@@ -26,6 +26,9 @@ from typing import Dict, List, Optional, Tuple
 from enum import Enum
 import subprocess
 
+# Import the robust calibration framework
+from robust_calibration import RobustCalibrationFramework, CalibrationPoint, EnvironmentalState
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -70,17 +73,44 @@ class SmartCalibrationGUI:
         self.sensor_states: Dict[int, SensorLearningState] = {}
         self.pending_requests: List[HumanInputRequest] = []
         self.latest_measurements: Dict[int, Dict] = {}
+        # Robust calibration frameworks for each sensor
+        self.calibration_frameworks: Dict[int, RobustCalibrationFramework] = {
+            i: RobustCalibrationFramework(i) for i in range(9)
+        }
+        
+        # Legacy calibration data (for backward compatibility)
         self.calibration_data: Dict[int, List] = {i: [] for i in range(9)}
+        
+        # Packet parsing structures - EXACT copy from channel_plotter.py
+        self.HEADER_STRUCT = struct.Struct("<4sBBHHII")
+        self.RECORD_STRUCT = struct.Struct("<BBiiII")
+        
+        # Constants from channel_plotter.py
+        self.MAGIC = b"AD26"
+        self.PACKET_VERSION = 2
+        self.CRC_SIZE_OPTIONAL = 4
+        self.HEADER_SIZE = self.HEADER_STRUCT.size
+        self.RECORD_SIZE = self.RECORD_STRUCT.size
+        self.PACKET_RECORDS = 10
+        self.FLAG_TIMING = 0x01
+        self.MAX_PACKET_BYTES = self.HEADER_SIZE + self.PACKET_RECORDS * self.RECORD_SIZE + self.CRC_SIZE_OPTIONAL
+        self.INT32_MIN = -2147483648
+        self.UINT32_MAX = 0xFFFFFFFF
+        self.V_REF = 2.5
+        self.ADC_SCALE = 2147483648.0
         
         # Real-time data
         self.data_queue = queue.Queue(maxsize=1000)
         self.recording_data = False
         self.autonomous_mode = False
+        self.recent_data: Dict[int, List] = {i: [] for i in range(9)}
+        self.last_update_time: Dict[int, float] = {i: 0.0 for i in range(9)}
         
         # Serial connection
         self.serial_connection: Optional[serial.Serial] = None
         self.serial_thread: Optional[threading.Thread] = None
         self.stop_serial = threading.Event()
+        self.synced = False
         
         # Performance tracking
         self.performance_stats = {
@@ -127,7 +157,7 @@ class SmartCalibrationGUI:
         conn_frame.pack(fill=tk.X, pady=(0, 10))
         
         ttk.Label(conn_frame, text="Serial Port:").pack(side=tk.LEFT)
-        self.port_var = tk.StringVar(value="/dev/ttyUSB0")
+        self.port_var = tk.StringVar(value="/dev/ttyACM0")
         port_combo = ttk.Combobox(conn_frame, textvariable=self.port_var, width=15)
         port_combo['values'] = self.get_available_ports()
         port_combo.pack(side=tk.LEFT, padx=(5, 10))
@@ -350,23 +380,50 @@ class SmartCalibrationGUI:
                 ports.append(port.device)
         except:
             # Fallback
+            ports = ["/tmp/fake_esp32_pipe"]
             for i in range(10):
                 ports.extend([f"/dev/ttyUSB{i}", f"/dev/ttyACM{i}", f"COM{i}"])
         return ports
         
     def setup_serial(self):
-        """Setup serial connection"""
+        """Setup serial connection with robust error handling"""
         try:
+            # Close existing connection if any
+            if hasattr(self, 'serial_connection') and self.serial_connection and self.serial_connection.is_open:
+                self.serial_connection.close()
+                time.sleep(0.1)  # Give it time to close
+            
+            # Clear any existing data
+            self.recent_data.clear()
+            self.last_update_time.clear()
+            
             self.serial_connection = serial.Serial(
                 port=self.port_var.get(),
                 baudrate=115200,
-                timeout=0.001,
-                write_timeout=0.1
+                timeout=0.05,  # Longer timeout for stability
+                write_timeout=0.1,
+                inter_byte_timeout=0.1,
+                rtscts=False,  # Disable hardware flow control
+                dsrdtr=False,  # Disable hardware flow control
+                xonxoff=False  # Disable software flow control
             )
+            
+            # Reset buffers and flush
             self.serial_connection.reset_input_buffer()
             self.serial_connection.reset_output_buffer()
+            self.serial_connection.flushInput()
+            self.serial_connection.flushOutput()
+            
+            # Reset packet sync state
+            self.synced = False
+            
             logger.info(f"Serial connection established on {self.port_var.get()}")
             return True
+            
+        except serial.SerialException as e:
+            logger.error(f"Serial port error: {e}")
+            messagebox.showerror("Serial Error", f"Serial port error: {e}")
+            return False
         except Exception as e:
             logger.error(f"Failed to connect to serial port: {e}")
             messagebox.showerror("Connection Error", f"Failed to connect to {self.port_var.get()}: {e}")
@@ -380,53 +437,199 @@ class SmartCalibrationGUI:
         # Start GUI update timer
         self.update_gui()
         
+    def _resync(self, buffer):
+        """EXACT copy from working channel_plotter.py"""
+        keep = len(self.MAGIC) - 1
+        while True:
+            idx = buffer.find(self.MAGIC)
+            if idx == -1:
+                if keep > 0 and len(buffer) > keep:
+                    del buffer[:-keep]
+                return False
+            if idx:
+                del buffer[:idx]
+            if len(buffer) < self.HEADER_SIZE:
+                return False
+            try:
+                magic, version, flags, count, _failures, _total_time_us, _packet_time_us = self.HEADER_STRUCT.unpack_from(buffer, 0)
+            except struct.error:
+                return False
+            if magic != self.MAGIC or version != self.PACKET_VERSION or not (flags & self.FLAG_TIMING):
+                del buffer[0]
+                continue
+            count = int(count)
+            if count > self.PACKET_RECORDS:
+                del buffer[0]
+                continue
+            payload_len = self.HEADER_SIZE + count * self.RECORD_SIZE
+            if payload_len <= self.HEADER_SIZE or payload_len > self.MAX_PACKET_BYTES:
+                del buffer[0]
+                continue
+            if len(buffer) < payload_len:
+                return False
+            if payload_len < len(buffer) < payload_len + self.CRC_SIZE_OPTIONAL:
+                return False
+            crc_present = False
+            if len(buffer) >= payload_len + self.CRC_SIZE_OPTIONAL:
+                next_bytes = buffer[payload_len:payload_len + len(self.MAGIC)]
+                if next_bytes != self.MAGIC:
+                    crc_present = True
+            packet_len = payload_len + (self.CRC_SIZE_OPTIONAL if crc_present else 0)
+            if len(buffer) < packet_len:
+                return False
+            return True
+    
+    def _drain_synced(self, buffer):
+        """EXACT copy from working channel_plotter.py"""
+        measurements = []
+        while True:
+            if len(buffer) < self.HEADER_SIZE:
+                break
+            if buffer[:len(self.MAGIC)] != self.MAGIC:
+                self.synced = False
+                del buffer[0]
+                break
+            try:
+                magic, version, flags, count, failures, total_time_us, packet_time_us = self.HEADER_STRUCT.unpack_from(buffer, 0)
+            except struct.error:
+                self.synced = False
+                del buffer[0]
+                break
+            count = int(count)
+            payload_len = self.HEADER_SIZE + count * self.RECORD_SIZE
+            if payload_len > self.MAX_PACKET_BYTES:
+                self.synced = False
+                del buffer[0]
+                break
+            if len(buffer) < payload_len:
+                break
+            if payload_len < len(buffer) < payload_len + self.CRC_SIZE_OPTIONAL:
+                break
+            crc_present = False
+            if len(buffer) >= payload_len + self.CRC_SIZE_OPTIONAL:
+                next_bytes = buffer[payload_len:payload_len + len(self.MAGIC)]
+                if next_bytes != self.MAGIC:
+                    crc_present = True
+            packet_len = payload_len + (self.CRC_SIZE_OPTIONAL if crc_present else 0)
+            if len(buffer) < packet_len:
+                break
+            if (
+                magic != self.MAGIC
+                or version != self.PACKET_VERSION
+                or not (flags & self.FLAG_TIMING)
+            ):
+                self.synced = False
+                del buffer[0]
+                break
+            
+            total_time_us = int(total_time_us)
+            failures = int(failures)
+            packet_time_us = int(packet_time_us) & self.UINT32_MAX
+            count_success = max(1, count - min(count, failures))
+            per_sample_default = max(1, total_time_us // count_success) if total_time_us > 0 else 1
+            
+            for i in range(count):
+                base = self.HEADER_SIZE + i * self.RECORD_SIZE
+                ch, ok, raw, sample_time, read_dur, conv_dur = self.RECORD_STRUCT.unpack_from(buffer, base)
+                ch = int(ch)
+                ok = int(ok)
+                raw = int(raw)
+                sample_time = int(sample_time)
+                
+                # Skip padding records (ch=0xFF) and invalid records
+                if ch == 0xFF:
+                    continue
+                if not ok or raw == self.INT32_MIN or sample_time in (-1, self.INT32_MIN):
+                    continue
+                sample_us = sample_time & self.UINT32_MAX
+                read_us = 0 if read_dur == self.UINT32_MAX else int(read_dur)
+                conv_us = 0 if conv_dur == self.UINT32_MAX else int(conv_dur)
+                per_sample = read_us + conv_us
+                if per_sample <= 0:
+                    per_sample = per_sample_default
+                per_sample = max(1, int(per_sample))
+                volts = raw * self.V_REF / self.ADC_SCALE
+                
+                # Create measurement
+                measurement = {
+                    'sensor_id': ch,
+                    'voltage': volts,
+                    'raw_adc': raw,
+                    'sample_time': sample_time,
+                    'read_time_dur': read_us,
+                    'conv_time_dur': conv_us,
+                    'timestamp': time.time(),
+                    'filtered_voltage': self.apply_kalman_filter(volts, ch),
+                    'predicted_pressure': 0.0,
+                    'confidence_level': 'LOW',
+                    'needs_human_input': True
+                }
+                
+                # Check if sensor has calibration data OR if we can use covariance mapping from other PTs
+                framework = self.calibration_frameworks[ch]
+                
+                if len(framework.calibration_points) > 2:
+                    # Use robust calibration framework for prediction
+                    env_state = EnvironmentalState()  # Default environmental state
+                    predicted_pressure, uncertainty = framework.predict_pressure_with_uncertainty(
+                        measurement['filtered_voltage'], env_state
+                    )
+                    measurement['predicted_pressure'] = predicted_pressure
+                    measurement['uncertainty'] = uncertainty
+                    measurement['needs_human_input'] = self.should_request_human_input_robust(ch, measurement)
+                    measurement['confidence_level'] = framework.get_confidence_level()
+                elif self.can_use_covariance_mapping(ch):
+                    # Use covariance mapping from other calibrated PTs
+                    measurement['predicted_pressure'] = self.predict_pressure_covariance(ch, measurement['filtered_voltage'])
+                    measurement['needs_human_input'] = False  # Autonomous prediction
+                    measurement['confidence_level'] = 'MEDIUM'  # Medium confidence from covariance
+                else:
+                    measurement['needs_human_input'] = True
+                    measurement['confidence_level'] = 'LOW'
+                
+                measurements.append(measurement)
+            
+            del buffer[:packet_len]
+        return measurements
+    
     def data_processor(self):
-        """High-performance data processing thread"""
+        """High-performance data processing thread with robust error handling"""
+        buffer = bytearray()
+        synced = False
+        
         while not self.stop_serial.is_set():
             if self.serial_connection and self.serial_connection.is_open:
                 try:
-                    if self.serial_connection.in_waiting >= 20:
-                        data = self.serial_connection.read(20)
-                        if len(data) == 20:
-                            # Parse binary data
-                            timestamp_us, channel, voltage_raw, voltage, read_time_us, sps, sent_us = struct.unpack('<I B i f I f I', data)
+                    # Read available data
+                    data = self.serial_connection.read(self.serial_connection.in_waiting or 1)
+                    if data:
+                        buffer.extend(data)
+                        
+                        if not synced:
+                            synced = self._resync(buffer)
+                        
+                        if synced:
+                            measurements = self._drain_synced(buffer)
+                            for measurement in measurements:
+                                # Update latest measurements
+                                self.latest_measurements[measurement['sensor_id']] = measurement
+                                
+                                # Add to data queue for GUI updates
+                                if not self.data_queue.full():
+                                    self.data_queue.put(measurement)
+                                
+                                # Update performance stats
+                                self.update_performance_stats()
                             
-                            # Create measurement
-                            measurement = {
-                                'sensor_id': channel,
-                                'voltage': voltage,
-                                'timestamp': time.time(),
-                                'filtered_voltage': self.apply_kalman_filter(voltage, channel),
-                                'predicted_pressure': 0.0,
-                                'confidence_level': 'LOW',
-                                'needs_human_input': True
-                            }
-                            
-                            # Check if sensor has calibration data
-                            if channel in self.calibration_data and len(self.calibration_data[channel]) > 2:
-                                # Predict pressure using simple polynomial fit
-                                measurement['predicted_pressure'] = self.predict_pressure(channel, measurement['filtered_voltage'])
-                                measurement['needs_human_input'] = self.should_request_human_input(channel, measurement)
-                                measurement['confidence_level'] = self.get_confidence_level(channel)
-                            else:
-                                measurement['needs_human_input'] = True
-                                measurement['confidence_level'] = 'LOW'
-                            
-                            # Update latest measurements
-                            self.latest_measurements[channel] = measurement
-                            
-                            # Add to data queue for GUI updates
-                            if not self.data_queue.full():
-                                self.data_queue.put(measurement)
-                            
-                            # Update performance stats
-                            self.update_performance_stats()
-                            
+                except serial.SerialException as e:
+                    logger.error(f"Serial error in data processor: {e}")
+                    self.status_var.set("Serial Error - Reconnecting...")
+                    time.sleep(1.0)  # Wait before retrying
                 except Exception as e:
-                    logger.error(f"Error processing serial data: {e}")
-                    time.sleep(0.001)
+                    logger.error(f"Unexpected error in data processor: {e}")
+                    time.sleep(0.1)  # Wait before retrying
             else:
-                time.sleep(0.001)
+                time.sleep(0.1)
                 
     def apply_kalman_filter(self, voltage: float, sensor_id: int) -> float:
         """Apply Kalman filter for high-performance voltage filtering"""
@@ -468,7 +671,105 @@ class SmartCalibrationGUI:
             return np.polyval(poly_coeffs, voltage)
         except:
             return 0.0
+    
+    def can_use_covariance_mapping(self, sensor_id: int) -> bool:
+        """Check if we can use covariance mapping from other calibrated PTs"""
+        # Need at least one other PT with good calibration
+        calibrated_pts = []
+        for pt_id, framework in self.calibration_frameworks.items():
+            if pt_id != sensor_id and len(framework.calibration_points) >= 3:
+                calibrated_pts.append(pt_id)
+        
+        return len(calibrated_pts) >= 1
+    
+    def predict_pressure_covariance(self, sensor_id: int, voltage: float) -> float:
+        """Predict pressure using covariance mapping from other calibrated PTs"""
+        # Find the best reference PT (most calibrated)
+        best_ref_pt = None
+        max_cal_points = 0
+        
+        for pt_id, framework in self.calibration_frameworks.items():
+            if pt_id != sensor_id and len(framework.calibration_points) > max_cal_points:
+                best_ref_pt = pt_id
+                max_cal_points = len(framework.calibration_points)
+        
+        if best_ref_pt is None:
+            return 0.0
+        
+        # Use robust framework for prediction
+        framework = self.calibration_frameworks[best_ref_pt]
+        env_state = EnvironmentalState()  # Default environmental state
+        predicted_pressure, uncertainty = framework.predict_pressure_with_uncertainty(voltage, env_state)
+        
+        # Apply covariance scaling based on PT relationships
+        covariance_factor = self.get_pt_covariance_factor(sensor_id, best_ref_pt)
+        
+        return predicted_pressure * covariance_factor
+    
+    def get_pt_covariance_factor(self, target_pt: int, reference_pt: int) -> float:
+        """Get covariance scaling factor between PTs"""
+        # Simplified covariance model based on PT locations
+        # In practice, this would be learned from historical data
+        
+        pt_relationships = {
+            # Pressurant Tank relationships
+            0: {1: 0.95, 2: 0.90, 3: 0.85, 4: 0.80, 5: 0.75, 6: 0.70, 7: 0.65, 8: 0.60},
+            # Kero Inlet relationships  
+            1: {0: 0.95, 2: 0.98, 3: 0.85, 4: 0.80, 5: 0.75, 6: 0.70, 7: 0.65, 8: 0.60},
+            # Kero Outlet relationships
+            2: {0: 0.90, 1: 0.98, 3: 0.85, 4: 0.80, 5: 0.75, 6: 0.70, 7: 0.65, 8: 0.60},
+            # Lox Inlet relationships
+            3: {0: 0.85, 1: 0.85, 2: 0.85, 4: 0.95, 5: 0.80, 6: 0.75, 7: 0.70, 8: 0.65},
+            # Lox Outlet relationships
+            4: {0: 0.80, 1: 0.80, 2: 0.80, 3: 0.95, 5: 0.85, 6: 0.80, 7: 0.75, 8: 0.70},
+            # Injector relationships
+            5: {0: 0.75, 1: 0.75, 2: 0.75, 3: 0.80, 4: 0.85, 6: 0.90, 7: 0.85, 8: 0.80},
+            # Chamber Wall #1 relationships
+            6: {0: 0.70, 1: 0.70, 2: 0.70, 3: 0.75, 4: 0.80, 5: 0.90, 7: 0.95, 8: 0.85},
+            # Chamber Wall #2 relationships
+            7: {0: 0.65, 1: 0.65, 2: 0.65, 3: 0.70, 4: 0.75, 5: 0.85, 6: 0.95, 8: 0.90},
+            # Nozzle Exit relationships
+            8: {0: 0.60, 1: 0.60, 2: 0.60, 3: 0.65, 4: 0.70, 5: 0.80, 6: 0.85, 7: 0.90}
+        }
+        
+        if target_pt in pt_relationships and reference_pt in pt_relationships[target_pt]:
+            return pt_relationships[target_pt][reference_pt]
+        
+        # Default covariance factor
+        return 0.8
             
+    def should_request_human_input_robust(self, sensor_id: int, measurement: Dict) -> bool:
+        """
+        Robust human input decision using uncertainty quantification
+        """
+        framework = self.calibration_frameworks[sensor_id]
+        
+        if len(framework.calibration_points) < 3:
+            return True  # Need more calibration data
+        
+        # Get uncertainty from robust framework
+        uncertainty = measurement.get('uncertainty', 0.1)
+        predicted_pressure = measurement.get('predicted_pressure', 0.0)
+        
+        # Request human input if uncertainty is too high
+        uncertainty_threshold = 0.05  # 5% uncertainty threshold
+        
+        if uncertainty > uncertainty_threshold:
+            return True
+        
+        # Request human input if prediction is outside reasonable range
+        if predicted_pressure < 0 or predicted_pressure > 1000:  # Reasonable pressure range
+            return True
+        
+        # Request human input based on confidence level
+        confidence_level = framework.get_confidence_level()
+        if confidence_level == 'LOW':
+            return True
+        elif confidence_level == 'MEDIUM' and uncertainty > 0.02:
+            return True
+        
+        return False
+
     def should_request_human_input(self, sensor_id: int, measurement: Dict) -> bool:
         """Determine if human input is needed"""
         if sensor_id not in self.sensor_states:
@@ -584,6 +885,10 @@ class SmartCalibrationGUI:
         
         self.pending_requests.append(request)
         self.update_requests_listbox()
+        
+        # Enable input buttons when there are pending requests
+        self.confirm_btn.config(state='normal')
+        self.skip_btn.config(state='normal')
         
     def update_data_tree(self):
         """Update data display tree"""
@@ -715,24 +1020,56 @@ class SmartCalibrationGUI:
             self.connect()
             
     def connect(self):
-        """Connect to serial port"""
-        if self.setup_serial():
-            self.connect_btn.config(text="Disconnect")
-            self.learn_btn.config(state='normal')
-            self.status_var.set("Connected")
-            logger.info("Connected to serial port")
-        else:
-            self.status_var.set("Connection Failed")
+        """Connect to serial port with retry mechanism"""
+        max_retries = 3
+        for attempt in range(max_retries):
+            if self.setup_serial():
+                self.connect_btn.config(text="Disconnect")
+                self.learn_btn.config(state='normal')
+                self.status_var.set("Connected")
+                logger.info("Connected to serial port")
+                
+                # Start data processing
+                self.stop_serial.clear()
+                self.start_data_processing()
+                return
+            else:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Connection attempt {attempt + 1} failed, retrying...")
+                    time.sleep(0.5)
+        
+        self.status_var.set("Connection Failed - Check Port")
+        logger.error("Failed to connect after all retries")
             
     def disconnect(self):
-        """Disconnect from serial port"""
-        if self.serial_connection:
-            self.serial_connection.close()
+        """Disconnect from serial port with proper cleanup"""
+        # Signal data thread to stop
+        self.stop_serial.set()
+        
+        # Wait for data thread to finish
+        if hasattr(self, 'data_thread') and self.data_thread.is_alive():
+            self.data_thread.join(timeout=1.0)
+        
+        # Close serial connection
+        if self.serial_connection and self.serial_connection.is_open:
+            try:
+                self.serial_connection.close()
+                time.sleep(0.1)  # Give it time to close
+            except Exception as e:
+                logger.warning(f"Error closing serial connection: {e}")
+        
+        # Reset UI state
         self.connect_btn.config(text="Connect")
         self.learn_btn.config(state='disabled')
         self.autonomous_btn.config(state='disabled')
         self.validate_btn.config(state='disabled')
         self.status_var.set("Disconnected")
+        
+        # Clear data
+        self.latest_measurements.clear()
+        self.recent_data.clear()
+        self.last_update_time.clear()
+        
         logger.info("Disconnected from serial port")
         
     def start_learning(self):
@@ -769,12 +1106,26 @@ class SmartCalibrationGUI:
             if sensor_id in self.latest_measurements:
                 measurement = self.latest_measurements[sensor_id]
                 
+                # Add to robust calibration framework
+                framework = self.calibration_frameworks[sensor_id]
+                env_state = EnvironmentalState()  # Default environmental state
+                robust_calibration_point = CalibrationPoint(
+                    voltage=measurement['filtered_voltage'],
+                    pressure=reference_pressure,
+                    timestamp=time.time(),
+                    environmental_state=env_state,
+                    uncertainty=0.01  # 1% uncertainty
+                )
+                
+                # Add to framework and get results
+                result = framework.add_calibration_point(robust_calibration_point)
+                
+                # Also add to legacy system for backward compatibility
                 calibration_point = {
                     'voltage': measurement['filtered_voltage'],
                     'pressure': reference_pressure,
                     'timestamp': time.time()
                 }
-                
                 self.calibration_data[sensor_id].append(calibration_point)
                 
                 # Update sensor state
@@ -796,6 +1147,11 @@ class SmartCalibrationGUI:
                 self.pending_requests = [req for req in self.pending_requests if req.sensor_id != sensor_id]
                 self.update_requests_listbox()
                 
+                # Disable buttons if no more pending requests
+                if not self.pending_requests:
+                    self.confirm_btn.config(state='disabled')
+                    self.skip_btn.config(state='disabled')
+                
                 # Clear input fields
                 self.ref_pressure_var.set("")
                 
@@ -809,6 +1165,11 @@ class SmartCalibrationGUI:
         if self.pending_requests:
             self.pending_requests.pop(0)
             self.update_requests_listbox()
+            
+            # Disable buttons if no more pending requests
+            if not self.pending_requests:
+                self.confirm_btn.config(state='disabled')
+                self.skip_btn.config(state='disabled')
             
     def validate_prediction(self):
         """Validate system prediction"""

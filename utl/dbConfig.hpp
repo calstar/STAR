@@ -71,22 +71,26 @@ void cppGenerateDBConfig() {
     // ══════════════════════════════════════════════════════════════════════════════
 
     auto ptTable = builder::vtable({
-        raw_field(0, 8, schema(PrimType::F64(), {}, pair(0x02, "time_pt"))),
-        raw_field(8, 8, schema(PrimType::F64(), {}, pair(0x02, "pressure"))),
-        raw_field(16, 8, schema(PrimType::F64(), {}, pair(0x02, "temperature"))),
-        raw_field(24, 8, schema(PrimType::U64(), {}, pair(0x02, "time_monotonic"))),
+        raw_field(0, 1, schema(PrimType::U8(), {}, pair(0x20, "ch"))),
+        raw_field(1, 1, schema(PrimType::U8(), {}, pair(0x20, "ok"))),
+        raw_field(4, 4, schema(PrimType::U32(), {}, pair(0x20, "raw"))),              // Aligned to 4-byte boundary
+        raw_field(8, 4, schema(PrimType::U32(), {}, pair(0x20, "sample_time"))),
+        raw_field(12, 4, schema(PrimType::U32(), {}, pair(0x20, "read_time_dur"))),
+        raw_field(16, 4, schema(PrimType::U32(), {}, pair(0x20, "conv_time_dur"))),
     });
 
     send(VTableMsg{
-        .id = {0x02, 0x00},
+        .id = {0x20, 0x00},
         .vtable = ptTable,
     });
 
-    send(set_component_name("time_pt"));
-    send(set_component_name("pressure"));
-    send(set_component_name("temperature"));
-    send(set_component_name("time_monotonic"));
-    send(set_entity_name(0x02, "PT"));
+    send(set_component_name("ch"));
+    send(set_component_name("ok"));
+    send(set_component_name("raw"));
+    send(set_component_name("sample_time"));
+    send(set_component_name("read_time_dur"));
+    send(set_component_name("conv_time_dur"));
+    send(set_entity_name(0x20, "PT_Rec18"));
 
     // ══════════════════════════════════════════════════════════════════════════════
     // TCMessage (Thermocouple)

@@ -23,15 +23,18 @@ enum class PTLocation {
 };
 
 /**
- * @brief Pressure Transducer Message - Raw voltage system
+ * @brief Pressure Transducer Message - Raw Rec18 format from ESP32
  *
- * Contains raw voltage readings from PT sensors (calibration applied later)
+ * Matches the Rec18 struct from Arduino exactly
  */
 using PTMessage =
-    MessageFactory<uint64_t,   // (0) timestamp_ns - monotonic timestamp in nanoseconds
-                   uint8_t,    // (1) sensor_id - PT sensor identifier (0-8 for 9 PTs)
-                   double,     // (2) raw_voltage_v - raw voltage reading in Volts
-                   uint8_t>;   // (3) pt_location - PT location enum value
+    MessageFactory<uint8_t,    // (0) ch - channel id
+                   uint8_t,    // (1) ok - 0 or 1
+                   uint16_t,   // (2) padding - for 4-byte alignment
+                   uint32_t,   // (3) raw - ADC code
+                   uint32_t,   // (4) sample_time - per-sample timestamp
+                   uint32_t,   // (5) read_time_dur - per read()
+                   uint32_t>;  // (6) conv_time_dur - wait for DRDY
 
 // Function to set PT sensor measurements with raw voltage
 static void set_pt_measurement(PTMessage& message, uint64_t timestamp_ns, uint8_t sensor_id, 

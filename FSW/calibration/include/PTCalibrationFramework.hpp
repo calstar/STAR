@@ -279,6 +279,19 @@ public:
                                          double convergence_tolerance = 1e-6);
     
     /**
+     * @brief Single-point calibration for future use when PTs may be at different pressures
+     * Uses only the zero point and assumes linear relationship
+     * @param zero_voltage Voltage at zero pressure
+     * @param zero_pressure Pressure at zero voltage (usually 0)
+     * @param environment Environmental conditions
+     * @return Calibration parameters with uncertainty
+     */
+    CalibrationParameters performSinglePointCalibration(
+        double zero_voltage,
+        double zero_pressure,
+        const EnvironmentalState& environment);
+    
+    /**
      * @brief Update calibration with new data using Recursive Least Squares
      * @param forgetting_factor Forgetting factor (0 < lambda <= 1)
      * @param new_data_point New calibration data point

@@ -1,6 +1,4 @@
 #include "PTCalibrationFramework.hpp"
-#include <iostream>
-#include <fstream>
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -48,25 +46,35 @@ bool PolynomialCalibrationMap::validateParameters(const Eigen::VectorXd& theta) 
 }
 
 double PolynomialCalibrationMap::computeBasisFunction(int k, double voltage, const EnvironmentalState& environment) const {
+    // ROBUST VOLTAGE CLAMPING - Prevent numerical instability
+    const double MIN_VOLTAGE = 1e-6;
+    const double MAX_VOLTAGE = 10.0;
+    voltage = std::clamp(voltage, MIN_VOLTAGE, MAX_VOLTAGE);
+    
     switch (k) {
         case 0: return 1.0;  // offset
         case 1: return voltage;  // linear
         case 2: return voltage * voltage;  // quadratic
         case 3: return voltage * voltage * voltage;  // cubic
-        case 4: return std::sqrt(std::max(0.0, voltage));  // sqrt (with safety)
-        case 5: return std::log(1.0 + std::max(0.0, voltage));  // log (with safety)
+        case 4: return std::sqrt(voltage);  // sqrt (now safe due to clamping)
+        case 5: return std::log(1.0 + voltage);  // log (now safe due to clamping)
         default: return 0.0;
     }
 }
 
 double PolynomialCalibrationMap::computeBasisFunctionDerivative(int k, double voltage, const EnvironmentalState& environment) const {
+    // ROBUST VOLTAGE CLAMPING - Prevent numerical instability
+    const double MIN_VOLTAGE = 1e-6;
+    const double MAX_VOLTAGE = 10.0;
+    voltage = std::clamp(voltage, MIN_VOLTAGE, MAX_VOLTAGE);
+    
     switch (k) {
         case 0: return 0.0;  // offset derivative
         case 1: return 1.0;  // linear derivative
         case 2: return 2.0 * voltage;  // quadratic derivative
         case 3: return 3.0 * voltage * voltage;  // cubic derivative
-        case 4: return 0.5 / std::sqrt(std::max(1e-6, voltage));  // sqrt derivative
-        case 5: return 1.0 / (1.0 + std::max(0.0, voltage));  // log derivative
+        case 4: return 0.5 / std::sqrt(voltage);  // sqrt derivative (now safe)
+        case 5: return 1.0 / (1.0 + voltage);  // log derivative (now safe)
         default: return 0.0;
     }
 }
@@ -121,25 +129,47 @@ bool EnvironmentalRobustCalibrationMap::validateParameters(const Eigen::VectorXd
 }
 
 double EnvironmentalRobustCalibrationMap::computeRobustBasisFunction(int k, double voltage, const EnvironmentalState& environment) const {
+    // ROBUST VOLTAGE CLAMPING - Prevent numerical instability
+    const double MIN_VOLTAGE = 1e-6;
+    const double MAX_VOLTAGE = 10.0;
+    voltage = std::clamp(voltage, MIN_VOLTAGE, MAX_VOLTAGE);
+    
+    // ROBUST ENVIRONMENTAL CLAMPING - Prevent extreme environmental values
+    const double clamped_temp = std::clamp(environment.temperature, -50.0, 150.0);
+    const double clamped_humidity = std::clamp(environment.humidity, 0.0, 100.0);
+    const double clamped_vibration = std::clamp(environment.vibration_level, 0.0, 100.0);
+    const double clamped_aging = std::clamp(environment.aging_factor, 0.0, 10.0);
+    
     switch (k) {
         case 0: return 1.0;  // offset
         case 1: return voltage;  // linear
-        case 2: return voltage * voltage + 0.1 * environment.temperature * voltage + 0.01 * environment.humidity * voltage;  // quadratic + env
-        case 3: return voltage * voltage * voltage + 0.1 * environment.temperature * voltage * voltage + 0.1 * environment.vibration_level * voltage;  // cubic + env
-        case 4: return std::sqrt(std::max(0.0, voltage)) + 0.1 * environment.aging_factor * std::log(std::max(1e-6, voltage));  // sqrt + aging
-        case 5: return std::log(1.0 + std::max(0.0, voltage)) + 0.1 * environment.temperature + 0.01 * environment.humidity;  // log + env
+        case 2: return voltage * voltage + 0.1 * clamped_temp * voltage + 0.01 * clamped_humidity * voltage;  // quadratic + env
+        case 3: return voltage * voltage * voltage + 0.1 * clamped_temp * voltage * voltage + 0.1 * clamped_vibration * voltage;  // cubic + env
+        case 4: return std::sqrt(voltage) + 0.1 * clamped_aging * std::log(voltage);  // sqrt + aging (now safe)
+        case 5: return std::log(1.0 + voltage) + 0.1 * clamped_temp + 0.01 * clamped_humidity;  // log + env (now safe)
         default: return 0.0;
     }
 }
 
 double EnvironmentalRobustCalibrationMap::computeRobustBasisFunctionDerivative(int k, double voltage, const EnvironmentalState& environment) const {
+    // ROBUST VOLTAGE CLAMPING - Prevent numerical instability
+    const double MIN_VOLTAGE = 1e-6;
+    const double MAX_VOLTAGE = 10.0;
+    voltage = std::clamp(voltage, MIN_VOLTAGE, MAX_VOLTAGE);
+    
+    // ROBUST ENVIRONMENTAL CLAMPING - Prevent extreme environmental values
+    const double clamped_temp = std::clamp(environment.temperature, -50.0, 150.0);
+    const double clamped_humidity = std::clamp(environment.humidity, 0.0, 100.0);
+    const double clamped_vibration = std::clamp(environment.vibration_level, 0.0, 100.0);
+    const double clamped_aging = std::clamp(environment.aging_factor, 0.0, 10.0);
+    
     switch (k) {
         case 0: return 0.0;  // offset derivative
         case 1: return 1.0;  // linear derivative
-        case 2: return 2.0 * voltage + 0.1 * environment.temperature + 0.01 * environment.humidity;  // quadratic + env derivative
-        case 3: return 3.0 * voltage * voltage + 0.2 * environment.temperature * voltage + 0.1 * environment.vibration_level;  // cubic + env derivative
-        case 4: return 0.5 / std::sqrt(std::max(1e-6, voltage)) + 0.1 * environment.aging_factor / std::max(1e-6, voltage);  // sqrt + aging derivative
-        case 5: return 1.0 / (1.0 + std::max(0.0, voltage));  // log derivative (env terms are constant)
+        case 2: return 2.0 * voltage + 0.1 * clamped_temp + 0.01 * clamped_humidity;  // quadratic + env derivative
+        case 3: return 3.0 * voltage * voltage + 0.2 * clamped_temp * voltage + 0.1 * clamped_vibration;  // cubic + env derivative
+        case 4: return 0.5 / std::sqrt(voltage) + 0.1 * clamped_aging / voltage;  // sqrt + aging derivative (now safe)
+        case 5: return 1.0 / (1.0 + voltage);  // log derivative (env terms are constant, now safe)
         default: return 0.0;
     }
 }
@@ -168,8 +198,22 @@ CalibrationParameters PTCalibrationFramework::performBayesianCalibration(
     const Eigen::MatrixXd& population_prior_covariance,
     double individual_variance) {
     
+    // ROBUST NUMERICAL STABILITY CHECKS
     if (calibration_data_.empty()) {
-        throw std::runtime_error("No calibration data available");
+        throw std::invalid_argument("No calibration data available");
+    }
+    
+    // Check for finite inputs
+    if (!population_prior_mean.allFinite()) {
+        throw std::invalid_argument("Population prior mean contains non-finite values");
+    }
+    
+    if (!population_prior_covariance.allFinite()) {
+        throw std::invalid_argument("Population prior covariance contains non-finite values");
+    }
+    
+    if (!std::isfinite(individual_variance) || individual_variance <= 0) {
+        throw std::invalid_argument("Individual variance must be positive and finite");
     }
     
     int num_params = calibration_map_->getNumParameters();
@@ -482,6 +526,67 @@ bool PTCalibrationFramework::validateCalibrationData() const {
     }
     
     return true;
+}
+
+CalibrationParameters PTCalibrationFramework::performSinglePointCalibration(
+    double zero_voltage,
+    double zero_pressure,
+    const EnvironmentalState& environment) {
+    
+    // ROBUST NUMERICAL STABILITY CHECKS
+    if (!std::isfinite(zero_voltage) || !std::isfinite(zero_pressure)) {
+        throw std::invalid_argument("Zero voltage and pressure must be finite");
+    }
+    
+    // Clamp voltage to safe range
+    const double MIN_VOLTAGE = 1e-6;
+    const double MAX_VOLTAGE = 10.0;
+    zero_voltage = std::clamp(zero_voltage, MIN_VOLTAGE, MAX_VOLTAGE);
+    
+    int num_params = calibration_map_->getNumParameters();
+    
+    // SINGLE-POINT CALIBRATION: Assume linear relationship
+    // For a 6-parameter model: p = θ₀ + θ₁v + θ₂v² + θ₃v³ + θ₄√v + θ₅ln(1+v)
+    // With only one point, we can only solve for θ₀ and θ₁ (linear terms)
+    // Set higher-order terms to zero with high uncertainty
+    
+    CalibrationParameters result;
+    result.theta = Eigen::VectorXd::Zero(num_params);
+    result.covariance = Eigen::MatrixXd::Identity(num_params, num_params);
+    
+    // Set linear relationship: p = θ₀ + θ₁v
+    // At zero voltage: p = θ₀, so θ₀ = zero_pressure
+    // We need to estimate θ₁, but with only one point, we use a reasonable default
+    
+    result.theta(0) = zero_pressure;  // offset
+    result.theta(1) = 1000.0;  // Default linear coefficient (Pa/V) - reasonable for most PTs
+    
+    // Set high uncertainty for parameters we can't determine
+    double base_uncertainty = 1000.0;  // 1000 Pa uncertainty
+    for (int i = 0; i < num_params; ++i) {
+        result.covariance(i, i) = base_uncertainty * base_uncertainty;
+    }
+    
+    // Lower uncertainty for offset (we know this exactly)
+    result.covariance(0, 0) = 10.0 * 10.0;  // 10 Pa uncertainty
+    
+    // Higher uncertainty for higher-order terms (we assume they're zero)
+    for (int i = 2; i < num_params; ++i) {
+        result.covariance(i, i) = 10000.0 * 10000.0;  // Very high uncertainty
+    }
+    
+    // Set calibration quality metric
+    result.calibration_quality = 0.5;  // Medium quality for single-point calibration
+    
+    // Set basis function names
+    result.basis_functions = calibration_map_->getParameterNames();
+    
+    // Validate result
+    if (!calibration_map_->validateParameters(result.theta)) {
+        throw std::runtime_error("Single-point calibration produced invalid parameters");
+    }
+    
+    return result;
 }
 
 // Factory function

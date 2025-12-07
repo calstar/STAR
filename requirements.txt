@@ -1,0 +1,55 @@
+# Sensor System Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# ==========================================
+# Core Scientific Computing
+# ==========================================
+numpy>=1.21.0,<2.0.0
+scipy>=1.7.0,<2.0.0
+
+# ==========================================
+# GUI and Visualization (PyQt6)
+# ==========================================
+PyQt6>=6.4.0,<7.0.0
+pyqtgraph>=0.13.0
+
+# ==========================================
+# Alternative GUI (Tkinter + Matplotlib)
+# ==========================================
+matplotlib>=3.5.0,<4.0.0
+# Note: tkinter is included with Python standard library
+
+# ==========================================
+# Hardware Communication
+# ==========================================
+pyserial>=3.5
+
+# ==========================================
+# System Monitoring
+# ==========================================
+psutil>=5.9.0
+
+# ==========================================
+# Optional: Enhanced Features
+# ==========================================
+# For improved performance with large arrays
+# numexpr>=2.8.0
+
+# For additional statistical functions
+# scikit-learn>=1.0.0
+
+# ==========================================
+# Development and Testing (Optional)
+# ==========================================
+# pytest>=7.0.0
+# pytest-cov>=3.0.0
+# black>=22.0.0
+# flake8>=4.0.0
+# mypy>=0.950
+
+# ==========================================
+# Documentation (Optional)
+# ==========================================
+# sphinx>=4.5.0
+# sphinx-rtd-theme>=1.0.0
+

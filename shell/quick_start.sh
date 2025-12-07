@@ -3,15 +3,14 @@ set -euo pipefail
 
 # Quick sensor system startup - based on your proven tmux pattern
 
-# Make sure ROOT_SENSOR_DIR is set
-if [[ -z "${ROOT_SENSOR_DIR:-}" ]]; then
-    echo "Setting up environment..."
-    source ../startup.sh
-fi
+# Set ROOT_SENSOR_DIR to project root (parent of shell directory)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_SENSOR_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Default values
 DB_NAME="${1:-test_db}"
 SESSION_NAME="sensor_system"
+PORT=2240
 
 # Setup paths
 TMP_DB_PATH="$HOME/.local/share/elodin/${DB_NAME}"
@@ -38,48 +37,52 @@ SLEEP_TIME_LONG=3
 # Kill existing session if running
 tmux has-session -t "$SESSION_NAME" 2>/dev/null && tmux kill-session -t "$SESSION_NAME"
 
-# Start new session - EXACTLY like your working script
+# Kill any existing elodin-db on port 2240
+pkill -f "elodin-db.*2240" 2>/dev/null || true
+sleep 1
+
+# Create DB directory
+mkdir -p "$TMP_DB_PATH"
+
+# Start new tmux session
 tmux new-session -d -s "$SESSION_NAME" -c "$ROOT_SENSOR_DIR"
 sleep $SLEEP_TIME_SHELL_ENTER
-tmux send-keys -t "$SESSION_NAME" "cd shell && source startup_db.sh $DB_NAME 2>&1 | tee $DB_LOG" C-m
+
+# Start database in first pane
+tmux send-keys -t "$SESSION_NAME":0 "elodin-db run '[::]:$PORT' $TMP_DB_PATH 2>&1 | tee $DB_LOG" C-m
 tmux select-pane -t "$SESSION_NAME":0 -T "DB"
 
-# Start a background watcher to wait for "Database is ready!" in log - EXACTLY like your working script
-(
-    sleep $SLEEP_TIME_LONG
-    while true; do
-        if grep -q "Database is ready!" "$DB_LOG" 2>/dev/null; then
-            break
-        fi
-        sleep 0.5
-    done
+echo "Waiting for database to start..."
+sleep $SLEEP_TIME_LONG
 
-    # Once DB is ready, start sensor generator - EXACTLY like your working script
-    tmux split-window -h -t "$SESSION_NAME":0 -c "$ROOT_SENSOR_DIR"
-    sleep $SLEEP_TIME_SHELL_ENTER
-    tmux send-keys -t "$SESSION_NAME":0.1 "cd scripts && ./fake_sensor_generator 127.0.0.1 2240 2>&1 | tee $SENSOR_LOG" C-m
-    tmux select-pane -t "$SESSION_NAME":0.1 -T "Sensors"
-    sleep $SLEEP_TIME_SHORT
+# Wait for database to be ready (check if port is listening)
+for i in {1..20}; do
+    if lsof -i:$PORT &>/dev/null; then
+        echo "✅ Database is ready!"
+        break
+    fi
+    sleep 0.5
+done
 
-    # Add third pane for visualizer
-    tmux split-window -v -t "$SESSION_NAME":0.1 -c "$ROOT_SENSOR_DIR"
-    sleep $SLEEP_TIME_SHELL_ENTER
-    tmux send-keys -t "$SESSION_NAME":0.2 "elodin" C-m
-    tmux select-pane -t "$SESSION_NAME":0.2 -T "Visualizer"
+# Start ESP32 PT streamer in second pane (using real hardware /dev/ttyACM0)
+tmux split-window -h -t "$SESSION_NAME":0 -c "$ROOT_SENSOR_DIR"
+sleep $SLEEP_TIME_SHELL_ENTER
+tmux send-keys -t "$SESSION_NAME":0.1 "cd build && ./esp32_pt_streamer 127.0.0.1 $PORT /dev/ttyACM0 2>&1 | tee $SENSOR_LOG" C-m
+tmux select-pane -t "$SESSION_NAME":0.1 -T "ESP32-PT"
+sleep $SLEEP_TIME_SHORT
 
-    echo "✅ Sensor system started successfully!"
-    echo "   - Database: $DB_NAME"
-    echo "   - Logs: $LOG_DIR"
-    echo ""
-    echo "To attach to the session: tmux attach -t $SESSION_NAME"
-    echo "To stop the system: tmux kill-session -t $SESSION_NAME"
-) &
+# Add third pane for visualizer
+tmux split-window -v -t "$SESSION_NAME":0.1 -c "$ROOT_SENSOR_DIR"
+sleep $SLEEP_TIME_SHELL_ENTER
+tmux send-keys -t "$SESSION_NAME":0.2 "elodin" C-m
+tmux select-pane -t "$SESSION_NAME":0.2 -T "Visualizer"
 
-echo "Starting sensor system..."
-echo "Waiting for database to be ready..."
+echo "✅ Sensor system started successfully!"
+echo "   - Database: $DB_NAME"
+echo "   - Logs: $LOG_DIR"
+echo ""
+echo "Attaching to session..."
 
-# Wait a bit for the background process to complete
-sleep 5
-
-# Attach to the session - EXACTLY like your working script
+# Attach to the session
+sleep 1
 tmux attach -t "$SESSION_NAME"

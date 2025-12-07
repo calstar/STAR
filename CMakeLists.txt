@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(LiquidEngineFlightSoftware VERSION 1.0.0 LANGUAGES CXX)
 
 # Set C++ standard
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Compiler flags
@@ -108,6 +108,14 @@ add_executable(configurable_pt_example FSW/src/configurable_pt_example.cpp)
 add_executable(pt_calibration_example FSW/src/pt_calibration_example.cpp)
 add_executable(complete_calibration_pipeline FSW/src/complete_calibration_pipeline.cpp)
 add_executable(paper_algorithm_pipeline FSW/src/paper_algorithm_pipeline.cpp)
+
+# ESP32 PT Streamer for calibration (Rec18 format)
+add_executable(esp32_pt_streamer scripts/esp32_pt_streamer.cpp)
+target_link_libraries(esp32_pt_streamer Threads::Threads pthread rt)
+
+# Fake ESP32 packet generator for testing
+add_executable(fake_esp32_packet_gen scripts/fake_esp32_packet_gen.cpp)
+target_link_libraries(fake_esp32_packet_gen Threads::Threads pthread rt)
 
 # Link libraries for main executable (commented out until all source implementations are added)
 # target_link_libraries(engine_controller

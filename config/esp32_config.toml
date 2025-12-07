@@ -3,7 +3,7 @@
 
 [serial]
 # Serial port configuration
-device_path = "/dev/ttyUSB0"  # Linux: "/dev/ttyUSB0", "/dev/ttyACM0", etc.
+device_path = "/dev/ttyACM0"  # Linux: "/dev/ttyUSB0", "/dev/ttyACM0", etc.
                               # Windows: "COM3", "COM4", etc.
                               # macOS: "/dev/cu.usbserial-*", "/dev/cu.usbmodem*"
 
