@@ -1,13 +1,3 @@
-/******************************************************************************
- * @file        MessageFactory.hpp
- * @author(s)   Fabio Ibanez (fabio@singularityus.com)
- * @date        January 27 2025
- * @brief       Definition for all message types in Revere
- *
- * @copyright   2025, Singularity Defense Corporation.
- *              All rights reserved.
- ******************************************************************************/
-
 #ifndef MESSAGE_FACTORY_HPP
 #define MESSAGE_FACTORY_HPP
 
