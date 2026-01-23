@@ -1,4 +1,4 @@
-#include "my_ADS126X.h"
+#include "STAR_ADS126X.h"
 #include <SPI.h>
 #include <Arduino.h>
 
@@ -8,12 +8,17 @@ ADS126X::ADS126X() {
 }
 
 void ADS126X::begin(uint8_t chip_select) {
+  begin(chip_select, &SPI);
+}
+
+void ADS126X::begin(uint8_t chip_select, SPIClass *spi) {
   cs_used = true;
   cs_pin = chip_select;
   pinMode(cs_pin, OUTPUT);
   digitalWrite(cs_pin, HIGH);
 
-  SPI.begin();
+  _spi = spi;
+  _spi->begin();
   
   ADS126X::reset();
   ADS126X::readAllRegisters();
@@ -522,11 +527,11 @@ void ADS126X::setIDAC2Mag(uint8_t magnitude) {
 
 // write buffer to spi, save results over the buffer
 void ADS126X::spi_rw(uint8_t buff[],uint8_t len) {
-  SPI.beginTransaction( SPISettings(2000000, MSBFIRST, SPI_MODE1) ); // 2 MHz
+  _spi->beginTransaction( SPISettings(2000000, MSBFIRST, SPI_MODE1) ); // 2 MHz
   
   for(uint8_t i=0;i<len;i++) {
-    buff[i] = SPI.transfer(buff[i]);
+    buff[i] = _spi->transfer(buff[i]);
   }
   
-  SPI.endTransaction();
+  _spi->endTransaction();
 }

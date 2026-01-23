@@ -9,7 +9,7 @@ This is a class to use the TI ADS1262 and ADS1263 analog converters with an Ardu
 #define ADS126X_H
 
 #include <stdint.h>
-#include "my_ADS126X_definitions.h"
+#include "STAR_ADS126X_definitions.h"
 #include <SPI.h>
 #include <Arduino.h>
 
@@ -22,6 +22,7 @@ class ADS126X {
   	// Initialization
     ADS126X(void);
     void begin(uint8_t chip_select);
+    void begin(uint8_t chip_select, SPIClass *spi);
     void begin(void);
     void setStartPin(uint8_t pin); // designate a pin connected to START
 
@@ -125,6 +126,8 @@ class ADS126X {
     uint8_t cs_pin; // chip select pin
     bool start_used = false;
     uint8_t start_pin; // start pin
+
+    SPIClass *_spi; // pointer to SPI object
 
     ADS126X_STATUS_Type STATUS; // save last status and checksum values
     bool CHECKSUM;
