@@ -1,2 +1,2 @@
-DB_SESSION=test_db
-CONFIG_PATH=/home/kush-mahajan/sensor_system/config/config_base.toml
+DB_SESSION=test
+CONFIG_PATH=/home/kushmahajan/Diablo-FSW/config/config_base.toml
