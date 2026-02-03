@@ -4,13 +4,13 @@
 #include <array>
 #include <cstdint>
 
-#include "../../external/shared/message_factory/MessageFactory.hpp"
+#include "CommsMessage.hpp"
 
 /**
  * @brief Barometer sensor message
  * Measures atmospheric pressure and derived altitude
  */
-using BarometerMessage = MessageFactory<double,     // (0) time_bar (s) - timestamp
+using BarometerMessage = comms::CommsMessage<double,     // (0) time_bar (s) - timestamp
                                         double,     // (1) pressure (Pa) - atmospheric pressure
                                         double,     // (2) altitude (m) - derived altitude
                                         double,     // (3) temperature (C) - temperature reading

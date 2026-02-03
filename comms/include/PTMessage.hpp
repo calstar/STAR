@@ -4,7 +4,7 @@
 #include <array>
 #include <cstdint>
 
-#include "../../external/shared/message_factory/MessageFactory.hpp"
+#include "CommsMessage.hpp"
 
 /**
  * @brief PT Location enumeration for engine system
@@ -28,7 +28,7 @@ enum class PTLocation {
  * Matches the Rec18 struct from Arduino exactly
  */
 using PTMessage =
-    MessageFactory<uint8_t,    // (0) ch - channel id
+    comms::CommsMessage<uint8_t,    // (0) ch - channel id
                    uint8_t,    // (1) ok - 0 or 1
                    uint16_t,   // (2) padding - for 4-byte alignment
                    uint32_t,   // (3) raw - ADC code

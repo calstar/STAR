@@ -4,7 +4,7 @@
 #include <array>
 #include <cstdint>
 
-#include "../../external/shared/message_factory/MessageFactory.hpp"
+#include "CommsMessage.hpp"
 
 /**
  * @brief Thermocouple Temperature Sensor Message
@@ -12,7 +12,7 @@
  * Contains temperature measurements from thermocouple sensors with calibration data
  */
 using TCMessage =
-    MessageFactory<double,     // (0) timestamp (s) - timestamp
+    comms::CommsMessage<double,     // (0) timestamp (s) - timestamp
                    uint8_t,    // (1) sensor_id - TC sensor identifier
                    double,     // (2) raw_voltage (mV) - raw voltage reading
                    double,     // (3) temperature (°C) - calibrated temperature

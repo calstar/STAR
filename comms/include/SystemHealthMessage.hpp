@@ -4,7 +4,7 @@
 #include <array>
 #include <cstdint>
 
-#include "../../external/shared/message_factory/MessageFactory.hpp"
+#include "CommsMessage.hpp"
 
 /**
  * @brief System Health Message
@@ -12,7 +12,7 @@
  * Contains overall system health status, fault information, and performance metrics
  */
 using SystemHealthMessage =
-    MessageFactory<double,     // (0) timestamp (s) - timestamp
+    comms::CommsMessage<double,     // (0) timestamp (s) - timestamp
                    uint8_t,    // (1) system_status - overall system status
                    double,     // (2) system_health (0-1) - overall system health
                    uint32_t,   // (3) active_faults - number of active faults

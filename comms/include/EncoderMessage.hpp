@@ -4,7 +4,7 @@
 #include <array>
 #include <cstdint>
 
-#include "../../external/shared/message_factory/MessageFactory.hpp"
+#include "CommsMessage.hpp"
 
 /**
  * @brief Encoder Message
@@ -12,7 +12,7 @@
  * Contains encoder position and velocity measurements with calibration data
  */
 using EncoderMessage =
-    MessageFactory<double,     // (0) timestamp (s) - timestamp
+    comms::CommsMessage<double,     // (0) timestamp (s) - timestamp
                    uint8_t,    // (1) encoder_id - encoder identifier
                    uint8_t,    // (2) encoder_type - encoder type (incremental, absolute, etc.)
                    int32_t,    // (3) raw_counts - raw encoder counts

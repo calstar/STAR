@@ -4,13 +4,13 @@
 #include <array>
 #include <cstdint>
 
-#include "../../external/shared/message_factory/MessageFactory.hpp"
+#include "CommsMessage.hpp"
 
 /**
  * @brief IMU (Inertial Measurement Unit) sensor message
  * Contains accelerometer and gyroscope data
  */
-using IMUMessage = MessageFactory<double,     // (0) time_imu (s) - timestamp
+using IMUMessage = comms::CommsMessage<double,     // (0) time_imu (s) - timestamp
                                   double,     // (1) accel_x (m/s^2) - x-axis acceleration
                                   double,     // (2) accel_y (m/s^2) - y-axis acceleration
                                   double,     // (3) accel_z (m/s^2) - z-axis acceleration

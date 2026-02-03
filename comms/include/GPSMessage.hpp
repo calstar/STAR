@@ -4,13 +4,13 @@
 #include <array>
 #include <cstdint>
 
-#include "../../external/shared/message_factory/MessageFactory.hpp"
+#include "CommsMessage.hpp"
 
 /**
  * @brief GPS Position message
  */
 using GPSPositionMessage =
-    MessageFactory<uint64_t,  // (0) time_monotonic (ns) - monotonic timestamp
+    comms::CommsMessage<uint64_t,  // (0) time_monotonic (ns) - monotonic timestamp
                    uint32_t,  // (1) time_gps (ms) - GPS time
                    uint32_t,  // (2) status - GPS status
                    double,    // (3) latitude (deg) - latitude
@@ -24,7 +24,7 @@ using GPSPositionMessage =
  * @brief GPS Velocity message
  */
 using GPSVelocityMessage =
-    MessageFactory<uint64_t,  // (0) time_monotonic (ns) - monotonic timestamp
+    comms::CommsMessage<uint64_t,  // (0) time_monotonic (ns) - monotonic timestamp
                    uint32_t,  // (1) time_gps (s) - GPS time
                    float,     // (2) velocity_x (m/s) - x velocity
                    float,     // (3) velocity_y (m/s) - y velocity

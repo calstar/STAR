@@ -4,7 +4,7 @@
 #include <array>
 #include <cstdint>
 
-#include "../../external/shared/message_factory/MessageFactory.hpp"
+#include "CommsMessage.hpp"
 
 /**
  * @brief Calibration Message
@@ -12,7 +12,7 @@
  * Contains calibration status and results for sensors and encoders
  */
 using CalibrationMessage =
-    MessageFactory<double,     // (0) timestamp (s) - timestamp
+    comms::CommsMessage<double,     // (0) timestamp (s) - timestamp
                    uint8_t,    // (1) sensor_id - sensor identifier
                    uint8_t,    // (2) sensor_type - sensor type (PT, RTD, TC, etc.)
                    uint8_t,    // (3) calibration_status - calibration status

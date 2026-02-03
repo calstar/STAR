@@ -4,7 +4,7 @@
 #include <array>
 #include <cstdint>
 
-#include "../../external/shared/message_factory/MessageFactory.hpp"
+#include "CommsMessage.hpp"
 
 /**
  * @brief Flow Meter Message
@@ -12,7 +12,7 @@
  * Contains mass flow rate measurements from flow meters with calibration data
  */
 using FlowMeterMessage =
-    MessageFactory<double,     // (0) timestamp (s) - timestamp
+    comms::CommsMessage<double,     // (0) timestamp (s) - timestamp
                    uint8_t,    // (1) sensor_id - flow meter identifier
                    double,     // (2) raw_frequency (Hz) - raw frequency reading
                    double,     // (3) mass_flow_rate (kg/s) - calibrated mass flow rate

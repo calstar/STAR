@@ -30,7 +30,6 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/FSW/nav/include
     ${CMAKE_SOURCE_DIR}/FSW/state/include
     ${CMAKE_SOURCE_DIR}/comms/include
-    ${CMAKE_SOURCE_DIR}/external/shared
     ${CMAKE_SOURCE_DIR}/utl
 )
 
@@ -110,12 +109,21 @@ add_executable(complete_calibration_pipeline FSW/src/complete_calibration_pipeli
 add_executable(paper_algorithm_pipeline FSW/src/paper_algorithm_pipeline.cpp)
 
 # ESP32 PT Streamer for calibration (Rec18 format)
-add_executable(esp32_pt_streamer scripts/esp32_pt_streamer.cpp)
+add_executable(esp32_pt_streamer scripts/source/esp32_pt_streamer.cpp)
 target_link_libraries(esp32_pt_streamer Threads::Threads pthread rt)
 
 # Fake ESP32 packet generator for testing
-add_executable(fake_esp32_packet_gen scripts/fake_esp32_packet_gen.cpp)
+add_executable(fake_esp32_packet_gen scripts/source/fake_esp32_packet_gen.cpp)
 target_link_libraries(fake_esp32_packet_gen Threads::Threads pthread rt)
+
+# FSW Simulator for Elodin groundstation testing
+add_executable(test_fsw_simulator scripts/test/test_fsw_simulator.cpp)
+target_link_libraries(test_fsw_simulator daq_comms_lib Threads::Threads pthread rt)
+target_include_directories(test_fsw_simulator PRIVATE
+    ${CMAKE_SOURCE_DIR}/daq_comms/include
+    ${CMAKE_SOURCE_DIR}/comms/include
+    ${CMAKE_SOURCE_DIR}/utl
+)
 
 # Link libraries for main executable (commented out until all source implementations are added)
 # target_link_libraries(engine_controller
@@ -175,7 +183,7 @@ install(FILES config/config_engine.toml
 )
 
 # Install systemd service file
-install(FILES scripts/engine_controller.service
+install(FILES scripts/systemd/engine_controller.service
     DESTINATION /etc/systemd/system
 )
 
@@ -184,6 +192,9 @@ install(DIRECTORY DESTINATION /var/lib/engine_controller/calibrations)
 
 # Create log directory
 install(DIRECTORY DESTINATION /var/log/engine_controller)
+
+# Add daq_comms subdirectory (must be before test targets that use it)
+add_subdirectory(daq_comms)
 
 # Testing
 enable_testing()

@@ -4,7 +4,7 @@
 #include <array>
 #include <cstdint>
 
-#include "../../external/shared/message_factory/MessageFactory.hpp"
+#include "CommsMessage.hpp"
 
 /**
  * @brief Valve Control Message
@@ -12,7 +12,7 @@
  * Contains valve position, commands, and status for individual valves
  */
 using ValveControlMessage =
-    MessageFactory<double,     // (0) timestamp (s) - timestamp
+    comms::CommsMessage<double,     // (0) timestamp (s) - timestamp
                    uint8_t,    // (1) valve_id - valve identifier
                    uint8_t,    // (2) valve_type - ValveType enum (motor/solenoid)
                    double,     // (3) commanded_position (0-1) - commanded position

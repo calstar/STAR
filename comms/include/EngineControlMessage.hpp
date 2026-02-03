@@ -4,7 +4,7 @@
 #include <array>
 #include <cstdint>
 
-#include "../../external/shared/message_factory/MessageFactory.hpp"
+#include "CommsMessage.hpp"
 
 /**
  * @brief Engine Control System Message
@@ -12,7 +12,7 @@
  * Contains engine control state, valve commands, and performance metrics
  */
 using EngineControlMessage =
-    MessageFactory<double,     // (0) timestamp (s) - timestamp
+    comms::CommsMessage<double,     // (0) timestamp (s) - timestamp
                    uint8_t,    // (1) engine_phase - EnginePhase enum
                    double,     // (2) thrust_demand (N) - commanded thrust
                    double,     // (3) thrust_actual (N) - actual thrust

@@ -4,7 +4,7 @@
 #include <array>
 #include <cstdint>
 
-#include "../../external/shared/message_factory/MessageFactory.hpp"
+#include "CommsMessage.hpp"
 
 /**
  * @brief Load Cell Message
@@ -12,7 +12,7 @@
  * Contains thrust measurements from load cells with calibration data
  */
 using LoadCellMessage =
-    MessageFactory<double,     // (0) timestamp (s) - timestamp
+    comms::CommsMessage<double,     // (0) timestamp (s) - timestamp
                    uint8_t,    // (1) sensor_id - load cell identifier
                    double,     // (2) raw_voltage (V) - raw voltage reading
                    double,     // (3) force (N) - calibrated force measurement

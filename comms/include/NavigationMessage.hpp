@@ -4,7 +4,7 @@
 #include <array>
 #include <cstdint>
 
-#include "../../external/shared/message_factory/MessageFactory.hpp"
+#include "CommsMessage.hpp"
 
 /**
  * @brief Navigation Message
@@ -12,7 +12,7 @@
  * Contains navigation state from EKF with position, velocity, attitude, and engine state
  */
 using NavigationMessage =
-    MessageFactory<double,     // (0) timestamp (s) - timestamp
+    comms::CommsMessage<double,     // (0) timestamp (s) - timestamp
                    double,     // (1) position_x (m) - X position
                    double,     // (2) position_y (m) - Y position
                    double,     // (3) position_z (m) - Z position

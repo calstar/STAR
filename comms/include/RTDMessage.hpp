@@ -4,7 +4,7 @@
 #include <array>
 #include <cstdint>
 
-#include "../../external/shared/message_factory/MessageFactory.hpp"
+#include "CommsMessage.hpp"
 
 /**
  * @brief RTD Temperature Sensor Message
@@ -12,7 +12,7 @@
  * Contains temperature measurements from RTD sensors with calibration data
  */
 using RTDMessage =
-    MessageFactory<double,     // (0) timestamp (s) - timestamp
+    comms::CommsMessage<double,     // (0) timestamp (s) - timestamp
                    uint8_t,    // (1) sensor_id - RTD sensor identifier
                    double,     // (2) raw_resistance (Ohm) - raw resistance reading
                    double,     // (3) temperature (°C) - calibrated temperature
