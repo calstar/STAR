@@ -1,2 +1,2 @@
-DB_SESSION=test_db
-CONFIG_PATH=/home/kush-mahajan/sensor_system/config/config_base.toml
+DB_SESSION=aahil
+CONFIG_PATH=/home/kush-mahajan/sensor_system/config/config_jetson.toml
