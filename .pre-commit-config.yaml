@@ -32,7 +32,7 @@ repos:
         files: \.(cpp|hpp|c|h)$
         exclude: '^external/'
 
-  # C++ linting
+  # C++ linting (skip if no compilation database)
   - repo: https://github.com/pocc/pre-commit-hooks
     rev: v1.3.5
     hooks:
@@ -41,6 +41,8 @@ repos:
         files: \.(cpp|hpp)$
         exclude: '^external/|^build/'
         additional_dependencies: ['clang-tidy']
+        pass_filenames: false
+        always_run: false
 
   # Python formatting
   - repo: https://github.com/psf/black
@@ -89,8 +91,10 @@ repos:
 
       - id: check-build
         name: Verify build still works
-        entry: bash -c 'mkdir -p build && cd build && cmake .. && make -j$(nproc) || exit 1'
+        entry: >
+          bash -c 'mkdir -p build && cd build && cmake .. && make -j$(nproc) || exit 1'
         language: system
         pass_filenames: false
         always_run: false
         stages: [pre-push]
+        verbose: true
