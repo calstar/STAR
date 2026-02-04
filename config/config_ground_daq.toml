@@ -1,0 +1,103 @@
+# Ground Systems DAQ Configuration
+# Used for GSE sensors and during hotfire (everything connects here)
+# During flight: flight sensors/actuators go to flight DAQ, everything else here
+
+# ============================================================================
+# System Configuration
+# ============================================================================
+[system]
+mode = "GROUND"
+state = "GSE"
+
+# Ground network configuration
+[system.network]
+base_ip = "192.168.2.0"
+ip_range_start = 100
+ip_range_end = 150
+bind_address = "0.0.0.0"
+bind_port = 5005
+
+# ============================================================================
+# Database Configuration (Elodin)
+# ============================================================================
+[database]
+db_host = "127.0.0.1"
+db_port = 2240
+auto_flush_interval_ms = 100
+max_buffer_size = 2048
+connection_retry_attempts = 3
+connection_retry_delay_ms = 1000
+
+# ============================================================================
+# GSE Sensors Configuration
+# ============================================================================
+# GSE sensors are assigned to ground DAQ
+
+[sensors.gse.pt]
+# LOX Fill PT that goes up to 1000 psi
+PT_OF = { board_id = 10, channel = 0, max_psi = 1000, purpose = "LOX fill pressure", component = "lox_fill" }
+
+# Fuel fill PT that goes up to 1000 psi
+PT_FF = { board_id = 11, channel = 0, max_psi = 1000, purpose = "Fuel fill pressure", component = "fuel_fill" }
+
+# High pressure fill with PT rated to 5000 psi
+PT_HPF = { board_id = 12, channel = 0, max_psi = 5000, purpose = "High pressure fill", component = "pressurant_fill" }
+
+# Medium press fill with PT rated to 2000 PSI
+PT_MPF = { board_id = 12, channel = 1, max_psi = 2000, purpose = "Medium pressure fill", component = "pressurant_fill" }
+
+# Low pressure line with PT rated to 1000 psi
+PT_LPF = { board_id = 12, channel = 2, max_psi = 1000, purpose = "Low pressure fill", component = "pressurant_fill" }
+
+# GSE RTDs, TCs, LCs will be added here
+[sensors.gse.rtd]
+# RTD sensors for GSE system
+
+[sensors.gse.tc]
+# Thermocouple sensors for GSE system
+
+[sensors.gse.lc]
+# Load cell sensors for GSE system
+
+# ============================================================================
+# Hotfire Configuration
+# ============================================================================
+# During hotfire, ALL sensors (including flight sensors) connect to ground DAQ
+[hotfire]
+enabled = false  # Set to true during hotfire
+include_flight_sensors = true  # During hotfire, flight sensors also connect here
+
+# Flight sensors that connect to ground DAQ during hotfire
+[sensors.hotfire.flight_pt]
+# These are the same flight PT sensors, but routed to ground DAQ during hotfire
+PT_HP = { board_id = 0, channel = 0, max_psi = 5000, purpose = "High pressure" }
+PT_LP = { board_id = 0, channel = 1, max_psi = 1000, purpose = "COPV post regulator" }
+PT_FUP = { board_id = 1, channel = 0, max_psi = 1000, purpose = "Fuel upstream" }
+PT_FDP = { board_id = 1, channel = 1, max_psi = 1000, purpose = "Fuel downstream" }
+PT_OUP = { board_id = 2, channel = 0, max_psi = 1000, purpose = "Oxidizer upstream" }
+PT_ODP = { board_id = 2, channel = 1, max_psi = 1000, purpose = "Oxidizer downstream" }
+
+# ============================================================================
+# Board Discovery Configuration
+# ============================================================================
+[discovery]
+enabled = true
+network_interface = "eth0"
+mode = "hybrid"
+announcement_port = 2245
+discovery_timeout_seconds = 30
+auto_update_config = true
+config_update_interval_seconds = 60
+
+# ============================================================================
+# Sensor Data Settings
+# ============================================================================
+[sensor_data]
+update_rate_hz = 10
+enable_all_sensors = true
+
+# Calibration settings
+[calibration]
+enabled = true
+calibration_file = "calibration/data/ground_calibration.json"
+

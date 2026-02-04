@@ -1,0 +1,63 @@
+# Sensor System Base Configuration
+# This is the base config. Use config_flight_daq.toml or config_ground_daq.toml for specific systems
+
+# ============================================================================
+# System Mode
+# ============================================================================
+# Options: "FLIGHT" or "GROUND"
+# FLIGHT: Flight DAQ handles flight sensors and actuators
+# GROUND: Ground DAQ handles GSE sensors, and during hotfire everything connects here
+[system]
+mode = "GROUND"  # Default to ground for development
+state = "GSE"
+
+# ============================================================================
+# Network Configuration
+# ============================================================================
+[network]
+# Local IP address to bind to (0.0.0.0 = all interfaces)
+local_ip = "0.0.0.0"
+
+# Elodin database port
+publish_port = 2240
+
+# Socket buffer sizes
+buffer_size = 1024
+connection_timeout_ms = 5000
+
+# ============================================================================
+# Database Configuration (Elodin)
+# ============================================================================
+[database]
+db_host = "127.0.0.1"
+db_port = 2240
+auto_flush_interval_ms = 100
+max_buffer_size = 2048
+connection_retry_attempts = 3
+connection_retry_delay_ms = 1000
+
+# ============================================================================
+# Board Discovery Configuration
+# ============================================================================
+[discovery]
+enabled = true
+network_interface = "eth0"
+mode = "hybrid"
+announcement_port = 2245
+discovery_timeout_seconds = 30
+auto_update_config = true
+config_update_interval_seconds = 60
+
+# ============================================================================
+# Sensor Data Settings
+# ============================================================================
+[sensor_data]
+update_rate_hz = 10
+enable_all_sensors = true
+
+# ============================================================================
+# Calibration Settings
+# ============================================================================
+[calibration]
+enabled = true
+calibration_file = "calibration/data/calibration.json"

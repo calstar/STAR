@@ -131,9 +131,10 @@ SensorRouter::route_pt_samples(const protocol::SensorBatch& batch, uint64_t rece
         comms::messages::sensor::RawPTMessage msg;
         msg.setField<0>(receive_timestamp_ns);
         msg.setField<1>(sample.channel_id);  // channel_id distinguishes channels
-        msg.setField<2>(sample.raw_adc_counts);
-        msg.setField<3>(sample.sample_timestamp_ms);
-        msg.setField<4>(sample.status_flags);
+        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});  // Padding bytes for alignment
+        msg.setField<3>(sample.raw_adc_counts);
+        msg.setField<4>(sample.sample_timestamp_ms);
+        msg.setField<5>(sample.status_flags);
         
         // Debug: Verify message construction
         static size_t debug_count = 0;
@@ -161,9 +162,10 @@ SensorRouter::route_tc_samples(const protocol::SensorBatch& batch, uint64_t rece
         comms::messages::sensor::RawTCMessage msg;
         msg.setField<0>(receive_timestamp_ns);
         msg.setField<1>(sample.channel_id);
-        msg.setField<2>(sample.raw_adc_counts);
-        msg.setField<3>(sample.sample_timestamp_ms);
-        msg.setField<4>(sample.status_flags);
+        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});  // Padding bytes for alignment
+        msg.setField<3>(sample.raw_adc_counts);
+        msg.setField<4>(sample.sample_timestamp_ms);
+        msg.setField<5>(sample.status_flags);
         
         messages.emplace_back(TC_PACKET_ID, msg);
     }
@@ -182,9 +184,10 @@ SensorRouter::route_rtd_samples(const protocol::SensorBatch& batch, uint64_t rec
         comms::messages::sensor::RawRTDMessage msg;
         msg.setField<0>(receive_timestamp_ns);
         msg.setField<1>(sample.channel_id);
-        msg.setField<2>(sample.raw_resistance_counts);
-        msg.setField<3>(sample.sample_timestamp_ms);
-        msg.setField<4>(sample.status_flags);
+        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});  // Padding bytes for alignment
+        msg.setField<3>(sample.raw_resistance_counts);
+        msg.setField<4>(sample.sample_timestamp_ms);
+        msg.setField<5>(sample.status_flags);
         
         messages.emplace_back(RTD_PACKET_ID, msg);
     }
@@ -203,9 +206,10 @@ SensorRouter::route_lc_samples(const protocol::SensorBatch& batch, uint64_t rece
         comms::messages::sensor::RawLCMessage msg;
         msg.setField<0>(receive_timestamp_ns);
         msg.setField<1>(sample.channel_id);
-        msg.setField<2>(sample.raw_adc_counts);
-        msg.setField<3>(sample.sample_timestamp_ms);
-        msg.setField<4>(sample.status_flags);
+        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});  // Padding bytes for alignment
+        msg.setField<3>(sample.raw_adc_counts);
+        msg.setField<4>(sample.sample_timestamp_ms);
+        msg.setField<5>(sample.status_flags);
         
         messages.emplace_back(LC_PACKET_ID, msg);
     }

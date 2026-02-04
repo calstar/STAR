@@ -137,13 +137,17 @@ else
     echo "Directory '$TMP_DB_PATH' does not exist. Proceeding to create DB of name '$DB_NAME'"
 fi
 
-# Make DB_META_PATH if it does not exist
+# Make DB_META_PATH if it does not exist (match FSW)
 if [ ! -d "$TMP_DB_META_PATH" ]; then
     echo "Creating DB_META_PATH: $TMP_DB_META_PATH"
     mkdir -p "$TMP_DB_META_PATH"
 else
     echo "DB_META_PATH already exists: $TMP_DB_META_PATH"
 fi
+
+# Ensure db directory exists and restart db service
+# Match FSW: commented out mkdir -p "$TMP_DB_PATH" (let elodin-db create it)
+#mkdir -p "$TMP_DB_PATH"
 
 # Find elodin-db binary
 ELODIN_DB_BIN=""
@@ -162,19 +166,14 @@ if is_jetson; then
     sudo systemctl start elodin-db@$DB_NAME.service
     DB_PID=""
 else
-    # Don't create DB directory - let elodin-db create it with proper initialization
+    # Match FSW exactly: don't create DB directory - let elodin-db create it
     # elodin-db will create the db_state file when it starts
     # Start database in background - output shows in terminal (like FSW)
-    echo "Starting Elodin DB: $TMP_DB_PATH on port $PORT"
-    RUST_LOG=info $ELODIN_DB_BIN run "$DB_HOST" "$TMP_DB_PATH" 2>&1 &
+    # CRITICAL: Use RUST_LOG=debug (not info) and don't redirect output (like FSW)
+    RUST_LOG=debug $ELODIN_DB_BIN run "$DB_HOST" "$TMP_DB_PATH" &
     # Get the PID of the last background process
     DB_PID=$!
-    sleep 2  # Give it a moment to start
-    if ! ps -p $DB_PID > /dev/null 2>&1; then
-        echo "❌ Error: Database process failed to start"
-        echo "Check logs: tail -20 /tmp/elodin_db_${DB_NAME}.log"
-        return 1
-    fi
+    sleep 1  # Match FSW: sleep 1 (not 2)
     echo "Elodin database ($DB_NAME) started in the background with PID $DB_PID"
 fi
 
@@ -189,18 +188,17 @@ dbmeta_func() {
     awk '{for(i=1;i<=NF;i++) if ($i ~ /^\//) { print $i "_metadata"; exit }}'
 }
 
-# Wait for the database to be ready
-echo "Waiting for database to be ready..."
-for i in {1..20}; do
-    if is_jetson && systemctl is-active --quiet 'elodin-db@*' 2>/dev/null; then
-        echo "✅ Database is ready!"
+# Wait for the database to be ready (match FSW exactly)
+for i in {1..10}; do
+    if is_jetson && systemctl is-active --quiet 'elodin-db@*'; then
+        echo "Database is ready!"
         echo "   Database path: $TMP_DB_PATH"
         echo "   Port: $PORT"
         echo ""
         echo "To connect editor: elodin editor $TMP_DB_PATH"
         return 0
-    elif lsof -i:$PORT &>/dev/null 2>&1; then
-        echo "✅ Database is ready!"
+    elif lsof -i:$PORT &>/dev/null; then
+        echo "Database is ready!"
         echo "   Database path: $TMP_DB_PATH"
         if [ -n "$DB_PID" ]; then
             echo "   Database PID: $DB_PID"
@@ -210,29 +208,8 @@ for i in {1..20}; do
         echo "To connect editor: elodin editor $TMP_DB_PATH"
         return 0
     fi
-    
-    # Check if process died
-    if [ -n "$DB_PID" ] && ! ps -p $DB_PID > /dev/null 2>&1; then
-        echo "❌ Error: Database process (PID $DB_PID) died unexpectedly"
-        echo "Check database logs for errors"
-        return 1
-    fi
-    
-    # Show progress every 2 seconds
-    if [ $((i % 4)) -eq 0 ]; then
-        echo "   Still waiting... ($i/20 attempts)"
-    fi
-    sleep 0.5
+    sleep 1  # Match FSW: sleep 1 second per iteration
 done
 
-echo "❌ Error: Database failed to start on port $PORT after 10 seconds"
-if [ -n "$DB_PID" ]; then
-    echo "   Database PID was: $DB_PID"
-    if ps -p $DB_PID > /dev/null 2>&1; then
-        echo "   Process is still running but not listening on port"
-    else
-        echo "   Process has died"
-    fi
-fi
-echo "   Check if port $PORT is available: lsof -i:$PORT"
+echo "Error: Database failed to start on port $PORT"
 return 1

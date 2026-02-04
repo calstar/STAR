@@ -2219,6 +2219,68 @@ struct OpPair {
     }
 };
 
+struct OpComponent {
+    static constexpr std::string_view TYPE_NAME = "OpComponent";
+
+    uint16_t component_id;
+
+    size_t encoded_size() const {
+        size_t size = 0;
+        size += postcard_size_u16(component_id);
+        return size;
+    }
+
+    postcard_error_t encode(std::span<uint8_t>& output) const {
+        postcard_slice_t slice;
+        postcard_init_slice(&slice, output.data(), output.size());
+        auto res = encode_raw(&slice);
+        if (res != POSTCARD_SUCCESS)
+            return res;
+        output = output.subspan(0, slice.len);
+        return POSTCARD_SUCCESS;
+    }
+
+    std::vector<uint8_t> encode_vec() const {
+        std::vector<uint8_t> vec(encoded_size());
+        auto span = std::span<uint8_t>(vec);
+        postcard_slice_t slice;
+        postcard_init_slice(&slice, span.data(), span.size());
+        auto res = encode_raw(&slice);
+        if (res == POSTCARD_SUCCESS) {
+            vec.resize(slice.len);
+        } else {
+            vec.clear();
+        }
+        return vec;
+    }
+
+    postcard_error_t encode_raw(postcard_slice_t* slice) const {
+        postcard_error_t result;
+        result = postcard_encode_u16(slice, component_id);
+        if (result != POSTCARD_SUCCESS)
+            return result;
+        return POSTCARD_SUCCESS;
+    }
+
+    postcard_error_t decode(std::span<const uint8_t>& input) {
+        postcard_slice_t slice;
+        postcard_init_slice(&slice, const_cast<uint8_t*>(input.data()), input.size());
+        postcard_error_t result = decode_raw(&slice);
+        if (result == POSTCARD_SUCCESS) {
+            input = input.subspan(slice.len);
+        }
+        return result;
+    }
+
+    postcard_error_t decode_raw(postcard_slice_t* slice) {
+        postcard_error_t result;
+        result = postcard_decode_u16(slice, &component_id);
+        if (result != POSTCARD_SUCCESS)
+            return result;
+        return POSTCARD_SUCCESS;
+    }
+};
+
 struct OpSchema {
     static constexpr std::string_view TYPE_NAME = "OpSchema";
 
@@ -2502,11 +2564,12 @@ struct OpExt {
 };
 
 class Op
-    : public std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema, OpTimestamp, OpExt> {
+    : public std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema, OpTimestamp, OpExt> {
 public:
     static constexpr std::string_view TYPE_NAME = "Op";
     // Inherit constructors from std::variant
-    using std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema, OpTimestamp,
+    // Match FSW exactly: OpData, OpTable, std::monostate, OpComponent, OpSchema, OpTimestamp, OpExt
+    using std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema, OpTimestamp,
                        OpExt>::variant;
 
     // Static constructor for Data variant
@@ -2520,12 +2583,12 @@ public:
     }
 
     const OpData* get_data() const {
-        return std::get_if<0>((const std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema,
+        return std::get_if<0>((const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
                                                   OpTimestamp, OpExt>*)this);
     }
 
     OpData* get_data() {
-        return std::get_if<0>((std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema,
+        return std::get_if<0>((std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
                                             OpTimestamp, OpExt>*)this);
     }
 
@@ -2540,12 +2603,12 @@ public:
     }
 
     const OpTable* get_table() const {
-        return std::get_if<1>((const std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema,
+        return std::get_if<1>((const std::variant<OpData, OpTable, std::monostate, OpSchema,
                                                   OpTimestamp, OpExt>*)this);
     }
 
     OpTable* get_table() {
-        return std::get_if<1>((std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema,
+        return std::get_if<1>((std::variant<OpData, OpTable, std::monostate, OpSchema,
                                             OpTimestamp, OpExt>*)this);
     }
 
@@ -2560,36 +2623,36 @@ public:
     }
 
     const std::monostate* get_none() const {
-        return std::get_if<2>((const std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema,
+        return std::get_if<2>((const std::variant<OpData, OpTable, std::monostate, OpSchema,
                                                   OpTimestamp, OpExt>*)this);
     }
 
     std::monostate* get_none() {
-        return std::get_if<2>((std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema,
+        return std::get_if<2>((std::variant<OpData, OpTable, std::monostate, OpSchema,
                                             OpTimestamp, OpExt>*)this);
     }
 
-    // Static constructor for Pair variant
-    static Op Pair(const OpPair& value) {
+    // Static constructor for Component variant (index 3, matching FSW)
+    static Op Component(const OpComponent& value) {
         return Op{std::in_place_index<3>, value};
     }
 
-    // Accessor method for variant Pair
-    bool is_pair() const {
+    // Accessor method for variant Component
+    bool is_component() const {
         return this->index() == 3;
     }
 
-    const OpPair* get_pair() const {
-        return std::get_if<3>((const std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema,
+    const OpComponent* get_component() const {
+        return std::get_if<3>((const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
                                                   OpTimestamp, OpExt>*)this);
     }
 
-    OpPair* get_pair() {
-        return std::get_if<3>((std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema,
+    OpComponent* get_component() {
+        return std::get_if<3>((std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
                                             OpTimestamp, OpExt>*)this);
     }
 
-    // Static constructor for Schema variant
+    // Static constructor for Schema variant (index 4, matching FSW)
     static Op Schema(const OpSchema& value) {
         return Op{std::in_place_index<4>, value};
     }
@@ -2600,16 +2663,16 @@ public:
     }
 
     const OpSchema* get_schema() const {
-        return std::get_if<4>((const std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema,
+        return std::get_if<4>((const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
                                                   OpTimestamp, OpExt>*)this);
     }
 
     OpSchema* get_schema() {
-        return std::get_if<4>((std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema,
+        return std::get_if<4>((std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
                                             OpTimestamp, OpExt>*)this);
     }
 
-    // Static constructor for Timestamp variant
+    // Static constructor for Timestamp variant (index 5, matching FSW)
     static Op Timestamp(const OpTimestamp& value) {
         return Op{std::in_place_index<5>, value};
     }
@@ -2620,16 +2683,16 @@ public:
     }
 
     const OpTimestamp* get_timestamp() const {
-        return std::get_if<5>((const std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema,
+        return std::get_if<5>((const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
                                                   OpTimestamp, OpExt>*)this);
     }
 
     OpTimestamp* get_timestamp() {
-        return std::get_if<5>((std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema,
+        return std::get_if<5>((std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
                                             OpTimestamp, OpExt>*)this);
     }
 
-    // Static constructor for Ext variant
+    // Static constructor for Ext variant (index 6, matching FSW)
     static Op Ext(const OpExt& value) {
         return Op{std::in_place_index<6>, value};
     }
@@ -2640,12 +2703,12 @@ public:
     }
 
     const OpExt* get_ext() const {
-        return std::get_if<6>((const std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema,
+        return std::get_if<6>((const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
                                                   OpTimestamp, OpExt>*)this);
     }
 
     OpExt* get_ext() {
-        return std::get_if<6>((std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema,
+        return std::get_if<6>((std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
                                             OpTimestamp, OpExt>*)this);
     }
 
@@ -2656,30 +2719,30 @@ public:
         size += postcard_size_u8();  // Just for the variant tag
 
         if ([[maybe_unused]] auto val =
-                std::get_if<0>((const std::variant<OpData, OpTable, std::monostate, OpPair,
+                std::get_if<0>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
                                                    OpSchema, OpTimestamp, OpExt>*)this)) {
             size += (*val).encoded_size();
         } else if ([[maybe_unused]] auto val =
-                       std::get_if<1>((const std::variant<OpData, OpTable, std::monostate, OpPair,
+                       std::get_if<1>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
                                                           OpSchema, OpTimestamp, OpExt>*)this)) {
             size += (*val).encoded_size();
         } else if ([[maybe_unused]] auto val =
-                       std::get_if<2>((const std::variant<OpData, OpTable, std::monostate, OpPair,
+                       std::get_if<2>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
                                                           OpSchema, OpTimestamp, OpExt>*)this)) {
         } else if ([[maybe_unused]] auto val =
-                       std::get_if<3>((const std::variant<OpData, OpTable, std::monostate, OpPair,
-                                                          OpSchema, OpTimestamp, OpExt>*)this)) {
-            size += (*val).encoded_size();
-        } else if ([[maybe_unused]] auto val =
-                       std::get_if<4>((const std::variant<OpData, OpTable, std::monostate, OpPair,
+                       std::get_if<3>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
                                                           OpSchema, OpTimestamp, OpExt>*)this)) {
             size += (*val).encoded_size();
         } else if ([[maybe_unused]] auto val =
-                       std::get_if<5>((const std::variant<OpData, OpTable, std::monostate, OpPair,
+                       std::get_if<4>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
                                                           OpSchema, OpTimestamp, OpExt>*)this)) {
             size += (*val).encoded_size();
         } else if ([[maybe_unused]] auto val =
-                       std::get_if<6>((const std::variant<OpData, OpTable, std::monostate, OpPair,
+                       std::get_if<5>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
+                                                          OpSchema, OpTimestamp, OpExt>*)this)) {
+            size += (*val).encoded_size();
+        } else if ([[maybe_unused]] auto val =
+                       std::get_if<6>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
                                                           OpSchema, OpTimestamp, OpExt>*)this)) {
             size += (*val).encoded_size();
         }
@@ -2723,8 +2786,8 @@ public:
         postcard_error_t result;
 
         if ([[maybe_unused]] auto val =
-                std::get_if<0>((std::variant<OpData, OpTable, std::monostate, OpPair, OpSchema,
-                                             OpTimestamp, OpExt>*)this)) {
+                std::get_if<0>((std::variant<OpData, OpTable, std::monostate, OpComponent,
+                                             OpSchema, OpTimestamp, OpExt>*)this)) {
             result = postcard_encode_u8(slice, 0);
             if (result != POSTCARD_SUCCESS)
                 return result;
@@ -2732,7 +2795,7 @@ public:
             if (result != POSTCARD_SUCCESS)
                 return result;
         } else if ([[maybe_unused]] auto val =
-                       std::get_if<1>((std::variant<OpData, OpTable, std::monostate, OpPair,
+                       std::get_if<1>((std::variant<OpData, OpTable, std::monostate, OpComponent,
                                                     OpSchema, OpTimestamp, OpExt>*)this)) {
             result = postcard_encode_u8(slice, 1);
             if (result != POSTCARD_SUCCESS)
@@ -2741,16 +2804,13 @@ public:
             if (result != POSTCARD_SUCCESS)
                 return result;
         } else if ([[maybe_unused]] auto val =
-                       std::get_if<2>((std::variant<OpData, OpTable, std::monostate, OpPair,
+                       std::get_if<2>((std::variant<OpData, OpTable, std::monostate, OpComponent,
                                                     OpSchema, OpTimestamp, OpExt>*)this)) {
             result = postcard_encode_u8(slice, 2);
             if (result != POSTCARD_SUCCESS)
                 return result;
-
-            if (result != POSTCARD_SUCCESS)
-                return result;
         } else if ([[maybe_unused]] auto val =
-                       std::get_if<3>((std::variant<OpData, OpTable, std::monostate, OpPair,
+                       std::get_if<3>((std::variant<OpData, OpTable, std::monostate, OpComponent,
                                                     OpSchema, OpTimestamp, OpExt>*)this)) {
             result = postcard_encode_u8(slice, 3);
             if (result != POSTCARD_SUCCESS)
@@ -2759,7 +2819,7 @@ public:
             if (result != POSTCARD_SUCCESS)
                 return result;
         } else if ([[maybe_unused]] auto val =
-                       std::get_if<4>((std::variant<OpData, OpTable, std::monostate, OpPair,
+                       std::get_if<4>((std::variant<OpData, OpTable, std::monostate, OpComponent,
                                                     OpSchema, OpTimestamp, OpExt>*)this)) {
             result = postcard_encode_u8(slice, 4);
             if (result != POSTCARD_SUCCESS)
@@ -2768,7 +2828,7 @@ public:
             if (result != POSTCARD_SUCCESS)
                 return result;
         } else if ([[maybe_unused]] auto val =
-                       std::get_if<5>((std::variant<OpData, OpTable, std::monostate, OpPair,
+                       std::get_if<5>((std::variant<OpData, OpTable, std::monostate, OpComponent,
                                                     OpSchema, OpTimestamp, OpExt>*)this)) {
             result = postcard_encode_u8(slice, 5);
             if (result != POSTCARD_SUCCESS)
@@ -2777,7 +2837,7 @@ public:
             if (result != POSTCARD_SUCCESS)
                 return result;
         } else if ([[maybe_unused]] auto val =
-                       std::get_if<6>((std::variant<OpData, OpTable, std::monostate, OpPair,
+                       std::get_if<6>((std::variant<OpData, OpTable, std::monostate, OpComponent,
                                                     OpSchema, OpTimestamp, OpExt>*)this)) {
             result = postcard_encode_u8(slice, 6);
             if (result != POSTCARD_SUCCESS)
@@ -2839,9 +2899,9 @@ public:
 
                 break;
             }
-            case 3: {  // Pair
+            case 3: {  // Component
 
-                OpPair val;
+                OpComponent val;
                 result = val.decode_raw(slice);
                 if (result != POSTCARD_SUCCESS)
                     return result;
@@ -4497,13 +4557,17 @@ public:
         std::shared_ptr<OpBuilder> arg;
     };
 
+    struct Component {
+        std::shared_ptr<OpBuilder> component_id;
+    };
+
     struct Ext {
         std::tuple<uint8_t, uint8_t> id;
         std::shared_ptr<OpBuilder> data;
         std::shared_ptr<OpBuilder> arg;
     };
 
-    using ValueType = std::variant<Data, Table, Pair, Schema, Timestamp, Ext>;
+    using ValueType = std::variant<Data, Table, Pair, Schema, Timestamp, Component, Ext>;
     ValueType value;
 
     explicit OpBuilder(const Data& data) : value(data) {
@@ -4519,6 +4583,9 @@ public:
     }
 
     explicit OpBuilder(const Timestamp& timestamp) : value(timestamp) {
+    }
+
+    explicit OpBuilder(const Component& component) : value(component) {
     }
 
     explicit OpBuilder(const Ext& ext) : value(ext) {
@@ -4610,6 +4677,15 @@ inline std::shared_ptr<OpBuilder> timestamp(std::shared_ptr<OpBuilder> timestamp
     return std::make_shared<OpBuilder>(ts);
 }
 
+/// Creates a component operation builder from a component name
+inline std::shared_ptr<OpBuilder> component(std::string_view component_name) {
+    auto id = component_id(component_name);
+    auto component_id_op = data(id);
+
+    OpBuilder::Component component{std::move(component_id_op)};
+    return std::make_shared<OpBuilder>(component);
+}
+
 /**
  * Creates an extension operation builder from a message ID, data, and an
  * argument
@@ -4682,13 +4758,11 @@ public:
                 } else if constexpr (std::is_same_v<T, OpBuilder::Table>) {
                     const auto& table_op = val;
                     result_op = Op::Table(OpTable{table_op.offset, table_op.len});
-                } else if constexpr (std::is_same_v<T, OpBuilder::Pair>) {
-                    const auto& pair_op = val;
-                    OpRef entity_id = visit(pair_op.entity_id);
-                    OpRef component_id = visit(pair_op.component_id);
+                } else if constexpr (std::is_same_v<T, OpBuilder::Component>) {
+                    const auto& component_op = val;
+                    OpRef component_id = visit(component_op.component_id);
 
-                    result_op = Op::Pair(OpPair{static_cast<uint16_t>(entity_id.value),
-                                                static_cast<uint16_t>(component_id.value)});
+                    result_op = Op::Component(OpComponent{static_cast<uint16_t>(component_id.value)});
                 } else if constexpr (std::is_same_v<T, OpBuilder::Schema>) {
                     const auto& schema_op = val;
                     OpRef ty = visit(schema_op.ty);
@@ -4712,6 +4786,12 @@ public:
 
                     result_op = Op::Ext(OpExt{static_cast<uint16_t>(arg.value), ext_op.id,
                                               static_cast<uint16_t>(data.value)});
+                } else if constexpr (std::is_same_v<T, OpBuilder::Pair>) {
+                    // FSW doesn't use Pair in Op variant, but we keep Pair in OpBuilder for compatibility
+                    // Convert Pair to Component (FSW's dbConfig.hpp uses pair() but it gets converted)
+                    const auto& pair_op = val;
+                    OpRef component_id = visit(pair_op.component_id);
+                    result_op = Op::Component(OpComponent{static_cast<uint16_t>(component_id.value)});
                 }
             },
             op->value);

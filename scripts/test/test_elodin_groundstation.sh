@@ -28,17 +28,12 @@ echo "🧹 Cleaning up existing processes..."
 pkill -f "elodin-db run.*$DB_PORT" || true
 sleep 1
 
-# Start Elodin database
+# Start Elodin database (match FSW startup_db.sh exactly)
 echo "📊 Starting Elodin database..."
-elodin-db run "[::]:$DB_PORT" "$DB_PATH" > /tmp/elodin_db.log 2>&1 &
+# Match FSW: RUST_LOG=debug, no output redirection (output goes to terminal)
+RUST_LOG=debug elodin-db run "[::]:$DB_PORT" "$DB_PATH" &
 ELODIN_PID=$!
-sleep 2
-
-if ! kill -0 $ELODIN_PID 2>/dev/null; then
-    echo "❌ Failed to start Elodin database"
-    cat /tmp/elodin_db.log
-    exit 1
-fi
+sleep 1  # Match FSW: sleep 1 (not 2)
 
 echo "✅ Elodin database started (PID: $ELODIN_PID)"
 echo "   Database path: $DB_PATH"

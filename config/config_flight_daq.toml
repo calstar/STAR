@@ -1,0 +1,91 @@
+# Flight DAQ Configuration
+# Used for flight sensors and actuators during flight operations
+# During hotfire, everything connects to ground DAQ
+
+# ============================================================================
+# System Configuration
+# ============================================================================
+[system]
+mode = "FLIGHT"
+state = "FLIGHT"
+
+# Flight network configuration
+[system.network]
+base_ip = "192.168.3.0"
+ip_range_start = 100
+ip_range_end = 150
+bind_address = "0.0.0.0"
+bind_port = 5005
+
+# ============================================================================
+# Database Configuration (Elodin)
+# ============================================================================
+[database]
+db_host = "127.0.0.1"
+db_port = 2240
+auto_flush_interval_ms = 100
+max_buffer_size = 2048
+connection_retry_attempts = 3
+connection_retry_delay_ms = 1000
+
+# ============================================================================
+# Flight Sensors Configuration
+# ============================================================================
+# Flight sensors and actuators are assigned to flight DAQ
+
+[sensors.flight.pt]
+# High pressure PT capable of going up to 5k PSI reading
+PT_HP = { board_id = 0, channel = 0, max_psi = 5000, purpose = "High pressure" }
+
+# COPV PT post regulator (1000psi)
+PT_LP = { board_id = 0, channel = 1, max_psi = 1000, purpose = "COPV post regulator" }
+
+# Upstream Fuel PT (1000 psi)
+PT_FUP = { board_id = 1, channel = 0, max_psi = 1000, purpose = "Fuel upstream" }
+
+# Downstream Fuel PT (1000 psi)
+PT_FDP = { board_id = 1, channel = 1, max_psi = 1000, purpose = "Fuel downstream" }
+
+# Upstream Oxidizer PT (1000 PSI)
+PT_OUP = { board_id = 2, channel = 0, max_psi = 1000, purpose = "Oxidizer upstream" }
+
+# Downstream Oxidizer PT (1000 PSI)
+PT_ODP = { board_id = 2, channel = 1, max_psi = 1000, purpose = "Oxidizer downstream" }
+
+# Flight RTDs, TCs, LCs, Actuators will be added here
+[sensors.flight.rtd]
+# RTD sensors for flight system
+
+[sensors.flight.tc]
+# Thermocouple sensors for flight system
+
+[sensors.flight.lc]
+# Load cell sensors for flight system
+
+[sensors.flight.actuator]
+# Actuator/valve assignments for flight system
+
+# ============================================================================
+# Board Discovery Configuration
+# ============================================================================
+[discovery]
+enabled = true
+network_interface = "eth0"
+mode = "hybrid"
+announcement_port = 2245
+discovery_timeout_seconds = 30
+auto_update_config = true
+config_update_interval_seconds = 60
+
+# ============================================================================
+# Sensor Data Settings
+# ============================================================================
+[sensor_data]
+update_rate_hz = 10
+enable_all_sensors = true
+
+# Calibration settings
+[calibration]
+enabled = true
+calibration_file = "calibration/data/flight_calibration.json"
+

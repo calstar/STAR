@@ -30,11 +30,12 @@ int main(int argc, char* argv[]) {
     uint16_t port = std::stoi(argv[1]);
     int message_count = (argc > 2) ? std::stoi(argv[2]) : 10;
     
-    std::cout << "🧪 Sending fake RawPTMessage to Elodin" << std::endl;
+    std::cout << "\n🧪 Sending fake RawPTMessage to Elodin" << std::endl;
     std::cout << "===================================" << std::endl;
-    std::cout << "DB: 127.0.0.1:" << port << std::endl;
+    std::cout << "Database: 127.0.0.1:" << port << std::endl;
     std::cout << "Messages: " << message_count << std::endl;
-    std::cout << std::endl;
+    std::cout << "Packet ID: [0x20, 0x00]" << std::endl;
+    std::cout << "===================================\n" << std::endl;
     
     try {
         // Connect to Elodin DB
@@ -61,7 +62,10 @@ int main(int argc, char* argv[]) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5000));
         
         // Send fake RawPTMessage data
-        std::cout << "📤 Sending " << message_count << " RawPTMessage(s)..." << std::endl;
+        std::cout << "📤 Starting data transmission..." << std::endl;
+        std::cout << "   Sending " << message_count << " RawPTMessage(s) to Elodin" << std::endl;
+        std::cout << "   Rate: ~10 Hz (100ms between messages)" << std::endl;
+        std::cout << std::endl;
         auto start_time = std::chrono::steady_clock::now();
         
         std::array<uint8_t, 2> pt_packet_id{0x20, 0x00}; // PT_PACKET_ID
@@ -80,9 +84,10 @@ int main(int argc, char* argv[]) {
             
             pt_msg.setField<0>(timestamp_ns);
             pt_msg.setField<1>(channel_id);
-            pt_msg.setField<2>(raw_adc_counts);
-            pt_msg.setField<3>(sample_timestamp_ms);
-            pt_msg.setField<4>(status_flags);
+            pt_msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});  // Padding bytes (must be zeros)
+            pt_msg.setField<3>(raw_adc_counts);
+            pt_msg.setField<4>(sample_timestamp_ms);
+            pt_msg.setField<5>(status_flags);
             
             // Debug: Hex dump first message to compare with FSW
             if (i == 0) {
@@ -106,9 +111,11 @@ int main(int argc, char* argv[]) {
                 continue;
             }
             
-            if (i < 5 || i % 10 == 0) {
-                std::cout << "  Sent #" << (i+1) << " (channel=" << (int)channel_id 
-                          << ", adc=" << raw_adc_counts << ")" << std::endl;
+            if (i < 5) {
+                std::cout << "[send_fake_pt] ✅ Sent #" << (i+1) << " (channel=" << (int)channel_id 
+                          << ", adc=" << raw_adc_counts << ", timestamp=" << timestamp_ns << ")" << std::endl;
+            } else if (i % 50 == 0) {
+                std::cout << "[send_fake_pt] 📊 Progress: " << (i+1) << "/" << message_count << " messages sent" << std::endl;
             }
             
             // Flush after each message to ensure immediate delivery (like FSW)
@@ -119,9 +126,18 @@ int main(int argc, char* argv[]) {
         // Final flush
         client.flush_buffer();
         
+        auto end_time = std::chrono::steady_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+        
+        std::cout << "\n===================================" << std::endl;
+        std::cout << "✅ Transmission Complete!" << std::endl;
+        std::cout << "   Messages sent: " << message_count << std::endl;
+        std::cout << "   Duration: " << duration.count() << " ms" << std::endl;
+        std::cout << "   Average rate: " << (message_count * 1000.0 / duration.count()) << " msg/s" << std::endl;
+        std::cout << "===================================" << std::endl;
+        std::cout << "\n📊 View data in Elodin editor:" << std::endl;
+        std::cout << "   elodin editor ~/.local/share/elodin/test_pt_db" << std::endl;
         std::cout << std::endl;
-        std::cout << "✅ Done! Sent " << message_count << " messages" << std::endl;
-        std::cout << "   Open Elodin editor: elodin editor <db_path>" << std::endl;
         
         client.disconnect();
         

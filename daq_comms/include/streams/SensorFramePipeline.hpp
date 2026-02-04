@@ -1,6 +1,7 @@
 #ifndef DAQ_SENSOR_FRAME_PIPELINE_HPP
 #define DAQ_SENSOR_FRAME_PIPELINE_HPP
 
+#include "protocol/DiabloBoardPacketParser.hpp"
 #include "protocol/EncryptedFrame.hpp"
 #include "transport/NetworkSocket.hpp"
 #include <memory>
@@ -11,15 +12,15 @@ namespace daq_comms {
 namespace streams {
 
 /**
- * @brief High-level pipeline for receiving and processing sensor frames
+ * @brief High-level pipeline for receiving and processing actual DiabloAvionics board packets
  * 
- * Combines transport, protocol decoding, and stream management
- * into a single easy-to-use API.
+ * Receives actual DiabloAvionics board packet format (6-byte header, simple body)
+ * over Ethernet (UDP) and converts to internal SensorBatch format for routing to Elodin.
  */
 class SensorFramePipeline {
 public:
     /**
-     * @brief Create pipeline with UDP socket for receiving frames
+     * @brief Create pipeline with UDP socket for receiving DiabloAvionics board packets
      * @param bind_address Address to bind UDP socket to
      * @param bind_port Port to bind UDP socket to
      */
@@ -28,8 +29,8 @@ public:
     ~SensorFramePipeline() = default;
 
     /**
-     * @brief Poll for new sensor frames
-     * @return Sensor batch if a complete frame was received, empty otherwise
+     * @brief Poll for new DiabloAvionics board packets
+     * @return Sensor batch if a SENSOR_DATA packet was received, empty otherwise
      */
     std::optional<protocol::SensorBatch> poll();
 
@@ -44,17 +45,17 @@ public:
     std::string last_error() const;
 
     /**
-     * @brief Get decoder statistics
+     * @brief Get board packet parser (for accessing parsed packets)
      */
-    protocol::FrameDecoder::Stats get_stats() const;
+    protocol::DiabloBoardPacketParser& get_parser() { return board_parser_; }
 
 private:
     std::unique_ptr<transport::UDPSocket> socket_;
-    protocol::FrameDecoder decoder_;
+    protocol::DiabloBoardPacketParser board_parser_;  // Actual DiabloAvionics board parser
     std::vector<uint8_t> receive_buffer_;
     std::string last_error_;
     
-    static constexpr size_t MAX_FRAME_SIZE = 4096;
+    static constexpr size_t MAX_PACKET_SIZE = 512;  // DiabloAvionics max packet size (from DAQv2-Comms.h)
     static constexpr size_t RECEIVE_BUFFER_SIZE = 8192;
 };
 

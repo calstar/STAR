@@ -1,161 +1,188 @@
-/**
- * @file daq_bridge_main.cpp
- * @brief Main executable for DAQ bridge - connects embedded sensor packets to Elodin
- * 
- * This is the main entry point for the groundstation-side DAQ bridge.
- * It receives encrypted sensor packets from embedded systems, decrypts them,
- * routes sensor data to appropriate Elodin tables, and publishes to the database.
- */
-
 #include "streams/SensorFramePipeline.hpp"
 #include "routing/SensorRouter.hpp"
-#include "routing/FrameToElodinMapper.hpp"
 #include "elodin/ElodinClient.hpp"
-#include "elodin/DatabaseConfig.hpp"
+#include "config/BoardDiscovery.hpp"
+#include "fsw/FSWConfigManager.hpp"
 
 #include <iostream>
 #include <chrono>
 #include <thread>
-#include <csignal>
+#include <signal.h>
 #include <atomic>
 
-namespace {
-    std::atomic<bool> g_running{true};
-    
-    void signal_handler(int signal) {
-        if (signal == SIGINT || signal == SIGTERM) {
-            std::cout << "\n[DAQ Bridge] Received shutdown signal, stopping...\n";
-            g_running = false;
-        }
-    }
+using namespace daq_comms;
+
+std::atomic<bool> running(true);
+
+void signal_handler(int /* sig */) {
+    running = false;
+    std::cout << "\n[DAQ Bridge] Shutting down..." << std::endl;
 }
 
 int main(int argc, char* argv[]) {
-        // Ensure stdout is line-buffered for real-time output
-        setvbuf(stdout, nullptr, _IOLBF, 0);
-        setvbuf(stderr, nullptr, _IOLBF, 0);
-        
-        // Parse command line arguments
-        std::string udp_bind_address = "0.0.0.0";
-        uint16_t udp_bind_port = 8888;
-        std::string elodin_host = "127.0.0.1";
-        uint16_t elodin_port = 2240;
-        std::string config_path = "config/sensor_routing.toml";
+    // Parse command line arguments
+    std::string config_path = "config/config.toml";
+    std::string bind_address = "0.0.0.0";
+    uint16_t bind_port = 2244;
+    bool enable_discovery = true;
     
     if (argc > 1) {
-        udp_bind_address = argv[1];
+        config_path = argv[1];
     }
     if (argc > 2) {
-        udp_bind_port = static_cast<uint16_t>(std::stoi(argv[2]));
+        bind_address = argv[2];
     }
     if (argc > 3) {
-        elodin_host = argv[3];
+        bind_port = static_cast<uint16_t>(std::stoi(argv[3]));
     }
-    if (argc > 4) {
-        elodin_port = static_cast<uint16_t>(std::stoi(argv[4]));
-    }
-    if (argc > 5) {
-        config_path = argv[5];
-    }
-
-    std::cout << "[DAQ Bridge] Starting DAQ bridge service\n";
-    std::cout << "[DAQ Bridge] UDP bind: " << udp_bind_address << ":" << udp_bind_port << "\n";
-    std::cout << "[DAQ Bridge] Elodin host: " << elodin_host << ":" << elodin_port << "\n";
-    std::cout << "[DAQ Bridge] Config: " << config_path << "\n";
-
+    
+    std::cout << "=== DAQ Bridge - DiabloAvionics Packet Receiver ===" << std::endl;
+    std::cout << "Config: " << config_path << std::endl;
+    std::cout << "Listening on: " << bind_address << ":" << bind_port << std::endl;
+    std::cout << std::endl;
+    
     // Setup signal handlers
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
-
-    // Initialize components
-    daq_comms::streams::SensorFramePipeline pipeline(udp_bind_address, udp_bind_port);
+    
+    // Determine system mode from config path
+    bool is_flight_daq = (config_path.find("flight") != std::string::npos);
+    config::SystemState system_state = is_flight_daq ? config::SystemState::FLIGHT : config::SystemState::GSE;
+    
+    std::cout << "[System] Mode: " << (is_flight_daq ? "FLIGHT DAQ" : "GROUND DAQ") << std::endl;
+    
+    // Initialize FSW configuration manager (assigns IPs and sensors)
+    fsw::FSWConfigManager fsw_config;
+    if (enable_discovery) {
+        std::cout << "[FSW] Initializing FSW configuration manager..." << std::endl;
+        if (!fsw_config.initialize("0.0.0.0", 5008)) {  // Port for sending configs
+            std::cerr << "❌ Failed to initialize FSW config manager" << std::endl;
+            return 1;
+        }
+        
+        // Set system state based on config file
+        fsw_config.set_system_state(system_state);
+    }
+    
+    // Initialize board discovery
+    config::BoardDiscovery discovery;
+    config::DynamicConfigManager config_manager;
+    
+    if (enable_discovery) {
+        std::cout << "[Discovery] Initializing board discovery..." << std::endl;
+        
+        // Set IP range based on system state
+        std::string base_ip = is_flight_daq ? "192.168.3.0" : "192.168.2.0";
+        discovery.initialize("eth0", base_ip, 100, 150);
+        discovery.start_discovery(config::BoardDiscovery::DiscoveryMode::HYBRID);
+        
+        // Register callback for board discovery - integrate with FSW config
+        discovery.register_discovery_callback([&fsw_config](const config::DiscoveredBoard& board) {
+            std::cout << "[Discovery] Board discovered: " << board.signature.to_string() 
+                      << " at " << board.current_ip << std::endl;
+            std::cout << "  Sensors: " << board.active_sensors << " active" << std::endl;
+            
+            // Process heartbeat through FSW config manager
+            // TODO: Parse heartbeat and send to FSW config manager
+        });
+        
+        // Load base config
+        config_manager.load_base_config(config_path);
+    }
+    
+    // Initialize sensor pipeline (receives DiabloAvionics packets)
+    streams::SensorFramePipeline pipeline(bind_address, bind_port);
     if (!pipeline.is_ready()) {
-        std::cerr << "[DAQ Bridge] ERROR: Failed to initialize sensor pipeline: " 
-                  << pipeline.last_error() << "\n";
+        std::cerr << "❌ Failed to initialize sensor pipeline: " << pipeline.last_error() << std::endl;
         return 1;
     }
-
-    daq_comms::elodin::ElodinClient elodin_client;
-    if (!elodin_client.connect(elodin_host, elodin_port)) {
-        std::cerr << "[DAQ Bridge] ERROR: Failed to connect to Elodin: " 
-                  << elodin_client.last_error() << "\n";
+    
+    std::cout << "✅ Sensor pipeline ready" << std::endl;
+    
+    // Initialize sensor router
+    routing::SensorRouter router;
+    std::cout << "✅ Sensor router initialized" << std::endl;
+    
+    // Initialize Elodin client
+    elodin::ElodinClient elodin_client;
+    if (!elodin_client.connect("127.0.0.1", 2240)) {
+        std::cerr << "❌ Failed to connect to Elodin database" << std::endl;
         return 1;
     }
-    std::cout << "[DAQ Bridge] Connected to Elodin database\n";
     
-    // Register database tables
-    // NOTE: FSW's data also goes to entity_id 14002, suggesting Elodin uses this as default
-    // Let's try registering VTables to see if it helps, but data might still go to 14002
-    if (!daq_comms::elodin::DatabaseConfig::register_tables(elodin_client)) {
-        std::cerr << "[DAQ Bridge] WARNING: Failed to register tables\n";
-    }
+    std::cout << "✅ Connected to Elodin database" << std::endl;
+    std::cout << std::endl;
+    std::cout << "📡 Listening for DiabloAvionics packets..." << std::endl;
+    std::cout << std::endl;
     
-    std::cout << "[DAQ Bridge] NOTE: Data may go to entity_id 14002 (Elodin default)\n";
-    std::cout << "[DAQ Bridge] This matches FSW's behavior - check editor for entity_id 14002\n";
-    
-    // Small delay to ensure registration messages are processed
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-    daq_comms::routing::SensorRouter router;
-    if (!router.load_config(config_path)) {
-        std::cerr << "[DAQ Bridge] WARNING: Failed to load config, using defaults\n";
-    }
-
-    daq_comms::routing::FrameToElodinMapper mapper(elodin_client, router);
-
-    std::cout << "[DAQ Bridge] Ready, waiting for sensor packets...\n";
-
     // Main processing loop
-    size_t total_batches = 0;
+    size_t packet_count = 0;
     auto last_stats_time = std::chrono::steady_clock::now();
     
-    auto last_flush_time = std::chrono::steady_clock::now();
-    
-    while (g_running) {
-        // Poll for new frames
+    while (running) {
+        // Poll for new packets
         auto batch = pipeline.poll();
+        if (!batch.has_value()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
         
-        if (batch.has_value()) {
-            size_t published = mapper.map_and_publish(batch.value());
-            total_batches++;
-            
-            if (total_batches <= 10 || total_batches % 100 == 0) {
-                std::cout << "[DAQ Bridge] Processed " << total_batches 
-                          << " batches, published " << published << " messages\n";
-            }
+        packet_count++;
+        
+        // Process sensor data for board discovery
+        if (enable_discovery) {
+            // Extract source IP from packet (would need to modify pipeline to track this)
+            // For now, discovery happens via separate announcement packets
         }
-
-        // Flush Elodin buffer periodically (every 100ms) to ensure data is sent
+        
+        // Get receive timestamp
         auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_flush_time).count() >= 100) {
-            elodin_client.flush_buffer();
-            last_flush_time = now;
+        auto duration = now.time_since_epoch();
+        uint64_t receive_timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+        
+        // Route PT samples
+        auto pt_messages = router.route_pt_samples(batch.value(), receive_timestamp_ns);
+        for (const auto& [packet_id, msg] : pt_messages) {
+            elodin_client.publish(packet_id, msg);
         }
-
-        // Print statistics periodically (every 5 seconds for better visibility)
-        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_stats_time).count() >= 5) {
-            auto pipeline_stats = pipeline.get_stats();
-            auto mapper_stats = mapper.get_stats();
-            
-            std::cout << "[DAQ Bridge] Stats:\n";
-            std::cout << "  Frames decoded: " << pipeline_stats.frames_decoded << "\n";
-            std::cout << "  Frames dropped: " << pipeline_stats.frames_dropped << "\n";
-            std::cout << "  Decryption failures: " << pipeline_stats.decryption_failures << "\n";
-            std::cout << "  Unpack failures: " << pipeline_stats.unpack_failures << "\n";
-            std::cout << "  Batches processed: " << mapper_stats.batches_processed << "\n";
-            std::cout << "  Messages published: " << mapper_stats.messages_published << "\n";
-            std::cout << "  Publish failures: " << mapper_stats.publish_failures << "\n";
-            
-            last_stats_time = now;
+        
+        // Route TC samples
+        auto tc_messages = router.route_tc_samples(batch.value(), receive_timestamp_ns);
+        for (const auto& [packet_id, msg] : tc_messages) {
+            elodin_client.publish(packet_id, msg);
         }
-
-        // Small sleep to avoid busy-waiting
-        std::this_thread::sleep_for(std::chrono::microseconds(100));
+        
+        // Route RTD samples
+        auto rtd_messages = router.route_rtd_samples(batch.value(), receive_timestamp_ns);
+        for (const auto& [packet_id, msg] : rtd_messages) {
+            elodin_client.publish(packet_id, msg);
+        }
+        
+        // Route LC samples
+        auto lc_messages = router.route_lc_samples(batch.value(), receive_timestamp_ns);
+        for (const auto& [packet_id, msg] : lc_messages) {
+            elodin_client.publish(packet_id, msg);
+        }
+        
+        // Periodic stats output
+        auto elapsed = std::chrono::steady_clock::now() - last_stats_time;
+        if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() >= 5) {
+            std::cout << "[Stats] Packets processed: " << packet_count << std::endl;
+            last_stats_time = std::chrono::steady_clock::now();
+        }
     }
-
-    std::cout << "[DAQ Bridge] Shutting down...\n";
-    elodin_client.disconnect();
     
+    // Update config with discovered boards before shutdown
+    if (enable_discovery) {
+        auto boards = discovery.get_discovered_boards();
+        config_manager.update_with_boards(boards);
+        config_manager.save_config(config_path + ".auto");
+        
+        std::cout << "[Discovery] Discovered " << boards.size() << " boards" << std::endl;
+        auto discovery_stats = discovery.get_stats();
+        std::cout << "[Discovery] Sensors detected: " << discovery_stats.sensors_detected << std::endl;
+    }
+    
+    std::cout << "[DAQ Bridge] Shutdown complete" << std::endl;
     return 0;
 }
-

@@ -5,11 +5,17 @@ set(DAQ_COMMS_SOURCES
     src/transport/NetworkSocket.cpp
     src/transport/TCPClient.cpp
     src/protocol/EncryptedFrame.cpp
+    src/protocol/PacketParser.cpp
+    src/protocol/DiabloBoardPacketParser.cpp
     src/streams/SensorFramePipeline.cpp
     src/elodin/ElodinClient.cpp
     src/elodin/DatabaseConfig.cpp
     src/routing/SensorRouter.cpp
     src/routing/FrameToElodinMapper.cpp
+    src/config/BoardDiscovery.cpp
+    src/config/DynamicConfigManager.cpp
+    src/config/SensorAssignment.cpp
+    src/fsw/FSWConfigManager.cpp
 )
 
 # Create shared library for daq_comms
@@ -63,6 +69,22 @@ target_include_directories(send_fake_pt PRIVATE
 )
 
 target_link_libraries(send_fake_pt
+    daq_comms_lib
+    Threads::Threads
+    pthread
+    rt
+)
+
+# Test program to send fake data for ALL sensor types (PT, TC, RTD, LC)
+add_executable(send_all_sensors test/send_all_sensors.cpp)
+
+target_include_directories(send_all_sensors PRIVATE
+    ${CMAKE_SOURCE_DIR}/daq_comms/include
+    ${CMAKE_SOURCE_DIR}/comms/include
+    ${CMAKE_SOURCE_DIR}/utl
+)
+
+target_link_libraries(send_all_sensors
     daq_comms_lib
     Threads::Threads
     pthread
