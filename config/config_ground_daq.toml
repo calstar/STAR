@@ -35,29 +35,31 @@ connection_retry_delay_ms = 1000
 
 [sensors.gse.pt]
 # LOX Fill PT that goes up to 1000 psi
-PT_OF = { board_id = 10, channel = 0, max_psi = 1000, purpose = "LOX fill pressure", component = "lox_fill" }
+PT_OF = { board_id = 10, channel = 0, packet_id = [0x20, 0xA0], max_psi = 1000, purpose = "LOX fill pressure", component = "lox_fill" }
 
 # Fuel fill PT that goes up to 1000 psi
-PT_FF = { board_id = 11, channel = 0, max_psi = 1000, purpose = "Fuel fill pressure", component = "fuel_fill" }
+PT_FF = { board_id = 11, channel = 0, packet_id = [0x20, 0xB0], max_psi = 1000, purpose = "Fuel fill pressure", component = "fuel_fill" }
 
 # High pressure fill with PT rated to 5000 psi
-PT_HPF = { board_id = 12, channel = 0, max_psi = 5000, purpose = "High pressure fill", component = "pressurant_fill" }
+PT_HPF = { board_id = 12, channel = 0, packet_id = [0x20, 0xC0], max_psi = 5000, purpose = "High pressure fill", component = "pressurant_fill" }
 
 # Medium press fill with PT rated to 2000 PSI
-PT_MPF = { board_id = 12, channel = 1, max_psi = 2000, purpose = "Medium pressure fill", component = "pressurant_fill" }
+PT_MPF = { board_id = 12, channel = 1, packet_id = [0x20, 0xC1], max_psi = 2000, purpose = "Medium pressure fill", component = "pressurant_fill" }
 
 # Low pressure line with PT rated to 1000 psi
-PT_LPF = { board_id = 12, channel = 2, max_psi = 1000, purpose = "Low pressure fill", component = "pressurant_fill" }
+PT_LPF = { board_id = 12, channel = 2, packet_id = [0x20, 0xC2], max_psi = 1000, purpose = "Low pressure fill", component = "pressurant_fill" }
 
-# GSE RTDs, TCs, LCs will be added here
 [sensors.gse.rtd]
-# RTD sensors for GSE system
+# GSE RTD sensors (if any)
+# Add GSE-specific RTDs here if needed
 
 [sensors.gse.tc]
-# Thermocouple sensors for GSE system
+# GSE Thermocouple sensors (if any)
+# Add GSE-specific TCs here if needed
 
 [sensors.gse.lc]
-# Load cell sensors for GSE system
+# GSE Load cell sensors (if any)
+# Add GSE-specific LCs here if needed
 
 # ============================================================================
 # Hotfire Configuration
@@ -70,12 +72,32 @@ include_flight_sensors = true  # During hotfire, flight sensors also connect her
 # Flight sensors that connect to ground DAQ during hotfire
 [sensors.hotfire.flight_pt]
 # These are the same flight PT sensors, but routed to ground DAQ during hotfire
-PT_HP = { board_id = 0, channel = 0, max_psi = 5000, purpose = "High pressure" }
-PT_LP = { board_id = 0, channel = 1, max_psi = 1000, purpose = "COPV post regulator" }
-PT_FUP = { board_id = 1, channel = 0, max_psi = 1000, purpose = "Fuel upstream" }
-PT_FDP = { board_id = 1, channel = 1, max_psi = 1000, purpose = "Fuel downstream" }
-PT_OUP = { board_id = 2, channel = 0, max_psi = 1000, purpose = "Oxidizer upstream" }
-PT_ODP = { board_id = 2, channel = 1, max_psi = 1000, purpose = "Oxidizer downstream" }
+PT_HP = { board_id = 0, channel = 0, packet_id = [0x20, 0x00], max_psi = 5000, purpose = "High pressure" }
+PT_LP = { board_id = 0, channel = 1, packet_id = [0x20, 0x01], max_psi = 1000, purpose = "COPV post regulator" }
+PT_FUP = { board_id = 1, channel = 0, packet_id = [0x20, 0x10], max_psi = 1000, purpose = "Fuel upstream" }
+PT_FDP = { board_id = 1, channel = 1, packet_id = [0x20, 0x11], max_psi = 1000, purpose = "Fuel downstream" }
+PT_OUP = { board_id = 2, channel = 0, packet_id = [0x20, 0x20], max_psi = 1000, purpose = "Oxidizer upstream" }
+PT_ODP = { board_id = 2, channel = 1, packet_id = [0x20, 0x21], max_psi = 1000, purpose = "Oxidizer downstream" }
+
+[sensors.hotfire.flight_rtd]
+# Flight RTDs during hotfire
+RTD_COPV = { board_id = 3, channel = 0, packet_id = [0x22, 0x30], purpose = "COPV temperature", location = "COPV" }
+RTD_LOX_1 = { board_id = 3, channel = 1, packet_id = [0x22, 0x31], purpose = "LOX tank temperature top", location = "LOX_tank" }
+RTD_LOX_2 = { board_id = 3, channel = 2, packet_id = [0x22, 0x32], purpose = "LOX tank temperature middle", location = "LOX_tank" }
+RTD_LOX_3 = { board_id = 3, channel = 3, packet_id = [0x22, 0x33], purpose = "LOX tank temperature bottom", location = "LOX_tank" }
+
+[sensors.hotfire.flight_tc]
+# Flight TCs during hotfire
+TC_CHAMBER_1 = { board_id = 4, channel = 0, packet_id = [0x21, 0x40], purpose = "Chamber temperature front", location = "chamber" }
+TC_CHAMBER_2 = { board_id = 4, channel = 1, packet_id = [0x21, 0x41], purpose = "Chamber temperature middle", location = "chamber" }
+TC_CHAMBER_3 = { board_id = 4, channel = 2, packet_id = [0x21, 0x42], purpose = "Chamber temperature rear", location = "chamber" }
+TC_CHAMBER_4 = { board_id = 4, channel = 3, packet_id = [0x21, 0x43], purpose = "Chamber temperature side", location = "chamber" }
+
+[sensors.hotfire.flight_lc]
+# Flight LCs during hotfire
+LC_CHAMBER_1 = { board_id = 5, channel = 0, packet_id = [0x23, 0x50], purpose = "Chamber load cell 1", location = "chamber" }
+LC_CHAMBER_2 = { board_id = 5, channel = 1, packet_id = [0x23, 0x51], purpose = "Chamber load cell 2", location = "chamber" }
+LC_CHAMBER_3 = { board_id = 5, channel = 2, packet_id = [0x23, 0x52], purpose = "Chamber load cell 3", location = "chamber" }
 
 # ============================================================================
 # Board Discovery Configuration

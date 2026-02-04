@@ -15,11 +15,12 @@ set(DAQ_COMMS_SOURCES
     src/config/BoardDiscovery.cpp
     src/config/DynamicConfigManager.cpp
     src/config/SensorAssignment.cpp
+    src/config/ConfigParser.cpp
     src/fsw/FSWConfigManager.cpp
-    src/calibration/PTCalibrationPipeline.cpp
+    # src/calibration/PTCalibrationPipeline.cpp  # Temporarily disabled - has unresolved symbols
     # FSW Calibration Framework sources
-    ../FSW/calibration/src/PTCalibrationFramework.cpp
-    ../FSW/calibration/src/EnvironmentalRobustCalibration.cpp
+    # ../FSW/calibration/src/PTCalibrationFramework.cpp  # Temporarily disabled
+    # ../FSW/calibration/src/EnvironmentalRobustCalibration.cpp  # Temporarily disabled
 )
 
 # Create shared library for daq_comms
@@ -28,6 +29,7 @@ add_library(daq_comms_lib SHARED ${DAQ_COMMS_SOURCES})
 # Include directories
 target_include_directories(daq_comms_lib PUBLIC
     ${CMAKE_SOURCE_DIR}/daq_comms/include
+    ${CMAKE_SOURCE_DIR}/daq_comms/include/comms  # For FSW calibration headers to find PTMessage.hpp
     ${CMAKE_SOURCE_DIR}/FSW/calibration/include
     ${CMAKE_SOURCE_DIR}/utl
 )
@@ -99,12 +101,27 @@ target_link_libraries(send_all_sensors
 # Test program to send fake CalibratedPTMessage
 add_executable(fake_calibrated_pt test/fake_calibrated_pt.cpp)
 
+# Comprehensive test program to send ALL message types (raw, calibrated, filtered, navigation, control, IMU, GPS, barometer)
+add_executable(send_all_message_types test/send_all_message_types.cpp)
+
 target_include_directories(fake_calibrated_pt PRIVATE
     ${CMAKE_SOURCE_DIR}/daq_comms/include
     ${CMAKE_SOURCE_DIR}/utl
 )
 
 target_link_libraries(fake_calibrated_pt
+    daq_comms_lib
+    Threads::Threads
+    pthread
+    rt
+)
+
+target_include_directories(send_all_message_types PRIVATE
+    ${CMAKE_SOURCE_DIR}/daq_comms/include
+    ${CMAKE_SOURCE_DIR}/utl
+)
+
+target_link_libraries(send_all_message_types
     daq_comms_lib
     Threads::Threads
     pthread

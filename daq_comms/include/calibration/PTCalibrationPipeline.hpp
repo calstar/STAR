@@ -14,10 +14,9 @@
 #include "comms/messages/sensor/SensorMessages.hpp"
 #include "elodin/ElodinClient.hpp"
 
-// Forward declarations for FSW calibration framework
-// FSW calibration uses global namespace
-struct EnvironmentalState;
-struct CalibrationParameters;
+// FSW calibration framework types
+// Note: These are in the global namespace from FSW
+#include "../../FSW/calibration/include/PTCalibrationFramework.hpp"
 class PTCalibrationFramework;
 
 namespace daq_comms {

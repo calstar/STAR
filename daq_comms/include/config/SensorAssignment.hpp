@@ -51,14 +51,17 @@ struct PressureSensorSpec {
  * @brief Sensor assignment to board
  */
 struct SensorAssignment {
-    std::string sensor_id;     // Sensor identifier
-    uint8_t board_id;          // Board ID (0-15)
-    uint8_t channel_id;        // Channel ID on board (0-indexed)
-    SensorType sensor_type;    // Type of sensor
-    SystemState system_state;  // GSE or FLIGHT
-    bool is_active;            // Whether sensor is currently active
-    std::string board_ip;      // Board IP address (assigned by FSW)
-    uint16_t board_port;       // Board port (default 5005)
+    std::string sensor_id;             // Sensor identifier
+    uint8_t board_id;                  // Board ID (0-15)
+    uint8_t channel_id;                // Channel ID on board (0-indexed)
+    SensorType sensor_type;            // Type of sensor
+    SystemState system_state;          // GSE or FLIGHT
+    bool is_active;                    // Whether sensor is currently active
+    std::string board_ip;              // Board IP address (assigned by FSW)
+    uint16_t board_port;               // Board port (default 5005)
+    std::array<uint8_t, 2> packet_id;  // Elodin packet ID for this sensor [MSB, LSB]
+    std::string location;              // Physical location (e.g., "chamber", "COPV", "LOX_tank")
+    std::string purpose;               // Purpose/description
 };
 
 /**

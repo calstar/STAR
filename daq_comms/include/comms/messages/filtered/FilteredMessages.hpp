@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-#include "../CommsMessage.hpp"
+#include "../../CommsMessage.hpp"
 
 namespace comms {
 namespace messages {
