@@ -5,7 +5,7 @@
 #include <regex>
 #include <sstream>
 
-namespace daq_comms {
+namespace fsw {
 namespace config {
 
 bool ConfigParser::load_config(const std::string& config_path) {
@@ -76,25 +76,14 @@ bool ConfigParser::load_config(const std::string& config_path) {
             value.erase(0, value.find_first_not_of(" \t"));
             value.erase(value.find_last_not_of(" \t") + 1);
 
-            // Handle array values like packet_id = [0x20, 0x00]
-            if (value.front() == '[' && value.back() == ']') {
-                value = value.substr(1, value.length() - 2);  // Remove brackets
-                // Parse array elements
-                std::istringstream iss(value);
-                std::string element;
-                std::vector<std::string> elements;
-                while (std::getline(iss, element, ',')) {
-                    element.erase(0, element.find_first_not_of(" \t"));
-                    element.erase(element.find_last_not_of(" \t") + 1);
-                    elements.push_back(element);
+            // Handle message_id as integer (like FSW: 0, 1, 2, etc.)
+            // Support both decimal and hex (0x prefix)
+            if (key == "message_id" || key == "packet_id") {
+                // Remove quotes if present
+                if (value.front() == '"' && value.back() == '"') {
+                    value = value.substr(1, value.length() - 2);
                 }
-                if (key == "packet_id" && elements.size() == 2) {
-                    // Parse hex values
-                    uint8_t msb = static_cast<uint8_t>(std::stoul(elements[0], nullptr, 16));
-                    uint8_t lsb = static_cast<uint8_t>(std::stoul(elements[1], nullptr, 16));
-                    current_fields["packet_id_msb"] = std::to_string(msb);
-                    current_fields["packet_id_lsb"] = std::to_string(lsb);
-                }
+                current_fields["message_id"] = value;
             } else {
                 // Remove quotes if present
                 if (value.front() == '"' && value.back() == '"') {
@@ -147,13 +136,30 @@ bool ConfigParser::parse_sensor_entry(const std::string& sensor_id, const std::s
         return false;
     }
 
-    // Parse packet_id
-    if (fields.find("packet_id_msb") != fields.end() &&
-        fields.find("packet_id_lsb") != fields.end()) {
-        assignment.packet_id[0] = static_cast<uint8_t>(std::stoul(fields.at("packet_id_msb")));
-        assignment.packet_id[1] = static_cast<uint8_t>(std::stoul(fields.at("packet_id_lsb")));
+    // Parse message_id (integer, like FSW: 0, 1, 2, etc.)
+    // Support both decimal and hex (0x prefix)
+    if (fields.find("message_id") != fields.end()) {
+        std::string msg_id_str = fields.at("message_id");
+        // Remove quotes if present
+        if (msg_id_str.front() == '"' && msg_id_str.back() == '"') {
+            msg_id_str = msg_id_str.substr(1, msg_id_str.length() - 2);
+        }
+        // Parse as hex if starts with 0x, otherwise decimal
+        if (msg_id_str.substr(0, 2) == "0x" || msg_id_str.substr(0, 2) == "0X") {
+            assignment.message_id = static_cast<uint16_t>(std::stoul(msg_id_str, nullptr, 16));
+        } else {
+            assignment.message_id = static_cast<uint16_t>(std::stoul(msg_id_str));
+        }
+    } else if (fields.find("packet_id") != fields.end()) {
+        // Legacy support: parse packet_id as integer too
+        std::string msg_id_str = fields.at("packet_id");
+        if (msg_id_str.substr(0, 2) == "0x" || msg_id_str.substr(0, 2) == "0X") {
+            assignment.message_id = static_cast<uint16_t>(std::stoul(msg_id_str, nullptr, 16));
+        } else {
+            assignment.message_id = static_cast<uint16_t>(std::stoul(msg_id_str));
+        }
     } else {
-        std::cerr << "[ConfigParser] Missing packet_id for sensor: " << sensor_id << std::endl;
+        std::cerr << "[ConfigParser] Missing message_id for sensor: " << sensor_id << std::endl;
         return false;
     }
 
@@ -228,13 +234,13 @@ std::optional<SensorAssignment> ConfigParser::get_sensor_assignment(
     return std::nullopt;
 }
 
-std::map<std::string, std::array<uint8_t, 2>> ConfigParser::get_all_packet_ids() const {
-    std::map<std::string, std::array<uint8_t, 2>> packet_ids;
+std::map<std::string, uint16_t> ConfigParser::get_all_message_ids() const {
+    std::map<std::string, uint16_t> message_ids;
     for (const auto& [sensor_id, assignment] : sensor_assignments_) {
-        packet_ids[sensor_id] = assignment.packet_id;
+        message_ids[sensor_id] = assignment.message_id;
     }
-    return packet_ids;
+    return message_ids;
 }
 
 }  // namespace config
-}  // namespace daq_comms
+}  // namespace fsw

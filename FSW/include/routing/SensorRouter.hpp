@@ -6,10 +6,10 @@
 #include <unordered_map>
 #include <vector>
 
-#include "comms/messages/sensor/SensorMessages.hpp"
-#include "protocol/EncryptedFrame.hpp"
+#include "../../daq_comms/include/comms/messages/sensor/SensorMessages.hpp"
+#include "../../daq_comms/include/protocol/EncryptedFrame.hpp"
 
-namespace daq_comms {
+namespace fsw {
 namespace routing {
 
 /**
@@ -65,16 +65,20 @@ public:
      * @return Vector of (table_id, message) pairs ready for publishing
      */
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawPTMessage>>
-    route_pt_samples(const protocol::SensorBatch& batch, uint64_t receive_timestamp_ns) const;
+    route_pt_samples(const daq_comms::protocol::SensorBatch& batch,
+                     uint64_t receive_timestamp_ns) const;
 
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawTCMessage>>
-    route_tc_samples(const protocol::SensorBatch& batch, uint64_t receive_timestamp_ns) const;
+    route_tc_samples(const daq_comms::protocol::SensorBatch& batch,
+                     uint64_t receive_timestamp_ns) const;
 
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawRTDMessage>>
-    route_rtd_samples(const protocol::SensorBatch& batch, uint64_t receive_timestamp_ns) const;
+    route_rtd_samples(const daq_comms::protocol::SensorBatch& batch,
+                      uint64_t receive_timestamp_ns) const;
 
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawLCMessage>>
-    route_lc_samples(const protocol::SensorBatch& batch, uint64_t receive_timestamp_ns) const;
+    route_lc_samples(const daq_comms::protocol::SensorBatch& batch,
+                     uint64_t receive_timestamp_ns) const;
 
 private:
     std::unordered_map<std::string, SensorChannelConfig>
@@ -84,6 +88,6 @@ private:
 };
 
 }  // namespace routing
-}  // namespace daq_comms
+}  // namespace fsw
 
 #endif  // DAQ_SENSOR_ROUTER_HPP

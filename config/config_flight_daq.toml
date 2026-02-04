@@ -35,19 +35,19 @@ connection_retry_delay_ms = 1000
 
 [sensors.flight.pt]
 # High pressure PT capable of going up to 5k PSI reading
-PT_HP = { board_id = 0, channel = 0, packet_id = [0x20, 0x00], max_psi = 5000, purpose = "High pressure" }
+PT_HP = { board_id = 0, channel = 0, message_id = 0x2000, max_psi = 5000, purpose = "High pressure" }
 
 # COPV PT post regulator (1000psi)
-PT_LP = { board_id = 0, channel = 1, packet_id = [0x20, 0x01], max_psi = 1000, purpose = "COPV post regulator" }
+PT_LP = { board_id = 0, channel = 1, message_id = 0x2001, max_psi = 1000, purpose = "COPV post regulator" }
 
 # Upstream Fuel PT (1000 psi)
-PT_FUP = { board_id = 1, channel = 0, packet_id = [0x20, 0x10], max_psi = 1000, purpose = "Fuel upstream" }
+PT_FUP = { board_id = 1, channel = 0, message_id = 0x2010, max_psi = 1000, purpose = "Fuel upstream" }
 
 # Downstream Fuel PT (1000 psi)
-PT_FDP = { board_id = 1, channel = 1, packet_id = [0x20, 0x11], max_psi = 1000, purpose = "Fuel downstream" }
+PT_FDP = { board_id = 1, channel = 1, message_id = 0x2011, max_psi = 1000, purpose = "Fuel downstream" }
 
 # Upstream Oxidizer PT (1000 PSI)
-PT_OUP = { board_id = 2, channel = 0, packet_id = [0x20, 0x20], max_psi = 1000, purpose = "Oxidizer upstream" }
+PT_OUP = { board_id = 2, channel = 0, message_id = 0x2020, max_psi = 1000, purpose = "Oxidizer upstream" }
 
 # Downstream Oxidizer PT (1000 PSI)
 PT_ODP = { board_id = 2, channel = 1, packet_id = [0x20, 0x21], max_psi = 1000, purpose = "Oxidizer downstream" }

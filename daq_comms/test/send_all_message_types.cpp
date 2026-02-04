@@ -23,9 +23,9 @@
 #include <thread>
 #include <vector>
 
+#include "../../FSW/include/elodin/DatabaseConfig.hpp"
+#include "../../FSW/include/elodin/ElodinClient.hpp"
 #include "../../utl/db.hpp"
-#include "../include/elodin/DatabaseConfig.hpp"
-#include "../include/elodin/ElodinClient.hpp"
 #include "comms/BarometerMessage.hpp"
 #include "comms/GPSMessage.hpp"
 #include "comms/IMUMessage.hpp"
@@ -91,20 +91,21 @@ int main(int argc, char* argv[]) {
 
     try {
         // Connect to Elodin DB
-        daq_comms::elodin::ElodinClient client;
+        fsw::elodin::ElodinClient client;
         if (!client.connect("127.0.0.1", port)) {
             std::cerr << "❌ Failed to connect to Elodin DB: " << client.last_error() << std::endl;
             return 1;
         }
         std::cout << "\n✅ Connected to Elodin DB" << std::endl;
 
-        // Register all VTables
-        std::cout << "\n📋 Registering all VTables..." << std::endl;
-        if (!daq_comms::elodin::DatabaseConfig::register_tables(client)) {
-            std::cerr << "❌ Failed to register VTables" << std::endl;
+        // Register all VTables from config (per sensor)
+        std::string config_path = (argc > 4) ? argv[4] : "config/config_flight_daq.toml";
+        std::cout << "\n📋 Registering VTables from config: " << config_path << std::endl;
+        if (!fsw::elodin::DatabaseConfig::register_tables_from_config(client, config_path)) {
+            std::cerr << "❌ Failed to register VTables from config" << std::endl;
             return 1;
         }
-        std::cout << "✅ All VTables registered" << std::endl;
+        std::cout << "✅ All VTables registered (per sensor)" << std::endl;
 
         // Wait for Elodin to process registrations
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -167,10 +168,12 @@ int main(int argc, char* argv[]) {
                 client.publish(pt_packet_id, raw_pt);
                 total_messages++;
 
-                // Raw TC Message
+                // Raw TC Message - FIXED: Set padding field
                 comms::messages::sensor::RawTCMessage raw_tc;
                 std::get<0>(raw_tc.fields) = timestamp;
                 std::get<1>(raw_tc.fields) = i % 8;  // Channel 0-7
+                std::get<2>(raw_tc.fields) =
+                    std::array<uint8_t, 3>{0, 0, 0};  // Padding - CRITICAL!
                 std::get<3>(raw_tc.fields) = static_cast<uint32_t>(adc_dist(gen));
                 std::get<4>(raw_tc.fields) = timestamp_ms;
                 std::get<5>(raw_tc.fields) = 0;
@@ -178,10 +181,12 @@ int main(int argc, char* argv[]) {
                 client.publish(tc_packet_id, raw_tc);
                 total_messages++;
 
-                // Raw RTD Message
+                // Raw RTD Message - FIXED: Set padding field
                 comms::messages::sensor::RawRTDMessage raw_rtd;
                 std::get<0>(raw_rtd.fields) = timestamp;
                 std::get<1>(raw_rtd.fields) = i % 6;  // Channel 0-5
+                std::get<2>(raw_rtd.fields) =
+                    std::array<uint8_t, 3>{0, 0, 0};  // Padding - CRITICAL!
                 std::get<3>(raw_rtd.fields) = static_cast<uint32_t>(resistance_dist(gen) * 1000);
                 std::get<4>(raw_rtd.fields) = timestamp_ms;
                 std::get<5>(raw_rtd.fields) = 0;
@@ -189,10 +194,12 @@ int main(int argc, char* argv[]) {
                 client.publish(rtd_packet_id, raw_rtd);
                 total_messages++;
 
-                // Raw LC Message
+                // Raw LC Message - FIXED: Set padding field
                 comms::messages::sensor::RawLCMessage raw_lc;
                 std::get<0>(raw_lc.fields) = timestamp;
                 std::get<1>(raw_lc.fields) = i % 4;  // Channel 0-3
+                std::get<2>(raw_lc.fields) =
+                    std::array<uint8_t, 3>{0, 0, 0};  // Padding - CRITICAL!
                 std::get<3>(raw_lc.fields) = static_cast<uint32_t>(load_dist(gen));
                 std::get<4>(raw_lc.fields) = timestamp_ms;
                 std::get<5>(raw_lc.fields) = 0;

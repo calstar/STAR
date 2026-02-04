@@ -5,7 +5,7 @@
 
 #include "config/BoardDiscovery.hpp"
 
-namespace daq_comms {
+namespace fsw {
 namespace config {
 
 DynamicConfigManager::DynamicConfigManager() {
@@ -146,4 +146,4 @@ bool DynamicConfigManager::save_config(const std::string& output_path) const {
 }
 
 }  // namespace config
-}  // namespace daq_comms
+}  // namespace fsw

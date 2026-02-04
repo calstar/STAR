@@ -5,11 +5,11 @@
 #include <optional>
 #include <vector>
 
-#include "protocol/DiabloBoardPacketParser.hpp"
-#include "protocol/EncryptedFrame.hpp"
-#include "transport/NetworkSocket.hpp"
+#include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
+#include "../../daq_comms/include/protocol/EncryptedFrame.hpp"
+#include "../../daq_comms/include/transport/NetworkSocket.hpp"
 
-namespace daq_comms {
+namespace fsw {
 namespace streams {
 
 /**
@@ -33,7 +33,7 @@ public:
      * @brief Poll for new DiabloAvionics board packets
      * @return Sensor batch if a SENSOR_DATA packet was received, empty otherwise
      */
-    std::optional<protocol::SensorBatch> poll();
+    std::optional<daq_comms::protocol::SensorBatch> poll();
 
     /**
      * @brief Check if pipeline is ready
@@ -48,13 +48,14 @@ public:
     /**
      * @brief Get board packet parser (for accessing parsed packets)
      */
-    protocol::DiabloBoardPacketParser& get_parser() {
+    daq_comms::protocol::DiabloBoardPacketParser& get_parser() {
         return board_parser_;
     }
 
 private:
-    std::unique_ptr<transport::UDPSocket> socket_;
-    protocol::DiabloBoardPacketParser board_parser_;  // Actual DiabloAvionics board parser
+    std::unique_ptr<daq_comms::transport::UDPSocket> socket_;
+    daq_comms::protocol::DiabloBoardPacketParser
+        board_parser_;  // Actual DiabloAvionics board parser
     std::vector<uint8_t> receive_buffer_;
     std::string last_error_;
 
@@ -64,6 +65,6 @@ private:
 };
 
 }  // namespace streams
-}  // namespace daq_comms
+}  // namespace fsw
 
 #endif  // DAQ_SENSOR_FRAME_PIPELINE_HPP

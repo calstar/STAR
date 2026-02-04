@@ -2,7 +2,7 @@
 
 #include <chrono>
 
-namespace daq_comms {
+namespace fsw {
 namespace routing {
 
 FrameToElodinMapper::FrameToElodinMapper(elodin::ElodinClient& elodin_client, SensorRouter& router)
@@ -10,7 +10,7 @@ FrameToElodinMapper::FrameToElodinMapper(elodin::ElodinClient& elodin_client, Se
     stats_ = Stats{};
 }
 
-size_t FrameToElodinMapper::map_and_publish(const protocol::SensorBatch& batch) {
+size_t FrameToElodinMapper::map_and_publish(const daq_comms::protocol::SensorBatch& batch) {
     if (!batch.is_valid) {
         return 0;
     }
@@ -82,4 +82,4 @@ uint64_t FrameToElodinMapper::get_monotonic_timestamp_ns() const {
 }
 
 }  // namespace routing
-}  // namespace daq_comms
+}  // namespace fsw

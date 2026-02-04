@@ -9,7 +9,7 @@
 
 #include "SensorAssignment.hpp"
 
-namespace daq_comms {
+namespace fsw {
 namespace config {
 
 /**
@@ -51,10 +51,10 @@ public:
     std::optional<SensorAssignment> get_sensor_assignment(const std::string& sensor_id) const;
 
     /**
-     * @brief Get all packet IDs from config
-     * @return Map of sensor_id -> packet_id
+     * @brief Get all message IDs from config
+     * @return Map of sensor_id -> message_id
      */
-    std::map<std::string, std::array<uint8_t, 2>> get_all_packet_ids() const;
+    std::map<std::string, uint16_t> get_all_message_ids() const;
 
 private:
     // Internal storage: sensor_id -> SensorAssignment
@@ -63,12 +63,12 @@ private:
     // Helper methods
     SensorType parse_sensor_type(const std::string& section_path) const;
     SystemState parse_system_state(const std::string& section_path) const;
-    std::array<uint8_t, 2> parse_packet_id(const std::string& packet_id_str) const;
+    uint16_t parse_message_id(const std::string& message_id_str) const;
     bool parse_sensor_entry(const std::string& sensor_id, const std::string& section_path,
                             const std::map<std::string, std::string>& fields);
 };
 
 }  // namespace config
-}  // namespace daq_comms
+}  // namespace fsw
 
 #endif  // DAQ_CONFIG_PARSER_HPP

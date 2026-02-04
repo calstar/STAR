@@ -3,7 +3,7 @@
 #include <iostream>
 #include <sstream>
 
-namespace daq_comms {
+namespace fsw {
 namespace routing {
 
 SensorRouter::SensorRouter() {
@@ -106,7 +106,7 @@ std::string SensorRouter::get_table_name(const std::string& sensor_type, uint8_t
 }
 
 std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawPTMessage>>
-SensorRouter::route_pt_samples(const protocol::SensorBatch& batch,
+SensorRouter::route_pt_samples(const daq_comms::protocol::SensorBatch& batch,
                                uint64_t receive_timestamp_ns) const {
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawPTMessage>> messages;
 
@@ -138,7 +138,7 @@ SensorRouter::route_pt_samples(const protocol::SensorBatch& batch,
 }
 
 std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawTCMessage>>
-SensorRouter::route_tc_samples(const protocol::SensorBatch& batch,
+SensorRouter::route_tc_samples(const daq_comms::protocol::SensorBatch& batch,
                                uint64_t receive_timestamp_ns) const {
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawTCMessage>> messages;
 
@@ -161,7 +161,7 @@ SensorRouter::route_tc_samples(const protocol::SensorBatch& batch,
 }
 
 std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawRTDMessage>>
-SensorRouter::route_rtd_samples(const protocol::SensorBatch& batch,
+SensorRouter::route_rtd_samples(const daq_comms::protocol::SensorBatch& batch,
                                 uint64_t receive_timestamp_ns) const {
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawRTDMessage>> messages;
 
@@ -184,7 +184,7 @@ SensorRouter::route_rtd_samples(const protocol::SensorBatch& batch,
 }
 
 std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawLCMessage>>
-SensorRouter::route_lc_samples(const protocol::SensorBatch& batch,
+SensorRouter::route_lc_samples(const daq_comms::protocol::SensorBatch& batch,
                                uint64_t receive_timestamp_ns) const {
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawLCMessage>> messages;
 
@@ -211,4 +211,4 @@ std::string SensorRouter::make_key(const std::string& sensor_type, uint8_t chann
 }
 
 }  // namespace routing
-}  // namespace daq_comms
+}  // namespace fsw

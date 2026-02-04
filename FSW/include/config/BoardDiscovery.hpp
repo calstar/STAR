@@ -12,9 +12,9 @@
 #include <string>
 #include <vector>
 
-#include "../protocol/DiabloBoardPacketParser.hpp"
+#include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
 
-namespace daq_comms {
+namespace fsw {
 namespace config {
 
 /**
@@ -283,6 +283,6 @@ private:
 };
 
 }  // namespace config
-}  // namespace daq_comms
+}  // namespace fsw
 
 #endif  // DAQ_BOARD_DISCOVERY_HPP

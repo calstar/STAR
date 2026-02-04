@@ -7,11 +7,11 @@
 #include <memory>
 #include <string>
 
+#include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
+#include "../../daq_comms/include/transport/NetworkSocket.hpp"
 #include "config/SensorAssignment.hpp"
-#include "protocol/DiabloBoardPacketParser.hpp"
-#include "transport/NetworkSocket.hpp"
 
-namespace daq_comms {
+namespace fsw {
 namespace fsw {
 
 /**
@@ -40,7 +40,7 @@ public:
      * @return Assigned IP address
      */
     std::string process_board_heartbeat(
-        const protocol::DiabloBoardPacketParser::ParsedBoardHeartbeat& heartbeat,
+        const daq_comms::protocol::DiabloBoardPacketParser::ParsedBoardHeartbeat& heartbeat,
         const std::string& source_ip, const std::string& mac_address);
 
     /**
@@ -86,7 +86,7 @@ public:
 
 private:
     config::SensorAssignmentManager assignment_manager_;
-    std::unique_ptr<transport::UDPSocket> config_socket_;
+    std::unique_ptr<daq_comms::transport::UDPSocket> config_socket_;
     config::SystemState current_state_;
 
     // Track which boards have been configured
@@ -97,6 +97,6 @@ private:
 };
 
 }  // namespace fsw
-}  // namespace daq_comms
+}  // namespace fsw
 
 #endif  // DAQ_FSW_CONFIG_MANAGER_HPP

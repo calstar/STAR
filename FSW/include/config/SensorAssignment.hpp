@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace daq_comms {
+namespace fsw {
 namespace config {
 
 /**
@@ -51,17 +51,18 @@ struct PressureSensorSpec {
  * @brief Sensor assignment to board
  */
 struct SensorAssignment {
-    std::string sensor_id;             // Sensor identifier
-    uint8_t board_id;                  // Board ID (0-15)
-    uint8_t channel_id;                // Channel ID on board (0-indexed)
-    SensorType sensor_type;            // Type of sensor
-    SystemState system_state;          // GSE or FLIGHT
-    bool is_active;                    // Whether sensor is currently active
-    std::string board_ip;              // Board IP address (assigned by FSW)
-    uint16_t board_port;               // Board port (default 5005)
-    std::array<uint8_t, 2> packet_id;  // Elodin packet ID for this sensor [MSB, LSB]
-    std::string location;              // Physical location (e.g., "chamber", "COPV", "LOX_tank")
-    std::string purpose;               // Purpose/description
+    std::string sensor_id;     // Sensor identifier
+    uint8_t board_id;          // Board ID (0-15)
+    uint8_t channel_id;        // Channel ID on board (0-indexed)
+    SensorType sensor_type;    // Type of sensor
+    SystemState system_state;  // GSE or FLIGHT
+    bool is_active;            // Whether sensor is currently active
+    std::string board_ip;      // Board IP address (assigned by FSW)
+    uint16_t board_port;       // Board port (default 5005)
+    uint16_t message_id;       // Message ID (like FSW: 0, 1, 2, etc.) - converted to packet_id when
+                               // serializing
+    std::string location;      // Physical location (e.g., "chamber", "COPV", "LOX_tank")
+    std::string purpose;       // Purpose/description
 };
 
 /**
@@ -198,6 +199,6 @@ private:
 };
 
 }  // namespace config
-}  // namespace daq_comms
+}  // namespace fsw
 
 #endif  // DAQ_SENSOR_ASSIGNMENT_HPP

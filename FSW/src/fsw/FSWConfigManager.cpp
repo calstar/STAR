@@ -4,14 +4,14 @@
 #include <iostream>
 #include <thread>
 
-namespace daq_comms {
+namespace fsw {
 namespace fsw {
 
 FSWConfigManager::FSWConfigManager() : current_state_(config::SystemState::GSE) {
 }
 
 bool FSWConfigManager::initialize(const std::string& bind_address, uint16_t bind_port) {
-    config_socket_ = std::make_unique<transport::UDPSocket>(bind_address, bind_port);
+    config_socket_ = std::make_unique<daq_comms::transport::UDPSocket>(bind_address, bind_port);
 
     if (!config_socket_->is_valid()) {
         std::cerr << "[FSWConfig] Failed to create UDP socket: " << config_socket_->last_error()
@@ -30,7 +30,7 @@ bool FSWConfigManager::initialize(const std::string& bind_address, uint16_t bind
 }
 
 std::string FSWConfigManager::process_board_heartbeat(
-    const protocol::DiabloBoardPacketParser::ParsedBoardHeartbeat& heartbeat,
+    const daq_comms::protocol::DiabloBoardPacketParser::ParsedBoardHeartbeat& heartbeat,
     const std::string& source_ip, const std::string& mac_address) {
     uint8_t board_id = heartbeat.heartbeat.board_id;
 
@@ -122,7 +122,8 @@ bool FSWConfigManager::send_config_to_board(uint8_t board_id) {
     }
 
     // Create UDP socket for sending to board
-    transport::UDPSocket board_socket(board_config->board_ip, board_config->board_port, true);
+    daq_comms::transport::UDPSocket board_socket(board_config->board_ip, board_config->board_port,
+                                                 true);
 
     // Send packet to board
     ssize_t sent = board_socket.send(packet.data(), packet.size());
@@ -176,4 +177,4 @@ config::SystemState FSWConfigManager::infer_system_state(uint8_t board_id,
 }
 
 }  // namespace fsw
-}  // namespace daq_comms
+}  // namespace fsw

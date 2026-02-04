@@ -7,7 +7,7 @@
 #include <iostream>
 #include <sstream>
 
-namespace daq_comms {
+namespace fsw {
 namespace config {
 
 SensorAssignmentManager::SensorAssignmentManager()
@@ -384,4 +384,4 @@ void SensorAssignmentManager::register_config_update_callback(
 }
 
 }  // namespace config
-}  // namespace daq_comms
+}  // namespace fsw

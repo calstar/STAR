@@ -15,7 +15,7 @@
 #include <mutex>
 #include <sstream>
 
-namespace daq_comms {
+namespace fsw {
 namespace config {
 
 BoardDiscovery::BoardDiscovery()
@@ -67,7 +67,7 @@ void BoardDiscovery::stop_discovery() {
 void BoardDiscovery::process_board_announcement(const uint8_t* data, size_t size,
                                                 const std::string& source_ip) {
     // Parse actual DiabloAvionics BOARD_HEARTBEAT packet
-    protocol::DiabloBoardPacketParser parser;
+    daq_comms::protocol::DiabloBoardPacketParser parser;
     auto heartbeat = parser.parse_board_heartbeat(data, size);
 
     if (!heartbeat || !heartbeat->is_valid) {
@@ -107,8 +107,9 @@ void BoardDiscovery::process_board_announcement(const uint8_t* data, size_t size
 
     // Assign IP based on MAC address (deterministic)
     if (signature_to_ip_.find(signature) == signature_to_ip_.end()) {
-        std::string assigned_ip = protocol::DiabloBoardPacketParser::calculate_ip_from_mac(
-            board.mac_address, base_ip_, ip_range_start_, ip_range_end_);
+        std::string assigned_ip =
+            daq_comms::protocol::DiabloBoardPacketParser::calculate_ip_from_mac(
+                board.mac_address, base_ip_, ip_range_start_, ip_range_end_);
 
         if (is_ip_available(assigned_ip)) {
             signature_to_ip_[signature] = assigned_ip;
@@ -132,7 +133,7 @@ void BoardDiscovery::process_board_announcement(const uint8_t* data, size_t size
 void BoardDiscovery::process_sensor_data(const uint8_t* data, size_t size,
                                          const std::string& source_ip) {
     // Parse actual DiabloAvionics SENSOR_DATA packet
-    protocol::DiabloBoardPacketParser parser;
+    daq_comms::protocol::DiabloBoardPacketParser parser;
     auto sensor_packet = parser.parse_sensor_data(data, size);
 
     if (!sensor_packet || !sensor_packet->is_valid) {
@@ -141,17 +142,17 @@ void BoardDiscovery::process_sensor_data(const uint8_t* data, size_t size,
 
     // Find board by IP
     auto it = ip_to_signature_.find(source_ip);
-    protocol::DiabloBoardPacketParser::BoardType board_type =
-        protocol::DiabloBoardPacketParser::BoardType::UNKNOWN;
+    daq_comms::protocol::DiabloBoardPacketParser::BoardType board_type =
+        daq_comms::protocol::DiabloBoardPacketParser::BoardType::UNKNOWN;
 
     if (it != ip_to_signature_.end()) {
         // Known board - get type from signature
         uint8_t sig_type = discovered_boards_[it->second].signature.board_type;
-        board_type = static_cast<protocol::DiabloBoardPacketParser::BoardType>(sig_type);
+        board_type = static_cast<daq_comms::protocol::DiabloBoardPacketParser::BoardType>(sig_type);
     } else {
         // Unknown board - infer type from sensor data patterns
         // For now, default to PT (most common)
-        board_type = protocol::DiabloBoardPacketParser::BoardType::PRESSURE_TRANSDUCER;
+        board_type = daq_comms::protocol::DiabloBoardPacketParser::BoardType::PRESSURE_TRANSDUCER;
     }
 
     // Detect sensors from packet
@@ -210,7 +211,7 @@ std::vector<SensorInfo> BoardDiscovery::detect_sensors_from_packet(const uint8_t
     std::vector<SensorInfo> sensors;
 
     // Parse actual DiabloAvionics SENSOR_DATA packet
-    protocol::DiabloBoardPacketParser parser;
+    daq_comms::protocol::DiabloBoardPacketParser parser;
     auto sensor_packet = parser.parse_sensor_data(data, size);
 
     if (!sensor_packet || !sensor_packet->is_valid || sensor_packet->chunks.empty()) {
@@ -437,4 +438,4 @@ void BoardDiscovery::register_discovery_callback(
 }
 
 }  // namespace config
-}  // namespace daq_comms
+}  // namespace fsw

@@ -4,19 +4,19 @@
 #include <cstring>
 #include <iostream>
 
-namespace daq_comms {
+namespace fsw {
 namespace streams {
 
 SensorFramePipeline::SensorFramePipeline(const std::string& bind_address, uint16_t bind_port)
     : receive_buffer_(RECEIVE_BUFFER_SIZE) {
-    socket_ = std::make_unique<transport::UDPSocket>(bind_address, bind_port);
+    socket_ = std::make_unique<daq_comms::transport::UDPSocket>(bind_address, bind_port);
 
     if (!socket_->is_valid()) {
         last_error_ = "Failed to create UDP socket: " + socket_->last_error();
     }
 }
 
-std::optional<protocol::SensorBatch> SensorFramePipeline::poll() {
+std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
     if (!socket_->is_valid()) {
         last_error_ = "Socket not valid: " + socket_->last_error();
         return std::nullopt;
@@ -43,14 +43,14 @@ std::optional<protocol::SensorBatch> SensorFramePipeline::poll() {
     }
 
     // Handle SENSOR_DATA packets
-    if (*packet_type == protocol::DiabloBoardPacketParser::PacketType::SENSOR_DATA) {
+    if (*packet_type == daq_comms::protocol::DiabloBoardPacketParser::PacketType::SENSOR_DATA) {
         auto parsed = board_parser_.parse_sensor_data(receive_buffer_.data(), received);
         if (!parsed || !parsed->is_valid) {
             return std::nullopt;
         }
 
         // Convert to SensorBatch format
-        protocol::SensorBatch batch;
+        daq_comms::protocol::SensorBatch batch;
 
         // Use chunk timestamp (convert ms to ns)
         if (!parsed->chunks.empty()) {
@@ -75,7 +75,7 @@ std::optional<protocol::SensorBatch> SensorFramePipeline::poll() {
             for (const auto& dp : chunk.datapoints) {
                 // Create samples - we'll need board context to know sensor type
                 // For now, create PT samples as default (will be updated by board discovery)
-                protocol::RawPTSample sample;
+                daq_comms::protocol::RawPTSample sample;
                 sample.channel_id = dp.sensor_id;
                 sample.raw_adc_counts = dp.data;  // Already uint32_t, little-endian
                 sample.sample_timestamp_ms = chunk.timestamp;
@@ -89,7 +89,7 @@ std::optional<protocol::SensorBatch> SensorFramePipeline::poll() {
 
     // Handle BOARD_HEARTBEAT packets (for board discovery)
     // These are handled separately by board discovery system
-    if (*packet_type == protocol::DiabloBoardPacketParser::PacketType::BOARD_HEARTBEAT) {
+    if (*packet_type == daq_comms::protocol::DiabloBoardPacketParser::PacketType::BOARD_HEARTBEAT) {
         // Return empty batch - heartbeat handled by discovery
         return std::nullopt;
     }
@@ -106,4 +106,4 @@ std::string SensorFramePipeline::last_error() const {
 }
 
 }  // namespace streams
-}  // namespace daq_comms
+}  // namespace fsw

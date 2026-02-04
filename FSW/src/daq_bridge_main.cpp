@@ -11,7 +11,7 @@
 #include "routing/SensorRouter.hpp"
 #include "streams/SensorFramePipeline.hpp"
 
-using namespace daq_comms;
+using namespace fsw;
 
 std::atomic<bool> running(true);
 

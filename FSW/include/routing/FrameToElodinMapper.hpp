@@ -4,11 +4,11 @@
 #include <chrono>
 #include <cstdint>
 
+#include "../../daq_comms/include/protocol/EncryptedFrame.hpp"
 #include "elodin/ElodinClient.hpp"
-#include "protocol/EncryptedFrame.hpp"
 #include "routing/SensorRouter.hpp"
 
-namespace daq_comms {
+namespace fsw {
 namespace routing {
 
 /**
@@ -27,7 +27,7 @@ public:
      * @param batch Decoded sensor batch
      * @return Number of messages published
      */
-    size_t map_and_publish(const protocol::SensorBatch& batch);
+    size_t map_and_publish(const daq_comms::protocol::SensorBatch& batch);
 
     /**
      * @brief Get statistics
@@ -54,6 +54,6 @@ private:
 };
 
 }  // namespace routing
-}  // namespace daq_comms
+}  // namespace fsw
 
 #endif  // DAQ_FRAME_TO_ELODIN_MAPPER_HPP

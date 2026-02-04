@@ -118,6 +118,22 @@ target_link_libraries(fake_esp32_packet_gen Threads::Threads pthread rt)
 
 # FSW Simulator for Elodin groundstation testing
 add_executable(test_fsw_simulator scripts/test/test_fsw_simulator.cpp)
+
+# Test program to send all message types
+add_executable(send_all_message_types daq_comms/test/send_all_message_types.cpp)
+target_include_directories(send_all_message_types PRIVATE
+    ${CMAKE_SOURCE_DIR}/daq_comms/include
+    ${CMAKE_SOURCE_DIR}/FSW/include
+    ${CMAKE_SOURCE_DIR}/utl
+)
+target_link_libraries(send_all_message_types
+    daq_comms_lib
+    fsw_daq_lib
+    Threads::Threads
+    pthread
+    rt
+)
+
 target_link_libraries(test_fsw_simulator daq_comms_lib Threads::Threads pthread rt)
 target_include_directories(test_fsw_simulator PRIVATE
     ${CMAKE_SOURCE_DIR}/daq_comms/include
@@ -194,6 +210,7 @@ install(DIRECTORY DESTINATION /var/log/engine_controller)
 
 # Add daq_comms subdirectory (must be before test targets that use it)
 add_subdirectory(daq_comms)
+add_subdirectory(FSW)
 
 # Testing
 enable_testing()

@@ -13,8 +13,8 @@
 #include "../control/include/ValveController.hpp"
 
 // Communication system includes
-#include "../comms/include/CommunicationProtocol.hpp"
-#include "../comms/include/PacketProtocol.hpp"
+#include "../../daq_comms/include/comms/include/CommunicationProtocol.hpp"
+#include "../../daq_comms/include/comms/include/PacketProtocol.hpp"
 
 // Calibration system includes
 #include "../calibration/include/EncoderCalibration.hpp"
