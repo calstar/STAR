@@ -4,3 +4,7 @@
 [submodule "external/DiabloAvionics"]
 	path = external/DiabloAvionics
 	url = https://github.com/calstar/DiabloAvionics.git
+[submodule "engine_sim"]
+	path = engine_sim
+	url = https://github.com/KushMahajan/EngineDesign.git
+	branch = christmas
