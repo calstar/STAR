@@ -50,39 +50,39 @@ PT_FDP = { board_id = 1, channel = 1, message_id = 0x2011, max_psi = 1000, purpo
 PT_OUP = { board_id = 2, channel = 0, message_id = 0x2020, max_psi = 1000, purpose = "Oxidizer upstream" }
 
 # Downstream Oxidizer PT (1000 PSI)
-PT_ODP = { board_id = 2, channel = 1, packet_id = [0x20, 0x21], max_psi = 1000, purpose = "Oxidizer downstream" }
+PT_ODP = { board_id = 2, channel = 1, message_id = 0x2021, max_psi = 1000, purpose = "Oxidizer downstream" }
 
 # Flight RTDs, TCs, LCs, Actuators
 [sensors.flight.rtd]
 # RTD on COPV
-RTD_COPV = { board_id = 3, channel = 0, packet_id = [0x22, 0x30], purpose = "COPV temperature", location = "COPV" }
+RTD_COPV = { board_id = 3, channel = 0, message_id = 0x2230, purpose = "COPV temperature", location = "COPV" }
 
 # RTDs along LOX tank (3 sensors)
-RTD_LOX_1 = { board_id = 3, channel = 1, packet_id = [0x22, 0x31], purpose = "LOX tank temperature top", location = "LOX_tank" }
-RTD_LOX_2 = { board_id = 3, channel = 2, packet_id = [0x22, 0x32], purpose = "LOX tank temperature middle", location = "LOX_tank" }
-RTD_LOX_3 = { board_id = 3, channel = 3, packet_id = [0x22, 0x33], purpose = "LOX tank temperature bottom", location = "LOX_tank" }
+RTD_LOX_1 = { board_id = 3, channel = 1, message_id = 0x2231, purpose = "LOX tank temperature top", location = "LOX_tank" }
+RTD_LOX_2 = { board_id = 3, channel = 2, message_id = 0x2232, purpose = "LOX tank temperature middle", location = "LOX_tank" }
+RTD_LOX_3 = { board_id = 3, channel = 3, message_id = 0x2233, purpose = "LOX tank temperature bottom", location = "LOX_tank" }
 
 [sensors.flight.tc]
 # Thermocouples along chamber (multiple sensors)
-TC_CHAMBER_1 = { board_id = 4, channel = 0, packet_id = [0x21, 0x40], purpose = "Chamber temperature front", location = "chamber" }
-TC_CHAMBER_2 = { board_id = 4, channel = 1, packet_id = [0x21, 0x41], purpose = "Chamber temperature middle", location = "chamber" }
-TC_CHAMBER_3 = { board_id = 4, channel = 2, packet_id = [0x21, 0x42], purpose = "Chamber temperature rear", location = "chamber" }
-TC_CHAMBER_4 = { board_id = 4, channel = 3, packet_id = [0x21, 0x43], purpose = "Chamber temperature side", location = "chamber" }
+TC_CHAMBER_1 = { board_id = 4, channel = 0, message_id = 0x2140, purpose = "Chamber temperature front", location = "chamber" }
+TC_CHAMBER_2 = { board_id = 4, channel = 1, message_id = 0x2141, purpose = "Chamber temperature middle", location = "chamber" }
+TC_CHAMBER_3 = { board_id = 4, channel = 2, message_id = 0x2142, purpose = "Chamber temperature rear", location = "chamber" }
+TC_CHAMBER_4 = { board_id = 4, channel = 3, message_id = 0x2143, purpose = "Chamber temperature side", location = "chamber" }
 
 [sensors.flight.lc]
 # Load cells on chamber (3 sensors)
-LC_CHAMBER_1 = { board_id = 5, channel = 0, packet_id = [0x23, 0x50], purpose = "Chamber load cell 1", location = "chamber" }
-LC_CHAMBER_2 = { board_id = 5, channel = 1, packet_id = [0x23, 0x51], purpose = "Chamber load cell 2", location = "chamber" }
-LC_CHAMBER_3 = { board_id = 5, channel = 2, packet_id = [0x23, 0x52], purpose = "Chamber load cell 3", location = "chamber" }
+LC_CHAMBER_1 = { board_id = 5, channel = 0, message_id = 0x2350, purpose = "Chamber load cell 1", location = "chamber" }
+LC_CHAMBER_2 = { board_id = 5, channel = 1, message_id = 0x2351, purpose = "Chamber load cell 2", location = "chamber" }
+LC_CHAMBER_3 = { board_id = 5, channel = 2, message_id = 0x2352, purpose = "Chamber load cell 3", location = "chamber" }
 
 [sensors.flight.actuator]
 # Actuator/valve assignments for flight system
-ACTUATOR_LOX_MAIN = { board_id = 6, channel = 0, packet_id = [0x50, 0x60], purpose = "LOX main valve", location = "lox_line" }
-ACTUATOR_FUEL_MAIN = { board_id = 6, channel = 1, packet_id = [0x50, 0x61], purpose = "Fuel main valve", location = "fuel_line" }
-ACTUATOR_LOX_VENT = { board_id = 6, channel = 2, packet_id = [0x50, 0x62], purpose = "LOX vent valve", location = "lox_line" }
-ACTUATOR_FUEL_VENT = { board_id = 6, channel = 3, packet_id = [0x50, 0x63], purpose = "Fuel vent valve", location = "fuel_line" }
-ACTUATOR_LOX_PRESS = { board_id = 6, channel = 4, packet_id = [0x50, 0x64], purpose = "LOX pressurant valve", location = "lox_line" }
-ACTUATOR_FUEL_PRESS = { board_id = 6, channel = 5, packet_id = [0x50, 0x65], purpose = "Fuel pressurant valve", location = "fuel_line" }
+ACTUATOR_LOX_MAIN = { board_id = 6, channel = 0, message_id = 0x5060, purpose = "LOX main valve", location = "lox_line" }
+ACTUATOR_FUEL_MAIN = { board_id = 6, channel = 1, message_id = 0x5061, purpose = "Fuel main valve", location = "fuel_line" }
+ACTUATOR_LOX_VENT = { board_id = 6, channel = 2, message_id = 0x5062, purpose = "LOX vent valve", location = "lox_line" }
+ACTUATOR_FUEL_VENT = { board_id = 6, channel = 3, message_id = 0x5063, purpose = "Fuel vent valve", location = "fuel_line" }
+ACTUATOR_LOX_PRESS = { board_id = 6, channel = 4, message_id = 0x5064, purpose = "LOX pressurant valve", location = "lox_line" }
+ACTUATOR_FUEL_PRESS = { board_id = 6, channel = 5, message_id = 0x5065, purpose = "Fuel pressurant valve", location = "fuel_line" }
 
 # ============================================================================
 # Board Discovery Configuration

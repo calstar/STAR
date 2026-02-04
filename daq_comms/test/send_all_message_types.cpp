@@ -23,6 +23,7 @@
 #include <thread>
 #include <vector>
 
+#include "../../FSW/include/config/ConfigParser.hpp"
 #include "../../FSW/include/elodin/DatabaseConfig.hpp"
 #include "../../FSW/include/elodin/ElodinClient.hpp"
 #include "../../utl/db.hpp"
@@ -90,6 +91,21 @@ int main(int argc, char* argv[]) {
     std::cout << "================================================================" << std::endl;
 
     try {
+        // Load config first
+        std::string config_path = (argc > 4) ? argv[4] : "config/config_flight_daq.toml";
+        fsw::config::ConfigParser parser;
+        if (!parser.load_config(config_path)) {
+            std::cerr << "❌ Failed to load config: " << config_path << std::endl;
+            return 1;
+        }
+        auto all_sensors = parser.get_all_sensor_assignments();
+        std::cout << "✅ Loaded " << all_sensors.size() << " sensors from config" << std::endl;
+
+        if (all_sensors.empty()) {
+            std::cerr << "❌ ERROR: No sensors found in config file!" << std::endl;
+            return 1;
+        }
+
         // Connect to Elodin DB
         fsw::elodin::ElodinClient client;
         if (!client.connect("127.0.0.1", port)) {
@@ -99,13 +115,20 @@ int main(int argc, char* argv[]) {
         std::cout << "\n✅ Connected to Elodin DB" << std::endl;
 
         // Register all VTables from config (per sensor)
-        std::string config_path = (argc > 4) ? argv[4] : "config/config_flight_daq.toml";
         std::cout << "\n📋 Registering VTables from config: " << config_path << std::endl;
         if (!fsw::elodin::DatabaseConfig::register_tables_from_config(client, config_path)) {
             std::cerr << "❌ Failed to register VTables from config" << std::endl;
             return 1;
         }
-        std::cout << "✅ All VTables registered (per sensor)" << std::endl;
+
+        // Also register VTables for non-sensor message types (calibrated, filtered, navigation,
+        // etc.)
+        std::cout << "\n📋 Registering VTables for non-sensor message types..." << std::endl;
+        if (!fsw::elodin::DatabaseConfig::register_non_sensor_tables(client)) {
+            std::cerr << "❌ Failed to register non-sensor VTables" << std::endl;
+            return 1;
+        }
+        std::cout << "✅ All VTables registered" << std::endl;
 
         // Wait for Elodin to process registrations
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -156,56 +179,85 @@ int main(int argc, char* argv[]) {
                 uint32_t timestamp_ms = timestamp_ms_counter;
 
                 // === RAW SENSOR MESSAGES ===
+                // Send messages for each sensor from config using their unique message IDs
+                // Only send one sensor per type per iteration to avoid overwhelming the system
+                static size_t sensor_index = 0;
 
-                // Raw PT Message
-                comms::messages::sensor::RawPTMessage raw_pt;
-                std::get<0>(raw_pt.fields) = timestamp;
-                std::get<1>(raw_pt.fields) = i % 10;  // Channel 0-9
-                std::get<3>(raw_pt.fields) = static_cast<uint32_t>(adc_dist(gen));
-                std::get<4>(raw_pt.fields) = timestamp_ms;
-                std::get<5>(raw_pt.fields) = 0;
-                std::array<uint8_t, 2> pt_packet_id = {0x20, 0x00};
-                client.publish(pt_packet_id, raw_pt);
-                total_messages++;
+                // Safety check: ensure we have sensors and valid index
+                if (!all_sensors.empty() && sensor_index < all_sensors.size()) {
+                    // Send one sensor per iteration (round-robin)
+                    const auto& sensor = all_sensors[sensor_index];
+                    sensor_index++;
+                    if (sensor_index >= all_sensors.size()) {
+                        sensor_index = 0;  // Wrap around
+                    }
 
-                // Raw TC Message - FIXED: Set padding field
-                comms::messages::sensor::RawTCMessage raw_tc;
-                std::get<0>(raw_tc.fields) = timestamp;
-                std::get<1>(raw_tc.fields) = i % 8;  // Channel 0-7
-                std::get<2>(raw_tc.fields) =
-                    std::array<uint8_t, 3>{0, 0, 0};  // Padding - CRITICAL!
-                std::get<3>(raw_tc.fields) = static_cast<uint32_t>(adc_dist(gen));
-                std::get<4>(raw_tc.fields) = timestamp_ms;
-                std::get<5>(raw_tc.fields) = 0;
-                std::array<uint8_t, 2> tc_packet_id = {0x21, 0x00};
-                client.publish(tc_packet_id, raw_tc);
-                total_messages++;
+                    bool published = false;
 
-                // Raw RTD Message - FIXED: Set padding field
-                comms::messages::sensor::RawRTDMessage raw_rtd;
-                std::get<0>(raw_rtd.fields) = timestamp;
-                std::get<1>(raw_rtd.fields) = i % 6;  // Channel 0-5
-                std::get<2>(raw_rtd.fields) =
-                    std::array<uint8_t, 3>{0, 0, 0};  // Padding - CRITICAL!
-                std::get<3>(raw_rtd.fields) = static_cast<uint32_t>(resistance_dist(gen) * 1000);
-                std::get<4>(raw_rtd.fields) = timestamp_ms;
-                std::get<5>(raw_rtd.fields) = 0;
-                std::array<uint8_t, 2> rtd_packet_id = {0x22, 0x00};
-                client.publish(rtd_packet_id, raw_rtd);
-                total_messages++;
+                    switch (sensor.sensor_type) {
+                        case fsw::config::SensorType::PT: {
+                            comms::messages::sensor::RawPTMessage raw_pt;
+                            std::get<0>(raw_pt.fields) = timestamp;
+                            std::get<1>(raw_pt.fields) = sensor.channel_id;
+                            std::get<2>(raw_pt.fields) =
+                                std::array<uint8_t, 3>{0, 0, 0};  // Padding
+                            std::get<3>(raw_pt.fields) = static_cast<uint32_t>(adc_dist(gen));
+                            std::get<4>(raw_pt.fields) = timestamp_ms;
+                            std::get<5>(raw_pt.fields) = 0;
+                            published = client.publish(sensor.message_id, raw_pt);
+                            break;
+                        }
+                        case fsw::config::SensorType::TC: {
+                            comms::messages::sensor::RawTCMessage raw_tc;
+                            std::get<0>(raw_tc.fields) = timestamp;
+                            std::get<1>(raw_tc.fields) = sensor.channel_id;
+                            std::get<2>(raw_tc.fields) =
+                                std::array<uint8_t, 3>{0, 0, 0};  // Padding
+                            std::get<3>(raw_tc.fields) = static_cast<uint32_t>(adc_dist(gen));
+                            std::get<4>(raw_tc.fields) = timestamp_ms;
+                            std::get<5>(raw_tc.fields) = 0;
+                            published = client.publish(sensor.message_id, raw_tc);
+                            break;
+                        }
+                        case fsw::config::SensorType::RTD: {
+                            comms::messages::sensor::RawRTDMessage raw_rtd;
+                            std::get<0>(raw_rtd.fields) = timestamp;
+                            std::get<1>(raw_rtd.fields) = sensor.channel_id;
+                            std::get<2>(raw_rtd.fields) =
+                                std::array<uint8_t, 3>{0, 0, 0};  // Padding
+                            std::get<3>(raw_rtd.fields) =
+                                static_cast<uint32_t>(resistance_dist(gen) * 1000);
+                            std::get<4>(raw_rtd.fields) = timestamp_ms;
+                            std::get<5>(raw_rtd.fields) = 0;
+                            published = client.publish(sensor.message_id, raw_rtd);
+                            break;
+                        }
+                        case fsw::config::SensorType::LC: {
+                            comms::messages::sensor::RawLCMessage raw_lc;
+                            std::get<0>(raw_lc.fields) = timestamp;
+                            std::get<1>(raw_lc.fields) = sensor.channel_id;
+                            std::get<2>(raw_lc.fields) =
+                                std::array<uint8_t, 3>{0, 0, 0};  // Padding
+                            std::get<3>(raw_lc.fields) = static_cast<uint32_t>(load_dist(gen));
+                            std::get<4>(raw_lc.fields) = timestamp_ms;
+                            std::get<5>(raw_lc.fields) = 0;
+                            published = client.publish(sensor.message_id, raw_lc);
+                            break;
+                        }
+                        case fsw::config::SensorType::ACTUATOR: {
+                            // Skip actuators for now (would need ActuatorCommandMessage)
+                            break;
+                        }
+                    }
 
-                // Raw LC Message - FIXED: Set padding field
-                comms::messages::sensor::RawLCMessage raw_lc;
-                std::get<0>(raw_lc.fields) = timestamp;
-                std::get<1>(raw_lc.fields) = i % 4;  // Channel 0-3
-                std::get<2>(raw_lc.fields) =
-                    std::array<uint8_t, 3>{0, 0, 0};  // Padding - CRITICAL!
-                std::get<3>(raw_lc.fields) = static_cast<uint32_t>(load_dist(gen));
-                std::get<4>(raw_lc.fields) = timestamp_ms;
-                std::get<5>(raw_lc.fields) = 0;
-                std::array<uint8_t, 2> lc_packet_id = {0x23, 0x00};
-                client.publish(lc_packet_id, raw_lc);
-                total_messages++;
+                    if (published) {
+                        total_messages++;
+                    }
+                } else {
+                    // No sensors or invalid index - skip raw sensor messages this iteration
+                    std::cerr << "⚠️  WARNING: No sensors available or invalid sensor_index"
+                              << std::endl;
+                }
 
                 // === CALIBRATED SENSOR MESSAGES ===
 

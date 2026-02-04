@@ -53,7 +53,7 @@ bool ConfigParser::load_config(const std::string& config_path) {
             continue;
         }
 
-        // Check for sensor entry: sensor_id = { ... }
+        // Check for sensor entry: sensor_id = { ... } (single-line or multi-line)
         std::regex sensor_entry_regex(R"((\w+)\s*=\s*\{)");
         std::smatch match;
         if (std::regex_search(line, match, sensor_entry_regex)) {
@@ -63,6 +63,46 @@ bool ConfigParser::load_config(const std::string& config_path) {
                 current_fields.clear();
             }
             current_sensor_id = match[1].str();
+
+            // Check if this is a single-line entry: sensor_id = { key1 = value1, key2 = value2 }
+            if (line.find('}') != std::string::npos) {
+                // Single-line entry - parse fields from the same line
+                std::string content = line.substr(line.find('{') + 1);
+                content = content.substr(0, content.find_last_of('}'));
+
+                // Parse key-value pairs separated by commas
+                std::regex kv_regex(R"((\w+)\s*=\s*([^,}]+))");
+                std::sregex_iterator iter(content.begin(), content.end(), kv_regex);
+                std::sregex_iterator end;
+
+                for (; iter != end; ++iter) {
+                    std::string key = iter->str(1);
+                    std::string value = iter->str(2);
+
+                    // Trim value
+                    value.erase(0, value.find_first_not_of(" \t"));
+                    value.erase(value.find_last_not_of(" \t") + 1);
+
+                    // Remove quotes if present
+                    if (value.front() == '"' && value.back() == '"') {
+                        value = value.substr(1, value.length() - 2);
+                    }
+
+                    if (key == "message_id" || key == "packet_id") {
+                        current_fields["message_id"] = value;
+                    } else {
+                        current_fields[key] = value;
+                    }
+                }
+
+                // Parse the entry immediately
+                if (!current_fields.empty()) {
+                    parse_sensor_entry(current_sensor_id, current_section, current_fields);
+                    current_fields.clear();
+                    current_sensor_id.clear();
+                }
+            }
+            // If multi-line, continue to next lines for fields
             continue;
         }
 
