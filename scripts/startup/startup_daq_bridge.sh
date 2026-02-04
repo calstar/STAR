@@ -140,7 +140,7 @@ if [ -f "$FAKE_GEN_BIN" ]; then
     "$FAKE_GEN_BIN" "127.0.0.1" "$UDP_PORT" 1000 &
     FAKE_GEN_PID=$!
     sleep 1
-    
+
     if ps -p $FAKE_GEN_PID > /dev/null 2>&1; then
         echo "✅ Fake packet generator started (PID: $FAKE_GEN_PID)"
         echo ""
@@ -183,4 +183,3 @@ else
 fi
 
 return 0
-

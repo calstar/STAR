@@ -19,5 +19,3 @@ if ! nc -z ${GROUNDSTATION_IP:-"192.168.1.100"} 2240; then
 fi
 
 echo "All systems operational"
-
-

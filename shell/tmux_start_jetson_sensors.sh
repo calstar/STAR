@@ -77,5 +77,3 @@ echo "To stop the system: tmux kill-session -t $SESSION_NAME"
 
 # Attach to the session
 tmux attach -t "$SESSION_NAME"
-
-

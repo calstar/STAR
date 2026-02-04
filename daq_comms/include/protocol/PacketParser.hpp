@@ -1,26 +1,26 @@
 #ifndef DAQ_PACKET_PARSER_HPP
 #define DAQ_PACKET_PARSER_HPP
 
-#include <cstdint>
-#include <vector>
-#include <optional>
-#include <atomic>
-#include <mutex>
-#include <map>
-#include <chrono>
-#include <string>
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <map>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <vector>
 
-#include "../../comms/include/CommsMessage.hpp"
-#include "../../comms/include/messages/sensor/SensorMessages.hpp"
 #include "EncryptedFrame.hpp"
+#include "comms/CommsMessage.hpp"
+#include "comms/messages/sensor/SensorMessages.hpp"
 
 namespace daq_comms {
 namespace protocol {
 
 /**
  * @brief Unified Packet Parser for Sensor Data and Commands
- * 
+ *
  * Inspired by DiabloAvionics packet protocol patterns, this parser handles:
  * - Incoming sensor data packets (from embedded systems)
  * - Outgoing command packets (to embedded systems)
@@ -32,28 +32,28 @@ class PacketParser {
 public:
     // Packet structure constants (matching DiabloAvionics FSW PacketProtocol exactly)
     static constexpr uint16_t PACKET_HEADER_SIZE = 26;  // Full header including checksum
-    static constexpr uint16_t HEADER_DATA_SIZE = 24;     // Header data (before checksum)
+    static constexpr uint16_t HEADER_DATA_SIZE = 24;    // Header data (before checksum)
     static constexpr uint16_t MAX_PACKET_SIZE = 1024;
     static constexpr uint32_t MAGIC_NUMBER = 0xDEADBEEF;
     static constexpr uint16_t PROTOCOL_VERSION = 0x0001;
 
     // Packet types
     enum class PacketType : uint8_t {
-        SENSOR_DATA = 0x01,        // Sensor data from embedded systems
-        CONTROL_COMMAND = 0x02,   // Control commands to embedded systems
-        STATUS_UPDATE = 0x03,      // Status/health updates
-        CALIBRATION_REQUEST = 0x04, // Calibration data requests
-        HEARTBEAT = 0x05,          // Heartbeat/keepalive
-        ERROR_REPORT = 0x06,       // Error reporting
-        ACK = 0x07                 // Acknowledgment
+        SENSOR_DATA = 0x01,          // Sensor data from embedded systems
+        CONTROL_COMMAND = 0x02,      // Control commands to embedded systems
+        STATUS_UPDATE = 0x03,        // Status/health updates
+        CALIBRATION_REQUEST = 0x04,  // Calibration data requests
+        HEARTBEAT = 0x05,            // Heartbeat/keepalive
+        ERROR_REPORT = 0x06,         // Error reporting
+        ACK = 0x07                   // Acknowledgment
     };
 
     // Packet priority levels
     enum class Priority : uint8_t {
         CRITICAL = 0x01,  // Safety-critical data
         HIGH = 0x02,      // Control commands
-        NORMAL = 0x03,   // Regular sensor data
-        LOW = 0x04       // Logging data
+        NORMAL = 0x03,    // Regular sensor data
+        LOW = 0x04        // Logging data
     };
 
     // Sensor types (matching our sensor system)
@@ -77,7 +77,7 @@ public:
 
     /**
      * @brief Packet header structure (matching DiabloAvionics FSW PacketProtocol exactly)
-     * 
+     *
      * Layout (26 bytes total):
      * - magic_number: 4 bytes (0xDEADBEEF)
      * - protocol_version: 2 bytes (0x0001)
@@ -99,11 +99,10 @@ public:
         uint32_t sequence_number;   // Sequence number for ordering
         uint64_t timestamp_ns;      // Timestamp in nanoseconds
         uint16_t checksum;          // CRC16 checksum (matches FSW)
-        
+
         // Validation
         bool is_valid() const {
-            return magic_number == MAGIC_NUMBER &&
-                   protocol_version == PROTOCOL_VERSION &&
+            return magic_number == MAGIC_NUMBER && protocol_version == PROTOCOL_VERSION &&
                    payload_size <= MAX_PACKET_SIZE;
         }
     };
@@ -113,11 +112,11 @@ public:
      */
     struct SensorDataEntry {
         SensorType sensor_type;
-        uint8_t sensor_id;          // Channel/sensor ID
-        uint16_t data_size;         // Size of sensor data
+        uint8_t sensor_id;              // Channel/sensor ID
+        uint16_t data_size;             // Size of sensor data
         std::vector<uint8_t> raw_data;  // Raw sensor data bytes
-        uint64_t timestamp_ns;      // Sensor timestamp
-        uint8_t quality;           // Data quality (0-255)
+        uint64_t timestamp_ns;          // Sensor timestamp
+        uint8_t quality;                // Data quality (0-255)
     };
 
     /**
@@ -168,10 +167,8 @@ public:
      * @param priority Packet priority
      * @return Constructed packet bytes
      */
-    std::vector<uint8_t> construct_sensor_packet(
-        const std::vector<SensorDataEntry>& sensor_data,
-        Priority priority = Priority::NORMAL
-    );
+    std::vector<uint8_t> construct_sensor_packet(const std::vector<SensorDataEntry>& sensor_data,
+                                                 Priority priority = Priority::NORMAL);
 
     /**
      * @brief Construct control command packet
@@ -180,11 +177,9 @@ public:
      * @param priority Packet priority
      * @return Constructed packet bytes
      */
-    std::vector<uint8_t> construct_command_packet(
-        uint8_t command_type,
-        const std::vector<uint8_t>& command_data,
-        Priority priority = Priority::HIGH
-    );
+    std::vector<uint8_t> construct_command_packet(uint8_t command_type,
+                                                  const std::vector<uint8_t>& command_data,
+                                                  Priority priority = Priority::HIGH);
 
     /**
      * @brief Construct calibration request packet
@@ -193,26 +188,27 @@ public:
      * @param calibration_data Calibration parameters
      * @return Constructed packet bytes
      */
-    std::vector<uint8_t> construct_calibration_request(
-        SensorType sensor_type,
-        uint8_t sensor_id,
-        const std::vector<double>& calibration_data
-    );
+    std::vector<uint8_t> construct_calibration_request(SensorType sensor_type, uint8_t sensor_id,
+                                                       const std::vector<double>& calibration_data);
 
     /**
      * @brief Validate parsed packet (including checksum)
      */
     bool validate_packet(const ParsedPacket& packet) const;
-    
+
     /**
      * @brief Enable/disable checksum validation
      */
-    void set_checksum_validation(bool enabled) { checksum_validation_enabled_ = enabled; }
+    void set_checksum_validation(bool enabled) {
+        checksum_validation_enabled_ = enabled;
+    }
 
     /**
      * @brief Get statistics
      */
-    PacketStats get_stats() const { return stats_; }
+    PacketStats get_stats() const {
+        return stats_;
+    }
 
     /**
      * @brief Reset statistics
@@ -222,32 +218,40 @@ public:
     /**
      * @brief Get next sequence number (for outgoing packets)
      */
-    uint32_t get_next_sequence() { return next_sequence_++; }
+    uint32_t get_next_sequence() {
+        return next_sequence_++;
+    }
 
     /**
      * @brief Check if parser is healthy
      */
-    bool is_healthy() const { return healthy_; }
+    bool is_healthy() const {
+        return healthy_;
+    }
 
     /**
      * @brief Get active errors
      */
-    std::vector<std::string> get_active_errors() const { return active_errors_; }
+    std::vector<std::string> get_active_errors() const {
+        return active_errors_;
+    }
 
 private:
     // Packet parsing helpers
     bool parse_header(const uint8_t* data, size_t size, size_t& offset, PacketHeader& header) const;
-    bool parse_sensor_data(const uint8_t* data, size_t size, size_t& offset, SensorDataEntry& entry) const;
-    
+    bool parse_sensor_data(const uint8_t* data, size_t size, size_t& offset,
+                           SensorDataEntry& entry) const;
+
     // Packet construction helpers
     void add_header_to_packet(std::vector<uint8_t>& packet, PacketType type, Priority priority,
                               uint16_t payload_size, uint16_t sensor_count);
-    void add_sensor_entry_to_packet(std::vector<uint8_t>& packet, const SensorDataEntry& entry) const;
-    
+    void add_sensor_entry_to_packet(std::vector<uint8_t>& packet,
+                                    const SensorDataEntry& entry) const;
+
     // Validation helpers
     uint16_t calculate_checksum(const uint8_t* data, size_t size) const;
     bool validate_sequence(uint32_t sequence);
-    
+
     // Error handling
     void handle_malformed_packet(const std::string& error);
     void clear_errors();
@@ -264,7 +268,7 @@ private:
 
 /**
  * @brief Helper class to convert ParsedPacket to CommsMessage format
- * 
+ *
  * This bridges the packet parser output to our CommsMessage system
  */
 class PacketToCommsMessageConverter {
@@ -275,37 +279,40 @@ public:
      * @param receive_timestamp_ns Receive timestamp
      * @return Pair of (packet_id, CommsMessage) or empty if conversion fails
      */
-    template<typename MessageType>
-    std::optional<std::pair<std::array<uint8_t, 2>, MessageType>> 
-    convert_sensor_entry(const PacketParser::SensorDataEntry& entry, uint64_t receive_timestamp_ns) const;
+    template <typename MessageType>
+    std::optional<std::pair<std::array<uint8_t, 2>, MessageType>> convert_sensor_entry(
+        const PacketParser::SensorDataEntry& entry, uint64_t receive_timestamp_ns) const;
 
     /**
      * @brief Convert PT sensor entry to RawPTMessage
      */
     std::optional<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawPTMessage>>
-    convert_pt_entry(const PacketParser::SensorDataEntry& entry, uint64_t receive_timestamp_ns) const;
+    convert_pt_entry(const PacketParser::SensorDataEntry& entry,
+                     uint64_t receive_timestamp_ns) const;
 
     /**
      * @brief Convert TC sensor entry to RawTCMessage
      */
     std::optional<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawTCMessage>>
-    convert_tc_entry(const PacketParser::SensorDataEntry& entry, uint64_t receive_timestamp_ns) const;
+    convert_tc_entry(const PacketParser::SensorDataEntry& entry,
+                     uint64_t receive_timestamp_ns) const;
 
     /**
      * @brief Convert RTD sensor entry to RawRTDMessage
      */
     std::optional<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawRTDMessage>>
-    convert_rtd_entry(const PacketParser::SensorDataEntry& entry, uint64_t receive_timestamp_ns) const;
+    convert_rtd_entry(const PacketParser::SensorDataEntry& entry,
+                      uint64_t receive_timestamp_ns) const;
 
     /**
      * @brief Convert LC sensor entry to RawLCMessage
      */
     std::optional<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawLCMessage>>
-    convert_lc_entry(const PacketParser::SensorDataEntry& entry, uint64_t receive_timestamp_ns) const;
+    convert_lc_entry(const PacketParser::SensorDataEntry& entry,
+                     uint64_t receive_timestamp_ns) const;
 };
 
-} // namespace protocol
-} // namespace daq_comms
+}  // namespace protocol
+}  // namespace daq_comms
 
-#endif // DAQ_PACKET_PARSER_HPP
-
+#endif  // DAQ_PACKET_PARSER_HPP

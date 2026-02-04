@@ -1,21 +1,22 @@
 #ifndef DAQ_FSW_CONFIG_MANAGER_HPP
 #define DAQ_FSW_CONFIG_MANAGER_HPP
 
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
+
 #include "config/SensorAssignment.hpp"
 #include "protocol/DiabloBoardPacketParser.hpp"
 #include "transport/NetworkSocket.hpp"
-#include <cstdint>
-#include <string>
-#include <map>
-#include <memory>
-#include <functional>
 
 namespace daq_comms {
 namespace fsw {
 
 /**
  * @brief FSW Configuration Manager
- * 
+ *
  * Manages IP assignment and sensor configuration distribution to boards.
  * This runs on the FSW side and assigns configurations to boards.
  */
@@ -38,9 +39,9 @@ public:
      * @param mac_address Board MAC address
      * @return Assigned IP address
      */
-    std::string process_board_heartbeat(const protocol::DiabloBoardPacketParser::ParsedBoardHeartbeat& heartbeat,
-                                       const std::string& source_ip,
-                                       const std::string& mac_address);
+    std::string process_board_heartbeat(
+        const protocol::DiabloBoardPacketParser::ParsedBoardHeartbeat& heartbeat,
+        const std::string& source_ip, const std::string& mac_address);
 
     /**
      * @brief Assign sensors to a board
@@ -49,7 +50,8 @@ public:
      * @param start_channel Starting channel on board
      * @return true if successful
      */
-    bool assign_sensors(uint8_t board_id, const std::vector<std::string>& sensor_ids, uint8_t start_channel = 0);
+    bool assign_sensors(uint8_t board_id, const std::vector<std::string>& sensor_ids,
+                        uint8_t start_channel = 0);
 
     /**
      * @brief Send configuration packet to board
@@ -66,7 +68,9 @@ public:
     /**
      * @brief Get sensor assignment manager
      */
-    config::SensorAssignmentManager& get_assignment_manager() { return assignment_manager_; }
+    config::SensorAssignmentManager& get_assignment_manager() {
+        return assignment_manager_;
+    }
 
     /**
      * @brief Set system state (GSE or FLIGHT)
@@ -76,22 +80,23 @@ public:
     /**
      * @brief Get current system state
      */
-    config::SystemState get_system_state() const { return current_state_; }
+    config::SystemState get_system_state() const {
+        return current_state_;
+    }
 
 private:
     config::SensorAssignmentManager assignment_manager_;
     std::unique_ptr<transport::UDPSocket> config_socket_;
     config::SystemState current_state_;
-    
+
     // Track which boards have been configured
     std::map<uint8_t, bool> boards_configured_;
-    
+
     // Helper to determine system state from board type/IP
     config::SystemState infer_system_state(uint8_t board_id, const std::string& source_ip) const;
 };
 
-} // namespace fsw
-} // namespace daq_comms
+}  // namespace fsw
+}  // namespace daq_comms
 
-#endif // DAQ_FSW_CONFIG_MANAGER_HPP
-
+#endif  // DAQ_FSW_CONFIG_MANAGER_HPP

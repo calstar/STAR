@@ -255,14 +255,16 @@ public:
     ~GainOptimizer();
 
     bool initialize(const OptimizationConfig& config);
-    OptimizationResult optimizeGains(GainScheduling::ControlLoop control_loop, const GainScheduling::OperatingPoint& op_point,
+    OptimizationResult optimizeGains(GainScheduling::ControlLoop control_loop,
+                                     const GainScheduling::OperatingPoint& op_point,
                                      const GainScheduling::PIDGains& initial_gains);
 
     OptimizationConfig getConfig() const;
     bool updateConfig(const OptimizationConfig& config);
 
 private:
-    double evaluateObjective(const GainScheduling::PIDGains& gains, const GainScheduling::OperatingPoint& op_point) const;
+    double evaluateObjective(const GainScheduling::PIDGains& gains,
+                             const GainScheduling::OperatingPoint& op_point) const;
     bool checkConstraints(const GainScheduling::PIDGains& gains) const;
 
     OptimizationConfig config_;

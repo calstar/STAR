@@ -46,4 +46,3 @@
 1. **Development**: Use Ground DAQ config
 2. **Hotfire**: Use Ground DAQ config with `hotfire.enabled = true` (all sensors)
 3. **Flight**: Use Flight DAQ for flight sensors, Ground DAQ for GSE sensors
-

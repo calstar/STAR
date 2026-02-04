@@ -65,4 +65,3 @@ echo ""
 echo "🧪 Test installation:"
 echo "   python3 -c 'from PyQt6 import QtWidgets; import pyqtgraph; print(\"✅ All imports OK\")'"
 echo ""
-

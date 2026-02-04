@@ -204,4 +204,3 @@ PT_OF = { board_id = 10, channel = 0, max_psi = 1000, component = "lox_fill" }
 5. **Validation**: Verify sensor assignments match hardware
 6. **Error Handling**: Robust error handling for failed assignments
 7. **Persistence**: Save assignments to config file
-

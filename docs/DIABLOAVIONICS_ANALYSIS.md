@@ -175,4 +175,3 @@ From analyzing the board code:
 - Packet format defined in: `external/DAQv2-Comms/src/DiabloPackets.h`
 - Packet utilities: `external/DAQv2-Comms/src/DiabloPacketUtils.cpp`
 - Board examples: `external/DiabloAvionics/PT_Board/`, `RTD_Board/`, `LC_Board/`
-

@@ -16,7 +16,7 @@ if [ -z "$1" ]; then
     return 1
 fi
 
-# Initially set these 
+# Initially set these
 PORT=2240
 
 # Find all PIDs using the port
@@ -144,5 +144,3 @@ done
 
 echo "❌ Error: Database failed to start on port $PORT"
 return 1
-
-

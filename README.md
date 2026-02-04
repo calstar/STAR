@@ -51,11 +51,45 @@ See `config/README.md` for detailed configuration documentation.
 
 ## Building
 
+### Initial Setup
+
+```bash
+# Clone repository with submodules
+git clone --recursive <repository-url>
+cd sensor_system
+
+# OR if already cloned, initialize submodules
+git submodule update --init --recursive
+```
+
+### Build
+
 ```bash
 mkdir -p build
 cd build
 cmake ..
 cmake --build .
+```
+
+## External Dependencies
+
+This repository uses git submodules for external dependencies:
+
+- **external/DAQv2-Comms**: ESP32 Ethernet communication library for Diablo DAQ system
+- **external/DiabloAvionics**: DiabloAvionics firmware and board code
+
+To update submodules to latest versions:
+```bash
+git submodule update --remote --recursive
+```
+
+To update a specific submodule:
+```bash
+cd external/DAQv2-Comms
+git pull origin main
+cd ../..
+git add external/DAQv2-Comms
+git commit -m "Update DAQv2-Comms submodule"
 ```
 
 ## Documentation

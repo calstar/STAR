@@ -29,7 +29,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/FSW/control/include
     ${CMAKE_SOURCE_DIR}/FSW/nav/include
     ${CMAKE_SOURCE_DIR}/FSW/state/include
-    ${CMAKE_SOURCE_DIR}/comms/include
+    ${CMAKE_SOURCE_DIR}/daq_comms/include
     ${CMAKE_SOURCE_DIR}/utl
 )
 
@@ -121,7 +121,6 @@ add_executable(test_fsw_simulator scripts/test/test_fsw_simulator.cpp)
 target_link_libraries(test_fsw_simulator daq_comms_lib Threads::Threads pthread rt)
 target_include_directories(test_fsw_simulator PRIVATE
     ${CMAKE_SOURCE_DIR}/daq_comms/include
-    ${CMAKE_SOURCE_DIR}/comms/include
     ${CMAKE_SOURCE_DIR}/utl
 )
 

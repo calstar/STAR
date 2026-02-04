@@ -92,6 +92,3 @@ Databases are stored in `~/.local/share/elodin/<db_name>`, matching FSW's conven
 - Database will prompt if existing database is found
 - Ports default to 8888 (UDP) and 2240 (Elodin)
 - Scripts check for required executables before starting
-
-
-

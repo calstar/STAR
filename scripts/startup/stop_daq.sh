@@ -34,6 +34,3 @@ fi
 sleep 1
 echo ""
 echo "✅ All DAQ processes stopped"
-
-
-

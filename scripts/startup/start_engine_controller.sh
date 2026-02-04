@@ -46,13 +46,13 @@ check_root() {
 # Check system requirements
 check_system_requirements() {
     log_info "Checking system requirements..."
-    
+
     # Check if running on supported platform
     if [[ ! -f /etc/os-release ]]; then
         log_error "Cannot determine OS version"
         exit 1
     fi
-    
+
     # Check for required tools
     local required_tools=("systemctl" "journalctl" "ps" "netstat")
     for tool in "${required_tools[@]}"; do
@@ -61,32 +61,32 @@ check_system_requirements() {
             exit 1
         fi
     done
-    
+
     log_success "System requirements check passed"
 }
 
 # Check configuration file
 check_config() {
     log_info "Checking configuration file..."
-    
+
     if [[ ! -f "$CONFIG_FILE" ]]; then
         log_warning "Configuration file not found at $CONFIG_FILE"
         log_info "Using default configuration from project directory"
         CONFIG_FILE="$PROJECT_ROOT/config/config_engine.toml"
-        
+
         if [[ ! -f "$CONFIG_FILE" ]]; then
             log_error "No configuration file found"
             exit 1
         fi
     fi
-    
+
     log_success "Configuration file found: $CONFIG_FILE"
 }
 
 # Check if service is already running
 check_service_status() {
     log_info "Checking service status..."
-    
+
     if systemctl is-active --quiet "$SERVICE_NAME"; then
         log_warning "Service '$SERVICE_NAME' is already running"
         read -p "Do you want to restart it? (y/N): " -n 1 -r
@@ -105,14 +105,14 @@ check_service_status() {
 # Create necessary directories
 create_directories() {
     log_info "Creating necessary directories..."
-    
+
     local directories=(
         "/var/lib/engine_controller"
         "/var/lib/engine_controller/calibrations"
         "/var/log/engine_controller"
         "/tmp/engine_controller"
     )
-    
+
     for dir in "${directories[@]}"; do
         if [[ ! -d "$dir" ]]; then
             sudo mkdir -p "$dir"
@@ -125,7 +125,7 @@ create_directories() {
 # Set up hardware interfaces
 setup_hardware() {
     log_info "Setting up hardware interfaces..."
-    
+
     # Check CAN interface
     if [[ -d /sys/class/net/can0 ]]; then
         if ! ip link show can0 | grep -q "UP"; then
@@ -136,7 +136,7 @@ setup_hardware() {
     else
         log_warning "CAN interface not found"
     fi
-    
+
     # Check serial interfaces
     local serial_devices=("/dev/ttyUSB0" "/dev/ttyUSB1" "/dev/ttyACM0")
     for device in "${serial_devices[@]}"; do
@@ -145,7 +145,7 @@ setup_hardware() {
             sudo chmod 666 "$device" 2>/dev/null || true
         fi
     done
-    
+
     # Check GPIO access
     if [[ -d /sys/class/gpio ]]; then
         log_success "GPIO interface available"
@@ -157,11 +157,11 @@ setup_hardware() {
 # Start the service
 start_service() {
     log_info "Starting engine controller service..."
-    
+
     # Set environment variables
     export CONFIG_FILE
     export LOG_LEVEL
-    
+
     # Start the service
     if systemctl start "$SERVICE_NAME"; then
         log_success "Service started successfully"
@@ -175,10 +175,10 @@ start_service() {
 # Monitor the service
 monitor_service() {
     log_info "Monitoring service status..."
-    
+
     # Wait for service to start
     sleep 3
-    
+
     # Check if service is running
     if systemctl is-active --quiet "$SERVICE_NAME"; then
         log_success "Service is running"
@@ -187,11 +187,11 @@ monitor_service() {
         systemctl status "$SERVICE_NAME" --no-pager
         exit 1
     fi
-    
+
     # Show service logs
     log_info "Recent service logs:"
     journalctl -u "$SERVICE_NAME" --no-pager -n 20
-    
+
     # Show network connections
     log_info "Network connections:"
     netstat -tuln | grep -E ":(2240|2241|2242|2243)" || log_warning "No expected network connections found"
@@ -201,7 +201,7 @@ monitor_service() {
 main() {
     log_info "Starting Liquid Engine Flight Software Controller"
     log_info "=================================================="
-    
+
     check_root
     check_system_requirements
     check_config
@@ -210,7 +210,7 @@ main() {
     setup_hardware
     start_service
     monitor_service
-    
+
     log_success "Engine controller startup complete!"
     log_info "Use 'journalctl -u $SERVICE_NAME -f' to follow logs"
     log_info "Use 'systemctl status $SERVICE_NAME' to check status"

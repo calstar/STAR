@@ -1,5 +1,5 @@
-#include <iostream>
 #include <cstdio>
+#include <iostream>
 
 void transpose(double* matrix, size_t width, size_t height, double* out) {
     for (size_t i = 0; i < width; i++) {
@@ -9,11 +9,11 @@ void transpose(double* matrix, size_t width, size_t height, double* out) {
     }
 }
 
-void zeros(double *matrix, size_t n, size_t m) {
+void zeros(double* matrix, size_t n, size_t m) {
     std::fill(matrix, matrix + n * m, 0.0);
 }
 
-void ones(double *matrix, size_t n, size_t m) {
+void ones(double* matrix, size_t n, size_t m) {
     std::fill(matrix, matrix + n * m, 1.0);
 }
 
@@ -27,7 +27,8 @@ void eye(double* matrix, size_t n, size_t m) {
     }
 }
 
-void matmul(double* A, size_t a_width, size_t a_height, double* B, size_t b_width, size_t b_height, double* out) {
+void matmul(double* A, size_t a_width, size_t a_height, double* B, size_t b_width, size_t b_height,
+            double* out) {
     // Standard matrix multiplication, with transposed B for cache efficiency
     alignas(64) double BT[b_width * b_height];
     transpose(B, b_width, b_height, BT);
@@ -83,7 +84,7 @@ void abs(double* matrix, size_t n, size_t m) {
 // double least_squares_solver(y, X, beta)
 
 size_t _printed_length(double value) {
-    char buffer[64]; // big enough for any double representation
+    char buffer[64];  // big enough for any double representation
     int len = std::snprintf(buffer, sizeof(buffer), "%g", value);
     return static_cast<size_t>(len);
 }
@@ -102,17 +103,20 @@ void print_matrix(double* matrix, size_t n, size_t m) {
 
     std::cout << "[";
     for (size_t row = 0; row < m; row++) {
-        if (row > 0) std::cout << " ";
+        if (row > 0)
+            std::cout << " ";
         std::cout << "[";
 
         for (size_t col = 0; col < n; col++) {
             size_t pad_size = longest_num_in_col[col] - _printed_length(matrix[row * n + col]);
             std::cout << std::string(pad_size + 1, ' ') << matrix[row * n + col];
-            if (col < n - 1) std::cout << ",";
+            if (col < n - 1)
+                std::cout << ",";
         }
 
         std::cout << " ";
-        if (row == m - 1) std::cout << "]";
+        if (row == m - 1)
+            std::cout << "]";
         std::cout << "]" << std::endl;
     }
 }

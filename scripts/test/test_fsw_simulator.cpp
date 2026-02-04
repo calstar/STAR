@@ -1,28 +1,28 @@
 /**
  * Simple FSW Simulator for Elodin Groundstation Testing
- * 
+ *
  * This simulates FSW behavior:
  * - Reads commands from Elodin database
  * - Executes state machine transitions
  * - Writes telemetry (engine status, sensor data) back to Elodin
- * 
+ *
  * Usage: ./test_fsw_simulator <db_port> [db_path]
  */
 
-#include <iostream>
-#include <thread>
-#include <chrono>
-#include <atomic>
-#include <cstdint>
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <iomanip>
+#include <iostream>
 #include <map>
 #include <string>
-#include <iomanip>
+#include <thread>
 
-#include "../../daq_comms/include/elodin/ElodinClient.hpp"
 #include "../../daq_comms/include/elodin/DatabaseConfig.hpp"
-#include "../../comms/include/messages/sensor/SensorMessages.hpp"
+#include "../../daq_comms/include/elodin/ElodinClient.hpp"
 #include "../../utl/db.hpp"
+#include "comms/messages/sensor/SensorMessages.hpp"
 
 using namespace vtable;
 using namespace vtable::builder;
@@ -61,7 +61,7 @@ bool parseCommand(const std::vector<std::byte>& /*data*/, CommandMessage& /*cmd*
 // Execute command
 void executeCommand(const CommandMessage& cmd) {
     std::cout << "📥 Executing command: " << cmd.type << std::endl;
-    
+
     if (cmd.type == "ENGINE_START") {
         if (current_state == EngineState::STANDBY) {
             current_state = EngineState::PRE_IGNITION;
@@ -96,29 +96,29 @@ void writeEngineStatus(daq_comms::elodin::ElodinClient& client) {
     // Create a simple status message
     // In real FSW, this would be EngineStatusMessage
     // For now, we'll use RawPTMessage format but with status data
-    
+
     comms::messages::sensor::RawPTMessage status_msg;
-    
+
     auto now = std::chrono::steady_clock::now();
-    auto timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        now.time_since_epoch()).count();
-    
+    auto timestamp_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+
     // Load atomic values
     EngineState state = current_state.load();
     double thrust = current_thrust.load();
-    
+
     // Encode state and thrust in the message fields
     status_msg.setField<0>(timestamp_ns);
-    status_msg.setField<1>(static_cast<uint8_t>(state)); // channel_id = state
-    status_msg.setField<2>(static_cast<uint32_t>(thrust * 100)); // raw_adc = thrust*100
-    status_msg.setField<3>(0); // sample_timestamp_ms
-    status_msg.setField<4>(0); // status_flags
-    
-    std::array<uint8_t, 2> status_packet_id{0x10, 0x00}; // ENGINE_STATUS
-    
+    status_msg.setField<1>(static_cast<uint8_t>(state));          // channel_id = state
+    status_msg.setField<2>(static_cast<uint32_t>(thrust * 100));  // raw_adc = thrust*100
+    status_msg.setField<3>(0);                                    // sample_timestamp_ms
+    status_msg.setField<4>(0);                                    // status_flags
+
+    std::array<uint8_t, 2> status_packet_id{0x10, 0x00};  // ENGINE_STATUS
+
     if (client.publish(status_packet_id, status_msg)) {
-        std::cout << "📤 Engine status: state=" << static_cast<int>(state) 
-                  << ", thrust=" << thrust << "%" << std::endl;
+        std::cout << "📤 Engine status: state=" << static_cast<int>(state) << ", thrust=" << thrust
+                  << "%" << std::endl;
     }
 }
 
@@ -129,15 +129,15 @@ int main(int argc, char* argv[]) {
         std::cerr << "Example: " << argv[0] << " 2240" << std::endl;
         return 1;
     }
-    
+
     uint16_t port = std::stoi(argv[1]);
-    
+
     std::cout << "🤖 FSW Simulator for Elodin Groundstation Test" << std::endl;
     std::cout << "================================================" << std::endl;
     std::cout << "DB: 127.0.0.1:" << port << std::endl;
     std::cout << "State: STANDBY" << std::endl;
     std::cout << "" << std::endl;
-    
+
     try {
         // Connect to Elodin
         daq_comms::elodin::ElodinClient client;
@@ -146,42 +146,43 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         std::cout << "✅ Connected to Elodin DB" << std::endl;
-        
+
         // Register tables
         if (!daq_comms::elodin::DatabaseConfig::register_tables(client)) {
             std::cerr << "❌ Failed to register tables" << std::endl;
             return 1;
         }
         std::cout << "✅ Registered VTables" << std::endl;
-        
+
         // Wait for Elodin to process VTables
         std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-        
+
         std::cout << "" << std::endl;
         std::cout << "🔄 Starting simulation loop..." << std::endl;
         std::cout << "   - Polling for commands every 100ms" << std::endl;
         std::cout << "   - Writing engine status every 1s" << std::endl;
         std::cout << "   Press Ctrl+C to stop" << std::endl;
         std::cout << "" << std::endl;
-        
+
         auto last_status_time = std::chrono::steady_clock::now();
-        
+
         // Main loop
         while (running) {
             // TODO: Poll Elodin for commands
             // In real implementation, use ElodinCommandHandler to poll for commands
             // For now, we'll just write status periodically
-            
+
             auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                now - last_status_time).count();
-            
+            auto elapsed =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - last_status_time)
+                    .count();
+
             // Write engine status every second
             if (elapsed >= 1000) {
                 writeEngineStatus(client);
                 last_status_time = now;
             }
-            
+
             // Simulate state transitions
             if (current_state == EngineState::PRE_IGNITION) {
                 std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -196,17 +197,16 @@ int main(int argc, char* argv[]) {
                 current_state = EngineState::STEADY_STATE;
                 std::cout << "  → Auto-transitioned to STEADY_STATE" << std::endl;
             }
-            
+
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        
+
         client.disconnect();
-        
+
     } catch (const std::exception& e) {
         std::cerr << "❌ Error: " << e.what() << std::endl;
         return 1;
     }
-    
+
     return 0;
 }
-

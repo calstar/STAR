@@ -2,19 +2,18 @@
 #define CONFIG_H
 
 #include <array>
-#include <string>
-#include <map>
 #include <cstdint>
+#include <map>
+#include <string>
 
 // Note: If tomlplusplus is not available, we can use a simple TOML parser
 // For now, using basic file reading until tomlplusplus is integrated
 
 class Config {
-   public:
+public:
     // Constructor, loads config
     explicit Config(const std::string& configFile);
-    void loadConfigMatrix(double* mat, int m, int n, const char* group,
-                          const char* id);
+    void loadConfigMatrix(double* mat, int m, int n, const char* group, const char* id);
 
     struct NetworkConfig {
         std::string host_ip;
@@ -114,19 +113,21 @@ class Config {
     StateMachineConfig state_machine;
     MessageIDs messageIDs;
 
-   private:
+private:
     // Simple TOML-like config storage (can be replaced with tomlplusplus)
     std::map<std::string, std::map<std::string, std::string>> configData;
-    
+
     // Private method to load configuration from file
     void loadConfig(const std::string& configFile);
-    std::string getValue(const std::string& section, const std::string& key, const std::string& default_val);
+    std::string getValue(const std::string& section, const std::string& key,
+                         const std::string& default_val);
     double getDouble(const std::string& section, const std::string& key, double default_val);
     int getInt(const std::string& section, const std::string& key, int default_val);
     bool getBool(const std::string& section, const std::string& key, bool default_val);
-    std::array<double, 3> getArray3(const std::string& section, const std::string& key, std::array<double, 3> default_val);
-    std::array<int, 4> getArray4Int(const std::string& section, const std::string& key, std::array<int, 4> default_val);
+    std::array<double, 3> getArray3(const std::string& section, const std::string& key,
+                                    std::array<double, 3> default_val);
+    std::array<int, 4> getArray4Int(const std::string& section, const std::string& key,
+                                    std::array<int, 4> default_val);
 };
 
 #endif  // CONFIG_H
-

@@ -68,5 +68,3 @@ echo "  2. ./shell/tmux_start_sensors.sh config/config_base.toml test_db"
 echo ""
 echo "To stop the system:"
 echo "  tmux kill-session -t sensor_system"
-
-

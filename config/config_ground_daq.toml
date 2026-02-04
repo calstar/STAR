@@ -100,4 +100,3 @@ enable_all_sensors = true
 [calibration]
 enabled = true
 calibration_file = "calibration/data/ground_calibration.json"
-

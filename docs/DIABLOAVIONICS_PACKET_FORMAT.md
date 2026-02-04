@@ -167,4 +167,3 @@ udp.write(buffer, packet_size);
 3. Update board discovery to listen for BOARD_HEARTBEAT packets
 4. Update IP assignment to use MAC address
 5. Update sensor detection to parse actual sensor data packets
-

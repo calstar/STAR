@@ -74,4 +74,3 @@ echo "  ./build/fake_packet_generator localhost $UDP_PORT 10"
 trap "echo 'Stopping...'; kill $ELODIN_PID $DAQ_PID 2>/dev/null; exit" INT TERM
 
 wait
-

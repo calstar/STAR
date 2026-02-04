@@ -43,7 +43,7 @@ check_environment() {
         echo -e "${YELLOW}💡 Usage: cd shell && ./start_complete_system.sh${NC}"
         exit 1
     fi
-    
+
     # Auto-source startup.sh if ROOT_SENSOR_DIR isn't set
     if [[ -z "${ROOT_SENSOR_DIR:-}" ]]; then
         echo -e "${YELLOW}🔧 Setting up environment...${NC}"
@@ -56,7 +56,7 @@ check_environment() {
 # Kill existing processes
 cleanup_existing() {
     echo -e "${YELLOW}🧹 Cleaning up existing processes...${NC}"
-    
+
     # Kill existing tmux sessions
     for session in "complete_sensor_system" "sensor_system" "groundstation" "jetson_sensors"; do
         if tmux has-session -t "$session" 2>/dev/null; then
@@ -64,19 +64,19 @@ cleanup_existing() {
             tmux kill-session -t "$session"
         fi
     done
-    
+
     # Kill any elodin-db processes
     if pgrep -f "elodin-db" > /dev/null; then
         echo -e "${YELLOW}  Killing existing database processes...${NC}"
         pkill -f "elodin-db" || true
     fi
-    
+
     # Kill sensor generators
     if pgrep -f "fake_sensor_generator" > /dev/null; then
         echo -e "${YELLOW}  Killing existing sensor generators...${NC}"
         pkill -f "fake_sensor_generator" || true
     fi
-    
+
     sleep 2
     echo -e "${GREEN}✅ Cleanup complete${NC}"
 }
@@ -86,7 +86,7 @@ check_database_conflict() {
     local db_name="$1"
     local db_path="$HOME/.local/share/elodin/$db_name"
     local db_meta_path="${db_path}_metadata"
-    
+
     if [[ -d "$db_path" ]]; then
         echo -e "${YELLOW}⚠️  Database '$db_name' already exists at:${NC}"
         echo -e "${BLUE}   $db_path${NC}"
@@ -96,7 +96,7 @@ check_database_conflict() {
         echo -e "${YELLOW}  2) Append${NC}   - Use existing database (read/append mode)"
         echo -e "${RED}  3) Quit${NC}     - Exit without making changes"
         echo
-        
+
         while true; do
             read -p "Enter your choice [1/2/3]: " choice
             case $choice in
@@ -126,31 +126,31 @@ check_database_conflict() {
 get_user_config() {
     echo -e "${CYAN}📋 System Configuration${NC}"
     echo
-    
+
     # Database name
     read -p "Database name [$DEFAULT_DB_NAME]: " DB_NAME
     DB_NAME=${DB_NAME:-$DEFAULT_DB_NAME}
-    
+
     # Check for conflicts
     check_database_conflict "$DB_NAME"
-    
+
     # Config file
     echo
     read -p "Config file path [$DEFAULT_CONFIG]: " CONFIG_PATH
     CONFIG_PATH=${CONFIG_PATH:-$DEFAULT_CONFIG}
-    
+
     if [[ ! -f "$CONFIG_PATH" ]]; then
         echo -e "${RED}❌ Config file not found: $CONFIG_PATH${NC}"
         exit 1
     fi
-    
+
     # Mode selection
     echo
     echo -e "${CYAN}Select system mode:${NC}"
     echo -e "${GREEN}  1) Local${NC}     - Database and sensors on this machine"
     echo -e "${YELLOW}  2) Remote${NC}    - Connect to remote groundstation"
     echo
-    
+
     while true; do
         read -p "Enter mode [1/2]: " mode_choice
         case $mode_choice in
@@ -173,7 +173,7 @@ get_user_config() {
                 ;;
         esac
     done
-    
+
     echo
     echo -e "${GREEN}📝 Configuration Summary:${NC}"
     echo -e "${BLUE}  Database: $DB_NAME${NC}"
@@ -183,7 +183,7 @@ get_user_config() {
         echo -e "${BLUE}  Groundstation: $GROUNDSTATION_IP:$DEFAULT_PORT${NC}"
     fi
     echo
-    
+
     read -p "Continue with this configuration? [Y/n]: " confirm
     if [[ "$confirm" =~ ^[Nn]$ ]]; then
         echo -e "${RED}❌ Aborted by user${NC}"
@@ -197,42 +197,42 @@ start_system() {
     local config_path="$2"
     local mode="$3"
     local groundstation_ip="${4:-}"
-    
+
     local session_name="complete_sensor_system"
     local timestamp=$(date +%m_%d_%y__%H_%M_%S)
     local db_path="$HOME/.local/share/elodin/$db_name"
     local db_meta_path="${db_path}_metadata"
     local log_dir="${db_meta_path}/log"
-    
+
     # Create log directory
     mkdir -p "$log_dir"
-    
+
     # Log files
     local db_log="$log_dir/database_$timestamp.log"
     local sensor_log="$log_dir/sensors_$timestamp.log"
     local viewer_log="$log_dir/viewer_$timestamp.log"
-    
+
     echo -e "${PURPLE}🚀 Starting Complete Sensor System...${NC}"
     echo -e "${BLUE}   Session: $session_name${NC}"
     echo -e "${BLUE}   Logs: $log_dir${NC}"
     echo
-    
+
     # Timing constants like your original script
     SLEEP_TIME_SHORT=1
     SLEEP_TIME_SHELL_ENTER=2
     SLEEP_TIME_LONG=3
-    
+
     # Start tmux session
     tmux new-session -d -s "$session_name" -c "$ROOT_SENSOR_DIR"
-    
+
     if [[ "$mode" == "local" ]]; then
         # LOCAL MODE: Database + Local Sensors + Viewer
-        
+
         # Start tmux session with just the DB (left big pane) - EXACTLY like your working script
         sleep $SLEEP_TIME_SHELL_ENTER
         tmux send-keys -t "$session_name" "cd shell && source startup_db.sh $db_name 2>&1 | tee $db_log" C-m
         tmux select-pane -t "$session_name":0 -T "DB"
-        
+
         # Start a background watcher to wait for "Database is ready!" in log - EXACTLY like your working script
         (
             sleep $SLEEP_TIME_LONG
@@ -255,7 +255,7 @@ start_system() {
             sleep $SLEEP_TIME_SHELL_ENTER
             tmux send-keys -t "$session_name":0.2 "python3 scripts/view_sensor_data.py --host 127.0.0.1 --port $DEFAULT_PORT 2>&1 | tee $viewer_log" C-m
             tmux select-pane -t "$session_name":0.2 -T "Viewer"
-            
+
             echo "✅ Sensor system started successfully!"
             echo "   - Database: $db_name"
             echo "   - Config: $config_path"
@@ -264,14 +264,14 @@ start_system() {
             echo "To attach to the session: tmux attach -t $session_name"
             echo "To stop the system: tmux kill-session -t $session_name"
         ) &
-        
+
     else
         # REMOTE MODE: Remote Sensors Only - EXACTLY like your working script
         sleep $SLEEP_TIME_SHELL_ENTER
         tmux send-keys -t "$session_name" "cd scripts && ./fake_sensor_generator_remote $groundstation_ip $DEFAULT_PORT 2>&1 | tee $sensor_log" C-m
         tmux select-pane -t "$session_name":0 -T "Remote Sensors"
     fi
-    
+
     echo -e "${GREEN}✅ System startup initiated!${NC}"
     echo
     echo -e "${CYAN}📊 System Information:${NC}"
@@ -291,10 +291,10 @@ start_system() {
     echo
     echo -e "${GREEN}🔗 Attaching to tmux session...${NC}"
     echo -e "${YELLOW}💡 Components will start automatically as database becomes ready${NC}"
-    
+
     # Wait a bit for the background process to complete, then attach
     sleep 5
-    
+
     # Immediately attach so you can interact with DB while the watcher runs
     tmux attach -t "$session_name"
 }
@@ -304,10 +304,10 @@ main() {
     print_banner
     check_environment
     cleanup_existing
-    
+
     # Get configuration from user
     get_user_config
-    
+
     # Start the system
     start_system "$DB_NAME" "$CONFIG_PATH" "$MODE" "${GROUNDSTATION_IP:-}"
 }

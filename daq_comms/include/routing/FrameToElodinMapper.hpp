@@ -1,18 +1,19 @@
 #ifndef DAQ_FRAME_TO_ELODIN_MAPPER_HPP
 #define DAQ_FRAME_TO_ELODIN_MAPPER_HPP
 
-#include "protocol/EncryptedFrame.hpp"
-#include "routing/SensorRouter.hpp"
-#include "elodin/ElodinClient.hpp"
 #include <chrono>
 #include <cstdint>
+
+#include "elodin/ElodinClient.hpp"
+#include "protocol/EncryptedFrame.hpp"
+#include "routing/SensorRouter.hpp"
 
 namespace daq_comms {
 namespace routing {
 
 /**
  * @brief Maps decoded sensor frames to Elodin messages and publishes them
- * 
+ *
  * This is the translation layer that takes SensorBatch objects
  * and publishes them to Elodin via the ElodinClient.
  */
@@ -36,22 +37,23 @@ public:
         size_t messages_published;
         size_t publish_failures;
     };
-    
-    Stats get_stats() const { return stats_; }
-    void reset_stats() { stats_ = Stats{}; }
+
+    Stats get_stats() const {
+        return stats_;
+    }
+    void reset_stats() {
+        stats_ = Stats{};
+    }
 
 private:
     elodin::ElodinClient& elodin_client_;
     SensorRouter& router_;
     Stats stats_;
-    
+
     uint64_t get_monotonic_timestamp_ns() const;
 };
 
-} // namespace routing
-} // namespace daq_comms
+}  // namespace routing
+}  // namespace daq_comms
 
-#endif // DAQ_FRAME_TO_ELODIN_MAPPER_HPP
-
-
-
+#endif  // DAQ_FRAME_TO_ELODIN_MAPPER_HPP

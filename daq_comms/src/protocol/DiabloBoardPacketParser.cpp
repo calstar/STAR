@@ -1,9 +1,9 @@
 #include "protocol/DiabloBoardPacketParser.hpp"
 
-#include <cstring>
-#include <sstream>
-#include <iomanip>
 #include <algorithm>
+#include <cstring>
+#include <iomanip>
+#include <sstream>
 
 namespace daq_comms {
 namespace protocol {
@@ -11,17 +11,17 @@ namespace protocol {
 DiabloBoardPacketParser::DiabloBoardPacketParser() {
 }
 
-std::optional<DiabloBoardPacketParser::PacketType> 
-DiabloBoardPacketParser::parse_packet_type(const uint8_t* data, size_t size) const {
+std::optional<DiabloBoardPacketParser::PacketType> DiabloBoardPacketParser::parse_packet_type(
+    const uint8_t* data, size_t size) const {
     if (size < 1) {
         return std::nullopt;
     }
-    
+
     uint8_t type_byte = data[0];
     if (type_byte >= 1 && type_byte <= 9) {
         return static_cast<PacketType>(type_byte);
     }
-    
+
     return std::nullopt;
 }
 
@@ -30,29 +30,29 @@ DiabloBoardPacketParser::parse_board_heartbeat(const uint8_t* data, size_t size)
     constexpr size_t HEADER_SIZE = 6;
     constexpr size_t BODY_SIZE = 4;
     constexpr size_t TOTAL_SIZE = HEADER_SIZE + BODY_SIZE;
-    
+
     if (size < TOTAL_SIZE) {
         return std::nullopt;
     }
-    
+
     ParsedBoardHeartbeat result;
-    
+
     // Parse header (little-endian)
     result.header.packet_type = static_cast<PacketType>(data[0]);
     result.header.version = data[1];
     result.header.timestamp = read_le_u32(data + 2);
-    
+
     // Verify packet type
     if (result.header.packet_type != PacketType::BOARD_HEARTBEAT) {
         return std::nullopt;
     }
-    
+
     // Parse body
     result.heartbeat.board_type = static_cast<BoardType>(data[6]);
     result.heartbeat.board_id = data[7];
     result.heartbeat.engine_state = static_cast<EngineState>(data[8]);
     result.heartbeat.board_state = static_cast<BoardState>(data[9]);
-    
+
     result.is_valid = true;
     return result;
 }
@@ -61,86 +61,86 @@ std::optional<DiabloBoardPacketParser::ParsedSensorDataPacket>
 DiabloBoardPacketParser::parse_sensor_data(const uint8_t* data, size_t size) const {
     constexpr size_t HEADER_SIZE = 6;
     constexpr size_t BODY_HEADER_SIZE = 2;
-    
+
     if (size < HEADER_SIZE + BODY_HEADER_SIZE) {
         return std::nullopt;
     }
-    
+
     ParsedSensorDataPacket result;
-    
+
     // Parse header
     result.header.packet_type = static_cast<PacketType>(data[0]);
     result.header.version = data[1];
     result.header.timestamp = read_le_u32(data + 2);
-    
+
     // Verify packet type
     if (result.header.packet_type != PacketType::SENSOR_DATA) {
         return std::nullopt;
     }
-    
+
     // Parse body header
     result.num_chunks = data[6];
     result.num_sensors = data[7];
-    
+
     // Parse chunks
     size_t offset = HEADER_SIZE + BODY_HEADER_SIZE;
-    
+
     for (uint8_t c = 0; c < result.num_chunks; ++c) {
         if (offset + 4 > size) {
             result.is_valid = false;
             return result;  // Not enough data
         }
-        
+
         SensorDataChunk chunk;
         chunk.timestamp = read_le_u32(data + offset);
         offset += 4;
-        
+
         // Parse datapoints for this chunk
         for (uint8_t s = 0; s < result.num_sensors; ++s) {
             if (offset + 5 > size) {
                 result.is_valid = false;
                 return result;  // Not enough data
             }
-            
+
             SensorDatapoint dp;
             dp.sensor_id = data[offset++];
             dp.data = read_le_u32(data + offset);
             offset += 4;
-            
+
             chunk.datapoints.push_back(dp);
         }
-        
+
         result.chunks.push_back(chunk);
     }
-    
+
     result.is_valid = (result.chunks.size() == result.num_chunks);
     return result;
 }
 
-DiabloBoardPacketParser::BoardSignature
-DiabloBoardPacketParser::extract_signature(const ParsedBoardHeartbeat& heartbeat, const std::string& source_ip) const {
+DiabloBoardPacketParser::BoardSignature DiabloBoardPacketParser::extract_signature(
+    const ParsedBoardHeartbeat& heartbeat, const std::string& source_ip) const {
     BoardSignature sig;
     sig.board_type = heartbeat.heartbeat.board_type;
     sig.board_id = heartbeat.heartbeat.board_id;
     sig.mac_address = "unknown";  // MAC will be extracted from network layer
-    
+
     return sig;
 }
 
-std::vector<DiabloBoardPacketParser::DetectedSensor>
-DiabloBoardPacketParser::detect_sensors(const ParsedSensorDataPacket& packet, BoardType board_type) const {
+std::vector<DiabloBoardPacketParser::DetectedSensor> DiabloBoardPacketParser::detect_sensors(
+    const ParsedSensorDataPacket& packet, BoardType board_type) const {
     std::vector<DetectedSensor> sensors;
-    
+
     if (!packet.is_valid || packet.chunks.empty()) {
         return sensors;
     }
-    
+
     // Extract unique sensor IDs from first chunk
     std::map<uint8_t, bool> sensor_ids;
     for (const auto& dp : packet.chunks[0].datapoints) {
         sensor_ids[dp.sensor_id] = (dp.data != 0);  // Active if non-zero
     }
-    
+
     for (const auto& [sensor_id, is_active] : sensor_ids) {
         DetectedSensor sensor;
         sensor.sensor_id = sensor_id;
@@ -148,7 +148,7 @@ DiabloBoardPacketParser::detect_sensors(const ParsedSensorDataPacket& packet, Bo
         sensor.is_active = is_active;
         sensors.push_back(sensor);
     }
-    
+
     return sensors;
 }
 
@@ -161,23 +161,22 @@ std::string DiabloBoardPacketParser::calculate_ip_from_mac(const std::string& ma
     std::string byte_str;
     uint32_t mac_hash = 0;
     int byte_count = 0;
-    
+
     while (std::getline(mac_stream, byte_str, ':') && byte_count < 6) {
         uint8_t byte_val = static_cast<uint8_t>(std::stoul(byte_str, nullptr, 16));
         mac_hash = (mac_hash << 8) | byte_val;
         byte_count++;
     }
-    
+
     // Use MAC hash to get consistent IP in range
     uint8_t ip_octet = ip_range_start + (mac_hash % (ip_range_end - ip_range_start + 1));
-    
+
     // Parse base IP
     size_t last_dot = base_ip.rfind('.');
     std::string base = base_ip.substr(0, last_dot);
-    
+
     return base + "." + std::to_string(ip_octet);
 }
 
-} // namespace protocol
-} // namespace daq_comms
-
+}  // namespace protocol
+}  // namespace daq_comms

@@ -65,7 +65,7 @@ check_clang_format() {
         echo "  Or visit: https://clang.llvm.org/docs/ClangFormat.html"
         exit 1
     fi
-    
+
     local version=$(clang-format --version | head -n1)
     print_status "Using $version"
 }
@@ -73,11 +73,11 @@ check_clang_format() {
 # Function to find C++ files
 find_cpp_files() {
     local directories=("FSW" "comms" "utl")
-    
+
     if [ "$FORMAT_ALL" = true ]; then
         directories+=("external")
     fi
-    
+
     for dir in "${directories[@]}"; do
         if [ -d "$dir" ]; then
             find "$dir" -name "*.cpp" -o -name "*.hpp" -o -name "*.c" -o -name "*.h"
@@ -91,22 +91,22 @@ find_cpp_files() {
 format_files() {
     local files=($(find_cpp_files))
     local total_files=${#files[@]}
-    
+
     if [ $total_files -eq 0 ]; then
         print_warning "No C++ files found to format"
         return 0
     fi
-    
+
     print_status "Found $total_files C++ files"
-    
+
     local changed_files=()
     local unchanged_files=()
-    
+
     for file in "${files[@]}"; do
         if [ "$VERBOSE" = true ]; then
             print_status "Processing: $file"
         fi
-        
+
         if [ "$CHECK_ONLY" = true ]; then
             # Check if file is properly formatted
             if ! clang-format --dry-run --Werror "$file" &>/dev/null; then
@@ -138,7 +138,7 @@ format_files() {
             fi
         fi
     done
-    
+
     # Print summary
     if [ "$CHECK_ONLY" = true ]; then
         if [ ${#changed_files[@]} -eq 0 ]; then
@@ -197,26 +197,26 @@ done
 # Main execution
 main() {
     print_status "Starting code formatting process..."
-    
+
     # Check if clang-format is available
     check_clang_format
-    
+
     # Check if .clang-format config exists
     if [ ! -f ".clang-format" ]; then
         print_warning ".clang-format configuration file not found"
         print_status "Using default clang-format style"
     fi
-    
+
     # Format files
     format_files
     local exit_code=$?
-    
+
     if [ $exit_code -eq 0 ]; then
         print_success "Formatting process completed successfully!"
     else
         print_error "Formatting process failed!"
     fi
-    
+
     exit $exit_code
 }
 

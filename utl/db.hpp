@@ -2563,8 +2563,8 @@ struct OpExt {
     }
 };
 
-class Op
-    : public std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema, OpTimestamp, OpExt> {
+class Op : public std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema, OpTimestamp,
+                               OpExt> {
 public:
     static constexpr std::string_view TYPE_NAME = "Op";
     // Inherit constructors from std::variant
@@ -2583,8 +2583,8 @@ public:
     }
 
     const OpData* get_data() const {
-        return std::get_if<0>((const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
-                                                  OpTimestamp, OpExt>*)this);
+        return std::get_if<0>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
+                                                  OpSchema, OpTimestamp, OpExt>*)this);
     }
 
     OpData* get_data() {
@@ -2608,8 +2608,8 @@ public:
     }
 
     OpTable* get_table() {
-        return std::get_if<1>((std::variant<OpData, OpTable, std::monostate, OpSchema,
-                                            OpTimestamp, OpExt>*)this);
+        return std::get_if<1>(
+            (std::variant<OpData, OpTable, std::monostate, OpSchema, OpTimestamp, OpExt>*)this);
     }
 
     // Static constructor for unit variant None
@@ -2628,8 +2628,8 @@ public:
     }
 
     std::monostate* get_none() {
-        return std::get_if<2>((std::variant<OpData, OpTable, std::monostate, OpSchema,
-                                            OpTimestamp, OpExt>*)this);
+        return std::get_if<2>(
+            (std::variant<OpData, OpTable, std::monostate, OpSchema, OpTimestamp, OpExt>*)this);
     }
 
     // Static constructor for Component variant (index 3, matching FSW)
@@ -2643,8 +2643,8 @@ public:
     }
 
     const OpComponent* get_component() const {
-        return std::get_if<3>((const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
-                                                  OpTimestamp, OpExt>*)this);
+        return std::get_if<3>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
+                                                  OpSchema, OpTimestamp, OpExt>*)this);
     }
 
     OpComponent* get_component() {
@@ -2663,8 +2663,8 @@ public:
     }
 
     const OpSchema* get_schema() const {
-        return std::get_if<4>((const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
-                                                  OpTimestamp, OpExt>*)this);
+        return std::get_if<4>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
+                                                  OpSchema, OpTimestamp, OpExt>*)this);
     }
 
     OpSchema* get_schema() {
@@ -2683,8 +2683,8 @@ public:
     }
 
     const OpTimestamp* get_timestamp() const {
-        return std::get_if<5>((const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
-                                                  OpTimestamp, OpExt>*)this);
+        return std::get_if<5>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
+                                                  OpSchema, OpTimestamp, OpExt>*)this);
     }
 
     OpTimestamp* get_timestamp() {
@@ -2703,8 +2703,8 @@ public:
     }
 
     const OpExt* get_ext() const {
-        return std::get_if<6>((const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
-                                                  OpTimestamp, OpExt>*)this);
+        return std::get_if<6>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
+                                                  OpSchema, OpTimestamp, OpExt>*)this);
     }
 
     OpExt* get_ext() {
@@ -2722,28 +2722,28 @@ public:
                 std::get_if<0>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
                                                    OpSchema, OpTimestamp, OpExt>*)this)) {
             size += (*val).encoded_size();
-        } else if ([[maybe_unused]] auto val =
-                       std::get_if<1>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
-                                                          OpSchema, OpTimestamp, OpExt>*)this)) {
+        } else if ([[maybe_unused]] auto val = std::get_if<1>(
+                       (const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
+                                           OpTimestamp, OpExt>*)this)) {
             size += (*val).encoded_size();
-        } else if ([[maybe_unused]] auto val =
-                       std::get_if<2>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
-                                                          OpSchema, OpTimestamp, OpExt>*)this)) {
-        } else if ([[maybe_unused]] auto val =
-                       std::get_if<3>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
-                                                          OpSchema, OpTimestamp, OpExt>*)this)) {
+        } else if ([[maybe_unused]] auto val = std::get_if<2>(
+                       (const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
+                                           OpTimestamp, OpExt>*)this)) {
+        } else if ([[maybe_unused]] auto val = std::get_if<3>(
+                       (const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
+                                           OpTimestamp, OpExt>*)this)) {
             size += (*val).encoded_size();
-        } else if ([[maybe_unused]] auto val =
-                       std::get_if<4>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
-                                                          OpSchema, OpTimestamp, OpExt>*)this)) {
+        } else if ([[maybe_unused]] auto val = std::get_if<4>(
+                       (const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
+                                           OpTimestamp, OpExt>*)this)) {
             size += (*val).encoded_size();
-        } else if ([[maybe_unused]] auto val =
-                       std::get_if<5>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
-                                                          OpSchema, OpTimestamp, OpExt>*)this)) {
+        } else if ([[maybe_unused]] auto val = std::get_if<5>(
+                       (const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
+                                           OpTimestamp, OpExt>*)this)) {
             size += (*val).encoded_size();
-        } else if ([[maybe_unused]] auto val =
-                       std::get_if<6>((const std::variant<OpData, OpTable, std::monostate, OpComponent,
-                                                          OpSchema, OpTimestamp, OpExt>*)this)) {
+        } else if ([[maybe_unused]] auto val = std::get_if<6>(
+                       (const std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
+                                           OpTimestamp, OpExt>*)this)) {
             size += (*val).encoded_size();
         }
 
@@ -2786,8 +2786,8 @@ public:
         postcard_error_t result;
 
         if ([[maybe_unused]] auto val =
-                std::get_if<0>((std::variant<OpData, OpTable, std::monostate, OpComponent,
-                                             OpSchema, OpTimestamp, OpExt>*)this)) {
+                std::get_if<0>((std::variant<OpData, OpTable, std::monostate, OpComponent, OpSchema,
+                                             OpTimestamp, OpExt>*)this)) {
             result = postcard_encode_u8(slice, 0);
             if (result != POSTCARD_SUCCESS)
                 return result;
@@ -4762,7 +4762,8 @@ public:
                     const auto& component_op = val;
                     OpRef component_id = visit(component_op.component_id);
 
-                    result_op = Op::Component(OpComponent{static_cast<uint16_t>(component_id.value)});
+                    result_op =
+                        Op::Component(OpComponent{static_cast<uint16_t>(component_id.value)});
                 } else if constexpr (std::is_same_v<T, OpBuilder::Schema>) {
                     const auto& schema_op = val;
                     OpRef ty = visit(schema_op.ty);
@@ -4787,11 +4788,13 @@ public:
                     result_op = Op::Ext(OpExt{static_cast<uint16_t>(arg.value), ext_op.id,
                                               static_cast<uint16_t>(data.value)});
                 } else if constexpr (std::is_same_v<T, OpBuilder::Pair>) {
-                    // FSW doesn't use Pair in Op variant, but we keep Pair in OpBuilder for compatibility
-                    // Convert Pair to Component (FSW's dbConfig.hpp uses pair() but it gets converted)
+                    // FSW doesn't use Pair in Op variant, but we keep Pair in OpBuilder for
+                    // compatibility Convert Pair to Component (FSW's dbConfig.hpp uses pair() but
+                    // it gets converted)
                     const auto& pair_op = val;
                     OpRef component_id = visit(pair_op.component_id);
-                    result_op = Op::Component(OpComponent{static_cast<uint16_t>(component_id.value)});
+                    result_op =
+                        Op::Component(OpComponent{static_cast<uint16_t>(component_id.value)});
                 }
             },
             op->value);

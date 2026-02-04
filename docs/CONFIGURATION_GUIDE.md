@@ -143,4 +143,3 @@ include_flight_sensors = true
 - Add actuator assignments
 - Implement hotfire mode switching
 - Add validation for sensor assignments
-

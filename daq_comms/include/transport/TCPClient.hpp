@@ -1,18 +1,18 @@
 #ifndef DAQ_TCP_CLIENT_HPP
 #define DAQ_TCP_CLIENT_HPP
 
-#include <string>
 #include <cstdint>
 #include <memory>
-#include <vector>
 #include <mutex>
+#include <string>
+#include <vector>
 
 namespace daq_comms {
 namespace transport {
 
 /**
  * @brief Simple TCP client for Elodin database connection
- * 
+ *
  * Standalone implementation without FSW dependencies.
  */
 class TCPClient {
@@ -68,21 +68,18 @@ private:
     int socket_fd_;
     bool connected_;
     std::string last_error_;
-    
+
     // Buffering for efficient writes
     static constexpr size_t BUFFER_SIZE = 8192;
     std::vector<uint8_t> write_buffer_;
     size_t buffer_pos_;
     std::mutex write_mutex_;
-    
+
     bool _write_all(const void* data, size_t len);
     void _flush_buffer();
 };
 
-} // namespace transport
-} // namespace daq_comms
+}  // namespace transport
+}  // namespace daq_comms
 
-#endif // DAQ_TCP_CLIENT_HPP
-
-
-
+#endif  // DAQ_TCP_CLIENT_HPP

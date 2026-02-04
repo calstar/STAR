@@ -28,4 +28,3 @@ python3 ground_station_gui.py
 
 echo ""
 echo "Ground Station GUI closed."
-

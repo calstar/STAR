@@ -1,50 +1,52 @@
 #include "fsw/FSWConfigManager.hpp"
 
-#include <iostream>
 #include <chrono>
+#include <iostream>
 #include <thread>
 
 namespace daq_comms {
 namespace fsw {
 
-FSWConfigManager::FSWConfigManager()
-    : current_state_(config::SystemState::GSE) {
+FSWConfigManager::FSWConfigManager() : current_state_(config::SystemState::GSE) {
 }
 
 bool FSWConfigManager::initialize(const std::string& bind_address, uint16_t bind_port) {
     config_socket_ = std::make_unique<transport::UDPSocket>(bind_address, bind_port);
-    
+
     if (!config_socket_->is_valid()) {
-        std::cerr << "[FSWConfig] Failed to create UDP socket: " << config_socket_->last_error() << std::endl;
+        std::cerr << "[FSWConfig] Failed to create UDP socket: " << config_socket_->last_error()
+                  << std::endl;
         return false;
     }
-    
+
     // Load sensor definitions (will be loaded from specific config file)
     assignment_manager_.load_sensor_definitions("");
-    
+
     std::cout << "[FSWConfig] Initialized FSW configuration manager" << std::endl;
-    std::cout << "[FSWConfig] System state: " << (current_state_ == config::SystemState::GSE ? "GSE" : "FLIGHT") << std::endl;
-    
+    std::cout << "[FSWConfig] System state: "
+              << (current_state_ == config::SystemState::GSE ? "GSE" : "FLIGHT") << std::endl;
+
     return true;
 }
 
-std::string FSWConfigManager::process_board_heartbeat(const protocol::DiabloBoardPacketParser::ParsedBoardHeartbeat& heartbeat,
-                                                      const std::string& source_ip,
-                                                      const std::string& mac_address) {
+std::string FSWConfigManager::process_board_heartbeat(
+    const protocol::DiabloBoardPacketParser::ParsedBoardHeartbeat& heartbeat,
+    const std::string& source_ip, const std::string& mac_address) {
     uint8_t board_id = heartbeat.heartbeat.board_id;
-    
+
     // Infer system state from board ID or IP
     config::SystemState system_state = infer_system_state(board_id, source_ip);
-    
+
     // Assign IP address
-    std::string assigned_ip = assignment_manager_.assign_board_ip(board_id, mac_address, system_state);
-    
+    std::string assigned_ip =
+        assignment_manager_.assign_board_ip(board_id, mac_address, system_state);
+
     // Check if board needs sensor assignment
     auto board_config = assignment_manager_.get_board_config(board_id);
     if (board_config && board_config->sensors.empty()) {
         // Auto-assign sensors based on board type and system state
         std::vector<std::string> sensor_ids;
-        
+
         if (system_state == config::SystemState::FLIGHT) {
             // Flight sensors based on board ID
             switch (board_id) {
@@ -76,30 +78,31 @@ std::string FSWConfigManager::process_board_heartbeat(const protocol::DiabloBoar
                     break;
             }
         }
-        
+
         if (!sensor_ids.empty()) {
             assignment_manager_.assign_sensors_to_board(board_id, sensor_ids);
-            std::cout << "[FSWConfig] Auto-assigned " << sensor_ids.size() 
-                      << " sensors to board " << (int)board_id << std::endl;
+            std::cout << "[FSWConfig] Auto-assigned " << sensor_ids.size() << " sensors to board "
+                      << (int)board_id << std::endl;
         }
     }
-    
+
     // Send configuration to board if not already configured
     if (!boards_configured_[board_id]) {
         send_config_to_board(board_id);
     }
-    
+
     return assigned_ip;
 }
 
-bool FSWConfigManager::assign_sensors(uint8_t board_id, const std::vector<std::string>& sensor_ids, uint8_t start_channel) {
+bool FSWConfigManager::assign_sensors(uint8_t board_id, const std::vector<std::string>& sensor_ids,
+                                      uint8_t start_channel) {
     bool success = assignment_manager_.assign_sensors_to_board(board_id, sensor_ids, start_channel);
-    
+
     if (success) {
         // Send updated configuration to board
         send_config_to_board(board_id);
     }
-    
+
     return success;
 }
 
@@ -109,30 +112,31 @@ bool FSWConfigManager::send_config_to_board(uint8_t board_id) {
         std::cerr << "[FSWConfig] Board " << (int)board_id << " not found" << std::endl;
         return false;
     }
-    
+
     // Generate configuration packet
     auto packet = assignment_manager_.generate_board_config_packet(board_id);
     if (packet.empty()) {
-        std::cerr << "[FSWConfig] Failed to generate config packet for board " << (int)board_id << std::endl;
+        std::cerr << "[FSWConfig] Failed to generate config packet for board " << (int)board_id
+                  << std::endl;
         return false;
     }
-    
+
     // Create UDP socket for sending to board
     transport::UDPSocket board_socket(board_config->board_ip, board_config->board_port, true);
-    
+
     // Send packet to board
     ssize_t sent = board_socket.send(packet.data(), packet.size());
-    
+
     if (sent != static_cast<ssize_t>(packet.size())) {
-        std::cerr << "[FSWConfig] Failed to send config to board " << (int)board_id 
-                  << " at " << board_config->board_ip << ":" << board_config->board_port << std::endl;
+        std::cerr << "[FSWConfig] Failed to send config to board " << (int)board_id << " at "
+                  << board_config->board_ip << ":" << board_config->board_port << std::endl;
         return false;
     }
-    
+
     boards_configured_[board_id] = true;
-    std::cout << "[FSWConfig] Sent configuration to board " << (int)board_id 
-              << " (" << board_config->board_ip << ":" << board_config->board_port << ")" << std::endl;
-    
+    std::cout << "[FSWConfig] Sent configuration to board " << (int)board_id << " ("
+              << board_config->board_ip << ":" << board_config->board_port << ")" << std::endl;
+
     return true;
 }
 
@@ -149,27 +153,27 @@ void FSWConfigManager::send_configs_to_all_boards() {
 
 void FSWConfigManager::set_system_state(config::SystemState state) {
     current_state_ = state;
-    std::cout << "[FSWConfig] System state changed to: " 
+    std::cout << "[FSWConfig] System state changed to: "
               << (state == config::SystemState::GSE ? "GSE" : "FLIGHT") << std::endl;
 }
 
-config::SystemState FSWConfigManager::infer_system_state(uint8_t board_id, const std::string& source_ip) const {
+config::SystemState FSWConfigManager::infer_system_state(uint8_t board_id,
+                                                         const std::string& source_ip) const {
     // Infer from board ID: GSE boards typically use IDs 10-15, Flight uses 0-9
     if (board_id >= 10) {
         return config::SystemState::GSE;
     }
-    
+
     // Infer from IP address: GSE uses 192.168.2.x, Flight uses 192.168.3.x
     if (source_ip.find("192.168.2.") == 0) {
         return config::SystemState::GSE;
     } else if (source_ip.find("192.168.3.") == 0) {
         return config::SystemState::FLIGHT;
     }
-    
+
     // Default to current system state
     return current_state_;
 }
 
-} // namespace fsw
-} // namespace daq_comms
-
+}  // namespace fsw
+}  // namespace daq_comms

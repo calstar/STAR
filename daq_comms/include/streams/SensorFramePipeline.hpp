@@ -1,19 +1,20 @@
 #ifndef DAQ_SENSOR_FRAME_PIPELINE_HPP
 #define DAQ_SENSOR_FRAME_PIPELINE_HPP
 
-#include "protocol/DiabloBoardPacketParser.hpp"
-#include "protocol/EncryptedFrame.hpp"
-#include "transport/NetworkSocket.hpp"
 #include <memory>
 #include <optional>
 #include <vector>
+
+#include "protocol/DiabloBoardPacketParser.hpp"
+#include "protocol/EncryptedFrame.hpp"
+#include "transport/NetworkSocket.hpp"
 
 namespace daq_comms {
 namespace streams {
 
 /**
  * @brief High-level pipeline for receiving and processing actual DiabloAvionics board packets
- * 
+ *
  * Receives actual DiabloAvionics board packet format (6-byte header, simple body)
  * over Ethernet (UDP) and converts to internal SensorBatch format for routing to Elodin.
  */
@@ -25,7 +26,7 @@ public:
      * @param bind_port Port to bind UDP socket to
      */
     SensorFramePipeline(const std::string& bind_address, uint16_t bind_port);
-    
+
     ~SensorFramePipeline() = default;
 
     /**
@@ -47,22 +48,22 @@ public:
     /**
      * @brief Get board packet parser (for accessing parsed packets)
      */
-    protocol::DiabloBoardPacketParser& get_parser() { return board_parser_; }
+    protocol::DiabloBoardPacketParser& get_parser() {
+        return board_parser_;
+    }
 
 private:
     std::unique_ptr<transport::UDPSocket> socket_;
     protocol::DiabloBoardPacketParser board_parser_;  // Actual DiabloAvionics board parser
     std::vector<uint8_t> receive_buffer_;
     std::string last_error_;
-    
-    static constexpr size_t MAX_PACKET_SIZE = 512;  // DiabloAvionics max packet size (from DAQv2-Comms.h)
+
+    static constexpr size_t MAX_PACKET_SIZE =
+        512;  // DiabloAvionics max packet size (from DAQv2-Comms.h)
     static constexpr size_t RECEIVE_BUFFER_SIZE = 8192;
 };
 
-} // namespace streams
-} // namespace daq_comms
+}  // namespace streams
+}  // namespace daq_comms
 
-#endif // DAQ_SENSOR_FRAME_PIPELINE_HPP
-
-
-
+#endif  // DAQ_SENSOR_FRAME_PIPELINE_HPP

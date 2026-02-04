@@ -16,6 +16,10 @@ set(DAQ_COMMS_SOURCES
     src/config/DynamicConfigManager.cpp
     src/config/SensorAssignment.cpp
     src/fsw/FSWConfigManager.cpp
+    src/calibration/PTCalibrationPipeline.cpp
+    # FSW Calibration Framework sources
+    ../FSW/calibration/src/PTCalibrationFramework.cpp
+    ../FSW/calibration/src/EnvironmentalRobustCalibration.cpp
 )
 
 # Create shared library for daq_comms
@@ -24,12 +28,16 @@ add_library(daq_comms_lib SHARED ${DAQ_COMMS_SOURCES})
 # Include directories
 target_include_directories(daq_comms_lib PUBLIC
     ${CMAKE_SOURCE_DIR}/daq_comms/include
-    ${CMAKE_SOURCE_DIR}/comms/include
+    ${CMAKE_SOURCE_DIR}/FSW/calibration/include
     ${CMAKE_SOURCE_DIR}/utl
 )
 
+# Find Eigen3 for FSW calibration framework
+find_package(Eigen3 REQUIRED)
+
 # Link libraries
 target_link_libraries(daq_comms_lib
+    Eigen3::Eigen
     Threads::Threads
     pthread
     rt
@@ -40,7 +48,6 @@ add_executable(daq_bridge src/daq_bridge_main.cpp)
 
 target_include_directories(daq_bridge PRIVATE
     ${CMAKE_SOURCE_DIR}/daq_comms/include
-    ${CMAKE_SOURCE_DIR}/comms/include
 )
 
 target_link_libraries(daq_bridge
@@ -64,7 +71,6 @@ add_executable(send_fake_pt test/send_fake_pt.cpp)
 
 target_include_directories(send_fake_pt PRIVATE
     ${CMAKE_SOURCE_DIR}/daq_comms/include
-    ${CMAKE_SOURCE_DIR}/comms/include
     ${CMAKE_SOURCE_DIR}/utl
 )
 
@@ -80,11 +86,25 @@ add_executable(send_all_sensors test/send_all_sensors.cpp)
 
 target_include_directories(send_all_sensors PRIVATE
     ${CMAKE_SOURCE_DIR}/daq_comms/include
-    ${CMAKE_SOURCE_DIR}/comms/include
     ${CMAKE_SOURCE_DIR}/utl
 )
 
 target_link_libraries(send_all_sensors
+    daq_comms_lib
+    Threads::Threads
+    pthread
+    rt
+)
+
+# Test program to send fake CalibratedPTMessage
+add_executable(fake_calibrated_pt test/fake_calibrated_pt.cpp)
+
+target_include_directories(fake_calibrated_pt PRIVATE
+    ${CMAKE_SOURCE_DIR}/daq_comms/include
+    ${CMAKE_SOURCE_DIR}/utl
+)
+
+target_link_libraries(fake_calibrated_pt
     daq_comms_lib
     Threads::Threads
     pthread
@@ -97,4 +117,3 @@ install(TARGETS daq_comms_lib daq_bridge fake_packet_generator
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
 )
-

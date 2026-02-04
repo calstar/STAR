@@ -1,0 +1,29 @@
+name: Pre-commit Checks
+
+on:
+  pull_request:
+  push:
+    branches: [ main, develop, PT_Calibration ]
+
+jobs:
+  pre-commit:
+    name: Pre-commit Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install pre-commit
+      run: |
+        pip install pre-commit
+
+    - name: Run pre-commit
+      run: |
+        pre-commit run --all-files

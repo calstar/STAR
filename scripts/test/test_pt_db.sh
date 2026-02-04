@@ -38,6 +38,3 @@ echo ""
 echo ""
 echo "✅ Test complete!"
 echo "   Check Elodin editor to see if messages appear"
-
-
-

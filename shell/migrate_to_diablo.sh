@@ -26,33 +26,33 @@ print_banner() {
 
 check_prerequisites() {
     echo -e "${BLUE}🔍 Checking prerequisites...${NC}"
-    
+
     # Check if we're in the right directory (should be shell/ directory)
     if [[ ! -f "../startup.sh" || ! -d "../scripts" || ! -d "../config" ]]; then
         echo -e "${RED}❌ Please run this script from the shell/ directory${NC}"
         echo -e "${YELLOW}💡 Usage: cd shell && ./migrate_to_diablo.sh${NC}"
         exit 1
     fi
-    
+
     # Check if git is available
     if ! command -v git &> /dev/null; then
         echo -e "${RED}❌ Git is not installed${NC}"
         exit 1
     fi
-    
+
     # Check SSH key for GitHub
     if ! ssh -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
         echo -e "${YELLOW}⚠️  Warning: GitHub SSH authentication may not be set up${NC}"
         echo -e "${BLUE}   You may need to enter credentials during clone${NC}"
     fi
-    
+
     echo -e "${GREEN}✅ Prerequisites check complete${NC}"
     echo
 }
 
 clone_or_update_diablo() {
     echo -e "${BLUE}📥 Setting up Diablo-FSW repository...${NC}"
-    
+
     if [[ -d "$DIABLO_DIR" ]]; then
         echo -e "${YELLOW}📁 Diablo-FSW directory already exists${NC}"
         read -p "Update existing repository? [Y/n]: " update_repo
@@ -66,17 +66,17 @@ clone_or_update_diablo() {
         echo -e "${BLUE}📥 Cloning Diablo-FSW repository...${NC}"
         git clone "$DIABLO_REPO_URL" "$DIABLO_DIR"
     fi
-    
+
     echo -e "${GREEN}✅ Diablo-FSW repository ready${NC}"
     echo
 }
 
 copy_sensor_system() {
     echo -e "${BLUE}📋 Copying sensor system files...${NC}"
-    
+
     # Create target directory
     mkdir -p "$SENSOR_TARGET_DIR"
-    
+
     # Copy all directories
     echo -e "${BLUE}  📁 Copying directories...${NC}"
     for dir in scripts config comms utl shell groundstation external; do
@@ -85,12 +85,12 @@ copy_sensor_system() {
             cp -r "$dir" "$SENSOR_TARGET_DIR/"
         fi
     done
-    
+
     # Copy root files
     echo -e "${BLUE}  📄 Copying root files...${NC}"
     files_to_copy=(
         "quick_start.sh"
-        "shutdown_system.sh" 
+        "shutdown_system.sh"
         "startup.sh"
         "CMakeLists.txt"
         "build.sh"
@@ -100,41 +100,41 @@ copy_sensor_system() {
         "MIGRATION_TO_DIABLO.md"
         ".gitignore"
     )
-    
+
     for file in "${files_to_copy[@]}"; do
         if [[ -f "$file" ]]; then
             echo -e "${BLUE}    $file → telemetry/sensor_system/$file${NC}"
             cp "$file" "$SENSOR_TARGET_DIR/"
         fi
     done
-    
+
     echo -e "${GREEN}✅ Files copied successfully${NC}"
     echo
 }
 
 update_paths_for_diablo() {
     echo -e "${BLUE}🔧 Updating paths for Diablo-FSW structure...${NC}"
-    
+
     # Update startup.sh
     if [[ -f "$SENSOR_TARGET_DIR/startup.sh" ]]; then
         echo -e "${BLUE}  📝 Updating startup.sh paths...${NC}"
         sed -i.bak "s|ROOT_SENSOR_DIR=.*|ROOT_SENSOR_DIR=\"\$(cd \"\$(dirname \"\${BASH_SOURCE[0]}\")\" && pwd)\"|g" "$SENSOR_TARGET_DIR/startup.sh"
     fi
-    
+
     # Make scripts executable
     echo -e "${BLUE}  🔧 Making scripts executable...${NC}"
     chmod +x "$SENSOR_TARGET_DIR"/*.sh
     chmod +x "$SENSOR_TARGET_DIR/config/generate_configs.py"
-    
+
     echo -e "${GREEN}✅ Path updates complete${NC}"
     echo
 }
 
 update_diablo_gitignore() {
     echo -e "${BLUE}📝 Updating Diablo-FSW .gitignore...${NC}"
-    
+
     local diablo_gitignore="$DIABLO_DIR/.gitignore"
-    
+
     # Add sensor system specific entries to main .gitignore
     if [[ -f "$diablo_gitignore" ]]; then
         # Check if sensor system section already exists
@@ -168,14 +168,14 @@ EOF
         echo -e "${BLUE}  Creating new .gitignore for Diablo-FSW...${NC}"
         cp "$SENSOR_TARGET_DIR/.gitignore" "$diablo_gitignore"
     fi
-    
+
     echo -e "${GREEN}✅ .gitignore updated${NC}"
     echo
 }
 
 create_diablo_integration() {
     echo -e "${BLUE}🔗 Creating Diablo-FSW integration files...${NC}"
-    
+
     # Create telemetry README
     cat > "$DIABLO_DIR/telemetry/README.md" <<EOF
 # Diablo-FSW Telemetry System
@@ -188,7 +188,7 @@ Real-time telemetry collection and monitoring for the Diablo Flight Software.
 Comprehensive sensor data collection with support for:
 - PT (Pressure/Temperature) sensors
 - TC (Thermocouple) sensors
-- RTD (Temperature) sensors  
+- RTD (Temperature) sensors
 - IMU (Inertial Measurement Unit)
 - Barometer sensors
 - GPS position/velocity
@@ -201,7 +201,7 @@ cd sensor_system
 
 ### Clean Shutdown
 \`\`\`bash
-cd sensor_system  
+cd sensor_system
 ./shutdown_system.sh
 \`\`\`
 
@@ -211,7 +211,7 @@ EOF
     # Update main Diablo-FSW README if it exists
     if [[ -f "$DIABLO_DIR/README.md" ]]; then
         echo -e "${BLUE}  📝 Updating main Diablo-FSW README...${NC}"
-        
+
         # Add telemetry section if it doesn't exist
         if ! grep -q "telemetry" "$DIABLO_DIR/README.md"; then
             cat >> "$DIABLO_DIR/README.md" <<EOF
@@ -230,7 +230,7 @@ See \`telemetry/README.md\` for detailed documentation.
 EOF
         fi
     fi
-    
+
     echo -e "${GREEN}✅ Integration files created${NC}"
     echo
 }
@@ -258,17 +258,17 @@ print_migration_summary() {
 
 main() {
     print_banner
-    
+
     echo -e "${CYAN}This script will migrate the sensor system to the Diablo-FSW repository.${NC}"
     echo -e "${YELLOW}Target location: $SENSOR_TARGET_DIR${NC}"
     echo
-    
+
     read -p "Continue with migration? [Y/n]: " confirm
     if [[ "$confirm" =~ ^[Nn]$ ]]; then
         echo -e "${RED}❌ Migration cancelled${NC}"
         exit 0
     fi
-    
+
     check_prerequisites
     clone_or_update_diablo
     copy_sensor_system

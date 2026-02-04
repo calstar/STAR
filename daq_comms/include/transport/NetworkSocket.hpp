@@ -9,7 +9,7 @@ namespace transport {
 
 /**
  * @brief Abstract base for network socket operations
- * 
+ *
  * Provides a clean interface for UDP/TCP socket operations
  * without exposing platform-specific details.
  */
@@ -55,14 +55,14 @@ public:
      * @param bind_port Local port to bind to
      */
     UDPSocket(const std::string& bind_address, uint16_t bind_port);
-    
+
     /**
      * @brief Create UDP socket for sending to remote address
      * @param remote_address Remote address to send to
      * @param remote_port Remote port to send to
      */
     UDPSocket(const std::string& remote_address, uint16_t remote_port, bool is_sender);
-    
+
     ~UDPSocket() override;
 
     ssize_t receive(uint8_t* buffer, size_t max_size) override;
@@ -78,8 +78,8 @@ public:
      * @param source_port Output parameter for source port
      * @return Number of bytes received, or -1 on error
      */
-    ssize_t receive_from(uint8_t* buffer, size_t max_size, 
-                         std::string& source_address, uint16_t& source_port);
+    ssize_t receive_from(uint8_t* buffer, size_t max_size, std::string& source_address,
+                         uint16_t& source_port);
 
 private:
     int socket_fd_;
@@ -87,7 +87,7 @@ private:
     std::string remote_address_;
     uint16_t remote_port_;
     std::string last_error_;
-    
+
     void setup_socket();
 };
 
@@ -102,7 +102,7 @@ public:
      * @param remote_port Remote port to connect to
      */
     TCPSocket(const std::string& remote_address, uint16_t remote_port);
-    
+
     ~TCPSocket() override;
 
     ssize_t receive(uint8_t* buffer, size_t max_size) override;
@@ -113,12 +113,11 @@ public:
 private:
     int socket_fd_;
     std::string last_error_;
-    
+
     void setup_socket(const std::string& remote_address, uint16_t remote_port);
 };
 
-} // namespace transport
-} // namespace daq_comms
+}  // namespace transport
+}  // namespace daq_comms
 
-#endif // DAQ_NETWORK_SOCKET_HPP
-
+#endif  // DAQ_NETWORK_SOCKET_HPP

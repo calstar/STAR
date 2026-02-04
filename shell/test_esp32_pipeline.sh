@@ -86,7 +86,7 @@ tmux select-pane -t "$SESSION_NAME":0.1 -T "Fake-ESP32"
 sleep $SLEEP_TIME_SHORT
 
 # ========================
-# PANE 3: ESP32 STREAMER  
+# PANE 3: ESP32 STREAMER
 # ========================
 tmux split-window -v -t "$SESSION_NAME":0.1 -c "$ROOT_SENSOR_DIR"
 sleep $SLEEP_TIME_SHELL_ENTER

@@ -1,16 +1,17 @@
 #ifndef DAQ_BOARD_DISCOVERY_HPP
 #define DAQ_BOARD_DISCOVERY_HPP
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <cstring>
+#include <functional>
+#include <map>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
-#include <map>
-#include <optional>
-#include <chrono>
-#include <functional>
-#include <mutex>
-#include <atomic>
-#include <cstring>
+
 #include "../protocol/DiabloBoardPacketParser.hpp"
 
 namespace daq_comms {
@@ -18,35 +19,34 @@ namespace config {
 
 /**
  * @brief Board signature/identifier structure
- * 
+ *
  * Each board has a unique signature used for identification and IP assignment
  */
 struct BoardSignature {
-    uint32_t board_id;           // Unique board ID (MAC address hash or serial number)
-    uint8_t board_type;          // Board type (PT, TC, RTD, LC, etc.)
-    uint8_t hardware_version;    // Hardware revision
-    uint8_t firmware_version;   // Firmware version
-    uint16_t serial_number;      // Board serial number
-    
+    uint32_t board_id;         // Unique board ID (MAC address hash or serial number)
+    uint8_t board_type;        // Board type (PT, TC, RTD, LC, etc.)
+    uint8_t hardware_version;  // Hardware revision
+    uint8_t firmware_version;  // Firmware version
+    uint16_t serial_number;    // Board serial number
+
     // Comparison operators for map/set usage
     bool operator<(const BoardSignature& other) const {
-        if (board_id != other.board_id) return board_id < other.board_id;
-        if (board_type != other.board_type) return board_type < other.board_type;
+        if (board_id != other.board_id)
+            return board_id < other.board_id;
+        if (board_type != other.board_type)
+            return board_type < other.board_type;
         return serial_number < other.serial_number;
     }
-    
+
     bool operator==(const BoardSignature& other) const {
-        return board_id == other.board_id &&
-               board_type == other.board_type &&
+        return board_id == other.board_id && board_type == other.board_type &&
                hardware_version == other.hardware_version &&
-               firmware_version == other.firmware_version &&
-               serial_number == other.serial_number;
+               firmware_version == other.firmware_version && serial_number == other.serial_number;
     }
-    
+
     // Convert to string for logging
     std::string to_string() const {
-        return "Board{id=0x" + std::to_string(board_id) + 
-               ", type=" + std::to_string(board_type) +
+        return "Board{id=0x" + std::to_string(board_id) + ", type=" + std::to_string(board_type) +
                ", hw=" + std::to_string(hardware_version) +
                ", fw=" + std::to_string(firmware_version) +
                ", sn=" + std::to_string(serial_number) + "}";
@@ -57,12 +57,12 @@ struct BoardSignature {
  * @brief Detected sensor information from board
  */
 struct SensorInfo {
-    uint8_t sensor_type;         // Sensor type (PT, TC, RTD, LC)
-    uint8_t channel_id;          // Channel ID on board
-    uint8_t sensor_count;        // Number of sensors of this type
-    bool is_active;              // Whether sensor is currently active
-    uint8_t quality;             // Data quality (0-255)
-    std::string location;        // Physical location (if known)
+    uint8_t sensor_type;   // Sensor type (PT, TC, RTD, LC)
+    uint8_t channel_id;    // Channel ID on board
+    uint8_t sensor_count;  // Number of sensors of this type
+    bool is_active;        // Whether sensor is currently active
+    uint8_t quality;       // Data quality (0-255)
+    std::string location;  // Physical location (if known)
 };
 
 /**
@@ -70,22 +70,22 @@ struct SensorInfo {
  */
 struct DiscoveredBoard {
     BoardSignature signature;
-    std::string current_ip;              // Current IP address (if assigned)
-    std::string mac_address;             // MAC address
-    std::vector<SensorInfo> sensors;     // Detected sensors
+    std::string current_ip;           // Current IP address (if assigned)
+    std::string mac_address;          // MAC address
+    std::vector<SensorInfo> sensors;  // Detected sensors
     std::chrono::steady_clock::time_point last_seen;
-    bool is_configured;                  // Whether board has been configured
-    uint16_t port;                       // Communication port
-    
+    bool is_configured;  // Whether board has been configured
+    uint16_t port;       // Communication port
+
     // Board capabilities
-    uint8_t max_sensors;                 // Maximum sensors board supports
-    uint8_t active_sensors;              // Currently active sensors
-    bool supports_dynamic_config;         // Can board accept config updates?
+    uint8_t max_sensors;           // Maximum sensors board supports
+    uint8_t active_sensors;        // Currently active sensors
+    bool supports_dynamic_config;  // Can board accept config updates?
 };
 
 /**
  * @brief Board Discovery and Configuration Manager
- * 
+ *
  * Discovers boards on the network, detects sensors, and assigns IP addresses
  * based on board signatures. Automatically updates configuration based on
  * discovered hardware.
@@ -98,15 +98,15 @@ public:
         TC_BOARD = 0x02,
         RTD_BOARD = 0x03,
         LC_BOARD = 0x04,
-        MIXED_BOARD = 0x05,      // Board with multiple sensor types
+        MIXED_BOARD = 0x05,  // Board with multiple sensor types
         UNKNOWN = 0xFF
     };
 
     // Discovery modes
     enum class DiscoveryMode {
-        PASSIVE,    // Listen for board announcements
-        ACTIVE,     // Actively scan network
-        HYBRID      // Both passive and active
+        PASSIVE,  // Listen for board announcements
+        ACTIVE,   // Actively scan network
+        HYBRID    // Both passive and active
     };
 
     BoardDiscovery();
@@ -119,10 +119,8 @@ public:
      * @param ip_range_start Starting IP in range (e.g., 100)
      * @param ip_range_end Ending IP in range (e.g., 200)
      */
-    bool initialize(const std::string& network_interface,
-                   const std::string& base_ip,
-                   uint8_t ip_range_start = 100,
-                   uint8_t ip_range_end = 200);
+    bool initialize(const std::string& network_interface, const std::string& base_ip,
+                    uint8_t ip_range_start = 100, uint8_t ip_range_end = 200);
 
     /**
      * @brief Start discovery process
@@ -201,26 +199,29 @@ public:
         size_t ip_assignments;
         std::chrono::steady_clock::time_point last_discovery;
     };
-    
-    DiscoveryStats get_stats() const { return stats_; }
+
+    DiscoveryStats get_stats() const {
+        return stats_;
+    }
 
 private:
     // IP assignment based on board signature
     std::string calculate_ip_from_signature(const BoardSignature& signature) const;
     bool is_ip_available(const std::string& ip) const;
-    
+
     // Sensor detection from packet data
     std::vector<SensorInfo> detect_sensors_from_packet(const uint8_t* data, size_t size) const;
     BoardType detect_board_type(const std::vector<SensorInfo>& sensors) const;
-    
+
     // Board management
     void add_or_update_board(const DiscoveredBoard& board);
     void remove_stale_boards(std::chrono::seconds timeout = std::chrono::seconds(30));
-    
+
     // Configuration generation
     std::map<std::string, std::string> generate_board_config(const DiscoveredBoard& board) const;
-    std::map<std::string, std::string> generate_sensor_config(const std::vector<SensorInfo>& sensors) const;
-    
+    std::map<std::string, std::string> generate_sensor_config(
+        const std::vector<SensorInfo>& sensors) const;
+
     // Network discovery
     void scan_network();
     void listen_for_announcements();
@@ -228,25 +229,25 @@ private:
     // State
     std::map<BoardSignature, DiscoveredBoard> discovered_boards_;
     std::map<std::string, BoardSignature> ip_to_signature_;  // IP -> signature mapping
-    std::map<BoardSignature, std::string> signature_to_ip_; // signature -> IP mapping
-    
+    std::map<BoardSignature, std::string> signature_to_ip_;  // signature -> IP mapping
+
     std::string network_interface_;
     std::string base_ip_;
     uint8_t ip_range_start_;
     uint8_t ip_range_end_;
-    
+
     std::atomic<bool> discovery_active_;
     DiscoveryMode current_mode_;
-    
+
     std::vector<std::function<void(const DiscoveredBoard&)>> discovery_callbacks_;
-    
+
     DiscoveryStats stats_;
     std::mutex boards_mutex_;
 };
 
 /**
  * @brief Dynamic Configuration Manager
- * 
+ *
  * Manages configuration that updates based on discovered hardware
  */
 class DynamicConfigManager {
@@ -281,8 +282,7 @@ private:
     std::string base_config_path_;
 };
 
-} // namespace config
-} // namespace daq_comms
+}  // namespace config
+}  // namespace daq_comms
 
-#endif // DAQ_BOARD_DISCOVERY_HPP
-
+#endif  // DAQ_BOARD_DISCOVERY_HPP

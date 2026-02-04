@@ -59,4 +59,3 @@ echo ""
 trap "echo ''; echo '🛑 Stopping Elodin database...'; kill $ELODIN_PID 2>/dev/null || true; wait $ELODIN_PID 2>/dev/null || true; echo '✅ Stopped'; exit 0" INT TERM
 
 wait $ELODIN_PID
-

@@ -1,27 +1,28 @@
 /**
  * @file esp32_pt_streamer.cpp
  * @brief ESP32 PT data streamer using Rec18 packet format
- * 
+ *
  * Reads the new ESP32 packet format (PacketHeader + Rec18[]) and streams
  * PT messages to Elodin DB for calibration
  */
 
-#include <iostream>
-#include <thread>
-#include <chrono>
-#include <signal.h>
-#include <memory>
-#include <atomic>
 #include <fcntl.h>
+#include <signal.h>
+#include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
-#include <cstring>
-#include <map>
-#include <sys/stat.h>
 
-#include "../external/shared/message_factory/MessageFactory.hpp"
-#include "../comms/include/PTMessage.hpp"
+#include <atomic>
+#include <chrono>
+#include <cstring>
+#include <iostream>
+#include <map>
+#include <memory>
+#include <thread>
+
+#include "../../daq_comms/include/comms/PTMessage.hpp"
 #include "../comms/include/Timer.hpp"
+#include "../external/shared/message_factory/MessageFactory.hpp"
 #include "../utl/Elodin.hpp"
 #include "../utl/TCPSocket.hpp"
 #include "../utl/dbConfig.hpp"
@@ -39,11 +40,11 @@ void signalHandler(int signum) {
 }
 
 // ESP32 Packet structures matching Arduino code (use ESP32 prefix to avoid conflict)
-#pragma pack(push,1)
+#pragma pack(push, 1)
 struct ESP32PacketHeader {
-    char     magic[4];        // "AD26"
-    uint8_t  version;         // 2 (new format)
-    uint8_t  flags;           // bit0 = per-record t_us present
+    char magic[4];            // "AD26"
+    uint8_t version;          // 2 (new format)
+    uint8_t flags;            // bit0 = per-record t_us present
     uint16_t count;           // number of records in this sweep
     uint16_t failures;        // from readAll
     uint32_t total_time_us;   // total sweep time
@@ -51,12 +52,12 @@ struct ESP32PacketHeader {
 };
 
 struct Rec18 {
-    uint8_t  ch;              // channel id
-    uint8_t  ok;              // 0 or 1
-    int32_t  raw;             // ADC code
-    int32_t  sample_time;     // per-sample timestamp (if flags&1)
-    uint32_t read_time_dur;   // per read()
-    uint32_t conv_time_dur;   // wait for DRDY
+    uint8_t ch;              // channel id
+    uint8_t ok;              // 0 or 1
+    int32_t raw;             // ADC code
+    int32_t sample_time;     // per-sample timestamp (if flags&1)
+    uint32_t read_time_dur;  // per read()
+    uint32_t conv_time_dur;  // wait for DRDY
 };
 #pragma pack(pop)
 
@@ -81,7 +82,7 @@ bool openSerialPort(const char* device, int baudrate) {
     // It's a character device (serial port) - configure it
     struct termios tty;
     memset(&tty, 0, sizeof(tty));
-    
+
     if (tcgetattr(serial_fd, &tty) != 0) {
         std::cerr << "Error from tcgetattr: " << strerror(errno) << std::endl;
         std::cerr << "Device might not be a serial port, trying to use it anyway..." << std::endl;
@@ -91,10 +92,13 @@ bool openSerialPort(const char* device, int baudrate) {
 
     // Set baud rate
     speed_t baud = B115200;
-    if (baudrate == 921600) baud = B921600;
-    else if (baudrate == 460800) baud = B460800;
-    else if (baudrate == 230400) baud = B230400;
-    
+    if (baudrate == 921600)
+        baud = B921600;
+    else if (baudrate == 460800)
+        baud = B460800;
+    else if (baudrate == 230400)
+        baud = B230400;
+
     cfsetospeed(&tty, baud);
     cfsetispeed(&tty, baud);
 
@@ -103,7 +107,7 @@ bool openSerialPort(const char* device, int baudrate) {
     tty.c_iflag &= ~IGNBRK;
     tty.c_lflag = 0;
     tty.c_oflag = 0;
-    tty.c_cc[VMIN]  = 0;
+    tty.c_cc[VMIN] = 0;
     tty.c_cc[VTIME] = 5;
     tty.c_iflag &= ~(IXON | IXOFF | IXANY);
     tty.c_cflag |= (CLOCAL | CREAD);
@@ -125,7 +129,7 @@ bool openSerialPort(const char* device, int baudrate) {
 bool readBytes(void* buffer, size_t count) {
     uint8_t* ptr = (uint8_t*)buffer;
     size_t remaining = count;
-    
+
     while (remaining > 0 && running) {
         ssize_t n = read(serial_fd, ptr, remaining);
         if (n < 0) {
@@ -142,7 +146,7 @@ bool readBytes(void* buffer, size_t count) {
         ptr += n;
         remaining -= n;
     }
-    
+
     return remaining == 0;
 }
 
@@ -154,7 +158,7 @@ double rawToVoltage(int32_t raw, double vref = 2.5) {
 
 int main(int argc, char* argv[]) {
     std::cout << "=== ESP32 PT STREAMER (Rec18 Format) ===" << std::endl;
-    
+
     if (argc < 3 || argc > 4) {
         std::cerr << "Usage: " << argv[0] << " <db_host> <db_port> [serial_device]" << std::endl;
         std::cerr << "Example: " << argv[0] << " 127.0.0.1 2240 /dev/ttyACM0" << std::endl;
@@ -186,7 +190,7 @@ int main(int argc, char* argv[]) {
 
     // Open ESP32 serial port or pipe
     int baudrate = 115200;
-    
+
     std::cout << "Opening ESP32 input: " << serial_device << std::endl;
     if (!openSerialPort(serial_device, baudrate)) {
         return 1;
@@ -247,21 +251,23 @@ int main(int argc, char* argv[]) {
 
             // Create PT message - send raw Rec18 data directly
             PTMessage pt_msg;
-            std::get<0>(pt_msg.fields) = rec.ch;              // ch - channel id
-            std::get<1>(pt_msg.fields) = rec.ok;              // ok - 0 or 1
-            std::get<2>(pt_msg.fields) = 0;                   // padding for alignment
-            std::get<3>(pt_msg.fields) = rec.raw;             // raw - ADC code
-            std::get<4>(pt_msg.fields) = rec.sample_time;     // sample_time
-            std::get<5>(pt_msg.fields) = rec.read_time_dur;   // read_time_dur
-            std::get<6>(pt_msg.fields) = rec.conv_time_dur;   // conv_time_dur
+            std::get<0>(pt_msg.fields) = rec.ch;             // ch - channel id
+            std::get<1>(pt_msg.fields) = rec.ok;             // ok - 0 or 1
+            std::get<2>(pt_msg.fields) = 0;                  // padding for alignment
+            std::get<3>(pt_msg.fields) = rec.raw;            // raw - ADC code
+            std::get<4>(pt_msg.fields) = rec.sample_time;    // sample_time
+            std::get<5>(pt_msg.fields) = rec.read_time_dur;  // read_time_dur
+            std::get<6>(pt_msg.fields) = rec.conv_time_dur;  // conv_time_dur
 
             // Debug: print first record to verify all fields
             if (total_records == 1) {
                 std::cout << "DEBUG First Record:" << std::endl;
                 std::cout << "  ch=" << (int)rec.ch << " ok=" << (int)rec.ok << std::endl;
                 std::cout << "  raw=" << rec.raw << " sample_time=" << rec.sample_time << std::endl;
-                std::cout << "  read_dur=" << rec.read_time_dur << " conv_dur=" << rec.conv_time_dur << std::endl;
-                std::cout << "  Message size: " << MessageSize<PTMessage>::value << " bytes (expected 20 with padding)" << std::endl;
+                std::cout << "  read_dur=" << rec.read_time_dur << " conv_dur=" << rec.conv_time_dur
+                          << std::endl;
+                std::cout << "  Message size: " << MessageSize<PTMessage>::value
+                          << " bytes (expected 20 with padding)" << std::endl;
             }
 
             // Send to Elodin DB
@@ -271,20 +277,21 @@ int main(int argc, char* argv[]) {
         // Print statistics every 5 seconds
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::seconds>(now - last_stats_time).count() >= 5) {
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
-            
+            auto elapsed =
+                std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+
             std::cout << "\n📊 STREAMING STATISTICS (" << elapsed << "s):" << std::endl;
-            std::cout << "Total packets: " << total_packets 
-                      << " (" << (elapsed > 0 ? total_packets / elapsed : 0) << " packets/s)" << std::endl;
-            std::cout << "Total records: " << total_records 
-                      << " (" << (elapsed > 0 ? total_records / elapsed : 0) << " records/s)" << std::endl;
-            
+            std::cout << "Total packets: " << total_packets << " ("
+                      << (elapsed > 0 ? total_packets / elapsed : 0) << " packets/s)" << std::endl;
+            std::cout << "Total records: " << total_records << " ("
+                      << (elapsed > 0 ? total_records / elapsed : 0) << " records/s)" << std::endl;
+
             std::cout << "Channels: ";
             for (const auto& pair : channel_counts) {
                 std::cout << (int)pair.first << "=" << pair.second << " ";
             }
             std::cout << std::endl;
-            
+
             last_stats_time = now;
         }
     }

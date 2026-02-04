@@ -1,19 +1,19 @@
 #ifndef DAQ_DIABLO_BOARD_PACKET_PARSER_HPP
 #define DAQ_DIABLO_BOARD_PACKET_PARSER_HPP
 
+#include <chrono>
 #include <cstdint>
-#include <vector>
+#include <map>
 #include <optional>
 #include <string>
-#include <map>
-#include <chrono>
+#include <vector>
 
 namespace daq_comms {
 namespace protocol {
 
 /**
  * @brief Parser for actual DiabloAvionics board packets
- * 
+ *
  * This matches the REAL packet format from DAQv2-Comms library:
  * - 6-byte header (packet_type, version, timestamp)
  * - Simple body structures
@@ -46,12 +46,7 @@ public:
     };
 
     // Board states
-    enum class BoardState : uint8_t {
-        SETUP = 1,
-        ACTIVE = 2,
-        ABORT = 3,
-        ABORT_DONE = 4
-    };
+    enum class BoardState : uint8_t { SETUP = 1, ACTIVE = 2, ABORT = 3, ABORT_DONE = 4 };
 
     // Engine states
     enum class EngineState : uint8_t {
@@ -75,26 +70,26 @@ public:
      * @brief Board Heartbeat packet body
      */
     struct BoardHeartbeat {
-        BoardType board_type;    // 1 byte
-        uint8_t board_id;        // 1 byte (0-15)
-        EngineState engine_state; // 1 byte
-        BoardState board_state;   // 1 byte
+        BoardType board_type;      // 1 byte
+        uint8_t board_id;          // 1 byte (0-15)
+        EngineState engine_state;  // 1 byte
+        BoardState board_state;    // 1 byte
     };
 
     /**
      * @brief Sensor datapoint
      */
     struct SensorDatapoint {
-        uint8_t sensor_id;       // Sensor ID on board (0-indexed)
-        uint32_t data;           // Sensor value (can be ADC counts or float)
+        uint8_t sensor_id;  // Sensor ID on board (0-indexed)
+        uint32_t data;      // Sensor value (can be ADC counts or float)
     };
 
     /**
      * @brief Sensor data chunk
      */
     struct SensorDataChunk {
-        uint32_t timestamp;                      // Chunk timestamp (ms)
-        std::vector<SensorDatapoint> datapoints; // Sensor readings
+        uint32_t timestamp;                       // Chunk timestamp (ms)
+        std::vector<SensorDatapoint> datapoints;  // Sensor readings
     };
 
     /**
@@ -131,7 +126,8 @@ public:
     /**
      * @brief Parse board heartbeat packet
      */
-    std::optional<ParsedBoardHeartbeat> parse_board_heartbeat(const uint8_t* data, size_t size) const;
+    std::optional<ParsedBoardHeartbeat> parse_board_heartbeat(const uint8_t* data,
+                                                              size_t size) const;
 
     /**
      * @brief Parse sensor data packet
@@ -146,8 +142,9 @@ public:
         uint8_t board_id;
         std::string mac_address;  // Will be extracted from source IP/MAC
     };
-    
-    BoardSignature extract_signature(const ParsedBoardHeartbeat& heartbeat, const std::string& source_ip) const;
+
+    BoardSignature extract_signature(const ParsedBoardHeartbeat& heartbeat,
+                                     const std::string& source_ip) const;
 
     /**
      * @brief Detect sensors from sensor data packet
@@ -157,29 +154,26 @@ public:
         BoardType board_type;  // Inferred from packet source/context
         bool is_active;
     };
-    
-    std::vector<DetectedSensor> detect_sensors(const ParsedSensorDataPacket& packet, BoardType board_type) const;
+
+    std::vector<DetectedSensor> detect_sensors(const ParsedSensorDataPacket& packet,
+                                               BoardType board_type) const;
 
     /**
      * @brief Calculate IP from MAC address (deterministic assignment)
      */
-    static std::string calculate_ip_from_mac(const std::string& mac_address, 
-                                             const std::string& base_ip,
-                                             uint8_t ip_range_start,
+    static std::string calculate_ip_from_mac(const std::string& mac_address,
+                                             const std::string& base_ip, uint8_t ip_range_start,
                                              uint8_t ip_range_end);
 
 private:
     // Helper to read little-endian uint32_t
     uint32_t read_le_u32(const uint8_t* data) const {
-        return static_cast<uint32_t>(data[0]) |
-               (static_cast<uint32_t>(data[1]) << 8) |
-               (static_cast<uint32_t>(data[2]) << 16) |
-               (static_cast<uint32_t>(data[3]) << 24);
+        return static_cast<uint32_t>(data[0]) | (static_cast<uint32_t>(data[1]) << 8) |
+               (static_cast<uint32_t>(data[2]) << 16) | (static_cast<uint32_t>(data[3]) << 24);
     }
 };
 
-} // namespace protocol
-} // namespace daq_comms
+}  // namespace protocol
+}  // namespace daq_comms
 
-#endif // DAQ_DIABLO_BOARD_PACKET_PARSER_HPP
-
+#endif  // DAQ_DIABLO_BOARD_PACKET_PARSER_HPP

@@ -39,5 +39,3 @@ echo "Access viewer at: http://localhost:8080"
 echo "Press Ctrl+C to stop all services"
 trap "kill $DB_PID $VIEWER_PID; exit" INT
 wait
-
-

@@ -1,11 +1,11 @@
 #ifndef PT_CALIBRATION_CHANGE_DETECTION_HPP
 #define PT_CALIBRATION_CHANGE_DETECTION_HPP
 
-#include <vector>
-#include <memory>
 #include <Eigen/Dense>
-#include <deque>
 #include <chrono>
+#include <deque>
+#include <memory>
+#include <vector>
 
 #include "PTCalibrationFramework.hpp"
 
@@ -20,12 +20,12 @@ public:
      * @param false_alarm_rate Desired false alarm rate
      */
     GLRChangeDetector(size_t window_size = 50, double false_alarm_rate = 0.05);
-    
+
     /**
      * @brief Destructor
      */
     ~GLRChangeDetector();
-    
+
     /**
      * @brief Add new measurement
      * @param voltage Voltage measurement
@@ -37,32 +37,36 @@ public:
      * @return GLR test statistic
      */
     double addMeasurement(double voltage, double pressure, const EnvironmentalState& environment,
-                         std::shared_ptr<CalibrationMapFunction> calibration_map,
-                         const Eigen::VectorXd& theta, const Eigen::MatrixXd& covariance);
-    
+                          std::shared_ptr<CalibrationMapFunction> calibration_map,
+                          const Eigen::VectorXd& theta, const Eigen::MatrixXd& covariance);
+
     /**
      * @brief Check if change is detected
      * @return true if change detected, false otherwise
      */
-    bool isChangeDetected() const { return change_detected_; }
-    
+    bool isChangeDetected() const {
+        return change_detected_;
+    }
+
     /**
      * @brief Get threshold value
      * @return GLR threshold
      */
-    double getThreshold() const { return threshold_; }
-    
+    double getThreshold() const {
+        return threshold_;
+    }
+
     /**
      * @brief Reset detector
      */
     void reset();
-    
+
     /**
      * @brief Set window size
      * @param window_size New window size
      */
     void setWindowSize(size_t window_size);
-    
+
     /**
      * @brief Set false alarm rate
      * @param false_alarm_rate New false alarm rate
@@ -76,20 +80,20 @@ private:
         EnvironmentalState environment;
         uint64_t timestamp_ns;
     };
-    
+
     size_t window_size_;
     double false_alarm_rate_;
     double threshold_;
     bool change_detected_;
-    
+
     std::deque<Measurement> measurements_;
-    
+
     /**
      * @brief Compute GLR test statistic
      * @return GLR statistic
      */
     double computeGLRStatistic();
-    
+
     /**
      * @brief Update threshold based on false alarm rate
      */
@@ -107,12 +111,12 @@ public:
      * @param minimum_run_length Minimum run length before reset
      */
     CUSUMChangeDetector(double threshold = 5.0, size_t minimum_run_length = 10);
-    
+
     /**
      * @brief Destructor
      */
     ~CUSUMChangeDetector();
-    
+
     /**
      * @brief Add new measurement
      * @param voltage Voltage measurement
@@ -124,26 +128,30 @@ public:
      * @return CUSUM statistic
      */
     double addMeasurement(double voltage, double pressure, const EnvironmentalState& environment,
-                         std::shared_ptr<CalibrationMapFunction> calibration_map,
-                         const Eigen::VectorXd& old_theta, const Eigen::VectorXd& new_theta);
-    
+                          std::shared_ptr<CalibrationMapFunction> calibration_map,
+                          const Eigen::VectorXd& old_theta, const Eigen::VectorXd& new_theta);
+
     /**
      * @brief Check if drift is detected
      * @return true if drift detected, false otherwise
      */
-    bool isDriftDetected() const { return drift_detected_; }
-    
+    bool isDriftDetected() const {
+        return drift_detected_;
+    }
+
     /**
      * @brief Get current CUSUM value
      * @return Current CUSUM statistic
      */
-    double getCurrentCUSUM() const { return current_cusum_; }
-    
+    double getCurrentCUSUM() const {
+        return current_cusum_;
+    }
+
     /**
      * @brief Reset detector
      */
     void reset();
-    
+
     /**
      * @brief Set threshold
      * @param threshold New threshold
@@ -156,7 +164,7 @@ private:
     double current_cusum_;
     bool drift_detected_;
     size_t run_length_;
-    
+
     /**
      * @brief Compute log-likelihood ratio
      * @param voltage Voltage measurement
@@ -167,9 +175,11 @@ private:
      * @param new_theta New parameters
      * @return Log-likelihood ratio
      */
-    double computeLogLikelihoodRatio(double voltage, double pressure, const EnvironmentalState& environment,
-                                   std::shared_ptr<CalibrationMapFunction> calibration_map,
-                                   const Eigen::VectorXd& old_theta, const Eigen::VectorXd& new_theta);
+    double computeLogLikelihoodRatio(double voltage, double pressure,
+                                     const EnvironmentalState& environment,
+                                     std::shared_ptr<CalibrationMapFunction> calibration_map,
+                                     const Eigen::VectorXd& old_theta,
+                                     const Eigen::VectorXd& new_theta);
 };
 
 /**
@@ -182,13 +192,14 @@ public:
      * @param calibration_map Calibration map function
      * @param num_physical_states Number of physical states to track
      */
-    PTCalibrationEKF(std::shared_ptr<CalibrationMapFunction> calibration_map, int num_physical_states = 3);
-    
+    PTCalibrationEKF(std::shared_ptr<CalibrationMapFunction> calibration_map,
+                     int num_physical_states = 3);
+
     /**
      * @brief Destructor
      */
     ~PTCalibrationEKF();
-    
+
     /**
      * @brief Initialize EKF state
      * @param initial_calibration Initial calibration parameters
@@ -196,16 +207,16 @@ public:
      * @param initial_physical_states Initial physical states
      */
     void initialize(const CalibrationParameters& initial_calibration,
-                   const EnvironmentalState& initial_environment,
-                   const Eigen::VectorXd& initial_physical_states);
-    
+                    const EnvironmentalState& initial_environment,
+                    const Eigen::VectorXd& initial_physical_states);
+
     /**
      * @brief Predict step
      * @param dt Time step
      * @param environmental_input Environmental input (if available)
      */
     void predict(double dt, const EnvironmentalState* environmental_input = nullptr);
-    
+
     /**
      * @brief Update step
      * @param voltage Voltage measurement
@@ -213,92 +224,100 @@ public:
      * @param environment Environmental state
      * @return Innovation and innovation covariance
      */
-    std::pair<double, double> update(double voltage, double pressure, const EnvironmentalState& environment);
-    
+    std::pair<double, double> update(double voltage, double pressure,
+                                     const EnvironmentalState& environment);
+
     /**
      * @brief Get current state estimate
      * @return State vector [physical_states, calibration_params, environment, residual_bias]
      */
-    const Eigen::VectorXd& getStateEstimate() const { return state_; }
-    
+    const Eigen::VectorXd& getStateEstimate() const {
+        return state_;
+    }
+
     /**
      * @brief Get current state covariance
      * @return State covariance matrix
      */
-    const Eigen::MatrixXd& getStateCovariance() const { return covariance_; }
-    
+    const Eigen::MatrixXd& getStateCovariance() const {
+        return covariance_;
+    }
+
     /**
      * @brief Get current calibration parameters
      * @return Calibration parameters
      */
     CalibrationParameters getCalibrationParameters() const;
-    
+
     /**
      * @brief Get current environmental state
      * @return Environmental state
      */
     EnvironmentalState getEnvironmentalState() const;
-    
+
     /**
      * @brief Set process noise covariance
      * @param Q Process noise covariance matrix
      */
     void setProcessNoiseCovariance(const Eigen::MatrixXd& Q);
-    
+
     /**
      * @brief Set measurement noise covariance
      * @param R Measurement noise variance
      */
     void setMeasurementNoiseCovariance(double R);
-    
+
     /**
      * @brief Check if EKF is initialized
      * @return true if initialized, false otherwise
      */
-    bool isInitialized() const { return initialized_; }
+    bool isInitialized() const {
+        return initialized_;
+    }
 
 private:
     std::shared_ptr<CalibrationMapFunction> calibration_map_;
     int num_physical_states_;
     int num_calibration_params_;
     bool initialized_;
-    
+
     // State vector: [physical_states, calibration_params, environment, residual_bias]
     Eigen::VectorXd state_;
     Eigen::MatrixXd covariance_;
-    
+
     // Process and measurement noise
     Eigen::MatrixXd process_noise_covariance_;
     double measurement_noise_variance_;
-    
+
     // State indices
     int physical_start_idx_;
     int calibration_start_idx_;
     int environment_start_idx_;
     int bias_idx_;
-    
+
     /**
      * @brief Compute process model Jacobian
      * @param dt Time step
      * @return Process model Jacobian
      */
     Eigen::MatrixXd computeProcessJacobian(double dt);
-    
+
     /**
      * @brief Compute measurement model Jacobian
      * @param voltage Voltage measurement
      * @param environment Environmental state
      * @return Measurement model Jacobian
      */
-    Eigen::VectorXd computeMeasurementJacobian(double voltage, const EnvironmentalState& environment);
-    
+    Eigen::VectorXd computeMeasurementJacobian(double voltage,
+                                               const EnvironmentalState& environment);
+
     /**
      * @brief Compute process noise covariance (environment-dependent)
      * @param environment Environmental state
      * @return Process noise covariance
      */
     Eigen::MatrixXd computeProcessNoiseCovariance(const EnvironmentalState& environment);
-    
+
     /**
      * @brief Update environmental state from sensor inputs
      * @param environmental_input Environmental input
@@ -319,15 +338,14 @@ public:
      * @param cusum_threshold CUSUM threshold
      */
     PTAdaptiveCalibrationSystem(std::shared_ptr<CalibrationMapFunction> calibration_map,
-                               size_t glr_window_size = 50,
-                               double glr_false_alarm_rate = 0.05,
-                               double cusum_threshold = 5.0);
-    
+                                size_t glr_window_size = 50, double glr_false_alarm_rate = 0.05,
+                                double cusum_threshold = 5.0);
+
     /**
      * @brief Destructor
      */
     ~PTAdaptiveCalibrationSystem();
-    
+
     /**
      * @brief Initialize system
      * @param initial_calibration Initial calibration parameters
@@ -335,9 +353,9 @@ public:
      * @param initial_physical_states Initial physical states
      */
     void initialize(const CalibrationParameters& initial_calibration,
-                   const EnvironmentalState& initial_environment,
-                   const Eigen::VectorXd& initial_physical_states);
-    
+                    const EnvironmentalState& initial_environment,
+                    const Eigen::VectorXd& initial_physical_states);
+
     /**
      * @brief Process new measurement
      * @param voltage Voltage measurement
@@ -345,32 +363,32 @@ public:
      * @param environment Environmental state
      * @return Prediction result with uncertainty
      */
-    std::pair<double, double> processMeasurement(double voltage, double pressure, 
-                                               const EnvironmentalState& environment);
-    
+    std::pair<double, double> processMeasurement(double voltage, double pressure,
+                                                 const EnvironmentalState& environment);
+
     /**
      * @brief Check if recalibration is needed
      * @return true if recalibration needed, false otherwise
      */
     bool isRecalibrationNeeded() const;
-    
+
     /**
      * @brief Get change detection status
      * @return Pair of (GLR_change_detected, CUSUM_drift_detected)
      */
     std::pair<bool, bool> getChangeDetectionStatus() const;
-    
+
     /**
      * @brief Get current calibration quality
      * @return Calibration quality metrics
      */
     CalibrationQualityMetrics getCalibrationQuality() const;
-    
+
     /**
      * @brief Reset change detectors
      */
     void resetChangeDetectors();
-    
+
     /**
      * @brief Get current EKF state
      * @return EKF state and covariance
@@ -381,17 +399,18 @@ private:
     std::shared_ptr<PTCalibrationEKF> ekf_;
     std::shared_ptr<GLRChangeDetector> glr_detector_;
     std::shared_ptr<CUSUMChangeDetector> cusum_detector_;
-    
+
     CalibrationParameters last_stable_calibration_;
     bool recalibration_needed_;
-    
+
     /**
      * @brief Update change detection
      * @param voltage Voltage measurement
      * @param pressure Pressure measurement
      * @param environment Environmental state
      */
-    void updateChangeDetection(double voltage, double pressure, const EnvironmentalState& environment);
+    void updateChangeDetection(double voltage, double pressure,
+                               const EnvironmentalState& environment);
 };
 
 #endif  // PT_CALIBRATION_CHANGE_DETECTION_HPP

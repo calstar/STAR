@@ -73,7 +73,8 @@ void cppGenerateDBConfig() {
     auto ptTable = builder::vtable({
         raw_field(0, 1, schema(PrimType::U8(), {}, pair(0x20, "ch"))),
         raw_field(1, 1, schema(PrimType::U8(), {}, pair(0x20, "ok"))),
-        raw_field(4, 4, schema(PrimType::U32(), {}, pair(0x20, "raw"))),              // Aligned to 4-byte boundary
+        raw_field(4, 4,
+                  schema(PrimType::U32(), {}, pair(0x20, "raw"))),  // Aligned to 4-byte boundary
         raw_field(8, 4, schema(PrimType::U32(), {}, pair(0x20, "sample_time"))),
         raw_field(12, 4, schema(PrimType::U32(), {}, pair(0x20, "read_time_dur"))),
         raw_field(16, 4, schema(PrimType::U32(), {}, pair(0x20, "conv_time_dur"))),

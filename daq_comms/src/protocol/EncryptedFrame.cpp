@@ -1,18 +1,18 @@
 #include "protocol/EncryptedFrame.hpp"
 
-#include <cstring>
-#include <algorithm>
-#include <iostream>
-#include <iomanip>
 #include <arpa/inet.h>
+
+#include <algorithm>
+#include <cstring>
+#include <iomanip>
+#include <iostream>
 
 namespace daq_comms {
 namespace protocol {
 
-FrameDecoder::FrameDecoder() 
-    : expected_sequence_id_(0) {
+FrameDecoder::FrameDecoder() : expected_sequence_id_(0) {
     stats_ = Stats{};
-    
+
     // Default development key (should be replaced with real key management)
     uint8_t default_key[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
                              0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10};
@@ -27,7 +27,8 @@ std::optional<SensorFrame> FrameDecoder::decode_frame(const uint8_t* data, size_
     if (size < FrameHeader::HEADER_SIZE) {
         static size_t small_packet_count = 0;
         if (small_packet_count++ < 3) {
-            std::cerr << "[Decoder] Packet too small: " << size << " < " << FrameHeader::HEADER_SIZE << "\n";
+            std::cerr << "[Decoder] Packet too small: " << size << " < " << FrameHeader::HEADER_SIZE
+                      << "\n";
         }
         return std::nullopt;
     }
@@ -48,7 +49,7 @@ std::optional<SensorFrame> FrameDecoder::decode_frame(const uint8_t* data, size_
         if (no_magic_count++ < 3) {
             std::cerr << "[Decoder] No magic byte found. First bytes: ";
             for (size_t i = 0; i < std::min(size, size_t(16)); ++i) {
-                std::cerr << std::hex << std::setw(2) << std::setfill('0') 
+                std::cerr << std::hex << std::setw(2) << std::setfill('0')
                           << static_cast<int>(data[i]) << " ";
             }
             std::cerr << std::dec << "\n";
@@ -59,7 +60,7 @@ std::optional<SensorFrame> FrameDecoder::decode_frame(const uint8_t* data, size_
     // Parse header (handle endianness)
     FrameHeader header;
     std::memcpy(&header, data + header_offset, sizeof(FrameHeader));
-    
+
     // Convert from network byte order
     header.sequence_id = ntohs(header.sequence_id);
     header.timestamp_ms = ntohl(header.timestamp_ms);
@@ -74,9 +75,9 @@ std::optional<SensorFrame> FrameDecoder::decode_frame(const uint8_t* data, size_
 
     // Check sequence ID for loss detection
     if (expected_sequence_id_ != 0) {
-        uint16_t gap = (header.sequence_id >= expected_sequence_id_) 
-            ? (header.sequence_id - expected_sequence_id_)
-            : (65535 - expected_sequence_id_ + header.sequence_id + 1);
+        uint16_t gap = (header.sequence_id >= expected_sequence_id_)
+                           ? (header.sequence_id - expected_sequence_id_)
+                           : (65535 - expected_sequence_id_ + header.sequence_id + 1);
         if (gap > 1) {
             stats_.sequence_gaps += (gap - 1);
         }
@@ -92,7 +93,7 @@ std::optional<SensorFrame> FrameDecoder::decode_frame(const uint8_t* data, size_
 
     SensorFrame frame;
     frame.header = header;
-    frame.receive_timestamp_ns = 0; // TODO: Get actual receive time
+    frame.receive_timestamp_ns = 0;  // TODO: Get actual receive time
     frame.source_address = "";
     frame.source_port = 0;
 
@@ -105,7 +106,7 @@ std::optional<SensorFrame> FrameDecoder::decode_frame(const uint8_t* data, size_
 
     stats_.frames_decoded++;
     stats_.last_sequence_id = header.sequence_id;
-    
+
     return frame;
 }
 
@@ -126,13 +127,13 @@ std::optional<SensorBatch> FrameDecoder::unpack_payload(const SensorFrame& frame
             // End of payload, but we haven't consumed all bytes - might be padding
             break;
         }
-        
+
         uint8_t sensor_type = payload[offset++];
-        
+
         switch (sensor_type) {
-            case 0x01: { // PT sensor
+            case 0x01: {  // PT sensor
                 if (offset + 9 > payload_size) {
-                    break; // Not enough data, stop unpacking
+                    break;  // Not enough data, stop unpacking
                 }
                 RawPTSample sample;
                 sample.channel_id = payload[offset++];
@@ -148,7 +149,7 @@ std::optional<SensorBatch> FrameDecoder::unpack_payload(const SensorFrame& frame
                 batch.pt_samples.push_back(sample);
                 break;
             }
-            case 0x02: { // TC sensor
+            case 0x02: {  // TC sensor
                 if (offset + 9 > payload_size) {
                     break;
                 }
@@ -166,7 +167,7 @@ std::optional<SensorBatch> FrameDecoder::unpack_payload(const SensorFrame& frame
                 batch.tc_samples.push_back(sample);
                 break;
             }
-            case 0x03: { // RTD sensor
+            case 0x03: {  // RTD sensor
                 if (offset + 9 > payload_size) {
                     break;
                 }
@@ -184,7 +185,7 @@ std::optional<SensorBatch> FrameDecoder::unpack_payload(const SensorFrame& frame
                 batch.rtd_samples.push_back(sample);
                 break;
             }
-            case 0x04: { // LC sensor
+            case 0x04: {  // LC sensor
                 if (offset + 9 > payload_size) {
                     break;
                 }
@@ -219,13 +220,13 @@ bool FrameDecoder::validate_header(const FrameHeader& header) const {
     if (header.version != FrameHeader::PROTOCOL_VERSION) {
         return false;
     }
-    if (header.payload_size > 4096) { // Reasonable max payload size
+    if (header.payload_size > 4096) {  // Reasonable max payload size
         return false;
     }
-    
+
     // CRC validation would go here
     // For now, skip CRC check in development
-    
+
     return true;
 }
 
@@ -258,6 +259,5 @@ uint32_t FrameDecoder::compute_crc32(const uint8_t* data, size_t size) const {
     return ~crc;
 }
 
-} // namespace protocol
-} // namespace daq_comms
-
+}  // namespace protocol
+}  // namespace daq_comms

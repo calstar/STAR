@@ -1,18 +1,19 @@
 #ifndef NAVIGATION_H
 #define NAVIGATION_H
 
-#include "../include/Config.h"
-#include "../include/DiabloGlobals.h"
-#include "../comms/include/mfNavigationMessage.hpp"
-#include "../comms/include/mfDiabloSensorMessages.hpp"
-#include "DiabloSensorFusion.hpp"
-#include "DiabloNavigationFilter.hpp"
+#include <condition_variable>
+#include <memory>
+#include <mutex>
+
+#include "../../comms/include/Timer.hpp"
 #include "../../utl/Elodin.hpp"
 #include "../../utl/TCPSocket.hpp"
-#include "../../comms/include/Timer.hpp"
-#include <condition_variable>
-#include <mutex>
-#include <memory>
+#include "../comms/include/mfDiabloSensorMessages.hpp"
+#include "../comms/include/mfNavigationMessage.hpp"
+#include "../include/Config.h"
+#include "../include/DiabloGlobals.h"
+#include "DiabloNavigationFilter.hpp"
+#include "DiabloSensorFusion.hpp"
 
 // Forward declarations
 class Timer;
@@ -20,7 +21,7 @@ extern Timer navigation_timer;
 
 /**
  * @brief Navigation subsystem for DiabloAvionics FSW
- * 
+ *
  * Processes sensor data to compute navigation state (position, velocity, attitude)
  * and publishes to Elodin DB. Follows the reference FSW pattern with condition
  * variables and global state.
@@ -35,7 +36,7 @@ private:
     int _port_min;
     bool is_broadcasting;
     Timer* nav_timer;
-    
+
     // Our unique navigation components
     std::unique_ptr<DiabloSensorFusion> sensor_fusion_;
     std::unique_ptr<DiabloNavigationFilter> navigation_filter_;
@@ -44,7 +45,7 @@ public:
     // Timestamp tracking
     double last_timestamp_imu;
     double last_timestamp_pt;
-    
+
     // HITL variables
     bool is_hitl;
     bool simulate_velocity_flag;
@@ -54,7 +55,7 @@ public:
 
     /* Member Functions */
     void update();
-    void populate_navigation_message_ned(); // Uses our sensor fusion and filter
+    void populate_navigation_message_ned();  // Uses our sensor fusion and filter
 
     /* Special Member Functions (SMFs) */
     Navigation(Config config);
@@ -62,4 +63,3 @@ public:
 };
 
 #endif  // NAVIGATION_H
-

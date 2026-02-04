@@ -86,6 +86,3 @@ echo ""
 echo "   4. Stop database when done:"
 echo "      kill $DB_PID"
 echo ""
-
-
-

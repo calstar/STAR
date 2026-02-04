@@ -461,4 +461,3 @@ This Elodin-integrated ground station provides:
 ---
 
 **Ready to command! 🚀**
-

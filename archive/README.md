@@ -26,6 +26,3 @@ The new `daq_comms/` system only uses:
 - `utl/db.hpp` - Database utilities (via ElodinClient)
 
 All other utilities are FSW-specific and not used by the new system.
-
-
-

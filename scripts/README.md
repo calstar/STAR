@@ -100,4 +100,3 @@ make esp32_pt_streamer fake_esp32_packet_gen
 - Python scripts require Python 3.8+ and dependencies from `requirements.txt`
 - C++ source files are compiled as part of the main build system
 - Service files in `systemd/` are installed to `/etc/systemd/system/` during installation
-

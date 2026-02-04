@@ -17,29 +17,29 @@
         daq-bridge = pkgs.stdenv.mkDerivation {
           name = "daq-bridge";
           src = ./.;
-          
+
           nativeBuildInputs = with pkgs; [
             cmake
             pkg-config
           ];
-          
+
           buildInputs = with pkgs; [
             eigen
             python3
             tmux
           ];
-          
+
           cmakeFlags = [
             "-DCMAKE_BUILD_TYPE=Release"
           ];
-          
+
           buildPhase = ''
             mkdir -p build
             cd build
             cmake ..
             make -j$(nproc) daq_bridge
           '';
-          
+
           installPhase = ''
             mkdir -p $out/bin
             cp build/daq_bridge $out/bin/
@@ -50,7 +50,7 @@
         # Development shell
         devShell = pkgs.mkShell {
           name = "daq-system-dev";
-          
+
           nativeBuildInputs = with pkgs; [
             cmake
             pkg-config
@@ -58,7 +58,7 @@
             gdb
             clang-tools
           ];
-          
+
           buildInputs = with pkgs; [
             eigen
             python3
@@ -67,7 +67,7 @@
             # Elodin binary (if available via cargo)
             # Note: You may need to install elodin separately via cargo install
           ];
-          
+
           shellHook = ''
             echo "DAQ System Development Environment"
             echo "=================================="
@@ -100,4 +100,3 @@
       }
     );
 }
-

@@ -1,12 +1,13 @@
 #include "transport/NetworkSocket.hpp"
 
-#include <sys/socket.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
-#include <unistd.h>
 #include <fcntl.h>
-#include <cstring>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include <cerrno>
+#include <cstring>
 
 namespace daq_comms {
 namespace transport {
@@ -23,7 +24,7 @@ UDPSocket::UDPSocket(const std::string& bind_address, uint16_t bind_port)
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(bind_port);
-    
+
     if (bind_address == "0.0.0.0" || bind_address.empty()) {
         addr.sin_addr.s_addr = INADDR_ANY;
     } else {
@@ -75,7 +76,7 @@ ssize_t UDPSocket::receive(uint8_t* buffer, size_t max_size) {
     ssize_t received = recvfrom(socket_fd_, buffer, max_size, 0, nullptr, nullptr);
     if (received < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return 0; // No data available (non-blocking)
+            return 0;  // No data available (non-blocking)
         }
         last_error_ = "Receive error: " + std::string(strerror(errno));
         return -1;
@@ -83,8 +84,8 @@ ssize_t UDPSocket::receive(uint8_t* buffer, size_t max_size) {
     return received;
 }
 
-ssize_t UDPSocket::receive_from(uint8_t* buffer, size_t max_size,
-                                std::string& source_address, uint16_t& source_port) {
+ssize_t UDPSocket::receive_from(uint8_t* buffer, size_t max_size, std::string& source_address,
+                                uint16_t& source_port) {
     if (socket_fd_ < 0) {
         last_error_ = "Socket not initialized";
         return -1;
@@ -92,7 +93,7 @@ ssize_t UDPSocket::receive_from(uint8_t* buffer, size_t max_size,
 
     struct sockaddr_in addr = {};
     socklen_t addr_len = sizeof(addr);
-    
+
     ssize_t received = recvfrom(socket_fd_, buffer, max_size, 0,
                                 reinterpret_cast<struct sockaddr*>(&addr), &addr_len);
     if (received < 0) {
@@ -123,9 +124,9 @@ ssize_t UDPSocket::send(const uint8_t* data, size_t size) {
             last_error_ = "Invalid remote address: " + remote_address_;
             return -1;
         }
-        
-        ssize_t sent = sendto(socket_fd_, data, size, 0,
-                              reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+
+        ssize_t sent = sendto(socket_fd_, data, size, 0, reinterpret_cast<struct sockaddr*>(&addr),
+                              sizeof(addr));
         if (sent < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 return 0;
@@ -150,8 +151,7 @@ std::string UDPSocket::last_error() const {
 }
 
 // TCP Socket Implementation
-TCPSocket::TCPSocket(const std::string& remote_address, uint16_t remote_port)
-    : socket_fd_(-1) {
+TCPSocket::TCPSocket(const std::string& remote_address, uint16_t remote_port) : socket_fd_(-1) {
     setup_socket(remote_address, remote_port);
 }
 
@@ -171,7 +171,7 @@ void TCPSocket::setup_socket(const std::string& remote_address, uint16_t remote_
     struct sockaddr_in addr = {};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(remote_port);
-    
+
     if (inet_aton(remote_address.c_str(), &addr.sin_addr) == 0) {
         last_error_ = "Invalid remote address: " + remote_address;
         close(socket_fd_);
@@ -236,6 +236,5 @@ std::string TCPSocket::last_error() const {
     return last_error_;
 }
 
-} // namespace transport
-} // namespace daq_comms
-
+}  // namespace transport
+}  // namespace daq_comms

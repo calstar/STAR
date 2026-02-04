@@ -53,4 +53,3 @@ echo "Processes are still running. Press Ctrl+C to stop, or run:"
 echo "  kill $BRIDGE_PID $DB_PID"
 
 wait
-

@@ -1,0 +1,6 @@
+[submodule "external/DAQv2-Comms"]
+	path = external/DAQv2-Comms
+	url = https://github.com/calstar/DAQv2-Comms.git
+[submodule "external/DiabloAvionics"]
+	path = external/DiabloAvionics
+	url = https://github.com/calstar/DiabloAvionics.git

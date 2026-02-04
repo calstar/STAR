@@ -288,7 +288,8 @@ public:
 
     std::vector<uint8_t> buildValveCommandPacket(const ValveCommand& command);
     std::vector<uint8_t> buildEngineCommandPacket(const EngineCommand& command);
-    std::vector<uint8_t> buildCalibrationRequestPacket(PacketProtocol::SensorType sensor_type, uint8_t sensor_id,
+    std::vector<uint8_t> buildCalibrationRequestPacket(PacketProtocol::SensorType sensor_type,
+                                                       uint8_t sensor_id,
                                                        const std::vector<double>& data);
 
     // Batch command building
