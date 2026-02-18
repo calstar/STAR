@@ -1,0 +1,65 @@
+# SITL (Software-In-The-Loop) Configuration
+
+[sitl]
+elodin_host = "127.0.0.1"
+elodin_port = 2240
+simulation_rate_hz = 100.0
+physics_dt = 0.01
+realtime = true
+
+# Engine simulation paths
+engine_config_path = "engine_sim/configs/default.yaml"
+controller_config_path = "engine_sim/configs/controller_default.yaml"
+
+# Engine simulation bridge (Python)
+engine_bridge_port = 5555
+engine_bridge_host = "127.0.0.1"
+
+# Sensor channel mappings
+[sensors]
+copv_pt_channel = 0
+reg_pt_channel = 1
+fuel_upstream_pt_channel = 2
+ox_upstream_pt_channel = 3
+fuel_downstream_pt_channel = 4
+ox_downstream_pt_channel = 5
+
+# Initial conditions
+[initial_conditions]
+altitude = 0.0  # [m]
+velocity = 0.0  # [m/s]
+tank_pressure_fuel = 974.0  # [psi] (will be converted to Pa)
+tank_pressure_ox = 1305.0   # [psi] (will be converted to Pa)
+
+# EKF Navigation configuration
+[ekf]
+position_process_noise = 0.1
+velocity_process_noise = 0.1
+attitude_process_noise = 0.01
+bias_process_noise = 0.001
+scale_process_noise = 0.0001
+engine_process_noise = 100.0
+
+imu_accel_noise = 0.1
+imu_gyro_noise = 0.01
+gps_position_noise = 1.0
+gps_velocity_noise = 0.1
+barometer_noise = 100.0
+engine_noise = 10.0
+
+initial_position_uncertainty = 1.0
+initial_velocity_uncertainty = 0.1
+initial_attitude_uncertainty = 0.1
+initial_bias_uncertainty = 0.01
+
+enable_adaptive_filtering = true
+enable_outlier_rejection = true
+outlier_threshold = 3.0
+innovation_threshold = 5.0
+enable_robust_estimation = true
+
+# Actuation
+[actuation]
+fuel_solenoid_id = 0
+ox_solenoid_id = 1
+pwm_frequency_hz = 100.0

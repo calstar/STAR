@@ -1,63 +1,250 @@
-# Sensor System Base Configuration
-# This is the base config. Use config_flight_daq.toml or config_ground_daq.toml for specific systems
+# =============================================================================
+# Sensor System Configuration
+# Modular config for boards, sensors, actuators, calibration, and routing
+# =============================================================================
 
-# ============================================================================
-# System Mode
-# ============================================================================
-# Options: "FLIGHT" or "GROUND"
-# FLIGHT: Flight DAQ handles flight sensors and actuators
-# GROUND: Ground DAQ handles GSE sensors, and during hotfire everything connects here
+# =============================================================================
+# System
+# =============================================================================
 [system]
-mode = "GROUND"  # Default to ground for development
-state = "GSE"
+mode = "GROUND"          # "FLIGHT" or "GROUND"
+state = "GSE"            # Initial state: GSE, HOTFIRE, etc.
 
-# ============================================================================
-# Network Configuration
-# ============================================================================
+# =============================================================================
+# Network - DAQ Bridge Listener
+# =============================================================================
 [network]
-# Local IP address to bind to (0.0.0.0 = all interfaces)
-local_ip = "0.0.0.0"
-
-# Elodin database port
-publish_port = 2240
-
-# Socket buffer sizes
+bind_ip = "0.0.0.0"
+sensor_port = 5006       # Port for all sensor data (PT, LC, TC, RTD boards send here)
+actuator_cmd_port = 5005 # Port actuator boards listen on for commands
 buffer_size = 1024
-connection_timeout_ms = 5000
 
-# ============================================================================
-# Database Configuration (Elodin)
-# ============================================================================
+# =============================================================================
+# Network - Elodin Database
+# =============================================================================
 [database]
-db_host = "127.0.0.1"
-db_port = 2240
+host = "127.0.0.1"
+port = 2240
 auto_flush_interval_ms = 100
-max_buffer_size = 2048
+max_buffer_size = 4096
 connection_retry_attempts = 3
 connection_retry_delay_ms = 1000
 
-# ============================================================================
-# Board Discovery Configuration
-# ============================================================================
+# =============================================================================
+# Board Discovery
+# =============================================================================
 [discovery]
 enabled = true
-network_interface = "eth0"
-mode = "hybrid"
-announcement_port = 2245
+network_interface = "auto"  # "auto" = detect interface with 192.168.2.x IP
+mode = "hybrid"             # "passive", "active", "hybrid"
+subnet = "192.168.2.0/24"
+ip_range_start = 100
+ip_range_end = 150
 discovery_timeout_seconds = 30
-auto_update_config = true
-config_update_interval_seconds = 60
 
-# ============================================================================
-# Sensor Data Settings
-# ============================================================================
-[sensor_data]
-update_rate_hz = 10
-enable_all_sensors = true
+# =============================================================================
+# Boards - Each board has a type, IP, and sends/receives on specific ports
+#
+# Board types: PT (Pressure Transducer), LC (Load Cell), TC (Thermocouple),
+#              RTD (Resistance Temperature Detector), ACTUATOR
+# =============================================================================
 
-# ============================================================================
-# Calibration Settings
-# ============================================================================
+[boards.pt_board]
+type = "PT"
+ip = "192.168.2.101"
+send_port = 5006           # Board sends SENSOR_DATA to this port on our PC
+num_sensors = 10            # 10 connectors on this board
+board_id = 1
+enabled = true
+
+[boards.actuator_board]
+type = "ACTUATOR"
+ip = "192.168.2.201"
+send_port = 5006           # Actuator board also sends current sense data here
+listen_port = 5005         # Actuator board listens for ACTUATOR_COMMAND on this port
+num_actuators = 10
+num_sensors = 10            # 10 current sense ADC channels
+board_id = 2
+enabled = true
+
+[boards.lc_board]
+type = "LC"
+ip = "192.168.2.102"
+send_port = 5006
+num_sensors = 4
+board_id = 3
+enabled = false              # flip to true when board is connected
+
+[boards.tc_board]
+type = "TC"
+ip = "192.168.2.103"
+send_port = 5006
+num_sensors = 10
+board_id = 4
+enabled = false
+
+[boards.rtd_board]
+type = "RTD"
+ip = "192.168.2.104"
+send_port = 5006
+num_sensors = 4
+board_id = 5
+enabled = false
+
+# =============================================================================
+# Sensor Roles - Maps sensor_id (1-indexed) to human-readable names
+# These match the DiabloAvionics config.json "sensor_roles"
+# =============================================================================
+[sensor_roles]
+"GSE Low"         = 2
+"GSE Mid"         = 3
+"GN2 Regulated"   = 6
+"Fuel Upstream"   = 1
+"Fuel Downstream" = 4
+"Ox Upstream"     = 5
+"Ox Downstream"   = 7
+
+# =============================================================================
+# Actuator Roles - Maps role names to [type, actuator_id]
+# type: "NC" (Normally Closed) or "NO" (Normally Open)
+# actuator_id: 1-indexed connector number on the actuator board
+# =============================================================================
+[actuator_roles]
+"LOX Main"         = ["NO", 1]
+"Fuel Vent"        = ["NC", 2]
+"Fuel Press"       = ["NC", 3]
+"LOX Press"        = ["NO", 8]
+"LOX Vent"         = ["NC", 6]
+"Fuel Main"        = ["NO", 7]
+"GSE Low Vent"     = ["NC", 5]
+"Fuel Fill Press"  = ["NC", 10]
+"Fuel Fill Vent"   = ["NC", 9]
+
+# Abbreviation mapping for state machine CSV
+[actuator_abbrev]
+FV = "Fuel Vent"
+OV = "LOX Vent"
+FP = "Fuel Press"
+OP = "LOX Press"
+FM = "Fuel Main"
+OM = "LOX Main"
+FF = "Fuel Fill"
+
+# =============================================================================
+# Elodin Table Routing - Maps sensor types to Elodin table IDs
+# packet_id is [high_byte, low_byte] for the Elodin table
+# =============================================================================
+[routing.pt_raw]
+packet_id = [0x20, 0x00]
+description = "Raw PT ADC counts"
+
+[routing.pt_calibrated]
+packet_id = [0x20, 0x10]
+description = "Calibrated PT pressure (PSI)"
+
+[routing.tc_raw]
+packet_id = [0x21, 0x00]
+description = "Raw TC ADC counts"
+
+[routing.rtd_raw]
+packet_id = [0x22, 0x00]
+description = "Raw RTD resistance counts"
+
+[routing.lc_raw]
+packet_id = [0x23, 0x00]
+description = "Raw LC ADC counts"
+
+[routing.lc_calibrated]
+packet_id = [0x23, 0x10]
+description = "Calibrated LC force"
+
+[routing.actuator_status]
+packet_id = [0x30, 0x00]
+description = "Actuator current sense readings"
+
+# =============================================================================
+# Calibration
+# =============================================================================
 [calibration]
 enabled = true
-calibration_file = "calibration/data/calibration.json"
+
+# Orchestrator settings (Phase 1 + Phase 2 lifecycle)
+[calibration.orchestrator]
+min_points = 5               # Minimum points to attempt a fit
+target_points = 15           # Target for HIGH confidence
+max_points = 30              # Keep at most this many per channel
+min_r_squared = 0.95         # Minimum R² for acceptable calibration
+target_r_squared = 0.99      # R² for MAXIMUM confidence
+rls_forgetting_factor = 0.995  # Phase 2 RLS forgetting factor (0.99–1.0)
+drift_glr_threshold = 3.0   # GLR statistic threshold for drift alarm
+auto_save_interval_sec = 300 # Phase 2 auto-save interval
+status_interval_sec = 30     # Phase 2 status print interval
+
+# PT calibration sources (tried in order: JSON first, then CSV)
+[calibration.pt]
+json_dir = "scripts/calibration/calibrations"
+csv_paths = [
+    "external/DiabloAvionics/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv"
+]
+# Polynomial: psi = A*(adc^3) + B*(adc^2) + C*adc + D
+
+[calibration.tc]
+json_dir = "scripts/calibration/calibrations/tc"
+csv_paths = []
+
+[calibration.rtd]
+json_dir = "scripts/calibration/calibrations/rtd"
+csv_paths = []
+
+[calibration.lc]
+json_dir = "scripts/calibration/calibrations/lc"
+csv_paths = []
+
+# =============================================================================
+# Pressure Limits (for GUI gauges and alarms)
+# =============================================================================
+[pressure_limits.GN2]
+THRESH = 550
+NOP = 900
+MEOP = 950
+POP = 1000
+
+[pressure_limits.ETH]
+THRESH = 550
+NOP = 600
+MEOP = 650
+POP = 750
+
+[pressure_limits.LOX]
+THRESH = 550
+NOP = 600
+MEOP = 650
+POP = 750
+
+# Pressure sensor → fluid system mapping (sensor_id → system)
+[pressure_mappings]
+GN2 = 6
+ETH = 1
+LOX = 5
+
+# =============================================================================
+# Display Settings
+# =============================================================================
+[display]
+adc_bits = 32
+ref_voltage = 2.5
+window_seconds = 26.0
+y_axis_min = 0.0
+y_axis_max = 700.0
+y_axis_autoscale = true
+only_show_actuators_with_roles = true
+only_show_pt_with_roles = true
+graph_ma_samples = 1
+display_ma_samples = 1
+
+# =============================================================================
+# State Machine
+# =============================================================================
+[state_machine]
+actuator_csv = "external/DiabloAvionics/test_guis/state_machine_actuators.csv"
+transitions_csv = "external/DiabloAvionics/test_guis/state_transitions.csv"

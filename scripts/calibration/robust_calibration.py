@@ -209,12 +209,14 @@ class RobustCalibrationFramework:
         )
 
         # RLS update equations
-        K = self.rls_P @ phi / (self.forgetting_factor + phi.T @ self.rls_P @ phi)
-        prediction_error = point.pressure - phi.T @ self.theta_mean
+        Pphi = self.rls_P @ phi  # (6,)
+        denom = self.forgetting_factor + phi @ Pphi  # scalar
+        K = Pphi / denom  # (6,)
+        prediction_error = point.pressure - phi @ self.theta_mean
 
         # Update parameters
         self.theta_mean = self.theta_mean + K * prediction_error
-        self.rls_P = (self.rls_P - K @ phi.T @ self.rls_P) / self.forgetting_factor
+        self.rls_P = (self.rls_P - np.outer(K, Pphi)) / self.forgetting_factor
 
         # Add forgetting covariance
         forgetting_cov = np.eye(6) * 0.001
@@ -344,8 +346,9 @@ class RobustCalibrationFramework:
         phi = self.environmental_robust_basis_functions(
             point.voltage, point.environmental_state
         )
-        K = self.rls_P @ phi / (self.forgetting_factor + phi.T @ self.rls_P @ phi)
-        self.rls_P = (self.rls_P - K @ phi.T @ self.rls_P) / self.forgetting_factor
+        Pphi = self.rls_P @ phi
+        K = Pphi / (self.forgetting_factor + phi @ Pphi)
+        self.rls_P = (self.rls_P - np.outer(K, Pphi)) / self.forgetting_factor
 
         return {
             "drift_detected": drift_detected,

@@ -159,6 +159,22 @@ public:
                                                BoardType board_type) const;
 
     /**
+     * @brief Actuator command structure (matching DAQv2-Comms)
+     */
+    struct ActuatorCommand {
+        uint8_t actuator_id;     // Actuator ID (1-10, 1-indexed)
+        uint8_t actuator_state;  // 0 = OFF, non-zero = ON
+    };
+
+    /**
+     * @brief Construct actuator command packet (matching DAQv2-Comms format)
+     * @param commands Vector of actuator commands
+     * @return Packet bytes (little-endian)
+     */
+    std::vector<uint8_t> construct_actuator_command_packet(
+        const std::vector<ActuatorCommand>& commands) const;
+
+    /**
      * @brief Calculate IP from MAC address (deterministic assignment)
      */
     static std::string calculate_ip_from_mac(const std::string& mac_address,

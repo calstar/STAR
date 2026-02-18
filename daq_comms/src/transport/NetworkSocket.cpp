@@ -8,6 +8,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <iostream>
 
 namespace daq_comms {
 namespace transport {
@@ -19,6 +20,14 @@ UDPSocket::UDPSocket(const std::string& bind_address, uint16_t bind_port)
     if (socket_fd_ < 0) {
         last_error_ = "Failed to create UDP socket: " + std::string(strerror(errno));
         return;
+    }
+
+    // Set SO_REUSEADDR to allow multiple processes to bind to same port (like DiabloAvionics GUI)
+    int reuse = 1;
+    if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+        // Non-fatal, but log it
+        std::cerr << "[UDPSocket] Warning: Failed to set SO_REUSEADDR: " << strerror(errno)
+                  << std::endl;
     }
 
     struct sockaddr_in addr = {};
@@ -81,6 +90,7 @@ ssize_t UDPSocket::receive(uint8_t* buffer, size_t max_size) {
         last_error_ = "Receive error: " + std::string(strerror(errno));
         return -1;
     }
+
     return received;
 }
 

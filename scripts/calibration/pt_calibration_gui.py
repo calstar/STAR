@@ -16,7 +16,14 @@ from tkinter import ttk, messagebox, filedialog
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
-import serial
+
+try:
+    import serial
+
+    SERIAL_AVAILABLE = True
+except ImportError:
+    SERIAL_AVAILABLE = False
+    print("⚠️  pyserial not available - serial data source disabled")
 import struct
 from collections import deque
 from datetime import datetime
@@ -25,6 +32,15 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 import subprocess
 import signal
+
+# Try to import Elodin client
+try:
+    from elodin_client import ElodinClient
+
+    ELODIN_AVAILABLE = True
+except ImportError:
+    ELODIN_AVAILABLE = False
+    print("⚠️  elodin_client not available - Elodin subscription disabled")
 
 # Configure logging
 logging.basicConfig(
@@ -38,10 +54,11 @@ class PTMeasurement:
     """PT measurement data structure"""
 
     sensor_id: int
-    voltage: float
-    timestamp: float
-    pt_location: str
-    filtered_voltage: float = 0.0
+    voltage: float  # For display only
+    raw_adc_code: int = 0  # Raw ADC code (32-bit signed) - used for calibration
+    timestamp: float = 0.0
+    pt_location: str = ""
+    filtered_adc_code: float = 0.0  # Filtered ADC code for calibration
     calculated_pressure: float = 0.0
     reference_pressure: float = 0.0
     temperature: float = 25.0
@@ -52,7 +69,8 @@ class PTMeasurement:
 class CalibrationPoint:
     """Calibration data point"""
 
-    voltages: List[float]  # One per sensor
+    adc_codes: List[int]  # Raw ADC codes (one per sensor) - used for calibration
+    voltages: List[float]  # Voltages (for display/reference only)
     reference_pressures: List[float]  # One per gauge
     timestamp: float
     environmental_conditions: Dict[str, float]
@@ -87,6 +105,12 @@ class HighPerformanceCalibrationGUI:
         self.serial_thread: Optional[threading.Thread] = None
         self.stop_serial = threading.Event()
 
+        # Elodin connection (for subscribing to PT messages)
+        self.elodin_client: Optional[ElodinClient] = None
+        self.elodin_thread: Optional[threading.Thread] = None
+        self.use_elodin = False
+        self.elodin_connected = False
+
         # Performance tracking
         self.performance_stats = {
             "data_rate_hz": 0.0,
@@ -97,7 +121,25 @@ class HighPerformanceCalibrationGUI:
 
         # Initialize GUI
         self.setup_gui()
-        self.setup_serial()
+
+        # Setup data source based on selection
+        if self.data_source_var.get() == "Elodin" and ELODIN_AVAILABLE:
+            self.setup_elodin()
+        elif SERIAL_AVAILABLE:
+            self.setup_serial()
+        else:
+            # No data sources available - default to Elodin if possible
+            if ELODIN_AVAILABLE:
+                self.data_source_var.set("Elodin")
+                self.setup_elodin()
+            else:
+                logger.error("❌ No data sources available (neither serial nor Elodin)")
+                messagebox.showerror(
+                    "No Data Source",
+                    "Neither serial nor Elodin is available.\n"
+                    "Install pyserial or elodin-client to use calibration GUI.",
+                )
+
         self.start_data_processing()
 
     def setup_gui(self):
@@ -127,9 +169,29 @@ class HighPerformanceCalibrationGUI:
         conn_frame = ttk.Frame(control_frame)
         conn_frame.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Label(conn_frame, text="Serial Port:").pack(side=tk.LEFT)
+        # Data source selection
+        source_frame = ttk.Frame(conn_frame)
+        source_frame.pack(side=tk.LEFT, padx=(0, 10))
+
+        ttk.Label(source_frame, text="Data Source:").pack(side=tk.LEFT)
+        self.data_source_var = tk.StringVar(value="Serial")
+        source_combo = ttk.Combobox(
+            source_frame,
+            textvariable=self.data_source_var,
+            values=["Serial", "Elodin"],
+            width=10,
+            state="readonly",
+        )
+        source_combo.pack(side=tk.LEFT, padx=(5, 0))
+        source_combo.bind("<<ComboboxSelected>>", self.on_data_source_changed)
+
+        # Serial port controls
+        serial_frame = ttk.Frame(conn_frame)
+        serial_frame.pack(side=tk.LEFT, padx=(0, 10))
+
+        ttk.Label(serial_frame, text="Serial Port:").pack(side=tk.LEFT)
         self.port_var = tk.StringVar(value="/dev/ttyUSB0")
-        port_combo = ttk.Combobox(conn_frame, textvariable=self.port_var, width=15)
+        port_combo = ttk.Combobox(serial_frame, textvariable=self.port_var, width=15)
         port_combo["values"] = self.get_available_ports()
         port_combo.pack(side=tk.LEFT, padx=(5, 10))
 
@@ -137,6 +199,12 @@ class HighPerformanceCalibrationGUI:
             conn_frame, text="Connect", command=self.toggle_connection
         )
         self.connect_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        # Elodin status
+        self.elodin_status_label = ttk.Label(
+            conn_frame, text="Elodin: Not Connected", foreground="gray"
+        )
+        self.elodin_status_label.pack(side=tk.LEFT, padx=(10, 0))
 
         # Calibration controls
         calib_frame = ttk.Frame(control_frame)
@@ -303,6 +371,12 @@ class HighPerformanceCalibrationGUI:
     def get_available_ports(self):
         """Get list of available serial ports"""
         ports = []
+        if not SERIAL_AVAILABLE:
+            # Return default ports if serial not available
+            for i in range(10):
+                ports.extend([f"/dev/ttyUSB{i}", f"/dev/ttyACM{i}", f"COM{i}"])
+            return ports
+
         try:
             import serial.tools.list_ports
 
@@ -316,6 +390,14 @@ class HighPerformanceCalibrationGUI:
 
     def setup_serial(self):
         """Setup serial connection"""
+        if not SERIAL_AVAILABLE:
+            logger.error("Serial not available - pyserial not installed")
+            messagebox.showerror(
+                "Serial Not Available",
+                "pyserial is not installed.\n" "Install with: pip install pyserial",
+            )
+            return False
+
         try:
             self.serial_connection = serial.Serial(
                 port=self.port_var.get(),
@@ -334,6 +416,51 @@ class HighPerformanceCalibrationGUI:
             )
             return False
 
+    def on_data_source_changed(self, event=None):
+        """Handle data source change"""
+        source = self.data_source_var.get()
+        self.use_elodin = source == "Elodin" and ELODIN_AVAILABLE
+
+        # Disconnect current source
+        if self.serial_connection and self.serial_connection.is_open:
+            self.serial_connection.close()
+            self.serial_connection = None
+        if self.elodin_client and self.elodin_connected:
+            self.elodin_client.disconnect()
+            self.elodin_connected = False
+            self.elodin_status_label.config(
+                text="Elodin: Not Connected", foreground="gray"
+            )
+
+        # Connect to new source
+        if self.use_elodin:
+            if self.setup_elodin():
+                self.connect_btn.config(text="Disconnect")
+                self.calibration_btn.config(state="normal")
+                self.status_var.set("Connected to Elodin")
+            else:
+                self.status_var.set("Elodin Connection Failed")
+                # Fallback to serial if available
+                if SERIAL_AVAILABLE:
+                    self.data_source_var.set("Serial")
+                    self.use_elodin = False
+        elif SERIAL_AVAILABLE:
+            if self.setup_serial():
+                self.connect_btn.config(text="Disconnect")
+                self.calibration_btn.config(state="normal")
+                self.status_var.set("Connected")
+            else:
+                self.status_var.set("Connection Failed")
+        else:
+            # No data sources available
+            logger.error("No data sources available")
+            self.status_var.set("No Data Source Available")
+            messagebox.showerror(
+                "No Data Source",
+                "Neither serial nor Elodin is available.\n"
+                "Install pyserial or elodin-client to use calibration GUI.",
+            )
+
     def start_data_processing(self):
         """Start the data processing thread"""
         self.data_thread = threading.Thread(target=self.data_processor, daemon=True)
@@ -345,7 +472,18 @@ class HighPerformanceCalibrationGUI:
     def data_processor(self):
         """High-performance data processing thread"""
         while not self.stop_serial.is_set():
-            if self.serial_connection and self.serial_connection.is_open:
+            if self.use_elodin and self.elodin_connected:
+                # Process Elodin messages
+                try:
+                    messages = self.elodin_client.poll_messages(
+                        timeout=0.01
+                    )  # 10ms timeout
+                    for msg in messages:
+                        self.process_elodin_message(msg)
+                except Exception as e:
+                    logger.error(f"Error processing Elodin data: {e}")
+                    time.sleep(0.01)
+            elif self.serial_connection and self.serial_connection.is_open:
                 try:
                     # Read binary data with minimal latency
                     if (
@@ -364,26 +502,38 @@ class HighPerformanceCalibrationGUI:
                                 sent_us,
                             ) = struct.unpack("<I B i f I f I", data)
 
+                            # Convert voltage_raw (int32) to signed int
+                            if voltage_raw >= 0x80000000:
+                                adc_code = voltage_raw - 0x100000000
+                            else:
+                                adc_code = voltage_raw
+
                             # Create measurement
                             measurement = PTMeasurement(
                                 sensor_id=channel,
-                                voltage=voltage,
+                                voltage=voltage,  # For display
+                                raw_adc_code=adc_code,  # Raw ADC code for calibration
                                 timestamp=time.time(),
                                 pt_location=f"PT {channel}",
                                 temperature=25.0,  # Could be read from sensors
                                 humidity=50.0,
                             )
 
-                            # Apply high-performance filtering
-                            measurement.filtered_voltage = self.apply_kalman_filter(
-                                measurement.voltage, channel
+                            # Apply high-performance filtering on ADC code
+                            measurement.filtered_adc_code = (
+                                self.apply_kalman_filter_adc(
+                                    measurement.raw_adc_code, channel
+                                )
                             )
 
-                            # Calculate pressure if calibrated
+                            # Calculate pressure if calibrated (using ADC code directly)
                             if channel in self.calibration_polynomials:
-                                measurement.calculated_pressure = np.polyval(
-                                    self.calibration_polynomials[channel],
-                                    measurement.filtered_voltage,
+                                a, b, c, d = self.calibration_polynomials[channel]
+                                measurement.calculated_pressure = (
+                                    a * (measurement.filtered_adc_code**3)
+                                    + b * (measurement.filtered_adc_code**2)
+                                    + c * measurement.filtered_adc_code
+                                    + d
                                 )
 
                             # Update latest measurements
@@ -396,29 +546,141 @@ class HighPerformanceCalibrationGUI:
                     logger.error(f"Error processing serial data: {e}")
                     time.sleep(0.001)  # 1ms sleep on error
             else:
-                time.sleep(0.001)
+                time.sleep(0.01)
 
-    def apply_kalman_filter(self, voltage: float, sensor_id: int) -> float:
-        """Apply Kalman filter for high-performance voltage filtering"""
-        if not hasattr(self, "kalman_states"):
-            self.kalman_states = {}
+    def process_elodin_message(self, msg):
+        """Process PT message from Elodin"""
+        try:
+            # Extract message fields based on message type
+            # RawPTMessage: [timestamp_ns, channel_id, padding, raw_adc_counts, sample_timestamp_ms, status_flags]
+            # CalibratedPTMessage: [timestamp_ns, channel_id, padding, calibrated_pressure_psi, raw_adc_counts, calibration_status]
 
-        if sensor_id not in self.kalman_states:
+            packet_id = msg.get("packet_id", [0, 0])
+            table_id = (packet_id[0] << 8) | packet_id[1]
+
+            if table_id == 0x2000:  # RawPTMessage
+                channel_id = msg.get("channel_id", 0)
+                raw_adc_counts = msg.get("raw_adc_counts", 0)
+
+                # Convert to signed int32 ADC code
+                if raw_adc_counts >= 0x80000000:
+                    adc_code = raw_adc_counts - 0x100000000
+                else:
+                    adc_code = raw_adc_counts
+
+                # Convert to voltage for display only
+                voltage = (adc_code * 2.5) / 2147483648.0
+
+                # Create measurement with raw ADC code
+                measurement = PTMeasurement(
+                    sensor_id=channel_id,
+                    voltage=voltage,  # For display
+                    raw_adc_code=adc_code,  # Raw ADC code for calibration
+                    timestamp=time.time(),
+                    pt_location=f"PT {channel_id}",
+                    temperature=25.0,
+                    humidity=50.0,
+                )
+
+                # Apply filtering on ADC code
+                measurement.filtered_adc_code = self.apply_kalman_filter_adc(
+                    measurement.raw_adc_code, channel_id
+                )
+
+                # Calculate pressure if calibrated (using ADC code directly)
+                if channel_id in self.calibration_polynomials:
+                    a, b, c, d = self.calibration_polynomials[channel_id]
+                    measurement.calculated_pressure = (
+                        a * (measurement.filtered_adc_code**3)
+                        + b * (measurement.filtered_adc_code**2)
+                        + c * measurement.filtered_adc_code
+                        + d
+                    )
+
+                # Update latest measurements
+                self.latest_measurements[channel_id] = measurement
+                self.update_performance_stats()
+
+            elif table_id == 0x2001:  # CalibratedPTMessage
+                channel_id = msg.get("channel_id", 0)
+                calibrated_pressure = msg.get("calibrated_pressure_psi", 0.0)
+                raw_adc_counts = msg.get("raw_adc_counts", 0)
+
+                # Convert to signed int32 ADC code
+                if raw_adc_counts >= 0x80000000:
+                    adc_code = raw_adc_counts - 0x100000000
+                else:
+                    adc_code = raw_adc_counts
+
+                # Convert to voltage for display only
+                voltage = (adc_code * 2.5) / 2147483648.0
+
+                # Create measurement with calibrated pressure
+                measurement = PTMeasurement(
+                    sensor_id=channel_id,
+                    voltage=voltage,  # For display
+                    raw_adc_code=adc_code,  # Raw ADC code
+                    timestamp=time.time(),
+                    pt_location=f"PT {channel_id}",
+                    temperature=25.0,
+                    humidity=50.0,
+                    calculated_pressure=calibrated_pressure,
+                )
+
+                # Apply filtering on ADC code
+                measurement.filtered_adc_code = self.apply_kalman_filter_adc(
+                    measurement.raw_adc_code, channel_id
+                )
+
+                # Update latest measurements
+                self.latest_measurements[channel_id] = measurement
+                self.update_performance_stats()
+
+        except Exception as e:
+            logger.error(f"Error processing Elodin message: {e}")
+
+    def apply_kalman_filter_adc(self, adc_code: float, sensor_id: int) -> float:
+        """Apply Kalman filter for high-performance ADC code filtering"""
+        if not hasattr(self, "kalman_states_adc"):
+            self.kalman_states_adc = {}
+
+        if sensor_id not in self.kalman_states_adc:
             # Initialize Kalman filter state
-            self.kalman_states[sensor_id] = {
-                "x": voltage,  # State estimate
-                "P": 1.0,  # Error covariance
-                "Q": 0.01,  # Process noise
-                "R": 0.1,  # Measurement noise
+            self.kalman_states_adc[sensor_id] = {
+                "x": adc_code,  # State estimate
+                "P": 1000.0,  # Error covariance (larger for ADC codes)
+                "Q": 10.0,  # Process noise
+                "R": 100.0,  # Measurement noise
             }
 
-        state = self.kalman_states[sensor_id]
+        state = self.kalman_states_adc[sensor_id]
 
         # Predict step
         state["P"] += state["Q"]
 
         # Update step
         K = state["P"] / (state["P"] + state["R"])  # Kalman gain
+        state["x"] += K * (adc_code - state["x"])
+        state["P"] *= 1 - K
+
+        return state["x"]
+
+    def apply_kalman_filter(self, voltage: float, sensor_id: int) -> float:
+        """Apply Kalman filter for voltage (for display only)"""
+        if not hasattr(self, "kalman_states"):
+            self.kalman_states = {}
+
+        if sensor_id not in self.kalman_states:
+            self.kalman_states[sensor_id] = {
+                "x": voltage,
+                "P": 1.0,
+                "Q": 0.01,
+                "R": 0.1,
+            }
+
+        state = self.kalman_states[sensor_id]
+        state["P"] += state["Q"]
+        K = state["P"] / (state["P"] + state["R"])
         state["x"] += K * (voltage - state["x"])
         state["P"] *= 1 - K
 
@@ -524,32 +786,51 @@ class HighPerformanceCalibrationGUI:
         self.canvas.draw_idle()
 
     def toggle_connection(self):
-        """Toggle serial connection"""
-        if self.serial_connection and self.serial_connection.is_open:
-            self.disconnect()
+        """Toggle data source connection"""
+        if self.use_elodin:
+            if self.elodin_connected:
+                self.disconnect()
+            else:
+                self.connect()
         else:
-            self.connect()
+            if self.serial_connection and self.serial_connection.is_open:
+                self.disconnect()
+            else:
+                self.connect()
 
     def connect(self):
-        """Connect to serial port"""
-        if self.setup_serial():
-            self.connect_btn.config(text="Disconnect")
-            self.calibration_btn.config(state="normal")
-            self.status_var.set("Connected")
-            logger.info("Connected to serial port")
+        """Connect to data source (Serial or Elodin)"""
+        if self.use_elodin:
+            if self.setup_elodin():
+                self.connect_btn.config(text="Disconnect")
+                self.calibration_btn.config(state="normal")
+                self.status_var.set("Connected to Elodin")
+                logger.info("Connected to Elodin")
+            else:
+                self.status_var.set("Elodin Connection Failed")
         else:
-            self.status_var.set("Connection Failed")
+            if self.setup_serial():
+                self.connect_btn.config(text="Disconnect")
+                self.calibration_btn.config(state="normal")
+                self.status_var.set("Connected")
+                logger.info("Connected to serial port")
+            else:
+                self.status_var.set("Connection Failed")
 
     def disconnect(self):
-        """Disconnect from serial port"""
-        if self.serial_connection:
-            self.serial_connection.close()
+        """Disconnect from data source"""
+        if self.use_elodin:
+            self.disconnect_elodin()
+        else:
+            if self.serial_connection:
+                self.serial_connection.close()
+            logger.info("Disconnected from serial port")
+
         self.connect_btn.config(text="Connect")
         self.calibration_btn.config(state="disabled")
         self.record_btn.config(state="disabled")
         self.fit_btn.config(state="disabled")
         self.status_var.set("Disconnected")
-        logger.info("Disconnected from serial port")
 
     def toggle_calibration(self):
         """Toggle calibration mode"""
@@ -581,17 +862,23 @@ class HighPerformanceCalibrationGUI:
                 )
                 return
 
-        # Get current measurements
+        # Get current measurements (ADC codes for calibration, voltages for reference)
+        adc_codes = []
         voltages = []
         for sensor_id in range(9):
             if sensor_id in self.latest_measurements:
-                voltages.append(self.latest_measurements[sensor_id].filtered_voltage)
+                adc_codes.append(
+                    int(self.latest_measurements[sensor_id].filtered_adc_code)
+                )
+                voltages.append(self.latest_measurements[sensor_id].voltage)
             else:
+                adc_codes.append(0)
                 voltages.append(0.0)
 
         # Create calibration point
         calibration_point = CalibrationPoint(
-            voltages=voltages,
+            adc_codes=adc_codes,  # Raw ADC codes for calibration
+            voltages=voltages,  # Voltages for display/reference
             reference_pressures=reference_pressures,
             timestamp=time.time(),
             environmental_conditions={"temperature": 25.0, "humidity": 50.0},
@@ -613,28 +900,29 @@ class HighPerformanceCalibrationGUI:
             )
             return
 
-        # Fit polynomials for each sensor
+        # Fit polynomials for each sensor using ADC codes
         for sensor_id in range(9):
-            voltages = []
+            adc_codes = []
             pressures = []
 
             for point in self.calibration_points:
-                if sensor_id < len(point.voltages) and sensor_id < len(
+                if sensor_id < len(point.adc_codes) and sensor_id < len(
                     point.reference_pressures
                 ):
-                    voltages.append(point.voltages[sensor_id])
+                    adc_codes.append(point.adc_codes[sensor_id])
                     pressures.append(point.reference_pressures[sensor_id])
 
             if (
-                len(voltages) >= 3 and len(set(voltages)) > 1
-            ):  # Need unique voltage values
+                len(adc_codes) >= 3 and len(set(adc_codes)) > 1
+            ):  # Need unique ADC code values
                 try:
-                    # Fit polynomial (degree 2 for good fit without overfitting)
-                    poly_coeffs = np.polyfit(voltages, pressures, 2)
-                    self.calibration_polynomials[sensor_id] = poly_coeffs
+                    # Fit cubic polynomial: psi = A*adc^3 + B*adc^2 + C*adc + D
+                    # polyfit returns [A, B, C, D] for A*x^3 + B*x^2 + C*x + D
+                    poly_coeffs = np.polyfit(adc_codes, pressures, 3)
+                    self.calibration_polynomials[sensor_id] = tuple(poly_coeffs)
 
                     # Calculate R-squared
-                    y_pred = np.polyval(poly_coeffs, voltages)
+                    y_pred = np.polyval(poly_coeffs, adc_codes)
                     ss_res = np.sum((pressures - y_pred) ** 2)
                     ss_tot = np.sum((pressures - np.mean(pressures)) ** 2)
                     r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
@@ -664,7 +952,8 @@ class HighPerformanceCalibrationGUI:
                 "timestamp": datetime.now().isoformat(),
                 "calibration_points": [
                     {
-                        "voltages": cp.voltages,
+                        "adc_codes": cp.adc_codes,
+                        "voltages": cp.voltages,  # For reference/display
                         "reference_pressures": cp.reference_pressures,
                         "timestamp": cp.timestamp,
                         "environmental_conditions": cp.environmental_conditions,
@@ -696,6 +985,8 @@ class HighPerformanceCalibrationGUI:
         self.stop_serial.set()
         if self.serial_connection and self.serial_connection.is_open:
             self.serial_connection.close()
+        if self.elodin_client and self.elodin_connected:
+            self.elodin_client.disconnect()
         logger.info("GUI cleanup complete")
 
 

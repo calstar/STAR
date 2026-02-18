@@ -22,18 +22,19 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
         return std::nullopt;
     }
 
-    // Receive raw bytes (actual DiabloAvionics board packets)
-    ssize_t received = socket_->receive(receive_buffer_.data(), receive_buffer_.size());
+    // Receive raw bytes with source IP tracking
+    uint16_t source_port = 0;
+    ssize_t received = socket_->receive_from(receive_buffer_.data(), receive_buffer_.size(),
+                                             last_source_ip_, source_port);
     if (received <= 0) {
-        return std::nullopt;  // No data available (non-blocking)
-    }
-
-    // Debug: log first few packets received
-    static size_t packet_count = 0;
-    if (packet_count < 5) {
-        std::cout << "[Pipeline] Received DiabloAvionics board packet " << (packet_count + 1)
-                  << ", size: " << received << " bytes\n";
-        packet_count++;
+        if (received < 0 && !socket_->last_error().empty()) {
+            static size_t error_count = 0;
+            if (error_count++ < 5) {
+                std::cerr << "[Pipeline] Socket receive error: " << socket_->last_error()
+                          << std::endl;
+            }
+        }
+        return std::nullopt;
     }
 
     // Parse packet type

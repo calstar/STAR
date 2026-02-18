@@ -13,6 +13,12 @@ set(FSW_SOURCES
     src/elodin/ElodinClient.cpp
     src/streams/SensorFramePipeline.cpp
     src/fsw/FSWConfigManager.cpp
+    src/control/PressureStateMachine.cpp
+    src/calibration/PTCalibration.cpp
+    src/calibration/SensorCalibration.cpp
+    src/control/RobustDDPController.cpp
+    # src/nav/EKFNavigationEnhanced.cpp
+    # src/calibration/IMUCalibration.cpp
     # Calibration pipeline (if needed)
     # src/calibration/PTCalibrationPipeline.cpp
 )
@@ -68,6 +74,58 @@ target_include_directories(send_all_sensors_from_config PRIVATE
 target_link_libraries(send_all_sensors_from_config
     fsw_daq_lib
     daq_comms_lib
+    Threads::Threads
+    pthread
+    rt
+)
+
+# SITL Simulator executable
+add_executable(sitl_simulator src/sitl/sitl_main.cpp src/sitl/SITLSimulator.cpp)
+
+target_include_directories(sitl_simulator PRIVATE
+    ${CMAKE_SOURCE_DIR}/FSW/include
+    ${CMAKE_SOURCE_DIR}/daq_comms/include
+    ${CMAKE_SOURCE_DIR}/utl
+)
+
+target_link_libraries(sitl_simulator
+    fsw_daq_lib
+    daq_comms_lib
+    Eigen3::Eigen
+    Threads::Threads
+    pthread
+    rt
+)
+
+# Robust DDP Controller test executable
+add_executable(test_robust_ddp test/test_robust_ddp.cpp)
+
+target_include_directories(test_robust_ddp PRIVATE
+    ${CMAKE_SOURCE_DIR}/FSW/include
+    ${CMAKE_SOURCE_DIR}/daq_comms/include
+)
+
+target_link_libraries(test_robust_ddp
+    fsw_daq_lib
+    daq_comms_lib
+    Eigen3::Eigen
+    Threads::Threads
+    pthread
+    rt
+)
+
+# IMU Calibration test executable
+add_executable(test_imu_calibration test/test_imu_calibration.cpp)
+
+target_include_directories(test_imu_calibration PRIVATE
+    ${CMAKE_SOURCE_DIR}/FSW/include
+    ${CMAKE_SOURCE_DIR}/daq_comms/include
+)
+
+target_link_libraries(test_imu_calibration
+    fsw_daq_lib
+    daq_comms_lib
+    Eigen3::Eigen
     Threads::Threads
     pthread
     rt

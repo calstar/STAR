@@ -41,14 +41,23 @@ bool TCPClient::connect(const std::string& host, uint16_t port) {
         return false;
     }
 
-    // Enable TCP keepalive
+    // TCP keepalive
     int keepalive = 1;
     setsockopt(socket_fd_, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
 
-    // Disable Nagle's algorithm (TCP_NODELAY) to send messages immediately
-    // This matches FSW's behavior and ensures messages are sent without delay
+    // TCP_NODELAY — send immediately, no Nagle buffering
     int nodelay = 1;
     setsockopt(socket_fd_, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+
+    // Large send buffer (1 MB) — gives headroom before backpressure
+    int sndbuf = 1024 * 1024;
+    setsockopt(socket_fd_, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
+
+    // Write timeout 500ms — prevents indefinite blocking if Elodin stalls
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 500000;
+    setsockopt(socket_fd_, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
     if (::connect(socket_fd_, reinterpret_cast<struct sockaddr*>(&server_addr),
                   sizeof(server_addr)) < 0) {
@@ -134,26 +143,24 @@ bool TCPClient::_write_all(const void* data, size_t len) {
 
     while (total_sent < len) {
         ssize_t sent = 0;
-        // Handle EINTR (interrupted system call) - retry automatically (matching FSW's
-        // Socket::write) CRITICAL: Use ::write() instead of ::send() to match FSW exactly!
         do {
             sent = ::write(socket_fd_, bytes + total_sent, len - total_sent);
         } while (sent < 0 && errno == EINTR);
 
         if (sent < 0) {
-            // EAGAIN/EWOULDBLOCK shouldn't happen on blocking socket, but handle gracefully
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                continue;
+                // SO_SNDTIMEO fired — Elodin is backpressuring.
+                // Drop this write rather than blocking the UDP pipeline.
+                last_error_ = "Write timeout (backpressure)";
+                return false;
             }
             last_error_ = "Write failed: " + std::string(strerror(errno));
-            std::cerr << "[TCPClient] ERROR: send() failed: " << last_error_
-                      << " (sent=" << total_sent << "/" << len << ")\n";
+            connected_ = false;  // Mark dead so main loop can reconnect
             return false;
         }
         if (sent == 0) {
-            last_error_ = "Write failed: Connection closed by peer";
-            std::cerr << "[TCPClient] ERROR: Connection closed (sent=" << total_sent << "/" << len
-                      << ")\n";
+            last_error_ = "Connection closed by peer";
+            connected_ = false;
             return false;
         }
         total_sent += sent;
@@ -167,6 +174,61 @@ void TCPClient::_flush_buffer() {
         _write_all(write_buffer_.data(), buffer_pos_);
         buffer_pos_ = 0;
     }
+}
+
+ssize_t TCPClient::read(void* buffer, size_t max_len) {
+    if (!connected_) {
+        last_error_ = "Not connected";
+        return -1;
+    }
+
+    // Set socket to non-blocking for this read
+    int flags = fcntl(socket_fd_, F_GETFL, 0);
+    fcntl(socket_fd_, F_SETFL, flags | O_NONBLOCK);
+
+    ssize_t received = ::read(socket_fd_, buffer, max_len);
+
+    // Restore blocking mode
+    fcntl(socket_fd_, F_SETFL, flags);
+
+    if (received < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return 0;  // No data available (non-blocking)
+        }
+        last_error_ = "Read failed: " + std::string(strerror(errno));
+        return -1;
+    }
+
+    return received;
+}
+
+bool TCPClient::read_exact(void* buffer, size_t len) {
+    if (!connected_) {
+        last_error_ = "Not connected";
+        return false;
+    }
+
+    // Match external FSW Socket::read() - reads exactly len bytes (blocking)
+    uint8_t* ptr = static_cast<uint8_t*>(buffer);
+    size_t remaining = len;
+
+    while (remaining > 0) {
+        ssize_t r = ::read(socket_fd_, ptr, remaining);
+        if (r < 0) {
+            if (errno == EINTR) {
+                continue;  // Retry on interrupt
+            }
+            last_error_ = "Read failed: " + std::string(strerror(errno));
+            return false;
+        } else if (r == 0) {
+            last_error_ = "Socket closed unexpectedly";
+            return false;
+        }
+        ptr += r;
+        remaining -= r;
+    }
+
+    return true;
 }
 
 }  // namespace transport

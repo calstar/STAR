@@ -1,5 +1,7 @@
 #include "routing/SensorRouter.hpp"
 
+#include <cmath>
+#include <cstdint>
 #include <iostream>
 #include <sstream>
 
@@ -110,28 +112,51 @@ SensorRouter::route_pt_samples(const daq_comms::protocol::SensorBatch& batch,
                                uint64_t receive_timestamp_ns) const {
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawPTMessage>> messages;
 
-    // Use ONE packet_id per sensor type (like FSW), not per channel
-    static constexpr std::array<uint8_t, 2> PT_PACKET_ID = {0x20, 0x00};
-
     for (const auto& sample : batch.pt_samples) {
+        // Per-channel packet_id: {0x20, channel_id}
+        std::array<uint8_t, 2> pkt_id = {0x20, sample.channel_id};
+
         comms::messages::sensor::RawPTMessage msg;
         msg.setField<0>(receive_timestamp_ns);
-        msg.setField<1>(sample.channel_id);                // channel_id distinguishes channels
-        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});  // Padding bytes for alignment
+        msg.setField<1>(sample.channel_id);
+        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
         msg.setField<3>(sample.raw_adc_counts);
         msg.setField<4>(sample.sample_timestamp_ms);
         msg.setField<5>(sample.status_flags);
 
-        // Debug: Verify message construction
-        static size_t debug_count = 0;
-        if (debug_count++ < 3) {
-            std::cout << "[Router] PT message: ts=" << receive_timestamp_ns
-                      << ", ch=" << (int)sample.channel_id << ", adc=" << sample.raw_adc_counts
-                      << ", packet_id=[" << std::hex << (int)PT_PACKET_ID[0] << ", "
-                      << (int)PT_PACKET_ID[1] << std::dec << "]\n";
-        }
+        messages.emplace_back(pkt_id, msg);
+    }
 
-        messages.emplace_back(PT_PACKET_ID, msg);
+    return messages;
+}
+
+std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedPTMessage>>
+SensorRouter::route_pt_samples_calibrated(const daq_comms::protocol::SensorBatch& batch,
+                                          uint64_t receive_timestamp_ns) const {
+    std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedPTMessage>>
+        messages;
+
+    if (!pt_calibration_) {
+        return messages;
+    }
+
+    for (const auto& sample : batch.pt_samples) {
+        // Per-channel calibrated packet_id: {0x20, 0x10 + channel_id}
+        std::array<uint8_t, 2> pkt_id = {0x20, static_cast<uint8_t>(0x10 + sample.channel_id)};
+
+        int32_t adc_code = static_cast<int32_t>(sample.raw_adc_counts);
+        double pressure_psi = pt_calibration_->calculate_pressure(sample.channel_id, adc_code);
+        uint8_t calibration_status = pt_calibration_->is_calibrated(sample.channel_id) ? 1 : 0;
+
+        comms::messages::sensor::CalibratedPTMessage msg;
+        msg.setField<0>(receive_timestamp_ns);
+        msg.setField<1>(sample.channel_id);
+        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
+        msg.setField<3>(static_cast<float>(pressure_psi));
+        msg.setField<4>(sample.raw_adc_counts);
+        msg.setField<5>(calibration_status);
+
+        messages.emplace_back(pkt_id, msg);
     }
 
     return messages;
@@ -142,19 +167,18 @@ SensorRouter::route_tc_samples(const daq_comms::protocol::SensorBatch& batch,
                                uint64_t receive_timestamp_ns) const {
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawTCMessage>> messages;
 
-    // Use ONE packet_id per sensor type (like FSW)
-    static constexpr std::array<uint8_t, 2> TC_PACKET_ID = {0x21, 0x00};
-
     for (const auto& sample : batch.tc_samples) {
+        std::array<uint8_t, 2> pkt_id = {0x21, sample.channel_id};
+
         comms::messages::sensor::RawTCMessage msg;
         msg.setField<0>(receive_timestamp_ns);
         msg.setField<1>(sample.channel_id);
-        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});  // Padding bytes for alignment
+        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
         msg.setField<3>(sample.raw_adc_counts);
         msg.setField<4>(sample.sample_timestamp_ms);
         msg.setField<5>(sample.status_flags);
 
-        messages.emplace_back(TC_PACKET_ID, msg);
+        messages.emplace_back(pkt_id, msg);
     }
 
     return messages;
@@ -165,19 +189,18 @@ SensorRouter::route_rtd_samples(const daq_comms::protocol::SensorBatch& batch,
                                 uint64_t receive_timestamp_ns) const {
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawRTDMessage>> messages;
 
-    // Use ONE packet_id per sensor type (like FSW)
-    static constexpr std::array<uint8_t, 2> RTD_PACKET_ID = {0x22, 0x00};
-
     for (const auto& sample : batch.rtd_samples) {
+        std::array<uint8_t, 2> pkt_id = {0x22, sample.channel_id};
+
         comms::messages::sensor::RawRTDMessage msg;
         msg.setField<0>(receive_timestamp_ns);
         msg.setField<1>(sample.channel_id);
-        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});  // Padding bytes for alignment
+        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
         msg.setField<3>(sample.raw_resistance_counts);
         msg.setField<4>(sample.sample_timestamp_ms);
         msg.setField<5>(sample.status_flags);
 
-        messages.emplace_back(RTD_PACKET_ID, msg);
+        messages.emplace_back(pkt_id, msg);
     }
 
     return messages;
@@ -188,21 +211,104 @@ SensorRouter::route_lc_samples(const daq_comms::protocol::SensorBatch& batch,
                                uint64_t receive_timestamp_ns) const {
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawLCMessage>> messages;
 
-    // Use ONE packet_id per sensor type (like FSW)
-    static constexpr std::array<uint8_t, 2> LC_PACKET_ID = {0x23, 0x00};
-
     for (const auto& sample : batch.lc_samples) {
+        std::array<uint8_t, 2> pkt_id = {0x23, sample.channel_id};
+
         comms::messages::sensor::RawLCMessage msg;
         msg.setField<0>(receive_timestamp_ns);
         msg.setField<1>(sample.channel_id);
-        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});  // Padding bytes for alignment
+        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
         msg.setField<3>(sample.raw_adc_counts);
         msg.setField<4>(sample.sample_timestamp_ms);
         msg.setField<5>(sample.status_flags);
 
-        messages.emplace_back(LC_PACKET_ID, msg);
+        messages.emplace_back(pkt_id, msg);
     }
 
+    return messages;
+}
+
+// ── Calibrated TC ─────────────────────────────────────────────────────────
+std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedTCMessage>>
+SensorRouter::route_tc_samples_calibrated(const daq_comms::protocol::SensorBatch& batch,
+                                          uint64_t receive_timestamp_ns) const {
+    std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedTCMessage>>
+        messages;
+    if (!tc_calibration_)
+        return messages;
+
+    for (const auto& sample : batch.tc_samples) {
+        // Calibrated TC packet_id: {0x21, 0x10 + channel_id}
+        std::array<uint8_t, 2> pkt_id = {0x21, static_cast<uint8_t>(0x10 + sample.channel_id)};
+        int32_t raw = static_cast<int32_t>(sample.raw_adc_counts);
+        double temp_c = tc_calibration_->calculate(sample.channel_id, raw);
+        uint8_t status = tc_calibration_->is_calibrated(sample.channel_id) ? 1 : 0;
+
+        comms::messages::sensor::CalibratedTCMessage msg;
+        msg.setField<0>(receive_timestamp_ns);
+        msg.setField<1>(sample.channel_id);
+        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
+        msg.setField<3>(static_cast<float>(temp_c));
+        msg.setField<4>(sample.raw_adc_counts);
+        msg.setField<5>(status);
+        messages.emplace_back(pkt_id, msg);
+    }
+    return messages;
+}
+
+// ── Calibrated RTD ────────────────────────────────────────────────────────
+std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedRTDMessage>>
+SensorRouter::route_rtd_samples_calibrated(const daq_comms::protocol::SensorBatch& batch,
+                                           uint64_t receive_timestamp_ns) const {
+    std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedRTDMessage>>
+        messages;
+    if (!rtd_calibration_)
+        return messages;
+
+    for (const auto& sample : batch.rtd_samples) {
+        // Calibrated RTD packet_id: {0x22, 0x10 + channel_id}
+        std::array<uint8_t, 2> pkt_id = {0x22, static_cast<uint8_t>(0x10 + sample.channel_id)};
+        int32_t raw = static_cast<int32_t>(sample.raw_resistance_counts);
+        double temp_c = rtd_calibration_->calculate(sample.channel_id, raw);
+        uint8_t status = rtd_calibration_->is_calibrated(sample.channel_id) ? 1 : 0;
+
+        comms::messages::sensor::CalibratedRTDMessage msg;
+        msg.setField<0>(receive_timestamp_ns);
+        msg.setField<1>(sample.channel_id);
+        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
+        msg.setField<3>(static_cast<float>(temp_c));
+        msg.setField<4>(sample.raw_resistance_counts);
+        msg.setField<5>(status);
+        messages.emplace_back(pkt_id, msg);
+    }
+    return messages;
+}
+
+// ── Calibrated LC ─────────────────────────────────────────────────────────
+std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedLCMessage>>
+SensorRouter::route_lc_samples_calibrated(const daq_comms::protocol::SensorBatch& batch,
+                                          uint64_t receive_timestamp_ns) const {
+    std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedLCMessage>>
+        messages;
+    if (!lc_calibration_)
+        return messages;
+
+    for (const auto& sample : batch.lc_samples) {
+        // Calibrated LC packet_id: {0x23, 0x10 + channel_id}
+        std::array<uint8_t, 2> pkt_id = {0x23, static_cast<uint8_t>(0x10 + sample.channel_id)};
+        int32_t raw = static_cast<int32_t>(sample.raw_adc_counts);
+        double force = lc_calibration_->calculate(sample.channel_id, raw);
+        uint8_t status = lc_calibration_->is_calibrated(sample.channel_id) ? 1 : 0;
+
+        comms::messages::sensor::CalibratedLCMessage msg;
+        msg.setField<0>(receive_timestamp_ns);
+        msg.setField<1>(sample.channel_id);
+        msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
+        msg.setField<3>(static_cast<float>(force));
+        msg.setField<4>(sample.raw_adc_counts);
+        msg.setField<5>(status);
+        messages.emplace_back(pkt_id, msg);
+    }
     return messages;
 }
 

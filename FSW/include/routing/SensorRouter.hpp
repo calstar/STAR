@@ -6,8 +6,12 @@
 #include <unordered_map>
 #include <vector>
 
+#include "../../daq_comms/include/comms/messages/sensor/CalibratedPTMessage.hpp"
+#include "../../daq_comms/include/comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "../../daq_comms/include/comms/messages/sensor/SensorMessages.hpp"
 #include "../../daq_comms/include/protocol/EncryptedFrame.hpp"
+#include "../calibration/PTCalibration.hpp"
+#include "../calibration/SensorCalibration.hpp"
 
 namespace fsw {
 namespace routing {
@@ -68,6 +72,34 @@ public:
     route_pt_samples(const daq_comms::protocol::SensorBatch& batch,
                      uint64_t receive_timestamp_ns) const;
 
+    /**
+     * @brief Convert PT samples to calibrated messages
+     * @param batch Decoded sensor batch
+     * @return Vector of (table_id, calibrated_message) pairs
+     */
+    std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedPTMessage>>
+    route_pt_samples_calibrated(const daq_comms::protocol::SensorBatch& batch,
+                                uint64_t receive_timestamp_ns) const;
+
+    /**
+     * @brief Set PT calibration manager (legacy)
+     */
+    void set_pt_calibration(const calibration::PTCalibrationManager* cal_manager) {
+        pt_calibration_ = cal_manager;
+    }
+
+    /// Set calibration managers for each sensor type
+    void set_tc_calibration(const calibration::SensorCalibrationManager* m) {
+        tc_calibration_ = m;
+    }
+    void set_rtd_calibration(const calibration::SensorCalibrationManager* m) {
+        rtd_calibration_ = m;
+    }
+    void set_lc_calibration(const calibration::SensorCalibrationManager* m) {
+        lc_calibration_ = m;
+    }
+
+    // ── Raw routing ────────────────────────────────────────────────────────
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawTCMessage>>
     route_tc_samples(const daq_comms::protocol::SensorBatch& batch,
                      uint64_t receive_timestamp_ns) const;
@@ -80,9 +112,27 @@ public:
     route_lc_samples(const daq_comms::protocol::SensorBatch& batch,
                      uint64_t receive_timestamp_ns) const;
 
+    // ── Calibrated routing ─────────────────────────────────────────────────
+    std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedTCMessage>>
+    route_tc_samples_calibrated(const daq_comms::protocol::SensorBatch& batch,
+                                uint64_t receive_timestamp_ns) const;
+
+    std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedRTDMessage>>
+    route_rtd_samples_calibrated(const daq_comms::protocol::SensorBatch& batch,
+                                 uint64_t receive_timestamp_ns) const;
+
+    std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedLCMessage>>
+    route_lc_samples_calibrated(const daq_comms::protocol::SensorBatch& batch,
+                                uint64_t receive_timestamp_ns) const;
+
 private:
     std::unordered_map<std::string, SensorChannelConfig>
         channel_map_;  // Key: "sensor_type:channel_id"
+
+    const calibration::PTCalibrationManager* pt_calibration_ = nullptr;
+    const calibration::SensorCalibrationManager* tc_calibration_ = nullptr;
+    const calibration::SensorCalibrationManager* rtd_calibration_ = nullptr;
+    const calibration::SensorCalibrationManager* lc_calibration_ = nullptr;
 
     std::string make_key(const std::string& sensor_type, uint8_t channel_id) const;
 };

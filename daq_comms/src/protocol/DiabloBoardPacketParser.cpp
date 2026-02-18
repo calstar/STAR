@@ -178,5 +178,51 @@ std::string DiabloBoardPacketParser::calculate_ip_from_mac(const std::string& ma
     return base + "." + std::to_string(ip_octet);
 }
 
+std::vector<uint8_t> DiabloBoardPacketParser::construct_actuator_command_packet(
+    const std::vector<ActuatorCommand>& commands) const {
+    if (commands.empty() || commands.size() > 255) {
+        return {};
+    }
+
+    // Packet structure (matching DAQv2-Comms exactly):
+    // Header: [packet_type(1)][version(1)][timestamp(4)] = 6 bytes
+    // Body: [num_commands(1)] = 1 byte
+    // Commands: [actuator_id(1)][actuator_state(1)] * num_commands = 2 bytes each
+
+    constexpr size_t HEADER_SIZE = 6;
+    constexpr size_t BODY_SIZE = 1;
+    constexpr size_t COMMAND_SIZE = 2;
+
+    size_t packet_size = HEADER_SIZE + BODY_SIZE + (commands.size() * COMMAND_SIZE);
+    std::vector<uint8_t> packet(packet_size);
+    size_t offset = 0;
+
+    // Packet header (little-endian)
+    packet[offset++] = static_cast<uint8_t>(PacketType::ACTUATOR_COMMAND);  // packet_type
+    packet[offset++] = 0;  // version (DIABLO_COMMS_VERSION = 0, matching DAQv2-Comms and GUI)
+
+    // Timestamp (32-bit, milliseconds, little-endian)
+    uint32_t timestamp_ms =
+        static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now().time_since_epoch())
+                                  .count() &
+                              0xFFFFFFFF);
+    packet[offset++] = static_cast<uint8_t>(timestamp_ms & 0xFF);
+    packet[offset++] = static_cast<uint8_t>((timestamp_ms >> 8) & 0xFF);
+    packet[offset++] = static_cast<uint8_t>((timestamp_ms >> 16) & 0xFF);
+    packet[offset++] = static_cast<uint8_t>((timestamp_ms >> 24) & 0xFF);
+
+    // Packet body
+    packet[offset++] = static_cast<uint8_t>(commands.size());  // num_commands
+
+    // Actuator commands
+    for (const auto& cmd : commands) {
+        packet[offset++] = cmd.actuator_id;     // actuator_id (1-indexed, 1-10)
+        packet[offset++] = cmd.actuator_state;  // actuator_state (0=OFF, non-zero=ON)
+    }
+
+    return packet;
+}
+
 }  // namespace protocol
 }  // namespace daq_comms

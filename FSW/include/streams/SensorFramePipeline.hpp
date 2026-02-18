@@ -36,6 +36,13 @@ public:
     std::optional<daq_comms::protocol::SensorBatch> poll();
 
     /**
+     * @brief Get the source IP of the last received packet
+     */
+    const std::string& last_source_ip() const {
+        return last_source_ip_;
+    }
+
+    /**
      * @brief Check if pipeline is ready
      */
     bool is_ready() const;
@@ -58,6 +65,7 @@ private:
         board_parser_;  // Actual DiabloAvionics board parser
     std::vector<uint8_t> receive_buffer_;
     std::string last_error_;
+    std::string last_source_ip_;
 
     static constexpr size_t MAX_PACKET_SIZE =
         512;  // DiabloAvionics max packet size (from DAQv2-Comms.h)

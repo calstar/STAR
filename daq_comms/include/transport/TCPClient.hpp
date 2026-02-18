@@ -1,6 +1,10 @@
 #ifndef DAQ_TCP_CLIENT_HPP
 #define DAQ_TCP_CLIENT_HPP
 
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -58,6 +62,22 @@ public:
      * @brief Flush buffered data
      */
     void flush();
+
+    /**
+     * @brief Read data from socket (non-blocking)
+     * @param buffer Buffer to read into
+     * @param max_len Maximum bytes to read
+     * @return Number of bytes read, 0 if no data available, -1 on error
+     */
+    ssize_t read(void* buffer, size_t max_len);
+
+    /**
+     * @brief Read exactly len bytes (blocking, like external FSW Socket::read)
+     * @param buffer Buffer to read into
+     * @param len Exact number of bytes to read
+     * @return true if successful, false on error
+     */
+    bool read_exact(void* buffer, size_t len);
 
     /**
      * @brief Get last error message
