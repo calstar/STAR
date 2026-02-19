@@ -5,17 +5,19 @@
 // WebSocket message types
 export enum MessageType {
   // Client → Server
-  SUBSCRIBE_SENSOR = 'subscribe_sensor',
-  UNSUBSCRIBE_SENSOR = 'unsubscribe_sensor',
-  SEND_COMMAND = 'send_command',
-  QUERY_HISTORICAL = 'query_historical',
+  SUBSCRIBE_SENSOR    = 'subscribe_sensor',
+  UNSUBSCRIBE_SENSOR  = 'unsubscribe_sensor',
+  SEND_COMMAND        = 'send_command',
+  QUERY_HISTORICAL    = 'query_historical',
+  CALIBRATION_COMMAND = 'calibration_command',
 
   // Server → Client
-  SENSOR_UPDATE = 'sensor_update',
-  ACTUATOR_UPDATE = 'actuator_update',
-  STATE_UPDATE = 'state_update',
-  ERROR = 'error',
-  CONNECTION_STATUS = 'connection_status',
+  SENSOR_UPDATE      = 'sensor_update',
+  ACTUATOR_UPDATE    = 'actuator_update',
+  STATE_UPDATE       = 'state_update',
+  ERROR              = 'error',
+  CONNECTION_STATUS  = 'connection_status',
+  CALIBRATION_STATUS = 'calibration_status',
 }
 
 // Sensor types
@@ -118,4 +120,40 @@ export interface ConnectionStatus {
   elodinConnected: boolean;
   latency?: number;
   error?: string;
+}
+
+// ── Calibration types ─────────────────────────────────────────────────────────
+
+export type CalibrationConfidence = 'MAXIMUM' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNCALIBRATED';
+
+export interface CalibrationChannelStatus {
+  sensorId:      number;
+  updateCount:   number;
+  lastUpdate:    number;
+  driftDetected: boolean;
+  meanResidual:  number;
+  glrStat:       number;
+  confidence:    CalibrationConfidence;
+  coeffs: { A: number; B: number; C: number; D: number };
+  phase2Active:  boolean;
+}
+
+export interface CalibrationStatusPayload {
+  channels:      CalibrationChannelStatus[];
+  phase2Enabled: boolean;
+  timestamp:     number;
+}
+
+export type CalibrationCommandType =
+  | 'capture_reference'
+  | 'fit_channel'
+  | 'reset_channel'
+  | 'enable_phase2'
+  | 'disable_phase2'
+  | 'save_coefficients';
+
+export interface CalibrationCommand {
+  commandType:        CalibrationCommandType;
+  sensorId?:          number;
+  referencePressure?: number;
 }

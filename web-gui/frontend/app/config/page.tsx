@@ -44,8 +44,29 @@ interface ConfigData {
   state_machine?: Record<string, string>;
 }
 
+// Sensible defaults drawn from config.toml so the form isn't blank on first load
+const DEFAULT_CONFIG: ConfigData = {
+  system:   { mode: 'GROUND', state: 'GSE' },
+  network:  { bind_ip: '0.0.0.0', sensor_port: 5006, actuator_cmd_port: 5005, buffer_size: 1024 },
+  database: { host: '127.0.0.1', port: 2240, auto_flush_interval_ms: 100,
+              max_buffer_size: 4096, connection_retry_attempts: 3, connection_retry_delay_ms: 1000 },
+  discovery:{ enabled: true, network_interface: 'auto', mode: 'hybrid',
+              subnet: '192.168.2.0/24', ip_range_start: 100, ip_range_end: 150,
+              discovery_timeout_seconds: 30 },
+  boards: {
+    pt_board: { type: 'PT', ip: '192.168.2.101', send_port: 5006, num_sensors: 10, board_id: 1, enabled: true, active_connectors: [1,2,3,4,5,6,7] },
+    actuator_board: { type: 'ACTUATOR', ip: '192.168.2.201', send_port: 5006, listen_port: 5005, num_actuators: 10, num_sensors: 10, board_id: 2, enabled: true, active_connectors: [] },
+  },
+  sensor_roles: { 'Fuel Upstream': 1, 'GSE Low': 2, 'GSE Mid': 3, 'Fuel Downstream': 4, 'Ox Upstream': 5, 'GN2 Regulated': 6, 'Ox Downstream': 7 },
+  actuator_roles: { 'LOX Main': ['NO', 1], 'Fuel Vent': ['NC', 2], 'Fuel Press': ['NC', 3], 'GSE Low Vent': ['NC', 5], 'LOX Vent': ['NC', 6], 'Fuel Main': ['NO', 7], 'LOX Press': ['NO', 8] },
+  calibration: { enabled: true, orchestrator: { min_points: 5, target_points: 15, max_points: 30, min_r_squared: 0.95, target_r_squared: 0.99, rls_forgetting_factor: 0.995, drift_glr_threshold: 3.0, auto_save_interval_sec: 300, status_interval_sec: 30 } },
+  pressure_limits: { GN2: { THRESH: 550, NOP: 900, MEOP: 950, POP: 1000 }, ETH: { THRESH: 550, NOP: 600, MEOP: 650, POP: 750 }, LOX: { THRESH: 550, NOP: 600, MEOP: 650, POP: 750 } },
+  display: { adc_bits: 32, ref_voltage: 2.5, window_seconds: 26.0, y_axis_min: 0.0, y_axis_max: 700.0, y_axis_autoscale: true, only_show_actuators_with_roles: true, only_show_pt_with_roles: true, graph_ma_samples: 1, display_ma_samples: 1 },
+  state_machine: { actuator_csv: 'external/DiabloAvionics/test_guis/state_machine_actuators.csv', transitions_csv: 'external/DiabloAvionics/test_guis/state_transitions.csv' },
+};
+
 export default function ConfigPage() {
-  const [config, setConfig] = useState<ConfigData>({});
+  const [config, setConfig] = useState<ConfigData>(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,10 +98,11 @@ export default function ConfigPage() {
       }
 
       const data = await response.json();
-      setConfig(data.config || {});
+      // Merge loaded config on top of defaults so fields are never empty
+      setConfig({ ...DEFAULT_CONFIG, ...(data.config || {}) });
       setLoading(false);
     } catch (err: any) {
-      setError(err.message || 'Failed to load config');
+      // Keep defaults even on error so form is usable offline
       setLoading(false);
     }
   };

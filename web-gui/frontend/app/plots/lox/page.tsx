@@ -3,95 +3,75 @@
 import { useEffect } from 'react';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import PressureBar from '@/components/plots/PressureBar';
-import { useSensorStore } from '@/lib/store';
+import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate } from '@/lib/types';
 
-export default function LOXGraphsPage() {
-  const updateSensor = useSensorStore((state) => state.updateSensor);
-  const getSensorValue = useSensorStore((state) => state.getSensorValue);
-  const ws = getWebSocketClient();
+const NOP  = 450;
+const MEOP = 600;
 
+export default function LOXGraphsPage() {
+  const updateSensor = useSensorStore((s) => s.updateSensor);
+  const ws = getWebSocketClient();
   useEffect(() => {
     ws.connect();
-    const unsubscribe = ws.on(MessageType.SENSOR_UPDATE, (payload: unknown) => {
-      updateSensor(payload as SensorUpdate);
-    });
-    return unsubscribe;
+    const unsub = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
+    return unsub;
   }, [ws, updateSensor]);
 
+  const up   = useSensorValue('PT_Cal.PT_CH5', 'pressure_psi');
+  const down = useSensorValue('PT_Cal.PT_CH7', 'pressure_psi');
+  const loxMainOpen = (useSensorValue('ACT.ACT_CH1', 'raw_adc_counts') ?? 0) > 0;
+
   return (
-    <main className="min-h-screen bg-background text-text p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold text-lox">LOX System</h1>
-          <div className="flex gap-6 text-sm">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-lox"></div>
-              <span>Upstream: {getSensorValue('PT_Cal.Ox_Upstream', 'pressure_psi')?.toFixed(1) || '---'} PSI</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#C0392B' }}></div>
-              <span>Downstream: {getSensorValue('PT_Cal.Ox_Downstream', 'pressure_psi')?.toFixed(1) || '---'} PSI</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#F1948A' }}></div>
-              <span>Press: {getSensorValue('PT_Cal.Ox_Press', 'pressure_psi')?.toFixed(1) || '---'} PSI</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-green-500"></div>
-              <span>Main: {getSensorValue('ACT.LOX_Main', 'status') === 1 ? 'OPEN' : 'CLOSED'}</span>
-            </div>
-          </div>
-        </div>
+    <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
 
-        {/* Pressure Bars */}
-        <div className="bg-card rounded-lg p-6">
-          <h2 className="text-xl font-bold mb-6">Pressure Bars (NOP/MEOP)</h2>
-          <div className="flex gap-8 justify-center items-end flex-wrap">
-            <PressureBar
-              label="Upstream"
-              value={getSensorValue('PT_Cal.Ox_Upstream', 'pressure_psi')}
-              nop={500}
-              meop={700}
-              color="#E74C3C"
+      <div className="flex items-center justify-between flex-shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-1 h-5 bg-red-500 rounded-full" />
+          <h1 className="text-base font-bold text-red-400 tracking-wider">LOX SYSTEM</h1>
+        </div>
+        <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${loxMainOpen ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
+          LOX MAIN: {loxMainOpen ? 'OPEN' : 'CLOSED'}
+        </span>
+      </div>
+
+      <div className="flex-1 min-h-0 flex flex-row gap-2">
+
+        <div className="flex-1 flex flex-col gap-2 min-h-0 min-w-0">
+          <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0 overflow-hidden">
+            <TimeSeriesPlot
+              title="LOX Pressure (PSI)"
+              entities={['PT_Cal.PT_CH5','PT_Cal.PT_CH7']}
+              labels={['Upstream','Downstream']}
+              component="pressure_psi"
+              colors={['#E74C3C','#C0392B']}
+              yLabel="Pressure (PSI)"
             />
-            <PressureBar
-              label="Downstream"
-              value={getSensorValue('PT_Cal.Ox_Downstream', 'pressure_psi')}
-              nop={500}
-              meop={700}
-              color="#C0392B"
-            />
-            <PressureBar
-              label="Press"
-              value={getSensorValue('PT_Cal.Ox_Press', 'pressure_psi')}
-              nop={500}
-              meop={700}
-              color="#F1948A"
+          </div>
+          <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0 overflow-hidden">
+            <TimeSeriesPlot
+              title="LOX Actuator States (ADC)"
+              entities={['ACT.ACT_CH1','ACT.ACT_CH6','ACT.ACT_CH8']}
+              labels={['LOX Main','LOX Vent','LOX Press']}
+              component="raw_adc_counts"
+              colors={['#27AE60','#E74C3C','#F39C12']}
+              yLabel="ADC / Status"
             />
           </div>
         </div>
 
-        {/* Pressure Plot */}
-        <TimeSeriesPlot
-          title="LOX Pressure"
-          entities={['PT_Cal.Ox_Upstream', 'PT_Cal.Ox_Downstream', 'PT_Cal.Ox_Press']}
-          component="pressure_psi"
-          colors={['#E74C3C', '#C0392B', '#F1948A']}
-          yLabel="Pressure (PSI)"
-          height={400}
-        />
+        <div className="w-36 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0">
+          <div className="text-[9px] font-bold uppercase tracking-widest text-gray-600 text-center flex-shrink-0">Pressures</div>
+          <div className="flex-shrink-0 text-[9px] font-mono text-center">
+            <span className="text-red-400">— MEOP</span> <span className="text-yellow-400">— NOP</span>
+          </div>
+          <div className="flex flex-row flex-1 gap-2 min-h-0">
+            <div className="flex-1 min-h-0"><PressureBar label="Upstream"   value={up}   nop={NOP} meop={MEOP} color="#E74C3C" /></div>
+            <div className="flex-1 min-h-0"><PressureBar label="Downstream" value={down} nop={NOP} meop={MEOP} color="#C0392B" /></div>
+          </div>
+        </div>
 
-        {/* Actuator States Plot */}
-        <TimeSeriesPlot
-          title="LOX Actuator States"
-          entities={['ACT.LOX_Main', 'ACT.LOX_Vent', 'ACT.LOX_Press']}
-          component="raw_adc_counts"
-          colors={['#27AE60', '#E74C3C', '#F39C12']}
-          yLabel="ADC Counts / Status"
-          height={300}
-        />
       </div>
     </main>
   );

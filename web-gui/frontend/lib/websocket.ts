@@ -69,11 +69,15 @@ export class WebSocketClient {
       this.ws.onmessage = (event) => {
         try {
           const message: WSMessage = JSON.parse(event.data);
-          // ALWAYS log sensor updates - this is critical for debugging
+          // Log sensor updates occasionally for debugging (reduce spam)
           if (message.type === MessageType.SENSOR_UPDATE) {
             const update = message.payload as SensorUpdate;
-            console.log(`📥 Frontend received: ${update.entity}.${update.component} = ${update.value.toFixed(2)}`);
-          } else {
+            // Log occasionally to see data flow without spamming console
+            if (Math.random() < 0.1) {
+              console.log(`📥 Frontend received: ${update.entity}.${update.component} = ${update.value.toFixed(2)}`);
+            }
+          } else if (Math.random() < 0.1) {
+            // Log other message types occasionally
             console.log(`📥 Frontend received message type: ${message.type}`);
           }
           this.handleMessage(message);
@@ -86,12 +90,17 @@ export class WebSocketClient {
       this.ws.onerror = (error) => {
         console.error('❌ WebSocket error:', error);
         console.error(`   URL: ${this.url}`);
-        console.error(`   Ready state: ${this.ws?.readyState}`);
+        console.error(`   Ready state: ${this.ws?.readyState} (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)`);
+        console.error(`   Check: Is backend WebSocket server running on port 8081?`);
         this.notifyConnectionStatus({ connected: false, elodinConnected: false });
       };
 
-      this.ws.onclose = () => {
-        console.log('🔌 WebSocket disconnected');
+      this.ws.onclose = (event) => {
+        console.log(`🔌 WebSocket disconnected (code: ${event.code}, reason: ${event.reason || 'none'})`);
+        console.log(`   Ready state: ${this.ws?.readyState} (3=CLOSED)`);
+        if (event.code !== 1000) {
+          console.error(`   Abnormal close - check backend logs`);
+        }
         this.notifyConnectionStatus({ connected: false, elodinConnected: false });
         this.scheduleReconnect();
       };
@@ -103,7 +112,42 @@ export class WebSocketClient {
 
   private subscribeToAllSensors(): void {
     // Subscribe to all sensor entities we care about
+    // IMPORTANT: Subscribe to ALL PT_CH channels (1-10) for both calibrated AND raw ADC
     const sensors = [
+      // All PT channels - CALIBRATED pressure (1-10)
+      'PT_Cal.PT_CH1',
+      'PT_Cal.PT_CH2',
+      'PT_Cal.PT_CH3',
+      'PT_Cal.PT_CH4',
+      'PT_Cal.PT_CH5',
+      'PT_Cal.PT_CH6',
+      'PT_Cal.PT_CH7',
+      'PT_Cal.PT_CH8',
+      'PT_Cal.PT_CH9',
+      'PT_Cal.PT_CH10',
+      // All PT channels - RAW ADC (1-10) for raw readouts tab
+      'PT.PT_CH1',
+      'PT.PT_CH2',
+      'PT.PT_CH3',
+      'PT.PT_CH4',
+      'PT.PT_CH5',
+      'PT.PT_CH6',
+      'PT.PT_CH7',
+      'PT.PT_CH8',
+      'PT.PT_CH9',
+      'PT.PT_CH10',
+      // All actuator channels (1-10)
+      'ACT.ACT_CH1',
+      'ACT.ACT_CH2',
+      'ACT.ACT_CH3',
+      'ACT.ACT_CH4',
+      'ACT.ACT_CH5',
+      'ACT.ACT_CH6',
+      'ACT.ACT_CH7',
+      'ACT.ACT_CH8',
+      'ACT.ACT_CH9',
+      'ACT.ACT_CH10',
+      // Named aliases (for compatibility)
       'PT_Cal.GN2_Regulated',
       'PT_Cal.Fuel_Upstream',
       'PT_Cal.Ox_Upstream',
@@ -113,9 +157,6 @@ export class WebSocketClient {
       'PT_Cal.GSE_Mid',
       'PT_Cal.GSE_High',
       'PT_Cal.GN2_High',
-      'PT_Cal.PT_CH8',
-      'PT_Cal.PT_CH9',
-      'PT_Cal.PT_CH10',
       'PT.GN2_Regulated',
       'PT.Fuel_Upstream',
       'PT.Ox_Upstream',
@@ -146,16 +187,17 @@ export class WebSocketClient {
   private handleMessage(message: WSMessage): void {
     const listeners = this.listeners.get(message.type);
 
-    // ALWAYS log if no listeners - this is a critical issue
+    // Log sensor updates occasionally for debugging (reduce spam)
     if (message.type === MessageType.SENSOR_UPDATE) {
       const update = message.payload as SensorUpdate;
       if (!listeners || listeners.size === 0) {
-        console.error(`❌ CRITICAL: No listeners for SENSOR_UPDATE!`);
-        console.error(`   Entity: ${update.entity}.${update.component} = ${update.value}`);
-        console.error(`   This means components haven't subscribed.`);
-        console.error(`   Check that pages call: ws.on(MessageType.SENSOR_UPDATE, ...)`);
-      } else {
-        console.log(`✅ Calling ${listeners.size} listener(s) for ${update.entity}.${update.component}`);
+        // Only log this occasionally to avoid spam
+        if (Math.random() < 0.1) {
+          console.warn(`⚠️ No listeners for SENSOR_UPDATE: ${update.entity}.${update.component}`);
+        }
+      } else if (Math.random() < 0.05) {
+        // Log successful delivery occasionally
+        console.log(`✅ Delivered: ${update.entity}.${update.component} = ${update.value.toFixed(2)} to ${listeners.size} listener(s)`);
       }
     }
 
@@ -209,7 +251,8 @@ export class WebSocketClient {
     });
   }
 
-  private send(message: WSMessage): void {
+  /** Generic message send — used by calibration page etc. */
+  send(message: WSMessage): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       try {
         this.ws.send(JSON.stringify(message));

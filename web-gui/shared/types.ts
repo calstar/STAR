@@ -5,17 +5,19 @@
 // WebSocket message types
 export enum MessageType {
   // Client → Server
-  SUBSCRIBE_SENSOR = 'subscribe_sensor',
-  UNSUBSCRIBE_SENSOR = 'unsubscribe_sensor',
-  SEND_COMMAND = 'send_command',
-  QUERY_HISTORICAL = 'query_historical',
+  SUBSCRIBE_SENSOR    = 'subscribe_sensor',
+  UNSUBSCRIBE_SENSOR  = 'unsubscribe_sensor',
+  SEND_COMMAND        = 'send_command',
+  QUERY_HISTORICAL    = 'query_historical',
+  CALIBRATION_COMMAND = 'calibration_command',
 
   // Server → Client
-  SENSOR_UPDATE = 'sensor_update',
-  ACTUATOR_UPDATE = 'actuator_update',
-  STATE_UPDATE = 'state_update',
-  ERROR = 'error',
-  CONNECTION_STATUS = 'connection_status',
+  SENSOR_UPDATE      = 'sensor_update',
+  ACTUATOR_UPDATE    = 'actuator_update',
+  STATE_UPDATE       = 'state_update',
+  ERROR              = 'error',
+  CONNECTION_STATUS  = 'connection_status',
+  CALIBRATION_STATUS = 'calibration_status',
 }
 
 // Sensor types
@@ -118,4 +120,44 @@ export interface ConnectionStatus {
   elodinConnected: boolean;
   latency?: number;
   error?: string;
+}
+
+// ── Calibration types ─────────────────────────────────────────────────────────
+
+/** Confidence level derived from RLS update count + drift state */
+export type CalibrationConfidence = 'MAXIMUM' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNCALIBRATED';
+
+/** Per-channel status broadcast from the Phase 2 engine */
+export interface CalibrationChannelStatus {
+  sensorId:      number;   // 1-based PT channel
+  updateCount:   number;   // total RLS updates applied
+  lastUpdate:    number;   // epoch ms
+  driftDetected: boolean;
+  meanResidual:  number;   // mean |error| over last 100 samples (PSI)
+  glrStat:       number;   // GLR statistic (>threshold = drift)
+  confidence:    CalibrationConfidence;
+  coeffs: { A: number; B: number; C: number; D: number };
+  phase2Active:  boolean;
+}
+
+/** Full calibration status payload — one entry per initialized channel */
+export interface CalibrationStatusPayload {
+  channels:      CalibrationChannelStatus[];
+  phase2Enabled: boolean;
+  timestamp:     number;
+}
+
+/** Commands the frontend sends to drive the calibration engine */
+export type CalibrationCommandType =
+  | 'capture_reference'   // store current ADC at a known PSI reference
+  | 'fit_channel'         // force polynomial re-fit for a channel
+  | 'reset_channel'       // clear all points and restart
+  | 'enable_phase2'
+  | 'disable_phase2'
+  | 'save_coefficients';
+
+export interface CalibrationCommand {
+  commandType:        CalibrationCommandType;
+  sensorId?:          number;
+  referencePressure?: number;  // PSI ground-truth for capture_reference
 }

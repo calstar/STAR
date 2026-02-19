@@ -161,6 +161,186 @@ export function parseActuatorMessage(
 }
 
 /**
+ * Parse TC (Thermocouple) Raw Message (21 bytes)
+ * Layout: uint64_t (8) + uint8_t (1) + padding[3] (3) + uint32_t (4) + uint32_t (4) + uint8_t (1)
+ * Same layout as PT Raw
+ */
+export function parseRawTCMessage(
+  payload: Buffer,
+  packetId: [number, number]
+): ParsedSensorData | null {
+  if (payload.length < 21) {
+    console.warn(`⚠️ TC Raw payload too short: ${payload.length} bytes (expected 21)`);
+    return null;
+  }
+
+  const timestampNs = Number(payload.readBigUInt64LE(0));
+  const channelId = payload.readUInt8(8);
+
+  // Validate channel ID
+  if (channelId < 1 || channelId > 4) {
+    console.warn(`⚠️ Invalid channel ID in raw TC: ${channelId}`);
+  }
+
+  // Skip padding (bytes 9-11)
+  const rawAdcCounts = payload.readUInt32LE(12);
+  const sampleTimestampMs = payload.readUInt32LE(16);
+  const statusFlags = payload.readUInt8(20);
+
+  // Channel ID from packet is 1-based, map to entity names (matches DatabaseConfig.cpp)
+  const entityMap: Record<number, string> = {
+    1: 'TC.TC_CH1',
+    2: 'TC.TC_CH2',
+    3: 'TC.TC_CH3',
+    4: 'TC.TC_CH4',
+  };
+
+  const entity = entityMap[channelId] || `TC.TC_CH${channelId}`;
+
+  return {
+    entity,
+    component: 'raw_adc_counts',
+    value: rawAdcCounts,
+    timestamp: sampleTimestampMs,
+  };
+}
+
+/**
+ * Parse TC Calibrated Message (21 bytes)
+ * Layout: uint64_t (8) + uint8_t (1) + padding[3] (3) + float (4) + uint32_t (4) + uint8_t (1)
+ * Same layout as PT Calibrated
+ */
+export function parseCalibratedTCMessage(
+  payload: Buffer,
+  packetId: [number, number]
+): ParsedSensorData | null {
+  if (payload.length < 21) {
+    console.warn(`⚠️ TC Calibrated payload too short: ${payload.length} bytes (expected 21)`);
+    return null;
+  }
+
+  const timestampNs = Number(payload.readBigUInt64LE(0));
+  const channelId = payload.readUInt8(8);
+
+  // Validate channel ID
+  if (channelId < 1 || channelId > 4) {
+    console.warn(`⚠️ Invalid channel ID in calibrated TC: ${channelId}`);
+    return null;
+  }
+
+  // Skip padding (bytes 9-11)
+  const calibratedTemperatureC = payload.readFloatLE(12);
+  const rawAdcCounts = payload.readUInt32LE(16);
+  const calibrationStatus = payload.readUInt8(20);
+
+  // Channel ID from packet is 1-based, map to entity names (matches DatabaseConfig.cpp)
+  const entityMap: Record<number, string> = {
+    1: 'TC_Cal.TC_CH1',
+    2: 'TC_Cal.TC_CH2',
+    3: 'TC_Cal.TC_CH3',
+    4: 'TC_Cal.TC_CH4',
+  };
+
+  const entity = entityMap[channelId] || `TC_Cal.TC_CH${channelId}`;
+
+  return {
+    entity,
+    component: 'temperature_c',
+    value: calibratedTemperatureC,
+    timestamp: Date.now(),
+  };
+}
+
+/**
+ * Parse RTD (Resistance Temperature Detector) Raw Message (21 bytes)
+ * Layout: uint64_t (8) + uint8_t (1) + padding[3] (3) + uint32_t (4) + uint32_t (4) + uint8_t (1)
+ */
+export function parseRawRTDMessage(
+  payload: Buffer,
+  packetId: [number, number]
+): ParsedSensorData | null {
+  if (payload.length < 21) {
+    console.warn(`⚠️ RTD Raw payload too short: ${payload.length} bytes (expected 21)`);
+    return null;
+  }
+
+  const timestampNs = Number(payload.readBigUInt64LE(0));
+  const channelId = payload.readUInt8(8);
+
+  // Validate channel ID
+  if (channelId < 1 || channelId > 4) {
+    console.warn(`⚠️ Invalid channel ID in raw RTD: ${channelId}`);
+  }
+
+  // Skip padding (bytes 9-11)
+  const rawResistance = payload.readUInt32LE(12);
+  const sampleTimestampMs = payload.readUInt32LE(16);
+  const statusFlags = payload.readUInt8(20);
+
+  // Channel ID from packet is 1-based, map to entity names (matches DatabaseConfig.cpp)
+  const entityMap: Record<number, string> = {
+    1: 'RTD.RTD_CH1',
+    2: 'RTD.RTD_CH2',
+    3: 'RTD.RTD_CH3',
+    4: 'RTD.RTD_CH4',
+  };
+
+  const entity = entityMap[channelId] || `RTD.RTD_CH${channelId}`;
+
+  return {
+    entity,
+    component: 'raw_resistance',
+    value: rawResistance,
+    timestamp: sampleTimestampMs,
+  };
+}
+
+/**
+ * Parse RTD Calibrated Message (21 bytes)
+ * Layout: uint64_t (8) + uint8_t (1) + padding[3] (3) + float (4) + uint32_t (4) + uint8_t (1)
+ */
+export function parseCalibratedRTDMessage(
+  payload: Buffer,
+  packetId: [number, number]
+): ParsedSensorData | null {
+  if (payload.length < 21) {
+    console.warn(`⚠️ RTD Calibrated payload too short: ${payload.length} bytes (expected 21)`);
+    return null;
+  }
+
+  const timestampNs = Number(payload.readBigUInt64LE(0));
+  const channelId = payload.readUInt8(8);
+
+  // Validate channel ID
+  if (channelId < 1 || channelId > 4) {
+    console.warn(`⚠️ Invalid channel ID in calibrated RTD: ${channelId}`);
+    return null;
+  }
+
+  // Skip padding (bytes 9-11)
+  const calibratedTemperatureC = payload.readFloatLE(12);
+  const rawResistance = payload.readUInt32LE(16);
+  const calibrationStatus = payload.readUInt8(20);
+
+  // Channel ID from packet is 1-based, map to entity names (matches DatabaseConfig.cpp)
+  const entityMap: Record<number, string> = {
+    1: 'RTD_Cal.RTD_CH1',
+    2: 'RTD_Cal.RTD_CH2',
+    3: 'RTD_Cal.RTD_CH3',
+    4: 'RTD_Cal.RTD_CH4',
+  };
+
+  const entity = entityMap[channelId] || `RTD_Cal.RTD_CH${channelId}`;
+
+  return {
+    entity,
+    component: 'temperature_c',
+    value: calibratedTemperatureC,
+    timestamp: Date.now(),
+  };
+}
+
+/**
  * Parse Elodin packet based on packet_id
  */
 export function parseElodinPacket(
@@ -170,23 +350,41 @@ export function parseElodinPacket(
   // Packet ID format: [high_byte, low_byte]
   const [high, low] = packetId;
 
-  // PT Raw: [0x20, channel_id] where channel_id is 1-based
+  // PT Raw: [0x20, channel_id] where channel_id is 1-based (0x01-0x0A)
   if (high === 0x20 && low >= 0x01 && low <= 0x0A) {
     return parseRawPTMessage(payload, packetId);
   }
 
-  // PT Calibrated: [0x20, 0x10 + channel_id] where channel_id is 1-based
-  // So low byte = 0x10 + channel_id, meaning 0x11 (ch1) to 0x1A (ch10)
+  // PT Calibrated: [0x20, 0x10 + channel_id] where channel_id is 1-based (0x11-0x1A)
   if (high === 0x20 && low >= 0x11 && low <= 0x1A) {
-    // Extract channel_id from low byte: channel_id = low - 0x10
-    const channelId = low - 0x10;
     return parseCalibratedPTMessage(payload, packetId);
   }
 
-  // Actuator data: [0x30, channel_id] where channel_id is 1-based
+  // TC Raw: [0x21, channel_id] where channel_id is 1-based (0x01-0x04)
+  if (high === 0x21 && low >= 0x01 && low <= 0x04) {
+    return parseRawTCMessage(payload, packetId);
+  }
+
+  // TC Calibrated: [0x21, 0x10 + channel_id] where channel_id is 1-based (0x11-0x14)
+  if (high === 0x21 && low >= 0x11 && low <= 0x14) {
+    return parseCalibratedTCMessage(payload, packetId);
+  }
+
+  // RTD Raw: [0x22, channel_id] where channel_id is 1-based (0x01-0x04)
+  if (high === 0x22 && low >= 0x01 && low <= 0x04) {
+    return parseRawRTDMessage(payload, packetId);
+  }
+
+  // RTD Calibrated: [0x22, 0x10 + channel_id] where channel_id is 1-based (0x11-0x14)
+  if (high === 0x22 && low >= 0x11 && low <= 0x14) {
+    return parseCalibratedRTDMessage(payload, packetId);
+  }
+
+  // Actuator data: [0x30, channel_id] where channel_id is 1-based (0x01-0x0A)
   if (high === 0x30 && low >= 0x01 && low <= 0x0A) {
     return parseActuatorMessage(payload, packetId);
   }
 
+  // Unknown packet type - return null (will be logged in handleElodinPacket)
   return null;
 }

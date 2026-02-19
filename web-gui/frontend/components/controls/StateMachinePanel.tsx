@@ -22,7 +22,7 @@ const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.CALIBRATE]: 'CALIBRATE',
   [SystemState.READY]: 'READY',
   [SystemState.FIRE]: 'FIRE',
-  [SystemState.ABORT]: '🚨 ABORT',
+  [SystemState.ABORT]: 'ABORT',
 };
 
 interface StateButtonProps {

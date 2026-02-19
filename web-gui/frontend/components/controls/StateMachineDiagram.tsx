@@ -9,16 +9,16 @@ const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.DEBUG]: 'DEBUG',
   [SystemState.IDLE]: 'IDLE',
   [SystemState.ARMED]: 'ARMED',
-  [SystemState.FUEL_FILL]: 'Fuel Fill',
-  [SystemState.OX_FILL]: 'Ox Fill',
-  [SystemState.GN2_LOW_PRESS]: 'GN2 Press',
-  [SystemState.GN2_VENT]: 'GN2 Vent',
-  [SystemState.FUEL_PRESS]: 'Fuel Press',
-  [SystemState.FUEL_VENT]: 'Fuel Vent',
-  [SystemState.OX_PRESS]: 'Ox Press',
-  [SystemState.OX_VENT]: 'Ox Vent',
-  [SystemState.GN2_HIGH_PRESS]: 'High Press',
-  [SystemState.GN2_HIGH_VENT]: 'GN2 High Vent',
+  [SystemState.FUEL_FILL]: 'FUEL FILL',
+  [SystemState.OX_FILL]: 'OX FILL',
+  [SystemState.GN2_LOW_PRESS]: 'GN2 PRESS',
+  [SystemState.GN2_VENT]: 'GN2 VENT',
+  [SystemState.FUEL_PRESS]: 'FUEL PRESS',
+  [SystemState.FUEL_VENT]: 'FUEL VENT',
+  [SystemState.OX_PRESS]: 'OX PRESS',
+  [SystemState.OX_VENT]: 'OX VENT',
+  [SystemState.GN2_HIGH_PRESS]: 'HIGH PRESS',
+  [SystemState.GN2_HIGH_VENT]: 'GN2 HI VENT',
   [SystemState.VENT]: 'VENT',
   [SystemState.CALIBRATE]: 'CALIBRATE',
   [SystemState.READY]: 'READY',
@@ -26,176 +26,43 @@ const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.ABORT]: 'ABORT',
 };
 
-// Professional hierarchical layout - rocket launch sequence flow
-// Organized by operational phase: Init → Fill → Pressurize → Sequence → Emergency
-// Clean vertical flow with logical grouping - ordered to match CSV sequence
-const STATE_LAYOUT: Record<SystemState, { x: number; y: number; width: number; height: number; group: string }> = {
-  // Phase 1: Initialization (top row - left to right)
-  [SystemState.IDLE]: { x: 30, y: 20, width: 100, height: 45, group: 'init' },
-  [SystemState.ARMED]: { x: 150, y: 20, width: 100, height: 45, group: 'init' },
-  [SystemState.DEBUG]: { x: 270, y: 20, width: 100, height: 45, group: 'init' },
+const NW = 90; // node width
+const NH = 36; // node height
+const COLS = 4; // columns in grid
+const COL_GAP = 110;
+const ROW_GAP = 56;
+const PAD = 16;
 
-  // Phase 2: Fill Operations (row 2 - sequential fill path)
-  [SystemState.FUEL_FILL]: { x: 30, y: 85, width: 100, height: 45, group: 'fill' },
-  [SystemState.OX_FILL]: { x: 150, y: 85, width: 100, height: 45, group: 'fill' },
-  [SystemState.READY]: { x: 270, y: 85, width: 100, height: 45, group: 'fill' }, // Quick Fire → READY
-
-  // Phase 3: GN2 Pressurization (row 3 - press/vent pair)
-  [SystemState.GN2_LOW_PRESS]: { x: 30, y: 150, width: 100, height: 45, group: 'press' },
-  [SystemState.GN2_VENT]: { x: 150, y: 150, width: 100, height: 45, group: 'press' },
-
-  // Phase 4: Fuel Pressurization (row 4 - press/vent pair)
-  [SystemState.FUEL_PRESS]: { x: 30, y: 215, width: 100, height: 45, group: 'press' },
-  [SystemState.FUEL_VENT]: { x: 150, y: 215, width: 100, height: 45, group: 'press' },
-
-  // Phase 5: Ox Pressurization (row 5 - press/vent pair)
-  [SystemState.OX_PRESS]: { x: 30, y: 280, width: 100, height: 45, group: 'press' },
-  [SystemState.OX_VENT]: { x: 150, y: 280, width: 100, height: 45, group: 'press' },
-
-  // Phase 6: High Pressure & Launch Sequence (row 6 - critical path)
-  [SystemState.GN2_HIGH_PRESS]: { x: 30, y: 345, width: 100, height: 45, group: 'sequence' },
-  [SystemState.GN2_HIGH_VENT]: { x: 150, y: 345, width: 100, height: 45, group: 'sequence' },
-  [SystemState.FIRE]: { x: 270, y: 345, width: 100, height: 45, group: 'sequence' },
-  [SystemState.CALIBRATE]: { x: 390, y: 345, width: 100, height: 45, group: 'sequence' },
-
-  // Phase 7: Emergency States (bottom row - always accessible)
-  [SystemState.VENT]: { x: 30, y: 410, width: 100, height: 50, group: 'emergency' },
-  [SystemState.ABORT]: { x: 150, y: 410, width: 100, height: 50, group: 'emergency' },
+// Grid layout: [row, col] 0-based
+const STATE_POS: Record<SystemState, [number, number]> = {
+  [SystemState.IDLE]:          [0, 0],
+  [SystemState.ARMED]:         [0, 1],
+  [SystemState.DEBUG]:         [0, 2],
+  [SystemState.CALIBRATE]:     [0, 3],
+  [SystemState.FUEL_FILL]:     [1, 0],
+  [SystemState.OX_FILL]:       [1, 1],
+  [SystemState.READY]:         [1, 2],
+  [SystemState.GN2_LOW_PRESS]: [2, 0],
+  [SystemState.GN2_VENT]:      [2, 1],
+  [SystemState.FUEL_PRESS]:    [3, 0],
+  [SystemState.FUEL_VENT]:     [3, 1],
+  [SystemState.OX_PRESS]:      [4, 0],
+  [SystemState.OX_VENT]:       [4, 1],
+  [SystemState.GN2_HIGH_PRESS]:[5, 0],
+  [SystemState.GN2_HIGH_VENT]: [5, 1],
+  [SystemState.FIRE]:          [5, 2],
+  [SystemState.VENT]:          [6, 0],
+  [SystemState.ABORT]:         [6, 1],
 };
 
-interface Transition {
-  from: SystemState;
-  to: SystemState;
-}
+function nodeX(state: SystemState) { return PAD + STATE_POS[state][1] * COL_GAP; }
+function nodeY(state: SystemState) { return PAD + STATE_POS[state][0] * ROW_GAP; }
+function nodeCX(state: SystemState) { return nodeX(state) + NW / 2; }
+function nodeCY(state: SystemState) { return nodeY(state) + NH / 2; }
 
-interface StateNodeProps {
-  state: SystemState;
-  isActive: boolean;
-  isReachable: boolean;
-  onClick: () => void;
-}
+interface Transition { from: SystemState; to: SystemState; }
 
-function StateNode({ state, isActive, isReachable, onClick }: StateNodeProps) {
-  const layout = STATE_LAYOUT[state];
-  const isEmergency = state === SystemState.ABORT || state === SystemState.VENT;
-  const name = STATE_NAMES[state];
-
-  // Color scheme: Active (blue), Reachable (green), Emergency (red), Normal (dark gray)
-  const fillColor = isActive
-    ? '#3B82F6'  // Bright blue for active
-    : isReachable
-    ? '#10B981'  // Green for reachable
-    : isEmergency
-    ? '#DC2626'  // Red for emergency
-    : '#1F2937'; // Dark gray for normal
-
-  const strokeColor = isActive
-    ? '#60A5FA'  // Light blue border
-    : isReachable
-    ? '#34D399'  // Light green border
-    : isEmergency
-    ? '#EF4444'  // Light red border
-    : '#374151'; // Gray border
-
-  return (
-    <g>
-      {/* Main state rectangle */}
-      <rect
-        x={layout.x}
-        y={layout.y}
-        width={layout.width}
-        height={layout.height}
-        rx={8}
-        fill={fillColor}
-        stroke={strokeColor}
-        strokeWidth={isActive ? 3 : isReachable ? 2.5 : isEmergency ? 2.5 : 2}
-        className={(isReachable || isActive) ? "cursor-pointer transition-all hover:opacity-90" : "cursor-not-allowed opacity-50"}
-        style={{
-          transition: 'all 0.2s ease'
-        }}
-        onClick={(isReachable || isActive) ? onClick : undefined}
-      />
-
-      {/* State name text */}
-      <text
-        x={layout.x + layout.width / 2}
-        y={layout.y + layout.height / 2 + 5}
-        textAnchor="middle"
-        fill="white"
-        fontSize={isEmergency ? "13" : "12"}
-        fontWeight={isActive || isEmergency || isReachable ? 'bold' : '600'}
-        className="pointer-events-none select-none"
-        style={{
-          fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
-          letterSpacing: '0.02em'
-        }}
-      >
-        {name}
-      </text>
-    </g>
-  );
-}
-
-function TransitionArrow({
-  from,
-  to,
-  currentState
-}: {
-  from: SystemState;
-  to: SystemState;
-  currentState: SystemState | null;
-}) {
-  const fromLayout = STATE_LAYOUT[from];
-  const toLayout = STATE_LAYOUT[to];
-
-  // Only show transitions FROM the current state
-  if (currentState !== from) {
-    return null;
-  }
-
-  // Calculate connection points
-  const fromX = fromLayout.x + fromLayout.width / 2;
-  const fromY = fromLayout.y + fromLayout.height;
-  const toX = toLayout.x + toLayout.width / 2;
-  const toY = toLayout.y;
-
-  // Calculate direction and distance
-  const dx = toX - fromX;
-  const dy = toY - fromY;
-
-  // Offset from node edges
-  const offset = 25;
-  const startX = fromX;
-  const startY = fromY + offset;
-  const endX = toX;
-  const endY = toY - offset;
-
-  // Create smooth curved path
-  const midX = (startX + endX) / 2;
-  const midY = (startY + endY) / 2;
-  const curvature = Math.abs(dx) > 100 ? 40 : Math.abs(dx) > 50 ? 25 : 15;
-
-  const path = `M ${startX} ${startY} Q ${midX} ${midY - curvature} ${endX} ${endY}`;
-
-  const isEmergency = to === SystemState.ABORT || to === SystemState.VENT;
-
-  return (
-    <path
-      d={path}
-      fill="none"
-      stroke={isEmergency ? '#EF4444' : '#10B981'}
-      strokeWidth={2.5}
-      markerEnd="url(#arrowhead)"
-      opacity={1}
-      className="transition-all"
-      style={{ transition: 'all 0.3s ease' }}
-    />
-  );
-}
-
-// Parse CSV transitions
 function parseCSVTransitions(): Transition[] {
-  // CSV format: row = from_state, columns = to_states (1 = allowed, 0 = not allowed)
   const csvData = [
     ['Idle', 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
     ['Armed', 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1],
@@ -213,56 +80,134 @@ function parseCSVTransitions(): Transition[] {
     ['Vent', 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1],
     ['Abort', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
   ];
-
-  const stateNames = ['Idle', 'Armed', 'Fuel Fill', 'Ox Fill', 'Quick Fire', 'GN2 Press',
-                      'Fuel Press', 'Fuel Vent', 'Ox Press', 'Ox Vent', 'High Press',
-                      'GN2 Vent', 'Fire', 'Vent', 'Abort'];
-
+  const stateNames = ['Idle','Armed','Fuel Fill','Ox Fill','Quick Fire','GN2 Press',
+                      'Fuel Press','Fuel Vent','Ox Press','Ox Vent','High Press',
+                      'GN2 Vent','Fire','Vent','Abort'];
   const stateMap: Record<string, SystemState> = {
-    'Idle': SystemState.IDLE,
-    'Armed': SystemState.ARMED,
-    'Fuel Fill': SystemState.FUEL_FILL,
-    'Ox Fill': SystemState.OX_FILL,
-    'Quick Fire': SystemState.READY, // Map Quick Fire to READY
-    'GN2 Press': SystemState.GN2_LOW_PRESS,
-    'Fuel Press': SystemState.FUEL_PRESS,
-    'Fuel Vent': SystemState.FUEL_VENT,
-    'Ox Press': SystemState.OX_PRESS,
-    'Ox Vent': SystemState.OX_VENT,
-    'High Press': SystemState.GN2_HIGH_PRESS,
-    'GN2 Vent': SystemState.GN2_VENT,
-    'Fire': SystemState.FIRE,
-    'Vent': SystemState.VENT,
-    'Abort': SystemState.ABORT,
+    'Idle': SystemState.IDLE, 'Armed': SystemState.ARMED,
+    'Fuel Fill': SystemState.FUEL_FILL, 'Ox Fill': SystemState.OX_FILL,
+    'Quick Fire': SystemState.READY, 'GN2 Press': SystemState.GN2_LOW_PRESS,
+    'Fuel Press': SystemState.FUEL_PRESS, 'Fuel Vent': SystemState.FUEL_VENT,
+    'Ox Press': SystemState.OX_PRESS, 'Ox Vent': SystemState.OX_VENT,
+    'High Press': SystemState.GN2_HIGH_PRESS, 'GN2 Vent': SystemState.GN2_VENT,
+    'Fire': SystemState.FIRE, 'Vent': SystemState.VENT, 'Abort': SystemState.ABORT,
   };
-
   const transitions: Transition[] = [];
-
-  csvData.forEach((row, rowIdx) => {
-    const fromStateName = row[0] as string;
-    const fromState = stateMap[fromStateName];
-    if (!fromState && fromState !== 0) return;
-
-    // Skip header row (index 0 is state name)
-    for (let colIdx = 1; colIdx < row.length; colIdx++) {
-      if (row[colIdx] === 1) {
-        const toStateName = stateNames[colIdx - 1];
-        const toState = stateMap[toStateName];
-        if (toState !== undefined) {
-          transitions.push({ from: fromState, to: toState });
-        }
+  csvData.forEach((row) => {
+    const from = stateMap[row[0] as string];
+    if (from === undefined) return;
+    for (let c = 1; c < row.length; c++) {
+      if (row[c] === 1) {
+        const to = stateMap[stateNames[c - 1]];
+        if (to !== undefined) transitions.push({ from, to });
       }
     }
   });
-
   return transitions;
 }
 
-export default function StateMachineDiagram() {
-  const currentState = useSensorStore((state) => state.currentState);
-  const ws = getWebSocketClient();
+/**
+ * Draw a clean orthogonal arrow between two nodes.
+ * Exits the source node from the edge closest to the target and enters the
+ * target from the opposite edge.  Falls back to a straight quadratic bezier
+ * for short/same-column connections.
+ */
+function arrowPath(from: SystemState, to: SystemState): string {
+  const fx = nodeX(from); const fy = nodeY(from);
+  const tx = nodeX(to);   const ty = nodeY(to);
+  const fcx = fx + NW / 2; const fcy = fy + NH / 2;
+  const tcx = tx + NW / 2; const tcy = ty + NH / 2;
 
-  // Parse transitions from CSV
+  const dx = tcx - fcx;
+  const dy = tcy - fcy;
+
+  // Source exit point & target entry point
+  let sx: number, sy: number, ex: number, ey: number;
+
+  if (Math.abs(dy) >= Math.abs(dx)) {
+    // Primarily vertical
+    if (dy > 0) {
+      sx = fcx; sy = fy + NH;     // bottom of source
+      ex = tcx; ey = ty;          // top of target
+    } else {
+      sx = fcx; sy = fy;          // top of source
+      ex = tcx; ey = ty + NH;     // bottom of target
+    }
+  } else {
+    // Primarily horizontal
+    if (dx > 0) {
+      sx = fx + NW; sy = fcy;
+      ex = tx;      ey = tcy;
+    } else {
+      sx = fx;      sy = fcy;
+      ex = tx + NW; ey = tcy;
+    }
+  }
+
+  // Orthogonal elbow if there's both horizontal and vertical displacement
+  if (Math.abs(dx) > 4 && Math.abs(dy) > 4) {
+    const midY = (sy + ey) / 2;
+    return `M ${sx} ${sy} L ${sx} ${midY} L ${ex} ${midY} L ${ex} ${ey}`;
+  }
+
+  // Straight line with slight curve
+  const cpx = (sx + ex) / 2;
+  const cpy = (sy + ey) / 2 - Math.min(20, Math.abs(dx) * 0.3);
+  return `M ${sx} ${sy} Q ${cpx} ${cpy} ${ex} ${ey}`;
+}
+
+function StateNode({
+  state, isActive, isReachable, onClick,
+}: { state: SystemState; isActive: boolean; isReachable: boolean; onClick: () => void; }) {
+  const isEmergency = state === SystemState.ABORT || state === SystemState.VENT;
+  // Emergency states are ALWAYS clickable — they must never be locked out
+  const isClickable = isReachable || isActive || isEmergency;
+  const name = STATE_NAMES[state];
+  const x = nodeX(state); const y = nodeY(state);
+
+  const fill = isActive    ? '#2563EB'
+             : isReachable  ? '#059669'
+             : isEmergency  ? '#7F1D1D'
+             : '#1F2937';
+  const stroke = isActive   ? '#60A5FA'
+               : isReachable ? '#34D399'
+               : isEmergency ? '#EF4444'
+               : '#374151';
+  const sw = isActive || isReachable || isEmergency ? 2 : 1.5;
+
+  return (
+    <g
+      onClick={onClick}
+      className={isClickable ? 'cursor-pointer' : 'cursor-not-allowed'}
+      style={{ opacity: (!isActive && !isReachable && !isEmergency) ? 0.45 : 1 }}
+    >
+      <rect x={x} y={y} width={NW} height={NH} rx={5}
+        fill={fill} stroke={stroke} strokeWidth={sw}
+        style={{ transition: 'fill 0.15s, stroke 0.15s' }}
+      />
+      {/* Emergency pulse ring */}
+      {isEmergency && (
+        <rect x={x - 2} y={y - 2} width={NW + 4} height={NH + 4} rx={7}
+          fill="none" stroke="#EF4444" strokeWidth={1} opacity={0.35}
+        />
+      )}
+      <text
+        x={x + NW / 2} y={y + NH / 2 + 1}
+        textAnchor="middle" dominantBaseline="middle"
+        fill={isEmergency ? '#FCA5A5' : 'white'}
+        fontSize={10} fontWeight={isActive || isEmergency ? 700 : 500}
+        fontFamily="ui-monospace, monospace" letterSpacing="0.04em"
+        style={{ pointerEvents: 'none', userSelect: 'none' }}
+      >
+        {name}
+      </text>
+    </g>
+  );
+}
+
+export default function StateMachineDiagram() {
+  const currentState = useSensorStore((s) => s.currentState);
+  const ws = getWebSocketClient();
   const transitions = useMemo(() => parseCSVTransitions(), []);
 
   const sendStateTransition = (targetState: SystemState) => {
@@ -275,87 +220,87 @@ export default function StateMachineDiagram() {
 
   const states = Object.values(SystemState).filter((s) => typeof s === 'number') as SystemState[];
 
+  // SVG dimensions
+  const svgW = PAD * 2 + COLS * COL_GAP;
+  const svgH = PAD * 2 + 7 * ROW_GAP;
+
+  // Default to IDLE when no state has been received yet
+  const effectiveState = currentState ?? SystemState.IDLE;
+
+  const reachableStates = useMemo(() => {
+    return new Set(transitions.filter(t => t.from === effectiveState && t.from !== t.to).map(t => t.to));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveState, transitions]);
+
   return (
-    <div className="bg-card rounded-xl p-6 border border-gray-800 shadow-xl">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
-          State Machine Diagram
-        </h2>
-        <div className="text-xs text-text-muted font-mono">
-          Rocket Launch Sequence
-        </div>
+    <div className="bg-card rounded-xl border border-gray-800 overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
+        <h2 className="text-sm font-bold tracking-widest text-text-muted uppercase">State Machine</h2>
+        <span className="text-xs font-mono">
+          <span className="text-text-muted">CURRENT: </span>
+          <span className="text-blue-400 font-bold">{STATE_NAMES[effectiveState]}</span>
+          <span className="text-text-muted ml-2">— click to transition</span>
+        </span>
       </div>
 
-      <div className="bg-background rounded-lg p-6 overflow-auto border border-gray-800"
-           style={{ minHeight: '500px' }}>
-        <svg width="520" height="470" className="w-full h-auto" viewBox="0 0 520 470" style={{ fontFamily: 'system-ui' }}>
-          {/* Arrow marker definition */}
+      <div className="p-4 overflow-auto bg-background">
+        <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`}
+          style={{ display: 'block', overflow: 'visible' }}>
           <defs>
-            <marker
-              id="arrowhead"
-              markerWidth="10"
-              markerHeight="10"
-              refX="9"
-              refY="3"
-              orient="auto"
-            >
-              <polygon points="0 0, 10 3, 0 6" fill="#10B981" />
+            <marker id="arr-green" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6 Z" fill="#34D399" />
+            </marker>
+            <marker id="arr-red" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L8,3 L0,6 Z" fill="#EF4444" />
             </marker>
           </defs>
 
-          {/* Only show transitions FROM current state - no other transitions */}
-          {currentState !== null && transitions
-            .filter(t => t.from === currentState && t.from !== t.to)
-            .map((transition, idx) => (
-              <TransitionArrow
-                key={`${transition.from}-${transition.to}-${idx}`}
-                from={transition.from}
-                to={transition.to}
-                currentState={currentState}
-              />
-            ))}
+          {/* Transition arrows from effective state */}
+          {transitions
+            .filter(t => t.from === effectiveState && t.from !== t.to)
+            .map((t, i) => {
+              const isEmergency = t.to === SystemState.ABORT || t.to === SystemState.VENT;
+              return (
+                <path
+                  key={i}
+                  d={arrowPath(t.from, t.to)}
+                  fill="none"
+                  stroke={isEmergency ? '#EF4444' : '#34D399'}
+                  strokeWidth={isEmergency ? 2 : 1.5}
+                  strokeDasharray={isEmergency ? '5 3' : undefined}
+                  markerEnd={isEmergency ? 'url(#arr-red)' : 'url(#arr-green)'}
+                  style={{ transition: 'all 0.2s' }}
+                />
+              );
+            })}
 
-          {/* Draw state nodes - highlight ONLY reachable states from current state */}
-          {states.map((state) => {
-            // Only highlight states that can be reached from current state
-            const isReachable = currentState !== null &&
-              transitions.some(t => t.from === currentState && t.to === state && t.from !== t.to);
-
-            // Only allow clicking on reachable states or current state
-            const canClick = currentState === null || currentState === state || isReachable;
-
-            return (
-              <StateNode
-                key={state}
-                state={state}
-                isActive={currentState === state}
-                isReachable={isReachable}
-                onClick={canClick ? () => sendStateTransition(state) : () => {}}
-              />
-            );
-          })}
+          {/* State nodes */}
+          {states.map((state) => (
+            <StateNode
+              key={state}
+              state={state}
+              isActive={effectiveState === state}
+              isReachable={reachableStates.has(state)}
+              onClick={() => sendStateTransition(state)}
+            />
+          ))}
         </svg>
       </div>
 
       {/* Legend */}
-      <div className="mt-6 flex gap-6 text-sm flex-wrap items-center justify-between bg-gray-900/50 rounded-lg p-4 border border-gray-800">
-        <div className="flex gap-6 flex-wrap">
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 rounded bg-blue-600 border-2 border-blue-400"></div>
-            <span className="font-semibold text-gray-200">Current State</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 rounded bg-green-600 border-2 border-green-400"></div>
-            <span className="font-semibold text-gray-200">Reachable State</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 rounded bg-red-600 border-2 border-red-400"></div>
-            <span className="font-semibold text-gray-200">Emergency State</span>
-          </div>
-        </div>
-        <div className="text-xs text-gray-400 font-mono">
-          Click state to transition →
-        </div>
+      <div className="px-5 py-3 border-t border-gray-800 flex flex-wrap gap-4 text-xs">
+        <span className="flex items-center gap-1.5">
+          <span className="w-4 h-3 rounded-sm inline-block" style={{ background: '#2563EB', border: '1.5px solid #60A5FA' }} />
+          <span className="text-text-muted">Current</span>
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-4 h-3 rounded-sm inline-block" style={{ background: '#059669', border: '1.5px solid #34D399' }} />
+          <span className="text-text-muted">Reachable (click)</span>
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-4 h-3 rounded-sm inline-block" style={{ background: '#7F1D1D', border: '1.5px solid #EF4444' }} />
+          <span className="text-text-muted">Emergency (always active)</span>
+        </span>
       </div>
     </div>
   );

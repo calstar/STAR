@@ -4,12 +4,18 @@
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
-import { ElodinClient } from './elodin-client.js';
+import * as dgram from 'dgram';
+import { ElodinClient, ElodinPacketType } from './elodin-client.js';
 import { DAQDirectClient } from './daq-direct-client.js';
+import { ElodinQueryClient } from './elodin-query.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { registerVTables } from './elodin-vtable.js';
+import { subscribeWithStream } from './elodin-stream.js';
+import { encodeRawPTMessage, encodeCalibratedPTMessage } from './elodin-publisher.js';
 import { getStateTransitions } from './routes/state-transitions.js';
 import { startAPIServer } from './api-server.js';
+import { loadPTCalibration, calculatePressure, CalibrationCoefficients } from './calibration.js';
+import { Phase2CalibrationEngine } from './calibration-phase2.js';
 import {
   MessageType,
   SensorUpdate,
@@ -25,7 +31,7 @@ import {
 const WS_PORT = parseInt(process.env.WS_PORT || '8081', 10);
 const WS_HOST = process.env.WS_HOST || '0.0.0.0'; // Allow external connections
 // Elodin DB listens on [::]:2240 (IPv6), try localhost which should work for both
-const ELODIN_HOST = process.env.ELODIN_HOST || 'localhost'; // localhost works for both IPv4/IPv6
+const ELODIN_HOST = process.env.ELODIN_HOST || '::1'; // Use IPv6 to match Elodin DB's [::]:2240 binding
 const ELODIN_PORT = parseInt(process.env.ELODIN_PORT || '2240', 10);
 
 interface Client {
@@ -37,16 +43,41 @@ interface Client {
 class SensorSystemServer {
   private wss: WebSocketServer;
   private elodin: ElodinClient;
+  private queryClient: ElodinQueryClient | null = null;
   private daqDirect: DAQDirectClient | null = null;
   private clients: Map<WebSocket, Client> = new Map();
   private sensorCache: Map<string, SensorUpdate> = new Map();
   private updateInterval: NodeJS.Timeout | null = null;
-  private useDirectDAQ: boolean = false; // Use Elodin DB (DAQ Bridge handles calibration and persistence)
+  private useDirectDAQ: boolean = false; // Use Elodin DB for data (DAQ Bridge writes to DB, we read from DB)
+  private useQueryPolling: boolean = process.env.ELODIN_USE_QUERY === 'true'; // Fallback to query/polling
+  private streamingDataReceived: boolean = false;
+  private streamingCheckTimer: NodeJS.Timeout | null = null;
+  private ptCalibration: Map<number, CalibrationCoefficients> = new Map();
+  private phase2Engine: Phase2CalibrationEngine | null = null;
+  private actuatorSocket: dgram.Socket | null = null;
+  private actuatorIP: string = '192.168.2.201'; // Default actuator board IP
+  private actuatorPort: number = 5005; // Default actuator command port
 
   constructor() {
     console.log(`🚀 Starting Sensor System Server...`);
     console.log(`   WebSocket: ${WS_HOST}:${WS_PORT}`);
     console.log(`   Elodin DB: ${ELODIN_HOST}:${ELODIN_PORT}`);
+
+    // Load PT calibration (like combined_fsw_gui.py)
+    this.ptCalibration = loadPTCalibration();
+
+    // Initialize Phase 2 autonomous calibration engine
+    this.phase2Engine = new Phase2CalibrationEngine();
+
+    // Initialize Phase 2 for all sensors with existing calibration
+    this.ptCalibration.forEach((coeffs, sensorId) => {
+      this.phase2Engine!.initializeSensor(sensorId, coeffs);
+    });
+    console.log(`🤖 Phase 2 calibration engine initialized for ${this.ptCalibration.size} sensors`);
+
+    // Initialize UDP socket for actuator commands (like combined_gui.py)
+    this.actuatorSocket = dgram.createSocket('udp4');
+    console.log(`🎯 Actuator command socket initialized (target: ${this.actuatorIP}:${this.actuatorPort})`);
 
     this.wss = new WebSocketServer({
       port: WS_PORT,
@@ -65,8 +96,13 @@ class SensorSystemServer {
     });
 
     this.wss.on('listening', () => {
+      const address = this.wss.address();
       console.log(`✅ WebSocket server listening on ${WS_HOST}:${WS_PORT}`);
+      if (address && typeof address === 'object') {
+        console.log(`   Server bound to: ${address.address}:${address.port}`);
+      }
       console.log(`   Ready to accept client connections`);
+      console.log(`   Frontend should connect to: ws://localhost:${WS_PORT} or ws://${WS_HOST === '0.0.0.0' ? 'your-ip' : WS_HOST}:${WS_PORT}`);
     });
 
     this.elodin = new ElodinClient(ELODIN_HOST, ELODIN_PORT);
@@ -74,32 +110,59 @@ class SensorSystemServer {
     // Always set up WebSocket FIRST (critical for frontend connection)
     this.setupWebSocket();
 
-    // Set up Elodin DB connection (for persistence, even if using direct DAQ)
+    // Set up Elodin DB connection (primary data source)
     this.setupElodin();
 
-    // Set up direct DAQ for real-time data (bypasses Elodin streaming)
+    // Set up direct DAQ ONLY if explicitly enabled (for testing/bypassing Elodin)
     if (this.useDirectDAQ) {
       console.log('🚀 Using DIRECT DAQ connection for real-time data');
       console.log('   ⚠️ NOTE: DAQ Bridge should be STOPPED - backend receives packets directly');
       console.log('   ✅ Data flows: Boards → Backend → Frontend (real-time)');
       console.log('   ⚠️ Elodin DB writes not yet implemented (requires TABLE packet format)');
       this.setupDirectDAQ();
+    } else {
+      console.log('📡 Using Elodin DB for data (DAQ Bridge → Elodin DB → Backend → Frontend)');
+      console.log('   ✅ Data flows: DAQ Bridge → Elodin DB → Backend → Frontend');
+      console.log('   ⏳ Waiting for data from Elodin DB...');
+      console.log('   Make sure DAQ Bridge is running and sending data to Elodin DB');
     }
 
     this.startUpdateLoop();
   }
 
   private setupElodin(): void {
-    this.elodin.on('connected', () => {
+    this.elodin.on('connected', async () => {
       console.log('✅ Elodin connected, broadcasting to clients');
       console.log('🔍 Connection status:');
-      console.log(`   - Elodin client connected: ${this.elodin.isConnected}`);
+      console.log(`   - Elodin client connected: ${this.elodin.isConnected()}`);
       console.log(`   - WebSocket clients: ${this.clients.size}`);
-      console.log('⏳ Waiting for data from Elodin DB...');
+
+      // CRITICAL: Try Stream message subscription first (most likely to work)
+      console.log('📡 Trying Stream message subscription (with empty filter = all data)...');
+      await subscribeWithStream(this.elodin);
+
+      // Wait to see if Stream subscription works
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      if (!this.streamingDataReceived) {
+        console.log('⚠️ No data after Stream subscription. Trying MsgStream/VTableStream...');
+        await registerVTables(this.elodin);
+      } else {
+        console.log('✅ Stream subscription successful! Receiving data...');
+      }
+
+      // Reset streaming check
+      this.streamingDataReceived = false;
+
+      console.log('⏳ Waiting for TABLE packets from Elodin DB...');
       console.log('   If no data appears, check:');
       console.log('   1. Is DAQ Bridge running and sending data?');
-      console.log('   2. Is Elodin DB receiving data from DAQ Bridge?');
+      console.log('   2. Are VTables registered (DAQ Bridge should do this)?');
       console.log('   3. Check Elodin DB logs for incoming data');
+
+      // Start streaming check - will warn if no data after 10 seconds
+      this.startStreamingCheck();
+
       this.broadcast({
         type: MessageType.CONNECTION_STATUS,
         timestamp: Date.now(),
@@ -117,40 +180,68 @@ class SensorSystemServer {
     });
 
     this.elodin.on('packet', (header, payload) => {
-      // Handle incoming packets from Elodin
-      // Don't log every packet - too verbose, only log occasionally
-      if (Math.random() < 0.01) {
-        console.log(`🎯 Server received 'packet' event from Elodin client`);
+      // Mark that we received streaming data
+      if (!this.streamingDataReceived && header.ty === ElodinPacketType.TABLE) {
+        this.streamingDataReceived = true;
+        if (this.streamingCheckTimer) {
+          clearTimeout(this.streamingCheckTimer);
+          this.streamingCheckTimer = null;
+        }
+        const [high, low] = header.packetId;
+        console.log(`✅ Streaming data received from Elodin DB!`);
+        console.log(`   First TABLE packet: packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}`);
       }
       this.handleElodinPacket(header, payload);
     });
 
     // Connect to Elodin (non-blocking, will retry on failure)
-    console.log('🔌 Attempting to connect to Elodin DB...');
-    console.log('   DAQ Bridge should be running and writing calibrated data to Elodin DB');
-    this.elodin.connect().then(async (connected) => {
-      if (connected) {
-        console.log('✅ Elodin connection established');
-        // Register VTables to tell Elodin DB to stream data to us
-        console.log('📋 Registering VTables with Elodin DB...');
-        console.log('   This subscribes to calibrated sensor data from DAQ Bridge');
-        await registerVTables(this.elodin);
-        console.log('   ✅ Waiting for calibrated data from DAQ Bridge...');
-        console.log('   Make sure DAQ Bridge is running and receiving packets from boards');
-      } else {
-        console.warn('⚠️ Elodin connection failed, will retry...');
-        console.warn('   Make sure Elodin DB is running on port 2240');
-      }
+    this.elodin.connect().then(() => {
+      console.log('✅ Elodin connection established');
+      // Send periodic keepalive to ensure connection stays alive
+      setInterval(() => {
+        if (this.elodin.isConnected()) {
+          // Send empty MSG packet as keepalive
+          const keepaliveId: [number, number] = [0x00, 0x00];
+          this.elodin.sendRawMessage(keepaliveId, ElodinPacketType.MSG, Buffer.alloc(0));
+        }
+      }, 5000); // Every 5 seconds
     }).catch((error) => {
-      // Error already logged by elodin-client, just prevent unhandled rejection
       console.error('❌ Elodin connection error:', error);
-      // Connection will be retried automatically
     });
 
     // Handle Elodin errors gracefully (don't crash)
     this.elodin.on('error', () => {
       // Errors are already logged, just prevent unhandled error crashes
     });
+  }
+
+  /**
+   * Start a timer to check if streaming data is received
+   * If no data after 5 seconds, fallback to query polling
+   */
+  private startStreamingCheck(): void {
+    if (this.streamingCheckTimer) {
+      clearTimeout(this.streamingCheckTimer);
+    }
+
+    this.streamingCheckTimer = setTimeout(() => {
+      if (!this.streamingDataReceived) {
+        console.warn('⚠️ No streaming data received from Elodin DB after 10 seconds');
+        console.warn('   Elodin DB requires VTable registration before streaming');
+        console.warn('   Falling back to DIRECT DAQ connection (like combined_gui.py)...');
+        console.warn('');
+
+        // Fallback to direct DAQ connection
+        if (!this.daqDirect) {
+          console.log('🔌 Setting up direct UDP connection to DAQ boards...');
+          console.log('   This bypasses Elodin DB and receives data directly from boards');
+          this.setupDirectDAQ();
+        }
+      } else {
+        console.log('✅ Streaming data confirmed - Elodin DB is sending TABLE packets');
+      }
+      this.streamingCheckTimer = null;
+    }, 10000); // Increased to 10 seconds
   }
 
   private setupDirectDAQ(): void {
@@ -171,23 +262,183 @@ class SensorSystemServer {
       });
     });
 
-    this.daqDirect.on('sensor', (sensorData: any) => {
-      // Convert DAQ sensor data to our format
-      const update: SensorUpdate = {
-        entity: sensorData.entity,
-        component: sensorData.component,
-        value: sensorData.value,
-        timestamp: sensorData.timestamp || Date.now(),
-      };
+    // EXACT combined_gui.py implementation: on_sensor_data handler
+    this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
+      // Log ALL incoming sensor data packets (remove IP filter temporarily for debugging)
+      console.log(`📥 Sensor data packet from ${sourceIP}: ${chunks.length} chunks`);
 
-      // Log actuator data more frequently (it's important)
-      const isActuator = sensorData.entity?.startsWith('ACT.');
-      const logFrequency = isActuator ? 0.3 : 0.1; // Log 30% of actuator messages, 10% of others
+      // EXACT from combined_gui.py: filter by source IP
+      // Temporarily accept ALL IPs to see if packets are arriving
+      // const filterSourceIP = '192.168.2.101'; // Default PT board IP (from combined_gui.py)
+      // if (sourceIP !== filterSourceIP) {
+      //   return; // Ignore actuator board data (handled separately in combined_gui.py)
+      // }
 
-      if (Math.random() < logFrequency) {
-        console.log(`📥 Direct DAQ sensor: ${update.entity}.${update.component} = ${update.value.toFixed(2)} (from ${sensorData.sourceIP || 'unknown'})`);
+      const currentTime = Date.now();
+      const timestampNs = BigInt(currentTime) * BigInt(1000000); // Convert ms to ns
+      const statsStartTime = (this.daqDirect as any).statsStartTime || currentTime;
+      if (!(this.daqDirect as any).statsStartTime) {
+        (this.daqDirect as any).statsStartTime = currentTime;
       }
-      this.handleSensorUpdate(update);
+
+      // CRITICAL: Publish to Elodin DB if connected (like DAQ Bridge does)
+      const publishingToElodin = this.elodin.isConnected();
+
+      // Process each chunk (EXACT from combined_gui.py on_sensor_data)
+      for (const chunk of chunks) {
+        const chunkTimestampMs = chunk.timestamp;
+        const relativeTime = (currentTime - statsStartTime) / 1000; // Relative time in seconds
+
+        // Process each datapoint (EXACT from combined_gui.py)
+        for (const dp of chunk.datapoints) {
+          const sensorId = dp.sensor_id; // 0-based sensor ID (0-9)
+          const channelId = sensorId + 1; // 1-based channel ID
+          const codeUint32 = dp.data; // uint32_t from protocol (EXACT from combined_gui.py)
+
+          // Get calibration (sensor_id is 0-based, calibration map uses 1-based)
+          let coeffs = this.ptCalibration.get(channelId) || this.ptCalibration.get(sensorId);
+
+          // Initialize Phase 2 if we have static calibration
+          if (coeffs && this.phase2Engine) {
+            this.phase2Engine.initializeSensor(channelId, coeffs);
+          }
+
+          // Publish raw PT message to Elodin DB
+          if (publishingToElodin) {
+            try {
+              const rawPayload = encodeRawPTMessage(
+                timestampNs,
+                channelId,
+                codeUint32,
+                chunkTimestampMs,
+                0 // status flags
+              );
+              // Packet ID: [0x20, channel_id] for raw PT
+              this.elodin.publishTable([0x20, channelId], rawPayload);
+            } catch (error) {
+              // Silently fail - publishing is optional
+            }
+          }
+
+          // Map channel ID to proper entity name (matches DatabaseConfig.cpp PT_NAMES)
+          const entityMap: Record<number, string> = {
+            1: 'PT.Fuel_Upstream',
+            2: 'PT.GSE_Low',
+            3: 'PT.GSE_Mid',
+            4: 'PT.Fuel_Downstream',
+            5: 'PT.Ox_Upstream',
+            6: 'PT.GN2_Regulated',
+            7: 'PT.Ox_Downstream',
+            8: 'PT.PT_CH8',  // May be GSE_High or GN2_High
+            9: 'PT.PT_CH9',
+            10: 'PT.PT_CH10',
+          };
+          const rawEntity = entityMap[channelId] || `PT.PT_CH${channelId}`;
+
+          // Emit raw ADC code with BOTH the nice name and the PT_CH alias
+          // Nice name (for top bar / GSE/Fuel/LOX views)
+          this.handleSensorUpdate({
+            entity: rawEntity,
+            component: 'raw_adc_counts',
+            value: codeUint32, // uint32_t raw ADC code (2147483647 is valid!)
+            timestamp: currentTime,
+          });
+
+          // PT_CH alias (for raw plots & status pages which expect PT.PT_CHx)
+          this.handleSensorUpdate({
+            entity: `PT.PT_CH${channelId}`,
+            component: 'raw_adc_counts',
+            value: codeUint32,
+            timestamp: currentTime,
+          });
+
+          // Cache latest raw ADC per channel for Phase 1 calibration capture
+          this.lastRawAdc.set(channelId, codeUint32);
+
+          // Calculate and emit calibrated PSI if calibration exists (EXACT from combined_gui.py)
+          let psi: number;
+          if (coeffs) {
+            // Apply calibration: psi = A*x^3 + B*x^2 + C*x + D (EXACT from combined_gui.py)
+            psi = calculatePressure(codeUint32, coeffs);
+          } else {
+            // No calibration - use raw value
+            psi = codeUint32 / 1000000.0; // Temporary conversion
+          }
+
+          // Publish calibrated PT message to Elodin DB
+          if (publishingToElodin) {
+            try {
+              const calPayload = encodeCalibratedPTMessage(
+                timestampNs,
+                channelId,
+                psi,
+                codeUint32,
+                0 // cal status
+              );
+              // Packet ID: [0x20, 0x10 + channel_id] for calibrated PT
+              this.elodin.publishTable([0x20, 0x10 + channelId], calPayload);
+            } catch (error) {
+              // Silently fail - publishing is optional
+            }
+          }
+
+          // Map channel ID to proper calibrated entity name
+          const calEntityMap: Record<number, string> = {
+            1: 'PT_Cal.Fuel_Upstream',
+            2: 'PT_Cal.GSE_Low',
+            3: 'PT_Cal.GSE_Mid',
+            4: 'PT_Cal.Fuel_Downstream',
+            5: 'PT_Cal.Ox_Upstream',
+            6: 'PT_Cal.GN2_Regulated',
+            7: 'PT_Cal.Ox_Downstream',
+            8: 'PT_Cal.PT_CH8',  // May be GSE_High or GN2_High
+            9: 'PT_Cal.PT_CH9',
+            10: 'PT_Cal.PT_CH10',
+          };
+          const calEntity = calEntityMap[channelId] || `PT_Cal.PT_CH${channelId}`;
+
+          // Calibrated value with BOTH the nice name and PT_CH alias
+          this.handleSensorUpdate({
+            entity: calEntity,
+            component: 'pressure_psi',
+            value: psi,
+            timestamp: currentTime,
+          });
+
+          this.handleSensorUpdate({
+            entity: `PT_Cal.PT_CH${channelId}`,
+            component: 'pressure_psi',
+            value: psi,
+            timestamp: currentTime,
+          });
+        }
+      }
+    });
+
+    // Handle actuator board data separately (EXACT from combined_gui.py)
+    this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
+      const actuatorIP = '192.168.2.201'; // Default actuator board IP
+      if (sourceIP !== actuatorIP) {
+        return; // Only process actuator board data here
+      }
+
+      const currentTime = Date.now();
+
+      // Process actuator board sensor data (current sense)
+      for (const chunk of chunks) {
+        for (const dp of chunk.datapoints) {
+          const sensorId = dp.sensor_id; // 0-based (0-9)
+          const codeUint32 = dp.data; // uint32_t raw ADC
+
+          // Emit actuator current sense data (EXACT from combined_gui.py)
+          this.handleSensorUpdate({
+            entity: `ACT.ACT_CH${sensorId + 1}`, // 1-based channel ID
+            component: 'raw_adc_counts',
+            value: codeUint32, // Raw ADC code
+            timestamp: currentTime,
+          });
+        }
+      }
     });
 
     // Connect to DAQ boards
@@ -207,7 +458,43 @@ class SensorSystemServer {
     });
   }
 
+  /**
+   * Send test data to verify frontend pipeline
+   */
+  private sendTestData(): void {
+    console.log('🧪 Sending test data to verify frontend pipeline...');
+    const now = Date.now();
+
+    // Send test PT data for all 10 channels
+    for (let ch = 1; ch <= 10; ch++) {
+      // Raw PT (PT_CH alias)
+      this.handleSensorUpdate({
+        entity: `PT.PT_CH${ch}`,
+        component: 'raw_adc_counts',
+        value: 1000000 + ch * 10000, // Test value
+        timestamp: now,
+      });
+
+      // Calibrated PT (PT_CH alias)
+      this.handleSensorUpdate({
+        entity: `PT_Cal.PT_CH${ch}`,
+        component: 'pressure_psi',
+        value: 10 + ch * 2, // Test pressure
+        timestamp: now,
+      });
+    }
+
+    console.log('✅ Test data sent - check frontend');
+  }
+
   private handleSensorUpdate(update: SensorUpdate): void {
+    // Validate update values - reject only truly invalid data (NaN, Infinity)
+    // Note: 2147483647 is a valid raw ADC code (max int32), don't filter it!
+    if (isNaN(update.value) || !isFinite(update.value)) {
+      console.warn(`⚠️ Rejecting invalid sensor value: ${update.entity}.${update.component} = ${update.value}`);
+      return;
+    }
+
     // Update cache
     const key = `${update.entity}.${update.component}`;
     this.sensorCache.set(key, update);
@@ -231,88 +518,94 @@ class SensorSystemServer {
     const openClients = Array.from(this.clients.values()).filter(c => c.ws.readyState === WebSocket.OPEN).length;
 
     if (openClients > 0) {
-      if (Math.random() < 0.1) {
+      // Log broadcasts more frequently initially to see data flow
+      if (!this.streamingDataReceived || Math.random() < 0.2) {
         console.log(`📤 Broadcasting: ${update.entity}.${update.component} = ${update.value.toFixed(2)} to ${openClients} client(s)`);
       }
       this.broadcast(message);
     } else if (clientCount > 0) {
-      console.warn(`⚠️ ${clientCount} clients connected but none are OPEN - frontend may be disconnected`);
+      // Log this warning more frequently to catch connection issues
+      if (Math.random() < 0.1) {
+        console.warn(`⚠️ ${clientCount} clients connected but none are OPEN - frontend may be disconnected`);
+      }
+    } else {
+      // No clients at all - this is a problem
+      if (Math.random() < 0.05) {
+        console.warn(`⚠️ No WebSocket clients connected - data is being lost!`);
+      }
     }
   }
 
   private handleElodinPacket(header: any, payload: Buffer): void {
     try {
-      // ALWAYS log packet info - this is critical for debugging
       const [high, low] = header.packetId;
 
-      // Log ALL packets from Elodin DB - this is critical
-      console.log(`📦 Server received packet: type=${header.ty}, packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}`);
+      // Log ALL packets initially to see what we're receiving
+      if (!this.streamingDataReceived || Math.random() < 0.1) {
+        console.log(`📥 Elodin TABLE packet: packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}`);
+      }
 
+      // Parse packet - this handles PT, TC, RTD, and Actuator packets
       const parsed = parseElodinPacket(header.packetId, payload);
 
       if (!parsed) {
-        console.warn(`⚠️ Failed to parse packet: packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}`);
-        // Log hex dump for debugging
+        // Log unparseable packets - this is important to see what we're missing
+        console.warn(`⚠️ Could not parse packet: packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}`);
+        // Log first 32 bytes of payload for debugging
         const hexPreview = payload.subarray(0, Math.min(32, payload.length)).toString('hex');
-        console.warn(`   Payload hex: ${hexPreview}...`);
+        console.warn(`   Payload preview (hex): ${hexPreview}`);
         return;
       }
 
-      // Log parsed data
-      console.log(`✅ Parsed: ${parsed.entity}.${parsed.component} = ${parsed.value.toFixed(2)}`);
-
-      if (parsed) {
-        // Update cache
-        const key = `${parsed.entity}.${parsed.component}`;
-        const update: SensorUpdate = {
-          entity: parsed.entity,
-          component: parsed.component,
-          value: parsed.value,
-          timestamp: parsed.timestamp,
-        };
-        this.sensorCache.set(key, update);
-
-        // Broadcast to ALL clients (subscription filtering happens on frontend)
-        // This ensures all data is available, frontend can filter as needed
-        const message = {
-          type: MessageType.SENSOR_UPDATE,
-          timestamp: parsed.timestamp,
-          payload: update,
-        };
-
-        // ALWAYS log broadcasts - this is critical for debugging
-        const clientCount = this.clients.size;
-        const openClients = Array.from(this.clients.values()).filter(c => c.ws.readyState === WebSocket.OPEN).length;
-
-        // Log EVERY broadcast - don't throttle this
-        console.log(`📤 Broadcasting: ${parsed.entity}.${parsed.component} = ${parsed.value.toFixed(2)} to ${openClients}/${clientCount} clients`);
-
-        // Log the actual message being sent
-        console.log(`   Message: ${JSON.stringify(message).substring(0, 100)}...`);
-
-        this.broadcast(message);
-
-        // Log after broadcast to confirm it was sent
-        if (openClients > 0) {
-          console.log(`   ✅ Sent to ${openClients} client(s)`);
-        } else if (clientCount > 0) {
-          console.warn(`   ⚠️ ${clientCount} clients connected but none are OPEN`);
-        } else {
-          console.warn(`   ⚠️ No clients connected - data is being lost!`);
-        }
-      } else {
-        console.warn(`⚠️ Could not parse packet: type=${header.ty}, packetId=[0x${high.toString(16)}, 0x${low.toString(16)}]`);
+      // Log successful parsing occasionally
+      if (Math.random() < 0.1) {
+        console.log(`✅ Parsed: ${parsed.entity}.${parsed.component} = ${parsed.value.toFixed(2)}`);
       }
+
+      // Create sensor update
+      const key = `${parsed.entity}.${parsed.component}`;
+      const update: SensorUpdate = {
+        entity: parsed.entity,
+        component: parsed.component,
+        value: parsed.value,
+        timestamp: parsed.timestamp,
+      };
+
+      // Handle update (updates cache and broadcasts)
+      this.handleSensorUpdate(update);
     } catch (error) {
       console.error('❌ Error handling Elodin packet:', error);
+      console.error('   Packet header:', header);
+      console.error('   Payload length:', payload.length);
     }
   }
 
   private setupWebSocket(): void {
-    this.wss.on('connection', (ws: WebSocket) => {
+    this.wss.on('connection', (ws: WebSocket, req: any) => {
+      const clientIP = req.socket?.remoteAddress || 'unknown';
+      const clientPort = req.socket?.remotePort || 'unknown';
       console.log('📱 New WebSocket client connected');
+      console.log(`   Client: ${clientIP}:${clientPort}`);
+      console.log(`   Request URL: ${req.url || 'unknown'}`);
       console.log(`   Total clients now: ${this.clients.size + 1}`);
-      console.log(`   Client remote address: ${ws.url || 'unknown'}`);
+
+      // Send test data when first client connects to verify pipeline
+      if (this.clients.size === 0) {
+        setTimeout(() => {
+          console.log('🧪 First client connected - sending test data to verify pipeline...');
+          this.sendTestData();
+        }, 1000);
+      }
+
+      ws.on('error', (error: Error) => {
+        console.error(`❌ WebSocket client error (${clientIP}:${clientPort}):`, error);
+      });
+
+      ws.on('close', (code: number, reason: Buffer) => {
+        console.log(`🔌 WebSocket client disconnected (${clientIP}:${clientPort})`);
+        console.log(`   Close code: ${code}, reason: ${reason.toString() || 'none'}`);
+        console.log(`   Remaining clients: ${this.clients.size - 1}`);
+      });
 
       const client: Client = {
         ws,
@@ -421,6 +714,10 @@ class SensorSystemServer {
         this.handleCommand(message.payload as CommandPayload);
         break;
 
+      case MessageType.CALIBRATION_COMMAND:
+        this.handleCalibrationCommand(ws, message.payload);
+        break;
+
       case MessageType.QUERY_HISTORICAL:
         // TODO: Implement historical data query
         break;
@@ -440,10 +737,51 @@ class SensorSystemServer {
     }
   }
 
+  private sendActuatorCommandUDP(channelId: number, state: number): boolean {
+    // Send actuator command via UDP (like combined_gui.py)
+    // Packet format: [packet_type(1), version(1), timestamp(4), num_actuators(1), actuator_data...]
+    // actuator_data: [actuator_id(1), actuator_state(1)] for each actuator
+    // Packet type 3 = ACTUATOR_COMMAND (from combined_gui.py)
+
+    if (!this.actuatorSocket) {
+      console.error('❌ Actuator socket not initialized');
+      return false;
+    }
+
+    try {
+      const timestamp = Math.floor(Date.now()); // Timestamp in milliseconds (32-bit)
+      const packetType = 4; // ACTUATOR_COMMAND (from combined_gui.py PacketType.ACTUATOR_COMMAND = 4)
+      const version = 0;
+      const numActuators = 1; // Single actuator command
+
+      // Build packet: [packet_type, version, timestamp(4 bytes LE), num_actuators, actuator_id, actuator_state]
+      // Total: 1 + 1 + 4 + 1 + 1 + 1 = 9 bytes
+      const buffer = Buffer.allocUnsafe(9);
+      buffer.writeUInt8(packetType, 0);
+      buffer.writeUInt8(version, 1);
+      buffer.writeUInt32LE(timestamp & 0xFFFFFFFF, 2); // 32-bit timestamp
+      buffer.writeUInt8(numActuators, 6);
+      buffer.writeUInt8(channelId, 7); // 1-based channel ID (1-10)
+      buffer.writeUInt8(state, 8); // 0 = CLOSED, 1 = OPEN
+
+      this.actuatorSocket.send(buffer, this.actuatorPort, this.actuatorIP, (err) => {
+        if (err) {
+          console.error(`❌ Failed to send actuator command: ${err.message}`);
+        }
+      });
+
+      return true;
+    } catch (error) {
+      console.error('❌ Error sending actuator command:', error);
+      return false;
+    }
+  }
+
   private handleCommand(command: CommandPayload): void {
-    if (!this.elodin.isConnected()) {
-      console.error('❌ Cannot send command: Elodin not connected');
-      // Broadcast error to all clients
+    // Commands can be sent even if Elodin is not connected (UDP direct)
+    // Only state transitions require Elodin connection
+    if (command.commandType === 'state_transition' && !this.elodin.isConnected()) {
+      console.error('❌ Cannot send state transition: Elodin not connected');
       this.broadcast({
         type: MessageType.ERROR,
         timestamp: Date.now(),
@@ -472,12 +810,18 @@ class SensorSystemServer {
       } else if (command.commandType === 'actuator') {
         const { actuatorId, actuatorState } = command.data;
         if (actuatorId !== undefined && actuatorState !== undefined) {
-          const success = this.elodin.sendCommand('actuator', {
-            actuatorId,
-            state: actuatorState,
-          });
+          // Send actuator command via direct UDP (like combined_gui.py)
+          // Actuator IDs: 0=LOX_MAIN, 1=FUEL_MAIN, 2=LOX_VENT, 3=FUEL_VENT, 4=LOX_PRESS, 5=FUEL_PRESS, 6=GSE_LOW_VENT
+          // Channel IDs are 1-based (1-10), actuatorId is 0-based enum
+          // Map actuatorId to channel ID (assuming sequential mapping for now)
+          const channelId = actuatorId + 1; // 1-based channel (1-10)
+          const state = actuatorState === ActuatorState.OPEN ? 1 : 0;
+
+          // Send via direct UDP to actuator board (like combined_gui.py)
+          const success = this.sendActuatorCommandUDP(channelId, state);
+
           if (success) {
-            console.log(`🎯 Actuator command sent: ${ActuatorId[actuatorId]} -> ${ActuatorState[actuatorState]}`);
+            console.log(`🎯 Actuator command sent via UDP: ${ActuatorId[actuatorId]} (CH${channelId}) -> ${ActuatorState[actuatorState]} (${state})`);
             // Broadcast actuator update
             this.broadcast({
               type: MessageType.ACTUATOR_UPDATE,
@@ -491,7 +835,7 @@ class SensorSystemServer {
               },
             });
           } else {
-            throw new Error('Failed to send actuator command');
+            throw new Error('Failed to send actuator command via UDP');
           }
         }
       } else if (command.commandType === 'controller_frequency') {
@@ -520,14 +864,75 @@ class SensorSystemServer {
     }
   }
 
+  /** Cache of recent raw ADC values per sensor for Phase 1 capture */
+  private lastRawAdc: Map<number, number> = new Map();
+
+  private handleCalibrationCommand(ws: WebSocket, payload: any): void {
+    if (!this.phase2Engine) return;
+    const { commandType, sensorId, referencePressure } = payload ?? {};
+
+    switch (commandType) {
+      case 'capture_reference': {
+        if (sensorId == null || referencePressure == null) {
+          this.send(ws, { type: MessageType.ERROR, timestamp: Date.now(),
+            payload: { message: 'capture_reference requires sensorId and referencePressure' } });
+          return;
+        }
+        // Apply the reference pressure to trigger an RLS update immediately
+        const adc = this.lastRawAdc.get(sensorId) ?? 0;
+        const updated = this.phase2Engine.updateCalibration(sensorId, adc, referencePressure);
+        console.log(`📐 Calibration capture: CH${sensorId} ADC=${adc} ref=${referencePressure} PSI → updated=${!!updated}`);
+        break;
+      }
+      case 'enable_phase2':
+        this.phase2Engine.setEnabled(true);
+        break;
+      case 'disable_phase2':
+        this.phase2Engine.setEnabled(false);
+        break;
+      case 'reset_channel':
+        if (sensorId != null) {
+          const existing = this.phase2Engine.getCalibration(sensorId);
+          if (existing) {
+            this.phase2Engine.initializeSensor(sensorId, existing);
+            console.log(`🔄 Calibration reset for CH${sensorId}`);
+          }
+        }
+        break;
+      default:
+        console.warn('⚠️ Unknown calibration command:', commandType);
+    }
+
+    // Always immediately broadcast updated status after a command
+    const channels = this.phase2Engine.getAllStatus();
+    this.broadcast({
+      type: MessageType.CALIBRATION_STATUS,
+      timestamp: Date.now(),
+      payload: { channels, phase2Enabled: this.phase2Engine.isEnabled(), timestamp: Date.now() },
+    });
+  }
+
   private startUpdateLoop(): void {
-    // Update loop for broadcasting sensor data
-    // In production, this would be driven by Elodin packet events
-    // For now, this is a placeholder that simulates updates
+    // Sensor data broadcast driven by Elodin packet events (see handleElodinPacket)
     this.updateInterval = setInterval(() => {
-      // TODO: Get real sensor data from Elodin
-      // For now, we'll implement this when we have the full Elodin protocol parsing
-    }, 50); // 20 Hz update rate (50ms)
+      // placeholder – real updates come from packet events
+    }, 50);
+
+    // Broadcast Phase 2 calibration status to all clients every 2 seconds
+    setInterval(() => {
+      if (!this.phase2Engine || this.clients.size === 0) return;
+      const channels = this.phase2Engine.getAllStatus();
+      if (channels.length === 0) return;
+      this.broadcast({
+        type:      MessageType.CALIBRATION_STATUS,
+        timestamp: Date.now(),
+        payload: {
+          channels,
+          phase2Enabled: this.phase2Engine.isEnabled(),
+          timestamp:     Date.now(),
+        },
+      });
+    }, 2000);
   }
 
   private broadcast(message: any): void {
@@ -593,7 +998,9 @@ class SensorSystemServer {
 
 // Start servers
 const server = new SensorSystemServer();
-startAPIServer();
+// API server will get query client after Elodin connects
+// Pass a getter function that returns the query client
+startAPIServer(() => (server as any).queryClient || null);
 
 // Graceful shutdown
 process.on('SIGINT', () => {

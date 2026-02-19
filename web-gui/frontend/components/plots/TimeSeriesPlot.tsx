@@ -1,196 +1,275 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
-import { useSensorStore } from '@/lib/store';
+import { useSensorStore, ALIASES } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, ConnectionStatus } from '@/lib/types';
+import { MessageType, SensorUpdate } from '@/lib/types';
 
 interface TimeSeriesPlotProps {
   title: string;
-  entities: string[]; // e.g., ['PT_Cal.GN2_Regulated', 'PT_Cal.Fuel_Upstream']
-  component: string; // Default component for all entities
-  components?: string[]; // Optional: specific component for each entity
-  colors: string[]; // Hex colors for each entity
+  entities: string[];
+  component: string;
+  components?: string[];
+  colors: string[];
   yLabel?: string;
+  labels?: string[];
   height?: number;
+  className?: string;
 }
 
+// ── Alias reverse lookup ──────────────────────────────────────────────────────
+function buildReverseAliases(): Record<string, string> {
+  const rev: Record<string, string> = {};
+  for (const [canonical, fallbacks] of Object.entries(ALIASES)) {
+    const canonicalEntity = canonical.split('.').slice(0, -1).join('.');
+    for (const fb of fallbacks) rev[fb] = canonicalEntity;
+  }
+  return rev;
+}
+const REVERSE_ALIASES = buildReverseAliases();
+
+function resolveEntity(incomingEntity: string, incomingComponent: string): string | null {
+  return REVERSE_ALIASES[`${incomingEntity}.${incomingComponent}`] ?? null;
+}
+
+// ── Smart Y-range — padding so flat lines are always visible ─────────────────
+function smartYRange(dataMin: number, dataMax: number): [number, number] {
+  if (!isFinite(dataMin) || !isFinite(dataMax)) return [0, 1];
+  if (dataMin === dataMax) {
+    const margin = dataMin === 0 ? 1 : Math.abs(dataMin) * 0.05;
+    return [dataMin - margin, dataMax + margin];
+  }
+  const span = dataMax - dataMin;
+  const pad  = Math.max(span * 0.12, Math.abs(dataMax) * 0.001);
+  return [dataMin - pad, dataMax + pad];
+}
+
+// ── Axis formatter: K / M / G suffixes ───────────────────────────────────────
+function fmtAxisVal(val: number): string {
+  if (!isFinite(val)) return '';
+  const abs = Math.abs(val);
+  if (abs >= 1e9) return (val / 1e9).toFixed(1) + 'G';
+  if (abs >= 1e6) return (val / 1e6).toFixed(2) + 'M';
+  if (abs >= 1e3) return (val / 1e3).toFixed(1) + 'K';
+  if (abs >= 100) return val.toFixed(0);
+  if (abs >= 1)   return val.toFixed(1);
+  return val.toFixed(2);
+}
+
+// ── Memory constants ──────────────────────────────────────────────────────────
+const WINDOW_SECONDS = 30;
+const SAMPLE_HZ      = 20;
+const MAX_POINTS     = WINDOW_SECONDS * SAMPLE_HZ;  // 600
+
 export default function TimeSeriesPlot({
-  title,
-  entities,
-  component,
-  components,
-  colors,
-  yLabel = 'Value',
-  height = 300,
+  title, entities, component, components, colors,
+  yLabel = 'Value', labels, height, className,
 }: TimeSeriesPlotProps) {
-  // Use components array if provided, otherwise use component for all
-  const componentMap = components || entities.map(() => component);
-  const plotRef = useRef<HTMLDivElement>(null);
+  const componentMap = components ?? entities.map(() => component);
+
+  const plotRef         = useRef<HTMLDivElement>(null);
   const plotInstanceRef = useRef<uPlot | null>(null);
+  const startTimeRef    = useRef<number>(Date.now());
+  const latestValuesRef = useRef<number[]>(entities.map(() => NaN));
+
   const dataRef = useRef<{ time: number[]; values: number[][] }>({
-    time: [],
+    time:   [],
     values: entities.map(() => []),
   });
-  const [isConnected, setIsConnected] = useState(false);
+
+  const updateConnectionStatus = useSensorStore((s) => s.updateConnectionStatus);
+  const connectionStatus       = useSensorStore((s) => s.connectionStatus);
+  const actuallyConnected      = connectionStatus?.connected ?? false;
+
+  const entitiesKey = entities.join(',');
+  const colorsKey   = colors.join(',');
 
   useEffect(() => {
     const ws = getWebSocketClient();
     ws.connect();
-    setIsConnected(ws.isConnected());
 
-    // Initialize plot
-    if (plotRef.current && !plotInstanceRef.current) {
-      const opts: uPlot.Options = {
-        title,
-        width: plotRef.current.offsetWidth,
-        height,
-        scales: {
-          x: {
-            time: true,
-          },
-          y: {
-            auto: true,
+    const unsubStatus = ws.onConnectionStatus((s) => updateConnectionStatus(s));
+    const seriesLabels = entities.map(
+      (e, i) => labels?.[i] ?? e.split('.').pop() ?? e
+    );
+
+    // ── Build uPlot options ───────────────────────────────────────────────
+    const buildOpts = (w: number, h: number): uPlot.Options => ({
+      width:   w,
+      height:  h,
+      pxAlign: true,
+      scales: {
+        x: {
+          time: false,
+          range: (): [number, number] => {
+            const now = (Date.now() - startTimeRef.current) / 1000;
+            return [Math.max(0, now - WINDOW_SECONDS), now];
           },
         },
-        axes: [
-          {
-            stroke: '#E0E0E0',
-            grid: { show: true, stroke: '#333', width: 1 },
-            ticks: { show: true, stroke: '#E0E0E0' },
-          },
-          {
-            label: yLabel,
-            stroke: '#E0E0E0',
-            grid: { show: true, stroke: '#333', width: 1 },
-            ticks: { show: true, stroke: '#E0E0E0' },
-          },
-        ],
-        series: [
-          {
-            label: 'Time',
-            value: '{YYYY}-{MM}-{DD} {HH}:{mm}:{ss}',
-          },
-          ...entities.map((entity, idx) => ({
-            label: entity.split('.').pop() || entity,
-            stroke: colors[idx] || '#3498DB',
-            width: 2,
-            points: { show: false },
-          })),
-        ],
-        cursor: {
-          show: true,
-          x: true,
-          y: true,
+        y: {
+          auto: true,
+          range: (_u, mn, mx): [number, number] => smartYRange(mn, mx),
         },
-        legend: {
-          show: true,
-          live: true,
+      },
+      axes: [
+        {
+          label:     'Time (s)',
+          stroke:    '#9CA3AF',
+          grid:      { show: true, stroke: '#333', width: 1 },
+          ticks:     { show: true, stroke: '#444', width: 1 },
+          font:      'bold 12px monospace',
+          labelFont: '12px system-ui',
+          gap:       4,
         },
-      };
+        {
+          label:     yLabel,
+          stroke:    '#9CA3AF',
+          grid:      { show: true, stroke: '#333', width: 1 },
+          ticks:     { show: true, stroke: '#444', width: 1 },
+          font:      'bold 12px monospace',
+          labelFont: '12px system-ui',
+          size:      72,
+          gap:       5,
+          values:    (_u, vals) => vals.map((v) => (v == null ? '' : fmtAxisVal(v))),
+        },
+      ],
+      series: [
+        {},
+        ...entities.map((_, idx) => ({
+          label:  seriesLabels[idx],
+          stroke: colors[idx] || '#3498DB',
+          width:  3,
+          points: { show: false },
+        })),
+      ],
+      cursor: { show: true, x: true, y: false },
+      legend: {
+        show:    true,
+        live:    true,
+        markers: { width: 16 },
+      },
+      padding: [8, 12, 0, 0] as [number, number, number, number],
+    });
 
-      const data: [number[], ...number[][]] = [
-        dataRef.current.time,
-        ...dataRef.current.values,
-      ];
+    // ── Dimension helper — reads plotRef's CSS-resolved pixel size ────────
+    const getDims = (): { w: number; h: number } | null => {
+      if (!plotRef.current) return null;
+      const w = plotRef.current.clientWidth;
+      const h = plotRef.current.clientHeight;
+      return (w > 50 && h > 30) ? { w, h } : null;
+    };
 
-      plotInstanceRef.current = new uPlot(opts, data, plotRef.current);
-    }
+    let initialized = false;
 
-    // Subscribe to sensor updates
-    console.log(`📊 TimeSeriesPlot subscribing to: ${entities.join(', ')}`);
-    const unsubscribe = ws.on(MessageType.SENSOR_UPDATE, (payload: unknown) => {
+    const tryInit = () => {
+      if (initialized || !plotRef.current) return;
+      const dims = getDims();
+      if (!dims) return;
+      initialized = true;
+      const data: uPlot.AlignedData = [dataRef.current.time, ...dataRef.current.values];
+      plotInstanceRef.current = new uPlot(buildOpts(dims.w, dims.h), data, plotRef.current);
+    };
+
+    // ── ResizeObserver on plotRef — fires after CSS layout resolves ───────
+    const ro = new ResizeObserver(() => {
+      if (!initialized) {
+        tryInit();
+      } else if (plotInstanceRef.current) {
+        const dims = getDims();
+        if (dims) {
+          plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
+        }
+      }
+    });
+    if (plotRef.current) ro.observe(plotRef.current);
+
+    // Safety-net: window resize
+    const onWinResize = () => {
+      if (!plotInstanceRef.current) return;
+      const dims = getDims();
+      if (dims) plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
+    };
+    window.addEventListener('resize', onWinResize);
+
+    // ── WS handler: O(1) — store the latest value per series ─────────────
+    const unsubSensor = ws.on(MessageType.SENSOR_UPDATE, (payload: unknown) => {
       const update = payload as SensorUpdate;
-
-      // Log every update to see what we're receiving
-      console.log(`📊 Plot received: ${update.entity}.${update.component} = ${update.value.toFixed(2)}`);
-      console.log(`   Looking for entities: ${entities.join(', ')}`);
-
-      // Check if this update is for one of our entities
-      const entityIndex = entities.findIndex((e) => update.entity === e);
-      if (entityIndex >= 0 && update.component === componentMap[entityIndex]) {
-        console.log(`   ✅ MATCH! Adding to plot series ${entityIndex}`);
-        const now = Date.now();
-
-        // Add data point
-        dataRef.current.time.push(now);
-        dataRef.current.values[entityIndex].push(update.value);
-
-        // Keep only last 1000 points (adjust based on update rate)
-        const maxPoints = 1000;
-        if (dataRef.current.time.length > maxPoints) {
-          dataRef.current.time.shift();
-          dataRef.current.values.forEach((arr) => arr.shift());
-        }
-
-        // Update plot
-        if (plotInstanceRef.current) {
-          const data: [number[], ...number[][]] = [
-            dataRef.current.time,
-            ...dataRef.current.values,
-          ];
-          plotInstanceRef.current.setData(data);
-          console.log(`   ✅ Plot updated with ${dataRef.current.time.length} points`);
-        } else {
-          console.warn(`   ⚠️ Plot instance not ready yet`);
-        }
-      } else {
-        console.log(`   ❌ No match - entityIndex=${entityIndex}, component=${update.component}, expected=${componentMap[entityIndex]}`);
+      let idx = entities.indexOf(update.entity);
+      if (idx < 0) {
+        const canon = resolveEntity(update.entity, update.component);
+        if (canon) idx = entities.indexOf(canon);
+      }
+      if (idx >= 0 && update.component === componentMap[idx]) {
+        latestValuesRef.current[idx] = update.value;
       }
     });
 
-    // Handle window resize
-    const handleResize = () => {
-      if (plotInstanceRef.current && plotRef.current) {
-        plotInstanceRef.current.setSize({
-          width: plotRef.current.offsetWidth,
-          height,
-        });
+    // ── 20 Hz sample + render + size-sync loop ──────────────────────────
+    const sampleInterval = setInterval(() => {
+      // Try init if not yet done (catches late layout)
+      if (!initialized) { tryInit(); if (!initialized) return; }
+
+      const now    = (Date.now() - startTimeRef.current) / 1000;
+      const cutoff = now - WINDOW_SECONDS;
+      const d      = dataRef.current;
+
+      d.time.push(now);
+      entities.forEach((_, i) => d.values[i].push(latestValuesRef.current[i]));
+
+      // Trim older than window
+      let first = 0;
+      while (first < d.time.length && d.time[first] < cutoff) first++;
+      if (first > 0) {
+        d.time   = d.time.slice(first);
+        d.values = d.values.map((a) => a.slice(first));
       }
-    };
-    window.addEventListener('resize', handleResize);
+      if (d.time.length > MAX_POINTS) {
+        const excess = d.time.length - MAX_POINTS;
+        d.time   = d.time.slice(excess);
+        d.values = d.values.map((a) => a.slice(excess));
+      }
+
+      // resetScales=true → Y range() recalculates from real data each tick
+      plotInstanceRef.current!.setData([d.time, ...d.values], true);
+
+      // ── Continuous size sync — catches any mismatch ResizeObserver missed
+      const dims = getDims();
+      if (dims && plotInstanceRef.current &&
+          (Math.abs(dims.w - plotInstanceRef.current.width) > 2 ||
+           Math.abs(dims.h - plotInstanceRef.current.height) > 2)) {
+        plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
+      }
+    }, 1000 / SAMPLE_HZ);
 
     return () => {
-      unsubscribe();
-      window.removeEventListener('resize', handleResize);
-      if (plotInstanceRef.current) {
-        plotInstanceRef.current.destroy();
-        plotInstanceRef.current = null;
-      }
+      unsubSensor();
+      unsubStatus();
+      clearInterval(sampleInterval);
+      ro.disconnect();
+      window.removeEventListener('resize', onWinResize);
+      plotInstanceRef.current?.destroy();
+      plotInstanceRef.current = null;
     };
-  }, [title, entities, component, colors, yLabel, height]);
-
-  // Check connection status from store
-  const connectionStatus = useSensorStore((state) => state.connectionStatus);
-  const actuallyConnected = connectionStatus?.connected && connectionStatus?.elodinConnected;
-
-  // Also subscribe to connection status updates
-  useEffect(() => {
-    const ws = getWebSocketClient();
-    const unsubscribe = ws.onConnectionStatus((status) => {
-      // Status is updated in store via TopBar, this just triggers re-render
-    });
-    return unsubscribe;
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entitiesKey, colorsKey, component, yLabel, height]);
 
   return (
-    <div className="w-full">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-lg font-semibold">{title}</h3>
-        <div className="flex items-center gap-2">
-          <div
-            className={`w-2 h-2 rounded-full ${
-              actuallyConnected ? 'bg-green-500' : 'bg-red-500'
-            }`}
-          />
-          <span className="text-sm text-text-muted">
-            {actuallyConnected ? 'Connected' : 'Disconnected'}
-          </span>
+    <div
+      className={`w-full flex flex-col min-h-0 min-w-0 ${height ? '' : 'flex-1'} ${className ?? ''}`}
+      style={height ? { height: height + 32 } : undefined}
+    >
+      {/* Title bar */}
+      <div className="flex items-center justify-between mb-1 px-1 flex-shrink-0">
+        <h3 className="text-sm font-bold text-gray-100 truncate">{title}</h3>
+        <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+          <div className={`w-2 h-2 rounded-full ${actuallyConnected ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
+          <span className="text-[11px] font-mono text-gray-500">{actuallyConnected ? 'Live' : 'No signal'}</span>
         </div>
       </div>
-      <div ref={plotRef} className="w-full" style={{ height: `${height}px` }} />
+      {/* uPlot mount — plotRef is the observation target */}
+      <div ref={plotRef} className="w-full flex-1 min-h-0 min-w-0 overflow-hidden" />
     </div>
   );
 }

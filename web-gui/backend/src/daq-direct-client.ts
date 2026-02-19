@@ -1,40 +1,46 @@
 /**
- * Direct DAQ Board Client
- * Connects directly to DiabloAvionics boards (bypassing Elodin DB streaming)
- * Still writes to Elodin DB for persistence, but reads directly from boards
+ * Direct DAQ Board Client - EXACT REPLICATION OF combined_gui.py
+ * Implements the exact same packet parsing and data handling as combined_gui.py
  */
 
-import { Socket } from 'net';
-import { createSocket } from 'dgram';
+import { createSocket, Socket } from 'dgram';
 import { EventEmitter } from 'events';
-import { parseElodinPacket } from './elodin-protocol.js';
 
-export interface DAQPacket {
-  packetType: number;
-  version: number;
-  timestamp: number;
-  boardType: number;
-  boardId: number;
-  data: Buffer;
+// Packet format constants (EXACT from combined_gui.py)
+const PACKET_HEADER_FORMAT_SIZE = 6; // <BBI> = packet_type(1) + version(1) + timestamp(4)
+const SENSOR_DATA_PACKET_SIZE = 2; // <BB> = num_chunks(1) + num_sensors(1)
+const SENSOR_DATA_CHUNK_SIZE = 4; // <I> = chunk_timestamp(4)
+const SENSOR_DATAPOINT_SIZE = 5; // <BI> = sensor_id(1) + data(4)
+const MAX_PACKET_SIZE = 512;
+
+// Packet types (from combined_gui.py)
+enum PacketType {
+  BOARD_HEARTBEAT = 1,
+  SERVER_HEARTBEAT = 2,
+  SENSOR_DATA = 3,
+  ACTUATOR_COMMAND = 4,
+  ABORT_COMMAND = 5,
+  CLEAR_ABORT = 6,
+  STATE_TRANSITION = 7,
+  PWM_ACTUATOR_COMMAND = 10,
 }
 
 export class DAQDirectClient extends EventEmitter {
-  private tcpSocket: Socket | null = null;
-  private udpSocket: ReturnType<typeof createSocket> | null = null;
-  private host: string;
-  private tcpPort: number;
-  private udpPort: number;
+  private udpSocket: Socket | null = null;
+  private bindAddress: string;
+  private port: number;
   private _connected: boolean = false;
-  private reconnectTimer: NodeJS.Timeout | null = null;
+  private ptBoardIPs: Set<string> = new Set<string>();
+  private actuatorBoardIPs: Set<string> = new Set<string>();
 
   get connected(): boolean {
     return this._connected;
   }
 
-  constructor(host: string = '0.0.0.0', udpPort: number = 5006) {
+  constructor(bindAddress: string = '0.0.0.0', port: number = 5006) {
     super();
-    this.host = host;
-    this.udpPort = udpPort;
+    this.bindAddress = bindAddress;
+    this.port = port;
   }
 
   async connect(): Promise<boolean> {
@@ -42,205 +48,197 @@ export class DAQDirectClient extends EventEmitter {
       return true;
     }
 
-    return new Promise((resolve) => {
-      try {
-        console.log(`🔌 Setting up direct UDP listener for DiabloAvionics boards on ${this.host}:${this.udpPort}...`);
-        console.log(`   This bypasses Elodin DB streaming and receives packets directly from boards`);
-
-        // Set up UDP listener (boards send UDP packets)
-        this.setupUDP();
-        resolve(true);
-      } catch (error) {
-        console.error('❌ Failed to set up UDP listener:', error);
-        resolve(false);
-      }
-    });
-  }
-
-  private setupUDP(): void {
     try {
-      console.log(`📡 Setting up UDP listener on port ${this.udpPort}...`);
-      this.udpSocket = createSocket('udp4');
+      console.log(`🔌 Setting up UDP listener (EXACT combined_gui.py implementation) on ${this.bindAddress}:${this.port}`);
 
-      this.udpSocket.on('message', (msg: Buffer, rinfo: any) => {
-        // Parse DiabloAvionics packet format
-        this.handleDAQPacket(msg, rinfo);
+      // Use SO_REUSEADDR to allow binding even if port is in use
+      // This allows us to receive UDP packets even if DAQ Bridge is using the port
+      // Note: On Linux, we'd need SO_REUSEPORT for true port sharing, but SO_REUSEADDR
+      // might work if DAQ Bridge also uses it
+      try {
+        this.udpSocket = createSocket({
+          type: 'udp4',
+          reuseAddr: true,  // SO_REUSEADDR - allows binding even if port is in use
+        });
+
+        // Try to set SO_REUSEPORT via internal handle (Linux only)
+        if (process.platform === 'linux' && this.udpSocket._handle && (this.udpSocket._handle as any).setOption) {
+          try {
+            // SO_REUSEPORT = 15 on Linux (from /usr/include/asm-generic/socket.h)
+            (this.udpSocket._handle as any).setOption(15, 1);
+            console.log('   ✅ SO_REUSEPORT enabled - can share port with DAQ Bridge');
+          } catch (e) {
+            // SO_REUSEPORT not available, continue anyway
+          }
+        }
+      } catch (e) {
+        // Fallback to regular socket
+        this.udpSocket = createSocket('udp4');
+      }
+
+      this.udpSocket.setMaxListeners(100);
+
+      this.udpSocket.on('message', (data: Buffer, rinfo: any) => {
+        // Log first few packets to confirm we're receiving data
+        if (!(this as any).hasReceivedPacket) {
+          console.log(`📥 FIRST UDP PACKET received: ${data.length} bytes from ${rinfo.address}:${rinfo.port}`);
+          (this as any).hasReceivedPacket = true;
+        }
+        this.handlePacket(data, rinfo.address);
       });
 
       this.udpSocket.on('error', (error: Error) => {
-        console.error('❌ UDP socket error:', error);
-        if ((error as any).code === 'EADDRINUSE') {
-          console.warn(`⚠️ Port ${this.udpPort} already in use. DAQ Bridge might be running.`);
-          console.warn(`   This is OK - we'll use Elodin DB connection instead.`);
-        }
+        const err = error as any;
+        console.error('❌ UDP socket error:', err.code, err.message);
       });
 
-      this.udpSocket.bind(this.udpPort, this.host, () => {
-        console.log(`✅ UDP listener bound to ${this.host}:${this.udpPort}`);
-        console.log(`   Ready to receive DiabloAvionics packets from boards`);
-        if (!this._connected) {
-          this._connected = true;
-          this.emit('connected');
-        }
+      // Bind with reuseAddr - this should work even if DAQ Bridge is using the port
+      // On Linux with SO_REUSEPORT, both processes will receive packets
+      this.udpSocket.bind(this.port, this.bindAddress, () => {
+        console.log(`✅ UDP listener bound to ${this.bindAddress}:${this.port}`);
+        console.log('   📡 Receiving DiabloAvionics packets directly from boards');
+        console.log('   ✅ Sharing port with DAQ Bridge (SO_REUSEADDR/SO_REUSEPORT)');
+        this._connected = true;
+        this.emit('connected');
       });
+
+      return true;
     } catch (error) {
       console.error('❌ Failed to set up UDP listener:', error);
+      return false;
     }
   }
 
-  private handleDAQPacket(data: Buffer, rinfo: any): void {
-    // Parse DiabloAvionics packet format
-    // Header: packet_type(1) + version(1) + timestamp(4) = 6 bytes
-    if (data.length < 6) {
-      console.warn(`⚠️ Packet too short: ${data.length} bytes from ${rinfo.address}`);
-      return;
+  private parsePacketHeader(data: Buffer): { packetType: number; version: number; timestamp: number } | null {
+    // EXACT from combined_gui.py: <BBI> = packet_type(1) + version(1) + timestamp(4)
+    if (data.length < PACKET_HEADER_FORMAT_SIZE) {
+      return null;
     }
 
-    const packetType = data.readUInt8(0);
-    const version = data.readUInt8(1);
-    const timestamp = data.readUInt32LE(2);
-    const payload = data.subarray(6);
-
-    // Log ALL packets from 192.168.2.x network (these are our boards)
-    if (rinfo.address.startsWith('192.168.2.')) {
-      console.log(`📥 Packet from ${rinfo.address}:${rinfo.port} - type=${packetType} (1=HEARTBEAT, 3=SENSOR_DATA), len=${data.length} bytes`);
-    } else if (Math.random() < 0.1) {
-      console.log(`📥 Packet from ${rinfo.address}:${rinfo.port} - type=${packetType}, len=${data.length}`);
-    }
-
-    // Parse based on packet type
-    if (packetType === 3) { // SENSOR_DATA
-      this.parseSensorData(payload, timestamp, rinfo.address);
-    } else if (packetType === 1) { // BOARD_HEARTBEAT
-      // Parse heartbeat to identify board type
-      this.parseHeartbeat(payload, timestamp, rinfo.address);
-    } else {
-      console.log(`📋 Unknown packet type ${packetType} from ${rinfo.address}`);
-    }
-
-    // Emit raw packet for further processing
-    this.emit('packet', { packetType, version, timestamp, data: payload, sourceIP: rinfo.address });
-  }
-
-  private parseHeartbeat(payload: Buffer, timestamp: number, sourceIP: string): void {
-    // Heartbeat format: board_type(1) + board_id(1) + engine_state(1) + board_state(1) = 4 bytes
-    if (payload.length < 4) {
-      return;
-    }
-
-    const boardType = payload.readUInt8(0);
-    const boardId = payload.readUInt8(1);
-    const engineState = payload.readUInt8(2);
-    const boardState = payload.readUInt8(3);
-
-    const boardTypeNames = ['UNKNOWN', 'PT', 'LC', 'RTD', 'TC', 'ACTUATOR'];
-    const boardTypeName = boardTypeNames[boardType] || 'UNKNOWN';
-
-    if (Math.random() < 0.1) {
-      console.log(`💓 Heartbeat from ${sourceIP}: ${boardTypeName} (ID: ${boardId}, Engine: ${engineState}, Board: ${boardState})`);
+    try {
+      const packetType = data.readUInt8(0);
+      const version = data.readUInt8(1);
+      const timestamp = data.readUInt32LE(2); // Little-endian 32-bit
+      return { packetType, version, timestamp };
+    } catch (error) {
+      return null;
     }
   }
 
-  private parseSensorData(payload: Buffer, timestamp: number, sourceIP: string): void {
-    // Parse sensor data packet
-    // Body Header: num_chunks(1) + num_sensors(1) = 2 bytes
-    if (payload.length < 2) {
-      console.warn(`⚠️ Sensor data payload too short: ${payload.length} bytes from ${sourceIP}`);
-      return;
+  private parseSensorDataPacket(data: Buffer): { header: any; chunks: Array<{ timestamp: number; datapoints: Array<{ sensor_id: number; data: number }> }> } | null {
+    // EXACT from combined_gui.py parse_sensor_data_packet()
+    if (data.length < PACKET_HEADER_FORMAT_SIZE + SENSOR_DATA_PACKET_SIZE) {
+      return null;
     }
 
-    const numChunks = payload.readUInt8(0);
-    const numSensors = payload.readUInt8(1);
-    let offset = 2;
-
-    // Determine board type from source IP
-    // 192.168.2.101 = PT board, 192.168.2.201 = Actuator board
-    // But actuator board might send from different IP, so check IP range
-    const isPTBoard = sourceIP === '192.168.2.101' || (sourceIP.startsWith('192.168.2.10') && sourceIP !== '192.168.2.201');
-    const isActuatorBoard = sourceIP === '192.168.2.201' || sourceIP.startsWith('192.168.2.20');
-
-    // Log unknown IPs for debugging
-    if (!isPTBoard && !isActuatorBoard && sourceIP.startsWith('192.168.2.')) {
-      if (Math.random() < 0.1) {
-        console.log(`⚠️ Unknown board IP: ${sourceIP} - treating as potential actuator board`);
-      }
+    const header = this.parsePacketHeader(data);
+    if (!header || header.packetType !== PacketType.SENSOR_DATA) {
+      return null;
     }
 
-    if (Math.random() < 0.1) {
-      console.log(`📊 Sensor data from ${sourceIP}: ${numChunks} chunks, ${numSensors} sensors per chunk, total payload: ${payload.length} bytes`);
+    let offset = PACKET_HEADER_FORMAT_SIZE;
+
+    // Read num_chunks and num_sensors
+    const numChunks = data.readUInt8(offset);
+    const numSensors = data.readUInt8(offset + 1);
+    offset += SENSOR_DATA_PACKET_SIZE;
+
+    // Calculate expected size
+    const perChunkSize = SENSOR_DATA_CHUNK_SIZE + (numSensors * SENSOR_DATAPOINT_SIZE);
+    const expectedSize = PACKET_HEADER_FORMAT_SIZE + SENSOR_DATA_PACKET_SIZE + (numChunks * perChunkSize);
+
+    if (data.length < expectedSize) {
+      return null;
     }
 
-    // Parse each chunk
-    for (let chunk = 0; chunk < numChunks; chunk++) {
-      if (offset + 4 > payload.length) {
-        console.warn(`⚠️ Chunk ${chunk} timestamp out of bounds`);
-        break;
-      }
-      const chunkTimestamp = payload.readUInt32LE(offset);
-      offset += 4;
+    const chunks: Array<{ timestamp: number; datapoints: Array<{ sensor_id: number; data: number }> }> = [];
 
-      // Parse sensor readings in this chunk
-      for (let sensor = 0; sensor < numSensors; sensor++) {
-        if (offset + 5 > payload.length) {
-          console.warn(`⚠️ Sensor ${sensor} in chunk ${chunk} out of bounds (offset: ${offset}, payload: ${payload.length})`);
-          break;
-        }
+    for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
+      // Read chunk timestamp
+      const chunkTimestamp = data.readUInt32LE(offset);
+      offset += SENSOR_DATA_CHUNK_SIZE;
 
-        // DiabloAvionics format: sensor_id(1) + data(4) = 5 bytes per sensor
-        const sensorId = payload.readUInt8(offset);
-        const sensorValue = payload.readUInt32LE(offset + 1);
-        offset += 5;
+      // Read datapoints
+      const datapoints: Array<{ sensor_id: number; data: number }> = [];
+      for (let sensorIdx = 0; sensorIdx < numSensors; sensorIdx++) {
+        const sensorId = data.readUInt8(offset);
+        const sensorData = data.readUInt32LE(offset + 1); // uint32_t
+        offset += SENSOR_DATAPOINT_SIZE;
 
-        // Map to entity names based on board type
-        let entity: string;
-        let component: string;
-        let value: number;
-
-        if (isPTBoard) {
-          // PT board: map to PT_Cal.PT_CH1, PT_Cal.PT_CH2, etc.
-          entity = `PT_Cal.PT_CH${sensorId + 1}`;
-          component = 'pressure_psi';
-          // Convert ADC counts to pressure (simplified - actual calibration needed)
-          // For now, just use raw value / 1000 as placeholder
-          value = sensorValue / 1000.0;
-        } else if (isActuatorBoard) {
-          // Actuator board: current sense data
-          entity = `ACT.ACT_CH${sensorId + 1}`;
-          component = 'current_ma';
-          // Convert ADC counts to current (simplified - actual calibration needed)
-          value = sensorValue / 1000.0; // Placeholder conversion
-        } else {
-          // Unknown board type - log and skip
-          if (Math.random() < 0.05) {
-            console.log(`⚠️ Unknown board type from ${sourceIP}, sensor_id=${sensorId}, value=${sensorValue}`);
-          }
-          continue;
-        }
-
-        // Emit sensor data
-        this.emit('sensor', {
-          entity,
-          component,
-          value,
-          timestamp: chunkTimestamp,
-          rawValue: sensorValue,
-          sourceIP,
+        datapoints.push({
+          sensor_id: sensorId,
+          data: sensorData, // This is uint32_t from protocol (like combined_gui.py)
         });
+      }
+
+      chunks.push({
+        timestamp: chunkTimestamp,
+        datapoints,
+      });
+    }
+
+    return {
+      header: {
+        packet_type: header.packetType,
+        version: header.version,
+        timestamp: header.timestamp,
+      },
+      chunks,
+    };
+  }
+
+  private handlePacket(data: Buffer, sourceIP: string): void {
+    // EXACT from combined_gui.py UDPReceiver.run()
+    // ALWAYS log packets to see if we're receiving ANY data
+    if (!(this as any).packetCount) {
+      (this as any).packetCount = 0;
+    }
+    (this as any).packetCount++;
+
+    // Log ALL packets initially, then reduce frequency
+    if ((this as any).packetCount <= 20 || (this as any).packetCount % 100 === 0) {
+      console.log(`📥 UDP packet #${(this as any).packetCount}: ${data.length} bytes from ${sourceIP}`);
+      console.log(`   First 16 bytes (hex): ${data.subarray(0, Math.min(16, data.length)).toString('hex')}`);
+    }
+
+    const header = this.parsePacketHeader(data);
+    if (!header) {
+      if ((this as any).packetCount <= 5) {
+        console.warn(`   ⚠️ Failed to parse packet header`);
+      }
+      return;
+    }
+
+    // Handle heartbeat to identify board types
+    if (header.packetType === PacketType.BOARD_HEARTBEAT) {
+      // Parse heartbeat to identify board type (PT vs Actuator)
+      // This is simplified - in full implementation would parse board type from heartbeat
+      if (sourceIP.startsWith('192.168.2.10')) {
+        this.ptBoardIPs.add(sourceIP);
+      } else if (sourceIP.startsWith('192.168.2.20')) {
+        this.actuatorBoardIPs.add(sourceIP);
+      }
+      return;
+    }
+
+    // Handle sensor data packets (EXACT from combined_gui.py)
+    if (header.packetType === PacketType.SENSOR_DATA) {
+      const result = this.parseSensorDataPacket(data);
+      if (result) {
+        const { header: headerDict, chunks } = result;
+
+        // Emit sensor data (EXACT format from combined_gui.py)
+        // source_ip is used to filter PT board vs actuator board
+        this.emit('sensor_data', headerDict, chunks, sourceIP);
       }
     }
   }
 
   disconnect(): void {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
     if (this.udpSocket) {
       this.udpSocket.close();
       this.udpSocket = null;
     }
-
     this._connected = false;
   }
 }

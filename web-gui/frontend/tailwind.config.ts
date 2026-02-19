@@ -9,16 +9,20 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Sensor system color scheme
+        // Sensor system palette
         gn2: '#27AE60',
         fuel: '#3498DB',
         lox: '#E74C3C',
         'gse-low': '#F39C12',
         'gse-mid': '#9B59B6',
-        background: '#1A1A1A',
-        card: '#2D2D2D',
-        text: '#E0E0E0',
-        'text-muted': '#A0A0A0',
+        background: '#141414',
+        card: '#1e1e1e',
+        text: '#e2e2e2',
+        'text-muted': '#888888',
+      },
+      fontFamily: {
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+        mono: ['Menlo', 'Consolas', 'Monaco', 'monospace'],
       },
     },
   },

@@ -1,17 +1,41 @@
 'use client'
 
-import { useSensorStore } from '@/lib/store';
+import { useState } from 'react';
+import { useGetSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { ActuatorId, ActuatorState, CommandPayload } from '@/lib/types';
 
+// Human-readable names
 const ACTUATOR_NAMES: Record<ActuatorId, string> = {
-  [ActuatorId.LOX_MAIN]: 'LOX Main',
-  [ActuatorId.FUEL_MAIN]: 'Fuel Main',
-  [ActuatorId.LOX_VENT]: 'LOX Vent',
-  [ActuatorId.FUEL_VENT]: 'Fuel Vent',
-  [ActuatorId.LOX_PRESS]: 'LOX Press',
-  [ActuatorId.FUEL_PRESS]: 'Fuel Press',
-  [ActuatorId.GSE_LOW_VENT]: 'GN2 Vent',
+  [ActuatorId.LOX_MAIN]:    'LOX Main',
+  [ActuatorId.FUEL_MAIN]:   'Fuel Main',
+  [ActuatorId.LOX_VENT]:    'LOX Vent',
+  [ActuatorId.FUEL_VENT]:   'Fuel Vent',
+  [ActuatorId.LOX_PRESS]:   'LOX Press',
+  [ActuatorId.FUEL_PRESS]:  'Fuel Press',
+  [ActuatorId.GSE_LOW_VENT]:'GN2 Vent',
+};
+
+// Named entity in sensor data (works with store aliases → falls back to ACT_CHX)
+const ACTUATOR_ENTITIES: Record<ActuatorId, string> = {
+  [ActuatorId.LOX_MAIN]:    'ACT.LOX_Main',
+  [ActuatorId.FUEL_MAIN]:   'ACT.Fuel_Main',
+  [ActuatorId.LOX_VENT]:    'ACT.LOX_Vent',
+  [ActuatorId.FUEL_VENT]:   'ACT.Fuel_Vent',
+  [ActuatorId.LOX_PRESS]:   'ACT.LOX_Press',
+  [ActuatorId.FUEL_PRESS]:  'ACT.Fuel_Press',
+  [ActuatorId.GSE_LOW_VENT]:'ACT.GSE_Low_Vent',
+};
+
+// Channel-number entity (direct fallback for actuator board data)
+const ACTUATOR_CHANNELS: Record<ActuatorId, number> = {
+  [ActuatorId.LOX_MAIN]:    1,
+  [ActuatorId.FUEL_MAIN]:   7,
+  [ActuatorId.LOX_VENT]:    6,
+  [ActuatorId.FUEL_VENT]:   2,
+  [ActuatorId.LOX_PRESS]:   8,
+  [ActuatorId.FUEL_PRESS]:  3,
+  [ActuatorId.GSE_LOW_VENT]:5,
 };
 
 interface ActuatorControlProps {
@@ -20,77 +44,105 @@ interface ActuatorControlProps {
 
 export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const ws = getWebSocketClient();
-  const getSensorValue = useSensorStore((state) => state.getSensorValue);
-  const actuator = useSensorStore((state) => state.actuators.get(actuatorId));
+  const getSensorValue = useGetSensorValue();
 
-  const entity = `ACT.${ACTUATOR_NAMES[actuatorId].replace(' ', '_')}`;
-  const rawAdcCounts = getSensorValue(entity, 'raw_adc_counts') ?? 0;
-  const status = getSensorValue(entity, 'status') ?? 0;
+  // Commanded state tracks what we last told the actuator to do
+  const [commanded, setCommanded] = useState<ActuatorState | null>(null);
+  const [pending, setPending] = useState(false);
 
-  // Determine state from raw ADC counts (simplified - actual logic may vary)
-  const isOpen = status === 1 || rawAdcCounts > 1000; // Threshold-based detection
+  const entity = ACTUATOR_ENTITIES[actuatorId];
+  const ch = ACTUATOR_CHANNELS[actuatorId];
+
+  // Feedback: try named entity first (aliases in store.ts cover the ACT_CHX fallback)
+  const rawAdc = getSensorValue(entity, 'raw_adc_counts')
+    ?? getSensorValue(`ACT.ACT_CH${ch}`, 'raw_adc_counts')
+    ?? 0;
+  const statusRaw = getSensorValue(entity, 'status')
+    ?? getSensorValue(`ACT.ACT_CH${ch}`, 'status');
+
+  // Actuator is considered OPEN if: status=1 OR high raw ADC (current sense)
+  // Threshold: raw ADC > 100000 (arbitrary; adjust per board)
+  const feedbackOpen = statusRaw === 1 || rawAdc > 100000;
 
   const sendCommand = (state: ActuatorState) => {
     const command: CommandPayload = {
       commandType: 'actuator',
-      data: {
-        actuatorId,
-        actuatorState: state,
-      },
+      data: { actuatorId, actuatorState: state },
     };
-
     ws.sendCommand(command);
+    setCommanded(state);
+    setPending(true);
+    // Clear pending after 1 s (feedback should have arrived by then)
+    setTimeout(() => setPending(false), 1000);
   };
 
-  return (
-    <div className="bg-card rounded-lg p-4 border border-gray-700">
-      <h3 className="text-lg font-semibold mb-3">{ACTUATOR_NAMES[actuatorId]}</h3>
+  const commandedOpen = commanded === ActuatorState.OPEN;
+  const commandedClosed = commanded === ActuatorState.CLOSED;
 
-      {/* State Display */}
-      <div className="mb-4">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-sm text-text-muted">State:</span>
-          <div className="flex items-center gap-2">
-            <div
-              className={`w-3 h-3 rounded-full ${
-                isOpen ? 'bg-green-500' : 'bg-red-500'
-              }`}
-            />
-            <span className="font-medium">{isOpen ? 'OPEN' : 'CLOSED'}</span>
+  // Mismatch = commanded ≠ feedback (only show if command was actually issued)
+  const mismatch = commanded !== null && pending === false &&
+    ((commandedOpen && !feedbackOpen) || (commandedClosed && feedbackOpen));
+
+  return (
+    <div className={`rounded-lg p-3 border transition-colors
+      ${mismatch
+        ? 'bg-yellow-950/40 border-yellow-600'
+        : 'bg-background border-gray-700 hover:border-gray-600'}`}>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-semibold tracking-wider text-text uppercase">
+          {ACTUATOR_NAMES[actuatorId]}
+        </h3>
+        {mismatch && (
+          <span className="text-xs font-bold text-yellow-400 uppercase tracking-wider">MISMATCH</span>
+        )}
+      </div>
+
+      {/* Two-row indicator: Commanded vs Feedback */}
+      <div className="flex gap-3 mb-3 text-xs">
+        <div className="flex-1">
+          <div className="text-text-muted mb-1">COMMANDED</div>
+          <div className={`flex items-center gap-1.5 ${commanded === null ? 'text-gray-500' : commandedOpen ? 'text-green-400' : 'text-red-400'}`}>
+            <div className={`w-2 h-2 rounded-full ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="font-mono font-bold">
+              {commanded === null ? '---' : commandedOpen ? 'OPEN' : 'CLOSED'}
+            </span>
+            {pending && <span className="text-yellow-400 text-[10px]">⟳</span>}
           </div>
         </div>
-        <div className="text-xs text-text-muted">
-          ADC: {rawAdcCounts.toLocaleString()} | Status: {status}
+        <div className="w-px bg-gray-700" />
+        <div className="flex-1">
+          <div className="text-text-muted mb-1">FEEDBACK</div>
+          <div className={`flex items-center gap-1.5 ${feedbackOpen ? 'text-green-400' : 'text-red-400'}`}>
+            <div className={`w-2 h-2 rounded-full ${feedbackOpen ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+            <span className="font-mono font-bold">{feedbackOpen ? 'OPEN' : 'CLOSED'}</span>
+          </div>
         </div>
       </div>
 
-      {/* Toggle Buttons */}
-      <div className="flex gap-2">
+      {/* ADC readout */}
+      <div className="text-[10px] text-text-muted font-mono mb-2.5">
+        ADC: {rawAdc.toLocaleString()}
+      </div>
+
+      {/* OPEN / CLOSE buttons */}
+      <div className="grid grid-cols-2 gap-1.5">
         <button
           onClick={() => sendCommand(ActuatorState.OPEN)}
-          className={`
-            flex-1 px-4 py-2 rounded-lg font-semibold transition-all
-            ${
-              isOpen
-                ? 'bg-green-600 text-white shadow-lg'
-                : 'bg-gray-700 hover:bg-gray-600 text-text'
-            }
-          `}
+          className={`py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all
+            ${commandedOpen
+              ? 'bg-green-700 text-white ring-1 ring-green-400'
+              : 'bg-gray-800 hover:bg-gray-700 text-gray-300'}`}
         >
-          OPEN
+          Open
         </button>
         <button
           onClick={() => sendCommand(ActuatorState.CLOSED)}
-          className={`
-            flex-1 px-4 py-2 rounded-lg font-semibold transition-all
-            ${
-              !isOpen
-                ? 'bg-red-600 text-white shadow-lg'
-                : 'bg-gray-700 hover:bg-gray-600 text-text'
-            }
-          `}
+          className={`py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all
+            ${commandedClosed
+              ? 'bg-red-700 text-white ring-1 ring-red-400'
+              : 'bg-gray-800 hover:bg-gray-700 text-gray-300'}`}
         >
-          CLOSE
+          Close
         </button>
       </div>
     </div>

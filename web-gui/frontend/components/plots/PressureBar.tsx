@@ -1,103 +1,94 @@
 'use client'
 
-import { useSensorStore } from '@/lib/store';
-
 interface PressureBarProps {
   label: string;
   value: number | null;
-  nop?: number; // Normal Operating Pressure
-  meop?: number; // Maximum Expected Operating Pressure
+  nop?: number;
+  meop?: number;
   color?: string;
   unit?: string;
-  height?: number;
 }
 
 export default function PressureBar({
   label,
   value,
-  nop = 500.0,
-  meop = 700.0,
+  nop  = 500,
+  meop = 700,
   color,
   unit = 'PSI',
-  height = 200,
 }: PressureBarProps) {
-  const displayValue = value !== null ? value : 0;
+  const displayValue = value ?? 0;
+  const maxVal = Math.max(meop * 1.3, 1000);
 
-  // Use a fixed maximum range based on MEOP, with some headroom
-  // This ensures consistent scaling across all bars
-  const maxVal = Math.max(meop * 1.2, 1000, 100);
-  const barHeight = height - 80; // Account for label and value display
+  // All CSS percentages relative to bar height
+  const pct       = (v: number) => `${Math.min(Math.max((v / maxVal) * 100, 0), 100).toFixed(2)}%`;
+  const valuePct  = Math.min(Math.max((displayValue / maxVal) * 100, 0), 100);
 
-  // Calculate positions: bottom is 0, top is maxVal
-  // So position = (value / maxVal) * barHeight from bottom
-  const valuePosition = displayValue > 0 ? (displayValue / maxVal) * barHeight : 0;
-  const nopPosition = (nop / maxVal) * barHeight;
-  const meopPosition = (meop / maxVal) * barHeight;
-
-  // Clamp positions to bar bounds
-  const clampedValuePos = Math.min(Math.max(valuePosition, 0), barHeight);
-  const clampedNopPos = Math.min(Math.max(nopPosition, 0), barHeight);
-  const clampedMeopPos = Math.min(Math.max(meopPosition, 0), barHeight);
-
-  // Determine color based on NOP/MEOP thresholds
   let barColor = color;
   if (!barColor) {
-    if (displayValue > meop) {
-      barColor = '#E74C3C'; // Red - over MEOP
-    } else if (displayValue > nop) {
-      barColor = '#F39C12'; // Orange - over NOP
-    } else {
-      barColor = '#27AE60'; // Green - normal
-    }
+    barColor = displayValue > meop ? '#E74C3C' : displayValue > nop ? '#F39C12' : '#27AE60';
   }
 
   return (
-    <div className="flex flex-col items-center justify-end" style={{ height: `${height}px`, minWidth: '80px' }}>
-      <div className="text-sm font-semibold mb-2 text-center">{label}</div>
+    <div className="flex flex-col items-center h-full gap-1 min-h-0 select-none">
+      {/* Label above bar */}
+      <div className="text-[9px] font-bold uppercase tracking-wider text-gray-500 text-center leading-none flex-shrink-0 truncate w-full text-center px-0.5">
+        {label}
+      </div>
 
-      <div className="relative w-16 bg-gray-800 rounded-lg overflow-hidden" style={{ height: `${barHeight}px` }}>
-        {/* Background fill - shows the full range */}
-        <div className="absolute bottom-0 w-full bg-gray-700" style={{ height: `${barHeight}px` }} />
-
-        {/* NOP threshold line (yellow) */}
-        {nop > 0 && nop <= maxVal && (
+      {/* Bar — fills all remaining height */}
+      <div
+        className="relative w-full flex-1 rounded-sm border border-gray-700 overflow-hidden min-h-0"
+        style={{ background: '#0d0d0d' }}
+      >
+        {/* Gradient fill from bottom */}
+        {value !== null && (
           <div
-            className="absolute w-full border-t-2 border-yellow-400 opacity-70 z-10"
+            className="absolute bottom-0 w-full transition-[height] duration-100"
             style={{
-              bottom: `${clampedNopPos}px`,
+              height:     `${valuePct}%`,
+              background: `linear-gradient(to top, ${barColor}, ${barColor}55)`,
             }}
           />
         )}
 
-        {/* MEOP threshold line (red/pink) */}
-        {meop > 0 && meop <= maxVal && (
-          <div
-            className="absolute w-full border-t-2 border-red-400 opacity-70 z-10"
-            style={{
-              bottom: `${clampedMeopPos}px`,
-            }}
-          />
-        )}
+        {/* MEOP dashed threshold line */}
+        <div
+          className="absolute w-full pointer-events-none"
+          style={{
+            bottom:    pct(meop),
+            borderTop: '1.5px dashed rgba(231,76,60,0.85)',
+          }}
+        />
 
-        {/* Current value indicator line (dashed, colored) */}
-        {value !== null && displayValue > 0 && (
+        {/* NOP dashed threshold line */}
+        <div
+          className="absolute w-full pointer-events-none"
+          style={{
+            bottom:    pct(nop),
+            borderTop: '1.5px dashed rgba(243,156,18,0.85)',
+          }}
+        />
+
+        {/* Bright top edge on the fill — makes current level obvious */}
+        {value !== null && valuePct > 0.5 && (
           <div
-            className="absolute w-full border-t-2 opacity-90 z-20"
+            className="absolute w-full pointer-events-none"
             style={{
-              bottom: `${clampedValuePos}px`,
-              borderColor: barColor,
-              borderStyle: 'dashed',
+              bottom:    `${valuePct}%`,
+              borderTop: `2px solid ${barColor}`,
+              filter:    'brightness(1.5)',
             }}
           />
         )}
       </div>
 
-      {/* Value display */}
-      <div className="mt-2 text-center">
-        <div className="text-lg font-bold" style={{ color: barColor }}>
-          {value !== null ? value.toFixed(1) : '---'}
+      {/* Numeric value */}
+      <div className="flex-shrink-0 text-center leading-none">
+        <div className="text-[11px] font-bold font-mono" style={{ color: barColor }}>
+          {value !== null ? value.toFixed(0) : '---'}
         </div>
-        <div className="text-xs text-text-muted">{unit}</div>
+        <div className="text-[9px] text-gray-700">{unit}</div>
       </div>
     </div>
   );

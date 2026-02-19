@@ -28,6 +28,7 @@ export class ElodinClient extends EventEmitter {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private buffer: Buffer = Buffer.alloc(0);
   private hasReceivedData: boolean = false;
+  private packetCount: number = 0;
 
   get connected(): boolean {
     return this._connected;
@@ -92,7 +93,9 @@ export class ElodinClient extends EventEmitter {
         }, 5000);
 
         this.socket.on('connect', () => {
-          clearTimeout(connectTimeout);
+          if (connectTimeout) {
+            clearTimeout(connectTimeout);
+          }
           this._connected = true;
           this.emit('connected');
           console.log(`✅ CONNECTED to Elodin DB at ${this.host}:${this.port}`);
@@ -105,6 +108,8 @@ export class ElodinClient extends EventEmitter {
           console.log(`   - PT Calibrated: [0x20, 0x11-0x1A]`);
           console.log(`   - Actuator: [0x30, 0x01-0x0A]`);
           console.log(`   ✅ VTableStream subscriptions will be sent after connection...`);
+          console.log(`   ⚠️  If no data appears, Elodin DB may stream automatically OR require VTable registration`);
+          console.log(`   ⚠️  DAQ Bridge registers VTables - we only send VTableStream subscriptions`);
           resolve(true);
         });
 
@@ -222,22 +227,19 @@ export class ElodinClient extends EventEmitter {
       // ALWAYS log packets - this is critical for debugging
       const [high, low] = header.packetId;
 
-      // Log ALL packets initially, then reduce frequency
-      if (!this.hasReceivedData || Math.random() < 0.05) {
-        console.log(`🔍 Raw packet from Elodin: type=${header.ty} (0=MSG, 1=TABLE, 2=COMMAND, 3=QUERY), packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}, totalLen=${header.len}`);
-
-        // Log payload hex for debugging
-        const hexPreview = payload.subarray(0, Math.min(32, payload.length)).toString('hex');
-        console.log(`   Payload preview (hex): ${hexPreview}${payload.length > 32 ? '...' : ''}`);
-      }
-
-      // Only emit TABLE packets (type 1) - these are the data packets
-      // COMMAND (2) and QUERY (3) are for sending commands/queries, not receiving data
+      // CRITICAL: Elodin DB sends TABLE packets (type 1) for data
+      // We need to emit ALL TABLE packets so the server can process them
       if (header.ty === ElodinPacketType.TABLE) {
-        console.log(`✅ Emitting TABLE packet to listeners (packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}])`);
+        // ALWAYS log TABLE packets - this is critical to see if we're receiving data
+        console.log(`📥 TABLE packet: packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}`);
+        this.packetCount++;
         this.emit('packet', header, payload);
       } else {
-        console.log(`📋 Ignoring non-TABLE packet: type=${header.ty} (1=TABLE, 2=COMMAND, 3=QUERY)`);
+        // Log other packet types - these might be responses to our subscriptions
+        const packetTypeName = header.ty === ElodinPacketType.MSG ? 'MSG' :
+                              header.ty === ElodinPacketType.COMMAND ? 'COMMAND' :
+                              header.ty === ElodinPacketType.QUERY ? 'QUERY' : `UNKNOWN(${header.ty})`;
+        console.log(`📨 ${packetTypeName} packet: packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}`);
       }
     }
   }
@@ -276,6 +278,7 @@ export class ElodinClient extends EventEmitter {
    */
   sendRawMessage(packetId: [number, number], packetType: ElodinPacketType, payload: Buffer): boolean {
     if (!this.connected || !this.socket) {
+      console.warn(`⚠️ Cannot send raw message - not connected (packetId=[0x${packetId[0].toString(16).padStart(2, '0')}, 0x${packetId[1].toString(16).padStart(2, '0')}])`);
       return false;
     }
 
@@ -283,11 +286,37 @@ export class ElodinClient extends EventEmitter {
       const header = this.createHeader(packetType, packetId, payload.length);
       const packet = Buffer.concat([header, payload]);
       this.socket.write(packet);
+
+      // Log first few messages to verify they're being sent
+      if (this.packetCount < 10) {
+        const [high, low] = packetId;
+        const packetTypeName = packetType === ElodinPacketType.MSG ? 'MSG' :
+                              packetType === ElodinPacketType.TABLE ? 'TABLE' :
+                              packetType === ElodinPacketType.COMMAND ? 'COMMAND' :
+                              packetType === ElodinPacketType.QUERY ? 'QUERY' : `UNKNOWN(${packetType})`;
+        console.log(`📤 Sent ${packetTypeName} packet: packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}, totalLen=${packet.length}`);
+        if (payload.length <= 16) {
+          console.log(`   Payload (hex): ${payload.toString('hex')}`);
+        }
+      }
+
       return true;
     } catch (error) {
       console.error('❌ Failed to send raw message:', error);
       return false;
     }
+  }
+
+  /**
+   * Publish a TABLE packet to Elodin DB
+   * This is used to send sensor data to Elodin DB (like DAQ Bridge does)
+   *
+   * @param packetId Packet ID [high, low] (e.g., [0x20, 0x01] for PT Raw CH1)
+   * @param payload Postcard-encoded message payload
+   * @returns true if published successfully
+   */
+  publishTable(packetId: [number, number], payload: Buffer): boolean {
+    return this.sendRawMessage(packetId, ElodinPacketType.TABLE, payload);
   }
 
   sendCommand(commandType: 'state_transition' | 'actuator', data: unknown): boolean {
@@ -305,9 +334,9 @@ export class ElodinClient extends EventEmitter {
       const payload = JSON.stringify(commandData);
       const payloadBuffer = Buffer.from(payload, 'utf-8');
 
-      const packetId = commandType === 'state_transition'
-        ? this.PACKET_IDS.STATE_MACHINE
-        : this.PACKET_IDS.COMMAND;
+      const packetId: [number, number] = commandType === 'state_transition'
+        ? [this.PACKET_IDS.STATE_MACHINE[0], this.PACKET_IDS.STATE_MACHINE[1]]
+        : [this.PACKET_IDS.COMMAND[0], this.PACKET_IDS.COMMAND[1]];
 
       return this.sendRawMessage(packetId, ElodinPacketType.COMMAND, payloadBuffer);
     } catch (error) {
