@@ -8,3 +8,6 @@
 	path = engine_sim
 	url = https://github.com/KushMahajan/EngineDesign.git
 	branch = christmas
+[submodule "external/flash"]
+	path = external/flash
+	url = https://github.com/calstar/flash.git

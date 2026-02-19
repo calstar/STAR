@@ -96,6 +96,12 @@ TOOL_REGISTRY = {
         "sensor_type": "ALL",
         "gui": False,
     },
+    "orchestrator_gui": {
+        "script": "calibration_orchestrator_gui.py",
+        "description": "Calibration orchestrator with PyQt6 GUI",
+        "sensor_type": "ALL",
+        "gui": True,
+    },
     "orchestrator_monitor": {
         "script": "calibration_orchestrator.py",
         "description": "Self-recalibration monitor only (loads existing cal, skips Phase 1)",

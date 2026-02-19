@@ -1,0 +1,148 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// Controls Window — State Machine + Actuator Commands
+// Vertical state flow with horizontal Press/Vent pairs
+// Actuators with state display and toggle buttons
+// ═══════════════════════════════════════════════════════════════════════════
+
+hsplit {
+    // ── LEFT: State Machine (Vertical flow with horizontal pairs) ──────────
+    vsplit share=0.5 {
+        // DEBUG/IDLE (horizontal pair)
+        hsplit {
+            action_pane "DEBUG" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {0})"
+            action_pane "IDLE" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {1})"
+        }
+
+        // ARMED (single)
+        action_pane "ARMED" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {2})"
+
+        // Fill states (horizontal pair)
+        hsplit {
+            action_pane "Fuel FILL" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {3})"
+            action_pane "OX FILL" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {4})"
+        }
+
+        // GN2 Low Press/Vent (horizontal pair - sister states)
+        hsplit {
+            action_pane "GN2 Low Press" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {5})"
+            action_pane "GN2 Vent" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {6})"
+        }
+
+        // Fuel Press/Vent (horizontal pair - sister states)
+        hsplit {
+            action_pane "Fuel Press" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {7})"
+            action_pane "Fuel Vent" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {8})"
+        }
+
+        // OX Press/Vent (horizontal pair - sister states)
+        hsplit {
+            action_pane "OX Press" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {9})"
+            action_pane "OX Vent" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {10})"
+        }
+
+        // GN2 High Press/Vent (horizontal pair - sister states)
+        hsplit {
+            action_pane "GN2 High Press" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {11})"
+            action_pane "GN2 High Vent" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {12})"
+        }
+
+        // Calibration sequence (vertical)
+        action_pane "CALIBRATE" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {14})"
+        action_pane "READY" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {15})"
+        action_pane "FIRE" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {16})"
+
+        // Emergency states (bottom)
+        action_pane "VENT" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {13})"
+        action_pane "🚨 ABORT" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, {17})"
+    }
+
+    // ── RIGHT: Actuators (State display + Toggle buttons) ──────────────────
+    vsplit share=0.5 {
+        // Main Valves
+        vsplit {
+            dashboard label="LOX Main" display="flex" flex_direction="column" \
+                      padding="4px" bg="35 35 35" {
+                node text="State:" font_size=10.0 text_color="180 180 180"
+            }
+            query_table "ACT.LOX_Main.raw_adc_counts, ACT.LOX_Main.status"
+            hsplit {
+                action_pane "OPEN" lua="client:send_table(\"command.actuator\", \"u8\", {2}, {0, 1})"
+                action_pane "CLOSE" lua="client:send_table(\"command.actuator\", \"u8\", {2}, {0, 2})"
+            }
+        }
+
+        vsplit {
+            dashboard label="Fuel Main" display="flex" flex_direction="column" \
+                      padding="4px" bg="35 35 35" {
+                node text="State:" font_size=10.0 text_color="180 180 180"
+            }
+            query_table "ACT.Fuel_Main.raw_adc_counts, ACT.Fuel_Main.status"
+            hsplit {
+                action_pane "OPEN" lua="client:send_table(\"command.actuator\", \"u8\", {2}, {1, 1})"
+                action_pane "CLOSE" lua="client:send_table(\"command.actuator\", \"u8\", {2}, {1, 2})"
+            }
+        }
+
+        // Vent Valves
+        vsplit {
+            dashboard label="LOX Vent" display="flex" flex_direction="column" \
+                      padding="4px" bg="35 35 35" {
+                node text="State:" font_size=10.0 text_color="180 180 180"
+            }
+            query_table "ACT.LOX_Vent.raw_adc_counts, ACT.LOX_Vent.status"
+            hsplit {
+                action_pane "OPEN" lua="client:send_table(\"command.actuator\", \"u8\", {2}, {2, 1})"
+                action_pane "CLOSE" lua="client:send_table(\"command.actuator\", \"u8\", {2}, {2, 2})"
+            }
+        }
+
+        vsplit {
+            dashboard label="Fuel Vent" display="flex" flex_direction="column" \
+                      padding="4px" bg="35 35 35" {
+                node text="State:" font_size=10.0 text_color="180 180 180"
+            }
+            query_table "ACT.Fuel_Vent.raw_adc_counts, ACT.Fuel_Vent.status"
+            hsplit {
+                action_pane "OPEN" lua="client:send_table(\"command.actuator\", \"u8\", {2}, {3, 1})"
+                action_pane "CLOSE" lua="client:send_table(\"command.actuator\", \"u8\", {2}, {3, 2})"
+            }
+        }
+
+        // Press/GN2 Valves
+        vsplit {
+            dashboard label="LOX Press" display="flex" flex_direction="column" \
+                      padding="4px" bg="35 35 35" {
+                node text="State:" font_size=10.0 text_color="180 180 180"
+            }
+            query_table "ACT.LOX_Press.raw_adc_counts, ACT.LOX_Press.status"
+            hsplit {
+                action_pane "OPEN" lua="client:send_table(\"command.actuator\", \"u8\", {2}, {4, 1})"
+                action_pane "CLOSE" lua="client:send_table(\"command.actuator\", \"u8\", {2}, {4, 2})"
+            }
+        }
+
+        vsplit {
+            dashboard label="Fuel Press" display="flex" flex_direction="column" \
+                      padding="4px" bg="35 35 35" {
+                node text="State:" font_size=10.0 text_color="180 180 180"
+            }
+            query_table "ACT.Fuel_Press.raw_adc_counts, ACT.Fuel_Press.status"
+            hsplit {
+                action_pane "OPEN" lua="client:send_table(\"command.actuator\", \"u8\", {2}, {5, 1})"
+                action_pane "CLOSE" lua="client:send_table(\"command.actuator\", \"u8\", {2}, {5, 2})"
+            }
+        }
+
+        vsplit {
+            dashboard label="GN2 Vent" display="flex" flex_direction="column" \
+                      padding="4px" bg="35 35 35" {
+                node text="State:" font_size=10.0 text_color="180 180 180"
+            }
+            query_table "ACT.GSE_Low_Vent.raw_adc_counts, ACT.GSE_Low_Vent.status"
+            hsplit {
+                action_pane "OPEN" lua="client:send_table(\"command.actuator\", \"u8\", {2}, {6, 1})"
+                action_pane "CLOSE" lua="client:send_table(\"command.actuator\", \"u8\", {2}, {6, 2})"
+            }
+        }
+    }
+}

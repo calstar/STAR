@@ -84,6 +84,15 @@ from autonomous_calibration_engine import (
     CalibrationRequest,
 )
 
+# ── Actuator communication (2-way: send commands, receive status) ──────
+try:
+    from controller_integration import ActuatorComm
+
+    ACTUATOR_COMM_AVAILABLE = True
+except ImportError:
+    ACTUATOR_COMM_AVAILABLE = False
+    logger.warning("⚠️  Actuator communication not available")
+
 # ── DiabloAvionics packet constants ─────────────────────────────────────
 PACKET_HEADER_FORMAT = "<BBI"
 PACKET_HEADER_SIZE = 6
@@ -175,30 +184,44 @@ class UDPSensorReceiver(threading.Thread):
 
     @staticmethod
     def parse(data: bytes):
-        if len(data) < PACKET_HEADER_SIZE + SENSOR_DATA_PACKET_SIZE:
+        """Parse DiabloAvionics sensor data packet with error handling."""
+        try:
+            if len(data) < PACKET_HEADER_SIZE + SENSOR_DATA_PACKET_SIZE:
+                return None
+            pt, _, _ = struct.unpack(PACKET_HEADER_FORMAT, data[:PACKET_HEADER_SIZE])
+            if pt != PACKET_TYPE_SENSOR_DATA:
+                return None
+            off = PACKET_HEADER_SIZE
+            nc, ns = struct.unpack(
+                SENSOR_DATA_PACKET_FORMAT, data[off : off + SENSOR_DATA_PACKET_SIZE]
+            )
+            off += SENSOR_DATA_PACKET_SIZE
+            per = SENSOR_DATA_CHUNK_SIZE + ns * SENSOR_DATAPOINT_SIZE
+            required_len = PACKET_HEADER_SIZE + SENSOR_DATA_PACKET_SIZE + nc * per
+            if len(data) < required_len:
+                logger.debug(f"Packet too short: {len(data)} < {required_len}")
+                return None
+            samples = []
+            for _ in range(nc):
+                off += SENSOR_DATA_CHUNK_SIZE
+                for _ in range(ns):
+                    if off + SENSOR_DATAPOINT_SIZE > len(data):
+                        logger.warning("Packet truncated during parsing")
+                        return samples  # Return partial samples
+                    sid, raw = struct.unpack(
+                        SENSOR_DATAPOINT_FORMAT, data[off : off + SENSOR_DATAPOINT_SIZE]
+                    )
+                    off += SENSOR_DATAPOINT_SIZE
+                    # Sign-extend 32-bit value
+                    signed = raw if raw < 0x80000000 else raw - 0x100000000
+                    samples.append((sid, signed))
+            return samples
+        except struct.error as e:
+            logger.debug(f"Packet parse error: {e}")
             return None
-        pt, _, _ = struct.unpack(PACKET_HEADER_FORMAT, data[:PACKET_HEADER_SIZE])
-        if pt != PACKET_TYPE_SENSOR_DATA:
+        except Exception as e:
+            logger.warning(f"Unexpected parse error: {e}")
             return None
-        off = PACKET_HEADER_SIZE
-        nc, ns = struct.unpack(
-            SENSOR_DATA_PACKET_FORMAT, data[off : off + SENSOR_DATA_PACKET_SIZE]
-        )
-        off += SENSOR_DATA_PACKET_SIZE
-        per = SENSOR_DATA_CHUNK_SIZE + ns * SENSOR_DATAPOINT_SIZE
-        if len(data) < PACKET_HEADER_SIZE + SENSOR_DATA_PACKET_SIZE + nc * per:
-            return None
-        samples = []
-        for _ in range(nc):
-            off += SENSOR_DATA_CHUNK_SIZE
-            for _ in range(ns):
-                sid, raw = struct.unpack(
-                    SENSOR_DATAPOINT_FORMAT, data[off : off + SENSOR_DATAPOINT_SIZE]
-                )
-                off += SENSOR_DATAPOINT_SIZE
-                signed = raw if raw < 0x80000000 else raw - 0x100000000
-                samples.append((sid, signed))
-        return samples
 
     def run(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -253,18 +276,77 @@ class CalibrationOrchestrator:
                 continue
             self.sensor_types[name] = info
 
-        total_channels = sum(i.num_sensors for i in self.sensor_types.values())
+        # ── Active connectors per board IP (from config or all) ──────────────
+        # Key: (sensor_type, board_ip) -> List[int] of active connectors
+        # This allows multiple boards of the same type with different IPs
+        self.active_connectors: Dict[Tuple[str, str], List[int]] = {}
+        self.board_ip_to_type: Dict[str, str] = {}  # IP -> sensor type mapping
+
+        for stype, info in self.sensor_types.items():
+            # Get all boards of this type (supports multiple boards)
+            if _cfg_loaded:
+                from config_loader import get_boards_by_type
+
+                boards = get_boards_by_type(stype)
+            else:
+                boards = []
+
+            if not boards:
+                # Fallback: use single board info from SensorTypeInfo
+                board_ip = info.board_ip or "unknown"
+                active = list(range(1, info.num_sensors + 1))  # Default: all connectors
+                self.active_connectors[(stype, board_ip)] = active
+                self.board_ip_to_type[board_ip] = stype
+                logger.info(
+                    f"  {stype} ({board_ip}): active connectors = {active} (default: all)"
+                )
+            else:
+                # Process each board separately
+                for board in boards:
+                    board_ip = board.get("ip", info.board_ip or "unknown")
+                    board_name = board.get("name", "unknown")
+                    num_sensors = board.get("num_sensors", info.num_sensors)
+
+                    # Get active connectors for this specific board
+                    active = list(range(1, num_sensors + 1))  # Default: all connectors
+                    if "active_connectors" in board:
+                        active_cfg = board.get("active_connectors", [])
+                        if active_cfg:  # If specified, use only those
+                            active = [
+                                int(c) for c in active_cfg if 1 <= int(c) <= num_sensors
+                            ]
+
+                    self.active_connectors[(stype, board_ip)] = active
+                    self.board_ip_to_type[board_ip] = stype
+                    logger.info(
+                        f"  {stype} ({board_name}, {board_ip}): active connectors = {active}"
+                    )
 
         # ── Per-channel RobustCalibrationFramework ──────────────────────
-        # keyed by (sensor_type, channel_id)
+        # keyed by (sensor_type, board_ip, channel_id) - ONLY for active connectors
+        # We use (stype, ch) as the key but track board_ip separately for routing
         self.robust: Dict[Tuple[str, int], RobustCalibrationFramework] = {}
+        self.channel_to_board_ip: Dict[Tuple[str, int], str] = (
+            {}
+        )  # Track which board each channel belongs to
         channel_idx = 0
-        for stype, info in self.sensor_types.items():
-            for ch in range(1, info.num_sensors + 1):
-                self.robust[(stype, ch)] = RobustCalibrationFramework(
-                    sensor_id=channel_idx
-                )
-                channel_idx += 1
+        for (stype, board_ip), active_conns in self.active_connectors.items():
+            for ch in active_conns:
+                key = (stype, ch)
+                # If we already have this (stype, ch) from another board, append board_ip to distinguish
+                # For now, we'll use the first board's IP if there's a conflict
+                if key not in self.robust:
+                    self.robust[key] = RobustCalibrationFramework(sensor_id=channel_idx)
+                    self.channel_to_board_ip[key] = board_ip
+                    channel_idx += 1
+                else:
+                    # Multiple boards with same type and channel - use board_ip in key
+                    logger.warning(
+                        f"  ⚠️  Channel conflict: {stype} CH{ch} exists on multiple boards. Using first board."
+                    )
+
+        # Total channels = only active connectors
+        total_channels = sum(len(conns) for conns in self.active_connectors.values())
 
         # ── Cross-sensor Autonomous Engine ──────────────────────────────
         orch_cfg = {}
@@ -277,15 +359,14 @@ class CalibrationOrchestrator:
             forgetting_factor=forgetting,
         )
 
-        # Build flat index → key mapping (for engine ↔ robust)
+        # Build flat index → key mapping (for engine ↔ robust) - ONLY active connectors
         self._idx_to_key: Dict[int, Tuple[str, int]] = {}
         self._key_to_idx: Dict[Tuple[str, int], int] = {}
         idx = 0
-        for stype, info in self.sensor_types.items():
-            for ch in range(1, info.num_sensors + 1):
-                self._idx_to_key[idx] = (stype, ch)
-                self._key_to_idx[(stype, ch)] = idx
-                idx += 1
+        for key in sorted(self.robust.keys()):  # Sort for consistent ordering
+            self._idx_to_key[idx] = key
+            self._key_to_idx[key] = idx
+            idx += 1
 
         # ── Live ADC buffers ────────────────────────────────────────────
         self.live_adc: Dict[Tuple[str, int], deque] = defaultdict(
@@ -336,6 +417,23 @@ class CalibrationOrchestrator:
         # ── Pending active-learning alerts ──────────────────────────────
         self.pending_alerts: List[CalibrationRequest] = []
 
+        # ── Actuator communication (optional) ────────────────────────────
+        self.actuator_comm = None
+        if ACTUATOR_COMM_AVAILABLE:
+            try:
+                from config_loader import get_board_by_type
+
+                actuator_board = get_board_by_type("ACTUATOR") if _cfg_loaded else None
+                if actuator_board and actuator_board.get("enabled", False):
+                    actuator_ip = actuator_board.get("ip", "192.168.2.201")
+                    actuator_port = actuator_board.get("port", 5005)
+                    self.actuator_comm = ActuatorComm(actuator_ip, actuator_port)
+                    logger.info(
+                        f"✅ Actuator communication initialized: {actuator_ip}:{actuator_port}"
+                    )
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to initialize actuator comm: {e}")
+
         # ── Stats ───────────────────────────────────────────────────────
         self.stats = {
             "phase1_points": 0,
@@ -361,35 +459,83 @@ class CalibrationOrchestrator:
         if not self.receiver.connected:
             logger.error("❌ UDP receiver failed to bind")
             return False
+
+        # Start actuator communication if available
+        if self.actuator_comm:
+            if not self.actuator_comm.start():
+                logger.warning("⚠️  Actuator communication failed to start")
+
         self.running = True
         return True
 
     def stop(self):
         self.running = False
         self.receiver.stop()
+        if self.actuator_comm:
+            self.actuator_comm.stop()
         if self.monitor_thread and self.monitor_thread.is_alive():
             self.monitor_thread.join(timeout=3)
         logger.info("🛑 Orchestrator stopped")
 
     # ── Queue drain (routes by source IP) ────────────────────────────────
     def _drain_queue(self):
-        while self.receiver.sample_queue:
-            src_ip, sid, signed, ts = self.receiver.sample_queue.popleft()
+        max_drain = 100  # Limit per call to prevent blocking
+        drained = 0
+        while self.receiver.sample_queue and drained < max_drain:
+            try:
+                src_ip, sid, signed, ts = self.receiver.sample_queue.popleft()
+            except (IndexError, ValueError):
+                break
+            drained += 1
+
             stype = self.ip_to_type.get(src_ip)
             if stype is None:
+                # Check if it's actuator board (for status parsing)
+                if self.actuator_comm and src_ip == self.actuator_comm.actuator_ip:
+                    # Store raw data for actuator status parsing
+                    if not hasattr(self, "_actuator_raw_samples"):
+                        self._actuator_raw_samples = deque(maxlen=100)
+                    self._actuator_raw_samples.append((sid, signed, ts))
                 continue
-            key = (stype, sid)
+
+            # FIX: sensor_id (sid) is 0-indexed from packet, channels are 1-indexed
+            channel_id = sid + 1
+
+            # Get active connectors for this specific board IP
+            board_key = (stype, src_ip)
+            active_conns = self.active_connectors.get(board_key, [])
+
+            # If not found by IP, try by type (fallback for single board per type)
+            if not active_conns:
+                # Try to find any board of this type
+                for (st, ip), conns in self.active_connectors.items():
+                    if st == stype:
+                        active_conns = conns
+                        break
+
+            # Only process if this connector is active for this board
+            if channel_id not in active_conns:
+                continue  # Skip inactive connectors
+
+            key = (stype, channel_id)
+
             if key not in self.robust:
+                # Log first few misses to help debug
+                if self.stats.get("missed_channels", 0) < 5:
+                    logger.warning(
+                        f"⚠️  Unknown channel: {stype} CH{channel_id} (sid={sid})"
+                    )
+                    self.stats["missed_channels"] = (
+                        self.stats.get("missed_channels", 0) + 1
+                    )
                 continue
             self.live_adc[key].append(signed)
-
-            voltage = adc_to_voltage(signed)
 
             # Phase 1: collect calibration points when user is collecting
             if self.collecting and key in self.references:
                 ref_val = self.references[key]
                 pt = RobustCalPoint(
-                    voltage=voltage,
+                    adc_code=float(signed),  # Use raw ADC code directly
                     pressure=ref_val,
                     timestamp=ts,
                     environmental_state=self.env_state,
@@ -404,12 +550,52 @@ class CalibrationOrchestrator:
 
                 # Feed into autonomous engine
                 idx = self._key_to_idx[key]
-                phi = rcf.environmental_robust_basis_functions(voltage, self.env_state)
+                phi = rcf.environmental_robust_basis_functions(
+                    float(signed), self.env_state
+                )
                 self.engine.add_calibration_point(idx, phi, ref_val, pt.uncertainty)
 
             # Phase 2: continuous RLS + drift monitoring
             if self.phase == "MONITORING":
-                self._online_update(key, voltage)
+                self._online_update(key, float(signed))
+
+    def _parse_actuator_status(self):
+        """Parse actuator current sense data from raw samples"""
+        if not hasattr(self, "_actuator_raw_samples") or not self._actuator_raw_samples:
+            return
+
+        # Process recent actuator samples
+        while self._actuator_raw_samples:
+            try:
+                sid, signed, ts = self._actuator_raw_samples.popleft()
+                # Convert ADC to voltage
+                voltage = (signed * 2.5) / 2147483648.0
+                # Update actuator status
+                if not hasattr(self, "actuator_statuses"):
+                    self.actuator_statuses = {}
+                self.actuator_statuses[sid] = {
+                    "voltage": voltage,
+                    "timestamp": ts,
+                    "actuator_id": sid,
+                }
+            except (IndexError, ValueError):
+                break
+
+    def _print_actuator_status(self):
+        """Print actuator current sense status"""
+        if not hasattr(self, "actuator_statuses") or not self.actuator_statuses:
+            print("  ⚠️  No actuator status data received yet")
+            return
+
+        print(f"\n  {'─'*60}")
+        print("  Actuator Current Sense Status:")
+        for actuator_id in sorted(self.actuator_statuses.keys()):
+            status = self.actuator_statuses[actuator_id]
+            age = time.time() - status["timestamp"]
+            print(
+                f"    Actuator {actuator_id}: {status['voltage']:.4f}V  (age: {age:.1f}s)"
+            )
+        print(f"  {'─'*60}\n")
 
     def _adc_uncertainty(self, key) -> float:
         """Compute measurement uncertainty from ADC noise."""
@@ -421,7 +607,7 @@ class CalibrationOrchestrator:
         return 0.01  # default 1% of range
 
     # ── Phase 2: online update per channel ───────────────────────────────
-    def _online_update(self, key: Tuple[str, int], voltage: float):
+    def _online_update(self, key: Tuple[str, int], adc_code: float):
         """
         Phase 2 per-sample update:
           1. RLS update (if reference available)
@@ -435,7 +621,7 @@ class CalibrationOrchestrator:
         if key in self.references:
             ref_val = self.references[key]
             pt = RobustCalPoint(
-                voltage=voltage,
+                adc_code=adc_code,  # Use raw ADC code directly
                 pressure=ref_val,
                 timestamp=time.time(),
                 environmental_state=self.env_state,
@@ -454,11 +640,11 @@ class CalibrationOrchestrator:
                 self.stats["recalibrations"] += 1
 
             # Feed into engine
-            phi = rcf.environmental_robust_basis_functions(voltage, self.env_state)
+            phi = rcf.environmental_robust_basis_functions(adc_code, self.env_state)
             self.engine.add_calibration_point(idx, phi, ref_val, pt.uncertainty)
 
         # Active learning check (even without reference)
-        phi = rcf.environmental_robust_basis_functions(voltage, self.env_state)
+        phi = rcf.environmental_robust_basis_functions(adc_code, self.env_state)
         pred, unc, alert = self.engine.predict(idx, phi)
         if alert is not None:
             self.stats["active_learning_alerts"] += 1
@@ -488,6 +674,11 @@ class CalibrationOrchestrator:
         print("    status                    — show calibration status")
         print("    save                      — save calibrations + priors")
         print("    live                      — show live ADC (Ctrl+C to stop)")
+        if self.actuator_comm:
+            print(
+                "    actuator <id> <0|1>      — send actuator command (test 2-way comm)"
+            )
+            print("    actuator-status          — show actuator current sense readings")
         print("    done                      — finish Phase 1, enter Phase 2")
         print("    quit                      — save and exit")
         print()
@@ -588,11 +779,19 @@ class CalibrationOrchestrator:
         print(f"  📊 Collecting {dur:.1f}s at: {refs}")
         self.collecting = True
         t0 = time.time()
-        while time.time() - t0 < dur and self.running:
-            self._drain_queue()
-            time.sleep(0.01)
-        self.collecting = False
-        print(f"  ✅ Done — {self.stats['phase1_points']} total calibration points")
+        points_before = self.stats.get("phase1_points", 0)
+        try:
+            while time.time() - t0 < dur and self.running:
+                self._drain_queue()
+                time.sleep(0.01)
+        except KeyboardInterrupt:
+            print("\n  ⚠️  Collection interrupted")
+        finally:
+            self.collecting = False
+            points_collected = self.stats.get("phase1_points", 0) - points_before
+            print(
+                f"  ✅ Done — collected {points_collected} points ({self.stats.get('phase1_points', 0)} total)"
+            )
 
     # ── TLS + Bayesian fitting ───────────────────────────────────────────
     def _tls_bayesian_fit_all(self):
@@ -627,6 +826,8 @@ class CalibrationOrchestrator:
         self.phase = "MONITORING"
         print(f"\n{'═'*72}")
         print("  PHASE 2 — CONTINUOUS MONITORING / SELF-RECALIBRATION")
+        if self.actuator_comm:
+            print("  + Actuator communication enabled (2-way: commands + status)")
         print(f"{'═'*72}")
         print("  Math:  RLS w/ forgetting → GLR drift → Bayesian recal")
         print("         Empirical Bayes prior propagation across sensors")
@@ -641,6 +842,11 @@ class CalibrationOrchestrator:
             try:
                 self._drain_queue()
                 now = time.time()
+
+                # Parse actuator status from received packets (if actuator board enabled)
+                if self.actuator_comm:
+                    self._parse_actuator_status()
+
                 if now - last_status > self._status_interval:
                     self._print_status()
                     self._print_alerts()
@@ -868,12 +1074,12 @@ class CalibrationOrchestrator:
                 summary = rcf.get_calibration_summary()
                 rmse = summary.get("rmse", 0.0)
 
-                # Prediction at current voltage (works for both direct + prior-only)
+                # Prediction at current ADC code (works for both direct + prior-only)
                 pred_str = ""
                 if buf and len(buf):
-                    v = adc_to_voltage(int(np.mean(list(buf))))
+                    mean_adc_code = int(np.mean(list(buf)))
                     pred, sigma = rcf.predict_pressure_with_uncertainty(
-                        v, self.env_state
+                        float(mean_adc_code), self.env_state
                     )
                     pred_str = f"  →{pred:>8.2f}±{sigma:.2f}"
 

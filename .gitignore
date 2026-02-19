@@ -7,8 +7,6 @@ build/
 *.so
 *.dylib
 *.exe
-a.out
-*.out
 
 # CMake generated files
 CMakeCache.txt
@@ -68,12 +66,6 @@ venv.bak/
 .DS_Store
 Thumbs.db
 
-# Language server and IDE caches
-.cache/
-.clangd/
-*.idx
-compile_commands.json
-
 # Runtime and session files
 shell/last_run.txt
 groundstation/scripts/last_run.txt
@@ -126,9 +118,6 @@ gmon.out
 *.json
 data/
 recordings/
-Testing/
-test_output/
-test_results/
 
 # Network and socket files
 *.sock
@@ -168,28 +157,4 @@ $RECYCLE.BIN/
 # Local configuration overrides
 config_local.toml
 *_local.toml
-
-# Untitled/unsaved files
-**/Untitled
-**/Untitled.*
-
-# External submodules (if not using git submodules properly)
-# Uncomment if external/ should be ignored
-# external/DAQv2-Comms/
-# external/DiabloAvionics/
-
-# Coverage reports
-*.gcov
-*.gcda
-*.gcno
-lcov.info
-coverage.xml
-
-# Valgrind output
-*.memcheck
-vgcore.*
-
-# Static analysis output
-*.sarif
-cppcheck.xml
-clang-tidy-report.txt
+.cache/

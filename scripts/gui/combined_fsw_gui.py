@@ -1304,21 +1304,90 @@ class ActuatorControlWidget(QtWidgets.QWidget):
 
         self.actuator_command_sent.emit(actuator_id, state)
 
-    def send_udp_command(self, actuator_id: int, state: int):
-        """Send UDP command to actuator board"""
-        try:
-            # Create actuator command packet (DiabloAvionics format)
-            packet = bytearray()
-            packet.append(PacketType.ACTUATOR_COMMAND)  # packet_type
-            packet.append(0)  # version
-            packet.extend(struct.pack("<I", int(time.time() * 1000)))  # timestamp
-            packet.append(1)  # num_commands
-            packet.append(actuator_id)  # actuator_id
-            packet.append(state)  # state
+    def send_actuator_commands_batch(self, commands: List[Tuple[int, int]]):
+        """Send multiple actuator commands in a single packet"""
+        if not commands:
+            return
 
-            self.command_sock.sendto(bytes(packet), (self.device_ip, self.device_port))
+        # Send via UDP (batch packet)
+        try:
+            packet = self.create_actuator_command_packet(commands)
+            if len(packet) > 0:
+                self.command_sock.sendto(packet, (self.device_ip, self.device_port))
+                print(f"📤 Sent batch: {len(commands)} actuator commands")
+            else:
+                print(f"❌ Failed to create batch packet")
+        except Exception as e:
+            print(f"Failed to send batch commands: {e}")
+
+        # Also send via Elodin if connected
+        if self.elodin_client and self.elodin_client.connected:
+            for actuator_id, state in commands:
+                self.elodin_client.send_actuator_command(actuator_id, state)
+
+        # Emit signals for each command
+        for actuator_id, state in commands:
+            self.actuator_command_sent.emit(actuator_id, state)
+
+    def send_udp_command(self, actuator_id: int, state: int):
+        """Send UDP command to actuator board (exact DiabloAvionics format)"""
+        try:
+            # Use exact format from combined_gui.py
+            commands = [(actuator_id, state)]
+            packet = self.create_actuator_command_packet(commands)
+            if len(packet) > 0:
+                self.command_sock.sendto(packet, (self.device_ip, self.device_port))
+            else:
+                print(f"Failed to create packet for actuator {actuator_id}")
         except Exception as e:
             print(f"Failed to send UDP command: {e}")
+
+    def create_actuator_command_packet(self, commands: List[Tuple[int, int]]) -> bytes:
+        """
+        Create an actuator command packet (exact format from DiabloAvionics combined_gui.py).
+        commands: List of (actuator_id, actuator_state) tuples
+        actuator_id: 1-10 (1-indexed)
+        actuator_state: 0 = OFF, non-zero = ON
+        """
+        if len(commands) == 0 or len(commands) > 255:
+            return b""
+
+        # Calculate packet size
+        header_size = PACKET_HEADER_SIZE
+        body_size = 1  # ACTUATOR_COMMAND_PACKET_SIZE (num_commands byte)
+        commands_size = len(commands) * 2  # ACTUATOR_COMMAND_SIZE (2 bytes each)
+        total_size = header_size + body_size + commands_size
+
+        if total_size > MAX_PACKET_SIZE:
+            return b""
+
+        # Create packet buffer
+        packet = bytearray(total_size)
+        offset = 0
+
+        # Packet header: <BBI> = packet_type, version, timestamp
+        packet_type = PacketType.ACTUATOR_COMMAND
+        version = 0
+        timestamp = (
+            int(time.time() * 1000) & 0xFFFFFFFF
+        )  # 32-bit timestamp in milliseconds
+
+        struct.pack_into(
+            PACKET_HEADER_FORMAT, packet, offset, packet_type, version, timestamp
+        )
+        offset += PACKET_HEADER_SIZE
+
+        # Actuator command packet body: num_commands (1 byte)
+        num_commands = len(commands)
+        struct.pack_into("<B", packet, offset, num_commands)
+        offset += 1
+
+        # Actuator commands: <BB> = actuator_id, actuator_state (2 bytes each)
+        for actuator_id, actuator_state in commands:
+            struct.pack_into("<BB", packet, offset, actuator_id, actuator_state)
+            offset += 2
+
+        return bytes(packet)
 
     def update_button_highlight(self, array_idx: int, state: int):
         """Update button highlighting"""
@@ -1471,12 +1540,175 @@ class CombinedFSWMainWindow(QtWidgets.QMainWindow):
         self.top_bar_timer.start(100)
 
     def on_state_transition(self, target_state: str):
-        """Handle state transition request"""
+        """Handle state transition request and set actuators accordingly"""
         if self.elodin_client and self.elodin_client.connected:
             self.elodin_client.send_state_transition(target_state)
+
+        # Set actuators based on state machine CSV
+        self._set_actuators_for_state(target_state)
+
         self.current_state = target_state
         self.top_bar.set_state(target_state)
         self.state_machine_widget.set_current_state(target_state)
+
+    def _set_actuators_for_state(self, state: str):
+        """Set actuator states based on state machine CSV"""
+        if not hasattr(self, "_state_actuator_map"):
+            self._load_state_actuator_map()
+
+        # Get actuator commands for this state
+        actuator_commands = self._state_actuator_map.get(state, {})
+
+        # Send commands for all actuators
+        commands_to_send = []
+        for abbrev, gui_state in actuator_commands.items():
+            actuator_id = self._abbrev_to_actuator_id(abbrev)
+            if actuator_id is None:
+                continue
+
+            # Convert GUI state (OPEN/CLOSED) to hardware state (0/1)
+            # Account for NC/NO actuator types
+            hardware_state = self._gui_state_to_hardware(abbrev, gui_state)
+
+            # Update GUI button state
+            if self.actuator_widget:
+                array_idx = actuator_id - 1
+                if 0 <= array_idx < len(self.actuator_widget.actuator_states):
+                    self.actuator_widget.actuator_states[array_idx] = (
+                        1 if gui_state == "OPEN" else 0
+                    )
+                    self.actuator_widget.update_button_highlight(
+                        array_idx, self.actuator_widget.actuator_states[array_idx]
+                    )
+
+            commands_to_send.append((actuator_id, hardware_state))
+
+        # Send all commands in batch
+        if commands_to_send and self.actuator_widget:
+            self.actuator_widget.send_actuator_commands_batch(commands_to_send)
+
+    def _load_state_actuator_map(self):
+        """Load state machine actuator mapping from CSV"""
+        csv_path = (
+            Path(__file__).parent.parent.parent
+            / "external"
+            / "DiabloAvionics"
+            / "test_guis"
+            / "state_machine_actuators.csv"
+        )
+        self._state_actuator_map = {}
+
+        if not csv_path.exists():
+            print(f"⚠️  State machine CSV not found: {csv_path}")
+            return
+
+        try:
+            with open(csv_path, "r") as f:
+                reader = csv.reader(f)
+                header = next(reader)  # Skip header row
+                state_names = [
+                    s.strip() for s in header[1:] if s.strip()
+                ]  # Skip first column
+
+                # Normalize state names to match SystemState enum
+                state_name_map = {
+                    "Debug": "Debug",
+                    "Idle": "Idle",
+                    "Armed": "Armed",
+                    "Fuel Fill": "Fuel Fill",
+                    "Ox Fill": "Ox Fill",
+                    "Quick Fire": "Quick Fire",
+                    "GN2 Press": "GN2 Low Press",  # Map to SystemState name
+                    "Fuel Press": "Fuel Press",
+                    "Fuel Vent": "Fuel Vent",
+                    "Ox Press": "Ox Press",
+                    "Ox Vent": "Ox Vent",
+                    "High Press": "High Press",
+                    "GN2 Vent": "GN2 Vent",
+                    "Fire": "Fire",
+                    "Vent": "Vent",
+                    "Abort": "Abort",
+                }
+
+                # Create normalized state names list
+                normalized_state_names = [
+                    state_name_map.get(name, name) for name in state_names
+                ]
+
+                for row in reader:
+                    if not row or row[0].strip() == "":
+                        continue
+                    abbrev = row[0].strip()
+                    for i, state_name in enumerate(normalized_state_names):
+                        if i + 1 >= len(row):
+                            break
+                        gui_state = row[i + 1].strip().upper()
+                        if gui_state in ("OPEN", "CLOSE", "CLOSED"):
+                            if state_name not in self._state_actuator_map:
+                                self._state_actuator_map[state_name] = {}
+                            # Normalize: "CLOSE" or "CLOSED" -> "CLOSED"
+                            normalized_state = (
+                                "OPEN" if gui_state == "OPEN" else "CLOSED"
+                            )
+                            self._state_actuator_map[state_name][
+                                abbrev
+                            ] = normalized_state
+        except Exception as e:
+            print(f"Error loading state machine CSV: {e}")
+            self._state_actuator_map = {}
+
+    def _abbrev_to_actuator_id(self, abbrev: str) -> Optional[int]:
+        """Map actuator abbreviation to actuator ID from config.toml"""
+        # Map from config.toml actuator_abbrev and actuator_roles
+        abbrev_map = {
+            "FV": "Fuel Vent",  # NC, actuator_id = 2
+            "OV": "LOX Vent",  # NC, actuator_id = 6
+            "FP": "Fuel Press",  # NC, actuator_id = 3
+            "OP": "LOX Press",  # NO, actuator_id = 8
+            "FM": "Fuel Main",  # NO, actuator_id = 7
+            "OM": "LOX Main",  # NO, actuator_id = 1
+        }
+
+        role_name = abbrev_map.get(abbrev)
+        if not role_name:
+            return None
+
+        # Map role name to actuator ID (from config.toml actuator_roles)
+        role_to_id = {
+            "LOX Main": 1,
+            "Fuel Vent": 2,
+            "Fuel Press": 3,
+            "GSE Low Vent": 5,
+            "LOX Vent": 6,
+            "Fuel Main": 7,
+            "LOX Press": 8,
+            "Fuel Fill Vent": 9,
+            "Fuel Fill Press": 10,
+        }
+
+        return role_to_id.get(role_name)
+
+    def _gui_state_to_hardware(self, abbrev: str, gui_state: str) -> int:
+        """Convert GUI state (OPEN/CLOSED) to hardware state (0/1) accounting for NC/NO"""
+        # Map actuator type (NC/NO) from config.toml
+        abbrev_to_type = {
+            "FV": "NC",  # Fuel Vent - NC
+            "OV": "NC",  # LOX Vent - NC
+            "FP": "NC",  # Fuel Press - NC
+            "OP": "NO",  # LOX Press - NO
+            "FM": "NO",  # Fuel Main - NO
+            "OM": "NO",  # LOX Main - NO
+        }
+
+        actuator_type = abbrev_to_type.get(abbrev, "NC")
+        is_open = gui_state == "OPEN"
+
+        if actuator_type == "NO":
+            # NO: OPEN (1) -> hardware OFF (0), CLOSED (0) -> hardware ON (1)
+            return 0 if is_open else 1
+        else:
+            # NC: OPEN (1) -> hardware ON (1), CLOSED (0) -> hardware OFF (0)
+            return 1 if is_open else 0
 
     def on_abort(self):
         """Handle abort"""

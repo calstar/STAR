@@ -125,8 +125,19 @@ fi
 
 # Ensure directory exists
 mkdir -p "$TMP_DB_PATH"
+
+# Resolve the sensor-system panel config (if it exists)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+CONFIG_LUA="$REPO_ROOT/panels/config.lua"
+CONFIG_FLAG=""
+if [ -f "$CONFIG_LUA" ]; then
+    CONFIG_FLAG="--config $CONFIG_LUA"
+    echo "Loading editor panel config: $CONFIG_LUA"
+fi
+
 # Start the database in the background
-RUST_LOG=debug elodin-db run "$DB_HOST" "$TMP_DB_PATH" &
+RUST_LOG=debug elodin-db run "$DB_HOST" "$TMP_DB_PATH" $CONFIG_FLAG &
 # Get the PID of the last background process
 DB_PID=$!
 sleep 1

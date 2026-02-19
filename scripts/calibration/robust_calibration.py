@@ -37,7 +37,7 @@ class EnvironmentalState:
 class CalibrationPoint:
     """Single calibration data point"""
 
-    voltage: float
+    adc_code: float  # Raw ADC code (signed 32-bit, not voltage)
     pressure: float
     timestamp: float
     environmental_state: EnvironmentalState
@@ -93,10 +93,11 @@ class RobustCalibrationFramework:
         }
 
     def environmental_robust_basis_functions(
-        self, v: float, env: EnvironmentalState
+        self, adc_code: float, env: EnvironmentalState
     ) -> np.ndarray:
         """
         Environmental-robust basis functions from equation (66-72)
+        Works directly on ADC codes (not voltage).
         """
         T, H, V, A, M = (
             env.temperature,
@@ -106,24 +107,28 @@ class RobustCalibrationFramework:
             env.mounting_torque,
         )
 
+        # Normalize ADC code to reasonable range for numerical stability
+        # ADC codes are typically in range [-2^31, 2^31-1], normalize to ~[-1, 1]
+        adc_norm = adc_code / 1e9  # Scale down for numerical stability
+
         phi = np.zeros(6)
         phi[0] = 1.0
-        phi[1] = v
+        phi[1] = adc_norm
         phi[2] = (
-            v**2
-            + self.physical_params["alpha1"] * T * v
-            + self.physical_params["alpha2"] * H * v
+            adc_norm**2
+            + self.physical_params["alpha1"] * T * adc_norm
+            + self.physical_params["alpha2"] * H * adc_norm
         )
         phi[3] = (
-            v**3
-            + self.physical_params["beta1"] * T * v**2
-            + self.physical_params["beta2"] * V * v
+            adc_norm**3
+            + self.physical_params["beta1"] * T * adc_norm**2
+            + self.physical_params["beta2"] * V * adc_norm
         )
-        phi[4] = np.sqrt(max(v, 1e-6)) + self.physical_params["gamma1"] * A * np.log(
-            max(v, 1e-6)
-        )
+        phi[4] = np.sqrt(max(adc_norm, 1e-6)) + self.physical_params[
+            "gamma1"
+        ] * A * np.log(max(adc_norm, 1e-6))
         phi[5] = (
-            np.log(1 + v)
+            np.log(1 + adc_norm)
             + self.physical_params["delta1"] * T
             + self.physical_params["delta2"] * H
         )
@@ -147,7 +152,7 @@ class RobustCalibrationFramework:
 
         for i, point in enumerate(points):
             Phi[i] = self.environmental_robust_basis_functions(
-                point.voltage, point.environmental_state
+                point.adc_code, point.environmental_state
             )
             p_obs[i] = point.pressure
             weights[i] = 1.0 / (point.uncertainty**2 + self.env_variance_base)
@@ -205,7 +210,7 @@ class RobustCalibrationFramework:
         Equations (162-166)
         """
         phi = self.environmental_robust_basis_functions(
-            point.voltage, point.environmental_state
+            point.adc_code, point.environmental_state
         )
 
         # RLS update equations
@@ -241,7 +246,7 @@ class RobustCalibrationFramework:
         log_likelihood_current = 0.0
         for point in recent_points:
             phi = self.environmental_robust_basis_functions(
-                point.voltage, point.environmental_state
+                point.adc_code, point.environmental_state
             )
             predicted_pressure = phi.T @ self.theta_mean
             residual = point.pressure - predicted_pressure
@@ -255,7 +260,7 @@ class RobustCalibrationFramework:
         log_likelihood_unconstrained = 0.0
         for point in recent_points:
             phi = self.environmental_robust_basis_functions(
-                point.voltage, point.environmental_state
+                point.adc_code, point.environmental_state
             )
             predicted_pressure = phi.T @ theta_tls
             residual = point.pressure - predicted_pressure
@@ -273,13 +278,14 @@ class RobustCalibrationFramework:
         return glr_statistic, drift_detected
 
     def predict_pressure_with_uncertainty(
-        self, voltage: float, env: EnvironmentalState
+        self, adc_code: float, env: EnvironmentalState
     ) -> Tuple[float, float]:
         """
         Predict pressure with full uncertainty quantification
         Equations (154-156)
+        Works directly on ADC codes (not voltage).
         """
-        phi = self.environmental_robust_basis_functions(voltage, env)
+        phi = self.environmental_robust_basis_functions(adc_code, env)
 
         # Mean prediction
         predicted_pressure = phi.T @ self.theta_mean
@@ -344,7 +350,7 @@ class RobustCalibrationFramework:
 
         # Update RLS covariance matrix
         phi = self.environmental_robust_basis_functions(
-            point.voltage, point.environmental_state
+            point.adc_code, point.environmental_state
         )
         Pphi = self.rls_P @ phi
         K = Pphi / (self.forgetting_factor + phi @ Pphi)
@@ -390,7 +396,7 @@ class RobustCalibrationFramework:
         residuals = []
         for point in self.calibration_points:
             phi = self.environmental_robust_basis_functions(
-                point.voltage, point.environmental_state
+                point.adc_code, point.environmental_state
             )
             predicted = phi.T @ self.theta_mean
             residuals.append(abs(point.pressure - predicted))

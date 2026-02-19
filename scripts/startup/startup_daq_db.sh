@@ -170,7 +170,18 @@ else
     # elodin-db will create the db_state file when it starts
     # Start database in background - output shows in terminal (like FSW)
     # CRITICAL: Use RUST_LOG=debug (not info) and don't redirect output (like FSW)
-    RUST_LOG=debug $ELODIN_DB_BIN run "$DB_HOST" "$TMP_DB_PATH" &
+
+    # Resolve the sensor-system panel config (if it exists)
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+    CONFIG_LUA="$REPO_ROOT/panels/config.lua"
+    CONFIG_FLAG=""
+    if [ -f "$CONFIG_LUA" ]; then
+        CONFIG_FLAG="--config $CONFIG_LUA"
+        echo "Loading editor panel config: $CONFIG_LUA"
+    fi
+
+    RUST_LOG=debug $ELODIN_DB_BIN run "$DB_HOST" "$TMP_DB_PATH" $CONFIG_FLAG &
     # Get the PID of the last background process
     DB_PID=$!
     sleep 1  # Match FSW: sleep 1 (not 2)

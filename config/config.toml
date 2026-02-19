@@ -56,6 +56,9 @@ send_port = 5006           # Board sends SENSOR_DATA to this port on our PC
 num_sensors = 10            # 10 connectors on this board
 board_id = 1
 enabled = true
+# Active connectors: list of connector IDs (1-10) that have sensors plugged in
+# Leave empty [] to use all connectors, or specify only active ones
+active_connectors = [1, 2, 3, 4, 5, 6, 7]  # Example: only connectors 1-7 are used
 
 [boards.actuator_board]
 type = "ACTUATOR"
@@ -74,6 +77,9 @@ send_port = 5006
 num_sensors = 4
 board_id = 3
 enabled = false              # flip to true when board is connected
+# Active connectors: list of connector IDs (1-4) that have sensors plugged in
+# Leave empty [] to use all connectors, or specify only active ones
+active_connectors = []  # Example: [1, 2, 3] if only connectors 1-3 are used
 
 [boards.tc_board]
 type = "TC"
@@ -82,6 +88,9 @@ send_port = 5006
 num_sensors = 10
 board_id = 4
 enabled = false
+# Active connectors: list of connector IDs (1-10) that have sensors plugged in
+# Leave empty [] to use all connectors, or specify only active ones
+active_connectors = []  # Example: [1, 2, 3, 4, 5] if only connectors 1-5 are used
 
 [boards.rtd_board]
 type = "RTD"
@@ -90,6 +99,35 @@ send_port = 5006
 num_sensors = 4
 board_id = 5
 enabled = false
+# Active connectors: list of connector IDs (1-4) that have sensors plugged in
+# Leave empty [] to use all connectors, or specify only active ones
+active_connectors = []  # Example: [1, 2] if only connectors 1-2 are used
+
+# =============================================================================
+# Multiple Boards Example (commented out - uncomment to use)
+# =============================================================================
+# You can define multiple boards of the same type by using different section names:
+#
+# [boards.pt_board_1]
+# type = "PT"
+# ip = "192.168.2.101"
+# send_port = 5006
+# num_sensors = 10
+# board_id = 1
+# enabled = true
+# active_connectors = [1, 2, 3, 4, 5]
+#
+# [boards.pt_board_2]
+# type = "PT"
+# ip = "192.168.2.111"
+# send_port = 5006
+# num_sensors = 10
+# board_id = 11
+# enabled = true
+# active_connectors = [1, 2, 3]
+#
+# The config parser will find all boards with type="PT" and process them separately.
+# Each board can have different IPs and different active_connectors.
 
 # =============================================================================
 # Sensor Roles - Maps sensor_id (1-indexed) to human-readable names

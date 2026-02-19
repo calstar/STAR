@@ -1,28 +1,12 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Sensor System — Elodin Editor Panel
-// Ground-station GUI: pressure plots, actuator status, state overview
-//
-// SystemState enum (PressureStateMachine.hpp):
-//   0=DEBUG_STATE  1=IDLE  2=ARMED  3=FUEL_FILL  4=OX_FILL
-//   5=GN2_LOW_PRESS  6=GN2_VENT  7=FUEL_PRESS  8=FUEL_VENT
-//   9=OX_PRESS  10=OX_VENT  11=GN2_HIGH_PRESS  12=GN2_HIGH_VENT
-//   13=VENT  14=CALIBRATE  15=READY  16=FIRE  17=ABORT
-//
-// ActuatorID enum:
-//   0=LOX_MAIN  1=FUEL_MAIN  2=LOX_VENT  3=FUEL_VENT
-//   4=LOX_PRESS  5=FUEL_PRESS  6=PRESSURE_VENT
-//
-// CommandType: 1=OPEN  2=CLOSE  3=PULSE  4=SET_POSITION
+// Sensor System — Elodin Editor Multi-Window Layout
+// Main window with top bar, plus separate windows for graphs and controls
 // ═══════════════════════════════════════════════════════════════════════════
 
 theme "dark"
 
-// ── Main Layout: top bar → workspace → bottom controls ─────────────────────
+// ── Main Window: Top Bar Only ─────────────────────────────────────────────
 vsplit {
-
-    // ════════════════════════════════════════════════════════════════════════
-    // TOP BAR — Calibrated pressure overview + state readout
-    // ════════════════════════════════════════════════════════════════════════
     dashboard label="Top Bar" display="flex" flex_direction="row" \
               width="100%" height="120px" align_items="center" \
               justify_content="space-between" {
@@ -94,150 +78,16 @@ vsplit {
             }
         }
     }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // MAIN WORKSPACE — Plots left, Actuators + Data right
-    // ════════════════════════════════════════════════════════════════════════
-    hsplit {
-
-        // ── LEFT: Pressure Plots ───────────────────────────────────────────
-        vsplit share=0.55 {
-
-            // Calibrated pressure — all PT channels
-            tabs {
-                graph "PT_Cal.GN2_Regulated.pressure_psi, PT_Cal.Fuel_Upstream.pressure_psi, PT_Cal.Ox_Upstream.pressure_psi" name="Pressure (Calibrated)" {
-                    color 39 174 96
-                    color 52 152 219
-                    color 231 76 60
-                }
-
-                graph "PT_Cal.GSE_Low.pressure_psi, PT_Cal.GSE_Mid.pressure_psi" name="GSE Pressure" {
-                    color 243 156 18
-                    color 155 89 182
-                }
-
-                graph "PT_Cal.Fuel_Downstream.pressure_psi, PT_Cal.Ox_Downstream.pressure_psi" name="Downstream Pressure" {
-                    color 52 152 219
-                    color 231 76 60
-                }
-            }
-
-            // Raw ADC — for diagnostics
-            tabs {
-                graph "PT.GN2_Regulated.raw_adc_counts, PT.Fuel_Upstream.raw_adc_counts, PT.Ox_Upstream.raw_adc_counts" name="Raw ADC (Primary)" {
-                    color 39 174 96
-                    color 52 152 219
-                    color 231 76 60
-                }
-
-                graph "PT.GSE_Low.raw_adc_counts, PT.GSE_Mid.raw_adc_counts" name="Raw ADC (GSE)" {
-                    color 243 156 18
-                    color 155 89 182
-                }
-            }
-        }
-
-        // ── MIDDLE: State Machine + Actuator Commands ──────────────────────
-        vsplit share=0.20 {
-
-            // ── STATE MACHINE CONTROL ──────────────────────────────────────
-            // Each action_pane sends: client:send_table("command.state_transition", "u8", {1}, data)
-            // The u8 value is the SystemState enum ordinal.
-            tabs {
-                // Core operational states
-                action_pane "→ IDLE" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(1))"
-                action_pane "→ ARMED" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(2))"
-                action_pane "→ CALIBRATE" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(14))"
-                action_pane "→ READY" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(15))"
-                action_pane "→ FIRE" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(16))"
-                action_pane "→ DEBUG" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(0))"
-            }
-
-            tabs {
-                // Fill states
-                action_pane "→ FUEL FILL" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(3))"
-                action_pane "→ OX FILL" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(4))"
-                // Pressurization
-                action_pane "→ GN2 LOW PRESS" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(5))"
-                action_pane "→ FUEL PRESS" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(7))"
-                action_pane "→ OX PRESS" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(9))"
-                action_pane "→ GN2 HIGH PRESS" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(11))"
-            }
-
-            tabs {
-                // Vent states
-                action_pane "→ GN2 VENT" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(6))"
-                action_pane "→ FUEL VENT" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(8))"
-                action_pane "→ OX VENT" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(10))"
-                action_pane "→ GN2 HIGH VENT" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(12))"
-                action_pane "→ VENT (safety)" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(13))"
-            }
-
-            // ── ACTUATOR COMMANDS ──────────────────────────────────────────
-            // Each sends: client:send_table("command.actuator", "u8", {2}, data)
-            // data = [actuator_id, command_type] where OPEN=1, CLOSE=2
-            tabs {
-                // LOX Main (ID 0) — OPEN / CLOSE
-                action_pane "LOX Main OPEN" lua="client:send_table(\"command.actuator\", \"u8\", {2}, string.char(0, 1))"
-                action_pane "LOX Main CLOSE" lua="client:send_table(\"command.actuator\", \"u8\", {2}, string.char(0, 2))"
-                // Fuel Main (ID 1)
-                action_pane "Fuel Main OPEN" lua="client:send_table(\"command.actuator\", \"u8\", {2}, string.char(1, 1))"
-                action_pane "Fuel Main CLOSE" lua="client:send_table(\"command.actuator\", \"u8\", {2}, string.char(1, 2))"
-            }
-
-            tabs {
-                // LOX Vent (ID 2)
-                action_pane "LOX Vent OPEN" lua="client:send_table(\"command.actuator\", \"u8\", {2}, string.char(2, 1))"
-                action_pane "LOX Vent CLOSE" lua="client:send_table(\"command.actuator\", \"u8\", {2}, string.char(2, 2))"
-                // Fuel Vent (ID 3)
-                action_pane "Fuel Vent OPEN" lua="client:send_table(\"command.actuator\", \"u8\", {2}, string.char(3, 1))"
-                action_pane "Fuel Vent CLOSE" lua="client:send_table(\"command.actuator\", \"u8\", {2}, string.char(3, 2))"
-            }
-
-            tabs {
-                // LOX Press (ID 4)
-                action_pane "LOX Press OPEN" lua="client:send_table(\"command.actuator\", \"u8\", {2}, string.char(4, 1))"
-                action_pane "LOX Press CLOSE" lua="client:send_table(\"command.actuator\", \"u8\", {2}, string.char(4, 2))"
-                // Fuel Press (ID 5)
-                action_pane "Fuel Press OPEN" lua="client:send_table(\"command.actuator\", \"u8\", {2}, string.char(5, 1))"
-                action_pane "Fuel Press CLOSE" lua="client:send_table(\"command.actuator\", \"u8\", {2}, string.char(5, 2))"
-                // GN2 Pressure Vent (ID 6)
-                action_pane "GN2 Vent OPEN" lua="client:send_table(\"command.actuator\", \"u8\", {2}, string.char(6, 1))"
-                action_pane "GN2 Vent CLOSE" lua="client:send_table(\"command.actuator\", \"u8\", {2}, string.char(6, 2))"
-            }
-
-            // ── ABORT — prominent, always accessible ───────────────────────
-            action_pane "🚨 ABORT" lua="client:send_table(\"command.state_transition\", \"u8\", {1}, string.char(17))"
-        }
-
-        // ── RIGHT: Actuator Feedback + Data Tables ─────────────────────────
-        vsplit share=0.25 {
-
-            // Actuator current-sense readings
-            tabs {
-                graph "ACT.LOX_Main.raw_adc_counts, ACT.Fuel_Main.raw_adc_counts" name="Main Valves" {
-                    color 231 76 60
-                    color 52 152 219
-                }
-
-                graph "ACT.LOX_Press.raw_adc_counts, ACT.Fuel_Press.raw_adc_counts" name="Press Valves" {
-                    color 231 76 60
-                    color 52 152 219
-                }
-
-                graph "ACT.LOX_Vent.raw_adc_counts, ACT.Fuel_Vent.raw_adc_counts, ACT.GSE_Low_Vent.raw_adc_counts" name="Vent Valves" {
-                    color 231 76 60
-                    color 52 152 219
-                    color 243 156 18
-                }
-            }
-
-            // Data tables for live numeric readouts
-            tabs {
-                query_table "PT_Cal.GN2_Regulated.pressure_psi, PT_Cal.Fuel_Upstream.pressure_psi, PT_Cal.Ox_Upstream.pressure_psi, PT_Cal.GSE_Low.pressure_psi, PT_Cal.GSE_Mid.pressure_psi"
-
-                query_table "ACT.LOX_Main.raw_adc_counts, ACT.Fuel_Main.raw_adc_counts, ACT.LOX_Press.raw_adc_counts, ACT.Fuel_Press.raw_adc_counts, ACT.LOX_Vent.raw_adc_counts, ACT.Fuel_Vent.raw_adc_counts"
-            }
-        }
-    }
 }
+
+// ── Separate Windows for Graphs ──────────────────────────────────────────
+window path="windows/lox_graphs.kdl" title="LOX Graphs" rect 0 10 30 60
+window path="windows/fuel_graphs.kdl" title="FUEL Graphs" rect 30 10 30 60
+window path="windows/gse_graphs.kdl" title="GSE Graphs" rect 60 10 30 60
+window path="windows/gn2_graphs.kdl" title="GN2 Graphs" rect 0 70 30 30
+
+// ── Controls Window ───────────────────────────────────────────────────────
+window path="windows/controls.kdl" title="Controls" rect 30 70 40 30
+
+// ── Status Window ──────────────────────────────────────────────────────────
+window path="windows/status.kdl" title="Status Tables" rect 70 10 30 90

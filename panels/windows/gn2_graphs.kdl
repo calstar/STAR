@@ -1,0 +1,12 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// GN2 Graphs Window
+// ═══════════════════════════════════════════════════════════════════════════
+
+vsplit {
+    graph "PT_Cal.GN2_Regulated.pressure_psi" name="GN2 Pressure (Calibrated)" {
+        color 39 174 96
+    }
+    graph "PT.GN2_Regulated.raw_adc_counts" name="GN2 Raw ADC" {
+        color 39 174 96
+    }
+}

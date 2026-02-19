@@ -1,0 +1,19 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// LOX Graphs Window
+// ═══════════════════════════════════════════════════════════════════════════
+
+vsplit {
+    graph "PT_Cal.Ox_Upstream.pressure_psi, PT_Cal.Ox_Downstream.pressure_psi" name="LOX Pressure (Calibrated)" {
+        color 231 76 60
+        color 200 50 50
+    }
+    graph "PT.Ox_Upstream.raw_adc_counts, PT.Ox_Downstream.raw_adc_counts" name="LOX Raw ADC" {
+        color 231 76 60
+        color 200 50 50
+    }
+    graph "ACT.LOX_Main.raw_adc_counts, ACT.LOX_Vent.raw_adc_counts, ACT.LOX_Press.raw_adc_counts" name="LOX Actuators" {
+        color 231 76 60
+        color 200 100 100
+        color 180 50 50
+    }
+}
