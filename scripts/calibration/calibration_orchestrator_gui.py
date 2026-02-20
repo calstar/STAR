@@ -309,7 +309,38 @@ class CalibrationOrchestratorGUI(QtWidgets.QMainWindow):
             actuator_group = QtWidgets.QGroupBox("Actuator Control")
             actuator_layout = QtWidgets.QGridLayout()
 
-            for i in range(1, 11):  # 10 actuators
+            # Get number of actuators dynamically from config/CSV
+            try:
+                import sys
+                from pathlib import Path
+                # Try to import from combined_gui if available
+                sys.path.insert(0, str(Path(__file__).parent.parent.parent / "external" / "DiabloAvionics" / "test_guis"))
+                try:
+                    from combined_gui import get_num_actuators
+                    num_actuators = get_num_actuators()
+                except ImportError:
+                    # Fallback: try to count from CSV
+                    csv_path = Path(__file__).parent.parent.parent / "external" / "DiabloAvionics" / "test_guis" / "state_machine_actuators.csv"
+                    if csv_path.exists():
+                        import csv
+                        with open(csv_path, 'r') as f:
+                            reader = csv.reader(f)
+                            rows = list(reader)
+                            num_actuators = sum(1 for row in rows[1:] if len(row) > 0 and row[0].strip()) if len(rows) > 1 else 10
+                    else:
+                        num_actuators = 10
+            except Exception:
+                num_actuators = 10
+            
+            # Calculate optimal grid layout
+            if num_actuators <= 8:
+                cols = 2
+            elif num_actuators <= 16:
+                cols = 4
+            else:
+                cols = 4
+            
+            for i in range(1, num_actuators + 1):
                 on_btn = QtWidgets.QPushButton(f"ON {i}")
                 off_btn = QtWidgets.QPushButton(f"OFF {i}")
                 on_btn.clicked.connect(
@@ -319,8 +350,8 @@ class CalibrationOrchestratorGUI(QtWidgets.QMainWindow):
                     lambda checked, aid=i: self.send_actuator_command(aid, 0)
                 )
 
-                row = (i - 1) // 2
-                col = (i - 1) % 2
+                row = (i - 1) // cols
+                col = (i - 1) % cols
                 actuator_layout.addWidget(
                     QtWidgets.QLabel(f"Act {i}:"), row * 2, col * 2
                 )

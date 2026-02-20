@@ -32,7 +32,7 @@ import numpy as np
 
 # Configuration
 MAX_PACKET_SIZE = 512
-NUM_ACTUATORS = 10
+# NUM_ACTUATORS is now dynamic - use get_num_actuators() function
 NUM_SENSORS = 10
 UPDATE_INTERVAL_MS = 50
 DEFAULT_WINDOW_SECONDS = 40.0
@@ -120,13 +120,39 @@ class SystemState:
 
 CONFIG_FILE = Path(__file__).parent / "fsw_gui_config.json"
 
+# State machine CSV path
+_STATE_MACHINE_CSV = (
+    Path(__file__).parent.parent.parent
+    / "external"
+    / "DiabloAvionics"
+    / "test_guis"
+    / "state_machine_actuators.csv"
+)
+
+def get_num_actuators():
+    """Get number of actuators dynamically from CSV."""
+    if _STATE_MACHINE_CSV.exists():
+        try:
+            with open(_STATE_MACHINE_CSV, "r") as f:
+                reader = csv.reader(f)
+                rows = list(reader)
+                if len(rows) >= 2:
+                    # Count non-empty actuator rows (skip header)
+                    count = sum(1 for row in rows[1:] if len(row) > 0 and row[0].strip())
+                    if count > 0:
+                        return count
+        except Exception as e:
+            print(f"Warning: Could not determine actuator count from CSV: {e}")
+    # Fallback to default
+    return 10
 
 class ConfigManager:
     """Manages GUI configuration"""
 
     def __init__(self):
+        num_actuators = get_num_actuators()
         self.config = {
-            "actuators": {str(i): "" for i in range(1, NUM_ACTUATORS + 1)},
+            "actuators": {str(i): "" for i in range(1, num_actuators + 1)},
             "sensors": {str(i): "" for i in range(1, NUM_SENSORS + 1)},
             "network": {
                 "actuator_ip": DEFAULT_ACTUATOR_IP,
@@ -1197,10 +1223,11 @@ class ActuatorControlWidget(QtWidgets.QWidget):
         self.device_port = device_port or CONFIG.config["network"]["actuator_port"]
 
         # Actuator state tracking
-        self.actuator_states = [0] * NUM_ACTUATORS
-        self.voltage_readings = [0.0] * NUM_ACTUATORS
+        num_actuators = get_num_actuators()
+        self.actuator_states = [0] * num_actuators
+        self.voltage_readings = [0.0] * num_actuators
         self.actuator_labels = {
-            i: CONFIG.get_actuator_label(i) for i in range(1, NUM_ACTUATORS + 1)
+            i: CONFIG.get_actuator_label(i) for i in range(1, num_actuators + 1)
         }
 
         # UDP socket for direct commands
@@ -1226,14 +1253,23 @@ class ActuatorControlWidget(QtWidgets.QWidget):
         title.setStyleSheet("font-size: 12pt; font-weight: bold; padding: 5px;")
         layout.addWidget(title)
 
-        # Grid for actuators (2 columns, 5 rows)
+        # Grid for actuators - dynamic layout based on count
         grid = QtWidgets.QGridLayout()
         grid.setSpacing(10)
 
+        # Calculate optimal grid layout: use 2-4 columns based on number of actuators
+        num_actuators = get_num_actuators()
+        if num_actuators <= 8:
+            cols = 2
+        elif num_actuators <= 16:
+            cols = 4
+        else:
+            cols = 4  # Default to 4 columns for larger numbers
+
         self.actuator_widgets = []
-        for i in range(NUM_ACTUATORS):
+        for i in range(num_actuators):
             actuator_id = i + 1
-            row, col = i // 2, i % 2
+            row, col = i // cols, i % cols
 
             # Frame for each actuator
             frame = QtWidgets.QFrame()
@@ -1423,7 +1459,7 @@ class ActuatorControlWidget(QtWidgets.QWidget):
                 voltage = (code_int32 * 2.5) / 2147483648.0
 
                 # Map sensor_id (0-9) to actuator (1-10)
-                if 0 <= sensor_id < NUM_ACTUATORS:
+                if 0 <= sensor_id < get_num_actuators():
                     array_idx = sensor_id  # Already 0-indexed
                     self.voltage_readings[array_idx] = voltage
 

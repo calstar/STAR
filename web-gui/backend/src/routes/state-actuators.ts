@@ -80,13 +80,13 @@ const CSV_STATE_MAP: Record<string, SystemState> = {
   'Ready': SystemState.READY,
   'Fire': SystemState.FIRE,
   'Vent': SystemState.VENT,
-  'Engine Abort': SystemState.ABORT,      // Map to ABORT
-  'GSE Abort': SystemState.ABORT,         // Map to ABORT
-  'Emergency Abort': SystemState.ABORT,   // Map to ABORT
+  'Engine Abort': SystemState.ENGINE_ABORT,
+  'GSE Abort': SystemState.GSE_ABORT,
+  'Emergency Abort': SystemState.EMERGENCY_ABORT,
   // Legacy mappings
   'Quick Fire': SystemState.READY,
   'High Press': SystemState.GN2_HIGH_PRESS,
-  'Abort': SystemState.ABORT,
+  'Abort': SystemState.EMERGENCY_ABORT, // Default to emergency abort for legacy
 };
 
 export interface StateActuatorMap {
@@ -124,10 +124,23 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
     // First line is header: ,Idle,Armed,Fuel Fill,...
     const headers = lines[0].split(',').slice(1).map(h => h.trim()); // Skip first empty cell
 
+    // Count actuators dynamically from CSV
+    let actuatorCount = 0;
+    
+    // Priority for abort states: Emergency Abort > Engine Abort > GSE Abort
+    // Collect all abort positions separately, then merge with priority
+    const abortPositions: Record<string, Record<number, number>> = {}; // abortType → {channelId → value}
+    
     // Parse each row (skip header)
     for (let i = 1; i < lines.length; i++) {
       const row = lines[i].split(',');
       const actuatorName = row[0].trim(); // Full name or abbreviation
+      
+      if (!actuatorName) {
+        continue; // Skip empty rows
+      }
+      
+      actuatorCount++; // Count valid actuator rows
       
       // Try to find channel ID
       let channelId: number | undefined;
@@ -184,6 +197,20 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
         }
 
         const value = row[colIdx + 1].trim().toUpperCase();
+        
+        // For ABORT states, collect all abort types separately, then merge with priority
+        if (systemState === SystemState.ABORT && (stateName === 'Emergency Abort' || stateName === 'Engine Abort' || stateName === 'GSE Abort')) {
+          if (!abortPositions[stateName]) {
+            abortPositions[stateName] = {};
+          }
+          if (value === 'OPEN') {
+            abortPositions[stateName][channelId] = 1;
+          } else if (value === 'CLOSE' || value === 'CLOSED') {
+            abortPositions[stateName][channelId] = 0;
+          }
+          continue; // Skip adding to result for now - will merge after all rows
+        }
+
         if (value === 'OPEN') {
           if (!result[systemState]) {
             result[systemState] = {};
@@ -199,7 +226,22 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
       }
     }
 
+    // Store abort positions in separate states
+    if (abortPositions['Engine Abort']) {
+      result[SystemState.ENGINE_ABORT] = abortPositions['Engine Abort'];
+      console.log(`📋 Engine Abort: ${Object.keys(abortPositions['Engine Abort']).length} actuators`);
+    }
+    if (abortPositions['GSE Abort']) {
+      result[SystemState.GSE_ABORT] = abortPositions['GSE Abort'];
+      console.log(`📋 GSE Abort: ${Object.keys(abortPositions['GSE Abort']).length} actuators`);
+    }
+    if (abortPositions['Emergency Abort']) {
+      result[SystemState.EMERGENCY_ABORT] = abortPositions['Emergency Abort'];
+      console.log(`📋 Emergency Abort: ${Object.keys(abortPositions['Emergency Abort']).length} actuators`);
+    }
+
     console.log(`📋 Parsed state actuator map: ${Object.keys(result).length} states`);
+    console.log(`📋 Found ${actuatorCount} actuators in CSV`);
     let totalActuators = 0;
     for (const [state, actuators] of Object.entries(result)) {
       const count = Object.keys(actuators).length;
@@ -215,6 +257,43 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
     console.error('❌ Failed to parse state actuators CSV:', error);
     return result;
   }
+}
+
+export function getNumActuatorsFromCSV(): number {
+  /**Get number of actuators dynamically from CSV file.*/
+  const possiblePaths = [
+    join(process.cwd(), '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'state_machine_actuators.csv'),
+    join(process.cwd(), '..', 'external', 'DiabloAvionics', 'test_guis', 'state_machine_actuators.csv'),
+    '/home/kush-mahajan/sensor_system/external/DiabloAvionics/test_guis/state_machine_actuators.csv',
+    join(__dirname, '..', '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'state_machine_actuators.csv'),
+  ];
+
+  for (const path of possiblePaths) {
+    try {
+      if (!existsSync(path)) {
+        continue;
+      }
+      const csvContent = readFileSync(path, 'utf-8');
+      const lines = csvContent.trim().split('\n');
+      if (lines.length < 2) {
+        continue;
+      }
+      // Count non-empty actuator rows (skip header)
+      let count = 0;
+      for (let i = 1; i < lines.length; i++) {
+        const row = lines[i].split(',');
+        if (row[0] && row[0].trim()) {
+          count++;
+        }
+      }
+      if (count > 0) {
+        return count;
+      }
+    } catch (error) {
+      continue;
+    }
+  }
+  return 10; // Fallback default
 }
 
 export function getStateActuatorMap(): StateActuatorMap {
