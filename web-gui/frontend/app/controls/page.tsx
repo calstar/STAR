@@ -7,6 +7,13 @@ import { getWebSocketClient } from '@/lib/websocket';
 import { useSensorStore } from '@/lib/store';
 import { MessageType, SensorUpdate, StateUpdate, ActuatorId, SystemState, CommandPayload } from '@/lib/types';
 
+const STATE_NAMES: Record<number, string> = {
+  0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
+  5: 'GN2 PRESS', 6: 'GN2 VENT', 7: 'FUEL PRESS', 8: 'FUEL VENT',
+  9: 'OX PRESS', 10: 'OX VENT', 11: 'HIGH PRESS', 12: 'HIGH VENT',
+  13: 'VENT', 14: 'CALIBRATE', 15: 'READY', 16: 'FIRE', 17: 'ABORT',
+};
+
 export default function ControlsPage() {
   const ws = getWebSocketClient();
   const updateSensor = useSensorStore((state) => state.updateSensor);
@@ -20,6 +27,7 @@ export default function ControlsPage() {
   }, [ws, updateSensor, updateState]);
 
   const sendEmergency = (state: SystemState) => {
+    updateState({ currentState: state, stateName: STATE_NAMES[state] ?? '', timestamp: Date.now() });
     const cmd: CommandPayload = { commandType: 'state_transition', data: { state } };
     ws.sendCommand(cmd);
   };
@@ -97,3 +105,4 @@ export default function ControlsPage() {
     </main>
   );
 }
+

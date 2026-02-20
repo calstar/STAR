@@ -28,18 +28,18 @@ interface SensorSystemState {
   actuators: Map<number, ActuatorUpdate>;
   currentState: SystemState | null;
   connectionStatus: ConnectionStatus;
+  debugMode: boolean;
 
   updateSensor: (update: SensorUpdate) => void;
   updateActuator: (update: ActuatorUpdate) => void;
   updateState: (update: StateUpdate) => void;
   updateConnectionStatus: (status: ConnectionStatus) => void;
   getSensorValue: (entity: string, component: string) => number | null;
+  setDebugMode: (mode: boolean) => void;
 }
 
 // ── Alias table ──────────────────────────────────────────────────────────────
 // Maps lookup key → list of fallback keys to try in order.
-// This lets the frontend work regardless of which entity-naming mode the backend
-// happens to be using.
 const ALIASES: Record<string, string[]> = {
   // ── PT calibrated pressure (named → PT_CHX) ─────────────────────────────
   'PT_Cal.Fuel_Upstream.pressure_psi':    ['PT_Cal.PT_CH1.pressure_psi', 'PT.Fuel_Upstream.pressure_psi'],
@@ -64,7 +64,6 @@ const ALIASES: Record<string, string[]> = {
   'PT_Cal.GN2_High.raw_adc_counts':        ['PT_Cal.PT_CH9.raw_adc_counts', 'PT_Cal.PT_CH10.raw_adc_counts'],
 
   // ── PT raw (PT. namespace) → PT_Cal namespace fallback ──────────────────
-  // Elodin-DB mode emits PT_Cal.PT_CHX.raw_adc_counts, raw plots use PT.PT_CHX
   'PT.PT_CH1.raw_adc_counts':  ['PT_Cal.PT_CH1.raw_adc_counts',  'PT.Fuel_Upstream.raw_adc_counts'],
   'PT.PT_CH2.raw_adc_counts':  ['PT_Cal.PT_CH2.raw_adc_counts',  'PT.GSE_Low.raw_adc_counts'],
   'PT.PT_CH3.raw_adc_counts':  ['PT_Cal.PT_CH3.raw_adc_counts',  'PT.GSE_Mid.raw_adc_counts'],
@@ -95,20 +94,42 @@ const ALIASES: Record<string, string[]> = {
 
 export { ALIASES };
 
+// ── Batched sensor-data updates (10 Hz) ──────────────────────────────────────
+// Accumulate all incoming sensor writes and flush to Zustand once every 100ms.
+// Backend broadcasts at 10 Hz per entity so this perfectly coalesces bursts
+// into a single setState, keeping React re-renders at ≤10 Hz regardless of
+// how many entities are arriving simultaneously.
+let _pendingSensorWrites: Record<string, number> = {};
+let _flushScheduled = false;
+
+function scheduleSensorFlush() {
+  if (_flushScheduled) return;
+  _flushScheduled = true;
+  setTimeout(flushSensorWrites, 100); // 10 Hz — matches backend broadcast rate
+}
+
+function flushSensorWrites() {
+  _flushScheduled = false;
+  const batch = _pendingSensorWrites;
+  _pendingSensorWrites = {};
+  if (Object.keys(batch).length === 0) return;
+  useSensorStore.setState((state) => ({
+    sensorData: Object.assign({}, state.sensorData, batch),
+  }));
+}
+
 export const useSensorStore = create<SensorSystemState>((set, get) => ({
   sensorData: {},
   actuators: new Map(),
   currentState: SystemState.IDLE,
   connectionStatus: { connected: false, elodinConnected: false },
+  debugMode: false,
 
   updateSensor: (update: SensorUpdate) => {
     const key = `${update.entity}.${update.component}`;
-    set((state) => ({
-      sensorData: {
-        ...state.sensorData,
-        [key]: update.value,
-      },
-    }));
+    // Accumulate in pending batch — flush at next animation frame
+    _pendingSensorWrites[key] = update.value;
+    scheduleSensorFlush();
   },
 
   updateActuator: (update: ActuatorUpdate) => {
@@ -120,7 +141,10 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   },
 
   updateState: (update: StateUpdate) => {
-    set({ currentState: update.currentState });
+    set({
+      currentState: update.currentState,
+      debugMode: update.currentState === SystemState.DEBUG,
+    });
   },
 
   updateConnectionStatus: (status: ConnectionStatus) => {
@@ -143,25 +167,13 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
 
     return null;
   },
+
+  setDebugMode: (mode: boolean) => {
+    set({ debugMode: mode });
+  },
 }));
 
 // ── Reactive sensor-value hooks ──────────────────────────────────────────────
-//
-// WHY these exist:
-//   useSensorStore((state) => state.getSensorValue) returns a STABLE function
-//   reference that never changes → Zustand never triggers a re-render when
-//   sensorData updates.  These hooks subscribe to sensorData directly so
-//   components receive live updates.
-//
-// useSensorValue(entity, component)
-//   Best for a SINGLE known entity/component pair (e.g. one pressure card).
-//   Only re-renders when that specific value changes.
-//
-// useGetSensorValue()
-//   Returns a getSensorValue(entity,component) function.
-//   Use this when a component calls getSensorValue multiple times or the
-//   entity/component strings are dynamic.  Re-renders whenever sensorData
-//   changes (but that's expected for live-data tables / dashboards).
 
 export function useSensorValue(entity: string, component: string): number | null {
   return useSensorStore((state) => {
@@ -180,7 +192,6 @@ export function useSensorValue(entity: string, component: string): number | null
 }
 
 export function useGetSensorValue(): (entity: string, component: string) => number | null {
-  // Subscribe to sensorData so the returned function is always "fresh"
   const sensorData = useSensorStore((state) => state.sensorData);
   return useCallback(
     (entity: string, component: string): number | null => {

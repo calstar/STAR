@@ -7,7 +7,7 @@ interface WindowButtonProps {
   name: string;
   description: string;
   url: string;
-  accent: string; // CSS hex color for the accent strip
+  accent: string;
 }
 
 function WindowButton({ id, name, description, url, accent }: WindowButtonProps) {
@@ -18,22 +18,20 @@ function WindowButton({ id, name, description, url, accent }: WindowButtonProps)
     <button
       onClick={() => openWindow(id, name, url, 1400, 900)}
       className={`
-        relative overflow-hidden bg-card rounded-lg border transition-all text-left
-        hover:border-gray-500 hover:bg-opacity-80
+        relative overflow-hidden bg-card rounded border transition-all text-left
+        hover:border-gray-600
         ${isOpen ? 'border-gray-500 ring-1 ring-inset ring-gray-600' : 'border-gray-800'}
       `}
     >
-      {/* Accent strip */}
-      <div className="absolute left-0 top-0 bottom-0 w-0.5 rounded-l-lg" style={{ backgroundColor: accent }} />
-
-      <div className="px-4 py-3 pl-5">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold text-text">{name}</span>
+      <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l" style={{ backgroundColor: accent }} />
+      <div className="px-3 py-2 pl-4">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-text">{name}</span>
           {isOpen && (
-            <span className="text-xs font-mono text-green-400">● OPEN</span>
+            <span className="text-[10px] font-mono text-green-400 flex-shrink-0">● OPEN</span>
           )}
         </div>
-        <div className="text-xs text-text-muted mt-0.5">{description}</div>
+        <div className="text-[10px] text-text-muted mt-0.5 leading-tight truncate">{description}</div>
       </div>
     </button>
   );
@@ -43,7 +41,6 @@ export default function WindowLauncher() {
   const { closeAllWindows, windows } = useWindowManager();
   const openCount = windows.filter((w) => w.window && !w.window.closed).length;
 
-  // Single-pane "all plots" view
   const allPlotsEntry: WindowButtonProps = {
     id: 'all', name: 'All Plots ★',
     description: 'FUEL · LOX · COPV · GSE · RAW in one tabbed window',
@@ -64,40 +61,28 @@ export default function WindowLauncher() {
   ];
 
   return (
-    <div className="bg-card rounded-lg border border-gray-800 p-5">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-sm font-bold tracking-wider text-text uppercase">View Windows</h2>
+    <div className="bg-card rounded border border-gray-800 p-2">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-3">
+          <h2 className="text-xs font-bold tracking-wider text-text-muted uppercase">View Windows</h2>
           {openCount > 0 && (
-            <p className="text-xs text-text-muted mt-0.5">{openCount} window{openCount !== 1 ? 's' : ''} open</p>
+            <span className="text-[10px] text-text-muted">{openCount} open</span>
           )}
         </div>
         {openCount > 0 && (
           <button
             onClick={closeAllWindows}
-            className="px-3 py-1.5 bg-red-900/40 border border-red-800 rounded text-xs font-semibold text-red-300 hover:bg-red-800/60 transition-colors"
+            className="px-2 py-1 bg-red-900/40 border border-red-800 rounded text-[10px] font-semibold text-red-300 hover:bg-red-800/60 transition-colors"
           >
             Close All
           </button>
         )}
       </div>
 
-      {/* ── Single-pane "all plots" card — prominent row ── */}
-      <div className="mb-3">
-        <div className="text-[10px] font-bold uppercase tracking-widest text-gray-600 mb-1.5 px-0.5">
-          Single Window (recommended)
-        </div>
+      {/* All Plots + grid in one row */}
+      <div className="grid grid-cols-3 sm:grid-cols-6 lg:grid-cols-11 gap-1.5">
         <WindowButton {...allPlotsEntry} />
-      </div>
-
-      {/* ── Divider ── */}
-      <div className="flex items-center gap-2 mb-3">
-        <div className="flex-1 h-px bg-gray-800" />
-        <span className="text-[10px] font-bold uppercase tracking-widest text-gray-700">Multi Window</span>
-        <div className="flex-1 h-px bg-gray-800" />
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
         {multiEntries.map((e) => (
           <WindowButton key={e.id} {...e} />
         ))}

@@ -127,15 +127,17 @@ export interface ConnectionStatus {
 export type CalibrationConfidence = 'MAXIMUM' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNCALIBRATED';
 
 export interface CalibrationChannelStatus {
-  sensorId:      number;
-  updateCount:   number;
-  lastUpdate:    number;
-  driftDetected: boolean;
-  meanResidual:  number;
-  glrStat:       number;
-  confidence:    CalibrationConfidence;
+  sensorId:        number;
+  updateCount:     number;   // total readings processed (monitoring + RLS)
+  rlsUpdateCount:  number;   // ground-truth RLS updates only
+  lastUpdate:      number;
+  driftDetected:   boolean;
+  meanResidual:    number;
+  glrStat:         number;
+  confidence:      CalibrationConfidence;
   coeffs: { A: number; B: number; C: number; D: number };
-  phase2Active:  boolean;
+  phase2Active:    boolean;
+  covarianceTrace: number;   // sum of P diagonal — proxy for uncertainty
 }
 
 export interface CalibrationStatusPayload {
@@ -150,6 +152,7 @@ export type CalibrationCommandType =
   | 'reset_channel'
   | 'enable_phase2'
   | 'disable_phase2'
+  | 'zero_all'
   | 'save_coefficients';
 
 export interface CalibrationCommand {
@@ -157,3 +160,4 @@ export interface CalibrationCommand {
   sensorId?:          number;
   referencePressure?: number;
 }
+

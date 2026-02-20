@@ -6,6 +6,8 @@ import 'uplot/dist/uPlot.min.css';
 import { useSensorStore, ALIASES } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate } from '@/lib/types';
+import { getStartupTime } from '@/lib/startup-time';
+import { getDataCache } from '@/lib/data-cache';
 
 interface TimeSeriesPlotProps {
   title: string;
@@ -59,8 +61,8 @@ function fmtAxisVal(val: number): string {
 }
 
 // ── Memory constants ──────────────────────────────────────────────────────────
-const WINDOW_SECONDS = 30;
-const SAMPLE_HZ      = 20;
+const WINDOW_SECONDS = 60;   // 60 s rolling window
+const SAMPLE_HZ      = 10;   // matches backend broadcast rate (100 ms per entity)
 const MAX_POINTS     = WINDOW_SECONDS * SAMPLE_HZ;  // 600
 
 export default function TimeSeriesPlot({
@@ -69,9 +71,11 @@ export default function TimeSeriesPlot({
 }: TimeSeriesPlotProps) {
   const componentMap = components ?? entities.map(() => component);
 
+  const containerRef    = useRef<HTMLDivElement>(null);
   const plotRef         = useRef<HTMLDivElement>(null);
   const plotInstanceRef = useRef<uPlot | null>(null);
-  const startTimeRef    = useRef<number>(Date.now());
+  // ── Use global T+0 so all windows share the same time axis ─────
+  const startTimeRef    = useRef<number>(getStartupTime());
   const latestValuesRef = useRef<number[]>(entities.map(() => NaN));
 
   const dataRef = useRef<{ time: number[]; values: number[][] }>({
@@ -105,7 +109,8 @@ export default function TimeSeriesPlot({
           time: false,
           range: (): [number, number] => {
             const now = (Date.now() - startTimeRef.current) / 1000;
-            return [Math.max(0, now - WINDOW_SECONDS), now];
+            const window = Math.min(WINDOW_SECONDS, now + 1);
+            return [Math.max(0, now - window), now];
           },
         },
         y: {
@@ -115,10 +120,10 @@ export default function TimeSeriesPlot({
       },
       axes: [
         {
-          label:     'Time (s)',
+          label:     'T+ (s)',
           stroke:    '#9CA3AF',
-          grid:      { show: true, stroke: '#333', width: 1 },
-          ticks:     { show: true, stroke: '#444', width: 1 },
+          grid:      { show: true, stroke: '#555', width: 1 },
+          ticks:     { show: true, stroke: '#777', width: 1 },
           font:      'bold 12px monospace',
           labelFont: '12px system-ui',
           gap:       4,
@@ -126,8 +131,8 @@ export default function TimeSeriesPlot({
         {
           label:     yLabel,
           stroke:    '#9CA3AF',
-          grid:      { show: true, stroke: '#333', width: 1 },
-          ticks:     { show: true, stroke: '#444', width: 1 },
+          grid:      { show: true, stroke: '#555', width: 1 },
+          ticks:     { show: true, stroke: '#777', width: 1 },
           font:      'bold 12px monospace',
           labelFont: '12px system-ui',
           size:      72,
@@ -153,13 +158,26 @@ export default function TimeSeriesPlot({
       padding: [8, 12, 0, 0] as [number, number, number, number],
     });
 
-    // ── Dimension helper — reads plotRef's CSS-resolved pixel size ────────
+    // ── Dimension helper — measure the CONTAINER (stable CSS size) ────────
     const getDims = (): { w: number; h: number } | null => {
-      if (!plotRef.current) return null;
-      const w = plotRef.current.clientWidth;
-      const h = plotRef.current.clientHeight;
-      return (w > 50 && h > 30) ? { w, h } : null;
+      const el = containerRef.current;
+      if (!el) return null;
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      return (w > 60 && h > 40) ? { w, h } : null;
     };
+
+    // ── Pre-fill from background cache so plot has history on open ────
+    const cache = getDataCache();
+    const cached = cache.getAlignedHistory(entities, componentMap, WINDOW_SECONDS);
+    if (cached && cached.time.length > 0) {
+      dataRef.current.time = cached.time;
+      dataRef.current.values = cached.values;
+      cached.values.forEach((vals, i) => {
+        const last = vals[vals.length - 1];
+        if (isFinite(last)) latestValuesRef.current[i] = last;
+      });
+    }
 
     let initialized = false;
 
@@ -172,7 +190,7 @@ export default function TimeSeriesPlot({
       plotInstanceRef.current = new uPlot(buildOpts(dims.w, dims.h), data, plotRef.current);
     };
 
-    // ── ResizeObserver on plotRef — fires after CSS layout resolves ───────
+    // ── ResizeObserver on the outer container ─────────────────────────────
     const ro = new ResizeObserver(() => {
       if (!initialized) {
         tryInit();
@@ -183,9 +201,9 @@ export default function TimeSeriesPlot({
         }
       }
     });
-    if (plotRef.current) ro.observe(plotRef.current);
+    if (containerRef.current) ro.observe(containerRef.current);
 
-    // Safety-net: window resize
+    // Window resize safety net
     const onWinResize = () => {
       if (!plotInstanceRef.current) return;
       const dims = getDims();
@@ -208,7 +226,6 @@ export default function TimeSeriesPlot({
 
     // ── 20 Hz sample + render + size-sync loop ──────────────────────────
     const sampleInterval = setInterval(() => {
-      // Try init if not yet done (catches late layout)
       if (!initialized) { tryInit(); if (!initialized) return; }
 
       const now    = (Date.now() - startTimeRef.current) / 1000;
@@ -234,7 +251,7 @@ export default function TimeSeriesPlot({
       // resetScales=true → Y range() recalculates from real data each tick
       plotInstanceRef.current!.setData([d.time, ...d.values], true);
 
-      // ── Continuous size sync — catches any mismatch ResizeObserver missed
+      // ── Continuous size sync — catches layout changes ──────────────────
       const dims = getDims();
       if (dims && plotInstanceRef.current &&
           (Math.abs(dims.w - plotInstanceRef.current.width) > 2 ||
@@ -268,8 +285,11 @@ export default function TimeSeriesPlot({
           <span className="text-[11px] font-mono text-gray-500">{actuallyConnected ? 'Live' : 'No signal'}</span>
         </div>
       </div>
-      {/* uPlot mount — plotRef is the observation target */}
-      <div ref={plotRef} className="w-full flex-1 min-h-0 min-w-0 overflow-hidden" />
+      {/* Chart container: measured by ResizeObserver. plotRef inside receives uPlot. */}
+      <div ref={containerRef} className="relative flex-1 min-h-0 min-w-0 overflow-hidden">
+        <div ref={plotRef} className="absolute inset-0" />
+      </div>
     </div>
   );
 }
+

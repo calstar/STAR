@@ -6,7 +6,6 @@ import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 import WindowDetector from '@/components/windows/WindowDetector';
-import WindowTopBar from '@/components/windows/WindowTopBar';
 
 // Import all page components
 import FuelGraphsPage from '@/app/plots/fuel/page';
@@ -46,27 +45,16 @@ export default function WindowViewPage() {
 
   useEffect(() => {
     ws.connect();
-
-    // Sensor updates
     const unsubscribeSensor = ws.on(MessageType.SENSOR_UPDATE, (payload: unknown) => {
       updateSensor(payload as SensorUpdate);
     });
-
-    // State-machine updates (needed by controls panel in popup windows)
     const unsubscribeState = ws.on(MessageType.STATE_UPDATE, (payload: unknown) => {
       updateState(payload as StateUpdate);
     });
-
-    // Connection status — popup windows don't have TopBar, so update the store here
     const unsubscribeConn = ws.onConnectionStatus((status) => {
       updateConnectionStatus(status);
     });
-
-    return () => {
-      unsubscribeSensor();
-      unsubscribeState();
-      unsubscribeConn();
-    };
+    return () => { unsubscribeSensor(); unsubscribeState(); unsubscribeConn(); };
   }, [ws, updateSensor, updateState, updateConnectionStatus]);
 
   const Component = viewComponents[view];
@@ -83,14 +71,11 @@ export default function WindowViewPage() {
     );
   }
 
+  // TopBar is rendered by layout.tsx — just give the page remaining height
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-background text-text">
+    <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
       <WindowDetector />
-      <WindowTopBar />
-      {/* flex-1 gives the page all remaining height after the topbar */}
-      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-        <Component />
-      </div>
+      <Component />
     </div>
   );
 }

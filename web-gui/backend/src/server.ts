@@ -16,6 +16,7 @@ import { getStateTransitions } from './routes/state-transitions.js';
 import { startAPIServer } from './api-server.js';
 import { loadPTCalibration, calculatePressure, CalibrationCoefficients } from './calibration.js';
 import { Phase2CalibrationEngine } from './calibration-phase2.js';
+import { DataLogger } from './data-logger.js';
 import {
   MessageType,
   SensorUpdate,
@@ -40,6 +41,40 @@ interface Client {
   lastPing: number;
 }
 
+// ── Actuator ID → board channel (from config.toml actuator_roles) ──────────
+const ACTUATOR_CHANNEL: Record<number, number> = {
+  [ActuatorId.LOX_MAIN]:     1,
+  [ActuatorId.FUEL_MAIN]:    7,
+  [ActuatorId.LOX_VENT]:     6,
+  [ActuatorId.FUEL_VENT]:    2,
+  [ActuatorId.LOX_PRESS]:    8,
+  [ActuatorId.FUEL_PRESS]:   3,
+  [ActuatorId.GSE_LOW_VENT]: 5,
+};
+
+// ── Expected actuator positions per state (from state_machine_actuators.csv) ─
+// Maps SystemState → { channelId → 0|1 (CLOSED|OPEN) }
+// FV=Fuel Vent(CH2), OV=LOX Vent(CH6), FP=Fuel Press(CH3), OP=LOX Press(CH8),
+// FM=Fuel Main(CH7), OM=LOX Main(CH1)
+const STATE_ACTUATOR_MAP: Record<number, Record<number, number>> = {
+  //                         CH1(OM) CH2(FV) CH3(FP) CH6(OV) CH7(FM) CH8(OP)
+  [SystemState.IDLE]:           { 1:1, 2:1, 3:1, 6:1, 7:1, 8:1 },
+  [SystemState.ARMED]:          { 1:0, 2:0, 3:0, 6:0, 7:0, 8:0 },
+  [SystemState.FUEL_FILL]:      { 1:0, 2:1, 3:0, 6:1, 7:0, 8:0 },
+  [SystemState.OX_FILL]:        { 1:0, 2:1, 3:0, 6:1, 7:0, 8:0 },
+  [SystemState.READY]:          { 1:1, 2:1, 3:0, 6:1, 7:1, 8:0 },
+  [SystemState.GN2_LOW_PRESS]:  { 1:0, 2:1, 3:0, 6:1, 7:0, 8:0 },
+  [SystemState.FUEL_PRESS]:     { 1:0, 2:0, 3:1, 6:0, 7:0, 8:0 },
+  [SystemState.FUEL_VENT]:      { 1:0, 2:1, 3:0, 6:0, 7:0, 8:0 },
+  [SystemState.OX_PRESS]:       { 1:0, 2:0, 3:0, 6:0, 7:0, 8:1 },
+  [SystemState.OX_VENT]:        { 1:0, 2:0, 3:0, 6:1, 7:0, 8:0 },
+  [SystemState.GN2_HIGH_PRESS]: { 1:0, 2:0, 3:0, 6:0, 7:0, 8:0 },
+  [SystemState.GN2_VENT]:       { 1:0, 2:1, 3:1, 6:0, 7:0, 8:0 },
+  [SystemState.FIRE]:           { 1:1, 2:0, 3:1, 6:0, 7:1, 8:1 },
+  [SystemState.VENT]:           { 1:0, 2:1, 3:1, 6:1, 7:0, 8:1 },
+  [SystemState.ABORT]:          { 1:1, 2:1, 3:1, 6:1, 7:1, 8:1 },
+};
+
 class SensorSystemServer {
   private wss: WebSocketServer;
   private elodin: ElodinClient;
@@ -57,6 +92,20 @@ class SensorSystemServer {
   private actuatorSocket: dgram.Socket | null = null;
   private actuatorIP: string = '192.168.2.201'; // Default actuator board IP
   private actuatorPort: number = 5005; // Default actuator command port
+
+  /** Throttle Phase 2 monitoring to ~5 Hz per channel */
+  private phase2LastMonitor: Map<number, number> = new Map();
+  private readonly PHASE2_MONITOR_INTERVAL_MS = 200; // 5 Hz
+
+  /** Throttle WS broadcasts per entity to ~10 Hz (cache is always instant) */
+  private broadcastLastTime: Map<string, number> = new Map();
+  private readonly BROADCAST_MIN_INTERVAL_MS = 100; // 10 Hz per entity
+
+  /** Binary data logger for runs */
+  private dataLogger = new DataLogger();
+
+  /** Logging throttle */
+  private _lastSensorLog = 0;
 
   constructor() {
     console.log(`🚀 Starting Sensor System Server...`);
@@ -142,7 +191,7 @@ class SensorSystemServer {
       await subscribeWithStream(this.elodin);
 
       // Wait to see if Stream subscription works
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       if (!this.streamingDataReceived) {
         console.log('⚠️ No data after Stream subscription. Trying MsgStream/VTableStream...');
@@ -241,7 +290,7 @@ class SensorSystemServer {
         console.log('✅ Streaming data confirmed - Elodin DB is sending TABLE packets');
       }
       this.streamingCheckTimer = null;
-    }, 10000); // Increased to 10 seconds
+    }, 4000); // 4 seconds before DAQ fallback
   }
 
   private setupDirectDAQ(): void {
@@ -264,8 +313,12 @@ class SensorSystemServer {
 
     // EXACT combined_gui.py implementation: on_sensor_data handler
     this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
-      // Log ALL incoming sensor data packets (remove IP filter temporarily for debugging)
-      console.log(`📥 Sensor data packet from ${sourceIP}: ${chunks.length} chunks`);
+      // Log sensor data sparingly to avoid choking the event loop
+      const now = Date.now();
+      if (now - this._lastSensorLog > 5000) {
+        this._lastSensorLog = now;
+        console.log(`📥 Sensor data from ${sourceIP}: ${chunks.length} chunks`);
+      }
 
       // EXACT from combined_gui.py: filter by source IP
       // Temporarily accept ALL IPs to see if packets are arriving
@@ -298,10 +351,8 @@ class SensorSystemServer {
           // Get calibration (sensor_id is 0-based, calibration map uses 1-based)
           let coeffs = this.ptCalibration.get(channelId) || this.ptCalibration.get(sensorId);
 
-          // Initialize Phase 2 if we have static calibration
-          if (coeffs && this.phase2Engine) {
-            this.phase2Engine.initializeSensor(channelId, coeffs);
-          }
+          // NOTE: Phase 2 is already initialized at startup from ptCalibration.
+          // Do NOT re-initialize here — that would reset RLS state on every packet.
 
           // Publish raw PT message to Elodin DB
           if (publishingToElodin) {
@@ -355,14 +406,26 @@ class SensorSystemServer {
           // Cache latest raw ADC per channel for Phase 1 calibration capture
           this.lastRawAdc.set(channelId, codeUint32);
 
-          // Calculate and emit calibrated PSI if calibration exists (EXACT from combined_gui.py)
+          // Feed to Phase 2 for continuous monitoring — throttled to ~10 Hz per
+          // channel (DAQ fires at 25 kHz — unthrottled would choke the event loop).
+          if (this.phase2Engine) {
+            const monitorNow = Date.now();
+            const lastMonitor = this.phase2LastMonitor.get(channelId) ?? 0;
+            if (monitorNow - lastMonitor >= this.PHASE2_MONITOR_INTERVAL_MS) {
+              this.phase2LastMonitor.set(channelId, monitorNow);
+              this.phase2Engine.monitorReading(channelId, codeUint32);
+            }
+          }
+
+          // Calculate calibrated PSI — prefer Phase 2 (live-updated) coefficients,
+          // fall back to static file coefficients, then raw conversion.
+          const liveCoeffs = this.phase2Engine?.getCalibration(channelId);
+          const activeCoeffs = liveCoeffs ?? coeffs;
           let psi: number;
-          if (coeffs) {
-            // Apply calibration: psi = A*x^3 + B*x^2 + C*x + D (EXACT from combined_gui.py)
-            psi = calculatePressure(codeUint32, coeffs);
+          if (activeCoeffs) {
+            psi = calculatePressure(codeUint32, activeCoeffs);
           } else {
-            // No calibration - use raw value
-            psi = codeUint32 / 1000000.0; // Temporary conversion
+            psi = codeUint32 / 1000000.0; // No calibration - temporary conversion
           }
 
           // Publish calibrated PT message to Elodin DB
@@ -489,23 +552,20 @@ class SensorSystemServer {
 
   private handleSensorUpdate(update: SensorUpdate): void {
     // Validate update values - reject only truly invalid data (NaN, Infinity)
-    // Note: 2147483647 is a valid raw ADC code (max int32), don't filter it!
-    if (isNaN(update.value) || !isFinite(update.value)) {
-      console.warn(`⚠️ Rejecting invalid sensor value: ${update.entity}.${update.component} = ${update.value}`);
-      return;
-    }
+    if (isNaN(update.value) || !isFinite(update.value)) return;
 
-    // Update cache
+    // Update cache (always instant)
     const key = `${update.entity}.${update.component}`;
     this.sensorCache.set(key, update);
 
-    // Write to Elodin DB for persistence (if connected)
-    if (this.elodin.isConnected()) {
-      // TODO: Write to Elodin DB using TABLE packet format
-      // For now, Elodin DB will receive data from DAQ Bridge if it's running
-      // But since we're bypassing DAQ Bridge, we need to write directly
-      // This requires implementing the TABLE packet format
-    }
+    // Record to binary log if running
+    this.dataLogger.record(key, update.value);
+
+    // Throttle WebSocket broadcasts to BROADCAST_MIN_INTERVAL_MS per entity
+    const now = Date.now();
+    const lastBroadcast = this.broadcastLastTime.get(key) ?? 0;
+    if (now - lastBroadcast < this.BROADCAST_MIN_INTERVAL_MS) return;
+    this.broadcastLastTime.set(key, now);
 
     // Broadcast to ALL clients
     const message = {
@@ -514,19 +574,13 @@ class SensorSystemServer {
       payload: update,
     };
 
-    const clientCount = this.clients.size;
     const openClients = Array.from(this.clients.values()).filter(c => c.ws.readyState === WebSocket.OPEN).length;
 
     if (openClients > 0) {
-      // Log broadcasts more frequently initially to see data flow
-      if (!this.streamingDataReceived || Math.random() < 0.2) {
-        console.log(`📤 Broadcasting: ${update.entity}.${update.component} = ${update.value.toFixed(2)} to ${openClients} client(s)`);
-      }
       this.broadcast(message);
-    } else if (clientCount > 0) {
-      // Log this warning more frequently to catch connection issues
-      if (Math.random() < 0.1) {
-        console.warn(`⚠️ ${clientCount} clients connected but none are OPEN - frontend may be disconnected`);
+    } else if (this.clients.size > 0) {
+      if (Math.random() < 0.001) {
+        console.warn(`⚠️ ${this.clients.size} clients connected but none are OPEN`);
       }
     } else {
       // No clients at all - this is a problem
@@ -540,8 +594,8 @@ class SensorSystemServer {
     try {
       const [high, low] = header.packetId;
 
-      // Log ALL packets initially to see what we're receiving
-      if (!this.streamingDataReceived || Math.random() < 0.1) {
+      // Minimal logging to avoid choking the event loop
+      if (!this.streamingDataReceived) {
         console.log(`📥 Elodin TABLE packet: packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}`);
       }
 
@@ -594,7 +648,7 @@ class SensorSystemServer {
         setTimeout(() => {
           console.log('🧪 First client connected - sending test data to verify pipeline...');
           this.sendTestData();
-        }, 1000);
+        }, 200);
       }
 
       ws.on('error', (error: Error) => {
@@ -797,12 +851,27 @@ class SensorSystemServer {
           const success = this.elodin.sendCommand('state_transition', { state });
           if (success) {
             console.log(`🎯 State transition command sent: ${SystemState[state]}`);
+
+            // ── Auto data-logging: start on ARMED, stop on IDLE/ABORT ──
+            if (state === SystemState.ARMED && !this.dataLogger.running) {
+              this.dataLogger.start();
+            } else if ((state === SystemState.IDLE || state === SystemState.ABORT) && this.dataLogger.running) {
+              const stats = this.dataLogger.stop();
+              if (stats) {
+                console.log(`📝 Run logged: ${stats.filePath} (${stats.records} records, ${stats.channels} channels, ${(stats.durationMs / 1000).toFixed(1)}s)`);
+              }
+            }
+
             // Broadcast confirmation
             this.broadcast({
               type: MessageType.STATE_UPDATE,
               timestamp: Date.now(),
               payload: { currentState: state, stateName: SystemState[state], timestamp: Date.now() },
             });
+            // Auto-command actuators to match state (skip DEBUG — manual control)
+            if (state !== SystemState.DEBUG) {
+              this.applyActuatorsForState(state);
+            }
           } else {
             throw new Error('Failed to send state transition command');
           }
@@ -810,11 +879,8 @@ class SensorSystemServer {
       } else if (command.commandType === 'actuator') {
         const { actuatorId, actuatorState } = command.data;
         if (actuatorId !== undefined && actuatorState !== undefined) {
-          // Send actuator command via direct UDP (like combined_gui.py)
-          // Actuator IDs: 0=LOX_MAIN, 1=FUEL_MAIN, 2=LOX_VENT, 3=FUEL_VENT, 4=LOX_PRESS, 5=FUEL_PRESS, 6=GSE_LOW_VENT
-          // Channel IDs are 1-based (1-10), actuatorId is 0-based enum
-          // Map actuatorId to channel ID (assuming sequential mapping for now)
-          const channelId = actuatorId + 1; // 1-based channel (1-10)
+          // Map actuatorId → real board channel from config.toml actuator_roles
+          const channelId = ACTUATOR_CHANNEL[actuatorId] ?? (actuatorId + 1);
           const state = actuatorState === ActuatorState.OPEN ? 1 : 0;
 
           // Send via direct UDP to actuator board (like combined_gui.py)
@@ -864,6 +930,24 @@ class SensorSystemServer {
     }
   }
 
+  /**
+   * Auto-command actuators to match expected positions for a given state.
+   * Reads from STATE_ACTUATOR_MAP (parsed from state_machine_actuators.csv).
+   */
+  private applyActuatorsForState(state: SystemState): void {
+    const expected = STATE_ACTUATOR_MAP[state];
+    if (!expected) {
+      console.log(`⚠️ No actuator map for state ${SystemState[state]}, skipping auto-command`);
+      return;
+    }
+    console.log(`🔧 Auto-commanding actuators for state ${SystemState[state]}:`);
+    for (const [ch, val] of Object.entries(expected)) {
+      const channelId = Number(ch);
+      this.sendActuatorCommandUDP(channelId, val);
+      console.log(`   CH${channelId} → ${val === 1 ? 'OPEN' : 'CLOSED'}`);
+    }
+  }
+
   /** Cache of recent raw ADC values per sensor for Phase 1 capture */
   private lastRawAdc: Map<number, number> = new Map();
 
@@ -899,6 +983,28 @@ class SensorSystemServer {
           }
         }
         break;
+      case 'zero_all': {
+        // Trust the user: current readings → 0 PSI for ALL channels.
+        // Re-init Phase 2 with zero coefficients, then do one RLS update
+        // with (currentADC, 0 PSI) so that the linear model maps the
+        // current operating point to exactly 0.
+        console.log('🎯 ZERO ALL PTs — initializing all channels to 0 PSI');
+        for (let ch = 1; ch <= 10; ch++) {
+          const currentAdc = this.lastRawAdc.get(ch) ?? 0;
+          if (currentAdc === 0) {
+            console.log(`   CH${ch}: no ADC data yet, skipping`);
+            continue;
+          }
+          // Start fresh with zero coefficients
+          this.phase2Engine.initializeSensor(ch, { A: 0, B: 0, C: 0, D: 0 });
+          // One RLS update: teach the model that currentAdc → 0 PSI
+          this.phase2Engine.updateCalibration(ch, currentAdc, 0);
+          // Clear static calibration so live coefficients take priority
+          this.ptCalibration.delete(ch);
+          console.log(`   CH${ch}: ADC=${currentAdc} → 0 PSI ✓`);
+        }
+        break;
+      }
       default:
         console.warn('⚠️ Unknown calibration command:', commandType);
     }

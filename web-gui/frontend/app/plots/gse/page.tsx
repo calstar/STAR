@@ -3,6 +3,8 @@
 import { useEffect } from 'react';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import PressureBar from '@/components/plots/PressureBar';
+import ActuatorStatePanel from '@/components/plots/ActuatorStatePanel';
+import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate } from '@/lib/types';
@@ -31,6 +33,14 @@ export default function GSEGraphsPage() {
         <h1 className="text-base font-bold text-yellow-400 tracking-wider">GSE SYSTEM</h1>
       </div>
 
+      <div className="flex-shrink-0">
+        <SensorReadoutStrip sensors={[
+          { label: 'GSE Low', entity: 'PT_Cal.PT_CH2', component: 'pressure_psi', color: '#F39C12' },
+          { label: 'GSE Mid', entity: 'PT_Cal.PT_CH3', component: 'pressure_psi', color: '#9B59B6' },
+          { label: 'GSE Hi',  entity: 'PT_Cal.PT_CH8', component: 'pressure_psi', color: '#8E44AD' },
+        ]} />
+      </div>
+
       <div className="flex-1 min-h-0 flex flex-row gap-2">
 
         <div className="flex-1 flex flex-col gap-2 min-h-0 min-w-0">
@@ -44,16 +54,12 @@ export default function GSEGraphsPage() {
               yLabel="Pressure (PSI)"
             />
           </div>
-          <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0 overflow-hidden">
-            <TimeSeriesPlot
-              title="GSE Vent Actuator (ADC)"
-              entities={['ACT.ACT_CH5']}
-              labels={['GSE Low Vent']}
-              component="raw_adc_counts"
-              colors={['#F39C12']}
-              yLabel="ADC / Status"
-            />
-          </div>
+          <ActuatorStatePanel
+            title="GSE Actuators"
+            actuators={[
+              { label: 'GSE Low Vent', entity: 'ACT.ACT_CH5', color: '#F39C12' },
+            ]}
+          />
         </div>
 
         <div className="w-44 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0">

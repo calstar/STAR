@@ -3,6 +3,8 @@
 import { useEffect } from 'react';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import PressureBar from '@/components/plots/PressureBar';
+import ActuatorStatePanel from '@/components/plots/ActuatorStatePanel';
+import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate } from '@/lib/types';
@@ -21,7 +23,6 @@ export default function LOXGraphsPage() {
 
   const up   = useSensorValue('PT_Cal.PT_CH5', 'pressure_psi');
   const down = useSensorValue('PT_Cal.PT_CH7', 'pressure_psi');
-  const loxMainOpen = (useSensorValue('ACT.ACT_CH1', 'raw_adc_counts') ?? 0) > 0;
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
@@ -31,9 +32,13 @@ export default function LOXGraphsPage() {
           <div className="w-1 h-5 bg-red-500 rounded-full" />
           <h1 className="text-base font-bold text-red-400 tracking-wider">LOX SYSTEM</h1>
         </div>
-        <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${loxMainOpen ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
-          LOX MAIN: {loxMainOpen ? 'OPEN' : 'CLOSED'}
-        </span>
+      </div>
+
+      <div className="flex-shrink-0">
+        <SensorReadoutStrip sensors={[
+          { label: 'LOX Up', entity: 'PT_Cal.PT_CH5', component: 'pressure_psi', color: '#E74C3C' },
+          { label: 'LOX Down', entity: 'PT_Cal.PT_CH7', component: 'pressure_psi', color: '#C0392B' },
+        ]} />
       </div>
 
       <div className="flex-1 min-h-0 flex flex-row gap-2">
@@ -49,16 +54,14 @@ export default function LOXGraphsPage() {
               yLabel="Pressure (PSI)"
             />
           </div>
-          <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0 overflow-hidden">
-            <TimeSeriesPlot
-              title="LOX Actuator States (ADC)"
-              entities={['ACT.ACT_CH1','ACT.ACT_CH6','ACT.ACT_CH8']}
-              labels={['LOX Main','LOX Vent','LOX Press']}
-              component="raw_adc_counts"
-              colors={['#27AE60','#E74C3C','#F39C12']}
-              yLabel="ADC / Status"
-            />
-          </div>
+          <ActuatorStatePanel
+            title="LOX Actuators"
+            actuators={[
+              { label: 'LOX Main',  entity: 'ACT.ACT_CH1', color: '#27AE60' },
+              { label: 'LOX Vent',  entity: 'ACT.ACT_CH6', color: '#E74C3C' },
+              { label: 'LOX Press', entity: 'ACT.ACT_CH8', color: '#F39C12' },
+            ]}
+          />
         </div>
 
         <div className="w-36 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0">

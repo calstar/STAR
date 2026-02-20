@@ -2,7 +2,7 @@
 
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { SystemState, MessageType, CommandPayload } from '@/lib/types';
+import { SystemState, MessageType, CommandPayload, StateUpdate } from '@/lib/types';
 
 const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.DEBUG]: 'DEBUG',
@@ -55,17 +55,17 @@ function StateButton({ state, label, isActive, onClick }: StateButtonProps) {
 
 export default function StateMachinePanel() {
   const currentState = useSensorStore((state) => state.currentState);
+  const updateState = useSensorStore((state) => state.updateState);
   const ws = getWebSocketClient();
 
   const sendStateTransition = (targetState: SystemState) => {
-    // No confirmation - direct execution
+    // Optimistic update — show new state immediately
+    updateState({ currentState: targetState, stateName: STATE_NAMES[targetState], timestamp: Date.now() });
     const command: CommandPayload = {
       commandType: 'state_transition',
       data: { state: targetState },
     };
-
     ws.sendCommand(command);
-    console.log(`State transition command sent: ${STATE_NAMES[targetState]}`);
   };
 
   return (
@@ -214,3 +214,4 @@ export default function StateMachinePanel() {
     </div>
   );
 }
+

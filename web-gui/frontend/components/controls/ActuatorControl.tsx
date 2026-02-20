@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react';
-import { useGetSensorValue } from '@/lib/store';
+import { useGetSensorValue, useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { ActuatorId, ActuatorState, CommandPayload } from '@/lib/types';
 
@@ -45,6 +45,7 @@ interface ActuatorControlProps {
 export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const ws = getWebSocketClient();
   const getSensorValue = useGetSensorValue();
+  const debugMode = useSensorStore((s) => s.debugMode);
 
   // Commanded state tracks what we last told the actuator to do
   const [commanded, setCommanded] = useState<ActuatorState | null>(null);
@@ -124,23 +125,34 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
         ADC: {rawAdc.toLocaleString()}
       </div>
 
-      {/* OPEN / CLOSE buttons */}
+      {/* OPEN / CLOSE buttons — locked unless debug mode */}
+      {!debugMode && (
+        <div className="text-[10px] text-yellow-600 font-mono text-center mb-1">
+          🔒 Enable DEBUG mode to control
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-1.5">
         <button
-          onClick={() => sendCommand(ActuatorState.OPEN)}
+          onClick={() => debugMode && sendCommand(ActuatorState.OPEN)}
+          disabled={!debugMode}
           className={`py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all
-            ${commandedOpen
-              ? 'bg-green-700 text-white ring-1 ring-green-400'
-              : 'bg-gray-800 hover:bg-gray-700 text-gray-300'}`}
+            ${!debugMode
+              ? 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'
+              : commandedOpen
+                ? 'bg-green-700 text-white ring-1 ring-green-400'
+                : 'bg-gray-800 hover:bg-gray-700 text-gray-300'}`}
         >
           Open
         </button>
         <button
-          onClick={() => sendCommand(ActuatorState.CLOSED)}
+          onClick={() => debugMode && sendCommand(ActuatorState.CLOSED)}
+          disabled={!debugMode}
           className={`py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all
-            ${commandedClosed
-              ? 'bg-red-700 text-white ring-1 ring-red-400'
-              : 'bg-gray-800 hover:bg-gray-700 text-gray-300'}`}
+            ${!debugMode
+              ? 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'
+              : commandedClosed
+                ? 'bg-red-700 text-white ring-1 ring-red-400'
+                : 'bg-gray-800 hover:bg-gray-700 text-gray-300'}`}
         >
           Close
         </button>
@@ -148,3 +160,4 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
     </div>
   );
 }
+

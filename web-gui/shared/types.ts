@@ -129,15 +129,17 @@ export type CalibrationConfidence = 'MAXIMUM' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNC
 
 /** Per-channel status broadcast from the Phase 2 engine */
 export interface CalibrationChannelStatus {
-  sensorId:      number;   // 1-based PT channel
-  updateCount:   number;   // total RLS updates applied
-  lastUpdate:    number;   // epoch ms
-  driftDetected: boolean;
-  meanResidual:  number;   // mean |error| over last 100 samples (PSI)
-  glrStat:       number;   // GLR statistic (>threshold = drift)
-  confidence:    CalibrationConfidence;
+  sensorId:        number;   // 1-based PT channel
+  updateCount:     number;   // total readings processed (monitoring + RLS)
+  rlsUpdateCount:  number;   // ground-truth RLS updates only
+  lastUpdate:      number;   // epoch ms
+  driftDetected:   boolean;
+  meanResidual:    number;   // mean |error| over last 100 samples (PSI)
+  glrStat:         number;   // GLR statistic (>threshold = drift)
+  confidence:      CalibrationConfidence;
   coeffs: { A: number; B: number; C: number; D: number };
-  phase2Active:  boolean;
+  phase2Active:    boolean;
+  covarianceTrace: number;   // sum of P diagonal — proxy for uncertainty
 }
 
 /** Full calibration status payload — one entry per initialized channel */
@@ -154,6 +156,8 @@ export type CalibrationCommandType =
   | 'reset_channel'       // clear all points and restart
   | 'enable_phase2'
   | 'disable_phase2'
+  | 'zero_all'            // zero-point init: all PTs set current ADC → 0 PSI
+  | 'save_coefficients'   // persist current coefficients to disk
   | 'save_coefficients';
 
 export interface CalibrationCommand {

@@ -2,13 +2,13 @@
 
 import { useEffect } from 'react';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
+import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate } from '@/lib/types';
 
 // Channel → role mapping from config.toml
 const CH_LABELS_PT = ['Fuel Up', 'GSE Low', 'GSE Mid', 'Fuel Dn', 'LOX Up', 'GN2 Reg', 'LOX Dn', 'GSE Hi', 'GN2 Hi', 'CH10'];
-const CH_LABELS_ACT = ['LOX Main', 'Fuel Vent', 'Fuel Press', 'CH4', 'GSE Vent', 'LOX Vent', 'Fuel Main', 'LOX Press', 'CH9', 'CH10'];
 
 export default function RawReadoutsPage() {
   const updateSensor = useSensorStore((state) => state.updateSensor);
@@ -26,14 +26,27 @@ export default function RawReadoutsPage() {
         <div className="w-1 h-5 bg-blue-500 rounded-full" />
         <h1 className="text-lg font-bold">Raw Sensor Readouts</h1>
         <span className="text-xs text-text-muted font-mono ml-2">
-          40 s rolling window · 20 Hz render
+          30 s rolling window · 20 Hz render
         </span>
       </div>
 
-      {/* 3 rows × 2 cols — each plot fills 1/3 of the viewport height */}
-      <div className="flex-1 grid grid-cols-2 grid-rows-3 gap-2 min-h-0">
+      {/* Live readout strips */}
+      <div className="flex-shrink-0">
+        <SensorReadoutStrip sensors={
+          Array.from({ length: 10 }, (_, i) => ({
+            label: CH_LABELS_PT[i],
+            entity: `PT.PT_CH${i + 1}`,
+            component: 'raw_adc_counts',
+            unit: 'ADC',
+            color: '#3498DB',
+            decimals: 0,
+          }))
+        } />
+      </div>
 
-        {/* Row 1: PT raw ADC counts */}
+      {/* 2 rows × 2 cols */}
+      <div className="flex-1 grid grid-cols-2 grid-rows-2 gap-2 min-h-0">
+
         <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0 overflow-hidden">
           <TimeSeriesPlot
             title="PT CH 1–5  •  Raw ADC Counts"
@@ -56,7 +69,7 @@ export default function RawReadoutsPage() {
           />
         </div>
 
-        {/* Row 2: Calibrated PSI */}
+        {/* Calibrated PSI */}
         <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0 overflow-hidden">
           <TimeSeriesPlot
             title="PT CH 1–5  •  Calibrated PSI"
@@ -76,29 +89,6 @@ export default function RawReadoutsPage() {
             component="pressure_psi"
             colors={['#E74C3C','#C0392B','#F1948A','#F39C12','#E67E22']}
             yLabel="Pressure (PSI)"
-          />
-        </div>
-
-        {/* Row 3: Actuator current feedback */}
-        <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0 overflow-hidden">
-          <TimeSeriesPlot
-            title="ACT CH 1–5  •  Current Feedback (ADC)"
-            entities={['ACT.ACT_CH1','ACT.ACT_CH2','ACT.ACT_CH3','ACT.ACT_CH4','ACT.ACT_CH5']}
-            labels={CH_LABELS_ACT.slice(0, 5)}
-            component="raw_adc_counts"
-            colors={['#9B59B6','#8E44AD','#7D3C98','#6C3483','#5B2C6F']}
-            yLabel="ADC Counts"
-          />
-        </div>
-
-        <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0 overflow-hidden">
-          <TimeSeriesPlot
-            title="ACT CH 6–10  •  Current Feedback (ADC)"
-            entities={['ACT.ACT_CH6','ACT.ACT_CH7','ACT.ACT_CH8','ACT.ACT_CH9','ACT.ACT_CH10']}
-            labels={CH_LABELS_ACT.slice(5, 10)}
-            component="raw_adc_counts"
-            colors={['#27AE60','#229954','#1E8449','#196F3D','#145A32']}
-            yLabel="ADC Counts"
           />
         </div>
 

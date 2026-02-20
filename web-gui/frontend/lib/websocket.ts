@@ -69,21 +69,9 @@ export class WebSocketClient {
       this.ws.onmessage = (event) => {
         try {
           const message: WSMessage = JSON.parse(event.data);
-          // Log sensor updates occasionally for debugging (reduce spam)
-          if (message.type === MessageType.SENSOR_UPDATE) {
-            const update = message.payload as SensorUpdate;
-            // Log occasionally to see data flow without spamming console
-            if (Math.random() < 0.1) {
-              console.log(`📥 Frontend received: ${update.entity}.${update.component} = ${update.value.toFixed(2)}`);
-            }
-          } else if (Math.random() < 0.1) {
-            // Log other message types occasionally
-            console.log(`📥 Frontend received message type: ${message.type}`);
-          }
           this.handleMessage(message);
-        } catch (error) {
-          console.error('❌ Failed to parse message:', error);
-          console.error('   Raw data:', event.data);
+        } catch {
+          // silently drop malformed messages
         }
       };
 
@@ -186,32 +174,11 @@ export class WebSocketClient {
 
   private handleMessage(message: WSMessage): void {
     const listeners = this.listeners.get(message.type);
-
-    // Log sensor updates occasionally for debugging (reduce spam)
-    if (message.type === MessageType.SENSOR_UPDATE) {
-      const update = message.payload as SensorUpdate;
-      if (!listeners || listeners.size === 0) {
-        // Only log this occasionally to avoid spam
-        if (Math.random() < 0.1) {
-          console.warn(`⚠️ No listeners for SENSOR_UPDATE: ${update.entity}.${update.component}`);
-        }
-      } else if (Math.random() < 0.05) {
-        // Log successful delivery occasionally
-        console.log(`✅ Delivered: ${update.entity}.${update.component} = ${update.value.toFixed(2)} to ${listeners.size} listener(s)`);
+    if (listeners && listeners.size > 0) {
+      for (const listener of listeners) {
+        try { listener(message.payload); } catch { /* silent */ }
       }
     }
-
-    if (listeners && listeners.size > 0) {
-      listeners.forEach((listener) => {
-        try {
-          listener(message.payload);
-        } catch (error) {
-          console.error(`❌ Error in listener for ${message.type}:`, error);
-        }
-      });
-    }
-
-    // Handle connection status updates
     if (message.type === MessageType.CONNECTION_STATUS) {
       this.notifyConnectionStatus(message.payload as ConnectionStatus);
     }

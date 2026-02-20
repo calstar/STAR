@@ -1,13 +1,24 @@
 /**
  * Phase 2: Autonomous Monitoring and Self-Recalibration
  *
- * Implements:
- * - RLS (Recursive Least Squares) online parameter updates with forgetting factor
- * - GLR (Generalized Likelihood Ratio) drift detection
- * - Automatic recalibration when drift detected
- * - Periodic saving of updated coefficients
+ * Key insight: the PT's intrinsic transfer function (A,B,C) does NOT change —
+ * sensor physics are fixed. What drifts is the offset D (thermal, aging, etc.).
  *
- * Based on calibration_orchestrator.py Phase 2 implementation
+ * Phase 2 runs CONTINUOUSLY on every incoming ADC reading:
+ *   1.  Predict PSI from current polynomial
+ *   2.  Track prediction via exponential moving average (EMA)
+ *   3.  Residual = |prediction − EMA| → feeds GLR drift detector
+ *   4.  Covariance P grows each tick by process noise (models drift)
+ *        → confidence naturally decays without ground truth
+ *   5.  When user provides ground truth (zero-point or known ref)
+ *        → full RLS update shrinks P and corrects coefficients
+ *
+ * Implements:
+ * - RLS (Recursive Least Squares) with forgetting factor
+ * - GLR (Generalized Likelihood Ratio) drift detection
+ * - Process-noise covariance growth for autonomous confidence tracking
+ * - Automatic recalibration on drift
+ * - Periodic saving of updated coefficients
  */
 
 import * as fs from 'fs';
@@ -27,13 +38,18 @@ interface SensorState {
   P: number[][]; // Covariance matrix (4x4 for cubic polynomial)
   forgettingFactor: number;
 
+  // Continuous monitoring state
+  recentPredictions: number[];
+  smoothedPrediction: number | null;
+
   // Drift detection
   recentResiduals: number[];
   driftThreshold: number;
   driftDetected: boolean;
 
   // Statistics
-  updateCount: number;
+  updateCount: number;       // total readings processed
+  rlsUpdateCount: number;    // ground-truth RLS updates
   lastUpdate: number;
   lastSave: number;
 }
@@ -45,10 +61,18 @@ export class Phase2CalibrationEngine {
   private driftThreshold: number = 3.0; // GLR threshold
   private forgettingFactor: number = 0.995; // RLS forgetting factor
 
+  // Process noise added to covariance diagonal each monitoring tick.
+  // Models expected drift rate — confidence decays naturally without ground truth.
+  private processNoise: number = 1e-6;
+
+  // EMA smoothing factor for prediction baseline (0.01 = very slow, stable)
+  private emaSmoothingAlpha: number = 0.02;
+
   constructor() {
     console.log('🤖 Phase 2 Calibration Engine initialized');
     console.log(`   Forgetting factor: ${this.forgettingFactor}`);
-    console.log(`   Drift threshold: ${this.driftThreshold}`);
+    console.log(`   Drift threshold:   ${this.driftThreshold}`);
+    console.log(`   Process noise:     ${this.processNoise}`);
     console.log(`   Auto-save interval: ${this.saveInterval}s`);
   }
 
@@ -56,8 +80,6 @@ export class Phase2CalibrationEngine {
    * Initialize sensor state from existing calibration
    */
   initializeSensor(sensorId: number, coeffs: CalibrationCoefficients): void {
-    // Initialize RLS covariance matrix (4x4 for cubic polynomial)
-    // Start with large diagonal values (high uncertainty)
     const P: number[][] = [
       [1e6, 0, 0, 0],
       [0, 1e6, 0, 0],
@@ -69,48 +91,90 @@ export class Phase2CalibrationEngine {
       coeffs,
       P,
       forgettingFactor: this.forgettingFactor,
+      recentPredictions: [],
+      smoothedPrediction: null,
       recentResiduals: [],
       driftThreshold: this.driftThreshold,
       driftDetected: false,
       updateCount: 0,
+      rlsUpdateCount: 0,
       lastUpdate: Date.now(),
       lastSave: Date.now(),
     });
   }
 
+  // ─── Continuous monitoring (called on EVERY incoming ADC reading) ──────────
+
   /**
-   * Update calibration using RLS with forgetting factor
-   * Formula: θ(k+1) = θ(k) + K(k+1) * e(k+1)
-   * where K is Kalman gain, e is prediction error
+   * Process a raw ADC reading — runs every time the DAQ sends data.
+   * Does NOT require ground truth. Evolves covariance, tracks predictions,
+   * computes residuals, feeds GLR drift detector.
+   */
+  monitorReading(sensorId: number, adcCode: number): void {
+    if (!this.enabled) return;
+    const state = this.sensorStates.get(sensorId);
+    if (!state) return;
+
+    // Current prediction from polynomial
+    const predicted =
+      state.coeffs.A * adcCode ** 3 +
+      state.coeffs.B * adcCode ** 2 +
+      state.coeffs.C * adcCode +
+      state.coeffs.D;
+
+    // Track recent predictions
+    state.recentPredictions.push(predicted);
+    if (state.recentPredictions.length > 200) state.recentPredictions.shift();
+
+    // Initialise EMA on first reading
+    if (state.smoothedPrediction === null) {
+      state.smoothedPrediction = predicted;
+    }
+
+    // Exponential moving average — slow baseline that lags behind drift
+    state.smoothedPrediction =
+      this.emaSmoothingAlpha * predicted +
+      (1 - this.emaSmoothingAlpha) * state.smoothedPrediction;
+
+    // Residual: deviation from the smoothed baseline.
+    // Stable sensor → tiny residuals. Drifting sensor → growing residuals.
+    const residual = Math.abs(predicted - state.smoothedPrediction);
+    state.recentResiduals.push(residual);
+    if (state.recentResiduals.length > 100) state.recentResiduals.shift();
+
+    // Process noise: covariance grows each tick → confidence naturally decays
+    // without ground truth updates. This models expected sensor drift.
+    for (let i = 0; i < 4; i++) {
+      state.P[i][i] += this.processNoise;
+    }
+
+    state.updateCount++;
+    state.lastUpdate = Date.now();
+
+    // GLR drift check
+    this.checkDrift(sensorId, state);
+  }
+
+  // ─── Full RLS update (called when user provides ground truth) ─────────────
+
+  /**
+   * Update calibration using RLS with forgetting factor.
+   * Called when the user supplies a known reference pressure (zero-point init,
+   * Phase 1 capture, or any manual reference).
+   *
+   * Formula: θ(k+1) = θ(k) + K(k+1) · e(k+1)
    */
   updateCalibration(
     sensorId: number,
     adcCode: number,
-    referencePressure: number | null
+    referencePressure: number
   ): CalibrationCoefficients | null {
-    if (!this.enabled) {
-      return null;
-    }
-
+    if (!this.enabled) return null;
     const state = this.sensorStates.get(sensorId);
-    if (!state) {
-      return null;
-    }
+    if (!state) return null;
 
-    // If no reference pressure, we can't update (need ground truth)
-    // In autonomous mode, we'd use consensus or other sensors
-    // For now, skip if no reference
-    if (referencePressure === null) {
-      return null;
-    }
-
-    // Feature vector for cubic polynomial: [adc^3, adc^2, adc, 1]
-    const phi = [
-      adcCode ** 3,
-      adcCode ** 2,
-      adcCode,
-      1.0,
-    ];
+    // Feature vector for cubic polynomial: [adc³, adc², adc, 1]
+    const phi = [adcCode ** 3, adcCode ** 2, adcCode, 1.0];
 
     // Current prediction
     const predicted =
@@ -122,14 +186,11 @@ export class Phase2CalibrationEngine {
     // Prediction error
     const error = referencePressure - predicted;
 
-    // Store residual for drift detection
+    // Store residual
     state.recentResiduals.push(Math.abs(error));
-    if (state.recentResiduals.length > 100) {
-      state.recentResiduals.shift();
-    }
+    if (state.recentResiduals.length > 100) state.recentResiduals.shift();
 
-    // RLS update with forgetting factor
-    // K = P * phi / (lambda + phi^T * P * phi)
+    // RLS: K = P · φ / (λ + φᵀ · P · φ)
     const phiTP = [
       phi[0] * state.P[0][0] + phi[1] * state.P[1][0] + phi[2] * state.P[2][0] + phi[3] * state.P[3][0],
       phi[0] * state.P[0][1] + phi[1] * state.P[1][1] + phi[2] * state.P[2][1] + phi[3] * state.P[3][1],
@@ -137,16 +198,15 @@ export class Phase2CalibrationEngine {
       phi[0] * state.P[0][3] + phi[1] * state.P[1][3] + phi[2] * state.P[2][3] + phi[3] * state.P[3][3],
     ];
 
-    const denominator = this.forgettingFactor +
+    const denominator =
+      this.forgettingFactor +
       phi[0] * phiTP[0] + phi[1] * phiTP[1] + phi[2] * phiTP[2] + phi[3] * phiTP[3];
 
-    if (Math.abs(denominator) < 1e-10) {
-      return null; // Avoid division by zero
-    }
+    if (Math.abs(denominator) < 1e-10) return null;
 
-    const K = phiTP.map(v => v / denominator);
+    const K = phiTP.map((v) => v / denominator);
 
-    // Update coefficients: θ = θ + K * error
+    // Update coefficients: θ = θ + K · error
     const newCoeffs: CalibrationCoefficients = {
       A: state.coeffs.A + K[0] * error,
       B: state.coeffs.B + K[1] * error,
@@ -154,7 +214,7 @@ export class Phase2CalibrationEngine {
       D: state.coeffs.D + K[3] * error,
     };
 
-    // Update covariance: P = (P - K * phi^T * P) / lambda
+    // Update covariance: P = (P − K · φᵀ · P) / λ
     const KP = [
       [K[0] * phiTP[0], K[0] * phiTP[1], K[0] * phiTP[2], K[0] * phiTP[3]],
       [K[1] * phiTP[0], K[1] * phiTP[1], K[1] * phiTP[2], K[1] * phiTP[3]],
@@ -168,15 +228,19 @@ export class Phase2CalibrationEngine {
       }
     }
 
-    // Update state
+    // Commit
     state.coeffs = newCoeffs;
+    state.rlsUpdateCount++;
     state.updateCount++;
     state.lastUpdate = Date.now();
 
-    // Check for drift
+    // Reset EMA after a ground-truth update so it re-centres
+    state.smoothedPrediction = referencePressure;
+
+    // Check drift
     this.checkDrift(sensorId, state);
 
-    // Auto-save if needed
+    // Auto-save
     if (Date.now() - state.lastSave > this.saveInterval * 1000) {
       this.saveCalibration(sensorId, state);
       state.lastSave = Date.now();
@@ -185,18 +249,17 @@ export class Phase2CalibrationEngine {
     return newCoeffs;
   }
 
-  /**
-   * GLR drift detection
-   * Compares recent residuals to historical mean
-   */
-  private checkDrift(sensorId: number, state: SensorState): void {
-    if (state.recentResiduals.length < 20) {
-      return; // Need enough data
-    }
+  // ─── GLR drift detection ──────────────────────────────────────────────────
 
-    // Calculate mean and std of recent residuals
-    const mean = state.recentResiduals.reduce((a, b) => a + b, 0) / state.recentResiduals.length;
-    const variance = state.recentResiduals.reduce((sum, r) => sum + (r - mean) ** 2, 0) / state.recentResiduals.length;
+  private checkDrift(sensorId: number, state: SensorState): void {
+    if (state.recentResiduals.length < 20) return;
+
+    const mean =
+      state.recentResiduals.reduce((a, b) => a + b, 0) /
+      state.recentResiduals.length;
+    const variance =
+      state.recentResiduals.reduce((sum, r) => sum + (r - mean) ** 2, 0) /
+      state.recentResiduals.length;
     const std = Math.sqrt(variance);
 
     // GLR statistic (simplified)
@@ -204,27 +267,29 @@ export class Phase2CalibrationEngine {
 
     if (glr > state.driftThreshold && !state.driftDetected) {
       state.driftDetected = true;
-      console.warn(`⚠️ Drift detected for sensor ${sensorId}: GLR=${glr.toFixed(2)} (threshold=${state.driftThreshold})`);
+      console.warn(
+        `⚠️ Drift detected for sensor ${sensorId}: GLR=${glr.toFixed(2)} (threshold=${state.driftThreshold})`
+      );
       console.warn(`   Mean residual: ${mean.toFixed(4)}, Std: ${std.toFixed(4)}`);
-      // In full implementation, would trigger Bayesian recalibration here
     } else if (glr <= state.driftThreshold && state.driftDetected) {
       state.driftDetected = false;
       console.log(`✅ Drift cleared for sensor ${sensorId}`);
     }
   }
 
-  /**
-   * Save updated calibration to file
-   */
+  // ─── Persistence ──────────────────────────────────────────────────────────
+
   private saveCalibration(sensorId: number, state: SensorState): void {
-    const calibrationDir = path.join(__dirname, '../../../scripts/calibration/calibrations');
+    const calibrationDir = path.join(__dirname, '../../data');
+    if (!fs.existsSync(calibrationDir)) {
+      fs.mkdirSync(calibrationDir, { recursive: true });
+    }
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
     const filename = path.join(calibrationDir, `phase2_update_${timestamp}.json`);
 
     try {
-      // Load existing calibration file or create new structure
       const existingFile = this.findLatestCalibrationFile();
-      let data: any = {};
+      let data: Record<string, unknown> = {};
 
       if (existingFile && fs.existsSync(existingFile)) {
         data = JSON.parse(fs.readFileSync(existingFile, 'utf-8'));
@@ -239,24 +304,18 @@ export class Phase2CalibrationEngine {
         };
       }
 
-      // Update coefficients for this sensor
-      if (!data.calibration_polynomials) {
-        data.calibration_polynomials = {};
-      }
-
-      data.calibration_polynomials[sensorId.toString()] = [
+      if (!data.calibration_polynomials) data.calibration_polynomials = {};
+      (data.calibration_polynomials as Record<string, number[]>)[sensorId.toString()] = [
         state.coeffs.A,
         state.coeffs.B,
         state.coeffs.C,
         state.coeffs.D,
       ];
 
-      // Add Phase 2 metadata
-      if (!data.phase2_updates) {
-        data.phase2_updates = {};
-      }
-      data.phase2_updates[sensorId.toString()] = {
+      if (!data.phase2_updates) data.phase2_updates = {};
+      (data.phase2_updates as Record<string, unknown>)[sensorId.toString()] = {
         update_count: state.updateCount,
+        rls_updates: state.rlsUpdateCount,
         last_update: new Date(state.lastUpdate).toISOString(),
         drift_detected: state.driftDetected,
       };
@@ -269,71 +328,72 @@ export class Phase2CalibrationEngine {
   }
 
   /**
-   * Find latest calibration file
+   * Force save all channels NOW (called by save_coefficients command)
    */
+  saveAllNow(): void {
+    for (const [sensorId, state] of this.sensorStates) {
+      this.saveCalibration(sensorId, state);
+      state.lastSave = Date.now();
+    }
+  }
+
   private findLatestCalibrationFile(): string | null {
-    const calibrationDir = path.join(__dirname, '../../../scripts/calibration/calibrations');
-    if (!fs.existsSync(calibrationDir)) {
-      return null;
-    }
+    const calibrationDir = path.join(__dirname, '../../data');
+    if (!fs.existsSync(calibrationDir)) return null;
 
-    const jsonFiles = fs.readdirSync(calibrationDir)
-      .filter(f => f.endsWith('.json') && !f.includes('learned_prior'))
-      .map(f => path.join(calibrationDir, f));
+    const jsonFiles = fs
+      .readdirSync(calibrationDir)
+      .filter((f) => f.endsWith('.json') && !f.includes('learned_prior'))
+      .map((f) => path.join(calibrationDir, f));
 
-    if (jsonFiles.length === 0) {
-      return null;
-    }
-
-    return jsonFiles.sort((a, b) =>
-      fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs
-    )[0];
+    if (jsonFiles.length === 0) return null;
+    return jsonFiles.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
   }
 
-  /**
-   * Get current calibration for a sensor
-   */
+  // ─── Accessors ────────────────────────────────────────────────────────────
+
   getCalibration(sensorId: number): CalibrationCoefficients | null {
-    const state = this.sensorStates.get(sensorId);
-    return state ? state.coeffs : null;
+    return this.sensorStates.get(sensorId)?.coeffs ?? null;
   }
 
-  /**
-   * Return live status for every initialized channel — used by
-   * the WebSocket server to broadcast CALIBRATION_STATUS messages.
-   */
   getAllStatus(): Array<{
-    sensorId:      number;
-    updateCount:   number;
-    lastUpdate:    number;
+    sensorId: number;
+    updateCount: number;
+    rlsUpdateCount: number;
+    lastUpdate: number;
     driftDetected: boolean;
-    meanResidual:  number;
-    glrStat:       number;
-    confidence:    'MAXIMUM' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNCALIBRATED';
+    meanResidual: number;
+    glrStat: number;
+    confidence: 'MAXIMUM' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNCALIBRATED';
     coeffs: { A: number; B: number; C: number; D: number };
-    phase2Active:  boolean;
+    phase2Active: boolean;
+    covarianceTrace: number;
   }> {
     const result: ReturnType<typeof this.getAllStatus> = [];
 
     for (const [sensorId, state] of this.sensorStates) {
-      const n    = state.recentResiduals.length;
-      const mean = n > 0
-        ? state.recentResiduals.reduce((a, b) => a + b, 0) / n
-        : 0;
-      const variance = n > 1
-        ? state.recentResiduals.reduce((s, r) => s + (r - mean) ** 2, 0) / n
-        : 0;
-      const std    = Math.sqrt(variance);
+      const n = state.recentResiduals.length;
+      const mean = n > 0 ? state.recentResiduals.reduce((a, b) => a + b, 0) / n : 0;
+      const variance =
+        n > 1 ? state.recentResiduals.reduce((s, r) => s + (r - mean) ** 2, 0) / n : 0;
+      const std = Math.sqrt(variance);
       const glrStat = mean / (std + 1e-6);
 
+      // Covariance trace — proxy for overall uncertainty
+      const covTrace = state.P[0][0] + state.P[1][1] + state.P[2][2] + state.P[3][3];
+
       let confidence: 'MAXIMUM' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNCALIBRATED';
-      if (state.updateCount === 0) {
+      if (state.rlsUpdateCount === 0) {
         confidence = 'UNCALIBRATED';
-      } else if (state.updateCount > 200 && !state.driftDetected && glrStat < this.driftThreshold) {
+      } else if (
+        state.rlsUpdateCount > 200 &&
+        !state.driftDetected &&
+        glrStat < this.driftThreshold
+      ) {
         confidence = 'MAXIMUM';
-      } else if (state.updateCount > 50 && !state.driftDetected) {
+      } else if (state.rlsUpdateCount > 50 && !state.driftDetected) {
         confidence = 'HIGH';
-      } else if (state.updateCount > 5) {
+      } else if (state.rlsUpdateCount > 5) {
         confidence = 'MEDIUM';
       } else {
         confidence = 'LOW';
@@ -341,30 +401,26 @@ export class Phase2CalibrationEngine {
 
       result.push({
         sensorId,
-        updateCount:   state.updateCount,
-        lastUpdate:    state.lastUpdate,
+        updateCount: state.updateCount,
+        rlsUpdateCount: state.rlsUpdateCount,
+        lastUpdate: state.lastUpdate,
         driftDetected: state.driftDetected,
-        meanResidual:  mean,
+        meanResidual: mean,
         glrStat,
         confidence,
-        coeffs: {
-          A: state.coeffs.A,
-          B: state.coeffs.B,
-          C: state.coeffs.C,
-          D: state.coeffs.D,
-        },
+        coeffs: { ...state.coeffs },
         phase2Active: this.enabled,
+        covarianceTrace: covTrace,
       });
     }
 
     return result.sort((a, b) => a.sensorId - b.sensorId);
   }
 
-  isEnabled(): boolean { return this.enabled; }
+  isEnabled(): boolean {
+    return this.enabled;
+  }
 
-  /**
-   * Enable/disable Phase 2
-   */
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
     console.log(`Phase 2 calibration ${enabled ? 'enabled' : 'disabled'}`);

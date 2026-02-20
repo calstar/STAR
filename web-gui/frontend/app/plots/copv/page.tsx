@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import PressureBar from '@/components/plots/PressureBar';
+import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate } from '@/lib/types';
@@ -28,6 +29,13 @@ export default function COPVGraphsPage() {
       <div className="flex items-center flex-shrink-0">
         <div className="w-1 h-5 bg-green-500 rounded-full mr-3" />
         <h1 className="text-base font-bold text-green-400 tracking-wider">COPV / GN2 SYSTEM</h1>
+      </div>
+
+      <div className="flex-shrink-0">
+        <SensorReadoutStrip sensors={[
+          { label: 'GN2 High', entity: 'PT_Cal.PT_CH9', component: 'pressure_psi', color: '#27AE60' },
+          { label: 'GN2 Reg',  entity: 'PT_Cal.PT_CH6', component: 'pressure_psi', color: '#229954' },
+        ]} />
       </div>
 
       <div className="flex-1 min-h-0 flex flex-row gap-2">
@@ -56,7 +64,7 @@ export default function COPVGraphsPage() {
           </div>
         </div>
 
-        <div className="w-36 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0">
+        <div className="w-44 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0">
           <div className="text-[9px] font-bold uppercase tracking-widest text-gray-600 text-center flex-shrink-0">Pressures</div>
           <div className="flex-shrink-0 text-[9px] font-mono text-center">
             <span className="text-red-400">— MEOP</span> <span className="text-yellow-400">— NOP</span>

@@ -14,9 +14,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body>
+      <body className="h-screen flex flex-col overflow-hidden">
         <TopBar />
-        {children}
+        <div className="flex-1 min-h-0 overflow-auto flex flex-col">
+          {children}
+        </div>
       </body>
     </html>
   )

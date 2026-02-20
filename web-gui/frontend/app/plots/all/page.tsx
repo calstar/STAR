@@ -5,6 +5,7 @@ import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
+import ActuatorStatePanel from '@/components/plots/ActuatorStatePanel';
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
 type TabId = 'fuel' | 'lox' | 'copv' | 'gse' | 'raw';
@@ -49,13 +50,13 @@ function FuelTab() {
         colors={['#3498DB','#2980B9']}
         yLabel="Pressure (PSI)"
       />
-      <TimeSeriesPlot
-        title="FUEL Actuator States (ADC)"
-        entities={['ACT.ACT_CH7','ACT.ACT_CH2','ACT.ACT_CH3']}
-        labels={['Fuel Main','Fuel Vent','Fuel Press']}
-        component="raw_adc_counts"
-        colors={['#27AE60','#E74C3C','#F39C12']}
-        yLabel="ADC / Status"
+      <ActuatorStatePanel
+        title="Fuel Actuators"
+        actuators={[
+          { label: 'Fuel Main',  entity: 'ACT.ACT_CH7', color: '#27AE60' },
+          { label: 'Fuel Vent',  entity: 'ACT.ACT_CH2', color: '#E74C3C' },
+          { label: 'Fuel Press', entity: 'ACT.ACT_CH3', color: '#F39C12' },
+        ]}
       />
     </div>
   );
@@ -76,13 +77,13 @@ function LOXTab() {
         colors={['#E74C3C','#C0392B']}
         yLabel="Pressure (PSI)"
       />
-      <TimeSeriesPlot
-        title="LOX Actuator States (ADC)"
-        entities={['ACT.ACT_CH1','ACT.ACT_CH6','ACT.ACT_CH8']}
-        labels={['LOX Main','LOX Vent','LOX Press']}
-        component="raw_adc_counts"
-        colors={['#27AE60','#E74C3C','#F39C12']}
-        yLabel="ADC / Status"
+      <ActuatorStatePanel
+        title="LOX Actuators"
+        actuators={[
+          { label: 'LOX Main',  entity: 'ACT.ACT_CH1', color: '#27AE60' },
+          { label: 'LOX Vent',  entity: 'ACT.ACT_CH6', color: '#E74C3C' },
+          { label: 'LOX Press', entity: 'ACT.ACT_CH8', color: '#F39C12' },
+        ]}
       />
     </div>
   );
@@ -123,13 +124,11 @@ function GSETab() {
         colors={['#F39C12','#9B59B6','#8E44AD']}
         yLabel="Pressure (PSI)"
       />
-      <TimeSeriesPlot
-        title="GSE Vent Actuator (ADC feedback)"
-        entities={['ACT.ACT_CH5']}
-        labels={['GSE Low Vent']}
-        component="raw_adc_counts"
-        colors={['#F39C12']}
-        yLabel="ADC / Status"
+      <ActuatorStatePanel
+        title="GSE Actuators"
+        actuators={[
+          { label: 'GSE Low Vent', entity: 'ACT.ACT_CH5', color: '#F39C12' },
+        ]}
       />
     </div>
   );

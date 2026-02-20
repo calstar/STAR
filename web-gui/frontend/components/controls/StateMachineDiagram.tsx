@@ -2,7 +2,7 @@
 
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { SystemState, MessageType, CommandPayload } from '@/lib/types';
+import { SystemState, MessageType, CommandPayload, StateUpdate } from '@/lib/types';
 import { useEffect, useState, useMemo } from 'react';
 
 const STATE_NAMES: Record<SystemState, string> = {
@@ -207,10 +207,13 @@ function StateNode({
 
 export default function StateMachineDiagram() {
   const currentState = useSensorStore((s) => s.currentState);
+  const updateState = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
   const transitions = useMemo(() => parseCSVTransitions(), []);
 
   const sendStateTransition = (targetState: SystemState) => {
+    // Optimistic update — show new state immediately
+    updateState({ currentState: targetState, stateName: SystemState[targetState] ?? '', timestamp: Date.now() });
     const command: CommandPayload = {
       commandType: 'state_transition',
       data: { state: targetState },
@@ -305,3 +308,4 @@ export default function StateMachineDiagram() {
     </div>
   );
 }
+

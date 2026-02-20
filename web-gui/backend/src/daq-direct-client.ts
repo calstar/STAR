@@ -62,10 +62,11 @@ export class DAQDirectClient extends EventEmitter {
         });
 
         // Try to set SO_REUSEPORT via internal handle (Linux only)
-        if (process.platform === 'linux' && this.udpSocket._handle && (this.udpSocket._handle as any).setOption) {
+        const handle = (this.udpSocket as any)._handle;
+        if (process.platform === 'linux' && handle && handle.setOption) {
           try {
             // SO_REUSEPORT = 15 on Linux (from /usr/include/asm-generic/socket.h)
-            (this.udpSocket._handle as any).setOption(15, 1);
+            handle.setOption(15, 1);
             console.log('   ✅ SO_REUSEPORT enabled - can share port with DAQ Bridge');
           } catch (e) {
             // SO_REUSEPORT not available, continue anyway

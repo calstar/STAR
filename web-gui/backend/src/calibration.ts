@@ -77,45 +77,53 @@ function loadCalibrationJSON(jsonPath: string): CalibrationMap {
 /**
  * Load PT calibration (tries JSON first, then CSV)
  * Returns map: sensor_id -> {A, B, C, D}
+ *
+ * Search order:
+ *  1. scripts/calibration/calibrations/ (relative to project root via __dirname)
+ *  2. web-gui/backend/data/             (backend local data dir)
+ *  3. external/DiabloAvionics/test_guis/ (original source)
  */
 export function loadPTCalibration(): CalibrationMap {
-  // Try JSON first (from calibration GUI)
-  // Path relative to backend directory: backend/src -> scripts/calibration/calibrations
-  // __dirname points to the compiled JS location (backend/dist/src or backend/src)
-  const calibrationDir = path.join(__dirname, '../../../scripts/calibration/calibrations');
+  // Build a list of candidate directories to search
+  const candidateDirs: string[] = [
+    path.join(__dirname, '../../../scripts/calibration/calibrations'),   // project root
+    path.join(__dirname, '../data'),                                      // backend/data
+    path.join(__dirname, '../../../external/DiabloAvionics/test_guis'),  // original source
+  ];
 
-  console.log(`🔍 Looking for calibration files in: ${calibrationDir}`);
-  console.log(`   Current working directory: ${process.cwd()}`);
+  console.log(`🔍 Searching for calibration files…`);
   console.log(`   __dirname: ${__dirname}`);
 
-  if (fs.existsSync(calibrationDir)) {
+  for (const calibrationDir of candidateDirs) {
+    if (!fs.existsSync(calibrationDir)) {
+      console.log(`   ❌ ${calibrationDir} — not found`);
+      continue;
+    }
+
     const jsonFiles = fs.readdirSync(calibrationDir)
-      .filter(f => f.endsWith('.json'))
+      .filter(f => f.endsWith('.json') && f.startsWith('calibration'))
       .map(f => path.join(calibrationDir, f));
 
-    if (jsonFiles.length > 0) {
-      // Use most recent file
-      const latest = jsonFiles.sort((a, b) =>
-        fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs
-      )[0];
-
-      console.log(`📋 Loading calibration from: ${latest}`);
-      const cal = loadCalibrationJSON(latest);
-      if (cal.size > 0) {
-        console.log(`✅ Loaded PT calibration: ${cal.size} sensors`);
-        // Log which sensors have calibration
-        for (const [sensorId, coeffs] of cal.entries()) {
-          console.log(`   Sensor ${sensorId}: A=${coeffs.A.toExponential(2)}, B=${coeffs.B.toExponential(2)}, C=${coeffs.C.toExponential(2)}, D=${coeffs.D.toFixed(2)}`);
-        }
-        return cal;
-      } else {
-        console.warn(`⚠️ Calibration file found but no valid coefficients loaded`);
-      }
-    } else {
-      console.warn(`⚠️ No JSON files found in ${calibrationDir}`);
+    if (jsonFiles.length === 0) {
+      console.log(`   ⚠️ ${calibrationDir} — no calibration JSON files`);
+      continue;
     }
-  } else {
-    console.warn(`⚠️ Calibration directory does not exist: ${calibrationDir}`);
+
+    // Use most recent file
+    const latest = jsonFiles.sort((a, b) =>
+      fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs
+    )[0];
+
+    console.log(`📋 Loading calibration from: ${latest}`);
+    const cal = loadCalibrationJSON(latest);
+    if (cal.size > 0) {
+      console.log(`✅ Loaded PT calibration: ${cal.size} sensors`);
+      for (const [sensorId, coeffs] of cal.entries()) {
+        console.log(`   Sensor ${sensorId}: A=${coeffs.A.toExponential(2)}, B=${coeffs.B.toExponential(2)}, C=${coeffs.C.toExponential(2)}, D=${coeffs.D.toFixed(2)}`);
+      }
+      return cal;
+    }
+    console.warn(`   ⚠️ ${latest} — no valid coefficients`);
   }
 
   console.warn('⚠️ No PT calibration found - pressures will be uncalibrated');
