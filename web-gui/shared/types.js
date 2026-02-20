@@ -9,12 +9,17 @@ export var MessageType;
     MessageType["UNSUBSCRIBE_SENSOR"] = "unsubscribe_sensor";
     MessageType["SEND_COMMAND"] = "send_command";
     MessageType["QUERY_HISTORICAL"] = "query_historical";
+    MessageType["CALIBRATION_COMMAND"] = "calibration_command";
     // Server → Client
     MessageType["SENSOR_UPDATE"] = "sensor_update";
     MessageType["ACTUATOR_UPDATE"] = "actuator_update";
     MessageType["STATE_UPDATE"] = "state_update";
     MessageType["ERROR"] = "error";
     MessageType["CONNECTION_STATUS"] = "connection_status";
+    MessageType["CALIBRATION_STATUS"] = "calibration_status";
+    MessageType["CONTROLLER_UPDATE"] = "controller_update";
+    MessageType["MISSION_START_TIME"] = "mission_start_time";
+    MessageType["ACTUATOR_EXPECTED_POSITIONS_UPDATE"] = "actuator_expected_positions_update";
 })(MessageType || (MessageType = {}));
 // Sensor types
 export var SensorType;
@@ -46,7 +51,11 @@ export var SystemState;
     SystemState[SystemState["CALIBRATE"] = 14] = "CALIBRATE";
     SystemState[SystemState["READY"] = 15] = "READY";
     SystemState[SystemState["FIRE"] = 16] = "FIRE";
-    SystemState[SystemState["ABORT"] = 17] = "ABORT";
+    SystemState[SystemState["ENGINE_ABORT"] = 17] = "ENGINE_ABORT";
+    SystemState[SystemState["GSE_ABORT"] = 18] = "GSE_ABORT";
+    SystemState[SystemState["EMERGENCY_ABORT"] = 19] = "EMERGENCY_ABORT";
+    // Legacy alias for backwards compatibility
+    SystemState[SystemState["ABORT"] = 19] = "ABORT";
 })(SystemState || (SystemState = {}));
 // Actuator IDs
 export var ActuatorId;
@@ -58,6 +67,15 @@ export var ActuatorId;
     ActuatorId[ActuatorId["LOX_PRESS"] = 4] = "LOX_PRESS";
     ActuatorId[ActuatorId["FUEL_PRESS"] = 5] = "FUEL_PRESS";
     ActuatorId[ActuatorId["GSE_LOW_VENT"] = 6] = "GSE_LOW_VENT";
+    // Extended actuators (non-state-machine, but controllable in DEBUG)
+    ActuatorId[ActuatorId["FUEL_FILL_VENT"] = 7] = "FUEL_FILL_VENT";
+    ActuatorId[ActuatorId["FUEL_FILL_PRESS"] = 8] = "FUEL_FILL_PRESS";
+    ActuatorId[ActuatorId["LOX_FILL"] = 9] = "LOX_FILL";
+    ActuatorId[ActuatorId["LOX_DUMP"] = 10] = "LOX_DUMP";
+    ActuatorId[ActuatorId["GSE_HIGH_PRESS_VENT"] = 11] = "GSE_HIGH_PRESS_VENT";
+    ActuatorId[ActuatorId["GSE_LOX_FILL_VENT"] = 12] = "GSE_LOX_FILL_VENT";
+    ActuatorId[ActuatorId["GSE_HIGH_PRESS_CONTROL"] = 13] = "GSE_HIGH_PRESS_CONTROL";
+    ActuatorId[ActuatorId["GSE_MED_PRESS_CONTROL"] = 14] = "GSE_MED_PRESS_CONTROL";
 })(ActuatorId || (ActuatorId = {}));
 // Actuator states
 export var ActuatorState;
