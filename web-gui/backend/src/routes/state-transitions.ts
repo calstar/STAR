@@ -27,6 +27,12 @@ const CSV_STATE_MAP: Record<string, SystemState> = {
   'Fire': SystemState.FIRE,
   'Vent': SystemState.VENT,
   'Abort': SystemState.ABORT,
+  // Additional mappings for completeness
+  'Debug': SystemState.DEBUG,
+  'Calibrate': SystemState.CALIBRATE,
+  'Ready': SystemState.READY,
+  'GN2 High Press': SystemState.GN2_HIGH_PRESS,
+  'GN2 High Vent': SystemState.GN2_HIGH_VENT,
 };
 
 interface Transition {
