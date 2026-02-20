@@ -25,8 +25,9 @@ export function useWindowManager() {
     const top = (Math.floor(windows.size / 3) * 100) + 50;
 
     try {
-      // Ensure URL is absolute
+      // Ensure URL is absolute - use current origin
       const absoluteUrl = url.startsWith('http') ? url : `${window.location.origin}${url.startsWith('/') ? url : '/' + url}`;
+      console.log(`[WindowManager] Opening window: ${absoluteUrl}`);
       
       const newWindow = window.open(
         absoluteUrl,

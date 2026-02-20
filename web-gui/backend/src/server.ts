@@ -144,27 +144,37 @@ class SensorSystemServer {
     // Initialize Phase 2 autonomous calibration engine
     this.phase2Engine = new Phase2CalibrationEngine();
 
-    // Load saved Phase 2 calibration if it exists
-    const savedCalibration = this.phase2Engine.loadSavedCalibration();
+    // Load saved Phase 2 calibration if it exists (wrap in try-catch to prevent crashes)
+    let savedCalibration: Map<number, CalibrationCoefficients> = new Map();
+    try {
+      savedCalibration = this.phase2Engine.loadSavedCalibration();
+    } catch (err) {
+      console.warn('⚠️ Failed to load saved Phase 2 calibration, continuing without it:', err);
+    }
     
     // Initialize Phase 2 for all sensors with existing calibration
     this.ptCalibration.forEach((coeffs, sensorId) => {
-      this.phase2Engine!.initializeSensor(sensorId, coeffs);
-      
-      // If we have saved calibration for this sensor, restore it
-      const saved = savedCalibration.get(sensorId);
-      if (saved) {
-        const state = this.phase2Engine!.getSensorState(sensorId);
-        if (state) {
-          // Restore saved adjustment values (saved = baseline + adjustment)
-          state.adjustment = {
-            A: saved.A - coeffs.A,
-            B: saved.B - coeffs.B,
-            C: saved.C - coeffs.C,
-            D: saved.D - coeffs.D,
-          };
-          console.log(`📋 Restored saved Phase 2 calibration for sensor ${sensorId}`);
+      try {
+        this.phase2Engine!.initializeSensor(sensorId, coeffs);
+        
+        // If we have saved calibration for this sensor, restore it
+        const saved = savedCalibration.get(sensorId);
+        if (saved) {
+          const state = this.phase2Engine!.getSensorState(sensorId);
+          if (state) {
+            // Restore saved adjustment values (saved = baseline + adjustment)
+            state.adjustment = {
+              A: saved.A - coeffs.A,
+              B: saved.B - coeffs.B,
+              C: saved.C - coeffs.C,
+              D: saved.D - coeffs.D,
+            };
+            console.log(`📋 Restored saved Phase 2 calibration for sensor ${sensorId}`);
+          }
         }
+      } catch (err) {
+        console.error(`❌ Failed to initialize Phase 2 for sensor ${sensorId}:`, err);
+        // Continue with other sensors
       }
     });
     console.log(`🤖 Phase 2 calibration engine initialized for ${this.ptCalibration.size} sensors`);
