@@ -6,19 +6,21 @@ import PressureBar from '@/components/plots/PressureBar';
 import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate } from '@/lib/types';
+import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 
 const NOP_HIGH = 900; const MEOP_HIGH = 950;
 const NOP_REG  = 450; const MEOP_REG  = 600;
 
 export default function COPVGraphsPage() {
   const updateSensor = useSensorStore((s) => s.updateSensor);
+  const updateState = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
   useEffect(() => {
     ws.connect();
-    const unsub = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    return unsub;
-  }, [ws, updateSensor]);
+    const unsub1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
+    const unsub2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
+    return () => { unsub1(); unsub2(); };
+  }, [ws, updateSensor, updateState]);
 
   // Call all hooks unconditionally (React Rules of Hooks)
   const hiNamed = useSensorValue('PT_Cal.GN2_High', 'pressure_psi');

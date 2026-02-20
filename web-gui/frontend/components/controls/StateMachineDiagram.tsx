@@ -206,9 +206,9 @@ export default function StateMachineDiagram() {
 
   const states = Object.values(SystemState).filter((s) => typeof s === 'number') as SystemState[];
 
-  // SVG dimensions
+  // SVG dimensions - ensure enough space for all states
   const svgW = PAD * 2 + COLS * COL_GAP;
-  const svgH = PAD * 2 + 7 * ROW_GAP;
+  const svgH = PAD * 2 + 7 * ROW_GAP; // 7 rows for all states
 
   // Default to IDLE when no state has been received yet
   const effectiveState = currentState ?? SystemState.IDLE;

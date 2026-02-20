@@ -144,9 +144,28 @@ class SensorSystemServer {
     // Initialize Phase 2 autonomous calibration engine
     this.phase2Engine = new Phase2CalibrationEngine();
 
+    // Load saved Phase 2 calibration if it exists
+    const savedCalibration = this.phase2Engine.loadSavedCalibration();
+    
     // Initialize Phase 2 for all sensors with existing calibration
     this.ptCalibration.forEach((coeffs, sensorId) => {
       this.phase2Engine!.initializeSensor(sensorId, coeffs);
+      
+      // If we have saved calibration for this sensor, restore it
+      const saved = savedCalibration.get(sensorId);
+      if (saved) {
+        const state = this.phase2Engine!.getSensorState(sensorId);
+        if (state) {
+          // Restore saved adjustment values (saved = baseline + adjustment)
+          state.adjustment = {
+            A: saved.A - coeffs.A,
+            B: saved.B - coeffs.B,
+            C: saved.C - coeffs.C,
+            D: saved.D - coeffs.D,
+          };
+          console.log(`📋 Restored saved Phase 2 calibration for sensor ${sensorId}`);
+        }
+      }
     });
     console.log(`🤖 Phase 2 calibration engine initialized for ${this.ptCalibration.size} sensors`);
 
@@ -827,6 +846,32 @@ class SensorSystemServer {
               } as ConnectionStatus,
             });
             console.log('   ✅ Sent initial connection status to client');
+
+            // ── CRITICAL: Send current state immediately to new client ──
+            // This ensures all windows/tabs show the same state even if opened at different times
+            if (this.currentState !== null) {
+              this.send(ws, {
+                type: MessageType.STATE_UPDATE,
+                timestamp: Date.now(),
+                payload: {
+                  currentState: this.currentState,
+                  stateName: SystemState[this.currentState] ?? 'UNKNOWN',
+                  timestamp: Date.now(),
+                } as StateUpdate,
+              });
+              console.log(`📤 Sent current state to new client: ${SystemState[this.currentState]}`);
+            } else {
+              // Send IDLE as default if no state set yet
+              this.send(ws, {
+                type: MessageType.STATE_UPDATE,
+                timestamp: Date.now(),
+                payload: {
+                  currentState: SystemState.IDLE,
+                  stateName: 'IDLE',
+                  timestamp: Date.now(),
+                } as StateUpdate,
+              });
+            }
           } catch (error) {
             console.error('   ❌ Failed to send connection status:', error);
           }

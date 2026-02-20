@@ -383,6 +383,40 @@ export class Phase2CalibrationEngine {
     return jsonFiles.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
   }
 
+  /**
+   * Load saved Phase 2 calibration from disk
+   */
+  loadSavedCalibration(): Map<number, CalibrationCoefficients> {
+    const result = new Map<number, CalibrationCoefficients>();
+    const latestFile = this.findLatestCalibrationFile();
+    
+    if (!latestFile) {
+      return result;
+    }
+
+    try {
+      const data = JSON.parse(fs.readFileSync(latestFile, 'utf-8'));
+      if (data.calibration_polynomials) {
+        for (const [sensorIdStr, coeffs] of Object.entries(data.calibration_polynomials)) {
+          const sensorId = parseInt(sensorIdStr, 10);
+          if (Array.isArray(coeffs) && coeffs.length === 4) {
+            result.set(sensorId, {
+              A: coeffs[0],
+              B: coeffs[1],
+              C: coeffs[2],
+              D: coeffs[3],
+            });
+          }
+        }
+      }
+      console.log(`📋 Loaded ${result.size} saved Phase 2 calibrations from ${latestFile}`);
+    } catch (error) {
+      console.error(`❌ Failed to load saved Phase 2 calibration: ${error}`);
+    }
+
+    return result;
+  }
+
   // ─── Accessors ────────────────────────────────────────────────────────────
 
   getCalibration(sensorId: number): CalibrationCoefficients | null {

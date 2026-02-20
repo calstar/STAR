@@ -166,10 +166,11 @@ export default function TimeSeriesPlot({
       if (!el) return null;
       // Use getBoundingClientRect for accurate dimensions
       const rect = el.getBoundingClientRect();
-      const w = Math.floor(rect.width);
-      const h = Math.floor(rect.height);
-      // Lower threshold to allow initialization sooner
-      return (w > 30 && h > 20) ? { w, h } : null;
+      const w = Math.max(0, Math.floor(rect.width));
+      const h = Math.max(0, Math.floor(rect.height));
+      // Require minimum viable size for uPlot
+      if (w < 100 || h < 50) return null;
+      return { w, h };
     };
 
     // ── Pre-fill from background cache so plot has history on open ────
@@ -200,8 +201,7 @@ export default function TimeSeriesPlot({
     const tryInit = () => {
       if (initializedRef.current || !plotRef.current) return;
       const dims = getDims();
-      // Use consistent, lower threshold - plots can work with smaller sizes
-      if (!dims || dims.w < 50 || dims.h < 30) return;
+      if (!dims) return; // getDims already checks minimum size
       
       // Re-check cache right before init to get latest data
       try {
@@ -219,8 +219,6 @@ export default function TimeSeriesPlot({
         console.warn('[TimeSeriesPlot] Cache re-check failed:', err);
       }
       
-      initializedRef.current = true;
-      
       // Always initialize with data - ensure we have at least one time point
       const now = (Date.now() - startTimeRef.current) / 1000;
       const timeData = dataRef.current.time.length > 0 ? dataRef.current.time : [now];
@@ -228,16 +226,21 @@ export default function TimeSeriesPlot({
       
       const data: uPlot.AlignedData = [timeData, ...valueData];
       
-      try {
-        plotInstanceRef.current = new uPlot(buildOpts(dims.w, dims.h), data, plotRef.current);
-        // Immediately update with cached data if we have history
-        if (dataRef.current.time.length > 1) {
-          plotInstanceRef.current.setData([dataRef.current.time, ...dataRef.current.values], true);
+        try {
+          if (!plotRef.current) {
+            return;
+          }
+          plotInstanceRef.current = new uPlot(buildOpts(dims.w, dims.h), data, plotRef.current);
+          // Immediately update with cached data if we have history
+          if (dataRef.current.time.length > 1) {
+            plotInstanceRef.current.setData([dataRef.current.time, ...dataRef.current.values], true);
+          }
+          initializedRef.current = true;
+        } catch (err) {
+          console.error('[TimeSeriesPlot] Initialization failed:', err);
+          initializedRef.current = false;
+          plotInstanceRef.current = null;
         }
-      } catch (err) {
-        console.error('[TimeSeriesPlot] Initialization failed:', err);
-        initializedRef.current = false;
-      }
     };
 
     // ── Aggressive initialization - try immediately and repeatedly ────────
@@ -246,8 +249,7 @@ export default function TimeSeriesPlot({
       if (initializedRef.current) return;
       if (!containerRef.current || !plotRef.current) return;
       const dims = getDims();
-      // Use same threshold as tryInit for consistency
-      if (!dims || dims.w < 50 || dims.h < 30) return;
+      if (!dims) return; // getDims already checks minimum size
       tryInit();
     };
     
@@ -265,16 +267,16 @@ export default function TimeSeriesPlot({
     const ro = new ResizeObserver(() => {
       if (!initializedRef.current) {
         attemptInit(); // Keep trying if not initialized
-      } else if (plotInstanceRef.current) {
-        const dims = getDims();
-        if (dims && dims.w > 30 && dims.h > 20) {
-          try {
-            plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
-          } catch (err) {
-            console.error('[TimeSeriesPlot] ResizeObserver setSize failed:', err);
+        } else if (plotInstanceRef.current) {
+          const dims = getDims();
+          if (dims) {
+            try {
+              plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
+            } catch (err) {
+              console.error('[TimeSeriesPlot] ResizeObserver setSize failed:', err);
+            }
           }
         }
-      }
     });
     
     // Set up observer once container ref is available
@@ -394,7 +396,7 @@ export default function TimeSeriesPlot({
 
       // ── Continuous size sync — catches layout changes ──────────────────
       const dims = getDims();
-      if (dims && plotInstanceRef.current && dims.w > 30 && dims.h > 20 &&
+      if (dims && plotInstanceRef.current &&
           (Math.abs(dims.w - plotInstanceRef.current.width) > 2 ||
            Math.abs(dims.h - plotInstanceRef.current.height) > 2)) {
         try {
@@ -436,8 +438,8 @@ export default function TimeSeriesPlot({
         </div>
       </div>
       {/* Chart container: measured by ResizeObserver. plotRef inside receives uPlot. */}
-      <div ref={containerRef} className="relative flex-1 min-h-0 min-w-0 overflow-hidden">
-        <div ref={plotRef} className="absolute inset-0" />
+      <div ref={containerRef} className="relative flex-1 min-h-0 min-w-0 overflow-hidden" style={{ position: 'relative' }}>
+        <div ref={plotRef} className="absolute inset-0" style={{ width: '100%', height: '100%' }} />
       </div>
     </div>
   );

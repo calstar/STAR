@@ -4,7 +4,7 @@ import { useSensorStore, useGetSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { startDataCache } from '@/lib/data-cache';
 import { useEffect, useState } from 'react';
-import { ConnectionStatus, SystemState, CommandPayload } from '@/lib/types';
+import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, MessageType } from '@/lib/types';
 import PressureBar from '@/components/plots/PressureBar';
 
 const STATE_NAMES: Record<number, string> = {
@@ -41,6 +41,7 @@ export default function TopBar() {
   const debugMode = useSensorStore((s) => s.debugMode);
   const setDebugMode = useSensorStore((s) => s.setDebugMode);
   const updateConnectionStatus = useSensorStore((s) => s.updateConnectionStatus);
+  const updateState = useSensorStore((s) => s.updateState);
 
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({
     connected: false, elodinConnected: false,
@@ -56,11 +57,15 @@ export default function TopBar() {
     } catch (err) {
       console.error('[TopBar] Failed to start data cache:', err);
     }
-    return ws.onConnectionStatus((status) => {
+    const unsubConn = ws.onConnectionStatus((status) => {
       setConnectionStatus(status);
       updateConnectionStatus(status);
     });
-  }, [ws, updateConnectionStatus]);
+    const unsubState = ws.on(MessageType.STATE_UPDATE, (p: unknown) => {
+      updateState(p as StateUpdate);
+    });
+    return () => { unsubConn(); unsubState(); };
+  }, [ws, updateConnectionStatus, updateState]);
 
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString('en-US', { hour12: false }));
@@ -74,8 +79,6 @@ export default function TopBar() {
   const stateColor = STATE_COLORS[effectiveState] ?? 'text-text';
   const isConnected = connectionStatus.connected;
   const isFullyConnected = connectionStatus.connected && connectionStatus.elodinConnected;
-
-  const updateState = useSensorStore((s) => s.updateState);
 
   const sendEmergency = (state: SystemState) => {
     // Optimistic — update UI immediately

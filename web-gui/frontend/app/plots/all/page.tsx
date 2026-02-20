@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate } from '@/lib/types';
+import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import ActuatorStatePanel from '@/components/plots/ActuatorStatePanel';
 
@@ -164,14 +164,16 @@ const TAB_CONTENT: Record<TabId, React.ComponentType> = {
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function AllPlotsPage() {
   const updateSensor = useSensorStore((s) => s.updateSensor);
+  const updateState = useSensorStore((s) => s.updateState);
   const [activeTab, setActiveTab] = useState<TabId>('fuel');
   const ws = getWebSocketClient();
 
   useEffect(() => {
     ws.connect();
-    const unsub = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    return unsub;
-  }, [ws, updateSensor]);
+    const unsub1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
+    const unsub2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
+    return () => { unsub1(); unsub2(); };
+  }, [ws, updateSensor, updateState]);
 
   const TabContent = TAB_CONTENT[activeTab];
   const activeColor = TABS.find((t) => t.id === activeTab)?.color ?? '#3498DB';
