@@ -61,8 +61,8 @@ const STATE_POS: Partial<Record<SystemState, [number, number]>> = {
   // Note: ABORT is an alias for EMERGENCY_ABORT (same enum value), so we don't need to add it separately
 };
 
-function nodeX(state: SystemState) { return PAD + STATE_POS[state][1] * COL_GAP; }
-function nodeY(state: SystemState) { return PAD + STATE_POS[state][0] * ROW_GAP; }
+function nodeX(state: SystemState) { return PAD + (STATE_POS[state]?.[1] ?? 0) * COL_GAP; }
+function nodeY(state: SystemState) { return PAD + (STATE_POS[state]?.[0] ?? 0) * ROW_GAP; }
 function nodeCX(state: SystemState) { return nodeX(state) + NW / 2; }
 function nodeCY(state: SystemState) { return nodeY(state) + NH / 2; }
 
@@ -113,7 +113,7 @@ function arrowPath(from: SystemState, to: SystemState): string {
 function StateNode({
   state, isActive, isReachable, onClick,
 }: { state: SystemState; isActive: boolean; isReachable: boolean; onClick: () => void; }) {
-    const isEmergency = state === SystemState.ENGINE_ABORT || state === SystemState.GSE_ABORT || state === SystemState.EMERGENCY_ABORT || state === SystemState.ABORT || state === SystemState.VENT;
+    const isEmergency = state === SystemState.ENGINE_ABORT || state === SystemState.GSE_ABORT || state === SystemState.EMERGENCY_ABORT || state === SystemState.VENT;
   const isClickable = isReachable || isActive || isEmergency;
   const name = STATE_NAMES[state] ?? 'UNKNOWN';
   const x = nodeX(state); const y = nodeY(state);
