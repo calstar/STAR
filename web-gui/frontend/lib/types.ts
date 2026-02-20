@@ -52,7 +52,11 @@ export enum SystemState {
   CALIBRATE = 14,
   READY = 15,
   FIRE = 16,
-  ABORT = 17,
+  ENGINE_ABORT = 17,
+  GSE_ABORT = 18,
+  EMERGENCY_ABORT = 19,
+  // Legacy alias for backwards compatibility
+  ABORT = 19, // Maps to EMERGENCY_ABORT
 }
 
 // Actuator IDs
