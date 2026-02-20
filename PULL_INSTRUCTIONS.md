@@ -22,10 +22,22 @@ If you're cloning the repository for the first time, use:
 git clone --recurse-submodules https://github.com/calstar/Diablo-FSW.git
 cd Diablo-FSW
 
+# Fix engine_sim submodule if it fails (it uses a branch, not a commit)
+cd engine_sim
+git fetch origin christmas
+git checkout christmas
+cd ..
+
 # OR if you already cloned without submodules:
 git clone https://github.com/calstar/Diablo-FSW.git
 cd Diablo-FSW
 git submodule update --init --recursive
+
+# Fix engine_sim if needed
+cd engine_sim
+git fetch origin christmas
+git checkout christmas || git checkout -b christmas origin/christmas
+cd ..
 ```
 
 ## Updating Existing Repository
