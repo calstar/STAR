@@ -43,17 +43,17 @@ const ACTUATOR_CHANNEL: Record<number, number> = {
 
 // Additional actuators from CSV (not in enum yet, map to channels directly)
 // These are stored by channel ID since they're not in ActuatorId enum
-// NOTE: Some actuators may share channels - verify with hardware config
+// Channel mappings from config.toml actuator_roles
 const ADDITIONAL_ACTUATOR_CHANNELS: Record<string, number> = {
-  'Fuel Fill Vent': 9,        // CH9 (if available)
-  'Fuel Fill Press': 10,      // CH10 (if available)
-  'LOX Dump': 4,              // CH4 (if exists)
+  'Fuel Fill Vent': 9,        // CH9 from config.toml
+  'Fuel Fill Press': 10,      // CH10 from config.toml
+  'LOX Dump': 4,              // CH4 (if exists, may need to verify)
   'LOX Fill': 4,              // CH4 (if exists, may be same as LOX Dump)
   'GSE Low Press Vent': 5,    // CH5 (same as GSE Low Vent/GN2 Vent)
-  'GSE High Press Vent': 5,    // CH5 (may need separate channel - verify)
-  'GSE LOX Fill Vent': 5,     // CH5 (may need separate channel - verify)
-  'GSE High Press Control': 5, // CH5 (may need separate channel - verify)
-  'GSE Med Press Control': 5,  // CH5 (may need separate channel - verify)
+  'GSE High Press Vent': 5,    // CH5 (may need separate channel - verify with hardware)
+  'GSE LOX Fill Vent': 5,     // CH5 (may need separate channel - verify with hardware)
+  'GSE High Press Control': 5, // CH5 (may need separate channel - verify with hardware)
+  'GSE Med Press Control': 5,  // CH5 (may need separate channel - verify with hardware)
 };
 
 // CSV state name → SystemState enum mapping (new format)
