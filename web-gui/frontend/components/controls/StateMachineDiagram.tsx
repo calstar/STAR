@@ -58,7 +58,7 @@ const STATE_POS: Record<SystemState, [number, number]> = {
   [SystemState.ENGINE_ABORT]:   [4, 2],
   [SystemState.GSE_ABORT]:     [4, 3],
   [SystemState.EMERGENCY_ABORT]: [5, 1],
-  [SystemState.ABORT]:         [5, 1], // Legacy alias
+  // Note: ABORT is an alias for EMERGENCY_ABORT (same enum value), so we don't need to add it separately
 };
 
 function nodeX(state: SystemState) { return PAD + STATE_POS[state][1] * COL_GAP; }
