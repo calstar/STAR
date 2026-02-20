@@ -41,18 +41,19 @@ const ACTUATOR_CHANNEL: Record<number, number> = {
   [ActuatorId.GSE_LOW_VENT]: 5,
 };
 
-// Additional actuators from new CSV (not in enum yet, map to channels directly)
+// Additional actuators from CSV (not in enum yet, map to channels directly)
 // These are stored by channel ID since they're not in ActuatorId enum
+// NOTE: Some actuators may share channels - verify with hardware config
 const ADDITIONAL_ACTUATOR_CHANNELS: Record<string, number> = {
-  'Fuel Fill Vent': 9,   // CH9
-  'Fuel Fill Press': 10, // CH10
-  'LOX Dump': 4,         // CH4 (if exists)
-  'LOX Fill': 4,         // CH4 (if exists)
-  'GSE Low Press Vent': 5, // Same as GSE Low Vent
-  'GSE High Press Vent': 5, // May need separate channel
-  'GSE LOX Fill Vent': 5,   // May need separate channel
-  'GSE High Press Control': 5, // May need separate channel
-  'GSE Med Press Control': 5,  // May need separate channel
+  'Fuel Fill Vent': 9,        // CH9 (if available)
+  'Fuel Fill Press': 10,      // CH10 (if available)
+  'LOX Dump': 4,              // CH4 (if exists)
+  'LOX Fill': 4,              // CH4 (if exists, may be same as LOX Dump)
+  'GSE Low Press Vent': 5,    // CH5 (same as GSE Low Vent/GN2 Vent)
+  'GSE High Press Vent': 5,    // CH5 (may need separate channel - verify)
+  'GSE LOX Fill Vent': 5,     // CH5 (may need separate channel - verify)
+  'GSE High Press Control': 5, // CH5 (may need separate channel - verify)
+  'GSE Med Press Control': 5,  // CH5 (may need separate channel - verify)
 };
 
 // CSV state name → SystemState enum mapping (new format)
@@ -125,7 +126,9 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
       }
       
       if (!channelId) {
-        console.warn(`⚠️ No channel mapping for actuator "${actuatorName}"`);
+        console.warn(`⚠️ No channel mapping for actuator "${actuatorName}" - skipping`);
+        console.warn(`   Available actuators: ${Object.keys(ACTUATOR_NAME_MAP).join(', ')}`);
+        console.warn(`   Additional actuators: ${Object.keys(ADDITIONAL_ACTUATOR_CHANNELS).join(', ')}`);
         continue;
       }
 
@@ -165,9 +168,16 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
     }
 
     console.log(`📋 Parsed state actuator map: ${Object.keys(result).length} states`);
+    let totalActuators = 0;
     for (const [state, actuators] of Object.entries(result)) {
-      console.log(`   State ${SystemState[Number(state)]}: ${Object.keys(actuators).length} actuators`);
+      const count = Object.keys(actuators).length;
+      totalActuators += count;
+      const actuatorList = Object.entries(actuators)
+        .map(([ch, val]) => `CH${ch}=${val ? 'OPEN' : 'CLOSE'}`)
+        .join(', ');
+      console.log(`   State ${SystemState[Number(state)]}: ${count} actuators (${actuatorList})`);
     }
+    console.log(`   Total: ${totalActuators} actuator commands across all states`);
     return result;
   } catch (error) {
     console.error('❌ Failed to parse state actuators CSV:', error);
