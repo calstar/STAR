@@ -51,7 +51,11 @@ export default function TopBar() {
 
   useEffect(() => {
     ws.connect();
-    startDataCache(); // begin 1 Hz background sampling for plot history
+    try {
+      startDataCache(); // begin 1 Hz background sampling for plot history
+    } catch (err) {
+      console.error('[TopBar] Failed to start data cache:', err);
+    }
     return ws.onConnectionStatus((status) => {
       setConnectionStatus(status);
       updateConnectionStatus(status);
