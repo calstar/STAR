@@ -21,10 +21,15 @@ export default function LOXGraphsPage() {
     return unsub;
   }, [ws, updateSensor]);
 
-  const up   = useSensorValue('PT_Cal.Ox_Upstream', 'pressure_psi')
-            ?? useSensorValue('PT_Cal.PT_CH5', 'pressure_psi');
-  const down = useSensorValue('PT_Cal.Ox_Downstream', 'pressure_psi')
-            ?? useSensorValue('PT_Cal.PT_CH7', 'pressure_psi');
+  // Call all hooks unconditionally (React Rules of Hooks)
+  const upNamed = useSensorValue('PT_Cal.Ox_Upstream', 'pressure_psi');
+  const upCh = useSensorValue('PT_Cal.PT_CH5', 'pressure_psi');
+  const downNamed = useSensorValue('PT_Cal.Ox_Downstream', 'pressure_psi');
+  const downCh = useSensorValue('PT_Cal.PT_CH7', 'pressure_psi');
+  
+  // Then select the value (not conditional hook calls)
+  const up = upNamed ?? upCh;
+  const down = downNamed ?? downCh;
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">

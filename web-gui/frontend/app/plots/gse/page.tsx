@@ -21,12 +21,18 @@ export default function GSEGraphsPage() {
     return unsub;
   }, [ws, updateSensor]);
 
-  const lo  = useSensorValue('PT_Cal.GSE_Low', 'pressure_psi')
-            ?? useSensorValue('PT_Cal.PT_CH2', 'pressure_psi');
-  const mid = useSensorValue('PT_Cal.GSE_Mid', 'pressure_psi')
-            ?? useSensorValue('PT_Cal.PT_CH3', 'pressure_psi');
-  const hi  = useSensorValue('PT_Cal.GSE_High', 'pressure_psi')
-            ?? useSensorValue('PT_Cal.PT_CH8', 'pressure_psi');
+  // Call all hooks unconditionally (React Rules of Hooks)
+  const loNamed = useSensorValue('PT_Cal.GSE_Low', 'pressure_psi');
+  const loCh = useSensorValue('PT_Cal.PT_CH2', 'pressure_psi');
+  const midNamed = useSensorValue('PT_Cal.GSE_Mid', 'pressure_psi');
+  const midCh = useSensorValue('PT_Cal.PT_CH3', 'pressure_psi');
+  const hiNamed = useSensorValue('PT_Cal.GSE_High', 'pressure_psi');
+  const hiCh = useSensorValue('PT_Cal.PT_CH8', 'pressure_psi');
+  
+  // Then select the values (not conditional hook calls)
+  const lo = loNamed ?? loCh;
+  const mid = midNamed ?? midCh;
+  const hi = hiNamed ?? hiCh;
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">

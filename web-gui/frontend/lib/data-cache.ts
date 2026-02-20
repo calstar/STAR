@@ -74,6 +74,26 @@ class SensorDataCache {
   }
 
   /**
+   * Find cached series for a key, checking aliases if direct lookup fails.
+   */
+  private findCachedSeries(key: string): CachedSeries | null {
+    // Try direct lookup first
+    let series = this.cache.get(key);
+    if (series && series.time.length > 0) return series;
+
+    // Check aliases
+    const fallbacks = ALIASES[key];
+    if (fallbacks) {
+      for (const fb of fallbacks) {
+        series = this.cache.get(fb);
+        if (series && series.time.length > 0) return series;
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Build pre-filled time + values arrays from cache for a set of entities.
    * Returns data suitable for direct assignment to dataRef in TimeSeriesPlot.
    */
@@ -87,16 +107,18 @@ class SensorDataCache {
 
     const keys = entities.map((e, i) => `${e}.${componentMap[i]}`);
 
-    // Find any series that has data to use as time base
+    // Find any series that has data to use as time base (check aliases)
     let baseSeries: CachedSeries | undefined;
+    let baseKey: string | undefined;
     for (const k of keys) {
-      const s = this.cache.get(k);
+      const s = this.findCachedSeries(k);
       if (s && s.time.length > 0) {
         baseSeries = s;
+        baseKey = k;
         break;
       }
     }
-    if (!baseSeries) return null;
+    if (!baseSeries || !baseKey) return null;
 
     // Find start index within window
     let startIdx = 0;
@@ -107,7 +129,7 @@ class SensorDataCache {
 
     const len = time.length;
     const values = keys.map((key) => {
-      const s = this.cache.get(key);
+      const s = this.findCachedSeries(key);
       if (!s) return new Array(len).fill(NaN);
       const sliced = s.values.slice(startIdx, startIdx + len);
       while (sliced.length < len) sliced.push(NaN);

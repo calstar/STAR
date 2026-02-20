@@ -200,6 +200,23 @@ export default function TimeSeriesPlot({
       if (initialized || !plotRef.current) return;
       const dims = getDims();
       if (!dims || dims.w < 100 || dims.h < 50) return; // Ensure minimum size
+      
+      // Re-check cache right before init to get latest data
+      try {
+        const cache = getDataCache();
+        const cached = cache.getAlignedHistory(entities, componentMap, WINDOW_SECONDS);
+        if (cached && cached.time.length > 0) {
+          dataRef.current.time = cached.time;
+          dataRef.current.values = cached.values;
+          cached.values.forEach((vals, i) => {
+            const last = vals[vals.length - 1];
+            if (isFinite(last)) latestValuesRef.current[i] = last;
+          });
+        }
+      } catch (err) {
+        console.warn('[TimeSeriesPlot] Cache re-check failed:', err);
+      }
+      
       initialized = true;
       
       // Always initialize with data - ensure we have at least one time point
@@ -211,6 +228,10 @@ export default function TimeSeriesPlot({
       
       try {
         plotInstanceRef.current = new uPlot(buildOpts(dims.w, dims.h), data, plotRef.current);
+        // Immediately update with cached data if we have history
+        if (dataRef.current.time.length > 1) {
+          plotInstanceRef.current.setData([dataRef.current.time, ...dataRef.current.values], true);
+        }
       } catch (err) {
         console.error('[TimeSeriesPlot] Initialization failed:', err);
         initialized = false;

@@ -17,6 +17,7 @@ import { startAPIServer } from './api-server.js';
 import { loadPTCalibration, calculatePressure, CalibrationCoefficients } from './calibration.js';
 import { Phase2CalibrationEngine } from './calibration-phase2.js';
 import { DataLogger } from './data-logger.js';
+import { readConfig } from './routes/config.js';
 import {
   MessageType,
   SensorUpdate,
@@ -115,6 +116,9 @@ class SensorSystemServer {
   private actuatorCommandInterval: NodeJS.Timeout | null = null;
   private readonly ACTUATOR_COMMAND_INTERVAL_MS = 1000; // Send actuator commands every 1 second while in state
 
+  /** Channel ID → entity name map (loaded from config.toml sensor_roles) */
+  private channelToEntityMap: Record<number, string> = {};
+
   constructor() {
     console.log(`🚀 Starting Sensor System Server...`);
     console.log(`   WebSocket: ${WS_HOST}:${WS_PORT}`);
@@ -122,6 +126,9 @@ class SensorSystemServer {
 
     // Load PT calibration (like combined_fsw_gui.py)
     this.ptCalibration = loadPTCalibration();
+
+    // Load sensor_roles from config.toml (like combined_gui.py)
+    this.loadSensorRoleMap();
 
     // Initialize Phase 2 autonomous calibration engine
     this.phase2Engine = new Phase2CalibrationEngine();
@@ -185,6 +192,46 @@ class SensorSystemServer {
     }
 
     this.startUpdateLoop();
+  }
+
+  /**
+   * Load sensor_roles from config.toml and build channel ID → entity name map
+   * Matches combined_gui.py's CONFIG.get_sensor_role() behavior
+   */
+  private loadSensorRoleMap(): void {
+    try {
+      const config = readConfig();
+      const sensorRoles = config.sensor_roles || {};
+      
+      // Build reverse map: channel_id → role_name
+      // config.toml format: "Fuel Upstream" = 1 means channel 1 → "Fuel Upstream"
+      const reverseMap: Record<number, string> = {};
+      for (const [roleName, channelId] of Object.entries(sensorRoles)) {
+        if (typeof channelId === 'number' && channelId >= 1 && channelId <= 10) {
+          // Convert role name to entity format: "Fuel Upstream" → "PT_Cal.Fuel_Upstream"
+          const entityName = roleName.replace(/\s+/g, '_'); // Replace spaces with underscores
+          reverseMap[channelId] = `PT_Cal.${entityName}`;
+        }
+      }
+      
+      this.channelToEntityMap = reverseMap;
+      console.log(`📋 Loaded sensor role map from config.toml:`, this.channelToEntityMap);
+    } catch (error) {
+      console.warn('⚠️ Failed to load sensor_roles from config.toml, using defaults:', error);
+      // Fallback to hardcoded defaults (matches original behavior)
+      this.channelToEntityMap = {
+        1: 'PT_Cal.Fuel_Upstream',
+        2: 'PT_Cal.GSE_Low',
+        3: 'PT_Cal.GSE_Mid',
+        4: 'PT_Cal.Fuel_Downstream',
+        5: 'PT_Cal.Ox_Upstream',
+        6: 'PT_Cal.GN2_Regulated',
+        7: 'PT_Cal.Ox_Downstream',
+        8: 'PT_Cal.PT_CH8',
+        9: 'PT_Cal.PT_CH9',
+        10: 'PT_Cal.PT_CH10',
+      };
+    }
   }
 
   private setupElodin(): void {
@@ -352,12 +399,20 @@ class SensorSystemServer {
 
         // Process each datapoint (EXACT from combined_gui.py)
         for (const dp of chunk.datapoints) {
-          const sensorId = dp.sensor_id; // 0-based sensor ID (0-9)
-          const channelId = sensorId + 1; // 1-based channel ID
+          const sensorIdPacket = dp.sensor_id; // From packet (0-9 or 1-10, depending on hardware)
+          
+          // Skip sensor_id 0 (inactive) - matches combined_gui.py behavior
+          if (sensorIdPacket === 0) {
+            continue;
+          }
+          
+          // Use sensor_id directly as channel ID (1-based: 1-10)
+          // combined_gui.py does: sensor_id = sensor_id_packet (no +1 offset)
+          const channelId = sensorIdPacket;
           const codeUint32 = dp.data; // uint32_t from protocol (EXACT from combined_gui.py)
 
-          // Get calibration (sensor_id is 0-based, calibration map uses 1-based)
-          let coeffs = this.ptCalibration.get(channelId) || this.ptCalibration.get(sensorId);
+          // Get calibration (channelId is 1-based: 1-10)
+          let coeffs = this.ptCalibration.get(channelId);
 
           // NOTE: Phase 2 is already initialized at startup from ptCalibration.
           // Do NOT re-initialize here — that would reset RLS state on every packet.
@@ -379,20 +434,10 @@ class SensorSystemServer {
             }
           }
 
-          // Map channel ID to proper entity name (matches DatabaseConfig.cpp PT_NAMES)
-          const entityMap: Record<number, string> = {
-            1: 'PT.Fuel_Upstream',
-            2: 'PT.GSE_Low',
-            3: 'PT.GSE_Mid',
-            4: 'PT.Fuel_Downstream',
-            5: 'PT.Ox_Upstream',
-            6: 'PT.GN2_Regulated',
-            7: 'PT.Ox_Downstream',
-            8: 'PT.PT_CH8',  // May be GSE_High or GN2_High
-            9: 'PT.PT_CH9',
-            10: 'PT.PT_CH10',
-          };
-          const rawEntity = entityMap[channelId] || `PT.PT_CH${channelId}`;
+          // Map channel ID to proper raw entity name (PT namespace, from config.toml sensor_roles)
+          const calEntity = this.channelToEntityMap[channelId] || `PT_Cal.PT_CH${channelId}`;
+          // Convert PT_Cal namespace to PT namespace for raw ADC
+          const rawEntity = calEntity.replace('PT_Cal.', 'PT.');
 
           // Emit raw ADC code with BOTH the nice name and the PT_CH alias
           // Nice name (for top bar / GSE/Fuel/LOX views)
@@ -468,20 +513,8 @@ class SensorSystemServer {
               }
             }
 
-            // Map channel ID to proper calibrated entity name
-            const calEntityMap: Record<number, string> = {
-              1: 'PT_Cal.Fuel_Upstream',
-              2: 'PT_Cal.GSE_Low',
-              3: 'PT_Cal.GSE_Mid',
-              4: 'PT_Cal.Fuel_Downstream',
-              5: 'PT_Cal.Ox_Upstream',
-              6: 'PT_Cal.GN2_Regulated',
-              7: 'PT_Cal.Ox_Downstream',
-              8: 'PT_Cal.PT_CH8',  // May be GSE_High or GN2_High
-              9: 'PT_Cal.PT_CH9',
-              10: 'PT_Cal.PT_CH10',
-            };
-            const calEntity = calEntityMap[channelId] || `PT_Cal.PT_CH${channelId}`;
+            // Map channel ID to proper calibrated entity name (from config.toml sensor_roles)
+            const calEntity = this.channelToEntityMap[channelId] || `PT_Cal.PT_CH${channelId}`;
 
             // Calibrated value with BOTH the nice name and PT_CH alias
             this.handleSensorUpdate({
@@ -520,12 +553,13 @@ class SensorSystemServer {
       // Process actuator board sensor data (current sense)
       for (const chunk of chunks) {
         for (const dp of chunk.datapoints) {
-          const sensorId = dp.sensor_id; // 0-based (0-9)
+          const sensorId = dp.sensor_id; // 1-based (1-10) - matches combined_gui.py
           const codeUint32 = dp.data; // uint32_t raw ADC
 
           // Emit actuator current sense data (EXACT from combined_gui.py)
+          // combined_gui.py: sensor_id is 1-indexed (1-10), use directly
           this.handleSensorUpdate({
-            entity: `ACT.ACT_CH${sensorId + 1}`, // 1-based channel ID
+            entity: `ACT.ACT_CH${sensorId}`, // 1-based channel ID (no +1 offset)
             component: 'raw_adc_counts',
             value: codeUint32, // Raw ADC code
             timestamp: currentTime,

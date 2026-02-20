@@ -21,11 +21,15 @@ export default function FuelGraphsPage() {
     return unsub;
   }, [ws, updateSensor]);
 
-  // Use both aliases for fuel upstream (PT_CH1 = Fuel_Upstream)
-  const up   = useSensorValue('PT_Cal.Fuel_Upstream', 'pressure_psi') 
-            ?? useSensorValue('PT_Cal.PT_CH1', 'pressure_psi');
-  const down = useSensorValue('PT_Cal.Fuel_Downstream', 'pressure_psi')
-            ?? useSensorValue('PT_Cal.PT_CH4', 'pressure_psi');
+  // Call all hooks unconditionally (React Rules of Hooks)
+  const upNamed = useSensorValue('PT_Cal.Fuel_Upstream', 'pressure_psi');
+  const upCh = useSensorValue('PT_Cal.PT_CH1', 'pressure_psi');
+  const downNamed = useSensorValue('PT_Cal.Fuel_Downstream', 'pressure_psi');
+  const downCh = useSensorValue('PT_Cal.PT_CH4', 'pressure_psi');
+  
+  // Then select the value (not conditional hook calls)
+  const up = upNamed ?? upCh;
+  const down = downNamed ?? downCh;
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
