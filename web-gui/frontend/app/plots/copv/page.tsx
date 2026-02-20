@@ -50,7 +50,7 @@ export default function COPVGraphsPage() {
       <div className="flex-1 min-h-0 flex flex-row gap-2">
 
         <div className="flex-1 flex flex-col gap-2 min-h-0 min-w-0">
-          <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0 overflow-hidden">
+          <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0" style={{ minHeight: '300px' }}>
             <TimeSeriesPlot
               title="COPV / GN2 Pressure (PSI)"
               entities={['PT_Cal.PT_CH9','PT_Cal.PT_CH6']}
@@ -60,7 +60,7 @@ export default function COPVGraphsPage() {
               yLabel="Pressure (PSI)"
             />
           </div>
-          <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0 overflow-hidden">
+          <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0" style={{ minHeight: '300px' }}>
             <TimeSeriesPlot
               title="All PT Channels — Overview (PSI)"
               entities={['PT_Cal.PT_CH1','PT_Cal.PT_CH2','PT_Cal.PT_CH3',

@@ -49,7 +49,7 @@ export default function RawReadoutsPage() {
       {/* 2 rows × 2 cols */}
       <div className="flex-1 grid grid-cols-2 grid-rows-2 gap-2 min-h-0">
 
-        <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0 overflow-hidden">
+        <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0" style={{ minHeight: '250px' }}>
           <TimeSeriesPlot
             title="PT CH 1–5  •  Raw ADC Counts"
             entities={['PT.PT_CH1','PT.PT_CH2','PT.PT_CH3','PT.PT_CH4','PT.PT_CH5']}
@@ -60,7 +60,7 @@ export default function RawReadoutsPage() {
           />
         </div>
 
-        <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0 overflow-hidden">
+        <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0" style={{ minHeight: '250px' }}>
           <TimeSeriesPlot
             title="PT CH 6–10  •  Raw ADC Counts"
             entities={['PT.PT_CH6','PT.PT_CH7','PT.PT_CH8','PT.PT_CH9','PT.PT_CH10']}
@@ -72,7 +72,7 @@ export default function RawReadoutsPage() {
         </div>
 
         {/* Calibrated PSI */}
-        <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0 overflow-hidden">
+        <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0" style={{ minHeight: '250px' }}>
           <TimeSeriesPlot
             title="PT CH 1–5  •  Calibrated PSI"
             entities={['PT_Cal.PT_CH1','PT_Cal.PT_CH2','PT_Cal.PT_CH3','PT_Cal.PT_CH4','PT_Cal.PT_CH5']}
@@ -83,7 +83,7 @@ export default function RawReadoutsPage() {
           />
         </div>
 
-        <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0 overflow-hidden">
+        <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0" style={{ minHeight: '250px' }}>
           <TimeSeriesPlot
             title="PT CH 6–10  •  Calibrated PSI"
             entities={['PT_Cal.PT_CH6','PT_Cal.PT_CH7','PT_Cal.PT_CH8','PT_Cal.PT_CH9','PT_Cal.PT_CH10']}
