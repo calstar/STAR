@@ -186,26 +186,42 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
 }
 
 export function getStateActuatorMap(): StateActuatorMap {
-  // Try to find the CSV file
+  // Try to find the CSV file - check multiple possible locations
   const possiblePaths = [
-    join(process.cwd(), '..', 'external', 'DiabloAvionics', 'test_guis', 'state_machine_actuators.csv'),
+    // From web-gui/backend directory
     join(process.cwd(), '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'state_machine_actuators.csv'),
+    // From web-gui directory
+    join(process.cwd(), '..', 'external', 'DiabloAvionics', 'test_guis', 'state_machine_actuators.csv'),
+    // Absolute path (fallback)
     '/home/kush-mahajan/sensor_system/external/DiabloAvionics/test_guis/state_machine_actuators.csv',
+    // From sensor_system root
+    join(__dirname, '..', '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'state_machine_actuators.csv'),
   ];
 
   for (const path of possiblePaths) {
     try {
+      const fs = require('fs');
+      if (!fs.existsSync(path)) {
+        console.log(`   Trying: ${path} (not found)`);
+        continue;
+      }
+      console.log(`   Trying: ${path} (found)`);
       const map = parseStateActuatorsCSV(path);
       if (Object.keys(map).length > 0) {
         console.log(`✅ Loaded state actuator map from: ${path}`);
         return map;
+      } else {
+        console.warn(`   ⚠️ File exists but parsed to empty map: ${path}`);
       }
     } catch (error) {
+      console.warn(`   ⚠️ Error reading ${path}:`, error);
       // Try next path
       continue;
     }
   }
 
-  console.warn('⚠️ State actuators CSV not found, using empty map');
+  console.error('❌ State actuators CSV not found in any of these locations:');
+  possiblePaths.forEach(p => console.error(`   - ${p}`));
+  console.warn('⚠️ Using empty map - actuators will not auto-command');
   return {};
 }
