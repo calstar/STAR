@@ -105,7 +105,7 @@ class SensorSystemServer {
 
   /** Logging throttle */
   private _lastSensorLog = 0;
-  
+
   /** Track if we've received calibrated PT from Elodin recently (per channel) */
   private calibratedPTFromElodin: Map<number, number> = new Map(); // channelId -> timestamp
 
@@ -133,10 +133,10 @@ class SensorSystemServer {
     console.log(`🚀 Starting Sensor System Server...`);
     console.log(`   WebSocket: ${WS_HOST}:${WS_PORT}`);
     console.log(`   Elodin DB: ${ELODIN_HOST}:${ELODIN_PORT}`);
-    
+
     // Reset mission T+0 on server restart (new DB per run)
     this.firstPacketTime = null;
-    
+
     // Initialize demo mode
     this.demoMode = new DemoModeGenerator();
 
@@ -177,12 +177,12 @@ class SensorSystemServer {
     } catch (err) {
       console.warn('⚠️ Failed to load saved Phase 2 calibration, continuing without it:', err);
     }
-    
+
     // Initialize Phase 2 for all sensors with existing calibration
     this.ptCalibration.forEach((coeffs, sensorId) => {
       try {
         this.phase2Engine!.initializeSensor(sensorId, coeffs);
-        
+
         // If we have saved calibration for this sensor, restore it
         const saved = savedCalibration.get(sensorId);
         if (saved) {
@@ -267,14 +267,14 @@ class SensorSystemServer {
     }
 
     this.startUpdateLoop();
-    
+
     // Start demo mode if enabled
     if (this.demoMode.isEnabled()) {
       console.log('🎭 Starting demo mode data generation...');
       this.demoMode.start((update: SensorUpdate) => {
         // Send demo data to WebSocket clients
         this.handleSensorUpdate(update);
-        
+
         // Also publish to Elodin DB if connected (dual streaming)
         if (this.elodin.isConnected()) {
           try {
@@ -310,7 +310,7 @@ class SensorSystemServer {
     try {
       const config = readConfig();
       const sensorRoles = config.sensor_roles || {};
-      
+
       // Build reverse map: channel_id → role_name
       // config.toml format: "Fuel Upstream" = 1 means channel 1 → "Fuel Upstream"
       const reverseMap: Record<number, string> = {};
@@ -321,7 +321,7 @@ class SensorSystemServer {
           reverseMap[channelId] = `PT_Cal.${entityName}`;
         }
       }
-      
+
       this.channelToEntityMap = reverseMap;
       console.log(`📋 Loaded sensor role map from config.toml:`, this.channelToEntityMap);
     } catch (error) {
@@ -514,7 +514,7 @@ class SensorSystemServer {
 
       // CRITICAL: Publish to Elodin DB using batched pattern (matches DAQ Bridge)
       const publishingToElodin = this.elodin.isConnected() && this.elodinPublisher;
-      
+
       // Begin batch for this packet (matches DAQ Bridge pattern)
       if (publishingToElodin) {
         this.elodinPublisher!.beginBatch();
@@ -528,12 +528,12 @@ class SensorSystemServer {
         // Process each datapoint (EXACT from combined_gui.py)
         for (const dp of chunk.datapoints) {
           const sensorIdPacket = dp.sensor_id; // From packet (0-9 or 1-10, depending on hardware)
-          
+
           // Skip sensor_id 0 (inactive) - matches combined_gui.py behavior
           if (sensorIdPacket === 0) {
             continue;
           }
-          
+
           // Use sensor_id directly as channel ID (1-based: 1-10)
           // combined_gui.py does: sensor_id = sensor_id_packet (no +1 offset)
           const channelId = sensorIdPacket;
@@ -596,15 +596,15 @@ class SensorSystemServer {
           // If so, ALWAYS use Phase 2 - don't trust Elodin's old static calibration
           // Once Phase 2 has been manually updated, it should permanently take priority
           const phase2State = this.phase2Engine?.getSensorState?.(channelId);
-          const phase2HasManualUpdate = phase2State && 
+          const phase2HasManualUpdate = phase2State &&
             phase2State.rlsUpdateCount > 0; // Has at least one manual update (permanent priority)
-          
+
           // Check if we've received calibrated PT from Elodin recently (within last 200ms)
           // Only trust Elodin if Phase 2 hasn't been manually updated
           const lastElodinCal = this.calibratedPTFromElodin.get(channelId) ?? 0;
           const timeSinceElodinCal = Date.now() - lastElodinCal;
           const skipOurCalculation = !phase2HasManualUpdate && timeSinceElodinCal < 200;
-          
+
           if (!skipOurCalculation) {
             // Only calculate if Elodin hasn't sent calibrated PT recently
             // Calculate calibrated PSI — prefer Phase 2 (live-updated) coefficients,
@@ -648,7 +648,7 @@ class SensorSystemServer {
               value: psi,
               timestamp: currentTime,
             });
-            
+
             // Debug log for fuel upstream (channel 1) to verify processing
             if (channelId === 1 && Math.random() < 0.01) { // Log 1% of packets
               console.log(`[CH1/Fuel_Upstream] ADC=${codeUint32}, PSI=${psi.toFixed(2)}, entity=${calEntity}`);
@@ -771,7 +771,7 @@ class SensorSystemServer {
 
     // Record to binary log if running
     this.dataLogger.record(key, update.value);
-    
+
     // CRITICAL: Dual streaming - ensure data goes to BOTH DB and WebSocket
     // Data from Elodin already goes to WebSocket via handleElodinPacket
     // Data from DAQ Direct already goes to DB via publishTable
@@ -857,7 +857,7 @@ class SensorSystemServer {
       // If Phase 2 was manually updated (zero_all, capture_reference), trust Phase 2 over Elodin
       let shouldUseElodinValue = true;
       let channelId: number | null = null;
-      
+
       if (parsed.entity.startsWith('PT_Cal.') && parsed.component === 'pressure_psi') {
         // Extract channel ID from entity name
         const channelMatch = parsed.entity.match(/PT_CH(\d+)/);
@@ -876,7 +876,7 @@ class SensorSystemServer {
           };
           channelId = nameMap[parsed.entity] ?? null;
         }
-        
+
         if (channelId) {
           // Check if Phase 2 has manual updates - if so, ALWAYS ignore Elodin's value
           // Once Phase 2 has been manually updated (zero_all, etc.), it should permanently take priority
@@ -912,7 +912,7 @@ class SensorSystemServer {
 
         // Handle update (updates cache and broadcasts)
         this.handleSensorUpdate(update);
-        
+
         // Also emit PT_CH alias if it's a calibrated PT
         if (channelId) {
           this.handleSensorUpdate({
@@ -1187,14 +1187,14 @@ class SensorSystemServer {
 
         // Validate transition: check if transition from current state to new state is allowed
         const currentState = this.currentState ?? SystemState.IDLE;
-        
+
         console.log(`🔍 Validating transition: ${SystemState[currentState]} → ${SystemState[newState]}`);
-        
+
         // Allow DEBUG state from any state (user requirement: "user can always enter debug state")
         const isDebugTransition = newState === SystemState.DEBUG;
         // Allow emergency states (all abort types, VENT) from any state
         const isEmergency = newState === SystemState.ENGINE_ABORT || newState === SystemState.GSE_ABORT || newState === SystemState.EMERGENCY_ABORT || newState === SystemState.ABORT || newState === SystemState.VENT;
-        
+
         // In DEBUG mode, allow transitions to any state
         if (currentState === SystemState.DEBUG) {
           // Allow any transition from DEBUG state
@@ -1244,7 +1244,7 @@ class SensorSystemServer {
               timestamp: Date.now(),
               payload: { currentState: newState, stateName: SystemState[newState], timestamp: Date.now() },
             });
-            
+
             // Auto-command actuators to match state (skip DEBUG — manual control)
             if (newState !== SystemState.DEBUG) {
               this.applyActuatorsForState(newState);
@@ -1390,13 +1390,13 @@ class SensorSystemServer {
     // Special handling for GN2_VENT state
     const isGN2Vent = state === SystemState.GN2_VENT;
     const expected = STATE_ACTUATOR_MAP[state];
-    
+
     if (!expected && !isGN2Vent) {
       return;
     }
 
     console.log(`🔄 Starting continuous actuator commands for state ${SystemState[state]} (every ${this.ACTUATOR_COMMAND_INTERVAL_MS}ms)`);
-    
+
     this.actuatorCommandInterval = setInterval(() => {
       if (this.currentState === state) {
         // Only send if we're still in the same state
@@ -1450,7 +1450,7 @@ class SensorSystemServer {
     // Convert channel IDs to entity names
     // Build reverse map: channelId → entity name
     const channelToEntity: Record<number, string> = {};
-    
+
     // Map from ACTUATOR_CHANNEL
     for (const [actuatorId, channelId] of Object.entries(ACTUATOR_CHANNEL)) {
       const id = Number(actuatorId);
@@ -1468,6 +1468,42 @@ class SensorSystemServer {
         if (Array.isArray(value) && value.length === 2 && typeof value[1] === 'number') {
           const channelId = value[1];
           const entityName = `ACT.${name.replace(/\s+/g, '_')}`;
+          channelToEntity[channelId] = entityName;
+        }
+      }
+    } catch (err) {
+      // Ignore config errors
+    }
+
+    // Add direct CSV actuator name to entity mapping (from state-actuators.ts)
+    // This ensures all actuators from CSV are properly mapped
+    const csvActuatorToEntity: Record<string, string> = {
+      'Fuel Vent': 'ACT.Fuel_Vent',
+      'LOX Vent': 'ACT.LOX_Vent',
+      'Fuel Press': 'ACT.Fuel_Press',
+      'LOX Press': 'ACT.LOX_Press',
+      'Fuel Main': 'ACT.Fuel_Main',
+      'LOX Main': 'ACT.LOX_Main',
+      'GN2 Vent': 'ACT.GSE_Low_Vent',
+      'GSE Low Press Vent': 'ACT.GSE_Low_Vent',
+      'Fuel Fill Vent': 'ACT.Fuel_Fill_Vent',
+      'Fuel Fill Press': 'ACT.Fuel_Fill_Press',
+      'LOX Fill': 'ACT.LOX_Fill',
+      'LOX Dump': 'ACT.LOX_Dump',
+      'GSE High Press Vent': 'ACT.GSE_High_Press_Vent',
+      'GSE LOX Fill Vent': 'ACT.GSE_LOX_Fill_Vent',
+      'GSE High Press Control': 'ACT.GSE_High_Press_Control',
+      'GSE Med Press Control': 'ACT.GSE_Med_Press_Control',
+    };
+
+    // Build reverse map: find channel IDs from config for CSV actuator names
+    try {
+      const config = readConfig();
+      const actuatorRoles = config.actuator_roles || {};
+      for (const [csvName, entityName] of Object.entries(csvActuatorToEntity)) {
+        const roleValue = actuatorRoles[csvName];
+        if (Array.isArray(roleValue) && roleValue.length === 2 && typeof roleValue[1] === 'number') {
+          const channelId = roleValue[1];
           channelToEntity[channelId] = entityName;
         }
       }
@@ -1629,7 +1665,7 @@ class SensorSystemServer {
             // Missing required sensor data - log warning occasionally
             if (Math.random() < 0.01) { // 1% of steps to avoid spam
               const missingSensors: string[] = [];
-              const required = ['PT_Cal.GN2_High', 'PT_Cal.GN2_Regulated', 'PT_Cal.Fuel_Upstream', 
+              const required = ['PT_Cal.GN2_High', 'PT_Cal.GN2_Regulated', 'PT_Cal.Fuel_Upstream',
                               'PT_Cal.Ox_Upstream', 'PT_Cal.Fuel_Downstream', 'PT_Cal.Ox_Downstream'];
               for (const sensor of required) {
                 if (!sensorDataMap.has(`${sensor}.pressure_psi`)) {
@@ -1711,7 +1747,7 @@ class SensorSystemServer {
                 actuation.u_O_onoff,
                 actuation.valid ?? true
               );
-              
+
               publishControllerDiagnostics(
                 this.elodin,
                 diagnostics.F_ref,
@@ -1898,14 +1934,14 @@ class SensorSystemServer {
           // DIRECTLY set adjustment D term to compensate for drift
           // This immediately forces the reading to 0 PSI
           state.adjustment.D = state.adjustment.D - drift;
-          
+
           // Update timestamp to mark this as a recent manual update
           state.lastUpdate = Date.now();
           state.rlsUpdateCount++;
-          
+
           // Also do an RLS update to update covariance and statistics
           const updated = this.phase2Engine.updateCalibration(ch, currentAdc, 0);
-          
+
           const newCoeffs = this.phase2Engine.getCalibration(ch);
           if (newCoeffs) {
             const newReading = calculatePressure(currentAdc, newCoeffs);

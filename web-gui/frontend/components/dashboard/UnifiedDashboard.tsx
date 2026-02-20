@@ -69,10 +69,20 @@ export default function UnifiedDashboard() {
     } catch (err) {
       console.error('[UnifiedDashboard] Failed to start data cache:', err);
     }
-    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
+
+    // Subscribe to sensor updates - ensure we receive all updates
+    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => {
+      const update = p as SensorUpdate;
+      updateSensor(update);
+    });
     const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    const u3 = ws.onConnectionStatus((s) => updateConnectionStatus(s));
-    return () => { u1(); u2(); u3(); };
+    const u3 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
+      const payload = p as Record<number, Record<string, 'open' | 'closed' | null>>;
+      useSensorStore.getState().updateActuatorExpectedPositions(payload);
+    });
+    const u4 = ws.onConnectionStatus((s) => updateConnectionStatus(s));
+
+    return () => { u1(); u2(); u3(); u4(); };
   }, [ws, updateSensor, updateState, updateConnectionStatus]);
 
   const isFireState = currentState === SystemState.FIRE;
@@ -81,7 +91,7 @@ export default function UnifiedDashboard() {
     <main className="h-screen w-screen bg-background text-text flex flex-col overflow-hidden">
       {/* ── Main content: 3-section split view ─────────────────────────────── */}
       <div className="flex-1 flex gap-3 p-3 min-h-0 overflow-hidden">
-        
+
         {/* ── Left column: Pressure graphs ─────────────────────────────────── */}
         <div className="flex-1 min-w-0 overflow-auto">
           <div className="bg-card rounded-xl border border-gray-800 p-4 h-full flex flex-col min-h-0">
@@ -124,7 +134,7 @@ export default function UnifiedDashboard() {
 
         {/* ── Right column: Actuators grid (top) + State machine (bottom) ───── */}
         <div className="flex-1 min-w-0 flex flex-col gap-3 overflow-hidden">
-          
+
           {/* Actuators in 4x4 grid */}
           <div className="bg-card rounded-xl border border-gray-800 p-4 flex-shrink-0 overflow-auto">
             <h2 className="text-sm font-bold tracking-widest text-text-muted uppercase mb-4">
@@ -192,4 +202,3 @@ function ControllerStatusDisplay() {
     </div>
   );
 }
-

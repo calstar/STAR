@@ -167,9 +167,17 @@ export class WebSocketClient {
   }
 
   private handleMessage(message: WSMessage): void {
-    const listeners = this.listeners.get(message.type);
+    // Handle both MessageType enum values and custom string types (like 'state_transitions')
+    const listeners = this.listeners.get(message.type as MessageType);
     if (listeners && listeners.size > 0) {
       for (const listener of listeners) {
+        try { listener(message.payload); } catch { /* silent */ }
+      }
+    }
+    // Also check for custom message types (not in MessageType enum)
+    const customListeners = this.listeners.get(message.type as any);
+    if (customListeners && customListeners.size > 0) {
+      for (const listener of customListeners) {
         try { listener(message.payload); } catch { /* silent */ }
       }
     }
@@ -178,7 +186,7 @@ export class WebSocketClient {
     }
   }
 
-  on(type: MessageType, callback: (payload: unknown) => void): () => void {
+  on(type: MessageType | string, callback: (payload: unknown) => void): () => void {
     if (!this.listeners.has(type)) {
       this.listeners.set(type, new Set());
     }

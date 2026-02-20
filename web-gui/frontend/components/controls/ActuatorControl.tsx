@@ -84,6 +84,13 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const stateExpected = currentState != null ? (actuatorExpectedPositions[currentState] ?? {}) : {};
   const expected = stateExpected[entity] ?? null;
 
+  // Clear manual commanded state when exiting DEBUG mode
+  React.useEffect(() => {
+    if (currentState !== SystemState.DEBUG && manualCommanded !== null) {
+      setManualCommanded(null);
+    }
+  }, [currentState, manualCommanded]);
+
   // Debug logging
   React.useEffect(() => {
     if (currentState !== null && currentState !== SystemState.DEBUG) {
@@ -106,7 +113,16 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   }, [currentState, expected]);
 
   // Use system-commanded state unless in DEBUG mode with manual command
-  const commanded = currentState === SystemState.DEBUG ? manualCommanded : commandedState;
+  // If in DEBUG mode, prefer manualCommanded; otherwise use commandedState
+  const commanded = React.useMemo(() => {
+    if (currentState === SystemState.DEBUG) {
+      return manualCommanded ?? commandedState; // Use manual if set, otherwise fall back to expected
+    }
+    return commandedState; // Use expected state from CSV
+  }, [currentState, manualCommanded, commandedState]);
+
+  // Allow manual control when in DEBUG state OR when debugMode is enabled
+  const canControl = debugMode || currentState === SystemState.DEBUG;
 
   // Feedback: try named entity first (aliases in store.ts cover the ACT_CHX fallback)
   const rawAdc = getSensorValue(entity, 'raw_adc_counts')
@@ -125,12 +141,13 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const feedbackOpen = statusRaw === 1 || rawAdc > voltageThreshold;
 
   const sendCommand = (state: ActuatorState) => {
+    if (!canControl) return;
     const command: CommandPayload = {
       commandType: 'actuator',
       data: { actuatorId, actuatorState: state },
     };
     ws.sendCommand(command);
-    if (currentState === SystemState.DEBUG) {
+    if (currentState === SystemState.DEBUG || debugMode) {
       setManualCommanded(state);
     }
     setPending(true);
@@ -186,18 +203,18 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
         ADC: {rawAdc.toLocaleString()}
       </div>
 
-      {/* OPEN / CLOSE buttons — locked unless debug mode */}
-      {!debugMode && (
+      {/* OPEN / CLOSE buttons — locked unless debug mode or DEBUG state */}
+      {!canControl && (
         <div className="text-[10px] text-yellow-600 font-mono text-center mb-1">
           🔒 Enable DEBUG mode to control
         </div>
       )}
       <div className="grid grid-cols-2 gap-1.5">
         <button
-          onClick={() => debugMode && sendCommand(ActuatorState.OPEN)}
-          disabled={!debugMode}
+          onClick={() => sendCommand(ActuatorState.OPEN)}
+          disabled={!canControl}
           className={`py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all
-            ${!debugMode
+            ${!canControl
               ? 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'
               : commandedOpen
                 ? 'bg-green-700 text-white ring-1 ring-green-400'
@@ -206,10 +223,10 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
           Open
         </button>
         <button
-          onClick={() => debugMode && sendCommand(ActuatorState.CLOSED)}
-          disabled={!debugMode}
+          onClick={() => sendCommand(ActuatorState.CLOSED)}
+          disabled={!canControl}
           className={`py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all
-            ${!debugMode
+            ${!canControl
               ? 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'
               : commandedClosed
                 ? 'bg-red-700 text-white ring-1 ring-red-400'
@@ -221,4 +238,3 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
     </div>
   );
 }
-

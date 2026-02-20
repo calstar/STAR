@@ -1,5 +1,7 @@
 'use client'
 
+import { useState, useEffect, useRef } from 'react';
+
 interface PressureBarProps {
   label: string;
   value: number | null;
@@ -56,9 +58,6 @@ function nonLinearPct(value: number, nop: number, meop: number, maxVal: number):
   }
 }
 
-// Ensure bars always grow upward - never shrink below previous value
-let lastValuePct = 0;
-
 export default function PressureBar({
   label,
   value,
@@ -80,13 +79,20 @@ export default function PressureBar({
   const nopPct   = nonLinearPct(nop, nop, meop, maxVal);
   const meopPct  = nonLinearPct(meop, nop, meop, maxVal);
 
+  // Ensure bar always renders visibly for non-zero values
+  // For very small values, use a minimum visible height (2% of container)
+  const minVisibleHeight = 2; // Minimum 2% height for any non-zero value
+  const displayHeight = sane && value !== null && value !== 0
+    ? Math.max(valuePct, minVisibleHeight)
+    : valuePct;
+
   let barColor = color;
   if (!barColor) {
     barColor = sane && displayValue > meop ? '#E74C3C' : sane && displayValue > nop ? '#F39C12' : '#27AE60';
   }
 
   return (
-    <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-visible select-none w-full">
+    <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-hidden select-none w-full">
       {/* Label */}
       <div className="text-base font-semibold uppercase tracking-wider text-gray-300 text-center leading-none flex-shrink-0 truncate w-full">
         {label}
@@ -94,22 +100,18 @@ export default function PressureBar({
 
       {/* Bar — takes all remaining space */}
       <div
-        className="relative w-full flex-1 rounded border border-gray-700 overflow-visible min-h-0"
-        style={{ background: '#0d0d0d', maxHeight: '100%', overflow: 'visible' }}
+        className="relative w-full flex-1 rounded border border-gray-700 overflow-hidden min-h-0"
+        style={{ background: '#0d0d0d', maxHeight: '100%' }}
       >
         {sane && value !== null && (
           <div
-            className="absolute bottom-0 w-full"
+            className="absolute bottom-0 w-full rounded-sm"
             style={{
-              height:     `${Math.max(0, valuePct)}%`,
+              height:     `${displayHeight}%`,
               background: barColor,
-              minHeight:  '0%',
-              transition: valuePct > (window.lastBarHeight || 0) ? 'height 0.1s ease-out' : 'none',
-            }}
-            ref={(el) => {
-              if (el) {
-                (window as any).lastBarHeight = valuePct;
-              }
+              minHeight:  value !== null && value !== 0 ? '2px' : '0px',
+              transition: 'height 0.15s ease-out',
+              opacity: value !== null && value !== 0 ? 1 : 0.3,
             }}
           />
         )}
@@ -124,7 +126,7 @@ export default function PressureBar({
           </span>
           <div className="w-full border-t-2 border-dashed border-red-500/85" />
         </div>
-        
+
         {/* NOP threshold line with centered value label */}
         <div
           className="absolute w-full pointer-events-none flex flex-col items-center"
@@ -136,23 +138,23 @@ export default function PressureBar({
           <div className="w-full border-t-2 border-dashed border-yellow-500/85" />
         </div>
         {/* Fill top edge */}
-        {sane && value !== null && valuePct > 0.5 && (
+        {sane && value !== null && displayHeight > 0.5 && (
           <div
             className="absolute w-full pointer-events-none"
             style={{
-              bottom: `${valuePct}%`,
+              bottom: `${displayHeight}%`,
               borderTop: `2px solid ${barColor}`,
               filter: 'brightness(1.5)',
             }}
           />
         )}
-        
+
         {/* Pressure value ON the bar itself */}
-        {sane && value !== null && valuePct > 5 && (
+        {sane && value !== null && displayHeight > 5 && (
           <div
             className="absolute w-full pointer-events-none flex items-center justify-center"
             style={{
-              bottom: `${valuePct}%`,
+              bottom: `${displayHeight}%`,
               transform: 'translateY(-50%)',
             }}
           >
@@ -166,7 +168,7 @@ export default function PressureBar({
       </div>
 
       {/* Value + unit below bar (only if value is too low to show on bar) */}
-      {(!sane || value === null || valuePct <= 5) && (
+      {(!sane || value === null || displayHeight <= 5) && (
         <div className="flex-shrink-0 text-center leading-none">
           <div className="text-xl font-bold font-mono tabular-nums" style={{ color: barColor }}>
             {value !== null ? fmtPressure(value) : '---'}

@@ -117,7 +117,8 @@ let _flushScheduled = false;
 // ── Data filtering for spikes ────────────────────────────────────────────────
 // Simple moving average filter to smooth out random spikes in sensor data
 const FILTER_WINDOW_SIZE = 5; // Number of samples to average
-const MAX_SPIKE_THRESHOLD = 50; // PSI - reject values that jump more than this
+const MAX_SPIKE_THRESHOLD_ABSOLUTE = 50; // PSI - absolute threshold for large values
+const MAX_SPIKE_THRESHOLD_PERCENT = 0.5; // 50% - percentage threshold for relative changes
 
 interface FilterState {
   history: number[];
@@ -127,8 +128,8 @@ interface FilterState {
 const _filterState: Map<string, FilterState> = new Map();
 
 function filterSensorValue(key: string, value: number): number {
-  // Only filter pressure values
-  if (!key.includes('pressure_psi')) {
+  // Only filter pressure values (both pressure_psi and raw_adc_counts can have spikes)
+  if (!key.includes('pressure_psi') && !key.includes('raw_adc_counts')) {
     return value;
   }
 
@@ -142,9 +143,16 @@ function filterSensorValue(key: string, value: number): number {
   // Outlier detection: if value jumps too much from last value, reject it
   if (state.lastValue !== null) {
     const delta = Math.abs(value - state.lastValue);
-    if (delta > MAX_SPIKE_THRESHOLD) {
+    const absLastValue = Math.abs(state.lastValue);
+
+    // Use percentage-based threshold for small values, absolute for large values
+    const threshold = absLastValue > 10
+      ? Math.max(MAX_SPIKE_THRESHOLD_ABSOLUTE, absLastValue * MAX_SPIKE_THRESHOLD_PERCENT)
+      : Math.max(5, absLastValue * MAX_SPIKE_THRESHOLD_PERCENT); // Minimum 5 PSI threshold
+
+    if (delta > threshold) {
       // Spike detected - use last value instead
-      console.warn(`⚠️ Spike detected for ${key}: ${value} (delta: ${delta.toFixed(2)} PSI), using last value: ${state.lastValue}`);
+      console.warn(`⚠️ Spike detected for ${key}: ${value} (delta: ${delta.toFixed(2)} PSI, threshold: ${threshold.toFixed(2)} PSI), using last value: ${state.lastValue}`);
       return state.lastValue;
     }
   }

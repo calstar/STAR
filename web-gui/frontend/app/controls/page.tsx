@@ -1,11 +1,11 @@
 'use client'
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
 import ActuatorControl from '@/components/controls/ActuatorControl';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { getWebSocketClient } from '@/lib/websocket';
-import { useSensorStore, useSensorStore as getStore } from '@/lib/store';
+import { useSensorStore } from '@/lib/store';
 import { MessageType, SensorUpdate, StateUpdate, ActuatorId, SystemState, CommandPayload } from '@/lib/types';
 import { useSensorValue } from '@/lib/store';
 
@@ -34,25 +34,25 @@ const ALL_ACTUATORS = [
   // Main Valves
   { id: ActuatorId.LOX_MAIN, name: 'LOX Main', channel: 1, entity: 'ACT.LOX_Main', category: 'main' },
   { id: ActuatorId.FUEL_MAIN, name: 'Fuel Main', channel: 7, entity: 'ACT.Fuel_Main', category: 'main' },
-  
+
   // Vent Valves
   { id: ActuatorId.LOX_VENT, name: 'LOX Vent', channel: 6, entity: 'ACT.LOX_Vent', category: 'vent' },
   { id: ActuatorId.FUEL_VENT, name: 'Fuel Vent', channel: 2, entity: 'ACT.Fuel_Vent', category: 'vent' },
   { id: ActuatorId.GSE_LOW_VENT, name: 'GN2 Vent', channel: 5, entity: 'ACT.GSE_Low_Vent', category: 'vent' },
   { id: ActuatorId.GSE_HIGH_PRESS_VENT, name: 'GSE High Press Vent', channel: 5, entity: 'ACT.GSE_High_Press_Vent', category: 'vent' },
   { id: ActuatorId.GSE_LOX_FILL_VENT, name: 'GSE LOX Fill Vent', channel: 5, entity: 'ACT.GSE_LOX_Fill_Vent', category: 'vent' },
-  
+
   // Press Valves
   { id: ActuatorId.LOX_PRESS, name: 'LOX Press', channel: 8, entity: 'ACT.LOX_Press', category: 'press' },
   { id: ActuatorId.FUEL_PRESS, name: 'Fuel Press', channel: 3, entity: 'ACT.Fuel_Press', category: 'press' },
   { id: ActuatorId.FUEL_FILL_PRESS, name: 'Fuel Fill Press', channel: 10, entity: 'ACT.Fuel_Fill_Press', category: 'press' },
   { id: ActuatorId.GSE_HIGH_PRESS_CONTROL, name: 'GSE High Press Control', channel: 5, entity: 'ACT.GSE_High_Press_Control', category: 'press' },
   { id: ActuatorId.GSE_MED_PRESS_CONTROL, name: 'GSE Med Press Control', channel: 5, entity: 'ACT.GSE_Med_Press_Control', category: 'press' },
-  
+
   // Fill Valves
   { id: ActuatorId.FUEL_FILL_VENT, name: 'Fuel Fill Vent', channel: 9, entity: 'ACT.Fuel_Fill_Vent', category: 'fill' },
   { id: ActuatorId.LOX_FILL, name: 'LOX Fill', channel: 4, entity: 'ACT.LOX_Fill', category: 'fill' },
-  
+
   // Other
   { id: ActuatorId.LOX_DUMP, name: 'LOX Dump', channel: 4, entity: 'ACT.LOX_Dump', category: 'other' },
 ];
@@ -71,10 +71,10 @@ function SimpleActuatorDisplay({ name, channel, entity }: { name: string; channe
   // Get expected position from backend (CSV-based) - computed directly from store
   const stateExpected = currentState != null ? (actuatorExpectedPositions[currentState] ?? {}) : {};
   const expected = stateExpected[entity] ?? null;
-  
+
   // Commanded state should always show what the system state requires
   // Use useMemo to ensure reactivity to store changes
-  const commandedState = React.useMemo(() => {
+  const commandedState = useMemo(() => {
     if (currentState === null || currentState === SystemState.DEBUG) {
       return null;
     }
@@ -142,17 +142,18 @@ export default function ControlsPage() {
 
   useEffect(() => {
     ws.connect();
-    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const u2 = ws.on(MessageType.STATE_UPDATE,  (p: unknown) => updateState(p as StateUpdate));
+
+    // Subscribe to sensor updates immediately - WebSocket client handles queuing
+    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => {
+      const update = p as SensorUpdate;
+      updateSensor(update);
+    });
+    const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
     const u3 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
       const payload = p as Record<number, Record<string, 'open' | 'closed' | null>>;
-      console.log('📥 Received expected positions update:', payload);
-      console.log('📥 Payload keys (states):', Object.keys(payload).map(k => `${k} (${SystemState[Number(k)]})`));
-      for (const [state, positions] of Object.entries(payload)) {
-        console.log(`📥 State ${SystemState[Number(state)]} has ${Object.keys(positions).length} actuators:`, Object.keys(positions));
-      }
       updateActuatorExpectedPositions(payload);
     });
+
     return () => { u1(); u2(); u3(); };
   }, [ws, updateSensor, updateState, updateActuatorExpectedPositions]);
 
@@ -160,7 +161,7 @@ export default function ControlsPage() {
     <main className="h-full bg-background text-text flex flex-col overflow-hidden">
       {/* ── Main content: 3-section split view ─────────────────────────────── */}
       <div className="flex-1 flex gap-3 p-3 min-h-0 overflow-hidden">
-        
+
         {/* ── Left column: Pressure graphs ─────────────────────────────────── */}
         <div className="flex-1 min-w-0 overflow-auto">
           <div className="bg-card rounded-xl border border-gray-800 p-4 h-full flex flex-col min-h-0">
@@ -178,14 +179,14 @@ export default function ControlsPage() {
 
         {/* ── Right column: Actuators grid (top) + Camera (middle) + State machine (bottom) ───── */}
         <div className="flex-1 min-w-0 flex flex-col gap-3 overflow-hidden">
-          
+
           {/* Actuators in 4x4 grid */}
           <div className="bg-card rounded-xl border border-gray-800 p-4 flex-shrink-0 overflow-auto">
             <h2 className="text-sm font-bold tracking-widest text-text-muted uppercase mb-4">
               Actuator Controls
             </h2>
             <div className="grid grid-cols-4 gap-3 auto-rows-fr">
-              {ALL_ACTUATORS.map((a) => 
+              {ALL_ACTUATORS.map((a) =>
                 a.id !== undefined ? (
                   <ActuatorControl key={a.name} actuatorId={a.id} />
                 ) : (
@@ -193,11 +194,6 @@ export default function ControlsPage() {
                 )
               )}
             </div>
-          </div>
-
-          {/* Camera feed */}
-          <div className="flex-shrink-0">
-            <CameraFeed url="https://192.168.2.50/" />
           </div>
 
           {/* State machine diagram */}

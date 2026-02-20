@@ -14,7 +14,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Actuator name → ActuatorId mapping (from config.toml actuator_roles)
-// Maps full names to our enum
+// Maps full names to our enum - matches CSV column names
 const ACTUATOR_NAME_MAP: Record<string, ActuatorId> = {
   'Fuel Vent': ActuatorId.FUEL_VENT,      // CH2
   'LOX Vent': ActuatorId.LOX_VENT,        // CH6
@@ -22,8 +22,16 @@ const ACTUATOR_NAME_MAP: Record<string, ActuatorId> = {
   'LOX Press': ActuatorId.LOX_PRESS,      // CH8
   'Fuel Main': ActuatorId.FUEL_MAIN,      // CH7
   'LOX Main': ActuatorId.LOX_MAIN,        // CH1
-  'GSE Low Vent': ActuatorId.GSE_LOW_VENT, // CH5
+  'GSE Low Press Vent': ActuatorId.GSE_LOW_VENT, // CH5
   'GN2 Vent': ActuatorId.GSE_LOW_VENT,    // CH5 (same as GSE Low Vent)
+  'Fuel Fill Vent': ActuatorId.FUEL_FILL_VENT, // CH9
+  'Fuel Fill Press': ActuatorId.FUEL_FILL_PRESS, // CH10
+  'LOX Fill': ActuatorId.LOX_FILL,        // CH4
+  'LOX Dump': ActuatorId.LOX_DUMP,        // CH4
+  'GSE High Press Vent': ActuatorId.GSE_HIGH_PRESS_VENT, // CH5
+  'GSE LOX Fill Vent': ActuatorId.GSE_LOX_FILL_VENT, // CH5
+  'GSE High Press Control': ActuatorId.GSE_HIGH_PRESS_CONTROL, // CH5
+  'GSE Med Press Control': ActuatorId.GSE_MED_PRESS_CONTROL, // CH5
 };
 
 // Legacy abbreviation mapping (for old CSV format)
@@ -53,13 +61,13 @@ const ACTUATOR_CHANNEL: Record<number, number> = {
 const ADDITIONAL_ACTUATOR_CHANNELS: Record<string, number> = {
   'Fuel Fill Vent': 9,        // CH9 from config.toml
   'Fuel Fill Press': 10,      // CH10 from config.toml
-  'LOX Dump': 4,              // CH4 (if exists, may need to verify)
-  'LOX Fill': 4,              // CH4 (if exists, may be same as LOX Dump)
+  'LOX Dump': 4,              // CH4
+  'LOX Fill': 4,              // CH4
   'GSE Low Press Vent': 5,    // CH5 (same as GSE Low Vent/GN2 Vent)
-  'GSE High Press Vent': 5,    // CH5 (may need separate channel - verify with hardware)
-  'GSE LOX Fill Vent': 5,     // CH5 (may need separate channel - verify with hardware)
-  'GSE High Press Control': 5, // CH5 (may need separate channel - verify with hardware)
-  'GSE Med Press Control': 5,  // CH5 (may need separate channel - verify with hardware)
+  'GSE High Press Vent': 5,    // CH5
+  'GSE LOX Fill Vent': 5,     // CH5
+  'GSE High Press Control': 5, // CH5
+  'GSE Med Press Control': 5,  // CH5
 };
 
 // CSV state name → SystemState enum mapping (new format)
@@ -112,7 +120,7 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
     } catch (err) {
       console.warn('⚠️ Could not load actuator channels from config.toml, using defaults');
     }
-    
+
     const csvContent = readFileSync(csvPath, 'utf-8');
     const lines = csvContent.trim().split('\n');
 
@@ -126,28 +134,28 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
 
     // Count actuators dynamically from CSV
     let actuatorCount = 0;
-    
+
     // Priority for abort states: Emergency Abort > Engine Abort > GSE Abort
     // Collect all abort positions separately, then merge with priority
     const abortPositions: Record<string, Record<number, number>> = {}; // abortType → {channelId → value}
-    
+
     // Parse each row (skip header)
     for (let i = 1; i < lines.length; i++) {
       const row = lines[i].split(',');
       const actuatorName = row[0].trim(); // Full name or abbreviation
-      
+
       if (!actuatorName) {
         continue; // Skip empty rows
       }
-      
+
       actuatorCount++; // Count valid actuator rows
-      
+
       // Try to find channel ID
       let channelId: number | undefined;
-      
+
       // First try config.toml actuator_roles (most reliable)
       channelId = configActuatorChannels[actuatorName];
-      
+
       // Then try full name mapping
       if (!channelId) {
         const actuatorId = ACTUATOR_NAME_MAP[actuatorName];
@@ -155,7 +163,7 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
           channelId = ACTUATOR_CHANNEL[actuatorId];
         }
       }
-      
+
       // Try abbreviation mapping (legacy)
       if (!channelId) {
         const abbrevId = ACTUATOR_ABBREV_MAP[actuatorName];
@@ -163,12 +171,12 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
           channelId = ACTUATOR_CHANNEL[abbrevId];
         }
       }
-      
+
       // Try additional actuators (fallback)
       if (!channelId) {
         channelId = ADDITIONAL_ACTUATOR_CHANNELS[actuatorName];
       }
-      
+
       if (!channelId) {
         console.warn(`⚠️ No channel mapping for actuator "${actuatorName}" - skipping`);
         console.warn(`   Checked config.toml: ${Object.keys(configActuatorChannels).join(', ')}`);
@@ -197,9 +205,9 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
         }
 
         const value = row[colIdx + 1].trim().toUpperCase();
-        
+
         // For ABORT states, collect all abort types separately, then merge with priority
-        if (systemState === SystemState.ABORT && (stateName === 'Emergency Abort' || stateName === 'Engine Abort' || stateName === 'GSE Abort')) {
+        if (stateName === 'Emergency Abort' || stateName === 'Engine Abort' || stateName === 'GSE Abort') {
           if (!abortPositions[stateName]) {
             abortPositions[stateName] = {};
           }

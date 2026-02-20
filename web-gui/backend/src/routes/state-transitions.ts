@@ -11,28 +11,30 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const CSV_STATE_MAP: Record<string, SystemState> = {
+  'Debug': SystemState.DEBUG,
   'Idle': SystemState.IDLE,
   'Armed': SystemState.ARMED,
   'Fuel Fill': SystemState.FUEL_FILL,
   'Ox Fill': SystemState.OX_FILL,
-  'Quick Fire': SystemState.READY,
   'GN2 Press': SystemState.GN2_LOW_PRESS,
+  'GN2 Vent': SystemState.GN2_VENT,
   'Fuel Press': SystemState.FUEL_PRESS,
-  'Fuel Press ': SystemState.FUEL_PRESS,  // Handle trailing space in CSV
   'Fuel Vent': SystemState.FUEL_VENT,
   'Ox Press': SystemState.OX_PRESS,
   'Ox Vent': SystemState.OX_VENT,
-  'High Press': SystemState.GN2_HIGH_PRESS,
-  'GN2 Vent': SystemState.GN2_VENT,
-  'Fire': SystemState.FIRE,
-  'Vent': SystemState.VENT,
-  'Abort': SystemState.ABORT,
-  // Additional mappings for completeness
-  'Debug': SystemState.DEBUG,
-  'Calibrate': SystemState.CALIBRATE,
-  'Ready': SystemState.READY,
   'GN2 High Press': SystemState.GN2_HIGH_PRESS,
   'GN2 High Vent': SystemState.GN2_HIGH_VENT,
+  'Vent': SystemState.VENT,
+  'Calibrate': SystemState.CALIBRATE,
+  'Ready': SystemState.READY,
+  'Fire': SystemState.FIRE,
+  'Engine Abort': SystemState.ENGINE_ABORT,
+  'GSE Abort': SystemState.GSE_ABORT,
+  'Emergency Abort': SystemState.EMERGENCY_ABORT,
+  // Legacy mappings
+  'Quick Fire': SystemState.READY,
+  'High Press': SystemState.GN2_HIGH_PRESS,
+  'Abort': SystemState.EMERGENCY_ABORT,
 };
 
 interface Transition {
