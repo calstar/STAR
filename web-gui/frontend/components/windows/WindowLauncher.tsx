@@ -16,7 +16,13 @@ function WindowButton({ id, name, description, url, accent }: WindowButtonProps)
 
   return (
     <button
-      onClick={() => openWindow(id, name, url, 1400, 900)}
+      onClick={(e) => {
+        e.preventDefault();
+        const result = openWindow(id, name, url, 1400, 900);
+        if (!result) {
+          console.warn(`[WindowLauncher] Failed to open ${name} - check popup blocker`);
+        }
+      }}
       className={`
         relative overflow-hidden bg-card rounded-lg border transition-all text-left
         hover:border-gray-500 hover:bg-opacity-80

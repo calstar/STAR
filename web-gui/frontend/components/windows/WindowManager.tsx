@@ -24,13 +24,28 @@ export function useWindowManager() {
     const left = (windows.size % 3) * 100 + 50;
     const top = (Math.floor(windows.size / 3) * 100) + 50;
 
-    const newWindow = window.open(
-      url,
-      `window_${id}`,
-      `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,toolbar=no,location=no,status=no`
-    );
+    try {
+      // Ensure URL is absolute
+      const absoluteUrl = url.startsWith('http') ? url : `${window.location.origin}${url.startsWith('/') ? url : '/' + url}`;
+      
+      const newWindow = window.open(
+        absoluteUrl,
+        `window_${id}`,
+        `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,toolbar=no,location=no,status=no`
+      );
 
-    if (newWindow) {
+      if (!newWindow) {
+        // Popup blocked - fallback to same window navigation
+        console.warn(`[WindowManager] Popup blocked for ${name}, opening in same window`);
+        window.location.href = url;
+        return null;
+      }
+
+      if (newWindow.closed) {
+        console.warn(`[WindowManager] Window was immediately closed for ${name}`);
+        return null;
+      }
+
       const windowRef: WindowReference = {
         id,
         name,
@@ -57,9 +72,12 @@ export function useWindowManager() {
       }, 500);
 
       return newWindow;
+    } catch (err) {
+      console.error(`[WindowManager] Failed to open window ${name}:`, err);
+      // Fallback to same window
+      window.location.href = url;
+      return null;
     }
-
-    return null;
   };
 
   const closeWindow = (id: string) => {
