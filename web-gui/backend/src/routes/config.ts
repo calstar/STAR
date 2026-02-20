@@ -72,7 +72,8 @@ export function readConfig(): any {
           const match = line.match(/^"([^"]+)"\s*=\s*\["([^"]+)",\s*(\d+)\]/);
           if (match) {
             const [, name, type, channelId] = match;
-            config.actuator_roles[name] = [type, parseInt(channelId, 10)];
+            // Type assertion to allow mixed array types
+            (config.actuator_roles as any)[name] = [type, parseInt(channelId, 10)];
           }
         }
         

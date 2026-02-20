@@ -91,6 +91,23 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
   const result: StateActuatorMap = {};
 
   try {
+    // Load actuator channel mappings from config.toml dynamically
+    let configActuatorChannels: Record<string, number> = {};
+    try {
+      const { readConfig } = require('./config.js');
+      const config = readConfig();
+      const actuatorRoles = config.actuator_roles || {};
+      // Extract channel IDs from [type, channelId] format
+      for (const [name, value] of Object.entries(actuatorRoles)) {
+        if (Array.isArray(value) && value.length === 2 && typeof value[1] === 'number') {
+          configActuatorChannels[name] = value[1];
+        }
+      }
+      console.log(`📋 Loaded ${Object.keys(configActuatorChannels).length} actuator channels from config.toml`);
+    } catch (err) {
+      console.warn('⚠️ Could not load actuator channels from config.toml, using defaults');
+    }
+    
     const csvContent = readFileSync(csvPath, 'utf-8');
     const lines = csvContent.trim().split('\n');
 
@@ -110,25 +127,35 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
       // Try to find channel ID
       let channelId: number | undefined;
       
-      // First try full name mapping
-      const actuatorId = ACTUATOR_NAME_MAP[actuatorName];
-      if (actuatorId !== undefined) {
-        channelId = ACTUATOR_CHANNEL[actuatorId];
-      } else {
-        // Try abbreviation mapping (legacy)
+      // First try config.toml actuator_roles (most reliable)
+      channelId = configActuatorChannels[actuatorName];
+      
+      // Then try full name mapping
+      if (!channelId) {
+        const actuatorId = ACTUATOR_NAME_MAP[actuatorName];
+        if (actuatorId !== undefined) {
+          channelId = ACTUATOR_CHANNEL[actuatorId];
+        }
+      }
+      
+      // Try abbreviation mapping (legacy)
+      if (!channelId) {
         const abbrevId = ACTUATOR_ABBREV_MAP[actuatorName];
         if (abbrevId !== undefined) {
           channelId = ACTUATOR_CHANNEL[abbrevId];
-        } else {
-          // Try additional actuators
-          channelId = ADDITIONAL_ACTUATOR_CHANNELS[actuatorName];
         }
+      }
+      
+      // Try additional actuators (fallback)
+      if (!channelId) {
+        channelId = ADDITIONAL_ACTUATOR_CHANNELS[actuatorName];
       }
       
       if (!channelId) {
         console.warn(`⚠️ No channel mapping for actuator "${actuatorName}" - skipping`);
-        console.warn(`   Available actuators: ${Object.keys(ACTUATOR_NAME_MAP).join(', ')}`);
-        console.warn(`   Additional actuators: ${Object.keys(ADDITIONAL_ACTUATOR_CHANNELS).join(', ')}`);
+        console.warn(`   Checked config.toml: ${Object.keys(configActuatorChannels).join(', ')}`);
+        console.warn(`   Checked hardcoded: ${Object.keys(ACTUATOR_NAME_MAP).join(', ')}`);
+        console.warn(`   Checked additional: ${Object.keys(ADDITIONAL_ACTUATOR_CHANNELS).join(', ')}`);
         continue;
       }
 
