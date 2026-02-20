@@ -39,24 +39,30 @@ class SensorDataCache {
   }
 
   private sample(): void {
-    const now = (Date.now() - getStartupTime()) / 1000;
-    const sensorData = useSensorStore.getState().sensorData;
+    try {
+      const now = (Date.now() - getStartupTime()) / 1000;
+      const state = useSensorStore.getState();
+      if (!state || !state.sensorData) return;
+      const sensorData = state.sensorData;
 
-    for (const [key, value] of Object.entries(sensorData)) {
-      if (!isFinite(value)) continue;
+      for (const [key, value] of Object.entries(sensorData)) {
+        if (!isFinite(value)) continue;
 
-      let series = this.cache.get(key);
-      if (!series) {
-        series = { time: [], values: [] };
-        this.cache.set(key, series);
+        let series = this.cache.get(key);
+        if (!series) {
+          series = { time: [], values: [] };
+          this.cache.set(key, series);
+        }
+        series.time.push(now);
+        series.values.push(value);
+
+        if (series.time.length > CACHE_MAX_POINTS) {
+          series.time = series.time.slice(-CACHE_MAX_POINTS);
+          series.values = series.values.slice(-CACHE_MAX_POINTS);
+        }
       }
-      series.time.push(now);
-      series.values.push(value);
-
-      if (series.time.length > CACHE_MAX_POINTS) {
-        series.time = series.time.slice(-CACHE_MAX_POINTS);
-        series.values = series.values.slice(-CACHE_MAX_POINTS);
-      }
+    } catch (err) {
+      console.error('[DataCache] Error sampling:', err);
     }
   }
 

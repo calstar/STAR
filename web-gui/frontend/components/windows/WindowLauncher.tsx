@@ -18,20 +18,20 @@ function WindowButton({ id, name, description, url, accent }: WindowButtonProps)
     <button
       onClick={() => openWindow(id, name, url, 1400, 900)}
       className={`
-        relative overflow-hidden bg-card rounded border transition-all text-left
-        hover:border-gray-600
+        relative overflow-hidden bg-card rounded-lg border transition-all text-left
+        hover:border-gray-500 hover:bg-opacity-80
         ${isOpen ? 'border-gray-500 ring-1 ring-inset ring-gray-600' : 'border-gray-800'}
       `}
     >
-      <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l" style={{ backgroundColor: accent }} />
-      <div className="px-3 py-2 pl-4">
+      <div className="absolute left-0 top-0 bottom-0 w-1.5 rounded-l-lg" style={{ backgroundColor: accent }} />
+      <div className="px-4 py-3 pl-5">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-xs font-semibold text-text">{name}</span>
+          <span className="text-sm font-semibold text-text">{name}</span>
           {isOpen && (
-            <span className="text-[10px] font-mono text-green-400 flex-shrink-0">● OPEN</span>
+            <span className="text-xs font-mono text-green-400 flex-shrink-0">● OPEN</span>
           )}
         </div>
-        <div className="text-[10px] text-text-muted mt-0.5 leading-tight truncate">{description}</div>
+        <div className="text-xs text-text-muted mt-1 leading-snug line-clamp-2">{description}</div>
       </div>
     </button>
   );
@@ -61,28 +61,32 @@ export default function WindowLauncher() {
   ];
 
   return (
-    <div className="bg-card rounded border border-gray-800 p-2">
+    <div className="bg-card rounded-lg border border-gray-800 p-4">
       {/* Header */}
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-xs font-bold tracking-wider text-text-muted uppercase">View Windows</h2>
+          <h2 className="text-sm font-bold tracking-wider text-text-muted uppercase">View Windows</h2>
           {openCount > 0 && (
-            <span className="text-[10px] text-text-muted">{openCount} open</span>
+            <span className="text-xs text-text-muted">{openCount} window{openCount !== 1 ? 's' : ''} open</span>
           )}
         </div>
         {openCount > 0 && (
           <button
             onClick={closeAllWindows}
-            className="px-2 py-1 bg-red-900/40 border border-red-800 rounded text-[10px] font-semibold text-red-300 hover:bg-red-800/60 transition-colors"
+            className="px-3 py-1.5 bg-red-900/40 border border-red-800 rounded text-xs font-semibold text-red-300 hover:bg-red-800/60 transition-colors"
           >
             Close All
           </button>
         )}
       </div>
 
-      {/* All Plots + grid in one row */}
-      <div className="grid grid-cols-3 sm:grid-cols-6 lg:grid-cols-11 gap-1.5">
+      {/* All Plots featured */}
+      <div className="mb-2">
         <WindowButton {...allPlotsEntry} />
+      </div>
+
+      {/* Grid - 2 rows */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
         {multiEntries.map((e) => (
           <WindowButton key={e.id} {...e} />
         ))}

@@ -50,12 +50,12 @@ function ActuatorPill({ label, entity }: { label: string; entity: string }) {
   const hasData = status !== null || adc !== null;
 
   return (
-    <div className={`flex flex-col items-center justify-center bg-card border rounded-xl px-4 py-4 gap-2 transition-all ${
+    <div className={`flex flex-col items-center justify-center bg-card border rounded-xl px-3 py-3 gap-2.5 transition-all min-h-[100px] ${
       !hasData ? 'border-gray-800' : isOpen ? 'border-green-700/80' : 'border-red-700/80'
     }`}>
-      <span className="text-sm font-bold text-text-muted uppercase tracking-wider text-center">{label}</span>
+      <span className="text-xs font-bold text-text-muted uppercase tracking-wider text-center leading-tight">{label}</span>
       <span
-        className={`text-2xl font-bold font-mono px-4 py-1.5 rounded-lg w-full text-center ${
+        className={`text-xl font-bold font-mono px-3 py-2 rounded-lg w-full text-center ${
           !hasData ? 'text-gray-600 bg-gray-900/40' : isOpen ? 'bg-green-900/50 text-green-300' : 'bg-red-900/50 text-red-300'
         }`}
       >

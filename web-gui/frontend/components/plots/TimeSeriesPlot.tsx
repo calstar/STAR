@@ -168,15 +168,19 @@ export default function TimeSeriesPlot({
     };
 
     // ── Pre-fill from background cache so plot has history on open ────
-    const cache = getDataCache();
-    const cached = cache.getAlignedHistory(entities, componentMap, WINDOW_SECONDS);
-    if (cached && cached.time.length > 0) {
-      dataRef.current.time = cached.time;
-      dataRef.current.values = cached.values;
-      cached.values.forEach((vals, i) => {
-        const last = vals[vals.length - 1];
-        if (isFinite(last)) latestValuesRef.current[i] = last;
-      });
+    try {
+      const cache = getDataCache();
+      const cached = cache.getAlignedHistory(entities, componentMap, WINDOW_SECONDS);
+      if (cached && cached.time.length > 0) {
+        dataRef.current.time = cached.time;
+        dataRef.current.values = cached.values;
+        cached.values.forEach((vals, i) => {
+          const last = vals[vals.length - 1];
+          if (isFinite(last)) latestValuesRef.current[i] = last;
+        });
+      }
+    } catch (err) {
+      console.warn('[TimeSeriesPlot] Cache pre-fill failed:', err);
     }
 
     let initialized = false;
