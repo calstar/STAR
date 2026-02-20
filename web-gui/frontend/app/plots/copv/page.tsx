@@ -20,10 +20,15 @@ export default function COPVGraphsPage() {
     return unsub;
   }, [ws, updateSensor]);
 
-  const hi  = useSensorValue('PT_Cal.GN2_High', 'pressure_psi')
-            ?? useSensorValue('PT_Cal.PT_CH9', 'pressure_psi');
-  const reg = useSensorValue('PT_Cal.GN2_Regulated', 'pressure_psi')
-            ?? useSensorValue('PT_Cal.PT_CH6', 'pressure_psi');
+  // Call all hooks unconditionally (React Rules of Hooks)
+  const hiNamed = useSensorValue('PT_Cal.GN2_High', 'pressure_psi');
+  const hiCh = useSensorValue('PT_Cal.PT_CH9', 'pressure_psi');
+  const regNamed = useSensorValue('PT_Cal.GN2_Regulated', 'pressure_psi');
+  const regCh = useSensorValue('PT_Cal.PT_CH6', 'pressure_psi');
+  
+  // Then select the values (not conditional hook calls)
+  const hi = hiNamed ?? hiCh;
+  const reg = regNamed ?? regCh;
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
