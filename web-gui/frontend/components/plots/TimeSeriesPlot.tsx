@@ -225,14 +225,28 @@ export default function TimeSeriesPlot({
       
       // Always initialize with data - ensure we have at least one time point
       const now = (Date.now() - startTimeRef.current) / 1000;
-      const timeData = dataRef.current.time.length > 0 ? dataRef.current.time : [now];
-      const valueData = dataRef.current.values.map(v => v.length > 0 ? v : [NaN]);
+      let timeData = dataRef.current.time.length > 0 ? dataRef.current.time : [now];
+      let valueData = dataRef.current.values.map(v => v.length > 0 ? v : [NaN]);
+      
+      // If we have no data at all, create a single point so plot renders
+      if (timeData.length === 0) {
+        timeData = [now];
+        valueData = entities.map(() => [NaN]);
+      }
+      
+      // Ensure all series have the same length
+      const maxLen = Math.max(timeData.length, ...valueData.map(v => v.length));
+      while (timeData.length < maxLen) timeData.push(now);
+      valueData = valueData.map(v => {
+        while (v.length < maxLen) v.push(NaN);
+        return v;
+      });
       
       const data: uPlot.AlignedData = [timeData, ...valueData];
       
       try {
         if (!plotRef.current) {
-          console.warn('[TimeSeriesPlot] plotRef.current is null');
+          console.warn(`[TimeSeriesPlot] plotRef.current is null for: ${title}`);
           return;
         }
         plotInstanceRef.current = new uPlot(buildOpts(dims.w, dims.h), data, plotRef.current);
@@ -241,10 +255,16 @@ export default function TimeSeriesPlot({
           plotInstanceRef.current.setData([dataRef.current.time, ...dataRef.current.values], true);
         }
         initializedRef.current = true;
-        console.log(`[TimeSeriesPlot] Initialized: ${title} (${dims.w}x${dims.h})`);
+        console.log(`[TimeSeriesPlot] ✓ Initialized: ${title} (${dims.w}x${dims.h}, ${timeData.length} points)`);
       } catch (err) {
-        console.error('[TimeSeriesPlot] Initialization failed:', err);
-        console.error('[TimeSeriesPlot] Error details:', { title, dims, hasPlotRef: !!plotRef.current });
+        console.error(`[TimeSeriesPlot] ✗ Initialization failed for ${title}:`, err);
+        console.error('[TimeSeriesPlot] Details:', { 
+          title, 
+          dims, 
+          hasPlotRef: !!plotRef.current,
+          timeDataLen: timeData.length,
+          valueDataLens: valueData.map(v => v.length)
+        });
         initializedRef.current = false;
         plotInstanceRef.current = null;
       }
