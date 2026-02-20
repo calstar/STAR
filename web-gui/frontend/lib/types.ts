@@ -134,6 +134,11 @@ export interface ConnectionStatus {
   error?: string;
 }
 
+// Mission start time (T+0 from first packet)
+export interface MissionStartTime {
+  missionStartTime: number; // Unix timestamp in milliseconds
+}
+
 // ── Calibration types ─────────────────────────────────────────────────────────
 
 export type CalibrationConfidence = 'MAXIMUM' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNCALIBRATED';
