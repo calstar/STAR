@@ -18,6 +18,9 @@ export enum MessageType {
   ERROR              = 'error',
   CONNECTION_STATUS  = 'connection_status',
   CALIBRATION_STATUS = 'calibration_status',
+  CONTROLLER_UPDATE  = 'controller_update',
+  MISSION_START_TIME = 'mission_start_time',
+  ACTUATOR_EXPECTED_POSITIONS_UPDATE = 'actuator_expected_positions_update',
 }
 
 // Sensor types
