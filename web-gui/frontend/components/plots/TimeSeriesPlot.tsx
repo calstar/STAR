@@ -467,8 +467,17 @@ export default function TimeSeriesPlot({
         </div>
       </div>
       {/* Chart container: measured by ResizeObserver. plotRef inside receives uPlot. */}
-      <div ref={containerRef} className="relative flex-1 min-h-0 min-w-0" style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <div 
+        ref={containerRef} 
+        className="relative flex-1 min-h-0 min-w-0" 
+        style={{ position: 'relative', width: '100%', height: '100%', minHeight: '200px' }}
+      >
         <div ref={plotRef} className="absolute inset-0" />
+        {!initializedRef.current && (
+          <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
+            Initializing plot...
+          </div>
+        )}
       </div>
     </div>
   );
