@@ -13,6 +13,11 @@ This repository has **4 submodules**:
 ./scripts/setup/pull_all.sh
 ```
 
+**If engine_sim submodule fails, run the fix script:**
+```bash
+./scripts/setup/fix_engine_sim.sh
+```
+
 ## Initial Clone (First Time)
 
 If you're cloning the repository for the first time, use:
