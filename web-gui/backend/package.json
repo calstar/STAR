@@ -1,0 +1,27 @@
+{
+  "name": "sensor-system-backend",
+  "version": "1.0.0",
+  "description": "WebSocket server for sensor system GUI",
+  "main": "dist/server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.16.0",
+    "msgpack-lite": "^0.1.26",
+    "@iarna/toml": "^2.2.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}
+
