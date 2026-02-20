@@ -20,6 +20,7 @@ import { Phase2CalibrationEngine } from './calibration-phase2.js';
 import { DataLogger } from './data-logger.js';
 import { readConfig } from './routes/config.js';
 import { ControllerClient, mapSensorDataToMeasurement, ControllerCommand } from './controller-client.js';
+import { DemoModeGenerator } from './demo-mode.js';
 import {
   MessageType,
   SensorUpdate,
@@ -109,10 +110,16 @@ class SensorSystemServer {
   /** Channel ID → entity name map (loaded from config.toml sensor_roles) */
   private channelToEntityMap: Record<number, string> = {};
 
+  /** Demo mode generator for testing without hardware */
+  private demoMode: DemoModeGenerator;
+
   constructor() {
     console.log(`🚀 Starting Sensor System Server...`);
     console.log(`   WebSocket: ${WS_HOST}:${WS_PORT}`);
     console.log(`   Elodin DB: ${ELODIN_HOST}:${ELODIN_PORT}`);
+    
+    // Initialize demo mode
+    this.demoMode = new DemoModeGenerator();
 
     // Load PT calibration (like combined_fsw_gui.py)
     this.ptCalibration = loadPTCalibration();
@@ -232,6 +239,39 @@ class SensorSystemServer {
     }
 
     this.startUpdateLoop();
+    
+    // Start demo mode if enabled
+    if (this.demoMode.isEnabled()) {
+      console.log('🎭 Starting demo mode data generation...');
+      this.demoMode.start((update: SensorUpdate) => {
+        // Send demo data to WebSocket clients
+        this.handleSensorUpdate(update);
+        
+        // Also publish to Elodin DB if connected (dual streaming)
+        if (this.elodin.isConnected()) {
+          try {
+            // Extract channel ID from entity name
+            const channelMatch = update.entity.match(/PT_CH(\d+)|ACT_CH(\d+)/);
+            if (channelMatch) {
+              const channelId = parseInt(channelMatch[1] || channelMatch[2], 10);
+              if (update.component === 'raw_adc_counts') {
+                const timestampNs = BigInt(Date.now()) * BigInt(1000000);
+                const rawPayload = encodeRawPTMessage(
+                  timestampNs,
+                  channelId,
+                  Math.round(update.value),
+                  Date.now(),
+                  0
+                );
+                this.elodin.publishTable([0x20, channelId], rawPayload);
+              }
+            }
+          } catch (err) {
+            // Silently fail - demo mode doesn't require DB
+          }
+        }
+      }, 10); // 10 Hz generation rate
+    }
   }
 
   /**
@@ -339,19 +379,30 @@ class SensorSystemServer {
     });
 
     // Connect to Elodin (non-blocking, will retry on failure)
-    this.elodin.connect().then(() => {
-      console.log('✅ Elodin connection established');
-      // Send periodic keepalive to ensure connection stays alive
-      setInterval(() => {
-        if (this.elodin.isConnected()) {
-          // Send empty MSG packet as keepalive
-          const keepaliveId: [number, number] = [0x00, 0x00];
-          this.elodin.sendRawMessage(keepaliveId, ElodinPacketType.MSG, Buffer.alloc(0));
-        }
-      }, 5000); // Every 5 seconds
-    }).catch((error) => {
-      console.error('❌ Elodin connection error:', error);
-    });
+    // In demo mode, skip Elodin connection
+    if (!this.demoMode.isEnabled()) {
+      this.elodin.connect().then(() => {
+        console.log('✅ Elodin connection established');
+        // Send periodic keepalive to ensure connection stays alive
+        setInterval(() => {
+          if (this.elodin.isConnected()) {
+            // Send empty MSG packet as keepalive
+            const keepaliveId: [number, number] = [0x00, 0x00];
+            this.elodin.sendRawMessage(keepaliveId, ElodinPacketType.MSG, Buffer.alloc(0));
+          }
+        }, 5000); // Every 5 seconds
+      }).catch((error) => {
+        console.error('❌ Elodin connection error:', error);
+      });
+    } else {
+      console.log('🎭 Demo mode: Skipping Elodin DB connection');
+      // In demo mode, simulate connection
+      this.broadcast({
+        type: MessageType.CONNECTION_STATUS,
+        timestamp: Date.now(),
+        payload: { connected: true, elodinConnected: false } as ConnectionStatus,
+      });
+    }
 
     // Handle Elodin errors gracefully (don't crash)
     this.elodin.on('error', () => {
@@ -664,6 +715,11 @@ class SensorSystemServer {
 
     // Record to binary log if running
     this.dataLogger.record(key, update.value);
+    
+    // CRITICAL: Dual streaming - ensure data goes to BOTH DB and WebSocket
+    // Data from Elodin already goes to WebSocket via handleElodinPacket
+    // Data from DAQ Direct already goes to DB via publishTable
+    // This ensures no data is lost regardless of source
 
     // Throttle WebSocket broadcasts to BROADCAST_MIN_INTERVAL_MS per entity
     const now = Date.now();

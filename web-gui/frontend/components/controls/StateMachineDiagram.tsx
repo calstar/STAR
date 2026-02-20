@@ -33,26 +33,26 @@ const COL_GAP = 280; // much wider spacing
 const ROW_GAP = 140; // much taller spacing
 const PAD = 40; // more padding
 
-// Grid layout: [row, col] 0-based
+// Grid layout: [row, col] 0-based - includes ALL states
 const STATE_POS: Record<SystemState, [number, number]> = {
-  [SystemState.IDLE]:          [0, 0],
-  [SystemState.ARMED]:         [0, 1],
-  [SystemState.DEBUG]:         [0, 2],
+  [SystemState.DEBUG]:         [0, 0],
+  [SystemState.IDLE]:          [0, 1],
+  [SystemState.ARMED]:         [0, 2],
   [SystemState.CALIBRATE]:     [0, 3],
   [SystemState.FUEL_FILL]:     [1, 0],
   [SystemState.OX_FILL]:       [1, 1],
   [SystemState.READY]:         [1, 2],
   [SystemState.GN2_LOW_PRESS]: [2, 0],
   [SystemState.GN2_VENT]:      [2, 1],
-  [SystemState.FUEL_PRESS]:    [3, 0],
-  [SystemState.FUEL_VENT]:     [3, 1],
-  [SystemState.OX_PRESS]:      [4, 0],
-  [SystemState.OX_VENT]:       [4, 1],
-  [SystemState.GN2_HIGH_PRESS]:[5, 0],
-  [SystemState.GN2_HIGH_VENT]: [5, 1],
-  [SystemState.FIRE]:          [5, 2],
-  [SystemState.VENT]:          [6, 0],
-  [SystemState.ABORT]:         [6, 1],
+  [SystemState.FUEL_PRESS]:    [2, 2],
+  [SystemState.FUEL_VENT]:     [2, 3],
+  [SystemState.OX_PRESS]:      [3, 0],
+  [SystemState.OX_VENT]:       [3, 1],
+  [SystemState.GN2_HIGH_PRESS]:[3, 2],
+  [SystemState.GN2_HIGH_VENT]: [3, 3],
+  [SystemState.FIRE]:          [4, 1],
+  [SystemState.VENT]:          [4, 2],
+  [SystemState.ABORT]:         [4, 3],
 };
 
 function nodeX(state: SystemState) { return PAD + STATE_POS[state][1] * COL_GAP; }
@@ -206,9 +206,9 @@ export default function StateMachineDiagram() {
 
   const states = Object.values(SystemState).filter((s) => typeof s === 'number') as SystemState[];
 
-  // SVG dimensions - ensure enough space for all states
+  // SVG dimensions - ensure enough space for all states (5 rows now)
   const svgW = PAD * 2 + COLS * COL_GAP;
-  const svgH = PAD * 2 + 7 * ROW_GAP; // 7 rows for all states
+  const svgH = PAD * 2 + 5 * ROW_GAP; // 5 rows for all states
 
   // Default to IDLE when no state has been received yet
   const effectiveState = currentState ?? SystemState.IDLE;
