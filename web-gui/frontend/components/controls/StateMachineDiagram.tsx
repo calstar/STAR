@@ -26,7 +26,7 @@ const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.ENGINE_ABORT]: 'ENGINE ABORT',
   [SystemState.GSE_ABORT]: 'GSE ABORT',
   [SystemState.EMERGENCY_ABORT]: 'EMERGENCY ABORT',
-  [SystemState.ABORT]: 'EMERGENCY ABORT', // Legacy alias
+  // Note: ABORT is an alias for EMERGENCY_ABORT (same enum value), so we don't need to add it separately
 };
 
 const NW = 220; // node width - much bigger
@@ -168,24 +168,49 @@ export default function StateMachineDiagram() {
     ws.connect();
     const handleTransitions = (payload: unknown) => {
       const data = payload as { transitions: Transition[] };
-      if (data.transitions) {
+      if (data && data.transitions && Array.isArray(data.transitions)) {
         setTransitions(data.transitions);
         console.log(`📋 Loaded ${data.transitions.length} state transitions from backend`);
+      } else {
+        console.warn('⚠️ Invalid transitions payload:', payload);
       }
     };
 
-    // Listen for state_transitions message
-    const unsub = ws.on('state_transitions' as any, handleTransitions);
+    // Listen for state_transitions message (custom message type, not in MessageType enum)
+    const unsub = ws.on('state_transitions', handleTransitions);
     
-    // Request transitions via WebSocket
-    const msg = {
-      type: 'get_state_transitions',
-      timestamp: Date.now(),
-      payload: {},
+    // Request transitions via WebSocket after connection is ready
+    const requestTransitions = () => {
+      // Send as raw message (server handles 'get_state_transitions' message type)
+      (ws as any).send({
+        type: 'get_state_transitions',
+        timestamp: Date.now(),
+        payload: {},
+      });
+      console.log('📤 Requested state transitions from backend via WebSocket');
     };
-    (ws as any).send(msg);
+    
+    // Request immediately if connected, otherwise wait a bit
+    const timeoutId = setTimeout(() => {
+      if (ws.isConnected()) {
+        requestTransitions();
+      } else {
+        // Wait for connection
+        const checkConnection = setInterval(() => {
+          if (ws.isConnected()) {
+            clearInterval(checkConnection);
+            requestTransitions();
+          }
+        }, 100);
+        // Cleanup after 5 seconds
+        setTimeout(() => clearInterval(checkConnection), 5000);
+      }
+    }, 200);
 
-    return unsub;
+    return () => {
+      clearTimeout(timeoutId);
+      unsub();
+    };
   }, [ws]);
 
   const debugMode = useSensorStore((s) => s.debugMode);
@@ -217,9 +242,9 @@ export default function StateMachineDiagram() {
 
   const states = Object.values(SystemState).filter((s) => typeof s === 'number') as SystemState[];
 
-  // SVG dimensions - ensure enough space for all states (5 rows now)
+  // SVG dimensions - ensure enough space for all states (6 rows: 0-5)
   const svgW = PAD * 2 + COLS * COL_GAP;
-  const svgH = PAD * 2 + 5 * ROW_GAP; // 5 rows for all states
+  const svgH = PAD * 2 + 6 * ROW_GAP; // 6 rows for all states (0-5)
 
   // Default to IDLE when no state has been received yet
   const effectiveState = currentState ?? SystemState.IDLE;
@@ -271,7 +296,7 @@ export default function StateMachineDiagram() {
               const isEmergency = t.to === SystemState.ENGINE_ABORT || t.to === SystemState.GSE_ABORT || t.to === SystemState.EMERGENCY_ABORT || t.to === SystemState.ABORT || t.to === SystemState.VENT;
               return (
                 <path
-                  key={i}
+                  key={`${t.from}-${t.to}-${i}`}
                   d={arrowPath(t.from, t.to)}
                   fill="none"
                   stroke={isEmergency ? '#EF4444' : '#34D399'}
