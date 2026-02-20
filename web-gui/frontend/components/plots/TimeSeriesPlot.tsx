@@ -170,11 +170,15 @@ export default function TimeSeriesPlot({
       const rect = el.getBoundingClientRect();
       const w = Math.max(0, Math.floor(rect.width));
       const h = Math.max(0, Math.floor(rect.height));
-      // Require minimum viable size for uPlot (lowered to allow earlier init)
+      
+      // Log dimensions for debugging
       if (w < 50 || h < 30) {
+        console.log(`[TimeSeriesPlot] ${title}: Container too small: ${w}x${h}`);
         return null;
       }
-      return { w: Math.max(w, 100), h: Math.max(h, 50) };
+      
+      console.log(`[TimeSeriesPlot] ${title}: Container size: ${w}x${h}`);
+      return { w, h };
     };
 
     // ── Pre-fill from background cache so plot has history on open ────
@@ -203,9 +207,20 @@ export default function TimeSeriesPlot({
     }
 
     const tryInit = () => {
-      if (initializedRef.current || !plotRef.current) return;
+      if (initializedRef.current) {
+        console.log(`[TimeSeriesPlot] ${title}: Already initialized, skipping`);
+        return;
+      }
+      if (!plotRef.current) {
+        console.log(`[TimeSeriesPlot] ${title}: plotRef.current is null`);
+        return;
+      }
       const dims = getDims();
-      if (!dims) return; // getDims already checks minimum size
+      if (!dims) {
+        console.log(`[TimeSeriesPlot] ${title}: No valid dimensions yet`);
+        return;
+      }
+      console.log(`[TimeSeriesPlot] ${title}: Attempting initialization with ${dims.w}x${dims.h}`);
       
       // Re-check cache right before init to get latest data
       try {
