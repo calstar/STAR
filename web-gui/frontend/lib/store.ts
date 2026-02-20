@@ -90,6 +90,14 @@ const ALIASES: Record<string, string[]> = {
   'ACT.Fuel_Main.status':            ['ACT.ACT_CH7.status'],
   'ACT.LOX_Press.raw_adc_counts':    ['ACT.ACT_CH8.raw_adc_counts'],
   'ACT.LOX_Press.status':            ['ACT.ACT_CH8.status'],
+  // Additional actuators from new CSV
+  'ACT.Fuel_Fill_Vent.raw_adc_counts': ['ACT.ACT_CH9.raw_adc_counts'],
+  'ACT.Fuel_Fill_Vent.status':        ['ACT.ACT_CH9.status'],
+  'ACT.Fuel_Fill_Press.raw_adc_counts': ['ACT.ACT_CH10.raw_adc_counts'],
+  'ACT.Fuel_Fill_Press.status':       ['ACT.ACT_CH10.status'],
+  // GN2 Vent is same as GSE Low Vent (CH5)
+  'ACT.GN2_Vent.raw_adc_counts':     ['ACT.ACT_CH5.raw_adc_counts', 'ACT.GSE_Low_Vent.raw_adc_counts'],
+  'ACT.GN2_Vent.status':             ['ACT.ACT_CH5.status', 'ACT.GSE_Low_Vent.status'],
 };
 
 export { ALIASES };

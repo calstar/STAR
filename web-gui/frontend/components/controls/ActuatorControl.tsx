@@ -55,22 +55,76 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const entity = ACTUATOR_ENTITIES[actuatorId];
   const ch = ACTUATOR_CHANNELS[actuatorId];
 
-  // Expected position based on system state (from ActuatorStatePanel logic)
+  // Expected position based on system state (matches ActuatorStatePanel - updated from new CSV)
   const EXPECTED_POSITIONS: Record<number, Record<string, 'open' | 'closed' | null>> = {
-    [SystemState.IDLE]:    { 'ACT.LOX_Main': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Press': 'closed', 'ACT.GSE_Low_Vent': 'closed' },
-    [SystemState.ARMED]:   { 'ACT.LOX_Main': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Press': 'closed', 'ACT.GSE_Low_Vent': 'closed' },
-    [SystemState.FUEL_FILL]:     { 'ACT.Fuel_Main': 'open', 'ACT.LOX_Main': 'closed' },
-    [SystemState.OX_FILL]:       { 'ACT.LOX_Main': 'open', 'ACT.Fuel_Main': 'closed' },
-    [SystemState.GN2_LOW_PRESS]: { 'ACT.Fuel_Press': 'open', 'ACT.LOX_Press': 'open', 'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed' },
-    [SystemState.GN2_VENT]:      { 'ACT.GSE_Low_Vent': 'open', 'ACT.Fuel_Press': 'closed', 'ACT.LOX_Press': 'closed' },
-    [SystemState.FUEL_PRESS]:    { 'ACT.Fuel_Press': 'open', 'ACT.Fuel_Vent': 'closed' },
-    [SystemState.FUEL_VENT]:     { 'ACT.Fuel_Vent': 'open', 'ACT.Fuel_Press': 'closed' },
-    [SystemState.OX_PRESS]:      { 'ACT.LOX_Press': 'open', 'ACT.LOX_Vent': 'closed' },
-    [SystemState.OX_VENT]:       { 'ACT.LOX_Vent': 'open', 'ACT.LOX_Press': 'closed' },
-    [SystemState.READY]:   { 'ACT.LOX_Main': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Vent': 'closed' },
-    [SystemState.FIRE]:    { 'ACT.LOX_Main': 'open', 'ACT.Fuel_Main': 'open', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Vent': 'closed' },
-    [SystemState.VENT]:    { 'ACT.LOX_Vent': 'open', 'ACT.Fuel_Vent': 'open', 'ACT.GSE_Low_Vent': 'open', 'ACT.LOX_Main': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Press': 'closed' },
-    [SystemState.ABORT]:   { 'ACT.LOX_Vent': 'open', 'ACT.Fuel_Vent': 'open', 'ACT.GSE_Low_Vent': 'open', 'ACT.LOX_Main': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Press': 'closed' },
+    [SystemState.IDLE]: {
+      'ACT.LOX_Main': 'open', 'ACT.Fuel_Main': 'open', 'ACT.LOX_Vent': 'open', 
+      'ACT.Fuel_Vent': 'open', 'ACT.LOX_Press': 'open', 'ACT.Fuel_Press': 'open', 
+      'ACT.GSE_Low_Vent': 'open',
+    },
+    [SystemState.ARMED]: {
+      'ACT.LOX_Main': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Vent': 'closed', 
+      'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Press': 'closed', 
+      'ACT.GSE_Low_Vent': 'closed',
+    },
+    [SystemState.FUEL_FILL]: {
+      'ACT.Fuel_Vent': 'open', 'ACT.LOX_Vent': 'open', 'ACT.GSE_Low_Vent': 'open',
+      'ACT.Fuel_Press': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed',
+    },
+    [SystemState.OX_FILL]: {
+      'ACT.Fuel_Vent': 'open', 'ACT.LOX_Vent': 'open', 'ACT.GSE_Low_Vent': 'open',
+      'ACT.Fuel_Press': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed',
+    },
+    [SystemState.GN2_LOW_PRESS]: {
+      'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Press': 'closed',
+      'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GSE_Low_Vent': 'closed',
+    },
+    [SystemState.FUEL_PRESS]: {
+      'ACT.Fuel_Press': 'open', 'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed',
+      'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GSE_Low_Vent': 'closed',
+    },
+    [SystemState.FUEL_VENT]: {
+      'ACT.Fuel_Vent': 'open', 'ACT.Fuel_Press': 'closed', 'ACT.LOX_Vent': 'closed',
+      'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GSE_Low_Vent': 'closed',
+    },
+    [SystemState.OX_PRESS]: {
+      'ACT.LOX_Press': 'open', 'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed',
+      'ACT.Fuel_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GSE_Low_Vent': 'closed',
+    },
+    [SystemState.OX_VENT]: {
+      'ACT.LOX_Vent': 'open', 'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Press': 'closed',
+      'ACT.Fuel_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GSE_Low_Vent': 'closed',
+    },
+    [SystemState.GN2_HIGH_PRESS]: {
+      'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Press': 'closed',
+      'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GSE_Low_Vent': 'closed',
+    },
+    [SystemState.GN2_VENT]: {
+      'ACT.GSE_Low_Vent': 'open', 'ACT.Fuel_Press': 'open', 'ACT.Fuel_Vent': 'closed',
+      'ACT.LOX_Vent': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed',
+    },
+    [SystemState.CALIBRATE]: {
+      'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Press': 'closed',
+      'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GSE_Low_Vent': 'closed',
+    },
+    [SystemState.READY]: {
+      'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Press': 'closed',
+      'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GSE_Low_Vent': 'closed',
+    },
+    [SystemState.FIRE]: {
+      'ACT.Fuel_Main': 'open', 'ACT.Fuel_Press': 'open', 'ACT.LOX_Main': 'open', 'ACT.LOX_Press': 'open',
+      'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.GSE_Low_Vent': 'closed',
+    },
+    [SystemState.VENT]: {
+      'ACT.Fuel_Vent': 'open', 'ACT.LOX_Vent': 'open', 'ACT.GSE_Low_Vent': 'open',
+      'ACT.Fuel_Press': 'open', 'ACT.LOX_Press': 'open',
+      'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed',
+    },
+    [SystemState.ABORT]: {
+      'ACT.Fuel_Vent': 'open', 'ACT.LOX_Vent': 'open', 'ACT.GSE_Low_Vent': 'open',
+      'ACT.Fuel_Press': 'open', 'ACT.LOX_Press': 'open', 'ACT.Fuel_Main': 'open',
+      'ACT.LOX_Main': 'closed',
+    },
   };
 
   // Update commanded state based on system state

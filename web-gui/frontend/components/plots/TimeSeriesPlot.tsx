@@ -168,7 +168,8 @@ export default function TimeSeriesPlot({
       const rect = el.getBoundingClientRect();
       const w = Math.floor(rect.width);
       const h = Math.floor(rect.height);
-      return (w > 60 && h > 40) ? { w, h } : null;
+      // Lower threshold to allow initialization sooner
+      return (w > 30 && h > 20) ? { w, h } : null;
     };
 
     // ── Pre-fill from background cache so plot has history on open ────
@@ -199,7 +200,8 @@ export default function TimeSeriesPlot({
     const tryInit = () => {
       if (initializedRef.current || !plotRef.current) return;
       const dims = getDims();
-      if (!dims || dims.w < 100 || dims.h < 50) return; // Ensure minimum size
+      // Use consistent, lower threshold - plots can work with smaller sizes
+      if (!dims || dims.w < 50 || dims.h < 30) return;
       
       // Re-check cache right before init to get latest data
       try {
@@ -244,17 +246,20 @@ export default function TimeSeriesPlot({
       if (initializedRef.current) return;
       if (!containerRef.current || !plotRef.current) return;
       const dims = getDims();
-      if (!dims || dims.w < 50 || dims.h < 30) return; // Lower threshold
+      // Use same threshold as tryInit for consistency
+      if (!dims || dims.w < 50 || dims.h < 30) return;
       tryInit();
     };
     
     // Try immediately on mount
     attemptInit();
     
-    // Try again after a tiny delay (React might not have laid out yet)
+    // Try again after delays (React might not have laid out yet)
     const initTimeout1 = setTimeout(attemptInit, 10);
     const initTimeout2 = setTimeout(attemptInit, 50);
     const initTimeout3 = setTimeout(attemptInit, 100);
+    const initTimeout4 = setTimeout(attemptInit, 200);
+    const initTimeout5 = setTimeout(attemptInit, 500);
     
     // ── ResizeObserver for size changes (after init) ─────────────────────
     const ro = new ResizeObserver(() => {
@@ -262,7 +267,7 @@ export default function TimeSeriesPlot({
         attemptInit(); // Keep trying if not initialized
       } else if (plotInstanceRef.current) {
         const dims = getDims();
-        if (dims && dims.w > 50 && dims.h > 30) {
+        if (dims && dims.w > 30 && dims.h > 20) {
           try {
             plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
           } catch (err) {
@@ -389,7 +394,7 @@ export default function TimeSeriesPlot({
 
       // ── Continuous size sync — catches layout changes ──────────────────
       const dims = getDims();
-      if (dims && plotInstanceRef.current &&
+      if (dims && plotInstanceRef.current && dims.w > 30 && dims.h > 20 &&
           (Math.abs(dims.w - plotInstanceRef.current.width) > 2 ||
            Math.abs(dims.h - plotInstanceRef.current.height) > 2)) {
         try {
@@ -406,6 +411,9 @@ export default function TimeSeriesPlot({
       clearInterval(sampleInterval);
       clearTimeout(initTimeout1);
       clearTimeout(initTimeout2);
+      clearTimeout(initTimeout3);
+      clearTimeout(initTimeout4);
+      clearTimeout(initTimeout5);
       ro.disconnect();
       window.removeEventListener('resize', onWinResize);
       plotInstanceRef.current?.destroy();

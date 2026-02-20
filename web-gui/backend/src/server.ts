@@ -1150,10 +1150,13 @@ class SensorSystemServer {
       return;
     }
     console.log(`🔧 Auto-commanding actuators for state ${SystemState[state]}:`);
-    // Default all actuators to CLOSED (0), then override with CSV values
-    const allChannels = [1, 2, 3, 6, 7, 8]; // OM, FV, FP, OV, FM, OP
-    for (const channelId of allChannels) {
-      const val = expected[channelId] ?? 0; // Default to CLOSED if not in CSV
+    // Send commands for all channels specified in the CSV map
+    for (const [channelIdStr, val] of Object.entries(expected)) {
+      const channelId = Number(channelIdStr);
+      if (isNaN(channelId) || channelId < 1 || channelId > 10) {
+        console.warn(`⚠️ Invalid channel ID in map: ${channelIdStr}`);
+        continue;
+      }
       this.sendActuatorCommandUDP(channelId, val);
       console.log(`   CH${channelId} → ${val === 1 ? 'OPEN' : 'CLOSED'}`);
     }

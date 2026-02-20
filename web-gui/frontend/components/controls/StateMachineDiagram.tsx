@@ -17,7 +17,7 @@ const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.FUEL_VENT]: 'FUEL VENT',
   [SystemState.OX_PRESS]: 'OX PRESS',
   [SystemState.OX_VENT]: 'OX VENT',
-  [SystemState.GN2_HIGH_PRESS]: 'HIGH PRESS',
+  [SystemState.GN2_HIGH_PRESS]: 'GN2 HIGH PRESS',
   [SystemState.GN2_HIGH_VENT]: 'GN2 HI VENT',
   [SystemState.VENT]: 'VENT',
   [SystemState.CALIBRATE]: 'CALIBRATE',
@@ -62,55 +62,8 @@ function nodeCY(state: SystemState) { return nodeY(state) + NH / 2; }
 
 interface Transition { from: SystemState; to: SystemState; }
 
-function parseCSVTransitions(): Transition[] {
-  const csvData = [
-    ['Idle', 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-    ['Armed', 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1],
-    ['Fuel Fill', 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1],
-    ['Ox Fill', 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1],
-    ['Quick Fire', 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1],
-    ['GN2 Press', 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1],
-    ['Fuel Press', 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1],
-    ['Fuel Vent', 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1],
-    ['Ox Press', 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1],
-    ['Ox Vent', 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1],
-    ['High Press', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1],
-    ['GN2 Vent', 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1],
-    ['Fire', 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1],
-    ['Vent', 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1],
-    ['Abort', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-  ];
-  const stateNames = ['Idle','Armed','Fuel Fill','Ox Fill','Quick Fire','GN2 Press',
-                      'Fuel Press','Fuel Vent','Ox Press','Ox Vent','High Press',
-                      'GN2 Vent','Fire','Vent','Abort'];
-  const stateMap: Record<string, SystemState> = {
-    'Idle': SystemState.IDLE, 'Armed': SystemState.ARMED,
-    'Fuel Fill': SystemState.FUEL_FILL, 'Ox Fill': SystemState.OX_FILL,
-    'Quick Fire': SystemState.READY, 'GN2 Press': SystemState.GN2_LOW_PRESS,
-    'Fuel Press': SystemState.FUEL_PRESS, 'Fuel Vent': SystemState.FUEL_VENT,
-    'Ox Press': SystemState.OX_PRESS, 'Ox Vent': SystemState.OX_VENT,
-    'High Press': SystemState.GN2_HIGH_PRESS, 'GN2 Vent': SystemState.GN2_VENT,
-    'Fire': SystemState.FIRE, 'Vent': SystemState.VENT, 'Abort': SystemState.ABORT,
-  };
-  const transitions: Transition[] = [];
-  csvData.forEach((row) => {
-    const from = stateMap[row[0] as string];
-    if (from === undefined) return;
-    for (let c = 1; c < row.length; c++) {
-      if (row[c] === 1) {
-        const to = stateMap[stateNames[c - 1]];
-        if (to !== undefined) transitions.push({ from, to });
-      }
-    }
-  });
-  return transitions;
-}
-
 /**
  * Draw a clean orthogonal arrow between two nodes.
- * Exits the source node from the edge closest to the target and enters the
- * target from the opposite edge.  Falls back to a straight quadratic bezier
- * for short/same-column connections.
  */
 function arrowPath(from: SystemState, to: SystemState): string {
   const fx = nodeX(from); const fy = nodeY(from);
@@ -121,20 +74,17 @@ function arrowPath(from: SystemState, to: SystemState): string {
   const dx = tcx - fcx;
   const dy = tcy - fcy;
 
-  // Source exit point & target entry point
   let sx: number, sy: number, ex: number, ey: number;
 
   if (Math.abs(dy) >= Math.abs(dx)) {
-    // Primarily vertical
     if (dy > 0) {
-      sx = fcx; sy = fy + NH;     // bottom of source
-      ex = tcx; ey = ty;          // top of target
+      sx = fcx; sy = fy + NH;
+      ex = tcx; ey = ty;
     } else {
-      sx = fcx; sy = fy;          // top of source
-      ex = tcx; ey = ty + NH;     // bottom of target
+      sx = fcx; sy = fy;
+      ex = tcx; ey = ty + NH;
     }
   } else {
-    // Primarily horizontal
     if (dx > 0) {
       sx = fx + NW; sy = fcy;
       ex = tx;      ey = tcy;
@@ -144,13 +94,11 @@ function arrowPath(from: SystemState, to: SystemState): string {
     }
   }
 
-  // Orthogonal elbow if there's both horizontal and vertical displacement
   if (Math.abs(dx) > 4 && Math.abs(dy) > 4) {
     const midY = (sy + ey) / 2;
     return `M ${sx} ${sy} L ${sx} ${midY} L ${ex} ${midY} L ${ex} ${ey}`;
   }
 
-  // Straight line with slight curve
   const cpx = (sx + ex) / 2;
   const cpy = (sy + ey) / 2 - Math.min(20, Math.abs(dx) * 0.3);
   return `M ${sx} ${sy} Q ${cpx} ${cpy} ${ex} ${ey}`;
@@ -160,7 +108,6 @@ function StateNode({
   state, isActive, isReachable, onClick,
 }: { state: SystemState; isActive: boolean; isReachable: boolean; onClick: () => void; }) {
   const isEmergency = state === SystemState.ABORT || state === SystemState.VENT;
-  // Emergency states are ALWAYS clickable — they must never be locked out
   const isClickable = isReachable || isActive || isEmergency;
   const name = STATE_NAMES[state];
   const x = nodeX(state); const y = nodeY(state);
@@ -185,7 +132,6 @@ function StateNode({
         fill={fill} stroke={stroke} strokeWidth={sw}
         style={{ transition: 'fill 0.15s, stroke 0.15s' }}
       />
-      {/* Emergency pulse ring */}
       {isEmergency && (
         <rect x={x - 4} y={y - 4} width={NW + 8} height={NH + 8} rx={14}
           fill="none" stroke="#EF4444" strokeWidth={3} opacity={0.35}
@@ -209,11 +155,48 @@ export default function StateMachineDiagram() {
   const currentState = useSensorStore((s) => s.currentState);
   const updateState = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
-  const transitions = useMemo(() => parseCSVTransitions(), []);
+  const [transitions, setTransitions] = useState<Transition[]>([]);
+
+  // Fetch transitions from backend on mount
+  useEffect(() => {
+    ws.connect();
+    const handleTransitions = (payload: unknown) => {
+      const data = payload as { transitions: Transition[] };
+      if (data.transitions) {
+        setTransitions(data.transitions);
+        console.log(`📋 Loaded ${data.transitions.length} state transitions from backend`);
+      }
+    };
+
+    // Listen for state_transitions message
+    const unsub = ws.on('state_transitions' as any, handleTransitions);
+    
+    // Request transitions via WebSocket
+    const msg = {
+      type: 'get_state_transitions',
+      timestamp: Date.now(),
+      payload: {},
+    };
+    (ws as any).send(msg);
+
+    return unsub;
+  }, [ws]);
 
   const sendStateTransition = (targetState: SystemState) => {
+    const effectiveState = currentState ?? SystemState.IDLE;
+    
+    // Validate transition - check if it's allowed
+    const isAllowed = transitions.some(t => t.from === effectiveState && t.to === targetState);
+    const isEmergency = targetState === SystemState.ABORT || targetState === SystemState.VENT;
+    
+    if (!isAllowed && !isEmergency && effectiveState !== targetState) {
+      console.warn(`⚠️ Invalid transition: ${STATE_NAMES[effectiveState]} → ${STATE_NAMES[targetState]}`);
+      alert(`Invalid transition: Cannot go from ${STATE_NAMES[effectiveState]} to ${STATE_NAMES[targetState]}`);
+      return;
+    }
+
     // Optimistic update — show new state immediately
-    updateState({ currentState: targetState, stateName: SystemState[targetState] ?? '', timestamp: Date.now() });
+    updateState({ currentState: targetState, stateName: STATE_NAMES[targetState] ?? '', timestamp: Date.now() });
     const command: CommandPayload = {
       commandType: 'state_transition',
       data: { state: targetState },
@@ -232,7 +215,6 @@ export default function StateMachineDiagram() {
 
   const reachableStates = useMemo(() => {
     return new Set(transitions.filter(t => t.from === effectiveState && t.from !== t.to).map(t => t.to));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveState, transitions]);
 
   return (
@@ -309,4 +291,3 @@ export default function StateMachineDiagram() {
     </div>
   );
 }
-

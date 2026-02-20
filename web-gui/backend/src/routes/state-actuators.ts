@@ -1,19 +1,33 @@
 /**
  * Parse state_machine_actuators.csv to get actuator positions for each state
+ * Supports both old format (abbreviations) and new format (full names)
  */
 
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { SystemState, ActuatorId } from '../../../shared/types.js';
 
-// Actuator abbreviation → ActuatorId mapping
+// Actuator name → ActuatorId mapping (from config.toml actuator_roles)
+// Maps full names to our enum
+const ACTUATOR_NAME_MAP: Record<string, ActuatorId> = {
+  'Fuel Vent': ActuatorId.FUEL_VENT,      // CH2
+  'LOX Vent': ActuatorId.LOX_VENT,        // CH6
+  'Fuel Press': ActuatorId.FUEL_PRESS,    // CH3
+  'LOX Press': ActuatorId.LOX_PRESS,      // CH8
+  'Fuel Main': ActuatorId.FUEL_MAIN,      // CH7
+  'LOX Main': ActuatorId.LOX_MAIN,        // CH1
+  'GSE Low Vent': ActuatorId.GSE_LOW_VENT, // CH5
+  'GN2 Vent': ActuatorId.GSE_LOW_VENT,    // CH5 (same as GSE Low Vent)
+};
+
+// Legacy abbreviation mapping (for old CSV format)
 const ACTUATOR_ABBREV_MAP: Record<string, ActuatorId> = {
-  'FV': ActuatorId.FUEL_VENT,      // Fuel Vent → CH2
-  'OV': ActuatorId.LOX_VENT,        // LOX Vent → CH6
-  'FP': ActuatorId.FUEL_PRESS,      // Fuel Press → CH3
-  'OP': ActuatorId.LOX_PRESS,        // LOX Press → CH8
-  'FM': ActuatorId.FUEL_MAIN,       // Fuel Main → CH7
-  'OM': ActuatorId.LOX_MAIN,        // LOX Main → CH1
+  'FV': ActuatorId.FUEL_VENT,
+  'OV': ActuatorId.LOX_VENT,
+  'FP': ActuatorId.FUEL_PRESS,
+  'OP': ActuatorId.LOX_PRESS,
+  'FM': ActuatorId.FUEL_MAIN,
+  'OM': ActuatorId.LOX_MAIN,
 };
 
 // ActuatorId → board channel mapping (from config.toml actuator_roles)
@@ -27,23 +41,44 @@ const ACTUATOR_CHANNEL: Record<number, number> = {
   [ActuatorId.GSE_LOW_VENT]: 5,
 };
 
-// CSV state name → SystemState enum mapping
+// Additional actuators from new CSV (not in enum yet, map to channels directly)
+// These are stored by channel ID since they're not in ActuatorId enum
+const ADDITIONAL_ACTUATOR_CHANNELS: Record<string, number> = {
+  'Fuel Fill Vent': 9,   // CH9
+  'Fuel Fill Press': 10, // CH10
+  'LOX Dump': 4,         // CH4 (if exists)
+  'LOX Fill': 4,         // CH4 (if exists)
+  'GSE Low Press Vent': 5, // Same as GSE Low Vent
+  'GSE High Press Vent': 5, // May need separate channel
+  'GSE LOX Fill Vent': 5,   // May need separate channel
+  'GSE High Press Control': 5, // May need separate channel
+  'GSE Med Press Control': 5,  // May need separate channel
+};
+
+// CSV state name → SystemState enum mapping (new format)
 const CSV_STATE_MAP: Record<string, SystemState> = {
   'Debug': SystemState.DEBUG,
   'Idle': SystemState.IDLE,
   'Armed': SystemState.ARMED,
   'Fuel Fill': SystemState.FUEL_FILL,
   'Ox Fill': SystemState.OX_FILL,
-  'Quick Fire': SystemState.READY,
   'GN2 Press': SystemState.GN2_LOW_PRESS,
   'Fuel Press': SystemState.FUEL_PRESS,
   'Fuel Vent': SystemState.FUEL_VENT,
   'Ox Press': SystemState.OX_PRESS,
   'Ox Vent': SystemState.OX_VENT,
-  'High Press': SystemState.GN2_HIGH_PRESS,
+  'GN2 High Press': SystemState.GN2_HIGH_PRESS,
   'GN2 Vent': SystemState.GN2_VENT,
+  'Calibrate': SystemState.CALIBRATE,
+  'Ready': SystemState.READY,
   'Fire': SystemState.FIRE,
   'Vent': SystemState.VENT,
+  'Engine Abort': SystemState.ABORT,      // Map to ABORT
+  'GSE Abort': SystemState.ABORT,         // Map to ABORT
+  'Emergency Abort': SystemState.ABORT,   // Map to ABORT
+  // Legacy mappings
+  'Quick Fire': SystemState.READY,
+  'High Press': SystemState.GN2_HIGH_PRESS,
   'Abort': SystemState.ABORT,
 };
 
@@ -63,47 +98,57 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
       return result;
     }
 
-    // First line is header: ,Debug ,Idle,Armed,...
+    // First line is header: ,Idle,Armed,Fuel Fill,...
     const headers = lines[0].split(',').slice(1).map(h => h.trim()); // Skip first empty cell
-    const stateNames = headers.filter(h => h && h.toLowerCase() !== 'no change' && h.toLowerCase() !== 'debug');
 
     // Parse each row (skip header)
     for (let i = 1; i < lines.length; i++) {
       const row = lines[i].split(',');
-      const abbrev = row[0].trim(); // FV, OV, FP, OP, FM, OM
+      const actuatorName = row[0].trim(); // Full name or abbreviation
       
-      if (!abbrev || !ACTUATOR_ABBREV_MAP[abbrev]) {
-        continue; // Skip unknown actuators
+      // Try to find channel ID
+      let channelId: number | undefined;
+      
+      // First try full name mapping
+      const actuatorId = ACTUATOR_NAME_MAP[actuatorName];
+      if (actuatorId !== undefined) {
+        channelId = ACTUATOR_CHANNEL[actuatorId];
+      } else {
+        // Try abbreviation mapping (legacy)
+        const abbrevId = ACTUATOR_ABBREV_MAP[actuatorName];
+        if (abbrevId !== undefined) {
+          channelId = ACTUATOR_CHANNEL[abbrevId];
+        } else {
+          // Try additional actuators
+          channelId = ADDITIONAL_ACTUATOR_CHANNELS[actuatorName];
+        }
       }
-
-      const actuatorId = ACTUATOR_ABBREV_MAP[abbrev];
-      const channelId = ACTUATOR_CHANNEL[actuatorId];
       
       if (!channelId) {
-        console.warn(`⚠️ No channel mapping for actuator ${abbrev} (ID: ${actuatorId})`);
+        console.warn(`⚠️ No channel mapping for actuator "${actuatorName}"`);
         continue;
       }
 
-      // Parse each state column (match combined_gui.py logic)
-      // headers[0] = Debug, headers[1] = Idle, etc.
-      // row[0] = actuator abbrev, row[1] = Debug value, row[2] = Idle value, etc.
-      for (let i = 0; i < headers.length; i++) {
-        const stateName = headers[i]?.trim();
+      // Parse each state column
+      // row[0] = actuator name, row[1] = first state value, row[2] = second state value, etc.
+      for (let colIdx = 0; colIdx < headers.length; colIdx++) {
+        const stateName = headers[colIdx]?.trim();
         if (!stateName || stateName.toLowerCase() === 'no change' || stateName.toLowerCase() === 'debug') {
           continue; // Skip Debug and "No change" columns
         }
 
         const systemState = CSV_STATE_MAP[stateName];
-        if (!systemState) {
-          continue; // Skip unknown states
+        if (systemState === undefined) {
+          console.warn(`⚠️ Unknown state name: "${stateName}"`);
+          continue;
         }
 
-        // Use row[i + 1] to match Python's row[i + 1] logic (row[0] is actuator abbrev)
-        if (i + 1 >= row.length) {
-          continue; // Skip if row doesn't have enough columns
+        // Use row[colIdx + 1] (row[0] is actuator name)
+        if (colIdx + 1 >= row.length) {
+          continue;
         }
 
-        const value = row[i + 1].trim().toUpperCase();
+        const value = row[colIdx + 1].trim().toUpperCase();
         if (value === 'OPEN') {
           if (!result[systemState]) {
             result[systemState] = {};
@@ -120,6 +165,9 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
     }
 
     console.log(`📋 Parsed state actuator map: ${Object.keys(result).length} states`);
+    for (const [state, actuators] of Object.entries(result)) {
+      console.log(`   State ${SystemState[Number(state)]}: ${Object.keys(actuators).length} actuators`);
+    }
     return result;
   } catch (error) {
     console.error('❌ Failed to parse state actuators CSV:', error);
@@ -139,6 +187,7 @@ export function getStateActuatorMap(): StateActuatorMap {
     try {
       const map = parseStateActuatorsCSV(path);
       if (Object.keys(map).length > 0) {
+        console.log(`✅ Loaded state actuator map from: ${path}`);
         return map;
       }
     } catch (error) {
@@ -150,4 +199,3 @@ export function getStateActuatorMap(): StateActuatorMap {
   console.warn('⚠️ State actuators CSV not found, using empty map');
   return {};
 }
-

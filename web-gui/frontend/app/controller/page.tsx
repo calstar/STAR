@@ -87,10 +87,34 @@ export default function ControllerPage() {
   const ws = getWebSocketClient();
 
   useEffect(() => {
-    ws.connect();
-    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    return () => { u1(); u2(); };
+    if (!ws.isConnected()) {
+      ws.connect();
+    }
+    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => {
+      updateSensor(p as SensorUpdate);
+    });
+    const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => {
+      const stateUpdate = p as StateUpdate;
+      updateState(stateUpdate);
+      console.log('[ControllerPage] State updated:', stateUpdate);
+    });
+    
+    // Also subscribe to sensor updates for the controller entities
+    ws.send({
+      type: MessageType.SUBSCRIBE_SENSOR,
+      timestamp: Date.now(),
+      payload: { entity: 'CONTROLLER.Fuel' },
+    });
+    ws.send({
+      type: MessageType.SUBSCRIBE_SENSOR,
+      timestamp: Date.now(),
+      payload: { entity: 'CONTROLLER.Ox' },
+    });
+    
+    return () => { 
+      u1(); 
+      u2(); 
+    };
   }, [ws, updateSensor, updateState]);
 
   return (
