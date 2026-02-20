@@ -3,9 +3,15 @@
  * Supports both old format (abbreviations) and new format (full names)
  */
 
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { SystemState, ActuatorId } from '../../../shared/types.js';
+import { readConfig } from './config.js';
+
+// ES module __dirname equivalent
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Actuator name → ActuatorId mapping (from config.toml actuator_roles)
 // Maps full names to our enum
@@ -94,7 +100,6 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
     // Load actuator channel mappings from config.toml dynamically
     let configActuatorChannels: Record<string, number> = {};
     try {
-      const { readConfig } = require('./config.js');
       const config = readConfig();
       const actuatorRoles = config.actuator_roles || {};
       // Extract channel IDs from [type, channelId] format
@@ -227,8 +232,7 @@ export function getStateActuatorMap(): StateActuatorMap {
 
   for (const path of possiblePaths) {
     try {
-      const fs = require('fs');
-      if (!fs.existsSync(path)) {
+      if (!existsSync(path)) {
         console.log(`   Trying: ${path} (not found)`);
         continue;
       }

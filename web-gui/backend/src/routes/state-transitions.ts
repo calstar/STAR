@@ -2,9 +2,13 @@
  * API route to parse state_transitions.csv and return transitions
  */
 
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { SystemState } from '../../../shared/types.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const CSV_STATE_MAP: Record<string, SystemState> = {
   'Idle': SystemState.IDLE,
@@ -79,15 +83,20 @@ export function parseStateTransitionsCSV(csvPath: string): Transition[] {
 export function getStateTransitions(): Transition[] {
   // Try to find the CSV file
   const possiblePaths = [
-    join(process.cwd(), '..', 'external', 'DiabloAvionics', 'test_guis', 'state_transitions.csv'),
     join(process.cwd(), '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'state_transitions.csv'),
+    join(process.cwd(), '..', 'external', 'DiabloAvionics', 'test_guis', 'state_transitions.csv'),
+    join(__dirname, '..', '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'state_transitions.csv'),
     '/home/kush-mahajan/sensor_system/external/DiabloAvionics/test_guis/state_transitions.csv',
   ];
 
   for (const path of possiblePaths) {
     try {
+      if (!existsSync(path)) {
+        continue;
+      }
       const transitions = parseStateTransitionsCSV(path);
       if (transitions.length > 0) {
+        console.log(`✅ Loaded state transitions from: ${path}`);
         return transitions;
       }
     } catch (error) {

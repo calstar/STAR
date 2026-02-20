@@ -46,8 +46,12 @@ const ALL_ACTUATORS = [
 
 // Simple actuator display for actuators not in the enum
 function SimpleActuatorDisplay({ name, channel, entity }: { name: string; channel: number; entity: string }) {
+  // Call all hooks unconditionally (React Rules of Hooks)
   const status = useSensorValue(entity, 'status');
-  const adc = useSensorValue(entity, 'raw_adc_counts') ?? useSensorValue(`ACT.ACT_CH${channel}`, 'raw_adc_counts');
+  const adcEntity = useSensorValue(entity, 'raw_adc_counts');
+  const adcChannel = useSensorValue(`ACT.ACT_CH${channel}`, 'raw_adc_counts');
+  // Then select the value (not conditional hook calls)
+  const adc = adcEntity ?? adcChannel;
   const hasData = status !== null || adc !== null;
   const isOpen = status === 1 || (adc !== null && adc > 1000);
   const currentState = useSensorStore((s) => s.currentState);

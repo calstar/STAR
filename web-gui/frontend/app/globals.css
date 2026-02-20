@@ -41,19 +41,20 @@ html {
 ::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }
 
 /* ── uPlot overrides ───────────────────────────────────────────────────────── */
-.u-wrap {
+.u-plot-container {
   width: 100% !important;
   height: 100% !important;
 }
 
-.uplot {
+.u-plot-container .u-wrap {
   width: 100% !important;
   height: 100% !important;
 }
 
-.uplot canvas {
+.u-plot-container canvas {
   width: 100% !important;
   height: 100% !important;
+  display: block;
 }
 
 /* Legend inside uPlot – tighten it up */
