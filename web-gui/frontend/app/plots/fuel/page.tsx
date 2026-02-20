@@ -57,7 +57,7 @@ export default function FuelGraphsPage() {
 
         {/* Main chart area */}
         <div className="flex-1 flex flex-col gap-2 min-h-0 min-w-0">
-          <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0 overflow-hidden">
+          <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0" style={{ minHeight: '300px' }}>
             <TimeSeriesPlot
               title="FUEL Pressure (PSI)"
               entities={['PT_Cal.PT_CH1','PT_Cal.PT_CH4']}
