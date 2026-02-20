@@ -62,9 +62,9 @@ export default function FuelGraphsPage() {
           <ActuatorStatePanel
             title="Fuel Actuators"
             actuators={[
-              { label: 'Fuel Main',  entity: 'ACT.ACT_CH7', color: '#27AE60' },
-              { label: 'Fuel Vent',  entity: 'ACT.ACT_CH2', color: '#E74C3C' },
-              { label: 'Fuel Press', entity: 'ACT.ACT_CH3', color: '#F39C12' },
+              { label: 'Fuel Main',  entity: 'ACT.Fuel_Main', color: '#27AE60' },
+              { label: 'Fuel Vent',  entity: 'ACT.Fuel_Vent', color: '#E74C3C' },
+              { label: 'Fuel Press', entity: 'ACT.Fuel_Press', color: '#F39C12' },
             ]}
           />
         </div>

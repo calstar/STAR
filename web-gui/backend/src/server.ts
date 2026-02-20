@@ -1039,24 +1039,45 @@ class SensorSystemServer {
         break;
       case 'zero_all': {
         // Trust the user: current readings → 0 PSI for ALL channels.
-        // Re-init Phase 2 with zero coefficients, then do one RLS update
-        // with (currentADC, 0 PSI) so that the linear model maps the
-        // current operating point to exactly 0.
-        console.log('🎯 ZERO ALL PTs — initializing all channels to 0 PSI');
+        // Calculate drift offset and adjust primarily D term to compensate.
+        // Preserves baseline calibration — only adjusts for drift.
+        console.log('🎯 ZERO ALL PTs — adjusting drift offset to 0 PSI');
         for (let ch = 1; ch <= 10; ch++) {
           const currentAdc = this.lastRawAdc.get(ch) ?? 0;
           if (currentAdc === 0) {
             console.log(`   CH${ch}: no ADC data yet, skipping`);
             continue;
           }
-          // Start fresh with zero coefficients
-          this.phase2Engine.initializeSensor(ch, { A: 0, B: 0, C: 0, D: 0 });
-          // One RLS update: teach the model that currentAdc → 0 PSI
+
+          // Get baseline from ptCalibration (or use existing if already initialized)
+          const baseline = this.ptCalibration.get(ch);
+          if (baseline) {
+            // Initialize with baseline if not already initialized
+            // (initializeSensor is idempotent — won't overwrite if already exists)
+            this.phase2Engine.initializeSensor(ch, baseline);
+          } else {
+            // No baseline found — check if already initialized
+            const existing = this.phase2Engine.getCalibration(ch);
+            if (!existing) {
+              console.log(`   CH${ch}: no baseline calibration, initializing with zeros`);
+              this.phase2Engine.initializeSensor(ch, { A: 0, B: 0, C: 0, D: 0 });
+            }
+          }
+
+          // Calculate current reading to see drift
+          const currentCoeffs = this.phase2Engine.getCalibration(ch);
+          if (currentCoeffs) {
+            const currentReading = calculatePressure(currentAdc, currentCoeffs);
+            const drift = currentReading - 0; // How far off from 0 PSI
+            console.log(`   CH${ch}: ADC=${currentAdc}, current=${currentReading.toFixed(2)} PSI, drift=${drift.toFixed(2)} PSI`);
+          }
+
+          // One RLS update: adjust adjustment term to map currentAdc → 0 PSI
+          // This primarily adjusts D (offset) while preserving baseline A, B, C
           this.phase2Engine.updateCalibration(ch, currentAdc, 0);
-          // Clear static calibration so live coefficients take priority
-          this.ptCalibration.delete(ch);
-          console.log(`   CH${ch}: ADC=${currentAdc} → 0 PSI ✓`);
+          console.log(`   CH${ch}: drift offset adjusted → 0 PSI ✓`);
         }
+        // DO NOT clear ptCalibration — baseline must be preserved
         break;
       }
       default:

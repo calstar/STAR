@@ -91,7 +91,7 @@ export default function PressureBar({
             className="absolute bottom-0 w-full transition-[height] duration-100"
             style={{
               height:     `${valuePct}%`,
-              background: `linear-gradient(to top, ${barColor}, ${barColor}55)`,
+              background: barColor,
             }}
           />
         )}

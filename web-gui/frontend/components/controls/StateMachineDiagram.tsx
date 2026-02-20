@@ -26,12 +26,12 @@ const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.ABORT]: 'ABORT',
 };
 
-const NW = 90; // node width
-const NH = 36; // node height
+const NW = 220; // node width - much bigger
+const NH = 88; // node height - much bigger
 const COLS = 4; // columns in grid
-const COL_GAP = 110;
-const ROW_GAP = 56;
-const PAD = 16;
+const COL_GAP = 280; // much wider spacing
+const ROW_GAP = 140; // much taller spacing
+const PAD = 40; // more padding
 
 // Grid layout: [row, col] 0-based
 const STATE_POS: Record<SystemState, [number, number]> = {
@@ -181,22 +181,22 @@ function StateNode({
       className={isClickable ? 'cursor-pointer' : 'cursor-not-allowed'}
       style={{ opacity: (!isActive && !isReachable && !isEmergency) ? 0.45 : 1 }}
     >
-      <rect x={x} y={y} width={NW} height={NH} rx={5}
+      <rect x={x} y={y} width={NW} height={NH} rx={12}
         fill={fill} stroke={stroke} strokeWidth={sw}
         style={{ transition: 'fill 0.15s, stroke 0.15s' }}
       />
       {/* Emergency pulse ring */}
       {isEmergency && (
-        <rect x={x - 2} y={y - 2} width={NW + 4} height={NH + 4} rx={7}
-          fill="none" stroke="#EF4444" strokeWidth={1} opacity={0.35}
+        <rect x={x - 4} y={y - 4} width={NW + 8} height={NH + 8} rx={14}
+          fill="none" stroke="#EF4444" strokeWidth={3} opacity={0.35}
         />
       )}
       <text
-        x={x + NW / 2} y={y + NH / 2 + 1}
+        x={x + NW / 2} y={y + NH / 2 + 2}
         textAnchor="middle" dominantBaseline="middle"
         fill={isEmergency ? '#FCA5A5' : 'white'}
-        fontSize={10} fontWeight={isActive || isEmergency ? 700 : 500}
-        fontFamily="ui-monospace, monospace" letterSpacing="0.04em"
+        fontSize={18} fontWeight={isActive || isEmergency ? 700 : 500}
+        fontFamily="ui-monospace, monospace" letterSpacing="0.05em"
         style={{ pointerEvents: 'none', userSelect: 'none' }}
       >
         {name}
@@ -236,25 +236,26 @@ export default function StateMachineDiagram() {
   }, [effectiveState, transitions]);
 
   return (
-    <div className="bg-card rounded-xl border border-gray-800 overflow-hidden">
-      <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
-        <h2 className="text-sm font-bold tracking-widest text-text-muted uppercase">State Machine</h2>
-        <span className="text-xs font-mono">
+    <div className="bg-card rounded-xl border border-gray-800 overflow-hidden flex flex-col h-full min-h-0">
+      <div className="px-6 py-5 border-b border-gray-800 flex items-center justify-between flex-shrink-0">
+        <h2 className="text-lg font-bold tracking-widest text-text-muted uppercase">State Machine</h2>
+        <span className="text-sm font-mono">
           <span className="text-text-muted">CURRENT: </span>
           <span className="text-blue-400 font-bold">{STATE_NAMES[effectiveState]}</span>
           <span className="text-text-muted ml-2">— click to transition</span>
         </span>
       </div>
 
-      <div className="p-4 overflow-auto bg-background">
+      <div className="p-8 overflow-auto bg-background min-h-0 flex-1" style={{ minHeight: '600px' }}>
         <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`}
-          style={{ display: 'block', overflow: 'visible' }}>
+          style={{ display: 'block', overflow: 'visible', width: '100%', height: '100%', minHeight: '600px' }}
+          preserveAspectRatio="xMidYMid meet">
           <defs>
-            <marker id="arr-green" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-              <path d="M0,0 L8,3 L0,6 Z" fill="#34D399" />
+            <marker id="arr-green" markerWidth="16" markerHeight="16" refX="13" refY="5" orient="auto">
+              <path d="M0,0 L16,5 L0,10 Z" fill="#34D399" />
             </marker>
-            <marker id="arr-red" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-              <path d="M0,0 L8,3 L0,6 Z" fill="#EF4444" />
+            <marker id="arr-red" markerWidth="16" markerHeight="16" refX="13" refY="5" orient="auto">
+              <path d="M0,0 L16,5 L0,10 Z" fill="#EF4444" />
             </marker>
           </defs>
 
@@ -269,8 +270,8 @@ export default function StateMachineDiagram() {
                   d={arrowPath(t.from, t.to)}
                   fill="none"
                   stroke={isEmergency ? '#EF4444' : '#34D399'}
-                  strokeWidth={isEmergency ? 2 : 1.5}
-                  strokeDasharray={isEmergency ? '5 3' : undefined}
+                  strokeWidth={isEmergency ? 4 : 3.5}
+                  strokeDasharray={isEmergency ? '8 5' : undefined}
                   markerEnd={isEmergency ? 'url(#arr-red)' : 'url(#arr-green)'}
                   style={{ transition: 'all 0.2s' }}
                 />
@@ -291,18 +292,18 @@ export default function StateMachineDiagram() {
       </div>
 
       {/* Legend */}
-      <div className="px-5 py-3 border-t border-gray-800 flex flex-wrap gap-4 text-xs">
-        <span className="flex items-center gap-1.5">
-          <span className="w-4 h-3 rounded-sm inline-block" style={{ background: '#2563EB', border: '1.5px solid #60A5FA' }} />
-          <span className="text-text-muted">Current</span>
+      <div className="px-6 py-4 border-t border-gray-800 flex flex-wrap gap-5 text-sm flex-shrink-0">
+        <span className="flex items-center gap-2">
+          <span className="w-5 h-4 rounded-sm inline-block" style={{ background: '#2563EB', border: '2px solid #60A5FA' }} />
+          <span className="text-text-muted font-semibold">Current</span>
         </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-4 h-3 rounded-sm inline-block" style={{ background: '#059669', border: '1.5px solid #34D399' }} />
-          <span className="text-text-muted">Reachable (click)</span>
+        <span className="flex items-center gap-2">
+          <span className="w-5 h-4 rounded-sm inline-block" style={{ background: '#059669', border: '2px solid #34D399' }} />
+          <span className="text-text-muted font-semibold">Reachable (click)</span>
         </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-4 h-3 rounded-sm inline-block" style={{ background: '#7F1D1D', border: '1.5px solid #EF4444' }} />
-          <span className="text-text-muted">Emergency (always active)</span>
+        <span className="flex items-center gap-2">
+          <span className="w-5 h-4 rounded-sm inline-block" style={{ background: '#7F1D1D', border: '2px solid #EF4444' }} />
+          <span className="text-text-muted font-semibold">Emergency (always active)</span>
         </span>
       </div>
     </div>

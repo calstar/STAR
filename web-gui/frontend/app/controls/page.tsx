@@ -67,7 +67,7 @@ export default function ControlsPage() {
         </div>
 
         {/* Actuator controls — right column, scrollable */}
-        <div className="w-80 flex-shrink-0 overflow-y-auto space-y-3">
+        <div className="w-72 flex-shrink-0 overflow-y-auto space-y-3">
           <div className="bg-card rounded-xl border border-gray-800 p-4">
             <h2 className="text-sm font-bold tracking-widest text-text-muted uppercase mb-4">
               Actuator Controls

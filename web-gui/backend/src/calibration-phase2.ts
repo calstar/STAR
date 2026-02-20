@@ -92,8 +92,16 @@ export class Phase2CalibrationEngine {
   /**
    * Initialize sensor state from existing calibration (baseline)
    * Adjustment starts at zero — Phase 2 will guide it to correct drift
+   * Idempotent: if sensor already initialized, only updates baseline if different
    */
   initializeSensor(sensorId: number, baselineCoeffs: CalibrationCoefficients): void {
+    const existing = this.sensorStates.get(sensorId);
+    if (existing) {
+      // Already initialized — update baseline but preserve adjustment
+      existing.baselineCoeffs = baselineCoeffs;
+      return;
+    }
+
     const P: number[][] = [
       [1e6, 0, 0, 0],
       [0, 1e6, 0, 0],
@@ -329,11 +337,12 @@ export class Phase2CalibrationEngine {
       }
 
       if (!data.calibration_polynomials) data.calibration_polynomials = {};
+      const liveCoeffs = getLiveCoeffs(state);
       (data.calibration_polynomials as Record<string, number[]>)[sensorId.toString()] = [
-        state.coeffs.A,
-        state.coeffs.B,
-        state.coeffs.C,
-        state.coeffs.D,
+        liveCoeffs.A,
+        liveCoeffs.B,
+        liveCoeffs.C,
+        liveCoeffs.D,
       ];
 
       if (!data.phase2_updates) data.phase2_updates = {};
@@ -433,7 +442,7 @@ export class Phase2CalibrationEngine {
         meanResidual: mean,
         glrStat,
         confidence,
-        coeffs: { ...state.coeffs },
+        coeffs: { ...getLiveCoeffs(state) },
         phase2Active: this.enabled,
         covarianceTrace: covTrace,
       });

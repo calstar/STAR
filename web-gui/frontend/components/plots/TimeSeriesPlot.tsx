@@ -188,10 +188,21 @@ export default function TimeSeriesPlot({
     const tryInit = () => {
       if (initialized || !plotRef.current) return;
       const dims = getDims();
-      if (!dims) return;
+      if (!dims || dims.w < 100 || dims.h < 50) return; // Ensure minimum size
       initialized = true;
-      const data: uPlot.AlignedData = [dataRef.current.time, ...dataRef.current.values];
-      plotInstanceRef.current = new uPlot(buildOpts(dims.w, dims.h), data, plotRef.current);
+      
+      // Always initialize with data, even if empty - uPlot handles empty data
+      const data: uPlot.AlignedData = [
+        dataRef.current.time.length > 0 ? dataRef.current.time : [0],
+        ...dataRef.current.values.map(v => v.length > 0 ? v : [NaN])
+      ];
+      
+      try {
+        plotInstanceRef.current = new uPlot(buildOpts(dims.w, dims.h), data, plotRef.current);
+      } catch (err) {
+        console.error('[TimeSeriesPlot] Initialization failed:', err);
+        initialized = false;
+      }
     };
 
     // ── ResizeObserver on the outer container ─────────────────────────────
@@ -205,7 +216,30 @@ export default function TimeSeriesPlot({
         }
       }
     });
-    if (containerRef.current) ro.observe(containerRef.current);
+    
+    // Set up observer - use a small delay to ensure refs are set
+    const setupObserver = () => {
+      if (containerRef.current) {
+        ro.observe(containerRef.current);
+        // Also try init immediately if container is ready
+        tryInit();
+      }
+    };
+    
+    // Try immediately
+    setupObserver();
+    
+    // Fallback: try again after short delays in case container wasn't ready
+    const initTimeout1 = setTimeout(() => {
+      setupObserver();
+      if (!initialized) tryInit();
+    }, 50);
+    
+    const initTimeout2 = setTimeout(() => {
+      if (!initialized && containerRef.current) {
+        tryInit();
+      }
+    }, 200);
 
     // Window resize safety net
     const onWinResize = () => {
@@ -228,16 +262,26 @@ export default function TimeSeriesPlot({
       }
     });
 
-    // ── 20 Hz sample + render + size-sync loop ──────────────────────────
+    // ── 10 Hz sample + render + size-sync loop ──────────────────────────
     const sampleInterval = setInterval(() => {
-      if (!initialized) { tryInit(); if (!initialized) return; }
+      // Always try to initialize if not done yet
+      if (!initialized) {
+        tryInit();
+        if (!initialized) return;
+      }
+
+      if (!plotInstanceRef.current) return;
 
       const now    = (Date.now() - startTimeRef.current) / 1000;
       const cutoff = now - WINDOW_SECONDS;
       const d      = dataRef.current;
 
+      // Add new data point
       d.time.push(now);
-      entities.forEach((_, i) => d.values[i].push(latestValuesRef.current[i]));
+      entities.forEach((_, i) => {
+        const val = latestValuesRef.current[i];
+        d.values[i].push(isFinite(val) ? val : NaN);
+      });
 
       // Trim older than window
       let first = 0;
@@ -252,15 +296,26 @@ export default function TimeSeriesPlot({
         d.values = d.values.map((a) => a.slice(excess));
       }
 
-      // resetScales=true → Y range() recalculates from real data each tick
-      plotInstanceRef.current!.setData([d.time, ...d.values], true);
+      // Update plot data - ensure we always have at least one time point
+      const timeData = d.time.length > 0 ? d.time : [now];
+      const valueData = d.values.map(v => v.length > 0 ? v : [NaN]);
+      
+      try {
+        plotInstanceRef.current.setData([timeData, ...valueData], true);
+      } catch (err) {
+        console.error('[TimeSeriesPlot] setData failed:', err);
+      }
 
       // ── Continuous size sync — catches layout changes ──────────────────
       const dims = getDims();
       if (dims && plotInstanceRef.current &&
           (Math.abs(dims.w - plotInstanceRef.current.width) > 2 ||
            Math.abs(dims.h - plotInstanceRef.current.height) > 2)) {
-        plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
+        try {
+          plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
+        } catch (err) {
+          console.error('[TimeSeriesPlot] setSize failed:', err);
+        }
       }
     }, 1000 / SAMPLE_HZ);
 
@@ -268,6 +323,8 @@ export default function TimeSeriesPlot({
       unsubSensor();
       unsubStatus();
       clearInterval(sampleInterval);
+      clearTimeout(initTimeout1);
+      clearTimeout(initTimeout2);
       ro.disconnect();
       window.removeEventListener('resize', onWinResize);
       plotInstanceRef.current?.destroy();

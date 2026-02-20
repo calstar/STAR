@@ -57,7 +57,7 @@ export default function GSEGraphsPage() {
           <ActuatorStatePanel
             title="GSE Actuators"
             actuators={[
-              { label: 'GSE Low Vent', entity: 'ACT.ACT_CH5', color: '#F39C12' },
+              { label: 'GSE Low Vent', entity: 'ACT.GSE_Low_Vent', color: '#F39C12' },
             ]}
           />
         </div>

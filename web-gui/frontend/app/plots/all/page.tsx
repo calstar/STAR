@@ -53,9 +53,9 @@ function FuelTab() {
       <ActuatorStatePanel
         title="Fuel Actuators"
         actuators={[
-          { label: 'Fuel Main',  entity: 'ACT.ACT_CH7', color: '#27AE60' },
-          { label: 'Fuel Vent',  entity: 'ACT.ACT_CH2', color: '#E74C3C' },
-          { label: 'Fuel Press', entity: 'ACT.ACT_CH3', color: '#F39C12' },
+          { label: 'Fuel Main',  entity: 'ACT.Fuel_Main', color: '#27AE60' },
+          { label: 'Fuel Vent',  entity: 'ACT.Fuel_Vent', color: '#E74C3C' },
+          { label: 'Fuel Press', entity: 'ACT.Fuel_Press', color: '#F39C12' },
         ]}
       />
     </div>
@@ -80,9 +80,9 @@ function LOXTab() {
       <ActuatorStatePanel
         title="LOX Actuators"
         actuators={[
-          { label: 'LOX Main',  entity: 'ACT.ACT_CH1', color: '#27AE60' },
-          { label: 'LOX Vent',  entity: 'ACT.ACT_CH6', color: '#E74C3C' },
-          { label: 'LOX Press', entity: 'ACT.ACT_CH8', color: '#F39C12' },
+          { label: 'LOX Main',  entity: 'ACT.LOX_Main', color: '#27AE60' },
+          { label: 'LOX Vent',  entity: 'ACT.LOX_Vent', color: '#E74C3C' },
+          { label: 'LOX Press', entity: 'ACT.LOX_Press', color: '#F39C12' },
         ]}
       />
     </div>
@@ -127,7 +127,7 @@ function GSETab() {
       <ActuatorStatePanel
         title="GSE Actuators"
         actuators={[
-          { label: 'GSE Low Vent', entity: 'ACT.ACT_CH5', color: '#F39C12' },
+          { label: 'GSE Low Vent', entity: 'ACT.GSE_Low_Vent', color: '#F39C12' },
         ]}
       />
     </div>
