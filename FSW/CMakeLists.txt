@@ -43,7 +43,7 @@ target_link_libraries(fsw_daq_lib
     Eigen3::Eigen
     Threads::Threads
     pthread
-    rt
+    ${RT_LIBRARY}
 )
 
 # Main daq_bridge executable
@@ -59,7 +59,7 @@ target_link_libraries(daq_bridge
     daq_comms_lib
     Threads::Threads
     pthread
-    rt
+    ${RT_LIBRARY}
 )
 
 # Test program to send all sensors from config
@@ -76,7 +76,7 @@ target_link_libraries(send_all_sensors_from_config
     daq_comms_lib
     Threads::Threads
     pthread
-    rt
+    ${RT_LIBRARY}
 )
 
 # SITL Simulator executable
@@ -94,7 +94,7 @@ target_link_libraries(sitl_simulator
     Eigen3::Eigen
     Threads::Threads
     pthread
-    rt
+    ${RT_LIBRARY}
 )
 
 # Robust DDP Controller test executable
@@ -111,7 +111,7 @@ target_link_libraries(test_robust_ddp
     Eigen3::Eigen
     Threads::Threads
     pthread
-    rt
+    ${RT_LIBRARY}
 )
 
 # IMU Calibration test executable
@@ -128,7 +128,7 @@ target_link_libraries(test_imu_calibration
     Eigen3::Eigen
     Threads::Threads
     pthread
-    rt
+    ${RT_LIBRARY}
 )
 
 # Install targets

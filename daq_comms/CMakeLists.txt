@@ -22,7 +22,7 @@ target_include_directories(daq_comms_lib PUBLIC
 target_link_libraries(daq_comms_lib
     Threads::Threads
     pthread
-    rt
+    ${RT_LIBRARY}
 )
 
 # Install targets
