@@ -7,10 +7,10 @@
  * mount to pre-fill its buffer.
  */
 
-import { useSensorStore } from './store';
+import { useSensorStore, ALIASES } from './store';
 import { getStartupTime } from './startup-time';
 
-const CACHE_SAMPLE_HZ = 1; // 1 Hz background sampling
+const CACHE_SAMPLE_HZ = 10; // 10 Hz to match backend broadcast rate
 const CACHE_MAX_SECONDS = 300; // 5 minutes of history
 const CACHE_MAX_POINTS = CACHE_MAX_SECONDS * CACHE_SAMPLE_HZ;
 

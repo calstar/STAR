@@ -162,8 +162,10 @@ export default function TimeSeriesPlot({
     const getDims = (): { w: number; h: number } | null => {
       const el = containerRef.current;
       if (!el) return null;
-      const w = el.clientWidth;
-      const h = el.clientHeight;
+      // Use getBoundingClientRect for accurate dimensions
+      const rect = el.getBoundingClientRect();
+      const w = Math.floor(rect.width);
+      const h = Math.floor(rect.height);
       return (w > 60 && h > 40) ? { w, h } : null;
     };
 
@@ -178,9 +180,18 @@ export default function TimeSeriesPlot({
           const last = vals[vals.length - 1];
           if (isFinite(last)) latestValuesRef.current[i] = last;
         });
+      } else {
+        // Initialize with current time so plot shows immediately
+        const now = (Date.now() - startTimeRef.current) / 1000;
+        dataRef.current.time = [now];
+        dataRef.current.values = entities.map(() => [NaN]);
       }
     } catch (err) {
       console.warn('[TimeSeriesPlot] Cache pre-fill failed:', err);
+      // Initialize with current time so plot shows immediately
+      const now = (Date.now() - startTimeRef.current) / 1000;
+      dataRef.current.time = [now];
+      dataRef.current.values = entities.map(() => [NaN]);
     }
 
     let initialized = false;
@@ -191,11 +202,12 @@ export default function TimeSeriesPlot({
       if (!dims || dims.w < 100 || dims.h < 50) return; // Ensure minimum size
       initialized = true;
       
-      // Always initialize with data, even if empty - uPlot handles empty data
-      const data: uPlot.AlignedData = [
-        dataRef.current.time.length > 0 ? dataRef.current.time : [0],
-        ...dataRef.current.values.map(v => v.length > 0 ? v : [NaN])
-      ];
+      // Always initialize with data - ensure we have at least one time point
+      const now = (Date.now() - startTimeRef.current) / 1000;
+      const timeData = dataRef.current.time.length > 0 ? dataRef.current.time : [now];
+      const valueData = dataRef.current.values.map(v => v.length > 0 ? v : [NaN]);
+      
+      const data: uPlot.AlignedData = [timeData, ...valueData];
       
       try {
         plotInstanceRef.current = new uPlot(buildOpts(dims.w, dims.h), data, plotRef.current);
@@ -211,8 +223,12 @@ export default function TimeSeriesPlot({
         tryInit();
       } else if (plotInstanceRef.current) {
         const dims = getDims();
-        if (dims) {
-          plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
+        if (dims && dims.w > 100 && dims.h > 50) {
+          try {
+            plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
+          } catch (err) {
+            console.error('[TimeSeriesPlot] ResizeObserver setSize failed:', err);
+          }
         }
       }
     });
@@ -339,11 +355,11 @@ export default function TimeSeriesPlot({
       style={height ? { height: height + 32 } : undefined}
     >
       {/* Title bar */}
-      <div className="flex items-center justify-between mb-1 px-1 flex-shrink-0">
-        <h3 className="text-sm font-bold text-gray-100 truncate">{title}</h3>
+      <div className="flex items-center justify-between mb-2 px-1 flex-shrink-0">
+        <h3 className="text-base font-bold text-gray-100 truncate">{title}</h3>
         <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-          <div className={`w-2 h-2 rounded-full ${actuallyConnected ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
-          <span className="text-[11px] font-mono text-gray-500">{actuallyConnected ? 'Live' : 'No signal'}</span>
+          <div className={`w-2.5 h-2.5 rounded-full ${actuallyConnected ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
+          <span className="text-xs font-mono text-gray-400 font-semibold">{actuallyConnected ? 'Live' : 'No signal'}</span>
         </div>
       </div>
       {/* Chart container: measured by ResizeObserver. plotRef inside receives uPlot. */}

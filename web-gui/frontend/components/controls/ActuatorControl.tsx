@@ -1,9 +1,9 @@
 'use client'
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useGetSensorValue, useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { ActuatorId, ActuatorState, CommandPayload } from '@/lib/types';
+import { ActuatorId, ActuatorState, CommandPayload, SystemState } from '@/lib/types';
 
 // Human-readable names
 const ACTUATOR_NAMES: Record<ActuatorId, string> = {
@@ -47,12 +47,42 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const getSensorValue = useGetSensorValue();
   const debugMode = useSensorStore((s) => s.debugMode);
 
-  // Commanded state tracks what we last told the actuator to do
+  // Commanded state tracks what we last told the actuator to do OR what system state requires
   const [commanded, setCommanded] = useState<ActuatorState | null>(null);
   const [pending, setPending] = useState(false);
+  const currentState = useSensorStore((s) => s.currentState);
 
   const entity = ACTUATOR_ENTITIES[actuatorId];
   const ch = ACTUATOR_CHANNELS[actuatorId];
+
+  // Expected position based on system state (from ActuatorStatePanel logic)
+  const EXPECTED_POSITIONS: Record<number, Record<string, 'open' | 'closed' | null>> = {
+    [SystemState.IDLE]:    { 'ACT.LOX_Main': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Press': 'closed', 'ACT.GSE_Low_Vent': 'closed' },
+    [SystemState.ARMED]:   { 'ACT.LOX_Main': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Press': 'closed', 'ACT.GSE_Low_Vent': 'closed' },
+    [SystemState.FUEL_FILL]:     { 'ACT.Fuel_Main': 'open', 'ACT.LOX_Main': 'closed' },
+    [SystemState.OX_FILL]:       { 'ACT.LOX_Main': 'open', 'ACT.Fuel_Main': 'closed' },
+    [SystemState.GN2_LOW_PRESS]: { 'ACT.Fuel_Press': 'open', 'ACT.LOX_Press': 'open', 'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed' },
+    [SystemState.GN2_VENT]:      { 'ACT.GSE_Low_Vent': 'open', 'ACT.Fuel_Press': 'closed', 'ACT.LOX_Press': 'closed' },
+    [SystemState.FUEL_PRESS]:    { 'ACT.Fuel_Press': 'open', 'ACT.Fuel_Vent': 'closed' },
+    [SystemState.FUEL_VENT]:     { 'ACT.Fuel_Vent': 'open', 'ACT.Fuel_Press': 'closed' },
+    [SystemState.OX_PRESS]:      { 'ACT.LOX_Press': 'open', 'ACT.LOX_Vent': 'closed' },
+    [SystemState.OX_VENT]:       { 'ACT.LOX_Vent': 'open', 'ACT.LOX_Press': 'closed' },
+    [SystemState.READY]:   { 'ACT.LOX_Main': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Vent': 'closed' },
+    [SystemState.FIRE]:    { 'ACT.LOX_Main': 'open', 'ACT.Fuel_Main': 'open', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Vent': 'closed' },
+    [SystemState.VENT]:    { 'ACT.LOX_Vent': 'open', 'ACT.Fuel_Vent': 'open', 'ACT.GSE_Low_Vent': 'open', 'ACT.LOX_Main': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Press': 'closed' },
+    [SystemState.ABORT]:   { 'ACT.LOX_Vent': 'open', 'ACT.Fuel_Vent': 'open', 'ACT.GSE_Low_Vent': 'open', 'ACT.LOX_Main': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Press': 'closed' },
+  };
+
+  // Update commanded state based on system state
+  useEffect(() => {
+    if (currentState != null) {
+      const stateExpected = EXPECTED_POSITIONS[currentState] ?? {};
+      const expected = stateExpected[entity];
+      if (expected !== null && expected !== undefined) {
+        setCommanded(expected === 'open' ? ActuatorState.OPEN : ActuatorState.CLOSED);
+      }
+    }
+  }, [currentState, entity]);
 
   // Feedback: try named entity first (aliases in store.ts cover the ACT_CHX fallback)
   const rawAdc = getSensorValue(entity, 'raw_adc_counts')
@@ -61,9 +91,14 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const statusRaw = getSensorValue(entity, 'status')
     ?? getSensorValue(`ACT.ACT_CH${ch}`, 'status');
 
-  // Actuator is considered OPEN if: status=1 OR high raw ADC (current sense)
-  // Threshold: raw ADC > 100000 (arbitrary; adjust per board)
-  const feedbackOpen = statusRaw === 1 || rawAdc > 100000;
+  // Convert ADC to voltage (32-bit ADC, 0-3.3V range, reference voltage)
+  // Combined_gui uses voltage threshold: typically > 0.1V means actuator is ON
+  // For 32-bit ADC: voltage = (rawAdc / 2^32) * 3.3V
+  // Threshold: > 0.1V = rawAdc > (0.1 / 3.3) * 2^32 ≈ 130,000,000
+  // But we see values like 1,168,235,832 which is ~0.9V, so threshold should be lower
+  // Use threshold: > 50,000,000 (about 0.04V) to detect actuator ON
+  const voltageThreshold = 50000000; // ~0.04V
+  const feedbackOpen = statusRaw === 1 || rawAdc > voltageThreshold;
 
   const sendCommand = (state: ActuatorState) => {
     const command: CommandPayload = {

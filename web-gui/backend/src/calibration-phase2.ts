@@ -390,6 +390,13 @@ export class Phase2CalibrationEngine {
     return state ? getLiveCoeffs(state) : null;
   }
 
+  /**
+   * Get sensor state for checking update timestamps
+   */
+  getSensorState(sensorId: number): SensorState | null {
+    return this.sensorStates.get(sensorId) ?? null;
+  }
+
   getAllStatus(): Array<{
     sensorId: number;
     updateCount: number;

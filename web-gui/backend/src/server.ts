@@ -106,6 +106,9 @@ class SensorSystemServer {
 
   /** Logging throttle */
   private _lastSensorLog = 0;
+  
+  /** Track if we've received calibrated PT from Elodin recently (per channel) */
+  private calibratedPTFromElodin: Map<number, number> = new Map(); // channelId -> timestamp
 
   /** Current system state for continuous actuator command sending */
   private currentState: SystemState | null = null;
@@ -422,63 +425,85 @@ class SensorSystemServer {
             }
           }
 
-          // Calculate calibrated PSI — prefer Phase 2 (live-updated) coefficients,
-          // fall back to static file coefficients, then raw conversion.
-          const liveCoeffs = this.phase2Engine?.getCalibration(channelId);
-          const activeCoeffs = liveCoeffs ?? coeffs;
-          let psi: number;
-          if (activeCoeffs) {
-            psi = calculatePressure(codeUint32, activeCoeffs);
-          } else {
-            psi = codeUint32 / 1000000.0; // No calibration - temporary conversion
-          }
+          // Check if Phase 2 has recent manual updates (zero_all, capture_reference)
+          // If so, ALWAYS use Phase 2 - don't trust Elodin's old static calibration
+          const phase2State = this.phase2Engine?.getSensorState?.(channelId);
+          const phase2HasRecentUpdate = phase2State && 
+            (Date.now() - phase2State.lastUpdate < 5000) && // Updated in last 5 seconds
+            phase2State.rlsUpdateCount > 0; // Has at least one manual update
+          
+          // Check if we've received calibrated PT from Elodin recently (within last 200ms)
+          // Only trust Elodin if Phase 2 hasn't been manually updated
+          const lastElodinCal = this.calibratedPTFromElodin.get(channelId) ?? 0;
+          const timeSinceElodinCal = Date.now() - lastElodinCal;
+          const skipOurCalculation = !phase2HasRecentUpdate && timeSinceElodinCal < 200;
+          
+          if (!skipOurCalculation) {
+            // Only calculate if Elodin hasn't sent calibrated PT recently
+            // Calculate calibrated PSI — prefer Phase 2 (live-updated) coefficients,
+            // fall back to static file coefficients, then raw conversion.
+            const liveCoeffs = this.phase2Engine?.getCalibration(channelId);
+            const activeCoeffs = liveCoeffs ?? coeffs;
+            let psi: number;
+            if (activeCoeffs) {
+              psi = calculatePressure(codeUint32, activeCoeffs);
+            } else {
+              psi = codeUint32 / 1000000.0; // No calibration - temporary conversion
+            }
 
-          // Publish calibrated PT message to Elodin DB
-          if (publishingToElodin) {
-            try {
-              const calPayload = encodeCalibratedPTMessage(
-                timestampNs,
-                channelId,
-                psi,
-                codeUint32,
-                0 // cal status
-              );
-              // Packet ID: [0x20, 0x10 + channel_id] for calibrated PT
-              this.elodin.publishTable([0x20, 0x10 + channelId], calPayload);
-            } catch (error) {
-              // Silently fail - publishing is optional
+            // Publish calibrated PT message to Elodin DB (only if we calculated it)
+            if (publishingToElodin) {
+              try {
+                const calPayload = encodeCalibratedPTMessage(
+                  timestampNs,
+                  channelId,
+                  psi,
+                  codeUint32,
+                  0 // cal status
+                );
+                // Packet ID: [0x20, 0x10 + channel_id] for calibrated PT
+                this.elodin.publishTable([0x20, 0x10 + channelId], calPayload);
+              } catch (error) {
+                // Silently fail - publishing is optional
+              }
+            }
+
+            // Map channel ID to proper calibrated entity name
+            const calEntityMap: Record<number, string> = {
+              1: 'PT_Cal.Fuel_Upstream',
+              2: 'PT_Cal.GSE_Low',
+              3: 'PT_Cal.GSE_Mid',
+              4: 'PT_Cal.Fuel_Downstream',
+              5: 'PT_Cal.Ox_Upstream',
+              6: 'PT_Cal.GN2_Regulated',
+              7: 'PT_Cal.Ox_Downstream',
+              8: 'PT_Cal.PT_CH8',  // May be GSE_High or GN2_High
+              9: 'PT_Cal.PT_CH9',
+              10: 'PT_Cal.PT_CH10',
+            };
+            const calEntity = calEntityMap[channelId] || `PT_Cal.PT_CH${channelId}`;
+
+            // Calibrated value with BOTH the nice name and PT_CH alias
+            this.handleSensorUpdate({
+              entity: calEntity,
+              component: 'pressure_psi',
+              value: psi,
+              timestamp: currentTime,
+            });
+
+            // Also send PT_CH alias for compatibility
+            this.handleSensorUpdate({
+              entity: `PT_Cal.PT_CH${channelId}`,
+              component: 'pressure_psi',
+              value: psi,
+              timestamp: currentTime,
+            });
+            
+            // Debug log for fuel upstream (channel 1) to verify processing
+            if (channelId === 1 && Math.random() < 0.01) { // Log 1% of packets
+              console.log(`[CH1/Fuel_Upstream] ADC=${codeUint32}, PSI=${psi.toFixed(2)}, entity=${calEntity}`);
             }
           }
-
-          // Map channel ID to proper calibrated entity name
-          const calEntityMap: Record<number, string> = {
-            1: 'PT_Cal.Fuel_Upstream',
-            2: 'PT_Cal.GSE_Low',
-            3: 'PT_Cal.GSE_Mid',
-            4: 'PT_Cal.Fuel_Downstream',
-            5: 'PT_Cal.Ox_Upstream',
-            6: 'PT_Cal.GN2_Regulated',
-            7: 'PT_Cal.Ox_Downstream',
-            8: 'PT_Cal.PT_CH8',  // May be GSE_High or GN2_High
-            9: 'PT_Cal.PT_CH9',
-            10: 'PT_Cal.PT_CH10',
-          };
-          const calEntity = calEntityMap[channelId] || `PT_Cal.PT_CH${channelId}`;
-
-          // Calibrated value with BOTH the nice name and PT_CH alias
-          this.handleSensorUpdate({
-            entity: calEntity,
-            component: 'pressure_psi',
-            value: psi,
-            timestamp: currentTime,
-          });
-
-          this.handleSensorUpdate({
-            entity: `PT_Cal.PT_CH${channelId}`,
-            component: 'pressure_psi',
-            value: psi,
-            timestamp: currentTime,
-          });
         }
       }
     });
@@ -617,21 +642,71 @@ class SensorSystemServer {
       }
 
       // Log successful parsing occasionally
-      if (Math.random() < 0.1) {
+      if (Math.random() < 0.01) {
         console.log(`✅ Parsed: ${parsed.entity}.${parsed.component} = ${parsed.value.toFixed(2)}`);
       }
 
-      // Create sensor update
-      const key = `${parsed.entity}.${parsed.component}`;
-      const update: SensorUpdate = {
-        entity: parsed.entity,
-        component: parsed.component,
-        value: parsed.value,
-        timestamp: parsed.timestamp,
-      };
+      // For calibrated PT from Elodin, check if Phase 2 has recent manual updates
+      // If Phase 2 was manually updated (zero_all, capture_reference), trust Phase 2 over Elodin
+      let shouldUseElodinValue = true;
+      let channelId: number | null = null;
+      
+      if (parsed.entity.startsWith('PT_Cal.') && parsed.component === 'pressure_psi') {
+        // Extract channel ID from entity name
+        const channelMatch = parsed.entity.match(/PT_CH(\d+)/);
+        if (channelMatch) {
+          channelId = parseInt(channelMatch[1], 10);
+        } else {
+          // Try to match by name
+          const nameMap: Record<string, number> = {
+            'PT_Cal.Fuel_Upstream': 1,
+            'PT_Cal.GSE_Low': 2,
+            'PT_Cal.GSE_Mid': 3,
+            'PT_Cal.Fuel_Downstream': 4,
+            'PT_Cal.Ox_Upstream': 5,
+            'PT_Cal.GN2_Regulated': 6,
+            'PT_Cal.Ox_Downstream': 7,
+          };
+          channelId = nameMap[parsed.entity] ?? null;
+        }
+        
+        if (channelId) {
+          // Check if Phase 2 has recent manual updates - if so, ignore Elodin's value
+          const phase2State = this.phase2Engine?.getSensorState?.(channelId);
+          if (phase2State && 
+              (Date.now() - phase2State.lastUpdate < 10000) && // Updated in last 10 seconds
+              phase2State.rlsUpdateCount > 0) { // Has at least one manual update
+            console.log(`⚠️ Ignoring Elodin calibrated PT for CH${channelId} - Phase 2 has recent manual update (last update: ${((Date.now() - phase2State.lastUpdate) / 1000).toFixed(1)}s ago)`);
+            shouldUseElodinValue = false;
+          } else {
+            // Mark that we received calibrated PT from Elodin for this channel
+            this.calibratedPTFromElodin.set(channelId, Date.now());
+          }
+        }
+      }
 
-      // Handle update (updates cache and broadcasts)
-      this.handleSensorUpdate(update);
+      // Only use Elodin's value if Phase 2 doesn't have recent manual updates
+      if (shouldUseElodinValue) {
+        const update: SensorUpdate = {
+          entity: parsed.entity,
+          component: parsed.component,
+          value: parsed.value,
+          timestamp: parsed.timestamp,
+        };
+
+        // Handle update (updates cache and broadcasts)
+        this.handleSensorUpdate(update);
+        
+        // Also emit PT_CH alias if it's a calibrated PT
+        if (channelId) {
+          this.handleSensorUpdate({
+            entity: `PT_Cal.PT_CH${channelId}`,
+            component: 'pressure_psi',
+            value: parsed.value,
+            timestamp: parsed.timestamp,
+          });
+        }
+      }
     } catch (error) {
       console.error('❌ Error handling Elodin packet:', error);
       console.error('   Packet header:', header);
@@ -1039,9 +1114,9 @@ class SensorSystemServer {
         break;
       case 'zero_all': {
         // Trust the user: current readings → 0 PSI for ALL channels.
-        // Calculate drift offset and adjust primarily D term to compensate.
-        // Preserves baseline calibration — only adjusts for drift.
-        console.log('🎯 ZERO ALL PTs — adjusting drift offset to 0 PSI');
+        // DIRECTLY set adjustment D term to force current reading to 0 PSI.
+        // This is more aggressive and immediate than RLS update.
+        console.log('🎯 ZERO ALL PTs — directly setting adjustment to force 0 PSI');
         for (let ch = 1; ch <= 10; ch++) {
           const currentAdc = this.lastRawAdc.get(ch) ?? 0;
           if (currentAdc === 0) {
@@ -1064,18 +1139,40 @@ class SensorSystemServer {
             }
           }
 
-          // Calculate current reading to see drift
-          const currentCoeffs = this.phase2Engine.getCalibration(ch);
-          if (currentCoeffs) {
-            const currentReading = calculatePressure(currentAdc, currentCoeffs);
-            const drift = currentReading - 0; // How far off from 0 PSI
-            console.log(`   CH${ch}: ADC=${currentAdc}, current=${currentReading.toFixed(2)} PSI, drift=${drift.toFixed(2)} PSI`);
+          // Get current state to directly modify adjustment
+          const state = this.phase2Engine.getSensorState(ch);
+          if (!state) {
+            console.log(`   CH${ch}: Phase 2 state not found, skipping`);
+            continue;
           }
 
-          // One RLS update: adjust adjustment term to map currentAdc → 0 PSI
-          // This primarily adjusts D (offset) while preserving baseline A, B, C
+          // Calculate current reading using baseline + current adjustment
+          const currentCoeffs = {
+            A: state.baselineCoeffs.A + state.adjustment.A,
+            B: state.baselineCoeffs.B + state.adjustment.B,
+            C: state.baselineCoeffs.C + state.adjustment.C,
+            D: state.baselineCoeffs.D + state.adjustment.D,
+          };
+          const currentReading = calculatePressure(currentAdc, currentCoeffs);
+          const drift = currentReading - 0; // How far off from 0 PSI
+          console.log(`   CH${ch}: ADC=${currentAdc}, current=${currentReading.toFixed(2)} PSI, drift=${drift.toFixed(2)} PSI`);
+
+          // DIRECTLY set adjustment D term to compensate for drift
+          // This immediately forces the reading to 0 PSI
+          state.adjustment.D = state.adjustment.D - drift;
+          
+          // Update timestamp to mark this as a recent manual update
+          state.lastUpdate = Date.now();
+          state.rlsUpdateCount++;
+          
+          // Also do an RLS update to update covariance and statistics
           this.phase2Engine.updateCalibration(ch, currentAdc, 0);
-          console.log(`   CH${ch}: drift offset adjusted → 0 PSI ✓`);
+          
+          const newCoeffs = this.phase2Engine.getCalibration(ch);
+          if (newCoeffs) {
+            const newReading = calculatePressure(currentAdc, newCoeffs);
+            console.log(`   CH${ch}: adjustment D=${state.adjustment.D.toFixed(4)}, new reading=${newReading.toFixed(2)} PSI ✓`);
+          }
         }
         // DO NOT clear ptCalibration — baseline must be preserved
         break;

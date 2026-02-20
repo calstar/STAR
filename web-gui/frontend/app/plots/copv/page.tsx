@@ -20,8 +20,10 @@ export default function COPVGraphsPage() {
     return unsub;
   }, [ws, updateSensor]);
 
-  const hi  = useSensorValue('PT_Cal.PT_CH9', 'pressure_psi');
-  const reg = useSensorValue('PT_Cal.PT_CH6', 'pressure_psi');
+  const hi  = useSensorValue('PT_Cal.GN2_High', 'pressure_psi')
+            ?? useSensorValue('PT_Cal.PT_CH9', 'pressure_psi');
+  const reg = useSensorValue('PT_Cal.GN2_Regulated', 'pressure_psi')
+            ?? useSensorValue('PT_Cal.PT_CH6', 'pressure_psi');
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
@@ -64,14 +66,22 @@ export default function COPVGraphsPage() {
           </div>
         </div>
 
-        <div className="w-44 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0">
-          <div className="text-[9px] font-bold uppercase tracking-widest text-gray-600 text-center flex-shrink-0">Pressures</div>
-          <div className="flex-shrink-0 text-[9px] font-mono text-center">
-            <span className="text-red-400">— MEOP</span> <span className="text-yellow-400">— NOP</span>
+        <div className="w-44 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0 overflow-hidden">
+          <div className="text-sm font-bold uppercase tracking-widest text-gray-400 text-center flex-shrink-0">Pressures</div>
+          {/* Single NOP/MEOP label for all bars */}
+          <div className="flex items-center justify-center gap-3 flex-shrink-0 text-xs">
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-0.5 border-t-2 border-dashed border-yellow-500/85" />
+              <span className="text-sm font-bold text-yellow-400">NOP {NOP_HIGH}/{NOP_REG}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-0.5 border-t-2 border-dashed border-red-500/85" />
+              <span className="text-sm font-bold text-red-400">MEOP {MEOP_HIGH}/{MEOP_REG}</span>
+            </div>
           </div>
-          <div className="flex flex-row flex-1 gap-2 min-h-0">
-            <div className="flex-1 min-h-0"><PressureBar label="GN2 Hi"  value={hi}  nop={NOP_HIGH} meop={MEOP_HIGH} color="#27AE60" /></div>
-            <div className="flex-1 min-h-0"><PressureBar label="GN2 Reg" value={reg} nop={NOP_REG}  meop={MEOP_REG}  color="#229954" /></div>
+          <div className="flex flex-row flex-1 gap-2 min-h-0 overflow-hidden w-full">
+            <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-hidden"><PressureBar label="GN2 Hi"  value={hi}  nop={NOP_HIGH} meop={MEOP_HIGH} color="#27AE60" showLabels={false} /></div>
+            <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-hidden"><PressureBar label="GN2 Reg" value={reg} nop={NOP_REG}  meop={MEOP_REG}  color="#229954" showLabels={false} /></div>
           </div>
         </div>
 

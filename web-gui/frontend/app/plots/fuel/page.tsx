@@ -21,8 +21,11 @@ export default function FuelGraphsPage() {
     return unsub;
   }, [ws, updateSensor]);
 
-  const up   = useSensorValue('PT_Cal.PT_CH1', 'pressure_psi');
-  const down = useSensorValue('PT_Cal.PT_CH4', 'pressure_psi');
+  // Use both aliases for fuel upstream (PT_CH1 = Fuel_Upstream)
+  const up   = useSensorValue('PT_Cal.Fuel_Upstream', 'pressure_psi') 
+            ?? useSensorValue('PT_Cal.PT_CH1', 'pressure_psi');
+  const down = useSensorValue('PT_Cal.Fuel_Downstream', 'pressure_psi')
+            ?? useSensorValue('PT_Cal.PT_CH4', 'pressure_psi');
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
@@ -70,19 +73,27 @@ export default function FuelGraphsPage() {
         </div>
 
         {/* Gauges sidebar */}
-        <div className="w-40 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0 overflow-hidden">
-          <div className="text-xs font-bold uppercase tracking-widest text-gray-500 text-center flex-shrink-0">
+        <div className="w-44 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0 overflow-hidden">
+          <div className="text-sm font-bold uppercase tracking-widest text-gray-400 text-center flex-shrink-0">
             Pressures
           </div>
-          <div className="flex-shrink-0 text-[10px] font-mono text-center space-y-0.5">
-            <div><span className="text-red-400">— MEOP</span> <span className="text-yellow-400">— NOP</span></div>
-          </div>
-          <div className="flex flex-row flex-1 gap-2 min-h-0 overflow-hidden">
-            <div className="flex-1 min-h-0 min-w-0">
-              <PressureBar label="Up" value={up} nop={NOP} meop={MEOP} color="#3498DB" />
+          {/* Single NOP/MEOP label for all bars */}
+          <div className="flex items-center justify-center gap-3 flex-shrink-0 text-xs">
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-0.5 border-t-2 border-dashed border-yellow-500/85" />
+              <span className="text-sm font-bold text-yellow-400">NOP {NOP}</span>
             </div>
-            <div className="flex-1 min-h-0 min-w-0">
-              <PressureBar label="Down" value={down} nop={NOP} meop={MEOP} color="#2980B9" />
+            <div className="flex items-center gap-1">
+              <div className="w-3 h-0.5 border-t-2 border-dashed border-red-500/85" />
+              <span className="text-sm font-bold text-red-400">MEOP {MEOP}</span>
+            </div>
+          </div>
+          <div className="flex flex-row flex-1 gap-2 min-h-0 overflow-hidden w-full">
+            <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-hidden">
+              <PressureBar label="Up" value={up} nop={NOP} meop={MEOP} color="#3498DB" showLabels={false} />
+            </div>
+            <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-hidden">
+              <PressureBar label="Down" value={down} nop={NOP} meop={MEOP} color="#2980B9" showLabels={false} />
             </div>
           </div>
         </div>

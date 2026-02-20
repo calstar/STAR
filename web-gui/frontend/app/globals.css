@@ -43,6 +43,17 @@ html {
 /* ── uPlot overrides ───────────────────────────────────────────────────────── */
 .u-wrap {
   width: 100% !important;
+  height: 100% !important;
+}
+
+.uplot {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.uplot canvas {
+  width: 100% !important;
+  height: 100% !important;
 }
 
 /* Legend inside uPlot – tighten it up */

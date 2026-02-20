@@ -90,22 +90,22 @@ export default function TopBar() {
 
         {/* Left: brand + connection + clock */}
         <div className="flex flex-col justify-center gap-2 flex-shrink-0 pr-4 border-r border-gray-800/60">
-          <span className="text-base font-bold tracking-widest text-blue-400 uppercase">
+          <span className="text-lg font-bold tracking-widest text-blue-400 uppercase">
             DIABLO DAQ
           </span>
           <div className="flex items-center gap-2">
             <div className={`w-3 h-3 rounded-full ${isFullyConnected ? 'bg-green-500' : isConnected ? 'bg-yellow-500' : 'bg-red-500'}`} />
-            <span className="text-sm text-gray-400">
+            <span className="text-base text-gray-300 font-semibold">
               {isFullyConnected ? 'Connected' : isConnected ? 'WS Only' : 'Disconnected'}
             </span>
           </div>
-          <span className="text-base font-mono text-gray-300 tabular-nums">{clock}</span>
+          <span className="text-lg font-mono text-gray-200 tabular-nums font-bold">{clock}</span>
         </div>
 
         {/* Center: pressure bars — dominant */}
-        <div className="flex-1 flex items-stretch gap-2 py-2 min-w-0">
+        <div className="flex-1 flex items-stretch gap-1.5 py-2 min-w-0 overflow-hidden">
           {PRESSURE_BARS.map(({ label, entity, nop, meop, color }) => (
-            <div key={entity} className="flex-1 min-w-0 h-full">
+            <div key={entity} className="flex-1 min-w-0 h-full max-w-full overflow-hidden">
               <PressureBar
                 label={label}
                 value={getSensorValue(entity, 'pressure_psi')}
@@ -118,8 +118,8 @@ export default function TopBar() {
         {/* Right: state + abort */}
         <div className="flex items-center gap-4 flex-shrink-0 pl-4 border-l border-gray-800/60">
           <div className="flex flex-col items-center gap-1">
-            <span className="text-xs text-gray-500 uppercase tracking-widest font-semibold">STATE</span>
-            <span className={`text-2xl font-bold font-mono tracking-wider ${stateColor}`}>
+            <span className="text-sm text-gray-400 uppercase tracking-widest font-bold">STATE</span>
+            <span className={`text-3xl font-bold font-mono tracking-wider ${stateColor}`}>
               {currentStateName}
             </span>
           </div>

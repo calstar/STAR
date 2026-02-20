@@ -7,6 +7,7 @@ interface PressureBarProps {
   meop?: number;
   color?: string;
   unit?: string;
+  showLabels?: boolean; // Show NOP/MEOP labels on this bar (default true)
 }
 
 function fmtPressure(v: number): string {
@@ -58,6 +59,7 @@ export default function PressureBar({
   meop = 700,
   color,
   unit = 'PSI',
+  showLabels = true,
 }: PressureBarProps) {
   const displayValue = value ?? 0;
   const maxVal = Math.max(meop * 1.3, 1000);
@@ -75,11 +77,25 @@ export default function PressureBar({
   }
 
   return (
-    <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-hidden select-none">
+    <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-hidden select-none w-full">
       {/* Label */}
-      <div className="text-sm font-bold uppercase tracking-wider text-gray-300 text-center leading-none flex-shrink-0 truncate w-full">
+      <div className="text-lg font-bold uppercase tracking-wider text-gray-100 text-center leading-none flex-shrink-0 truncate w-full">
         {label}
       </div>
+
+      {/* MEOP/NOP horizontal label above bar (only if showLabels=true) */}
+      {showLabels && (
+        <div className="flex items-center justify-center gap-3 flex-shrink-0 w-full text-xs">
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-0.5 border-t-2 border-dashed border-yellow-500/85" />
+            <span className="text-sm font-bold text-yellow-400">NOP {nop}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-0.5 border-t-2 border-dashed border-red-500/85" />
+            <span className="text-sm font-bold text-red-400">MEOP {meop}</span>
+          </div>
+        </div>
+      )}
 
       {/* Bar — takes all remaining space */}
       <div
@@ -96,12 +112,12 @@ export default function PressureBar({
           />
         )}
 
-        {/* MEOP threshold */}
+        {/* MEOP threshold line (no label) */}
         <div
           className="absolute w-full pointer-events-none"
           style={{ bottom: `${meopPct.toFixed(2)}%`, borderTop: '2px dashed rgba(231,76,60,0.85)' }}
         />
-        {/* NOP threshold */}
+        {/* NOP threshold line (no label) */}
         <div
           className="absolute w-full pointer-events-none"
           style={{ bottom: `${nopPct.toFixed(2)}%`, borderTop: '2px dashed rgba(243,156,18,0.85)' }}
@@ -117,15 +133,34 @@ export default function PressureBar({
             }}
           />
         )}
+        
+        {/* Pressure value ON the bar itself */}
+        {sane && value !== null && valuePct > 5 && (
+          <div
+            className="absolute w-full pointer-events-none flex items-center justify-center"
+            style={{
+              bottom: `${valuePct}%`,
+              transform: 'translateY(-50%)',
+            }}
+          >
+            <div className="bg-gray-900/90 px-2 py-0.5 rounded border border-gray-700">
+              <div className="text-lg font-bold font-mono tabular-nums" style={{ color: barColor }}>
+                {fmtPressure(value)}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Value + unit */}
-      <div className="flex-shrink-0 text-center leading-none">
-        <div className="text-lg font-bold font-mono tabular-nums" style={{ color: barColor }}>
-          {value !== null ? fmtPressure(value) : '---'}
+      {/* Value + unit below bar (only if value is too low to show on bar) */}
+      {(!sane || value === null || valuePct <= 5) && (
+        <div className="flex-shrink-0 text-center leading-none">
+          <div className="text-3xl font-bold font-mono tabular-nums" style={{ color: barColor }}>
+            {value !== null ? fmtPressure(value) : '---'}
+          </div>
+          <div className="text-sm text-gray-300 font-semibold">{unit}</div>
         </div>
-        <div className="text-[10px] text-gray-500">{unit}</div>
-      </div>
+      )}
     </div>
   );
 }
