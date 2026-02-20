@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate } from '@/lib/types';
+import { MessageType, SensorUpdate, StateUpdate, SystemState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 
 // Valve rows: [label, entity, component]
@@ -73,15 +73,25 @@ function DutyCycleCard({ label, entity, color }: { label: string; entity: string
   );
 }
 
+const STATE_NAMES: Record<number, string> = {
+  0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
+  5: 'GN2 PRESS', 6: 'GN2 VENT', 7: 'FUEL PRESS', 8: 'FUEL VENT',
+  9: 'OX PRESS', 10: 'OX VENT', 11: 'HIGH PRESS', 12: 'HIGH VENT',
+  13: 'VENT', 14: 'CALIBRATE', 15: 'READY', 16: 'FIRE', 17: 'ABORT',
+};
+
 export default function ControllerPage() {
   const updateSensor = useSensorStore((state) => state.updateSensor);
+  const updateState = useSensorStore((state) => state.updateState);
+  const currentState = useSensorStore((state) => state.currentState);
   const ws = getWebSocketClient();
 
   useEffect(() => {
     ws.connect();
-    const unsub = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    return unsub;
-  }, [ws, updateSensor]);
+    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
+    const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
+    return () => { u1(); u2(); };
+  }, [ws, updateSensor, updateState]);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-3">
@@ -92,11 +102,24 @@ export default function ControllerPage() {
           <div className="w-1 h-5 bg-purple-500 rounded-full" />
           <h1 className="text-lg font-bold">Controller Status</h1>
         </div>
-        <div className="flex items-center gap-3 text-xs text-text-muted bg-gray-900 rounded px-3 py-1.5 border border-gray-800">
-          <span>PWM Frequency:</span>
-          <span className="font-mono font-bold text-text">10 Hz</span>
-          <span className="text-gray-600">·</span>
-          <span>set in config.toml</span>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 text-xs bg-gray-900 rounded px-3 py-1.5 border border-gray-800">
+            <span className="text-text-muted">STATE:</span>
+            <span className={`font-mono font-bold ${
+              currentState === SystemState.FIRE ? 'text-red-400' :
+              currentState === SystemState.READY ? 'text-green-400' :
+              currentState === SystemState.ABORT ? 'text-red-500' :
+              'text-text'
+            }`}>
+              {currentState !== null ? STATE_NAMES[currentState] : '---'}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 text-xs text-text-muted bg-gray-900 rounded px-3 py-1.5 border border-gray-800">
+            <span>PWM Frequency:</span>
+            <span className="font-mono font-bold text-text">10 Hz</span>
+            <span className="text-gray-600">·</span>
+            <span>set in config.toml</span>
+          </div>
         </div>
       </div>
 

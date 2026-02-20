@@ -70,19 +70,19 @@ export default function FuelGraphsPage() {
         </div>
 
         {/* Gauges sidebar */}
-        <div className="w-36 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0">
-          <div className="text-[9px] font-bold uppercase tracking-widest text-gray-600 text-center flex-shrink-0">
+        <div className="w-40 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0 overflow-hidden">
+          <div className="text-xs font-bold uppercase tracking-widest text-gray-500 text-center flex-shrink-0">
             Pressures
           </div>
-          <div className="flex-shrink-0 text-[9px] font-mono text-center space-y-0.5">
+          <div className="flex-shrink-0 text-[10px] font-mono text-center space-y-0.5">
             <div><span className="text-red-400">— MEOP</span> <span className="text-yellow-400">— NOP</span></div>
           </div>
-          <div className="flex flex-row flex-1 gap-2 min-h-0">
-            <div className="flex-1 min-h-0">
-              <PressureBar label="Upstream" value={up} nop={NOP} meop={MEOP} color="#3498DB" />
+          <div className="flex flex-row flex-1 gap-2 min-h-0 overflow-hidden">
+            <div className="flex-1 min-h-0 min-w-0">
+              <PressureBar label="Up" value={up} nop={NOP} meop={MEOP} color="#3498DB" />
             </div>
-            <div className="flex-1 min-h-0">
-              <PressureBar label="Downstream" value={down} nop={NOP} meop={MEOP} color="#2980B9" />
+            <div className="flex-1 min-h-0 min-w-0">
+              <PressureBar label="Down" value={down} nop={NOP} meop={MEOP} color="#2980B9" />
             </div>
           </div>
         </div>

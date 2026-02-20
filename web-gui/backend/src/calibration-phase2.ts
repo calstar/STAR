@@ -31,8 +31,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 interface SensorState {
-  // Current calibration coefficients
-  coeffs: CalibrationCoefficients;
+  // Baseline calibration coefficients (from JSON) — immutable, represents sensor physics
+  baselineCoeffs: CalibrationCoefficients;
+  
+  // Drift adjustment (what Phase 2 modifies) — primarily affects offset D
+  adjustment: CalibrationCoefficients;
 
   // RLS state
   P: number[][]; // Covariance matrix (4x4 for cubic polynomial)
@@ -52,6 +55,16 @@ interface SensorState {
   rlsUpdateCount: number;    // ground-truth RLS updates
   lastUpdate: number;
   lastSave: number;
+}
+
+// Helper to compute live coefficients from baseline + adjustment
+function getLiveCoeffs(state: SensorState): CalibrationCoefficients {
+  return {
+    A: state.baselineCoeffs.A + state.adjustment.A,
+    B: state.baselineCoeffs.B + state.adjustment.B,
+    C: state.baselineCoeffs.C + state.adjustment.C,
+    D: state.baselineCoeffs.D + state.adjustment.D,
+  };
 }
 
 export class Phase2CalibrationEngine {
@@ -77,9 +90,10 @@ export class Phase2CalibrationEngine {
   }
 
   /**
-   * Initialize sensor state from existing calibration
+   * Initialize sensor state from existing calibration (baseline)
+   * Adjustment starts at zero — Phase 2 will guide it to correct drift
    */
-  initializeSensor(sensorId: number, coeffs: CalibrationCoefficients): void {
+  initializeSensor(sensorId: number, baselineCoeffs: CalibrationCoefficients): void {
     const P: number[][] = [
       [1e6, 0, 0, 0],
       [0, 1e6, 0, 0],
@@ -88,7 +102,8 @@ export class Phase2CalibrationEngine {
     ];
 
     this.sensorStates.set(sensorId, {
-      coeffs,
+      baselineCoeffs, // Immutable baseline from JSON
+      adjustment: { A: 0, B: 0, C: 0, D: 0 }, // Start with no adjustment
       P,
       forgettingFactor: this.forgettingFactor,
       recentPredictions: [],
@@ -115,12 +130,13 @@ export class Phase2CalibrationEngine {
     const state = this.sensorStates.get(sensorId);
     if (!state) return;
 
-    // Current prediction from polynomial
+    // Current prediction from live coefficients (baseline + adjustment)
+    const coeffs = getLiveCoeffs(state);
     const predicted =
-      state.coeffs.A * adcCode ** 3 +
-      state.coeffs.B * adcCode ** 2 +
-      state.coeffs.C * adcCode +
-      state.coeffs.D;
+      coeffs.A * adcCode ** 3 +
+      coeffs.B * adcCode ** 2 +
+      coeffs.C * adcCode +
+      coeffs.D;
 
     // Track recent predictions
     state.recentPredictions.push(predicted);
@@ -176,12 +192,13 @@ export class Phase2CalibrationEngine {
     // Feature vector for cubic polynomial: [adc³, adc², adc, 1]
     const phi = [adcCode ** 3, adcCode ** 2, adcCode, 1.0];
 
-    // Current prediction
+    // Current prediction from live coefficients (baseline + adjustment)
+    const coeffs = getLiveCoeffs(state);
     const predicted =
-      state.coeffs.A * phi[0] +
-      state.coeffs.B * phi[1] +
-      state.coeffs.C * phi[2] +
-      state.coeffs.D * phi[3];
+      coeffs.A * phi[0] +
+      coeffs.B * phi[1] +
+      coeffs.C * phi[2] +
+      coeffs.D * phi[3];
 
     // Prediction error
     const error = referencePressure - predicted;
@@ -206,15 +223,22 @@ export class Phase2CalibrationEngine {
 
     const K = phiTP.map((v) => v / denominator);
 
-    // Update coefficients: θ = θ + K · error
-    const newCoeffs: CalibrationCoefficients = {
-      A: state.coeffs.A + K[0] * error,
-      B: state.coeffs.B + K[1] * error,
-      C: state.coeffs.C + K[2] * error,
-      D: state.coeffs.D + K[3] * error,
+    // Weighting: primarily adjust D (offset), smaller adjustments to A, B, C
+    // This preserves the baseline transfer function while correcting drift
+    const weights = [0.1, 0.1, 0.1, 1.0]; // A, B, C get 10% weight, D gets 100%
+    const weightedK = K.map((k, i) => k * weights[i]);
+
+    // Update ADJUSTMENT (not baseline): adjustment = adjustment + weightedK · error
+    // This guides the coefficients back to correct values without overwriting baseline
+    state.adjustment = {
+      A: state.adjustment.A + weightedK[0] * error,
+      B: state.adjustment.B + weightedK[1] * error,
+      C: state.adjustment.C + weightedK[2] * error,
+      D: state.adjustment.D + weightedK[3] * error,
     };
 
     // Update covariance: P = (P − K · φᵀ · P) / λ
+    // Use original K (not weighted) for covariance update
     const KP = [
       [K[0] * phiTP[0], K[0] * phiTP[1], K[0] * phiTP[2], K[0] * phiTP[3]],
       [K[1] * phiTP[0], K[1] * phiTP[1], K[1] * phiTP[2], K[1] * phiTP[3]],
@@ -228,8 +252,8 @@ export class Phase2CalibrationEngine {
       }
     }
 
-    // Commit
-    state.coeffs = newCoeffs;
+    // Get updated live coefficients for return
+    const newCoeffs = getLiveCoeffs(state);
     state.rlsUpdateCount++;
     state.updateCount++;
     state.lastUpdate = Date.now();
@@ -353,7 +377,8 @@ export class Phase2CalibrationEngine {
   // ─── Accessors ────────────────────────────────────────────────────────────
 
   getCalibration(sensorId: number): CalibrationCoefficients | null {
-    return this.sensorStates.get(sensorId)?.coeffs ?? null;
+    const state = this.sensorStates.get(sensorId);
+    return state ? getLiveCoeffs(state) : null;
   }
 
   getAllStatus(): Array<{

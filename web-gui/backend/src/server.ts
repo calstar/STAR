@@ -107,6 +107,11 @@ class SensorSystemServer {
   /** Logging throttle */
   private _lastSensorLog = 0;
 
+  /** Current system state for continuous actuator command sending */
+  private currentState: SystemState | null = null;
+  private actuatorCommandInterval: NodeJS.Timeout | null = null;
+  private readonly ACTUATOR_COMMAND_INTERVAL_MS = 1000; // Send actuator commands every 1 second while in state
+
   constructor() {
     console.log(`🚀 Starting Sensor System Server...`);
     console.log(`   WebSocket: ${WS_HOST}:${WS_PORT}`);
@@ -862,15 +867,24 @@ class SensorSystemServer {
               }
             }
 
+            // Update current state
+            this.currentState = state;
+
             // Broadcast confirmation
             this.broadcast({
               type: MessageType.STATE_UPDATE,
               timestamp: Date.now(),
               payload: { currentState: state, stateName: SystemState[state], timestamp: Date.now() },
             });
+            
             // Auto-command actuators to match state (skip DEBUG — manual control)
             if (state !== SystemState.DEBUG) {
               this.applyActuatorsForState(state);
+              // Start continuous actuator command sending for this state
+              this.startContinuousActuatorCommands(state);
+            } else {
+              // Stop continuous commands in DEBUG mode
+              this.stopContinuousActuatorCommands();
             }
           } else {
             throw new Error('Failed to send state transition command');
@@ -945,6 +959,46 @@ class SensorSystemServer {
       const channelId = Number(ch);
       this.sendActuatorCommandUDP(channelId, val);
       console.log(`   CH${channelId} → ${val === 1 ? 'OPEN' : 'CLOSED'}`);
+    }
+  }
+
+  /**
+   * Start continuously sending actuator commands for the current state.
+   * Sends commands every ACTUATOR_COMMAND_INTERVAL_MS to ensure actuators stay in correct position.
+   */
+  private startContinuousActuatorCommands(state: SystemState): void {
+    // Stop any existing interval
+    this.stopContinuousActuatorCommands();
+
+    const expected = STATE_ACTUATOR_MAP[state];
+    if (!expected) {
+      return;
+    }
+
+    console.log(`🔄 Starting continuous actuator commands for state ${SystemState[state]} (every ${this.ACTUATOR_COMMAND_INTERVAL_MS}ms)`);
+    
+    this.actuatorCommandInterval = setInterval(() => {
+      if (this.currentState === state) {
+        // Only send if we're still in the same state
+        for (const [ch, val] of Object.entries(expected)) {
+          const channelId = Number(ch);
+          this.sendActuatorCommandUDP(channelId, val);
+        }
+      } else {
+        // State changed, stop this interval
+        this.stopContinuousActuatorCommands();
+      }
+    }, this.ACTUATOR_COMMAND_INTERVAL_MS);
+  }
+
+  /**
+   * Stop continuous actuator command sending.
+   */
+  private stopContinuousActuatorCommands(): void {
+    if (this.actuatorCommandInterval) {
+      clearInterval(this.actuatorCommandInterval);
+      this.actuatorCommandInterval = null;
+      console.log('🛑 Stopped continuous actuator commands');
     }
   }
 

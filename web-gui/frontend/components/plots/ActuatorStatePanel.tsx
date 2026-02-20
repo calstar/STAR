@@ -41,12 +41,12 @@ function ActuatorRow({ label, entity, color, expected }: ActuatorRowProps) {
   );
 
   return (
-    <div className={`flex items-center justify-between rounded-lg px-5 py-3.5 ${
+    <div className={`flex items-center justify-between rounded-lg px-5 py-4 ${
       mismatch ? 'bg-yellow-950/40 border border-yellow-600/50' : 'bg-gray-900/50'
     }`}>
       <div className="flex items-center gap-3">
-        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
-        <span className="text-sm font-bold text-text-muted uppercase tracking-wider">{label}</span>
+        <div className="w-4 h-4 rounded-full" style={{ backgroundColor: color }} />
+        <span className="text-base font-bold text-text-muted uppercase tracking-wider">{label}</span>
       </div>
       <div className="flex items-center gap-3">
         {/* Expected position indicator */}
@@ -57,11 +57,11 @@ function ActuatorRow({ label, entity, color, expected }: ActuatorRowProps) {
             EXP:{expected === 'open' ? 'O' : 'C'}
           </span>
         )}
-        <span className="text-sm font-mono text-gray-500">
+        <span className="text-base font-mono text-gray-400">
           {hasData ? adc.toLocaleString() : '---'}
         </span>
         <span
-          className={`text-sm font-black font-mono px-3 py-1.5 rounded-lg ${
+          className={`text-base font-black font-mono px-4 py-2 rounded-lg ${
             !hasData ? 'bg-gray-800 text-gray-600' :
             isOpen   ? 'bg-green-900/60 text-green-400 border border-green-800' :
                        'bg-red-900/60 text-red-400 border border-red-800'
@@ -69,7 +69,7 @@ function ActuatorRow({ label, entity, color, expected }: ActuatorRowProps) {
         >
           {!hasData ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
         </span>
-        {mismatch && <span className="text-yellow-400 text-base">⚠</span>}
+        {mismatch && <span className="text-yellow-400 text-lg">⚠</span>}
       </div>
     </div>
   );
@@ -87,8 +87,8 @@ export default function ActuatorStatePanel({ title, actuators }: ActuatorStatePa
   const stateExpected = currentState != null ? (EXPECTED_POSITIONS[currentState] ?? {}) : {};
 
   return (
-    <div className="bg-card rounded-lg p-4 flex flex-col gap-2">
-      <h3 className="text-sm font-bold text-text-muted uppercase tracking-widest mb-1">{title}</h3>
+    <div className="bg-card rounded-lg p-4 flex flex-col gap-3">
+      <h3 className="text-base font-bold text-text-muted uppercase tracking-widest mb-1">{title}</h3>
       {actuators.map((a) => (
         <ActuatorRow
           key={a.entity}

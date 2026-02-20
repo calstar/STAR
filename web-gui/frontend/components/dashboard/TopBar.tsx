@@ -85,7 +85,7 @@ export default function TopBar() {
   };
 
   return (
-    <div className="bg-card border-b border-gray-800 select-none flex-shrink-0" style={{ height: '38vh', minHeight: 240 }}>
+    <div className="bg-card border-b border-gray-800 select-none flex-shrink-0" style={{ height: '20vh', minHeight: 140 }}>
       <div className="flex items-stretch h-full px-4 gap-4">
 
         {/* Left: brand + connection + clock */}
