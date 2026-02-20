@@ -54,16 +54,10 @@ export class WebSocketClient {
           }
         }
 
-        // Wait a tiny bit to ensure WebSocket is fully ready, then subscribe
-        setTimeout(() => {
-          if (this.ws?.readyState === WebSocket.OPEN) {
-            console.log('📡 Subscribing to all sensors...');
-            this.subscribeToAllSensors();
-            console.log('✅ Subscription requests sent');
-          } else {
-            console.error('❌ WebSocket not ready when trying to subscribe!');
-          }
-        }, 50);
+        // Subscribe immediately - WebSocket is ready when onopen fires
+        console.log('📡 Subscribing to all sensors...');
+        this.subscribeToAllSensors();
+        console.log('✅ Subscription requests sent');
       };
 
       this.ws.onmessage = (event) => {

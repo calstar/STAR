@@ -12,7 +12,8 @@ import { parseElodinPacket } from './elodin-protocol.js';
 import { registerVTables } from './elodin-vtable.js';
 import { subscribeWithStream } from './elodin-stream.js';
 import { encodeRawPTMessage, encodeCalibratedPTMessage } from './elodin-publisher.js';
-import { getStateTransitions } from './routes/state-transitions.js';
+import { getStateTransitions, isTransitionAllowed } from './routes/state-transitions.js';
+import { getStateActuatorMap, StateActuatorMap } from './routes/state-actuators.js';
 import { startAPIServer } from './api-server.js';
 import { loadPTCalibration, calculatePressure, CalibrationCoefficients } from './calibration.js';
 import { Phase2CalibrationEngine } from './calibration-phase2.js';
@@ -53,28 +54,10 @@ const ACTUATOR_CHANNEL: Record<number, number> = {
   [ActuatorId.GSE_LOW_VENT]: 5,
 };
 
-// ── Expected actuator positions per state (from state_machine_actuators.csv) ─
+// ── Expected actuator positions per state (loaded from state_machine_actuators.csv) ─
 // Maps SystemState → { channelId → 0|1 (CLOSED|OPEN) }
-// FV=Fuel Vent(CH2), OV=LOX Vent(CH6), FP=Fuel Press(CH3), OP=LOX Press(CH8),
-// FM=Fuel Main(CH7), OM=LOX Main(CH1)
-const STATE_ACTUATOR_MAP: Record<number, Record<number, number>> = {
-  //                         CH1(OM) CH2(FV) CH3(FP) CH6(OV) CH7(FM) CH8(OP)
-  [SystemState.IDLE]:           { 1:1, 2:1, 3:1, 6:1, 7:1, 8:1 },
-  [SystemState.ARMED]:          { 1:0, 2:0, 3:0, 6:0, 7:0, 8:0 },
-  [SystemState.FUEL_FILL]:      { 1:0, 2:1, 3:0, 6:1, 7:0, 8:0 },
-  [SystemState.OX_FILL]:        { 1:0, 2:1, 3:0, 6:1, 7:0, 8:0 },
-  [SystemState.READY]:          { 1:1, 2:1, 3:0, 6:1, 7:1, 8:0 },
-  [SystemState.GN2_LOW_PRESS]:  { 1:0, 2:1, 3:0, 6:1, 7:0, 8:0 },
-  [SystemState.FUEL_PRESS]:     { 1:0, 2:0, 3:1, 6:0, 7:0, 8:0 },
-  [SystemState.FUEL_VENT]:      { 1:0, 2:1, 3:0, 6:0, 7:0, 8:0 },
-  [SystemState.OX_PRESS]:       { 1:0, 2:0, 3:0, 6:0, 7:0, 8:1 },
-  [SystemState.OX_VENT]:        { 1:0, 2:0, 3:0, 6:1, 7:0, 8:0 },
-  [SystemState.GN2_HIGH_PRESS]: { 1:0, 2:0, 3:0, 6:0, 7:0, 8:0 },
-  [SystemState.GN2_VENT]:       { 1:0, 2:1, 3:1, 6:0, 7:0, 8:0 },
-  [SystemState.FIRE]:           { 1:1, 2:0, 3:1, 6:0, 7:1, 8:1 },
-  [SystemState.VENT]:           { 1:0, 2:1, 3:1, 6:1, 7:0, 8:1 },
-  [SystemState.ABORT]:          { 1:1, 2:1, 3:1, 6:1, 7:1, 8:1 },
-};
+// Loaded dynamically from CSV in constructor
+let STATE_ACTUATOR_MAP: StateActuatorMap = {};
 
 class SensorSystemServer {
   private wss: WebSocketServer;
@@ -129,6 +112,22 @@ class SensorSystemServer {
 
     // Load sensor_roles from config.toml (like combined_gui.py)
     this.loadSensorRoleMap();
+
+    // Load state actuator map from CSV (replaces hardcoded map)
+    STATE_ACTUATOR_MAP = getStateActuatorMap();
+    if (Object.keys(STATE_ACTUATOR_MAP).length === 0) {
+      console.warn('⚠️ No state actuator map loaded - actuators will not auto-command');
+    } else {
+      console.log(`📋 Loaded state actuator map: ${Object.keys(STATE_ACTUATOR_MAP).length} states`);
+    }
+
+    // Build transition validation map
+    const transitions = getStateTransitions();
+    if (transitions.length === 0) {
+      console.warn('⚠️ No state transitions loaded - all transitions will be allowed');
+    } else {
+      console.log(`📋 Loaded ${transitions.length} allowed state transitions`);
+    }
 
     // Initialize Phase 2 autonomous calibration engine
     this.phase2Engine = new Phase2CalibrationEngine();
@@ -470,18 +469,18 @@ class SensorSystemServer {
             }
           }
 
-          // Check if Phase 2 has recent manual updates (zero_all, capture_reference)
+          // Check if Phase 2 has manual updates (zero_all, capture_reference)
           // If so, ALWAYS use Phase 2 - don't trust Elodin's old static calibration
+          // Once Phase 2 has been manually updated, it should permanently take priority
           const phase2State = this.phase2Engine?.getSensorState?.(channelId);
-          const phase2HasRecentUpdate = phase2State && 
-            (Date.now() - phase2State.lastUpdate < 5000) && // Updated in last 5 seconds
-            phase2State.rlsUpdateCount > 0; // Has at least one manual update
+          const phase2HasManualUpdate = phase2State && 
+            phase2State.rlsUpdateCount > 0; // Has at least one manual update (permanent priority)
           
           // Check if we've received calibrated PT from Elodin recently (within last 200ms)
           // Only trust Elodin if Phase 2 hasn't been manually updated
           const lastElodinCal = this.calibratedPTFromElodin.get(channelId) ?? 0;
           const timeSinceElodinCal = Date.now() - lastElodinCal;
-          const skipOurCalculation = !phase2HasRecentUpdate && timeSinceElodinCal < 200;
+          const skipOurCalculation = !phase2HasManualUpdate && timeSinceElodinCal < 200;
           
           if (!skipOurCalculation) {
             // Only calculate if Elodin hasn't sent calibrated PT recently
@@ -705,13 +704,16 @@ class SensorSystemServer {
         }
         
         if (channelId) {
-          // Check if Phase 2 has recent manual updates - if so, ignore Elodin's value
+          // Check if Phase 2 has manual updates - if so, ALWAYS ignore Elodin's value
+          // Once Phase 2 has been manually updated (zero_all, etc.), it should permanently take priority
           const phase2State = this.phase2Engine?.getSensorState?.(channelId);
-          if (phase2State && 
-              (Date.now() - phase2State.lastUpdate < 10000) && // Updated in last 10 seconds
-              phase2State.rlsUpdateCount > 0) { // Has at least one manual update
-            console.log(`⚠️ Ignoring Elodin calibrated PT for CH${channelId} - Phase 2 has recent manual update (last update: ${((Date.now() - phase2State.lastUpdate) / 1000).toFixed(1)}s ago)`);
+          if (phase2State && phase2State.rlsUpdateCount > 0) {
+            // Phase 2 has manual updates - permanently prioritize Phase 2 over Elodin
             shouldUseElodinValue = false;
+            // Only log occasionally to avoid spam
+            if (Math.random() < 0.001) {
+              console.log(`⚠️ Ignoring Elodin calibrated PT for CH${channelId} - Phase 2 has manual updates (rlsUpdateCount: ${phase2State.rlsUpdateCount})`);
+            }
           } else {
             // Mark that we received calibrated PT from Elodin for this channel
             this.calibratedPTFromElodin.set(channelId, Date.now());
@@ -783,6 +785,23 @@ class SensorSystemServer {
 
       this.clients.set(ws, client);
 
+      // Send cached sensor data IMMEDIATELY (before status) so plots have data on connect
+      // This ensures plots show data as soon as they initialize
+      if (this.sensorCache.size > 0) {
+        console.log(`📤 Sending ${this.sensorCache.size} cached sensor values to new client...`);
+        this.sensorCache.forEach((update) => {
+          try {
+            this.send(ws, {
+              type: MessageType.SENSOR_UPDATE,
+              timestamp: update.timestamp,
+              payload: update,
+            });
+          } catch (error) {
+            // Silently fail - WebSocket might not be ready yet, but we'll retry
+          }
+        });
+      }
+
       // Send initial connection status (with retry to ensure WebSocket is ready)
       const sendStatus = () => {
         if (ws.readyState === WebSocket.OPEN) {
@@ -807,15 +826,6 @@ class SensorSystemServer {
 
       // Try immediately, then retry if needed
       setTimeout(sendStatus, 10);
-
-      // Send cached sensor data
-      this.sensorCache.forEach((update) => {
-        this.send(ws, {
-          type: MessageType.SENSOR_UPDATE,
-          timestamp: update.timestamp,
-          payload: update,
-        });
-      });
 
       ws.on('message', (data: Buffer) => {
         try {
@@ -960,16 +970,53 @@ class SensorSystemServer {
 
     try {
       if (command.commandType === 'state_transition') {
-        const state = command.data.state;
-        if (state !== undefined) {
-          const success = this.elodin.sendCommand('state_transition', { state });
-          if (success) {
-            console.log(`🎯 State transition command sent: ${SystemState[state]}`);
+        const newState = command.data.state;
+        if (newState === undefined) {
+          throw new Error('State transition command missing state');
+        }
+
+        // Validate transition: check if transition from current state to new state is allowed
+        const currentState = this.currentState ?? SystemState.IDLE;
+        
+        console.log(`🔍 Validating transition: ${SystemState[currentState]} → ${SystemState[newState]}`);
+        
+        // DEBUG mode: only allow transitions to IDLE, VENT, or ABORT (safety states)
+        if (currentState === SystemState.DEBUG) {
+          const allowedFromDebug = [SystemState.IDLE, SystemState.VENT, SystemState.ABORT];
+          if (!allowedFromDebug.includes(newState)) {
+            const errorMsg = `❌ Invalid transition from DEBUG: Only IDLE, VENT, or ABORT allowed`;
+            console.error(errorMsg);
+            this.broadcast({
+              type: MessageType.ERROR,
+              timestamp: Date.now(),
+              payload: { message: errorMsg, command },
+            });
+            return;
+          }
+        } else {
+          // Normal mode: validate against CSV
+          const isAllowed = isTransitionAllowed(currentState, newState);
+          console.log(`   Transition allowed: ${isAllowed}`);
+          if (!isAllowed) {
+            const errorMsg = `❌ Invalid state transition: ${SystemState[currentState]} → ${SystemState[newState]} (not allowed in CSV)`;
+            console.error(errorMsg);
+            this.broadcast({
+              type: MessageType.ERROR,
+              timestamp: Date.now(),
+              payload: { message: errorMsg, command },
+            });
+            return;
+          }
+        }
+
+        const success = this.elodin.sendCommand('state_transition', { state: newState });
+        if (success) {
+          console.log(`🎯 State transition command sent: ${SystemState[currentState]} → ${SystemState[newState]}`);
 
             // ── Auto data-logging: start on ARMED, stop on IDLE/ABORT ──
-            if (state === SystemState.ARMED && !this.dataLogger.running) {
+            if (newState === SystemState.ARMED && !this.dataLogger.running) {
               this.dataLogger.start();
-            } else if ((state === SystemState.IDLE || state === SystemState.ABORT) && this.dataLogger.running) {
+            } else if ((newState === SystemState.IDLE || newState === SystemState.ABORT) && this.dataLogger.running) {
               const stats = this.dataLogger.stop();
               if (stats) {
                 console.log(`📝 Run logged: ${stats.filePath} (${stats.records} records, ${stats.channels} channels, ${(stats.durationMs / 1000).toFixed(1)}s)`);
@@ -977,27 +1024,26 @@ class SensorSystemServer {
             }
 
             // Update current state
-            this.currentState = state;
+            this.currentState = newState;
 
             // Broadcast confirmation
             this.broadcast({
               type: MessageType.STATE_UPDATE,
               timestamp: Date.now(),
-              payload: { currentState: state, stateName: SystemState[state], timestamp: Date.now() },
+              payload: { currentState: newState, stateName: SystemState[newState], timestamp: Date.now() },
             });
             
             // Auto-command actuators to match state (skip DEBUG — manual control)
-            if (state !== SystemState.DEBUG) {
-              this.applyActuatorsForState(state);
+            if (newState !== SystemState.DEBUG) {
+              this.applyActuatorsForState(newState);
               // Start continuous actuator command sending for this state
-              this.startContinuousActuatorCommands(state);
+              this.startContinuousActuatorCommands(newState);
             } else {
               // Stop continuous commands in DEBUG mode
               this.stopContinuousActuatorCommands();
             }
-          } else {
-            throw new Error('Failed to send state transition command');
-          }
+        } else {
+          throw new Error('Failed to send state transition command');
         }
       } else if (command.commandType === 'actuator') {
         const { actuatorId, actuatorState } = command.data;
@@ -1064,8 +1110,10 @@ class SensorSystemServer {
       return;
     }
     console.log(`🔧 Auto-commanding actuators for state ${SystemState[state]}:`);
-    for (const [ch, val] of Object.entries(expected)) {
-      const channelId = Number(ch);
+    // Default all actuators to CLOSED (0), then override with CSV values
+    const allChannels = [1, 2, 3, 6, 7, 8]; // OM, FV, FP, OV, FM, OP
+    for (const channelId of allChannels) {
+      const val = expected[channelId] ?? 0; // Default to CLOSED if not in CSV
       this.sendActuatorCommandUDP(channelId, val);
       console.log(`   CH${channelId} → ${val === 1 ? 'OPEN' : 'CLOSED'}`);
     }

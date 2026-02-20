@@ -194,10 +194,10 @@ export default function TimeSeriesPlot({
       dataRef.current.values = entities.map(() => [NaN]);
     }
 
-    let initialized = false;
+    const initializedRef = useRef(false);
 
     const tryInit = () => {
-      if (initialized || !plotRef.current) return;
+      if (initializedRef.current || !plotRef.current) return;
       const dims = getDims();
       if (!dims || dims.w < 100 || dims.h < 50) return; // Ensure minimum size
       
@@ -217,7 +217,7 @@ export default function TimeSeriesPlot({
         console.warn('[TimeSeriesPlot] Cache re-check failed:', err);
       }
       
-      initialized = true;
+      initializedRef.current = true;
       
       // Always initialize with data - ensure we have at least one time point
       const now = (Date.now() - startTimeRef.current) / 1000;
@@ -234,17 +234,35 @@ export default function TimeSeriesPlot({
         }
       } catch (err) {
         console.error('[TimeSeriesPlot] Initialization failed:', err);
-        initialized = false;
+        initializedRef.current = false;
       }
     };
 
-    // ── ResizeObserver on the outer container ─────────────────────────────
+    // ── Aggressive initialization - try immediately and repeatedly ────────
+    // Don't wait for ResizeObserver - initialize as soon as container has any size
+    const attemptInit = () => {
+      if (initializedRef.current) return;
+      if (!containerRef.current || !plotRef.current) return;
+      const dims = getDims();
+      if (!dims || dims.w < 50 || dims.h < 30) return; // Lower threshold
+      tryInit();
+    };
+    
+    // Try immediately on mount
+    attemptInit();
+    
+    // Try again after a tiny delay (React might not have laid out yet)
+    const initTimeout1 = setTimeout(attemptInit, 10);
+    const initTimeout2 = setTimeout(attemptInit, 50);
+    const initTimeout3 = setTimeout(attemptInit, 100);
+    
+    // ── ResizeObserver for size changes (after init) ─────────────────────
     const ro = new ResizeObserver(() => {
-      if (!initialized) {
-        tryInit();
+      if (!initializedRef.current) {
+        attemptInit(); // Keep trying if not initialized
       } else if (plotInstanceRef.current) {
         const dims = getDims();
-        if (dims && dims.w > 100 && dims.h > 50) {
+        if (dims && dims.w > 50 && dims.h > 30) {
           try {
             plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
           } catch (err) {
@@ -254,29 +272,20 @@ export default function TimeSeriesPlot({
       }
     });
     
-    // Set up observer - use a small delay to ensure refs are set
-    const setupObserver = () => {
-      if (containerRef.current) {
-        ro.observe(containerRef.current);
-        // Also try init immediately if container is ready
-        tryInit();
-      }
-    };
-    
-    // Try immediately
-    setupObserver();
-    
-    // Fallback: try again after short delays in case container wasn't ready
-    const initTimeout1 = setTimeout(() => {
-      setupObserver();
-      if (!initialized) tryInit();
-    }, 50);
-    
-    const initTimeout2 = setTimeout(() => {
-      if (!initialized && containerRef.current) {
-        tryInit();
-      }
-    }, 200);
+    // Set up observer once container ref is available
+    if (containerRef.current) {
+      ro.observe(containerRef.current);
+    } else {
+      // Fallback: observe when ref becomes available
+      const checkRef = setInterval(() => {
+        if (containerRef.current) {
+          ro.observe(containerRef.current);
+          attemptInit();
+          clearInterval(checkRef);
+        }
+      }, 50);
+      setTimeout(() => clearInterval(checkRef), 1000); // Give up after 1s
+    }
 
     // Window resize safety net
     const onWinResize = () => {
@@ -287,6 +296,8 @@ export default function TimeSeriesPlot({
     window.addEventListener('resize', onWinResize);
 
     // ── WS handler: O(1) — store the latest value per series ─────────────
+    // IMPORTANT: Collect data immediately, even before plot is initialized
+    // This ensures we have data ready when the plot initializes
     const unsubSensor = ws.on(MessageType.SENSOR_UPDATE, (payload: unknown) => {
       const update = payload as SensorUpdate;
       let idx = entities.indexOf(update.entity);
@@ -296,15 +307,48 @@ export default function TimeSeriesPlot({
       }
       if (idx >= 0 && update.component === componentMap[idx]) {
         latestValuesRef.current[idx] = update.value;
+        
+        // If plot is already initialized, add data point immediately (don't wait for 10Hz loop)
+        if (initializedRef.current && plotInstanceRef.current) {
+          const now = (Date.now() - startTimeRef.current) / 1000;
+          const d = dataRef.current;
+          
+          // Only add if this is a new time point (avoid duplicates)
+          const lastTime = d.time.length > 0 ? d.time[d.time.length - 1] : -Infinity;
+          if (now - lastTime >= 0.05) { // At least 50ms between points (20 Hz max)
+            d.time.push(now);
+            entities.forEach((_, i) => {
+              const val = latestValuesRef.current[i];
+              d.values[i].push(isFinite(val) ? val : NaN);
+            });
+            
+            // Trim to window
+            const cutoff = now - WINDOW_SECONDS;
+            let first = 0;
+            while (first < d.time.length && d.time[first] < cutoff) first++;
+            if (first > 0) {
+              d.time = d.time.slice(first);
+              d.values = d.values.map(a => a.slice(first));
+            }
+            if (d.time.length > MAX_POINTS) {
+              const excess = d.time.length - MAX_POINTS;
+              d.time = d.time.slice(excess);
+              d.values = d.values.map(a => a.slice(excess));
+            }
+            
+            // Update plot immediately
+            plotInstanceRef.current.setData([d.time, ...d.values], true);
+          }
+        }
       }
     });
 
     // ── 10 Hz sample + render + size-sync loop ──────────────────────────
     const sampleInterval = setInterval(() => {
       // Always try to initialize if not done yet
-      if (!initialized) {
+      if (!initializedRef.current) {
         tryInit();
-        if (!initialized) return;
+        if (!initializedRef.current) return;
       }
 
       if (!plotInstanceRef.current) return;

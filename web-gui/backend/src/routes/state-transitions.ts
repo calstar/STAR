@@ -14,6 +14,7 @@ const CSV_STATE_MAP: Record<string, SystemState> = {
   'Quick Fire': SystemState.READY,
   'GN2 Press': SystemState.GN2_LOW_PRESS,
   'Fuel Press': SystemState.FUEL_PRESS,
+  'Fuel Press ': SystemState.FUEL_PRESS,  // Handle trailing space in CSV
   'Fuel Vent': SystemState.FUEL_VENT,
   'Ox Press': SystemState.OX_PRESS,
   'Ox Vent': SystemState.OX_VENT,
@@ -53,9 +54,12 @@ export function parseStateTransitionsCSV(csvPath: string): Transition[] {
       }
 
       // Check each column for valid transitions (value = 1)
+      // headers[0] = Idle, headers[1] = Armed, etc.
+      // row[0] = from state name, row[1] = transition to Idle, row[2] = transition to Armed, etc.
       for (let j = 1; j < row.length && j <= headers.length; j++) {
         if (row[j].trim() === '1') {
-          const toStateName = headers[j - 1].trim();
+          const toStateName = headers[j - 1]?.trim();
+          if (!toStateName) continue;
           const toState = CSV_STATE_MAP[toStateName];
 
           if (toState && fromState) {
@@ -93,4 +97,39 @@ export function getStateTransitions(): Transition[] {
   }
 
   return [];
+}
+
+// Build a lookup map for fast validation: fromState -> Set<toState>
+let _transitionMap: Map<SystemState, Set<SystemState>> | null = null;
+
+export function buildTransitionMap(): Map<SystemState, Set<SystemState>> {
+  if (_transitionMap) {
+    return _transitionMap;
+  }
+
+  _transitionMap = new Map();
+  const transitions = getStateTransitions();
+
+  for (const { from, to } of transitions) {
+    if (!_transitionMap.has(from)) {
+      _transitionMap.set(from, new Set());
+    }
+    _transitionMap.get(from)!.add(to);
+  }
+
+  console.log(`📋 Built transition map: ${transitions.length} allowed transitions`);
+  // Debug: log all transitions
+  for (const [from, allowed] of _transitionMap.entries()) {
+    console.log(`   ${SystemState[from]}: can go to [${Array.from(allowed).map(s => SystemState[s]).join(', ')}]`);
+  }
+  return _transitionMap;
+}
+
+export function isTransitionAllowed(from: SystemState, to: SystemState): boolean {
+  const map = buildTransitionMap();
+  const allowed = map.get(from);
+  if (!allowed) {
+    return false; // No transitions defined for this state
+  }
+  return allowed.has(to);
 }
