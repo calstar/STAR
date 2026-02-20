@@ -37,7 +37,7 @@ const ROW_GAP = 140; // much taller spacing
 const PAD = 40; // more padding
 
 // Grid layout: [row, col] 0-based - includes ALL states
-const STATE_POS: Record<SystemState, [number, number]> = {
+const STATE_POS: Partial<Record<SystemState, [number, number]>> = {
   [SystemState.DEBUG]:         [0, 0],
   [SystemState.IDLE]:          [0, 1],
   [SystemState.ARMED]:         [0, 2],
@@ -115,7 +115,7 @@ function StateNode({
 }: { state: SystemState; isActive: boolean; isReachable: boolean; onClick: () => void; }) {
     const isEmergency = state === SystemState.ENGINE_ABORT || state === SystemState.GSE_ABORT || state === SystemState.EMERGENCY_ABORT || state === SystemState.ABORT || state === SystemState.VENT;
   const isClickable = isReachable || isActive || isEmergency;
-  const name = STATE_NAMES[state];
+  const name = STATE_NAMES[state] ?? 'UNKNOWN';
   const x = nodeX(state); const y = nodeY(state);
 
   const fill = isActive    ? '#2563EB'
