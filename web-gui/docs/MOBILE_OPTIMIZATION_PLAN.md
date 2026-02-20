@@ -283,3 +283,6 @@ Optimize the web GUI for mobile devices (iOS, Android) with responsive design, P
 3. Implement service worker
 4. Add PWA manifest
 5. Test on real devices
+
+
+

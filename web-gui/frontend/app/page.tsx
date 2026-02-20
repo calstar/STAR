@@ -3,7 +3,7 @@
 import { useSensorStore } from '@/lib/store';
 import { useEffect } from 'react';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
+import { MessageType, SensorUpdate, StateUpdate, MissionStartTime } from '@/lib/types';
 import WindowLauncher from '@/components/windows/WindowLauncher';
 import { useSensorValue } from '@/lib/store';
 
@@ -33,10 +33,19 @@ function SensorCard({ label, entity, component, unit = 'PSI', color, nop, meop }
 
   return (
     <div className={`bg-card border rounded-lg px-3 py-2 hover:border-gray-600 transition-all ${statusClass}`}>
-      <div className="text-xs text-text-muted font-semibold tracking-wider uppercase truncate mb-0.5">{label}</div>
-      <div className="text-2xl font-bold font-mono tabular-nums leading-tight" style={{ color: valueColor }}>
+      <div className="text-xs text-text-muted font-semibold tracking-wider uppercase truncate mb-0.5">
+        {label}
+      </div>
+
+      {/* Current value */}
+      <div
+        className="text-2xl font-bold font-mono tabular-nums leading-tight"
+        style={{ color: valueColor }}
+      >
         {value !== null ? value.toFixed(1) : <span className="text-gray-700">---</span>}
       </div>
+
+      {/* Unit */}
       <div className="text-[10px] text-text-muted mt-0.5">{unit}</div>
     </div>
   );
@@ -80,15 +89,20 @@ export default function Home() {
   const updateSensor = useSensorStore((state) => state.updateSensor);
   const updateState = useSensorStore((state) => state.updateState);
   const updateConnectionStatus = useSensorStore((state) => state.updateConnectionStatus);
+  const updateMissionStartTime = useSensorStore((state) => state.updateMissionStartTime);
   const ws = getWebSocketClient();
 
   useEffect(() => {
     ws.connect();
     const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
     const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    const u3 = ws.onConnectionStatus((s) => updateConnectionStatus(s));
-    return () => { u1(); u2(); u3(); };
-  }, [ws, updateSensor, updateState, updateConnectionStatus]);
+    const u3 = ws.on(MessageType.MISSION_START_TIME, (p: unknown) => {
+      const payload = p as MissionStartTime;
+      updateMissionStartTime(payload.missionStartTime);
+    });
+    const u4 = ws.onConnectionStatus((s) => updateConnectionStatus(s));
+    return () => { u1(); u2(); u3(); u4(); };
+  }, [ws, updateSensor, updateState, updateConnectionStatus, updateMissionStartTime]);
 
   const pressureSensors: SensorCardProps[] = [
     { label: 'GN2 Reg', entity: 'PT_Cal.GN2_Regulated', component: 'pressure_psi', color: '#27AE60', nop: 900, meop: 950 },
@@ -102,14 +116,28 @@ export default function Home() {
     { label: 'GN2 High', entity: 'PT_Cal.GN2_High', component: 'pressure_psi', color: '#1ABC9C', nop: 900, meop: 950 },
   ];
 
+  // Show all actuators (matching Controls page)
   const actuators = [
-    { label: 'LOX Main', entity: 'ACT.LOX_Main' },
-    { label: 'Fuel Main', entity: 'ACT.Fuel_Main' },
-    { label: 'LOX Vent', entity: 'ACT.LOX_Vent' },
-    { label: 'Fuel Vent', entity: 'ACT.Fuel_Vent' },
-    { label: 'LOX Press', entity: 'ACT.LOX_Press' },
-    { label: 'Fuel Press', entity: 'ACT.Fuel_Press' },
-    { label: 'GSE Vent', entity: 'ACT.GSE_Low_Vent' },
+    // Main valves
+    { label: 'LOX Main',        entity: 'ACT.LOX_Main' },
+    { label: 'Fuel Main',       entity: 'ACT.Fuel_Main' },
+    // Vent valves
+    { label: 'LOX Vent',        entity: 'ACT.LOX_Vent' },
+    { label: 'Fuel Vent',       entity: 'ACT.Fuel_Vent' },
+    { label: 'GN2 Vent',        entity: 'ACT.GSE_Low_Vent' },
+    // Press valves
+    { label: 'LOX Press',       entity: 'ACT.LOX_Press' },
+    { label: 'Fuel Press',      entity: 'ACT.Fuel_Press' },
+    // Fill valves / additional
+    { label: 'Fuel Fill Vent',  entity: 'ACT.Fuel_Fill_Vent' },
+    { label: 'Fuel Fill Press', entity: 'ACT.Fuel_Fill_Press' },
+    { label: 'LOX Fill',        entity: 'ACT.ACT_CH4' },
+    { label: 'LOX Dump',        entity: 'ACT.ACT_CH4' },
+    { label: 'GSE Low Press Vent',  entity: 'ACT.GSE_Low_Vent' },
+    { label: 'GSE High Press Vent', entity: 'ACT.GSE_Low_Vent' },
+    { label: 'GSE LOX Fill Vent',   entity: 'ACT.GSE_Low_Vent' },
+    { label: 'GSE High Press Control', entity: 'ACT.GSE_Low_Vent' },
+    { label: 'GSE Med Press Control',  entity: 'ACT.GSE_Low_Vent' },
   ];
 
   return (

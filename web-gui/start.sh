@@ -58,3 +58,6 @@ echo "Press Ctrl+C to stop all services"
 # Wait for user interrupt
 trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit" INT TERM
 wait
+
+
+

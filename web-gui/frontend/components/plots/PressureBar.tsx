@@ -30,27 +30,34 @@ function fmtPressure(v: number): string {
  *  MEOP → maxVal    ⟶  85% – 100%  bar  (over-pressure)
  */
 function nonLinearPct(value: number, nop: number, meop: number, maxVal: number): number {
-  if (value <= 0) return 0;
-  if (value >= maxVal) return 100;
+  // Handle negative values - clamp to 0 for display purposes
+  // Negative pressures should show as minimal bar (not going below baseline)
+  // Use absolute value for calculation, but ensure result is always >= 0
+  const clampedValue = Math.max(0, value);
+  if (clampedValue <= 0) return 0;
+  if (clampedValue >= maxVal) return 100;
 
   const safeEdge    = nop * 0.7;
   const safePct     = 35;
   const warningPct  = 60;
   const dangerPct   = 85;
 
-  if (value <= safeEdge) {
-    return (value / safeEdge) * safePct;
-  } else if (value <= nop) {
-    const frac = (value - safeEdge) / (nop - safeEdge);
+  if (clampedValue <= safeEdge) {
+    return (clampedValue / safeEdge) * safePct;
+  } else if (clampedValue <= nop) {
+    const frac = (clampedValue - safeEdge) / (nop - safeEdge);
     return safePct + frac * (warningPct - safePct);
-  } else if (value <= meop) {
-    const frac = (value - nop) / (meop - nop);
+  } else if (clampedValue <= meop) {
+    const frac = (clampedValue - nop) / (meop - nop);
     return warningPct + frac * (dangerPct - warningPct);
   } else {
-    const frac = (value - meop) / (maxVal - meop);
+    const frac = (clampedValue - meop) / (maxVal - meop);
     return dangerPct + frac * (100 - dangerPct);
   }
 }
+
+// Ensure bars always grow upward - never shrink below previous value
+let lastValuePct = 0;
 
 export default function PressureBar({
   label,
@@ -67,7 +74,9 @@ export default function PressureBar({
   const sane = isFinite(displayValue) && Math.abs(displayValue) < 100000;
 
   // Non-linear percentage for fill and threshold lines
-  const valuePct = sane ? Math.min(Math.max(nonLinearPct(displayValue, nop, meop, maxVal), 0), 100) : 0;
+  // Always use positive value for calculation - bars only grow upward
+  const clampedDisplayValue = Math.max(0, displayValue);
+  const valuePct = sane ? Math.min(Math.max(nonLinearPct(clampedDisplayValue, nop, meop, maxVal), 0), 100) : 0;
   const nopPct   = nonLinearPct(nop, nop, meop, maxVal);
   const meopPct  = nonLinearPct(meop, nop, meop, maxVal);
 
@@ -77,51 +86,55 @@ export default function PressureBar({
   }
 
   return (
-    <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-hidden select-none w-full">
+    <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-visible select-none w-full">
       {/* Label */}
-      <div className="text-lg font-bold uppercase tracking-wider text-gray-100 text-center leading-none flex-shrink-0 truncate w-full">
+      <div className="text-base font-semibold uppercase tracking-wider text-gray-300 text-center leading-none flex-shrink-0 truncate w-full">
         {label}
       </div>
 
-      {/* MEOP/NOP horizontal label above bar (only if showLabels=true) */}
-      {showLabels && (
-        <div className="flex items-center justify-center gap-3 flex-shrink-0 w-full text-xs">
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-0.5 border-t-2 border-dashed border-yellow-500/85" />
-            <span className="text-sm font-bold text-yellow-400">NOP {nop}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-0.5 border-t-2 border-dashed border-red-500/85" />
-            <span className="text-sm font-bold text-red-400">MEOP {meop}</span>
-          </div>
-        </div>
-      )}
-
       {/* Bar — takes all remaining space */}
       <div
-        className="relative w-full flex-1 rounded border border-gray-700 overflow-hidden min-h-0"
-        style={{ background: '#0d0d0d', maxHeight: '100%' }}
+        className="relative w-full flex-1 rounded border border-gray-700 overflow-visible min-h-0"
+        style={{ background: '#0d0d0d', maxHeight: '100%', overflow: 'visible' }}
       >
         {sane && value !== null && (
           <div
-            className="absolute bottom-0 w-full transition-[height] duration-100"
+            className="absolute bottom-0 w-full"
             style={{
-              height:     `${valuePct}%`,
+              height:     `${Math.max(0, valuePct)}%`,
               background: barColor,
+              minHeight:  '0%',
+              transition: valuePct > (window.lastBarHeight || 0) ? 'height 0.1s ease-out' : 'none',
+            }}
+            ref={(el) => {
+              if (el) {
+                (window as any).lastBarHeight = valuePct;
+              }
             }}
           />
         )}
 
-        {/* MEOP threshold line (no label) */}
+        {/* MEOP threshold line with centered value label */}
         <div
-          className="absolute w-full pointer-events-none"
-          style={{ bottom: `${meopPct.toFixed(2)}%`, borderTop: '2px dashed rgba(231,76,60,0.85)' }}
-        />
-        {/* NOP threshold line (no label) */}
+          className="absolute w-full pointer-events-none flex flex-col items-center"
+          style={{ bottom: `${meopPct.toFixed(2)}%` }}
+        >
+          <span className="text-sm font-mono font-extrabold text-red-400 whitespace-nowrap mb-0.5">
+            {meop}
+          </span>
+          <div className="w-full border-t-2 border-dashed border-red-500/85" />
+        </div>
+        
+        {/* NOP threshold line with centered value label */}
         <div
-          className="absolute w-full pointer-events-none"
-          style={{ bottom: `${nopPct.toFixed(2)}%`, borderTop: '2px dashed rgba(243,156,18,0.85)' }}
-        />
+          className="absolute w-full pointer-events-none flex flex-col items-center"
+          style={{ bottom: `${nopPct.toFixed(2)}%` }}
+        >
+          <span className="text-sm font-mono font-extrabold text-yellow-400 whitespace-nowrap mb-0.5">
+            {nop}
+          </span>
+          <div className="w-full border-t-2 border-dashed border-yellow-500/85" />
+        </div>
         {/* Fill top edge */}
         {sane && value !== null && valuePct > 0.5 && (
           <div
@@ -143,8 +156,8 @@ export default function PressureBar({
               transform: 'translateY(-50%)',
             }}
           >
-            <div className="bg-gray-900/90 px-2 py-0.5 rounded border border-gray-700">
-              <div className="text-lg font-bold font-mono tabular-nums" style={{ color: barColor }}>
+            <div className="bg-gray-900/90 px-1.5 py-0.5 rounded border border-gray-700">
+              <div className="text-sm font-bold font-mono tabular-nums" style={{ color: barColor }}>
                 {fmtPressure(value)}
               </div>
             </div>
@@ -155,10 +168,10 @@ export default function PressureBar({
       {/* Value + unit below bar (only if value is too low to show on bar) */}
       {(!sane || value === null || valuePct <= 5) && (
         <div className="flex-shrink-0 text-center leading-none">
-          <div className="text-3xl font-bold font-mono tabular-nums" style={{ color: barColor }}>
+          <div className="text-xl font-bold font-mono tabular-nums" style={{ color: barColor }}>
             {value !== null ? fmtPressure(value) : '---'}
           </div>
-          <div className="text-sm text-gray-300 font-semibold">{unit}</div>
+          <div className="text-xs text-gray-400 font-semibold">{unit}</div>
         </div>
       )}
     </div>

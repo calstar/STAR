@@ -87,3 +87,6 @@ fi
 echo ""
 echo "✅ Installation complete!"
 echo "🚀 You can now run: ./scripts/startup/start_tmux.sh"
+
+
+

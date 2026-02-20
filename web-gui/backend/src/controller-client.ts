@@ -129,7 +129,7 @@ export class ControllerClient {
             mass_estimate: nav.mass ?? 10.0,
           },
           cmd: {
-            command_type: cmd.command_type,
+            command_type: cmd.command_type.toLowerCase(), // API expects lowercase: 'thrust_desired' or 'altitude_goal'
             thrust_desired: cmd.thrust_desired ?? 0.0,
             altitude_goal: cmd.altitude_goal ?? 0.0,
           },
@@ -212,12 +212,18 @@ export function mapSensorDataToMeasurement(sensorData: Map<string, number>): Con
     return value !== undefined ? value : null;
   };
 
-  const P_copv = getPressure('PT_Cal.GN2_High', 'PT_Cal.PT_CH9');
+  let P_copv = getPressure('PT_Cal.GN2_High', 'PT_Cal.PT_CH9');
   const P_reg = getPressure('PT_Cal.GN2_Regulated', 'PT_Cal.PT_CH6');
   const P_u_fuel = getPressure('PT_Cal.Fuel_Upstream', 'PT_Cal.PT_CH1');
   const P_u_ox = getPressure('PT_Cal.Ox_Upstream', 'PT_Cal.PT_CH5');
   const P_d_fuel = getPressure('PT_Cal.Fuel_Downstream', 'PT_Cal.PT_CH4');
   const P_d_ox = getPressure('PT_Cal.Ox_Downstream', 'PT_Cal.PT_CH7');
+
+  // If we don't have a dedicated COPV sensor, approximate from regulator pressure.
+  // This keeps the controller running on rigs with only GN2_Regulated installed.
+  if (P_copv === null && P_reg !== null) {
+    P_copv = P_reg; // Simple fallback: treat COPV ≈ regulator pressure
+  }
 
   // Check if we have all required pressures
   if (P_copv === null || P_reg === null || P_u_fuel === null || 

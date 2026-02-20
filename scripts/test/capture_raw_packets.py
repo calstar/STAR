@@ -78,3 +78,6 @@ if packet_count == 0:
     print("  2. Check firewall: sudo ufw status")
     print("  3. Check network connectivity")
     print("  4. Verify board is actually sending (check Serial monitor)")
+
+
+

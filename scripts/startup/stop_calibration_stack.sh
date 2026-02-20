@@ -74,3 +74,6 @@ if pgrep -f "(elodin-db|daq_bridge|calibration_orchestrator_gui)" > /dev/null; t
 else
     echo -e "${GREEN}✅ All calibration stack processes stopped${NC}"
 fi
+
+
+

@@ -17,7 +17,7 @@
 
 import { create } from 'zustand';
 import { useCallback } from 'react';
-import { SensorUpdate, ActuatorUpdate, StateUpdate, ConnectionStatus, SystemState } from './types';
+import { SensorUpdate, ActuatorUpdate, StateUpdate, ConnectionStatus, SystemState, MissionStartTime } from './types';
 
 interface SensorData {
   [key: string]: number; // entity.component -> value
@@ -29,11 +29,15 @@ interface SensorSystemState {
   currentState: SystemState | null;
   connectionStatus: ConnectionStatus;
   debugMode: boolean;
+  missionStartTime: number | null; // T+0 from first packet (backend)
+  actuatorExpectedPositions: Record<number, Record<string, 'open' | 'closed' | null>>; // state → entity → position
 
   updateSensor: (update: SensorUpdate) => void;
   updateActuator: (update: ActuatorUpdate) => void;
   updateState: (update: StateUpdate) => void;
   updateConnectionStatus: (status: ConnectionStatus) => void;
+  updateMissionStartTime: (time: number) => void;
+  updateActuatorExpectedPositions: (positions: Record<number, Record<string, 'open' | 'closed' | null>>) => void;
   getSensorValue: (entity: string, component: string) => number | null;
   setDebugMode: (mode: boolean) => void;
 }
@@ -110,6 +114,54 @@ export { ALIASES };
 let _pendingSensorWrites: Record<string, number> = {};
 let _flushScheduled = false;
 
+// ── Data filtering for spikes ────────────────────────────────────────────────
+// Simple moving average filter to smooth out random spikes in sensor data
+const FILTER_WINDOW_SIZE = 5; // Number of samples to average
+const MAX_SPIKE_THRESHOLD = 50; // PSI - reject values that jump more than this
+
+interface FilterState {
+  history: number[];
+  lastValue: number | null;
+}
+
+const _filterState: Map<string, FilterState> = new Map();
+
+function filterSensorValue(key: string, value: number): number {
+  // Only filter pressure values
+  if (!key.includes('pressure_psi')) {
+    return value;
+  }
+
+  // Initialize filter state if needed
+  if (!_filterState.has(key)) {
+    _filterState.set(key, { history: [], lastValue: null });
+  }
+
+  const state = _filterState.get(key)!;
+
+  // Outlier detection: if value jumps too much from last value, reject it
+  if (state.lastValue !== null) {
+    const delta = Math.abs(value - state.lastValue);
+    if (delta > MAX_SPIKE_THRESHOLD) {
+      // Spike detected - use last value instead
+      console.warn(`⚠️ Spike detected for ${key}: ${value} (delta: ${delta.toFixed(2)} PSI), using last value: ${state.lastValue}`);
+      return state.lastValue;
+    }
+  }
+
+  // Add to history
+  state.history.push(value);
+  if (state.history.length > FILTER_WINDOW_SIZE) {
+    state.history.shift();
+  }
+
+  // Calculate moving average
+  const avg = state.history.reduce((a, b) => a + b, 0) / state.history.length;
+  state.lastValue = avg;
+
+  return avg;
+}
+
 function scheduleSensorFlush() {
   if (_flushScheduled) return;
   _flushScheduled = true;
@@ -132,11 +184,15 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   currentState: SystemState.IDLE,
   connectionStatus: { connected: false, elodinConnected: false },
   debugMode: false,
+  missionStartTime: null,
+  actuatorExpectedPositions: {},
 
   updateSensor: (update: SensorUpdate) => {
     const key = `${update.entity}.${update.component}`;
+    // Filter out spikes before storing
+    const filteredValue = filterSensorValue(key, update.value);
     // Accumulate in pending batch — flush at next animation frame
-    _pendingSensorWrites[key] = update.value;
+    _pendingSensorWrites[key] = filteredValue;
     scheduleSensorFlush();
   },
 
@@ -157,6 +213,18 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
 
   updateConnectionStatus: (status: ConnectionStatus) => {
     set({ connectionStatus: status });
+  },
+
+  updateActuatorExpectedPositions: (positions: Record<number, Record<string, 'open' | 'closed' | null>>) => {
+    set((state) => {
+      // Deep merge to ensure all state positions are updated
+      const updated = { ...state.actuatorExpectedPositions };
+      for (const [stateKey, statePositions] of Object.entries(positions)) {
+        const stateNum = Number(stateKey);
+        updated[stateNum] = { ...(updated[stateNum] || {}), ...statePositions };
+      }
+      return { actuatorExpectedPositions: updated };
+    });
   },
 
   getSensorValue: (entity: string, component: string) => {

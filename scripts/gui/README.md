@@ -191,3 +191,6 @@ This GUI is designed to match the functionality and layout of `external/DiabloAv
 - Advanced plotting options
 - Multi-board support
 - Event logging and playback
+
+
+

@@ -1,8 +1,7 @@
 #!/bin/bash
 # =============================================================================
 # Sensor System tmux Launcher
-# Starts: Elodin DB | DAQ Bridge | Elodin Editor | Web GUI Backend | Web GUI Frontend
-# Then launches Diablo combined_gui.py in a separate X window.
+# Starts: Elodin DB | DAQ Bridge | Web GUI Backend | Web GUI Frontend
 # Usage: ./scripts/startup/start_tmux.sh [session_name] [db_name]
 # =============================================================================
 
@@ -12,14 +11,11 @@ ELODIN_PORT=2240
 SENSOR_PORT=5006
 PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ELODIN_DB="$HOME/.cargo/bin/elodin-db"
-ELODIN_ED="$HOME/.cargo/bin/elodin"
 DAQ="$PROJECT/build/FSW/daq_bridge"
 CFG="$PROJECT/config/config.toml"
 DB="$HOME/.local/share/elodin/$DB_NAME"
 KDL_DIR="$PROJECT/panels"
 CONFIG_LUA="$KDL_DIR/config.lua"
-VENV="$PROJECT/venv/bin/activate"
-DIABLO_GUI="$PROJECT/external/DiabloAvionics/test_guis/combined_gui.py"
 WEB_GUI_BACKEND="$PROJECT/web-gui/backend"
 WEB_GUI_FRONTEND="$PROJECT/web-gui/frontend"
 
@@ -72,8 +68,6 @@ CMD_DB="printf '\n  ══ ELODIN DB — :$ELODIN_PORT ══\n\n' && export SEN
 
 CMD_DAQ="printf '\n  ══ DAQ BRIDGE — UDP :$SENSOR_PORT ══\n\n' && sleep 2 && cd $PROJECT && exec $DAQ $CFG 0.0.0.0 $SENSOR_PORT"
 
-CMD_ED="printf '\n  ══ ELODIN EDITOR — 127.0.0.1:$ELODIN_PORT ══\n\n' && sleep 4 && export ELODIN_KDL_DIR=$KDL_DIR && exec $ELODIN_ED editor '127.0.0.1:$ELODIN_PORT'"
-
 # Web GUI commands (only if enabled)
 if [ "$WEB_GUI_ENABLED" = "true" ]; then
     CMD_WEB_BACKEND="printf '\n  ══ WEB GUI BACKEND — WS :8081 ══\n\n' && cd $WEB_GUI_BACKEND && if [ ! -d node_modules ]; then echo 'Installing dependencies...' && npm install; fi && echo 'Starting backend...' && npm run dev 2>&1"
@@ -84,12 +78,10 @@ else
 fi
 
 # ── Create tmux session ────────────────────────────────────────────────────
-# Layout (5 panes):
+# Layout (4 panes):
 #  ┌──────────────────┬──────────────────┐
 #  │   Elodin DB      │   DAQ Bridge     │
 #  ├──────────────────┴──────────────────┤
-#  │         Elodin Editor               │
-#  ├──────────────────┬──────────────────┤
 #  │  Web GUI Backend │  Web GUI Frontend │
 #  └──────────────────┴──────────────────┘
 
@@ -102,51 +94,27 @@ tmux set-option -t "$SESSION" remain-on-exit on
 tmux split-window -h -t "$SESSION:main.0" \
   "bash --norc --noprofile -c \"$CMD_DAQ\""
 
-# Pane 2 (bottom full-width): Elodin Editor
-tmux split-window -v -t "$SESSION:main.0" -l 15 \
-  "bash --norc --noprofile -c \"$CMD_ED\""
-
-# Pane 3 (bottom left): Web GUI Backend
-tmux split-window -h -t "$SESSION:main.2" \
+# Pane 2 (bottom left): Web GUI Backend
+tmux split-window -v -t "$SESSION:main.0" \
   "bash --norc --noprofile -c \"$CMD_WEB_BACKEND\""
 
-# Pane 4 (bottom right): Web GUI Frontend
-tmux split-window -v -t "$SESSION:main.3" \
+# Pane 3 (bottom right): Web GUI Frontend
+tmux split-window -h -t "$SESSION:main.2" \
   "bash --norc --noprofile -c \"$CMD_WEB_FRONTEND\""
 
 # Select DAQ Bridge pane
 tmux select-pane -t "$SESSION:main.1"
 
-# ── Trigger schematic reload after data registers ─────────────────────────
-# The editor loads the schematic before components exist, so graph panes fail.
-# Touch the KDL file after DAQ bridge has time to register → triggers live reload.
-(sleep 10 && touch "$KDL_DIR/sensor-system.kdl" 2>/dev/null) &
-
-# ── Launch Diablo GUI in separate X window (not in tmux) ────────────────────
-if [ -n "$DISPLAY" ] && [ -f "$DIABLO_GUI" ]; then
-    echo "🖥️  Launching Diablo combined_gui.py in separate window..."
-    (
-        cd "$PROJECT/external/DiabloAvionics/test_guis"
-        source "$VENV" 2>/dev/null
-        sleep 3
-        python3 combined_gui.py &
-    ) &
-    DIABLO_PID=$!
-    echo "   PID: $DIABLO_PID"
-fi
-
 # ── Attach ──────────────────────────────────────────────────────────────────
 echo "┌────────────────────────────────────────┐"
 echo "│  tmux: $SESSION                        │"
 echo "│  0: Elodin DB    1: DAQ Bridge         │"
-echo "│  2: Elodin Editor                      │"
 if [ "$WEB_GUI_ENABLED" = "true" ]; then
-    echo "│  3: Web GUI Backend  4: Web GUI Frontend │"
+    echo "│  2: Web GUI Backend  3: Web GUI Frontend │"
     echo "│  🌐 Web GUI: http://localhost:3000      │"
 else
     echo "│  ⚠️  Web GUI: Disabled (Node.js missing)   │"
 fi
-echo "│  + Diablo GUI (separate X window)      │"
 echo "│  Ctrl+B arrows=switch  D=detach        │"
 echo "│  stop: ./scripts/startup/stop_tmux.sh  │"
 echo "└────────────────────────────────────────┘"

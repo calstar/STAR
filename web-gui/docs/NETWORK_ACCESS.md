@@ -213,3 +213,6 @@ ws.onerror = (e) => console.error('Error:', e);
 - Frontend Next.js dev server listens on `0.0.0.0:3000` by default
 - For production, use a reverse proxy with SSL
 - Always use WSS (secure WebSocket) over the internet
+
+
+

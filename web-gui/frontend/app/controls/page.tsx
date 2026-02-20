@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
 import ActuatorControl from '@/components/controls/ActuatorControl';
+import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { getWebSocketClient } from '@/lib/websocket';
-import { useSensorStore } from '@/lib/store';
+import { useSensorStore, useSensorStore as getStore } from '@/lib/store';
 import { MessageType, SensorUpdate, StateUpdate, ActuatorId, SystemState, CommandPayload } from '@/lib/types';
 import { useSensorValue } from '@/lib/store';
 
@@ -15,88 +16,119 @@ const STATE_NAMES: Record<number, string> = {
   13: 'VENT', 14: 'CALIBRATE', 15: 'READY', 16: 'FIRE', 17: 'ABORT',
 };
 
-// All actuators from the CSV - organized by category
-const ALL_ACTUATORS = [
-  // Main Valves
-  { id: ActuatorId.LOX_MAIN, name: 'LOX Main', channel: 1, entity: 'ACT.LOX_Main' },
-  { id: ActuatorId.FUEL_MAIN, name: 'Fuel Main', channel: 7, entity: 'ACT.Fuel_Main' },
-  
-  // Vent Valves
-  { id: ActuatorId.LOX_VENT, name: 'LOX Vent', channel: 6, entity: 'ACT.LOX_Vent' },
-  { id: ActuatorId.FUEL_VENT, name: 'Fuel Vent', channel: 2, entity: 'ACT.Fuel_Vent' },
-  { name: 'GN2 Vent', channel: 5, entity: 'ACT.GSE_Low_Vent' }, // Maps to GSE Low Vent
-  
-  // Press Valves
-  { id: ActuatorId.LOX_PRESS, name: 'LOX Press', channel: 8, entity: 'ACT.LOX_Press' },
-  { id: ActuatorId.FUEL_PRESS, name: 'Fuel Press', channel: 3, entity: 'ACT.Fuel_Press' },
-  
-  // Fill Valves
-  { name: 'Fuel Fill Vent', channel: 9, entity: 'ACT.Fuel_Fill_Vent' },
-  { name: 'Fuel Fill Press', channel: 10, entity: 'ACT.Fuel_Fill_Press' },
-  { name: 'LOX Fill', channel: 4, entity: 'ACT.ACT_CH4' },
-  
-  // Dump/Additional
-  { name: 'LOX Dump', channel: 4, entity: 'ACT.ACT_CH4' },
-  { name: 'GSE Low Press Vent', channel: 5, entity: 'ACT.GSE_Low_Vent' },
-  { name: 'GSE High Press Vent', channel: 5, entity: 'ACT.GSE_Low_Vent' },
-  { name: 'GSE LOX Fill Vent', channel: 5, entity: 'ACT.GSE_Low_Vent' },
-  { name: 'GSE High Press Control', channel: 5, entity: 'ACT.GSE_Low_Vent' },
-  { name: 'GSE Med Press Control', channel: 5, entity: 'ACT.GSE_Low_Vent' },
+// Pressure sensors for plotting
+const PRESSURE_SENSORS = [
+  { label: 'GN2 Reg', entity: 'PT_Cal.GN2_Regulated', color: '#27AE60' },
+  { label: 'Fuel Up', entity: 'PT_Cal.Fuel_Upstream', color: '#3498DB' },
+  { label: 'Fuel Down', entity: 'PT_Cal.Fuel_Downstream', color: '#2980B9' },
+  { label: 'LOX Up', entity: 'PT_Cal.Ox_Upstream', color: '#E74C3C' },
+  { label: 'LOX Down', entity: 'PT_Cal.Ox_Downstream', color: '#C0392B' },
+  { label: 'GSE Low', entity: 'PT_Cal.GSE_Low', color: '#F39C12' },
+  { label: 'GSE Mid', entity: 'PT_Cal.GSE_Mid', color: '#9B59B6' },
+  { label: 'GSE High', entity: 'PT_Cal.GSE_High', color: '#8E44AD' },
+  { label: 'GN2 High', entity: 'PT_Cal.GN2_High', color: '#1ABC9C' },
 ];
 
-// Simple actuator display for actuators not in the enum
+// All actuators from the CSV - organized by category, no duplicates
+const ALL_ACTUATORS = [
+  // Main Valves
+  { id: ActuatorId.LOX_MAIN, name: 'LOX Main', channel: 1, entity: 'ACT.LOX_Main', category: 'main' },
+  { id: ActuatorId.FUEL_MAIN, name: 'Fuel Main', channel: 7, entity: 'ACT.Fuel_Main', category: 'main' },
+  
+  // Vent Valves
+  { id: ActuatorId.LOX_VENT, name: 'LOX Vent', channel: 6, entity: 'ACT.LOX_Vent', category: 'vent' },
+  { id: ActuatorId.FUEL_VENT, name: 'Fuel Vent', channel: 2, entity: 'ACT.Fuel_Vent', category: 'vent' },
+  { id: ActuatorId.GSE_LOW_VENT, name: 'GN2 Vent', channel: 5, entity: 'ACT.GSE_Low_Vent', category: 'vent' },
+  { id: ActuatorId.GSE_HIGH_PRESS_VENT, name: 'GSE High Press Vent', channel: 5, entity: 'ACT.GSE_High_Press_Vent', category: 'vent' },
+  { id: ActuatorId.GSE_LOX_FILL_VENT, name: 'GSE LOX Fill Vent', channel: 5, entity: 'ACT.GSE_LOX_Fill_Vent', category: 'vent' },
+  
+  // Press Valves
+  { id: ActuatorId.LOX_PRESS, name: 'LOX Press', channel: 8, entity: 'ACT.LOX_Press', category: 'press' },
+  { id: ActuatorId.FUEL_PRESS, name: 'Fuel Press', channel: 3, entity: 'ACT.Fuel_Press', category: 'press' },
+  { id: ActuatorId.FUEL_FILL_PRESS, name: 'Fuel Fill Press', channel: 10, entity: 'ACT.Fuel_Fill_Press', category: 'press' },
+  { id: ActuatorId.GSE_HIGH_PRESS_CONTROL, name: 'GSE High Press Control', channel: 5, entity: 'ACT.GSE_High_Press_Control', category: 'press' },
+  { id: ActuatorId.GSE_MED_PRESS_CONTROL, name: 'GSE Med Press Control', channel: 5, entity: 'ACT.GSE_Med_Press_Control', category: 'press' },
+  
+  // Fill Valves
+  { id: ActuatorId.FUEL_FILL_VENT, name: 'Fuel Fill Vent', channel: 9, entity: 'ACT.Fuel_Fill_Vent', category: 'fill' },
+  { id: ActuatorId.LOX_FILL, name: 'LOX Fill', channel: 4, entity: 'ACT.LOX_Fill', category: 'fill' },
+  
+  // Other
+  { id: ActuatorId.LOX_DUMP, name: 'LOX Dump', channel: 4, entity: 'ACT.LOX_Dump', category: 'other' },
+];
+
+// Simple actuator display - matches ActuatorControl layout exactly
 function SimpleActuatorDisplay({ name, channel, entity }: { name: string; channel: number; entity: string }) {
-  // Call all hooks unconditionally (React Rules of Hooks)
   const status = useSensorValue(entity, 'status');
   const adcEntity = useSensorValue(entity, 'raw_adc_counts');
   const adcChannel = useSensorValue(`ACT.ACT_CH${channel}`, 'raw_adc_counts');
-  // Then select the value (not conditional hook calls)
-  const adc = adcEntity ?? adcChannel;
+  const adc = adcEntity ?? adcChannel ?? 0;
   const hasData = status !== null || adc !== null;
   const isOpen = status === 1 || (adc !== null && adc > 1000);
   const currentState = useSensorStore((s) => s.currentState);
+  const actuatorExpectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
 
-  // Get expected position from ActuatorStatePanel logic
-  const EXPECTED_POSITIONS: Record<number, Record<string, 'open' | 'closed' | null>> = {
-    [SystemState.IDLE]: { 'ACT.LOX_Main': 'open', 'ACT.Fuel_Main': 'open', 'ACT.LOX_Vent': 'open', 'ACT.Fuel_Vent': 'open', 'ACT.LOX_Press': 'open', 'ACT.Fuel_Press': 'open', 'ACT.GSE_Low_Vent': 'open', 'ACT.Fuel_Fill_Vent': 'open', 'ACT.Fuel_Fill_Press': 'open' },
-    [SystemState.ARMED]: { 'ACT.LOX_Main': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Press': 'closed', 'ACT.GSE_Low_Vent': 'closed', 'ACT.Fuel_Fill_Vent': 'closed', 'ACT.Fuel_Fill_Press': 'closed' },
-    [SystemState.FUEL_FILL]: { 'ACT.Fuel_Vent': 'open', 'ACT.LOX_Vent': 'open', 'ACT.GSE_Low_Vent': 'open', 'ACT.Fuel_Fill_Press': 'open', 'ACT.Fuel_Press': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.Fuel_Fill_Vent': 'closed' },
-    [SystemState.OX_FILL]: { 'ACT.Fuel_Vent': 'open', 'ACT.LOX_Vent': 'open', 'ACT.GSE_Low_Vent': 'open', 'ACT.Fuel_Press': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed' },
-    [SystemState.FIRE]: { 'ACT.Fuel_Main': 'open', 'ACT.Fuel_Press': 'open', 'ACT.LOX_Main': 'open', 'ACT.LOX_Press': 'open', 'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.GSE_Low_Vent': 'closed' },
-    [SystemState.VENT]: { 'ACT.Fuel_Vent': 'open', 'ACT.LOX_Vent': 'open', 'ACT.GSE_Low_Vent': 'open', 'ACT.Fuel_Press': 'open', 'ACT.LOX_Press': 'open', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed' },
-    [SystemState.ABORT]: { 'ACT.Fuel_Vent': 'open', 'ACT.LOX_Vent': 'open', 'ACT.GSE_Low_Vent': 'open', 'ACT.Fuel_Press': 'open', 'ACT.LOX_Press': 'open', 'ACT.Fuel_Main': 'open', 'ACT.LOX_Main': 'closed' },
-  };
-
-  const stateExpected = currentState != null ? (EXPECTED_POSITIONS[currentState] ?? {}) : {};
+  // Get expected position from backend (CSV-based) - computed directly from store
+  const stateExpected = currentState != null ? (actuatorExpectedPositions[currentState] ?? {}) : {};
   const expected = stateExpected[entity] ?? null;
+  
+  // Commanded state should always show what the system state requires
+  // Use useMemo to ensure reactivity to store changes
+  const commandedState = React.useMemo(() => {
+    if (currentState === null || currentState === SystemState.DEBUG) {
+      return null;
+    }
+    if (expected === 'open') {
+      return 'OPEN';
+    } else if (expected === 'closed') {
+      return 'CLOSED';
+    }
+    return null;
+  }, [currentState, expected]);
   const mismatch = expected !== null && hasData && ((expected === 'open' && !isOpen) || (expected === 'closed' && isOpen));
 
   return (
-    <div className={`bg-gray-900/50 rounded-lg px-4 py-3 border ${mismatch ? 'border-yellow-600/50 bg-yellow-950/20' : 'border-gray-800'}`}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-text-muted uppercase tracking-wider">{name}</span>
-          {expected && (
-            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-              expected === 'open' ? 'bg-green-900/30 text-green-600' : 'bg-red-900/30 text-red-600'
-            }`}>
-              EXP:{expected === 'open' ? 'O' : 'C'}
+    <div className={`rounded-lg p-3 border transition-colors
+      ${mismatch
+        ? 'bg-yellow-950/40 border-yellow-600'
+        : 'bg-background border-gray-700 hover:border-gray-600'}`}>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-semibold tracking-wider text-text uppercase">
+          {name}
+        </h3>
+        {mismatch && (
+          <span className="text-xs font-bold text-yellow-400 uppercase tracking-wider">MISMATCH</span>
+        )}
+      </div>
+
+      {/* Two-row indicator: Commanded vs Feedback - EXACTLY like ActuatorControl */}
+      <div className="flex gap-3 mb-3 text-xs">
+        <div className="flex-1">
+          <div className="text-text-muted mb-1">COMMANDED</div>
+          <div className={`flex items-center gap-1.5 ${commandedState === null ? 'text-gray-500' : commandedState === 'OPEN' ? 'text-green-400' : 'text-red-400'}`}>
+            <div className={`w-2 h-2 rounded-full ${commandedState === null ? 'bg-gray-600' : commandedState === 'OPEN' ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span className="font-mono font-bold">
+              {commandedState === null ? '---' : commandedState}
             </span>
-          )}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-mono text-gray-400">
-            {hasData ? (adc?.toLocaleString() ?? '---') : '---'}
-          </span>
-          <span className={`text-xs font-bold font-mono px-2 py-1 rounded ${
-            !hasData ? 'bg-gray-800 text-gray-600' :
-            isOpen ? 'bg-green-900/60 text-green-400' : 'bg-red-900/60 text-red-400'
-          }`}>
-            {!hasData ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
-          </span>
-          {mismatch && <span className="text-yellow-400 text-sm">⚠</span>}
+        <div className="w-px bg-gray-700" />
+        <div className="flex-1">
+          <div className="text-text-muted mb-1">FEEDBACK</div>
+          <div className={`flex items-center gap-1.5 ${!hasData ? 'text-gray-500' : isOpen ? 'text-green-400' : 'text-red-400'}`}>
+            <div className={`w-2 h-2 rounded-full ${!hasData ? 'bg-gray-600' : isOpen ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+            <span className="font-mono font-bold">{!hasData ? '---' : isOpen ? 'OPEN' : 'CLOSED'}</span>
+          </div>
         </div>
       </div>
+
+      {/* ADC readout */}
+      <div className="text-[10px] text-text-muted font-mono mb-2.5">
+        ADC: {adc.toLocaleString()}
+      </div>
+
+      {/* Placeholder for buttons area to maintain spacing */}
+      <div className="h-[34px]" />
     </div>
   );
 }
@@ -106,128 +138,71 @@ export default function ControlsPage() {
   const updateSensor = useSensorStore((state) => state.updateSensor);
   const updateState  = useSensorStore((state) => state.updateState);
 
+  const updateActuatorExpectedPositions = useSensorStore((s) => s.updateActuatorExpectedPositions);
+
   useEffect(() => {
     ws.connect();
     const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
     const u2 = ws.on(MessageType.STATE_UPDATE,  (p: unknown) => updateState(p as StateUpdate));
-    return () => { u1(); u2(); };
-  }, [ws, updateSensor, updateState]);
-
-  const sendEmergency = (state: SystemState) => {
-    updateState({ currentState: state, stateName: STATE_NAMES[state] ?? '', timestamp: Date.now() });
-    const cmd: CommandPayload = { commandType: 'state_transition', data: { state } };
-    ws.sendCommand(cmd);
-  };
-
-  // Group actuators by category
-  const mainValves = ALL_ACTUATORS.filter(a => a.name.includes('Main'));
-  const ventValves = ALL_ACTUATORS.filter(a => a.name.includes('Vent'));
-  const pressValves = ALL_ACTUATORS.filter(a => a.name.includes('Press'));
-  const fillValves = ALL_ACTUATORS.filter(a => a.name.includes('Fill'));
-  const otherValves = ALL_ACTUATORS.filter(a => 
-    !a.name.includes('Main') && !a.name.includes('Vent') && !a.name.includes('Press') && !a.name.includes('Fill')
-  );
+    const u3 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
+      const payload = p as Record<number, Record<string, 'open' | 'closed' | null>>;
+      console.log('📥 Received expected positions update:', payload);
+      console.log('📥 Payload keys (states):', Object.keys(payload).map(k => `${k} (${SystemState[Number(k)]})`));
+      for (const [state, positions] of Object.entries(payload)) {
+        console.log(`📥 State ${SystemState[Number(state)]} has ${Object.keys(positions).length} actuators:`, Object.keys(positions));
+      }
+      updateActuatorExpectedPositions(payload);
+    });
+    return () => { u1(); u2(); u3(); };
+  }, [ws, updateSensor, updateState, updateActuatorExpectedPositions]);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden">
-
-      {/* ── Permanent emergency strip — always visible at top ─────────────── */}
-      <div className="flex-shrink-0 bg-red-950/60 border-b border-red-800/60 px-4 py-2 flex items-center justify-between">
-        <span className="text-xs font-bold tracking-widest text-red-400 uppercase">
-          ⚠ Emergency Controls — always active
-        </span>
-        <div className="flex gap-3">
-          <button
-            onClick={() => sendEmergency(SystemState.VENT)}
-            className="px-6 py-2 bg-amber-700 hover:bg-amber-600 active:bg-amber-800 border border-amber-500
-                       text-white font-bold text-sm rounded tracking-widest transition-colors"
-          >
-            VENT
-          </button>
-          <button
-            onClick={() => sendEmergency(SystemState.ABORT)}
-            className="px-6 py-2 bg-red-700 hover:bg-red-600 active:bg-red-800 border border-red-500
-                       text-white font-bold text-sm rounded tracking-widest transition-colors"
-          >
-            ABORT
-          </button>
-        </div>
-      </div>
-
-      {/* ── Main content: state machine + actuators ───────────────────────── */}
+      {/* ── Main content: 3-section split view ─────────────────────────────── */}
       <div className="flex-1 flex gap-3 p-3 min-h-0 overflow-hidden">
-
-        {/* State machine diagram — left column */}
+        
+        {/* ── Left column: Pressure graphs ─────────────────────────────────── */}
         <div className="flex-1 min-w-0 overflow-auto">
-          <StateMachineDiagram />
+          <div className="bg-card rounded-xl border border-gray-800 p-4 h-full flex flex-col min-h-0">
+            <TimeSeriesPlot
+              title="All Pressure Sensors (PSI)"
+              entities={PRESSURE_SENSORS.map(s => s.entity)}
+              labels={PRESSURE_SENSORS.map(s => s.label)}
+              component="pressure_psi"
+              colors={PRESSURE_SENSORS.map(s => s.color)}
+              yLabel="Pressure (PSI)"
+              windowSeconds={30}
+            />
+          </div>
         </div>
 
-        {/* Actuator controls — right column, scrollable */}
-        <div className="w-80 flex-shrink-0 overflow-y-auto space-y-4">
-          <div className="bg-card rounded-xl border border-gray-800 p-4">
+        {/* ── Right column: Actuators grid (top) + Camera (middle) + State machine (bottom) ───── */}
+        <div className="flex-1 min-w-0 flex flex-col gap-3 overflow-hidden">
+          
+          {/* Actuators in 4x4 grid */}
+          <div className="bg-card rounded-xl border border-gray-800 p-4 flex-shrink-0 overflow-auto">
             <h2 className="text-sm font-bold tracking-widest text-text-muted uppercase mb-4">
               Actuator Controls
             </h2>
-
-            <div className="space-y-4">
-              {/* Main Valves */}
-              <div>
-                <p className="text-xs text-text-muted font-semibold uppercase tracking-wider mb-2">Main Valves</p>
-                <div className="space-y-2">
-                  {mainValves.map((a) => a.id !== undefined ? (
-                    <ActuatorControl key={a.name} actuatorId={a.id} />
-                  ) : (
-                    <SimpleActuatorDisplay key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
-                  ))}
-                </div>
-              </div>
-
-              {/* Vent Valves */}
-              <div className="border-t border-gray-800 pt-3">
-                <p className="text-xs text-text-muted font-semibold uppercase tracking-wider mb-2">Vent Valves</p>
-                <div className="space-y-2">
-                  {ventValves.map((a) => a.id !== undefined ? (
-                    <ActuatorControl key={a.name} actuatorId={a.id} />
-                  ) : (
-                    <SimpleActuatorDisplay key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
-                  ))}
-                </div>
-              </div>
-
-              {/* Press Valves */}
-              <div className="border-t border-gray-800 pt-3">
-                <p className="text-xs text-text-muted font-semibold uppercase tracking-wider mb-2">Press Valves</p>
-                <div className="space-y-2">
-                  {pressValves.map((a) => a.id !== undefined ? (
-                    <ActuatorControl key={a.name} actuatorId={a.id} />
-                  ) : (
-                    <SimpleActuatorDisplay key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
-                  ))}
-                </div>
-              </div>
-
-              {/* Fill Valves */}
-              <div className="border-t border-gray-800 pt-3">
-                <p className="text-xs text-text-muted font-semibold uppercase tracking-wider mb-2">Fill Valves</p>
-                <div className="space-y-2">
-                  {fillValves.map((a) => (
-                    <SimpleActuatorDisplay key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
-                  ))}
-                </div>
-              </div>
-
-              {/* Other Valves */}
-              {otherValves.length > 0 && (
-                <div className="border-t border-gray-800 pt-3">
-                  <p className="text-xs text-text-muted font-semibold uppercase tracking-wider mb-2">Other</p>
-                  <div className="space-y-2">
-                    {otherValves.map((a) => (
-                      <SimpleActuatorDisplay key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
-                    ))}
-                  </div>
-                </div>
+            <div className="grid grid-cols-4 gap-3 auto-rows-fr">
+              {ALL_ACTUATORS.map((a) => 
+                a.id !== undefined ? (
+                  <ActuatorControl key={a.name} actuatorId={a.id} />
+                ) : (
+                  <SimpleActuatorDisplay key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
+                )
               )}
             </div>
+          </div>
+
+          {/* Camera feed */}
+          <div className="flex-shrink-0">
+            <CameraFeed url="https://192.168.2.50/" />
+          </div>
+
+          {/* State machine diagram */}
+          <div className="flex-1 min-h-0 overflow-auto bg-card rounded-xl border border-gray-800 p-4">
+            <StateMachineDiagram />
           </div>
         </div>
       </div>

@@ -8,6 +8,7 @@ import { SystemState } from '@/lib/types';
 type ExpectedPosition = 'open' | 'closed' | null;
 
 const EXPECTED_POSITIONS: Record<number, Record<string, ExpectedPosition>> = {
+  [SystemState.DEBUG]: {}, // DEBUG mode - no expected positions, manual control
   [SystemState.IDLE]: {
     'ACT.LOX_Main': 'open', 'ACT.Fuel_Main': 'open', 'ACT.LOX_Vent': 'open', 
     'ACT.Fuel_Vent': 'open', 'ACT.LOX_Press': 'open', 'ACT.Fuel_Press': 'open', 

@@ -61,6 +61,15 @@ export enum ActuatorId {
   LOX_PRESS = 4,
   FUEL_PRESS = 5,
   GSE_LOW_VENT = 6,
+  // Extended actuators (non-state-machine, but controllable in DEBUG)
+  FUEL_FILL_VENT = 7,
+  FUEL_FILL_PRESS = 8,
+  LOX_FILL = 9,
+  LOX_DUMP = 10,
+  GSE_HIGH_PRESS_VENT = 11,
+  GSE_LOX_FILL_VENT = 12,
+  GSE_HIGH_PRESS_CONTROL = 13,
+  GSE_MED_PRESS_CONTROL = 14,
 }
 
 // Actuator states

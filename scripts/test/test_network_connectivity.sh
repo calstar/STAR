@@ -105,3 +105,6 @@ echo ""
 echo "4. Check if DAQ bridge is using correct interface:"
 echo "   The DAQ bridge binds to 0.0.0.0 which should work, but verify:"
 echo "   netstat -ulnp | grep 5006"
+
+
+

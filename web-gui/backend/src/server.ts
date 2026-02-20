@@ -10,8 +10,11 @@ import { DAQDirectClient } from './daq-direct-client.js';
 import { ElodinQueryClient } from './elodin-query.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { registerVTables } from './elodin-vtable.js';
+import { registerControllerVTables } from './elodin-vtable-controller.js';
 import { subscribeWithStream } from './elodin-stream.js';
 import { encodeRawPTMessage, encodeCalibratedPTMessage } from './elodin-publisher.js';
+import { ElodinPublisherBatched } from './elodin-publisher-batched.js';
+import { publishControllerActuation, publishControllerDiagnostics } from './controller-elodin-publisher.js';
 import { getStateTransitions, isTransitionAllowed } from './routes/state-transitions.js';
 import { getStateActuatorMap, StateActuatorMap } from './routes/state-actuators.js';
 import { startAPIServer } from './api-server.js';
@@ -21,6 +24,7 @@ import { DataLogger } from './data-logger.js';
 import { readConfig } from './routes/config.js';
 import { ControllerClient, mapSensorDataToMeasurement, ControllerCommand } from './controller-client.js';
 import { DemoModeGenerator } from './demo-mode.js';
+import { MessageLogger } from './message-logger.js';
 import {
   MessageType,
   SensorUpdate,
@@ -47,13 +51,22 @@ interface Client {
 
 // ── Actuator ID → board channel (from config.toml actuator_roles) ──────────
 const ACTUATOR_CHANNEL: Record<number, number> = {
-  [ActuatorId.LOX_MAIN]:     1,
-  [ActuatorId.FUEL_MAIN]:    7,
-  [ActuatorId.LOX_VENT]:     6,
-  [ActuatorId.FUEL_VENT]:    2,
-  [ActuatorId.LOX_PRESS]:    8,
-  [ActuatorId.FUEL_PRESS]:   3,
-  [ActuatorId.GSE_LOW_VENT]: 5,
+  [ActuatorId.LOX_MAIN]:              1,
+  [ActuatorId.FUEL_MAIN]:             7,
+  [ActuatorId.LOX_VENT]:              6,
+  [ActuatorId.FUEL_VENT]:             2,
+  [ActuatorId.LOX_PRESS]:             8,
+  [ActuatorId.FUEL_PRESS]:            3,
+  [ActuatorId.GSE_LOW_VENT]:          5,
+  // Extended actuators share channels based on config.toml / legacy GUI
+  [ActuatorId.FUEL_FILL_VENT]:        9,
+  [ActuatorId.FUEL_FILL_PRESS]:       10,
+  [ActuatorId.LOX_FILL]:              4,
+  [ActuatorId.LOX_DUMP]:              4,
+  [ActuatorId.GSE_HIGH_PRESS_VENT]:   5,
+  [ActuatorId.GSE_LOX_FILL_VENT]:     5,
+  [ActuatorId.GSE_HIGH_PRESS_CONTROL]:5,
+  [ActuatorId.GSE_MED_PRESS_CONTROL]: 5,
 };
 
 // ── Expected actuator positions per state (loaded from state_machine_actuators.csv) ─
@@ -96,6 +109,9 @@ class SensorSystemServer {
   /** Track if we've received calibrated PT from Elodin recently (per channel) */
   private calibratedPTFromElodin: Map<number, number> = new Map(); // channelId -> timestamp
 
+  /** Mission T+0: Timestamp of first data packet received (ms since epoch) */
+  private firstPacketTime: number | null = null;
+
   /** Current system state for continuous actuator command sending */
   private currentState: SystemState | null = null;
   private actuatorCommandInterval: NodeJS.Timeout | null = null;
@@ -117,6 +133,9 @@ class SensorSystemServer {
     console.log(`🚀 Starting Sensor System Server...`);
     console.log(`   WebSocket: ${WS_HOST}:${WS_PORT}`);
     console.log(`   Elodin DB: ${ELODIN_HOST}:${ELODIN_PORT}`);
+    
+    // Reset mission T+0 on server restart (new DB per run)
+    this.firstPacketTime = null;
     
     // Initialize demo mode
     this.demoMode = new DemoModeGenerator();
@@ -217,6 +236,15 @@ class SensorSystemServer {
     });
 
     this.elodin = new ElodinClient(ELODIN_HOST, ELODIN_PORT);
+
+    // Initialize message logger for writing WebSocket messages to Elodin DB
+    this.messageLogger = new MessageLogger(this.elodin);
+    if (process.env.ENABLE_MESSAGE_LOGGING !== 'false') {
+      this.messageLogger.enable();
+    }
+
+    // Initialize batched Elodin publisher (matches DAQ Bridge pattern)
+    this.elodinPublisher = new ElodinPublisherBatched(this.elodin);
 
     // Always set up WebSocket FIRST (critical for frontend connection)
     this.setupWebSocket();
@@ -334,6 +362,10 @@ class SensorSystemServer {
       } else {
         console.log('✅ Stream subscription successful! Receiving data...');
       }
+
+      // Register controller VTables
+      console.log('📡 Registering controller VTables...');
+      await registerControllerVTables(this.elodin);
 
       // Reset streaming check
       this.streamingDataReceived = false;
@@ -480,8 +512,13 @@ class SensorSystemServer {
         (this.daqDirect as any).statsStartTime = currentTime;
       }
 
-      // CRITICAL: Publish to Elodin DB if connected (like DAQ Bridge does)
-      const publishingToElodin = this.elodin.isConnected();
+      // CRITICAL: Publish to Elodin DB using batched pattern (matches DAQ Bridge)
+      const publishingToElodin = this.elodin.isConnected() && this.elodinPublisher;
+      
+      // Begin batch for this packet (matches DAQ Bridge pattern)
+      if (publishingToElodin) {
+        this.elodinPublisher!.beginBatch();
+      }
 
       // Process each chunk (EXACT from combined_gui.py on_sensor_data)
       for (const chunk of chunks) {
@@ -508,21 +545,15 @@ class SensorSystemServer {
           // NOTE: Phase 2 is already initialized at startup from ptCalibration.
           // Do NOT re-initialize here — that would reset RLS state on every packet.
 
-          // Publish raw PT message to Elodin DB
+          // Publish raw PT message to Elodin DB (matches DAQ Bridge pattern)
           if (publishingToElodin) {
-            try {
-              const rawPayload = encodeRawPTMessage(
-                timestampNs,
-                channelId,
-                codeUint32,
-                chunkTimestampMs,
-                0 // status flags
-              );
-              // Packet ID: [0x20, channel_id] for raw PT
-              this.elodin.publishTable([0x20, channelId], rawPayload);
-            } catch (error) {
-              // Silently fail - publishing is optional
-            }
+            this.elodinPublisher!.publishRawPT(
+              channelId,
+              timestampNs,
+              codeUint32,
+              chunkTimestampMs,
+              0 // status flags
+            );
           }
 
           // Map channel ID to proper raw entity name (PT namespace, from config.toml sensor_roles)
@@ -588,20 +619,15 @@ class SensorSystemServer {
             }
 
             // Publish calibrated PT message to Elodin DB (only if we calculated it)
+            // Matches DAQ Bridge pattern
             if (publishingToElodin) {
-              try {
-                const calPayload = encodeCalibratedPTMessage(
-                  timestampNs,
-                  channelId,
-                  psi,
-                  codeUint32,
-                  0 // cal status
-                );
-                // Packet ID: [0x20, 0x10 + channel_id] for calibrated PT
-                this.elodin.publishTable([0x20, 0x10 + channelId], calPayload);
-              } catch (error) {
-                // Silently fail - publishing is optional
-              }
+              this.elodinPublisher!.publishCalibratedPT(
+                channelId,
+                timestampNs,
+                psi,
+                codeUint32,
+                0 // cal status
+              );
             }
 
             // Map channel ID to proper calibrated entity name (from config.toml sensor_roles)
@@ -628,6 +654,24 @@ class SensorSystemServer {
               console.log(`[CH1/Fuel_Upstream] ADC=${codeUint32}, PSI=${psi.toFixed(2)}, entity=${calEntity}`);
             }
           }
+        }
+      }
+
+      // Flush batch after processing all chunks (matches DAQ Bridge pattern)
+      // This sends all messages in one TCP write for efficiency
+      if (publishingToElodin) {
+        const success = this.elodinPublisher!.flushBatch();
+        if (!success && Math.random() < 0.01) {
+          console.warn('⚠️ Failed to flush Elodin DB batch');
+        }
+        // Debug: Log when we're actually publishing
+        if (Math.random() < 0.01) {
+          const totalDatapoints = chunks.reduce((sum, chunk) => sum + (chunk.datapoints?.length || 0), 0);
+          console.log(`📤 Published ${chunks.length} chunks to Elodin DB (${totalDatapoints} datapoints)`);
+        }
+      } else {
+        if (Math.random() < 0.01) {
+          console.warn('⚠️ Not publishing to Elodin DB - connected:', this.elodin.isConnected(), 'publisher:', !!this.elodinPublisher);
         }
       }
     });
@@ -709,6 +753,18 @@ class SensorSystemServer {
     // Validate update values - reject only truly invalid data (NaN, Infinity)
     if (isNaN(update.value) || !isFinite(update.value)) return;
 
+    // Track first packet time (mission T+0) - set on first real sensor data
+    if (this.firstPacketTime === null && (update.entity.startsWith('PT.') || update.entity.startsWith('PT_Cal.') || update.entity.startsWith('ACT.'))) {
+      this.firstPacketTime = update.timestamp;
+      console.log(`🚀 Mission T+0 set: ${new Date(this.firstPacketTime).toISOString()} (first packet received)`);
+      // Broadcast mission start time to all clients
+      this.broadcast({
+        type: MessageType.MISSION_START_TIME,
+        timestamp: Date.now(),
+        payload: { missionStartTime: this.firstPacketTime },
+      });
+    }
+
     // Update cache (always instant)
     const key = `${update.entity}.${update.component}`;
     this.sensorCache.set(key, update);
@@ -746,6 +802,27 @@ class SensorSystemServer {
       // No clients at all - this is a problem
       if (Math.random() < 0.05) {
         console.warn(`⚠️ No WebSocket clients connected - data is being lost!`);
+      }
+    }
+  }
+
+  /**
+   * Republish PT data back to Elodin DB for replay capability
+   * This ensures all data flows through Elodin DB, even data that comes FROM Elodin DB
+   */
+  private republishPTDataToElodin(packetId: [number, number], payload: Buffer, parsed: any): void {
+    if (!this.elodin.isConnected()) {
+      return;
+    }
+
+    try {
+      // Republish the exact same payload back to Elodin DB
+      // This ensures data is logged for replay, even if it came from Elodin DB
+      this.elodin.publishTable(packetId, payload);
+    } catch (error) {
+      // Silently fail - republishing is optional and shouldn't break the system
+      if (Math.random() < 0.01) {
+        console.warn(`⚠️ Failed to republish PT data to Elodin DB: ${error}`);
       }
     }
   }
@@ -827,6 +904,12 @@ class SensorSystemServer {
           timestamp: parsed.timestamp,
         };
 
+        // CRITICAL: Republish PT data back to Elodin DB for replay
+        // This ensures all data flows through Elodin DB, even data that comes FROM Elodin DB
+        if (parsed.entity.startsWith('PT.') || parsed.entity.startsWith('PT_Cal.')) {
+          this.republishPTDataToElodin(header.packetId, payload, parsed);
+        }
+
         // Handle update (updates cache and broadcasts)
         this.handleSensorUpdate(update);
         
@@ -849,6 +932,10 @@ class SensorSystemServer {
 
   private setupWebSocket(): void {
     this.wss.on('connection', (ws: WebSocket, req: any) => {
+      // Broadcast current state's expected positions to new client
+      if (this.currentState !== null) {
+        this.broadcastActuatorExpectedPositions(this.currentState);
+      }
       const clientIP = req.socket?.remoteAddress || 'unknown';
       const clientPort = req.socket?.remotePort || 'unknown';
       console.log('📱 New WebSocket client connected');
@@ -1103,19 +1190,21 @@ class SensorSystemServer {
         
         console.log(`🔍 Validating transition: ${SystemState[currentState]} → ${SystemState[newState]}`);
         
-        // DEBUG mode: only allow transitions to IDLE, VENT, or ABORT (safety states)
+        // Allow DEBUG state from any state (user requirement: "user can always enter debug state")
+        const isDebugTransition = newState === SystemState.DEBUG;
+        // Allow emergency states (all abort types, VENT) from any state
+        const isEmergency = newState === SystemState.ENGINE_ABORT || newState === SystemState.GSE_ABORT || newState === SystemState.EMERGENCY_ABORT || newState === SystemState.ABORT || newState === SystemState.VENT;
+        
+        // In DEBUG mode, allow transitions to any state
         if (currentState === SystemState.DEBUG) {
-          const allowedFromDebug = [SystemState.IDLE, SystemState.VENT, SystemState.ABORT];
-          if (!allowedFromDebug.includes(newState)) {
-            const errorMsg = `❌ Invalid transition from DEBUG: Only IDLE, VENT, or ABORT allowed`;
-            console.error(errorMsg);
-            this.broadcast({
-              type: MessageType.ERROR,
-              timestamp: Date.now(),
-              payload: { message: errorMsg, command },
-            });
-            return;
-          }
+          // Allow any transition from DEBUG state
+          console.log(`   Transition from DEBUG: allowing any transition`);
+        } else if (isDebugTransition) {
+          // Allow entering DEBUG from any state
+          console.log(`   Transition to DEBUG: allowing from any state`);
+        } else if (isEmergency) {
+          // Allow emergency states from any state
+          console.log(`   Emergency transition: allowing from any state`);
         } else {
           // Normal mode: validate against CSV
           const isAllowed = isTransitionAllowed(currentState, newState);
@@ -1165,6 +1254,9 @@ class SensorSystemServer {
               // Stop continuous commands in DEBUG mode
               this.stopContinuousActuatorCommands();
             }
+
+            // Broadcast expected actuator positions to frontend
+            this.broadcastActuatorExpectedPositions(newState);
 
             // ── Controller integration: Start/stop controller loop on FIRE state ──
             if (newState === SystemState.FIRE) {
@@ -1253,8 +1345,22 @@ class SensorSystemServer {
   /**
    * Auto-command actuators to match expected positions for a given state.
    * Reads from STATE_ACTUATOR_MAP (parsed from state_machine_actuators.csv).
+   * Also handles special states like GN2_VENT (turns on LOX Vent and Fuel Vent).
    */
   private applyActuatorsForState(state: SystemState): void {
+    // Special handling for GN2_VENT state: it's not an actuator, but a state that triggers other actuators
+    if (state === SystemState.GN2_VENT) {
+      console.log(`🔧 GN2 Vent state: turning on LOX Vent and Fuel Vent`);
+      // LOX Vent is CH6, Fuel Vent is CH2
+      const loxVentChannel = ACTUATOR_CHANNEL[ActuatorId.LOX_VENT] ?? 6;
+      const fuelVentChannel = ACTUATOR_CHANNEL[ActuatorId.FUEL_VENT] ?? 2;
+      this.sendActuatorCommandUDP(loxVentChannel, 1); // OPEN
+      this.sendActuatorCommandUDP(fuelVentChannel, 1); // OPEN
+      console.log(`   CH${loxVentChannel} (LOX Vent) → OPEN`);
+      console.log(`   CH${fuelVentChannel} (Fuel Vent) → OPEN`);
+    }
+
+    // Apply standard actuator map from CSV
     const expected = STATE_ACTUATOR_MAP[state];
     if (!expected) {
       console.log(`⚠️ No actuator map for state ${SystemState[state]}, skipping auto-command`);
@@ -1281,8 +1387,11 @@ class SensorSystemServer {
     // Stop any existing interval
     this.stopContinuousActuatorCommands();
 
+    // Special handling for GN2_VENT state
+    const isGN2Vent = state === SystemState.GN2_VENT;
     const expected = STATE_ACTUATOR_MAP[state];
-    if (!expected) {
+    
+    if (!expected && !isGN2Vent) {
       return;
     }
 
@@ -1291,9 +1400,18 @@ class SensorSystemServer {
     this.actuatorCommandInterval = setInterval(() => {
       if (this.currentState === state) {
         // Only send if we're still in the same state
-        for (const [ch, val] of Object.entries(expected)) {
-          const channelId = Number(ch);
-          this.sendActuatorCommandUDP(channelId, val);
+        if (isGN2Vent) {
+          // GN2 Vent: continuously send LOX Vent and Fuel Vent OPEN
+          const loxVentChannel = ACTUATOR_CHANNEL[ActuatorId.LOX_VENT] ?? 6;
+          const fuelVentChannel = ACTUATOR_CHANNEL[ActuatorId.FUEL_VENT] ?? 2;
+          this.sendActuatorCommandUDP(loxVentChannel, 1); // OPEN
+          this.sendActuatorCommandUDP(fuelVentChannel, 1); // OPEN
+        }
+        if (expected) {
+          for (const [ch, val] of Object.entries(expected)) {
+            const channelId = Number(ch);
+            this.sendActuatorCommandUDP(channelId, val);
+          }
         }
       } else {
         // State changed, stop this interval
@@ -1314,8 +1432,102 @@ class SensorSystemServer {
   }
 
   /**
+   * Broadcast expected actuator positions to frontend
+   * Converts channel IDs to entity names for frontend display
+   */
+  private broadcastActuatorExpectedPositions(state: SystemState): void {
+    const expected = STATE_ACTUATOR_MAP[state];
+    if (!expected) {
+      // Send empty map if no expected positions
+      this.broadcast({
+        type: MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE,
+        timestamp: Date.now(),
+        payload: { [state]: {} },
+      });
+      return;
+    }
+
+    // Convert channel IDs to entity names
+    // Build reverse map: channelId → entity name
+    const channelToEntity: Record<number, string> = {};
+    
+    // Map from ACTUATOR_CHANNEL
+    for (const [actuatorId, channelId] of Object.entries(ACTUATOR_CHANNEL)) {
+      const id = Number(actuatorId);
+      const entityName = this.getActuatorEntityName(id);
+      if (entityName) {
+        channelToEntity[channelId] = entityName;
+      }
+    }
+
+    // Also check config.toml actuator_roles for additional mappings
+    try {
+      const config = readConfig();
+      const actuatorRoles = config.actuator_roles || {};
+      for (const [name, value] of Object.entries(actuatorRoles)) {
+        if (Array.isArray(value) && value.length === 2 && typeof value[1] === 'number') {
+          const channelId = value[1];
+          const entityName = `ACT.${name.replace(/\s+/g, '_')}`;
+          channelToEntity[channelId] = entityName;
+        }
+      }
+    } catch (err) {
+      // Ignore config errors
+    }
+
+    // Convert expected positions to entity-based format
+    const entityExpected: Record<string, 'open' | 'closed'> = {};
+    for (const [channelIdStr, value] of Object.entries(expected)) {
+      const channelId = Number(channelIdStr);
+      const entity = channelToEntity[channelId];
+      if (entity) {
+        entityExpected[entity] = value === 1 ? 'open' : 'closed';
+      } else {
+        // Fallback to ACT_CHX format
+        entityExpected[`ACT.ACT_CH${channelId}`] = value === 1 ? 'open' : 'closed';
+      }
+    }
+
+    console.log(`📤 Broadcasting expected actuator positions for state ${SystemState[state]}:`, entityExpected);
+
+    this.broadcast({
+      type: MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE,
+      timestamp: Date.now(),
+      payload: { [state]: entityExpected },
+    });
+  }
+
+  /**
+   * Get actuator entity name from ActuatorId
+   */
+  private getActuatorEntityName(actuatorId: number): string | null {
+    const entityMap: Record<number, string> = {
+      [ActuatorId.LOX_MAIN]: 'ACT.LOX_Main',
+      [ActuatorId.FUEL_MAIN]: 'ACT.Fuel_Main',
+      [ActuatorId.LOX_VENT]: 'ACT.LOX_Vent',
+      [ActuatorId.FUEL_VENT]: 'ACT.Fuel_Vent',
+      [ActuatorId.LOX_PRESS]: 'ACT.LOX_Press',
+      [ActuatorId.FUEL_PRESS]: 'ACT.Fuel_Press',
+      [ActuatorId.GSE_LOW_VENT]: 'ACT.GSE_Low_Vent',
+      [ActuatorId.FUEL_FILL_VENT]: 'ACT.Fuel_Fill_Vent',
+      [ActuatorId.FUEL_FILL_PRESS]: 'ACT.Fuel_Fill_Press',
+      [ActuatorId.LOX_FILL]: 'ACT.LOX_Fill',
+      [ActuatorId.LOX_DUMP]: 'ACT.LOX_Dump',
+      [ActuatorId.GSE_HIGH_PRESS_VENT]: 'ACT.GSE_High_Press_Vent',
+      [ActuatorId.GSE_LOX_FILL_VENT]: 'ACT.GSE_LOX_Fill_Vent',
+      [ActuatorId.GSE_HIGH_PRESS_CONTROL]: 'ACT.GSE_High_Press_Control',
+      [ActuatorId.GSE_MED_PRESS_CONTROL]: 'ACT.GSE_Med_Press_Control',
+    };
+    return entityMap[actuatorId] || null;
+  }
+
+  /**
    * Send PWM actuator command via UDP
-   * Format: [packet_type, version, timestamp(4), actuator_id, duration_ms(4), duty_cycle(4), frequency(4)]
+   * Format matches combined_gui.py exactly:
+   *   Header: [packet_type(1), version(1), timestamp(4)] = 6 bytes
+   *   Body: [num_commands(1)] = 1 byte
+   *   Commands: [actuator_id(1), duration_ms(4), duty_cycle(4), frequency(4)] = 13 bytes each
+   *   Total: 6 + 1 + 13 = 20 bytes for single command
    */
   private sendPWMActuatorCommandUDP(channelId: number, dutyCycle: number, frequency: number = 10, durationMs: number = 1000): boolean {
     if (!this.actuatorSocket) {
@@ -1324,20 +1536,37 @@ class SensorSystemServer {
     }
 
     try {
-      const timestamp = Math.floor(Date.now());
-      const packetType = 10; // PWM_ACTUATOR_COMMAND (from DAQDirectClient)
+      const packetType = 10; // PWM_ACTUATOR_COMMAND
       const version = 0;
+      // Use milliseconds timestamp (32-bit safe) - matches combined_gui.py exactly
+      const timestamp = (Date.now() & 0xFFFFFFFF); // 32-bit timestamp in milliseconds
+      const numCommands = 1; // Single command per packet
 
-      // Build packet: [packet_type(1), version(1), timestamp(4), actuator_id(1), duration_ms(4), duty_cycle(4), frequency(4)]
-      // Total: 1 + 1 + 4 + 1 + 4 + 4 + 4 = 19 bytes
-      const buffer = Buffer.allocUnsafe(19);
-      buffer.writeUInt8(packetType, 0);
-      buffer.writeUInt8(version, 1);
-      buffer.writeUInt32LE(timestamp, 2);
-      buffer.writeUInt8(channelId, 6);
-      buffer.writeUInt32LE(durationMs, 7);
-      buffer.writeFloatLE(dutyCycle, 11); // duty_cycle [0-1]
-      buffer.writeFloatLE(frequency, 15); // frequency [Hz]
+      // Build packet matching combined_gui.py format exactly
+      // Header (6 bytes): packet_type, version, timestamp
+      // Body (1 byte): num_commands
+      // Command (13 bytes): actuator_id, duration_ms, duty_cycle, frequency
+      // Total: 6 + 1 + 13 = 20 bytes
+      const buffer = Buffer.allocUnsafe(20);
+      let offset = 0;
+
+      // Header: <BBI> = packet_type, version, timestamp (6 bytes)
+      buffer.writeUInt8(packetType, offset++);
+      buffer.writeUInt8(version, offset++);
+      buffer.writeUInt32LE(timestamp, offset);
+      offset += 4;
+
+      // Body: num_commands (1 byte)
+      buffer.writeUInt8(numCommands, offset++);
+
+      // Command: <BIff> = actuator_id, duration_ms, duty_cycle, frequency (13 bytes)
+      buffer.writeUInt8(channelId, offset++);
+      buffer.writeUInt32LE(durationMs, offset);
+      offset += 4;
+      buffer.writeFloatLE(dutyCycle, offset); // duty_cycle [0-1]
+      offset += 4;
+      buffer.writeFloatLE(frequency, offset); // frequency [Hz]
+      offset += 4;
 
       this.actuatorSocket.send(buffer, 0, buffer.length, this.actuatorPort, this.actuatorIP, (err) => {
         if (err) {
@@ -1372,73 +1601,201 @@ class SensorSystemServer {
     this.controllerClient.initialize().then((success) => {
       if (!success) {
         console.error('❌ Failed to initialize controller - controller loop will not run');
+        console.error('   Make sure the controller service is running at http://localhost:8000');
+        console.error('   Start it with: cd engine_sim && uvicorn backend.main:app --reload --port 8000');
         return;
       }
 
-      // Start controller loop at 10 Hz
+      // Start controller loop at 10 Hz with error handling
       this.controllerLoopInterval = setInterval(async () => {
-        if (this.currentState !== SystemState.FIRE) {
-          // State changed, stop loop
-          this.stopControllerLoop();
-          return;
-        }
+        try {
+          if (this.currentState !== SystemState.FIRE) {
+            // State changed, stop loop
+            this.stopControllerLoop();
+            return;
+          }
 
-        // Build sensor data map from cache
-        const sensorDataMap = new Map<string, number>();
-        for (const [key, update] of this.sensorCache.entries()) {
-          if (update.component === 'pressure_psi') {
-            sensorDataMap.set(key, update.value);
+          // Build sensor data map from cache
+          const sensorDataMap = new Map<string, number>();
+          for (const [key, update] of this.sensorCache.entries()) {
+            if (update.component === 'pressure_psi') {
+              sensorDataMap.set(key, update.value);
+            }
+          }
+
+          // Map sensor data to controller measurement format
+          const measurement = mapSensorDataToMeasurement(sensorDataMap);
+          if (!measurement) {
+            // Missing required sensor data - log warning occasionally
+            if (Math.random() < 0.01) { // 1% of steps to avoid spam
+              const missingSensors: string[] = [];
+              const required = ['PT_Cal.GN2_High', 'PT_Cal.GN2_Regulated', 'PT_Cal.Fuel_Upstream', 
+                              'PT_Cal.Ox_Upstream', 'PT_Cal.Fuel_Downstream', 'PT_Cal.Ox_Downstream'];
+              for (const sensor of required) {
+                if (!sensorDataMap.has(`${sensor}.pressure_psi`)) {
+                  missingSensors.push(sensor);
+                }
+              }
+              console.warn(`⚠️ Controller: Missing required sensor data. Missing: ${missingSensors.join(', ')}`);
+            }
+            // Continue loop even with missing sensors (graceful degradation)
+            return;
+          }
+
+          // Call controller step with error handling
+          let result;
+          try {
+            result = await this.controllerClient!.step(
+              measurement,
+              {}, // Nav state (can be enhanced later)
+              this.controllerCommand
+            );
+          } catch (error) {
+            // Controller service error - log occasionally
+            if (Math.random() < 0.01) { // 1% of steps
+              console.error('❌ Controller step error:', error);
+              console.warn('   Controller service may be down - continuing loop');
+            }
+            return; // Continue loop even if controller fails
+          }
+
+          if (!result) {
+            // Log warning occasionally to avoid spam
+            if (Math.random() < 0.01) { // 1% of steps
+              console.warn('⚠️ Controller step returned null - check controller service logs');
+              console.warn('   Controller service may be down or error occurred');
+            }
+            return;
+          }
+
+          const { actuation, diagnostics } = result;
+
+          // Send PWM commands to actuators
+          // Fuel Press (CH3) gets duty_F, LOX Press (CH8) gets duty_O
+          const fuelPressChannel = ACTUATOR_CHANNEL[ActuatorId.FUEL_PRESS]; // CH3
+          const loxPressChannel = ACTUATOR_CHANNEL[ActuatorId.LOX_PRESS];   // CH8
+
+          // Clamp duty cycles to valid range [0, 1] before sending
+          const duty_F_clamped = Math.max(0, Math.min(1, actuation.duty_F));
+          const duty_O_clamped = Math.max(0, Math.min(1, actuation.duty_O));
+
+          // Send PWM commands with error handling
+          try {
+            if (fuelPressChannel) {
+              this.sendPWMActuatorCommandUDP(fuelPressChannel, duty_F_clamped, 10, 100);
+            }
+            if (loxPressChannel) {
+              this.sendPWMActuatorCommandUDP(loxPressChannel, duty_O_clamped, 10, 100);
+            }
+          } catch (error) {
+            // Log PWM send errors occasionally
+            if (Math.random() < 0.01) {
+              console.error('❌ Failed to send PWM actuator command:', error);
+            }
+          }
+
+          // Log diagnostics occasionally
+          if (Math.random() < 0.1) { // 10% of steps
+            console.log(`🎯 Controller: F_ref=${diagnostics.F_ref.toFixed(1)}N, F_est=${diagnostics.F_estimated.toFixed(1)}N, ` +
+                       `duty_F=${actuation.duty_F.toFixed(3)}, duty_O=${actuation.duty_O.toFixed(3)}`);
+          }
+
+          // Write controller outputs to Elodin DB for logging and replay
+          if (this.elodin.isConnected()) {
+            try {
+              publishControllerActuation(
+                this.elodin,
+                duty_F_clamped,
+                duty_O_clamped,
+                actuation.u_F_onoff,
+                actuation.u_O_onoff,
+                actuation.valid ?? true
+              );
+              
+              publishControllerDiagnostics(
+                this.elodin,
+                diagnostics.F_ref,
+                diagnostics.MR_ref,
+                diagnostics.F_estimated,
+                diagnostics.MR_estimated,
+                diagnostics.P_ch,
+                diagnostics.cost,
+                diagnostics.safety_filtered,
+                diagnostics.cutoff_active,
+                diagnostics.solver_iters
+              );
+            } catch (error) {
+              // Log Elodin publishing errors occasionally
+              if (Math.random() < 0.01) {
+                console.error('❌ Failed to publish controller data to Elodin:', error);
+              }
+            }
+          }
+
+          // Broadcast controller diagnostics to frontend
+          this.broadcast({
+            type: MessageType.CONTROLLER_UPDATE,
+            timestamp: Date.now(),
+            payload: {
+              actuation,
+              diagnostics,
+            },
+          });
+
+          // Also update sensor store with duty cycles so frontend can display them
+          // Map controller outputs to sensor entities that the frontend expects
+          // (duty_F_clamped and duty_O_clamped already defined above)
+
+          this.sensorCache.set('CONTROLLER.Fuel.duty_cycle', {
+            entity: 'CONTROLLER.Fuel',
+            component: 'duty_cycle',
+            value: duty_F_clamped * 100, // Convert 0-1 to 0-100%
+            timestamp: Date.now(),
+          });
+          this.sensorCache.set('CONTROLLER.Fuel.onoff', {
+            entity: 'CONTROLLER.Fuel',
+            component: 'onoff',
+            value: actuation.u_F_onoff ? 1 : 0,
+            timestamp: Date.now(),
+          });
+          this.sensorCache.set('CONTROLLER.Ox.duty_cycle', {
+            entity: 'CONTROLLER.Ox',
+            component: 'duty_cycle',
+            value: duty_O_clamped * 100, // Convert 0-1 to 0-100%
+            timestamp: Date.now(),
+          });
+          this.sensorCache.set('CONTROLLER.Ox.onoff', {
+            entity: 'CONTROLLER.Ox',
+            component: 'onoff',
+            value: actuation.u_O_onoff ? 1 : 0,
+            timestamp: Date.now(),
+          });
+
+          // Broadcast sensor updates for duty cycles (use clamped values)
+          this.broadcast({
+            type: MessageType.SENSOR_UPDATE,
+            timestamp: Date.now(),
+            payload: {
+              entity: 'CONTROLLER.Fuel',
+              component: 'duty_cycle',
+              value: duty_F_clamped * 100, // Convert 0-1 to 0-100%
+            },
+          });
+          this.broadcast({
+            type: MessageType.SENSOR_UPDATE,
+            timestamp: Date.now(),
+            payload: {
+              entity: 'CONTROLLER.Ox',
+              component: 'duty_cycle',
+              value: duty_O_clamped * 100, // Convert 0-1 to 0-100%
+            },
+          });
+        } catch (error) {
+          // Catch any unexpected errors in controller loop
+          if (Math.random() < 0.01) {
+            console.error('❌ Unexpected error in controller loop:', error);
           }
         }
-
-        // Map sensor data to controller measurement format
-        const measurement = mapSensorDataToMeasurement(sensorDataMap);
-        if (!measurement) {
-          // Missing required sensor data - skip this step
-          return;
-        }
-
-        // Call controller step
-        const result = await this.controllerClient!.step(
-          measurement,
-          {}, // Nav state (can be enhanced later)
-          this.controllerCommand
-        );
-
-        if (!result) {
-          console.warn('⚠️ Controller step returned null - skipping PWM command');
-          return;
-        }
-
-        const { actuation, diagnostics } = result;
-
-        // Send PWM commands to actuators
-        // Fuel Press (CH3) gets duty_F, LOX Press (CH8) gets duty_O
-        const fuelPressChannel = ACTUATOR_CHANNEL[ActuatorId.FUEL_PRESS]; // CH3
-        const loxPressChannel = ACTUATOR_CHANNEL[ActuatorId.LOX_PRESS];   // CH8
-
-        if (fuelPressChannel) {
-          this.sendPWMActuatorCommandUDP(fuelPressChannel, actuation.duty_F, 10, 100);
-        }
-        if (loxPressChannel) {
-          this.sendPWMActuatorCommandUDP(loxPressChannel, actuation.duty_O, 10, 100);
-        }
-
-        // Log diagnostics occasionally
-        if (Math.random() < 0.1) { // 10% of steps
-          console.log(`🎯 Controller: F_ref=${diagnostics.F_ref.toFixed(1)}N, F_est=${diagnostics.F_estimated.toFixed(1)}N, ` +
-                     `duty_F=${actuation.duty_F.toFixed(3)}, duty_O=${actuation.duty_O.toFixed(3)}`);
-        }
-
-        // Broadcast controller diagnostics to frontend
-        this.broadcast({
-          type: MessageType.CONTROLLER_UPDATE,
-          timestamp: Date.now(),
-          payload: {
-            actuation,
-            diagnostics,
-          },
-        });
       }, this.CONTROLLER_LOOP_INTERVAL_MS);
     });
   }
@@ -1494,10 +1851,13 @@ class SensorSystemServer {
         // DIRECTLY set adjustment D term to force current reading to 0 PSI.
         // This is more aggressive and immediate than RLS update.
         console.log('🎯 ZERO ALL PTs — directly setting adjustment to force 0 PSI');
+        let successCount = 0;
+        let skipCount = 0;
         for (let ch = 1; ch <= 10; ch++) {
           const currentAdc = this.lastRawAdc.get(ch) ?? 0;
           if (currentAdc === 0) {
             console.log(`   CH${ch}: no ADC data yet, skipping`);
+            skipCount++;
             continue;
           }
 
@@ -1519,7 +1879,8 @@ class SensorSystemServer {
           // Get current state to directly modify adjustment
           const state = this.phase2Engine.getSensorState(ch);
           if (!state) {
-            console.log(`   CH${ch}: Phase 2 state not found, skipping`);
+            console.log(`   CH${ch}: Phase 2 state not found after initialization, skipping`);
+            skipCount++;
             continue;
           }
 
@@ -1543,14 +1904,18 @@ class SensorSystemServer {
           state.rlsUpdateCount++;
           
           // Also do an RLS update to update covariance and statistics
-          this.phase2Engine.updateCalibration(ch, currentAdc, 0);
+          const updated = this.phase2Engine.updateCalibration(ch, currentAdc, 0);
           
           const newCoeffs = this.phase2Engine.getCalibration(ch);
           if (newCoeffs) {
             const newReading = calculatePressure(currentAdc, newCoeffs);
-            console.log(`   CH${ch}: adjustment D=${state.adjustment.D.toFixed(4)}, new reading=${newReading.toFixed(2)} PSI ✓`);
+            console.log(`   CH${ch}: adjustment D=${state.adjustment.D.toFixed(4)}, new reading=${newReading.toFixed(2)} PSI ✓ (RLS updated: ${updated})`);
+            successCount++;
+          } else {
+            console.warn(`   CH${ch}: Failed to get updated calibration after zero_all`);
           }
         }
+        console.log(`✅ Zero all complete: ${successCount} channels updated, ${skipCount} skipped`);
         // DO NOT clear ptCalibration — baseline must be preserved
         break;
       }
@@ -1591,6 +1956,11 @@ class SensorSystemServer {
   }
 
   private broadcast(message: any): void {
+    // Log message to Elodin DB for replay capability
+    if (this.messageLogger) {
+      this.messageLogger.logMessage(message);
+    }
+
     if (this.clients.size === 0) {
       // Log every time if no clients - this is a critical issue
       console.error(`❌ CRITICAL: Broadcasting but no WebSocket clients connected!`);

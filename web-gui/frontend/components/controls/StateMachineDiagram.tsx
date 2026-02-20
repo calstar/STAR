@@ -23,7 +23,10 @@ const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.CALIBRATE]: 'CALIBRATE',
   [SystemState.READY]: 'READY',
   [SystemState.FIRE]: 'FIRE',
-  [SystemState.ABORT]: 'ABORT',
+  [SystemState.ENGINE_ABORT]: 'ENGINE ABORT',
+  [SystemState.GSE_ABORT]: 'GSE ABORT',
+  [SystemState.EMERGENCY_ABORT]: 'EMERGENCY ABORT',
+  [SystemState.ABORT]: 'EMERGENCY ABORT', // Legacy alias
 };
 
 const NW = 220; // node width - much bigger
@@ -51,8 +54,11 @@ const STATE_POS: Record<SystemState, [number, number]> = {
   [SystemState.GN2_HIGH_PRESS]:[3, 2],
   [SystemState.GN2_HIGH_VENT]: [3, 3],
   [SystemState.FIRE]:          [4, 1],
-  [SystemState.VENT]:          [4, 2],
-  [SystemState.ABORT]:         [4, 3],
+  [SystemState.VENT]:          [4, 0],
+  [SystemState.ENGINE_ABORT]:   [4, 2],
+  [SystemState.GSE_ABORT]:     [4, 3],
+  [SystemState.EMERGENCY_ABORT]: [5, 1],
+  [SystemState.ABORT]:         [5, 1], // Legacy alias
 };
 
 function nodeX(state: SystemState) { return PAD + STATE_POS[state][1] * COL_GAP; }
@@ -107,7 +113,7 @@ function arrowPath(from: SystemState, to: SystemState): string {
 function StateNode({
   state, isActive, isReachable, onClick,
 }: { state: SystemState; isActive: boolean; isReachable: boolean; onClick: () => void; }) {
-  const isEmergency = state === SystemState.ABORT || state === SystemState.VENT;
+    const isEmergency = state === SystemState.ENGINE_ABORT || state === SystemState.GSE_ABORT || state === SystemState.EMERGENCY_ABORT || state === SystemState.ABORT || state === SystemState.VENT;
   const isClickable = isReachable || isActive || isEmergency;
   const name = STATE_NAMES[state];
   const x = nodeX(state); const y = nodeY(state);
@@ -182,21 +188,26 @@ export default function StateMachineDiagram() {
     return unsub;
   }, [ws]);
 
+  const debugMode = useSensorStore((s) => s.debugMode);
+  
   const sendStateTransition = (targetState: SystemState) => {
     const effectiveState = currentState ?? SystemState.IDLE;
     
     // Validate transition - check if it's allowed
     const isAllowed = transitions.some(t => t.from === effectiveState && t.to === targetState);
-    const isEmergency = targetState === SystemState.ABORT || targetState === SystemState.VENT;
+    const isEmergency = targetState === SystemState.ENGINE_ABORT || targetState === SystemState.GSE_ABORT || targetState === SystemState.EMERGENCY_ABORT || targetState === SystemState.ABORT || targetState === SystemState.VENT;
+    const isDebug = targetState === SystemState.DEBUG;
+    const isInDebugMode = debugMode || effectiveState === SystemState.DEBUG;
     
-    if (!isAllowed && !isEmergency && effectiveState !== targetState) {
+    // Allow DEBUG state from any state, allow emergency states always, allow any transition in DEBUG mode, or if transition is explicitly allowed
+    if (!isAllowed && !isEmergency && !isDebug && !isInDebugMode && effectiveState !== targetState) {
       console.warn(`⚠️ Invalid transition: ${STATE_NAMES[effectiveState]} → ${STATE_NAMES[targetState]}`);
       alert(`Invalid transition: Cannot go from ${STATE_NAMES[effectiveState]} to ${STATE_NAMES[targetState]}`);
       return;
     }
 
-    // Optimistic update — show new state immediately
-    updateState({ currentState: targetState, stateName: STATE_NAMES[targetState] ?? '', timestamp: Date.now() });
+    // Don't do optimistic update - let backend broadcast state update to all clients
+    // This ensures all panes/windows stay in sync
     const command: CommandPayload = {
       commandType: 'state_transition',
       data: { state: targetState },
@@ -212,10 +223,22 @@ export default function StateMachineDiagram() {
 
   // Default to IDLE when no state has been received yet
   const effectiveState = currentState ?? SystemState.IDLE;
-
+  
   const reachableStates = useMemo(() => {
-    return new Set(transitions.filter(t => t.from === effectiveState && t.from !== t.to).map(t => t.to));
-  }, [effectiveState, transitions]);
+    const fromTransitions = new Set(transitions.filter(t => t.from === effectiveState && t.from !== t.to).map(t => t.to));
+    // Always allow DEBUG state from any state
+    fromTransitions.add(SystemState.DEBUG);
+    // Always allow emergency states
+    fromTransitions.add(SystemState.ABORT);
+    fromTransitions.add(SystemState.VENT);
+    // In DEBUG mode, allow transitions to any state
+    if (debugMode || effectiveState === SystemState.DEBUG) {
+      Object.values(SystemState).filter((s) => typeof s === 'number').forEach((s) => {
+        fromTransitions.add(s as SystemState);
+      });
+    }
+    return fromTransitions;
+  }, [effectiveState, transitions, debugMode]);
 
   return (
     <div className="bg-card rounded-xl border border-gray-800 overflow-hidden flex flex-col h-full min-h-0">
@@ -228,9 +251,9 @@ export default function StateMachineDiagram() {
         </span>
       </div>
 
-      <div className="p-8 overflow-auto bg-background min-h-0 flex-1" style={{ minHeight: '600px' }}>
+      <div className="p-4 overflow-auto bg-background min-h-0 flex-1">
         <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`}
-          style={{ display: 'block', overflow: 'visible', width: '100%', height: '100%', minHeight: '600px' }}
+          style={{ display: 'block', overflow: 'visible', width: '100%', height: 'auto', maxHeight: '100%' }}
           preserveAspectRatio="xMidYMid meet">
           <defs>
             <marker id="arr-green" markerWidth="16" markerHeight="16" refX="13" refY="5" orient="auto">
@@ -245,7 +268,7 @@ export default function StateMachineDiagram() {
           {transitions
             .filter(t => t.from === effectiveState && t.from !== t.to)
             .map((t, i) => {
-              const isEmergency = t.to === SystemState.ABORT || t.to === SystemState.VENT;
+              const isEmergency = t.to === SystemState.ENGINE_ABORT || t.to === SystemState.GSE_ABORT || t.to === SystemState.EMERGENCY_ABORT || t.to === SystemState.ABORT || t.to === SystemState.VENT;
               return (
                 <path
                   key={i}

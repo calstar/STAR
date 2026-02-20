@@ -20,9 +20,19 @@ export function useWindowManager() {
       return existing.window;
     }
 
-    // Calculate position to avoid overlap
-    const left = (windows.size % 3) * 100 + 50;
-    const top = (Math.floor(windows.size / 3) * 100) + 50;
+    // Calculate position to avoid overlap - better grid layout
+    // Arrange in a 2x2 grid pattern with proper spacing
+    const gridCols = 2;
+    const gridRows = 2;
+    const offsetX = 50;
+    const offsetY = 50;
+    const spacingX = 50;
+    const spacingY = 50;
+    
+    const col = windows.size % gridCols;
+    const row = Math.floor(windows.size / gridCols) % gridRows;
+    const left = offsetX + col * (width + spacingX);
+    const top = offsetY + row * (height + spacingY);
 
     try {
       // Ensure URL is absolute - use current origin

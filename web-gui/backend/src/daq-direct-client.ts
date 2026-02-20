@@ -51,30 +51,37 @@ export class DAQDirectClient extends EventEmitter {
     try {
       console.log(`🔌 Setting up UDP listener (EXACT combined_gui.py implementation) on ${this.bindAddress}:${this.port}`);
 
-      // Use SO_REUSEADDR to allow binding even if port is in use
-      // This allows us to receive UDP packets even if DAQ Bridge is using the port
-      // Note: On Linux, we'd need SO_REUSEPORT for true port sharing, but SO_REUSEADDR
-      // might work if DAQ Bridge also uses it
+      // Use SO_REUSEADDR and SO_REUSEPORT to allow multiple processes to bind to port 5006
+      // This allows both DAQ Bridge and backend to receive UDP packets simultaneously
+      // SO_REUSEPORT (Linux) allows true port sharing - both processes receive packets
       try {
         this.udpSocket = createSocket({
           type: 'udp4',
           reuseAddr: true,  // SO_REUSEADDR - allows binding even if port is in use
         });
 
-        // Try to set SO_REUSEPORT via internal handle (Linux only)
+        // CRITICAL: Set SO_REUSEPORT for true port sharing (Linux only)
+        // This allows both DAQ Bridge and backend to receive packets on port 5006
         const handle = (this.udpSocket as any)._handle;
         if (process.platform === 'linux' && handle && handle.setOption) {
           try {
             // SO_REUSEPORT = 15 on Linux (from /usr/include/asm-generic/socket.h)
+            // This allows multiple processes to bind to the same port
             handle.setOption(15, 1);
-            console.log('   ✅ SO_REUSEPORT enabled - can share port with DAQ Bridge');
+            console.log('   ✅ SO_REUSEPORT enabled - sharing port 5006 with DAQ Bridge');
+            console.log('   📡 Both DAQ Bridge and backend will receive UDP packets');
           } catch (e) {
-            // SO_REUSEPORT not available, continue anyway
+            console.warn('   ⚠️ SO_REUSEPORT not available - only one process can bind to port 5006');
+            console.warn('   💡 Solution: Stop DAQ Bridge or use UDP forwarding');
           }
+        } else if (process.platform !== 'linux') {
+          console.warn('   ⚠️ SO_REUSEPORT only available on Linux');
+          console.warn('   💡 On non-Linux systems, only one process can bind to port 5006');
         }
       } catch (e) {
         // Fallback to regular socket
         this.udpSocket = createSocket('udp4');
+        console.warn('   ⚠️ Failed to set socket options:', e);
       }
 
       this.udpSocket.setMaxListeners(100);

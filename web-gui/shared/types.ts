@@ -19,6 +19,8 @@ export enum MessageType {
   CONNECTION_STATUS  = 'connection_status',
   CALIBRATION_STATUS = 'calibration_status',
   CONTROLLER_UPDATE  = 'controller_update',
+  MISSION_START_TIME = 'mission_start_time',
+  ACTUATOR_EXPECTED_POSITIONS_UPDATE = 'actuator_expected_positions_update',
 }
 
 // Sensor types
@@ -50,7 +52,11 @@ export enum SystemState {
   CALIBRATE = 14,
   READY = 15,
   FIRE = 16,
-  ABORT = 17,
+  ENGINE_ABORT = 17,
+  GSE_ABORT = 18,
+  EMERGENCY_ABORT = 19,
+  // Legacy alias for backwards compatibility
+  ABORT = 19, // Maps to EMERGENCY_ABORT
 }
 
 // Actuator IDs
@@ -62,6 +68,15 @@ export enum ActuatorId {
   LOX_PRESS = 4,
   FUEL_PRESS = 5,
   GSE_LOW_VENT = 6,
+  // Extended actuators (non-state-machine, but controllable in DEBUG)
+  FUEL_FILL_VENT = 7,
+  FUEL_FILL_PRESS = 8,
+  LOX_FILL = 9,
+  LOX_DUMP = 10,
+  GSE_HIGH_PRESS_VENT = 11,
+  GSE_LOX_FILL_VENT = 12,
+  GSE_HIGH_PRESS_CONTROL = 13,
+  GSE_MED_PRESS_CONTROL = 14,
 }
 
 // Actuator states
@@ -124,6 +139,11 @@ export interface ConnectionStatus {
   elodinConnected: boolean;
   latency?: number;
   error?: string;
+}
+
+// Mission start time (T+0 from first packet)
+export interface MissionStartTime {
+  missionStartTime: number; // Unix timestamp in milliseconds
 }
 
 // ── Calibration types ─────────────────────────────────────────────────────────

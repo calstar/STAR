@@ -202,3 +202,6 @@ DiabloNavigationFilter::FilterState DiabloNavigationFilter::getCurrentState() co
     std::lock_guard<std::mutex> lock(state_mutex_);
     return state_;
 }
+
+
+

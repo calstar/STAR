@@ -96,3 +96,6 @@ echo "3. Configure your board to send to: 192.168.2.201:5006"
 echo ""
 echo "4. Test connectivity:"
 echo "   ping <board_ip>  (from board, ping 192.168.2.201)"
+
+
+

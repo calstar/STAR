@@ -80,11 +80,26 @@ export default function TopBar() {
   const isConnected = connectionStatus.connected;
   const isFullyConnected = connectionStatus.connected && connectionStatus.elodinConnected;
 
-  const sendEmergency = (state: SystemState) => {
-    // Optimistic — update UI immediately
-    updateState({ currentState: state, stateName: STATE_NAMES[state] ?? '', timestamp: Date.now() });
+  // Simple helper: send a single state-transition command
+  const sendState = (state: SystemState) => {
     const cmd: CommandPayload = { commandType: 'state_transition', data: { state } };
     ws.sendCommand(cmd);
+  };
+
+  // ABORT: go to VENT for 5 seconds, then ENGINE_ABORT
+  const handleAbort = () => {
+    sendState(SystemState.VENT);
+    // After 5 seconds, transition to ENGINE_ABORT
+    setTimeout(() => {
+      sendState(SystemState.ENGINE_ABORT);
+    }, 5000);
+  };
+
+  // EMERGENCY ABORT: immediately go to EMERGENCY_ABORT state
+  const handleEmergencyAbort = () => {
+    if (!confirm('⚠️ EMERGENCY ABORT — immediately vent GN2 and abort all operations?')) return;
+    // Go directly to EMERGENCY_ABORT state
+    sendState(SystemState.EMERGENCY_ABORT);
   };
 
   return (
@@ -106,9 +121,9 @@ export default function TopBar() {
         </div>
 
         {/* Center: pressure bars — dominant */}
-        <div className="flex-1 flex items-stretch gap-1.5 py-2 min-w-0 overflow-hidden">
+        <div className="flex-1 flex items-stretch gap-1 py-2 min-w-0 overflow-visible">
           {PRESSURE_BARS.map(({ label, entity, nop, meop, color }) => (
-            <div key={entity} className="flex-1 min-w-0 h-full max-w-full overflow-hidden">
+            <div key={entity} className="flex-1 min-w-0 h-full overflow-visible">
               <PressureBar
                 label={label}
                 value={getSensorValue(entity, 'pressure_psi')}
@@ -119,20 +134,20 @@ export default function TopBar() {
         </div>
 
         {/* Right: state + abort */}
-        <div className="flex items-center gap-4 flex-shrink-0 pl-4 border-l border-gray-800/60">
-          <div className="flex flex-col items-center gap-1">
-            <span className="text-sm text-gray-400 uppercase tracking-widest font-bold">STATE</span>
-            <span className={`text-3xl font-bold font-mono tracking-wider ${stateColor}`}>
+        <div className="flex items-center gap-6 flex-shrink-0 pl-4 border-l border-gray-800/60">
+          <div className="flex flex-col items-center gap-2">
+            <span className="text-base text-gray-400 uppercase tracking-widest font-bold">STATE</span>
+            <span className={`text-5xl font-bold font-mono tracking-wider ${stateColor}`}>
               {currentStateName}
             </span>
           </div>
 
           {/* Debug mode toggle */}
-          <div className="flex flex-col items-center gap-0.5 border-l border-gray-800/60 pl-4">
-            <span className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold">MODE</span>
+          <div className="flex flex-col items-center gap-1 border-l border-gray-800/60 pl-6">
+            <span className="text-sm text-gray-500 uppercase tracking-widest font-semibold">MODE</span>
             <button
               onClick={() => setDebugMode(!debugMode)}
-              className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider border transition-all ${
+              className={`px-5 py-3 rounded-md text-base font-bold uppercase tracking-wider border transition-all ${
                 debugMode
                   ? 'bg-yellow-800/60 border-yellow-600 text-yellow-300 shadow-[0_0_6px_rgba(234,179,8,0.3)]'
                   : 'bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-500'
@@ -143,22 +158,18 @@ export default function TopBar() {
           </div>
 
           {/* Abort buttons */}
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-3">
             <button
-              onClick={() => sendEmergency(SystemState.VENT)}
-              className="px-6 py-3 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border border-amber-600
-                         text-white font-bold text-sm rounded-lg tracking-wider transition-colors"
+              onClick={handleAbort}
+              className="px-8 py-4 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border-2 border-amber-600
+                         text-white font-bold text-lg rounded-lg tracking-wider transition-colors"
             >
               ABORT
             </button>
             <button
-              onClick={() => {
-                if (confirm('⚠️ EMERGENCY ABORT — immediately abort all operations?')) {
-                  sendEmergency(SystemState.ABORT);
-                }
-              }}
-              className="px-6 py-3 bg-red-700 hover:bg-red-600 active:bg-red-800 border border-red-500
-                         text-white font-bold text-sm rounded-lg tracking-wider transition-colors
+              onClick={handleEmergencyAbort}
+              className="px-8 py-4 bg-red-700 hover:bg-red-600 active:bg-red-800 border-2 border-red-500
+                         text-white font-bold text-lg rounded-lg tracking-wider transition-colors
                          shadow-[0_0_8px_rgba(239,68,68,0.4)]"
             >
               E-ABORT

@@ -46,15 +46,22 @@ class SensorDataCache {
       const sensorData = state.sensorData;
 
       for (const [key, value] of Object.entries(sensorData)) {
-        if (!isFinite(value)) continue;
+        if (value === null || value === undefined || !isFinite(value)) continue;
 
         let series = this.cache.get(key);
         if (!series) {
           series = { time: [], values: [] };
           this.cache.set(key, series);
         }
-        series.time.push(now);
-        series.values.push(value);
+        
+        // Only add if time has advanced (avoid duplicates)
+        if (series.time.length === 0 || series.time[series.time.length - 1] < now) {
+          series.time.push(now);
+          series.values.push(value);
+        } else {
+          // Update last value if same timestamp
+          series.values[series.values.length - 1] = value;
+        }
 
         if (series.time.length > CACHE_MAX_POINTS) {
           series.time = series.time.slice(-CACHE_MAX_POINTS);
@@ -63,6 +70,38 @@ class SensorDataCache {
       }
     } catch (err) {
       console.error('[DataCache] Error sampling:', err);
+    }
+  }
+
+  /** Manually add a data point (called from WebSocket handler) */
+  addDataPoint(entity: string, component: string, value: number): void {
+    if (!isFinite(value)) return;
+    const key = `${entity}.${component}`;
+    const now = (Date.now() - getStartupTime()) / 1000;
+    
+    let series = this.cache.get(key);
+    if (!series) {
+      series = { time: [], values: [] };
+      this.cache.set(key, series);
+    }
+    
+    // Always add new point - allow some time tolerance for batching
+    const lastTime = series.time.length > 0 ? series.time[series.time.length - 1] : -Infinity;
+    const timeDiff = now - lastTime;
+    
+    if (timeDiff >= 0.05) { // At least 50ms between points (20 Hz max)
+      series.time.push(now);
+      series.values.push(value);
+    } else if (timeDiff >= -0.1 && timeDiff < 0.05) {
+      // Update last value if within 100ms (same batch)
+      if (series.values.length > 0) {
+        series.values[series.values.length - 1] = value;
+      }
+    }
+
+    if (series.time.length > CACHE_MAX_POINTS) {
+      series.time = series.time.slice(-CACHE_MAX_POINTS);
+      series.values = series.values.slice(-CACHE_MAX_POINTS);
     }
   }
 
@@ -118,7 +157,14 @@ class SensorDataCache {
         break;
       }
     }
-    if (!baseSeries || !baseKey) return null;
+    if (!baseSeries || !baseKey) {
+      // Debug: log cache state
+      const cacheKeys = Array.from(this.cache.keys());
+      if (cacheKeys.length > 0) {
+        console.log(`[DataCache] Cache has ${cacheKeys.length} keys, but none match requested:`, keys);
+      }
+      return null;
+    }
 
     // Find start index within window
     let startIdx = 0;
@@ -136,6 +182,7 @@ class SensorDataCache {
       return sliced;
     });
 
+    console.log(`[DataCache] Returning ${len} points for ${keys.length} series`);
     return { time, values };
   }
 }

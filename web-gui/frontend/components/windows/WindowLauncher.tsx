@@ -53,6 +53,12 @@ export default function WindowLauncher() {
     url: '/window/all', accent: '#38BDF8',
   };
 
+  const unifiedEntry: WindowButtonProps = {
+    id: 'unified', name: 'Single Pane ★★',
+    description: 'State machine · Pressure graphs · Actuators · Controller all in one window',
+    url: '/window/unified', accent: '#EC4899',
+  };
+
   const multiEntries: WindowButtonProps[] = [
     { id: 'fuel',        name: 'FUEL',         description: 'Upstream / downstream pressure & actuators', url: '/window/fuel',        accent: '#3498DB' },
     { id: 'lox',         name: 'LOX',          description: 'Oxidizer pressure & actuators',              url: '/window/lox',         accent: '#E74C3C' },
@@ -86,8 +92,9 @@ export default function WindowLauncher() {
         )}
       </div>
 
-      {/* All Plots featured */}
-      <div className="mb-2">
+      {/* Featured windows */}
+      <div className="mb-2 space-y-2">
+        <WindowButton {...unifiedEntry} />
         <WindowButton {...allPlotsEntry} />
       </div>
 

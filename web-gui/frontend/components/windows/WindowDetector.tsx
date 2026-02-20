@@ -18,3 +18,6 @@ export default function WindowDetector() {
 
   return null;
 }
+
+
+

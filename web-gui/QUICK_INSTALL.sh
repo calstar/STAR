@@ -61,3 +61,6 @@ echo "   1. Start the system: ./scripts/startup/start_tmux.sh"
 echo "   2. Open browser: http://localhost:3000"
 echo "   3. For network access: http://<your-ip>:3000"
 echo ""
+
+
+

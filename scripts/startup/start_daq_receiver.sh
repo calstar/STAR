@@ -58,3 +58,6 @@ echo "📝 Logs: tail -f /tmp/daq_bridge_${PORT}.log"
 echo ""
 echo "🛑 To stop: kill $DAQ_PID"
 echo ""
+
+
+

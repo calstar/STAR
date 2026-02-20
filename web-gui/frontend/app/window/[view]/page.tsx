@@ -19,6 +19,7 @@ import StatusPage from '@/app/status/page';
 import ConfigPage from '@/app/config/page';
 import ControllerPage from '@/app/controller/page';
 import CalibrationPage from '@/app/calibration/page';
+import UnifiedDashboardPage from '@/app/window/unified/page';
 
 const viewComponents: Record<string, React.ComponentType> = {
   fuel: FuelGraphsPage,
@@ -32,6 +33,7 @@ const viewComponents: Record<string, React.ComponentType> = {
   config: ConfigPage,
   calibration: CalibrationPage,
   controller: ControllerPage,
+  unified: UnifiedDashboardPage,
 };
 
 export default function WindowViewPage() {

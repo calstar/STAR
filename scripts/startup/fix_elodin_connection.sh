@@ -61,3 +61,6 @@ echo ""
 echo "Now restart DAQ bridge to connect:"
 echo "  pkill -f daq_bridge"
 echo "  ./build/FSW/daq_bridge config/config.toml 0.0.0.0 5006"
+
+
+

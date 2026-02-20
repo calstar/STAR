@@ -278,14 +278,26 @@ export class ElodinClient extends EventEmitter {
    */
   sendRawMessage(packetId: [number, number], packetType: ElodinPacketType, payload: Buffer): boolean {
     if (!this.connected || !this.socket) {
-      console.warn(`⚠️ Cannot send raw message - not connected (packetId=[0x${packetId[0].toString(16).padStart(2, '0')}, 0x${packetId[1].toString(16).padStart(2, '0')}])`);
+      if (Math.random() < 0.01) { // Log occasionally to avoid spam
+        console.warn(`⚠️ Cannot send raw message - not connected (packetId=[0x${packetId[0].toString(16).padStart(2, '0')}, 0x${packetId[1].toString(16).padStart(2, '0')}])`);
+      }
       return false;
     }
 
     try {
       const header = this.createHeader(packetType, packetId, payload.length);
       const packet = Buffer.concat([header, payload]);
-      this.socket.write(packet);
+      
+      // Write to socket - Node.js will buffer and flush automatically
+      const flushed = this.socket.write(packet);
+      
+      // If write buffer is full, socket.write returns false
+      // In that case, we should wait for 'drain' event, but for now just log
+      if (!flushed) {
+        if (Math.random() < 0.01) {
+          console.warn(`⚠️ Socket write buffer full for packetId=[0x${packetId[0].toString(16).padStart(2, '0')}, 0x${packetId[1].toString(16).padStart(2, '0')}]`);
+        }
+      }
 
       // Log first few messages to verify they're being sent
       if (this.packetCount < 10) {
@@ -299,6 +311,9 @@ export class ElodinClient extends EventEmitter {
           console.log(`   Payload (hex): ${payload.toString('hex')}`);
         }
       }
+
+      // Increment packet count for logging
+      this.packetCount++;
 
       return true;
     } catch (error) {
