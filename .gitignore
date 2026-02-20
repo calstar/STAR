@@ -27,9 +27,14 @@ scripts/fake_sensor_generator_remote
 .local/
 *_metadata/
 
-# Elodin database directories
-**/elodin/
+# Elodin database directories (runtime only, NOT source code)
+# Only ignore runtime database directories, not source code in FSW/src/elodin/ or FSW/include/elodin/
+**/elodin/*.db
+**/elodin/*.sqlite
+**/elodin/*.sqlite3
 **/.local/share/elodin/
+.elodin/
+elodin_data/
 
 # Log files
 *.log
@@ -113,11 +118,37 @@ core.*
 *.prof
 gmon.out
 
-# Sensor data files (if any)
-*.csv
-*.json
+# Sensor data files (runtime data only, NOT config/template files)
+# IMPORTANT: We need to allow important CSV/JSON config files while ignoring runtime data
+# Use specific patterns to ignore data directories, but allow config files
+
+# Ignore runtime data directories
 data/
 recordings/
+*.csv.data
+*.json.data
+**/data/*.csv
+**/data/*.json
+**/recordings/*.csv
+**/recordings/*.json
+**/logs/*.csv
+**/logs/*.json
+
+# BUT allow important config/template files (exceptions)
+!config/*.json
+!config/*.csv
+!**/test_guis/*.csv
+!**/test_guis/*.json
+!**/calibration/*.json
+!**/calibration/*.csv
+!**/package.json
+!**/package-lock.json
+!**/tsconfig.json
+!**/system_config.json
+!**/fsw_gui_config.json
+!**/config.json
+!**/actuator_labels.json
+!**/sensor_labels.json
 
 # Network and socket files
 *.sock
