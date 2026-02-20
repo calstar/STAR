@@ -18,6 +18,7 @@ export enum MessageType {
   ERROR              = 'error',
   CONNECTION_STATUS  = 'connection_status',
   CALIBRATION_STATUS = 'calibration_status',
+  CONTROLLER_UPDATE  = 'controller_update',
 }
 
 // Sensor types
@@ -103,7 +104,7 @@ export interface StateUpdate {
 
 // Command payload
 export interface CommandPayload {
-  commandType: 'state_transition' | 'actuator' | 'controller_frequency' | 'pwm_actuator';
+  commandType: 'state_transition' | 'actuator' | 'controller_frequency' | 'pwm_actuator' | 'controller_command';
   data: {
     state?: SystemState;
     actuatorId?: ActuatorId;
@@ -111,6 +112,9 @@ export interface CommandPayload {
     frequency?: number; // Controller frequency in Hz
     dutyCycle?: number; // PWM duty cycle 0-1
     duration?: number; // Duration in ms
+    command_type?: 'THRUST_DESIRED' | 'ALTITUDE_GOAL'; // Controller command type
+    thrust_desired?: number; // Thrust desired [N]
+    altitude_goal?: number; // Altitude goal [m]
   };
 }
 

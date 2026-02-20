@@ -19,6 +19,7 @@ import { loadPTCalibration, calculatePressure, CalibrationCoefficients } from '.
 import { Phase2CalibrationEngine } from './calibration-phase2.js';
 import { DataLogger } from './data-logger.js';
 import { readConfig } from './routes/config.js';
+import { ControllerClient, mapSensorDataToMeasurement, ControllerCommand } from './controller-client.js';
 import {
   MessageType,
   SensorUpdate,
@@ -99,6 +100,12 @@ class SensorSystemServer {
   private actuatorCommandInterval: NodeJS.Timeout | null = null;
   private readonly ACTUATOR_COMMAND_INTERVAL_MS = 1000; // Send actuator commands every 1 second while in state
 
+  /** Controller client for DDP controller integration */
+  private controllerClient: ControllerClient | null = null;
+  private controllerLoopInterval: NodeJS.Timeout | null = null;
+  private readonly CONTROLLER_LOOP_INTERVAL_MS = 100; // Controller loop at 10 Hz
+  private controllerCommand: ControllerCommand = { command_type: 'THRUST_DESIRED', thrust_desired: 1000 };
+
   /** Channel ID → entity name map (loaded from config.toml sensor_roles) */
   private channelToEntityMap: Record<number, string> = {};
 
@@ -112,6 +119,11 @@ class SensorSystemServer {
 
     // Load sensor_roles from config.toml (like combined_gui.py)
     this.loadSensorRoleMap();
+
+    // Initialize controller client (connects to FastAPI controller service)
+    const controllerUrl = process.env.CONTROLLER_URL || 'http://localhost:8000';
+    this.controllerClient = new ControllerClient(controllerUrl);
+    console.log(`🎯 Controller client initialized: ${controllerUrl}`);
 
     // Load state actuator map from CSV (replaces hardcoded map)
     STATE_ACTUATOR_MAP = getStateActuatorMap();
@@ -1042,6 +1054,13 @@ class SensorSystemServer {
               // Stop continuous commands in DEBUG mode
               this.stopContinuousActuatorCommands();
             }
+
+            // ── Controller integration: Start/stop controller loop on FIRE state ──
+            if (newState === SystemState.FIRE) {
+              this.startControllerLoop();
+            } else {
+              this.stopControllerLoop();
+            }
         } else {
           throw new Error('Failed to send state transition command');
         }
@@ -1084,9 +1103,30 @@ class SensorSystemServer {
       } else if (command.commandType === 'pwm_actuator') {
         const { actuatorId, dutyCycle, frequency, duration } = command.data;
         if (actuatorId !== undefined && dutyCycle !== undefined) {
-          // TODO: Send PWM actuator command
-          // Format: actuator_id, duration_ms, duty_cycle (0-1), frequency (Hz)
-          console.log(`🎯 PWM Actuator command: ${ActuatorId[actuatorId]}, Duty: ${dutyCycle}, Freq: ${frequency || 10}Hz`);
+          const channelId = ACTUATOR_CHANNEL[actuatorId] ?? (actuatorId + 1);
+          const success = this.sendPWMActuatorCommandUDP(
+            channelId,
+            dutyCycle,
+            frequency || 10,
+            duration || 1000
+          );
+          if (success) {
+            console.log(`🎯 PWM Actuator command sent: ${ActuatorId[actuatorId]} (CH${channelId}), Duty: ${dutyCycle}, Freq: ${frequency || 10}Hz`);
+          } else {
+            throw new Error('Failed to send PWM actuator command via UDP');
+          }
+        }
+      } else if (command.commandType === 'controller_command') {
+        // Update controller command (thrust desired, altitude goal, etc.)
+        const { command_type, thrust_desired, altitude_goal } = command.data;
+        if (command_type) {
+          this.controllerCommand = {
+            command_type: command_type as 'THRUST_DESIRED' | 'ALTITUDE_GOAL',
+            thrust_desired: thrust_desired ?? this.controllerCommand.thrust_desired,
+            altitude_goal: altitude_goal ?? this.controllerCommand.altitude_goal,
+          };
+          console.log(`🎯 Controller command updated: ${this.controllerCommand.command_type}, ` +
+                     `thrust=${this.controllerCommand.thrust_desired}N, altitude=${this.controllerCommand.altitude_goal}m`);
         }
       }
     } catch (error) {
@@ -1156,6 +1196,147 @@ class SensorSystemServer {
       clearInterval(this.actuatorCommandInterval);
       this.actuatorCommandInterval = null;
       console.log('🛑 Stopped continuous actuator commands');
+    }
+  }
+
+  /**
+   * Send PWM actuator command via UDP
+   * Format: [packet_type, version, timestamp(4), actuator_id, duration_ms(4), duty_cycle(4), frequency(4)]
+   */
+  private sendPWMActuatorCommandUDP(channelId: number, dutyCycle: number, frequency: number = 10, durationMs: number = 1000): boolean {
+    if (!this.actuatorSocket) {
+      console.error('❌ Actuator socket not initialized');
+      return false;
+    }
+
+    try {
+      const timestamp = Math.floor(Date.now());
+      const packetType = 10; // PWM_ACTUATOR_COMMAND (from DAQDirectClient)
+      const version = 0;
+
+      // Build packet: [packet_type(1), version(1), timestamp(4), actuator_id(1), duration_ms(4), duty_cycle(4), frequency(4)]
+      // Total: 1 + 1 + 4 + 1 + 4 + 4 + 4 = 19 bytes
+      const buffer = Buffer.allocUnsafe(19);
+      buffer.writeUInt8(packetType, 0);
+      buffer.writeUInt8(version, 1);
+      buffer.writeUInt32LE(timestamp, 2);
+      buffer.writeUInt8(channelId, 6);
+      buffer.writeUInt32LE(durationMs, 7);
+      buffer.writeFloatLE(dutyCycle, 11); // duty_cycle [0-1]
+      buffer.writeFloatLE(frequency, 15); // frequency [Hz]
+
+      this.actuatorSocket.send(buffer, 0, buffer.length, this.actuatorPort, this.actuatorIP, (err) => {
+        if (err) {
+          console.error(`❌ Failed to send PWM command to ${this.actuatorIP}:${this.actuatorPort}:`, err);
+        }
+      });
+
+      return true;
+    } catch (error) {
+      console.error('❌ Error sending PWM command:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Start controller loop - runs when FIRE state is active
+   * Reads sensor data, calls DDP controller, sends PWM commands
+   */
+  private startControllerLoop(): void {
+    if (this.controllerLoopInterval) {
+      return; // Already running
+    }
+
+    if (!this.controllerClient) {
+      console.warn('⚠️ Controller client not initialized - cannot start controller loop');
+      return;
+    }
+
+    console.log('🎯 Starting controller loop (FIRE state active)');
+
+    // Initialize controller if not already done
+    this.controllerClient.initialize().then((success) => {
+      if (!success) {
+        console.error('❌ Failed to initialize controller - controller loop will not run');
+        return;
+      }
+
+      // Start controller loop at 10 Hz
+      this.controllerLoopInterval = setInterval(async () => {
+        if (this.currentState !== SystemState.FIRE) {
+          // State changed, stop loop
+          this.stopControllerLoop();
+          return;
+        }
+
+        // Build sensor data map from cache
+        const sensorDataMap = new Map<string, number>();
+        for (const [key, update] of this.sensorCache.entries()) {
+          if (update.component === 'pressure_psi') {
+            sensorDataMap.set(key, update.value);
+          }
+        }
+
+        // Map sensor data to controller measurement format
+        const measurement = mapSensorDataToMeasurement(sensorDataMap);
+        if (!measurement) {
+          // Missing required sensor data - skip this step
+          return;
+        }
+
+        // Call controller step
+        const result = await this.controllerClient!.step(
+          measurement,
+          {}, // Nav state (can be enhanced later)
+          this.controllerCommand
+        );
+
+        if (!result) {
+          console.warn('⚠️ Controller step returned null - skipping PWM command');
+          return;
+        }
+
+        const { actuation, diagnostics } = result;
+
+        // Send PWM commands to actuators
+        // Fuel Press (CH3) gets duty_F, LOX Press (CH8) gets duty_O
+        const fuelPressChannel = ACTUATOR_CHANNEL[ActuatorId.FUEL_PRESS]; // CH3
+        const loxPressChannel = ACTUATOR_CHANNEL[ActuatorId.LOX_PRESS];   // CH8
+
+        if (fuelPressChannel) {
+          this.sendPWMActuatorCommandUDP(fuelPressChannel, actuation.duty_F, 10, 100);
+        }
+        if (loxPressChannel) {
+          this.sendPWMActuatorCommandUDP(loxPressChannel, actuation.duty_O, 10, 100);
+        }
+
+        // Log diagnostics occasionally
+        if (Math.random() < 0.1) { // 10% of steps
+          console.log(`🎯 Controller: F_ref=${diagnostics.F_ref.toFixed(1)}N, F_est=${diagnostics.F_estimated.toFixed(1)}N, ` +
+                     `duty_F=${actuation.duty_F.toFixed(3)}, duty_O=${actuation.duty_O.toFixed(3)}`);
+        }
+
+        // Broadcast controller diagnostics to frontend
+        this.broadcast({
+          type: MessageType.CONTROLLER_UPDATE,
+          timestamp: Date.now(),
+          payload: {
+            actuation,
+            diagnostics,
+          },
+        });
+      }, this.CONTROLLER_LOOP_INTERVAL_MS);
+    });
+  }
+
+  /**
+   * Stop controller loop
+   */
+  private stopControllerLoop(): void {
+    if (this.controllerLoopInterval) {
+      clearInterval(this.controllerLoopInterval);
+      this.controllerLoopInterval = null;
+      console.log('🛑 Stopped controller loop');
     }
   }
 

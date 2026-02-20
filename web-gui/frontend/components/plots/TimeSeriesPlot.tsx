@@ -83,6 +83,8 @@ export default function TimeSeriesPlot({
     values: entities.map(() => []),
   });
 
+  const initializedRef = useRef(false);
+
   const updateConnectionStatus = useSensorStore((s) => s.updateConnectionStatus);
   const connectionStatus       = useSensorStore((s) => s.connectionStatus);
   const actuallyConnected      = connectionStatus?.connected ?? false;
@@ -193,8 +195,6 @@ export default function TimeSeriesPlot({
       dataRef.current.time = [now];
       dataRef.current.values = entities.map(() => [NaN]);
     }
-
-    const initializedRef = useRef(false);
 
     const tryInit = () => {
       if (initializedRef.current || !plotRef.current) return;
