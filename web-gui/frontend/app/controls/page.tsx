@@ -24,7 +24,7 @@ const PRESSURE_SENSORS = [
   { label: 'LOX Up', entity: 'PT_Cal.Ox_Upstream', color: '#E74C3C' },
   { label: 'LOX Down', entity: 'PT_Cal.Ox_Downstream', color: '#C0392B' },
   { label: 'GSE Low', entity: 'PT_Cal.GSE_Low', color: '#F39C12' },
-  { label: 'GSE Mid', entity: 'PT_Cal.GSE_Mid', color: '#9B59B6' },
+  { label: 'GSE MID', entity: 'PT_Cal.GSE_Mid', color: '#9B59B6' },
   { label: 'GSE High', entity: 'PT_Cal.GSE_High', color: '#8E44AD' },
   { label: 'GN2 High', entity: 'PT_Cal.GN2_High', color: '#1ABC9C' },
 ];

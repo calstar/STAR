@@ -101,32 +101,8 @@ export class ElodinClient extends EventEmitter {
           console.log(`✅ CONNECTED to Elodin DB at ${this.host}:${this.port}`);
           console.log(`   Socket local address: ${this.socket?.localAddress}:${this.socket?.localPort}`);
           console.log(`   Socket remote address: ${this.socket?.remoteAddress}:${this.socket?.remotePort}`);
-
-          console.log(`📡 Socket connected, ready to receive data from Elodin DB...`);
-          console.log(`   Expected packet types: TABLE (type=1) with packetIds:`);
-          console.log(`   - PT Raw: [0x20, 0x01-0x0A]`);
-          console.log(`   - PT Calibrated: [0x20, 0x11-0x1A]`);
-          console.log(`   - Actuator: [0x30, 0x01-0x0A]`);
-          console.log(`   ✅ VTableStream subscriptions will be sent after connection...`);
-          console.log(`   ⚠️  If no data appears, Elodin DB may stream automatically OR require VTable registration`);
-          console.log(`   ⚠️  DAQ Bridge registers VTables - we only send VTableStream subscriptions`);
+          console.log(`📡 Ready to receive TABLE packets from Elodin DB`);
           resolve(true);
-        });
-
-        this.socket.on('data', (data: Buffer) => {
-          // ALWAYS log data chunks - this is critical to see if we're receiving anything
-          if (!this.hasReceivedData) {
-            console.log(`📥 FIRST DATA CHUNK from Elodin DB: ${data.length} bytes`);
-            console.log(`   First 64 bytes (hex): ${data.subarray(0, Math.min(64, data.length)).toString('hex')}`);
-            console.log(`   First 64 bytes (ascii): ${data.subarray(0, Math.min(64, data.length)).toString('ascii').replace(/[^\x20-\x7E]/g, '.')}`);
-            this.hasReceivedData = true;
-          } else {
-            // Log every 100th chunk to confirm continuous data flow
-            if (Math.random() < 0.01) {
-              console.log(`📥 Data chunk: ${data.length} bytes`);
-            }
-          }
-          this.handleData(data);
         });
 
         this.socket.on('error', (error: Error) => {
@@ -227,15 +203,13 @@ export class ElodinClient extends EventEmitter {
       // ALWAYS log packets - this is critical for debugging
       const [high, low] = header.packetId;
 
-      // CRITICAL: Elodin DB sends TABLE packets (type 1) for data
-      // We need to emit ALL TABLE packets so the server can process them
       if (header.ty === ElodinPacketType.TABLE) {
-        // ALWAYS log TABLE packets - this is critical to see if we're receiving data
-        console.log(`📥 TABLE packet: packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}`);
         this.packetCount++;
+        if (this.packetCount <= 5 || this.packetCount % 1000 === 0) {
+          console.log(`📥 TABLE packet #${this.packetCount}: packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}`);
+        }
         this.emit('packet', header, payload);
       } else {
-        // Log other packet types - these might be responses to our subscriptions
         const packetTypeName = header.ty === ElodinPacketType.MSG ? 'MSG' :
                               header.ty === ElodinPacketType.COMMAND ? 'COMMAND' :
                               header.ty === ElodinPacketType.QUERY ? 'QUERY' : `UNKNOWN(${header.ty})`;

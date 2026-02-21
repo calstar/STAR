@@ -86,10 +86,10 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
 
   // Clear manual commanded state when exiting DEBUG mode
   React.useEffect(() => {
-    if (currentState !== SystemState.DEBUG && manualCommanded !== null) {
+    if (currentState !== SystemState.DEBUG && !debugMode) {
       setManualCommanded(null);
     }
-  }, [currentState, manualCommanded]);
+  }, [currentState, debugMode]);
 
   // Debug logging
   React.useEffect(() => {
@@ -112,14 +112,14 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
     return null;
   }, [currentState, expected]);
 
-  // Use system-commanded state unless in DEBUG mode with manual command
-  // If in DEBUG mode, prefer manualCommanded; otherwise use commandedState
+  // Use manualCommanded when controls are active (debugMode or DEBUG state),
+  // falling back to the CSV-expected position. Otherwise use CSV only.
   const commanded = React.useMemo(() => {
-    if (currentState === SystemState.DEBUG) {
-      return manualCommanded ?? commandedState; // Use manual if set, otherwise fall back to expected
+    if (currentState === SystemState.DEBUG || debugMode) {
+      return manualCommanded ?? commandedState;
     }
-    return commandedState; // Use expected state from CSV
-  }, [currentState, manualCommanded, commandedState]);
+    return commandedState;
+  }, [currentState, debugMode, manualCommanded, commandedState]);
 
   // Allow manual control when in DEBUG state OR when debugMode is enabled
   const canControl = debugMode || currentState === SystemState.DEBUG;
@@ -168,7 +168,7 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
         ? 'bg-yellow-950/40 border-yellow-600'
         : 'bg-background border-gray-700 hover:border-gray-600'}`}>
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-semibold tracking-wider text-text uppercase">
+        <h3 className="text-base font-bold tracking-wider text-text uppercase">
           {ACTUATOR_NAMES[actuatorId]}
         </h3>
         {mismatch && (
@@ -176,61 +176,51 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
         )}
       </div>
 
-      {/* Two-row indicator: Commanded vs Feedback */}
-      <div className="flex gap-3 mb-3 text-xs">
+      {/* Feedback indicator */}
+      <div className="flex gap-3 mb-3 text-base">
         <div className="flex-1">
           <div className="text-text-muted mb-1">COMMANDED</div>
-          <div className={`flex items-center gap-1.5 ${commanded === null ? 'text-gray-500' : commandedOpen ? 'text-green-400' : 'text-red-400'}`}>
-            <div className={`w-2 h-2 rounded-full ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
+          <div className={`flex items-center gap-2 ${commanded === null ? 'text-gray-500' : commandedOpen ? 'text-green-400' : 'text-red-400'}`}>
+            <div className={`w-2.5 h-2.5 rounded-full ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
             <span className="font-mono font-bold">
               {commanded === null ? '---' : commandedOpen ? 'OPEN' : 'CLOSED'}
             </span>
-            {pending && <span className="text-yellow-400 text-[10px]">⟳</span>}
-          </div>
-        </div>
-        <div className="w-px bg-gray-700" />
-        <div className="flex-1">
-          <div className="text-text-muted mb-1">FEEDBACK</div>
-          <div className={`flex items-center gap-1.5 ${feedbackOpen ? 'text-green-400' : 'text-red-400'}`}>
-            <div className={`w-2 h-2 rounded-full ${feedbackOpen ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-            <span className="font-mono font-bold">{feedbackOpen ? 'OPEN' : 'CLOSED'}</span>
+            {pending && <span className="text-yellow-400 text-xs">⟳</span>}
           </div>
         </div>
       </div>
 
       {/* ADC readout */}
-      <div className="text-[10px] text-text-muted font-mono mb-2.5">
+      <div className="text-sm text-text-muted font-mono mb-2.5">
         ADC: {rawAdc.toLocaleString()}
       </div>
 
-      {/* OPEN / CLOSE buttons — locked unless debug mode or DEBUG state */}
-      {!canControl && (
-        <div className="text-[10px] text-yellow-600 font-mono text-center mb-1">
-          🔒 Enable DEBUG mode to control
-        </div>
-      )}
       <div className="grid grid-cols-2 gap-1.5">
         <button
           onClick={() => sendCommand(ActuatorState.OPEN)}
           disabled={!canControl}
-          className={`py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all
-            ${!canControl
-              ? 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'
-              : commandedOpen
-                ? 'bg-green-700 text-white ring-1 ring-green-400'
-                : 'bg-gray-800 hover:bg-gray-700 text-gray-300'}`}
+          className={`py-2.5 rounded text-base font-bold uppercase tracking-wider transition-all
+            ${commandedOpen
+              ? canControl
+                ? 'bg-green-700 text-white ring-2 ring-green-400'
+                : 'bg-green-700/50 text-green-300 ring-2 ring-green-700 cursor-not-allowed'
+              : canControl
+                ? 'bg-gray-800 hover:bg-gray-700 text-gray-300'
+                : 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'}`}
         >
           Open
         </button>
         <button
           onClick={() => sendCommand(ActuatorState.CLOSED)}
           disabled={!canControl}
-          className={`py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-all
-            ${!canControl
-              ? 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'
-              : commandedClosed
-                ? 'bg-red-700 text-white ring-1 ring-red-400'
-                : 'bg-gray-800 hover:bg-gray-700 text-gray-300'}`}
+          className={`py-2.5 rounded text-base font-bold uppercase tracking-wider transition-all
+            ${commandedClosed
+              ? canControl
+                ? 'bg-red-700 text-white ring-2 ring-red-400'
+                : 'bg-red-700/50 text-red-300 ring-2 ring-red-700 cursor-not-allowed'
+              : canControl
+                ? 'bg-gray-800 hover:bg-gray-700 text-gray-300'
+                : 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'}`}
         >
           Close
         </button>

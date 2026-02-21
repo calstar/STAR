@@ -92,9 +92,9 @@ export default function PressureBar({
   }
 
   return (
-    <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-hidden select-none w-full">
+    <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-visible select-none w-full">
       {/* Label */}
-      <div className="text-base font-semibold uppercase tracking-wider text-gray-300 text-center leading-none flex-shrink-0 truncate w-full">
+      <div className="text-2xl font-bold uppercase tracking-wider text-gray-300 text-center leading-none flex-shrink-0 whitespace-nowrap">
         {label}
       </div>
 
@@ -167,15 +167,13 @@ export default function PressureBar({
         )}
       </div>
 
-      {/* Value + unit below bar (only if value is too low to show on bar) */}
-      {(!sane || value === null || displayHeight <= 5) && (
-        <div className="flex-shrink-0 text-center leading-none">
-          <div className="text-xl font-bold font-mono tabular-nums" style={{ color: barColor }}>
-            {value !== null ? fmtPressure(value) : '---'}
-          </div>
-          <div className="text-xs text-gray-400 font-semibold">{unit}</div>
+      {/* Value + unit below bar — always rendered to keep bar height stable */}
+      <div className="flex-shrink-0 text-center leading-none">
+        <div className="text-2xl font-bold font-mono tabular-nums" style={{ color: barColor }}>
+          {value !== null ? fmtPressure(value) : '---'}
         </div>
-      )}
+        <div className="text-sm text-gray-400 font-semibold">{unit}</div>
+      </div>
     </div>
   );
 }

@@ -7,7 +7,7 @@
  *  2. Elodin-DB mode  → emits channel entities e.g. PT_Cal.PT_CH1.pressure_psi
  *
  * Sensor-role → channel mapping (from config.toml):
- *   Fuel Upstream = CH1, GSE Low = CH2, GSE Mid = CH3, Fuel Downstream = CH4
+ *   Fuel Upstream = CH1, GSE Low = CH2, Fuel Downstream = CH4, ...; GSE Mid = board 2 connector 4
  *   Ox Upstream   = CH5, GN2 Regulated = CH6, Ox Downstream = CH7
  *
  * Actuator-role → channel mapping (from config.toml actuator_roles):
@@ -48,7 +48,7 @@ const ALIASES: Record<string, string[]> = {
   // ── PT calibrated pressure (named → PT_CHX) ─────────────────────────────
   'PT_Cal.Fuel_Upstream.pressure_psi':    ['PT_Cal.PT_CH1.pressure_psi', 'PT.Fuel_Upstream.pressure_psi'],
   'PT_Cal.GSE_Low.pressure_psi':          ['PT_Cal.PT_CH2.pressure_psi', 'PT.GSE_Low.pressure_psi'],
-  'PT_Cal.GSE_Mid.pressure_psi':          ['PT_Cal.PT_CH3.pressure_psi', 'PT.GSE_Mid.pressure_psi'],
+  'PT_Cal.HP_PT_4.pressure_psi':          [],
   'PT_Cal.Fuel_Downstream.pressure_psi':  ['PT_Cal.PT_CH4.pressure_psi', 'PT.Fuel_Downstream.pressure_psi'],
   'PT_Cal.Ox_Upstream.pressure_psi':      ['PT_Cal.PT_CH5.pressure_psi', 'PT.Ox_Upstream.pressure_psi'],
   'PT_Cal.GN2_Regulated.pressure_psi':    ['PT_Cal.PT_CH6.pressure_psi', 'PT.GN2_Regulated.pressure_psi'],
@@ -59,7 +59,8 @@ const ALIASES: Record<string, string[]> = {
   // ── PT raw ADC counts (named → PT_CHX) ──────────────────────────────────
   'PT_Cal.Fuel_Upstream.raw_adc_counts':   ['PT_Cal.PT_CH1.raw_adc_counts', 'PT.Fuel_Upstream.raw_adc_counts', 'PT.PT_CH1.raw_adc_counts'],
   'PT_Cal.GSE_Low.raw_adc_counts':         ['PT_Cal.PT_CH2.raw_adc_counts', 'PT.PT_CH2.raw_adc_counts'],
-  'PT_Cal.GSE_Mid.raw_adc_counts':         ['PT_Cal.PT_CH3.raw_adc_counts', 'PT.PT_CH3.raw_adc_counts'],
+  'PT_Cal.GSE_Mid.raw_adc_counts':         [],
+  'PT_Cal.PT_CH3.raw_adc_counts':          ['PT.PT_CH3.raw_adc_counts'],
   'PT_Cal.Fuel_Downstream.raw_adc_counts': ['PT_Cal.PT_CH4.raw_adc_counts', 'PT.PT_CH4.raw_adc_counts'],
   'PT_Cal.Ox_Upstream.raw_adc_counts':     ['PT_Cal.PT_CH5.raw_adc_counts', 'PT.PT_CH5.raw_adc_counts'],
   'PT_Cal.GN2_Regulated.raw_adc_counts':   ['PT_Cal.PT_CH6.raw_adc_counts', 'PT.PT_CH6.raw_adc_counts'],
@@ -70,7 +71,7 @@ const ALIASES: Record<string, string[]> = {
   // ── PT raw (PT. namespace) → PT_Cal namespace fallback ──────────────────
   'PT.PT_CH1.raw_adc_counts':  ['PT_Cal.PT_CH1.raw_adc_counts',  'PT.Fuel_Upstream.raw_adc_counts'],
   'PT.PT_CH2.raw_adc_counts':  ['PT_Cal.PT_CH2.raw_adc_counts',  'PT.GSE_Low.raw_adc_counts'],
-  'PT.PT_CH3.raw_adc_counts':  ['PT_Cal.PT_CH3.raw_adc_counts',  'PT.GSE_Mid.raw_adc_counts'],
+  'PT.PT_CH3.raw_adc_counts':  ['PT_Cal.PT_CH3.raw_adc_counts'],
   'PT.PT_CH4.raw_adc_counts':  ['PT_Cal.PT_CH4.raw_adc_counts',  'PT.Fuel_Downstream.raw_adc_counts'],
   'PT.PT_CH5.raw_adc_counts':  ['PT_Cal.PT_CH5.raw_adc_counts',  'PT.Ox_Upstream.raw_adc_counts'],
   'PT.PT_CH6.raw_adc_counts':  ['PT_Cal.PT_CH6.raw_adc_counts',  'PT.GN2_Regulated.raw_adc_counts'],

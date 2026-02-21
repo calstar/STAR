@@ -24,15 +24,15 @@ const STATE_COLORS: Record<number, string> = {
 };
 
 const PRESSURE_BARS = [
-  { label:'GN2 REG',  entity:'PT_Cal.GN2_Regulated', nop:900, meop:950, color:'#27AE60' },
-  { label:'FUEL UP',  entity:'PT_Cal.Fuel_Upstream',  nop:600, meop:650, color:'#3498DB' },
-  { label:'FUEL DN',  entity:'PT_Cal.Fuel_Downstream',nop:600, meop:650, color:'#2980B9' },
-  { label:'LOX UP',   entity:'PT_Cal.Ox_Upstream',    nop:600, meop:650, color:'#E74C3C' },
-  { label:'LOX DN',   entity:'PT_Cal.Ox_Downstream',  nop:600, meop:650, color:'#C0392B' },
-  { label:'GSE LO',   entity:'PT_Cal.GSE_Low',         nop:500, meop:700, color:'#F39C12' },
-  { label:'GSE MID',  entity:'PT_Cal.GSE_Mid',         nop:500, meop:700, color:'#9B59B6' },
-  { label:'GSE HI',   entity:'PT_Cal.GSE_High',        nop:500, meop:700, color:'#8E44AD' },
-  { label:'GN2 HI',   entity:'PT_Cal.GN2_High',        nop:900, meop:950, color:'#1ABC9C' },
+  { label:'GN2 REG',  entity:'PT_Cal.GN2_Regulated', nop:900,  meop:950,  color:'#8E44AD' },
+  { label:'FUEL UP',  entity:'PT_Cal.Fuel_Upstream',  nop:600,  meop:650,  color:'#FF8C3A' },
+  { label:'FUEL DN',  entity:'PT_Cal.Fuel_Downstream',nop:600,  meop:650,  color:'#CC2200' },
+  { label:'LOX UP',   entity:'PT_Cal.Ox_Upstream',    nop:600,  meop:650,  color:'#85C1E9' },
+  { label:'LOX DN',   entity:'PT_Cal.Ox_Downstream',  nop:600,  meop:650,  color:'#2471A3' },
+  { label:'GSE LO',   entity:'PT_Cal.GSE_Low',        nop:500,  meop:700,  color:'#1E8449' },
+  { label:'GSE MID',  entity:'PT_Cal.GSE_Mid',        nop:4000, meop:4500, color:'#2ECC71' },
+  { label:'GSE HI',   entity:'PT_Cal.GSE_High',       nop:500,  meop:700,  color:'#8ACE00' },
+  { label:'GN2 HI',   entity:'PT_Cal.GN2_High',       nop:900,  meop:950,  color:'#C39BD3' },
 ] as const;
 
 export default function TopBar() {
@@ -68,7 +68,7 @@ export default function TopBar() {
   }, [ws, updateConnectionStatus, updateState]);
 
   useEffect(() => {
-    const tick = () => setClock(new Date().toLocaleTimeString('en-US', { hour12: false }));
+    const tick = () => setClock(new Date().toLocaleTimeString('en-US', { hour12: true }));
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
@@ -103,27 +103,27 @@ export default function TopBar() {
   };
 
   return (
-    <div className="bg-card border-b border-gray-800 select-none flex-shrink-0" style={{ height: '20vh', minHeight: 140 }}>
+    <div className="bg-card border-b border-gray-800 select-none flex-shrink-0" style={{ height: '15vh', minHeight: 110 }}>
       <div className="flex items-stretch h-full px-4 gap-4">
 
         {/* Left: brand + connection + clock */}
-        <div className="flex flex-col justify-center gap-2 flex-shrink-0 pr-4 border-r border-gray-800/60">
-          <span className="text-lg font-bold tracking-widest text-blue-400 uppercase">
+        <div className="flex flex-col justify-start pt-1 gap-0.5 flex-shrink-0 pr-6 border-r border-gray-800/60">
+          <span className="text-7xl font-bold tracking-widest text-blue-400 uppercase leading-none">
             DIABLO DAQ
           </span>
-          <div className="flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full ${isFullyConnected ? 'bg-green-500' : isConnected ? 'bg-yellow-500' : 'bg-red-500'}`} />
-            <span className="text-base text-gray-300 font-semibold">
+          <div className="flex items-center gap-3">
+            <div className={`w-5 h-5 rounded-full ${isFullyConnected ? 'bg-green-500' : isConnected ? 'bg-yellow-500' : 'bg-red-500'}`} />
+            <span className="text-3xl text-gray-300 font-semibold">
               {isFullyConnected ? 'Connected' : isConnected ? 'WS Only' : 'Disconnected'}
             </span>
           </div>
-          <span className="text-lg font-mono text-gray-200 tabular-nums font-bold">{clock}</span>
+          <span className="text-5xl font-mono text-gray-200 tabular-nums font-bold leading-tight">{clock}</span>
         </div>
 
         {/* Center: pressure bars — dominant */}
-        <div className="flex-1 flex items-stretch gap-1 py-2 min-w-0 overflow-visible">
+        <div className="flex-1 flex items-stretch justify-center gap-20 py-1 min-w-0 overflow-visible">
           {PRESSURE_BARS.map(({ label, entity, nop, meop, color }) => (
-            <div key={entity} className="flex-1 min-w-0 h-full overflow-visible">
+            <div key={entity} className="min-w-0 h-full overflow-visible" style={{ width: '9%', maxWidth: 110 }}>
               <PressureBar
                 label={label}
                 value={getSensorValue(entity, 'pressure_psi')}
@@ -136,18 +136,18 @@ export default function TopBar() {
         {/* Right: state + abort */}
         <div className="flex items-center gap-6 flex-shrink-0 pl-4 border-l border-gray-800/60">
           <div className="flex flex-col items-center gap-2">
-            <span className="text-base text-gray-400 uppercase tracking-widest font-bold">STATE</span>
-            <span className={`text-5xl font-bold font-mono tracking-wider ${stateColor}`}>
+            <span className="text-lg text-gray-400 uppercase tracking-widest font-bold">STATE</span>
+            <span className={`text-6xl font-bold font-mono tracking-wider ${stateColor}`}>
               {currentStateName}
             </span>
           </div>
 
           {/* Debug mode toggle */}
-          <div className="flex flex-col items-center gap-1 border-l border-gray-800/60 pl-6">
-            <span className="text-sm text-gray-500 uppercase tracking-widest font-semibold">MODE</span>
+          <div className="flex flex-col items-center gap-1.5 border-l border-gray-800/60 pl-6">
+            <span className="text-base text-gray-500 uppercase tracking-widest font-semibold">MODE</span>
             <button
               onClick={() => setDebugMode(!debugMode)}
-              className={`px-5 py-3 rounded-md text-base font-bold uppercase tracking-wider border transition-all ${
+              className={`px-6 py-3.5 rounded-md text-lg font-bold uppercase tracking-wider border transition-all ${
                 debugMode
                   ? 'bg-yellow-800/60 border-yellow-600 text-yellow-300 shadow-[0_0_6px_rgba(234,179,8,0.3)]'
                   : 'bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-500'
@@ -161,15 +161,15 @@ export default function TopBar() {
           <div className="flex flex-col gap-3">
             <button
               onClick={handleAbort}
-              className="px-8 py-4 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border-2 border-amber-600
-                         text-white font-bold text-lg rounded-lg tracking-wider transition-colors"
+              className="px-10 py-4 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border-2 border-amber-600
+                         text-white font-bold text-xl rounded-lg tracking-wider transition-colors"
             >
               ABORT
             </button>
             <button
               onClick={handleEmergencyAbort}
-              className="px-8 py-4 bg-red-700 hover:bg-red-600 active:bg-red-800 border-2 border-red-500
-                         text-white font-bold text-lg rounded-lg tracking-wider transition-colors
+              className="px-10 py-4 bg-red-700 hover:bg-red-600 active:bg-red-800 border-2 border-red-500
+                         text-white font-bold text-xl rounded-lg tracking-wider transition-colors
                          shadow-[0_0_8px_rgba(239,68,68,0.4)]"
             >
               E-ABORT

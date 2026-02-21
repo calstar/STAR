@@ -57,7 +57,7 @@ const DEFAULT_CONFIG: ConfigData = {
     pt_board: { type: 'PT', ip: '192.168.2.101', send_port: 5006, num_sensors: 10, board_id: 1, enabled: true, active_connectors: [1,2,3,4,5,6,7] },
     actuator_board: { type: 'ACTUATOR', ip: '192.168.2.201', send_port: 5006, listen_port: 5005, num_actuators: 10, num_sensors: 10, board_id: 2, enabled: true, active_connectors: [] },
   },
-  sensor_roles: { 'Fuel Upstream': 1, 'GSE Low': 2, 'GSE Mid': 3, 'Fuel Downstream': 4, 'Ox Upstream': 5, 'GN2 Regulated': 6, 'Ox Downstream': 7 },
+  sensor_roles: { 'Fuel Upstream': 1, 'GSE Low': 2, 'Fuel Downstream': 4, 'Ox Upstream': 5, 'GN2 Regulated': 6, 'Ox Downstream': 7 },
   actuator_roles: { 'LOX Main': ['NO', 1], 'Fuel Vent': ['NC', 2], 'Fuel Press': ['NC', 3], 'GSE Low Vent': ['NC', 5], 'LOX Vent': ['NC', 6], 'Fuel Main': ['NO', 7], 'LOX Press': ['NO', 8] },
   calibration: { enabled: true, orchestrator: { min_points: 5, target_points: 15, max_points: 30, min_r_squared: 0.95, target_r_squared: 0.99, rls_forgetting_factor: 0.995, drift_glr_threshold: 3.0, auto_save_interval_sec: 300, status_interval_sec: 30 } },
   pressure_limits: { GN2: { THRESH: 550, NOP: 900, MEOP: 950, POP: 1000 }, ETH: { THRESH: 550, NOP: 600, MEOP: 650, POP: 750 }, LOX: { THRESH: 550, NOP: 600, MEOP: 650, POP: 750 } },

@@ -117,7 +117,7 @@ export class DemoModeGenerator {
     // Typical ADC range: 1000000-2000000 for pressure sensors
     this.baseValues.set(1, 1500000); // Fuel Upstream
     this.baseValues.set(2, 1200000); // GSE Low
-    this.baseValues.set(3, 1300000); // GSE Mid
+    this.baseValues.set(3, 1300000); // PT_CH3 (board 1)
     this.baseValues.set(4, 1400000); // Fuel Downstream
     this.baseValues.set(5, 1600000); // Ox Upstream
     this.baseValues.set(6, 1100000); // GN2 Regulated
@@ -160,7 +160,7 @@ export class DemoModeGenerator {
     const entityMap: Record<number, string> = {
       1: 'PT_Cal.Fuel_Upstream',
       2: 'PT_Cal.GSE_Low',
-      3: 'PT_Cal.GSE_Mid',
+      3: 'PT_Cal.PT_CH3',
       4: 'PT_Cal.Fuel_Downstream',
       5: 'PT_Cal.Ox_Upstream',
       6: 'PT_Cal.GN2_Regulated',

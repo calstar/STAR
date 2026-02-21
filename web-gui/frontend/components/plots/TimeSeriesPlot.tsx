@@ -140,7 +140,9 @@ export default function TimeSeriesPlot({
           ticks:     { show: true, stroke: '#777', width: 1 },
           font:      'bold 12px monospace',
           labelFont: '12px system-ui',
-          gap:       4,
+          gap:       8,
+          space:     120,
+          values:    (_u, vals) => vals.map((v) => (v == null ? '' : Math.round(v).toString())),
         },
         {
           label:     yLabel,
@@ -149,8 +151,9 @@ export default function TimeSeriesPlot({
           ticks:     { show: true, stroke: '#777', width: 1 },
           font:      'bold 12px monospace',
           labelFont: '12px system-ui',
-          size:      72,
+          size:      60,
           gap:       5,
+          space:     80,
           values:    (_u, vals) => vals.map((v) => (v == null ? '' : fmtAxisVal(v))),
         },
       ],
@@ -165,7 +168,7 @@ export default function TimeSeriesPlot({
       ],
       cursor: { show: true, x: true, y: false },
       legend: {
-        show:    false,
+        show: false,
       },
       padding: [8, 12, 0, 0] as [number, number, number, number],
     });
@@ -390,10 +393,9 @@ export default function TimeSeriesPlot({
       className={`w-full h-full flex flex-col min-h-0 min-w-0 ${height ? '' : 'flex-1'} ${className ?? ''}`}
       style={height ? { height: height + 32 } : { height: '100%', width: '100%' }}
     >
-      {/* Title bar */}
-      <div className="flex items-center justify-between mb-1 px-1 flex-shrink-0">
-        <h3 className="text-sm font-bold text-gray-100 truncate">{title}</h3>
-        <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+      {/* Connection indicator */}
+      <div className="flex items-center justify-end mb-1 px-1 flex-shrink-0">
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           <div className={`w-2 h-2 rounded-full ${actuallyConnected ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
           <span className="text-[11px] font-mono text-gray-500">{actuallyConnected ? 'Live' : 'No signal'}</span>
         </div>
@@ -424,6 +426,18 @@ export default function TimeSeriesPlot({
             Initializing plot...
           </div>
         )}
+      </div>
+
+      {/* Legend */}
+      <div className="flex flex-wrap gap-x-5 gap-y-1.5 px-2 py-2 flex-shrink-0">
+        {entities.map((e, i) => (
+          <div key={e} className="flex items-center gap-2">
+            <span className="w-4 h-[3px] rounded-full inline-block" style={{ background: colors[i] || '#3498DB' }} />
+            <span className="text-sm font-semibold font-mono text-gray-300">
+              {labels?.[i] ?? e.split('.').pop() ?? e}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );

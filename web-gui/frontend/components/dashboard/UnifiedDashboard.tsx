@@ -35,15 +35,15 @@ const ALL_ACTUATORS = [
 
 // Pressure sensors for plotting
 const PRESSURE_SENSORS = [
-  { label: 'GN2 Reg', entity: 'PT_Cal.GN2_Regulated', color: '#27AE60' },
-  { label: 'Fuel Up', entity: 'PT_Cal.Fuel_Upstream', color: '#3498DB' },
-  { label: 'Fuel Down', entity: 'PT_Cal.Fuel_Downstream', color: '#2980B9' },
-  { label: 'LOX Up', entity: 'PT_Cal.Ox_Upstream', color: '#E74C3C' },
-  { label: 'LOX Down', entity: 'PT_Cal.Ox_Downstream', color: '#C0392B' },
-  { label: 'GSE Low', entity: 'PT_Cal.GSE_Low', color: '#F39C12' },
-  { label: 'GSE Mid', entity: 'PT_Cal.GSE_Mid', color: '#9B59B6' },
-  { label: 'GSE High', entity: 'PT_Cal.GSE_High', color: '#8E44AD' },
-  { label: 'GN2 High', entity: 'PT_Cal.GN2_High', color: '#1ABC9C' },
+  { label: 'GN2 Reg',  entity: 'PT_Cal.GN2_Regulated',  color: '#8E44AD' },
+  { label: 'Fuel Up',  entity: 'PT_Cal.Fuel_Upstream',   color: '#FF8C3A' },
+  { label: 'Fuel Down',entity: 'PT_Cal.Fuel_Downstream', color: '#CC2200' },
+  { label: 'LOX Up',   entity: 'PT_Cal.Ox_Upstream',     color: '#85C1E9' },
+  { label: 'LOX Down', entity: 'PT_Cal.Ox_Downstream',   color: '#2471A3' },
+  { label: 'GSE Low',  entity: 'PT_Cal.GSE_Low',         color: '#1E8449' },
+  { label: 'GSE Mid',  entity: 'PT_Cal.GSE_Mid',         color: '#2ECC71' },
+  { label: 'GSE High', entity: 'PT_Cal.GSE_High',        color: '#8ACE00' },
+  { label: 'GN2 High', entity: 'PT_Cal.GN2_High',        color: '#C39BD3' },
 ];
 
 // Time window options for history plotting
@@ -137,7 +137,7 @@ export default function UnifiedDashboard() {
 
           {/* Actuators in 4x4 grid */}
           <div className="bg-card rounded-xl border border-gray-800 p-4 flex-shrink-0 overflow-auto">
-            <h2 className="text-sm font-bold tracking-widest text-text-muted uppercase mb-4">
+            <h2 className="text-base font-bold tracking-widest text-text-muted uppercase mb-4">
               Actuator Controls
             </h2>
             <div className="grid grid-cols-4 gap-3 auto-rows-fr">

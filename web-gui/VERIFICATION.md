@@ -8,7 +8,7 @@
 - [ ] Components registered with correct entity names:
   - `PT_Cal.Fuel_Upstream` (channel 1)
   - `PT_Cal.GSE_Low` (channel 2)
-  - `PT_Cal.GSE_Mid` (channel 3)
+  - `PT_Cal.GSE_Mid` (GSE Mid, board 2 connector 4)
   - `PT_Cal.Fuel_Downstream` (channel 4)
   - `PT_Cal.Ox_Upstream` (channel 5)
   - `PT_Cal.GN2_Regulated` (channel 6)
@@ -75,7 +75,8 @@ Offset  Size  Type      Field
 ### PT Sensors (channels 1-10)
 - Channel 1: `PT_Cal.Fuel_Upstream`
 - Channel 2: `PT_Cal.GSE_Low`
-- Channel 3: `PT_Cal.GSE_Mid`
+- Channel 3: `PT_Cal.PT_CH3` (board 1)
+- GSE Mid: `PT_Cal.GSE_Mid` (board 2 connector 4)
 - Channel 4: `PT_Cal.Fuel_Downstream`
 - Channel 5: `PT_Cal.Ox_Upstream`
 - Channel 6: `PT_Cal.GN2_Regulated`

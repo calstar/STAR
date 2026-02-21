@@ -2,7 +2,7 @@
 
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { SystemState, MessageType, CommandPayload, StateUpdate } from '@/lib/types';
+import { SystemState, CommandPayload } from '@/lib/types';
 import { useEffect, useState, useMemo } from 'react';
 
 const STATE_NAMES: Record<SystemState, string> = {
@@ -26,52 +26,97 @@ const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.ENGINE_ABORT]: 'ENGINE ABORT',
   [SystemState.GSE_ABORT]: 'GSE ABORT',
   [SystemState.EMERGENCY_ABORT]: 'EMERGENCY ABORT',
-  // Note: ABORT is an alias for EMERGENCY_ABORT (same enum value), so we don't need to add it separately
 };
 
-const NW = 220; // node width - much bigger
-const NH = 88; // node height - much bigger
-const COLS = 4; // columns in grid
-const COL_GAP = 280; // much wider spacing
-const ROW_GAP = 140; // much taller spacing
-const PAD = 40; // more padding
+const NW = 320; // node width
+const NH = 115; // node height
+const COLS = 4;
+const COL_GAP = 380;
+const ROW_GAP = 165;
+const PAD = 40;
 
-// Grid layout: [row, col] 0-based - includes ALL states
+// Grid layout: [row, col] 0-based
 const STATE_POS: Partial<Record<SystemState, [number, number]>> = {
-  [SystemState.DEBUG]:         [0, 0],
-  [SystemState.IDLE]:          [0, 1],
-  [SystemState.ARMED]:         [0, 2],
-  [SystemState.CALIBRATE]:     [0, 3],
-  [SystemState.FUEL_FILL]:     [1, 0],
-  [SystemState.OX_FILL]:       [1, 1],
-  [SystemState.READY]:         [1, 2],
-  [SystemState.GN2_LOW_PRESS]: [2, 0],
-  [SystemState.GN2_VENT]:      [2, 1],
-  [SystemState.FUEL_PRESS]:    [2, 2],
-  [SystemState.FUEL_VENT]:     [2, 3],
-  [SystemState.OX_PRESS]:      [3, 0],
-  [SystemState.OX_VENT]:       [3, 1],
-  [SystemState.GN2_HIGH_PRESS]:[3, 2],
-  [SystemState.GN2_HIGH_VENT]: [3, 3],
-  [SystemState.FIRE]:          [4, 1],
-  [SystemState.VENT]:          [4, 0],
+  [SystemState.DEBUG]:          [0, 0],
+  [SystemState.IDLE]:           [0, 1],
+  [SystemState.ARMED]:          [0, 2],
+  [SystemState.CALIBRATE]:      [0, 3],
+  [SystemState.FUEL_FILL]:      [1, 0],
+  [SystemState.OX_FILL]:        [1, 1],
+  [SystemState.READY]:          [1, 2],
+  [SystemState.GN2_LOW_PRESS]:  [2, 0],
+  [SystemState.GN2_VENT]:       [2, 1],
+  [SystemState.FUEL_PRESS]:     [2, 2],
+  [SystemState.FUEL_VENT]:      [2, 3],
+  [SystemState.OX_PRESS]:       [3, 0],
+  [SystemState.OX_VENT]:        [3, 1],
+  [SystemState.GN2_HIGH_PRESS]: [3, 2],
+  [SystemState.GN2_HIGH_VENT]:  [3, 3],
+  [SystemState.FIRE]:           [4, 1],
+  [SystemState.VENT]:           [4, 0],
   [SystemState.ENGINE_ABORT]:   [4, 2],
-  [SystemState.GSE_ABORT]:     [4, 3],
-  [SystemState.EMERGENCY_ABORT]: [5, 1],
-  // Note: ABORT is an alias for EMERGENCY_ABORT (same enum value), so we don't need to add it separately
+  [SystemState.GSE_ABORT]:      [4, 3],
+  [SystemState.EMERGENCY_ABORT]:[5, 1],
 };
+
+/**
+ * Hardcoded state transitions derived from PressureStateMachine.cpp.
+ * Used as the permanent fallback so arrows are always visible even when
+ * the backend hasn't loaded the CSV yet.
+ */
+interface Transition { from: SystemState; to: SystemState; }
+
+const STATIC_TRANSITIONS: Transition[] = [
+  // Main forward sequence
+  { from: SystemState.IDLE,           to: SystemState.ARMED },
+  { from: SystemState.IDLE,           to: SystemState.DEBUG },
+  { from: SystemState.DEBUG,          to: SystemState.IDLE },
+  { from: SystemState.ARMED,          to: SystemState.IDLE },
+  { from: SystemState.ARMED,          to: SystemState.FUEL_FILL },
+  { from: SystemState.ARMED,          to: SystemState.CALIBRATE },
+  { from: SystemState.FUEL_FILL,      to: SystemState.OX_FILL },
+  { from: SystemState.OX_FILL,        to: SystemState.GN2_LOW_PRESS },
+  // GN2 low-pressure regulation loop
+  { from: SystemState.GN2_LOW_PRESS,  to: SystemState.FUEL_PRESS },
+  { from: SystemState.GN2_LOW_PRESS,  to: SystemState.GN2_VENT },
+  { from: SystemState.GN2_VENT,       to: SystemState.GN2_LOW_PRESS },
+  // Fuel pressurisation loop
+  { from: SystemState.FUEL_PRESS,     to: SystemState.OX_PRESS },
+  { from: SystemState.FUEL_PRESS,     to: SystemState.FUEL_VENT },
+  { from: SystemState.FUEL_VENT,      to: SystemState.FUEL_PRESS },
+  // Ox pressurisation loop
+  { from: SystemState.OX_PRESS,       to: SystemState.GN2_HIGH_PRESS },
+  { from: SystemState.OX_PRESS,       to: SystemState.OX_VENT },
+  { from: SystemState.OX_VENT,        to: SystemState.OX_PRESS },
+  // GN2 high-pressure regulation loop
+  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.CALIBRATE },
+  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.GN2_HIGH_VENT },
+  { from: SystemState.GN2_HIGH_VENT,  to: SystemState.GN2_HIGH_PRESS },
+  // Final sequence
+  { from: SystemState.CALIBRATE,      to: SystemState.READY },
+  { from: SystemState.READY,          to: SystemState.FIRE },
+  { from: SystemState.FIRE,           to: SystemState.VENT },
+  { from: SystemState.VENT,           to: SystemState.IDLE },
+];
+
+// States reachable from *any* state (emergencies + vent)
+const ALWAYS_REACHABLE: SystemState[] = [
+  SystemState.ENGINE_ABORT,
+  SystemState.GSE_ABORT,
+  SystemState.EMERGENCY_ABORT,
+  SystemState.VENT,
+  SystemState.DEBUG,
+];
 
 function nodeX(state: SystemState) { return PAD + (STATE_POS[state]?.[1] ?? 0) * COL_GAP; }
 function nodeY(state: SystemState) { return PAD + (STATE_POS[state]?.[0] ?? 0) * ROW_GAP; }
-function nodeCX(state: SystemState) { return nodeX(state) + NW / 2; }
-function nodeCY(state: SystemState) { return nodeY(state) + NH / 2; }
-
-interface Transition { from: SystemState; to: SystemState; }
 
 /**
- * Draw a clean orthogonal arrow between two nodes.
+ * Draw an orthogonal elbow arrow between two nodes.
+ * `sideOffset` (in pixels) shifts the exit/entry point perpendicular to the
+ * dominant axis, separating bidirectional arrow pairs so they don't overlap.
  */
-function arrowPath(from: SystemState, to: SystemState): string {
+function arrowPath(from: SystemState, to: SystemState, sideOffset = 0): string {
   const fx = nodeX(from); const fy = nodeY(from);
   const tx = nodeX(to);   const ty = nodeY(to);
   const fcx = fx + NW / 2; const fcy = fy + NH / 2;
@@ -83,20 +128,24 @@ function arrowPath(from: SystemState, to: SystemState): string {
   let sx: number, sy: number, ex: number, ey: number;
 
   if (Math.abs(dy) >= Math.abs(dx)) {
+    // Predominantly vertical — exit/enter through top/bottom; offset horizontally
+    const ox = sideOffset;
     if (dy > 0) {
-      sx = fcx; sy = fy + NH;
-      ex = tcx; ey = ty;
+      sx = fcx + ox; sy = fy + NH;
+      ex = tcx + ox; ey = ty;
     } else {
-      sx = fcx; sy = fy;
-      ex = tcx; ey = ty + NH;
+      sx = fcx + ox; sy = fy;
+      ex = tcx + ox; ey = ty + NH;
     }
   } else {
+    // Predominantly horizontal — exit/enter through left/right; offset vertically
+    const oy = sideOffset;
     if (dx > 0) {
-      sx = fx + NW; sy = fcy;
-      ex = tx;      ey = tcy;
+      sx = fx + NW; sy = fcy + oy;
+      ex = tx;      ey = tcy + oy;
     } else {
-      sx = fx;      sy = fcy;
-      ex = tx + NW; ey = tcy;
+      sx = fx;      sy = fcy + oy;
+      ex = tx + NW; ey = tcy + oy;
     }
   }
 
@@ -113,20 +162,17 @@ function arrowPath(from: SystemState, to: SystemState): string {
 function StateNode({
   state, isActive, isReachable, onClick,
 }: { state: SystemState; isActive: boolean; isReachable: boolean; onClick: () => void; }) {
-    const isEmergency = state === SystemState.ENGINE_ABORT || state === SystemState.GSE_ABORT || state === SystemState.EMERGENCY_ABORT || state === SystemState.VENT;
+  const isEmergency = state === SystemState.ENGINE_ABORT
+    || state === SystemState.GSE_ABORT
+    || state === SystemState.EMERGENCY_ABORT
+    || state === SystemState.VENT;
   const isClickable = isReachable || isActive || isEmergency;
   const name = STATE_NAMES[state] ?? 'UNKNOWN';
   const x = nodeX(state); const y = nodeY(state);
 
-  const fill = isActive    ? '#2563EB'
-             : isReachable  ? '#059669'
-             : isEmergency  ? '#7F1D1D'
-             : '#1F2937';
-  const stroke = isActive   ? '#60A5FA'
-               : isReachable ? '#34D399'
-               : isEmergency ? '#EF4444'
-               : '#374151';
-  const sw = isActive || isReachable || isEmergency ? 2 : 1.5;
+  const fill   = isActive    ? '#2563EB' : isReachable ? '#059669' : isEmergency ? '#7F1D1D' : '#1F2937';
+  const stroke = isActive    ? '#60A5FA' : isReachable ? '#34D399' : isEmergency ? '#EF4444' : '#374151';
+  const sw     = (isActive || isReachable || isEmergency) ? 2 : 1.5;
 
   return (
     <g
@@ -147,7 +193,7 @@ function StateNode({
         x={x + NW / 2} y={y + NH / 2 + 2}
         textAnchor="middle" dominantBaseline="middle"
         fill={isEmergency ? '#FCA5A5' : 'white'}
-        fontSize={18} fontWeight={isActive || isEmergency ? 700 : 500}
+        fontSize={32} fontWeight={(isActive || isEmergency) ? 700 : 600}
         fontFamily="ui-monospace, monospace" letterSpacing="0.05em"
         style={{ pointerEvents: 'none', userSelect: 'none' }}
       >
@@ -158,81 +204,63 @@ function StateNode({
 }
 
 export default function StateMachineDiagram() {
-  const currentState = useSensorStore((s) => s.currentState);
-  const updateState = useSensorStore((s) => s.updateState);
-  const ws = getWebSocketClient();
-  const [transitions, setTransitions] = useState<Transition[]>([]);
+  const currentState  = useSensorStore((s) => s.currentState);
+  const ws            = getWebSocketClient();
+  const [backendTransitions, setBackendTransitions] = useState<Transition[]>([]);
 
-  // Fetch transitions from backend on mount
+  // Request transitions from backend on mount; fall back to STATIC_TRANSITIONS if unavailable
   useEffect(() => {
     ws.connect();
+
     const handleTransitions = (payload: unknown) => {
       const data = payload as { transitions: Transition[] };
-      if (data && data.transitions && Array.isArray(data.transitions)) {
-        setTransitions(data.transitions);
+      if (data?.transitions && Array.isArray(data.transitions) && data.transitions.length > 0) {
+        setBackendTransitions(data.transitions);
         console.log(`📋 Loaded ${data.transitions.length} state transitions from backend`);
-      } else {
-        console.warn('⚠️ Invalid transitions payload:', payload);
       }
     };
 
-    // Listen for state_transitions message (custom message type, not in MessageType enum)
     const unsub = ws.on('state_transitions', handleTransitions);
-    
-    // Request transitions via WebSocket after connection is ready
+
     const requestTransitions = () => {
-      // Send as raw message (server handles 'get_state_transitions' message type)
-      (ws as any).send({
-        type: 'get_state_transitions',
-        timestamp: Date.now(),
-        payload: {},
-      });
-      console.log('📤 Requested state transitions from backend via WebSocket');
+      (ws as any).send({ type: 'get_state_transitions', timestamp: Date.now(), payload: {} });
     };
-    
-    // Request immediately if connected, otherwise wait a bit
+
     const timeoutId = setTimeout(() => {
       if (ws.isConnected()) {
         requestTransitions();
       } else {
-        // Wait for connection
         const checkConnection = setInterval(() => {
           if (ws.isConnected()) {
             clearInterval(checkConnection);
             requestTransitions();
           }
         }, 100);
-        // Cleanup after 5 seconds
         setTimeout(() => clearInterval(checkConnection), 5000);
       }
     }, 200);
 
-    return () => {
-      clearTimeout(timeoutId);
-      unsub();
-    };
+    return () => { clearTimeout(timeoutId); unsub(); };
   }, [ws]);
 
   const debugMode = useSensorStore((s) => s.debugMode);
-  
+
+  // Use backend transitions when available, otherwise fall back to hardcoded static transitions
+  const transitions = backendTransitions.length > 0 ? backendTransitions : STATIC_TRANSITIONS;
+
   const sendStateTransition = (targetState: SystemState) => {
     const effectiveState = currentState ?? SystemState.IDLE;
-    
-    // Validate transition - check if it's allowed
-    const isAllowed = transitions.some(t => t.from === effectiveState && t.to === targetState);
-    const isEmergency = targetState === SystemState.ENGINE_ABORT || targetState === SystemState.GSE_ABORT || targetState === SystemState.EMERGENCY_ABORT || targetState === SystemState.ABORT || targetState === SystemState.VENT;
-    const isDebug = targetState === SystemState.DEBUG;
+    const isAllowed  = transitions.some(t => t.from === effectiveState && t.to === targetState);
+    const isEmergency = ALWAYS_REACHABLE.includes(targetState);
+    const isDebug    = targetState === SystemState.DEBUG;
     const isInDebugMode = debugMode || effectiveState === SystemState.DEBUG;
-    
-    // Allow DEBUG state from any state, allow emergency states always, allow any transition in DEBUG mode, or if transition is explicitly allowed
+
     if (!isAllowed && !isEmergency && !isDebug && !isInDebugMode && effectiveState !== targetState) {
       console.warn(`⚠️ Invalid transition: ${STATE_NAMES[effectiveState]} → ${STATE_NAMES[targetState]}`);
       alert(`Invalid transition: Cannot go from ${STATE_NAMES[effectiveState]} to ${STATE_NAMES[targetState]}`);
       return;
     }
 
-    // Don't do optimistic update - let backend broadcast state update to all clients
-    // This ensures all panes/windows stay in sync
     const command: CommandPayload = {
       commandType: 'state_transition',
       data: { state: targetState },
@@ -240,30 +268,46 @@ export default function StateMachineDiagram() {
     ws.sendCommand(command);
   };
 
+  const effectiveState = currentState ?? SystemState.IDLE;
+
+  const reachableStates = useMemo(() => {
+    const set = new Set(
+      transitions
+        .filter(t => t.from === effectiveState && t.from !== t.to)
+        .map(t => t.to),
+    );
+    // Emergency states are always reachable
+    ALWAYS_REACHABLE.forEach(s => set.add(s));
+    if (debugMode || effectiveState === SystemState.DEBUG) {
+      Object.values(SystemState)
+        .filter((s) => typeof s === 'number')
+        .forEach((s) => set.add(s as SystemState));
+    }
+    return set;
+  }, [effectiveState, transitions, debugMode]);
+
+  // Build a set of pairs that have arrows in BOTH directions so we can offset them
+  const forwardTransitions = transitions.filter(
+    t => t.from === effectiveState && t.from !== t.to,
+  );
+  const reverseSet = new Set(
+    forwardTransitions
+      .filter(t => transitions.some(r => r.from === t.to && r.to === t.from))
+      .map(t => t.to),
+  );
+
+  // Emergency arrows from current state (always draw these separately)
+  const emergencyTargets = ALWAYS_REACHABLE.filter(
+    s => s !== effectiveState && STATE_POS[s] !== undefined,
+  );
+
   const states = Object.values(SystemState).filter((s) => typeof s === 'number') as SystemState[];
 
-  // SVG dimensions - ensure enough space for all states (6 rows: 0-5)
   const svgW = PAD * 2 + COLS * COL_GAP;
-  const svgH = PAD * 2 + 6 * ROW_GAP; // 6 rows for all states (0-5)
+  const svgH = PAD * 2 + 6 * ROW_GAP;
 
-  // Default to IDLE when no state has been received yet
-  const effectiveState = currentState ?? SystemState.IDLE;
-  
-  const reachableStates = useMemo(() => {
-    const fromTransitions = new Set(transitions.filter(t => t.from === effectiveState && t.from !== t.to).map(t => t.to));
-    // Always allow DEBUG state from any state
-    fromTransitions.add(SystemState.DEBUG);
-    // Always allow emergency states
-    fromTransitions.add(SystemState.ABORT);
-    fromTransitions.add(SystemState.VENT);
-    // In DEBUG mode, allow transitions to any state
-    if (debugMode || effectiveState === SystemState.DEBUG) {
-      Object.values(SystemState).filter((s) => typeof s === 'number').forEach((s) => {
-        fromTransitions.add(s as SystemState);
-      });
-    }
-    return fromTransitions;
-  }, [effectiveState, transitions, debugMode]);
+  // Offset (px) used to separate bidirectional arrow pairs
+  const BIDIR_OFFSET = 14;
 
   return (
     <div className="bg-card rounded-xl border border-gray-800 overflow-hidden flex flex-col h-full min-h-0">
@@ -272,43 +316,76 @@ export default function StateMachineDiagram() {
         <span className="text-sm font-mono">
           <span className="text-text-muted">CURRENT: </span>
           <span className="text-blue-400 font-bold">{STATE_NAMES[effectiveState]}</span>
-          <span className="text-text-muted ml-2">— click to transition</span>
         </span>
       </div>
 
-      <div className="p-4 overflow-auto bg-background min-h-0 flex-1">
-        <svg width={svgW} height={svgH} viewBox={`0 0 ${svgW} ${svgH}`}
-          style={{ display: 'block', overflow: 'visible', width: '100%', height: 'auto', maxHeight: '100%' }}
+      <div className="overflow-hidden bg-background min-h-0 flex-1 p-2">
+        <svg viewBox={`0 0 ${svgW} ${svgH}`}
+          style={{ display: 'block', width: '100%', height: '100%' }}
           preserveAspectRatio="xMidYMid meet">
           <defs>
-            <marker id="arr-green" markerWidth="16" markerHeight="16" refX="13" refY="5" orient="auto">
-              <path d="M0,0 L16,5 L0,10 Z" fill="#34D399" />
+            <marker id="arr-green" markerWidth="14" markerHeight="14" refX="12" refY="5" orient="auto">
+              <path d="M0,0 L14,5 L0,10 Z" fill="#34D399" />
             </marker>
-            <marker id="arr-red" markerWidth="16" markerHeight="16" refX="13" refY="5" orient="auto">
-              <path d="M0,0 L16,5 L0,10 Z" fill="#EF4444" />
+            <marker id="arr-red" markerWidth="14" markerHeight="14" refX="12" refY="5" orient="auto">
+              <path d="M0,0 L14,5 L0,10 Z" fill="#EF4444" />
+            </marker>
+            <marker id="arr-blue" markerWidth="14" markerHeight="14" refX="12" refY="5" orient="auto">
+              <path d="M0,0 L14,5 L0,10 Z" fill="#60A5FA" />
             </marker>
           </defs>
 
-          {/* Transition arrows from effective state */}
-          {transitions
-            .filter(t => t.from === effectiveState && t.from !== t.to)
+          {/* Normal transition arrows from the current state */}
+          {forwardTransitions
+            .filter(t => !ALWAYS_REACHABLE.includes(t.to))
             .map((t, i) => {
-              const isEmergency = t.to === SystemState.ENGINE_ABORT || t.to === SystemState.GSE_ABORT || t.to === SystemState.EMERGENCY_ABORT || t.to === SystemState.ABORT || t.to === SystemState.VENT;
+              const isBidir = reverseSet.has(t.to);
+              // Offset the "forward" arrow to one side so its return pair is visible
+              const offset  = isBidir ? -BIDIR_OFFSET : 0;
               return (
                 <path
-                  key={`${t.from}-${t.to}-${i}`}
-                  d={arrowPath(t.from, t.to)}
+                  key={`fwd-${t.from}-${t.to}-${i}`}
+                  d={arrowPath(t.from, t.to, offset)}
                   fill="none"
-                  stroke={isEmergency ? '#EF4444' : '#34D399'}
-                  strokeWidth={isEmergency ? 4 : 3.5}
-                  strokeDasharray={isEmergency ? '8 5' : undefined}
-                  markerEnd={isEmergency ? 'url(#arr-red)' : 'url(#arr-green)'}
+                  stroke="#34D399"
+                  strokeWidth={3}
+                  markerEnd="url(#arr-green)"
                   style={{ transition: 'all 0.2s' }}
                 />
               );
             })}
 
-          {/* State nodes */}
+          {/* Return arrows (states that can come BACK to current state) */}
+          {transitions
+            .filter(t => t.to === effectiveState && t.from !== effectiveState && !ALWAYS_REACHABLE.includes(t.from))
+            .map((t, i) => (
+              <path
+                key={`ret-${t.from}-${t.to}-${i}`}
+                d={arrowPath(t.to, t.from, BIDIR_OFFSET)}
+                fill="none"
+                stroke="#60A5FA"
+                strokeWidth={2}
+                strokeDasharray="6 4"
+                markerEnd="url(#arr-blue)"
+                style={{ transition: 'all 0.2s' }}
+              />
+            ))}
+
+          {/* Emergency arrows from current state */}
+          {emergencyTargets.map((target, i) => (
+            <path
+              key={`emg-${effectiveState}-${target}-${i}`}
+              d={arrowPath(effectiveState, target)}
+              fill="none"
+              stroke="#EF4444"
+              strokeWidth={3}
+              strokeDasharray="8 5"
+              markerEnd="url(#arr-red)"
+              style={{ transition: 'all 0.2s' }}
+            />
+          ))}
+
+          {/* State nodes — rendered last so they sit on top of arrows */}
           {states.map((state) => (
             <StateNode
               key={state}
@@ -334,6 +411,27 @@ export default function StateMachineDiagram() {
         <span className="flex items-center gap-2">
           <span className="w-5 h-4 rounded-sm inline-block" style={{ background: '#7F1D1D', border: '2px solid #EF4444' }} />
           <span className="text-text-muted font-semibold">Emergency (always active)</span>
+        </span>
+        <span className="flex items-center gap-3">
+          <svg width="36" height="12" style={{ display: 'inline-block' }}>
+            <line x1="0" y1="6" x2="28" y2="6" stroke="#34D399" strokeWidth="2.5" markerEnd="url(#arr-green)" />
+            <polygon points="28,3 36,6 28,9" fill="#34D399" />
+          </svg>
+          <span className="text-text-muted font-semibold">Next state</span>
+        </span>
+        <span className="flex items-center gap-3">
+          <svg width="36" height="12" style={{ display: 'inline-block' }}>
+            <line x1="0" y1="6" x2="28" y2="6" stroke="#60A5FA" strokeWidth="2" strokeDasharray="5 3" markerEnd="url(#arr-blue)" />
+            <polygon points="28,3 36,6 28,9" fill="#60A5FA" />
+          </svg>
+          <span className="text-text-muted font-semibold">Return path</span>
+        </span>
+        <span className="flex items-center gap-3">
+          <svg width="36" height="12" style={{ display: 'inline-block' }}>
+            <line x1="0" y1="6" x2="28" y2="6" stroke="#EF4444" strokeWidth="2.5" strokeDasharray="6 4" />
+            <polygon points="28,3 36,6 28,9" fill="#EF4444" />
+          </svg>
+          <span className="text-text-muted font-semibold">Emergency</span>
         </span>
       </div>
     </div>

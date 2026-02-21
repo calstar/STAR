@@ -8,7 +8,7 @@ import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 
 // Channel → role mapping from config.toml
-const CH_LABELS_PT = ['Fuel Up', 'GSE Low', 'GSE Mid', 'Fuel Dn', 'LOX Up', 'GN2 Reg', 'LOX Dn', 'GSE Hi', 'GN2 Hi', 'CH10'];
+const CH_LABELS_PT = ['Fuel Up', 'GSE Low', 'GSE MID', 'Fuel Dn', 'LOX Up', 'GN2 Reg', 'LOX Dn', 'GSE Hi', 'GN2 Hi', 'CH10'];
 
 export default function RawReadoutsPage() {
   const updateSensor = useSensorStore((state) => state.updateSensor);

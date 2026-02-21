@@ -16,7 +16,7 @@ import {
 const PT_CHANNELS: { id: number; role: string; entity: string; calEntity: string }[] = [
   { id: 1,  role: 'Fuel Upstream',   entity: 'PT.Fuel_Upstream',   calEntity: 'PT_Cal.Fuel_Upstream'  },
   { id: 2,  role: 'GSE Low',         entity: 'PT.GSE_Low',         calEntity: 'PT_Cal.GSE_Low'        },
-  { id: 3,  role: 'GSE Mid',         entity: 'PT.GSE_Mid',         calEntity: 'PT_Cal.GSE_Mid'        },
+  { id: 3,  role: 'GSE Mid',       entity: 'PT.GSE_Mid',         calEntity: 'PT_Cal.GSE_Mid'        },
   { id: 4,  role: 'Fuel Downstream', entity: 'PT.Fuel_Downstream', calEntity: 'PT_Cal.Fuel_Downstream'},
   { id: 5,  role: 'Ox Upstream',     entity: 'PT.Ox_Upstream',     calEntity: 'PT_Cal.Ox_Upstream'    },
   { id: 6,  role: 'GN2 Regulated',   entity: 'PT.GN2_Regulated',   calEntity: 'PT_Cal.GN2_Regulated'  },

@@ -48,73 +48,43 @@ export class DAQDirectClient extends EventEmitter {
       return true;
     }
 
-    try {
-      console.log(`🔌 Setting up UDP listener (EXACT combined_gui.py implementation) on ${this.bindAddress}:${this.port}`);
-
-      // Use SO_REUSEADDR and SO_REUSEPORT to allow multiple processes to bind to port 5006
-      // This allows both DAQ Bridge and backend to receive UDP packets simultaneously
-      // SO_REUSEPORT (Linux) allows true port sharing - both processes receive packets
+    return new Promise((resolve) => {
       try {
-        this.udpSocket = createSocket({
-          type: 'udp4',
-          reuseAddr: true,  // SO_REUSEADDR - allows binding even if port is in use
+        console.log(`🔌 Setting up UDP listener on ${this.bindAddress}:${this.port}`);
+
+        this.udpSocket = createSocket({ type: 'udp4', reuseAddr: true });
+        this.udpSocket.setMaxListeners(100);
+
+        this.udpSocket.on('message', (data: Buffer, rinfo: any) => {
+          if (!(this as any).hasReceivedPacket) {
+            console.log(`📥 FIRST UDP PACKET received: ${data.length} bytes from ${rinfo.address}:${rinfo.port}`);
+            (this as any).hasReceivedPacket = true;
+          }
+          this.handlePacket(data, rinfo.address);
         });
 
-        // CRITICAL: Set SO_REUSEPORT for true port sharing (Linux only)
-        // This allows both DAQ Bridge and backend to receive packets on port 5006
-        const handle = (this.udpSocket as any)._handle;
-        if (process.platform === 'linux' && handle && handle.setOption) {
-          try {
-            // SO_REUSEPORT = 15 on Linux (from /usr/include/asm-generic/socket.h)
-            // This allows multiple processes to bind to the same port
-            handle.setOption(15, 1);
-            console.log('   ✅ SO_REUSEPORT enabled - sharing port 5006 with DAQ Bridge');
-            console.log('   📡 Both DAQ Bridge and backend will receive UDP packets');
-          } catch (e) {
-            console.warn('   ⚠️ SO_REUSEPORT not available - only one process can bind to port 5006');
-            console.warn('   💡 Solution: Stop DAQ Bridge or use UDP forwarding');
+        this.udpSocket.on('error', (error: Error) => {
+          const err = error as any;
+          console.error(`❌ UDP socket error: ${err.code} — ${err.message}`);
+          if (err.code === 'EADDRINUSE') {
+            console.error('   Port 5006 is in use. Stop DAQ Bridge first: kill $(pgrep -f daq_bridge)');
           }
-        } else if (process.platform !== 'linux') {
-          console.warn('   ⚠️ SO_REUSEPORT only available on Linux');
-          console.warn('   💡 On non-Linux systems, only one process can bind to port 5006');
-        }
-      } catch (e) {
-        // Fallback to regular socket
-        this.udpSocket = createSocket('udp4');
-        console.warn('   ⚠️ Failed to set socket options:', e);
+          this._connected = false;
+          resolve(false);
+        });
+
+        this.udpSocket.bind(this.port, this.bindAddress, () => {
+          console.log(`✅ UDP listener bound to ${this.bindAddress}:${this.port}`);
+          console.log('   📡 Receiving DiabloAvionics packets directly from boards');
+          this._connected = true;
+          this.emit('connected');
+          resolve(true);
+        });
+      } catch (error) {
+        console.error('❌ Failed to set up UDP listener:', error);
+        resolve(false);
       }
-
-      this.udpSocket.setMaxListeners(100);
-
-      this.udpSocket.on('message', (data: Buffer, rinfo: any) => {
-        // Log first few packets to confirm we're receiving data
-        if (!(this as any).hasReceivedPacket) {
-          console.log(`📥 FIRST UDP PACKET received: ${data.length} bytes from ${rinfo.address}:${rinfo.port}`);
-          (this as any).hasReceivedPacket = true;
-        }
-        this.handlePacket(data, rinfo.address);
-      });
-
-      this.udpSocket.on('error', (error: Error) => {
-        const err = error as any;
-        console.error('❌ UDP socket error:', err.code, err.message);
-      });
-
-      // Bind with reuseAddr - this should work even if DAQ Bridge is using the port
-      // On Linux with SO_REUSEPORT, both processes will receive packets
-      this.udpSocket.bind(this.port, this.bindAddress, () => {
-        console.log(`✅ UDP listener bound to ${this.bindAddress}:${this.port}`);
-        console.log('   📡 Receiving DiabloAvionics packets directly from boards');
-        console.log('   ✅ Sharing port with DAQ Bridge (SO_REUSEADDR/SO_REUSEPORT)');
-        this._connected = true;
-        this.emit('connected');
-      });
-
-      return true;
-    } catch (error) {
-      console.error('❌ Failed to set up UDP listener:', error);
-      return false;
-    }
+    });
   }
 
   private parsePacketHeader(data: Buffer): { packetType: number; version: number; timestamp: number } | null {

@@ -27,12 +27,10 @@ export default function GSEGraphsPage() {
   // Sidebar pressure PTs
   const loNamed  = useSensorValue('PT_Cal.GSE_Low',   'pressure_psi');
   const loCh     = useSensorValue('PT_Cal.PT_CH2',    'pressure_psi');
-  const midNamed = useSensorValue('PT_Cal.GSE_Mid',   'pressure_psi');
-  const midCh    = useSensorValue('PT_Cal.PT_CH3',    'pressure_psi');
+  const mid = useSensorValue('PT_Cal.GSE_Mid', 'pressure_psi');
   const hiNamed  = useSensorValue('PT_Cal.GSE_High',  'pressure_psi');
   const hiCh     = useSensorValue('PT_Cal.PT_CH8',    'pressure_psi');
   const lo       = loNamed  ?? loCh;
-  const mid      = midNamed ?? midCh;
   const hi       = hiNamed  ?? hiCh;
 
   return (
@@ -46,7 +44,7 @@ export default function GSEGraphsPage() {
       <div className="flex-shrink-0">
         <SensorReadoutStrip sensors={[
           { label: 'GSE Low',  entity: 'PT_Cal.PT_CH2', component: 'pressure_psi', color: '#F39C12' },
-          { label: 'GSE Mid',  entity: 'PT_Cal.PT_CH3', component: 'pressure_psi', color: '#9B59B6' },
+          { label: 'GSE MID',  entity: 'PT_Cal.GSE_Mid', component: 'pressure_psi', color: '#9B59B6' },
           { label: 'GSE High', entity: 'PT_Cal.PT_CH8', component: 'pressure_psi', color: '#8E44AD' },
         ]} />
       </div>
@@ -58,8 +56,8 @@ export default function GSEGraphsPage() {
           <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0" style={{ minHeight: '300px' }}>
             <TimeSeriesPlot
               title="GSE Pressures (PSI)"
-              entities={['PT_Cal.PT_CH2','PT_Cal.PT_CH3','PT_Cal.PT_CH8']}
-              labels={['GSE Low','GSE Mid','GSE High']}
+              entities={['PT_Cal.PT_CH2','PT_Cal.GSE_Mid','PT_Cal.PT_CH8']}
+              labels={['GSE Low','GSE MID','GSE High']}
               component="pressure_psi"
               colors={['#F39C12','#9B59B6','#8E44AD']}
               yLabel="Pressure (PSI)"

@@ -113,13 +113,13 @@ function GSETab() {
     <div className="flex flex-col h-full gap-2">
       <div className="flex gap-6 px-1 flex-shrink-0">
         <ValPill label="GSE Lo"  entity="PT_Cal.PT_CH2" color="#F39C12" />
-        <ValPill label="GSE Mid" entity="PT_Cal.PT_CH3" color="#9B59B6" />
+        <ValPill label="GSE MID" entity="PT_Cal.GSE_Mid" color="#9B59B6" />
         <ValPill label="GSE Hi"  entity="PT_Cal.PT_CH8" color="#8E44AD" />
       </div>
       <TimeSeriesPlot
         title="GSE Pressures (PSI)"
-        entities={['PT_Cal.PT_CH2','PT_Cal.PT_CH3','PT_Cal.PT_CH8']}
-        labels={['GSE Low','GSE Mid','GSE High']}
+        entities={['PT_Cal.PT_CH2','PT_Cal.GSE_Mid','PT_Cal.PT_CH8']}
+        labels={['GSE Low','GSE MID','GSE High']}
         component="pressure_psi"
         colors={['#F39C12','#9B59B6','#8E44AD']}
         yLabel="Pressure (PSI)"
@@ -140,7 +140,7 @@ function RawTab() {
       <TimeSeriesPlot
         title="PT CH 1–5 (Raw ADC)"
         entities={['PT.PT_CH1','PT.PT_CH2','PT.PT_CH3','PT.PT_CH4','PT.PT_CH5']}
-        labels={['Fuel Up','GSE Lo','GSE Mid','Fuel Down','LOX Up']}
+        labels={['Fuel Up','GSE Lo','GSE MID','Fuel Down','LOX Up']}
         component="raw_adc_counts"
         colors={['#3498DB','#2980B9','#5DADE2','#1ABC9C','#16A085']}
         yLabel="ADC Counts"
