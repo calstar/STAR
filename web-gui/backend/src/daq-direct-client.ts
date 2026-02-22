@@ -103,7 +103,7 @@ export class DAQDirectClient extends EventEmitter {
     }
   }
 
-  private parseSensorDataPacket(data: Buffer): { header: any; chunks: Array<{ timestamp: number; datapoints: Array<{ sensor_id: number; data: number }> }> } | null {
+  private parseSensorDataPacket(data: Buffer, sourceIP?: string): { header: any; chunks: Array<{ timestamp: number; datapoints: Array<{ sensor_id: number; data: number }> }> } | null {
     // EXACT from combined_gui.py parse_sensor_data_packet()
     if (data.length < PACKET_HEADER_FORMAT_SIZE + SENSOR_DATA_PACKET_SIZE) {
       return null;
@@ -121,6 +121,32 @@ export class DAQDirectClient extends EventEmitter {
     const numSensors = data.readUInt8(offset + 1);
     offset += SENSOR_DATA_PACKET_SIZE;
 
+    // Detailed logging for 192.168.2.102 (HP PT board) to verify chunked format
+    const isHpPtBoard = sourceIP === '192.168.2.102';
+    let shouldLog = false;
+    if (isHpPtBoard) {
+      if (!(this as any).hpPtPacketCount) (this as any).hpPtPacketCount = 0;
+      (this as any).hpPtPacketCount++;
+      shouldLog = (this as any).hpPtPacketCount <= 5 || (this as any).hpPtPacketCount % 50 === 0;
+
+      if (shouldLog) {
+        console.log(`\n🔍 HP PT Board (192.168.2.102) Packet #${(this as any).hpPtPacketCount} Analysis:`);
+        console.log(`   Packet size: ${data.length} bytes`);
+        console.log(`   Header: type=${header.packetType}, version=${header.version}, timestamp=${header.timestamp}`);
+        console.log(`   Body header: num_chunks=${numChunks}, num_sensors=${numSensors}`);
+        console.log(`   Expected size: ${PACKET_HEADER_FORMAT_SIZE} (header) + ${SENSOR_DATA_PACKET_SIZE} (body header) + ${numChunks} chunks × (${SENSOR_DATA_CHUNK_SIZE} (timestamp) + ${numSensors} sensors × ${SENSOR_DATAPOINT_SIZE} bytes)`);
+        const expectedSize = PACKET_HEADER_FORMAT_SIZE + SENSOR_DATA_PACKET_SIZE + (numChunks * (SENSOR_DATA_CHUNK_SIZE + (numSensors * SENSOR_DATAPOINT_SIZE)));
+        console.log(`   Expected total: ${expectedSize} bytes, Actual: ${data.length} bytes`);
+        if (data.length !== expectedSize) {
+          console.warn(`   ⚠️ SIZE MISMATCH! Expected ${expectedSize}, got ${data.length}`);
+        }
+        // Show first few bytes of body for verification
+        const bodyStart = offset;
+        const bodyPreview = data.subarray(bodyStart, Math.min(bodyStart + 32, data.length));
+        console.log(`   Body start (hex): ${bodyPreview.toString('hex')}`);
+      }
+    }
+
     // Calculate expected size
     const perChunkSize = SENSOR_DATA_CHUNK_SIZE + (numSensors * SENSOR_DATAPOINT_SIZE);
     const expectedSize = PACKET_HEADER_FORMAT_SIZE + SENSOR_DATA_PACKET_SIZE + (numChunks * perChunkSize);
@@ -131,7 +157,25 @@ export class DAQDirectClient extends EventEmitter {
 
     const chunks: Array<{ timestamp: number; datapoints: Array<{ sensor_id: number; data: number }> }> = [];
 
+    // Validate num_chunks and num_sensors
+    if (numChunks === 0) {
+      console.warn(`⚠️ Received packet with num_chunks=0 from ${data.length} byte packet`);
+      return null;
+    }
+    if (numSensors === 0) {
+      console.warn(`⚠️ Received packet with num_sensors=0 from ${data.length} byte packet`);
+      return null;
+    }
+
     for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
+      // Verify we have enough data for this chunk
+      const remainingBytes = data.length - offset;
+      const chunkDataSize = SENSOR_DATA_CHUNK_SIZE + (numSensors * SENSOR_DATAPOINT_SIZE);
+      if (remainingBytes < chunkDataSize) {
+        console.error(`❌ Packet truncated: need ${chunkDataSize} bytes for chunk ${chunkIdx + 1}/${numChunks}, only ${remainingBytes} bytes remaining`);
+        return null;
+      }
+
       // Read chunk timestamp
       const chunkTimestamp = data.readUInt32LE(offset);
       offset += SENSOR_DATA_CHUNK_SIZE;
@@ -147,6 +191,12 @@ export class DAQDirectClient extends EventEmitter {
           sensor_id: sensorId,
           data: sensorData, // This is uint32_t from protocol (like combined_gui.py)
         });
+      }
+
+      // Detailed logging for HP PT board chunks
+      if (isHpPtBoard && shouldLog) {
+        console.log(`   Chunk ${chunkIdx + 1}/${numChunks}: timestamp=${chunkTimestamp}, ${datapoints.length} datapoints`);
+        console.log(`      Datapoints: ${datapoints.map(dp => `ID=${dp.sensor_id} ADC=${dp.data}`).join(', ')}`);
       }
 
       chunks.push({
@@ -201,13 +251,24 @@ export class DAQDirectClient extends EventEmitter {
 
     // Handle sensor data packets (EXACT from combined_gui.py)
     if (header.packetType === PacketType.SENSOR_DATA) {
-      const result = this.parseSensorDataPacket(data);
+      const result = this.parseSensorDataPacket(data, sourceIP);
       if (result) {
         const { header: headerDict, chunks } = result;
+
+        // Log chunk information for debugging (throttled to avoid spam)
+        if ((this as any).packetCount <= 10 || (this as any).packetCount % 100 === 0) {
+          const totalDatapoints = chunks.reduce((sum, chunk) => sum + (chunk.datapoints?.length || 0), 0);
+          console.log(`   📦 Parsed ${chunks.length} chunk(s) with ${totalDatapoints} total datapoints from ${sourceIP}`);
+        }
 
         // Emit sensor data (EXACT format from combined_gui.py)
         // source_ip is used to filter PT board vs actuator board
         this.emit('sensor_data', headerDict, chunks, sourceIP);
+      } else {
+        // Log parse failures for debugging
+        if ((this as any).packetCount <= 5) {
+          console.warn(`   ⚠️ Failed to parse sensor data packet from ${sourceIP} (packet size: ${data.length} bytes)`);
+        }
       }
     }
   }

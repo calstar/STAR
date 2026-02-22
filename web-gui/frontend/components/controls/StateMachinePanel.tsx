@@ -10,19 +10,23 @@ const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.ARMED]: 'ARMED',
   [SystemState.FUEL_FILL]: 'Fuel FILL',
   [SystemState.OX_FILL]: 'OX FILL',
+  [SystemState.PRESS_STANDBY]: 'Press Standby',
   [SystemState.GN2_LOW_PRESS]: 'GN2 Low Press',
-  [SystemState.GN2_VENT]: 'GN2 Vent',
+  [SystemState.GN2_VENT]: 'GN2 Low Vent', // Updated to match new CSV
   [SystemState.FUEL_PRESS]: 'Fuel Press',
   [SystemState.FUEL_VENT]: 'Fuel Vent',
   [SystemState.OX_PRESS]: 'OX Press',
   [SystemState.OX_VENT]: 'OX Vent',
   [SystemState.GN2_HIGH_PRESS]: 'GN2 High Press',
-  [SystemState.GN2_HIGH_VENT]: 'GN2 High Vent',
+  [SystemState.GN2_HIGH_VENT]: 'GN2 High Vent', // Updated to match new CSV
   [SystemState.VENT]: 'VENT',
   [SystemState.CALIBRATE]: 'CALIBRATE',
   [SystemState.READY]: 'READY',
   [SystemState.FIRE]: 'FIRE',
-  [SystemState.ABORT]: 'ABORT',
+  [SystemState.ENGINE_ABORT]: 'Engine Abort',
+  [SystemState.GSE_ABORT]: 'GSE Abort',
+  [SystemState.EMERGENCY_ABORT]: 'Emergency Abort',
+  [SystemState.ABORT]: 'ABORT', // Legacy alias
 };
 
 interface StateButtonProps {
@@ -214,4 +218,3 @@ export default function StateMachinePanel() {
     </div>
   );
 }
-

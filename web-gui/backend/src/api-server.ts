@@ -40,12 +40,14 @@ export function startAPIServer(getQueryClient?: () => ElodinQueryClient | null):
         req.on('end', () => {
           try {
             const { config } = JSON.parse(body);
+            console.log(`📝 Received config save request`);
             writeConfig(config);
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true }));
+            res.end(JSON.stringify({ success: true, message: 'Config saved successfully' }));
           } catch (error: any) {
+            console.error('❌ Config save error:', error);
             res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: error.message }));
+            res.end(JSON.stringify({ error: error.message || 'Failed to save config' }));
           }
         });
       } else if (url.pathname === '/api/query' && req.method === 'GET') {

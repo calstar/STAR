@@ -33,6 +33,7 @@ const ACTUATOR_NAME_MAP: Record<string, ActuatorId> = {
   'GSE LOX Fill Vent': ActuatorId.GSE_LOX_FILL_VENT, // CH5
   'GSE High Press Control': ActuatorId.GSE_HIGH_PRESS_CONTROL, // CH5
   'GSE Med Press Control': ActuatorId.GSE_MED_PRESS_CONTROL, // CH5
+  'Test Actuator 2': ActuatorId.TEST_ACTUATOR_2, // CH1 on board 2
 };
 
 // Legacy abbreviation mapping (for old CSV format)
@@ -58,6 +59,7 @@ const ACTUATOR_CHANNEL: Record<number, number> = {
   [ActuatorId.FUEL_FILL_PRESS]: 10,
   [ActuatorId.LOX_FILL]:     4,
   [ActuatorId.LOX_DUMP]:     4,
+  [ActuatorId.TEST_ACTUATOR_2]: 1, // Channel 1 on second board (192.168.2.202)
 };
 
 // Additional actuators from CSV (not in ACTUATOR_CHANNEL, map to channels directly)
@@ -93,6 +95,7 @@ export const CSV_ACTUATOR_TO_ENTITY: Record<string, string> = {
   'GSE LOX Fill Vent': 'ACT.GSE_LOX_Fill_Vent',
   'GSE High Press Control': 'ACT.GSE_High_Press_Control',
   'GSE Med Press Control': 'ACT.GSE_Med_Press_Control',
+  'Test Actuator 2': 'ACT.Test_Actuator_2',
 };
 
 // CSV state name → SystemState enum mapping (new format)
@@ -102,13 +105,15 @@ const CSV_STATE_MAP: Record<string, SystemState> = {
   'Armed': SystemState.ARMED,
   'Fuel Fill': SystemState.FUEL_FILL,
   'Ox Fill': SystemState.OX_FILL,
-  'GN2 Press': SystemState.GN2_LOW_PRESS,
+  'Press Standby': SystemState.PRESS_STANDBY, // Press Standby is a separate state
+  'GN2 Low Press': SystemState.GN2_LOW_PRESS,
+  'GN2 Low Vent': SystemState.GN2_VENT,
   'Fuel Press': SystemState.FUEL_PRESS,
   'Fuel Vent': SystemState.FUEL_VENT,
   'Ox Press': SystemState.OX_PRESS,
   'Ox Vent': SystemState.OX_VENT,
   'GN2 High Press': SystemState.GN2_HIGH_PRESS,
-  'GN2 Vent': SystemState.GN2_VENT,
+  'GN2 High Vent': SystemState.GN2_HIGH_VENT,
   'Calibrate': SystemState.CALIBRATE,
   'Ready': SystemState.READY,
   'Fire': SystemState.FIRE,
@@ -117,6 +122,8 @@ const CSV_STATE_MAP: Record<string, SystemState> = {
   'GSE Abort': SystemState.GSE_ABORT,
   'Emergency Abort': SystemState.EMERGENCY_ABORT,
   // Legacy mappings
+  'GN2 Press': SystemState.GN2_LOW_PRESS, // Old name for GN2 Low Press
+  'GN2 Vent': SystemState.GN2_VENT, // Old name for GN2 Low Vent
   'Quick Fire': SystemState.READY,
   'High Press': SystemState.GN2_HIGH_PRESS,
   'Abort': SystemState.EMERGENCY_ABORT,
@@ -266,9 +273,15 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
 export function getNumActuatorsFromCSV(): number {
   /**Get number of actuators dynamically from CSV file.*/
   const possiblePaths = [
+    // New file name (primary)
+    '/home/kush-mahajan/sensor_system/external/DiabloAvionics/test_guis/Avionics Board Status - State Machine Actuators.csv',
+    join(process.cwd(), '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'Avionics Board Status - State Machine Actuators.csv'),
+    join(process.cwd(), '..', 'external', 'DiabloAvionics', 'test_guis', 'Avionics Board Status - State Machine Actuators.csv'),
+    join(__dirname, '..', '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'Avionics Board Status - State Machine Actuators.csv'),
+    // Fallback to old filename
+    '/home/kush-mahajan/sensor_system/external/DiabloAvionics/test_guis/state_machine_actuators.csv',
     join(process.cwd(), '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'state_machine_actuators.csv'),
     join(process.cwd(), '..', 'external', 'DiabloAvionics', 'test_guis', 'state_machine_actuators.csv'),
-    '/home/kush-mahajan/sensor_system/external/DiabloAvionics/test_guis/state_machine_actuators.csv',
     join(__dirname, '..', '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'state_machine_actuators.csv'),
   ];
 
@@ -301,15 +314,17 @@ export function getNumActuatorsFromCSV(): number {
 }
 
 export function getStateActuatorMap(): StateActuatorMap {
-  // Try to find the CSV file - check multiple possible locations
+  // Try to find the CSV file - prefer the new "Avionics Board Status" file
   const possiblePaths = [
-    // From web-gui/backend directory
-    join(process.cwd(), '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'state_machine_actuators.csv'),
-    // From web-gui directory
-    join(process.cwd(), '..', 'external', 'DiabloAvionics', 'test_guis', 'state_machine_actuators.csv'),
-    // Absolute path (fallback)
+    // New file name (primary)
+    '/home/kush-mahajan/sensor_system/external/DiabloAvionics/test_guis/Avionics Board Status - State Machine Actuators.csv',
+    join(process.cwd(), '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'Avionics Board Status - State Machine Actuators.csv'),
+    join(process.cwd(), '..', 'external', 'DiabloAvionics', 'test_guis', 'Avionics Board Status - State Machine Actuators.csv'),
+    join(__dirname, '..', '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'Avionics Board Status - State Machine Actuators.csv'),
+    // Fallback to old filename
     '/home/kush-mahajan/sensor_system/external/DiabloAvionics/test_guis/state_machine_actuators.csv',
-    // From sensor_system root
+    join(process.cwd(), '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'state_machine_actuators.csv'),
+    join(process.cwd(), '..', 'external', 'DiabloAvionics', 'test_guis', 'state_machine_actuators.csv'),
     join(__dirname, '..', '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'state_machine_actuators.csv'),
   ];
 

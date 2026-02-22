@@ -53,7 +53,7 @@ class SensorDataCache {
           series = { time: [], values: [] };
           this.cache.set(key, series);
         }
-        
+
         // Only add if time has advanced (avoid duplicates)
         if (series.time.length === 0 || series.time[series.time.length - 1] < now) {
           series.time.push(now);
@@ -78,17 +78,17 @@ class SensorDataCache {
     if (!isFinite(value)) return;
     const key = `${entity}.${component}`;
     const now = (Date.now() - getStartupTime()) / 1000;
-    
+
     let series = this.cache.get(key);
     if (!series) {
       series = { time: [], values: [] };
       this.cache.set(key, series);
     }
-    
+
     // Always add new point - allow some time tolerance for batching
     const lastTime = series.time.length > 0 ? series.time[series.time.length - 1] : -Infinity;
     const timeDiff = now - lastTime;
-    
+
     if (timeDiff >= 0.05) { // At least 50ms between points (20 Hz max)
       series.time.push(now);
       series.values.push(value);
@@ -120,12 +120,27 @@ class SensorDataCache {
     let series = this.cache.get(key);
     if (series && series.time.length > 0) return series;
 
-    // Check aliases
+    // Check forward aliases (canonical → fallbacks)
     const fallbacks = ALIASES[key];
     if (fallbacks) {
       for (const fb of fallbacks) {
         series = this.cache.get(fb);
         if (series && series.time.length > 0) return series;
+      }
+    }
+
+    // Check reverse aliases (PT_CHX → canonical)
+    // If key is a fallback (e.g., PT_Cal.PT_CH1.pressure_psi), find the canonical entity
+    for (const [canonical, fallbackList] of Object.entries(ALIASES)) {
+      if (fallbackList.includes(key)) {
+        // This key is a fallback for canonical, so check if canonical exists in cache
+        series = this.cache.get(canonical);
+        if (series && series.time.length > 0) return series;
+        // Also check if any of canonical's fallbacks exist
+        for (const fb of fallbackList) {
+          series = this.cache.get(fb);
+          if (series && series.time.length > 0) return series;
+        }
       }
     }
 
@@ -200,4 +215,3 @@ export function getDataCache(): SensorDataCache {
 export function startDataCache(): void {
   getDataCache().start();
 }
-

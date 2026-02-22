@@ -1,10 +1,10 @@
 'use client'
 
-import { useSensorStore, useGetSensorValue } from '@/lib/store';
+import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { startDataCache } from '@/lib/data-cache';
 import { useEffect, useState } from 'react';
-import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, MessageType } from '@/lib/types';
+import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, SensorUpdate, MessageType } from '@/lib/types';
 import PressureBar from '@/components/plots/PressureBar';
 
 const STATE_NAMES: Record<number, string> = {
@@ -35,13 +35,36 @@ const PRESSURE_BARS = [
   { label:'GN2 HI',   entity:'PT_Cal.GN2_High',       nop:900,  meop:950,  color:'#C39BD3' },
 ] as const;
 
+// Separate component for each pressure bar to properly use hooks
+function ReactivePressureBar({ label, entity, nop, meop, color }: {
+  label: string;
+  entity: string;
+  nop: number;
+  meop: number;
+  color: string;
+}) {
+  const value = useSensorValue(entity, 'pressure_psi');
+  return (
+    <div className="min-w-0 h-full overflow-visible" style={{ width: '9%', maxWidth: 110 }}>
+      <PressureBar
+        label={label}
+        value={value}
+        nop={nop} meop={meop} color={color}
+      />
+    </div>
+  );
+}
+
 export default function TopBar() {
-  const getSensorValue = useGetSensorValue();
+  // Subscribe to sensor updates to ensure bar plots re-render when values change
+  // Subscribe to the entire sensorData object to catch all updates
+  const sensorData = useSensorStore((s) => s.sensorData);
   const currentState = useSensorStore((s) => s.currentState);
   const debugMode = useSensorStore((s) => s.debugMode);
   const setDebugMode = useSensorStore((s) => s.setDebugMode);
   const updateConnectionStatus = useSensorStore((s) => s.updateConnectionStatus);
   const updateState = useSensorStore((s) => s.updateState);
+  const updateSensor = useSensorStore((s) => s.updateSensor);
 
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({
     connected: false, elodinConnected: false,
@@ -64,8 +87,12 @@ export default function TopBar() {
     const unsubState = ws.on(MessageType.STATE_UPDATE, (p: unknown) => {
       updateState(p as StateUpdate);
     });
-    return () => { unsubConn(); unsubState(); };
-  }, [ws, updateConnectionStatus, updateState]);
+    // CRITICAL: Subscribe to sensor updates to ensure bar plots update
+    const unsubSensor = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => {
+      updateSensor(p as SensorUpdate);
+    });
+    return () => { unsubConn(); unsubState(); unsubSensor(); };
+  }, [ws, updateConnectionStatus, updateState, updateSensor]);
 
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString('en-US', { hour12: true }));
@@ -86,13 +113,18 @@ export default function TopBar() {
     ws.sendCommand(cmd);
   };
 
-  // ABORT: go to VENT for 5 seconds, then ENGINE_ABORT
-  const handleAbort = () => {
+  // ENGINE ABORT: go to VENT for 5 seconds, then ENGINE_ABORT (same as old ABORT functionality)
+  const handleEngineAbort = () => {
     sendState(SystemState.VENT);
     // After 5 seconds, transition to ENGINE_ABORT
     setTimeout(() => {
       sendState(SystemState.ENGINE_ABORT);
     }, 5000);
+  };
+
+  // GSE ABORT: go directly to GSE_ABORT state
+  const handleGseAbort = () => {
+    sendState(SystemState.GSE_ABORT);
   };
 
   // EMERGENCY ABORT: immediately go to EMERGENCY_ABORT state
@@ -123,13 +155,14 @@ export default function TopBar() {
         {/* Center: pressure bars — dominant */}
         <div className="flex-1 flex items-stretch justify-center gap-20 py-1 min-w-0 overflow-visible">
           {PRESSURE_BARS.map(({ label, entity, nop, meop, color }) => (
-            <div key={entity} className="min-w-0 h-full overflow-visible" style={{ width: '9%', maxWidth: 110 }}>
-              <PressureBar
-                label={label}
-                value={getSensorValue(entity, 'pressure_psi')}
-                nop={nop} meop={meop} color={color}
-              />
-            </div>
+            <ReactivePressureBar
+              key={entity}
+              label={label}
+              entity={entity}
+              nop={nop}
+              meop={meop}
+              color={color}
+            />
           ))}
         </div>
 
@@ -146,7 +179,16 @@ export default function TopBar() {
           <div className="flex flex-col items-center gap-1.5 border-l border-gray-800/60 pl-6">
             <span className="text-base text-gray-500 uppercase tracking-widest font-semibold">MODE</span>
             <button
-              onClick={() => setDebugMode(!debugMode)}
+              onClick={() => {
+                const newDebugMode = !debugMode;
+                setDebugMode(newDebugMode);
+                // Send debug mode command to backend
+                const cmd: CommandPayload = {
+                  commandType: 'debug_mode',
+                  data: { debugMode: newDebugMode }
+                };
+                ws.sendCommand(cmd);
+              }}
               className={`px-6 py-3.5 rounded-md text-lg font-bold uppercase tracking-wider border transition-all ${
                 debugMode
                   ? 'bg-yellow-800/60 border-yellow-600 text-yellow-300 shadow-[0_0_6px_rgba(234,179,8,0.3)]'
@@ -158,22 +200,32 @@ export default function TopBar() {
           </div>
 
           {/* Abort buttons */}
-          <div className="flex flex-col gap-3">
-            <button
-              onClick={handleAbort}
-              className="px-10 py-4 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border-2 border-amber-600
-                         text-white font-bold text-xl rounded-lg tracking-wider transition-colors"
-            >
-              ABORT
-            </button>
-            <button
-              onClick={handleEmergencyAbort}
-              className="px-10 py-4 bg-red-700 hover:bg-red-600 active:bg-red-800 border-2 border-red-500
-                         text-white font-bold text-xl rounded-lg tracking-wider transition-colors
-                         shadow-[0_0_8px_rgba(239,68,68,0.4)]"
-            >
-              E-ABORT
-            </button>
+          <div className="flex flex-col gap-2 border-l border-gray-800/60 pl-6">
+            <span className="text-base text-gray-500 uppercase tracking-widest font-semibold mb-1">ABORT</span>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={handleEngineAbort}
+                className="px-8 py-3 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border-2 border-amber-600
+                           text-white font-bold text-lg rounded-lg tracking-wider transition-colors"
+              >
+                ENGINE ABORT
+              </button>
+              <button
+                onClick={handleGseAbort}
+                className="px-8 py-3 bg-orange-800 hover:bg-orange-700 active:bg-orange-900 border-2 border-orange-600
+                           text-white font-bold text-lg rounded-lg tracking-wider transition-colors"
+              >
+                GSE ABORT
+              </button>
+              <button
+                onClick={handleEmergencyAbort}
+                className="px-8 py-3 bg-red-700 hover:bg-red-600 active:bg-red-800 border-2 border-red-500
+                           text-white font-bold text-lg rounded-lg tracking-wider transition-colors
+                           shadow-[0_0_8px_rgba(239,68,68,0.4)]"
+              >
+                E-ABORT
+              </button>
+            </div>
           </div>
         </div>
       </div>

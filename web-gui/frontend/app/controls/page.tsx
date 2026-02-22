@@ -11,9 +11,10 @@ import { useSensorValue } from '@/lib/store';
 
 const STATE_NAMES: Record<number, string> = {
   0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
-  5: 'GN2 PRESS', 6: 'GN2 VENT', 7: 'FUEL PRESS', 8: 'FUEL VENT',
+  5: 'GN2 LOW PRESS', 6: 'GN2 LOW VENT', 7: 'FUEL PRESS', 8: 'FUEL VENT',
   9: 'OX PRESS', 10: 'OX VENT', 11: 'GN2 HIGH PRESS', 12: 'GN2 HIGH VENT',
-  13: 'VENT', 14: 'CALIBRATE', 15: 'READY', 16: 'FIRE', 17: 'ABORT',
+  13: 'VENT', 14: 'CALIBRATE', 15: 'READY', 16: 'FIRE', 17: 'ENGINE ABORT',
+  18: 'GSE ABORT', 19: 'EMERGENCY ABORT', 20: 'PRESS STANDBY',
 };
 
 // Pressure sensors for plotting
@@ -55,6 +56,9 @@ const ALL_ACTUATORS = [
 
   // Other
   { id: ActuatorId.LOX_DUMP, name: 'LOX Dump', channel: 4, entity: 'ACT.LOX_Dump', category: 'other' },
+
+  // Test Actuators
+  { id: ActuatorId.TEST_ACTUATOR_2, name: 'Test Actuator 2', channel: 1, entity: 'ACT.Test_Actuator_2', category: 'other' },
 ];
 
 // Simple actuator display - matches ActuatorControl layout exactly
@@ -75,7 +79,7 @@ function SimpleActuatorDisplay({ name, channel, entity }: { name: string; channe
   // Commanded state should always show what the system state requires
   // Use useMemo to ensure reactivity to store changes
   const commandedState = useMemo(() => {
-    if (currentState === null || currentState === SystemState.DEBUG) {
+    if (currentState === null) {
       return null;
     }
     if (expected === 'open') {

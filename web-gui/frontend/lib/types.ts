@@ -55,6 +55,7 @@ export enum SystemState {
   ENGINE_ABORT = 17,
   GSE_ABORT = 18,
   EMERGENCY_ABORT = 19,
+  PRESS_STANDBY = 20,
   // Legacy alias for backwards compatibility
   ABORT = 19, // Maps to EMERGENCY_ABORT
 }
@@ -115,11 +116,12 @@ export interface StateUpdate {
   currentState: SystemState;
   stateName: string;
   timestamp: number;
+  debugMode?: boolean; // Debug mode status
 }
 
 // Command payload
 export interface CommandPayload {
-  commandType: 'state_transition' | 'actuator' | 'controller_frequency' | 'pwm_actuator';
+  commandType: 'state_transition' | 'actuator' | 'controller_frequency' | 'pwm_actuator' | 'debug_mode';
   data: {
     state?: SystemState;
     actuatorId?: ActuatorId;
@@ -127,6 +129,7 @@ export interface CommandPayload {
     frequency?: number; // Controller frequency in Hz
     dutyCycle?: number; // PWM duty cycle 0-1
     duration?: number; // Duration in ms
+    debugMode?: boolean; // Debug mode toggle
   };
 }
 
@@ -181,4 +184,3 @@ export interface CalibrationCommand {
   sensorId?:          number;
   referencePressure?: number;
 }
-

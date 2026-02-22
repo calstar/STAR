@@ -29,16 +29,70 @@ export interface CalibrationCoefficients {
 type CalibrationMap = Map<number, CalibrationCoefficients>;
 
 /**
+ * Validate calibration coefficients to ensure they won't produce extreme values
+ * Returns true if coefficients are reasonable
+ */
+export function validateCalibrationCoefficients(
+  coeffs: CalibrationCoefficients,
+  typicalAdcRange: [number, number] = [1000000, 300000000]
+): boolean {
+  const { A, B, C, D } = coeffs;
+
+  // Check for NaN or Infinity
+  if (!isFinite(A) || !isFinite(B) || !isFinite(C) || !isFinite(D)) {
+    return false;
+  }
+
+  // Test at typical ADC values to ensure result is reasonable
+  const [minAdc, maxAdc] = typicalAdcRange;
+  const testAdcs = [minAdc, (minAdc + maxAdc) / 2, maxAdc];
+
+  for (const adc of testAdcs) {
+    const psi = A * (adc ** 3) + B * (adc ** 2) + C * adc + D;
+    // Reject if result is outside reasonable physical bounds
+    if (!isFinite(psi) || psi < -1000 || psi > 10000) {
+      return false;
+    }
+  }
+
+  // Check if cubic term dominates too much (A term should be very small for large ADC codes)
+  // For ADC ~250M, A * (250M)^3 should be reasonable
+  // Relaxed threshold: If |A| > 1e-11, the cubic term might dominate (was 1e-12, too strict)
+  // Some valid calibrations have slightly larger A terms, especially at high pressures
+  if (Math.abs(A) > 1e-11) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * Calculate pressure (psi) from ADC code using cubic polynomial
  * Formula: pressure = A*x^3 + B*x^2 + C*x + D
  * where x = raw ADC code
+ *
+ * Includes validation to prevent extreme values from bad calibrations
  */
 export function calculatePressure(
   adcCode: number,
   coeffs: CalibrationCoefficients
 ): number {
   const { A, B, C, D } = coeffs;
-  return A * (adcCode ** 3) + B * (adcCode ** 2) + C * adcCode + D;
+
+  // Validate coefficients before calculation
+  if (!validateCalibrationCoefficients(coeffs)) {
+    // Return NaN to signal invalid calibration
+    return NaN;
+  }
+
+  const result = A * (adcCode ** 3) + B * (adcCode ** 2) + C * adcCode + D;
+
+  // Double-check result is finite
+  if (!isFinite(result)) {
+    return NaN;
+  }
+
+  return result;
 }
 
 /**

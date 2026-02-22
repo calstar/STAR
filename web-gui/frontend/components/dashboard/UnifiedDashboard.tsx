@@ -31,6 +31,9 @@ const ALL_ACTUATORS = [
   { id: ActuatorId.LOX_FILL, name: 'LOX Fill', channel: 4, entity: 'ACT.LOX_Fill', category: 'fill' },
   // Other
   { id: ActuatorId.LOX_DUMP, name: 'LOX Dump', channel: 4, entity: 'ACT.LOX_Dump', category: 'other' },
+
+  // Test Actuators
+  { id: ActuatorId.TEST_ACTUATOR_2, name: 'Test Actuator 2', channel: 1, entity: 'ACT.Test_Actuator_2', category: 'other' },
 ];
 
 // Pressure sensors for plotting

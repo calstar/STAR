@@ -22,7 +22,7 @@ import { loadPTCalibration, calculatePressure, CalibrationCoefficients } from '.
 import { Phase2CalibrationEngine } from './calibration-phase2.js';
 import { DataLogger } from './data-logger.js';
 import { readConfig } from './routes/config.js';
-import { ControllerClient, mapSensorDataToMeasurement, ControllerCommand } from './controller-client.js';
+import { ControllerClient, mapSensorDataToMeasurement, ControllerCommand, ControllerDiagnostics } from './controller-client.js';
 import { MessageLogger } from './message-logger.js';
 import {
   MessageType,
@@ -66,6 +66,7 @@ const ACTUATOR_CHANNEL: Record<number, number> = {
   [ActuatorId.GSE_LOX_FILL_VENT]:     5,
   [ActuatorId.GSE_HIGH_PRESS_CONTROL]:5,
   [ActuatorId.GSE_MED_PRESS_CONTROL]: 5,
+  [ActuatorId.TEST_ACTUATOR_2]: 1, // Channel 1 on second board (192.168.2.202)
 };
 
 // ── Expected actuator positions per state (loaded from state_machine_actuators.csv) ─
@@ -93,15 +94,21 @@ class SensorSystemServer {
   private clients: Map<WebSocket, Client> = new Map();
   private sensorCache: Map<string, SensorUpdate> = new Map();
   private updateInterval: NodeJS.Timeout | null = null;
-  private useDirectDAQ: boolean = true; // Receive UDP directly from boards (DAQ Bridge must be stopped)
+  // Default to true (direct DAQ mode) - receives UDP directly from boards (DAQ Bridge must be stopped)
+  // Set USE_DIRECT_DAQ=false to use Elodin DB mode (DAQ Bridge → Elodin DB → Backend)
+  private useDirectDAQ: boolean = process.env.USE_DIRECT_DAQ !== 'false';
   private useQueryPolling: boolean = process.env.ELODIN_USE_QUERY === 'true'; // Fallback to query/polling
   private streamingDataReceived: boolean = false;
   private streamingCheckTimer: NodeJS.Timeout | null = null;
   private ptCalibration: Map<number, CalibrationCoefficients> = new Map();
   private phase2Engine: Phase2CalibrationEngine | null = null;
   private actuatorSocket: dgram.Socket | null = null;
-  private actuatorIP: string = '192.168.2.201'; // Default actuator board IP
+  private actuatorIP: string = '192.168.2.201'; // Default actuator board IP (legacy, kept for backward compatibility)
   private actuatorPort: number = 5005; // Default actuator command port
+  // Map actuator name → [channel, board_ip] for multi-board support
+  private actuatorBoardMap: Map<string, { channel: number; boardIp: string }> = new Map();
+  // Set of all actuator board IPs (for filtering sensor data)
+  private actuatorBoardIPs: Set<string> = new Set();
 
   /** Throttle Phase 2 monitoring to ~5 Hz per channel */
   private phase2LastMonitor: Map<number, number> = new Map();
@@ -109,9 +116,11 @@ class SensorSystemServer {
 
   /** Per-channel last-known-good PSI for spike rejection */
   private lastGoodPsi: Map<number, number> = new Map();
+  /** Track recent readings to detect consistent pressure changes (legitimate pressurization) */
+  private recentPsiReadings: Map<number, number[]> = new Map(); // channelId -> array of recent PSI values
   private readonly PSI_ABSOLUTE_MIN = -200;
-  private readonly PSI_ABSOLUTE_MAX = 1500;
-  private readonly PSI_MAX_JUMP = 300; // max single-step change in PSI
+  private readonly PSI_ABSOLUTE_MAX = 5000; // Increased to handle high-pressure sensors (GSE High can go to 4800 PSI)
+  private readonly PSI_MAX_JUMP = 1000; // max single-step change in PSI (increased from 300 to handle rapid pressurization)
 
   /** Throttle WS broadcasts per entity to ~10 Hz (cache is always instant) */
   private broadcastLastTime: Map<string, number> = new Map();
@@ -131,17 +140,30 @@ class SensorSystemServer {
 
   /** Current system state for continuous actuator command sending */
   private currentState: SystemState | null = null;
+  /** Debug mode flag - persistent across state transitions */
+  private debugMode: boolean = false;
   private actuatorCommandInterval: NodeJS.Timeout | null = null;
   private readonly ACTUATOR_COMMAND_INTERVAL_MS = 1000; // Send actuator commands every 1 second while in state
+
+  /** Track manually commanded channels to exclude from continuous commands */
+  private manuallyCommandedChannels: Set<number> = new Set();
 
   /** Controller client for DDP controller integration */
   private controllerClient: ControllerClient | null = null;
   private controllerLoopInterval: NodeJS.Timeout | null = null;
-  private readonly CONTROLLER_LOOP_INTERVAL_MS = 100; // Controller loop at 10 Hz
+  private controllerLoopStartTime: number | null = null;
+  private readonly CONTROLLER_LOOP_INTERVAL_MS: number; // Controller loop interval (ms)
+  private readonly PWM_DURATION_MS: number; // PWM command duration (ms)
+  private readonly PWM_FREQUENCY_HZ: number; // PWM frequency (Hz)
+  private readonly FALLBACK_FUEL_DUTY: number; // Fallback duty cycle for Fuel Press
+  private readonly FALLBACK_OX_DUTY: number; // Fallback duty cycle for LOX Press
   private controllerCommand: ControllerCommand = { command_type: 'THRUST_DESIRED', thrust_desired: 1000 };
 
-  /** Channel ID → entity name map (loaded from config.toml sensor_roles) */
+  /** Channel ID → entity name map (loaded from config.toml sensor_roles) - LEGACY, for backward compatibility */
   private channelToEntityMap: Record<number, string> = {};
+
+  /** Board-specific channel ID → entity name maps keyed by board IP */
+  private boardChannelToEntityMaps: Map<string, Record<number, string>> = new Map();
 
   /** HP PT board configs keyed by source IP (loaded from config.toml) */
   private hpPtBoards: Map<string, HpPtBoardConfig> = new Map();
@@ -156,6 +178,21 @@ class SensorSystemServer {
 
     // Reset mission T+0 on server restart (new DB per run)
     this.firstPacketTime = null;
+
+    // Load config first to get controller and Phase 2 settings
+    const config = readConfig();
+
+    // Initialize controller settings from config
+    const controllerConfig = config.controller || {};
+    this.CONTROLLER_LOOP_INTERVAL_MS = controllerConfig.controller_loop_hz
+      ? Math.round(1000 / controllerConfig.controller_loop_hz)
+      : 100; // Default 10 Hz
+    this.PWM_DURATION_MS = controllerConfig.pwm_duration_ms || 10000;
+    this.PWM_FREQUENCY_HZ = controllerConfig.pwm_frequency_hz || 10;
+    this.FALLBACK_FUEL_DUTY = controllerConfig.fallback_fuel_duty_cycle || 0.1;
+    this.FALLBACK_OX_DUTY = controllerConfig.fallback_ox_duty_cycle || 0.1;
+    console.log(`🎯 Controller settings: loop=${1000/this.CONTROLLER_LOOP_INTERVAL_MS}Hz, PWM=${this.PWM_FREQUENCY_HZ}Hz, duration=${this.PWM_DURATION_MS}ms`);
+    console.log(`   Fallback duty cycles: Fuel=${(this.FALLBACK_FUEL_DUTY*100).toFixed(1)}%, LOX=${(this.FALLBACK_OX_DUTY*100).toFixed(1)}%`);
 
     // Load PT calibration (like combined_fsw_gui.py)
     this.ptCalibration = loadPTCalibration();
@@ -179,6 +216,9 @@ class SensorSystemServer {
       console.log(`📋 Loaded state actuator map: ${Object.keys(STATE_ACTUATOR_MAP).length} states`);
     }
 
+    // Load actuator board mappings from config (multi-board support)
+    this.loadActuatorBoardMap(config);
+
     // Build transition validation map
     const transitions = getStateTransitions();
     if (transitions.length === 0) {
@@ -189,6 +229,34 @@ class SensorSystemServer {
 
     // Initialize Phase 2 autonomous calibration engine
     this.phase2Engine = new Phase2CalibrationEngine();
+
+    // Load Phase 2 settings from config
+    try {
+      const phase2Config = config.phase2;
+      if (phase2Config) {
+        if (phase2Config.drift_threshold !== undefined) {
+          this.phase2Engine.setDriftThreshold(phase2Config.drift_threshold);
+        }
+        if (phase2Config.process_noise !== undefined) {
+          this.phase2Engine.setProcessNoise(phase2Config.process_noise);
+        }
+        if (phase2Config.ema_smoothing_alpha !== undefined) {
+          this.phase2Engine.setEMASmoothingAlpha(phase2Config.ema_smoothing_alpha);
+        }
+        if (phase2Config.enabled !== undefined) {
+          this.phase2Engine.setEnabled(phase2Config.enabled);
+        }
+        if (phase2Config.consensus_threshold_psi !== undefined) {
+          this.phase2Engine.setConsensusThreshold(phase2Config.consensus_threshold_psi);
+        }
+        if (phase2Config.consensus_update_rate !== undefined) {
+          this.phase2Engine.setConsensusUpdateRate(phase2Config.consensus_update_rate);
+        }
+        console.log('✅ Phase 2 settings loaded from config (including covariance coupling)');
+      }
+    } catch (err) {
+      console.warn('⚠️ Failed to load Phase 2 config, using defaults:', err);
+    }
 
     // Load saved Phase 2 calibration if it exists (wrap in try-catch to prevent crashes)
     let savedCalibration: Map<number, CalibrationCoefficients> = new Map();
@@ -227,6 +295,34 @@ class SensorSystemServer {
 
     // Initialize UDP socket for actuator commands (like combined_gui.py)
     this.actuatorSocket = dgram.createSocket('udp4');
+
+    // Add error handlers to detect socket issues
+    this.actuatorSocket.on('error', (err: Error) => {
+      const error = err as any;
+      console.error(`❌ Actuator UDP socket error: ${error.code || 'UNKNOWN'} — ${error.message}`);
+      console.error(`   Target: ${this.actuatorIP}:${this.actuatorPort}`);
+      console.error(`   Attempting to recreate socket...`);
+
+      // Try to recreate the socket
+      try {
+        if (this.actuatorSocket) {
+          this.actuatorSocket.close();
+        }
+        this.actuatorSocket = dgram.createSocket('udp4');
+        this.actuatorSocket.on('error', (err2: Error) => {
+          console.error(`❌ Failed to recreate actuator socket: ${err2.message}`);
+        });
+        console.log(`✅ Actuator socket recreated`);
+      } catch (recreateError) {
+        console.error(`❌ Failed to recreate actuator socket:`, recreateError);
+        this.actuatorSocket = null;
+      }
+    });
+
+    this.actuatorSocket.on('close', () => {
+      console.warn('⚠️ Actuator UDP socket closed');
+    });
+
     console.log(`🎯 Actuator command socket initialized (target: ${this.actuatorIP}:${this.actuatorPort})`);
 
     this.wss = new WebSocketServer({
@@ -298,8 +394,9 @@ class SensorSystemServer {
     try {
       const config = readConfig();
       const sensorRoles = config.sensor_roles || {};
+      const boards = config.boards || {};
 
-      // Build reverse map: channel_id → role_name
+      // Build reverse map: channel_id → role_name (for backward compatibility)
       // config.toml format: "Fuel Upstream" = 1 means channel 1 → "Fuel Upstream"
       const reverseMap: Record<number, string> = {};
       for (const [roleName, channelId] of Object.entries(sensorRoles)) {
@@ -312,6 +409,36 @@ class SensorSystemServer {
 
       this.channelToEntityMap = reverseMap;
       console.log(`📋 Loaded sensor role map from config.toml:`, this.channelToEntityMap);
+
+      // Build board-specific mappings to prevent cross-contamination
+      this.boardChannelToEntityMaps.clear();
+      for (const [boardKey, boardRaw] of Object.entries(boards)) {
+        const board = boardRaw as any;
+        if (board.type === 'PT' && board.enabled !== false && board.ip) {
+          const boardIp = board.ip as string;
+
+          // Check for board-specific sensor roles (e.g., sensor_roles_pt_board, sensor_roles_pt_board_2)
+          const boardSensorRolesKey = `sensor_roles_${boardKey}`;
+          const boardSensorRoles = (config as any)[boardSensorRolesKey] || sensorRoles; // Fallback to global if not found
+
+          // Build channel-to-entity map for this board
+          const boardMap: Record<number, string> = {};
+          for (const [roleName, channelId] of Object.entries(boardSensorRoles)) {
+            if (typeof channelId === 'number' && channelId >= 1 && channelId <= 10) {
+              const entityName = roleName.replace(/\s+/g, '_');
+              boardMap[channelId] = `PT_Cal.${entityName}`;
+            }
+          }
+
+          // If no board-specific roles found, use global mapping
+          if (Object.keys(boardMap).length === 0) {
+            Object.assign(boardMap, reverseMap);
+          }
+
+          this.boardChannelToEntityMaps.set(boardIp, boardMap);
+          console.log(`📋 Loaded sensor role map for board ${boardKey} (${boardIp}):`, boardMap);
+        }
+      }
     } catch (error) {
       console.warn('⚠️ Failed to load sensor_roles from config.toml, using defaults:', error);
       // Fallback to hardcoded defaults (matches original behavior)
@@ -327,6 +454,10 @@ class SensorSystemServer {
         9: 'PT_Cal.PT_CH9',
         10: 'PT_Cal.PT_CH10',
       };
+      // Use same defaults for all boards if config fails
+      const defaultMap = { ...this.channelToEntityMap };
+      this.boardChannelToEntityMaps.set('192.168.2.101', defaultMap);
+      this.boardChannelToEntityMaps.set('192.168.2.102', defaultMap);
     }
   }
 
@@ -345,7 +476,9 @@ class SensorSystemServer {
       const pt2ReverseMap: Record<number, string> = {};
       for (const [roleName, connectorId] of Object.entries(sensorRolesPt2)) {
         if (typeof connectorId === 'number') {
-          pt2ReverseMap[connectorId] = `PT_Cal.${roleName.replace(/\s+/g, '_')}`;
+          const entityName = `PT_Cal.${roleName.replace(/\s+/g, '_')}`;
+          pt2ReverseMap[connectorId] = entityName;
+          console.log(`   Mapping: Connector ${connectorId} (${roleName}) → ${entityName}`);
         }
       }
 
@@ -372,7 +505,9 @@ class SensorSystemServer {
         // Build channel→entity map for this board's HP PT connectors
         const channelToEntity: Record<number, string> = {};
         for (const connId of hpPtConnectorIds) {
-          channelToEntity[connId] = pt2ReverseMap[connId] ?? `PT_Cal.HP_PT_${connId}`;
+          const entity = pt2ReverseMap[connId] ?? `PT_Cal.HP_PT_${connId}`;
+          channelToEntity[connId] = entity;
+          console.log(`   HP PT Connector ${connId} → Entity: ${entity}`);
         }
 
         const hpCfg: HpPtBoardConfig = {
@@ -396,10 +531,14 @@ class SensorSystemServer {
           adcRefVoltage,
           channelToEntity,
         });
+        // Log entity mappings to verify they match frontend expectations
+        console.log(`   Entity mappings:`, Object.entries(channelToEntity).map(([conn, ent]) => `Connector ${conn} → ${ent}`).join(', '));
       }
 
       if (this.hpPtBoards.size === 0) {
         console.log('📋 No HP PT boards configured (no boards with hp_pt_connectors found)');
+      } else {
+        console.log(`✅ Loaded ${this.hpPtBoards.size} HP PT board(s): ${Array.from(this.hpPtBoards.keys()).join(', ')}`);
       }
     } catch (error) {
       console.warn('⚠️ Failed to load HP PT board config from config.toml:', error);
@@ -424,15 +563,34 @@ class SensorSystemServer {
     adcExc: number,
     cfg: HpPtBoardConfig,
   ): number {
-    const ADC_MAX = 4294967296; // 2^32
+    const ADC_MAX = 2147483648; // 2^31
     const I_MIN_MA = 4.0;
     const I_SPAN_MA = 16.0; // 20 - 4
 
-    // V_exc: ADC sees V_exc * attenuation, so V_exc = V_adc_input / attenuation = V_adc_input * excitationDividerRatio
-    const vExc = (adcExc / ADC_MAX) * cfg.adcRefVoltage * cfg.excitationDividerRatio;
-    const vSense = (adcSensor / ADC_MAX) * vExc;
+    // Handle zero excitation (sensor disconnected or no power)
+    if (adcExc === 0 || adcExc === undefined) {
+      // If excitation is 0, sensor is likely disconnected - return NaN to signal invalid reading
+      return NaN;
+    }
+
+    // Calculate current using same method as displayed current
+    // V_sense is independent - convert ADC to voltage directly using adcRefVoltage
+    const vSense = (adcSensor / ADC_MAX) * cfg.adcRefVoltage;
     const iMa = (vSense / cfg.senseResistorOhms) * 1000;
-    const fraction = Math.max(0, Math.min(1, (iMa - I_MIN_MA) / I_SPAN_MA));
+
+    // Convert current to pressure: 4mA → 0 PSI, 20mA → fullScalePsi PSI
+    // Standard 4-20mA formula: pressure = ((I_mA - 4) / 16) * fullScalePsi
+    // Ensure: 4mA → 0 PSI, 20mA → fullScalePsi PSI
+    if (iMa < I_MIN_MA) {
+      // Current below 4mA - return NaN (sensor fault or disconnected) - don't emit 0 PSI
+      return NaN;
+    }
+    if (iMa > 20.0) {
+      // Current above 20mA - clamp to full scale (over-range)
+      return cfg.fullScalePsi;
+    }
+    // Normal range: 4-20mA maps linearly to 0-fullScalePsi
+    const fraction = (iMa - I_MIN_MA) / I_SPAN_MA;
     return fraction * cfg.fullScalePsi;
   }
 
@@ -563,19 +721,23 @@ class SensorSystemServer {
 
     // EXACT combined_gui.py implementation: on_sensor_data handler
     this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
+      // Skip HP PT boards - they're handled by a separate handler
+      if (this.hpPtBoards.has(sourceIP)) {
+        return; // HP PT boards handled separately
+      }
+
+      // Skip ALL actuator boards - handled separately (current sense data, not pressure)
+      if (this.actuatorBoardIPs.has(sourceIP)) {
+        return; // Actuator board handled separately
+      }
+
       // Log sensor data sparingly to avoid choking the event loop
       const now = Date.now();
       if (now - this._lastSensorLog > 5000) {
         this._lastSensorLog = now;
-        console.log(`📥 Sensor data from ${sourceIP}: ${chunks.length} chunks`);
+        const totalDatapoints = chunks.reduce((sum, chunk) => sum + (chunk.datapoints?.length || 0), 0);
+        console.log(`📥 Regular PT data from ${sourceIP}: ${chunks.length} chunks, ${totalDatapoints} datapoints`);
       }
-
-      // EXACT from combined_gui.py: filter by source IP
-      // Temporarily accept ALL IPs to see if packets are arriving
-      // const filterSourceIP = '192.168.2.101'; // Default PT board IP (from combined_gui.py)
-      // if (sourceIP !== filterSourceIP) {
-      //   return; // Ignore actuator board data (handled separately in combined_gui.py)
-      // }
 
       const currentTime = Date.now();
       const timestampNs = BigInt(currentTime) * BigInt(1000000); // Convert ms to ns
@@ -593,12 +755,24 @@ class SensorSystemServer {
       }
 
       // Process each chunk (EXACT from combined_gui.py on_sensor_data)
+      // Chunk timestamp is the START of the chunk; each datapoint within the chunk
+      // is spaced by the sample period (1/SAMPLE_RATE_HZ)
+      const SAMPLE_RATE_HZ = 7200; // Board sample rate (from firmware)
+      const SAMPLE_PERIOD_MS = 1000.0 / SAMPLE_RATE_HZ; // ~0.139 ms per sample
+
       for (const chunk of chunks) {
         const chunkTimestampMs = chunk.timestamp;
+        // Use chunk timestamp as base; each datapoint gets its own timestamp
+        const chunkTimeBase = chunkTimestampMs > 0 ? chunkTimestampMs : currentTime;
         const relativeTime = (currentTime - statsStartTime) / 1000; // Relative time in seconds
 
         // Process each datapoint (EXACT from combined_gui.py)
-        for (const dp of chunk.datapoints) {
+        // Calculate individual timestamp for each sample within the chunk
+        for (let sampleIdx = 0; sampleIdx < chunk.datapoints.length; sampleIdx++) {
+          const dp = chunk.datapoints[sampleIdx];
+          // Each sample is spaced by SAMPLE_PERIOD_MS from the chunk start
+          const sampleTimeMs = chunkTimeBase + (sampleIdx * SAMPLE_PERIOD_MS);
+          const sampleTime = sampleTimeMs;
           const sensorIdPacket = dp.sensor_id; // From packet (0-9 or 1-10, depending on hardware)
 
           // Skip sensor_id 0 (inactive) - matches combined_gui.py behavior
@@ -629,17 +803,21 @@ class SensorSystemServer {
           }
 
           // Map channel ID to proper raw entity name (PT namespace, from config.toml sensor_roles)
-          const calEntity = this.channelToEntityMap[channelId] || `PT_Cal.PT_CH${channelId}`;
+          // Use board-specific mapping if available, otherwise fall back to global mapping
+          const boardMap = this.boardChannelToEntityMaps.get(sourceIP);
+          const channelMap = boardMap || this.channelToEntityMap;
+          const calEntity = channelMap[channelId] || `PT_Cal.PT_CH${channelId}`;
           // Convert PT_Cal namespace to PT namespace for raw ADC
           const rawEntity = calEntity.replace('PT_Cal.', 'PT.');
 
           // Emit raw ADC code with BOTH the nice name and the PT_CH alias
+          // Use individual sample timestamp to preserve temporal ordering within and across chunks
           // Nice name (for top bar / GSE/Fuel/LOX views)
           this.handleSensorUpdate({
             entity: rawEntity,
             component: 'raw_adc_counts',
             value: codeUint32, // uint32_t raw ADC code (2147483647 is valid!)
-            timestamp: currentTime,
+            timestamp: sampleTime,
           });
 
           // PT_CH alias (for raw plots & status pages which expect PT.PT_CHx)
@@ -647,29 +825,22 @@ class SensorSystemServer {
             entity: `PT.PT_CH${channelId}`,
             component: 'raw_adc_counts',
             value: codeUint32,
-            timestamp: currentTime,
+            timestamp: sampleTime,
           });
 
           // Cache latest raw ADC per channel for Phase 1 calibration capture
           this.lastRawAdc.set(channelId, codeUint32);
 
-          // Feed to Phase 2 for continuous monitoring — throttled to ~10 Hz per
-          // channel (DAQ fires at 25 kHz — unthrottled would choke the event loop).
-          if (this.phase2Engine) {
-            const monitorNow = Date.now();
-            const lastMonitor = this.phase2LastMonitor.get(channelId) ?? 0;
-            if (monitorNow - lastMonitor >= this.PHASE2_MONITOR_INTERVAL_MS) {
-              this.phase2LastMonitor.set(channelId, monitorNow);
-              this.phase2Engine.monitorReading(channelId, codeUint32);
-            }
-          }
+          // NOTE: Phase 2 monitoring happens AFTER spike rejection below
+          // This ensures Phase 2 only sees valid data, not spikes
 
           // Check if Phase 2 has manual updates (zero_all, capture_reference)
-          // If so, ALWAYS use Phase 2 - don't trust Elodin's old static calibration
-          // Once Phase 2 has been manually updated, it should permanently take priority
+          // Only use Phase 2 if it's enabled - Phase 2 adjustments can corrupt readings if disabled
+          // Phase 2 adjustments from bad zero_all operations can also cause issues
           const phase2State = this.phase2Engine?.getSensorState?.(channelId);
+          const phase2Enabled = this.phase2Engine?.isEnabled() ?? false;
           const phase2HasManualUpdate = phase2State &&
-            phase2State.rlsUpdateCount > 0; // Has at least one manual update (permanent priority)
+            phase2State.rlsUpdateCount > 0 && phase2Enabled; // Has manual update AND Phase 2 is enabled
 
           // Check if we've received calibrated PT from Elodin recently (within last 200ms)
           // Only trust Elodin if Phase 2 hasn't been manually updated
@@ -678,11 +849,66 @@ class SensorSystemServer {
           const skipOurCalculation = !phase2HasManualUpdate && timeSinceElodinCal < 200;
 
           if (!skipOurCalculation) {
-            const liveCoeffs = this.phase2Engine?.getCalibration(channelId);
+            // Only use Phase 2 calibration if it's enabled AND has been manually updated
+            // Phase 2 adjustments can corrupt readings if they're from a bad zero_all
+            const phase2State = this.phase2Engine?.getSensorState?.(channelId);
+            const phase2Enabled = this.phase2Engine?.isEnabled() ?? false;
+            const phase2HasManualUpdate = phase2State && phase2State.rlsUpdateCount > 0;
+            const usePhase2 = phase2Enabled && phase2HasManualUpdate;
+
+            const liveCoeffs = usePhase2 ? this.phase2Engine?.getCalibration(channelId) : null;
             const activeCoeffs = liveCoeffs ?? coeffs;
             let psi: number;
             if (activeCoeffs) {
               psi = calculatePressure(codeUint32, activeCoeffs);
+
+              // Check if calibration produced invalid result
+              if (isNaN(psi) || !isFinite(psi)) {
+                // Invalid calibration - log and fall back to baseline or skip
+                if (liveCoeffs && coeffs) {
+                  // Phase 2 calibration is bad - fall back to baseline
+                  console.error(`❌ CH${channelId} Phase 2 calibration invalid, falling back to baseline. Phase2 coeffs: A=${liveCoeffs.A.toExponential(2)}, B=${liveCoeffs.B.toExponential(2)}, C=${liveCoeffs.C.toExponential(2)}, D=${liveCoeffs.D.toFixed(2)}`);
+                  psi = calculatePressure(codeUint32, coeffs);
+                  // If baseline is also bad, skip this reading
+                  if (isNaN(psi) || !isFinite(psi)) {
+                    console.error(`❌ CH${channelId} Baseline calibration also invalid! Coeffs: A=${coeffs.A.toExponential(2)}, B=${coeffs.B.toExponential(2)}, C=${coeffs.C.toExponential(2)}, D=${coeffs.D.toFixed(2)}`);
+                    continue;
+                  }
+                } else {
+                  // No valid calibration available
+                  console.error(`❌ CH${channelId} No valid calibration available, skipping reading`);
+                  continue;
+                }
+              }
+
+              // Validate that switching between baseline and Phase 2 doesn't cause sudden jumps
+              // This prevents calibration coefficient changes from causing spurious readings
+              // DISABLED: This validation was too strict and was breaking readings after zero_all
+              // Phase 2 adjustments should be trusted if Phase 2 is enabled and has manual updates
+              // The jump detection below will catch actual spikes, not calibration differences
+              // if (liveCoeffs && coeffs && usePhase2) {
+              //   const baselinePsi = calculatePressure(codeUint32, coeffs);
+              //   if (!isNaN(baselinePsi) && isFinite(baselinePsi)) {
+              //     const calibrationJump = Math.abs(psi - baselinePsi);
+              //     const absBaselinePsi = Math.abs(baselinePsi);
+              //
+              //     // Use same adaptive threshold logic as jump detection
+              //     let maxCalibrationJump: number;
+              //     if (absBaselinePsi < 1.0) {
+              //       maxCalibrationJump = 2.0;
+              //     } else if (absBaselinePsi < 10.0) {
+              //       maxCalibrationJump = Math.max(5.0, absBaselinePsi * 0.5);
+              //     } else {
+              //       maxCalibrationJump = Math.min(50.0, absBaselinePsi * 0.5);
+              //     }
+              //
+              //     if (calibrationJump > maxCalibrationJump) {
+              //       // Phase 2 calibration causes too large a jump - use baseline instead
+              //       console.warn(`⚠️ CH${channelId} Phase 2 calibration jump too large (${calibrationJump.toFixed(1)} PSI vs baseline ${baselinePsi.toFixed(1)} PSI, threshold ${maxCalibrationJump.toFixed(1)}), using baseline calibration`);
+              //       psi = baselinePsi;
+              //     }
+              //   }
+              // }
             } else {
               psi = codeUint32 / 1000000.0;
             }
@@ -690,18 +916,108 @@ class SensorSystemServer {
             // ── Spike / glitch rejection ──
             // Reject values outside absolute physical limits
             if (psi < this.PSI_ABSOLUTE_MIN || psi > this.PSI_ABSOLUTE_MAX) {
-              if (Math.random() < 0.1) {
-                console.warn(`⚠️ CH${channelId} spike rejected (out of range): PSI=${psi.toFixed(1)}, ADC=${codeUint32}`);
-              }
+              // Log all out-of-range rejections (not throttled) - these are serious errors
+              // Include calibration info to help debug
+              const coeffInfo = activeCoeffs
+                ? `A=${activeCoeffs.A.toExponential(2)}, B=${activeCoeffs.B.toExponential(2)}, C=${activeCoeffs.C.toExponential(2)}, D=${activeCoeffs.D.toFixed(2)}`
+                : 'no calibration';
+              console.warn(`⚠️ CH${channelId} spike rejected (out of range): PSI=${psi.toFixed(1)}, ADC=${codeUint32}, coeffs=[${coeffInfo}]`);
               continue;
             }
             // Reject sudden jumps from last known good value
+            // Use adaptive threshold: more sensitive for small values, especially near 0
+            // Allow larger jumps when pressure is increasing (pressurization)
+            // but be more strict when pressure is decreasing (potential leak/failure)
             const lastPsi = this.lastGoodPsi.get(channelId);
-            if (lastPsi !== undefined && Math.abs(psi - lastPsi) > this.PSI_MAX_JUMP) {
-              console.warn(`⚠️ CH${channelId} spike rejected (jump): PSI=${psi.toFixed(1)} vs last=${lastPsi.toFixed(1)}, ADC=${codeUint32}`);
-              continue;
+            if (lastPsi !== undefined) {
+              const jump = Math.abs(psi - lastPsi);
+              const isIncreasing = psi > lastPsi;
+              const absLastPsi = Math.abs(lastPsi);
+
+              // Track recent readings to detect consistent pressure changes (legitimate pressurization)
+              if (!this.recentPsiReadings.has(channelId)) {
+                this.recentPsiReadings.set(channelId, []);
+              }
+              const recentReadings = this.recentPsiReadings.get(channelId)!;
+              recentReadings.push(psi);
+              if (recentReadings.length > 10) {
+                recentReadings.shift(); // Keep last 10 readings
+              }
+
+              // Check if pressure is consistently changing in one direction (legitimate pressurization/depressurization)
+              let isConsistentChange = false;
+              if (recentReadings.length >= 5) {
+                const firstHalf = recentReadings.slice(0, Math.floor(recentReadings.length / 2));
+                const secondHalf = recentReadings.slice(Math.floor(recentReadings.length / 2));
+                const firstAvg = firstHalf.reduce((a, b) => a + b, 0) / firstHalf.length;
+                const secondAvg = secondHalf.reduce((a, b) => a + b, 0) / secondHalf.length;
+                const consistentDirection = (secondAvg > firstAvg && isIncreasing) || (secondAvg < firstAvg && !isIncreasing);
+                const consistentMagnitude = Math.abs(secondAvg - firstAvg) > 1.0; // At least 1 PSI change over readings
+                isConsistentChange = consistentDirection && consistentMagnitude;
+              }
+
+              // Adaptive threshold: use percentage-based for small values, absolute for large values
+              // For values near 0, be much more lenient to allow pressurization to start
+              // This prevents sensors from getting stuck at 0 when pressure legitimately starts to change
+              let adaptiveThreshold: number;
+              if (absLastPsi < 1.0) {
+                // Near 0: Allow much larger jumps (up to 20 PSI) to enable pressurization
+                // When starting from near-zero, a single reading might jump significantly during pressurization
+                // This is legitimate, not a spike - allow it through
+                if (isConsistentChange) {
+                  adaptiveThreshold = 50.0; // Allow very large steps during consistent pressurization
+                } else if (isIncreasing && psi > 0) {
+                  // Pressurization starting from zero - allow up to 20 PSI jump
+                  adaptiveThreshold = 20.0;
+                } else {
+                  adaptiveThreshold = 10.0; // Allow moderate steps even without consistent change
+                }
+              } else if (absLastPsi < 10.0) {
+                // Small values: use 50% change or minimum 5 PSI, whichever is larger
+                adaptiveThreshold = Math.max(5.0, absLastPsi * 0.5);
+              } else {
+                // Larger values: use percentage-based with absolute cap
+                // Allow larger jumps during pressurization (up to 2x threshold)
+                const baseThreshold = Math.min(this.PSI_MAX_JUMP, Math.max(50.0, absLastPsi * 0.5));
+                adaptiveThreshold = isIncreasing ? baseThreshold * 2 : baseThreshold;
+              }
+
+              if (jump > adaptiveThreshold) {
+                // Log all jump rejections (not throttled) - these indicate sensor issues
+                console.warn(`⚠️ CH${channelId} spike rejected (jump): PSI=${psi.toFixed(1)} vs last=${lastPsi.toFixed(1)} (Δ=${jump.toFixed(1)}, threshold=${adaptiveThreshold.toFixed(1)}), ADC=${codeUint32}`);
+                continue;
+              }
             }
-            this.lastGoodPsi.set(channelId, psi);
+            // Feed to Phase 2 for continuous monitoring — ONLY after spike rejection
+            // Throttled to ~5 Hz per channel (DAQ fires at 25 kHz — unthrottled would choke the event loop).
+            // Phase 2 should only see valid (non-spike) data to avoid corrupting calibration
+            // Do this FIRST so smoothed prediction is updated before we use it as baseline
+            if (this.phase2Engine) {
+              const monitorNow = Date.now();
+              const lastMonitor = this.phase2LastMonitor.get(channelId) ?? 0;
+              if (monitorNow - lastMonitor >= this.PHASE2_MONITOR_INTERVAL_MS) {
+                this.phase2LastMonitor.set(channelId, monitorNow);
+                // Only feed valid (non-spike) data to Phase 2
+                this.phase2Engine.monitorReading(channelId, codeUint32);
+              }
+            }
+
+            // Update baseline to track actual system pressure continuously
+            // Use Phase 2's smoothed prediction if available (system's best estimate of true value)
+            // Otherwise use current calibrated reading. Baseline self-updates as pressure changes.
+            // This allows baseline to track gradual changes (0 → 1000 PSI) while rejecting sudden spikes
+            let baselinePsi = psi;
+            if (this.phase2Engine) {
+              const phase2State = this.phase2Engine.getSensorState(channelId);
+              if (phase2State && phase2State.smoothedPrediction !== null) {
+                // Use Phase 2's smoothed prediction - it's the system's interpretation of true value
+                // This is more accurate than raw reading and tracks gradual pressure changes
+                baselinePsi = phase2State.smoothedPrediction;
+              }
+            }
+            // Update baseline to track actual pressure (self-moving as system pressure changes)
+            // Baseline follows the true value from robust calibration, not stuck at initial value
+            this.lastGoodPsi.set(channelId, baselinePsi);
 
             if (publishingToElodin) {
               this.elodinPublisher!.publishCalibratedPT(
@@ -715,18 +1031,19 @@ class SensorSystemServer {
 
             const calEntity = this.channelToEntityMap[channelId] || `PT_Cal.PT_CH${channelId}`;
 
+            // Use individual sample timestamp to preserve temporal ordering within and across chunks
             this.handleSensorUpdate({
               entity: calEntity,
               component: 'pressure_psi',
               value: psi,
-              timestamp: currentTime,
+              timestamp: sampleTime,
             });
 
             this.handleSensorUpdate({
               entity: `PT_Cal.PT_CH${channelId}`,
               component: 'pressure_psi',
               value: psi,
-              timestamp: currentTime,
+              timestamp: sampleTime,
             });
 
             if (channelId === 1 && Math.random() < 0.01) {
@@ -756,10 +1073,19 @@ class SensorSystemServer {
     });
 
     // Handle actuator board data separately (EXACT from combined_gui.py)
+    // Process current sense data from ALL actuator boards
     this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
-      const actuatorIP = '192.168.2.201'; // Default actuator board IP
-      if (sourceIP !== actuatorIP) {
+      if (!this.actuatorBoardIPs.has(sourceIP)) {
         return; // Only process actuator board data here
+      }
+
+      // Log chunk information for actuator boards (throttled)
+      const now = Date.now();
+      if (!(this as any).lastActuatorLog) (this as any).lastActuatorLog = 0;
+      if (now - (this as any).lastActuatorLog > 5000) {
+        (this as any).lastActuatorLog = now;
+        const totalDatapoints = chunks.reduce((sum, chunk) => sum + (chunk.datapoints?.length || 0), 0);
+        console.log(`📥 Actuator board data from ${sourceIP}: ${chunks.length} chunk(s), ${totalDatapoints} datapoints`);
       }
 
       const currentTime = Date.now();
@@ -786,39 +1112,198 @@ class SensorSystemServer {
     // Board is identified solely by source IP — no packet-internal board ID is used.
     this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
       const hpCfg = this.hpPtBoards.get(sourceIP);
-      if (!hpCfg) return; // Not an HP PT board
+      if (!hpCfg) {
+        // Log first few packets from unrecognized IPs to help debug
+        if (!(this as any).unrecognizedIPs) (this as any).unrecognizedIPs = new Set();
+        if (!(this as any).unrecognizedIPs.has(sourceIP) && (this as any).unrecognizedIPs.size < 5) {
+          console.log(`📥 Received packet from ${sourceIP} - not configured as HP PT board (check config.toml)`);
+          (this as any).unrecognizedIPs.add(sourceIP);
+        }
+        return; // Not an HP PT board
+      }
+
+      // Log first few packets from recognized HP PT boards
+      if (!(this as any).recognizedHPBoards) (this as any).recognizedHPBoards = new Set();
+      if (!(this as any).recognizedHPBoards.has(sourceIP)) {
+        console.log(`✅ Processing HP PT board data from ${sourceIP}`);
+        (this as any).recognizedHPBoards.add(sourceIP);
+      }
+
+      // Log chunk information for HP PT boards (throttled)
+      const now = Date.now();
+      if (!(this as any).lastHpPtLog) (this as any).lastHpPtLog = 0;
+      const shouldLogHpPt = now - (this as any).lastHpPtLog > 5000;
+      if (shouldLogHpPt) {
+        (this as any).lastHpPtLog = now;
+        const totalDatapoints = chunks.reduce((sum, chunk) => sum + (chunk.datapoints?.length || 0), 0);
+        console.log(`📥 HP PT data from ${sourceIP}: ${chunks.length} chunk(s), ${totalDatapoints} datapoints`);
+        if (sourceIP === '192.168.2.102') {
+          console.log(`   Chunk details:`);
+          chunks.forEach((chunk, idx) => {
+            console.log(`     Chunk ${idx + 1}: timestamp=${chunk.timestamp}, ${chunk.datapoints.length} datapoints`);
+            chunk.datapoints.forEach(dp => {
+              console.log(`       Connector ${dp.sensor_id}: ADC=${dp.data}`);
+            });
+          });
+        }
+      }
 
       const currentTime = Date.now();
 
+      // Chunk timestamp is the START of the chunk; each datapoint within the chunk
+      // is spaced by the sample period (1/SAMPLE_RATE_HZ)
+      const SAMPLE_RATE_HZ = 7200; // Board sample rate (from firmware)
+      const SAMPLE_PERIOD_MS = 1000.0 / SAMPLE_RATE_HZ; // ~0.139 ms per sample
+
       for (const chunk of chunks) {
+        // Use chunk timestamp as base; each datapoint gets its own timestamp
+        const chunkTimestampMs = chunk.timestamp;
+        const chunkTimeBase = chunkTimestampMs > 0 ? chunkTimestampMs : currentTime;
+
+        // CRITICAL: Extract excitation from THIS chunk first (not from cache)
+        // Each chunk contains all sensors including excitation, so we need to find it in this chunk
+        let chunkExcitation: number | undefined = undefined;
         for (const dp of chunk.datapoints) {
+          if (dp.sensor_id === hpCfg.excitationConnectorId) {
+            chunkExcitation = dp.data;
+            // Also update cache for future reference (only if valid)
+            if (chunkExcitation !== undefined && chunkExcitation > 0) {
+              this.excitationAdcCache.set(sourceIP, chunkExcitation);
+            }
+            break;
+          }
+        }
+
+        // If no excitation in this chunk, try cache (for backward compatibility)
+        if (chunkExcitation === undefined) {
+          chunkExcitation = this.excitationAdcCache.get(sourceIP);
+        }
+
+        // Skip entire chunk if no excitation available
+        if (chunkExcitation === undefined || chunkExcitation === 0) {
+          if (Math.random() < 0.1) {
+            console.warn(`⚠️ HP PT ${sourceIP}: No valid excitation in chunk (timestamp=${chunkTimestampMs}), skipping chunk`);
+          }
+          continue; // Skip entire chunk if no excitation
+        }
+
+        // Process each datapoint with individual timestamps
+        for (let sampleIdx = 0; sampleIdx < chunk.datapoints.length; sampleIdx++) {
+          const dp = chunk.datapoints[sampleIdx];
+          // Each sample is spaced by SAMPLE_PERIOD_MS from the chunk start
+          const sampleTimeMs = chunkTimeBase + (sampleIdx * SAMPLE_PERIOD_MS);
+          const sampleTime = sampleTimeMs;
           const connectorId: number = dp.sensor_id; // 1-based connector ID
           const adcCode: number = dp.data;           // uint32_t raw ADC
 
+          // Skip excitation connector (already processed above)
           if (connectorId === hpCfg.excitationConnectorId) {
-            // Cache excitation ADC code — do NOT emit as a sensor update
-            this.excitationAdcCache.set(sourceIP, adcCode);
             continue;
           }
 
           if (!hpCfg.hpPtConnectors.has(connectorId)) {
+            // Log unrecognized connectors occasionally
+            if (Math.random() < 0.05) {
+              console.log(`⚠️ HP PT ${sourceIP}: Connector ${connectorId} not in hp_pt_connectors [${Array.from(hpCfg.hpPtConnectors).join(', ')}]`);
+            }
             continue; // Connector not configured as HP PT
           }
 
-          const adcExc = this.excitationAdcCache.get(sourceIP);
-          if (adcExc === undefined) {
-            // No excitation reading yet — skip conversion until we have one
-            continue;
-          }
+          // Use excitation from THIS chunk (not cached from previous chunks)
+          // chunkExcitation is guaranteed to be defined here due to check above
+          const adcExc = chunkExcitation!;
 
           const psi = this.convertHpPtToPressure(adcCode, adcExc, hpCfg);
+
+          // Skip invalid readings (NaN) - don't emit invalid data
+          // Note: 0 PSI is valid (4mA = 0 PSI), so we only skip NaN/infinite
+          if (!isFinite(psi) || isNaN(psi)) {
+            continue; // Skip invalid readings instead of emitting them
+          }
           const entity = hpCfg.channelToEntity[connectorId] ?? `PT_Cal.HP_PT_${connectorId}`;
 
+          // Calculate intermediate values for debugging
+          // Step 1: Convert ADC code to voltage reading: voltage = (adc_code / 2^31) * reference_voltage
+          // Step 2: For excitation, multiply by divider ratio to get actual V_exc (since ratio = 1/attenuation)
+          //         V_exc = V_adc * excitationDividerRatio = V_adc / excitation_divider_attenuation
+          const ADC_MAX = 2147483648; // 2^31
+          const vExcRaw = (adcExc / ADC_MAX) * hpCfg.adcRefVoltage; // Voltage at ADC input
+          const vExc = vExcRaw * hpCfg.excitationDividerRatio; // Apply divider to get actual excitation voltage
+          // V_sense is independent - just convert ADC to voltage directly (not relative to V_exc)
+          const vSense = (adcCode / ADC_MAX) * hpCfg.adcRefVoltage;
+          const iMa = (vSense / hpCfg.senseResistorOhms) * 1000;
+
+          // Always log GSE Mid (connector 1) to verify it's working
+          if (connectorId === 1 || entity.includes('GSE_Mid')) {
+            console.log(`🔵 GSE Mid (HP PT): Connector ${connectorId} → ${entity} = ${psi.toFixed(2)} PSI`);
+            console.log(`   ADC_sensor=${adcCode}, ADC_exc=${adcExc}`);
+            console.log(`   V_exc=${vExc.toFixed(4)}V, V_sense=${vSense.toFixed(4)}V, I=${iMa.toFixed(2)}mA`);
+            console.log(`   Entity name: ${entity}, Component: pressure_psi`);
+          }
+
+          // Log HP PT readings more frequently to debug
+          if (Math.random() < 0.1) {
+            console.log(`📊 HP PT ${sourceIP}: Connector ${connectorId} → ${entity}`);
+            console.log(`   ADC_sensor=${adcCode}, ADC_exc=${adcExc}`);
+            console.log(`   V_exc=${vExc.toFixed(4)}V, V_sense=${vSense.toFixed(4)}V, I=${iMa.toFixed(2)}mA`);
+            console.log(`   PSI=${psi.toFixed(2)}`);
+          }
+
+          // Log first few updates to confirm data flow
+          const logKey = `${sourceIP}:${connectorId}`;
+          if (!(this as any).hpPtLogged) (this as any).hpPtLogged = new Set();
+          if (!(this as any).hpPtLogged.has(logKey)) {
+            console.log(`✅ HP PT ${sourceIP}: Sending ${entity} = ${psi.toFixed(2)} PSI to GUI`);
+            console.log(`   Entity name: ${entity} (connector ${connectorId})`);
+            console.log(`   V_exc=${vExc.toFixed(4)}V, I=${iMa.toFixed(2)}mA`);
+            (this as any).hpPtLogged.add(logKey);
+          }
+
+          // CRITICAL: Send to GUI - verify entity name matches frontend expectations
+          // Log GSE Mid specifically to debug
+          if (entity.includes('GSE_Mid')) {
+            console.log(`📤 Sending GSE Mid update: ${entity}.pressure_psi = ${psi.toFixed(2)} PSI`);
+            console.log(`   Connector: ${connectorId}, Entity: ${entity}, Value: ${psi.toFixed(2)}`);
+          }
+
+          // Send pressure - use individual sample timestamp to preserve temporal ordering
           this.handleSensorUpdate({
             entity,
             component: 'pressure_psi',
             value: psi,
-            timestamp: currentTime,
+            timestamp: sampleTime,
+          });
+
+          // Send raw ADC code
+          this.handleSensorUpdate({
+            entity,
+            component: 'raw_adc_counts',
+            value: adcCode,
+            timestamp: sampleTime,
+          });
+
+          // Send excitation voltage (V_exc)
+          this.handleSensorUpdate({
+            entity,
+            component: 'excitation_voltage',
+            value: vExc,
+            timestamp: sampleTime,
+          });
+
+          // Send sense voltage (V_sense)
+          this.handleSensorUpdate({
+            entity,
+            component: 'sense_voltage',
+            value: vSense,
+            timestamp: sampleTime,
+          });
+
+          // Send current (I_mA)
+          this.handleSensorUpdate({
+            entity,
+            component: 'current_ma',
+            value: iMa,
+            timestamp: sampleTime,
           });
         }
       }
@@ -842,12 +1327,40 @@ class SensorSystemServer {
   }
 
   private handleSensorUpdate(update: SensorUpdate): void {
-    if (isNaN(update.value) || !isFinite(update.value)) return;
+    // Filter out invalid values (NaN, Infinity) to prevent frontend freezing
+    if (isNaN(update.value) || !isFinite(update.value)) {
+      console.warn(`⚠️ Invalid sensor value rejected: ${update.entity}.${update.component} = ${update.value}`);
+      return;
+    }
 
     // Safety net: reject pressure_psi values outside physical limits
     if (update.component === 'pressure_psi') {
       if (update.value < this.PSI_ABSOLUTE_MIN || update.value > this.PSI_ABSOLUTE_MAX) {
+        // Log first few rejections to help debug calibration issues
+        if (!(this as any).rangeRejections) (this as any).rangeRejections = new Map();
+        const key = `${update.entity}.${update.component}`;
+        const count = (this as any).rangeRejections.get(key) || 0;
+        if (count < 3) {
+          console.warn(`⚠️ Pressure value out of range rejected: ${update.entity}.${update.component} = ${update.value.toFixed(2)} PSI (range: ${this.PSI_ABSOLUTE_MIN} to ${this.PSI_ABSOLUTE_MAX})`);
+          (this as any).rangeRejections.set(key, count + 1);
+        }
         return;
+      }
+    }
+
+    // Log HP PT updates to verify they're being processed
+    if (update.entity.includes('GSE_High') || update.entity.includes('GN2_High') || update.entity.includes('GSE_Mid')) {
+      if (!(this as any).hpPtEntityLogged) (this as any).hpPtEntityLogged = new Set();
+      const logKey = `${update.entity}.${update.component}`;
+      if (!(this as any).hpPtEntityLogged.has(logKey)) {
+        console.log(`📤 Broadcasting HP PT update: ${update.entity}.${update.component} = ${update.value}`);
+        (this as any).hpPtEntityLogged.add(logKey);
+      }
+      // Always log GSE Mid updates to verify it's reaching the GUI
+      if (update.entity.includes('GSE_Mid')) {
+        if (Math.random() < 0.2) { // Log 20% of GSE Mid updates
+          console.log(`🔵 GSE Mid broadcast: ${update.entity}.${update.component} = ${update.value.toFixed(2)} PSI`);
+        }
       }
     }
 
@@ -881,25 +1394,25 @@ class SensorSystemServer {
     if (now - lastBroadcast < this.BROADCAST_MIN_INTERVAL_MS) return;
     this.broadcastLastTime.set(key, now);
 
-    // Broadcast to ALL clients
+    // CRITICAL: Always broadcast to GUI - this is the primary data path
     const message = {
       type: MessageType.SENSOR_UPDATE,
       timestamp: update.timestamp,
       payload: update,
     };
 
-    const openClients = Array.from(this.clients.values()).filter(c => c.ws.readyState === WebSocket.OPEN).length;
+    // ALWAYS broadcast - don't check client count first (broadcast handles that)
+    this.broadcast(message);
 
-    if (openClients > 0) {
-      this.broadcast(message);
-    } else if (this.clients.size > 0) {
-      if (Math.random() < 0.001) {
-        console.warn(`⚠️ ${this.clients.size} clients connected but none are OPEN`);
+    // Log warnings if no clients (for debugging)
+    const openClients = Array.from(this.clients.values()).filter(c => c.ws.readyState === WebSocket.OPEN).length;
+    if (openClients === 0 && this.clients.size > 0) {
+      if (Math.random() < 0.01) {
+        console.warn(`⚠️ ${this.clients.size} clients connected but none are OPEN - GUI not receiving data!`);
       }
-    } else {
-      // No clients at all - this is a problem
-      if (Math.random() < 0.05) {
-        console.warn(`⚠️ No WebSocket clients connected - data is being lost!`);
+    } else if (this.clients.size === 0) {
+      if (Math.random() < 0.1) {
+        console.warn(`⚠️ No WebSocket clients connected - GUI not receiving data!`);
       }
     }
   }
@@ -1031,10 +1544,6 @@ class SensorSystemServer {
 
   private setupWebSocket(): void {
     this.wss.on('connection', (ws: WebSocket, req: any) => {
-      // Broadcast current state's expected positions to new client
-      if (this.currentState !== null) {
-        this.broadcastActuatorExpectedPositions(this.currentState);
-      }
       const clientIP = req.socket?.remoteAddress || 'unknown';
       const clientPort = req.socket?.remotePort || 'unknown';
       console.log('📱 New WebSocket client connected');
@@ -1100,28 +1609,22 @@ class SensorSystemServer {
             console.log('   ✅ Sent initial connection status to client');
 
             // Send current state immediately to new client
-            if (this.currentState !== null) {
-              this.send(ws, {
-                type: MessageType.STATE_UPDATE,
+            // Default to IDLE if currentState is null (initial state)
+            const stateToSend = this.currentState ?? SystemState.IDLE;
+            this.send(ws, {
+              type: MessageType.STATE_UPDATE,
+              timestamp: Date.now(),
+              payload: {
+                currentState: stateToSend,
+                stateName: SystemState[stateToSend] ?? 'IDLE',
                 timestamp: Date.now(),
-                payload: {
-                  currentState: this.currentState,
-                  stateName: SystemState[this.currentState] ?? 'UNKNOWN',
-                  timestamp: Date.now(),
-                } as StateUpdate,
-              });
-              console.log(`📤 Sent current state to new client: ${SystemState[this.currentState]}`);
-            } else {
-              this.send(ws, {
-                type: MessageType.STATE_UPDATE,
-                timestamp: Date.now(),
-                payload: {
-                  currentState: SystemState.IDLE,
-                  stateName: 'IDLE',
-                  timestamp: Date.now(),
-                } as StateUpdate,
-              });
-            }
+                debugMode: this.debugMode,
+              } as StateUpdate,
+            });
+            console.log(`📤 Sent current state to new client: ${SystemState[stateToSend]}`);
+
+            // Send expected actuator positions for the current state (or IDLE if null)
+            this.sendActuatorExpectedPositionsToClient(ws, stateToSend);
           } catch (error) {
             console.error('   ❌ Failed to send connection status:', error);
           }
@@ -1225,42 +1728,210 @@ class SensorSystemServer {
     }
   }
 
-  private sendActuatorCommandUDP(channelId: number, state: number): boolean {
+  private sendActuatorCommandUDP(channelId: number, state: number, boardIp?: string): boolean {
+    // Use provided board IP or default
+    const targetIp = boardIp || this.actuatorIP;
     // Send actuator command via UDP (like combined_gui.py)
     // Packet format: [packet_type(1), version(1), timestamp(4), num_actuators(1), actuator_data...]
     // actuator_data: [actuator_id(1), actuator_state(1)] for each actuator
-    // Packet type 3 = ACTUATOR_COMMAND (from combined_gui.py)
+    // Packet type 4 = ACTUATOR_COMMAND (from combined_gui.py PacketType.ACTUATOR_COMMAND = 4)
 
     if (!this.actuatorSocket) {
-      console.error('❌ Actuator socket not initialized');
-      return false;
+      console.error('❌ Actuator socket not initialized - attempting to recreate...');
+      try {
+        this.actuatorSocket = dgram.createSocket('udp4');
+        this.actuatorSocket.on('error', (err: Error) => {
+          console.error(`❌ Actuator socket error: ${err.message}`);
+        });
+        console.log('✅ Actuator socket recreated');
+      } catch (error) {
+        console.error('❌ Failed to recreate actuator socket:', error);
+        return false;
+      }
+    }
+
+    // Check if socket is still valid (not closed)
+    try {
+      const socketState = (this.actuatorSocket as any).closed;
+      if (socketState === true) {
+        console.error('❌ Actuator socket is closed - recreating...');
+        this.actuatorSocket = dgram.createSocket('udp4');
+        this.actuatorSocket.on('error', (err: Error) => {
+          console.error(`❌ Actuator socket error: ${err.message}`);
+        });
+      }
+    } catch (checkError) {
+      // Socket might not have 'closed' property, that's OK
     }
 
     try {
-      const timestamp = Math.floor(Date.now()); // Timestamp in milliseconds (32-bit)
-      const packetType = 4; // ACTUATOR_COMMAND (from combined_gui.py PacketType.ACTUATOR_COMMAND = 4)
-      const version = 0;
-      const numActuators = 1; // Single actuator command
+      // Validate inputs
+      if (channelId < 1 || channelId > 10) {
+        console.error(`❌ Invalid channel ID: ${channelId} (must be 1-10)`);
+        return false;
+      }
+      if (state !== 0 && state !== 1) {
+        console.error(`❌ Invalid state: ${state} (must be 0 or 1)`);
+        return false;
+      }
 
-      // Build packet: [packet_type, version, timestamp(4 bytes LE), num_actuators, actuator_id, actuator_state]
-      // Total: 1 + 1 + 4 + 1 + 1 + 1 = 9 bytes
-      const buffer = Buffer.allocUnsafe(9);
-      buffer.writeUInt8(packetType, 0);
-      buffer.writeUInt8(version, 1);
-      buffer.writeUInt32LE(timestamp & 0xFFFFFFFF, 2); // 32-bit timestamp
-      buffer.writeUInt8(numActuators, 6);
-      buffer.writeUInt8(channelId, 7); // 1-based channel ID (1-10)
-      buffer.writeUInt8(state, 8); // 0 = CLOSED, 1 = OPEN
+      // Calculate timestamp - ensure it's a valid 32-bit unsigned integer
+      // Match Python exactly: int(time.time() * 1000) & 0xFFFFFFFF
+      const nowMs = Date.now();
+      if (!isFinite(nowMs) || nowMs < 0) {
+        console.error(`❌ Invalid timestamp: ${nowMs}`);
+        return false;
+      }
+      // Take lower 32 bits (matches Python & 0xFFFFFFFF)
+      // Use >>> 0 to convert to unsigned 32-bit (JavaScript displays large unsigned as negative, but that's OK)
+      const timestamp = (Math.floor(nowMs) >>> 0);
+      // After >>> 0, value is always in range [0, 0xFFFFFFFF] as unsigned
+      // JavaScript may display it as negative if > 2^31, but writeUInt32LE handles it correctly
+      // No need to validate - >>> 0 guarantees valid unsigned 32-bit range
 
-      this.actuatorSocket.send(buffer, this.actuatorPort, this.actuatorIP, (err) => {
-        if (err) {
-          console.error(`❌ Failed to send actuator command: ${err.message}`);
+      // Packet constants (matching combined_gui.py exactly)
+      const packetType = 4; // PacketType.ACTUATOR_COMMAND
+      const version = 0; // DIABLO_COMMS_VERSION
+      const numCommands = 1;
+
+      // Build packet exactly matching Python format
+      // Header: packet_type(1) + version(1) + timestamp(4) = 6 bytes
+      // Body: num_commands(1) = 1 byte
+      // Command: actuator_id(1) + actuator_state(1) = 2 bytes
+      // Total: 9 bytes
+      const buffer = Buffer.alloc(9, 0); // Allocate and zero-fill
+
+      let offset = 0;
+
+      // Header: packet_type (1 byte)
+      buffer.writeUInt8(packetType, offset);
+      offset += 1;
+
+      // Header: version (1 byte)
+      buffer.writeUInt8(version, offset);
+      offset += 1;
+
+      // Header: timestamp (4 bytes, little-endian, unsigned 32-bit)
+      // Validate offset and value before write to catch ERR_OUT_OF_RANGE
+      if (offset + 4 > buffer.length) {
+        console.error(`❌ Buffer overflow: offset ${offset} + 4 > ${buffer.length}`);
+        return false;
+      }
+      // After >>> 0, timestamp is guaranteed to be valid unsigned 32-bit
+      // JavaScript may display it as negative if > 2^31, but writeUInt32LE writes it as unsigned
+      // No validation needed - >>> 0 ensures it's in valid range
+      try {
+        buffer.writeUInt32LE(timestamp, offset);
+      } catch (writeError) {
+        const err = writeError as any;
+        console.error(`❌ Buffer writeUInt32LE error at offset ${offset}: ${err.code || 'UNKNOWN'} — ${err.message}`);
+        console.error(`   Timestamp: ${timestamp}, Buffer length: ${buffer.length}, Offset: ${offset}`);
+        return false;
+      }
+      offset += 4;
+
+      // Body: num_commands (1 byte)
+      buffer.writeUInt8(numCommands, offset);
+      offset += 1;
+
+      // Command: actuator_id (1 byte)
+      buffer.writeUInt8(channelId, offset);
+      offset += 1;
+
+      // Command: actuator_state (1 byte)
+      buffer.writeUInt8(state, offset);
+      offset += 1;
+
+      // Verify we wrote exactly 9 bytes
+      if (offset !== 9) {
+        console.error(`❌ Buffer write error: wrote ${offset} bytes, expected 9`);
+        return false;
+      }
+
+      // Validate buffer was written correctly
+      if (buffer.length !== 9) {
+        console.error(`❌ Buffer size mismatch: expected 9, got ${buffer.length}`);
+        return false;
+      }
+
+      // Double-check socket is still valid before sending
+      if (!this.actuatorSocket) {
+        console.error('❌ Actuator socket became null before send');
+        return false;
+      }
+
+      // Send with explicit offset and length (more reliable than implicit)
+      // Wrap in try-catch to catch synchronous errors (like ERR_OUT_OF_RANGE)
+      try {
+        this.actuatorSocket.send(buffer, 0, buffer.length, this.actuatorPort, targetIp, (err) => {
+          if (err) {
+            const error = err as any;
+            console.error(`❌ Failed to send actuator command to ${targetIp}:${this.actuatorPort}: ${error.code || 'UNKNOWN'} — ${error.message}`);
+            console.error(`   Channel: ${channelId}, State: ${state}, Buffer length: ${buffer.length}`);
+            console.error(`   Attempting to recreate socket...`);
+
+            // Try to recreate socket on error
+            try {
+              if (this.actuatorSocket) {
+                this.actuatorSocket.close();
+              }
+              this.actuatorSocket = dgram.createSocket('udp4');
+              this.actuatorSocket.on('error', (err2: Error) => {
+                console.error(`❌ Recreated socket error: ${err2.message}`);
+              });
+              this.actuatorSocket.on('close', () => {
+                console.warn('⚠️ Recreated actuator socket closed');
+              });
+              console.log(`✅ Actuator socket recreated after send error`);
+            } catch (recreateError) {
+              console.error(`❌ Failed to recreate socket:`, recreateError);
+              this.actuatorSocket = null;
+            }
+          }
+        });
+      } catch (sendError) {
+        const err = sendError as any;
+        console.error(`❌ Synchronous error during send: ${err.code || 'UNKNOWN'} — ${err.message}`);
+        console.error(`   Channel: ${channelId}, State: ${state}, Buffer length: ${buffer.length}`);
+        console.error(`   IP: ${this.actuatorIP}, Port: ${this.actuatorPort}`);
+        // Try to recreate socket
+        try {
+          if (this.actuatorSocket) {
+            this.actuatorSocket.close();
+          }
+          this.actuatorSocket = dgram.createSocket('udp4');
+          this.actuatorSocket.on('error', (err2: Error) => {
+            console.error(`❌ Recreated socket error: ${err2.message}`);
+          });
+          this.actuatorSocket.on('close', () => {
+            console.warn('⚠️ Recreated actuator socket closed');
+          });
+          console.log(`✅ Actuator socket recreated after synchronous send error`);
+        } catch (recreateError) {
+          console.error(`❌ Failed to recreate socket:`, recreateError);
+          this.actuatorSocket = null;
         }
-      });
+        return false;
+      }
 
+      // Return true - send initiated (errors handled in callback or catch above)
       return true;
     } catch (error) {
       console.error('❌ Error sending actuator command:', error);
+      // Try to recreate socket on exception
+      try {
+        if (this.actuatorSocket) {
+          this.actuatorSocket.close();
+        }
+        this.actuatorSocket = dgram.createSocket('udp4');
+        this.actuatorSocket.on('error', (err: Error) => {
+          console.error(`❌ Recreated socket error: ${err.message}`);
+        });
+        console.log(`✅ Actuator socket recreated after exception`);
+      } catch (recreateError) {
+        console.error(`❌ Failed to recreate socket:`, recreateError);
+        this.actuatorSocket = null;
+      }
       return false;
     }
   }
@@ -1290,18 +1961,13 @@ class SensorSystemServer {
 
         console.log(`🔍 Validating transition: ${SystemState[currentState]} → ${SystemState[newState]}`);
 
-        // Allow DEBUG state from any state (user requirement: "user can always enter debug state")
-        const isDebugTransition = newState === SystemState.DEBUG;
         // Allow emergency states (all abort types, VENT) from any state
-        const isEmergency = newState === SystemState.ENGINE_ABORT || newState === SystemState.GSE_ABORT || newState === SystemState.EMERGENCY_ABORT || newState === SystemState.ABORT || newState === SystemState.VENT;
+        const isEmergency = newState === SystemState.ENGINE_ABORT || newState === SystemState.GSE_ABORT || newState === SystemState.EMERGENCY_ABORT || newState === SystemState.VENT;
 
-        // In DEBUG mode, allow transitions to any state
-        if (currentState === SystemState.DEBUG) {
-          // Allow any transition from DEBUG state
-          console.log(`   Transition from DEBUG: allowing any transition`);
-        } else if (isDebugTransition) {
-          // Allow entering DEBUG from any state
-          console.log(`   Transition to DEBUG: allowing from any state`);
+        // In DEBUG mode, allow transitions to any state (except DEBUG state itself - debug is a mode, not a state)
+        if (this.debugMode && newState !== SystemState.DEBUG) {
+          // Allow any transition when in debug mode
+          console.log(`   Debug mode active: allowing any transition`);
         } else if (isEmergency) {
           // Allow emergency states from any state
           console.log(`   Emergency transition: allowing from any state`);
@@ -1328,7 +1994,7 @@ class SensorSystemServer {
             // ── Auto data-logging: start on ARMED, stop on IDLE/ABORT ──
             if (newState === SystemState.ARMED && !this.dataLogger.running) {
               this.dataLogger.start();
-            } else if ((newState === SystemState.IDLE || newState === SystemState.ABORT) && this.dataLogger.running) {
+            } else if ((newState === SystemState.IDLE || newState === SystemState.EMERGENCY_ABORT) && this.dataLogger.running) {
               const stats = this.dataLogger.stop();
               if (stats) {
                 console.log(`📝 Run logged: ${stats.filePath} (${stats.records} records, ${stats.channels} channels, ${(stats.durationMs / 1000).toFixed(1)}s)`);
@@ -1338,21 +2004,41 @@ class SensorSystemServer {
             // Update current state
             this.currentState = newState;
 
-            // Broadcast confirmation
+            // Broadcast confirmation (include debug mode status)
             this.broadcast({
               type: MessageType.STATE_UPDATE,
               timestamp: Date.now(),
-              payload: { currentState: newState, stateName: SystemState[newState], timestamp: Date.now() },
+              payload: { currentState: newState, stateName: SystemState[newState], timestamp: Date.now(), debugMode: this.debugMode },
             });
 
-            // Auto-command actuators to match state (skip DEBUG — manual control)
-            if (newState !== SystemState.DEBUG) {
-              this.applyActuatorsForState(newState);
-              // Start continuous actuator command sending for this state
-              this.startContinuousActuatorCommands(newState);
-            } else {
-              // Stop continuous commands in DEBUG mode
+            // Auto-command actuators to match state (skip if in debug mode — manual control)
+            if (this.debugMode) {
+              // Stop continuous commands in debug mode
               this.stopContinuousActuatorCommands();
+              // Clear manually commanded channels when in debug mode
+              this.manuallyCommandedChannels.clear();
+            } else {
+              // Clear manually commanded channels on state transition - state takes precedence
+              this.manuallyCommandedChannels.clear();
+              this.applyActuatorsForState(newState);
+              // In IDLE state, actuators are de-powered - send initial command but don't send continuous commands
+              if (newState === SystemState.IDLE) {
+                console.log(`💤 IDLE state: Actuators are de-powered, stopping continuous commands`);
+                this.stopContinuousActuatorCommands();
+              } else if (newState === SystemState.FIRE) {
+                // In FIRE state, controller takes over Fuel Press and LOX Press - don't send continuous ON/OFF commands
+                // Mark controller-controlled channels so continuous commands skip them
+                const fuelPressChannel = ACTUATOR_CHANNEL[ActuatorId.FUEL_PRESS];
+                const loxPressChannel = ACTUATOR_CHANNEL[ActuatorId.LOX_PRESS];
+                if (fuelPressChannel) this.manuallyCommandedChannels.add(fuelPressChannel);
+                if (loxPressChannel) this.manuallyCommandedChannels.add(loxPressChannel);
+                console.log(`🎯 FIRE state: Controller will control Fuel Press (CH${fuelPressChannel}) and LOX Press (CH${loxPressChannel}) via PWM`);
+                // Still start continuous commands for other actuators
+                this.startContinuousActuatorCommands(newState);
+              } else {
+                // Start continuous actuator command sending for this state
+                this.startContinuousActuatorCommands(newState);
+              }
             }
 
             // Broadcast expected actuator positions to frontend
@@ -1370,15 +2056,57 @@ class SensorSystemServer {
       } else if (command.commandType === 'actuator') {
         const { actuatorId, actuatorState } = command.data;
         if (actuatorId !== undefined && actuatorState !== undefined) {
-          // Map actuatorId → real board channel from config.toml actuator_roles
-          const channelId = ACTUATOR_CHANNEL[actuatorId] ?? (actuatorId + 1);
-          const state = actuatorState === ActuatorState.OPEN ? 1 : 0;
+          // Get actuator name from ActuatorId enum
+          const actuatorName = ActuatorId[actuatorId];
+
+          // Get board info (channel and IP) from config mapping
+          const boardInfo = this.getActuatorBoardInfo(actuatorName);
+          if (!boardInfo) {
+            // Fallback to old mapping if not found in config
+            const channelId = ACTUATOR_CHANNEL[actuatorId] ?? (actuatorId + 1);
+            const actuatorType = this.getActuatorTypeByChannel(channelId);
+            const guiState = actuatorState === ActuatorState.OPEN ? 1 : 0;
+            const hardwareState = this.guiStateToHardwareState(guiState, actuatorType);
+            this.manuallyCommandedChannels.add(channelId);
+            const success = this.sendActuatorCommandUDP(channelId, hardwareState);
+            if (success) {
+              const guiStateStr = actuatorState === ActuatorState.OPEN ? 'OPEN' : 'CLOSED';
+              const hwStateStr = hardwareState === 1 ? 'ON' : 'OFF';
+              console.log(`🎯 Actuator command sent via UDP: ${actuatorName} (CH${channelId}) -> GUI:${guiStateStr} → HW:${hwStateStr} [${actuatorType}]`);
+              this.broadcast({
+                type: MessageType.ACTUATOR_UPDATE,
+                timestamp: Date.now(),
+                payload: {
+                  actuatorId,
+                  name: actuatorName,
+                  state: actuatorState,
+                  rawAdcCounts: 0,
+                  timestamp: Date.now(),
+                } as ActuatorUpdate,
+              });
+            }
+            return;
+          }
+
+          const { channel: channelId, boardIp } = boardInfo;
+          const guiState = actuatorState === ActuatorState.OPEN ? 1 : 0;
+
+          // Convert GUI state (open/closed) to hardware state (on/off) based on NC/NO type
+          const actuatorType = this.getActuatorType(actuatorName);
+          const hardwareState = this.guiStateToHardwareState(guiState, actuatorType);
+
+          // Mark this channel as manually commanded - exclude from continuous commands
+          this.manuallyCommandedChannels.add(channelId);
 
           // Send via direct UDP to actuator board (like combined_gui.py)
-          const success = this.sendActuatorCommandUDP(channelId, state);
+          const success = this.sendActuatorCommandUDP(channelId, hardwareState, boardIp);
 
           if (success) {
-            console.log(`🎯 Actuator command sent via UDP: ${ActuatorId[actuatorId]} (CH${channelId}) -> ${ActuatorState[actuatorState]} (${state})`);
+            const guiStateStr = actuatorState === ActuatorState.OPEN ? 'OPEN' : 'CLOSED';
+            const hwStateStr = hardwareState === 1 ? 'ON' : 'OFF';
+            // Log with actuator name lookup for better debugging
+            const actuatorName = this.getActuatorNameByChannel(channelId) || `CH${channelId}`;
+            console.log(`🎯 Actuator command sent via UDP: ${ActuatorId[actuatorId]} (${actuatorName}, CH${channelId}) -> GUI:${guiStateStr} → HW:${hwStateStr} (${hardwareState}) [${actuatorType}]`);
             // Broadcast actuator update
             this.broadcast({
               type: MessageType.ACTUATOR_UPDATE,
@@ -1431,6 +2159,38 @@ class SensorSystemServer {
           console.log(`🎯 Controller command updated: ${this.controllerCommand.command_type}, ` +
                      `thrust=${this.controllerCommand.thrust_desired}N, altitude=${this.controllerCommand.altitude_goal}m`);
         }
+      } else if (command.commandType === 'debug_mode') {
+        // Toggle debug mode
+        const { debugMode } = command.data;
+        if (debugMode !== undefined) {
+          this.debugMode = debugMode;
+          console.log(`🔧 Debug mode ${this.debugMode ? 'ENABLED' : 'DISABLED'}`);
+
+          // If disabling debug mode, resume normal actuator commands for current state
+          if (!this.debugMode && this.currentState !== null) {
+            this.manuallyCommandedChannels.clear();
+            this.applyActuatorsForState(this.currentState);
+            this.startContinuousActuatorCommands(this.currentState);
+          } else if (this.debugMode) {
+            // If enabling debug mode, stop continuous commands
+            this.stopContinuousActuatorCommands();
+            this.manuallyCommandedChannels.clear();
+          }
+
+          // Broadcast debug mode status update
+          if (this.currentState !== null) {
+            this.broadcast({
+              type: MessageType.STATE_UPDATE,
+              timestamp: Date.now(),
+              payload: {
+                currentState: this.currentState,
+                stateName: SystemState[this.currentState],
+                timestamp: Date.now(),
+                debugMode: this.debugMode
+              },
+            });
+          }
+        }
       }
     } catch (error) {
       console.error('❌ Command error:', error);
@@ -1439,6 +2199,174 @@ class SensorSystemServer {
         timestamp: Date.now(),
         payload: { message: `Command failed: ${error}`, command },
       });
+    }
+  }
+
+  /**
+   * Load actuator board mappings from config (multi-board support).
+   * Maps actuator name → { channel, boardIp } for routing commands to correct board.
+   */
+  private loadActuatorBoardMap(config: any): void {
+    try {
+      const actuatorRoles = config.actuator_roles || {};
+      const boards = config.boards || {};
+
+      // Build set of all actuator board IPs (for filtering sensor data)
+      // CRITICAL: This prevents actuator board current sense data from being processed as pressure sensor data
+      this.actuatorBoardIPs.clear();
+      for (const [boardKey, boardConfig] of Object.entries(boards)) {
+        const board = boardConfig as any;
+        if (board.type === 'ACTUATOR' && board.enabled !== false && board.ip) {
+          this.actuatorBoardIPs.add(board.ip);
+          console.log(`📋 Registered actuator board IP: ${board.ip}`);
+        }
+      }
+
+      // Get default board IP (first actuator board found)
+      let defaultBoardIp = '192.168.2.201';
+      for (const [boardKey, boardConfig] of Object.entries(boards)) {
+        const board = boardConfig as any;
+        if (board.type === 'ACTUATOR' && board.enabled !== false) {
+          defaultBoardIp = board.ip || defaultBoardIp;
+          break; // Use first enabled actuator board as default
+        }
+      }
+
+      for (const [name, value] of Object.entries(actuatorRoles)) {
+        if (Array.isArray(value)) {
+          const type = value[0] as string;
+          const channel = value[1] as number;
+          // Third element is optional board IP, otherwise use default
+          const boardIp = (value.length >= 3 && typeof value[2] === 'string')
+            ? value[2]
+            : defaultBoardIp;
+
+          this.actuatorBoardMap.set(name, { channel, boardIp });
+          console.log(`📋 Actuator mapping: ${name} → CH${channel} @ ${boardIp}`);
+        }
+      }
+
+      console.log(`✅ Loaded ${this.actuatorBoardMap.size} actuator board mappings`);
+      console.log(`✅ Registered ${this.actuatorBoardIPs.size} actuator board IPs for filtering: ${Array.from(this.actuatorBoardIPs).join(', ')}`);
+    } catch (error) {
+      console.error('❌ Failed to load actuator board map:', error);
+    }
+  }
+
+  /**
+   * Get actuator board IP and channel by actuator name.
+   * Returns null if not found.
+   */
+  private getActuatorBoardInfo(actuatorName: string): { channel: number; boardIp: string } | null {
+    return this.actuatorBoardMap.get(actuatorName) || null;
+  }
+
+  /**
+   * Get actuator type (NC/NO) from config by actuator name.
+   * Returns 'NC' as default if not found.
+   * Supports both old format [type, channel] and new format [type, channel, board_ip]
+   */
+  private getActuatorType(actuatorName: string): 'NC' | 'NO' {
+    try {
+      const config = readConfig();
+      const roles = config.actuator_roles || {};
+      const roleValue = roles[actuatorName];
+
+      // CRITICAL: Log all keys to debug lookup issues
+      if (actuatorName === 'LOX Press') {
+        console.log(`   🔍 LOX Press getActuatorType: Looking up "${actuatorName}"`);
+        console.log(`   🔍 Available keys: ${Object.keys(roles).join(', ')}`);
+        console.log(`   🔍 roleValue for "${actuatorName}": ${JSON.stringify(roleValue)}`);
+      }
+
+      // Support both old format [type, channel] and new format [type, channel, board_ip]
+      if (Array.isArray(roleValue) && roleValue.length >= 2 && typeof roleValue[0] === 'string') {
+        const type = roleValue[0] === 'NO' ? 'NO' : 'NC';
+        if (actuatorName === 'LOX Press') {
+          console.log(`   ✅ LOX Press getActuatorType: Found type=${type} from roleValue=${JSON.stringify(roleValue)}`);
+        }
+        return type;
+      } else {
+        // CRITICAL ERROR: LOX Press must be NO!
+        if (actuatorName === 'LOX Press') {
+          console.error(`   ❌❌❌ CRITICAL: LOX Press lookup FAILED! roleValue=${JSON.stringify(roleValue)}, defaulting to NC (WRONG!)`);
+          console.error(`   ❌ This will cause ALL LOX Press commands to be inverted!`);
+          // Force return NO as a safety measure
+          return 'NO';
+        }
+      }
+    } catch (error) {
+      if (actuatorName === 'LOX Press') {
+        console.error(`   ❌ LOX Press getActuatorType error:`, error);
+        // Force return NO as a safety measure
+        return 'NO';
+      }
+    }
+    return 'NC'; // Default to NC (but LOX Press should never reach here)
+  }
+
+  /**
+   * Get actuator type (NC/NO) from config by channel ID.
+   * Returns the first matching actuator name's type, or 'NC' as default.
+   */
+  private getActuatorTypeByChannel(channelId: number): 'NC' | 'NO' {
+    try {
+      const config = readConfig();
+      const roles = config.actuator_roles || {};
+      for (const [name, value] of Object.entries(roles)) {
+        if (Array.isArray(value) && value.length === 2 && typeof value[1] === 'number' && value[1] === channelId) {
+          if (typeof value[0] === 'string') {
+            const type = value[0] === 'NO' ? 'NO' : 'NC';
+            console.log(`📋 Found actuator type for CH${channelId} (${name}): ${type}`);
+            return type;
+          }
+        }
+      }
+      console.warn(`⚠️ Actuator type not found for channel ${channelId} in config, defaulting to NC`);
+    } catch (error) {
+      console.error(`❌ Failed to get actuator type for channel ${channelId}:`, error);
+    }
+    return 'NC'; // Default to NC
+  }
+
+  /**
+   * Get actuator name by channel ID for logging/debugging.
+   * Supports both old format [type, channel] and new format [type, channel, board_ip]
+   */
+  private getActuatorNameByChannel(channelId: number): string | null {
+    try {
+      const config = readConfig();
+      const roles = config.actuator_roles || {};
+      for (const [name, value] of Object.entries(roles)) {
+        if (Array.isArray(value) && value.length >= 2 && typeof value[1] === 'number' && value[1] === channelId) {
+          return name;
+        }
+      }
+    } catch (_) { /* ignore */ }
+    return null;
+  }
+
+  /**
+   * Convert GUI state (open/closed) to hardware state (on/off) based on NC/NO type.
+   * GUI state: 0 = CLOSED, 1 = OPEN
+   * Hardware state: 0 = OFF, 1 = ON
+   *
+   * Packet format: [packet_type, version, timestamp, num_actuators, actuator_id, actuator_state]
+   * The packet does NOT contain NC/NO information - conversion must happen in software.
+   *
+   * Matches Python GUI logic exactly:
+   * NC: OPEN (1) -> hardware ON (1), CLOSED (0) -> hardware OFF (0)
+   * NO: OPEN (1) -> hardware OFF (0), CLOSED (0) -> hardware ON (1) [INVERTED]
+   */
+  private guiStateToHardwareState(guiState: number, actuatorType: 'NC' | 'NO'): number {
+    if (actuatorType === 'NO') {
+      // NO: OPEN (1) -> hardware OFF (0), CLOSED (0) -> hardware ON (1)
+      // Python: hardware_command = 0 if gui_state == 1 else 1
+      return guiState === 1 ? 0 : 1;
+    } else {
+      // NC: OPEN (1) -> hardware ON (1), CLOSED (0) -> hardware OFF (0)
+      // Python: hardware_command = gui_state
+      return guiState;
     }
   }
 
@@ -1455,13 +2383,14 @@ class SensorSystemServer {
       return;
     }
 
-    // Load config channels once for name resolution
+    // Load config channels and types once for name resolution
     let configActuatorChannels: Record<string, number> = {};
     try {
       const config = readConfig();
       const roles = config.actuator_roles || {};
       for (const [name, value] of Object.entries(roles)) {
-        if (Array.isArray(value) && value.length === 2 && typeof value[1] === 'number') {
+        // Support both old format [type, channel] and new format [type, channel, board_ip]
+        if (Array.isArray(value) && value.length >= 2 && typeof value[1] === 'number') {
           configActuatorChannels[name] = value[1];
         }
       }
@@ -1471,21 +2400,71 @@ class SensorSystemServer {
 
     // Track which channels have already been commanded so we send the most specific
     // (first-encountered) command when multiple actuator names resolve to the same channel.
-    const commandedChannels = new Set<number>();
+    const commandedChannels = new Set<string>(); // Use "channel@boardIp" as key for multi-board support
 
     for (const [actuatorName, val] of Object.entries(expected)) {
-      const channelId = getActuatorChannel(actuatorName, configActuatorChannels);
-      if (channelId === undefined || isNaN(channelId) || channelId < 1 || channelId > 10) {
-        console.warn(`⚠️ No valid channel for actuator "${actuatorName}" - skipping`);
+      // Get board info from mapping (includes channel and board IP)
+      const boardInfo = this.getActuatorBoardInfo(actuatorName);
+      if (!boardInfo) {
+        // Fallback to old method if not in mapping
+        const channelId = getActuatorChannel(actuatorName, configActuatorChannels);
+        if (channelId === undefined || isNaN(channelId) || channelId < 1 || channelId > 10) {
+          console.warn(`⚠️ No valid channel for actuator "${actuatorName}" - skipping`);
+          continue;
+        }
+        const channelKey = `${channelId}@${this.actuatorIP}`;
+        if (commandedChannels.has(channelKey)) {
+          console.log(`   (${actuatorName}) CH${channelId} already commanded - skipping duplicate`);
+          continue;
+        }
+        commandedChannels.add(channelKey);
+        const actuatorType = this.getActuatorType(actuatorName);
+        const hardwareState = this.guiStateToHardwareState(val, actuatorType);
+
+        // CRITICAL: Verify LOX Press is detected as NO - if not, this is a bug!
+        if (actuatorName === 'LOX Press') {
+          if (actuatorType !== 'NO') {
+            console.error(`   ❌❌❌ CRITICAL BUG: LOX Press detected as ${actuatorType} instead of NO! This will cause inverted commands!`);
+          }
+          console.log(`   🔍 LOX Press: GUI=${val} (${val === 1 ? 'OPEN' : 'CLOSED'}) → Type=${actuatorType} → HW=${hardwareState} (${hardwareState === 1 ? 'ON' : 'OFF'})`);
+        }
+
+        this.sendActuatorCommandUDP(channelId, hardwareState);
+        const guiStateStr = val === 1 ? 'OPEN' : 'CLOSED';
+        const hwStateStr = hardwareState === 1 ? 'ON' : 'OFF';
+        console.log(`   ${actuatorName} CH${channelId} @ ${this.actuatorIP} → GUI:${guiStateStr} (${val}) → HW:${hwStateStr} (${hardwareState}) [${actuatorType}]`);
         continue;
       }
-      if (commandedChannels.has(channelId)) {
-        console.log(`   (${actuatorName}) CH${channelId} already commanded - skipping duplicate`);
+
+      const { channel: channelId, boardIp } = boardInfo;
+      if (channelId < 1 || channelId > 10) {
+        console.warn(`⚠️ Invalid channel ${channelId} for actuator "${actuatorName}" - skipping`);
         continue;
       }
-      commandedChannels.add(channelId);
-      this.sendActuatorCommandUDP(channelId, val);
-      console.log(`   ${actuatorName} CH${channelId} → ${val === 1 ? 'OPEN' : 'CLOSED'}`);
+
+      const channelKey = `${channelId}@${boardIp}`;
+      if (commandedChannels.has(channelKey)) {
+        console.log(`   (${actuatorName}) CH${channelId} @ ${boardIp} already commanded - skipping duplicate`);
+        continue;
+      }
+      commandedChannels.add(channelKey);
+
+      // Convert GUI state (open/closed) to hardware state (on/off) based on NC/NO type
+      const actuatorType = this.getActuatorType(actuatorName);
+      const hardwareState = this.guiStateToHardwareState(val, actuatorType);
+
+      // CRITICAL: Verify LOX Press is detected as NO - if not, this is a bug!
+      if (actuatorName === 'LOX Press') {
+        if (actuatorType !== 'NO') {
+          console.error(`   ❌❌❌ CRITICAL BUG: LOX Press detected as ${actuatorType} instead of NO! This will cause inverted commands!`);
+        }
+        console.log(`   🔍 LOX Press: GUI=${val} (${val === 1 ? 'OPEN' : 'CLOSED'}) → Type=${actuatorType} → HW=${hardwareState} (${hardwareState === 1 ? 'ON' : 'OFF'})`);
+      }
+
+      this.sendActuatorCommandUDP(channelId, hardwareState, boardIp);
+      const guiStateStr = val === 1 ? 'OPEN' : 'CLOSED';
+      const hwStateStr = hardwareState === 1 ? 'ON' : 'OFF';
+      console.log(`   ${actuatorName} CH${channelId} @ ${boardIp} → GUI:${guiStateStr} (${val}) → HW:${hwStateStr} (${hardwareState}) [${actuatorType}]`);
     }
   }
 
@@ -1502,30 +2481,46 @@ class SensorSystemServer {
       return;
     }
 
-    // Resolve actuator names → channel IDs once, before the interval starts
+    // Resolve actuator names → channel IDs and board IPs once, before the interval starts
     let configActuatorChannels: Record<string, number> = {};
     try {
       const config = readConfig();
       const roles = config.actuator_roles || {};
       for (const [name, value] of Object.entries(roles)) {
-        if (Array.isArray(value) && value.length === 2 && typeof value[1] === 'number') {
+        // Support both old format [type, channel] and new format [type, channel, board_ip]
+        if (Array.isArray(value) && value.length >= 2 && typeof value[1] === 'number') {
           configActuatorChannels[name] = value[1];
         }
       }
     } catch (_) { /* ignore */ }
 
-    // Build a deduplicated channel → value map so we send one command per physical channel
-    const channelCommands: Record<number, number> = {};
+    // Build a deduplicated channel@boardIp → { actuatorName, guiState, boardIp } map
+    // Store actuator name so we can look up NC/NO type when converting
+    const channelCommands: Map<string, { actuatorName: string; guiState: number; boardIp: string; channel: number }> = new Map();
     for (const [actuatorName, val] of Object.entries(expected)) {
-      const channelId = getActuatorChannel(actuatorName, configActuatorChannels);
-      if (channelId === undefined || channelId < 1 || channelId > 10) continue;
-      // First actuator name encountered for this channel wins
-      if (!(channelId in channelCommands)) {
-        channelCommands[channelId] = val;
+      // Get board info from mapping (includes channel and board IP)
+      const boardInfo = this.getActuatorBoardInfo(actuatorName);
+      if (!boardInfo) {
+        // Fallback to old method if not in mapping
+        const channelId = getActuatorChannel(actuatorName, configActuatorChannels);
+        if (channelId === undefined || channelId < 1 || channelId > 10) continue;
+        const channelKey = `${channelId}@${this.actuatorIP}`;
+        if (!channelCommands.has(channelKey)) {
+          channelCommands.set(channelKey, { actuatorName, guiState: val, boardIp: this.actuatorIP, channel: channelId });
+        }
+        continue;
+      }
+
+      const { channel: channelId, boardIp } = boardInfo;
+      if (channelId < 1 || channelId > 10) continue;
+      const channelKey = `${channelId}@${boardIp}`;
+      // First actuator name encountered for this channel@board wins
+      if (!channelCommands.has(channelKey)) {
+        channelCommands.set(channelKey, { actuatorName, guiState: val, boardIp, channel: channelId });
       }
     }
 
-    if (Object.keys(channelCommands).length === 0) {
+    if (channelCommands.size === 0) {
       return;
     }
 
@@ -1533,8 +2528,23 @@ class SensorSystemServer {
 
     this.actuatorCommandInterval = setInterval(() => {
       if (this.currentState === state) {
-        for (const [ch, val] of Object.entries(channelCommands)) {
-          this.sendActuatorCommandUDP(Number(ch), val);
+        for (const [channelKey, cmd] of channelCommands.entries()) {
+          const channelNum = cmd.channel;
+          // Skip manually commanded channels - user has taken control OR controller is controlling (FIRE state)
+          if (this.manuallyCommandedChannels.has(channelNum)) {
+            // In FIRE state, Fuel Press and LOX Press are controlled by controller via PWM
+            if (state === SystemState.FIRE && (channelNum === ACTUATOR_CHANNEL[ActuatorId.FUEL_PRESS] ||
+                                               channelNum === ACTUATOR_CHANNEL[ActuatorId.LOX_PRESS])) {
+              // Silently skip - controller is handling these via PWM
+              continue;
+            }
+            // Otherwise, user has manual control
+            continue;
+          }
+          // Convert GUI state (open/closed) to hardware state (on/off) based on NC/NO type
+          const actuatorType = this.getActuatorType(cmd.actuatorName);
+          const hardwareState = this.guiStateToHardwareState(cmd.guiState, actuatorType);
+          this.sendActuatorCommandUDP(channelNum, hardwareState, cmd.boardIp);
         }
       } else {
         this.stopContinuousActuatorCommands();
@@ -1559,6 +2569,39 @@ class SensorSystemServer {
    * so every actuator in the CSV gets its own entry — even when multiple actuators
    * share the same physical board channel.
    */
+  private sendActuatorExpectedPositionsToClient(ws: WebSocket, state: SystemState): void {
+    const expected = STATE_ACTUATOR_MAP[state];
+    if (!expected) {
+      this.send(ws, {
+        type: MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE,
+        timestamp: Date.now(),
+        payload: { [state]: {} },
+      });
+      return;
+    }
+
+    // Map actuator name → entity name directly (no channel indirection)
+    const entityExpected: Record<string, 'open' | 'closed'> = {};
+    for (const [actuatorName, value] of Object.entries(expected)) {
+      const entity = CSV_ACTUATOR_TO_ENTITY[actuatorName];
+      if (entity) {
+        entityExpected[entity] = value === 1 ? 'open' : 'closed';
+      } else {
+        // Unknown actuator — use a sanitised fallback so the frontend can still see it
+        const fallback = `ACT.${actuatorName.replace(/\s+/g, '_')}`;
+        entityExpected[fallback] = value === 1 ? 'open' : 'closed';
+      }
+    }
+
+    console.log(`📤 Sending expected actuator positions for state ${SystemState[state]} to client:`, entityExpected);
+
+    this.send(ws, {
+      type: MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE,
+      timestamp: Date.now(),
+      payload: { [state]: entityExpected },
+    });
+  }
+
   private broadcastActuatorExpectedPositions(state: SystemState): void {
     const expected = STATE_ACTUATOR_MAP[state];
     if (!expected) {
@@ -1639,15 +2682,51 @@ class SensorSystemServer {
       buffer.writeFloatLE(frequency, offset); // frequency [Hz]
       offset += 4;
 
+      // Send with error callback
+      let sendError: Error | null = null;
       this.actuatorSocket.send(buffer, 0, buffer.length, this.actuatorPort, this.actuatorIP, (err) => {
         if (err) {
-          console.error(`❌ Failed to send PWM command to ${this.actuatorIP}:${this.actuatorPort}:`, err);
+          sendError = err;
+          const error = err as any;
+          console.error(`❌ Failed to send PWM command to ${this.actuatorIP}:${this.actuatorPort}: ${error.code || 'UNKNOWN'} — ${error.message}`);
+          console.error(`   Channel: ${channelId}, Duty: ${dutyCycle.toFixed(3)}, Freq: ${frequency}Hz`);
+          console.error(`   Attempting to recreate socket...`);
+
+          // Try to recreate socket on error
+          try {
+            if (this.actuatorSocket) {
+              this.actuatorSocket.close();
+            }
+            this.actuatorSocket = dgram.createSocket('udp4');
+            this.actuatorSocket.on('error', (err2: Error) => {
+              console.error(`❌ Recreated socket error: ${err2.message}`);
+            });
+            console.log(`✅ Actuator socket recreated after PWM send error`);
+          } catch (recreateError) {
+            console.error(`❌ Failed to recreate socket:`, recreateError);
+            this.actuatorSocket = null;
+          }
         }
       });
 
+      // Return true if no immediate error (async callback will handle errors)
       return true;
     } catch (error) {
       console.error('❌ Error sending PWM command:', error);
+      // Try to recreate socket on exception
+      try {
+        if (this.actuatorSocket) {
+          this.actuatorSocket.close();
+        }
+        this.actuatorSocket = dgram.createSocket('udp4');
+        this.actuatorSocket.on('error', (err: Error) => {
+          console.error(`❌ Recreated socket error: ${err.message}`);
+        });
+        console.log(`✅ Actuator socket recreated after PWM exception`);
+      } catch (recreateError) {
+        console.error(`❌ Failed to recreate socket:`, recreateError);
+        this.actuatorSocket = null;
+      }
       return false;
     }
   }
@@ -1677,7 +2756,15 @@ class SensorSystemServer {
         return;
       }
 
+      console.log('✅ Controller initialized successfully - starting loop');
+
+      // Track when loop started for better error logging
+      this.controllerLoopStartTime = Date.now();
+
       // Start controller loop at 10 Hz with error handling
+      // Log immediately that loop is starting
+      console.log(`🔄 Controller loop starting at ${this.CONTROLLER_LOOP_INTERVAL_MS}ms interval (${1000/this.CONTROLLER_LOOP_INTERVAL_MS} Hz)`);
+
       this.controllerLoopInterval = setInterval(async () => {
         try {
           if (this.currentState !== SystemState.FIRE) {
@@ -1697,17 +2784,19 @@ class SensorSystemServer {
           // Map sensor data to controller measurement format
           const measurement = mapSensorDataToMeasurement(sensorDataMap);
           if (!measurement) {
-            // Missing required sensor data - log warning occasionally
-            if (Math.random() < 0.01) { // 1% of steps to avoid spam
-              const missingSensors: string[] = [];
-              const required = ['PT_Cal.GN2_High', 'PT_Cal.GN2_Regulated', 'PT_Cal.Fuel_Upstream',
-                              'PT_Cal.Ox_Upstream', 'PT_Cal.Fuel_Downstream', 'PT_Cal.Ox_Downstream'];
-              for (const sensor of required) {
-                if (!sensorDataMap.has(`${sensor}.pressure_psi`)) {
-                  missingSensors.push(sensor);
-                }
+            // Missing required sensor data - log warning more frequently on first few attempts
+            const missingSensors: string[] = [];
+            const required = ['PT_Cal.GN2_High', 'PT_Cal.GN2_Regulated', 'PT_Cal.Fuel_Upstream',
+                            'PT_Cal.Ox_Upstream', 'PT_Cal.Fuel_Downstream', 'PT_Cal.Ox_Downstream'];
+            for (const sensor of required) {
+              if (!sensorDataMap.has(`${sensor}.pressure_psi`)) {
+                missingSensors.push(sensor);
               }
+            }
+            // Log every time for first 10 seconds, then occasionally
+            if (Math.random() < 0.1 || Date.now() - (this.controllerLoopStartTime || 0) < 10000) {
               console.warn(`⚠️ Controller: Missing required sensor data. Missing: ${missingSensors.join(', ')}`);
+              console.warn(`   Available sensors: ${Array.from(sensorDataMap.keys()).join(', ')}`);
             }
             // Continue loop even with missing sensors (graceful degradation)
             return;
@@ -1715,6 +2804,7 @@ class SensorSystemServer {
 
           // Call controller step with error handling
           let result;
+          let controllerFailed = false;
           try {
             result = await this.controllerClient!.step(
               measurement,
@@ -1722,24 +2812,45 @@ class SensorSystemServer {
               this.controllerCommand
             );
           } catch (error) {
-            // Controller service error - log occasionally
-            if (Math.random() < 0.01) { // 1% of steps
+            // Controller service error - log more frequently
+            controllerFailed = true;
+            const timeSinceStart = Date.now() - (this.controllerLoopStartTime || 0);
+            if (timeSinceStart < 5000 || Math.random() < 0.05) { // Log first 5 seconds or 5% of time
               console.error('❌ Controller step error:', error);
-              console.warn('   Controller service may be down - continuing loop');
+              console.warn('   Controller service may be down - using fallback PWM commands');
+              console.warn('   Start controller service: cd engine_sim && uvicorn backend.main:app --reload --port 8000');
             }
-            return; // Continue loop even if controller fails
           }
 
-          if (!result) {
-            // Log warning occasionally to avoid spam
-            if (Math.random() < 0.01) { // 1% of steps
-              console.warn('⚠️ Controller step returned null - check controller service logs');
+          // Use fallback if controller failed or returned null
+          let duty_F = 0;
+          let duty_O = 0;
+          let diagnostics: ControllerDiagnostics | null = null;
+
+          if (!result || controllerFailed) {
+            // Log warning more frequently - this is a critical failure
+            const timeSinceStart = Date.now() - (this.controllerLoopStartTime || 0);
+            if (timeSinceStart < 10000 || Math.random() < 0.1) {
+              console.warn('⚠️ Controller step failed - using fallback duty cycles');
               console.warn('   Controller service may be down or error occurred');
+              console.warn(`   Current state: ${SystemState[this.currentState]}`);
+              if (measurement) {
+                console.warn(`   Measurement available: ${Object.keys(measurement).join(', ')}`);
+              } else {
+                console.warn('   No measurement data available');
+              }
             }
-            return;
+            // Fallback: Use configurable default duty cycles to keep valves slightly open
+            // This prevents complete shutdown if controller service is unavailable
+            duty_F = this.FALLBACK_FUEL_DUTY;
+            duty_O = this.FALLBACK_OX_DUTY;
+            console.log(`🔄 Using fallback PWM: Fuel=${(duty_F*100).toFixed(1)}%, LOX=${(duty_O*100).toFixed(1)}%`);
+          } else {
+            const { actuation, diagnostics: diag } = result;
+            duty_F = actuation.duty_F;
+            duty_O = actuation.duty_O;
+            diagnostics = diag;
           }
-
-          const { actuation, diagnostics } = result;
 
           // Send PWM commands to actuators
           // Fuel Press (CH3) gets duty_F, LOX Press (CH8) gets duty_O
@@ -1747,40 +2858,62 @@ class SensorSystemServer {
           const loxPressChannel = ACTUATOR_CHANNEL[ActuatorId.LOX_PRESS];   // CH8
 
           // Clamp duty cycles to valid range [0, 1] before sending
-          const duty_F_clamped = Math.max(0, Math.min(1, actuation.duty_F));
-          const duty_O_clamped = Math.max(0, Math.min(1, actuation.duty_O));
+          const duty_F_clamped = Math.max(0, Math.min(1, duty_F));
+          const duty_O_clamped = Math.max(0, Math.min(1, duty_O));
 
           // Send PWM commands with error handling
+          // Use configurable duration for continuous operation - controller refreshes periodically anyway
+          // This ensures PWM stays active even if there's a brief delay in the controller loop
+
+          // Log every PWM command for first 2 seconds, then occasionally
+          const shouldLogPWM = Math.random() < 0.1 || (this.controllerLoopStartTime && Date.now() - this.controllerLoopStartTime < 2000);
+
           try {
             if (fuelPressChannel) {
-              this.sendPWMActuatorCommandUDP(fuelPressChannel, duty_F_clamped, 10, 100);
+              const success = this.sendPWMActuatorCommandUDP(fuelPressChannel, duty_F_clamped, this.PWM_FREQUENCY_HZ, this.PWM_DURATION_MS);
+              if (success) {
+                if (shouldLogPWM) {
+                  console.log(`🎯 PWM sent: Fuel Press CH${fuelPressChannel} duty=${duty_F_clamped.toFixed(3)} (${(duty_F_clamped * 100).toFixed(1)}%), freq=${this.PWM_FREQUENCY_HZ}Hz, duration=${this.PWM_DURATION_MS}ms`);
+                }
+              } else {
+                console.error(`❌ Failed to send PWM command to Fuel Press CH${fuelPressChannel}`);
+              }
+            } else {
+              console.warn('⚠️ Fuel Press channel not found in ACTUATOR_CHANNEL map');
             }
             if (loxPressChannel) {
-              this.sendPWMActuatorCommandUDP(loxPressChannel, duty_O_clamped, 10, 100);
+              const success = this.sendPWMActuatorCommandUDP(loxPressChannel, duty_O_clamped, this.PWM_FREQUENCY_HZ, this.PWM_DURATION_MS);
+              if (success) {
+                if (shouldLogPWM) {
+                  console.log(`🎯 PWM sent: LOX Press CH${loxPressChannel} duty=${duty_O_clamped.toFixed(3)} (${(duty_O_clamped * 100).toFixed(1)}%), freq=${this.PWM_FREQUENCY_HZ}Hz, duration=${this.PWM_DURATION_MS}ms`);
+                }
+              } else {
+                console.error(`❌ Failed to send PWM command to LOX Press CH${loxPressChannel}`);
+              }
+            } else {
+              console.warn('⚠️ LOX Press channel not found in ACTUATOR_CHANNEL map');
             }
           } catch (error) {
-            // Log PWM send errors occasionally
-            if (Math.random() < 0.01) {
-              console.error('❌ Failed to send PWM actuator command:', error);
-            }
+            // Log PWM send errors always - these are critical
+            console.error('❌ Failed to send PWM actuator command:', error);
           }
 
-          // Log diagnostics occasionally
-          if (Math.random() < 0.1) { // 10% of steps
+          // Log diagnostics occasionally (only if controller is working)
+          if (diagnostics && Math.random() < 0.1) { // 10% of steps
             console.log(`🎯 Controller: F_ref=${diagnostics.F_ref.toFixed(1)}N, F_est=${diagnostics.F_estimated.toFixed(1)}N, ` +
-                       `duty_F=${actuation.duty_F.toFixed(3)}, duty_O=${actuation.duty_O.toFixed(3)}`);
+                       `duty_F=${duty_F_clamped.toFixed(3)}, duty_O=${duty_O_clamped.toFixed(3)}`);
           }
 
           // Write controller outputs to Elodin DB for logging and replay
-          if (this.elodin.isConnected()) {
+          if (this.elodin.isConnected() && diagnostics) {
             try {
               publishControllerActuation(
                 this.elodin,
                 duty_F_clamped,
                 duty_O_clamped,
-                actuation.u_F_onoff,
-                actuation.u_O_onoff,
-                actuation.valid ?? true
+                duty_F_clamped > 0,
+                duty_O_clamped > 0,
+                !controllerFailed && result !== null
               );
 
               publishControllerDiagnostics(
@@ -1803,13 +2936,29 @@ class SensorSystemServer {
             }
           }
 
-          // Broadcast controller diagnostics to frontend
+          // Broadcast controller diagnostics to frontend (always, even with fallback values)
           this.broadcast({
             type: MessageType.CONTROLLER_UPDATE,
             timestamp: Date.now(),
             payload: {
-              actuation,
-              diagnostics,
+              actuation: {
+                duty_F: duty_F_clamped,
+                duty_O: duty_O_clamped,
+                u_F_onoff: duty_F_clamped > 0,
+                u_O_onoff: duty_O_clamped > 0,
+                valid: !controllerFailed && result !== null,
+              },
+              diagnostics: diagnostics || {
+                F_ref: 0,
+                MR_ref: 0,
+                F_estimated: 0,
+                MR_estimated: 0,
+                P_ch: 0,
+                cost: 0,
+                safety_filtered: false,
+                cutoff_active: false,
+                solver_iters: 0,
+              },
             },
           });
 
@@ -1826,7 +2975,7 @@ class SensorSystemServer {
           this.sensorCache.set('CONTROLLER.Fuel.onoff', {
             entity: 'CONTROLLER.Fuel',
             component: 'onoff',
-            value: actuation.u_F_onoff ? 1 : 0,
+            value: duty_F_clamped > 0 ? 1 : 0,
             timestamp: Date.now(),
           });
           this.sensorCache.set('CONTROLLER.Ox.duty_cycle', {
@@ -1838,7 +2987,7 @@ class SensorSystemServer {
           this.sensorCache.set('CONTROLLER.Ox.onoff', {
             entity: 'CONTROLLER.Ox',
             component: 'onoff',
-            value: actuation.u_O_onoff ? 1 : 0,
+            value: duty_O_clamped > 0 ? 1 : 0,
             timestamp: Date.now(),
           });
 
@@ -1878,6 +3027,7 @@ class SensorSystemServer {
     if (this.controllerLoopInterval) {
       clearInterval(this.controllerLoopInterval);
       this.controllerLoopInterval = null;
+      this.controllerLoopStartTime = null;
       console.log('🛑 Stopped controller loop');
     }
   }
@@ -1886,7 +3036,6 @@ class SensorSystemServer {
   private lastRawAdc: Map<number, number> = new Map();
 
   private handleCalibrationCommand(ws: WebSocket, payload: any): void {
-    if (!this.phase2Engine) return;
     const { commandType, sensorId, referencePressure } = payload ?? {};
 
     switch (commandType) {
@@ -1896,32 +3045,54 @@ class SensorSystemServer {
             payload: { message: 'capture_reference requires sensorId and referencePressure' } });
           return;
         }
-        // Apply the reference pressure to trigger an RLS update immediately
+        // Human-provided reference pressure is absolute ground truth - trust it completely
+        // Get the most recent ADC reading for this sensor
         const adc = this.lastRawAdc.get(sensorId) ?? 0;
-        const updated = this.phase2Engine.updateCalibration(sensorId, adc, referencePressure);
-        console.log(`📐 Calibration capture: CH${sensorId} ADC=${adc} ref=${referencePressure} PSI → updated=${!!updated}`);
+
+        // Update Phase 2 calibration with the human-provided reference pressure
+        // This is ground truth - the system must trust it completely
+        const updated = this.phase2Engine!.updateCalibration(sensorId, adc, referencePressure);
+
+        // Update baseline to the human-provided reference (ground truth starting point)
+        // After this, the baseline will self-update continuously as pressure changes
+        this.lastGoodPsi.set(sensorId, referencePressure);
+
+        console.log(`📐 Calibration capture (GROUND TRUTH): CH${sensorId} ADC=${adc} ref=${referencePressure} PSI → updated=${!!updated}`);
+        console.log(`   ✅ Set baseline to ${referencePressure} PSI (will self-update as pressure changes)`);
         break;
       }
       case 'enable_phase2':
-        this.phase2Engine.setEnabled(true);
+        if (this.phase2Engine) {
+          this.phase2Engine.setEnabled(true);
+        } else {
+          console.warn('⚠️ Phase 2 engine not available');
+        }
         break;
       case 'disable_phase2':
-        this.phase2Engine.setEnabled(false);
+        if (this.phase2Engine) {
+          this.phase2Engine.setEnabled(false);
+        } else {
+          console.warn('⚠️ Phase 2 engine not available');
+        }
         break;
       case 'reset_channel':
-        if (sensorId != null) {
-          const existing = this.phase2Engine.getCalibration(sensorId);
-          if (existing) {
-            this.phase2Engine.initializeSensor(sensorId, existing);
-            console.log(`🔄 Calibration reset for CH${sensorId}`);
-          }
+        if (this.phase2Engine && sensorId != null) {
+          // Reset Phase 2 adjustment (undoes consensus corrections)
+          this.phase2Engine.resetAdjustment(sensorId);
+          console.log(`🔄 Phase 2 adjustment reset for CH${sensorId}`);
+        } else {
+          console.warn('⚠️ Phase 2 engine not available or sensorId missing');
         }
         break;
       case 'zero_all': {
         // Trust the user: current readings → 0 PSI for ALL channels.
-        // DIRECTLY set adjustment D term to force current reading to 0 PSI.
-        // This is more aggressive and immediate than RLS update.
-        console.log('🎯 ZERO ALL PTs — directly setting adjustment to force 0 PSI');
+        // Works with or without Phase 2 - directly adjusts baseline calibration D term
+        console.log('🎯 ZERO ALL PTs — setting current readings to 0 PSI');
+        if (this.phase2Engine) {
+          console.log(`   Phase 2 engine enabled: ${this.phase2Engine.isEnabled()}`);
+        } else {
+          console.log(`   Phase 2 engine not available - using baseline calibration only`);
+        }
         let successCount = 0;
         let skipCount = 0;
         for (let ch = 1; ch <= 10; ch++) {
@@ -1932,62 +3103,59 @@ class SensorSystemServer {
             continue;
           }
 
-          // Get baseline from ptCalibration (or use existing if already initialized)
+          // Get baseline calibration
           const baseline = this.ptCalibration.get(ch);
-          if (baseline) {
-            // Initialize with baseline if not already initialized
-            // (initializeSensor is idempotent — won't overwrite if already exists)
-            this.phase2Engine.initializeSensor(ch, baseline);
-          } else {
-            // No baseline found — check if already initialized
-            const existing = this.phase2Engine.getCalibration(ch);
-            if (!existing) {
-              console.log(`   CH${ch}: no baseline calibration, initializing with zeros`);
-              this.phase2Engine.initializeSensor(ch, { A: 0, B: 0, C: 0, D: 0 });
-            }
-          }
-
-          // Get current state to directly modify adjustment
-          const state = this.phase2Engine.getSensorState(ch);
-          if (!state) {
-            console.log(`   CH${ch}: Phase 2 state not found after initialization, skipping`);
+          if (!baseline) {
+            console.log(`   CH${ch}: no baseline calibration found, skipping`);
             skipCount++;
             continue;
           }
 
-          // Calculate current reading using baseline + current adjustment
-          const currentCoeffs = {
-            A: state.baselineCoeffs.A + state.adjustment.A,
-            B: state.baselineCoeffs.B + state.adjustment.B,
-            C: state.baselineCoeffs.C + state.adjustment.C,
-            D: state.baselineCoeffs.D + state.adjustment.D,
-          };
-          const currentReading = calculatePressure(currentAdc, currentCoeffs);
+          // Calculate current reading using baseline calibration
+          const currentReading = calculatePressure(currentAdc, baseline);
           const drift = currentReading - 0; // How far off from 0 PSI
           console.log(`   CH${ch}: ADC=${currentAdc}, current=${currentReading.toFixed(2)} PSI, drift=${drift.toFixed(2)} PSI`);
 
-          // DIRECTLY set adjustment D term to compensate for drift
-          // This immediately forces the reading to 0 PSI
-          state.adjustment.D = state.adjustment.D - drift;
+          // Directly adjust baseline D term to force reading to 0 PSI
+          // This works regardless of Phase 2 state
+          const oldD = baseline.D;
+          baseline.D = baseline.D - drift;
+          console.log(`   CH${ch}: Baseline D: ${oldD.toFixed(4)} → ${baseline.D.toFixed(4)} (drift=${drift.toFixed(2)} PSI)`);
 
-          // Update timestamp to mark this as a recent manual update
-          state.lastUpdate = Date.now();
-          state.rlsUpdateCount++;
+          // Update ptCalibration map with modified baseline
+          this.ptCalibration.set(ch, baseline);
 
-          // Also do an RLS update to update covariance and statistics
-          const updated = this.phase2Engine.updateCalibration(ch, currentAdc, 0);
-
-          const newCoeffs = this.phase2Engine.getCalibration(ch);
-          if (newCoeffs) {
-            const newReading = calculatePressure(currentAdc, newCoeffs);
-            console.log(`   CH${ch}: adjustment D=${state.adjustment.D.toFixed(4)}, new reading=${newReading.toFixed(2)} PSI ✓ (RLS updated: ${updated})`);
-            successCount++;
-          } else {
-            console.warn(`   CH${ch}: Failed to get updated calibration after zero_all`);
+          // If Phase 2 is available, also update Phase 2
+          if (this.phase2Engine) {
+            try {
+              // Initialize Phase 2 with modified baseline if needed
+              this.phase2Engine.initializeSensor(ch, baseline);
+              const state = this.phase2Engine.getSensorState(ch);
+              if (state) {
+                // Reset Phase 2 adjustment since we've modified the baseline
+                state.adjustment = { A: 0, B: 0, C: 0, D: 0 };
+                state.lastUpdate = Date.now();
+                state.rlsUpdateCount++;
+                // Do RLS update to set ground truth
+                this.phase2Engine.updateCalibration(ch, currentAdc, 0);
+              }
+            } catch (err) {
+              console.warn(`   CH${ch}: Phase 2 update failed (non-critical):`, err);
+            }
           }
+
+          // Clear recent readings history to allow fresh start after zero calibration
+          this.recentPsiReadings.set(ch, []);
+
+          // Clear lastGoodPsi so jump detection starts fresh (won't reject first reading)
+          this.lastGoodPsi.delete(ch);
+
+          // Verify the adjustment worked
+          const newReading = calculatePressure(currentAdc, baseline);
+          console.log(`   CH${ch}: ✅ New reading=${newReading.toFixed(2)} PSI (should be ~0.0)`);
+          successCount++;
         }
         console.log(`✅ Zero all complete: ${successCount} channels updated, ${skipCount} skipped`);
-        // DO NOT clear ptCalibration — baseline must be preserved
         break;
       }
       default:
@@ -1995,12 +3163,14 @@ class SensorSystemServer {
     }
 
     // Always immediately broadcast updated status after a command
-    const channels = this.phase2Engine.getAllStatus();
-    this.broadcast({
-      type: MessageType.CALIBRATION_STATUS,
-      timestamp: Date.now(),
-      payload: { channels, phase2Enabled: this.phase2Engine.isEnabled(), timestamp: Date.now() },
-    });
+    if (this.phase2Engine) {
+      const channels = this.phase2Engine.getAllStatus();
+      this.broadcast({
+        type: MessageType.CALIBRATION_STATUS,
+        timestamp: Date.now(),
+        payload: { channels, phase2Enabled: this.phase2Engine.isEnabled(), timestamp: Date.now() },
+      });
+    }
   }
 
   private startUpdateLoop(): void {

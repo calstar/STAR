@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate } from '@/lib/types';
+import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 
 const PRESSURE_SENSORS = [
   { label: 'GN2 Regulated', entity: 'PT_Cal.GN2_Regulated', component: 'pressure_psi', color: '#27AE60', nop: 900, meop: 950 },
@@ -25,6 +26,13 @@ const ACTUATORS = [
   { label: 'LOX Press', entity: 'ACT.LOX_Press' },
   { label: 'Fuel Press', entity: 'ACT.Fuel_Press' },
   { label: 'GSE Low Vent', entity: 'ACT.GSE_Low_Vent' },
+];
+
+// High Pressure PT sensors (4-20 mA ratiometric)
+const HP_PT_SENSORS = [
+  { label: 'GSE Mid', entity: 'PT_Cal.GSE_Mid', color: '#9B59B6' },
+  { label: 'GSE High', entity: 'PT_Cal.GSE_High', color: '#8E44AD' },
+  { label: 'GN2 High', entity: 'PT_Cal.GN2_High', color: '#1ABC9C' },
 ];
 
 function fmtValue(v: number | null): string {
@@ -126,6 +134,103 @@ export default function StatusPage() {
               );
             })}
           </div>
+        </div>
+      </div>
+
+      {/* High Pressure PT Sensors Section */}
+      <div className="mt-4">
+        <h2 className="text-xl font-bold text-text-muted uppercase tracking-wider mb-4">High Pressure PT Sensors</h2>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {HP_PT_SENSORS.map((sensor) => {
+            const pressure = useSensorValue(sensor.entity, 'pressure_psi');
+            const adc = useSensorValue(sensor.entity, 'raw_adc_counts');
+            const vExc = useSensorValue(sensor.entity, 'excitation_voltage');
+            const vSense = useSensorValue(sensor.entity, 'sense_voltage');
+            const current = useSensorValue(sensor.entity, 'current_ma');
+
+            return (
+              <div key={sensor.label} className="bg-card rounded-lg p-4 border border-gray-800">
+                <h3 className="text-lg font-bold text-text mb-3 flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: sensor.color }} />
+                  {sensor.label}
+                </h3>
+
+                {/* Current Values */}
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div className="bg-gray-900/50 rounded p-2">
+                    <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Pressure</div>
+                    <div className="text-xl font-bold font-mono tabular-nums" style={{ color: sensor.color }}>
+                      {fmtValue(pressure)} PSI
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/50 rounded p-2">
+                    <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Current</div>
+                    <div className="text-xl font-bold font-mono tabular-nums text-blue-400">
+                      {current !== null ? `${current.toFixed(2)} mA` : '---'}
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/50 rounded p-2">
+                    <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">V_exc</div>
+                    <div className="text-lg font-bold font-mono tabular-nums text-green-400">
+                      {vExc !== null ? `${vExc.toFixed(3)} V` : '---'}
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/50 rounded p-2">
+                    <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">V_sense</div>
+                    <div className="text-lg font-bold font-mono tabular-nums text-yellow-400">
+                      {vSense !== null ? `${vSense.toFixed(3)} V` : '---'}
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/50 rounded p-2 col-span-2">
+                    <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">ADC Code</div>
+                    <div className="text-lg font-bold font-mono tabular-nums text-purple-400">
+                      {adc !== null ? adc.toLocaleString() : '---'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Time Series Plots */}
+                <div className="space-y-3">
+                  <div className="h-32">
+                    <TimeSeriesPlot
+                      title="Voltage"
+                      entities={[sensor.entity]}
+                      components={['excitation_voltage', 'sense_voltage']}
+                      labels={['V_exc', 'V_sense']}
+                      colors={['#27AE60', '#F39C12']}
+                      yLabel="Voltage (V)"
+                      height={128}
+                      windowSeconds={60}
+                    />
+                  </div>
+                  <div className="h-32">
+                    <TimeSeriesPlot
+                      title="Current"
+                      entities={[sensor.entity]}
+                      components={['current_ma']}
+                      labels={['Current']}
+                      colors={[sensor.color]}
+                      yLabel="Current (mA)"
+                      height={128}
+                      windowSeconds={60}
+                    />
+                  </div>
+                  <div className="h-32">
+                    <TimeSeriesPlot
+                      title="ADC Code"
+                      entities={[sensor.entity]}
+                      components={['raw_adc_counts']}
+                      labels={['ADC']}
+                      colors={['#9B59B6']}
+                      yLabel="ADC Code"
+                      height={128}
+                      windowSeconds={60}
+                    />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     </main>

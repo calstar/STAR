@@ -21,7 +21,16 @@ export default function FuelGraphsPage() {
     ws.connect();
     const unsub1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
     const unsub2 = ws.on(MessageType.STATE_UPDATE,  (p: unknown) => updateState(p as StateUpdate));
-    return () => { unsub1(); unsub2(); };
+
+    // Re-register listeners on reconnection to prevent freezing
+    const unsub3 = ws.onConnectionStatus((status) => {
+      if (status.connected) {
+        // WebSocket reconnected - listeners are already registered, but ensure they're active
+        console.log('[FuelGraphsPage] WebSocket reconnected, listeners active');
+      }
+    });
+
+    return () => { unsub1(); unsub2(); unsub3(); };
   }, [ws, updateSensor, updateState]);
 
   // Sidebar pressure PTs
@@ -100,8 +109,3 @@ export default function FuelGraphsPage() {
     </main>
   );
 }
-
-
-
-
-

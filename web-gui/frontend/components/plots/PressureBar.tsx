@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 
 interface PressureBarProps {
   label: string;
@@ -68,28 +68,24 @@ export default function PressureBar({
   showLabels = true,
 }: PressureBarProps) {
   const displayValue = value ?? 0;
-  const maxVal = Math.max(meop * 1.3, 1000);
 
-  const sane = isFinite(displayValue) && Math.abs(displayValue) < 100000;
+  // Memoize calculations based on value - will recalculate when value changes
+  // The useSensorValue hook now properly triggers re-renders when values update
+  const { sane, valuePct, nopPct, meopPct, displayHeight, barColor } = useMemo(() => {
+    const maxVal = Math.max(meop * 1.3, 1000);
+    const sane = isFinite(displayValue) && Math.abs(displayValue) < 100000;
+    const clampedDisplayValue = Math.max(0, displayValue);
+    const valuePct = sane ? Math.min(Math.max(nonLinearPct(clampedDisplayValue, nop, meop, maxVal), 0), 100) : 0;
+    const nopPct   = nonLinearPct(nop, nop, meop, maxVal);
+    const meopPct  = nonLinearPct(meop, nop, meop, maxVal);
+    const minVisibleHeight = 2;
+    const displayHeight = sane && value !== null && value !== 0
+      ? Math.max(valuePct, minVisibleHeight)
+      : valuePct;
+    const barColor = color || (sane && displayValue > meop ? '#E74C3C' : sane && displayValue > nop ? '#F39C12' : '#27AE60');
 
-  // Non-linear percentage for fill and threshold lines
-  // Always use positive value for calculation - bars only grow upward
-  const clampedDisplayValue = Math.max(0, displayValue);
-  const valuePct = sane ? Math.min(Math.max(nonLinearPct(clampedDisplayValue, nop, meop, maxVal), 0), 100) : 0;
-  const nopPct   = nonLinearPct(nop, nop, meop, maxVal);
-  const meopPct  = nonLinearPct(meop, nop, meop, maxVal);
-
-  // Ensure bar always renders visibly for non-zero values
-  // For very small values, use a minimum visible height (2% of container)
-  const minVisibleHeight = 2; // Minimum 2% height for any non-zero value
-  const displayHeight = sane && value !== null && value !== 0
-    ? Math.max(valuePct, minVisibleHeight)
-    : valuePct;
-
-  let barColor = color;
-  if (!barColor) {
-    barColor = sane && displayValue > meop ? '#E74C3C' : sane && displayValue > nop ? '#F39C12' : '#27AE60';
-  }
+    return { sane, valuePct, nopPct, meopPct, displayHeight, barColor };
+  }, [displayValue, value, nop, meop, color]);
 
   return (
     <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-visible select-none w-full">
@@ -147,23 +143,6 @@ export default function PressureBar({
               filter: 'brightness(1.5)',
             }}
           />
-        )}
-
-        {/* Pressure value ON the bar itself */}
-        {sane && value !== null && displayHeight > 5 && (
-          <div
-            className="absolute w-full pointer-events-none flex items-center justify-center"
-            style={{
-              bottom: `${displayHeight}%`,
-              transform: 'translateY(-50%)',
-            }}
-          >
-            <div className="bg-gray-900/90 px-1.5 py-0.5 rounded border border-gray-700">
-              <div className="text-sm font-bold font-mono tabular-nums" style={{ color: barColor }}>
-                {fmtPressure(value)}
-              </div>
-            </div>
-          </div>
         )}
       </div>
 

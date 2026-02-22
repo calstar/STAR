@@ -75,9 +75,9 @@ echo "🧹 Step 3: Cleaning up existing processes..."
 pkill -f "daq_bridge" 2>/dev/null || true
 sleep 1
 
-# Step 4: Start DAQ Bridge
+# Step 4: DAQ Bridge (DISABLED - backend uses direct UDP mode)
 echo ""
-echo "🌉 Step 4: Starting DAQ Bridge..."
+echo "⚠️  Step 4: DAQ Bridge startup skipped (backend uses direct UDP mode)..."
 CONFIG_FILE="$PROJECT_ROOT/config/config.toml"
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "⚠️  Warning: Config file not found at $CONFIG_FILE"
@@ -85,26 +85,13 @@ if [ ! -f "$CONFIG_FILE" ]; then
     CONFIG_FILE=""
 fi
 
-# Start daq_bridge with correct arguments
-# Arguments: [config_path] [bind_address] [bind_port]
-cd "$PROJECT_ROOT"
-"$DAQ_BRIDGE_BIN" \
-    "${CONFIG_FILE:-config/config.toml}" \
-    "0.0.0.0" \
-    "$UDP_PORT" \
-    > /tmp/daq_bridge.log 2>&1 &
-DAQ_BRIDGE_PID=$!
-sleep 2
-
-if ! ps -p $DAQ_BRIDGE_PID > /dev/null 2>&1; then
-    echo "❌ Failed to start DAQ bridge"
-    echo "   Check logs: tail -20 /tmp/daq_bridge.log"
-    exit 1
-fi
-
-echo "   ✅ DAQ bridge started (PID: $DAQ_BRIDGE_PID)"
-echo "   Listening on: 0.0.0.0:$UDP_PORT"
-echo "   Connected to Elodin: 127.0.0.1:$ELODIN_PORT"
+# DAQ Bridge disabled - backend receives packets directly
+# The backend uses direct UDP mode (USE_DIRECT_DAQ=true by default)
+# and receives packets directly from boards on port 5006
+echo "   ⚠️  DAQ Bridge startup skipped"
+echo "   ✅ Backend will receive packets directly from boards (no DAQ Bridge needed)"
+echo "   Backend listens on: 0.0.0.0:5006"
+DAQ_BRIDGE_PID=""
 
 # Step 5: Verify system is ready
 echo ""
@@ -133,7 +120,7 @@ echo "📊 To view data:"
 echo "   elodin editor $HOME/.local/share/elodin/$DB_NAME"
 echo ""
 echo "📝 Logs:"
-echo "   DAQ Bridge: tail -f /tmp/daq_bridge.log"
+echo "   DAQ Bridge: (disabled - backend uses direct UDP mode)"
 echo "   Elodin DB: tail -f /tmp/elodin_db_${DB_NAME}.log"
 echo ""
 echo "🛑 To stop:"

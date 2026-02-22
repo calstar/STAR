@@ -66,7 +66,8 @@ CONFIG_FLAG=""
 
 CMD_DB="printf '\n  ══ ELODIN DB — :$ELODIN_PORT ══\n\n' && export SENSOR_KDL_PATH=$KDL_DIR/sensor-system.kdl && RUST_LOG=info exec $ELODIN_DB run '[::]:$ELODIN_PORT' '$DB' $CONFIG_FLAG"
 
-CMD_DAQ="printf '\n  ══ DAQ BRIDGE — UDP :$SENSOR_PORT ══\n\n' && sleep 2 && cd $PROJECT && exec $DAQ $CFG 0.0.0.0 $SENSOR_PORT"
+# DAQ Bridge disabled - backend receives packets directly
+CMD_DAQ="printf '\n  ══ DAQ BRIDGE (DISABLED) — Backend uses direct UDP mode ══\n\n' && echo 'DAQ Bridge is disabled. Backend receives packets directly from boards.' && sleep 3600"
 
 # Web GUI commands (only if enabled)
 if [ "$WEB_GUI_ENABLED" = "true" ]; then
@@ -108,7 +109,7 @@ tmux select-pane -t "$SESSION:main.1"
 # ── Attach ──────────────────────────────────────────────────────────────────
 echo "┌────────────────────────────────────────┐"
 echo "│  tmux: $SESSION                        │"
-echo "│  0: Elodin DB    1: DAQ Bridge         │"
+    echo "│  0: Elodin DB    1: DAQ Bridge (DISABLED) │"
 if [ "$WEB_GUI_ENABLED" = "true" ]; then
     echo "│  2: Web GUI Backend  3: Web GUI Frontend │"
     echo "│  🌐 Web GUI: http://localhost:3000      │"

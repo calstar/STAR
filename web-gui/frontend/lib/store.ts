@@ -16,7 +16,7 @@
  */
 
 import { create } from 'zustand';
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { SensorUpdate, ActuatorUpdate, StateUpdate, ConnectionStatus, SystemState, MissionStartTime } from './types';
 
 interface SensorData {
@@ -25,6 +25,7 @@ interface SensorData {
 
 interface SensorSystemState {
   sensorData: SensorData;
+  _updateVersion?: number; // Internal version counter to force re-renders
   actuators: Map<number, ActuatorUpdate>;
   currentState: SystemState | null;
   connectionStatus: ConnectionStatus;
@@ -46,27 +47,29 @@ interface SensorSystemState {
 // Maps lookup key → list of fallback keys to try in order.
 const ALIASES: Record<string, string[]> = {
   // ── PT calibrated pressure (named → PT_CHX) ─────────────────────────────
-  'PT_Cal.Fuel_Upstream.pressure_psi':    ['PT_Cal.PT_CH1.pressure_psi', 'PT.Fuel_Upstream.pressure_psi'],
-  'PT_Cal.GSE_Low.pressure_psi':          ['PT_Cal.PT_CH2.pressure_psi', 'PT.GSE_Low.pressure_psi'],
-  'PT_Cal.HP_PT_4.pressure_psi':          [],
-  'PT_Cal.Fuel_Downstream.pressure_psi':  ['PT_Cal.PT_CH4.pressure_psi', 'PT.Fuel_Downstream.pressure_psi'],
-  'PT_Cal.Ox_Upstream.pressure_psi':      ['PT_Cal.PT_CH5.pressure_psi', 'PT.Ox_Upstream.pressure_psi'],
-  'PT_Cal.GN2_Regulated.pressure_psi':    ['PT_Cal.PT_CH6.pressure_psi', 'PT.GN2_Regulated.pressure_psi'],
-  'PT_Cal.Ox_Downstream.pressure_psi':    ['PT_Cal.PT_CH7.pressure_psi', 'PT.Ox_Downstream.pressure_psi'],
-  'PT_Cal.GSE_High.pressure_psi':         ['PT_Cal.PT_CH8.pressure_psi'],
-  'PT_Cal.GN2_High.pressure_psi':         ['PT_Cal.PT_CH9.pressure_psi', 'PT_Cal.PT_CH10.pressure_psi'],
+  'PT_Cal.Fuel_Upstream.pressure_psi':    ['PT_Cal.PT_CH1.pressure_psi', 'PT.Fuel_Upstream.pressure_psi', 'PT.PT_CH1.pressure_psi'],
+  'PT_Cal.GSE_Low.pressure_psi':          ['PT_Cal.PT_CH2.pressure_psi', 'PT.GSE_Low.pressure_psi', 'PT.PT_CH2.pressure_psi'],
+  'PT_Cal.GSE_Mid.pressure_psi':          ['PT_Cal.HP_PT_4.pressure_psi', 'PT.GSE_Mid.pressure_psi'],
+  'PT_Cal.HP_PT_4.pressure_psi':          ['PT_Cal.GSE_Mid.pressure_psi', 'PT.GSE_Mid.pressure_psi'],
+  'PT_Cal.Fuel_Downstream.pressure_psi':  ['PT_Cal.PT_CH4.pressure_psi', 'PT.Fuel_Downstream.pressure_psi', 'PT.PT_CH4.pressure_psi'],
+  'PT_Cal.Ox_Upstream.pressure_psi':      ['PT_Cal.PT_CH5.pressure_psi', 'PT.Ox_Upstream.pressure_psi', 'PT.PT_CH5.pressure_psi'],
+  'PT_Cal.GN2_Regulated.pressure_psi':    ['PT_Cal.PT_CH6.pressure_psi', 'PT.GN2_Regulated.pressure_psi', 'PT.PT_CH6.pressure_psi'],
+  'PT_Cal.Ox_Downstream.pressure_psi':    ['PT_Cal.PT_CH7.pressure_psi', 'PT.Ox_Downstream.pressure_psi', 'PT.PT_CH7.pressure_psi'],
+  'PT_Cal.GSE_High.pressure_psi':         ['PT_Cal.PT_CH8.pressure_psi', 'PT.PT_CH8.pressure_psi'],
+  'PT_Cal.GN2_High.pressure_psi':         ['PT_Cal.PT_CH9.pressure_psi', 'PT_Cal.PT_CH10.pressure_psi', 'PT.PT_CH9.pressure_psi', 'PT.PT_CH10.pressure_psi'],
 
   // ── PT raw ADC counts (named → PT_CHX) ──────────────────────────────────
   'PT_Cal.Fuel_Upstream.raw_adc_counts':   ['PT_Cal.PT_CH1.raw_adc_counts', 'PT.Fuel_Upstream.raw_adc_counts', 'PT.PT_CH1.raw_adc_counts'],
   'PT_Cal.GSE_Low.raw_adc_counts':         ['PT_Cal.PT_CH2.raw_adc_counts', 'PT.PT_CH2.raw_adc_counts'],
-  'PT_Cal.GSE_Mid.raw_adc_counts':         [],
+  'PT_Cal.GSE_Mid.raw_adc_counts':         ['PT_Cal.HP_PT_4.raw_adc_counts', 'PT.GSE_Mid.raw_adc_counts'],
+  'PT_Cal.HP_PT_4.raw_adc_counts':         ['PT_Cal.GSE_Mid.raw_adc_counts'],
   'PT_Cal.PT_CH3.raw_adc_counts':          ['PT.PT_CH3.raw_adc_counts'],
   'PT_Cal.Fuel_Downstream.raw_adc_counts': ['PT_Cal.PT_CH4.raw_adc_counts', 'PT.PT_CH4.raw_adc_counts'],
   'PT_Cal.Ox_Upstream.raw_adc_counts':     ['PT_Cal.PT_CH5.raw_adc_counts', 'PT.PT_CH5.raw_adc_counts'],
   'PT_Cal.GN2_Regulated.raw_adc_counts':   ['PT_Cal.PT_CH6.raw_adc_counts', 'PT.PT_CH6.raw_adc_counts'],
   'PT_Cal.Ox_Downstream.raw_adc_counts':   ['PT_Cal.PT_CH7.raw_adc_counts', 'PT.PT_CH7.raw_adc_counts'],
   'PT_Cal.GSE_High.raw_adc_counts':        ['PT_Cal.PT_CH8.raw_adc_counts', 'PT.PT_CH8.raw_adc_counts'],
-  'PT_Cal.GN2_High.raw_adc_counts':        ['PT_Cal.PT_CH9.raw_adc_counts', 'PT_Cal.PT_CH10.raw_adc_counts'],
+  'PT_Cal.GN2_High.raw_adc_counts':        ['PT_Cal.PT_CH9.raw_adc_counts', 'PT_Cal.PT_CH10.raw_adc_counts', 'PT.PT_CH9.raw_adc_counts', 'PT.PT_CH10.raw_adc_counts'],
 
   // ── PT raw (PT. namespace) → PT_Cal namespace fallback ──────────────────
   'PT.PT_CH1.raw_adc_counts':  ['PT_Cal.PT_CH1.raw_adc_counts',  'PT.Fuel_Upstream.raw_adc_counts'],
@@ -114,11 +117,12 @@ export { ALIASES };
 // how many entities are arriving simultaneously.
 let _pendingSensorWrites: Record<string, number> = {};
 let _flushScheduled = false;
+let _updateVersion = 0; // Version counter to force re-renders even if values are identical
 
 // ── Data filtering for spikes ────────────────────────────────────────────────
 // Simple moving average filter to smooth out random spikes in sensor data
 const FILTER_WINDOW_SIZE = 5; // Number of samples to average
-const MAX_SPIKE_THRESHOLD_ABSOLUTE = 50; // PSI - absolute threshold for large values
+const MAX_SPIKE_THRESHOLD_ABSOLUTE = 200; // PSI - absolute threshold for large values (increased from 50 to handle rapid pressurization)
 const MAX_SPIKE_THRESHOLD_PERCENT = 0.5; // 50% - percentage threshold for relative changes
 
 interface FilterState {
@@ -174,7 +178,20 @@ function filterSensorValue(key: string, value: number): number {
 function scheduleSensorFlush() {
   if (_flushScheduled) return;
   _flushScheduled = true;
-  setTimeout(flushSensorWrites, 100); // 10 Hz — matches backend broadcast rate
+
+  // Use requestAnimationFrame for smooth, synchronized updates with React render cycle
+  // This ensures updates happen before the next paint, keeping bar plots and graphs in sync
+  requestAnimationFrame(() => {
+    flushSensorWrites();
+  });
+
+  // Fallback timeout: if requestAnimationFrame doesn't fire within 50ms, force flush
+  // This prevents bar plots from freezing if the browser tab is in background
+  setTimeout(() => {
+    if (_flushScheduled) {
+      flushSensorWrites();
+    }
+  }, 50);
 }
 
 function flushSensorWrites() {
@@ -182,9 +199,27 @@ function flushSensorWrites() {
   const batch = _pendingSensorWrites;
   _pendingSensorWrites = {};
   if (Object.keys(batch).length === 0) return;
-  useSensorStore.setState((state) => ({
-    sensorData: Object.assign({}, state.sensorData, batch),
-  }));
+
+  // Increment version counter to force re-renders
+  _updateVersion++;
+
+  // Always create a completely new object to ensure Zustand detects the change
+  // This is critical for React re-renders - Zustand uses shallow equality checks
+  // Even if values are the same, we need a new object reference to trigger selectors
+  useSensorStore.setState((state) => {
+    // Create new object with all existing data first
+    const newSensorData: SensorData = {};
+    for (const [key, value] of Object.entries(state.sensorData)) {
+      newSensorData[key] = value;
+    }
+    // Then apply batched updates - always overwrite to ensure new reference
+    for (const [key, value] of Object.entries(batch)) {
+      newSensorData[key] = value;
+    }
+    // Return new object with version - this ensures React components re-render
+    // The version counter ensures bar plots update even if values are identical
+    return { sensorData: newSensorData, _updateVersion: _updateVersion };
+  });
 }
 
 export const useSensorStore = create<SensorSystemState>((set, get) => ({
@@ -214,9 +249,12 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   },
 
   updateState: (update: StateUpdate) => {
+    console.log('[Store] State update received:', update);
     set({
       currentState: update.currentState,
-      debugMode: update.currentState === SystemState.DEBUG,
+      // Debug mode is now a persistent mode, not tied to DEBUG state
+      // Update from backend if provided, otherwise keep current value
+      debugMode: update.debugMode !== undefined ? update.debugMode : get().debugMode,
     });
   },
 
@@ -234,6 +272,10 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
       }
       return { actuatorExpectedPositions: updated };
     });
+  },
+
+  updateMissionStartTime: (time: number) => {
+    set({ missionStartTime: time });
   },
 
   getSensorValue: (entity: string, component: string) => {
@@ -261,10 +303,17 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
 // ── Reactive sensor-value hooks ──────────────────────────────────────────────
 
 export function useSensorValue(entity: string, component: string): number | null {
-  return useSensorStore((state) => {
-    const key = `${entity}.${component}`;
+  const key = `${entity}.${component}`;
+
+  // Subscribe to the specific value AND updateVersion to ensure we catch all updates
+  // Using a selector that returns the specific value ensures Zustand triggers re-renders
+  // when that specific key changes, even if the sensorData object reference is the same
+  const value = useSensorStore((state) => {
+    // Direct lookup
     const direct = state.sensorData[key];
     if (direct !== undefined) return direct;
+
+    // Fallback to aliases
     const fallbacks = ALIASES[key];
     if (fallbacks) {
       for (const fb of fallbacks) {
@@ -272,8 +321,17 @@ export function useSensorValue(entity: string, component: string): number | null
         if (v !== undefined) return v;
       }
     }
+
     return null;
   });
+
+  // Also subscribe to updateVersion to force re-renders even if value is the same
+  // This ensures bar plots stay synchronized with graphs
+  const updateVersion = useSensorStore((state) => state._updateVersion || 0);
+
+  // Return the value - Zustand will trigger re-render when the selected value changes
+  // The updateVersion subscription ensures we also re-render on every flush
+  return useMemo(() => value, [value, updateVersion]);
 }
 
 export function useGetSensorValue(): (entity: string, component: string) => number | null {

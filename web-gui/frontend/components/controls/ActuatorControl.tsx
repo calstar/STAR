@@ -22,6 +22,7 @@ const ACTUATOR_NAMES: Record<ActuatorId, string> = {
   [ActuatorId.GSE_LOX_FILL_VENT]:     'GSE LOX Fill Vent',
   [ActuatorId.GSE_HIGH_PRESS_CONTROL]:'GSE High Press Control',
   [ActuatorId.GSE_MED_PRESS_CONTROL]: 'GSE Med Press Control',
+  [ActuatorId.TEST_ACTUATOR_2]: 'Test Actuator 2',
 };
 
 // Named entity in sensor data (works with store aliases → falls back to ACT_CHX)
@@ -41,6 +42,7 @@ const ACTUATOR_ENTITIES: Record<ActuatorId, string> = {
   [ActuatorId.GSE_LOX_FILL_VENT]:     'ACT.GSE_LOX_Fill_Vent',
   [ActuatorId.GSE_HIGH_PRESS_CONTROL]:'ACT.GSE_High_Press_Control',
   [ActuatorId.GSE_MED_PRESS_CONTROL]: 'ACT.GSE_Med_Press_Control',
+  [ActuatorId.TEST_ACTUATOR_2]: 'ACT.Test_Actuator_2',
 };
 
 // Channel-number entity (direct fallback for actuator board data)
@@ -60,6 +62,7 @@ const ACTUATOR_CHANNELS: Record<ActuatorId, number> = {
   [ActuatorId.GSE_LOX_FILL_VENT]:     5,
   [ActuatorId.GSE_HIGH_PRESS_CONTROL]:5,
   [ActuatorId.GSE_MED_PRESS_CONTROL]: 5,
+  [ActuatorId.TEST_ACTUATOR_2]: 1,
 };
 
 interface ActuatorControlProps {
@@ -84,45 +87,52 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const stateExpected = currentState != null ? (actuatorExpectedPositions[currentState] ?? {}) : {};
   const expected = stateExpected[entity] ?? null;
 
-  // Clear manual commanded state when exiting DEBUG mode
+  // Clear manual commanded state when exiting debug mode
+  // When state changes in debug mode, clear manual override so new state's expected position shows
   React.useEffect(() => {
-    if (currentState !== SystemState.DEBUG && !debugMode) {
+    if (!debugMode) {
       setManualCommanded(null);
     }
-  }, [currentState, debugMode]);
+  }, [debugMode]);
+
+  // When state changes in debug mode, clear manual override to show new state's expected position
+  React.useEffect(() => {
+    if (debugMode && currentState !== null) {
+      setManualCommanded(null);
+    }
+  }, [debugMode, currentState]);
 
   // Debug logging
   React.useEffect(() => {
-    if (currentState !== null && currentState !== SystemState.DEBUG) {
+    if (currentState !== null && !debugMode) {
       console.log(`[ActuatorControl ${ACTUATOR_NAMES[actuatorId]}] State: ${SystemState[currentState]}, Entity: ${entity}, Expected: ${expected}, StateExpected:`, stateExpected);
     }
-  }, [currentState, entity, expected, stateExpected, actuatorId]);
+  }, [currentState, entity, expected, stateExpected, actuatorId, debugMode]);
 
   // Compute commanded state directly from expected position (reactive to store changes)
-  // In DEBUG mode, use manual commanded; otherwise use system-expected position
+  // Always compute expected position from state, even in debug mode (so user can see what state expects)
   const commandedState = React.useMemo(() => {
-    if (currentState === SystemState.DEBUG) {
-      return null; // DEBUG mode uses manualCommanded
-    }
     if (expected === 'open') {
       return ActuatorState.OPEN;
     } else if (expected === 'closed') {
       return ActuatorState.CLOSED;
     }
     return null;
-  }, [currentState, expected]);
+  }, [expected]);
 
-  // Use manualCommanded when controls are active (debugMode or DEBUG state),
-  // falling back to the CSV-expected position. Otherwise use CSV only.
+  // In debug mode, manualCommanded overrides the expected position
+  // Otherwise, use the expected position from the state
   const commanded = React.useMemo(() => {
-    if (currentState === SystemState.DEBUG || debugMode) {
+    if (debugMode) {
+      // In debug mode: show manual override if set, otherwise show expected position for current state
       return manualCommanded ?? commandedState;
     }
+    // In normal mode: always use expected position
     return commandedState;
-  }, [currentState, debugMode, manualCommanded, commandedState]);
+  }, [debugMode, manualCommanded, commandedState]);
 
-  // Allow manual control when in DEBUG state OR when debugMode is enabled
-  const canControl = debugMode || currentState === SystemState.DEBUG;
+  // Allow manual control when debug mode is enabled
+  const canControl = debugMode;
 
   // Feedback: try named entity first (aliases in store.ts cover the ACT_CHX fallback)
   const rawAdc = getSensorValue(entity, 'raw_adc_counts')
@@ -147,7 +157,7 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
       data: { actuatorId, actuatorState: state },
     };
     ws.sendCommand(command);
-    if (currentState === SystemState.DEBUG || debugMode) {
+    if (debugMode) {
       setManualCommanded(state);
     }
     setPending(true);

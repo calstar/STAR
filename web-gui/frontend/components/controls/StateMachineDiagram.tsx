@@ -11,14 +11,14 @@ const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.ARMED]: 'ARMED',
   [SystemState.FUEL_FILL]: 'FUEL FILL',
   [SystemState.OX_FILL]: 'OX FILL',
-  [SystemState.GN2_LOW_PRESS]: 'GN2 PRESS',
-  [SystemState.GN2_VENT]: 'GN2 VENT',
+  [SystemState.GN2_LOW_PRESS]: 'GN2 LOW PRESS',
+  [SystemState.GN2_VENT]: 'GN2 LOW VENT',
   [SystemState.FUEL_PRESS]: 'FUEL PRESS',
   [SystemState.FUEL_VENT]: 'FUEL VENT',
   [SystemState.OX_PRESS]: 'OX PRESS',
   [SystemState.OX_VENT]: 'OX VENT',
   [SystemState.GN2_HIGH_PRESS]: 'GN2 HIGH PRESS',
-  [SystemState.GN2_HIGH_VENT]: 'GN2 HI VENT',
+  [SystemState.GN2_HIGH_VENT]: 'GN2 HIGH VENT',
   [SystemState.VENT]: 'VENT',
   [SystemState.CALIBRATE]: 'CALIBRATE',
   [SystemState.READY]: 'READY',
@@ -26,37 +26,52 @@ const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.ENGINE_ABORT]: 'ENGINE ABORT',
   [SystemState.GSE_ABORT]: 'GSE ABORT',
   [SystemState.EMERGENCY_ABORT]: 'EMERGENCY ABORT',
+  [SystemState.PRESS_STANDBY]: 'PRESS STANDBY',
 };
+
+// States to exclude from diagram rendering
+const EXCLUDED_STATES = new Set([
+  SystemState.DEBUG,
+  SystemState.ENGINE_ABORT,
+  SystemState.GSE_ABORT,
+  SystemState.EMERGENCY_ABORT,
+]);
 
 const NW = 320; // node width
 const NH = 115; // node height
-const COLS = 4;
+const COLS = 5; // Updated to accommodate 5 columns in row 2 and 3
 const COL_GAP = 380;
 const ROW_GAP = 165;
 const PAD = 40;
 
 // Grid layout: [row, col] 0-based
+// IMPORTANT: All states from SystemState enum must be included here to appear in the diagram
+// States without positions will default to [0, 0] and may overlap
+// DEBUG, ENGINE_ABORT, GSE_ABORT, EMERGENCY_ABORT are excluded from rendering
 const STATE_POS: Partial<Record<SystemState, [number, number]>> = {
-  [SystemState.DEBUG]:          [0, 0],
-  [SystemState.IDLE]:           [0, 1],
-  [SystemState.ARMED]:          [0, 2],
-  [SystemState.CALIBRATE]:      [0, 3],
-  [SystemState.FUEL_FILL]:      [1, 0],
-  [SystemState.OX_FILL]:        [1, 1],
-  [SystemState.READY]:          [1, 2],
-  [SystemState.GN2_LOW_PRESS]:  [2, 0],
-  [SystemState.GN2_VENT]:       [2, 1],
+  // Row 0: IDLE
+  [SystemState.IDLE]:           [0, 0],
+  // Row 1: Armed, Fuel Fill, Ox Fill
+  [SystemState.ARMED]:          [1, 0],
+  [SystemState.FUEL_FILL]:      [1, 1],
+  [SystemState.OX_FILL]:        [1, 2],
+  // Row 2: Press Standby, GN2 Low Press, Fuel Press, OX Press, GN2 High Press
+  [SystemState.PRESS_STANDBY]:  [2, 0],
+  [SystemState.GN2_LOW_PRESS]:  [2, 1],
   [SystemState.FUEL_PRESS]:     [2, 2],
-  [SystemState.FUEL_VENT]:      [2, 3],
-  [SystemState.OX_PRESS]:       [3, 0],
-  [SystemState.OX_VENT]:        [3, 1],
-  [SystemState.GN2_HIGH_PRESS]: [3, 2],
-  [SystemState.GN2_HIGH_VENT]:  [3, 3],
-  [SystemState.FIRE]:           [4, 1],
-  [SystemState.VENT]:           [4, 0],
-  [SystemState.ENGINE_ABORT]:   [4, 2],
-  [SystemState.GSE_ABORT]:      [4, 3],
-  [SystemState.EMERGENCY_ABORT]:[5, 1],
+  [SystemState.OX_PRESS]:       [2, 3],
+  [SystemState.GN2_HIGH_PRESS]: [2, 4],
+  // Row 3: Vent, GN2 Low Vent, Fuel Vent, Ox Vent, GN2 High Vent
+  [SystemState.VENT]:           [3, 0],
+  [SystemState.GN2_VENT]:       [3, 1],
+  [SystemState.FUEL_VENT]:      [3, 2],
+  [SystemState.OX_VENT]:        [3, 3],
+  [SystemState.GN2_HIGH_VENT]:  [3, 4],
+  // Row 4: Calibrate, Ready
+  [SystemState.CALIBRATE]:      [4, 0],
+  [SystemState.READY]:          [4, 1],
+  // Row 5: Fire
+  [SystemState.FIRE]:           [5, 0],
 };
 
 /**
@@ -69,43 +84,95 @@ interface Transition { from: SystemState; to: SystemState; }
 const STATIC_TRANSITIONS: Transition[] = [
   // Main forward sequence
   { from: SystemState.IDLE,           to: SystemState.ARMED },
-  { from: SystemState.IDLE,           to: SystemState.DEBUG },
-  { from: SystemState.DEBUG,          to: SystemState.IDLE },
   { from: SystemState.ARMED,          to: SystemState.IDLE },
   { from: SystemState.ARMED,          to: SystemState.FUEL_FILL },
-  { from: SystemState.ARMED,          to: SystemState.CALIBRATE },
+  { from: SystemState.ARMED,          to: SystemState.PRESS_STANDBY },
+  { from: SystemState.FUEL_FILL,      to: SystemState.ARMED },
   { from: SystemState.FUEL_FILL,      to: SystemState.OX_FILL },
-  { from: SystemState.OX_FILL,        to: SystemState.GN2_LOW_PRESS },
+  { from: SystemState.OX_FILL,        to: SystemState.ARMED },
+  { from: SystemState.OX_FILL,        to: SystemState.PRESS_STANDBY },
+  // Press Standby can go to all press/vent states
+  { from: SystemState.PRESS_STANDBY,  to: SystemState.GN2_LOW_PRESS },
+  { from: SystemState.PRESS_STANDBY,  to: SystemState.GN2_VENT },
+  { from: SystemState.PRESS_STANDBY,  to: SystemState.FUEL_PRESS },
+  { from: SystemState.PRESS_STANDBY,  to: SystemState.FUEL_VENT },
+  { from: SystemState.PRESS_STANDBY,  to: SystemState.OX_PRESS },
+  { from: SystemState.PRESS_STANDBY,  to: SystemState.OX_VENT },
+  { from: SystemState.PRESS_STANDBY,  to: SystemState.GN2_HIGH_PRESS },
+  { from: SystemState.PRESS_STANDBY,  to: SystemState.GN2_HIGH_VENT },
+  { from: SystemState.PRESS_STANDBY,  to: SystemState.FIRE },
+  { from: SystemState.PRESS_STANDBY,  to: SystemState.VENT },
   // GN2 low-pressure regulation loop
-  { from: SystemState.GN2_LOW_PRESS,  to: SystemState.FUEL_PRESS },
+  { from: SystemState.GN2_LOW_PRESS,  to: SystemState.PRESS_STANDBY },
   { from: SystemState.GN2_LOW_PRESS,  to: SystemState.GN2_VENT },
+  { from: SystemState.GN2_LOW_PRESS,  to: SystemState.FUEL_PRESS },
+  { from: SystemState.GN2_LOW_PRESS,  to: SystemState.OX_PRESS },
+  { from: SystemState.GN2_LOW_PRESS,  to: SystemState.GN2_HIGH_VENT },
+  { from: SystemState.GN2_LOW_PRESS,  to: SystemState.FIRE },
+  { from: SystemState.GN2_VENT,       to: SystemState.PRESS_STANDBY },
   { from: SystemState.GN2_VENT,       to: SystemState.GN2_LOW_PRESS },
+  { from: SystemState.GN2_VENT,       to: SystemState.FUEL_VENT },
+  { from: SystemState.GN2_VENT,       to: SystemState.OX_VENT },
+  { from: SystemState.GN2_VENT,       to: SystemState.GN2_HIGH_VENT },
+  { from: SystemState.GN2_VENT,       to: SystemState.FIRE },
   // Fuel pressurisation loop
-  { from: SystemState.FUEL_PRESS,     to: SystemState.OX_PRESS },
+  { from: SystemState.FUEL_PRESS,     to: SystemState.PRESS_STANDBY },
+  { from: SystemState.FUEL_PRESS,     to: SystemState.GN2_VENT },
   { from: SystemState.FUEL_PRESS,     to: SystemState.FUEL_VENT },
+  { from: SystemState.FUEL_PRESS,     to: SystemState.OX_PRESS },
+  { from: SystemState.FUEL_PRESS,     to: SystemState.OX_VENT },
+  { from: SystemState.FUEL_PRESS,     to: SystemState.GN2_HIGH_VENT },
+  { from: SystemState.FUEL_PRESS,     to: SystemState.FIRE },
+  { from: SystemState.FUEL_VENT,      to: SystemState.PRESS_STANDBY },
+  { from: SystemState.FUEL_VENT,      to: SystemState.GN2_VENT },
   { from: SystemState.FUEL_VENT,      to: SystemState.FUEL_PRESS },
+  { from: SystemState.FUEL_VENT,      to: SystemState.OX_VENT },
+  { from: SystemState.FUEL_VENT,      to: SystemState.GN2_HIGH_VENT },
+  { from: SystemState.FUEL_VENT,      to: SystemState.FIRE },
   // Ox pressurisation loop
-  { from: SystemState.OX_PRESS,       to: SystemState.GN2_HIGH_PRESS },
+  { from: SystemState.OX_PRESS,       to: SystemState.PRESS_STANDBY },
+  { from: SystemState.OX_PRESS,       to: SystemState.GN2_VENT },
+  { from: SystemState.OX_PRESS,       to: SystemState.FUEL_VENT },
   { from: SystemState.OX_PRESS,       to: SystemState.OX_VENT },
+  { from: SystemState.OX_PRESS,       to: SystemState.GN2_HIGH_VENT },
+  { from: SystemState.OX_PRESS,       to: SystemState.FIRE },
+  { from: SystemState.OX_VENT,        to: SystemState.PRESS_STANDBY },
+  { from: SystemState.OX_VENT,        to: SystemState.GN2_VENT },
+  { from: SystemState.OX_VENT,        to: SystemState.FUEL_VENT },
   { from: SystemState.OX_VENT,        to: SystemState.OX_PRESS },
+  { from: SystemState.OX_VENT,        to: SystemState.GN2_HIGH_VENT },
+  { from: SystemState.OX_VENT,        to: SystemState.FIRE },
   // GN2 high-pressure regulation loop
-  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.CALIBRATE },
+  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.PRESS_STANDBY },
+  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.GN2_VENT },
+  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.FUEL_VENT },
+  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.OX_VENT },
   { from: SystemState.GN2_HIGH_PRESS, to: SystemState.GN2_HIGH_VENT },
+  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.CALIBRATE },
+  { from: SystemState.GN2_HIGH_PRESS, to: SystemState.VENT },
+  { from: SystemState.GN2_HIGH_VENT,  to: SystemState.PRESS_STANDBY },
+  { from: SystemState.GN2_HIGH_VENT,  to: SystemState.GN2_VENT },
+  { from: SystemState.GN2_HIGH_VENT,  to: SystemState.FUEL_VENT },
+  { from: SystemState.GN2_HIGH_VENT,  to: SystemState.OX_VENT },
   { from: SystemState.GN2_HIGH_VENT,  to: SystemState.GN2_HIGH_PRESS },
-  // Final sequence
+  { from: SystemState.GN2_HIGH_VENT,  to: SystemState.VENT },
+  // Calibrate and Ready
+  { from: SystemState.CALIBRATE,      to: SystemState.PRESS_STANDBY },
   { from: SystemState.CALIBRATE,      to: SystemState.READY },
+  { from: SystemState.CALIBRATE,      to: SystemState.VENT },
   { from: SystemState.READY,          to: SystemState.FIRE },
+  { from: SystemState.READY,          to: SystemState.VENT },
+  // Fire and Vent
+  { from: SystemState.FIRE,           to: SystemState.IDLE },
+  { from: SystemState.FIRE,           to: SystemState.ARMED },
   { from: SystemState.FIRE,           to: SystemState.VENT },
   { from: SystemState.VENT,           to: SystemState.IDLE },
 ];
 
 // States reachable from *any* state (emergencies + vent)
+// Note: DEBUG, ENGINE_ABORT, GSE_ABORT, EMERGENCY_ABORT are handled via top bar buttons, not diagram
 const ALWAYS_REACHABLE: SystemState[] = [
-  SystemState.ENGINE_ABORT,
-  SystemState.GSE_ABORT,
-  SystemState.EMERGENCY_ABORT,
   SystemState.VENT,
-  SystemState.DEBUG,
 ];
 
 function nodeX(state: SystemState) { return PAD + (STATE_POS[state]?.[1] ?? 0) * COL_GAP; }
@@ -162,10 +229,8 @@ function arrowPath(from: SystemState, to: SystemState, sideOffset = 0): string {
 function StateNode({
   state, isActive, isReachable, onClick,
 }: { state: SystemState; isActive: boolean; isReachable: boolean; onClick: () => void; }) {
-  const isEmergency = state === SystemState.ENGINE_ABORT
-    || state === SystemState.GSE_ABORT
-    || state === SystemState.EMERGENCY_ABORT
-    || state === SystemState.VENT;
+  // VENT is the only emergency state still rendered in the diagram
+  const isEmergency = state === SystemState.VENT;
   const isClickable = isReachable || isActive || isEmergency;
   const name = STATE_NAMES[state] ?? 'UNKNOWN';
   const x = nodeX(state); const y = nodeY(state);
@@ -252,10 +317,10 @@ export default function StateMachineDiagram() {
     const effectiveState = currentState ?? SystemState.IDLE;
     const isAllowed  = transitions.some(t => t.from === effectiveState && t.to === targetState);
     const isEmergency = ALWAYS_REACHABLE.includes(targetState);
-    const isDebug    = targetState === SystemState.DEBUG;
-    const isInDebugMode = debugMode || effectiveState === SystemState.DEBUG;
+    const isInDebugMode = debugMode;
 
-    if (!isAllowed && !isEmergency && !isDebug && !isInDebugMode && effectiveState !== targetState) {
+    // In debug mode, allow any transition
+    if (!isAllowed && !isEmergency && !isInDebugMode && effectiveState !== targetState) {
       console.warn(`⚠️ Invalid transition: ${STATE_NAMES[effectiveState]} → ${STATE_NAMES[targetState]}`);
       alert(`Invalid transition: Cannot go from ${STATE_NAMES[effectiveState]} to ${STATE_NAMES[targetState]}`);
       return;
@@ -278,9 +343,10 @@ export default function StateMachineDiagram() {
     );
     // Emergency states are always reachable
     ALWAYS_REACHABLE.forEach(s => set.add(s));
-    if (debugMode || effectiveState === SystemState.DEBUG) {
+    // In debug mode, all non-excluded states are reachable
+    if (debugMode) {
       Object.values(SystemState)
-        .filter((s) => typeof s === 'number')
+        .filter((s) => typeof s === 'number' && !EXCLUDED_STATES.has(s as SystemState))
         .forEach((s) => set.add(s as SystemState));
     }
     return set;
@@ -301,10 +367,13 @@ export default function StateMachineDiagram() {
     s => s !== effectiveState && STATE_POS[s] !== undefined,
   );
 
-  const states = Object.values(SystemState).filter((s) => typeof s === 'number') as SystemState[];
+  // Filter out excluded states from rendering
+  const states = Object.values(SystemState).filter(
+    (s) => typeof s === 'number' && !EXCLUDED_STATES.has(s as SystemState)
+  ) as SystemState[];
 
   const svgW = PAD * 2 + COLS * COL_GAP;
-  const svgH = PAD * 2 + 6 * ROW_GAP;
+  const svgH = PAD * 2 + 6 * ROW_GAP; // 6 rows: 0-5 (IDLE, Armed/Fill, Press, Vent, Calibrate/Ready, Fire)
 
   // Offset (px) used to separate bidirectional arrow pairs
   const BIDIR_OFFSET = 14;
@@ -335,9 +404,9 @@ export default function StateMachineDiagram() {
             </marker>
           </defs>
 
-          {/* Normal transition arrows from the current state */}
+          {/* Normal transition arrows from the current state - only show to reachable states that exist in diagram */}
           {forwardTransitions
-            .filter(t => !ALWAYS_REACHABLE.includes(t.to))
+            .filter(t => !ALWAYS_REACHABLE.includes(t.to) && reachableStates.has(t.to) && STATE_POS[t.to] !== undefined)
             .map((t, i) => {
               const isBidir = reverseSet.has(t.to);
               // Offset the "forward" arrow to one side so its return pair is visible
@@ -355,13 +424,13 @@ export default function StateMachineDiagram() {
               );
             })}
 
-          {/* Return arrows (states that can come BACK to current state) */}
+          {/* Return arrows (states that can come BACK to current state) - only show if the source state exists in diagram */}
           {transitions
-            .filter(t => t.to === effectiveState && t.from !== effectiveState && !ALWAYS_REACHABLE.includes(t.from))
+            .filter(t => t.to === effectiveState && t.from !== effectiveState && !ALWAYS_REACHABLE.includes(t.from) && STATE_POS[t.from] !== undefined)
             .map((t, i) => (
               <path
                 key={`ret-${t.from}-${t.to}-${i}`}
-                d={arrowPath(t.to, t.from, BIDIR_OFFSET)}
+                d={arrowPath(t.from, t.to, BIDIR_OFFSET)}
                 fill="none"
                 stroke="#60A5FA"
                 strokeWidth={2}

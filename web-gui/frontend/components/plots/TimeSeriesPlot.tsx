@@ -39,7 +39,7 @@ function resolveEntity(incomingEntity: string, incomingComponent: string): strin
 
 // ── Smart Y-range — padding so flat lines are always visible ─────────────────
 function smartYRange(dataMin: number, dataMax: number): [number, number] {
-  if (!isFinite(dataMin) || !isFinite(dataMax)) return [0, 1];
+  // This function should only be called with valid finite values
   if (dataMin === dataMax) {
     const margin = dataMin === 0 ? 1 : Math.abs(dataMin) * 0.05;
     return [dataMin - margin, dataMax + margin];
@@ -104,7 +104,7 @@ export default function TimeSeriesPlot({
       plotInstanceRef.current.destroy();
       plotInstanceRef.current = null;
     }
-    
+
     const ws = getWebSocketClient();
     ws.connect();
 
@@ -129,7 +129,37 @@ export default function TimeSeriesPlot({
         },
         y: {
           auto: true,
-          range: (_u, mn, mx): [number, number] => smartYRange(mn, mx),
+          range: (u, mn, mx): [number, number] => {
+            // Calculate min/max from actual sensor data (ignore uPlot's mn/mx which might be NaN)
+            // Get all data from all series
+            const allValues: number[] = [];
+            for (let i = 1; i < u.data.length; i++) {
+              const series = u.data[i] as number[];
+              if (series) {
+                for (const val of series) {
+                  if (isFinite(val)) {
+                    allValues.push(val);
+                  }
+                }
+              }
+            }
+
+            // If we have valid data, use it; otherwise use uPlot's calculated values
+            if (allValues.length > 0) {
+              const dataMin = Math.min(...allValues);
+              const dataMax = Math.max(...allValues);
+              return smartYRange(dataMin, dataMax);
+            }
+
+            // Fallback: use uPlot's calculated values if they're valid
+            if (isFinite(mn) && isFinite(mx)) {
+              return smartYRange(mn, mx);
+            }
+
+            // No valid data yet - return a reasonable default that won't clamp
+            // This will be updated as soon as data arrives
+            return [0, 100];
+          },
         },
       },
       axes: [
@@ -213,7 +243,7 @@ export default function TimeSeriesPlot({
       }
       return false;
     };
-    
+
     // Try loading cache data immediately
     const hasCache = loadCacheData();
     if (hasCache) {
@@ -224,16 +254,16 @@ export default function TimeSeriesPlot({
       if (initializedRef.current || !plotRef.current) return;
       const dims = getDims();
       if (!dims) return;
-      
+
       // Re-check cache right before init to get latest data
       loadCacheData();
-      
+
       const now = (Date.now() - startTimeRef.current) / 1000;
-      
+
       // Use cached data if available, otherwise create empty arrays
       let timeData = dataRef.current.time.length > 0 ? dataRef.current.time : [now];
       let valueData = dataRef.current.values.map(v => v.length > 0 ? v : [NaN]);
-      
+
       // Ensure all arrays are aligned
       const maxLen = Math.max(timeData.length, ...valueData.map(v => v.length));
       if (maxLen === 0) {
@@ -251,9 +281,9 @@ export default function TimeSeriesPlot({
           return arr;
         });
       }
-      
+
       const data: uPlot.AlignedData = [timeData, ...valueData];
-      
+
       try {
         if (!plotRef.current) return;
         const opts = buildOpts(dims.w, dims.h);
@@ -273,7 +303,7 @@ export default function TimeSeriesPlot({
       if (!dims) return;
       tryInit();
     };
-    
+
     // Wait for next frame to ensure DOM is ready
     requestAnimationFrame(() => {
       attemptInit();
@@ -281,7 +311,7 @@ export default function TimeSeriesPlot({
       setTimeout(attemptInit, 300);
       setTimeout(attemptInit, 600);
     });
-    
+
     const ro = new ResizeObserver(() => {
       if (!initializedRef.current) {
         attemptInit();
@@ -303,12 +333,12 @@ export default function TimeSeriesPlot({
     // ── WS handler: O(1) — store the latest value per series ─────────────
     const unsubSensor = ws.on(MessageType.SENSOR_UPDATE, (payload: unknown) => {
       const update = payload as SensorUpdate;
-      
+
       // Add to cache immediately
       if (isFinite(update.value)) {
         cache.addDataPoint(update.entity, update.component, update.value);
       }
-      
+
       let idx = entities.indexOf(update.entity);
       if (idx < 0) {
         const canon = resolveEntity(update.entity, update.component);
@@ -319,48 +349,76 @@ export default function TimeSeriesPlot({
       }
     });
 
-    // ── 10 Hz sample + render + size-sync loop ──────────────────────────
-    const sampleInterval = setInterval(() => {
-      if (!initializedRef.current) { 
-        tryInit(); 
-        if (!initializedRef.current) return; 
-      }
-      
-      if (!plotInstanceRef.current) return;
+    // ── Smooth rendering loop using requestAnimationFrame (60 FPS) ────────
+    // Separate data sampling (10 Hz) from rendering (60 FPS) for smooth scrolling
+    let lastDataUpdate = 0;
+    let lastYAxisUpdate = 0;
+    const DATA_UPDATE_INTERVAL = 1000 / SAMPLE_HZ; // 100ms for data updates
+    const Y_AXIS_UPDATE_INTERVAL = 200; // 200ms for Y-axis auto-scaling (5 Hz)
 
-      const now    = (Date.now() - startTimeRef.current) / 1000;
+    let animationFrameId: number | null = null;
+    const renderLoop = () => {
+      if (!initializedRef.current) {
+        tryInit();
+        if (!initializedRef.current) {
+          animationFrameId = requestAnimationFrame(renderLoop);
+          return;
+        }
+      }
+
+      if (!plotInstanceRef.current) {
+        animationFrameId = requestAnimationFrame(renderLoop);
+        return;
+      }
+
+      const now = (Date.now() - startTimeRef.current) / 1000;
       const cutoff = now - windowSeconds;
-      const d      = dataRef.current;
-      
-      // Update x-axis range when windowSeconds changes (force redraw)
+      const d = dataRef.current;
+      const currentTime = Date.now();
+      let dataChanged = false;
+
+      // Update data at 10 Hz (only when needed)
+      if (currentTime - lastDataUpdate >= DATA_UPDATE_INTERVAL) {
+        d.time.push(now);
+        entities.forEach((_, i) => d.values[i].push(latestValuesRef.current[i]));
+
+        // Trim older than window
+        let first = 0;
+        while (first < d.time.length && d.time[first] < cutoff) first++;
+        if (first > 0) {
+          d.time   = d.time.slice(first);
+          d.values = d.values.map((a) => a.slice(first));
+        }
+        if (d.time.length > MAX_POINTS) {
+          const excess = d.time.length - MAX_POINTS;
+          d.time   = d.time.slice(excess);
+          d.values = d.values.map((a) => a.slice(excess));
+        }
+
+        lastDataUpdate = currentTime;
+        dataChanged = true;
+      }
+
+      // Update x-axis smoothly at 60 FPS (every frame)
+      // This ensures continuous scrolling based on server time
+      const xMin = Math.max(0, now - windowSeconds);
+      const xMax = now;
       plotInstanceRef.current.setScale('x', {
-        min: Math.max(0, now - windowSeconds),
-        max: now,
+        min: xMin,
+        max: xMax,
       });
 
-      d.time.push(now);
-      entities.forEach((_, i) => d.values[i].push(latestValuesRef.current[i]));
-
-      // Trim older than window
-      let first = 0;
-      while (first < d.time.length && d.time[first] < cutoff) first++;
-      if (first > 0) {
-        d.time   = d.time.slice(first);
-        d.values = d.values.map((a) => a.slice(first));
-      }
-      if (d.time.length > MAX_POINTS) {
-        const excess = d.time.length - MAX_POINTS;
-        d.time   = d.time.slice(excess);
-        d.values = d.values.map((a) => a.slice(excess));
-      }
-
-      // Ensure we always have at least one time point
+      // Update plot data every frame for smooth rendering
       const timeData = d.time.length > 0 ? d.time : [now];
       const valueData = d.values.map(v => v.length > 0 ? v : [NaN]);
-      
-      // resetScales=true → Y range() recalculates from real data each tick
+
       try {
-        plotInstanceRef.current.setData([timeData, ...valueData], true);
+        // Reset scales periodically (when data changes or every 200ms) to update Y-axis
+        const shouldResetScales = dataChanged || (currentTime - lastYAxisUpdate >= Y_AXIS_UPDATE_INTERVAL);
+        if (shouldResetScales) {
+          lastYAxisUpdate = currentTime;
+        }
+        plotInstanceRef.current.setData([timeData, ...valueData], shouldResetScales);
       } catch (err) {
         console.error('[TimeSeriesPlot] setData failed:', err);
       }
@@ -372,12 +430,21 @@ export default function TimeSeriesPlot({
            Math.abs(dims.h - plotInstanceRef.current.height) > 2)) {
         plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
       }
-    }, 1000 / SAMPLE_HZ);
+
+      // Continue animation loop
+      animationFrameId = requestAnimationFrame(renderLoop);
+    };
+
+    // Start the smooth rendering loop
+    animationFrameId = requestAnimationFrame(renderLoop);
 
     return () => {
       unsubSensor();
       unsubStatus();
-      clearInterval(sampleInterval);
+      if (animationFrameId !== null) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+      }
       ro.disconnect();
       window.removeEventListener('resize', onWinResize);
       plotInstanceRef.current?.destroy();
@@ -401,19 +468,19 @@ export default function TimeSeriesPlot({
         </div>
       </div>
       {/* Chart container: measured by ResizeObserver. plotRef inside receives uPlot. */}
-      <div 
-        ref={containerRef} 
-        className="relative flex-1 min-h-0 min-w-0" 
-        style={{ 
-          position: 'relative', 
-          width: '100%', 
+      <div
+        ref={containerRef}
+        className="relative flex-1 min-h-0 min-w-0"
+        style={{
+          position: 'relative',
+          width: '100%',
           height: '100%',
           flex: '1 1 0%'
         }}
       >
-        <div 
+        <div
           ref={plotRef}
-          style={{ 
+          style={{
             position: 'absolute',
             top: 0,
             left: 0,
@@ -442,4 +509,3 @@ export default function TimeSeriesPlot({
     </div>
   );
 }
-

@@ -55,6 +55,7 @@ export enum SystemState {
   ENGINE_ABORT = 17,
   GSE_ABORT = 18,
   EMERGENCY_ABORT = 19,
+  PRESS_STANDBY = 20,  // Press Standby state (separate from GN2_LOW_PRESS)
   // Legacy alias for backwards compatibility
   ABORT = 19, // Maps to EMERGENCY_ABORT
 }
@@ -77,6 +78,7 @@ export enum ActuatorId {
   GSE_LOX_FILL_VENT = 12,
   GSE_HIGH_PRESS_CONTROL = 13,
   GSE_MED_PRESS_CONTROL = 14,
+  TEST_ACTUATOR_2 = 15,
 }
 
 // Actuator states
@@ -115,11 +117,12 @@ export interface StateUpdate {
   currentState: SystemState;
   stateName: string;
   timestamp: number;
+  debugMode?: boolean; // Debug mode status
 }
 
 // Command payload
 export interface CommandPayload {
-  commandType: 'state_transition' | 'actuator' | 'controller_frequency' | 'pwm_actuator' | 'controller_command';
+  commandType: 'state_transition' | 'actuator' | 'controller_frequency' | 'pwm_actuator' | 'controller_command' | 'debug_mode';
   data: {
     state?: SystemState;
     actuatorId?: ActuatorId;
@@ -130,6 +133,7 @@ export interface CommandPayload {
     command_type?: 'THRUST_DESIRED' | 'ALTITUDE_GOAL'; // Controller command type
     thrust_desired?: number; // Thrust desired [N]
     altitude_goal?: number; // Altitude goal [m]
+    debugMode?: boolean; // Debug mode toggle
   };
 }
 
