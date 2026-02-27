@@ -125,6 +125,3 @@ Offset  Size  Type      Field
 - Check WebSocket server is running on port 8081
 - Check Elodin DB is running on port 2240
 - Check firewall settings
-
-
-

@@ -165,6 +165,3 @@ private:
 }  // namespace fsw
 
 #endif  // SITL_SIMULATOR_HPP
-
-
-

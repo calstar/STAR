@@ -165,6 +165,3 @@ sudo ip addr add 192.168.2.20/24 dev enx00e04c680240
 - Board Firmware Examples:
   - `external/DiabloAvionics/ADC_Testing/Actuator_Testing/src/main.cpp`
   - `external/DiabloAvionics/PT_Board/PT_BOARD_Multi/PT_BOARD_Multi_Send/src/main.cpp`
-
-
-

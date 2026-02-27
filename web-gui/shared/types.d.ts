@@ -144,7 +144,7 @@ export interface CalibrationStatusPayload {
     timestamp: number;
 }
 /** Commands the frontend sends to drive the calibration engine */
-export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'save_coefficients';
+export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'clear_calibration';
 export interface CalibrationCommand {
     commandType: CalibrationCommandType;
     sensorId?: number;

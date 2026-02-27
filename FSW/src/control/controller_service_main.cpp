@@ -8,11 +8,11 @@
  * - Writes controller outputs to Elodin DB for logging and replay
  */
 
-#include "control/ControllerService.hpp"
-
 #include <csignal>
 #include <iostream>
 #include <memory>
+
+#include "control/ControllerService.hpp"
 
 std::unique_ptr<fsw::control::ControllerService> g_controller_service;
 
@@ -88,8 +88,7 @@ int main(int argc, char* argv[]) {
 
     // Initialize controller service
     if (!g_controller_service->initialize(elodin_host, elodin_port, config)) {
-        std::cerr << "[controller_service] ❌ Failed to initialize controller service"
-                  << std::endl;
+        std::cerr << "[controller_service] ❌ Failed to initialize controller service" << std::endl;
         return 1;
     }
 
@@ -109,7 +108,3 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
-
-
-
-

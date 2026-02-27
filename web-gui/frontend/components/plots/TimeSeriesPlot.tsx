@@ -37,6 +37,20 @@ function resolveEntity(incomingEntity: string, incomingComponent: string): strin
   return REVERSE_ALIASES[`${incomingEntity}.${incomingComponent}`] ?? null;
 }
 
+// For high-pressure PTs, only accept updates from the canonical or HP_PT alias,
+// not from PT_CHx (standard board channel), so we don't mix two boards into one series.
+const HP_PLOT_ENTITY_SOURCES: Record<string, string[]> = {
+  'PT_Cal.GN2_High': ['PT_Cal.GN2_High', 'PT_Cal.HP_PT_4'],
+  'PT_Cal.GSE_High': ['PT_Cal.GSE_High', 'PT_Cal.HP_PT_3'],
+  'PT_Cal.GSE_Mid': ['PT_Cal.GSE_Mid', 'PT_Cal.HP_PT_1'],
+};
+
+function shouldAcceptUpdateForSeries(plotEntity: string, updateEntity: string): boolean {
+  const allowed = HP_PLOT_ENTITY_SOURCES[plotEntity];
+  if (allowed) return allowed.includes(updateEntity);
+  return true; // non-HP series: accept any alias
+}
+
 // ── Smart Y-range — padding so flat lines are always visible ─────────────────
 function smartYRange(dataMin: number, dataMax: number): [number, number] {
   // This function should only be called with valid finite values
@@ -45,7 +59,7 @@ function smartYRange(dataMin: number, dataMax: number): [number, number] {
     return [dataMin - margin, dataMax + margin];
   }
   const span = dataMax - dataMin;
-  const pad  = Math.max(span * 0.12, Math.abs(dataMax) * 0.001);
+  const pad = Math.max(span * 0.12, Math.abs(dataMax) * 0.001);
   return [dataMin - pad, dataMax + pad];
 }
 
@@ -57,13 +71,13 @@ function fmtAxisVal(val: number): string {
   if (abs >= 1e6) return (val / 1e6).toFixed(2) + 'M';
   if (abs >= 1e3) return (val / 1e3).toFixed(1) + 'K';
   if (abs >= 100) return val.toFixed(0);
-  if (abs >= 1)   return val.toFixed(1);
+  if (abs >= 1) return val.toFixed(1);
   return val.toFixed(2);
 }
 
 // ── Memory constants ──────────────────────────────────────────────────────────
 const DEFAULT_WINDOW_SECONDS = 60;   // 60 s rolling window (can be overridden via prop)
-const SAMPLE_HZ      = 10;   // matches backend broadcast rate (100 ms per entity)
+const SAMPLE_HZ = 10;   // matches backend broadcast rate (100 ms per entity)
 
 export default function TimeSeriesPlot({
   title, entities, component, components, colors,
@@ -73,15 +87,15 @@ export default function TimeSeriesPlot({
   const componentMap = components ?? entities.map(() => component);
   const MAX_POINTS = windowSeconds * SAMPLE_HZ;
 
-  const containerRef    = useRef<HTMLDivElement>(null);
-  const plotRef         = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const plotRef = useRef<HTMLDivElement>(null);
   const plotInstanceRef = useRef<uPlot | null>(null);
   // ── Use global T+0 so all windows share the same time axis ─────
-  const startTimeRef    = useRef<number>(getStartupTime());
+  const startTimeRef = useRef<number>(getStartupTime());
   const latestValuesRef = useRef<number[]>(entities.map(() => NaN));
 
   const dataRef = useRef<{ time: number[]; values: number[][] }>({
-    time:   [],
+    time: [],
     values: entities.map(() => []),
   });
 
@@ -89,17 +103,26 @@ export default function TimeSeriesPlot({
   const [isInitialized, setIsInitialized] = useState(false);
 
   const updateConnectionStatus = useSensorStore((s) => s.updateConnectionStatus);
-  const connectionStatus       = useSensorStore((s) => s.connectionStatus);
-  const actuallyConnected      = connectionStatus?.connected ?? false;
+  const connectionStatus = useSensorStore((s) => s.connectionStatus);
+  const actuallyConnected = connectionStatus?.connected ?? false;
 
   const entitiesKey = entities.join(',');
-  const colorsKey   = colors.join(',');
-  const windowKey   = windowSeconds; // Include windowSeconds in dependency tracking
+  const colorsKey = colors.join(',');
+  const windowKey = windowSeconds; // Include windowSeconds in dependency tracking
 
   useEffect(() => {
     // Reset initialization state when dependencies change (including windowSeconds)
     initializedRef.current = false;
     setIsInitialized(false);
+
+    // Safety check: if entities structure changed, reset internal buffers to match
+    // so that uPlot receives exactly the right number of series data arrays
+    if (dataRef.current.values.length !== entities.length) {
+      dataRef.current.time = [];
+      dataRef.current.values = entities.map(() => []);
+      latestValuesRef.current = entities.map(() => NaN);
+    }
+
     if (plotInstanceRef.current) {
       plotInstanceRef.current.destroy();
       plotInstanceRef.current = null;
@@ -115,8 +138,8 @@ export default function TimeSeriesPlot({
 
     // ── Build uPlot options ───────────────────────────────────────────────
     const buildOpts = (w: number, h: number): uPlot.Options => ({
-      width:   w,
-      height:  h,
+      width: w,
+      height: h,
       pxAlign: true,
       scales: {
         x: {
@@ -164,35 +187,35 @@ export default function TimeSeriesPlot({
       },
       axes: [
         {
-          label:     'T+ (s)',
-          stroke:    '#9CA3AF',
-          grid:      { show: true, stroke: '#555', width: 1 },
-          ticks:     { show: true, stroke: '#777', width: 1 },
-          font:      'bold 12px monospace',
+          label: 'T+ (s)',
+          stroke: '#9CA3AF',
+          grid: { show: true, stroke: '#555', width: 1 },
+          ticks: { show: true, stroke: '#777', width: 1 },
+          font: 'bold 12px monospace',
           labelFont: '12px system-ui',
-          gap:       8,
-          space:     120,
-          values:    (_u, vals) => vals.map((v) => (v == null ? '' : Math.round(v).toString())),
+          gap: 8,
+          space: 120,
+          values: (_u, vals) => vals.map((v) => (v == null ? '' : Math.round(v).toString())),
         },
         {
-          label:     yLabel,
-          stroke:    '#9CA3AF',
-          grid:      { show: true, stroke: '#555', width: 1 },
-          ticks:     { show: true, stroke: '#777', width: 1 },
-          font:      'bold 12px monospace',
+          label: yLabel,
+          stroke: '#9CA3AF',
+          grid: { show: true, stroke: '#555', width: 1 },
+          ticks: { show: true, stroke: '#777', width: 1 },
+          font: 'bold 12px monospace',
           labelFont: '12px system-ui',
-          size:      60,
-          gap:       5,
-          space:     80,
-          values:    (_u, vals) => vals.map((v) => (v == null ? '' : fmtAxisVal(v))),
+          size: 60,
+          gap: 5,
+          space: 80,
+          values: (_u, vals) => vals.map((v) => (v == null ? '' : fmtAxisVal(v))),
         },
       ],
       series: [
         {},
         ...entities.map((_, idx) => ({
-          label:  seriesLabels[idx],
+          label: seriesLabels[idx],
           stroke: colors[idx] || '#3498DB',
-          width:  3,
+          width: 3,
           points: { show: false },
         })),
       ],
@@ -345,6 +368,9 @@ export default function TimeSeriesPlot({
         if (canon) idx = entities.indexOf(canon);
       }
       if (idx >= 0 && update.component === componentMap[idx]) {
+        // For HP pressure series, only use updates from the canonical or HP_PT entity,
+        // not PT_CHx (avoids 0/5000 spiking when standard board and HP board both send data).
+        if (!shouldAcceptUpdateForSeries(entities[idx], update.entity)) return;
         latestValuesRef.current[idx] = update.value;
       }
     });
@@ -386,12 +412,12 @@ export default function TimeSeriesPlot({
         let first = 0;
         while (first < d.time.length && d.time[first] < cutoff) first++;
         if (first > 0) {
-          d.time   = d.time.slice(first);
+          d.time = d.time.slice(first);
           d.values = d.values.map((a) => a.slice(first));
         }
         if (d.time.length > MAX_POINTS) {
           const excess = d.time.length - MAX_POINTS;
-          d.time   = d.time.slice(excess);
+          d.time = d.time.slice(excess);
           d.values = d.values.map((a) => a.slice(excess));
         }
 
@@ -426,8 +452,8 @@ export default function TimeSeriesPlot({
       // ── Continuous size sync — catches layout changes ──────────────────
       const dims = getDims();
       if (dims && plotInstanceRef.current &&
-          (Math.abs(dims.w - plotInstanceRef.current.width) > 2 ||
-           Math.abs(dims.h - plotInstanceRef.current.height) > 2)) {
+        (Math.abs(dims.w - plotInstanceRef.current.width) > 2 ||
+          Math.abs(dims.h - plotInstanceRef.current.height) > 2)) {
         plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
       }
 

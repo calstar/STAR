@@ -129,6 +129,7 @@ _STATE_MACHINE_CSV = (
     / "state_machine_actuators.csv"
 )
 
+
 def get_num_actuators():
     """Get number of actuators dynamically from CSV."""
     if _STATE_MACHINE_CSV.exists():
@@ -138,13 +139,16 @@ def get_num_actuators():
                 rows = list(reader)
                 if len(rows) >= 2:
                     # Count non-empty actuator rows (skip header)
-                    count = sum(1 for row in rows[1:] if len(row) > 0 and row[0].strip())
+                    count = sum(
+                        1 for row in rows[1:] if len(row) > 0 and row[0].strip()
+                    )
                     if count > 0:
                         return count
         except Exception as e:
             print(f"Warning: Could not determine actuator count from CSV: {e}")
     # Fallback to default
     return 10
+
 
 class ConfigManager:
     """Manages GUI configuration"""

@@ -6,6 +6,7 @@ import { startDataCache } from '@/lib/data-cache';
 import { useEffect, useState } from 'react';
 import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, SensorUpdate, MessageType } from '@/lib/types';
 import PressureBar from '@/components/plots/PressureBar';
+import { PRESSURE_BAR_SENSORS } from '@/lib/sensor-colors';
 
 const STATE_NAMES: Record<number, string> = {
   0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
@@ -23,17 +24,18 @@ const STATE_COLORS: Record<number, string> = {
   0:  'text-gray-500',
 };
 
-const PRESSURE_BARS = [
-  { label:'GN2 REG',  entity:'PT_Cal.GN2_Regulated', nop:900,  meop:950,  color:'#8E44AD' },
-  { label:'FUEL UP',  entity:'PT_Cal.Fuel_Upstream',  nop:600,  meop:650,  color:'#FF8C3A' },
-  { label:'FUEL DN',  entity:'PT_Cal.Fuel_Downstream',nop:600,  meop:650,  color:'#CC2200' },
-  { label:'LOX UP',   entity:'PT_Cal.Ox_Upstream',    nop:600,  meop:650,  color:'#85C1E9' },
-  { label:'LOX DN',   entity:'PT_Cal.Ox_Downstream',  nop:600,  meop:650,  color:'#2471A3' },
-  { label:'GSE LO',   entity:'PT_Cal.GSE_Low',        nop:500,  meop:700,  color:'#1E8449' },
-  { label:'GSE MID',  entity:'PT_Cal.GSE_Mid',        nop:4000, meop:4500, color:'#2ECC71' },
-  { label:'GSE HI',   entity:'PT_Cal.GSE_High',       nop:500,  meop:700,  color:'#8ACE00' },
-  { label:'GN2 HI',   entity:'PT_Cal.GN2_High',       nop:900,  meop:950,  color:'#C39BD3' },
-] as const;
+const SHORT_LABELS: Record<string, string> = {
+  'PT_Cal.GN2_Regulated': 'GN2 REG', 'PT_Cal.Fuel_Upstream': 'FUEL UP', 'PT_Cal.Fuel_Downstream': 'FUEL DN',
+  'PT_Cal.Ox_Upstream': 'LOX UP', 'PT_Cal.Ox_Downstream': 'LOX DN', 'PT_Cal.GSE_Low': 'GSE LO',
+  'PT_Cal.GSE_Mid': 'GSE MID', 'PT_Cal.GSE_High': 'GSE HI', 'PT_Cal.GN2_High': 'GN2 HI',
+};
+const PRESSURE_BARS = PRESSURE_BAR_SENSORS.map((s) => ({
+  label: SHORT_LABELS[s.entity] ?? s.label,
+  entity: s.entity,
+  nop: s.nop!,
+  meop: s.meop!,
+  color: s.color,
+}));
 
 // Separate component for each pressure bar to properly use hooks
 function ReactivePressureBar({ label, entity, nop, meop, color }: {

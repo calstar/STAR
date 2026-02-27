@@ -63,6 +63,3 @@ echo "   ./build/FSW/daq_bridge config/config.toml 0.0.0.0 <port>"
 echo ""
 echo "4. Test packet reception:"
 echo "   python3 scripts/test/test_udp_simple.py"
-
-
-

@@ -9,6 +9,8 @@
 
 import { useSensorStore, ALIASES } from './store';
 import { getStartupTime } from './startup-time';
+import { getWebSocketClient } from './websocket';
+import { MessageType } from './types';
 
 const CACHE_SAMPLE_HZ = 10; // 10 Hz to match backend broadcast rate
 const CACHE_MAX_SECONDS = 300; // 5 minutes of history
@@ -28,6 +30,26 @@ class SensorDataCache {
     if (this.started) return;
     this.started = true;
     this.interval = setInterval(() => this.sample(), 1000 / CACHE_SAMPLE_HZ);
+
+    // Listen for bulk historical data from backend connection
+    const ws = getWebSocketClient();
+    ws.on(MessageType.HISTORICAL_DATA, (payload: unknown) => {
+      try {
+        const data = payload as Record<string, { time: number[]; values: number[] }>;
+        let count = 0;
+        for (const [key, series] of Object.entries(data)) {
+          if (series.time && series.values && series.time.length > 0) {
+            this.cache.set(key, { ...series });
+            count++;
+          }
+        }
+        if (count > 0) {
+          console.log(`[DataCache] Loaded historical data for ${count} entities from backend`);
+        }
+      } catch (err) {
+        console.error('[DataCache] Failed to parse historical data:', err);
+      }
+    });
   }
 
   stop(): void {

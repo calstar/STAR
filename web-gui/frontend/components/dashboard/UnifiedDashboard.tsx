@@ -7,47 +7,27 @@ import { MessageType, SensorUpdate, StateUpdate, SystemState, ActuatorId } from 
 import { startDataCache } from '@/lib/data-cache';
 import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
 import ActuatorControl from '@/components/controls/ActuatorControl';
+import ActuatorControlByName from '@/components/controls/ActuatorControlByName';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
+import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
 
-// All actuators from controls page
-const ALL_ACTUATORS = [
-  // Main Valves
-  { id: ActuatorId.LOX_MAIN, name: 'LOX Main', channel: 1, entity: 'ACT.LOX_Main', category: 'main' },
-  { id: ActuatorId.FUEL_MAIN, name: 'Fuel Main', channel: 7, entity: 'ACT.Fuel_Main', category: 'main' },
-  // Vent Valves
-  { id: ActuatorId.LOX_VENT, name: 'LOX Vent', channel: 6, entity: 'ACT.LOX_Vent', category: 'vent' },
-  { id: ActuatorId.FUEL_VENT, name: 'Fuel Vent', channel: 2, entity: 'ACT.Fuel_Vent', category: 'vent' },
-  { id: ActuatorId.GSE_LOW_VENT, name: 'GN2 Vent', channel: 5, entity: 'ACT.GSE_Low_Vent', category: 'vent' },
-  { id: ActuatorId.GSE_HIGH_PRESS_VENT, name: 'GSE High Press Vent', channel: 5, entity: 'ACT.GSE_High_Press_Vent', category: 'vent' },
-  { id: ActuatorId.GSE_LOX_FILL_VENT, name: 'GSE LOX Fill Vent', channel: 5, entity: 'ACT.GSE_LOX_Fill_Vent', category: 'vent' },
-  // Press Valves
-  { id: ActuatorId.LOX_PRESS, name: 'LOX Press', channel: 8, entity: 'ACT.LOX_Press', category: 'press' },
-  { id: ActuatorId.FUEL_PRESS, name: 'Fuel Press', channel: 3, entity: 'ACT.Fuel_Press', category: 'press' },
-  { id: ActuatorId.FUEL_FILL_PRESS, name: 'Fuel Fill Press', channel: 10, entity: 'ACT.Fuel_Fill_Press', category: 'press' },
-  { id: ActuatorId.GSE_HIGH_PRESS_CONTROL, name: 'GSE High Press Control', channel: 5, entity: 'ACT.GSE_High_Press_Control', category: 'press' },
-  { id: ActuatorId.GSE_MED_PRESS_CONTROL, name: 'GSE Med Press Control', channel: 5, entity: 'ACT.GSE_Med_Press_Control', category: 'press' },
-  // Fill Valves
-  { id: ActuatorId.FUEL_FILL_VENT, name: 'Fuel Fill Vent', channel: 9, entity: 'ACT.Fuel_Fill_Vent', category: 'fill' },
-  { id: ActuatorId.LOX_FILL, name: 'LOX Fill', channel: 4, entity: 'ACT.LOX_Fill', category: 'fill' },
-  // Other
-  { id: ActuatorId.LOX_DUMP, name: 'LOX Dump', channel: 4, entity: 'ACT.LOX_Dump', category: 'other' },
+const NAME_TO_ACTUATOR_ID: Partial<Record<string, ActuatorId>> = {
+  'LOX Main': ActuatorId.LOX_MAIN, 'Fuel Main': ActuatorId.FUEL_MAIN,
+  'LOX Vent': ActuatorId.LOX_VENT, 'Fuel Vent': ActuatorId.FUEL_VENT,
+  'GN2 Vent': ActuatorId.GSE_LOW_VENT, 'GSE Low Vent': ActuatorId.GSE_LOW_VENT,
+  'GSE High Press Vent': ActuatorId.GSE_HIGH_PRESS_VENT, 'GSE LOX Fill Vent': ActuatorId.GSE_LOX_FILL_VENT,
+  'LOX Press': ActuatorId.LOX_PRESS, 'Fuel Press': ActuatorId.FUEL_PRESS,
+  'Fuel Fill Press': ActuatorId.FUEL_FILL_PRESS, 'GSE High Press Control': ActuatorId.GSE_HIGH_PRESS_CONTROL,
+  'GSE Med Press Control': ActuatorId.GSE_MED_PRESS_CONTROL,
+  'Fuel Fill Vent': ActuatorId.FUEL_FILL_VENT, 'LOX Fill': ActuatorId.LOX_FILL,
+  'LOX Dump': ActuatorId.LOX_DUMP,
+};
 
-  // Test Actuators
-  { id: ActuatorId.TEST_ACTUATOR_2, name: 'Test Actuator 2', channel: 1, entity: 'ACT.Test_Actuator_2', category: 'other' },
-];
-
-// Pressure sensors for plotting
-const PRESSURE_SENSORS = [
-  { label: 'GN2 Reg',  entity: 'PT_Cal.GN2_Regulated',  color: '#8E44AD' },
-  { label: 'Fuel Up',  entity: 'PT_Cal.Fuel_Upstream',   color: '#FF8C3A' },
-  { label: 'Fuel Down',entity: 'PT_Cal.Fuel_Downstream', color: '#CC2200' },
-  { label: 'LOX Up',   entity: 'PT_Cal.Ox_Upstream',     color: '#85C1E9' },
-  { label: 'LOX Down', entity: 'PT_Cal.Ox_Downstream',   color: '#2471A3' },
-  { label: 'GSE Low',  entity: 'PT_Cal.GSE_Low',         color: '#1E8449' },
-  { label: 'GSE Mid',  entity: 'PT_Cal.GSE_Mid',         color: '#2ECC71' },
-  { label: 'GSE High', entity: 'PT_Cal.GSE_High',        color: '#8ACE00' },
-  { label: 'GN2 High', entity: 'PT_Cal.GN2_High',        color: '#C39BD3' },
-];
+const PRESSURE_SENSORS_PLOT = PRESSURE_SENSORS.map((s) => ({
+  label: s.label.replace('Upstream', 'Up').replace('Downstream', 'Down').replace('Regulated', 'Reg'),
+  entity: s.entity,
+  color: s.color,
+}));
 
 // Time window options for history plotting
 const TIME_WINDOWS = [
@@ -63,7 +43,25 @@ export default function UnifiedDashboard() {
   const updateConnectionStatus = useSensorStore((state) => state.updateConnectionStatus);
   const currentState = useSensorStore((state) => state.currentState);
   const ws = getWebSocketClient();
-  const [timeWindow, setTimeWindow] = useState(60); // Default 60 seconds
+  const [timeWindow, setTimeWindow] = useState(60);
+  const [actuatorsFromConfig, setActuatorsFromConfig] = useState<{ name: string; channel: number; entity: string; id?: ActuatorId }[]>([]);
+
+  useEffect(() => {
+    fetch('/api/config')
+      .then((r) => r.ok ? r.json() : null)
+      .then((data: { config?: { actuator_roles?: Record<string, [string, number] | [string, number, string]> } } | null) => {
+        const roles = data?.config?.actuator_roles;
+        if (!roles || typeof roles !== 'object') return;
+        setActuatorsFromConfig(
+          Object.entries(roles).map(([name, value]) => {
+            const channel = Array.isArray(value) && value.length >= 2 && typeof value[1] === 'number' ? value[1] : 1;
+            const entity = `ACT.${name.replace(/\s+/g, '_')}`;
+            return { name, channel, entity, id: NAME_TO_ACTUATOR_ID[name] };
+          })
+        );
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     ws.connect();
@@ -124,10 +122,10 @@ export default function UnifiedDashboard() {
             <div className="flex-1 min-h-0">
               <TimeSeriesPlot
                 title="All Pressure Sensors (PSI)"
-                entities={PRESSURE_SENSORS.map(s => s.entity)}
-                labels={PRESSURE_SENSORS.map(s => s.label)}
+                entities={PRESSURE_SENSORS_PLOT.map(s => s.entity)}
+                labels={PRESSURE_SENSORS_PLOT.map(s => s.label)}
                 component="pressure_psi"
-                colors={PRESSURE_SENSORS.map(s => s.color)}
+                colors={PRESSURE_SENSORS_PLOT.map(s => s.color)}
                 yLabel="Pressure (PSI)"
                 windowSeconds={timeWindow}
               />
@@ -144,9 +142,13 @@ export default function UnifiedDashboard() {
               Actuator Controls
             </h2>
             <div className="grid grid-cols-4 gap-3 auto-rows-fr">
-              {ALL_ACTUATORS.map((a) => (
-                <ActuatorControl key={a.name} actuatorId={a.id} />
-              ))}
+              {actuatorsFromConfig.map((a) =>
+                a.id !== undefined ? (
+                  <ActuatorControl key={a.name} actuatorId={a.id} />
+                ) : (
+                  <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
+                )
+              )}
             </div>
           </div>
 

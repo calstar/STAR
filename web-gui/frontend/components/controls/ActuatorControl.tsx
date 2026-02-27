@@ -7,62 +7,81 @@ import { ActuatorId, ActuatorState, CommandPayload, SystemState } from '@/lib/ty
 
 // Human-readable names
 const ACTUATOR_NAMES: Record<ActuatorId, string> = {
-  [ActuatorId.LOX_MAIN]:              'LOX Main',
-  [ActuatorId.FUEL_MAIN]:             'Fuel Main',
-  [ActuatorId.LOX_VENT]:              'LOX Vent',
-  [ActuatorId.FUEL_VENT]:             'Fuel Vent',
-  [ActuatorId.LOX_PRESS]:             'LOX Press',
-  [ActuatorId.FUEL_PRESS]:            'Fuel Press',
-  [ActuatorId.GSE_LOW_VENT]:          'GN2 Vent',
-  [ActuatorId.FUEL_FILL_VENT]:        'Fuel Fill Vent',
-  [ActuatorId.FUEL_FILL_PRESS]:       'Fuel Fill Press',
-  [ActuatorId.LOX_FILL]:              'LOX Fill',
-  [ActuatorId.LOX_DUMP]:              'LOX Dump',
-  [ActuatorId.GSE_HIGH_PRESS_VENT]:   'GSE High Press Vent',
-  [ActuatorId.GSE_LOX_FILL_VENT]:     'GSE LOX Fill Vent',
-  [ActuatorId.GSE_HIGH_PRESS_CONTROL]:'GSE High Press Control',
+  [ActuatorId.LOX_MAIN]: 'LOX Main',
+  [ActuatorId.FUEL_MAIN]: 'Fuel Main',
+  [ActuatorId.LOX_VENT]: 'LOX Vent',
+  [ActuatorId.FUEL_VENT]: 'Fuel Vent',
+  [ActuatorId.LOX_PRESS]: 'LOX Press',
+  [ActuatorId.FUEL_PRESS]: 'Fuel Press',
+  [ActuatorId.GSE_LOW_VENT]: 'GN2 Vent',
+  [ActuatorId.FUEL_FILL_VENT]: 'Fuel Fill Vent',
+  [ActuatorId.FUEL_FILL_PRESS]: 'Fuel Fill Press',
+  [ActuatorId.LOX_FILL]: 'LOX Fill',
+  [ActuatorId.LOX_DUMP]: 'LOX Dump',
+  [ActuatorId.GSE_HIGH_PRESS_VENT]: 'GSE High Press Vent',
+  [ActuatorId.GSE_LOX_FILL_VENT]: 'GSE LOX Fill Vent',
+  [ActuatorId.GSE_HIGH_PRESS_CONTROL]: 'GSE High Press Control',
   [ActuatorId.GSE_MED_PRESS_CONTROL]: 'GSE Med Press Control',
   [ActuatorId.TEST_ACTUATOR_2]: 'Test Actuator 2',
 };
 
 // Named entity in sensor data (works with store aliases → falls back to ACT_CHX)
 const ACTUATOR_ENTITIES: Record<ActuatorId, string> = {
-  [ActuatorId.LOX_MAIN]:              'ACT.LOX_Main',
-  [ActuatorId.FUEL_MAIN]:             'ACT.Fuel_Main',
-  [ActuatorId.LOX_VENT]:              'ACT.LOX_Vent',
-  [ActuatorId.FUEL_VENT]:             'ACT.Fuel_Vent',
-  [ActuatorId.LOX_PRESS]:             'ACT.LOX_Press',
-  [ActuatorId.FUEL_PRESS]:            'ACT.Fuel_Press',
-  [ActuatorId.GSE_LOW_VENT]:          'ACT.GSE_Low_Vent',
-  [ActuatorId.FUEL_FILL_VENT]:        'ACT.Fuel_Fill_Vent',
-  [ActuatorId.FUEL_FILL_PRESS]:       'ACT.Fuel_Fill_Press',
-  [ActuatorId.LOX_FILL]:              'ACT.LOX_Fill',
-  [ActuatorId.LOX_DUMP]:              'ACT.LOX_Dump',
-  [ActuatorId.GSE_HIGH_PRESS_VENT]:   'ACT.GSE_High_Press_Vent',
-  [ActuatorId.GSE_LOX_FILL_VENT]:     'ACT.GSE_LOX_Fill_Vent',
-  [ActuatorId.GSE_HIGH_PRESS_CONTROL]:'ACT.GSE_High_Press_Control',
+  [ActuatorId.LOX_MAIN]: 'ACT.LOX_Main',
+  [ActuatorId.FUEL_MAIN]: 'ACT.Fuel_Main',
+  [ActuatorId.LOX_VENT]: 'ACT.LOX_Vent',
+  [ActuatorId.FUEL_VENT]: 'ACT.Fuel_Vent',
+  [ActuatorId.LOX_PRESS]: 'ACT.LOX_Press',
+  [ActuatorId.FUEL_PRESS]: 'ACT.Fuel_Press',
+  [ActuatorId.GSE_LOW_VENT]: 'ACT.GN2_Vent',
+  [ActuatorId.FUEL_FILL_VENT]: 'ACT.Fuel_Fill_Vent',
+  [ActuatorId.FUEL_FILL_PRESS]: 'ACT.Fuel_Fill_Press',
+  [ActuatorId.LOX_FILL]: 'ACT.LOX_Fill',
+  [ActuatorId.LOX_DUMP]: 'ACT.LOX_Dump',
+  [ActuatorId.GSE_HIGH_PRESS_VENT]: 'ACT.GSE_High_Press_Vent',
+  [ActuatorId.GSE_LOX_FILL_VENT]: 'ACT.GSE_LOX_Fill_Vent',
+  [ActuatorId.GSE_HIGH_PRESS_CONTROL]: 'ACT.GSE_High_Press_Control',
   [ActuatorId.GSE_MED_PRESS_CONTROL]: 'ACT.GSE_Med_Press_Control',
   [ActuatorId.TEST_ACTUATOR_2]: 'ACT.Test_Actuator_2',
 };
 
 // Channel-number entity (direct fallback for actuator board data)
 const ACTUATOR_CHANNELS: Record<ActuatorId, number> = {
-  [ActuatorId.LOX_MAIN]:              1,
-  [ActuatorId.FUEL_MAIN]:             7,
-  [ActuatorId.LOX_VENT]:              6,
-  [ActuatorId.FUEL_VENT]:             2,
-  [ActuatorId.LOX_PRESS]:             8,
-  [ActuatorId.FUEL_PRESS]:            3,
-  [ActuatorId.GSE_LOW_VENT]:          5,
-  [ActuatorId.FUEL_FILL_VENT]:        9,
-  [ActuatorId.FUEL_FILL_PRESS]:       10,
-  [ActuatorId.LOX_FILL]:              4,
-  [ActuatorId.LOX_DUMP]:              4,
-  [ActuatorId.GSE_HIGH_PRESS_VENT]:   5,
-  [ActuatorId.GSE_LOX_FILL_VENT]:     5,
-  [ActuatorId.GSE_HIGH_PRESS_CONTROL]:5,
+  [ActuatorId.LOX_MAIN]: 1,
+  [ActuatorId.FUEL_MAIN]: 7,
+  [ActuatorId.LOX_VENT]: 6,
+  [ActuatorId.FUEL_VENT]: 2,
+  [ActuatorId.LOX_PRESS]: 8,
+  [ActuatorId.FUEL_PRESS]: 3,
+  [ActuatorId.GSE_LOW_VENT]: 5,
+  [ActuatorId.FUEL_FILL_VENT]: 9,
+  [ActuatorId.FUEL_FILL_PRESS]: 10,
+  [ActuatorId.LOX_FILL]: 4,
+  [ActuatorId.LOX_DUMP]: 4,
+  [ActuatorId.GSE_HIGH_PRESS_VENT]: 5,
+  [ActuatorId.GSE_LOX_FILL_VENT]: 5,
+  [ActuatorId.GSE_HIGH_PRESS_CONTROL]: 5,
   [ActuatorId.GSE_MED_PRESS_CONTROL]: 5,
   [ActuatorId.TEST_ACTUATOR_2]: 1,
+};
+
+const ACTUATOR_TYPES: Record<ActuatorId, 'NC' | 'NO'> = {
+  [ActuatorId.LOX_MAIN]: 'NO',
+  [ActuatorId.FUEL_MAIN]: 'NO',
+  [ActuatorId.LOX_VENT]: 'NC',
+  [ActuatorId.FUEL_VENT]: 'NC',
+  [ActuatorId.LOX_PRESS]: 'NO',
+  [ActuatorId.FUEL_PRESS]: 'NC',
+  [ActuatorId.GSE_LOW_VENT]: 'NC',
+  [ActuatorId.FUEL_FILL_VENT]: 'NC',
+  [ActuatorId.FUEL_FILL_PRESS]: 'NC',
+  [ActuatorId.LOX_FILL]: 'NC',
+  [ActuatorId.LOX_DUMP]: 'NC',
+  [ActuatorId.GSE_HIGH_PRESS_VENT]: 'NC',
+  [ActuatorId.GSE_LOX_FILL_VENT]: 'NC',
+  [ActuatorId.GSE_HIGH_PRESS_CONTROL]: 'NC',
+  [ActuatorId.GSE_MED_PRESS_CONTROL]: 'NC',
+  [ActuatorId.TEST_ACTUATOR_2]: 'NC',
 };
 
 interface ActuatorControlProps {
@@ -82,6 +101,7 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
 
   const entity = ACTUATOR_ENTITIES[actuatorId];
   const ch = ACTUATOR_CHANNELS[actuatorId];
+  const type = ACTUATOR_TYPES[actuatorId] || 'NC';
 
   // Get expected position from backend (CSV-based) - computed directly from store
   const stateExpected = currentState != null ? (actuatorExpectedPositions[currentState] ?? {}) : {};
@@ -148,13 +168,19 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   // But we see values like 1,168,235,832 which is ~0.9V, so threshold should be lower
   // Use threshold: > 50,000,000 (about 0.04V) to detect actuator ON
   const voltageThreshold = 50000000; // ~0.04V
-  const feedbackOpen = statusRaw === 1 || rawAdc > voltageThreshold;
+  const isPowered = statusRaw === 1 || rawAdc > voltageThreshold;
+
+  // feedbackOpen depends on NC/NO
+  // NC: Powered = OPEN, Unpowered = CLOSED
+  // NO: Powered = CLOSED, Unpowered = OPEN
+  const feedbackOpen = type === 'NO' ? !isPowered : isPowered;
 
   const sendCommand = (state: ActuatorState) => {
     if (!canControl) return;
+    // Send display name so backend uses config lookup (actuator_roles key) — same path as LOX Main on 202
     const command: CommandPayload = {
       commandType: 'actuator',
-      data: { actuatorId, actuatorState: state },
+      data: { actuatorId, actuatorName: ACTUATOR_NAMES[actuatorId], actuatorState: state },
     };
     ws.sendCommand(command);
     if (debugMode) {

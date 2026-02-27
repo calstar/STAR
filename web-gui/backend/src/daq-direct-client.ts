@@ -1,16 +1,17 @@
 /**
  * Direct DAQ Board Client - EXACT REPLICATION OF combined_gui.py
- * Implements the exact same packet parsing and data handling as combined_gui.py
+ * Packet format matches external/DiabloAvionics/ADC_Testing/Stream_ADC_Data
+ * and DAQv2-Comms (DiabloPackets.h / DiabloPacketUtils.cpp).
  */
 
 import { createSocket, Socket } from 'dgram';
 import { EventEmitter } from 'events';
 
-// Packet format constants (EXACT from combined_gui.py)
-const PACKET_HEADER_FORMAT_SIZE = 6; // <BBI> = packet_type(1) + version(1) + timestamp(4)
-const SENSOR_DATA_PACKET_SIZE = 2; // <BB> = num_chunks(1) + num_sensors(1)
-const SENSOR_DATA_CHUNK_SIZE = 4; // <I> = chunk_timestamp(4)
-const SENSOR_DATAPOINT_SIZE = 5; // <BI> = sensor_id(1) + data(4)
+// Packet format constants (matches DAQv2-Comms: PacketHeader, SensorDataPacket, SensorDataChunk, SensorDatapoint)
+const PACKET_HEADER_FORMAT_SIZE = 6; // packet_type(1) + version(1) + timestamp(4 LE)
+const SENSOR_DATA_PACKET_SIZE = 2; // num_chunks(1) + num_sensors(1)
+const SENSOR_DATA_CHUNK_SIZE = 4; // chunk_timestamp(4 LE)
+const SENSOR_DATAPOINT_SIZE = 5; // sensor_id(1) + data(4 LE)
 const MAX_PACKET_SIZE = 512;
 
 // Packet types (from combined_gui.py)
@@ -121,8 +122,8 @@ export class DAQDirectClient extends EventEmitter {
     const numSensors = data.readUInt8(offset + 1);
     offset += SENSOR_DATA_PACKET_SIZE;
 
-    // Detailed logging for 192.168.2.102 (HP PT board) to verify chunked format
-    const isHpPtBoard = sourceIP === '192.168.2.102';
+    // Throttled detailed logging for HP PT boards (configurable via hpPtBoardIPs)
+    const isHpPtBoard = (this as any).hpPtBoardIPs?.has(sourceIP) ?? false;
     let shouldLog = false;
     if (isHpPtBoard) {
       if (!(this as any).hpPtPacketCount) (this as any).hpPtPacketCount = 0;
@@ -130,7 +131,7 @@ export class DAQDirectClient extends EventEmitter {
       shouldLog = (this as any).hpPtPacketCount <= 5 || (this as any).hpPtPacketCount % 50 === 0;
 
       if (shouldLog) {
-        console.log(`\n🔍 HP PT Board (192.168.2.102) Packet #${(this as any).hpPtPacketCount} Analysis:`);
+        console.log(`\n🔍 HP PT Board (${sourceIP}) Packet #${(this as any).hpPtPacketCount} Analysis:`);
         console.log(`   Packet size: ${data.length} bytes`);
         console.log(`   Header: type=${header.packetType}, version=${header.version}, timestamp=${header.timestamp}`);
         console.log(`   Body header: num_chunks=${numChunks}, num_sensors=${numSensors}`);
@@ -239,13 +240,8 @@ export class DAQDirectClient extends EventEmitter {
 
     // Handle heartbeat to identify board types
     if (header.packetType === PacketType.BOARD_HEARTBEAT) {
-      // Parse heartbeat to identify board type (PT vs Actuator)
-      // This is simplified - in full implementation would parse board type from heartbeat
-      if (sourceIP.startsWith('192.168.2.10')) {
-        this.ptBoardIPs.add(sourceIP);
-      } else if (sourceIP.startsWith('192.168.2.20')) {
-        this.actuatorBoardIPs.add(sourceIP);
-      }
+      // Board type classification is done by the caller (server.ts) using config board IPs.
+      // We no longer classify by IP prefix heuristic here.
       return;
     }
 

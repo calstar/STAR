@@ -2,10 +2,12 @@
 
 import { useSensorStore } from '@/lib/store';
 import { useEffect } from 'react';
+import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate, MissionStartTime } from '@/lib/types';
 import WindowLauncher from '@/components/windows/WindowLauncher';
 import { useSensorValue } from '@/lib/store';
+import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
 
 // ── Sensor value card ────────────────────────────────────────────────────────
 interface SensorCardProps {
@@ -54,19 +56,17 @@ function SensorCard({ label, entity, component, unit = 'PSI', color, nop, meop }
 // ── Actuator status pill ─────────────────────────────────────────────────────
 function ActuatorPill({ label, entity }: { label: string; entity: string }) {
   const status = useSensorValue(entity, 'status');
-  const adc    = useSensorValue(entity, 'raw_adc_counts');
+  const adc = useSensorValue(entity, 'raw_adc_counts');
   const isOpen = status === 1 || (adc !== null && adc > 1000);
   const hasData = status !== null || adc !== null;
 
   return (
-    <div className={`flex flex-col items-center justify-center bg-card border rounded-xl px-3 py-3 gap-2.5 transition-all min-h-[100px] ${
-      !hasData ? 'border-gray-800' : isOpen ? 'border-green-700/80' : 'border-red-700/80'
-    }`}>
+    <div className={`flex flex-col items-center justify-center bg-card border rounded-xl px-3 py-3 gap-2.5 transition-all min-h-[100px] ${!hasData ? 'border-gray-800' : isOpen ? 'border-green-700/80' : 'border-red-700/80'
+      }`}>
       <span className="text-xs font-bold text-text-muted uppercase tracking-wider text-center leading-tight">{label}</span>
       <span
-        className={`text-xl font-bold font-mono px-3 py-2 rounded-lg w-full text-center ${
-          !hasData ? 'text-gray-600 bg-gray-900/40' : isOpen ? 'bg-green-900/50 text-green-300' : 'bg-red-900/50 text-red-300'
-        }`}
+        className={`text-xl font-bold font-mono px-3 py-2 rounded-lg w-full text-center ${!hasData ? 'text-gray-600 bg-gray-900/40' : isOpen ? 'bg-green-900/50 text-green-300' : 'bg-red-900/50 text-red-300'
+          }`}
       >
         {!hasData ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
       </span>
@@ -105,40 +105,19 @@ export default function Home() {
   }, [ws, updateSensor, updateState, updateConnectionStatus, updateMissionStartTime]);
 
   const pressureSensors: SensorCardProps[] = [
-    { label: 'GN2 Reg', entity: 'PT_Cal.GN2_Regulated', component: 'pressure_psi', color: '#27AE60', nop: 900, meop: 950 },
-    { label: 'Fuel Up', entity: 'PT_Cal.Fuel_Upstream', component: 'pressure_psi', color: '#3498DB', nop: 600, meop: 650 },
-    { label: 'Fuel Down', entity: 'PT_Cal.Fuel_Downstream', component: 'pressure_psi', color: '#2980B9', nop: 600, meop: 650 },
-    { label: 'LOX Up', entity: 'PT_Cal.Ox_Upstream', component: 'pressure_psi', color: '#E74C3C', nop: 600, meop: 650 },
-    { label: 'LOX Down', entity: 'PT_Cal.Ox_Downstream', component: 'pressure_psi', color: '#C0392B', nop: 600, meop: 650 },
-    { label: 'GSE Low', entity: 'PT_Cal.GSE_Low', component: 'pressure_psi', color: '#F39C12', nop: 500, meop: 700 },
-    { label: 'GSE MID', entity: 'PT_Cal.GSE_Mid', component: 'pressure_psi', color: '#9B59B6', nop: 4000, meop: 4500 },
-    { label: 'GSE High', entity: 'PT_Cal.GSE_High', component: 'pressure_psi', color: '#8E44AD', nop: 500, meop: 700 },
-    { label: 'GN2 High', entity: 'PT_Cal.GN2_High', component: 'pressure_psi', color: '#1ABC9C', nop: 900, meop: 950 },
+    ...PRESSURE_SENSORS.map((s) => ({
+      label: s.label.replace('Upstream', 'Up').replace('Downstream', 'Down'),
+      entity: s.entity,
+      component: s.component,
+      color: s.color,
+      nop: s.nop,
+      meop: s.meop,
+    })),
   ];
 
   // Show all actuators (matching Controls page)
-  const actuators = [
-    // Main valves
-    { label: 'LOX Main',        entity: 'ACT.LOX_Main' },
-    { label: 'Fuel Main',       entity: 'ACT.Fuel_Main' },
-    // Vent valves
-    { label: 'LOX Vent',        entity: 'ACT.LOX_Vent' },
-    { label: 'Fuel Vent',       entity: 'ACT.Fuel_Vent' },
-    { label: 'GN2 Vent',        entity: 'ACT.GSE_Low_Vent' },
-    // Press valves
-    { label: 'LOX Press',       entity: 'ACT.LOX_Press' },
-    { label: 'Fuel Press',      entity: 'ACT.Fuel_Press' },
-    // Fill valves / additional
-    { label: 'Fuel Fill Vent',  entity: 'ACT.Fuel_Fill_Vent' },
-    { label: 'Fuel Fill Press', entity: 'ACT.Fuel_Fill_Press' },
-    { label: 'LOX Fill',        entity: 'ACT.ACT_CH4' },
-    { label: 'LOX Dump',        entity: 'ACT.ACT_CH4' },
-    { label: 'GSE Low Press Vent',  entity: 'ACT.GSE_Low_Vent' },
-    { label: 'GSE High Press Vent', entity: 'ACT.GSE_Low_Vent' },
-    { label: 'GSE LOX Fill Vent',   entity: 'ACT.GSE_Low_Vent' },
-    { label: 'GSE High Press Control', entity: 'ACT.GSE_Low_Vent' },
-    { label: 'GSE Med Press Control',  entity: 'ACT.GSE_Low_Vent' },
-  ];
+  const { actuators: actuatorsFromConfig } = useActuatorsFromConfig();
+  const actuators = actuatorsFromConfig.map((a) => ({ label: a.name, entity: a.entity }));
 
   return (
     <main className="flex-1 bg-background text-text flex flex-col overflow-auto">

@@ -88,6 +88,3 @@ fi
 
 echo ""
 echo "Full logs: tail -f $LOG_FILE"
-
-
-

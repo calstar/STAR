@@ -11,26 +11,16 @@ import {
   CalibrationCommand,
   CalibrationConfidence,
 } from '@/lib/types';
+import { useSensorConfig, SensorConfig } from '@/lib/sensor-config';
 
-// ── Channel metadata ──────────────────────────────────────────────────────────
-const PT_CHANNELS: { id: number; role: string; entity: string; calEntity: string }[] = [
-  { id: 1,  role: 'Fuel Upstream',   entity: 'PT.Fuel_Upstream',   calEntity: 'PT_Cal.Fuel_Upstream'  },
-  { id: 2,  role: 'GSE Low',         entity: 'PT.GSE_Low',         calEntity: 'PT_Cal.GSE_Low'        },
-  { id: 3,  role: 'GSE Mid',       entity: 'PT.GSE_Mid',         calEntity: 'PT_Cal.GSE_Mid'        },
-  { id: 4,  role: 'Fuel Downstream', entity: 'PT.Fuel_Downstream', calEntity: 'PT_Cal.Fuel_Downstream'},
-  { id: 5,  role: 'Ox Upstream',     entity: 'PT.Ox_Upstream',     calEntity: 'PT_Cal.Ox_Upstream'    },
-  { id: 6,  role: 'GN2 Regulated',   entity: 'PT.GN2_Regulated',   calEntity: 'PT_Cal.GN2_Regulated'  },
-  { id: 7,  role: 'Ox Downstream',   entity: 'PT.Ox_Downstream',   calEntity: 'PT_Cal.Ox_Downstream'  },
-  { id: 8,  role: 'PT CH 8',         entity: 'PT.PT_CH8',          calEntity: 'PT_Cal.PT_CH8'         },
-  { id: 9,  role: 'PT CH 9',         entity: 'PT.PT_CH9',          calEntity: 'PT_Cal.PT_CH9'         },
-  { id: 10, role: 'PT CH 10',        entity: 'PT.PT_CH10',         calEntity: 'PT_Cal.PT_CH10'        },
-];
+// ── PT_CHANNELS is now derived from config.toml via useSensorConfig().
+// The hardcoded list below is removed.
 
 const CONFIDENCE_COLORS: Record<CalibrationConfidence, string> = {
-  MAXIMUM:      'text-green-400 border-green-700 bg-green-900/30',
-  HIGH:         'text-blue-400 border-blue-700 bg-blue-900/30',
-  MEDIUM:       'text-yellow-400 border-yellow-700 bg-yellow-900/30',
-  LOW:          'text-orange-400 border-orange-700 bg-orange-900/30',
+  MAXIMUM: 'text-green-400 border-green-700 bg-green-900/30',
+  HIGH: 'text-blue-400 border-blue-700 bg-blue-900/30',
+  MEDIUM: 'text-yellow-400 border-yellow-700 bg-yellow-900/30',
+  LOW: 'text-orange-400 border-orange-700 bg-orange-900/30',
   UNCALIBRATED: 'text-gray-500 border-gray-700 bg-gray-800/40',
 };
 
@@ -47,11 +37,11 @@ function fmtAdc(v: number | null | undefined): string {
 
 // ── Single channel card — compact and readable ─────────────────────────────────
 interface ChannelCardProps {
-  ch:      typeof PT_CHANNELS[number];
+  ch: SensorConfig;
   status?: CalibrationChannelStatus;
   rawAdc?: number | null;
   calPsi?: number | null;
-  onCapture: (sensorId: number, refPsi: number) => void;
+  onCapture: (sensorId: number, boardId: number, refPsi: number) => void;
 }
 
 function ChannelCard({ ch, status, rawAdc, calPsi, onCapture }: ChannelCardProps) {
@@ -62,7 +52,7 @@ function ChannelCard({ ch, status, rawAdc, calPsi, onCapture }: ChannelCardProps
   const handleCapture = () => {
     const psi = parseFloat(refInput);
     if (isNaN(psi)) return;
-    onCapture(ch.id, psi);
+    onCapture(ch.id, ch.boardId, psi);
     setRefInput('');
   };
 
@@ -116,26 +106,32 @@ function ChannelCard({ ch, status, rawAdc, calPsi, onCapture }: ChannelCardProps
         </div>
       )}
 
-      {/* Capture input */}
+      {/* Capture input — only for channels in calibration sequence (low-pressure PTs) */}
       <div className="flex gap-1 mt-auto pt-1 border-t border-gray-800/60">
-        <input
-          type="number"
-          step="any"
-          placeholder="Ref PSI"
-          value={refInput}
-          onChange={(e) => setRefInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleCapture()}
-          className="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-xs
-                     font-mono text-text placeholder-gray-600 focus:outline-none focus:border-blue-500"
-        />
-        <button
-          onClick={handleCapture}
-          disabled={!refInput}
-          className="px-2 py-1 text-[10px] font-bold rounded bg-blue-700 hover:bg-blue-600
-                     disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-white"
-        >
-          CAPTURE
-        </button>
+        {ch.inCalibrationSequence ? (
+          <>
+            <input
+              type="number"
+              step="any"
+              placeholder="Ref PSI"
+              value={refInput}
+              onChange={(e) => setRefInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleCapture()}
+              className="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-xs
+                         font-mono text-text placeholder-gray-600 focus:outline-none focus:border-blue-500"
+            />
+            <button
+              onClick={handleCapture}
+              disabled={!refInput}
+              className="px-2 py-1 text-[10px] font-bold rounded bg-blue-700 hover:bg-blue-600
+                         disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-white"
+            >
+              CAPTURE
+            </button>
+          </>
+        ) : (
+          <span className="text-[10px] text-gray-500 italic">HP — no cal</span>
+        )}
       </div>
     </div>
   );
@@ -143,15 +139,38 @@ function ChannelCard({ ch, status, rawAdc, calPsi, onCapture }: ChannelCardProps
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function CalibrationPage() {
-  const updateSensor   = useSensorStore((s) => s.updateSensor);
+  const updateSensor = useSensorStore((s) => s.updateSensor);
   const getSensorValue = useGetSensorValue();
   const ws = getWebSocketClient();
+  const ptChannels = useSensorConfig();
 
-  const [calStatus, setCalStatus]       = useState<CalibrationStatusPayload | null>(null);
-  const [lastUpdate, setLastUpdate]     = useState<Date | null>(null);
+  const [calStatus, setCalStatus] = useState<CalibrationStatusPayload | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [phase2Active, setPhase2Active] = useState(true);
+  const [numReferenceGauges, setNumReferenceGauges] = useState(1);
+  const [singleRefPsi, setSingleRefPsi] = useState('');
+  const [selectedBoardId, setSelectedBoardId] = useState<number | 'all'>('all');
+
+  // Gauge → PT channel mapping (when multiple gauges): gauge index 1..N → channel ids
+  const [gaugeToChannels, setGaugeToChannels] = useState<Record<number, number[]>>({ 1: [1] });
+  const [gaugeRefs, setGaugeRefs] = useState<Record<number, string>>({});
   const phase2Ref = useRef(phase2Active);
   phase2Ref.current = phase2Active;
+
+  const availableBoards = Array.from(new Set(ptChannels.map((c) => c.boardId))).sort((a, b) => a - b);
+  const visibleChannels = ptChannels.filter((c) => selectedBoardId === 'all' || c.boardId === selectedBoardId);
+
+  // Default mapping when number of gauges changes: Gauge 1→[1], Gauge 2→[2], ...
+  useEffect(() => {
+    const n = numReferenceGauges;
+    setGaugeToChannels((prev) => {
+      const next = { ...prev };
+      for (let g = 1; g <= n; g++) {
+        if (!next[g]?.length) next[g] = [g];
+      }
+      return next;
+    });
+  }, [numReferenceGauges]);
 
   useEffect(() => {
     ws.connect();
@@ -162,20 +181,66 @@ export default function CalibrationPage() {
       setLastUpdate(new Date(payload.timestamp));
       setPhase2Active(payload.phase2Enabled);
     });
-    return () => { u1(); u2(); };
+    const u3 = ws.on(MessageType.ERROR, (p: unknown) => {
+      const payload = p as { message?: string };
+      const msg = payload?.message ?? 'Unknown error';
+      console.error('[Calibration] Backend error:', msg);
+      alert(`❌ Calibration: ${msg}`);
+    });
+    return () => { u1(); u2(); u3(); };
   }, [ws, updateSensor]);
 
   const sendCalCmd = useCallback((cmd: CalibrationCommand) => {
     ws.send({ type: MessageType.CALIBRATION_COMMAND, timestamp: Date.now(), payload: cmd });
   }, [ws]);
 
-  const handleCapture = useCallback((sensorId: number, referencePressure: number) => {
-    sendCalCmd({ commandType: 'capture_reference', sensorId, referencePressure });
+  const handleCapture = useCallback((sensorId: number, boardId: number, referencePressure: number) => {
+    sendCalCmd({ commandType: 'capture_reference', sensorId, boardId, referencePressure });
   }, [sendCalCmd]);
 
   const handleZeroAll = useCallback(() => {
     sendCalCmd({ commandType: 'zero_all' });
   }, [sendCalCmd]);
+
+  const handleClearCalibration = useCallback(() => {
+    if (typeof window !== 'undefined' && !window.confirm('Clear all calibration and start from scratch?')) return;
+    sendCalCmd({ commandType: 'clear_calibration' });
+  }, [sendCalCmd]);
+
+  const handleCaptureAll = useCallback(() => {
+    const psi = parseFloat(singleRefPsi);
+    if (isNaN(psi)) return;
+    for (const ch of visibleChannels) {
+      if (!ch.inCalibrationSequence) continue;
+      sendCalCmd({ commandType: 'capture_reference', sensorId: ch.id, boardId: ch.boardId, referencePressure: psi });
+    }
+    setSingleRefPsi('');
+  }, [sendCalCmd, singleRefPsi, visibleChannels]);
+
+  const toggleGaugeChannel = useCallback((gauge: number, uniqueId: number) => {
+    setGaugeToChannels((prev) => {
+      const list = prev[gauge] ?? [];
+      const next = list.includes(uniqueId) ? list.filter((c) => c !== uniqueId) : [...list, uniqueId].sort((a, b) => a - b);
+      return { ...prev, [gauge]: next };
+    });
+  }, []);
+
+  const handleCaptureByGauges = useCallback(() => {
+    for (let g = 1; g <= numReferenceGauges; g++) {
+      const refStr = gaugeRefs[g];
+      const ref = parseFloat(refStr ?? '');
+      if (isNaN(ref)) continue;
+      const uniqueIds = gaugeToChannels[g] ?? [];
+      for (const uid of uniqueIds) {
+        // Find by unique board*100 + channel
+        const ch = ptChannels.find(c => (c.boardId * 100 + c.id) === uid);
+        if (ch) {
+          sendCalCmd({ commandType: 'capture_reference', sensorId: ch.id, boardId: ch.boardId, referencePressure: ref });
+        }
+      }
+    }
+    setGaugeRefs({});
+  }, [sendCalCmd, numReferenceGauges, gaugeToChannels, gaugeRefs, ptChannels]);
 
   const togglePhase2 = useCallback(() => {
     sendCalCmd({ commandType: phase2Ref.current ? 'disable_phase2' : 'enable_phase2' });
@@ -189,8 +254,12 @@ export default function CalibrationPage() {
     (calStatus?.channels ?? []).map((c) => [c.sensorId, c])
   );
 
-  const driftCount   = (calStatus?.channels ?? []).filter(c => c.driftDetected).length;
-  const totalRls     = (calStatus?.channels ?? []).reduce((s, c) => s + (c.rlsUpdateCount ?? 0), 0);
+  const getStatus = (channelId: number, boardId: number) => {
+    return statusMap.get(boardId * 100 + channelId);
+  };
+
+  const driftCount = (calStatus?.channels ?? []).filter(c => c.driftDetected).length;
+  const totalRls = (calStatus?.channels ?? []).reduce((s, c) => s + (c.rlsUpdateCount ?? 0), 0);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden">
@@ -198,16 +267,61 @@ export default function CalibrationPage() {
       {/* ── Toolbar ─────────────────────────────────────────────────────── */}
       <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 border-b border-gray-800 bg-card">
         <div className="flex items-center gap-4">
-          <h1 className="text-lg font-bold tracking-tight">Calibration</h1>
+          <h1 className="text-lg font-bold tracking-tight">Robust Calibration</h1>
+          <span className="text-xs text-gray-400 font-semibold bg-gray-800 px-2 py-0.5 rounded uppercase tracking-wider">
+            Single Pipeline
+          </span>
           <span className="text-xs text-gray-500 font-mono">
-            {calStatus ? `${calStatus.channels.length} ch` : '—'}
+            {calStatus ? `${(calStatus.channels ?? []).length} ch` : '—'}
             {' · '}
             {totalRls} RLS
             {driftCount > 0 && <span className="text-red-400 ml-1">· {driftCount} drift</span>}
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] text-gray-500 mr-1">Board:</span>
+          <select
+            value={selectedBoardId}
+            onChange={(e) => setSelectedBoardId(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+            className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-text mr-4"
+          >
+            <option value="all">All</option>
+            {availableBoards.map((bId) => (
+              <option key={bId} value={bId}>Board {bId}</option>
+            ))}
+          </select>
+
+          <span className="text-[10px] text-gray-500 mr-1">Ref gauges:</span>
+          <select
+            value={numReferenceGauges}
+            onChange={(e) => setNumReferenceGauges(Number(e.target.value))}
+            className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-text"
+          >
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+          {numReferenceGauges === 1 && (
+            <>
+              <input
+                type="number"
+                step="any"
+                placeholder="Ref PSI (all ch)"
+                value={singleRefPsi}
+                onChange={(e) => setSingleRefPsi(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleCaptureAll()}
+                className="w-24 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs font-mono text-text"
+              />
+              <button
+                onClick={handleCaptureAll}
+                disabled={!singleRefPsi}
+                className="px-2 py-1 text-[10px] font-bold rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white"
+              >
+                CAPTURE ALL
+              </button>
+            </>
+          )}
           <button
             onClick={handleZeroAll}
             className="px-3 py-1.5 text-xs font-bold rounded border transition-all
@@ -216,14 +330,19 @@ export default function CalibrationPage() {
             ZERO ALL
           </button>
           <button
-            onClick={togglePhase2}
-            className={`px-3 py-1.5 text-xs font-bold rounded border transition-all ${
-              phase2Active
-                ? 'bg-green-900/30 border-green-700 text-green-400'
-                : 'bg-gray-800 border-gray-600 text-gray-500'
-            }`}
+            onClick={handleClearCalibration}
+            className="px-3 py-1.5 text-xs font-bold rounded border border-red-700 bg-red-900/30 text-red-300 hover:bg-red-800/50"
           >
-            P2 {phase2Active ? 'ON' : 'OFF'}
+            CLEAR
+          </button>
+          <button
+            onClick={togglePhase2}
+            className={`px-3 py-1.5 text-xs font-bold rounded border transition-all ${phase2Active
+              ? 'bg-green-900/30 border-green-700 text-green-400'
+              : 'bg-gray-800 border-gray-600 text-gray-500'
+              }`}
+          >
+            Robust {phase2Active ? 'ON' : 'OFF'}
           </button>
           <button
             onClick={handleSave}
@@ -239,23 +358,70 @@ export default function CalibrationPage() {
       </div>
 
       {/* ── Instruction strip (only if never zeroed) ────────────────── */}
-      {(!calStatus || (calStatus.channels.every(c => c.rlsUpdateCount === 0))) && (
+      {(!calStatus || (calStatus.channels ?? []).every(c => c.rlsUpdateCount === 0)) && (
         <div className="flex-shrink-0 bg-blue-950/20 border-b border-blue-800/30 px-4 py-2 text-xs text-blue-300">
           <strong>Quick start:</strong> With all PTs at atmospheric (0 PSI), click{' '}
           <span className="font-mono bg-blue-900/40 px-1 rounded">ZERO ALL</span> to initialize.
           Then provide known reference pressures via CAPTURE to build the calibration curve.
-          Phase 2 auto-refines in the background.
+          Robust Calibration auto-refines in the background.
+        </div>
+      )}
+
+      {/* ── Gauge → PT mapping (when multiple gauges) ────────────────── */}
+      {numReferenceGauges > 1 && (
+        <div className="flex-shrink-0 border-b border-gray-700 bg-gray-900/50 px-4 py-3">
+          <div className="text-xs font-bold text-gray-400 mb-2">Map each reference gauge to PT channels, then enter ref (PSI) and capture</div>
+          <div className="flex flex-wrap items-center gap-4">
+            {Array.from({ length: numReferenceGauges }, (_, i) => i + 1).map((g) => (
+              <div key={g} className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-bold text-gray-500 w-14">Gauge {g}:</span>
+                <div className="flex items-center gap-0.5">
+                  {visibleChannels.filter((c) => c.inCalibrationSequence).map((c) => {
+                    const uid = c.boardId * 100 + c.id;
+                    return (
+                      <label key={uid} className="flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={(gaugeToChannels[g] ?? []).includes(uid)}
+                          onChange={() => toggleGaugeChannel(g, uid)}
+                          className="sr-only peer"
+                        />
+                        <span className="px-1.5 py-0.5 text-[9px] font-mono rounded border border-gray-600 peer-checked:bg-blue-700 peer-checked:border-blue-500 text-gray-400 peer-checked:text-white" title={`Board ${c.boardId}`}>
+                          {c.id}<sup>{c.boardId}</sup>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <input
+                  type="number"
+                  step="any"
+                  placeholder="Ref PSI"
+                  value={gaugeRefs[g] ?? ''}
+                  onChange={(e) => setGaugeRefs((prev) => ({ ...prev, [g]: e.target.value }))}
+                  onKeyDown={(e) => e.key === 'Enter' && handleCaptureByGauges()}
+                  className="w-20 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs font-mono text-text"
+                />
+              </div>
+            ))}
+            <button
+              onClick={handleCaptureByGauges}
+              className="px-3 py-1.5 text-xs font-bold rounded bg-blue-700 hover:bg-blue-600 text-white"
+            >
+              CAPTURE ALL GAUGES
+            </button>
+          </div>
         </div>
       )}
 
       {/* ── Channel grid — 5 columns × 2 rows ──────────────────────── */}
       <div className="flex-1 overflow-auto min-h-0 p-3">
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 h-full auto-rows-fr">
-          {PT_CHANNELS.map((ch) => (
+          {visibleChannels.map((ch) => (
             <ChannelCard
-              key={ch.id}
+              key={`${ch.boardId}-${ch.id}`}
               ch={ch}
-              status={statusMap.get(ch.id)}
+              status={getStatus(ch.id, ch.boardId)}
               rawAdc={getSensorValue(ch.entity, 'raw_adc_counts')}
               calPsi={getSensorValue(ch.calEntity, 'pressure_psi')}
               onCapture={handleCapture}

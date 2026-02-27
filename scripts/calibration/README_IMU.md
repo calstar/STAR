@@ -74,6 +74,3 @@ Or use Python calibration results directly in Python-based systems.
 
 - PT Calibration: `external/DiabloAvionics/PT_Board/Calibration/pt_cali.py`
 - LC Calibration GUI: `external/DiabloAvionics/LC_Board/LC_Calibration/LC_Calibration_Gui/`
-
-
-

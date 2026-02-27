@@ -199,6 +199,3 @@ The SITL integrates seamlessly with existing FSW:
 - Engine Simulation: `engine_sim/docs/`
 - EKF Navigation: `FSW/nav/include/EKFNavigation.hpp`
 - Controller: `engine_sim/docs/control/`
-
-
-

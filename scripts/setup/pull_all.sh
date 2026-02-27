@@ -40,4 +40,3 @@ echo "✅ All updates complete!"
 echo ""
 echo "Submodule status:"
 git submodule status
-

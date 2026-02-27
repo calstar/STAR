@@ -3,24 +3,15 @@
 import { useEffect } from 'react';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
+import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { MessageType, SensorUpdate, StateUpdate, SystemState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
-
-// Valve rows: [label, entity, component]
-const VALVES = [
-  { label: 'LOX Main',     entity: 'ACT.LOX_Main',     ch: 'ACT.ACT_CH1' },
-  { label: 'Fuel Main',    entity: 'ACT.Fuel_Main',    ch: 'ACT.ACT_CH7' },
-  { label: 'LOX Vent',     entity: 'ACT.LOX_Vent',     ch: 'ACT.ACT_CH6' },
-  { label: 'Fuel Vent',    entity: 'ACT.Fuel_Vent',    ch: 'ACT.ACT_CH2' },
-  { label: 'LOX Press',    entity: 'ACT.LOX_Press',    ch: 'ACT.ACT_CH8' },
-  { label: 'Fuel Press',   entity: 'ACT.Fuel_Press',   ch: 'ACT.ACT_CH3' },
-  { label: 'GSE Vent',     entity: 'ACT.GSE_Low_Vent', ch: 'ACT.ACT_CH5' },
-];
+import { getEntityColor } from '@/lib/sensor-colors';
 
 function ValveStatusRow({ label, entity, ch }: { label: string; entity: string; ch: string }) {
-  const status  = useSensorValue(entity, 'status');
+  const status = useSensorValue(entity, 'status');
   const adcNamed = useSensorValue(entity, 'raw_adc_counts');
-  const adcCh    = useSensorValue(ch, 'raw_adc_counts');
+  const adcCh = useSensorValue(ch, 'raw_adc_counts');
   const adc = adcNamed ?? adcCh;
   const isOpen = status === 1 || (adc !== null && adc > 1000);
   const hasData = status !== null || adc !== null;
@@ -32,9 +23,8 @@ function ValveStatusRow({ label, entity, ch }: { label: string; entity: string; 
         {adc !== null && (
           <span className="text-xs font-mono text-gray-500">{adc.toFixed(0)} ADC</span>
         )}
-        <span className={`text-xs font-bold font-mono w-16 text-right ${
-          !hasData ? 'text-gray-600' : isOpen ? 'text-green-400' : 'text-red-400'
-        }`}>
+        <span className={`text-xs font-bold font-mono w-16 text-right ${!hasData ? 'text-gray-600' : isOpen ? 'text-green-400' : 'text-red-400'
+          }`}>
           {!hasData ? '---' : isOpen ? '● OPEN' : '○ CLOSED'}
         </span>
       </div>
@@ -43,17 +33,16 @@ function ValveStatusRow({ label, entity, ch }: { label: string; entity: string; 
 }
 
 function DutyCycleCard({ label, entity, color }: { label: string; entity: string; color: string }) {
-  const dc  = useSensorValue(entity, 'duty_cycle') ?? 0;
-  const on  = useSensorValue(entity, 'onoff');
+  const dc = useSensorValue(entity, 'duty_cycle') ?? 0;
+  const on = useSensorValue(entity, 'onoff');
 
   return (
     <div className="bg-card rounded-xl border border-gray-800 p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-bold tracking-wider text-text-muted uppercase">{label}</h3>
-        <span className={`text-xs font-bold font-mono px-2 py-0.5 rounded ${
-          on ? 'bg-green-900/50 text-green-400 border border-green-800' :
-               'bg-gray-900/50 text-gray-500 border border-gray-800'
-        }`}>
+        <span className={`text-xs font-bold font-mono px-2 py-0.5 rounded ${on ? 'bg-green-900/50 text-green-400 border border-green-800' :
+            'bg-gray-900/50 text-gray-500 border border-gray-800'
+          }`}>
           {on ? 'ON' : 'OFF'}
         </span>
       </div>
@@ -85,6 +74,8 @@ export default function ControllerPage() {
   const updateState = useSensorStore((state) => state.updateState);
   const currentState = useSensorStore((state) => state.currentState);
   const ws = getWebSocketClient();
+  const { actuators } = useActuatorsFromConfig();
+  const VALVES = actuators.map((a) => ({ label: a.name, entity: a.entity, ch: a.entity }));
 
   useEffect(() => {
     if (!ws.isConnected()) {
@@ -98,7 +89,7 @@ export default function ControllerPage() {
       updateState(stateUpdate);
       console.log('[ControllerPage] State updated:', stateUpdate);
     });
-    
+
     // Also subscribe to sensor updates for the controller entities
     ws.send({
       type: MessageType.SUBSCRIBE_SENSOR,
@@ -110,10 +101,10 @@ export default function ControllerPage() {
       timestamp: Date.now(),
       payload: { entity: 'CONTROLLER.Ox' },
     });
-    
-    return () => { 
-      u1(); 
-      u2(); 
+
+    return () => {
+      u1();
+      u2();
     };
   }, [ws, updateSensor, updateState]);
 
@@ -129,12 +120,11 @@ export default function ControllerPage() {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 text-xs bg-gray-900 rounded px-3 py-1.5 border border-gray-800">
             <span className="text-text-muted">STATE:</span>
-            <span className={`font-mono font-bold ${
-              currentState === SystemState.FIRE ? 'text-red-400' :
-              currentState === SystemState.READY ? 'text-green-400' :
-              currentState === SystemState.ABORT ? 'text-red-500' :
-              'text-text'
-            }`}>
+            <span className={`font-mono font-bold ${currentState === SystemState.FIRE ? 'text-red-400' :
+                currentState === SystemState.READY ? 'text-green-400' :
+                  currentState === SystemState.ABORT ? 'text-red-500' :
+                    'text-text'
+              }`}>
               {currentState !== null ? STATE_NAMES[currentState] : '---'}
             </span>
           </div>
@@ -152,8 +142,8 @@ export default function ControllerPage() {
 
         {/* Left column: duty cycle cards */}
         <div className="flex flex-col gap-3">
-          <DutyCycleCard label="Fuel Solenoid"     entity="CONTROLLER.Fuel" color="#3498DB" />
-          <DutyCycleCard label="Oxidizer Solenoid" entity="CONTROLLER.Ox"   color="#E74C3C" />
+          <DutyCycleCard label="Fuel Solenoid" entity="CONTROLLER.Fuel" color={getEntityColor('CONTROLLER.Fuel')} />
+          <DutyCycleCard label="Oxidizer Solenoid" entity="CONTROLLER.Ox" color={getEntityColor('CONTROLLER.Ox')} />
 
           {/* Data-flow info card */}
           <div className="bg-card rounded-xl border border-gray-800 p-4 flex-1">
@@ -200,7 +190,7 @@ export default function ControllerPage() {
             entities={['CONTROLLER.Fuel', 'CONTROLLER.Ox']}
             labels={['Fuel Sol.', 'Ox Sol.']}
             component="duty_cycle"
-            colors={['#3498DB', '#E74C3C']}
+            colors={[getEntityColor('CONTROLLER.Fuel'), getEntityColor('CONTROLLER.Ox')]}
             yLabel="Duty Cycle (%)"
           />
         </div>

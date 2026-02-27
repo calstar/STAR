@@ -159,18 +159,7 @@ active_connectors = []  # Example: [1, 2] if only connectors 1-2 are used
 # The config parser will find all boards with type="PT" and process them separately.
 # Each board can have different IPs and different active_connectors.
 
-# =============================================================================
-# Sensor Roles - Maps sensor_id (1-indexed) to human-readable names
-# These match the DiabloAvionics config.json "sensor_roles"
-# This is the DEFAULT mapping used for boards without board-specific roles
-# =============================================================================
-[sensor_roles]
-"GSE Low"         = 2
-"GN2 Regulated"   = 6
-"Fuel Upstream"   = 1
-"Fuel Downstream" = 4
-"Ox Upstream"     = 5
-"Ox Downstream"   = 7
+
 
 # =============================================================================
 # Sensor Roles - PT Board 1 (192.168.2.101)
@@ -179,7 +168,8 @@ active_connectors = []  # Example: [1, 2] if only connectors 1-2 are used
 [sensor_roles_pt_board]
 "Fuel Upstream"   = 1
 "GSE Low"         = 2
-"Fuel Downstream" = 4
+"Fuel Fill Tank"  = 4
+"Fuel Downstream" = 3
 "Ox Upstream"     = 5
 "GN2 Regulated"   = 6
 "Ox Downstream"   = 7
@@ -203,16 +193,24 @@ active_connectors = []  # Example: [1, 2] if only connectors 1-2 are used
 # board_ip: IP address of the actuator board (optional, defaults to 192.168.2.201)
 # =============================================================================
 [actuator_roles]
-"LOX Main"         = ["NO", 1, "192.168.2.201"]
-"Fuel Vent"        = ["NC", 2, "192.168.2.201"]
-"Fuel Press"       = ["NC", 3, "192.168.2.201"]
-"LOX Press"        = ["NO", 8, "192.168.2.201"]
-"LOX Vent"         = ["NC", 6, "192.168.2.201"]
-"Fuel Main"        = ["NC", 7, "192.168.2.201"]
-"GSE Low Vent"     = ["NC", 5, "192.168.2.201"]
-"Fuel Fill Press"  = ["NC", 10, "192.168.2.201"]
-"Fuel Fill Vent"   = ["NC", 9, "192.168.2.201"]
-"Test Actuator 2"  = ["NC", 1, "192.168.2.202"]
+# Board 192.168.2.201 – names match state_machine_actuators.csv
+"LOX Main"               = ["NO", 1, "192.168.2.201"]
+"Fuel Vent"             = ["NC", 2, "192.168.2.201"]
+"Fuel Press"            = ["NC", 3, "192.168.2.201"]
+"Fuel Main"             = ["NC", 7, "192.168.2.201"]
+"LOX Vent"              = ["NC", 6, "192.168.2.201"]
+"LOX Press"             = ["NO", 8, "192.168.2.201"]
+"GSE Low Press Vent"    = ["NC", 5, "192.168.2.201"]
+"Fuel Fill Press"       = ["NC", 10, "192.168.2.201"]
+# Board 192.168.2.202
+"Fuel Fill Vent"        = ["NC", 1, "192.168.2.202"]
+"GSE LOX Fill Vent"     = ["NC", 2, "192.168.2.202"]
+"GSE High Press Control" = ["NC", 3, "192.168.2.202"]
+"GSE Med Press Control" = ["NC", 4, "192.168.2.202"]
+"GSE High Press Vent"   = ["NC", 5, "192.168.2.202"]
+"GN2 Vent"              = ["NC", 6, "192.168.2.202"]
+"LOX Fill"              = ["NC", 7, "192.168.2.202"]
+"LOX Dump"              = ["NC", 8, "192.168.2.202"]
 
 # Abbreviation mapping for state machine CSV
 [actuator_abbrev]
@@ -350,7 +348,7 @@ transitions_csv = "external/DiabloAvionics/test_guis/state_transitions.csv"
 # PWM frequency for actuator control (Hz)
 pwm_frequency_hz = 10.0
 # PWM command duration (ms) - how long each command stays active
-pwm_duration_ms = 10000
+pwm_duration_ms = 1000
 # Fallback duty cycles when controller service is unavailable (0.0-1.0)
 fallback_fuel_duty_cycle = 0.5
 fallback_ox_duty_cycle = 0.2
@@ -358,6 +356,26 @@ fallback_ox_duty_cycle = 0.2
 controller_loop_hz = 10.0
 # Controller service URL
 controller_service_url = "http://localhost:8000"
+# Controller config path (YAML file relative to engine_sim/configs/). If empty, uses default.
+# Example: "controller_default.yaml" or "hotfire_conservative.yaml"
+controller_config_path = ""
+
+# Controller Targets (used when state machine enters FIRE state)
+# command_type can be: "THRUST_DESIRED", "ALTITUDE_GOAL", or "PRESSURE_TARGET"
+command_type = "THRUST_DESIRED"
+thrust_desired = 1000.0        # Target thrust in Newtons
+altitude_goal = 0.0            # Target altitude (if using ALTITUDE_GOAL)
+pressure_fuel_target = 0.0     # Target fuel pressure (if using PRESSURE_TARGET)
+pressure_ox_target = 0.0       # Target ox pressure (if using PRESSURE_TARGET)
+# Duty sweep: open-loop multi-step test (no controller service needed).
+duty_sweep_enabled = false
+duty_sweep_step_duration_sec = 2.0
+# Steps as [fuel_duty, ox_duty] in 0.0-1.0; 5 steps x 2s = 10s
+duty_sweep_steps = [[0.1, 0.1], [0.3, 0.2], [0.5, 0.4], [0.3, 0.3], [0.1, 0.1]]
+
+# Use C++ RobustDDPController service for PWM instead of Python FastAPI.
+# When true, the web backend will not start its own controller loop or send PWM.
+use_cpp_controller = false
 
 # =============================================================================
 # Phase 2 Calibration Settings
@@ -383,5 +401,22 @@ absolute_drift_threshold_psi = 2.0
 consensus_threshold_psi = 1.0
 # Consensus update rate (0.0-1.0) - how aggressively to update based on sensor agreement
 consensus_update_rate = 0.1
+
+# =============================================================================
+# Robust Calibration Integration (Python Sidecar)
+# =============================================================================
+[calibration.sidecar]
+enabled = true
+host = "127.0.0.1"
+port = 8100
+reconnect_interval_ms = 5000
+adc_forward_interval_ms = 200
+
+[calibration.environmental]
+temperature = 25.0
+humidity = 50.0
+vibration = 0.0
+aging_factor = 1.0
+mounting_torque = 1.0
 # Minimum sensors needed for consensus-based updates
 min_consensus_sensors = 2

@@ -140,11 +140,13 @@ public:
     };
 
     // ── Command ────────────────────────────────────────────────────────
-    enum class CommandType { THRUST_DESIRED, ALTITUDE_GOAL };
+    enum class CommandType { THRUST_DESIRED, ALTITUDE_GOAL, PRESSURE_TARGET };
     struct Command {
         CommandType type = CommandType::THRUST_DESIRED;
         double thrust_desired = 0.0;
         double altitude_goal = 0.0;
+        double P_fuel_target = 0.0;  // Target fuel tank pressure [Pa]
+        double P_ox_target = 0.0;    // Target ox tank pressure [Pa]
     };
 
     // ── Actuation output ───────────────────────────────────────────────
@@ -217,8 +219,11 @@ public:
 private:
     // ── Internal types ─────────────────────────────────────────────────
     struct Reference {
+        CommandType type = CommandType::THRUST_DESIRED;
         std::vector<double> F_ref;
         std::vector<double> MR_ref;
+        std::vector<double> P_fuel_ref;
+        std::vector<double> P_ox_ref;
     };
 
     struct DDPSolution {
@@ -247,26 +252,28 @@ private:
     Eigen::VectorXd buildState(const Measurement& meas) const;
 
     // ── Constraint checking (§7) ───────────────────────────────────────
-    bool isStateSafe(const Eigen::VectorXd& x) const;
+    bool isStateSafe(const Eigen::VectorXd& x,
+                     CommandType cmd_type = CommandType::THRUST_DESIRED) const;
 
     // ── DDP solver (§9) ────────────────────────────────────────────────
     DDPSolution solveDDP(const Eigen::VectorXd& x0, const Reference& ref,
                          const Eigen::MatrixXd& u_init) const;
 
-    double runningCost(const Eigen::VectorXd& x, const Eigen::VectorXd& u, double F_ref,
-                       double MR_ref, const Eigen::VectorXd& u_prev) const;
+    double runningCost(const Eigen::VectorXd& x, const Eigen::VectorXd& u, const Reference& ref,
+                       int k, const Eigen::VectorXd& u_prev) const;
 
     // ── Enumerative robust MPC (§10) ───────────────────────────────────
-    Eigen::VectorXd enumerativeMPC(const Eigen::VectorXd& x0, double F_ref, double MR_ref) const;
+    Eigen::VectorXd enumerativeMPC(const Eigen::VectorXd& x0, const Reference& ref, int k) const;
 
     // ── Open/close decision logic (§11) ────────────────────────────────
-    Eigen::VectorXd economicDecision(const Eigen::VectorXd& x, double F_ref) const;
+    Eigen::VectorXd economicDecision(const Eigen::VectorXd& x, const Reference& ref, int k) const;
 
     // ── Safety filter — tube propagation (§9.3) ────────────────────────
     Eigen::VectorXd filterAction(const Eigen::VectorXd& x, const Eigen::VectorXd& u_proposed,
-                                 double F_ref, double MR_ref) const;
+                                 const Reference& ref, int k) const;
 
-    bool isActionSafe(const Eigen::VectorXd& x, const Eigen::VectorXd& u, int num_steps = 2) const;
+    bool isActionSafe(const Eigen::VectorXd& x, const Eigen::VectorXd& u, CommandType cmd_type,
+                      int num_steps = 2) const;
 
     // ── Supervisory cutoff (§12) ───────────────────────────────────────
     bool shouldCutoff(const NavState& nav) const;

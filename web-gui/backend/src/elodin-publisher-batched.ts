@@ -63,7 +63,7 @@ export class ElodinPublisherBatched {
     try {
       // Concatenate all buffered packets into one TCP write
       const fullBatch = Buffer.concat(this.batchBuffer);
-      
+
       // Send as a single write to Elodin DB
       // Use packetId [0x00, 0x00] and BATCH type (or just send raw)
       // Actually, Elodin DB expects individual TABLE packets, so we need to send them separately
@@ -116,7 +116,7 @@ export class ElodinPublisherBatched {
   /**
    * Publish a raw PT message to Elodin DB
    * Matches: elodin_client.publish(packet_id, RawPTMessage)
-   * 
+   *
    * @param channelId Channel ID (1-based: 1-10)
    * @param timestampNs Timestamp in nanoseconds
    * @param rawAdcCounts Raw ADC counts
@@ -168,7 +168,7 @@ export class ElodinPublisherBatched {
   /**
    * Publish a calibrated PT message to Elodin DB
    * Matches: elodin_client.publish(packet_id, CalibratedPTMessage)
-   * 
+   *
    * @param channelId Channel ID (1-based: 1-10)
    * @param timestampNs Timestamp in nanoseconds
    * @param pressurePsi Calibrated pressure in PSI
@@ -220,7 +220,7 @@ export class ElodinPublisherBatched {
   /**
    * Publish an actuator message to Elodin DB
    * Matches: elodin_client.publish(packet_id, RawPTMessage) for actuators
-   * 
+   *
    * @param channelId Channel ID (1-based: 1-10)
    * @param timestampNs Timestamp in nanoseconds
    * @param rawAdcCounts Raw ADC counts
@@ -262,4 +262,3 @@ export class ElodinPublisherBatched {
     }
   }
 }
-

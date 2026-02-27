@@ -63,6 +63,3 @@ enable_robust_estimation = true
 fuel_solenoid_id = 0
 ox_solenoid_id = 1
 pwm_frequency_hz = 100.0
-
-
-

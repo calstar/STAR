@@ -17,6 +17,7 @@ set(FSW_SOURCES
     src/calibration/PTCalibration.cpp
     src/calibration/SensorCalibration.cpp
     src/control/RobustDDPController.cpp
+    src/control/ControllerService.cpp
     # src/nav/EKFNavigationEnhanced.cpp
     # src/calibration/IMUCalibration.cpp
     # Calibration pipeline (if needed)
@@ -106,6 +107,24 @@ target_include_directories(test_robust_ddp PRIVATE
 )
 
 target_link_libraries(test_robust_ddp
+    fsw_daq_lib
+    daq_comms_lib
+    Eigen3::Eigen
+    Threads::Threads
+    pthread
+    ${RT_LIBRARY}
+)
+
+# Controller Service standalone executable
+add_executable(controller_service src/control/controller_main.cpp)
+
+target_include_directories(controller_service PRIVATE
+    ${CMAKE_SOURCE_DIR}/FSW/include
+    ${CMAKE_SOURCE_DIR}/daq_comms/include
+    ${CMAKE_SOURCE_DIR}/utl
+)
+
+target_link_libraries(controller_service
     fsw_daq_lib
     daq_comms_lib
     Eigen3::Eigen

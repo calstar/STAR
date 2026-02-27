@@ -64,20 +64,30 @@ export class MessageLogger {
       // Determine packet ID based on message type
       let packetId: [number, number] = [0x5f, 0x00]; // Default: unknown message type
 
-      if (message.type === MessageType.SENSOR_UPDATE) {
-        packetId = this.PACKET_IDS.SENSOR_UPDATE;
-      } else if (message.type === MessageType.ACTUATOR_UPDATE) {
-        packetId = this.PACKET_IDS.ACTUATOR_UPDATE;
-      } else if (message.type === MessageType.STATE_UPDATE) {
-        packetId = this.PACKET_IDS.STATE_UPDATE;
-      } else if (message.type === MessageType.CONTROLLER_UPDATE) {
-        packetId = this.PACKET_IDS.CONTROLLER_UPDATE;
-      } else if (message.type === MessageType.ERROR) {
-        packetId = this.PACKET_IDS.ERROR;
-      } else if (message.type === MessageType.CONNECTION_STATUS) {
-        packetId = this.PACKET_IDS.CONNECTION_STATUS;
-      } else if (message.type === MessageType.CALIBRATION_STATUS) {
-        packetId = this.PACKET_IDS.CALIBRATION_STATUS;
+      switch (message.type) {
+        case MessageType.SENSOR_UPDATE:
+          packetId = this.PACKET_IDS.SENSOR_UPDATE as [number, number];
+          break;
+        case MessageType.ACTUATOR_UPDATE:
+          packetId = this.PACKET_IDS.ACTUATOR_UPDATE as [number, number];
+          break;
+        case MessageType.STATE_UPDATE:
+          packetId = this.PACKET_IDS.STATE_UPDATE as [number, number];
+          break;
+        case MessageType.CONTROLLER_UPDATE:
+          packetId = this.PACKET_IDS.CONTROLLER_UPDATE as [number, number];
+          break;
+        case MessageType.ERROR:
+          packetId = this.PACKET_IDS.ERROR as [number, number];
+          break;
+        case MessageType.CONNECTION_STATUS:
+          packetId = this.PACKET_IDS.CONNECTION_STATUS as [number, number];
+          break;
+        case MessageType.CALIBRATION_STATUS:
+          packetId = this.PACKET_IDS.CALIBRATION_STATUS as [number, number];
+          break;
+        default:
+          return; // Ignore uncharted message types
       }
 
       // Serialize message to JSON
@@ -126,7 +136,3 @@ export class MessageLogger {
     });
   }
 }
-
-
-
-

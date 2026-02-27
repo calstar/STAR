@@ -11,7 +11,7 @@ import { ElodinClient } from './elodin-client.js';
 /**
  * Encode ControllerActuationMessage for Elodin DB
  * Format matching ControllerMessages.hpp:
- * uint64_t timestamp_ns (8) + float duty_F (4) + float duty_O (4) + 
+ * uint64_t timestamp_ns (8) + float duty_F (4) + float duty_O (4) +
  * uint8_t u_F_on (1) + uint8_t u_O_on (1) + uint8_t valid (1) = 19 bytes
  */
 export function encodeControllerActuation(
@@ -48,9 +48,9 @@ export function encodeControllerActuation(
 /**
  * Encode ControllerDiagnosticsMessage for Elodin DB
  * Format matching ControllerMessages.hpp:
- * uint64_t timestamp_ns (8) + double F_ref (8) + double MR_ref (8) + 
- * double F_estimated (8) + double MR_estimated (8) + double P_ch (8) + 
- * double cost (8) + uint8_t safety_filtered (1) + uint8_t cutoff_active (1) + 
+ * uint64_t timestamp_ns (8) + double F_ref (8) + double MR_ref (8) +
+ * double F_estimated (8) + double MR_estimated (8) + double P_ch (8) +
+ * double cost (8) + uint8_t safety_filtered (1) + uint8_t cutoff_active (1) +
  * int32_t solver_iters (4) = 62 bytes
  */
 export function encodeControllerDiagnostics(
@@ -118,7 +118,7 @@ export function publishControllerActuation(
   try {
     const timestampNs = BigInt(Date.now()) * BigInt(1_000_000); // Convert ms to ns
     const payload = encodeControllerActuation(timestampNs, dutyF, dutyO, uFOn, uOOn, valid);
-    
+
     // Packet ID: [0x40, 0x00] for controller actuation
     return elodin.publishTable([0x40, 0x00], payload);
   } catch (error) {
@@ -160,7 +160,7 @@ export function publishControllerDiagnostics(
       cutoffActive,
       solverIters
     );
-    
+
     // Packet ID: [0x41, 0x00] for controller diagnostics
     return elodin.publishTable([0x41, 0x00], payload);
   } catch (error) {
@@ -168,7 +168,3 @@ export function publishControllerDiagnostics(
     return false;
   }
 }
-
-
-
-

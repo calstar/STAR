@@ -55,6 +55,3 @@ echo "  □ Board is actually sending packets (check Serial monitor)"
 echo ""
 echo "Monitor for incoming packets:"
 echo "  tail -f $LOG_FILE | grep -E '\[Packet|\[Pipeline.*Received'"
-
-
-

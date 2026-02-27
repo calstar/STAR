@@ -261,10 +261,10 @@ export class ElodinClient extends EventEmitter {
     try {
       const header = this.createHeader(packetType, packetId, payload.length);
       const packet = Buffer.concat([header, payload]);
-      
+
       // Write to socket - Node.js will buffer and flush automatically
       const flushed = this.socket.write(packet);
-      
+
       // If write buffer is full, socket.write returns false
       // In that case, we should wait for 'drain' event, but for now just log
       if (!flushed) {

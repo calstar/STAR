@@ -40,8 +40,8 @@ export function parseRawPTMessage(
   const entityMap: Record<number, string> = {
     1: 'PT.Fuel_Upstream',
     2: 'PT.GSE_Low',
-    3: 'PT.PT_CH3',
-    4: 'PT.Fuel_Downstream',
+    3: 'PT.Fuel_Downstream',
+    4: 'PT.Fuel_Fill_Tank',
     5: 'PT.Ox_Upstream',
     6: 'PT.GN2_Regulated',
     7: 'PT.Ox_Downstream',
@@ -92,8 +92,8 @@ export function parseCalibratedPTMessage(
   const baseEntityMap: Record<number, string> = {
     1: 'PT_Cal.Fuel_Upstream',
     2: 'PT_Cal.GSE_Low',
-    3: 'PT_Cal.PT_CH3',
-    4: 'PT_Cal.Fuel_Downstream',
+    3: 'PT_Cal.Fuel_Downstream',
+    4: 'PT_Cal.Fuel_Fill_Tank',
     5: 'PT_Cal.Ox_Upstream',
     6: 'PT_Cal.GN2_Regulated',
     7: 'PT_Cal.Ox_Downstream',

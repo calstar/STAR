@@ -8,38 +8,45 @@ import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
+import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
+import { useSensorConfig, filterByRole } from '@/lib/sensor-config';
+import { usePressureLimits, getLimitsForSystem } from '@/lib/pressure-limits';
 
-const NOP  = 450;
-const MEOP = 600;
+
 
 export default function FuelGraphsPage() {
   const updateSensor = useSensorStore((s) => s.updateSensor);
-  const updateState  = useSensorStore((s) => s.updateState);
-  const ws           = getWebSocketClient();
+  const updateState = useSensorStore((s) => s.updateState);
+  const ws = getWebSocketClient();
+  const allSensors = useSensorConfig();
+  const pressureLimits = usePressureLimits();
+  const ethLimits = getLimitsForSystem(pressureLimits, 'ETH');
+
+  // Fuel sensors from config (role names containing "Fuel")
+  const fuelSensors = filterByRole(allSensors, 'Fuel');
+  const entities = fuelSensors.map((s) => s.calEntity);
+  const labels = fuelSensors.map((s) => s.role);
+  const colors = entities.map((e) => getEntityColor(e));
+
+  // Sidebar values
+  const upSensor = fuelSensors.find((s) => s.role.toLowerCase().includes('upstream'));
+  const downSensor = fuelSensors.find((s) => s.role.toLowerCase().includes('downstream'));
+  const up = useSensorValue(upSensor?.calEntity ?? '', 'pressure_psi');
+  const down = useSensorValue(downSensor?.calEntity ?? '', 'pressure_psi');
 
   useEffect(() => {
     ws.connect();
     const unsub1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const unsub2 = ws.on(MessageType.STATE_UPDATE,  (p: unknown) => updateState(p as StateUpdate));
+    const unsub2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
 
-    // Re-register listeners on reconnection to prevent freezing
     const unsub3 = ws.onConnectionStatus((status) => {
       if (status.connected) {
-        // WebSocket reconnected - listeners are already registered, but ensure they're active
         console.log('[FuelGraphsPage] WebSocket reconnected, listeners active');
       }
     });
 
     return () => { unsub1(); unsub2(); unsub3(); };
   }, [ws, updateSensor, updateState]);
-
-  // Sidebar pressure PTs
-  const upNamed   = useSensorValue('PT_Cal.Fuel_Upstream',   'pressure_psi');
-  const upCh      = useSensorValue('PT_Cal.PT_CH1',          'pressure_psi');
-  const downNamed = useSensorValue('PT_Cal.Fuel_Downstream', 'pressure_psi');
-  const downCh    = useSensorValue('PT_Cal.PT_CH4',          'pressure_psi');
-  const up        = upNamed   ?? upCh;
-  const down      = downNamed ?? downCh;
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
@@ -54,10 +61,9 @@ export default function FuelGraphsPage() {
 
       {/* Live readout strip */}
       <div className="flex-shrink-0">
-        <SensorReadoutStrip sensors={[
-          { label: 'Fuel Up',   entity: 'PT_Cal.PT_CH1', component: 'pressure_psi', color: '#3498DB' },
-          { label: 'Fuel Down', entity: 'PT_Cal.PT_CH4', component: 'pressure_psi', color: '#2980B9' },
-        ]} />
+        <SensorReadoutStrip sensors={fuelSensors.map((s) => ({
+          label: s.role, entity: s.calEntity, component: 'pressure_psi', color: getEntityColor(s.calEntity),
+        }))} />
       </div>
 
       {/* Body: chart + sidebar */}
@@ -67,10 +73,10 @@ export default function FuelGraphsPage() {
           <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0" style={{ minHeight: '300px' }}>
             <TimeSeriesPlot
               title="FUEL Pressure (PSI)"
-              entities={['PT_Cal.PT_CH1','PT_Cal.PT_CH4']}
-              labels={['Upstream','Downstream']}
+              entities={entities}
+              labels={labels}
               component="pressure_psi"
-              colors={['#3498DB','#2980B9']}
+              colors={colors}
               yLabel="Pressure (PSI)"
             />
           </div>
@@ -80,11 +86,11 @@ export default function FuelGraphsPage() {
             <ActuatorStatePanel
               title="Fuel Actuators"
               actuators={[
-                { label: 'Fuel Main',       entity: 'ACT.Fuel_Main',       color: '#27AE60' },
-                { label: 'Fuel Vent',       entity: 'ACT.Fuel_Vent',       color: '#E74C3C' },
-                { label: 'Fuel Press',      entity: 'ACT.Fuel_Press',      color: '#F39C12' },
-                { label: 'Fuel Fill Vent',  entity: 'ACT.Fuel_Fill_Vent',  color: '#9B59B6' },
-                { label: 'Fuel Fill Press', entity: 'ACT.Fuel_Fill_Press', color: '#8E44AD' },
+                { label: 'Fuel Main', entity: 'ACT.Fuel_Main', color: getActuatorColor('ACT.Fuel_Main') },
+                { label: 'Fuel Vent', entity: 'ACT.Fuel_Vent', color: getActuatorColor('ACT.Fuel_Vent') },
+                { label: 'Fuel Press', entity: 'ACT.Fuel_Press', color: getActuatorColor('ACT.Fuel_Press') },
+                { label: 'Fuel Fill Vent', entity: 'ACT.Fuel_Fill_Vent', color: getActuatorColor('ACT.Fuel_Fill_Vent') },
+                { label: 'Fuel Fill Press', entity: 'ACT.Fuel_Fill_Press', color: getActuatorColor('ACT.Fuel_Fill_Press') },
               ]}
             />
           </div>
@@ -97,10 +103,10 @@ export default function FuelGraphsPage() {
           </div>
           <div className="flex flex-row flex-1 gap-2 min-h-0 overflow-visible w-full pr-6">
             <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-visible">
-              <PressureBar label="Up" value={up} nop={NOP} meop={MEOP} color="#3498DB" showLabels={false} />
+              <PressureBar label="Up" value={up} nop={ethLimits.NOP} meop={ethLimits.MEOP} color={getEntityColor(upSensor?.calEntity ?? '')} showLabels={false} />
             </div>
             <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-visible">
-              <PressureBar label="Down" value={down} nop={NOP} meop={MEOP} color="#2980B9" showLabels={false} />
+              <PressureBar label="Down" value={down} nop={ethLimits.NOP} meop={ethLimits.MEOP} color={getEntityColor(downSensor?.calEntity ?? '')} showLabels={false} />
             </div>
           </div>
         </div>

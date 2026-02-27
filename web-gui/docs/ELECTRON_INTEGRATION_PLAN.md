@@ -235,6 +235,3 @@ linux:
 3. Set up build configuration
 4. Test in development mode
 5. Create installers for all platforms
-
-
-

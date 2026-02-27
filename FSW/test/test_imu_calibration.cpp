@@ -110,6 +110,3 @@ int main() {
     std::cout << "\n✅ IMU Calibration test completed successfully" << std::endl;
     return 0;
 }
-
-
-

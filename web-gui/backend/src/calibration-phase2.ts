@@ -77,20 +77,8 @@ function getLiveCoeffs(state: SensorState): CalibrationCoefficients {
 }
 
 // Sensor groups that should agree (for consensus-based calibration)
-// Maps sensor group name → array of sensor IDs that measure related quantities
-// NOTE: Only sensors that measure the SAME physical quantity should be grouped
-const SENSOR_GROUPS: Record<string, number[]> = {
-  // Oxidizer system: upstream and downstream should agree when no flow (same tank pressure)
-  'ox_system': [5, 7], // Ox Upstream (CH5), Ox Downstream (CH7) - both measure LOX tank pressure when idle
-  // GN2 system: regulated and high pressure should be related (same GN2 source)
-  'gn2_system': [6, 9], // GN2 Regulated (CH6), GN2 High (CH9) - related pressures
-  // GSE system: low, mid, high should be related (same GSE system)
-  'gse_system': [2, 3, 8], // GSE Low (CH2), GSE Mid (CH3), GSE High (CH8) - related pressures
-  // NOTE: Fuel Upstream (CH1) and Fuel Downstream (CH4) are NOT grouped because:
-  // - Fuel Up is on the tank (tank pressure)
-  // - Fuel Down is exposed to chamber (chamber pressure when firing)
-  // They measure different things and should NOT be forced to agree
-};
+// Removing hardcoded exclusions to dynamically support GUI-selected boards and mappings.
+const SENSOR_GROUPS: Record<string, number[]> = {};
 
 export class Phase2CalibrationEngine {
   private sensorStates: Map<number, SensorState> = new Map();
@@ -622,7 +610,7 @@ export class Phase2CalibrationEngine {
     // Use inverse-variance consensus if uncertainties are valid,
     // otherwise fall back to reliability-weighted
     const consensusPsi = (totalGroupWeight > 0 &&
-                          groupReadings.every(r => r.uncertainty < 1000 && r.uncertainty > 0))
+      groupReadings.every(r => r.uncertainty < 1000 && r.uncertainty > 0))
       ? inverseVarianceConsensus
       : reliabilityWeightedConsensus;
 
@@ -641,7 +629,7 @@ export class Phase2CalibrationEngine {
     // Check if pressure is changing rapidly (pressurization/venting)
     const pressureChangeRate = state.recentReadings.length >= 10
       ? Math.abs(state.recentReadings[state.recentReadings.length - 1].psi -
-                 state.recentReadings[state.recentReadings.length - 10].psi) / 10
+        state.recentReadings[state.recentReadings.length - 10].psi) / 10
       : 0;
     const isPressureChanging = pressureChangeRate > 2.0; // More than 2 PSI per reading indicates rapid change
 
@@ -806,7 +794,7 @@ export class Phase2CalibrationEngine {
         let validationFailed = false;
         let failureReason = '';
         if (!isFinite(consensusTestCoeffs.A) || !isFinite(consensusTestCoeffs.B) ||
-            !isFinite(consensusTestCoeffs.C) || !isFinite(consensusTestCoeffs.D)) {
+          !isFinite(consensusTestCoeffs.C) || !isFinite(consensusTestCoeffs.D)) {
           validationFailed = true;
           failureReason = 'NaN/Infinity in coefficients';
         } else if (Math.abs(consensusTestCoeffs.A) > 1e-12) {
@@ -817,9 +805,9 @@ export class Phase2CalibrationEngine {
           const testAdcs = [1000000, 150000000, 300000000];
           for (const adc of testAdcs) {
             const testPsi = consensusTestCoeffs.A * (adc ** 3) +
-                           consensusTestCoeffs.B * (adc ** 2) +
-                           consensusTestCoeffs.C * adc +
-                           consensusTestCoeffs.D;
+              consensusTestCoeffs.B * (adc ** 2) +
+              consensusTestCoeffs.C * adc +
+              consensusTestCoeffs.D;
             if (!isFinite(testPsi) || testPsi < -1000 || testPsi > 10000) {
               validationFailed = true;
               failureReason = `Test at ADC=${adc} produced invalid PSI: ${testPsi.toFixed(2)}`;
@@ -921,33 +909,34 @@ export class Phase2CalibrationEngine {
   // ─── Persistence ──────────────────────────────────────────────────────────
 
   private saveCalibration(sensorId: number, state: SensorState): void {
-    const calibrationDir = path.join(__dirname, '../../data');
+    const calibrationDir = '/home/kush-mahajan/sensor_system/calibration';
     if (!fs.existsSync(calibrationDir)) {
       fs.mkdirSync(calibrationDir, { recursive: true });
     }
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-    const filename = path.join(calibrationDir, `phase2_update_${timestamp}.json`);
+    const filename = path.join(calibrationDir, `robust_calibration.json`);
 
     try {
-      const existingFile = this.findLatestCalibrationFile();
-      let data: Record<string, unknown> = {};
+      let data: any = {
+        sensor_type: 'PT',
+        unit: 'PSI',
+        framework: 'phase2_rls',
+        created: new Date().toISOString(),
+        phase: 'MONITORING',
+        calibration_polynomials: {},
+        phase2_updates: {}
+      };
 
-      if (existingFile && fs.existsSync(existingFile)) {
-        data = JSON.parse(fs.readFileSync(existingFile, 'utf-8'));
-      } else {
-        data = {
-          sensor_type: 'PT',
-          unit: 'PSI',
-          framework: 'phase2_rls',
-          created: new Date().toISOString(),
-          phase: 'MONITORING',
-          calibration_polynomials: {},
-        };
+      if (fs.existsSync(filename)) {
+        try {
+          data = JSON.parse(fs.readFileSync(filename, 'utf-8'));
+        } catch (e) {
+          console.warn(`⚠️ Failed to parse existing calibration, starting fresh`);
+        }
       }
 
       if (!data.calibration_polynomials) data.calibration_polynomials = {};
       const liveCoeffs = getLiveCoeffs(state);
-      (data.calibration_polynomials as Record<string, number[]>)[sensorId.toString()] = [
+      data.calibration_polynomials[sensorId.toString()] = [
         liveCoeffs.A,
         liveCoeffs.B,
         liveCoeffs.C,
@@ -955,7 +944,7 @@ export class Phase2CalibrationEngine {
       ];
 
       if (!data.phase2_updates) data.phase2_updates = {};
-      (data.phase2_updates as Record<string, unknown>)[sensorId.toString()] = {
+      data.phase2_updates[sensorId.toString()] = {
         update_count: state.updateCount,
         rls_updates: state.rlsUpdateCount,
         last_update: new Date(state.lastUpdate).toISOString(),
@@ -963,7 +952,7 @@ export class Phase2CalibrationEngine {
       };
 
       fs.writeFileSync(filename, JSON.stringify(data, null, 2));
-      console.log(`💾 Phase 2 calibration saved for sensor ${sensorId}: ${filename}`);
+      console.log(`💾 Phase 2 calibration saved for sensor ${sensorId} to robust_calibration.json`);
     } catch (error) {
       console.error(`❌ Failed to save Phase 2 calibration: ${error}`);
     }
@@ -980,8 +969,12 @@ export class Phase2CalibrationEngine {
   }
 
   private findLatestCalibrationFile(): string | null {
-    const calibrationDir = path.join(__dirname, '../../data');
+    const calibrationDir = '/home/kush-mahajan/sensor_system/calibration';
     if (!fs.existsSync(calibrationDir)) return null;
+
+    // Favor stable file if it exists
+    const stable = path.join(calibrationDir, 'robust_calibration.json');
+    if (fs.existsSync(stable)) return stable;
 
     const jsonFiles = fs
       .readdirSync(calibrationDir)
@@ -995,8 +988,8 @@ export class Phase2CalibrationEngine {
   /**
    * Load saved Phase 2 calibration from disk
    */
-  loadSavedCalibration(): Map<number, CalibrationCoefficients> {
-    const result = new Map<number, CalibrationCoefficients>();
+  loadSavedCalibration(): Map<number, { coeffs: CalibrationCoefficients; rlsUpdateCount: number }> {
+    const result = new Map<number, { coeffs: CalibrationCoefficients; rlsUpdateCount: number }>();
     const latestFile = this.findLatestCalibrationFile();
 
     if (!latestFile) {
@@ -1009,11 +1002,15 @@ export class Phase2CalibrationEngine {
         for (const [sensorIdStr, coeffs] of Object.entries(data.calibration_polynomials)) {
           const sensorId = parseInt(sensorIdStr, 10);
           if (Array.isArray(coeffs) && coeffs.length === 4) {
+            const rlsUpdateCount = data.phase2_updates?.[sensorIdStr]?.rls_updates ?? 0;
             result.set(sensorId, {
-              A: coeffs[0],
-              B: coeffs[1],
-              C: coeffs[2],
-              D: coeffs[3],
+              coeffs: {
+                A: coeffs[0],
+                B: coeffs[1],
+                C: coeffs[2],
+                D: coeffs[3],
+              },
+              rlsUpdateCount
             });
           }
         }
@@ -1108,5 +1105,19 @@ export class Phase2CalibrationEngine {
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
     console.log(`Phase 2 calibration ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
+  /**
+   * Clear all sensor state (for "start from scratch").
+   * Caller should re-initialize with default or loaded baseline after.
+   */
+  clearAll(): void {
+    this.sensorStates.clear();
+    console.log('🗑️ Phase 2 calibration state cleared');
+  }
+
+  /** All sensor IDs that have state */
+  getSensorIds(): number[] {
+    return Array.from(this.sensorStates.keys());
   }
 }

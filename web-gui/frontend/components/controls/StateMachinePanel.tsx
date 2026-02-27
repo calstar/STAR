@@ -26,7 +26,6 @@ const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.ENGINE_ABORT]: 'Engine Abort',
   [SystemState.GSE_ABORT]: 'GSE Abort',
   [SystemState.EMERGENCY_ABORT]: 'Emergency Abort',
-  [SystemState.ABORT]: 'ABORT', // Legacy alias
 };
 
 interface StateButtonProps {
@@ -37,7 +36,7 @@ interface StateButtonProps {
 }
 
 function StateButton({ state, label, isActive, onClick }: StateButtonProps) {
-  const isEmergency = state === SystemState.ABORT || state === SystemState.VENT;
+  const isEmergency = state === SystemState.ABORT;
 
   return (
     <button
@@ -47,8 +46,8 @@ function StateButton({ state, label, isActive, onClick }: StateButtonProps) {
         ${isActive
           ? 'bg-blue-600 text-white shadow-lg'
           : isEmergency
-          ? 'bg-red-600 hover:bg-red-700 text-white'
-          : 'bg-card hover:bg-opacity-80 text-text'
+            ? 'bg-red-600 hover:bg-red-700 text-white'
+            : 'bg-card hover:bg-opacity-80 text-text'
         }
       `}
     >

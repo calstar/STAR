@@ -108,6 +108,3 @@ export function formatPacketIdHex(packetId: [number, number]): string {
   const [high, low] = packetId;
   return `0x${high.toString(16).padStart(2, '0')},0x${low.toString(16).padStart(2, '0')}`;
 }
-
-
-

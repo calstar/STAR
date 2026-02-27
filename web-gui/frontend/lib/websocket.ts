@@ -15,7 +15,7 @@ export class WebSocketClient {
   private ws: WebSocket | null = null;
   private url: string;
   private reconnectTimer: NodeJS.Timeout | null = null;
-  private listeners: Map<MessageType, Set<(payload: unknown) => void>> = new Map();
+  private listeners: Map<string, Set<(payload: unknown) => void>> = new Map();
   private connectionStatusListeners: Set<(status: ConnectionStatus) => void> = new Set();
   private messageQueue: WSMessage[] = []; // Queue messages until WebSocket is ready
 
@@ -58,6 +58,14 @@ export class WebSocketClient {
         console.log('📡 Subscribing to all sensors...');
         this.subscribeToAllSensors();
         console.log('✅ Subscription requests sent');
+
+        // Request historical data for plots
+        console.log('📊 Requesting historical plot data...');
+        this.send({
+          type: MessageType.QUERY_HISTORICAL,
+          timestamp: Date.now(),
+          payload: {},
+        });
       };
 
       this.ws.onmessage = (event) => {
@@ -92,70 +100,43 @@ export class WebSocketClient {
     }
   }
 
-  private subscribeToAllSensors(): void {
-    // Subscribe to all sensor entities we care about
-    // IMPORTANT: Subscribe to ALL PT_CH channels (1-10) for both calibrated AND raw ADC
-    const sensors = [
-      // All PT channels - CALIBRATED pressure (1-10)
-      'PT_Cal.PT_CH1',
-      'PT_Cal.PT_CH2',
-      'PT_Cal.PT_CH3',
-      'PT_Cal.PT_CH4',
-      'PT_Cal.PT_CH5',
-      'PT_Cal.PT_CH6',
-      'PT_Cal.PT_CH7',
-      'PT_Cal.PT_CH8',
-      'PT_Cal.PT_CH9',
-      'PT_Cal.PT_CH10',
-      // All PT channels - RAW ADC (1-10) for raw readouts tab
-      'PT.PT_CH1',
-      'PT.PT_CH2',
-      'PT.PT_CH3',
-      'PT.PT_CH4',
-      'PT.PT_CH5',
-      'PT.PT_CH6',
-      'PT.PT_CH7',
-      'PT.PT_CH8',
-      'PT.PT_CH9',
-      'PT.PT_CH10',
-      // All actuator channels (1-10)
-      'ACT.ACT_CH1',
-      'ACT.ACT_CH2',
-      'ACT.ACT_CH3',
-      'ACT.ACT_CH4',
-      'ACT.ACT_CH5',
-      'ACT.ACT_CH6',
-      'ACT.ACT_CH7',
-      'ACT.ACT_CH8',
-      'ACT.ACT_CH9',
-      'ACT.ACT_CH10',
-      // Named aliases (for compatibility)
-      'PT_Cal.GN2_Regulated',
-      'PT_Cal.Fuel_Upstream',
-      'PT_Cal.Ox_Upstream',
-      'PT_Cal.Fuel_Downstream',
-      'PT_Cal.Ox_Downstream',
-      'PT_Cal.GSE_Low',
-      'PT_Cal.GSE_Mid',
-      'PT_Cal.GSE_High',
-      'PT_Cal.GN2_High',
-      'PT.GN2_Regulated',
-      'PT.Fuel_Upstream',
-      'PT.Ox_Upstream',
-      'PT.Fuel_Downstream',
-      'PT.Ox_Downstream',
-      'PT.GSE_Low',
-      'PT.GSE_Mid',
-      'ACT.LOX_Main',
-      'ACT.Fuel_Main',
-      'ACT.LOX_Vent',
-      'ACT.Fuel_Vent',
-      'ACT.LOX_Press',
-      'ACT.Fuel_Press',
-      'ACT.GSE_Low_Vent',
-    ];
+  private async subscribeToAllSensors(): Promise<void> {
+    const sensors = new Set<string>();
 
-    console.log(`📋 Subscribing to ${sensors.length} sensor entities`);
+    // Core channels up to 32 to be safe
+    for (let i = 1; i <= 32; i++) {
+      sensors.add(`PT_Cal.PT_CH${i}`);
+      sensors.add(`PT.PT_CH${i}`);
+      sensors.add(`ACT.ACT_CH${i}`);
+    }
+
+    try {
+      const API_BASE_URL = typeof window !== 'undefined' && window.location.hostname
+        ? `${window.location.protocol === 'https:' ? 'https:' : 'http:'}//${window.location.hostname}:8082`
+        : 'http://localhost:8082';
+
+      const res = await fetch(`${API_BASE_URL}/api/sensor-config`);
+      if (res.ok) {
+        const data = await res.json();
+        data.sensors?.forEach((s: any) => {
+          if (s.entity) sensors.add(s.entity);
+          if (s.calEntity) sensors.add(s.calEntity);
+        });
+      }
+
+      const cfgRes = await fetch(`${API_BASE_URL}/api/config`);
+      if (cfgRes.ok) {
+        const cfgData = await cfgRes.json();
+        const actRoles = cfgData.config?.actuator_roles || {};
+        Object.keys(actRoles).forEach(role => {
+          sensors.add(`ACT.${role.replace(/\\s+/g, '_')}`);
+        });
+      }
+    } catch (e) {
+      console.warn("Could not fetch dynamic sensors, falling back to basic array:", e);
+    }
+
+    console.log(`📋 Subscribing to ${sensors.size} sensor entities`);
     sensors.forEach((entity) => {
       this.send({
         type: MessageType.SUBSCRIBE_SENSOR,
@@ -168,18 +149,12 @@ export class WebSocketClient {
 
   private handleMessage(message: WSMessage): void {
     // Handle both MessageType enum values and custom string types (like 'state_transitions')
-    const listeners = this.listeners.get(message.type as MessageType);
+    const typeStr = message.type as string;
+    const listeners = this.listeners.get(typeStr);
     if (listeners && listeners.size > 0) {
-      for (const listener of listeners) {
+      listeners.forEach(listener => {
         try { listener(message.payload); } catch { /* silent */ }
-      }
-    }
-    // Also check for custom message types (not in MessageType enum)
-    const customListeners = this.listeners.get(message.type as any);
-    if (customListeners && customListeners.size > 0) {
-      for (const listener of customListeners) {
-        try { listener(message.payload); } catch { /* silent */ }
-      }
+      });
     }
     if (message.type === MessageType.CONNECTION_STATUS) {
       this.notifyConnectionStatus(message.payload as ConnectionStatus);
@@ -187,14 +162,15 @@ export class WebSocketClient {
   }
 
   on(type: MessageType | string, callback: (payload: unknown) => void): () => void {
-    if (!this.listeners.has(type)) {
-      this.listeners.set(type, new Set());
+    const typeStr = type as string;
+    if (!this.listeners.has(typeStr)) {
+      this.listeners.set(typeStr, new Set());
     }
-    this.listeners.get(type)!.add(callback);
+    this.listeners.get(typeStr)!.add(callback);
 
     // Return unsubscribe function
     return () => {
-      const listeners = this.listeners.get(type);
+      const listeners = this.listeners.get(typeStr);
       if (listeners) {
         listeners.delete(callback);
       }

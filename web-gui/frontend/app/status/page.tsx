@@ -3,37 +3,14 @@
 import { useEffect } from 'react';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
+import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { MessageType, SensorUpdate } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
+import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
 
-const PRESSURE_SENSORS = [
-  { label: 'GN2 Regulated', entity: 'PT_Cal.GN2_Regulated', component: 'pressure_psi', color: '#27AE60', nop: 900, meop: 950 },
-  { label: 'Fuel Upstream', entity: 'PT_Cal.Fuel_Upstream', component: 'pressure_psi', color: '#3498DB', nop: 600, meop: 650 },
-  { label: 'Fuel Downstream', entity: 'PT_Cal.Fuel_Downstream', component: 'pressure_psi', color: '#2980B9', nop: 600, meop: 650 },
-  { label: 'LOX Upstream', entity: 'PT_Cal.Ox_Upstream', component: 'pressure_psi', color: '#E74C3C', nop: 600, meop: 650 },
-  { label: 'LOX Downstream', entity: 'PT_Cal.Ox_Downstream', component: 'pressure_psi', color: '#C0392B', nop: 600, meop: 650 },
-  { label: 'GSE Low', entity: 'PT_Cal.GSE_Low', component: 'pressure_psi', color: '#F39C12', nop: 500, meop: 700 },
-  { label: 'GSE MID', entity: 'PT_Cal.GSE_Mid', component: 'pressure_psi', color: '#9B59B6', nop: 4000, meop: 4500 },
-  { label: 'GSE High', entity: 'PT_Cal.GSE_High', component: 'pressure_psi', color: '#8E44AD', nop: 500, meop: 700 },
-  { label: 'GN2 High', entity: 'PT_Cal.GN2_High', component: 'pressure_psi', color: '#1ABC9C', nop: 900, meop: 950 },
-];
-
-const ACTUATORS = [
-  { label: 'LOX Main', entity: 'ACT.LOX_Main' },
-  { label: 'Fuel Main', entity: 'ACT.Fuel_Main' },
-  { label: 'LOX Vent', entity: 'ACT.LOX_Vent' },
-  { label: 'Fuel Vent', entity: 'ACT.Fuel_Vent' },
-  { label: 'LOX Press', entity: 'ACT.LOX_Press' },
-  { label: 'Fuel Press', entity: 'ACT.Fuel_Press' },
-  { label: 'GSE Low Vent', entity: 'ACT.GSE_Low_Vent' },
-];
-
-// High Pressure PT sensors (4-20 mA ratiometric)
-const HP_PT_SENSORS = [
-  { label: 'GSE Mid', entity: 'PT_Cal.GSE_Mid', color: '#9B59B6' },
-  { label: 'GSE High', entity: 'PT_Cal.GSE_High', color: '#8E44AD' },
-  { label: 'GN2 High', entity: 'PT_Cal.GN2_High', color: '#1ABC9C' },
-];
+const HP_PT_SENSORS = PRESSURE_SENSORS.filter((s) =>
+  ['PT_Cal.GSE_Mid', 'PT_Cal.GSE_High', 'PT_Cal.GN2_High'].includes(s.entity)
+).map(({ label, entity, color }) => ({ label, entity, color }));
 
 function fmtValue(v: number | null): string {
   if (v === null || !isFinite(v)) return '---';
@@ -48,6 +25,8 @@ export default function StatusPage() {
   const updateSensor = useSensorStore((s) => s.updateSensor);
   const currentState = useSensorStore((s) => s.currentState);
   const ws = getWebSocketClient();
+  const { actuators } = useActuatorsFromConfig();
+  const ACTUATORS = actuators.map((a) => ({ label: a.name, entity: a.entity }));
 
   useEffect(() => {
     ws.connect();
@@ -80,7 +59,7 @@ export default function StatusPage() {
               const value = useSensorValue(s.entity, s.component);
               const val = value ?? null;
               const statusColor = val !== null && val > (s.meop ?? 0) ? '#E74C3C' :
-                                 val !== null && val > (s.nop ?? 0) ? '#F39C12' : s.color;
+                val !== null && val > (s.nop ?? 0) ? '#F39C12' : s.color;
               return (
                 <div key={s.label} className="flex items-center justify-between py-2 border-b border-gray-800 last:border-0">
                   <div className="flex items-center gap-2">
@@ -122,10 +101,9 @@ export default function StatusPage() {
                       </span>
                     )}
                     <span
-                      className={`text-base font-bold font-mono px-3 py-1 rounded ${
-                        !hasData ? 'bg-gray-800 text-gray-600' :
-                        isOpen ? 'bg-green-900/60 text-green-400' : 'bg-red-900/60 text-red-400'
-                      }`}
+                      className={`text-base font-bold font-mono px-3 py-1 rounded ${!hasData ? 'bg-gray-800 text-gray-600' :
+                          isOpen ? 'bg-green-900/60 text-green-400' : 'bg-red-900/60 text-red-400'
+                        }`}
                     >
                       {!hasData ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
                     </span>
@@ -195,6 +173,7 @@ export default function StatusPage() {
                     <TimeSeriesPlot
                       title="Voltage"
                       entities={[sensor.entity]}
+                      component="excitation_voltage"
                       components={['excitation_voltage', 'sense_voltage']}
                       labels={['V_exc', 'V_sense']}
                       colors={['#27AE60', '#F39C12']}
@@ -207,6 +186,7 @@ export default function StatusPage() {
                     <TimeSeriesPlot
                       title="Current"
                       entities={[sensor.entity]}
+                      component="current_ma"
                       components={['current_ma']}
                       labels={['Current']}
                       colors={[sensor.color]}
@@ -219,6 +199,7 @@ export default function StatusPage() {
                     <TimeSeriesPlot
                       title="ADC Code"
                       entities={[sensor.entity]}
+                      component="raw_adc_counts"
                       components={['raw_adc_counts']}
                       labels={['ADC']}
                       colors={['#9B59B6']}

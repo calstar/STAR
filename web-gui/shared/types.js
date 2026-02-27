@@ -20,6 +20,7 @@ export var MessageType;
     MessageType["CONTROLLER_UPDATE"] = "controller_update";
     MessageType["MISSION_START_TIME"] = "mission_start_time";
     MessageType["ACTUATOR_EXPECTED_POSITIONS_UPDATE"] = "actuator_expected_positions_update";
+    MessageType["HISTORICAL_DATA"] = "historical_data";
 })(MessageType || (MessageType = {}));
 // Sensor types
 export var SensorType;
@@ -54,29 +55,12 @@ export var SystemState;
     SystemState[SystemState["ENGINE_ABORT"] = 17] = "ENGINE_ABORT";
     SystemState[SystemState["GSE_ABORT"] = 18] = "GSE_ABORT";
     SystemState[SystemState["EMERGENCY_ABORT"] = 19] = "EMERGENCY_ABORT";
+    SystemState[SystemState["PRESS_STANDBY"] = 20] = "PRESS_STANDBY";
     // Legacy alias for backwards compatibility
     SystemState[SystemState["ABORT"] = 19] = "ABORT";
 })(SystemState || (SystemState = {}));
-// Actuator IDs
-export var ActuatorId;
-(function (ActuatorId) {
-    ActuatorId[ActuatorId["LOX_MAIN"] = 0] = "LOX_MAIN";
-    ActuatorId[ActuatorId["FUEL_MAIN"] = 1] = "FUEL_MAIN";
-    ActuatorId[ActuatorId["LOX_VENT"] = 2] = "LOX_VENT";
-    ActuatorId[ActuatorId["FUEL_VENT"] = 3] = "FUEL_VENT";
-    ActuatorId[ActuatorId["LOX_PRESS"] = 4] = "LOX_PRESS";
-    ActuatorId[ActuatorId["FUEL_PRESS"] = 5] = "FUEL_PRESS";
-    ActuatorId[ActuatorId["GSE_LOW_VENT"] = 6] = "GSE_LOW_VENT";
-    // Extended actuators (non-state-machine, but controllable in DEBUG)
-    ActuatorId[ActuatorId["FUEL_FILL_VENT"] = 7] = "FUEL_FILL_VENT";
-    ActuatorId[ActuatorId["FUEL_FILL_PRESS"] = 8] = "FUEL_FILL_PRESS";
-    ActuatorId[ActuatorId["LOX_FILL"] = 9] = "LOX_FILL";
-    ActuatorId[ActuatorId["LOX_DUMP"] = 10] = "LOX_DUMP";
-    ActuatorId[ActuatorId["GSE_HIGH_PRESS_VENT"] = 11] = "GSE_HIGH_PRESS_VENT";
-    ActuatorId[ActuatorId["GSE_LOX_FILL_VENT"] = 12] = "GSE_LOX_FILL_VENT";
-    ActuatorId[ActuatorId["GSE_HIGH_PRESS_CONTROL"] = 13] = "GSE_HIGH_PRESS_CONTROL";
-    ActuatorId[ActuatorId["GSE_MED_PRESS_CONTROL"] = 14] = "GSE_MED_PRESS_CONTROL";
-})(ActuatorId || (ActuatorId = {}));
+// Actuator IDs — now string-based, driven by config.toml actuator_roles.
+// No enum: all references use the config role name (e.g. "LOX Main").
 // Actuator states
 export var ActuatorState;
 (function (ActuatorState) {
@@ -84,4 +68,3 @@ export var ActuatorState;
     ActuatorState[ActuatorState["OPEN"] = 1] = "OPEN";
     ActuatorState[ActuatorState["UNKNOWN"] = 2] = "UNKNOWN";
 })(ActuatorState || (ActuatorState = {}));
-//# sourceMappingURL=types.js.map

@@ -185,6 +185,3 @@ ox_solenoid_id = 1
 - Controller Documentation: `engine_sim/docs/control/`
 - DDP Solver: `engine_sim/docs/control/DDP_SOLVER.md`
 - Controller Summary: `engine_sim/docs/control/CONTROLLER_SUMMARY.md`
-
-
-

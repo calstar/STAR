@@ -5,22 +5,23 @@
 // WebSocket message types
 export enum MessageType {
   // Client → Server
-  SUBSCRIBE_SENSOR    = 'subscribe_sensor',
-  UNSUBSCRIBE_SENSOR  = 'unsubscribe_sensor',
-  SEND_COMMAND        = 'send_command',
-  QUERY_HISTORICAL    = 'query_historical',
+  SUBSCRIBE_SENSOR = 'subscribe_sensor',
+  UNSUBSCRIBE_SENSOR = 'unsubscribe_sensor',
+  SEND_COMMAND = 'send_command',
+  QUERY_HISTORICAL = 'query_historical',
   CALIBRATION_COMMAND = 'calibration_command',
 
   // Server → Client
-  SENSOR_UPDATE      = 'sensor_update',
-  ACTUATOR_UPDATE    = 'actuator_update',
-  STATE_UPDATE       = 'state_update',
-  ERROR              = 'error',
-  CONNECTION_STATUS  = 'connection_status',
+  SENSOR_UPDATE = 'sensor_update',
+  ACTUATOR_UPDATE = 'actuator_update',
+  STATE_UPDATE = 'state_update',
+  ERROR = 'error',
+  CONNECTION_STATUS = 'connection_status',
   CALIBRATION_STATUS = 'calibration_status',
-  CONTROLLER_UPDATE  = 'controller_update',
+  CONTROLLER_UPDATE = 'controller_update',
   MISSION_START_TIME = 'mission_start_time',
   ACTUATOR_EXPECTED_POSITIONS_UPDATE = 'actuator_expected_positions_update',
+  HISTORICAL_DATA = 'historical_data',
 }
 
 // Sensor types
@@ -78,6 +79,7 @@ export enum ActuatorId {
   GSE_LOX_FILL_VENT = 12,
   GSE_HIGH_PRESS_CONTROL = 13,
   GSE_MED_PRESS_CONTROL = 14,
+  TEST_ACTUATOR_2 = 15,
 }
 
 // Actuator states
@@ -125,6 +127,8 @@ export interface CommandPayload {
   data: {
     state?: SystemState;
     actuatorId?: ActuatorId;
+    /** Config-driven: command by actuator role name (config.toml actuator_roles) */
+    actuatorName?: string;
     actuatorState?: ActuatorState;
     frequency?: number; // Controller frequency in Hz
     dutyCycle?: number; // PWM duty cycle 0-1
@@ -151,23 +155,23 @@ export interface MissionStartTime {
 export type CalibrationConfidence = 'MAXIMUM' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNCALIBRATED';
 
 export interface CalibrationChannelStatus {
-  sensorId:        number;
-  updateCount:     number;   // total readings processed (monitoring + RLS)
-  rlsUpdateCount:  number;   // ground-truth RLS updates only
-  lastUpdate:      number;
-  driftDetected:   boolean;
-  meanResidual:    number;
-  glrStat:         number;
-  confidence:      CalibrationConfidence;
+  sensorId: number;
+  updateCount: number;   // total readings processed (monitoring + RLS)
+  rlsUpdateCount: number;   // ground-truth RLS updates only
+  lastUpdate: number;
+  driftDetected: boolean;
+  meanResidual: number;
+  glrStat: number;
+  confidence: CalibrationConfidence;
   coeffs: { A: number; B: number; C: number; D: number };
-  phase2Active:    boolean;
+  phase2Active: boolean;
   covarianceTrace: number;   // sum of P diagonal — proxy for uncertainty
 }
 
 export interface CalibrationStatusPayload {
-  channels:      CalibrationChannelStatus[];
+  channels: CalibrationChannelStatus[];
   phase2Enabled: boolean;
-  timestamp:     number;
+  timestamp: number;
 }
 
 export type CalibrationCommandType =
@@ -177,10 +181,12 @@ export type CalibrationCommandType =
   | 'enable_phase2'
   | 'disable_phase2'
   | 'zero_all'
-  | 'save_coefficients';
+  | 'save_coefficients'
+  | 'clear_calibration';
 
 export interface CalibrationCommand {
-  commandType:        CalibrationCommandType;
-  sensorId?:          number;
+  commandType: CalibrationCommandType;
+  sensorId?: number;
+  boardId?: number;
   referencePressure?: number;
 }

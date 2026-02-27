@@ -185,7 +185,3 @@ export class DataLogger {
     return size;
   }
 }
-
-
-
-

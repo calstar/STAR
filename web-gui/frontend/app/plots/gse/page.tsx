@@ -8,30 +8,39 @@ import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
-
-const NOP  = 450;
-const MEOP = 600;
+import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
+import { useSensorConfig, filterByRole } from '@/lib/sensor-config';
+import { usePressureLimits, getLimitsForSystem } from '@/lib/pressure-limits';
+import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 
 export default function GSEGraphsPage() {
   const updateSensor = useSensorStore((s) => s.updateSensor);
-  const updateState  = useSensorStore((s) => s.updateState);
-  const ws           = getWebSocketClient();
+  const updateState = useSensorStore((s) => s.updateState);
+  const ws = getWebSocketClient();
+  const allSensors = useSensorConfig();
+  const pressureLimits = usePressureLimits();
+  const gn2Limits = getLimitsForSystem(pressureLimits, 'GN2');
+  const { actuators: actuatorsFromConfig } = useActuatorsFromConfig();
+
+  // GSE sensors: role names containing "GSE"
+  const gseSensors = filterByRole(allSensors, 'GSE');
+  const entities = gseSensors.map((s) => s.calEntity);
+  const labels = gseSensors.map((s) => s.role);
+  const colors = entities.map((e) => getEntityColor(e));
+
+  const loSensor = gseSensors.find((s) => s.role.toLowerCase().includes('low'));
+  const midSensor = gseSensors.find((s) => s.role.toLowerCase().includes('mid'));
+  const hiSensor = gseSensors.find((s) => s.role.toLowerCase().includes('high'));
+  const lo = useSensorValue(loSensor?.calEntity ?? '', 'pressure_psi');
+  const mid = useSensorValue(midSensor?.calEntity ?? '', 'pressure_psi');
+  const hi = useSensorValue(hiSensor?.calEntity ?? '', 'pressure_psi');
 
   useEffect(() => {
     ws.connect();
     const unsub1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const unsub2 = ws.on(MessageType.STATE_UPDATE,  (p: unknown) => updateState(p as StateUpdate));
+    const unsub2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
     return () => { unsub1(); unsub2(); };
   }, [ws, updateSensor, updateState]);
-
-  // Sidebar pressure PTs
-  const loNamed  = useSensorValue('PT_Cal.GSE_Low',   'pressure_psi');
-  const loCh     = useSensorValue('PT_Cal.PT_CH2',    'pressure_psi');
-  const mid = useSensorValue('PT_Cal.GSE_Mid', 'pressure_psi');
-  const hiNamed  = useSensorValue('PT_Cal.GSE_High',  'pressure_psi');
-  const hiCh     = useSensorValue('PT_Cal.PT_CH8',    'pressure_psi');
-  const lo       = loNamed  ?? loCh;
-  const hi       = hiNamed  ?? hiCh;
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
@@ -42,11 +51,9 @@ export default function GSEGraphsPage() {
       </div>
 
       <div className="flex-shrink-0">
-        <SensorReadoutStrip sensors={[
-          { label: 'GSE Low',  entity: 'PT_Cal.PT_CH2', component: 'pressure_psi', color: '#F39C12' },
-          { label: 'GSE MID',  entity: 'PT_Cal.GSE_Mid', component: 'pressure_psi', color: '#9B59B6' },
-          { label: 'GSE High', entity: 'PT_Cal.PT_CH8', component: 'pressure_psi', color: '#8E44AD' },
-        ]} />
+        <SensorReadoutStrip sensors={gseSensors.map((s) => ({
+          label: s.role, entity: s.calEntity, component: 'pressure_psi', color: getEntityColor(s.calEntity),
+        }))} />
       </div>
 
       {/* Body: chart + sidebar */}
@@ -56,26 +63,19 @@ export default function GSEGraphsPage() {
           <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0" style={{ minHeight: '300px' }}>
             <TimeSeriesPlot
               title="GSE Pressures (PSI)"
-              entities={['PT_Cal.PT_CH2','PT_Cal.GSE_Mid','PT_Cal.PT_CH8']}
-              labels={['GSE Low','GSE MID','GSE High']}
+              entities={entities}
+              labels={labels}
               component="pressure_psi"
-              colors={['#F39C12','#9B59B6','#8E44AD']}
+              colors={colors}
               yLabel="Pressure (PSI)"
             />
           </div>
 
-          {/* GSE / GN2 actuators */}
+          {/* GSE actuators from config */}
           <div className="flex-shrink-0">
             <ActuatorStatePanel
               title="GSE Actuators"
-              actuators={[
-                { label: 'GN2 Vent',             entity: 'ACT.GSE_Low_Vent', color: '#F39C12' },
-                { label: 'GSE Low Press Vent',   entity: 'ACT.GSE_Low_Vent', color: '#F1C40F' },
-                { label: 'GSE High Press Vent',  entity: 'ACT.GSE_Low_Vent', color: '#D35400' },
-                { label: 'GSE LOX Fill Vent',    entity: 'ACT.GSE_Low_Vent', color: '#9B59B6' },
-                { label: 'GSE High Press Ctrl',  entity: 'ACT.GSE_Low_Vent', color: '#1ABC9C' },
-                { label: 'GSE Med Press Ctrl',   entity: 'ACT.GSE_Low_Vent', color: '#16A085' },
-              ]}
+              actuators={actuatorsFromConfig.map((a) => ({ label: a.name, entity: a.entity, color: getActuatorColor(a.entity) }))}
             />
           </div>
         </div>
@@ -87,13 +87,13 @@ export default function GSEGraphsPage() {
           </div>
           <div className="flex flex-row flex-1 gap-1.5 min-h-0 overflow-visible w-full pr-6">
             <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-visible">
-              <PressureBar label="Low"  value={lo}  nop={NOP} meop={MEOP} color="#F39C12" showLabels={false} />
+              <PressureBar label="Low" value={lo} nop={gn2Limits.NOP} meop={gn2Limits.MEOP} color={getEntityColor(loSensor?.calEntity ?? '')} showLabels={false} />
             </div>
             <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-visible">
-              <PressureBar label="Mid"  value={mid} nop={NOP} meop={MEOP} color="#9B59B6" showLabels={false} />
+              <PressureBar label="Mid" value={mid} nop={gn2Limits.NOP} meop={gn2Limits.MEOP} color={getEntityColor(midSensor?.calEntity ?? '')} showLabels={false} />
             </div>
             <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-visible">
-              <PressureBar label="High" value={hi}  nop={NOP} meop={MEOP} color="#8E44AD" showLabels={false} />
+              <PressureBar label="High" value={hi} nop={gn2Limits.NOP} meop={gn2Limits.MEOP} color={getEntityColor(hiSensor?.calEntity ?? '')} showLabels={false} />
             </div>
           </div>
         </div>
@@ -102,5 +102,3 @@ export default function GSEGraphsPage() {
     </main>
   );
 }
-
- 
