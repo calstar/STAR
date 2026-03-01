@@ -10,6 +10,7 @@ export enum MessageType {
   SEND_COMMAND = 'send_command',
   QUERY_HISTORICAL = 'query_historical',
   CALIBRATION_COMMAND = 'calibration_command',
+  RESEND_CONFIG = 'resend_config',
 
   // Server → Client
   SENSOR_UPDATE = 'sensor_update',
@@ -211,6 +212,7 @@ export interface BoardStatus {
   boardState: number | null;
   engineState: number | null;
   configured?: boolean;
+  configLastSentAt?: number;
   configError?: string;
   necessaryForAbort?: boolean;
   designatedSurvivor?: boolean;
@@ -230,6 +232,8 @@ export interface BoardStatus {
   boardState: number | null;
   engineState: number | null;
   configured?: boolean;
+  /** Epoch ms when config was last sent successfully. */
+  configLastSentAt?: number;
   configError?: string;
   necessaryForAbort?: boolean;
   designatedSurvivor?: boolean;

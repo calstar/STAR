@@ -71,6 +71,7 @@ export default function WindowLauncher() {
     { id: 'config',      name: 'Config',       description: 'System & board configuration editor',        url: '/window/config',      accent: '#FBBF24' },
     { id: 'controller',  name: 'Controller',   description: 'PWM duty cycle & valve states',              url: '/window/controller',  accent: '#F87171' },
     { id: 'calibration', name: 'Calibration',  description: 'RLS + GLR drift · Bayesian auto-recal',     url: '/window/calibration', accent: '#A3E635' },
+    { id: 'lcs-tcs-rtd',  name: 'LCS / TCS / RTD', description: 'Thermocouples, RTDs, load cell — voltage and temperature', url: '/window/lcs-tcs-rtd', accent: '#F59E0B' },
   ];
 
   return (

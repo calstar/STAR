@@ -76,14 +76,21 @@ export function readConfig(): any {
         const config = parseToml(configWithoutActuators.join('\n'));
 
         // Manually parse actuator_roles (trim lines so leading-space keys match)
-        // Format: ["NC"|"NO", channel_id] or ["NC"|"NO", channel_id, "board_ip"]
+        // Format: ["NC"|"NO", channel_id] or ["NC"|"NO", channel_id, board_id] or ["NC"|"NO", channel_id, "board_ip"]
+        // Third element: number = board_id (preferred), string = legacy board_ip
         config.actuator_roles = {};
         for (const line of actuatorRolesLines) {
           const trimmed = line.trim();
           if (!trimmed || trimmed.startsWith('#')) continue;
-          const match2 = trimmed.match(/^"([^"]+)"\s*=\s*\["([^"]+)",\s*(\d+)(?:,\s*"([^"]+)")?\]/);
-          if (match2) {
-            const [, name, type, channelId, boardIp] = match2;
+          const matchStr = trimmed.match(/^"([^"]+)"\s*=\s*\["([^"]+)",\s*(\d+)(?:,\s*"([^"]+)")?\]/);
+          const matchNum = trimmed.match(/^"([^"]+)"\s*=\s*\["([^"]+)",\s*(\d+),\s*(\d+)\]/);
+          if (matchNum) {
+            const [, name, type, channelId, boardId] = matchNum;
+            const channel = parseInt(channelId, 10);
+            const bid = parseInt(boardId, 10);
+            (config.actuator_roles as any)[name] = [type, channel, bid];
+          } else if (matchStr) {
+            const [, name, type, channelId, boardIp] = matchStr;
             const channel = parseInt(channelId, 10);
             if (boardIp) {
               (config.actuator_roles as any)[name] = [type, channel, boardIp];

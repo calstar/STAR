@@ -21,6 +21,8 @@ export interface CalibrationPoint { adc: number; pressure: number; }
 /** Minimal interface for the parts of SensorSystemServer that calibration needs. */
 export interface CalibrationHost {
     ptCalibration: Map<number, CalibrationCoefficients>;
+    /** Absolute path of the calibration file loaded at startup (null = none found). */
+    ptCalibrationFilePath: string | null;
     /** Accumulated (adc, pressure) points per channel for ADC→pressure fit. */
     calibrationPoints: Map<number, CalibrationPoint[]>;
     phase2Engine: Phase2CalibrationEngine | null;
@@ -311,8 +313,9 @@ export function handleCalibrationCommand(
                     continue;
                 }
 
-                const points = host.calibrationPoints.get(chUniqueId) ?? [];
-                points.push({ adc: currentAdc, pressure: 0 });
+                // Replace any prior zero-point (keep non-zero CAPTURE references)
+                const prevPoints = host.calibrationPoints.get(chUniqueId) ?? [];
+                const points = [...prevPoints.filter(p => p.pressure !== 0), { adc: currentAdc, pressure: 0 }];
                 host.calibrationPoints.set(chUniqueId, points);
 
                 const sidecarPrimaryZero = !!(host.calibrationSidecar && host.calibrationSidecar.enabled);
@@ -321,12 +324,42 @@ export function handleCalibrationCommand(
                 // accumulate points and forward raw ADC codes. Local polynomial fit
                 // remains as a fallback when sidecar is disabled.
                 if (!sidecarPrimaryZero) {
-                    let coeffs = fitAdcToPressure(points);
-                    const reading = coeffs ? calculatePressure(currentAdc, coeffs) : NaN;
-                    if (coeffs == null || !Number.isFinite(reading)) {
-                        coeffs = { A: 0, B: 0, C: 0, D: 0 };
-                        if (points.length > 1) {
+                    let coeffs: CalibrationCoefficients;
+                    if (points.length === 1) {
+                        // Single point = zero point only. Don't use constant-0 polynomial
+                        // (which would force every ADC to 0 PSI). If we have a prior
+                        // calibration, shift it so current ADC → 0 PSI; otherwise constant 0.
+                        // Use the same fallback pattern as the packet processor: unique board
+                        // key first (e.g. 101), then plain channel key (e.g. 1) for JSON-loaded cal.
+                        const chId = chUniqueId % 100;
+                        const existing = host.ptCalibration.get(chUniqueId) ?? host.ptCalibration.get(chId);
+                        const hasPriorCurve =
+                            existing &&
+                            coeffsFinite(existing) &&
+                            ((existing.polyCoeffs != null && existing.polyCoeffs.length > 1) ||
+                                (Math.abs(existing.A) + Math.abs(existing.B) + Math.abs(existing.C) > 1e-15));
+                        if (hasPriorCurve) {
+                            const pZero = calculatePressure(currentAdc, existing!);
+                            if (!Number.isFinite(pZero)) {
+                                coeffs = { A: 0, B: 0, C: 0, D: 0, polyCoeffs: [0], adcNormMin: currentAdc, adcNormScale: 1 };
+                            } else {
+                                if (existing!.polyCoeffs != null && existing!.polyCoeffs.length > 0) {
+                                    const newPoly = [...existing!.polyCoeffs];
+                                    newPoly[0] = (newPoly[0] ?? 0) - pZero;
+                                    coeffs = { ...existing!, polyCoeffs: newPoly };
+                                } else {
+                                    coeffs = { ...existing!, D: existing!.D - pZero };
+                                }
+                            }
+                        } else {
+                            coeffs = { A: 0, B: 0, C: 0, D: 0, polyCoeffs: [0], adcNormMin: currentAdc, adcNormScale: 1 };
+                        }
+                    } else {
+                        coeffs = fitAdcToPressure(points) ?? { A: 0, B: 0, C: 0, D: 0 };
+                        const reading = calculatePressure(currentAdc, coeffs);
+                        if (!Number.isFinite(reading) && points.length > 1) {
                             console.warn(`   ID ${chUniqueId}: fit failed or produced NaN (${points.length} pts), using constant 0 PSI`);
+                            coeffs = { A: 0, B: 0, C: 0, D: 0 };
                         }
                     }
                     host.ptCalibration.set(chUniqueId, coeffs);
@@ -403,6 +436,7 @@ export function handleCalibrationCommand(
                 if (Object.keys(calibration_adc_norm_scale).length > 0) data.calibration_adc_norm_scale = calibration_adc_norm_scale;
                 fs.writeFileSync(filename, JSON.stringify(data, null, 2));
                 console.log(`💾 Calibration saved to ${filename}`);
+                host.ptCalibrationFilePath = filename;
                 host.send(ws, {
                     type: MessageType.CALIBRATION_STATUS, timestamp: Date.now(),
                     payload: { message: 'Calibration saved', path: filename }
@@ -446,7 +480,7 @@ export function handleCalibrationCommand(
         host.broadcast({
             type: MessageType.CALIBRATION_STATUS,
             timestamp: Date.now(),
-            payload: { channels, phase2Enabled: host.phase2Engine.isEnabled(), timestamp: Date.now() },
+            payload: { channels, phase2Enabled: host.phase2Engine.isEnabled(), timestamp: Date.now(), calibrationFilePath: host.ptCalibrationFilePath },
         });
     }
 }
