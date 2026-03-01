@@ -201,24 +201,6 @@ export interface CalibrationCommand {
 }
 // ── Board / heartbeat status ───────────────────────────────────────────────────
 
-export interface BoardStatus {
-  type: string;
-  boardNumber: number | null;
-  id: number;
-  ip: string;
-  expected: boolean;
-  connected: boolean;
-  lastHeartbeatMs: number | null;
-  frequencyHz: number | null;
-  boardState: number | null;
-  engineState: number | null;
-  configured?: boolean;
-  configLastSentAt?: number;
-  configError?: string;
-  necessaryForAbort?: boolean;
-  designatedSurvivor?: boolean;
-}
-
 // ── Board / heartbeat status ───────────────────────────────────────────────────
 
 export interface BoardStatus {

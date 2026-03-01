@@ -248,6 +248,15 @@ class SensorSystemServer {
   private readonly SETUP_STUCK_THRESHOLD_MS = 4000;
   private readonly BOARD_STATE_SETUP = 1;
 
+  /** Notification system: previous board connected state for transition detection */
+  private previousBoardConnected: Map<number, boolean> = new Map();
+  /** First time we saw board in SETUP (boardState === 1), for "stuck in setup" detection */
+  private boardFirstSeenSetupMs: Map<number, number> = new Map();
+  /** Keys for which we have emitted ongoing: true (so we only emit ongoing: false when they clear) */
+  private activeNotificationKeys: Set<string> = new Set();
+  private readonly SETUP_STUCK_THRESHOLD_MS = 4000;
+  private readonly BOARD_STATE_SETUP = 1;
+
   constructor() {
     console.log(`🚀 Starting Sensor System Server...`);
     console.log(`   WebSocket: ${WS_HOST}:${WS_PORT}`);
@@ -1832,6 +1841,12 @@ class SensorSystemServer {
     } catch (err) {
       console.error(`❌ Error while constructing/sending ${label} packet:`, err);
     }
+  }
+
+  /** Broadcast a single notification to all clients (for notification panel). */
+  private broadcastNotification(payload: NotificationPayload): void {
+    if (this.clients.size === 0) return;
+    this.broadcast({ type: MessageType.NOTIFICATION, timestamp: Date.now(), payload });
   }
 
   /** Build a snapshot of current board status suitable for WebSocket broadcast. */
