@@ -25,19 +25,23 @@ export async function registerVTables(client: ElodinClient): Promise<boolean> {
     return false;
   }
 
-  console.log('📡 Trying MsgStream subscriptions (alternative to VTableStream)...');
-  console.log('   MsgStream has same structure as VTableStream: std::tuple<uint8_t, uint8_t> msg_id');
+  console.log('📡 Trying VTableStream subscriptions...');
+  console.log('   VTableStream has structure: std::tuple<uint8_t, uint8_t> msg_id');
   console.log('');
 
   try {
     // All packet IDs we want to subscribe to
     const subscriptions: Array<[number, number]> = [
-      // PT Raw channels (0x20, 0x01-0x0A)
+      // PT Raw channels (0x20, 0x01-0x0A) — PT board 1
       [0x20, 0x01], [0x20, 0x02], [0x20, 0x03], [0x20, 0x04], [0x20, 0x05],
       [0x20, 0x06], [0x20, 0x07], [0x20, 0x08], [0x20, 0x09], [0x20, 0x0A],
-      // PT Calibrated channels (0x20, 0x11-0x1A)
+      // PT Raw channels (0x20, 0x0B-0x0E) — PT board 2 channels 11-14
+      [0x20, 0x0B], [0x20, 0x0C], [0x20, 0x0D], [0x20, 0x0E],
+      // PT Calibrated channels (0x20, 0x11-0x1A) — PT board 1
       [0x20, 0x11], [0x20, 0x12], [0x20, 0x13], [0x20, 0x14], [0x20, 0x15],
       [0x20, 0x16], [0x20, 0x17], [0x20, 0x18], [0x20, 0x19], [0x20, 0x1A],
+      // PT Calibrated channels (0x20, 0x1B-0x1E) — PT board 2 calibrated channels 11-14
+      [0x20, 0x1B], [0x20, 0x1C], [0x20, 0x1D], [0x20, 0x1E],
       // TC Raw channels (0x21, 0x01-0x04)
       [0x21, 0x01], [0x21, 0x02], [0x21, 0x03], [0x21, 0x04],
       // TC Calibrated channels (0x21, 0x11-0x14)
@@ -51,21 +55,21 @@ export async function registerVTables(client: ElodinClient): Promise<boolean> {
       [0x30, 0x06], [0x30, 0x07], [0x30, 0x08], [0x30, 0x09], [0x30, 0x0A],
     ];
 
-    // Try MsgStream instead of VTableStream
-    const msgStreamMsgId = computeMsgId("MsgStream");
-    console.log(`   MsgStream message ID: [0x${msgStreamMsgId[0].toString(16).padStart(2, '0')}, 0x${msgStreamMsgId[1].toString(16).padStart(2, '0')}]`);
+    // Try VTableStream
+    const vtableStreamMsgId = computeMsgId("VTableStream");
+    console.log(`   VTableStream message ID: [0x${vtableStreamMsgId[0].toString(16).padStart(2, '0')}, 0x${vtableStreamMsgId[1].toString(16).padStart(2, '0')}]`);
 
     let successCount = 0;
     for (const [high, low] of subscriptions) {
-      // Postcard-encoded MsgStream payload: u8(high) + u8(low)
-      // This matches the struct MsgStream { std::tuple<uint8_t, uint8_t> msg_id; }
+      // Postcard-encoded VTableStream payload: u8(high) + u8(low)
+      // This matches the struct VTableStream { std::tuple<uint8_t, uint8_t> msg_id; }
       const payload = Buffer.alloc(2);
       payload.writeUInt8(high, 0);
       payload.writeUInt8(low, 1);
 
-      // Send as MSG type (0) with MsgStream message packet_id
+      // Send as MSG type (0) with VTableStream message packet_id
       const success = client.sendRawMessage(
-        msgStreamMsgId,
+        vtableStreamMsgId,
         ElodinPacketType.MSG,
         payload
       );
@@ -74,14 +78,14 @@ export async function registerVTables(client: ElodinClient): Promise<boolean> {
         successCount++;
         // Log first few subscriptions
         if (successCount <= 5) {
-          console.log(`   ✅ MsgStream subscription sent: [0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}]`);
+          console.log(`   ✅ VTableStream subscription sent: [0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}]`);
         }
       } else {
-        console.error(`   ❌ Failed to send MsgStream for [0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}]`);
+        console.error(`   ❌ Failed to send VTableStream for [0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}]`);
       }
     }
 
-    console.log(`   ✅ MsgStream: Sent ${successCount}/${subscriptions.length} subscriptions`);
+    console.log(`   ✅ VTableStream: Sent ${successCount}/${subscriptions.length} subscriptions`);
     console.log('   Waiting for TABLE packets from Elodin DB...');
 
     return successCount > 0;
@@ -106,11 +110,14 @@ export function computeMsgId(typeName: string): [number, number] {
   const FNV_PRIME = 0x01000193;         // 16777619 in decimal
 
   let hash = FNV_OFFSET_BASIS;
-  const maxLen = Math.min(typeName.length, 32);  // Limit to 32 chars like db.hpp
+  // C++ uses `if (++i >= 32) break;` which processes at most 31 chars
+  const maxLen = Math.min(typeName.length, 31);
 
   for (let i = 0; i < maxLen; i++) {
     hash ^= typeName.charCodeAt(i);
-    hash = (hash * FNV_PRIME) >>> 0;  // Force unsigned 32-bit
+    // CRITICAL: Must use Math.imul for correct uint32 overflow behavior.
+    // Plain `hash * FNV_PRIME` uses JS float64 and loses precision.
+    hash = Math.imul(hash, FNV_PRIME) >>> 0;
   }
 
   // fnv1a_hash_16_xor: XOR upper and lower 16 bits

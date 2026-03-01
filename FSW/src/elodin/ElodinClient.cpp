@@ -114,7 +114,7 @@ bool ElodinClient::read_packet_header(uint8_t* header_buffer) {
     }
 
     std::lock_guard<std::mutex> lock(publish_mutex_);
-    return socket_->read_exact(header_buffer, 12);
+    return socket_->read_exact(header_buffer, 8);
 }
 
 ssize_t ElodinClient::read_packet(uint8_t* packet_buffer, size_t max_len) {
@@ -123,41 +123,41 @@ ssize_t ElodinClient::read_packet(uint8_t* packet_buffer, size_t max_len) {
         return -1;
     }
 
-    if (max_len < 12) {
+    if (max_len < 8) {
         last_error_ = "Buffer too small for packet header";
         return -1;
     }
 
     std::lock_guard<std::mutex> lock(publish_mutex_);
 
-    // Read packet header (12 bytes)
-    if (!socket_->read_exact(packet_buffer, 12)) {
+    // Read packet header (8 bytes)
+    if (!socket_->read_exact(packet_buffer, 8)) {
         last_error_ = socket_->last_error();
         return -1;
     }
 
-    // Parse header: len (4 bytes), type (1 byte), packet_id (2 bytes), request_id (1 byte), padding
-    // (4 bytes)
+    // Parse header: len(4), ty(1), packet_id(2), request_id(1)
     uint32_t packet_len = *reinterpret_cast<uint32_t*>(packet_buffer);
     uint8_t packet_type = packet_buffer[4];
     uint16_t packet_id = (static_cast<uint16_t>(packet_buffer[5]) << 8) | packet_buffer[6];
+    uint8_t request_id = packet_buffer[7];
 
-    // Validate packet length
-    if (packet_len < 12 || packet_len > max_len) {
+    // Validate packet length (must have at least the rest of the 8-byte header)
+    if (packet_len < 4 || packet_len > max_len) {
         last_error_ = "Invalid packet length: " + std::to_string(packet_len);
         return -1;
     }
 
-    // Read payload (packet_len - 12 bytes)
-    size_t payload_len = packet_len - 12;
+    // Read payload (packet_len - 4 bytes)
+    size_t payload_len = packet_len - 4;
     if (payload_len > 0) {
-        if (!socket_->read_exact(packet_buffer + 12, payload_len)) {
+        if (!socket_->read_exact(packet_buffer + 8, payload_len)) {
             last_error_ = socket_->last_error();
             return -1;
         }
     }
 
-    return static_cast<ssize_t>(packet_len);
+    return static_cast<ssize_t>(packet_len + 4);
 }
 
 bool ElodinClient::send_msg(const std::array<uint8_t, 2>& /* packet_id */,

@@ -69,7 +69,7 @@ Stops all DAQ bridge processes and frees ports.
 
 ```bash
 # Terminal 1: Start database and bridge
-cd /home/kush-mahajan/sensor_system
+cd /path/to/Diablo-FSW
 source scripts/startup_daq_bridge.sh daq_test
 
 # Terminal 2: Send test packets

@@ -539,22 +539,17 @@ class SensorSystemServer {
     }
 
     if (this.useDirectDAQ) {
-      console.log('🚀 Using DIRECT DAQ connection for real-time data');
-      // Load environmental state from config
-      const envCfg = config.calibration?.environmental || {};
-      this.envState = {
-        temperature: envCfg.temperature ?? 25.0,
-        humidity: envCfg.humidity ?? 50.0,
-        vibration: envCfg.vibration ?? 0.0,
-        aging_factor: envCfg.aging_factor ?? 1.0,
-        mounting_torque: envCfg.mounting_torque ?? 1.0
-      };
-
-      this.setupDirectDAQ();
-    } else if (!process.env.ELODIN_RELAY_WS_URL) {
-      console.log('📡 Using Elodin DB for data (DAQ Bridge → Elodin DB → Backend → Frontend)');
-      console.warn('⚠️ Elodin DB streams raw data to only the FIRST subscriber. For multiple clients (e.g. backend + sidecar), run the relay first and set ELODIN_RELAY_WS_URL=ws://localhost:9090');
+      console.log('🚀 Using DIRECT DAQ connection for REAL-TIME BOARD DATA');
+    } else {
+      console.log('📡 Using ELODIN RELAY/DB for sensor data. Direct DAQ will only be used for heartbeats.');
+      if (!process.env.ELODIN_RELAY_WS_URL) {
+        console.warn('⚠️ Elodin DB streams raw data to only the FIRST subscriber. For multiple clients (e.g. backend + sidecar), run the relay first and set ELODIN_RELAY_WS_URL=ws://localhost:9090');
+      }
     }
+
+    // Always setup DAQ to receive Board Heartbeats over UDP broadcast.
+    // We will conditionally ignore sensor data inside setupDirectDAQ if useDirectDAQ is false.
+    this.setupDirectDAQ();
 
     this.startUpdateLoop();
   }
@@ -721,7 +716,11 @@ class SensorSystemServer {
           await registerVTables(this.elodin);
         } else { console.log('✅ Stream subscription successful!'); }
         if (!this.useDirectDAQ) this.startStreamingCheck();
+      } else {
+        // When using relay, just register controller VTables so we can send commands
+        console.log('📡 Relay mode active: Skipping VTableStream subscriptions to avoid stealing the stream');
       }
+
       await registerControllerVTables(this.elodin);
       this.streamingDataReceived = false;
       this.broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true } as ConnectionStatus });
@@ -864,6 +863,7 @@ class SensorSystemServer {
 
     // ── Regular PT sensor data ──────────────────────────────────────────────
     this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
+      if (!this.useDirectDAQ) return;
       if (this.hpPtBoards.has(sourceIP)) return;
       if (this.actuatorBoardIPs.has(sourceIP)) return;
 
@@ -959,6 +959,7 @@ class SensorSystemServer {
 
     // ── Actuator board data ─────────────────────────────────────────────────
     this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
+      if (!this.useDirectDAQ) return;
       if (!this.actuatorBoardIPs.has(sourceIP)) return;
       const currentTime = Date.now();
       for (const chunk of chunks) {
@@ -996,6 +997,7 @@ class SensorSystemServer {
 
     // ── HP PT board data ────────────────────────────────────────────────────
     this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
+      if (!this.useDirectDAQ) return;
       const hpCfg = this.hpPtBoards.get(sourceIP);
       if (!hpCfg) return;
 

@@ -169,36 +169,44 @@ export class ElodinClient extends EventEmitter {
     // Append to buffer
     this.buffer = Buffer.concat([this.buffer, data]);
 
-    // Process complete packets
-    while (this.buffer.length >= 12) {
-      // Read packet length (first 4 bytes)
+    // We need at least 4 bytes to read the length
+    while (this.buffer.length >= 4) {
       const packetLen = this.buffer.readUInt32LE(0);
 
-      if (this.buffer.length < packetLen) {
-        // Incomplete packet, wait for more data
+      // Total packet size is packetLen + 4.
+      // We need at least that many bytes to process the full packet.
+      if (this.buffer.length < packetLen + 4) {
         break;
       }
 
-      // Extract complete packet
-      const packet = this.buffer.subarray(0, packetLen);
-      this.buffer = this.buffer.subarray(packetLen);
+      // Minimum packet size with 8-byte header is 8 (len field is 4 in that case)
+      if (packetLen < 4) {
+        console.error(`[ElodinClient] Packet length too small: ${packetLen}`);
+        this.buffer = this.buffer.subarray(4);
+        // Continue to find a valid packet
+        continue;
+      }
 
-      // Parse packet header (12 bytes: len(4) + ty(1) + packetId(2) + padding(4) + requestId(1))
+      // Extract complete packet
+      const packet = this.buffer.subarray(0, packetLen + 4);
+      this.buffer = this.buffer.subarray(packetLen + 4);
+
+      // Parse packet header (8 bytes: len(4) + ty(1) + packetId(2) + requestId(1))
       const header: ElodinPacketHeader = {
         len: packet.readUInt32LE(0),
         ty: packet.readUInt8(4) as ElodinPacketType,
         packetId: [packet.readUInt8(5), packet.readUInt8(6)],
-        requestId: packet.readUInt8(11),
+        requestId: packet.readUInt8(7),
       };
 
       // Validate header
-      if (header.len < 12 || header.len > 65536) {
+      if (header.len < 8 || header.len > 65536) {
         console.error(`❌ Invalid packet length: ${header.len}`);
         continue;
       }
 
-      // Extract payload (skip 12-byte header)
-      const payload = packet.subarray(12);
+      // Extract payload (skip 8-byte header)
+      const payload = packet.subarray(8);
 
       // ALWAYS log packets - this is critical for debugging
       const [high, low] = header.packetId;
@@ -209,11 +217,6 @@ export class ElodinClient extends EventEmitter {
           console.log(`📥 TABLE packet #${this.packetCount}: packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}`);
         }
         this.emit('packet', header, payload);
-      } else {
-        const packetTypeName = header.ty === ElodinPacketType.MSG ? 'MSG' :
-                              header.ty === ElodinPacketType.COMMAND ? 'COMMAND' :
-                              header.ty === ElodinPacketType.QUERY ? 'QUERY' : `UNKNOWN(${header.ty})`;
-        console.log(`📨 ${packetTypeName} packet: packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}`);
       }
     }
   }
@@ -233,8 +236,8 @@ export class ElodinClient extends EventEmitter {
 
       const header = this.createHeader(
         ElodinPacketType.QUERY,
-        queryPacketId,
-        emptyPayload.length
+        emptyPayload.length,
+        queryPacketId
       );
 
       const packet = Buffer.concat([header, emptyPayload]);
@@ -259,7 +262,7 @@ export class ElodinClient extends EventEmitter {
     }
 
     try {
-      const header = this.createHeader(packetType, packetId, payload.length);
+      const header = this.createHeader(packetType, payload.length, packetId);
       const packet = Buffer.concat([header, payload]);
 
       // Write to socket - Node.js will buffer and flush automatically
@@ -277,9 +280,9 @@ export class ElodinClient extends EventEmitter {
       if (this.packetCount < 10) {
         const [high, low] = packetId;
         const packetTypeName = packetType === ElodinPacketType.MSG ? 'MSG' :
-                              packetType === ElodinPacketType.TABLE ? 'TABLE' :
-                              packetType === ElodinPacketType.COMMAND ? 'COMMAND' :
-                              packetType === ElodinPacketType.QUERY ? 'QUERY' : `UNKNOWN(${packetType})`;
+          packetType === ElodinPacketType.TABLE ? 'TABLE' :
+            packetType === ElodinPacketType.COMMAND ? 'COMMAND' :
+              packetType === ElodinPacketType.QUERY ? 'QUERY' : `UNKNOWN(${packetType})`;
         console.log(`📤 Sent ${packetTypeName} packet: packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}, totalLen=${packet.length}`);
         if (payload.length <= 16) {
           console.log(`   Payload (hex): ${payload.toString('hex')}`);
@@ -334,18 +337,14 @@ export class ElodinClient extends EventEmitter {
     }
   }
 
-  private createHeader(
-    packetType: ElodinPacketType,
-    packetId: [number, number],
-    payloadLength: number
-  ): Buffer {
-    const header = Buffer.alloc(12);
-    header.writeUInt32LE(12 + payloadLength, 0); // Total length
-    header.writeUInt8(packetType, 4);
+  private createHeader(type: ElodinPacketType, payloadLength: number, packetId: [number, number] = [0, 0]): Buffer {
+    const header = Buffer.alloc(8);
+    const totalLen = 8 + payloadLength;
+    header.writeUInt32LE(totalLen - 4, 0); // Elodin len = total - 4
+    header.writeUInt8(type, 4);
     header.writeUInt8(packetId[0], 5);
     header.writeUInt8(packetId[1], 6);
-    header.writeUInt32LE(0, 7); // Padding
-    header.writeUInt8(0, 11); // Request ID
+    header.writeUInt8(0, 7); // requestId
     return header;
   }
 

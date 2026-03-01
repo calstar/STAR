@@ -14,7 +14,7 @@
 #include <vector>
 
 #include "../../daq_comms/include/comms/messages/sensor/SensorMessages.hpp"
-#include "../../utl/db.hpp"
+#include "../../archive/legacy/utl/db.hpp"
 #include "config/ConfigParser.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
@@ -111,15 +111,73 @@ int main(int argc, char* argv[]) {
         }
         std::cout << "✅ Connected to Elodin DB" << std::endl;
 
-        // Register all VTables (per sensor, not per type)
-        // TODO: Update DatabaseConfig to register VTables per sensor using ConfigParser
-        std::cout << "\n⚠️  Note: Currently registering VTables per type." << std::endl;
-        std::cout << "   Need to update DatabaseConfig to register per sensor." << std::endl;
-        if (!elodin::DatabaseConfig::register_tables(client)) {
-            std::cerr << "❌ Failed to register tables" << std::endl;
-            return 1;
+        // Register all VTables as defined in the config
+        std::cout << "\n📋 Registering VTables for each config-defined sensor..." << std::endl;
+        for (const auto& sensor : all_sensors) {
+            std::string prefix = sensor.sensor_id + ".";
+            std::string val_name = "pressure_psi";
+            PrimType val_type = PrimType::F32();
+
+            switch (sensor.sensor_type) {
+                case config::SensorType::PT:
+                    val_name = "pressure_psi";
+                    val_type = PrimType::F32();
+                    break;
+                case config::SensorType::TC:
+                    val_name = "temperature_c";
+                    val_type = PrimType::F32();
+                    break;
+                case config::SensorType::RTD:
+                    val_name = "temperature_c";
+                    val_type = PrimType::F32();
+                    break;
+                case config::SensorType::LC:
+                    val_name = "load_n";
+                    val_type = PrimType::F32();
+                    break;
+                case config::SensorType::ACTUATOR:
+                    continue; // Skip for now
+            }
+
+            // Extract high and low bytes from the message_id for the VTable ID
+            std::tuple<uint8_t, uint8_t> vt_id = {
+                static_cast<uint8_t>((sensor.message_id >> 8) & 0xFF),
+                static_cast<uint8_t>(sensor.message_id & 0xFF)
+            };
+
+            // Build VTable matching DatabaseConfig's layout
+            auto vt = builder::vtable({
+                raw_field(0, 8, schema(PrimType::U64(), {}, component(prefix + "timestamp_ns"))),
+                raw_field(8, 1, schema(PrimType::U8(), {}, component(prefix + "channel_id"))),
+                // 3 bytes padding at offset 9
+                raw_field(12, 4, schema(val_type, {}, component(prefix + val_name))),
+                raw_field(16, 4, schema(PrimType::U32(), {}, component(prefix + "sample_ts_ms"))),
+                raw_field(20, 1, schema(PrimType::U8(), {}, component(prefix + "status"))),
+            });
+            
+            auto buf = Msg(VTableMsg{.id = vt_id, .vtable = vt}).encode_vec();
+            if (buf.empty() || !client.send_msg({0, 0}, buf)) {
+                std::cerr << "❌ Failed to register VTable for " << sensor.sensor_id << std::endl;
+            }
+
+            // Name the components and entity
+            auto c1 = Msg(set_component_name(prefix + "timestamp_ns")).encode_vec();
+            client.send_msg({0, 0}, c1);
+            auto c2 = Msg(set_component_name(prefix + "channel_id")).encode_vec();
+            client.send_msg({0, 0}, c2);
+            auto c3 = Msg(set_component_name(prefix + val_name)).encode_vec();
+            client.send_msg({0, 0}, c3);
+            auto c4 = Msg(set_component_name(prefix + "sample_ts_ms")).encode_vec();
+            client.send_msg({0, 0}, c4);
+            auto c5 = Msg(set_component_name(prefix + "status")).encode_vec();
+            client.send_msg({0, 0}, c5);
+
+            // Extract a unique entity ID from the message_id for naming
+            uint64_t entity_id = 0x20000 + sensor.message_id;
+            auto e1 = Msg(set_entity_name(entity_id, sensor.sensor_id)).encode_vec();
+            client.send_msg({0, 0}, e1);
         }
-        std::cout << "✅ Registered VTables" << std::endl;
+        std::cout << "✅ Registered dynamic VTables from config" << std::endl;
 
         // Wait for Elodin to process VTable registrations
         std::cout << "⏳ Waiting 3 seconds for Elodin to process VTable registrations..."

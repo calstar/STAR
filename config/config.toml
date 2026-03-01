@@ -280,6 +280,7 @@ active_connectors = []
 "LOX UP"       = 5
 "GN2 REG"      = 6
 "LOX DN"       = 7
+"LOX FILL"     = 8
 
 # =============================================================================
 # Abort PTs - PTs required for abort logic (sensor role name → pressure threshold PSI)
@@ -351,8 +352,8 @@ description = "Raw PT ADC counts"
 
 [routing.pt_calibrated]
 packet_id = [0x20, 0x10]
-channels = 10
-description = "Calibrated PT pressure (PSI)"
+channels = 26
+description = "Calibrated PT pressure (PSI) — channels 1..10 map to packet IDs 0x11..0x1A"
 
 [routing.tc_raw]
 packet_id = [0x21, 0x00]
@@ -381,7 +382,7 @@ description = "Actuator current sense readings"
 
 # Which routing types daq_bridge publishes to Elodin (avionics payload only; calibration writes calibrated later)
 [daq_bridge]
-publish = ["pt_raw", "actuator_status"]
+publish = ["pt_raw", "pt_calibrated", "actuator_status"]
 
 # =============================================================================
 # Calibration

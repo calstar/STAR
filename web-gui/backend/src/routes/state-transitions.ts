@@ -97,7 +97,7 @@ export function getStateTransitions(): Transition[] {
     join(process.cwd(), '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'state_transitions.csv'),
     join(process.cwd(), '..', 'external', 'DiabloAvionics', 'test_guis', 'state_transitions.csv'),
     join(__dirname, '..', '..', '..', 'external', 'DiabloAvionics', 'test_guis', 'state_transitions.csv'),
-    '/home/kush-mahajan/sensor_system/external/DiabloAvionics/test_guis/state_transitions.csv',
+    join(__dirname, '../../../../external/DiabloAvionics/test_guis/state_transitions.csv'),
   ];
 
   for (const path of possiblePaths) {

@@ -113,12 +113,12 @@ SensorRouter::route_pt_samples(const daq_comms::protocol::SensorBatch& batch,
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawPTMessage>> messages;
 
     for (const auto& sample : batch.pt_samples) {
-        // Per-channel packet_id: {0x20, channel_id}
-        std::array<uint8_t, 2> pkt_id = {0x20, sample.channel_id};
+        // Per-channel packet_id: {0x20, channel_id + 1}
+        std::array<uint8_t, 2> pkt_id = {0x20, static_cast<uint8_t>(sample.channel_id + 1)};
 
         comms::messages::sensor::RawPTMessage msg;
         msg.setField<0>(receive_timestamp_ns);
-        msg.setField<1>(sample.channel_id);
+        msg.setField<1>(static_cast<uint8_t>(sample.channel_id + 1));
         msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
         msg.setField<3>(sample.raw_adc_counts);
         msg.setField<4>(sample.sample_timestamp_ms);
@@ -141,8 +141,8 @@ SensorRouter::route_pt_samples_calibrated(const daq_comms::protocol::SensorBatch
     }
 
     for (const auto& sample : batch.pt_samples) {
-        // Per-channel calibrated packet_id: {0x20, 0x10 + channel_id}
-        std::array<uint8_t, 2> pkt_id = {0x20, static_cast<uint8_t>(0x10 + sample.channel_id)};
+        // Per-channel calibrated packet_id: {0x20, 0x10 + (channel_id + 1)}
+        std::array<uint8_t, 2> pkt_id = {0x20, static_cast<uint8_t>(0x10 + sample.channel_id + 1)};
 
         int32_t adc_code = static_cast<int32_t>(sample.raw_adc_counts);
         double pressure_psi = pt_calibration_->calculate_pressure(sample.channel_id, adc_code);
@@ -150,7 +150,7 @@ SensorRouter::route_pt_samples_calibrated(const daq_comms::protocol::SensorBatch
 
         comms::messages::sensor::CalibratedPTMessage msg;
         msg.setField<0>(receive_timestamp_ns);
-        msg.setField<1>(sample.channel_id);
+        msg.setField<1>(static_cast<uint8_t>(sample.channel_id + 1));
         msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
         msg.setField<3>(static_cast<float>(pressure_psi));
         msg.setField<4>(sample.raw_adc_counts);
@@ -168,11 +168,11 @@ SensorRouter::route_tc_samples(const daq_comms::protocol::SensorBatch& batch,
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawTCMessage>> messages;
 
     for (const auto& sample : batch.tc_samples) {
-        std::array<uint8_t, 2> pkt_id = {0x21, sample.channel_id};
+        std::array<uint8_t, 2> pkt_id = {0x21, static_cast<uint8_t>(sample.channel_id + 1)};
 
         comms::messages::sensor::RawTCMessage msg;
         msg.setField<0>(receive_timestamp_ns);
-        msg.setField<1>(sample.channel_id);
+        msg.setField<1>(static_cast<uint8_t>(sample.channel_id + 1));
         msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
         msg.setField<3>(sample.raw_adc_counts);
         msg.setField<4>(sample.sample_timestamp_ms);
@@ -190,11 +190,11 @@ SensorRouter::route_rtd_samples(const daq_comms::protocol::SensorBatch& batch,
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawRTDMessage>> messages;
 
     for (const auto& sample : batch.rtd_samples) {
-        std::array<uint8_t, 2> pkt_id = {0x22, sample.channel_id};
+        std::array<uint8_t, 2> pkt_id = {0x22, static_cast<uint8_t>(sample.channel_id + 1)};
 
         comms::messages::sensor::RawRTDMessage msg;
         msg.setField<0>(receive_timestamp_ns);
-        msg.setField<1>(sample.channel_id);
+        msg.setField<1>(static_cast<uint8_t>(sample.channel_id + 1));
         msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
         msg.setField<3>(sample.raw_resistance_counts);
         msg.setField<4>(sample.sample_timestamp_ms);
@@ -212,11 +212,11 @@ SensorRouter::route_lc_samples(const daq_comms::protocol::SensorBatch& batch,
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::RawLCMessage>> messages;
 
     for (const auto& sample : batch.lc_samples) {
-        std::array<uint8_t, 2> pkt_id = {0x23, sample.channel_id};
+        std::array<uint8_t, 2> pkt_id = {0x23, static_cast<uint8_t>(sample.channel_id + 1)};
 
         comms::messages::sensor::RawLCMessage msg;
         msg.setField<0>(receive_timestamp_ns);
-        msg.setField<1>(sample.channel_id);
+        msg.setField<1>(static_cast<uint8_t>(sample.channel_id + 1));
         msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
         msg.setField<3>(sample.raw_adc_counts);
         msg.setField<4>(sample.sample_timestamp_ms);
@@ -238,15 +238,15 @@ SensorRouter::route_tc_samples_calibrated(const daq_comms::protocol::SensorBatch
         return messages;
 
     for (const auto& sample : batch.tc_samples) {
-        // Calibrated TC packet_id: {0x21, 0x10 + channel_id}
-        std::array<uint8_t, 2> pkt_id = {0x21, static_cast<uint8_t>(0x10 + sample.channel_id)};
+        // Calibrated TC packet_id: {0x21, 0x10 + (channel_id + 1)}
+        std::array<uint8_t, 2> pkt_id = {0x21, static_cast<uint8_t>(0x10 + sample.channel_id + 1)};
         int32_t raw = static_cast<int32_t>(sample.raw_adc_counts);
         double temp_c = tc_calibration_->calculate(sample.channel_id, raw);
         uint8_t status = tc_calibration_->is_calibrated(sample.channel_id) ? 1 : 0;
 
         comms::messages::sensor::CalibratedTCMessage msg;
         msg.setField<0>(receive_timestamp_ns);
-        msg.setField<1>(sample.channel_id);
+        msg.setField<1>(static_cast<uint8_t>(sample.channel_id + 1));
         msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
         msg.setField<3>(static_cast<float>(temp_c));
         msg.setField<4>(sample.raw_adc_counts);
@@ -266,15 +266,15 @@ SensorRouter::route_rtd_samples_calibrated(const daq_comms::protocol::SensorBatc
         return messages;
 
     for (const auto& sample : batch.rtd_samples) {
-        // Calibrated RTD packet_id: {0x22, 0x10 + channel_id}
-        std::array<uint8_t, 2> pkt_id = {0x22, static_cast<uint8_t>(0x10 + sample.channel_id)};
+        // Calibrated RTD packet_id: {0x22, 0x10 + (channel_id + 1)}
+        std::array<uint8_t, 2> pkt_id = {0x22, static_cast<uint8_t>(0x10 + sample.channel_id + 1)};
         int32_t raw = static_cast<int32_t>(sample.raw_resistance_counts);
         double temp_c = rtd_calibration_->calculate(sample.channel_id, raw);
         uint8_t status = rtd_calibration_->is_calibrated(sample.channel_id) ? 1 : 0;
 
         comms::messages::sensor::CalibratedRTDMessage msg;
         msg.setField<0>(receive_timestamp_ns);
-        msg.setField<1>(sample.channel_id);
+        msg.setField<1>(static_cast<uint8_t>(sample.channel_id + 1));
         msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
         msg.setField<3>(static_cast<float>(temp_c));
         msg.setField<4>(sample.raw_resistance_counts);
@@ -294,15 +294,15 @@ SensorRouter::route_lc_samples_calibrated(const daq_comms::protocol::SensorBatch
         return messages;
 
     for (const auto& sample : batch.lc_samples) {
-        // Calibrated LC packet_id: {0x23, 0x10 + channel_id}
-        std::array<uint8_t, 2> pkt_id = {0x23, static_cast<uint8_t>(0x10 + sample.channel_id)};
+        // Calibrated LC packet_id: {0x23, 0x10 + (channel_id + 1)}
+        std::array<uint8_t, 2> pkt_id = {0x23, static_cast<uint8_t>(0x10 + sample.channel_id + 1)};
         int32_t raw = static_cast<int32_t>(sample.raw_adc_counts);
         double force = lc_calibration_->calculate(sample.channel_id, raw);
         uint8_t status = lc_calibration_->is_calibrated(sample.channel_id) ? 1 : 0;
 
         comms::messages::sensor::CalibratedLCMessage msg;
         msg.setField<0>(receive_timestamp_ns);
-        msg.setField<1>(sample.channel_id);
+        msg.setField<1>(static_cast<uint8_t>(sample.channel_id + 1));
         msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
         msg.setField<3>(static_cast<float>(force));
         msg.setField<4>(sample.raw_adc_counts);

@@ -41,6 +41,7 @@ struct BoardConfig {
     std::string ip;
     int num_sensors;
     bool enabled;
+    int board_id; // Added board_id
 };
 
 // Minimal config parse: [database] host/port, [network] sensor_port/bind_ip, [boards.xxx]
@@ -58,6 +59,7 @@ static void load_board_map_from_config(const std::string& config_path,
     std::string line, current_section;
     std::string board_type_str, board_ip;
     int board_num_sensors = 10;
+    int board_id = -1; // Added board_id
     bool board_enabled = true;
     auto add_board = [&]() {
         if (board_ip.empty())
@@ -74,9 +76,10 @@ static void load_board_map_from_config(const std::string& config_path,
         else if (board_type_str == "ACTUATOR")
             bt = BoardType::ACTUATOR;
         if (bt != BoardType::UNKNOWN)
-            board_map[board_ip] = {bt, board_ip, board_num_sensors, board_enabled};
+            board_map[board_ip] = {bt, board_ip, board_num_sensors, board_enabled, board_id};
         board_ip.clear();
         board_type_str.clear();
+        board_id = -1; // Reset board_id
     };
     while (std::getline(f, line)) {
         size_t c = line.find('#');
@@ -93,6 +96,7 @@ static void load_board_map_from_config(const std::string& config_path,
             add_board();
             current_section = line.substr(1, line.size() - 2);
             board_num_sensors = 10;
+            board_id = -1; // Reset board_id for new section
             board_enabled = true;
             continue;
         }
@@ -124,6 +128,8 @@ static void load_board_map_from_config(const std::string& config_path,
                 board_ip = val;
             else if (key == "num_sensors")
                 board_num_sensors = std::stoi(val);
+            else if (key == "board_id")
+                board_id = std::stoi(val); // Parse board_id
             else if (key == "enabled")
                 board_enabled = (val == "true" || val == "1");
         }
@@ -131,7 +137,7 @@ static void load_board_map_from_config(const std::string& config_path,
     add_board();
     // Simulator (e.g. board_simulator.py) sends from 127.0.0.1 — treat as PT so routing works
     if (board_map.find("127.0.0.1") == board_map.end())
-        board_map["127.0.0.1"] = {BoardType::PT, "127.0.0.1", 10, true};
+        board_map["127.0.0.1"] = {BoardType::PT, "127.0.0.1", 10, true, 0};
 }
 
 // Config-driven publish allowlist: [routing.*] packet_id + channels, [daq_bridge] publish = [...]
@@ -282,6 +288,17 @@ static void load_sensor_and_actuator_maps(const std::string& config_path,
             }
             if (channel >= 1 && channel <= 10)
                 pt_channel_to_name[channel] = to_entity_name(key);
+        } else if (current_section == "sensor_roles_pt2") {
+            // PT board 2 connectors are globally offset by +10 (connector 1 → global channel 11)
+            int connector = 0;
+            try {
+                connector = std::stoi(val);
+            } catch (...) {
+                continue;
+            }
+            int global_ch = connector + 10;
+            if (global_ch >= 11 && global_ch <= 14)
+                pt_channel_to_name[global_ch] = to_entity_name(key);
         } else if (current_section == "actuator_roles") {
             size_t comma = val.find(',');
             if (comma == std::string::npos)
@@ -396,6 +413,13 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     fsw_config->set_system_state(system_state);
+    
+    // Add static IPs to FSW config manager
+    for (const auto& [ip, cfg] : board_map) {
+        if (cfg.board_id >= 0) {
+            fsw_config->set_board_static_ip(cfg.board_id, ip);
+        }
+    }
 
     // ── Board Discovery ──
     fsw::config::BoardDiscovery discovery;
@@ -487,7 +511,7 @@ int main(int argc, char* argv[]) {
         // Drain any response from DB after registration; otherwise recv buffer fills and TABLE
         // writes stall after ~3s
         std::array<uint8_t, 4096> drain_buf;
-        auto drain_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        auto drain_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
         while (std::chrono::steady_clock::now() < drain_deadline && elodin_client.is_connected()) {
             while (elodin_client.read_data(drain_buf.data(), drain_buf.size()) > 0) {
             }
@@ -618,10 +642,10 @@ int main(int argc, char* argv[]) {
             }
             case BoardType::ACTUATOR: {
                 for (const auto& sample : batch.value().pt_samples) {
-                    std::array<uint8_t, 2> act_pkt = {0x30, sample.channel_id};
+                    std::array<uint8_t, 2> act_pkt = {0x30, static_cast<uint8_t>(sample.channel_id + 1)};
                     comms::messages::sensor::RawPTMessage msg;
                     msg.setField<0>(receive_timestamp_ns);
-                    msg.setField<1>(sample.channel_id);
+                    msg.setField<1>(static_cast<uint8_t>(sample.channel_id + 1));
                     msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
                     msg.setField<3>(sample.raw_adc_counts);
                     msg.setField<4>(sample.sample_timestamp_ms);
