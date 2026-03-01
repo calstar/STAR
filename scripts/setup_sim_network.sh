@@ -4,13 +4,18 @@
 
 # Board IPs from config.toml
 IPS=(
-    "192.168.2.101" # pt_board
-    "192.168.2.102" # pt_board_2
-    "192.168.2.103" # tc_board
-    "192.168.2.104" # rtd_board
-    "192.168.2.105" # lc_board
-    "192.168.2.201" # actuator_board
-    "192.168.2.202" # actuator_board_2
+    "192.168.2.21" # pt_board
+    "192.168.2.22" # pt_board_2
+    "192.168.2.11" # actuator_board
+    "192.168.2.12" # actuator_board_2
+    "192.168.2.13" # actuator_board_3
+    "192.168.2.14" # actuator_board_4
+    "192.168.2.41" # lc_board
+    "192.168.2.42" # lc_board_2
+    "192.168.2.51" # tc_board
+    "192.168.2.52" # tc_board_2
+    "192.168.2.31" # rtd_board
+    "192.168.2.32" # rtd_board_2
 )
 
 echo "🔧 Setting up virtual IP aliases for simulation..."

@@ -154,17 +154,20 @@ class SimulatedBoard:
         elif self.board_type == BOARD_TYPE_LC:
             # Scale for ~0-500 N (force_n)
             wave = (math.sin(t * 0.2 + self.board_id) + 1) / 2.0
-            return int(wave * 50000000 + random.randint(-500, 500))
+            val = int(wave * 50000000 + random.randint(-500, 500))
+            return max(0, min(val, ADC_MAX - 1))
 
         elif self.board_type == BOARD_TYPE_TC:
             # Scale for ~20-100 C (temperature_c)
             wave = (math.sin(t * 0.1 + self.board_id * 0.5) + 1) / 2.0
-            return int(2000000 + wave * 8000000 + random.randint(-500, 500))
+            val = int(2000000 + wave * 8000000 + random.randint(-500, 500))
+            return max(0, min(val, ADC_MAX - 1))
 
         elif self.board_type == BOARD_TYPE_RTD:
             # Scale for ~20-50 C (temperature_c)
             wave = (math.sin(t * 0.05 + sensor_id) + 1) / 2.0
-            return int(2000000 + wave * 3000000 + random.randint(-100, 100))
+            val = int(2000000 + wave * 3000000 + random.randint(-100, 100))
+            return max(0, min(val, ADC_MAX - 1))
 
         elif self.board_type == BOARD_TYPE_ACTUATOR:
             return int(1200000 + random.randint(-2000, 2000))

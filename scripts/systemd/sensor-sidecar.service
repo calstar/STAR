@@ -1,0 +1,15 @@
+[Unit]
+Description=Sensor System Calibration Sidecar
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sensor_system
+ExecStart=%h/fsw/venv/bin/python3 scripts/calibration/calibration_server.py
+Restart=always
+RestartSec=5
+Environment=PYTHONPATH=%h/sensor_system
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

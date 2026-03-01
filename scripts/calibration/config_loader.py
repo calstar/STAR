@@ -227,7 +227,8 @@ def get_display_config() -> dict:
 
 def get_abort_pts() -> Dict[str, Any]:
     """Return [abort_pts] section: sensor role name → pressure threshold (PSI).
-    Used when building ACTUATOR_CONFIG (threshold is converted to ADC code per PT calibration)."""
+    Used when building ACTUATOR_CONFIG (threshold is converted to ADC code per PT calibration).
+    """
     cfg = load_config()
     return cfg.get("abort_pts", {})
 

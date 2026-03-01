@@ -1259,15 +1259,19 @@ class SensorSystemServer {
             this.manuallyCommandedChannels.clear();
           } else {
             this.manuallyCommandedChannels.clear();
-            applyActuatorsForState(this, newState, STATE_ACTUATOR_MAP);
-            if (newState === SystemState.IDLE) { stopContinuousActuatorCommands(this); }
-            else if (newState === SystemState.FIRE) {
-              const fuelInfo = getActuatorBoardInfo(this, 'Fuel Press');
-              const loxInfo = getActuatorBoardInfo(this, 'LOX Press');
-              if (fuelInfo) this.manuallyCommandedChannels.add(`${fuelInfo.channel}@${fuelInfo.boardIp}`);
-              if (loxInfo) this.manuallyCommandedChannels.add(`${loxInfo.channel}@${loxInfo.boardIp}`);
-              startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP);
-            } else { startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP); }
+            if (!this.USE_CPP_CONTROLLER) {
+              applyActuatorsForState(this, newState, STATE_ACTUATOR_MAP);
+              if (newState === SystemState.IDLE) { stopContinuousActuatorCommands(this); }
+              else if (newState === SystemState.FIRE) {
+                const fuelInfo = getActuatorBoardInfo(this, 'Fuel Press');
+                const loxInfo = getActuatorBoardInfo(this, 'LOX Press');
+                if (fuelInfo) this.manuallyCommandedChannels.add(`${fuelInfo.channel}@${fuelInfo.boardIp}`);
+                if (loxInfo) this.manuallyCommandedChannels.add(`${loxInfo.channel}@${loxInfo.boardIp}`);
+                startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP);
+              } else { startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP); }
+            } else {
+              console.log(`🎯 State changed to ${SystemState[newState]} – relying on C++ PressureStateMachine for automations`);
+            }
           }
 
           broadcastActuatorExpectedPositions(this, newState, STATE_ACTUATOR_MAP);
@@ -1328,8 +1332,12 @@ class SensorSystemServer {
 
         console.log(`🎯 CLEAR_ABORT command received – syncing actuators to abort pattern for state ${SystemState[abortState]} and broadcasting CLEAR_ABORT`);
         try {
-          applyActuatorsForState(this, abortState, STATE_ACTUATOR_MAP);
-          broadcastActuatorExpectedPositions(this, abortState, STATE_ACTUATOR_MAP);
+          if (!this.USE_CPP_CONTROLLER) {
+            applyActuatorsForState(this, abortState, STATE_ACTUATOR_MAP);
+            broadcastActuatorExpectedPositions(this, abortState, STATE_ACTUATOR_MAP);
+          } else {
+            console.log(`🎯 Relying on C++ PressureStateMachine for CLEAR_ABORT actuator automations`);
+          }
         } catch (err) {
           console.error('❌ Failed to apply abort actuator pattern during clear_abort:', err);
         }

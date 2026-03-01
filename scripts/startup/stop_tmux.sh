@@ -1,28 +1,23 @@
 #!/bin/bash
-# =============================================================================
-# Sensor System tmux Shutdown
-# Kills the tmux session and all associated processes
-# Usage: ./scripts/startup/stop_tmux.sh [session_name]
-# =============================================================================
+# Stop script for Tmux sessions and related background processes
 
-SESSION="${1:-sensor}"
+echo "Stopping Sensor System tmux sessions and processes..."
 
-echo "Shutting down sensor system..."
+# Kill the dev and logs tmux sessions
+tmux kill-session -t "sensor-dev" 2>/dev/null || true
+tmux kill-session -t "sensor-logs" 2>/dev/null || true
+tmux kill-session -t "sensor" 2>/dev/null || true
 
-# Kill tmux session (kills all panes/processes inside it)
-if tmux has-session -t "$SESSION" 2>/dev/null; then
-    tmux kill-session -t "$SESSION"
-    echo "  ✅ tmux session '$SESSION' killed"
-else
-    echo "  ⚠️  No tmux session '$SESSION' found"
+# Kill background processes if they were started in dev mode
+pkill -f "elodin-db run.*2240" 2>/dev/null || true
+pkill -f "next dev" 2>/dev/null || true
+pkill -f "tsx watch.*server.ts" 2>/dev/null || true
+pkill -f "calibration_server.py" 2>/dev/null || true
+
+# Stop systemd services if they are running
+if systemctl --user is-active --quiet sensor-backend.service 2>/dev/null; then
+    echo "Stopping systemd services..."
+    systemctl --user stop sensor-backend sensor-frontend sensor-sidecar sensor-elodin 2>/dev/null || true
 fi
 
-# Mop up any stragglers
-pkill -f "elodin-db run.*:2240" 2>/dev/null && echo "  ✅ Stopped elodin-db" || true
-pkill -f "daq_bridge" 2>/dev/null && echo "  ✅ Stopped daq_bridge" || true
-pkill -f "combined_gui.py" 2>/dev/null && echo "  ✅ Stopped Diablo GUI" || true
-pkill -f "combined_fsw_gui" 2>/dev/null && echo "  ✅ Stopped FSW GUI" || true
-pkill -f "next dev" 2>/dev/null && echo "  ✅ Stopped Web GUI Frontend" || true
-pkill -f "tsx watch.*server.ts" 2>/dev/null && echo "  ✅ Stopped Web GUI Backend" || true
-
-echo "Done."
+echo "✅ All tmux sessions and related processes have been stopped."

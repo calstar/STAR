@@ -33,6 +33,29 @@ npm run dev &
 BACKEND_PID=$!
 cd ..
 
+# Build and start C++ FSW components
+echo "⚙️  Building and starting C++ FSW components (daq_bridge, controller_service)..."
+cd ../FSW
+if [ ! -d "build" ]; then
+    mkdir -p build
+    cd build
+    cmake ..
+    cd ..
+fi
+cd build
+make -j$(nproc) daq_bridge controller_service
+
+echo "🚀 Starting daq_bridge..."
+./daq_bridge &
+DAQ_BRIDGE_PID=$!
+
+echo "🚀 Starting controller_service..."
+./controller_service &
+CONTROLLER_PID=$!
+
+cd ../../web-gui
+
+
 # Wait for backend to start
 sleep 2
 
@@ -56,5 +79,5 @@ echo ""
 echo "Press Ctrl+C to stop all services"
 
 # Wait for user interrupt
-trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit" INT TERM
+trap "echo 'Stopping all services...'; kill $BACKEND_PID $FRONTEND_PID $DAQ_BRIDGE_PID $CONTROLLER_PID 2>/dev/null; exit" INT TERM
 wait

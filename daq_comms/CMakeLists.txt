@@ -15,7 +15,8 @@ add_library(daq_comms_lib SHARED ${DAQ_COMMS_SOURCES})
 
 # Include directories
 target_include_directories(daq_comms_lib PUBLIC
-    ${CMAKE_SOURCE_DIR}/daq_comms/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 # Link libraries

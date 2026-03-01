@@ -5,9 +5,9 @@
   "main": "dist/server.js",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "USE_CPP_CONTROLLER=true USE_DIRECT_DAQ=false tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "USE_CPP_CONTROLLER=true USE_DIRECT_DAQ=false node dist/server.js"
   },
   "keywords": [],
   "author": "",
