@@ -229,6 +229,8 @@ export interface BoardStatus {
   necessaryForAbort?: boolean;
   /** True if this board is the designated survivor actuator controller. */
   designatedSurvivor?: boolean;
+  /** 0 = Internal 2.5V, 1 = VDD ratiometric, 2 = 5V absolute */
+  voltageReference?: number;
 }
 
 export interface BoardStatusPayload {

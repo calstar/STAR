@@ -41,6 +41,50 @@ export function calculatePressure(
   return A * (adcCode ** 3) + B * (adcCode ** 2) + C * adcCode + D;
 }
 
+/** Maximum ADC value for bisection range (24-bit typical) */
+const MAX_ADC = 16777216;
+
+/**
+ * Inverse of calculatePressure: given target PSI, solve for ADC code.
+ * Solves A*x³ + B*x² + C*x + D = targetPsi for x using bisection.
+ * Used when building ACTUATOR_CONFIG so the packet sends threshold as ADC code.
+ *
+ * @param targetPsi Target pressure in PSI (from config).
+ * @param coeffs Same calibration coefficients as used by calculatePressure.
+ * @return ADC code (integer in [0, MAX_ADC]), or NaN if no solution in range.
+ */
+export function inversePressureToAdc(
+  targetPsi: number,
+  coeffs: CalibrationCoefficients
+): number {
+  const { A, B, C, D } = coeffs;
+  const f = (x: number) => A * (x ** 3) + B * (x ** 2) + C * x + D - targetPsi;
+
+  let lo = 0;
+  let hi = MAX_ADC;
+  const fLo = f(lo);
+  const fHi = f(hi);
+
+  if (fLo * fHi > 0) {
+    return NaN; // No root in [0, MAX_ADC] or same sign at both ends
+  }
+
+  const maxIter = 80;
+  for (let i = 0; i < maxIter; i++) {
+    const mid = (lo + hi) / 2;
+    const fMid = f(mid);
+    if (Math.abs(fMid) < 1e-6 || hi - lo < 1) {
+      return Math.round(mid);
+    }
+    if (fLo * fMid <= 0) {
+      hi = mid;
+    } else {
+      lo = mid;
+    }
+  }
+  return Math.round((lo + hi) / 2);
+}
+
 /**
  * Load calibration from JSON file (from calibration GUI)
  */

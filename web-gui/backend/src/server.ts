@@ -18,7 +18,7 @@ import { publishControllerActuation, publishControllerDiagnostics } from './cont
 import { getStateTransitions, isTransitionAllowed } from './routes/state-transitions.js';
 import { getStateActuatorMap, StateActuatorMap } from './routes/state-actuators.js';
 import { startAPIServer } from './api-server.js';
-import { loadPTCalibration, calculatePressure, CalibrationCoefficients } from './calibration.js';
+import { loadPTCalibration, calculatePressure, inversePressureToAdc, CalibrationCoefficients } from './calibration.js';
 import { Phase2CalibrationEngine } from './calibration-phase2.js';
 import { DataLogger } from './data-logger.js';
 import { readConfig } from './routes/config.js';
@@ -149,6 +149,8 @@ class SensorSystemServer {
     designatedSurvivor: boolean;
     /** Sensor channels (1-based) we want data from on this board. */
     sensorChannels: number[];
+    /** 0 = Internal 2.5V, 1 = VDD ratiometric, 2 = 5V absolute. */
+    voltageReference: number;
   }> = new Map();
 
   /** Aggregated per-board status, keyed by numeric ID. */
@@ -472,6 +474,8 @@ class SensorSystemServer {
           sensorChannels = Array.from({ length: numSensors }, (_v, i) => i + 1);
         }
 
+        const voltageReference = Math.min(2, Math.max(0, Number(board.voltage_reference) || 0));
+
         const entry = {
           type,
           boardNumber,
@@ -481,6 +485,7 @@ class SensorSystemServer {
           necessaryForAbort,
           designatedSurvivor,
           sensorChannels,
+          voltageReference,
         };
         this.boardRegistryById.set(id, entry);
         this.boardsStatus.set(id, {
@@ -2420,6 +2425,7 @@ class SensorSystemServer {
         configError: configState?.status === 'error' ? configState.errorMessage : undefined,
         necessaryForAbort: registry?.necessaryForAbort ?? false,
         designatedSurvivor: registry?.designatedSurvivor ?? false,
+        voltageReference: registry?.voltageReference ?? 0,
       });
     });
 
@@ -2524,18 +2530,54 @@ class SensorSystemServer {
       const registry = this.boardRegistryById.get(id);
       if (!registry) return;
 
-      // Skip actuator boards for now – actuator config is a separate TODO
-      if (registry.type === 'ACTUATOR') return;
-
       const cfg = this.boardConfigState.get(id) ?? { status: 'pending' as const };
       if (cfg.status === 'sent') return;
 
+      if (registry.type === 'ACTUATOR') {
+        // Send ACTUATOR_CONFIG when actuator board connects for the first time
+        if (!this.designatedSurvivorBoardId || !this.designatedSurvivorIP) {
+          return;
+        }
+        try {
+          const isAbortController = id === this.designatedSurvivorBoardId ? 1 : 0;
+          const packet = this.buildActuatorConfigPacket(isAbortController);
+          if (!packet) return;
+          const targetPort = 5005;
+          this.actuatorSocket!.send(packet, targetPort, registry.ip, (err) => {
+            if (err) {
+              console.error(`❌ Failed to send ACTUATOR_CONFIG to board ${id} (${registry.ip}:${targetPort}):`, err);
+              this.boardConfigState.set(id, {
+                status: 'error',
+                lastSentAt: Date.now(),
+                errorMessage: err.message || 'UDP send error',
+              });
+            } else {
+              console.log(`📤 ACTUATOR_CONFIG sent to board ${id} (${registry.ip}:${targetPort}) – is_abort_controller=${isAbortController}`);
+              this.boardConfigState.set(id, {
+                status: 'sent',
+                lastSentAt: Date.now(),
+              });
+            }
+          });
+        } catch (err: any) {
+          console.error(`❌ Failed to build/send ACTUATOR_CONFIG for board ${id}:`, err);
+          this.boardConfigState.set(id, {
+            status: 'error',
+            lastSentAt: Date.now(),
+            errorMessage: String(err?.message || err),
+          });
+        }
+        return;
+      }
+
+      // SENSOR_CONFIG for sense boards
       const sensorChannels = registry.sensorChannels || [];
       const necessaryForAbort = registry.necessaryForAbort;
 
       try {
         const packet = this.buildSensorConfigPacket(
           sensorChannels,
+          registry.voltageReference ?? 0,
           necessaryForAbort,
           this.designatedSurvivorIP!,
         );
@@ -2570,15 +2612,130 @@ class SensorSystemServer {
   }
 
   /**
+   * Build ACTUATOR_CONFIG packet (header + body).
+   * Body: is_abort_controller (1B), N (1B), N x AbortActuatorLocation (7B each), X (1B), X x AbortPTLocation (9B each).
+   * IPs big-endian; threshold_adc_code little-endian.
+   */
+  private buildActuatorConfigPacket(is_abort_controller: number): Buffer | null {
+    const config = readConfig();
+    const actuatorRoles = (config.actuator_roles || {}) as Record<string, [string, number]>;
+    const sensorRoles = (config.sensor_roles || {}) as Record<string, number>;
+    const abortPts = (config.abort_pts || {}) as Record<string, number>;
+
+    if (!this.designatedSurvivorIP) {
+      return null;
+    }
+
+    const actuatorBoardIP = this.designatedSurvivorIP;
+    const ipToU32BE = (ip: string): number => {
+      const octets = ip.split('.').map((p) => Number(p));
+      if (octets.length !== 4 || octets.some((p) => !Number.isFinite(p) || p < 0 || p > 255)) {
+        throw new Error(`Invalid IP: ${ip}`);
+      }
+      return ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+    };
+
+    // First PT board IP for abort PT blocks
+    let ptBoardIP: string | null = null;
+    for (const [, reg] of this.boardRegistryById) {
+      if (reg.type === 'PT') {
+        ptBoardIP = reg.ip;
+        break;
+      }
+    }
+
+    // Build N abort actuator blocks (actuator_roles + Vent + Engine Abort from state CSV)
+    const abortActuators: Array<{ ip: number; actuator_id: number; vent_state: number; abort_state: number }> = [];
+    for (const [_, value] of Object.entries(actuatorRoles)) {
+      if (!Array.isArray(value) || value.length < 2) continue;
+      const actuatorId = Number(value[1]);
+      if (!Number.isFinite(actuatorId) || actuatorId < 1 || actuatorId > 255) continue;
+      const ventState = (STATE_ACTUATOR_MAP[SystemState.VENT] && STATE_ACTUATOR_MAP[SystemState.VENT][actuatorId]) ?? 0;
+      const abortState = (STATE_ACTUATOR_MAP[SystemState.ENGINE_ABORT] && STATE_ACTUATOR_MAP[SystemState.ENGINE_ABORT][actuatorId]) ?? 0;
+      abortActuators.push({
+        ip: ipToU32BE(actuatorBoardIP),
+        actuator_id: actuatorId,
+        vent_state: ventState ? 1 : 0,
+        abort_state: abortState ? 1 : 0,
+      });
+    }
+
+    // Build X abort PT blocks (abort_pts + sensor_roles + calibration inverse)
+    const abortPtsList: Array<{ ip: number; sensor_id: number; threshold_adc_code: number }> = [];
+    for (const [roleName, thresholdPsi] of Object.entries(abortPts)) {
+      const sensorId = sensorRoles[roleName];
+      if (sensorId == null || !Number.isFinite(sensorId) || sensorId < 1 || sensorId > 255) {
+        console.warn(`⚠️ abort_pts: no sensor_roles entry for "${roleName}", skipping`);
+        continue;
+      }
+      const coeffs = this.ptCalibration.get(sensorId);
+      if (!coeffs) {
+        console.warn(`⚠️ abort_pts: no calibration for sensor_id ${sensorId} ("${roleName}"), skipping`);
+        continue;
+      }
+      const adcCode = inversePressureToAdc(Number(thresholdPsi), coeffs);
+      if (!Number.isFinite(adcCode) || adcCode < 0) {
+        console.warn(`⚠️ abort_pts: inversePressureToAdc(${thresholdPsi}, ...) failed for "${roleName}", skipping`);
+        continue;
+      }
+      if (!ptBoardIP) {
+        console.warn('⚠️ abort_pts: no PT board in config, skipping abort PT blocks');
+        break;
+      }
+      abortPtsList.push({
+        ip: ipToU32BE(ptBoardIP),
+        sensor_id: sensorId,
+        threshold_adc_code: Math.round(adcCode) >>> 0,
+      });
+    }
+
+    const N = Math.min(abortActuators.length, 255);
+    const X = Math.min(abortPtsList.length, 255);
+    const headerSize = 6;
+    const bodySize = 1 + 1 + N * 7 + 1 + X * 9;
+    const totalSize = headerSize + bodySize;
+    const buffer = Buffer.allocUnsafe(totalSize);
+
+    const timestamp = Math.floor(Date.now()) & 0xFFFFFFFF;
+    buffer.writeUInt8(6, 0);   // ACTUATOR_CONFIG
+    buffer.writeUInt8(0, 1);   // version
+    buffer.writeUInt32LE(timestamp, 2);
+
+    let offset = headerSize;
+    buffer.writeUInt8(is_abort_controller, offset++);
+    buffer.writeUInt8(N, offset++);
+
+    for (let i = 0; i < N; i++) {
+      const a = abortActuators[i];
+      buffer.writeUInt32BE(a.ip, offset); offset += 4;
+      buffer.writeUInt8(a.actuator_id, offset++);
+      buffer.writeUInt8(a.vent_state, offset++);
+      buffer.writeUInt8(a.abort_state, offset++);
+    }
+
+    buffer.writeUInt8(X, offset++);
+    for (let i = 0; i < X; i++) {
+      const p = abortPtsList[i];
+      buffer.writeUInt32BE(p.ip, offset); offset += 4;
+      buffer.writeUInt8(p.sensor_id, offset++);
+      buffer.writeUInt32LE(p.threshold_adc_code, offset); offset += 4;
+    }
+
+    return buffer;
+  }
+
+  /**
    * Construct a DAQv2 SENSOR_CONFIG packet.
    * Body layout (after 6-byte header):
    *   num_sensors (1 byte)
    *   sensor_ids  (N bytes, 1-byte each)
+   *   reference_voltage (1 byte: 0=Internal 2.5V, 1=VDD, 2=5V)
    *   necessary_for_abort (1 byte, 0/1)
    *   designated_survivor_ip (4 bytes, big-endian IPv4)
    */
   private buildSensorConfigPacket(
     sensorChannels: number[],
+    referenceVoltage: number,
     necessaryForAbort: boolean,
     designatedSurvivorIP: string,
   ): Buffer {
@@ -2587,7 +2744,7 @@ class SensorSystemServer {
       .filter((v) => Number.isFinite(v) && v >= 1 && v <= 255);
 
     const numSensors = Math.min(sanitized.length, 255);
-    const bodyLength = 1 + numSensors + 1 + 4;
+    const bodyLength = 1 + numSensors + 1 + 1 + 4;
     const totalLength = 6 + bodyLength;
     const buffer = Buffer.allocUnsafe(totalLength);
 
@@ -2606,6 +2763,7 @@ class SensorSystemServer {
       buffer.writeUInt8(sanitized[i], offset++);
     }
 
+    buffer.writeUInt8(Math.min(2, Math.max(0, referenceVoltage)), offset++);
     buffer.writeUInt8(necessaryForAbort ? 1 : 0, offset++);
 
     const ipOctets = designatedSurvivorIP.split('.').map((part) => Number(part));

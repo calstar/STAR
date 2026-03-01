@@ -1,0 +1,21 @@
+---
+description: Do not edit code inside git submodules from this repo
+alwaysApply: true
+---
+
+# Submodules: Do Not Edit From Here
+
+**Do not create, edit, or delete files inside git submodules** when working in this repo.
+
+Submodule paths (read-only from this workspace):
+
+- `external/DAQv2-Comms`
+- `external/DiabloAvionics`
+- `engine_sim`
+- `external/flash`
+
+**Allowed:** Updating submodule pointers (e.g. `git submodule update --remote`, committing updated submodule refs in the parent repo).
+
+**Not allowed:** Changing source files under the above paths. Changes to submodule code belong in their own repositories; update this repo by pulling new commits and then updating the submodule reference here.
+
+If the user asks to change behavior that lives in a submodule, suggest they make the change in the submodule's repo (or open that repo), then update the submodule ref in this repo.

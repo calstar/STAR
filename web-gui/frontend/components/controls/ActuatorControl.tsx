@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useGetSensorValue, useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
+import { getActuatorOpenThreshold } from '@/lib/voltageRef';
 import { ActuatorId, ActuatorState, CommandPayload, SystemState } from '@/lib/types';
 
 // Human-readable names
@@ -72,6 +73,7 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const debugMode = useSensorStore((s) => s.debugMode);
   const currentState = useSensorStore((s) => s.currentState);
   const actuatorExpectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
+  const boards = useSensorStore((s) => s.boards as Record<number, { designatedSurvivor?: boolean; voltageReference?: number }>);
 
   // Manual commanded state for DEBUG mode only
   const [manualCommanded, setManualCommanded] = useState<ActuatorState | null>(null);
@@ -131,14 +133,11 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const statusRaw = getSensorValue(entity, 'status')
     ?? getSensorValue(`ACT.ACT_CH${ch}`, 'status');
 
-  // Convert ADC to voltage (32-bit ADC, 0-3.3V range, reference voltage)
-  // Combined_gui uses voltage threshold: typically > 0.1V means actuator is ON
-  // For 32-bit ADC: voltage = (rawAdc / 2^32) * 3.3V
-  // Threshold: > 0.1V = rawAdc > (0.1 / 3.3) * 2^32 ≈ 130,000,000
-  // But we see values like 1,168,235,832 which is ~0.9V, so threshold should be lower
-  // Use threshold: > 50,000,000 (about 0.04V) to detect actuator ON
-  const voltageThreshold = 50000000; // ~0.04V
-  const feedbackOpen = statusRaw === 1 || rawAdc > voltageThreshold;
+  // Actuator open threshold from designated survivor board's voltage reference (0=2.5V, 1=VDD raw, 2=5V)
+  const actuatorBoard = boards ? Object.values(boards).find((b) => b.designatedSurvivor) : null;
+  const voltageRef = actuatorBoard?.voltageReference ?? 0;
+  const openThreshold = getActuatorOpenThreshold(voltageRef);
+  const feedbackOpen = statusRaw === 1 || rawAdc > openThreshold;
 
   const sendCommand = (state: ActuatorState) => {
     if (!canControl) return;
