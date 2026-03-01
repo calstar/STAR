@@ -39,7 +39,8 @@ export function loadSensorRoleMap(): {
         // Build board-specific mappings to prevent cross-contamination
         for (const [boardKey, boardRaw] of Object.entries(boards)) {
             const board = boardRaw as any;
-            if (board.type === 'PT' && board.enabled !== false && board.ip) {
+            const supportedTypes = ['PT', 'LC', 'RTD', 'TC'];
+            if (supportedTypes.includes(board.type) && board.enabled !== false && board.ip) {
                 const boardIp = board.ip as string;
                 const isHpBoard = Array.isArray(board.hp_pt_connectors) && board.hp_pt_connectors.length > 0;
                 const excitationId = typeof board.excitation_connector_id === 'number' ? board.excitation_connector_id : -1;
@@ -48,13 +49,24 @@ export function loadSensorRoleMap(): {
                 const boardSensorRolesKey = isHpBoard ? 'sensor_roles_pt2' : `sensor_roles_${boardKey}`;
                 const boardSensorRoles = (config as any)[boardSensorRolesKey] || sensorRoles;
 
-                const boardMap: Record<number, string> = {};
+                const boardMap: Record<string, string> = {};
                 for (const [roleName, channelId] of Object.entries(boardSensorRoles)) {
                     if (typeof channelId !== 'number' || channelId < 1 || channelId > 10) continue;
                     if (isHpBoard && channelId === excitationId) continue;
                     if (isHpBoard && !(board.hp_pt_connectors as number[]).includes(channelId)) continue;
                     const entityName = roleName.replace(/\s+/g, '_');
-                    boardMap[channelId] = `PT_Cal.${entityName}`;
+                    const prefix = board.type === 'PT' ? 'PT_Cal' : board.type;
+                    const entity = `${prefix}.${entityName}`;
+                    boardMap[channelId] = entity;
+
+                    // GUI Compatibility Aliases - if name ends in LO/HI, also map LOW/HIGH
+                    if (roleName.endsWith(' LO')) {
+                        boardMap[`${channelId}_alias`] = `${prefix}.${roleName.replace(' LO', ' LOW').replace(/\s+/g, '_')}`;
+                    } else if (roleName.endsWith(' HI')) {
+                        boardMap[`${channelId}_alias`] = `${prefix}.${roleName.replace(' HI', ' HIGH').replace(/\s+/g, '_')}`;
+                    } else if (roleName.endsWith(' DN')) {
+                        boardMap[`${channelId}_alias`] = `${prefix}.${roleName.replace(' DN', ' DOWN').replace(/\s+/g, '_')}`;
+                    }
                 }
 
                 if (Object.keys(boardMap).length === 0) {

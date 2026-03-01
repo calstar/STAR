@@ -127,11 +127,11 @@ voltage_reference = 0
 
 [boards.lc_board]
 type = "LC"
-ip = "192.168.2.102"
+ip = "192.168.2.105"
 send_port = 5006
 num_sensors = 4
-board_id = 3
-enabled = false              # flip to true when board is connected
+board_id = 12
+enabled = true              # flip to true when board is connected
 enable_serial_printing = false
 necessary_for_abort = false
 designated_survivor = false
@@ -146,8 +146,8 @@ type = "TC"
 ip = "192.168.2.103"
 send_port = 5006
 num_sensors = 10
-board_id = 4
-enabled = false
+board_id = 13
+enabled = true
 enable_serial_printing = false
 necessary_for_abort = false
 designated_survivor = false
@@ -162,8 +162,8 @@ type = "RTD"
 ip = "192.168.2.104"
 send_port = 5006
 num_sensors = 4
-board_id = 5
-enabled = false
+board_id = 14
+enabled = true
 enable_serial_printing = false
 necessary_for_abort = false
 designated_survivor = false
@@ -206,21 +206,21 @@ active_connectors = []  # Example: [1, 2] if only connectors 1-2 are used
 # Board-specific mapping to prevent cross-contamination between boards
 # =============================================================================
 [sensor_roles_pt_board]
-"Fuel Upstream"   = 1
-"GSE Low"         = 2
-"Fuel Fill Tank"  = 4
-"Fuel Downstream" = 3
-"Ox Upstream"     = 5
-"GN2 Regulated"   = 6
-"Ox Downstream"   = 7
+"FUEL UP"      = 1
+"GSE LO"       = 2
+"FUEL FILL PRESS" = 4
+"FUEL DN"      = 3
+"LOX UP"       = 5
+"GN2 REG"      = 6
+"LOX DN"       = 7
 
 # =============================================================================
 # Abort PTs - PTs required for abort logic (sensor role name → pressure threshold PSI)
 # Threshold is converted to ADC code per PT calibration when building ACTUATOR_CONFIG.
 # =============================================================================
 [abort_pts]
-"Fuel Upstream"   = 400
-"Ox Upstream"     = 400
+"FUEL UP"   = 400
+"LOX UP"    = 400
 
 # =============================================================================
 # Sensor Roles - PT Board 2 (High-Pressure 4-20 mA sensors)
@@ -229,9 +229,9 @@ active_connectors = []  # Example: [1, 2] if only connectors 1-2 are used
 # and never emitted as a sensor update.
 # =============================================================================
 [sensor_roles_pt2]
-"GSE Mid"  = 1    # Connector 1 is GSE Mid (HP PT sensor)
-"GSE High" = 3    # Connector 3 is GSE High (HP PT sensor)
-"GN2 High" = 4    # Connector 4 is GN2 High (HP PT sensor)
+"GSE MID"  = 1
+"GSE HI"   = 3
+"GN2 HI"   = 4
 # Connector 2 is excitation voltage, not a sensor
 
 # =============================================================================

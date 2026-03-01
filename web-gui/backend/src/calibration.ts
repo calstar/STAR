@@ -187,13 +187,38 @@ function loadCalibrationJSON(jsonPath: string): CalibrationMap {
       for (const [sensorIdStr, coeffs] of Object.entries(data.calibration_polynomials)) {
         const sensorId = parseInt(sensorIdStr, 10);
         const poly = polyCoeffsMap?.[sensorIdStr];
-        if (Array.isArray(poly) && poly.length > 0) {
+
+        // If poly exists and is not all zeros, use it.
+        // If coeffs exists and is not all zeros, use it.
+        if (Array.isArray(poly) && poly.length > 0 && poly.some(c => c !== 0)) {
           const entry: CalibrationCoefficients = { A: 0, B: 0, C: 0, D: 0, polyCoeffs: poly };
           if (adcNormMinMap?.[sensorIdStr] != null) entry.adcNormMin = adcNormMinMap[sensorIdStr];
           if (adcNormScaleMap?.[sensorIdStr] != null) entry.adcNormScale = adcNormScaleMap[sensorIdStr];
           calMap.set(sensorId, entry);
-        } else if (Array.isArray(coeffs) && coeffs.length >= 4) {
+        } else if (Array.isArray(coeffs) && coeffs.length >= 4 && coeffs.some(c => c !== 0)) {
           const entry: CalibrationCoefficients = { A: coeffs[0], B: coeffs[1], C: coeffs[2], D: coeffs[3] };
+          if (adcNormMinMap?.[sensorIdStr] != null) entry.adcNormMin = adcNormMinMap[sensorIdStr];
+          if (adcNormScaleMap?.[sensorIdStr] != null) entry.adcNormScale = adcNormScaleMap[sensorIdStr];
+          calMap.set(sensorId, entry);
+        } else if (polyCoeffsMap?.[sensorIdStr]) {
+          // Fallback to polyCoeffsMap if polynomials was zeroed but coeffs are provided there
+          const fallbackPoly = polyCoeffsMap[sensorIdStr];
+          if (Array.isArray(fallbackPoly) && fallbackPoly.length > 0 && fallbackPoly.some(c => c !== 0)) {
+            const entry: CalibrationCoefficients = { A: 0, B: 0, C: 0, D: 0, polyCoeffs: fallbackPoly };
+            if (adcNormMinMap?.[sensorIdStr] != null) entry.adcNormMin = adcNormMinMap[sensorIdStr];
+            if (adcNormScaleMap?.[sensorIdStr] != null) entry.adcNormScale = adcNormScaleMap[sensorIdStr];
+            calMap.set(sensorId, entry);
+          }
+        }
+      }
+    }
+    // Final pass for any sensors only in polyCoeffsMap
+    if (polyCoeffsMap) {
+      for (const [sensorIdStr, poly] of Object.entries(polyCoeffsMap)) {
+        const sensorId = parseInt(sensorIdStr, 10);
+        if (calMap.has(sensorId)) continue;
+        if (Array.isArray(poly) && poly.length > 0 && poly.some(c => c !== 0)) {
+          const entry: CalibrationCoefficients = { A: 0, B: 0, C: 0, D: 0, polyCoeffs: poly };
           if (adcNormMinMap?.[sensorIdStr] != null) entry.adcNormMin = adcNormMinMap[sensorIdStr];
           if (adcNormScaleMap?.[sensorIdStr] != null) entry.adcNormScale = adcNormScaleMap[sensorIdStr];
           calMap.set(sensorId, entry);

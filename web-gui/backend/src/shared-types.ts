@@ -18,3 +18,5 @@ export type CommandPayload = import('../../shared/types.js').CommandPayload;
 export type ConnectionStatus = import('../../shared/types.js').ConnectionStatus;
 export type BoardStatus = import('../../shared/types.js').BoardStatus;
 export type BoardStatusPayload = import('../../shared/types.js').BoardStatusPayload;
+export type SystemState = import('../../shared/types.js').SystemState;
+export type ActuatorState = import('../../shared/types.js').ActuatorState;

@@ -150,6 +150,7 @@ class SensorSystemServer {
 
   /** Server heartbeat (UDP broadcast) configuration */
   private serverHeartbeatIntervalMs: number = 1000; // default 1 Hz
+  private _lastDesignatedSurvivorWarn: number = 0;
   private serverBroadcastPort: number = 5005;       // default actuator command port
   private serverBroadcastIP: string = '255.255.255.255';
   private serverHeartbeatTimer: NodeJS.Timeout | null = null;
@@ -311,7 +312,7 @@ class SensorSystemServer {
         }
       }
       console.log(`📡 Server heartbeat config: interval=${this.serverHeartbeatIntervalMs} ms, ` +
-                  `broadcast=${this.serverBroadcastIP}:${this.serverBroadcastPort}`);
+        `broadcast=${this.serverBroadcastIP}:${this.serverBroadcastPort}`);
     } catch (err) {
       console.warn('⚠️ Failed to load server_heartbeat config; using defaults:', err);
       this.serverBroadcastPort = this.actuatorPort;
@@ -403,7 +404,12 @@ class SensorSystemServer {
           const state = this.phase2Engine!.getSensorState(sensorId);
           if (state) {
             const c = saved.coeffs;
-            state.adjustment = c.map((val, idx) => val - coeffs[idx]);
+            state.adjustment = {
+              A: c.A - coeffs.A,
+              B: c.B - coeffs.B,
+              C: c.C - coeffs.C,
+              D: c.D - coeffs.D
+            };
             state.rlsUpdateCount = saved.rlsUpdateCount;
             // Also update our baseline map so conversions are correct before sidecar sync
             this.ptCalibration.set(sensorId, c);
@@ -568,6 +574,8 @@ class SensorSystemServer {
           necessaryForAbort,
           designatedSurvivor,
           sensorChannels,
+          voltageReference: board.voltage_reference ?? 0,
+          enableSerialPrinting: !!board.enable_serial_printing,
         };
         this.boardRegistryById.set(id, entry);
         this.boardsStatus.set(id, {
@@ -601,102 +609,6 @@ class SensorSystemServer {
     }
   }
 
-  /**
-   * Initialize board registry from config.toml
-   * Each board gets a numeric ID and boardNumber; IP is derived as 192.168.2.[id]
-   */
-  private loadBoardRegistry(): void {
-    try {
-      const config = readConfig();
-      const boards = config.boards || {};
-      this.boardRegistryById.clear();
-      this.boardsStatus.clear();
-      this.boardConfigState.clear();
-      this.designatedSurvivorBoardId = null;
-      this.designatedSurvivorIP = null;
-      this.designatedSurvivorConnected = false;
-
-      const designatedCandidates: Array<{ id: number; ip: string }> = [];
-
-      for (const [key, raw] of Object.entries(boards)) {
-        const board: any = raw;
-        const type: string = board.type || 'UNKNOWN';
-        // Distinguish between human board number and numeric ID used for IP
-        const boardNumber: number | null = typeof board.board_number === 'number'
-          ? board.board_number
-          : (typeof board.board_id === 'number' ? board.board_id : null);
-        const id: number | undefined = typeof board.id === 'number'
-          ? board.id
-          : (typeof board.board_id === 'number' ? board.board_id : undefined);
-        if (id === undefined) {
-          console.warn(`⚠️ Board ${key} is missing id/board_id; skipping heartbeat tracking`);
-          continue;
-        }
-        const ipFromConfig: string | undefined = typeof board.ip === 'string' ? board.ip : undefined;
-        const ip = ipFromConfig || `192.168.2.${id}`;
-
-        const necessaryForAbort: boolean = !!board.necessary_for_abort && type !== 'ACTUATOR';
-        const designatedSurvivor: boolean = !!board.designated_survivor && type === 'ACTUATOR';
-
-        // Determine sensor channels we want from this board
-        const numSensors: number | undefined = typeof board.num_sensors === 'number' ? board.num_sensors : undefined;
-        const activeConnectors: unknown = board.active_connectors;
-        let sensorChannels: number[] = [];
-        if (Array.isArray(activeConnectors) && activeConnectors.length > 0) {
-          sensorChannels = activeConnectors
-            .map((v) => Number(v))
-            .filter((v) => Number.isFinite(v) && v >= 1 && v <= 255);
-        } else if (numSensors && numSensors > 0) {
-          sensorChannels = Array.from({ length: numSensors }, (_v, i) => i + 1);
-        }
-
-        const voltageReference = Math.min(2, Math.max(0, Number(board.voltage_reference) || 0));
-
-        const enableSerialPrinting = !!board.enable_serial_printing;
-
-        const entry = {
-          type,
-          boardNumber,
-          id,
-          ip,
-          expected: true as const,
-          necessaryForAbort,
-          designatedSurvivor,
-          sensorChannels,
-          voltageReference,
-          enableSerialPrinting,
-        };
-        this.boardRegistryById.set(id, entry);
-        this.boardsStatus.set(id, {
-          ...entry,
-          connected: false,
-          lastHeartbeatMs: null,
-          heartbeatTimes: [],
-          boardState: null,
-          engineState: null,
-        });
-        this.boardConfigState.set(id, { status: 'pending' });
-
-        if (designatedSurvivor) {
-          designatedCandidates.push({ id, ip });
-        }
-      }
-
-      if (designatedCandidates.length === 1) {
-        this.designatedSurvivorBoardId = designatedCandidates[0].id;
-        this.designatedSurvivorIP = designatedCandidates[0].ip;
-        console.log(`📋 Designated survivor actuator board: ID ${this.designatedSurvivorBoardId} (${this.designatedSurvivorIP})`);
-      } else if (designatedCandidates.length === 0) {
-        console.warn('⚠️ No designated survivor actuator board found in config.toml; SENSOR_CONFIG packets will not be sent');
-      } else {
-        console.warn(`⚠️ Multiple designated survivor boards found (${designatedCandidates.length}); SENSOR_CONFIG packets will not be sent`);
-      }
-
-      console.log(`📋 Loaded ${this.boardRegistryById.size} boards from config.toml`);
-    } catch (error) {
-      console.warn('⚠️ Failed to load boards from config.toml; heartbeat pane will rely on discovery only:', error);
-    }
-  }
 
   private setupElodin(): void {
     this.elodin.on('connected', async () => {
@@ -846,6 +758,10 @@ class SensorSystemServer {
           const boardId = this.ipToBoardId.get(sourceIP) ?? 1; // Default to board 1
           const uniqueId = boardId * 100 + channelId;
           const codeUint32 = dp.data;
+
+          const boardEntry = this.boardRegistryById.get(boardId);
+          const boardType = boardEntry?.type || 'PT';
+
           let coeffs = this.ptCalibration.get(uniqueId) ?? this.ptCalibration.get(channelId); // Fallback to legacy channel ID if unique not found
 
           if (publishingToElodin) {
@@ -854,34 +770,45 @@ class SensorSystemServer {
 
           const boardMap = this.boardChannelToEntityMaps.get(sourceIP);
           const channelMap = boardMap || this.channelToEntityMap;
-          const calEntity = channelMap[channelId] || `PT_Cal.PT_CH${channelId}`;
-          const rawEntity = calEntity.replace('PT_Cal.', 'PT.');
+
+          const defaultPrefix = boardType === 'PT' ? 'PT_Cal' : boardType;
+          const calEntity = channelMap[channelId] || `${defaultPrefix}.${boardType}_CH${channelId}`;
+
+          let rawPrefix = 'PT';
+          if (boardType === 'TC') rawPrefix = 'TC';
+          else if (boardType === 'LC') rawPrefix = 'LC';
+          else if (boardType === 'RTD') rawPrefix = 'RTD';
+
+          const rawEntity = calEntity.replace(`${defaultPrefix}.`, `${rawPrefix}.`);
 
           this.handleSensorUpdate({ entity: rawEntity, component: 'raw_adc_counts', value: codeUint32, timestamp: sampleTime });
-          this.handleSensorUpdate({ entity: `PT.PT_CH${channelId}`, component: 'raw_adc_counts', value: codeUint32, timestamp: sampleTime });
+          this.handleSensorUpdate({ entity: `${rawPrefix}.${boardType}_CH${channelId}`, component: 'raw_adc_counts', value: codeUint32, timestamp: sampleTime });
           this.lastRawAdc.set(uniqueId, codeUint32);
 
-          // Phase 1 only: no sidecar samples, no Phase 2
-          const activeCoeffs = coeffs;
-          let psi: number;
-          if (activeCoeffs) {
-            psi = calculatePressure(codeUint32, activeCoeffs, this.envState);
-            if (isNaN(psi) || !isFinite(psi)) continue;
+          // Calibrated value logic
+          let val: number;
+          let component = 'pressure_psi';
+          if (boardType === 'TC' || boardType === 'RTD') component = 'temperature_c';
+          else if (boardType === 'LC') component = 'force_n';
+
+          if (boardType === 'PT' && coeffs) {
+            val = calculatePressure(codeUint32, coeffs, this.envState);
+            if (isNaN(val) || !isFinite(val)) continue;
           } else {
-            psi = (codeUint32 / 1e8) * 1000;
+            // Default linear scaling for non-PT or uncalibrated PT
+            // For TC/RTD/LC, we might need different scaling, but for now 1e8/1000 is a safe placeholder
+            val = (codeUint32 / 1e8) * 1000;
           }
 
-          if (psi < this.PSI_ABSOLUTE_MIN || psi > this.PSI_ABSOLUTE_MAX) continue;
-          this.lastGoodPsi.set(uniqueId, psi);
+          if (boardType === 'PT' && (val < this.PSI_ABSOLUTE_MIN || val > this.PSI_ABSOLUTE_MAX)) continue;
+          this.lastGoodPsi.set(uniqueId, val);
 
-          if (publishingToElodin) this.elodinPublisher!.publishCalibratedPT(channelId, timestampNs, psi, codeUint32, 0);
+          if (publishingToElodin && boardType === 'PT') {
+            this.elodinPublisher!.publishCalibratedPT(channelId, timestampNs, val, codeUint32, 0);
+          }
 
-          const boardMap2 = this.boardChannelToEntityMaps.get(sourceIP);
-          const channelMap2 = boardMap2 || this.channelToEntityMap;
-          const calEntity2 = channelMap2[channelId] || `PT_Cal.PT_CH${channelId}`;
-
-          this.handleSensorUpdate({ entity: calEntity2, component: 'pressure_psi', value: psi, timestamp: sampleTime });
-          this.handleSensorUpdate({ entity: `PT_Cal.PT_CH${channelId}`, component: 'pressure_psi', value: psi, timestamp: sampleTime });
+          this.handleSensorUpdate({ entity: calEntity, component, value: val, timestamp: sampleTime });
+          this.handleSensorUpdate({ entity: `${defaultPrefix}.${boardType}_CH${channelId}`, component, value: val, timestamp: sampleTime });
         }
       }
 
@@ -1614,102 +1541,6 @@ class SensorSystemServer {
     return result;
   }
 
-  /**
-   * Send SERVER_HEARTBEAT packet via UDP broadcast.
-   * Packet format (DAQv2Comms):
-   *   Header: [packet_type(1)=2, version(1)=0, timestamp_ms(4, LE)]
-   *   Body:   [engine_state(1)] where engine_state is SystemState numeric code.
-   */
-  private sendServerHeartbeatUDP(): void {
-    if (!this.actuatorSocket) {
-      return;
-    }
-    try {
-      const packetType = 2; // SERVER_HEARTBEAT
-      const version = 0;
-      const timestamp = Date.now() >>> 0;
-      const engineCode = (this.currentState ?? SystemState.IDLE) as number;
-
-      const buffer = Buffer.allocUnsafe(7);
-      buffer.writeUInt8(packetType, 0);
-      buffer.writeUInt8(version, 1);
-      buffer.writeUInt32LE(timestamp, 2);
-      buffer.writeUInt8(engineCode, 6);
-
-      this.actuatorSocket.send(
-        buffer,
-        0,
-        buffer.length,
-        this.serverBroadcastPort,
-        this.serverBroadcastIP,
-        (err) => {
-          if (err) {
-            console.error(
-              `❌ Failed to send SERVER_HEARTBEAT to ${this.serverBroadcastIP}:${this.serverBroadcastPort}:`,
-              err,
-            );
-          }
-        },
-      );
-    } catch (err) {
-      console.error('❌ Error while constructing/sending SERVER_HEARTBEAT packet:', err);
-    }
-  }
-
-  /**
-   * Broadcast an ABORT packet (header-only) to all boards.
-   */
-  private sendAbortBroadcast(): void {
-    this.sendSimpleBroadcastPacket(7, 'ABORT');
-  }
-
-  /**
-   * Broadcast an ABORT_DONE packet (header-only) to all boards.
-   */
-  private sendAbortDoneBroadcast(): void {
-    this.sendSimpleBroadcastPacket(8, 'ABORT_DONE');
-  }
-
-  /**
-   * Broadcast a CLEAR_ABORT packet (header-only) to all boards.
-   */
-  private sendClearAbortBroadcast(): void {
-    this.sendSimpleBroadcastPacket(9, 'CLEAR_ABORT');
-  }
-
-  /**
-   * Helper for header-only UDP broadcast packets that share the same format:
-   *   [packet_type(1), version(1)=0, timestamp_ms(4, LE)]
-   */
-  private sendSimpleBroadcastPacket(packetType: number, label: string): void {
-    if (!this.actuatorSocket) return;
-    try {
-      const version = 0;
-      const timestamp = Date.now() >>> 0;
-      const buffer = Buffer.allocUnsafe(6);
-      buffer.writeUInt8(packetType, 0);
-      buffer.writeUInt8(version, 1);
-      buffer.writeUInt32LE(timestamp, 2);
-
-      this.actuatorSocket.send(
-        buffer,
-        0,
-        buffer.length,
-        this.serverBroadcastPort,
-        this.serverBroadcastIP,
-        (err) => {
-          if (err) {
-            console.error(
-              `❌ Failed to send ${label} packet to ${this.serverBroadcastIP}:${this.serverBroadcastPort}:`,
-              err,
-            );
-          }
-        },
-      );
-    } catch (err) {
-      console.error(`❌ Error while constructing/sending ${label} packet:`, err);
-    }
-  }
 
   private async syncSidecarCoefficients(): Promise<void> {
     if (!this.calibrationSidecar || !this.calibrationSidecar.enabled) return;
@@ -1824,12 +1655,20 @@ class SensorSystemServer {
       const sensorChannels = registry.sensorChannels || [];
       const necessaryForAbort = registry.necessaryForAbort;
 
+      if (!this.designatedSurvivorIP) {
+        if (!this._lastDesignatedSurvivorWarn || Date.now() - this._lastDesignatedSurvivorWarn > 60000) {
+          console.warn(`⚠️ skipping SENSOR_CONFIG for board ${id}: no designated survivor actuator board`);
+          this._lastDesignatedSurvivorWarn = Date.now();
+        }
+        return;
+      }
+
       try {
         const packet = this.buildSensorConfigPacket(
           sensorChannels,
           registry.voltageReference ?? 0,
           necessaryForAbort,
-          this.designatedSurvivorIP!,
+          this.designatedSurvivorIP,
           registry.enableSerialPrinting ?? false,
         );
 
@@ -2025,7 +1864,7 @@ class SensorSystemServer {
     if (ipOctets.length !== 4 || ipOctets.some((p) => !Number.isFinite(p) || p < 0 || p > 255)) {
       throw new Error(`Invalid designated survivor IP address: ${designatedSurvivorIP}`);
     }
-    const ipInt = ((ipOctets[0] << 24) | (ipOctets[1] << 16) | (ipOctets[2] << 8) | ipOctets[3]) >>> 0;
+    const ipInt = (((ipOctets[0] ?? 0) << 24) | ((ipOctets[1] ?? 0) << 16) | ((ipOctets[2] ?? 0) << 8) | (ipOctets[3] ?? 0)) >>> 0;
     buffer.writeUInt32BE(ipInt, offset);
     offset += 4;
 
