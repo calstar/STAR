@@ -22,6 +22,7 @@ export enum MessageType {
   MISSION_START_TIME = 'mission_start_time',
   ACTUATOR_EXPECTED_POSITIONS_UPDATE = 'actuator_expected_positions_update',
   HISTORICAL_DATA = 'historical_data',
+  BOARD_STATUS_UPDATE = 'board_status_update',
 }
 
 // Sensor types
@@ -105,7 +106,14 @@ export interface StateUpdate {
 
 // Command payload
 export interface CommandPayload {
-  commandType: 'state_transition' | 'actuator' | 'controller_frequency' | 'pwm_actuator' | 'controller_command' | 'debug_mode';
+  commandType:
+    | 'state_transition'
+    | 'actuator'
+    | 'controller_frequency'
+    | 'pwm_actuator'
+    | 'controller_command'
+    | 'clear_abort'
+    | 'debug_mode';
   data: {
     state?: SystemState;
     /** Config-driven: actuator role name from config.toml actuator_roles (e.g. "LOX Main") */
@@ -179,4 +187,59 @@ export interface CalibrationCommand {
   sensorId?: number;
   boardId?: number;
   referencePressure?: number;  // PSI ground-truth for capture_reference
+}
+
+// ── Board / heartbeat status ───────────────────────────────────────────────────
+
+/** Aggregated status for a single hardware board (PT, ACTUATOR, RTD, LC, TC, etc.). */
+export interface BoardStatus {
+  /** Board type label, e.g. "PT", "ACTUATOR", "RTD", "LC", "TC". */
+  type: string;
+  /** Human-friendly board number (from config), distinct from numeric ID. */
+  boardNumber: number | null;
+  /** Unique numeric ID for the PCB; also the last octet of its IP. */
+  id: number;
+  /** Derived IP address, typically 192.168.2.[id]. */
+  ip: string;
+  /** True if this board was defined in config.toml; false if discovered at runtime. */
+  expected: boolean;
+  /** Whether we consider the board currently connected (recent heartbeat). */
+  connected: boolean;
+  /** Timestamp of the last heartbeat in epoch milliseconds, or null if none yet. */
+  lastHeartbeatMs: number | null;
+  /** Estimated heartbeat frequency in Hz, or null if not enough data. */
+  frequencyHz: number | null;
+  /** Raw numeric board state from heartbeat (protocol-defined). */
+  boardState: number | null;
+  /** Raw numeric engine state from heartbeat (protocol-defined). */
+  engineState: number | null;
+  /** True if a SENSOR_CONFIG has been successfully sent for this board. */
+  configured?: boolean;
+  /** Optional error message if configuration failed. */
+  configError?: string;
+  /** True if this sense board is marked as necessary for abort. */
+  necessaryForAbort?: boolean;
+  /** True if this board is the designated survivor actuator controller. */
+  designatedSurvivor?: boolean;
+}
+
+export interface BoardStatusPayload {
+  boards: BoardStatus[];
+}
+
+// ── Engine state helpers ─────────────────────────────────────────────────────
+
+/**
+ * Map a numeric engine_state code (from SystemState / wire) to a human-readable
+ * label. Falls back to 'UNKNOWN' if the code is not recognized.
+ */
+export function engineStateCodeToLabel(code: number | null | undefined): string {
+  if (code === null || code === undefined) return 'UNKNOWN';
+  // TypeScript enums are bidirectional; indexing with the numeric value
+  // returns the string name when it exists.
+  const name = (SystemState as any)[code];
+  if (typeof name === 'string') {
+    return name.replace(/_/g, ' ');
+  }
+  return 'UNKNOWN';
 }

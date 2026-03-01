@@ -68,10 +68,12 @@ public:
 
     /**
      * @brief Board Heartbeat packet body
+     *
+     * Matches DAQv2-Comms: board_id is a full uint8_t (0-255).
      */
     struct BoardHeartbeat {
         BoardType board_type;      // 1 byte
-        uint8_t board_id;          // 1 byte (0-15)
+        uint8_t board_id;          // 1 byte (0-255)
         EngineState engine_state;  // 1 byte
         BoardState board_state;    // 1 byte
     };

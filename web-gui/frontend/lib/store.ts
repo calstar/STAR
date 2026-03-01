@@ -17,7 +17,7 @@
 
 import { create } from 'zustand';
 import { useCallback, useMemo } from 'react';
-import { SensorUpdate, ActuatorUpdate, StateUpdate, ConnectionStatus, SystemState, MissionStartTime } from './types';
+import { SensorUpdate, ActuatorUpdate, StateUpdate, ConnectionStatus, SystemState, MissionStartTime, BoardStatus } from './types';
 
 interface SensorData {
   [key: string]: number; // entity.component -> value
@@ -32,6 +32,7 @@ interface SensorSystemState {
   debugMode: boolean;
   missionStartTime: number | null; // T+0 from first packet (backend)
   actuatorExpectedPositions: Record<number, Record<string, 'open' | 'closed' | null>>; // state → entity → position
+  boards: Record<number, BoardStatus>;
 
   updateSensor: (update: SensorUpdate) => void;
   updateActuator: (update: ActuatorUpdate) => void;
@@ -41,6 +42,7 @@ interface SensorSystemState {
   updateActuatorExpectedPositions: (positions: Record<number, Record<string, 'open' | 'closed' | null>>) => void;
   getSensorValue: (entity: string, component: string) => number | null;
   setDebugMode: (mode: boolean) => void;
+  updateBoards: (boards: BoardStatus[]) => void;
 }
 
 // ── Alias table ──────────────────────────────────────────────────────────────
@@ -276,6 +278,7 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   debugMode: false,
   missionStartTime: null,
   actuatorExpectedPositions: {},
+   boards: {},
 
   updateSensor: (update: SensorUpdate) => {
     const key = `${update.entity}.${update.component}`;
@@ -322,6 +325,16 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
 
   updateMissionStartTime: (time: number) => {
     set({ missionStartTime: time });
+  },
+
+  updateBoards: (boards: BoardStatus[]) => {
+    set((state) => {
+      const next: Record<number, BoardStatus> = { ...state.boards };
+      boards.forEach((b) => {
+        next[b.id] = b;
+      });
+      return { boards: next };
+    });
   },
 
   getSensorValue: (entity: string, component: string) => {
