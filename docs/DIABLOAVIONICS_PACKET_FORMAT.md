@@ -56,7 +56,7 @@ Header (6 bytes):
 
 Body (4 bytes):
   - board_type (1 byte): BoardType enum
-  - board_id (1 byte): Board identifier (0-15)
+  - board_id (1 byte): Board identifier (uint8_t, 0-255)
   - engine_state (1 byte): EngineState enum
   - board_state (1 byte): BoardState enum
 ```
@@ -104,7 +104,7 @@ For each chunk:
 
 Boards are identified by:
 - **Board Type**: PT, TC, RTD, LC, Actuator
-- **Board ID**: 0-15 (4 bits)
+- **Board ID**: 0-255 (full uint8_t)
 - **MAC Address**: Used for IP assignment (ESP32 MAC)
 
 ## IP Assignment

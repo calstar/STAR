@@ -22,6 +22,7 @@ export enum MessageType {
   MISSION_START_TIME = 'mission_start_time',
   ACTUATOR_EXPECTED_POSITIONS_UPDATE = 'actuator_expected_positions_update',
   HISTORICAL_DATA = 'historical_data',
+  BOARD_STATUS_UPDATE = 'board_status_update',
 }
 
 // Sensor types
@@ -123,7 +124,13 @@ export interface StateUpdate {
 
 // Command payload
 export interface CommandPayload {
-  commandType: 'state_transition' | 'actuator' | 'controller_frequency' | 'pwm_actuator' | 'debug_mode';
+  commandType:
+    | 'state_transition'
+    | 'actuator'
+    | 'controller_frequency'
+    | 'pwm_actuator'
+    | 'clear_abort'
+    | 'debug_mode';
   data: {
     state?: SystemState;
     actuatorId?: ActuatorId;
@@ -190,3 +197,62 @@ export interface CalibrationCommand {
   boardId?: number;
   referencePressure?: number;
 }
+// ── Board / heartbeat status ───────────────────────────────────────────────────
+
+export interface BoardStatus {
+  type: string;
+  boardNumber: number | null;
+  id: number;
+  ip: string;
+  expected: boolean;
+  connected: boolean;
+  lastHeartbeatMs: number | null;
+  frequencyHz: number | null;
+  boardState: number | null;
+  engineState: number | null;
+  configured?: boolean;
+  configError?: string;
+  necessaryForAbort?: boolean;
+  designatedSurvivor?: boolean;
+}
+
+// ── Board / heartbeat status ───────────────────────────────────────────────────
+
+export interface BoardStatus {
+  type: string;
+  boardNumber: number | null;
+  id: number;
+  ip: string;
+  expected: boolean;
+  connected: boolean;
+  lastHeartbeatMs: number | null;
+  frequencyHz: number | null;
+  boardState: number | null;
+  engineState: number | null;
+  configured?: boolean;
+  configError?: string;
+  necessaryForAbort?: boolean;
+  designatedSurvivor?: boolean;
+  /** 0 = Internal 2.5V, 1 = VDD ratiometric, 2 = 5V absolute */
+  voltageReference?: number;
+}
+
+export interface BoardStatusPayload {
+  boards: BoardStatus[];
+}
+
+// ── Engine state helpers ─────────────────────────────────────────────────────
+
+/**
+ * Map a numeric engine_state code (from SystemState / wire) to a human-readable
+ * label. Falls back to 'UNKNOWN' if the code is not recognized.
+ */
+export function engineStateCodeToLabel(code: number | null | undefined): string {
+  if (code === null || code === undefined) return 'UNKNOWN';
+  const name = (SystemState as any)[code];
+  if (typeof name === 'string') {
+    return name.replace(/_/g, ' ');
+  }
+  return 'UNKNOWN';
+}
+

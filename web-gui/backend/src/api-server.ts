@@ -6,7 +6,7 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { readConfig, writeConfig } from './routes/config.js';
 import { ElodinQueryClient, QueryOptions } from './elodin-query.js';
-import type { SensorUpdate } from '../../shared/types.js';
+import type { SensorUpdate } from './shared-types.js';
 
 // ── Sensor config helpers ──────────────────────────────────────────────────
 

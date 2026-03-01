@@ -1,10 +1,10 @@
 'use client'
 
 import { useSensorStore } from '@/lib/store';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate, MissionStartTime } from '@/lib/types';
+import { MessageType, SensorUpdate, StateUpdate, MissionStartTime, CommandPayload, BoardStatus, BoardStatusPayload } from '@/lib/types';
 import WindowLauncher from '@/components/windows/WindowLauncher';
 import { useSensorValue } from '@/lib/store';
 import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
@@ -90,7 +90,20 @@ export default function Home() {
   const updateState = useSensorStore((state) => state.updateState);
   const updateConnectionStatus = useSensorStore((state) => state.updateConnectionStatus);
   const updateMissionStartTime = useSensorStore((state) => state.updateMissionStartTime);
+  const updateBoards = useSensorStore((state) => state.updateBoards);
+  const boardsMap = useSensorStore((state) => state.boards as Record<number, BoardStatus>);
   const ws = getWebSocketClient();
+
+  const boards = useMemo(() => {
+    const map = boardsMap ?? {};
+    return Object.values(map).sort((a, b) => {
+      if (a.type !== b.type) return a.type.localeCompare(b.type);
+      const an = a.boardNumber ?? Number.MAX_SAFE_INTEGER;
+      const bn = b.boardNumber ?? Number.MAX_SAFE_INTEGER;
+      if (an !== bn) return an - bn;
+      return a.id - b.id;
+    });
+  }, [boardsMap]);
 
   useEffect(() => {
     ws.connect();
@@ -100,9 +113,13 @@ export default function Home() {
       const payload = p as MissionStartTime;
       updateMissionStartTime(payload.missionStartTime);
     });
-    const u4 = ws.onConnectionStatus((s) => updateConnectionStatus(s));
-    return () => { u1(); u2(); u3(); u4(); };
-  }, [ws, updateSensor, updateState, updateConnectionStatus, updateMissionStartTime]);
+    const u4 = ws.on(MessageType.BOARD_STATUS_UPDATE, (p: unknown) => {
+      const payload = p as BoardStatusPayload;
+      if (payload?.boards) updateBoards(payload.boards as BoardStatus[]);
+    });
+    const u5 = ws.onConnectionStatus((s) => updateConnectionStatus(s));
+    return () => { u1(); u2(); u3(); u4(); u5(); };
+  }, [ws, updateSensor, updateState, updateConnectionStatus, updateMissionStartTime, updateBoards]);
 
   const pressureSensors: SensorCardProps[] = [
     ...PRESSURE_SENSORS.map((s) => ({
@@ -119,9 +136,34 @@ export default function Home() {
   const { actuators: actuatorsFromConfig } = useActuatorsFromConfig();
   const actuators = actuatorsFromConfig.map((a) => ({ label: a.name, entity: a.entity }));
 
+  const hasAbortDoneBoard = boards.some((b) => b.boardState === 4);
+
   return (
     <main className="flex-1 bg-background text-text flex flex-col overflow-auto">
       <div className="w-full px-3 py-2 flex flex-col gap-2 flex-1">
+
+        {/* ── Safety controls ───────────────────────────────────────────── */}
+        <div className="flex items-center justify-between mb-1">
+          <SectionHeader color="bg-red-500">Safety</SectionHeader>
+          <button
+            type="button"
+            disabled={!hasAbortDoneBoard}
+            onClick={() => {
+              const cmd: CommandPayload = {
+                commandType: 'clear_abort',
+                data: {},
+              };
+              ws.sendCommand(cmd);
+            }}
+            className={`px-4 py-1.5 rounded-md text-sm font-semibold border transition-colors ${
+              hasAbortDoneBoard
+                ? 'border-red-500 text-red-200 bg-red-900/40 hover:bg-red-800/60'
+                : 'border-gray-700 text-gray-500 bg-gray-900/40 cursor-not-allowed'
+            }`}
+          >
+            Clear Abort (Sync Actuators)
+          </button>
+        </div>
 
         {/* ── Sensors ────────────────────────────────────────────────── */}
         <div>

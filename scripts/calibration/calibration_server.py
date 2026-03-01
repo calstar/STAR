@@ -330,10 +330,13 @@ def run_ws_server(host, port):
     global ws_loop
     ws_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(ws_loop)
-    start_server = websockets.serve(ws_handler, host, port)
-    ws_loop.run_until_complete(start_server)
-    logger.info(f"Starting WebSocket server on {host}:{port}")
-    ws_loop.run_forever()
+
+    async def _run_ws():
+        async with websockets.serve(ws_handler, host, port):
+            logger.info(f"Starting WebSocket server on {host}:{port}")
+            await asyncio.Future()  # run forever
+
+    ws_loop.run_until_complete(_run_ws())
 
 
 if __name__ == "__main__":

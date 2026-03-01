@@ -52,7 +52,7 @@ struct PressureSensorSpec {
  */
 struct SensorAssignment {
     std::string sensor_id;     // Sensor identifier
-    uint8_t board_id;          // Board ID (0-15)
+    uint8_t board_id;          // Board ID (0-255)
     uint8_t channel_id;        // Channel ID on board (0-indexed)
     SensorType sensor_type;    // Type of sensor
     SystemState system_state;  // GSE or FLIGHT
@@ -69,7 +69,7 @@ struct SensorAssignment {
  * @brief Board configuration (assigned by FSW)
  */
 struct BoardConfiguration {
-    uint8_t board_id;                       // Board ID (0-15)
+    uint8_t board_id;                       // Board ID (0-255)
     std::string board_ip;                   // Assigned IP address
     uint16_t board_port;                    // Communication port
     std::string mac_address;                // Board MAC address

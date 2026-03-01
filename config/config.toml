@@ -20,6 +20,14 @@ actuator_cmd_port = 5005 # Port actuator boards listen on for commands
 buffer_size = 1024
 
 # =============================================================================
+# Server Heartbeat - UDP broadcast config
+# =============================================================================
+[server_heartbeat]
+interval_ms = 1000                 # Broadcast SERVER_HEARTBEAT every 1 second
+broadcast_port = 5005              # Default: actuator command port
+broadcast_ip = "255.255.255.255"   # Full-subnet broadcast
+
+# =============================================================================
 # Network - Elodin Database
 # =============================================================================
 [database]
@@ -56,7 +64,13 @@ send_port = 5006           # Board sends SENSOR_DATA to this port on our PC
 num_sensors = 10            # 10 connectors on this board
 board_id = 1
 enabled = true
-adc_ref_voltage = 2.5      # Fixed ADC reference voltage for this board (V)
+enable_serial_printing = false
+# voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
+voltage_reference = 0
+necessary_for_abort = true   # This sense board participates in abort logic
+# Exactly one actuator board should be marked as designated_survivor
+# (PT boards are never designated survivors)
+designated_survivor = false
 # Active connectors: list of connector IDs (1-10) that have sensors plugged in
 # Leave empty [] to use all connectors, or specify only active ones
 active_connectors = [1, 2, 3, 4, 5, 6, 7]  # Example: only connectors 1-7 are used
@@ -68,6 +82,9 @@ send_port = 5006           # Board sends SENSOR_DATA to this port on our PC
 num_sensors = 10            # 10 connectors on this board
 board_id = 11
 enabled = true
+enable_serial_printing = false
+# voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
+voltage_reference = 0
 adc_ref_voltage = 2.5      # Fixed ADC reference voltage for this board (V)
 # Connector 2 is hardware-wired to measure excitation voltage on this PCB.
 # hp_pt_connectors lists whichever connectors have HP PT sensors plugged in
@@ -89,6 +106,11 @@ num_actuators = 10
 num_sensors = 10            # 10 current sense ADC channels
 board_id = 2
 enabled = true
+enable_serial_printing = false
+necessary_for_abort = false
+designated_survivor = true  # Primary actuator controller / designated survivor
+# voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
+voltage_reference = 0
 
 [boards.actuator_board_2]
 type = "ACTUATOR"
@@ -99,6 +121,9 @@ num_actuators = 10
 num_sensors = 10            # 10 current sense ADC channels
 board_id = 3
 enabled = true
+enable_serial_printing = false
+# voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
+voltage_reference = 0
 
 [boards.lc_board]
 type = "LC"
@@ -107,6 +132,11 @@ send_port = 5006
 num_sensors = 4
 board_id = 3
 enabled = false              # flip to true when board is connected
+enable_serial_printing = false
+necessary_for_abort = false
+designated_survivor = false
+# voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
+voltage_reference = 0
 # Active connectors: list of connector IDs (1-4) that have sensors plugged in
 # Leave empty [] to use all connectors, or specify only active ones
 active_connectors = []  # Example: [1, 2, 3] if only connectors 1-3 are used
@@ -118,6 +148,11 @@ send_port = 5006
 num_sensors = 10
 board_id = 4
 enabled = false
+enable_serial_printing = false
+necessary_for_abort = false
+designated_survivor = false
+# voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
+voltage_reference = 0
 # Active connectors: list of connector IDs (1-10) that have sensors plugged in
 # Leave empty [] to use all connectors, or specify only active ones
 active_connectors = []  # Example: [1, 2, 3, 4, 5] if only connectors 1-5 are used
@@ -129,6 +164,11 @@ send_port = 5006
 num_sensors = 4
 board_id = 5
 enabled = false
+enable_serial_printing = false
+necessary_for_abort = false
+designated_survivor = false
+# voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
+voltage_reference = 0
 # Active connectors: list of connector IDs (1-4) that have sensors plugged in
 # Leave empty [] to use all connectors, or specify only active ones
 active_connectors = []  # Example: [1, 2] if only connectors 1-2 are used
@@ -173,6 +213,14 @@ active_connectors = []  # Example: [1, 2] if only connectors 1-2 are used
 "Ox Upstream"     = 5
 "GN2 Regulated"   = 6
 "Ox Downstream"   = 7
+
+# =============================================================================
+# Abort PTs - PTs required for abort logic (sensor role name → pressure threshold PSI)
+# Threshold is converted to ADC code per PT calibration when building ACTUATOR_CONFIG.
+# =============================================================================
+[abort_pts]
+"Fuel Upstream"   = 400
+"Ox Upstream"     = 400
 
 # =============================================================================
 # Sensor Roles - PT Board 2 (High-Pressure 4-20 mA sensors)
@@ -324,7 +372,6 @@ LOX = 5
 # =============================================================================
 [display]
 adc_bits = 32
-ref_voltage = 2.5
 window_seconds = 26.0
 y_axis_min = 0.0
 y_axis_max = 700.0

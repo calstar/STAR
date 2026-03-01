@@ -7,11 +7,12 @@ ports, sensor counts, calibration paths, and network settings so that every
 calibration script derives its parameters from the same place.
 
 Usage:
-    from config_loader import load_config, get_board_by_type, get_calibration_config
+    from config_loader import load_config, get_board_by_type, get_calibration_config, get_abort_pts
 
     cfg = load_config()                          # full dict
     pt = get_board_by_type("PT")                 # {ip, send_port, num_sensors, …}
     cal = get_calibration_config("pt")           # {json_dir, csv_paths}
+    abort_pts = get_abort_pts()                  # {"Fuel Upstream": 400, …} (PSI)
 """
 
 from __future__ import annotations
@@ -222,6 +223,13 @@ def get_display_config() -> dict:
     """Return [display] section."""
     cfg = load_config()
     return cfg.get("display", {})
+
+
+def get_abort_pts() -> Dict[str, Any]:
+    """Return [abort_pts] section: sensor role name → pressure threshold (PSI).
+    Used when building ACTUATOR_CONFIG (threshold is converted to ADC code per PT calibration)."""
+    cfg = load_config()
+    return cfg.get("abort_pts", {})
 
 
 def resolve_path(rel_path: str) -> Path:

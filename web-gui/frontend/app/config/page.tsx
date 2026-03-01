@@ -54,14 +54,14 @@ const DEFAULT_CONFIG: ConfigData = {
               subnet: '192.168.2.0/24', ip_range_start: 100, ip_range_end: 150,
               discovery_timeout_seconds: 30 },
   boards: {
-    pt_board: { type: 'PT', ip: '192.168.2.101', send_port: 5006, num_sensors: 10, board_id: 1, enabled: true, active_connectors: [1,2,3,4,5,6,7] },
-    actuator_board: { type: 'ACTUATOR', ip: '192.168.2.201', send_port: 5006, listen_port: 5005, num_actuators: 10, num_sensors: 10, board_id: 2, enabled: true, active_connectors: [] },
+    pt_board: { type: 'PT', ip: '192.168.2.101', send_port: 5006, num_sensors: 10, board_id: 1, enabled: true, enable_serial_printing: false, voltage_reference: 0, active_connectors: [1,2,3,4,5,6,7] },
+    actuator_board: { type: 'ACTUATOR', ip: '192.168.2.201', send_port: 5006, listen_port: 5005, num_actuators: 10, num_sensors: 10, board_id: 2, enabled: true, enable_serial_printing: false, voltage_reference: 0, active_connectors: [] },
   },
   sensor_roles: { 'Fuel Upstream': 1, 'GSE Low': 2, 'Fuel Downstream': 4, 'Ox Upstream': 5, 'GN2 Regulated': 6, 'Ox Downstream': 7 },
   actuator_roles: { 'LOX Main': ['NO', 1], 'Fuel Vent': ['NC', 2], 'Fuel Press': ['NC', 3], 'GSE Low Vent': ['NC', 5], 'LOX Vent': ['NC', 6], 'Fuel Main': ['NO', 7], 'LOX Press': ['NO', 8] },
   calibration: { enabled: true, orchestrator: { min_points: 5, target_points: 15, max_points: 30, min_r_squared: 0.95, target_r_squared: 0.99, rls_forgetting_factor: 0.995, drift_glr_threshold: 3.0, auto_save_interval_sec: 300, status_interval_sec: 30 } },
   pressure_limits: { GN2: { THRESH: 550, NOP: 900, MEOP: 950, POP: 1000 }, ETH: { THRESH: 550, NOP: 600, MEOP: 650, POP: 750 }, LOX: { THRESH: 550, NOP: 600, MEOP: 650, POP: 750 } },
-  display: { adc_bits: 32, ref_voltage: 2.5, window_seconds: 26.0, y_axis_min: 0.0, y_axis_max: 700.0, y_axis_autoscale: true, only_show_actuators_with_roles: true, only_show_pt_with_roles: true, graph_ma_samples: 1, display_ma_samples: 1 },
+  display: { adc_bits: 32, window_seconds: 26.0, y_axis_min: 0.0, y_axis_max: 700.0, y_axis_autoscale: true, only_show_actuators_with_roles: true, only_show_pt_with_roles: true, graph_ma_samples: 1, display_ma_samples: 1 },
   state_machine: { actuator_csv: 'external/DiabloAvionics/test_guis/state_machine_actuators.csv', transitions_csv: 'external/DiabloAvionics/test_guis/state_transitions.csv' },
 };
 
@@ -511,6 +511,26 @@ export default function ConfigPage() {
                         'boolean'
                       )}
                       {renderField(
+                        'Enable serial printing',
+                        (board as any).enable_serial_printing,
+                        (val) => updateBoard(boardKey, 'enable_serial_printing', val),
+                        'boolean',
+                        undefined,
+                        'Board will enable serial debug when config is applied'
+                      )}
+                      <div className="space-y-1">
+                        <label className="block text-sm font-semibold">Voltage reference</label>
+                        <select
+                          value={String((board as any).voltage_reference ?? 0)}
+                          onChange={(e) => updateBoard(boardKey, 'voltage_reference', parseInt(e.target.value, 10))}
+                          className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white"
+                        >
+                          <option value="0">Internal (2.5V)</option>
+                          <option value="1">VDD (ratiometric)</option>
+                          <option value="2">5V (absolute)</option>
+                        </select>
+                      </div>
+                      {renderField(
                         'Num Sensors',
                         (board as any).num_sensors,
                         (val) => updateBoard(boardKey, 'num_sensors', val),
@@ -536,6 +556,8 @@ export default function ConfigPage() {
                     const newKey = `board_${Object.keys(config.boards || {}).length + 1}`;
                     updateBoard(newKey, 'type', 'PT');
                     updateBoard(newKey, 'enabled', false);
+                    updateBoard(newKey, 'enable_serial_printing', false);
+                    updateBoard(newKey, 'voltage_reference', 0);
                   }}
                   className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
                 >
@@ -787,12 +809,6 @@ export default function ConfigPage() {
                   'ADC Bits',
                   config.display?.adc_bits,
                   (val) => updateField('display', 'adc_bits', val),
-                  'number'
-                )}
-                {renderField(
-                  'Ref Voltage',
-                  config.display?.ref_voltage,
-                  (val) => updateField('display', 'ref_voltage', val),
                   'number'
                 )}
                 {renderField(
