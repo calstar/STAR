@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate } from '@/lib/types';
+import { MessageType, SensorUpdate, BoardStatusPayload, BoardStatus, engineStateCodeToLabel } from '@/lib/types';
 
 const PRESSURE_SENSORS = [
   { label: 'GN2 Regulated', entity: 'PT_Cal.GN2_Regulated', component: 'pressure_psi', color: '#27AE60', nop: 900, meop: 950 },
@@ -38,14 +38,35 @@ function fmtValue(v: number | null): string {
 
 export default function StatusPage() {
   const updateSensor = useSensorStore((s) => s.updateSensor);
+  const updateBoards = useSensorStore((s) => s.updateBoards);
+  const boardsMap = useSensorStore((s) => s.boards);
   const currentState = useSensorStore((s) => s.currentState);
   const ws = getWebSocketClient();
 
   useEffect(() => {
     ws.connect();
-    const unsub = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    return unsub;
-  }, [ws, updateSensor]);
+    const unsubSensor = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
+    const unsubBoards = ws.on(MessageType.BOARD_STATUS_UPDATE, (p: unknown) => {
+      const payload = p as BoardStatusPayload;
+      if (payload && Array.isArray(payload.boards)) {
+        updateBoards(payload.boards as BoardStatus[]);
+      }
+    });
+    return () => {
+      unsubSensor();
+      unsubBoards();
+    };
+  }, [ws, updateSensor, updateBoards]);
+
+  const boards = useMemo(() => {
+    return Object.values(boardsMap).sort((a, b) => {
+      if (a.type !== b.type) return a.type.localeCompare(b.type);
+      const an = a.boardNumber ?? Number.MAX_SAFE_INTEGER;
+      const bn = b.boardNumber ?? Number.MAX_SAFE_INTEGER;
+      if (an !== bn) return an - bn;
+      return a.id - b.id;
+    });
+  }, [boardsMap]);
 
   const stateNames: Record<number, string> = {
     0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
@@ -63,7 +84,7 @@ export default function StatusPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Pressure Sensors */}
         <div className="bg-card rounded-lg p-4 border border-gray-800">
           <h2 className="text-lg font-bold text-text-muted uppercase tracking-wider mb-3">Pressure Sensors</h2>
@@ -126,6 +147,96 @@ export default function StatusPage() {
               );
             })}
           </div>
+        </div>
+
+        {/* Boards / Heartbeats */}
+        <div className="bg-card rounded-lg p-4 border border-gray-800">
+          <h2 className="text-lg font-bold text-text-muted uppercase tracking-wider mb-3">Boards / Heartbeats</h2>
+          {boards.length === 0 ? (
+            <div className="text-sm text-text-muted">No boards configured or discovered yet.</div>
+          ) : (
+            <div className="space-y-2">
+              {boards.map((b) => {
+                const statusColor =
+                  !b.connected ? 'bg-red-900/60 text-red-400' : 'bg-green-900/60 text-green-400';
+                const unexpectedBg = b.expected ? '' : 'bg-amber-900/20';
+                const freq =
+                  b.frequencyHz != null && isFinite(b.frequencyHz)
+                    ? `${b.frequencyHz.toFixed(1)} Hz`
+                    : '---';
+
+                let boardStateLabel = 'Unknown';
+                if (b.boardState === 1) boardStateLabel = 'Setup';
+                else if (b.boardState === 2) boardStateLabel = 'Active';
+                else if (b.boardState === 3) boardStateLabel = 'Abort';
+                else if (b.boardState === 4) boardStateLabel = 'Abort done';
+
+                const engineLabel = engineStateCodeToLabel(b.engineState);
+
+                const nameParts = [];
+                if (b.type) nameParts.push(b.type);
+                if (b.boardNumber != null) nameParts.push(`Board ${b.boardNumber}`);
+                const title = nameParts.join(' · ') || `ID ${b.id}`;
+
+                return (
+                  <div
+                    key={b.id}
+                    className={`flex flex-col gap-1 py-2 px-3 rounded border border-gray-800 ${unexpectedBg}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex flex-col">
+                        <span className="text-base font-semibold text-text">
+                          {title}
+                        </span>
+                        <span className="text-xs text-text-muted font-mono">
+                          ID {b.id} • {b.ip}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {!b.expected && (
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-amber-900/60 text-amber-200 font-semibold uppercase tracking-wide">
+                            Unexpected
+                          </span>
+                        )}
+                        {b.designatedSurvivor && (
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-blue-900/60 text-blue-200 font-semibold uppercase tracking-wide">
+                            Designated
+                          </span>
+                        )}
+                        {b.necessaryForAbort && (
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-red-900/60 text-red-200 font-semibold uppercase tracking-wide">
+                            Abort-critical
+                          </span>
+                        )}
+                        {b.configured !== undefined && (
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wide font-mono ${
+                              b.configured
+                                ? 'bg-emerald-900/60 text-emerald-200'
+                                : 'bg-gray-800 text-gray-500'
+                            }`}
+                          >
+                            {b.configured ? 'Config OK' : 'Unconfigured'}
+                          </span>
+                        )}
+                        <span
+                          className={`text-xs font-bold font-mono px-2 py-1 rounded ${statusColor}`}
+                        >
+                          {b.connected ? 'CONNECTED' : 'DISCONNECTED'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-text-muted font-mono">
+                      <span>Heartbeat: {freq}</span>
+                      <span>
+                        State: {boardStateLabel} · Engine: {engineLabel}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </main>

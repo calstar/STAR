@@ -6,7 +6,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import * as dgram from 'dgram';
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
-import { DAQDirectClient } from './daq-direct-client.js';
+import { DAQDirectClient, BoardHeartbeatEvent } from './daq-direct-client.js';
 import { ElodinQueryClient } from './elodin-query.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { registerVTables } from './elodin-vtable.js';
@@ -35,6 +35,7 @@ import {
   SystemState,
   ActuatorId,
   ActuatorState,
+  BoardStatus,
 } from '../../shared/types.js';
 
 const WS_PORT = parseInt(process.env.WS_PORT || '8081', 10);
@@ -117,6 +118,15 @@ class SensorSystemServer {
   private actuatorCommandInterval: NodeJS.Timeout | null = null;
   private readonly ACTUATOR_COMMAND_INTERVAL_MS = 1000; // Send actuator commands every 1 second while in state
 
+  /** Server heartbeat (UDP broadcast) configuration */
+  private serverHeartbeatIntervalMs: number = 1000; // default 1 Hz
+  private serverBroadcastPort: number = 5005;       // default actuator command port
+  private serverBroadcastIP: string = '255.255.255.255';
+  private serverHeartbeatTimer: NodeJS.Timeout | null = null;
+
+  /** Abort → AbortDone timer */
+  private abortDoneTimer: NodeJS.Timeout | null = null;
+
   /** Controller client for DDP controller integration */
   private controllerClient: ControllerClient | null = null;
   private controllerLoopInterval: NodeJS.Timeout | null = null;
@@ -125,6 +135,43 @@ class SensorSystemServer {
 
   /** Channel ID → entity name map (loaded from config.toml sensor_roles) */
   private channelToEntityMap: Record<number, string> = {};
+
+  /** Registry of boards from config.toml, keyed by numeric ID. */
+  private boardRegistryById: Map<number, {
+    type: string;
+    boardNumber: number | null;
+    id: number;
+    ip: string;
+    expected: boolean;
+    /** True if this sense board participates in abort logic. */
+    necessaryForAbort: boolean;
+    /** True if this board is the designated survivor actuator controller. */
+    designatedSurvivor: boolean;
+    /** Sensor channels (1-based) we want data from on this board. */
+    sensorChannels: number[];
+  }> = new Map();
+
+  /** Aggregated per-board status, keyed by numeric ID. */
+  private boardsStatus: Map<number, {
+    type: string;
+    boardNumber: number | null;
+    id: number;
+    ip: string;
+    expected: boolean;
+    connected: boolean;
+    lastHeartbeatMs: number | null;
+    heartbeatTimes: number[];
+    boardState: number | null;
+    engineState: number | null;
+  }> = new Map();
+
+  /** Per-board configuration state driven by SENSOR_CONFIG packets. */
+  private boardConfigState: Map<number, { status: 'pending' | 'sent' | 'error'; lastSentAt?: number; errorMessage?: string }> = new Map();
+
+  /** Designated survivor actuator board (from config.toml). */
+  private designatedSurvivorBoardId: number | null = null;
+  private designatedSurvivorIP: string | null = null;
+  private designatedSurvivorConnected: boolean = false;
 
   /** Demo mode generator for testing without hardware */
   private demoMode: DemoModeGenerator;
@@ -145,6 +192,33 @@ class SensorSystemServer {
 
     // Load sensor_roles from config.toml (like combined_gui.py)
     this.loadSensorRoleMap();
+
+    // Load board registry from config.toml for heartbeat tracking
+    this.loadBoardRegistry();
+
+    // Load server heartbeat configuration from config.toml (optional section)
+    try {
+      const config = readConfig();
+      const hb = (config as any).server_heartbeat || {};
+      if (typeof hb.interval_ms === 'number' && hb.interval_ms > 0) {
+        this.serverHeartbeatIntervalMs = hb.interval_ms;
+      }
+      if (typeof hb.broadcast_port === 'number' && hb.broadcast_port > 0 && hb.broadcast_port <= 65535) {
+        this.serverBroadcastPort = hb.broadcast_port;
+      } else {
+        // Fallback to actuator command port if not specified
+        this.serverBroadcastPort = this.actuatorPort;
+      }
+      if (typeof hb.broadcast_ip === 'string' && hb.broadcast_ip.length > 0) {
+        this.serverBroadcastIP = hb.broadcast_ip;
+      }
+      console.log(`📡 Server heartbeat config: interval=${this.serverHeartbeatIntervalMs} ms, ` +
+                  `broadcast=${this.serverBroadcastIP}:${this.serverBroadcastPort}`);
+    } catch (err) {
+      // Config read failures are non-fatal for heartbeat; use defaults.
+      console.warn('⚠️ Failed to load server_heartbeat config; using defaults:', err);
+      this.serverBroadcastPort = this.actuatorPort;
+    }
 
     // Initialize controller client (connects to FastAPI controller service)
     const controllerUrl = process.env.CONTROLLER_URL || 'http://localhost:8000';
@@ -207,6 +281,13 @@ class SensorSystemServer {
 
     // Initialize UDP socket for actuator commands (like combined_gui.py)
     this.actuatorSocket = dgram.createSocket('udp4');
+    // Enable broadcast so we can send SERVER_HEARTBEAT / ABORT / CLEAR_ABORT to the whole subnet
+    try {
+      this.actuatorSocket.setBroadcast(true);
+      console.log('📡 UDP socket broadcast enabled for actuator/heartbeat traffic');
+    } catch (err) {
+      console.warn('⚠️ Failed to enable UDP broadcast on actuator socket:', err);
+    }
     console.log(`🎯 Actuator command socket initialized (target: ${this.actuatorIP}:${this.actuatorPort})`);
 
     this.wss = new WebSocketServer({
@@ -339,6 +420,97 @@ class SensorSystemServer {
         9: 'PT_Cal.PT_CH9',
         10: 'PT_Cal.PT_CH10',
       };
+    }
+  }
+
+  /**
+   * Initialize board registry from config.toml
+   * Each board gets a numeric ID and boardNumber; IP is derived as 192.168.2.[id]
+   */
+  private loadBoardRegistry(): void {
+    try {
+      const config = readConfig();
+      const boards = config.boards || {};
+      this.boardRegistryById.clear();
+      this.boardsStatus.clear();
+      this.boardConfigState.clear();
+      this.designatedSurvivorBoardId = null;
+      this.designatedSurvivorIP = null;
+      this.designatedSurvivorConnected = false;
+
+      const designatedCandidates: Array<{ id: number; ip: string }> = [];
+
+      for (const [key, raw] of Object.entries(boards)) {
+        const board: any = raw;
+        const type: string = board.type || 'UNKNOWN';
+        // Distinguish between human board number and numeric ID used for IP
+        const boardNumber: number | null = typeof board.board_number === 'number'
+          ? board.board_number
+          : (typeof board.board_id === 'number' ? board.board_id : null);
+        const id: number | undefined = typeof board.id === 'number'
+          ? board.id
+          : (typeof board.board_id === 'number' ? board.board_id : undefined);
+        if (id === undefined) {
+          console.warn(`⚠️ Board ${key} is missing id/board_id; skipping heartbeat tracking`);
+          continue;
+        }
+        const ipFromConfig: string | undefined = typeof board.ip === 'string' ? board.ip : undefined;
+        const ip = ipFromConfig || `192.168.2.${id}`;
+
+        const necessaryForAbort: boolean = !!board.necessary_for_abort && type !== 'ACTUATOR';
+        const designatedSurvivor: boolean = !!board.designated_survivor && type === 'ACTUATOR';
+
+        // Determine sensor channels we want from this board
+        const numSensors: number | undefined = typeof board.num_sensors === 'number' ? board.num_sensors : undefined;
+        const activeConnectors: unknown = board.active_connectors;
+        let sensorChannels: number[] = [];
+        if (Array.isArray(activeConnectors) && activeConnectors.length > 0) {
+          sensorChannels = activeConnectors
+            .map((v) => Number(v))
+            .filter((v) => Number.isFinite(v) && v >= 1 && v <= 255);
+        } else if (numSensors && numSensors > 0) {
+          sensorChannels = Array.from({ length: numSensors }, (_v, i) => i + 1);
+        }
+
+        const entry = {
+          type,
+          boardNumber,
+          id,
+          ip,
+          expected: true as const,
+          necessaryForAbort,
+          designatedSurvivor,
+          sensorChannels,
+        };
+        this.boardRegistryById.set(id, entry);
+        this.boardsStatus.set(id, {
+          ...entry,
+          connected: false,
+          lastHeartbeatMs: null,
+          heartbeatTimes: [],
+          boardState: null,
+          engineState: null,
+        });
+        this.boardConfigState.set(id, { status: 'pending' });
+
+        if (designatedSurvivor) {
+          designatedCandidates.push({ id, ip });
+        }
+      }
+
+      if (designatedCandidates.length === 1) {
+        this.designatedSurvivorBoardId = designatedCandidates[0].id;
+        this.designatedSurvivorIP = designatedCandidates[0].ip;
+        console.log(`📋 Designated survivor actuator board: ID ${this.designatedSurvivorBoardId} (${this.designatedSurvivorIP})`);
+      } else if (designatedCandidates.length === 0) {
+        console.warn('⚠️ No designated survivor actuator board found in config.toml; SENSOR_CONFIG packets will not be sent');
+      } else {
+        console.warn(`⚠️ Multiple designated survivor boards found (${designatedCandidates.length}); SENSOR_CONFIG packets will not be sent`);
+      }
+
+      console.log(`📋 Loaded ${this.boardRegistryById.size} boards from config.toml`);
+    } catch (error) {
+      console.warn('⚠️ Failed to load boards from config.toml; heartbeat pane will rely on discovery only:', error);
     }
   }
 
@@ -487,6 +659,53 @@ class SensorSystemServer {
         timestamp: Date.now(),
         payload: { connected: true, elodinConnected: false } as ConnectionStatus,
       });
+    });
+
+    // Track BOARD_HEARTBEAT packets from DiabloAvionics boards
+    this.daqDirect.on('board_heartbeat', (hb: BoardHeartbeatEvent) => {
+      const now = Date.now();
+      const id = hb.id;
+      let status = this.boardsStatus.get(id);
+
+      if (!status) {
+        // Unknown board ID – create a new, unexpected entry
+        const registry = this.boardRegistryById.get(id);
+        const type = registry?.type || 'UNKNOWN';
+        const boardNumber = registry?.boardNumber ?? null;
+        const ip = registry?.ip || `192.168.2.${id}`;
+        status = {
+          type,
+          boardNumber,
+          id,
+          ip,
+          expected: !!registry,
+          connected: false,
+          lastHeartbeatMs: null,
+          heartbeatTimes: [],
+          boardState: null,
+          engineState: null,
+        };
+        this.boardsStatus.set(id, status);
+        if (!this.boardConfigState.has(id)) {
+          this.boardConfigState.set(id, { status: 'pending' });
+        }
+      }
+
+      status.connected = true;
+      status.lastHeartbeatMs = now;
+      status.boardState = hb.boardState;
+      status.engineState = hb.engineState;
+
+      // Maintain a sliding window of recent heartbeat timestamps for frequency
+      status.heartbeatTimes.push(now);
+      const windowMs = 10000; // 10 s
+      const cutoff = now - windowMs;
+      while (status.heartbeatTimes.length > 0 && status.heartbeatTimes[0] < cutoff) {
+        status.heartbeatTimes.shift();
+      }
+
+      // Opportunistically attempt to send config packets when heartbeats arrive
+      this.maybeSendConfigPackets();
     });
 
     // EXACT combined_gui.py implementation: on_sensor_data handler
@@ -1264,6 +1483,30 @@ class SensorSystemServer {
             } else {
               this.stopControllerLoop();
             }
+
+            // ── Abort UDP broadcasts (ABORT / ABORT_DONE) ───────────────────────
+            const isAbortState =
+              newState === SystemState.ENGINE_ABORT ||
+              newState === SystemState.GSE_ABORT ||
+              newState === SystemState.EMERGENCY_ABORT ||
+              newState === SystemState.ABORT;
+            if (isAbortState) {
+              // Cancel any previous abort-done timer before starting a new one
+              if (this.abortDoneTimer) {
+                clearTimeout(this.abortDoneTimer);
+                this.abortDoneTimer = null;
+              }
+              // Immediately broadcast ABORT to all boards
+              this.sendAbortBroadcast();
+              // After a short delay, broadcast ABORT_DONE.
+              // TODO: Replace fixed delay with real confirmation based on actuator
+              // feedback / board heartbeats reflecting abort completion.
+              const ABORT_DONE_DELAY_MS = 3000;
+              this.abortDoneTimer = setTimeout(() => {
+                this.sendAbortDoneBroadcast();
+                this.abortDoneTimer = null;
+              }, ABORT_DONE_DELAY_MS);
+            }
         } else {
           throw new Error('Failed to send state transition command');
         }
@@ -1295,6 +1538,31 @@ class SensorSystemServer {
             throw new Error('Failed to send actuator command via UDP');
           }
         }
+      } else if (command.commandType === 'clear_abort') {
+        // Sync server-side actuator expectations to the abort pattern and
+        // broadcast CLEAR_ABORT to all boards, without changing currentState.
+        const current = this.currentState;
+        const isAbortState =
+          current === SystemState.ENGINE_ABORT ||
+          current === SystemState.GSE_ABORT ||
+          current === SystemState.EMERGENCY_ABORT ||
+          current === SystemState.ABORT;
+        const abortState = isAbortState ? current! : SystemState.EMERGENCY_ABORT;
+
+        console.log(
+          `🎯 CLEAR_ABORT command received – syncing actuators to abort pattern for state ${
+            SystemState[abortState]
+          } and broadcasting CLEAR_ABORT`,
+        );
+
+        try {
+          this.applyActuatorsForState(abortState);
+          this.broadcastActuatorExpectedPositions(abortState);
+        } catch (err) {
+          console.error('❌ Failed to apply abort actuator pattern during clear_abort:', err);
+        }
+
+        this.sendClearAbortBroadcast();
       } else if (command.commandType === 'controller_frequency') {
         const { frequency } = command.data;
         if (frequency !== undefined) {
@@ -1989,6 +2257,182 @@ class SensorSystemServer {
         },
       });
     }, 2000);
+
+    // Broadcast board heartbeat / connection status to all clients every second
+    setInterval(() => {
+      // Drive config state machine on a slow loop as well (for late-connecting boards)
+      this.maybeSendConfigPackets();
+
+      if (this.clients.size === 0) return;
+      const snapshot = this.getBoardStatusSnapshot();
+      if (snapshot.length === 0) return;
+      this.broadcast({
+        type: MessageType.BOARD_STATUS_UPDATE,
+        timestamp: Date.now(),
+        payload: { boards: snapshot },
+      });
+    }, 1000);
+
+    // Broadcast server heartbeat to all boards at configured interval
+    if (this.serverHeartbeatTimer) {
+      clearInterval(this.serverHeartbeatTimer);
+    }
+    this.serverHeartbeatTimer = setInterval(() => {
+      this.sendServerHeartbeatUDP();
+    }, this.serverHeartbeatIntervalMs);
+  }
+
+  /**
+   * Send SERVER_HEARTBEAT packet via UDP broadcast.
+   * Packet format (DAQv2Comms):
+   *   Header: [packet_type(1)=2, version(1)=0, timestamp_ms(4, LE)]
+   *   Body:   [engine_state(1)] where engine_state is SystemState numeric code.
+   */
+  private sendServerHeartbeatUDP(): void {
+    if (!this.actuatorSocket) {
+      return;
+    }
+    try {
+      const packetType = 2; // SERVER_HEARTBEAT
+      const version = 0;
+      const timestamp = Date.now() & 0xffffffff;
+      const engineCode = (this.currentState ?? SystemState.IDLE) as number;
+
+      const buffer = Buffer.allocUnsafe(7);
+      buffer.writeUInt8(packetType, 0);
+      buffer.writeUInt8(version, 1);
+      buffer.writeUInt32LE(timestamp, 2);
+      buffer.writeUInt8(engineCode, 6);
+
+      this.actuatorSocket.send(
+        buffer,
+        0,
+        buffer.length,
+        this.serverBroadcastPort,
+        this.serverBroadcastIP,
+        (err) => {
+          if (err) {
+            console.error(
+              `❌ Failed to send SERVER_HEARTBEAT to ${this.serverBroadcastIP}:${this.serverBroadcastPort}:`,
+              err,
+            );
+          }
+        },
+      );
+    } catch (err) {
+      console.error('❌ Error while constructing/sending SERVER_HEARTBEAT packet:', err);
+    }
+  }
+
+  /**
+   * Broadcast an ABORT packet (header-only) to all boards.
+   */
+  private sendAbortBroadcast(): void {
+    this.sendSimpleBroadcastPacket(7, 'ABORT');
+  }
+
+  /**
+   * Broadcast an ABORT_DONE packet (header-only) to all boards.
+   */
+  private sendAbortDoneBroadcast(): void {
+    this.sendSimpleBroadcastPacket(8, 'ABORT_DONE');
+  }
+
+  /**
+   * Broadcast a CLEAR_ABORT packet (header-only) to all boards.
+   */
+  private sendClearAbortBroadcast(): void {
+    this.sendSimpleBroadcastPacket(9, 'CLEAR_ABORT');
+  }
+
+  /**
+   * Helper for header-only UDP broadcast packets that share the same format:
+   *   [packet_type(1), version(1)=0, timestamp_ms(4, LE)]
+   */
+  private sendSimpleBroadcastPacket(packetType: number, label: string): void {
+    if (!this.actuatorSocket) return;
+    try {
+      const version = 0;
+      const timestamp = Date.now() & 0xffffffff;
+      const buffer = Buffer.allocUnsafe(6);
+      buffer.writeUInt8(packetType, 0);
+      buffer.writeUInt8(version, 1);
+      buffer.writeUInt32LE(timestamp, 2);
+
+      this.actuatorSocket.send(
+        buffer,
+        0,
+        buffer.length,
+        this.serverBroadcastPort,
+        this.serverBroadcastIP,
+        (err) => {
+          if (err) {
+            console.error(
+              `❌ Failed to send ${label} packet to ${this.serverBroadcastIP}:${this.serverBroadcastPort}:`,
+              err,
+            );
+          }
+        },
+      );
+    } catch (err) {
+      console.error(`❌ Error while constructing/sending ${label} packet:`, err);
+    }
+  }
+
+  /** Build a snapshot of current board status suitable for WebSocket broadcast. */
+  private getBoardStatusSnapshot(): BoardStatus[] {
+    const now = Date.now();
+    const timeoutMs = 2500; // treat as disconnected if no heartbeat for >2.5 s
+    const result: BoardStatus[] = [];
+
+    this.boardsStatus.forEach((status) => {
+      const last = status.lastHeartbeatMs;
+      const isConnected = last != null && now - last <= timeoutMs;
+
+      if (this.designatedSurvivorBoardId !== null && status.id === this.designatedSurvivorBoardId) {
+        this.designatedSurvivorConnected = isConnected;
+      }
+
+      let frequencyHz: number | null = null;
+      if (status.heartbeatTimes.length >= 2) {
+        const span = status.heartbeatTimes[status.heartbeatTimes.length - 1] - status.heartbeatTimes[0];
+        if (span > 0) {
+          const count = status.heartbeatTimes.length - 1;
+          frequencyHz = count / (span / 1000);
+        }
+      }
+
+      const registry = this.boardRegistryById.get(status.id);
+      const configState = this.boardConfigState.get(status.id);
+
+      result.push({
+        type: status.type,
+        boardNumber: status.boardNumber,
+        id: status.id,
+        ip: status.ip,
+        expected: status.expected,
+        connected: isConnected,
+        lastHeartbeatMs: last ?? null,
+        frequencyHz,
+        boardState: status.boardState,
+        engineState: status.engineState,
+        configured: configState?.status === 'sent',
+        configError: configState?.status === 'error' ? configState.errorMessage : undefined,
+        necessaryForAbort: registry?.necessaryForAbort ?? false,
+        designatedSurvivor: registry?.designatedSurvivor ?? false,
+      });
+    });
+
+    // Sort by type, then boardNumber, then id for stable display
+    result.sort((a, b) => {
+      if (a.type !== b.type) return a.type.localeCompare(b.type);
+      const an = a.boardNumber ?? Number.MAX_SAFE_INTEGER;
+      const bn = b.boardNumber ?? Number.MAX_SAFE_INTEGER;
+      if (an !== bn) return an - bn;
+      return a.id - b.id;
+    });
+
+    return result;
   }
 
   private broadcast(message: any): void {
@@ -2046,6 +2490,132 @@ class SensorSystemServer {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(message));
     }
+  }
+
+  /**
+   * Build and send SENSOR_CONFIG packets to connected boards once the
+   * designated survivor actuator board is online.
+   */
+  private maybeSendConfigPackets(): void {
+    // Require a single designated survivor actuator board to be configured
+    if (!this.designatedSurvivorBoardId || !this.designatedSurvivorIP) {
+      return;
+    }
+
+    // Only send configs once the designated survivor is actually connected
+    if (!this.designatedSurvivorConnected) {
+      return;
+    }
+
+    // Reuse actuator UDP socket for config packets (same network)
+    if (!this.actuatorSocket) {
+      console.warn('⚠️ Cannot send SENSOR_CONFIG packets: actuator/config UDP socket not initialized');
+      return;
+    }
+
+    const now = Date.now();
+    const timeoutMs = 2500;
+
+    this.boardsStatus.forEach((status, id) => {
+      const last = status.lastHeartbeatMs;
+      const isConnected = last != null && now - last <= timeoutMs;
+      if (!isConnected) return;
+
+      const registry = this.boardRegistryById.get(id);
+      if (!registry) return;
+
+      // Skip actuator boards for now – actuator config is a separate TODO
+      if (registry.type === 'ACTUATOR') return;
+
+      const cfg = this.boardConfigState.get(id) ?? { status: 'pending' as const };
+      if (cfg.status === 'sent') return;
+
+      const sensorChannels = registry.sensorChannels || [];
+      const necessaryForAbort = registry.necessaryForAbort;
+
+      try {
+        const packet = this.buildSensorConfigPacket(
+          sensorChannels,
+          necessaryForAbort,
+          this.designatedSurvivorIP!,
+        );
+
+        // DAQ boards listen for config on port 5005 by convention
+        const targetPort = 5005;
+        this.actuatorSocket.send(packet, targetPort, registry.ip, (err) => {
+          if (err) {
+            console.error(`❌ Failed to send SENSOR_CONFIG to board ${id} (${registry.ip}:${targetPort}):`, err);
+            this.boardConfigState.set(id, {
+              status: 'error',
+              lastSentAt: Date.now(),
+              errorMessage: err.message || 'UDP send error',
+            });
+          } else {
+            console.log(`📤 SENSOR_CONFIG sent to board ${id} (${registry.ip}:${targetPort}) – sensors=${sensorChannels.join(',')}, necessary_for_abort=${necessaryForAbort}`);
+            this.boardConfigState.set(id, {
+              status: 'sent',
+              lastSentAt: Date.now(),
+            });
+          }
+        });
+      } catch (err: any) {
+        console.error(`❌ Failed to build/send SENSOR_CONFIG for board ${id}:`, err);
+        this.boardConfigState.set(id, {
+          status: 'error',
+          lastSentAt: Date.now(),
+          errorMessage: String(err?.message || err),
+        });
+      }
+    });
+  }
+
+  /**
+   * Construct a DAQv2 SENSOR_CONFIG packet.
+   * Body layout (after 6-byte header):
+   *   num_sensors (1 byte)
+   *   sensor_ids  (N bytes, 1-byte each)
+   *   necessary_for_abort (1 byte, 0/1)
+   *   designated_survivor_ip (4 bytes, big-endian IPv4)
+   */
+  private buildSensorConfigPacket(
+    sensorChannels: number[],
+    necessaryForAbort: boolean,
+    designatedSurvivorIP: string,
+  ): Buffer {
+    const sanitized = sensorChannels
+      .map((v) => Number(v))
+      .filter((v) => Number.isFinite(v) && v >= 1 && v <= 255);
+
+    const numSensors = Math.min(sanitized.length, 255);
+    const bodyLength = 1 + numSensors + 1 + 4;
+    const totalLength = 6 + bodyLength;
+    const buffer = Buffer.allocUnsafe(totalLength);
+
+    const timestamp = Math.floor(Date.now()) & 0xFFFFFFFF;
+
+    // Header: packet_type=5 (SENSOR_CONFIG), version=0, timestamp LE
+    buffer.writeUInt8(5, 0);
+    buffer.writeUInt8(0, 1);
+    buffer.writeUInt32LE(timestamp, 2);
+
+    // Body
+    let offset = 6;
+    buffer.writeUInt8(numSensors, offset++);
+
+    for (let i = 0; i < numSensors; i++) {
+      buffer.writeUInt8(sanitized[i], offset++);
+    }
+
+    buffer.writeUInt8(necessaryForAbort ? 1 : 0, offset++);
+
+    const ipOctets = designatedSurvivorIP.split('.').map((part) => Number(part));
+    if (ipOctets.length !== 4 || ipOctets.some((p) => !Number.isFinite(p) || p < 0 || p > 255)) {
+      throw new Error(`Invalid designated survivor IP address: ${designatedSurvivorIP}`);
+    }
+    const ipInt = ((ipOctets[0] << 24) | (ipOctets[1] << 16) | (ipOctets[2] << 8) | ipOctets[3]) >>> 0;
+    buffer.writeUInt32BE(ipInt, offset);
+
+    return buffer;
   }
 
   shutdown(): void {

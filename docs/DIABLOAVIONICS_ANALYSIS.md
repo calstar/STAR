@@ -24,7 +24,7 @@ After cloning and analyzing the actual [DiabloAvionics](https://github.com/calst
 
 Boards are identified by:
 - **Board Type**: PT (1), LC (2), RTD (3), TC (4), Actuator (5)
-- **Board ID**: 0-15 (4 bits, sent in heartbeat)
+- **Board ID**: 0-255 (full uint8_t, sent in heartbeat)
 - **MAC Address**: ESP32 MAC address (used for IP assignment)
 
 **NOT** by complex signatures with hardware/firmware versions!

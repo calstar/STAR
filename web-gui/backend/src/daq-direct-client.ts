@@ -25,6 +25,31 @@ enum PacketType {
   PWM_ACTUATOR_COMMAND = 10,
 }
 
+// Board heartbeat protocol (mirrors external/DiabloAvionics/test_guis/sense_testing_gui.py)
+// Header: <BBI> already handled by parsePacketHeader()
+// Body:   <BBBB> = board_type, board_id (legacy board number), engine_state, board_state
+// New:    we additionally treat the *board ID* as the numeric ID encoded in the heartbeat,
+//         which maps to IP 192.168.2.[id] via config.toml. For now we rely on the board_id
+//         field as that ID when building higher‑level status (server will map ID→config).
+enum BoardState {
+  SETUP = 1,
+  ACTIVE = 2,
+  ABORT = 3,
+  ABORT_DONE = 4,
+}
+
+export interface BoardHeartbeatEvent {
+  sourceIP: string;
+  packetType: number;
+  version: number;
+  timestamp: number;
+  boardType: number;
+  /** Numeric board ID from heartbeat body (also used as PCB ID). */
+  id: number;
+  engineState: number;
+  boardState: BoardState | number;
+}
+
 export class DAQDirectClient extends EventEmitter {
   private udpSocket: Socket | null = null;
   private bindAddress: string;
@@ -195,6 +220,36 @@ export class DAQDirectClient extends EventEmitter {
     };
   }
 
+  private parseBoardHeartbeatPacket(data: Buffer): BoardHeartbeatEvent | null {
+    // Body format: <BBBB> immediately after 6‑byte header
+    if (data.length < PACKET_HEADER_FORMAT_SIZE + 4) {
+      return null;
+    }
+    const header = this.parsePacketHeader(data);
+    if (!header || header.packetType !== PacketType.BOARD_HEARTBEAT) {
+      return null;
+    }
+    try {
+      const offset = PACKET_HEADER_FORMAT_SIZE;
+      const boardType = data.readUInt8(offset);
+      const id = data.readUInt8(offset + 1);        // board_id / PCB ID
+      const engineState = data.readUInt8(offset + 2);
+      const boardState = data.readUInt8(offset + 3);
+      return {
+        sourceIP: '', // filled in by caller
+        packetType: header.packetType,
+        version: header.version,
+        timestamp: header.timestamp,
+        boardType,
+        id,
+        engineState,
+        boardState,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   private handlePacket(data: Buffer, sourceIP: string): void {
     // EXACT from combined_gui.py UDPReceiver.run()
     // ALWAYS log packets to see if we're receiving ANY data
@@ -217,14 +272,18 @@ export class DAQDirectClient extends EventEmitter {
       return;
     }
 
-    // Handle heartbeat to identify board types
+    // Handle heartbeat to identify boards and feed higher‑level status
     if (header.packetType === PacketType.BOARD_HEARTBEAT) {
-      // Parse heartbeat to identify board type (PT vs Actuator)
-      // This is simplified - in full implementation would parse board type from heartbeat
-      if (sourceIP.startsWith('192.168.2.10')) {
-        this.ptBoardIPs.add(sourceIP);
-      } else if (sourceIP.startsWith('192.168.2.20')) {
-        this.actuatorBoardIPs.add(sourceIP);
+      const parsed = this.parseBoardHeartbeatPacket(data);
+      if (parsed) {
+        parsed.sourceIP = sourceIP;
+        // Track seen board IPs for simple classification/debug
+        if (parsed.boardType === 0 || parsed.boardType === 1) {
+          this.ptBoardIPs.add(sourceIP);
+        } else {
+          this.actuatorBoardIPs.add(sourceIP);
+        }
+        this.emit('board_heartbeat', parsed);
       }
       return;
     }
