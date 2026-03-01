@@ -6,6 +6,3 @@ import UnifiedDashboard from '@/components/dashboard/UnifiedDashboard';
 export default function UnifiedDashboardPage() {
   return <UnifiedDashboard />;
 }
-
-
-

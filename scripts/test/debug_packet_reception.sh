@@ -57,6 +57,3 @@ fi
 
 echo ""
 echo "Live monitoring: tail -f $LOG_FILE | grep Pipeline"
-
-
-

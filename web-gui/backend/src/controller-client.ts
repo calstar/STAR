@@ -1,6 +1,6 @@
 /**
  * Controller Client - Interfaces with Robust DDP Controller
- * 
+ *
  * Maps sensor data to controller Measurement format and sends PWM commands
  * based on controller ActuationCommand output.
  */
@@ -23,9 +23,11 @@ export interface ControllerNavState {
 }
 
 export interface ControllerCommand {
-  command_type: 'THRUST_DESIRED' | 'ALTITUDE_GOAL';
+  command_type: 'THRUST_DESIRED' | 'ALTITUDE_GOAL' | 'PRESSURE_TARGET';
   thrust_desired?: number;  // [N]
   altitude_goal?: number;    // [m]
+  P_fuel_target?: number;    // Target fuel pressure
+  P_ox_target?: number;      // Target ox pressure
 }
 
 export interface ControllerActuation {
@@ -72,8 +74,8 @@ export class ControllerClient {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          config_path: configPath || null,
-          engine_config_loaded: true,
+          controller_config_path: configPath || null,
+          use_engine_config: true,
         }),
       });
 
@@ -129,9 +131,11 @@ export class ControllerClient {
             mass_estimate: nav.mass ?? 10.0,
           },
           cmd: {
-            command_type: cmd.command_type.toLowerCase(), // API expects lowercase: 'thrust_desired' or 'altitude_goal'
+            command_type: cmd.command_type.toLowerCase(), // API expects lowercase: 'thrust_desired' or 'altitude_goal' or 'pressure_target'
             thrust_desired: cmd.thrust_desired ?? 0.0,
             altitude_goal: cmd.altitude_goal ?? 0.0,
+            P_fuel_target: cmd.P_fuel_target ?? 0.0,
+            P_ox_target: cmd.P_ox_target ?? 0.0,
           },
         }),
       });
@@ -207,8 +211,8 @@ export function mapSensorDataToMeasurement(sensorData: Map<string, number>): Con
   // Map entity names to controller measurement fields
   // Using both named aliases and PT_CH fallbacks
   const getPressure = (entity: string, fallback?: string): number | null => {
-    const value = sensorData.get(`${entity}.pressure_psi`) 
-               ?? sensorData.get(`${fallback}.pressure_psi`);
+    const value = sensorData.get(`${entity}.pressure_psi`)
+      ?? sensorData.get(`${fallback}.pressure_psi`);
     return value !== undefined ? value : null;
   };
 
@@ -216,7 +220,7 @@ export function mapSensorDataToMeasurement(sensorData: Map<string, number>): Con
   const P_reg = getPressure('PT_Cal.GN2_Regulated', 'PT_Cal.PT_CH6');
   const P_u_fuel = getPressure('PT_Cal.Fuel_Upstream', 'PT_Cal.PT_CH1');
   const P_u_ox = getPressure('PT_Cal.Ox_Upstream', 'PT_Cal.PT_CH5');
-  const P_d_fuel = getPressure('PT_Cal.Fuel_Downstream', 'PT_Cal.PT_CH4');
+  const P_d_fuel = getPressure('PT_Cal.Fuel_Downstream', 'PT_Cal.PT_CH3');
   const P_d_ox = getPressure('PT_Cal.Ox_Downstream', 'PT_Cal.PT_CH7');
 
   // If we don't have a dedicated COPV sensor, approximate from regulator pressure.
@@ -226,8 +230,8 @@ export function mapSensorDataToMeasurement(sensorData: Map<string, number>): Con
   }
 
   // Check if we have all required pressures
-  if (P_copv === null || P_reg === null || P_u_fuel === null || 
-      P_u_ox === null || P_d_fuel === null || P_d_ox === null) {
+  if (P_copv === null || P_reg === null || P_u_fuel === null ||
+    P_u_ox === null || P_d_fuel === null || P_d_ox === null) {
     return null; // Missing required sensor data
   }
 
@@ -241,4 +245,3 @@ export function mapSensorDataToMeasurement(sensorData: Map<string, number>): Con
     timestamp: Date.now(),
   };
 }
-

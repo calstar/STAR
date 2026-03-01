@@ -9,12 +9,18 @@ export var MessageType;
     MessageType["UNSUBSCRIBE_SENSOR"] = "unsubscribe_sensor";
     MessageType["SEND_COMMAND"] = "send_command";
     MessageType["QUERY_HISTORICAL"] = "query_historical";
+    MessageType["CALIBRATION_COMMAND"] = "calibration_command";
     // Server → Client
     MessageType["SENSOR_UPDATE"] = "sensor_update";
     MessageType["ACTUATOR_UPDATE"] = "actuator_update";
     MessageType["STATE_UPDATE"] = "state_update";
     MessageType["ERROR"] = "error";
     MessageType["CONNECTION_STATUS"] = "connection_status";
+    MessageType["CALIBRATION_STATUS"] = "calibration_status";
+    MessageType["CONTROLLER_UPDATE"] = "controller_update";
+    MessageType["MISSION_START_TIME"] = "mission_start_time";
+    MessageType["ACTUATOR_EXPECTED_POSITIONS_UPDATE"] = "actuator_expected_positions_update";
+    MessageType["HISTORICAL_DATA"] = "historical_data";
 })(MessageType || (MessageType = {}));
 // Sensor types
 export var SensorType;
@@ -46,19 +52,15 @@ export var SystemState;
     SystemState[SystemState["CALIBRATE"] = 14] = "CALIBRATE";
     SystemState[SystemState["READY"] = 15] = "READY";
     SystemState[SystemState["FIRE"] = 16] = "FIRE";
-    SystemState[SystemState["ABORT"] = 17] = "ABORT";
+    SystemState[SystemState["ENGINE_ABORT"] = 17] = "ENGINE_ABORT";
+    SystemState[SystemState["GSE_ABORT"] = 18] = "GSE_ABORT";
+    SystemState[SystemState["EMERGENCY_ABORT"] = 19] = "EMERGENCY_ABORT";
+    SystemState[SystemState["PRESS_STANDBY"] = 20] = "PRESS_STANDBY";
+    // Legacy alias for backwards compatibility
+    SystemState[SystemState["ABORT"] = 19] = "ABORT";
 })(SystemState || (SystemState = {}));
-// Actuator IDs
-export var ActuatorId;
-(function (ActuatorId) {
-    ActuatorId[ActuatorId["LOX_MAIN"] = 0] = "LOX_MAIN";
-    ActuatorId[ActuatorId["FUEL_MAIN"] = 1] = "FUEL_MAIN";
-    ActuatorId[ActuatorId["LOX_VENT"] = 2] = "LOX_VENT";
-    ActuatorId[ActuatorId["FUEL_VENT"] = 3] = "FUEL_VENT";
-    ActuatorId[ActuatorId["LOX_PRESS"] = 4] = "LOX_PRESS";
-    ActuatorId[ActuatorId["FUEL_PRESS"] = 5] = "FUEL_PRESS";
-    ActuatorId[ActuatorId["GSE_LOW_VENT"] = 6] = "GSE_LOW_VENT";
-})(ActuatorId || (ActuatorId = {}));
+// Actuator IDs — now string-based, driven by config.toml actuator_roles.
+// No enum: all references use the config role name (e.g. "LOX Main").
 // Actuator states
 export var ActuatorState;
 (function (ActuatorState) {
@@ -66,4 +68,3 @@ export var ActuatorState;
     ActuatorState[ActuatorState["OPEN"] = 1] = "OPEN";
     ActuatorState[ActuatorState["UNKNOWN"] = 2] = "UNKNOWN";
 })(ActuatorState || (ActuatorState = {}));
-//# sourceMappingURL=types.js.map

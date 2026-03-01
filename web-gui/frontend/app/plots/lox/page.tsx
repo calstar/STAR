@@ -8,29 +8,37 @@ import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
+import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
+import { useSensorConfig, filterByRole } from '@/lib/sensor-config';
+import { usePressureLimits, getLimitsForSystem } from '@/lib/pressure-limits';
 
-const NOP  = 450;
-const MEOP = 600;
+
 
 export default function LOXGraphsPage() {
   const updateSensor = useSensorStore((s) => s.updateSensor);
-  const updateState  = useSensorStore((s) => s.updateState);
-  const ws           = getWebSocketClient();
+  const updateState = useSensorStore((s) => s.updateState);
+  const ws = getWebSocketClient();
+  const allSensors = useSensorConfig();
+  const pressureLimits = usePressureLimits();
+  const loxLimits = getLimitsForSystem(pressureLimits, 'LOX');
+
+  // LOX / Ox sensors from config (role names containing "Ox" or "LOX")
+  const loxSensors = filterByRole(allSensors, 'Ox', 'LOX');
+  const entities = loxSensors.map((s) => s.calEntity);
+  const labels = loxSensors.map((s) => s.role);
+  const colors = entities.map((e) => getEntityColor(e));
+
+  const upSensor = loxSensors.find((s) => s.role.toLowerCase().includes('upstream'));
+  const downSensor = loxSensors.find((s) => s.role.toLowerCase().includes('downstream'));
+  const up = useSensorValue(upSensor?.calEntity ?? '', 'pressure_psi');
+  const down = useSensorValue(downSensor?.calEntity ?? '', 'pressure_psi');
 
   useEffect(() => {
     ws.connect();
     const unsub1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const unsub2 = ws.on(MessageType.STATE_UPDATE,  (p: unknown) => updateState(p as StateUpdate));
+    const unsub2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
     return () => { unsub1(); unsub2(); };
   }, [ws, updateSensor, updateState]);
-
-  // Sidebar pressure PTs
-  const upNamed   = useSensorValue('PT_Cal.Ox_Upstream',   'pressure_psi');
-  const upCh      = useSensorValue('PT_Cal.PT_CH5',        'pressure_psi');
-  const downNamed = useSensorValue('PT_Cal.Ox_Downstream', 'pressure_psi');
-  const downCh    = useSensorValue('PT_Cal.PT_CH7',        'pressure_psi');
-  const up        = upNamed   ?? upCh;
-  const down      = downNamed ?? downCh;
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
@@ -45,10 +53,9 @@ export default function LOXGraphsPage() {
 
       {/* Live readout strip */}
       <div className="flex-shrink-0">
-        <SensorReadoutStrip sensors={[
-          { label: 'LOX Up',   entity: 'PT_Cal.PT_CH5', component: 'pressure_psi', color: '#E74C3C' },
-          { label: 'LOX Down', entity: 'PT_Cal.PT_CH7', component: 'pressure_psi', color: '#C0392B' },
-        ]} />
+        <SensorReadoutStrip sensors={loxSensors.map((s) => ({
+          label: s.role, entity: s.calEntity, component: 'pressure_psi', color: getEntityColor(s.calEntity),
+        }))} />
       </div>
 
       {/* Body: chart + sidebar */}
@@ -58,10 +65,10 @@ export default function LOXGraphsPage() {
           <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0" style={{ minHeight: '300px' }}>
             <TimeSeriesPlot
               title="LOX Pressure (PSI)"
-              entities={['PT_Cal.PT_CH5','PT_Cal.PT_CH7']}
-              labels={['Upstream','Downstream']}
+              entities={entities}
+              labels={labels}
               component="pressure_psi"
-              colors={['#E74C3C','#C0392B']}
+              colors={colors}
               yLabel="Pressure (PSI)"
             />
           </div>
@@ -71,11 +78,11 @@ export default function LOXGraphsPage() {
             <ActuatorStatePanel
               title="LOX Actuators"
               actuators={[
-                { label: 'LOX Main',  entity: 'ACT.LOX_Main',        color: '#27AE60' },
-                { label: 'LOX Vent',  entity: 'ACT.LOX_Vent',        color: '#E74C3C' },
-                { label: 'LOX Press', entity: 'ACT.LOX_Press',       color: '#F39C12' },
-                { label: 'LOX Fill',  entity: 'ACT.ACT_CH4',         color: '#9B59B6' },
-                { label: 'LOX Dump',  entity: 'ACT.ACT_CH4',         color: '#8E44AD' },
+                { label: 'LOX Main', entity: 'ACT.LOX_Main', color: getActuatorColor('ACT.LOX_Main') },
+                { label: 'LOX Vent', entity: 'ACT.LOX_Vent', color: getActuatorColor('ACT.LOX_Vent') },
+                { label: 'LOX Press', entity: 'ACT.LOX_Press', color: getActuatorColor('ACT.LOX_Press') },
+                { label: 'LOX Fill', entity: 'ACT.LOX_Fill', color: getActuatorColor('ACT.LOX_Fill') },
+                { label: 'LOX Dump', entity: 'ACT.LOX_Dump', color: getActuatorColor('ACT.LOX_Dump') },
               ]}
             />
           </div>
@@ -88,10 +95,10 @@ export default function LOXGraphsPage() {
           </div>
           <div className="flex flex-row flex-1 gap-2 min-h-0 overflow-visible w-full pr-6">
             <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-visible">
-              <PressureBar label="Up" value={up} nop={NOP} meop={MEOP} color="#E74C3C" showLabels={false} />
+              <PressureBar label="Up" value={up} nop={loxLimits.NOP} meop={loxLimits.MEOP} color={getEntityColor(upSensor?.calEntity ?? '')} showLabels={false} />
             </div>
             <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-visible">
-              <PressureBar label="Down" value={down} nop={NOP} meop={MEOP} color="#C0392B" showLabels={false} />
+              <PressureBar label="Down" value={down} nop={loxLimits.NOP} meop={loxLimits.MEOP} color={getEntityColor(downSensor?.calEntity ?? '')} showLabels={false} />
             </div>
           </div>
         </div>
@@ -100,8 +107,3 @@ export default function LOXGraphsPage() {
     </main>
   );
 }
-
-
-
-
-

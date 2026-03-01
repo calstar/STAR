@@ -168,10 +168,33 @@ class CalibrationOrchestratorGUI(QtWidgets.QMainWindow):
         )
         ref_layout = QtWidgets.QVBoxLayout()
 
+        # Number of reference gauges (1 = one value for all channels, N = one per channel)
+        gauge_group = QtWidgets.QGroupBox("Reference gauges")
+        gauge_layout = QtWidgets.QHBoxLayout()
+        gauge_layout.addWidget(QtWidgets.QLabel("Number of gauges:"))
+        self.num_gauges_spin = QtWidgets.QSpinBox()
+        self.num_gauges_spin.setMinimum(1)
+        self.num_gauges_spin.setMaximum(10)
+        self.num_gauges_spin.setValue(1)
+        self.num_gauges_spin.setToolTip(
+            "If all PTs share one reference gauge, set to 1 and enter one value for Phase 1."
+        )
+        gauge_layout.addWidget(self.num_gauges_spin)
+        gauge_group.setLayout(gauge_layout)
+        phase1_layout.addWidget(gauge_group)
+
         # Per-sensor-type reference inputs (only for active connectors)
         for stype, info in self.orchestrator.sensor_types.items():
-            active_connectors = self.orchestrator.active_connectors.get(stype, [])
-            if not active_connectors:
+            # Collect active channels for this type (active_connectors key is (stype, board_ip))
+            channels_for_type: List[int] = []
+            for (
+                st,
+                _board_ip,
+            ), active_conns in self.orchestrator.active_connectors.items():
+                if st == stype:
+                    channels_for_type.extend(active_conns)
+            channels_for_type = sorted(set(channels_for_type))
+            if not channels_for_type:
                 continue
 
             # Get sensor role names if available
@@ -183,16 +206,16 @@ class CalibrationOrchestratorGUI(QtWidgets.QMainWindow):
                     cfg = load_config()
                     roles = cfg.get("sensor_roles", {})
                     for role, role_ch in roles.items():
-                        if role_ch in active_connectors and stype == "PT":
+                        if role_ch in channels_for_type and stype == "PT":
                             role_map[role_ch] = role
-                except:
+                except Exception:
                     pass
 
             type_group = QtWidgets.QGroupBox(f"{stype} ({info.unit})")
             type_layout = QtWidgets.QGridLayout()
 
             row = 0
-            for board_ip, ch in connectors:
+            for ch in channels_for_type:
                 key = (stype, ch)
 
                 # Create label with role name if available
@@ -251,6 +274,15 @@ class CalibrationOrchestratorGUI(QtWidgets.QMainWindow):
         batch_set_btn.clicked.connect(self.set_batch_reference)
         batch_layout.addWidget(batch_set_btn)
 
+        # When num_gauges == 1: single ref applies to all PT channels
+        self.single_ref_input = QtWidgets.QLineEdit()
+        self.single_ref_input.setPlaceholderText("One ref (PSI) for all PTs")
+        self.single_ref_btn = QtWidgets.QPushButton("Set ref for all PTs")
+        self.single_ref_btn.clicked.connect(self.set_single_ref_all_pts)
+        batch_layout.addWidget(QtWidgets.QLabel("1-gauge ref:"))
+        batch_layout.addWidget(self.single_ref_input)
+        batch_layout.addWidget(self.single_ref_btn)
+
         batch_group.setLayout(batch_layout)
         phase1_layout.addWidget(batch_group)
 
@@ -277,9 +309,17 @@ class CalibrationOrchestratorGUI(QtWidgets.QMainWindow):
         self.fit_btn.clicked.connect(self.fit_calibrations)
         action_layout.addWidget(self.fit_btn)
 
-        self.save_btn = QtWidgets.QPushButton("Save")
+        self.save_btn = QtWidgets.QPushButton("Save calibration")
+        self.save_btn.setToolTip(
+            "Save calibration constants to JSON in config calibration path"
+        )
         self.save_btn.clicked.connect(self.save_calibrations)
         action_layout.addWidget(self.save_btn)
+
+        self.clear_btn = QtWidgets.QPushButton("Clear calibration")
+        self.clear_btn.setToolTip("Clear all calibration data and start from scratch")
+        self.clear_btn.clicked.connect(self.clear_calibrations)
+        action_layout.addWidget(self.clear_btn)
 
         phase1_layout.addLayout(action_layout)
 
@@ -313,25 +353,50 @@ class CalibrationOrchestratorGUI(QtWidgets.QMainWindow):
             try:
                 import sys
                 from pathlib import Path
+
                 # Try to import from combined_gui if available
-                sys.path.insert(0, str(Path(__file__).parent.parent.parent / "external" / "DiabloAvionics" / "test_guis"))
+                sys.path.insert(
+                    0,
+                    str(
+                        Path(__file__).parent.parent.parent
+                        / "external"
+                        / "DiabloAvionics"
+                        / "test_guis"
+                    ),
+                )
                 try:
                     from combined_gui import get_num_actuators
+
                     num_actuators = get_num_actuators()
                 except ImportError:
                     # Fallback: try to count from CSV
-                    csv_path = Path(__file__).parent.parent.parent / "external" / "DiabloAvionics" / "test_guis" / "state_machine_actuators.csv"
+                    csv_path = (
+                        Path(__file__).parent.parent.parent
+                        / "external"
+                        / "DiabloAvionics"
+                        / "test_guis"
+                        / "state_machine_actuators.csv"
+                    )
                     if csv_path.exists():
                         import csv
-                        with open(csv_path, 'r') as f:
+
+                        with open(csv_path, "r") as f:
                             reader = csv.reader(f)
                             rows = list(reader)
-                            num_actuators = sum(1 for row in rows[1:] if len(row) > 0 and row[0].strip()) if len(rows) > 1 else 10
+                            num_actuators = (
+                                sum(
+                                    1
+                                    for row in rows[1:]
+                                    if len(row) > 0 and row[0].strip()
+                                )
+                                if len(rows) > 1
+                                else 10
+                            )
                     else:
                         num_actuators = 10
             except Exception:
                 num_actuators = 10
-            
+
             # Calculate optimal grid layout
             if num_actuators <= 8:
                 cols = 2
@@ -339,7 +404,7 @@ class CalibrationOrchestratorGUI(QtWidgets.QMainWindow):
                 cols = 4
             else:
                 cols = 4
-            
+
             for i in range(1, num_actuators + 1):
                 on_btn = QtWidgets.QPushButton(f"ON {i}")
                 off_btn = QtWidgets.QPushButton(f"OFF {i}")
@@ -475,20 +540,71 @@ class CalibrationOrchestratorGUI(QtWidgets.QMainWindow):
         except ValueError:
             self.status_text.append(f"❌ Invalid value: {value_str}")
 
+    def set_single_ref_all_pts(self):
+        """Set one reference value for all PT channels (when using 1 reference gauge)."""
+        try:
+            value = float(self.single_ref_input.text())
+        except ValueError:
+            self.status_text.append("❌ Invalid value for 1-gauge ref")
+            return
+        info = self.orchestrator.sensor_types.get("PT")
+        if not info:
+            self.status_text.append("❌ PT not in orchestrator")
+            return
+        count = 0
+        for (stype, ch), rcf in self.orchestrator.robust.items():
+            if stype != "PT":
+                continue
+            self.orchestrator.references[(stype, ch)] = value
+            if (stype, ch) in self.ref_inputs:
+                self.ref_inputs[(stype, ch)].setText(str(value))
+            count += 1
+        self.status_text.append(
+            f"✅ PT all ({count} ch) → {value} {info.unit} (trusted)"
+        )
+
     def set_batch_reference(self):
         """Set reference for all channels of a type"""
         stype = self.batch_type_combo.currentText()
         try:
             value = float(self.batch_value_input.text())
             info = self.orchestrator.sensor_types[stype]
-            for ch in range(1, info.num_sensors + 1):
+            channels = []
+            for (st, _), active_conns in self.orchestrator.active_connectors.items():
+                if st == stype:
+                    channels.extend(active_conns)
+            channels = (
+                sorted(set(channels))
+                if channels
+                else list(range(1, info.num_sensors + 1))
+            )
+            for ch in channels:
                 key = (stype, ch)
                 self.orchestrator.references[key] = value
                 if key in self.ref_inputs:
                     self.ref_inputs[key].setText(str(value))
-            self.status_text.append(f"✅ {stype} all → {value} {info.unit}")
+            self.status_text.append(f"✅ {stype} all → {value} {info.unit} (trusted)")
         except ValueError:
             self.status_text.append(f"❌ Invalid value")
+
+    def clear_calibrations(self):
+        """Clear all calibration data and start from scratch."""
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "Clear calibration",
+            "Clear all calibration points and references and start from scratch?",
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if reply != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self.orchestrator.clear_calibration()
+        for inp in self.ref_inputs.values():
+            inp.clear()
+        self.single_ref_input.clear()
+        self.batch_value_input.clear()
+        self.status_text.append("🗑️ Calibration cleared — start from scratch")
 
     def start_collection(self):
         """Start collecting calibration points"""

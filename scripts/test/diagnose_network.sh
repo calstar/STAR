@@ -61,6 +61,3 @@ echo "   • If board doesn't appear, it's not on same network"
 echo ""
 echo "5. Try Wireshark/tcpdump (if available):"
 echo "   sudo tcpdump -i enx00e04c680240 -n udp port 5006"
-
-
-

@@ -98,6 +98,3 @@ The GUI needs to:
 3. Add state machine command interface
 4. Test with real sensor data
 5. Refine UI/UX based on feedback
-
-
-

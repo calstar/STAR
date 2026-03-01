@@ -62,6 +62,7 @@ int main(int argc, char* argv[]) {
     std::map<std::string, BoardConfig> board_map;
     board_map["192.168.2.101"] = {BoardType::PT, "192.168.2.101", 10, true};
     board_map["192.168.2.201"] = {BoardType::ACTUATOR, "192.168.2.201", 10, true};
+    board_map["192.168.2.202"] = {BoardType::ACTUATOR, "192.168.2.202", 10, true};
     // Future boards:
     // board_map["192.168.2.102"] = {BoardType::LC,  "192.168.2.102", 4, false};
     // board_map["192.168.2.103"] = {BoardType::TC,  "192.168.2.103", 4, false};

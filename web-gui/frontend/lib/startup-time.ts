@@ -2,7 +2,7 @@
  * Global mission T+0 time — from backend's first packet timestamp.
  * Every TimeSeriesPlot uses this as the reference so the X-axis shows
  * continuous elapsed time since first data packet, not since the window opened.
- * 
+ *
  * Priority: Backend missionStartTime > localStorage fallback > current time
  */
 
@@ -30,7 +30,7 @@ export function getStartupTime(): number {
     const t = parseInt(stored, 10);
     if (!isNaN(t) && t > 0) return t;
   }
-  
+
   // Last resort: current time (shouldn't happen if backend is working)
   return Date.now();
 }
@@ -45,7 +45,3 @@ export function resetStartupTime(): void {
 export function elapsedSeconds(): number {
   return (Date.now() - getStartupTime()) / 1000;
 }
-
-
-
-

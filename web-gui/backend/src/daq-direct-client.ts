@@ -1,16 +1,17 @@
 /**
  * Direct DAQ Board Client - EXACT REPLICATION OF combined_gui.py
- * Implements the exact same packet parsing and data handling as combined_gui.py
+ * Packet format matches external/DiabloAvionics/ADC_Testing/Stream_ADC_Data
+ * and DAQv2-Comms (DiabloPackets.h / DiabloPacketUtils.cpp).
  */
 
 import { createSocket, Socket } from 'dgram';
 import { EventEmitter } from 'events';
 
-// Packet format constants (EXACT from combined_gui.py)
-const PACKET_HEADER_FORMAT_SIZE = 6; // <BBI> = packet_type(1) + version(1) + timestamp(4)
-const SENSOR_DATA_PACKET_SIZE = 2; // <BB> = num_chunks(1) + num_sensors(1)
-const SENSOR_DATA_CHUNK_SIZE = 4; // <I> = chunk_timestamp(4)
-const SENSOR_DATAPOINT_SIZE = 5; // <BI> = sensor_id(1) + data(4)
+// Packet format constants (matches DAQv2-Comms: PacketHeader, SensorDataPacket, SensorDataChunk, SensorDatapoint)
+const PACKET_HEADER_FORMAT_SIZE = 6; // packet_type(1) + version(1) + timestamp(4 LE)
+const SENSOR_DATA_PACKET_SIZE = 2; // num_chunks(1) + num_sensors(1)
+const SENSOR_DATA_CHUNK_SIZE = 4; // chunk_timestamp(4 LE)
+const SENSOR_DATAPOINT_SIZE = 5; // sensor_id(1) + data(4 LE)
 const MAX_PACKET_SIZE = 512;
 
 // Packet types (from combined_gui.py)
@@ -73,73 +74,43 @@ export class DAQDirectClient extends EventEmitter {
       return true;
     }
 
-    try {
-      console.log(`🔌 Setting up UDP listener (EXACT combined_gui.py implementation) on ${this.bindAddress}:${this.port}`);
-
-      // Use SO_REUSEADDR and SO_REUSEPORT to allow multiple processes to bind to port 5006
-      // This allows both DAQ Bridge and backend to receive UDP packets simultaneously
-      // SO_REUSEPORT (Linux) allows true port sharing - both processes receive packets
+    return new Promise((resolve) => {
       try {
-        this.udpSocket = createSocket({
-          type: 'udp4',
-          reuseAddr: true,  // SO_REUSEADDR - allows binding even if port is in use
+        console.log(`🔌 Setting up UDP listener on ${this.bindAddress}:${this.port}`);
+
+        this.udpSocket = createSocket({ type: 'udp4', reuseAddr: true });
+        this.udpSocket.setMaxListeners(100);
+
+        this.udpSocket.on('message', (data: Buffer, rinfo: any) => {
+          if (!(this as any).hasReceivedPacket) {
+            console.log(`📥 FIRST UDP PACKET received: ${data.length} bytes from ${rinfo.address}:${rinfo.port}`);
+            (this as any).hasReceivedPacket = true;
+          }
+          this.handlePacket(data, rinfo.address);
         });
 
-        // CRITICAL: Set SO_REUSEPORT for true port sharing (Linux only)
-        // This allows both DAQ Bridge and backend to receive packets on port 5006
-        const handle = (this.udpSocket as any)._handle;
-        if (process.platform === 'linux' && handle && handle.setOption) {
-          try {
-            // SO_REUSEPORT = 15 on Linux (from /usr/include/asm-generic/socket.h)
-            // This allows multiple processes to bind to the same port
-            handle.setOption(15, 1);
-            console.log('   ✅ SO_REUSEPORT enabled - sharing port 5006 with DAQ Bridge');
-            console.log('   📡 Both DAQ Bridge and backend will receive UDP packets');
-          } catch (e) {
-            console.warn('   ⚠️ SO_REUSEPORT not available - only one process can bind to port 5006');
-            console.warn('   💡 Solution: Stop DAQ Bridge or use UDP forwarding');
+        this.udpSocket.on('error', (error: Error) => {
+          const err = error as any;
+          console.error(`❌ UDP socket error: ${err.code} — ${err.message}`);
+          if (err.code === 'EADDRINUSE') {
+            console.error('   Port 5006 is in use. Stop DAQ Bridge first: kill $(pgrep -f daq_bridge)');
           }
-        } else if (process.platform !== 'linux') {
-          console.warn('   ⚠️ SO_REUSEPORT only available on Linux');
-          console.warn('   💡 On non-Linux systems, only one process can bind to port 5006');
-        }
-      } catch (e) {
-        // Fallback to regular socket
-        this.udpSocket = createSocket('udp4');
-        console.warn('   ⚠️ Failed to set socket options:', e);
+          this._connected = false;
+          resolve(false);
+        });
+
+        this.udpSocket.bind(this.port, this.bindAddress, () => {
+          console.log(`✅ UDP listener bound to ${this.bindAddress}:${this.port}`);
+          console.log('   📡 Receiving DiabloAvionics packets directly from boards');
+          this._connected = true;
+          this.emit('connected');
+          resolve(true);
+        });
+      } catch (error) {
+        console.error('❌ Failed to set up UDP listener:', error);
+        resolve(false);
       }
-
-      this.udpSocket.setMaxListeners(100);
-
-      this.udpSocket.on('message', (data: Buffer, rinfo: any) => {
-        // Log first few packets to confirm we're receiving data
-        if (!(this as any).hasReceivedPacket) {
-          console.log(`📥 FIRST UDP PACKET received: ${data.length} bytes from ${rinfo.address}:${rinfo.port}`);
-          (this as any).hasReceivedPacket = true;
-        }
-        this.handlePacket(data, rinfo.address);
-      });
-
-      this.udpSocket.on('error', (error: Error) => {
-        const err = error as any;
-        console.error('❌ UDP socket error:', err.code, err.message);
-      });
-
-      // Bind with reuseAddr - this should work even if DAQ Bridge is using the port
-      // On Linux with SO_REUSEPORT, both processes will receive packets
-      this.udpSocket.bind(this.port, this.bindAddress, () => {
-        console.log(`✅ UDP listener bound to ${this.bindAddress}:${this.port}`);
-        console.log('   📡 Receiving DiabloAvionics packets directly from boards');
-        console.log('   ✅ Sharing port with DAQ Bridge (SO_REUSEADDR/SO_REUSEPORT)');
-        this._connected = true;
-        this.emit('connected');
-      });
-
-      return true;
-    } catch (error) {
-      console.error('❌ Failed to set up UDP listener:', error);
-      return false;
-    }
+    });
   }
 
   private parsePacketHeader(data: Buffer): { packetType: number; version: number; timestamp: number } | null {
@@ -158,7 +129,7 @@ export class DAQDirectClient extends EventEmitter {
     }
   }
 
-  private parseSensorDataPacket(data: Buffer): { header: any; chunks: Array<{ timestamp: number; datapoints: Array<{ sensor_id: number; data: number }> }> } | null {
+  private parseSensorDataPacket(data: Buffer, sourceIP?: string): { header: any; chunks: Array<{ timestamp: number; datapoints: Array<{ sensor_id: number; data: number }> }> } | null {
     // EXACT from combined_gui.py parse_sensor_data_packet()
     if (data.length < PACKET_HEADER_FORMAT_SIZE + SENSOR_DATA_PACKET_SIZE) {
       return null;
@@ -176,6 +147,32 @@ export class DAQDirectClient extends EventEmitter {
     const numSensors = data.readUInt8(offset + 1);
     offset += SENSOR_DATA_PACKET_SIZE;
 
+    // Throttled detailed logging for HP PT boards (configurable via hpPtBoardIPs)
+    const isHpPtBoard = (this as any).hpPtBoardIPs?.has(sourceIP) ?? false;
+    let shouldLog = false;
+    if (isHpPtBoard) {
+      if (!(this as any).hpPtPacketCount) (this as any).hpPtPacketCount = 0;
+      (this as any).hpPtPacketCount++;
+      shouldLog = (this as any).hpPtPacketCount <= 5 || (this as any).hpPtPacketCount % 50 === 0;
+
+      if (shouldLog) {
+        console.log(`\n🔍 HP PT Board (${sourceIP}) Packet #${(this as any).hpPtPacketCount} Analysis:`);
+        console.log(`   Packet size: ${data.length} bytes`);
+        console.log(`   Header: type=${header.packetType}, version=${header.version}, timestamp=${header.timestamp}`);
+        console.log(`   Body header: num_chunks=${numChunks}, num_sensors=${numSensors}`);
+        console.log(`   Expected size: ${PACKET_HEADER_FORMAT_SIZE} (header) + ${SENSOR_DATA_PACKET_SIZE} (body header) + ${numChunks} chunks × (${SENSOR_DATA_CHUNK_SIZE} (timestamp) + ${numSensors} sensors × ${SENSOR_DATAPOINT_SIZE} bytes)`);
+        const expectedSize = PACKET_HEADER_FORMAT_SIZE + SENSOR_DATA_PACKET_SIZE + (numChunks * (SENSOR_DATA_CHUNK_SIZE + (numSensors * SENSOR_DATAPOINT_SIZE)));
+        console.log(`   Expected total: ${expectedSize} bytes, Actual: ${data.length} bytes`);
+        if (data.length !== expectedSize) {
+          console.warn(`   ⚠️ SIZE MISMATCH! Expected ${expectedSize}, got ${data.length}`);
+        }
+        // Show first few bytes of body for verification
+        const bodyStart = offset;
+        const bodyPreview = data.subarray(bodyStart, Math.min(bodyStart + 32, data.length));
+        console.log(`   Body start (hex): ${bodyPreview.toString('hex')}`);
+      }
+    }
+
     // Calculate expected size
     const perChunkSize = SENSOR_DATA_CHUNK_SIZE + (numSensors * SENSOR_DATAPOINT_SIZE);
     const expectedSize = PACKET_HEADER_FORMAT_SIZE + SENSOR_DATA_PACKET_SIZE + (numChunks * perChunkSize);
@@ -186,7 +183,25 @@ export class DAQDirectClient extends EventEmitter {
 
     const chunks: Array<{ timestamp: number; datapoints: Array<{ sensor_id: number; data: number }> }> = [];
 
+    // Validate num_chunks and num_sensors
+    if (numChunks === 0) {
+      console.warn(`⚠️ Received packet with num_chunks=0 from ${data.length} byte packet`);
+      return null;
+    }
+    if (numSensors === 0) {
+      console.warn(`⚠️ Received packet with num_sensors=0 from ${data.length} byte packet`);
+      return null;
+    }
+
     for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
+      // Verify we have enough data for this chunk
+      const remainingBytes = data.length - offset;
+      const chunkDataSize = SENSOR_DATA_CHUNK_SIZE + (numSensors * SENSOR_DATAPOINT_SIZE);
+      if (remainingBytes < chunkDataSize) {
+        console.error(`❌ Packet truncated: need ${chunkDataSize} bytes for chunk ${chunkIdx + 1}/${numChunks}, only ${remainingBytes} bytes remaining`);
+        return null;
+      }
+
       // Read chunk timestamp
       const chunkTimestamp = data.readUInt32LE(offset);
       offset += SENSOR_DATA_CHUNK_SIZE;
@@ -202,6 +217,12 @@ export class DAQDirectClient extends EventEmitter {
           sensor_id: sensorId,
           data: sensorData, // This is uint32_t from protocol (like combined_gui.py)
         });
+      }
+
+      // Detailed logging for HP PT board chunks
+      if (isHpPtBoard && shouldLog) {
+        console.log(`   Chunk ${chunkIdx + 1}/${numChunks}: timestamp=${chunkTimestamp}, ${datapoints.length} datapoints`);
+        console.log(`      Datapoints: ${datapoints.map(dp => `ID=${dp.sensor_id} ADC=${dp.data}`).join(', ')}`);
       }
 
       chunks.push({
@@ -290,13 +311,24 @@ export class DAQDirectClient extends EventEmitter {
 
     // Handle sensor data packets (EXACT from combined_gui.py)
     if (header.packetType === PacketType.SENSOR_DATA) {
-      const result = this.parseSensorDataPacket(data);
+      const result = this.parseSensorDataPacket(data, sourceIP);
       if (result) {
         const { header: headerDict, chunks } = result;
+
+        // Log chunk information for debugging (throttled to avoid spam)
+        if ((this as any).packetCount <= 10 || (this as any).packetCount % 100 === 0) {
+          const totalDatapoints = chunks.reduce((sum, chunk) => sum + (chunk.datapoints?.length || 0), 0);
+          console.log(`   📦 Parsed ${chunks.length} chunk(s) with ${totalDatapoints} total datapoints from ${sourceIP}`);
+        }
 
         // Emit sensor data (EXACT format from combined_gui.py)
         // source_ip is used to filter PT board vs actuator board
         this.emit('sensor_data', headerDict, chunks, sourceIP);
+      } else {
+        // Log parse failures for debugging
+        if ((this as any).packetCount <= 5) {
+          console.warn(`   ⚠️ Failed to parse sensor data packet from ${sourceIP} (packet size: ${data.length} bytes)`);
+        }
       }
     }
   }

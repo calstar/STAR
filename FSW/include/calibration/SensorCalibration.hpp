@@ -187,6 +187,3 @@ inline std::vector<double> nist_type_k_mv_to_c() {
 }  // namespace fsw
 
 #endif  // SENSOR_CALIBRATION_HPP
-
-
-

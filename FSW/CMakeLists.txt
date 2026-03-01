@@ -17,6 +17,7 @@ set(FSW_SOURCES
     src/calibration/PTCalibration.cpp
     src/calibration/SensorCalibration.cpp
     src/control/RobustDDPController.cpp
+    src/control/ControllerService.cpp
     # src/nav/EKFNavigationEnhanced.cpp
     # src/calibration/IMUCalibration.cpp
     # Calibration pipeline (if needed)
@@ -43,7 +44,7 @@ target_link_libraries(fsw_daq_lib
     Eigen3::Eigen
     Threads::Threads
     pthread
-    rt
+    ${RT_LIBRARY}
 )
 
 # Main daq_bridge executable
@@ -59,7 +60,7 @@ target_link_libraries(daq_bridge
     daq_comms_lib
     Threads::Threads
     pthread
-    rt
+    ${RT_LIBRARY}
 )
 
 # Test program to send all sensors from config
@@ -76,7 +77,7 @@ target_link_libraries(send_all_sensors_from_config
     daq_comms_lib
     Threads::Threads
     pthread
-    rt
+    ${RT_LIBRARY}
 )
 
 # SITL Simulator executable
@@ -94,7 +95,7 @@ target_link_libraries(sitl_simulator
     Eigen3::Eigen
     Threads::Threads
     pthread
-    rt
+    ${RT_LIBRARY}
 )
 
 # Robust DDP Controller test executable
@@ -111,7 +112,25 @@ target_link_libraries(test_robust_ddp
     Eigen3::Eigen
     Threads::Threads
     pthread
-    rt
+    ${RT_LIBRARY}
+)
+
+# Controller Service standalone executable
+add_executable(controller_service src/control/controller_main.cpp)
+
+target_include_directories(controller_service PRIVATE
+    ${CMAKE_SOURCE_DIR}/FSW/include
+    ${CMAKE_SOURCE_DIR}/daq_comms/include
+    ${CMAKE_SOURCE_DIR}/utl
+)
+
+target_link_libraries(controller_service
+    fsw_daq_lib
+    daq_comms_lib
+    Eigen3::Eigen
+    Threads::Threads
+    pthread
+    ${RT_LIBRARY}
 )
 
 # IMU Calibration test executable
@@ -128,7 +147,7 @@ target_link_libraries(test_imu_calibration
     Eigen3::Eigen
     Threads::Threads
     pthread
-    rt
+    ${RT_LIBRARY}
 )
 
 # Install targets

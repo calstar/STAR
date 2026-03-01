@@ -87,4 +87,3 @@ export default function CameraFeed({ url, className = '' }: CameraFeedProps) {
     </div>
   );
 }
-

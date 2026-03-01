@@ -6,14 +6,25 @@ import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
+import { getEntityColor } from '@/lib/sensor-colors';
+import { useSensorConfig } from '@/lib/sensor-config';
 
-// Channel → role mapping from config.toml
-const CH_LABELS_PT = ['Fuel Up', 'GSE Low', 'GSE Mid', 'Fuel Dn', 'LOX Up', 'GN2 Reg', 'LOX Dn', 'GSE Hi', 'GN2 Hi', 'CH10'];
+
 
 export default function RawReadoutsPage() {
   const updateSensor = useSensorStore((state) => state.updateSensor);
   const updateState = useSensorStore((state) => state.updateState);
   const ws = getWebSocketClient();
+  const allSensors = useSensorConfig();
+
+  // Derive labels and entities from config
+  const labels = allSensors.map((s) => s.role);
+  const entities = allSensors.map((s) => s.entity);
+  const calEntities = allSensors.map((s) => s.calEntity);
+  const colors = entities.map((e) => getEntityColor(e));
+  const calColors = calEntities.map((e) => getEntityColor(e));
+
+  const half = Math.ceil(allSensors.length / 2);
 
   useEffect(() => {
     ws.connect();
@@ -35,12 +46,12 @@ export default function RawReadoutsPage() {
       {/* Live readout strips */}
       <div className="flex-shrink-0">
         <SensorReadoutStrip sensors={
-          Array.from({ length: 10 }, (_, i) => ({
-            label: CH_LABELS_PT[i],
-            entity: `PT.PT_CH${i + 1}`,
+          allSensors.map((s) => ({
+            label: s.role,
+            entity: s.entity,
             component: 'raw_adc_counts',
             unit: 'ADC',
-            color: '#3498DB',
+            color: getEntityColor(s.entity),
             decimals: 0,
           }))
         } />
@@ -51,22 +62,22 @@ export default function RawReadoutsPage() {
 
         <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0" style={{ minHeight: '250px' }}>
           <TimeSeriesPlot
-            title="PT CH 1–5  •  Raw ADC Counts"
-            entities={['PT.PT_CH1','PT.PT_CH2','PT.PT_CH3','PT.PT_CH4','PT.PT_CH5']}
-            labels={CH_LABELS_PT.slice(0, 5)}
+            title={`PT CH 1–${half}  •  Raw ADC Counts`}
+            entities={entities.slice(0, half)}
+            labels={labels.slice(0, half)}
             component="raw_adc_counts"
-            colors={['#3498DB','#2980B9','#5DADE2','#1ABC9C','#16A085']}
+            colors={colors.slice(0, half)}
             yLabel="ADC Counts"
           />
         </div>
 
         <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0" style={{ minHeight: '250px' }}>
           <TimeSeriesPlot
-            title="PT CH 6–10  •  Raw ADC Counts"
-            entities={['PT.PT_CH6','PT.PT_CH7','PT.PT_CH8','PT.PT_CH9','PT.PT_CH10']}
-            labels={CH_LABELS_PT.slice(5, 10)}
+            title={`PT CH ${half + 1}–${allSensors.length}  •  Raw ADC Counts`}
+            entities={entities.slice(half)}
+            labels={labels.slice(half)}
             component="raw_adc_counts"
-            colors={['#E74C3C','#C0392B','#F1948A','#F39C12','#E67E22']}
+            colors={colors.slice(half)}
             yLabel="ADC Counts"
           />
         </div>
@@ -74,22 +85,22 @@ export default function RawReadoutsPage() {
         {/* Calibrated PSI */}
         <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0" style={{ minHeight: '250px' }}>
           <TimeSeriesPlot
-            title="PT CH 1–5  •  Calibrated PSI"
-            entities={['PT_Cal.PT_CH1','PT_Cal.PT_CH2','PT_Cal.PT_CH3','PT_Cal.PT_CH4','PT_Cal.PT_CH5']}
-            labels={CH_LABELS_PT.slice(0, 5)}
+            title={`PT CH 1–${half}  •  Calibrated PSI`}
+            entities={calEntities.slice(0, half)}
+            labels={labels.slice(0, half)}
             component="pressure_psi"
-            colors={['#3498DB','#2980B9','#5DADE2','#1ABC9C','#16A085']}
+            colors={calColors.slice(0, half)}
             yLabel="Pressure (PSI)"
           />
         </div>
 
         <div className="bg-card rounded-lg p-3 flex flex-col min-h-0 min-w-0" style={{ minHeight: '250px' }}>
           <TimeSeriesPlot
-            title="PT CH 6–10  •  Calibrated PSI"
-            entities={['PT_Cal.PT_CH6','PT_Cal.PT_CH7','PT_Cal.PT_CH8','PT_Cal.PT_CH9','PT_Cal.PT_CH10']}
-            labels={CH_LABELS_PT.slice(5, 10)}
+            title={`PT CH ${half + 1}–${allSensors.length}  •  Calibrated PSI`}
+            entities={calEntities.slice(half)}
+            labels={labels.slice(half)}
             component="pressure_psi"
-            colors={['#E74C3C','#C0392B','#F1948A','#F39C12','#E67E22']}
+            colors={calColors.slice(half)}
             yLabel="Pressure (PSI)"
           />
         </div>

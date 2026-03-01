@@ -88,6 +88,3 @@ echo ""
 trap "echo ''; echo 'Stopping SITL...'; kill $SITL_PID $ENGINE_BRIDGE_PID 2>/dev/null || true; exit" INT TERM
 
 wait $SITL_PID
-
-
-

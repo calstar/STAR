@@ -103,6 +103,3 @@ npm install
 - See `docs/ELECTRON_INTEGRATION_PLAN.md` for desktop app setup
 - See `docs/MOBILE_OPTIMIZATION_PLAN.md` for mobile optimization
 - See `docs/NETWORK_ACCESS.md` for network configuration
-
-
-

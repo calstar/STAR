@@ -11,6 +11,12 @@ if not kdl then
     return
 end
 
+-- SetDbConfig was removed in elodin-db ≥0.14. Guard so the DB still starts.
+if type(SetDbConfig) ~= "function" then
+    print("[config.lua] SetDbConfig not available in this elodin-db version, skipping schematic config")
+    return
+end
+
 -- Connect to the local DB (same process when launched with --config).
 local client = connect("[::1]:2240")
 

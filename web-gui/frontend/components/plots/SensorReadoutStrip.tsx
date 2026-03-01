@@ -39,4 +39,3 @@ export default function SensorReadoutStrip({ sensors }: SensorReadoutStripProps)
 }
 
 export { ReadoutBox };
-

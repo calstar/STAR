@@ -318,8 +318,14 @@ class CalibrationOrchestrator:
 
                     self.active_connectors[(stype, board_ip)] = active
                     self.board_ip_to_type[board_ip] = stype
+
+                    # Store board ID for this IP to build unique keys
+                    if not hasattr(self, "ip_to_board_id"):
+                        self.ip_to_board_id = {}
+                    self.ip_to_board_id[board_ip] = board.get("board_id", 1)
+
                     logger.info(
-                        f"  {stype} ({board_name}, {board_ip}): active connectors = {active}"
+                        f"  {stype} ({board_name}, {board_ip}, ID {self.ip_to_board_id[board_ip]}): active connectors = {active}"
                     )
 
         # ── Per-channel RobustCalibrationFramework ──────────────────────
@@ -331,18 +337,17 @@ class CalibrationOrchestrator:
         )  # Track which board each channel belongs to
         channel_idx = 0
         for (stype, board_ip), active_conns in self.active_connectors.items():
+            board_id = getattr(self, "ip_to_board_id", {}).get(board_ip, 1)
             for ch in active_conns:
-                key = (stype, ch)
-                # If we already have this (stype, ch) from another board, append board_ip to distinguish
-                # For now, we'll use the first board's IP if there's a conflict
+                # Use board-aware unique ID: boardId * 100 + channelId
+                unique_ch = board_id * 100 + ch
+                key = (stype, unique_ch)
                 if key not in self.robust:
-                    self.robust[key] = RobustCalibrationFramework(sensor_id=channel_idx)
+                    self.robust[key] = RobustCalibrationFramework(sensor_id=unique_ch)
                     self.channel_to_board_ip[key] = board_ip
-                    channel_idx += 1
                 else:
-                    # Multiple boards with same type and channel - use board_ip in key
                     logger.warning(
-                        f"  ⚠️  Channel conflict: {stype} CH{ch} exists on multiple boards. Using first board."
+                        f"  ⚠️  Channel conflict: {stype} key {key} exists on multiple boards. Using first."
                     )
 
         # Total channels = only active connectors
@@ -500,24 +505,9 @@ class CalibrationOrchestrator:
 
             # FIX: sensor_id (sid) is 0-indexed from packet, channels are 1-indexed
             channel_id = sid + 1
-
-            # Get active connectors for this specific board IP
-            board_key = (stype, src_ip)
-            active_conns = self.active_connectors.get(board_key, [])
-
-            # If not found by IP, try by type (fallback for single board per type)
-            if not active_conns:
-                # Try to find any board of this type
-                for (st, ip), conns in self.active_connectors.items():
-                    if st == stype:
-                        active_conns = conns
-                        break
-
-            # Only process if this connector is active for this board
-            if channel_id not in active_conns:
-                continue  # Skip inactive connectors
-
-            key = (stype, channel_id)
+            board_id = getattr(self, "ip_to_board_id", {}).get(src_ip, 1)
+            unique_ch = board_id * 100 + channel_id
+            key = (stype, unique_ch)
 
             if key not in self.robust:
                 # Log first few misses to help debug
@@ -532,6 +522,7 @@ class CalibrationOrchestrator:
             self.live_adc[key].append(signed)
 
             # Phase 1: collect calibration points when user is collecting
+            # User reference is ground truth — trust it completely (no validation)
             if self.collecting and key in self.references:
                 ref_val = self.references[key]
                 pt = RobustCalPoint(
@@ -879,13 +870,26 @@ class CalibrationOrchestrator:
             )
         self.pending_alerts.clear()
 
+    # ── Clear calibration (start from scratch) ────────────────────────────
+    def clear_calibration(self):
+        """Clear all references and per-channel calibration data. User can start fresh."""
+        self.references.clear()
+        for key, rcf in self.robust.items():
+            rcf.calibration_points.clear()
+            rcf.theta_mean = rcf.population_prior_mean.copy()
+            rcf.theta_cov = rcf.individual_prior_cov.copy()
+            rcf.rls_P = np.eye(6) * 100.0
+        logger.info("🗑️ Calibration cleared — references and points reset")
+
     # ── Save / Load ──────────────────────────────────────────────────────
     def _save_all(self):
+        """Save calibration constants to JSON (and CSV) in config calibration path."""
         for stype, info in self.sensor_types.items():
             calibrated = {}
-            for ch in range(1, info.num_sensors + 1):
-                key = (stype, ch)
-                rcf = self.robust[key]
+            for key, rcf in self.robust.items():
+                if key[0] != stype:
+                    continue
+                ch = key[1]
                 if len(rcf.calibration_points) >= self.min_points:
                     calibrated[ch] = rcf
             if not calibrated:

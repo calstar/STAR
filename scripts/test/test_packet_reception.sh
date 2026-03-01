@@ -51,6 +51,3 @@ else
     echo "Check board IP:"
     echo "  ip addr show | grep 192.168"
 fi
-
-
-

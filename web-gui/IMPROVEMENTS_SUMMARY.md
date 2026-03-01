@@ -61,6 +61,3 @@
 2. Add window management
 3. Add more error recovery
 4. Performance optimizations
-
-
-

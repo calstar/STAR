@@ -28,7 +28,7 @@ export function useWindowManager() {
     const offsetY = 50;
     const spacingX = 50;
     const spacingY = 50;
-    
+
     const col = windows.size % gridCols;
     const row = Math.floor(windows.size / gridCols) % gridRows;
     const left = offsetX + col * (width + spacingX);
@@ -38,7 +38,7 @@ export function useWindowManager() {
       // Ensure URL is absolute - use current origin
       const absoluteUrl = url.startsWith('http') ? url : `${window.location.origin}${url.startsWith('/') ? url : '/' + url}`;
       console.log(`[WindowManager] Opening window: ${absoluteUrl}`);
-      
+
       const newWindow = window.open(
         absoluteUrl,
         `window_${id}`,

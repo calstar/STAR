@@ -120,6 +120,3 @@ private:
 }  // namespace fsw
 
 #endif  // PT_CALIBRATION_HPP
-
-
-

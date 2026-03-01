@@ -87,17 +87,17 @@ RobustDDPController::step(const Measurement& meas, const NavState& nav, const Co
 
     // 5. Solve — use enumerative MPC for binary valves (§10)
     //    then refine with DDP for PWM (§9)
-    Eigen::VectorXd u_binary = enumerativeMPC(x, diag.F_ref, diag.MR_ref);
+    Eigen::VectorXd u_binary = enumerativeMPC(x, ref, 0);
 
     // Also try economic decision logic (§11) as candidate
-    Eigen::VectorXd u_econ = economicDecision(x, diag.F_ref);
+    Eigen::VectorXd u_econ = economicDecision(x, ref, 0);
 
     // Pick best of enumerative and economic
     // eng_bin used implicitly inside runningCost
-    double cost_bin = runningCost(x, u_binary, diag.F_ref, diag.MR_ref,
+    double cost_bin = runningCost(x, u_binary, ref, 0,
                                   u_prev_applied_.value_or(Eigen::VectorXd::Zero(N_CONTROL)));
-    double cost_econ = runningCost(x, u_econ, diag.F_ref, diag.MR_ref,
-                                   u_prev_applied_.value_or(Eigen::VectorXd::Zero(N_CONTROL)));
+    double cost_econ =
+        runningCost(x, u_econ, ref, 0, u_prev_applied_.value_or(Eigen::VectorXd::Zero(N_CONTROL)));
     Eigen::VectorXd u_relaxed = (cost_bin <= cost_econ) ? u_binary : u_econ;
 
     // Optionally refine with DDP if horizon > 1
@@ -117,7 +117,7 @@ RobustDDPController::step(const Measurement& meas, const NavState& nav, const Co
         diag.solver_iters = sol.iterations;
 
         // Only use DDP solution if it improves over greedy
-        double cost_ddp = runningCost(x, sol.u_seq.row(0).transpose(), diag.F_ref, diag.MR_ref,
+        double cost_ddp = runningCost(x, sol.u_seq.row(0).transpose(), ref, 0,
                                       u_prev_applied_.value_or(Eigen::VectorXd::Zero(N_CONTROL)));
         if (cost_ddp < cost_bin && cost_ddp < cost_econ) {
             u_relaxed = sol.u_seq.row(0).transpose();
@@ -126,7 +126,7 @@ RobustDDPController::step(const Measurement& meas, const NavState& nav, const Co
     }
 
     // 6. Safety filter  (§9.3)
-    Eigen::VectorXd u_safe = filterAction(x, u_relaxed, diag.F_ref, diag.MR_ref);
+    Eigen::VectorXd u_safe = filterAction(x, u_relaxed, ref, 0);
     if ((u_safe - u_relaxed).norm() > 1e-6)
         diag.safety_filtered = true;
 
@@ -138,6 +138,13 @@ RobustDDPController::step(const Measurement& meas, const NavState& nav, const Co
     diag.F_estimated = eng.F;
     diag.MR_estimated = eng.MR;
     diag.P_ch = eng.P_ch;
+
+    if (ref.type == CommandType::PRESSURE_TARGET && tick_ % 10 == 0) {
+        std::cout << "[PRESSURE_MODE] tick=" << tick_ << " P_f_d=" << x(IDX_P_D_F) / 6894.76
+                  << "psi / " << cmd.P_fuel_target / 6894.76 << "psi" << " u_safe=[" << u_safe(0)
+                  << ", " << u_safe(1) << "]" << " cost_bin=" << cost_bin
+                  << " cost_econ=" << cost_econ << "\n";
+    }
 
     // Store for next tick
     x_prev_ = x;
@@ -389,14 +396,23 @@ RobustDDPController::Reference RobustDDPController::buildReference(const NavStat
                                                                    const Measurement& /* meas */,
                                                                    const Command& cmd) const {
     Reference ref;
+    ref.type = cmd.type;
     ref.F_ref.resize(config_.N);
     ref.MR_ref.resize(config_.N);
+    ref.P_fuel_ref.resize(config_.N);
+    ref.P_ox_ref.resize(config_.N);
 
     double F_target = 0.0;
     double MR_target = 2.0;  // nominal MR
+    double P_f_target = 0.0;
+    double P_o_target = 0.0;
 
     if (cmd.type == CommandType::THRUST_DESIRED) {
         F_target = cmd.thrust_desired;
+    } else if (cmd.type == CommandType::PRESSURE_TARGET) {
+        F_target = cmd.thrust_desired;  // Secondary, maybe 0
+        P_f_target = cmd.P_fuel_target;
+        P_o_target = cmd.P_ox_target;
     } else {
         // Altitude-based  (§8.1):  a_z = kp·(h*−h) + kd·(v*−vz)
         double kp = 1.0, kd = 2.0;
@@ -411,6 +427,8 @@ RobustDDPController::Reference RobustDDPController::buildReference(const NavStat
     for (int i = 0; i < config_.N; ++i) {
         ref.F_ref[i] = F_target;
         ref.MR_ref[i] = MR_target;
+        ref.P_fuel_ref[i] = P_f_target;
+        ref.P_ox_ref[i] = P_o_target;
     }
     return ref;
 }
@@ -441,7 +459,7 @@ Eigen::VectorXd RobustDDPController::buildState(const Measurement& meas) const {
 //  CONSTRAINTS  (§7)
 // ═══════════════════════════════════════════════════════════════════════
 
-bool RobustDDPController::isStateSafe(const Eigen::VectorXd& x) const {
+bool RobustDDPController::isStateSafe(const Eigen::VectorXd& x, CommandType cmd_type) const {
     // §5.2  Hard gas constraint: P_copv ≥ P_copv_min
     if (x(IDX_P_COPV) < config_.P_copv_min)
         return false;
@@ -451,18 +469,22 @@ bool RobustDDPController::isStateSafe(const Eigen::VectorXd& x) const {
     if (x(IDX_P_U_O) > config_.P_u_max)
         return false;
 
+    // Safety checks on engine are somewhat coupled to thrust mode.
+    // If not valid, it's safe (e.g. pressure too low for combustion).
     auto eng = estimateEngine(x(IDX_P_D_F), x(IDX_P_D_O));
     if (!eng.valid)
         return true;  // can't evaluate → assume safe
 
-    // §7.1 MR bounds
-    if (eng.MR < config_.MR_min || eng.MR > config_.MR_max)
-        return false;
-    // §7.2 Injector stiffness: ΔP ≥ ε·Pch
-    if (eng.dp_F < config_.injector_dp_frac * eng.P_ch)
-        return false;
-    if (eng.dp_O < config_.injector_dp_frac * eng.P_ch)
-        return false;
+    if (cmd_type != CommandType::PRESSURE_TARGET) {
+        // §7.1 MR bounds
+        if (eng.MR < config_.MR_min || eng.MR > config_.MR_max)
+            return false;
+        // §7.2 Injector stiffness: ΔP ≥ ε·Pch
+        if (eng.dp_F < config_.injector_dp_frac * eng.P_ch)
+            return false;
+        if (eng.dp_O < config_.injector_dp_frac * eng.P_ch)
+            return false;
+    }
 
     return true;
 }
@@ -472,18 +494,31 @@ bool RobustDDPController::isStateSafe(const Eigen::VectorXd& x) const {
 // ═══════════════════════════════════════════════════════════════════════
 
 double RobustDDPController::runningCost(const Eigen::VectorXd& x, const Eigen::VectorXd& u,
-                                        double F_ref, double MR_ref,
+                                        const Reference& ref, int k,
                                         const Eigen::VectorXd& u_prev) const {
     auto eng = estimateEngine(x(IDX_P_D_F), x(IDX_P_D_O));
     double cost = 0.0;
 
-    if (eng.valid) {
-        double F_err = (eng.F - F_ref) / std::max(std::abs(F_ref), 1.0);
-        double MR_err = (eng.MR - MR_ref) / std::max(std::abs(MR_ref), 1.0);
-        cost += config_.qF * F_err * F_err;
-        cost += config_.qMR * MR_err * MR_err;
-    } else if (F_ref > 0) {
-        cost += 1e4;
+    if (ref.type == CommandType::PRESSURE_TARGET) {
+        // Pressure control mode: penalize deviation from target tank pressures
+        double P_f_err = (x(IDX_P_D_F) - ref.P_fuel_ref[k]) / 1e5;  // scale by 1 bar for tuning
+        double P_o_err = (x(IDX_P_D_O) - ref.P_ox_ref[k]) / 1e5;
+
+        // High penalty to overcome gas cost/switching cost
+        cost += 1e4 * P_f_err * P_f_err;
+        cost += 1e4 * P_o_err * P_o_err;
+    } else {
+        // Thrust/MR control mode
+        if (eng.valid) {
+            double F_ref = ref.F_ref[k];
+            double MR_ref = ref.MR_ref[k];
+            double F_err = (eng.F - F_ref) / std::max(std::abs(F_ref), 1.0);
+            double MR_err = (eng.MR - MR_ref) / std::max(std::abs(MR_ref), 1.0);
+            cost += config_.qF * F_err * F_err;
+            cost += config_.qMR * MR_err * MR_err;
+        } else if (ref.F_ref[k] > 0) {
+            cost += 1e4;
+        }
     }
 
     // Gas consumption
@@ -528,7 +563,7 @@ RobustDDPController::DDPSolution RobustDDPController::solveDDP(
             Eigen::VectorXd xk = x_seq.row(k).transpose();
             Eigen::VectorXd uk = sol.u_seq.row(k).transpose();
             auto eng = estimateEngine(xk(IDX_P_D_F), xk(IDX_P_D_O));
-            total_cost += runningCost(xk, uk, ref.F_ref[k], ref.MR_ref[k], u_p);
+            total_cost += runningCost(xk, uk, ref, k, u_p);
             u_p = uk;
             x_seq.row(k + 1) = dynamicsStep(xk, uk, eng.mdot_F, eng.mdot_O).transpose();
         }
@@ -564,19 +599,19 @@ RobustDDPController::DDPSolution RobustDDPController::solveDDP(
             Eigen::VectorXd u_pr = Eigen::VectorXd::Zero(N_CONTROL);
             if (k > 0)
                 u_pr = sol.u_seq.row(k - 1).transpose();
-            double c0 = runningCost(xk, uk, ref.F_ref[k], ref.MR_ref[k], u_pr);
+            double c0 = runningCost(xk, uk, ref, k, u_pr);
 
             Eigen::VectorXd lx(N_STATE);
             for (int i = 0; i < N_STATE; ++i) {
                 Eigen::VectorXd xp = xk;
                 xp(i) += eps;
-                lx(i) = (runningCost(xp, uk, ref.F_ref[k], ref.MR_ref[k], u_pr) - c0) / eps;
+                lx(i) = (runningCost(xp, uk, ref, k, u_pr) - c0) / eps;
             }
             Eigen::VectorXd lu(N_CONTROL);
             for (int i = 0; i < N_CONTROL; ++i) {
                 Eigen::VectorXd up = uk;
                 up(i) = std::clamp(up(i) + eps, 0.0, 1.0);
-                lu(i) = (runningCost(xk, up, ref.F_ref[k], ref.MR_ref[k], u_pr) - c0) / eps;
+                lu(i) = (runningCost(xk, up, ref, k, u_pr) - c0) / eps;
             }
 
             // Q-function
@@ -623,8 +658,7 @@ RobustDDPController::DDPSolution RobustDDPController::solveDDP(
                 u_new.row(k) = uk_new.transpose();
 
                 auto eng = estimateEngine(x_new.row(k)(IDX_P_D_F), x_new.row(k)(IDX_P_D_O));
-                c_new += runningCost(x_new.row(k).transpose(), uk_new, ref.F_ref[k], ref.MR_ref[k],
-                                     u_p2);
+                c_new += runningCost(x_new.row(k).transpose(), uk_new, ref, k, u_p2);
                 u_p2 = uk_new;
                 x_new.row(k + 1) =
                     dynamicsStep(x_new.row(k).transpose(), uk_new, eng.mdot_F, eng.mdot_O)
@@ -632,11 +666,20 @@ RobustDDPController::DDPSolution RobustDDPController::solveDDP(
             }
 
             if (c_new < total_cost) {
+                if (ref.type == CommandType::PRESSURE_TARGET) {
+                    // std::cout << "[DDP Iter " << iter << "] accepted step (alpha=" << alpha << ")
+                    // cost: " << c_new << " -> u=" << u_new.row(0) << std::endl;
+                }
                 sol.u_seq = u_new;
                 improved = true;
                 break;
             }
             alpha *= 0.5;
+        }
+
+        if (ref.type == CommandType::PRESSURE_TARGET && !improved) {
+            // std::cout << "[DDP Iter " << iter << "] rejected all steps (reg=" << reg << ")" <<
+            // std::endl;
         }
 
         if (!improved)
@@ -663,8 +706,8 @@ RobustDDPController::DDPSolution RobustDDPController::solveDDP(
 //  worst-case blowdown + gas loss, reject infeasible, pick min cost.
 // ═══════════════════════════════════════════════════════════════════════
 
-Eigen::VectorXd RobustDDPController::enumerativeMPC(const Eigen::VectorXd& x0, double F_ref,
-                                                    double MR_ref) const {
+Eigen::VectorXd RobustDDPController::enumerativeMPC(const Eigen::VectorXd& x0, const Reference& ref,
+                                                    int k) const {
     // Candidate binary actions
     static const std::array<Eigen::Vector2d, 4> actions = {
         {{0.0, 0.0}, {0.0, 1.0}, {1.0, 0.0}, {1.0, 1.0}}};
@@ -686,7 +729,7 @@ Eigen::VectorXd RobustDDPController::enumerativeMPC(const Eigen::VectorXd& x0, d
 
         for (int step = 0; step < depth; ++step) {
             auto eng = estimateEngine(x_wc(IDX_P_D_F), x_wc(IDX_P_D_O));
-            total_cost += runningCost(x_wc, u_cand, F_ref, MR_ref, u_prev);
+            total_cost += runningCost(x_wc, u_cand, ref, k, u_prev);
 
             // Worst-case dynamics: nominal + w_bar disturbance (max adverse)
             Eigen::VectorXd x_next = dynamicsStep(x_wc, u_cand, eng.mdot_F, eng.mdot_O);
@@ -695,7 +738,7 @@ Eigen::VectorXd RobustDDPController::enumerativeMPC(const Eigen::VectorXd& x0, d
             x_next = x_next.cwiseMax(0.0);
 
             // Check feasibility  (§9.3 constraints)
-            if (!isStateSafe(x_next)) {
+            if (!isStateSafe(x_next, ref.type)) {
                 feasible = false;
                 break;
             }
@@ -711,6 +754,11 @@ Eigen::VectorXd RobustDDPController::enumerativeMPC(const Eigen::VectorXd& x0, d
         }
     }
 
+    if (ref.type == CommandType::PRESSURE_TARGET) {
+        // std::cout << "[EnumMPC] best cost=" << best_cost << " u=" << best_u.transpose() <<
+        // std::endl;
+    }
+
     return best_u;
 }
 
@@ -721,7 +769,7 @@ Eigen::VectorXd RobustDDPController::enumerativeMPC(const Eigen::VectorXd& x0, d
 // ═══════════════════════════════════════════════════════════════════════
 
 Eigen::VectorXd RobustDDPController::economicDecision(const Eigen::VectorXd& x,
-                                                      double F_ref) const {
+                                                      const Reference& ref, int k) const {
     auto eng_base = estimateEngine(x(IDX_P_D_F), x(IDX_P_D_O));
     double F_base = eng_base.valid ? eng_base.F : 0.0;
 
@@ -746,7 +794,19 @@ Eigen::VectorXd RobustDDPController::economicDecision(const Eigen::VectorXd& x,
         delta_mc *= config_.dt;
 
         // Decision rule  (§11)
-        double benefit = config_.qF * (F_ref - F_base) * delta_F;
+        double benefit;
+        if (ref.type == CommandType::PRESSURE_TARGET) {
+            // High benefit if we are below the pressure target
+            double P_f_err = std::max(0.0, ref.P_fuel_ref[k] - x(IDX_P_D_F));
+            double P_o_err = std::max(0.0, ref.P_ox_ref[k] - x(IDX_P_D_O));
+            double err_pa = (i == 0) ? P_f_err : P_o_err;
+
+            // Scaled benefit: if we are >1 psi (6894 Pa) away, open it
+            // gas_cost is usually around ~2000-3000
+            benefit = err_pa;
+        } else {
+            benefit = config_.qF * (ref.F_ref[k] - F_base) * delta_F;
+        }
         double gas_cost = config_.qGas * delta_mc + config_.qSwitch;
 
         if (benefit >= gas_cost)
@@ -761,7 +821,7 @@ Eigen::VectorXd RobustDDPController::economicDecision(const Eigen::VectorXd& x,
 // ═══════════════════════════════════════════════════════════════════════
 
 bool RobustDDPController::isActionSafe(const Eigen::VectorXd& x, const Eigen::VectorXd& u,
-                                       int num_steps) const {
+                                       CommandType cmd_type, int num_steps) const {
     Eigen::VectorXd x_lo = x;
     Eigen::VectorXd x_hi = x;
 
@@ -773,18 +833,18 @@ bool RobustDDPController::isActionSafe(const Eigen::VectorXd& x, const Eigen::Ve
         x_lo = x_lo_next.cwiseMin(x_hi_next);
         x_hi = x_lo_next.cwiseMax(x_hi_next);
 
-        if (!isStateSafe(x_hi))
+        if (!isStateSafe(x_hi, cmd_type))
             return false;
     }
     return true;
 }
 
 Eigen::VectorXd RobustDDPController::filterAction(const Eigen::VectorXd& x,
-                                                  const Eigen::VectorXd& u_proposed, double F_ref,
-                                                  double MR_ref) const {
+                                                  const Eigen::VectorXd& u_proposed,
+                                                  const Reference& ref, int k) const {
     Eigen::VectorXd u_safe = u_proposed.cwiseMax(0.0).cwiseMin(1.0);
 
-    if (isActionSafe(x, u_safe))
+    if (isActionSafe(x, u_safe, ref.type))
         return u_safe;
 
     // Find best safe action from binary candidates
@@ -796,9 +856,9 @@ Eigen::VectorXd RobustDDPController::filterAction(const Eigen::VectorXd& x,
     Eigen::VectorXd u_prev = u_prev_applied_.value_or(Eigen::VectorXd::Zero(N_CONTROL));
 
     for (const auto& c : candidates) {
-        if (!isActionSafe(x, c))
+        if (!isActionSafe(x, c, ref.type))
             continue;
-        double cost = runningCost(x, c, F_ref, MR_ref, u_prev);
+        double cost = runningCost(x, c, ref, k, u_prev);
         if (cost < best_cost) {
             best_cost = cost;
             best_u = c;

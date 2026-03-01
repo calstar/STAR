@@ -65,6 +65,3 @@ bridge = SITLBridge(config_path="config/config_sitl.toml")
 # Run SITL loop
 bridge.run()
 ```
-
-
-

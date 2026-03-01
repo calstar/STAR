@@ -37,15 +37,29 @@ function resolveEntity(incomingEntity: string, incomingComponent: string): strin
   return REVERSE_ALIASES[`${incomingEntity}.${incomingComponent}`] ?? null;
 }
 
+// For high-pressure PTs, only accept updates from the canonical or HP_PT alias,
+// not from PT_CHx (standard board channel), so we don't mix two boards into one series.
+const HP_PLOT_ENTITY_SOURCES: Record<string, string[]> = {
+  'PT_Cal.GN2_High': ['PT_Cal.GN2_High', 'PT_Cal.HP_PT_4'],
+  'PT_Cal.GSE_High': ['PT_Cal.GSE_High', 'PT_Cal.HP_PT_3'],
+  'PT_Cal.GSE_Mid': ['PT_Cal.GSE_Mid', 'PT_Cal.HP_PT_1'],
+};
+
+function shouldAcceptUpdateForSeries(plotEntity: string, updateEntity: string): boolean {
+  const allowed = HP_PLOT_ENTITY_SOURCES[plotEntity];
+  if (allowed) return allowed.includes(updateEntity);
+  return true; // non-HP series: accept any alias
+}
+
 // ── Smart Y-range — padding so flat lines are always visible ─────────────────
 function smartYRange(dataMin: number, dataMax: number): [number, number] {
-  if (!isFinite(dataMin) || !isFinite(dataMax)) return [0, 1];
+  // This function should only be called with valid finite values
   if (dataMin === dataMax) {
     const margin = dataMin === 0 ? 1 : Math.abs(dataMin) * 0.05;
     return [dataMin - margin, dataMax + margin];
   }
   const span = dataMax - dataMin;
-  const pad  = Math.max(span * 0.12, Math.abs(dataMax) * 0.001);
+  const pad = Math.max(span * 0.12, Math.abs(dataMax) * 0.001);
   return [dataMin - pad, dataMax + pad];
 }
 
@@ -57,13 +71,13 @@ function fmtAxisVal(val: number): string {
   if (abs >= 1e6) return (val / 1e6).toFixed(2) + 'M';
   if (abs >= 1e3) return (val / 1e3).toFixed(1) + 'K';
   if (abs >= 100) return val.toFixed(0);
-  if (abs >= 1)   return val.toFixed(1);
+  if (abs >= 1) return val.toFixed(1);
   return val.toFixed(2);
 }
 
 // ── Memory constants ──────────────────────────────────────────────────────────
 const DEFAULT_WINDOW_SECONDS = 60;   // 60 s rolling window (can be overridden via prop)
-const SAMPLE_HZ      = 10;   // matches backend broadcast rate (100 ms per entity)
+const SAMPLE_HZ = 10;   // matches backend broadcast rate (100 ms per entity)
 
 export default function TimeSeriesPlot({
   title, entities, component, components, colors,
@@ -73,15 +87,15 @@ export default function TimeSeriesPlot({
   const componentMap = components ?? entities.map(() => component);
   const MAX_POINTS = windowSeconds * SAMPLE_HZ;
 
-  const containerRef    = useRef<HTMLDivElement>(null);
-  const plotRef         = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const plotRef = useRef<HTMLDivElement>(null);
   const plotInstanceRef = useRef<uPlot | null>(null);
   // ── Use global T+0 so all windows share the same time axis ─────
-  const startTimeRef    = useRef<number>(getStartupTime());
+  const startTimeRef = useRef<number>(getStartupTime());
   const latestValuesRef = useRef<number[]>(entities.map(() => NaN));
 
   const dataRef = useRef<{ time: number[]; values: number[][] }>({
-    time:   [],
+    time: [],
     values: entities.map(() => []),
   });
 
@@ -89,22 +103,31 @@ export default function TimeSeriesPlot({
   const [isInitialized, setIsInitialized] = useState(false);
 
   const updateConnectionStatus = useSensorStore((s) => s.updateConnectionStatus);
-  const connectionStatus       = useSensorStore((s) => s.connectionStatus);
-  const actuallyConnected      = connectionStatus?.connected ?? false;
+  const connectionStatus = useSensorStore((s) => s.connectionStatus);
+  const actuallyConnected = connectionStatus?.connected ?? false;
 
   const entitiesKey = entities.join(',');
-  const colorsKey   = colors.join(',');
-  const windowKey   = windowSeconds; // Include windowSeconds in dependency tracking
+  const colorsKey = colors.join(',');
+  const windowKey = windowSeconds; // Include windowSeconds in dependency tracking
 
   useEffect(() => {
     // Reset initialization state when dependencies change (including windowSeconds)
     initializedRef.current = false;
     setIsInitialized(false);
+
+    // Safety check: if entities structure changed, reset internal buffers to match
+    // so that uPlot receives exactly the right number of series data arrays
+    if (dataRef.current.values.length !== entities.length) {
+      dataRef.current.time = [];
+      dataRef.current.values = entities.map(() => []);
+      latestValuesRef.current = entities.map(() => NaN);
+    }
+
     if (plotInstanceRef.current) {
       plotInstanceRef.current.destroy();
       plotInstanceRef.current = null;
     }
-    
+
     const ws = getWebSocketClient();
     ws.connect();
 
@@ -115,8 +138,8 @@ export default function TimeSeriesPlot({
 
     // ── Build uPlot options ───────────────────────────────────────────────
     const buildOpts = (w: number, h: number): uPlot.Options => ({
-      width:   w,
-      height:  h,
+      width: w,
+      height: h,
       pxAlign: true,
       scales: {
         x: {
@@ -129,43 +152,76 @@ export default function TimeSeriesPlot({
         },
         y: {
           auto: true,
-          range: (_u, mn, mx): [number, number] => smartYRange(mn, mx),
+          range: (u, mn, mx): [number, number] => {
+            // Calculate min/max from actual sensor data (ignore uPlot's mn/mx which might be NaN)
+            // Get all data from all series
+            const allValues: number[] = [];
+            for (let i = 1; i < u.data.length; i++) {
+              const series = u.data[i] as number[];
+              if (series) {
+                for (const val of series) {
+                  if (isFinite(val)) {
+                    allValues.push(val);
+                  }
+                }
+              }
+            }
+
+            // If we have valid data, use it; otherwise use uPlot's calculated values
+            if (allValues.length > 0) {
+              const dataMin = Math.min(...allValues);
+              const dataMax = Math.max(...allValues);
+              return smartYRange(dataMin, dataMax);
+            }
+
+            // Fallback: use uPlot's calculated values if they're valid
+            if (isFinite(mn) && isFinite(mx)) {
+              return smartYRange(mn, mx);
+            }
+
+            // No valid data yet - return a reasonable default that won't clamp
+            // This will be updated as soon as data arrives
+            return [0, 100];
+          },
         },
       },
       axes: [
         {
-          label:     'T+ (s)',
-          stroke:    '#9CA3AF',
-          grid:      { show: true, stroke: '#555', width: 1 },
-          ticks:     { show: true, stroke: '#777', width: 1 },
-          font:      'bold 12px monospace',
+          label: 'T+ (s)',
+          stroke: '#9CA3AF',
+          grid: { show: true, stroke: '#555', width: 1 },
+          ticks: { show: true, stroke: '#777', width: 1 },
+          font: 'bold 12px monospace',
           labelFont: '12px system-ui',
-          gap:       4,
+          gap: 8,
+          space: 120,
+          values: (_u, vals) => vals.map((v) => (v == null ? '' : Math.round(v).toString())),
         },
         {
-          label:     yLabel,
-          stroke:    '#9CA3AF',
-          grid:      { show: true, stroke: '#555', width: 1 },
-          ticks:     { show: true, stroke: '#777', width: 1 },
-          font:      'bold 12px monospace',
+          label: yLabel,
+          stroke: '#9CA3AF',
+          grid: { show: true, stroke: '#555', width: 1 },
+          ticks: { show: true, stroke: '#777', width: 1 },
+          font: 'bold 12px monospace',
           labelFont: '12px system-ui',
-          size:      72,
-          gap:       5,
-          values:    (_u, vals) => vals.map((v) => (v == null ? '' : fmtAxisVal(v))),
+          size: 60,
+          gap: 5,
+          space: 80,
+          values: (_u, vals) => vals.map((v) => (v == null ? '' : fmtAxisVal(v))),
         },
       ],
       series: [
         {},
         ...entities.map((_, idx) => ({
-          label:  seriesLabels[idx],
+          label: seriesLabels[idx],
           stroke: colors[idx] || '#3498DB',
-          width:  3,
+          width: 3,
           points: { show: false },
         })),
       ],
       cursor: { show: true, x: true, y: false },
       legend: {
-        show:    false,
+        show: false,
       },
       padding: [8, 12, 0, 0] as [number, number, number, number],
     });
@@ -210,7 +266,7 @@ export default function TimeSeriesPlot({
       }
       return false;
     };
-    
+
     // Try loading cache data immediately
     const hasCache = loadCacheData();
     if (hasCache) {
@@ -221,16 +277,16 @@ export default function TimeSeriesPlot({
       if (initializedRef.current || !plotRef.current) return;
       const dims = getDims();
       if (!dims) return;
-      
+
       // Re-check cache right before init to get latest data
       loadCacheData();
-      
+
       const now = (Date.now() - startTimeRef.current) / 1000;
-      
+
       // Use cached data if available, otherwise create empty arrays
       let timeData = dataRef.current.time.length > 0 ? dataRef.current.time : [now];
       let valueData = dataRef.current.values.map(v => v.length > 0 ? v : [NaN]);
-      
+
       // Ensure all arrays are aligned
       const maxLen = Math.max(timeData.length, ...valueData.map(v => v.length));
       if (maxLen === 0) {
@@ -248,9 +304,9 @@ export default function TimeSeriesPlot({
           return arr;
         });
       }
-      
+
       const data: uPlot.AlignedData = [timeData, ...valueData];
-      
+
       try {
         if (!plotRef.current) return;
         const opts = buildOpts(dims.w, dims.h);
@@ -270,7 +326,7 @@ export default function TimeSeriesPlot({
       if (!dims) return;
       tryInit();
     };
-    
+
     // Wait for next frame to ensure DOM is ready
     requestAnimationFrame(() => {
       attemptInit();
@@ -278,7 +334,7 @@ export default function TimeSeriesPlot({
       setTimeout(attemptInit, 300);
       setTimeout(attemptInit, 600);
     });
-    
+
     const ro = new ResizeObserver(() => {
       if (!initializedRef.current) {
         attemptInit();
@@ -300,64 +356,95 @@ export default function TimeSeriesPlot({
     // ── WS handler: O(1) — store the latest value per series ─────────────
     const unsubSensor = ws.on(MessageType.SENSOR_UPDATE, (payload: unknown) => {
       const update = payload as SensorUpdate;
-      
+
       // Add to cache immediately
       if (isFinite(update.value)) {
         cache.addDataPoint(update.entity, update.component, update.value);
       }
-      
+
       let idx = entities.indexOf(update.entity);
       if (idx < 0) {
         const canon = resolveEntity(update.entity, update.component);
         if (canon) idx = entities.indexOf(canon);
       }
       if (idx >= 0 && update.component === componentMap[idx]) {
+        // For HP pressure series, only use updates from the canonical or HP_PT entity,
+        // not PT_CHx (avoids 0/5000 spiking when standard board and HP board both send data).
+        if (!shouldAcceptUpdateForSeries(entities[idx], update.entity)) return;
         latestValuesRef.current[idx] = update.value;
       }
     });
 
-    // ── 10 Hz sample + render + size-sync loop ──────────────────────────
-    const sampleInterval = setInterval(() => {
-      if (!initializedRef.current) { 
-        tryInit(); 
-        if (!initializedRef.current) return; 
-      }
-      
-      if (!plotInstanceRef.current) return;
+    // ── Smooth rendering loop using requestAnimationFrame (60 FPS) ────────
+    // Separate data sampling (10 Hz) from rendering (60 FPS) for smooth scrolling
+    let lastDataUpdate = 0;
+    let lastYAxisUpdate = 0;
+    const DATA_UPDATE_INTERVAL = 1000 / SAMPLE_HZ; // 100ms for data updates
+    const Y_AXIS_UPDATE_INTERVAL = 200; // 200ms for Y-axis auto-scaling (5 Hz)
 
-      const now    = (Date.now() - startTimeRef.current) / 1000;
+    let animationFrameId: number | null = null;
+    const renderLoop = () => {
+      if (!initializedRef.current) {
+        tryInit();
+        if (!initializedRef.current) {
+          animationFrameId = requestAnimationFrame(renderLoop);
+          return;
+        }
+      }
+
+      if (!plotInstanceRef.current) {
+        animationFrameId = requestAnimationFrame(renderLoop);
+        return;
+      }
+
+      const now = (Date.now() - startTimeRef.current) / 1000;
       const cutoff = now - windowSeconds;
-      const d      = dataRef.current;
-      
-      // Update x-axis range when windowSeconds changes (force redraw)
+      const d = dataRef.current;
+      const currentTime = Date.now();
+      let dataChanged = false;
+
+      // Update data at 10 Hz (only when needed)
+      if (currentTime - lastDataUpdate >= DATA_UPDATE_INTERVAL) {
+        d.time.push(now);
+        entities.forEach((_, i) => d.values[i].push(latestValuesRef.current[i]));
+
+        // Trim older than window
+        let first = 0;
+        while (first < d.time.length && d.time[first] < cutoff) first++;
+        if (first > 0) {
+          d.time = d.time.slice(first);
+          d.values = d.values.map((a) => a.slice(first));
+        }
+        if (d.time.length > MAX_POINTS) {
+          const excess = d.time.length - MAX_POINTS;
+          d.time = d.time.slice(excess);
+          d.values = d.values.map((a) => a.slice(excess));
+        }
+
+        lastDataUpdate = currentTime;
+        dataChanged = true;
+      }
+
+      // Update x-axis smoothly at 60 FPS (every frame)
+      // This ensures continuous scrolling based on server time
+      const xMin = Math.max(0, now - windowSeconds);
+      const xMax = now;
       plotInstanceRef.current.setScale('x', {
-        min: Math.max(0, now - windowSeconds),
-        max: now,
+        min: xMin,
+        max: xMax,
       });
 
-      d.time.push(now);
-      entities.forEach((_, i) => d.values[i].push(latestValuesRef.current[i]));
-
-      // Trim older than window
-      let first = 0;
-      while (first < d.time.length && d.time[first] < cutoff) first++;
-      if (first > 0) {
-        d.time   = d.time.slice(first);
-        d.values = d.values.map((a) => a.slice(first));
-      }
-      if (d.time.length > MAX_POINTS) {
-        const excess = d.time.length - MAX_POINTS;
-        d.time   = d.time.slice(excess);
-        d.values = d.values.map((a) => a.slice(excess));
-      }
-
-      // Ensure we always have at least one time point
+      // Update plot data every frame for smooth rendering
       const timeData = d.time.length > 0 ? d.time : [now];
       const valueData = d.values.map(v => v.length > 0 ? v : [NaN]);
-      
-      // resetScales=true → Y range() recalculates from real data each tick
+
       try {
-        plotInstanceRef.current.setData([timeData, ...valueData], true);
+        // Reset scales periodically (when data changes or every 200ms) to update Y-axis
+        const shouldResetScales = dataChanged || (currentTime - lastYAxisUpdate >= Y_AXIS_UPDATE_INTERVAL);
+        if (shouldResetScales) {
+          lastYAxisUpdate = currentTime;
+        }
+        plotInstanceRef.current.setData([timeData, ...valueData], shouldResetScales);
       } catch (err) {
         console.error('[TimeSeriesPlot] setData failed:', err);
       }
@@ -365,16 +452,25 @@ export default function TimeSeriesPlot({
       // ── Continuous size sync — catches layout changes ──────────────────
       const dims = getDims();
       if (dims && plotInstanceRef.current &&
-          (Math.abs(dims.w - plotInstanceRef.current.width) > 2 ||
-           Math.abs(dims.h - plotInstanceRef.current.height) > 2)) {
+        (Math.abs(dims.w - plotInstanceRef.current.width) > 2 ||
+          Math.abs(dims.h - plotInstanceRef.current.height) > 2)) {
         plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
       }
-    }, 1000 / SAMPLE_HZ);
+
+      // Continue animation loop
+      animationFrameId = requestAnimationFrame(renderLoop);
+    };
+
+    // Start the smooth rendering loop
+    animationFrameId = requestAnimationFrame(renderLoop);
 
     return () => {
       unsubSensor();
       unsubStatus();
-      clearInterval(sampleInterval);
+      if (animationFrameId !== null) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+      }
       ro.disconnect();
       window.removeEventListener('resize', onWinResize);
       plotInstanceRef.current?.destroy();
@@ -390,28 +486,27 @@ export default function TimeSeriesPlot({
       className={`w-full h-full flex flex-col min-h-0 min-w-0 ${height ? '' : 'flex-1'} ${className ?? ''}`}
       style={height ? { height: height + 32 } : { height: '100%', width: '100%' }}
     >
-      {/* Title bar */}
-      <div className="flex items-center justify-between mb-1 px-1 flex-shrink-0">
-        <h3 className="text-sm font-bold text-gray-100 truncate">{title}</h3>
-        <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+      {/* Connection indicator */}
+      <div className="flex items-center justify-end mb-1 px-1 flex-shrink-0">
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           <div className={`w-2 h-2 rounded-full ${actuallyConnected ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
           <span className="text-[11px] font-mono text-gray-500">{actuallyConnected ? 'Live' : 'No signal'}</span>
         </div>
       </div>
       {/* Chart container: measured by ResizeObserver. plotRef inside receives uPlot. */}
-      <div 
-        ref={containerRef} 
-        className="relative flex-1 min-h-0 min-w-0" 
-        style={{ 
-          position: 'relative', 
-          width: '100%', 
+      <div
+        ref={containerRef}
+        className="relative flex-1 min-h-0 min-w-0"
+        style={{
+          position: 'relative',
+          width: '100%',
           height: '100%',
           flex: '1 1 0%'
         }}
       >
-        <div 
+        <div
           ref={plotRef}
-          style={{ 
+          style={{
             position: 'absolute',
             top: 0,
             left: 0,
@@ -425,7 +520,18 @@ export default function TimeSeriesPlot({
           </div>
         )}
       </div>
+
+      {/* Legend */}
+      <div className="flex flex-wrap gap-x-5 gap-y-1.5 px-2 py-2 flex-shrink-0">
+        {entities.map((e, i) => (
+          <div key={e} className="flex items-center gap-2">
+            <span className="w-4 h-[3px] rounded-full inline-block" style={{ background: colors[i] || '#3498DB' }} />
+            <span className="text-sm font-semibold font-mono text-gray-300">
+              {labels?.[i] ?? e.split('.').pop() ?? e}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
-

@@ -334,6 +334,3 @@ void SITLSimulator::update_ekf() {
 
 }  // namespace sitl
 }  // namespace fsw
-
-
-

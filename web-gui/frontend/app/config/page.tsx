@@ -54,10 +54,10 @@ const DEFAULT_CONFIG: ConfigData = {
               subnet: '192.168.2.0/24', ip_range_start: 100, ip_range_end: 150,
               discovery_timeout_seconds: 30 },
   boards: {
-    pt_board: { type: 'PT', ip: '192.168.2.101', send_port: 5006, num_sensors: 10, board_id: 1, enabled: true, voltage_reference: 0, active_connectors: [1,2,3,4,5,6,7] },
-    actuator_board: { type: 'ACTUATOR', ip: '192.168.2.201', send_port: 5006, listen_port: 5005, num_actuators: 10, num_sensors: 10, board_id: 2, enabled: true, voltage_reference: 0, active_connectors: [] },
+    pt_board: { type: 'PT', ip: '192.168.2.101', send_port: 5006, num_sensors: 10, board_id: 1, enabled: true, enable_serial_printing: false, voltage_reference: 0, active_connectors: [1,2,3,4,5,6,7] },
+    actuator_board: { type: 'ACTUATOR', ip: '192.168.2.201', send_port: 5006, listen_port: 5005, num_actuators: 10, num_sensors: 10, board_id: 2, enabled: true, enable_serial_printing: false, voltage_reference: 0, active_connectors: [] },
   },
-  sensor_roles: { 'Fuel Upstream': 1, 'GSE Low': 2, 'GSE Mid': 3, 'Fuel Downstream': 4, 'Ox Upstream': 5, 'GN2 Regulated': 6, 'Ox Downstream': 7 },
+  sensor_roles: { 'Fuel Upstream': 1, 'GSE Low': 2, 'Fuel Downstream': 4, 'Ox Upstream': 5, 'GN2 Regulated': 6, 'Ox Downstream': 7 },
   actuator_roles: { 'LOX Main': ['NO', 1], 'Fuel Vent': ['NC', 2], 'Fuel Press': ['NC', 3], 'GSE Low Vent': ['NC', 5], 'LOX Vent': ['NC', 6], 'Fuel Main': ['NO', 7], 'LOX Press': ['NO', 8] },
   calibration: { enabled: true, orchestrator: { min_points: 5, target_points: 15, max_points: 30, min_r_squared: 0.95, target_r_squared: 0.99, rls_forgetting_factor: 0.995, drift_glr_threshold: 3.0, auto_save_interval_sec: 300, status_interval_sec: 30 } },
   pressure_limits: { GN2: { THRESH: 550, NOP: 900, MEOP: 950, POP: 1000 }, ETH: { THRESH: 550, NOP: 600, MEOP: 650, POP: 750 }, LOX: { THRESH: 550, NOP: 600, MEOP: 650, POP: 750 } },
@@ -510,6 +510,14 @@ export default function ConfigPage() {
                         (val) => updateBoard(boardKey, 'enabled', val),
                         'boolean'
                       )}
+                      {renderField(
+                        'Enable serial printing',
+                        (board as any).enable_serial_printing,
+                        (val) => updateBoard(boardKey, 'enable_serial_printing', val),
+                        'boolean',
+                        undefined,
+                        'Board will enable serial debug when config is applied'
+                      )}
                       <div className="space-y-1">
                         <label className="block text-sm font-semibold">Voltage reference</label>
                         <select
@@ -548,6 +556,7 @@ export default function ConfigPage() {
                     const newKey = `board_${Object.keys(config.boards || {}).length + 1}`;
                     updateBoard(newKey, 'type', 'PT');
                     updateBoard(newKey, 'enabled', false);
+                    updateBoard(newKey, 'enable_serial_printing', false);
                     updateBoard(newKey, 'voltage_reference', 0);
                   }}
                   className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"

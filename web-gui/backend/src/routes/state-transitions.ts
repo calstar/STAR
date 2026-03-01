@@ -16,8 +16,9 @@ const CSV_STATE_MAP: Record<string, SystemState> = {
   'Armed': SystemState.ARMED,
   'Fuel Fill': SystemState.FUEL_FILL,
   'Ox Fill': SystemState.OX_FILL,
-  'GN2 Press': SystemState.GN2_LOW_PRESS,
-  'GN2 Vent': SystemState.GN2_VENT,
+  'Press Standby': SystemState.PRESS_STANDBY, // Press Standby is a separate state
+  'GN2 Low Press': SystemState.GN2_LOW_PRESS,
+  'GN2 Low Vent': SystemState.GN2_VENT,
   'Fuel Press': SystemState.FUEL_PRESS,
   'Fuel Vent': SystemState.FUEL_VENT,
   'Ox Press': SystemState.OX_PRESS,
@@ -32,6 +33,8 @@ const CSV_STATE_MAP: Record<string, SystemState> = {
   'GSE Abort': SystemState.GSE_ABORT,
   'Emergency Abort': SystemState.EMERGENCY_ABORT,
   // Legacy mappings
+  'GN2 Press': SystemState.GN2_LOW_PRESS, // Old name
+  'GN2 Vent': SystemState.GN2_VENT, // Old name
   'Quick Fire': SystemState.READY,
   'High Press': SystemState.GN2_HIGH_PRESS,
   'Abort': SystemState.EMERGENCY_ABORT,

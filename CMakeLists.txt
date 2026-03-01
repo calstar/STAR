@@ -15,6 +15,13 @@ find_package(Eigen3 REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 
+# librt is needed on Linux but not on macOS (functions are in libc on Darwin)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(RT_LIBRARY rt)
+else()
+    set(RT_LIBRARY "")
+endif()
+
 # Find optional packages
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
@@ -110,11 +117,11 @@ add_executable(paper_algorithm_pipeline FSW/src/paper_algorithm_pipeline.cpp)
 
 # ESP32 PT Streamer for calibration (Rec18 format)
 add_executable(esp32_pt_streamer scripts/source/esp32_pt_streamer.cpp)
-target_link_libraries(esp32_pt_streamer Threads::Threads pthread rt)
+target_link_libraries(esp32_pt_streamer Threads::Threads pthread ${RT_LIBRARY})
 
 # Fake ESP32 packet generator for testing
 add_executable(fake_esp32_packet_gen scripts/source/fake_esp32_packet_gen.cpp)
-target_link_libraries(fake_esp32_packet_gen Threads::Threads pthread rt)
+target_link_libraries(fake_esp32_packet_gen Threads::Threads pthread ${RT_LIBRARY})
 
 # FSW Simulator for Elodin groundstation testing
 add_executable(test_fsw_simulator scripts/test/test_fsw_simulator.cpp)
@@ -131,10 +138,10 @@ target_link_libraries(send_all_message_types
     fsw_daq_lib
     Threads::Threads
     pthread
-    rt
+    ${RT_LIBRARY}
 )
 
-target_link_libraries(test_fsw_simulator daq_comms_lib Threads::Threads pthread rt)
+target_link_libraries(test_fsw_simulator daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
 target_include_directories(test_fsw_simulator PRIVATE
     ${CMAKE_SOURCE_DIR}/daq_comms/include
     ${CMAKE_SOURCE_DIR}/utl
@@ -145,7 +152,7 @@ target_include_directories(test_fsw_simulator PRIVATE
 #     Eigen3::Eigen
 #     Threads::Threads
 #     pthread
-#     rt
+#     ${RT_LIBRARY}
 # )
 
 # Link libraries for shared library
@@ -153,7 +160,7 @@ target_link_libraries(fsw_lib
     Eigen3::Eigen
     Threads::Threads
     pthread
-    rt
+    ${RT_LIBRARY}
 )
 
 # Link example executables to shared library

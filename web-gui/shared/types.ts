@@ -5,22 +5,23 @@
 // WebSocket message types
 export enum MessageType {
   // Client → Server
-  SUBSCRIBE_SENSOR    = 'subscribe_sensor',
-  UNSUBSCRIBE_SENSOR  = 'unsubscribe_sensor',
-  SEND_COMMAND        = 'send_command',
-  QUERY_HISTORICAL    = 'query_historical',
+  SUBSCRIBE_SENSOR = 'subscribe_sensor',
+  UNSUBSCRIBE_SENSOR = 'unsubscribe_sensor',
+  SEND_COMMAND = 'send_command',
+  QUERY_HISTORICAL = 'query_historical',
   CALIBRATION_COMMAND = 'calibration_command',
 
   // Server → Client
-  SENSOR_UPDATE      = 'sensor_update',
-  ACTUATOR_UPDATE    = 'actuator_update',
-  STATE_UPDATE       = 'state_update',
-  ERROR              = 'error',
-  CONNECTION_STATUS  = 'connection_status',
+  SENSOR_UPDATE = 'sensor_update',
+  ACTUATOR_UPDATE = 'actuator_update',
+  STATE_UPDATE = 'state_update',
+  ERROR = 'error',
+  CONNECTION_STATUS = 'connection_status',
   CALIBRATION_STATUS = 'calibration_status',
-  CONTROLLER_UPDATE  = 'controller_update',
+  CONTROLLER_UPDATE = 'controller_update',
   MISSION_START_TIME = 'mission_start_time',
   ACTUATOR_EXPECTED_POSITIONS_UPDATE = 'actuator_expected_positions_update',
+  HISTORICAL_DATA = 'historical_data',
   BOARD_STATUS_UPDATE = 'board_status_update',
 }
 
@@ -56,29 +57,13 @@ export enum SystemState {
   ENGINE_ABORT = 17,
   GSE_ABORT = 18,
   EMERGENCY_ABORT = 19,
+  PRESS_STANDBY = 20,  // Press Standby state (separate from GN2_LOW_PRESS)
   // Legacy alias for backwards compatibility
   ABORT = 19, // Maps to EMERGENCY_ABORT
 }
 
-// Actuator IDs
-export enum ActuatorId {
-  LOX_MAIN = 0,
-  FUEL_MAIN = 1,
-  LOX_VENT = 2,
-  FUEL_VENT = 3,
-  LOX_PRESS = 4,
-  FUEL_PRESS = 5,
-  GSE_LOW_VENT = 6,
-  // Extended actuators (non-state-machine, but controllable in DEBUG)
-  FUEL_FILL_VENT = 7,
-  FUEL_FILL_PRESS = 8,
-  LOX_FILL = 9,
-  LOX_DUMP = 10,
-  GSE_HIGH_PRESS_VENT = 11,
-  GSE_LOX_FILL_VENT = 12,
-  GSE_HIGH_PRESS_CONTROL = 13,
-  GSE_MED_PRESS_CONTROL = 14,
-}
+// Actuator IDs — now string-based, driven by config.toml actuator_roles.
+// No enum: all references use the config role name (e.g. "LOX Main").
 
 // Actuator states
 export enum ActuatorState {
@@ -104,7 +89,7 @@ export interface SensorUpdate {
 
 // Actuator update payload
 export interface ActuatorUpdate {
-  actuatorId: ActuatorId;
+  /** Config role name (e.g. "LOX Main") — primary identifier */
   name: string;
   state: ActuatorState;
   rawAdcCounts: number;
@@ -116,6 +101,7 @@ export interface StateUpdate {
   currentState: SystemState;
   stateName: string;
   timestamp: number;
+  debugMode?: boolean; // Debug mode status
 }
 
 // Command payload
@@ -126,17 +112,22 @@ export interface CommandPayload {
     | 'controller_frequency'
     | 'pwm_actuator'
     | 'controller_command'
-    | 'clear_abort';
+    | 'clear_abort'
+    | 'debug_mode';
   data: {
     state?: SystemState;
-    actuatorId?: ActuatorId;
+    /** Config-driven: actuator role name from config.toml actuator_roles (e.g. "LOX Main") */
+    actuatorName?: string;
     actuatorState?: ActuatorState;
     frequency?: number; // Controller frequency in Hz
     dutyCycle?: number; // PWM duty cycle 0-1
     duration?: number; // Duration in ms
-    command_type?: 'THRUST_DESIRED' | 'ALTITUDE_GOAL'; // Controller command type
+    command_type?: 'THRUST_DESIRED' | 'ALTITUDE_GOAL' | 'PRESSURE_TARGET'; // Controller command type
     thrust_desired?: number; // Thrust desired [N]
     altitude_goal?: number; // Altitude goal [m]
+    pressure_fuel_target?: number; // Target fuel pressure [PSI or Pa]
+    pressure_ox_target?: number;   // Target ox pressure [PSI or Pa]
+    debugMode?: boolean; // Debug mode toggle
   };
 }
 
@@ -160,24 +151,24 @@ export type CalibrationConfidence = 'MAXIMUM' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNC
 
 /** Per-channel status broadcast from the Phase 2 engine */
 export interface CalibrationChannelStatus {
-  sensorId:        number;   // 1-based PT channel
-  updateCount:     number;   // total readings processed (monitoring + RLS)
-  rlsUpdateCount:  number;   // ground-truth RLS updates only
-  lastUpdate:      number;   // epoch ms
-  driftDetected:   boolean;
-  meanResidual:    number;   // mean |error| over last 100 samples (PSI)
-  glrStat:         number;   // GLR statistic (>threshold = drift)
-  confidence:      CalibrationConfidence;
+  sensorId: number;   // 1-based PT channel
+  updateCount: number;   // total readings processed (monitoring + RLS)
+  rlsUpdateCount: number;   // ground-truth RLS updates only
+  lastUpdate: number;   // epoch ms
+  driftDetected: boolean;
+  meanResidual: number;   // mean |error| over last 100 samples (PSI)
+  glrStat: number;   // GLR statistic (>threshold = drift)
+  confidence: CalibrationConfidence;
   coeffs: { A: number; B: number; C: number; D: number };
-  phase2Active:    boolean;
+  phase2Active: boolean;
   covarianceTrace: number;   // sum of P diagonal — proxy for uncertainty
 }
 
 /** Full calibration status payload — one entry per initialized channel */
 export interface CalibrationStatusPayload {
-  channels:      CalibrationChannelStatus[];
+  channels: CalibrationChannelStatus[];
   phase2Enabled: boolean;
-  timestamp:     number;
+  timestamp: number;
 }
 
 /** Commands the frontend sends to drive the calibration engine */
@@ -189,11 +180,12 @@ export type CalibrationCommandType =
   | 'disable_phase2'
   | 'zero_all'            // zero-point init: all PTs set current ADC → 0 PSI
   | 'save_coefficients'   // persist current coefficients to disk
-  | 'save_coefficients';
+  | 'clear_calibration';  // clear all state and start from scratch
 
 export interface CalibrationCommand {
-  commandType:        CalibrationCommandType;
-  sensorId?:          number;
+  commandType: CalibrationCommandType;
+  sensorId?: number;
+  boardId?: number;
   referencePressure?: number;  // PSI ground-truth for capture_reference
 }
 

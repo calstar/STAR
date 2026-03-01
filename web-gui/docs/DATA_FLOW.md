@@ -103,6 +103,3 @@ Example:
 - Frequency: 10 Hz (set in config)
 - Duty Cycle: 50% (controlled by controller)
 - Result: Valve is ON for 50ms, OFF for 50ms, repeating every 100ms
-
-
-

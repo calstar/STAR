@@ -98,6 +98,3 @@ private:
 };
 
 #endif  // DIABLO_NAVIGATION_FILTER_HPP
-
-
-

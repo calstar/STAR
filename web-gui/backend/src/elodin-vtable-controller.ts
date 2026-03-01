@@ -118,12 +118,12 @@ function encodeVTable(config: {
   // Simplified VTable encoding
   // Full implementation would use postcard encoding with OpBuilder, FieldBuilder, etc.
   // For now, we'll create a minimal structure that Elodin can understand
-  
+
   // VTable structure (simplified):
   // - packet_id (2 bytes)
   // - field count (1 byte)
   // - For each field: offset (4 bytes), size (4 bytes), type (1 byte), component_name (string)
-  
+
   const buffer = Buffer.alloc(1024); // Allocate enough space
   let offset = 0;
 
@@ -140,13 +140,13 @@ function encodeVTable(config: {
     offset += 4;
     buffer.writeUInt32LE(field.size, offset);
     offset += 4;
-    
+
     // Type encoding: u64=0, f64=1, f32=2, u32=3, i32=4, u8=5
     const typeMap: Record<string, number> = {
       'u64': 0, 'f64': 1, 'f32': 2, 'u32': 3, 'i32': 4, 'u8': 5,
     };
     buffer.writeUInt8(typeMap[field.type] || 0, offset++);
-    
+
     // Component name (length-prefixed string)
     const componentBytes = Buffer.from(field.component, 'utf-8');
     buffer.writeUInt8(componentBytes.length, offset++);
@@ -156,7 +156,3 @@ function encodeVTable(config: {
 
   return buffer.subarray(0, offset);
 }
-
-
-
-
