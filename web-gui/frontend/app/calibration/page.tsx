@@ -146,6 +146,7 @@ export default function CalibrationPage() {
 
   const [calStatus, setCalStatus] = useState<CalibrationStatusPayload | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [calFilePath, setCalFilePath] = useState<string | null>(null);
   const [phase2Active, setPhase2Active] = useState(true);
   const [numReferenceGauges, setNumReferenceGauges] = useState(1);
   const [singleRefPsi, setSingleRefPsi] = useState('');
@@ -180,6 +181,7 @@ export default function CalibrationPage() {
       setCalStatus(payload);
       setLastUpdate(new Date(payload.timestamp));
       setPhase2Active(payload.phase2Enabled);
+      if (payload.calibrationFilePath != null) setCalFilePath(payload.calibrationFilePath);
     });
     const u3 = ws.on(MessageType.ERROR, (p: unknown) => {
       const payload = p as { message?: string };
@@ -364,6 +366,19 @@ export default function CalibrationPage() {
           <span className="font-mono bg-blue-900/40 px-1 rounded">ZERO ALL</span> to initialize.
           Then provide known reference pressures via CAPTURE to build the calibration curve.
           Robust Calibration auto-refines in the background.
+        </div>
+      )}
+
+      {/* ── Calibration file path strip ──────────────────────────────── */}
+      {calFilePath && (
+        <div className="flex-shrink-0 border-b border-gray-800 px-4 py-1.5 flex items-center gap-2">
+          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Cal file</span>
+          <span
+            className="text-[10px] font-mono text-gray-400 truncate"
+            title={calFilePath}
+          >
+            {calFilePath}
+          </span>
         </div>
       )}
 

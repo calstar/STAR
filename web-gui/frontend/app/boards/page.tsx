@@ -1,9 +1,15 @@
 'use client'
 
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, BoardStatusPayload, BoardStatus, engineStateCodeToLabel } from '@/lib/types';
+
+function formatConfigSentAt(ms: number | undefined): string {
+  if (ms == null) return '';
+  const d = new Date(ms);
+  return d.toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
 
 // Subtle accent hues per card (left border + light tint)
 const CARD_ACCENTS = [
@@ -40,13 +46,30 @@ export default function BoardsPage() {
     return () => unsub();
   }, [ws, updateBoards]);
 
+  const handleResendConfig = useCallback(() => {
+    getWebSocketClient().send({
+      type: MessageType.RESEND_CONFIG,
+      timestamp: Date.now(),
+      payload: {},
+    });
+  }, []);
+
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-auto p-8 md:p-10">
-      <div className="mb-8">
-        <h1 className="text-4xl font-bold text-text mb-2 tracking-tight">Boards / Heartbeats</h1>
-        <p className="text-lg text-text-muted max-w-2xl">
-          Discovered boards and heartbeat status. Unexpected boards are highlighted.
-        </p>
+      <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-4xl font-bold text-text mb-2 tracking-tight">Boards / Heartbeats</h1>
+          <p className="text-lg text-text-muted max-w-2xl">
+            Discovered boards and heartbeat status. Unexpected boards are highlighted.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleResendConfig}
+          className="min-h-[48px] px-8 py-3 text-lg font-bold rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity shadow-lg"
+        >
+          Resend config
+        </button>
       </div>
 
       {boards.length === 0 ? (
@@ -88,7 +111,7 @@ export default function BoardsPage() {
                     </span>
                   )}
                 </div>
-                <div className="flex gap-3 mb-3 text-lg">
+                <div className="flex flex-wrap gap-4 mb-3 text-lg">
                   <div className="flex-1 min-w-0">
                     <div className="text-text-muted mb-1.5 text-sm uppercase tracking-wider">Status</div>
                     <div className={`flex items-center gap-2.5 ${!b.connected ? 'text-red-400' : 'text-green-400'}`}>
@@ -100,12 +123,48 @@ export default function BoardsPage() {
                       </span>
                     </div>
                   </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-text-muted mb-1.5 text-sm uppercase tracking-wider">State</div>
+                    <div className="flex items-center gap-2.5 text-text">
+                      <div
+                        className={`w-3.5 h-3.5 rounded-full flex-shrink-0 ${
+                          boardStateLabel === 'Active' ? 'bg-green-500' :
+                          boardStateLabel === 'Setup' ? 'bg-blue-500' :
+                          boardStateLabel === 'Abort' || boardStateLabel === 'Abort done' ? 'bg-red-500' : 'bg-gray-500'
+                        }`}
+                      />
+                      <span className="font-mono font-bold text-lg truncate">
+                        {boardStateLabel.toUpperCase()}
+                      </span>
+                    </div>
+                  </div>
                 </div>
+                <div className="text-sm text-text-muted font-mono mb-2">
+                  Engine: {engineLabel}
+                </div>
+                {b.configured !== undefined && (
+                  <div className="flex items-center gap-2 mb-2">
+                    <span
+                      className={`text-xs px-2 py-1 rounded font-semibold uppercase tracking-wide font-mono ${
+                        b.configured ? 'bg-emerald-900/60 text-emerald-200' : 'bg-gray-800 text-gray-500'
+                      }`}
+                    >
+                      {b.configured ? 'Config sent' : 'Unconfigured'}
+                    </span>
+                    {b.configured && b.configLastSentAt != null && (
+                      <span className="text-xs text-emerald-400/90 font-mono">
+                        at {formatConfigSentAt(b.configLastSentAt)}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {b.configError && (
+                  <div className="text-xs text-red-400 font-mono mb-2" title={b.configError}>
+                    Config error: {b.configError}
+                  </div>
+                )}
                 <div className="text-base text-text-muted font-mono mb-2">
                   Heartbeat: {freq}
-                </div>
-                <div className="text-sm text-text-muted font-mono">
-                  State: {boardStateLabel} · Engine: {engineLabel}
                 </div>
                 <div className="text-sm text-gray-500 font-mono mt-auto pt-3 truncate" title={b.ip}>
                   ID {b.id} · {b.ip}

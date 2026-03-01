@@ -33,7 +33,7 @@ import { loadPTCalibration, calculatePressure, inversePressureToAdc, Calibration
 import { Phase2CalibrationEngine } from './calibration-phase2.js';
 import { CalibrationSidecarClient } from './calibration-sidecar.js';
 import { DataLogger } from './data-logger.js';
-import { readConfig } from './routes/config.js';
+import { readConfig, getConfigPath } from './routes/config.js';
 import { ControllerClient, mapSensorDataToMeasurement, ControllerCommand, ControllerDiagnostics } from './controller-client.js';
 import { MessageLogger } from './message-logger.js';
 import { DemoModeGenerator } from './demo-mode.js';
@@ -86,6 +86,8 @@ class SensorSystemServer {
   private streamingDataReceived: boolean = false;
   private streamingCheckTimer: NodeJS.Timeout | null = null;
   ptCalibration: Map<number, CalibrationCoefficients> = new Map();
+  /** Absolute path of the calibration file loaded at startup (null = none found). */
+  ptCalibrationFilePath: string | null = null;
   /** (ADC, pressure) points per channel for ADC→pressure fit; cleared on clear_calibration. */
   calibrationPoints: Map<number, { adc: number; pressure: number }[]> = new Map();
   phase2Engine: Phase2CalibrationEngine | null = null;
@@ -229,6 +231,8 @@ class SensorSystemServer {
   private designatedSurvivorBoardId: number | null = null;
   private designatedSurvivorIP: string | null = null;
   private designatedSurvivorConnected: boolean = false;
+  /** Throttle: last time we logged that config is blocked (designated survivor not connected). */
+  private lastConfigBlockedLogMs: number = 0;
 
   constructor() {
     console.log(`🚀 Starting Sensor System Server...`);
@@ -276,8 +280,14 @@ class SensorSystemServer {
       console.log(`   Duty sweep: ${this.DUTY_SWEEP_STEPS.length} steps × ${this.DUTY_SWEEP_STEP_DURATION_MS}ms (${(this.DUTY_SWEEP_STEPS.length * this.DUTY_SWEEP_STEP_DURATION_MS / 1000).toFixed(1)}s fire)`);
     }
 
-    // Load PT calibration
-    this.ptCalibration = loadPTCalibration();
+    // Load PT calibration (use config.calibration.pt.json_path if set)
+    const ptJsonPath = (config as any).calibration?.pt?.json_path;
+    const configDir = path.dirname(getConfigPath());
+    const repoRoot = path.dirname(configDir); // config.toml lives in config/, so repo root is parent
+    const resolvedPtPath = ptJsonPath ? path.join(repoRoot, ptJsonPath) : undefined;
+    const ptCalResult = loadPTCalibration(resolvedPtPath);
+    this.ptCalibration = ptCalResult.map;
+    this.ptCalibrationFilePath = ptCalResult.filePath;
 
     // Initialize Robust Calibration Sidecar
     this.calibrationSidecar = new CalibrationSidecarClient();
@@ -768,13 +778,15 @@ class SensorSystemServer {
     this.daqDirect.on('board_heartbeat', (hb: BoardHeartbeatEvent) => {
       const now = Date.now();
       const id = hb.id;
+      const sourceIP = hb.sourceIP || '';
       let status = this.boardsStatus.get(id);
 
       if (!status) {
         const registry = this.boardRegistryById.get(id);
         const type = registry?.type || 'UNKNOWN';
         const boardNumber = registry?.boardNumber ?? null;
-        const ip = registry?.ip || `192.168.2.${id}`;
+        // Use actual source IP from heartbeat so we send config to the right host (PT boards may send id that doesn't match config)
+        const ip = sourceIP || registry?.ip || `192.168.2.${id}`;
         status = {
           type,
           boardNumber,
@@ -791,12 +803,47 @@ class SensorSystemServer {
         if (!this.boardConfigState.has(id)) {
           this.boardConfigState.set(id, { status: 'pending' });
         }
+      } else {
+        // Keep board IP in sync with actual heartbeat source (in case id in packet doesn't match config)
+        status.ip = sourceIP || status.ip;
       }
+
+      // Detect disconnected → reconnected transition so we can resend config.
+      const HEARTBEAT_TIMEOUT_MS = 2500;
+      const wasDisconnected =
+        status.lastHeartbeatMs == null || now - status.lastHeartbeatMs > HEARTBEAT_TIMEOUT_MS;
 
       status.connected = true;
       status.lastHeartbeatMs = now;
+      const prevBoardState = status.boardState;
+      const prevEngineState = status.engineState;
       status.boardState = hb.boardState;
       status.engineState = hb.engineState;
+      if (prevBoardState !== status.boardState || prevEngineState !== status.engineState) {
+        const stateNames: Record<number, string> = { 1: 'Setup', 2: 'Active', 3: 'Abort', 4: 'Abort done' };
+        console.log(
+          `[BOARD] ${id} (${status.ip}) state: ${stateNames[status.boardState as number] ?? status.boardState} (board_state=${status.boardState}) engine_state=${status.engineState}`
+        );
+      }
+
+      // Gap 1: board reconnected after timeout – resend config.
+      if (wasDisconnected) {
+        const prevCfg = this.boardConfigState.get(id);
+        if (prevCfg?.status === 'sent' || prevCfg?.status === 'error') {
+          console.log(`[CONFIG] Board ${id} (${status.ip}) reconnected – resetting config state to pending`);
+          this.boardConfigState.set(id, { status: 'pending' });
+        }
+      }
+
+      // Gap 2: board rebooted while heartbeats stayed continuous – boardState returned to Setup (1).
+      const boardJustEnteredSetup = status.boardState === 1 && prevBoardState !== 1;
+      if (boardJustEnteredSetup) {
+        const prevCfg = this.boardConfigState.get(id);
+        if (prevCfg?.status === 'sent' || prevCfg?.status === 'error') {
+          console.log(`[CONFIG] Board ${id} (${status.ip}) entered Setup state – resetting config to pending`);
+          this.boardConfigState.set(id, { status: 'pending' });
+        }
+      }
 
       status.heartbeatTimes.push(now);
       const windowMs = 10000;
@@ -1211,6 +1258,15 @@ class SensorSystemServer {
       case 'get_state_transitions':
         this.send(ws, { type: 'state_transitions', timestamp: Date.now(), payload: { transitions: getStateTransitions() } });
         break;
+      case MessageType.RESEND_CONFIG:
+        // Force resend config to all connected boards by resetting state to pending
+        const boardCount = this.boardsStatus.size;
+        this.boardsStatus.forEach((_, id) => {
+          this.boardConfigState.set(id, { status: 'pending' });
+        });
+        console.log(`[CONFIG] Resend config requested by client – reset ${boardCount} board(s) to pending, sending now`);
+        this.maybeSendConfigPackets();
+        break;
       case MessageType.QUERY_HISTORICAL:
         // Send the entire 5 minute history buffer for all sensors to just this client
         const historyPayload: Record<string, { time: number[]; values: number[] }> = {};
@@ -1419,7 +1475,7 @@ class SensorSystemServer {
             for (const ch of status.channels) {
               if (ch.coeffs) this.ptCalibration.set(ch.sensorId, ch.coeffs);
             }
-            this.broadcast({ type: MessageType.CALIBRATION_STATUS, timestamp: Date.now(), payload: status });
+            this.broadcast({ type: MessageType.CALIBRATION_STATUS, timestamp: Date.now(), payload: { ...status, calibrationFilePath: this.ptCalibrationFilePath } });
             return;
           }
         } catch (e: any) {
@@ -1431,7 +1487,7 @@ class SensorSystemServer {
       if (this.phase2Engine && this.phase2Engine.isEnabled()) {
         const channels = this.phase2Engine.getAllStatus();
         if (channels.length > 0) {
-          this.broadcast({ type: MessageType.CALIBRATION_STATUS, timestamp: Date.now(), payload: { channels, phase2Enabled: true, timestamp: Date.now() } });
+          this.broadcast({ type: MessageType.CALIBRATION_STATUS, timestamp: Date.now(), payload: { channels, phase2Enabled: true, timestamp: Date.now(), calibrationFilePath: this.ptCalibrationFilePath } });
         }
       }
     }, 2000);
@@ -1582,6 +1638,10 @@ class SensorSystemServer {
 
       const registry = this.boardRegistryById.get(status.id);
       const configState = this.boardConfigState.get(status.id);
+      // Show "Config sent" if we sent it, OR if the board reports Setup/Active (firmware only enters these after config)
+      const weSentConfig = configState?.status === 'sent';
+      const boardReportsConfigured = status.boardState === 1 || status.boardState === 2; // 1=Setup, 2=Active
+      const configured = weSentConfig || boardReportsConfigured;
 
       result.push({
         type: status.type,
@@ -1594,7 +1654,8 @@ class SensorSystemServer {
         frequencyHz,
         boardState: status.boardState,
         engineState: status.engineState,
-        configured: configState?.status === 'sent',
+        configured,
+        configLastSentAt: configState?.status === 'sent' ? configState.lastSentAt : undefined,
         configError: configState?.status === 'error' ? configState.errorMessage : undefined,
         necessaryForAbort: registry?.necessaryForAbort ?? false,
         designatedSurvivor: registry?.designatedSurvivor ?? false,
@@ -1612,6 +1673,18 @@ class SensorSystemServer {
     });
 
     return result;
+  }
+
+  /** Broadcast current board status to all clients (e.g. right after config is sent so UI and state/engine update). */
+  private broadcastBoardStatus(): void {
+    if (this.clients.size === 0) return;
+    const snapshot = this.getBoardStatusSnapshot();
+    if (snapshot.length === 0) return;
+    this.broadcast({
+      type: MessageType.BOARD_STATUS_UPDATE,
+      timestamp: Date.now(),
+      payload: { boards: snapshot },
+    });
   }
 
   /**
@@ -1733,7 +1806,7 @@ class SensorSystemServer {
           }
         }
         // Broadcast the new status immediately to update UI (latencies hiding)
-        this.broadcast({ type: MessageType.CALIBRATION_STATUS, timestamp: Date.now(), payload: status });
+        this.broadcast({ type: MessageType.CALIBRATION_STATUS, timestamp: Date.now(), payload: { ...status, calibrationFilePath: this.ptCalibrationFilePath } });
       }
     } catch (e: any) {
       console.warn(`🤖 Sidecar sync error: ${e.message}`);
@@ -1759,28 +1832,55 @@ class SensorSystemServer {
   }
 
   /**
-   * Build and send SENSOR_CONFIG packets to connected boards once the
-   * designated survivor actuator board is online.
+   * Build and send SENSOR_CONFIG/ACTUATOR_CONFIG from this server to each board (UDP to board IP:5005).
+   * Config is not sent "between boards" – the server sends to every board. Sending is gated on the
+   * designated survivor actuator board being connected (heartbeat in last 2.5s).
    */
   private maybeSendConfigPackets(): void {
-    if (!this.designatedSurvivorBoardId || !this.designatedSurvivorIP) return;
-    if (!this.designatedSurvivorConnected) return;
+    if (!this.designatedSurvivorBoardId || !this.designatedSurvivorIP) {
+      const now = Date.now();
+      if (now - this.lastConfigBlockedLogMs >= 15000) {
+        this.lastConfigBlockedLogMs = now;
+        console.warn('[CONFIG] Not sending: no designated survivor in config (set designated_survivor = true on one ACTUATOR board in config.toml)');
+      }
+      return;
+    }
+    // Config is sent regardless of whether the designated survivor board is currently connected.
     if (!this.actuatorSocket) {
-      console.warn('⚠️ Cannot send SENSOR_CONFIG packets: actuator/config UDP socket not initialized');
+      console.warn('[CONFIG] Cannot send: actuator/config UDP socket not initialized');
       return;
     }
     const now = Date.now();
     const timeoutMs = 2500;
+    let pendingCount = 0;
     this.boardsStatus.forEach((status, id) => {
       const last = status.lastHeartbeatMs;
       const isConnected = last != null && now - last <= timeoutMs;
       if (!isConnected) return;
 
-      const registry = this.boardRegistryById.get(id);
-      if (!registry) return;
+      // Prefer registry by id; PT/sense boards may send a different id in heartbeat, so fall back to lookup by IP
+      let registry = this.boardRegistryById.get(id);
+      const matchedByIp = !registry && !!status.ip;
+      if (!registry && status.ip) {
+        for (const [, reg] of this.boardRegistryById) {
+          if (reg.ip === status.ip) {
+            registry = reg;
+            break;
+          }
+        }
+      }
+      if (!registry) {
+        console.log(`[CONFIG] Skip board id=${id} ip=${status.ip ?? 'unknown'}: no registry (id not in config, IP not in config)`);
+        return;
+      }
+      if (matchedByIp) {
+        console.log(`[CONFIG] Board heartbeat id=${id} matched config by IP ${status.ip} → type=${registry.type} (config board_id may differ)`);
+      }
 
       const cfg = this.boardConfigState.get(id) ?? { status: 'pending' as const };
       if (cfg.status === 'sent') return;
+
+      pendingCount++;
 
       if (registry.type === 'ACTUATOR') {
         // Send ACTUATOR_CONFIG when actuator board connects for the first time
@@ -1790,27 +1890,35 @@ class SensorSystemServer {
         try {
           const isAbortController = id === this.designatedSurvivorBoardId ? 1 : 0;
           const enableSerialPrinting = registry.enableSerialPrinting ? 1 : 0;
-          const packet = this.buildActuatorConfigPacket(isAbortController, enableSerialPrinting);
-          if (!packet) return;
           const targetPort = 5005;
-          this.actuatorSocket!.send(packet, targetPort, registry.ip, (err) => {
+          const destIP = status.ip;
+          const packet = this.buildActuatorConfigPacket(isAbortController, enableSerialPrinting);
+          if (!packet) {
+            console.warn(`[CONFIG] buildActuatorConfigPacket returned null for board ${id}, skipping`);
+            return;
+          }
+          console.log(
+            `[CONFIG] Sending ACTUATOR_CONFIG to board ${id} (${destIP}:${targetPort}) – is_abort_controller=${isAbortController} packet_len=${packet.length}`
+          );
+          this.actuatorSocket!.send(packet, targetPort, destIP, (err) => {
             if (err) {
-              console.error(`❌ Failed to send ACTUATOR_CONFIG to board ${id} (${registry.ip}:${targetPort}):`, err);
+              console.error(`[CONFIG] Failed ACTUATOR_CONFIG to board ${id} (${destIP}:${targetPort}):`, err.message);
               this.boardConfigState.set(id, {
                 status: 'error',
                 lastSentAt: Date.now(),
                 errorMessage: err.message || 'UDP send error',
               });
             } else {
-              console.log(`📤 ACTUATOR_CONFIG sent to board ${id} (${registry.ip}:${targetPort}) – is_abort_controller=${isAbortController}`);
+              console.log(`[CONFIG] ACTUATOR_CONFIG sent OK → board ${id} (${destIP})`);
               this.boardConfigState.set(id, {
                 status: 'sent',
                 lastSentAt: Date.now(),
               });
             }
+            this.broadcastBoardStatus();
           });
         } catch (err: any) {
-          console.error(`❌ Failed to build/send ACTUATOR_CONFIG for board ${id}:`, err);
+          console.error(`[CONFIG] Failed to build ACTUATOR_CONFIG for board ${id}:`, err?.message ?? err);
           this.boardConfigState.set(id, {
             status: 'error',
             lastSentAt: Date.now(),
@@ -1825,6 +1933,9 @@ class SensorSystemServer {
       const necessaryForAbort = registry.necessaryForAbort;
 
       try {
+        const targetPortSensor = 5005;
+        const destIP = status.ip;
+        console.log(`[CONFIG] Sending SENSOR_CONFIG to board ${id} (${destIP}:${targetPortSensor}) – channels=[${sensorChannels.join(',')}] necessary_for_abort=${necessaryForAbort}`);
         const packet = this.buildSensorConfigPacket(
           sensorChannels,
           registry.voltageReference ?? 0,
@@ -1833,26 +1944,28 @@ class SensorSystemServer {
           registry.enableSerialPrinting ?? false,
         );
 
-        // DAQ boards listen for config on port 5005 by convention
-        const targetPort = 5005;
-        this.actuatorSocket.send(packet, targetPort, registry.ip, (err) => {
+        // DAQ boards listen for config on port 5005 by convention; send to actual heartbeat source IP
+        this.actuatorSocket!.send(packet, targetPortSensor, destIP, (err) => {
           if (err) {
-            console.error(`❌ Failed to send SENSOR_CONFIG to board ${id} (${registry.ip}:${targetPort}):`, err);
+            console.error(`[CONFIG] Failed SENSOR_CONFIG to board ${id} (${destIP}:${targetPortSensor}):`, err.message);
             this.boardConfigState.set(id, {
               status: 'error',
               lastSentAt: Date.now(),
               errorMessage: err.message || 'UDP send error',
             });
           } else {
-            console.log(`📤 SENSOR_CONFIG sent to board ${id} (${registry.ip}:${targetPort}) – sensors=${sensorChannels.join(',')}, necessary_for_abort=${necessaryForAbort}`);
+            console.log(
+              `[CONFIG] SENSOR_CONFIG sent OK → board ${id} (${destIP}) channels=[${sensorChannels.join(',')}] `
+            );
             this.boardConfigState.set(id, {
               status: 'sent',
               lastSentAt: Date.now(),
             });
           }
+          this.broadcastBoardStatus();
         });
       } catch (err: any) {
-        console.error(`❌ Failed to build/send SENSOR_CONFIG for board ${id}:`, err);
+        console.error(`[CONFIG] Failed to build SENSOR_CONFIG for board ${id}:`, err?.message ?? err);
         this.boardConfigState.set(id, {
           status: 'error',
           lastSentAt: Date.now(),
@@ -1860,6 +1973,10 @@ class SensorSystemServer {
         });
       }
     });
+
+    if (pendingCount > 0) {
+      this.lastConfigBlockedLogMs = 0; // reset so next time we're blocked we log again
+    }
   }
 
   /**
@@ -1869,15 +1986,16 @@ class SensorSystemServer {
    */
   private buildActuatorConfigPacket(is_abort_controller: number, enable_serial_printing: number): Buffer | null {
     const config = readConfig();
-    const actuatorRoles = (config.actuator_roles || {}) as Record<string, [string, number]>;
-    const sensorRoles = (config.sensor_roles || {}) as Record<string, number>;
+    const actuatorRoles = (config.actuator_roles || {}) as Record<string, [string, number] | [string, number, number] | [string, number, string]>;
+    // Abort PTs use sensor roles from PT board #1 (board_id 21) = sensor_roles_pt_board
+    const sensorRoles = (config.sensor_roles_pt_board || config.sensor_roles || {}) as Record<string, number>;
     const abortPts = (config.abort_pts || {}) as Record<string, number>;
+    const boards = (config.boards || {}) as Record<string, any>;
 
     if (!this.designatedSurvivorIP) {
       return null;
     }
 
-    const actuatorBoardIP = this.designatedSurvivorIP;
     const ipToU32BE = (ip: string): number => {
       const octets = ip.split('.').map((p) => Number(p));
       if (octets.length !== 4 || octets.some((p) => !Number.isFinite(p) || p < 0 || p > 255)) {
@@ -1886,7 +2004,15 @@ class SensorSystemServer {
       return ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
     };
 
-    // First PT board IP for abort PT blocks
+    /** Resolve board_id to IP from config.boards (actuators mapped by board_id, not IP). */
+    const boardIdToIp = new Map<number, string>();
+    for (const [, board] of Object.entries(boards)) {
+      const id = typeof board?.id === 'number' ? board.id : (typeof board?.board_id === 'number' ? board.board_id : null);
+      const ip = typeof board?.ip === 'string' ? board.ip : (id != null ? `192.168.2.${id}` : '');
+      if (id != null && ip) boardIdToIp.set(id, ip);
+    }
+
+    // First PT board IP for abort PT blocks (PT board #1 = board_id 21)
     let ptBoardIP: string | null = null;
     for (const [, reg] of this.boardRegistryById) {
       if (reg.type === 'PT') {
@@ -1895,16 +2021,24 @@ class SensorSystemServer {
       }
     }
 
-    // Build N abort actuator blocks (actuator_roles + Vent + Engine Abort from state CSV)
+    // Build N abort actuator blocks (actuator_roles; each actuator's IP from its board_id)
     const abortActuators: Array<{ ip: number; actuator_id: number; vent_state: number; abort_state: number }> = [];
     for (const [_, value] of Object.entries(actuatorRoles)) {
       if (!Array.isArray(value) || value.length < 2) continue;
       const actuatorId = Number(value[1]);
       if (!Number.isFinite(actuatorId) || actuatorId < 1 || actuatorId > 255) continue;
+      let actuatorIP = this.designatedSurvivorIP;
+      if (value.length >= 3) {
+        if (typeof value[2] === 'number') {
+          actuatorIP = boardIdToIp.get(value[2]) || actuatorIP;
+        } else if (typeof value[2] === 'string') {
+          actuatorIP = value[2];
+        }
+      }
       const ventState = (STATE_ACTUATOR_MAP[SystemState.VENT] && STATE_ACTUATOR_MAP[SystemState.VENT][actuatorId]) ?? 0;
       const abortState = (STATE_ACTUATOR_MAP[SystemState.ENGINE_ABORT] && STATE_ACTUATOR_MAP[SystemState.ENGINE_ABORT][actuatorId]) ?? 0;
       abortActuators.push({
-        ip: ipToU32BE(actuatorBoardIP),
+        ip: ipToU32BE(actuatorIP),
         actuator_id: actuatorId,
         vent_state: ventState ? 1 : 0,
         abort_state: abortState ? 1 : 0,

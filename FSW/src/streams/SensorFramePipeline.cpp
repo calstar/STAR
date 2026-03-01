@@ -88,14 +88,26 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
         return batch;
     }
 
-    // Handle BOARD_HEARTBEAT packets (for board discovery)
-    // These are handled separately by board discovery system
+    // Handle BOARD_HEARTBEAT packets (for board discovery + config broadcast)
     if (*packet_type == daq_comms::protocol::DiabloBoardPacketParser::PacketType::BOARD_HEARTBEAT) {
-        // Return empty batch - heartbeat handled by discovery
+        last_heartbeat_buffer_.assign(receive_buffer_.data(), receive_buffer_.data() + received);
+        last_heartbeat_source_ip_ = last_source_ip_;
         return std::nullopt;
     }
 
     return std::nullopt;
+}
+
+std::optional<SensorFramePipeline::LastHeartbeat> SensorFramePipeline::get_last_heartbeat() {
+    if (last_heartbeat_buffer_.empty()) {
+        return std::nullopt;
+    }
+    LastHeartbeat out;
+    out.data = std::move(last_heartbeat_buffer_);
+    out.source_ip = std::move(last_heartbeat_source_ip_);
+    last_heartbeat_buffer_.clear();
+    last_heartbeat_source_ip_.clear();
+    return out;
 }
 
 bool SensorFramePipeline::is_ready() const {

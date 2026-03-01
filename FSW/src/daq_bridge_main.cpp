@@ -2,10 +2,12 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <map>
 #include <set>
+#include <sstream>
 #include <thread>
 
 #include "../../daq_comms/include/comms/messages/sensor/CalibratedSensorMessages.hpp"
@@ -15,6 +17,7 @@
 #include "config/BoardDiscovery.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
+#include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
 #include "fsw/FSWConfigManager.hpp"
 #include "routing/SensorRouter.hpp"
 #include "streams/SensorFramePipeline.hpp"
@@ -208,6 +211,29 @@ int main(int argc, char* argv[]) {
     while (running) {
         auto batch = pipeline.poll();
         if (!batch.has_value()) {
+            // When last packet was a BOARD_HEARTBEAT, run discovery and broadcast config to that board
+            auto hb = pipeline.get_last_heartbeat();
+            if (hb) {
+                discovery.process_board_announcement(hb->data.data(), hb->data.size(),
+                                                     hb->source_ip);
+                auto parsed = pipeline.get_parser().parse_board_heartbeat(hb->data.data(),
+                                                                         hb->data.size());
+                if (parsed && parsed->is_valid) {
+                    // MAC for FSWConfigManager (same formula as BoardDiscovery)
+                    std::hash<std::string> hasher;
+                    uint32_t ip_hash = static_cast<uint32_t>(hasher(hb->source_ip));
+                    uint32_t sig_id = (static_cast<uint32_t>(parsed->heartbeat.board_type) << 8) |
+                                      parsed->heartbeat.board_id;
+                    std::ostringstream mac;
+                    mac << std::hex << std::setw(2) << std::setfill('0') << ((ip_hash >> 16) & 0xFF)
+                        << ":" << std::setw(2) << ((ip_hash >> 8) & 0xFF) << ":" << std::setw(2)
+                        << (ip_hash & 0xFF) << ":" << std::setw(2) << ((ip_hash >> 24) & 0xFF)
+                        << ":" << std::setw(2) << ((sig_id >> 8) & 0xFF) << ":" << std::setw(2)
+                        << (sig_id & 0xFF);
+                    fsw_config->process_board_heartbeat(*parsed, hb->source_ip, mac.str());
+                }
+            }
+
             std::this_thread::sleep_for(std::chrono::microseconds(500));
 
             // Try reconnect every 5 seconds if disconnected
