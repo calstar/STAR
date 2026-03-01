@@ -20,6 +20,7 @@ import ConfigPage from '@/app/config/page';
 import ControllerPage from '@/app/controller/page';
 import CalibrationPage from '@/app/calibration/page';
 import UnifiedDashboardPage from '@/app/window/unified/page';
+import BoardsPage from '@/app/boards/page';
 
 const viewComponents: Record<string, React.ComponentType> = {
   fuel: FuelGraphsPage,
@@ -30,6 +31,7 @@ const viewComponents: Record<string, React.ComponentType> = {
   all: AllPlotsPage,
   controls: ControlsPage,
   status: StatusPage,
+  boards: BoardsPage,
   config: ConfigPage,
   calibration: CalibrationPage,
   controller: ControllerPage,

@@ -10,7 +10,7 @@
  */
 
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
-import { MessageType } from '../../shared/types.js';
+import { MessageType } from './shared-types.js';
 
 /**
  * Message logger that writes WebSocket messages to Elodin DB

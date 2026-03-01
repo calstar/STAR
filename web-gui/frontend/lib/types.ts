@@ -216,17 +216,6 @@ export interface BoardStatus {
   designatedSurvivor?: boolean;
 }
 
-export interface BoardStatusPayload {
-  boards: BoardStatus[];
-}
-
-export function engineStateCodeToLabel(code: number | null | undefined): string {
-  if (code === null || code === undefined) return 'UNKNOWN';
-  const name = (SystemState as any)[code];
-  if (typeof name === 'string') return name.replace(/_/g, ' ');
-  return 'UNKNOWN';
-}
-
 // ── Board / heartbeat status ───────────────────────────────────────────────────
 
 export interface BoardStatus {

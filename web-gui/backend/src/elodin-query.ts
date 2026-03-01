@@ -7,7 +7,7 @@
 import { EventEmitter } from 'events';
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
-import type { SensorUpdate } from '../../shared/types.js';
+import type { SensorUpdate } from './shared-types.js';
 
 export interface QueryOptions {
   packetId: [number, number];

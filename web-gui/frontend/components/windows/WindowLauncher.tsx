@@ -67,6 +67,7 @@ export default function WindowLauncher() {
     { id: 'raw',         name: 'Raw ADC',      description: 'All 10 PT & actuator ADC channels',          url: '/window/raw',         accent: '#60A5FA' },
     { id: 'controls',    name: 'Controls',     description: 'State machine & actuator commands',          url: '/window/controls',    accent: '#A78BFA' },
     { id: 'status',      name: 'Status',       description: 'Tabular real-time sensor values',            url: '/window/status',      accent: '#34D399' },
+    { id: 'boards',      name: 'Boards / Heartbeats', description: 'Discovered boards and heartbeat status', url: '/window/boards',    accent: '#10B981' },
     { id: 'config',      name: 'Config',       description: 'System & board configuration editor',        url: '/window/config',      accent: '#FBBF24' },
     { id: 'controller',  name: 'Controller',   description: 'PWM duty cycle & valve states',              url: '/window/controller',  accent: '#F87171' },
     { id: 'calibration', name: 'Calibration',  description: 'RLS + GLR drift · Bayesian auto-recal',     url: '/window/calibration', accent: '#A3E635' },

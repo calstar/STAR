@@ -47,7 +47,7 @@ import {
   SystemState,
   ActuatorState,
   BoardStatus,
-} from '../../shared/types.js';
+} from './shared-types.js';
 
 // ── Extracted modules ──────────────────────────────────────────────────────────
 import { Client, HpPtBoardConfig, WS_PORT, WS_HOST, ELODIN_HOST, ELODIN_PORT, ACTUATOR_CHANNEL_BY_NAME } from './server-types.js';
@@ -103,6 +103,7 @@ class SensorSystemServer {
   };
 
   actuatorSocket: dgram.Socket | null = null;
+  private actuatorSocketBroadcastReady: boolean = false;
   actuatorIP: string = '192.168.2.201';
   actuatorPort: number = 5005;
   actuatorBoardMap: Map<string, { channel: number; boardIp: string }> = new Map();
@@ -304,6 +305,10 @@ class SensorSystemServer {
       }
       if (typeof hb.broadcast_ip === 'string' && hb.broadcast_ip.length > 0) {
         this.serverBroadcastIP = hb.broadcast_ip;
+        // Normalize common typo that causes EADDRS (205 → 255 for limited broadcast)
+        if (this.serverBroadcastIP === '205.255.255.255') {
+          this.serverBroadcastIP = '255.255.255.255';
+        }
       }
       console.log(`📡 Server heartbeat config: interval=${this.serverHeartbeatIntervalMs} ms, ` +
                   `broadcast=${this.serverBroadcastIP}:${this.serverBroadcastPort}`);
@@ -420,14 +425,8 @@ class SensorSystemServer {
       this.syncSidecarCoefficients().catch(e => console.warn('⚠️ Initial sidecar sync failed:', e.message));
     }
 
-    // Initialize UDP socket for actuator commands
+    // Initialize UDP socket for actuator commands (bind first so setBroadcast works on macOS/Unix)
     this.actuatorSocket = dgram.createSocket('udp4');
-    try {
-      this.actuatorSocket.setBroadcast(true);
-      console.log('📡 UDP socket broadcast enabled for actuator/heartbeat traffic');
-    } catch (err) {
-      console.warn('⚠️ Failed to enable UDP broadcast on actuator socket:', err);
-    }
     this.actuatorSocket.on('error', (err: Error) => {
       const error = err as any;
       console.error(`❌ Actuator UDP socket error: ${error.code || 'UNKNOWN'} — ${error.message}`);
@@ -435,11 +434,27 @@ class SensorSystemServer {
         if (this.actuatorSocket) this.actuatorSocket.close();
         this.actuatorSocket = dgram.createSocket('udp4');
         this.actuatorSocket.on('error', (err2: Error) => { console.error(`❌ Failed to recreate actuator socket: ${err2.message}`); });
-        console.log(`✅ Actuator socket recreated`);
+        this.actuatorSocketBroadcastReady = false;
+        this.actuatorSocket.bind({ port: 0, address: '0.0.0.0' }, () => {
+          try {
+            this.actuatorSocket!.setBroadcast(true);
+            this.actuatorSocketBroadcastReady = true;
+            console.log('📡 Actuator socket recreated with broadcast enabled');
+          } catch (e) { console.warn('⚠️ setBroadcast failed on recreated socket:', e); }
+        });
       } catch (recreateError) { console.error(`❌ Failed to recreate actuator socket:`, recreateError); this.actuatorSocket = null; }
     });
     this.actuatorSocket.on('close', () => { console.warn('⚠️ Actuator UDP socket closed'); });
-    console.log(`🎯 Actuator command socket initialized (target: ${this.actuatorIP}:${this.actuatorPort})`);
+    this.actuatorSocket.bind({ port: 0, address: '0.0.0.0' }, () => {
+      try {
+        this.actuatorSocket!.setBroadcast(true);
+        this.actuatorSocketBroadcastReady = true;
+        console.log('📡 UDP socket broadcast enabled for actuator/heartbeat traffic');
+      } catch (err) {
+        console.warn('⚠️ Failed to enable UDP broadcast on actuator socket:', err);
+      }
+    });
+    console.log(`🎯 Actuator command socket initializing (target: ${this.actuatorIP}:${this.actuatorPort})`);
 
     this.wss = new WebSocketServer({ port: WS_PORT, host: WS_HOST, perMessageDeflate: false });
     this.wss.on('error', (error: any) => {
@@ -1452,13 +1467,13 @@ class SensorSystemServer {
    *   Body:   [engine_state(1)] where engine_state is SystemState numeric code.
    */
   private sendServerHeartbeatUDP(): void {
-    if (!this.actuatorSocket) {
+    if (!this.actuatorSocket || !this.actuatorSocketBroadcastReady) {
       return;
     }
     try {
       const packetType = 2; // SERVER_HEARTBEAT
       const version = 0;
-      const timestamp = Date.now() & 0xffffffff;
+      const timestamp = Date.now() >>> 0;
       const engineCode = (this.currentState ?? SystemState.IDLE) as number;
 
       const buffer = Buffer.allocUnsafe(7);
@@ -1513,10 +1528,10 @@ class SensorSystemServer {
    *   [packet_type(1), version(1)=0, timestamp_ms(4, LE)]
    */
   private sendSimpleBroadcastPacket(packetType: number, label: string): void {
-    if (!this.actuatorSocket) return;
+    if (!this.actuatorSocket || !this.actuatorSocketBroadcastReady) return;
     try {
       const version = 0;
-      const timestamp = Date.now() & 0xffffffff;
+      const timestamp = Date.now() >>> 0;
       const buffer = Buffer.allocUnsafe(6);
       buffer.writeUInt8(packetType, 0);
       buffer.writeUInt8(version, 1);
