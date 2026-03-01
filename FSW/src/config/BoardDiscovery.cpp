@@ -13,6 +13,7 @@
 #include <iomanip>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <sstream>
 
 namespace fsw {
@@ -338,6 +339,17 @@ std::vector<DiscoveredBoard> BoardDiscovery::get_discovered_boards() {
         boards.push_back(board);
     }
     return boards;
+}
+
+std::optional<DiscoveredBoard> BoardDiscovery::get_board_by_ip(const std::string& ip) {
+    std::lock_guard<std::mutex> lock(boards_mutex_);
+    auto it = ip_to_signature_.find(ip);
+    if (it == ip_to_signature_.end())
+        return std::nullopt;
+    auto board_it = discovered_boards_.find(it->second);
+    if (board_it == discovered_boards_.end())
+        return std::nullopt;
+    return board_it->second;
 }
 
 std::map<std::string, std::map<std::string, std::string>> BoardDiscovery::generate_config() {

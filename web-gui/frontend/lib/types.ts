@@ -198,6 +198,7 @@ export interface CalibrationCommand {
   boardId?: number;
   referencePressure?: number;
 }
+
 // ── Board / heartbeat status ───────────────────────────────────────────────────
 
 export interface BoardStatus {
@@ -215,6 +216,8 @@ export interface BoardStatus {
   configError?: string;
   necessaryForAbort?: boolean;
   designatedSurvivor?: boolean;
+  /** 0 = Internal 2.5V, 1 = VDD ratiometric, 2 = 5V absolute */
+  voltageReference?: number;
 }
 
 export interface BoardStatusPayload {
@@ -243,31 +246,6 @@ export type NotificationPayload = NotificationPayloadOngoing | NotificationPaylo
 
 export function isNotificationOngoing(p: NotificationPayload): p is NotificationPayloadOngoing {
   return 'key' in p && 'ongoing' in p;
-}
-
-// ── Board / heartbeat status ───────────────────────────────────────────────────
-
-export interface BoardStatus {
-  type: string;
-  boardNumber: number | null;
-  id: number;
-  ip: string;
-  expected: boolean;
-  connected: boolean;
-  lastHeartbeatMs: number | null;
-  frequencyHz: number | null;
-  boardState: number | null;
-  engineState: number | null;
-  configured?: boolean;
-  configError?: string;
-  necessaryForAbort?: boolean;
-  designatedSurvivor?: boolean;
-  /** 0 = Internal 2.5V, 1 = VDD ratiometric, 2 = 5V absolute */
-  voltageReference?: number;
-}
-
-export interface BoardStatusPayload {
-  boards: BoardStatus[];
 }
 
 // ── Engine state helpers ─────────────────────────────────────────────────────

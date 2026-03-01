@@ -59,14 +59,14 @@ discovery_timeout_seconds = 30
 
 [boards.pt_board]
 type = "PT"
-ip = "192.168.2.101"
-send_port = 5006           # Board sends SENSOR_DATA to this port on our PC
+ip = "192.168.2.21"
+send_port = 5005           # Board sends SENSOR_DATA to this port on our PC
 num_sensors = 10            # 10 connectors on this board
-board_id = 1
+board_id = 21               # PT Board #1 (label on board)
 enabled = true
 enable_serial_printing = false
 # voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
-voltage_reference = 0
+voltage_reference = 1
 necessary_for_abort = true   # This sense board participates in abort logic
 # Exactly one actuator board should be marked as designated_survivor
 # (PT boards are never designated survivors)
@@ -77,32 +77,10 @@ active_connectors = [1, 2, 3, 4, 5, 6, 7]  # Example: only connectors 1-7 are us
 
 [boards.pt_board_2]
 type = "PT"
-ip = "192.168.2.102"
-send_port = 5006           # Board sends SENSOR_DATA to this port on our PC
+ip = "192.168.2.22"
+send_port = 5005           # Board sends SENSOR_DATA to this port on our PC
 num_sensors = 10            # 10 connectors on this board
-board_id = 11
-enabled = true
-enable_serial_printing = false
-# voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
-voltage_reference = 0
-adc_ref_voltage = 2.5      # Fixed ADC reference voltage for this board (V)
-# Connector 2 is hardware-wired to measure excitation voltage on this PCB.
-# hp_pt_connectors lists whichever connectors have HP PT sensors plugged in
-# (any subset of active_connectors except excitation_connector_id).
-active_connectors = [1, 2, 3, 4]
-hp_pt_connectors = [1, 3, 4]   # Connectors with 4-20 mA HP PT sensors (connector 2 is excitation, not a sensor)
-excitation_connector_id = 2    # Connector that measures excitation voltage (not plotted)
-hp_pt_full_scale_psi = 5000.0   # Full-scale pressure at 20 mA (PSI)
-hp_pt_sense_resistor_ohms = 120 # Sense resistor for 4-20 mA → voltage (Ω)
-# Excitation voltage divider: ADC sees this fraction of V_exc; V_exc = V_adc / this value
-excitation_divider_attenuation = 0.0762
-
-[boards.pt_board_2]
-type = "PT"
-ip = "192.168.2.102"
-send_port = 5006           # Board sends SENSOR_DATA to this port on our PC
-num_sensors = 10            # 10 connectors on this board
-board_id = 11
+board_id = 22               # PT Board #2 (label on board)
 enabled = true
 enable_serial_printing = false
 # voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
@@ -121,12 +99,12 @@ excitation_divider_attenuation = 0.0762
 
 [boards.actuator_board]
 type = "ACTUATOR"
-ip = "192.168.2.201"
-send_port = 5006           # Actuator board also sends current sense data here
+ip = "192.168.2.11"
+send_port = 5005           # Actuator board also sends current sense data here
 listen_port = 5005         # Actuator board listens for ACTUATOR_COMMAND on this port
 num_actuators = 10
 num_sensors = 10            # 10 current sense ADC channels
-board_id = 2
+board_id = 11              # Actuator Board #1 (label on board)
 enabled = true
 enable_serial_printing = false
 necessary_for_abort = false
@@ -136,24 +114,51 @@ voltage_reference = 0
 
 [boards.actuator_board_2]
 type = "ACTUATOR"
-ip = "192.168.2.202"
-send_port = 5006           # Actuator board also sends current sense data here
+ip = "192.168.2.12"
+send_port = 5005           # Actuator board also sends current sense data here
 listen_port = 5005         # Actuator board listens for ACTUATOR_COMMAND on this port
 num_actuators = 10
 num_sensors = 10            # 10 current sense ADC channels
-board_id = 3
+board_id = 12              # Actuator Board #2 (label on board)
 enabled = true
 enable_serial_printing = false
+necessary_for_abort = false
 # voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
+voltage_reference = 0
+
+[boards.actuator_board_3]
+type = "ACTUATOR"
+ip = "192.168.2.13"
+send_port = 5005
+listen_port = 5005
+num_actuators = 10
+num_sensors = 10
+board_id = 13              # Actuator Board #3 (label on board)
+enabled = true
+enable_serial_printing = false
+necessary_for_abort = false
+voltage_reference = 0
+
+[boards.actuator_board_4]
+type = "ACTUATOR"
+ip = "192.168.2.14"
+send_port = 5005
+listen_port = 5005
+num_actuators = 10
+num_sensors = 10
+board_id = 14              # Actuator Board #4 (label on board)
+enabled = true
+enable_serial_printing = false
+necessary_for_abort = false
 voltage_reference = 0
 
 [boards.lc_board]
 type = "LC"
-ip = "192.168.2.102"
-send_port = 5006
+ip = "192.168.2.41"
+send_port = 5005
 num_sensors = 4
-board_id = 3
-enabled = false              # flip to true when board is connected
+board_id = 41              # LC Board #1 (label on board)
+enabled = true              # flip to true when board is connected
 enable_serial_printing = false
 necessary_for_abort = false
 designated_survivor = false
@@ -163,13 +168,26 @@ voltage_reference = 0
 # Leave empty [] to use all connectors, or specify only active ones
 active_connectors = []  # Example: [1, 2, 3] if only connectors 1-3 are used
 
+[boards.lc_board_2]
+type = "LC"
+ip = "192.168.2.42"
+send_port = 5005
+num_sensors = 4
+board_id = 42              # LC Board #2 (label on board)
+enabled = false
+enable_serial_printing = false
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 0
+active_connectors = []
+
 [boards.tc_board]
 type = "TC"
-ip = "192.168.2.103"
-send_port = 5006
+ip = "192.168.2.51"
+send_port = 5005
 num_sensors = 10
-board_id = 4
-enabled = false
+board_id = 51              # TC Board #1 (label on board)
+enabled = true
 enable_serial_printing = false
 necessary_for_abort = false
 designated_survivor = false
@@ -179,13 +197,26 @@ voltage_reference = 0
 # Leave empty [] to use all connectors, or specify only active ones
 active_connectors = []  # Example: [1, 2, 3, 4, 5] if only connectors 1-5 are used
 
+[boards.tc_board_2]
+type = "TC"
+ip = "192.168.2.52"
+send_port = 5005
+num_sensors = 10
+board_id = 52              # TC Board #2 (label on board)
+enabled = false
+enable_serial_printing = false
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 0
+active_connectors = []
+
 [boards.rtd_board]
 type = "RTD"
-ip = "192.168.2.104"
-send_port = 5006
+ip = "192.168.2.31"
+send_port = 5005
 num_sensors = 4
-board_id = 5
-enabled = false
+board_id = 31              # RTD Board #1 (label on board)
+enabled = true
 enable_serial_printing = false
 necessary_for_abort = false
 designated_survivor = false
@@ -195,6 +226,19 @@ voltage_reference = 0
 # Leave empty [] to use all connectors, or specify only active ones
 active_connectors = []  # Example: [1, 2] if only connectors 1-2 are used
 
+[boards.rtd_board_2]
+type = "RTD"
+ip = "192.168.2.32"
+send_port = 5005
+num_sensors = 4
+board_id = 32              # RTD Board #2 (label on board)
+enabled = false
+enable_serial_printing = false
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 0
+active_connectors = []
+
 # =============================================================================
 # Multiple Boards Example (commented out - uncomment to use)
 # =============================================================================
@@ -203,7 +247,7 @@ active_connectors = []  # Example: [1, 2] if only connectors 1-2 are used
 # [boards.pt_board_1]
 # type = "PT"
 # ip = "192.168.2.101"
-# send_port = 5006
+# send_port = 5005
 # num_sensors = 10
 # board_id = 1
 # enabled = true
@@ -212,7 +256,7 @@ active_connectors = []  # Example: [1, 2] if only connectors 1-2 are used
 # [boards.pt_board_2]
 # type = "PT"
 # ip = "192.168.2.111"
-# send_port = 5006
+# send_port = 5005
 # num_sensors = 10
 # board_id = 11
 # enabled = true
@@ -224,63 +268,66 @@ active_connectors = []  # Example: [1, 2] if only connectors 1-2 are used
 
 
 # =============================================================================
-# Sensor Roles - PT Board 1 (192.168.2.101)
-# Board-specific mapping to prevent cross-contamination between boards
+# Sensor Roles - PT Board #1 (board_id = 21)
+# Board-specific mapping to prevent cross-contamination between boards.
+# pt_board in [boards] has board_id = 21.
 # =============================================================================
 [sensor_roles_pt_board]
-"Fuel Upstream"   = 1
-"GSE Low"         = 2
-"Fuel Fill Tank"  = 4
-"Fuel Downstream" = 3
-"Ox Upstream"     = 5
-"GN2 Regulated"   = 6
-"Ox Downstream"   = 7
+"FUEL UP"      = 1
+"GSE LO"       = 2
+"FUEL FILL PRESS" = 4
+"FUEL DN"      = 3
+"LOX UP"       = 5
+"GN2 REG"      = 6
+"LOX DN"       = 7
 
 # =============================================================================
 # Abort PTs - PTs required for abort logic (sensor role name → pressure threshold PSI)
 # Threshold is converted to ADC code per PT calibration when building ACTUATOR_CONFIG.
 # =============================================================================
 [abort_pts]
-"Fuel Upstream"   = 400
-"Ox Upstream"     = 400
+"FUEL UP"   = 400
+"LOX UP"    = 400
 
 # =============================================================================
-# Sensor Roles - PT Board 2 (High-Pressure 4-20 mA sensors)
+# Sensor Roles - PT Board #2 (board_id = 22, High-Pressure 4-20 mA sensors)
 # Maps connector_id (1-indexed) to human-readable names for hp_pt_connectors.
+# pt_board_2 in [boards] has board_id = 22.
 # The excitation_connector_id must NOT appear here — it is cached internally
 # and never emitted as a sensor update.
 # =============================================================================
 [sensor_roles_pt2]
-"GSE Mid"  = 1    # Connector 1 is GSE Mid (HP PT sensor)
-"GSE High" = 3    # Connector 3 is GSE High (HP PT sensor)
-"GN2 High" = 4    # Connector 4 is GN2 High (HP PT sensor)
+"GSE MID"  = 1
+"GSE HI"   = 3
+"GN2 HI"   = 4
 # Connector 2 is excitation voltage, not a sensor
 
 # =============================================================================
-# Actuator Roles - Maps role names to [type, actuator_id, board_ip]
+# Actuator Roles - Maps role names to [type, actuator_id, board_id]
 # type: "NC" (Normally Closed) or "NO" (Normally Open)
 # actuator_id: 1-indexed connector number on the actuator board
-# board_ip: IP address of the actuator board (optional, defaults to 192.168.2.201)
+# board_id: numeric board ID from [boards] (e.g. 14 = Actuator Board #1, 12 = Actuator Board #2).
+#           IP is resolved from config.boards by board_id.
 # =============================================================================
 [actuator_roles]
-# Board 192.168.2.201 – names match state_machine_actuators.csv
-"LOX Main"               = ["NO", 1, "192.168.2.201"]
-"Fuel Vent"             = ["NC", 2, "192.168.2.201"]
-"Fuel Press"            = ["NC", 3, "192.168.2.201"]
-"Fuel Main"             = ["NC", 7, "192.168.2.201"]
-"LOX Vent"              = ["NC", 6, "192.168.2.201"]
-"LOX Press"             = ["NO", 8, "192.168.2.201"]
-"GSE Low Press Vent"    = ["NC", 5, "192.168.2.201"]
-"Fuel Fill Press"       = ["NC", 10, "192.168.2.201"]
-# Board 192.168.2.202
-"Fuel Fill Vent"        = ["NC", 1, "192.168.2.202"]
-"GSE LOX Fill Vent"     = ["NC", 2, "192.168.2.202"]
-"GSE High Press Control" = ["NC", 3, "192.168.2.202"]
-"GSE Med Press Control" = ["NC", 4, "192.168.2.202"]
-"GSE High Press Vent"   = ["NC", 5, "192.168.2.202"]
-"GN2 Vent"              = ["NC", 6, "192.168.2.202"]
-"LOX Fill"              = ["NC", 7, "192.168.2.202"]
-"LOX Dump"              = ["NC", 8, "192.168.2.202"]
+# Actuator Board #1 → board_id 14 (names match state_machine_actuators.csv)
+"LOX Main"               = ["NO", 1, 14]
+"Fuel Vent"             = ["NC", 2, 14]
+"Fuel Press"            = ["NC", 3, 14]
+"Fuel Main"             = ["NC", 7, 14]
+"LOX Vent"              = ["NC", 6, 14]
+"LOX Press"             = ["NO", 8, 14]
+"GSE Low Press Vent"    = ["NC", 5, 14]
+"Fuel Fill Press"       = ["NC", 10, 14]
+# Actuator Board #2 → board_id 12
+"Fuel Fill Vent"        = ["NC", 1, 12]
+"GSE LOX Fill Vent"     = ["NC", 2, 12]
+"GSE High Press Control" = ["NC", 3, 12]
+"GSE Med Press Control" = ["NC", 4, 12]
+"GSE High Press Vent"   = ["NC", 5, 12]
+"GN2 Vent"              = ["NC", 6, 12]
+"LOX Fill"              = ["NC", 7, 12]
+"LOX Dump"              = ["NC", 8, 12]
 
 # Abbreviation mapping for state machine CSV
 [actuator_abbrev]
@@ -293,36 +340,48 @@ OM = "LOX Main"
 FF = "Fuel Fill"
 
 # =============================================================================
-# Elodin Table Routing - Maps sensor types to Elodin table IDs
-# packet_id is [high_byte, low_byte] for the Elodin table
+# Elodin Table Routing - Maps sensor types to Elodin table IDs (config-driven, no fixed hexes in code)
+# packet_id = [high_byte, low_byte]; channels = 1-based channel count (low byte 0x01..0x0N).
+# Backend (server.ts) and daq_bridge both read this; add/remove routing types here for modularity.
 # =============================================================================
 [routing.pt_raw]
 packet_id = [0x20, 0x00]
+channels = 10
 description = "Raw PT ADC counts"
 
 [routing.pt_calibrated]
 packet_id = [0x20, 0x10]
+channels = 10
 description = "Calibrated PT pressure (PSI)"
 
 [routing.tc_raw]
 packet_id = [0x21, 0x00]
+channels = 4
 description = "Raw TC ADC counts"
 
 [routing.rtd_raw]
 packet_id = [0x22, 0x00]
+channels = 4
 description = "Raw RTD resistance counts"
 
 [routing.lc_raw]
 packet_id = [0x23, 0x00]
+channels = 4
 description = "Raw LC ADC counts"
 
 [routing.lc_calibrated]
 packet_id = [0x23, 0x10]
+channels = 4
 description = "Calibrated LC force"
 
 [routing.actuator_status]
 packet_id = [0x30, 0x00]
+channels = 10
 description = "Actuator current sense readings"
+
+# Which routing types daq_bridge publishes to Elodin (avionics payload only; calibration writes calibrated later)
+[daq_bridge]
+publish = ["pt_raw", "actuator_status"]
 
 # =============================================================================
 # Calibration
@@ -343,7 +402,9 @@ auto_save_interval_sec = 300 # Phase 2 auto-save interval
 status_interval_sec = 30     # Phase 2 status print interval
 
 # PT calibration sources (tried in order: JSON first, then CSV)
+# If json_path is set, that file is used for PT data; otherwise latest in json_dir is used.
 [calibration.pt]
+json_path = "scripts/calibration/calibrations/calibration_2026-02-24T02-32-07.json"
 json_dir = "scripts/calibration/calibrations"
 csv_paths = [
     "external/DiabloAvionics/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv"

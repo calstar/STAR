@@ -3,6 +3,8 @@
 
 #include <memory>
 #include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
@@ -59,6 +61,16 @@ public:
         return board_parser_;
     }
 
+    /**
+     * @brief Last received BOARD_HEARTBEAT packet (valid only after poll() returned nullopt)
+     * @return Packet data and source IP if last packet was a heartbeat, empty otherwise
+     */
+    struct LastHeartbeat {
+        std::vector<uint8_t> data;
+        std::string source_ip;
+    };
+    std::optional<LastHeartbeat> get_last_heartbeat();
+
 private:
     std::unique_ptr<daq_comms::transport::UDPSocket> socket_;
     daq_comms::protocol::DiabloBoardPacketParser
@@ -66,6 +78,10 @@ private:
     std::vector<uint8_t> receive_buffer_;
     std::string last_error_;
     std::string last_source_ip_;
+
+    // When last poll() received a BOARD_HEARTBEAT, copy for main loop to process
+    std::vector<uint8_t> last_heartbeat_buffer_;
+    std::string last_heartbeat_source_ip_;
 
     static constexpr size_t MAX_PACKET_SIZE =
         512;  // DiabloAvionics max packet size (from DAQv2-Comms.h)

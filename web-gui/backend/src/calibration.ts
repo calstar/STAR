@@ -187,13 +187,38 @@ function loadCalibrationJSON(jsonPath: string): CalibrationMap {
       for (const [sensorIdStr, coeffs] of Object.entries(data.calibration_polynomials)) {
         const sensorId = parseInt(sensorIdStr, 10);
         const poly = polyCoeffsMap?.[sensorIdStr];
-        if (Array.isArray(poly) && poly.length > 0) {
+
+        // If poly exists and is not all zeros, use it.
+        // If coeffs exists and is not all zeros, use it.
+        if (Array.isArray(poly) && poly.length > 0 && poly.some(c => c !== 0)) {
           const entry: CalibrationCoefficients = { A: 0, B: 0, C: 0, D: 0, polyCoeffs: poly };
           if (adcNormMinMap?.[sensorIdStr] != null) entry.adcNormMin = adcNormMinMap[sensorIdStr];
           if (adcNormScaleMap?.[sensorIdStr] != null) entry.adcNormScale = adcNormScaleMap[sensorIdStr];
           calMap.set(sensorId, entry);
-        } else if (Array.isArray(coeffs) && coeffs.length >= 4) {
+        } else if (Array.isArray(coeffs) && coeffs.length >= 4 && coeffs.some(c => c !== 0)) {
           const entry: CalibrationCoefficients = { A: coeffs[0], B: coeffs[1], C: coeffs[2], D: coeffs[3] };
+          if (adcNormMinMap?.[sensorIdStr] != null) entry.adcNormMin = adcNormMinMap[sensorIdStr];
+          if (adcNormScaleMap?.[sensorIdStr] != null) entry.adcNormScale = adcNormScaleMap[sensorIdStr];
+          calMap.set(sensorId, entry);
+        } else if (polyCoeffsMap?.[sensorIdStr]) {
+          // Fallback to polyCoeffsMap if polynomials was zeroed but coeffs are provided there
+          const fallbackPoly = polyCoeffsMap[sensorIdStr];
+          if (Array.isArray(fallbackPoly) && fallbackPoly.length > 0 && fallbackPoly.some(c => c !== 0)) {
+            const entry: CalibrationCoefficients = { A: 0, B: 0, C: 0, D: 0, polyCoeffs: fallbackPoly };
+            if (adcNormMinMap?.[sensorIdStr] != null) entry.adcNormMin = adcNormMinMap[sensorIdStr];
+            if (adcNormScaleMap?.[sensorIdStr] != null) entry.adcNormScale = adcNormScaleMap[sensorIdStr];
+            calMap.set(sensorId, entry);
+          }
+        }
+      }
+    }
+    // Final pass for any sensors only in polyCoeffsMap
+    if (polyCoeffsMap) {
+      for (const [sensorIdStr, poly] of Object.entries(polyCoeffsMap)) {
+        const sensorId = parseInt(sensorIdStr, 10);
+        if (calMap.has(sensorId)) continue;
+        if (Array.isArray(poly) && poly.length > 0 && poly.some(c => c !== 0)) {
+          const entry: CalibrationCoefficients = { A: 0, B: 0, C: 0, D: 0, polyCoeffs: poly };
           if (adcNormMinMap?.[sensorIdStr] != null) entry.adcNormMin = adcNormMinMap[sensorIdStr];
           if (adcNormScaleMap?.[sensorIdStr] != null) entry.adcNormScale = adcNormScaleMap[sensorIdStr];
           calMap.set(sensorId, entry);
@@ -207,16 +232,22 @@ function loadCalibrationJSON(jsonPath: string): CalibrationMap {
   return calMap;
 }
 
+export interface PTCalibrationResult {
+  map: CalibrationMap;
+  /** Absolute path of the file that was loaded, or null if none found. */
+  filePath: string | null;
+}
+
 /**
  * Load PT calibration (tries JSON first, then CSV)
- * Returns map: sensor_id -> {A, B, C, D}
+ * Returns the calibration map and the path of the file that was loaded.
  *
  * Search order:
  *  1. scripts/calibration/calibrations/ (relative to project root via __dirname)
  *  2. web-gui/backend/data/             (backend local data dir)
  *  3. external/DiabloAvionics/test_guis/ (original source)
  */
-export function loadPTCalibration(): CalibrationMap {
+export function loadPTCalibration(overridePath?: string): PTCalibrationResult {
   // Build a list of candidate directories to search
   const candidateDirs: string[] = [
     '/home/kush-mahajan/sensor_system/calibration',                      // New robust calibration home
@@ -224,6 +255,20 @@ export function loadPTCalibration(): CalibrationMap {
     path.join(__dirname, '../data'),                                      // backend/data
     path.join(__dirname, '../../../external/DiabloAvionics/test_guis'),  // original source
   ];
+
+  // If caller supplied a specific file path, try it first
+  if (overridePath) {
+    if (fs.existsSync(overridePath)) {
+      const cal = loadCalibrationJSON(overridePath);
+      if (cal.size > 0) {
+        console.log(`📋 Loading calibration from override: ${overridePath}`);
+        console.log(`✅ Loaded PT calibration: ${cal.size} sensors`);
+        return { map: cal, filePath: overridePath };
+      }
+    } else {
+      console.warn(`⚠️ Override calibration path not found: ${overridePath}`);
+    }
+  }
 
   console.log(`🔍 Searching for calibration files…`);
   console.log(`   __dirname: ${__dirname}`);
@@ -255,11 +300,11 @@ export function loadPTCalibration(): CalibrationMap {
       for (const [sensorId, coeffs] of cal.entries()) {
         console.log(`   Sensor ${sensorId}: A=${coeffs.A.toExponential(2)}, B=${coeffs.B.toExponential(2)}, C=${coeffs.C.toExponential(2)}, D=${coeffs.D.toFixed(2)}`);
       }
-      return cal;
+      return { map: cal, filePath: latest };
     }
     console.warn(`   ⚠️ ${latest} — no valid coefficients`);
   }
 
   console.warn('⚠️ No PT calibration found - pressures will be uncalibrated');
-  return new Map();
+  return { map: new Map(), filePath: null };
 }

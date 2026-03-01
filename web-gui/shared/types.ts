@@ -10,6 +10,7 @@ export enum MessageType {
   SEND_COMMAND = 'send_command',
   QUERY_HISTORICAL = 'query_historical',
   CALIBRATION_COMMAND = 'calibration_command',
+  RESEND_CONFIG = 'resend_config',
 
   // Server → Client
   SENSOR_UPDATE = 'sensor_update',
@@ -170,6 +171,8 @@ export interface CalibrationStatusPayload {
   channels: CalibrationChannelStatus[];
   phase2Enabled: boolean;
   timestamp: number;
+  /** Absolute path of the calibration file that was loaded at startup, or null if none. */
+  calibrationFilePath?: string | null;
 }
 
 /** Commands the frontend sends to drive the calibration engine */
@@ -216,6 +219,8 @@ export interface BoardStatus {
   engineState: number | null;
   /** True if a SENSOR_CONFIG has been successfully sent for this board. */
   configured?: boolean;
+  /** Epoch ms when config was last sent successfully, for display. */
+  configLastSentAt?: number;
   /** Optional error message if configuration failed. */
   configError?: string;
   /** True if this sense board is marked as necessary for abort. */

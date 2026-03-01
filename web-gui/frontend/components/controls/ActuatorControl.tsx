@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react';
-import { useGetSensorValue, useSensorStore } from '@/lib/store';
+import { useGetSensorValue, useSensorStore, useActuatorCommandedState } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { getActuatorOpenThreshold } from '@/lib/voltageRef';
 import { ActuatorId, ActuatorState, CommandPayload, SystemState } from '@/lib/types';
@@ -96,62 +96,23 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const currentState = useSensorStore((s) => s.currentState);
   const actuatorExpectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
   const boards = useSensorStore((s) => s.boards as Record<number, { designatedSurvivor?: boolean; voltageReference?: number }>);
-
-  // Manual commanded state for DEBUG mode only
-  const [manualCommanded, setManualCommanded] = useState<ActuatorState | null>(null);
+  const setActuatorState = useSensorStore((s) => s.setActuatorState);
+  const setActuatorCommandedOverride = useSensorStore((s) => s.setActuatorCommandedOverride);
   const [pending, setPending] = useState(false);
 
   const entity = ACTUATOR_ENTITIES[actuatorId];
   const ch = ACTUATOR_CHANNELS[actuatorId];
   const type = ACTUATOR_TYPES[actuatorId] || 'NC';
+  const commanded = useActuatorCommandedState(entity);
 
-  // Get expected position from backend (CSV-based) - computed directly from store
   const stateExpected = currentState != null ? (actuatorExpectedPositions[currentState] ?? {}) : {};
   const expected = stateExpected[entity] ?? null;
 
-  // Clear manual commanded state when exiting debug mode
-  // When state changes in debug mode, clear manual override so new state's expected position shows
-  React.useEffect(() => {
-    if (!debugMode) {
-      setManualCommanded(null);
-    }
-  }, [debugMode]);
-
-  // When state changes in debug mode, clear manual override to show new state's expected position
-  React.useEffect(() => {
-    if (debugMode && currentState !== null) {
-      setManualCommanded(null);
-    }
-  }, [debugMode, currentState]);
-
-  // Debug logging
   React.useEffect(() => {
     if (currentState !== null && !debugMode) {
       console.log(`[ActuatorControl ${ACTUATOR_NAMES[actuatorId]}] State: ${SystemState[currentState]}, Entity: ${entity}, Expected: ${expected}, StateExpected:`, stateExpected);
     }
   }, [currentState, entity, expected, stateExpected, actuatorId, debugMode]);
-
-  // Compute commanded state directly from expected position (reactive to store changes)
-  // Always compute expected position from state, even in debug mode (so user can see what state expects)
-  const commandedState = React.useMemo(() => {
-    if (expected === 'open') {
-      return ActuatorState.OPEN;
-    } else if (expected === 'closed') {
-      return ActuatorState.CLOSED;
-    }
-    return null;
-  }, [expected]);
-
-  // In debug mode, manualCommanded overrides the expected position
-  // Otherwise, use the expected position from the state
-  const commanded = React.useMemo(() => {
-    if (debugMode) {
-      // In debug mode: show manual override if set, otherwise show expected position for current state
-      return manualCommanded ?? commandedState;
-    }
-    // In normal mode: always use expected position
-    return commandedState;
-  }, [debugMode, manualCommanded, commandedState]);
 
   // Allow manual control when debug mode is enabled
   const canControl = debugMode;
@@ -173,17 +134,14 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
 
   const sendCommand = (state: ActuatorState) => {
     if (!canControl) return;
-    // Send display name so backend uses config lookup (actuator_roles key) — same path as LOX Main on 202
     const command: CommandPayload = {
       commandType: 'actuator',
       data: { actuatorId, actuatorName: ACTUATOR_NAMES[actuatorId], actuatorState: state },
     };
     ws.sendCommand(command);
-    if (debugMode) {
-      setManualCommanded(state);
-    }
+    setActuatorState(entity, state);
+    if (debugMode) setActuatorCommandedOverride(entity, state);
     setPending(true);
-    // Clear pending after 1 s (feedback should have arrived by then)
     setTimeout(() => setPending(false), 1000);
   };
 

@@ -58,8 +58,17 @@ export function loadActuatorBoardMap(
             }
         }
 
+        /** Resolve board_id to IP from config.boards (sensors/actuators are mapped by board_id, not IP). */
+        const boardIdToIp = new Map<number, string>();
+        for (const [, boardConfig] of Object.entries(boards)) {
+            const board = boardConfig as any;
+            const id = typeof board.id === 'number' ? board.id : (typeof board.board_id === 'number' ? board.board_id : null);
+            const ip = typeof board.ip === 'string' ? board.ip : (id != null ? `192.168.2.${id}` : '');
+            if (id != null && ip) boardIdToIp.set(id, ip);
+        }
+
         let defaultBoardIp = '';
-        for (const [boardKey, boardConfig] of Object.entries(boards)) {
+        for (const [, boardConfig] of Object.entries(boards)) {
             const board = boardConfig as any;
             if (board.type === 'ACTUATOR' && board.enabled !== false) {
                 defaultBoardIp = board.ip || defaultBoardIp;
@@ -71,9 +80,14 @@ export function loadActuatorBoardMap(
             if (Array.isArray(value)) {
                 const type = value[0] as string;
                 const channel = value[1] as number;
-                const boardIp = (value.length >= 3 && typeof value[2] === 'string')
-                    ? value[2]
-                    : defaultBoardIp;
+                let boardIp = defaultBoardIp;
+                if (value.length >= 3) {
+                    if (typeof value[2] === 'number') {
+                        boardIp = boardIdToIp.get(value[2]) || defaultBoardIp;
+                    } else if (typeof value[2] === 'string') {
+                        boardIp = value[2]; // legacy board_ip string
+                    }
+                }
 
                 host.actuatorBoardMap.set(name, { channel, boardIp });
                 console.log(`📋 Actuator mapping: ${name} → CH${channel} @ ${boardIp}`);

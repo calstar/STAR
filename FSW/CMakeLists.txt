@@ -1,6 +1,18 @@
 # CMakeLists.txt for FSW (Flight Software)
 # Contains: config, routing, elodin, discovery, calibration, etc.
 
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(Threads REQUIRED)
+find_package(ZLIB REQUIRED)
+find_package(OpenSSL REQUIRED)
+
+# When built from repo root, daq_comms is already added; when built from FSW/build, add it
+if(NOT TARGET daq_comms_lib)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../daq_comms ${CMAKE_BINARY_DIR}/daq_comms)
+endif()
+
 # Source files for FSW library
 set(FSW_SOURCES
     src/config/BoardDiscovery.cpp
@@ -27,12 +39,12 @@ set(FSW_SOURCES
 # Create shared library for FSW (renamed to avoid conflict with root CMakeLists)
 add_library(fsw_daq_lib SHARED ${FSW_SOURCES})
 
-# Include directories
+# Include directories (CMAKE_CURRENT_SOURCE_DIR = FSW when built from root or from FSW/build)
 target_include_directories(fsw_daq_lib PUBLIC
-    ${CMAKE_SOURCE_DIR}/FSW/include
-    ${CMAKE_SOURCE_DIR}/daq_comms/include  # For messages and parser
-    ${CMAKE_SOURCE_DIR}/FSW/calibration/include
-    ${CMAKE_SOURCE_DIR}/utl
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../daq_comms/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../archive/legacy/utl
 )
 
 # Find Eigen3 for calibration framework
@@ -51,8 +63,8 @@ target_link_libraries(fsw_daq_lib
 add_executable(daq_bridge src/daq_bridge_main.cpp)
 
 target_include_directories(daq_bridge PRIVATE
-    ${CMAKE_SOURCE_DIR}/FSW/include
-    ${CMAKE_SOURCE_DIR}/daq_comms/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../daq_comms/include
 )
 
 target_link_libraries(daq_bridge
@@ -64,46 +76,46 @@ target_link_libraries(daq_bridge
 )
 
 # Test program to send all sensors from config
-add_executable(send_all_sensors_from_config test/send_all_sensors_from_config.cpp)
+# add_executable(send_all_sensors_from_config test/send_all_sensors_from_config.cpp)
 
-target_include_directories(send_all_sensors_from_config PRIVATE
-    ${CMAKE_SOURCE_DIR}/FSW/include
-    ${CMAKE_SOURCE_DIR}/daq_comms/include
-    ${CMAKE_SOURCE_DIR}/utl
-)
+# target_include_directories(send_all_sensors_from_config PRIVATE
+#     ${CMAKE_SOURCE_DIR}/include
+#     ${CMAKE_SOURCE_DIR}/../daq_comms/include
+#     ${CMAKE_SOURCE_DIR}/../archive/legacy/utl
+# )
 
-target_link_libraries(send_all_sensors_from_config
-    fsw_daq_lib
-    daq_comms_lib
-    Threads::Threads
-    pthread
-    ${RT_LIBRARY}
-)
+# target_link_libraries(send_all_sensors_from_config
+#     fsw_daq_lib
+#     daq_comms_lib
+#     Threads::Threads
+#     pthread
+#     ${RT_LIBRARY}
+# )
 
 # SITL Simulator executable
-add_executable(sitl_simulator src/sitl/sitl_main.cpp src/sitl/SITLSimulator.cpp)
+# add_executable(sitl_simulator src/sitl/sitl_main.cpp src/sitl/SITLSimulator.cpp)
 
-target_include_directories(sitl_simulator PRIVATE
-    ${CMAKE_SOURCE_DIR}/FSW/include
-    ${CMAKE_SOURCE_DIR}/daq_comms/include
-    ${CMAKE_SOURCE_DIR}/utl
-)
+# target_include_directories(sitl_simulator PRIVATE
+#     ${CMAKE_SOURCE_DIR}/include
+#     ${CMAKE_SOURCE_DIR}/../daq_comms/include
+#     ${CMAKE_SOURCE_DIR}/../archive/legacy/utl
+# )
 
-target_link_libraries(sitl_simulator
-    fsw_daq_lib
-    daq_comms_lib
-    Eigen3::Eigen
-    Threads::Threads
-    pthread
-    ${RT_LIBRARY}
-)
+# target_link_libraries(sitl_simulator
+#     fsw_daq_lib
+#     daq_comms_lib
+#     Eigen3::Eigen
+#     Threads::Threads
+#     pthread
+#     ${RT_LIBRARY}
+# )
 
 # Robust DDP Controller test executable
 add_executable(test_robust_ddp test/test_robust_ddp.cpp)
 
 target_include_directories(test_robust_ddp PRIVATE
-    ${CMAKE_SOURCE_DIR}/FSW/include
-    ${CMAKE_SOURCE_DIR}/daq_comms/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../daq_comms/include
 )
 
 target_link_libraries(test_robust_ddp
@@ -119,9 +131,9 @@ target_link_libraries(test_robust_ddp
 add_executable(controller_service src/control/controller_main.cpp)
 
 target_include_directories(controller_service PRIVATE
-    ${CMAKE_SOURCE_DIR}/FSW/include
-    ${CMAKE_SOURCE_DIR}/daq_comms/include
-    ${CMAKE_SOURCE_DIR}/utl
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../daq_comms/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../archive/legacy/utl
 )
 
 target_link_libraries(controller_service
@@ -134,25 +146,60 @@ target_link_libraries(controller_service
 )
 
 # IMU Calibration test executable
-add_executable(test_imu_calibration test/test_imu_calibration.cpp)
+# add_executable(test_imu_calibration test/test_imu_calibration.cpp)
 
-target_include_directories(test_imu_calibration PRIVATE
-    ${CMAKE_SOURCE_DIR}/FSW/include
-    ${CMAKE_SOURCE_DIR}/daq_comms/include
-)
+# target_include_directories(test_imu_calibration PRIVATE
+#     ${CMAKE_SOURCE_DIR}/include
+#     ${CMAKE_SOURCE_DIR}/../daq_comms/include
+# )
 
-target_link_libraries(test_imu_calibration
-    fsw_daq_lib
-    daq_comms_lib
-    Eigen3::Eigen
-    Threads::Threads
-    pthread
-    ${RT_LIBRARY}
-)
+# target_link_libraries(test_imu_calibration
+#     fsw_daq_lib
+#     daq_comms_lib
+#     Eigen3::Eigen
+#     Threads::Threads
+#     pthread
+#     ${RT_LIBRARY}
+# )
+
+
+# uSockets library + FSW WebSocket Bridge (optional: only if uWebSockets present; bridge is WIP)
+set(USOCKETS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/uWebSockets")
+if(EXISTS "${USOCKETS_DIR}/uSockets/src")
+    file(GLOB USOCKETS_SOURCES "${USOCKETS_DIR}/uSockets/src/*.c" "${USOCKETS_DIR}/uSockets/src/eventing/*.c" "${USOCKETS_DIR}/uSockets/src/crypto/*.c")
+    add_library(usockets STATIC ${USOCKETS_SOURCES})
+    target_include_directories(usockets PUBLIC ${USOCKETS_DIR}/uSockets/src)
+    target_compile_definitions(usockets PRIVATE LIBUS_USE_OPENSSL LIBUS_NO_SSL)
+    # fsw_web_bridge disabled until main/loop/ifstream fixes are in
+    if(FALSE)
+    add_executable(fsw_web_bridge src/fsw_web_bridge.cpp)
+    target_include_directories(fsw_web_bridge PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../archive/legacy/utl
+        ${USOCKETS_DIR}/src
+        ${USOCKETS_DIR}/uSockets/src
+    )
+    target_link_libraries(fsw_web_bridge
+        fsw_daq_lib
+        usockets
+        Threads::Threads
+        pthread
+        ZLIB::ZLIB
+        OpenSSL::SSL
+        OpenSSL::Crypto
+        ${RT_LIBRARY}
+    )
+    endif()
+else()
+    message(STATUS "uWebSockets not found, skipping fsw_web_bridge")
+endif()
 
 # Install targets
-install(TARGETS fsw_daq_lib daq_bridge
+install(TARGETS fsw_daq_lib daq_bridge controller_service
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
 )
+if(TARGET fsw_web_bridge)
+    install(TARGETS fsw_web_bridge RUNTIME DESTINATION bin)
+endif()

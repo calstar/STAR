@@ -1,0 +1,17 @@
+[Unit]
+Description=Sensor System Web GUI Backend
+After=network.target sensor-relay.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sensor_system/web-gui/backend
+ExecStart=/usr/bin/npm run dev
+Restart=always
+RestartSec=5
+# DB → relay → backend: all data from Elodin via relay (modular, invariant to upstream)
+Environment=ELODIN_RELAY_WS_URL=ws://localhost:9090
+Environment=USE_DIRECT_DAQ=false
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

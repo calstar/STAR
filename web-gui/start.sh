@@ -22,16 +22,47 @@ if [ "$NODE_VERSION" -lt 20 ]; then
     exit 1
 fi
 
-# Start backend
-echo "📡 Starting WebSocket server..."
+# Start Elodin relay first (Elodin DB streams to only one TCP subscriber; relay is that subscriber and fans out to many)
+echo "📡 Starting Elodin relay (single subscriber → many WS clients)..."
 cd backend
 if [ ! -d "node_modules" ]; then
     echo "📦 Installing backend dependencies..."
     npm install
 fi
-npm run dev &
+npm run relay &
+RELAY_PID=$!
+cd ..
+sleep 1
+
+# Backend: data only from DB via relay (modular; no direct UDP/Elodin stream)
+echo "📡 Starting WebSocket server (data via relay)..."
+cd backend
+ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false npm run dev &
 BACKEND_PID=$!
 cd ..
+
+# Build and start C++ FSW components
+echo "⚙️  Building and starting C++ FSW components (daq_bridge, controller_service)..."
+cd ../FSW
+if [ ! -d "build" ]; then
+    mkdir -p build
+    cd build
+    cmake ..
+    cd ..
+fi
+cd build
+make -j$(nproc) daq_bridge controller_service
+
+echo "🚀 Starting daq_bridge (config from repo root)..."
+./daq_bridge ../../config/config.toml &
+DAQ_BRIDGE_PID=$!
+
+echo "🚀 Starting controller_service..."
+./controller_service &
+CONTROLLER_PID=$!
+
+cd ../../web-gui
+
 
 # Wait for backend to start
 sleep 2
@@ -50,11 +81,12 @@ cd ..
 echo ""
 echo "✅ Web GUI started!"
 echo ""
+echo "📡 Elodin relay: ws://localhost:9090 (raw data fan-out)"
 echo "📡 WebSocket server: http://localhost:8081"
 echo "🌐 Frontend: http://localhost:3000"
 echo ""
 echo "Press Ctrl+C to stop all services"
 
 # Wait for user interrupt
-trap "kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit" INT TERM
+trap "echo 'Stopping all services...'; kill $BACKEND_PID $FRONTEND_PID $RELAY_PID $DAQ_BRIDGE_PID $CONTROLLER_PID 2>/dev/null; exit" INT TERM
 wait
