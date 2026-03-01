@@ -1627,7 +1627,7 @@ class SensorSystemServer {
     try {
       const packetType = 2; // SERVER_HEARTBEAT
       const version = 0;
-      const timestamp = Date.now() & 0xffffffff;
+      const timestamp = Date.now() >>> 0;
       const engineCode = (this.currentState ?? SystemState.IDLE) as number;
 
       const buffer = Buffer.allocUnsafe(7);
@@ -1685,7 +1685,7 @@ class SensorSystemServer {
     if (!this.actuatorSocket) return;
     try {
       const version = 0;
-      const timestamp = Date.now() & 0xffffffff;
+      const timestamp = Date.now() >>> 0;
       const buffer = Buffer.allocUnsafe(6);
       buffer.writeUInt8(packetType, 0);
       buffer.writeUInt8(version, 1);
@@ -1947,7 +1947,7 @@ class SensorSystemServer {
     const totalSize = headerSize + bodySize;
     const buffer = Buffer.allocUnsafe(totalSize);
 
-    const timestamp = Math.floor(Date.now()) & 0xFFFFFFFF;
+    const timestamp = (Math.floor(Date.now()) >>> 0);
     buffer.writeUInt8(6, 0);   // ACTUATOR_CONFIG
     buffer.writeUInt8(0, 1);   // version
     buffer.writeUInt32LE(timestamp, 2);
@@ -2003,7 +2003,7 @@ class SensorSystemServer {
     const totalLength = 6 + bodyLength;
     const buffer = Buffer.allocUnsafe(totalLength);
 
-    const timestamp = Math.floor(Date.now()) & 0xFFFFFFFF;
+    const timestamp = (Math.floor(Date.now()) >>> 0);
 
     // Header: packet_type=5 (SENSOR_CONFIG), version=0, timestamp LE
     buffer.writeUInt8(5, 0);
