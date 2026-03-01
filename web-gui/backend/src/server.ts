@@ -23,6 +23,7 @@ import { parseElodinPacket } from './elodin-protocol.js';
 import { registerVTables } from './elodin-vtable.js';
 import { registerControllerVTables } from './elodin-vtable-controller.js';
 import { subscribeWithStream } from './elodin-stream.js';
+import { ElodinRelayClient } from './elodin-relay-client.js';
 
 import { ElodinPublisherBatched } from './elodin-publisher-batched.js';
 import { publishControllerActuation, publishControllerDiagnostics } from './controller-elodin-publisher.js';
@@ -51,7 +52,7 @@ import {
 
 // ── Extracted modules ──────────────────────────────────────────────────────────
 import { Client, HpPtBoardConfig, WS_PORT, WS_HOST, ELODIN_HOST, ELODIN_PORT, ACTUATOR_CHANNEL_BY_NAME } from './server-types.js';
-import { loadSensorRoleMap, loadHpPtConfig, convertHpPtToPressure } from './sensor-config.js';
+import { loadSensorRoleMap, loadHpPtConfig, loadActuatorChannelToEntityMap, convertHpPtToPressure } from './sensor-config.js';
 import {
   loadActuatorBoardMap,
   getActuatorBoardInfo,
@@ -73,15 +74,24 @@ import { handleCalibrationCommand } from './calibration-handler.js';
 // ── Expected actuator positions per state (loaded from state_machine_actuators.csv) ─
 let STATE_ACTUATOR_MAP: StateActuatorMap = {};
 
+/** Channel → legacy entity names so frontend PRESSURE_SENSORS get values when data comes from relay (raw PT only in DB). */
+const RELAY_PT_CHANNEL_TO_LEGACY_ENTITY: Record<number, string> = {
+  1: 'PT_Cal.Fuel_Upstream', 2: 'PT_Cal.GSE_Low', 3: 'PT_Cal.Fuel_Downstream', 4: 'PT_Cal.Fuel_Fill_Tank',
+  5: 'PT_Cal.Ox_Upstream', 6: 'PT_Cal.GN2_Regulated', 7: 'PT_Cal.Ox_Downstream',
+  8: 'PT_Cal.GSE_High', 9: 'PT_Cal.GN2_High', 10: 'PT_Cal.PT_CH10',
+};
+
 class SensorSystemServer {
   private wss: WebSocketServer;
   elodin: ElodinClient;
+  private elodinRelay: ElodinRelayClient | null = null;
   private queryClient: ElodinQueryClient | null = null;
   private daqDirect: DAQDirectClient | null = null;
   private clients: Map<WebSocket, Client> = new Map();
   sensorCache: Map<string, SensorUpdate> = new Map();
   private updateInterval: NodeJS.Timeout | null = null;
-  private useDirectDAQ: boolean = process.env.USE_DIRECT_DAQ !== 'false';
+  // When ELODIN_RELAY_WS_URL is set, data comes from relay (DB); otherwise allow direct UDP if set
+  private useDirectDAQ: boolean = process.env.USE_DIRECT_DAQ === 'true' && !process.env.ELODIN_RELAY_WS_URL;
   private useQueryPolling: boolean = process.env.ELODIN_USE_QUERY === 'true';
   private streamingDataReceived: boolean = false;
   private streamingCheckTimer: NodeJS.Timeout | null = null;
@@ -176,9 +186,10 @@ class SensorSystemServer {
   controllerCommand: ControllerCommand = { command_type: 'THRUST_DESIRED', thrust_desired: 1000 };
   controllerConfigPath: string | undefined;
 
-  /** Sensor maps */
+  /** Sensor maps (from config.toml; used so DB and backend are a replica of config) */
   channelToEntityMap: Record<number, string> = {};
   boardChannelToEntityMaps: Map<string, Record<number, string>> = new Map();
+  actuatorChannelToEntityMap: Record<number, string> = {};
   private hpPtBoards: Map<string, HpPtBoardConfig> = new Map();
   private excitationAdcCache: Map<string, number> = new Map();
 
@@ -295,10 +306,15 @@ class SensorSystemServer {
     this.calibrationSidecar.start();
     console.log('🤖 Robust Calibration Sidecar initialized');
 
-    // Load sensor roles from config.toml (extracted module)
+    // Load sensor/actuator maps from config.toml (single source of truth; DB and backend replicate this)
     const sensorMaps = loadSensorRoleMap();
     this.channelToEntityMap = sensorMaps.channelToEntityMap;
     this.boardChannelToEntityMaps = sensorMaps.boardChannelToEntityMaps;
+    if (Object.keys(this.channelToEntityMap).length === 0 && this.boardChannelToEntityMaps.size > 0) {
+      const first = this.boardChannelToEntityMaps.values().next().value;
+      if (first) this.channelToEntityMap = { ...first };
+    }
+    this.actuatorChannelToEntityMap = loadActuatorChannelToEntityMap();
 
     // Load board registry from config.toml for heartbeat tracking
     this.loadBoardRegistry();
@@ -475,7 +491,9 @@ class SensorSystemServer {
     this.wss = new WebSocketServer({ port: WS_PORT, host: WS_HOST, perMessageDeflate: false });
     this.wss.on('error', (error: any) => {
       if (error.code === 'EADDRINUSE') {
-        console.warn(`⚠️ Port ${WS_PORT} already in use. WebSocket server will not start.`);
+        console.error(`❌ Port ${WS_PORT} already in use — frontend cannot connect. Free it and restart:`);
+        console.error(`   fuser -k ${WS_PORT}/tcp   OR   kill $(lsof -ti:${WS_PORT})`);
+        process.exit(1);
       } else { console.error('❌ WebSocket server error:', error); }
     });
     this.wss.on('listening', () => {
@@ -491,6 +509,10 @@ class SensorSystemServer {
     this.elodinPublisher = new ElodinPublisherBatched(this.elodin);
 
     this.setupWebSocket();
+    if (process.env.ELODIN_RELAY_WS_URL) {
+      console.log('📡 Using Elodin RELAY for data (DAQ Bridge → Elodin → Relay → Backend → Frontend)');
+      this.setupElodinRelay();
+    }
     this.setupElodin();
 
     // Optional DEMO mode: synthesised data + UDP packets for DAQ bridge.
@@ -515,8 +537,9 @@ class SensorSystemServer {
       };
 
       this.setupDirectDAQ();
-    } else {
+    } else if (!process.env.ELODIN_RELAY_WS_URL) {
       console.log('📡 Using Elodin DB for data (DAQ Bridge → Elodin DB → Backend → Frontend)');
+      console.warn('⚠️ Elodin DB streams raw data to only the FIRST subscriber. For multiple clients (e.g. backend + sidecar), run the relay first and set ELODIN_RELAY_WS_URL=ws://localhost:9090');
     }
 
     this.startUpdateLoop();
@@ -620,18 +643,73 @@ class SensorSystemServer {
   }
 
 
+  private setupElodinRelay(): void {
+    const url = process.env.ELODIN_RELAY_WS_URL!;
+    this.elodinRelay = new ElodinRelayClient(url);
+    this.elodinRelay.on('packet', (header, payload) => {
+      this.relayPacketCount++;
+      if (this.relayPacketCount === 1 || this.relayPacketCount % 500 === 0) {
+        console.log(`[Relay] packets received: ${this.relayPacketCount}`);
+      }
+      if (!this.streamingDataReceived && header.ty === ElodinPacketType.TABLE) {
+        this.streamingDataReceived = true;
+        if (this.streamingCheckTimer) { clearTimeout(this.streamingCheckTimer); this.streamingCheckTimer = null; }
+      }
+      this.handleElodinPacket(header, payload);
+    });
+    this.elodinRelay.on('connected', () => {
+      console.log('✅ Elodin relay connected — receiving stream from relay (one publisher, multiple subscribers)');
+      this.streamingDataReceived = true;
+      this.broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true } as ConnectionStatus });
+    });
+    this.elodinRelay.on('disconnected', () => {
+      console.log('❌ Elodin relay disconnected');
+      this.broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false } as ConnectionStatus });
+      this.scheduleRelayReconnect();
+    });
+    const tryRelay = (): void => {
+      this.elodinRelay!.connect().then((ok) => {
+        if (ok) {
+          console.log('✅ Elodin relay data connection established at ' + url);
+          if (this.relayReconnectTimer) { clearInterval(this.relayReconnectTimer); this.relayReconnectTimer = null; }
+        } else this.scheduleRelayReconnect();
+      }).catch((e) => { console.warn('⚠️ Relay connect error:', e); this.scheduleRelayReconnect(); });
+    };
+    tryRelay();
+  }
+
+  private relayPacketCount: number = 0;
+  private relayReconnectTimer: ReturnType<typeof setInterval> | null = null;
+  private scheduleRelayReconnect(): void {
+    if (this.relayReconnectTimer || !this.elodinRelay) return;
+    this.relayReconnectTimer = setInterval(() => {
+      if (this.elodinRelay?.isConnected()) {
+        if (this.relayReconnectTimer) { clearInterval(this.relayReconnectTimer); this.relayReconnectTimer = null; }
+        return;
+      }
+      console.log('🔄 Retrying relay connection...');
+      this.elodinRelay?.connect().then((ok) => {
+        if (ok && this.relayReconnectTimer) { clearInterval(this.relayReconnectTimer); this.relayReconnectTimer = null; }
+      });
+    }, 3000);
+  }
+
   private setupElodin(): void {
+    const useRelay = !!process.env.ELODIN_RELAY_WS_URL;
+
     this.elodin.on('connected', async () => {
-      console.log('✅ Elodin connected, broadcasting to clients');
-      await subscribeWithStream(this.elodin);
-      await new Promise(resolve => setTimeout(resolve, 500));
-      if (!this.streamingDataReceived) {
-        console.log('⚠️ No data after Stream subscription. Trying MsgStream/VTableStream...');
-        await registerVTables(this.elodin);
-      } else { console.log('✅ Stream subscription successful!'); }
+      console.log('✅ Elodin connected' + (useRelay ? ' (send-only; data via relay)' : ', broadcasting to clients'));
+      if (!useRelay) {
+        await subscribeWithStream(this.elodin);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        if (!this.streamingDataReceived) {
+          console.log('⚠️ No data after Stream subscription. Trying MsgStream/VTableStream...');
+          await registerVTables(this.elodin);
+        } else { console.log('✅ Stream subscription successful!'); }
+        if (!this.useDirectDAQ) this.startStreamingCheck();
+      }
       await registerControllerVTables(this.elodin);
       this.streamingDataReceived = false;
-      if (!this.useDirectDAQ) this.startStreamingCheck();
       this.broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true } as ConnectionStatus });
     });
 
@@ -641,6 +719,7 @@ class SensorSystemServer {
     });
 
     this.elodin.on('packet', (header, payload) => {
+      if (useRelay) return;
       if (!this.streamingDataReceived && header.ty === ElodinPacketType.TABLE) {
         this.streamingDataReceived = true;
         if (this.streamingCheckTimer) { clearTimeout(this.streamingCheckTimer); this.streamingCheckTimer = null; }
@@ -651,11 +730,13 @@ class SensorSystemServer {
 
     this.elodin.connect().then(() => {
       console.log('✅ Elodin connection established');
-      setInterval(() => {
-        if (this.elodin.isConnected()) {
-          this.elodin.sendRawMessage([0x00, 0x00], ElodinPacketType.MSG, Buffer.alloc(0));
-        }
-      }, 5000);
+      if (!useRelay) {
+        setInterval(() => {
+          if (this.elodin.isConnected()) {
+            this.elodin.sendRawMessage([0x00, 0x00], ElodinPacketType.MSG, Buffer.alloc(0));
+          }
+        }, 5000);
+      }
     }).catch((error) => { console.error('❌ Elodin connection error:', error); });
 
     this.elodin.on('error', () => { });
@@ -1008,7 +1089,13 @@ class SensorSystemServer {
     }
 
     this.broadcast({ type: MessageType.SENSOR_UPDATE, timestamp: update.timestamp, payload: update });
+    if (this.clients.size === 0 && update.component === 'pressure_psi' && !this._loggedNoFrontendClients) {
+      this._loggedNoFrontendClients = true;
+      console.warn('⚠️ Backend has no WebSocket clients (frontend not connected?). Open the dashboard at the backend URL (e.g. http://localhost:8082 or port 8081 for WS).');
+    }
   }
+
+  private _loggedNoFrontendClients = false;
 
   /** Push an immediate pressure_psi update for a channel after calibration so the UI reflects the new fit. */
   pushCalibrationUpdate(uniqueId: number): void {
@@ -1048,7 +1135,10 @@ class SensorSystemServer {
   private handleElodinPacket(header: any, payload: Buffer): void {
     try {
       const [high, low] = header.packetId;
-      const parsed = parseElodinPacket(header.packetId, payload);
+      const parsed = parseElodinPacket(header.packetId, payload, {
+        channelToEntityMap: this.channelToEntityMap,
+        actuatorChannelToEntityMap: this.actuatorChannelToEntityMap,
+      });
       if (!parsed) return;
 
       let shouldUseElodinValue = true;
@@ -1098,12 +1188,46 @@ class SensorSystemServer {
 
       if (shouldUseElodinValue) {
         const update: SensorUpdate = { entity: parsed.entity, component: parsed.component, value: parsed.value, timestamp: parsed.timestamp };
-        if (parsed.entity.startsWith('PT.') || parsed.entity.startsWith('PT_Cal.')) {
+        // When using relay, data came from DB — do not write back to Elodin (avoids loop; DB is fed only by daq_bridge).
+        if (!process.env.ELODIN_RELAY_WS_URL && (parsed.entity.startsWith('PT.') || parsed.entity.startsWith('PT_Cal.'))) {
           this.republishPTDataToElodin(header.packetId, payload, parsed);
         }
         this.handleSensorUpdate(update);
         if (channelId) {
           this.handleSensorUpdate({ entity: `PT_Cal.PT_CH${channelId}`, component: 'pressure_psi', value: parsed.value, timestamp: parsed.timestamp });
+        }
+        // DB only has raw PT; convert raw → pressure_psi here so frontend gauges get values
+        if (parsed.entity.startsWith('PT.') && parsed.component === 'raw_adc_counts' && payload.length >= 9) {
+          const rawCh = payload.readUInt8(8);
+          const uid = 100 + rawCh;
+          const rawAdc = parsed.value;
+          this.lastRawAdc.set(uid, Math.round(rawAdc));
+          const ts = typeof parsed.timestamp === 'number' && parsed.timestamp > 1e12 ? parsed.timestamp : Date.now();
+          let psi: number;
+          const coeffs = this.ptCalibration.get(uid) ?? this.ptCalibration.get(rawCh);
+          if (coeffs) {
+            psi = calculatePressure(rawAdc, coeffs, this.envState);
+            if (!isFinite(psi) || isNaN(psi)) psi = (rawAdc / 2147483648) * 500;  // fallback scale
+          } else {
+            // No calibration: show linear-scaled value so frontend at least shows data
+            psi = (rawAdc / 2147483648) * 500;
+          }
+          const calEntity = this.channelToEntityMap[rawCh] || `PT_Cal.PT_CH${rawCh}`;
+          this.handleSensorUpdate({ entity: calEntity, component: 'pressure_psi', value: psi, timestamp: ts });
+          this.handleSensorUpdate({ entity: `PT_Cal.PT_CH${rawCh}`, component: 'pressure_psi', value: psi, timestamp: ts });
+          const legacyEntity = RELAY_PT_CHANNEL_TO_LEGACY_ENTITY[rawCh];
+          if (legacyEntity) this.handleSensorUpdate({ entity: legacyEntity, component: 'pressure_psi', value: psi, timestamp: ts });
+        }
+        // Emit ACTUATOR_UPDATE so dashboard actuator panels get state (open/closed from raw ADC threshold).
+        if (parsed.entity.startsWith('ACT.') && parsed.component === 'raw_adc_counts') {
+          const rawAdc = Math.round(parsed.value);
+          const state = rawAdc > 1000 ? 1 : 0; // 1 = OPEN, 0 = CLOSED
+          const name = parsed.entity.replace('ACT.', '').replace(/_/g, ' ');
+          this.broadcast({
+            type: MessageType.ACTUATOR_UPDATE,
+            timestamp: parsed.timestamp,
+            payload: { actuatorId: 0, name, state, rawAdcCounts: rawAdc, timestamp: parsed.timestamp } as ActuatorUpdate,
+          });
         }
       }
     } catch (error) { console.error('❌ Error handling Elodin packet:', error); }
@@ -1136,7 +1260,7 @@ class SensorSystemServer {
         attempts++;
         if (ws.readyState === WebSocket.OPEN) {
           try {
-            this.send(ws, { type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: this.daqDirect?.connected || this.elodin.isConnected() } as ConnectionStatus });
+            this.send(ws, { type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: this.daqDirect?.connected || this.elodinRelay?.isConnected() || this.elodin.isConnected() } as ConnectionStatus });
             const stateToSend = this.currentState ?? SystemState.IDLE;
             this.send(ws, { type: MessageType.STATE_UPDATE, timestamp: Date.now(), payload: { currentState: stateToSend, stateName: SystemState[stateToSend] ?? 'IDLE', timestamp: Date.now(), debugMode: this.debugMode } as StateUpdate });
             sendActuatorExpectedPositionsToClient(this, ws, stateToSend, STATE_ACTUATOR_MAP);
@@ -2008,6 +2132,8 @@ class SensorSystemServer {
 
   shutdown(): void {
     if (this.updateInterval) clearInterval(this.updateInterval);
+    if (this.relayReconnectTimer) { clearInterval(this.relayReconnectTimer); this.relayReconnectTimer = null; }
+    this.elodinRelay?.disconnect();
     this.elodin.disconnect();
     this.wss.close();
   }

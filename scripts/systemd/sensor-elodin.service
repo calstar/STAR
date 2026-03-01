@@ -5,10 +5,9 @@ After=network.target
 [Service]
 Type=simple
 ExecStartPre=/usr/bin/mkdir -p %h/.local/share/elodin
-ExecStart=%h/.cargo/bin/elodin-db run '[::]:2240' '%h/.local/share/elodin/daq_live' --config %h/sensor_system/archive/legacy/panels/config.lua
+ExecStart=%h/.cargo/bin/elodin-db run '[::]:2240' '%h/.local/share/elodin/daq_live'
 Restart=always
 RestartSec=5
-Environment=SENSOR_KDL_PATH=%h/sensor_system/archive/legacy/panels/sensor-system.kdl
 Environment=RUST_LOG=info
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 

@@ -340,36 +340,48 @@ OM = "LOX Main"
 FF = "Fuel Fill"
 
 # =============================================================================
-# Elodin Table Routing - Maps sensor types to Elodin table IDs
-# packet_id is [high_byte, low_byte] for the Elodin table
+# Elodin Table Routing - Maps sensor types to Elodin table IDs (config-driven, no fixed hexes in code)
+# packet_id = [high_byte, low_byte]; channels = 1-based channel count (low byte 0x01..0x0N).
+# Backend (server.ts) and daq_bridge both read this; add/remove routing types here for modularity.
 # =============================================================================
 [routing.pt_raw]
 packet_id = [0x20, 0x00]
+channels = 10
 description = "Raw PT ADC counts"
 
 [routing.pt_calibrated]
 packet_id = [0x20, 0x10]
+channels = 10
 description = "Calibrated PT pressure (PSI)"
 
 [routing.tc_raw]
 packet_id = [0x21, 0x00]
+channels = 4
 description = "Raw TC ADC counts"
 
 [routing.rtd_raw]
 packet_id = [0x22, 0x00]
+channels = 4
 description = "Raw RTD resistance counts"
 
 [routing.lc_raw]
 packet_id = [0x23, 0x00]
+channels = 4
 description = "Raw LC ADC counts"
 
 [routing.lc_calibrated]
 packet_id = [0x23, 0x10]
+channels = 4
 description = "Calibrated LC force"
 
 [routing.actuator_status]
 packet_id = [0x30, 0x00]
+channels = 10
 description = "Actuator current sense readings"
+
+# Which routing types daq_bridge publishes to Elodin (avionics payload only; calibration writes calibrated later)
+[daq_bridge]
+publish = ["pt_raw", "actuator_status"]
 
 # =============================================================================
 # Calibration

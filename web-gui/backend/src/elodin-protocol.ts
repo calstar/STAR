@@ -340,51 +340,61 @@ export function parseCalibratedRTDMessage(
   };
 }
 
+/** Config-driven entity maps (from config.toml sensor_roles / actuator_roles). When set, used instead of hardcoded maps so DB and backend share the same mapping. */
+export interface EntityMaps {
+  /** channel_id → "PT_Cal.Fuel_Upstream" etc (from sensor_roles); raw PT uses PT. prefix */
+  channelToEntityMap?: Record<number, string>;
+  /** channel_id → "ACT.LOX_Main" etc (from actuator_roles) */
+  actuatorChannelToEntityMap?: Record<number, string>;
+}
+
 /**
- * Parse Elodin packet based on packet_id
+ * Parse Elodin packet based on packet_id. If entityMaps (from config) are provided, use them so backend and DB are a replica of config.
  */
 export function parseElodinPacket(
   packetId: [number, number],
-  payload: Buffer
+  payload: Buffer,
+  entityMaps?: EntityMaps
 ): ParsedSensorData | null {
-  // Packet ID format: [high_byte, low_byte]
   const [high, low] = packetId;
+  let parsed: ParsedSensorData | null = null;
 
-  // PT Raw: [0x20, channel_id] where channel_id is 1-based (0x01-0x0A)
   if (high === 0x20 && low >= 0x01 && low <= 0x0A) {
-    return parseRawPTMessage(payload, packetId);
+    parsed = parseRawPTMessage(payload, packetId);
+    if (parsed && entityMaps?.channelToEntityMap && payload.length >= 9) {
+      const ch = payload.readUInt8(8);
+      const cal = entityMaps.channelToEntityMap[ch];
+      if (cal) parsed.entity = cal.replace('PT_Cal.', 'PT.');
+    }
+    return parsed;
   }
-
-  // PT Calibrated: [0x20, 0x10 + channel_id] where channel_id is 1-based (0x11-0x1A)
   if (high === 0x20 && low >= 0x11 && low <= 0x1A) {
-    return parseCalibratedPTMessage(payload, packetId);
+    parsed = parseCalibratedPTMessage(payload, packetId);
+    if (parsed && entityMaps?.channelToEntityMap && payload.length >= 9) {
+      const ch = payload.readUInt8(8);
+      if (entityMaps.channelToEntityMap[ch]) parsed.entity = entityMaps.channelToEntityMap[ch];
+    }
+    return parsed;
   }
-
-  // TC Raw: [0x21, channel_id] where channel_id is 1-based (0x01-0x04)
   if (high === 0x21 && low >= 0x01 && low <= 0x04) {
     return parseRawTCMessage(payload, packetId);
   }
-
-  // TC Calibrated: [0x21, 0x10 + channel_id] where channel_id is 1-based (0x11-0x14)
   if (high === 0x21 && low >= 0x11 && low <= 0x14) {
     return parseCalibratedTCMessage(payload, packetId);
   }
-
-  // RTD Raw: [0x22, channel_id] where channel_id is 1-based (0x01-0x04)
   if (high === 0x22 && low >= 0x01 && low <= 0x04) {
     return parseRawRTDMessage(payload, packetId);
   }
-
-  // RTD Calibrated: [0x22, 0x10 + channel_id] where channel_id is 1-based (0x11-0x14)
   if (high === 0x22 && low >= 0x11 && low <= 0x14) {
     return parseCalibratedRTDMessage(payload, packetId);
   }
-
-  // Actuator data: [0x30, channel_id] where channel_id is 1-based (0x01-0x0A)
   if (high === 0x30 && low >= 0x01 && low <= 0x0A) {
-    return parseActuatorMessage(payload, packetId);
+    parsed = parseActuatorMessage(payload, packetId);
+    if (parsed && entityMaps?.actuatorChannelToEntityMap && payload.length >= 9) {
+      const ch = payload.readUInt8(8);
+      if (entityMaps.actuatorChannelToEntityMap[ch]) parsed.entity = entityMaps.actuatorChannelToEntityMap[ch];
+    }
+    return parsed;
   }
-
-  // Unknown packet type - return null (will be logged in handleElodinPacket)
   return null;
 }

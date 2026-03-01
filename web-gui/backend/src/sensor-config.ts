@@ -7,6 +7,25 @@ import { readConfig } from './routes/config.js';
 import type { HpPtBoardConfig } from './server-types.js';
 
 /**
+ * Build actuator channel → entity map from config.toml actuator_roles.
+ * Used so Elodin parser uses same names as config (replica of backend/DB).
+ */
+export function loadActuatorChannelToEntityMap(): Record<number, string> {
+    const out: Record<number, string> = {};
+    try {
+        const config = readConfig();
+        const roles = (config.actuator_roles || {}) as Record<string, [string, number] | [string, number, number]>;
+        for (const [name, value] of Object.entries(roles)) {
+            if (Array.isArray(value) && value.length >= 2 && typeof value[1] === 'number') {
+                const channelId = value[1];
+                out[channelId] = `ACT.${name.replace(/\s+/g, '_')}`;
+            }
+        }
+    } catch (_) { /* use empty map */ }
+    return out;
+}
+
+/**
  * Load sensor_roles from config.toml and build channel ID → entity name maps.
  * Matches combined_gui.py's CONFIG.get_sensor_role() behavior.
  *

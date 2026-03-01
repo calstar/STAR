@@ -17,7 +17,7 @@
 
 import { create } from 'zustand';
 import { useCallback, useMemo } from 'react';
-import { SensorUpdate, ActuatorUpdate, StateUpdate, ConnectionStatus, SystemState, MissionStartTime, BoardStatus } from './types';
+import { SensorUpdate, ActuatorUpdate, StateUpdate, ConnectionStatus, SystemState, MissionStartTime, BoardStatus, ActuatorState } from './types';
 
 interface SensorData {
   [key: string]: number; // entity.component -> value
@@ -32,10 +32,16 @@ interface SensorSystemState {
   debugMode: boolean;
   missionStartTime: number | null; // T+0 from first packet (backend)
   actuatorExpectedPositions: Record<number, Record<string, 'open' | 'closed' | null>>; // state → entity → position
+  /** Global actuator state by entity (updated from backend ACTUATOR_UPDATE and on manual command). */
+  actuatorStateByEntity: Record<string, ActuatorState>;
+  /** Manual overrides in DEBUG mode; cleared on state change or when leaving DEBUG. */
+  actuatorCommandedOverrides: Record<string, ActuatorState>;
   boards: Record<number, BoardStatus>;
 
   updateSensor: (update: SensorUpdate) => void;
   updateActuator: (update: ActuatorUpdate) => void;
+  setActuatorState: (entity: string, state: ActuatorState) => void;
+  setActuatorCommandedOverride: (entity: string, state: ActuatorState | null) => void;
   updateState: (update: StateUpdate) => void;
   updateConnectionStatus: (status: ConnectionStatus) => void;
   updateMissionStartTime: (time: number) => void;
@@ -278,7 +284,9 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   debugMode: false,
   missionStartTime: null,
   actuatorExpectedPositions: {},
-   boards: {},
+  actuatorStateByEntity: {},
+  actuatorCommandedOverrides: {},
+  boards: {},
 
   updateSensor: (update: SensorUpdate) => {
     const key = `${update.entity}.${update.component}`;
@@ -290,21 +298,37 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   },
 
   updateActuator: (update: ActuatorUpdate) => {
+    const entity = `ACT.${(update.name || '').replace(/\s+/g, '_')}`;
     set((state) => {
       const actuators = new Map(state.actuators);
-      actuators.set(update.actuatorId, update);
-      return { actuators };
+      if (update.actuatorId != null) actuators.set(update.actuatorId, update);
+      return {
+        actuators,
+        actuatorStateByEntity: { ...state.actuatorStateByEntity, [entity]: update.state },
+      };
+    });
+  },
+
+  setActuatorState: (entity: string, state: ActuatorState) => {
+    set((s) => ({ actuatorStateByEntity: { ...s.actuatorStateByEntity, [entity]: state } }));
+  },
+
+  setActuatorCommandedOverride: (entity: string, state: ActuatorState | null) => {
+    set((s) => {
+      const next = { ...s.actuatorCommandedOverrides };
+      if (state == null) delete next[entity];
+      else next[entity] = state;
+      return { actuatorCommandedOverrides: next };
     });
   },
 
   updateState: (update: StateUpdate) => {
     console.log('[Store] State update received:', update);
-    set({
+    set((s) => ({
       currentState: update.currentState,
-      // Debug mode is now a persistent mode, not tied to DEBUG state
-      // Update from backend if provided, otherwise keep current value
       debugMode: update.debugMode !== undefined ? update.debugMode : get().debugMode,
-    });
+      actuatorCommandedOverrides: {}, // clear overrides on state change so new state's expected positions apply
+    }));
   },
 
   updateConnectionStatus: (status: ConnectionStatus) => {
@@ -355,7 +379,7 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   },
 
   setDebugMode: (mode: boolean) => {
-    set({ debugMode: mode });
+    set((s) => ({ debugMode: mode, actuatorCommandedOverrides: mode ? s.actuatorCommandedOverrides : {} }));
   },
 }));
 
@@ -400,4 +424,24 @@ export function useGetSensorValue(): (entity: string, component: string) => numb
     },
     [sensorData]
   );
+}
+
+/** Global commanded state for an actuator: override (DEBUG) or expected from current state. */
+export function useActuatorCommandedState(entity: string): ActuatorState | null {
+  const currentState = useSensorStore((s) => s.currentState);
+  const expectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
+  const overrides = useSensorStore((s) => s.actuatorCommandedOverrides);
+  const debugMode = useSensorStore((s) => s.debugMode);
+  const override = overrides[entity] ?? null;
+  const stateExpected = currentState != null ? (expectedPositions[currentState] ?? {}) : {};
+  const expected = stateExpected[entity] ?? null;
+  if (debugMode && override != null) return override;
+  if (expected === 'open') return ActuatorState.OPEN;
+  if (expected === 'closed') return ActuatorState.CLOSED;
+  return null;
+}
+
+/** Global last-known actuator state (from backend or optimistic update). */
+export function useActuatorStateByEntity(entity: string): ActuatorState | null {
+  return useSensorStore((s) => s.actuatorStateByEntity[entity] ?? null);
 }

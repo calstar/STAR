@@ -1,7 +1,7 @@
 'use client'
 
-import { useSensorValue, useSensorStore } from '@/lib/store';
-import { SystemState } from '@/lib/types';
+import { useSensorValue, useSensorStore, useActuatorCommandedState, useActuatorStateByEntity } from '@/lib/store';
+import { SystemState, ActuatorState } from '@/lib/types';
 
 // Expected actuator positions per system state: 'open' | 'closed' | null (don't care)
 // Updated from new CSV: "Avionics Board Status - State Machine Actuators.csv"
@@ -87,27 +87,28 @@ interface ActuatorRowProps {
 }
 
 function ActuatorRow({ label, entity, color, expected }: ActuatorRowProps) {
-  // Try both named entity and channel fallback
+  const globalCommanded = useActuatorCommandedState(entity);
+  const globalActual = useActuatorStateByEntity(entity);
   const status = useSensorValue(entity, 'status');
   const adcNamed = useSensorValue(entity, 'raw_adc_counts');
 
-  // Extract channel number if present (e.g., ACT.ACT_CH7 -> 7)
   const entityMatch = entity.match(/ACT_CH(\d+)/);
   const channelNum = entityMatch ? parseInt(entityMatch[1], 10) : null;
-
-  // Try channel-based lookup if we found a channel number
-  // Use a dummy entity that won't match anything if no channel
   const channelEntity = channelNum ? `ACT.ACT_CH${channelNum}` : 'ACT._DUMMY_NO_CH';
   const adcChannel = useSensorValue(channelEntity, 'raw_adc_counts');
 
-  // Prefer named entity, fallback to channel-based (only if channelNum exists)
   const adc = adcNamed ?? (channelNum ? adcChannel : null);
   const hasData = status !== null || adc !== null;
-  const isOpen = status === 1 || (adc !== null && adc > 1000);
+  const isOpenFromSensor = status === 1 || (adc !== null && adc > 1000);
+  const isOpen = globalActual !== null
+    ? globalActual === ActuatorState.OPEN
+    : isOpenFromSensor;
 
-  // Determine if actual state matches expected
-  const mismatch = expected !== null && hasData && (
-    (expected === 'open' && !isOpen) || (expected === 'closed' && isOpen)
+  const commandedExpected = globalCommanded !== null
+    ? (globalCommanded === ActuatorState.OPEN ? 'open' : 'closed')
+    : expected;
+  const mismatch = commandedExpected !== null && (hasData || globalActual !== null) && (
+    (commandedExpected === 'open' && !isOpen) || (commandedExpected === 'closed' && isOpen)
   );
 
   return (
@@ -119,12 +120,11 @@ function ActuatorRow({ label, entity, color, expected }: ActuatorRowProps) {
         <span className="text-base font-bold text-text-muted uppercase tracking-wider">{label}</span>
       </div>
       <div className="flex items-center gap-3">
-        {/* Expected position indicator */}
-        {expected && (
+        {commandedExpected && (
           <span className={`text-xs font-mono px-2 py-1 rounded ${
-            expected === 'open' ? 'bg-green-900/30 text-green-600' : 'bg-red-900/30 text-red-600'
+            commandedExpected === 'open' ? 'bg-green-900/30 text-green-600' : 'bg-red-900/30 text-red-600'
           }`}>
-            EXP:{expected === 'open' ? 'O' : 'C'}
+            EXP:{commandedExpected === 'open' ? 'O' : 'C'}
           </span>
         )}
         <span className="text-base font-mono text-gray-400">
@@ -152,20 +152,26 @@ interface ActuatorStatePanelProps {
 
 export default function ActuatorStatePanel({ title, actuators }: ActuatorStatePanelProps) {
   const currentState = useSensorStore((s) => s.currentState);
-
-  // Get expected positions for current state
   const stateExpected = currentState != null ? (EXPECTED_POSITIONS[currentState] ?? {}) : {};
+  const overrides = useSensorStore((s) => s.actuatorCommandedOverrides);
 
   return (
     <div className="bg-card rounded-lg p-4 flex flex-col gap-3">
       <h3 className="text-base font-bold text-text-muted uppercase tracking-widest mb-1">{title}</h3>
-      {actuators.map((a) => (
-        <ActuatorRow
-          key={a.entity}
-          {...a}
-          expected={stateExpected[a.entity] ?? null}
-        />
-      ))}
+      {actuators.map((a) => {
+        const expectedFromState = stateExpected[a.entity] ?? null;
+        const hasOverride = overrides[a.entity] !== undefined;
+        const expected = hasOverride
+          ? (overrides[a.entity] === ActuatorState.OPEN ? 'open' : 'closed')
+          : expectedFromState;
+        return (
+          <ActuatorRow
+            key={a.entity}
+            {...a}
+            expected={expected}
+          />
+        );
+      })}
     </div>
   );
 }

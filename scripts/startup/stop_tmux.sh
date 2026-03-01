@@ -3,13 +3,17 @@
 
 echo "Stopping Sensor System tmux sessions and processes..."
 
-# Kill the dev and logs tmux sessions
+# Kill all sensor-related tmux sessions
 tmux kill-session -t "sensor-dev" 2>/dev/null || true
+tmux kill-session -t "sensor-db-only" 2>/dev/null || true
 tmux kill-session -t "sensor-logs" 2>/dev/null || true
 tmux kill-session -t "sensor" 2>/dev/null || true
 
-# Kill background processes if they were started in dev mode
+# Kill background processes
 pkill -f "elodin-db run.*2240" 2>/dev/null || true
+pkill -f "elodin-relay" 2>/dev/null || true
+pkill -f "daq_bridge" 2>/dev/null || true
+pkill -f "board_simulator" 2>/dev/null || true
 pkill -f "next dev" 2>/dev/null || true
 pkill -f "tsx watch.*server.ts" 2>/dev/null || true
 pkill -f "calibration_server.py" 2>/dev/null || true

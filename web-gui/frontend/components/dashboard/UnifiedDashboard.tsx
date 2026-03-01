@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useSensorStore, useSensorValue, useGetSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate, SystemState, ActuatorId } from '@/lib/types';
+import { MessageType, SensorUpdate, StateUpdate, ActuatorUpdate, SystemState, ActuatorId } from '@/lib/types';
 import { startDataCache } from '@/lib/data-cache';
 import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
 import ActuatorControl from '@/components/controls/ActuatorControl';
@@ -40,6 +40,7 @@ const TIME_WINDOWS = [
 export default function UnifiedDashboard() {
   const updateSensor = useSensorStore((state) => state.updateSensor);
   const updateState = useSensorStore((state) => state.updateState);
+  const updateActuator = useSensorStore((state) => state.updateActuator);
   const updateConnectionStatus = useSensorStore((state) => state.updateConnectionStatus);
   const currentState = useSensorStore((state) => state.currentState);
   const ws = getWebSocketClient();
@@ -77,14 +78,15 @@ export default function UnifiedDashboard() {
       updateSensor(update);
     });
     const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    const u3 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
+    const u3 = ws.on(MessageType.ACTUATOR_UPDATE, (p: unknown) => updateActuator(p as ActuatorUpdate));
+    const u4 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
       const payload = p as Record<number, Record<string, 'open' | 'closed' | null>>;
       useSensorStore.getState().updateActuatorExpectedPositions(payload);
     });
-    const u4 = ws.onConnectionStatus((s) => updateConnectionStatus(s));
+    const u5 = ws.onConnectionStatus((s) => updateConnectionStatus(s));
 
-    return () => { u1(); u2(); u3(); u4(); };
-  }, [ws, updateSensor, updateState, updateConnectionStatus]);
+    return () => { u1(); u2(); u3(); u4(); u5(); };
+  }, [ws, updateSensor, updateState, updateActuator, updateConnectionStatus]);
 
   const isFireState = currentState === SystemState.FIRE;
 

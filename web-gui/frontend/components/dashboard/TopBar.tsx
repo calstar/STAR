@@ -4,7 +4,7 @@ import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { startDataCache } from '@/lib/data-cache';
 import { useEffect, useState } from 'react';
-import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, SensorUpdate, MessageType } from '@/lib/types';
+import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, SensorUpdate, ActuatorUpdate, MessageType } from '@/lib/types';
 import PressureBar from '@/components/plots/PressureBar';
 import { PRESSURE_BAR_SENSORS } from '@/lib/sensor-colors';
 
@@ -67,6 +67,8 @@ export default function TopBar() {
   const updateConnectionStatus = useSensorStore((s) => s.updateConnectionStatus);
   const updateState = useSensorStore((s) => s.updateState);
   const updateSensor = useSensorStore((s) => s.updateSensor);
+  const updateActuator = useSensorStore((s) => s.updateActuator);
+  const updateActuatorExpectedPositions = useSensorStore((s) => s.updateActuatorExpectedPositions);
 
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({
     connected: false, elodinConnected: false,
@@ -93,8 +95,12 @@ export default function TopBar() {
     const unsubSensor = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => {
       updateSensor(p as SensorUpdate);
     });
-    return () => { unsubConn(); unsubState(); unsubSensor(); };
-  }, [ws, updateConnectionStatus, updateState, updateSensor]);
+    const unsubActuator = ws.on(MessageType.ACTUATOR_UPDATE, (p: unknown) => updateActuator(p as ActuatorUpdate));
+    const unsubExpected = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
+      updateActuatorExpectedPositions(p as Record<number, Record<string, 'open' | 'closed' | null>>);
+    });
+    return () => { unsubConn(); unsubState(); unsubSensor(); unsubActuator(); unsubExpected(); };
+  }, [ws, updateConnectionStatus, updateState, updateSensor, updateActuator, updateActuatorExpectedPositions]);
 
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString('en-US', { hour12: true }));

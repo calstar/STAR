@@ -1,23 +1,27 @@
 #include <signal.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <fstream>
 #include <functional>
 #include <iomanip>
 #include <iostream>
 #include <map>
 #include <set>
 #include <sstream>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include "../../daq_comms/include/comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "../../daq_comms/include/comms/messages/sensor/SensorMessages.hpp"
+#include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
 #include "calibration/PTCalibration.hpp"
 #include "calibration/SensorCalibration.hpp"
 #include "config/BoardDiscovery.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
-#include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
 #include "fsw/FSWConfigManager.hpp"
 #include "routing/SensorRouter.hpp"
 #include "streams/SensorFramePipeline.hpp"
@@ -38,6 +42,278 @@ struct BoardConfig {
     int num_sensors;
     bool enabled;
 };
+
+// Minimal config parse: [database] host/port, [network] sensor_port/bind_ip, [boards.xxx]
+// type/ip/enabled
+static void load_board_map_from_config(const std::string& config_path,
+                                       std::map<std::string, BoardConfig>& board_map,
+                                       std::string& db_host, uint16_t& db_port,
+                                       uint16_t* out_sensor_port = nullptr,
+                                       std::string* out_bind_ip = nullptr) {
+    db_host = "127.0.0.1";
+    db_port = 2240;
+    std::ifstream f(config_path);
+    if (!f.is_open())
+        return;
+    std::string line, current_section;
+    std::string board_type_str, board_ip;
+    int board_num_sensors = 10;
+    bool board_enabled = true;
+    auto add_board = [&]() {
+        if (board_ip.empty())
+            return;
+        BoardType bt = BoardType::UNKNOWN;
+        if (board_type_str == "PT")
+            bt = BoardType::PT;
+        else if (board_type_str == "LC")
+            bt = BoardType::LC;
+        else if (board_type_str == "TC")
+            bt = BoardType::TC;
+        else if (board_type_str == "RTD")
+            bt = BoardType::RTD;
+        else if (board_type_str == "ACTUATOR")
+            bt = BoardType::ACTUATOR;
+        if (bt != BoardType::UNKNOWN)
+            board_map[board_ip] = {bt, board_ip, board_num_sensors, board_enabled};
+        board_ip.clear();
+        board_type_str.clear();
+    };
+    while (std::getline(f, line)) {
+        size_t c = line.find('#');
+        if (c != std::string::npos)
+            line = line.substr(0, c);
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
+            line.pop_back();
+        size_t start = line.find_first_not_of(" \t");
+        if (start != std::string::npos)
+            line = line.substr(start);
+        if (line.empty())
+            continue;
+        if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
+            add_board();
+            current_section = line.substr(1, line.size() - 2);
+            board_num_sensors = 10;
+            board_enabled = true;
+            continue;
+        }
+        size_t eq = line.find('=');
+        if (eq == std::string::npos)
+            continue;
+        std::string key = line.substr(0, eq);
+        std::string val = line.substr(eq + 1);
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
+            key.pop_back();
+        while (!val.empty() && (val[0] == ' ' || val[0] == '\t'))
+            val.erase(0, 1);
+        if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
+            val = val.substr(1, val.size() - 2);
+        if (current_section == "database") {
+            if (key == "host")
+                db_host = val;
+            else if (key == "port")
+                db_port = static_cast<uint16_t>(std::stoul(val));
+        } else if (current_section == "network") {
+            if (out_sensor_port && key == "sensor_port")
+                *out_sensor_port = static_cast<uint16_t>(std::stoul(val));
+            else if (out_bind_ip && key == "bind_ip")
+                *out_bind_ip = val;
+        } else if (current_section.compare(0, 7, "boards.") == 0) {
+            if (key == "type")
+                board_type_str = val;
+            else if (key == "ip")
+                board_ip = val;
+            else if (key == "num_sensors")
+                board_num_sensors = std::stoi(val);
+            else if (key == "enabled")
+                board_enabled = (val == "true" || val == "1");
+        }
+    }
+    add_board();
+    // Simulator (e.g. board_simulator.py) sends from 127.0.0.1 — treat as PT so routing works
+    if (board_map.find("127.0.0.1") == board_map.end())
+        board_map["127.0.0.1"] = {BoardType::PT, "127.0.0.1", 10, true};
+}
+
+// Config-driven publish allowlist: [routing.*] packet_id + channels, [daq_bridge] publish = [...]
+// Emulates backend (server.ts) loading mapping from config; no fixed hex codes in code.
+struct PublishRange {
+    uint8_t high;
+    uint8_t low_max;  // allow low byte 0x01 .. low_max (1-based channel count)
+};
+static std::vector<PublishRange> load_publish_ranges(const std::string& config_path) {
+    std::vector<PublishRange> out;
+    std::map<std::string, std::pair<uint8_t, int>> routing;  // name -> (high, channels)
+    std::set<std::string> publish_names;
+    std::ifstream f(config_path);
+    if (!f.is_open())
+        return out;
+    std::string line, current_section;
+    auto parse_hex_byte = [](const std::string& s) -> int {
+        if (s.size() >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+            return static_cast<int>(std::strtoul(s.c_str(), nullptr, 16));
+        }
+        return static_cast<int>(std::strtoul(s.c_str(), nullptr, 10));
+    };
+    auto parse_array_first_byte = [&parse_hex_byte](const std::string& val) -> int {
+        size_t i = val.find('0');
+        if (i == std::string::npos)
+            return -1;
+        size_t j = val.find_first_of(",]", i);
+        std::string sub = (j != std::string::npos) ? val.substr(i, j - i) : val.substr(i);
+        return parse_hex_byte(sub);
+    };
+    while (std::getline(f, line)) {
+        size_t c = line.find('#');
+        if (c != std::string::npos)
+            line = line.substr(0, c);
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
+            line.pop_back();
+        size_t start = line.find_first_not_of(" \t");
+        if (start != std::string::npos)
+            line = line.substr(start);
+        if (line.empty())
+            continue;
+        if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
+            current_section = line.substr(1, line.size() - 2);
+            continue;
+        }
+        size_t eq = line.find('=');
+        if (eq == std::string::npos)
+            continue;
+        std::string key = line.substr(0, eq);
+        std::string val = line.substr(eq + 1);
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
+            key.pop_back();
+        while (!val.empty() && val[0] == ' ')
+            val.erase(0, 1);
+        if (current_section.compare(0, 8, "routing.") == 0) {
+            std::string rname = current_section.substr(8);
+            if (key == "packet_id") {
+                int high = parse_array_first_byte(val);
+                if (high >= 0 && high <= 255) {
+                    auto& p = routing[rname];
+                    p.first = static_cast<uint8_t>(high);
+                    if (p.second == 0)
+                        p.second = 10;
+                }
+            } else if (key == "channels") {
+                int ch = parse_hex_byte(val);
+                if (ch > 0 && ch <= 255)
+                    routing[current_section.substr(8)].second = ch;
+            }
+        } else if (current_section == "daq_bridge" && key == "publish") {
+            // Parse ["pt_raw", "actuator_status"] - extract quoted tokens
+            for (size_t i = 0; i < val.size(); ++i) {
+                if (val[i] == '"') {
+                    size_t j = val.find('"', i + 1);
+                    if (j != std::string::npos) {
+                        publish_names.insert(val.substr(i + 1, j - i - 1));
+                        i = j;
+                    }
+                }
+            }
+        }
+    }
+    for (const auto& name : publish_names) {
+        auto it = routing.find(name);
+        if (it != routing.end() && it->second.second > 0) {
+            uint8_t low_max = static_cast<uint8_t>(std::min(255, it->second.second));
+            out.push_back({it->second.first, low_max});
+        }
+    }
+    return out;
+}
+static bool is_publish_allowed(uint8_t high, uint8_t low, const std::vector<PublishRange>& ranges) {
+    if (low < 0x01)
+        return false;
+    for (const auto& r : ranges) {
+        if (r.high == high && low <= r.low_max)
+            return true;
+    }
+    return false;
+}
+
+// Load channel → name from config.toml [sensor_roles*] and [actuator_roles] so DB matches backend.
+static void load_sensor_and_actuator_maps(const std::string& config_path,
+                                          std::map<int, std::string>& pt_channel_to_name,
+                                          std::map<int, std::string>& act_channel_to_name) {
+    std::ifstream f(config_path);
+    if (!f.is_open())
+        return;
+    std::string line, current_section;
+    while (std::getline(f, line)) {
+        size_t c = line.find('#');
+        if (c != std::string::npos)
+            line = line.substr(0, c);
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
+            line.pop_back();
+        size_t start = line.find_first_not_of(" \t");
+        if (start != std::string::npos)
+            line = line.substr(start);
+        if (line.empty())
+            continue;
+        if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
+            current_section = line.substr(1, line.size() - 2);
+            continue;
+        }
+        size_t eq = line.find('=');
+        if (eq == std::string::npos)
+            continue;
+        std::string key = line.substr(0, eq);
+        std::string val = line.substr(eq + 1);
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
+            key.pop_back();
+        while (!val.empty() && val[0] == ' ')
+            val.erase(0, 1);
+        auto to_entity_name = [](std::string s) {
+            if (s.size() >= 2 && s.front() == '"' && s.back() == '"')
+                s = s.substr(1, s.size() - 2);
+            for (size_t i = 0; i < s.size(); ++i)
+                if (s[i] == ' ')
+                    s[i] = '_';
+            return s;
+        };
+        if (current_section == "sensor_roles_pt_board" || current_section == "sensor_roles") {
+            int channel = 0;
+            try {
+                channel = std::stoi(val);
+            } catch (...) {
+                continue;
+            }
+            if (channel >= 1 && channel <= 10)
+                pt_channel_to_name[channel] = to_entity_name(key);
+        } else if (current_section == "actuator_roles") {
+            size_t comma = val.find(',');
+            if (comma == std::string::npos)
+                continue;
+            try {
+                int channel = std::stoi(val.substr(comma + 1));
+                if (channel >= 1 && channel <= 10)
+                    act_channel_to_name[channel] = to_entity_name(key);
+            } catch (...) {
+            }
+        }
+    }
+}
+
+// Map discovery signature board_type (DiabloAvionics enum 1=PT,2=TC,3=RTD,4=LC,5=ACTUATOR) to our
+// BoardType
+static BoardType discovery_board_type_to_enum(uint8_t t) {
+    switch (t) {
+        case 1:
+            return BoardType::PT;
+        case 2:
+            return BoardType::TC;
+        case 3:
+            return BoardType::RTD;
+        case 4:
+            return BoardType::LC;
+        case 5:
+            return BoardType::ACTUATOR;
+        default:
+            return BoardType::UNKNOWN;
+    }
+}
 
 int main(int argc, char* argv[]) {
     // Parse command line arguments
@@ -60,18 +336,20 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    // ── Board IP → Type mapping (from config) ──
-    // This is the key routing table: source IP determines what type of data we got
+    // ── Board IP → Type mapping from config ([boards.*]), DB host/port, network sensor_port ──
     std::map<std::string, BoardConfig> board_map;
-    board_map["192.168.2.101"] = {BoardType::PT, "192.168.2.101", 10, true};
-    board_map["192.168.2.201"] = {BoardType::ACTUATOR, "192.168.2.201", 10, true};
-    board_map["192.168.2.202"] = {BoardType::ACTUATOR, "192.168.2.202", 10, true};
-    // Future boards:
-    // board_map["192.168.2.102"] = {BoardType::LC,  "192.168.2.102", 4, false};
-    // board_map["192.168.2.103"] = {BoardType::TC,  "192.168.2.103", 4, false};
-    // board_map["192.168.2.104"] = {BoardType::RTD, "192.168.2.104", 4, false};
+    std::string db_host;
+    uint16_t db_port;
+    uint16_t config_sensor_port = 0;
+    std::string config_bind_ip;
+    load_board_map_from_config(config_path, board_map, db_host, db_port, &config_sensor_port,
+                               &config_bind_ip);
+    if (config_sensor_port != 0)
+        bind_port = config_sensor_port;
+    if (!config_bind_ip.empty())
+        bind_address = config_bind_ip;
 
-    std::cout << "[Config] Board routing table:" << std::endl;
+    std::cout << "[Config] Board routing table (from " << config_path << "):" << std::endl;
     for (const auto& [ip, cfg] : board_map) {
         const char* type_str = "UNKNOWN";
         switch (cfg.type) {
@@ -102,6 +380,13 @@ int main(int argc, char* argv[]) {
     fsw::config::SystemState system_state =
         is_flight_daq ? fsw::config::SystemState::FLIGHT : fsw::config::SystemState::GSE;
     std::cout << "[System] Mode: " << (is_flight_daq ? "FLIGHT" : "GROUND") << std::endl;
+
+    // ── Publish allowlist from config [routing.*] + [daq_bridge] publish (modular, no fixed hexes)
+    std::vector<PublishRange> publish_ranges = load_publish_ranges(config_path);
+    std::cout << "[Config] Publish to DB (from config):";
+    for (const auto& r : publish_ranges)
+        std::cout << " 0x" << std::hex << (int)r.high << std::dec << "/1.." << (int)r.low_max;
+    std::cout << std::endl;
 
     // ── FSW Config Manager ──
     std::cout << "[FSW] Initializing configuration manager..." << std::endl;
@@ -182,16 +467,33 @@ int main(int argc, char* argv[]) {
     router.set_lc_calibration(&lc_calibration);
     std::cout << "✅ Sensor router initialized" << std::endl;
 
-    // ── Elodin Client ──
+    // ── Elodin Client (host/port from config [database]) ──
     fsw::elodin::ElodinClient elodin_client;
     bool elodin_connected = false;
-    if (elodin_client.connect("127.0.0.1", 2240)) {
+    std::map<int, std::string> pt_channel_to_name, act_channel_to_name;
+    load_sensor_and_actuator_maps(config_path, pt_channel_to_name, act_channel_to_name);
+    const std::map<int, std::string>* pt_names =
+        pt_channel_to_name.empty() ? nullptr : &pt_channel_to_name;
+    const std::map<int, std::string>* act_names =
+        act_channel_to_name.empty() ? nullptr : &act_channel_to_name;
+
+    if (elodin_client.connect(db_host, db_port)) {
         elodin_connected = true;
         std::cout << "✅ Connected to Elodin database" << std::endl;
-        // Register VTables so Elodin knows how to interpret our messages
-        if (!fsw::elodin::DatabaseConfig::register_tables(elodin_client)) {
+        // Register VTables with config-driven names so DB is a replica of backend
+        if (!fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_names, act_names)) {
             std::cerr << "⚠️  VTable registration failed — editor may not display data" << std::endl;
         }
+        // Drain any response from DB after registration; otherwise recv buffer fills and TABLE
+        // writes stall after ~3s
+        std::array<uint8_t, 4096> drain_buf;
+        auto drain_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        while (std::chrono::steady_clock::now() < drain_deadline && elodin_client.is_connected()) {
+            while (elodin_client.read_data(drain_buf.data(), drain_buf.size()) > 0) {
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        std::cout << "[Elodin] Drain complete, ready for TABLE data" << std::endl;
     } else {
         std::cerr << "⚠️  Elodin not connected (packets will be parsed but not published)"
                   << std::endl;
@@ -211,13 +513,14 @@ int main(int argc, char* argv[]) {
     while (running) {
         auto batch = pipeline.poll();
         if (!batch.has_value()) {
-            // When last packet was a BOARD_HEARTBEAT, run discovery and broadcast config to that board
+            // When last packet was a BOARD_HEARTBEAT, run discovery and broadcast config to that
+            // board
             auto hb = pipeline.get_last_heartbeat();
             if (hb) {
                 discovery.process_board_announcement(hb->data.data(), hb->data.size(),
                                                      hb->source_ip);
-                auto parsed = pipeline.get_parser().parse_board_heartbeat(hb->data.data(),
-                                                                         hb->data.size());
+                auto parsed =
+                    pipeline.get_parser().parse_board_heartbeat(hb->data.data(), hb->data.size());
                 if (parsed && parsed->is_valid) {
                     // MAC for FSWConfigManager (same formula as BoardDiscovery)
                     std::hash<std::string> hasher;
@@ -236,6 +539,16 @@ int main(int argc, char* argv[]) {
 
             std::this_thread::sleep_for(std::chrono::microseconds(500));
 
+            // Drain Elodin socket: we only write TABLE packets; if the DB sends anything back
+            // (acks, errors, etc.) and we never read, the TCP recv buffer fills and the connection
+            // stalls after ~10–20s. Non-blocking read and discard keeps the connection alive.
+            if (elodin_connected && elodin_client.is_connected()) {
+                std::array<uint8_t, 4096> drain_buf;
+                while (elodin_client.read_data(drain_buf.data(), drain_buf.size()) > 0) {
+                    /* discard */
+                }
+            }
+
             // Try reconnect every 5 seconds if disconnected
             if (elodin_connected && !elodin_client.is_connected()) {
                 auto since = std::chrono::steady_clock::now() - last_reconnect_time;
@@ -244,7 +557,8 @@ int main(int argc, char* argv[]) {
                     if (elodin_client.reconnect()) {
                         std::cout << "✅ Reconnected to Elodin — re-registering VTables"
                                   << std::endl;
-                        fsw::elodin::DatabaseConfig::register_tables(elodin_client);
+                        fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_names,
+                                                                     act_names);
                     }
                 }
             }
@@ -259,15 +573,27 @@ int main(int argc, char* argv[]) {
         uint64_t receive_timestamp_ns =
             std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
 
-        // ── Route based on source IP → board type ──
+        // ── Route based on source IP → board type (config, then discovery, else treat as PT so DB
+        // gets data) ──
         auto board_it = board_map.find(source_ip);
         BoardType board_type = BoardType::UNKNOWN;
         if (board_it != board_map.end() && board_it->second.enabled) {
             board_type = board_it->second.type;
-        } else if (unknown_ips.find(source_ip) == unknown_ips.end()) {
-            unknown_ips.insert(source_ip);
-            std::cout << "[Discovery] Unknown board at " << source_ip << " — add to [boards] config"
-                      << std::endl;
+        } else {
+            auto discovered = discovery.get_board_by_ip(source_ip);
+            if (discovered) {
+                board_type = discovery_board_type_to_enum(discovered->signature.board_type);
+                if (board_type != BoardType::UNKNOWN)
+                    board_map[source_ip] = {board_type, source_ip, 10, true};
+            }
+            if (board_type == BoardType::UNKNOWN) {
+                if (unknown_ips.find(source_ip) == unknown_ips.end()) {
+                    unknown_ips.insert(source_ip);
+                    std::cout << "[Discovery] Unknown board at " << source_ip
+                              << " — treating as PT so data is written to DB" << std::endl;
+                }
+                board_type = BoardType::PT;
+            }
         }
 
         // ── Begin batch: all publishes from this packet go into one buffer ──
@@ -282,9 +608,11 @@ int main(int argc, char* argv[]) {
                     router.route_pt_samples_calibrated(batch.value(), receive_timestamp_ns);
                 if (publishing) {
                     for (const auto& [id, msg] : pt_msgs)
-                        elodin_client.publish(id, msg);
+                        if (is_publish_allowed(id[0], id[1], publish_ranges))
+                            elodin_client.publish(id, msg);
                     for (const auto& [id, msg] : cal_msgs)
-                        elodin_client.publish(id, msg);
+                        if (is_publish_allowed(id[0], id[1], publish_ranges))
+                            elodin_client.publish(id, msg);
                 }
                 break;
             }
@@ -298,7 +626,7 @@ int main(int argc, char* argv[]) {
                     msg.setField<3>(sample.raw_adc_counts);
                     msg.setField<4>(sample.sample_timestamp_ms);
                     msg.setField<5>(sample.status_flags);
-                    if (publishing)
+                    if (publishing && is_publish_allowed(act_pkt[0], act_pkt[1], publish_ranges))
                         elodin_client.publish(act_pkt, msg);
                 }
                 break;
@@ -319,9 +647,11 @@ int main(int argc, char* argv[]) {
                 auto lc_cal = router.route_lc_samples_calibrated(lc_batch, receive_timestamp_ns);
                 if (publishing) {
                     for (const auto& [id, msg] : lc_raw)
-                        elodin_client.publish(id, msg);
+                        if (is_publish_allowed(id[0], id[1], publish_ranges))
+                            elodin_client.publish(id, msg);
                     for (const auto& [id, msg] : lc_cal)
-                        elodin_client.publish(id, msg);
+                        if (is_publish_allowed(id[0], id[1], publish_ranges))
+                            elodin_client.publish(id, msg);
                 }
                 break;
             }
@@ -341,9 +671,11 @@ int main(int argc, char* argv[]) {
                 auto tc_cal = router.route_tc_samples_calibrated(tc_batch, receive_timestamp_ns);
                 if (publishing) {
                     for (const auto& [id, msg] : tc_raw)
-                        elodin_client.publish(id, msg);
+                        if (is_publish_allowed(id[0], id[1], publish_ranges))
+                            elodin_client.publish(id, msg);
                     for (const auto& [id, msg] : tc_cal)
-                        elodin_client.publish(id, msg);
+                        if (is_publish_allowed(id[0], id[1], publish_ranges))
+                            elodin_client.publish(id, msg);
                 }
                 break;
             }
@@ -363,9 +695,11 @@ int main(int argc, char* argv[]) {
                 auto rtd_cal = router.route_rtd_samples_calibrated(rtd_batch, receive_timestamp_ns);
                 if (publishing) {
                     for (const auto& [id, msg] : rtd_raw)
-                        elodin_client.publish(id, msg);
+                        if (is_publish_allowed(id[0], id[1], publish_ranges))
+                            elodin_client.publish(id, msg);
                     for (const auto& [id, msg] : rtd_cal)
-                        elodin_client.publish(id, msg);
+                        if (is_publish_allowed(id[0], id[1], publish_ranges))
+                            elodin_client.publish(id, msg);
                 }
                 break;
             }
@@ -379,6 +713,10 @@ int main(int argc, char* argv[]) {
                 elodin_publish_count++;
             } else {
                 elodin_drop_count++;
+            }
+            // Drain any response from DB so recv buffer doesn't fill and stall the connection
+            std::array<uint8_t, 4096> drain_buf;
+            while (elodin_client.read_data(drain_buf.data(), drain_buf.size()) > 0) {
             }
         }
 

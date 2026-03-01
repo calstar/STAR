@@ -1,6 +1,7 @@
 #include "elodin/DatabaseConfig.hpp"
 
 #include <iostream>
+#include <map>
 #include <string>
 
 #include "db.hpp"  // utl/db.hpp — VTable builder, Msg, postcard encoding
@@ -143,35 +144,48 @@ static bool register_calibrated_vtable(
 // PUBLIC API
 // ════════════════════════════════════════════════════════════════════════════
 
-bool DatabaseConfig::register_tables(ElodinClient& client) {
-    std::cout << "[DatabaseConfig] Registering per-channel VTables..." << std::endl;
+static std::string pt_name_for_channel(int ch, const std::map<int, std::string>* from_config) {
+    if (from_config) {
+        auto it = from_config->find(ch);
+        if (it != from_config->end() && !it->second.empty())
+            return it->second;
+    }
+    return (ch <= NUM_PT && PT_NAMES[ch][0] != '\0') ? PT_NAMES[ch] : "CH" + std::to_string(ch);
+}
+static std::string act_name_for_channel(int ch, const std::map<int, std::string>* from_config) {
+    if (from_config) {
+        auto it = from_config->find(ch);
+        if (it != from_config->end() && !it->second.empty())
+            return it->second;
+    }
+    return (ch <= NUM_ACT && ACT_NAMES[ch][0] != '\0') ? ACT_NAMES[ch] : "CH" + std::to_string(ch);
+}
+
+bool DatabaseConfig::register_tables(ElodinClient& client,
+                                     const std::map<int, std::string>* pt_channel_to_name,
+                                     const std::map<int, std::string>* act_channel_to_name) {
+    std::cout
+        << "[DatabaseConfig] Registering per-channel VTables (config-driven names when provided)..."
+        << std::endl;
     int registered = 0;
 
-    // ── PT Raw (packet_id 0x20, ch) ───────────────────────────────────────
     for (int ch = 1; ch <= NUM_PT; ++ch) {
-        std::string name = (ch <= NUM_PT && PT_NAMES[ch][0] != '\0')
-                               ? std::string("PT.") + PT_NAMES[ch]
-                               : "PT.CH" + std::to_string(ch);
+        std::string base = pt_name_for_channel(ch, pt_channel_to_name);
+        std::string name = "PT." + base;
         uint64_t eid = 0x2000 + ch;
         if (register_raw_sensor_vtable(client, 0x20, ch, eid, name, "raw_adc_counts"))
             registered++;
     }
-
-    // ── PT Calibrated (packet_id 0x20, 0x10+ch) ──────────────────────────
     for (int ch = 1; ch <= NUM_PT; ++ch) {
-        std::string name = (ch <= NUM_PT && PT_NAMES[ch][0] != '\0')
-                               ? std::string("PT_Cal.") + PT_NAMES[ch]
-                               : "PT_Cal.CH" + std::to_string(ch);
+        std::string base = pt_name_for_channel(ch, pt_channel_to_name);
+        std::string name = "PT_Cal." + base;
         uint64_t eid = 0x2010 + ch;
         if (register_calibrated_vtable(client, 0x20, ch, eid, name, "pressure_psi", "raw_adc"))
             registered++;
     }
-
-    // ── Actuator Status (packet_id 0x30, ch) ─────────────────────────────
     for (int ch = 1; ch <= NUM_ACT; ++ch) {
-        std::string name = (ch <= NUM_ACT && ACT_NAMES[ch][0] != '\0')
-                               ? std::string("ACT.") + ACT_NAMES[ch]
-                               : "ACT.CH" + std::to_string(ch);
+        std::string base = act_name_for_channel(ch, act_channel_to_name);
+        std::string name = "ACT." + base;
         uint64_t eid = 0x3000 + ch;
         if (register_raw_sensor_vtable(client, 0x30, ch, eid, name, "raw_adc_counts"))
             registered++;
@@ -230,7 +244,7 @@ bool DatabaseConfig::register_tables(ElodinClient& client) {
 
 bool DatabaseConfig::register_tables_from_config(ElodinClient& client,
                                                  const std::string& /* config_path */) {
-    return register_tables(client);
+    return register_tables(client, nullptr, nullptr);
 }
 
 bool DatabaseConfig::register_non_sensor_tables(ElodinClient& /* client */) {

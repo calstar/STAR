@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <string>
 
 #include "../../daq_comms/include/comms/CommsMessage.hpp"
@@ -22,11 +23,13 @@ namespace elodin {
 class DatabaseConfig {
 public:
     /**
-     * @brief Register all sensor tables with the Elodin database (per sensor type)
-     * @param client Connected ElodinClient instance
-     * @return true if registration successful
+     * @brief Register all sensor tables with the Elodin database (per sensor type).
+     * If pt_channel_to_name / act_channel_to_name are provided (from config.toml sensor_roles /
+     * actuator_roles), use them so DB is a replica of backend config; otherwise use built-in names.
      */
-    static bool register_tables(ElodinClient& client);
+    static bool register_tables(ElodinClient& client,
+                                const std::map<int, std::string>* pt_channel_to_name = nullptr,
+                                const std::map<int, std::string>* act_channel_to_name = nullptr);
 
     /**
      * @brief Register VTables per sensor instance from config (per sensor, not per type)

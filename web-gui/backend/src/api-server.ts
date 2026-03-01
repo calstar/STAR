@@ -227,8 +227,8 @@ export function startAPIServer(getQueryClient?: () => ElodinQueryClient | null):
   // Register error handler BEFORE calling listen()
   server.on('error', (error: any) => {
     if (error.code === 'EADDRINUSE') {
-      console.warn(`⚠️ Port ${API_PORT} already in use. API server will not start.`);
-      console.warn(`   This is OK if another instance is running.`);
+      console.error(`❌ Port ${API_PORT} already in use. Free it and restart: fuser -k ${API_PORT}/tcp`);
+      process.exit(1);
     } else {
       console.error('❌ API server error:', error);
     }

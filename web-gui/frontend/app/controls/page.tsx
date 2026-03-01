@@ -7,7 +7,7 @@ import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { getWebSocketClient } from '@/lib/websocket';
 import { useSensorStore } from '@/lib/store';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
-import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
+import { MessageType, SensorUpdate, StateUpdate, ActuatorUpdate } from '@/lib/types';
 import { useSensorValue } from '@/lib/store';
 import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
 
@@ -29,6 +29,7 @@ export default function ControlsPage() {
   const ws = getWebSocketClient();
   const updateSensor = useSensorStore((state) => state.updateSensor);
   const updateState  = useSensorStore((state) => state.updateState);
+  const updateActuator = useSensorStore((s) => s.updateActuator);
   const updateActuatorExpectedPositions = useSensorStore((s) => s.updateActuatorExpectedPositions);
   const { actuators: actuatorsFromConfig, loading: actuatorsLoading } = useActuatorsFromConfig();
 
@@ -36,11 +37,12 @@ export default function ControlsPage() {
     ws.connect();
     const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
     const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    const u3 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
+    const u3 = ws.on(MessageType.ACTUATOR_UPDATE, (p: unknown) => updateActuator(p as ActuatorUpdate));
+    const u4 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
       updateActuatorExpectedPositions(p as Record<number, Record<string, 'open' | 'closed' | null>>);
     });
-    return () => { u1(); u2(); u3(); };
-  }, [ws, updateSensor, updateState, updateActuatorExpectedPositions]);
+    return () => { u1(); u2(); u3(); u4(); };
+  }, [ws, updateSensor, updateState, updateActuator, updateActuatorExpectedPositions]);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden">

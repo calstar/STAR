@@ -53,10 +53,10 @@ bool TCPClient::connect(const std::string& host, uint16_t port) {
     int sndbuf = 1024 * 1024;
     setsockopt(socket_fd_, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
 
-    // Write timeout 500ms — prevents indefinite blocking if Elodin stalls
+    // Write timeout 5s — avoid dropping batches on brief backpressure; drain in daq_bridge keeps recv side clear
     struct timeval tv;
-    tv.tv_sec = 0;
-    tv.tv_usec = 500000;
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
     setsockopt(socket_fd_, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
     if (::connect(socket_fd_, reinterpret_cast<struct sockaddr*>(&server_addr),
