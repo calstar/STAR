@@ -112,34 +112,31 @@ function ActuatorRow({ label, entity, color, expected }: ActuatorRowProps) {
   );
 
   return (
-    <div className={`flex items-center justify-between rounded-lg px-5 py-4 ${
-      mismatch ? 'bg-yellow-950/40 border border-yellow-600/50' : 'bg-gray-900/50'
-    }`}>
+    <div className={`flex items-center justify-between rounded-xl px-5 py-4 transition-all duration-300 group ${mismatch ? 'bg-yellow-950/40 border border-yellow-600/50 shadow-[0_0_15px_rgba(202,138,4,0.15)]' : 'bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] hover:shadow-lg'
+      }`}>
       <div className="flex items-center gap-3">
-        <div className="w-4 h-4 rounded-full" style={{ backgroundColor: color }} />
-        <span className="text-base font-bold text-text-muted uppercase tracking-wider">{label}</span>
+        <div className="w-4 h-4 rounded-full shadow-sm transition-transform duration-300 group-hover:scale-110" style={{ backgroundColor: color, boxShadow: `0 0 10px ${color}80` }} />
+        <span className="text-base font-bold text-gray-300 uppercase tracking-widest group-hover:text-white transition-colors">{label}</span>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-4">
         {commandedExpected && (
-          <span className={`text-xs font-mono px-2 py-1 rounded ${
-            commandedExpected === 'open' ? 'bg-green-900/30 text-green-600' : 'bg-red-900/30 text-red-600'
-          }`}>
-            EXP:{commandedExpected === 'open' ? 'O' : 'C'}
+          <span className={`text-xs font-mono px-2.5 py-1 rounded shadow-inner ${commandedExpected === 'open' ? 'bg-emerald-900/30 text-emerald-500 border border-emerald-800/50' : 'bg-rose-900/30 text-rose-500 border border-rose-800/50'
+            }`}>
+            EXP: {commandedExpected.toUpperCase()}
           </span>
         )}
-        <span className="text-base font-mono text-gray-400">
+        <span className="text-base font-mono text-gray-500 group-hover:text-gray-400 transition-colors w-12 text-right">
           {hasData ? (adc?.toLocaleString() ?? '---') : '---'}
         </span>
         <span
-          className={`text-base font-black font-mono px-4 py-2 rounded-lg ${
-            !hasData ? 'bg-gray-800 text-gray-600' :
-            isOpen   ? 'bg-green-900/60 text-green-400 border border-green-800' :
-                       'bg-red-900/60 text-red-400 border border-red-800'
-          }`}
+          className={`text-base font-black font-mono px-5 py-2.5 rounded-lg transition-colors duration-500 w-28 text-center ${!hasData ? 'bg-gray-800/50 text-gray-600 border border-gray-700/50' :
+              isOpen ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.15)]' :
+                'bg-rose-500/20 text-rose-400 border border-rose-500/30 shadow-[0_0_15px_rgba(244,63,94,0.15)]'
+            }`}
         >
           {!hasData ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
         </span>
-        {mismatch && <span className="text-yellow-400 text-lg">⚠</span>}
+        {mismatch && <span className="text-yellow-400 text-xl animate-pulse drop-shadow-[0_0_8px_rgba(250,204,21,0.8)]">⚠</span>}
       </div>
     </div>
   );

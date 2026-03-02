@@ -81,6 +81,20 @@ public:
     ssize_t receive_from(uint8_t* buffer, size_t max_size, std::string& source_address,
                          uint16_t& source_port);
 
+    /**
+     * @brief Send UDP packet to specific destination (works on bound sockets)
+     * @param dest_address Destination IP (e.g. "255.255.255.255" for broadcast)
+     * @param dest_port Destination port
+     * @param data Data to send
+     * @param size Number of bytes
+     * @return Bytes sent, or -1 on error. Set SO_BROADCAST before sending to broadcast addr.
+     */
+    ssize_t send_to(const std::string& dest_address, uint16_t dest_port, const uint8_t* data,
+                    size_t size);
+
+    /** @brief Enable broadcast (required before send_to to 255.255.255.255) */
+    bool set_broadcast(bool enable);
+
 private:
     int socket_fd_;
     bool is_bound_;

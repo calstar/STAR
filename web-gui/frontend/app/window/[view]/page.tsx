@@ -22,6 +22,7 @@ import CalibrationPage from '@/app/calibration/page';
 import UnifiedDashboardPage from '@/app/window/unified/page';
 import BoardsPage from '@/app/boards/page';
 import LCS_TCS_RTDPage from '@/app/plots/lcs-tcs-rtd/page';
+import ChamberGraphsPage from '@/app/plots/chamber/page';
 
 const viewComponents: Record<string, React.ComponentType> = {
   fuel: FuelGraphsPage,
@@ -35,9 +36,9 @@ const viewComponents: Record<string, React.ComponentType> = {
   boards: BoardsPage,
   config: ConfigPage,
   calibration: CalibrationPage,
-  controller: ControllerPage,
   unified: UnifiedDashboardPage,
   'lcs-tcs-rtd': LCS_TCS_RTDPage,
+  chamber: ChamberGraphsPage,
 };
 
 export default function WindowViewPage() {

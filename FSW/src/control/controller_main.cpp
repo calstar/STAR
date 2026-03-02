@@ -82,9 +82,13 @@ static void signalHandler(int /*sig*/) {
 int main(int argc, char* argv[]) {
     // ── Parse CLI args ─────────────────────────────────────────────────
     std::string config_path = "../../config/config.toml";
-    std::string elodin_host;
-    uint16_t elodin_port = 2240;
+    std::string elodin_host = "";  // empty = use config.toml [database].host
+    uint16_t elodin_port = 0;      // 0 = use config.toml [database].port
+    std::string relay_host = "127.0.0.1";
+    uint16_t relay_port = 9090;
     double thrust_desired = 1000.0;
+    bool elodin_host_from_cli = false;
+    bool elodin_port_from_cli = false;
 
     // Optional pressure targets in psi
     bool use_pressure_control = false;
@@ -97,8 +101,14 @@ int main(int argc, char* argv[]) {
             config_path = argv[++i];
         } else if (arg == "--elodin-host" && i + 1 < argc) {
             elodin_host = argv[++i];
+            elodin_host_from_cli = true;
         } else if (arg == "--elodin-port" && i + 1 < argc) {
             elodin_port = static_cast<uint16_t>(std::atoi(argv[++i]));
+            elodin_port_from_cli = true;
+        } else if (arg == "--relay-host" && i + 1 < argc) {
+            relay_host = argv[++i];
+        } else if (arg == "--relay-port" && i + 1 < argc) {
+            relay_port = static_cast<uint16_t>(std::atoi(argv[++i]));
         } else if (arg == "--thrust" && i + 1 < argc) {
             thrust_desired = std::atof(argv[++i]);
         } else if (arg == "--p-fuel" && i + 1 < argc) {
@@ -171,7 +181,18 @@ int main(int argc, char* argv[]) {
 
         v = getTomlValue(config_content, "controller", "controller_loop_hz", "10.0");
         loop_hz = std::atof(v.c_str());
+
+        if (!elodin_host_from_cli) {
+            std::string db_host = getTomlValue(config_content, "database", "host", "127.0.0.1");
+            if (!db_host.empty()) elodin_host = db_host;
+        }
+        if (!elodin_port_from_cli) {
+            std::string db_port_str = getTomlValue(config_content, "database", "port", "2240");
+            if (!db_port_str.empty()) elodin_port = static_cast<uint16_t>(std::atoi(db_port_str.c_str()));
+        }
     }
+    if (elodin_host.empty()) elodin_host = "127.0.0.1";
+    if (elodin_port == 0) elodin_port = 2240;
 
     // Controller algorithm config (using defaults from RobustDDPController.hpp)
     fsw::control::RobustDDPController::Config ctrl_cfg;
@@ -202,7 +223,7 @@ int main(int argc, char* argv[]) {
     // ── Initialize ─────────────────────────────────────────────────────
     fsw::control::ControllerService service;
 
-    if (!service.initialize(pwm, ctrl_cfg, elodin_host, elodin_port)) {
+    if (!service.initialize(pwm, ctrl_cfg, elodin_host, elodin_port, relay_host, relay_port)) {
         std::cerr << "❌ Failed to initialize controller service" << std::endl;
         return 1;
     }

@@ -173,14 +173,14 @@ export default function LCS_TCS_RTDPage() {
 
         const tc = buildChannels(boards, 'TC');
         if (tc.length) {
-          setTcEntities(tc.map((ch) => `TC.TC_CH${ch}`));
+          setTcEntities(tc.map((ch) => `TC.CH${ch}`));
           setTcLabels(tc.map((ch) => `TC Ch${ch}`));
         }
 
         const rtd = buildChannels(boards, 'RTD');
         if (rtd.length) {
-          setRtdEntities(rtd.map((ch) => `RTD.RTD_CH${ch}`));
-          setRtdCalEntities(rtd.map((ch) => `RTD_Cal.RTD_CH${ch}`));
+          setRtdEntities(rtd.map((ch) => `RTD.CH${ch}`));
+          setRtdCalEntities(rtd.map((ch) => `RTD_Cal.CH${ch}`));
           setRtdLabels(rtd.map((ch) => `RTD Ch${ch}`));
         }
 
@@ -310,7 +310,7 @@ export default function LCS_TCS_RTDPage() {
                     sensors={rtdEntities.map((entity, i) => ({
                       label: `${rtdLabels[i]} ADC`,
                       entity,
-                      component: 'raw_resistance',
+                      component: 'raw_resistance_counts',
                       unit: 'counts',
                       color: SENSE_COLORS[i % SENSE_COLORS.length],
                       decimals: 0,

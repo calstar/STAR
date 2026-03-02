@@ -48,7 +48,8 @@ public:
      */
     bool initialize(const PWMConfig& pwm_config,
                     const RobustDDPController::Config& controller_config,
-                    const std::string& elodin_host = "", uint16_t elodin_port = 2240);
+                    const std::string& elodin_host = "", uint16_t elodin_port = 2240,
+                    const std::string& relay_host = "127.0.0.1", uint16_t relay_port = 9090);
 
     /** Start the controller loop at the given rate. */
     bool start(double loop_rate_hz = 10.0);
@@ -92,6 +93,7 @@ private:
     // ── Controller loop ────────────────────────────────────────────────
     void controllerLoop();
     void elodinSubscriberLoop();
+    void relaySubscriberLoop();
 
     // ── State ──────────────────────────────────────────────────────────
     std::atomic<bool> running_{false};
@@ -99,9 +101,13 @@ private:
     // Controller algorithm
     std::unique_ptr<RobustDDPController> controller_;
 
-    // Elodin DB (may be nullptr if not connected)
+    // Elodin DB (write-only; used for publishing actuation/diagnostics)
     std::unique_ptr<elodin::ElodinClient> elodin_client_;
     bool elodin_connected_ = false;
+
+    // Relay WebSocket (for reading calibrated PT sensor data)
+    std::string relay_host_ = "127.0.0.1";
+    uint16_t relay_port_ = 9090;
 
     // PWM output
     PWMConfig pwm_config_;
@@ -122,6 +128,7 @@ private:
     // Loop timing
     std::thread controller_thread_;
     std::thread elodin_subscriber_thread_;
+    std::thread relay_subscriber_thread_;
     double loop_rate_hz_ = 10.0;
     double loop_interval_ms_ = 100.0;
 };

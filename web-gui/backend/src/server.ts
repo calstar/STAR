@@ -876,11 +876,15 @@ class SensorSystemServer {
             }
           }
           if (!channelId) {
-            const fallbackMap: Record<string, number> = {
-              'PT_Cal.Fuel_Upstream': 1, 'PT_Cal.GSE_Low': 2, 'PT_Cal.Fuel_Downstream': 3, 'PT_Cal.PT_CH3': 3,
-              'PT_Cal.Fuel_Fill_Tank': 4, 'PT_Cal.PT_CH4': 4, 'PT_Cal.Ox_Upstream': 5, 'PT_Cal.GN2_Regulated': 6, 'PT_Cal.Ox_Downstream': 7,
-            };
-            channelId = fallbackMap[parsed.entity] ?? null;
+            const chMatch = parsed.entity.match(/[._]CH?(\d+)$/);
+            if (chMatch) channelId = parseInt(chMatch[1], 10);
+            else {
+              const fallbackMap: Record<string, number> = {
+                'PT_Cal.Fuel_Upstream': 1, 'PT_Cal.GSE_Low': 2, 'PT_Cal.Fuel_Downstream': 3, 'PT_Cal.PT_CH3': 3,
+                'PT_Cal.Fuel_Fill_Tank': 4, 'PT_Cal.PT_CH4': 4, 'PT_Cal.Ox_Upstream': 5, 'PT_Cal.GN2_Regulated': 6, 'PT_Cal.Ox_Downstream': 7,
+              };
+              channelId = fallbackMap[parsed.entity] ?? null;
+            }
           }
         }
 
@@ -908,26 +912,23 @@ class SensorSystemServer {
         if (channelId) {
           this.handleSensorUpdate({ entity: `PT_Cal.PT_CH${channelId}`, component: 'pressure_psi', value: parsed.value, timestamp: parsed.timestamp });
         }
-        // DB only has raw PT; convert raw → pressure_psi here so frontend gauges get values
+        // Raw PT → pressure_psi (fallback when DB doesn't send calibrated)
         if (parsed.entity.startsWith('PT.') && parsed.component === 'raw_adc_counts' && payload.length >= 9) {
           const rawCh = payload.readUInt8(8);
           const uid = 100 + rawCh;
-          const rawAdc = parsed.value;
-          this.lastRawAdc.set(uid, Math.round(rawAdc));
+          this.lastRawAdc.set(uid, Math.round(parsed.value));
           const ts = typeof parsed.timestamp === 'number' && parsed.timestamp > 1e12 ? parsed.timestamp : Date.now();
           let psi: number;
           const coeffs = this.ptCalibration.get(uid) ?? this.ptCalibration.get(rawCh);
           if (coeffs) {
-            psi = calculatePressure(rawAdc, coeffs, this.envState);
-            if (!isFinite(psi) || isNaN(psi)) psi = (rawAdc / 2147483648) * 500;  // fallback scale
+            psi = calculatePressure(parsed.value, coeffs, this.envState);
+            if (!isFinite(psi) || isNaN(psi)) psi = (parsed.value / 2147483648) * 500;
           } else {
-            // No calibration: show linear-scaled value so frontend at least shows data
-            psi = (rawAdc / 2147483648) * 500;
+            psi = (parsed.value / 2147483648) * 500;
           }
           const calEntity = this.channelToEntityMap[rawCh] || `PT_Cal.PT_CH${rawCh}`;
           this.handleSensorUpdate({ entity: calEntity, component: 'pressure_psi', value: psi, timestamp: ts });
           this.handleSensorUpdate({ entity: `PT_Cal.PT_CH${rawCh}`, component: 'pressure_psi', value: psi, timestamp: ts });
-          // Config-driven entity map handles all naming — no hardcoded legacy map needed
         }
         // Emit ACTUATOR_UPDATE so dashboard actuator panels get state (open/closed from raw ADC threshold).
         if (parsed.entity.startsWith('ACT.') && parsed.component === 'raw_adc_counts') {

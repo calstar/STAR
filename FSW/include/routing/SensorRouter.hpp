@@ -112,7 +112,7 @@ public:
     route_lc_samples(const daq_comms::protocol::SensorBatch& batch,
                      uint64_t receive_timestamp_ns) const;
 
-    // ── Calibrated routing ─────────────────────────────────────────────────
+    // ── Calibrated routing (require SensorCalibrationManager) ─────────────
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedTCMessage>>
     route_tc_samples_calibrated(const daq_comms::protocol::SensorBatch& batch,
                                 uint64_t receive_timestamp_ns) const;
@@ -124,6 +124,20 @@ public:
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedLCMessage>>
     route_lc_samples_calibrated(const daq_comms::protocol::SensorBatch& batch,
                                 uint64_t receive_timestamp_ns) const;
+
+    /**
+     * @brief RTD Pt100 temperature conversion — no calibration manager required.
+     *
+     * Applies Callendar-Van Dusen (Pt100, R0=100Ω, A=3.9083e-3, B=-5.775e-7):
+     *   resistance_ohm = raw_resistance_counts * 0.001
+     *   T = (-R0*A + sqrt((R0*A)^2 - 4*R0*B*(R0 - R))) / (2*R0*B)
+     *
+     * Outputs CalibratedRTDMessage at packet_id {0x22, 0x10 + channel_id + 1}
+     * (matching the RTD_Cal VTable registered in DatabaseConfig).
+     */
+    std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedRTDMessage>>
+    route_rtd_samples_pt100(const daq_comms::protocol::SensorBatch& batch,
+                            uint64_t receive_timestamp_ns) const;
 
 private:
     std::unordered_map<std::string, SensorChannelConfig>

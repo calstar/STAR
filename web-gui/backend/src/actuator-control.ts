@@ -171,8 +171,38 @@ export function guiStateToHardwareState(guiState: number, actuatorType: 'NC' | '
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// UDP command sending
+// UDP command sending — routed through daq_bridge proxy on 127.0.0.1:5557
+// Proxy format: [dest_ip(4B big-endian) | dest_port(2B LE) | payload...]
 // ═══════════════════════════════════════════════════════════════════════════════
+
+const DAQ_PROXY_HOST = '127.0.0.1';
+const DAQ_PROXY_PORT = 5557;
+
+/** Wrap a raw actuator payload in the proxy envelope and send to daq_bridge. */
+function sendViaProxy(host: ActuatorHost, destIp: string, destPort: number, payload: Buffer): boolean {
+    if (!host.actuatorSocket) return false;
+    try {
+        // dest_ip as 4 bytes big-endian (network order)
+        const ipOctets = destIp.split('.').map(Number);
+        if (ipOctets.length !== 4 || ipOctets.some(b => !Number.isFinite(b) || b < 0 || b > 255)) {
+            console.error(`❌ sendViaProxy: invalid dest IP "${destIp}"`);
+            return false;
+        }
+        const proxied = Buffer.allocUnsafe(6 + payload.length);
+        proxied[0] = ipOctets[0]; proxied[1] = ipOctets[1];
+        proxied[2] = ipOctets[2]; proxied[3] = ipOctets[3];
+        proxied.writeUInt16LE(destPort, 4);
+        payload.copy(proxied, 6);
+
+        host.actuatorSocket.send(proxied, 0, proxied.length, DAQ_PROXY_PORT, DAQ_PROXY_HOST, (err) => {
+            if (err) console.error(`❌ Proxy send failed: ${err.message}`);
+        });
+        return true;
+    } catch (error) {
+        console.error('❌ sendViaProxy error:', error);
+        return false;
+    }
+}
 
 /**
  * Send actuator command via UDP (matches combined_gui.py packet format).
@@ -275,22 +305,7 @@ export function sendActuatorCommandUDP(
             return false;
         }
 
-        try {
-            host.actuatorSocket.send(buffer, 0, buffer.length, host.actuatorPort, targetIp, (err) => {
-                if (err) {
-                    const error = err as any;
-                    console.error(`❌ Failed to send actuator command to ${targetIp}:${host.actuatorPort}: ${error.code || 'UNKNOWN'} — ${error.message}`);
-                    _recreateSocket(host);
-                }
-            });
-        } catch (sendError) {
-            const err = sendError as any;
-            console.error(`❌ Synchronous error during send: ${err.code || 'UNKNOWN'} — ${err.message}`);
-            _recreateSocket(host);
-            return false;
-        }
-
-        return true;
+        return sendViaProxy(host, targetIp, host.actuatorPort, buffer);
     } catch (error) {
         console.error('❌ Error sending actuator command:', error);
         _recreateSocket(host);
@@ -338,15 +353,7 @@ export function sendPWMActuatorCommandUDP(
         buffer.writeFloatLE(frequency, offset);
         offset += 4;
 
-        host.actuatorSocket.send(buffer, 0, buffer.length, host.actuatorPort, targetIp, (err) => {
-            if (err) {
-                const error = err as any;
-                console.error(`❌ Failed to send PWM command to ${targetIp}:${host.actuatorPort}: ${error.code || 'UNKNOWN'} — ${error.message}`);
-                _recreateSocket(host);
-            }
-        });
-
-        return true;
+        return sendViaProxy(host, targetIp, host.actuatorPort, buffer);
     } catch (error) {
         console.error('❌ Error sending PWM command:', error);
         _recreateSocket(host);

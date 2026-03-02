@@ -32,17 +32,19 @@ using ControllerActuationMessage =
  *
  * Contains controller internal state and diagnostics for monitoring and replay.
  */
+// Field order: U64 + 6xF64 + I32 + 2xU8
+// I32 is at byte offset 56 (4-byte aligned); U8s follow at 60, 61.
 using ControllerDiagnosticsMessage =
-    CommsMessage<uint64_t,  // (0) timestamp_ns - monotonic timestamp
-                 double,    // (1) F_ref - Reference thrust [N]
-                 double,    // (2) MR_ref - Reference mixture ratio
-                 double,    // (3) F_estimated - Estimated thrust [N]
-                 double,    // (4) MR_estimated - Estimated mixture ratio
-                 double,    // (5) P_ch - Chamber pressure [Pa]
-                 double,    // (6) cost - Controller cost function value
-                 uint8_t,   // (7) safety_filtered - Safety filter active (0/1)
-                 uint8_t,   // (8) cutoff_active - Supervisory cutoff active (0/1)
-                 int32_t    // (9) solver_iters - DDP solver iterations
+    CommsMessage<uint64_t,  // (0) timestamp_ns   offset=0  (8 bytes)
+                 double,    // (1) F_ref           offset=8  (8 bytes)
+                 double,    // (2) MR_ref          offset=16 (8 bytes)
+                 double,    // (3) F_estimated     offset=24 (8 bytes)
+                 double,    // (4) MR_estimated    offset=32 (8 bytes)
+                 double,    // (5) P_ch            offset=40 (8 bytes)
+                 double,    // (6) cost            offset=48 (8 bytes)
+                 int32_t,   // (7) solver_iters    offset=56 (4 bytes, 4-byte aligned)
+                 uint8_t,   // (8) safety_filtered offset=60 (1 byte)
+                 uint8_t    // (9) cutoff_active   offset=61 (1 byte)
                  >;
 
 /**

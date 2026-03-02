@@ -87,10 +87,22 @@ echo "🚀 Starting daq_bridge (config from repo root)..."
 DAQ_BRIDGE_PID=$!
 
 echo "🚀 Starting controller_service..."
-./controller_service &
+./controller_service --config ../../config/config.toml --elodin-host 127.0.0.1 &
 CONTROLLER_PID=$!
 
 cd ../../web-gui
+
+# Calibration sidecar (reads raw PT from relay, writes calibrated PT to Elodin DB)
+SIDECAR_SCRIPT="$SCRIPT_DIR/../scripts/calibration/calibration_server.py"
+if [ -f "$SIDECAR_SCRIPT" ] && command -v python3 &>/dev/null; then
+  echo "🧪 Starting calibration sidecar..."
+  PYTHONPATH="$SCRIPT_DIR/.." python3 "$SIDECAR_SCRIPT" > /tmp/calibration_sidecar.log 2>&1 &
+  SIDECAR_PID=$!
+  echo "   ✅ Calibration sidecar started (pid $SIDECAR_PID), log: /tmp/calibration_sidecar.log"
+else
+  SIDECAR_PID=""
+  echo "   ⚠️ calibration_server.py not found or python3 not installed — skipping"
+fi
 
 
 # Wait for backend to start
@@ -117,5 +129,5 @@ echo ""
 echo "Press Ctrl+C to stop all services"
 
 # Wait for user interrupt
-trap "echo 'Stopping all services...'; kill $BACKEND_PID $FRONTEND_PID $RELAY_PID $DAQ_BRIDGE_PID $CONTROLLER_PID $ELODIN_PID 2>/dev/null; exit" INT TERM
+trap "echo 'Stopping all services...'; kill $BACKEND_PID $FRONTEND_PID $RELAY_PID $DAQ_BRIDGE_PID $CONTROLLER_PID $SIDECAR_PID $ELODIN_PID 2>/dev/null; exit" INT TERM
 wait

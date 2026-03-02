@@ -2,8 +2,13 @@
 import asyncio
 import json
 import logging
+import math
+import socket
+import struct
 import threading
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from typing import Optional
 import websockets
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
@@ -23,6 +28,150 @@ logger = logging.getLogger("CalibrationServer")
 
 # Single source of truth for config: config/config.toml via shared loader.
 config = load_config()
+
+
+class ElodinWriter:
+    """Minimal TCP client that writes TABLE packets directly to Elodin DB."""
+
+    def __init__(self, host: str = "127.0.0.1", port: int = 2240):
+        self.host = host
+        self.port = port
+        self.sock: Optional[socket.socket] = None
+        self.connected = False
+
+    def connect(self) -> bool:
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.settimeout(3.0)
+            self.sock.connect((self.host, self.port))
+            self.connected = True
+            logger.info(f"[ElodinWriter] Connected to {self.host}:{self.port}")
+            return True
+        except Exception as e:
+            logger.warning(f"[ElodinWriter] Connect failed: {e}")
+            self.sock = None
+            self.connected = False
+            return False
+
+    def write_calibrated_pt(self, channel_id: int, pressure_psi: float) -> bool:
+        """
+        Write a calibrated PT TABLE packet to Elodin DB.
+        Packet ID: [0x20, 0x10 + channel_id]  (e.g. ch1 → 0x11)
+        Payload:   ts_ns(8) + ch(1) + pad(3) + psi(float32,4) + ts_ms(4) + flags(1)
+        """
+        if not self.connected or not self.sock:
+            return False
+        try:
+            ts_ns = time.time_ns()
+            ts_ms = (ts_ns // 1_000_000) & 0xFFFFFFFF
+            payload = struct.pack("<Q", ts_ns)
+            payload += struct.pack("<B", channel_id)
+            payload += bytes(3)
+            payload += struct.pack("<f", pressure_psi)
+            payload += struct.pack("<I", ts_ms)
+            payload += struct.pack("<B", 0)
+            # Elodin header: len(4) + ty(1) + packetId(2) + requestId(1)
+            # len = payloadLen + 4
+            packet_id_low = 0x10 + channel_id
+            header = struct.pack("<I", len(payload) + 4)
+            header += struct.pack("<B", 1)  # TABLE
+            header += struct.pack("<BB", 0x20, packet_id_low)
+            header += struct.pack("<B", 0)
+            self.sock.sendall(header + payload)
+            return True
+        except Exception as e:
+            logger.debug(f"[ElodinWriter] Write failed: {e}")
+            self.sock = None
+            self.connected = False
+            return False
+
+
+def _parse_raw_adc(payload: bytes) -> Optional[int]:
+    """Extract raw ADC uint32 from a raw PT payload (21-byte or 12-byte format)."""
+    if len(payload) >= 21:
+        return struct.unpack_from("<I", payload, 12)[0]
+    if len(payload) >= 12:
+        return struct.unpack_from("<I", payload, 8)[0]
+    return None
+
+
+# Per-channel write throttle (max 10 Hz to Elodin DB)
+_last_elodin_write: dict = {}
+_ELODIN_WRITE_INTERVAL = 0.1  # seconds
+
+
+async def relay_subscriber_task():
+    """
+    Subscribe to the Elodin Relay WebSocket to get raw ADC data.
+    Feeds the calibration engine and writes calibrated values back to Elodin DB.
+    The relay is the sole subscriber to Elodin DB and fans out TABLE packets here.
+    """
+    sidecar_cfg = config.get("calibration", {}).get("sidecar", {})
+    relay_host = sidecar_cfg.get("relay_host", "127.0.0.1")
+    relay_port = sidecar_cfg.get("relay_port", 9090)
+    relay_url = f"ws://{relay_host}:{relay_port}"
+
+    elodin_cfg = config.get("database", {})
+    elodin_host = elodin_cfg.get("host", "127.0.0.1")
+    elodin_port = elodin_cfg.get("port", 2240)
+    writer = ElodinWriter(elodin_host, elodin_port)
+
+    logger.info(f"[Relay] Relay subscriber starting → {relay_url}")
+
+    while True:
+        try:
+            async with websockets.connect(relay_url, ping_interval=20) as ws:
+                logger.info(f"[Relay] Connected to relay at {relay_url}")
+                async for message in ws:
+                    if not isinstance(message, bytes) or len(message) < 8:
+                        continue
+                    ty = message[4]
+                    high = message[5]
+                    low = message[6]
+                    payload = message[8:]
+
+                    if ty != 1:  # TABLE = 1
+                        continue
+
+                    # Raw PT: [0x20, 0x01..0x0A]
+                    if high != 0x20 or not (0x01 <= low <= 0x0A):
+                        continue
+
+                    channel_id = low
+                    adc = _parse_raw_adc(payload)
+                    if adc is None:
+                        continue
+
+                    key = ("PT", channel_id)
+                    if key not in state.orchestrator.robust:
+                        continue
+
+                    # Feed raw ADC into the calibration engine (Phase 2 online update)
+                    state.orchestrator._online_update(key, float(adc))
+
+                    # Compute calibrated pressure from engine and write back to Elodin DB
+                    now = time.monotonic()
+                    if now - _last_elodin_write.get(channel_id, 0) < _ELODIN_WRITE_INTERVAL:
+                        continue
+
+                    rcf = state.orchestrator.robust[key]
+                    idx = state.orchestrator._key_to_idx.get(key)
+                    if idx is None:
+                        continue
+
+                    phi = rcf.environmental_robust_basis_functions(float(adc), state.env_state)
+                    pred, _unc, _alert = state.orchestrator.engine.predict(idx, phi)
+                    if pred is None or not math.isfinite(pred):
+                        continue
+
+                    _last_elodin_write[channel_id] = now
+                    if not writer.connected:
+                        writer.connect()
+                    writer.write_calibrated_pt(channel_id, float(pred))
+
+        except Exception as e:
+            logger.warning(f"[Relay] Disconnected ({e}), retrying in 5s...")
+            await asyncio.sleep(5)
 
 
 class ServerState:
@@ -334,6 +483,7 @@ def run_ws_server(host, port):
     async def _run_ws():
         async with websockets.serve(ws_handler, host, port):
             logger.info(f"Starting WebSocket server on {host}:{port}")
+            asyncio.ensure_future(relay_subscriber_task())
             await asyncio.Future()  # run forever
 
     ws_loop.run_until_complete(_run_ws())

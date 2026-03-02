@@ -30,24 +30,33 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
 
-    // Parse command line arguments
-    std::string elodin_host = "localhost";
+    // Parse command line arguments (flags: --elodin-host, --relay-host, --rate, --config)
+    std::string elodin_host = "127.0.0.1";
     uint16_t elodin_port = 2240;
+    std::string relay_host = "127.0.0.1";
+    uint16_t relay_port = 9090;
     double loop_rate_hz = 10.0;
 
-    if (argc > 1) {
-        elodin_host = argv[1];
-    }
-    if (argc > 2) {
-        elodin_port = static_cast<uint16_t>(std::stoi(argv[2]));
-    }
-    if (argc > 3) {
-        loop_rate_hz = std::stod(argv[3]);
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if ((arg == "--elodin-host" || arg == "-e") && i + 1 < argc)
+            elodin_host = argv[++i];
+        else if ((arg == "--relay-host" || arg == "-r") && i + 1 < argc)
+            relay_host = argv[++i];
+        else if ((arg == "--relay-port") && i + 1 < argc)
+            relay_port = static_cast<uint16_t>(std::stoi(argv[++i]));
+        else if ((arg == "--rate") && i + 1 < argc)
+            loop_rate_hz = std::stod(argv[++i]);
+        else if ((arg == "--elodin-port") && i + 1 < argc)
+            elodin_port = static_cast<uint16_t>(std::stoi(argv[++i]));
+        else if (arg == "--config" && i + 1 < argc)
+            ++i;  // config path accepted but not used (defaults cover all)
     }
 
     std::cout << "[controller_service] Starting C++ controller service..." << std::endl;
     std::cout << "[controller_service] Elodin DB: " << elodin_host << ":" << elodin_port
               << std::endl;
+    std::cout << "[controller_service] Relay: " << relay_host << ":" << relay_port << std::endl;
     std::cout << "[controller_service] Loop rate: " << loop_rate_hz << " Hz" << std::endl;
 
     // Create controller service
@@ -86,8 +95,18 @@ int main(int argc, char* argv[]) {
     config.tau_line_F = 0.05;
     config.tau_line_O = 0.05;
 
+    // Default PWM config (fuel → CH3, LOX → CH8 on actuator board)
+    fsw::control::ControllerService::PWMConfig pwm_config;
+    pwm_config.actuator_board_ip = "192.168.2.201";
+    pwm_config.actuator_port = 5005;
+    pwm_config.fuel_channel = 3;
+    pwm_config.lox_channel = 8;
+    pwm_config.frequency_hz = 10.0f;
+    pwm_config.duration_ms = 1000;
+
     // Initialize controller service
-    if (!g_controller_service->initialize(elodin_host, elodin_port, config)) {
+    if (!g_controller_service->initialize(pwm_config, config, elodin_host, elodin_port,
+                                          relay_host, relay_port)) {
         std::cerr << "[controller_service] ❌ Failed to initialize controller service" << std::endl;
         return 1;
     }

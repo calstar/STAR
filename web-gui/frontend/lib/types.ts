@@ -10,7 +10,7 @@ export enum MessageType {
   SEND_COMMAND = 'send_command',
   QUERY_HISTORICAL = 'query_historical',
   CALIBRATION_COMMAND = 'calibration_command',
-
+  RESEND_CONFIG = 'resend_config',
   // Server → Client
   SENSOR_UPDATE = 'sensor_update',
   ACTUATOR_UPDATE = 'actuator_update',
@@ -126,12 +126,12 @@ export interface StateUpdate {
 // Command payload
 export interface CommandPayload {
   commandType:
-    | 'state_transition'
-    | 'actuator'
-    | 'controller_frequency'
-    | 'pwm_actuator'
-    | 'clear_abort'
-    | 'debug_mode';
+  | 'state_transition'
+  | 'actuator'
+  | 'controller_frequency'
+  | 'pwm_actuator'
+  | 'clear_abort'
+  | 'debug_mode';
   data: {
     state?: SystemState;
     actuatorId?: ActuatorId;
@@ -180,6 +180,7 @@ export interface CalibrationStatusPayload {
   channels: CalibrationChannelStatus[];
   phase2Enabled: boolean;
   timestamp: number;
+  calibrationFilePath?: string;
 }
 
 export type CalibrationCommandType =
@@ -214,6 +215,7 @@ export interface BoardStatus {
   engineState: number | null;
   configured?: boolean;
   configError?: string;
+  configLastSentAt?: number;
   necessaryForAbort?: boolean;
   designatedSurvivor?: boolean;
   /** 0 = Internal 2.5V, 1 = VDD ratiometric, 2 = 5V absolute */

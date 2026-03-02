@@ -29,8 +29,8 @@ export default function FuelGraphsPage() {
   const colors = entities.map((e) => getEntityColor(e));
 
   // Sidebar values
-  const upSensor = fuelSensors.find((s) => s.role.toLowerCase().includes('upstream'));
-  const downSensor = fuelSensors.find((s) => s.role.toLowerCase().includes('downstream'));
+  const upSensor = fuelSensors.find((s) => s.role.toLowerCase().includes('up'));
+  const downSensor = fuelSensors.find((s) => s.role.toLowerCase().includes('dn') || s.role.toLowerCase().includes('down'));
   const up = useSensorValue(upSensor?.calEntity ?? '', 'pressure_psi');
   const down = useSensorValue(downSensor?.calEntity ?? '', 'pressure_psi');
 
@@ -89,8 +89,6 @@ export default function FuelGraphsPage() {
                 { label: 'Fuel Main', entity: 'ACT.Fuel_Main', color: getActuatorColor('ACT.Fuel_Main') },
                 { label: 'Fuel Vent', entity: 'ACT.Fuel_Vent', color: getActuatorColor('ACT.Fuel_Vent') },
                 { label: 'Fuel Press', entity: 'ACT.Fuel_Press', color: getActuatorColor('ACT.Fuel_Press') },
-                { label: 'Fuel Fill Vent', entity: 'ACT.Fuel_Fill_Vent', color: getActuatorColor('ACT.Fuel_Fill_Vent') },
-                { label: 'Fuel Fill Press', entity: 'ACT.Fuel_Fill_Press', color: getActuatorColor('ACT.Fuel_Fill_Press') },
               ]}
             />
           </div>

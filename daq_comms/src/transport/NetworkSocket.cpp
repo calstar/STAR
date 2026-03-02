@@ -119,6 +119,39 @@ ssize_t UDPSocket::receive_from(uint8_t* buffer, size_t max_size, std::string& s
     return received;
 }
 
+bool UDPSocket::set_broadcast(bool enable) {
+    if (socket_fd_ < 0) return false;
+    int opt = enable ? 1 : 0;
+    if (setsockopt(socket_fd_, SOL_SOCKET, SO_BROADCAST, &opt, sizeof(opt)) < 0) {
+        last_error_ = "Failed to set SO_BROADCAST: " + std::string(strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+ssize_t UDPSocket::send_to(const std::string& dest_address, uint16_t dest_port,
+                          const uint8_t* data, size_t size) {
+    if (socket_fd_ < 0) {
+        last_error_ = "Socket not initialized";
+        return -1;
+    }
+    struct sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(dest_port);
+    if (inet_aton(dest_address.c_str(), &addr.sin_addr) == 0) {
+        last_error_ = "Invalid destination: " + dest_address;
+        return -1;
+    }
+    ssize_t sent = ::sendto(socket_fd_, data, size, 0,
+                            reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
+    if (sent < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+        last_error_ = "sendto error: " + std::string(strerror(errno));
+        return -1;
+    }
+    return sent;
+}
+
 ssize_t UDPSocket::send(const uint8_t* data, size_t size) {
     if (socket_fd_ < 0) {
         last_error_ = "Socket not initialized";

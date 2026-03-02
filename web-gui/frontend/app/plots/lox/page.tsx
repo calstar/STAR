@@ -11,8 +11,7 @@ import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
 import { useSensorConfig, filterByRole } from '@/lib/sensor-config';
 import { usePressureLimits, getLimitsForSystem } from '@/lib/pressure-limits';
-
-
+import { useState } from 'react';
 
 export default function LOXGraphsPage() {
   const updateSensor = useSensorStore((s) => s.updateSensor);
@@ -22,16 +21,37 @@ export default function LOXGraphsPage() {
   const pressureLimits = usePressureLimits();
   const loxLimits = getLimitsForSystem(pressureLimits, 'LOX');
 
-  // LOX / Ox sensors from config (role names containing "Ox" or "LOX")
-  const loxSensors = filterByRole(allSensors, 'Ox', 'LOX');
-  const entities = loxSensors.map((s) => s.calEntity);
-  const labels = loxSensors.map((s) => s.role);
+  const [activeTab, setActiveTab] = useState<'PT' | 'RTD'>('PT');
+
+  // Sensors
+  const ptSensors = filterByRole(allSensors, 'Ox', 'LOX').filter(s => s.calEntity.startsWith('PT') || s.calEntity.startsWith('PT_Cal'));
+  const rtdSensors = filterByRole(allSensors, 'Ox', 'LOX').filter(s => s.calEntity.startsWith('RTD') || s.calEntity.startsWith('RTD_Cal'));
+
+  let currentSensors = ptSensors;
+  let componentName = 'pressure_psi';
+  let yLabel = 'Pressure (PSI)';
+
+  if (activeTab === 'RTD') {
+    currentSensors = rtdSensors;
+    componentName = 'temperature_c';
+    if (rtdSensors.some(s => s.calEntity.includes('RTD.'))) {
+      componentName = 'raw_resistance_counts';
+      yLabel = 'Temp (Raw ADC)';
+    } else {
+      yLabel = 'Temperature (°C)';
+    }
+  }
+
+  const entities = currentSensors.map((s) => s.calEntity);
+  const labels = currentSensors.map((s) => s.role);
   const colors = entities.map((e) => getEntityColor(e));
 
-  const upSensor = loxSensors.find((s) => s.role.toLowerCase().includes('upstream'));
-  const downSensor = loxSensors.find((s) => s.role.toLowerCase().includes('downstream'));
+  const upSensor = ptSensors.find((s) => s.role.toLowerCase().includes('up'));
+  const downSensor = ptSensors.find((s) => s.role.toLowerCase().includes('dn') || s.role.toLowerCase().includes('down'));
+  const fillSensor = ptSensors.find((s) => s.role.toLowerCase().includes('fill'));
   const up = useSensorValue(upSensor?.calEntity ?? '', 'pressure_psi');
   const down = useSensorValue(downSensor?.calEntity ?? '', 'pressure_psi');
+  const fill = useSensorValue(fillSensor?.calEntity ?? '', 'pressure_psi');
 
   useEffect(() => {
     ws.connect();
@@ -49,12 +69,26 @@ export default function LOXGraphsPage() {
           <div className="w-1 h-5 bg-red-500 rounded-full" />
           <h1 className="text-base font-bold text-red-400 tracking-wider">LOX SYSTEM</h1>
         </div>
+        <div className="flex gap-2 bg-gray-900 rounded-lg p-1">
+          <button
+            onClick={() => setActiveTab('PT')}
+            className={`px-4 py-1.5 text-sm font-bold rounded-md transition-colors ${activeTab === 'PT' ? 'bg-red-500 text-black' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
+          >
+            PTs (Pressures)
+          </button>
+          <button
+            onClick={() => setActiveTab('RTD')}
+            className={`px-4 py-1.5 text-sm font-bold rounded-md transition-colors ${activeTab === 'RTD' ? 'bg-orange-500 text-black' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
+          >
+            RTDs (Temperatures)
+          </button>
+        </div>
       </div>
 
       {/* Live readout strip */}
       <div className="flex-shrink-0">
-        <SensorReadoutStrip sensors={loxSensors.map((s) => ({
-          label: s.role, entity: s.calEntity, component: 'pressure_psi', color: getEntityColor(s.calEntity),
+        <SensorReadoutStrip sensors={currentSensors.map((s) => ({
+          label: s.role, entity: s.calEntity, component: componentName, color: getEntityColor(s.calEntity),
         }))} />
       </div>
 
@@ -64,12 +98,12 @@ export default function LOXGraphsPage() {
         <div className="flex-1 flex flex-col gap-2 min-h-0 min-w-0">
           <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0" style={{ minHeight: '300px' }}>
             <TimeSeriesPlot
-              title="LOX Pressure (PSI)"
+              title={`LOX ${activeTab}`}
               entities={entities}
               labels={labels}
-              component="pressure_psi"
+              component={componentName}
               colors={colors}
-              yLabel="Pressure (PSI)"
+              yLabel={yLabel}
             />
           </div>
 
@@ -99,6 +133,9 @@ export default function LOXGraphsPage() {
             </div>
             <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-visible">
               <PressureBar label="Down" value={down} nop={loxLimits.NOP} meop={loxLimits.MEOP} color={getEntityColor(downSensor?.calEntity ?? '')} showLabels={false} />
+            </div>
+            <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-visible">
+              <PressureBar label="Fill" value={fill} nop={loxLimits.NOP} meop={loxLimits.MEOP} color={getEntityColor(fillSensor?.calEntity ?? '')} showLabels={false} />
             </div>
           </div>
         </div>

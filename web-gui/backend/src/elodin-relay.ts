@@ -10,7 +10,6 @@
 
 import { WebSocketServer } from 'ws';
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
-import { subscribeWithStream } from './elodin-stream.js';
 import { registerVTables } from './elodin-vtable.js';
 
 const ELODIN_HOST = process.env.ELODIN_HOST || '::1';
@@ -38,9 +37,47 @@ function main(): void {
     console.log(`[Relay] Backends can connect with ELODIN_RELAY_WS_URL=ws://localhost:${RELAY_WS_PORT}`);
   });
 
+  let tablePacketCount = 0;
+  let resubscribeTimer: NodeJS.Timeout | null = null;
+  // Track which high-byte packet ID groups have delivered at least one TABLE packet.
+  // Groups: 0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC, 0x30=ACT, 0x40=CTRL_ACT, 0x41=CTRL_DIAG, 0x42=CTRL_MEAS
+  const seenHighBytes = new Set<number>();
+
+  // Re-send VTableStream subscriptions. Elodin DB rejects subscriptions for
+  // VTables that aren't registered yet, so retry until all expected groups flow.
+  // daq_bridge VTables register in ~2s; controller VTables register a few seconds later.
+  function scheduleResubscribe(attempt: number): void {
+    if (resubscribeTimer) return;
+    resubscribeTimer = setTimeout(() => {
+      resubscribeTimer = null;
+      if (!elodin.isConnected()) return;
+      const missingGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x40, 0x41, 0x42]
+        .filter(g => !seenHighBytes.has(g));
+      if (missingGroups.length > 0) {
+        const missing = missingGroups.map(g => `0x${g.toString(16)}`).join(', ');
+        console.log(`[Relay] Missing groups [${missing}] — retrying subscriptions (attempt #${attempt})...`);
+        registerVTables(elodin).then(() => {
+          scheduleResubscribe(attempt + 1);
+        }).catch((e) => {
+          console.error('[Relay] Subscription retry failed:', e);
+          scheduleResubscribe(attempt + 1);
+        });
+      }
+    }, 5000);
+  }
+
   elodin.on('packet', (header, payload) => {
     if (header.ty === ElodinPacketType.TABLE) {
-      console.log(`[Relay] Received TABLE packet: packetId=[0x${header.packetId[0].toString(16)}, 0x${header.packetId[1].toString(16)}], payloadLen=${payload.length}`);
+      tablePacketCount++;
+      seenHighBytes.add(header.packetId[0]);
+      // Cancel retry once all expected groups are delivering data
+      if (resubscribeTimer) {
+        const allGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x40, 0x41, 0x42];
+        if (allGroups.every(g => seenHighBytes.has(g))) {
+          clearTimeout(resubscribeTimer);
+          resubscribeTimer = null;
+        }
+      }
     }
     // Forward as binary: 8-byte header (len LE, ty, packetId[2], requestId) + payload
     const payloadLen = payload.length;
@@ -56,20 +93,43 @@ function main(): void {
 
     payload.copy(broadcastBuffer, 8);
     wss.clients.forEach((client) => {
-      if (client.readyState === 1) client.send(broadcastBuffer);
+      if (client.readyState === 1) {
+        try { client.send(broadcastBuffer); } catch (_) { /* ignore closed client */ }
+      }
     });
   });
 
-  elodin.on('connected', async () => {
-    console.log('[Relay] Elodin connected, subscribing...');
-    await subscribeWithStream(elodin);
-    await new Promise((r) => setTimeout(r, 300));
-    await registerVTables(elodin);
-    console.log('[Relay] Subscriptions sent; relaying TABLE packets to WebSocket clients.');
+  elodin.on('connected', () => {
+    console.log('[Relay] Elodin connected, sending VTableStream subscriptions...');
+    tablePacketCount = 0;
+    seenHighBytes.clear();
+    if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
+    // Use VTableStream (not Stream) so Elodin DB sends whole-row TABLE packets
+    // with original structured IDs [0x20, 0x01..0x1E] rather than per-component
+    // FNV-1a hash IDs that the backend cannot parse.
+    registerVTables(elodin).then(() => {
+      console.log('[Relay] VTableStream subscriptions sent; relaying TABLE packets to WebSocket clients.');
+      scheduleResubscribe(2);
+    }).catch((e) => {
+      console.error('[Relay] Initial subscription failed:', e);
+      scheduleResubscribe(1);
+    });
   });
 
-  elodin.on('disconnected', () => console.log('[Relay] Elodin disconnected'));
+  elodin.on('disconnected', () => {
+    console.log('[Relay] Elodin disconnected');
+    tablePacketCount = 0;
+    seenHighBytes.clear();
+    if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
+  });
   elodin.on('error', () => { });
+
+  process.on('uncaughtException', (err) => {
+    console.error('[Relay] Uncaught exception (keeping alive):', err);
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error('[Relay] Unhandled rejection (keeping alive):', reason);
+  });
 
   elodin.connect().then((ok) => {
     if (ok) console.log('[Relay] Connected to Elodin at ' + ELODIN_HOST + ':' + ELODIN_PORT);

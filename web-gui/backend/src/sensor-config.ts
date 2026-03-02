@@ -40,20 +40,31 @@ export function loadSensorRoleMap(): {
 
     try {
         const config = readConfig();
-        const sensorRoles = config.sensor_roles || {};
+        // Config has [sensor_roles_pt_board] and [sensor_roles_pt2], NOT [sensor_roles]
+        const sensorRolesPtBoard = (config as any).sensor_roles_pt_board || {};
+        const sensorRolesPt2 = (config as any).sensor_roles_pt2 || {};
         const boards = config.boards || {};
 
-        // Build reverse map: channel_id → role_name (for backward compatibility)
+        // Build reverse map: channel_id → role_name from BOTH PT boards
         const reverseMap: Record<number, string> = {};
-        for (const [roleName, channelId] of Object.entries(sensorRoles)) {
+        // PT board 1 (sensor_roles_pt_board)
+        for (const [roleName, channelId] of Object.entries(sensorRolesPtBoard)) {
             if (typeof channelId === 'number' && channelId >= 1 && channelId <= 10) {
                 const entityName = roleName.replace(/\s+/g, '_');
                 reverseMap[channelId] = `PT_Cal.${entityName}`;
             }
         }
+        // PT board 2 (sensor_roles_pt2) — channels map to 11+ for cross-board uniqueness
+        for (const [roleName, channelId] of Object.entries(sensorRolesPt2)) {
+            if (typeof channelId === 'number' && channelId >= 1 && channelId <= 10) {
+                const entityName = roleName.replace(/\s+/g, '_');
+                // PT2 channels are separate board — keep original channel ID but track under board-specific map
+                reverseMap[channelId + 10] = `PT_Cal.${entityName}`;
+            }
+        }
 
         channelToEntityMap = reverseMap;
-        console.log(`📋 Loaded sensor role map from config.toml:`, channelToEntityMap);
+        console.log(`📋 Loaded sensor role map from config.toml (${Object.keys(reverseMap).length} channels):`, channelToEntityMap);
 
         // Build board-specific mappings to prevent cross-contamination
         for (const [boardKey, boardRaw] of Object.entries(boards)) {
@@ -66,7 +77,7 @@ export function loadSensorRoleMap(): {
 
                 // HP PT board uses sensor_roles_pt2; others use sensor_roles_<boardKey> (e.g. sensor_roles_pt_board)
                 const boardSensorRolesKey = isHpBoard ? 'sensor_roles_pt2' : `sensor_roles_${boardKey}`;
-                const boardSensorRoles = (config as any)[boardSensorRolesKey] || sensorRoles;
+                const boardSensorRoles = (config as any)[boardSensorRolesKey] || sensorRolesPtBoard;
 
                 const boardMap: Record<string, string> = {};
                 for (const [roleName, channelId] of Object.entries(boardSensorRoles)) {

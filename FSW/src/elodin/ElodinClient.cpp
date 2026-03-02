@@ -72,22 +72,23 @@ void ElodinClient::flush_buffer() {
 }
 
 bool ElodinClient::subscribe_stream() {
-    // Actually using MsgStream as per successful frontend logic.
-    // packetId for MsgStream = [0x1d, 0x4a]
+    // MsgStream packet: 8-byte header + 2-byte Postcard payload ([hi, lo])
+    // packetId for MsgStream = FNV-1a("MsgStream") = [0x1d, 0x4a]
     std::array<uint8_t, 2> msgstream_id = {0x1d, 0x4a};
 
     auto subscribe = [&](uint8_t hi, uint8_t lo) {
-        std::vector<uint8_t> data(12 + 2, 0x00);
-        uint32_t len = 2 + 12;
+        // Correct format: 8-byte header + 2-byte payload = 10 bytes total
+        // len field = payload_bytes(2) + header_after_len(4) = 6
+        std::vector<uint8_t> data(10, 0x00);
+        uint32_t len = 2 + 4;  // 2 payload bytes + 4 (ty + packetId + requestId)
         std::memcpy(data.data(), &len, 4);
         data[4] = static_cast<uint8_t>(fsw::elodin::PacketType::MSG);
         data[5] = msgstream_id[0];
         data[6] = msgstream_id[1];
         data[7] = 0x00;
-
-        // Payload (2 bytes)
-        data[12] = hi;
-        data[13] = lo;
+        // Postcard payload: just the 2 ID bytes, no extra padding
+        data[8] = hi;
+        data[9] = lo;
 
         send_msg(msgstream_id, data);
     };

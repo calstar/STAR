@@ -177,6 +177,7 @@ export { ALIASES };
 // into a single setState, keeping React re-renders at ≤10 Hz regardless of
 // how many entities are arriving simultaneously.
 let _pendingSensorWrites: Record<string, number> = {};
+let _sensorTimestamps: Record<string, number> = {};
 let _flushScheduled = false;
 let _updateVersion = 0; // Version counter to force re-renders even if values are identical
 
@@ -195,77 +196,7 @@ interface FilterState {
 const _filterState: Map<string, FilterState> = new Map();
 
 function filterSensorValue(key: string, value: number): number {
-  // HP PT sensors: filtering disabled for debugging oscillation
-  if (key.includes('GSE_Mid') || key.includes('HP_PT_1') || key.includes('GSE_High') || key.includes('HP_PT_3') || key.includes('GN2_High') || key.includes('HP_PT_4')) {
-    return value;
-  }
-  // Tank/reg pressure: allow large legitimate steps (e.g. vented -2 → pressurized 20)
-  // so bar plot and graph stay in sync (graph uses raw WS values, bar uses store).
-  if (key.includes('Fuel_Upstream') || key.includes('PT_CH1') || key.includes('Fuel_Downstream') || key.includes('PT_CH4') ||
-    key.includes('Ox_Upstream') || key.includes('PT_CH5') || key.includes('Ox_Downstream') || key.includes('PT_CH7') ||
-    key.includes('GN2_Regulated') || key.includes('PT_CH6') || key.includes('GSE_Low') || key.includes('PT_CH2')) {
-    return value;
-  }
-
-  // Only filter pressure values (both pressure_psi and raw_adc_counts can have spikes)
-  if (!key.includes('pressure_psi') && !key.includes('raw_adc_counts')) {
-    return value;
-  }
-
-  // For HP PT sensors, use a shared filter key to prevent oscillation between aliases
-  // This ensures PT_Cal.GSE_Mid and PT_Cal.HP_PT_1 share the same filter state
-  let filterKey = key;
-  if (key.includes('GSE_Mid') || key.includes('HP_PT_1')) {
-    filterKey = key.replace(/HP_PT_1|GSE_Mid/g, 'GSE_Mid'); // Normalize to GSE_Mid
-  } else if (key.includes('GSE_High') || key.includes('HP_PT_3')) {
-    filterKey = key.replace(/HP_PT_3|GSE_High/g, 'GSE_High'); // Normalize to GSE_High
-  } else if (key.includes('GN2_High') || key.includes('HP_PT_4')) {
-    filterKey = key.replace(/HP_PT_4|GN2_High/g, 'GN2_High'); // Normalize to GN2_High
-  }
-
-  // Initialize filter state if needed
-  if (!_filterState.has(filterKey)) {
-    _filterState.set(filterKey, { history: [], lastRawValue: null, lastFilteredValue: null });
-  }
-
-  const state = _filterState.get(filterKey)!;
-
-  // Outlier detection: compare against last RAW value (not filtered average) to prevent oscillation
-  if (state.lastRawValue !== null) {
-    const delta = Math.abs(value - state.lastRawValue);
-    const absLastValue = Math.abs(state.lastRawValue);
-
-    // Use percentage-based threshold for small values, absolute for large values
-    const threshold = absLastValue > 10
-      ? Math.max(MAX_SPIKE_THRESHOLD_ABSOLUTE, absLastValue * MAX_SPIKE_THRESHOLD_PERCENT)
-      : Math.max(5, absLastValue * MAX_SPIKE_THRESHOLD_PERCENT); // Minimum 5 PSI threshold
-
-    if (delta > threshold) {
-      // Spike detected - use last filtered value instead (smooth transition, not raw)
-      if (state.lastFilteredValue !== null) {
-        console.warn(`⚠️ Spike detected for ${key}: ${value} (delta: ${delta.toFixed(2)} PSI, threshold: ${threshold.toFixed(2)} PSI), using last filtered value: ${state.lastFilteredValue.toFixed(2)}`);
-        return state.lastFilteredValue;
-      } else {
-        // No filtered value yet, use raw value but don't update history
-        return state.lastRawValue;
-      }
-    }
-  }
-
-  // Update last raw value BEFORE filtering
-  state.lastRawValue = value;
-
-  // Add to history
-  state.history.push(value);
-  if (state.history.length > FILTER_WINDOW_SIZE) {
-    state.history.shift();
-  }
-
-  // Calculate moving average
-  const avg = state.history.reduce((a, b) => a + b, 0) / state.history.length;
-  state.lastFilteredValue = avg;
-
-  return avg;
+  return value;
 }
 
 function scheduleSensorFlush() {
@@ -338,6 +269,16 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
 
   updateSensor: (update: SensorUpdate) => {
     const key = `${update.entity}.${update.component}`;
+
+    // Late packet rejection: ensure we don't overwrite new data with buffered old data
+    const prevTimestamp = _sensorTimestamps[key] || 0;
+    // If packet is older than the newest we've seen (and not a reboot), drop it.
+    // (Allow reboot detect: if timestamp drops by > 60 seconds, accept it)
+    if (update.timestamp < prevTimestamp && (prevTimestamp - update.timestamp < 60000)) {
+      return;
+    }
+    _sensorTimestamps[key] = update.timestamp;
+
     // Filter out spikes before storing
     const filteredValue = filterSensorValue(key, update.value);
     // Accumulate in pending batch — flush at next animation frame

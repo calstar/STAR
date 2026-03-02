@@ -23,6 +23,7 @@ set(FSW_SOURCES
     src/config/SensorAssignment.cpp
     src/config/ConfigParser.cpp
     src/routing/FrameToElodinMapper.cpp
+    src/routing/HeartbeatRouter.cpp
     src/routing/SensorRouter.cpp
     src/elodin/DatabaseConfig.cpp
     src/elodin/ElodinClient.cpp

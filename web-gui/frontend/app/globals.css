@@ -28,6 +28,23 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-size: 14px;
+  background: radial-gradient(circle at top center, #1a1a24 0%, #0d0d12 60%, #050508 100%);
+  background-attachment: fixed;
+}
+
+/* Glassmorphism for panels */
+.bg-card {
+  background: rgba(22, 22, 28, 0.5) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.05) !important;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2) !important;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.bg-card:hover {
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4) !important;
 }
 
 html {

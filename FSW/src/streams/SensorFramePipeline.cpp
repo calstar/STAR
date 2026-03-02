@@ -98,6 +98,17 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
     return std::nullopt;
 }
 
+bool SensorFramePipeline::set_broadcast(bool enable) {
+    if (!socket_ || !socket_->is_valid()) return false;
+    return socket_->set_broadcast(enable);
+}
+
+ssize_t SensorFramePipeline::send_to(const std::string& dest_ip, uint16_t dest_port,
+                                     const uint8_t* data, size_t size) {
+    if (!socket_ || !socket_->is_valid()) return -1;
+    return socket_->send_to(dest_ip, dest_port, data, size);
+}
+
 std::optional<SensorFramePipeline::LastHeartbeat> SensorFramePipeline::get_last_heartbeat() {
     if (last_heartbeat_buffer_.empty()) {
         return std::nullopt;

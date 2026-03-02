@@ -31,22 +31,22 @@ function ReadoutBox({
   const display = value !== null ? formatWithCommas(value, decimals) : '---';
   if (compact) {
     return (
-      <div className="bg-gray-900/60 rounded px-2.5 py-2 flex items-center gap-2 min-w-0">
-        <span className="text-sm text-text-muted font-medium uppercase tracking-wider truncate">{label}</span>
-        <span className="text-base font-mono tabular-nums ml-auto" style={{ color }}>
+      <div className="bg-white/[0.02] backdrop-blur-md border border-white/5 rounded-lg px-3 py-2 flex items-center gap-3 min-w-0 hover:bg-white/[0.04] hover:shadow-md transition-all duration-300 flex-1">
+        <span className="text-xs text-gray-400 font-bold uppercase tracking-widest truncate">{label}</span>
+        <span className="text-lg font-black font-mono tabular-nums ml-auto" style={{ color, textShadow: `0 0 8px ${color}50` }}>
           {display}
         </span>
-        <span className="text-sm text-gray-500">{unit}</span>
+        <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">{unit}</span>
       </div>
     );
   }
   return (
-    <div className="bg-gray-900/60 rounded-lg px-5 py-3 flex items-center gap-4 min-w-0">
-      <span className="text-base text-text-muted font-bold uppercase tracking-wider truncate">{label}</span>
-      <span className="text-3xl font-bold font-mono tabular-nums ml-auto" style={{ color }}>
+    <div className="bg-white/[0.02] backdrop-blur-md border border-white/5 rounded-xl px-5 py-3.5 flex items-center gap-4 min-w-0 hover:bg-white/[0.04] hover:shadow-lg transition-all duration-300 flex-1">
+      <span className="text-[13px] text-gray-400 font-bold uppercase tracking-widest truncate">{label}</span>
+      <span className="text-3xl font-black font-mono tabular-nums ml-auto" style={{ color, textShadow: `0 0 15px ${color}60` }}>
         {display}
       </span>
-      <span className="text-sm text-gray-400 font-semibold">{unit}</span>
+      <span className="text-xs text-gray-500 font-bold uppercase tracking-widest">{unit}</span>
     </div>
   );
 }

@@ -100,12 +100,29 @@ export default function TimeSeriesPlot({
     values: entities.map(() => []),
   });
 
+  // Ref to the latest loadCacheData function, so the missionStartTime effect can reload.
+  const loadCacheDataRef = useRef<(() => void) | null>(null);
   const initializedRef = useRef(false);
   const [isInitialized, setIsInitialized] = useState(false);
 
   const updateConnectionStatus = useSensorStore((s) => s.updateConnectionStatus);
   const connectionStatus = useSensorStore((s) => s.connectionStatus);
   const actuallyConnected = connectionStatus?.connected ?? false;
+  const missionStartTime = useSensorStore((s) => s.missionStartTime);
+
+  // Keep startTimeRef in sync with the backend's mission start time.
+  // startTimeRef is initialized at mount using whatever getStartupTime() returns at that moment,
+  // but missionStartTime may arrive slightly later. Once it does, re-anchor so the plot time
+  // axis matches the data-cache time axis and eliminates non-monotonic time arrays.
+  useEffect(() => {
+    if (missionStartTime !== null && missionStartTime > 0 && missionStartTime !== startTimeRef.current) {
+      startTimeRef.current = missionStartTime;
+      // Clear the data buffer — it was built on the old time reference.
+      dataRef.current = { time: [], values: entities.map(() => []) };
+      // Reload from the cache now that the time reference is correct.
+      loadCacheDataRef.current?.();
+    }
+  }, [missionStartTime]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const entitiesKey = entities.join(',');
   const colorsKey = colors.join(',');
@@ -269,6 +286,17 @@ export default function TimeSeriesPlot({
       return false;
     };
 
+    // Expose loadCacheData so the missionStartTime effect can reload after a time-base reset.
+    loadCacheDataRef.current = loadCacheData;
+
+    // When HISTORICAL_DATA arrives from backend, reload if our buffer is still empty or stale.
+    // This handles the race where missionStartTime effect fires before HISTORICAL_DATA fills cache.
+    const unsubscribeHistorical = cache.onHistoricalData(() => {
+      if (dataRef.current.time.length === 0) {
+        loadCacheData();
+      }
+    });
+
     // Try loading cache data immediately
     const hasCache = loadCacheData();
     if (hasCache) {
@@ -408,6 +436,13 @@ export default function TimeSeriesPlot({
 
       // Update data at 10 Hz (only when needed)
       if (currentTime - lastDataUpdate >= DATA_UPDATE_INTERVAL) {
+        // Guard: if new 'now' would create a non-monotonic time array (e.g. due to
+        // misaligned historical pre-fill), reset the buffer and start fresh.
+        if (d.time.length > 0 && now < d.time[d.time.length - 1] - 1) {
+          d.time = [];
+          d.values = entities.map(() => []);
+        }
+
         d.time.push(now);
         entities.forEach((_, i) => {
           const val = receivedUpdateThisIntervalRef.current[i] ? latestValuesRef.current[i] : NaN;
@@ -474,6 +509,7 @@ export default function TimeSeriesPlot({
     return () => {
       unsubSensor();
       unsubStatus();
+      unsubscribeHistorical();
       if (animationFrameId !== null) {
         cancelAnimationFrame(animationFrameId);
         animationFrameId = null;
@@ -531,8 +567,8 @@ export default function TimeSeriesPlot({
       {/* Legend */}
       <div className="flex flex-wrap gap-x-5 gap-y-1.5 px-2 py-2 flex-shrink-0">
         {entities.map((e, i) => (
-          <div key={e} className="flex items-center gap-2">
-            <span className="w-4 h-[3px] rounded-full inline-block" style={{ background: colors[i] || '#3498DB' }} />
+          <div key={e} className="flex items-center gap-2.5 bg-black/20 px-2.5 py-1 rounded-md border border-white/5">
+            <span className="w-3.5 h-[3px] rounded-full inline-block" style={{ background: colors[i] || '#3498DB', boxShadow: `0 0 10px ${colors[i]}A0` }} />
             <span className="text-sm font-semibold font-mono text-gray-300">
               {labels?.[i] ?? e.split('.').pop() ?? e}
             </span>

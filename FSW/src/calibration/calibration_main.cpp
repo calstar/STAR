@@ -158,13 +158,15 @@ int main(int argc, char* argv[]) {
 
     int packet_count = 0;
     while (running && elodin_client.is_connected()) {
-        // Read header first (12 bytes)
-        uint8_t header[12];
+        // Read 8-byte Elodin header: len(4) ty(1) id_hi(1) id_lo(1) req_id(1)
+        uint8_t header[8];
         if (!elodin_client.read_packet_header(header)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
 
+        // packet_len = number of bytes after the 4-byte len field (ty + id + req_id + payload)
+        // so payload_len = packet_len - 4
         uint32_t packet_len = *reinterpret_cast<uint32_t*>(header);
         uint8_t packet_type = header[4];
         uint16_t packet_id = (static_cast<uint16_t>(header[5]) << 8) | header[6];
@@ -174,17 +176,23 @@ int main(int argc, char* argv[]) {
                       << " id=" << packet_id << std::endl;
         }
 
-        if (packet_len > rx_buffer.size()) {
-            rx_buffer.resize(packet_len);
+        if (packet_len < 4 || packet_len > 65536) {
+            // Corrupt header — drain and resync
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
         }
 
-        // Copy header to rx_buffer
-        std::memcpy(rx_buffer.data(), header, 12);
+        size_t payload_len = packet_len - 4;
+        if (payload_len + 8 > rx_buffer.size()) {
+            rx_buffer.resize(payload_len + 8);
+        }
+
+        // Copy header to rx_buffer[0..7], payload follows at rx_buffer[8..]
+        std::memcpy(rx_buffer.data(), header, 8);
 
         // Read payload
-        size_t payload_len = packet_len - 12;
         if (payload_len > 0) {
-            ssize_t read_bytes = elodin_client.read_data(rx_buffer.data() + 12, payload_len);
+            ssize_t read_bytes = elodin_client.read_data(rx_buffer.data() + 8, payload_len);
             if (read_bytes != static_cast<ssize_t>(payload_len))
                 continue;
         }
@@ -197,7 +205,7 @@ int main(int argc, char* argv[]) {
         if (channel_id > 0 && channel_id <= 15) {
             if (type_hi == 0x20) {  // PT Raw
                 if (payload_len >= comms::messages::sensor::RawPTMessage::nbytes()) {
-                    uint8_t* payload = rx_buffer.data() + 12;
+                    uint8_t* payload = rx_buffer.data() + 8;
 
                     // Deserialize using CommsMessage — matches FSW pattern
                     comms::messages::sensor::RawPTMessage raw_msg;
@@ -225,7 +233,7 @@ int main(int argc, char* argv[]) {
                 }
             } else if (type_hi == 0x21) {  // TC Raw
                 if (payload_len >= comms::messages::sensor::RawTCMessage::nbytes()) {
-                    uint8_t* payload = rx_buffer.data() + 12;
+                    uint8_t* payload = rx_buffer.data() + 8;
 
                     comms::messages::sensor::RawTCMessage raw_msg;
                     raw_msg.deserialize(payload);
@@ -249,7 +257,7 @@ int main(int argc, char* argv[]) {
                 }
             } else if (type_hi == 0x22) {  // RTD Raw
                 if (payload_len >= comms::messages::sensor::RawRTDMessage::nbytes()) {
-                    uint8_t* payload = rx_buffer.data() + 12;
+                    uint8_t* payload = rx_buffer.data() + 8;
 
                     comms::messages::sensor::RawRTDMessage raw_msg;
                     raw_msg.deserialize(payload);
@@ -273,7 +281,7 @@ int main(int argc, char* argv[]) {
                 }
             } else if (type_hi == 0x23) {  // LC Raw
                 if (payload_len >= comms::messages::sensor::RawLCMessage::nbytes()) {
-                    uint8_t* payload = rx_buffer.data() + 12;
+                    uint8_t* payload = rx_buffer.data() + 8;
 
                     comms::messages::sensor::RawLCMessage raw_msg;
                     raw_msg.deserialize(payload);

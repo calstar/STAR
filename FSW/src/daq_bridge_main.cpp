@@ -17,6 +17,28 @@
 #include "../../daq_comms/include/comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "../../daq_comms/include/comms/messages/sensor/SensorMessages.hpp"
 #include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
+
+namespace {
+constexpr uint8_t SERVER_HEARTBEAT_PACKET_TYPE = 2;
+constexpr uint8_t DIABLO_COMMS_VERSION = 0;
+
+std::vector<uint8_t> build_server_heartbeat_packet() {
+    std::vector<uint8_t> pkt(7);
+    uint32_t ts = static_cast<uint32_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count() &
+        0xFFFFFFFF);
+    pkt[0] = SERVER_HEARTBEAT_PACKET_TYPE;
+    pkt[1] = DIABLO_COMMS_VERSION;
+    pkt[2] = static_cast<uint8_t>(ts & 0xFF);
+    pkt[3] = static_cast<uint8_t>((ts >> 8) & 0xFF);
+    pkt[4] = static_cast<uint8_t>((ts >> 16) & 0xFF);
+    pkt[5] = static_cast<uint8_t>((ts >> 24) & 0xFF);
+    pkt[6] = 0;  // engine_state = SAFE
+    return pkt;
+}
+}  // namespace
 #include "calibration/PTCalibration.hpp"
 #include "calibration/SensorCalibration.hpp"
 #include "config/BoardDiscovery.hpp"
@@ -44,13 +66,20 @@ struct BoardConfig {
     int board_id;  // Added board_id
 };
 
-// Minimal config parse: [database] host/port, [network] sensor_port/bind_ip, [boards.xxx]
-// type/ip/enabled
+struct ServerHeartbeatConfig {
+    uint32_t interval_ms = 1000;
+    uint16_t broadcast_port = 5005;
+    std::string broadcast_ip = "255.255.255.255";
+};
+
+// Minimal config parse: [database] host/port, [network] sensor_port/bind_ip, [server_heartbeat],
+// [boards.xxx] type/ip/enabled
 static void load_board_map_from_config(const std::string& config_path,
                                        std::map<std::string, BoardConfig>& board_map,
                                        std::string& db_host, uint16_t& db_port,
                                        uint16_t* out_sensor_port = nullptr,
-                                       std::string* out_bind_ip = nullptr) {
+                                       std::string* out_bind_ip = nullptr,
+                                       ServerHeartbeatConfig* out_hb = nullptr) {
     db_host = "127.0.0.1";
     db_port = 2240;
     std::ifstream f(config_path);
@@ -121,6 +150,13 @@ static void load_board_map_from_config(const std::string& config_path,
                 *out_sensor_port = static_cast<uint16_t>(std::stoul(val));
             else if (out_bind_ip && key == "bind_ip")
                 *out_bind_ip = val;
+        } else if (current_section == "server_heartbeat" && out_hb) {
+            if (key == "interval_ms")
+                out_hb->interval_ms = std::stoul(val);
+            else if (key == "broadcast_port")
+                out_hb->broadcast_port = static_cast<uint16_t>(std::stoul(val));
+            else if (key == "broadcast_ip")
+                out_hb->broadcast_ip = val;
         } else if (current_section.compare(0, 7, "boards.") == 0) {
             if (key == "type")
                 board_type_str = val;
@@ -359,8 +395,9 @@ int main(int argc, char* argv[]) {
     uint16_t db_port;
     uint16_t config_sensor_port = 0;
     std::string config_bind_ip;
+    ServerHeartbeatConfig hb_config;
     load_board_map_from_config(config_path, board_map, db_host, db_port, &config_sensor_port,
-                               &config_bind_ip);
+                               &config_bind_ip, &hb_config);
     if (config_sensor_port != 0)
         bind_port = config_sensor_port;
     if (!config_bind_ip.empty())
@@ -457,6 +494,41 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "✅ Sensor pipeline ready on port " << bind_port << std::endl;
 
+    if (pipeline.set_broadcast(true)) {
+        std::cout << "✅ Broadcast enabled for SERVER_HEARTBEAT" << std::endl;
+    } else {
+        std::cerr << "⚠️  Failed to enable broadcast (heartbeat may not reach boards)"
+                  << std::endl;
+    }
+
+    // Proactively send SENSOR_CONFIG to all configured sense boards (PT/TC/RTD/LC).
+    // Boards need SENSOR_CONFIG to transition from WaitingForServer → Active and start streaming.
+    int proactive_count = 0;
+    for (const auto& [ip, cfg] : board_map) {
+        if (cfg.board_id < 0 || !cfg.enabled || cfg.type == BoardType::ACTUATOR)
+            continue;
+        daq_comms::protocol::DiabloBoardPacketParser::ParsedBoardHeartbeat synthetic;
+        synthetic.is_valid = true;
+        synthetic.heartbeat.board_id = static_cast<uint8_t>(cfg.board_id);
+        synthetic.heartbeat.board_type =
+            daq_comms::protocol::DiabloBoardPacketParser::BoardType::PRESSURE_TRANSDUCER;
+        if (cfg.type == BoardType::TC)
+            synthetic.heartbeat.board_type =
+                daq_comms::protocol::DiabloBoardPacketParser::BoardType::THERMOCOUPLE;
+        else if (cfg.type == BoardType::RTD)
+            synthetic.heartbeat.board_type =
+                daq_comms::protocol::DiabloBoardPacketParser::BoardType::RTD;
+        else if (cfg.type == BoardType::LC)
+            synthetic.heartbeat.board_type =
+                daq_comms::protocol::DiabloBoardPacketParser::BoardType::LOAD_CELL;
+        std::string mac = "00:00:00:00:" + std::to_string(cfg.board_id) + ":00";
+        fsw_config->process_board_heartbeat(synthetic, ip, mac);
+        proactive_count++;
+    }
+    if (proactive_count > 0)
+        std::cout << "✅ Proactive SENSOR_CONFIG sent to " << proactive_count << " sense boards"
+                  << std::endl;
+
     fsw::routing::SensorRouter router;
 
     // ── Inline Calibration (Elodin only supports 1 stream subscriber, so calibration runs here) ──
@@ -525,8 +597,23 @@ int main(int argc, char* argv[]) {
     std::set<std::string> unknown_ips;
     auto last_stats_time = std::chrono::steady_clock::now();
     auto last_reconnect_time = std::chrono::steady_clock::now();
+    auto last_heartbeat_send = std::chrono::steady_clock::now();
 
     while (running) {
+        // Broadcast SERVER_HEARTBEAT so boards learn our IP:port for SENSOR_DATA
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_heartbeat_send)
+                .count();
+        if (elapsed_ms >= static_cast<int64_t>(hb_config.interval_ms)) {
+            auto pkt = build_server_heartbeat_packet();
+            ssize_t sent =
+                pipeline.send_to(hb_config.broadcast_ip, hb_config.broadcast_port, pkt.data(),
+                                 pkt.size());
+            if (sent > 0)
+                last_heartbeat_send = now;
+        }
+
         auto batch = pipeline.poll();
         if (!batch.has_value()) {
             // When last packet was a BOARD_HEARTBEAT, run discovery and broadcast config to that
@@ -585,7 +672,6 @@ int main(int argc, char* argv[]) {
         const std::string& source_ip = pipeline.last_source_ip();
         packets_per_board[source_ip]++;
 
-        auto now = std::chrono::steady_clock::now();
         uint64_t receive_timestamp_ns =
             std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
 

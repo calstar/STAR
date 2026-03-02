@@ -138,10 +138,27 @@ bool DatabaseConfig::register_tables(ElodinClient& client,
             << std::endl;
     }
 
-    // NOTE: TC, RTD, LC raw VTables are NOT registered here because no boards
-    // of those types are currently in the config. When TC/RTD/LC boards are
-    // added to config.toml, add their sensor_roles sections and parse them
-    // in daq_bridge_main.cpp, then pass the maps here.
+    // TC Raw: channels 1-20, generic names (no named roles in config yet)
+    for (int ch = 1; ch <= 20; ch++) {
+        std::string entity = "TC.CH" + std::to_string(ch);
+        if (register_raw_sensor_vtable(client, 0x21, ch, 0x2100 + ch, entity, "raw_adc_counts"))
+            registered++;
+    }
+
+    // RTD Raw: channels 1-20
+    for (int ch = 1; ch <= 20; ch++) {
+        std::string entity = "RTD.CH" + std::to_string(ch);
+        if (register_raw_sensor_vtable(client, 0x22, ch, 0x2200 + ch, entity,
+                                       "raw_resistance_counts"))
+            registered++;
+    }
+
+    // LC Raw: channels 1-20
+    for (int ch = 1; ch <= 20; ch++) {
+        std::string entity = "LC.CH" + std::to_string(ch);
+        if (register_raw_sensor_vtable(client, 0x23, ch, 0x2300 + ch, entity, "raw_adc_counts"))
+            registered++;
+    }
 
     std::cout << "[DatabaseConfig] ✅ Registered " << registered << " RAW VTables" << std::endl;
     return registered > 0;
@@ -167,10 +184,80 @@ bool DatabaseConfig::register_calibrated_tables(
         }
     }
 
-    // NOTE: TC_Cal, RTD_Cal, LC_Cal will be added when those sensor types
-    // are present in config. Same pattern as above.
+    // RTD Calibrated (Pt100 temperature): channels 1-20
+    for (int ch = 1; ch <= 20; ch++) {
+        std::string entity = "RTD_Cal.CH" + std::to_string(ch);
+        uint64_t eid = 0x2210 + static_cast<uint64_t>(ch);
+        if (register_calibrated_vtable(client, 0x22, ch, eid, entity, "temperature_c",
+                                       "raw_resistance"))
+            registered++;
+    }
+
+    // TC Calibrated: channels 1-20
+    for (int ch = 1; ch <= 20; ch++) {
+        std::string entity = "TC_Cal.CH" + std::to_string(ch);
+        uint64_t eid = 0x2110 + static_cast<uint64_t>(ch);
+        if (register_calibrated_vtable(client, 0x21, ch, eid, entity, "temperature_c",
+                                       "raw_adc"))
+            registered++;
+    }
+
+    // LC Calibrated: channels 1-20
+    for (int ch = 1; ch <= 20; ch++) {
+        std::string entity = "LC_Cal.CH" + std::to_string(ch);
+        uint64_t eid = 0x2310 + static_cast<uint64_t>(ch);
+        if (register_calibrated_vtable(client, 0x23, ch, eid, entity, "force_n",
+                                       "raw_adc"))
+            registered++;
+    }
 
     std::cout << "[DatabaseConfig] ✅ Registered " << registered << " CALIBRATED VTables"
+              << std::endl;
+    return registered > 0;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PUBLIC API — BOARD HEARTBEAT VTables
+// ════════════════════════════════════════════════════════════════════════════
+
+bool DatabaseConfig::register_heartbeat_tables(ElodinClient& client, uint8_t max_board_id) {
+    std::cout << "[DatabaseConfig] Registering BOARD_HEARTBEAT VTables (boards 1-"
+              << (int)max_board_id << ")..." << std::endl;
+    int registered = 0;
+
+    // Board heartbeat layout (16 bytes, no padding required):
+    //   u64 timestamp_ns (0,8) | u8 board_id (8) | u8 board_type (9)
+    //   u8 engine_state (10)   | u8 board_state (11) | u32 packet_ts_ms (12,4)
+    for (uint8_t board_id = 1; board_id <= max_board_id; board_id++) {
+        std::string entity = "BOARD.HB_" + std::to_string(board_id);
+        std::string prefix = entity + ".";
+
+        auto vt = builder::vtable({
+            raw_field(0,  8, schema(PrimType::U64(), {}, component(prefix + "timestamp_ns"))),
+            raw_field(8,  1, schema(PrimType::U8(),  {}, component(prefix + "board_id"))),
+            raw_field(9,  1, schema(PrimType::U8(),  {}, component(prefix + "board_type"))),
+            raw_field(10, 1, schema(PrimType::U8(),  {}, component(prefix + "engine_state"))),
+            raw_field(11, 1, schema(PrimType::U8(),  {}, component(prefix + "board_state"))),
+            raw_field(12, 4, schema(PrimType::U32(), {}, component(prefix + "packet_ts_ms"))),
+        });
+
+        uint64_t entity_id = 0x1000 + board_id;
+        if (!send_msg(client, VTableMsg{.id = {0x10, board_id}, .vtable = vt})) {
+            std::cerr << "[DatabaseConfig] ❌ Heartbeat VTable failed: " << entity << std::endl;
+            continue;
+        }
+
+        send_msg(client, set_component_name(prefix + "timestamp_ns"));
+        send_msg(client, set_component_name(prefix + "board_id"));
+        send_msg(client, set_component_name(prefix + "board_type"));
+        send_msg(client, set_component_name(prefix + "engine_state"));
+        send_msg(client, set_component_name(prefix + "board_state"));
+        send_msg(client, set_component_name(prefix + "packet_ts_ms"));
+        send_msg(client, set_entity_name(entity_id, entity));
+        registered++;
+    }
+
+    std::cout << "[DatabaseConfig] ✅ Registered " << registered << " HEARTBEAT VTables"
               << std::endl;
     return registered > 0;
 }

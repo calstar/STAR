@@ -152,7 +152,7 @@ export function parseElodinPacket(
     return parseRawSensorPayload(payload, ch, `RTD.CH${ch}`, 'raw_resistance_counts');
   }
 
-  // ── RTD Calibrated: [0x22, 0x11..0x14] ──────────────────────────────────
+  // ── RTD Calibrated: [0x22, 0x11..0x14] ───────────────────────────────────
   if (high === 0x22 && low >= 0x11 && low <= 0x14) {
     const ch = low - 0x10;
     return parseCalibratedSensorPayload(payload, ch, `RTD_Cal.CH${ch}`, 'temperature_c');

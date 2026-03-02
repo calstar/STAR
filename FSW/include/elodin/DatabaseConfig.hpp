@@ -42,6 +42,15 @@ public:
     static bool register_calibrated_tables(
         ElodinClient& client, const std::map<int, std::string>* pt_channel_to_name = nullptr);
 
+    /**
+     * @brief Register BOARD_HEARTBEAT VTables (one per board_id in [1, max_board_id]).
+     *
+     * packet_id: {0x10, board_id}
+     * Layout: u64 timestamp_ns | u8 board_id | u8 board_type | u8 engine_state |
+     *         u8 board_state | u32 packet_ts_ms  (16 bytes)
+     */
+    static bool register_heartbeat_tables(ElodinClient& client, uint8_t max_board_id = 64);
+
     /** @brief Legacy: register from config path (delegates to register_tables with no maps) */
     static bool register_tables_from_config(ElodinClient& client, const std::string& config_path);
 
