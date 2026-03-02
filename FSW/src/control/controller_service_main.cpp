@@ -97,7 +97,7 @@ int main(int argc, char* argv[]) {
 
     // Default PWM config (fuel → CH3, LOX → CH8 on actuator board)
     fsw::control::ControllerService::PWMConfig pwm_config;
-    pwm_config.actuator_board_ip = "192.168.2.201";
+    pwm_config.actuator_board_ip = "192.168.2.11";
     pwm_config.actuator_port = 5005;
     pwm_config.fuel_channel = 3;
     pwm_config.lox_channel = 8;

@@ -102,6 +102,33 @@ static bool register_calibrated_vtable(
     return true;
 }
 
+// ── Helper: register actuator state VTable (0=closed, 1=open) ───────────────
+// Layout: u64 timestamp_ns | u8 channel_id | u8 actuator_state (10 bytes)
+static bool register_actuator_state_vtable(ElodinClient& client, uint8_t type_hi,
+                                           uint8_t channel_id, uint64_t entity_id,
+                                           const std::string& entity_name) {
+    std::string prefix = entity_name + ".";
+
+    auto vt = builder::vtable({
+        raw_field(0, 8, schema(PrimType::U64(), {}, component(prefix + "timestamp_ns"))),
+        raw_field(8, 1, schema(PrimType::U8(), {}, component(prefix + "channel_id"))),
+        raw_field(9, 1, schema(PrimType::U8(), {}, component(prefix + "actuator_state"))),
+    });
+
+    if (!send_msg(client, VTableMsg{.id = {type_hi, channel_id}, .vtable = vt})) {
+        std::cerr << "[DatabaseConfig] ❌ Actuator state VTable failed: " << entity_name
+                  << std::endl;
+        return false;
+    }
+
+    send_msg(client, set_component_name(prefix + "timestamp_ns"));
+    send_msg(client, set_component_name(prefix + "channel_id"));
+    send_msg(client, set_component_name(prefix + "actuator_state"));
+    send_msg(client, set_entity_name(entity_id, entity_name));
+
+    return true;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // PUBLIC API — RAW VTables only (for daq_bridge)
 // ════════════════════════════════════════════════════════════════════════════
@@ -131,6 +158,9 @@ bool DatabaseConfig::register_tables(ElodinClient& client,
             std::string entity = "ACT." + name;
             uint64_t eid = 0x3000 + ch;
             if (register_raw_sensor_vtable(client, 0x30, ch, eid, entity, "raw_adc_counts"))
+                registered++;
+            // Actuator state (0=closed, 1=open) — packet_id [0x31, ch]
+            if (register_actuator_state_vtable(client, 0x31, ch, 0x3100 + ch, entity))
                 registered++;
         }
     } else {

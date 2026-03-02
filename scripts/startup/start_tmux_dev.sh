@@ -11,7 +11,7 @@ PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Check if services are already running via systemd
 if systemctl --user is-active --quiet sensor-backend.service 2>/dev/null; then
   echo "⚠️  Systemd services are currently running!"
-  echo "   Stop them first: systemctl --user stop sensor-elodin sensor-relay sensor-backend sensor-frontend sensor-sidecar"
+  echo "   Stop them first: systemctl --user stop sensor-elodin sensor-relay sensor-backend sensor-frontend sensor-sidecar sensor-actuator"
   exit 1
 fi
 
@@ -37,6 +37,7 @@ tmux kill-session -t "$SESSION" 2>/dev/null || true
 pkill -f "elodin-db run.*2240" 2>/dev/null || true
 pkill -f "elodin-relay" 2>/dev/null || true
 pkill -f "daq_bridge" 2>/dev/null || true
+pkill -f "actuator_service" 2>/dev/null || true
 pkill -f "next dev" 2>/dev/null || true
 pkill -f "tsx watch.*server.ts" 2>/dev/null || true
 # Free backend ports so the new process can bind (frontend needs WS :8081, API :8082)
@@ -68,10 +69,23 @@ if [ ! -x "$CTRL_BIN" ]; then
 fi
 CMD_CTRL="printf '\n  ══ CONTROLLER SERVICE (DB Calibrated → Actuators) ══\n\n' && sleep 4 && cd $PROJECT && exec $CTRL_BIN --config config/config.toml --elodin-host 127.0.0.1 2>&1"
 
+# Actuator Service: receives state via TCP :9998, sends UDP to actuator boards
+ACTUATOR_BIN="$PROJECT/build/FSW/actuator_service"
+if [ ! -x "$ACTUATOR_BIN" ]; then
+  ACTUATOR_BIN="$PROJECT/FSW/build/actuator_service"
+fi
+CMD_ACTUATOR="printf '\n  ══ ACTUATOR SERVICE (TCP :9998 → state → UDP commands) ══\n\n' && sleep 3 && cd $PROJECT && exec $ACTUATOR_BIN --config config/config.toml --port 9998 2>&1"
+
 CMD_DB="printf '\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n' && mkdir -p $HOME/.local/share/elodin && RUST_LOG=debug exec $HOME/.cargo/bin/elodin-db run '[::]:2240' '$HOME/.local/share/elodin/daq_live'"
 # Relay must connect to DB FIRST (sleep 2s) — daq_bridge sleeps 5s so relay subscribes before any TABLE data flows.
 CMD_RELAY="printf '\n  ══ ELODIN RELAY — WS :9090 (DB → relay → services) ══\n\n' && sleep 2 && cd $PROJECT/web-gui/backend && npm run relay 2>&1"
-CMD_WEB_BACKEND="printf '\n  ══ BACKEND — WS :8081 (data from relay only) ══\n\n' && sleep 5 && cd $PROJECT/web-gui/backend && ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false npm run dev 2>&1"
+# Auto-detect whether the actuator_service binary is available for TCP forwarding.
+# If not built yet, disable TCP forwarding so state transitions send UDP directly.
+ACTUATOR_SVC_ENV="ACTUATOR_SERVICE_ENABLED=false"
+if [ -x "$ACTUATOR_BIN" ]; then
+  ACTUATOR_SVC_ENV="ACTUATOR_SERVICE_ENABLED=true ACTUATOR_SERVICE_PORT=9998"
+fi
+CMD_WEB_BACKEND="printf '\n  ══ BACKEND — WS :8081 (data from relay only) ══\n\n' && sleep 5 && cd $PROJECT/web-gui/backend && $ACTUATOR_SVC_ENV ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false npm run dev 2>&1"
 CMD_WEB_FRONTEND="printf '\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n' && sleep 3 && cd $PROJECT/web-gui/frontend && npm run dev 2>&1"
 CMD_SIDECAR="printf '\n  ══ CALIBRATION SIDECAR — HTTP :8100, WS :8101 ══\n\n' && cd $PROJECT && PYTHONPATH=$PROJECT exec python3 scripts/calibration/calibration_server.py 2>/dev/null || PYTHONPATH=$PROJECT exec $HOME/fsw/venv/bin/python3 scripts/calibration/calibration_server.py"
 CMD_SIM="printf '\n  ══ BOARD SIMULATOR — UDP → :5006 (synthetic data when no hardware) ══\n\n' && sleep 4 && cd $PROJECT && exec python3 scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 2>&1"
@@ -106,6 +120,9 @@ tmux split-window -v -t "$SESSION:main.4" \
 tmux split-window -v -t "$SESSION:main.5" \
   "bash --norc --noprofile -c \"$CMD_CTRL\""
 
+tmux split-window -v -t "$SESSION:main.6" \
+  "bash --norc --noprofile -c \"$CMD_ACTUATOR\""
+
 tmux select-layout -t "$SESSION:main" tiled
 
 tmux select-pane -t "$SESSION:main.2"
@@ -114,7 +131,7 @@ echo "┌───────────────────────�
 echo "│  Pipeline: UDP → daq_bridge → DB → relay → backend → UI     │"
 echo "│  0: Elodin DB  1: Relay :9090  2: Backend :8081             │"
 echo "│  3: DAQ Bridge  4: Frontend  5: Sidecar  6: Board Simulator │"
-echo "│  7: Calibration Service  8: Controller Service              │"
+echo "│  7: Calibration  8: Controller  9: Actuator Service        │"
 echo "│  Ctrl+B arrows=switch  D=detach                              │"
 echo "└─────────────────────────────────────────────────────────────┘"
 tmux attach -t "$SESSION"

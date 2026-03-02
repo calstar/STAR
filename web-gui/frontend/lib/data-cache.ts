@@ -122,6 +122,19 @@ class SensorDataCache {
       this.cache.set(key, series);
     }
 
+    // Spike rejection: prevent obvious spikes from entering time series (bar uses latest, so unaffected)
+    if (series.values.length > 0) {
+      const prev = series.values[series.values.length - 1];
+      if (isFinite(prev)) {
+        if (component === 'pressure_psi') {
+          const maxJump = entity.includes('HP_PT') || entity.includes('GSE_Mid') || entity.includes('GSE_High') || entity.includes('GN2_High') ? 500 : 1000;
+          if (Math.abs(value - prev) > maxJump) value = prev;
+        } else if (prev !== 0 && Math.abs(value / prev) > 10) {
+          value = prev;  // ratio filter for other components
+        }
+      }
+    }
+
     // Always add new point - allow some time tolerance for batching
     const lastTime = series.time.length > 0 ? series.time[series.time.length - 1] : -Infinity;
     const timeDiff = now - lastTime;

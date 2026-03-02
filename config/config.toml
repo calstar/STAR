@@ -339,6 +339,12 @@ FM = "Fuel Main"
 OM = "LOX Main"
 FF = "Fuel Fill"
 
+# Actuator service (C++) — when port is set, backend forwards state transitions here;
+# actuator commands are sent by C++ instead of Node.
+# Env ACTUATOR_SERVICE_PORT overrides this; startup script sets it automatically.
+[actuator_service]
+port = 9998
+
 # =============================================================================
 # Elodin Table Routing - Maps sensor types to Elodin table IDs (config-driven, no fixed hexes in code)
 # packet_id = [high_byte, low_byte]; channels = 1-based channel count (low byte 0x01..0x0N).
@@ -379,9 +385,14 @@ packet_id = [0x30, 0x00]
 channels = 10
 description = "Actuator current sense readings"
 
+[routing.actuator_state]
+packet_id = [0x31, 0x00]
+channels = 20
+description = "Actuator state (0=closed, 1=open) from current-sense threshold"
+
 # Which routing types daq_bridge publishes to Elodin (raw + calibrated inline, since Elodin only supports one stream subscriber)
 [daq_bridge]
-publish = ["pt_raw", "pt_calibrated", "tc_raw", "rtd_raw", "lc_raw", "actuator_status"]
+publish = ["pt_raw", "pt_calibrated", "tc_raw", "rtd_raw", "lc_raw", "actuator_status", "actuator_state"]
 
 # =============================================================================
 # Calibration

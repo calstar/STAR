@@ -71,6 +71,12 @@ using RawLCMessage =
                  uint8_t    // (5) status_flags - status/health flags
                  >;
 
+/** Actuator state (0=closed, 1=open) from current-sense ADC threshold. Packet ID [0x31, ch]. */
+using ActuatorStateMessage = CommsMessage<uint64_t,  // (0) timestamp_ns
+                                          uint8_t,   // (1) channel_id - 1-based
+                                          uint8_t    // (2) actuator_state - 0=closed, 1=open
+                                          >;
+
 }  // namespace sensor
 }  // namespace messages
 using comms::CommsMessage;

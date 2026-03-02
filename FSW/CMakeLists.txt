@@ -216,8 +216,16 @@ else()
     message(STATUS "uWebSockets not found, skipping fsw_web_bridge")
 endif()
 
+# Actuator service — receives state transitions, sends UDP commands
+add_executable(actuator_service src/control/actuator_service_main.cpp)
+target_include_directories(actuator_service PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../daq_comms/include
+)
+target_link_libraries(actuator_service daq_comms_lib pthread ${RT_LIBRARY})
+
 # Install targets
-install(TARGETS fsw_daq_lib daq_bridge controller_service calibration_service
+install(TARGETS fsw_daq_lib daq_bridge controller_service calibration_service actuator_service
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib

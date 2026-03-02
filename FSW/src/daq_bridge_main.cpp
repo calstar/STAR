@@ -62,7 +62,8 @@ struct BoardConfig {
     std::string ip;
     int num_sensors;
     bool enabled;
-    int board_id;  // Added board_id
+    int board_id;            // Added board_id
+    int channel_offset = 0;  // For PT board 2 (HP): connector 1 → global ch 11
 };
 
 struct ServerHeartbeatConfig {
@@ -88,6 +89,7 @@ static void load_board_map_from_config(const std::string& config_path,
     std::string board_type_str, board_ip;
     int board_num_sensors = 10;
     int board_id = -1;  // Added board_id
+    int board_channel_offset = 0;
     bool board_enabled = true;
     auto add_board = [&]() {
         if (board_ip.empty())
@@ -104,10 +106,12 @@ static void load_board_map_from_config(const std::string& config_path,
         else if (board_type_str == "ACTUATOR")
             bt = BoardType::ACTUATOR;
         if (bt != BoardType::UNKNOWN)
-            board_map[board_ip] = {bt, board_ip, board_num_sensors, board_enabled, board_id};
+            board_map[board_ip] = {
+                bt, board_ip, board_num_sensors, board_enabled, board_id, board_channel_offset};
         board_ip.clear();
         board_type_str.clear();
-        board_id = -1;  // Reset board_id
+        board_id = -1;
+        board_channel_offset = 0;
     };
     while (std::getline(f, line)) {
         size_t c = line.find('#');
@@ -165,6 +169,8 @@ static void load_board_map_from_config(const std::string& config_path,
                 board_num_sensors = std::stoi(val);
             else if (key == "board_id")
                 board_id = std::stoi(val);  // Parse board_id
+            else if (key == "channel_offset")
+                board_channel_offset = std::stoi(val);
             else if (key == "enabled")
                 board_enabled = (val == "true" || val == "1");
         }
@@ -172,7 +178,7 @@ static void load_board_map_from_config(const std::string& config_path,
     add_board();
     // Simulator (e.g. board_simulator.py) sends from 127.0.0.1 — treat as PT so routing works
     if (board_map.find("127.0.0.1") == board_map.end())
-        board_map["127.0.0.1"] = {BoardType::PT, "127.0.0.1", 10, true, 0};
+        board_map["127.0.0.1"] = {BoardType::PT, "127.0.0.1", 10, true, 0, 0};
 }
 
 // Config-driven publish allowlist: [routing.*] packet_id + channels, [daq_bridge] publish = [...]
@@ -669,8 +675,11 @@ int main(int argc, char* argv[]) {
         const std::string& source_ip = pipeline.last_source_ip();
         packets_per_board[source_ip]++;
 
-        uint64_t receive_timestamp_ns =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+        // Use system_clock (epoch) so timestamps align with JS Date.now() — prevents
+        // boot-relative vs epoch confusion that causes plot spikes when sources mix.
+        uint64_t receive_timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                            std::chrono::system_clock::now().time_since_epoch())
+                                            .count();
 
         // ── Route based on source IP → board type (config, then discovery, else treat as PT so DB
         // gets data) ──
@@ -683,7 +692,7 @@ int main(int argc, char* argv[]) {
             if (discovered) {
                 board_type = discovery_board_type_to_enum(discovered->signature.board_type);
                 if (board_type != BoardType::UNKNOWN)
-                    board_map[source_ip] = {board_type, source_ip, 10, true};
+                    board_map[source_ip] = {board_type, source_ip, 10, true, -1, 0};
             }
             if (board_type == BoardType::UNKNOWN) {
                 if (unknown_ips.find(source_ip) == unknown_ips.end()) {
@@ -702,7 +711,14 @@ int main(int argc, char* argv[]) {
 
         switch (board_type) {
             case BoardType::PT: {
-                auto pt_msgs = router.route_pt_samples(batch.value(), receive_timestamp_ns);
+                // Apply channel_offset for PT board 2 (HP) so connector 1 → global ch 11
+                auto pt_batch = batch.value();
+                int ch_offset = (board_it != board_map.end()) ? board_it->second.channel_offset : 0;
+                if (ch_offset != 0) {
+                    for (auto& s : pt_batch.pt_samples)
+                        s.channel_id = static_cast<uint8_t>(s.channel_id + ch_offset);
+                }
+                auto pt_msgs = router.route_pt_samples(pt_batch, receive_timestamp_ns);
                 if (publishing) {
                     for (const auto& [id, msg] : pt_msgs)
                         if (is_publish_allowed(id[0], id[1], publish_ranges))
@@ -711,7 +727,7 @@ int main(int argc, char* argv[]) {
                 // Inline calibration: also publish calibrated PT data
                 if (publishing) {
                     auto cal_msgs =
-                        router.route_pt_samples_calibrated(batch.value(), receive_timestamp_ns);
+                        router.route_pt_samples_calibrated(pt_batch, receive_timestamp_ns);
                     for (const auto& [id, msg] : cal_msgs)
                         if (is_publish_allowed(id[0], id[1], publish_ranges))
                             elodin_client.publish(id, msg);
@@ -719,18 +735,31 @@ int main(int argc, char* argv[]) {
                 break;
             }
             case BoardType::ACTUATOR: {
+                constexpr uint32_t ACT_STATE_ADC_THRESHOLD = 1500;  // above = open (1)
                 for (const auto& sample : batch.value().pt_samples) {
-                    std::array<uint8_t, 2> act_pkt = {0x30,
-                                                      static_cast<uint8_t>(sample.channel_id + 1)};
+                    uint8_t ch =
+                        static_cast<uint8_t>(sample.channel_id);  // already 1-indexed connector
+                    std::array<uint8_t, 2> act_pkt = {0x30, ch};
                     comms::messages::sensor::RawPTMessage msg;
                     msg.setField<0>(receive_timestamp_ns);
-                    msg.setField<1>(static_cast<uint8_t>(sample.channel_id + 1));
+                    msg.setField<1>(ch);
                     msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
                     msg.setField<3>(sample.raw_adc_counts);
                     msg.setField<4>(sample.sample_timestamp_ms);
                     msg.setField<5>(sample.status_flags);
                     if (publishing && is_publish_allowed(act_pkt[0], act_pkt[1], publish_ranges))
                         elodin_client.publish(act_pkt, msg);
+                    // Publish actuator state (0=closed, 1=open) to [0x31, ch]
+                    std::array<uint8_t, 2> state_pkt = {0x31, ch};
+                    if (publishing &&
+                        is_publish_allowed(state_pkt[0], state_pkt[1], publish_ranges)) {
+                        comms::messages::sensor::ActuatorStateMessage state_msg;
+                        state_msg.setField<0>(receive_timestamp_ns);
+                        state_msg.setField<1>(ch);
+                        state_msg.setField<2>(sample.raw_adc_counts > ACT_STATE_ADC_THRESHOLD ? 1
+                                                                                              : 0);
+                        elodin_client.publish(state_pkt, state_msg);
+                    }
                 }
                 break;
             }

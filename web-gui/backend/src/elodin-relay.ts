@@ -40,7 +40,7 @@ function main(): void {
   let tablePacketCount = 0;
   let resubscribeTimer: NodeJS.Timeout | null = null;
   // Track which high-byte packet ID groups have delivered at least one TABLE packet.
-  // Groups: 0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC, 0x30=ACT, 0x40=CTRL_ACT, 0x41=CTRL_DIAG, 0x42=CTRL_MEAS
+  // Groups: 0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC, 0x30=ACT, 0x31=ACT_STATE, 0x40=CTRL_ACT, 0x41=CTRL_DIAG, 0x42=CTRL_MEAS
   const seenHighBytes = new Set<number>();
 
   // Re-send VTableStream subscriptions. Elodin DB rejects subscriptions for
@@ -72,7 +72,7 @@ function main(): void {
       seenHighBytes.add(header.packetId[0]);
       // Cancel retry once all expected groups are delivering data
       if (resubscribeTimer) {
-        const allGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x40, 0x41, 0x42];
+        const allGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31, 0x40, 0x41, 0x42];
         if (allGroups.every(g => seenHighBytes.has(g))) {
           clearTimeout(resubscribeTimer);
           resubscribeTimer = null;

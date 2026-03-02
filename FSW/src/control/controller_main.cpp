@@ -163,7 +163,7 @@ int main(int argc, char* argv[]) {
 
     // Actuator board IP — from first actuator board in [boards]
     std::string actuator_ip =
-        getTomlValue(config_content, "boards.actuator1", "ip", "192.168.2.201");
+        getTomlValue(config_content, "boards.actuator_board", "ip", "192.168.2.11");
     pwm.actuator_board_ip = actuator_ip;
     pwm.actuator_port = 5005;
     pwm.fuel_channel = 3;  // Fuel Press CH3 from config

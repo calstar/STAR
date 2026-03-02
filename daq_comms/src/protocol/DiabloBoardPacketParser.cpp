@@ -81,6 +81,23 @@ DiabloBoardPacketParser::parse_sensor_data(const uint8_t* data, size_t size) con
     // Parse body header
     result.num_chunks = data[6];
     result.num_sensors = data[7];
+    if (result.num_sensors == 0 || result.num_sensors > 32) {
+        result.is_valid = false;
+        return result;  // Sanity: corrupt num_sensors
+    }
+    if (result.num_chunks == 0 || result.num_chunks > 64) {
+        result.is_valid = false;
+        return result;  // Sanity: corrupt num_chunks
+    }
+
+    // Validate total packet size before parsing (matches DAQv2-Comms parse_sensor_data_packet)
+    const size_t per_chunk_size = 4 + (static_cast<size_t>(result.num_sensors) * 5);
+    const size_t expected_size =
+        HEADER_SIZE + BODY_HEADER_SIZE + (static_cast<size_t>(result.num_chunks) * per_chunk_size);
+    if (size < expected_size) {
+        result.is_valid = false;
+        return result;  // Truncated or corrupted packet
+    }
 
     // Parse chunks
     size_t offset = HEADER_SIZE + BODY_HEADER_SIZE;

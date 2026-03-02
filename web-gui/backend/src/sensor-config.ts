@@ -18,7 +18,7 @@ export function loadActuatorChannelToEntityMap(): Record<number, string> {
         for (const [name, value] of Object.entries(roles)) {
             if (Array.isArray(value) && value.length >= 2 && typeof value[1] === 'number') {
                 const channelId = value[1];
-                out[channelId] = `ACT.${name.replace(/\s+/g, '_')}`;
+                out[channelId + 1] = `ACT.${name.replace(/\s+/g, '_')}`;
             }
         }
     } catch (_) { /* use empty map */ }
@@ -47,19 +47,18 @@ export function loadSensorRoleMap(): {
 
         // Build reverse map: channel_id → role_name from BOTH PT boards
         const reverseMap: Record<number, string> = {};
-        // PT board 1 (sensor_roles_pt_board)
+        // PT board 1 (sensor_roles_pt_board): payload uses channel_id+1, so key = connector+1
         for (const [roleName, channelId] of Object.entries(sensorRolesPtBoard)) {
             if (typeof channelId === 'number' && channelId >= 1 && channelId <= 10) {
                 const entityName = roleName.replace(/\s+/g, '_');
-                reverseMap[channelId] = `PT_Cal.${entityName}`;
+                reverseMap[channelId + 1] = `PT_Cal.${entityName}`;
             }
         }
-        // PT board 2 (sensor_roles_pt2) — channels map to 11+ for cross-board uniqueness
+        // PT board 2 (sensor_roles_pt2) — packet uses (connector+10)+1, so key = connector+11
         for (const [roleName, channelId] of Object.entries(sensorRolesPt2)) {
             if (typeof channelId === 'number' && channelId >= 1 && channelId <= 10) {
                 const entityName = roleName.replace(/\s+/g, '_');
-                // PT2 channels are separate board — keep original channel ID but track under board-specific map
-                reverseMap[channelId + 10] = `PT_Cal.${entityName}`;
+                reverseMap[channelId + 11] = `PT_Cal.${entityName}`;  // payloadCh for connector 1 = 12
             }
         }
 

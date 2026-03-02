@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo } from 'react';
-import { useSensorStore, useSensorValue } from '@/lib/store';
+import { useSensorStore, useGetSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { MessageType, SensorUpdate, BoardStatusPayload, BoardStatus, engineStateCodeToLabel } from '@/lib/types';
@@ -29,6 +29,7 @@ export default function StatusPage() {
   const ws = getWebSocketClient();
   const { actuators } = useActuatorsFromConfig();
   const ACTUATORS = actuators.map((a) => ({ label: a.name, entity: a.entity }));
+  const getSensorValue = useGetSensorValue();
 
   useEffect(() => {
     ws.connect();
@@ -77,7 +78,7 @@ export default function StatusPage() {
           <h2 className="text-lg font-bold text-text-muted uppercase tracking-wider mb-3">Pressure Sensors</h2>
           <div className="space-y-2">
             {PRESSURE_SENSORS.map((s) => {
-              const value = useSensorValue(s.entity, s.component);
+              const value = getSensorValue(s.entity, s.component);
               const val = value ?? null;
               const statusColor = val !== null && val > (s.meop ?? 0) ? '#E74C3C' :
                 val !== null && val > (s.nop ?? 0) ? '#F39C12' : s.color;
@@ -108,8 +109,8 @@ export default function StatusPage() {
           <h2 className="text-lg font-bold text-text-muted uppercase tracking-wider mb-3">Actuators</h2>
           <div className="space-y-2">
             {ACTUATORS.map((a) => {
-              const status = useSensorValue(a.entity, 'status');
-              const adc = useSensorValue(a.entity, 'raw_adc_counts');
+              const status = getSensorValue(a.entity, 'status');
+              const adc = getSensorValue(a.entity, 'raw_adc_counts');
               const isOpen = status === 1 || (adc !== null && adc > 1000);
               const hasData = status !== null || adc !== null;
               return (
@@ -123,7 +124,7 @@ export default function StatusPage() {
                     )}
                     <span
                       className={`text-base font-bold font-mono px-3 py-1 rounded ${!hasData ? 'bg-gray-800 text-gray-600' :
-                          isOpen ? 'bg-green-900/60 text-green-400' : 'bg-red-900/60 text-red-400'
+                        isOpen ? 'bg-green-900/60 text-green-400' : 'bg-red-900/60 text-red-400'
                         }`}
                     >
                       {!hasData ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
@@ -196,11 +197,10 @@ export default function StatusPage() {
                         )}
                         {b.configured !== undefined && (
                           <span
-                            className={`text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wide font-mono ${
-                              b.configured
-                                ? 'bg-emerald-900/60 text-emerald-200'
-                                : 'bg-gray-800 text-gray-500'
-                            }`}
+                            className={`text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wide font-mono ${b.configured
+                              ? 'bg-emerald-900/60 text-emerald-200'
+                              : 'bg-gray-800 text-gray-500'
+                              }`}
                           >
                             {b.configured ? 'Config OK' : 'Unconfigured'}
                           </span>
@@ -231,13 +231,13 @@ export default function StatusPage() {
         <h2 className="text-xl font-bold text-text-muted uppercase tracking-wider mb-4">High Pressure PT Sensors</h2>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {HP_PT_SENSORS.map((sensor) => {
-            const pressure = useSensorValue(sensor.entity, 'pressure_psi');
-            const adcCal = useSensorValue(sensor.entity, 'raw_adc_counts');
-            const adcRawNs = useSensorValue(sensor.entity.replace('PT_Cal.', 'PT.'), 'raw_adc_counts');
+            const pressure = getSensorValue(sensor.entity, 'pressure_psi');
+            const adcCal = getSensorValue(sensor.entity, 'raw_adc_counts');
+            const adcRawNs = getSensorValue(sensor.entity.replace('PT_Cal.', 'PT.'), 'raw_adc_counts');
             const adc = adcCal ?? adcRawNs;
-            const vExc = useSensorValue(sensor.entity, 'excitation_voltage');
-            const vSense = useSensorValue(sensor.entity, 'sense_voltage');
-            const current = useSensorValue(sensor.entity, 'current_ma');
+            const vExc = getSensorValue(sensor.entity, 'excitation_voltage');
+            const vSense = getSensorValue(sensor.entity, 'sense_voltage');
+            const current = getSensorValue(sensor.entity, 'current_ma');
 
             return (
               <div key={sensor.label} className="bg-card rounded-lg p-4 border border-gray-800">

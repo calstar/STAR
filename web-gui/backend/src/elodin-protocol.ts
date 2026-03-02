@@ -36,23 +36,20 @@ export interface EntityMaps {
 // ── 21-byte message parsers (shared layout) ─────────────────────────────────
 // Layout: uint64_t(8) + uint8_t(1) + pad[3](3) + uint32_t/float(4) + uint32_t(4) + uint8_t(1)
 
+const RAW_SENSOR_PAYLOAD_SIZE = 21; // u64(8) + u8(1) + pad(3) + u32(4) + u32(4) + u8(1)
+
 function parseRawSensorPayload(
   payload: Buffer,
   channelId: number,
   entity: string,
   fieldName: string = 'raw_adc_counts',
 ): ParsedSensorData | null {
-  if (payload.length >= 21) {
-    const rawValue = payload.readUInt32LE(12);
-    const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
-    return { entity, component: fieldName, value: rawValue, timestamp: tsMs };
-  }
-  // Compact fallback: 8-byte ts + uint32 value. Raw ADC is 32-bit; 9-11 bytes would misread uint8→0-255 spikes.
-  if (payload.length >= 12) {
-    const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
-    return { entity, component: fieldName, value: payload.readUInt32LE(8), timestamp: tsMs };
-  }
-  return null;
+  // RawPTMessage layout: u64(0) ts + u8(8) ch + pad3(9-11) + u32(12) raw_adc + u32(16) sample_ts + u8(20)
+  // Require full 21 bytes to avoid reading garbage from truncated/malformed packets.
+  if (payload.length < RAW_SENSOR_PAYLOAD_SIZE) return null;
+  const rawValue = payload.readUInt32LE(12);
+  const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
+  return { entity, component: fieldName, value: rawValue, timestamp: tsMs };
 }
 
 function parseCalibratedSensorPayload(
@@ -61,18 +58,11 @@ function parseCalibratedSensorPayload(
   entity: string,
   fieldName: string = 'pressure_psi',
 ): ParsedSensorData | null {
-  // Calibrated value is always a float (4 bytes). Need at least 8 (ts) + 4 (float) = 12 bytes.
-  // 9-11 byte payloads were misread as uint8(8) → 0–255, causing "drops to 0" spikes.
-  if (payload.length >= 21) {
-    const calibratedValue = payload.readFloatLE(12);
-    const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
-    return { entity, component: fieldName, value: calibratedValue, timestamp: tsMs };
-  }
-  if (payload.length >= 12) {
-    const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
-    return { entity, component: fieldName, value: payload.readFloatLE(8), timestamp: tsMs };
-  }
-  return null;
+  // CalibratedPTMessage: u64(0) ts + u8(8) ch + pad3(9-11) + float(12) psi + u32(16) raw + u8(20)
+  if (payload.length < RAW_SENSOR_PAYLOAD_SIZE) return null;
+  const calibratedValue = payload.readFloatLE(12);
+  const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
+  return { entity, component: fieldName, value: calibratedValue, timestamp: tsMs };
 }
 
 /**
@@ -134,38 +124,38 @@ export function parseElodinPacket(
     return parseCalibratedSensorPayload(payload, ch, entityName, 'pressure_psi');
   }
 
-  // ── TC Raw: [0x21, 0x01..0x04] ──────────────────────────────────────────
-  if (high === 0x21 && low >= 0x01 && low <= 0x04) {
+  // ── TC Raw: [0x21, 0x01..0x14] ──────────────────────────────────────────
+  if (high === 0x21 && low >= 0x01 && low <= 0x14) {
     const ch = low;
     return parseRawSensorPayload(payload, ch, `TC.CH${ch}`, 'raw_adc_counts');
   }
 
-  // ── TC Calibrated: [0x21, 0x11..0x14] ───────────────────────────────────
-  if (high === 0x21 && low >= 0x11 && low <= 0x14) {
+  // ── TC Calibrated: [0x21, 0x11..0x24] ───────────────────────────────────
+  if (high === 0x21 && low >= 0x11 && low <= 0x24) {
     const ch = low - 0x10;
     return parseCalibratedSensorPayload(payload, ch, `TC_Cal.CH${ch}`, 'temperature_c');
   }
 
-  // ── RTD Raw: [0x22, 0x01..0x04] ─────────────────────────────────────────
-  if (high === 0x22 && low >= 0x01 && low <= 0x04) {
+  // ── RTD Raw: [0x22, 0x01..0x14] ─────────────────────────────────────────
+  if (high === 0x22 && low >= 0x01 && low <= 0x14) {
     const ch = low;
     return parseRawSensorPayload(payload, ch, `RTD.CH${ch}`, 'raw_resistance_counts');
   }
 
-  // ── RTD Calibrated: [0x22, 0x11..0x14] ───────────────────────────────────
-  if (high === 0x22 && low >= 0x11 && low <= 0x14) {
+  // ── RTD Calibrated: [0x22, 0x11..0x24] ───────────────────────────────────
+  if (high === 0x22 && low >= 0x11 && low <= 0x24) {
     const ch = low - 0x10;
     return parseCalibratedSensorPayload(payload, ch, `RTD_Cal.CH${ch}`, 'temperature_c');
   }
 
-  // ── LC Raw: [0x23, 0x01..0x04] ──────────────────────────────────────────
-  if (high === 0x23 && low >= 0x01 && low <= 0x04) {
+  // ── LC Raw: [0x23, 0x01..0x14] ──────────────────────────────────────────
+  if (high === 0x23 && low >= 0x01 && low <= 0x14) {
     const ch = low;
     return parseRawSensorPayload(payload, ch, `LC.CH${ch}`, 'raw_adc_counts');
   }
 
-  // ── LC Calibrated: [0x23, 0x11..0x14] ───────────────────────────────────
-  if (high === 0x23 && low >= 0x11 && low <= 0x14) {
+  // ── LC Calibrated: [0x23, 0x11..0x24] ───────────────────────────────────
+  if (high === 0x23 && low >= 0x11 && low <= 0x24) {
     const ch = low - 0x10;
     return parseCalibratedSensorPayload(payload, ch, `LC_Cal.CH${ch}`, 'force_lbf');
   }
@@ -176,6 +166,16 @@ export function parseElodinPacket(
     const payloadCh = payload.length >= 9 ? payload.readUInt8(8) : ch;
     const entityName = entityMaps?.actuatorChannelToEntityMap?.[payloadCh] || `ACT.CH${payloadCh}`;
     return parseRawSensorPayload(payload, ch, entityName, 'raw_adc_counts');
+  }
+
+  // ── Actuator state (0=closed, 1=open): [0x31, 0x01..0x14] ─────────────────
+  if (high === 0x31 && low >= 0x01 && payload.length >= 10) {
+    const ch = low;
+    const payloadCh = payload.readUInt8(8);
+    const state = payload.readUInt8(9);
+    const entityName = entityMaps?.actuatorChannelToEntityMap?.[payloadCh] || `ACT.CH${payloadCh}`;
+    const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
+    return { entity: entityName, component: 'actuator_state', value: state, timestamp: tsMs };
   }
 
   // ── Controller Actuation: [0x40, 0x00] ──────────────────────────────────

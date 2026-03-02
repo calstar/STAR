@@ -5,6 +5,7 @@
  */
 
 import * as dgram from 'dgram';
+import * as net from 'net';
 import { WebSocket } from 'ws';
 import { readConfig } from './routes/config.js';
 import { getActuatorChannel, CSV_ACTUATOR_TO_ENTITY } from './routes/state-actuators.js';
@@ -175,33 +176,17 @@ export function guiStateToHardwareState(guiState: number, actuatorType: 'NC' | '
 // Proxy format: [dest_ip(4B big-endian) | dest_port(2B LE) | payload...]
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const DAQ_PROXY_HOST = '127.0.0.1';
-const DAQ_PROXY_PORT = 5557;
-
-/** Wrap a raw actuator payload in the proxy envelope and send to daq_bridge. */
-function sendViaProxy(host: ActuatorHost, destIp: string, destPort: number, payload: Buffer): boolean {
+/** Send payload directly to board IP:port. */
+function sendUdp(host: ActuatorHost, destIp: string, destPort: number, payload: Buffer): boolean {
     if (!host.actuatorSocket) return false;
-    try {
-        // dest_ip as 4 bytes big-endian (network order)
-        const ipOctets = destIp.split('.').map(Number);
-        if (ipOctets.length !== 4 || ipOctets.some(b => !Number.isFinite(b) || b < 0 || b > 255)) {
-            console.error(`❌ sendViaProxy: invalid dest IP "${destIp}"`);
-            return false;
+    host.actuatorSocket.send(payload, 0, payload.length, destPort, destIp, (err) => {
+        if (err) {
+            const e = err as any;
+            console.error(`❌ UDP to ${destIp}:${destPort}: ${e.code || ''} ${e.message}`);
+            _recreateSocket(host);
         }
-        const proxied = Buffer.allocUnsafe(6 + payload.length);
-        proxied[0] = ipOctets[0]; proxied[1] = ipOctets[1];
-        proxied[2] = ipOctets[2]; proxied[3] = ipOctets[3];
-        proxied.writeUInt16LE(destPort, 4);
-        payload.copy(proxied, 6);
-
-        host.actuatorSocket.send(proxied, 0, proxied.length, DAQ_PROXY_PORT, DAQ_PROXY_HOST, (err) => {
-            if (err) console.error(`❌ Proxy send failed: ${err.message}`);
-        });
-        return true;
-    } catch (error) {
-        console.error('❌ sendViaProxy error:', error);
-        return false;
-    }
+    });
+    return true;
 }
 
 /**
@@ -305,7 +290,7 @@ export function sendActuatorCommandUDP(
             return false;
         }
 
-        return sendViaProxy(host, targetIp, host.actuatorPort, buffer);
+        return sendUdp(host, targetIp, host.actuatorPort, buffer);
     } catch (error) {
         console.error('❌ Error sending actuator command:', error);
         _recreateSocket(host);
@@ -353,12 +338,63 @@ export function sendPWMActuatorCommandUDP(
         buffer.writeFloatLE(frequency, offset);
         offset += 4;
 
-        return sendViaProxy(host, targetIp, host.actuatorPort, buffer);
+        return sendUdp(host, targetIp, host.actuatorPort, buffer);
     } catch (error) {
         console.error('❌ Error sending PWM command:', error);
         _recreateSocket(host);
         return false;
     }
+}
+
+/** Map SystemState enum key to CSV state name (state_machine_actuators.csv headers). */
+const STATE_TO_CSV_NAME: Record<string, string> = {
+  IDLE: 'Idle', ARMED: 'Armed', FUEL_FILL: 'Fuel Fill', OX_FILL: 'Ox Fill',
+  PRESS_STANDBY: 'Press Standby', GN2_LOW_PRESS: 'GN2 Low Press', GN2_VENT: 'GN2 Low Vent',
+  FUEL_PRESS: 'Fuel Press', FUEL_VENT: 'Fuel Vent', OX_PRESS: 'Ox Press', OX_VENT: 'Ox Vent',
+  GN2_HIGH_PRESS: 'GN2 High Press', GN2_HIGH_VENT: 'GN2 High Vent', CALIBRATE: 'Calibrate',
+  READY: 'Ready', FIRE: 'Fire', VENT: 'Vent',
+  ENGINE_ABORT: 'Engine Abort', GSE_ABORT: 'GSE Abort', EMERGENCY_ABORT: 'Emergency Abort',
+  DEBUG: 'Debug',
+};
+
+/** Forward state to C++ actuator_service (TCP). When configured, backend skips UDP. */
+export async function forwardStateToActuatorService(stateName: string, port?: number): Promise<boolean> {
+    let p = port ?? 0;
+    if (!p || p < 1 || p > 65535) {
+        p = process.env.ACTUATOR_SERVICE_PORT ? parseInt(process.env.ACTUATOR_SERVICE_PORT, 10) : 0;
+    }
+    if (!p || p < 1 || p > 65535) {
+        try {
+            const cfg = readConfig();
+            const c = (cfg as any).actuator_service?.port;
+            if (typeof c === 'number' && c >= 1 && c <= 65535) p = c;
+        } catch (_) { /* ignore */ }
+    }
+    if (!p || p < 1 || p > 65535) return false;
+
+    return new Promise<boolean>((resolve) => {
+        const csvName = STATE_TO_CSV_NAME[stateName] ?? stateName;
+        const socket = net.connect({ host: '127.0.0.1', port: p }, () => {
+            socket.write(`STATE:${csvName}\n`, (err?: Error | null) => {
+                if (err) {
+                    console.error(`[ActuatorService] Write error: ${err.message}`);
+                    resolve(false);
+                } else {
+                    console.log(`[ActuatorService] Forwarded state ${stateName} to C++ service`);
+                    resolve(true);
+                }
+                socket.end();
+            });
+        });
+        socket.on('error', (err: Error) => {
+            console.warn(`[ActuatorService] Connection failed (port ${p}): ${err.message}`);
+            resolve(false);
+        });
+        socket.setTimeout(2000, () => {
+            socket.destroy();
+            resolve(false);
+        });
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

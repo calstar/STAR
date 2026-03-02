@@ -688,7 +688,7 @@ void ControllerService::writeActuationToDB(const RobustDDPController::ActuationC
 
     comms::messages::control::ControllerActuationMessage msg;
     std::get<0>(msg.fields) = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                  std::chrono::steady_clock::now().time_since_epoch())
+                                  std::chrono::system_clock::now().time_since_epoch())
                                   .count();
     std::get<1>(msg.fields) = static_cast<float>(actuation.duty_F);
     std::get<2>(msg.fields) = static_cast<float>(actuation.duty_O);
@@ -704,7 +704,7 @@ void ControllerService::writeDiagnosticsToDB(const RobustDDPController::Diagnost
 
     comms::messages::control::ControllerDiagnosticsMessage msg;
     std::get<0>(msg.fields) = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                  std::chrono::steady_clock::now().time_since_epoch())
+                                  std::chrono::system_clock::now().time_since_epoch())
                                   .count();
     std::get<1>(msg.fields) = diagnostics.F_ref;
     std::get<2>(msg.fields) = diagnostics.MR_ref;
@@ -723,8 +723,9 @@ void ControllerService::writeMeasurementToDB(const RobustDDPController::Measurem
     constexpr uint16_t MEASUREMENT_MESSAGE_ID = 0x4200;
 
     comms::messages::control::ControllerMeasurementMessage msg;
+    // Use system_clock for consistency with DAQ bridge (epoch ms in GUI).
     auto ts_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                     measurement.timestamp.time_since_epoch())
+                     std::chrono::system_clock::now().time_since_epoch())
                      .count();
     std::get<0>(msg.fields) = ts_ns;
     std::get<1>(msg.fields) = measurement.P_copv;

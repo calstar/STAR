@@ -210,13 +210,17 @@ export function psiToPa(psi: number): number {
 export function mapSensorDataToMeasurement(sensorData: Map<string, number>): ControllerMeasurement | null {
   // Map entity names to controller measurement fields
   // Using both named aliases and PT_CH fallbacks
-  const getPressure = (entity: string, fallback?: string): number | null => {
-    const value = sensorData.get(`${entity}.pressure_psi`)
-      ?? sensorData.get(`${fallback}.pressure_psi`);
-    return value !== undefined ? value : null;
+  const getPressure = (entity: string, ...fallbacks: string[]): number | null => {
+    let v = sensorData.get(`${entity}.pressure_psi`);
+    if (v !== undefined) return v;
+    for (const fb of fallbacks) {
+      v = sensorData.get(`${fb}.pressure_psi`);
+      if (v !== undefined) return v;
+    }
+    return null;
   };
 
-  let P_copv = getPressure('PT_Cal.GN2_High', 'PT_Cal.PT_CH9');
+  let P_copv = getPressure('PT_Cal.GN2_High', 'PT_Cal.HP_PT_4', 'PT_Cal.PT_CH9');
   const P_reg = getPressure('PT_Cal.GN2_Regulated', 'PT_Cal.PT_CH6');
   const P_u_fuel = getPressure('PT_Cal.Fuel_Upstream', 'PT_Cal.PT_CH1');
   const P_u_ox = getPressure('PT_Cal.Ox_Upstream', 'PT_Cal.PT_CH5');
