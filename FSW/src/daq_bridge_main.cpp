@@ -17,6 +17,8 @@
 #include "../../daq_comms/include/comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "../../daq_comms/include/comms/messages/sensor/SensorMessages.hpp"
 #include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
+#include "calibration/PTCalibration.hpp"
+#include "calibration/SensorCalibration.hpp"
 #include "config/BoardDiscovery.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
@@ -456,7 +458,28 @@ int main(int argc, char* argv[]) {
     std::cout << "✅ Sensor pipeline ready on port " << bind_port << std::endl;
 
     fsw::routing::SensorRouter router;
-    std::cout << "✅ Sensor router initialized" << std::endl;
+
+    // ── Inline Calibration (Elodin only supports 1 stream subscriber, so calibration runs here) ──
+    fsw::calibration::PTCalibrationManager pt_calibration;
+    pt_calibration.load_calibration();
+    fsw::calibration::SensorCalibrationManager tc_calibration("TC", "°C", 3);
+    tc_calibration.load_calibration(
+        "scripts/calibration/calibrations/tc",
+        "external/DiabloAvionics/TC_Board/Calibration/tc_calibration.csv");
+    fsw::calibration::SensorCalibrationManager rtd_calibration("RTD", "°C", 3);
+    rtd_calibration.load_calibration(
+        "scripts/calibration/calibrations/rtd",
+        "external/DiabloAvionics/RTD_Board/Calibration/rtd_calibration.csv");
+    fsw::calibration::SensorCalibrationManager lc_calibration("LC", "lbf", 3);
+    lc_calibration.load_calibration(
+        "scripts/calibration/calibrations/lc",
+        "external/DiabloAvionics/LC_Board/Calibration/lc_calibration.csv");
+    router.set_pt_calibration(&pt_calibration);
+    router.set_tc_calibration(&tc_calibration);
+    router.set_rtd_calibration(&rtd_calibration);
+    router.set_lc_calibration(&lc_calibration);
+    std::cout << "✅ Sensor router initialized (with inline calibration: PT="
+              << pt_calibration.get_calibrated_count() << " channels)" << std::endl;
 
     // ── Elodin Client (host/port from config [database]) ──
     fsw::elodin::ElodinClient elodin_client;
@@ -471,10 +494,12 @@ int main(int argc, char* argv[]) {
     if (elodin_client.connect(db_host, db_port)) {
         elodin_connected = true;
         std::cout << "✅ Connected to Elodin database" << std::endl;
-        // Register VTables with config-driven names so DB is a replica of backend
+        // Register RAW VTables
         if (!fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_names, act_names)) {
-            std::cerr << "⚠️  VTable registration failed — editor may not display data" << std::endl;
+            std::cerr << "⚠️  RAW VTable registration failed" << std::endl;
         }
+        // Register CALIBRATED VTables (inline calibration — no separate service)
+        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names);
         // Drain any response from DB after registration; otherwise recv buffer fills and TABLE
         // writes stall after ~3s
         std::array<uint8_t, 4096> drain_buf;
@@ -597,6 +622,14 @@ int main(int argc, char* argv[]) {
                 auto pt_msgs = router.route_pt_samples(batch.value(), receive_timestamp_ns);
                 if (publishing) {
                     for (const auto& [id, msg] : pt_msgs)
+                        if (is_publish_allowed(id[0], id[1], publish_ranges))
+                            elodin_client.publish(id, msg);
+                }
+                // Inline calibration: also publish calibrated PT data
+                if (publishing) {
+                    auto cal_msgs =
+                        router.route_pt_samples_calibrated(batch.value(), receive_timestamp_ns);
+                    for (const auto& [id, msg] : cal_msgs)
                         if (is_publish_allowed(id[0], id[1], publish_ranges))
                             elodin_client.publish(id, msg);
                 }
