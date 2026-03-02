@@ -54,7 +54,6 @@ export default function DerivedTimeSeriesPlot({
   const transformRef = useRef(transform);
   transformRef.current = transform;
   const [ready, setReady] = useState(false);
-  const startTimeRef = useRef(getStartupTime());
 
   useEffect(() => {
     if (!containerRef.current || !plotRef.current) return;
@@ -168,7 +167,7 @@ export default function DerivedTimeSeriesPlot({
     const intervalId = setInterval(() => {
       updateData();
       if (uplotRef.current) {
-        const now = (Date.now() - startTimeRef.current) / 1000;
+        const now = (Date.now() - getStartupTime()) / 1000;
         uplotRef.current.setScale('x', {
           min: Math.max(0, now - windowSeconds),
           max: now,

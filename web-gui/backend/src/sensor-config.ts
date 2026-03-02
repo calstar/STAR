@@ -179,6 +179,41 @@ export function loadHpPtConfig(): Map<string, HpPtBoardConfig> {
 }
 
 /**
+ * Load TC board configs from config.toml.
+ * Returns a map of board IP → set of active connector IDs (empty set = all connectors).
+ */
+export function loadTcBoardConfig(): Map<string, Set<number>> {
+    const tcBoards = new Map<string, Set<number>>();
+
+    try {
+        const config = readConfig();
+        const boards = config.boards || {};
+
+        for (const [boardKey, boardRaw] of Object.entries(boards)) {
+            const board = boardRaw as any;
+            if (board.type !== 'TC') continue;
+            if (board.enabled === false) {
+                console.log(`   ⏭️  Skipping ${boardKey} (${board.ip}): board is disabled`);
+                continue;
+            }
+            if (!board.ip) continue;
+
+            const active: Set<number> = new Set(
+                Array.isArray(board.active_connectors) && board.active_connectors.length > 0
+                    ? (board.active_connectors as number[])
+                    : []
+            );
+            tcBoards.set(board.ip, active);
+            console.log(`📋 Registered TC board ${boardKey} (${board.ip}), active connectors: ${active.size > 0 ? [...active].join(', ') : 'all'}`);
+        }
+    } catch (error) {
+        console.error('❌ Failed to load TC board config from config.toml:', error);
+    }
+
+    return tcBoards;
+}
+
+/**
  * Convert HP PT ADC codes to PSI using the 4-20 mA formula.
  *
  * Both the sensor channel and the excitation channel use the board's fixed

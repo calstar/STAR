@@ -1,7 +1,6 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react';
-import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import DerivedTimeSeriesPlot from '@/components/plots/DerivedTimeSeriesPlot';
 import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
 import { useSensorStore, useSensorValue } from '@/lib/store';
@@ -31,19 +30,27 @@ const SENSE_COLORS = ['#F59E0B', '#10B981', '#3B82F6', '#EC4899'];
 
 const WINDOW_SECONDS = 60;
 
-/** Single readout box showing a derived value (e.g. temperature from raw). */
+// ── Config helper ─────────────────────────────────────────────────────────────
+
+function buildChannels(boards: Record<string, any>, type: 'TC' | 'RTD' | 'LC'): number[] {
+  const channels: number[] = [];
+  for (const board of Object.values(boards)) {
+    if (board.type !== type || board.enabled === false) continue;
+    const active: number[] =
+      Array.isArray(board.active_connectors) && board.active_connectors.length > 0
+        ? (board.active_connectors as number[])
+        : Array.from({ length: (board.num_sensors as number) ?? 10 }, (_, i) => i + 1);
+    channels.push(...active);
+  }
+  return channels;
+}
+
+// ── Readout boxes ─────────────────────────────────────────────────────────────
+
 function DerivedReadoutBox({
-  label,
-  value,
-  unit,
-  color,
-  decimals = 1,
+  label, value, unit, color, decimals = 1,
 }: {
-  label: string;
-  value: number | null;
-  unit: string;
-  color: string;
-  decimals?: number;
+  label: string; value: number | null; unit: string; color: string; decimals?: number;
 }) {
   return (
     <div className="bg-gray-900/60 rounded-xl px-4 py-3 flex flex-col gap-0.5 min-w-0 border border-gray-800/80">
@@ -59,29 +66,52 @@ function DerivedReadoutBox({
 }
 
 function TCTempReadout({
-  entity,
-  label,
-  color,
-  refVoltage,
+  entity, label, color, refVoltage,
 }: {
-  entity: string;
-  label: string;
-  color: string;
-  refVoltage: number;
+  entity: string; label: string; color: string; refVoltage: number;
 }) {
   const raw = useSensorValue(entity, 'raw_adc_counts');
   const volt = raw !== null ? adcToVoltageCustom(raw, refVoltage) : null;
   const temp = volt !== null ? kTypeVoltageToTempC(volt) : null;
-  return (
-    <DerivedReadoutBox label={label} value={temp} unit="°C" color={color} decimals={1} />
-  );
+  return <DerivedReadoutBox label={label} value={temp} unit="°C" color={color} decimals={1} />;
 }
 
 function RTDTempReadout({ entity, label, color }: { entity: string; label: string; color: string }) {
-  const r = useSensorValue(entity, 'raw_resistance');
-  const temp = r !== null ? pt1000ResistanceToTempC(r) : null;
+  const temp = useSensorValue(entity, 'temperature_c');
+  return <DerivedReadoutBox label={label} value={temp} unit="°C" color={color} decimals={1} />;
+}
+
+// ── Shared plot wrapper ───────────────────────────────────────────────────────
+
+function SectionPlot({
+  title, entities, component, transform, yLabel, labels, colors,
+}: {
+  title: string;
+  entities: string[];
+  component: string;
+  transform: (v: number) => number | null;
+  yLabel: string;
+  labels: string[];
+  colors: string[];
+}) {
   return (
-    <DerivedReadoutBox label={label} value={temp} unit="°C" color={color} decimals={1} />
+    <div className="flex flex-col min-h-[320px] rounded-lg overflow-hidden bg-gray-950/50 border border-gray-800">
+      <div className="px-3 py-2 border-b border-gray-800 text-xs font-medium text-gray-500">
+        {title}
+      </div>
+      <div className="flex-1 min-h-[280px]">
+        <DerivedTimeSeriesPlot
+          title=""
+          entities={entities}
+          component={component}
+          transform={transform}
+          yLabel={yLabel}
+          labels={labels}
+          colors={colors}
+          windowSeconds={WINDOW_SECONDS}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -122,10 +152,51 @@ function LCForceReadout({
 
 export default function LCS_TCS_RTDPage() {
   const updateSensor = useSensorStore((s) => s.updateSensor);
-  const updateState = useSensorStore((s) => s.updateState);
+  const updateState  = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
+
   const [tcRefVoltage, setTcRefVoltage] = useState(2.5);
 
+  // Dynamic channel lists from config
+  const [tcEntities,  setTcEntities]  = useState<string[]>([]);
+  const [tcLabels,    setTcLabels]    = useState<string[]>([]);
+  const [rtdEntities, setRtdEntities] = useState<string[]>([]);
+  const [rtdCalEntities, setRtdCalEntities] = useState<string[]>([]);
+  const [rtdLabels,   setRtdLabels]   = useState<string[]>([]);
+  const [lcEntities,  setLcEntities]  = useState<string[]>([]);
+  const [lcLabels,    setLcLabels]    = useState<string[]>([]);
+
+  // Fetch board config once on mount
+  useEffect(() => {
+    fetch('/api/config')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: any) => {
+        const boards = data?.config?.boards;
+        if (!boards) return;
+
+        const tc = buildChannels(boards, 'TC');
+        if (tc.length) {
+          setTcEntities(tc.map((ch) => `TC.TC_CH${ch}`));
+          setTcLabels(tc.map((ch) => `TC Ch${ch}`));
+        }
+
+        const rtd = buildChannels(boards, 'RTD');
+        if (rtd.length) {
+          setRtdEntities(rtd.map((ch) => `RTD.RTD_CH${ch}`));
+          setRtdCalEntities(rtd.map((ch) => `RTD_Cal.RTD_CH${ch}`));
+          setRtdLabels(rtd.map((ch) => `RTD Ch${ch}`));
+        }
+
+        const lc = buildChannels(boards, 'LC');
+        if (lc.length) {
+          setLcEntities(lc.map((ch) => `LC.LC_CH${ch}`));
+          setLcLabels(lc.map((ch) => `LC Ch${ch}`));
+        }
+      })
+      .catch(() => {/* leave defaults empty */});
+  }, []);
+
+  // WebSocket subscriptions
   useEffect(() => {
     ws.connect();
     const unsub1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) =>
@@ -134,17 +205,12 @@ export default function LCS_TCS_RTDPage() {
     const unsub2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) =>
       updateState(p as StateUpdate)
     );
-    return () => {
-      unsub1();
-      unsub2();
-    };
+    return () => { unsub1(); unsub2(); };
   }, [ws, updateSensor, updateState]);
 
+  // Plot transforms
   const tcTransform = useCallback(
-    (v: number) => {
-      const volt = adcToVoltageCustom(v, tcRefVoltage);
-      return kTypeVoltageToTempC(volt);
-    },
+    (v: number) => kTypeVoltageToTempC(adcToVoltageCustom(v, tcRefVoltage)),
     [tcRefVoltage]
   );
 
@@ -168,9 +234,7 @@ export default function LCS_TCS_RTDPage() {
       <div className="flex-shrink-0 px-4 pt-4 pb-3 border-b border-gray-800/80">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-white">
-              LCS / TCS / RTD
-            </h1>
+            <h1 className="text-xl font-bold tracking-tight text-white">LCS / TCS / RTD</h1>
             <p className="text-sm text-gray-400 mt-0.5">
               Thermocouples (K-type) · RTDs (Pt1000) · Load cells (3 channels, formula-based force)
             </p>
@@ -190,15 +254,14 @@ export default function LCS_TCS_RTDPage() {
                 <option value={5}>5</option>
               </select>
             </div>
-            <span className="text-xs text-gray-500 font-mono">
-              {WINDOW_SECONDS} s window
-            </span>
+            <span className="text-xs text-gray-500 font-mono">{WINDOW_SECONDS} s window</span>
           </div>
         </div>
       </div>
 
       <div className="flex-1 min-h-0 p-4 flex flex-col gap-6 overflow-auto">
-        {/* ── Thermocouples ───────────────────────────────────────────────── */}
+
+        {/* ── Thermocouples ──────────────────────────────────────────────────── */}
         <section className="flex flex-col gap-3 flex-shrink-0">
           <div className="flex items-center gap-2">
             <div className="w-1 h-6 rounded-full bg-amber-500/90" />
@@ -207,50 +270,48 @@ export default function LCS_TCS_RTDPage() {
             </h2>
           </div>
           <div className="bg-card rounded-xl border border-gray-800 p-4 flex flex-col gap-4">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {TC_ENTITIES.map((entity, i) => (
-                <TCTempReadout
-                  key={entity}
-                  entity={entity}
-                  label={TC_LABELS[i]}
-                  color={SENSE_COLORS[i]}
-                  refVoltage={tcRefVoltage}
+            {tcEntities.length > 0 ? (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {tcEntities.map((entity, i) => (
+                    <TCTempReadout
+                      key={entity}
+                      entity={entity}
+                      label={tcLabels[i]}
+                      color={SENSE_COLORS[i % SENSE_COLORS.length]}
+                      refVoltage={tcRefVoltage}
+                    />
+                  ))}
+                </div>
+                <SensorReadoutStrip
+                  sensors={tcEntities.map((entity, i) => ({
+                    label: `${tcLabels[i]} ADC`,
+                    entity,
+                    component: 'raw_adc_counts',
+                    unit: 'counts',
+                    color: SENSE_COLORS[i % SENSE_COLORS.length],
+                    decimals: 0,
+                  }))}
                 />
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <SensorReadoutStrip
-                sensors={TC_ENTITIES.map((entity, i) => ({
-                  label: `${TC_LABELS[i]} ADC`,
-                  entity,
-                  component: 'raw_adc_counts',
-                  unit: 'counts',
-                  color: SENSE_COLORS[i],
-                  decimals: 0,
-                }))}
-              />
-            </div>
-            <div className="flex flex-col min-h-[320px] rounded-lg overflow-hidden bg-gray-950/50 border border-gray-800">
-              <div className="px-3 py-2 border-b border-gray-800 text-xs font-medium text-gray-500">
-                Temperature (°C) — K-type from raw ADC
-              </div>
-              <div className="flex-1 min-h-[280px]">
-                <DerivedTimeSeriesPlot
-                  title=""
-                  entities={TC_ENTITIES}
+                <SectionPlot
+                  title="Temperature (°C) — K-type from raw ADC"
+                  entities={tcEntities}
                   component="raw_adc_counts"
                   transform={tcTransform}
                   yLabel="Temperature (°C)"
-                  labels={TC_LABELS}
-                  colors={SENSE_COLORS}
-                  windowSeconds={WINDOW_SECONDS}
+                  labels={tcLabels}
+                  colors={SENSE_COLORS.slice(0, tcEntities.length)}
                 />
-              </div>
-            </div>
+              </>
+            ) : (
+              <p className="text-sm text-gray-500 text-center py-4">
+                No TC boards enabled in config.toml
+              </p>
+            )}
           </div>
         </section>
 
-        {/* ── RTDs ────────────────────────────────────────────────────────── */}
+        {/* ── RTDs ───────────────────────────────────────────────────────────── */}
         <section className="flex flex-col gap-3 flex-shrink-0">
           <div className="flex items-center gap-2">
             <div className="w-1 h-6 rounded-full bg-emerald-500/90" />
@@ -259,63 +320,43 @@ export default function LCS_TCS_RTDPage() {
             </h2>
           </div>
           <div className="bg-card rounded-xl border border-gray-800 p-4 flex flex-col gap-4">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {RTD_ENTITIES.map((entity, i) => (
-                <RTDTempReadout
-                  key={entity}
-                  entity={entity}
-                  label={`${RTD_LABELS[i]} T`}
-                  color={SENSE_COLORS[i]}
+            {rtdEntities.length > 0 ? (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {rtdCalEntities.map((entity, i) => (
+                    <RTDTempReadout
+                      key={entity}
+                      entity={entity}
+                      label={`${rtdLabels[i]} T`}
+                      color={SENSE_COLORS[i % SENSE_COLORS.length]}
+                    />
+                  ))}
+                </div>
+                <SensorReadoutStrip
+                  sensors={rtdEntities.map((entity, i) => ({
+                    label: `${rtdLabels[i]} ADC`,
+                    entity,
+                    component: 'raw_resistance',
+                    unit: 'counts',
+                    color: SENSE_COLORS[i % SENSE_COLORS.length],
+                    decimals: 0,
+                  }))}
                 />
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <SensorReadoutStrip
-                sensors={RTD_ENTITIES.map((entity, i) => ({
-                  label: `${RTD_LABELS[i]} R`,
-                  entity,
-                  component: 'raw_resistance',
-                  unit: 'Ω',
-                  color: SENSE_COLORS[i],
-                  decimals: 1,
-                }))}
-              />
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className="flex flex-col min-h-[320px] rounded-lg overflow-hidden bg-gray-950/50 border border-gray-800">
-                <div className="px-3 py-2 border-b border-gray-800 text-xs font-medium text-gray-500">
-                  Resistance (Ω)
-                </div>
-                <div className="flex-1 min-h-[280px]">
-                  <TimeSeriesPlot
-                    title=""
-                    entities={RTD_ENTITIES}
-                    labels={RTD_LABELS}
-                    component="raw_resistance"
-                    colors={SENSE_COLORS}
-                    yLabel="Resistance (Ω)"
-                    windowSeconds={WINDOW_SECONDS}
-                  />
-                </div>
-              </div>
-              <div className="flex flex-col min-h-[320px] rounded-lg overflow-hidden bg-gray-950/50 border border-gray-800">
-                <div className="px-3 py-2 border-b border-gray-800 text-xs font-medium text-gray-500">
-                  Temperature (°C) — Pt1000
-                </div>
-                <div className="flex-1 min-h-[280px]">
-                  <DerivedTimeSeriesPlot
-                    title=""
-                    entities={RTD_ENTITIES}
-                    component="raw_resistance"
-                    transform={rtdTransform}
-                    yLabel="Temperature (°C)"
-                    labels={RTD_LABELS}
-                    colors={SENSE_COLORS}
-                    windowSeconds={WINDOW_SECONDS}
-                  />
-                </div>
-              </div>
-            </div>
+                <SectionPlot
+                  title="Temperature (°C) — Pt1000"
+                  entities={rtdCalEntities}
+                  component="temperature_c"
+                  transform={rtdTransform}
+                  yLabel="Temperature (°C)"
+                  labels={rtdLabels}
+                  colors={SENSE_COLORS.slice(0, rtdEntities.length)}
+                />
+              </>
+            ) : (
+              <p className="text-sm text-gray-500 text-center py-4">
+                No RTD boards enabled in config.toml
+              </p>
+            )}
           </div>
         </section>
 
@@ -387,6 +428,7 @@ export default function LCS_TCS_RTDPage() {
             </div>
           </div>
         </section>
+
       </div>
     </main>
   );

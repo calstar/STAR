@@ -52,7 +52,7 @@ import {
 
 // ── Extracted modules ──────────────────────────────────────────────────────────
 import { Client, HpPtBoardConfig, WS_PORT, WS_HOST, ELODIN_HOST, ELODIN_PORT, ACTUATOR_CHANNEL_BY_NAME } from './server-types.js';
-import { loadSensorRoleMap, loadHpPtConfig, convertHpPtToPressure } from './sensor-config.js';
+import { loadSensorRoleMap, loadHpPtConfig, convertHpPtToPressure, loadTcBoardConfig } from './sensor-config.js';
 import {
   loadActuatorBoardMap,
   getActuatorBoardInfo,
@@ -111,6 +111,7 @@ class SensorSystemServer {
   actuatorPort: number = 5005;
   actuatorBoardMap: Map<string, { channel: number; boardIp: string }> = new Map();
   actuatorBoardIPs: Set<string> = new Set();
+  private tcBoards: Map<string, Set<number>> = new Map();
 
   /** Throttle Phase 2 monitoring to ~5 Hz per channel */
   private phase2LastMonitor: Map<number, number> = new Map();
@@ -348,6 +349,9 @@ class SensorSystemServer {
 
     // Load HP PT board configs (extracted module)
     this.hpPtBoards = loadHpPtConfig();
+
+    // Load TC board configs
+    this.tcBoards = loadTcBoardConfig();
 
     // Initialize controller client (config > env var > default), unless using C++ controller
     const controllerUrl = process.env.CONTROLLER_URL || controllerConfig.controller_service_url || 'http://localhost:8000';
@@ -869,6 +873,7 @@ class SensorSystemServer {
     this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
       if (this.hpPtBoards.has(sourceIP)) return;
       if (this.actuatorBoardIPs.has(sourceIP)) return;
+      if (this.tcBoards.has(sourceIP)) return;
 
       const now = Date.now();
       if (now - this._lastSensorLog > 5000) {
@@ -1044,6 +1049,33 @@ class SensorSystemServer {
       }
     });
 
+    // ── TC board data ────────────────────────────────────────────────────────
+    this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
+      const activeConnectors = this.tcBoards.get(sourceIP);
+      if (activeConnectors === undefined) return;
+
+      const currentTime = Date.now();
+      const SAMPLE_RATE_HZ = 7200;
+      const SAMPLE_PERIOD_MS = 1000.0 / SAMPLE_RATE_HZ;
+
+      for (const chunk of chunks) {
+        const chunkTimeBase = chunk.timestamp > 0 ? chunk.timestamp : currentTime;
+        for (let i = 0; i < chunk.datapoints.length; i++) {
+          const dp = chunk.datapoints[i];
+          const channelId: number = dp.sensor_id;
+          if (channelId === 0) continue;
+          if (activeConnectors.size > 0 && !activeConnectors.has(channelId)) continue;
+          const sampleTime = chunkTimeBase + i * SAMPLE_PERIOD_MS;
+          this.handleSensorUpdate({
+            entity: `TC.TC_CH${channelId}`,
+            component: 'raw_adc_counts',
+            value: dp.data,
+            timestamp: sampleTime,
+          });
+        }
+      }
+    });
+
     this.daqDirect.connect().then((connected) => {
       if (connected) { console.log('✅ Direct DAQ connection successful'); }
       else { console.warn('⚠️ Direct DAQ connection failed (no Elodin fallback — data path is UDP → Backend only)'); }
@@ -1060,7 +1092,7 @@ class SensorSystemServer {
       if (update.value < this.PSI_ABSOLUTE_MIN || update.value > this.PSI_ABSOLUTE_MAX) return;
     }
 
-    if (this.firstPacketTime === null && (update.entity.startsWith('PT.') || update.entity.startsWith('PT_Cal.') || update.entity.startsWith('ACT.'))) {
+    if (this.firstPacketTime === null && (update.entity.startsWith('PT.') || update.entity.startsWith('PT_Cal.') || update.entity.startsWith('ACT.') || update.entity.startsWith('TC.'))) {
       this.firstPacketTime = update.timestamp;
       console.log(`🚀 Mission T+0 set: ${new Date(this.firstPacketTime).toISOString()}`);
       this.broadcast({ type: MessageType.MISSION_START_TIME, timestamp: Date.now(), payload: { missionStartTime: this.firstPacketTime } });
@@ -2206,13 +2238,16 @@ class SensorSystemServer {
   }
 
   /**
-   * Construct a DAQv2 SENSOR_CONFIG packet.
+   * Construct a DAQv2-Comms SENSOR_CONFIG packet.
+   * Layout matches create_sensor_config_packet in DiabloPacketUtils.cpp.
+   * Must NOT follow generate_packets.cpp (different/legacy format).
+   *
    * Body layout (after 6-byte header):
    *   num_sensors (1 byte)
-   *   sensor_ids  (N bytes, 1-byte each)
+   *   sensor_ids (N bytes, 1-byte each)
    *   reference_voltage (1 byte: 0=Internal 2.5V, 1=VDD, 2=5V)
    *   necessary_for_abort (1 byte, 0/1)
-   *   designated_survivor_ip (4 bytes, big-endian IPv4)
+   *   controller_ip (4 bytes, big-endian) — ONLY when necessary_for_abort is true
    *   enable_serial_printing (1 byte, 0/1)
    */
   private buildSensorConfigPacket(
@@ -2227,7 +2262,7 @@ class SensorSystemServer {
       .filter((v) => Number.isFinite(v) && v >= 1 && v <= 255);
 
     const numSensors = Math.min(sanitized.length, 255);
-    const bodyLength = 1 + numSensors + 1 + 1 + 4 + 1;
+    const bodyLength = 1 + numSensors + 1 + 1 + (necessaryForAbort ? 4 : 0) + 1;
     const totalLength = 6 + bodyLength;
     const buffer = Buffer.allocUnsafe(totalLength);
 
@@ -2249,13 +2284,15 @@ class SensorSystemServer {
     buffer.writeUInt8(Math.min(2, Math.max(0, referenceVoltage)), offset++);
     buffer.writeUInt8(necessaryForAbort ? 1 : 0, offset++);
 
-    const ipOctets = designatedSurvivorIP.split('.').map((part) => Number(part));
-    if (ipOctets.length !== 4 || ipOctets.some((p) => !Number.isFinite(p) || p < 0 || p > 255)) {
-      throw new Error(`Invalid designated survivor IP address: ${designatedSurvivorIP}`);
+    if (necessaryForAbort) {
+      const ipOctets = designatedSurvivorIP.split('.').map((part) => Number(part));
+      if (ipOctets.length !== 4 || ipOctets.some((p) => !Number.isFinite(p) || p < 0 || p > 255)) {
+        throw new Error(`Invalid designated survivor IP address: ${designatedSurvivorIP}`);
+      }
+      const ipInt = ((ipOctets[0] << 24) | (ipOctets[1] << 16) | (ipOctets[2] << 8) | ipOctets[3]) >>> 0;
+      buffer.writeUInt32BE(ipInt, offset);
+      offset += 4;
     }
-    const ipInt = ((ipOctets[0] << 24) | (ipOctets[1] << 16) | (ipOctets[2] << 8) | ipOctets[3]) >>> 0;
-    buffer.writeUInt32BE(ipInt, offset);
-    offset += 4;
 
     buffer.writeUInt8(enableSerialPrinting ? 1 : 0, offset++);
 
