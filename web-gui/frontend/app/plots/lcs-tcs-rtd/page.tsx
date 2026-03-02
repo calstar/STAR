@@ -8,7 +8,6 @@ import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 import {
   kTypeVoltageToTempC,
-  pt1000ResistanceToTempC,
   codeToForce,
 } from '@/lib/sense-conversions';
 
@@ -22,10 +21,8 @@ function adcToVoltageCustom(rawAdc: number, refVolts: number): number {
 
 const TC_ENTITIES = ['TC.TC_CH1', 'TC.TC_CH2', 'TC.TC_CH3', 'TC.TC_CH4'];
 const RTD_ENTITIES = ['RTD.RTD_CH1', 'RTD.RTD_CH2', 'RTD.RTD_CH3', 'RTD.RTD_CH4'];
-const LC_ENTITIES = ['LC.CH1', 'LC.CH2', 'LC.CH3'];
 const TC_LABELS = ['TC Ch1', 'TC Ch2', 'TC Ch3', 'TC Ch4'];
 const RTD_LABELS = ['RTD Ch1', 'RTD Ch2', 'RTD Ch3', 'RTD Ch4'];
-const LC_LABELS = ['LC Ch1', 'LC Ch2', 'LC Ch3'];
 const SENSE_COLORS = ['#F59E0B', '#10B981', '#3B82F6', '#EC4899'];
 
 const WINDOW_SECONDS = 60;
@@ -54,13 +51,13 @@ function DerivedReadoutBox({
 }) {
   return (
     <div className="bg-gray-900/60 rounded-xl px-4 py-3 flex flex-col gap-0.5 min-w-0 border border-gray-800/80">
-      <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider truncate">
+      <span className="text-xl font-bold text-gray-200 uppercase tracking-wider truncate">
         {label}
       </span>
-      <span className="text-2xl font-bold font-mono tabular-nums leading-tight" style={{ color }}>
+      <span className="text-4xl font-bold font-mono tabular-nums leading-tight" style={{ color }}>
         {value !== null && Number.isFinite(value) ? value.toFixed(decimals) : '—'}
       </span>
-      <span className="text-[10px] text-gray-500 font-medium">{unit}</span>
+      <span className="text-xs text-gray-500 font-medium">{unit}</span>
     </div>
   );
 }
@@ -95,11 +92,11 @@ function SectionPlot({
   colors: string[];
 }) {
   return (
-    <div className="flex flex-col min-h-[320px] rounded-lg overflow-hidden bg-gray-950/50 border border-gray-800">
-      <div className="px-3 py-2 border-b border-gray-800 text-xs font-medium text-gray-500">
+    <div className="flex flex-col flex-1 min-h-0 rounded-lg overflow-hidden bg-gray-950/50 border border-gray-800">
+      <div className="px-3 py-2 border-b border-gray-800 text-xs font-medium text-gray-500 flex-shrink-0">
         {title}
       </div>
-      <div className="flex-1 min-h-[280px]">
+      <div className="flex-1 min-h-0 flex flex-col">
         <DerivedTimeSeriesPlot
           title=""
           entities={entities}
@@ -155,7 +152,7 @@ export default function LCS_TCS_RTDPage() {
   const updateState  = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
 
-  const [tcRefVoltage, setTcRefVoltage] = useState(2.5);
+  const TC_REF_VOLTAGE = 2.5;
 
   // Dynamic channel lists from config
   const [tcEntities,  setTcEntities]  = useState<string[]>([]);
@@ -189,7 +186,7 @@ export default function LCS_TCS_RTDPage() {
 
         const lc = buildChannels(boards, 'LC');
         if (lc.length) {
-          setLcEntities(lc.map((ch) => `LC.LC_CH${ch}`));
+          setLcEntities(lc.map((ch) => `LC.CH${ch}`));
           setLcLabels(lc.map((ch) => `LC Ch${ch}`));
         }
       })
@@ -210,11 +207,12 @@ export default function LCS_TCS_RTDPage() {
 
   // Plot transforms
   const tcTransform = useCallback(
-    (v: number) => kTypeVoltageToTempC(adcToVoltageCustom(v, tcRefVoltage)),
-    [tcRefVoltage]
+    (v: number) => kTypeVoltageToTempC(adcToVoltageCustom(v, TC_REF_VOLTAGE)),
+    []
   );
 
-  const rtdTransform = useCallback((v: number) => pt1000ResistanceToTempC(v), []);
+  // RTD plot uses component temperature_c (backend sends °C); no conversion needed
+  const rtdTransform = useCallback((v: number) => (Number.isFinite(v) ? v : null), []);
 
   const lcTransform = useCallback((v: number) => {
     const n = codeToForce(
@@ -229,70 +227,44 @@ export default function LCS_TCS_RTDPage() {
   }, []);
 
   return (
-    <main className="h-full min-h-0 bg-background text-text flex flex-col overflow-auto">
-      {/* Header */}
-      <div className="flex-shrink-0 px-4 pt-4 pb-3 border-b border-gray-800/80">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-white">LCS / TCS / RTD</h1>
-            <p className="text-sm text-gray-400 mt-0.5">
-              Thermocouples (K-type) · RTDs (Pt1000) · Load cells (3 channels, formula-based force)
-            </p>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-medium text-gray-500 uppercase tracking-wider">
-                TC ref (V)
-              </label>
-              <select
-                value={tcRefVoltage}
-                onChange={(e) => setTcRefVoltage(Number(e.target.value))}
-                className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500/50 outline-none"
-              >
-                <option value={2.5}>2.5</option>
-                <option value={3.3}>3.3</option>
-                <option value={5}>5</option>
-              </select>
-            </div>
-            <span className="text-xs text-gray-500 font-mono">{WINDOW_SECONDS} s window</span>
-          </div>
-        </div>
-      </div>
+    <main className="h-full min-h-0 bg-background text-text flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 p-4 grid grid-cols-1 lg:grid-cols-3 gap-4 overflow-hidden min-w-0 lg:grid-rows-[1fr]">
 
-      <div className="flex-1 min-h-0 p-4 flex flex-col gap-6 overflow-auto">
-
-        {/* ── Thermocouples ──────────────────────────────────────────────────── */}
-        <section className="flex flex-col gap-3 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <div className="w-1 h-6 rounded-full bg-amber-500/90" />
-            <h2 className="text-sm font-bold tracking-widest text-gray-400 uppercase">
+        {/* ── TC (left column) ──────────────────────────────────────────────── */}
+        <section className="flex flex-col gap-3 min-w-0 h-full">
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="w-1.5 h-10 rounded-full bg-amber-500/90" />
+            <h2 className="text-3xl font-bold tracking-widest text-gray-400 uppercase">
               Thermocouples (K-type)
             </h2>
           </div>
-          <div className="bg-card rounded-xl border border-gray-800 p-4 flex flex-col gap-4">
+          <div className="bg-card rounded-xl border border-gray-800 p-4 flex flex-col gap-4 flex-1 min-h-0">
             {tcEntities.length > 0 ? (
               <>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 flex-shrink-0">
                   {tcEntities.map((entity, i) => (
                     <TCTempReadout
                       key={entity}
                       entity={entity}
                       label={tcLabels[i]}
                       color={SENSE_COLORS[i % SENSE_COLORS.length]}
-                      refVoltage={tcRefVoltage}
+                      refVoltage={TC_REF_VOLTAGE}
                     />
                   ))}
                 </div>
-                <SensorReadoutStrip
-                  sensors={tcEntities.map((entity, i) => ({
-                    label: `${tcLabels[i]} ADC`,
-                    entity,
-                    component: 'raw_adc_counts',
-                    unit: 'counts',
-                    color: SENSE_COLORS[i % SENSE_COLORS.length],
-                    decimals: 0,
-                  }))}
-                />
+                <div className="flex-shrink-0">
+                  <SensorReadoutStrip
+                    variant="compact"
+                    sensors={tcEntities.map((entity, i) => ({
+                      label: `${tcLabels[i]} ADC`,
+                      entity,
+                      component: 'raw_adc_counts',
+                      unit: 'counts',
+                      color: SENSE_COLORS[i % SENSE_COLORS.length],
+                      decimals: 0,
+                    }))}
+                  />
+                </div>
                 <SectionPlot
                   title="Temperature (°C) — K-type from raw ADC"
                   entities={tcEntities}
@@ -311,18 +283,18 @@ export default function LCS_TCS_RTDPage() {
           </div>
         </section>
 
-        {/* ── RTDs ───────────────────────────────────────────────────────────── */}
-        <section className="flex flex-col gap-3 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <div className="w-1 h-6 rounded-full bg-emerald-500/90" />
-            <h2 className="text-sm font-bold tracking-widest text-gray-400 uppercase">
-              RTDs (Pt1000)
+        {/* ── RTD (middle column) ────────────────────────────────────────────── */}
+        <section className="flex flex-col gap-3 min-w-0 h-full">
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="w-1.5 h-10 rounded-full bg-emerald-500/90" />
+            <h2 className="text-3xl font-bold tracking-widest text-gray-400 uppercase">
+              RTDs (Pt100)
             </h2>
           </div>
-          <div className="bg-card rounded-xl border border-gray-800 p-4 flex flex-col gap-4">
+          <div className="bg-card rounded-xl border border-gray-800 p-4 flex flex-col gap-4 flex-1 min-h-0">
             {rtdEntities.length > 0 ? (
               <>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 flex-shrink-0">
                   {rtdCalEntities.map((entity, i) => (
                     <RTDTempReadout
                       key={entity}
@@ -332,18 +304,21 @@ export default function LCS_TCS_RTDPage() {
                     />
                   ))}
                 </div>
-                <SensorReadoutStrip
-                  sensors={rtdEntities.map((entity, i) => ({
-                    label: `${rtdLabels[i]} ADC`,
-                    entity,
-                    component: 'raw_resistance',
-                    unit: 'counts',
-                    color: SENSE_COLORS[i % SENSE_COLORS.length],
-                    decimals: 0,
-                  }))}
-                />
+                <div className="flex-shrink-0">
+                  <SensorReadoutStrip
+                    variant="compact"
+                    sensors={rtdEntities.map((entity, i) => ({
+                      label: `${rtdLabels[i]} ADC`,
+                      entity,
+                      component: 'raw_resistance',
+                      unit: 'counts',
+                      color: SENSE_COLORS[i % SENSE_COLORS.length],
+                      decimals: 0,
+                    }))}
+                  />
+                </div>
                 <SectionPlot
-                  title="Temperature (°C) — Pt1000"
+                  title="Temperature (°C) — Pt100"
                   entities={rtdCalEntities}
                   component="temperature_c"
                   transform={rtdTransform}
@@ -360,72 +335,55 @@ export default function LCS_TCS_RTDPage() {
           </div>
         </section>
 
-        {/* ── Load cells (LCS) ────────────────────────────────────────────── */}
-        <section className="flex flex-col gap-3 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <div className="w-1 h-6 rounded-full bg-violet-500/90" />
-            <h2 className="text-sm font-bold tracking-widest text-gray-400 uppercase">
+        {/* ── LC (right column) ─────────────────────────────────────────────── */}
+        <section className="flex flex-col gap-3 min-w-0 h-full">
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="w-1.5 h-10 rounded-full bg-violet-500/90" />
+            <h2 className="text-3xl font-bold tracking-widest text-gray-400 uppercase">
               Load cells (LCS)
             </h2>
           </div>
-          <div className="bg-card rounded-xl border border-gray-800 p-4 flex flex-col gap-4">
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {LC_ENTITIES.map((entity, i) => (
-                <LCForceReadout
-                  key={entity}
-                  entity={entity}
-                  label={LC_LABELS[i]}
-                  color={SENSE_COLORS[i]}
+          <div className="bg-card rounded-xl border border-gray-800 p-4 flex flex-col gap-4 flex-1 min-h-0">
+            {lcEntities.length > 0 ? (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 flex-shrink-0">
+                  {lcEntities.map((entity, i) => (
+                    <LCForceReadout
+                      key={entity}
+                      entity={entity}
+                      label={lcLabels[i]}
+                      color={SENSE_COLORS[i % SENSE_COLORS.length]}
+                    />
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-2 flex-shrink-0">
+                  <SensorReadoutStrip
+                    variant="compact"
+                    sensors={lcEntities.map((entity, i) => ({
+                      label: `${lcLabels[i]} ADC`,
+                      entity,
+                      component: 'raw_adc_counts',
+                      unit: 'counts',
+                      color: SENSE_COLORS[i % SENSE_COLORS.length],
+                      decimals: 0,
+                    }))}
+                  />
+                </div>
+                <SectionPlot
+                  title="Force (N) — ratiometric formula"
+                  entities={lcEntities}
+                  component="raw_adc_counts"
+                  transform={lcTransform}
+                  yLabel="Force (N)"
+                  labels={lcLabels}
+                  colors={SENSE_COLORS.slice(0, lcEntities.length)}
                 />
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <SensorReadoutStrip
-                sensors={LC_ENTITIES.map((entity, i) => ({
-                  label: `${LC_LABELS[i]} ADC`,
-                  entity,
-                  component: 'raw_adc_counts',
-                  unit: 'counts',
-                  color: SENSE_COLORS[i],
-                  decimals: 0,
-                }))}
-              />
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className="flex flex-col min-h-[320px] rounded-lg overflow-hidden bg-gray-950/50 border border-gray-800">
-                <div className="px-3 py-2 border-b border-gray-800 text-xs font-medium text-gray-500">
-                  Raw ADC (counts)
-                </div>
-                <div className="flex-1 min-h-[280px]">
-                  <TimeSeriesPlot
-                    title=""
-                    entities={LC_ENTITIES}
-                    labels={LC_LABELS}
-                    component="raw_adc_counts"
-                    colors={SENSE_COLORS}
-                    yLabel="ADC counts"
-                    windowSeconds={WINDOW_SECONDS}
-                  />
-                </div>
-              </div>
-              <div className="flex flex-col min-h-[320px] rounded-lg overflow-hidden bg-gray-950/50 border border-gray-800">
-                <div className="px-3 py-2 border-b border-gray-800 text-xs font-medium text-gray-500">
-                  Force (N) — ratiometric formula
-                </div>
-                <div className="flex-1 min-h-[280px]">
-                  <DerivedTimeSeriesPlot
-                    title=""
-                    entities={LC_ENTITIES}
-                    component="raw_adc_counts"
-                    transform={lcTransform}
-                    yLabel="Force (N)"
-                    labels={LC_LABELS}
-                    colors={SENSE_COLORS}
-                    windowSeconds={WINDOW_SECONDS}
-                  />
-                </div>
-              </div>
-            </div>
+              </>
+            ) : (
+              <p className="text-sm text-gray-500 text-center py-4">
+                No LC boards enabled in config.toml
+              </p>
+            )}
           </div>
         </section>
 

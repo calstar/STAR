@@ -52,7 +52,7 @@ import {
 
 // ── Extracted modules ──────────────────────────────────────────────────────────
 import { Client, HpPtBoardConfig, WS_PORT, WS_HOST, ELODIN_HOST, ELODIN_PORT, ACTUATOR_CHANNEL_BY_NAME } from './server-types.js';
-import { loadSensorRoleMap, loadHpPtConfig, convertHpPtToPressure, loadTcBoardConfig } from './sensor-config.js';
+import { loadSensorRoleMap, loadHpPtConfig, convertHpPtToPressure, loadTcBoardConfig, loadRtdBoardConfig, loadLcBoardConfig, rawRtdToTemperatureC } from './sensor-config.js';
 import {
   loadActuatorBoardMap,
   getActuatorBoardInfo,
@@ -112,6 +112,8 @@ class SensorSystemServer {
   actuatorBoardMap: Map<string, { channel: number; boardIp: string }> = new Map();
   actuatorBoardIPs: Set<string> = new Set();
   private tcBoards: Map<string, Set<number>> = new Map();
+  private rtdBoards: Map<string, Set<number>> = new Map();
+  private lcBoards: Map<string, Set<number>> = new Map();
 
   /** Throttle Phase 2 monitoring to ~5 Hz per channel */
   private phase2LastMonitor: Map<number, number> = new Map();
@@ -352,6 +354,8 @@ class SensorSystemServer {
 
     // Load TC board configs
     this.tcBoards = loadTcBoardConfig();
+    this.rtdBoards = loadRtdBoardConfig();
+    this.lcBoards = loadLcBoardConfig();
 
     // Initialize controller client (config > env var > default), unless using C++ controller
     const controllerUrl = process.env.CONTROLLER_URL || controllerConfig.controller_service_url || 'http://localhost:8000';
@@ -874,6 +878,8 @@ class SensorSystemServer {
       if (this.hpPtBoards.has(sourceIP)) return;
       if (this.actuatorBoardIPs.has(sourceIP)) return;
       if (this.tcBoards.has(sourceIP)) return;
+      if (this.rtdBoards.has(sourceIP)) return;
+      if (this.lcBoards.has(sourceIP)) return;
 
       const now = Date.now();
       if (now - this._lastSensorLog > 5000) {
@@ -1068,6 +1074,69 @@ class SensorSystemServer {
           const sampleTime = chunkTimeBase + i * SAMPLE_PERIOD_MS;
           this.handleSensorUpdate({
             entity: `TC.TC_CH${channelId}`,
+            component: 'raw_adc_counts',
+            value: dp.data,
+            timestamp: sampleTime,
+          });
+        }
+      }
+    });
+
+    // ── RTD board data ───────────────────────────────────────────────────────
+    this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
+      const activeConnectors = this.rtdBoards.get(sourceIP);
+      if (activeConnectors === undefined) return;
+
+      const currentTime = Date.now();
+      const SAMPLE_RATE_HZ = 7200;
+      const SAMPLE_PERIOD_MS = 1000.0 / SAMPLE_RATE_HZ;
+
+      for (const chunk of chunks) {
+        const chunkTimeBase = chunk.timestamp > 0 ? chunk.timestamp : currentTime;
+        for (let i = 0; i < chunk.datapoints.length; i++) {
+          const dp = chunk.datapoints[i];
+          const channelId: number = dp.sensor_id;
+          if (channelId === 0) continue;
+          if (activeConnectors.size > 0 && !activeConnectors.has(channelId)) continue;
+          const sampleTime = chunkTimeBase + i * SAMPLE_PERIOD_MS;
+          this.handleSensorUpdate({
+            entity: `RTD.RTD_CH${channelId}`,
+            component: 'raw_resistance',
+            value: dp.data,
+            timestamp: sampleTime,
+          });
+          const tempC = rawRtdToTemperatureC(dp.data);
+          if (tempC != null) {
+            this.handleSensorUpdate({
+              entity: `RTD_Cal.RTD_CH${channelId}`,
+              component: 'temperature_c',
+              value: tempC,
+              timestamp: sampleTime,
+            });
+          }
+        }
+      }
+    });
+
+    // ── LC (Load Cell) board data ───────────────────────────────────────────
+    this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
+      const activeConnectors = this.lcBoards.get(sourceIP);
+      if (activeConnectors === undefined) return;
+
+      const currentTime = Date.now();
+      const SAMPLE_RATE_HZ = 7200;
+      const SAMPLE_PERIOD_MS = 1000.0 / SAMPLE_RATE_HZ;
+
+      for (const chunk of chunks) {
+        const chunkTimeBase = chunk.timestamp > 0 ? chunk.timestamp : currentTime;
+        for (let i = 0; i < chunk.datapoints.length; i++) {
+          const dp = chunk.datapoints[i];
+          const channelId: number = dp.sensor_id;
+          if (channelId === 0) continue;
+          if (activeConnectors.size > 0 && !activeConnectors.has(channelId)) continue;
+          const sampleTime = chunkTimeBase + i * SAMPLE_PERIOD_MS;
+          this.handleSensorUpdate({
+            entity: `LC.CH${channelId}`,
             component: 'raw_adc_counts',
             value: dp.data,
             timestamp: sampleTime,

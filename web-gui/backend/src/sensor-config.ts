@@ -214,6 +214,104 @@ export function loadTcBoardConfig(): Map<string, Set<number>> {
 }
 
 /**
+ * Load RTD board configs from config.toml.
+ * Returns a map of board IP → set of active connector IDs (empty set = all connectors).
+ */
+export function loadRtdBoardConfig(): Map<string, Set<number>> {
+    const rtdBoards = new Map<string, Set<number>>();
+
+    try {
+        const config = readConfig();
+        const boards = config.boards || {};
+
+        for (const [boardKey, boardRaw] of Object.entries(boards)) {
+            const board = boardRaw as any;
+            if (board.type !== 'RTD') continue;
+            if (board.enabled === false) {
+                console.log(`   ⏭️  Skipping ${boardKey} (${board.ip}): board is disabled`);
+                continue;
+            }
+            if (!board.ip) continue;
+
+            const active: Set<number> = new Set(
+                Array.isArray(board.active_connectors) && board.active_connectors.length > 0
+                    ? (board.active_connectors as number[])
+                    : []
+            );
+            rtdBoards.set(board.ip, active);
+            console.log(`📋 Registered RTD board ${boardKey} (${board.ip}), active connectors: ${active.size > 0 ? [...active].join(', ') : 'all'}`);
+        }
+    } catch (error) {
+        console.error('❌ Failed to load RTD board config from config.toml:', error);
+    }
+
+    return rtdBoards;
+}
+
+/**
+ * Load LC (Load Cell) board configs from config.toml.
+ * Returns a map of board IP → set of active connector IDs (empty set = all connectors).
+ */
+export function loadLcBoardConfig(): Map<string, Set<number>> {
+    const lcBoards = new Map<string, Set<number>>();
+
+    try {
+        const config = readConfig();
+        const boards = config.boards || {};
+
+        for (const [boardKey, boardRaw] of Object.entries(boards)) {
+            const board = boardRaw as any;
+            if (board.type !== 'LC') continue;
+            if (board.enabled === false) {
+                console.log(`   ⏭️  Skipping ${boardKey} (${board.ip}): board is disabled`);
+                continue;
+            }
+            if (!board.ip) continue;
+
+            const active: Set<number> = new Set(
+                Array.isArray(board.active_connectors) && board.active_connectors.length > 0
+                    ? (board.active_connectors as number[])
+                    : []
+            );
+            lcBoards.set(board.ip, active);
+            console.log(`📋 Registered LC board ${boardKey} (${board.ip}), active connectors: ${active.size > 0 ? [...active].join(', ') : 'all'}`);
+        }
+    } catch (error) {
+        console.error('❌ Failed to load LC board config from config.toml:', error);
+    }
+
+    return lcBoards;
+}
+
+/** Pt100 R0 (Ω) for resistance → temperature conversion */
+const PT100_R0 = 100;
+const PT100_A = 3.9083e-3;
+const PT100_B = -5.775e-7;
+
+/**
+ * Convert Pt100 resistance (Ω) to temperature (°C). Returns null if out of range.
+ * Matches frontend sense-conversions.ts for consistency.
+ */
+export function pt100ResistanceToTempC(rOhm: number): number | null {
+    const rr = rOhm / PT100_R0;
+    const d = PT100_A * PT100_A - 4 * PT100_B * (1 - rr);
+    if (d < 0) return null;
+    const sqrtD = Math.sqrt(d);
+    const t = (-PT100_A + sqrtD) / (2 * PT100_B);
+    if (t >= -400 && t <= 1100) return t;
+    return null;
+}
+
+/**
+ * Convert raw RTD value to temperature (°C).
+ * rawValue is typically ADC counts or milliohms; scale converts to Ohms (default 0.001 = value as milliohms).
+ */
+export function rawRtdToTemperatureC(rawValue: number, scaleToOhms: number = 0.001): number | null {
+    const rOhm = rawValue * scaleToOhms;
+    return pt100ResistanceToTempC(rOhm);
+}
+
+/**
  * Convert HP PT ADC codes to PSI using the 4-20 mA formula.
  *
  * Both the sensor channel and the excitation channel use the board's fixed
