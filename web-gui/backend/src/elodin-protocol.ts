@@ -341,6 +341,41 @@ export function parseCalibratedRTDMessage(
 }
 
 /**
+ * Parse LC (Load Cell) Raw Message (21 bytes)
+ * Layout: same as PT/TC raw — uint64_t (8) + uint8_t (1) + padding[3] (3) + uint32_t (4) + uint32_t (4) + uint8_t (1)
+ * Entity names match FSW DatabaseConfig: LC.CH1 .. LC.CH4
+ */
+export function parseRawLCMessage(
+  payload: Buffer,
+  packetId: [number, number]
+): ParsedSensorData | null {
+  if (payload.length < 21) {
+    console.warn(`⚠️ LC Raw payload too short: ${payload.length} bytes (expected 21)`);
+    return null;
+  }
+
+  const timestampNs = Number(payload.readBigUInt64LE(0));
+  const channelId = payload.readUInt8(8);
+
+  if (channelId < 1 || channelId > 4) {
+    console.warn(`⚠️ Invalid channel ID in raw LC: ${channelId}`);
+  }
+
+  const rawAdcCounts = payload.readUInt32LE(12);
+  const sampleTimestampMs = payload.readUInt32LE(16);
+  const statusFlags = payload.readUInt8(20);
+
+  const entity = `LC.CH${channelId}`;
+
+  return {
+    entity,
+    component: 'raw_adc_counts',
+    value: rawAdcCounts,
+    timestamp: sampleTimestampMs,
+  };
+}
+
+/**
  * Parse Elodin packet based on packet_id
  */
 export function parseElodinPacket(
@@ -378,6 +413,11 @@ export function parseElodinPacket(
   // RTD Calibrated: [0x22, 0x10 + channel_id] where channel_id is 1-based (0x11-0x14)
   if (high === 0x22 && low >= 0x11 && low <= 0x14) {
     return parseCalibratedRTDMessage(payload, packetId);
+  }
+
+  // LC Raw: [0x23, channel_id] where channel_id is 1-based (0x01-0x04)
+  if (high === 0x23 && low >= 0x01 && low <= 0x04) {
+    return parseRawLCMessage(payload, packetId);
   }
 
   // Actuator data: [0x30, channel_id] where channel_id is 1-based (0x01-0x0A)

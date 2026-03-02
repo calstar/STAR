@@ -10,6 +10,7 @@ import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 import {
   kTypeVoltageToTempC,
   pt1000ResistanceToTempC,
+  codeToForce,
 } from '@/lib/sense-conversions';
 
 const ADC_FULL_SCALE = 2 ** 31;
@@ -22,8 +23,10 @@ function adcToVoltageCustom(rawAdc: number, refVolts: number): number {
 
 const TC_ENTITIES = ['TC.TC_CH1', 'TC.TC_CH2', 'TC.TC_CH3', 'TC.TC_CH4'];
 const RTD_ENTITIES = ['RTD.RTD_CH1', 'RTD.RTD_CH2', 'RTD.RTD_CH3', 'RTD.RTD_CH4'];
+const LC_ENTITIES = ['LC.CH1', 'LC.CH2', 'LC.CH3'];
 const TC_LABELS = ['TC Ch1', 'TC Ch2', 'TC Ch3', 'TC Ch4'];
 const RTD_LABELS = ['RTD Ch1', 'RTD Ch2', 'RTD Ch3', 'RTD Ch4'];
+const LC_LABELS = ['LC Ch1', 'LC Ch2', 'LC Ch3'];
 const SENSE_COLORS = ['#F59E0B', '#10B981', '#3B82F6', '#EC4899'];
 
 const WINDOW_SECONDS = 60;
@@ -82,6 +85,41 @@ function RTDTempReadout({ entity, label, color }: { entity: string; label: strin
   );
 }
 
+/** Defaults for ratiometric load-cell force (VDD ref = 1). Adjust per hardware/datasheet. */
+const LC_DEFAULTS = {
+  adcRefVoltage: 3.3,      // VDD when voltage_reference = 1
+  excitationVoltage: 5,
+  sensitivityMvPerV: 2,
+  pgaGain: 128,
+  fullScaleForceN: 1000,
+};
+
+function LCForceReadout({
+  entity,
+  label,
+  color,
+}: {
+  entity: string;
+  label: string;
+  color: string;
+}) {
+  const raw = useSensorValue(entity, 'raw_adc_counts');
+  const forceN =
+    raw !== null
+      ? codeToForce(
+          raw,
+          LC_DEFAULTS.adcRefVoltage,
+          LC_DEFAULTS.excitationVoltage,
+          LC_DEFAULTS.sensitivityMvPerV,
+          LC_DEFAULTS.pgaGain,
+          LC_DEFAULTS.fullScaleForceN
+        )
+      : null;
+  return (
+    <DerivedReadoutBox label={label} value={forceN} unit="N" color={color} decimals={1} />
+  );
+}
+
 export default function LCS_TCS_RTDPage() {
   const updateSensor = useSensorStore((s) => s.updateSensor);
   const updateState = useSensorStore((s) => s.updateState);
@@ -112,6 +150,18 @@ export default function LCS_TCS_RTDPage() {
 
   const rtdTransform = useCallback((v: number) => pt1000ResistanceToTempC(v), []);
 
+  const lcTransform = useCallback((v: number) => {
+    const n = codeToForce(
+      v,
+      LC_DEFAULTS.adcRefVoltage,
+      LC_DEFAULTS.excitationVoltage,
+      LC_DEFAULTS.sensitivityMvPerV,
+      LC_DEFAULTS.pgaGain,
+      LC_DEFAULTS.fullScaleForceN
+    );
+    return n ?? NaN;
+  }, []);
+
   return (
     <main className="h-full min-h-0 bg-background text-text flex flex-col overflow-auto">
       {/* Header */}
@@ -122,7 +172,7 @@ export default function LCS_TCS_RTDPage() {
               LCS / TCS / RTD
             </h1>
             <p className="text-sm text-gray-400 mt-0.5">
-              Thermocouples (K-type) · RTDs (Pt1000) · Load cell when available
+              Thermocouples (K-type) · RTDs (Pt1000) · Load cells (3 channels, formula-based force)
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -269,18 +319,72 @@ export default function LCS_TCS_RTDPage() {
           </div>
         </section>
 
-        {/* ── Load cell placeholder ───────────────────────────────────────── */}
+        {/* ── Load cells (LCS) ────────────────────────────────────────────── */}
         <section className="flex flex-col gap-3 flex-shrink-0">
           <div className="flex items-center gap-2">
-            <div className="w-1 h-6 rounded-full bg-gray-500/90" />
+            <div className="w-1 h-6 rounded-full bg-violet-500/90" />
             <h2 className="text-sm font-bold tracking-widest text-gray-400 uppercase">
               Load cells (LCS)
             </h2>
           </div>
-          <div className="bg-card rounded-xl border border-gray-800 border-dashed p-6 flex flex-col items-center justify-center min-h-[120px]">
-            <p className="text-sm text-gray-500 text-center max-w-md">
-              Load cell channels will appear here when the backend supports LC packet types.
-            </p>
+          <div className="bg-card rounded-xl border border-gray-800 p-4 flex flex-col gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {LC_ENTITIES.map((entity, i) => (
+                <LCForceReadout
+                  key={entity}
+                  entity={entity}
+                  label={LC_LABELS[i]}
+                  color={SENSE_COLORS[i]}
+                />
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <SensorReadoutStrip
+                sensors={LC_ENTITIES.map((entity, i) => ({
+                  label: `${LC_LABELS[i]} ADC`,
+                  entity,
+                  component: 'raw_adc_counts',
+                  unit: 'counts',
+                  color: SENSE_COLORS[i],
+                  decimals: 0,
+                }))}
+              />
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="flex flex-col min-h-[320px] rounded-lg overflow-hidden bg-gray-950/50 border border-gray-800">
+                <div className="px-3 py-2 border-b border-gray-800 text-xs font-medium text-gray-500">
+                  Raw ADC (counts)
+                </div>
+                <div className="flex-1 min-h-[280px]">
+                  <TimeSeriesPlot
+                    title=""
+                    entities={LC_ENTITIES}
+                    labels={LC_LABELS}
+                    component="raw_adc_counts"
+                    colors={SENSE_COLORS}
+                    yLabel="ADC counts"
+                    windowSeconds={WINDOW_SECONDS}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col min-h-[320px] rounded-lg overflow-hidden bg-gray-950/50 border border-gray-800">
+                <div className="px-3 py-2 border-b border-gray-800 text-xs font-medium text-gray-500">
+                  Force (N) — ratiometric formula
+                </div>
+                <div className="flex-1 min-h-[280px]">
+                  <DerivedTimeSeriesPlot
+                    title=""
+                    entities={LC_ENTITIES}
+                    component="raw_adc_counts"
+                    transform={lcTransform}
+                    yLabel="Force (N)"
+                    labels={LC_LABELS}
+                    colors={SENSE_COLORS}
+                    windowSeconds={WINDOW_SECONDS}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
         </section>
       </div>
