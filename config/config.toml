@@ -380,9 +380,9 @@ packet_id = [0x30, 0x00]
 channels = 10
 description = "Actuator current sense readings"
 
-# Which routing types daq_bridge publishes to Elodin (avionics payload only; calibration writes calibrated later)
+# Which routing types daq_bridge publishes to Elodin (raw avionics only; calibration_service writes calibrated)
 [daq_bridge]
-publish = ["pt_raw", "pt_calibrated", "actuator_status"]
+publish = ["pt_raw", "tc_raw", "rtd_raw", "lc_raw", "actuator_status"]
 
 # =============================================================================
 # Calibration

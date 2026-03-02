@@ -23,53 +23,9 @@ static bool send_msg(ElodinClient& client, T msg) {
     return client.send_msg({0, 0}, buf);  // packet_id unused — already in buf
 }
 
-// ── Sensor role names (from config.toml [sensor_roles]) ────────────────────
-// Index = 1-based channel_id.  0 = unused.
-// Channels 1-10: PT board 1 (board_id=21)
-// Channels 11-14: PT board 2 (board_id=22) — high-pressure 4-20 mA sensors
-//   connector 1→ch11, connector 2→ch12 (excitation), connector 3→ch13, connector 4→ch14
-static const char* PT_NAMES[] = {
-    "",                 // 0 (unused)
-    "Fuel_Upstream",    // 1
-    "GSE_Low",          // 2
-    "GSE_Mid",          // 3
-    "Fuel_Downstream",  // 4
-    "Ox_Upstream",      // 5
-    "GN2_Regulated",    // 6
-    "Ox_Downstream",    // 7
-    "PT_CH8",           // 8
-    "PT_CH9",           // 9
-    "PT_CH10",          // 10
-    "GSE_MID",          // 11 (PT board 2 connector 1)
-    "PT_CH12",          // 12 (PT board 2 connector 2 — excitation voltage, not a sensor)
-    "GSE_HI",           // 13 (PT board 2 connector 3)
-    "GN2_HI",           // 14 (PT board 2 connector 4)
-};
-static constexpr int NUM_PT = 14;
-
-static const char* ACT_NAMES[] = {
-    "",                 // 0 (unused)
-    "LOX_Main",         // 1
-    "Fuel_Vent",        // 2
-    "Fuel_Press",       // 3
-    "ACT_CH4",          // 4
-    "GSE_Low_Vent",     // 5
-    "LOX_Vent",         // 6
-    "Fuel_Main",        // 7
-    "LOX_Press",        // 8
-    "Fuel_Fill_Vent",   // 9
-    "Fuel_Fill_Press",  // 10
-};
-static constexpr int NUM_ACT = 10;
-
-static constexpr int NUM_TC = 4;   // future TC channels
-static constexpr int NUM_RTD = 4;  // future RTD channels
-static constexpr int NUM_LC = 4;   // future LC channels
-
 // ── Helper: register one raw-sensor VTable for a single channel ────────────
 // All raw sensor messages share the same 21-byte layout:
 //   u64 timestamp_ns | u8 channel_id | u8[3] pad | u32 raw_adc | u32 sample_ts | u8 status
-// The only difference is the packet_id, entity_id, and names.
 static bool register_raw_sensor_vtable(
     ElodinClient& client,
     uint8_t type_hi,     // high byte of packet_id (0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC, 0x30=ACT)
@@ -109,9 +65,7 @@ static bool register_raw_sensor_vtable(
 
 // ── Helper: register one calibrated-sensor VTable for a single channel ─────
 // All calibrated messages share the same 21-byte layout:
-//   u64 timestamp_ns | u8 channel_id | u8[3] pad | f32 calibrated_value | u32 raw_counts | u8
-//   cal_status
-// Difference: packet_id, entity name, calibrated value field name.
+//   u64 timestamp_ns | u8 channel_id | u8[3] pad | f32 calibrated_value | u32 raw_counts | u8 cal_status
 static bool register_calibrated_vtable(
     ElodinClient& client,
     uint8_t type_hi,     // high byte (0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC)
@@ -148,103 +102,75 @@ static bool register_calibrated_vtable(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// PUBLIC API
+// PUBLIC API — RAW VTables only (for daq_bridge)
 // ════════════════════════════════════════════════════════════════════════════
-
-static std::string pt_name_for_channel(int ch, const std::map<int, std::string>* from_config) {
-    if (from_config) {
-        auto it = from_config->find(ch);
-        if (it != from_config->end() && !it->second.empty())
-            return it->second;
-    }
-    return (ch <= NUM_PT && PT_NAMES[ch][0] != '\0') ? PT_NAMES[ch] : "CH" + std::to_string(ch);
-}
-static std::string act_name_for_channel(int ch, const std::map<int, std::string>* from_config) {
-    if (from_config) {
-        auto it = from_config->find(ch);
-        if (it != from_config->end() && !it->second.empty())
-            return it->second;
-    }
-    return (ch <= NUM_ACT && ACT_NAMES[ch][0] != '\0') ? ACT_NAMES[ch] : "CH" + std::to_string(ch);
-}
 
 bool DatabaseConfig::register_tables(ElodinClient& client,
                                      const std::map<int, std::string>* pt_channel_to_name,
                                      const std::map<int, std::string>* act_channel_to_name) {
-    std::cout
-        << "[DatabaseConfig] Registering per-channel VTables (config-driven names when provided)..."
-        << std::endl;
+    std::cout << "[DatabaseConfig] Registering RAW VTables (config-driven)..." << std::endl;
     int registered = 0;
 
-    for (int ch = 1; ch <= NUM_PT; ++ch) {
-        std::string base = pt_name_for_channel(ch, pt_channel_to_name);
-        std::string name = "PT." + base;
-        uint64_t eid = 0x2000 + ch;
-        if (register_raw_sensor_vtable(client, 0x20, ch, eid, name, "raw_adc_counts"))
-            registered++;
-    }
-    for (int ch = 1; ch <= NUM_PT; ++ch) {
-        std::string base = pt_name_for_channel(ch, pt_channel_to_name);
-        std::string name = "PT_Cal." + base;
-        uint64_t eid = 0x2010 + ch;
-        if (register_calibrated_vtable(client, 0x20, ch, eid, name, "pressure_psi", "raw_adc"))
-            registered++;
-    }
-    for (int ch = 1; ch <= NUM_ACT; ++ch) {
-        std::string base = act_name_for_channel(ch, act_channel_to_name);
-        std::string name = "ACT." + base;
-        uint64_t eid = 0x3000 + ch;
-        if (register_raw_sensor_vtable(client, 0x30, ch, eid, name, "raw_adc_counts"))
-            registered++;
+    // ── PT Raw: only register channels that exist in config ────────────────
+    if (pt_channel_to_name && !pt_channel_to_name->empty()) {
+        for (const auto& [ch, name] : *pt_channel_to_name) {
+            std::string entity = "PT." + name;
+            uint64_t eid = 0x2000 + ch;
+            if (register_raw_sensor_vtable(client, 0x20, ch, eid, entity, "raw_adc_counts"))
+                registered++;
+        }
+    } else {
+        std::cerr << "[DatabaseConfig] ⚠️  No PT sensor roles in config — no PT VTables registered"
+                  << std::endl;
     }
 
-    // ── TC Raw (packet_id 0x21, ch) ──────────────────────────────────────
-    for (int ch = 1; ch <= NUM_TC; ++ch) {
-        std::string name = "TC.CH" + std::to_string(ch);
-        uint64_t eid = 0x2100 + ch;
-        if (register_raw_sensor_vtable(client, 0x21, ch, eid, name, "raw_adc_counts"))
-            registered++;
-    }
-    // ── TC Calibrated (packet_id 0x21, 0x10+ch) ─────────────────────────
-    for (int ch = 1; ch <= NUM_TC; ++ch) {
-        std::string name = "TC_Cal.CH" + std::to_string(ch);
-        uint64_t eid = 0x2110 + ch;
-        if (register_calibrated_vtable(client, 0x21, ch, eid, name, "temperature_c", "raw_adc"))
-            registered++;
-    }
-
-    // ── RTD Raw (packet_id 0x22, ch) ─────────────────────────────────────
-    for (int ch = 1; ch <= NUM_RTD; ++ch) {
-        std::string name = "RTD.CH" + std::to_string(ch);
-        uint64_t eid = 0x2200 + ch;
-        if (register_raw_sensor_vtable(client, 0x22, ch, eid, name, "raw_resistance"))
-            registered++;
-    }
-    // ── RTD Calibrated (packet_id 0x22, 0x10+ch) ────────────────────────
-    for (int ch = 1; ch <= NUM_RTD; ++ch) {
-        std::string name = "RTD_Cal.CH" + std::to_string(ch);
-        uint64_t eid = 0x2210 + ch;
-        if (register_calibrated_vtable(client, 0x22, ch, eid, name, "temperature_c",
-                                       "raw_resistance"))
-            registered++;
+    // ── Actuator Raw: only register channels that exist in config ──────────
+    if (act_channel_to_name && !act_channel_to_name->empty()) {
+        for (const auto& [ch, name] : *act_channel_to_name) {
+            std::string entity = "ACT." + name;
+            uint64_t eid = 0x3000 + ch;
+            if (register_raw_sensor_vtable(client, 0x30, ch, eid, entity, "raw_adc_counts"))
+                registered++;
+        }
+    } else {
+        std::cerr
+            << "[DatabaseConfig] ⚠️  No actuator roles in config — no ACT VTables registered"
+            << std::endl;
     }
 
-    // ── LC Raw (packet_id 0x23, ch) ──────────────────────────────────────
-    for (int ch = 1; ch <= NUM_LC; ++ch) {
-        std::string name = "LC.CH" + std::to_string(ch);
-        uint64_t eid = 0x2300 + ch;
-        if (register_raw_sensor_vtable(client, 0x23, ch, eid, name, "raw_adc_counts"))
-            registered++;
-    }
-    // ── LC Calibrated (packet_id 0x23, 0x10+ch) ─────────────────────────
-    for (int ch = 1; ch <= NUM_LC; ++ch) {
-        std::string name = "LC_Cal.CH" + std::to_string(ch);
-        uint64_t eid = 0x2310 + ch;
-        if (register_calibrated_vtable(client, 0x23, ch, eid, name, "force_lbf", "raw_adc"))
-            registered++;
+    // NOTE: TC, RTD, LC raw VTables are NOT registered here because no boards
+    // of those types are currently in the config. When TC/RTD/LC boards are
+    // added to config.toml, add their sensor_roles sections and parse them
+    // in daq_bridge_main.cpp, then pass the maps here.
+
+    std::cout << "[DatabaseConfig] ✅ Registered " << registered << " RAW VTables" << std::endl;
+    return registered > 0;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// PUBLIC API — CALIBRATED VTables only (for calibration_service)
+// ════════════════════════════════════════════════════════════════════════════
+
+bool DatabaseConfig::register_calibrated_tables(
+    ElodinClient& client, const std::map<int, std::string>* pt_channel_to_name) {
+    std::cout << "[DatabaseConfig] Registering CALIBRATED VTables..." << std::endl;
+    int registered = 0;
+
+    // ── PT Calibrated: only register channels that exist in config ─────────
+    if (pt_channel_to_name && !pt_channel_to_name->empty()) {
+        for (const auto& [ch, name] : *pt_channel_to_name) {
+            std::string entity = "PT_Cal." + name;
+            uint64_t eid = 0x2010 + ch;
+            if (register_calibrated_vtable(client, 0x20, ch, eid, entity, "pressure_psi",
+                                           "raw_adc"))
+                registered++;
+        }
     }
 
-    std::cout << "[DatabaseConfig] ✅ Registered " << registered << " per-channel VTables"
+    // NOTE: TC_Cal, RTD_Cal, LC_Cal will be added when those sensor types
+    // are present in config. Same pattern as above.
+
+    std::cout << "[DatabaseConfig] ✅ Registered " << registered << " CALIBRATED VTables"
               << std::endl;
     return registered > 0;
 }

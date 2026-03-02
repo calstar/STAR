@@ -11,6 +11,7 @@
  */
 
 #include <csignal>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <string>
@@ -84,6 +85,45 @@ int main(int argc, char* argv[]) {
               << std::endl;
     std::cout << "[Calibration] LC:  " << lc_calibration.calibrated_count() << " channels"
               << std::endl;
+    // Parse PT channel names from config for calibrated VTable registration
+    std::map<int, std::string> pt_channel_to_name;
+    {
+        std::ifstream cfg(config_path);
+        if (cfg.is_open()) {
+            std::string line, section;
+            while (std::getline(cfg, line)) {
+                size_t c = line.find('#');
+                if (c != std::string::npos) line = line.substr(0, c);
+                while (!line.empty() && (line.back() == ' ' || line.back() == '\r')) line.pop_back();
+                size_t start = line.find_first_not_of(" \t");
+                if (start != std::string::npos) line = line.substr(start);
+                if (line.empty()) continue;
+                if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
+                    section = line.substr(1, line.size() - 2);
+                    continue;
+                }
+                if (section != "sensor_roles_pt_board" && section != "sensor_roles_pt2" &&
+                    section != "sensor_roles")
+                    continue;
+                size_t eq = line.find('=');
+                if (eq == std::string::npos) continue;
+                std::string key = line.substr(0, eq);
+                std::string val = line.substr(eq + 1);
+                while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+                while (!val.empty() && val[0] == ' ') val.erase(0, 1);
+                // Strip quotes from key
+                if (key.size() >= 2 && key.front() == '"' && key.back() == '"')
+                    key = key.substr(1, key.size() - 2);
+                // Replace spaces with underscores for entity names
+                for (auto& ch : key) if (ch == ' ') ch = '_';
+                int channel = 0;
+                try { channel = std::stoi(val); } catch (...) { continue; }
+                if (channel > 0) pt_channel_to_name[channel] = key;
+            }
+        }
+    }
+    const std::map<int, std::string>* pt_names =
+        pt_channel_to_name.empty() ? nullptr : &pt_channel_to_name;
 
     // We use ElodinClient to subscribe to RAW and publish CALIBRATED
     fsw::elodin::ElodinClient elodin_client;
@@ -93,8 +133,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Register Tables (So that DB knows the structure of CALIBRATED packets we will push)
-    fsw::elodin::DatabaseConfig::register_tables(elodin_client, nullptr, nullptr);
+    // Register CALIBRATED VTables (not raw — that's daq_bridge's job)
+    fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names);
 
     // Setup Subscriptions to RAW Tables (0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC)
     // Send a TABLE subscribe stream command for 0x20_00 to 0x23_00 across necessary channels
