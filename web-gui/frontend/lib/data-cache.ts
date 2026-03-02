@@ -25,6 +25,13 @@ class SensorDataCache {
   private cache: Map<string, CachedSeries> = new Map();
   private interval: ReturnType<typeof setInterval> | null = null;
   private started = false;
+  private onHistoricalDataCallbacks: Set<() => void> = new Set();
+
+  /** Register a callback to be invoked whenever HISTORICAL_DATA is loaded from the backend. */
+  onHistoricalData(cb: () => void): () => void {
+    this.onHistoricalDataCallbacks.add(cb);
+    return () => this.onHistoricalDataCallbacks.delete(cb);
+  }
 
   start(): void {
     if (this.started) return;
@@ -36,15 +43,23 @@ class SensorDataCache {
     ws.on(MessageType.HISTORICAL_DATA, (payload: unknown) => {
       try {
         const data = payload as Record<string, { time: number[]; values: number[] }>;
+        const frontendNow = (Date.now() - getStartupTime()) / 1000;
         let count = 0;
         for (const [key, series] of Object.entries(data)) {
           if (series.time && series.values && series.time.length > 0) {
-            this.cache.set(key, { ...series });
+            // Remap backend timestamps so the most recent historical point aligns with
+            // the current frontend time. This prevents non-monotonic time arrays when
+            // live data (at frontend-relative time) gets appended after pre-fill.
+            const backendLatest = series.time[series.time.length - 1];
+            const offset = frontendNow - backendLatest;
+            const remappedTime = series.time.map(t => t + offset);
+            this.cache.set(key, { time: remappedTime, values: [...series.values] });
             count++;
           }
         }
         if (count > 0) {
           console.log(`[DataCache] Loaded historical data for ${count} entities from backend`);
+          this.onHistoricalDataCallbacks.forEach(cb => { try { cb(); } catch (_) { } });
         }
       } catch (err) {
         console.error('[DataCache] Failed to parse historical data:', err);
@@ -211,15 +226,22 @@ class SensorDataCache {
     if (time.length === 0) return null;
 
     const len = time.length;
+    // Time-based alignment: for each t in time, use value from each series at most recent time <= t.
+    // Index-based slicing causes spikes when series have different lengths/sampling.
     const values = keys.map((key) => {
       const s = this.findCachedSeries(key);
-      if (!s) return new Array(len).fill(NaN);
-      const sliced = s.values.slice(startIdx, startIdx + len);
-      while (sliced.length < len) sliced.push(NaN);
-      return sliced;
+      if (!s || s.time.length === 0) return new Array(len).fill(NaN);
+      const out: number[] = [];
+      let idx = 0;
+      for (let i = 0; i < len; i++) {
+        const t = time[i];
+        if (i > 0 && t < time[i - 1]) idx = 0;
+        while (idx + 1 < s.time.length && s.time[idx + 1] <= t) idx++;
+        out.push(s.time[idx] <= t ? s.values[idx] : NaN);
+      }
+      return out;
     });
 
-    console.log(`[DataCache] Returning ${len} points for ${keys.length} series`);
     return { time, values };
   }
 }
