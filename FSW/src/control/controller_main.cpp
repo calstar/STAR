@@ -184,15 +184,19 @@ int main(int argc, char* argv[]) {
 
         if (!elodin_host_from_cli) {
             std::string db_host = getTomlValue(config_content, "database", "host", "127.0.0.1");
-            if (!db_host.empty()) elodin_host = db_host;
+            if (!db_host.empty())
+                elodin_host = db_host;
         }
         if (!elodin_port_from_cli) {
             std::string db_port_str = getTomlValue(config_content, "database", "port", "2240");
-            if (!db_port_str.empty()) elodin_port = static_cast<uint16_t>(std::atoi(db_port_str.c_str()));
+            if (!db_port_str.empty())
+                elodin_port = static_cast<uint16_t>(std::atoi(db_port_str.c_str()));
         }
     }
-    if (elodin_host.empty()) elodin_host = "127.0.0.1";
-    if (elodin_port == 0) elodin_port = 2240;
+    if (elodin_host.empty())
+        elodin_host = "127.0.0.1";
+    if (elodin_port == 0)
+        elodin_port = 2240;
 
     // Controller algorithm config (using defaults from RobustDDPController.hpp)
     fsw::control::RobustDDPController::Config ctrl_cfg;

@@ -24,11 +24,10 @@ constexpr uint8_t DIABLO_COMMS_VERSION = 0;
 
 std::vector<uint8_t> build_server_heartbeat_packet() {
     std::vector<uint8_t> pkt(7);
-    uint32_t ts = static_cast<uint32_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count() &
-        0xFFFFFFFF);
+    uint32_t ts = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                            std::chrono::steady_clock::now().time_since_epoch())
+                                            .count() &
+                                        0xFFFFFFFF);
     pkt[0] = SERVER_HEARTBEAT_PACKET_TYPE;
     pkt[1] = DIABLO_COMMS_VERSION;
     pkt[2] = static_cast<uint8_t>(ts & 0xFF);
@@ -497,8 +496,7 @@ int main(int argc, char* argv[]) {
     if (pipeline.set_broadcast(true)) {
         std::cout << "✅ Broadcast enabled for SERVER_HEARTBEAT" << std::endl;
     } else {
-        std::cerr << "⚠️  Failed to enable broadcast (heartbeat may not reach boards)"
-                  << std::endl;
+        std::cerr << "⚠️  Failed to enable broadcast (heartbeat may not reach boards)" << std::endl;
     }
 
     // Proactively send SENSOR_CONFIG to all configured sense boards (PT/TC/RTD/LC).
@@ -607,9 +605,8 @@ int main(int argc, char* argv[]) {
                 .count();
         if (elapsed_ms >= static_cast<int64_t>(hb_config.interval_ms)) {
             auto pkt = build_server_heartbeat_packet();
-            ssize_t sent =
-                pipeline.send_to(hb_config.broadcast_ip, hb_config.broadcast_port, pkt.data(),
-                                 pkt.size());
+            ssize_t sent = pipeline.send_to(hb_config.broadcast_ip, hb_config.broadcast_port,
+                                            pkt.data(), pkt.size());
             if (sent > 0)
                 last_heartbeat_send = now;
         }

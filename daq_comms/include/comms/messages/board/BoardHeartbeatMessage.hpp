@@ -23,14 +23,13 @@ namespace board {
  *   u8  board_state   (11) — DiabloBoardPacketParser::BoardState raw value
  *   u32 packet_ts_ms  (12) — board-reported timestamp from packet header
  */
-using BoardHeartbeatElodinMessage =
-    CommsMessage<uint64_t,  // (0) timestamp_ns
-                 uint8_t,   // (1) board_id
-                 uint8_t,   // (2) board_type
-                 uint8_t,   // (3) engine_state
-                 uint8_t,   // (4) board_state
-                 uint32_t   // (5) packet_ts_ms
-                 >;
+using BoardHeartbeatElodinMessage = CommsMessage<uint64_t,  // (0) timestamp_ns
+                                                 uint8_t,   // (1) board_id
+                                                 uint8_t,   // (2) board_type
+                                                 uint8_t,   // (3) engine_state
+                                                 uint8_t,   // (4) board_state
+                                                 uint32_t   // (5) packet_ts_ms
+                                                 >;
 
 }  // namespace board
 }  // namespace messages

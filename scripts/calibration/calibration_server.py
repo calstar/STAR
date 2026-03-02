@@ -151,7 +151,10 @@ async def relay_subscriber_task():
 
                     # Compute calibrated pressure from engine and write back to Elodin DB
                     now = time.monotonic()
-                    if now - _last_elodin_write.get(channel_id, 0) < _ELODIN_WRITE_INTERVAL:
+                    if (
+                        now - _last_elodin_write.get(channel_id, 0)
+                        < _ELODIN_WRITE_INTERVAL
+                    ):
                         continue
 
                     rcf = state.orchestrator.robust[key]
@@ -159,7 +162,9 @@ async def relay_subscriber_task():
                     if idx is None:
                         continue
 
-                    phi = rcf.environmental_robust_basis_functions(float(adc), state.env_state)
+                    phi = rcf.environmental_robust_basis_functions(
+                        float(adc), state.env_state
+                    )
                     pred, _unc, _alert = state.orchestrator.engine.predict(idx, phi)
                     if pred is None or not math.isfinite(pred):
                         continue

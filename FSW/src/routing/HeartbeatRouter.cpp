@@ -9,13 +9,14 @@ namespace fsw {
 namespace routing {
 
 HeartbeatRouter::HeartbeatRouter(fsw::elodin::ElodinClient& elodin_client)
-    : elodin_client_(elodin_client) {}
+    : elodin_client_(elodin_client) {
+}
 
 HeartbeatRouter::BoardEvent HeartbeatRouter::process_heartbeat(
     const daq_comms::protocol::DiabloBoardPacketParser::ParsedBoardHeartbeat& hb,
     uint64_t receive_ts_ns) {
-
-    if (!hb.is_valid) return BoardEvent::NONE;
+    if (!hb.is_valid)
+        return BoardEvent::NONE;
 
     const uint8_t board_id = hb.heartbeat.board_id;
     const auto now = std::chrono::steady_clock::now();
@@ -37,8 +38,8 @@ HeartbeatRouter::BoardEvent HeartbeatRouter::process_heartbeat(
         } else if (hb.heartbeat.board_state == BoardState::SETUP &&
                    state.last_board_state != BoardState::SETUP) {
             event = BoardEvent::SETUP_REENTRY;
-            std::cout << "[HeartbeatRouter] Board " << (int)board_id
-                      << " re-entered SETUP state" << std::endl;
+            std::cout << "[HeartbeatRouter] Board " << (int)board_id << " re-entered SETUP state"
+                      << std::endl;
         }
     }
 

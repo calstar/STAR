@@ -65,7 +65,8 @@ static bool register_raw_sensor_vtable(
 
 // ── Helper: register one calibrated-sensor VTable for a single channel ─────
 // All calibrated messages share the same 21-byte layout:
-//   u64 timestamp_ns | u8 channel_id | u8[3] pad | f32 calibrated_value | u32 raw_counts | u8 cal_status
+//   u64 timestamp_ns | u8 channel_id | u8[3] pad | f32 calibrated_value | u32 raw_counts | u8
+//   cal_status
 static bool register_calibrated_vtable(
     ElodinClient& client,
     uint8_t type_hi,     // high byte (0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC)
@@ -133,9 +134,8 @@ bool DatabaseConfig::register_tables(ElodinClient& client,
                 registered++;
         }
     } else {
-        std::cerr
-            << "[DatabaseConfig] ⚠️  No actuator roles in config — no ACT VTables registered"
-            << std::endl;
+        std::cerr << "[DatabaseConfig] ⚠️  No actuator roles in config — no ACT VTables registered"
+                  << std::endl;
     }
 
     // TC Raw: channels 1-20, generic names (no named roles in config yet)
@@ -197,8 +197,7 @@ bool DatabaseConfig::register_calibrated_tables(
     for (int ch = 1; ch <= 20; ch++) {
         std::string entity = "TC_Cal.CH" + std::to_string(ch);
         uint64_t eid = 0x2110 + static_cast<uint64_t>(ch);
-        if (register_calibrated_vtable(client, 0x21, ch, eid, entity, "temperature_c",
-                                       "raw_adc"))
+        if (register_calibrated_vtable(client, 0x21, ch, eid, entity, "temperature_c", "raw_adc"))
             registered++;
     }
 
@@ -206,8 +205,7 @@ bool DatabaseConfig::register_calibrated_tables(
     for (int ch = 1; ch <= 20; ch++) {
         std::string entity = "LC_Cal.CH" + std::to_string(ch);
         uint64_t eid = 0x2310 + static_cast<uint64_t>(ch);
-        if (register_calibrated_vtable(client, 0x23, ch, eid, entity, "force_n",
-                                       "raw_adc"))
+        if (register_calibrated_vtable(client, 0x23, ch, eid, entity, "force_n", "raw_adc"))
             registered++;
     }
 
@@ -233,11 +231,11 @@ bool DatabaseConfig::register_heartbeat_tables(ElodinClient& client, uint8_t max
         std::string prefix = entity + ".";
 
         auto vt = builder::vtable({
-            raw_field(0,  8, schema(PrimType::U64(), {}, component(prefix + "timestamp_ns"))),
-            raw_field(8,  1, schema(PrimType::U8(),  {}, component(prefix + "board_id"))),
-            raw_field(9,  1, schema(PrimType::U8(),  {}, component(prefix + "board_type"))),
-            raw_field(10, 1, schema(PrimType::U8(),  {}, component(prefix + "engine_state"))),
-            raw_field(11, 1, schema(PrimType::U8(),  {}, component(prefix + "board_state"))),
+            raw_field(0, 8, schema(PrimType::U64(), {}, component(prefix + "timestamp_ns"))),
+            raw_field(8, 1, schema(PrimType::U8(), {}, component(prefix + "board_id"))),
+            raw_field(9, 1, schema(PrimType::U8(), {}, component(prefix + "board_type"))),
+            raw_field(10, 1, schema(PrimType::U8(), {}, component(prefix + "engine_state"))),
+            raw_field(11, 1, schema(PrimType::U8(), {}, component(prefix + "board_state"))),
             raw_field(12, 4, schema(PrimType::U32(), {}, component(prefix + "packet_ts_ms"))),
         });
 

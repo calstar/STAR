@@ -113,7 +113,7 @@ int main() {
                 uint8_t type = packet_buffer[4];
                 uint8_t high = packet_buffer[5];
                 uint8_t low = packet_buffer[6];
-                
+
                 // Elodin header is 8 bytes (len:4, ty:1, packetId:2, req:1)
                 const uint8_t *payload = packet_buffer + 8;
                 size_t payload_len = packet_len - 8;

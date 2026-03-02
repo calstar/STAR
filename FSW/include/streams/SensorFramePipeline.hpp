@@ -62,9 +62,11 @@ public:
     }
 
     /**
-     * @brief Enable broadcast and send packet to destination (e.g. SERVER_HEARTBEAT to 255.255.255.255)
+     * @brief Enable broadcast and send packet to destination (e.g. SERVER_HEARTBEAT to
+     * 255.255.255.255)
      */
-    ssize_t send_to(const std::string& dest_ip, uint16_t dest_port, const uint8_t* data, size_t size);
+    ssize_t send_to(const std::string& dest_ip, uint16_t dest_port, const uint8_t* data,
+                    size_t size);
 
     /** @brief Enable SO_BROADCAST on the socket (required for sending to 255.255.255.255) */
     bool set_broadcast(bool enable);

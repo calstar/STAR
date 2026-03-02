@@ -105,8 +105,8 @@ int main(int argc, char* argv[]) {
     pwm_config.duration_ms = 1000;
 
     // Initialize controller service
-    if (!g_controller_service->initialize(pwm_config, config, elodin_host, elodin_port,
-                                          relay_host, relay_port)) {
+    if (!g_controller_service->initialize(pwm_config, config, elodin_host, elodin_port, relay_host,
+                                          relay_port)) {
         std::cerr << "[controller_service] ❌ Failed to initialize controller service" << std::endl;
         return 1;
     }

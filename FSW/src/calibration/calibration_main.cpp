@@ -93,11 +93,15 @@ int main(int argc, char* argv[]) {
             std::string line, section;
             while (std::getline(cfg, line)) {
                 size_t c = line.find('#');
-                if (c != std::string::npos) line = line.substr(0, c);
-                while (!line.empty() && (line.back() == ' ' || line.back() == '\r')) line.pop_back();
+                if (c != std::string::npos)
+                    line = line.substr(0, c);
+                while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
+                    line.pop_back();
                 size_t start = line.find_first_not_of(" \t");
-                if (start != std::string::npos) line = line.substr(start);
-                if (line.empty()) continue;
+                if (start != std::string::npos)
+                    line = line.substr(start);
+                if (line.empty())
+                    continue;
                 if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
                     section = line.substr(1, line.size() - 2);
                     continue;
@@ -106,19 +110,29 @@ int main(int argc, char* argv[]) {
                     section != "sensor_roles")
                     continue;
                 size_t eq = line.find('=');
-                if (eq == std::string::npos) continue;
+                if (eq == std::string::npos)
+                    continue;
                 std::string key = line.substr(0, eq);
                 std::string val = line.substr(eq + 1);
-                while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
-                while (!val.empty() && val[0] == ' ') val.erase(0, 1);
+                while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
+                    key.pop_back();
+                while (!val.empty() && val[0] == ' ')
+                    val.erase(0, 1);
                 // Strip quotes from key
                 if (key.size() >= 2 && key.front() == '"' && key.back() == '"')
                     key = key.substr(1, key.size() - 2);
                 // Replace spaces with underscores for entity names
-                for (auto& ch : key) if (ch == ' ') ch = '_';
+                for (auto& ch : key)
+                    if (ch == ' ')
+                        ch = '_';
                 int channel = 0;
-                try { channel = std::stoi(val); } catch (...) { continue; }
-                if (channel > 0) pt_channel_to_name[channel] = key;
+                try {
+                    channel = std::stoi(val);
+                } catch (...) {
+                    continue;
+                }
+                if (channel > 0)
+                    pt_channel_to_name[channel] = key;
             }
         }
     }

@@ -351,7 +351,8 @@ void ControllerService::controllerLoop() {
             // buffer grows unboundedly until the write blocks.
             {
                 std::array<uint8_t, 4096> drain_buf;
-                while (elodin_client_->read_data(drain_buf.data(), drain_buf.size()) > 0) {}
+                while (elodin_client_->read_data(drain_buf.data(), drain_buf.size()) > 0) {
+                }
             }
         }
 
@@ -374,8 +375,9 @@ void ControllerService::controllerLoop() {
 
 static int ws_tcp_connect(const std::string& host, uint16_t port) {
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) return -1;
-    struct sockaddr_in addr{};
+    if (fd < 0)
+        return -1;
+    struct sockaddr_in addr {};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     if (inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {
@@ -393,7 +395,8 @@ static bool read_exact(int fd, uint8_t* buf, size_t n) {
     size_t total = 0;
     while (total < n) {
         ssize_t r = recv(fd, buf + total, n - total, 0);
-        if (r <= 0) return false;
+        if (r <= 0)
+            return false;
         total += static_cast<size_t>(r);
     }
     return true;
@@ -402,18 +405,22 @@ static bool read_exact(int fd, uint8_t* buf, size_t n) {
 static bool ws_upgrade(int fd, const std::string& host, uint16_t port) {
     std::string req =
         "GET / HTTP/1.1\r\n"
-        "Host: " + host + ":" + std::to_string(port) + "\r\n"
+        "Host: " +
+        host + ":" + std::to_string(port) +
+        "\r\n"
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
         "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
         "Sec-WebSocket-Version: 13\r\n"
         "\r\n";
-    if (send(fd, req.c_str(), req.size(), 0) < 0) return false;
+    if (send(fd, req.c_str(), req.size(), 0) < 0)
+        return false;
     char buf[2048];
     std::string resp;
     while (resp.find("\r\n\r\n") == std::string::npos) {
         ssize_t n = recv(fd, buf, sizeof(buf) - 1, 0);
-        if (n <= 0) return false;
+        if (n <= 0)
+            return false;
         buf[n] = '\0';
         resp += buf;
     }
@@ -422,21 +429,29 @@ static bool ws_upgrade(int fd, const std::string& host, uint16_t port) {
 
 static bool ws_read_frame(int fd, std::vector<uint8_t>& out) {
     uint8_t hdr[2];
-    if (!read_exact(fd, hdr, 2)) return false;
+    if (!read_exact(fd, hdr, 2))
+        return false;
     uint8_t opcode = hdr[0] & 0x0F;
-    if (opcode == 0x08) return false;  // close frame
+    if (opcode == 0x08)
+        return false;  // close frame
     uint64_t plen = hdr[1] & 0x7F;
     if (plen == 126) {
         uint8_t ext[2];
-        if (!read_exact(fd, ext, 2)) return false;
+        if (!read_exact(fd, ext, 2))
+            return false;
         plen = (uint64_t(ext[0]) << 8) | ext[1];
     } else if (plen == 127) {
         uint8_t ext[8];
-        if (!read_exact(fd, ext, 8)) return false;
+        if (!read_exact(fd, ext, 8))
+            return false;
         plen = 0;
-        for (int i = 0; i < 8; ++i) plen = (plen << 8) | ext[i];
+        for (int i = 0; i < 8; ++i)
+            plen = (plen << 8) | ext[i];
     }
-    if (plen == 0) { out.clear(); return true; }
+    if (plen == 0) {
+        out.clear();
+        return true;
+    }
     out.resize(plen);
     return read_exact(fd, out.data(), plen);
 }
@@ -462,23 +477,29 @@ void ControllerService::relaySubscriberLoop() {
         std::cout << "[ControllerService] ✅ Connected to Elodin Relay WS" << std::endl;
 
         while (running_) {
-            if (!ws_read_frame(fd, frame)) break;
-            if (frame.size() < 8) continue;
+            if (!ws_read_frame(fd, frame))
+                break;
+            if (frame.size() < 8)
+                continue;
 
             // 8-byte Elodin header: len(4) ty(1) packetId[2](1+1) requestId(1)
-            uint8_t ty     = frame[4];
+            uint8_t ty = frame[4];
             uint8_t pid_hi = frame[5];
             uint8_t pid_lo = frame[6];
 
-            if (ty != 1) continue;       // TABLE only
-            if (pid_hi != 0x20) continue;
-            if (pid_lo < 0x11 || pid_lo > 0x1A) continue;
+            if (ty != 1)
+                continue;  // TABLE only
+            if (pid_hi != 0x20)
+                continue;
+            if (pid_lo < 0x11 || pid_lo > 0x1A)
+                continue;
 
             uint8_t ch = pid_lo - 0x10;  // channel 1-10
             const uint8_t* payload = frame.data() + 8;
             size_t payload_size = frame.size() - 8;
 
-            if (payload_size < comms::messages::sensor::CalibratedPTMessage::nbytes()) continue;
+            if (payload_size < comms::messages::sensor::CalibratedPTMessage::nbytes())
+                continue;
 
             comms::messages::sensor::CalibratedPTMessage cal_msg;
             cal_msg.deserialize(payload);
@@ -490,12 +511,18 @@ void ControllerService::relaySubscriberLoop() {
                 // ch=1: FUEL UP → P_u_fuel, ch=3: FUEL DN → P_d_fuel
                 // ch=5: LOX UP → P_u_ox, ch=7: LOX DN → P_d_ox
                 // ch=6: GN2 REG → P_reg, ch=6 also used for P_copv (no dedicated COPV PT)
-                if (ch == 1)      current_meas_.P_u_fuel  = pressure_psi * 6894.76;
-                else if (ch == 5) current_meas_.P_u_ox    = pressure_psi * 6894.76;
-                else if (ch == 3) current_meas_.P_d_fuel  = pressure_psi * 6894.76;
-                else if (ch == 7) current_meas_.P_d_ox    = pressure_psi * 6894.76;
-                else if (ch == 6) { current_meas_.P_reg   = pressure_psi * 6894.76;
-                                    current_meas_.P_copv  = pressure_psi * 6894.76; }
+                if (ch == 1)
+                    current_meas_.P_u_fuel = pressure_psi * 6894.76;
+                else if (ch == 5)
+                    current_meas_.P_u_ox = pressure_psi * 6894.76;
+                else if (ch == 3)
+                    current_meas_.P_d_fuel = pressure_psi * 6894.76;
+                else if (ch == 7)
+                    current_meas_.P_d_ox = pressure_psi * 6894.76;
+                else if (ch == 6) {
+                    current_meas_.P_reg = pressure_psi * 6894.76;
+                    current_meas_.P_copv = pressure_psi * 6894.76;
+                }
                 current_meas_.timestamp = std::chrono::steady_clock::now();
                 has_measurement_ = true;
             }
@@ -575,7 +602,7 @@ void ControllerService::elodinSubscriberLoop() {
                 else if (ch == 7)
                     current_meas_.P_d_ox = pressure_psi * 6894.76;
                 else if (ch == 6) {
-                    current_meas_.P_reg  = pressure_psi * 6894.76;
+                    current_meas_.P_reg = pressure_psi * 6894.76;
                     current_meas_.P_copv = pressure_psi * 6894.76;
                 }
 
