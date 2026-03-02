@@ -338,7 +338,9 @@ export function convertHpPtToPressure(
     const vSense = (adcSensor / ADC_MAX) * cfg.adcRefVoltage;
     const iMa = (vSense / cfg.senseResistorOhms) * 1000;
 
-    if (iMa < I_MIN_MA) return NaN;
+    // Treat below-live-zero current as 0 PSI instead of invalid so GUI shows
+    // a deterministic pressure value ("0") rather than "---".
+    if (iMa < I_MIN_MA) return 0.0;
     if (iMa > 20.0) return cfg.fullScalePsi;
 
     const fraction = (iMa - I_MIN_MA) / I_SPAN_MA;

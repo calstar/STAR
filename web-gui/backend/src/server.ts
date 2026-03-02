@@ -184,6 +184,7 @@ class SensorSystemServer {
   boardChannelToEntityMaps: Map<string, Record<number, string>> = new Map();
   private hpPtBoards: Map<string, HpPtBoardConfig> = new Map();
   private excitationAdcCache: Map<string, number> = new Map();
+  private hpPtExcitationWarnAt: Map<string, number> = new Map();
 
   /** Cache of recent raw ADC values per sensor for Phase 1 capture */
   lastRawAdc: Map<number, number> = new Map();
@@ -1014,8 +1015,27 @@ class SensorSystemServer {
             break;
           }
         }
-        if (chunkExcitation === undefined) chunkExcitation = this.excitationAdcCache.get(sourceIP);
-        if (chunkExcitation === undefined || chunkExcitation === 0) continue;
+        if (chunkExcitation === undefined || chunkExcitation === 0) {
+          const cached = this.excitationAdcCache.get(sourceIP);
+          if (cached !== undefined && cached > 0) {
+            chunkExcitation = cached;
+          }
+        }
+        // Don't drop HP PT chunks when excitation is unavailable/zero.
+        // Conversion currently uses fixed ADC reference; excitation is logged/validated.
+        if (chunkExcitation === undefined || chunkExcitation === 0) {
+          const now = Date.now();
+          const lastWarn = this.hpPtExcitationWarnAt.get(sourceIP) ?? 0;
+          if (now - lastWarn > 5000) {
+            console.warn(
+              `⚠️ HP PT ${sourceIP}: no nonzero excitation reading on connector ${hpCfg.excitationConnectorId}. ` +
+              `Continuing with fallback conversion; verify wiring/config.`
+            );
+            this.hpPtExcitationWarnAt.set(sourceIP, now);
+          }
+          // Use a minimal non-zero sentinel so conversion does not reject the sample.
+          chunkExcitation = 1;
+        }
 
         for (let sampleIdx = 0; sampleIdx < chunk.datapoints.length; sampleIdx++) {
           const dp = chunk.datapoints[sampleIdx];
@@ -1026,19 +1046,20 @@ class SensorSystemServer {
           if (connectorId === hpCfg.excitationConnectorId) continue;
           if (!hpCfg.hpPtConnectors.has(connectorId)) continue;
 
-          const psi = convertHpPtToPressure(adcCode, chunkExcitation!, hpCfg);
-          if (!isFinite(psi) || isNaN(psi)) continue;
-
           const entity = hpCfg.channelToEntity[connectorId] ?? `PT_Cal.HP_PT_${connectorId}`;
+          const rawEntity = entity.replace('PT_Cal.', 'PT.');
+          const psi = convertHpPtToPressure(adcCode, chunkExcitation!, hpCfg);
 
           // Spike rejection for HP PT
           let psiToEmit = psi;
-          const lastHp = this.lastGoodPsiHp.get(entity);
-          if (lastHp !== undefined) {
-            const jump = Math.abs(psi - lastHp);
-            if (jump > this.HP_PT_MAX_JUMP) { psiToEmit = lastHp; }
-            else { this.lastGoodPsiHp.set(entity, psi); }
-          } else { this.lastGoodPsiHp.set(entity, psi); }
+          if (isFinite(psi) && !isNaN(psi)) {
+            const lastHp = this.lastGoodPsiHp.get(entity);
+            if (lastHp !== undefined) {
+              const jump = Math.abs(psi - lastHp);
+              if (jump > this.HP_PT_MAX_JUMP) { psiToEmit = lastHp; }
+              else { this.lastGoodPsiHp.set(entity, psi); }
+            } else { this.lastGoodPsiHp.set(entity, psi); }
+          }
 
           const ADC_MAX = 2147483648;
           const vSense = (adcCode / ADC_MAX) * hpCfg.adcRefVoltage;
@@ -1046,8 +1067,11 @@ class SensorSystemServer {
           const vExcRaw = (chunkExcitation! / ADC_MAX) * hpCfg.adcRefVoltage;
           const vExc = vExcRaw * hpCfg.excitationDividerRatio;
 
-          this.handleSensorUpdate({ entity, component: 'pressure_psi', value: psiToEmit, timestamp: sampleTime });
+          if (isFinite(psiToEmit) && !isNaN(psiToEmit)) {
+            this.handleSensorUpdate({ entity, component: 'pressure_psi', value: psiToEmit, timestamp: sampleTime });
+          }
           this.handleSensorUpdate({ entity, component: 'raw_adc_counts', value: adcCode, timestamp: sampleTime });
+          this.handleSensorUpdate({ entity: rawEntity, component: 'raw_adc_counts', value: adcCode, timestamp: sampleTime });
           this.handleSensorUpdate({ entity, component: 'excitation_voltage', value: vExc, timestamp: sampleTime });
           this.handleSensorUpdate({ entity, component: 'sense_voltage', value: vSense, timestamp: sampleTime });
           this.handleSensorUpdate({ entity, component: 'current_ma', value: iMa, timestamp: sampleTime });

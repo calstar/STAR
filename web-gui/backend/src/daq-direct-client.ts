@@ -58,6 +58,11 @@ export class DAQDirectClient extends EventEmitter {
   private _connected: boolean = false;
   private ptBoardIPs: Set<string> = new Set<string>();
   private actuatorBoardIPs: Set<string> = new Set<string>();
+  private verbosePacketLogging: boolean = process.env.DAQ_PACKET_LOG === '1' || process.env.DAQ_PACKET_LOG === 'true';
+  private verbosePacketLogEvery: number = Math.max(1, parseInt(process.env.DAQ_PACKET_LOG_EVERY || '1', 10) || 1);
+  private hptMonitorEnabled: boolean = process.env.DAQ_HPT_MONITOR !== '0';
+  private hptMonitorIP: string = process.env.DAQ_HPT_MONITOR_IP || '192.168.2.22';
+  private hptMonitorEvery: number = Math.max(1, parseInt(process.env.DAQ_HPT_MONITOR_EVERY || '1', 10) || 1);
 
   get connected(): boolean {
     return this._connected;
@@ -150,13 +155,15 @@ export class DAQDirectClient extends EventEmitter {
     // Throttled detailed logging for HP PT boards (configurable via hpPtBoardIPs)
     const isHpPtBoard = (this as any).hpPtBoardIPs?.has(sourceIP) ?? false;
     let shouldLog = false;
-    if (isHpPtBoard) {
+    if (this.verbosePacketLogging || isHpPtBoard) {
       if (!(this as any).hpPtPacketCount) (this as any).hpPtPacketCount = 0;
       (this as any).hpPtPacketCount++;
-      shouldLog = (this as any).hpPtPacketCount <= 5 || (this as any).hpPtPacketCount % 50 === 0;
+      shouldLog = this.verbosePacketLogging
+        ? ((this as any).hpPtPacketCount % this.verbosePacketLogEvery === 0)
+        : ((this as any).hpPtPacketCount <= 5 || (this as any).hpPtPacketCount % 50 === 0);
 
       if (shouldLog) {
-        console.log(`\n🔍 HP PT Board (${sourceIP}) Packet #${(this as any).hpPtPacketCount} Analysis:`);
+        console.log(`\n🔍 Sensor Packet (${sourceIP}) #${(this as any).hpPtPacketCount} Analysis:`);
         console.log(`   Packet size: ${data.length} bytes`);
         console.log(`   Header: type=${header.packetType}, version=${header.version}, timestamp=${header.timestamp}`);
         console.log(`   Body header: num_chunks=${numChunks}, num_sensors=${numSensors}`);
@@ -219,8 +226,8 @@ export class DAQDirectClient extends EventEmitter {
         });
       }
 
-      // Detailed logging for HP PT board chunks
-      if (isHpPtBoard && shouldLog) {
+      // Detailed logging for packet chunks/datapoints
+      if (shouldLog) {
         console.log(`   Chunk ${chunkIdx + 1}/${numChunks}: timestamp=${chunkTimestamp}, ${datapoints.length} datapoints`);
         console.log(`      Datapoints: ${datapoints.map(dp => `ID=${dp.sensor_id} ADC=${dp.data}`).join(', ')}`);
       }
@@ -278,16 +285,19 @@ export class DAQDirectClient extends EventEmitter {
       (this as any).packetCount = 0;
     }
     (this as any).packetCount++;
+    const packetCount = (this as any).packetCount as number;
 
     // Log ALL packets initially, then reduce frequency
-    if ((this as any).packetCount <= 20 || (this as any).packetCount % 100 === 0) {
-      console.log(`📥 UDP packet #${(this as any).packetCount}: ${data.length} bytes from ${sourceIP}`);
+    if (this.verbosePacketLogging
+      ? (packetCount % this.verbosePacketLogEvery === 0)
+      : (packetCount <= 20 || packetCount % 100 === 0)) {
+      console.log(`📥 UDP packet #${packetCount}: ${data.length} bytes from ${sourceIP}`);
       console.log(`   First 16 bytes (hex): ${data.subarray(0, Math.min(16, data.length)).toString('hex')}`);
     }
 
     const header = this.parsePacketHeader(data);
     if (!header) {
-      if ((this as any).packetCount <= 5) {
+      if (this.verbosePacketLogging || packetCount <= 5) {
         console.warn(`   ⚠️ Failed to parse packet header`);
       }
       return;
@@ -316,7 +326,9 @@ export class DAQDirectClient extends EventEmitter {
         const { header: headerDict, chunks } = result;
 
         // Log chunk information for debugging (throttled to avoid spam)
-        if ((this as any).packetCount <= 10 || (this as any).packetCount % 100 === 0) {
+        if (this.verbosePacketLogging
+          ? (packetCount % this.verbosePacketLogEvery === 0)
+          : (packetCount <= 10 || packetCount % 100 === 0)) {
           const totalDatapoints = chunks.reduce((sum, chunk) => sum + (chunk.datapoints?.length || 0), 0);
           console.log(`   📦 Parsed ${chunks.length} chunk(s) with ${totalDatapoints} total datapoints from ${sourceIP}`);
         }
@@ -324,9 +336,23 @@ export class DAQDirectClient extends EventEmitter {
         // Emit sensor data (EXACT format from combined_gui.py)
         // source_ip is used to filter PT board vs actuator board
         this.emit('sensor_data', headerDict, chunks, sourceIP);
+
+        // Focused HPT monitor: compact packet summary for one board IP.
+        if (this.hptMonitorEnabled && sourceIP === this.hptMonitorIP) {
+          if (!(this as any).hptMonitorPacketCount) (this as any).hptMonitorPacketCount = 0;
+          (this as any).hptMonitorPacketCount++;
+          const hptCount = (this as any).hptMonitorPacketCount as number;
+          if (hptCount % this.hptMonitorEvery === 0) {
+            const chunkSummaries = chunks.map((chunk, idx) => {
+              const dp = chunk.datapoints.map(d => `ID=${d.sensor_id} ADC=${d.data}`).join(' | ');
+              return `chunk${idx + 1}@${chunk.timestamp}: ${dp}`;
+            }).join(' || ');
+            console.log(`🧪 HPT monitor ${sourceIP} pkt#${hptCount}: ${chunkSummaries}`);
+          }
+        }
       } else {
         // Log parse failures for debugging
-        if ((this as any).packetCount <= 5) {
+        if (this.verbosePacketLogging || packetCount <= 5) {
           console.warn(`   ⚠️ Failed to parse sensor data packet from ${sourceIP} (packet size: ${data.length} bytes)`);
         }
       }
