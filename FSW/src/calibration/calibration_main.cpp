@@ -163,12 +163,12 @@ int main(int argc, char* argv[]) {
                     comms::messages::sensor::RawPTMessage raw_msg;
                     raw_msg.deserialize(payload);
 
-                    uint64_t ts_ns      = raw_msg.getField<0>();  // timestamp_ns
-                    uint8_t  ch         = raw_msg.getField<1>();  // channel_id
+                    uint64_t ts_ns = raw_msg.getField<0>();  // timestamp_ns
+                    uint8_t ch = raw_msg.getField<1>();      // channel_id
                     // field 2 = padding (skip)
-                    uint32_t raw_adc    = raw_msg.getField<3>();  // raw_adc_counts
-                    uint32_t sample_ts  = raw_msg.getField<4>();  // sample_timestamp_ms
-                    uint8_t  status     = raw_msg.getField<5>();  // status_flags
+                    uint32_t raw_adc = raw_msg.getField<3>();    // raw_adc_counts
+                    uint32_t sample_ts = raw_msg.getField<4>();  // sample_timestamp_ms
+                    uint8_t status = raw_msg.getField<5>();      // status_flags
 
                     daq_comms::protocol::SensorBatch batch;
                     daq_comms::protocol::RawPTSample pt;
@@ -190,11 +190,11 @@ int main(int argc, char* argv[]) {
                     comms::messages::sensor::RawTCMessage raw_msg;
                     raw_msg.deserialize(payload);
 
-                    uint64_t ts_ns      = raw_msg.getField<0>();
-                    uint8_t  ch         = raw_msg.getField<1>();
-                    uint32_t raw_adc    = raw_msg.getField<3>();
-                    uint32_t sample_ts  = raw_msg.getField<4>();
-                    uint8_t  status     = raw_msg.getField<5>();
+                    uint64_t ts_ns = raw_msg.getField<0>();
+                    uint8_t ch = raw_msg.getField<1>();
+                    uint32_t raw_adc = raw_msg.getField<3>();
+                    uint32_t sample_ts = raw_msg.getField<4>();
+                    uint8_t status = raw_msg.getField<5>();
 
                     daq_comms::protocol::SensorBatch batch;
                     daq_comms::protocol::RawTCSample tc;
@@ -214,11 +214,11 @@ int main(int argc, char* argv[]) {
                     comms::messages::sensor::RawRTDMessage raw_msg;
                     raw_msg.deserialize(payload);
 
-                    uint64_t ts_ns      = raw_msg.getField<0>();
-                    uint8_t  ch         = raw_msg.getField<1>();
-                    uint32_t raw_adc    = raw_msg.getField<3>();  // raw_resistance_counts
-                    uint32_t sample_ts  = raw_msg.getField<4>();
-                    uint8_t  status     = raw_msg.getField<5>();
+                    uint64_t ts_ns = raw_msg.getField<0>();
+                    uint8_t ch = raw_msg.getField<1>();
+                    uint32_t raw_adc = raw_msg.getField<3>();  // raw_resistance_counts
+                    uint32_t sample_ts = raw_msg.getField<4>();
+                    uint8_t status = raw_msg.getField<5>();
 
                     daq_comms::protocol::SensorBatch batch;
                     daq_comms::protocol::RawRTDSample rtd;
@@ -238,11 +238,11 @@ int main(int argc, char* argv[]) {
                     comms::messages::sensor::RawLCMessage raw_msg;
                     raw_msg.deserialize(payload);
 
-                    uint64_t ts_ns      = raw_msg.getField<0>();
-                    uint8_t  ch         = raw_msg.getField<1>();
-                    uint32_t raw_adc    = raw_msg.getField<3>();
-                    uint32_t sample_ts  = raw_msg.getField<4>();
-                    uint8_t  status     = raw_msg.getField<5>();
+                    uint64_t ts_ns = raw_msg.getField<0>();
+                    uint8_t ch = raw_msg.getField<1>();
+                    uint32_t raw_adc = raw_msg.getField<3>();
+                    uint32_t sample_ts = raw_msg.getField<4>();
+                    uint8_t status = raw_msg.getField<5>();
 
                     daq_comms::protocol::SensorBatch batch;
                     daq_comms::protocol::RawLCSample lc;

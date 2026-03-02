@@ -139,7 +139,6 @@ private:
     };
 };
 
-
 }  // namespace comms
 
 // Helper to get message size at compile time (outside namespace for convenience)

@@ -39,7 +39,7 @@ struct BoardConfig {
     std::string ip;
     int num_sensors;
     bool enabled;
-    int board_id; // Added board_id
+    int board_id;  // Added board_id
 };
 
 // Minimal config parse: [database] host/port, [network] sensor_port/bind_ip, [boards.xxx]
@@ -57,7 +57,7 @@ static void load_board_map_from_config(const std::string& config_path,
     std::string line, current_section;
     std::string board_type_str, board_ip;
     int board_num_sensors = 10;
-    int board_id = -1; // Added board_id
+    int board_id = -1;  // Added board_id
     bool board_enabled = true;
     auto add_board = [&]() {
         if (board_ip.empty())
@@ -77,7 +77,7 @@ static void load_board_map_from_config(const std::string& config_path,
             board_map[board_ip] = {bt, board_ip, board_num_sensors, board_enabled, board_id};
         board_ip.clear();
         board_type_str.clear();
-        board_id = -1; // Reset board_id
+        board_id = -1;  // Reset board_id
     };
     while (std::getline(f, line)) {
         size_t c = line.find('#');
@@ -94,7 +94,7 @@ static void load_board_map_from_config(const std::string& config_path,
             add_board();
             current_section = line.substr(1, line.size() - 2);
             board_num_sensors = 10;
-            board_id = -1; // Reset board_id for new section
+            board_id = -1;  // Reset board_id for new section
             board_enabled = true;
             continue;
         }
@@ -127,7 +127,7 @@ static void load_board_map_from_config(const std::string& config_path,
             else if (key == "num_sensors")
                 board_num_sensors = std::stoi(val);
             else if (key == "board_id")
-                board_id = std::stoi(val); // Parse board_id
+                board_id = std::stoi(val);  // Parse board_id
             else if (key == "enabled")
                 board_enabled = (val == "true" || val == "1");
         }
@@ -411,7 +411,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     fsw_config->set_system_state(system_state);
-    
+
     // Add static IPs to FSW config manager
     for (const auto& [ip, cfg] : board_map) {
         if (cfg.board_id >= 0) {
@@ -604,7 +604,8 @@ int main(int argc, char* argv[]) {
             }
             case BoardType::ACTUATOR: {
                 for (const auto& sample : batch.value().pt_samples) {
-                    std::array<uint8_t, 2> act_pkt = {0x30, static_cast<uint8_t>(sample.channel_id + 1)};
+                    std::array<uint8_t, 2> act_pkt = {0x30,
+                                                      static_cast<uint8_t>(sample.channel_id + 1)};
                     comms::messages::sensor::RawPTMessage msg;
                     msg.setField<0>(receive_timestamp_ns);
                     msg.setField<1>(static_cast<uint8_t>(sample.channel_id + 1));

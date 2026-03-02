@@ -48,12 +48,8 @@ import {
   SystemState,
   ActuatorState,
   BoardStatus,
-<<<<<<< HEAD
   NotificationPayload,
-} from '../../shared/types.js';
-=======
 } from './shared-types.js';
->>>>>>> e2ae74fd3874418bef67d0348b6d8de5cb9f590a
 
 // ── Extracted modules ──────────────────────────────────────────────────────────
 import { Client, HpPtBoardConfig, WS_PORT, WS_HOST, ELODIN_HOST, ELODIN_PORT, ACTUATOR_CHANNEL_BY_NAME } from './server-types.js';
@@ -1578,7 +1574,6 @@ class SensorSystemServer {
     setInterval(() => {
       // Drive config state machine on a slow loop as well (for late-connecting boards)
       this.maybeSendConfigPackets();
-<<<<<<< HEAD
 
       if (this.clients.size === 0) return;
       const snapshot = this.getBoardStatusSnapshot();
@@ -1666,9 +1661,6 @@ class SensorSystemServer {
       for (const b of snapshot) {
         this.previousBoardConnected.set(b.id, b.connected);
       }
-=======
-      this.broadcastBoardStatus();
->>>>>>> e2ae74fd3874418bef67d0348b6d8de5cb9f590a
     }, 1000);
 
     // Broadcast server heartbeat to all boards at configured interval

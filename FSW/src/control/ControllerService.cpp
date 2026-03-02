@@ -400,9 +400,10 @@ void ControllerService::elodinSubscriberLoop() {
                 comms::messages::sensor::CalibratedPTMessage cal_msg;
                 cal_msg.deserialize(payload);
 
-                float    pressure_psi = cal_msg.getField<3>();  // calibrated_pressure_psi
-                uint8_t  ch           = cal_msg.getField<1>();  // channel_id from message
-                if (ch == 0) ch = channel_id - 0x10;  // fallback to header
+                float pressure_psi = cal_msg.getField<3>();  // calibrated_pressure_psi
+                uint8_t ch = cal_msg.getField<1>();          // channel_id from message
+                if (ch == 0)
+                    ch = channel_id - 0x10;  // fallback to header
 
                 // Map based on PT names derived from config.toml.
                 std::lock_guard<std::mutex> lock(input_mutex_);

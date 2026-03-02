@@ -13,8 +13,8 @@
 #include <thread>
 #include <vector>
 
-#include "../../daq_comms/include/comms/messages/sensor/SensorMessages.hpp"
 #include "../../archive/legacy/utl/db.hpp"
+#include "../../daq_comms/include/comms/messages/sensor/SensorMessages.hpp"
 #include "config/ConfigParser.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
@@ -136,14 +136,13 @@ int main(int argc, char* argv[]) {
                     val_type = PrimType::F32();
                     break;
                 case config::SensorType::ACTUATOR:
-                    continue; // Skip for now
+                    continue;  // Skip for now
             }
 
             // Extract high and low bytes from the message_id for the VTable ID
             std::tuple<uint8_t, uint8_t> vt_id = {
                 static_cast<uint8_t>((sensor.message_id >> 8) & 0xFF),
-                static_cast<uint8_t>(sensor.message_id & 0xFF)
-            };
+                static_cast<uint8_t>(sensor.message_id & 0xFF)};
 
             // Build VTable matching DatabaseConfig's layout
             auto vt = builder::vtable({
@@ -154,7 +153,7 @@ int main(int argc, char* argv[]) {
                 raw_field(16, 4, schema(PrimType::U32(), {}, component(prefix + "sample_ts_ms"))),
                 raw_field(20, 1, schema(PrimType::U8(), {}, component(prefix + "status"))),
             });
-            
+
             auto buf = Msg(VTableMsg{.id = vt_id, .vtable = vt}).encode_vec();
             if (buf.empty() || !client.send_msg({0, 0}, buf)) {
                 std::cerr << "❌ Failed to register VTable for " << sensor.sensor_id << std::endl;

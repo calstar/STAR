@@ -207,7 +207,7 @@ std::vector<uint8_t> ElodinClient::serialize_msg(uint16_t message_id, const Mess
     // FSW's MessageFactory serialization uses Serializer::write() which does memcpy (host byte
     // order) Elodin expects host byte order (matching FSW's behavior) - NO network byte order
     // conversion!
-    constexpr size_t header_size = 8; // len(4) + ty(1) + id(2) + req(1)
+    constexpr size_t header_size = 8;  // len(4) + ty(1) + id(2) + req(1)
     std::vector<uint8_t> result(header_size + msg_size);
     elodin_msg.serialize(reinterpret_cast<uint8_t*>(result.data()));
 

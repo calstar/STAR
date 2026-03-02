@@ -20,3 +20,4 @@ export type BoardStatus = import('../../shared/types.js').BoardStatus;
 export type BoardStatusPayload = import('../../shared/types.js').BoardStatusPayload;
 export type SystemState = import('../../shared/types.js').SystemState;
 export type ActuatorState = import('../../shared/types.js').ActuatorState;
+export type NotificationPayload = import('../../shared/types.js').NotificationPayload;

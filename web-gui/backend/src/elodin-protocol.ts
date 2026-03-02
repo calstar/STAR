@@ -435,10 +435,10 @@ export function parseElodinPacket(
 ): ParsedSensorData | null {
   const [high, low] = packetId;
   const hashKey = `${high.toString(16)}_${low.toString(16)}`;
-  
+
   // First try to look up the hash directly from ELODIN_HASH_MAP
   const mapEntry = ELODIN_HASH_MAP[hashKey];
-  
+
   if (mapEntry) {
     // Try full 21-byte parser first; fall back to compact Stream{} format
     // Compact format: [u64 timestamp (8 bytes)] + [field value (N bytes)]
@@ -596,7 +596,7 @@ export function parseElodinPacket(
     }
     return parsed;
   }
-  
+
   // Log unmapped packet IDs so they can be identified and added to ELODIN_HASH_MAP
   if (process.env.ELODIN_DEBUG === '1') {
     console.debug(
