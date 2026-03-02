@@ -84,7 +84,7 @@ tmux new-session  -d -s "$SESSION" -n main -x 220 -y 60 \
   "bash --norc --noprofile -c \"$CMD_DB\""
 
 tmux set-option -t "$SESSION" remain-on-exit on
-
+tmux set-option -t "$SESSION" mouse on
 # Pane 1 (right): Web GUI Backend
 tmux split-window -h -t "$SESSION:main.0" \
   "bash --norc --noprofile -c \"$CMD_WEB_BACKEND\""
