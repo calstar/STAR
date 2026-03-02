@@ -4,7 +4,7 @@ import { useSensorStore, useActuatorCommandedState, useActuatorStateByEntity, us
 import { useEffect, useMemo } from 'react';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate, MissionStartTime, CommandPayload, BoardStatus, BoardStatusPayload } from '@/lib/types';
+import { MessageType, SensorUpdate, StateUpdate, MissionStartTime, CommandPayload, BoardStatus, BoardStatusPayload, NotificationPayload } from '@/lib/types';
 import WindowLauncher from '@/components/windows/WindowLauncher';
 import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
 
@@ -101,6 +101,7 @@ export default function Home() {
   const updateConnectionStatus = useSensorStore((state) => state.updateConnectionStatus);
   const updateMissionStartTime = useSensorStore((state) => state.updateMissionStartTime);
   const updateBoards = useSensorStore((state) => state.updateBoards);
+  const updateNotification = useSensorStore((state) => state.updateNotification);
   const boardsMap = useSensorStore((state) => state.boards as Record<number, BoardStatus>);
   const ws = getWebSocketClient();
 
@@ -128,8 +129,9 @@ export default function Home() {
       if (payload?.boards) updateBoards(payload.boards as BoardStatus[]);
     });
     const u5 = ws.onConnectionStatus((s) => updateConnectionStatus(s));
-    return () => { u1(); u2(); u3(); u4(); u5(); };
-  }, [ws, updateSensor, updateState, updateConnectionStatus, updateMissionStartTime, updateBoards]);
+    const u6 = ws.on(MessageType.NOTIFICATION, (p: unknown) => updateNotification(p as NotificationPayload));
+    return () => { u1(); u2(); u3(); u4(); u5(); u6(); };
+  }, [ws, updateSensor, updateState, updateConnectionStatus, updateMissionStartTime, updateBoards, updateNotification]);
 
   const pressureSensors: SensorCardProps[] = [
     ...PRESSURE_SENSORS.map((s) => ({

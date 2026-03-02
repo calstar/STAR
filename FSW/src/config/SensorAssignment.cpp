@@ -263,11 +263,13 @@ std::vector<uint8_t> SensorAssignmentManager::generate_board_config_packet(uint8
 
     const auto& config = it->second;
 
-    // Generate SENSOR_CONFIG packet (DiabloAvionics format)
-    // PacketHeader (6 bytes) + SensorConfig body
+    // Generate SENSOR_CONFIG packet (DAQv2-Comms format, NOT generate_packets.cpp)
+    // Layout matches create_sensor_config_packet in DiabloPacketUtils.cpp
+    // Body: num_sensors | sensor_ids | reference_voltage | necessary_for_abort
+    //       | [controller_ip if necessary_for_abort] | enable_serial_printing
     std::vector<uint8_t> packet;
 
-    // Header
+    // Header (6 bytes): type, version, timestamp LE
     packet.push_back(5);  // SENSOR_CONFIG packet type
     packet.push_back(0);  // Version
 
@@ -277,15 +279,23 @@ std::vector<uint8_t> SensorAssignmentManager::generate_board_config_packet(uint8
     packet.push_back((timestamp >> 16) & 0xFF);
     packet.push_back((timestamp >> 24) & 0xFF);
 
-    // Body: num_sensors (1 byte) + sensor_ids (N bytes)
+    // Body: num_sensors (1 byte)
     packet.push_back(static_cast<uint8_t>(config.sensors.size()));
 
+    // sensor_ids (N bytes) - use channel_id as sensor ID
     for (const auto& sensor : config.sensors) {
-        // Extract numeric ID from sensor_id (e.g., "PT_HP" -> use channel_id)
         packet.push_back(sensor.channel_id);
     }
 
-    // necessary_for_abort (1 byte) - set to 0 for now
+    // reference_voltage (1 byte): 0=Internal 2.5V, 1=VDD, 2=5V
+    packet.push_back(0);
+
+    // necessary_for_abort (1 byte)
+    packet.push_back(0);
+
+    // controller_ip (4 bytes) - OMITTED when necessary_for_abort is false
+
+    // enable_serial_printing (1 byte)
     packet.push_back(0);
 
     return packet;

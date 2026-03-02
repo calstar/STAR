@@ -93,6 +93,7 @@ export default function TimeSeriesPlot({
   // ── Use global T+0 so all windows share the same time axis ─────
   const startTimeRef = useRef<number>(getStartupTime());
   const latestValuesRef = useRef<number[]>(entities.map(() => NaN));
+  const receivedUpdateThisIntervalRef = useRef<boolean[]>(entities.map(() => false));
 
   const dataRef = useRef<{ time: number[]; values: number[][] }>({
     time: [],
@@ -121,6 +122,7 @@ export default function TimeSeriesPlot({
       dataRef.current.time = [];
       dataRef.current.values = entities.map(() => []);
       latestValuesRef.current = entities.map(() => NaN);
+      receivedUpdateThisIntervalRef.current = entities.map(() => false);
     }
 
     if (plotInstanceRef.current) {
@@ -372,6 +374,7 @@ export default function TimeSeriesPlot({
         // not PT_CHx (avoids 0/5000 spiking when standard board and HP board both send data).
         if (!shouldAcceptUpdateForSeries(entities[idx], update.entity)) return;
         latestValuesRef.current[idx] = update.value;
+        receivedUpdateThisIntervalRef.current[idx] = true;
       }
     });
 
@@ -406,7 +409,11 @@ export default function TimeSeriesPlot({
       // Update data at 10 Hz (only when needed)
       if (currentTime - lastDataUpdate >= DATA_UPDATE_INTERVAL) {
         d.time.push(now);
-        entities.forEach((_, i) => d.values[i].push(latestValuesRef.current[i]));
+        entities.forEach((_, i) => {
+          const val = receivedUpdateThisIntervalRef.current[i] ? latestValuesRef.current[i] : NaN;
+          d.values[i].push(val);
+          receivedUpdateThisIntervalRef.current[i] = false;
+        });
 
         // Trim older than window
         let first = 0;

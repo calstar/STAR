@@ -30,7 +30,6 @@ import {
   NotificationCategory,
   isNotificationOngoing,
 } from './types';
-
 interface SensorData {
   [key: string]: number; // entity.component -> value
 }
@@ -81,33 +80,57 @@ const ALIASES: Record<string, string[]> = {
   // ── PT calibrated pressure (named → PT_CHX) ─────────────────────────────
   'PT_Cal.Fuel_Upstream.pressure_psi': ['PT_Cal.PT_CH1.pressure_psi', 'PT.Fuel_Upstream.pressure_psi', 'PT.PT_CH1.pressure_psi'],
   'PT_Cal.GSE_Low.pressure_psi': ['PT_Cal.PT_CH2.pressure_psi', 'PT.GSE_Low.pressure_psi', 'PT.PT_CH2.pressure_psi'],
-  'PT_Cal.GSE_Mid.pressure_psi': ['PT_Cal.HP_PT_1.pressure_psi', 'PT.GSE_Mid.pressure_psi'],
-  'PT_Cal.HP_PT_1.pressure_psi': ['PT_Cal.GSE_Mid.pressure_psi', 'PT.GSE_Mid.pressure_psi'],
   'PT_Cal.Fuel_Downstream.pressure_psi': ['PT_Cal.PT_CH3.pressure_psi', 'PT.Fuel_Downstream.pressure_psi', 'PT.PT_CH3.pressure_psi'],
   'PT_Cal.Fuel_Fill_Tank.pressure_psi': ['PT_Cal.PT_CH4.pressure_psi', 'PT.Fuel_Fill_Tank.pressure_psi', 'PT.PT_CH4.pressure_psi'],
   'PT_Cal.Ox_Upstream.pressure_psi': ['PT_Cal.PT_CH5.pressure_psi', 'PT.Ox_Upstream.pressure_psi', 'PT.PT_CH5.pressure_psi'],
   'PT_Cal.GN2_Regulated.pressure_psi': ['PT_Cal.PT_CH6.pressure_psi', 'PT.GN2_Regulated.pressure_psi', 'PT.PT_CH6.pressure_psi'],
   'PT_Cal.Ox_Downstream.pressure_psi': ['PT_Cal.PT_CH7.pressure_psi', 'PT.Ox_Downstream.pressure_psi', 'PT.PT_CH7.pressure_psi'],
-  'PT_Cal.GSE_High.pressure_psi': ['PT_Cal.HP_PT_3.pressure_psi', 'PT_Cal.PT_CH8.pressure_psi', 'PT.PT_CH8.pressure_psi'],
-  'PT_Cal.HP_PT_3.pressure_psi': ['PT_Cal.GSE_High.pressure_psi', 'PT.PT_CH8.pressure_psi'],
-  'PT_Cal.GN2_High.pressure_psi': ['PT_Cal.HP_PT_4.pressure_psi', 'PT_Cal.PT_CH9.pressure_psi', 'PT_Cal.PT_CH10.pressure_psi', 'PT.PT_CH9.pressure_psi', 'PT.PT_CH10.pressure_psi'],
-  'PT_Cal.HP_PT_4.pressure_psi': ['PT_Cal.GN2_High.pressure_psi', 'PT.PT_CH9.pressure_psi', 'PT.PT_CH10.pressure_psi'],
+  // HP PT sensors: named entities only (no PT_CH channel fallback)
+  'PT_Cal.GSE_Mid.pressure_psi': ['PT_Cal.HP_PT_1.pressure_psi', 'PT.GSE_Mid.pressure_psi'],
+  'PT_Cal.HP_PT_1.pressure_psi': ['PT_Cal.GSE_Mid.pressure_psi', 'PT.GSE_Mid.pressure_psi'],
+  'PT_Cal.GSE_High.pressure_psi': ['PT_Cal.HP_PT_3.pressure_psi', 'PT.GSE_High.pressure_psi'],
+  'PT_Cal.HP_PT_3.pressure_psi': ['PT_Cal.GSE_High.pressure_psi', 'PT.GSE_High.pressure_psi'],
+  'PT_Cal.GN2_High.pressure_psi': ['PT_Cal.HP_PT_4.pressure_psi', 'PT.GN2_High.pressure_psi'],
+  'PT_Cal.HP_PT_4.pressure_psi': ['PT_Cal.GN2_High.pressure_psi', 'PT.GN2_High.pressure_psi'],
 
   // ── PT raw ADC counts (named → PT_CHX) ──────────────────────────────────
   'PT_Cal.Fuel_Upstream.raw_adc_counts': ['PT_Cal.PT_CH1.raw_adc_counts', 'PT.Fuel_Upstream.raw_adc_counts', 'PT.PT_CH1.raw_adc_counts'],
   'PT_Cal.GSE_Low.raw_adc_counts': ['PT_Cal.PT_CH2.raw_adc_counts', 'PT.PT_CH2.raw_adc_counts'],
-  'PT_Cal.GSE_Mid.raw_adc_counts': ['PT_Cal.HP_PT_1.raw_adc_counts', 'PT.GSE_Mid.raw_adc_counts'],
-  'PT_Cal.HP_PT_1.raw_adc_counts': ['PT_Cal.GSE_Mid.raw_adc_counts'],
   'PT_Cal.PT_CH3.raw_adc_counts': ['PT.PT_CH3.raw_adc_counts'],
   'PT_Cal.Fuel_Downstream.raw_adc_counts': ['PT_Cal.PT_CH3.raw_adc_counts', 'PT.PT_CH3.raw_adc_counts'],
   'PT_Cal.Fuel_Fill_Tank.raw_adc_counts': ['PT_Cal.PT_CH4.raw_adc_counts', 'PT.PT_CH4.raw_adc_counts'],
   'PT_Cal.Ox_Upstream.raw_adc_counts': ['PT_Cal.PT_CH5.raw_adc_counts', 'PT.PT_CH5.raw_adc_counts'],
   'PT_Cal.GN2_Regulated.raw_adc_counts': ['PT_Cal.PT_CH6.raw_adc_counts', 'PT.PT_CH6.raw_adc_counts'],
   'PT_Cal.Ox_Downstream.raw_adc_counts': ['PT_Cal.PT_CH7.raw_adc_counts', 'PT.PT_CH7.raw_adc_counts'],
-  'PT_Cal.GSE_High.raw_adc_counts': ['PT_Cal.HP_PT_3.raw_adc_counts', 'PT_Cal.PT_CH8.raw_adc_counts', 'PT.PT_CH8.raw_adc_counts'],
-  'PT_Cal.HP_PT_3.raw_adc_counts': ['PT_Cal.GSE_High.raw_adc_counts', 'PT.PT_CH8.raw_adc_counts'],
-  'PT_Cal.GN2_High.raw_adc_counts': ['PT_Cal.HP_PT_4.raw_adc_counts', 'PT_Cal.PT_CH9.raw_adc_counts', 'PT_Cal.PT_CH10.raw_adc_counts', 'PT.PT_CH9.raw_adc_counts', 'PT.PT_CH10.raw_adc_counts'],
-  'PT_Cal.HP_PT_4.raw_adc_counts': ['PT_Cal.GN2_High.raw_adc_counts', 'PT.PT_CH9.raw_adc_counts', 'PT.PT_CH10.raw_adc_counts'],
+  // HP PT sensors: named entities only (no PT_CH channel fallback)
+  'PT_Cal.GSE_Mid.raw_adc_counts': ['PT_Cal.HP_PT_1.raw_adc_counts', 'PT.GSE_Mid.raw_adc_counts'],
+  'PT_Cal.HP_PT_1.raw_adc_counts': ['PT_Cal.GSE_Mid.raw_adc_counts', 'PT.GSE_Mid.raw_adc_counts'],
+  'PT_Cal.GSE_High.raw_adc_counts': ['PT_Cal.HP_PT_3.raw_adc_counts', 'PT.GSE_High.raw_adc_counts'],
+  'PT_Cal.HP_PT_3.raw_adc_counts': ['PT_Cal.GSE_High.raw_adc_counts', 'PT.GSE_High.raw_adc_counts'],
+  'PT_Cal.GN2_High.raw_adc_counts': ['PT_Cal.HP_PT_4.raw_adc_counts', 'PT.GN2_High.raw_adc_counts'],
+  'PT_Cal.HP_PT_4.raw_adc_counts': ['PT_Cal.GN2_High.raw_adc_counts', 'PT.GN2_High.raw_adc_counts'],
+
+  // HP PT diagnostics
+  'PT_Cal.GSE_Mid.current_ma': ['PT_Cal.HP_PT_1.current_ma'],
+  'PT_Cal.HP_PT_1.current_ma': ['PT_Cal.GSE_Mid.current_ma'],
+  'PT_Cal.GSE_High.current_ma': ['PT_Cal.HP_PT_3.current_ma'],
+  'PT_Cal.HP_PT_3.current_ma': ['PT_Cal.GSE_High.current_ma'],
+  'PT_Cal.GN2_High.current_ma': ['PT_Cal.HP_PT_4.current_ma'],
+  'PT_Cal.HP_PT_4.current_ma': ['PT_Cal.GN2_High.current_ma'],
+
+  'PT_Cal.GSE_Mid.sense_voltage': ['PT_Cal.HP_PT_1.sense_voltage'],
+  'PT_Cal.HP_PT_1.sense_voltage': ['PT_Cal.GSE_Mid.sense_voltage'],
+  'PT_Cal.GSE_High.sense_voltage': ['PT_Cal.HP_PT_3.sense_voltage'],
+  'PT_Cal.HP_PT_3.sense_voltage': ['PT_Cal.GSE_High.sense_voltage'],
+  'PT_Cal.GN2_High.sense_voltage': ['PT_Cal.HP_PT_4.sense_voltage'],
+  'PT_Cal.HP_PT_4.sense_voltage': ['PT_Cal.GN2_High.sense_voltage'],
+
+  'PT_Cal.GSE_Mid.excitation_voltage': ['PT_Cal.HP_PT_1.excitation_voltage'],
+  'PT_Cal.HP_PT_1.excitation_voltage': ['PT_Cal.GSE_Mid.excitation_voltage'],
+  'PT_Cal.GSE_High.excitation_voltage': ['PT_Cal.HP_PT_3.excitation_voltage'],
+  'PT_Cal.HP_PT_3.excitation_voltage': ['PT_Cal.GSE_High.excitation_voltage'],
+  'PT_Cal.GN2_High.excitation_voltage': ['PT_Cal.HP_PT_4.excitation_voltage'],
+  'PT_Cal.HP_PT_4.excitation_voltage': ['PT_Cal.GN2_High.excitation_voltage'],
 
   // ── PT raw (PT. namespace) → PT_Cal namespace fallback ──────────────────
   'PT.PT_CH1.raw_adc_counts': ['PT_Cal.PT_CH1.raw_adc_counts', 'PT.Fuel_Upstream.raw_adc_counts'],
@@ -319,7 +342,6 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
     const filteredValue = filterSensorValue(key, update.value);
     // Accumulate in pending batch — flush at next animation frame
     _pendingSensorWrites[key] = filteredValue;
-    scheduleSensorFlush();
   },
 
   updateActuator: (update: ActuatorUpdate) => {
@@ -462,8 +484,6 @@ export function useSensorValue(entity: string, component: string): number | null
     return null;
   });
 
-  // Subscribe to _updateVersion so we re-render on every flush even when value is unchanged
-  useSensorStore((state) => state._updateVersion ?? 0);
   return value;
 }
 

@@ -5,10 +5,11 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { getDataCache } from '@/lib/data-cache';
 import { getStartupTime } from '@/lib/startup-time';
+import { getWebSocketClient } from '@/lib/websocket';
+import { MessageType, SensorUpdate } from '@/lib/types';
 
 const DEFAULT_WINDOW_SECONDS = 60;
 const SAMPLE_HZ = 10;
-const POLL_MS = 200;
 
 export type TransformFn = (rawValue: number) => number | null;
 
@@ -36,6 +37,16 @@ function fmtVal(v: number): string {
   return v.toFixed(2);
 }
 
+function smartYRange(dataMin: number, dataMax: number): [number, number] {
+  if (dataMin === dataMax) {
+    const margin = dataMin === 0 ? 1 : Math.abs(dataMin) * 0.05;
+    return [dataMin - margin, dataMax + margin];
+  }
+  const span = dataMax - dataMin;
+  const pad = Math.max(span * 0.12, Math.abs(dataMax) * 0.001);
+  return [dataMin - pad, dataMax + pad];
+}
+
 export default function DerivedTimeSeriesPlot({
   title,
   entities,
@@ -53,16 +64,37 @@ export default function DerivedTimeSeriesPlot({
   const uplotRef = useRef<uPlot | null>(null);
   const transformRef = useRef(transform);
   transformRef.current = transform;
+  const startTimeRef = useRef<number>(getStartupTime());
+  const latestValuesRef = useRef<number[]>(entities.map(() => NaN));
+  const receivedUpdateThisIntervalRef = useRef<boolean[]>(entities.map(() => false));
+  const dataRef = useRef<{ time: number[]; values: number[][] }>({
+    time: [],
+    values: entities.map(() => []),
+  });
   const [ready, setReady] = useState(false);
-  const startTimeRef = useRef(getStartupTime());
+
+  const componentMap = entities.map(() => component);
+  const MAX_POINTS = windowSeconds * SAMPLE_HZ;
 
   useEffect(() => {
     if (!containerRef.current || !plotRef.current) return;
 
-    const componentMap = entities.map(() => component);
     const cache = getDataCache();
+    const ws = getWebSocketClient();
     const seriesLabels = entities.map((e, i) => labels?.[i] ?? e.split('.').pop() ?? e);
     const colorList = entities.map((_, i) => colors[i] || '#94a3b8');
+
+    if (dataRef.current.values.length !== entities.length) {
+      dataRef.current.time = [];
+      dataRef.current.values = entities.map(() => []);
+      latestValuesRef.current = entities.map(() => NaN);
+    }
+
+    if (uplotRef.current) {
+      uplotRef.current.destroy();
+      uplotRef.current = null;
+    }
+    setReady(false);
 
     const getDims = (): { w: number; h: number } | null => {
       const el = containerRef.current;
@@ -74,38 +106,63 @@ export default function DerivedTimeSeriesPlot({
       return { w, h };
     };
 
-    let data: uPlot.AlignedData = [
-      [],
-      ...entities.map(() => [] as number[]),
-    ];
-
-    const opts: uPlot.Options = {
-      width: 400,
-      height: 300,
+    const buildOpts = (w: number, h: number): uPlot.Options => ({
+      width: w,
+      height: h,
       pxAlign: true,
       scales: {
-        x: { time: false },
-        y: { auto: true },
+        x: {
+          time: false,
+          range: (): [number, number] => {
+            const now = (Date.now() - startTimeRef.current) / 1000;
+            const window = Math.min(windowSeconds, now + 1);
+            return [Math.max(0, now - window), now];
+          },
+        },
+        y: {
+          auto: true,
+          range: (u, mn, mx): [number, number] => {
+            const allValues: number[] = [];
+            for (let i = 1; i < u.data.length; i++) {
+              const series = u.data[i] as number[];
+              if (series) {
+                for (const val of series) {
+                  if (isFinite(val)) allValues.push(val);
+                }
+              }
+            }
+            if (allValues.length > 0) {
+              const dataMin = Math.min(...allValues);
+              const dataMax = Math.max(...allValues);
+              return smartYRange(dataMin, dataMax);
+            }
+            if (isFinite(mn) && isFinite(mx)) return smartYRange(mn, mx);
+            return [-400, 100];
+          },
+        },
       },
       axes: [
         {
           label: 'T+ (s)',
           stroke: '#9CA3AF',
           grid: { show: true, stroke: '#555', width: 1 },
-          ticks: { show: true, stroke: '#777', width: 1 },
-          font: 'bold 11px monospace',
-          labelFont: 'bold 11px system-ui',
-          size: 50,
+          ticks: { show: true, stroke: '#9CA3AF', width: 2 },
+          font: 'bold 36px monospace',
+          labelFont: 'px system-ui',
+          gap: 12,
+          space: 140,
           values: (_u, vals) => vals.map((v) => (v == null ? '' : Math.round(v).toString())),
         },
         {
           label: yLabel,
           stroke: '#9CA3AF',
           grid: { show: true, stroke: '#555', width: 1 },
-          ticks: { show: true, stroke: '#777', width: 1 },
-          font: 'bold 11px monospace',
-          labelFont: 'bold 11px system-ui',
+          ticks: { show: true, stroke: '#9CA3AF', width: 2 },
+          font: 'bold 18px monospace',
+          labelFont: '18px system-ui',
           size: 70,
+          gap: 10,
+          space: 90,
           values: (_u, vals) => vals.map((v) => (v == null ? '' : fmtVal(v))),
         },
       ],
@@ -120,61 +177,169 @@ export default function DerivedTimeSeriesPlot({
       ],
       cursor: { show: true, x: true, y: false },
       legend: { show: false },
-      padding: [10, 14, 8, 4] as [number, number, number, number],
-    };
+      padding: [8, 12, 0, 0] as [number, number, number, number],
+    });
 
-    const updateData = () => {
-      const cached = cache.getAlignedHistory(entities, componentMap, windowSeconds);
-      if (!cached || cached.time.length === 0) return;
-      const t = transformRef.current;
-      const transformed = cached.values.map((arr) =>
-        arr.map((v) => {
-          const out = t(v);
-          return out === null || !Number.isFinite(out) ? NaN : out;
-        })
-      );
-      data = [cached.time, ...transformed];
-      if (uplotRef.current) {
-        try {
-          uplotRef.current.setData(data);
-        } catch (_) {}
+    const loadCacheData = (): boolean => {
+      try {
+        const cached = cache.getAlignedHistory(entities, componentMap, windowSeconds);
+        if (cached && cached.time.length > 0 && cached.values.length > 0) {
+          const t = transformRef.current;
+          dataRef.current.time = [...cached.time];
+          dataRef.current.values = cached.values.map((arr) =>
+            arr.map((v) => {
+              const out = t(v);
+              return out === null || !Number.isFinite(out) ? NaN : out;
+            })
+          );
+          cached.values.forEach((vals, i) => {
+            if (vals && vals.length > 0) {
+              for (let j = vals.length - 1; j >= 0; j--) {
+                const out = t(vals[j]);
+                if (out !== null && Number.isFinite(out)) {
+                  latestValuesRef.current[i] = out;
+                  break;
+                }
+              }
+            }
+          });
+          return true;
+        }
+      } catch (err) {
+        console.warn('[DerivedTimeSeriesPlot] Cache load failed:', err);
       }
+      return false;
     };
 
-    const init = () => {
+    loadCacheData();
+
+    const tryInit = () => {
+      if (uplotRef.current || !plotRef.current) return;
       const dims = getDims();
       if (!dims) return;
-      updateData();
-      opts.width = dims.w;
-      opts.height = dims.h;
+
+      loadCacheData();
+
+      const now = (Date.now() - startTimeRef.current) / 1000;
+      let timeData = dataRef.current.time.length > 0 ? dataRef.current.time : [now];
+      let valueData = dataRef.current.values.map((v) => (v.length > 0 ? v : [NaN]));
+
+      const maxLen = Math.max(timeData.length, ...valueData.map((v) => v.length));
+      if (maxLen === 0) {
+        timeData = [now];
+        valueData = entities.map(() => [NaN]);
+      } else {
+        while (timeData.length < maxLen) {
+          timeData.push(timeData.length > 0 ? timeData[timeData.length - 1] + 0.1 : now);
+        }
+        valueData = valueData.map((v) => {
+          const arr = [...v];
+          while (arr.length < maxLen) arr.push(NaN);
+          return arr;
+        });
+      }
+
+      const data: uPlot.AlignedData = [timeData, ...valueData];
+
       try {
-        uplotRef.current = new uPlot(opts, data, plotRef.current!);
+        if (!plotRef.current) return;
+        uplotRef.current = new uPlot(buildOpts(dims.w, dims.h), data, plotRef.current);
         setReady(true);
       } catch (err) {
         console.error('[DerivedTimeSeriesPlot] init failed:', err);
       }
     };
 
-    const tryInit = () => {
-      if (uplotRef.current) return;
-      init();
+    const unsubSensor = ws.on(MessageType.SENSOR_UPDATE, (payload: unknown) => {
+      const update = payload as SensorUpdate;
+      if (!isFinite(update.value)) return;
+
+      cache.addDataPoint(update.entity, update.component, update.value);
+
+      const idx = entities.indexOf(update.entity);
+      if (idx >= 0 && componentMap[idx] === update.component) {
+        const out = transformRef.current(update.value);
+        latestValuesRef.current[idx] = out !== null && Number.isFinite(out) ? out : NaN;
+        receivedUpdateThisIntervalRef.current[idx] = true;
+      }
+    });
+
+    let lastDataUpdate = 0;
+    const DATA_UPDATE_INTERVAL = 1000 / SAMPLE_HZ;
+
+    let animationFrameId: number | null = null;
+    const renderLoop = () => {
+      if (!uplotRef.current) {
+        animationFrameId = requestAnimationFrame(renderLoop);
+        return;
+      }
+
+      const now = (Date.now() - startTimeRef.current) / 1000;
+      const cutoff = now - windowSeconds;
+      const d = dataRef.current;
+      const currentTime = Date.now();
+
+      if (currentTime - lastDataUpdate >= DATA_UPDATE_INTERVAL) {
+        d.time.push(now);
+        entities.forEach((_, i) => {
+          const val = receivedUpdateThisIntervalRef.current[i] ? latestValuesRef.current[i] : NaN;
+          d.values[i].push(val);
+          receivedUpdateThisIntervalRef.current[i] = false;
+        });
+
+        let first = 0;
+        while (first < d.time.length && d.time[first] < cutoff) first++;
+        if (first > 0) {
+          d.time = d.time.slice(first);
+          d.values = d.values.map((a) => a.slice(first));
+        }
+        if (d.time.length > MAX_POINTS) {
+          const excess = d.time.length - MAX_POINTS;
+          d.time = d.time.slice(excess);
+          d.values = d.values.map((a) => a.slice(excess));
+        }
+        lastDataUpdate = currentTime;
+      }
+
+      uplotRef.current.setScale('x', {
+        min: Math.max(0, now - windowSeconds),
+        max: now,
+      });
+
+      const timeData = d.time.length > 0 ? d.time : [now];
+      const valueData = d.values.map((v) => (v.length > 0 ? v : [NaN]));
+      try {
+        uplotRef.current.setData([timeData, ...valueData]);
+      } catch (_) {}
+
+      const allY: number[] = [];
+      valueData.forEach((series) => {
+        series.forEach((v) => {
+          if (Number.isFinite(v)) allY.push(v);
+        });
+      });
+      if (allY.length > 0) {
+        const yMin = Math.min(...allY);
+        const yMax = Math.max(...allY);
+        const [min, max] = smartYRange(yMin, yMax);
+        uplotRef.current.setScale('y', { min, max });
+      }
+
+      const dims = getDims();
+      if (dims && (Math.abs(dims.w - uplotRef.current.width) > 2 || Math.abs(dims.h - uplotRef.current.height) > 2)) {
+        uplotRef.current.setSize({ width: dims.w, height: dims.h });
+      }
+
+      animationFrameId = requestAnimationFrame(renderLoop);
     };
 
-    requestAnimationFrame(tryInit);
-    const t1 = setTimeout(tryInit, 100);
-    const t2 = setTimeout(tryInit, 300);
-    const t3 = setTimeout(tryInit, 600);
-
-    const intervalId = setInterval(() => {
-      updateData();
-      if (uplotRef.current) {
-        const now = (Date.now() - startTimeRef.current) / 1000;
-        uplotRef.current.setScale('x', {
-          min: Math.max(0, now - windowSeconds),
-          max: now,
-        });
-      }
-    }, POLL_MS);
+    requestAnimationFrame(() => {
+      tryInit();
+      setTimeout(tryInit, 100);
+      setTimeout(tryInit, 300);
+      setTimeout(tryInit, 600);
+    });
+    animationFrameId = requestAnimationFrame(renderLoop);
 
     const ro = new ResizeObserver(() => {
       const dims = getDims();
@@ -187,10 +352,8 @@ export default function DerivedTimeSeriesPlot({
     if (containerRef.current) ro.observe(containerRef.current);
 
     return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-      clearInterval(intervalId);
+      unsubSensor();
+      if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
       ro.disconnect();
       uplotRef.current?.destroy();
       uplotRef.current = null;
@@ -214,19 +377,6 @@ export default function DerivedTimeSeriesPlot({
             Loading...
           </div>
         )}
-      </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-2 px-3 py-2 flex-shrink-0 border-t border-gray-800/80 bg-gray-900/30">
-        {entities.map((e, i) => (
-          <div key={e} className="flex items-center gap-2">
-            <span
-              className="w-3 h-1 rounded-full inline-block flex-shrink-0"
-              style={{ background: colors[i] || '#94a3b8' }}
-            />
-            <span className="text-xs font-medium font-mono text-gray-400">
-              {labels?.[i] ?? e.split('.').pop() ?? e}
-            </span>
-          </div>
-        ))}
       </div>
     </div>
   );

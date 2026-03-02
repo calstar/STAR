@@ -232,7 +232,9 @@ export default function StatusPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {HP_PT_SENSORS.map((sensor) => {
             const pressure = useSensorValue(sensor.entity, 'pressure_psi');
-            const adc = useSensorValue(sensor.entity, 'raw_adc_counts');
+            const adcCal = useSensorValue(sensor.entity, 'raw_adc_counts');
+            const adcRawNs = useSensorValue(sensor.entity.replace('PT_Cal.', 'PT.'), 'raw_adc_counts');
+            const adc = adcCal ?? adcRawNs;
             const vExc = useSensorValue(sensor.entity, 'excitation_voltage');
             const vSense = useSensorValue(sensor.entity, 'sense_voltage');
             const current = useSensorValue(sensor.entity, 'current_ma');
