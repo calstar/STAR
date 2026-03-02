@@ -29,7 +29,7 @@ import { ElodinPublisherBatched } from './elodin-publisher-batched.js';
 import { publishControllerActuation, publishControllerDiagnostics } from './controller-elodin-publisher.js';
 import { getStateTransitions, isTransitionAllowed } from './routes/state-transitions.js';
 import { getStateActuatorMap, StateActuatorMap, CSV_ACTUATOR_TO_ENTITY, getActuatorChannel } from './routes/state-actuators.js';
-import { startAPIServer } from './api-server.js';
+import { startAPIServer, type DebugInfo } from './api-server.js';
 import { loadPTCalibration, calculatePressure, inversePressureToAdc, CalibrationCoefficients, EnvironmentalState } from './calibration.js';
 import { Phase2CalibrationEngine } from './calibration-phase2.js';
 import { CalibrationSidecarClient } from './calibration-sidecar.js';
@@ -1132,6 +1132,7 @@ class SensorSystemServer {
     try { this.elodin.publishTable(packetId, payload); } catch (error) { }
   }
 
+  private _parseNullCount = 0;
   private handleElodinPacket(header: any, payload: Buffer): void {
     try {
       const [high, low] = header.packetId;
@@ -1139,7 +1140,13 @@ class SensorSystemServer {
         channelToEntityMap: this.channelToEntityMap,
         actuatorChannelToEntityMap: this.actuatorChannelToEntityMap,
       });
-      if (!parsed) return;
+      if (!parsed) {
+        if (header.ty === ElodinPacketType.TABLE && this._parseNullCount < 3) {
+          this._parseNullCount++;
+          console.warn(`[Relay] TABLE packet not parsed (packetId=0x${high.toString(16)},0x${low.toString(16)}, len=${payload.length})`);
+        }
+        return;
+      }
 
       let shouldUseElodinValue = true;
       let channelId: number | null = null;
@@ -1767,6 +1774,16 @@ class SensorSystemServer {
     }
   }
 
+  getDebugInfo(): DebugInfo {
+    return {
+      relayConnected: this.elodinRelay?.isConnected() ?? false,
+      relayPacketsReceived: this.relayPacketCount,
+      wsClients: this.clients.size,
+      sensorCacheSize: this.sensorCache.size,
+      useRelay: !!process.env.ELODIN_RELAY_WS_URL,
+    };
+  }
+
   broadcast(message: any): void {
     if (this.messageLogger) this.messageLogger.logMessage(message);
     if (this.clients.size === 0) return;
@@ -2141,7 +2158,10 @@ class SensorSystemServer {
 
 // Start servers
 const server = new SensorSystemServer();
-startAPIServer(() => (server as any).queryClient || null);
+startAPIServer(
+  () => (server as any).queryClient || null,
+  () => server.getDebugInfo()
+);
 
 process.on('SIGINT', () => { console.log('\n🛑 Shutting down server...'); server.shutdown(); process.exit(0); });
 process.on('SIGTERM', () => { console.log('\n🛑 Shutting down server...'); server.shutdown(); process.exit(0); });

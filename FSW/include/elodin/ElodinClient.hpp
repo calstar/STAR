@@ -67,6 +67,11 @@ public:
     }
 
     /**
+     * @brief Subscribe to all stream data from Elodin (sends a StreamFilter MSG).
+     */
+    bool subscribe_stream();
+
+    /**
      * @brief Begin batching — subsequent publish() calls go into an internal buffer.
      * Call flush_batch() to send everything in one TCP write.
      */

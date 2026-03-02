@@ -17,8 +17,6 @@
 #include "../../daq_comms/include/comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "../../daq_comms/include/comms/messages/sensor/SensorMessages.hpp"
 #include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
-#include "calibration/PTCalibration.hpp"
-#include "calibration/SensorCalibration.hpp"
 #include "config/BoardDiscovery.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
@@ -433,38 +431,7 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "✅ Sensor pipeline ready on port " << bind_port << std::endl;
 
-    // ── Calibration Managers ──
-    fsw::calibration::PTCalibrationManager pt_calibration;
-    std::cout << "[Calibration] PT:  " << pt_calibration.get_calibrated_count() << " channels"
-              << std::endl;
-
-    fsw::calibration::SensorCalibrationManager tc_calibration("TC", "°C", 3);
-    tc_calibration.load_calibration(
-        "scripts/calibration/calibrations/tc",
-        "external/DiabloAvionics/TC_Board/Calibration/tc_calibration.csv");
-    std::cout << "[Calibration] TC:  " << tc_calibration.calibrated_count() << " channels"
-              << std::endl;
-
-    fsw::calibration::SensorCalibrationManager rtd_calibration("RTD", "°C", 3);
-    rtd_calibration.load_calibration(
-        "scripts/calibration/calibrations/rtd",
-        "external/DiabloAvionics/RTD_Board/Calibration/rtd_calibration.csv");
-    std::cout << "[Calibration] RTD: " << rtd_calibration.calibrated_count() << " channels"
-              << std::endl;
-
-    fsw::calibration::SensorCalibrationManager lc_calibration("LC", "lbf", 3);
-    lc_calibration.load_calibration(
-        "scripts/calibration/calibrations/lc",
-        "external/DiabloAvionics/LC_Board/Calibration/lc_calibration.csv");
-    std::cout << "[Calibration] LC:  " << lc_calibration.calibrated_count() << " channels"
-              << std::endl;
-
-    // ── Sensor Router ──
     fsw::routing::SensorRouter router;
-    router.set_pt_calibration(&pt_calibration);
-    router.set_tc_calibration(&tc_calibration);
-    router.set_rtd_calibration(&rtd_calibration);
-    router.set_lc_calibration(&lc_calibration);
     std::cout << "✅ Sensor router initialized" << std::endl;
 
     // ── Elodin Client (host/port from config [database]) ──
@@ -604,13 +571,8 @@ int main(int argc, char* argv[]) {
         switch (board_type) {
             case BoardType::PT: {
                 auto pt_msgs = router.route_pt_samples(batch.value(), receive_timestamp_ns);
-                auto cal_msgs =
-                    router.route_pt_samples_calibrated(batch.value(), receive_timestamp_ns);
                 if (publishing) {
                     for (const auto& [id, msg] : pt_msgs)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                    for (const auto& [id, msg] : cal_msgs)
                         if (is_publish_allowed(id[0], id[1], publish_ranges))
                             elodin_client.publish(id, msg);
                 }
@@ -644,12 +606,8 @@ int main(int argc, char* argv[]) {
                 }
                 lc_batch.pt_samples.clear();
                 auto lc_raw = router.route_lc_samples(lc_batch, receive_timestamp_ns);
-                auto lc_cal = router.route_lc_samples_calibrated(lc_batch, receive_timestamp_ns);
                 if (publishing) {
                     for (const auto& [id, msg] : lc_raw)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                    for (const auto& [id, msg] : lc_cal)
                         if (is_publish_allowed(id[0], id[1], publish_ranges))
                             elodin_client.publish(id, msg);
                 }
@@ -668,12 +626,8 @@ int main(int argc, char* argv[]) {
                 }
                 tc_batch.pt_samples.clear();
                 auto tc_raw = router.route_tc_samples(tc_batch, receive_timestamp_ns);
-                auto tc_cal = router.route_tc_samples_calibrated(tc_batch, receive_timestamp_ns);
                 if (publishing) {
                     for (const auto& [id, msg] : tc_raw)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                    for (const auto& [id, msg] : tc_cal)
                         if (is_publish_allowed(id[0], id[1], publish_ranges))
                             elodin_client.publish(id, msg);
                 }
@@ -692,12 +646,8 @@ int main(int argc, char* argv[]) {
                 }
                 rtd_batch.pt_samples.clear();
                 auto rtd_raw = router.route_rtd_samples(rtd_batch, receive_timestamp_ns);
-                auto rtd_cal = router.route_rtd_samples_calibrated(rtd_batch, receive_timestamp_ns);
                 if (publishing) {
                     for (const auto& [id, msg] : rtd_raw)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                    for (const auto& [id, msg] : rtd_cal)
                         if (is_publish_allowed(id[0], id[1], publish_ranges))
                             elodin_client.publish(id, msg);
                 }
@@ -761,15 +711,12 @@ int main(int argc, char* argv[]) {
                 std::cout << " | DB: ❌";
             std::cout << std::endl;
 
-            // Print calibrated PT values if we have PT data
+            // Print raw PT ADC counts instead of calibrated pressures (removed logic)
             if (board_type == BoardType::PT && !batch.value().pt_samples.empty()) {
-                std::cout << "[PT Cal] ";
+                std::cout << "[PT Raw] ";
                 for (const auto& sample : batch.value().pt_samples) {
-                    int32_t adc_code = static_cast<int32_t>(sample.raw_adc_counts);
-                    double psi = pt_calibration.calculate_pressure(sample.channel_id, adc_code);
-                    bool cal = pt_calibration.is_calibrated(sample.channel_id);
-                    std::cout << "CH" << (int)sample.channel_id << ":" << (cal ? "" : "~")
-                              << std::fixed << std::setprecision(1) << psi << "psi ";
+                    std::cout << "CH" << (int)sample.channel_id << ":" << sample.raw_adc_counts
+                              << " ";
                 }
                 std::cout << std::endl;
             }

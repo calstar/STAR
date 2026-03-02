@@ -54,12 +54,27 @@ if [ ! -x "$DAQ_BIN" ]; then
 fi
 CMD_DAQ="printf '\n  ══ DAQ BRIDGE (writes to Elodin — UDP from config → DB) ══\n\n' && sleep 2 && cd $PROJECT && exec $DAQ_BIN config/config.toml 2>&1"
 
+# Calibration Service: Reads RAW DB → Writes CALIBRATED DB
+CAL_BIN="$PROJECT/build/FSW/calibration_service"
+if [ ! -x "$CAL_BIN" ]; then
+  CAL_BIN="$PROJECT/FSW/build/calibration_service"
+fi
+CMD_CAL="printf '\n  ══ CALIBRATION SERVICE (DB Raw → DB Calibrated) ══\n\n' && sleep 3 && cd $PROJECT && exec $CAL_BIN --config config/config.toml --elodin-host 127.0.0.1 2>&1"
+
+# Controller Service: Reads CALIBRATED DB → UDP out + Diagnostics DB
+CTRL_BIN="$PROJECT/build/FSW/controller_service"
+if [ ! -x "$CTRL_BIN" ]; then
+  CTRL_BIN="$PROJECT/FSW/build/controller_service"
+fi
+CMD_CTRL="printf '\n  ══ CONTROLLER SERVICE (DB Calibrated → Actuators) ══\n\n' && sleep 4 && cd $PROJECT && exec $CTRL_BIN --config config/config.toml --elodin-host 127.0.0.1 2>&1"
+
 CMD_DB="printf '\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n' && mkdir -p $HOME/.local/share/elodin && RUST_LOG=info exec $HOME/.cargo/bin/elodin-db run '[::]:2240' '$HOME/.local/share/elodin/daq_live'"
 # Relay must connect to DB before backend so it is the single stream subscriber
 CMD_RELAY="printf '\n  ══ ELODIN RELAY — WS :9090 (DB → relay → services) ══\n\n' && sleep 2 && cd $PROJECT/web-gui/backend && npm run relay 2>&1"
 CMD_WEB_BACKEND="printf '\n  ══ BACKEND — WS :8081 (data from relay only) ══\n\n' && sleep 3 && cd $PROJECT/web-gui/backend && ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false npm run dev 2>&1"
 CMD_WEB_FRONTEND="printf '\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n' && sleep 3 && cd $PROJECT/web-gui/frontend && npm run dev 2>&1"
 CMD_SIDECAR="printf '\n  ══ CALIBRATION SIDECAR — HTTP :8100, WS :8101 ══\n\n' && cd $PROJECT && PYTHONPATH=$PROJECT exec python3 scripts/calibration/calibration_server.py 2>/dev/null || PYTHONPATH=$PROJECT exec $HOME/fsw/venv/bin/python3 scripts/calibration/calibration_server.py"
+CMD_SIM="printf '\n  ══ BOARD SIMULATOR — UDP → :5006 (synthetic data when no hardware) ══\n\n' && sleep 4 && cd $PROJECT && exec python3 scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 2>&1"
 
 tmux new-session  -d -s "$SESSION" -n main -x 220 -y 60 \
   "bash --norc --noprofile -c \"$CMD_DB\""
@@ -81,13 +96,24 @@ tmux split-window -v -t "$SESSION:main.1" \
 tmux split-window -v -t "$SESSION:main.2" \
   "bash --norc --noprofile -c \"$CMD_SIDECAR\""
 
+tmux split-window -v -t "$SESSION:main.3" \
+  "bash --norc --noprofile -c \"$CMD_SIM\""
+
+tmux split-window -v -t "$SESSION:main.4" \
+  "bash --norc --noprofile -c \"$CMD_CAL\""
+
+tmux split-window -v -t "$SESSION:main.5" \
+  "bash --norc --noprofile -c \"$CMD_CTRL\""
+
+tmux select-layout -t "$SESSION:main" tiled
+
 tmux select-pane -t "$SESSION:main.2"
 
 echo "┌─────────────────────────────────────────────────────────────┐"
 echo "│  Pipeline: UDP → daq_bridge → DB → relay → backend → UI     │"
 echo "│  0: Elodin DB  1: Relay :9090  2: Backend :8081             │"
-echo "│  3: DAQ Bridge (→DB)  4: Frontend  5: Sidecar               │"
-echo "│  Optional: run board_simulator for synthetic data            │"
+echo "│  3: DAQ Bridge  4: Frontend  5: Sidecar  6: Board Simulator │"
+echo "│  7: Calibration Service  8: Controller Service              │"
 echo "│  Ctrl+B arrows=switch  D=detach                              │"
 echo "└─────────────────────────────────────────────────────────────┘"
 tmux attach -t "$SESSION"

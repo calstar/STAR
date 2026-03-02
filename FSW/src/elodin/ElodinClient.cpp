@@ -71,6 +71,47 @@ void ElodinClient::flush_buffer() {
     }
 }
 
+bool ElodinClient::subscribe_stream() {
+    // Actually using MsgStream as per successful frontend logic.
+    // packetId for MsgStream = [0x1d, 0x4a]
+    std::array<uint8_t, 2> msgstream_id = {0x1d, 0x4a};
+
+    auto subscribe = [&](uint8_t hi, uint8_t lo) {
+        std::vector<uint8_t> data(12 + 2, 0x00);
+        uint32_t len = 2 + 12;
+        std::memcpy(data.data(), &len, 4);
+        data[4] = static_cast<uint8_t>(fsw::elodin::PacketType::MSG);
+        data[5] = msgstream_id[0];
+        data[6] = msgstream_id[1];
+        data[7] = 0x00;
+
+        // Payload (2 bytes)
+        data[12] = hi;
+        data[13] = lo;
+
+        send_msg(msgstream_id, data);
+    };
+
+    // PT Raw (0x20, 0x01-0x0A)
+    for (uint8_t ch = 1; ch <= 10; ++ch)
+        subscribe(0x20, ch);
+    // PT Calibrated (0x20, 0x11-0x1A)
+    for (uint8_t ch = 0x11; ch <= 0x1A; ++ch)
+        subscribe(0x20, ch);
+    // TC Raw and Cal
+    for (uint8_t ch = 1; ch <= 4; ++ch)
+        subscribe(0x21, ch);
+    for (uint8_t ch = 0x11; ch <= 0x14; ++ch)
+        subscribe(0x21, ch);
+    // RTD Raw and Cal
+    for (uint8_t ch = 1; ch <= 4; ++ch)
+        subscribe(0x22, ch);
+    for (uint8_t ch = 0x11; ch <= 0x14; ++ch)
+        subscribe(0x22, ch);
+
+    return true;
+}
+
 void ElodinClient::begin_batch() {
     batching_ = true;
     batch_buffer_.clear();

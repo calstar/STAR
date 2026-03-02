@@ -146,6 +146,9 @@ bool ControllerService::start(double loop_rate_hz) {
     loop_interval_ms_ = 1000.0 / loop_rate_hz;
 
     controller_thread_ = std::thread(&ControllerService::controllerLoop, this);
+    if (elodin_connected_) {
+        elodin_subscriber_thread_ = std::thread(&ControllerService::elodinSubscriberLoop, this);
+    }
 
     std::cout << "[ControllerService] ✅ Started controller loop at " << loop_rate_hz << " Hz"
               << std::endl;
@@ -159,6 +162,9 @@ void ControllerService::stop() {
     running_ = false;
     if (controller_thread_.joinable()) {
         controller_thread_.join();
+    }
+    if (elodin_subscriber_thread_.joinable()) {
+        elodin_subscriber_thread_.join();
     }
     std::cout << "[ControllerService] 🛑 Stopped controller loop" << std::endl;
 }
@@ -346,6 +352,78 @@ void ControllerService::controllerLoop() {
             std::this_thread::sleep_for(loop_interval - elapsed);
         }
     }
+}
+
+void ControllerService::elodinSubscriberLoop() {
+    std::cout << "[ControllerService] 🎧 Elodin subscriber loop started." << std::endl;
+    // Subscribe to Elodin data streams
+    if (elodin_client_->is_connected()) {
+        elodin_client_->subscribe_stream();
+    }
+    std::vector<uint8_t> rx_buffer(8192);
+
+    while (running_ && elodin_client_->is_connected()) {
+        // Read header first (12 bytes)
+        uint8_t header[12];
+        if (!elodin_client_->read_packet_header(header)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+
+        uint32_t packet_len = *reinterpret_cast<uint32_t*>(header);
+        uint8_t packet_type = header[4];
+        uint16_t packet_id = (static_cast<uint16_t>(header[5]) << 8) | header[6];
+
+        if (packet_len > rx_buffer.size()) {
+            rx_buffer.resize(packet_len);
+        }
+
+        std::memcpy(rx_buffer.data(), header, 12);
+        size_t payload_len = packet_len - 12;
+
+        if (payload_len > 0) {
+            ssize_t read_bytes = elodin_client_->read_data(rx_buffer.data() + 12, payload_len);
+            if (read_bytes != static_cast<ssize_t>(payload_len))
+                continue;
+        }
+
+        uint8_t type_hi = header[5];
+        uint8_t channel_id = header[6];
+
+        // 0x20 is PT category. 0x11 to 0x1A are CALIBRATED channels (0x10 + ch_id)
+        if (type_hi == 0x20 && channel_id > 0x10 && channel_id <= 0x1A) {
+            if (payload_len >= 21) {
+                uint8_t* payload = rx_buffer.data() + 12;
+                float pressure_psi;
+                std::memcpy(&pressure_psi, payload + 12, 4);
+
+                // Convert back to original 1-based channel ID
+                uint8_t ch = channel_id - 0x10;
+
+                // Map based on PT names derived from config.toml.
+                // Assuming standard ordering for this test.
+                std::lock_guard<std::mutex> lock(input_mutex_);
+                // PT_NAMES[] array positions for the controller fields:
+                if (ch == 1)
+                    current_meas_.P_u_fuel = pressure_psi * 6894.76;
+                else if (ch == 5)
+                    current_meas_.P_u_ox = pressure_psi * 6894.76;
+                else if (ch == 4)
+                    current_meas_.P_d_fuel = pressure_psi * 6894.76;
+                else if (ch == 7)
+                    current_meas_.P_d_ox = pressure_psi * 6894.76;
+                else if (ch == 6)
+                    current_meas_.P_reg = pressure_psi * 6894.76;
+                // Note: P_copv is not perfectly mapped right now, placeholder:
+                else if (ch == 3)
+                    current_meas_.P_copv = pressure_psi * 6894.76;
+
+                current_meas_.timestamp = std::chrono::steady_clock::now();
+                has_measurement_ = true;
+            }
+        }
+    }
+    std::cout << "[ControllerService] 🎧 Elodin subscriber loop stopped." << std::endl;
 }
 
 // ═══════════════════════════════════════════════════════════════════════

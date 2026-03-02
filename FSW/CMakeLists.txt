@@ -145,6 +145,24 @@ target_link_libraries(controller_service
     ${RT_LIBRARY}
 )
 
+# Calibration Service standalone executable
+add_executable(calibration_service src/calibration/calibration_main.cpp)
+
+target_include_directories(calibration_service PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../daq_comms/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../archive/legacy/utl
+)
+
+target_link_libraries(calibration_service
+    fsw_daq_lib
+    daq_comms_lib
+    Eigen3::Eigen
+    Threads::Threads
+    pthread
+    ${RT_LIBRARY}
+)
+
 # IMU Calibration test executable
 # add_executable(test_imu_calibration test/test_imu_calibration.cpp)
 
@@ -195,7 +213,7 @@ else()
 endif()
 
 # Install targets
-install(TARGETS fsw_daq_lib daq_bridge controller_service
+install(TARGETS fsw_daq_lib daq_bridge controller_service calibration_service
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib

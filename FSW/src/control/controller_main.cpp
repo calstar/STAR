@@ -220,16 +220,8 @@ int main(int argc, char* argv[]) {
     }
     service.setCommand(cmd);
 
-    // ── Set initial measurement (zeros — will be overwritten) ──────────
-    fsw::control::RobustDDPController::Measurement meas{};
-    meas.P_copv = 18.96e6;   // ~2750 psi
-    meas.P_reg = 6.89e6;     // ~1000 psi
-    meas.P_u_fuel = 6.89e6;  // ~1000 psi (regulated)
-    meas.P_u_ox = 6.89e6;    // ~1000 psi (regulated)
-    meas.P_d_fuel = 6.89e6;  // Start at ullage pressure
-    meas.P_d_ox = 6.89e6;    // Start at ullage pressure
-    meas.timestamp = std::chrono::steady_clock::now();
-    service.setMeasurement(meas);
+    // Removed initial hardcoded measurement zeros
+    // Measurement relies dynamically on Elodin subscriber loop now
 
     // ── Install signal handlers ────────────────────────────────────────
     std::signal(SIGINT, signalHandler);

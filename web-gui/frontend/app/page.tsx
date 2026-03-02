@@ -1,12 +1,11 @@
 'use client'
 
-import { useSensorStore } from '@/lib/store';
+import { useSensorStore, useActuatorCommandedState, useActuatorStateByEntity, useSensorValue } from '@/lib/store';
 import { useEffect, useMemo } from 'react';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate, MissionStartTime, CommandPayload, BoardStatus, BoardStatusPayload } from '@/lib/types';
 import WindowLauncher from '@/components/windows/WindowLauncher';
-import { useSensorValue } from '@/lib/store';
 import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
 
 // ── Sensor value card ────────────────────────────────────────────────────────
@@ -53,22 +52,33 @@ function SensorCard({ label, entity, component, unit = 'PSI', color, nop, meop }
   );
 }
 
-// ── Actuator status pill ─────────────────────────────────────────────────────
+// ── Actuator status pill (same source of truth as Controls pane: commanded + actual from store) ──
 function ActuatorPill({ label, entity }: { label: string; entity: string }) {
+  const commanded = useActuatorCommandedState(entity);
+  const actual = useActuatorStateByEntity(entity);
   const status = useSensorValue(entity, 'status');
   const adc = useSensorValue(entity, 'raw_adc_counts');
-  const isOpen = status === 1 || (adc !== null && adc > 1000);
-  const hasData = status !== null || adc !== null;
+  const sensorOpen = status === 1 || (adc !== null && adc > 1000);
+  const hasSensor = status !== null || adc !== null;
+  const actualOpen = actual === 1;
+  const actualClosed = actual === 0;
+  const hasActual = actual === 0 || actual === 1;
+  const showCommanded = commanded !== null ? (commanded === 1 ? 'OPEN' : 'CLOSED') : null;
+  const showActual = hasActual ? (actualOpen ? 'OPEN' : 'CLOSED') : (hasSensor ? (sensorOpen ? 'OPEN' : 'CLOSED') : null);
+  const display = showCommanded ?? showActual ?? '---';
+  const isOpen = display === 'OPEN';
+  const mismatch = showCommanded != null && showActual != null && showCommanded !== showActual;
 
   return (
-    <div className={`flex flex-col items-center justify-center bg-card border rounded-xl px-3 py-3 gap-2.5 transition-all min-h-[100px] ${!hasData ? 'border-gray-800' : isOpen ? 'border-green-700/80' : 'border-red-700/80'
+    <div className={`flex flex-col items-center justify-center bg-card border rounded-xl px-3 py-3 gap-2.5 transition-all min-h-[100px] ${display === '---' ? 'border-gray-800' : mismatch ? 'border-yellow-600 bg-yellow-950/20' : isOpen ? 'border-green-700/80' : 'border-red-700/80'
       }`}>
       <span className="text-xs font-bold text-text-muted uppercase tracking-wider text-center leading-tight">{label}</span>
+      {mismatch && <span className="text-[10px] font-bold text-yellow-400 uppercase">MISMATCH</span>}
       <span
-        className={`text-xl font-bold font-mono px-3 py-2 rounded-lg w-full text-center ${!hasData ? 'text-gray-600 bg-gray-900/40' : isOpen ? 'bg-green-900/50 text-green-300' : 'bg-red-900/50 text-red-300'
+        className={`text-xl font-bold font-mono px-3 py-2 rounded-lg w-full text-center ${display === '---' ? 'text-gray-600 bg-gray-900/40' : isOpen ? 'bg-green-900/50 text-green-300' : 'bg-red-900/50 text-red-300'
           }`}
       >
-        {!hasData ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
+        {display}
       </span>
     </div>
   );

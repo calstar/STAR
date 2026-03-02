@@ -22,8 +22,37 @@ if [ "$NODE_VERSION" -lt 20 ]; then
     exit 1
 fi
 
-# Start Elodin relay first (Elodin DB streams to only one TCP subscriber; relay is that subscriber and fans out to many)
-echo "📡 Starting Elodin relay (single subscriber → many WS clients)..."
+# Elodin DB must run first — relay and daq_bridge both connect to it
+ELODIN_PORT="${ELODIN_PORT:-2240}"
+DB_NAME="sensor_system"
+DB_PATH="$HOME/.local/share/elodin/$DB_NAME"
+ELODIN_DB_BIN=""
+[ -f "$HOME/.cargo/bin/elodin-db" ] && ELODIN_DB_BIN="$HOME/.cargo/bin/elodin-db"
+[ -z "$ELODIN_DB_BIN" ] && command -v elodin-db &>/dev/null && ELODIN_DB_BIN="elodin-db"
+
+if [ -n "$ELODIN_DB_BIN" ]; then
+  if ! lsof -i:$ELODIN_PORT &>/dev/null 2>&1; then
+    echo "📊 Starting Elodin DB on port $ELODIN_PORT..."
+    mkdir -p "$(dirname "$DB_PATH")"
+    RUST_LOG=warn $ELODIN_DB_BIN run "[::]:$ELODIN_PORT" "$DB_PATH" > /tmp/elodin_db_${DB_NAME}.log 2>&1 &
+    ELODIN_PID=$!
+    sleep 2
+    if lsof -i:$ELODIN_PORT &>/dev/null 2>&1; then
+      echo "   ✅ Elodin DB ready"
+    else
+      echo "   ⚠️ Elodin DB may have failed — check /tmp/elodin_db_${DB_NAME}.log"
+    fi
+  else
+    echo "📊 Elodin DB already running on port $ELODIN_PORT"
+    ELODIN_PID=""
+  fi
+else
+  echo "⚠️ elodin-db not found — ensure it's running on port $ELODIN_PORT for data"
+  ELODIN_PID=""
+fi
+
+# Start Elodin relay (single subscriber → many WS clients)
+echo "📡 Starting Elodin relay..."
 cd backend
 if [ ! -d "node_modules" ]; then
     echo "📦 Installing backend dependencies..."
@@ -88,5 +117,5 @@ echo ""
 echo "Press Ctrl+C to stop all services"
 
 # Wait for user interrupt
-trap "echo 'Stopping all services...'; kill $BACKEND_PID $FRONTEND_PID $RELAY_PID $DAQ_BRIDGE_PID $CONTROLLER_PID 2>/dev/null; exit" INT TERM
+trap "echo 'Stopping all services...'; kill $BACKEND_PID $FRONTEND_PID $RELAY_PID $DAQ_BRIDGE_PID $CONTROLLER_PID $ELODIN_PID 2>/dev/null; exit" INT TERM
 wait

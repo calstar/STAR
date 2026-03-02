@@ -53,7 +53,8 @@ bool TCPClient::connect(const std::string& host, uint16_t port) {
     int sndbuf = 1024 * 1024;
     setsockopt(socket_fd_, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
 
-    // Write timeout 5s — avoid dropping batches on brief backpressure; drain in daq_bridge keeps recv side clear
+    // Write timeout 5s — avoid dropping batches on brief backpressure; drain in daq_bridge keeps
+    // recv side clear
     struct timeval tv;
     tv.tv_sec = 5;
     tv.tv_usec = 0;

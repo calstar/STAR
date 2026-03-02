@@ -3,8 +3,9 @@
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { startDataCache } from '@/lib/data-cache';
+import { initActuatorOverridesSync } from '@/lib/actuator-overrides-sync';
 import { useEffect, useState } from 'react';
-import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, SensorUpdate, ActuatorUpdate, MessageType } from '@/lib/types';
+import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, SensorUpdate, ActuatorUpdate, MessageType, ActuatorState } from '@/lib/types';
 import PressureBar from '@/components/plots/PressureBar';
 import { PRESSURE_BAR_SENSORS } from '@/lib/sensor-colors';
 
@@ -84,6 +85,9 @@ export default function TopBar() {
     } catch (err) {
       console.error('[TopBar] Failed to start data cache:', err);
     }
+    const unsubOverridesSync = initActuatorOverridesSync((overrides) => {
+      useSensorStore.getState().setActuatorCommandedOverridesFromSync(overrides as Record<string, ActuatorState>);
+    });
     const unsubConn = ws.onConnectionStatus((status) => {
       setConnectionStatus(status);
       updateConnectionStatus(status);
@@ -99,7 +103,7 @@ export default function TopBar() {
     const unsubExpected = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
       updateActuatorExpectedPositions(p as Record<number, Record<string, 'open' | 'closed' | null>>);
     });
-    return () => { unsubConn(); unsubState(); unsubSensor(); unsubActuator(); unsubExpected(); };
+    return () => { unsubOverridesSync(); unsubConn(); unsubState(); unsubSensor(); unsubActuator(); unsubExpected(); };
   }, [ws, updateConnectionStatus, updateState, updateSensor, updateActuator, updateActuatorExpectedPositions]);
 
   useEffect(() => {

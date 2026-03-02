@@ -18,6 +18,7 @@
 import { create } from 'zustand';
 import { useCallback, useMemo } from 'react';
 import { SensorUpdate, ActuatorUpdate, StateUpdate, ConnectionStatus, SystemState, MissionStartTime, BoardStatus, ActuatorState } from './types';
+import { persistActuatorOverrides } from './actuator-overrides-sync';
 
 interface SensorData {
   [key: string]: number; // entity.component -> value
@@ -42,6 +43,8 @@ interface SensorSystemState {
   updateActuator: (update: ActuatorUpdate) => void;
   setActuatorState: (entity: string, state: ActuatorState) => void;
   setActuatorCommandedOverride: (entity: string, state: ActuatorState | null) => void;
+  /** Apply overrides from another tab/window (sync); does not persist. */
+  setActuatorCommandedOverridesFromSync: (overrides: Record<string, ActuatorState>) => void;
   updateState: (update: StateUpdate) => void;
   updateConnectionStatus: (status: ConnectionStatus) => void;
   updateMissionStartTime: (time: number) => void;
@@ -320,6 +323,11 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
       else next[entity] = state;
       return { actuatorCommandedOverrides: next };
     });
+    persistActuatorOverrides(get().actuatorCommandedOverrides);
+  },
+
+  setActuatorCommandedOverridesFromSync: (overrides: Record<string, ActuatorState>) => {
+    set({ actuatorCommandedOverrides: { ...overrides } });
   },
 
   updateState: (update: StateUpdate) => {
@@ -329,6 +337,7 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
       debugMode: update.debugMode !== undefined ? update.debugMode : get().debugMode,
       actuatorCommandedOverrides: {}, // clear overrides on state change so new state's expected positions apply
     }));
+    persistActuatorOverrides({});
   },
 
   updateConnectionStatus: (status: ConnectionStatus) => {
@@ -379,7 +388,11 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   },
 
   setDebugMode: (mode: boolean) => {
-    set((s) => ({ debugMode: mode, actuatorCommandedOverrides: mode ? s.actuatorCommandedOverrides : {} }));
+    set((s) => {
+      const next = mode ? s.actuatorCommandedOverrides : {};
+      return { debugMode: mode, actuatorCommandedOverrides: next };
+    });
+    persistActuatorOverrides(get().actuatorCommandedOverrides);
   },
 }));
 

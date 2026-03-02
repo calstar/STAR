@@ -101,7 +101,18 @@ function buildSensorConfig(): SensorConfigEntry[] {
 
 const API_PORT = parseInt(process.env.API_PORT || '8082', 10);
 
-export function startAPIServer(getQueryClient?: () => ElodinQueryClient | null): void {
+export interface DebugInfo {
+  relayConnected: boolean;
+  relayPacketsReceived: number;
+  wsClients: number;
+  sensorCacheSize: number;
+  useRelay: boolean;
+}
+
+export function startAPIServer(
+  getQueryClient?: () => ElodinQueryClient | null,
+  getDebugInfo?: () => DebugInfo | null
+): void {
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -213,6 +224,10 @@ export function startAPIServer(getQueryClient?: () => ElodinQueryClient | null):
           entity,
           message: 'Use WebSocket for real-time data. Historical queries via /api/query',
         }));
+      } else if (url.pathname === '/api/debug' && req.method === 'GET') {
+        const info = getDebugInfo ? getDebugInfo() : null;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(info ?? { error: 'Debug info not available' }));
       } else {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Not found' }));

@@ -91,6 +91,7 @@ private:
 
     // ── Controller loop ────────────────────────────────────────────────
     void controllerLoop();
+    void elodinSubscriberLoop();
 
     // ── State ──────────────────────────────────────────────────────────
     std::atomic<bool> running_{false};
@@ -120,6 +121,7 @@ private:
 
     // Loop timing
     std::thread controller_thread_;
+    std::thread elodin_subscriber_thread_;
     double loop_rate_hz_ = 10.0;
     double loop_interval_ms_ = 100.0;
 };
