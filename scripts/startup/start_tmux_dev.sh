@@ -52,7 +52,7 @@ DAQ_BIN="$PROJECT/build/FSW/daq_bridge"
 if [ ! -x "$DAQ_BIN" ]; then
   DAQ_BIN="$PROJECT/FSW/build/daq_bridge"
 fi
-CMD_DAQ="printf '\n  ══ DAQ BRIDGE (writes to Elodin — UDP from config → DB) ══\n\n' && sleep 2 && cd $PROJECT && exec $DAQ_BIN config/config.toml 2>&1"
+CMD_DAQ="printf '\n  ══ DAQ BRIDGE (writes to Elodin — UDP from config → DB) ══\n\n' && sleep 5 && cd $PROJECT && exec $DAQ_BIN config/config.toml 2>&1"
 
 # Calibration Service: Reads RAW DB → Writes CALIBRATED DB
 CAL_BIN="$PROJECT/build/FSW/calibration_service"
@@ -68,10 +68,10 @@ if [ ! -x "$CTRL_BIN" ]; then
 fi
 CMD_CTRL="printf '\n  ══ CONTROLLER SERVICE (DB Calibrated → Actuators) ══\n\n' && sleep 4 && cd $PROJECT && exec $CTRL_BIN --config config/config.toml --elodin-host 127.0.0.1 2>&1"
 
-CMD_DB="printf '\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n' && mkdir -p $HOME/.local/share/elodin && RUST_LOG=info exec $HOME/.cargo/bin/elodin-db run '[::]:2240' '$HOME/.local/share/elodin/daq_live'"
-# Relay must connect to DB before backend so it is the single stream subscriber
+CMD_DB="printf '\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n' && mkdir -p $HOME/.local/share/elodin && RUST_LOG=debug exec $HOME/.cargo/bin/elodin-db run '[::]:2240' '$HOME/.local/share/elodin/daq_live'"
+# Relay must connect to DB FIRST (sleep 2s) — daq_bridge sleeps 5s so relay subscribes before any TABLE data flows.
 CMD_RELAY="printf '\n  ══ ELODIN RELAY — WS :9090 (DB → relay → services) ══\n\n' && sleep 2 && cd $PROJECT/web-gui/backend && npm run relay 2>&1"
-CMD_WEB_BACKEND="printf '\n  ══ BACKEND — WS :8081 (data from relay only) ══\n\n' && sleep 3 && cd $PROJECT/web-gui/backend && ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false npm run dev 2>&1"
+CMD_WEB_BACKEND="printf '\n  ══ BACKEND — WS :8081 (data from relay only) ══\n\n' && sleep 5 && cd $PROJECT/web-gui/backend && ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false npm run dev 2>&1"
 CMD_WEB_FRONTEND="printf '\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n' && sleep 3 && cd $PROJECT/web-gui/frontend && npm run dev 2>&1"
 CMD_SIDECAR="printf '\n  ══ CALIBRATION SIDECAR — HTTP :8100, WS :8101 ══\n\n' && cd $PROJECT && PYTHONPATH=$PROJECT exec python3 scripts/calibration/calibration_server.py 2>/dev/null || PYTHONPATH=$PROJECT exec $HOME/fsw/venv/bin/python3 scripts/calibration/calibration_server.py"
 CMD_SIM="printf '\n  ══ BOARD SIMULATOR — UDP → :5006 (synthetic data when no hardware) ══\n\n' && sleep 4 && cd $PROJECT && exec python3 scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 2>&1"
@@ -80,6 +80,7 @@ tmux new-session  -d -s "$SESSION" -n main -x 220 -y 60 \
   "bash --norc --noprofile -c \"$CMD_DB\""
 
 tmux set-option -t "$SESSION" remain-on-exit on
+tmux set-option -t "$SESSION" mouse on
 
 tmux split-window -h -t "$SESSION:main.0" \
   "bash --norc --noprofile -c \"$CMD_RELAY\""

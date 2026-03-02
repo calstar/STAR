@@ -250,7 +250,7 @@ export interface PTCalibrationResult {
 export function loadPTCalibration(overridePath?: string): PTCalibrationResult {
   // Build a list of candidate directories to search
   const candidateDirs: string[] = [
-    '/home/kush-mahajan/sensor_system/calibration',                      // New robust calibration home
+    path.join(__dirname, '../../../calibration'),                      // New robust calibration home
     path.join(__dirname, '../../../scripts/calibration/calibrations'),   // project root
     path.join(__dirname, '../data'),                                      // backend/data
     path.join(__dirname, '../../../external/DiabloAvionics/test_guis'),  // original source

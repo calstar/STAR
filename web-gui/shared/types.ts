@@ -24,6 +24,7 @@ export enum MessageType {
   ACTUATOR_EXPECTED_POSITIONS_UPDATE = 'actuator_expected_positions_update',
   HISTORICAL_DATA = 'historical_data',
   BOARD_STATUS_UPDATE = 'board_status_update',
+  NOTIFICATION = 'notification',
 }
 
 // Sensor types
@@ -232,6 +233,32 @@ export interface BoardStatus {
 
 export interface BoardStatusPayload {
   boards: BoardStatus[];
+}
+
+// ── Notification types ─────────────────────────────────────────────────────
+
+export type NotificationCategory = 'info' | 'warning' | 'error';
+
+/** Ongoing notification (keyed); when ongoing turns false, frontend keeps entry but no longer "current". */
+export interface NotificationPayloadOngoing {
+  key: string;
+  category: NotificationCategory;
+  message: string;
+  timestampMs: number;
+  ongoing: boolean;
+}
+
+/** One-shot notification (append-only, no key). */
+export interface NotificationPayloadOneShot {
+  category: NotificationCategory;
+  message: string;
+  timestampMs: number;
+}
+
+export type NotificationPayload = NotificationPayloadOngoing | NotificationPayloadOneShot;
+
+export function isNotificationOngoing(p: NotificationPayload): p is NotificationPayloadOngoing {
+  return 'key' in p && 'ongoing' in p;
 }
 
 // ── Engine state helpers ─────────────────────────────────────────────────────

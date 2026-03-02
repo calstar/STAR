@@ -108,17 +108,78 @@ bool SensorAssignmentManager::load_sensor_definitions(const std::string& /* conf
     return true;
 }
 
+void SensorAssignmentManager::set_static_board_ip(uint8_t board_id, const std::string& ip) {
+    if (!ip.empty()) {
+        static_board_ips_[board_id] = ip;
+        // If the board was already configured, update its IP
+        auto it = board_configs_.find(board_id);
+        if (it != board_configs_.end() && it->second.board_ip != ip) {
+            std::cout << "[SensorAssignment] Forcing static IP for board " << (int)board_id 
+                      << " from " << it->second.board_ip << " to " << ip << std::endl;
+            it->second.board_ip = ip;
+            for (auto& sensor : it->second.sensors) {
+                sensor.board_ip = ip;
+            }
+            for (auto& [sensor_id, assignment] : sensor_assignments_) {
+                if (assignment.board_id == board_id) {
+                    assignment.board_ip = ip;
+                }
+            }
+        }
+    }
+}
+
 std::string SensorAssignmentManager::assign_board_ip(uint8_t board_id,
                                                      const std::string& mac_address,
-                                                     SystemState system_state) {
+                                                     SystemState system_state,
+                                                     const std::string& source_ip) {
+    // Check if we have a static IP defined for this board
+    std::string assigned_ip;
+    auto static_it = static_board_ips_.find(board_id);
+    if (static_it != static_board_ips_.end() && !static_it->second.empty()) {
+        assigned_ip = static_it->second;
+    }
+
     // Check if board already has IP assigned
     auto it = board_configs_.find(board_id);
     if (it != board_configs_.end() && !it->second.board_ip.empty()) {
+        if (!assigned_ip.empty() && it->second.board_ip != assigned_ip) {
+            std::cout << "[SensorAssignment] Updating IP for board " << (int)board_id 
+                      << " to static config IP " << assigned_ip << std::endl;
+            it->second.board_ip = assigned_ip;
+            // Update IP in assigned sensors
+            for (auto& sensor : it->second.sensors) {
+                sensor.board_ip = assigned_ip;
+            }
+            // Update sensor_assignments_ map
+            for (auto& [sensor_id, assignment] : sensor_assignments_) {
+                if (assignment.board_id == board_id) {
+                    assignment.board_ip = assigned_ip;
+                }
+            }
+        } else if (assigned_ip.empty() && !source_ip.empty() && it->second.board_ip != source_ip) {
+            std::cout << "[SensorAssignment] Updating IP for unconfigured board " << (int)board_id 
+                      << " from " << it->second.board_ip << " to heartbeat source " << source_ip << std::endl;
+            it->second.board_ip = source_ip;
+            // Update IP in assigned sensors
+            for (auto& sensor : it->second.sensors) {
+                sensor.board_ip = source_ip;
+            }
+            // Update sensor_assignments_ map
+            for (auto& [sensor_id, assignment] : sensor_assignments_) {
+                if (assignment.board_id == board_id) {
+                    assignment.board_ip = source_ip;
+                }
+            }
+        }
         return it->second.board_ip;
     }
 
-    // Calculate IP from MAC address
-    std::string assigned_ip = calculate_ip_from_mac(mac_address, system_state);
+    // If no static IP was defined, use source IP, else calculate from MAC
+    if (assigned_ip.empty()) {
+        assigned_ip = !source_ip.empty() ? source_ip : calculate_ip_from_mac(mac_address, system_state);
+        std::cout << "[SensorAssignment] Board " << (int)board_id << " not found in config.toml! Using pseudo-random auto-discovery IP." << std::endl;
+    }
 
     // Create or update board configuration
     BoardConfiguration& config = board_configs_[board_id];

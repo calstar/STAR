@@ -2,7 +2,7 @@
 [network]
 local_ip = "0.0.0.0" # Listen on all interfaces
 host_ip = "127.0.0.1" # Local IP for connections
-root_sensor_dir = "/home/kush-mahajan/sensor_system"
+root_sensor_dir = "../../"
 port_min = 8000 # Minimum port number
 keyboard_background = true
 

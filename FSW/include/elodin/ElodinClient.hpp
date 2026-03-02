@@ -146,7 +146,7 @@ public:
      * @brief Serialize a message for Elodin (public for testing)
      */
     template <typename MessageType>
-    std::vector<std::byte> serialize_msg(uint16_t message_id, const MessageType& msg);
+    std::vector<uint8_t> serialize_msg(uint16_t message_id, const MessageType& msg);
 
 private:
     std::unique_ptr<daq_comms::transport::TCPClient> socket_;
@@ -156,7 +156,7 @@ private:
 
     // Batch accumulation buffer
     bool batching_ = false;
-    std::vector<std::byte> batch_buffer_;
+    std::vector<uint8_t> batch_buffer_;
 
     // For reconnection
     std::string last_host_;
@@ -175,7 +175,7 @@ inline std::array<uint8_t, 2> message_id_to_packet_id(uint16_t message_id) {
 //   ElodinMsg = MessageFactory<header, body>
 // When serialized, MessageFactory does memcpy of fields in order (no byte order conversion!)
 template <typename MessageType>
-std::vector<std::byte> ElodinClient::serialize_msg(uint16_t message_id, const MessageType& msg) {
+std::vector<uint8_t> ElodinClient::serialize_msg(uint16_t message_id, const MessageType& msg) {
     std::array<uint8_t, 2> packet_id = message_id_to_packet_id(message_id);
     constexpr size_t msg_size = MessageSize<MessageType>::value;
 
@@ -195,7 +195,7 @@ std::vector<std::byte> ElodinClient::serialize_msg(uint16_t message_id, const Me
     using ElodinMsg = comms::CommsMessage<Header, MessageType>;
 
     // Construct header: len = msg_size + 4 (matching FSW: msg.nbytes() + 4)
-    // The +4 accounts for: type (1) + packet_id (2) + request_id (1)
+    // The +4 accounts for: type(1) + packet_id(2) + request_id(1)
     // The len field itself (4 bytes) is NOT included in this calculation
     // FSW uses PacketType::TABLE for data messages - match exactly
     Header header(msg_size + 4, PacketType::TABLE, packet_id, 0);
@@ -207,9 +207,8 @@ std::vector<std::byte> ElodinClient::serialize_msg(uint16_t message_id, const Me
     // FSW's MessageFactory serialization uses Serializer::write() which does memcpy (host byte
     // order) Elodin expects host byte order (matching FSW's behavior) - NO network byte order
     // conversion!
-    constexpr size_t header_size =
-        sizeof(uint32_t) + sizeof(PacketType) + sizeof(std::array<uint8_t, 2>) + sizeof(uint8_t);
-    std::vector<std::byte> result(header_size + msg_size);
+    constexpr size_t header_size = 8; // len(4) + ty(1) + id(2) + req(1)
+    std::vector<uint8_t> result(header_size + msg_size);
     elodin_msg.serialize(reinterpret_cast<uint8_t*>(result.data()));
 
     // FSW's MessageFactory does memcpy (host byte order) and Elodin accepts it

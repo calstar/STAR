@@ -351,16 +351,220 @@ export interface EntityMaps {
 /**
  * Parse Elodin packet based on packet_id. If entityMaps (from config) are provided, use them so backend and DB are a replica of config.
  */
+
+export const ELODIN_HASH_MAP: Record<string, {entity: string, type: string}> = {
+  // PT Raw — keys are the Elodin stream packet IDs (observed from relay log)
+  '6b_8b': { entity: 'PT.Fuel_Upstream', type: 'PT' },    // was '10b_8b' (overflowed)
+  '9a_8f': { entity: 'PT.GSE_Low', type: 'PT' },          // was '15a_8f'
+  '9b_b6': { entity: 'PT.GSE_Mid', type: 'PT' },          // was '155_b6'
+  '3a_d':  { entity: 'PT.Fuel_Downstream', type: 'PT' },  // was '3a_10d'
+  '4a_a8': { entity: 'PT.Ox_Upstream', type: 'PT' },      // was '14a_a8'
+  'a9_b5': { entity: 'PT.GN2_Regulated', type: 'PT' },    // was '169_b5'
+  'b8_20': { entity: 'PT.Ox_Downstream', type: 'PT' },
+  '1a_c2': { entity: 'PT.PT_CH8', type: 'PT' },           // was '1a_194'
+  '6b_b9': { entity: 'PT.PT_CH9', type: 'PT' },           // was '10b_185'
+  'eb_a1': { entity: 'PT.PT_CH10', type: 'PT' },
+  // PT Calibrated
+  '1d_9a': { entity: 'PT_Cal.Fuel_Upstream', type: 'PT_Cal' },
+  'd_be':  { entity: 'PT_Cal.GSE_Low', type: 'PT_Cal' },
+  'fe_2e': { entity: 'PT_Cal.GSE_Mid', type: 'PT_Cal' },
+  '31_82': { entity: 'PT_Cal.Fuel_Downstream', type: 'PT_Cal' },
+  '4d_65': { entity: 'PT_Cal.Ox_Upstream', type: 'PT_Cal' },
+  'cd_a3': { entity: 'PT_Cal.GN2_Regulated', type: 'PT_Cal' },
+  'c3_c0': { entity: 'PT_Cal.Ox_Downstream', type: 'PT_Cal' },
+  'f7_3b': { entity: 'PT_Cal.PT_CH8', type: 'PT_Cal' },
+  '86_32': { entity: 'PT_Cal.PT_CH9', type: 'PT_Cal' },
+  '62_ca': { entity: 'PT_Cal.PT_CH10', type: 'PT_Cal' },
+  // Actuators
+  '39_32': { entity: 'ACT.LOX_Main', type: 'ACT' },
+  '45_de': { entity: 'ACT.Fuel_Vent', type: 'ACT' },
+  'fd_4e': { entity: 'ACT.Fuel_Press', type: 'ACT' },
+  'c_b5':  { entity: 'ACT.ACT_CH4', type: 'ACT' },
+  'f3_84': { entity: 'ACT.GSE_Low_Vent', type: 'ACT' },
+  '4a_fb': { entity: 'ACT.LOX_Vent', type: 'ACT' },
+  '79_46': { entity: 'ACT.Fuel_Main', type: 'ACT' },
+  'ce_65': { entity: 'ACT.LOX_Press', type: 'ACT' },      // was 'ce_101'
+  'd4_30': { entity: 'ACT.Fuel_Fill_Vent', type: 'ACT' },
+  '24_15': { entity: 'ACT.Fuel_Fill_Press', type: 'ACT' },
+  '19_1a': { entity: 'ACT.GSE_LOX_Fill_Vent', type: 'ACT' },
+  'd8_b8': { entity: 'ACT.GSE_High_Press_Control', type: 'ACT' },
+  '47_67': { entity: 'ACT.GSE_Med_Press_Control', type: 'ACT' },
+  'c0_c3': { entity: 'ACT.GSE_High_Press_Vent', type: 'ACT' }, // was '192_c3'
+  'a3_f5': { entity: 'ACT.GN2_Vent', type: 'ACT' },
+  'db_be': { entity: 'ACT.LOX_Fill', type: 'ACT' },
+  'c3_5f': { entity: 'ACT.LOX_Dump', type: 'ACT' },
+  // TC Raw (two entries for TC_CH1 — both observed IDs kept)
+  'fb_e6': { entity: 'TC.TC_CH1', type: 'TC' },
+  '38_c0': { entity: 'TC.TC_CH1', type: 'TC' },
+  'a5_c7': { entity: 'TC.TC_CH2', type: 'TC' },
+  'd6_c2': { entity: 'TC.TC_CH3', type: 'TC' },
+  '43_c2': { entity: 'TC.TC_CH4', type: 'TC' },
+  // TC Calibrated
+  'f0_91': { entity: 'TC_Cal.TC_CH1', type: 'TC_Cal' },
+  '5d_96': { entity: 'TC_Cal.TC_CH2', type: 'TC_Cal' },
+  'ca_92': { entity: 'TC_Cal.TC_CH3', type: 'TC_Cal' },
+  'cf_b6': { entity: 'TC_Cal.TC_CH4', type: 'TC_Cal' },
+  // RTD Raw
+  '4_36':  { entity: 'RTD.RTD_CH1', type: 'RTD' },
+  'bd_3c': { entity: 'RTD.RTD_CH2', type: 'RTD' },
+  '22_3d': { entity: 'RTD.RTD_CH3', type: 'RTD' },
+  'db_35': { entity: 'RTD.RTD_CH4', type: 'RTD' },
+  // RTD Calibrated
+  'e4_ec': { entity: 'RTD_Cal.RTD_CH1', type: 'RTD_Cal' },
+  '9_eb':  { entity: 'RTD_Cal.RTD_CH2', type: 'RTD_Cal' },
+  'be_f5': { entity: 'RTD_Cal.RTD_CH3', type: 'RTD_Cal' },
+  'bb_d3': { entity: 'RTD_Cal.RTD_CH4', type: 'RTD_Cal' },
+  // LC Raw
+  '75_31': { entity: 'LC.CH1', type: 'LC' },
+  'bc_6b': { entity: 'LC.LC_CH1', type: 'LC' },
+  '41_69': { entity: 'LC.LC_CH2', type: 'LC' },
+  'd2_6e': { entity: 'LC.LC_CH3', type: 'LC' },
+  '67_6a': { entity: 'LC.LC_CH4', type: 'LC' },
+  // LC Calibrated
+  '24_d5': { entity: 'LC_Cal.LC_CH1', type: 'LC_Cal' },
+  '89_ca': { entity: 'LC_Cal.LC_CH2', type: 'LC_Cal' },
+  '7e_ce': { entity: 'LC_Cal.LC_CH3', type: 'LC_Cal' },
+  '7b_d2': { entity: 'LC_Cal.LC_CH4', type: 'LC_Cal' },
+};
+
+
 export function parseElodinPacket(
   packetId: [number, number],
   payload: Buffer,
   entityMaps?: EntityMaps
 ): ParsedSensorData | null {
   const [high, low] = packetId;
-  let parsed: ParsedSensorData | null = null;
+  const hashKey = `${high.toString(16)}_${low.toString(16)}`;
+  
+  // First try to look up the hash directly from ELODIN_HASH_MAP
+  const mapEntry = ELODIN_HASH_MAP[hashKey];
+  
+  if (mapEntry) {
+    // Try full 21-byte parser first; fall back to compact Stream{} format
+    // Compact format: [u64 timestamp (8 bytes)] + [field value (N bytes)]
+    //   9 bytes  → 8-byte ts + 1-byte u8  (valve state, channel id, status)
+    //   12 bytes → 8-byte ts + 4-byte u32/f32 (raw ADC counts or calibrated float)
+    //   16 bytes → 8-byte ts + 8-byte u64 or two u32s
 
-  if (high === 0x20 && low >= 0x01 && low <= 0x0A) {
-    parsed = parseRawPTMessage(payload, packetId);
+    if (mapEntry.type === 'PT') {
+      const parsed = parseRawPTMessage(payload, packetId);
+      if (parsed) { parsed.entity = mapEntry.entity; return parsed; }
+      // Compact fallback
+      if (payload.length >= 12) {
+        return { entity: mapEntry.entity, component: 'raw_adc_counts',
+                 value: payload.readUInt32LE(8), timestamp: Date.now() };
+      }
+      if (payload.length >= 9) {
+        return { entity: mapEntry.entity, component: 'raw_adc_counts',
+                 value: payload.readUInt8(8), timestamp: Date.now() };
+      }
+      return null;
+    }
+
+    if (mapEntry.type === 'PT_Cal') {
+      const parsed = parseCalibratedPTMessage(payload, packetId);
+      if (parsed) { parsed.entity = mapEntry.entity; return parsed; }
+      if (payload.length >= 12) {
+        return { entity: mapEntry.entity, component: 'pressure_psi',
+                 value: payload.readFloatLE(8), timestamp: Date.now() };
+      }
+      if (payload.length >= 9) {
+        return { entity: mapEntry.entity, component: 'pressure_psi',
+                 value: payload.readUInt8(8), timestamp: Date.now() };
+      }
+      return null;
+    }
+
+    if (mapEntry.type === 'ACT') {
+      const parsed = parseActuatorMessage(payload, packetId);
+      if (parsed) { parsed.entity = mapEntry.entity; return parsed; }
+      // ACT compact: 9-byte → valve state byte; 12-byte → raw ADC u32
+      if (payload.length >= 12) {
+        return { entity: mapEntry.entity, component: 'raw_adc_counts',
+                 value: payload.readUInt32LE(8), timestamp: Date.now() };
+      }
+      if (payload.length >= 9) {
+        return { entity: mapEntry.entity, component: 'valve_state',
+                 value: payload.readUInt8(8), timestamp: Date.now() };
+      }
+      return null;
+    }
+
+    if (mapEntry.type === 'TC') {
+      const parsed = parseRawTCMessage(payload, packetId);
+      if (parsed) { parsed.entity = mapEntry.entity; return parsed; }
+      if (payload.length >= 12) {
+        return { entity: mapEntry.entity, component: 'raw_adc_counts',
+                 value: payload.readUInt32LE(8), timestamp: Date.now() };
+      }
+      if (payload.length >= 9) {
+        return { entity: mapEntry.entity, component: 'raw_adc_counts',
+                 value: payload.readUInt8(8), timestamp: Date.now() };
+      }
+      return null;
+    }
+
+    if (mapEntry.type === 'TC_Cal') {
+      const parsed = parseCalibratedTCMessage(payload, packetId);
+      if (parsed) { parsed.entity = mapEntry.entity; return parsed; }
+      if (payload.length >= 12) {
+        return { entity: mapEntry.entity, component: 'temperature_c',
+                 value: payload.readFloatLE(8), timestamp: Date.now() };
+      }
+      if (payload.length >= 9) {
+        return { entity: mapEntry.entity, component: 'temperature_c',
+                 value: payload.readUInt8(8), timestamp: Date.now() };
+      }
+      return null;
+    }
+
+    if (mapEntry.type === 'RTD') {
+      const parsed = parseRawRTDMessage(payload, packetId);
+      if (parsed) { parsed.entity = mapEntry.entity; return parsed; }
+      if (payload.length >= 12) {
+        return { entity: mapEntry.entity, component: 'raw_resistance_counts',
+                 value: payload.readUInt32LE(8), timestamp: Date.now() };
+      }
+      if (payload.length >= 9) {
+        return { entity: mapEntry.entity, component: 'raw_resistance_counts',
+                 value: payload.readUInt8(8), timestamp: Date.now() };
+      }
+      return null;
+    }
+
+    if (mapEntry.type === 'RTD_Cal') {
+      const parsed = parseCalibratedRTDMessage(payload, packetId);
+      if (parsed) { parsed.entity = mapEntry.entity; return parsed; }
+      if (payload.length >= 12) {
+        return { entity: mapEntry.entity, component: 'temperature_c',
+                 value: payload.readFloatLE(8), timestamp: Date.now() };
+      }
+      if (payload.length >= 9) {
+        return { entity: mapEntry.entity, component: 'temperature_c',
+                 value: payload.readUInt8(8), timestamp: Date.now() };
+      }
+      return null;
+    }
+
+    if (mapEntry.type === 'LC' || mapEntry.type === 'LC_Cal') {
+      const component = mapEntry.type === 'LC_Cal' ? 'force_lbf' : 'raw_adc_counts';
+      if (payload.length >= 12) {
+        return { entity: mapEntry.entity, component,
+                 value: mapEntry.type === 'LC_Cal' ? payload.readFloatLE(8) : payload.readUInt32LE(8),
+                 timestamp: Date.now() };
+      }
+      if (payload.length >= 9) {
+        return { entity: mapEntry.entity, component, value: payload.readUInt8(8),
+                 timestamp: Date.now() };
+      }
+      return null;
+    }
+  }
+
+  // Fallback: direct packet_id scheme (0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC, 0x30=ACT)
+  // PT raw: channels 1-14 (boards 1 and 2)
+  if (high === 0x20 && low >= 0x01 && low <= 0x0E) {
+    const parsed = parseRawPTMessage(payload, packetId);
     if (parsed && entityMaps?.channelToEntityMap && payload.length >= 9) {
       const ch = payload.readUInt8(8);
       const cal = entityMaps.channelToEntityMap[ch];
@@ -368,13 +572,9 @@ export function parseElodinPacket(
     }
     return parsed;
   }
-  if (high === 0x20 && low >= 0x11 && low <= 0x1A) {
-    parsed = parseCalibratedPTMessage(payload, packetId);
-    if (parsed && entityMaps?.channelToEntityMap && payload.length >= 9) {
-      const ch = payload.readUInt8(8);
-      if (entityMaps.channelToEntityMap[ch]) parsed.entity = entityMaps.channelToEntityMap[ch];
-    }
-    return parsed;
+  // PT calibrated: channels 1-14 (boards 1 and 2; lo = 0x10+ch, so ch14 → lo=0x1E)
+  if (high === 0x20 && low >= 0x11 && low <= 0x1E) {
+    return parseCalibratedPTMessage(payload, packetId);
   }
   if (high === 0x21 && low >= 0x01 && low <= 0x04) {
     return parseRawTCMessage(payload, packetId);
@@ -389,12 +589,21 @@ export function parseElodinPacket(
     return parseCalibratedRTDMessage(payload, packetId);
   }
   if (high === 0x30 && low >= 0x01 && low <= 0x0A) {
-    parsed = parseActuatorMessage(payload, packetId);
+    let parsed = parseActuatorMessage(payload, packetId);
     if (parsed && entityMaps?.actuatorChannelToEntityMap && payload.length >= 9) {
       const ch = payload.readUInt8(8);
       if (entityMaps.actuatorChannelToEntityMap[ch]) parsed.entity = entityMaps.actuatorChannelToEntityMap[ch];
     }
     return parsed;
   }
+  
+  // Log unmapped packet IDs so they can be identified and added to ELODIN_HASH_MAP
+  if (process.env.ELODIN_DEBUG === '1') {
+    console.debug(
+      `[Elodin] Unmapped packet id=[0x${high.toString(16).padStart(2,'0')}, 0x${low.toString(16).padStart(2,'0')}] ` +
+      `hashKey=${hashKey} payloadLen=${payload.length}`
+    );
+  }
+
   return null;
 }

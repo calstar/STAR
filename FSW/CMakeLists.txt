@@ -1,6 +1,9 @@
 # CMakeLists.txt for FSW (Flight Software)
 # Contains: config, routing, elodin, discovery, calibration, etc.
 
+cmake_minimum_required(VERSION 3.16)
+project(FSW_DAQ_Bridge)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -76,21 +79,21 @@ target_link_libraries(daq_bridge
 )
 
 # Test program to send all sensors from config
-# add_executable(send_all_sensors_from_config test/send_all_sensors_from_config.cpp)
+add_executable(send_all_sensors_from_config test/send_all_sensors_from_config.cpp)
 
-# target_include_directories(send_all_sensors_from_config PRIVATE
-#     ${CMAKE_SOURCE_DIR}/include
-#     ${CMAKE_SOURCE_DIR}/../daq_comms/include
-#     ${CMAKE_SOURCE_DIR}/../archive/legacy/utl
-# )
+target_include_directories(send_all_sensors_from_config PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../daq_comms/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../archive/legacy/utl
+)
 
-# target_link_libraries(send_all_sensors_from_config
-#     fsw_daq_lib
-#     daq_comms_lib
-#     Threads::Threads
-#     pthread
-#     ${RT_LIBRARY}
-# )
+target_link_libraries(send_all_sensors_from_config
+    fsw_daq_lib
+    daq_comms_lib
+    Threads::Threads
+    pthread
+    ${RT_LIBRARY}
+)
 
 # SITL Simulator executable
 # add_executable(sitl_simulator src/sitl/sitl_main.cpp src/sitl/SITLSimulator.cpp)

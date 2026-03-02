@@ -68,20 +68,25 @@ export class ElodinRelayClient extends EventEmitter {
   private drainPackets(): void {
     while (this.buffer.length >= 4) {
       const packetLen = this.buffer.readUInt32LE(0);
-      if (packetLen < 12 || packetLen > 65536) {
-        this.buffer = this.buffer.subarray(1);
+      // Minimum packet size with 8-byte header is 8 (len field is 4 in that case)
+      if (packetLen < 4 || packetLen > 65536) {
+        console.error(`[RelayClient] Packet length too small or too large: ${packetLen}`);
+        this.buffer = this.buffer.subarray(4); // Discard the bad length field
         continue;
       }
-      if (this.buffer.length < packetLen) break;
-      const packet = this.buffer.subarray(0, packetLen);
-      this.buffer = this.buffer.subarray(packetLen);
+      if (this.buffer.length < packetLen + 4) break;
+
+      const packet = this.buffer.subarray(0, packetLen + 4);
+      this.buffer = this.buffer.subarray(packetLen + 4);
+
       const header: ElodinPacketHeader = {
         len: packet.readUInt32LE(0),
         ty: packet.readUInt8(4) as ElodinPacketType,
         packetId: [packet.readUInt8(5), packet.readUInt8(6)],
-        requestId: packet.readUInt8(11),
+        requestId: packet.readUInt8(7),
       };
-      const payload = packet.subarray(12);
+
+      const payload = packet.subarray(8);
       this.emit('packet', header, payload);
     }
   }

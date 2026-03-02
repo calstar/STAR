@@ -909,7 +909,7 @@ export class Phase2CalibrationEngine {
   // ─── Persistence ──────────────────────────────────────────────────────────
 
   private saveCalibration(sensorId: number, state: SensorState): void {
-    const calibrationDir = '/home/kush-mahajan/sensor_system/calibration';
+    const calibrationDir = path.join(__dirname, '../../../calibration');
     if (!fs.existsSync(calibrationDir)) {
       fs.mkdirSync(calibrationDir, { recursive: true });
     }
@@ -969,7 +969,7 @@ export class Phase2CalibrationEngine {
   }
 
   private findLatestCalibrationFile(): string | null {
-    const calibrationDir = '/home/kush-mahajan/sensor_system/calibration';
+    const calibrationDir = path.join(__dirname, '../../../calibration');
     if (!fs.existsSync(calibrationDir)) return null;
 
     // Favor stable file if it exists

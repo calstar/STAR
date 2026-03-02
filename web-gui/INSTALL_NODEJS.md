@@ -3,7 +3,7 @@
 ## Quick Install (Automated)
 
 ```bash
-cd /home/kush-mahajan/sensor_system/web-gui
+cd /path/to/Diablo-FSW/web-gui
 ./install_nodejs.sh
 ```
 
@@ -76,7 +76,7 @@ npm -v
 After Node.js is installed:
 
 ```bash
-cd /home/kush-mahajan/sensor_system/web-gui
+cd /path/to/Diablo-FSW/web-gui
 
 # Install backend dependencies
 cd backend

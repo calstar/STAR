@@ -25,6 +25,9 @@ static bool send_msg(ElodinClient& client, T msg) {
 
 // ── Sensor role names (from config.toml [sensor_roles]) ────────────────────
 // Index = 1-based channel_id.  0 = unused.
+// Channels 1-10: PT board 1 (board_id=21)
+// Channels 11-14: PT board 2 (board_id=22) — high-pressure 4-20 mA sensors
+//   connector 1→ch11, connector 2→ch12 (excitation), connector 3→ch13, connector 4→ch14
 static const char* PT_NAMES[] = {
     "",                 // 0 (unused)
     "Fuel_Upstream",    // 1
@@ -37,8 +40,12 @@ static const char* PT_NAMES[] = {
     "PT_CH8",           // 8
     "PT_CH9",           // 9
     "PT_CH10",          // 10
+    "GSE_MID",          // 11 (PT board 2 connector 1)
+    "PT_CH12",          // 12 (PT board 2 connector 2 — excitation voltage, not a sensor)
+    "GSE_HI",           // 13 (PT board 2 connector 3)
+    "GN2_HI",           // 14 (PT board 2 connector 4)
 };
-static constexpr int NUM_PT = 10;
+static constexpr int NUM_PT = 14;
 
 static const char* ACT_NAMES[] = {
     "",                 // 0 (unused)

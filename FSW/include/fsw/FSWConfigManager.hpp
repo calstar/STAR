@@ -78,6 +78,11 @@ public:
     void set_system_state(config::SystemState state);
 
     /**
+     * @brief Configure static board IP address loaded from config.toml
+     */
+    void set_board_static_ip(uint8_t board_id, const std::string& ip);
+
+    /**
      * @brief Get current system state
      */
     config::SystemState get_system_state() const {

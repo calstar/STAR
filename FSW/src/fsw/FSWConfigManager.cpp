@@ -39,7 +39,7 @@ std::string FSWConfigManager::process_board_heartbeat(
 
     // Assign IP address
     std::string assigned_ip =
-        assignment_manager_.assign_board_ip(board_id, mac_address, system_state);
+        assignment_manager_.assign_board_ip(board_id, mac_address, system_state, source_ip);
 
     // Check if board needs sensor assignment
     auto board_config = assignment_manager_.get_board_config(board_id);
@@ -156,6 +156,12 @@ void FSWConfigManager::set_system_state(config::SystemState state) {
     current_state_ = state;
     std::cout << "[FSWConfig] System state changed to: "
               << (state == config::SystemState::GSE ? "GSE" : "FLIGHT") << std::endl;
+}
+
+void FSWConfigManager::set_board_static_ip(uint8_t board_id, const std::string& ip) {
+    if (!ip.empty()) {
+        assignment_manager_.set_static_board_ip(board_id, ip);
+    }
 }
 
 config::SystemState FSWConfigManager::infer_system_state(uint8_t board_id,

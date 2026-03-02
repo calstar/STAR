@@ -10,7 +10,6 @@ export enum MessageType {
   SEND_COMMAND = 'send_command',
   QUERY_HISTORICAL = 'query_historical',
   CALIBRATION_COMMAND = 'calibration_command',
-  RESEND_CONFIG = 'resend_config',
 
   // Server → Client
   SENSOR_UPDATE = 'sensor_update',
@@ -24,6 +23,7 @@ export enum MessageType {
   ACTUATOR_EXPECTED_POSITIONS_UPDATE = 'actuator_expected_positions_update',
   HISTORICAL_DATA = 'historical_data',
   BOARD_STATUS_UPDATE = 'board_status_update',
+  NOTIFICATION = 'notification',
 }
 
 // Sensor types
@@ -198,25 +198,6 @@ export interface CalibrationCommand {
   boardId?: number;
   referencePressure?: number;
 }
-// ── Board / heartbeat status ───────────────────────────────────────────────────
-
-export interface BoardStatus {
-  type: string;
-  boardNumber: number | null;
-  id: number;
-  ip: string;
-  expected: boolean;
-  connected: boolean;
-  lastHeartbeatMs: number | null;
-  frequencyHz: number | null;
-  boardState: number | null;
-  engineState: number | null;
-  configured?: boolean;
-  configLastSentAt?: number;
-  configError?: string;
-  necessaryForAbort?: boolean;
-  designatedSurvivor?: boolean;
-}
 
 // ── Board / heartbeat status ───────────────────────────────────────────────────
 
@@ -232,8 +213,6 @@ export interface BoardStatus {
   boardState: number | null;
   engineState: number | null;
   configured?: boolean;
-  /** Epoch ms when config was last sent successfully. */
-  configLastSentAt?: number;
   configError?: string;
   necessaryForAbort?: boolean;
   designatedSurvivor?: boolean;
@@ -243,6 +222,30 @@ export interface BoardStatus {
 
 export interface BoardStatusPayload {
   boards: BoardStatus[];
+}
+
+// ── Notification types ─────────────────────────────────────────────────────
+
+export type NotificationCategory = 'info' | 'warning' | 'error';
+
+export interface NotificationPayloadOngoing {
+  key: string;
+  category: NotificationCategory;
+  message: string;
+  timestampMs: number;
+  ongoing: boolean;
+}
+
+export interface NotificationPayloadOneShot {
+  category: NotificationCategory;
+  message: string;
+  timestampMs: number;
+}
+
+export type NotificationPayload = NotificationPayloadOngoing | NotificationPayloadOneShot;
+
+export function isNotificationOngoing(p: NotificationPayload): p is NotificationPayloadOngoing {
+  return 'key' in p && 'ongoing' in p;
 }
 
 // ── Engine state helpers ─────────────────────────────────────────────────────
@@ -259,3 +262,4 @@ export function engineStateCodeToLabel(code: number | null | undefined): string 
   }
   return 'UNKNOWN';
 }
+

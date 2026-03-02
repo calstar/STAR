@@ -48,7 +48,12 @@ import {
   SystemState,
   ActuatorState,
   BoardStatus,
+<<<<<<< HEAD
+  NotificationPayload,
+} from '../../shared/types.js';
+=======
 } from './shared-types.js';
+>>>>>>> e2ae74fd3874418bef67d0348b6d8de5cb9f590a
 
 // ── Extracted modules ──────────────────────────────────────────────────────────
 import { Client, HpPtBoardConfig, WS_PORT, WS_HOST, ELODIN_HOST, ELODIN_PORT, ACTUATOR_CHANNEL_BY_NAME } from './server-types.js';
@@ -245,6 +250,15 @@ class SensorSystemServer {
   private designatedSurvivorConnected: boolean = false;
   /** Throttle: last time we logged that config is blocked (designated survivor not connected). */
   private lastConfigBlockedLogMs: number = 0;
+
+  /** Notification system: previous board connected state for transition detection */
+  private previousBoardConnected: Map<number, boolean> = new Map();
+  /** First time we saw board in SETUP (boardState === 1), for "stuck in setup" detection */
+  private boardFirstSeenSetupMs: Map<number, number> = new Map();
+  /** Keys for which we have emitted ongoing: true (so we only emit ongoing: false when they clear) */
+  private activeNotificationKeys: Set<string> = new Set();
+  private readonly SETUP_STUCK_THRESHOLD_MS = 4000;
+  private readonly BOARD_STATE_SETUP = 1;
 
   constructor() {
     console.log(`🚀 Starting Sensor System Server...`);
@@ -525,22 +539,17 @@ class SensorSystemServer {
     }
 
     if (this.useDirectDAQ) {
-      console.log('🚀 Using DIRECT DAQ connection for real-time data');
-      // Load environmental state from config
-      const envCfg = config.calibration?.environmental || {};
-      this.envState = {
-        temperature: envCfg.temperature ?? 25.0,
-        humidity: envCfg.humidity ?? 50.0,
-        vibration: envCfg.vibration ?? 0.0,
-        aging_factor: envCfg.aging_factor ?? 1.0,
-        mounting_torque: envCfg.mounting_torque ?? 1.0
-      };
-
-      this.setupDirectDAQ();
-    } else if (!process.env.ELODIN_RELAY_WS_URL) {
-      console.log('📡 Using Elodin DB for data (DAQ Bridge → Elodin DB → Backend → Frontend)');
-      console.warn('⚠️ Elodin DB streams raw data to only the FIRST subscriber. For multiple clients (e.g. backend + sidecar), run the relay first and set ELODIN_RELAY_WS_URL=ws://localhost:9090');
+      console.log('🚀 Using DIRECT DAQ connection for REAL-TIME BOARD DATA');
+    } else {
+      console.log('📡 Using ELODIN RELAY/DB for sensor data. Direct DAQ will only be used for heartbeats.');
+      if (!process.env.ELODIN_RELAY_WS_URL) {
+        console.warn('⚠️ Elodin DB streams raw data to only the FIRST subscriber. For multiple clients (e.g. backend + sidecar), run the relay first and set ELODIN_RELAY_WS_URL=ws://localhost:9090');
+      }
     }
+
+    // Always setup DAQ to receive Board Heartbeats over UDP broadcast.
+    // We will conditionally ignore sensor data inside setupDirectDAQ if useDirectDAQ is false.
+    this.setupDirectDAQ();
 
     this.startUpdateLoop();
   }
@@ -707,7 +716,11 @@ class SensorSystemServer {
           await registerVTables(this.elodin);
         } else { console.log('✅ Stream subscription successful!'); }
         if (!this.useDirectDAQ) this.startStreamingCheck();
+      } else {
+        // When using relay, just register controller VTables so we can send commands
+        console.log('📡 Relay mode active: Skipping VTableStream subscriptions to avoid stealing the stream');
       }
+
       await registerControllerVTables(this.elodin);
       this.streamingDataReceived = false;
       this.broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true } as ConnectionStatus });
@@ -850,6 +863,7 @@ class SensorSystemServer {
 
     // ── Regular PT sensor data ──────────────────────────────────────────────
     this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
+      if (!this.useDirectDAQ) return;
       if (this.hpPtBoards.has(sourceIP)) return;
       if (this.actuatorBoardIPs.has(sourceIP)) return;
 
@@ -945,6 +959,7 @@ class SensorSystemServer {
 
     // ── Actuator board data ─────────────────────────────────────────────────
     this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
+      if (!this.useDirectDAQ) return;
       if (!this.actuatorBoardIPs.has(sourceIP)) return;
       const currentTime = Date.now();
       for (const chunk of chunks) {
@@ -982,6 +997,7 @@ class SensorSystemServer {
 
     // ── HP PT board data ────────────────────────────────────────────────────
     this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
+      if (!this.useDirectDAQ) return;
       const hpCfg = this.hpPtBoards.get(sourceIP);
       if (!hpCfg) return;
 
@@ -1562,7 +1578,97 @@ class SensorSystemServer {
     setInterval(() => {
       // Drive config state machine on a slow loop as well (for late-connecting boards)
       this.maybeSendConfigPackets();
+<<<<<<< HEAD
+
+      if (this.clients.size === 0) return;
+      const snapshot = this.getBoardStatusSnapshot();
+      if (snapshot.length === 0) return;
+      this.broadcast({
+        type: MessageType.BOARD_STATUS_UPDATE,
+        timestamp: Date.now(),
+        payload: { boards: snapshot },
+      });
+
+      // ── Notification logic (same snapshot, so connected/boardState/engineState/expected are current)
+      const now = Date.now();
+      const serverEngineState = this.currentState ?? SystemState.IDLE;
+
+      for (const b of snapshot) {
+        const id = b.id;
+        const connected = b.connected;
+        const prevConnected = this.previousBoardConnected.get(id);
+        const label = b.boardNumber != null ? `Board ${b.boardNumber} (${b.type})` : `Board ${id} (${b.type})`;
+
+        // Connection lost (error)
+        const boardLostKey = `board_lost_${id}`;
+        if (prevConnected === true && !connected) {
+          this.broadcastNotification({ key: boardLostKey, category: 'error', message: `${label} connection lost`, timestampMs: now, ongoing: true });
+          this.activeNotificationKeys.add(boardLostKey);
+        } else if (prevConnected === true && connected && this.activeNotificationKeys.has(boardLostKey)) {
+          this.broadcastNotification({ key: boardLostKey, category: 'error', message: `${label} connection lost`, timestampMs: now, ongoing: false });
+          this.activeNotificationKeys.delete(boardLostKey);
+        }
+
+        // Board connected (info) — one-shot when transitioning to connected
+        if (prevConnected === false && connected) {
+          this.broadcastNotification({ category: 'info', message: `${label} connected`, timestampMs: now });
+        }
+
+        // Board stuck in setup (error)
+        const setupStuckKey = `setup_stuck_${id}`;
+        const inSetup = connected && b.boardState === this.BOARD_STATE_SETUP;
+        if (inSetup) {
+          const firstSeen = this.boardFirstSeenSetupMs.get(id);
+          if (firstSeen == null) this.boardFirstSeenSetupMs.set(id, now);
+          const first = this.boardFirstSeenSetupMs.get(id)!;
+          if (now - first > this.SETUP_STUCK_THRESHOLD_MS) {
+            if (!this.activeNotificationKeys.has(setupStuckKey)) {
+              this.broadcastNotification({ key: setupStuckKey, category: 'error', message: `${label} stuck in setup`, timestampMs: first, ongoing: true });
+              this.activeNotificationKeys.add(setupStuckKey);
+            }
+          }
+        } else {
+          this.boardFirstSeenSetupMs.delete(id);
+          if (this.activeNotificationKeys.has(setupStuckKey)) {
+            this.broadcastNotification({ key: setupStuckKey, category: 'error', message: `${label} stuck in setup`, timestampMs: now, ongoing: false });
+            this.activeNotificationKeys.delete(setupStuckKey);
+          }
+        }
+
+        // Unrecognized board (warning)
+        const unrecognizedKey = `unrecognized_${id}`;
+        if (connected && !b.expected) {
+          if (!this.activeNotificationKeys.has(unrecognizedKey)) {
+            this.broadcastNotification({ key: unrecognizedKey, category: 'warning', message: `Unrecognized board at ${b.ip}`, timestampMs: now, ongoing: true });
+            this.activeNotificationKeys.add(unrecognizedKey);
+          }
+        } else if (!connected && this.activeNotificationKeys.has(unrecognizedKey)) {
+          this.broadcastNotification({ key: unrecognizedKey, category: 'warning', message: `Unrecognized board at ${b.ip}`, timestampMs: now, ongoing: false });
+          this.activeNotificationKeys.delete(unrecognizedKey);
+        }
+
+        // Engine state mismatch (warning)
+        const engineMismatchKey = `engine_mismatch_${id}`;
+        const boardEngineState = b.engineState ?? -1;
+        const mismatch = connected && boardEngineState !== serverEngineState;
+        if (mismatch) {
+          if (!this.activeNotificationKeys.has(engineMismatchKey)) {
+            this.broadcastNotification({ key: engineMismatchKey, category: 'warning', message: `${label} engine state differs from server`, timestampMs: now, ongoing: true });
+            this.activeNotificationKeys.add(engineMismatchKey);
+          }
+        } else if (this.activeNotificationKeys.has(engineMismatchKey)) {
+          this.broadcastNotification({ key: engineMismatchKey, category: 'warning', message: `${label} engine state differs from server`, timestampMs: now, ongoing: false });
+          this.activeNotificationKeys.delete(engineMismatchKey);
+        }
+      }
+
+      // Persist previous connected state
+      for (const b of snapshot) {
+        this.previousBoardConnected.set(b.id, b.connected);
+      }
+=======
       this.broadcastBoardStatus();
+>>>>>>> e2ae74fd3874418bef67d0348b6d8de5cb9f590a
     }, 1000);
 
     // Broadcast server heartbeat to all boards at configured interval
@@ -1669,6 +1775,12 @@ class SensorSystemServer {
     } catch (err) {
       console.error(`❌ Error while constructing/sending ${label} packet:`, err);
     }
+  }
+
+  /** Broadcast a single notification to all clients (for notification panel). */
+  private broadcastNotification(payload: NotificationPayload): void {
+    if (this.clients.size === 0) return;
+    this.broadcast({ type: MessageType.NOTIFICATION, timestamp: Date.now(), payload });
   }
 
   /** Build a snapshot of current board status suitable for WebSocket broadcast. */

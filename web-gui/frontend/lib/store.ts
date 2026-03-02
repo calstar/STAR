@@ -17,12 +17,33 @@
 
 import { create } from 'zustand';
 import { useCallback, useMemo } from 'react';
-import { SensorUpdate, ActuatorUpdate, StateUpdate, ConnectionStatus, SystemState, MissionStartTime, BoardStatus, ActuatorState } from './types';
-import { persistActuatorOverrides } from './actuator-overrides-sync';
+import {
+  SensorUpdate,
+  ActuatorUpdate,
+  StateUpdate,
+  ConnectionStatus,
+  SystemState,
+  MissionStartTime,
+  BoardStatus,
+  ActuatorState,
+  NotificationPayload,
+  NotificationCategory,
+  isNotificationOngoing,
+} from './types';
 
 interface SensorData {
   [key: string]: number; // entity.component -> value
 }
+
+export interface NotificationEntry {
+  key?: string;
+  category: NotificationCategory;
+  message: string;
+  timestampMs: number;
+  isCurrent: boolean;
+}
+
+const NOTIFICATIONS_MAX = 100;
 
 interface SensorSystemState {
   sensorData: SensorData;
@@ -38,13 +59,12 @@ interface SensorSystemState {
   /** Manual overrides in DEBUG mode; cleared on state change or when leaving DEBUG. */
   actuatorCommandedOverrides: Record<string, ActuatorState>;
   boards: Record<number, BoardStatus>;
+  notifications: NotificationEntry[];
 
   updateSensor: (update: SensorUpdate) => void;
   updateActuator: (update: ActuatorUpdate) => void;
   setActuatorState: (entity: string, state: ActuatorState) => void;
   setActuatorCommandedOverride: (entity: string, state: ActuatorState | null) => void;
-  /** Apply overrides from another tab/window (sync); does not persist. */
-  setActuatorCommandedOverridesFromSync: (overrides: Record<string, ActuatorState>) => void;
   updateState: (update: StateUpdate) => void;
   updateConnectionStatus: (status: ConnectionStatus) => void;
   updateMissionStartTime: (time: number) => void;
@@ -52,6 +72,7 @@ interface SensorSystemState {
   getSensorValue: (entity: string, component: string) => number | null;
   setDebugMode: (mode: boolean) => void;
   updateBoards: (boards: BoardStatus[]) => void;
+  updateNotification: (payload: NotificationPayload) => void;
 }
 
 // ── Alias table ──────────────────────────────────────────────────────────────
@@ -290,6 +311,7 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   actuatorStateByEntity: {},
   actuatorCommandedOverrides: {},
   boards: {},
+  notifications: [],
 
   updateSensor: (update: SensorUpdate) => {
     const key = `${update.entity}.${update.component}`;
@@ -323,11 +345,6 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
       else next[entity] = state;
       return { actuatorCommandedOverrides: next };
     });
-    persistActuatorOverrides(get().actuatorCommandedOverrides);
-  },
-
-  setActuatorCommandedOverridesFromSync: (overrides: Record<string, ActuatorState>) => {
-    set({ actuatorCommandedOverrides: { ...overrides } });
   },
 
   updateState: (update: StateUpdate) => {
@@ -337,7 +354,6 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
       debugMode: update.debugMode !== undefined ? update.debugMode : get().debugMode,
       actuatorCommandedOverrides: {}, // clear overrides on state change so new state's expected positions apply
     }));
-    persistActuatorOverrides({});
   },
 
   updateConnectionStatus: (status: ConnectionStatus) => {
@@ -370,6 +386,42 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
     });
   },
 
+  updateNotification: (payload: NotificationPayload) => {
+    set((state) => {
+      let list = [...state.notifications];
+      if (isNotificationOngoing(payload)) {
+        const idx = list.findIndex((n) => n.key === payload.key);
+        const entry: NotificationEntry = {
+          key: payload.key,
+          category: payload.category,
+          message: payload.message,
+          timestampMs: payload.timestampMs,
+          isCurrent: payload.ongoing,
+        };
+        if (idx >= 0) {
+          list[idx] = entry;
+        } else if (payload.ongoing) {
+          list.unshift(entry);
+        } else {
+          list = list.map((n) => (n.key === payload.key ? { ...n, isCurrent: false } : n));
+        }
+      } else {
+        list.unshift({
+          category: payload.category,
+          message: payload.message,
+          timestampMs: payload.timestampMs,
+          isCurrent: false,
+        });
+      }
+      list = list.slice(0, NOTIFICATIONS_MAX);
+      list.sort((a, b) => {
+        if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
+        return b.timestampMs - a.timestampMs;
+      });
+      return { notifications: list };
+    });
+  },
+
   getSensorValue: (entity: string, component: string) => {
     const key = `${entity}.${component}`;
     const value = get().sensorData[key];
@@ -388,11 +440,7 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   },
 
   setDebugMode: (mode: boolean) => {
-    set((s) => {
-      const next = mode ? s.actuatorCommandedOverrides : {};
-      return { debugMode: mode, actuatorCommandedOverrides: next };
-    });
-    persistActuatorOverrides(get().actuatorCommandedOverrides);
+    set((s) => ({ debugMode: mode, actuatorCommandedOverrides: mode ? s.actuatorCommandedOverrides : {} }));
   },
 }));
 

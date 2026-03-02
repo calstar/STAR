@@ -394,7 +394,7 @@ export function handleCalibrationCommand(
             break;
         }
         case 'save_coefficients': {
-            const calibrationDir = '/home/kush-mahajan/sensor_system/calibration';
+            const calibrationDir = path.join(__dirname, '../../../calibration');
             try {
                 if (!fs.existsSync(calibrationDir)) {
                     fs.mkdirSync(calibrationDir, { recursive: true });

@@ -97,14 +97,23 @@ public:
     bool load_sensor_definitions(const std::string& config_path);
 
     /**
+     * @brief Set a static IP for a board from loaded configuration
+     * @param board_id Board identifier
+     * @param ip The IP address configured for this board
+     */
+    void set_static_board_ip(uint8_t board_id, const std::string& ip);
+
+    /**
      * @brief Assign IP address to board (called by FSW)
+     * If a static IP was set for this board_id, it will be used regardless of MAC/source_ip.
      * @param board_id Board identifier
      * @param mac_address Board MAC address
      * @param system_state GSE or FLIGHT
+     * @param source_ip IP address from which the heartbeat was received
      * @return Assigned IP address
      */
     std::string assign_board_ip(uint8_t board_id, const std::string& mac_address,
-                                SystemState system_state);
+                                SystemState system_state, const std::string& source_ip = "");
 
     /**
      * @brief Assign sensors to board (called by FSW)
@@ -177,6 +186,9 @@ private:
 
     // Board configurations
     std::map<uint8_t, BoardConfiguration> board_configs_;
+
+    // Static IPs loaded from config.toml
+    std::map<uint8_t, std::string> static_board_ips_;
 
     // Sensor assignments (sensor_id -> assignment)
     std::map<std::string, SensorAssignment> sensor_assignments_;

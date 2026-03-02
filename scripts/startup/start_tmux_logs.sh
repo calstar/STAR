@@ -14,6 +14,7 @@ tmux kill-session -t "$SESSION" 2>/dev/null || true
 tmux new-session  -d -s "$SESSION" -n logs -x 220 -y 60 \
   "journalctl --user-unit=sensor-elodin.service -f"
 tmux set-option -t "$SESSION" remain-on-exit on
+tmux set-option -t "$SESSION" mouse on
 
 tmux split-window -h -t "$SESSION:logs.0" \
   "journalctl --user-unit=sensor-backend.service -f"

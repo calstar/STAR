@@ -30,7 +30,7 @@ function main(): void {
       clientCount--;
       console.log(`[Relay] Client disconnected (total ${clientCount})`);
     });
-    ws.on('error', () => {});
+    ws.on('error', () => { });
   });
 
   wss.on('listening', () => {
@@ -39,17 +39,24 @@ function main(): void {
   });
 
   elodin.on('packet', (header, payload) => {
-    // Forward as binary: 12-byte header (len LE, ty, packetId[2], padding 4, requestId) + payload
-    const len = 12 + payload.length;
-    const buf = Buffer.alloc(len);
-    buf.writeUInt32LE(len, 0);
-    buf.writeUInt8(header.ty, 4);
-    buf.writeUInt8(header.packetId[0], 5);
-    buf.writeUInt8(header.packetId[1], 6);
-    buf.writeUInt8(header.requestId, 11);
-    payload.copy(buf, 12);
+    if (header.ty === ElodinPacketType.TABLE) {
+      console.log(`[Relay] Received TABLE packet: packetId=[0x${header.packetId[0].toString(16)}, 0x${header.packetId[1].toString(16)}], payloadLen=${payload.length}`);
+    }
+    // Forward as binary: 8-byte header (len LE, ty, packetId[2], requestId) + payload
+    const payloadLen = payload.length;
+    const totalLen = 8 + payloadLen; // 8-byte header
+    const broadcastBuffer = Buffer.alloc(totalLen);
+
+    // 8-byte header: len(4), ty(1), packetId(2), requestId(1)
+    broadcastBuffer.writeUInt32LE(totalLen - 4, 0); // total - 4
+    broadcastBuffer.writeUInt8(header.ty, 4);
+    broadcastBuffer.writeUInt8(header.packetId[0], 5);
+    broadcastBuffer.writeUInt8(header.packetId[1], 6);
+    broadcastBuffer.writeUInt8(header.requestId, 7);
+
+    payload.copy(broadcastBuffer, 8);
     wss.clients.forEach((client) => {
-      if (client.readyState === 1) client.send(buf);
+      if (client.readyState === 1) client.send(broadcastBuffer);
     });
   });
 
@@ -62,7 +69,7 @@ function main(): void {
   });
 
   elodin.on('disconnected', () => console.log('[Relay] Elodin disconnected'));
-  elodin.on('error', () => {});
+  elodin.on('error', () => { });
 
   elodin.connect().then((ok) => {
     if (ok) console.log('[Relay] Connected to Elodin at ' + ELODIN_HOST + ':' + ELODIN_PORT);

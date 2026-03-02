@@ -59,6 +59,7 @@ CMD_SIM="printf '\n  ══ BOARD SIMULATOR — sends UDP to :5006 ══\n\n' &
 
 tmux new-session  -d -s "$SESSION" -n main -x 160 -y 50 "bash --norc --noprofile -c \"$CMD_DB\""
 tmux set-option -t "$SESSION" remain-on-exit on
+tmux set-option -t "$SESSION" mouse on
 tmux split-window -h -t "$SESSION:main.0" "bash --norc --noprofile -c \"$CMD_DAQ\""
 tmux split-window -v -t "$SESSION:main.0" "bash --norc --noprofile -c \"$CMD_SIM\""
 
