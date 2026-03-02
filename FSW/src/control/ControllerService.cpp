@@ -23,6 +23,7 @@
 #include <thread>
 
 #include "comms/messages/control/ControllerMessages.hpp"
+#include "comms/messages/sensor/CalibratedPTMessage.hpp"
 #include "control/RobustDDPController.hpp"
 #include "db.hpp"
 #include "elodin/ElodinClient.hpp"
@@ -392,16 +393,18 @@ void ControllerService::elodinSubscriberLoop() {
 
         // 0x20 is PT category. 0x11 to 0x1A are CALIBRATED channels (0x10 + ch_id)
         if (type_hi == 0x20 && channel_id > 0x10 && channel_id <= 0x1A) {
-            if (payload_len >= 21) {
+            if (payload_len >= comms::messages::sensor::CalibratedPTMessage::nbytes()) {
                 uint8_t* payload = rx_buffer.data() + 12;
-                float pressure_psi;
-                std::memcpy(&pressure_psi, payload + 12, 4);
 
-                // Convert back to original 1-based channel ID
-                uint8_t ch = channel_id - 0x10;
+                // Deserialize using CommsMessage — matches FSW pattern
+                comms::messages::sensor::CalibratedPTMessage cal_msg;
+                cal_msg.deserialize(payload);
+
+                float    pressure_psi = cal_msg.getField<3>();  // calibrated_pressure_psi
+                uint8_t  ch           = cal_msg.getField<1>();  // channel_id from message
+                if (ch == 0) ch = channel_id - 0x10;  // fallback to header
 
                 // Map based on PT names derived from config.toml.
-                // Assuming standard ordering for this test.
                 std::lock_guard<std::mutex> lock(input_mutex_);
                 // PT_NAMES[] array positions for the controller fields:
                 if (ch == 1)
@@ -414,7 +417,6 @@ void ControllerService::elodinSubscriberLoop() {
                     current_meas_.P_d_ox = pressure_psi * 6894.76;
                 else if (ch == 6)
                     current_meas_.P_reg = pressure_psi * 6894.76;
-                // Note: P_copv is not perfectly mapped right now, placeholder:
                 else if (ch == 3)
                     current_meas_.P_copv = pressure_psi * 6894.76;
 

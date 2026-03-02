@@ -154,85 +154,106 @@ int main(int argc, char* argv[]) {
         uint8_t type_hi = header[5];
         uint8_t channel_id = header[6];
 
-        if (channel_id > 0 && channel_id <= 15) {  // Assuming max channels is 15
-            if (type_hi == 0x20) {                 // PT Raw
-                // Format: u64 timestamp_ns | u8 channel_id | u8[3] pad | u32 raw_adc | u32
-                // sample_ts | u8 status
-                if (payload_len >= 21) {
+        if (channel_id > 0 && channel_id <= 15) {
+            if (type_hi == 0x20) {  // PT Raw
+                if (payload_len >= comms::messages::sensor::RawPTMessage::nbytes()) {
                     uint8_t* payload = rx_buffer.data() + 12;
-                    uint64_t ts_ns;
-                    std::memcpy(&ts_ns, payload, 8);
 
-                    uint32_t raw_adc;
-                    std::memcpy(&raw_adc, payload + 12, 4);
+                    // Deserialize using CommsMessage — matches FSW pattern
+                    comms::messages::sensor::RawPTMessage raw_msg;
+                    raw_msg.deserialize(payload);
 
-                    uint32_t sample_ts;
-                    std::memcpy(&sample_ts, payload + 16, 4);
-
-                    uint8_t status = payload[20];
+                    uint64_t ts_ns      = raw_msg.getField<0>();  // timestamp_ns
+                    uint8_t  ch         = raw_msg.getField<1>();  // channel_id
+                    // field 2 = padding (skip)
+                    uint32_t raw_adc    = raw_msg.getField<3>();  // raw_adc_counts
+                    uint32_t sample_ts  = raw_msg.getField<4>();  // sample_timestamp_ms
+                    uint8_t  status     = raw_msg.getField<5>();  // status_flags
 
                     daq_comms::protocol::SensorBatch batch;
                     daq_comms::protocol::RawPTSample pt;
-                    pt.channel_id = channel_id;
+                    pt.channel_id = ch;
                     pt.raw_adc_counts = raw_adc;
                     pt.sample_timestamp_ms = sample_ts;
                     pt.status_flags = status;
                     batch.pt_samples.push_back(pt);
 
-                    // Route and get calibrated messages
                     auto cal_msgs = router.route_pt_samples_calibrated(batch, ts_ns);
                     for (const auto& [id, msg] : cal_msgs) {
                         elodin_client.publish(id, msg);
                     }
                 }
-            } else if (type_hi == 0x21 || type_hi == 0x22 || type_hi == 0x23) {
-                // TC, RTD, LC raw messages have identical 21-byte structure as PT
-                if (payload_len >= 21) {
+            } else if (type_hi == 0x21) {  // TC Raw
+                if (payload_len >= comms::messages::sensor::RawTCMessage::nbytes()) {
                     uint8_t* payload = rx_buffer.data() + 12;
-                    uint64_t ts_ns;
-                    std::memcpy(&ts_ns, payload, 8);
 
-                    uint32_t raw_adc;
-                    std::memcpy(&raw_adc, payload + 12, 4);
+                    comms::messages::sensor::RawTCMessage raw_msg;
+                    raw_msg.deserialize(payload);
 
-                    uint32_t sample_ts;
-                    std::memcpy(&sample_ts, payload + 16, 4);
-
-                    uint8_t status = payload[20];
+                    uint64_t ts_ns      = raw_msg.getField<0>();
+                    uint8_t  ch         = raw_msg.getField<1>();
+                    uint32_t raw_adc    = raw_msg.getField<3>();
+                    uint32_t sample_ts  = raw_msg.getField<4>();
+                    uint8_t  status     = raw_msg.getField<5>();
 
                     daq_comms::protocol::SensorBatch batch;
+                    daq_comms::protocol::RawTCSample tc;
+                    tc.channel_id = ch;
+                    tc.raw_adc_counts = raw_adc;
+                    tc.sample_timestamp_ms = sample_ts;
+                    tc.status_flags = status;
+                    batch.tc_samples.push_back(tc);
+                    auto cal_msgs = router.route_tc_samples_calibrated(batch, ts_ns);
+                    for (const auto& [id, msg] : cal_msgs)
+                        elodin_client.publish(id, msg);
+                }
+            } else if (type_hi == 0x22) {  // RTD Raw
+                if (payload_len >= comms::messages::sensor::RawRTDMessage::nbytes()) {
+                    uint8_t* payload = rx_buffer.data() + 12;
 
-                    if (type_hi == 0x21) {  // TC
-                        daq_comms::protocol::RawTCSample tc;
-                        tc.channel_id = channel_id;
-                        tc.raw_adc_counts = raw_adc;
-                        tc.sample_timestamp_ms = sample_ts;
-                        tc.status_flags = status;
-                        batch.tc_samples.push_back(tc);
-                        auto cal_msgs = router.route_tc_samples_calibrated(batch, ts_ns);
-                        for (const auto& [id, msg] : cal_msgs)
-                            elodin_client.publish(id, msg);
-                    } else if (type_hi == 0x22) {  // RTD
-                        daq_comms::protocol::RawRTDSample rtd;
-                        rtd.channel_id = channel_id;
-                        rtd.raw_resistance_counts = raw_adc;
-                        rtd.sample_timestamp_ms = sample_ts;
-                        rtd.status_flags = status;
-                        batch.rtd_samples.push_back(rtd);
-                        auto cal_msgs = router.route_rtd_samples_calibrated(batch, ts_ns);
-                        for (const auto& [id, msg] : cal_msgs)
-                            elodin_client.publish(id, msg);
-                    } else if (type_hi == 0x23) {  // LC
-                        daq_comms::protocol::RawLCSample lc;
-                        lc.channel_id = channel_id;
-                        lc.raw_adc_counts = raw_adc;
-                        lc.sample_timestamp_ms = sample_ts;
-                        lc.status_flags = status;
-                        batch.lc_samples.push_back(lc);
-                        auto cal_msgs = router.route_lc_samples_calibrated(batch, ts_ns);
-                        for (const auto& [id, msg] : cal_msgs)
-                            elodin_client.publish(id, msg);
-                    }
+                    comms::messages::sensor::RawRTDMessage raw_msg;
+                    raw_msg.deserialize(payload);
+
+                    uint64_t ts_ns      = raw_msg.getField<0>();
+                    uint8_t  ch         = raw_msg.getField<1>();
+                    uint32_t raw_adc    = raw_msg.getField<3>();  // raw_resistance_counts
+                    uint32_t sample_ts  = raw_msg.getField<4>();
+                    uint8_t  status     = raw_msg.getField<5>();
+
+                    daq_comms::protocol::SensorBatch batch;
+                    daq_comms::protocol::RawRTDSample rtd;
+                    rtd.channel_id = ch;
+                    rtd.raw_resistance_counts = raw_adc;
+                    rtd.sample_timestamp_ms = sample_ts;
+                    rtd.status_flags = status;
+                    batch.rtd_samples.push_back(rtd);
+                    auto cal_msgs = router.route_rtd_samples_calibrated(batch, ts_ns);
+                    for (const auto& [id, msg] : cal_msgs)
+                        elodin_client.publish(id, msg);
+                }
+            } else if (type_hi == 0x23) {  // LC Raw
+                if (payload_len >= comms::messages::sensor::RawLCMessage::nbytes()) {
+                    uint8_t* payload = rx_buffer.data() + 12;
+
+                    comms::messages::sensor::RawLCMessage raw_msg;
+                    raw_msg.deserialize(payload);
+
+                    uint64_t ts_ns      = raw_msg.getField<0>();
+                    uint8_t  ch         = raw_msg.getField<1>();
+                    uint32_t raw_adc    = raw_msg.getField<3>();
+                    uint32_t sample_ts  = raw_msg.getField<4>();
+                    uint8_t  status     = raw_msg.getField<5>();
+
+                    daq_comms::protocol::SensorBatch batch;
+                    daq_comms::protocol::RawLCSample lc;
+                    lc.channel_id = ch;
+                    lc.raw_adc_counts = raw_adc;
+                    lc.sample_timestamp_ms = sample_ts;
+                    lc.status_flags = status;
+                    batch.lc_samples.push_back(lc);
+                    auto cal_msgs = router.route_lc_samples_calibrated(batch, ts_ns);
+                    for (const auto& [id, msg] : cal_msgs)
+                        elodin_client.publish(id, msg);
                 }
             }
         }

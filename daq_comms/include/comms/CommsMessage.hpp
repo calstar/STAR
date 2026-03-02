@@ -63,6 +63,23 @@ struct CommsMessage {
             fields);
     }
 
+    // Deserialize the tuple from a raw buffer with packed layout
+    void deserialize(const uint8_t* buffer) {
+        std::size_t offset = 0;
+        std::apply(
+            [&](auto&... field_vals) {
+                ((std::memcpy(&field_vals, buffer + offset, sizeof(field_vals)),
+                  offset += sizeof(field_vals)),
+                 ...);
+            },
+            fields);
+    }
+
+    // Compute the serialized size of this message
+    static constexpr std::size_t nbytes() {
+        return (MessageSizeHelper<Fields>::value + ... + 0);
+    }
+
 private:
     // Helper to serialize a single field (handles nested CommsMessage and std::array)
     // CRITICAL: Match FSW's Serializer::write() behavior exactly
@@ -120,18 +137,8 @@ private:
     struct MessageSizeHelper<CommsMessage<Ts...>> {
         static constexpr std::size_t value = (MessageSizeHelper<Ts>::value + ... + 0);
     };
-
-    // Deserialize the tuple from a raw buffer with packed layout
-    void deserialize(const uint8_t* buffer) {
-        std::size_t offset = 0;
-        std::apply(
-            [&](auto&... fields) {
-                ((std::memcpy(&fields, buffer + offset, sizeof(fields)), offset += sizeof(fields)),
-                 ...);
-            },
-            fields);
-    }
 };
+
 
 }  // namespace comms
 
