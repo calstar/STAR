@@ -18,3 +18,4 @@ export type CommandPayload = import('../../shared/types.js').CommandPayload;
 export type ConnectionStatus = import('../../shared/types.js').ConnectionStatus;
 export type BoardStatus = import('../../shared/types.js').BoardStatus;
 export type BoardStatusPayload = import('../../shared/types.js').BoardStatusPayload;
+export type NotificationPayload = import('../../shared/types.js').NotificationPayload;

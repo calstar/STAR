@@ -17,11 +17,21 @@
 
 import { create } from 'zustand';
 import { useCallback, useMemo } from 'react';
-import { SensorUpdate, ActuatorUpdate, StateUpdate, ConnectionStatus, SystemState, MissionStartTime, BoardStatus } from './types';
+import { SensorUpdate, ActuatorUpdate, StateUpdate, ConnectionStatus, SystemState, MissionStartTime, BoardStatus, NotificationPayload, NotificationCategory, isNotificationOngoing } from './types';
 
 interface SensorData {
   [key: string]: number; // entity.component -> value
 }
+
+export interface NotificationEntry {
+  key?: string;
+  category: NotificationCategory;
+  message: string;
+  timestampMs: number;
+  isCurrent: boolean;
+}
+
+const NOTIFICATIONS_MAX = 100;
 
 interface SensorSystemState {
   sensorData: SensorData;
@@ -33,6 +43,7 @@ interface SensorSystemState {
   missionStartTime: number | null; // T+0 from first packet (backend)
   actuatorExpectedPositions: Record<number, Record<string, 'open' | 'closed' | null>>; // state → entity → position
   boards: Record<number, BoardStatus>;
+  notifications: NotificationEntry[];
 
   updateSensor: (update: SensorUpdate) => void;
   updateActuator: (update: ActuatorUpdate) => void;
@@ -43,6 +54,7 @@ interface SensorSystemState {
   getSensorValue: (entity: string, component: string) => number | null;
   setDebugMode: (mode: boolean) => void;
   updateBoards: (boards: BoardStatus[]) => void;
+  updateNotification: (payload: NotificationPayload) => void;
 }
 
 // ── Alias table ──────────────────────────────────────────────────────────────
@@ -279,6 +291,7 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   missionStartTime: null,
   actuatorExpectedPositions: {},
    boards: {},
+  notifications: [],
 
   updateSensor: (update: SensorUpdate) => {
     const key = `${update.entity}.${update.component}`;
@@ -334,6 +347,42 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
         next[b.id] = b;
       });
       return { boards: next };
+    });
+  },
+
+  updateNotification: (payload: NotificationPayload) => {
+    set((state) => {
+      let list = [...state.notifications];
+      if (isNotificationOngoing(payload)) {
+        const idx = list.findIndex((n) => n.key === payload.key);
+        const entry: NotificationEntry = {
+          key: payload.key,
+          category: payload.category,
+          message: payload.message,
+          timestampMs: payload.timestampMs,
+          isCurrent: payload.ongoing,
+        };
+        if (idx >= 0) {
+          list[idx] = entry;
+        } else if (payload.ongoing) {
+          list.unshift(entry);
+        } else {
+          list = list.map((n) => (n.key === payload.key ? { ...n, isCurrent: false } : n));
+        }
+      } else {
+        list.unshift({
+          category: payload.category,
+          message: payload.message,
+          timestampMs: payload.timestampMs,
+          isCurrent: false,
+        });
+      }
+      list = list.slice(0, NOTIFICATIONS_MAX);
+      list.sort((a, b) => {
+        if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
+        return b.timestampMs - a.timestampMs;
+      });
+      return { notifications: list };
     });
   },
 
