@@ -1,14 +1,17 @@
 # LOX Fill Checklist
 
-*Role: Needs cryo gear, operates lox dewar and lox fill system, communicates with pad manager and mission control manager for fill level. DON'T LET VALVE FREEZE.*
+*Role: Requires cryogenic PPE. Operates LOX dewar and LOX fill system. Communicates with Pad Manager and Mission Control Manager for fill level. DO NOT ALLOW VALVES TO FREEZE.*
 
 ## Preparation
 - [ ] **DON CRYO GEAR** (Face shield, safety glasses, cryogenic gloves, apron).
-- [ ] Verify LOX dewar location and connect GSE LOX fill JIC to LOX dewar.
-- [ ] Tighten all fill connections until significant resistance is met (inspection required at resistance).
-- [ ] Connect GSE LOX fill QD to LOx tank.
-- [ ] **TELL PAD MANAGER/MISSION CONTROL LOX FILL SYSTEM IS SECURE.**
+- [ ] Inspect LOX dewar for proper positioning and stability.
+- [ ] Connect GSE LOX fill JIC to LOX dewar.
+- [ ] Tighten all fill connections until significant resistance is met (inspect at resistance).
+- [ ] Connect GSE LOX fill QD to LOX tank.
+- [ ] Confirm QD fully seated and locked.
+- [ ] **TELL PAD MANAGER / MISSION CONTROL LOX FILL SYSTEM IS SECURE.**
 - [ ] **CLEAR AREA: Ensure non-essential personnel are out of LOS of the pad.**
+- [ ] Confirm relief path is clear and vent outlets are unobstructed.
 - [ ] **CONFIRM PREP SIGNAL WITH SAFETY OFFICER / CONTROL SYSTEM OFFICER (DAQ SENSE power energized, signal continuity/comms check).**
 
 ## Fill Control
@@ -18,23 +21,29 @@
       - [ ] Tank fill valve on feed system: **OPEN**
       - [ ] Tank vent valve: **OPEN**
       - [ ] Emergency vent valve: **CLOSED**
-- [ ] Visually inspect valve positions and surrounding hardware for safety.
+- [ ] Visually inspect valve positions and surrounding hardware.
 - [ ] Slowly open LOX Dewar liquid valve.
-- [ ] Monitor pressure gauges on the LOX system continuously.
-- [ ] Actively manage fill rate and cycle operation to **PREVENT VALVE FREEZE**.
+- [ ] Monitor LOX system pressure gauges continuously.
+- [ ] Control fill rate to avoid rapid pressure or temperature spikes.
+- [ ] Actively cycle and manage valve operation to **PREVENT VALVE FREEZE**.
+- [ ] Watch for abnormal frost patterns or structural movement.
 - [ ] In case of leaks:
-      - [ ] If wrench accessible: **Close LOX Dewar valve**, tighten fitting until leak stops, then reopen valve and continue filling.
+      - [ ] If wrench accessible: **Close LOX Dewar valve**, tighten fitting until leak stops, reopen valve, continue filling.
       - [ ] If tightening does not resolve leak:
             - [ ] Close cryogenic cylinder valve.
             - [ ] Close tank fill valve and simultaneously open hose vent valve.
             - [ ] Open transfer line vent valve.
             - [ ] Disconnect fill line from tank fill valve.
-            - [ ] Drain tank through connected GSE dump valve, tighten fittings, and re-attempt fill.
+            - [ ] Drain tank through connected GSE dump valve.
+            - [ ] Tighten fittings and re-attempt fill.
 - [ ] Monitor LOX dip tube:
-      - [ ] Once LOX reaches dip-tube holes and vents, use this venting as visual fill confirmation.
-- [ ] Maintain comms with Pad Manager and Mission Control Manager on fill level and any anomalies.
-- [ ] **BREAK HERE. WAIT FOR VIDCOMM/MISSION CONTROL TO CONFIRM LEVEL/VENTING.**
+      - [ ] Use dip-tube venting as visual confirmation of fill level.
+- [ ] Maintain continuous comms with Pad Manager and Mission Control Manager.
+- [ ] Report pressure readings and visible venting status.
+- [ ] **BREAK HERE. WAIT FOR VIDCOMM / MISSION CONTROL TO CONFIRM LEVEL / VENTING.**
 - [ ] Close LOX dewar valve.
 - [ ] Close tank fill valve and open transfer line vent valve simultaneously.
+- [ ] Confirm pressure equalization before disconnect.
 - [ ] Process QD disconnect (use QD Disconnect Piston if installed).
-- [ ] **TELL PAD MANAGER/MISSION CONTROL LOX FILL IS COMPLETE.**
+- [ ] Inspect fittings post-disconnect for frost damage or leakage.
+- [ ] **TELL PAD MANAGER / MISSION CONTROL LOX FILL IS COMPLETE.**
