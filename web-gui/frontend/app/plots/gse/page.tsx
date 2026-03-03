@@ -22,8 +22,22 @@ export default function GSEGraphsPage() {
   const gn2Limits = getLimitsForSystem(pressureLimits, 'GN2');
   const { actuators: actuatorsFromConfig } = useActuatorsFromConfig();
 
-  // GSE sensors: role names containing "GSE"
-  const gseSensors = filterByRole(allSensors, 'GSE');
+  // GSE-only actuators: exclude prop/gn2 system valves (they live on Fuel / LOX / COPV pages)
+  const GSE_EXCLUDED_ACTUATORS = new Set([
+    'ACT.Fuel_Vent', 'ACT.Fuel_Press', 'ACT.Fuel_Main',
+    'ACT.LOX_Vent', 'ACT.LOX_Press', 'ACT.LOX_Main',
+    'ACT.GN2_Vent', 'ACT.GSE_Low_Vent', // GN2 Vent = GSE Low Vent
+  ]);
+  const gseActuators = actuatorsFromConfig
+    .filter((a) => !GSE_EXCLUDED_ACTUATORS.has(a.entity))
+    .map((a) => ({ label: a.name, entity: a.entity, color: getActuatorColor(a.entity) }));
+
+  // GSE sensors: role names containing "GSE", plus Fuel Fill Tank (GSE fill equipment)
+  const fillTankSensor = allSensors.find((s) => s.calEntity === 'PT_Cal.Fuel_Fill_Tank' || s.role === 'Fuel Fill Tank');
+  const gseSensors = [
+    ...filterByRole(allSensors, 'GSE'),
+    ...(fillTankSensor ? [fillTankSensor] : []),
+  ];
   const entities = gseSensors.map((s) => s.calEntity);
   const labels = gseSensors.map((s) => s.role);
   const colors = entities.map((e) => getEntityColor(e));
@@ -71,11 +85,11 @@ export default function GSEGraphsPage() {
             />
           </div>
 
-          {/* GSE actuators from config */}
+          {/* GSE actuators from config (excludes Fuel/LOX/GN2 system valves) */}
           <div className="flex-shrink-0">
             <ActuatorStatePanel
               title="GSE Actuators"
-              actuators={actuatorsFromConfig.map((a) => ({ label: a.name, entity: a.entity, color: getActuatorColor(a.entity) }))}
+              actuators={gseActuators}
             />
           </div>
         </div>

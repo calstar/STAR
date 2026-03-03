@@ -22,8 +22,10 @@ export default function FuelGraphsPage() {
   const pressureLimits = usePressureLimits();
   const ethLimits = getLimitsForSystem(pressureLimits, 'ETH');
 
-  // Fuel sensors from config (role names containing "Fuel")
-  const fuelSensors = filterByRole(allSensors, 'Fuel');
+  // Fuel sensors from config (role names containing "Fuel"), excluding GSE fill equipment
+  const fuelSensors = filterByRole(allSensors, 'Fuel').filter(
+    (s) => s.calEntity !== 'PT_Cal.Fuel_Fill_Tank'
+  );
   const entities = fuelSensors.map((s) => s.calEntity);
   const labels = fuelSensors.map((s) => s.role);
   const colors = entities.map((e) => getEntityColor(e));
@@ -86,11 +88,8 @@ export default function FuelGraphsPage() {
             <ActuatorStatePanel
               title="Fuel Actuators"
               actuators={[
-                { label: 'Fuel Main', entity: 'ACT.Fuel_Main', color: getActuatorColor('ACT.Fuel_Main') },
                 { label: 'Fuel Vent', entity: 'ACT.Fuel_Vent', color: getActuatorColor('ACT.Fuel_Vent') },
                 { label: 'Fuel Press', entity: 'ACT.Fuel_Press', color: getActuatorColor('ACT.Fuel_Press') },
-                { label: 'Fuel Fill Vent', entity: 'ACT.Fuel_Fill_Vent', color: getActuatorColor('ACT.Fuel_Fill_Vent') },
-                { label: 'Fuel Fill Press', entity: 'ACT.Fuel_Fill_Press', color: getActuatorColor('ACT.Fuel_Fill_Press') },
               ]}
             />
           </div>

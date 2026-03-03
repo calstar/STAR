@@ -11,7 +11,6 @@ import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
 import { useSensorConfig, filterByRole } from '@/lib/sensor-config';
 import { usePressureLimits, getLimitsForSystem } from '@/lib/pressure-limits';
-import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 
 export default function COPVGraphsPage() {
   const updateSensor = useSensorStore((s) => s.updateSensor);
@@ -20,7 +19,6 @@ export default function COPVGraphsPage() {
   const allSensors = useSensorConfig();
   const pressureLimits = usePressureLimits();
   const gn2Limits = getLimitsForSystem(pressureLimits, 'GN2');
-  const { actuators: actuatorsFromConfig } = useActuatorsFromConfig();
 
   // GN2 sensors: role names containing "GN2"
   const gn2Sensors = filterByRole(allSensors, 'GN2');
@@ -70,11 +68,13 @@ export default function COPVGraphsPage() {
             />
           </div>
 
-          {/* GN2 / GSE actuators from config */}
+          {/* GN2 actuator: GN2 Vent only */}
           <div className="flex-shrink-0">
             <ActuatorStatePanel
-              title="GN2 / GSE Actuators"
-              actuators={actuatorsFromConfig.map((a) => ({ label: a.name, entity: a.entity, color: getActuatorColor(a.entity) }))}
+              title="GN2 Actuator"
+              actuators={[
+                { label: 'GN2 Vent', entity: 'ACT.GN2_Vent', color: getActuatorColor('ACT.GN2_Vent') },
+              ]}
             />
           </div>
         </div>
