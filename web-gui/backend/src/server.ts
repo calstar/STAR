@@ -1427,7 +1427,7 @@ class SensorSystemServer {
   // ═══════════════════════════════════════════════════════════════════════════
 
   private handleCommand(command: CommandPayload): void {
-    if (command.commandType === 'state_transition' && !this.elodin.isConnected()) {
+    if (command.commandType === 'state_transition' && !this.elodin.isConnected() && !this.debugMode) {
       console.error('❌ Cannot send state transition: Elodin not connected');
       this.broadcast({ type: MessageType.ERROR, timestamp: Date.now(), payload: { message: 'Elodin DB not connected', command } });
       return;
@@ -1451,7 +1451,9 @@ class SensorSystemServer {
           }
         }
 
-        const success = this.elodin.sendCommand('state_transition', { state: newState });
+        const success = this.elodin.isConnected()
+          ? this.elodin.sendCommand('state_transition', { state: newState })
+          : this.debugMode; // in debug mode without Elodin, allow local state update
         if (success) {
           if (newState === SystemState.ARMED && !this.dataLogger.running) this.dataLogger.start();
           else if ((newState === SystemState.IDLE || newState === SystemState.EMERGENCY_ABORT) && this.dataLogger.running) {
