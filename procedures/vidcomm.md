@@ -12,7 +12,7 @@
 ## Active Monitoring Phase
 - [ ] Real-time monitoring for physical anomalies (e.g., leaks, venting locations).
 - [ ] **TELL LOX FILL OPERATOR UPON VISUAL CONFIRMATION OF LOX FILL (BY DIP TUBE VENTING).**
-- [ ] **BREAK HERE. WAIT FOR HOTFIRE INITIATION.**
+- [ ] **BREAK HERE. WAIT FOR HOTFIRE ATTEMPT / IGNITION SEQUENCE FROM MISSION CONTROL.**
 - [ ] Monitor Ignition phase and burn continuity.
 - [ ] Ensure continuous recording to server.
 - [ ] **TELL OPERATIONS MANAGER OF ANY VISUAL ANOMALY ENCOUNTERED BEFORE, DURING, OR AFTER TEST.**

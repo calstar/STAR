@@ -11,7 +11,7 @@
 ## Pre-Test Procedures
 - [ ] **BREAK HERE. WAIT FOR OPERATIONS MANAGER TO GIVE THE GO TO BEGIN.**
 - [ ] Energize DAQ SENSE power upon command.
-- [ ] Verify ABORT SYSTEM opens tank vents during dry run with ECOMM.
+- [ ] Verify **ABORT SYSTEM** opens tank vents during dry run with ECOMM (matches System Safing procedure).
 - [ ] Perform Remote Signal Check after Pad team clears.
 - [ ] **TELL MISSION CONTROL MANAGER AVIONICS SIGNAL IS NOMINAL.**
 

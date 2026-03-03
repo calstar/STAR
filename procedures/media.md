@@ -15,4 +15,4 @@
     - [ ] Ignition and Hotfire operations
 - [ ] Maintain strict situational awareness of all safety announcements from Operations Manager.
 - [ ] Ensure drone flight paths do not cross critical safety lines.
-- [ ] **BREAK HERE. WAIT FOR OPERATIONS MANAGER TO GIVE ALL-CLEAR AFTER TEST SAFING.**
+- [ ] **BREAK HERE. WAIT FOR OPERATIONS MANAGER TO GIVE ALL-CLEAR AFTER SYSTEM SAFING (SYSTEM BELOW 25 PSI, PER MASTER PROCEDURE).**

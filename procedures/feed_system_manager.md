@@ -11,7 +11,7 @@
 
 ## Active Propellant Operations
 - [ ] Oversee propellant operations during fill phases.
-- [ ] **BREAK HERE. WAIT FOR MISSION CONTROL TO INITIATE HOTFIRE PROTOCOL.**
+- [ ] **BREAK HERE. WAIT FOR MISSION CONTROL TO INITIATE HOTFIRE ATTEMPT / IGNITION SEQUENCE.**
 - [ ] Actively manage feed system operational parameters during hotfire.
 - [ ] Monitor line pressures and feed dynamic interactions using telemetry provided by Mission Control/ECOMM.
 

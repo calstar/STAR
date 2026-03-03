@@ -12,7 +12,7 @@
 ## Dry Run & Data Validation
 - [ ] Trigger and verify failsafe modes (e.g., disconnecting server, emergency abort).
 - [ ] Confirm accurate data is received (7 PTs, 3 HPTs, 3 LCs, 4 TCs, 4 RTDs) during the dry run.
-- [ ] **BREAK HERE. WAIT FOR MISSION CONTROL MANAGER TO COMMENCE REMOTE OPERATIONS.**
+- [ ] **BREAK HERE. WAIT FOR MISSION CONTROL MANAGER TO COMMENCE REMOTE OPERATIONS / HOTFIRE ATTEMPT.**
 - [ ] Monitor real-time telemetry from DAQ and Sensors closely.
 
 ## Active Operations

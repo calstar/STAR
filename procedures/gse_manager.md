@@ -4,7 +4,6 @@
 
 ## Preparation
 - [ ] Layout materials and wheel out Ground Support Equipment (GSE) system.
-- [ ] Setup tables and organize tools (wrenches, propulsion toolbox).
 - [ ] Check relief valve pressures and regulators for expected output.
 - [ ] Ensure check valves and regulators are in correct orientation.
 - [ ] Verify non-electrical valves are mounted per P&ID.
@@ -14,7 +13,7 @@
 - [ ] **TELL ACTCOMM TO VERIFY PNEUMATIC ACTUATORS.**
 - [ ] **TELL ECOMM TO VERIFY SENSOR CONNECTIONS ON GSE.**
 - [ ] **BREAK HERE. WAIT FOR ACTCOMM/ECOMM TO CONFIRM CONNECTIONS.**
-- [ ] **TELL PAD MANAGER GSE IS READY FOR PRESSURIZATION HAZARD CHECK.**
+- [ ] **TELL PAD MANAGER GSE IS READY FOR PRESSURIZATION HAZARD CHECK / SAFETY OFFICER CHECKOFFS.**
 - [ ] Secure pressurized bottles.
 - [ ] Attach fluid lines to hardware system and secure.
 - [ ] Set System and GSE fluid valves to safe state for start of operations.

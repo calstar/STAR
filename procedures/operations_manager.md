@@ -6,13 +6,13 @@
 - [ ] Confirm all personnel are trained and adhering strictly to safety regulations (PPE).
 - [ ] Enforce adherence to checklists and written procedures throughout the test lifecycle.
 - [ ] Initial POC with FAR range staff; confirm site permissions and local notifications are complete.
-- [ ] **BREAK HERE. WAIT FOR ALL PERSONNEL TO BE IN DESIGNATED SAFE AREAS.**
+- [ ] **BREAK HERE. WAIT FOR ALL PERSONNEL TO BE IN DESIGNATED SAFE AREAS AND PAD SAFETY OFFICER CHECKOFFS TO COMPLETE.**
 
 ## Procedures Oversight
-- [ ] Give the official GO to Pad Manager to commence Pad Setup and procedures.
+- [ ] Give the official GO to Pad Manager to commence Pad Setup and master procedures.
 - [ ] Coordinate with Mission Control Manager and Pad Manager to align procedure timing.
 - [ ] Prioritize safety checks before critical operations (e.g., Fluid Fill, Pressurization).
-- [ ] **TELL MISSION CONTROL / PAD MANAGERS TO PROCEED WITH FLUID FILLS UPON CONFIRMATION OF CLEAR ZONE.**
+- [ ] **TELL MISSION CONTROL / PAD MANAGERS TO PROCEED WITH FLUID FILLS UPON CONFIRMATION OF CLEAR ZONE (PER FLUIDS FILL SECTION).**
 
 ## Hotfire Attempt
 - [ ] Monitor strict compliance with safe distance protocols.

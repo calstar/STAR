@@ -4,7 +4,7 @@
 
 ## Pad Setup
 - [ ] Confirm tested system is sufficiently far or out of LOS.
-- [ ] **TELL OPERATIONS MANAGER (SAFETY) TO COMMENCE CHECKOFFS.**
+- [ ] **TELL OPERATIONS MANAGER (SAFETY) PAD IS READY FOR SAFETY OFFICER CHECKOFFS.**
 - [ ] Clear extraneous materials and personnel from static fire pad.
 - [ ] Establish and maintain main contact with Mission Control Manager.
 - [ ] Secure items and fittings (gauges, hose lines, harnessing).
@@ -14,7 +14,7 @@
 
 ## Fuel Fill Phase
 - [ ] **BREAK HERE. WAIT FOR OPERATIONS MANAGER TO GIVE THE GO TO BEGIN FUEL FILL.**
-- [ ] **TELL ETHANOL FILL OPERATOR TO COMMENCE FUEL FILL.**
+- [ ] **TELL ETHANOL FILL OPERATOR TO COMMENCE FUEL FILL PER MASTER PROCEDURE.**
 - [ ] Monitor Fuel Fill operations on pad.
 - [ ] Confirm Fuel Transfer Tank Vent is closed.
 - [ ] Return system to Armed state after fill via Mission Control.
@@ -23,7 +23,7 @@
 - [ ] **TELL LOX FILL OPERATOR TO DON CRYOGEN PPE.**
 - [ ] **TELL AVIONICS MANAGER TO ENERGIZE DAQ SENSE POWER.**
 - [ ] **TELL ECOMM/ACTCOMM TO CONDUCT COMMS CHECK.**
-- [ ] **TELL LOX FILL OPERATOR TO BEGIN LOX DEWAR CONNECTION.**
+- [ ] **TELL LOX FILL OPERATOR TO BEGIN LOX DEWAR CONNECTION AND VALVE ALIGNMENT PER CRYOGEN FILL PROCEDURE.**
 - [ ] Monitor Cryogen Fill on pad.
 - [ ] **BREAK HERE. WAIT FOR LOX FILL OPERATOR TO CONFIRM FILL.**
 
