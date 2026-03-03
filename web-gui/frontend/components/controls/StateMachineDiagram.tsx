@@ -4,6 +4,7 @@ import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { SystemState, CommandPayload } from '@/lib/types';
 import { useEffect, useState, useMemo } from 'react';
+import { useControlMode } from '@/lib/control-mode';
 
 const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.DEBUG]: 'DEBUG',
@@ -270,6 +271,7 @@ export default function StateMachineDiagram() {
   const updateState = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
   const [backendTransitions, setBackendTransitions] = useState<Transition[]>([]);
+  const { controlEnabled } = useControlMode();
 
   // Request transitions from backend on mount; fall back to STATIC_TRANSITIONS if unavailable
   useEffect(() => {
@@ -312,6 +314,7 @@ export default function StateMachineDiagram() {
   const transitions = backendTransitions.length > 0 ? backendTransitions : STATIC_TRANSITIONS;
 
   const sendStateTransition = (targetState: SystemState) => {
+    if (!controlEnabled) return;
     const effectiveState = currentState ?? SystemState.IDLE;
     const isAllowed = transitions.some(t => t.from === effectiveState && t.to === targetState);
     const isEmergency = ALWAYS_REACHABLE.includes(targetState);
@@ -460,7 +463,7 @@ export default function StateMachineDiagram() {
               key={state}
               state={state}
               isActive={effectiveState === state}
-              isReachable={reachableStates.has(state)}
+              isReachable={controlEnabled && reachableStates.has(state)}
               onClick={() => sendStateTransition(state)}
             />
           ))}

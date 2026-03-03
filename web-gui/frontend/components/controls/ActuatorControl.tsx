@@ -5,6 +5,7 @@ import { useGetSensorValue, useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { getActuatorOpenThreshold } from '@/lib/voltageRef';
 import { ActuatorId, ActuatorState, CommandPayload, SystemState } from '@/lib/types';
+import { useControlMode } from '@/lib/control-mode';
 
 // Human-readable names
 const ACTUATOR_NAMES: Record<ActuatorId, string> = {
@@ -96,6 +97,7 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const currentState = useSensorStore((s) => s.currentState);
   const actuatorExpectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
   const boards = useSensorStore((s) => s.boards as Record<number, { designatedSurvivor?: boolean; voltageReference?: number }>);
+  const { controlEnabled } = useControlMode();
 
   // Manual commanded state for DEBUG mode only
   const [manualCommanded, setManualCommanded] = useState<ActuatorState | null>(null);
@@ -153,8 +155,8 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
     return commandedState;
   }, [debugMode, manualCommanded, commandedState]);
 
-  // Allow manual control when debug mode is enabled
-  const canControl = debugMode;
+  // Allow manual control only when debug mode is enabled and control mode is unlocked
+  const canControl = debugMode && controlEnabled;
 
   // Feedback: try named entity first (aliases in store.ts cover the ACT_CHX fallback)
   const rawAdc = getSensorValue(entity, 'raw_adc_counts')

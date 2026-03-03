@@ -10,6 +10,7 @@ import ActuatorControl from '@/components/controls/ActuatorControl';
 import ActuatorControlByName from '@/components/controls/ActuatorControlByName';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { PRESSURE_SENSORS, PRESSURE_BAR_SENSORS } from '@/lib/sensor-colors';
+import { useControlMode } from '@/lib/control-mode';
 
 // ── Constants shared with TopBar/UnifiedDashboard ────────────────────────────
 
@@ -94,6 +95,7 @@ export default function MobileDashboard() {
   >([]);
 
   const ws = getWebSocketClient();
+  const { controlEnabled } = useControlMode();
 
   // ── WebSocket setup ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -148,6 +150,7 @@ export default function MobileDashboard() {
   const isFullyConnected = connected && elodinConnected;
 
   const sendState = (state: SystemState) => {
+    if (!controlEnabled) return;
     const cmd: CommandPayload = { commandType: 'state_transition', data: { state } };
     ws.sendCommand(cmd);
   };
@@ -193,37 +196,48 @@ export default function MobileDashboard() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => {
+              if (!controlEnabled) return;
               const next = !debugMode;
               setDebugMode(next);
               ws.sendCommand({ commandType: 'debug_mode', data: { debugMode: next } });
             }}
+            disabled={!controlEnabled}
             className={`px-3 py-2 rounded text-xs font-bold uppercase tracking-wider border transition-all flex-shrink-0 ${
-              debugMode
-                ? 'bg-yellow-800/60 border-yellow-600 text-yellow-300'
-                : 'bg-gray-800 border-gray-700 text-gray-500'
+              !controlEnabled
+                ? 'bg-gray-900 border-gray-800 text-gray-600 cursor-not-allowed'
+                : debugMode
+                  ? 'bg-yellow-800/60 border-yellow-600 text-yellow-300'
+                  : 'bg-gray-800 border-gray-700 text-gray-500'
             }`}
+            title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
           >
             {debugMode ? '🔓 DEBUG' : '🔒 SAFE'}
           </button>
           <button
             onClick={handleEngineAbort}
+            disabled={!controlEnabled}
             className="flex-1 py-2 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border border-amber-600
-                       text-white font-bold text-xs rounded tracking-wider transition-colors"
+                       text-white font-bold text-xs rounded tracking-wider transition-colors disabled:bg-amber-900 disabled:border-amber-900 disabled:text-amber-700 disabled:cursor-not-allowed"
+            title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
           >
             ENGINE ABORT
           </button>
           <button
             onClick={handleGseAbort}
+            disabled={!controlEnabled}
             className="flex-1 py-2 bg-orange-800 hover:bg-orange-700 active:bg-orange-900 border border-orange-600
-                       text-white font-bold text-xs rounded tracking-wider transition-colors"
+                       text-white font-bold text-xs rounded tracking-wider transition-colors disabled:bg-orange-900 disabled:border-orange-900 disabled:text-orange-700 disabled:cursor-not-allowed"
+            title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
           >
             GSE ABORT
           </button>
           <button
             onClick={handleEmergencyAbort}
+            disabled={!controlEnabled}
             className="flex-1 py-2 bg-red-700 hover:bg-red-600 active:bg-red-800 border border-red-500
                        text-white font-bold text-xs rounded tracking-wider transition-colors
-                       shadow-[0_0_6px_rgba(239,68,68,0.3)]"
+                       shadow-[0_0_6px_rgba(239,68,68,0.3)] disabled:bg-red-900 disabled:border-red-900 disabled:text-red-700 disabled:cursor-not-allowed"
+            title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
           >
             E-ABORT
           </button>

@@ -53,6 +53,14 @@ export default function WindowLauncher() {
     url: '/window/unified', accent: '#EC4899',
   };
 
+  const allPlotsEntry: WindowButtonProps = {
+    id: 'all',
+    name: 'All Plots',
+    description: 'Combined GN2 / fuel / LOX / GSE pressure plots in a single window',
+    url: '/window/all',
+    accent: '#3B82F6',
+  };
+
   const mobileEntry: WindowButtonProps = {
     id: 'mobile-gui', name: 'Mobile GUI 📱',
     description: 'Touch-friendly layout — compact header, pressure plot, actuators & state machine stacked for phones/tablets',

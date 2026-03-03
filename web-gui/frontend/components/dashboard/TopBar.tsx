@@ -8,6 +8,7 @@ import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, SensorUpdat
 import PressureBar from '@/components/plots/PressureBar';
 import { getEntityColor } from '@/lib/sensor-colors';
 import NotificationPanel from '@/components/dashboard/NotificationPanel';
+import { useControlMode } from '@/lib/control-mode';
 
 const STATE_NAMES: Record<number, string> = {
   0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
@@ -76,6 +77,9 @@ export default function TopBar() {
   const updateActuator = useSensorStore((s) => s.updateActuator);
   const updateActuatorExpectedPositions = useSensorStore((s) => s.updateActuatorExpectedPositions);
   const updateNotification = useSensorStore((s) => s.updateNotification);
+  const { controlEnabled, unlocking, error, unlock, lock } = useControlMode();
+  const [passwordInput, setPasswordInput] = useState('');
+  const [showUnlockForm, setShowUnlockForm] = useState(false);
 
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({
     connected: false, elodinConnected: false,
@@ -212,6 +216,7 @@ export default function TopBar() {
 
   // Simple helper: send a single state-transition command
   const sendState = (state: SystemState) => {
+    if (!controlEnabled) return;
     const cmd: CommandPayload = { commandType: 'state_transition', data: { state } };
     ws.sendCommand(cmd);
   };
@@ -268,7 +273,7 @@ export default function TopBar() {
 
         {/* Center: pressure bars — fills remaining space */}
         <div className="flex-1 flex items-stretch justify-end gap-2 py-1 pr-2 min-w-0 overflow-hidden">
-          {PRESSURE_BARS.map(({ label, entity, nop, meop, color }) => (
+          {effectivePressureBars.map(({ label, entity, nop, meop, color }) => (
             <ReactivePressureBar
               key={entity}
               label={label}
@@ -288,56 +293,130 @@ export default function TopBar() {
               {currentStateName}
             </span>
           </div>
+          {/* Control lock + debug mode + aborts */}
+          <div className="flex items-center gap-2 border-l border-gray-800/60 pl-2">
+            <div className="flex flex-col items-center gap-0.5">
+              <span className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold">CONTROL</span>
+              <div className="flex items-center gap-1">
+                <span
+                  className={`text-[11px] font-mono ${
+                    controlEnabled ? 'text-green-400' : 'text-gray-500'
+                  }`}
+                >
+                  {controlEnabled ? 'UNLOCKED' : 'VIEWER'}
+                </span>
+                {controlEnabled ? (
+                  <button
+                    onClick={() => {
+                      lock();
+                      setShowUnlockForm(false);
+                      setPasswordInput('');
+                    }}
+                    className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wider border border-gray-700 bg-gray-900 hover:bg-gray-800"
+                  >
+                    Lock
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setShowUnlockForm((v) => !v)}
+                    className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wider border border-gray-700 bg-gray-900 hover:bg-gray-800"
+                  >
+                    Unlock
+                  </button>
+                )}
+              </div>
+              {!controlEnabled && showUnlockForm && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    unlock(passwordInput);
+                  }}
+                  className="mt-1 flex flex-col gap-1"
+                >
+                  <input
+                    type="password"
+                    value={passwordInput}
+                    onChange={(e) => setPasswordInput(e.target.value)}
+                    placeholder="Control password"
+                    className="px-2 py-1 rounded bg-background border border-gray-700 text-[11px] text-white"
+                  />
+                  <button
+                    type="submit"
+                    disabled={unlocking || !passwordInput}
+                    className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wider border border-blue-700 bg-blue-700/80 hover:bg-blue-600 disabled:opacity-50"
+                  >
+                    {unlocking ? 'Unlocking…' : 'Submit'}
+                  </button>
+                  {error && (
+                    <span className="text-[10px] text-red-400">
+                      {error}
+                    </span>
+                  )}
+                </form>
+              )}
+            </div>
 
-          {/* Debug mode toggle */}
-          <div className="flex flex-col items-center gap-0.5 border-l border-gray-800/60 pl-2">
-            <span className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold">MODE</span>
-            <button
-              onClick={() => {
-                const newDebugMode = !debugMode;
-                setDebugMode(newDebugMode);
-                const cmd: CommandPayload = {
-                  commandType: 'debug_mode',
-                  data: { debugMode: newDebugMode }
-                };
-                ws.sendCommand(cmd);
-              }}
-              className={`px-2.5 py-1.5 rounded text-[11px] font-bold uppercase tracking-wider border transition-all ${
-                debugMode
-                  ? 'bg-yellow-800/60 border-yellow-600 text-yellow-300 shadow-[0_0_6px_rgba(234,179,8,0.3)]'
-                  : 'bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-500'
-              }`}
-            >
-              {debugMode ? '🔓 DEBUG' : '🔒 SAFE'}
-            </button>
-          </div>
+            <div className="flex flex-col items-center gap-0.5 border-l border-gray-800/60 pl-2">
+              <span className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold">MODE</span>
+              <button
+                onClick={() => {
+                  if (!controlEnabled) return;
+                  const newDebugMode = !debugMode;
+                  setDebugMode(newDebugMode);
+                  const cmd: CommandPayload = {
+                    commandType: 'debug_mode',
+                    data: { debugMode: newDebugMode }
+                  };
+                  ws.sendCommand(cmd);
+                }}
+                disabled={!controlEnabled}
+                className={`px-2.5 py-1.5 rounded text-[11px] font-bold uppercase tracking-wider border transition-all ${
+                  debugMode
+                    ? controlEnabled
+                      ? 'bg-yellow-800/60 border-yellow-600 text-yellow-300 shadow-[0_0_6px_rgba(234,179,8,0.3)]'
+                      : 'bg-yellow-900/40 border-yellow-800 text-yellow-700 cursor-not-allowed'
+                    : controlEnabled
+                      ? 'bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-500'
+                      : 'bg-gray-900 border-gray-800 text-gray-700 cursor-not-allowed'
+                }`}
+                title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+              >
+                {debugMode ? '🔓 DEBUG' : '🔒 SAFE'}
+              </button>
+            </div>
 
-          {/* Abort buttons */}
-          <div className="flex flex-col gap-0.5 border-l border-gray-800/60 pl-2">
-            <span className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold">ABORT</span>
-            <div className="flex flex-col gap-0.5">
-              <button
-                onClick={handleEngineAbort}
-                className="px-2.5 py-1 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border border-amber-600
-                           text-white font-semibold text-[11px] rounded tracking-wider transition-colors"
-              >
-                ENGINE ABORT
-              </button>
-              <button
-                onClick={handleGseAbort}
-                className="px-2.5 py-1 bg-orange-800 hover:bg-orange-700 active:bg-orange-900 border border-orange-600
-                           text-white font-semibold text-[11px] rounded tracking-wider transition-colors"
-              >
-                GSE ABORT
-              </button>
-              <button
-                onClick={handleEmergencyAbort}
-                className="px-2.5 py-1 bg-red-700 hover:bg-red-600 active:bg-red-800 border border-red-500
-                           text-white font-semibold text-[11px] rounded tracking-wider transition-colors
-                           shadow-[0_0_6px_rgba(239,68,68,0.4)]"
-              >
-                E-ABORT
-              </button>
+            <div className="flex flex-col gap-0.5 border-l border-gray-800/60 pl-2">
+              <span className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold">ABORT</span>
+              <div className="flex flex-col gap-0.5">
+                <button
+                  onClick={handleEngineAbort}
+                  disabled={!controlEnabled}
+                  className="px-2.5 py-1 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border border-amber-600
+                             text-white font-semibold text-[11px] rounded tracking-wider transition-colors disabled:bg-amber-900 disabled:border-amber-900 disabled:text-amber-700 disabled:cursor-not-allowed"
+                  title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+                >
+                  ENGINE ABORT
+                </button>
+                <button
+                  onClick={handleGseAbort}
+                  disabled={!controlEnabled}
+                  className="px-2.5 py-1 bg-orange-800 hover:bg-orange-700 active:bg-orange-900 border border-orange-600
+                             text-white font-semibold text-[11px] rounded tracking-wider transition-colors disabled:bg-orange-900 disabled:border-orange-900 disabled:text-orange-700 disabled:cursor-not-allowed"
+                  title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+                >
+                  GSE ABORT
+                </button>
+                <button
+                  onClick={handleEmergencyAbort}
+                  disabled={!controlEnabled}
+                  className="px-2.5 py-1 bg-red-700 hover:bg-red-600 active:bg-red-800 border border-red-500
+                             text-white font-semibold text-[11px] rounded tracking-wider transition-colors
+                             shadow-[0_0_6px_rgba(239,68,68,0.4)] disabled:bg-red-900 disabled:border-red-900 disabled:text-red-700 disabled:cursor-not-allowed"
+                  title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+                >
+                  E-ABORT
+                </button>
+              </div>
             </div>
           </div>
         </div>

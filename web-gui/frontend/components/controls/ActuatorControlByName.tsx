@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useGetSensorValue, useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { ActuatorState, CommandPayload } from '@/lib/types';
+import { useControlMode } from '@/lib/control-mode';
 
 /** Config-driven actuator control: sends command by role name (config.toml actuator_roles). */
 export interface ActuatorControlByNameProps {
@@ -18,9 +19,9 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
   const debugMode = useSensorStore((s) => s.debugMode);
   const currentState = useSensorStore((s) => s.currentState);
   const actuatorExpectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
-
   const [manualCommanded, setManualCommanded] = useState<ActuatorState | null>(null);
   const [pending, setPending] = useState(false);
+  const { controlEnabled } = useControlMode();
 
   const stateExpected = currentState != null ? (actuatorExpectedPositions[currentState] ?? {}) : {};
   const expected = stateExpected[entity] ?? null;
@@ -48,7 +49,7 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
     return commandedState;
   }, [debugMode, manualCommanded, commandedState]);
 
-  const canControl = debugMode;
+  const canControl = debugMode && controlEnabled;
 
   const rawAdc = getSensorValue(entity, 'raw_adc_counts')
     ?? getSensorValue(`ACT.ACT_CH${channel}`, 'raw_adc_counts')

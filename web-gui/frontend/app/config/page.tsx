@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType } from '@/lib/types';
+import { useControlMode } from '@/lib/control-mode';
 
 interface ConfigData {
   server_heartbeat?: {
@@ -85,6 +86,7 @@ export default function ConfigPage() {
   const [advancedError, setAdvancedError] = useState<string | null>(null);
 
   const ws = getWebSocketClient();
+  const { controlEnabled } = useControlMode();
 
   useEffect(() => {
     ws.connect();
@@ -314,10 +316,11 @@ export default function ConfigPage() {
             </button>
             <button
               onClick={saveConfig}
-              disabled={saving || loading}
-              className="px-4 py-2 bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              disabled={saving || loading || !controlEnabled}
+              className="px-4 py-2 bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={controlEnabled ? undefined : 'Viewer mode: config changes disabled'}
             >
-              {saving ? 'Saving...' : 'Save Config'}
+              {saving ? 'Saving...' : controlEnabled ? 'Save Config' : 'Save Disabled (Viewer)'}
             </button>
           </div>
         </div>
@@ -331,6 +334,12 @@ export default function ConfigPage() {
         {success && (
           <div className="mb-4 p-4 bg-green-900/30 border border-green-500 rounded-lg text-green-200">
             Configuration saved successfully!
+          </div>
+        )}
+
+        {!controlEnabled && (
+          <div className="mb-4 p-3 bg-yellow-900/40 border border-yellow-600 rounded-lg text-yellow-200 text-sm">
+            Viewer mode: configuration changes are disabled. Unlock controls in the top bar to enable saving.
           </div>
         )}
 
