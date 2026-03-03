@@ -248,15 +248,6 @@ class SensorSystemServer {
   private readonly SETUP_STUCK_THRESHOLD_MS = 4000;
   private readonly BOARD_STATE_SETUP = 1;
 
-  /** Notification system: previous board connected state for transition detection */
-  private previousBoardConnected: Map<number, boolean> = new Map();
-  /** First time we saw board in SETUP (boardState === 1), for "stuck in setup" detection */
-  private boardFirstSeenSetupMs: Map<number, number> = new Map();
-  /** Keys for which we have emitted ongoing: true (so we only emit ongoing: false when they clear) */
-  private activeNotificationKeys: Set<string> = new Set();
-  private readonly SETUP_STUCK_THRESHOLD_MS = 4000;
-  private readonly BOARD_STATE_SETUP = 1;
-
   constructor() {
     console.log(`🚀 Starting Sensor System Server...`);
     console.log(`   WebSocket: ${WS_HOST}:${WS_PORT}`);
@@ -547,97 +538,6 @@ class SensorSystemServer {
   // ═══════════════════════════════════════════════════════════════════════════
   // Elodin setup
   // ═══════════════════════════════════════════════════════════════════════════
-
-  /**
-   * Initialize board registry from config.toml
-   * Each board gets a numeric ID and boardNumber; IP is derived as 192.168.2.[id]
-   */
-  private loadBoardRegistry(): void {
-    try {
-      const config = readConfig();
-      const boards = config.boards || {};
-      this.boardRegistryById.clear();
-      this.boardsStatus.clear();
-      this.boardConfigState.clear();
-      this.designatedSurvivorBoardId = null;
-      this.designatedSurvivorIP = null;
-      this.designatedSurvivorConnected = false;
-
-      const designatedCandidates: Array<{ id: number; ip: string }> = [];
-
-      for (const [key, raw] of Object.entries(boards)) {
-        const board: any = raw;
-        const type: string = board.type || 'UNKNOWN';
-        // Distinguish between human board number and numeric ID used for IP
-        const boardNumber: number | null = typeof board.board_number === 'number'
-          ? board.board_number
-          : (typeof board.board_id === 'number' ? board.board_id : null);
-        const id: number | undefined = typeof board.id === 'number'
-          ? board.id
-          : (typeof board.board_id === 'number' ? board.board_id : undefined);
-        if (id === undefined) {
-          console.warn(`⚠️ Board ${key} is missing id/board_id; skipping heartbeat tracking`);
-          continue;
-        }
-        const ipFromConfig: string | undefined = typeof board.ip === 'string' ? board.ip : undefined;
-        const ip = ipFromConfig || `192.168.2.${id}`;
-
-        const necessaryForAbort: boolean = !!board.necessary_for_abort && type !== 'ACTUATOR';
-        const designatedSurvivor: boolean = !!board.designated_survivor && type === 'ACTUATOR';
-
-        // Determine sensor channels we want from this board
-        const numSensors: number | undefined = typeof board.num_sensors === 'number' ? board.num_sensors : undefined;
-        const activeConnectors: unknown = board.active_connectors;
-        let sensorChannels: number[] = [];
-        if (Array.isArray(activeConnectors) && activeConnectors.length > 0) {
-          sensorChannels = activeConnectors
-            .map((v) => Number(v))
-            .filter((v) => Number.isFinite(v) && v >= 1 && v <= 255);
-        } else if (numSensors && numSensors > 0) {
-          sensorChannels = Array.from({ length: numSensors }, (_v, i) => i + 1);
-        }
-
-        const entry = {
-          type,
-          boardNumber,
-          id,
-          ip,
-          expected: true as const,
-          necessaryForAbort,
-          designatedSurvivor,
-          sensorChannels,
-        };
-        this.boardRegistryById.set(id, entry);
-        this.boardsStatus.set(id, {
-          ...entry,
-          connected: false,
-          lastHeartbeatMs: null,
-          heartbeatTimes: [],
-          boardState: null,
-          engineState: null,
-        });
-        this.boardConfigState.set(id, { status: 'pending' });
-
-        if (designatedSurvivor) {
-          designatedCandidates.push({ id, ip });
-        }
-      }
-
-      if (designatedCandidates.length === 1) {
-        this.designatedSurvivorBoardId = designatedCandidates[0].id;
-        this.designatedSurvivorIP = designatedCandidates[0].ip;
-        console.log(`📋 Designated survivor actuator board: ID ${this.designatedSurvivorBoardId} (${this.designatedSurvivorIP})`);
-      } else if (designatedCandidates.length === 0) {
-        console.warn('⚠️ No designated survivor actuator board found in config.toml; SENSOR_CONFIG packets will not be sent');
-      } else {
-        console.warn(`⚠️ Multiple designated survivor boards found (${designatedCandidates.length}); SENSOR_CONFIG packets will not be sent`);
-      }
-
-      console.log(`📋 Loaded ${this.boardRegistryById.size} boards from config.toml`);
-    } catch (error) {
-      console.warn('⚠️ Failed to load boards from config.toml; heartbeat pane will rely on discovery only:', error);
-    }
-  }
 
   /**
    * Initialize board registry from config.toml
@@ -1843,12 +1743,6 @@ class SensorSystemServer {
     }
   }
 
-  /** Broadcast a single notification to all clients (for notification panel). */
-  private broadcastNotification(payload: NotificationPayload): void {
-    if (this.clients.size === 0) return;
-    this.broadcast({ type: MessageType.NOTIFICATION, timestamp: Date.now(), payload });
-  }
-
   /** Build a snapshot of current board status suitable for WebSocket broadcast. */
   private getBoardStatusSnapshot(): BoardStatus[] {
     const now = Date.now();
@@ -1921,103 +1815,6 @@ class SensorSystemServer {
       timestamp: Date.now(),
       payload: { boards: snapshot },
     });
-  }
-
-  /**
-   * Send SERVER_HEARTBEAT packet via UDP broadcast.
-   * Packet format (DAQv2Comms):
-   *   Header: [packet_type(1)=2, version(1)=0, timestamp_ms(4, LE)]
-   *   Body:   [engine_state(1)] where engine_state is SystemState numeric code.
-   */
-  private sendServerHeartbeatUDP(): void {
-    if (!this.actuatorSocket) {
-      return;
-    }
-    try {
-      const packetType = 2; // SERVER_HEARTBEAT
-      const version = 0;
-      const timestamp = Date.now() >>> 0;
-      const engineCode = (this.currentState ?? SystemState.IDLE) as number;
-
-      const buffer = Buffer.allocUnsafe(7);
-      buffer.writeUInt8(packetType, 0);
-      buffer.writeUInt8(version, 1);
-      buffer.writeUInt32LE(timestamp, 2);
-      buffer.writeUInt8(engineCode, 6);
-
-      this.actuatorSocket.send(
-        buffer,
-        0,
-        buffer.length,
-        this.serverBroadcastPort,
-        this.serverBroadcastIP,
-        (err) => {
-          if (err) {
-            console.error(
-              `❌ Failed to send SERVER_HEARTBEAT to ${this.serverBroadcastIP}:${this.serverBroadcastPort}:`,
-              err,
-            );
-          }
-        },
-      );
-    } catch (err) {
-      console.error('❌ Error while constructing/sending SERVER_HEARTBEAT packet:', err);
-    }
-  }
-
-  /**
-   * Broadcast an ABORT packet (header-only) to all boards.
-   */
-  private sendAbortBroadcast(): void {
-    this.sendSimpleBroadcastPacket(7, 'ABORT');
-  }
-
-  /**
-   * Broadcast an ABORT_DONE packet (header-only) to all boards.
-   */
-  private sendAbortDoneBroadcast(): void {
-    this.sendSimpleBroadcastPacket(8, 'ABORT_DONE');
-  }
-
-  /**
-   * Broadcast a CLEAR_ABORT packet (header-only) to all boards.
-   */
-  private sendClearAbortBroadcast(): void {
-    this.sendSimpleBroadcastPacket(9, 'CLEAR_ABORT');
-  }
-
-  /**
-   * Helper for header-only UDP broadcast packets that share the same format:
-   *   [packet_type(1), version(1)=0, timestamp_ms(4, LE)]
-   */
-  private sendSimpleBroadcastPacket(packetType: number, label: string): void {
-    if (!this.actuatorSocket) return;
-    try {
-      const version = 0;
-      const timestamp = Date.now() >>> 0;
-      const buffer = Buffer.allocUnsafe(6);
-      buffer.writeUInt8(packetType, 0);
-      buffer.writeUInt8(version, 1);
-      buffer.writeUInt32LE(timestamp, 2);
-
-      this.actuatorSocket.send(
-        buffer,
-        0,
-        buffer.length,
-        this.serverBroadcastPort,
-        this.serverBroadcastIP,
-        (err) => {
-          if (err) {
-            console.error(
-              `❌ Failed to send ${label} packet to ${this.serverBroadcastIP}:${this.serverBroadcastPort}:`,
-              err,
-            );
-          }
-        },
-      );
-    } catch (err) {
-      console.error(`❌ Error while constructing/sending ${label} packet:`, err);
-    }
   }
 
   private async syncSidecarCoefficients(): Promise<void> {

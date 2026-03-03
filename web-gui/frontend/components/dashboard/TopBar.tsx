@@ -4,9 +4,10 @@ import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { startDataCache } from '@/lib/data-cache';
 import { useEffect, useState } from 'react';
-import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, SensorUpdate, MessageType } from '@/lib/types';
+import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, SensorUpdate, ActuatorUpdate, MessageType, NotificationPayload } from '@/lib/types';
 import PressureBar from '@/components/plots/PressureBar';
 import { PRESSURE_BAR_SENSORS } from '@/lib/sensor-colors';
+import NotificationPanel from '@/components/dashboard/NotificationPanel';
 
 const STATE_NAMES: Record<number, string> = {
   0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
@@ -67,11 +68,16 @@ export default function TopBar() {
   const updateConnectionStatus = useSensorStore((s) => s.updateConnectionStatus);
   const updateState = useSensorStore((s) => s.updateState);
   const updateSensor = useSensorStore((s) => s.updateSensor);
+  const updateActuator = useSensorStore((s) => s.updateActuator);
+  const updateActuatorExpectedPositions = useSensorStore((s) => s.updateActuatorExpectedPositions);
+  const updateNotification = useSensorStore((s) => s.updateNotification);
 
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({
     connected: false, elodinConnected: false,
   });
   const [clock, setClock] = useState('');
+  const [countdown, setCountdown] = useState('');
+  const [countdownExpired, setCountdownExpired] = useState(false);
 
   const ws = getWebSocketClient();
 
@@ -93,11 +99,49 @@ export default function TopBar() {
     const unsubSensor = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => {
       updateSensor(p as SensorUpdate);
     });
-    return () => { unsubConn(); unsubState(); unsubSensor(); };
-  }, [ws, updateConnectionStatus, updateState, updateSensor]);
+    const unsubActuator = ws.on(MessageType.ACTUATOR_UPDATE, (p: unknown) => {
+      updateActuator(p as ActuatorUpdate);
+    });
+    const unsubExpected = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
+      updateActuatorExpectedPositions(p as Record<number, Record<string, 'open' | 'closed' | null>>);
+    });
+    const unsubNotification = ws.on(MessageType.NOTIFICATION, (p: unknown) => {
+      updateNotification(p as NotificationPayload);
+    });
+    return () => {
+      unsubConn();
+      unsubState();
+      unsubSensor();
+      unsubActuator();
+      unsubExpected();
+      unsubNotification();
+    };
+  }, [ws, updateConnectionStatus, updateState, updateSensor, updateActuator, updateActuatorExpectedPositions, updateNotification]);
 
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString('en-US', { hour12: true }));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Countdown to Friday March 6, 2026 12:00:00 PST (UTC-8 = 20:00 UTC)
+  const LAUNCH_TARGET_MS = Date.UTC(2026, 2, 6, 20, 0, 0); // month is 0-indexed
+  useEffect(() => {
+    const tick = () => {
+      const diff = LAUNCH_TARGET_MS - Date.now();
+      if (diff <= 0) {
+        setCountdown('000:00:00');
+        setCountdownExpired(true);
+      } else {
+        const totalSecs = Math.floor(diff / 1000);
+        const h = Math.floor(totalSecs / 3600);
+        const m = Math.floor((totalSecs % 3600) / 60);
+        const s = totalSecs % 60;
+        setCountdown(`${String(h).padStart(3, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`);
+        setCountdownExpired(false);
+      }
+    };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
@@ -140,7 +184,7 @@ export default function TopBar() {
     <div className="bg-card border-b border-gray-800 select-none flex-shrink-0" style={{ height: '15vh', minHeight: 110 }}>
       <div className="flex items-stretch h-full px-4 gap-4">
 
-        {/* Left: brand + connection + clock */}
+        {/* Left: brand + connection + clock + countdown */}
         <div className="flex flex-col justify-start pt-1 gap-0.5 flex-shrink-0 pr-6 border-r border-gray-800/60">
           <span className="text-7xl font-bold tracking-widest text-blue-400 uppercase leading-none">
             DIABLO DAQ
@@ -152,6 +196,17 @@ export default function TopBar() {
             </span>
           </div>
           <span className="text-5xl font-mono text-gray-200 tabular-nums font-bold leading-tight">{clock}</span>
+          <div className="flex flex-col items-start gap-0">
+            <span className="text-xs text-gray-500 uppercase tracking-widest font-semibold">T− LAUNCH</span>
+            <span className={`text-4xl font-mono tabular-nums font-bold leading-tight ${countdownExpired ? 'text-red-400' : 'text-white'}`}>
+              {countdown}
+            </span>
+          </div>
+        </div>
+
+        {/* Middle: notifications */}
+        <div className="flex flex-col justify-start pt-1 pr-2 flex-shrink-0">
+          <NotificationPanel />
         </div>
 
         {/* Center: pressure bars — dominant */}
@@ -170,9 +225,9 @@ export default function TopBar() {
 
         {/* Right: state + abort */}
         <div className="flex items-center gap-6 flex-shrink-0 pl-4 border-l border-gray-800/60">
-          <div className="flex flex-col items-center gap-2">
+          <div className="flex flex-col items-center gap-2 w-56">
             <span className="text-lg text-gray-400 uppercase tracking-widest font-bold">STATE</span>
-            <span className={`text-6xl font-bold font-mono tracking-wider ${stateColor}`}>
+            <span className={`text-5xl font-bold font-mono tracking-wider text-center leading-tight whitespace-normal ${stateColor}`}>
               {currentStateName}
             </span>
           </div>

@@ -181,6 +181,8 @@ export interface CalibrationStatusPayload {
   channels: CalibrationChannelStatus[];
   phase2Enabled: boolean;
   timestamp: number;
+  /** Absolute path of the calibration file that was loaded at startup, or null if none. */
+  calibrationFilePath?: string | null;
 }
 
 export type CalibrationCommandType =
