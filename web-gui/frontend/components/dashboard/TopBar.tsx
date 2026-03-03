@@ -280,18 +280,18 @@ export default function TopBar() {
           ))}
         </div>
 
-        {/* Right: state + abort */}
-        <div className="flex items-center gap-3 flex-shrink-0 pl-2 border-l border-gray-800/60">
-          <div className="flex flex-col items-center gap-1 w-36">
-            <span className="text-xs text-gray-400 uppercase tracking-widest font-bold">STATE</span>
-            <span className={`text-2xl font-bold font-mono tracking-wider text-center leading-tight whitespace-normal ${stateColor}`}>
+        {/* Right: state + mode + abort (compact) */}
+        <div className="flex items-center gap-2 flex-shrink-0 pl-2 border-l border-gray-800/60">
+          <div className="flex flex-col items-center gap-0.5 w-28">
+            <span className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">STATE</span>
+            <span className={`text-lg font-bold font-mono tracking-wider text-center leading-tight whitespace-normal ${stateColor}`}>
               {currentStateName}
             </span>
           </div>
 
           {/* Debug mode toggle */}
-          <div className="flex flex-col items-center gap-1 border-l border-gray-800/60 pl-2">
-            <span className="text-xs text-gray-500 uppercase tracking-widest font-semibold">MODE</span>
+          <div className="flex flex-col items-center gap-0.5 border-l border-gray-800/60 pl-2">
+            <span className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold">MODE</span>
             <button
               onClick={() => {
                 const newDebugMode = !debugMode;
@@ -302,7 +302,7 @@ export default function TopBar() {
                 };
                 ws.sendCommand(cmd);
               }}
-              className={`px-4 py-2 rounded-md text-sm font-bold uppercase tracking-wider border transition-all ${
+              className={`px-2.5 py-1.5 rounded text-[11px] font-bold uppercase tracking-wider border transition-all ${
                 debugMode
                   ? 'bg-yellow-800/60 border-yellow-600 text-yellow-300 shadow-[0_0_6px_rgba(234,179,8,0.3)]'
                   : 'bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-500'
@@ -313,28 +313,28 @@ export default function TopBar() {
           </div>
 
           {/* Abort buttons */}
-          <div className="flex flex-col gap-1 border-l border-gray-800/60 pl-2">
-            <span className="text-xs text-gray-500 uppercase tracking-widest font-semibold">ABORT</span>
-            <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-0.5 border-l border-gray-800/60 pl-2">
+            <span className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold">ABORT</span>
+            <div className="flex flex-col gap-0.5">
               <button
                 onClick={handleEngineAbort}
-                className="px-3 py-1.5 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border-2 border-amber-600
-                           text-white font-semibold text-xs rounded-md tracking-wider transition-colors"
+                className="px-2.5 py-1 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border border-amber-600
+                           text-white font-semibold text-[11px] rounded tracking-wider transition-colors"
               >
                 ENGINE ABORT
               </button>
               <button
                 onClick={handleGseAbort}
-                className="px-3 py-1.5 bg-orange-800 hover:bg-orange-700 active:bg-orange-900 border-2 border-orange-600
-                           text-white font-semibold text-xs rounded-md tracking-wider transition-colors"
+                className="px-2.5 py-1 bg-orange-800 hover:bg-orange-700 active:bg-orange-900 border border-orange-600
+                           text-white font-semibold text-[11px] rounded tracking-wider transition-colors"
               >
                 GSE ABORT
               </button>
               <button
                 onClick={handleEmergencyAbort}
-                className="px-3 py-1.5 bg-red-700 hover:bg-red-600 active:bg-red-800 border-2 border-red-500
-                           text-white font-semibold text-xs rounded-md tracking-wider transition-colors
-                           shadow-[0_0_8px_rgba(239,68,68,0.4)]"
+                className="px-2.5 py-1 bg-red-700 hover:bg-red-600 active:bg-red-800 border border-red-500
+                           text-white font-semibold text-[11px] rounded tracking-wider transition-colors
+                           shadow-[0_0_6px_rgba(239,68,68,0.4)]"
               >
                 E-ABORT
               </button>

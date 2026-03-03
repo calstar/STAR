@@ -62,7 +62,7 @@ export default function NotificationPanel() {
           />
         </span>
       </div>
-      <div className="flex items-center justify-end mb-1.5 pr-6">
+      <div className="flex items-center justify-start mb-1.5 pl-1 pr-6">
         <button
           type="button"
           onClick={clearNotifications}
