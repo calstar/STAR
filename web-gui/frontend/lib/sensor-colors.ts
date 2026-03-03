@@ -34,7 +34,14 @@ export const ENTITY_COLORS: Record<string, string> = {
 };
 
 export function getEntityColor(entity: string): string {
-  return ENTITY_COLORS[entity] ?? '#94a3b8';
+  if (ENTITY_COLORS[entity]) return ENTITY_COLORS[entity];
+  // Deterministic fallback for config-driven / unknown entities.
+  // Stable across sessions so the same entity keeps the same color.
+  let h = 0;
+  for (let i = 0; i < entity.length; i++) {
+    h = (h * 31 + entity.charCodeAt(i)) % 360;
+  }
+  return `hsl(${h}, 70%, 60%)`;
 }
 
 export const PRESSURE_SENSORS = [
@@ -80,5 +87,10 @@ export const ACTUATOR_COLORS: Record<string, string> = {
 };
 
 export function getActuatorColor(entity: string): string {
-  return ACTUATOR_COLORS[entity] ?? '#94a3b8';
+  if (ACTUATOR_COLORS[entity]) return ACTUATOR_COLORS[entity];
+  let h = 0;
+  for (let i = 0; i < entity.length; i++) {
+    h = (h * 31 + entity.charCodeAt(i)) % 360;
+  }
+  return `hsl(${h}, 70%, 60%)`;
 }

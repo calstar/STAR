@@ -47,12 +47,6 @@ export default function WindowLauncher() {
   const { closeAllWindows, windows } = useWindowManager();
   const openCount = windows.filter((w) => w.window && !w.window.closed).length;
 
-  const allPlotsEntry: WindowButtonProps = {
-    id: 'all', name: 'All Plots ★',
-    description: 'FUEL · LOX · COPV · GSE · RAW in one tabbed window',
-    url: '/window/all', accent: '#38BDF8',
-  };
-
   const unifiedEntry: WindowButtonProps = {
     id: 'unified', name: 'Single Pane ★★',
     description: 'State machine · Pressure graphs · Actuators · Controller all in one window',
@@ -98,7 +92,6 @@ export default function WindowLauncher() {
       {/* Featured windows */}
       <div className="mb-2 space-y-2">
         <WindowButton {...unifiedEntry} />
-        <WindowButton {...allPlotsEntry} />
       </div>
 
       {/* Grid - 2 rows */}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useSensorStore, useSensorValue, useGetSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate, SystemState, ActuatorId } from '@/lib/types';
@@ -9,7 +9,7 @@ import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
 import ActuatorControl from '@/components/controls/ActuatorControl';
 import ActuatorControlByName from '@/components/controls/ActuatorControlByName';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
-import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
+import { PRESSURE_SENSORS, getEntityColor } from '@/lib/sensor-colors';
 
 const NAME_TO_ACTUATOR_ID: Partial<Record<string, ActuatorId>> = {
   'LOX Main': ActuatorId.LOX_MAIN, 'Fuel Main': ActuatorId.FUEL_MAIN,
@@ -23,7 +23,7 @@ const NAME_TO_ACTUATOR_ID: Partial<Record<string, ActuatorId>> = {
   'LOX Dump': ActuatorId.LOX_DUMP,
 };
 
-const PRESSURE_SENSORS_PLOT = PRESSURE_SENSORS.map((s) => ({
+const FALLBACK_PRESSURE_SENSORS_PLOT = PRESSURE_SENSORS.map((s) => ({
   label: s.label.replace('Upstream', 'Up').replace('Downstream', 'Down').replace('Regulated', 'Reg'),
   entity: s.entity,
   color: s.color,
@@ -45,11 +45,12 @@ export default function UnifiedDashboard() {
   const ws = getWebSocketClient();
   const [timeWindow, setTimeWindow] = useState(60);
   const [actuatorsFromConfig, setActuatorsFromConfig] = useState<{ name: string; channel: number; entity: string; id?: ActuatorId }[]>([]);
+  const [pressureSensorsPlot, setPressureSensorsPlot] = useState<{ label: string; entity: string; color: string }[]>([]);
 
-  useEffect(() => {
+  const loadActuatorsFromConfig = useCallback(() => {
     fetch('/api/config')
-      .then((r) => r.ok ? r.json() : null)
-      .then((data: { config?: { actuator_roles?: Record<string, [string, number] | [string, number, string]> } } | null) => {
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { config?: { actuator_roles?: Record<string, any> } } | null) => {
         const roles = data?.config?.actuator_roles;
         if (!roles || typeof roles !== 'object') return;
         setActuatorsFromConfig(
@@ -62,6 +63,30 @@ export default function UnifiedDashboard() {
       })
       .catch(() => {});
   }, []);
+
+  const loadPressureSensors = useCallback(() => {
+    fetch('/api/sensor-config')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: any) => {
+        const sensors = data?.sensors as any[] | undefined;
+        if (!Array.isArray(sensors)) return;
+        const pts = sensors
+          .filter((s) => typeof s?.calEntity === 'string' && (s.calEntity as string).startsWith('PT_Cal.'))
+          .map((s) => {
+            const role = String(s.role || s.calEntity);
+            const label = role.replace('Upstream', 'Up').replace('Downstream', 'Down').replace('Regulated', 'Reg');
+            const entity = String(s.calEntity);
+            return { label, entity, color: getEntityColor(entity) };
+          });
+        if (pts.length > 0) setPressureSensorsPlot(pts);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadActuatorsFromConfig();
+    loadPressureSensors();
+  }, [loadActuatorsFromConfig, loadPressureSensors]);
 
   useEffect(() => {
     ws.connect();
@@ -82,11 +107,16 @@ export default function UnifiedDashboard() {
       useSensorStore.getState().updateActuatorExpectedPositions(payload);
     });
     const u4 = ws.onConnectionStatus((s) => updateConnectionStatus(s));
+    const u5 = ws.on(MessageType.CONFIG_UPDATED, () => {
+      loadActuatorsFromConfig();
+      loadPressureSensors();
+    });
 
-    return () => { u1(); u2(); u3(); u4(); };
-  }, [ws, updateSensor, updateState, updateConnectionStatus]);
+    return () => { u1(); u2(); u3(); u4(); u5(); };
+  }, [ws, updateSensor, updateState, updateConnectionStatus, loadActuatorsFromConfig, loadPressureSensors]);
 
   const isFireState = currentState === SystemState.FIRE;
+  const effectivePressureSensorsPlot = pressureSensorsPlot.length > 0 ? pressureSensorsPlot : FALLBACK_PRESSURE_SENSORS_PLOT;
 
   return (
     <main className="h-screen w-screen bg-background text-text flex flex-col overflow-hidden">
@@ -122,10 +152,10 @@ export default function UnifiedDashboard() {
             <div className="flex-1 min-h-0">
               <TimeSeriesPlot
                 title="All Pressure Sensors (PSI)"
-                entities={PRESSURE_SENSORS_PLOT.map(s => s.entity)}
-                labels={PRESSURE_SENSORS_PLOT.map(s => s.label)}
+                entities={effectivePressureSensorsPlot.map(s => s.entity)}
+                labels={effectivePressureSensorsPlot.map(s => s.label)}
                 component="pressure_psi"
-                colors={PRESSURE_SENSORS_PLOT.map(s => s.color)}
+                colors={effectivePressureSensorsPlot.map(s => s.color)}
                 yLabel="Pressure (PSI)"
                 windowSeconds={timeWindow}
               />

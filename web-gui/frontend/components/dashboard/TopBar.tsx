@@ -3,10 +3,10 @@
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { startDataCache } from '@/lib/data-cache';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, SensorUpdate, ActuatorUpdate, MessageType, NotificationPayload } from '@/lib/types';
 import PressureBar from '@/components/plots/PressureBar';
-import { PRESSURE_BAR_SENSORS } from '@/lib/sensor-colors';
+import { getEntityColor } from '@/lib/sensor-colors';
 import NotificationPanel from '@/components/dashboard/NotificationPanel';
 
 const STATE_NAMES: Record<number, string> = {
@@ -31,20 +31,13 @@ const SHORT_LABELS: Record<string, string> = {
   'PT_Cal.Ox_Upstream': 'LOX UP', 'PT_Cal.Ox_Downstream': 'LOX DN', 'PT_Cal.GSE_Low': 'GSE LO',
   'PT_Cal.GSE_Mid': 'GSE MID', 'PT_Cal.GSE_High': 'GSE HI', 'PT_Cal.GN2_High': 'GN2 HI',
 };
-const PRESSURE_BARS = PRESSURE_BAR_SENSORS.map((s) => ({
-  label: SHORT_LABELS[s.entity] ?? s.label,
-  entity: s.entity,
-  nop: s.nop!,
-  meop: s.meop!,
-  color: s.color,
-}));
 
 // Separate component for each pressure bar to properly use hooks
 function ReactivePressureBar({ label, entity, nop, meop, color }: {
   label: string;
   entity: string;
-  nop: number;
-  meop: number;
+  nop?: number;
+  meop?: number;
   color: string;
 }) {
   const value = useSensorValue(entity, 'pressure_psi');
@@ -57,6 +50,16 @@ function ReactivePressureBar({ label, entity, nop, meop, color }: {
       />
     </div>
   );
+}
+
+type PressureBarDef = { label: string; entity: string; nop?: number; meop?: number; color: string };
+
+function inferSystemFromRole(role: string): 'GN2' | 'ETH' | 'LOX' | null {
+  const r = role.toLowerCase();
+  if (r.includes('gn2')) return 'GN2';
+  if (r.includes('fuel') || r.includes('eth')) return 'ETH';
+  if (r.includes('ox') || r.includes('lox')) return 'LOX';
+  return null;
 }
 
 export default function TopBar() {
@@ -79,8 +82,46 @@ export default function TopBar() {
   const [clock, setClock] = useState('');
   const [countdown, setCountdown] = useState('');
   const [countdownExpired, setCountdownExpired] = useState(false);
+  const [pressureBars, setPressureBars] = useState<PressureBarDef[]>([]);
 
   const ws = getWebSocketClient();
+
+  const loadPressureBars = useCallback(() => {
+    Promise.allSettled([
+      fetch('/api/sensor-config').then((r) => (r.ok ? r.json() : null)),
+      fetch('/api/pressure-limits').then((r) => (r.ok ? r.json() : null)),
+    ]).then(([sensorRes, limitsRes]) => {
+      const sensors = sensorRes.status === 'fulfilled' ? (sensorRes.value?.sensors as any[] | undefined) : undefined;
+      const limits = limitsRes.status === 'fulfilled' ? (limitsRes.value?.pressure_limits as Record<string, any> | undefined) : undefined;
+      if (!Array.isArray(sensors) || sensors.length === 0) return;
+
+      const sorted = [...sensors].sort((a, b) => {
+        const ba = Number(a.boardId ?? 0);
+        const bb = Number(b.boardId ?? 0);
+        if (ba !== bb) return ba - bb;
+        return Number(a.id ?? 0) - Number(b.id ?? 0);
+      });
+
+      const bars: PressureBarDef[] = sorted
+        .map((s) => {
+          const role = String(s.role || '');
+          const entity = String(s.calEntity || s.entity || '');
+          const sys = inferSystemFromRole(role);
+          const nop = sys ? limits?.[sys]?.NOP : undefined;
+          const meop = sys ? limits?.[sys]?.MEOP : undefined;
+          const label = SHORT_LABELS[entity] ?? role ?? entity;
+          return { label, entity, nop, meop, color: getEntityColor(entity) };
+        })
+        .filter((b) => b.entity.startsWith('PT_Cal.'))
+        .slice(0, 10);
+
+      setPressureBars(bars);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadPressureBars();
+  }, [loadPressureBars]);
 
   useEffect(() => {
     ws.connect();
@@ -109,6 +150,9 @@ export default function TopBar() {
     const unsubNotification = ws.on(MessageType.NOTIFICATION, (p: unknown) => {
       updateNotification(p as NotificationPayload);
     });
+    const unsubConfig = ws.on(MessageType.CONFIG_UPDATED, () => {
+      loadPressureBars();
+    });
     return () => {
       unsubConn();
       unsubState();
@@ -116,8 +160,9 @@ export default function TopBar() {
       unsubActuator();
       unsubExpected();
       unsubNotification();
+      unsubConfig();
     };
-  }, [ws, updateConnectionStatus, updateState, updateSensor, updateActuator, updateActuatorExpectedPositions, updateNotification]);
+  }, [ws, updateConnectionStatus, updateState, updateSensor, updateActuator, updateActuatorExpectedPositions, updateNotification, loadPressureBars]);
 
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString('en-US', { hour12: true }));
@@ -153,6 +198,16 @@ export default function TopBar() {
   const stateColor = STATE_COLORS[effectiveState] ?? 'text-text';
   const isConnected = connectionStatus.connected;
   const isFullyConnected = connectionStatus.connected && connectionStatus.elodinConnected;
+
+  const effectivePressureBars = useMemo(() => {
+    if (pressureBars.length > 0) return pressureBars;
+    // Fallback: keep UI stable even if /api/sensor-config is unavailable
+    return [
+      { label: 'GN2 REG', entity: 'PT_Cal.GN2_Regulated', color: getEntityColor('PT_Cal.GN2_Regulated') },
+      { label: 'FUEL UP', entity: 'PT_Cal.Fuel_Upstream', color: getEntityColor('PT_Cal.Fuel_Upstream') },
+      { label: 'LOX UP', entity: 'PT_Cal.Ox_Upstream', color: getEntityColor('PT_Cal.Ox_Upstream') },
+    ] as PressureBarDef[];
+  }, [pressureBars]);
 
   // Simple helper: send a single state-transition command
   const sendState = (state: SystemState) => {
@@ -212,7 +267,7 @@ export default function TopBar() {
 
         {/* Center: pressure bars — dominant */}
         <div className="flex-1 flex items-stretch justify-end gap-20 py-1 pr-8 min-w-0 overflow-visible">
-          {PRESSURE_BARS.map(({ label, entity, nop, meop, color }) => (
+          {effectivePressureBars.map(({ label, entity, nop, meop, color }) => (
             <ReactivePressureBar
               key={entity}
               label={label}

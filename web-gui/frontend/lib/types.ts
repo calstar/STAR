@@ -25,6 +25,7 @@ export enum MessageType {
   HISTORICAL_DATA = 'historical_data',
   BOARD_STATUS_UPDATE = 'board_status_update',
   NOTIFICATION = 'notification',
+  CONFIG_UPDATED = 'config_updated',
 }
 
 // Sensor types

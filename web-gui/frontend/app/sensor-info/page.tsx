@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 import { useSensorRate } from '@/lib/sensor-rate';
 import { kTypeVoltageToTempC, codeToForce } from '@/lib/sense-conversions';
+import { getEntityColor } from '@/lib/sensor-colors';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -32,23 +33,9 @@ interface PtSensor {
   label: string;
   entity: string; // PT_Cal. namespace
   color: string;
+  channelId?: number;
+  boardId?: number;
 }
-
-const PT_SENSORS: PtSensor[] = [
-  { label: 'Fuel Upstream',   entity: 'PT_Cal.Fuel_Upstream',   color: '#E67E22' },
-  { label: 'GSE Low',         entity: 'PT_Cal.GSE_Low',         color: '#D7BDE2' },
-  { label: 'Fuel Downstream', entity: 'PT_Cal.Fuel_Downstream', color: '#C0392B' },
-  { label: 'Fuel Fill Tank',  entity: 'PT_Cal.Fuel_Fill_Tank',  color: '#F39C12' },
-  { label: 'Ox Upstream',     entity: 'PT_Cal.Ox_Upstream',     color: '#5DADE2' },
-  { label: 'GN2 Regulated',   entity: 'PT_Cal.GN2_Regulated',   color: '#3CB371' },
-  { label: 'Ox Downstream',   entity: 'PT_Cal.Ox_Downstream',   color: '#2471A3' },
-];
-
-const HPT_SENSORS: PtSensor[] = [
-  { label: 'GSE High', entity: 'PT_Cal.GSE_High', color: '#8E44AD' },
-  { label: 'GSE Mid',  entity: 'PT_Cal.GSE_Mid',  color: '#9B59B6' },
-  { label: 'GN2 High', entity: 'PT_Cal.GN2_High', color: '#32CD32' },
-];
 
 // ── Formatting helpers ────────────────────────────────────────────────────────
 
@@ -139,7 +126,9 @@ function PtRow({ sensor }: { sensor: PtSensor }) {
       <td className="px-4 py-2">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: sensor.color }} />
-          <span className="text-gray-200 font-sans font-medium text-xs">{sensor.label}</span>
+          <span className="text-gray-200 font-sans font-medium text-xs">
+            {sensor.channelId ? `CH${sensor.channelId} ` : ''}{sensor.label}
+          </span>
         </div>
       </td>
       <td className="px-4 py-2 tabular-nums text-purple-300">{fmtAdc(adc)}</td>
@@ -166,7 +155,9 @@ function HptRow({ sensor }: { sensor: PtSensor }) {
       <td className="px-4 py-2">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: sensor.color }} />
-          <span className="text-gray-200 font-sans font-medium text-xs">{sensor.label}</span>
+          <span className="text-gray-200 font-sans font-medium text-xs">
+            {sensor.channelId ? `CH${sensor.channelId} ` : ''}{sensor.label}
+          </span>
         </div>
       </td>
       <td className="px-4 py-2 tabular-nums text-purple-300">{fmtAdc(adc)}</td>
@@ -292,9 +283,9 @@ const SENSE_COLORS = ['#F59E0B', '#10B981', '#3B82F6', '#EC4899', '#F87171', '#A
 // Default channel lists match config.toml active_connectors so the first
 // render produces the same component tree as after the config fetch.
 // This prevents a 0 → N row transition that can trigger "more hooks" errors.
-const TC_DEFAULT_CHANNELS  = [2, 3, 4, 5];    // tc_board  active_connectors
-const RTD_DEFAULT_CHANNELS = [1, 2, 3, 4];    // rtd_board active_connectors
-const LC_DEFAULT_CHANNELS  = [1, 2, 3];        // lc_board  active_connectors
+const TC_DEFAULT_CHANNELS  = [2, 3, 4, 5];   // tc_board  active_connectors
+const RTD_DEFAULT_CHANNELS = [1, 2, 3, 4];   // rtd_board active_connectors
+const LC_DEFAULT_CHANNELS  = [1, 2, 3];      // lc_board  active_connectors
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
@@ -303,13 +294,16 @@ export default function SensorInfoPage() {
   const updateState  = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
 
-  // Initialised with defaults so rows are present immediately; config fetch
-  // refines the lists if they differ from the defaults.
+  const [ptSensors,  setPtSensors]  = useState<PtSensor[]>([]);
+  const [hptSensors, setHptSensors] = useState<PtSensor[]>([]);
+
+  // Dynamic channel lists from /api/config, seeded with defaults so the
+  // initial render matches the post-config-fetch structure.
   const [tcChannels,  setTcChannels]  = useState<number[]>(TC_DEFAULT_CHANNELS);
   const [rtdChannels, setRtdChannels] = useState<number[]>(RTD_DEFAULT_CHANNELS);
   const [lcChannels,  setLcChannels]  = useState<number[]>(LC_DEFAULT_CHANNELS);
 
-  useEffect(() => {
+  const loadChannelConfig = useCallback(() => {
     fetch('/api/config')
       .then((r) => (r.ok ? r.json() : null))
       .then((data: any) => {
@@ -326,11 +320,55 @@ export default function SensorInfoPage() {
   }, []);
 
   useEffect(() => {
+    loadChannelConfig();
+  }, [loadChannelConfig]);
+
+  const loadPtSensors = useCallback(() => {
+    fetch('/api/sensor-config')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: any) => {
+        const sensors = data?.sensors as any[] | undefined;
+        if (!Array.isArray(sensors)) return;
+
+        const mapped = sensors
+          .filter((s) => typeof s?.calEntity === 'string' && (s.calEntity as string).startsWith('PT_Cal.'))
+          .map((s) => {
+            const role = String(s.role || s.calEntity);
+            const entity = String(s.calEntity);
+            return {
+              label: role,
+              entity,
+              color: getEntityColor(entity),
+              channelId: typeof s.id === 'number' ? s.id : undefined,
+              boardId: typeof s.boardId === 'number' ? s.boardId : undefined,
+              isHpPt: !!s.isHpPt,
+            } as PtSensor & { isHpPt?: boolean };
+          });
+
+        const pt = mapped
+          .filter((s: any) => !s.isHpPt)
+          .sort((a: any, b: any) => (a.boardId ?? 0) - (b.boardId ?? 0) || (a.channelId ?? 0) - (b.channelId ?? 0));
+        const hpt = mapped
+          .filter((s: any) => !!s.isHpPt)
+          .sort((a: any, b: any) => (a.boardId ?? 0) - (b.boardId ?? 0) || (a.channelId ?? 0) - (b.channelId ?? 0));
+
+        setPtSensors(pt);
+        setHptSensors(hpt);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadPtSensors();
+  }, [loadPtSensors]);
+
+  useEffect(() => {
     ws.connect();
     const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
     const u2 = ws.on(MessageType.STATE_UPDATE,  (p: unknown) => updateState(p as StateUpdate));
-    return () => { u1(); u2(); };
-  }, [ws, updateSensor, updateState]);
+    const u3 = ws.on(MessageType.CONFIG_UPDATED, () => { loadChannelConfig(); loadPtSensors(); });
+    return () => { u1(); u2(); u3(); };
+  }, [ws, updateSensor, updateState, loadChannelConfig, loadPtSensors]);
 
   return (
     <main className="h-full bg-background text-text overflow-auto">
@@ -343,24 +381,28 @@ export default function SensorInfoPage() {
 
         {/* ── PT (Pressure Transducers – board 21) ─────────────────────────── */}
         <SensorTable
-          title="PT — Pressure Transducers (Board 21)"
+          title="PT — Pressure Transducers"
           color="#E67E22"
           headers={['Channel', 'ADC Code', 'Pressure', 'Rate']}
         >
-          {PT_SENSORS.map((s) => (
-            <PtRow key={s.entity} sensor={s} />
-          ))}
+          {ptSensors.length === 0 ? (
+            <tr><td colSpan={4} className="px-4 py-3 text-gray-600 text-xs">Loading PT roles…</td></tr>
+          ) : (
+            ptSensors.map((s) => <PtRow key={s.entity} sensor={s} />)
+          )}
         </SensorTable>
 
         {/* ── HPT (High-Pressure PT – board 22) ───────────────────────────── */}
         <SensorTable
-          title="HPT — High-Pressure PT (Board 22, 4–20 mA)"
+          title="HPT — High-Pressure PT (4–20 mA)"
           color="#9B59B6"
           headers={['Channel', 'ADC Code', 'Pressure', 'Current', 'Rate']}
         >
-          {HPT_SENSORS.map((s) => (
-            <HptRow key={s.entity} sensor={s} />
-          ))}
+          {hptSensors.length === 0 ? (
+            <tr><td colSpan={5} className="px-4 py-3 text-gray-600 text-xs">Loading HP PT roles…</td></tr>
+          ) : (
+            hptSensors.map((s) => <HptRow key={s.entity} sensor={s} />)
+          )}
         </SensorTable>
 
         {/* ── TC (Thermocouples – board 51) ────────────────────────────────── */}
