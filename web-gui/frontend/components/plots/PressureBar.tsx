@@ -10,6 +10,7 @@ interface PressureBarProps {
   color?: string;
   unit?: string;
   showLabels?: boolean; // Show NOP/MEOP labels on this bar (default true)
+  compact?: boolean;    // Reduced font sizes for use in tight spaces (e.g. TopBar)
 }
 
 function fmtPressure(v: number): string {
@@ -66,6 +67,7 @@ export default function PressureBar({
   color,
   unit = 'PSI',
   showLabels = true,
+  compact = false,
 }: PressureBarProps) {
   const displayValue = value ?? 0;
 
@@ -88,9 +90,9 @@ export default function PressureBar({
   }, [displayValue, value, nop, meop, color]);
 
   return (
-    <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-visible select-none w-full">
+    <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-hidden select-none w-full">
       {/* Label */}
-      <div className="text-2xl font-bold uppercase tracking-wider text-gray-300 text-center leading-none flex-shrink-0 whitespace-nowrap">
+      <div className={`${compact ? 'text-[10px]' : 'text-2xl'} font-bold uppercase tracking-wider text-gray-300 text-center leading-none flex-shrink-0 whitespace-nowrap`}>
         {label}
       </div>
 
@@ -148,10 +150,10 @@ export default function PressureBar({
 
       {/* Value + unit below bar — always rendered to keep bar height stable */}
       <div className="flex-shrink-0 text-center leading-none">
-        <div className="text-2xl font-bold font-mono tabular-nums" style={{ color: barColor }}>
+        <div className={`${compact ? 'text-xs' : 'text-2xl'} font-bold font-mono tabular-nums`} style={{ color: barColor }}>
           {value !== null ? fmtPressure(value) : '---'}
         </div>
-        <div className="text-sm text-gray-400 font-semibold">{unit}</div>
+        <div className={`${compact ? 'text-[9px]' : 'text-sm'} text-gray-400 font-semibold`}>{unit}</div>
       </div>
     </div>
   );

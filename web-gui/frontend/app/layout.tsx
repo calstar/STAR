@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
-import TopBar from '@/components/dashboard/TopBar'
+import TopBarWrapper from '@/components/dashboard/TopBarWrapper'
 
 export const metadata: Metadata = {
   title: 'Sensor System Control Panel',
@@ -15,7 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="h-screen flex flex-col overflow-hidden">
-        <TopBar />
+        <TopBarWrapper />
         <div className="flex-1 min-h-0 overflow-auto flex flex-col">
           {children}
         </div>

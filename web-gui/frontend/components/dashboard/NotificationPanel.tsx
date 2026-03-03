@@ -47,58 +47,51 @@ export default function NotificationPanel() {
   }, [items]);
 
   return (
-    <div className="h-full flex flex-col min-w-[700px] max-w-3xl relative">
-      <div className="absolute top-3 right-1 pointer-events-none">
-        <span className="relative flex h-5 w-5 items-center justify-center">
-          {/* Outer glow ring */}
+    <div className="h-full flex flex-col w-[150px] flex-shrink-0 relative">
+      <div className="absolute top-1 right-1 pointer-events-none z-10">
+        <span className="relative flex h-4 w-4 items-center justify-center">
           <span
-            className={`absolute inline-flex rounded-full h-5 w-5 transition-colors duration-75 ${
+            className={`absolute inline-flex rounded-full h-4 w-4 transition-colors duration-75 ${
               active ? 'bg-red-500/40' : 'bg-emerald-400/25'
             }`}
           />
-          {/* Core dot */}
           <span
-            className={`relative inline-flex rounded-full h-3 w-3 transition-colors duration-75 ${
+            className={`relative inline-flex rounded-full h-2.5 w-2.5 transition-colors duration-75 ${
               active ? 'bg-red-500' : 'bg-emerald-400'
             }`}
           />
         </span>
       </div>
-      <div className="mt-4 flex items-center justify-between mb-3 pr-10">
-        <span className="text-2xl font-bold tracking-widest text-gray-500 uppercase">
-          Notifications
-        </span>
+      <div className="flex items-center justify-end mb-1.5 pr-6">
         <button
           type="button"
           onClick={clearNotifications}
-          className="ml-4 px-3 py-1.5 rounded-md border border-gray-600 text-sm font-semibold text-gray-200 hover:bg-gray-800 active:bg-gray-700"
+          className="px-2 py-0.5 rounded border border-gray-700 text-xs font-semibold text-gray-300 hover:bg-gray-800 active:bg-gray-700"
         >
           Clear
         </button>
       </div>
-      <div className="flex-1 min-h-0 rounded-lg border border-gray-800 bg-black/40 overflow-hidden">
+      <div className="flex-1 min-h-0 rounded border border-gray-800 bg-black/40 overflow-hidden">
         <div className="h-full overflow-y-auto divide-y divide-gray-800/70">
           {items.length === 0 ? (
-            <div className="px-6 py-5 text-2xl text-gray-600">No recent notifications.</div>
+            <div className="px-3 py-2 text-xs text-gray-600">No recent notifications.</div>
           ) : (
             items.map((n, idx) => {
               const { emoji, color } = categoryStyle(n.category);
               return (
                 <div
                   key={n.key ?? idx}
-                  className={`px-5 py-2.5 flex items-center gap-4 ${
+                  className={`px-2 py-1.5 flex items-start gap-2 ${
                     n.isCurrent ? 'bg-gray-900/70' : 'bg-transparent'
                   }`}
                 >
-                  <div className="flex items-center justify-center w-8">
-                    <span className={`${color} text-2xl leading-none`}>{emoji}</span>
-                  </div>
+                  <span className={`${color} text-xs leading-none mt-0.5 flex-shrink-0`}>{emoji}</span>
                   <div className="flex-1 min-w-0">
-                    <div className="text-2xl text-gray-200 truncate">{n.message}</div>
-                    <div className="text-lg text-gray-500 flex items-center gap-3">
+                    <div className="text-xs text-gray-200 truncate">{n.message}</div>
+                    <div className="text-[10px] text-gray-500 flex items-center gap-2">
                       <span className="tabular-nums">{formatTime(n.timestampMs)}</span>
                       {n.isCurrent && (
-                        <span className="px-3 py-1 rounded-full bg-emerald-900/60 text-base text-emerald-300 font-semibold">
+                        <span className="px-1.5 py-0.5 rounded-full bg-emerald-900/60 text-[9px] text-emerald-300 font-semibold">
                           current
                         </span>
                       )}

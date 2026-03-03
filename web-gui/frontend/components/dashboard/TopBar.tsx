@@ -42,11 +42,12 @@ function ReactivePressureBar({ label, entity, nop, meop, color }: {
 }) {
   const value = useSensorValue(entity, 'pressure_psi');
   return (
-    <div className="min-w-0 h-full overflow-visible" style={{ width: '9%', maxWidth: 110 }}>
+    <div className="flex-1 min-w-0 h-full overflow-hidden" style={{ maxWidth: 90 }}>
       <PressureBar
         label={label}
         value={value}
         nop={nop} meop={meop} color={color}
+        compact
       />
     </div>
   );
@@ -237,37 +238,37 @@ export default function TopBar() {
   };
 
   return (
-    <div className="bg-card border-b border-gray-800 select-none flex-shrink-0" style={{ height: '15vh', minHeight: 110 }}>
-      <div className="flex items-stretch h-full px-4 gap-4">
+    <div className="bg-card border-b border-gray-800 select-none flex-shrink-0" style={{ minHeight: 64 }}>
+      <div className="flex items-stretch h-full px-3 gap-3 py-1.5">
 
         {/* Left: brand + connection + clock + countdown */}
-        <div className="flex flex-col justify-start pt-1 gap-0.5 flex-shrink-0 pr-6 border-r border-gray-800/60">
-          <span className="text-7xl font-bold tracking-widest text-blue-400 uppercase leading-none">
+        <div className="flex flex-col justify-center gap-0.5 flex-shrink-0 pr-4 border-r border-gray-800/60">
+          <span className="text-2xl font-bold tracking-widest text-blue-400 uppercase leading-none">
             DIABLO DAQ
           </span>
-          <div className="flex items-center gap-3">
-            <div className={`w-5 h-5 rounded-full ${isFullyConnected ? 'bg-green-500' : isConnected ? 'bg-yellow-500' : 'bg-red-500'}`} />
-            <span className="text-3xl text-gray-300 font-semibold">
+          <div className="flex items-center gap-2">
+            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isFullyConnected ? 'bg-green-500' : isConnected ? 'bg-yellow-500' : 'bg-red-500'}`} />
+            <span className="text-sm text-gray-300 font-semibold">
               {isFullyConnected ? 'Connected' : isConnected ? 'WS Only' : 'Disconnected'}
             </span>
           </div>
-          <span className="text-5xl font-mono text-gray-200 tabular-nums font-bold leading-tight">{clock}</span>
-          <div className="flex flex-col items-start gap-0">
-            <span className="text-xs text-gray-500 uppercase tracking-widest font-semibold">T− LAUNCH</span>
-            <span className={`text-4xl font-mono tabular-nums font-bold leading-tight ${countdownExpired ? 'text-red-400' : 'text-white'}`}>
+          <span className="text-xl font-mono text-gray-200 tabular-nums font-bold leading-tight">{clock}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 uppercase tracking-widest font-semibold">T−</span>
+            <span className={`text-xl font-mono tabular-nums font-bold leading-tight ${countdownExpired ? 'text-red-400' : 'text-white'}`}>
               {countdown}
             </span>
           </div>
         </div>
 
         {/* Middle: notifications */}
-        <div className="flex flex-col justify-start pt-1 pr-2 flex-shrink-0">
+        <div className="flex flex-col justify-center pr-1 flex-shrink-0">
           <NotificationPanel />
         </div>
 
-        {/* Center: pressure bars — dominant */}
-        <div className="flex-1 flex items-stretch justify-end gap-20 py-1 pr-8 min-w-0 overflow-visible">
-          {effectivePressureBars.map(({ label, entity, nop, meop, color }) => (
+        {/* Center: pressure bars — fills remaining space */}
+        <div className="flex-1 flex items-stretch justify-end gap-2 py-1 pr-2 min-w-0 overflow-hidden">
+          {PRESSURE_BARS.map(({ label, entity, nop, meop, color }) => (
             <ReactivePressureBar
               key={entity}
               label={label}
@@ -280,29 +281,28 @@ export default function TopBar() {
         </div>
 
         {/* Right: state + abort */}
-        <div className="flex items-center gap-6 flex-shrink-0 pl-4 border-l border-gray-800/60">
-          <div className="flex flex-col items-center gap-2 w-72">
-            <span className="text-lg text-gray-400 uppercase tracking-widest font-bold">STATE</span>
-            <span className={`text-5xl font-bold font-mono tracking-wider text-center leading-tight whitespace-normal ${stateColor}`}>
+        <div className="flex items-center gap-3 flex-shrink-0 pl-2 border-l border-gray-800/60">
+          <div className="flex flex-col items-center gap-1 w-36">
+            <span className="text-xs text-gray-400 uppercase tracking-widest font-bold">STATE</span>
+            <span className={`text-2xl font-bold font-mono tracking-wider text-center leading-tight whitespace-normal ${stateColor}`}>
               {currentStateName}
             </span>
           </div>
 
           {/* Debug mode toggle */}
-          <div className="flex flex-col items-center gap-1.5 border-l border-gray-800/60 pl-6">
-            <span className="text-base text-gray-500 uppercase tracking-widest font-semibold">MODE</span>
+          <div className="flex flex-col items-center gap-1 border-l border-gray-800/60 pl-2">
+            <span className="text-xs text-gray-500 uppercase tracking-widest font-semibold">MODE</span>
             <button
               onClick={() => {
                 const newDebugMode = !debugMode;
                 setDebugMode(newDebugMode);
-                // Send debug mode command to backend
                 const cmd: CommandPayload = {
                   commandType: 'debug_mode',
                   data: { debugMode: newDebugMode }
                 };
                 ws.sendCommand(cmd);
               }}
-              className={`px-6 py-3.5 rounded-md text-lg font-bold uppercase tracking-wider border transition-all ${
+              className={`px-4 py-2 rounded-md text-sm font-bold uppercase tracking-wider border transition-all ${
                 debugMode
                   ? 'bg-yellow-800/60 border-yellow-600 text-yellow-300 shadow-[0_0_6px_rgba(234,179,8,0.3)]'
                   : 'bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-500'
@@ -313,27 +313,27 @@ export default function TopBar() {
           </div>
 
           {/* Abort buttons */}
-          <div className="flex flex-col gap-2 border-l border-gray-800/60 pl-6">
-            <span className="text-base text-gray-500 uppercase tracking-widest font-semibold mb-1">ABORT</span>
-            <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-1 border-l border-gray-800/60 pl-2">
+            <span className="text-xs text-gray-500 uppercase tracking-widest font-semibold">ABORT</span>
+            <div className="flex flex-col gap-1">
               <button
                 onClick={handleEngineAbort}
-                className="px-8 py-3 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border-2 border-amber-600
-                           text-white font-bold text-lg rounded-lg tracking-wider transition-colors"
+                className="px-3 py-1.5 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border-2 border-amber-600
+                           text-white font-semibold text-xs rounded-md tracking-wider transition-colors"
               >
                 ENGINE ABORT
               </button>
               <button
                 onClick={handleGseAbort}
-                className="px-8 py-3 bg-orange-800 hover:bg-orange-700 active:bg-orange-900 border-2 border-orange-600
-                           text-white font-bold text-lg rounded-lg tracking-wider transition-colors"
+                className="px-3 py-1.5 bg-orange-800 hover:bg-orange-700 active:bg-orange-900 border-2 border-orange-600
+                           text-white font-semibold text-xs rounded-md tracking-wider transition-colors"
               >
                 GSE ABORT
               </button>
               <button
                 onClick={handleEmergencyAbort}
-                className="px-8 py-3 bg-red-700 hover:bg-red-600 active:bg-red-800 border-2 border-red-500
-                           text-white font-bold text-lg rounded-lg tracking-wider transition-colors
+                className="px-3 py-1.5 bg-red-700 hover:bg-red-600 active:bg-red-800 border-2 border-red-500
+                           text-white font-semibold text-xs rounded-md tracking-wider transition-colors
                            shadow-[0_0_8px_rgba(239,68,68,0.4)]"
               >
                 E-ABORT

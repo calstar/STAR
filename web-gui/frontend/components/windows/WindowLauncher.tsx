@@ -53,6 +53,12 @@ export default function WindowLauncher() {
     url: '/window/unified', accent: '#EC4899',
   };
 
+  const mobileEntry: WindowButtonProps = {
+    id: 'mobile-gui', name: 'Mobile GUI 📱',
+    description: 'Touch-friendly layout — compact header, pressure plot, actuators & state machine stacked for phones/tablets',
+    url: '/window/mobile-gui', accent: '#34D399',
+  };
+
   const multiEntries: WindowButtonProps[] = [
     { id: 'fuel',        name: 'FUEL',         description: 'Upstream / downstream pressure & actuators', url: '/window/fuel',        accent: '#3498DB' },
     { id: 'lox',         name: 'LOX',          description: 'Oxidizer pressure & actuators',              url: '/window/lox',         accent: '#E74C3C' },
@@ -92,6 +98,8 @@ export default function WindowLauncher() {
       {/* Featured windows */}
       <div className="mb-2 space-y-2">
         <WindowButton {...unifiedEntry} />
+        <WindowButton {...allPlotsEntry} />
+        <WindowButton {...mobileEntry} />
       </div>
 
       {/* Grid - 2 rows */}
