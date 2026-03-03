@@ -1377,27 +1377,17 @@ class SensorSystemServer {
             stopContinuousActuatorCommands(this);
             this.manuallyCommandedChannels.clear();
           } else {
-            this.manuallyCommandedChannels.clear();
-            applyActuatorsForState(this, newState, STATE_ACTUATOR_MAP);
-            if (newState === SystemState.IDLE) { stopContinuousActuatorCommands(this); }
-            else if (newState === SystemState.FIRE) {
-              const fuelInfo = getActuatorBoardInfo(this, 'Fuel Press');
-              const loxInfo = getActuatorBoardInfo(this, 'LOX Press');
-              if (fuelInfo) this.manuallyCommandedChannels.add(`${fuelInfo.channel}@${fuelInfo.boardIp}`);
-              if (loxInfo) this.manuallyCommandedChannels.add(`${loxInfo.channel}@${loxInfo.boardIp}`);
-              startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP);
-            } else { startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP); }
-          }
-
-          broadcastActuatorExpectedPositions(this, newState, STATE_ACTUATOR_MAP);
-          if (newState === SystemState.FIRE) {
-            if (!this.USE_CPP_CONTROLLER) {
-              startControllerLoop(this);
+            if (newState === SystemState.FIRE) {
+              // Async: probe controller first (0.1s), then open valves + start PWM atomically
+              this.startFireSequence();
             } else {
-              console.log('🎯 FIRE state entered – using C++ controller service; backend will not run controller loop or send PWM');
+              this.manuallyCommandedChannels.clear();
+              applyActuatorsForState(this, newState, STATE_ACTUATOR_MAP);
+              if (newState === SystemState.IDLE) { stopContinuousActuatorCommands(this); }
+              else { startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP); }
+              broadcastActuatorExpectedPositions(this, newState, STATE_ACTUATOR_MAP);
+              stopControllerLoop(this);
             }
-          } else {
-            stopControllerLoop(this);
           }
 
           // Abort UDP broadcasts (ABORT / ABORT_DONE)
@@ -1815,6 +1805,40 @@ class SensorSystemServer {
       timestamp: Date.now(),
       payload: { boards: snapshot },
     });
+  }
+
+  private async startFireSequence(): Promise<void> {
+    // Step 1: Probe controller with a very short timeout so we never block valve opening.
+    let controllerReady = false;
+    if (!this.USE_CPP_CONTROLLER && this.controllerClient) {
+      console.log('🎯 FIRE: probing controller service (0.1s timeout)...');
+      controllerReady = await this.controllerClient.initializeWithTimeout(100, this.controllerConfigPath);
+      console.log(controllerReady
+        ? '✅ FIRE: controller ready — closed-loop PWM'
+        : '⚠️  FIRE: controller unavailable — fallback duties');
+    }
+
+    // Step 2: Guard — bail out if we left FIRE state during the probe (e.g. abort)
+    if (this.currentState !== SystemState.FIRE) {
+      console.log('⚠️  FIRE sequence aborted — state changed during controller probe');
+      return;
+    }
+
+    // Step 3: Open valves, set press solenoids as manually commanded, and start PWM — all at once.
+    this.manuallyCommandedChannels.clear();
+    applyActuatorsForState(this, SystemState.FIRE, STATE_ACTUATOR_MAP);
+    const fuelInfo = getActuatorBoardInfo(this, 'Fuel Press');
+    const loxInfo  = getActuatorBoardInfo(this, 'LOX Press');
+    if (fuelInfo) this.manuallyCommandedChannels.add(`${fuelInfo.channel}@${fuelInfo.boardIp}`);
+    if (loxInfo)  this.manuallyCommandedChannels.add(`${loxInfo.channel}@${loxInfo.boardIp}`);
+    startContinuousActuatorCommands(this, SystemState.FIRE, STATE_ACTUATOR_MAP);
+    broadcastActuatorExpectedPositions(this, SystemState.FIRE, STATE_ACTUATOR_MAP);
+
+    if (!this.USE_CPP_CONTROLLER) {
+      startControllerLoop(this, controllerReady);
+    } else {
+      console.log('🎯 FIRE: using C++ controller service; backend will not send PWM');
+    }
   }
 
   private async syncSidecarCoefficients(): Promise<void> {

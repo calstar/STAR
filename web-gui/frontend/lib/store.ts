@@ -31,7 +31,7 @@ export interface NotificationEntry {
   isCurrent: boolean;
 }
 
-const NOTIFICATIONS_MAX = 100;
+const NOTIFICATIONS_MAX = 10;
 
 interface SensorSystemState {
   sensorData: SensorData;
@@ -55,6 +55,7 @@ interface SensorSystemState {
   setDebugMode: (mode: boolean) => void;
   updateBoards: (boards: BoardStatus[]) => void;
   updateNotification: (payload: NotificationPayload) => void;
+  clearNotifications: () => void;
 }
 
 // ── Alias table ──────────────────────────────────────────────────────────────
@@ -314,7 +315,7 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   debugMode: false,
   missionStartTime: null,
   actuatorExpectedPositions: {},
-   boards: {},
+  boards: {},
   notifications: [],
 
   updateSensor: (update: SensorUpdate) => {
@@ -408,6 +409,10 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
       });
       return { notifications: list };
     });
+  },
+
+  clearNotifications: () => {
+    set({ notifications: [] });
   },
 
   getSensorValue: (entity: string, component: string) => {

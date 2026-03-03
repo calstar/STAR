@@ -35,9 +35,10 @@ export interface ControllerHost extends ActuatorHost {
 
 /**
  * Start controller loop — runs when FIRE state is active.
- * Reads sensor data, calls DDP controller, sends PWM commands.
+ * controllerReady: true  → use closed-loop DDP step() (already initialized by caller)
+ *                  false → use fallback duties immediately, skip step() calls until controller comes up
  */
-export function startControllerLoop(host: ControllerHost): void {
+export function startControllerLoop(host: ControllerHost, controllerReady: boolean): void {
     if (host.controllerLoopInterval) {
         return; // Already running
     }
@@ -47,7 +48,7 @@ export function startControllerLoop(host: ControllerHost): void {
         return;
     }
 
-    console.log('🎯 Starting controller loop (FIRE state active)');
+    console.log(`🎯 Starting controller loop (FIRE state active, mode: ${controllerReady ? 'closed-loop' : 'fallback duties'})`);
 
     const startLoop = () => {
         console.log('✅ Controller loop starting' + (host.DUTY_SWEEP_ENABLED ? ' (duty sweep mode)' : ''));
@@ -97,7 +98,7 @@ export function startControllerLoop(host: ControllerHost): void {
                         host.DUTY_SWEEP_STEPS.length - 1
                     );
                     [duty_F, duty_O] = host.DUTY_SWEEP_STEPS[stepIndex];
-                } else if (measurement) {
+                } else if (controllerReady && measurement) {
                     let result;
                     try {
                         result = await host.controllerClient!.step(
@@ -257,18 +258,8 @@ export function startControllerLoop(host: ControllerHost): void {
         }, host.CONTROLLER_LOOP_INTERVAL_MS);
     };
 
-    if (host.DUTY_SWEEP_ENABLED) {
-        startLoop();
-    } else {
-        host.controllerClient!.initialize(host.controllerConfigPath).then((success) => {
-            if (!success) {
-                console.error('❌ Failed to initialize controller - controller loop will not run');
-                console.error('   Start controller service or enable duty_sweep_enabled in config');
-                return;
-            }
-            startLoop();
-        });
-    }
+    // Caller (startFireSequence) already probed and decided; start immediately.
+    startLoop();
 }
 
 /**

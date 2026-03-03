@@ -193,25 +193,25 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   // Mismatch = commanded ≠ feedback (only show if command was actually issued)
   const mismatch = commanded !== null && pending === false &&
     ((commandedOpen && !feedbackOpen) || (commandedClosed && feedbackOpen));
+  const showMismatch = false;
 
   return (
     <div className={`rounded-lg p-3 border transition-colors
-      ${mismatch
+      ${showMismatch && mismatch
         ? 'bg-yellow-950/40 border-yellow-600'
         : 'bg-background border-gray-700 hover:border-gray-600'}`}>
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-base font-bold tracking-wider text-text uppercase">
           {ACTUATOR_NAMES[actuatorId]}
         </h3>
-        {mismatch && (
+        {showMismatch && mismatch && (
           <span className="text-xs font-bold text-yellow-400 uppercase tracking-wider">MISMATCH</span>
         )}
       </div>
 
       {/* Feedback indicator */}
-      <div className="flex gap-3 mb-3 text-base">
+      <div className="flex gap-3 mb-2 text-base">
         <div className="flex-1">
-          <div className="text-text-muted mb-1">COMMANDED</div>
           <div className={`flex items-center gap-2 ${commanded === null ? 'text-gray-500' : commandedOpen ? 'text-green-400' : 'text-red-400'}`}>
             <div className={`w-2.5 h-2.5 rounded-full ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
             <span className="font-mono font-bold">

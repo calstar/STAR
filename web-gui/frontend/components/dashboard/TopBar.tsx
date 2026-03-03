@@ -11,9 +11,10 @@ import NotificationPanel from '@/components/dashboard/NotificationPanel';
 
 const STATE_NAMES: Record<number, string> = {
   0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
-  5: 'GN2 PRESS', 6: 'GN2 VENT', 7: 'FUEL PRESS', 8: 'FUEL VENT',
-  9: 'OX PRESS', 10: 'OX VENT', 11: 'HIGH PRESS', 12: 'HIGH VENT',
+  5: 'GN2 LOW PRESS', 6: 'GN2 VENT', 7: 'FUEL PRESS', 8: 'FUEL VENT',
+  9: 'OX PRESS', 10: 'OX VENT', 11: 'GN2 HIGH PRESS', 12: 'HIGH VENT',
   13: 'VENT', 14: 'CALIBRATE', 15: 'READY', 16: 'FIRE', 17: 'ABORT',
+  20: 'PRESS STANDBY',
 };
 
 const STATE_COLORS: Record<number, string> = {
@@ -148,7 +149,7 @@ export default function TopBar() {
   }, []);
 
   const effectiveState = currentState ?? SystemState.IDLE;
-  const currentStateName = STATE_NAMES[effectiveState] ?? 'IDLE';
+  const currentStateName = STATE_NAMES[effectiveState] ?? `STATE ${effectiveState}`;
   const stateColor = STATE_COLORS[effectiveState] ?? 'text-text';
   const isConnected = connectionStatus.connected;
   const isFullyConnected = connectionStatus.connected && connectionStatus.elodinConnected;
@@ -210,7 +211,7 @@ export default function TopBar() {
         </div>
 
         {/* Center: pressure bars — dominant */}
-        <div className="flex-1 flex items-stretch justify-center gap-20 py-1 min-w-0 overflow-visible">
+        <div className="flex-1 flex items-stretch justify-end gap-20 py-1 pr-8 min-w-0 overflow-visible">
           {PRESSURE_BARS.map(({ label, entity, nop, meop, color }) => (
             <ReactivePressureBar
               key={entity}
@@ -225,7 +226,7 @@ export default function TopBar() {
 
         {/* Right: state + abort */}
         <div className="flex items-center gap-6 flex-shrink-0 pl-4 border-l border-gray-800/60">
-          <div className="flex flex-col items-center gap-2 w-56">
+          <div className="flex flex-col items-center gap-2 w-72">
             <span className="text-lg text-gray-400 uppercase tracking-widest font-bold">STATE</span>
             <span className={`text-5xl font-bold font-mono tracking-wider text-center leading-tight whitespace-normal ${stateColor}`}>
               {currentStateName}

@@ -109,10 +109,11 @@ function ActuatorRow({ label, entity, color, expected }: ActuatorRowProps) {
   const mismatch = expected !== null && hasData && (
     (expected === 'open' && !isOpen) || (expected === 'closed' && isOpen)
   );
+  const showMismatch = false;
 
   return (
     <div className={`flex items-center justify-between rounded-lg px-5 py-4 ${
-      mismatch ? 'bg-yellow-950/40 border border-yellow-600/50' : 'bg-gray-900/50'
+      showMismatch && mismatch ? 'bg-yellow-950/40 border border-yellow-600/50' : 'bg-gray-900/50'
     }`}>
       <div className="flex items-center gap-3">
         <div className="w-4 h-4 rounded-full" style={{ backgroundColor: color }} />
@@ -139,7 +140,7 @@ function ActuatorRow({ label, entity, color, expected }: ActuatorRowProps) {
         >
           {!hasData ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
         </span>
-        {mismatch && <span className="text-yellow-400 text-lg">⚠</span>}
+        {showMismatch && mismatch && <span className="text-yellow-400 text-lg">⚠</span>}
       </div>
     </div>
   );

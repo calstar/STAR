@@ -60,6 +60,8 @@ export interface ControllerStepResponse {
 export class ControllerClient {
   private baseUrl: string;
   private initialized: boolean = false;
+  private lastInitAttemptMs: number = 0;
+  private static readonly INIT_RETRY_COOLDOWN_MS = 30_000;
 
   constructor(baseUrl: string = 'http://localhost:8000') {
     this.baseUrl = baseUrl;
@@ -86,10 +88,43 @@ export class ControllerClient {
       }
 
       this.initialized = true;
+      this.lastInitAttemptMs = Date.now();
       console.log('✅ Controller initialized');
       return true;
     } catch (error) {
       console.error('❌ Controller init error:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Initialize with a hard timeout — used at FIRE entry so we never block longer than timeoutMs.
+   */
+  async initializeWithTimeout(timeoutMs: number, configPath?: string): Promise<boolean> {
+    const abortController = new AbortController();
+    const timer = setTimeout(() => abortController.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${this.baseUrl}/api/control/init`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          controller_config_path: configPath || null,
+          use_engine_config: true,
+        }),
+        signal: abortController.signal,
+      });
+      clearTimeout(timer);
+      if (!response.ok) {
+        const error = await response.text();
+        console.error(`❌ Controller init failed: ${error}`);
+        return false;
+      }
+      this.initialized = true;
+      this.lastInitAttemptMs = Date.now();
+      console.log('✅ Controller initialized');
+      return true;
+    } catch {
+      clearTimeout(timer);
       return false;
     }
   }
@@ -103,6 +138,11 @@ export class ControllerClient {
     cmd: ControllerCommand = { command_type: 'THRUST_DESIRED', thrust_desired: 1000 }
   ): Promise<ControllerStepResponse | null> {
     if (!this.initialized) {
+      const now = Date.now();
+      if (now - this.lastInitAttemptMs < ControllerClient.INIT_RETRY_COOLDOWN_MS) {
+        return null; // cooldown — skip re-attempt, caller will use fallback
+      }
+      this.lastInitAttemptMs = now;
       console.warn('⚠️ Controller not initialized, attempting auto-init...');
       const initSuccess = await this.initialize();
       if (!initSuccess) {
