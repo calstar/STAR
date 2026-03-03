@@ -4,8 +4,7 @@
  */
 
 import { SensorUpdate } from './types';
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8082';
+import { getApiBaseUrl } from './websocket';
 
 export interface QueryOptions {
   packetIdHigh: number; // e.g., 0x20
@@ -47,7 +46,7 @@ export async function queryHistoricalData(options: QueryOptions): Promise<QueryR
     params.append('limit', options.limit.toString());
   }
 
-  const response = await fetch(`${API_BASE_URL}/api/query?${params.toString()}`);
+  const response = await fetch(`${getApiBaseUrl()}/api/query?${params.toString()}`);
 
   if (!response.ok) {
     const error = await response.json();
@@ -61,7 +60,7 @@ export async function queryHistoricalData(options: QueryOptions): Promise<QueryR
  * Get list of all available sensors (subscribed packet IDs)
  */
 export async function getSensorList(): Promise<SensorsListResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/sensors`);
+  const response = await fetch(`${getApiBaseUrl()}/api/sensors`);
 
   if (!response.ok) {
     const error = await response.json();
@@ -76,7 +75,7 @@ export async function getSensorList(): Promise<SensorsListResponse> {
  * Note: This is a placeholder - use WebSocket for real-time data
  */
 export async function getSensorValue(entity: string): Promise<{ entity: string; message: string }> {
-  const response = await fetch(`${API_BASE_URL}/api/sensors/${encodeURIComponent(entity)}`);
+  const response = await fetch(`${getApiBaseUrl()}/api/sensors/${encodeURIComponent(entity)}`);
 
   if (!response.ok) {
     const error = await response.json();

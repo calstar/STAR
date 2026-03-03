@@ -18,6 +18,7 @@
 import { create } from 'zustand';
 import { useCallback, useMemo } from 'react';
 import { SensorUpdate, ActuatorUpdate, StateUpdate, ConnectionStatus, SystemState, MissionStartTime, BoardStatus, NotificationPayload, NotificationCategory, isNotificationOngoing } from './types';
+import { recordSensorUpdate } from './sensor-rate';
 
 interface SensorData {
   [key: string]: number; // entity.component -> value
@@ -319,6 +320,7 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   notifications: [],
 
   updateSensor: (update: SensorUpdate) => {
+    recordSensorUpdate(update.entity, update.component);
     const key = `${update.entity}.${update.component}`;
     // Filter out spikes before storing
     const filteredValue = filterSensorValue(key, update.value);

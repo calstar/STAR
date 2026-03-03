@@ -43,8 +43,9 @@ export function startControllerLoop(host: ControllerHost, controllerReady: boole
         return; // Already running
     }
 
-    if (!host.controllerClient && !host.DUTY_SWEEP_ENABLED) {
-        console.warn('⚠️ Controller client not initialized - enable duty_sweep_enabled or set CONTROLLER_URL');
+    // When controllerReady is false we only use fallback duties and never call step(), so we don't need controllerClient.
+    if (controllerReady && !host.controllerClient && !host.DUTY_SWEEP_ENABLED) {
+        console.warn('⚠️ Controller client not initialized but closed-loop requested - enable duty_sweep_enabled or set CONTROLLER_URL');
         return;
     }
 

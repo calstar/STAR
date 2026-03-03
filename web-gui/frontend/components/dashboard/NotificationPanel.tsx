@@ -26,43 +26,40 @@ export default function NotificationPanel() {
 
   const items = useMemo(() => notifications, [notifications]);
 
-  const lastTimestampRef = useRef<number | null>(null);
-  const [pulses, setPulses] = useState<number[]>([]);
+  const lastMaxTsRef = useRef<number>(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [active, setActive] = useState(false);
 
   useEffect(() => {
     if (!items.length) return;
-    const newestTs = items[0]?.timestampMs ?? null;
-    if (!newestTs) return;
+    // Use the max timestamp across ALL items — the store sorts ongoing
+    // notifications to the top, so items[0].timestampMs may be stale.
+    const maxTs = Math.max(...items.map((n) => n.timestampMs));
+    if (maxTs <= lastMaxTsRef.current) return;
+    lastMaxTsRef.current = maxTs;
 
-    if (!lastTimestampRef.current || newestTs > lastTimestampRef.current) {
-      lastTimestampRef.current = newestTs;
-      setPulses((prev) => [...prev, newestTs]);
-      const timeout = setTimeout(() => {
-        setPulses((prev) => prev.filter((ts) => ts !== newestTs));
-      }, 50); // single, very fast pulse per notification
-      return () => clearTimeout(timeout);
-    }
+    setActive(true);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      setActive(false);
+      timerRef.current = null;
+    }, 200);
   }, [items]);
 
   return (
     <div className="h-full flex flex-col min-w-[700px] max-w-3xl relative">
       <div className="absolute top-3 right-1 pointer-events-none">
-        <span className="relative flex h-5 w-5">
-          {/* Red pulses for each incoming notification */}
-          {pulses.map((id) => (
-            <span
-              key={id}
-              className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-80"
-            />
-          ))}
-          {/* Idle halo */}
-          {!pulses.length && (
-            <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400/40 blur-sm" />
-          )}
-          {/* Core indicator: green when idle, red when pulsing */}
+        <span className="relative flex h-5 w-5 items-center justify-center">
+          {/* Outer glow ring */}
           <span
-            className={`relative inline-flex rounded-full h-3 w-3 ${
-              pulses.length ? 'bg-red-500' : 'bg-emerald-400'
+            className={`absolute inline-flex rounded-full h-5 w-5 transition-colors duration-75 ${
+              active ? 'bg-red-500/40' : 'bg-emerald-400/25'
+            }`}
+          />
+          {/* Core dot */}
+          <span
+            className={`relative inline-flex rounded-full h-3 w-3 transition-colors duration-75 ${
+              active ? 'bg-red-500' : 'bg-emerald-400'
             }`}
           />
         </span>

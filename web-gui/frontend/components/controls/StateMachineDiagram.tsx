@@ -267,6 +267,7 @@ function StateNode({
 
 export default function StateMachineDiagram() {
   const currentState = useSensorStore((s) => s.currentState);
+  const updateState = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
   const [backendTransitions, setBackendTransitions] = useState<Transition[]>([]);
 
@@ -322,6 +323,8 @@ export default function StateMachineDiagram() {
       alert(`Invalid transition: Cannot go from ${STATE_NAMES[effectiveState]} to ${STATE_NAMES[targetState]}`);
       return;
     }
+
+    updateState({ currentState: targetState, stateName: STATE_NAMES[targetState], timestamp: Date.now() });
 
     const command: CommandPayload = {
       commandType: 'state_transition',

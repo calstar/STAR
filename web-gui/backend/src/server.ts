@@ -1373,21 +1373,17 @@ class SensorSystemServer {
           this.currentState = newState;
           this.broadcast({ type: MessageType.STATE_UPDATE, timestamp: Date.now(), payload: { currentState: newState, stateName: SystemState[newState], timestamp: Date.now(), debugMode: this.debugMode } });
 
-          if (this.debugMode) {
-            stopContinuousActuatorCommands(this);
-            this.manuallyCommandedChannels.clear();
+          if (newState === SystemState.FIRE) {
+            // Async: probe controller first (0.1s), then open valves + start PWM atomically
+            // Runs in both normal and debug modes so you can exercise the FIRE sequence while debugging.
+            this.startFireSequence();
           } else {
-            if (newState === SystemState.FIRE) {
-              // Async: probe controller first (0.1s), then open valves + start PWM atomically
-              this.startFireSequence();
-            } else {
-              this.manuallyCommandedChannels.clear();
-              applyActuatorsForState(this, newState, STATE_ACTUATOR_MAP);
-              if (newState === SystemState.IDLE) { stopContinuousActuatorCommands(this); }
-              else { startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP); }
-              broadcastActuatorExpectedPositions(this, newState, STATE_ACTUATOR_MAP);
-              stopControllerLoop(this);
-            }
+            this.manuallyCommandedChannels.clear();
+            applyActuatorsForState(this, newState, STATE_ACTUATOR_MAP);
+            if (newState === SystemState.IDLE) { stopContinuousActuatorCommands(this); }
+            else { startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP); }
+            broadcastActuatorExpectedPositions(this, newState, STATE_ACTUATOR_MAP);
+            if (!this.debugMode) { stopControllerLoop(this); }
           }
 
           // Abort UDP broadcasts (ABORT / ABORT_DONE)
@@ -1808,6 +1804,7 @@ class SensorSystemServer {
   }
 
   private async startFireSequence(): Promise<void> {
+    console.log('🎯 FIRE: starting atomic sequence (probe 0.1s → then valves + PWM)');
     // Step 1: Probe controller with a very short timeout so we never block valve opening.
     let controllerReady = false;
     if (!this.USE_CPP_CONTROLLER && this.controllerClient) {
