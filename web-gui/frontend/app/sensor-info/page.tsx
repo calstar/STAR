@@ -272,7 +272,7 @@ function LcRow({ entity, label, color }: { entity: string; label: string; color:
   );
 }
 
-// ── Config-driven channel builder (same as lcs-tcs-rtd/page.tsx) ─────────────
+// ── Channel builder from /api/config ─────────────────────────────────────────
 
 function buildChannels(boards: Record<string, any>, type: 'TC' | 'RTD' | 'LC'): number[] {
   const channels: number[] = [];
@@ -289,6 +289,13 @@ function buildChannels(boards: Record<string, any>, type: 'TC' | 'RTD' | 'LC'): 
 
 const SENSE_COLORS = ['#F59E0B', '#10B981', '#3B82F6', '#EC4899', '#F87171', '#A78BFA', '#34D399', '#FBBF24', '#60A5FA', '#E879F9'];
 
+// Default channel lists match config.toml active_connectors so the first
+// render produces the same component tree as after the config fetch.
+// This prevents a 0 → N row transition that can trigger "more hooks" errors.
+const TC_DEFAULT_CHANNELS  = [2, 3, 4, 5];    // tc_board  active_connectors
+const RTD_DEFAULT_CHANNELS = [1, 2, 3, 4];    // rtd_board active_connectors
+const LC_DEFAULT_CHANNELS  = [1, 2, 3];        // lc_board  active_connectors
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function SensorInfoPage() {
@@ -296,10 +303,11 @@ export default function SensorInfoPage() {
   const updateState  = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
 
-  // Dynamic channel lists from /api/config
-  const [tcChannels,  setTcChannels]  = useState<number[]>([]);
-  const [rtdChannels, setRtdChannels] = useState<number[]>([]);
-  const [lcChannels,  setLcChannels]  = useState<number[]>([]);
+  // Initialised with defaults so rows are present immediately; config fetch
+  // refines the lists if they differ from the defaults.
+  const [tcChannels,  setTcChannels]  = useState<number[]>(TC_DEFAULT_CHANNELS);
+  const [rtdChannels, setRtdChannels] = useState<number[]>(RTD_DEFAULT_CHANNELS);
+  const [lcChannels,  setLcChannels]  = useState<number[]>(LC_DEFAULT_CHANNELS);
 
   useEffect(() => {
     fetch('/api/config')
@@ -314,7 +322,7 @@ export default function SensorInfoPage() {
         const lc = buildChannels(boards, 'LC');
         if (lc.length) setLcChannels(lc);
       })
-      .catch(() => {/* leave defaults empty */});
+      .catch(() => {/* keep defaults on failure */});
   }, []);
 
   useEffect(() => {
@@ -361,22 +369,14 @@ export default function SensorInfoPage() {
           color="#F59E0B"
           headers={['Channel', 'ADC Code', 'Temp (derived)', 'Rate']}
         >
-          {tcChannels.length === 0 ? (
-            <tr>
-              <td colSpan={4} className="px-4 py-3 text-gray-600 text-xs">
-                Loading channel config…
-              </td>
-            </tr>
-          ) : (
-            tcChannels.map((ch, i) => (
-              <TcRow
-                key={ch}
-                entity={`TC.TC_CH${ch}`}
-                label={`TC Ch${ch}`}
-                color={SENSE_COLORS[i % SENSE_COLORS.length]}
-              />
-            ))
-          )}
+          {tcChannels.map((ch, i) => (
+            <TcRow
+              key={ch}
+              entity={`TC.TC_CH${ch}`}
+              label={`TC Ch${ch}`}
+              color={SENSE_COLORS[i % SENSE_COLORS.length]}
+            />
+          ))}
         </SensorTable>
 
         {/* ── RTD (board 31) ───────────────────────────────────────────────── */}
@@ -385,23 +385,15 @@ export default function SensorInfoPage() {
           color="#10B981"
           headers={['Channel', 'Raw Resistance', 'Temp', 'Rate']}
         >
-          {rtdChannels.length === 0 ? (
-            <tr>
-              <td colSpan={4} className="px-4 py-3 text-gray-600 text-xs">
-                Loading channel config…
-              </td>
-            </tr>
-          ) : (
-            rtdChannels.map((ch, i) => (
-              <RtdRow
-                key={ch}
-                entity={`RTD.RTD_CH${ch}`}
-                calEntity={`RTD_Cal.RTD_CH${ch}`}
-                label={`RTD Ch${ch}`}
-                color={SENSE_COLORS[i % SENSE_COLORS.length]}
-              />
-            ))
-          )}
+          {rtdChannels.map((ch, i) => (
+            <RtdRow
+              key={ch}
+              entity={`RTD.RTD_CH${ch}`}
+              calEntity={`RTD_Cal.RTD_CH${ch}`}
+              label={`RTD Ch${ch}`}
+              color={SENSE_COLORS[i % SENSE_COLORS.length]}
+            />
+          ))}
         </SensorTable>
 
         {/* ── LC (Load Cells – board 41) ───────────────────────────────────── */}
@@ -410,22 +402,14 @@ export default function SensorInfoPage() {
           color="#3B82F6"
           headers={['Channel', 'ADC Code', 'Force (derived)', 'Rate']}
         >
-          {lcChannels.length === 0 ? (
-            <tr>
-              <td colSpan={4} className="px-4 py-3 text-gray-600 text-xs">
-                Loading channel config…
-              </td>
-            </tr>
-          ) : (
-            lcChannels.map((ch, i) => (
-              <LcRow
-                key={ch}
-                entity={`LC.CH${ch}`}
-                label={`LC Ch${ch}`}
-                color={SENSE_COLORS[i % SENSE_COLORS.length]}
-              />
-            ))
-          )}
+          {lcChannels.map((ch, i) => (
+            <LcRow
+              key={ch}
+              entity={`LC.CH${ch}`}
+              label={`LC Ch${ch}`}
+              color={SENSE_COLORS[i % SENSE_COLORS.length]}
+            />
+          ))}
         </SensorTable>
 
       </div>

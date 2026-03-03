@@ -17,6 +17,7 @@ const MAX_TIMESTAMPS = 200; // cap buffer size per key
 const _timestamps: Map<string, number[]> = new Map();
 
 export function recordSensorUpdate(entity: string, component: string): void {
+  if (typeof performance === 'undefined') return;
   const key = `${entity}.${component}`;
   const now = performance.now();
 
@@ -39,6 +40,7 @@ export function recordSensorUpdate(entity: string, component: string): void {
 }
 
 export function getSensorRate(entity: string, component: string): number {
+  if (typeof performance === 'undefined') return 0;
   const key = `${entity}.${component}`;
   const ts = _timestamps.get(key);
   if (!ts || ts.length < 2) return 0;
