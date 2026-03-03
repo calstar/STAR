@@ -12,7 +12,6 @@ import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
 import { useSensorConfig, filterByRole } from '@/lib/sensor-config';
 import { usePressureLimits, getLimitsForSystem } from '@/lib/pressure-limits';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
-import { useState } from 'react';
 
 export default function GSEGraphsPage() {
   const updateSensor = useSensorStore((s) => s.updateSensor);
@@ -21,41 +20,34 @@ export default function GSEGraphsPage() {
   const allSensors = useSensorConfig();
   const pressureLimits = usePressureLimits();
   const gn2Limits = getLimitsForSystem(pressureLimits, 'GN2');
-  const fuelLimits = getLimitsForSystem(pressureLimits, 'FUEL');
-  const loxLimits = getLimitsForSystem(pressureLimits, 'LOX');
   const { actuators: actuatorsFromConfig } = useActuatorsFromConfig();
 
-  const [activeTab, setActiveTab] = useState<'PRESSURANT' | 'FUEL' | 'LOX'>('PRESSURANT');
+  // GSE-only actuators: exclude prop/gn2 system valves (they live on Fuel / LOX / COPV pages)
+  const GSE_EXCLUDED_ACTUATORS = new Set([
+    'ACT.Fuel_Vent', 'ACT.Fuel_Press', 'ACT.Fuel_Main',
+    'ACT.LOX_Vent', 'ACT.LOX_Press', 'ACT.LOX_Main',
+    'ACT.GN2_Vent', 'ACT.GSE_Low_Vent', // GN2 Vent = GSE Low Vent
+  ]);
+  const gseActuators = actuatorsFromConfig
+    .filter((a) => !GSE_EXCLUDED_ACTUATORS.has(a.entity))
+    .map((a) => ({ label: a.name, entity: a.entity, color: getActuatorColor(a.entity) }));
 
-  const pressurantSensors = filterByRole(allSensors, 'GSE', 'GN2').filter(s => !s.role.toLowerCase().includes('fuel') && !s.role.toLowerCase().includes('lox'));
-  const fuelSensors = filterByRole(allSensors, 'Fuel').filter(s => s.role.toLowerCase().includes('gse') || s.role.toLowerCase().includes('fill'));
-  const loxSensors = filterByRole(allSensors, 'LOX', 'Ox').filter(s => s.role.toLowerCase().includes('gse') || s.role.toLowerCase().includes('fill'));
-
-  const pressurantActuators = actuatorsFromConfig.filter(a => (a.name.toLowerCase().includes('gse') || a.name.toLowerCase().includes('gn2')) && !a.name.toLowerCase().includes('lox') && !a.name.toLowerCase().includes('fuel'));
-  const fuelActuators = actuatorsFromConfig.filter(a => a.name.toLowerCase().includes('fuel') && a.name.toLowerCase().includes('fill'));
-  const loxActuators = actuatorsFromConfig.filter(a => a.name.toLowerCase().includes('lox') && (a.name.toLowerCase().includes('fill') || a.name.toLowerCase().includes('dump')));
-
-  // Current tab data
-  let currentSensors = pressurantSensors;
-  let currentActuators = pressurantActuators;
-  let currentSystem = 'GN2';
-  let limits = gn2Limits;
-
-  if (activeTab === 'FUEL') {
-    currentSensors = fuelSensors;
-    currentActuators = fuelActuators;
-    currentSystem = 'FUEL';
-    limits = fuelLimits;
-  } else if (activeTab === 'LOX') {
-    currentSensors = loxSensors;
-    currentActuators = loxActuators;
-    currentSystem = 'LOX';
-    limits = loxLimits;
-  }
-
-  const entities = currentSensors.map((s) => s.calEntity);
-  const labels = currentSensors.map((s) => s.role);
+  // GSE sensors: role names containing "GSE", plus Fuel Fill Tank (GSE fill equipment)
+  const fillTankSensor = allSensors.find((s) => s.calEntity === 'PT_Cal.Fuel_Fill_Tank' || s.role === 'Fuel Fill Tank');
+  const gseSensors = [
+    ...filterByRole(allSensors, 'GSE'),
+    ...(fillTankSensor ? [fillTankSensor] : []),
+  ];
+  const entities = gseSensors.map((s) => s.calEntity);
+  const labels = gseSensors.map((s) => s.role);
   const colors = entities.map((e) => getEntityColor(e));
+
+  const loSensor = gseSensors.find((s) => s.role.toLowerCase().includes('low'));
+  const midSensor = gseSensors.find((s) => s.role.toLowerCase().includes('mid'));
+  const hiSensor = gseSensors.find((s) => s.role.toLowerCase().includes('high'));
+  const lo = useSensorValue(loSensor?.calEntity ?? '', 'pressure_psi');
+  const mid = useSensorValue(midSensor?.calEntity ?? '', 'pressure_psi');
+  const hi = useSensorValue(hiSensor?.calEntity ?? '', 'pressure_psi');
 
   useEffect(() => {
     ws.connect();
@@ -67,45 +59,24 @@ export default function GSEGraphsPage() {
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
 
-      <div className="flex items-center flex-shrink-0 justify-between">
-        <div className="flex items-center">
-          <div className="w-1 h-5 bg-yellow-500 rounded-full mr-3" />
-          <h1 className="text-base font-bold text-yellow-400 tracking-wider">GSE SYSTEM</h1>
-        </div>
-        <div className="flex gap-2 bg-gray-900 rounded-lg p-1">
-          <button
-            onClick={() => setActiveTab('PRESSURANT')}
-            className={`px-4 py-1.5 text-sm font-bold rounded-md transition-colors ${activeTab === 'PRESSURANT' ? 'bg-yellow-500 text-black' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
-          >
-            Pressurant
-          </button>
-          <button
-            onClick={() => setActiveTab('FUEL')}
-            className={`px-4 py-1.5 text-sm font-bold rounded-md transition-colors ${activeTab === 'FUEL' ? 'bg-rose-500 text-black' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
-          >
-            Fuel
-          </button>
-          <button
-            onClick={() => setActiveTab('LOX')}
-            className={`px-4 py-1.5 text-sm font-bold rounded-md transition-colors ${activeTab === 'LOX' ? 'bg-blue-500 text-black' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
-          >
-            LOX
-          </button>
-        </div>
+      <div className="flex items-center flex-shrink-0">
+        <div className="w-1 h-5 bg-yellow-500 rounded-full mr-3" />
+        <h1 className="text-base font-bold text-yellow-400 tracking-wider">GSE SYSTEM</h1>
       </div>
 
       <div className="flex-shrink-0">
-        <SensorReadoutStrip sensors={currentSensors.map((s) => ({
+        <SensorReadoutStrip sensors={gseSensors.map((s) => ({
           label: s.role, entity: s.calEntity, component: 'pressure_psi', color: getEntityColor(s.calEntity),
         }))} />
       </div>
 
+      {/* Body: chart + sidebar */}
       <div className="flex-1 min-h-0 flex flex-row gap-2">
         {/* Main chart + actuators */}
         <div className="flex-1 flex flex-col gap-2 min-h-0 min-w-0">
           <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0" style={{ minHeight: '300px' }}>
             <TimeSeriesPlot
-              title={`${activeTab} Pressures (PSI)`}
+              title="GSE Pressures (PSI)"
               entities={entities}
               labels={labels}
               component="pressure_psi"
@@ -114,36 +85,34 @@ export default function GSEGraphsPage() {
             />
           </div>
 
+          {/* GSE actuators from config (excludes Fuel/LOX/GN2 system valves) */}
           <div className="flex-shrink-0">
             <ActuatorStatePanel
-              title={`${activeTab} Actuators`}
-              actuators={currentActuators.map((a) => ({ label: a.name, entity: a.entity, color: getActuatorColor(a.entity) }))}
+              title="GSE Actuators"
+              actuators={gseActuators}
             />
           </div>
         </div>
 
         {/* Pressure bars sidebar */}
-        <div className="w-60 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0 overflow-y-auto">
+        <div className="w-60 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0 overflow-visible">
           <div className="text-xs font-bold uppercase tracking-widest text-gray-400 text-center flex-shrink-0">
             Pressures
           </div>
-          <div className="flex flex-col flex-1 gap-4 overflow-visible w-full pr-2">
-            {currentSensors.map((s) => (
-              <ConnectedPressureBar key={s.calEntity} entity={s.calEntity} label={s.role} nop={limits.NOP} meop={limits.MEOP} />
-            ))}
+          <div className="flex flex-row flex-1 gap-1.5 min-h-0 overflow-visible w-full pr-6">
+            <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-visible">
+              <PressureBar label="Low" value={lo} nop={gn2Limits.NOP} meop={gn2Limits.MEOP} color={getEntityColor(loSensor?.calEntity ?? '')} showLabels={false} />
+            </div>
+            <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-visible">
+              <PressureBar label="Mid" value={mid} nop={gn2Limits.NOP} meop={gn2Limits.MEOP} color={getEntityColor(midSensor?.calEntity ?? '')} showLabels={false} />
+            </div>
+            <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-visible">
+              <PressureBar label="High" value={hi} nop={gn2Limits.NOP} meop={gn2Limits.MEOP} color={getEntityColor(hiSensor?.calEntity ?? '')} showLabels={false} />
+            </div>
           </div>
         </div>
       </div>
 
     </main>
-  );
-}
-
-function ConnectedPressureBar({ entity, label, nop, meop }: { entity: string, label: string, nop: number, meop: number }) {
-  const value = useSensorValue(entity, 'pressure_psi');
-  return (
-    <div className="h-40 min-h-0 overflow-visible w-full">
-      <PressureBar label={label} value={value} nop={nop} meop={meop} color={getEntityColor(entity)} showLabels={true} />
-    </div>
   );
 }
