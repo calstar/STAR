@@ -111,8 +111,8 @@ tmux split-window -v -t "$SESSION:main.1" \
 tmux split-window -v -t "$SESSION:main.2" \
   "bash --norc --noprofile -c \"$CMD_SIDECAR\""
 
-# tmux split-window -v -t "$SESSION:main.3" \
-#   "bash --norc --noprofile -c \"$CMD_SIM\""
+tmux split-window -v -t "$SESSION:main.3" \
+  "bash --norc --noprofile -c \"$CMD_SIM\""
 
 tmux split-window -v -t "$SESSION:main.4" \
   "bash --norc --noprofile -c \"$CMD_CAL\""

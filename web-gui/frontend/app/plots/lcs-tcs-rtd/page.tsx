@@ -163,8 +163,7 @@ export default function LCS_TCS_RTDPage() {
   const [lcEntities,  setLcEntities]  = useState<string[]>([]);
   const [lcLabels,    setLcLabels]    = useState<string[]>([]);
 
-  // Fetch board config once on mount
-  useEffect(() => {
+  const loadChannelConfig = useCallback(() => {
     fetch('/api/config')
       .then((r) => (r.ok ? r.json() : null))
       .then((data: any) => {
@@ -193,6 +192,11 @@ export default function LCS_TCS_RTDPage() {
       .catch(() => {/* leave defaults empty */});
   }, []);
 
+  // Fetch board config on mount and whenever backend signals config reload
+  useEffect(() => {
+    loadChannelConfig();
+  }, [loadChannelConfig]);
+
   // WebSocket subscriptions
   useEffect(() => {
     ws.connect();
@@ -202,8 +206,11 @@ export default function LCS_TCS_RTDPage() {
     const unsub2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) =>
       updateState(p as StateUpdate)
     );
-    return () => { unsub1(); unsub2(); };
-  }, [ws, updateSensor, updateState]);
+    const unsub3 = ws.on(MessageType.CONFIG_UPDATED, () => {
+      loadChannelConfig();
+    });
+    return () => { unsub1(); unsub2(); unsub3(); };
+  }, [ws, updateSensor, updateState, loadChannelConfig]);
 
   // Plot transforms
   const tcTransform = useCallback(

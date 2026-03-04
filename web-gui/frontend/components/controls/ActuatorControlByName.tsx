@@ -1,9 +1,10 @@
 'use client'
 
 import React, { useState } from 'react';
-import { useGetSensorValue, useSensorStore, useActuatorCommandedState } from '@/lib/store';
+import { useGetSensorValue, useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { ActuatorState, CommandPayload } from '@/lib/types';
+import { useControlMode } from '@/lib/control-mode';
 
 /** Config-driven actuator control: sends command by role name (config.toml actuator_roles). */
 export interface ActuatorControlByNameProps {
@@ -16,16 +17,39 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
   const ws = getWebSocketClient();
   const getSensorValue = useGetSensorValue();
   const debugMode = useSensorStore((s) => s.debugMode);
-  const setActuatorState = useSensorStore((s) => s.setActuatorState);
-  const setActuatorCommandedOverride = useSensorStore((s) => s.setActuatorCommandedOverride);
-  const commanded = useActuatorCommandedState(entity);
+  const currentState = useSensorStore((s) => s.currentState);
+  const actuatorExpectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
+  const [manualCommanded, setManualCommanded] = useState<ActuatorState | null>(null);
   const [pending, setPending] = useState(false);
+  const { controlEnabled } = useControlMode();
+
+  const stateExpected = currentState != null ? (actuatorExpectedPositions[currentState] ?? {}) : {};
+  const expected = stateExpected[entity] ?? null;
 
   // Determine if NO (Normally Open) based on name
   const isNO = name === 'LOX Main' || name === 'LOX Press' || name === 'Fuel Main';
   const type = isNO ? 'NO' : 'NC';
 
-  const canControl = debugMode;
+  React.useEffect(() => {
+    if (!debugMode) setManualCommanded(null);
+  }, [debugMode]);
+
+  React.useEffect(() => {
+    if (debugMode && currentState !== null) setManualCommanded(null);
+  }, [debugMode, currentState]);
+
+  const commandedState = React.useMemo(() => {
+    if (expected === 'open') return ActuatorState.OPEN;
+    if (expected === 'closed') return ActuatorState.CLOSED;
+    return null;
+  }, [expected]);
+
+  const commanded = React.useMemo(() => {
+    if (debugMode) return manualCommanded ?? commandedState;
+    return commandedState;
+  }, [debugMode, manualCommanded, commandedState]);
+
+  const canControl = debugMode && controlEnabled;
 
   const rawAdc = getSensorValue(entity, 'raw_adc_counts')
     ?? getSensorValue(`ACT.ACT_CH${channel}`, 'raw_adc_counts')
@@ -45,8 +69,7 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
       data: { actuatorName: name, actuatorState: state },
     };
     ws.sendCommand(command);
-    setActuatorState(entity, state);
-    if (debugMode) setActuatorCommandedOverride(entity, state);
+    if (debugMode) setManualCommanded(state);
     setPending(true);
     setTimeout(() => setPending(false), 1000);
   };
@@ -55,31 +78,26 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
   const commandedClosed = commanded === ActuatorState.CLOSED;
   const mismatch = commanded !== null && !pending &&
     ((commandedOpen && !feedbackOpen) || (commandedClosed && feedbackOpen));
+  const showMismatch = false;
 
   return (
-    <div className={`rounded-lg p-3 border transition-colors
-      ${mismatch ? 'bg-yellow-950/40 border-yellow-600' : 'bg-background border-gray-700 hover:border-gray-600'}`}>
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-base font-bold tracking-wider text-text uppercase">{name}</h3>
-        {mismatch && <span className="text-xs font-bold text-yellow-400 uppercase tracking-wider">MISMATCH</span>}
-      </div>
-      <div className="flex gap-3 mb-3 text-base">
-        <div className="flex-1">
-          <div className="text-text-muted mb-1">COMMANDED</div>
-          <div className={`flex items-center gap-2 ${commanded === null ? 'text-gray-500' : commandedOpen ? 'text-green-400' : 'text-red-400'}`}>
-            <div className={`w-2.5 h-2.5 rounded-full ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="font-mono font-bold">{commanded === null ? '---' : commandedOpen ? 'OPEN' : 'CLOSED'}</span>
-            {pending && <span className="text-yellow-400 text-xs">⟳</span>}
-          </div>
+    <div className={`rounded-md p-1 border transition-colors
+      ${showMismatch && mismatch ? 'bg-yellow-950/40 border-yellow-600' : 'bg-background border-gray-700 hover:border-gray-600'}`}>
+      <div className="flex items-center justify-between mb-0.5">
+        <div className="flex items-center gap-1 min-w-0">
+          <h3 className="text-[10px] font-bold tracking-wider text-text uppercase leading-tight truncate">{name}</h3>
+          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
+          {pending && <span className="text-yellow-400 text-[9px] leading-none">⟳</span>}
         </div>
+        {showMismatch && mismatch && <span className="text-[10px] font-bold text-yellow-400 uppercase tracking-wider">MM</span>}
       </div>
-      <div className="text-sm text-text-muted font-mono mb-2.5">ADC: {rawAdc.toLocaleString()}</div>
-      <div className="grid grid-cols-2 gap-1.5">
+      <div className="text-[10px] text-text-muted font-mono mb-0.5 truncate leading-none">ADC: {rawAdc.toLocaleString()}</div>
+      <div className="grid grid-cols-2 gap-0.5 mt-0.5">
         <button
           onClick={() => sendCommand(ActuatorState.OPEN)}
           disabled={!canControl}
-          className={`py-2.5 rounded text-base font-bold uppercase tracking-wider transition-all
-            ${commandedOpen ? (canControl ? 'bg-green-700 text-white ring-2 ring-green-400' : 'bg-green-700/50 text-green-300 ring-2 ring-green-700 cursor-not-allowed')
+          className={`py-1 rounded text-[10px] font-bold uppercase tracking-wider leading-none transition-all
+            ${commandedOpen ? (canControl ? 'bg-green-700 text-white ring-1 ring-green-400' : 'bg-green-700/50 text-green-300 ring-1 ring-green-700 cursor-not-allowed')
               : canControl ? 'bg-gray-800 hover:bg-gray-700 text-gray-300' : 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'}`}
         >
           Open
@@ -87,8 +105,8 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
         <button
           onClick={() => sendCommand(ActuatorState.CLOSED)}
           disabled={!canControl}
-          className={`py-2.5 rounded text-base font-bold uppercase tracking-wider transition-all
-            ${commandedClosed ? (canControl ? 'bg-red-700 text-white ring-2 ring-red-400' : 'bg-red-700/50 text-red-300 ring-2 ring-red-700 cursor-not-allowed')
+          className={`py-1 rounded text-[10px] font-bold uppercase tracking-wider leading-none transition-all
+            ${commandedClosed ? (canControl ? 'bg-red-700 text-white ring-1 ring-red-400' : 'bg-red-700/50 text-red-300 ring-1 ring-red-700 cursor-not-allowed')
               : canControl ? 'bg-gray-800 hover:bg-gray-700 text-gray-300' : 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'}`}
         >
           Close

@@ -24,6 +24,7 @@ export enum MessageType {
   HISTORICAL_DATA = 'historical_data',
   BOARD_STATUS_UPDATE = 'board_status_update',
   NOTIFICATION = 'notification',
+  CONFIG_UPDATED = 'config_updated',
 }
 
 // Sensor types
@@ -180,7 +181,8 @@ export interface CalibrationStatusPayload {
   channels: CalibrationChannelStatus[];
   phase2Enabled: boolean;
   timestamp: number;
-  calibrationFilePath?: string;
+  /** Absolute path of the calibration file that was loaded at startup, or null if none. */
+  calibrationFilePath?: string | null;
 }
 
 export type CalibrationCommandType =
@@ -199,7 +201,6 @@ export interface CalibrationCommand {
   boardId?: number;
   referencePressure?: number;
 }
-
 // ── Board / heartbeat status ───────────────────────────────────────────────────
 
 export interface BoardStatus {

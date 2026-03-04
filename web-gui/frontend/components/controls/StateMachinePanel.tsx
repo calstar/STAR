@@ -3,6 +3,7 @@
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { SystemState, MessageType, CommandPayload, StateUpdate } from '@/lib/types';
+import { useControlMode } from '@/lib/control-mode';
 
 const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.DEBUG]: 'DEBUG',
@@ -33,21 +34,25 @@ interface StateButtonProps {
   label: string;
   isActive: boolean;
   onClick: () => void;
+  disabled?: boolean;
 }
 
-function StateButton({ state, label, isActive, onClick }: StateButtonProps) {
+function StateButton({ state, label, isActive, onClick, disabled }: StateButtonProps) {
   const isEmergency = state === SystemState.ABORT;
 
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       className={`
         px-4 py-2 rounded-lg font-semibold transition-all
-        ${isActive
-          ? 'bg-blue-600 text-white shadow-lg'
-          : isEmergency
-            ? 'bg-red-600 hover:bg-red-700 text-white'
-            : 'bg-card hover:bg-opacity-80 text-text'
+        ${disabled
+          ? 'bg-gray-900 text-gray-600 cursor-not-allowed'
+          : isActive
+            ? 'bg-blue-600 text-white shadow-lg'
+            : isEmergency
+              ? 'bg-red-600 hover:bg-red-700 text-white'
+              : 'bg-card hover:bg-opacity-80 text-text'
         }
       `}
     >
@@ -60,8 +65,10 @@ export default function StateMachinePanel() {
   const currentState = useSensorStore((state) => state.currentState);
   const updateState = useSensorStore((state) => state.updateState);
   const ws = getWebSocketClient();
+  const { controlEnabled } = useControlMode();
 
   const sendStateTransition = (targetState: SystemState) => {
+    if (!controlEnabled) return;
     // Optimistic update — show new state immediately
     updateState({ currentState: targetState, stateName: STATE_NAMES[targetState], timestamp: Date.now() });
     const command: CommandPayload = {
@@ -83,12 +90,14 @@ export default function StateMachinePanel() {
             label={STATE_NAMES[SystemState.DEBUG]}
             isActive={currentState === SystemState.DEBUG}
             onClick={() => sendStateTransition(SystemState.DEBUG)}
+            disabled={!controlEnabled}
           />
           <StateButton
             state={SystemState.IDLE}
             label={STATE_NAMES[SystemState.IDLE]}
             isActive={currentState === SystemState.IDLE}
             onClick={() => sendStateTransition(SystemState.IDLE)}
+            disabled={!controlEnabled}
           />
         </div>
 
@@ -98,6 +107,7 @@ export default function StateMachinePanel() {
           label={STATE_NAMES[SystemState.ARMED]}
           isActive={currentState === SystemState.ARMED}
           onClick={() => sendStateTransition(SystemState.ARMED)}
+          disabled={!controlEnabled}
         />
 
         {/* Fill states (horizontal pair) */}
@@ -107,12 +117,14 @@ export default function StateMachinePanel() {
             label={STATE_NAMES[SystemState.FUEL_FILL]}
             isActive={currentState === SystemState.FUEL_FILL}
             onClick={() => sendStateTransition(SystemState.FUEL_FILL)}
+            disabled={!controlEnabled}
           />
           <StateButton
             state={SystemState.OX_FILL}
             label={STATE_NAMES[SystemState.OX_FILL]}
             isActive={currentState === SystemState.OX_FILL}
             onClick={() => sendStateTransition(SystemState.OX_FILL)}
+            disabled={!controlEnabled}
           />
         </div>
 
@@ -123,12 +135,14 @@ export default function StateMachinePanel() {
             label={STATE_NAMES[SystemState.GN2_LOW_PRESS]}
             isActive={currentState === SystemState.GN2_LOW_PRESS}
             onClick={() => sendStateTransition(SystemState.GN2_LOW_PRESS)}
+            disabled={!controlEnabled}
           />
           <StateButton
             state={SystemState.GN2_VENT}
             label={STATE_NAMES[SystemState.GN2_VENT]}
             isActive={currentState === SystemState.GN2_VENT}
             onClick={() => sendStateTransition(SystemState.GN2_VENT)}
+            disabled={!controlEnabled}
           />
         </div>
 
@@ -139,12 +153,14 @@ export default function StateMachinePanel() {
             label={STATE_NAMES[SystemState.FUEL_PRESS]}
             isActive={currentState === SystemState.FUEL_PRESS}
             onClick={() => sendStateTransition(SystemState.FUEL_PRESS)}
+            disabled={!controlEnabled}
           />
           <StateButton
             state={SystemState.FUEL_VENT}
             label={STATE_NAMES[SystemState.FUEL_VENT]}
             isActive={currentState === SystemState.FUEL_VENT}
             onClick={() => sendStateTransition(SystemState.FUEL_VENT)}
+            disabled={!controlEnabled}
           />
         </div>
 
@@ -155,12 +171,14 @@ export default function StateMachinePanel() {
             label={STATE_NAMES[SystemState.OX_PRESS]}
             isActive={currentState === SystemState.OX_PRESS}
             onClick={() => sendStateTransition(SystemState.OX_PRESS)}
+            disabled={!controlEnabled}
           />
           <StateButton
             state={SystemState.OX_VENT}
             label={STATE_NAMES[SystemState.OX_VENT]}
             isActive={currentState === SystemState.OX_VENT}
             onClick={() => sendStateTransition(SystemState.OX_VENT)}
+            disabled={!controlEnabled}
           />
         </div>
 
@@ -171,12 +189,14 @@ export default function StateMachinePanel() {
             label={STATE_NAMES[SystemState.GN2_HIGH_PRESS]}
             isActive={currentState === SystemState.GN2_HIGH_PRESS}
             onClick={() => sendStateTransition(SystemState.GN2_HIGH_PRESS)}
+            disabled={!controlEnabled}
           />
           <StateButton
             state={SystemState.GN2_HIGH_VENT}
             label={STATE_NAMES[SystemState.GN2_HIGH_VENT]}
             isActive={currentState === SystemState.GN2_HIGH_VENT}
             onClick={() => sendStateTransition(SystemState.GN2_HIGH_VENT)}
+            disabled={!controlEnabled}
           />
         </div>
 
@@ -186,18 +206,21 @@ export default function StateMachinePanel() {
           label={STATE_NAMES[SystemState.CALIBRATE]}
           isActive={currentState === SystemState.CALIBRATE}
           onClick={() => sendStateTransition(SystemState.CALIBRATE)}
+          disabled={!controlEnabled}
         />
         <StateButton
           state={SystemState.READY}
           label={STATE_NAMES[SystemState.READY]}
           isActive={currentState === SystemState.READY}
           onClick={() => sendStateTransition(SystemState.READY)}
+          disabled={!controlEnabled}
         />
         <StateButton
           state={SystemState.FIRE}
           label={STATE_NAMES[SystemState.FIRE]}
           isActive={currentState === SystemState.FIRE}
           onClick={() => sendStateTransition(SystemState.FIRE)}
+          disabled={!controlEnabled}
         />
 
         {/* Emergency states (bottom) */}
@@ -206,12 +229,14 @@ export default function StateMachinePanel() {
           label={STATE_NAMES[SystemState.VENT]}
           isActive={currentState === SystemState.VENT}
           onClick={() => sendStateTransition(SystemState.VENT)}
+          disabled={!controlEnabled}
         />
         <StateButton
           state={SystemState.ABORT}
           label={STATE_NAMES[SystemState.ABORT]}
           isActive={currentState === SystemState.ABORT}
           onClick={() => sendStateTransition(SystemState.ABORT)}
+          disabled={!controlEnabled}
         />
       </div>
     </div>

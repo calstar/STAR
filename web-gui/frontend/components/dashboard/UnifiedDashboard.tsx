@@ -1,15 +1,15 @@
 'use client'
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useSensorStore, useSensorValue, useGetSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate, ActuatorUpdate, SystemState, ActuatorId } from '@/lib/types';
+import { MessageType, SensorUpdate, StateUpdate, SystemState, ActuatorId } from '@/lib/types';
 import { startDataCache } from '@/lib/data-cache';
 import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
 import ActuatorControl from '@/components/controls/ActuatorControl';
 import ActuatorControlByName from '@/components/controls/ActuatorControlByName';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
-import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
+import { PRESSURE_SENSORS, getEntityColor } from '@/lib/sensor-colors';
 
 const NAME_TO_ACTUATOR_ID: Partial<Record<string, ActuatorId>> = {
   'LOX Main': ActuatorId.LOX_MAIN, 'Fuel Main': ActuatorId.FUEL_MAIN,
@@ -23,7 +23,7 @@ const NAME_TO_ACTUATOR_ID: Partial<Record<string, ActuatorId>> = {
   'LOX Dump': ActuatorId.LOX_DUMP,
 };
 
-const PRESSURE_SENSORS_PLOT = PRESSURE_SENSORS.map((s) => ({
+const FALLBACK_PRESSURE_SENSORS_PLOT = PRESSURE_SENSORS.map((s) => ({
   label: s.label.replace('Upstream', 'Up').replace('Downstream', 'Down').replace('Regulated', 'Reg'),
   entity: s.entity,
   color: s.color,
@@ -40,17 +40,17 @@ const TIME_WINDOWS = [
 export default function UnifiedDashboard() {
   const updateSensor = useSensorStore((state) => state.updateSensor);
   const updateState = useSensorStore((state) => state.updateState);
-  const updateActuator = useSensorStore((state) => state.updateActuator);
   const updateConnectionStatus = useSensorStore((state) => state.updateConnectionStatus);
   const currentState = useSensorStore((state) => state.currentState);
   const ws = getWebSocketClient();
   const [timeWindow, setTimeWindow] = useState(60);
   const [actuatorsFromConfig, setActuatorsFromConfig] = useState<{ name: string; channel: number; entity: string; id?: ActuatorId }[]>([]);
+  const [pressureSensorsPlot, setPressureSensorsPlot] = useState<{ label: string; entity: string; color: string }[]>([]);
 
-  useEffect(() => {
+  const loadActuatorsFromConfig = useCallback(() => {
     fetch('/api/config')
-      .then((r) => r.ok ? r.json() : null)
-      .then((data: { config?: { actuator_roles?: Record<string, [string, number] | [string, number, string]> } } | null) => {
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { config?: { actuator_roles?: Record<string, any> } } | null) => {
         const roles = data?.config?.actuator_roles;
         if (!roles || typeof roles !== 'object') return;
         setActuatorsFromConfig(
@@ -63,6 +63,30 @@ export default function UnifiedDashboard() {
       })
       .catch(() => {});
   }, []);
+
+  const loadPressureSensors = useCallback(() => {
+    fetch('/api/sensor-config')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: any) => {
+        const sensors = data?.sensors as any[] | undefined;
+        if (!Array.isArray(sensors)) return;
+        const pts = sensors
+          .filter((s) => typeof s?.calEntity === 'string' && (s.calEntity as string).startsWith('PT_Cal.'))
+          .map((s) => {
+            const role = String(s.role || s.calEntity);
+            const label = role.replace('Upstream', 'Up').replace('Downstream', 'Down').replace('Regulated', 'Reg');
+            const entity = String(s.calEntity);
+            return { label, entity, color: getEntityColor(entity) };
+          });
+        if (pts.length > 0) setPressureSensorsPlot(pts);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    loadActuatorsFromConfig();
+    loadPressureSensors();
+  }, [loadActuatorsFromConfig, loadPressureSensors]);
 
   useEffect(() => {
     ws.connect();
@@ -78,20 +102,24 @@ export default function UnifiedDashboard() {
       updateSensor(update);
     });
     const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    const u3 = ws.on(MessageType.ACTUATOR_UPDATE, (p: unknown) => updateActuator(p as ActuatorUpdate));
-    const u4 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
+    const u3 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
       const payload = p as Record<number, Record<string, 'open' | 'closed' | null>>;
       useSensorStore.getState().updateActuatorExpectedPositions(payload);
     });
-    const u5 = ws.onConnectionStatus((s) => updateConnectionStatus(s));
+    const u4 = ws.onConnectionStatus((s) => updateConnectionStatus(s));
+    const u5 = ws.on(MessageType.CONFIG_UPDATED, () => {
+      loadActuatorsFromConfig();
+      loadPressureSensors();
+    });
 
     return () => { u1(); u2(); u3(); u4(); u5(); };
-  }, [ws, updateSensor, updateState, updateActuator, updateConnectionStatus]);
+  }, [ws, updateSensor, updateState, updateConnectionStatus, loadActuatorsFromConfig, loadPressureSensors]);
 
   const isFireState = currentState === SystemState.FIRE;
+  const effectivePressureSensorsPlot = pressureSensorsPlot.length > 0 ? pressureSensorsPlot : FALLBACK_PRESSURE_SENSORS_PLOT;
 
   return (
-    <main className="h-screen w-screen bg-background text-text flex flex-col overflow-hidden">
+    <main className="h-full w-full bg-background text-text flex flex-col overflow-hidden">
       {/* ── Main content: 3-section split view ─────────────────────────────── */}
       <div className="flex-1 flex gap-3 p-3 min-h-0 overflow-hidden">
 
@@ -124,10 +152,10 @@ export default function UnifiedDashboard() {
             <div className="flex-1 min-h-0">
               <TimeSeriesPlot
                 title="All Pressure Sensors (PSI)"
-                entities={PRESSURE_SENSORS_PLOT.map(s => s.entity)}
-                labels={PRESSURE_SENSORS_PLOT.map(s => s.label)}
+                entities={effectivePressureSensorsPlot.map(s => s.entity)}
+                labels={effectivePressureSensorsPlot.map(s => s.label)}
                 component="pressure_psi"
-                colors={PRESSURE_SENSORS_PLOT.map(s => s.color)}
+                colors={effectivePressureSensorsPlot.map(s => s.color)}
                 yLabel="Pressure (PSI)"
                 windowSeconds={timeWindow}
               />
@@ -138,19 +166,27 @@ export default function UnifiedDashboard() {
         {/* ── Right column: Actuators grid (top) + State machine (bottom) ───── */}
         <div className="flex-1 min-w-0 flex flex-col gap-3 overflow-hidden">
 
-          {/* Actuators in 4x4 grid */}
-          <div className="bg-card rounded-xl border border-gray-800 p-4 flex-shrink-0 overflow-auto">
-            <h2 className="text-base font-bold tracking-widest text-text-muted uppercase mb-4">
-              Actuator Controls
-            </h2>
-            <div className="grid grid-cols-4 gap-3 auto-rows-fr">
-              {actuatorsFromConfig.map((a) =>
-                a.id !== undefined ? (
-                  <ActuatorControl key={a.name} actuatorId={a.id} />
-                ) : (
-                  <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
-                )
-              )}
+          {/* Actuators in 4x4 grid — visually scaled like 80% browser zoom */}
+          <div className="bg-card rounded-xl border border-gray-800 p-3 overflow-auto flex-shrink-0" style={{ maxHeight: '40%' }}>
+            <div
+              style={{
+                transform: 'scale(0.8)',
+                transformOrigin: 'top left',
+                width: '125%',
+              }}
+            >
+              <h2 className="text-xs font-bold tracking-widest text-text-muted uppercase mb-2 leading-none">
+                Actuator Controls
+              </h2>
+              <div className="grid grid-cols-4 gap-2 auto-rows-fr">
+                {actuatorsFromConfig.map((a) =>
+                  a.id !== undefined ? (
+                    <ActuatorControl key={a.name} actuatorId={a.id} />
+                  ) : (
+                    <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
+                  )
+                )}
+              </div>
             </div>
           </div>
 

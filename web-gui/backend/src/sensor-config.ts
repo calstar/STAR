@@ -18,7 +18,7 @@ export function loadActuatorChannelToEntityMap(): Record<number, string> {
         for (const [name, value] of Object.entries(roles)) {
             if (Array.isArray(value) && value.length >= 2 && typeof value[1] === 'number') {
                 const channelId = value[1];
-                out[channelId + 1] = `ACT.${name.replace(/\s+/g, '_')}`;
+                out[channelId] = `ACT.${name.replace(/\s+/g, '_')}`;
             }
         }
     } catch (_) { /* use empty map */ }
@@ -51,14 +51,14 @@ export function loadSensorRoleMap(): {
         for (const [roleName, channelId] of Object.entries(sensorRolesPtBoard)) {
             if (typeof channelId === 'number' && channelId >= 1 && channelId <= 10) {
                 const entityName = roleName.replace(/\s+/g, '_');
-                reverseMap[channelId + 1] = `PT_Cal.${entityName}`;
+                reverseMap[channelId] = `PT_Cal.${entityName}`;
             }
         }
-        // PT board 2 (sensor_roles_pt2) — packet uses (connector+10)+1, so key = connector+11
+        // PT board 2 (sensor_roles_pt2) — packet uses connector + channel_offset (10)
         for (const [roleName, channelId] of Object.entries(sensorRolesPt2)) {
             if (typeof channelId === 'number' && channelId >= 1 && channelId <= 10) {
                 const entityName = roleName.replace(/\s+/g, '_');
-                reverseMap[channelId + 11] = `PT_Cal.${entityName}`;  // payloadCh for connector 1 = 12
+                reverseMap[channelId + 10] = `PT_Cal.${entityName}`;
             }
         }
 

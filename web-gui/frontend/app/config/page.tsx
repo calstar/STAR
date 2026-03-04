@@ -3,8 +3,14 @@
 import { useState, useEffect } from 'react';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType } from '@/lib/types';
+import { useControlMode } from '@/lib/control-mode';
 
 interface ConfigData {
+  server_heartbeat?: {
+    interval_ms?: number;
+    broadcast_port?: number;
+    broadcast_ip?: string;
+  };
   system?: {
     mode?: string;
     state?: string;
@@ -33,8 +39,11 @@ interface ConfigData {
     discovery_timeout_seconds?: number;
   };
   boards?: Record<string, any>;
-  sensor_roles?: Record<string, number>;
-  actuator_roles?: Record<string, [string, number]>;
+  sensor_roles?: Record<string, number>; // legacy fallback
+  sensor_roles_pt_board?: Record<string, number>;
+  sensor_roles_pt2?: Record<string, number>;
+  abort_pts?: Record<string, number>;
+  actuator_roles?: Record<string, [string, number] | [string, number, number] | [string, number, string]>;
   actuator_abbrev?: Record<string, string>;
   routing?: Record<string, any>;
   calibration?: any;
@@ -42,28 +51,29 @@ interface ConfigData {
   pressure_mappings?: Record<string, number>;
   display?: Record<string, any>;
   state_machine?: Record<string, string>;
+  controller?: {
+    pwm_frequency_hz?: number;
+    pwm_duration_ms?: number;
+    fallback_fuel_duty_cycle?: number;
+    fallback_ox_duty_cycle?: number;
+    controller_loop_hz?: number;
+    controller_service_url?: string;
+    controller_config_path?: string;
+    command_type?: 'THRUST_DESIRED' | 'ALTITUDE_GOAL' | 'PRESSURE_TARGET' | string;
+    thrust_desired?: number;
+    altitude_goal?: number;
+    pressure_fuel_target?: number;
+    pressure_ox_target?: number;
+    duty_sweep_enabled?: boolean;
+    duty_sweep_step_duration_sec?: number;
+    duty_sweep_steps?: [number, number][];
+    use_cpp_controller?: boolean;
+  };
+  phase2?: Record<string, any>;
 }
 
-// Sensible defaults drawn from config.toml so the form isn't blank on first load
-const DEFAULT_CONFIG: ConfigData = {
-  system:   { mode: 'GROUND', state: 'GSE' },
-  network:  { bind_ip: '0.0.0.0', sensor_port: 5006, actuator_cmd_port: 5005, buffer_size: 1024 },
-  database: { host: '127.0.0.1', port: 2240, auto_flush_interval_ms: 100,
-              max_buffer_size: 4096, connection_retry_attempts: 3, connection_retry_delay_ms: 1000 },
-  discovery:{ enabled: true, network_interface: 'auto', mode: 'hybrid',
-              subnet: '192.168.2.0/24', ip_range_start: 100, ip_range_end: 150,
-              discovery_timeout_seconds: 30 },
-  boards: {
-    pt_board: { type: 'PT', ip: '192.168.2.101', send_port: 5006, num_sensors: 10, board_id: 1, enabled: true, enable_serial_printing: false, voltage_reference: 0, active_connectors: [1,2,3,4,5,6,7] },
-    actuator_board: { type: 'ACTUATOR', ip: '192.168.2.201', send_port: 5006, listen_port: 5005, num_actuators: 10, num_sensors: 10, board_id: 2, enabled: true, enable_serial_printing: false, voltage_reference: 0, active_connectors: [] },
-  },
-  sensor_roles: { 'Fuel Upstream': 1, 'GSE Low': 2, 'Fuel Downstream': 4, 'Ox Upstream': 5, 'GN2 Regulated': 6, 'Ox Downstream': 7 },
-  actuator_roles: { 'LOX Main': ['NO', 1], 'Fuel Vent': ['NC', 2], 'Fuel Press': ['NC', 3], 'GSE Low Vent': ['NC', 5], 'LOX Vent': ['NC', 6], 'Fuel Main': ['NO', 7], 'LOX Press': ['NO', 8] },
-  calibration: { enabled: true, orchestrator: { min_points: 5, target_points: 15, max_points: 30, min_r_squared: 0.95, target_r_squared: 0.99, rls_forgetting_factor: 0.995, drift_glr_threshold: 3.0, auto_save_interval_sec: 300, status_interval_sec: 30 } },
-  pressure_limits: { GN2: { THRESH: 550, NOP: 900, MEOP: 950, POP: 1000 }, ETH: { THRESH: 550, NOP: 600, MEOP: 650, POP: 750 }, LOX: { THRESH: 550, NOP: 600, MEOP: 650, POP: 750 } },
-  display: { adc_bits: 32, window_seconds: 26.0, y_axis_min: 0.0, y_axis_max: 700.0, y_axis_autoscale: true, only_show_actuators_with_roles: true, only_show_pt_with_roles: true, graph_ma_samples: 1, display_ma_samples: 1 },
-  state_machine: { actuator_csv: 'external/DiabloAvionics/test_guis/state_machine_actuators.csv', transitions_csv: 'external/DiabloAvionics/test_guis/state_transitions.csv' },
-};
+// Keep defaults minimal: config.toml is the source of truth.
+const DEFAULT_CONFIG: ConfigData = {};
 
 export default function ConfigPage() {
   const [config, setConfig] = useState<ConfigData>(DEFAULT_CONFIG);
@@ -72,8 +82,11 @@ export default function ConfigPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [activeTab, setActiveTab] = useState('system');
+  const [advancedText, setAdvancedText] = useState('');
+  const [advancedError, setAdvancedError] = useState<string | null>(null);
 
   const ws = getWebSocketClient();
+  const { controlEnabled } = useControlMode();
 
   useEffect(() => {
     ws.connect();
@@ -98,11 +111,14 @@ export default function ConfigPage() {
       }
 
       const data = await response.json();
-      // Merge loaded config on top of defaults so fields are never empty
-      setConfig({ ...DEFAULT_CONFIG, ...(data.config || {}) });
+      // config.toml is canonical; don't overlay stale defaults
+      const nextConfig = (data.config || {}) as ConfigData;
+      setConfig(nextConfig);
+      setAdvancedText(JSON.stringify(nextConfig, null, 2));
+      setAdvancedError(null);
       setLoading(false);
     } catch (err: any) {
-      // Keep defaults even on error so form is usable offline
+      setError(err?.message || 'Failed to load config');
       setLoading(false);
     }
   };
@@ -126,6 +142,8 @@ export default function ConfigPage() {
 
       setSuccess(true);
       setSaving(false);
+      // Re-fetch canonical config so UI mirrors what was written to disk
+      await loadConfig();
       setTimeout(() => setSuccess(false), 3000);
     } catch (err: any) {
       setError(err.message || 'Failed to save config');
@@ -135,36 +153,40 @@ export default function ConfigPage() {
 
   const updateField = (section: string, field: string, value: any, subSection?: string) => {
     setConfig((prev) => {
-      const updated = { ...prev };
+      const next: any = { ...(prev as any) };
       if (subSection) {
-        if (!updated[section as keyof ConfigData]) {
-          (updated as any)[section] = {};
+        next[section] = { ...(next[section] || {}) };
+        next[section][subSection] = { ...(next[section]?.[subSection] || {}) };
+        if (value === undefined) {
+          delete next[section][subSection][field];
+        } else {
+          next[section][subSection][field] = value;
         }
-        if (!(updated as any)[section][subSection]) {
-          (updated as any)[section][subSection] = {};
-        }
-        (updated as any)[section][subSection][field] = value;
       } else {
-        if (!updated[section as keyof ConfigData]) {
-          (updated as any)[section] = {};
+        next[section] = { ...(next[section] || {}) };
+        if (value === undefined) {
+          delete next[section][field];
+        } else {
+          next[section][field] = value;
         }
-        (updated as any)[section][field] = value;
       }
-      return updated;
+      return next as ConfigData;
     });
   };
 
   const updateBoard = (boardKey: string, field: string, value: any) => {
     setConfig((prev) => {
-      const updated = { ...prev };
-      if (!updated.boards) {
-        updated.boards = {};
+      const next: ConfigData = { ...prev };
+      const boards: Record<string, any> = { ...(next.boards || {}) };
+      const board: Record<string, any> = { ...(boards[boardKey] || {}) };
+      if (value === undefined) {
+        delete board[field];
+      } else {
+        board[field] = value;
       }
-      if (!updated.boards[boardKey]) {
-        updated.boards[boardKey] = {};
-      }
-      updated.boards[boardKey][field] = value;
-      return updated;
+      boards[boardKey] = board;
+      next.boards = boards;
+      return next;
     });
   };
 
@@ -204,7 +226,7 @@ export default function ConfigPage() {
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
-              checked={value || false}
+              checked={!!value}
               onChange={(e) => onChange(e.target.checked)}
               className="w-4 h-4"
             />
@@ -227,8 +249,16 @@ export default function ConfigPage() {
         ) : type === 'number' ? (
           <input
             type="number"
-            value={value || 0}
-            onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+            value={value ?? ''}
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (raw === '') {
+                onChange(undefined);
+                return;
+              }
+              const n = Number(raw);
+              onChange(Number.isFinite(n) ? n : undefined);
+            }}
             className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white"
           />
         ) : (
@@ -256,15 +286,19 @@ export default function ConfigPage() {
   const tabs = [
     { id: 'system', label: 'System' },
     { id: 'network', label: 'Network' },
+    { id: 'server_heartbeat', label: 'Heartbeat' },
     { id: 'database', label: 'Database' },
     { id: 'discovery', label: 'Discovery' },
     { id: 'boards', label: 'Boards' },
     { id: 'sensor_roles', label: 'Sensor Roles' },
     { id: 'actuator_roles', label: 'Actuator Roles' },
+    { id: 'controller', label: 'Controller' },
+    { id: 'phase2', label: 'Phase2' },
     { id: 'calibration', label: 'Calibration' },
     { id: 'pressure_limits', label: 'Pressure Limits' },
     { id: 'display', label: 'Display' },
     { id: 'state_machine', label: 'State Machine' },
+    { id: 'advanced', label: 'Advanced JSON' },
   ];
 
   return (
@@ -282,10 +316,11 @@ export default function ConfigPage() {
             </button>
             <button
               onClick={saveConfig}
-              disabled={saving || loading}
-              className="px-4 py-2 bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              disabled={saving || loading || !controlEnabled}
+              className="px-4 py-2 bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={controlEnabled ? undefined : 'Viewer mode: config changes disabled'}
             >
-              {saving ? 'Saving...' : 'Save Config'}
+              {saving ? 'Saving...' : controlEnabled ? 'Save Config' : 'Save Disabled (Viewer)'}
             </button>
           </div>
         </div>
@@ -299,6 +334,12 @@ export default function ConfigPage() {
         {success && (
           <div className="mb-4 p-4 bg-green-900/30 border border-green-500 rounded-lg text-green-200">
             Configuration saved successfully!
+          </div>
+        )}
+
+        {!controlEnabled && (
+          <div className="mb-4 p-3 bg-yellow-900/40 border border-yellow-600 rounded-lg text-yellow-200 text-sm">
+            Viewer mode: configuration changes are disabled. Unlock controls in the top bar to enable saving.
           </div>
         )}
 
@@ -369,6 +410,31 @@ export default function ConfigPage() {
                   config.network?.buffer_size,
                   (val) => updateField('network', 'buffer_size', val),
                   'number'
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'server_heartbeat' && (
+            <div className="bg-card rounded-lg p-6">
+              <h2 className="text-xl font-bold mb-4">Server Heartbeat</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {renderField(
+                  'Interval (ms)',
+                  config.server_heartbeat?.interval_ms,
+                  (val) => updateField('server_heartbeat', 'interval_ms', val),
+                  'number'
+                )}
+                {renderField(
+                  'Broadcast Port',
+                  config.server_heartbeat?.broadcast_port,
+                  (val) => updateField('server_heartbeat', 'broadcast_port', val),
+                  'number'
+                )}
+                {renderField(
+                  'Broadcast IP',
+                  config.server_heartbeat?.broadcast_ip,
+                  (val) => updateField('server_heartbeat', 'broadcast_ip', val)
                 )}
               </div>
             </div>
@@ -518,6 +584,18 @@ export default function ConfigPage() {
                         undefined,
                         'Board will enable serial debug when config is applied'
                       )}
+                      {(board as any).necessary_for_abort !== undefined && renderField(
+                        'Necessary for abort',
+                        (board as any).necessary_for_abort,
+                        (val) => updateBoard(boardKey, 'necessary_for_abort', val),
+                        'boolean'
+                      )}
+                      {(board as any).designated_survivor !== undefined && renderField(
+                        'Designated survivor (actuator only)',
+                        (board as any).designated_survivor,
+                        (val) => updateBoard(boardKey, 'designated_survivor', val),
+                        'boolean'
+                      )}
                       <div className="space-y-1">
                         <label className="block text-sm font-semibold">Voltage reference</label>
                         <select
@@ -530,6 +608,12 @@ export default function ConfigPage() {
                           <option value="2">5V (absolute)</option>
                         </select>
                       </div>
+                      {(board as any).adc_ref_voltage !== undefined && renderField(
+                        'ADC Reference Voltage (V)',
+                        (board as any).adc_ref_voltage,
+                        (val) => updateBoard(boardKey, 'adc_ref_voltage', val),
+                        'number'
+                      )}
                       {renderField(
                         'Num Sensors',
                         (board as any).num_sensors,
@@ -547,6 +631,38 @@ export default function ConfigPage() {
                         (board as any).active_connectors,
                         (val) => updateBoard(boardKey, 'active_connectors', val),
                         'array'
+                      )}
+
+                      {/* HP PT extras */}
+                      {(board as any).hp_pt_connectors !== undefined && renderField(
+                        'HP PT Connectors',
+                        (board as any).hp_pt_connectors,
+                        (val) => updateBoard(boardKey, 'hp_pt_connectors', val),
+                        'array'
+                      )}
+                      {(board as any).excitation_connector_id !== undefined && renderField(
+                        'Excitation Connector ID',
+                        (board as any).excitation_connector_id,
+                        (val) => updateBoard(boardKey, 'excitation_connector_id', val),
+                        'number'
+                      )}
+                      {(board as any).hp_pt_full_scale_psi !== undefined && renderField(
+                        'HP PT Full Scale (PSI)',
+                        (board as any).hp_pt_full_scale_psi,
+                        (val) => updateBoard(boardKey, 'hp_pt_full_scale_psi', val),
+                        'number'
+                      )}
+                      {(board as any).hp_pt_sense_resistor_ohms !== undefined && renderField(
+                        'HP PT Sense Resistor (Ω)',
+                        (board as any).hp_pt_sense_resistor_ohms,
+                        (val) => updateBoard(boardKey, 'hp_pt_sense_resistor_ohms', val),
+                        'number'
+                      )}
+                      {(board as any).excitation_divider_attenuation !== undefined && renderField(
+                        'Excitation Divider Attenuation',
+                        (board as any).excitation_divider_attenuation,
+                        (val) => updateBoard(boardKey, 'excitation_divider_attenuation', val),
+                        'number'
                       )}
                     </div>
                   </div>
@@ -570,53 +686,74 @@ export default function ConfigPage() {
           {activeTab === 'sensor_roles' && (
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Sensor Roles</h2>
-              <div className="space-y-4">
-                {Object.entries(config.sensor_roles || {}).map(([name, sensorId]) => (
-                  <div key={name} className="flex items-center gap-4">
-                    <input
-                      type="text"
-                      value={name}
-                      onChange={(e) => {
-                        const updated = { ...config.sensor_roles };
-                        delete updated[name];
-                        updated[e.target.value] = sensorId;
-                        setConfig({ ...config, sensor_roles: updated });
-                      }}
-                      className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded text-white"
-                    />
-                    <span className="text-text-muted">=</span>
-                    <input
-                      type="number"
-                      value={sensorId}
-                      onChange={(e) => {
-                        const updated = { ...config.sensor_roles };
-                        updated[name] = parseInt(e.target.value, 10);
-                        setConfig({ ...config, sensor_roles: updated });
-                      }}
-                      className="w-24 px-3 py-2 bg-background border border-gray-700 rounded text-white"
-                    />
-                    <button
-                      onClick={() => {
-                        const updated = { ...config.sensor_roles };
-                        delete updated[name];
-                        setConfig({ ...config, sensor_roles: updated });
-                      }}
-                      className="px-3 py-2 bg-red-600 rounded hover:bg-red-700"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-                <button
-                  onClick={() => {
-                    const updated = { ...config.sensor_roles };
-                    updated['New Sensor'] = 1;
-                    setConfig({ ...config, sensor_roles: updated });
-                  }}
-                  className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
-                >
-                  + Add Sensor Role
-                </button>
+              <div className="space-y-8">
+                {([
+                  { key: 'sensor_roles_pt_board', title: 'PT Board Roles (sensor_roles_pt_board)' },
+                  { key: 'sensor_roles_pt2', title: 'HP PT Roles (sensor_roles_pt2)' },
+                ] as const).map(({ key, title }) => {
+                  const map = (config as any)[key] as Record<string, number> | undefined;
+                  const entries = Object.entries(map || {});
+                  return (
+                    <div key={key} className="space-y-4">
+                      <h3 className="text-lg font-semibold">{title}</h3>
+                      {entries.length === 0 && (
+                        <p className="text-sm text-text-muted">
+                          No entries. Add one to create this section in `config.toml`.
+                        </p>
+                      )}
+                      <div className="space-y-3">
+                        {entries.map(([name, sensorId]) => (
+                          <div key={`${key}:${name}`} className="flex items-center gap-4">
+                            <input
+                              type="text"
+                              value={name}
+                              onChange={(e) => {
+                                const updated = { ...(map || {}) };
+                                delete updated[name];
+                                updated[e.target.value] = sensorId;
+                                setConfig({ ...config, [key]: updated } as any);
+                              }}
+                              className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded text-white"
+                            />
+                            <span className="text-text-muted">=</span>
+                            <input
+                              type="number"
+                              value={sensorId ?? ''}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                const updated = { ...(map || {}) };
+                                if (raw === '') return;
+                                updated[name] = parseInt(raw, 10);
+                                setConfig({ ...config, [key]: updated } as any);
+                              }}
+                              className="w-28 px-3 py-2 bg-background border border-gray-700 rounded text-white"
+                            />
+                            <button
+                              onClick={() => {
+                                const updated = { ...(map || {}) };
+                                delete updated[name];
+                                setConfig({ ...config, [key]: updated } as any);
+                              }}
+                              className="px-3 py-2 bg-red-600 rounded hover:bg-red-700"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        onClick={() => {
+                          const updated = { ...(map || {}) };
+                          updated['New Sensor'] = 1;
+                          setConfig({ ...config, [key]: updated } as any);
+                        }}
+                        className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
+                      >
+                        + Add Role
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -625,7 +762,13 @@ export default function ConfigPage() {
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Actuator Roles</h2>
               <div className="space-y-4">
-                {Object.entries(config.actuator_roles || {}).map(([name, [type, actuatorId]]) => (
+                {Object.entries(config.actuator_roles || {}).map(([name, value]) => {
+                  const arr = Array.isArray(value) ? value : [];
+                  const type = (arr[0] as string) || 'NC';
+                  const actuatorId = typeof arr[1] === 'number' ? arr[1] : Number(arr[1] || 1);
+                  const third = arr.length >= 3 ? arr[2] : undefined;
+                  const boardId = typeof third === 'number' ? third : (typeof third === 'string' ? Number(third) : undefined);
+                  return (
                   <div key={name} className="flex items-center gap-4">
                     <input
                       type="text"
@@ -633,7 +776,7 @@ export default function ConfigPage() {
                       onChange={(e) => {
                         const updated = { ...config.actuator_roles };
                         delete updated[name];
-                        updated[e.target.value] = [type, actuatorId];
+                        updated[e.target.value] = third !== undefined ? ([type, actuatorId, third] as any) : ([type, actuatorId] as any);
                         setConfig({ ...config, actuator_roles: updated });
                       }}
                       className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded text-white"
@@ -643,7 +786,9 @@ export default function ConfigPage() {
                       value={type}
                       onChange={(e) => {
                         const updated = { ...config.actuator_roles };
-                        updated[name] = [e.target.value, actuatorId];
+                        updated[name] = third !== undefined
+                          ? ([e.target.value, actuatorId, third] as any)
+                          : ([e.target.value, actuatorId] as any);
                         setConfig({ ...config, actuator_roles: updated });
                       }}
                       className="px-3 py-2 bg-background border border-gray-700 rounded text-white"
@@ -656,11 +801,28 @@ export default function ConfigPage() {
                       value={actuatorId}
                       onChange={(e) => {
                         const updated = { ...config.actuator_roles };
-                        updated[name] = [type, parseInt(e.target.value, 10)];
+                        const ch = parseInt(e.target.value, 10);
+                        updated[name] = third !== undefined ? ([type, ch, third] as any) : ([type, ch] as any);
                         setConfig({ ...config, actuator_roles: updated });
                       }}
                       className="w-24 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                       placeholder="ID"
+                    />
+                    <input
+                      type="number"
+                      value={Number.isFinite(boardId as number) ? (boardId as number) : ''}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        const updated = { ...config.actuator_roles };
+                        if (raw === '') {
+                          updated[name] = [type, actuatorId] as any;
+                        } else {
+                          updated[name] = [type, actuatorId, parseInt(raw, 10)] as any;
+                        }
+                        setConfig({ ...config, actuator_roles: updated });
+                      }}
+                      className="w-32 px-3 py-2 bg-background border border-gray-700 rounded text-white"
+                      placeholder="Board ID"
                     />
                     <button
                       onClick={() => {
@@ -673,11 +835,12 @@ export default function ConfigPage() {
                       Remove
                     </button>
                   </div>
-                ))}
+                  );
+                })}
                 <button
                   onClick={() => {
                     const updated = { ...config.actuator_roles };
-                    updated['New Actuator'] = ['NO', 1];
+                    updated['New Actuator'] = ['NC', 1, 12] as any;
                     setConfig({ ...config, actuator_roles: updated });
                   }}
                   className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
@@ -685,6 +848,100 @@ export default function ConfigPage() {
                   + Add Actuator Role
                 </button>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'controller' && (
+            <div className="bg-card rounded-lg p-6">
+              <h2 className="text-xl font-bold mb-4">Controller</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {renderField(
+                  'Controller Loop (Hz)',
+                  config.controller?.controller_loop_hz,
+                  (val) => updateField('controller', 'controller_loop_hz', val),
+                  'number'
+                )}
+                {renderField(
+                  'PWM Frequency (Hz)',
+                  config.controller?.pwm_frequency_hz,
+                  (val) => updateField('controller', 'pwm_frequency_hz', val),
+                  'number'
+                )}
+                {renderField(
+                  'PWM Duration (ms)',
+                  config.controller?.pwm_duration_ms,
+                  (val) => updateField('controller', 'pwm_duration_ms', val),
+                  'number'
+                )}
+                {renderField(
+                  'Controller Service URL',
+                  config.controller?.controller_service_url,
+                  (val) => updateField('controller', 'controller_service_url', val)
+                )}
+                {renderField(
+                  'Controller Config Path',
+                  config.controller?.controller_config_path,
+                  (val) => updateField('controller', 'controller_config_path', val)
+                )}
+                {renderField(
+                  'Use C++ Controller',
+                  config.controller?.use_cpp_controller,
+                  (val) => updateField('controller', 'use_cpp_controller', val),
+                  'boolean'
+                )}
+                {renderField(
+                  'Command Type',
+                  config.controller?.command_type,
+                  (val) => updateField('controller', 'command_type', val),
+                  'select',
+                  ['THRUST_DESIRED', 'ALTITUDE_GOAL', 'PRESSURE_TARGET']
+                )}
+                {renderField(
+                  'Thrust Desired',
+                  config.controller?.thrust_desired,
+                  (val) => updateField('controller', 'thrust_desired', val),
+                  'number'
+                )}
+                {renderField(
+                  'Altitude Goal',
+                  config.controller?.altitude_goal,
+                  (val) => updateField('controller', 'altitude_goal', val),
+                  'number'
+                )}
+                {renderField(
+                  'Fuel Pressure Target',
+                  config.controller?.pressure_fuel_target,
+                  (val) => updateField('controller', 'pressure_fuel_target', val),
+                  'number'
+                )}
+                {renderField(
+                  'Ox Pressure Target',
+                  config.controller?.pressure_ox_target,
+                  (val) => updateField('controller', 'pressure_ox_target', val),
+                  'number'
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'phase2' && (
+            <div className="bg-card rounded-lg p-6">
+              <h2 className="text-xl font-bold mb-4">Phase2 (raw object)</h2>
+              <p className="text-sm text-text-muted mb-3">
+                This section is stored as a TOML table. Edit as JSON here (advanced users).
+              </p>
+              <textarea
+                value={JSON.stringify(config.phase2 || {}, null, 2)}
+                onChange={(e) => {
+                  try {
+                    const obj = JSON.parse(e.target.value || '{}');
+                    setConfig({ ...config, phase2: obj });
+                  } catch {
+                    // ignore until valid JSON
+                  }
+                }}
+                className="w-full h-72 px-3 py-2 bg-background border border-gray-700 rounded text-white font-mono text-xs"
+              />
             </div>
           )}
 
@@ -877,6 +1134,53 @@ export default function ConfigPage() {
                   config.state_machine?.transitions_csv,
                   (val) => updateField('state_machine', 'transitions_csv', val)
                 )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'advanced' && (
+            <div className="bg-card rounded-lg p-6">
+              <h2 className="text-xl font-bold mb-2">Advanced JSON</h2>
+              <p className="text-sm text-text-muted mb-4">
+                Full config object as JSON. This is an escape hatch for fields not yet covered by the form tabs.
+              </p>
+              {advancedError && (
+                <div className="mb-3 p-3 bg-red-900/30 border border-red-500 rounded text-red-200 text-sm">
+                  {advancedError}
+                </div>
+              )}
+              <textarea
+                value={advancedText}
+                onChange={(e) => {
+                  setAdvancedText(e.target.value);
+                  setAdvancedError(null);
+                }}
+                className="w-full h-[520px] px-3 py-2 bg-background border border-gray-700 rounded text-white font-mono text-xs"
+              />
+              <div className="mt-4 flex gap-3">
+                <button
+                  onClick={() => {
+                    try {
+                      const obj = JSON.parse(advancedText || '{}');
+                      setConfig(obj);
+                      setAdvancedError(null);
+                    } catch (e: any) {
+                      setAdvancedError(e?.message || 'Invalid JSON');
+                    }
+                  }}
+                  className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
+                >
+                  Apply JSON to Form
+                </button>
+                <button
+                  onClick={() => {
+                    setAdvancedText(JSON.stringify(config || {}, null, 2));
+                    setAdvancedError(null);
+                  }}
+                  className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
+                >
+                  Reset to Current Form
+                </button>
               </div>
             </div>
           )}

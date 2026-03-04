@@ -24,20 +24,20 @@ function WindowButton({ id, name, description, url, accent }: WindowButtonProps)
         }
       }}
       className={`
-        relative overflow-hidden bg-white/[0.02] backdrop-blur-md rounded-xl border transition-all duration-300 text-left group
-        hover:bg-white/[0.06] hover:shadow-xl hover:-translate-y-0.5
-        ${isOpen ? 'border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.15)] ring-1 ring-inset ring-emerald-500/20' : 'border-white/5'}
+        relative overflow-hidden bg-card rounded-lg border transition-all text-left
+        hover:border-gray-500 hover:bg-opacity-80
+        ${isOpen ? 'border-gray-500 ring-1 ring-inset ring-gray-600' : 'border-gray-800'}
       `}
     >
       <div className="absolute left-0 top-0 bottom-0 w-1.5 rounded-l-lg" style={{ backgroundColor: accent }} />
       <div className="px-4 py-3 pl-5">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-bold tracking-wide text-gray-200 group-hover:text-white transition-colors">{name}</span>
+          <span className="text-sm font-semibold text-text">{name}</span>
           {isOpen && (
-            <span className="text-xs font-black font-mono text-emerald-400 flex-shrink-0 drop-shadow-[0_0_5px_rgba(16,185,129,0.5)]">● OPEN</span>
+            <span className="text-xs font-mono text-green-400 flex-shrink-0">● OPEN</span>
           )}
         </div>
-        <div className="text-[11px] font-semibold text-gray-400 mt-1 leading-relaxed line-clamp-2 group-hover:text-gray-300 transition-colors">{description}</div>
+        <div className="text-xs text-text-muted mt-1 leading-snug line-clamp-2">{description}</div>
       </div>
     </button>
   );
@@ -47,32 +47,40 @@ export default function WindowLauncher() {
   const { closeAllWindows, windows } = useWindowManager();
   const openCount = windows.filter((w) => w.window && !w.window.closed).length;
 
-  const allPlotsEntry: WindowButtonProps = {
-    id: 'all', name: 'All Plots ★',
-    description: 'FUEL · LOX · COPV · GSE · RAW in one tabbed window',
-    url: '/window/all', accent: '#38BDF8',
-  };
-
   const unifiedEntry: WindowButtonProps = {
     id: 'unified', name: 'Single Pane ★★',
     description: 'State machine · Pressure graphs · Actuators · Controller all in one window',
     url: '/window/unified', accent: '#EC4899',
   };
 
+  const allPlotsEntry: WindowButtonProps = {
+    id: 'all',
+    name: 'All Plots',
+    description: 'Combined GN2 / fuel / LOX / GSE pressure plots in a single window',
+    url: '/window/all',
+    accent: '#3B82F6',
+  };
+
+  const mobileEntry: WindowButtonProps = {
+    id: 'mobile-gui', name: 'Mobile GUI 📱',
+    description: 'Touch-friendly layout — compact header, pressure plot, actuators & state machine stacked for phones/tablets',
+    url: '/window/mobile-gui', accent: '#34D399',
+  };
+
   const multiEntries: WindowButtonProps[] = [
-    { id: 'fuel', name: 'FUEL', description: 'Upstream / downstream pressure & actuators', url: '/window/fuel', accent: '#3498DB' },
-    { id: 'lox', name: 'LOX', description: 'Oxidizer pressure & actuators', url: '/window/lox', accent: '#E74C3C' },
-    { id: 'chamber', name: 'Chamber', description: 'PT / TC / LC Measurements in one pane', url: '/window/chamber', accent: '#F97316' },
-    { id: 'copv', name: 'COPV / GN2', description: 'High-pressure bottle & regulator', url: '/window/copv', accent: '#27AE60' },
-    { id: 'gse', name: 'GSE', description: 'Ground support equipment pressures', url: '/window/gse', accent: '#F39C12' },
-    { id: 'raw', name: 'Raw ADC', description: 'All 10 PT & actuator ADC channels', url: '/window/raw', accent: '#60A5FA' },
-    { id: 'controls', name: 'Controls', description: 'State machine & actuator commands', url: '/window/controls', accent: '#A78BFA' },
-    { id: 'status', name: 'Status', description: 'Tabular real-time sensor values', url: '/window/status', accent: '#34D399' },
-    { id: 'boards', name: 'Boards / Heartbeats', description: 'Discovered boards and heartbeat status', url: '/window/boards', accent: '#10B981' },
-    { id: 'config', name: 'Config', description: 'System & board configuration editor', url: '/window/config', accent: '#FBBF24' },
-    { id: 'controller', name: 'Controller', description: 'PWM duty cycle & valve states', url: '/window/controller', accent: '#F87171' },
-    { id: 'calibration', name: 'Calibration', description: 'RLS + GLR drift · Bayesian auto-recal', url: '/window/calibration', accent: '#A3E635' },
-    { id: 'lcs-tcs-rtd', name: 'LCS / TCS / RTD', description: 'Thermocouples, RTDs, load cell — voltage and temperature', url: '/window/lcs-tcs-rtd', accent: '#F59E0B' }
+    { id: 'fuel',        name: 'FUEL',         description: 'Upstream / downstream pressure & actuators', url: '/window/fuel',        accent: '#3498DB' },
+    { id: 'lox',         name: 'LOX',          description: 'Oxidizer pressure & actuators',              url: '/window/lox',         accent: '#E74C3C' },
+    { id: 'copv',        name: 'COPV / GN2',   description: 'High-pressure bottle & regulator',           url: '/window/copv',        accent: '#27AE60' },
+    { id: 'gse',         name: 'GSE',          description: 'Ground support equipment pressures',         url: '/window/gse',         accent: '#F39C12' },
+    { id: 'raw',         name: 'Raw ADC',      description: 'All 10 PT & actuator ADC channels',          url: '/window/raw',         accent: '#60A5FA' },
+    { id: 'controls',    name: 'Controls',     description: 'State machine & actuator commands',          url: '/window/controls',    accent: '#A78BFA' },
+    { id: 'status',      name: 'Status',       description: 'Tabular real-time sensor values',            url: '/window/status',      accent: '#34D399' },
+    { id: 'boards',      name: 'Boards / Heartbeats', description: 'Discovered boards and heartbeat status', url: '/window/boards',    accent: '#10B981' },
+    { id: 'config',      name: 'Config',       description: 'System & board configuration editor',        url: '/window/config',      accent: '#FBBF24' },
+    { id: 'controller',  name: 'Controller',   description: 'PWM duty cycle & valve states',              url: '/window/controller',  accent: '#F87171' },
+    { id: 'calibration', name: 'Calibration',  description: 'RLS + GLR drift · Bayesian auto-recal',     url: '/window/calibration', accent: '#A3E635' },
+    { id: 'lcs-tcs-rtd',  name: 'LCS / TCS / RTD', description: 'Thermocouples, RTDs, load cell — voltage and temperature', url: '/window/lcs-tcs-rtd', accent: '#F59E0B' },
+    { id: 'sensor-info',  name: 'Sensor Info',     description: 'ADC code · converted value · data rate per channel for all PT / HPT / TC / RTD / LC', url: '/window/sensor-info', accent: '#22D3EE' },
   ];
 
   return (
@@ -99,6 +107,7 @@ export default function WindowLauncher() {
       <div className="mb-2 space-y-2">
         <WindowButton {...unifiedEntry} />
         <WindowButton {...allPlotsEntry} />
+        <WindowButton {...mobileEntry} />
       </div>
 
       {/* Grid - 2 rows */}

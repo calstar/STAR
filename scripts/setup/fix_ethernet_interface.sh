@@ -51,18 +51,18 @@ CURRENT_IP=$(ip addr show $ETH_INTERFACE 2>/dev/null | grep "inet.*192.168.2" | 
 
 if [ -n "$CURRENT_IP" ]; then
     echo "✅ Interface already has IP: $CURRENT_IP"
-    if [ "$CURRENT_IP" == "192.168.2.201" ]; then
-        echo "✅ IP matches configuration (192.168.2.201)"
+    if [ "$CURRENT_IP" == "192.168.2.20" ]; then
+        echo "✅ IP matches configuration (192.168.2.20)"
         exit 0
     else
-        echo "⚠️  IP is $CURRENT_IP but you want 192.168.2.201"
+        echo "⚠️  IP is $CURRENT_IP but you want 192.168.2.20"
         echo "   Remove old IP first or use the current IP in board config"
     fi
 else
     echo "⚠️  No 192.168.2.x IP assigned to this interface"
     echo ""
-    echo "To assign 192.168.2.201:"
-    echo "  sudo ip addr add 192.168.2.201/24 dev $ETH_INTERFACE"
+    echo "To assign 192.168.2.20:"
+    echo "  sudo ip addr add 192.168.2.20/24 dev $ETH_INTERFACE"
     echo "  sudo ip link set $ETH_INTERFACE up"
     echo ""
     read -p "Apply IP configuration now? (y/n): " APPLY
@@ -74,7 +74,7 @@ else
         sleep 1
 
         # Verify
-        NEW_IP=$(ip addr show $ETH_INTERFACE | grep "inet.*192.168.2.201" | awk '{print $2}' | cut -d/ -f1)
+        NEW_IP=$(ip addr show $ETH_INTERFACE | grep "inet.*192.168.2.20" | awk '{print $2}' | cut -d/ -f1)
         if [ -n "$NEW_IP" ]; then
             echo "✅ IP assigned: $NEW_IP"
         else
@@ -92,7 +92,7 @@ echo ""
 echo "2. Verify IP is assigned:"
 echo "   ip addr show $ETH_INTERFACE | grep 192.168.2"
 echo ""
-echo "3. Configure your board to send to: 192.168.2.201:5006"
+echo "3. Configure your board to send to: 192.168.2.20:5006"
 echo ""
 echo "4. Test connectivity:"
 echo "   ping <board_ip>  (from board, ping 192.168.2.201)"

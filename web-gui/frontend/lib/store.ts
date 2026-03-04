@@ -30,6 +30,7 @@ import {
   NotificationCategory,
   isNotificationOngoing,
 } from './types';
+import { recordSensorUpdate } from './sensor-rate';
 interface SensorData {
   [key: string]: number; // entity.component -> value
 }
@@ -42,7 +43,7 @@ export interface NotificationEntry {
   isCurrent: boolean;
 }
 
-const NOTIFICATIONS_MAX = 100;
+const NOTIFICATIONS_MAX = 10;
 
 interface SensorSystemState {
   sensorData: SensorData;
@@ -72,6 +73,7 @@ interface SensorSystemState {
   setDebugMode: (mode: boolean) => void;
   updateBoards: (boards: BoardStatus[]) => void;
   updateNotification: (payload: NotificationPayload) => void;
+  clearNotifications: () => void;
 }
 
 // ── Alias table ──────────────────────────────────────────────────────────────
@@ -268,6 +270,7 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   notifications: [],
 
   updateSensor: (update: SensorUpdate) => {
+    recordSensorUpdate(update.entity, update.component);
     const key = `${update.entity}.${update.component}`;
 
     // Late packet rejection: ensure we don't overwrite new data with buffered old data
@@ -383,6 +386,10 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
       });
       return { notifications: list };
     });
+  },
+
+  clearNotifications: () => {
+    set({ notifications: [] });
   },
 
   getSensorValue: (entity: string, component: string) => {

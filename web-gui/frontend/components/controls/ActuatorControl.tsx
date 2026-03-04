@@ -1,10 +1,11 @@
 'use client'
 
 import React, { useState, useEffect } from 'react';
-import { useGetSensorValue, useSensorStore, useActuatorCommandedState } from '@/lib/store';
+import { useGetSensorValue, useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { getActuatorOpenThreshold } from '@/lib/voltageRef';
 import { ActuatorId, ActuatorState, CommandPayload, SystemState } from '@/lib/types';
+import { useControlMode } from '@/lib/control-mode';
 
 // Human-readable names
 const ACTUATOR_NAMES: Record<ActuatorId, string> = {
@@ -96,26 +97,66 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const currentState = useSensorStore((s) => s.currentState);
   const actuatorExpectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
   const boards = useSensorStore((s) => s.boards as Record<number, { designatedSurvivor?: boolean; voltageReference?: number }>);
-  const setActuatorState = useSensorStore((s) => s.setActuatorState);
-  const setActuatorCommandedOverride = useSensorStore((s) => s.setActuatorCommandedOverride);
+  const { controlEnabled } = useControlMode();
+
+  // Manual commanded state for DEBUG mode only
+  const [manualCommanded, setManualCommanded] = useState<ActuatorState | null>(null);
   const [pending, setPending] = useState(false);
 
   const entity = ACTUATOR_ENTITIES[actuatorId];
   const ch = ACTUATOR_CHANNELS[actuatorId];
   const type = ACTUATOR_TYPES[actuatorId] || 'NC';
-  const commanded = useActuatorCommandedState(entity);
 
+  // Get expected position from backend (CSV-based) - computed directly from store
   const stateExpected = currentState != null ? (actuatorExpectedPositions[currentState] ?? {}) : {};
   const expected = stateExpected[entity] ?? null;
 
+  // Clear manual commanded state when exiting debug mode
+  // When state changes in debug mode, clear manual override so new state's expected position shows
+  React.useEffect(() => {
+    if (!debugMode) {
+      setManualCommanded(null);
+    }
+  }, [debugMode]);
+
+  // When state changes in debug mode, clear manual override to show new state's expected position
+  React.useEffect(() => {
+    if (debugMode && currentState !== null) {
+      setManualCommanded(null);
+    }
+  }, [debugMode, currentState]);
+
+  // Debug logging
   React.useEffect(() => {
     if (currentState !== null && !debugMode) {
       console.log(`[ActuatorControl ${ACTUATOR_NAMES[actuatorId]}] State: ${SystemState[currentState]}, Entity: ${entity}, Expected: ${expected}, StateExpected:`, stateExpected);
     }
   }, [currentState, entity, expected, stateExpected, actuatorId, debugMode]);
 
-  // Allow manual control when debug mode is enabled
-  const canControl = debugMode;
+  // Compute commanded state directly from expected position (reactive to store changes)
+  // Always compute expected position from state, even in debug mode (so user can see what state expects)
+  const commandedState = React.useMemo(() => {
+    if (expected === 'open') {
+      return ActuatorState.OPEN;
+    } else if (expected === 'closed') {
+      return ActuatorState.CLOSED;
+    }
+    return null;
+  }, [expected]);
+
+  // In debug mode, manualCommanded overrides the expected position
+  // Otherwise, use the expected position from the state
+  const commanded = React.useMemo(() => {
+    if (debugMode) {
+      // In debug mode: show manual override if set, otherwise show expected position for current state
+      return manualCommanded ?? commandedState;
+    }
+    // In normal mode: always use expected position
+    return commandedState;
+  }, [debugMode, manualCommanded, commandedState]);
+
+  // Allow manual control only when debug mode is enabled and control mode is unlocked
+  const canControl = debugMode && controlEnabled;
 
   // Feedback: try named entity first (aliases in store.ts cover the ACT_CHX fallback)
   const rawAdc = getSensorValue(entity, 'raw_adc_counts')
@@ -134,14 +175,17 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
 
   const sendCommand = (state: ActuatorState) => {
     if (!canControl) return;
+    // Send display name so backend uses config lookup (actuator_roles key) — same path as LOX Main on 202
     const command: CommandPayload = {
       commandType: 'actuator',
       data: { actuatorId, actuatorName: ACTUATOR_NAMES[actuatorId], actuatorState: state },
     };
     ws.sendCommand(command);
-    setActuatorState(entity, state);
-    if (debugMode) setActuatorCommandedOverride(entity, state);
+    if (debugMode) {
+      setManualCommanded(state);
+    }
     setPending(true);
+    // Clear pending after 1 s (feedback should have arrived by then)
     setTimeout(() => setPending(false), 1000);
   };
 
@@ -151,49 +195,40 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   // Mismatch = commanded ≠ feedback (only show if command was actually issued)
   const mismatch = commanded !== null && pending === false &&
     ((commandedOpen && !feedbackOpen) || (commandedClosed && feedbackOpen));
+  const showMismatch = false;
 
   return (
-    <div className={`rounded-lg p-3 border transition-colors
-      ${mismatch
+    <div className={`rounded-md p-1 border transition-colors
+      ${showMismatch && mismatch
         ? 'bg-yellow-950/40 border-yellow-600'
         : 'bg-background border-gray-700 hover:border-gray-600'}`}>
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-base font-bold tracking-wider text-text uppercase">
-          {ACTUATOR_NAMES[actuatorId]}
-        </h3>
-        {mismatch && (
-          <span className="text-xs font-bold text-yellow-400 uppercase tracking-wider">MISMATCH</span>
+      <div className="flex items-center justify-between mb-0.5">
+        <div className="flex items-center gap-1 min-w-0">
+          <h3 className="text-[10px] font-bold tracking-wider text-text uppercase leading-tight truncate">
+            {ACTUATOR_NAMES[actuatorId]}
+          </h3>
+          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
+          {pending && <span className="text-yellow-400 text-[9px] leading-none">⟳</span>}
+        </div>
+        {showMismatch && mismatch && (
+          <span className="text-[10px] font-bold text-yellow-400 uppercase tracking-wider">MM</span>
         )}
       </div>
 
-      {/* Feedback indicator */}
-      <div className="flex gap-3 mb-3 text-base">
-        <div className="flex-1">
-          <div className="text-text-muted mb-1">COMMANDED</div>
-          <div className={`flex items-center gap-2 ${commanded === null ? 'text-gray-500' : commandedOpen ? 'text-green-400' : 'text-red-400'}`}>
-            <div className={`w-2.5 h-2.5 rounded-full ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="font-mono font-bold">
-              {commanded === null ? '---' : commandedOpen ? 'OPEN' : 'CLOSED'}
-            </span>
-            {pending && <span className="text-yellow-400 text-xs">⟳</span>}
-          </div>
-        </div>
-      </div>
-
-      {/* ADC readout */}
-      <div className="text-sm text-text-muted font-mono mb-2.5">
+      {/* ADC readout (very compact) */}
+      <div className="text-[10px] text-text-muted font-mono mb-0.5 truncate leading-none">
         ADC: {rawAdc.toLocaleString()}
       </div>
 
-      <div className="grid grid-cols-2 gap-1.5">
+      <div className="grid grid-cols-2 gap-0.5 mt-0.5">
         <button
           onClick={() => sendCommand(ActuatorState.OPEN)}
           disabled={!canControl}
-          className={`py-2.5 rounded text-base font-bold uppercase tracking-wider transition-all
+          className={`py-1 rounded text-[10px] font-bold uppercase tracking-wider leading-none transition-all
             ${commandedOpen
               ? canControl
-                ? 'bg-green-700 text-white ring-2 ring-green-400'
-                : 'bg-green-700/50 text-green-300 ring-2 ring-green-700 cursor-not-allowed'
+                ? 'bg-green-700 text-white ring-1 ring-green-400'
+                : 'bg-green-700/50 text-green-300 ring-1 ring-green-700 cursor-not-allowed'
               : canControl
                 ? 'bg-gray-800 hover:bg-gray-700 text-gray-300'
                 : 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'}`}
@@ -203,11 +238,11 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
         <button
           onClick={() => sendCommand(ActuatorState.CLOSED)}
           disabled={!canControl}
-          className={`py-2.5 rounded text-base font-bold uppercase tracking-wider transition-all
+          className={`py-1 rounded text-[10px] font-bold uppercase tracking-wider leading-none transition-all
             ${commandedClosed
               ? canControl
-                ? 'bg-red-700 text-white ring-2 ring-red-400'
-                : 'bg-red-700/50 text-red-300 ring-2 ring-red-700 cursor-not-allowed'
+                ? 'bg-red-700 text-white ring-1 ring-red-400'
+                : 'bg-red-700/50 text-red-300 ring-1 ring-red-700 cursor-not-allowed'
               : canControl
                 ? 'bg-gray-800 hover:bg-gray-700 text-gray-300'
                 : 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50'}`}
