@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useSensorStore, useSensorValue } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
+import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
-import { useSensorRate } from '@/lib/sensor-rate';
+import { useSensorRate, getSensorRate } from '@/lib/sensor-rate';
 import { kTypeVoltageToTempC, codeToForce } from '@/lib/sense-conversions';
 import { getEntityColor } from '@/lib/sensor-colors';
 
@@ -35,6 +35,7 @@ interface PtSensor {
   color: string;
   channelId?: number;
   boardId?: number;
+  boardIp?: string;
 }
 
 // ── Formatting helpers ────────────────────────────────────────────────────────
@@ -72,6 +73,33 @@ function fmtForce(v: number | null): string {
 function fmtResistance(v: number | null): string {
   if (v === null || !isFinite(v)) return '---';
   return v.toFixed(3);
+}
+
+// ── Board-level rate helper ────────────────────────────────────────────────────
+
+function useBoardRate(
+  keys: Array<{ entity: string; component: string }>,
+  intervalMs = 1000
+): number {
+  const [rate, setRate] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const compute = () => {
+      const total = keys.reduce((sum, k) => sum + getSensorRate(k.entity, k.component), 0);
+      if (!cancelled) setRate(total);
+    };
+
+    compute();
+    const id = setInterval(compute, intervalMs);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [JSON.stringify(keys), intervalMs]);
+
+  return rate;
 }
 
 // ── Shared table wrapper ──────────────────────────────────────────────────────
@@ -126,8 +154,13 @@ function PtRow({ sensor }: { sensor: PtSensor }) {
       <td className="px-4 py-2">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: sensor.color }} />
-          <span className="text-gray-200 font-sans font-medium text-xs">
-            {sensor.channelId ? `CH${sensor.channelId} ` : ''}{sensor.label}
+          <span
+            className="text-gray-200 font-sans font-medium text-xs"
+            title={sensor.boardIp ? `Board ${sensor.boardId ?? '?'} • ${sensor.boardIp}` : undefined}
+          >
+            {sensor.boardId ? `B${sensor.boardId} ` : ''}
+            {sensor.channelId ? `CH${sensor.channelId} ` : ''}
+            {sensor.label}
           </span>
         </div>
       </td>
@@ -155,8 +188,13 @@ function HptRow({ sensor }: { sensor: PtSensor }) {
       <td className="px-4 py-2">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: sensor.color }} />
-          <span className="text-gray-200 font-sans font-medium text-xs">
-            {sensor.channelId ? `CH${sensor.channelId} ` : ''}{sensor.label}
+          <span
+            className="text-gray-200 font-sans font-medium text-xs"
+            title={sensor.boardIp ? `Board ${sensor.boardId ?? '?'} • ${sensor.boardIp}` : undefined}
+          >
+            {sensor.boardId ? `B${sensor.boardId} ` : ''}
+            {sensor.channelId ? `CH${sensor.channelId} ` : ''}
+            {sensor.label}
           </span>
         </div>
       </td>
@@ -203,9 +241,9 @@ function TcRow({ entity, label, color }: { entity: string; label: string; color:
 // ── RTD row ──────────────────────────────────────────────────────────────────
 
 function RtdRow({ entity, calEntity, label, color }: { entity: string; calEntity: string; label: string; color: string }) {
-  const rawRes  = useSensorValue(entity, 'raw_resistance');
+  const rawRes  = useSensorValue(entity, 'raw_resistance_counts');
   const tempC   = useSensorValue(calEntity, 'temperature_c');
-  const rateRaw = useSensorRate(entity, 'raw_resistance');
+  const rateRaw = useSensorRate(entity, 'raw_resistance_counts');
   const rateCal = useSensorRate(calEntity, 'temperature_c');
   const rate    = Math.max(rateRaw, rateCal);
 
@@ -294,6 +332,46 @@ export default function SensorInfoPage() {
   const updateState  = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
 
+  // ── DAQ / relay data-rate probe (Elodin relay → backend) ────────────────────
+  const [relayPackets, setRelayPackets] = useState<number | null>(null);
+  const [relayRateHz, setRelayRateHz] = useState<number>(0);
+
+  useEffect(() => {
+    let prevCount: number | null = null;
+    let prevTime: number | null = null;
+    let cancelled = false;
+
+    const poll = () => {
+      fetch(`${getApiBaseUrl()}/api/debug`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: any) => {
+          if (!data || cancelled) return;
+          const count: number = typeof data.relayPacketsReceived === 'number' ? data.relayPacketsReceived : 0;
+          const now = Date.now();
+          setRelayPackets(count);
+          if (prevCount != null && prevTime != null) {
+            const dt = (now - prevTime) / 1000;
+            const dn = count - prevCount;
+            if (dt > 0 && dn >= 0) {
+              setRelayRateHz(dn / dt);
+            }
+          }
+          prevCount = count;
+          prevTime = now;
+        })
+        .catch(() => {
+          // leave last values on error
+        });
+    };
+
+    poll();
+    const id = setInterval(poll, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
   const [ptSensors,  setPtSensors]  = useState<PtSensor[]>([]);
   const [hptSensors, setHptSensors] = useState<PtSensor[]>([]);
 
@@ -304,7 +382,7 @@ export default function SensorInfoPage() {
   const [lcChannels,  setLcChannels]  = useState<number[]>(LC_DEFAULT_CHANNELS);
 
   const loadChannelConfig = useCallback(() => {
-    fetch('/api/config')
+    fetch(`${getApiBaseUrl()}/api/config`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: any) => {
         const boards = data?.config?.boards;
@@ -324,7 +402,7 @@ export default function SensorInfoPage() {
   }, [loadChannelConfig]);
 
   const loadPtSensors = useCallback(() => {
-    fetch('/api/sensor-config')
+    fetch(`${getApiBaseUrl()}/api/sensor-config`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: any) => {
         const sensors = data?.sensors as any[] | undefined;
@@ -341,6 +419,7 @@ export default function SensorInfoPage() {
               color: getEntityColor(entity),
               channelId: typeof s.id === 'number' ? s.id : undefined,
               boardId: typeof s.boardId === 'number' ? s.boardId : undefined,
+              boardIp: typeof s.boardIp === 'string' ? s.boardIp : undefined,
               isHpPt: !!s.isHpPt,
             } as PtSensor & { isHpPt?: boolean };
           });
@@ -362,6 +441,23 @@ export default function SensorInfoPage() {
     loadPtSensors();
   }, [loadPtSensors]);
 
+  // ── Board-level DAQ breakdown (approximate, from per-entity stream rates) ────
+  const pt21Keys = ptSensors
+    .filter((s) => (s.boardId ?? 21) === 21)
+    .map((s) => ({ entity: s.entity, component: 'pressure_psi' }));
+  const pt22Keys = hptSensors
+    .filter((s) => (s.boardId ?? 22) === 22)
+    .map((s) => ({ entity: s.entity, component: 'pressure_psi' }));
+  const tcKeys = tcChannels.map((ch) => ({ entity: `TC.CH${ch}`, component: 'raw_adc_counts' }));
+  const rtdKeys = rtdChannels.map((ch) => ({ entity: `RTD.CH${ch}`, component: 'raw_resistance_counts' }));
+  const lcKeys = lcChannels.map((ch) => ({ entity: `LC.CH${ch}`, component: 'raw_adc_counts' }));
+
+  const pt21Rate = useBoardRate(pt21Keys);
+  const pt22Rate = useBoardRate(pt22Keys);
+  const tcRate = useBoardRate(tcKeys);
+  const rtdRate = useBoardRate(rtdKeys);
+  const lcRate = useBoardRate(lcKeys);
+
   useEffect(() => {
     ws.connect();
     const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
@@ -377,6 +473,53 @@ export default function SensorInfoPage() {
         <div className="flex items-center gap-3 mb-1">
           <h1 className="text-2xl font-bold tracking-widest text-gray-300 uppercase">Sensor Info</h1>
           <span className="text-xs text-gray-500 font-mono">ADC · Converted · Data Rate per channel</span>
+        </div>
+
+        <div className="flex flex-wrap gap-3 mb-2">
+          <div className="bg-card border border-gray-800 rounded-lg px-4 py-3 text-xs font-mono text-gray-300">
+            <div className="text-[10px] uppercase text-gray-500 tracking-widest mb-1">DAQ Stream (Elodin relay)</div>
+            <div className="flex gap-6 items-baseline">
+              <div>
+                <span className="text-gray-500 mr-1">Packets:</span>
+                <span className="text-cyan-400">{relayPackets != null ? relayPackets.toLocaleString() : '---'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 mr-1">Rate:</span>
+                <span className="text-cyan-400">{fmtHz(relayRateHz)} Hz</span>
+              </div>
+            </div>
+            <div className="text-[10px] text-gray-600 mt-1">
+              Approximates UDP → DAQ → Elodin stream rate seen by the backend.
+            </div>
+          </div>
+
+          <div className="bg-card border border-gray-800 rounded-lg px-4 py-3 text-[11px] font-mono text-gray-300 flex flex-col gap-1">
+            <div className="text-[10px] uppercase text-gray-500 tracking-widest mb-1">
+              Board Rates (DAQ → Elodin)
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-x-4 gap-y-1">
+              <div>
+                <div className="text-[10px] text-gray-500">PT B21</div>
+                <div className="text-cyan-400">{fmtHz(pt21Rate)} Hz</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-500">HPT B22</div>
+                <div className="text-cyan-400">{fmtHz(pt22Rate)} Hz</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-500">TC B51</div>
+                <div className="text-cyan-400">{fmtHz(tcRate)} Hz</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-500">RTD B31</div>
+                <div className="text-cyan-400">{fmtHz(rtdRate)} Hz</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-500">LC B41</div>
+                <div className="text-cyan-400">{fmtHz(lcRate)} Hz</div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* ── PT (Pressure Transducers – board 21) ─────────────────────────── */}
@@ -414,7 +557,7 @@ export default function SensorInfoPage() {
           {tcChannels.map((ch, i) => (
             <TcRow
               key={ch}
-              entity={`TC.TC_CH${ch}`}
+              entity={`TC.CH${ch}`}
               label={`TC Ch${ch}`}
               color={SENSE_COLORS[i % SENSE_COLORS.length]}
             />
@@ -430,8 +573,8 @@ export default function SensorInfoPage() {
           {rtdChannels.map((ch, i) => (
             <RtdRow
               key={ch}
-              entity={`RTD.RTD_CH${ch}`}
-              calEntity={`RTD_Cal.RTD_CH${ch}`}
+              entity={`RTD.CH${ch}`}
+              calEntity={`RTD_Cal.CH${ch}`}
               label={`RTD Ch${ch}`}
               color={SENSE_COLORS[i % SENSE_COLORS.length]}
             />
