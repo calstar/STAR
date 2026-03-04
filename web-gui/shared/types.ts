@@ -110,13 +110,13 @@ export interface StateUpdate {
 // Command payload
 export interface CommandPayload {
   commandType:
-    | 'state_transition'
-    | 'actuator'
-    | 'controller_frequency'
-    | 'pwm_actuator'
-    | 'controller_command'
-    | 'clear_abort'
-    | 'debug_mode';
+  | 'state_transition'
+  | 'actuator'
+  | 'controller_frequency'
+  | 'pwm_actuator'
+  | 'controller_command'
+  | 'clear_abort'
+  | 'debug_mode';
   data: {
     state?: SystemState;
     /** Config-driven: actuator role name from config.toml actuator_roles (e.g. "LOX Main") */
@@ -213,7 +213,7 @@ export interface BoardStatus {
   /** Timestamp of the last heartbeat in epoch milliseconds, or null if none yet. */
   lastHeartbeatMs: number | null;
   /** Estimated heartbeat frequency in Hz, or null if not enough data. */
-  frequencyHz: number | null;
+  frequencyHz?: number | null;
   /** Raw numeric board state from heartbeat (protocol-defined). */
   boardState: number | null;
   /** Raw numeric engine state from heartbeat (protocol-defined). */
@@ -230,6 +230,8 @@ export interface BoardStatus {
   designatedSurvivor?: boolean;
   /** 0 = Internal 2.5V, 1 = VDD ratiometric, 2 = 5V absolute */
   voltageReference?: number;
+  /** History of recent heartbeat timestamps for frequency calculation. */
+  heartbeatTimes?: number[];
 }
 
 export interface BoardStatusPayload {
