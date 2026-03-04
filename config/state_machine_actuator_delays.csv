@@ -1,0 +1,17 @@
+,Idle,Armed,Fuel Fill,Ox Fill,Press Standby,GN2 Low Press,GN2 Low Vent,Fuel Press,Fuel Vent,Ox Press,Ox Vent,GN2 High Press,GN2 High Vent,Calibrate,Ready,Fire,Vent,Engine Abort,GSE Abort,Emergency Abort
+Fuel Vent,0,0,0,0,0,0,0,0,0.2,0,0,0,0,0,0,0,0.2,0.2,0,0.2
+Fuel Press,0,0,0,0,0,0,0,0.2,0,0,0,0,0,0,0,0,0.2,0.2,0,0.2
+Fuel Main,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.2,0,0.2
+Fuel Fill Vent,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Fuel Fill Press,0,0,0.2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+LOX Vent,0,0,0,0,0,0,0,0,0,0,0.2,0,0,0,0,0,0.2,0.2,0,0.2
+LOX Press,0,0,0,0,0,0,0,0,0,0.2,0,0,0,0,0,0,0.2,0.2,0,0.2
+LOX Main,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.03,0,0.2,0,0.2
+LOX Dump,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.2,0,0.2
+LOX Fill,0,0,0,0.2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+GSE Low Press Vent,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+GSE High Press Vent,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.2,0.2
+GN2 Vent,0,0,0,0.2,0,0,0.2,0,0,0,0,0,0.2,0,0,0,0.2,0.2,0,0.2
+GSE LOX Fill Vent,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+GSE High Press Control,0,0,0,0,0,0,0,0,0,0,0,0.2,0,0,0,0,0,0,0,0
+GSE Med Press Control,0,0,0,0,0.2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0

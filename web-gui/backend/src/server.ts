@@ -947,6 +947,10 @@ class SensorSystemServer {
 
         const now = Date.now();
         let status = this.boardsStatus.get(boardId);
+        const wasDisconnected =
+          !status ||
+          status.lastHeartbeatMs == null ||
+          now - status.lastHeartbeatMs > 2500;
         if (!status) {
           // Auto-discover unexpected board
           const ip = `192.168.2.${boardId}`;
@@ -979,6 +983,10 @@ class SensorSystemServer {
           if (status.heartbeatTimes.length > 20) {
             status.heartbeatTimes.shift();
           }
+        }
+        // On (re)connect, mark config pending so we resend without user clicking Resend
+        if (wasDisconnected) {
+          this.boardConfigState.set(boardId, { status: 'pending' });
         }
         this.maybeSendConfigPackets();
         return; // Handled, skip typical sensor parsing
@@ -1824,7 +1832,8 @@ class SensorSystemServer {
       if (!registry) return;
 
       const cfg = this.boardConfigState.get(id) ?? { status: 'pending' as const };
-      if (!forceAll && cfg.status === 'sent') return;
+      const inSetup = status.boardState === this.BOARD_STATE_SETUP;
+      if (!forceAll && cfg.status === 'sent' && !inSetup) return;
 
       if (registry.type === 'ACTUATOR') {
         // Send ACTUATOR_CONFIG

@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -365,8 +366,127 @@ int main(int argc, char* argv[]) {
                   << std::endl;
     }
 
+    // Delay CSV (optional): state_name -> actuator_name -> delay in seconds when entering that state
+    std::map<std::string, std::map<std::string, double>> state_actuator_delays;
+    std::string delay_csv_path = getTomlValue(config_content, "state_machine", "actuator_delay_csv", "");
+    if (delay_csv_path.empty() && !csv_path.empty()) {
+        size_t slash = csv_path.find_last_of("/\\");
+        delay_csv_path = (slash != std::string::npos) ? csv_path.substr(0, slash + 1) + "state_machine_actuator_delays.csv"
+                                                 : "state_machine_actuator_delays.csv";
+    }
+    if (delay_csv_path.empty())
+        delay_csv_path = "config/state_machine_actuator_delays.csv";
+    const char* delay_fallbacks[] = {
+        "config/state_machine_actuator_delays.csv",
+        "../config/state_machine_actuator_delays.csv",
+        "../../config/state_machine_actuator_delays.csv",
+    };
+    {
+        std::ifstream df(delay_csv_path);
+        if (!df.is_open() && !delay_csv_path.empty()) {
+            for (const char* fb : delay_fallbacks) {
+                if (std::string(fb) == delay_csv_path) continue;
+                df.open(fb);
+                if (df.is_open()) {
+                    delay_csv_path = fb;
+                    break;
+                }
+            }
+        }
+        if (df.is_open()) {
+            std::string line;
+            if (std::getline(df, line)) {
+                std::vector<std::string> headers;
+                std::istringstream iss(line);
+                std::string cell;
+                while (std::getline(iss, cell, ','))
+                    headers.push_back(trim(cell));
+                while (std::getline(df, line)) {
+                    std::vector<std::string> cells;
+                    std::istringstream is(line);
+                    while (std::getline(is, cell, ','))
+                        cells.push_back(trim(cell));
+                    if (cells.empty() || cells[0].empty())
+                        continue;
+                    std::string actuator_name = cells[0];
+                    for (size_t col = 1; col < headers.size() && col < cells.size(); ++col) {
+                        if (headers[col].empty())
+                            continue;
+                        double sec = 0;
+                        try {
+                            if (!cells[col].empty())
+                                sec = std::stod(cells[col]);
+                        } catch (...) {}
+                        if (sec < 0)
+                            sec = 0;
+                        state_actuator_delays[headers[col]][actuator_name] = sec;
+                    }
+                }
+            }
+            std::cout << "[ActuatorService] Loaded delay CSV: " << state_actuator_delays.size() << " states" << std::endl;
+        } else {
+            std::cout << "[ActuatorService] No delay CSV at " << delay_csv_path << " (optional)" << std::endl;
+        }
+    }
+
     daq_comms::protocol::DiabloBoardPacketParser parser;
     constexpr uint16_t ACTUATOR_PORT = 5005;
+
+    auto sendSingleActuator = [&](const std::string& act_name, int pos) -> bool {
+        auto am = actuator_map.find(act_name);
+        if (am == actuator_map.end()) {
+            std::string canon = act_name;
+            std::transform(canon.begin(), canon.end(), canon.begin(), ::tolower);
+            for (const auto& [k, v] : actuator_map) {
+                std::string kc = k;
+                std::transform(kc.begin(), kc.end(), kc.begin(), ::tolower);
+                if (kc == canon) {
+                    am = actuator_map.find(k);
+                    break;
+                }
+            }
+        }
+        if (am == actuator_map.end()) {
+            std::cerr << "[ActuatorService] Unknown actuator: " << act_name << std::endl;
+            return false;
+        }
+        daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand cmd;
+        cmd.actuator_id = static_cast<uint8_t>(am->second.channel);
+        int hw = (am->second.is_no) ? (1 - pos) : pos;
+        cmd.actuator_state = static_cast<uint8_t>(hw);
+        std::vector<uint8_t> pkt = parser.construct_actuator_command_packet({cmd});
+        if (pkt.empty())
+            return false;
+        int sock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (sock < 0)
+            return false;
+        struct sockaddr_in local;
+        memset(&local, 0, sizeof(local));
+        local.sin_family = AF_INET;
+        local.sin_port = 0;
+        if (inet_pton(AF_INET, udp_bind_addr.c_str(), &local.sin_addr) != 1 ||
+            bind(sock, reinterpret_cast<struct sockaddr*>(&local), sizeof(local)) < 0) {
+            close(sock);
+            return false;
+        }
+        struct sockaddr_in dest;
+        memset(&dest, 0, sizeof(dest));
+        dest.sin_family = AF_INET;
+        dest.sin_port = htons(ACTUATOR_PORT);
+        if (inet_pton(AF_INET, am->second.board_ip.c_str(), &dest.sin_addr) != 1) {
+            close(sock);
+            return false;
+        }
+        ssize_t sent = sendto(sock, pkt.data(), pkt.size(), 0,
+                              reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
+        close(sock);
+        if (sent == static_cast<ssize_t>(pkt.size())) {
+            std::cout << "[ActuatorService] Actuator " << act_name << " -> "
+                      << (pos == 1 ? "OPEN" : "CLOSED") << std::endl;
+            return true;
+        }
+        return false;
+    };
 
     auto sendCommandsForState = [&](const std::string& state_name) {
         std::string canon = state_name;
@@ -387,7 +507,54 @@ int main(int argc, char* argv[]) {
             return false;
         }
 
-        // Group commands by board IP (actuator_map keys must match CSV row names exactly)
+        auto delay_it = state_actuator_delays.find(state_name);
+        if (delay_it == state_actuator_delays.end()) {
+            for (const auto& [k, v] : state_actuator_delays) {
+                std::string kc = k;
+                std::transform(kc.begin(), kc.end(), kc.begin(), ::tolower);
+                if (kc == canon) {
+                    delay_it = state_actuator_delays.find(k);
+                    break;
+                }
+            }
+        }
+        const bool use_delays = (delay_it != state_actuator_delays.end());
+
+        if (use_delays) {
+            // Build (act_name, pos, delay_sec), sort by delay, then send one-by-one with sleep
+            struct DelayedCmd {
+                std::string act_name;
+                int pos;
+                double delay_sec;
+            };
+            std::vector<DelayedCmd> delayed;
+            for (const auto& [act_name, pos] : it->second) {
+                if (actuator_map.find(act_name) == actuator_map.end())
+                    continue;
+                double d = 0;
+                if (delay_it != state_actuator_delays.end()) {
+                    auto ad = delay_it->second.find(act_name);
+                    if (ad != delay_it->second.end())
+                        d = ad->second;
+                }
+                delayed.push_back({act_name, pos, d});
+            }
+            std::sort(delayed.begin(), delayed.end(),
+                      [](const DelayedCmd& a, const DelayedCmd& b) { return a.delay_sec < b.delay_sec; });
+            double prev_t = 0;
+            for (const auto& dc : delayed) {
+                if (dc.delay_sec > prev_t) {
+                    auto usec = static_cast<unsigned>(std::round((dc.delay_sec - prev_t) * 1e6));
+                    if (usec > 0)
+                        usleep(usec);
+                }
+                prev_t = dc.delay_sec;
+                sendSingleActuator(dc.act_name, dc.pos);
+            }
+            return true;
+        }
+
+        // No delays: group commands by board IP and send in batch
         std::map<std::string,
                  std::vector<daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand>>
             by_board;
@@ -398,7 +565,6 @@ int main(int argc, char* argv[]) {
 
             daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand cmd;
             cmd.actuator_id = static_cast<uint8_t>(am->second.channel);
-            // NC: closed=0 open=1. NO: closed=1 open=0 (inverted)
             int hw = (am->second.is_no) ? (1 - pos) : pos;
             cmd.actuator_state = static_cast<uint8_t>(hw);
             by_board[am->second.board_ip].push_back(cmd);
@@ -484,62 +650,6 @@ int main(int argc, char* argv[]) {
 
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
-
-    auto sendSingleActuator = [&](const std::string& act_name, int pos) {
-        auto am = actuator_map.find(act_name);
-        if (am == actuator_map.end()) {
-            std::string canon = act_name;
-            std::transform(canon.begin(), canon.end(), canon.begin(), ::tolower);
-            for (const auto& [k, v] : actuator_map) {
-                std::string kc = k;
-                std::transform(kc.begin(), kc.end(), kc.begin(), ::tolower);
-                if (kc == canon) {
-                    am = actuator_map.find(k);
-                    break;
-                }
-            }
-        }
-        if (am == actuator_map.end()) {
-            std::cerr << "[ActuatorService] Unknown actuator: " << act_name << std::endl;
-            return false;
-        }
-        daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand cmd;
-        cmd.actuator_id = static_cast<uint8_t>(am->second.channel);
-        int hw = (am->second.is_no) ? (1 - pos) : pos;
-        cmd.actuator_state = static_cast<uint8_t>(hw);
-        std::vector<uint8_t> pkt = parser.construct_actuator_command_packet({cmd});
-        if (pkt.empty())
-            return false;
-        int sock = socket(AF_INET, SOCK_DGRAM, 0);
-        if (sock < 0)
-            return false;
-        struct sockaddr_in local;
-        memset(&local, 0, sizeof(local));
-        local.sin_family = AF_INET;
-        local.sin_port = 0;
-        if (inet_pton(AF_INET, udp_bind_addr.c_str(), &local.sin_addr) != 1 ||
-            bind(sock, reinterpret_cast<struct sockaddr*>(&local), sizeof(local)) < 0) {
-            close(sock);
-            return false;
-        }
-        struct sockaddr_in dest;
-        memset(&dest, 0, sizeof(dest));
-        dest.sin_family = AF_INET;
-        dest.sin_port = htons(ACTUATOR_PORT);
-        if (inet_pton(AF_INET, am->second.board_ip.c_str(), &dest.sin_addr) != 1) {
-            close(sock);
-            return false;
-        }
-        ssize_t sent = sendto(sock, pkt.data(), pkt.size(), 0,
-                              reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
-        close(sock);
-        if (sent == static_cast<ssize_t>(pkt.size())) {
-            std::cout << "[ActuatorService] Actuator " << act_name << " -> "
-                      << (pos == 1 ? "OPEN" : "CLOSED") << std::endl;
-            return true;
-        }
-        return false;
-    };
 
     std::cout << "[ActuatorService] Listening on port " << listen_port << std::endl;
     std::cout

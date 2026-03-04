@@ -242,18 +242,18 @@ export interface PTCalibrationResult {
  * Load PT calibration (tries JSON first, then CSV)
  * Returns the calibration map and the path of the file that was loaded.
  *
- * Search order:
- *  1. scripts/calibration/calibrations/ (relative to project root via __dirname)
- *  2. web-gui/backend/data/             (backend local data dir)
- *  3. external/DiabloAvionics/test_guis/ (original source)
+ * Search order (femboy-aligned: same as combined_fsw_gui and daq_bridge):
+ *  1. scripts/calibration/calibrations/ (project root — used by femboy/FSW)
+ *  2. calibration/                     (repo-root fallback)
+ *  3. web-gui/backend/data/
+ *  4. external/DiabloAvionics/test_guis/
  */
 export function loadPTCalibration(overridePath?: string): PTCalibrationResult {
-  // Build a list of candidate directories to search
   const candidateDirs: string[] = [
-    path.join(__dirname, '../../../calibration'),                      // New robust calibration home
-    path.join(__dirname, '../../../scripts/calibration/calibrations'),   // project root
-    path.join(__dirname, '../data'),                                      // backend/data
-    path.join(__dirname, '../../../external/DiabloAvionics/test_guis'),  // original source
+    path.join(__dirname, '../../../scripts/calibration/calibrations'),   // femboy / daq_bridge path
+    path.join(__dirname, '../../../calibration'),
+    path.join(__dirname, '../data'),
+    path.join(__dirname, '../../../external/DiabloAvionics/test_guis'),
   ];
 
   // If caller supplied a specific file path, try it first
