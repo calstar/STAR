@@ -6,8 +6,6 @@
 # Board simulator sends DiabloAvionics-format packets (heartbeats + sensor data).
 
 set -e
-
-SESSION="sensor-fake"
 PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$PROJECT"
 
@@ -38,7 +36,7 @@ if [ ! -x "$DAQ_BIN" ]; then
   echo "⚙️ Building daq_bridge..."
   mkdir -p "$PROJECT/build" && cd "$PROJECT/build"
   [ ! -f CMakeCache.txt ] && cmake ..
-  make -j$(nproc) daq_bridge calibration_service controller_service actuator_service 2>/dev/null || true
+  make -j"$(nproc)" daq_bridge calibration_service controller_service actuator_service 2>/dev/null || true
   cd "$PROJECT"
 fi
 
@@ -67,9 +65,23 @@ $DAQ_BIN config/config.toml > /tmp/daq_fake.log 2>&1 &
 sleep 2
 echo "✅ DAQ bridge (UDP :5006 → Elodin)"
 
-# 4. Board simulator (PT + actuator heartbeats + sensor data)
+# 4. Calibration service (Elodin raw PT → Elodin calibrated PT)
+CAL_BIN="$PROJECT/build/FSW/calibration_service"
+[ ! -x "$CAL_BIN" ] && CAL_BIN="$PROJECT/FSW/build/calibration_service"
+if [ -x "$CAL_BIN" ]; then
+  cd "$PROJECT"
+  $CAL_BIN --config config/config.toml --host 127.0.0.1 > /tmp/calibration_fake.log 2>&1 &
+  sleep 1
+  echo "✅ Calibration service (Elodin raw → calibrated)"
+else
+  echo "⚠️  calibration_service not found — skipping (PSI will fallback to backend)"
+fi
+
+# 4b. Board simulator (PT + actuator heartbeats + sensor data)
 # Add loopback aliases so simulator binds to 192.168.2.21, .22 (revert before real hardware)
-[ -x "$PROJECT/scripts/setup_sim_network.sh" ] && "$PROJECT/scripts/setup_sim_network.sh" || true
+if [ -x "$PROJECT/scripts/setup_sim_network.sh" ]; then
+  "$PROJECT/scripts/setup_sim_network.sh"
+fi
 # Add --low-noise for smoother PT signal when validating spike behavior
 python3 scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 ${LOW_NOISE:+--low-noise} > /tmp/sim_fake.log 2>&1 &
 sleep 1
@@ -79,7 +91,7 @@ echo "✅ Board simulator (PT, actuator heartbeats → :5006)"
 cd "$PROJECT/web-gui/backend"
 ACTUATOR_SVC_ENV="ACTUATOR_SERVICE_ENABLED=false"
 [ -x "$PROJECT/build/FSW/actuator_service" ] && ACTUATOR_SVC_ENV="ACTUATOR_SERVICE_ENABLED=true ACTUATOR_SERVICE_PORT=9998"
-ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false $ACTUATOR_SVC_ENV npm run dev > /tmp/backend_fake.log 2>&1 &
+ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false USE_CALIBRATION_SERVICE_CALIBRATED=false $ACTUATOR_SVC_ENV npm run dev > /tmp/backend_fake.log 2>&1 &
 sleep 3
 echo "✅ Backend :8081"
 

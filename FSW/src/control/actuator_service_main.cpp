@@ -564,6 +564,12 @@ int main(int argc, char* argv[]) {
         if (client < 0)
             continue;
 
+        // Set a 2-second recv timeout so a stalled sender never blocks the loop.
+        struct timeval recv_tv;
+        recv_tv.tv_sec = 2;
+        recv_tv.tv_usec = 0;
+        setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &recv_tv, sizeof(recv_tv));
+
         read_buf.clear();
         char c;
         while (g_running && recv(client, &c, 1, 0) == 1) {

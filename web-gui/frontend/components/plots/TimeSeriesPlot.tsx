@@ -77,7 +77,7 @@ function fmtAxisVal(val: number): string {
 
 // ── Memory constants ──────────────────────────────────────────────────────────
 const DEFAULT_WINDOW_SECONDS = 60;   // 60 s rolling window (can be overridden via prop)
-const SAMPLE_HZ = 10;   // matches backend broadcast rate (100 ms per entity)
+const SAMPLE_HZ = 30;   // matches backend broadcast rate (~33 ms per entity)
 
 export default function TimeSeriesPlot({
   title, entities, component, components, colors,

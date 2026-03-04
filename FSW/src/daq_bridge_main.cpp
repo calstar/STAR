@@ -715,8 +715,7 @@ int main(int argc, char* argv[]) {
                                   << std::endl;
                         fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_names,
                                                                      act_names);
-                        fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client,
-                                                                               64);
+                        fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, 64);
                     }
                 }
             }

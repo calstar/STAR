@@ -173,10 +173,10 @@ const ALIASES: Record<string, string[]> = {
 
 export { ALIASES };
 
-// ── Batched sensor-data updates (10 Hz) ──────────────────────────────────────
-// Accumulate all incoming sensor writes and flush to Zustand once every 100ms.
-// Backend broadcasts at 10 Hz per entity so this perfectly coalesces bursts
-// into a single setState, keeping React re-renders at ≤10 Hz regardless of
+// ── Batched sensor-data updates (30 Hz) ──────────────────────────────────────
+// Accumulate all incoming sensor writes and flush to Zustand once every ~33ms.
+// Backend broadcasts at 30 Hz per entity so this perfectly coalesces bursts
+// into a single setState, keeping React re-renders at ≤30 Hz regardless of
 // how many entities are arriving simultaneously.
 let _pendingSensorWrites: Record<string, number> = {};
 let _sensorTimestamps: Record<string, number> = {};
@@ -217,8 +217,8 @@ function scheduleSensorFlush() {
 }
 
 // Fixed-interval flush: when tab is in background, RAF is paused and setTimeout is heavily
-// throttled (~1s), so bar plots freeze. Flush pending writes every 100ms regardless of visibility.
-const FLUSH_INTERVAL_MS = 100;
+// throttled (~1s), so bar plots freeze. Flush pending writes every ~33ms regardless of visibility.
+const FLUSH_INTERVAL_MS = 33;
 if (typeof setInterval !== 'undefined') {
   setInterval(() => {
     if (Object.keys(_pendingSensorWrites).length > 0) {

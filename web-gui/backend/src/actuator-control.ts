@@ -358,6 +358,30 @@ const STATE_TO_CSV_NAME: Record<string, string> = {
   DEBUG: 'Idle',  // CSV has no Debug column; use Idle so actuator_service doesn't error
 };
 
+/** Send FIRE_START or FIRE_STOP to C++ controller_service (TCP :<port>). */
+export async function forwardFireStateToControllerService(fireActive: boolean, port: number): Promise<boolean> {
+    if (!port || port < 1 || port > 65535) return false;
+    const cmd = fireActive ? 'FIRE_START' : 'FIRE_STOP';
+    return new Promise<boolean>((resolve) => {
+        const socket = net.connect({ host: '127.0.0.1', port }, () => {
+            socket.write(`${cmd}\n`, (err?: Error | null) => {
+                if (err) {
+                    console.error(`[ControllerService] ${cmd} write error: ${err.message}`);
+                    resolve(false);
+                } else {
+                    resolve(true);
+                }
+                socket.end();
+            });
+        });
+        socket.on('error', (err) => {
+            console.error(`[ControllerService] ${cmd} connect error: ${err.message}`);
+            resolve(false);
+        });
+        setTimeout(() => { socket.destroy(); resolve(false); }, 2000);
+    });
+}
+
 /** Forward single actuator command to C++ actuator_service (TCP). */
 export async function forwardActuatorToActuatorService(actuatorName: string, open: boolean, port?: number): Promise<boolean> {
     let p = port ?? 0;

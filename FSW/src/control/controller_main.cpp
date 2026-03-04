@@ -14,12 +14,20 @@
  * Default config path: ../../config/config.toml (relative to binary)
  */
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <atomic>
 #include <csignal>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
+#include <thread>
 
 #include "control/ControllerService.hpp"
 #include "control/RobustDDPController.hpp"
@@ -33,32 +41,26 @@ static std::string trim(const std::string& s) {
 
 static std::string getTomlValue(const std::string& content, const std::string& section,
                                 const std::string& key, const std::string& fallback = "") {
-    // Find [section]
     std::string sec_header = "[" + section + "]";
     auto sec_pos = content.find(sec_header);
     if (sec_pos == std::string::npos)
         return fallback;
 
-    // Search from section start to next section or EOF
     auto search_start = sec_pos + sec_header.size();
     auto next_sec = content.find("\n[", search_start);
     std::string sec_content = (next_sec == std::string::npos)
                                   ? content.substr(search_start)
                                   : content.substr(search_start, next_sec - search_start);
 
-    // Find key = value
     std::istringstream iss(sec_content);
     std::string line;
     while (std::getline(iss, line)) {
-        // Skip comments
-        auto comment_pos = line.find('#');
-        if (comment_pos != std::string::npos)
-            line = line.substr(0, comment_pos);
-
+        auto c = line.find('#');
+        if (c != std::string::npos)
+            line = line.substr(0, c);
         auto eq = line.find('=');
         if (eq == std::string::npos)
             continue;
-
         std::string k = trim(line.substr(0, eq));
         std::string v = trim(line.substr(eq + 1));
         if (k == key)
@@ -67,12 +69,174 @@ static std::string getTomlValue(const std::string& content, const std::string& s
     return fallback;
 }
 
+// Parse [actuator_roles] entry: "Fuel Press" = ["NC", 3, 12] → channel, board_id, is_no
+static void parseActuatorRole(const std::string& val, int& channel, int& board_id, bool& is_no) {
+    channel = 0;
+    board_id = 0;
+    is_no = false;
+    size_t i = val.find('[');
+    if (i == std::string::npos)
+        return;
+    size_t j = val.find(',', i + 1);
+    if (j == std::string::npos)
+        return;
+    std::string type_str = trim(val.substr(i + 1, j - i - 1));
+    if (type_str == "NO" || type_str == "no")
+        is_no = true;
+    size_t k = val.find(',', j + 1);
+    try {
+        if (k != std::string::npos)
+            board_id = std::stoi(trim(val.substr(k + 1)));
+        channel =
+            std::stoi(trim(val.substr(j + 1, (k != std::string::npos ? k : val.size()) - j - 1)));
+    } catch (...) {
+    }
+}
+
+// Build board_id → IP map from all [boards.xxx] sections (mirrors actuator_service logic)
+static std::map<int, std::string> buildBoardIpMap(const std::string& config_content,
+                                                  const std::string& config_path) {
+    std::map<int, std::string> m;
+
+    // Prefer config.toml.auto (daq_bridge heartbeat discovery) when available
+    std::string auto_path = config_path + ".auto";
+    {
+        std::ifstream fa(auto_path);
+        if (fa.is_open()) {
+            std::ostringstream ss;
+            ss << fa.rdbuf();
+            std::string ac = ss.str();
+            size_t pos = 0;
+            while (pos < ac.size()) {
+                size_t next = ac.find("[board_", pos);
+                if (next == std::string::npos)
+                    break;
+                size_t end = ac.find(']', next);
+                if (end == std::string::npos)
+                    break;
+                std::string sec = ac.substr(next + 1, end - next - 1);
+                std::string bt = getTomlValue(ac, sec, "board_type", "");
+                std::string ip = getTomlValue(ac, sec, "ip", "");
+                if (bt == "5" && !ip.empty()) {  // board_type 5 = ACTUATOR
+                    size_t ld = ip.rfind('.');
+                    if (ld != std::string::npos) {
+                        try {
+                            int bid = std::stoi(ip.substr(ld + 1));
+                            if (bid >= 1 && bid <= 254)
+                                m[bid] = ip;
+                        } catch (...) {
+                        }
+                    }
+                }
+                pos = end + 1;
+            }
+        }
+    }
+
+    // Fallback: scan [boards.xxx] sections in config.toml
+    if (!config_content.empty()) {
+        size_t pos = 0;
+        while (pos < config_content.size()) {
+            size_t next = config_content.find("[boards.", pos);
+            if (next == std::string::npos)
+                break;
+            size_t end = config_content.find(']', next);
+            if (end == std::string::npos)
+                break;
+            std::string sec = config_content.substr(next + 1, end - next - 1);
+            std::string ip = getTomlValue(config_content, sec, "ip", "");
+            std::string id_str = getTomlValue(config_content, sec, "board_id",
+                                              getTomlValue(config_content, sec, "id", "0"));
+            if (!ip.empty() && !m.count(0)) {
+                try {
+                    int id = std::stoi(id_str);
+                    if (id > 0 && !m.count(id))
+                        m[id] = ip;
+                } catch (...) {
+                }
+            }
+            pos = end + 1;
+        }
+    }
+
+    // Last-resort defaults matching standard subnet layout
+    if (m.empty()) {
+        m[11] = "192.168.2.11";
+        m[12] = "192.168.2.12";
+        m[13] = "192.168.2.13";
+        m[14] = "192.168.2.14";
+    }
+    return m;
+}
+
 // ── Signal handling ────────────────────────────────────────────────────
 static std::atomic<bool> g_running{true};
 
 static void signalHandler(int /*sig*/) {
     std::cout << "\n[controller_service] Caught signal, shutting down…" << std::endl;
     g_running = false;
+}
+
+// ── TCP control server (FIRE_START / FIRE_STOP) ─────────────────────────
+// Mirrors the actuator_service TCP command pattern.
+// TS backend connects, sends "FIRE_START\n" or "FIRE_STOP\n", then disconnects.
+static void runControlServer(fsw::control::ControllerService* svc, uint16_t port) {
+    int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_fd < 0) {
+        std::cerr << "[ControllerService] ❌ Control socket failed: " << strerror(errno)
+                  << std::endl;
+        return;
+    }
+    int opt = 1;
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in addr {};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(port);
+    if (bind(listen_fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
+        std::cerr << "[ControllerService] ❌ Control bind(" << port
+                  << ") failed: " << strerror(errno) << std::endl;
+        ::close(listen_fd);
+        return;
+    }
+    ::listen(listen_fd, 4);
+    std::cout << "[ControllerService] 🎮 Control server on TCP :" << port
+              << "  (FIRE_START | FIRE_STOP)" << std::endl;
+
+    while (g_running) {
+        struct timeval tv {
+            1, 0
+        };
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(listen_fd, &fds);
+        if (select(listen_fd + 1, &fds, nullptr, nullptr, &tv) <= 0)
+            continue;
+
+        int client = ::accept(listen_fd, nullptr, nullptr);
+        if (client < 0)
+            continue;
+
+        std::string buf;
+        char c;
+        while (buf.size() < 64 && ::recv(client, &c, 1, 0) == 1) {
+            if (c == '\n')
+                break;
+            buf += c;
+        }
+        ::close(client);
+
+        if (buf == "FIRE_START") {
+            svc->setFireActive(true);
+        } else if (buf == "FIRE_STOP") {
+            svc->setFireActive(false);
+        } else {
+            std::cerr << "[ControllerService] ⚠️  Unknown control cmd: \"" << buf << "\""
+                      << std::endl;
+        }
+    }
+    ::close(listen_fd);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -86,6 +250,7 @@ int main(int argc, char* argv[]) {
     uint16_t elodin_port = 0;      // 0 = use config.toml [database].port
     std::string relay_host = "127.0.0.1";
     uint16_t relay_port = 9090;
+    uint16_t control_port = 0;  // 0 = use config.toml [controller_service].port
     double thrust_desired = 1000.0;
     bool elodin_host_from_cli = false;
     bool elodin_port_from_cli = false;
@@ -109,6 +274,8 @@ int main(int argc, char* argv[]) {
             relay_host = argv[++i];
         } else if (arg == "--relay-port" && i + 1 < argc) {
             relay_port = static_cast<uint16_t>(std::atoi(argv[++i]));
+        } else if (arg == "--control-port" && i + 1 < argc) {
+            control_port = static_cast<uint16_t>(std::atoi(argv[++i]));
         } else if (arg == "--thrust" && i + 1 < argc) {
             thrust_desired = std::atof(argv[++i]);
         } else if (arg == "--p-fuel" && i + 1 < argc) {
@@ -158,20 +325,90 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ── Extract settings ───────────────────────────────────────────────
+    // ── Extract settings from config ───────────────────────────────────
     fsw::control::ControllerService::PWMConfig pwm;
 
-    // Actuator board IP — from first actuator board in [boards]
-    std::string actuator_ip =
-        getTomlValue(config_content, "boards.actuator_board", "ip", "192.168.2.11");
-    pwm.actuator_board_ip = actuator_ip;
-    pwm.actuator_port = 5005;
-    pwm.fuel_channel = 3;  // Fuel Press CH3 from config
-    pwm.lox_channel = 8;   // LOX Press CH8 from config
+    // Build board_id → IP map from [boards.xxx] sections (uses discovery if available)
+    auto board_ip_map = buildBoardIpMap(config_content, config_path);
 
-    // Controller settings
+    // Read actuator_cmd_port from [network] (boards listen on this for commands)
+    {
+        std::string v = getTomlValue(config_content, "network", "actuator_cmd_port", "5005");
+        pwm.actuator_port = static_cast<uint16_t>(std::atoi(v.c_str()));
+    }
+
+    // Parse [actuator_roles] to find Fuel Press and LOX Press channels/boards
+    {
+        int fuel_channel = 3, fuel_board_id = 12;
+        int lox_channel = 8, lox_board_id = 12;
+        bool found_fuel = false, found_lox = false;
+
+        std::string current_section;
+        std::istringstream cfg(config_content);
+        std::string line;
+        while (std::getline(cfg, line)) {
+            auto c = line.find('#');
+            if (c != std::string::npos)
+                line = line.substr(0, c);
+            if (line.size() >= 2 && line[0] == '[') {
+                size_t end = line.find(']');
+                current_section = (end != std::string::npos) ? line.substr(1, end - 1) : "";
+                continue;
+            }
+            if (current_section != "actuator_roles")
+                continue;
+            auto eq = line.find('=');
+            if (eq == std::string::npos)
+                continue;
+            std::string key = trim(line.substr(0, eq));
+            std::string val = trim(line.substr(eq + 1));
+            int ch = 0, bid = 0;
+            bool is_no = false;
+            parseActuatorRole(val, ch, bid, is_no);
+            if (ch < 1)
+                continue;
+            if (key == "Fuel Press") {
+                fuel_channel = ch;
+                fuel_board_id = bid;
+                found_fuel = true;
+            } else if (key == "LOX Press") {
+                lox_channel = ch;
+                lox_board_id = bid;
+                found_lox = true;
+            }
+        }
+
+        if (!found_fuel)
+            std::cerr << "⚠️  [controller] 'Fuel Press' not found in [actuator_roles]; "
+                         "using defaults (CH3, board 12)"
+                      << std::endl;
+        if (!found_lox)
+            std::cerr << "⚠️  [controller] 'LOX Press' not found in [actuator_roles]; "
+                         "using defaults (CH8, board 12)"
+                      << std::endl;
+
+        pwm.fuel_channel = static_cast<uint8_t>(fuel_channel);
+        pwm.lox_channel = static_cast<uint8_t>(lox_channel);
+
+        // Resolve board IDs to IPs; warn if they differ (PWMConfig has one IP for now)
+        auto fuel_it = board_ip_map.find(fuel_board_id);
+        auto lox_it = board_ip_map.find(lox_board_id);
+        std::string fuel_ip = (fuel_it != board_ip_map.end())
+                                  ? fuel_it->second
+                                  : "192.168.2." + std::to_string(fuel_board_id);
+        std::string lox_ip = (lox_it != board_ip_map.end())
+                                 ? lox_it->second
+                                 : "192.168.2." + std::to_string(lox_board_id);
+
+        if (fuel_ip != lox_ip)
+            std::cerr << "⚠️  [controller] Fuel Press (" << fuel_ip << ") and LOX Press (" << lox_ip
+                      << ") on different boards — using fuel board IP for both" << std::endl;
+        pwm.actuator_board_ip = fuel_ip;
+    }
+
+    // Controller loop / PWM settings from [controller] section
     double loop_hz = 10.0;
-    if (!config_content.empty()) {
+    {
         std::string v;
         v = getTomlValue(config_content, "controller", "pwm_frequency_hz", "10.0");
         pwm.frequency_hz = static_cast<float>(std::atof(v.c_str()));
@@ -181,26 +418,45 @@ int main(int argc, char* argv[]) {
 
         v = getTomlValue(config_content, "controller", "controller_loop_hz", "10.0");
         loop_hz = std::atof(v.c_str());
+    }
 
-        if (!elodin_host_from_cli) {
-            std::string db_host = getTomlValue(config_content, "database", "host", "127.0.0.1");
-            if (!db_host.empty())
-                elodin_host = db_host;
-        }
-        if (!elodin_port_from_cli) {
-            std::string db_port_str = getTomlValue(config_content, "database", "port", "2240");
-            if (!db_port_str.empty())
-                elodin_port = static_cast<uint16_t>(std::atoi(db_port_str.c_str()));
-        }
+    if (!elodin_host_from_cli) {
+        std::string db_host = getTomlValue(config_content, "database", "host", "127.0.0.1");
+        if (!db_host.empty())
+            elodin_host = db_host;
+    }
+    if (!elodin_port_from_cli) {
+        std::string db_port_str = getTomlValue(config_content, "database", "port", "2240");
+        if (!db_port_str.empty())
+            elodin_port = static_cast<uint16_t>(std::atoi(db_port_str.c_str()));
     }
     if (elodin_host.empty())
         elodin_host = "127.0.0.1";
     if (elodin_port == 0)
         elodin_port = 2240;
 
+    // Read control port from [controller_service].port (FIRE_START / FIRE_STOP TCP gate)
+    if (control_port == 0) {
+        std::string cp = getTomlValue(config_content, "controller_service", "port", "9999");
+        if (!cp.empty())
+            control_port = static_cast<uint16_t>(std::atoi(cp.c_str()));
+        if (control_port == 0)
+            control_port = 9999;
+    }
+
     // Controller algorithm config (using defaults from RobustDDPController.hpp)
     fsw::control::RobustDDPController::Config ctrl_cfg;
-    // The defaults in Config{} are already tuned — override from TOML if needed
+    // Override safety constraint from config (0 = disabled, useful for simulation)
+    {
+        std::string v = getTomlValue(config_content, "controller", "P_copv_min_pa", "0");
+        double pmin = std::atof(v.c_str());
+        ctrl_cfg.P_copv_min = pmin;  // 0 disables the check; real hotfire sets >0
+        if (pmin == 0.0)
+            std::cout << "  P_copv_min:     disabled (0)" << std::endl;
+        else
+            std::cout << "  P_copv_min:     " << pmin << " Pa (" << (pmin / 6894.76) << " psi)"
+                      << std::endl;
+    }
 
     std::cout << "\n═══════════════════════════════════════════════════════════" << std::endl;
     std::cout << "  Robust DDP Controller Service" << std::endl;
@@ -245,8 +501,18 @@ int main(int argc, char* argv[]) {
     }
     service.setCommand(cmd);
 
-    // Removed initial hardcoded measurement zeros
-    // Measurement relies dynamically on Elodin subscriber loop now
+    // ── Optional open-loop test duty (fallback_fuel/ox_duty_cycle from config) ──
+    // When non-zero this bypasses the DDP controller so you can validate UDP PWM delivery.
+    {
+        float td_f = 0.0f, td_o = 0.0f;
+        std::string v;
+        v = getTomlValue(config_content, "controller", "fallback_fuel_duty_cycle", "0");
+        td_f = static_cast<float>(std::atof(v.c_str()));
+        v = getTomlValue(config_content, "controller", "fallback_ox_duty_cycle", "0");
+        td_o = static_cast<float>(std::atof(v.c_str()));
+        if (td_f > 0.0f || td_o > 0.0f)
+            service.setTestDuty(td_f, td_o);
+    }
 
     // ── Install signal handlers ────────────────────────────────────────
     std::signal(SIGINT, signalHandler);
@@ -258,7 +524,12 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::cout << "\n🎯 Controller running. Press Ctrl+C to stop.\n" << std::endl;
+    // ── Start TCP control server (FIRE_START / FIRE_STOP gate) ────────────
+    std::thread control_thread(runControlServer, &service, control_port);
+    control_thread.detach();
+
+    std::cout << "\n🎯 Controller running. PWM gated to FIRE state (TCP :" << control_port << ").\n"
+              << std::endl;
 
     // ── Wait for shutdown ──────────────────────────────────────────────
     while (g_running && service.is_running()) {

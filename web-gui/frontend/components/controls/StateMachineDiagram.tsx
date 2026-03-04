@@ -470,6 +470,43 @@ export default function StateMachineDiagram() {
         </svg>
       </div>
 
+      {/* Legend */}
+      <div className="px-6 py-4 border-t border-gray-800 flex flex-wrap gap-5 text-sm flex-shrink-0">
+        <span className="flex items-center gap-2">
+          <span className="w-5 h-4 rounded-sm inline-block" style={{ background: '#2563EB', border: '2px solid #60A5FA' }} />
+          <span className="text-text-muted font-semibold">Current</span>
+        </span>
+        <span className="flex items-center gap-2">
+          <span className="w-5 h-4 rounded-sm inline-block" style={{ background: '#059669', border: '2px solid #34D399' }} />
+          <span className="text-text-muted font-semibold">Reachable (click)</span>
+        </span>
+        <span className="flex items-center gap-2">
+          <span className="w-5 h-4 rounded-sm inline-block" style={{ background: '#7F1D1D', border: '2px solid #EF4444' }} />
+          <span className="text-text-muted font-semibold">Emergency (always active)</span>
+        </span>
+        <span className="flex items-center gap-3">
+          <svg width="36" height="12" style={{ display: 'inline-block' }}>
+            <line x1="0" y1="6" x2="28" y2="6" stroke="#34D399" strokeWidth="2.5" />
+            <polygon points="28,3 36,6 28,9" fill="#34D399" />
+          </svg>
+          <span className="text-text-muted font-semibold">Next state</span>
+        </span>
+        <span className="flex items-center gap-3">
+          <svg width="36" height="12" style={{ display: 'inline-block' }}>
+            <line x1="0" y1="6" x2="28" y2="6" stroke="#60A5FA" strokeWidth="2" strokeDasharray="5 3" />
+            <polygon points="28,3 36,6 28,9" fill="#60A5FA" />
+          </svg>
+          <span className="text-text-muted font-semibold">Return path</span>
+        </span>
+        <span className="flex items-center gap-3">
+          <svg width="36" height="12" style={{ display: 'inline-block' }}>
+            <line x1="0" y1="6" x2="28" y2="6" stroke="#EF4444" strokeWidth="2.5" strokeDasharray="6 4" />
+            <polygon points="28,3 36,6 28,9" fill="#EF4444" />
+          </svg>
+          <span className="text-text-muted font-semibold">Emergency</span>
+        </span>
+      </div>
+
     </div>
   );
 }

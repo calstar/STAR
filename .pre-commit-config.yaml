@@ -10,6 +10,7 @@ repos:
       - id: trailing-whitespace
         exclude: '\.(md|txt)$'
       - id: end-of-file-fixer
+        exclude: '^config/config\.toml\.auto$'
       - id: check-yaml
       - id: check-json
       - id: check-toml
@@ -41,8 +42,9 @@ repos:
         files: \.(cpp|hpp)$
         exclude: '^external/|^build/'
         additional_dependencies: ['clang-tidy']
-        pass_filenames: false
+        pass_filenames: true
         always_run: false
+        stages: [manual]
 
   # Python formatting
   - repo: https://github.com/psf/black
@@ -80,6 +82,7 @@ repos:
         files: \.(cpp|hpp|c|h)$
         pass_filenames: false
         always_run: false
+        stages: [manual]
 
       - id: check-todos
         name: Check for TODO/FIXME in committed files

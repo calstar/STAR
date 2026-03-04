@@ -90,7 +90,7 @@ export default function PressureBar({
   }, [displayValue, value, nop, meop, color]);
 
   return (
-    <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-hidden select-none w-full">
+    <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-visible select-none w-full">
       {/* Label */}
       <div className={`${compact ? 'text-[10px]' : 'text-2xl'} font-bold uppercase tracking-wider text-gray-300 text-center leading-none flex-shrink-0 whitespace-nowrap`}>
         {label}

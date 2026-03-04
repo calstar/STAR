@@ -12,7 +12,7 @@ import { getStartupTime } from './startup-time';
 import { getWebSocketClient } from './websocket';
 import { MessageType } from './types';
 
-const CACHE_SAMPLE_HZ = 10; // 10 Hz to match backend broadcast rate
+const CACHE_SAMPLE_HZ = 30; // 30 Hz to match backend broadcast rate
 const CACHE_MAX_SECONDS = 300; // 5 minutes of history
 const CACHE_MAX_POINTS = CACHE_MAX_SECONDS * CACHE_SAMPLE_HZ;
 

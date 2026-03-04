@@ -96,8 +96,9 @@ int main(int argc, char* argv[]) {
     config.tau_line_O = 0.05;
 
     // Default PWM config (fuel → CH3, LOX → CH8 on actuator board)
+    // Board 12 (192.168.2.12) hosts Fuel Press CH3 and LOX Press CH8 per config.toml actuator_roles
     fsw::control::ControllerService::PWMConfig pwm_config;
-    pwm_config.actuator_board_ip = "192.168.2.11";
+    pwm_config.actuator_board_ip = "192.168.2.12";
     pwm_config.actuator_port = 5005;
     pwm_config.fuel_channel = 3;
     pwm_config.lox_channel = 8;

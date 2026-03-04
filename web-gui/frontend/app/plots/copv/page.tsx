@@ -68,7 +68,6 @@ export default function COPVGraphsPage() {
             />
           </div>
 
-          {/* GN2 actuator: GN2 Vent only */}
           <div className="flex-shrink-0">
             <ActuatorStatePanel
               title="GN2 Actuator"

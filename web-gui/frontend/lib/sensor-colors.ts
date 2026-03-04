@@ -53,8 +53,8 @@ export function getEntityColor(entity: string): string {
 
 // Order and colors aligned with femboy for consistent calibrated values across plots
 export const PRESSURE_SENSORS = [
-  { label: 'GN2 Regulated', entity: 'PT_Cal.GN2_Regulated', component: 'pressure_psi' as const, color: '#27AE60', nop: 900, meop: 950 },
   { label: 'GN2 High', entity: 'PT_Cal.GN2_High', component: 'pressure_psi' as const, color: '#1ABC9C', nop: 900, meop: 950 },
+  { label: 'GN2 Regulated', entity: 'PT_Cal.GN2_Regulated', component: 'pressure_psi' as const, color: '#27AE60', nop: 900, meop: 950 },
   { label: 'Fuel Upstream', entity: 'PT_Cal.Fuel_Upstream', component: 'pressure_psi' as const, color: '#3498DB', nop: 600, meop: 650 },
   { label: 'Fuel Downstream', entity: 'PT_Cal.Fuel_Downstream', component: 'pressure_psi' as const, color: '#2980B9', nop: 600, meop: 650 },
   { label: 'LOX Upstream', entity: 'PT_Cal.Ox_Upstream', component: 'pressure_psi' as const, color: '#E74C3C', nop: 600, meop: 650 },

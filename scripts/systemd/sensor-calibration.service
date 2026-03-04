@@ -1,0 +1,15 @@
+[Unit]
+Description=Sensor System Calibration Service (Elodin Raw → Elodin Calibrated)
+After=network.target sensor-elodin.service sensor-daq.service
+Wants=sensor-daq.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sensor_system
+ExecStart=/bin/bash -c 'if [ -x ./build/FSW/calibration_service ]; then exec ./build/FSW/calibration_service --config config/config.toml --host 127.0.0.1; elif [ -x ./FSW/build/calibration_service ]; then exec ./FSW/build/calibration_service --config config/config.toml --host 127.0.0.1; else echo "calibration_service not found — run: cd build && cmake .. && make calibration_service"; exit 1; fi'
+Restart=always
+RestartSec=5
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

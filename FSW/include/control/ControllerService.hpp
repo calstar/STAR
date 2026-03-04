@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "RobustDDPController.hpp"
+#include "calibration/PTCalibration.hpp"
 #include "elodin/ElodinClient.hpp"
 
 namespace fsw {
@@ -66,6 +67,20 @@ public:
     void setCommand(const RobustDDPController::Command& cmd);
     void setNavState(const RobustDDPController::NavState& nav);
 
+    /**
+     * @brief Enable or disable PWM output (FIRE state gate).
+     * PWM is only sent while fire_active_ is true.
+     * Called by the TCP control thread when FIRE_START / FIRE_STOP is received.
+     */
+    void setFireActive(bool active);
+
+    /**
+     * @brief Override controller output with fixed duty cycles for open-loop validation.
+     * When both values are 0 (default), the RobustDDP controller runs normally.
+     * Set non-zero to bypass the controller and send these fixed duties on every FIRE tick.
+     */
+    void setTestDuty(float fuel, float ox);
+
     /** Get last actuation output (for diagnostics / GUI broadcast). */
     RobustDDPController::ActuationCommand getLastActuation() const;
     RobustDDPController::Diagnostics getLastDiagnostics() const;
@@ -97,6 +112,11 @@ private:
 
     // ── State ──────────────────────────────────────────────────────────
     std::atomic<bool> running_{false};
+    std::atomic<bool> fire_active_{false};  // PWM only sent when FIRE state is active
+
+    // Open-loop test duty cycles (0 = use DDP controller; non-zero = bypass DDP)
+    std::atomic<float> test_duty_fuel_{0.0f};
+    std::atomic<float> test_duty_ox_{0.0f};
 
     // Controller algorithm
     std::unique_ptr<RobustDDPController> controller_;
@@ -105,9 +125,12 @@ private:
     std::unique_ptr<elodin::ElodinClient> elodin_client_;
     bool elodin_connected_ = false;
 
-    // Relay WebSocket (for reading calibrated PT sensor data)
+    // Relay WebSocket (for reading PT sensor data)
     std::string relay_host_ = "127.0.0.1";
     uint16_t relay_port_ = 9090;
+
+    // Inline PT calibration (raw ADC → PSI) — loaded from default JSON calibration files
+    fsw::calibration::PTCalibrationManager pt_calibration_;
 
     // PWM output
     PWMConfig pwm_config_;

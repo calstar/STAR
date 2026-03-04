@@ -24,6 +24,7 @@
 
 #include "comms/messages/control/ControllerMessages.hpp"
 #include "comms/messages/sensor/CalibratedPTMessage.hpp"
+#include "comms/messages/sensor/SensorMessages.hpp"
 #include "control/RobustDDPController.hpp"
 #include "db.hpp"
 #include "elodin/ElodinClient.hpp"
@@ -112,6 +113,16 @@ bool ControllerService::initialize(const PWMConfig& pwm_config,
                   << std::endl;
     }
 
+    // ── Load PT calibration (for raw ADC → PSI in relay subscriber) ───────
+    pt_calibration_.load_calibration();
+    if (pt_calibration_.get_calibrated_count() > 0)
+        std::cout << "[ControllerService] ✅ PT calibration loaded ("
+                  << pt_calibration_.get_calibrated_count() << " channels)" << std::endl;
+    else
+        std::cout << "[ControllerService] ⚠️  No PT calibration files found — "
+                     "using linear ADC fallback"
+                  << std::endl;
+
     // ── Initialize controller ───────────────────────────────────────────
     if (!controller_->initialize(controller_config)) {
         std::cerr << "[ControllerService] ❌ Failed to initialize RobustDDPController" << std::endl;
@@ -192,6 +203,23 @@ void ControllerService::setCommand(const RobustDDPController::Command& cmd) {
 void ControllerService::setNavState(const RobustDDPController::NavState& nav) {
     std::lock_guard<std::mutex> lock(input_mutex_);
     current_nav_ = nav;
+}
+
+void ControllerService::setFireActive(bool active) {
+    fire_active_ = active;
+    std::cout << "[ControllerService] 🔥 Fire state: "
+              << (active ? "ACTIVE — PWM enabled" : "INACTIVE — PWM suppressed") << std::endl;
+}
+
+void ControllerService::setTestDuty(float fuel, float ox) {
+    test_duty_fuel_ = std::max(0.0f, std::min(1.0f, fuel));
+    test_duty_ox_ = std::max(0.0f, std::min(1.0f, ox));
+    if (fuel > 0.0f || ox > 0.0f)
+        std::cout << "[ControllerService] 🧪 Test duty override: fuel=" << test_duty_fuel_.load()
+                  << " ox=" << test_duty_ox_.load() << " (DDP bypassed)" << std::endl;
+    else
+        std::cout << "[ControllerService] 🧪 Test duty cleared — DDP controller active"
+                  << std::endl;
 }
 
 RobustDDPController::ActuationCommand ControllerService::getLastActuation() const {
@@ -309,18 +337,44 @@ void ControllerService::controllerLoop() {
             have_data = has_measurement_;
         }
 
-        if (!have_data && tick < 5) {
-            // No sensor data yet — skip but don't spam
-            if (tick == 0) {
-                std::cout << "[ControllerService] ⏳ Waiting for sensor data…" << std::endl;
+        if (!have_data) {
+            // No sensor data yet — do not run controller or send any PWM
+            if (tick == 0 || tick % 50 == 0) {
+                std::cout << "[ControllerService] ⏳ Waiting for sensor data from Elodin relay…"
+                          << std::endl;
             }
+            ++tick;
+            auto loop_end = std::chrono::steady_clock::now();
+            auto elapsed = loop_end - loop_start;
+            if (elapsed < loop_interval)
+                std::this_thread::sleep_for(loop_interval - elapsed);
+            continue;
         }
 
-        // ── Run controller step ────────────────────────────────────────
-        auto [actuation, diagnostics] = controller_->step(meas, nav, cmd);
+        // ── Run controller step (or use fixed test duty) ───────────────
+        float td_f = test_duty_fuel_.load();
+        float td_o = test_duty_ox_.load();
 
-        // ── Send PWM commands to actuator board ────────────────────────
-        sendActuationPWM(actuation);
+        RobustDDPController::ActuationCommand actuation;
+        RobustDDPController::Diagnostics diagnostics;
+
+        if (td_f > 0.0f || td_o > 0.0f) {
+            // Open-loop validation: bypass DDP, send fixed duty cycles
+            actuation.duty_F = td_f;
+            actuation.duty_O = td_o;
+            actuation.u_F_on = td_f > 0.0f;
+            actuation.u_O_on = td_o > 0.0f;
+            actuation.valid = true;
+        } else {
+            auto [a, d] = controller_->step(meas, nav, cmd);
+            actuation = a;
+            diagnostics = d;
+        }
+
+        // ── Send PWM commands only when FIRE state is active ──────────
+        if (fire_active_) {
+            sendActuationPWM(actuation);
+        }
 
         // ── Store outputs for external readers ─────────────────────────
         {
@@ -491,26 +545,52 @@ void ControllerService::relaySubscriberLoop() {
                 continue;  // TABLE only
             if (pid_hi != 0x20)
                 continue;
-            if (pid_lo < 0x11 || pid_lo > 0x1A)
-                continue;
 
-            uint8_t ch = pid_lo - 0x10;  // channel 1-10
             const uint8_t* payload = frame.data() + 8;
             size_t payload_size = frame.size() - 8;
 
-            if (payload_size < comms::messages::sensor::CalibratedPTMessage::nbytes())
-                continue;
+            float pressure_psi = 0.0f;
+            uint8_t ch = 0;
 
-            comms::messages::sensor::CalibratedPTMessage cal_msg;
-            cal_msg.deserialize(payload);
-            float pressure_psi = cal_msg.getField<3>();
+            if (pid_lo >= 0x01 && pid_lo <= 0x0A) {
+                // ── Raw PT [0x20, 0x01..0x0A] — calibrate inline ──────────
+                if (payload_size < comms::messages::sensor::RawPTMessage::nbytes())
+                    continue;
+                comms::messages::sensor::RawPTMessage raw_msg;
+                raw_msg.deserialize(payload);
+                ch = raw_msg.getField<1>();  // channel_id from message
+                if (ch == 0)
+                    ch = pid_lo;  // fallback to packet low byte
+                uint32_t raw_adc = raw_msg.getField<3>();
+                double psi_d =
+                    pt_calibration_.calculate_pressure(ch, static_cast<int32_t>(raw_adc));
+                if (!std::isfinite(psi_d) || psi_d < -50.0 || psi_d > 15000.0) {
+                    // Fallback: simple linear scale (320M ADC ≈ 20 PSI, 80M range ≈ 0–68 PSI)
+                    constexpr double ADC_MAX = 2147483648.0;
+                    psi_d = (static_cast<double>(raw_adc) / ADC_MAX) * 500.0;
+                }
+                pressure_psi = static_cast<float>(psi_d);
+            } else if (pid_lo >= 0x11 && pid_lo <= 0x1A) {
+                // ── Calibrated PT [0x20, 0x11..0x1A] — use directly ───────
+                if (payload_size < comms::messages::sensor::CalibratedPTMessage::nbytes())
+                    continue;
+                comms::messages::sensor::CalibratedPTMessage cal_msg;
+                cal_msg.deserialize(payload);
+                ch = pid_lo - 0x10;  // channel 1-10
+                pressure_psi = cal_msg.getField<3>();
+            } else {
+                continue;
+            }
+
+            if (ch == 0 || !std::isfinite(pressure_psi))
+                continue;
 
             {
                 std::lock_guard<std::mutex> lock(input_mutex_);
                 // Channel mapping from config.toml [sensor_roles_pt_board]:
                 // ch=1: FUEL UP → P_u_fuel, ch=3: FUEL DN → P_d_fuel
                 // ch=5: LOX UP → P_u_ox, ch=7: LOX DN → P_d_ox
-                // ch=6: GN2 REG → P_reg, ch=6 also used for P_copv (no dedicated COPV PT)
+                // ch=6: GN2 REG → P_reg / P_copv proxy
                 if (ch == 1)
                     current_meas_.P_u_fuel = pressure_psi * 6894.76;
                 else if (ch == 5)

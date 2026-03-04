@@ -19,8 +19,8 @@ function adcToVoltageCustom(rawAdc: number, refVolts: number): number {
   return (signed / ADC_FULL_SCALE) * refVolts;
 }
 
-const TC_ENTITIES = ['TC.TC_CH1', 'TC.TC_CH2', 'TC.TC_CH3', 'TC.TC_CH4'];
-const RTD_ENTITIES = ['RTD.RTD_CH1', 'RTD.RTD_CH2', 'RTD.RTD_CH3', 'RTD.RTD_CH4'];
+const TC_ENTITIES = ['TC.CH1', 'TC.CH2', 'TC.CH3', 'TC.CH4'];
+const RTD_ENTITIES = ['RTD.CH1', 'RTD.CH2', 'RTD.CH3', 'RTD.CH4'];
 const TC_LABELS = ['TC Ch1', 'TC Ch2', 'TC Ch3', 'TC Ch4'];
 const RTD_LABELS = ['RTD Ch1', 'RTD Ch2', 'RTD Ch3', 'RTD Ch4'];
 const SENSE_COLORS = ['#F59E0B', '#10B981', '#3B82F6', '#EC4899'];

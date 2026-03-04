@@ -348,6 +348,12 @@ FF = "Fuel Fill"
 port = 9998
 bind_address = "0.0.0.0"
 
+# Controller service (C++) — TCP port for FIRE_START / FIRE_STOP commands.
+# Backend sends FIRE_START when entering FIRE state, FIRE_STOP on exit.
+# PWM is only sent to actuator boards while fire_active is set.
+[controller_service]
+port = 9999
+
 # =============================================================================
 # Elodin Table Routing - Maps sensor types to Elodin table IDs (config-driven, no fixed hexes in code)
 # packet_id = [high_byte, low_byte]; channels = 1-based channel count (low byte 0x01..0x0N).
@@ -503,6 +509,10 @@ controller_service_url = "http://localhost:8000"
 # Controller config path (YAML file relative to engine_sim/configs/). If empty, uses default.
 # Example: "controller_default.yaml" or "hotfire_conservative.yaml"
 controller_config_path = ""
+# Minimum COPV/tank pressure (Pa) required by safety filter before PWM is allowed.
+# Set to 0 to disable the constraint (simulation / open-loop test).
+# For a real hotfire with COPV, set to ~689476 (100 psi) or higher.
+P_copv_min_pa = 0.0
 
 # Controller Targets (used when state machine enters FIRE state)
 # command_type can be: "THRUST_DESIRED", "ALTITUDE_GOAL", or "PRESSURE_TARGET"
@@ -519,7 +529,7 @@ duty_sweep_steps = [[0.1, 0.1], [0.3, 0.2], [0.5, 0.4], [0.3, 0.3], [0.1, 0.1]]
 
 # Use C++ RobustDDPController service for PWM instead of Python FastAPI.
 # When true, the web backend will not start its own controller loop or send PWM.
-use_cpp_controller = false
+use_cpp_controller = true
 
 # =============================================================================
 # Phase 2 Calibration Settings

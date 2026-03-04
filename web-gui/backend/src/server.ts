@@ -6,7 +6,6 @@
  *   server-types.ts       — shared types, interfaces, constants
  *   sensor-config.ts      — sensor role loading, HP PT config, ADC→PSI conversion
  *   actuator-control.ts   — UDP commands, board mapping, NC/NO, continuous commands
- *   controller-loop.ts    — FIRE-state controller / duty sweep
  *   calibration-handler.ts — zero_all, capture_reference, save/clear coefficients
  */
 
@@ -32,7 +31,6 @@ import { Phase2CalibrationEngine } from './calibration-phase2.js';
 import { CalibrationSidecarClient } from './calibration-sidecar.js';
 import { DataLogger } from './data-logger.js';
 import { readConfig, getConfigPath } from './routes/config.js';
-import { ControllerClient, mapSensorDataToMeasurement, ControllerCommand, ControllerDiagnostics } from './controller-client.js';
 import { MessageLogger } from './message-logger.js';
 import { DemoModeGenerator } from './demo-mode.js';
 import {
@@ -67,8 +65,8 @@ import {
   broadcastActuatorExpectedPositions,
   forwardStateToActuatorService,
   forwardActuatorToActuatorService,
+  forwardFireStateToControllerService,
 } from './actuator-control.js';
-import { startControllerLoop, stopControllerLoop } from './controller-loop.js';
 import { handleCalibrationCommand } from './calibration-handler.js';
 
 // ── Expected actuator positions per state (loaded from state_machine_actuators.csv) ─
@@ -112,6 +110,7 @@ class SensorSystemServer {
   actuatorPort: number = 5005;
   /** Port of C++ actuator_service (TCP). When set, state transitions are forwarded there instead of sending UDP directly. */
   actuatorServicePort: number = 0;
+  controllerServicePort: number = 0;
   actuatorBoardMap: Map<string, { channel: number; boardIp: string }> = new Map();
   actuatorBoardIPs: Set<string> = new Set();
   private tcBoards: Map<string, Set<number>> = new Map();
@@ -127,13 +126,13 @@ class SensorSystemServer {
   private readonly PSI_ABSOLUTE_MAX = 6000;  // max expected sensor range (HP PT up to 5000 PSI)
   private _psiDebugLogged?: Set<number>;  // temp: track which channels we've logged
 
-  /** Throttle WS broadcasts per entity to ~10 Hz */
+  /** Throttle WS broadcasts per entity to ~30 Hz */
   private broadcastLastTime: Map<string, number> = new Map();
-  private readonly BROADCAST_MIN_INTERVAL_MS = 100;
+  private readonly BROADCAST_MIN_INTERVAL_MS = 33;
 
-  /** History cache for plots (last 5 minutes at 10Hz = 3000 points per entity.component) */
+  /** History cache for plots (last 5 minutes at 30Hz = 9000 points per entity.component) */
   private historyCache: Map<string, { time: number[]; values: number[] }> = new Map();
-  private readonly HISTORY_MAX_POINTS = 3000;
+  private readonly HISTORY_MAX_POINTS = 9000;
 
   /** Binary data logger for runs */
   private dataLogger = new DataLogger();
@@ -160,26 +159,11 @@ class SensorSystemServer {
   private serverBroadcastIP: string = '255.255.255.255';
   private serverHeartbeatIntervalMs: number = 1000;
   private serverHeartbeatTimer: NodeJS.Timeout | null = null;
-  private useDirectDAQ: boolean = false;
-
   /** Abort → AbortDone timer */
   private abortDoneTimer: NodeJS.Timeout | null = null;
 
-  /** Controller */
-  USE_CPP_CONTROLLER: boolean = false;
-  controllerClient: ControllerClient | null = null;
-  controllerLoopInterval: NodeJS.Timeout | null = null;
-  controllerLoopStartTime: number | null = null;
-  CONTROLLER_LOOP_INTERVAL_MS: number = 100;
-  PWM_DURATION_MS: number = 1000;
-  PWM_FREQUENCY_HZ: number = 10;
-  FALLBACK_FUEL_DUTY: number = 0.1;
-  FALLBACK_OX_DUTY: number = 0.1;
-  DUTY_SWEEP_ENABLED: boolean = false;
-  DUTY_SWEEP_STEPS: [number, number][] = [[0.1, 0.1]];
-  DUTY_SWEEP_STEP_DURATION_MS: number = 2000;
-  controllerCommand: ControllerCommand = { command_type: 'THRUST_DESIRED', thrust_desired: 1000 };
-  controllerConfigPath: string | undefined;
+  /** Controller — always C++ controller_service */
+  USE_CPP_CONTROLLER: boolean = true;
 
   /** Sensor maps (from config.toml; used so DB and backend are a replica of config) */
   channelToEntityMap: Record<number, string> = {};
@@ -258,42 +242,6 @@ class SensorSystemServer {
     // Load config
     const config = readConfig();
 
-    // Controller settings from config
-    const controllerConfig = config.controller || {};
-    this.USE_CPP_CONTROLLER = !!controllerConfig.use_cpp_controller || process.env.USE_CPP_CONTROLLER === 'true';
-    this.CONTROLLER_LOOP_INTERVAL_MS = controllerConfig.controller_loop_hz
-      ? Math.round(1000 / controllerConfig.controller_loop_hz) : 100;
-    this.PWM_DURATION_MS = controllerConfig.pwm_duration_ms || 10000;
-    this.PWM_FREQUENCY_HZ = controllerConfig.pwm_frequency_hz || 10;
-    this.FALLBACK_FUEL_DUTY = controllerConfig.fallback_fuel_duty_cycle ?? 0.1;
-    this.FALLBACK_OX_DUTY = controllerConfig.fallback_ox_duty_cycle ?? 0.1;
-    this.DUTY_SWEEP_ENABLED = !!controllerConfig.duty_sweep_enabled;
-    this.DUTY_SWEEP_STEP_DURATION_MS = Math.round((controllerConfig.duty_sweep_step_duration_sec ?? 2) * 1000);
-    const rawSteps = controllerConfig.duty_sweep_steps;
-    if (Array.isArray(rawSteps) && rawSteps.length > 0) {
-      this.DUTY_SWEEP_STEPS = rawSteps.map((s: unknown) => {
-        const a = Array.isArray(s) ? s : [0.1, 0.1];
-        return [Math.max(0, Math.min(1, Number(a[0]) ?? 0.1)), Math.max(0, Math.min(1, Number(a[1]) ?? 0.1))] as [number, number];
-      });
-    } else {
-      this.DUTY_SWEEP_STEPS = [[0.1, 0.1], [0.3, 0.2], [0.5, 0.4], [0.3, 0.3], [0.1, 0.1]];
-    }
-
-    // Load config-driven controller targets
-    this.controllerCommand = {
-      command_type: (controllerConfig.command_type || 'THRUST_DESIRED') as any,
-      thrust_desired: controllerConfig.thrust_desired ?? 1000,
-      altitude_goal: controllerConfig.altitude_goal ?? 0,
-      P_fuel_target: controllerConfig.pressure_fuel_target ?? 0,
-      P_ox_target: controllerConfig.pressure_ox_target ?? 0,
-    };
-
-    console.log(`🎯 Controller settings: loop=${1000 / this.CONTROLLER_LOOP_INTERVAL_MS}Hz, PWM=${this.PWM_FREQUENCY_HZ}Hz, duration=${this.PWM_DURATION_MS}ms`);
-    console.log(`   Fallback duty cycles: Fuel=${(this.FALLBACK_FUEL_DUTY * 100).toFixed(1)}%, LOX=${(this.FALLBACK_OX_DUTY * 100).toFixed(1)}%`);
-    if (this.DUTY_SWEEP_ENABLED) {
-      console.log(`   Duty sweep: ${this.DUTY_SWEEP_STEPS.length} steps × ${this.DUTY_SWEEP_STEP_DURATION_MS}ms (${(this.DUTY_SWEEP_STEPS.length * this.DUTY_SWEEP_STEP_DURATION_MS / 1000).toFixed(1)}s fire)`);
-    }
-
     // Load PT calibration (use config.calibration.pt.json_path if set)
     const ptJsonPath = (config as any).calibration?.pt?.json_path;
     const configDir = path.dirname(getConfigPath());
@@ -324,11 +272,8 @@ class SensorSystemServer {
     // Use calibration_service calibrated only when explicitly enabled. Default: backend does raw→psi from ptCalibration.
     // This ensures consistent calibrated values when calibration_service/sidecar differs from expected.
     this.USE_CALIBRATION_SERVICE_CALIBRATED = process.env.USE_CALIBRATION_SERVICE_CALIBRATED === 'true';
-    if (this.USE_CALIBRATION_SERVICE_CALIBRATED) {
-      console.log('📐 Calibrated data from Elodin only (calibration_service) — backend raw→psi disabled');
-    } else {
-      console.log('📐 Backend calibration: raw ADC → PSI via ptCalibration (set USE_CALIBRATION_SERVICE_CALIBRATED=true for sidecar)');
-    }
+    console.log('📐 Backend calibration: raw ADC → PSI via ptCalibration');
+
 
     // Load broadcast config from config.toml [server_heartbeat] — used for ABORT/CLEAR_ABORT UDP
     try {
@@ -359,17 +304,7 @@ class SensorSystemServer {
     this.rtdBoards = loadRtdBoardConfig();
     this.lcBoards = loadLcBoardConfig();
 
-    // Initialize controller client (config > env var > default), unless using C++ controller
-    const controllerUrl = process.env.CONTROLLER_URL || controllerConfig.controller_service_url || 'http://localhost:8000';
-    if (!this.USE_CPP_CONTROLLER) {
-      this.controllerClient = new ControllerClient(controllerUrl);
-      this.controllerConfigPath = controllerConfig.controller_config_path || undefined;
-      console.log(`🎯 Controller client initialized: ${controllerUrl}` + (this.controllerConfigPath ? ` (config: ${this.controllerConfigPath})` : ''));
-    } else {
-      this.controllerClient = null;
-      this.controllerConfigPath = controllerConfig.controller_config_path || undefined;
-      console.log('🎯 Using C++ controller service – web backend ControllerClient disabled');
-    }
+    console.log('🎯 Using C++ controller service – web backend ControllerClient disabled');
 
     // Load state actuator map from CSV
     STATE_ACTUATOR_MAP = getStateActuatorMap();
@@ -397,6 +332,17 @@ class SensorSystemServer {
       console.log(`🔌 Actuator service enabled — state transitions → TCP :${this.actuatorServicePort}`);
     } else {
       console.log(`🎯 Actuator service disabled (ACTUATOR_SERVICE_ENABLED=false or no port) — using direct UDP`);
+    }
+
+    // Controller service port (FIRE_START / FIRE_STOP gate for C++ PWM)
+    const ctrlSvc = (config as any).controller_service;
+    if (process.env.CONTROLLER_SERVICE_PORT) {
+      this.controllerServicePort = parseInt(process.env.CONTROLLER_SERVICE_PORT, 10) || 0;
+    } else if (ctrlSvc?.port && typeof ctrlSvc.port === 'number') {
+      this.controllerServicePort = ctrlSvc.port;
+    }
+    if (this.controllerServicePort > 0) {
+      console.log(`🎯 Controller service enabled — FIRE gate → TCP :${this.controllerServicePort}`);
     }
 
     // Build transition validation map
@@ -664,51 +610,13 @@ class SensorSystemServer {
 
   private applyControllerConfig(config: any): void {
     const controllerConfig = config.controller || {};
-    this.USE_CPP_CONTROLLER = !!controllerConfig.use_cpp_controller || process.env.USE_CPP_CONTROLLER === 'true';
 
-    this.CONTROLLER_LOOP_INTERVAL_MS = controllerConfig.controller_loop_hz
-      ? Math.round(1000 / controllerConfig.controller_loop_hz)
-      : 100;
-    this.PWM_DURATION_MS = controllerConfig.pwm_duration_ms || 10000;
-    this.PWM_FREQUENCY_HZ = controllerConfig.pwm_frequency_hz || 10;
-    this.FALLBACK_FUEL_DUTY = controllerConfig.fallback_fuel_duty_cycle ?? 0.1;
-    this.FALLBACK_OX_DUTY = controllerConfig.fallback_ox_duty_cycle ?? 0.1;
-    this.DUTY_SWEEP_ENABLED = !!controllerConfig.duty_sweep_enabled;
-    this.DUTY_SWEEP_STEP_DURATION_MS = Math.round((controllerConfig.duty_sweep_step_duration_sec ?? 2) * 1000);
-
-    const rawSteps = controllerConfig.duty_sweep_steps;
-    if (Array.isArray(rawSteps) && rawSteps.length > 0) {
-      this.DUTY_SWEEP_STEPS = rawSteps.map((s: unknown) => {
-        const a = Array.isArray(s) ? s : [0.1, 0.1];
-        return [
-          Math.max(0, Math.min(1, Number(a[0]) ?? 0.1)),
-          Math.max(0, Math.min(1, Number(a[1]) ?? 0.1)),
-        ] as [number, number];
-      });
-    } else {
-      this.DUTY_SWEEP_STEPS = [[0.1, 0.1], [0.3, 0.2], [0.5, 0.4], [0.3, 0.3], [0.1, 0.1]];
+    // Re-read controller_service TCP port in case config changed
+    const ctrlSvc = (config.controller_service || {}) as { port?: number };
+    if (ctrlSvc.port && ctrlSvc.port > 0) {
+      this.controllerServicePort = ctrlSvc.port;
     }
-
-    this.controllerCommand = {
-      command_type: (controllerConfig.command_type || 'THRUST_DESIRED') as any,
-      thrust_desired: controllerConfig.thrust_desired ?? 1000,
-      altitude_goal: controllerConfig.altitude_goal ?? 0,
-      P_fuel_target: controllerConfig.pressure_fuel_target ?? 0,
-      P_ox_target: controllerConfig.pressure_ox_target ?? 0,
-    };
-
-    const controllerUrl = process.env.CONTROLLER_URL || controllerConfig.controller_service_url || 'http://localhost:8000';
-    this.controllerConfigPath = controllerConfig.controller_config_path || undefined;
-
-    if (this.USE_CPP_CONTROLLER) {
-      this.controllerClient = null;
-      console.log('🎯 Controller config reloaded: using C++ controller service; ControllerClient disabled');
-      return;
-    }
-
-    // (Re)initialize client if missing; creating a fresh client on each reload is cheap.
-    this.controllerClient = new ControllerClient(controllerUrl);
-    console.log(`🎯 Controller config reloaded: client=${controllerUrl}` + (this.controllerConfigPath ? ` (config: ${this.controllerConfigPath})` : ''));
+    console.log('🎯 Controller config reloaded: using C++ controller service');
   }
 
   private applyPhase2Config(config: any): void {
@@ -1338,8 +1246,10 @@ class SensorSystemServer {
   // ═══════════════════════════════════════════════════════════════════════════
 
   private handleCommand(command: CommandPayload): void {
-    if (command.commandType === 'state_transition' && !this.elodin.isConnected() && !this.debugMode) {
-      console.error('❌ Cannot send state transition: Elodin not connected');
+    // Block transition only when Elodin is down AND no actuator_service AND not in debug mode.
+    // When actuator_service is running it owns hardware commands, so allow transitions regardless of Elodin.
+    if (command.commandType === 'state_transition' && !this.elodin.isConnected() && !this.debugMode && this.actuatorServicePort <= 0) {
+      console.error('❌ Cannot send state transition: Elodin not connected and no actuator service');
       this.broadcast({ type: MessageType.ERROR, timestamp: Date.now(), payload: { message: 'Elodin DB not connected', command } });
       return;
     }
@@ -1364,7 +1274,7 @@ class SensorSystemServer {
 
         const success = this.elodin.isConnected()
           ? this.elodin.sendCommand('state_transition', { state: newState })
-          : this.debugMode; // in debug mode without Elodin, allow local state update
+          : (this.debugMode || this.actuatorServicePort > 0); // actuator_service is hardware authority when Elodin is down
         if (success) {
           if (newState === SystemState.ARMED && !this.dataLogger.running) this.dataLogger.start();
           else if ((newState === SystemState.IDLE || newState === SystemState.EMERGENCY_ABORT) && this.dataLogger.running) {
@@ -1376,7 +1286,12 @@ class SensorSystemServer {
           this.broadcast({ type: MessageType.STATE_UPDATE, timestamp: Date.now(), payload: { currentState: newState, stateName: SystemState[newState], timestamp: Date.now(), debugMode: this.debugMode } });
 
           const useCppActuatorService = this.actuatorServicePort > 0;
-          if (this.debugMode) {
+          if (this.debugMode && useCppActuatorService) {
+            stopContinuousActuatorCommands(this);
+            this.manuallyCommandedChannels.clear();
+            const enumKey = SystemState[newState] ?? 'IDLE';
+            forwardStateToActuatorService(enumKey, this.actuatorServicePort).catch(() => {});
+          } else if (this.debugMode) {
             stopContinuousActuatorCommands(this);
             this.manuallyCommandedChannels.clear();
           } else if (useCppActuatorService) {
@@ -1400,30 +1315,17 @@ class SensorSystemServer {
             });
           } else {
             this.manuallyCommandedChannels.clear();
-            if (!this.USE_CPP_CONTROLLER) {
-              applyActuatorsForState(this, newState, STATE_ACTUATOR_MAP);
-              if (newState === SystemState.IDLE) { stopContinuousActuatorCommands(this); }
-              else if (newState === SystemState.FIRE) {
-                const fuelInfo = getActuatorBoardInfo(this, 'Fuel Press');
-                const loxInfo = getActuatorBoardInfo(this, 'LOX Press');
-                if (fuelInfo) this.manuallyCommandedChannels.add(`${fuelInfo.channel}@${fuelInfo.boardIp}`);
-                if (loxInfo) this.manuallyCommandedChannels.add(`${loxInfo.channel}@${loxInfo.boardIp}`);
-                startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP);
-              } else { startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP); }
-            } else {
-              console.log(`🎯 State changed to ${SystemState[newState]} – relying on C++ PressureStateMachine for automations`);
-            }
+            console.log(`🎯 State changed to ${SystemState[newState]} – relying on C++ actuator_service`);
           }
 
           broadcastActuatorExpectedPositions(this, newState, STATE_ACTUATOR_MAP);
           if (newState === SystemState.FIRE) {
-            if (!this.USE_CPP_CONTROLLER) {
-              this.startFireSequence();
-            } else {
-              console.log('🎯 FIRE state entered – using C++ controller service; backend will not run controller loop or send PWM');
+            console.log('🎯 FIRE state entered – sending FIRE_START to C++ controller service');
+            if (this.controllerServicePort > 0) {
+              forwardFireStateToControllerService(true, this.controllerServicePort).catch(() => {});
             }
-          } else {
-            stopControllerLoop(this);
+          } else if (this.controllerServicePort > 0) {
+            forwardFireStateToControllerService(false, this.controllerServicePort).catch(() => {});
           }
 
           // Abort UDP broadcasts (ABORT / ABORT_DONE)
@@ -1433,6 +1335,9 @@ class SensorSystemServer {
             newState === SystemState.EMERGENCY_ABORT ||
             newState === SystemState.ABORT;
           if (isAbortState) {
+            if (this.controllerServicePort > 0) {
+              forwardFireStateToControllerService(false, this.controllerServicePort).catch(() => {});
+            }
             if (this.abortDoneTimer) {
               clearTimeout(this.abortDoneTimer);
               this.abortDoneTimer = null;
@@ -1494,14 +1399,9 @@ class SensorSystemServer {
 
         console.log(`🎯 CLEAR_ABORT command received – syncing actuators to abort pattern for state ${SystemState[abortState]} and broadcasting CLEAR_ABORT`);
         try {
-          if (!this.USE_CPP_CONTROLLER) {
-            applyActuatorsForState(this, abortState, STATE_ACTUATOR_MAP);
-            broadcastActuatorExpectedPositions(this, abortState, STATE_ACTUATOR_MAP);
-          } else {
-            console.log(`🎯 Relying on C++ PressureStateMachine for CLEAR_ABORT actuator automations`);
-          }
+          broadcastActuatorExpectedPositions(this, abortState, STATE_ACTUATOR_MAP);
         } catch (err) {
-          console.error('❌ Failed to apply abort actuator pattern during clear_abort:', err);
+          console.error('❌ Failed to broadcast abort actuator positions during clear_abort:', err);
         }
         this.sendClearAbortBroadcast();
       } else if (command.commandType === 'pwm_actuator') {
@@ -1523,11 +1423,6 @@ class SensorSystemServer {
           } else {
             console.warn(`⚠️ PWM actuator "${actuatorName}" not found in config`);
           }
-        }
-      } else if (command.commandType === 'controller_command') {
-        const { command_type, thrust_desired, altitude_goal } = command.data;
-        if (command_type) {
-          this.controllerCommand = { command_type: command_type as 'THRUST_DESIRED' | 'ALTITUDE_GOAL', thrust_desired: thrust_desired ?? this.controllerCommand.thrust_desired, altitude_goal: altitude_goal ?? this.controllerCommand.altitude_goal };
         }
       } else if (command.commandType === 'debug_mode') {
         const { debugMode } = command.data;
@@ -1835,38 +1730,6 @@ class SensorSystemServer {
       timestamp: Date.now(),
       payload: { boards: snapshot },
     });
-  }
-
-  private async startFireSequence(): Promise<void> {
-    console.log('🎯 FIRE: starting atomic sequence (probe 0.1s → then valves + PWM)');
-    let controllerReady = false;
-    if (!this.USE_CPP_CONTROLLER && this.controllerClient) {
-      console.log('🎯 FIRE: probing controller service (0.1s timeout)...');
-      controllerReady = await this.controllerClient.initializeWithTimeout(100, this.controllerConfigPath);
-      console.log(controllerReady
-        ? '✅ FIRE: controller ready — closed-loop PWM'
-        : '⚠️  FIRE: controller unavailable — fallback duties');
-    }
-
-    if (this.currentState !== SystemState.FIRE) {
-      console.log('⚠️  FIRE sequence aborted — state changed during controller probe');
-      return;
-    }
-
-    this.manuallyCommandedChannels.clear();
-    applyActuatorsForState(this, SystemState.FIRE, STATE_ACTUATOR_MAP);
-    const fuelInfo = getActuatorBoardInfo(this, 'Fuel Press');
-    const loxInfo = getActuatorBoardInfo(this, 'LOX Press');
-    if (fuelInfo) this.manuallyCommandedChannels.add(`${fuelInfo.channel}@${fuelInfo.boardIp}`);
-    if (loxInfo) this.manuallyCommandedChannels.add(`${loxInfo.channel}@${loxInfo.boardIp}`);
-    startContinuousActuatorCommands(this, SystemState.FIRE, STATE_ACTUATOR_MAP);
-    broadcastActuatorExpectedPositions(this, SystemState.FIRE, STATE_ACTUATOR_MAP);
-
-    if (!this.USE_CPP_CONTROLLER) {
-      startControllerLoop(this, controllerReady);
-    } else {
-      console.log('🎯 FIRE: using C++ controller service; backend will not send PWM');
-    }
   }
 
   private async syncSidecarCoefficients(): Promise<void> {

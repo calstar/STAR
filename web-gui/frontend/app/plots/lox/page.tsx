@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import PressureBar from '@/components/plots/PressureBar';
 import ActuatorStatePanel from '@/components/plots/ActuatorStatePanel';
@@ -11,7 +11,6 @@ import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
 import { useSensorConfig, filterByRole } from '@/lib/sensor-config';
 import { usePressureLimits, getLimitsForSystem } from '@/lib/pressure-limits';
-import { useState } from 'react';
 
 export default function LOXGraphsPage() {
   const updateSensor = useSensorStore((s) => s.updateSensor);
@@ -23,35 +22,29 @@ export default function LOXGraphsPage() {
 
   const [activeTab, setActiveTab] = useState<'PT' | 'RTD'>('PT');
 
-  // Sensors
-  const ptSensors = filterByRole(allSensors, 'Ox', 'LOX').filter(s => s.calEntity.startsWith('PT') || s.calEntity.startsWith('PT_Cal'));
-  const rtdSensors = filterByRole(allSensors, 'Ox', 'LOX').filter(s => s.calEntity.startsWith('RTD') || s.calEntity.startsWith('RTD_Cal'));
+  const ptSensors = filterByRole(allSensors, 'Ox', 'LOX').filter(
+    (s) => s.calEntity.startsWith('PT') || s.calEntity.startsWith('PT_Cal')
+  );
+  const rtdSensors = filterByRole(allSensors, 'Ox', 'LOX').filter(
+    (s) => s.calEntity.startsWith('RTD') || s.calEntity.startsWith('RTD_Cal')
+  );
 
-  let currentSensors = ptSensors;
-  let componentName = 'pressure_psi';
-  let yLabel = 'Pressure (PSI)';
-
-  if (activeTab === 'RTD') {
-    currentSensors = rtdSensors;
-    componentName = 'temperature_c';
-    if (rtdSensors.some(s => s.calEntity.includes('RTD.'))) {
-      componentName = 'raw_resistance_counts';
-      yLabel = 'Temp (Raw ADC)';
-    } else {
-      yLabel = 'Temperature (°C)';
-    }
-  }
+  const currentSensors = activeTab === 'PT' ? ptSensors : rtdSensors;
+  const componentName = activeTab === 'PT'
+    ? 'pressure_psi'
+    : (rtdSensors.some((s) => s.calEntity.includes('RTD.')) ? 'raw_resistance_counts' : 'temperature_c');
+  const yLabel = activeTab === 'PT'
+    ? 'Pressure (PSI)'
+    : (componentName === 'raw_resistance_counts' ? 'Temp (Raw ADC)' : 'Temperature (°C)');
 
   const entities = currentSensors.map((s) => s.calEntity);
   const labels = currentSensors.map((s) => s.role);
   const colors = entities.map((e) => getEntityColor(e));
 
-  const upSensor = ptSensors.find((s) => s.role.toLowerCase().includes('up'));
-  const downSensor = ptSensors.find((s) => s.role.toLowerCase().includes('dn') || s.role.toLowerCase().includes('down'));
-  const fillSensor = ptSensors.find((s) => s.role.toLowerCase().includes('fill'));
-  const up = useSensorValue(upSensor?.calEntity ?? '', 'pressure_psi');
+  const upSensor   = ptSensors.find((s) => s.role.toLowerCase().includes('upstream'));
+  const downSensor = ptSensors.find((s) => s.role.toLowerCase().includes('downstream'));
+  const up   = useSensorValue(upSensor?.calEntity   ?? '', 'pressure_psi');
   const down = useSensorValue(downSensor?.calEntity ?? '', 'pressure_psi');
-  const fill = useSensorValue(fillSensor?.calEntity ?? '', 'pressure_psi');
 
   useEffect(() => {
     ws.connect();
@@ -63,7 +56,7 @@ export default function LOXGraphsPage() {
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
 
-      {/* Header */}
+      {/* Header + tab toggle */}
       <div className="flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-1 h-5 bg-red-500 rounded-full" />
@@ -94,7 +87,6 @@ export default function LOXGraphsPage() {
 
       {/* Body: chart + sidebar */}
       <div className="flex-1 min-h-0 flex flex-row gap-2">
-        {/* Main chart + actuators */}
         <div className="flex-1 flex flex-col gap-2 min-h-0 min-w-0">
           <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0" style={{ minHeight: '300px' }}>
             <TimeSeriesPlot
@@ -107,32 +99,31 @@ export default function LOXGraphsPage() {
             />
           </div>
 
-          {/* Actuators */}
           <div className="flex-shrink-0">
             <ActuatorStatePanel
               title="LOX Actuators"
               actuators={[
-                { label: 'LOX Vent', entity: 'ACT.LOX_Vent', color: getActuatorColor('ACT.LOX_Vent') },
+                { label: 'LOX Main',  entity: 'ACT.LOX_Main',  color: getActuatorColor('ACT.LOX_Main') },
+                { label: 'LOX Vent',  entity: 'ACT.LOX_Vent',  color: getActuatorColor('ACT.LOX_Vent') },
                 { label: 'LOX Press', entity: 'ACT.LOX_Press', color: getActuatorColor('ACT.LOX_Press') },
+                { label: 'LOX Fill',  entity: 'ACT.LOX_Fill',  color: getActuatorColor('ACT.LOX_Fill') },
+                { label: 'LOX Dump',  entity: 'ACT.LOX_Dump',  color: getActuatorColor('ACT.LOX_Dump') },
               ]}
             />
           </div>
         </div>
 
-        {/* Pressure bars sidebar */}
+        {/* Pressure bars sidebar — PT only */}
         <div className="w-52 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0 overflow-visible">
           <div className="text-xs font-bold uppercase tracking-widest text-gray-400 text-center flex-shrink-0">
             Pressures
           </div>
           <div className="flex flex-row flex-1 gap-2 min-h-0 overflow-visible w-full pr-6">
             <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-visible">
-              <PressureBar label="Up" value={up} nop={loxLimits.NOP} meop={loxLimits.MEOP} color={getEntityColor(upSensor?.calEntity ?? '')} showLabels={false} />
+              <PressureBar label="Up"   value={up}   nop={loxLimits.NOP} meop={loxLimits.MEOP} color={getEntityColor(upSensor?.calEntity   ?? '')} showLabels={false} />
             </div>
             <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-visible">
               <PressureBar label="Down" value={down} nop={loxLimits.NOP} meop={loxLimits.MEOP} color={getEntityColor(downSensor?.calEntity ?? '')} showLabels={false} />
-            </div>
-            <div className="flex-1 min-h-0 min-w-0 max-w-full overflow-visible">
-              <PressureBar label="Fill" value={fill} nop={loxLimits.NOP} meop={loxLimits.MEOP} color={getEntityColor(fillSensor?.calEntity ?? '')} showLabels={false} />
             </div>
           </div>
         </div>

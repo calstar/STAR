@@ -9,7 +9,7 @@ import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate } from '@/lib/types';
 
 const DEFAULT_WINDOW_SECONDS = 60;
-const SAMPLE_HZ = 10;
+const SAMPLE_HZ = 30;
 
 export type TransformFn = (rawValue: number) => number | null;
 
@@ -146,23 +146,23 @@ export default function DerivedTimeSeriesPlot({
           label: 'T+ (s)',
           stroke: '#9CA3AF',
           grid: { show: true, stroke: '#555', width: 1 },
-          ticks: { show: true, stroke: '#9CA3AF', width: 2 },
-          font: 'bold 36px monospace',
-          labelFont: 'px system-ui',
-          gap: 12,
-          space: 140,
+          ticks: { show: true, stroke: '#777', width: 1 },
+          font: 'bold 12px monospace',
+          labelFont: '12px system-ui',
+          gap: 8,
+          space: 120,
           values: (_u, vals) => vals.map((v) => (v == null ? '' : Math.round(v).toString())),
         },
         {
           label: yLabel,
           stroke: '#9CA3AF',
           grid: { show: true, stroke: '#555', width: 1 },
-          ticks: { show: true, stroke: '#9CA3AF', width: 2 },
-          font: 'bold 18px monospace',
-          labelFont: '18px system-ui',
-          size: 70,
-          gap: 10,
-          space: 90,
+          ticks: { show: true, stroke: '#777', width: 1 },
+          font: 'bold 12px monospace',
+          labelFont: '12px system-ui',
+          size: 60,
+          gap: 5,
+          space: 80,
           values: (_u, vals) => vals.map((v) => (v == null ? '' : fmtVal(v))),
         },
       ],
