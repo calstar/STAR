@@ -1643,7 +1643,9 @@ class SensorSystemServer {
         }
 
         // Board connected (info) — one-shot when transitioning to connected
-        if (prevConnected === false && connected) {
+        // prevConnected === undefined means first time we've seen this board in the loop;
+        // treat that as "not previously connected" so initial connect fires a notification.
+        if ((prevConnected === false || prevConnected === undefined) && connected) {
           this.broadcastNotification({ category: 'info', message: `${label} connected`, timestampMs: now });
         }
 

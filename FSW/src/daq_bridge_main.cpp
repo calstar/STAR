@@ -14,6 +14,7 @@
 #include <thread>
 #include <vector>
 
+#include "../../daq_comms/include/comms/messages/board/BoardHeartbeatMessage.hpp"
 #include "../../daq_comms/include/comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "../../daq_comms/include/comms/messages/sensor/SensorMessages.hpp"
 #include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
@@ -655,6 +656,25 @@ int main(int argc, char* argv[]) {
                         << ":" << std::setw(2) << ((sig_id >> 8) & 0xFF) << ":" << std::setw(2)
                         << (sig_id & 0xFF);
                     fsw_config->process_board_heartbeat(*parsed, hb->source_ip, mac.str());
+
+                    // Publish board heartbeat to Elodin DB so the backend can track
+                    // board connection state and fire notifications.
+                    // packet_id: {0x10, board_id} — matches BoardHeartbeatMessage layout.
+                    if (elodin_connected && elodin_client.is_connected()) {
+                        uint64_t hb_ts_ns = static_cast<uint64_t>(
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::system_clock::now().time_since_epoch())
+                                .count());
+                        std::array<uint8_t, 2> hb_pkt = {0x10, parsed->heartbeat.board_id};
+                        comms::messages::board::BoardHeartbeatElodinMessage hb_msg;
+                        hb_msg.setField<0>(hb_ts_ns);
+                        hb_msg.setField<1>(parsed->heartbeat.board_id);
+                        hb_msg.setField<2>(static_cast<uint8_t>(parsed->heartbeat.board_type));
+                        hb_msg.setField<3>(static_cast<uint8_t>(parsed->heartbeat.engine_state));
+                        hb_msg.setField<4>(static_cast<uint8_t>(parsed->heartbeat.board_state));
+                        hb_msg.setField<5>(parsed->header.timestamp);
+                        elodin_client.publish(hb_pkt, hb_msg);
+                    }
                 }
                 // Periodic save of discovery state so actuator_service can use board IPs
                 auto elapsed =
