@@ -325,6 +325,10 @@ void ControllerService::controllerLoop() {
         auto loop_start = std::chrono::steady_clock::now();
 
         // ── Snapshot inputs ────────────────────────────────────────────
+        float td_f = test_duty_fuel_.load();
+        float td_o = test_duty_ox_.load();
+        const bool use_test_duty = (td_f > 0.0f || td_o > 0.0f);
+
         RobustDDPController::Measurement meas;
         RobustDDPController::Command cmd;
         RobustDDPController::NavState nav;
@@ -337,8 +341,8 @@ void ControllerService::controllerLoop() {
             have_data = has_measurement_;
         }
 
-        if (!have_data) {
-            // No sensor data yet — do not run controller or send any PWM
+        // Require sensor data only when running DDP; test/fallback duty can send PWM without it
+        if (!have_data && !use_test_duty) {
             if (tick == 0 || tick % 50 == 0) {
                 std::cout << "[ControllerService] ⏳ Waiting for sensor data from Elodin relay…"
                           << std::endl;
@@ -351,15 +355,11 @@ void ControllerService::controllerLoop() {
             continue;
         }
 
-        // ── Run controller step (or use fixed test duty) ───────────────
-        float td_f = test_duty_fuel_.load();
-        float td_o = test_duty_ox_.load();
-
         RobustDDPController::ActuationCommand actuation;
         RobustDDPController::Diagnostics diagnostics;
 
-        if (td_f > 0.0f || td_o > 0.0f) {
-            // Open-loop validation: bypass DDP, send fixed duty cycles
+        if (use_test_duty) {
+            // Open-loop validation: bypass DDP, send fixed duty cycles (no sensor data required)
             actuation.duty_F = td_f;
             actuation.duty_O = td_o;
             actuation.u_F_on = td_f > 0.0f;

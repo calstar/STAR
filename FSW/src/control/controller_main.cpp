@@ -229,8 +229,10 @@ static void runControlServer(fsw::control::ControllerService* svc, uint16_t port
 
         if (buf == "FIRE_START") {
             svc->setFireActive(true);
+            std::cout << "[ControllerService] 🔥 FIRE_START received — PWM gate open" << std::endl;
         } else if (buf == "FIRE_STOP") {
             svc->setFireActive(false);
+            std::cout << "[ControllerService] 🛑 FIRE_STOP received — PWM gate closed" << std::endl;
         } else {
             std::cerr << "[ControllerService] ⚠️  Unknown control cmd: \"" << buf << "\""
                       << std::endl;
