@@ -7,8 +7,76 @@
 #include <iostream>
 #include <sstream>
 
+#include "../../../external/DAQv2-Comms/src/DiabloEnums.h"
+#include "../../../external/DAQv2-Comms/src/DiabloPackets.h"
+
 namespace fsw {
 namespace config {
+
+namespace {
+
+constexpr uint8_t kDiabloCommsVersion = 0;
+
+// Local copy of DAQv2-Comms create_sensor_config_packet implementation,
+// adapted to build on FSW (no Arduino.h). This keeps the on-wire layout
+// exactly matched to Diablo::parse_sensor_config_packet on the boards.
+size_t create_sensor_config_packet_fsw(const std::vector<uint8_t>& sensor_ids,
+                                       uint8_t reference_voltage, bool necessary_for_abort,
+                                       uint32_t controller_ip, uint8_t enable_serial_printing,
+                                       uint8_t* buffer, size_t buffer_size) {
+    const size_t header_size = sizeof(Diablo::PacketHeader);
+    const size_t num_sensors = sensor_ids.size();
+
+    if (num_sensors > 255) {
+        return 0;
+    }
+
+    const size_t body_size = 1u                                 // num_sensors
+                             + num_sensors                      // sensor_ids
+                             + 1u                               // reference_voltage
+                             + 1u                               // necessary_for_abort
+                             + (necessary_for_abort ? 4u : 0u)  // controller_ip (conditional)
+                             + 1u;                              // enable_serial_printing
+    const size_t total_size = header_size + body_size;
+
+    if (buffer_size < total_size) {
+        return 0;
+    }
+
+    Diablo::PacketHeader header;
+    header.packet_type = Diablo::PacketType::SENSOR_CONFIG;
+    header.version = kDiabloCommsVersion;
+    header.timestamp = 0u;  // Boards do not depend on absolute timestamp from FSW configs.
+
+    uint8_t* ptr = buffer;
+    std::memcpy(ptr, &header, header_size);
+    ptr += header_size;
+
+    *ptr = static_cast<uint8_t>(num_sensors);
+    ptr += 1;
+
+    if (num_sensors) {
+        std::memcpy(ptr, sensor_ids.data(), num_sensors);
+        ptr += num_sensors;
+    }
+
+    *ptr = reference_voltage;
+    ptr += 1;
+
+    *ptr = necessary_for_abort ? 1u : 0u;
+    ptr += 1;
+
+    if (necessary_for_abort) {
+        std::memcpy(ptr, &controller_ip, sizeof(uint32_t));
+        ptr += sizeof(uint32_t);
+    }
+
+    *ptr = enable_serial_printing;
+
+    return total_size;
+}
+
+}  // namespace
 
 SensorAssignmentManager::SensorAssignmentManager()
     : gse_base_ip_("192.168.2.0"),
@@ -260,45 +328,39 @@ std::vector<uint8_t> SensorAssignmentManager::generate_board_config_packet(uint8
     if (it == board_configs_.end()) {
         return {};
     }
-
     const auto& config = it->second;
 
-    // Generate SENSOR_CONFIG packet (DAQv2-Comms format, NOT generate_packets.cpp)
-    // Layout matches create_sensor_config_packet in DiabloPacketUtils.cpp
+    // Generate SENSOR_CONFIG packet using canonical DAQv2-Comms serializer so that
+    // the on-wire format exactly matches Diablo::parse_sensor_config_packet.
     // Body: num_sensors | sensor_ids | reference_voltage | necessary_for_abort
     //       | [controller_ip if necessary_for_abort] | enable_serial_printing
-    std::vector<uint8_t> packet;
 
-    // Header (6 bytes): type, version, timestamp LE
-    packet.push_back(5);  // SENSOR_CONFIG packet type
-    packet.push_back(0);  // Version
-
-    uint32_t timestamp = static_cast<uint32_t>(std::time(nullptr)) * 1000;  // ms
-    packet.push_back(timestamp & 0xFF);
-    packet.push_back((timestamp >> 8) & 0xFF);
-    packet.push_back((timestamp >> 16) & 0xFF);
-    packet.push_back((timestamp >> 24) & 0xFF);
-
-    // Body: num_sensors (1 byte)
-    packet.push_back(static_cast<uint8_t>(config.sensors.size()));
-
-    // sensor_ids (N bytes) - use channel_id as sensor ID
+    std::vector<uint8_t> sensor_ids;
+    sensor_ids.reserve(config.sensors.size());
     for (const auto& sensor : config.sensors) {
-        packet.push_back(sensor.channel_id);
+        // Use board channel_id as sensor_id (matches DAQv2-Comms expectations)
+        sensor_ids.push_back(sensor.channel_id);
     }
 
-    // reference_voltage (1 byte): 0=Internal 2.5V, 1=VDD, 2=5V
-    packet.push_back(0);
+    uint8_t reference_voltage = 0;       // 0 = internal 2.5V
+    bool necessary_for_abort = false;    // FSW boards are not abort-critical by default
+    uint32_t controller_ip = 0;          // Unused when necessary_for_abort == false
+    uint8_t enable_serial_printing = 0;  // Do not enable Serial printing from FSW configs
 
-    // necessary_for_abort (1 byte)
-    packet.push_back(0);
+    constexpr size_t MAX_PACKET_SIZE = 512;
+    uint8_t buffer[MAX_PACKET_SIZE];
 
-    // controller_ip (4 bytes) - OMITTED when necessary_for_abort is false
+    size_t written = create_sensor_config_packet_fsw(
+        sensor_ids, reference_voltage, necessary_for_abort, controller_ip, enable_serial_printing,
+        buffer, sizeof(buffer));
 
-    // enable_serial_printing (1 byte)
-    packet.push_back(0);
+    if (written == 0 || written > MAX_PACKET_SIZE) {
+        std::cerr << "[SensorAssignment] Failed to serialize SENSOR_CONFIG for board "
+                  << static_cast<int>(board_id) << " using DAQv2-Comms serializer" << std::endl;
+        return {};
+    }
 
-    return packet;
+    return std::vector<uint8_t>(buffer, buffer + written);
 }
 
 std::optional<SensorAssignment> SensorAssignmentManager::get_sensor_assignment(

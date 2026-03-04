@@ -27,7 +27,7 @@ public:
         SETUP_REENTRY,  // board transitioned back to SETUP state
     };
 
-    explicit HeartbeatRouter(fsw::elodin::ElodinClient& elodin_client);
+    explicit HeartbeatRouter(elodin::ElodinClient& elodin_client);
     ~HeartbeatRouter() = default;
 
     /**
@@ -50,7 +50,7 @@ private:
         bool seen_before = false;
     };
 
-    fsw::elodin::ElodinClient& elodin_client_;
+    elodin::ElodinClient& elodin_client_;
     std::map<uint8_t, PerBoardState> board_states_;
 
     static constexpr auto RECONNECT_THRESHOLD = std::chrono::milliseconds(2500);

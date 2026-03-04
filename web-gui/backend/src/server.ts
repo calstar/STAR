@@ -1213,13 +1213,13 @@ class SensorSystemServer {
         this.send(ws, { type: 'state_transitions', timestamp: Date.now(), payload: { transitions: getStateTransitions() } });
         break;
       case MessageType.RESEND_CONFIG:
-        // Force resend config to all connected boards by resetting state to pending
+        // Force resend config to all boards by resetting state to pending
         const boardCount = this.boardsStatus.size;
         this.boardsStatus.forEach((_, id) => {
           this.boardConfigState.set(id, { status: 'pending' });
         });
-        console.log(`[CONFIG] Resend config requested by client – reset ${boardCount} board(s) to pending, sending now`);
-        this.maybeSendConfigPackets();
+        console.log(`[CONFIG] Resend config requested by client – reset ${boardCount} board(s) to pending, sending now (force all boards, including sensors)`);
+        this.maybeSendConfigPackets({ forceAll: true, includeSensors: true });
         break;
       case MessageType.QUERY_HISTORICAL:
         // Send the entire 5 minute history buffer for all sensors to just this client
@@ -1784,30 +1784,52 @@ class SensorSystemServer {
   }
 
   /**
-   * Send ACTUATOR_CONFIG to actuator boards on first connect.
-   * SENSOR_CONFIG is delegated to daq_bridge — it owns all direct board configuration.
+   * Send configuration packets to hardware boards.
+   *
+   * Default behavior (no options): on first connect / heartbeat loop, send ACTUATOR_CONFIG
+   * only to connected actuator boards, relying on a valid designated survivor.
+   *
+   * When called with { forceAll: true, includeSensors: true } (from RESEND_CONFIG),
+   * this will attempt to send both ACTUATOR_CONFIG and SENSOR_CONFIG to *all* boards
+   * defined in the registry, regardless of heartbeat status, and will log warnings
+   * instead of bailing if designated survivor metadata is missing.
    */
-  private maybeSendConfigPackets(): void {
-    if (!this.designatedSurvivorBoardId || !this.designatedSurvivorIP) return;
+  private maybeSendConfigPackets(options?: { forceAll?: boolean; includeSensors?: boolean }): void {
+    const forceAll = !!options?.forceAll;
+    const includeSensors = !!options?.includeSensors;
+
     if (!this.actuatorSocket) return;
+
+    if (!this.designatedSurvivorBoardId || !this.designatedSurvivorIP) {
+      if (!forceAll) {
+        return;
+      }
+      console.warn('⚠️ Forcing config send without a valid designated survivor actuator board – abort wiring may be invalid');
+    }
+
     const now = Date.now();
     this.boardsStatus.forEach((status, id) => {
       const isConnected = status.lastHeartbeatMs != null && now - status.lastHeartbeatMs <= 2500;
-      if (!isConnected) return;
+      if (!forceAll && !isConnected) return;
+
       let registry = this.boardRegistryById.get(id);
       if (!registry && status.ip) {
         for (const [, reg] of this.boardRegistryById) {
-          if (reg.ip === status.ip) { registry = reg; break; }
+          if (reg.ip === status.ip) {
+            registry = reg;
+            break;
+          }
         }
       }
-      if (!registry || registry.type !== 'ACTUATOR') return;
+      if (!registry) return;
+
       const cfg = this.boardConfigState.get(id) ?? { status: 'pending' as const };
-      if (cfg.status === 'sent') return;
+      if (!forceAll && cfg.status === 'sent') return;
 
       if (registry.type === 'ACTUATOR') {
-        // Send ACTUATOR_CONFIG when actuator board connects for the first time
+        // Send ACTUATOR_CONFIG
         if (!this.designatedSurvivorBoardId || !this.designatedSurvivorIP) {
-          return;
+          if (!forceAll) return;
         }
         try {
           const isAbortController = id === this.designatedSurvivorBoardId ? 1 : 0;
@@ -1819,8 +1841,9 @@ class SensorSystemServer {
             console.warn(`[CONFIG] buildActuatorConfigPacket returned null for board ${id}, skipping`);
             return;
           }
+          const actuatorHex = packet.toString('hex').match(/.{1,2}/g)?.join(' ') ?? '';
           console.log(
-            `[CONFIG] Sending ACTUATOR_CONFIG to board ${id} (${destIP}:${targetPort}) – is_abort_controller=${isAbortController} packet_len=${packet.length}`
+            `[CONFIG] Sending ACTUATOR_CONFIG to board ${id} (${destIP}:${targetPort}) – is_abort_controller=${isAbortController} packet_len=${packet.length} hex=[${actuatorHex}]`
           );
           this.actuatorSocket!.send(packet, 0, packet.length, targetPort, destIP, (err) => {
             if (err) {
@@ -1850,13 +1873,15 @@ class SensorSystemServer {
         return;
       }
 
+      if (!includeSensors) return;
+
       // SENSOR_CONFIG for sense boards
       const sensorChannels = registry.sensorChannels || [];
       const necessaryForAbort = registry.necessaryForAbort;
 
-      if (!this.designatedSurvivorIP) {
+      if (!this.designatedSurvivorIP && necessaryForAbort) {
         if (!this._lastDesignatedSurvivorWarn || Date.now() - this._lastDesignatedSurvivorWarn > 60000) {
-          console.warn(`⚠️ skipping SENSOR_CONFIG for board ${id}: no designated survivor actuator board`);
+          console.warn(`⚠️ skipping SENSOR_CONFIG for board ${id}: no designated survivor actuator board for abort-critical sensor`);
           this._lastDesignatedSurvivorWarn = Date.now();
         }
         return;
@@ -1865,13 +1890,16 @@ class SensorSystemServer {
       try {
         const targetPortSensor = 5005;
         const destIP = status.ip;
-        console.log(`[CONFIG] Sending SENSOR_CONFIG to board ${id} (${destIP}:${targetPortSensor}) – channels=[${sensorChannels.join(',')}] necessary_for_abort=${necessaryForAbort}`);
         const packet = this.buildSensorConfigPacket(
           sensorChannels,
           registry.voltageReference ?? 0,
           necessaryForAbort,
-          this.designatedSurvivorIP,
+          this.designatedSurvivorIP || '0.0.0.0',
           registry.enableSerialPrinting ?? false,
+        );
+        const sensorHex = packet.toString('hex').match(/.{1,2}/g)?.join(' ') ?? '';
+        console.log(
+          `[CONFIG] Sending SENSOR_CONFIG to board ${id} (${destIP}:${targetPortSensor}) – channels=[${sensorChannels.join(',')}] necessary_for_abort=${necessaryForAbort} packet_len=${packet.length} hex=[${sensorHex}]`
         );
         this.actuatorSocket!.send(packet, 0, packet.length, targetPortSensor, destIP, (err) => {
           if (err) {
@@ -1890,7 +1918,8 @@ class SensorSystemServer {
   /**
    * Build ACTUATOR_CONFIG packet (header + body).
    * Body: is_abort_controller (1B), N (1B), N x AbortActuatorLocation (7B each), X (1B), X x AbortPTLocation (9B each), enable_serial_printing (1B).
-   * IPs big-endian; threshold_adc_code little-endian.
+   * IPs encoded to match Diablo actuator hotfire firmware `getSelfIP` / `remote_ip32` representation
+   * (uint32_t ip0<<24 | ip1<<16 | ip2<<8 | ip3), written little-endian on the wire; threshold_adc_code little-endian.
    */
   private buildActuatorConfigPacket(is_abort_controller: number, enable_serial_printing: number): Buffer | null {
     const config = readConfig();
@@ -2000,7 +2029,10 @@ class SensorSystemServer {
 
     for (let i = 0; i < N; i++) {
       const a = abortActuators[i];
-      buffer.writeUInt32BE(a.ip, offset); offset += 4;
+      // IPs must compare equal to getSelfIP()/remote_ip32 (uint32_t ip0<<24 | ...).
+      // Those firmware helpers treat the uint32_t value as big-endian logical IP, but it is stored
+      // in little-endian memory on the MCU. Writing the value as LE here reproduces that layout.
+      buffer.writeUInt32LE(a.ip, offset); offset += 4;
       buffer.writeUInt8(a.actuator_id, offset++);
       buffer.writeUInt8(a.vent_state, offset++);
       buffer.writeUInt8(a.abort_state, offset++);
@@ -2009,7 +2041,9 @@ class SensorSystemServer {
     buffer.writeUInt8(X, offset++);
     for (let i = 0; i < X; i++) {
       const p = abortPtsList[i];
-      buffer.writeUInt32BE(p.ip, offset); offset += 4;
+      // Match actuator IP encoding: store ip0<<24|... as LE bytes on the wire so the hotfire
+      // firmware sees a uint32_t equal to remote_ip32 when parsing.
+      buffer.writeUInt32LE(p.ip, offset); offset += 4;
       buffer.writeUInt8(p.sensor_id, offset++);
       buffer.writeUInt32LE(p.threshold_adc_code, offset); offset += 4;
     }

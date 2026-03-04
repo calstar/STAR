@@ -121,6 +121,20 @@ bool FSWConfigManager::send_config_to_board(uint8_t board_id) {
         return false;
     }
 
+    // Dump packet contents for debugging / verification
+    std::cout << "[FSWConfig] SENSOR_CONFIG packet for board " << static_cast<int>(board_id)
+              << " len=" << packet.size() << " bytes: ";
+    std::ios_base::fmtflags f(std::cout.flags());
+    for (size_t i = 0; i < packet.size(); ++i) {
+        std::cout << std::hex << std::uppercase << std::setw(2) << std::setfill('0')
+                  << static_cast<int>(packet[i]);
+        if (i + 1 < packet.size()) {
+            std::cout << ' ';
+        }
+    }
+    std::cout.flags(f);
+    std::cout << std::dec << std::setfill(' ') << std::endl;
+
     // Create UDP socket for sending to board
     daq_comms::transport::UDPSocket board_socket(board_config->board_ip, board_config->board_port,
                                                  true);
