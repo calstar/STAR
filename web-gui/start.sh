@@ -1,10 +1,14 @@
 #!/bin/bash
 # Quick start script for Sensor System Web GUI
+# Use DEMO_MODE=1 or --demo for hardware-free testing (synthetic PT/actuator data)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+DEMO_MODE=false
+[[ "$1" = "--demo" ]] || [[ "${DEMO_MODE:-0}" = "1" ]] && DEMO_MODE=true
 
 echo "🚀 Starting Sensor System Web GUI..."
 echo ""
@@ -61,15 +65,21 @@ fi
 npm run relay &
 RELAY_PID=$!
 cd ..
-sleep 1
+sleep 3
 
 # Backend: data only from DB via relay (modular; no direct UDP/Elodin stream)
+# DEMO_MODE=true: injects synthetic PT sweep + actuator data for hardware-free validation
 echo "📡 Starting WebSocket server (data via relay)..."
 cd backend
-ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false npm run dev &
+BACKEND_ENV="ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false"
+$DEMO_MODE && BACKEND_ENV="$BACKEND_ENV DEMO_MODE=true"
+$BACKEND_ENV npm run dev &
 BACKEND_PID=$!
 cd ..
 
+# In demo mode, skip daq_bridge+simulator (demo injects data directly); otherwise build and run full pipeline
+DAQ_BRIDGE_PID=""; SIMULATOR_PID=""; CONTROLLER_PID=""
+if ! $DEMO_MODE; then
 # Build and start C++ FSW components
 echo "⚙️  Building and starting C++ FSW components (daq_bridge, controller_service)..."
 cd ../FSW
@@ -85,12 +95,25 @@ make -j$(nproc) daq_bridge controller_service
 echo "🚀 Starting daq_bridge (config from repo root)..."
 ./daq_bridge ../../config/config.toml &
 DAQ_BRIDGE_PID=$!
+sleep 4
+
+echo "🔧 Adding loopback aliases (192.168.2.21, .22...) for simulator..."
+( [ -x ../../scripts/setup_sim_network.sh ] && ../../scripts/setup_sim_network.sh ) &
+sleep 2
+# If aliases fail (sudo prompt), simulator falls back to 127.0.0.x — data still flows
+
+echo "🎭 Starting board_simulator (PT data → :5006)..."
+cd ../..
+python3 scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 --only-type PT &
+SIMULATOR_PID=$!
+cd FSW/build
 
 echo "🚀 Starting controller_service..."
 ./controller_service --config ../../config/config.toml --elodin-host 127.0.0.1 &
 CONTROLLER_PID=$!
 
 cd ../../web-gui
+fi
 
 # Calibration sidecar (reads raw PT from relay, writes calibrated PT to Elodin DB)
 SIDECAR_SCRIPT="$SCRIPT_DIR/../scripts/calibration/calibration_server.py"
@@ -121,6 +144,7 @@ cd ..
 
 echo ""
 echo "✅ Web GUI started!"
+$DEMO_MODE && echo "   🎭 DEMO MODE — synthetic PT sweep + actuator data (no hardware)"
 echo ""
 echo "📡 Elodin relay: ws://localhost:9090 (raw data fan-out)"
 echo "📡 WebSocket server: http://localhost:8081"
@@ -129,5 +153,5 @@ echo ""
 echo "Press Ctrl+C to stop all services"
 
 # Wait for user interrupt
-trap "echo 'Stopping all services...'; kill $BACKEND_PID $FRONTEND_PID $RELAY_PID $DAQ_BRIDGE_PID $CONTROLLER_PID $SIDECAR_PID $ELODIN_PID 2>/dev/null; exit" INT TERM
+trap "echo 'Stopping all services...'; kill $BACKEND_PID $FRONTEND_PID $RELAY_PID $DAQ_BRIDGE_PID $SIMULATOR_PID $CONTROLLER_PID $SIDECAR_PID $ELODIN_PID 2>/dev/null; exit" INT TERM
 wait

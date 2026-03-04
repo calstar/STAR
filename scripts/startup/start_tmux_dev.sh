@@ -43,7 +43,7 @@ pkill -f "tsx watch.*server.ts" 2>/dev/null || true
 # Free backend ports so the new process can bind (frontend needs WS :8081, API :8082)
 for port in 8081 8082; do
   pid=$(lsof -ti:$port 2>/dev/null) || true
-  [ -n "$pid" ] && kill -9 $pid 2>/dev/null || true
+  if [ -n "$pid" ]; then kill -9 "$pid" 2>/dev/null || true; fi
 done
 fuser -k 8081/tcp 8082/tcp 2>/dev/null || true
 sleep 2
@@ -85,10 +85,10 @@ ACTUATOR_SVC_ENV="ACTUATOR_SERVICE_ENABLED=false"
 if [ -x "$ACTUATOR_BIN" ]; then
   ACTUATOR_SVC_ENV="ACTUATOR_SERVICE_ENABLED=true ACTUATOR_SERVICE_PORT=9998"
 fi
-CMD_WEB_BACKEND="printf '\n  ══ BACKEND — WS :8081 (data from relay only) ══\n\n' && sleep 5 && cd $PROJECT/web-gui/backend && $ACTUATOR_SVC_ENV ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false npm run dev 2>&1"
+CMD_WEB_BACKEND="printf '\n  ══ BACKEND — WS :8081 (data from relay only) ══\n\n' && sleep 5 && cd $PROJECT/web-gui/backend && $ACTUATOR_SVC_ENV ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false USE_CALIBRATION_SERVICE_CALIBRATED=false npm run dev 2>&1"
 CMD_WEB_FRONTEND="printf '\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n' && sleep 3 && cd $PROJECT/web-gui/frontend && npm run dev 2>&1"
 CMD_SIDECAR="printf '\n  ══ CALIBRATION SIDECAR — HTTP :8100, WS :8101 ══\n\n' && cd $PROJECT && PYTHONPATH=$PROJECT exec python3 scripts/calibration/calibration_server.py 2>/dev/null || PYTHONPATH=$PROJECT exec $HOME/fsw/venv/bin/python3 scripts/calibration/calibration_server.py"
-CMD_SIM="printf '\n  ══ BOARD SIMULATOR — UDP → :5006 (synthetic data when no hardware) ══\n\n' && sleep 4 && cd $PROJECT && exec python3 scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 2>&1"
+CMD_SIM="printf '\n  ══ BOARD SIMULATOR — UDP → :5006 (All Boards) ══\n\n' && sleep 4 && cd $PROJECT && ([ -x scripts/setup_sim_network.sh ] && scripts/setup_sim_network.sh || true) && exec python3 scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 2>&1"
 
 tmux new-session  -d -s "$SESSION" -n main -x 220 -y 60 \
   "bash --norc --noprofile -c \"$CMD_DB\""
@@ -111,8 +111,16 @@ tmux split-window -v -t "$SESSION:main.1" \
 tmux split-window -v -t "$SESSION:main.2" \
   "bash --norc --noprofile -c \"$CMD_SIDECAR\""
 
-tmux split-window -v -t "$SESSION:main.3" \
-  "bash --norc --noprofile -c \"$CMD_SIM\""
+# Only launch simulator pane when USE_SIM=1 (default: disabled; set USE_SIM=1 to enable with real hardware)
+if [ "${USE_SIM:-0}" = "1" ]; then
+  echo -e "\n  🔌 STARTING BOARD SIMULATOR"
+  tmux split-window -v -t "$SESSION:main.3" \
+    "bash --norc --noprofile -c \"$CMD_SIM\""
+else
+  echo -e "\n  🚫 BOARD SIMULATOR DISABLED (set USE_SIM=1 to enable)"
+  tmux split-window -v -t "$SESSION:main.3" \
+    "bash --norc --noprofile -c \"echo '  ══ BOARD SIMULATOR DISABLED (set USE_SIM=1 to enable) ══'; sleep infinity\""
+fi
 
 tmux split-window -v -t "$SESSION:main.4" \
   "bash --norc --noprofile -c \"$CMD_CAL\""

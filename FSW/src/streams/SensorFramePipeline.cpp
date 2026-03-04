@@ -40,6 +40,14 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
     // Parse packet type
     auto packet_type = board_parser_.parse_packet_type(receive_buffer_.data(), received);
     if (!packet_type) {
+        static size_t unknown_type_count = 0;
+        if (++unknown_type_count <= 5 || unknown_type_count % 200 == 0) {
+            uint8_t fb = received > 0 ? receive_buffer_[0] : 0;
+            std::cerr << "[Pipeline] Unknown packet type #" << unknown_type_count
+                      << " (first_byte=" << static_cast<int>(fb) << ", size=" << received
+                      << ") from " << last_source_ip_ << " — expected 1=HEARTBEAT 3=SENSOR_DATA"
+                      << std::endl;
+        }
         return std::nullopt;
     }
 
@@ -47,6 +55,13 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
     if (*packet_type == daq_comms::protocol::DiabloBoardPacketParser::PacketType::SENSOR_DATA) {
         auto parsed = board_parser_.parse_sensor_data(receive_buffer_.data(), received);
         if (!parsed || !parsed->is_valid) {
+            static size_t parse_fail_count = 0;
+            if (++parse_fail_count <= 10 || parse_fail_count % 500 == 0) {
+                std::cerr << "[Pipeline] SENSOR_DATA parse failed #" << parse_fail_count
+                          << " (size=" << received
+                          << ", valid=" << (parsed ? parsed->is_valid : false) << ") from "
+                          << last_source_ip_ << std::endl;
+            }
             return std::nullopt;
         }
 

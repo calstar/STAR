@@ -61,6 +61,8 @@ function parseCalibratedSensorPayload(
   // CalibratedPTMessage: u64(0) ts + u8(8) ch + pad3(9-11) + float(12) psi + u32(16) raw + u8(20)
   if (payload.length < RAW_SENSOR_PAYLOAD_SIZE) return null;
   const calibratedValue = payload.readFloatLE(12);
+  if (!Number.isFinite(calibratedValue) || Number.isNaN(calibratedValue)) return null;
+  if (fieldName === 'pressure_psi' && (calibratedValue < -100 || calibratedValue > 10000)) return null;
   const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
   return { entity, component: fieldName, value: calibratedValue, timestamp: tsMs };
 }

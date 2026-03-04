@@ -10,13 +10,13 @@
  */
 
 #include <arpa/inet.h>
-#include <fcntl.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -74,15 +74,19 @@ std::string getTomlValue(const std::string& content, const std::string& section,
 }
 
 // Parse TOML array like ["NO", 1, 12] for actuator_roles
-void parseActuatorRole(const std::string& val, int& channel, int& board_id) {
+void parseActuatorRole(const std::string& val, int& channel, int& board_id, bool& is_no) {
     channel = 0;
     board_id = 0;
+    is_no = false;
     size_t i = val.find('[');
     if (i == std::string::npos)
         return;
     size_t j = val.find(',', i + 1);
     if (j == std::string::npos)
         return;
+    std::string type_str = trim(val.substr(i + 1, j - i - 1));
+    if (type_str == "NO" || type_str == "no")
+        is_no = true;
     size_t k = val.find(',', j + 1);
     try {
         if (k != std::string::npos) {
@@ -98,6 +102,7 @@ void parseActuatorRole(const std::string& val, int& channel, int& board_id) {
 
 struct ActuatorMapping {
     int channel;  // 1-based
+    bool is_no;   // NO valve: closed→hw 1, open→hw 0; NC: closed→0, open→1
     std::string board_ip;
 };
 
@@ -142,27 +147,87 @@ int main(int argc, char* argv[]) {
     }
 
     // Build actuator name -> {channel, board_ip}
+    // Prefer board discovery (config.toml.auto from daq_bridge heartbeats) for IPs.
     std::map<std::string, ActuatorMapping> actuator_map;
     std::map<int, std::string> board_id_to_ip;
 
+    // Load from config.toml.auto (daq_bridge writes this from heartbeat discovery)
+    std::string auto_path = config_path + ".auto";
+    {
+        std::ifstream fa(auto_path);
+        if (fa.is_open()) {
+            std::ostringstream ss;
+            ss << fa.rdbuf();
+            std::string auto_content = ss.str();
+            size_t pos = 0;
+            while (pos < auto_content.size()) {
+                size_t next = auto_content.find("[board_", pos);
+                if (next == std::string::npos)
+                    break;
+                size_t end = auto_content.find(']', next);
+                if (end == std::string::npos)
+                    break;
+                std::string sec = auto_content.substr(next + 1, end - next - 1);
+                std::string bt = getTomlValue(auto_content, sec, "board_type", "");
+                std::string ip = getTomlValue(auto_content, sec, "ip", "");
+                if (bt == "5" && !ip.empty()) {  // board_type 5 = ACTUATOR
+                    size_t last_dot = ip.rfind('.');
+                    if (last_dot != std::string::npos) {
+                        try {
+                            int bid = std::stoi(ip.substr(last_dot + 1));
+                            if (bid >= 1 && bid <= 254) {
+                                board_id_to_ip[bid] = ip;
+                                std::cout << "[ActuatorService] Discovery: board " << bid << " -> "
+                                          << ip << std::endl;
+                            }
+                        } catch (...) {
+                        }
+                    }
+                }
+                pos = end + 1;
+            }
+            if (!board_id_to_ip.empty())
+                std::cout << "[ActuatorService] Using " << board_id_to_ip.size()
+                          << " actuator board IPs from discovery (config.toml.auto)" << std::endl;
+        }
+    }
+
     if (!config_content.empty()) {
-        for (const auto& sec : {"boards.actuator_board", "boards.actuator_board_2"}) {
+        // Find all [boards.xxx] sections with type=ACTUATOR (static config fallback)
+        auto scan_section = [&](size_t start) {
+            if (config_content.compare(start, 9, "[boards.") != 0)
+                return start + 1;
+            size_t end = config_content.find(']', start);
+            if (end == std::string::npos)
+                return start + 1;
+            std::string sec = config_content.substr(start + 1, end - start - 1);
+            if (getTomlValue(config_content, sec, "type", "") != "ACTUATOR")
+                return end + 1;
             std::string ip = getTomlValue(config_content, sec, "ip", "");
+            std::string id_str = getTomlValue(config_content, sec, "board_id",
+                                              getTomlValue(config_content, sec, "id", "0"));
             if (!ip.empty()) {
-                std::string id_str = getTomlValue(config_content, sec, "board_id", "0");
                 try {
                     int id = std::stoi(id_str);
-                    if (id > 0)
+                    if (id > 0 && !board_id_to_ip.count(id))  // discovery overrides; skip if set
                         board_id_to_ip[id] = ip;
                 } catch (...) {
                 }
             }
+            return end + 1;
+        };
+        size_t pos = 0;
+        while (pos < config_content.size()) {
+            size_t next = config_content.find("[boards.", pos);
+            if (next == std::string::npos)
+                break;
+            pos = scan_section(next);
         }
         if (board_id_to_ip.empty()) {
-            std::string ip =
-                getTomlValue(config_content, "boards.actuator_board", "ip", "192.168.2.11");
-            board_id_to_ip[11] = ip;
-            board_id_to_ip[12] = ip;
+            board_id_to_ip[11] = "192.168.2.11";
+            board_id_to_ip[12] = "192.168.2.12";
+            board_id_to_ip[13] = "192.168.2.13";
+            board_id_to_ip[14] = "192.168.2.14";
         }
 
         std::string current_section;
@@ -184,26 +249,33 @@ int main(int argc, char* argv[]) {
             std::string key = trim(line.substr(0, eq));
             std::string val = trim(line.substr(eq + 1));
             int ch = 0, bid = 0;
-            parseActuatorRole(val, ch, bid);
+            bool is_no = false;
+            parseActuatorRole(val, ch, bid, is_no);
             if (ch < 1 || ch > 10)
                 continue;
 
             std::string ip;
             if (bid > 0 && board_id_to_ip.count(bid))
                 ip = board_id_to_ip[bid];
-            else if (!board_id_to_ip.empty())
-                ip = board_id_to_ip.begin()->second;
             else if (bid > 0)
-                ip = "192.168.2." + std::to_string(bid);
+                ip = "192.168.2." + std::to_string(bid);  // canonical: board_id N → 192.168.2.N
             else
                 ip = "192.168.2.11";
 
-            actuator_map[key] = {ch, ip};
+            actuator_map[key] = {ch, is_no, ip};
         }
     }
 
     std::cout << "[ActuatorService] Loaded " << actuator_map.size() << " actuator mappings"
               << std::endl;
+
+    // Bind address for outbound UDP — use DAQ interface (e.g. 192.168.2.x) so packets reach boards.
+    // On multi-homed hosts, unbound sockets can use wrong interface; binding fixes routing.
+    std::string udp_bind_addr =
+        getTomlValue(config_content, "actuator_service", "bind_address", "0.0.0.0");
+    if (udp_bind_addr.empty())
+        udp_bind_addr = "0.0.0.0";
+    std::cout << "[ActuatorService] UDP bind_address = " << udp_bind_addr << std::endl;
 
     // Resolve CSV path: --csv > config [state_machine] actuator_csv > fallbacks
     if (csv_path.empty() && !config_content.empty()) {
@@ -309,11 +381,13 @@ int main(int argc, char* argv[]) {
             }
         }
         if (it == state_actuators.end()) {
-            std::cerr << "[ActuatorService] Unknown state: " << state_name << std::endl;
+            std::cerr << "[ActuatorService] Unknown state: \"" << state_name
+                      << "\" (known: Idle, Armed, Fuel Fill, Ox Fill, ... Vent, Fuel Vent, etc.)"
+                      << std::endl;
             return false;
         }
 
-        // Group commands by board IP
+        // Group commands by board IP (actuator_map keys must match CSV row names exactly)
         std::map<std::string,
                  std::vector<daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand>>
             by_board;
@@ -324,8 +398,16 @@ int main(int argc, char* argv[]) {
 
             daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand cmd;
             cmd.actuator_id = static_cast<uint8_t>(am->second.channel);
-            cmd.actuator_state = (pos == 1) ? 1 : 0;
+            // NC: closed=0 open=1. NO: closed=1 open=0 (inverted)
+            int hw = (am->second.is_no) ? (1 - pos) : pos;
+            cmd.actuator_state = static_cast<uint8_t>(hw);
             by_board[am->second.board_ip].push_back(cmd);
+        }
+
+        if (by_board.empty()) {
+            std::cerr << "[ActuatorService] State \"" << state_name
+                      << "\": no actuator_map matches for CSV actuators" << std::endl;
+            return false;
         }
 
         for (const auto& [ip, commands] : by_board) {
@@ -336,6 +418,22 @@ int main(int argc, char* argv[]) {
             int sock = socket(AF_INET, SOCK_DGRAM, 0);
             if (sock < 0) {
                 std::cerr << "[ActuatorService] socket() failed" << std::endl;
+                continue;
+            }
+            struct sockaddr_in local;
+            memset(&local, 0, sizeof(local));
+            local.sin_family = AF_INET;
+            local.sin_port = 0;
+            if (inet_pton(AF_INET, udp_bind_addr.c_str(), &local.sin_addr) != 1) {
+                std::cerr << "[ActuatorService] invalid bind_address '" << udp_bind_addr << "'"
+                          << std::endl;
+                close(sock);
+                continue;
+            }
+            if (bind(sock, reinterpret_cast<struct sockaddr*>(&local), sizeof(local)) < 0) {
+                std::cerr << "[ActuatorService] bind(" << udp_bind_addr
+                          << ") failed: " << strerror(errno) << std::endl;
+                close(sock);
                 continue;
             }
 
@@ -387,8 +485,66 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
 
+    auto sendSingleActuator = [&](const std::string& act_name, int pos) {
+        auto am = actuator_map.find(act_name);
+        if (am == actuator_map.end()) {
+            std::string canon = act_name;
+            std::transform(canon.begin(), canon.end(), canon.begin(), ::tolower);
+            for (const auto& [k, v] : actuator_map) {
+                std::string kc = k;
+                std::transform(kc.begin(), kc.end(), kc.begin(), ::tolower);
+                if (kc == canon) {
+                    am = actuator_map.find(k);
+                    break;
+                }
+            }
+        }
+        if (am == actuator_map.end()) {
+            std::cerr << "[ActuatorService] Unknown actuator: " << act_name << std::endl;
+            return false;
+        }
+        daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand cmd;
+        cmd.actuator_id = static_cast<uint8_t>(am->second.channel);
+        int hw = (am->second.is_no) ? (1 - pos) : pos;
+        cmd.actuator_state = static_cast<uint8_t>(hw);
+        std::vector<uint8_t> pkt = parser.construct_actuator_command_packet({cmd});
+        if (pkt.empty())
+            return false;
+        int sock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (sock < 0)
+            return false;
+        struct sockaddr_in local;
+        memset(&local, 0, sizeof(local));
+        local.sin_family = AF_INET;
+        local.sin_port = 0;
+        if (inet_pton(AF_INET, udp_bind_addr.c_str(), &local.sin_addr) != 1 ||
+            bind(sock, reinterpret_cast<struct sockaddr*>(&local), sizeof(local)) < 0) {
+            close(sock);
+            return false;
+        }
+        struct sockaddr_in dest;
+        memset(&dest, 0, sizeof(dest));
+        dest.sin_family = AF_INET;
+        dest.sin_port = htons(ACTUATOR_PORT);
+        if (inet_pton(AF_INET, am->second.board_ip.c_str(), &dest.sin_addr) != 1) {
+            close(sock);
+            return false;
+        }
+        ssize_t sent = sendto(sock, pkt.data(), pkt.size(), 0,
+                              reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
+        close(sock);
+        if (sent == static_cast<ssize_t>(pkt.size())) {
+            std::cout << "[ActuatorService] Actuator " << act_name << " -> "
+                      << (pos == 1 ? "OPEN" : "CLOSED") << std::endl;
+            return true;
+        }
+        return false;
+    };
+
     std::cout << "[ActuatorService] Listening on port " << listen_port << std::endl;
-    std::cout << "[ActuatorService] Send STATE:<name> to trigger actuator commands\n" << std::endl;
+    std::cout
+        << "[ActuatorService] STATE:<name> = full state; ACTUATOR:<name>:0|1 = single actuator\n"
+        << std::endl;
 
     std::string read_buf;
     read_buf.reserve(256);
@@ -408,7 +564,6 @@ int main(int argc, char* argv[]) {
         if (client < 0)
             continue;
 
-        fcntl(client, F_SETFL, O_NONBLOCK);
         read_buf.clear();
         char c;
         while (g_running && recv(client, &c, 1, 0) == 1) {
@@ -419,14 +574,31 @@ int main(int argc, char* argv[]) {
         }
 
         std::string state_name;
+        bool handled = false;
         if (read_buf.compare(0, 6, "STATE:") == 0) {
             state_name = trim(read_buf.substr(6));
+            if (!state_name.empty()) {
+                sendCommandsForState(state_name);
+                handled = true;
+            }
+        } else if (read_buf.compare(0, 9, "ACTUATOR:") == 0) {
+            std::string rest = trim(read_buf.substr(9));
+            size_t last_colon = rest.rfind(':');
+            if (last_colon != std::string::npos && last_colon > 0) {
+                std::string act_name = trim(rest.substr(0, last_colon));
+                std::string val_str = trim(rest.substr(last_colon + 1));
+                int pos = -1;
+                if (val_str == "1" || val_str == "open")
+                    pos = 1;
+                else if (val_str == "0" || val_str == "closed")
+                    pos = 0;
+                if (pos >= 0 && !act_name.empty()) {
+                    sendSingleActuator(act_name, pos);
+                    handled = true;
+                }
+            }
         }
         close(client);
-
-        if (!state_name.empty()) {
-            sendCommandsForState(state_name);
-        }
     }
 
     close(listen_fd);
