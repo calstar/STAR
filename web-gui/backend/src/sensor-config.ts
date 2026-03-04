@@ -47,18 +47,18 @@ export function loadSensorRoleMap(): {
 
         // Build reverse map: channel_id → role_name from BOTH PT boards
         const reverseMap: Record<number, string> = {};
-        // PT board 1 (sensor_roles_pt_board): payload uses channel_id+1, so key = connector+1
+        // PT board 1 (sensor_roles_pt_board): payload channel byte IS the connector id (1-indexed). No +1.
         for (const [roleName, channelId] of Object.entries(sensorRolesPtBoard)) {
             if (typeof channelId === 'number' && channelId >= 1 && channelId <= 10) {
                 const entityName = roleName.replace(/\s+/g, '_');
-                reverseMap[channelId + 1] = `PT_Cal.${entityName}`;
+                reverseMap[channelId] = `PT_Cal.${entityName}`;
             }
         }
-        // PT board 2 (sensor_roles_pt2) — packet uses (connector+10)+1, so key = connector+11
+        // PT board 2 (sensor_roles_pt2) — packet uses connector+channel_offset, so key = connector+10
         for (const [roleName, channelId] of Object.entries(sensorRolesPt2)) {
             if (typeof channelId === 'number' && channelId >= 1 && channelId <= 10) {
                 const entityName = roleName.replace(/\s+/g, '_');
-                reverseMap[channelId + 11] = `PT_Cal.${entityName}`;  // payloadCh for connector 1 = 12
+                reverseMap[channelId + 10] = `PT_Cal.${entityName}`;  // payloadCh for connector 1 = 11
             }
         }
 
@@ -368,10 +368,10 @@ export function convertHpPtToPressure(
     const I_MIN_MA = 4.0;
     const I_SPAN_MA = 16.0; // 20 - 4
 
-    if (adcSensor > 2147483647) return NaN;
-    if (adcSensor < 0) return NaN;
+    if (adcSensor >= ADC_MAX || adcSensor < 0) return NaN;
+    // adcExc === ADC_MAX is the sentinel for "no excitation connector" (excitation_connector_id = -1).
+    // In that case we skip ratiometric compensation and use adcRefVoltage directly.
     if (adcExc === 0 || adcExc === undefined) return NaN;
-    if (adcExc > 2147483647) return NaN;
 
     const vExc = (adcExc / ADC_MAX) * cfg.adcRefVoltage * cfg.excitationDividerRatio;
     void vExc; // available for future ratiometric compensation / logging

@@ -123,6 +123,12 @@ public:
                     uint8_t ip_range_start = 100, uint8_t ip_range_end = 200);
 
     /**
+     * @brief Set static IP for board_id (from config). Overrides hash-based assignment.
+     * E.g. set_static_ip_for_board(21, "192.168.2.21") so pt_board uses canonical IP.
+     */
+    void set_static_ip_for_board(uint8_t board_id, const std::string& ip);
+
+    /**
      * @brief Start discovery process
      * @param mode Discovery mode to use
      */
@@ -235,6 +241,7 @@ private:
     std::string base_ip_;
     uint8_t ip_range_start_;
     uint8_t ip_range_end_;
+    std::map<uint8_t, std::string> static_ip_overrides_;  // board_id → config IP
 
     std::atomic<bool> discovery_active_;
     DiscoveryMode current_mode_;

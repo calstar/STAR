@@ -62,6 +62,7 @@ import {
   sendPWMActuatorCommandUDP,
   applyActuatorsForState,
   forwardStateToActuatorService,
+  forwardActuatorToActuatorService,
   startContinuousActuatorCommands,
   stopContinuousActuatorCommands,
   sendActuatorExpectedPositionsToClient,
@@ -122,15 +123,9 @@ class SensorSystemServer {
   ipToBoardId: Map<string, number> = new Map();
   private readonly PHASE2_MONITOR_INTERVAL_MS = 200;
 
-  /** Per-channel last-known-good PSI for spike rejection */
-  lastGoodPsi: Map<number, number> = new Map();
-  private lastGoodPsiHp: Map<string, number> = new Map();
-  private lastGoodPsiByEntity: Map<string, number> = new Map();
-  recentPsiReadings: Map<number, number[]> = new Map();
-  private readonly PSI_ABSOLUTE_MIN = -200;
-  private readonly PSI_ABSOLUTE_MAX = 5000;
-  private readonly PSI_MAX_JUMP = 1000;
-  private readonly HP_PT_MAX_JUMP = 500;
+  private readonly PSI_ABSOLUTE_MIN = -50;   // physically impossible below -50 PSI
+  private readonly PSI_ABSOLUTE_MAX = 6000;  // max expected sensor range (HP PT up to 5000 PSI)
+  private _psiDebugLogged?: Set<number>;  // temp: track which channels we've logged
 
   /** Throttle WS broadcasts per entity to ~10 Hz */
   private broadcastLastTime: Map<string, number> = new Map();
@@ -146,6 +141,9 @@ class SensorSystemServer {
 
   /** Track calibrated PT from Elodin per channel */
   private calibratedPTFromElodin: Map<number, number> = new Map();
+
+  /** When true: use only calibrated from Elodin (calibration_service); no backend raw→psi */
+  private readonly USE_CALIBRATION_SERVICE_CALIBRATED: boolean;
 
   /** Mission T+0 */
   private firstPacketTime: number | null = null;
@@ -319,6 +317,12 @@ class SensorSystemServer {
 
     // Load board registry from config.toml for heartbeat tracking
     this.loadBoardRegistry();
+
+    // Use calibration_service calibrated only (no backend raw→psi). Set false to fallback to backend calibration.
+    this.USE_CALIBRATION_SERVICE_CALIBRATED = process.env.USE_CALIBRATION_SERVICE_CALIBRATED !== 'false';
+    if (this.USE_CALIBRATION_SERVICE_CALIBRATED) {
+      console.log('📐 Calibrated data from Elodin only (calibration_service) — backend raw→psi disabled');
+    }
 
     // Load broadcast config from config.toml [server_heartbeat] — used for ABORT/CLEAR_ABORT UDP
     try {
@@ -741,15 +745,6 @@ class SensorSystemServer {
     if (isNaN(update.value) || !isFinite(update.value)) return;
     if (update.component === 'pressure_psi') {
       if (update.value < this.PSI_ABSOLUTE_MIN || update.value > this.PSI_ABSOLUTE_MAX) return;
-      const isHp = Array.from(this.hpPtBoards.values()).some(cfg =>
-        Object.values(cfg.channelToEntity).includes(update.entity));
-      const maxJump = isHp ? this.HP_PT_MAX_JUMP : this.PSI_MAX_JUMP;
-      const last = this.lastGoodPsiByEntity.get(update.entity);
-      if (last !== undefined && Math.abs(update.value - last) > maxJump) {
-        update = { ...update, value: last };
-      } else {
-        this.lastGoodPsiByEntity.set(update.entity, update.value);
-      }
     }
 
     if (this.firstPacketTime === null && (update.entity.startsWith('PT.') || update.entity.startsWith('PT_Cal.') || update.entity.startsWith('ACT.') || update.entity.startsWith('TC.'))) {
@@ -767,12 +762,12 @@ class SensorSystemServer {
     if (now - lastBroadcast < this.BROADCAST_MIN_INTERVAL_MS) return;
     this.broadcastLastTime.set(key, now);
 
-    // Save to history cache for plots
-    // Using relative time from mission start, or absolute if not set
+    // Save to history cache for plots — time relative to mission start (T+0).
+    // NOTE: Elodin timestamps are steady_clock (ns since boot ÷ 1e6 = ms since boot, NOT Unix epoch).
+    // All sensor updates that reach here should already have epoch-ms timestamps (see normalization above).
     const timeSec = (update.timestamp - (this.firstPacketTime ?? update.timestamp)) / 1000;
-    // Guard: skip data points with bad timestamps (e.g. steady_clock ns leaked through → negative billions)
+    // Guard: silently DROP bad timestamps — DO NOT broadcast to frontend or the plot renders garbage spikes.
     if (timeSec < -300 || timeSec > 86400) {
-      this.broadcast({ type: MessageType.SENSOR_UPDATE, timestamp: update.timestamp, payload: update });
       return;
     }
     let series = this.historyCache.get(key);
@@ -780,14 +775,7 @@ class SensorSystemServer {
       series = { time: [], values: [] };
       this.historyCache.set(key, series);
     }
-    // Spike rejection: discard values that jump > ~0.1% of full-scale (2^32) in a single update.
-    // Absolute delta avoids false positives near 0 that broke ratio-based checks.
-    const ADC_SPIKE_THRESHOLD = 4_000_000; // ~0.1% of 2^32 — generous, catches only garbage
     let value = update.value;
-    if (series.values.length > 0 && update.component === 'raw_adc_counts') {
-      const prev = series.values[series.values.length - 1];
-      if (isFinite(prev) && Math.abs(value - prev) > ADC_SPIKE_THRESHOLD) value = prev;
-    }
     const payload = { ...update, value };
     // Enforce monotonic time to prevent uPlot artifacts (spikes from out-of-order packets)
     const lastT = series.time.length > 0 ? series.time[series.time.length - 1] : -Infinity;
@@ -903,9 +891,12 @@ class SensorSystemServer {
         actuatorChannelToEntityMap: this.actuatorChannelToEntityMap,
       });
       if (!parsed) {
-        if (header.ty === ElodinPacketType.TABLE && this._parseNullCount < 3) {
+        // Log parse failures: first 5 always, then every 100th, and when ELODIN_DEBUG=1
+        if (header.ty === ElodinPacketType.TABLE) {
           this._parseNullCount++;
-          console.warn(`[Relay] TABLE packet not parsed (packetId=0x${high.toString(16)},0x${low.toString(16)}, len=${payload.length})`);
+          if (this._parseNullCount <= 5 || this._parseNullCount % 100 === 0 || process.env.ELODIN_DEBUG === '1') {
+            console.warn(`[Relay] TABLE packet not parsed #${this._parseNullCount} (packetId=0x${high.toString(16)},0x${low.toString(16)}, len=${payload.length})`);
+          }
         }
         return;
       }
@@ -943,37 +934,48 @@ class SensorSystemServer {
         }
 
         if (channelId) {
-          // Identify which board this entity belongs to (crude but effective)
           let boardId = 1;
           for (const [ip, bId] of this.ipToBoardId.entries()) {
             const boardMap = this.boardChannelToEntityMaps.get(ip);
             if (boardMap && boardMap[channelId] === parsed.entity) { boardId = bId; break; }
           }
           const uniqueId = boardId * 100 + channelId;
-          const phase2State = this.phase2Engine?.getSensorState?.(uniqueId);
-          if (phase2State && phase2State.rlsUpdateCount > 0) {
-            shouldUseElodinValue = false;
+          if (this.USE_CALIBRATION_SERVICE_CALIBRATED) {
+            shouldUseElodinValue = true;  // Always use Elodin calibrated (calibration_service)
           } else {
-            this.calibratedPTFromElodin.set(uniqueId, Date.now());
+            const phase2State = this.phase2Engine?.getSensorState?.(uniqueId);
+            if (phase2State && phase2State.rlsUpdateCount > 0) {
+              shouldUseElodinValue = false;
+            }
           }
+          this.calibratedPTFromElodin.set(uniqueId, Date.now());
         }
       }
 
       if (shouldUseElodinValue) {
-        const update: SensorUpdate = { entity: parsed.entity, component: parsed.component, value: parsed.value, timestamp: parsed.timestamp };
-        // Data originates from DB via relay — never republish back (DB is fed exclusively by daq_bridge).
-        this.handleSensorUpdate(update);
-        if (channelId) {
-          this.handleSensorUpdate({ entity: `PT_Cal.PT_CH${channelId}`, component: 'pressure_psi', value: parsed.value, timestamp: parsed.timestamp });
+        // CRITICAL: Elodin timestamps are steady_clock (nanoseconds since boot ÷ 1e6 = ms since boot),
+        // NOT Unix epoch. We must use Date.now() for ALL updates so firstPacketTime is set to epoch,
+        // and all subsequent timeSec calculations (relative to firstPacketTime) stay near 0.
+        // Mixing clocks causes timeSec = billions → bad data leaks to frontend as spikes.
+        const epochNow = Date.now();
+        // Reject corrupted/invalid parsed values to prevent spikes
+        const isValid = Number.isFinite(parsed.value) && !Number.isNaN(parsed.value) &&
+          (parsed.component !== 'pressure_psi' || (parsed.value >= this.PSI_ABSOLUTE_MIN && parsed.value <= this.PSI_ABSOLUTE_MAX));
+        if (isValid) {
+          const update: SensorUpdate = { entity: parsed.entity, component: parsed.component, value: parsed.value, timestamp: epochNow };
+          this.handleSensorUpdate(update);
+          if (channelId) {
+            this.handleSensorUpdate({ entity: `PT_Cal.PT_CH${channelId}`, component: 'pressure_psi', value: parsed.value, timestamp: epochNow });
+          }
         }
-        // Raw PT → pressure_psi (fallback when DB doesn't send calibrated)
-        if (parsed.entity.startsWith('PT.') && parsed.component === 'raw_adc_counts' && payload.length >= 9) {
+        // Raw PT → pressure_psi: ONLY when not using calibration_service (USE_CALIBRATION_SERVICE_CALIBRATED=false)
+        if (!this.USE_CALIBRATION_SERVICE_CALIBRATED &&
+          parsed.entity.startsWith('PT.') && parsed.component === 'raw_adc_counts' && payload.length >= 9) {
           const rawCh = payload.readUInt8(8);
           const pktLow = header.packetId[1];
           const uid = this.packetLowToUniqueId.get(pktLow) ?? (100 + rawCh);
           const calEntity = this.channelToEntityMap[rawCh] || `PT_Cal.PT_CH${rawCh}`;
           const adcSensor = Math.round(parsed.value);
-          const ts = typeof parsed.timestamp === 'number' && parsed.timestamp > 1e12 ? parsed.timestamp : Date.now();
           let psi: number = NaN;
 
           this.lastRawAdc.set(uid, adcSensor);
@@ -989,6 +991,7 @@ class SensorSystemServer {
                 : ADC_MAX;  // No excitation channel: use dummy so conversion runs
               psi = convertHpPtToPressure(adcSensor, adcExc, cfg);
               hpConverted = true;
+              console.log(`[HP-PT-DEBUG] entity=${hpEntity} adcSensor=${adcSensor} adcExc=${adcExc} psi=${psi} board=${cfg.boardIp}`);
               break;
             }
           }
@@ -1001,23 +1004,18 @@ class SensorSystemServer {
             } else {
               psi = (parsed.value / ADC_MAX) * 500;
             }
+            // TEMP DEBUG: log once per channel so we can see adc→psi in backend terminal
+            if (!this._psiDebugLogged) this._psiDebugLogged = new Set<number>();
+            if (!this._psiDebugLogged.has(rawCh)) {
+              this._psiDebugLogged.add(rawCh);
+              console.log(`[PSI Debug] ch=${rawCh} uid=${uid} adc=${parsed.value} psi=${psi.toFixed(2)} coeffs=${coeffs ? 'yes' : 'NO (fallback)'}`);
+            }
           }
 
           if (isFinite(psi) && !isNaN(psi)) {
-            const isHpEntity = this.hpPtBoards.size > 0 && Array.from(this.hpPtBoards.values()).some(cfg =>
-              Object.values(cfg.channelToEntity).includes(calEntity));
-            let psiToEmit = psi;
-            if (isHpEntity) {
-              const lastHp = this.lastGoodPsiHp.get(calEntity);
-              if (lastHp !== undefined && Math.abs(psi - lastHp) > this.HP_PT_MAX_JUMP) psiToEmit = lastHp;
-              else this.lastGoodPsiHp.set(calEntity, psi);
-            } else {
-              const last = this.lastGoodPsi.get(uid) ?? this.lastGoodPsi.get(rawCh);
-              if (last !== undefined && Math.abs(psi - last) > this.PSI_MAX_JUMP) psiToEmit = last;
-              else this.lastGoodPsi.set(uid, psi);
-            }
-            this.handleSensorUpdate({ entity: calEntity, component: 'pressure_psi', value: psiToEmit, timestamp: ts });
-            this.handleSensorUpdate({ entity: `PT_Cal.PT_CH${rawCh}`, component: 'pressure_psi', value: psiToEmit, timestamp: ts });
+            // Spike rejection is now handled entirely inside handleSensorUpdate
+            this.handleSensorUpdate({ entity: calEntity, component: 'pressure_psi', value: psi, timestamp: epochNow });
+            this.handleSensorUpdate({ entity: `PT_Cal.PT_CH${rawCh}`, component: 'pressure_psi', value: psi, timestamp: epochNow });
           }
         }
         // Emit ACTUATOR_UPDATE so dashboard actuator panels get state (open/closed from raw ADC threshold).
@@ -1194,7 +1192,19 @@ class SensorSystemServer {
             stopContinuousActuatorCommands(this);
             const enumKey = SystemState[newState] ?? 'IDLE';
             forwardStateToActuatorService(enumKey, this.actuatorServicePort).then((ok) => {
-              if (!ok) console.warn('⚠️ C++ actuator_service not reachable – actuators may not update');
+              if (!ok) {
+                console.warn('⚠️ actuator_service not reachable – falling back to direct UDP');
+                applyActuatorsForState(this, newState, STATE_ACTUATOR_MAP);
+                if (newState === SystemState.FIRE) {
+                  const fuelInfo = getActuatorBoardInfo(this, 'Fuel Press');
+                  const loxInfo = getActuatorBoardInfo(this, 'LOX Press');
+                  if (fuelInfo) this.manuallyCommandedChannels.add(`${fuelInfo.channel}@${fuelInfo.boardIp}`);
+                  if (loxInfo) this.manuallyCommandedChannels.add(`${loxInfo.channel}@${loxInfo.boardIp}`);
+                  startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP);
+                } else if (newState !== SystemState.IDLE) {
+                  startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP);
+                }
+              }
             });
           } else {
             this.manuallyCommandedChannels.clear();
@@ -1248,16 +1258,37 @@ class SensorSystemServer {
         const { actuatorName: commandActuatorName, actuatorState } = command.data as { actuatorName?: string; actuatorState?: ActuatorState };
         if (actuatorState === undefined || !commandActuatorName) { /* no-op */ }
         else {
-          const boardInfo = getActuatorBoardInfo(this, commandActuatorName);
-          if (!boardInfo) { console.warn(`⚠️ Actuator "${commandActuatorName}" not found in config`); return; }
-          const { channel: channelId, boardIp } = boardInfo;
-          const actuatorType = getActuatorType(commandActuatorName);
-          const guiState = actuatorState === ActuatorState.OPEN ? 1 : 0;
-          const hardwareState = guiStateToHardwareState(guiState, actuatorType);
-          this.manuallyCommandedChannels.add(`${channelId}@${boardIp}`);
-          const success = sendActuatorCommandUDP(this, channelId, hardwareState, boardIp);
-          if (success) {
-            this.broadcast({ type: MessageType.ACTUATOR_UPDATE, timestamp: Date.now(), payload: { name: commandActuatorName, state: actuatorState, rawAdcCounts: 0, timestamp: Date.now() } as ActuatorUpdate });
+          const useCppActuatorService = this.actuatorServicePort > 0;
+          const open = actuatorState === ActuatorState.OPEN;
+          if (useCppActuatorService) {
+            forwardActuatorToActuatorService(commandActuatorName, open, this.actuatorServicePort).then((ok) => {
+              if (ok) {
+                const boardInfo = getActuatorBoardInfo(this, commandActuatorName);
+                if (boardInfo) this.manuallyCommandedChannels.add(`${boardInfo.channel}@${boardInfo.boardIp}`);
+                this.broadcast({ type: MessageType.ACTUATOR_UPDATE, timestamp: Date.now(), payload: { name: commandActuatorName, state: actuatorState, rawAdcCounts: 0, timestamp: Date.now() } as ActuatorUpdate });
+              } else {
+                const boardInfo = getActuatorBoardInfo(this, commandActuatorName);
+                if (boardInfo) {
+                  const actuatorType = getActuatorType(commandActuatorName);
+                  const hardwareState = guiStateToHardwareState(open ? 1 : 0, actuatorType);
+                  this.manuallyCommandedChannels.add(`${boardInfo.channel}@${boardInfo.boardIp}`);
+                  const success = sendActuatorCommandUDP(this, boardInfo.channel, hardwareState, boardInfo.boardIp);
+                  if (success) this.broadcast({ type: MessageType.ACTUATOR_UPDATE, timestamp: Date.now(), payload: { name: commandActuatorName, state: actuatorState, rawAdcCounts: 0, timestamp: Date.now() } as ActuatorUpdate });
+                }
+              }
+            });
+          } else {
+            const boardInfo = getActuatorBoardInfo(this, commandActuatorName);
+            if (!boardInfo) { console.warn(`⚠️ Actuator "${commandActuatorName}" not found in config`); return; }
+            const { channel: channelId, boardIp } = boardInfo;
+            const actuatorType = getActuatorType(commandActuatorName);
+            const guiState = actuatorState === ActuatorState.OPEN ? 1 : 0;
+            const hardwareState = guiStateToHardwareState(guiState, actuatorType);
+            this.manuallyCommandedChannels.add(`${channelId}@${boardIp}`);
+            const success = sendActuatorCommandUDP(this, channelId, hardwareState, boardIp);
+            if (success) {
+              this.broadcast({ type: MessageType.ACTUATOR_UPDATE, timestamp: Date.now(), payload: { name: commandActuatorName, state: actuatorState, rawAdcCounts: 0, timestamp: Date.now() } as ActuatorUpdate });
+            }
           }
         }
       } else if (command.commandType === 'clear_abort') {
@@ -1371,6 +1402,10 @@ class SensorSystemServer {
       // Drive config state machine on a slow loop as well (for late-connecting boards)
       this.maybeSendConfigPackets();
 
+      // Send SERVER_HEARTBEAT so boards transition to Active and accept actuator commands
+      // (Matches femboy: backend owns heartbeats; engine_state syncs with currentState)
+      this.sendServerHeartbeatUDP();
+
       if (this.clients.size === 0) return;
       const snapshot = this.getBoardStatusSnapshot();
       if (snapshot.length === 0) return;
@@ -1468,8 +1503,7 @@ class SensorSystemServer {
    *   Body:   [engine_state(1)] where engine_state is SystemState numeric code.
    */
   private sendServerHeartbeatUDP(): void {
-    // SERVER_HEARTBEAT is owned by daq_bridge; backend routes via proxy for engine-state sync only.
-    if (!this.actuatorSocket) return;
+    if (!this.actuatorSocket || !this.actuatorSocketBroadcastReady) return;
     try {
       const packetType = 2;
       const version = 0;
@@ -1621,12 +1655,6 @@ class SensorSystemServer {
             Math.abs(prevCoeffs.C - ch.coeffs.C) > 1e-10;
 
           if (ch.coeffs) this.ptCalibration.set(ch.sensorId, ch.coeffs);
-
-          if (coeffsChanged) {
-            this.lastGoodPsi.delete(ch.sensorId);
-            this.recentPsiReadings.delete(ch.sensorId);
-            this.lastGoodPsiByEntity.clear();
-          }
         }
         // Broadcast the new status immediately to update UI (latencies hiding)
         this.broadcast({ type: MessageType.CALIBRATION_STATUS, timestamp: Date.now(), payload: { ...status, calibrationFilePath: this.ptCalibrationFilePath } });
@@ -1812,7 +1840,7 @@ class SensorSystemServer {
 
     // Build N abort actuator blocks (actuator_roles; each actuator's IP from its board_id)
     const abortActuators: Array<{ ip: number; actuator_id: number; vent_state: number; abort_state: number }> = [];
-    for (const [_, value] of Object.entries(actuatorRoles)) {
+    for (const [actuatorName, value] of Object.entries(actuatorRoles)) {
       if (!Array.isArray(value) || value.length < 2) continue;
       const actuatorId = Number(value[1]);
       if (!Number.isFinite(actuatorId) || actuatorId < 1 || actuatorId > 255) continue;
@@ -1824,8 +1852,8 @@ class SensorSystemServer {
           actuatorIP = value[2];
         }
       }
-      const ventState = (STATE_ACTUATOR_MAP[SystemState.VENT] && STATE_ACTUATOR_MAP[SystemState.VENT][actuatorId]) ?? 0;
-      const abortState = (STATE_ACTUATOR_MAP[SystemState.ENGINE_ABORT] && STATE_ACTUATOR_MAP[SystemState.ENGINE_ABORT][actuatorId]) ?? 0;
+      const ventState = (STATE_ACTUATOR_MAP[SystemState.VENT]?.[actuatorName] ?? 0) ? 1 : 0;
+      const abortState = (STATE_ACTUATOR_MAP[SystemState.ENGINE_ABORT]?.[actuatorName] ?? 0) ? 1 : 0;
       abortActuators.push({
         ip: ipToU32BE(actuatorIP),
         actuator_id: actuatorId,

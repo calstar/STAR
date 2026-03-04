@@ -342,8 +342,11 @@ FF = "Fuel Fill"
 # Actuator service (C++) — when port is set, backend forwards state transitions here;
 # actuator commands are sent by C++ instead of Node.
 # Env ACTUATOR_SERVICE_PORT overrides this; startup script sets it automatically.
+# bind_address: bind outbound UDP to this IP so packets use the right interface.
+# On multi-homed hosts (e.g. WiFi + DAQ Ethernet), set to your 192.168.2.x IP.
 [actuator_service]
 port = 9998
+bind_address = "0.0.0.0"
 
 # =============================================================================
 # Elodin Table Routing - Maps sensor types to Elodin table IDs (config-driven, no fixed hexes in code)
@@ -390,9 +393,9 @@ packet_id = [0x31, 0x00]
 channels = 20
 description = "Actuator state (0=closed, 1=open) from current-sense threshold"
 
-# Which routing types daq_bridge publishes to Elodin (raw + calibrated inline, since Elodin only supports one stream subscriber)
+# Which routing types daq_bridge publishes to Elodin. Calibrated PT is written by calibration_service, not daq_bridge.
 [daq_bridge]
-publish = ["pt_raw", "pt_calibrated", "tc_raw", "rtd_raw", "lc_raw", "actuator_status", "actuator_state"]
+publish = ["pt_raw", "tc_raw", "rtd_raw", "lc_raw", "actuator_status", "actuator_state"]
 
 # =============================================================================
 # Calibration

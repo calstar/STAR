@@ -72,12 +72,16 @@ struct ServerHeartbeatConfig {
     std::string broadcast_ip = "255.255.255.255";
 };
 
+// Ordered list of (ip, config) for enabled boards in parse order. Used when board_simulator
+// falls back to 127.0.0.2, 127.0.0.3, ... so each simulated board gets correct channel_offset.
+using BoardOrder = std::vector<std::pair<std::string, BoardConfig>>;
+
 // Minimal config parse: [database] host/port, [network] sensor_port/bind_ip, [server_heartbeat],
 // [boards.xxx] type/ip/enabled
 static void load_board_map_from_config(const std::string& config_path,
                                        std::map<std::string, BoardConfig>& board_map,
-                                       std::string& db_host, uint16_t& db_port,
-                                       uint16_t* out_sensor_port = nullptr,
+                                       BoardOrder* out_board_order, std::string& db_host,
+                                       uint16_t& db_port, uint16_t* out_sensor_port = nullptr,
                                        std::string* out_bind_ip = nullptr,
                                        ServerHeartbeatConfig* out_hb = nullptr) {
     db_host = "127.0.0.1";
@@ -105,9 +109,13 @@ static void load_board_map_from_config(const std::string& config_path,
             bt = BoardType::RTD;
         else if (board_type_str == "ACTUATOR")
             bt = BoardType::ACTUATOR;
-        if (bt != BoardType::UNKNOWN)
-            board_map[board_ip] = {
+        if (bt != BoardType::UNKNOWN) {
+            BoardConfig cfg{
                 bt, board_ip, board_num_sensors, board_enabled, board_id, board_channel_offset};
+            board_map[board_ip] = cfg;
+            if (out_board_order && board_enabled)
+                out_board_order->emplace_back(board_ip, std::move(cfg));
+        }
         board_ip.clear();
         board_type_str.clear();
         board_id = -1;
@@ -176,9 +184,8 @@ static void load_board_map_from_config(const std::string& config_path,
         }
     }
     add_board();
-    // Simulator (e.g. board_simulator.py) sends from 127.0.0.1 — treat as PT so routing works
-    if (board_map.find("127.0.0.1") == board_map.end())
-        board_map["127.0.0.1"] = {BoardType::PT, "127.0.0.1", 10, true, 0, 0};
+    // NOTE: do NOT add 127.0.0.1→PT. When simulator can't bind to config IPs, it uses
+    // 127.0.0.2, 127.0.0.3, ... (one per board). board_order maps index→config for that fallback.
 }
 
 // Config-driven publish allowlist: [routing.*] packet_id + channels, [daq_bridge] publish = [...]
@@ -396,18 +403,21 @@ int main(int argc, char* argv[]) {
 
     // ── Board IP → Type mapping from config ([boards.*]), DB host/port, network sensor_port ──
     std::map<std::string, BoardConfig> board_map;
+    BoardOrder board_order;
     std::string db_host;
     uint16_t db_port;
     uint16_t config_sensor_port = 0;
     std::string config_bind_ip;
     ServerHeartbeatConfig hb_config;
-    load_board_map_from_config(config_path, board_map, db_host, db_port, &config_sensor_port,
-                               &config_bind_ip, &hb_config);
+    load_board_map_from_config(config_path, board_map, &board_order, db_host, db_port,
+                               &config_sensor_port, &config_bind_ip, &hb_config);
     if (config_sensor_port != 0)
         bind_port = config_sensor_port;
     if (!config_bind_ip.empty())
         bind_address = config_bind_ip;
 
+    std::cout << "[Config] Board order (127.0.0.x fallback): " << board_order.size()
+              << " enabled boards" << std::endl;
     std::cout << "[Config] Board routing table (from " << config_path << "):" << std::endl;
     for (const auto& [ip, cfg] : board_map) {
         const char* type_str = "UNKNOWN";
@@ -487,6 +497,10 @@ int main(int argc, char* argv[]) {
 
     std::string base_ip = is_flight_daq ? "192.168.3.0" : "192.168.2.0";
     discovery.initialize(network_interface, base_ip, 100, 150);
+    for (const auto& [ip, cfg] : board_map) {
+        if (cfg.board_id >= 0 && cfg.board_id <= 255)
+            discovery.set_static_ip_for_board(static_cast<uint8_t>(cfg.board_id), ip);
+    }
     discovery.start_discovery(fsw::config::BoardDiscovery::DiscoveryMode::HYBRID);
     config_manager.load_base_config(config_path);
 
@@ -602,6 +616,7 @@ int main(int argc, char* argv[]) {
     auto last_stats_time = std::chrono::steady_clock::now();
     auto last_reconnect_time = std::chrono::steady_clock::now();
     auto last_heartbeat_send = std::chrono::steady_clock::now();
+    auto last_config_save = std::chrono::steady_clock::now();
 
     while (running) {
         // Broadcast SERVER_HEARTBEAT so boards learn our IP:port for SENSOR_DATA
@@ -640,6 +655,18 @@ int main(int argc, char* argv[]) {
                         << ":" << std::setw(2) << ((sig_id >> 8) & 0xFF) << ":" << std::setw(2)
                         << (sig_id & 0xFF);
                     fsw_config->process_board_heartbeat(*parsed, hb->source_ip, mac.str());
+                }
+                // Periodic save of discovery state so actuator_service can use board IPs
+                auto elapsed =
+                    std::chrono::duration_cast<std::chrono::seconds>(now - last_config_save)
+                        .count();
+                if (elapsed >= 5) {
+                    auto boards = discovery.get_discovered_boards();
+                    if (!boards.empty()) {
+                        config_manager.update_with_boards(boards);
+                        config_manager.save_config(config_path + ".auto");
+                        last_config_save = now;
+                    }
                 }
             }
 
@@ -681,13 +708,23 @@ int main(int argc, char* argv[]) {
                                             std::chrono::system_clock::now().time_since_epoch())
                                             .count();
 
-        // ── Route based on source IP → board type (config, then discovery, else treat as PT so DB
-        // gets data) ──
+        // ── Route based on source IP → board type (config, then 127.0.0.x simulator fallback,
+        // then discovery, else treat as PT) ──
         auto board_it = board_map.find(source_ip);
-        BoardType board_type = BoardType::UNKNOWN;
-        if (board_it != board_map.end() && board_it->second.enabled) {
-            board_type = board_it->second.type;
-        } else {
+        const BoardConfig* effective_cfg = nullptr;
+        if (board_it != board_map.end() && board_it->second.enabled)
+            effective_cfg = &board_it->second;
+        else if (source_ip.compare(0, 8, "127.0.0.") == 0 && !board_order.empty()) {
+            // 127.0.0.2→first board, 127.0.0.3→second, etc. 127.0.0.1→first (fallback when bind
+            // fails)
+            int idx = (source_ip.size() >= 9) ? (std::atoi(source_ip.c_str() + 8) - 2) : -1;
+            if (idx < 0)
+                idx = 0;  // 127.0.0.1 or malformed: use first board
+            if (idx < static_cast<int>(board_order.size()))
+                effective_cfg = &board_order[idx].second;
+        }
+        BoardType board_type = effective_cfg ? effective_cfg->type : BoardType::UNKNOWN;
+        if (board_type == BoardType::UNKNOWN) {
             auto discovered = discovery.get_board_by_ip(source_ip);
             if (discovered) {
                 board_type = discovery_board_type_to_enum(discovered->signature.board_type);
@@ -713,7 +750,7 @@ int main(int argc, char* argv[]) {
             case BoardType::PT: {
                 // Apply channel_offset for PT board 2 (HP) so connector 1 → global ch 11
                 auto pt_batch = batch.value();
-                int ch_offset = (board_it != board_map.end()) ? board_it->second.channel_offset : 0;
+                int ch_offset = effective_cfg ? effective_cfg->channel_offset : 0;
                 if (ch_offset != 0) {
                     for (auto& s : pt_batch.pt_samples)
                         s.channel_id = static_cast<uint8_t>(s.channel_id + ch_offset);
@@ -724,14 +761,20 @@ int main(int argc, char* argv[]) {
                         if (is_publish_allowed(id[0], id[1], publish_ranges))
                             elodin_client.publish(id, msg);
                 }
-                // Inline calibration: also publish calibrated PT data
-                if (publishing) {
-                    auto cal_msgs =
-                        router.route_pt_samples_calibrated(pt_batch, receive_timestamp_ns);
-                    for (const auto& [id, msg] : cal_msgs)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                }
+                // Inline calibration DISABLED: the C++ polynomial calibration receives ADC as
+                // uint32_t, casts to int32_t via calculate_pressure(). For 24-bit ADC near-zero
+                // values stored as large uint32 (two's complement), the sign change produces wildly
+                // wrong PSI (e.g., -163 PSI at ambient). The backend (server.ts) already applies
+                // the same JSON polynomials correctly, so publishing conflicting calibrated PT data
+                // to Elodin DB causes oscillation between the backend's correct values and these
+                // garbage values. Calibration runs in the backend only.
+                // if (publishing) {
+                //     auto cal_msgs =
+                //         router.route_pt_samples_calibrated(pt_batch, receive_timestamp_ns);
+                //     for (const auto& [id, msg] : cal_msgs)
+                //         if (is_publish_allowed(id[0], id[1], publish_ranges))
+                //             elodin_client.publish(id, msg);
+                // }
                 break;
             }
             case BoardType::ACTUATOR: {
@@ -848,9 +891,17 @@ int main(int argc, char* argv[]) {
             std::cout << "\n[Stats] Total: " << packet_count << " pkts";
             for (const auto& [ip, cnt] : packets_per_board) {
                 auto it = board_map.find(ip);
+                const BoardConfig* cfg = (it != board_map.end()) ? &it->second : nullptr;
+                if (!cfg && ip.compare(0, 8, "127.0.0.") == 0 && !board_order.empty()) {
+                    int idx = (ip.size() >= 9) ? (std::atoi(ip.c_str() + 8) - 2) : -1;
+                    if (idx < 0)
+                        idx = 0;
+                    if (idx < static_cast<int>(board_order.size()))
+                        cfg = &board_order[idx].second;
+                }
                 const char* tag = "???";
-                if (it != board_map.end()) {
-                    switch (it->second.type) {
+                if (cfg) {
+                    switch (cfg->type) {
                         case BoardType::PT:
                             tag = "PT";
                             break;

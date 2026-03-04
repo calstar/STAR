@@ -8,7 +8,7 @@ import { readConfig } from './routes/config.js';
 // ── Network constants ──────────────────────────────────────────────────────────
 export const WS_PORT = parseInt(process.env.WS_PORT || '8081', 10);
 export const WS_HOST = process.env.WS_HOST || '0.0.0.0';
-export const ELODIN_HOST = process.env.ELODIN_HOST || '::1';
+export const ELODIN_HOST = process.env.ELODIN_HOST || '127.0.0.1';
 export const ELODIN_PORT = parseInt(process.env.ELODIN_PORT || '2240', 10);
 
 // ── Interfaces ─────────────────────────────────────────────────────────────────

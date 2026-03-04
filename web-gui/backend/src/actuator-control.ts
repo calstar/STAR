@@ -354,8 +354,41 @@ const STATE_TO_CSV_NAME: Record<string, string> = {
   GN2_HIGH_PRESS: 'GN2 High Press', GN2_HIGH_VENT: 'GN2 High Vent', CALIBRATE: 'Calibrate',
   READY: 'Ready', FIRE: 'Fire', VENT: 'Vent',
   ENGINE_ABORT: 'Engine Abort', GSE_ABORT: 'GSE Abort', EMERGENCY_ABORT: 'Emergency Abort',
-  DEBUG: 'Debug',
+  DEBUG: 'Idle',  // CSV has no Debug column; use Idle so actuator_service doesn't error
 };
+
+/** Forward single actuator command to C++ actuator_service (TCP). */
+export async function forwardActuatorToActuatorService(actuatorName: string, open: boolean, port?: number): Promise<boolean> {
+    let p = port ?? 0;
+    if (!p || p < 1 || p > 65535) {
+        p = process.env.ACTUATOR_SERVICE_PORT ? parseInt(process.env.ACTUATOR_SERVICE_PORT, 10) : 0;
+    }
+    if (!p || p < 1 || p > 65535) {
+        try {
+            const cfg = readConfig();
+            const c = (cfg as any).actuator_service?.port;
+            if (typeof c === 'number' && c >= 1 && c <= 65535) p = c;
+        } catch (_) { /* ignore */ }
+    }
+    if (!p || p < 1 || p > 65535) return false;
+
+    return new Promise<boolean>((resolve) => {
+        const line = `ACTUATOR:${actuatorName}:${open ? 1 : 0}\n`;
+        const socket = net.connect({ host: '127.0.0.1', port: p }, () => {
+            socket.write(line, (err?: Error | null) => {
+                if (err) {
+                    console.error(`[ActuatorService] Actuator write error: ${err.message}`);
+                    resolve(false);
+                } else {
+                    resolve(true);
+                }
+                socket.end();
+            });
+        });
+        socket.on('error', () => resolve(false));
+        socket.setTimeout(2000, () => { socket.destroy(); resolve(false); });
+    });
+}
 
 /** Forward state to C++ actuator_service (TCP). When configured, backend skips UDP. */
 export async function forwardStateToActuatorService(stateName: string, port?: number): Promise<boolean> {
@@ -380,7 +413,7 @@ export async function forwardStateToActuatorService(stateName: string, port?: nu
                     console.error(`[ActuatorService] Write error: ${err.message}`);
                     resolve(false);
                 } else {
-                    console.log(`[ActuatorService] Forwarded state ${stateName} to C++ service`);
+                    console.log(`[ActuatorService] State ${stateName} → TCP :${p} (actuator_service will send UDP to boards)`);
                     resolve(true);
                 }
                 socket.end();

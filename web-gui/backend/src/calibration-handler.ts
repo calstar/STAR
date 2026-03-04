@@ -31,8 +31,6 @@ export interface CalibrationHost {
     boardChannelToEntityMaps?: Map<string, Record<number, string>>;
     ipToBoardId?: Map<string, number>;
     lastRawAdc: Map<number, number>;
-    lastGoodPsi: Map<number, number>;
-    recentPsiReadings: Map<number, number[]>;
     send(ws: WebSocket, message: any): void;
     broadcast(message: any): void;
     /** If set, called after ptCalibration is updated so the UI can show the new fit immediately. */
@@ -245,8 +243,6 @@ export function handleCalibrationCommand(
                 host.ptCalibration.set(uniqueId, coeffs);
                 host.pushCalibrationUpdate?.(uniqueId);
             }
-            host.lastGoodPsi.set(uniqueId, refPsi);
-
             // Internal Phase 2 engine is only used when sidecar is not primary.
             if (!sidecarPrimary && host.phase2Engine && coeffs) {
                 host.phase2Engine.initializeSensor(uniqueId, coeffs);
@@ -382,8 +378,6 @@ export function handleCalibrationCommand(
                     const newReading = calculatePressure(currentAdc, coeffs);
                     console.log(`   ID ${chUniqueId}: ADC=${currentAdc} → 0 PSI (${points.length} pt fit), reading=${Number.isFinite(newReading) ? newReading.toFixed(2) : 'NaN'} PSI`);
                 }
-                host.recentPsiReadings.set(chUniqueId, []);
-                host.lastGoodPsi.delete(chUniqueId);
                 sidecarZeroPayload.push({ id: chUniqueId, adc_code: currentAdc });
                 successCount++;
             }
@@ -464,9 +458,7 @@ export function handleCalibrationCommand(
                     host.phase2Engine!.initializeSensor(sensorId, coeffs);
                 });
             }
-            host.lastGoodPsi.clear();
             host.lastRawAdc.clear();
-            host.recentPsiReadings.clear();
             console.log('🗑️ Calibration cleared — ZERO ALL then CAPTURE to build ADC→pressure fit');
             break;
         }

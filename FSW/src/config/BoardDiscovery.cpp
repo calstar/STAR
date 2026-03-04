@@ -41,6 +41,10 @@ bool BoardDiscovery::initialize(const std::string& network_interface, const std:
     return true;
 }
 
+void BoardDiscovery::set_static_ip_for_board(uint8_t board_id, const std::string& ip) {
+    static_ip_overrides_[board_id] = ip;
+}
+
 void BoardDiscovery::start_discovery(DiscoveryMode mode) {
     current_mode_ = mode;
     discovery_active_ = true;
@@ -106,12 +110,17 @@ void BoardDiscovery::process_board_announcement(const uint8_t* data, size_t size
 
     add_or_update_board(board);
 
-    // Assign IP based on MAC address (deterministic)
+    // Assign IP: prefer config static IP (192.168.2.21 for board_id 21) over hash-derived
+    uint8_t board_id_octet = static_cast<uint8_t>(heartbeat->heartbeat.board_id);
     if (signature_to_ip_.find(signature) == signature_to_ip_.end()) {
-        std::string assigned_ip =
-            daq_comms::protocol::DiabloBoardPacketParser::calculate_ip_from_mac(
+        std::string assigned_ip;
+        auto it = static_ip_overrides_.find(board_id_octet);
+        if (it != static_ip_overrides_.end()) {
+            assigned_ip = it->second;
+        } else {
+            assigned_ip = daq_comms::protocol::DiabloBoardPacketParser::calculate_ip_from_mac(
                 board.mac_address, base_ip_, ip_range_start_, ip_range_end_);
-
+        }
         if (is_ip_available(assigned_ip)) {
             signature_to_ip_[signature] = assigned_ip;
             ip_to_signature_[assigned_ip] = signature;
