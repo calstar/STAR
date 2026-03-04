@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState } from 'react';
-import { useGetSensorValue, useSensorStore } from '@/lib/store';
+import { useGetSensorValue, useSensorStore, useActuatorCommandedState } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { ActuatorState, CommandPayload } from '@/lib/types';
 import { useControlMode } from '@/lib/control-mode';
@@ -17,37 +17,14 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
   const ws = getWebSocketClient();
   const getSensorValue = useGetSensorValue();
   const debugMode = useSensorStore((s) => s.debugMode);
-  const currentState = useSensorStore((s) => s.currentState);
-  const actuatorExpectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
-  const [manualCommanded, setManualCommanded] = useState<ActuatorState | null>(null);
+  const setActuatorState = useSensorStore((s) => s.setActuatorState);
+  const setActuatorCommandedOverride = useSensorStore((s) => s.setActuatorCommandedOverride);
+  const commanded = useActuatorCommandedState(entity);
   const [pending, setPending] = useState(false);
   const { controlEnabled } = useControlMode();
 
-  const stateExpected = currentState != null ? (actuatorExpectedPositions[currentState] ?? {}) : {};
-  const expected = stateExpected[entity] ?? null;
-
-  // Determine if NO (Normally Open) based on name
   const isNO = name === 'LOX Main' || name === 'LOX Press' || name === 'Fuel Main';
   const type = isNO ? 'NO' : 'NC';
-
-  React.useEffect(() => {
-    if (!debugMode) setManualCommanded(null);
-  }, [debugMode]);
-
-  React.useEffect(() => {
-    if (debugMode && currentState !== null) setManualCommanded(null);
-  }, [debugMode, currentState]);
-
-  const commandedState = React.useMemo(() => {
-    if (expected === 'open') return ActuatorState.OPEN;
-    if (expected === 'closed') return ActuatorState.CLOSED;
-    return null;
-  }, [expected]);
-
-  const commanded = React.useMemo(() => {
-    if (debugMode) return manualCommanded ?? commandedState;
-    return commandedState;
-  }, [debugMode, manualCommanded, commandedState]);
 
   const canControl = debugMode && controlEnabled;
 
@@ -69,7 +46,8 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
       data: { actuatorName: name, actuatorState: state },
     };
     ws.sendCommand(command);
-    if (debugMode) setManualCommanded(state);
+    setActuatorState(entity, state);
+    if (debugMode) setActuatorCommandedOverride(entity, state);
     setPending(true);
     setTimeout(() => setPending(false), 1000);
   };

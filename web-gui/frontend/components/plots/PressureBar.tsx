@@ -17,9 +17,9 @@ function fmtPressure(v: number): string {
   if (!isFinite(v)) return '---';
   const abs = Math.abs(v);
   if (abs > 99999) return '---';
-  if (abs >= 1000)  return v.toFixed(0);
-  if (abs >= 100)   return v.toFixed(0);
-  if (abs >= 1)     return v.toFixed(1);
+  if (abs >= 1000) return v.toFixed(0);
+  if (abs >= 100) return v.toFixed(0);
+  if (abs >= 1) return v.toFixed(1);
   return v.toFixed(2);
 }
 
@@ -40,10 +40,10 @@ function nonLinearPct(value: number, nop: number, meop: number, maxVal: number):
   if (clampedValue <= 0) return 0;
   if (clampedValue >= maxVal) return 100;
 
-  const safeEdge    = nop * 0.7;
-  const safePct     = 35;
-  const warningPct  = 60;
-  const dangerPct   = 85;
+  const safeEdge = nop * 0.7;
+  const safePct = 35;
+  const warningPct = 60;
+  const dangerPct = 85;
 
   if (clampedValue <= safeEdge) {
     return (clampedValue / safeEdge) * safePct;
@@ -62,7 +62,7 @@ function nonLinearPct(value: number, nop: number, meop: number, maxVal: number):
 export default function PressureBar({
   label,
   value,
-  nop  = 500,
+  nop = 500,
   meop = 700,
   color,
   unit = 'PSI',
@@ -78,8 +78,8 @@ export default function PressureBar({
     const sane = isFinite(displayValue) && Math.abs(displayValue) < 100000;
     const clampedDisplayValue = Math.max(0, displayValue);
     const valuePct = sane ? Math.min(Math.max(nonLinearPct(clampedDisplayValue, nop, meop, maxVal), 0), 100) : 0;
-    const nopPct   = nonLinearPct(nop, nop, meop, maxVal);
-    const meopPct  = nonLinearPct(meop, nop, meop, maxVal);
+    const nopPct = nonLinearPct(nop, nop, meop, maxVal);
+    const meopPct = nonLinearPct(meop, nop, meop, maxVal);
     const minVisibleHeight = 2;
     const displayHeight = sane && value !== null && value !== 0
       ? Math.max(valuePct, minVisibleHeight)
@@ -98,18 +98,19 @@ export default function PressureBar({
 
       {/* Bar — takes all remaining space */}
       <div
-        className="relative w-full flex-1 rounded border border-gray-700 overflow-hidden min-h-0"
-        style={{ background: '#0d0d0d', maxHeight: '100%' }}
+        className="relative w-full flex-1 rounded-xl border border-white/10 overflow-hidden min-h-0 bg-black/40 shadow-inner"
+        style={{ maxHeight: '100%' }}
       >
         {sane && value !== null && (
           <div
             className="absolute bottom-0 w-full rounded-sm"
             style={{
-              height:     `${displayHeight}%`,
+              height: `${displayHeight}%`,
               background: barColor,
-              minHeight:  value !== null && value !== 0 ? '2px' : '0px',
+              boxShadow: `0 0 15px ${barColor}80`,
+              minHeight: value !== null && value !== 0 ? '2px' : '0px',
               transition: 'height 0.15s ease-out',
-              opacity: value !== null && value !== 0 ? 1 : 0.3,
+              opacity: value !== null && value !== 0 ? 0.8 : 0.3,
             }}
           />
         )}
@@ -148,7 +149,6 @@ export default function PressureBar({
         )}
       </div>
 
-      {/* Value + unit below bar — always rendered to keep bar height stable */}
       <div className="flex-shrink-0 text-center leading-none">
         <div className={`${compact ? 'text-xs' : 'text-2xl'} font-bold font-mono tabular-nums`} style={{ color: barColor }}>
           {value !== null ? fmtPressure(value) : '---'}

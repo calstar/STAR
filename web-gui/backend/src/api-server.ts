@@ -112,7 +112,7 @@ export interface DebugInfo {
 export function startAPIServer(
   getQueryClient?: () => ElodinQueryClient | null,
   getDebugInfo?: () => DebugInfo | null,
-  onConfigUpdated?: () => void,
+  onConfigUpdated?: () => void
 ): void {
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // CORS headers

@@ -32,8 +32,6 @@ export default function NotificationPanel() {
 
   useEffect(() => {
     if (!items.length) return;
-    // Use the max timestamp across ALL items — the store sorts ongoing
-    // notifications to the top, so items[0].timestampMs may be stale.
     const maxTs = Math.max(...items.map((n) => n.timestampMs));
     if (maxTs <= lastMaxTsRef.current) return;
     lastMaxTsRef.current = maxTs;

@@ -25,7 +25,7 @@ buffer_size = 1024
 [server_heartbeat]
 interval_ms = 1000                 # Broadcast SERVER_HEARTBEAT every 1 second
 broadcast_port = 5005              # Boards listen on 5005 for control packets
-broadcast_ip = "192.168.2.255"     # Subnet-directed; use 255.255.255.255 if single interface
+broadcast_ip = "255.255.255.255"   # Full broadcast (matches femboy); 192.168.2.255 for subnet-only
 
 # =============================================================================
 # Network - Elodin Database
@@ -418,7 +418,7 @@ status_interval_sec = 30     # Phase 2 status print interval
 # PT calibration sources (tried in order: JSON first, then CSV)
 # If json_path is set, that file is used for PT data; otherwise latest in json_dir is used.
 [calibration.pt]
-json_path = "scripts/calibration/calibrations/calibration_2026-02-24T02-32-07.json"
+json_path = "calibration/calibration_2026-02-25T03-44-09.json"
 json_dir = "scripts/calibration/calibrations"
 csv_paths = [
     "external/DiabloAvionics/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv"

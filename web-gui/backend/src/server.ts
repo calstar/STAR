@@ -17,19 +17,16 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-import { DAQDirectClient, BoardHeartbeatEvent } from './daq-direct-client.js';
 import { ElodinQueryClient } from './elodin-query.js';
 import { parseElodinPacket } from './elodin-protocol.js';
-import { registerVTables } from './elodin-vtable.js';
 import { registerControllerVTables } from './elodin-vtable-controller.js';
-import { subscribeWithStream } from './elodin-stream.js';
 import { ElodinRelayClient } from './elodin-relay-client.js';
 
 import { ElodinPublisherBatched } from './elodin-publisher-batched.js';
 import { publishControllerActuation, publishControllerDiagnostics } from './controller-elodin-publisher.js';
 import { getStateTransitions, isTransitionAllowed } from './routes/state-transitions.js';
 import { getStateActuatorMap, StateActuatorMap, CSV_ACTUATOR_TO_ENTITY, getActuatorChannel } from './routes/state-actuators.js';
-import { startAPIServer } from './api-server.js';
+import { startAPIServer, type DebugInfo } from './api-server.js';
 import { loadPTCalibration, calculatePressure, inversePressureToAdc, CalibrationCoefficients, EnvironmentalState } from './calibration.js';
 import { Phase2CalibrationEngine } from './calibration-phase2.js';
 import { CalibrationSidecarClient } from './calibration-sidecar.js';
@@ -53,7 +50,7 @@ import {
 
 // ── Extracted modules ──────────────────────────────────────────────────────────
 import { Client, HpPtBoardConfig, WS_PORT, WS_HOST, ELODIN_HOST, ELODIN_PORT, ACTUATOR_CHANNEL_BY_NAME } from './server-types.js';
-import { loadSensorRoleMap, loadHpPtConfig, convertHpPtToPressure, loadTcBoardConfig, loadRtdBoardConfig, loadLcBoardConfig, rawRtdToTemperatureC } from './sensor-config.js';
+import { loadSensorRoleMap, loadHpPtConfig, loadActuatorChannelToEntityMap, convertHpPtToPressure, loadTcBoardConfig, loadRtdBoardConfig, loadLcBoardConfig, rawRtdToTemperatureC } from './sensor-config.js';
 import {
   loadActuatorBoardMap,
   getActuatorBoardInfo,
@@ -64,12 +61,12 @@ import {
   sendActuatorCommandUDP,
   sendPWMActuatorCommandUDP,
   applyActuatorsForState,
-  forwardStateToActuatorService,
-  forwardActuatorToActuatorService,
   startContinuousActuatorCommands,
   stopContinuousActuatorCommands,
   sendActuatorExpectedPositionsToClient,
   broadcastActuatorExpectedPositions,
+  forwardStateToActuatorService,
+  forwardActuatorToActuatorService,
 } from './actuator-control.js';
 import { startControllerLoop, stopControllerLoop } from './controller-loop.js';
 import { handleCalibrationCommand } from './calibration-handler.js';
@@ -77,18 +74,16 @@ import { handleCalibrationCommand } from './calibration-handler.js';
 // ── Expected actuator positions per state (loaded from state_machine_actuators.csv) ─
 let STATE_ACTUATOR_MAP: StateActuatorMap = {};
 
+// Legacy entity map removed — now uses this.channelToEntityMap from config.toml
+
 class SensorSystemServer {
   private wss: WebSocketServer;
   elodin: ElodinClient;
+  private elodinRelay: ElodinRelayClient | null = null;
   private queryClient: ElodinQueryClient | null = null;
-  private relayClient: ElodinRelayClient | null = null;
-  private relayPacketCount: number = 0;
-  private relayReconnectTimer: ReturnType<typeof setInterval> | null = null;
-  private daqDirect: DAQDirectClient | null = null;
   private clients: Map<WebSocket, Client> = new Map();
   sensorCache: Map<string, SensorUpdate> = new Map();
   private updateInterval: NodeJS.Timeout | null = null;
-  private useDirectDAQ: boolean = process.env.USE_DIRECT_DAQ === 'true';
   private useQueryPolling: boolean = process.env.ELODIN_USE_QUERY === 'true';
   private streamingDataReceived: boolean = false;
   private streamingCheckTimer: NodeJS.Timeout | null = null;
@@ -131,14 +126,6 @@ class SensorSystemServer {
   private readonly PSI_ABSOLUTE_MIN = -50;   // physically impossible below -50 PSI
   private readonly PSI_ABSOLUTE_MAX = 6000;  // max expected sensor range (HP PT up to 5000 PSI)
   private _psiDebugLogged?: Set<number>;  // temp: track which channels we've logged
-  private _parseNullCount: number = 0;
-
-  /** Per-channel last-known-good PSI for spike rejection */
-  lastGoodPsi: Map<number, number> = new Map();
-  private lastGoodPsiHp: Map<string, number> = new Map();
-  recentPsiReadings: Map<number, number[]> = new Map();
-  private readonly PSI_MAX_JUMP = 1000;
-  private readonly HP_PT_MAX_JUMP = 500;
 
   /** Throttle WS broadcasts per entity to ~10 Hz */
   private broadcastLastTime: Map<string, number> = new Map();
@@ -168,11 +155,12 @@ class SensorSystemServer {
   readonly ACTUATOR_COMMAND_INTERVAL_MS = 1000;
   manuallyCommandedChannels: Set<string> = new Set();
 
-  /** Server heartbeat (UDP broadcast) configuration */
-  private serverHeartbeatIntervalMs: number = 1000; // default 1 Hz
-  private serverBroadcastPort: number = 5005;       // default actuator command port
+  // SERVER_HEARTBEAT sending removed — daq_bridge owns it; keep broadcast addr for ABORT packets
+  private serverBroadcastPort: number = 5005;
   private serverBroadcastIP: string = '255.255.255.255';
+  private serverHeartbeatIntervalMs: number = 1000;
   private serverHeartbeatTimer: NodeJS.Timeout | null = null;
+  private useDirectDAQ: boolean = false;
 
   /** Abort → AbortDone timer */
   private abortDoneTimer: NodeJS.Timeout | null = null;
@@ -193,17 +181,18 @@ class SensorSystemServer {
   controllerCommand: ControllerCommand = { command_type: 'THRUST_DESIRED', thrust_desired: 1000 };
   controllerConfigPath: string | undefined;
 
-  /** Sensor maps */
+  /** Sensor maps (from config.toml; used so DB and backend are a replica of config) */
   channelToEntityMap: Record<number, string> = {};
-  actuatorChannelToEntityMap: Record<number, string> = {};
   boardChannelToEntityMaps: Map<string, Record<number, string>> = new Map();
+  actuatorChannelToEntityMap: Record<number, string> = {};
   private hpPtBoards: Map<string, HpPtBoardConfig> = new Map();
   private excitationAdcCache: Map<string, number> = new Map();
   private hpPtExcitationWarnAt: Map<string, number> = new Map();
-  private packetLowToUniqueId: Map<number, number> = new Map();
 
   /** Cache of recent raw ADC values per sensor for Phase 1 capture */
   lastRawAdc: Map<number, number> = new Map();
+  /** PT raw packet low byte → uniqueId (boardId*100+channelId) for calibration lookup */
+  private packetLowToUniqueId: Map<number, number> = new Map();
 
   /** Message logger & Elodin publisher */
   private messageLogger!: MessageLogger;
@@ -219,30 +208,36 @@ class SensorSystemServer {
     id: number;
     ip: string;
     expected: boolean;
-    /** True if this sense board participates in abort logic. */
-    necessaryForAbort: boolean;
     /** True if this board is the designated survivor actuator controller. */
     designatedSurvivor: boolean;
-    /** Sensor channels (1-based) we want data from on this board. */
-    sensorChannels: number[];
-    /** 0 = Internal 2.5V, 1 = VDD ratiometric, 2 = 5V absolute. */
-    voltageReference: number;
     /** If true, board will enable serial debug printing when config is applied. */
     enableSerialPrinting: boolean;
+    necessaryForAbort: boolean;
+    sensorChannels: number[];
+    voltageReference: number;
   }> = new Map();
+  private _lastDesignatedSurvivorWarn: number = 0;
 
   /** Aggregated per-board status, keyed by numeric ID. */
-  private boardsStatus: Map<number, BoardStatus> = new Map();
+  private boardsStatus: Map<number, {
+    type: string;
+    boardNumber: number | null;
+    id: number;
+    ip: string;
+    expected: boolean;
+    connected: boolean;
+    lastHeartbeatMs: number | null;
+    heartbeatTimes: number[];
+    boardState: number | null;
+    engineState: number | null;
+  }> = new Map();
 
-  /** Per-board configuration state driven by SENSOR_CONFIG packets. */
+  /** Per-board config state for ACTUATOR_CONFIG tracking. */
   private boardConfigState: Map<number, { status: 'pending' | 'sent' | 'error'; lastSentAt?: number; errorMessage?: string }> = new Map();
 
-  /** Designated survivor actuator board (from config.toml). */
+  /** Designated survivor actuator board (from config.toml) — for ACTUATOR_CONFIG abort logic. */
   private designatedSurvivorBoardId: number | null = null;
   private designatedSurvivorIP: string | null = null;
-  private designatedSurvivorConnected: boolean = false;
-  /** Throttle: last time we logged that config is blocked (designated survivor not connected). */
-  private lastConfigBlockedLogMs: number = 0;
 
   /** Notification system: previous board connected state for transition detection */
   private previousBoardConnected: Map<number, boolean> = new Map();
@@ -313,42 +308,37 @@ class SensorSystemServer {
     this.calibrationSidecar.start();
     console.log('🤖 Robust Calibration Sidecar initialized');
 
-    // Load sensor roles from config.toml (extracted module)
+    // Load sensor/actuator maps from config.toml (single source of truth; DB and backend replicate this)
     const sensorMaps = loadSensorRoleMap();
     this.channelToEntityMap = sensorMaps.channelToEntityMap;
     this.boardChannelToEntityMaps = sensorMaps.boardChannelToEntityMaps;
+    if (Object.keys(this.channelToEntityMap).length === 0 && this.boardChannelToEntityMaps.size > 0) {
+      const first = this.boardChannelToEntityMaps.values().next().value;
+      if (first) this.channelToEntityMap = { ...first };
+    }
+    this.actuatorChannelToEntityMap = loadActuatorChannelToEntityMap();
 
     // Load board registry from config.toml for heartbeat tracking
     this.loadBoardRegistry();
 
-    // Use calibration_service calibrated only (no backend raw→psi). Set false to fallback to backend calibration.
-    this.USE_CALIBRATION_SERVICE_CALIBRATED = process.env.USE_CALIBRATION_SERVICE_CALIBRATED !== 'false';
+    // Use calibration_service calibrated only when explicitly enabled. Default: backend does raw→psi from ptCalibration.
+    // This ensures consistent calibrated values when calibration_service/sidecar differs from expected.
+    this.USE_CALIBRATION_SERVICE_CALIBRATED = process.env.USE_CALIBRATION_SERVICE_CALIBRATED === 'true';
     if (this.USE_CALIBRATION_SERVICE_CALIBRATED) {
       console.log('📐 Calibrated data from Elodin only (calibration_service) — backend raw→psi disabled');
+    } else {
+      console.log('📐 Backend calibration: raw ADC → PSI via ptCalibration (set USE_CALIBRATION_SERVICE_CALIBRATED=true for sidecar)');
     }
 
     // Load broadcast config from config.toml [server_heartbeat] — used for ABORT/CLEAR_ABORT UDP
     try {
       const hb = (config as any).server_heartbeat || {};
-      if (typeof hb.interval_ms === 'number' && hb.interval_ms > 0) {
-        this.serverHeartbeatIntervalMs = hb.interval_ms;
-      }
-      if (typeof hb.broadcast_port === 'number' && hb.broadcast_port > 0 && hb.broadcast_port <= 65535) {
-        this.serverBroadcastPort = hb.broadcast_port;
-      } else {
-        this.serverBroadcastPort = this.actuatorPort;
-      }
+      this.serverBroadcastPort = (typeof hb.broadcast_port === 'number' && hb.broadcast_port > 0)
+        ? hb.broadcast_port : this.actuatorPort;
       if (typeof hb.broadcast_ip === 'string' && hb.broadcast_ip.length > 0) {
         this.serverBroadcastIP = hb.broadcast_ip;
-        // Normalize common typo that causes EADDRS (205 → 255 for limited broadcast)
-        if (this.serverBroadcastIP === '205.255.255.255') {
-          this.serverBroadcastIP = '255.255.255.255';
-        }
       }
-      console.log(`📡 Server heartbeat config: interval=${this.serverHeartbeatIntervalMs} ms, ` +
-        `broadcast=${this.serverBroadcastIP}:${this.serverBroadcastPort}`);
-    } catch (err) {
-      console.warn('⚠️ Failed to load server_heartbeat config; using defaults:', err);
+    } catch (_) {
       this.serverBroadcastPort = this.actuatorPort;
     }
 
@@ -391,6 +381,23 @@ class SensorSystemServer {
 
     // Load actuator board mappings (extracted module)
     loadActuatorBoardMap(config, this);
+
+    // Actuator service (C++) — backend forwards state transitions to it when port is set.
+    // Set ACTUATOR_SERVICE_ENABLED=false to force direct UDP even when config has a port.
+    const actSvc = (config as any).actuator_service;
+    const actSvcEnabled = process.env.ACTUATOR_SERVICE_ENABLED !== 'false';
+    if (actSvcEnabled) {
+      if (process.env.ACTUATOR_SERVICE_PORT) {
+        this.actuatorServicePort = parseInt(process.env.ACTUATOR_SERVICE_PORT, 10) || 0;
+      } else if (actSvc?.port && typeof actSvc.port === 'number') {
+        this.actuatorServicePort = actSvc.port;
+      }
+    }
+    if (this.actuatorServicePort > 0) {
+      console.log(`🔌 Actuator service enabled — state transitions → TCP :${this.actuatorServicePort}`);
+    } else {
+      console.log(`🎯 Actuator service disabled (ACTUATOR_SERVICE_ENABLED=false or no port) — using direct UDP`);
+    }
 
     // Build transition validation map
     const transitions = getStateTransitions();
@@ -444,11 +451,10 @@ class SensorSystemServer {
           if (state) {
             const c = saved.coeffs;
             state.adjustment = {
-              A: c.A - (coeffs?.A ?? 0),
-              B: c.B - (coeffs?.B ?? 0),
-              C: c.C - (coeffs?.C ?? 0),
-              D: c.D - (coeffs?.D ?? 0),
-              polyCoeffs: c.polyCoeffs
+              A: c.A - coeffs.A,
+              B: c.B - coeffs.B,
+              C: c.C - coeffs.C,
+              D: c.D - coeffs.D
             };
             state.rlsUpdateCount = saved.rlsUpdateCount;
             // Also update our baseline map so conversions are correct before sidecar sync
@@ -505,7 +511,9 @@ class SensorSystemServer {
     this.wss = new WebSocketServer({ port: WS_PORT, host: WS_HOST, perMessageDeflate: false });
     this.wss.on('error', (error: any) => {
       if (error.code === 'EADDRINUSE') {
-        console.warn(`⚠️ Port ${WS_PORT} already in use. WebSocket server will not start.`);
+        console.error(`❌ Port ${WS_PORT} already in use — frontend cannot connect. Free it and restart:`);
+        console.error(`   fuser -k ${WS_PORT}/tcp   OR   kill $(lsof -ti:${WS_PORT})`);
+        process.exit(1);
       } else { console.error('❌ WebSocket server error:', error); }
     });
     this.wss.on('listening', () => {
@@ -516,19 +524,14 @@ class SensorSystemServer {
     });
 
     this.elodin = new ElodinClient(ELODIN_HOST, ELODIN_PORT);
-    const relayWsUrl = process.env.ELODIN_RELAY_WS_URL || 'ws://localhost:9090';
-    if (relayWsUrl && !this.useDirectDAQ) {
-      console.log(`📡 Initializing Elodin Relay Client: ${relayWsUrl}`);
-      this.relayClient = new ElodinRelayClient(relayWsUrl);
-    }
     this.messageLogger = new MessageLogger(this.elodin);
     if (process.env.ENABLE_MESSAGE_LOGGING !== 'false') this.messageLogger.enable();
     this.elodinPublisher = new ElodinPublisherBatched(this.elodin);
 
     this.setupWebSocket();
-    if (!this.useDirectDAQ) {
-      this.setupElodinRelay();
-    }
+    // Always use relay — it's the only data path. Default to ws://localhost:9090 if env not set.
+    this.setupElodinRelay();
+    // Direct connection to Elodin DB for send-only: state transitions + controller VTable registration.
     this.setupElodin();
 
     // Optional DEMO mode: synthesised data + UDP packets for DAQ bridge.
@@ -538,23 +541,6 @@ class SensorSystemServer {
         console.log('🎭 DemoModeGenerator active — generating synthetic PT/ACT data');
         this.demoMode.start((update) => this.handleSensorUpdate(update), 10);
       }
-    }
-
-    if (this.useDirectDAQ) {
-      console.log('🚀 Using DIRECT DAQ connection for real-time data');
-      // Load environmental state from config
-      const envCfg = config.calibration?.environmental || {};
-      this.envState = {
-        temperature: envCfg.temperature ?? 25.0,
-        humidity: envCfg.humidity ?? 50.0,
-        vibration: envCfg.vibration ?? 0.0,
-        aging_factor: envCfg.aging_factor ?? 1.0,
-        mounting_torque: envCfg.mounting_torque ?? 1.0
-      };
-
-      this.setupDirectDAQ();
-    } else {
-      console.log('📡 Using Elodin DB for data (DAQ Bridge → Elodin DB → Backend → Frontend)');
     }
 
     this.startUpdateLoop();
@@ -620,16 +606,14 @@ class SensorSystemServer {
       this.restartServerHeartbeatTimer();
 
       // Environmental state (used in calibration conversions / sidecar)
-      if (this.useDirectDAQ) {
-        const envCfg = config.calibration?.environmental || {};
-        this.envState = {
-          temperature: envCfg.temperature ?? 25.0,
-          humidity: envCfg.humidity ?? 50.0,
-          vibration: envCfg.vibration ?? 0.0,
-          aging_factor: envCfg.aging_factor ?? 1.0,
-          mounting_torque: envCfg.mounting_torque ?? 1.0,
-        } as any;
-      }
+      const envCfg = config.calibration?.environmental || {};
+      this.envState = {
+        temperature: envCfg.temperature ?? 25.0,
+        humidity: envCfg.humidity ?? 50.0,
+        vibration: envCfg.vibration ?? 0.0,
+        aging_factor: envCfg.aging_factor ?? 1.0,
+        mounting_torque: envCfg.mounting_torque ?? 1.0,
+      } as any;
 
       // Phase2 tuning knobs (best-effort; doesn't restart engines)
       this.applyPhase2Config(config);
@@ -764,7 +748,6 @@ class SensorSystemServer {
       this.boardConfigState.clear();
       this.designatedSurvivorBoardId = null;
       this.designatedSurvivorIP = null;
-      this.designatedSurvivorConnected = false;
 
       const designatedCandidates: Array<{ id: number; ip: string }> = [];
 
@@ -785,24 +768,10 @@ class SensorSystemServer {
         const ipFromConfig: string | undefined = typeof board.ip === 'string' ? board.ip : undefined;
         const ip = ipFromConfig || `192.168.2.${id}`;
 
-        const necessaryForAbort: boolean = !!board.necessary_for_abort && type !== 'ACTUATOR';
         const designatedSurvivor: boolean = !!board.designated_survivor && type === 'ACTUATOR';
-
-        // Determine sensor channels we want from this board
-        const numSensors: number | undefined = typeof board.num_sensors === 'number' ? board.num_sensors : undefined;
-        const activeConnectors: unknown = board.active_connectors;
-        let sensorChannels: number[] = [];
-        if (Array.isArray(activeConnectors) && activeConnectors.length > 0) {
-          sensorChannels = activeConnectors
-            .map((v) => Number(v))
-            .filter((v) => Number.isFinite(v) && v >= 1 && v <= 255);
-        } else if (numSensors && numSensors > 0) {
-          sensorChannels = Array.from({ length: numSensors }, (_v, i) => i + 1);
-        }
-
-        const voltageReference = Math.min(2, Math.max(0, Number(board.voltage_reference) || 0));
-
-        const enableSerialPrinting = !!board.enable_serial_printing;
+        const activeConnectors: number[] = Array.isArray(board.active_connectors)
+          ? board.active_connectors.filter((c: unknown): c is number => typeof c === 'number')
+          : [];
 
         const entry = {
           type,
@@ -811,10 +780,10 @@ class SensorSystemServer {
           ip,
           expected: true as const,
           designatedSurvivor,
-          enableSerialPrinting,
+          enableSerialPrinting: !!board.enable_serial_printing,
           necessaryForAbort: !!board.necessary_for_abort,
-          sensorChannels,
-          voltageReference,
+          sensorChannels: activeConnectors,
+          voltageReference: typeof board.voltage_reference === 'number' ? board.voltage_reference : 0,
         };
         this.boardRegistryById.set(id, entry);
         this.boardsStatus.set(id, {
@@ -837,15 +806,87 @@ class SensorSystemServer {
         this.designatedSurvivorIP = designatedCandidates[0].ip;
         console.log(`📋 Designated survivor actuator board: ID ${this.designatedSurvivorBoardId} (${this.designatedSurvivorIP})`);
       } else if (designatedCandidates.length === 0) {
-        console.warn('⚠️ No designated survivor actuator board found in config.toml; SENSOR_CONFIG packets will not be sent');
+        console.warn('⚠️ No designated survivor actuator board in config.toml; ACTUATOR_CONFIG will not be sent');
       } else {
-        console.warn(`⚠️ Multiple designated survivor boards found (${designatedCandidates.length}); SENSOR_CONFIG packets will not be sent`);
+        console.warn(`⚠️ Multiple designated survivor boards found (${designatedCandidates.length}); ACTUATOR_CONFIG will not be sent`);
       }
 
+      this.packetLowToUniqueId.clear();
+      const sensorRolesPt2 = (config as any).sensor_roles_pt2 || {};
+      for (const [, raw] of Object.entries(boards)) {
+        const board: any = raw;
+        if (board.type !== 'PT' || board.enabled === false) continue;
+        const boardId = board.board_id ?? board.id;
+        if (boardId == null) continue;
+        const chOffset = typeof board.channel_offset === 'number' ? board.channel_offset : 0;
+        if (chOffset === 0) {
+          // packet low byte IS the channel ID (0x01..0x0A) — no +1 offset
+          for (let c = 1; c <= 10; c++) this.packetLowToUniqueId.set(c, boardId * 100 + c);
+        } else {
+          for (const [, conn] of Object.entries(sensorRolesPt2)) {
+            const connector = Number(conn);
+            if (connector >= 1 && connector <= 10) {
+              const packetCh = connector + chOffset;
+              this.packetLowToUniqueId.set(packetCh, boardId * 100 + connector);
+            }
+          }
+        }
+      }
       console.log(`📋 Loaded ${this.boardRegistryById.size} boards from config.toml`);
     } catch (error) {
       console.warn('⚠️ Failed to load boards from config.toml; heartbeat pane will rely on discovery only:', error);
     }
+  }
+
+
+  private setupElodinRelay(): void {
+    const url = process.env.ELODIN_RELAY_WS_URL || 'ws://localhost:9090';
+    this.elodinRelay = new ElodinRelayClient(url);
+    this.elodinRelay.on('packet', (header, payload) => {
+      this.relayPacketCount++;
+      if (this.relayPacketCount === 1 || this.relayPacketCount % 500 === 0) {
+        console.log(`[Relay] packets received: ${this.relayPacketCount}`);
+      }
+      if (!this.streamingDataReceived && header.ty === ElodinPacketType.TABLE) {
+        this.streamingDataReceived = true;
+      }
+      this.handleElodinPacket(header, payload);
+    });
+    this.elodinRelay.on('connected', () => {
+      console.log('✅ Elodin relay connected — receiving stream from relay (one publisher, multiple subscribers)');
+      this.streamingDataReceived = true;
+      this.broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true } as ConnectionStatus });
+    });
+    this.elodinRelay.on('disconnected', () => {
+      console.log('❌ Elodin relay disconnected');
+      this.broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false } as ConnectionStatus });
+      this.scheduleRelayReconnect();
+    });
+    const tryRelay = (): void => {
+      this.elodinRelay!.connect().then((ok) => {
+        if (ok) {
+          console.log('✅ Elodin relay data connection established at ' + url);
+          if (this.relayReconnectTimer) { clearInterval(this.relayReconnectTimer); this.relayReconnectTimer = null; }
+        } else this.scheduleRelayReconnect();
+      }).catch((e) => { console.warn('⚠️ Relay connect error:', e); this.scheduleRelayReconnect(); });
+    };
+    tryRelay();
+  }
+
+  private relayPacketCount: number = 0;
+  private relayReconnectTimer: ReturnType<typeof setInterval> | null = null;
+  private scheduleRelayReconnect(): void {
+    if (this.relayReconnectTimer || !this.elodinRelay) return;
+    this.relayReconnectTimer = setInterval(() => {
+      if (this.elodinRelay?.isConnected()) {
+        if (this.relayReconnectTimer) { clearInterval(this.relayReconnectTimer); this.relayReconnectTimer = null; }
+        return;
+      }
+      console.log('🔄 Retrying relay connection...');
+      this.elodinRelay?.connect().then((ok) => {
+        if (ok && this.relayReconnectTimer) { clearInterval(this.relayReconnectTimer); this.relayReconnectTimer = null; }
+      });
+    }, 3000);
   }
 
   private setupElodin(): void {
@@ -870,69 +911,6 @@ class SensorSystemServer {
     this.elodin.on('error', () => { });
   }
 
-  private setupElodinRelay(): void {
-    const url = process.env.ELODIN_RELAY_WS_URL || 'ws://localhost:9090';
-    console.log(`📡 Connecting to Elodin Relay: ${url}`);
-
-    // Always create a new client if we don't have one
-    if (!this.relayClient) {
-      this.relayClient = new ElodinRelayClient(url);
-    }
-
-    this.relayClient.on('packet', (header, payload) => {
-      this.relayPacketCount++;
-      if (this.relayPacketCount === 1 || this.relayPacketCount % 500 === 0) {
-        console.log(`[Relay] packets received: ${this.relayPacketCount}`);
-      }
-      if (!this.streamingDataReceived && header.ty === ElodinPacketType.TABLE) {
-        this.streamingDataReceived = true;
-        if (this.streamingCheckTimer) { clearTimeout(this.streamingCheckTimer); this.streamingCheckTimer = null; }
-      }
-      if (this.useDirectDAQ) return;
-      this.handleElodinPacket(header, payload);
-    });
-
-    this.relayClient.on('connected', () => {
-      console.log('✅ Elodin relay connected — receiving stream from relay (one publisher, multiple subscribers)');
-      this.streamingDataReceived = true;
-      if (this.relayReconnectTimer) { clearInterval(this.relayReconnectTimer); this.relayReconnectTimer = null; }
-      this.broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true } as ConnectionStatus });
-    });
-
-    this.relayClient.on('disconnected', () => {
-      console.log('❌ Elodin relay disconnected');
-      this.broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false } as ConnectionStatus });
-      this.scheduleRelayReconnect();
-    });
-
-    const tryRelay = (): void => {
-      this.relayClient!.connect().then((ok) => {
-        if (ok) {
-          console.log('✅ Elodin relay data connection established at ' + url);
-        } else this.scheduleRelayReconnect();
-      }).catch((e) => {
-        console.warn('⚠️ Relay connect error:', e);
-        this.scheduleRelayReconnect();
-      });
-    };
-    tryRelay();
-  }
-
-  private scheduleRelayReconnect(): void {
-    if (this.relayReconnectTimer || !this.relayClient) return;
-    this.relayReconnectTimer = setInterval(() => {
-      if (this.relayClient?.isConnected()) {
-        if (this.relayReconnectTimer) { clearInterval(this.relayReconnectTimer); this.relayReconnectTimer = null; }
-        return;
-      }
-      console.log('🔄 Retrying relay connection...');
-      this.relayClient?.connect().then((ok) => {
-        if (ok && this.relayReconnectTimer) { clearInterval(this.relayReconnectTimer); this.relayReconnectTimer = null; }
-      });
-    }, 3000);
-  }
-
-
   private startStreamingCheck(): void {
     if (this.streamingCheckTimer) clearTimeout(this.streamingCheckTimer);
     this.streamingCheckTimer = setTimeout(() => {
@@ -948,400 +926,6 @@ class SensorSystemServer {
   //   accesses 15+ private fields and would need a very wide interface)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  private setupDirectDAQ(): void {
-    console.log('🔌 Setting up direct UDP listener for DiabloAvionics boards...');
-    const sensorPort = readConfig()?.network?.sensor_port ?? 5006;
-    this.daqDirect = new DAQDirectClient('0.0.0.0', sensorPort);
-
-    this.daqDirect.on('connected', () => {
-      console.log('✅ Direct DAQ connection established');
-      this.broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false } as ConnectionStatus });
-    });
-
-    // Track BOARD_HEARTBEAT packets from DiabloAvionics boards
-    this.daqDirect.on('board_heartbeat', (hb: BoardHeartbeatEvent) => {
-      const now = Date.now();
-      const id = hb.id;
-      const sourceIP = hb.sourceIP || '';
-      let status = this.boardsStatus.get(id);
-
-      if (!status) {
-        const registry = this.boardRegistryById.get(id);
-        const type = registry?.type || 'UNKNOWN';
-        const boardNumber = registry?.boardNumber ?? null;
-        // Use actual source IP from heartbeat so we send config to the right host (PT boards may send id that doesn't match config)
-        const ip = sourceIP || registry?.ip || `192.168.2.${id}`;
-        status = {
-          type,
-          boardNumber,
-          id,
-          ip,
-          expected: !!registry,
-          connected: false,
-          lastHeartbeatMs: null,
-          heartbeatTimes: [],
-          boardState: null,
-          engineState: null,
-        };
-        this.boardsStatus.set(id, status);
-        if (!this.boardConfigState.has(id)) {
-          this.boardConfigState.set(id, { status: 'pending' });
-        }
-      } else {
-        // Keep board IP in sync with actual heartbeat source (in case id in packet doesn't match config)
-        status.ip = sourceIP || status.ip;
-      }
-
-      // Detect disconnected → reconnected transition so we can resend config.
-      const HEARTBEAT_TIMEOUT_MS = 2500;
-      const wasDisconnected =
-        status.lastHeartbeatMs == null || now - status.lastHeartbeatMs > HEARTBEAT_TIMEOUT_MS;
-
-      status.connected = true;
-      status.lastHeartbeatMs = now;
-      const prevBoardState = status.boardState;
-      const prevEngineState = status.engineState;
-      status.boardState = hb.boardState;
-      status.engineState = hb.engineState;
-      if (prevBoardState !== status.boardState || prevEngineState !== status.engineState) {
-        const stateNames: Record<number, string> = { 1: 'Setup', 2: 'Active', 3: 'Abort', 4: 'Abort done' };
-        console.log(
-          `[BOARD] ${id} (${status.ip}) state: ${stateNames[status.boardState as number] ?? status.boardState} (board_state=${status.boardState}) engine_state=${status.engineState}`
-        );
-      }
-
-      // Gap 1: board reconnected after timeout – resend config.
-      if (wasDisconnected) {
-        const prevCfg = this.boardConfigState.get(id);
-        if (prevCfg?.status === 'sent' || prevCfg?.status === 'error') {
-          console.log(`[CONFIG] Board ${id} (${status.ip}) reconnected – resetting config state to pending`);
-          this.boardConfigState.set(id, { status: 'pending' });
-        }
-      }
-
-      // Gap 2: board rebooted while heartbeats stayed continuous – boardState returned to Setup (1).
-      const boardJustEnteredSetup = status.boardState === 1 && prevBoardState !== 1;
-      if (boardJustEnteredSetup) {
-        const prevCfg = this.boardConfigState.get(id);
-        if (prevCfg?.status === 'sent' || prevCfg?.status === 'error') {
-          console.log(`[CONFIG] Board ${id} (${status.ip}) entered Setup state – resetting config to pending`);
-          this.boardConfigState.set(id, { status: 'pending' });
-        }
-      }
-
-      if (status) {
-        status.heartbeatTimes = status.heartbeatTimes || [];
-        status.heartbeatTimes.push(now);
-        const windowMs = 10000;
-        const cutoff = now - windowMs;
-        while (status.heartbeatTimes.length > 0 && status.heartbeatTimes[0] < cutoff) {
-          status.heartbeatTimes.shift();
-        }
-      }
-
-      this.maybeSendConfigPackets();
-    });
-
-    // ── Regular PT sensor data ──────────────────────────────────────────────
-    this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
-      if (this.hpPtBoards.has(sourceIP)) return;
-      if (this.actuatorBoardIPs.has(sourceIP)) return;
-      if (this.tcBoards.has(sourceIP)) return;
-      if (this.rtdBoards.has(sourceIP)) return;
-      if (this.lcBoards.has(sourceIP)) return;
-
-      const now = Date.now();
-      if (now - this._lastSensorLog > 5000) {
-        this._lastSensorLog = now;
-        const totalDatapoints = chunks.reduce((sum, chunk) => sum + (chunk.datapoints?.length || 0), 0);
-        console.log(`📥 Regular PT data from ${sourceIP}: ${chunks.length} chunks, ${totalDatapoints} datapoints`);
-      }
-
-      const currentTime = Date.now();
-      const timestampNs = BigInt(currentTime) * BigInt(1000000);
-      const statsStartTime = (this.daqDirect as any).statsStartTime || currentTime;
-      if (!(this.daqDirect as any).statsStartTime) (this.daqDirect as any).statsStartTime = currentTime;
-
-      const publishingToElodin = this.elodin.isConnected() && this.elodinPublisher;
-      if (publishingToElodin) this.elodinPublisher!.beginBatch();
-
-      const SAMPLE_RATE_HZ = 7200;
-      const SAMPLE_PERIOD_MS = 1000.0 / SAMPLE_RATE_HZ;
-
-      for (const chunk of chunks) {
-        const chunkTimestampMs = chunk.timestamp;
-        const chunkTimeBase = chunkTimestampMs > 0 ? chunkTimestampMs : currentTime;
-
-        for (let sampleIdx = 0; sampleIdx < chunk.datapoints.length; sampleIdx++) {
-          const dp = chunk.datapoints[sampleIdx];
-          const sampleTimeMs = chunkTimeBase + (sampleIdx * SAMPLE_PERIOD_MS);
-          const sampleTime = sampleTimeMs;
-          const sensorIdPacket = dp.sensor_id;
-          if (sensorIdPacket === 0) continue;
-
-          const channelId = sensorIdPacket;
-          const boardId = this.ipToBoardId.get(sourceIP) ?? 1; // Default to board 1
-          const uniqueId = boardId * 100 + channelId;
-          const codeUint32 = dp.data;
-          let coeffs = this.ptCalibration.get(uniqueId) ?? this.ptCalibration.get(channelId); // Fallback to legacy channel ID if unique not found
-
-          if (publishingToElodin) {
-            this.elodinPublisher!.publishRawPT(channelId, timestampNs, codeUint32, chunkTimestampMs, 0);
-          }
-
-          const boardMap = this.boardChannelToEntityMaps.get(sourceIP);
-          const channelMap = boardMap || this.channelToEntityMap;
-          const calEntity = channelMap[channelId] || `PT_Cal.PT_CH${channelId}`;
-          const rawEntity = calEntity.replace('PT_Cal.', 'PT.');
-
-          this.handleSensorUpdate({ entity: rawEntity, component: 'raw_adc_counts', value: codeUint32, timestamp: sampleTime });
-          this.handleSensorUpdate({ entity: `PT.PT_CH${channelId}`, component: 'raw_adc_counts', value: codeUint32, timestamp: sampleTime });
-          this.lastRawAdc.set(uniqueId, codeUint32);
-
-          // Phase 1 only: no sidecar samples, no Phase 2
-          const activeCoeffs = coeffs;
-          let psi: number;
-          if (activeCoeffs) {
-            psi = calculatePressure(codeUint32, activeCoeffs, this.envState);
-            if (isNaN(psi) || !isFinite(psi)) continue;
-          } else {
-            psi = (codeUint32 / 1e8) * 1000;
-          }
-
-          if (psi < this.PSI_ABSOLUTE_MIN || psi > this.PSI_ABSOLUTE_MAX) continue;
-          this.lastGoodPsi.set(uniqueId, psi);
-
-          if (publishingToElodin) this.elodinPublisher!.publishCalibratedPT(channelId, timestampNs, psi, codeUint32, 0);
-
-          const boardMap2 = this.boardChannelToEntityMaps.get(sourceIP);
-          const channelMap2 = boardMap2 || this.channelToEntityMap;
-          const calEntity2 = channelMap2[channelId] || `PT_Cal.PT_CH${channelId}`;
-
-          this.handleSensorUpdate({ entity: calEntity2, component: 'pressure_psi', value: psi, timestamp: sampleTime });
-          this.handleSensorUpdate({ entity: `PT_Cal.PT_CH${channelId}`, component: 'pressure_psi', value: psi, timestamp: sampleTime });
-        }
-      }
-
-      if (publishingToElodin) this.elodinPublisher!.flushBatch();
-    });
-
-    // ── Actuator board data ─────────────────────────────────────────────────
-    this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
-      if (!this.actuatorBoardIPs.has(sourceIP)) return;
-      const currentTime = Date.now();
-      for (const chunk of chunks) {
-        for (const dp of chunk.datapoints) {
-          const channelId = dp.sensor_id;
-          let actuatorName: string | null = null;
-          for (const [name, info] of this.actuatorBoardMap.entries()) {
-            if (info.boardIp === sourceIP && info.channel === channelId) {
-              actuatorName = name;
-              break;
-            }
-          }
-
-          const entity = actuatorName
-            ? `ACT.${actuatorName.replace(/\s+/g, '_')}`
-            : `ACT.ACT_CH${channelId}_${sourceIP.split('.').pop()}`;
-
-          this.handleSensorUpdate({
-            entity,
-            component: 'raw_adc_counts',
-            value: dp.data,
-            timestamp: currentTime
-          });
-
-          // Also update the generic ACT_CH for legacy UI components if they still use it
-          this.handleSensorUpdate({
-            entity: `ACT.ACT_CH${channelId}`,
-            component: 'raw_adc_counts',
-            value: dp.data,
-            timestamp: currentTime
-          });
-        }
-      }
-    });
-
-    // ── HP PT board data ────────────────────────────────────────────────────
-    this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
-      const hpCfg = this.hpPtBoards.get(sourceIP);
-      if (!hpCfg) return;
-
-      const currentTime = Date.now();
-      const SAMPLE_RATE_HZ = 7200;
-      const SAMPLE_PERIOD_MS = 1000.0 / SAMPLE_RATE_HZ;
-
-      for (const chunk of chunks) {
-        const chunkTimestampMs = chunk.timestamp;
-        const chunkTimeBase = chunkTimestampMs > 0 ? chunkTimestampMs : currentTime;
-
-        let chunkExcitation: number | undefined = undefined;
-        for (const dp of chunk.datapoints) {
-          if (dp.sensor_id === hpCfg.excitationConnectorId) {
-            chunkExcitation = dp.data;
-            if (chunkExcitation !== undefined && chunkExcitation > 0) this.excitationAdcCache.set(sourceIP, chunkExcitation);
-            break;
-          }
-        }
-        if (chunkExcitation === undefined || chunkExcitation === 0) {
-          const cached = this.excitationAdcCache.get(sourceIP);
-          if (cached !== undefined && cached > 0) {
-            chunkExcitation = cached;
-          }
-        }
-        // Don't drop HP PT chunks when excitation is unavailable/zero.
-        // Conversion currently uses fixed ADC reference; excitation is logged/validated.
-        if (chunkExcitation === undefined || chunkExcitation === 0) {
-          const now = Date.now();
-          const lastWarn = this.hpPtExcitationWarnAt.get(sourceIP) ?? 0;
-          if (now - lastWarn > 5000) {
-            console.warn(
-              `⚠️ HP PT ${sourceIP}: no nonzero excitation reading on connector ${hpCfg.excitationConnectorId}. ` +
-              `Continuing with fallback conversion; verify wiring/config.`
-            );
-            this.hpPtExcitationWarnAt.set(sourceIP, now);
-          }
-          // Use a minimal non-zero sentinel so conversion does not reject the sample.
-          chunkExcitation = 1;
-        }
-
-        for (let sampleIdx = 0; sampleIdx < chunk.datapoints.length; sampleIdx++) {
-          const dp = chunk.datapoints[sampleIdx];
-          const sampleTime = chunkTimeBase + (sampleIdx * SAMPLE_PERIOD_MS);
-          const connectorId: number = dp.sensor_id;
-          const adcCode: number = dp.data;
-
-          if (connectorId === hpCfg.excitationConnectorId) continue;
-          if (!hpCfg.hpPtConnectors.has(connectorId)) continue;
-
-          const entity = hpCfg.channelToEntity[connectorId] ?? `PT_Cal.HP_PT_${connectorId}`;
-          const rawEntity = entity.replace('PT_Cal.', 'PT.');
-          const psi = convertHpPtToPressure(adcCode, chunkExcitation!, hpCfg);
-
-          // Spike rejection for HP PT
-          let psiToEmit = psi;
-          if (isFinite(psi) && !isNaN(psi)) {
-            const lastHp = this.lastGoodPsiHp.get(entity);
-            if (lastHp !== undefined) {
-              const jump = Math.abs(psi - lastHp);
-              if (jump > this.HP_PT_MAX_JUMP) { psiToEmit = lastHp; }
-              else { this.lastGoodPsiHp.set(entity, psi); }
-            } else { this.lastGoodPsiHp.set(entity, psi); }
-          }
-
-          const ADC_MAX = 2147483648;
-          const vSense = (adcCode / ADC_MAX) * hpCfg.adcRefVoltage;
-          const iMa = (vSense / hpCfg.senseResistorOhms) * 1000;
-          const vExcRaw = (chunkExcitation! / ADC_MAX) * hpCfg.adcRefVoltage;
-          const vExc = vExcRaw * hpCfg.excitationDividerRatio;
-
-          if (isFinite(psiToEmit) && !isNaN(psiToEmit)) {
-            this.handleSensorUpdate({ entity, component: 'pressure_psi', value: psiToEmit, timestamp: sampleTime });
-          }
-          this.handleSensorUpdate({ entity, component: 'raw_adc_counts', value: adcCode, timestamp: sampleTime });
-          this.handleSensorUpdate({ entity: rawEntity, component: 'raw_adc_counts', value: adcCode, timestamp: sampleTime });
-          this.handleSensorUpdate({ entity, component: 'excitation_voltage', value: vExc, timestamp: sampleTime });
-          this.handleSensorUpdate({ entity, component: 'sense_voltage', value: vSense, timestamp: sampleTime });
-          this.handleSensorUpdate({ entity, component: 'current_ma', value: iMa, timestamp: sampleTime });
-        }
-      }
-    });
-
-    // ── TC board data ────────────────────────────────────────────────────────
-    this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
-      const activeConnectors = this.tcBoards.get(sourceIP);
-      if (activeConnectors === undefined) return;
-
-      const currentTime = Date.now();
-      const SAMPLE_RATE_HZ = 7200;
-      const SAMPLE_PERIOD_MS = 1000.0 / SAMPLE_RATE_HZ;
-
-      for (const chunk of chunks) {
-        const chunkTimeBase = chunk.timestamp > 0 ? chunk.timestamp : currentTime;
-        for (let i = 0; i < chunk.datapoints.length; i++) {
-          const dp = chunk.datapoints[i];
-          const channelId: number = dp.sensor_id;
-          if (channelId === 0) continue;
-          if (activeConnectors.size > 0 && !activeConnectors.has(channelId)) continue;
-          const sampleTime = chunkTimeBase + i * SAMPLE_PERIOD_MS;
-          this.handleSensorUpdate({
-            entity: `TC.TC_CH${channelId}`,
-            component: 'raw_adc_counts',
-            value: dp.data,
-            timestamp: sampleTime,
-          });
-        }
-      }
-    });
-
-    // ── RTD board data ───────────────────────────────────────────────────────
-    this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
-      const activeConnectors = this.rtdBoards.get(sourceIP);
-      if (activeConnectors === undefined) return;
-
-      const currentTime = Date.now();
-      const SAMPLE_RATE_HZ = 7200;
-      const SAMPLE_PERIOD_MS = 1000.0 / SAMPLE_RATE_HZ;
-
-      for (const chunk of chunks) {
-        const chunkTimeBase = chunk.timestamp > 0 ? chunk.timestamp : currentTime;
-        for (let i = 0; i < chunk.datapoints.length; i++) {
-          const dp = chunk.datapoints[i];
-          const channelId: number = dp.sensor_id;
-          if (channelId === 0) continue;
-          if (activeConnectors.size > 0 && !activeConnectors.has(channelId)) continue;
-          const sampleTime = chunkTimeBase + i * SAMPLE_PERIOD_MS;
-          this.handleSensorUpdate({
-            entity: `RTD.RTD_CH${channelId}`,
-            component: 'raw_resistance',
-            value: dp.data,
-            timestamp: sampleTime,
-          });
-          const tempC = rawRtdToTemperatureC(dp.data);
-          if (tempC != null) {
-            this.handleSensorUpdate({
-              entity: `RTD_Cal.RTD_CH${channelId}`,
-              component: 'temperature_c',
-              value: tempC,
-              timestamp: sampleTime,
-            });
-          }
-        }
-      }
-    });
-
-    // ── LC (Load Cell) board data ───────────────────────────────────────────
-    this.daqDirect.on('sensor_data', (header: any, chunks: Array<any>, sourceIP: string) => {
-      const activeConnectors = this.lcBoards.get(sourceIP);
-      if (activeConnectors === undefined) return;
-
-      const currentTime = Date.now();
-      const SAMPLE_RATE_HZ = 7200;
-      const SAMPLE_PERIOD_MS = 1000.0 / SAMPLE_RATE_HZ;
-
-      for (const chunk of chunks) {
-        const chunkTimeBase = chunk.timestamp > 0 ? chunk.timestamp : currentTime;
-        for (let i = 0; i < chunk.datapoints.length; i++) {
-          const dp = chunk.datapoints[i];
-          const channelId: number = dp.sensor_id;
-          if (channelId === 0) continue;
-          if (activeConnectors.size > 0 && !activeConnectors.has(channelId)) continue;
-          const sampleTime = chunkTimeBase + i * SAMPLE_PERIOD_MS;
-          this.handleSensorUpdate({
-            entity: `LC.CH${channelId}`,
-            component: 'raw_adc_counts',
-            value: dp.data,
-            timestamp: sampleTime,
-          });
-        }
-      }
-    });
-
-    this.daqDirect.connect().then((connected) => {
-      if (connected) { console.log('✅ Direct DAQ connection successful'); }
-      else { console.warn('⚠️ Direct DAQ connection failed (no Elodin fallback — data path is UDP → Backend only)'); }
-    }).catch((error) => { console.error('❌ Direct DAQ connection error:', error); });
-  }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // Sensor update handler
@@ -1393,12 +977,18 @@ class SensorSystemServer {
     }
     // else: out-of-order, skip to keep monotonic
     if (series.time.length > this.HISTORY_MAX_POINTS) {
-      series.time.shift();
-      series.values.shift();
+      series.time = series.time.slice(-this.HISTORY_MAX_POINTS);
+      series.values = series.values.slice(-this.HISTORY_MAX_POINTS);
     }
 
-    this.broadcast({ type: MessageType.SENSOR_UPDATE, timestamp: update.timestamp, payload: update });
+    this.broadcast({ type: MessageType.SENSOR_UPDATE, timestamp: update.timestamp, payload });
+    if (this.clients.size === 0 && update.component === 'pressure_psi' && !this._loggedNoFrontendClients) {
+      this._loggedNoFrontendClients = true;
+      console.warn('⚠️ Backend has no WebSocket clients (frontend not connected?). Open the dashboard at the backend URL (e.g. http://localhost:8082 or port 8081 for WS).');
+    }
   }
+
+  private _loggedNoFrontendClients = false;
 
   /** Push an immediate pressure_psi update for a channel after calibration so the UI reflects the new fit. */
   pushCalibrationUpdate(uniqueId: number): void {
@@ -1435,9 +1025,11 @@ class SensorSystemServer {
     try { this.elodin.publishTable(packetId, payload); } catch (error) { }
   }
 
+  private _parseNullCount = 0;
   private handleElodinPacket(header: any, payload: Buffer): void {
     try {
       const [high, low] = header.packetId;
+
       // ── Intercept Heartbeat Packets [0x10, board_id] ──
       if (high === 0x10 && payload.length >= 16) {
         const boardId = low;
@@ -1475,7 +1067,6 @@ class SensorSystemServer {
           status.lastHeartbeatMs = now;
           status.boardState = boardState;
           status.engineState = engineState;
-          status.heartbeatTimes = status.heartbeatTimes || [];
           status.heartbeatTimes.push(now);
           if (status.heartbeatTimes.length > 20) {
             status.heartbeatTimes.shift();
@@ -1520,11 +1111,15 @@ class SensorSystemServer {
             }
           }
           if (!channelId) {
-            const fallbackMap: Record<string, number> = {
-              'PT_Cal.Fuel_Upstream': 1, 'PT_Cal.GSE_Low': 2, 'PT_Cal.Fuel_Downstream': 3, 'PT_Cal.PT_CH3': 3,
-              'PT_Cal.Fuel_Fill_Tank': 4, 'PT_Cal.PT_CH4': 4, 'PT_Cal.Ox_Upstream': 5, 'PT_Cal.GN2_Regulated': 6, 'PT_Cal.Ox_Downstream': 7,
-            };
-            channelId = fallbackMap[parsed.entity] ?? null;
+            const chMatch = parsed.entity.match(/[._]CH?(\d+)$/);
+            if (chMatch) channelId = parseInt(chMatch[1], 10);
+            else {
+              const fallbackMap: Record<string, number> = {
+                'PT_Cal.Fuel_Upstream': 1, 'PT_Cal.GSE_Low': 2, 'PT_Cal.Fuel_Downstream': 3, 'PT_Cal.PT_CH3': 3,
+                'PT_Cal.Fuel_Fill_Tank': 4, 'PT_Cal.PT_CH4': 4, 'PT_Cal.Ox_Upstream': 5, 'PT_Cal.GN2_Regulated': 6, 'PT_Cal.Ox_Downstream': 7,
+              };
+              channelId = fallbackMap[parsed.entity] ?? null;
+            }
           }
         }
 
@@ -1642,6 +1237,11 @@ class SensorSystemServer {
       const client: Client = { ws, subscribedSensors: new Set(), lastPing: Date.now() };
       this.clients.set(ws, client);
 
+      // Send mission start time so client has correct time base for plots
+      if (this.firstPacketTime !== null) {
+        try { this.send(ws, { type: MessageType.MISSION_START_TIME, timestamp: Date.now(), payload: { missionStartTime: this.firstPacketTime } }); } catch (_) { }
+      }
+
       // Send cached sensor data immediately
       if (this.sensorCache.size > 0) {
         this.sensorCache.forEach((update) => {
@@ -1655,7 +1255,7 @@ class SensorSystemServer {
         attempts++;
         if (ws.readyState === WebSocket.OPEN) {
           try {
-            this.send(ws, { type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: this.daqDirect?.connected || this.elodin.isConnected() } as ConnectionStatus });
+            this.send(ws, { type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: this.elodinRelay?.isConnected() } as ConnectionStatus });
             const stateToSend = this.currentState ?? SystemState.IDLE;
             this.send(ws, { type: MessageType.STATE_UPDATE, timestamp: Date.now(), payload: { currentState: stateToSend, stateName: SystemState[stateToSend] ?? 'IDLE', timestamp: Date.now(), debugMode: this.debugMode } as StateUpdate });
             sendActuatorExpectedPositionsToClient(this, ws, stateToSend, STATE_ACTUATOR_MAP);
@@ -1776,7 +1376,10 @@ class SensorSystemServer {
           this.broadcast({ type: MessageType.STATE_UPDATE, timestamp: Date.now(), payload: { currentState: newState, stateName: SystemState[newState], timestamp: Date.now(), debugMode: this.debugMode } });
 
           const useCppActuatorService = this.actuatorServicePort > 0;
-          if (useCppActuatorService && !this.debugMode) {
+          if (this.debugMode) {
+            stopContinuousActuatorCommands(this);
+            this.manuallyCommandedChannels.clear();
+          } else if (useCppActuatorService) {
             this.manuallyCommandedChannels.clear();
             stopContinuousActuatorCommands(this);
             const enumKey = SystemState[newState] ?? 'IDLE';
@@ -1795,19 +1398,32 @@ class SensorSystemServer {
                 }
               }
             });
-            broadcastActuatorExpectedPositions(this, newState, STATE_ACTUATOR_MAP);
           } else {
-            if (newState === SystemState.FIRE) {
-              // Async: probe controller first (0.1s), then open valves + start PWM atomically
-              this.startFireSequence();
-            } else {
-              this.manuallyCommandedChannels.clear();
+            this.manuallyCommandedChannels.clear();
+            if (!this.USE_CPP_CONTROLLER) {
               applyActuatorsForState(this, newState, STATE_ACTUATOR_MAP);
               if (newState === SystemState.IDLE) { stopContinuousActuatorCommands(this); }
-              else { startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP); }
-              broadcastActuatorExpectedPositions(this, newState, STATE_ACTUATOR_MAP);
-              if (!this.debugMode) { stopControllerLoop(this); }
+              else if (newState === SystemState.FIRE) {
+                const fuelInfo = getActuatorBoardInfo(this, 'Fuel Press');
+                const loxInfo = getActuatorBoardInfo(this, 'LOX Press');
+                if (fuelInfo) this.manuallyCommandedChannels.add(`${fuelInfo.channel}@${fuelInfo.boardIp}`);
+                if (loxInfo) this.manuallyCommandedChannels.add(`${loxInfo.channel}@${loxInfo.boardIp}`);
+                startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP);
+              } else { startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP); }
+            } else {
+              console.log(`🎯 State changed to ${SystemState[newState]} – relying on C++ PressureStateMachine for automations`);
             }
+          }
+
+          broadcastActuatorExpectedPositions(this, newState, STATE_ACTUATOR_MAP);
+          if (newState === SystemState.FIRE) {
+            if (!this.USE_CPP_CONTROLLER) {
+              this.startFireSequence();
+            } else {
+              console.log('🎯 FIRE state entered – using C++ controller service; backend will not run controller loop or send PWM');
+            }
+          } else {
+            stopControllerLoop(this);
           }
 
           // Abort UDP broadcasts (ABORT / ABORT_DONE)
@@ -1878,8 +1494,12 @@ class SensorSystemServer {
 
         console.log(`🎯 CLEAR_ABORT command received – syncing actuators to abort pattern for state ${SystemState[abortState]} and broadcasting CLEAR_ABORT`);
         try {
-          applyActuatorsForState(this, abortState, STATE_ACTUATOR_MAP);
-          broadcastActuatorExpectedPositions(this, abortState, STATE_ACTUATOR_MAP);
+          if (!this.USE_CPP_CONTROLLER) {
+            applyActuatorsForState(this, abortState, STATE_ACTUATOR_MAP);
+            broadcastActuatorExpectedPositions(this, abortState, STATE_ACTUATOR_MAP);
+          } else {
+            console.log(`🎯 Relying on C++ PressureStateMachine for CLEAR_ABORT actuator automations`);
+          }
         } catch (err) {
           console.error('❌ Failed to apply abort actuator pattern during clear_abort:', err);
         }
@@ -1978,6 +1598,22 @@ class SensorSystemServer {
       // (Matches femboy: backend owns heartbeats; engine_state syncs with currentState)
       this.sendServerHeartbeatUDP();
 
+      // Demo mode: simulate heartbeats for configured boards so boards/notifications work without daq_bridge
+      if (process.env.DEMO_MODE === 'true' && this.demoMode?.isEnabled()) {
+        const now = Date.now();
+        const engineState = (this.currentState ?? SystemState.IDLE) as number;
+        this.boardsStatus.forEach((status, id) => {
+          if (status.expected) {
+            status.connected = true;
+            status.lastHeartbeatMs = now;
+            status.boardState = 2; // Active
+            status.engineState = engineState;
+            status.heartbeatTimes.push(now);
+            if (status.heartbeatTimes.length > 20) status.heartbeatTimes.shift();
+          }
+        });
+      }
+
       if (this.clients.size === 0) return;
       const snapshot = this.getBoardStatusSnapshot();
       if (snapshot.length === 0) return;
@@ -1989,7 +1625,6 @@ class SensorSystemServer {
 
       // ── Notification logic (same snapshot, so connected/boardState/engineState/expected are current)
       const now = Date.now();
-      const serverEngineState = this.currentState ?? SystemState.IDLE;
 
       for (const b of snapshot) {
         const id = b.id;
@@ -2045,19 +1680,6 @@ class SensorSystemServer {
           this.activeNotificationKeys.delete(unrecognizedKey);
         }
 
-        // Engine state mismatch (warning)
-        const engineMismatchKey = `engine_mismatch_${id}`;
-        const boardEngineState = b.engineState ?? -1;
-        const mismatch = connected && boardEngineState !== serverEngineState;
-        if (mismatch) {
-          if (!this.activeNotificationKeys.has(engineMismatchKey)) {
-            this.broadcastNotification({ key: engineMismatchKey, category: 'warning', message: `${label} engine state differs from server`, timestampMs: now, ongoing: true });
-            this.activeNotificationKeys.add(engineMismatchKey);
-          }
-        } else if (this.activeNotificationKeys.has(engineMismatchKey)) {
-          this.broadcastNotification({ key: engineMismatchKey, category: 'warning', message: `${label} engine state differs from server`, timestampMs: now, ongoing: false });
-          this.activeNotificationKeys.delete(engineMismatchKey);
-        }
       }
 
       // Persist previous connected state
@@ -2066,13 +1688,6 @@ class SensorSystemServer {
       }
     }, 1000);
 
-    // Broadcast server heartbeat to all boards at configured interval
-    if (this.serverHeartbeatTimer) {
-      clearInterval(this.serverHeartbeatTimer);
-    }
-    this.serverHeartbeatTimer = setInterval(() => {
-      this.sendServerHeartbeatUDP();
-    }, this.serverHeartbeatIntervalMs);
   }
 
   /**
@@ -2084,32 +1699,20 @@ class SensorSystemServer {
   private sendServerHeartbeatUDP(): void {
     if (!this.actuatorSocket || !this.actuatorSocketBroadcastReady) return;
     try {
-      const packetType = 2; // SERVER_HEARTBEAT
+      const packetType = 2;
       const version = 0;
       const timestamp = Date.now() >>> 0;
       const engineCode = (this.currentState ?? SystemState.IDLE) as number;
 
-      const buffer = Buffer.allocUnsafe(7);
-      buffer.writeUInt8(packetType, 0);
-      buffer.writeUInt8(version, 1);
-      buffer.writeUInt32LE(timestamp, 2);
-      buffer.writeUInt8(engineCode, 6);
+      const payload = Buffer.allocUnsafe(7);
+      payload.writeUInt8(packetType, 0);
+      payload.writeUInt8(version, 1);
+      payload.writeUInt32LE(timestamp, 2);
+      payload.writeUInt8(engineCode, 6);
 
-      this.actuatorSocket.send(
-        buffer,
-        0,
-        buffer.length,
-        this.serverBroadcastPort,
-        this.serverBroadcastIP,
-        (err) => {
-          if (err) {
-            console.error(
-              `❌ Failed to send SERVER_HEARTBEAT to ${this.serverBroadcastIP}:${this.serverBroadcastPort}:`,
-              err,
-            );
-          }
-        },
-      );
+      this.actuatorSocket.send(payload, 0, payload.length, this.serverBroadcastPort, this.serverBroadcastIP, (err) => {
+        if (err) console.error(`❌ Failed to broadcast SERVER_HEARTBEAT: ${err.message}`);
+      });
     } catch (err) {
       console.error('❌ Error while constructing/sending SERVER_HEARTBEAT packet:', err);
     }
@@ -2147,30 +1750,18 @@ class SensorSystemServer {
    *   [packet_type(1), version(1)=0, timestamp_ms(4, LE)]
    */
   private sendSimpleBroadcastPacket(packetType: number, label: string): void {
-    if (!this.actuatorSocket || !this.actuatorSocketBroadcastReady) return;
+    if (!this.actuatorSocket) return;
     try {
       const version = 0;
       const timestamp = Date.now() >>> 0;
-      const buffer = Buffer.allocUnsafe(6);
-      buffer.writeUInt8(packetType, 0);
-      buffer.writeUInt8(version, 1);
-      buffer.writeUInt32LE(timestamp, 2);
+      const payload = Buffer.allocUnsafe(6);
+      payload.writeUInt8(packetType, 0);
+      payload.writeUInt8(version, 1);
+      payload.writeUInt32LE(timestamp, 2);
 
-      this.actuatorSocket.send(
-        buffer,
-        0,
-        buffer.length,
-        this.serverBroadcastPort,
-        this.serverBroadcastIP,
-        (err) => {
-          if (err) {
-            console.error(
-              `❌ Failed to send ${label} packet to ${this.serverBroadcastIP}:${this.serverBroadcastPort}:`,
-              err,
-            );
-          }
-        },
-      );
+      this.actuatorSocket.send(payload, 0, payload.length, this.serverBroadcastPort, this.serverBroadcastIP, (err) => {
+        if (err) console.error(`❌ Failed to broadcast ${label}: ${err.message}`);
+      });
     } catch (err) {
       console.error(`❌ Error while constructing/sending ${label} packet:`, err);
     }
@@ -2186,16 +1777,11 @@ class SensorSystemServer {
       const last = status.lastHeartbeatMs;
       const isConnected = last != null && now - last <= timeoutMs;
 
-      if (this.designatedSurvivorBoardId !== null && status.id === this.designatedSurvivorBoardId) {
-        this.designatedSurvivorConnected = isConnected;
-      }
-
       let frequencyHz: number | null = null;
-      const hbt = status.heartbeatTimes || [];
-      if (hbt.length >= 2) {
-        const span = hbt[hbt.length - 1] - hbt[0];
+      if (status.heartbeatTimes.length >= 2) {
+        const span = status.heartbeatTimes[status.heartbeatTimes.length - 1] - status.heartbeatTimes[0];
         if (span > 0) {
-          const count = hbt.length - 1;
+          const count = status.heartbeatTimes.length - 1;
           frequencyHz = count / (span / 1000);
         }
       }
@@ -2221,9 +1807,7 @@ class SensorSystemServer {
         configured,
         configLastSentAt: configState?.status === 'sent' ? configState.lastSentAt : undefined,
         configError: configState?.status === 'error' ? configState.errorMessage : undefined,
-        necessaryForAbort: registry?.necessaryForAbort ?? false,
         designatedSurvivor: registry?.designatedSurvivor ?? false,
-        voltageReference: registry?.voltageReference ?? 0,
       });
     });
 
@@ -2253,7 +1837,6 @@ class SensorSystemServer {
 
   private async startFireSequence(): Promise<void> {
     console.log('🎯 FIRE: starting atomic sequence (probe 0.1s → then valves + PWM)');
-    // Step 1: Probe controller with a very short timeout so we never block valve opening.
     let controllerReady = false;
     if (!this.USE_CPP_CONTROLLER && this.controllerClient) {
       console.log('🎯 FIRE: probing controller service (0.1s timeout)...');
@@ -2263,13 +1846,11 @@ class SensorSystemServer {
         : '⚠️  FIRE: controller unavailable — fallback duties');
     }
 
-    // Step 2: Guard — bail out if we left FIRE state during the probe (e.g. abort)
     if (this.currentState !== SystemState.FIRE) {
       console.log('⚠️  FIRE sequence aborted — state changed during controller probe');
       return;
     }
 
-    // Step 3: Open valves, set press solenoids as manually commanded, and start PWM — all at once.
     this.manuallyCommandedChannels.clear();
     applyActuatorsForState(this, SystemState.FIRE, STATE_ACTUATOR_MAP);
     const fuelInfo = getActuatorBoardInfo(this, 'Fuel Press');
@@ -2309,6 +1890,16 @@ class SensorSystemServer {
     }
   }
 
+  getDebugInfo(): DebugInfo {
+    return {
+      relayConnected: this.elodinRelay?.isConnected() ?? false,
+      relayPacketsReceived: this.relayPacketCount,
+      wsClients: this.clients.size,
+      sensorCacheSize: this.sensorCache.size,
+      useRelay: true,
+    };
+  }
+
   broadcast(message: any): void {
     if (this.messageLogger) this.messageLogger.logMessage(message);
     if (this.clients.size === 0) return;
@@ -2328,55 +1919,25 @@ class SensorSystemServer {
   }
 
   /**
-   * Build and send SENSOR_CONFIG/ACTUATOR_CONFIG from this server to each board (UDP to board IP:5005).
-   * Config is not sent "between boards" – the server sends to every board. Sending is gated on the
-   * designated survivor actuator board being connected (heartbeat in last 2.5s).
+   * Send ACTUATOR_CONFIG to actuator boards on first connect.
+   * SENSOR_CONFIG is delegated to daq_bridge — it owns all direct board configuration.
    */
   private maybeSendConfigPackets(): void {
-    if (!this.designatedSurvivorBoardId || !this.designatedSurvivorIP) {
-      const now = Date.now();
-      if (now - this.lastConfigBlockedLogMs >= 15000) {
-        this.lastConfigBlockedLogMs = now;
-        console.warn('[CONFIG] Not sending: no designated survivor in config (set designated_survivor = true on one ACTUATOR board in config.toml)');
-      }
-      return;
-    }
-    // Config is sent regardless of whether the designated survivor board is currently connected.
-    if (!this.actuatorSocket) {
-      console.warn('[CONFIG] Cannot send: actuator/config UDP socket not initialized');
-      return;
-    }
+    if (!this.designatedSurvivorBoardId || !this.designatedSurvivorIP) return;
+    if (!this.actuatorSocket) return;
     const now = Date.now();
-    const timeoutMs = 2500;
-    let pendingCount = 0;
     this.boardsStatus.forEach((status, id) => {
-      const last = status.lastHeartbeatMs;
-      const isConnected = last != null && now - last <= timeoutMs;
+      const isConnected = status.lastHeartbeatMs != null && now - status.lastHeartbeatMs <= 2500;
       if (!isConnected) return;
-
-      // Prefer registry by id; PT/sense boards may send a different id in heartbeat, so fall back to lookup by IP
       let registry = this.boardRegistryById.get(id);
-      const matchedByIp = !registry && !!status.ip;
       if (!registry && status.ip) {
         for (const [, reg] of this.boardRegistryById) {
-          if (reg.ip === status.ip) {
-            registry = reg;
-            break;
-          }
+          if (reg.ip === status.ip) { registry = reg; break; }
         }
       }
-      if (!registry) {
-        console.log(`[CONFIG] Skip board id=${id} ip=${status.ip ?? 'unknown'}: no registry (id not in config, IP not in config)`);
-        return;
-      }
-      if (matchedByIp) {
-        console.log(`[CONFIG] Board heartbeat id=${id} matched config by IP ${status.ip} → type=${registry.type} (config board_id may differ)`);
-      }
-
+      if (!registry || registry.type !== 'ACTUATOR') return;
       const cfg = this.boardConfigState.get(id) ?? { status: 'pending' as const };
       if (cfg.status === 'sent') return;
-
-      pendingCount++;
 
       if (registry.type === 'ACTUATOR') {
         // Send ACTUATOR_CONFIG when actuator board connects for the first time
@@ -2396,7 +1957,7 @@ class SensorSystemServer {
           console.log(
             `[CONFIG] Sending ACTUATOR_CONFIG to board ${id} (${destIP}:${targetPort}) – is_abort_controller=${isAbortController} packet_len=${packet.length}`
           );
-          this.actuatorSocket!.send(packet, targetPort, destIP, (err) => {
+          this.actuatorSocket!.send(packet, 0, packet.length, targetPort, destIP, (err) => {
             if (err) {
               console.error(`[CONFIG] Failed ACTUATOR_CONFIG to board ${id} (${destIP}:${targetPort}):`, err.message);
               this.boardConfigState.set(id, {
@@ -2428,6 +1989,14 @@ class SensorSystemServer {
       const sensorChannels = registry.sensorChannels || [];
       const necessaryForAbort = registry.necessaryForAbort;
 
+      if (!this.designatedSurvivorIP) {
+        if (!this._lastDesignatedSurvivorWarn || Date.now() - this._lastDesignatedSurvivorWarn > 60000) {
+          console.warn(`⚠️ skipping SENSOR_CONFIG for board ${id}: no designated survivor actuator board`);
+          this._lastDesignatedSurvivorWarn = Date.now();
+        }
+        return;
+      }
+
       try {
         const targetPortSensor = 5005;
         const destIP = status.ip;
@@ -2436,43 +2005,21 @@ class SensorSystemServer {
           sensorChannels,
           registry.voltageReference ?? 0,
           necessaryForAbort,
-          this.designatedSurvivorIP!,
+          this.designatedSurvivorIP,
           registry.enableSerialPrinting ?? false,
         );
-
-        // DAQ boards listen for config on port 5005 by convention; send to actual heartbeat source IP
-        this.actuatorSocket!.send(packet, targetPortSensor, destIP, (err) => {
+        this.actuatorSocket!.send(packet, 0, packet.length, targetPortSensor, destIP, (err) => {
           if (err) {
-            console.error(`[CONFIG] Failed SENSOR_CONFIG to board ${id} (${destIP}:${targetPortSensor}):`, err.message);
-            this.boardConfigState.set(id, {
-              status: 'error',
-              lastSentAt: Date.now(),
-              errorMessage: err.message || 'UDP send error',
-            });
+            this.boardConfigState.set(id, { status: 'error', lastSentAt: Date.now(), errorMessage: err.message });
           } else {
-            console.log(
-              `[CONFIG] SENSOR_CONFIG sent OK → board ${id} (${destIP}) channels=[${sensorChannels.join(',')}] `
-            );
-            this.boardConfigState.set(id, {
-              status: 'sent',
-              lastSentAt: Date.now(),
-            });
+            this.boardConfigState.set(id, { status: 'sent', lastSentAt: Date.now() });
           }
           this.broadcastBoardStatus();
         });
       } catch (err: any) {
-        console.error(`[CONFIG] Failed to build SENSOR_CONFIG for board ${id}:`, err?.message ?? err);
-        this.boardConfigState.set(id, {
-          status: 'error',
-          lastSentAt: Date.now(),
-          errorMessage: String(err?.message || err),
-        });
+        this.boardConfigState.set(id, { status: 'error', lastSentAt: Date.now(), errorMessage: String(err?.message || err) });
       }
     });
-
-    if (pendingCount > 0) {
-      this.lastConfigBlockedLogMs = 0; // reset so next time we're blocked we log again
-    }
   }
 
   /**
@@ -2672,19 +2219,9 @@ class SensorSystemServer {
   shutdown(): void {
     if (this.updateInterval) clearInterval(this.updateInterval);
     if (this.relayReconnectTimer) { clearInterval(this.relayReconnectTimer); this.relayReconnectTimer = null; }
-    if (this.relayClient) this.relayClient.disconnect();
+    this.elodinRelay?.disconnect();
     this.elodin.disconnect();
-    if (this.wss) this.wss.close();
-  }
-
-  public getDebugInfo(): any {
-    return {
-      relayConnected: this.relayClient?.isConnected() ?? false,
-      relayPacketsReceived: this.relayPacketCount,
-      wsClients: this.clients.size,
-      sensorCacheSize: this.sensorCache.size,
-      useRelay: true
-    };
+    this.wss.close();
   }
 }
 
