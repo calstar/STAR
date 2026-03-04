@@ -47,16 +47,24 @@ export default function WindowLauncher() {
   const { closeAllWindows, windows } = useWindowManager();
   const openCount = windows.filter((w) => w.window && !w.window.closed).length;
 
-  const allPlotsEntry: WindowButtonProps = {
-    id: 'all', name: 'All Plots ★',
-    description: 'FUEL · LOX · COPV · GSE · RAW in one tabbed window',
-    url: '/window/all', accent: '#38BDF8',
-  };
-
   const unifiedEntry: WindowButtonProps = {
     id: 'unified', name: 'Single Pane ★★',
     description: 'State machine · Pressure graphs · Actuators · Controller all in one window',
     url: '/window/unified', accent: '#EC4899',
+  };
+
+  const allPlotsEntry: WindowButtonProps = {
+    id: 'all',
+    name: 'All Plots',
+    description: 'Combined GN2 / fuel / LOX / GSE pressure plots in a single window',
+    url: '/window/all',
+    accent: '#3B82F6',
+  };
+
+  const mobileEntry: WindowButtonProps = {
+    id: 'mobile-gui', name: 'Mobile GUI 📱',
+    description: 'Touch-friendly layout — compact header, pressure plot, actuators & state machine stacked for phones/tablets',
+    url: '/window/mobile-gui', accent: '#34D399',
   };
 
   const multiEntries: WindowButtonProps[] = [
@@ -72,7 +80,8 @@ export default function WindowLauncher() {
     { id: 'config', name: 'Config', description: 'System & board configuration editor', url: '/window/config', accent: '#FBBF24' },
     { id: 'controller', name: 'Controller', description: 'PWM duty cycle & valve states', url: '/window/controller', accent: '#F87171' },
     { id: 'calibration', name: 'Calibration', description: 'RLS + GLR drift · Bayesian auto-recal', url: '/window/calibration', accent: '#A3E635' },
-    { id: 'lcs-tcs-rtd', name: 'LCS / TCS / RTD', description: 'Thermocouples, RTDs, load cell — voltage and temperature', url: '/window/lcs-tcs-rtd', accent: '#F59E0B' }
+    { id: 'lcs-tcs-rtd', name: 'LCS / TCS / RTD', description: 'Thermocouples, RTDs, load cell — voltage and temperature', url: '/window/lcs-tcs-rtd', accent: '#F59E0B' },
+    { id: 'sensor-info', name: 'Sensor Info', description: 'ADC code · converted value · data rate per channel', url: '/window/sensor-info', accent: '#22D3EE' },
   ];
 
   return (
@@ -99,6 +108,7 @@ export default function WindowLauncher() {
       <div className="mb-2 space-y-2">
         <WindowButton {...unifiedEntry} />
         <WindowButton {...allPlotsEntry} />
+        <WindowButton {...mobileEntry} />
       </div>
 
       {/* Grid - 2 rows */}

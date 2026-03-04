@@ -158,23 +158,26 @@ class SensorSystemServer {
   // SERVER_HEARTBEAT sending removed — daq_bridge owns it; keep broadcast addr for ABORT packets
   private serverBroadcastPort: number = 5005;
   private serverBroadcastIP: string = '255.255.255.255';
+  private serverHeartbeatIntervalMs: number = 1000;
+  private serverHeartbeatTimer: NodeJS.Timeout | null = null;
+  private useDirectDAQ: boolean = false;
 
   /** Abort → AbortDone timer */
   private abortDoneTimer: NodeJS.Timeout | null = null;
 
   /** Controller */
-  readonly USE_CPP_CONTROLLER: boolean;
+  USE_CPP_CONTROLLER: boolean = false;
   controllerClient: ControllerClient | null = null;
   controllerLoopInterval: NodeJS.Timeout | null = null;
   controllerLoopStartTime: number | null = null;
-  readonly CONTROLLER_LOOP_INTERVAL_MS: number;
-  readonly PWM_DURATION_MS: number;
-  readonly PWM_FREQUENCY_HZ: number;
-  readonly FALLBACK_FUEL_DUTY: number;
-  readonly FALLBACK_OX_DUTY: number;
-  readonly DUTY_SWEEP_ENABLED: boolean;
-  readonly DUTY_SWEEP_STEPS: [number, number][];
-  readonly DUTY_SWEEP_STEP_DURATION_MS: number;
+  CONTROLLER_LOOP_INTERVAL_MS: number = 100;
+  PWM_DURATION_MS: number = 1000;
+  PWM_FREQUENCY_HZ: number = 10;
+  FALLBACK_FUEL_DUTY: number = 0.1;
+  FALLBACK_OX_DUTY: number = 0.1;
+  DUTY_SWEEP_ENABLED: boolean = false;
+  DUTY_SWEEP_STEPS: [number, number][] = [[0.1, 0.1]];
+  DUTY_SWEEP_STEP_DURATION_MS: number = 2000;
   controllerCommand: ControllerCommand = { command_type: 'THRUST_DESIRED', thrust_desired: 1000 };
   controllerConfigPath: string | undefined;
 
@@ -540,6 +543,191 @@ class SensorSystemServer {
     this.startUpdateLoop();
   }
 
+  /**
+   * Reload config.toml at runtime after a successful save.
+   * This updates in-memory mappings (boards, roles, controller settings, heartbeat),
+   * without restarting the backend process.
+   */
+  public reloadConfig(): void {
+    const t0 = Date.now();
+    console.log('🔄 Reloading config.toml (runtime)...');
+
+    let config: any;
+    try {
+      config = readConfig();
+    } catch (err) {
+      console.error('❌ reloadConfig: failed to read config.toml:', err);
+      return;
+    }
+
+    try {
+      // Network ports used for outbound actuator/heartbeat traffic
+      const net = config.network || {};
+      if (typeof net.actuator_cmd_port === 'number' && net.actuator_cmd_port > 0 && net.actuator_cmd_port <= 65535) {
+        this.actuatorPort = net.actuator_cmd_port;
+      }
+
+      // Controller settings / targets
+      this.applyControllerConfig(config);
+
+      // Sensor roles (PT role names -> entity strings)
+      const sensorMaps = loadSensorRoleMap();
+      this.channelToEntityMap = sensorMaps.channelToEntityMap;
+      this.boardChannelToEntityMaps = sensorMaps.boardChannelToEntityMaps;
+
+      // Board registry + designated survivor, abort flags, etc.
+      this.loadBoardRegistry();
+
+      // IP -> board_id mapping used in several places
+      this.ipToBoardId.clear();
+      const boards = (config.boards || {}) as Record<string, any>;
+      for (const [, boardRaw] of Object.entries(boards)) {
+        const board = boardRaw as any;
+        if (board.ip && typeof board.board_id === 'number' && board.enabled !== false) {
+          this.ipToBoardId.set(board.ip, board.board_id);
+        }
+      }
+
+      // Board-type filters & conversions
+      this.hpPtBoards = loadHpPtConfig();
+      this.tcBoards = loadTcBoardConfig();
+      this.rtdBoards = loadRtdBoardConfig();
+      this.lcBoards = loadLcBoardConfig();
+
+      // Actuator routing map (multi-board)
+      this.actuatorBoardMap.clear();
+      loadActuatorBoardMap(config, this);
+
+      // Heartbeat config (interval + broadcast target)
+      this.applyServerHeartbeatConfig(config);
+      this.restartServerHeartbeatTimer();
+
+      // Environmental state (used in calibration conversions / sidecar)
+      const envCfg = config.calibration?.environmental || {};
+      this.envState = {
+        temperature: envCfg.temperature ?? 25.0,
+        humidity: envCfg.humidity ?? 50.0,
+        vibration: envCfg.vibration ?? 0.0,
+        aging_factor: envCfg.aging_factor ?? 1.0,
+        mounting_torque: envCfg.mounting_torque ?? 1.0,
+      } as any;
+
+      // Phase2 tuning knobs (best-effort; doesn't restart engines)
+      this.applyPhase2Config(config);
+
+      console.log(`✅ reloadConfig complete in ${Date.now() - t0}ms`);
+      this.broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
+    } catch (err) {
+      console.error('❌ reloadConfig: failed while applying config:', err);
+    }
+  }
+
+  private applyServerHeartbeatConfig(config: any): void {
+    try {
+      const hb = (config as any).server_heartbeat || {};
+      if (typeof hb.interval_ms === 'number' && hb.interval_ms > 0) {
+        this.serverHeartbeatIntervalMs = hb.interval_ms;
+      }
+      if (typeof hb.broadcast_port === 'number' && hb.broadcast_port > 0 && hb.broadcast_port <= 65535) {
+        this.serverBroadcastPort = hb.broadcast_port;
+      } else {
+        this.serverBroadcastPort = this.actuatorPort;
+      }
+      if (typeof hb.broadcast_ip === 'string' && hb.broadcast_ip.length > 0) {
+        this.serverBroadcastIP = hb.broadcast_ip;
+        if (this.serverBroadcastIP === '205.255.255.255') {
+          this.serverBroadcastIP = '255.255.255.255';
+        }
+      }
+      console.log(
+        `📡 Server heartbeat config reloaded: interval=${this.serverHeartbeatIntervalMs} ms, ` +
+        `broadcast=${this.serverBroadcastIP}:${this.serverBroadcastPort}`,
+      );
+    } catch (err) {
+      console.warn('⚠️ Failed to reload server_heartbeat config; keeping existing values:', err);
+    }
+  }
+
+  private restartServerHeartbeatTimer(): void {
+    // Only restart if the update loop already created the timer.
+    if (!this.serverHeartbeatTimer) return;
+    try {
+      clearInterval(this.serverHeartbeatTimer);
+    } catch { /* ignore */ }
+    this.serverHeartbeatTimer = setInterval(() => {
+      this.sendServerHeartbeatUDP();
+    }, this.serverHeartbeatIntervalMs);
+  }
+
+  private applyControllerConfig(config: any): void {
+    const controllerConfig = config.controller || {};
+    this.USE_CPP_CONTROLLER = !!controllerConfig.use_cpp_controller || process.env.USE_CPP_CONTROLLER === 'true';
+
+    this.CONTROLLER_LOOP_INTERVAL_MS = controllerConfig.controller_loop_hz
+      ? Math.round(1000 / controllerConfig.controller_loop_hz)
+      : 100;
+    this.PWM_DURATION_MS = controllerConfig.pwm_duration_ms || 10000;
+    this.PWM_FREQUENCY_HZ = controllerConfig.pwm_frequency_hz || 10;
+    this.FALLBACK_FUEL_DUTY = controllerConfig.fallback_fuel_duty_cycle ?? 0.1;
+    this.FALLBACK_OX_DUTY = controllerConfig.fallback_ox_duty_cycle ?? 0.1;
+    this.DUTY_SWEEP_ENABLED = !!controllerConfig.duty_sweep_enabled;
+    this.DUTY_SWEEP_STEP_DURATION_MS = Math.round((controllerConfig.duty_sweep_step_duration_sec ?? 2) * 1000);
+
+    const rawSteps = controllerConfig.duty_sweep_steps;
+    if (Array.isArray(rawSteps) && rawSteps.length > 0) {
+      this.DUTY_SWEEP_STEPS = rawSteps.map((s: unknown) => {
+        const a = Array.isArray(s) ? s : [0.1, 0.1];
+        return [
+          Math.max(0, Math.min(1, Number(a[0]) ?? 0.1)),
+          Math.max(0, Math.min(1, Number(a[1]) ?? 0.1)),
+        ] as [number, number];
+      });
+    } else {
+      this.DUTY_SWEEP_STEPS = [[0.1, 0.1], [0.3, 0.2], [0.5, 0.4], [0.3, 0.3], [0.1, 0.1]];
+    }
+
+    this.controllerCommand = {
+      command_type: (controllerConfig.command_type || 'THRUST_DESIRED') as any,
+      thrust_desired: controllerConfig.thrust_desired ?? 1000,
+      altitude_goal: controllerConfig.altitude_goal ?? 0,
+      P_fuel_target: controllerConfig.pressure_fuel_target ?? 0,
+      P_ox_target: controllerConfig.pressure_ox_target ?? 0,
+    };
+
+    const controllerUrl = process.env.CONTROLLER_URL || controllerConfig.controller_service_url || 'http://localhost:8000';
+    this.controllerConfigPath = controllerConfig.controller_config_path || undefined;
+
+    if (this.USE_CPP_CONTROLLER) {
+      this.controllerClient = null;
+      console.log('🎯 Controller config reloaded: using C++ controller service; ControllerClient disabled');
+      return;
+    }
+
+    // (Re)initialize client if missing; creating a fresh client on each reload is cheap.
+    this.controllerClient = new ControllerClient(controllerUrl);
+    console.log(`🎯 Controller config reloaded: client=${controllerUrl}` + (this.controllerConfigPath ? ` (config: ${this.controllerConfigPath})` : ''));
+  }
+
+  private applyPhase2Config(config: any): void {
+    if (!this.phase2Engine) return;
+    try {
+      const phase2Config = config.phase2;
+      if (!phase2Config) return;
+      if (phase2Config.drift_threshold !== undefined) this.phase2Engine.setDriftThreshold(phase2Config.drift_threshold);
+      if (phase2Config.process_noise !== undefined) this.phase2Engine.setProcessNoise(phase2Config.process_noise);
+      if (phase2Config.ema_smoothing_alpha !== undefined) this.phase2Engine.setEMASmoothingAlpha(phase2Config.ema_smoothing_alpha);
+      if (phase2Config.consensus_threshold_psi !== undefined) this.phase2Engine.setConsensusThreshold(phase2Config.consensus_threshold_psi);
+      if (phase2Config.consensus_update_rate !== undefined) this.phase2Engine.setConsensusUpdateRate(phase2Config.consensus_update_rate);
+
+      // Only enable internal Phase2 if sidecar is not enabled.
+      if (!config.calibration?.sidecar?.enabled && phase2Config.enabled !== undefined) {
+        this.phase2Engine.setEnabled(!!phase2Config.enabled);
+      }
+    } catch (err) {
+      console.warn('⚠️ Failed to apply Phase2 config during reload; keeping existing values:', err);
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Elodin setup
   // ═══════════════════════════════════════════════════════════════════════════
@@ -578,10 +766,10 @@ class SensorSystemServer {
         const ip = ipFromConfig || `192.168.2.${id}`;
 
         const designatedSurvivor: boolean = !!board.designated_survivor && type === 'ACTUATOR';
-
         const activeConnectors: number[] = Array.isArray(board.active_connectors)
           ? board.active_connectors.filter((c: unknown): c is number => typeof c === 'number')
           : [];
+
         const entry = {
           type,
           boardNumber,
@@ -635,9 +823,8 @@ class SensorSystemServer {
           for (const [, conn] of Object.entries(sensorRolesPt2)) {
             const connector = Number(conn);
             if (connector >= 1 && connector <= 10) {
-              const ch = connector + chOffset;
-              // packet low byte IS ch directly — no +1 offset
-              this.packetLowToUniqueId.set(ch, boardId * 100 + ch);
+              const packetCh = connector + chOffset;
+              this.packetLowToUniqueId.set(packetCh, boardId * 100 + connector);
             }
           }
         }
@@ -1148,7 +1335,7 @@ class SensorSystemServer {
   // ═══════════════════════════════════════════════════════════════════════════
 
   private handleCommand(command: CommandPayload): void {
-    if (command.commandType === 'state_transition' && !this.elodin.isConnected()) {
+    if (command.commandType === 'state_transition' && !this.elodin.isConnected() && !this.debugMode) {
       console.error('❌ Cannot send state transition: Elodin not connected');
       this.broadcast({ type: MessageType.ERROR, timestamp: Date.now(), payload: { message: 'Elodin DB not connected', command } });
       return;
@@ -1172,7 +1359,9 @@ class SensorSystemServer {
           }
         }
 
-        const success = this.elodin.sendCommand('state_transition', { state: newState });
+        const success = this.elodin.isConnected()
+          ? this.elodin.sendCommand('state_transition', { state: newState })
+          : this.debugMode; // in debug mode without Elodin, allow local state update
         if (success) {
           if (newState === SystemState.ARMED && !this.dataLogger.running) this.dataLogger.start();
           else if ((newState === SystemState.IDLE || newState === SystemState.EMERGENCY_ABORT) && this.dataLogger.running) {
@@ -1226,7 +1415,7 @@ class SensorSystemServer {
           broadcastActuatorExpectedPositions(this, newState, STATE_ACTUATOR_MAP);
           if (newState === SystemState.FIRE) {
             if (!this.USE_CPP_CONTROLLER) {
-              startControllerLoop(this);
+              this.startFireSequence();
             } else {
               console.log('🎯 FIRE state entered – using C++ controller service; backend will not run controller loop or send PWM');
             }
@@ -1641,6 +1830,38 @@ class SensorSystemServer {
     });
   }
 
+  private async startFireSequence(): Promise<void> {
+    console.log('🎯 FIRE: starting atomic sequence (probe 0.1s → then valves + PWM)');
+    let controllerReady = false;
+    if (!this.USE_CPP_CONTROLLER && this.controllerClient) {
+      console.log('🎯 FIRE: probing controller service (0.1s timeout)...');
+      controllerReady = await this.controllerClient.initializeWithTimeout(100, this.controllerConfigPath);
+      console.log(controllerReady
+        ? '✅ FIRE: controller ready — closed-loop PWM'
+        : '⚠️  FIRE: controller unavailable — fallback duties');
+    }
+
+    if (this.currentState !== SystemState.FIRE) {
+      console.log('⚠️  FIRE sequence aborted — state changed during controller probe');
+      return;
+    }
+
+    this.manuallyCommandedChannels.clear();
+    applyActuatorsForState(this, SystemState.FIRE, STATE_ACTUATOR_MAP);
+    const fuelInfo = getActuatorBoardInfo(this, 'Fuel Press');
+    const loxInfo = getActuatorBoardInfo(this, 'LOX Press');
+    if (fuelInfo) this.manuallyCommandedChannels.add(`${fuelInfo.channel}@${fuelInfo.boardIp}`);
+    if (loxInfo) this.manuallyCommandedChannels.add(`${loxInfo.channel}@${loxInfo.boardIp}`);
+    startContinuousActuatorCommands(this, SystemState.FIRE, STATE_ACTUATOR_MAP);
+    broadcastActuatorExpectedPositions(this, SystemState.FIRE, STATE_ACTUATOR_MAP);
+
+    if (!this.USE_CPP_CONTROLLER) {
+      startControllerLoop(this, controllerReady);
+    } else {
+      console.log('🎯 FIRE: using C++ controller service; backend will not send PWM');
+    }
+  }
+
   private async syncSidecarCoefficients(): Promise<void> {
     if (!this.calibrationSidecar || !this.calibrationSidecar.enabled) return;
     try {
@@ -2003,7 +2224,8 @@ class SensorSystemServer {
 const server = new SensorSystemServer();
 startAPIServer(
   () => (server as any).queryClient || null,
-  () => server.getDebugInfo()
+  () => server.getDebugInfo(),
+  () => server.reloadConfig()
 );
 
 process.on('SIGINT', () => { console.log('\n🛑 Shutting down server...'); server.shutdown(); process.exit(0); });

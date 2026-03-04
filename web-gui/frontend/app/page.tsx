@@ -7,6 +7,7 @@ import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate, MissionStartTime, CommandPayload, BoardStatus, BoardStatusPayload, NotificationPayload } from '@/lib/types';
 import WindowLauncher from '@/components/windows/WindowLauncher';
 import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
+import { useControlMode } from '@/lib/control-mode';
 
 // ── Sensor value card ────────────────────────────────────────────────────────
 interface SensorCardProps {
@@ -104,6 +105,7 @@ export default function Home() {
   const updateNotification = useSensorStore((state) => state.updateNotification);
   const boardsMap = useSensorStore((state) => state.boards as Record<number, BoardStatus>);
   const ws = getWebSocketClient();
+  const { controlEnabled } = useControlMode();
 
   const boards = useMemo(() => {
     const map = boardsMap ?? {};
@@ -159,15 +161,17 @@ export default function Home() {
           <SectionHeader color="bg-red-500">Safety</SectionHeader>
           <button
             type="button"
-            disabled={!hasAbortDoneBoard}
+            disabled={!hasAbortDoneBoard || !controlEnabled}
             onClick={() => {
+              if (!controlEnabled) return;
               const cmd: CommandPayload = {
                 commandType: 'clear_abort',
                 data: {},
               };
               ws.sendCommand(cmd);
             }}
-            className={`px-4 py-1.5 rounded-md text-sm font-semibold border transition-colors ${hasAbortDoneBoard
+            className={`px-4 py-1.5 rounded-md text-sm font-semibold border transition-colors ${
+              hasAbortDoneBoard && controlEnabled
                 ? 'border-red-500 text-red-200 bg-red-900/40 hover:bg-red-800/60'
                 : 'border-gray-700 text-gray-500 bg-gray-900/40 cursor-not-allowed'
               }`}

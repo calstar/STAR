@@ -23,6 +23,8 @@ import UnifiedDashboardPage from '@/app/window/unified/page';
 import BoardsPage from '@/app/boards/page';
 import LCS_TCS_RTDPage from '@/app/plots/lcs-tcs-rtd/page';
 import ChamberGraphsPage from '@/app/plots/chamber/page';
+import SensorInfoPage from '@/app/sensor-info/page';
+import MobileGUIPage from '@/app/window/mobile-gui/page';
 
 const viewComponents: Record<string, React.ComponentType> = {
   fuel: FuelGraphsPage,
@@ -39,6 +41,8 @@ const viewComponents: Record<string, React.ComponentType> = {
   unified: UnifiedDashboardPage,
   'lcs-tcs-rtd': LCS_TCS_RTDPage,
   chamber: ChamberGraphsPage,
+  'sensor-info': SensorInfoPage,
+  'mobile-gui': MobileGUIPage,
 };
 
 export default function WindowViewPage() {

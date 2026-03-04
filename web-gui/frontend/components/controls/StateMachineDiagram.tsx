@@ -4,6 +4,7 @@ import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { SystemState, CommandPayload } from '@/lib/types';
 import { useEffect, useState, useMemo } from 'react';
+import { useControlMode } from '@/lib/control-mode';
 
 const STATE_NAMES: Record<SystemState, string> = {
   [SystemState.DEBUG]: 'DEBUG',
@@ -267,8 +268,10 @@ function StateNode({
 
 export default function StateMachineDiagram() {
   const currentState = useSensorStore((s) => s.currentState);
+  const updateState = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
   const [backendTransitions, setBackendTransitions] = useState<Transition[]>([]);
+  const { controlEnabled } = useControlMode();
 
   // Request transitions from backend on mount; fall back to STATIC_TRANSITIONS if unavailable
   useEffect(() => {
@@ -311,6 +314,7 @@ export default function StateMachineDiagram() {
   const transitions = backendTransitions.length > 0 ? backendTransitions : STATIC_TRANSITIONS;
 
   const sendStateTransition = (targetState: SystemState) => {
+    if (!controlEnabled) return;
     const effectiveState = currentState ?? SystemState.IDLE;
     const isAllowed = transitions.some(t => t.from === effectiveState && t.to === targetState);
     const isEmergency = ALWAYS_REACHABLE.includes(targetState);
@@ -322,6 +326,8 @@ export default function StateMachineDiagram() {
       alert(`Invalid transition: Cannot go from ${STATE_NAMES[effectiveState]} to ${STATE_NAMES[targetState]}`);
       return;
     }
+
+    updateState({ currentState: targetState, stateName: STATE_NAMES[targetState], timestamp: Date.now() });
 
     const command: CommandPayload = {
       commandType: 'state_transition',
@@ -377,9 +383,9 @@ export default function StateMachineDiagram() {
 
   return (
     <div className="bg-card rounded-xl border border-gray-800 overflow-hidden flex flex-col h-full min-h-0">
-      <div className="px-6 py-5 border-b border-gray-800 flex items-center justify-between flex-shrink-0">
-        <h2 className="text-lg font-bold tracking-widest text-text-muted uppercase">State Machine</h2>
-        <span className="text-sm font-mono">
+      <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between flex-shrink-0">
+        <h2 className="text-[11px] font-bold tracking-widest text-text-muted uppercase">State Machine</h2>
+        <span className="text-xs font-mono">
           <span className="text-text-muted">CURRENT: </span>
           <span className="text-blue-400 font-bold">{STATE_NAMES[effectiveState]}</span>
         </span>
@@ -457,49 +463,13 @@ export default function StateMachineDiagram() {
               key={state}
               state={state}
               isActive={effectiveState === state}
-              isReachable={reachableStates.has(state)}
+              isReachable={controlEnabled && reachableStates.has(state)}
               onClick={() => sendStateTransition(state)}
             />
           ))}
         </svg>
       </div>
 
-      {/* Legend */}
-      <div className="px-6 py-4 border-t border-gray-800 flex flex-wrap gap-5 text-sm flex-shrink-0">
-        <span className="flex items-center gap-2">
-          <span className="w-5 h-4 rounded-sm inline-block" style={{ background: '#2563EB', border: '2px solid #60A5FA' }} />
-          <span className="text-text-muted font-semibold">Current</span>
-        </span>
-        <span className="flex items-center gap-2">
-          <span className="w-5 h-4 rounded-sm inline-block" style={{ background: '#059669', border: '2px solid #34D399' }} />
-          <span className="text-text-muted font-semibold">Reachable (click)</span>
-        </span>
-        <span className="flex items-center gap-2">
-          <span className="w-5 h-4 rounded-sm inline-block" style={{ background: '#7F1D1D', border: '2px solid #EF4444' }} />
-          <span className="text-text-muted font-semibold">Emergency (always active)</span>
-        </span>
-        <span className="flex items-center gap-3">
-          <svg width="36" height="12" style={{ display: 'inline-block' }}>
-            <line x1="0" y1="6" x2="28" y2="6" stroke="#34D399" strokeWidth="2.5" markerEnd="url(#arr-green)" />
-            <polygon points="28,3 36,6 28,9" fill="#34D399" />
-          </svg>
-          <span className="text-text-muted font-semibold">Next state</span>
-        </span>
-        <span className="flex items-center gap-3">
-          <svg width="36" height="12" style={{ display: 'inline-block' }}>
-            <line x1="0" y1="6" x2="28" y2="6" stroke="#60A5FA" strokeWidth="2" strokeDasharray="5 3" markerEnd="url(#arr-blue)" />
-            <polygon points="28,3 36,6 28,9" fill="#60A5FA" />
-          </svg>
-          <span className="text-text-muted font-semibold">Return path</span>
-        </span>
-        <span className="flex items-center gap-3">
-          <svg width="36" height="12" style={{ display: 'inline-block' }}>
-            <line x1="0" y1="6" x2="28" y2="6" stroke="#EF4444" strokeWidth="2.5" strokeDasharray="6 4" />
-            <polygon points="28,3 36,6 28,9" fill="#EF4444" />
-          </svg>
-          <span className="text-text-muted font-semibold">Emergency</span>
-        </span>
-      </div>
     </div>
   );
 }

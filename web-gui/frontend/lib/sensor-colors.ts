@@ -5,32 +5,31 @@
 
 export const ENTITY_COLORS: Record<string, string> = {
   // Named calibrated PT entities
-  'PT_Cal.GN2_Regulated': '#27AE60',
-  'PT_Cal.Fuel_Upstream': '#3498DB',
-  'PT_Cal.Fuel_Downstream': '#2980B9',
-  'PT_Cal.Ox_Upstream': '#E74C3C',
-  'PT_Cal.Ox_Downstream': '#C0392B',
-  'PT_Cal.GSE_Low': '#F39C12',
+  'PT_Cal.GN2_High': '#32CD32',
+  'PT_Cal.GN2_Regulated': '#3CB371',
+  'PT_Cal.Fuel_Upstream': '#E67E22',
+  'PT_Cal.Fuel_Downstream': '#C0392B',
+  'PT_Cal.Ox_Upstream': '#5DADE2',
+  'PT_Cal.Ox_Downstream': '#2471A3',
+  'PT_Cal.GSE_Low': '#D7BDE2',
   'PT_Cal.GSE_Mid': '#9B59B6',
   'PT_Cal.GSE_High': '#8E44AD',
-  'PT_Cal.GN2_High': '#1ABC9C',
-  // Channel-to-logical mapping (same color as named role)
-  'PT_Cal.PT_CH1': '#3498DB',  // Fuel Upstream
-  'PT_Cal.PT_CH2': '#F39C12',  // GSE Low
-  'PT_Cal.PT_CH4': '#2980B9',  // Fuel Downstream
-  'PT_Cal.PT_CH5': '#E74C3C',  // Ox Upstream
-  'PT_Cal.PT_CH6': '#27AE60',  // GN2 Regulated
-  'PT_Cal.PT_CH7': '#C0392B',  // Ox Downstream
-  'PT_Cal.PT_CH8': '#8E44AD',  // GSE High
-  'PT_Cal.PT_CH9': '#1ABC9C',  // GN2 High
+  'PT_Cal.PT_CH1': '#E67E22',
+  'PT_Cal.PT_CH2': '#D7BDE2',
+  'PT_Cal.PT_CH4': '#C0392B',
+  'PT_Cal.PT_CH5': '#5DADE2',
+  'PT_Cal.PT_CH6': '#3CB371',
+  'PT_Cal.PT_CH7': '#2471A3',
+  'PT_Cal.PT_CH8': '#8E44AD',
+  'PT_Cal.PT_CH9': '#32CD32',
   'PT_Cal.PT_CH10': '#16A085',
   // Raw PT channels (same color as calibrated role for consistency)
-  'PT.PT_CH1': '#3498DB', 'PT.PT_CH2': '#F39C12', 'PT.PT_CH3': '#9B59B6', 'PT.PT_CH4': '#2980B9',
-  'PT.PT_CH5': '#E74C3C', 'PT.PT_CH6': '#27AE60', 'PT.PT_CH7': '#C0392B', 'PT.PT_CH8': '#8E44AD',
-  'PT.PT_CH9': '#1ABC9C', 'PT.PT_CH10': '#16A085',
+  'PT.PT_CH1': '#E67E22', 'PT.PT_CH2': '#D7BDE2', 'PT.PT_CH3': '#9B59B6', 'PT.PT_CH4': '#C0392B',
+  'PT.PT_CH5': '#5DADE2', 'PT.PT_CH6': '#3CB371', 'PT.PT_CH7': '#2471A3', 'PT.PT_CH8': '#8E44AD',
+  'PT.PT_CH9': '#32CD32', 'PT.PT_CH10': '#16A085',
   // Controller duty cycle (match Fuel / LOX)
-  'CONTROLLER.Fuel': '#3498DB',
-  'CONTROLLER.Ox': '#E74C3C',
+  'CONTROLLER.Fuel': '#E67E22',
+  'CONTROLLER.Ox': '#5DADE2',
 };
 
 const HASH_PALETTE = ['#3498DB', '#E74C3C', '#27AE60', '#F39C12', '#9B59B6', '#1ABC9C', '#E67E22', '#34495E', '#16A085', '#C0392B', '#8E44AD', '#2980B9', '#D35400', '#F1C40F', '#D35400', '#2C3E50'];
@@ -49,15 +48,15 @@ export function getEntityColor(entity: string): string {
 }
 
 export const PRESSURE_SENSORS = [
-  { label: 'GN2 Regulated', entity: 'PT_Cal.GN2_Regulated', component: 'pressure_psi' as const, color: '#27AE60', nop: 900, meop: 950 },
-  { label: 'Fuel Upstream', entity: 'PT_Cal.Fuel_Upstream', component: 'pressure_psi' as const, color: '#3498DB', nop: 600, meop: 650 },
-  { label: 'Fuel Downstream', entity: 'PT_Cal.Fuel_Downstream', component: 'pressure_psi' as const, color: '#2980B9', nop: 600, meop: 650 },
-  { label: 'LOX Upstream', entity: 'PT_Cal.Ox_Upstream', component: 'pressure_psi' as const, color: '#E74C3C', nop: 600, meop: 650 },
-  { label: 'LOX Downstream', entity: 'PT_Cal.Ox_Downstream', component: 'pressure_psi' as const, color: '#C0392B', nop: 600, meop: 650 },
-  { label: 'GSE Low', entity: 'PT_Cal.GSE_Low', component: 'pressure_psi' as const, color: '#F39C12', nop: 500, meop: 700 },
+  { label: 'GN2 High', entity: 'PT_Cal.GN2_High', component: 'pressure_psi' as const, color: '#32CD32', nop: 900, meop: 950 },
+  { label: 'GN2 Regulated', entity: 'PT_Cal.GN2_Regulated', component: 'pressure_psi' as const, color: '#3CB371', nop: 900, meop: 950 },
+  { label: 'Fuel Upstream', entity: 'PT_Cal.Fuel_Upstream', component: 'pressure_psi' as const, color: '#E67E22', nop: 600, meop: 650 },
+  { label: 'Fuel Downstream', entity: 'PT_Cal.Fuel_Downstream', component: 'pressure_psi' as const, color: '#C0392B', nop: 600, meop: 650 },
+  { label: 'LOX Upstream', entity: 'PT_Cal.Ox_Upstream', component: 'pressure_psi' as const, color: '#5DADE2', nop: 600, meop: 650 },
+  { label: 'LOX Downstream', entity: 'PT_Cal.Ox_Downstream', component: 'pressure_psi' as const, color: '#2471A3', nop: 600, meop: 650 },
+  { label: 'GSE Low', entity: 'PT_Cal.GSE_Low', component: 'pressure_psi' as const, color: '#D7BDE2', nop: 500, meop: 700 },
   { label: 'GSE MID', entity: 'PT_Cal.GSE_Mid', component: 'pressure_psi' as const, color: '#9B59B6', nop: 4000, meop: 4500 },
   { label: 'GSE High', entity: 'PT_Cal.GSE_High', component: 'pressure_psi' as const, color: '#8E44AD', nop: 500, meop: 700 },
-  { label: 'GN2 High', entity: 'PT_Cal.GN2_High', component: 'pressure_psi' as const, color: '#1ABC9C', nop: 900, meop: 950 },
 ] as const;
 
 /** For TopBar / compact lists: label + entity + color (and nop/meop where needed) */

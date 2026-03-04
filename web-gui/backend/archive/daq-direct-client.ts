@@ -60,7 +60,7 @@ export class DAQDirectClient extends EventEmitter {
   private actuatorBoardIPs: Set<string> = new Set<string>();
   private verbosePacketLogging: boolean = process.env.DAQ_PACKET_LOG === '1' || process.env.DAQ_PACKET_LOG === 'true';
   private verbosePacketLogEvery: number = Math.max(1, parseInt(process.env.DAQ_PACKET_LOG_EVERY || '1', 10) || 1);
-  private hptMonitorEnabled: boolean = process.env.DAQ_HPT_MONITOR !== '0';
+  private hptMonitorEnabled: boolean = process.env.DAQ_HPT_MONITOR === '1';
   private hptMonitorIP: string = process.env.DAQ_HPT_MONITOR_IP || '192.168.2.22';
   private hptMonitorEvery: number = Math.max(1, parseInt(process.env.DAQ_HPT_MONITOR_EVERY || '1', 10) || 1);
 
@@ -226,12 +226,6 @@ export class DAQDirectClient extends EventEmitter {
         });
       }
 
-      // Detailed logging for packet chunks/datapoints
-      if (shouldLog) {
-        console.log(`   Chunk ${chunkIdx + 1}/${numChunks}: timestamp=${chunkTimestamp}, ${datapoints.length} datapoints`);
-        console.log(`      Datapoints: ${datapoints.map(dp => `ID=${dp.sensor_id} ADC=${dp.data}`).join(', ')}`);
-      }
-
       chunks.push({
         timestamp: chunkTimestamp,
         datapoints,
@@ -337,19 +331,6 @@ export class DAQDirectClient extends EventEmitter {
         // source_ip is used to filter PT board vs actuator board
         this.emit('sensor_data', headerDict, chunks, sourceIP);
 
-        // Focused HPT monitor: compact packet summary for one board IP.
-        if (this.hptMonitorEnabled && sourceIP === this.hptMonitorIP) {
-          if (!(this as any).hptMonitorPacketCount) (this as any).hptMonitorPacketCount = 0;
-          (this as any).hptMonitorPacketCount++;
-          const hptCount = (this as any).hptMonitorPacketCount as number;
-          if (hptCount % this.hptMonitorEvery === 0) {
-            const chunkSummaries = chunks.map((chunk, idx) => {
-              const dp = chunk.datapoints.map(d => `ID=${d.sensor_id} ADC=${d.data}`).join(' | ');
-              return `chunk${idx + 1}@${chunk.timestamp}: ${dp}`;
-            }).join(' || ');
-            console.log(`🧪 HPT monitor ${sourceIP} pkt#${hptCount}: ${chunkSummaries}`);
-          }
-        }
       } else {
         // Log parse failures for debugging
         if (this.verbosePacketLogging || packetCount <= 5) {

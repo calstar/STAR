@@ -112,11 +112,8 @@ export default function LOXGraphsPage() {
             <ActuatorStatePanel
               title="LOX Actuators"
               actuators={[
-                { label: 'LOX Main', entity: 'ACT.LOX_Main', color: getActuatorColor('ACT.LOX_Main') },
                 { label: 'LOX Vent', entity: 'ACT.LOX_Vent', color: getActuatorColor('ACT.LOX_Vent') },
                 { label: 'LOX Press', entity: 'ACT.LOX_Press', color: getActuatorColor('ACT.LOX_Press') },
-                { label: 'LOX Fill', entity: 'ACT.LOX_Fill', color: getActuatorColor('ACT.LOX_Fill') },
-                { label: 'LOX Dump', entity: 'ACT.LOX_Dump', color: getActuatorColor('ACT.LOX_Dump') },
               ]}
             />
           </div>

@@ -297,8 +297,8 @@ active_connectors = []
 # If excitation_connector_id is -1, no dedicated excitation channel is required.
 # =============================================================================
 [sensor_roles_pt2]
-"GSE Mid"  = 1    # Connector 1 is GSE Mid (HP PT sensor)
-"GSE High" = 3    # Connector 3 is GSE High (HP PT sensor)
+"GSE High"  = 1    # Connector 1 is GSE Mid (HP PT sensor)
+"GSE Mid" = 3    # Connector 3 is GSE High (HP PT sensor)
 "GN2 High" = 4    # Connector 4 is GN2 High (HP PT sensor)
 # Connector 2 currently unused
 
@@ -311,7 +311,7 @@ active_connectors = []
 # =============================================================================
 [actuator_roles]
 # Actuator Board #1 → board_id 12 (names match state_machine_actuators.csv)
-"LOX Main"               = ["NO", 1, 12]
+"LOX Main"               = ["NC", 1, 12]
 "Fuel Vent"             = ["NC", 2, 12]
 "Fuel Press"            = ["NC", 3, 12]
 "Fuel Main"             = ["NC", 7, 12]

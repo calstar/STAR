@@ -6,8 +6,7 @@
  */
 
 import { useEffect, useState } from 'react';
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8082';
+import { getApiBaseUrl } from './websocket';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -37,7 +36,7 @@ export async function fetchPressureLimits(): Promise<PressureLimitsMap> {
     if (_cache !== null) return _cache;
     if (_fetchPromise) return _fetchPromise;
 
-    _fetchPromise = fetch(`${API_BASE_URL}/api/pressure-limits`)
+    _fetchPromise = fetch(`${getApiBaseUrl()}/api/pressure-limits`)
         .then((res) => {
             if (!res.ok) throw new Error(`pressure-limits fetch failed: ${res.status}`);
             return res.json();

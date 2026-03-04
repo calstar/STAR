@@ -38,12 +38,12 @@ max_sensors = 254
 port = 5005
 
 [board_4]
-active_sensors = 127
+active_sensors = 0
 board_id = 0x1075
 board_type = 4
 ip = 192.168.2.51
 mac_address = "d0:4d:2b:19:04:33"
-max_sensors = 254
+max_sensors = 0
 port = 5005
 
 [board_5]
@@ -69,4 +69,3 @@ port = 5005
 [network]
 
 [sensors]
-

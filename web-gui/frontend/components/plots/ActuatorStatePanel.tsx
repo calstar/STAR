@@ -110,6 +110,7 @@ function ActuatorRow({ label, entity, color, expected }: ActuatorRowProps) {
   const mismatch = commandedExpected !== null && (hasData || globalActual !== null) && (
     (commandedExpected === 'open' && !isOpen) || (commandedExpected === 'closed' && isOpen)
   );
+  const showMismatch = false;
 
   return (
     <div className={`flex items-center justify-between rounded-xl px-5 py-4 transition-all duration-300 group ${mismatch ? 'bg-yellow-950/40 border border-yellow-600/50 shadow-[0_0_15px_rgba(202,138,4,0.15)]' : 'bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] hover:shadow-lg'

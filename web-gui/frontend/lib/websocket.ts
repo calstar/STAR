@@ -111,11 +111,7 @@ export class WebSocketClient {
     }
 
     try {
-      const API_BASE_URL = typeof window !== 'undefined' && window.location.hostname
-        ? `${window.location.protocol === 'https:' ? 'https:' : 'http:'}//${window.location.hostname}:8082`
-        : 'http://localhost:8082';
-
-      const res = await fetch(`${API_BASE_URL}/api/sensor-config`);
+      const res = await fetch(`${getApiBaseUrl()}/api/sensor-config`);
       if (res.ok) {
         const data = await res.json();
         data.sensors?.forEach((s: any) => {
@@ -124,7 +120,7 @@ export class WebSocketClient {
         });
       }
 
-      const cfgRes = await fetch(`${API_BASE_URL}/api/config`);
+      const cfgRes = await fetch(`${getApiBaseUrl()}/api/config`);
       if (cfgRes.ok) {
         const cfgData = await cfgRes.json();
         const actRoles = cfgData.config?.actuator_roles || {};
@@ -253,6 +249,17 @@ export class WebSocketClient {
 
 // Singleton instance
 let wsClient: WebSocketClient | null = null;
+
+export function getApiBaseUrl(): string {
+  if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  if (typeof window !== 'undefined' && window.location.hostname) {
+    const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+    return `${protocol}//${window.location.hostname}:8082`;
+  }
+  return 'http://localhost:8082';
+}
 
 // Auto-detect WebSocket URL based on current hostname
 function getWebSocketUrl(): string {

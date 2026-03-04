@@ -111,7 +111,8 @@ export interface DebugInfo {
 
 export function startAPIServer(
   getQueryClient?: () => ElodinQueryClient | null,
-  getDebugInfo?: () => DebugInfo | null
+  getDebugInfo?: () => DebugInfo | null,
+  onConfigUpdated?: () => void
 ): void {
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // CORS headers
@@ -144,6 +145,15 @@ export function startAPIServer(
             const { config } = JSON.parse(body);
             console.log(`📝 Received config save request`);
             writeConfig(config);
+            try {
+              if (onConfigUpdated) {
+                setImmediate(() => {
+                  try { onConfigUpdated(); } catch (e) { console.warn('⚠️ onConfigUpdated handler threw:', e); }
+                });
+              }
+            } catch (e) {
+              console.warn('⚠️ onConfigUpdated handler threw:', e);
+            }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true, message: 'Config saved successfully' }));
           } catch (error: any) {
