@@ -354,6 +354,7 @@ const STATE_TO_CSV_NAME: Record<string, string> = {
   GN2_HIGH_PRESS: 'GN2 High Press', GN2_HIGH_VENT: 'GN2 High Vent', CALIBRATE: 'Calibrate',
   READY: 'Ready', FIRE: 'Fire', VENT: 'Vent',
   ENGINE_ABORT: 'Engine Abort', GSE_ABORT: 'GSE Abort', EMERGENCY_ABORT: 'Emergency Abort',
+  ABORT: 'Emergency Abort',  // ABORT is a numeric alias for EMERGENCY_ABORT (19); reverse lookup may yield either
   DEBUG: 'Idle',  // CSV has no Debug column; use Idle so actuator_service doesn't error
 };
 

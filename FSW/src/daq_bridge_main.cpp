@@ -591,6 +591,9 @@ int main(int argc, char* argv[]) {
         }
         // Register CALIBRATED VTables (inline calibration — no separate service)
         fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names);
+        // Register BOARD HEARTBEAT VTables so [0x10, board_id] packets can be streamed
+        // by the relay to the backend for board connection state tracking.
+        fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, 64);
         // Drain any response from DB after registration; otherwise recv buffer fills and TABLE
         // writes stall after ~3s
         std::array<uint8_t, 4096> drain_buf;
@@ -712,6 +715,8 @@ int main(int argc, char* argv[]) {
                                   << std::endl;
                         fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_names,
                                                                      act_names);
+                        fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client,
+                                                                               64);
                     }
                 }
             }
