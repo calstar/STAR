@@ -168,27 +168,19 @@ export default function UnifiedDashboard() {
         {/* ── Right column: Actuators grid (top) + State machine (bottom) ───── */}
         <div className="flex-1 min-w-0 flex flex-col gap-3 overflow-hidden">
 
-          {/* Actuators in 4x4 grid — visually scaled like 80% browser zoom */}
-          <div className="bg-card rounded-xl border border-gray-800 p-3 overflow-auto flex-shrink-0" style={{ maxHeight: '40%' }}>
-            <div
-              style={{
-                transform: 'scale(0.8)',
-                transformOrigin: 'top left',
-                width: '125%',
-              }}
-            >
-              <h2 className="text-xs font-bold tracking-widest text-text-muted uppercase mb-2 leading-none">
-                Actuator Controls
-              </h2>
-              <div className="grid grid-cols-4 gap-2 auto-rows-fr">
-                {actuatorsFromConfig.map((a) =>
-                  a.id !== undefined ? (
-                    <ActuatorControl key={a.name} actuatorId={a.id} />
-                  ) : (
-                    <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
-                  )
-                )}
-              </div>
+          {/* Actuators in 4x4 grid — uses viewport-aware height instead of manual zoom scaling */}
+          <div className="bg-card rounded-xl border border-gray-800 p-3 overflow-auto flex-shrink-0 max-h-[45vh]">
+            <h2 className="text-xs font-bold tracking-widest text-text-muted uppercase mb-2 leading-none">
+              Actuator Controls
+            </h2>
+            <div className="grid grid-cols-4 gap-2 auto-rows-fr">
+              {actuatorsFromConfig.map((a) =>
+                a.id !== undefined ? (
+                  <ActuatorControl key={a.name} actuatorId={a.id} />
+                ) : (
+                  <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
+                )
+              )}
             </div>
           </div>
 

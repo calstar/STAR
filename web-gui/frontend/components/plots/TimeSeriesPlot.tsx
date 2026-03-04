@@ -533,7 +533,7 @@ export default function TimeSeriesPlot({
       <div className="flex items-center justify-end mb-1 px-1 flex-shrink-0">
         <div className="flex items-center gap-1.5 flex-shrink-0">
           <div className={`w-2 h-2 rounded-full ${actuallyConnected ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`} />
-          <span className="text-[11px] font-mono text-gray-500">{actuallyConnected ? 'Live' : 'No signal'}</span>
+          <span className="text-[10px] font-mono text-gray-500">{actuallyConnected ? 'Live' : 'No signal'}</span>
         </div>
       </div>
       {/* Chart container: measured by ResizeObserver. plotRef inside receives uPlot. */}
@@ -565,11 +565,17 @@ export default function TimeSeriesPlot({
       </div>
 
       {/* Legend */}
-      <div className="flex flex-wrap gap-x-5 gap-y-1.5 px-2 py-2 flex-shrink-0">
+      <div className="flex flex-wrap gap-x-3 gap-y-1 px-1.5 py-1.5 flex-shrink-0">
         {entities.map((e, i) => (
-          <div key={e} className="flex items-center gap-2.5 bg-black/20 px-2.5 py-1 rounded-md border border-white/5">
-            <span className="w-3.5 h-[3px] rounded-full inline-block" style={{ background: colors[i] || '#3498DB', boxShadow: `0 0 10px ${colors[i]}A0` }} />
-            <span className="text-sm font-semibold font-mono text-gray-300">
+          <div
+            key={e}
+            className="flex items-center gap-2 bg-black/20 px-2 py-0.5 rounded-md border border-white/5"
+          >
+            <span
+              className="w-3 h-[2px] rounded-full inline-block"
+              style={{ background: colors[i] || '#3498DB', boxShadow: `0 0 6px ${(colors[i] || '#3498DB')}80` }}
+            />
+            <span className="text-[10px] font-semibold font-mono text-gray-300">
               {labels?.[i] ?? e.split('.').pop() ?? e}
             </span>
           </div>

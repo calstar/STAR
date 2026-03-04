@@ -44,7 +44,10 @@ function ReactivePressureBar({ label, entity, nop, meop, color }: {
 }) {
   const value = useSensorValue(entity, 'pressure_psi');
   return (
-    <div className="min-w-0 h-full overflow-visible" style={{ width: '9%', maxWidth: 110, minWidth: 56 }}>
+    <div
+      className="min-w-0 h-full overflow-visible flex-1"
+      style={{ minWidth: '6%', maxWidth: '14%' }}
+    >
       <PressureBar
         label={label}
         value={value}
@@ -217,7 +220,10 @@ export default function TopBar() {
   };
 
   return (
-    <div className="bg-card border-b border-gray-800 select-none flex-shrink-0" style={{ height: 'clamp(72px, 12vh, 140px)', minHeight: 72 }}>
+    <div
+      className="bg-card border-b border-gray-800 select-none flex-shrink-0"
+      style={{ height: '20vh' }}
+    >
       <div className="flex items-stretch h-full px-4 gap-4 py-2">
 
         {/* Left: brand + connection + clock + countdown */}
@@ -233,7 +239,6 @@ export default function TopBar() {
           </div>
           <span className="text-xl font-mono text-gray-200 tabular-nums font-bold leading-tight">{clock}</span>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500 uppercase tracking-widest font-semibold">T−</span>
             <span className={`text-xl font-mono tabular-nums font-bold leading-tight ${countdownExpired ? 'text-red-400' : 'text-white'}`}>
               {countdown}
             </span>
@@ -261,58 +266,76 @@ export default function TopBar() {
 
         {/* Right: state + mode + abort (compact) */}
         <div className="flex items-center gap-4 sm:gap-6 flex-shrink-0 pl-4 border-l border-gray-800/60">
-          <div className="flex flex-col items-center gap-0.5 w-28">
-            <span className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">STATE</span>
-            <span className={`text-lg font-bold font-mono tracking-wider text-center leading-tight whitespace-normal ${stateColor}`}>
+          <div className="flex flex-col items-center gap-0.5 w-20">
+            <span className="text-[9px] text-gray-400 uppercase tracking-widest font-bold">STATE</span>
+            <span className={`text-sm font-bold font-mono tracking-wider text-center leading-tight whitespace-normal ${stateColor}`}>
               {currentStateName}
             </span>
           </div>
-          {/* Control lock + debug mode + aborts */}
+          {/* Control lock + debug mode stacked, plus aborts */}
           <div className="flex items-center gap-2 border-l border-gray-800/60 pl-2">
-            <div className="flex flex-col items-center gap-0.5">
-              <span className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold">CONTROL</span>
-              <div className="flex items-center gap-1">
-                <span
-                  className={`text-[11px] font-mono ${
-                    controlEnabled ? 'text-green-400' : 'text-gray-500'
-                  }`}
-                >
-                  {controlEnabled ? 'UNLOCKED' : 'VIEWER'}
-                </span>
-                {controlEnabled ? (
-                  <button
-                    onClick={() => {
+            <div className="flex flex-col items-stretch gap-1 relative">
+              <button
+                onClick={() => {
+                  if (!controlEnabled) return;
+                  const newDebugMode = !debugMode;
+                  setDebugMode(newDebugMode);
+                  const cmd: CommandPayload = {
+                    commandType: 'debug_mode',
+                    data: { debugMode: newDebugMode }
+                  };
+                  ws.sendCommand(cmd);
+                }}
+                disabled={!controlEnabled}
+                className={`px-2.5 py-1.5 rounded text-[11px] font-bold uppercase tracking-wider border transition-all text-center ${
+                  debugMode
+                    ? controlEnabled
+                      ? 'bg-yellow-800/60 border-yellow-600 text-yellow-300 shadow-[0_0_6px_rgba(234,179,8,0.3)]'
+                      : 'bg-yellow-900/40 border-yellow-800 text-yellow-700 cursor-not-allowed'
+                    : controlEnabled
+                      ? 'bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-500'
+                      : 'bg-gray-900 border-gray-800 text-gray-700 cursor-not-allowed'
+                }`}
+                title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+              >
+                {debugMode ? '🔓 DEBUG' : '🔒 SAFE'}
+              </button>
+
+              <div className="flex items-center">
+                <button
+                  onClick={() => {
+                    if (controlEnabled) {
                       lock();
                       setShowUnlockForm(false);
                       setPasswordInput('');
-                    }}
-                    className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wider border border-gray-700 bg-gray-900 hover:bg-gray-800"
-                  >
-                    Lock
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => setShowUnlockForm((v) => !v)}
-                    className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wider border border-gray-700 bg-gray-900 hover:bg-gray-800"
-                  >
-                    Unlock
-                  </button>
-                )}
+                    } else {
+                      setShowUnlockForm((v) => !v);
+                    }
+                  }}
+                  className={`w-28 justify-center px-3 py-1 rounded text-[10px] font-semibold uppercase tracking-wider border flex ${
+                    controlEnabled
+                      ? 'border-green-500 bg-green-900/40 text-green-300 hover:bg-green-800/60'
+                      : 'border-gray-700 bg-gray-900 text-gray-400 hover:bg-gray-800'
+                  }`}
+                >
+                  {controlEnabled ? 'CONTROLLER' : 'VIEWER'}
+                </button>
               </div>
+
               {!controlEnabled && showUnlockForm && (
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
                     unlock(passwordInput);
                   }}
-                  className="mt-1 flex flex-col gap-1"
+                  className="absolute top-full right-0 mt-1 flex flex-col gap-1 bg-background border border-gray-700 rounded px-2 py-2 shadow-lg z-20 w-56"
                 >
                   <input
                     type="password"
                     value={passwordInput}
                     onChange={(e) => setPasswordInput(e.target.value)}
                     placeholder="Control password"
-                    className="px-2 py-1 rounded bg-background border border-gray-700 text-[11px] text-white"
+                    className="px-2 py-1 rounded bg-black/60 border border-gray-700 text-[11px] text-white"
                   />
                   <button
                     type="submit"
@@ -330,37 +353,7 @@ export default function TopBar() {
               )}
             </div>
 
-            <div className="flex flex-col items-center gap-0.5 border-l border-gray-800/60 pl-2">
-              <span className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold">MODE</span>
-              <button
-                onClick={() => {
-                  if (!controlEnabled) return;
-                  const newDebugMode = !debugMode;
-                  setDebugMode(newDebugMode);
-                  const cmd: CommandPayload = {
-                    commandType: 'debug_mode',
-                    data: { debugMode: newDebugMode }
-                  };
-                  ws.sendCommand(cmd);
-                }}
-                disabled={!controlEnabled}
-                className={`px-2.5 py-1.5 rounded text-[11px] font-bold uppercase tracking-wider border transition-all ${
-                  debugMode
-                    ? controlEnabled
-                      ? 'bg-yellow-800/60 border-yellow-600 text-yellow-300 shadow-[0_0_6px_rgba(234,179,8,0.3)]'
-                      : 'bg-yellow-900/40 border-yellow-800 text-yellow-700 cursor-not-allowed'
-                    : controlEnabled
-                      ? 'bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-500'
-                      : 'bg-gray-900 border-gray-800 text-gray-700 cursor-not-allowed'
-                }`}
-                title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
-              >
-                {debugMode ? '🔓 DEBUG' : '🔒 SAFE'}
-              </button>
-            </div>
-
             <div className="flex flex-col gap-0.5 border-l border-gray-800/60 pl-2">
-              <span className="text-[10px] text-gray-500 uppercase tracking-widest font-semibold">ABORT</span>
               <div className="flex flex-col gap-0.5">
                 <button
                   onClick={handleEngineAbort}

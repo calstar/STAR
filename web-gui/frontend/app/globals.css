@@ -76,14 +76,14 @@ html {
 
 /* Legend inside uPlot – tighten it up */
 .u-legend {
-  font-size: 11px !important;
+  font-size: 9px !important;
   color: #a0a0a0 !important;
-  padding: 4px 0 0 !important;
+  padding: 2px 0 0 !important;
   font-family: 'Menlo', 'Consolas', monospace !important;
 }
 
 .u-legend .u-series {
-  padding: 0 8px 0 0 !important;
+  padding: 0 4px 0 0 !important;
 }
 
 /* Remove the uPlot title element — we render our own <h3> */

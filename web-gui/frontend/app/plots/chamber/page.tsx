@@ -69,7 +69,7 @@ export default function ChamberGraphsPage() {
 
             <div className="flex-1 min-h-0 flex flex-col gap-2">
                 {/* 3 columns of graphs side-by-side */}
-                <div className="flex-1 flex flex-row gap-2 min-h-0 min-w-0">
+                <div className="flex-[3] min-h-0 flex flex-row gap-2 min-w-0">
                     <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0">
                         <TimeSeriesPlot title="PT Pressures" entities={ptEntities} labels={ptLabels} component="pressure_psi" colors={ptColors} yLabel="Pressure (PSI)" />
                     </div>
@@ -81,7 +81,7 @@ export default function ChamberGraphsPage() {
                     </div>
                 </div>
 
-                <div className="flex-shrink-0">
+                <div className="flex-[1] min-h-[200px] flex-shrink-0 overflow-auto">
                     <ActuatorStatePanel
                         title="Chamber Actuators"
                         actuators={[

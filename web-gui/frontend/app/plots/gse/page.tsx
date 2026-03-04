@@ -156,9 +156,9 @@ export default function GSEGraphsPage() {
       {/* Body: chart + actuators + pressure bar */}
       <div className="flex-1 min-h-0 flex flex-row gap-2">
 
-        {/* Left: plot + actuators */}
+        {/* Left: plot + actuators (plot dominant) */}
         <div className="flex-1 flex flex-col gap-2 min-h-0 min-w-0">
-          <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0" style={{ minHeight: '280px' }}>
+          <div className="flex-[3] min-h-0 bg-card rounded-lg p-2 flex flex-col min-w-0">
             <TimeSeriesPlot
               key={activeTab}
               title={tab.label}
@@ -170,7 +170,7 @@ export default function GSEGraphsPage() {
             />
           </div>
 
-          <div className="flex-shrink-0">
+          <div className="flex-[1] min-h-[280px] flex-shrink-0 overflow-auto">
             <ActuatorStatePanel
               title={`${tab.label} Actuators`}
               actuators={tab.actuators.map((a) => ({ ...a, color: getActuatorColor(a.entity) }))}
@@ -178,8 +178,8 @@ export default function GSEGraphsPage() {
           </div>
         </div>
 
-        {/* Right: single pressure bar for active tab */}
-        <div className="w-36 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0 overflow-visible">
+        {/* Right: single pressure bar for active tab (narrower) */}
+        <div className="w-32 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0 overflow-visible">
           <div className="text-xs font-bold uppercase tracking-widest text-gray-400 text-center flex-shrink-0">
             Pressure
           </div>

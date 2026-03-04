@@ -12,7 +12,7 @@ interface WindowReference {
 export function useWindowManager() {
   const [windows, setWindows] = useState<Map<string, WindowReference>>(new Map());
 
-  const openWindow = (id: string, name: string, url: string, width: number = 1200, height: number = 800) => {
+  const openWindow = (id: string, name: string, url: string) => {
     // Check if window already exists
     const existing = windows.get(id);
     if (existing?.window && !existing.window.closed) {
@@ -21,18 +21,50 @@ export function useWindowManager() {
     }
 
     // Calculate position to avoid overlap - better grid layout
-    // Arrange in a 2x2 grid pattern with proper spacing
+    // Arrange in a 2x2 grid pattern with spacing that scales with the viewport
     const gridCols = 2;
     const gridRows = 2;
-    const offsetX = 50;
-    const offsetY = 50;
-    const spacingX = 50;
-    const spacingY = 50;
+
+    const viewportWidth =
+      typeof window !== 'undefined'
+        ? window.innerWidth || window.screen?.availWidth || 1920
+        : 1920;
+    const viewportHeight =
+      typeof window !== 'undefined'
+        ? window.innerHeight || window.screen?.availHeight || 1080
+        : 1080;
+
+    // Use a percentage of the available viewport so windows scale with screen size
+    const width = Math.round(viewportWidth * 0.8);
+    const height = Math.round(viewportHeight * 0.85);
+
+    const spacingX = Math.round(viewportWidth * 0.02);
+    const spacingY = Math.round(viewportHeight * 0.04);
+    const offsetX = spacingX;
+    const offsetY = spacingY;
 
     const col = windows.size % gridCols;
     const row = Math.floor(windows.size / gridCols) % gridRows;
-    const left = offsetX + col * (width + spacingX);
-    const top = offsetY + row * (height + spacingY);
+
+    const availWidth =
+      typeof window !== 'undefined'
+        ? window.screen?.availWidth || viewportWidth
+        : viewportWidth;
+    const availHeight =
+      typeof window !== 'undefined'
+        ? window.screen?.availHeight || viewportHeight
+        : viewportHeight;
+
+    let left = offsetX + col * (width + spacingX);
+    let top = offsetY + row * (height + spacingY);
+
+    // Ensure windows stay fully on-screen even on smaller displays
+    if (left + width > availWidth) {
+      left = Math.max(0, availWidth - width);
+    }
+    if (top + height > availHeight) {
+      top = Math.max(0, availHeight - height);
+    }
 
     try {
       // Ensure URL is absolute - use current origin

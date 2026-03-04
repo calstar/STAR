@@ -70,9 +70,9 @@ export default function FuelGraphsPage() {
 
       {/* Body: chart + sidebar */}
       <div className="flex-1 min-h-0 flex flex-row gap-2">
-        {/* Main chart + actuators */}
+        {/* Main chart + actuators (plot dominant, actuators reserved) */}
         <div className="flex-1 flex flex-col gap-2 min-h-0 min-w-0">
-          <div className="flex-1 bg-card rounded-lg p-2 flex flex-col min-h-0 min-w-0" style={{ minHeight: '300px' }}>
+          <div className="flex-[3] min-h-0 bg-card rounded-lg p-2 flex flex-col min-w-0">
             <TimeSeriesPlot
               title="FUEL Pressure (PSI)"
               entities={entities}
@@ -83,8 +83,8 @@ export default function FuelGraphsPage() {
             />
           </div>
 
-          {/* Actuators */}
-          <div className="flex-shrink-0">
+          {/* Actuators – reserved height so always visible */}
+          <div className="flex-[1] min-h-[220px] flex-shrink-0 overflow-auto">
             <ActuatorStatePanel
               title="Fuel Actuators"
               actuators={[
@@ -96,8 +96,8 @@ export default function FuelGraphsPage() {
           </div>
         </div>
 
-        {/* Pressure bars sidebar */}
-        <div className="w-52 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0 overflow-visible">
+        {/* Pressure bars sidebar – narrower */}
+        <div className="w-40 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0 overflow-visible">
           <div className="text-xs font-bold uppercase tracking-widest text-gray-400 text-center flex-shrink-0">
             Pressures
           </div>

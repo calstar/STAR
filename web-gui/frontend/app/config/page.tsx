@@ -1155,7 +1155,7 @@ export default function ConfigPage() {
                   setAdvancedText(e.target.value);
                   setAdvancedError(null);
                 }}
-                className="w-full h-[520px] px-3 py-2 bg-background border border-gray-700 rounded text-white font-mono text-xs"
+                className="w-full h-[60vh] min-h-[320px] max-h-[75vh] px-3 py-2 bg-background border border-gray-700 rounded text-white font-mono text-xs"
               />
               <div className="mt-4 flex gap-3">
                 <button

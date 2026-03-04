@@ -18,7 +18,7 @@ function WindowButton({ id, name, description, url, accent }: WindowButtonProps)
     <button
       onClick={(e) => {
         e.preventDefault();
-        const result = openWindow(id, name, url, 1400, 900);
+        const result = openWindow(id, name, url);
         if (!result) {
           console.warn(`[WindowLauncher] Failed to open ${name} - check popup blocker`);
         }

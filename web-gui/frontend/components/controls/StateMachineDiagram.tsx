@@ -41,9 +41,10 @@ const EXCLUDED_STATES = new Set([
 const NW = 320; // node width
 const NH = 115; // node height
 const COLS = 5; // Updated to accommodate 5 columns in row 2 and 3
-const COL_GAP = 380;
-const ROW_GAP = 165;
-const PAD = 40;
+const COL_GAP = 360;
+const ROW_GAP = 155;
+const PAD = 24;
+const ROW_COUNT = 6; // rows 0–5
 
 // Grid layout: [row, col] 0-based
 // IMPORTANT: All states from SystemState enum must be included here to appear in the diagram
@@ -376,25 +377,26 @@ export default function StateMachineDiagram() {
   ) as SystemState[];
 
   const svgW = PAD * 2 + COLS * COL_GAP;
-  const svgH = PAD * 2 + 6 * ROW_GAP; // 6 rows: 0-5 (IDLE, Armed/Fill, Press, Vent, Calibrate/Ready, Fire)
+  const svgH = PAD * 2 + ROW_COUNT * ROW_GAP; // rows 0-5 (IDLE, Armed/Fill, Press, Vent, Calibrate/Ready, Fire)
 
   // Offset (px) used to separate bidirectional arrow pairs
   const BIDIR_OFFSET = 14;
 
   return (
-    <div className="bg-card rounded-xl border border-gray-800 overflow-hidden flex flex-col h-full min-h-0">
-      <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between flex-shrink-0">
-        <h2 className="text-[11px] font-bold tracking-widest text-text-muted uppercase">State Machine</h2>
-        <span className="text-xs font-mono">
+    <div className="overflow-hidden flex flex-col h-full min-h-0">
+      <div className="px-3 py-1.5 border-b border-gray-800 flex items-center justify-between flex-shrink-0">
+        <h2 className="text-[10px] font-bold tracking-widest text-text-muted uppercase">State Machine</h2>
+        <span className="text-[10px] font-mono">
           <span className="text-text-muted">CURRENT: </span>
           <span className="text-blue-400 font-bold">{STATE_NAMES[effectiveState]}</span>
         </span>
       </div>
 
-      <div className="overflow-hidden bg-background min-h-0 flex-1 p-2">
+      <div className="overflow-hidden bg-background min-h-0 flex-1 p-1 flex flex-col">
         <svg viewBox={`0 0 ${svgW} ${svgH}`}
+          className="min-h-0 flex-1"
           style={{ display: 'block', width: '100%', height: '100%' }}
-          preserveAspectRatio="xMidYMid meet">
+          preserveAspectRatio="xMidYMin meet">
           <defs>
             <marker id="arr-green" markerWidth="14" markerHeight="14" refX="12" refY="5" orient="auto">
               <path d="M0,0 L14,5 L0,10 Z" fill="#34D399" />
@@ -406,6 +408,23 @@ export default function StateMachineDiagram() {
               <path d="M0,0 L14,5 L0,10 Z" fill="#60A5FA" />
             </marker>
           </defs>
+
+          {/* Row lanes to break up deadspace and group states */}
+          {Array.from({ length: ROW_COUNT }).map((_, rowIdx) => {
+            const laneY = PAD + rowIdx * ROW_GAP - 18;
+            const laneHeight = NH + 36;
+            return (
+              <rect
+                key={`lane-${rowIdx}`}
+                x={PAD - 16}
+                y={laneY}
+                width={svgW - 2 * (PAD - 16)}
+                height={laneHeight}
+                fill={rowIdx % 2 === 0 ? '#020617' : '#020617'}
+                opacity={rowIdx % 2 === 0 ? 0.35 : 0.2}
+              />
+            );
+          })}
 
           {/* Normal transition arrows from the current state - only show to reachable states that exist in diagram */}
           {forwardTransitions
@@ -470,40 +489,40 @@ export default function StateMachineDiagram() {
         </svg>
       </div>
 
-      {/* Legend */}
-      <div className="px-6 py-4 border-t border-gray-800 flex flex-wrap gap-5 text-sm flex-shrink-0">
-        <span className="flex items-center gap-2">
-          <span className="w-5 h-4 rounded-sm inline-block" style={{ background: '#2563EB', border: '2px solid #60A5FA' }} />
-          <span className="text-text-muted font-semibold">Current</span>
+      {/* Legend – ultra compact */}
+      <div className="px-2 py-1.5 border-t border-gray-800 flex flex-wrap gap-2 text-[9px] flex-shrink-0">
+        <span className="flex items-center gap-1">
+          <span className="w-3 h-2 rounded-sm inline-block" style={{ background: '#2563EB', border: '1px solid #60A5FA' }} />
+          <span className="text-text-muted">Current</span>
         </span>
-        <span className="flex items-center gap-2">
-          <span className="w-5 h-4 rounded-sm inline-block" style={{ background: '#059669', border: '2px solid #34D399' }} />
-          <span className="text-text-muted font-semibold">Reachable (click)</span>
+        <span className="flex items-center gap-1">
+          <span className="w-3 h-2 rounded-sm inline-block" style={{ background: '#059669', border: '1px solid #34D399' }} />
+          <span className="text-text-muted">Reachable</span>
         </span>
-        <span className="flex items-center gap-2">
-          <span className="w-5 h-4 rounded-sm inline-block" style={{ background: '#7F1D1D', border: '2px solid #EF4444' }} />
-          <span className="text-text-muted font-semibold">Emergency (always active)</span>
+        <span className="flex items-center gap-1">
+          <span className="w-3 h-2 rounded-sm inline-block" style={{ background: '#7F1D1D', border: '1px solid #EF4444' }} />
+          <span className="text-text-muted">Emergency</span>
         </span>
-        <span className="flex items-center gap-3">
-          <svg width="36" height="12" style={{ display: 'inline-block' }}>
-            <line x1="0" y1="6" x2="28" y2="6" stroke="#34D399" strokeWidth="2.5" />
-            <polygon points="28,3 36,6 28,9" fill="#34D399" />
+        <span className="flex items-center gap-1.5">
+          <svg width="18" height="6" style={{ display: 'inline-block' }}>
+            <line x1="0" y1="3" x2="14" y2="3" stroke="#34D399" strokeWidth="1.5" />
+            <polygon points="14,1 18,3 14,5" fill="#34D399" />
           </svg>
-          <span className="text-text-muted font-semibold">Next state</span>
+          <span className="text-text-muted">Next</span>
         </span>
-        <span className="flex items-center gap-3">
-          <svg width="36" height="12" style={{ display: 'inline-block' }}>
-            <line x1="0" y1="6" x2="28" y2="6" stroke="#60A5FA" strokeWidth="2" strokeDasharray="5 3" />
-            <polygon points="28,3 36,6 28,9" fill="#60A5FA" />
+        <span className="flex items-center gap-1.5">
+          <svg width="18" height="6" style={{ display: 'inline-block' }}>
+            <line x1="0" y1="3" x2="14" y2="3" stroke="#60A5FA" strokeWidth="1.25" strokeDasharray="4 2" />
+            <polygon points="14,1 18,3 14,5" fill="#60A5FA" />
           </svg>
-          <span className="text-text-muted font-semibold">Return path</span>
+          <span className="text-text-muted">Return</span>
         </span>
-        <span className="flex items-center gap-3">
-          <svg width="36" height="12" style={{ display: 'inline-block' }}>
-            <line x1="0" y1="6" x2="28" y2="6" stroke="#EF4444" strokeWidth="2.5" strokeDasharray="6 4" />
-            <polygon points="28,3 36,6 28,9" fill="#EF4444" />
+        <span className="flex items-center gap-1.5">
+          <svg width="18" height="6" style={{ display: 'inline-block' }}>
+            <line x1="0" y1="3" x2="14" y2="3" stroke="#EF4444" strokeWidth="1.5" strokeDasharray="4 2" />
+            <polygon points="14,1 18,3 14,5" fill="#EF4444" />
           </svg>
-          <span className="text-text-muted font-semibold">Emergency</span>
+          <span className="text-text-muted">Emergency</span>
         </span>
       </div>
 
