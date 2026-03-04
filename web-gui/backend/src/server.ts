@@ -61,12 +61,12 @@ import {
   sendActuatorCommandUDP,
   sendPWMActuatorCommandUDP,
   applyActuatorsForState,
-  forwardStateToActuatorService,
-  forwardActuatorToActuatorService,
   startContinuousActuatorCommands,
   stopContinuousActuatorCommands,
   sendActuatorExpectedPositionsToClient,
   broadcastActuatorExpectedPositions,
+  forwardStateToActuatorService,
+  forwardActuatorToActuatorService,
 } from './actuator-control.js';
 import { startControllerLoop, stopControllerLoop } from './controller-loop.js';
 import { handleCalibrationCommand } from './calibration-handler.js';
@@ -321,10 +321,13 @@ class SensorSystemServer {
     // Load board registry from config.toml for heartbeat tracking
     this.loadBoardRegistry();
 
-    // Use calibration_service calibrated only (no backend raw→psi). Set false to fallback to backend calibration.
-    this.USE_CALIBRATION_SERVICE_CALIBRATED = process.env.USE_CALIBRATION_SERVICE_CALIBRATED !== 'false';
+    // Use calibration_service calibrated only when explicitly enabled. Default: backend does raw→psi from ptCalibration.
+    // This ensures consistent calibrated values when calibration_service/sidecar differs from expected.
+    this.USE_CALIBRATION_SERVICE_CALIBRATED = process.env.USE_CALIBRATION_SERVICE_CALIBRATED === 'true';
     if (this.USE_CALIBRATION_SERVICE_CALIBRATED) {
       console.log('📐 Calibrated data from Elodin only (calibration_service) — backend raw→psi disabled');
+    } else {
+      console.log('📐 Backend calibration: raw ADC → PSI via ptCalibration (set USE_CALIBRATION_SERVICE_CALIBRATED=true for sidecar)');
     }
 
     // Load broadcast config from config.toml [server_heartbeat] — used for ABORT/CLEAR_ABORT UDP
@@ -1595,6 +1598,22 @@ class SensorSystemServer {
       // (Matches femboy: backend owns heartbeats; engine_state syncs with currentState)
       this.sendServerHeartbeatUDP();
 
+      // Demo mode: simulate heartbeats for configured boards so boards/notifications work without daq_bridge
+      if (process.env.DEMO_MODE === 'true' && this.demoMode?.isEnabled()) {
+        const now = Date.now();
+        const engineState = (this.currentState ?? SystemState.IDLE) as number;
+        this.boardsStatus.forEach((status, id) => {
+          if (status.expected) {
+            status.connected = true;
+            status.lastHeartbeatMs = now;
+            status.boardState = 2; // Active
+            status.engineState = engineState;
+            status.heartbeatTimes.push(now);
+            if (status.heartbeatTimes.length > 20) status.heartbeatTimes.shift();
+          }
+        });
+      }
+
       if (this.clients.size === 0) return;
       const snapshot = this.getBoardStatusSnapshot();
       if (snapshot.length === 0) return;
@@ -1606,7 +1625,6 @@ class SensorSystemServer {
 
       // ── Notification logic (same snapshot, so connected/boardState/engineState/expected are current)
       const now = Date.now();
-      const serverEngineState = this.currentState ?? SystemState.IDLE;
 
       for (const b of snapshot) {
         const id = b.id;
@@ -1662,19 +1680,6 @@ class SensorSystemServer {
           this.activeNotificationKeys.delete(unrecognizedKey);
         }
 
-        // Engine state mismatch (warning)
-        const engineMismatchKey = `engine_mismatch_${id}`;
-        const boardEngineState = b.engineState ?? -1;
-        const mismatch = connected && boardEngineState !== serverEngineState;
-        if (mismatch) {
-          if (!this.activeNotificationKeys.has(engineMismatchKey)) {
-            this.broadcastNotification({ key: engineMismatchKey, category: 'warning', message: `${label} engine state differs from server`, timestampMs: now, ongoing: true });
-            this.activeNotificationKeys.add(engineMismatchKey);
-          }
-        } else if (this.activeNotificationKeys.has(engineMismatchKey)) {
-          this.broadcastNotification({ key: engineMismatchKey, category: 'warning', message: `${label} engine state differs from server`, timestampMs: now, ongoing: false });
-          this.activeNotificationKeys.delete(engineMismatchKey);
-        }
       }
 
       // Persist previous connected state

@@ -1,7 +1,7 @@
 'use client'
 
 import { useSensorStore, useSensorValue } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
+import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { startDataCache } from '@/lib/data-cache';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, SensorUpdate, ActuatorUpdate, MessageType, NotificationPayload } from '@/lib/types';
@@ -34,6 +34,7 @@ const SHORT_LABELS: Record<string, string> = {
 };
 
 // Separate component for each pressure bar to properly use hooks
+// Dynamic width: ~9% each with max so bars scale with viewport
 function ReactivePressureBar({ label, entity, nop, meop, color }: {
   label: string;
   entity: string;
@@ -43,7 +44,7 @@ function ReactivePressureBar({ label, entity, nop, meop, color }: {
 }) {
   const value = useSensorValue(entity, 'pressure_psi');
   return (
-    <div className="flex-1 min-w-0 h-full overflow-hidden" style={{ maxWidth: 90 }}>
+    <div className="min-w-0 h-full overflow-visible" style={{ width: '9%', maxWidth: 110, minWidth: 56 }}>
       <PressureBar
         label={label}
         value={value}
@@ -55,14 +56,6 @@ function ReactivePressureBar({ label, entity, nop, meop, color }: {
 }
 
 type PressureBarDef = { label: string; entity: string; nop?: number; meop?: number; color: string };
-
-function inferSystemFromRole(role: string): 'GN2' | 'ETH' | 'LOX' | null {
-  const r = role.toLowerCase();
-  if (r.includes('gn2')) return 'GN2';
-  if (r.includes('fuel') || r.includes('eth')) return 'ETH';
-  if (r.includes('ox') || r.includes('lox')) return 'LOX';
-  return null;
-}
 
 export default function TopBar() {
   // Subscribe to sensor updates to ensure bar plots re-render when values change
@@ -92,36 +85,15 @@ export default function TopBar() {
   const ws = getWebSocketClient();
 
   const loadPressureBars = useCallback(() => {
-    Promise.allSettled([
-      fetch('/api/sensor-config').then((r) => (r.ok ? r.json() : null)),
-      fetch('/api/pressure-limits').then((r) => (r.ok ? r.json() : null)),
-    ]).then(([sensorRes, limitsRes]) => {
-      const sensors = sensorRes.status === 'fulfilled' ? (sensorRes.value?.sensors as any[] | undefined) : undefined;
-      const limits = limitsRes.status === 'fulfilled' ? (limitsRes.value?.pressure_limits as Record<string, any> | undefined) : undefined;
-      if (!Array.isArray(sensors) || sensors.length === 0) return;
-
-      const sorted = [...sensors].sort((a, b) => {
-        const ba = Number(a.boardId ?? 0);
-        const bb = Number(b.boardId ?? 0);
-        if (ba !== bb) return ba - bb;
-        return Number(a.id ?? 0) - Number(b.id ?? 0);
-      });
-
-      const bars: PressureBarDef[] = sorted
-        .map((s) => {
-          const role = String(s.role || '');
-          const entity = String(s.calEntity || s.entity || '');
-          const sys = inferSystemFromRole(role);
-          const nop = sys ? limits?.[sys]?.NOP : undefined;
-          const meop = sys ? limits?.[sys]?.MEOP : undefined;
-          const label = SHORT_LABELS[entity] ?? role ?? entity;
-          return { label, entity, nop, meop, color: getEntityColor(entity) };
-        })
-        .filter((b) => b.entity.startsWith('PT_Cal.'))
-        .slice(0, 10);
-
-      setPressureBars(bars);
-    }).catch(() => {});
+    // Use PRESSURE_BAR_SENSORS (femboy-style) so GN2 High and all canonical sensors always appear
+    const bars: PressureBarDef[] = PRESSURE_BAR_SENSORS.map((s) => ({
+      label: SHORT_LABELS[s.entity] ?? s.label,
+      entity: s.entity,
+      nop: s.nop,
+      meop: s.meop,
+      color: getEntityColor(s.entity),
+    }));
+    setPressureBars(bars);
   }, []);
 
   useEffect(() => {
@@ -206,12 +178,14 @@ export default function TopBar() {
 
   const effectivePressureBars = useMemo(() => {
     if (pressureBars.length > 0) return pressureBars;
-    // Fallback: keep UI stable even if /api/sensor-config is unavailable
-    return [
-      { label: 'GN2 REG', entity: 'PT_Cal.GN2_Regulated', color: getEntityColor('PT_Cal.GN2_Regulated') },
-      { label: 'FUEL UP', entity: 'PT_Cal.Fuel_Upstream', color: getEntityColor('PT_Cal.Fuel_Upstream') },
-      { label: 'LOX UP', entity: 'PT_Cal.Ox_Upstream', color: getEntityColor('PT_Cal.Ox_Upstream') },
-    ] as PressureBarDef[];
+    // Fallback before loadPressureBars runs (uses same list as PRESSURE_BAR_SENSORS)
+    return PRESSURE_BAR_SENSORS.map((s) => ({
+      label: SHORT_LABELS[s.entity] ?? s.label,
+      entity: s.entity,
+      nop: s.nop,
+      meop: s.meop,
+      color: getEntityColor(s.entity),
+    })) as PressureBarDef[];
   }, [pressureBars]);
 
   // Simple helper: send a single state-transition command
@@ -243,11 +217,11 @@ export default function TopBar() {
   };
 
   return (
-    <div className="bg-card border-b border-gray-800 select-none flex-shrink-0" style={{ minHeight: 64 }}>
-      <div className="flex items-stretch h-full px-3 gap-3 py-1.5">
+    <div className="bg-card border-b border-gray-800 select-none flex-shrink-0" style={{ height: 'clamp(72px, 12vh, 140px)', minHeight: 72 }}>
+      <div className="flex items-stretch h-full px-4 gap-4 py-2">
 
         {/* Left: brand + connection + clock + countdown */}
-        <div className="flex flex-col justify-center gap-0.5 flex-shrink-0 pr-4 border-r border-gray-800/60">
+        <div className="flex flex-col justify-center gap-1 flex-shrink-0 pr-6 border-r border-gray-800/60">
           <span className="text-2xl font-bold tracking-widest text-blue-400 uppercase leading-none">
             DIABLO DAQ
           </span>
@@ -271,8 +245,8 @@ export default function TopBar() {
           <NotificationPanel />
         </div>
 
-        {/* Center: pressure bars — fills remaining space */}
-        <div className="flex-1 flex items-stretch justify-end gap-2 py-1 pr-2 min-w-0 overflow-hidden">
+        {/* Center: pressure bars — dynamic spacing, scales with viewport */}
+        <div className="flex-1 flex items-stretch justify-center gap-4 sm:gap-6 lg:gap-8 py-1 pr-2 min-w-0 overflow-visible">
           {effectivePressureBars.map(({ label, entity, nop, meop, color }) => (
             <ReactivePressureBar
               key={entity}
@@ -286,7 +260,7 @@ export default function TopBar() {
         </div>
 
         {/* Right: state + mode + abort (compact) */}
-        <div className="flex items-center gap-2 flex-shrink-0 pl-2 border-l border-gray-800/60">
+        <div className="flex items-center gap-4 sm:gap-6 flex-shrink-0 pl-4 border-l border-gray-800/60">
           <div className="flex flex-col items-center gap-0.5 w-28">
             <span className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">STATE</span>
             <span className={`text-lg font-bold font-mono tracking-wider text-center leading-tight whitespace-normal ${stateColor}`}>
