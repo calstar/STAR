@@ -39,6 +39,7 @@ function main(): void {
 
   let tablePacketCount = 0;
   let resubscribeTimer: NodeJS.Timeout | null = null;
+  const MAX_RESUBSCRIBE_ATTEMPTS = parseInt(process.env.RELAY_MAX_RESUBSCRIBE_ATTEMPTS || '24', 10);
   // Track which high-byte packet ID groups have delivered at least one TABLE packet.
   // Groups: 0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC, 0x30=ACT, 0x31=ACT_STATE, 0x40=CTRL_ACT, 0x41=CTRL_DIAG, 0x42=CTRL_MEAS
   const seenHighBytes = new Set<number>();
@@ -47,6 +48,10 @@ function main(): void {
   // VTables that aren't registered yet, so retry until all expected groups flow.
   // daq_bridge VTables register in ~2s; controller VTables register a few seconds later.
   function scheduleResubscribe(attempt: number): void {
+    if (attempt > MAX_RESUBSCRIBE_ATTEMPTS) {
+      console.warn(`[Relay] Reached max resubscribe attempts (${MAX_RESUBSCRIBE_ATTEMPTS}); keeping current subscriptions.`);
+      return;
+    }
     if (resubscribeTimer) return;
     resubscribeTimer = setTimeout(() => {
       resubscribeTimer = null;

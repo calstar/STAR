@@ -51,13 +51,25 @@ size_t FrameToElodinMapper::map_and_publish(const daq_comms::protocol::SensorBat
         }
     }
 
-    // Route and publish RTD samples
-    auto rtd_messages = router_.route_rtd_samples(batch, timestamp_ns);
-    for (const auto& [table_id, msg] : rtd_messages) {
-        if (elodin_client_.publish(table_id, msg)) {
-            published++;
-        } else {
-            stats_.publish_failures++;
+    // Route and publish RTD samples (calibrated = temperature °C in packet when calibration loaded;
+    // else raw)
+    auto rtd_cal_messages = router_.route_rtd_samples_calibrated(batch, timestamp_ns);
+    if (!rtd_cal_messages.empty()) {
+        for (const auto& [table_id, msg] : rtd_cal_messages) {
+            if (elodin_client_.publish(table_id, msg)) {
+                published++;
+            } else {
+                stats_.publish_failures++;
+            }
+        }
+    } else {
+        auto rtd_messages = router_.route_rtd_samples(batch, timestamp_ns);
+        for (const auto& [table_id, msg] : rtd_messages) {
+            if (elodin_client_.publish(table_id, msg)) {
+                published++;
+            } else {
+                stats_.publish_failures++;
+            }
         }
     }
 

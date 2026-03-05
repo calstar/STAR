@@ -48,7 +48,7 @@ import {
 
 // ── Extracted modules ──────────────────────────────────────────────────────────
 import { Client, HpPtBoardConfig, WS_PORT, WS_HOST, ELODIN_HOST, ELODIN_PORT, ACTUATOR_CHANNEL_BY_NAME } from './server-types.js';
-import { loadSensorRoleMap, loadHpPtConfig, loadActuatorChannelToEntityMap, convertHpPtToPressure, loadTcBoardConfig, loadRtdBoardConfig, loadLcBoardConfig, rawRtdToTemperatureC } from './sensor-config.js';
+import { loadSensorRoleMap, loadHpPtConfig, loadActuatorChannelToEntityMap, convertHpPtToPressure, loadTcBoardConfig, loadRtdBoardConfig, loadLcBoardConfig } from './sensor-config.js';
 import {
   loadActuatorBoardMap,
   getActuatorBoardInfo,

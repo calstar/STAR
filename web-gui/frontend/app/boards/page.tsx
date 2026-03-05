@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo } from 'react';
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, BoardStatusPayload, BoardStatus, engineStateCodeToLabel } from '@/lib/types';
+import { MessageType, BoardStatusPayload, BoardStatus, engineStateCodeToLabel, CommandPayload } from '@/lib/types';
 
 function formatConfigSentAt(ms: number | undefined): string {
   if (ms == null) return '';
@@ -54,6 +54,11 @@ export default function BoardsPage() {
     });
   }, []);
 
+  const handleClearAbort = useCallback(() => {
+    const cmd: CommandPayload = { commandType: 'clear_abort', data: {} };
+    getWebSocketClient().sendCommand(cmd);
+  }, []);
+
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-auto p-8 md:p-10">
       <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
@@ -63,13 +68,22 @@ export default function BoardsPage() {
             Discovered boards and heartbeat status. Unexpected boards are highlighted.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleResendConfig}
-          className="min-h-[48px] px-8 py-3 text-lg font-bold rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity shadow-lg"
-        >
-          Resend config
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={handleClearAbort}
+            className="min-h-[48px] px-6 py-3 text-base font-bold rounded-lg border border-red-500/70 bg-red-950/40 text-red-200 hover:bg-red-900/50 transition-colors"
+          >
+            Clear ABORT
+          </button>
+          <button
+            type="button"
+            onClick={handleResendConfig}
+            className="min-h-[48px] px-8 py-3 text-lg font-bold rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity shadow-lg"
+          >
+            Resend config
+          </button>
+        </div>
       </div>
 
       {boards.length === 0 ? (

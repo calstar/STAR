@@ -15,7 +15,8 @@ if systemctl --user is-active --quiet sensor-backend.service 2>/dev/null; then
   exit 1
 fi
 
-ELODIN_DB_DIR="$HOME/.local/share/elodin/daq_live"
+DB_NAME="${ELODIN_DB_NAME:-daq_$(date +%Y%m%d_%H%M%S)}"
+ELODIN_DB_DIR="$HOME/.local/share/elodin/$DB_NAME"
 HAVE_EXISTING_DB=false
 pgrep -f "elodin-db run.*2240" >/dev/null 2>&1 && HAVE_EXISTING_DB=true
 [ -d "$ELODIN_DB_DIR" ] || [ -d "${ELODIN_DB_DIR}_metadata" ] && HAVE_EXISTING_DB=true
@@ -76,7 +77,7 @@ if [ ! -x "$ACTUATOR_BIN" ]; then
 fi
 CMD_ACTUATOR="printf '\n  ══ ACTUATOR SERVICE (TCP :9998 → state → UDP commands) ══\n\n' && sleep 3 && cd $PROJECT && exec $ACTUATOR_BIN --config config/config.toml --port 9998 2>&1"
 
-CMD_DB="printf '\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n' && mkdir -p $HOME/.local/share/elodin && RUST_LOG=debug exec $HOME/.cargo/bin/elodin-db run '[::]:2240' '$HOME/.local/share/elodin/daq_live'"
+CMD_DB="printf '\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n' && mkdir -p $HOME/.local/share/elodin && RUST_LOG=debug exec $HOME/.cargo/bin/elodin-db run '[::]:2240' '$ELODIN_DB_DIR'"
 # Relay must connect to DB FIRST (sleep 2s) — daq_bridge sleeps 5s so relay subscribes before any TABLE data flows.
 CMD_RELAY="printf '\n  ══ ELODIN RELAY — WS :9090 (DB → relay → services) ══\n\n' && sleep 2 && cd $PROJECT/web-gui/backend && npm run relay 2>&1"
 # Auto-detect whether the actuator_service binary is available for TCP forwarding.

@@ -873,9 +873,19 @@ int main(int argc, char* argv[]) {
                     rtd_batch.rtd_samples.push_back(rtd);
                 }
                 rtd_batch.pt_samples.clear();
+                // Publish RAW RTD samples (ADC counts echoed as raw_resistance_counts)
                 auto rtd_raw = router.route_rtd_samples(rtd_batch, receive_timestamp_ns);
                 if (publishing) {
                     for (const auto& [id, msg] : rtd_raw)
+                        if (is_publish_allowed(id[0], id[1], publish_ranges))
+                            elodin_client.publish(id, msg);
+                }
+                // Also publish CALIBRATED RTD samples (temperature °C) when calibration files
+                // exist. This produces RTD_Cal.CH* streams that the web backend/GUI read as
+                // `temperature_c`.
+                auto rtd_cal = router.route_rtd_samples_calibrated(rtd_batch, receive_timestamp_ns);
+                if (publishing) {
+                    for (const auto& [id, msg] : rtd_cal)
                         if (is_publish_allowed(id[0], id[1], publish_ranges))
                             elodin_client.publish(id, msg);
                 }
