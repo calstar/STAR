@@ -155,33 +155,34 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const showMismatch = false;
 
   return (
-    <div className={`rounded-md p-1 border transition-colors
+    <div className={`rounded-md p-1 border transition-colors h-full flex flex-col relative
       ${showMismatch && mismatch
         ? 'bg-yellow-950/40 border-yellow-600'
         : 'bg-background border-gray-700 hover:border-gray-600'}`}>
-      <div className="flex items-center justify-between mb-0.5">
-        <div className="flex items-center gap-1 min-w-0">
-          <h3 className="text-[10px] font-bold tracking-wider text-text uppercase leading-tight truncate">
-            {ACTUATOR_NAMES[actuatorId]}
-          </h3>
-          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
-          {pending && <span className="text-yellow-400 text-[9px] leading-none">⟳</span>}
-        </div>
+      <div className="absolute top-1 right-1 flex items-center gap-1">
+        {pending && <span className="text-yellow-400 text-[9px] leading-none">⟳</span>}
+        <div className={`w-2.5 h-2.5 rounded-full ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
+      </div>
+      <div className="flex-[5] flex items-center min-h-0 overflow-hidden pr-5">
+        <h3 className="font-bold tracking-wider text-text uppercase leading-tight truncate" style={{ fontSize: 'clamp(8px, 2vh, 22px)' }}>
+          {ACTUATOR_NAMES[actuatorId]}
+        </h3>
         {showMismatch && mismatch && (
-          <span className="text-[10px] font-bold text-yellow-400 uppercase tracking-wider">MM</span>
+          <span className="text-[10px] font-bold text-yellow-400 uppercase tracking-wider ml-1">MM</span>
         )}
       </div>
 
-      {/* ADC readout (very compact) */}
-      <div className="text-[10px] text-text-muted font-mono mb-0.5 truncate leading-none">
-        ADC: {rawAdc.toLocaleString()}
+      <div className="flex-[2] flex items-center min-h-0 overflow-hidden">
+        <span className="text-[10px] text-text-muted font-mono truncate leading-none">
+          ADC: {rawAdc.toLocaleString()}
+        </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-0.5 mt-0.5">
+      <div className="grid grid-cols-2 gap-0.5 flex-[3] min-h-0">
         <button
           onClick={() => sendCommand(ActuatorState.OPEN)}
           disabled={!canControl}
-          className={`py-1 rounded text-[10px] font-bold uppercase tracking-wider leading-none transition-all
+          className={`h-full rounded text-[10px] font-bold uppercase tracking-wider leading-none transition-all
             ${commandedOpen
               ? canControl
                 ? 'bg-green-700 text-white ring-1 ring-green-400'
@@ -195,7 +196,7 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
         <button
           onClick={() => sendCommand(ActuatorState.CLOSED)}
           disabled={!canControl}
-          className={`py-1 rounded text-[10px] font-bold uppercase tracking-wider leading-none transition-all
+          className={`h-full rounded text-[10px] font-bold uppercase tracking-wider leading-none transition-all
             ${commandedClosed
               ? canControl
                 ? 'bg-red-700 text-white ring-1 ring-red-400'

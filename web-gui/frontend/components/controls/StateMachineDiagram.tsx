@@ -489,43 +489,6 @@ export default function StateMachineDiagram() {
         </svg>
       </div>
 
-      {/* Legend – ultra compact */}
-      <div className="px-2 py-1.5 border-t border-gray-800 flex flex-wrap gap-2 text-[9px] flex-shrink-0">
-        <span className="flex items-center gap-1">
-          <span className="w-3 h-2 rounded-sm inline-block" style={{ background: '#2563EB', border: '1px solid #60A5FA' }} />
-          <span className="text-text-muted">Current</span>
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-3 h-2 rounded-sm inline-block" style={{ background: '#059669', border: '1px solid #34D399' }} />
-          <span className="text-text-muted">Reachable</span>
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-3 h-2 rounded-sm inline-block" style={{ background: '#7F1D1D', border: '1px solid #EF4444' }} />
-          <span className="text-text-muted">Emergency</span>
-        </span>
-        <span className="flex items-center gap-1.5">
-          <svg width="18" height="6" style={{ display: 'inline-block' }}>
-            <line x1="0" y1="3" x2="14" y2="3" stroke="#34D399" strokeWidth="1.5" />
-            <polygon points="14,1 18,3 14,5" fill="#34D399" />
-          </svg>
-          <span className="text-text-muted">Next</span>
-        </span>
-        <span className="flex items-center gap-1.5">
-          <svg width="18" height="6" style={{ display: 'inline-block' }}>
-            <line x1="0" y1="3" x2="14" y2="3" stroke="#60A5FA" strokeWidth="1.25" strokeDasharray="4 2" />
-            <polygon points="14,1 18,3 14,5" fill="#60A5FA" />
-          </svg>
-          <span className="text-text-muted">Return</span>
-        </span>
-        <span className="flex items-center gap-1.5">
-          <svg width="18" height="6" style={{ display: 'inline-block' }}>
-            <line x1="0" y1="3" x2="14" y2="3" stroke="#EF4444" strokeWidth="1.5" strokeDasharray="4 2" />
-            <polygon points="14,1 18,3 14,5" fill="#EF4444" />
-          </svg>
-          <span className="text-text-muted">Emergency</span>
-        </span>
-      </div>
-
     </div>
   );
 }

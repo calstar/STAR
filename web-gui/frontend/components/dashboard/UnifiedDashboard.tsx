@@ -140,7 +140,7 @@ export default function UnifiedDashboard() {
                       setTimeWindow(newWindow);
                       console.log(`[UnifiedDashboard] Time window changed to ${newWindow}s`);
                     }}
-                    className={`px-4 py-2 text-sm font-semibold rounded-md transition-all ${
+                    className={`px-2 py-0.5 text-xs font-semibold rounded transition-all ${
                       timeWindow === w.seconds
                         ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
                         : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-300'
@@ -169,11 +169,12 @@ export default function UnifiedDashboard() {
         <div className="flex-1 min-w-0 flex flex-col gap-3 overflow-hidden">
 
           {/* Actuators in 4x4 grid — uses viewport-aware height instead of manual zoom scaling */}
-          <div className="bg-card rounded-xl border border-gray-800 p-3 overflow-auto flex-shrink-0 max-h-[45vh]">
-            <h2 className="text-xs font-bold tracking-widest text-text-muted uppercase mb-2 leading-none">
+          <div className="bg-card rounded-xl border border-gray-800 p-3 flex flex-col flex-shrink-0 max-h-[50vh] min-h-0 flex-1">
+            <h2 className="text-xs font-bold tracking-widest text-text-muted uppercase mb-2 leading-none flex-shrink-0">
               Actuator Controls
             </h2>
-            <div className="grid grid-cols-4 gap-2 auto-rows-fr">
+            <div className="flex-1 min-h-0 overflow-auto">
+            <div className="grid grid-cols-4 gap-2 h-full" style={{ gridAutoRows: '1fr' }}>
               {actuatorsFromConfig.map((a) =>
                 a.id !== undefined ? (
                   <ActuatorControl key={a.name} actuatorId={a.id} />
@@ -182,10 +183,11 @@ export default function UnifiedDashboard() {
                 )
               )}
             </div>
+            </div>
           </div>
 
           {/* State machine diagram */}
-          <div className="flex-1 min-h-0 overflow-auto bg-card rounded-xl border border-gray-800 p-4">
+          <div className="mt-auto min-h-0 overflow-auto bg-card rounded-xl border border-gray-800 p-4 max-h-[50vh]">
             <StateMachineDiagram />
           </div>
         </div>

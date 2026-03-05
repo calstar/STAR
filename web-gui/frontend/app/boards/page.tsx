@@ -114,12 +114,12 @@ export default function BoardsPage() {
                 <div className="flex flex-wrap gap-4 mb-3 text-lg">
                   <div className="flex-1 min-w-0">
                     <div className="text-text-muted mb-1.5 text-sm uppercase tracking-wider">Status</div>
-                    <div className={`flex items-center gap-2.5 ${!b.connected ? 'text-red-400' : 'text-green-400'}`}>
+                    <div className={`flex items-center gap-2.5 ${!(b.operational ?? b.connected) ? 'text-red-400' : 'text-green-400'}`}>
                       <div
-                        className={`w-3.5 h-3.5 rounded-full flex-shrink-0 ${!b.connected ? 'bg-red-500' : 'bg-green-500'}`}
+                        className={`w-3.5 h-3.5 rounded-full flex-shrink-0 ${!(b.operational ?? b.connected) ? 'bg-red-500' : 'bg-green-500'}`}
                       />
                       <span className="font-mono font-bold text-lg truncate">
-                        {b.connected ? 'CONNECTED' : 'DISCONNECTED'}
+                        {(b.operational ?? b.connected) ? 'CONNECTED' : 'DISCONNECTED'}
                       </span>
                     </div>
                   </div>

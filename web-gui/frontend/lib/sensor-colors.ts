@@ -5,15 +5,15 @@
 
 export const ENTITY_COLORS: Record<string, string> = {
   // Named calibrated PT entities (femboy-aligned)
-  'PT_Cal.GN2_Regulated': '#27AE60',
-  'PT_Cal.Fuel_Upstream': '#3498DB',
-  'PT_Cal.Fuel_Downstream': '#2980B9',
-  'PT_Cal.Ox_Upstream': '#E74C3C',
-  'PT_Cal.Ox_Downstream': '#C0392B',
-  'PT_Cal.GSE_Low': '#F39C12',
-  'PT_Cal.GSE_Mid': '#9B59B6',
-  'PT_Cal.GSE_High': '#8E44AD',
-  'PT_Cal.GN2_High': '#1ABC9C',
+  'PT_Cal.GN2_Regulated': '#228B22',
+  'PT_Cal.Fuel_Upstream': '#FF4500',
+  'PT_Cal.Fuel_Downstream': '#CC0000',
+  'PT_Cal.Ox_Upstream': '#38BDF8',
+  'PT_Cal.Ox_Downstream': '#4169E1',
+  'PT_Cal.GSE_Low': '#D8B4FE',
+  'PT_Cal.GSE_Mid': '#C026D3',
+  'PT_Cal.GSE_High': '#7B2FBE',
+  'PT_Cal.GN2_High': '#ADFF2F',
   // Channel-to-logical mapping (same color as named role)
   'PT_Cal.PT_CH1': '#3498DB',
   'PT_Cal.PT_CH2': '#F39C12',
@@ -53,15 +53,15 @@ export function getEntityColor(entity: string): string {
 
 // Order and colors aligned with femboy for consistent calibrated values across plots
 export const PRESSURE_SENSORS = [
-  { label: 'GN2 High', entity: 'PT_Cal.GN2_High', component: 'pressure_psi' as const, color: '#1ABC9C', nop: 900, meop: 950 },
-  { label: 'GN2 Regulated', entity: 'PT_Cal.GN2_Regulated', component: 'pressure_psi' as const, color: '#27AE60', nop: 900, meop: 950 },
-  { label: 'Fuel Upstream', entity: 'PT_Cal.Fuel_Upstream', component: 'pressure_psi' as const, color: '#3498DB', nop: 600, meop: 650 },
-  { label: 'Fuel Downstream', entity: 'PT_Cal.Fuel_Downstream', component: 'pressure_psi' as const, color: '#2980B9', nop: 600, meop: 650 },
-  { label: 'LOX Upstream', entity: 'PT_Cal.Ox_Upstream', component: 'pressure_psi' as const, color: '#E74C3C', nop: 600, meop: 650 },
-  { label: 'LOX Downstream', entity: 'PT_Cal.Ox_Downstream', component: 'pressure_psi' as const, color: '#C0392B', nop: 600, meop: 650 },
-  { label: 'GSE Low', entity: 'PT_Cal.GSE_Low', component: 'pressure_psi' as const, color: '#F39C12', nop: 500, meop: 700 },
-  { label: 'GSE MID', entity: 'PT_Cal.GSE_Mid', component: 'pressure_psi' as const, color: '#9B59B6', nop: 4000, meop: 4500 },
-  { label: 'GSE High', entity: 'PT_Cal.GSE_High', component: 'pressure_psi' as const, color: '#8E44AD', nop: 500, meop: 700 },
+  { label: 'GN2 High', entity: 'PT_Cal.GN2_High', component: 'pressure_psi' as const, color: '#ADFF2F', nop: 900, meop: 950 },
+  { label: 'GN2 Regulated', entity: 'PT_Cal.GN2_Regulated', component: 'pressure_psi' as const, color: '#228B22', nop: 900, meop: 950 },
+  { label: 'Fuel Upstream', entity: 'PT_Cal.Fuel_Upstream', component: 'pressure_psi' as const, color: '#FF4500', nop: 600, meop: 650 },
+  { label: 'Fuel Downstream', entity: 'PT_Cal.Fuel_Downstream', component: 'pressure_psi' as const, color: '#CC0000', nop: 600, meop: 650 },
+  { label: 'LOX Upstream', entity: 'PT_Cal.Ox_Upstream', component: 'pressure_psi' as const, color: '#38BDF8', nop: 600, meop: 650 },
+  { label: 'LOX Downstream', entity: 'PT_Cal.Ox_Downstream', component: 'pressure_psi' as const, color: '#4169E1', nop: 600, meop: 650 },
+  { label: 'GSE Low', entity: 'PT_Cal.GSE_Low', component: 'pressure_psi' as const, color: '#D8B4FE', nop: 500, meop: 700 },
+  { label: 'GSE MID', entity: 'PT_Cal.GSE_Mid', component: 'pressure_psi' as const, color: '#C026D3', nop: 4000, meop: 4500 },
+  { label: 'GSE High', entity: 'PT_Cal.GSE_High', component: 'pressure_psi' as const, color: '#7B2FBE', nop: 500, meop: 700 },
 ] as const;
 
 /** For TopBar / compact lists: label + entity + color (and nop/meop where needed) */

@@ -210,6 +210,8 @@ export interface BoardStatus {
   expected: boolean;
   /** Whether we consider the board currently connected (recent heartbeat). */
   connected: boolean;
+  /** True when connected and board state is Setup or Active; false when in Abort/AbortDone or no heartbeat. */
+  operational?: boolean;
   /** Timestamp of the last heartbeat in epoch milliseconds, or null if none yet. */
   lastHeartbeatMs: number | null;
   /** Estimated heartbeat frequency in Hz, or null if not enough data. */

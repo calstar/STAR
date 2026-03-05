@@ -210,6 +210,8 @@ export interface BoardStatus {
   ip: string;
   expected: boolean;
   connected: boolean;
+  /** True when connected and board state is Setup or Active. */
+  operational?: boolean;
   lastHeartbeatMs: number | null;
   frequencyHz: number | null;
   boardState: number | null;

@@ -4,9 +4,9 @@ import { useSensorStore } from '@/lib/store';
 import { useEffect, useMemo } from 'react';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate, MissionStartTime, CommandPayload, BoardStatus, BoardStatusPayload, NotificationPayload } from '@/lib/types';
+import { MessageType, SensorUpdate, StateUpdate, MissionStartTime, CommandPayload, BoardStatus, BoardStatusPayload, NotificationPayload, ActuatorUpdate, ActuatorState } from '@/lib/types';
 import WindowLauncher from '@/components/windows/WindowLauncher';
-import { useSensorValue } from '@/lib/store';
+import { useSensorValue, useActuatorCommandedState } from '@/lib/store';
 import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
 import { useControlMode } from '@/lib/control-mode';
 
@@ -56,10 +56,9 @@ function SensorCard({ label, entity, component, unit = 'PSI', color, nop, meop }
 
 // ── Actuator status pill ─────────────────────────────────────────────────────
 function ActuatorPill({ label, entity }: { label: string; entity: string }) {
-  const status = useSensorValue(entity, 'status');
-  const adc = useSensorValue(entity, 'raw_adc_counts');
-  const isOpen = status === 1 || (adc !== null && adc > 1000);
-  const hasData = status !== null || adc !== null;
+  const commanded = useActuatorCommandedState(entity);
+  const hasData = commanded !== null;
+  const isOpen = commanded === ActuatorState.OPEN;
 
   return (
     <div className={`flex flex-col items-center justify-center bg-card border rounded-xl px-3 py-3 gap-2.5 transition-all min-h-[100px] ${!hasData ? 'border-gray-800' : isOpen ? 'border-green-700/80' : 'border-red-700/80'
@@ -93,6 +92,8 @@ export default function Home() {
   const updateMissionStartTime = useSensorStore((state) => state.updateMissionStartTime);
   const updateBoards = useSensorStore((state) => state.updateBoards);
   const updateNotification = useSensorStore((state) => state.updateNotification);
+  const updateActuator = useSensorStore((s) => s.updateActuator);
+  const updateActuatorExpectedPositions = useSensorStore((s) => s.updateActuatorExpectedPositions);
   const boardsMap = useSensorStore((state) => state.boards as Record<number, BoardStatus>);
   const ws = getWebSocketClient();
   const { controlEnabled } = useControlMode();
@@ -122,7 +123,11 @@ export default function Home() {
     });
     const u5 = ws.onConnectionStatus((s) => updateConnectionStatus(s));
     const u6 = ws.on(MessageType.NOTIFICATION, (p: unknown) => updateNotification(p as NotificationPayload));
-    return () => { u1(); u2(); u3(); u4(); u5(); u6(); };
+    const u7 = ws.on(MessageType.ACTUATOR_UPDATE, (p: unknown) => updateActuator(p as ActuatorUpdate));
+    const u8 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
+      updateActuatorExpectedPositions(p as Record<number, Record<string, 'open' | 'closed' | null>>);
+    });
+    return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); };
   }, [ws, updateSensor, updateState, updateConnectionStatus, updateMissionStartTime, updateBoards, updateNotification]);
 
   const pressureSensors: SensorCardProps[] = [

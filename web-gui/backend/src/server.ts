@@ -764,6 +764,9 @@ class SensorSystemServer {
       console.log('✅ Elodin relay connected — receiving stream from relay (one publisher, multiple subscribers)');
       this.streamingDataReceived = true;
       this.broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true } as ConnectionStatus });
+      // After server restart, boards have no heartbeat state yet; mark all config pending and resend so config goes out once boards are reachable
+      this.boardsStatus.forEach((_, id) => this.boardConfigState.set(id, { status: 'pending' }));
+      setTimeout(() => this.maybeSendConfigPackets({ forceAll: true, includeSensors: true }), 500);
     });
     this.elodinRelay.on('disconnected', () => {
       console.log('❌ Elodin relay disconnected');
@@ -947,6 +950,7 @@ class SensorSystemServer {
 
         const now = Date.now();
         let status = this.boardsStatus.get(boardId);
+        const prevBoardState = status?.boardState ?? null;
         const wasDisconnected =
           !status ||
           status.lastHeartbeatMs == null ||
@@ -987,8 +991,17 @@ class SensorSystemServer {
         // On (re)connect, mark config pending so we resend without user clicking Resend
         if (wasDisconnected) {
           this.boardConfigState.set(boardId, { status: 'pending' });
+          this.maybeSendConfigPackets({ includeSensors: true });
+        } else {
+          // When board returns from Abort/AbortDone to Setup/Active, resend config
+          const returnedToOperational =
+            (prevBoardState === 3 || prevBoardState === 4) &&
+            (boardState === 1 || boardState === 2);
+          if (returnedToOperational) {
+            this.boardConfigState.set(boardId, { status: 'pending' });
+          }
+          this.maybeSendConfigPackets();
         }
-        this.maybeSendConfigPackets();
         return; // Handled, skip typical sensor parsing
       }
 
@@ -1697,6 +1710,7 @@ class SensorSystemServer {
       const weSentConfig = configState?.status === 'sent';
       const boardReportsConfigured = status.boardState === 1 || status.boardState === 2; // 1=Setup, 2=Active
       const configured = weSentConfig || boardReportsConfigured;
+      const operational = isConnected && (status.boardState === 1 || status.boardState === 2);
 
       result.push({
         type: status.type,
@@ -1705,6 +1719,7 @@ class SensorSystemServer {
         ip: status.ip,
         expected: status.expected,
         connected: isConnected,
+        operational,
         lastHeartbeatMs: last ?? null,
         frequencyHz,
         boardState: status.boardState,

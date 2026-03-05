@@ -53,28 +53,12 @@ export default function WindowLauncher() {
     url: '/window/unified', accent: '#EC4899',
   };
 
-  const allPlotsEntry: WindowButtonProps = {
-    id: 'all',
-    name: 'All Plots',
-    description: 'Combined GN2 / fuel / LOX / GSE pressure plots in a single window',
-    url: '/window/all',
-    accent: '#3B82F6',
-  };
-
-  const mobileEntry: WindowButtonProps = {
-    id: 'mobile-gui', name: 'Mobile GUI 📱',
-    description: 'Touch-friendly layout — compact header, pressure plot, actuators & state machine stacked for phones/tablets',
-    url: '/window/mobile-gui', accent: '#34D399',
-  };
-
   const multiEntries: WindowButtonProps[] = [
     { id: 'fuel', name: 'FUEL', description: 'Upstream / downstream pressure & actuators', url: '/window/fuel', accent: '#3498DB' },
     { id: 'lox', name: 'LOX', description: 'Oxidizer pressure & actuators', url: '/window/lox', accent: '#E74C3C' },
     { id: 'chamber', name: 'Chamber', description: 'PT / TC / LC Measurements in one pane', url: '/window/chamber', accent: '#F97316' },
     { id: 'copv', name: 'COPV / GN2', description: 'High-pressure bottle & regulator', url: '/window/copv', accent: '#27AE60' },
     { id: 'gse', name: 'GSE', description: 'Ground support equipment pressures', url: '/window/gse', accent: '#F39C12' },
-    { id: 'raw', name: 'Raw ADC', description: 'All 10 PT & actuator ADC channels', url: '/window/raw', accent: '#60A5FA' },
-    { id: 'controls', name: 'Controls', description: 'State machine & actuator commands', url: '/window/controls', accent: '#A78BFA' },
     { id: 'status', name: 'Status', description: 'Tabular real-time sensor values', url: '/window/status', accent: '#34D399' },
     { id: 'boards', name: 'Boards / Heartbeats', description: 'Discovered boards and heartbeat status', url: '/window/boards', accent: '#10B981' },
     { id: 'config', name: 'Config', description: 'System & board configuration editor', url: '/window/config', accent: '#FBBF24' },
@@ -107,8 +91,6 @@ export default function WindowLauncher() {
       {/* Featured windows */}
       <div className="mb-2 space-y-2">
         <WindowButton {...unifiedEntry} />
-        <WindowButton {...allPlotsEntry} />
-        <WindowButton {...mobileEntry} />
       </div>
 
       {/* Grid - 2 rows */}

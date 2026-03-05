@@ -7,7 +7,7 @@ board_id = 0x277
 board_type = 1
 ip = 192.168.2.21
 mac_address = "ef:84:60:1a:01:15"
-max_sensors = 254
+max_sensors = 252
 port = 5005
 
 [board_1]
@@ -16,7 +16,7 @@ board_id = 0x278
 board_type = 1
 ip = 192.168.2.22
 mac_address = 9e:fb:ec:0d:01:16
-max_sensors = 254
+max_sensors = 252
 port = 5005
 
 [board_2]
@@ -25,7 +25,7 @@ board_id = 0x553
 board_type = 2
 ip = 192.168.2.41
 mac_address = "ec:8a:71:6f:02:29"
-max_sensors = 254
+max_sensors = 252
 port = 5005
 
 [board_3]
@@ -34,7 +34,7 @@ board_id = 0x799
 board_type = 3
 ip = 192.168.2.31
 mac_address = 91:a9:8b:32:03:1f
-max_sensors = 254
+max_sensors = 252
 port = 5005
 
 [board_4]
@@ -43,7 +43,7 @@ board_id = 0x1075
 board_type = 4
 ip = 192.168.2.51
 mac_address = "d0:4d:2b:19:04:33"
-max_sensors = 254
+max_sensors = 252
 port = 5005
 
 [board_5]
@@ -52,16 +52,16 @@ board_id = 0x1292
 board_type = 5
 ip = 192.168.2.12
 mac_address = 69:dd:b3:f3:05:0c
-max_sensors = 254
+max_sensors = 252
 port = 5005
 
 [board_6]
-active_sensors = 0
+active_sensors = 127
 board_id = 0x1294
 board_type = 5
 ip = 192.168.2.14
 mac_address = "ea:00:ac:b7:05:0e"
-max_sensors = 0
+max_sensors = 252
 port = 5005
 
 [database]

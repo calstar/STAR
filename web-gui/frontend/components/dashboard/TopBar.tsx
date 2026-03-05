@@ -222,13 +222,13 @@ export default function TopBar() {
   return (
     <div
       className="bg-card border-b border-gray-800 select-none flex-shrink-0"
-      style={{ height: '20vh' }}
+      style={{ height: '18vh' }}
     >
-      <div className="flex items-stretch h-full px-4 gap-4 py-2">
+      <div className="flex items-stretch h-full px-4 gap-2 py-2">
 
         {/* Left: brand + connection + clock + countdown */}
-        <div className="flex flex-col justify-center gap-1 flex-shrink-0 pr-6 border-r border-gray-800/60">
-          <span className="text-2xl font-bold tracking-widest text-blue-400 uppercase leading-none">
+        <div className="flex flex-col justify-start gap-1 flex-shrink-0 pr-6 border-r border-gray-800/60">
+          <span className="text-3xl font-bold tracking-widest text-blue-400 uppercase leading-none">
             DIABLO DAQ
           </span>
           <div className="flex items-center gap-2">
@@ -246,12 +246,12 @@ export default function TopBar() {
         </div>
 
         {/* Middle: notifications */}
-        <div className="flex flex-col justify-center pr-1 flex-shrink-0">
+        <div className="flex flex-col justify-center pr-1 flex-shrink-0 w-[15vw]">
           <NotificationPanel />
         </div>
 
         {/* Center: pressure bars — dynamic spacing, scales with viewport */}
-        <div className="flex-1 flex items-stretch justify-center gap-4 sm:gap-6 lg:gap-8 py-1 pr-2 min-w-0 overflow-visible">
+        <div className="flex-[2] flex items-stretch justify-end gap-4 sm:gap-6 lg:gap-8 min-w-0 overflow-visible" style={{ maxWidth: '60vw' }}>
           {effectivePressureBars.map(({ label, entity, nop, meop, color }) => (
             <ReactivePressureBar
               key={entity}
@@ -264,127 +264,123 @@ export default function TopBar() {
           ))}
         </div>
 
-        {/* Right: state + mode + abort (compact) */}
-        <div className="flex items-center gap-4 sm:gap-6 flex-shrink-0 pl-4 border-l border-gray-800/60">
-          <div className="flex flex-col items-center gap-0.5 w-20">
-            <span className="text-[9px] text-gray-400 uppercase tracking-widest font-bold">STATE</span>
-            <span className={`text-sm font-bold font-mono tracking-wider text-center leading-tight whitespace-normal ${stateColor}`}>
+        {/* Right: state + mode + abort — top-right aligned, natural width, pushed to edge */}
+        <div className="flex items-center gap-10 flex-shrink-0 pl-3 border-l border-gray-800/60 ml-auto">
+          <div className="flex flex-col items-center gap-2 w-48">
+            <span className="text-base text-gray-400 uppercase tracking-widest font-bold">STATE</span>
+            <span className={`text-4xl font-bold font-mono tracking-wider text-center leading-tight whitespace-normal ${stateColor}`}>
               {currentStateName}
             </span>
           </div>
-          {/* Control lock + debug mode stacked, plus aborts */}
-          <div className="flex items-center gap-2 border-l border-gray-800/60 pl-2">
-            <div className="flex flex-col items-stretch gap-1 relative">
-              <button
-                onClick={() => {
-                  if (!controlEnabled) return;
-                  const newDebugMode = !debugMode;
-                  setDebugMode(newDebugMode);
-                  const cmd: CommandPayload = {
-                    commandType: 'debug_mode',
-                    data: { debugMode: newDebugMode }
-                  };
-                  ws.sendCommand(cmd);
+
+          {/* Control lock + debug mode stacked */}
+          <div className="flex flex-col items-stretch gap-4 relative border-l border-gray-800/60 pl-8">
+            <button
+              onClick={() => {
+                if (!controlEnabled) return;
+                const newDebugMode = !debugMode;
+                setDebugMode(newDebugMode);
+                const cmd: CommandPayload = {
+                  commandType: 'debug_mode',
+                  data: { debugMode: newDebugMode }
+                };
+                ws.sendCommand(cmd);
+              }}
+              disabled={!controlEnabled}
+              className={`px-10 py-6 rounded-xl text-xl font-bold uppercase tracking-wider border transition-all text-center ${
+                debugMode
+                  ? controlEnabled
+                    ? 'bg-yellow-800/60 border-yellow-600 text-yellow-300 shadow-[0_0_6px_rgba(234,179,8,0.3)]'
+                    : 'bg-yellow-900/40 border-yellow-800 text-yellow-700 cursor-not-allowed'
+                  : controlEnabled
+                    ? 'bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-500'
+                    : 'bg-gray-900 border-gray-800 text-gray-700 cursor-not-allowed'
+              }`}
+              title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+            >
+              {debugMode ? '🔓 DEBUG' : '🔒 SAFE'}
+            </button>
+
+            <button
+              onClick={() => {
+                if (controlEnabled) {
+                  lock();
+                  setShowUnlockForm(false);
+                  setPasswordInput('');
+                } else {
+                  setShowUnlockForm((v) => !v);
+                }
+              }}
+              className={`justify-center px-10 py-6 rounded-xl text-xl font-semibold uppercase tracking-wider border flex ${
+                controlEnabled
+                  ? 'border-green-500 bg-green-900/40 text-green-300 hover:bg-green-800/60'
+                  : 'border-gray-700 bg-gray-900 text-gray-400 hover:bg-gray-800'
+              }`}
+            >
+              {controlEnabled ? 'CONTROLLER' : 'VIEWER'}
+            </button>
+
+            {!controlEnabled && showUnlockForm && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  unlock(passwordInput);
                 }}
-                disabled={!controlEnabled}
-                className={`px-2.5 py-1.5 rounded text-[11px] font-bold uppercase tracking-wider border transition-all text-center ${
-                  debugMode
-                    ? controlEnabled
-                      ? 'bg-yellow-800/60 border-yellow-600 text-yellow-300 shadow-[0_0_6px_rgba(234,179,8,0.3)]'
-                      : 'bg-yellow-900/40 border-yellow-800 text-yellow-700 cursor-not-allowed'
-                    : controlEnabled
-                      ? 'bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-500'
-                      : 'bg-gray-900 border-gray-800 text-gray-700 cursor-not-allowed'
-                }`}
-                title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+                className="absolute top-full right-0 mt-1 flex flex-col gap-1 bg-background border border-gray-700 rounded px-2 py-2 shadow-lg z-20 w-56"
               >
-                {debugMode ? '🔓 DEBUG' : '🔒 SAFE'}
-              </button>
+                <input
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="Control password"
+                  className="px-2 py-1 rounded bg-black/60 border border-gray-700 text-[11px] text-white"
+                />
+                <button
+                  type="submit"
+                  disabled={unlocking || !passwordInput}
+                  className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wider border border-blue-700 bg-blue-700/80 hover:bg-blue-600 disabled:opacity-50"
+                >
+                  {unlocking ? 'Unlocking…' : 'Submit'}
+                </button>
+                {error && (
+                  <span className="text-[10px] text-red-400">
+                    {error}
+                  </span>
+                )}
+              </form>
+            )}
+          </div>
 
-              <div className="flex items-center">
-                <button
-                  onClick={() => {
-                    if (controlEnabled) {
-                      lock();
-                      setShowUnlockForm(false);
-                      setPasswordInput('');
-                    } else {
-                      setShowUnlockForm((v) => !v);
-                    }
-                  }}
-                  className={`w-28 justify-center px-3 py-1 rounded text-[10px] font-semibold uppercase tracking-wider border flex ${
-                    controlEnabled
-                      ? 'border-green-500 bg-green-900/40 text-green-300 hover:bg-green-800/60'
-                      : 'border-gray-700 bg-gray-900 text-gray-400 hover:bg-gray-800'
-                  }`}
-                >
-                  {controlEnabled ? 'CONTROLLER' : 'VIEWER'}
-                </button>
-              </div>
-
-              {!controlEnabled && showUnlockForm && (
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    unlock(passwordInput);
-                  }}
-                  className="absolute top-full right-0 mt-1 flex flex-col gap-1 bg-background border border-gray-700 rounded px-2 py-2 shadow-lg z-20 w-56"
-                >
-                  <input
-                    type="password"
-                    value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
-                    placeholder="Control password"
-                    className="px-2 py-1 rounded bg-black/60 border border-gray-700 text-[11px] text-white"
-                  />
-                  <button
-                    type="submit"
-                    disabled={unlocking || !passwordInput}
-                    className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wider border border-blue-700 bg-blue-700/80 hover:bg-blue-600 disabled:opacity-50"
-                  >
-                    {unlocking ? 'Unlocking…' : 'Submit'}
-                  </button>
-                  {error && (
-                    <span className="text-[10px] text-red-400">
-                      {error}
-                    </span>
-                  )}
-                </form>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-0.5 border-l border-gray-800/60 pl-2">
-              <div className="flex flex-col gap-0.5">
-                <button
-                  onClick={handleEngineAbort}
-                  disabled={!controlEnabled}
-                  className="px-2.5 py-1 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border border-amber-600
-                             text-white font-semibold text-[11px] rounded tracking-wider transition-colors disabled:bg-amber-900 disabled:border-amber-900 disabled:text-amber-700 disabled:cursor-not-allowed"
-                  title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
-                >
-                  ENGINE ABORT
-                </button>
-                <button
-                  onClick={handleGseAbort}
-                  disabled={!controlEnabled}
-                  className="px-2.5 py-1 bg-orange-800 hover:bg-orange-700 active:bg-orange-900 border border-orange-600
-                             text-white font-semibold text-[11px] rounded tracking-wider transition-colors disabled:bg-orange-900 disabled:border-orange-900 disabled:text-orange-700 disabled:cursor-not-allowed"
-                  title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
-                >
-                  GSE ABORT
-                </button>
-                <button
-                  onClick={handleEmergencyAbort}
-                  disabled={!controlEnabled}
-                  className="px-2.5 py-1 bg-red-700 hover:bg-red-600 active:bg-red-800 border border-red-500
-                             text-white font-semibold text-[11px] rounded tracking-wider transition-colors
-                             shadow-[0_0_6px_rgba(239,68,68,0.4)] disabled:bg-red-900 disabled:border-red-900 disabled:text-red-700 disabled:cursor-not-allowed"
-                  title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
-                >
-                  E-ABORT
-                </button>
-              </div>
-            </div>
+          {/* Abort buttons */}
+          <div className="flex flex-col gap-4 border-l border-gray-800/60 pl-8">
+            <button
+              onClick={handleEngineAbort}
+              disabled={!controlEnabled}
+              className="px-10 py-6 bg-amber-800 hover:bg-amber-700 active:bg-amber-900 border border-amber-600
+                         text-white font-semibold text-xl rounded-xl tracking-wider transition-colors disabled:bg-amber-900 disabled:border-amber-900 disabled:text-amber-700 disabled:cursor-not-allowed"
+              title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+            >
+              ENGINE ABORT
+            </button>
+            <button
+              onClick={handleGseAbort}
+              disabled={!controlEnabled}
+              className="px-10 py-6 bg-orange-800 hover:bg-orange-700 active:bg-orange-900 border border-orange-600
+                         text-white font-semibold text-xl rounded-xl tracking-wider transition-colors disabled:bg-orange-900 disabled:border-orange-900 disabled:text-orange-700 disabled:cursor-not-allowed"
+              title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+            >
+              GSE ABORT
+            </button>
+            <button
+              onClick={handleEmergencyAbort}
+              disabled={!controlEnabled}
+              className="px-10 py-6 bg-red-700 hover:bg-red-600 active:bg-red-800 border border-red-500
+                         text-white font-semibold text-xl rounded-xl tracking-wider transition-colors
+                         shadow-[0_0_6px_rgba(239,68,68,0.4)] disabled:bg-red-900 disabled:border-red-900 disabled:text-red-700 disabled:cursor-not-allowed"
+              title={controlEnabled ? undefined : 'Viewer mode: controls locked'}
+            >
+              E-ABORT
+            </button>
           </div>
         </div>
       </div>

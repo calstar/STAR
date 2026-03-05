@@ -94,7 +94,7 @@ export default function PressureBar({
       {/* Label */}
       <div
         className={`${compact ? 'leading-none' : 'text-2xl'} font-bold uppercase tracking-wider text-gray-300 text-center flex-shrink-0 whitespace-nowrap`}
-        style={compact ? { fontSize: 'min(0.8vw, 11px)' } : undefined}
+        style={compact ? { fontSize: 'min(1.6vw, 22px)' } : undefined}
       >
         {label}
       </div>
@@ -161,15 +161,9 @@ export default function PressureBar({
       <div className="flex-shrink-0 text-center leading-none">
         <div
           className={`${compact ? 'leading-none' : 'text-2xl'} font-bold font-mono tabular-nums`}
-          style={compact ? { color: barColor, fontSize: 'min(1vw, 14px)' } : { color: barColor }}
+          style={compact ? { color: barColor, fontSize: 'min(2vw, 28px)' } : { color: barColor }}
         >
           {value !== null ? fmtPressure(value) : '---'}
-        </div>
-        <div
-          className={`${compact ? 'leading-none' : 'text-sm'} text-gray-400 font-semibold`}
-          style={compact ? { fontSize: 'min(0.7vw, 9px)' } : undefined}
-        >
-          {unit}
         </div>
       </div>
     </div>

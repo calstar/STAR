@@ -104,6 +104,8 @@ export default function TimeSeriesPlot({
   const loadCacheDataRef = useRef<(() => void) | null>(null);
   const initializedRef = useRef(false);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [legendFontSize, setLegendFontSize] = useState(14);
+  const legendRef = useRef<HTMLDivElement>(null);
 
   const updateConnectionStatus = useSensorStore((s) => s.updateConnectionStatus);
   const connectionStatus = useSensorStore((s) => s.connectionStatus);
@@ -524,6 +526,30 @@ export default function TimeSeriesPlot({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entitiesKey, colorsKey, component, yLabel, height, windowKey]);
 
+  // Scale legend text to fill one row (measure and adjust until fit)
+  useEffect(() => {
+    const el = legendRef.current;
+    if (!el) return;
+    const fit = () => {
+      requestAnimationFrame(() => {
+        if (!el) return;
+        const client = el.clientWidth;
+        const scroll = el.scrollWidth;
+        if (client <= 0) return;
+        setLegendFontSize((prev) => {
+          const ratio = client / scroll;
+          if (Math.abs(ratio - 1) < 0.02) return prev;
+          const next = Math.min(24, Math.max(8, prev * ratio));
+          return next;
+        });
+      });
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [entities, labels, legendFontSize]);
+
   return (
     <div
       className={`w-full h-full flex flex-col min-h-0 min-w-0 ${height ? '' : 'flex-1'} ${className ?? ''}`}
@@ -564,18 +590,21 @@ export default function TimeSeriesPlot({
         )}
       </div>
 
-      {/* Legend */}
-      <div className="flex flex-wrap gap-x-3 gap-y-1 px-1.5 py-1.5 flex-shrink-0">
+      {/* Legend — single row, font size scales to fill width */}
+      <div
+        ref={legendRef}
+        className="flex flex-nowrap gap-x-3 gap-y-0 px-1.5 py-1.5 flex-shrink-0 overflow-hidden min-h-0"
+      >
         {entities.map((e, i) => (
           <div
             key={e}
-            className="flex items-center gap-2 bg-black/20 px-2 py-0.5 rounded-md border border-white/5"
+            className="flex items-center gap-2 bg-black/20 px-2 py-0.5 rounded-md border border-white/5 flex-shrink-0"
           >
             <span
-              className="w-3 h-[2px] rounded-full inline-block"
+              className="w-3 h-[2px] rounded-full inline-block flex-shrink-0"
               style={{ background: colors[i] || '#3498DB', boxShadow: `0 0 6px ${(colors[i] || '#3498DB')}80` }}
             />
-            <span className="text-[10px] font-semibold font-mono text-gray-300">
+            <span className="font-semibold font-mono text-gray-300 whitespace-nowrap" style={{ fontSize: `${legendFontSize}px` }}>
               {labels?.[i] ?? e.split('.').pop() ?? e}
             </span>
           </div>

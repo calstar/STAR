@@ -144,8 +144,9 @@ export default function StatusPage() {
           ) : (
             <div className="space-y-2">
               {boards.map((b) => {
+                const isOperational = b.operational ?? b.connected;
                 const statusColor =
-                  !b.connected ? 'bg-red-900/60 text-red-400' : 'bg-green-900/60 text-green-400';
+                  !isOperational ? 'bg-red-900/60 text-red-400' : 'bg-green-900/60 text-green-400';
                 const unexpectedBg = b.expected ? '' : 'bg-amber-900/20';
                 const freq =
                   b.frequencyHz != null && isFinite(b.frequencyHz)
@@ -208,7 +209,7 @@ export default function StatusPage() {
                         <span
                           className={`text-xs font-bold font-mono px-2 py-1 rounded ${statusColor}`}
                         >
-                          {b.connected ? 'CONNECTED' : 'DISCONNECTED'}
+                          {isOperational ? 'CONNECTED' : 'DISCONNECTED'}
                         </span>
                       </div>
                     </div>
