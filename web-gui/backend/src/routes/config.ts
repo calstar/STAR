@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { parse as parseToml, stringify as stringifyToml } from '@iarna/toml';
+import { applyControllerDefaults } from '../controller-config.js';
 
 // ES module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -45,7 +46,9 @@ export function readConfig(): any {
 
     // Try to parse normally first
     try {
-      return parseToml(content);
+      const config = parseToml(content);
+      applyControllerDefaults(config);
+      return config;
     } catch (parseError: any) {
       // If parsing fails due to mixed types in arrays (actuator_roles), handle it manually
       if (parseError.message && parseError.message.includes('Inline lists must be a single type')) {
@@ -100,6 +103,7 @@ export function readConfig(): any {
           }
         }
 
+        applyControllerDefaults(config);
         return config;
       }
       throw parseError;

@@ -502,8 +502,8 @@ pwm_frequency_hz = 10.0
 # PWM command duration (ms) - how long each command stays active
 pwm_duration_ms = 1000
 # Fallback duty cycles when controller service is unavailable (0.0-1.0)
-fallback_fuel_duty_cycle = 0.5
-fallback_ox_duty_cycle = 0.2
+fallback_fuel_duty_cycle = 0.65
+fallback_ox_duty_cycle = 0.65
 # Controller loop update rate (Hz)
 controller_loop_hz = 10.0
 # Controller service URL
