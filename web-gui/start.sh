@@ -115,16 +115,20 @@ CONTROLLER_PID=$!
 cd ../../web-gui
 fi
 
-# Calibration sidecar (reads raw PT from relay, writes calibrated PT to Elodin DB)
-SIDECAR_SCRIPT="$SCRIPT_DIR/../scripts/calibration/calibration_server.py"
-if [ -f "$SIDECAR_SCRIPT" ] && command -v python3 &>/dev/null; then
-  echo "🧪 Starting calibration sidecar..."
-  PYTHONPATH="$SCRIPT_DIR/.." python3 "$SIDECAR_SCRIPT" > /tmp/calibration_sidecar.log 2>&1 &
+# C++ Calibration Service (receives raw from relay TCP :9091, writes PT_Cal/TC_Cal/RTD_Cal/LC_Cal to Elodin)
+sleep 2  # Ensure relay TCP forward is ready
+CAL_BIN="$SCRIPT_DIR/../FSW/build/calibration_service"
+[ ! -x "$CAL_BIN" ] && CAL_BIN="$SCRIPT_DIR/../build/FSW/calibration_service"
+if [ -x "$CAL_BIN" ]; then
+  echo "🧪 Starting C++ calibration service..."
+  cd "$SCRIPT_DIR/.."
+  $CAL_BIN --config config/config.toml --elodin-host 127.0.0.1 --relay-host 127.0.0.1 --relay-port 9091 > /tmp/calibration_service.log 2>&1 &
   SIDECAR_PID=$!
-  echo "   ✅ Calibration sidecar started (pid $SIDECAR_PID), log: /tmp/calibration_sidecar.log"
+  cd "$SCRIPT_DIR"
+  echo "   ✅ Calibration service started (pid $SIDECAR_PID), log: /tmp/calibration_service.log"
 else
   SIDECAR_PID=""
-  echo "   ⚠️ calibration_server.py not found or python3 not installed — skipping"
+  echo "   ⚠️ calibration_service not found — run: cd FSW/build && make calibration_service"
 fi
 
 

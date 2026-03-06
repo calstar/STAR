@@ -32,6 +32,7 @@ set(FSW_SOURCES
     src/control/PressureStateMachine.cpp
     src/calibration/PTCalibration.cpp
     src/calibration/SensorCalibration.cpp
+    src/control/ControllerLUT.cpp
     src/control/RobustDDPController.cpp
     src/control/ControllerService.cpp
     # src/nav/EKFNavigationEnhanced.cpp

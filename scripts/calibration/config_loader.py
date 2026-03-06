@@ -206,6 +206,30 @@ def get_boards_by_type(board_type: str) -> List[dict]:
     return result
 
 
+def build_channel_to_orchestrator_key() -> Dict[tuple, tuple]:
+    """
+    Build mapping (stype, packet_channel_id) → (stype, unique_ch) for relay packets.
+    daq_bridge sends packet_id low = connector_id + channel_offset; orchestrator uses
+    unique_ch = board_id * 100 + connector_id. Returns dict for PT, TC, RTD, LC.
+    """
+    mapping: Dict[tuple, tuple] = {}
+    for stype in ("PT", "TC", "RTD", "LC"):
+        for board in get_boards_by_type(stype):
+            if not board.get("enabled", True):
+                continue
+            board_id = board.get("board_id", 1)
+            ch_offset = board.get("channel_offset", 0)
+            active = board.get("active_connectors", [])
+            if not active:
+                num = board.get("num_sensors", 10)
+                active = list(range(1, num + 1))
+            for conn in active:
+                packet_ch = conn + ch_offset
+                unique_ch = board_id * 100 + conn
+                mapping[(stype, packet_ch)] = (stype, unique_ch)
+    return mapping
+
+
 def get_calibration_config(sensor_type: str) -> dict:
     """Return [calibration.<sensor_type>] section.
     sensor_type is case-insensitive (pt, tc, rtd, lc)."""

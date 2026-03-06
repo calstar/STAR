@@ -31,6 +31,11 @@ websockets>=10.0,<14.0
 psutil>=5.9.0
 
 # ==========================================
+# Postprocessing (Elodin DB → parquet → CSV)
+# ==========================================
+duckdb>=0.8.0
+
+# ==========================================
 # Optional: Enhanced Features
 # ==========================================
 # For improved performance with large arrays

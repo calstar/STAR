@@ -77,7 +77,8 @@ ControllerService::~ControllerService() {
 bool ControllerService::initialize(const PWMConfig& pwm_config,
                                    const RobustDDPController::Config& controller_config,
                                    const std::string& elodin_host, uint16_t elodin_port,
-                                   const std::string& relay_host, uint16_t relay_port) {
+                                   const std::string& relay_host, uint16_t relay_port,
+                                   const std::string& lut_path) {
     relay_host_ = relay_host;
     relay_port_ = relay_port;
     pwm_config_ = pwm_config;
@@ -127,6 +128,17 @@ bool ControllerService::initialize(const PWMConfig& pwm_config,
     if (!controller_->initialize(controller_config)) {
         std::cerr << "[ControllerService] ❌ Failed to initialize RobustDDPController" << std::endl;
         return false;
+    }
+
+    // ── Optional LUT (bypasses DDP for boolean control) ──────────────────
+    if (!lut_path.empty()) {
+        if (lut_.load(lut_path)) {
+            std::cout
+                << "[ControllerService] ✅ Using LUT for optimal boolean control (DDP bypassed)"
+                << std::endl;
+        } else {
+            std::cerr << "[ControllerService] ⚠️ LUT load failed — falling back to DDP" << std::endl;
+        }
     }
 
     // Set default measurement to zeros
@@ -365,6 +377,50 @@ void ControllerService::controllerLoop() {
             actuation.u_F_on = td_f > 0.0f;
             actuation.u_O_on = td_o > 0.0f;
             actuation.valid = true;
+        } else if (lut_.is_loaded()) {
+            // LUT mode: optimal boolean control from precomputed DDP (u_safe_F/O > 0.5 → on)
+            std::map<std::string, double> point;
+            point["P_u_fuel"] = meas.P_u_fuel;
+            point["P_u_ox"] = meas.P_u_ox;
+            double thrust_val = (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
+                                    ? cmd.thrust_desired
+                                    : 0.0;
+            point["thrust_desired"] = thrust_val;
+
+            std::map<std::string, double> lut_out;
+            if (lut_.evaluate(point, lut_out)) {
+                double u_f = lut_out.count("u_safe_F") ? lut_out.at("u_safe_F")
+                             : lut_out.count("duty_F") ? lut_out.at("duty_F")
+                                                       : 0.0;
+                double u_o = lut_out.count("u_safe_O") ? lut_out.at("u_safe_O")
+                             : lut_out.count("duty_O") ? lut_out.at("duty_O")
+                                                       : 0.0;
+                // Boolean: threshold at 0.5
+                actuation.duty_F = (u_f > 0.5) ? 1.0 : 0.0;
+                actuation.duty_O = (u_o > 0.5) ? 1.0 : 0.0;
+                actuation.u_F_on = actuation.duty_F > 0.5;
+                actuation.u_O_on = actuation.duty_O > 0.5;
+                actuation.valid = true;
+
+                diagnostics.F_ref = thrust_val;
+                // Only report LUT engine predictions when tank pressures are in valid range.
+                // LUT grid typically starts ~2 MPa; below ~100 kPa (14.5 psi) engine is off.
+                constexpr double P_MIN_VALID = 1e5;  // 100 kPa
+                if (meas.P_u_fuel >= P_MIN_VALID && meas.P_u_ox >= P_MIN_VALID) {
+                    if (lut_out.count("F"))
+                        diagnostics.F_estimated = lut_out.at("F");
+                    if (lut_out.count("MR"))
+                        diagnostics.MR_estimated = lut_out.at("MR");
+                    if (lut_out.count("P_ch"))
+                        diagnostics.P_ch = lut_out.at("P_ch");
+                } else {
+                    diagnostics.F_estimated = 0.0;
+                    diagnostics.MR_estimated = 0.0;
+                    diagnostics.P_ch = 0.0;
+                }
+            } else {
+                actuation.valid = false;
+            }
         } else {
             auto [a, d] = controller_->step(meas, nav, cmd);
             actuation = a;

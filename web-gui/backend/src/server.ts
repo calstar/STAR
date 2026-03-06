@@ -26,8 +26,7 @@ import { publishControllerActuation, publishControllerDiagnostics } from './cont
 import { getStateTransitions, isTransitionAllowed } from './routes/state-transitions.js';
 import { getStateActuatorMap, StateActuatorMap, CSV_ACTUATOR_TO_ENTITY, getActuatorChannel } from './routes/state-actuators.js';
 import { startAPIServer, type DebugInfo } from './api-server.js';
-import { loadPTCalibration, calculatePressure, inversePressureToAdc, CalibrationCoefficients, EnvironmentalState } from './calibration.js';
-import { Phase2CalibrationEngine } from './calibration-phase2.js';
+import { loadPTCalibration, calculatePressure, type CalibrationCoefficients } from './calibration.js';
 import { CalibrationSidecarClient } from './calibration-sidecar.js';
 import { DataLogger } from './data-logger.js';
 import { readConfig, getConfigPath } from './routes/config.js';
@@ -67,7 +66,6 @@ import {
   forwardActuatorToActuatorService,
   forwardFireStateToControllerService,
 } from './actuator-control.js';
-import { handleCalibrationCommand } from './calibration-handler.js';
 
 // ── Expected actuator positions per state (loaded from state_machine_actuators.csv) ─
 let STATE_ACTUATOR_MAP: StateActuatorMap = {};
@@ -85,24 +83,11 @@ class SensorSystemServer {
   private useQueryPolling: boolean = process.env.ELODIN_USE_QUERY === 'true';
   private streamingDataReceived: boolean = false;
   private streamingCheckTimer: NodeJS.Timeout | null = null;
+
+  /** PT calibration for fallback raw→psi when C++ calibration_service isn't providing PT_Cal */
   ptCalibration: Map<number, CalibrationCoefficients> = new Map();
-  /** Absolute path of the calibration file loaded at startup (null = none found). */
-  ptCalibrationFilePath: string | null = null;
-  /** (ADC, pressure) points per channel for ADC→pressure fit; cleared on clear_calibration. */
-  calibrationPoints: Map<number, { adc: number; pressure: number }[]> = new Map();
-  phase2Engine: Phase2CalibrationEngine | null = null;
-
-  /** Robust Calibration Python Sidecar */
+  /** Robust Calibration Python Sidecar (status + UI only; all fitting lives in Python) */
   calibrationSidecar!: CalibrationSidecarClient;
-
-  /** Robust Calibration Environmental State */
-  envState: EnvironmentalState = {
-    temperature: 25.0,
-    humidity: 50.0,
-    vibration: 0.0,
-    aging_factor: 1.0,
-    mounting_torque: 1.0
-  };
 
   actuatorSocket: dgram.Socket | null = null;
   private actuatorSocketBroadcastReady: boolean = false;
@@ -117,14 +102,10 @@ class SensorSystemServer {
   private rtdBoards: Map<string, Set<number>> = new Map();
   private lcBoards: Map<string, Set<number>> = new Map();
 
-  /** Throttle Phase 2 monitoring to ~5 Hz per channel */
-  private phase2LastMonitor: Map<number, number> = new Map();
   ipToBoardId: Map<string, number> = new Map();
-  private readonly PHASE2_MONITOR_INTERVAL_MS = 200;
 
   private readonly PSI_ABSOLUTE_MIN = -50;   // physically impossible below -50 PSI
   private readonly PSI_ABSOLUTE_MAX = 6000;  // max expected sensor range (HP PT up to 5000 PSI)
-  private _psiDebugLogged?: Set<number>;  // temp: track which channels we've logged
 
   /** Throttle WS broadcasts per entity to ~30 Hz */
   private broadcastLastTime: Map<string, number> = new Map();
@@ -134,15 +115,12 @@ class SensorSystemServer {
   private historyCache: Map<string, { time: number[]; values: number[] }> = new Map();
   private readonly HISTORY_MAX_POINTS = 9000;
 
+  /** Server startup time (epoch ms) used as global timebase for all clients/devices. */
+  private readonly serverStartTimeMs: number = Date.now();
+
   /** Binary data logger for runs */
   private dataLogger = new DataLogger();
   private _lastSensorLog = 0;
-
-  /** Track calibrated PT from Elodin per channel */
-  private calibratedPTFromElodin: Map<number, number> = new Map();
-
-  /** When true: use only calibrated from Elodin (calibration_service); no backend raw→psi */
-  private readonly USE_CALIBRATION_SERVICE_CALIBRATED: boolean;
 
   /** Mission T+0 */
   private firstPacketTime: number | null = null;
@@ -172,11 +150,6 @@ class SensorSystemServer {
   private hpPtBoards: Map<string, HpPtBoardConfig> = new Map();
   private excitationAdcCache: Map<string, number> = new Map();
   private hpPtExcitationWarnAt: Map<string, number> = new Map();
-
-  /** Cache of recent raw ADC values per sensor for Phase 1 capture */
-  lastRawAdc: Map<number, number> = new Map();
-  /** PT raw packet low byte → uniqueId (boardId*100+channelId) for calibration lookup */
-  private packetLowToUniqueId: Map<number, number> = new Map();
 
   /** Message logger & Elodin publisher */
   private messageLogger!: MessageLogger;
@@ -242,16 +215,7 @@ class SensorSystemServer {
     // Load config
     const config = readConfig();
 
-    // Load PT calibration (use config.calibration.pt.json_path if set)
-    const ptJsonPath = (config as any).calibration?.pt?.json_path;
-    const configDir = path.dirname(getConfigPath());
-    const repoRoot = path.dirname(configDir); // config.toml lives in config/, so repo root is parent
-    const resolvedPtPath = ptJsonPath ? path.join(repoRoot, ptJsonPath) : undefined;
-    const ptCalResult = loadPTCalibration(resolvedPtPath);
-    this.ptCalibration = ptCalResult.map;
-    this.ptCalibrationFilePath = ptCalResult.filePath;
-
-    // Initialize Robust Calibration Sidecar
+    // Initialize Robust Calibration Sidecar (all calibration/fitting lives in Python sidecar)
     this.calibrationSidecar = new CalibrationSidecarClient();
     this.calibrationSidecar.start();
     console.log('🤖 Robust Calibration Sidecar initialized');
@@ -269,10 +233,13 @@ class SensorSystemServer {
     // Load board registry from config.toml for heartbeat tracking
     this.loadBoardRegistry();
 
-    // Use calibration_service calibrated only when explicitly enabled. Default: backend does raw→psi from ptCalibration.
-    // This ensures consistent calibrated values when calibration_service/sidecar differs from expected.
-    this.USE_CALIBRATION_SERVICE_CALIBRATED = process.env.USE_CALIBRATION_SERVICE_CALIBRATED === 'true';
-    console.log('📐 Backend calibration: raw ADC → PSI via ptCalibration');
+    // Load PT calibration for fallback raw→psi when C++ calibration_service isn't providing PT_Cal
+    const ptResult = loadPTCalibration();
+    this.ptCalibration = ptResult.map;
+
+    // Backend does not do fitting; it consumes PT_Cal from Elodin when available.
+    // Fallback: when we receive raw PT and have calibration, compute psi locally so gauges show data.
+    console.log('📐 Backend: PT_Cal from Elodin; fallback raw→psi when calibration_service unavailable');
 
 
     // Load broadcast config from config.toml [server_heartbeat] — used for ABORT/CLEAR_ABORT UDP
@@ -353,75 +320,8 @@ class SensorSystemServer {
       console.log(`📋 Loaded ${transitions.length} allowed state transitions`);
     }
 
-    // Initialize Phase 2 calibration engine (fallback/internal)
-    this.phase2Engine = new Phase2CalibrationEngine();
-
-    // Default Phase 2 to disabled if Sidecar is primary
-    if (config.calibration?.sidecar?.enabled) {
-      this.phase2Engine.setEnabled(false);
-      console.log('🤖 Internal Phase 2 disabled - Robust Sidecar is primary');
-    }
-
-    try {
-      const phase2Config = config.phase2;
-      if (phase2Config) {
-        if (phase2Config.drift_threshold !== undefined) this.phase2Engine.setDriftThreshold(phase2Config.drift_threshold);
-        if (phase2Config.process_noise !== undefined) this.phase2Engine.setProcessNoise(phase2Config.process_noise);
-        if (phase2Config.ema_smoothing_alpha !== undefined) this.phase2Engine.setEMASmoothingAlpha(phase2Config.ema_smoothing_alpha);
-        // Only override if sidecar is not enabled
-        if (!config.calibration?.sidecar?.enabled && phase2Config.enabled !== undefined) {
-          this.phase2Engine.setEnabled(phase2Config.enabled);
-        }
-        if (phase2Config.consensus_threshold_psi !== undefined) this.phase2Engine.setConsensusThreshold(phase2Config.consensus_threshold_psi);
-        if (phase2Config.consensus_update_rate !== undefined) this.phase2Engine.setConsensusUpdateRate(phase2Config.consensus_update_rate);
-      }
-    } catch (err) {
-      console.warn('⚠️ Failed to load Phase 2 config, using defaults:', err);
-    }
-    this.phase2Engine.setEnabled(false);
-    this.calibrationSidecar.enabled = false;
-    console.log('📐 Phase 1 polynomial calibration only (Phase 2 and sidecar disabled)');
-
-    // Load saved Phase 2/Robust calibration
-    let savedCalibration: Map<number, { coeffs: CalibrationCoefficients; rlsUpdateCount: number }> = new Map();
-    try { savedCalibration = this.phase2Engine.loadSavedCalibration(); } catch (err) {
-      console.warn('⚠️ Failed to load saved calibration, continuing without it:', err);
-    }
-
-    this.ptCalibration.forEach((coeffs, sensorId) => {
-      try {
-        this.phase2Engine!.initializeSensor(sensorId, coeffs);
-        const saved = savedCalibration.get(sensorId);
-        if (saved) {
-          const state = this.phase2Engine!.getSensorState(sensorId);
-          if (state) {
-            const c = saved.coeffs;
-            state.adjustment = {
-              A: c.A - coeffs.A,
-              B: c.B - coeffs.B,
-              C: c.C - coeffs.C,
-              D: c.D - coeffs.D
-            };
-            state.rlsUpdateCount = saved.rlsUpdateCount;
-            // Also update our baseline map so conversions are correct before sidecar sync
-            this.ptCalibration.set(sensorId, c);
-            console.log(`📋 Restored saved calibration for sensor ${sensorId} (RLS updates: ${state.rlsUpdateCount})`);
-          }
-        }
-      } catch (err) { console.error(`❌ Failed to initialize Phase 2 for sensor ${sensorId}:`, err); }
-    });
-
-    // Listen to Sidecar for live coefficient updates
-    if (this.calibrationSidecar) {
-      this.calibrationSidecar.on('message', async (msg: any) => {
-        if (msg.type === 'coefficient_update' || msg.type === 'calibration_update') {
-          console.log(`🤖 Sidecar notified of calibration update (channel: ${msg.channel})`);
-          await this.syncSidecarCoefficients();
-        }
-      });
-      // Initial sync
-      this.syncSidecarCoefficients().catch(e => console.warn('⚠️ Initial sidecar sync failed:', e.message));
-    }
+    // Internal Phase 1/Phase 2 calibration engine removed — Python sidecar owns
+    // all calibration, and writes calibrated values back to Elodin directly.
 
     // Initialize UDP socket for actuator commands (bind first so setBroadcast works on macOS/Unix)
     this.actuatorSocket = dgram.createSocket('udp4');
@@ -551,16 +451,6 @@ class SensorSystemServer {
       this.applyServerHeartbeatConfig(config);
       this.restartServerHeartbeatTimer();
 
-      // Environmental state (used in calibration conversions / sidecar)
-      const envCfg = config.calibration?.environmental || {};
-      this.envState = {
-        temperature: envCfg.temperature ?? 25.0,
-        humidity: envCfg.humidity ?? 50.0,
-        vibration: envCfg.vibration ?? 0.0,
-        aging_factor: envCfg.aging_factor ?? 1.0,
-        mounting_torque: envCfg.mounting_torque ?? 1.0,
-      } as any;
-
       // Phase2 tuning knobs (best-effort; doesn't restart engines)
       this.applyPhase2Config(config);
 
@@ -620,23 +510,8 @@ class SensorSystemServer {
   }
 
   private applyPhase2Config(config: any): void {
-    if (!this.phase2Engine) return;
-    try {
-      const phase2Config = config.phase2;
-      if (!phase2Config) return;
-      if (phase2Config.drift_threshold !== undefined) this.phase2Engine.setDriftThreshold(phase2Config.drift_threshold);
-      if (phase2Config.process_noise !== undefined) this.phase2Engine.setProcessNoise(phase2Config.process_noise);
-      if (phase2Config.ema_smoothing_alpha !== undefined) this.phase2Engine.setEMASmoothingAlpha(phase2Config.ema_smoothing_alpha);
-      if (phase2Config.consensus_threshold_psi !== undefined) this.phase2Engine.setConsensusThreshold(phase2Config.consensus_threshold_psi);
-      if (phase2Config.consensus_update_rate !== undefined) this.phase2Engine.setConsensusUpdateRate(phase2Config.consensus_update_rate);
-
-      // Only enable internal Phase2 if sidecar is not enabled.
-      if (!config.calibration?.sidecar?.enabled && phase2Config.enabled !== undefined) {
-        this.phase2Engine.setEnabled(!!phase2Config.enabled);
-      }
-    } catch (err) {
-      console.warn('⚠️ Failed to apply Phase2 config during reload; keeping existing values:', err);
-    }
+    // Legacy Phase 2 engine has been removed from the backend. Python sidecar +
+    // calibration_server.py own all calibration logic now.
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -719,27 +594,6 @@ class SensorSystemServer {
         console.warn(`⚠️ Multiple designated survivor boards found (${designatedCandidates.length}); ACTUATOR_CONFIG will not be sent`);
       }
 
-      this.packetLowToUniqueId.clear();
-      const sensorRolesPt2 = (config as any).sensor_roles_pt2 || {};
-      for (const [, raw] of Object.entries(boards)) {
-        const board: any = raw;
-        if (board.type !== 'PT' || board.enabled === false) continue;
-        const boardId = board.board_id ?? board.id;
-        if (boardId == null) continue;
-        const chOffset = typeof board.channel_offset === 'number' ? board.channel_offset : 0;
-        if (chOffset === 0) {
-          // packet low byte IS the channel ID (0x01..0x0A) — no +1 offset
-          for (let c = 1; c <= 10; c++) this.packetLowToUniqueId.set(c, boardId * 100 + c);
-        } else {
-          for (const [, conn] of Object.entries(sensorRolesPt2)) {
-            const connector = Number(conn);
-            if (connector >= 1 && connector <= 10) {
-              const packetCh = connector + chOffset;
-              this.packetLowToUniqueId.set(packetCh, boardId * 100 + connector);
-            }
-          }
-        }
-      }
       console.log(`📋 Loaded ${this.boardRegistryById.size} boards from config.toml`);
     } catch (error) {
       console.warn('⚠️ Failed to load boards from config.toml; heartbeat pane will rely on discovery only:', error);
@@ -901,32 +755,6 @@ class SensorSystemServer {
 
   private _loggedNoFrontendClients = false;
 
-  /** Push an immediate pressure_psi update for a channel after calibration so the UI reflects the new fit. */
-  pushCalibrationUpdate(uniqueId: number): void {
-    const coeffs = this.ptCalibration.get(uniqueId);
-    const adc = this.lastRawAdc.get(uniqueId);
-    if (coeffs == null || adc == null) return;
-    const psi = calculatePressure(adc, coeffs);
-    if (!isFinite(psi)) return;
-    const boardId = Math.floor(uniqueId / 100);
-    const channelId = uniqueId % 100;
-    let calEntity: string | undefined;
-    for (const [ip, bid] of this.ipToBoardId.entries()) {
-      if (bid === boardId) {
-        const boardMap = this.boardChannelToEntityMaps.get(ip);
-        if (boardMap) calEntity = boardMap[channelId] ?? (boardMap as Record<string, string>)[String(channelId)];
-        break;
-      }
-    }
-    if (!calEntity) calEntity = this.channelToEntityMap[channelId];
-    if (!calEntity) calEntity = `PT_Cal.PT_CH${channelId}`;
-    const t = Date.now();
-    this.broadcastLastTime.delete(`${calEntity}.pressure_psi`);
-    this.broadcastLastTime.delete(`PT_Cal.PT_CH${channelId}.pressure_psi`);
-    this.handleSensorUpdate({ entity: calEntity, component: 'pressure_psi', value: psi, timestamp: t });
-    this.handleSensorUpdate({ entity: `PT_Cal.PT_CH${channelId}`, component: 'pressure_psi', value: psi, timestamp: t });
-  }
-
   // ═══════════════════════════════════════════════════════════════════════════
   // Elodin packet handler
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1009,6 +837,40 @@ class SensorSystemServer {
         channelToEntityMap: this.channelToEntityMap,
         actuatorChannelToEntityMap: this.actuatorChannelToEntityMap,
       });
+
+      // Fallback: raw PT → psi when C++ calibration_service isn't providing PT_Cal
+      if (high === 0x20 && low >= 0x01 && low <= 0x0E && payload.length >= 21) {
+        const payloadCh = payload.readUInt8(8);
+        const rawAdc = payload.readInt32LE(12);
+        const epochNow = Date.now();
+        const connectorId = payloadCh - 10; // board 2 channel_offset
+
+        let handledAsHpPt = false;
+        for (const cfg of this.hpPtBoards.values()) {
+          if (cfg.hpPtConnectors.has(connectorId)) {
+            const adcExc = cfg.excitationConnectorId >= 0 ? (this.excitationAdcCache.get(`${cfg.boardIp}:${cfg.excitationConnectorId}`) ?? 0) : 2147483648;
+            const psi = convertHpPtToPressure(rawAdc, adcExc, cfg);
+            if (Number.isFinite(psi) && psi >= this.PSI_ABSOLUTE_MIN && psi <= this.PSI_ABSOLUTE_MAX) {
+              const calEntity = cfg.channelToEntity[connectorId] || this.channelToEntityMap[payloadCh] || `PT_Cal.HP_PT_${connectorId}`;
+              this.handleSensorUpdate({ entity: calEntity, component: 'pressure_psi', value: psi, timestamp: epochNow });
+            }
+            handledAsHpPt = true;
+            break;
+          }
+        }
+
+        if (!handledAsHpPt && this.ptCalibration.size > 0) {
+          const coeffs = this.ptCalibration.get(payloadCh) ?? this.ptCalibration.get(100 + payloadCh);
+          if (coeffs) {
+            const psi = calculatePressure(rawAdc, coeffs);
+            if (Number.isFinite(psi) && psi >= this.PSI_ABSOLUTE_MIN && psi <= this.PSI_ABSOLUTE_MAX) {
+              const calEntity = this.channelToEntityMap[payloadCh] || `PT_Cal.CH${payloadCh}`;
+              this.handleSensorUpdate({ entity: calEntity, component: 'pressure_psi', value: psi, timestamp: epochNow });
+            }
+          }
+        }
+      }
+
       if (!parsed) {
         // Log parse failures: first 5 always, then every 100th, and when ELODIN_DEBUG=1
         if (header.ty === ElodinPacketType.TABLE) {
@@ -1020,134 +882,29 @@ class SensorSystemServer {
         return;
       }
 
-      let shouldUseElodinValue = true;
-      let channelId: number | null = null;
-
-      if (parsed.entity.startsWith('PT_Cal.') && parsed.component === 'pressure_psi') {
-        const channelMatch = parsed.entity.match(/PT_CH(\d+)/);
-        if (channelMatch) {
-          channelId = parseInt(channelMatch[1], 10);
-        } else {
-          for (const boardMap of this.boardChannelToEntityMaps.values()) {
-            for (const [idStr, mapEntity] of Object.entries(boardMap)) {
-              if (mapEntity === parsed.entity || mapEntity.replace('PT_Cal.', 'PT.') === parsed.entity) { channelId = parseInt(idStr, 10); break; }
-            }
-            if (channelId) break;
-          }
-          if (!channelId) {
-            for (const [idStr, mapEntity] of Object.entries(this.channelToEntityMap)) {
-              if (mapEntity === parsed.entity || mapEntity.replace('PT_Cal.', 'PT.') === parsed.entity) { channelId = parseInt(idStr, 10); break; }
-            }
-          }
-          if (!channelId) {
-            const chMatch = parsed.entity.match(/[._]CH?(\d+)$/);
-            if (chMatch) channelId = parseInt(chMatch[1], 10);
-            else {
-              const fallbackMap: Record<string, number> = {
-                'PT_Cal.Fuel_Upstream': 1, 'PT_Cal.GSE_Low': 2, 'PT_Cal.Fuel_Downstream': 3, 'PT_Cal.PT_CH3': 3,
-                'PT_Cal.Fuel_Fill_Tank': 4, 'PT_Cal.PT_CH4': 4, 'PT_Cal.Ox_Upstream': 5, 'PT_Cal.GN2_Regulated': 6, 'PT_Cal.Ox_Downstream': 7,
-              };
-              channelId = fallbackMap[parsed.entity] ?? null;
-            }
-          }
-        }
-
-        if (channelId) {
-          let boardId = 1;
-          for (const [ip, bId] of this.ipToBoardId.entries()) {
-            const boardMap = this.boardChannelToEntityMaps.get(ip);
-            if (boardMap && boardMap[channelId] === parsed.entity) { boardId = bId; break; }
-          }
-          const uniqueId = boardId * 100 + channelId;
-          if (this.USE_CALIBRATION_SERVICE_CALIBRATED) {
-            shouldUseElodinValue = true;  // Always use Elodin calibrated (calibration_service)
-          } else {
-            const phase2State = this.phase2Engine?.getSensorState?.(uniqueId);
-            if (phase2State && phase2State.rlsUpdateCount > 0) {
-              shouldUseElodinValue = false;
-            }
-          }
-          this.calibratedPTFromElodin.set(uniqueId, Date.now());
-        }
+      // CRITICAL: Elodin timestamps are steady_clock (nanoseconds since boot ÷ 1e6 = ms since boot),
+      // NOT Unix epoch. We must use Date.now() for ALL updates so firstPacketTime is set to epoch,
+      // and all subsequent timeSec calculations (relative to firstPacketTime) stay near 0.
+      // Mixing clocks causes timeSec = billions → bad data leaks to frontend as spikes.
+      const epochNow = Date.now();
+      // Reject corrupted/invalid parsed values to prevent spikes
+      const isValid = Number.isFinite(parsed.value) && !Number.isNaN(parsed.value) &&
+        (parsed.component !== 'pressure_psi' || (parsed.value >= this.PSI_ABSOLUTE_MIN && parsed.value <= this.PSI_ABSOLUTE_MAX));
+      if (isValid) {
+        const update: SensorUpdate = { entity: parsed.entity, component: parsed.component, value: parsed.value, timestamp: epochNow };
+        this.handleSensorUpdate(update);
       }
 
-      if (shouldUseElodinValue) {
-        // CRITICAL: Elodin timestamps are steady_clock (nanoseconds since boot ÷ 1e6 = ms since boot),
-        // NOT Unix epoch. We must use Date.now() for ALL updates so firstPacketTime is set to epoch,
-        // and all subsequent timeSec calculations (relative to firstPacketTime) stay near 0.
-        // Mixing clocks causes timeSec = billions → bad data leaks to frontend as spikes.
-        const epochNow = Date.now();
-        // Reject corrupted/invalid parsed values to prevent spikes
-        const isValid = Number.isFinite(parsed.value) && !Number.isNaN(parsed.value) &&
-          (parsed.component !== 'pressure_psi' || (parsed.value >= this.PSI_ABSOLUTE_MIN && parsed.value <= this.PSI_ABSOLUTE_MAX));
-        if (isValid) {
-          const update: SensorUpdate = { entity: parsed.entity, component: parsed.component, value: parsed.value, timestamp: epochNow };
-          this.handleSensorUpdate(update);
-          if (channelId) {
-            this.handleSensorUpdate({ entity: `PT_Cal.PT_CH${channelId}`, component: 'pressure_psi', value: parsed.value, timestamp: epochNow });
-          }
-        }
-        // Raw PT → pressure_psi: ONLY when not using calibration_service (USE_CALIBRATION_SERVICE_CALIBRATED=false)
-        if (!this.USE_CALIBRATION_SERVICE_CALIBRATED &&
-          parsed.entity.startsWith('PT.') && parsed.component === 'raw_adc_counts' && payload.length >= 9) {
-          const rawCh = payload.readUInt8(8);
-          const pktLow = header.packetId[1];
-          const uid = this.packetLowToUniqueId.get(pktLow) ?? (100 + rawCh);
-          const calEntity = this.channelToEntityMap[rawCh] || `PT_Cal.PT_CH${rawCh}`;
-          const adcSensor = Math.round(parsed.value);
-          let psi: number = NaN;
-
-          this.lastRawAdc.set(uid, adcSensor);
-
-          // HP PT boards use 4-20 mA conversion, not polynomial calibration
-          const ADC_MAX = 2147483648;
-          let hpConverted = false;
-          for (const cfg of this.hpPtBoards.values()) {
-            const hpEntity = Object.values(cfg.channelToEntity).find((e) => e === calEntity);
-            if (hpEntity) {
-              const adcExc = cfg.excitationConnectorId >= 0
-                ? (this.excitationAdcCache.get(`${cfg.boardIp}:${cfg.excitationConnectorId}`) ?? ADC_MAX)
-                : ADC_MAX;  // No excitation channel: use dummy so conversion runs
-              psi = convertHpPtToPressure(adcSensor, adcExc, cfg);
-              hpConverted = true;
-              console.log(`[HP-PT-DEBUG] entity=${hpEntity} adcSensor=${adcSensor} adcExc=${adcExc} psi=${psi} board=${cfg.boardIp}`);
-              break;
-            }
-          }
-
-          if (!hpConverted) {
-            const coeffs = this.ptCalibration.get(uid) ?? this.ptCalibration.get(rawCh);
-            if (coeffs) {
-              psi = calculatePressure(parsed.value, coeffs, this.envState);
-              if (!isFinite(psi) || isNaN(psi)) psi = (parsed.value / ADC_MAX) * 500;
-            } else {
-              psi = (parsed.value / ADC_MAX) * 500;
-            }
-            // TEMP DEBUG: log once per channel so we can see adc→psi in backend terminal
-            if (!this._psiDebugLogged) this._psiDebugLogged = new Set<number>();
-            if (!this._psiDebugLogged.has(rawCh)) {
-              this._psiDebugLogged.add(rawCh);
-              console.log(`[PSI Debug] ch=${rawCh} uid=${uid} adc=${parsed.value} psi=${psi.toFixed(2)} coeffs=${coeffs ? 'yes' : 'NO (fallback)'}`);
-            }
-          }
-
-          if (isFinite(psi) && !isNaN(psi)) {
-            // Spike rejection is now handled entirely inside handleSensorUpdate
-            this.handleSensorUpdate({ entity: calEntity, component: 'pressure_psi', value: psi, timestamp: epochNow });
-            this.handleSensorUpdate({ entity: `PT_Cal.PT_CH${rawCh}`, component: 'pressure_psi', value: psi, timestamp: epochNow });
-          }
-        }
-        // Emit ACTUATOR_UPDATE so dashboard actuator panels get state (open/closed from raw ADC threshold).
-        if (parsed.entity.startsWith('ACT.') && parsed.component === 'raw_adc_counts') {
-          const rawAdc = Math.round(parsed.value);
-          const state = rawAdc > 1000 ? 1 : 0; // 1 = OPEN, 0 = CLOSED
-          const name = parsed.entity.replace('ACT.', '').replace(/_/g, ' ');
-          this.broadcast({
-            type: MessageType.ACTUATOR_UPDATE,
-            timestamp: parsed.timestamp,
-            payload: { actuatorId: 0, name, state, rawAdcCounts: rawAdc, timestamp: parsed.timestamp } as ActuatorUpdate,
-          });
-        }
+      // Emit ACTUATOR_UPDATE so dashboard actuator panels get state (open/closed from raw ADC threshold).
+      if (parsed.entity.startsWith('ACT.') && parsed.component === 'raw_adc_counts') {
+        const rawAdc = Math.round(parsed.value);
+        const state = rawAdc > 1000 ? 1 : 0; // 1 = OPEN, 0 = CLOSED
+        const name = parsed.entity.replace('ACT.', '').replace(/_/g, ' ');
+        this.broadcast({
+          type: MessageType.ACTUATOR_UPDATE,
+          timestamp: parsed.timestamp,
+          payload: { actuatorId: 0, name, state, rawAdcCounts: rawAdc, timestamp: parsed.timestamp } as ActuatorUpdate,
+        });
       }
     } catch (error) { console.error('❌ Error handling Elodin packet:', error); }
   }
@@ -1228,7 +985,9 @@ class SensorSystemServer {
         this.handleCommand(message.payload as CommandPayload);
         break;
       case MessageType.CALIBRATION_COMMAND:
-        handleCalibrationCommand(this, ws, message.payload);
+        // Legacy backend calibration path removed — calibration commands are now
+        // handled entirely by the Python calibration sidecar / HTTP API.
+        console.warn('⚠️ CALIBRATION_COMMAND received but backend calibration is disabled; use Python calibration service.');
         break;
       case 'get_state_transitions':
         this.send(ws, { type: 'state_transitions', timestamp: Date.now(), payload: { transitions: getStateTransitions() } });
@@ -1473,36 +1232,18 @@ class SensorSystemServer {
   // Update loop, broadcast, send, shutdown
   // ═══════════════════════════════════════════════════════════════════════════
 
+  /** Current server uptime in milliseconds since this backend process started. */
+  private getServerUptimeMs(): number {
+    return Date.now() - this.serverStartTimeMs;
+  }
+
   private startUpdateLoop(): void {
     this.updateInterval = setInterval(() => { }, 50);
 
-    // Robust Calibration Status Loop (Sync or Sidecar)
+    // Robust Calibration Status Loop (Python sidecar only)
     setInterval(async () => {
       if (this.clients.size === 0) return;
-
-      if (this.calibrationSidecar && this.calibrationSidecar.enabled) {
-        try {
-          const status = await this.calibrationSidecar.getStatus();
-          if (status && status.channels) {
-            // Update local coefficients map from sidecar status
-            for (const ch of status.channels) {
-              if (ch.coeffs) this.ptCalibration.set(ch.sensorId, ch.coeffs);
-            }
-            this.broadcast({ type: MessageType.CALIBRATION_STATUS, timestamp: Date.now(), payload: { ...status, calibrationFilePath: this.ptCalibrationFilePath } });
-            return;
-          }
-        } catch (e: any) {
-          console.warn(`⚠️ Sidecar status sync failed: ${e.message}`);
-        }
-      }
-
-      // Fallback to internal engine status if sidecar fails or is disabled
-      if (this.phase2Engine && this.phase2Engine.isEnabled()) {
-        const channels = this.phase2Engine.getAllStatus();
-        if (channels.length > 0) {
-          this.broadcast({ type: MessageType.CALIBRATION_STATUS, timestamp: Date.now(), payload: { channels, phase2Enabled: true, timestamp: Date.now(), calibrationFilePath: this.ptCalibrationFilePath } });
-        }
-      }
+      await this.syncSidecarCoefficients();
     }, 2000);
 
     // Broadcast board heartbeat / connection status to all clients every second
@@ -1619,7 +1360,7 @@ class SensorSystemServer {
     try {
       const packetType = 2;
       const version = 0;
-      const timestamp = Date.now() >>> 0;
+      const timestamp = Math.floor(this.getServerUptimeMs()) >>> 0;
       const engineCode = (this.currentState ?? SystemState.IDLE) as number;
 
       const payload = Buffer.allocUnsafe(7);
@@ -1671,7 +1412,7 @@ class SensorSystemServer {
     if (!this.actuatorSocket) return;
     try {
       const version = 0;
-      const timestamp = Date.now() >>> 0;
+      const timestamp = Math.floor(this.getServerUptimeMs()) >>> 0;
       const payload = Buffer.allocUnsafe(6);
       payload.writeUInt8(packetType, 0);
       payload.writeUInt8(version, 1);
@@ -1760,18 +1501,9 @@ class SensorSystemServer {
     try {
       const status = await this.calibrationSidecar.getStatus();
       if (status && status.channels) {
-        console.log(`🤖 Syncing ${status.channels.length} robust coefficients from sidecar...`);
-        for (const ch of status.channels) {
-          const prevCoeffs = this.ptCalibration.get(ch.sensorId);
-          // Compare offset (index 0) and linear term (index 1) for significant change
-          const coeffsChanged = !prevCoeffs ||
-            Math.abs(prevCoeffs.D - ch.coeffs.D) > 0.1 ||
-            Math.abs(prevCoeffs.C - ch.coeffs.C) > 1e-10;
-
-          if (ch.coeffs) this.ptCalibration.set(ch.sensorId, ch.coeffs);
-        }
-        // Broadcast the new status immediately to update UI (latencies hiding)
-        this.broadcast({ type: MessageType.CALIBRATION_STATUS, timestamp: Date.now(), payload: { ...status, calibrationFilePath: this.ptCalibrationFilePath } });
+        console.log(`🤖 Sidecar calibration status: ${status.channels.length} channels`);
+        // Backend no longer stores or applies coefficients; just broadcast status.
+        this.broadcast({ type: MessageType.CALIBRATION_STATUS, timestamp: Date.now(), payload: status });
       }
     } catch (e: any) {
       console.warn(`🤖 Sidecar sync error: ${e.message}`);
@@ -1789,6 +1521,9 @@ class SensorSystemServer {
   }
 
   broadcast(message: any): void {
+    if (message && typeof message === 'object' && typeof message.timestamp === 'number') {
+      (message as any).serverTimeMs = this.getServerUptimeMs();
+    }
     if (this.messageLogger) this.messageLogger.logMessage(message);
     if (this.clients.size === 0) return;
 
@@ -1803,6 +1538,9 @@ class SensorSystemServer {
   }
 
   send(ws: WebSocket, message: any): void {
+    if (message && typeof message === 'object' && typeof message.timestamp === 'number') {
+      (message as any).serverTimeMs = this.getServerUptimeMs();
+    }
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
   }
 
@@ -2006,33 +1744,12 @@ class SensorSystemServer {
       });
     }
 
-    // Build X abort PT blocks (abort_pts + sensor_roles + calibration inverse)
+    // Build X abort PT blocks (abort_pts + sensor_roles). Backend no longer has
+    // access to calibration curves, so it cannot convert PSI thresholds to ADC
+    // codes; abort PT blocks are therefore omitted from the config packet.
     const abortPtsList: Array<{ ip: number; sensor_id: number; threshold_adc_code: number }> = [];
-    for (const [roleName, thresholdPsi] of Object.entries(abortPts)) {
-      const sensorId = sensorRoles[roleName];
-      if (sensorId == null || !Number.isFinite(sensorId) || sensorId < 1 || sensorId > 255) {
-        console.warn(`⚠️ abort_pts: no sensor_roles entry for "${roleName}", skipping`);
-        continue;
-      }
-      const coeffs = this.ptCalibration.get(sensorId);
-      if (!coeffs) {
-        console.warn(`⚠️ abort_pts: no calibration for sensor_id ${sensorId} ("${roleName}"), skipping`);
-        continue;
-      }
-      const adcCode = inversePressureToAdc(Number(thresholdPsi), coeffs);
-      if (!Number.isFinite(adcCode) || adcCode < 0) {
-        console.warn(`⚠️ abort_pts: inversePressureToAdc(${thresholdPsi}, ...) failed for "${roleName}", skipping`);
-        continue;
-      }
-      if (!ptBoardIP) {
-        console.warn('⚠️ abort_pts: no PT board in config, skipping abort PT blocks');
-        break;
-      }
-      abortPtsList.push({
-        ip: ipToU32BE(ptBoardIP),
-        sensor_id: sensorId,
-        threshold_adc_code: Math.round(adcCode) >>> 0,
-      });
+    if (Object.keys(abortPts).length > 0) {
+      console.warn('⚠️ abort_pts configured but backend calibration is disabled; abort PT ADC thresholds will not be sent from backend.');
     }
 
     const N = Math.min(abortActuators.length, 255);
@@ -2042,7 +1759,7 @@ class SensorSystemServer {
     const totalSize = headerSize + bodySize;
     const buffer = Buffer.allocUnsafe(totalSize);
 
-    const timestamp = (Math.floor(Date.now()) >>> 0);
+    const timestamp = (Math.floor(this.getServerUptimeMs()) >>> 0);
     buffer.writeUInt8(6, 0);   // ACTUATOR_CONFIG
     buffer.writeUInt8(0, 1);   // version
     buffer.writeUInt32LE(timestamp, 2);
@@ -2106,7 +1823,7 @@ class SensorSystemServer {
     const totalLength = 6 + bodyLength;
     const buffer = Buffer.allocUnsafe(totalLength);
 
-    const timestamp = (Math.floor(Date.now()) >>> 0);
+    const timestamp = (Math.floor(this.getServerUptimeMs()) >>> 0);
 
     // Header: packet_type=5 (SENSOR_CONFIG), version=0, timestamp LE
     buffer.writeUInt8(5, 0);

@@ -114,7 +114,7 @@ listen_port = 5005         # Actuator board listens for ACTUATOR_COMMAND on this
 num_actuators = 10
 num_sensors = 10            # 10 current sense ADC channels
 board_id = 11              # Actuator Board #1 (label on board)
-enabled = true
+enabled = false
 enable_serial_printing = true
 necessary_for_abort = false
 # voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
@@ -323,8 +323,8 @@ active_connectors = []
 "LOX Main"               = ["NC", 1, 12]
 "Fuel Vent"             = ["NO", 2, 12]
 "Fuel Press"            = ["NC", 3, 12]
-"Fuel Main"             = ["NC", 7, 12]
-"LOX Vent"              = ["NC", 6, 12]
+"Fuel Main"             = ["NO", 7, 12]
+"LOX Vent"              = ["NO", 6, 12]
 "LOX Press"             = ["NO", 8, 12]
 "GSE Low Press Vent"    = ["NC", 5, 12]
 "Fuel Fill Press"       = ["NC", 10, 12]
@@ -408,7 +408,8 @@ packet_id = [0x31, 0x00]
 channels = 20
 description = "Actuator state (0=closed, 1=open) from current-sense threshold"
 
-# Which routing types daq_bridge publishes to Elodin. Calibrated PT is written by calibration_service, not daq_bridge.
+# Which routing types daq_bridge publishes to Elodin.
+# PT_Cal/TC_Cal/LC_Cal/RTD_Cal are written by calibration_server (subscribes to relay, applies calibration, writes to Elodin).
 [daq_bridge]
 publish = ["pt_raw", "tc_raw", "rtd_raw", "lc_raw", "actuator_status", "actuator_state"]
 
@@ -456,23 +457,52 @@ csv_paths = []
 # =============================================================================
 # Pressure Limits (for GUI gauges and alarms)
 # =============================================================================
-[pressure_limits.GN2]
-THRESH = 550
-NOP = 900
-MEOP = 950
+
+
+[pressure_limits.GN2_High]
+NOP = 4000
+MEOP = 5000
 POP = 1000
 
-[pressure_limits.ETH]
-THRESH = 550
-NOP = 600
+[pressure_limits.GN2_Regulated]
+NOP = 900
+MEOP = 1250
+POP = 9000
+
+[pressure_limits.Fuel_Upstream]
+NOP = 540
 MEOP = 650
 POP = 750
 
-[pressure_limits.LOX]
-THRESH = 550
-NOP = 600
+[pressure_limits.Fuel_Downstream]
+NOP = 540
 MEOP = 650
 POP = 750
+
+[pressure_limits.Ox_Upstream]
+NOP = 505
+MEOP = 650
+POP = 750
+
+[pressure_limits.Ox_Downstream]
+NOP = 505
+MEOP = 650
+POP = 750
+
+[pressure_limits.GSE_Low]
+NOP = 130
+MEOP = 155
+POP = 800
+
+[pressure_limits.GSE_Mid]
+NOP = 1500
+MEOP = 2000
+POP = 5000
+
+[pressure_limits.GSE_High]
+NOP = 4000
+MEOP = 5000
+POP = 800
 
 # Pressure sensor → fluid system mapping (sensor_id → system)
 [pressure_mappings]
@@ -510,9 +540,11 @@ transitions_csv = "external/DiabloAvionics/test_guis/state_transitions.csv"
 pwm_frequency_hz = 10.0
 # PWM command duration (ms) - how long each command stays active
 pwm_duration_ms = 1000
-# Fallback duty cycles when controller service is unavailable (0.0-1.0)
-fallback_fuel_duty_cycle = 0.65
-fallback_ox_duty_cycle = 0.65
+# Fallback duty cycles when controller service is unavailable (0.0-1.0).
+# When controller_service runs, non-zero values also act as open-loop test duty (bypass DDP/LUT).
+# For LUT mode, set both to 0 so the LUT is used.
+fallback_fuel_duty_cycle = 0.0
+fallback_ox_duty_cycle = 0.0
 # Controller loop update rate (Hz)
 controller_loop_hz = 10.0
 # Controller service URL
@@ -541,6 +573,13 @@ duty_sweep_steps = [[0.1, 0.1], [0.3, 0.2], [0.5, 0.4], [0.3, 0.3], [0.1, 0.1]]
 # Use C++ RobustDDPController service for PWM instead of Python FastAPI.
 # When true, the web backend will not start its own controller loop or send PWM.
 use_cpp_controller = true
+
+# Optional LUT path for boolean control. If set and load succeeds, bypasses DDP
+# and uses precomputed optimal u_safe_F/O from LUT (threshold > 0.5 → on).
+# For LUT mode, set fallback_fuel_duty_cycle and fallback_ox_duty_cycle to 0.
+# Generate: python -m scripts.controller_lut.generate_controller_lut --lut-config scripts/controller_lut/example_lut_config.yaml --output output/lut/controller_lut.npz
+# Export:   python -m scripts.controller_lut.export_lut_for_fsw -i output/lut/controller_lut.npz -o output/lut/controller_lut.bin
+# lut_path = "output/lut/controller_lut.bin"
 
 # =============================================================================
 # Phase 2 Calibration Settings
@@ -574,6 +613,8 @@ consensus_update_rate = 0.1
 enabled = true
 host = "127.0.0.1"
 port = 8100
+relay_host = "127.0.0.1"
+relay_port = 9090
 reconnect_interval_ms = 5000
 adc_forward_interval_ms = 200
 

@@ -261,6 +261,7 @@ int main(int argc, char* argv[]) {
     bool use_pressure_control = false;
     double p_fuel_target_psi = 0.0;
     double p_ox_target_psi = 0.0;
+    std::string lut_path_cli;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -286,6 +287,8 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--p-ox" && i + 1 < argc) {
             p_ox_target_psi = std::atof(argv[++i]);
             use_pressure_control = true;
+        } else if (arg == "--lut-path" && i + 1 < argc) {
+            lut_path_cli = argv[++i];
         } else if (arg == "--help" || arg == "-h") {
             std::cout
                 << "Usage: " << argv[0] << " [OPTIONS]\n"
@@ -294,7 +297,8 @@ int main(int argc, char* argv[]) {
                 << "  --elodin-port PORT    Elodin DB port (default: 2240)\n"
                 << "  --thrust N            Thrust demand [N] (default: 1000)\n"
                 << "  --p-fuel PSI          Fuel tank pressure target [psi]\n"
-                << "  --p-ox PSI            Ox tank pressure target [psi]\n";
+                << "  --p-ox PSI            Ox tank pressure target [psi]\n"
+                << "  --lut-path PATH      LUT binary for boolean control (bypasses DDP)\n";
             return 0;
         }
     }
@@ -485,7 +489,14 @@ int main(int argc, char* argv[]) {
     // ── Initialize ─────────────────────────────────────────────────────
     fsw::control::ControllerService service;
 
-    if (!service.initialize(pwm, ctrl_cfg, elodin_host, elodin_port, relay_host, relay_port)) {
+    std::string lut_path = !lut_path_cli.empty()
+                               ? lut_path_cli
+                               : getTomlValue(config_content, "controller", "lut_path", "");
+    if (!lut_path.empty())
+        std::cout << "  LUT path:       " << lut_path << " (boolean control)" << std::endl;
+
+    if (!service.initialize(pwm, ctrl_cfg, elodin_host, elodin_port, relay_host, relay_port,
+                            lut_path)) {
         std::cerr << "❌ Failed to initialize controller service" << std::endl;
         return 1;
     }

@@ -2,17 +2,15 @@
 """
 Post-process a single Elodin DB run.
 
-Responsibilities:
+Uses FSW-style pipeline (elodin-db lua save_archive → parquet → CSV → merge):
 - Resolve DB path from a DB name (under ~/.local/share/elodin) or explicit path.
-- Create a per-run output folder under scripts/postprocessing/output/<DB_NAME>/.
-- Export key tables from Elodin DB to CSV using `elodin-db export`.
-- Emit a minimal run summary (timestamps, row counts per table) as JSON.
+- Export DB to parquet via elodin-db native save_archive.
+- Convert parquet → CSV, merge by prefix.
+- Generate plots and summary JSON.
 
 Usage:
   ./postprocess_run.py --db-name daq_20260304_123456
   ./postprocess_run.py --db-path ~/.local/share/elodin/daq_20260304_123456
-
-You can extend this script with more domain-specific analysis/plots as needed.
 """
 
 import argparse
@@ -39,13 +37,21 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 def run_cmd(
-    cmd: List[str], capture: bool = False, check: bool = True
+    cmd: List[str],
+    capture: bool = False,
+    check: bool = True,
+    cwd: Optional[Path] = None,
 ) -> subprocess.CompletedProcess:
     if capture:
         return subprocess.run(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=check
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=check,
+            cwd=str(cwd) if cwd is not None else None,
         )
-    return subprocess.run(cmd, check=check)
+    return subprocess.run(cmd, check=check, cwd=str(cwd) if cwd is not None else None)
 
 
 def resolve_db_path(db_name: Optional[str], db_path: Optional[str]) -> Path:
@@ -70,46 +76,6 @@ def ensure_output_dir(db_name: str) -> Path:
     out_dir = POSTPROC_ROOT / "output" / db_name
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir
-
-
-def list_tables(db_path: Path) -> List[str]:
-    try:
-        proc = run_cmd(["elodin-db", "list", str(db_path)], capture=True)
-    except subprocess.CalledProcessError as e:
-        sys.stderr.write(
-            f"[postprocess] Failed to list tables for {db_path}: {e.stderr}\n"
-        )
-        raise
-
-    tables: List[str] = []
-    for line in proc.stdout.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        # Simple heuristic: treat each non-empty line as a table name
-        tables.append(line.split()[0])
-    return tables
-
-
-def export_table(db_path: Path, table: str, out_csv: Path) -> int:
-    try:
-        proc = run_cmd(["elodin-db", "export", str(db_path), table], capture=True)
-    except subprocess.CalledProcessError as e:
-        sys.stderr.write(f"[postprocess] Failed to export table {table}: {e.stderr}\n")
-        return 0
-
-    text = proc.stdout
-    if not text:
-        return 0
-
-    out_csv.parent.mkdir(parents=True, exist_ok=True)
-    out_csv.write_text(text)
-
-    # Cheap row count (minus header)
-    lines = [ln for ln in text.splitlines() if ln.strip()]
-    if not lines:
-        return 0
-    return max(len(lines) - 1, 0)
 
 
 def copy_metadata(db_path: Path, out_dir: Path) -> None:
@@ -279,11 +245,6 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     )
     parser.add_argument("--db-path", help="Explicit DB path (overrides --db-name)")
     parser.add_argument(
-        "--tables",
-        nargs="*",
-        help="Subset of tables to export (default: export all tables returned by `elodin-db list`).",
-    )
-    parser.add_argument(
         "--force",
         action="store_true",
         help="Overwrite existing output for this DB run if present.",
@@ -318,26 +279,14 @@ def main(argv: List[str]) -> int:
             else:
                 child.unlink()
 
+    sys.path.insert(0, str(POSTPROC_ROOT))
+    from elodin_db_pipeline import run_pipeline  # type: ignore
+
     try:
-        available_tables = list_tables(db_path)
-    except Exception:
+        table_rows, _ = run_pipeline(db_path, db_name, out_dir)
+    except Exception as e:
+        sys.stderr.write(f"[postprocess] Pipeline failed: {e}\n")
         return 1
-
-    if args.tables:
-        tables = [t for t in args.tables if t in available_tables]
-        missing = set(args.tables) - set(tables)
-        if missing:
-            sys.stderr.write(
-                f"[postprocess] Requested tables not found and will be skipped: {', '.join(sorted(missing))}\n"
-            )
-    else:
-        tables = available_tables
-
-    table_rows: Dict[str, int] = {}
-    for table in tables:
-        csv_path = out_dir / f"{table}.csv"
-        rows = export_table(db_path, table, csv_path)
-        table_rows[table] = rows
 
     copy_metadata(db_path, out_dir)
 

@@ -308,8 +308,9 @@ class RobustCalibrationFramework:
             ]
         )
         env_variance = env_vector.T @ self.env_variance_matrices["env"] @ env_vector
+        adc_norm = phi[1]  # linear term for interaction
         interaction_variance = (
-            voltage**2
+            adc_norm**2
             * env_vector.T
             @ self.env_variance_matrices["interaction"]
             @ env_vector

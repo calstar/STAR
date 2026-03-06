@@ -8,7 +8,7 @@ import struct
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import Optional
+from typing import Any, Optional
 import websockets
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
@@ -19,7 +19,10 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 from scripts.calibration.calibration_orchestrator import CalibrationOrchestrator
 from scripts.calibration.robust_calibration import CalibrationPoint, EnvironmentalState
-from scripts.calibration.config_loader import load_config
+from scripts.calibration.config_loader import (
+    load_config,
+    build_channel_to_orchestrator_key,
+)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -53,29 +56,32 @@ class ElodinWriter:
             self.connected = False
             return False
 
-    def write_calibrated_pt(self, channel_id: int, pressure_psi: float) -> bool:
+    def write_calibrated_pt(
+        self, channel_id: int, pressure_psi: float, raw_adc: int = 0
+    ) -> bool:
         """
         Write a calibrated PT TABLE packet to Elodin DB.
-        Packet ID: [0x20, 0x10 + channel_id]  (e.g. ch1 → 0x11)
-        Payload:   ts_ns(8) + ch(1) + pad(3) + psi(float32,4) + ts_ms(4) + flags(1)
+        Packet ID: [0x20, 0x10 + channel_id]. Payload: ts_ns(8)+ch(1)+pad(3)+psi(f32)+raw(u32)+flags(1)
         """
+        return self._write_calibrated(0x20, channel_id, pressure_psi, raw_adc)
+
+    def _write_calibrated(
+        self, high: int, channel_id: int, value: float, raw_counts: int
+    ) -> bool:
+        """Generic calibrated write: 21-byte payload, packet_id [high, 0x10+channel_id]."""
         if not self.connected or not self.sock:
             return False
         try:
             ts_ns = time.time_ns()
-            ts_ms = (ts_ns // 1_000_000) & 0xFFFFFFFF
             payload = struct.pack("<Q", ts_ns)
             payload += struct.pack("<B", channel_id)
             payload += bytes(3)
-            payload += struct.pack("<f", pressure_psi)
-            payload += struct.pack("<I", ts_ms)
+            payload += struct.pack("<f", value)
+            payload += struct.pack("<I", raw_counts & 0xFFFFFFFF)  # handle signed (LC)
             payload += struct.pack("<B", 0)
-            # Elodin header: len(4) + ty(1) + packetId(2) + requestId(1)
-            # len = payloadLen + 4
-            packet_id_low = 0x10 + channel_id
             header = struct.pack("<I", len(payload) + 4)
             header += struct.pack("<B", 1)  # TABLE
-            header += struct.pack("<BB", 0x20, packet_id_low)
+            header += struct.pack("<BB", high, 0x10 + channel_id)
             header += struct.pack("<B", 0)
             self.sock.sendall(header + payload)
             return True
@@ -85,9 +91,25 @@ class ElodinWriter:
             self.connected = False
             return False
 
+    def write_calibrated_tc(
+        self, channel_id: int, temperature_c: float, raw_adc: int
+    ) -> bool:
+        """Write calibrated TC to Elodin. Packet ID: [0x21, 0x10+channel_id]."""
+        return self._write_calibrated(0x21, channel_id, temperature_c, raw_adc)
+
+    def write_calibrated_rtd(
+        self, channel_id: int, temperature_c: float, raw_counts: int
+    ) -> bool:
+        """Write calibrated RTD to Elodin. Packet ID: [0x22, 0x10+channel_id]."""
+        return self._write_calibrated(0x22, channel_id, temperature_c, raw_counts)
+
+    def write_calibrated_lc(self, channel_id: int, force: float, raw_adc: int) -> bool:
+        """Write calibrated LC to Elodin. Packet ID: [0x23, 0x10+channel_id]."""
+        return self._write_calibrated(0x23, channel_id, force, raw_adc)
+
 
 def _parse_raw_adc(payload: bytes) -> Optional[int]:
-    """Extract raw ADC uint32 from a raw PT payload (21-byte or 12-byte format)."""
+    """Extract raw ADC uint32 from a raw PT/TC/RTD payload (21-byte format)."""
     if len(payload) >= 21:
         return struct.unpack_from("<I", payload, 12)[0]
     if len(payload) >= 12:
@@ -95,9 +117,72 @@ def _parse_raw_adc(payload: bytes) -> Optional[int]:
     return None
 
 
+def _parse_raw_signed(payload: bytes) -> Optional[int]:
+    """Extract raw ADC int32 (for LC signed ADC)."""
+    if len(payload) >= 21:
+        return struct.unpack_from("<i", payload, 12)[0]
+    return None
+
+
 # Per-channel write throttle (max 10 Hz to Elodin DB)
 _last_elodin_write: dict = {}
 _ELODIN_WRITE_INTERVAL = 0.1  # seconds
+_first_calibrated_write_logged: set = set()
+
+
+def _throttle_key(stype: str, ch: int) -> str:
+    return f"{stype}:{ch}"
+
+
+def _process_raw_and_write_calibrated(
+    stype: str,
+    channel_id: int,
+    raw_val: int,
+    writer: Any,
+    channel_to_key: dict,
+) -> None:
+    """If orchestrator has calibration for this channel, compute calibrated and write to Elodin."""
+    key = channel_to_key.get((stype, channel_id))
+    if key is None or key not in state.orchestrator.robust:
+        return
+    rcf = state.orchestrator.robust[key]
+    idx = state.orchestrator._key_to_idx.get(key)
+    if idx is None:
+        return
+
+    now = time.monotonic()
+    throttle_key = _throttle_key(stype, channel_id)
+    if now - _last_elodin_write.get(throttle_key, 0) < _ELODIN_WRITE_INTERVAL:
+        return
+
+    try:
+        # Use RCF directly — works with loaded calibration; engine may have empty online_learners
+        pred, _unc = rcf.predict_pressure_with_uncertainty(
+            float(raw_val), state.env_state
+        )
+    except Exception:
+        return
+    if pred is None or not math.isfinite(pred):
+        return
+
+    _last_elodin_write[throttle_key] = now
+    if not writer.connected:
+        writer.connect()
+
+    if stype == "PT":
+        writer.write_calibrated_pt(channel_id, float(pred), raw_val)
+    elif stype == "TC":
+        writer.write_calibrated_tc(channel_id, float(pred), raw_val)
+    elif stype == "RTD":
+        writer.write_calibrated_rtd(channel_id, float(pred), raw_val)
+    elif stype == "LC":
+        writer.write_calibrated_lc(channel_id, float(pred), raw_val)
+    k = (stype, channel_id)
+    if k not in _first_calibrated_write_logged:
+        _first_calibrated_write_logged.add(k)
+        logger.info(
+            f"[Cal] First calibrated write: {stype} ch{channel_id} → {pred:.2f}"
+        )
 
 
 async def relay_subscriber_task():
@@ -115,8 +200,10 @@ async def relay_subscriber_task():
     elodin_host = elodin_cfg.get("host", "127.0.0.1")
     elodin_port = elodin_cfg.get("port", 2240)
     writer = ElodinWriter(elodin_host, elodin_port)
-
-    logger.info(f"[Relay] Relay subscriber starting → {relay_url}")
+    channel_to_key = build_channel_to_orchestrator_key()
+    logger.info(
+        f"[Relay] Relay subscriber starting → {relay_url} (channel map: {len(channel_to_key)} entries)"
+    )
 
     while True:
         try:
@@ -133,46 +220,38 @@ async def relay_subscriber_task():
                     if ty != 1:  # TABLE = 1
                         continue
 
-                    # Raw PT: [0x20, 0x01..0x0A]
-                    if high != 0x20 or not (0x01 <= low <= 0x0A):
-                        continue
-
                     channel_id = low
-                    adc = _parse_raw_adc(payload)
-                    if adc is None:
+                    stype = None
+                    raw_val = None
+
+                    # Raw PT: [0x20, 0x01..0x0E]
+                    if high == 0x20 and 0x01 <= low <= 0x0E:
+                        raw_val = _parse_raw_adc(payload)
+                        stype = "PT"
+                    # Raw TC: [0x21, 0x01..0x14]
+                    elif high == 0x21 and 0x01 <= low <= 0x14:
+                        raw_val = _parse_raw_adc(payload)
+                        stype = "TC"
+                    # Raw RTD: [0x22, 0x01..0x14]
+                    elif high == 0x22 and 0x01 <= low <= 0x14:
+                        raw_val = _parse_raw_adc(payload)
+                        stype = "RTD"
+                    # Raw LC: [0x23, 0x01..0x14]
+                    elif high == 0x23 and 0x01 <= low <= 0x14:
+                        raw_val = _parse_raw_signed(payload)
+                        stype = "LC"
+
+                    if stype is None or raw_val is None:
                         continue
 
-                    key = ("PT", channel_id)
-                    if key not in state.orchestrator.robust:
-                        continue
+                    key = channel_to_key.get((stype, channel_id))
+                    if key and key in state.orchestrator.robust:
+                        state.orchestrator._online_update(key, float(raw_val))
 
-                    # Feed raw ADC into the calibration engine (Phase 2 online update)
-                    state.orchestrator._online_update(key, float(adc))
-
-                    # Compute calibrated pressure from engine and write back to Elodin DB
-                    now = time.monotonic()
-                    if (
-                        now - _last_elodin_write.get(channel_id, 0)
-                        < _ELODIN_WRITE_INTERVAL
-                    ):
-                        continue
-
-                    rcf = state.orchestrator.robust[key]
-                    idx = state.orchestrator._key_to_idx.get(key)
-                    if idx is None:
-                        continue
-
-                    phi = rcf.environmental_robust_basis_functions(
-                        float(adc), state.env_state
+                    # Compute calibrated and write to Elodin DB
+                    _process_raw_and_write_calibrated(
+                        stype, channel_id, raw_val, writer, channel_to_key
                     )
-                    pred, _unc, _alert = state.orchestrator.engine.predict(idx, phi)
-                    if pred is None or not math.isfinite(pred):
-                        continue
-
-                    _last_elodin_write[channel_id] = now
-                    if not writer.connected:
-                        writer.connect()
-                    writer.write_calibrated_pt(channel_id, float(pred))
 
         except Exception as e:
             logger.warning(f"[Relay] Disconnected ({e}), retrying in 5s...")

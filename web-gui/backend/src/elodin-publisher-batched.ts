@@ -218,6 +218,93 @@ export class ElodinPublisherBatched {
   }
 
   /**
+   * Publish calibrated TC (temperature °C) to Elodin DB.
+   * Packet ID: [0x21, 0x10 + channelId].
+   */
+  publishCalibratedTC(
+    channelId: number,
+    timestampNs: bigint,
+    temperatureC: number,
+    rawAdcCounts: number,
+    calStatus: number = 0
+  ): boolean {
+    if (!this.elodin.isConnected()) return false;
+    try {
+      const buffer = Buffer.alloc(21);
+      buffer.writeBigUInt64LE(timestampNs, 0);
+      buffer.writeUInt8(channelId, 8);
+      buffer.writeFloatLE(temperatureC, 12);
+      buffer.writeUInt32LE(rawAdcCounts, 16);
+      buffer.writeUInt8(calStatus, 20);
+      if (this.batchActive) {
+        this.addToBatch([0x21, 0x10 + channelId], ElodinPacketType.TABLE, buffer);
+        return true;
+      }
+      return this.elodin.publishTable([0x21, 0x10 + channelId], buffer);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Publish calibrated LC (force) to Elodin DB.
+   * Packet ID: [0x23, 0x10 + channelId].
+   */
+  publishCalibratedLC(
+    channelId: number,
+    timestampNs: bigint,
+    force: number,
+    rawAdcCounts: number,
+    calStatus: number = 0
+  ): boolean {
+    if (!this.elodin.isConnected()) return false;
+    try {
+      const buffer = Buffer.alloc(21);
+      buffer.writeBigUInt64LE(timestampNs, 0);
+      buffer.writeUInt8(channelId, 8);
+      buffer.writeFloatLE(force, 12);
+      buffer.writeUInt32LE(rawAdcCounts, 16);
+      buffer.writeUInt8(calStatus, 20);
+      if (this.batchActive) {
+        this.addToBatch([0x23, 0x10 + channelId], ElodinPacketType.TABLE, buffer);
+        return true;
+      }
+      return this.elodin.publishTable([0x23, 0x10 + channelId], buffer);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Publish calibrated RTD (temperature °C) to Elodin DB.
+   * Packet ID: [0x22, 0x10 + channelId].
+   */
+  publishCalibratedRTD(
+    channelId: number,
+    timestampNs: bigint,
+    temperatureC: number,
+    rawCounts: number,
+    calStatus: number = 0
+  ): boolean {
+    if (!this.elodin.isConnected()) return false;
+    try {
+      const buffer = Buffer.alloc(21);
+      buffer.writeBigUInt64LE(timestampNs, 0);
+      buffer.writeUInt8(channelId, 8);
+      buffer.writeFloatLE(temperatureC, 12);
+      buffer.writeUInt32LE(rawCounts, 16);
+      buffer.writeUInt8(calStatus, 20);
+      if (this.batchActive) {
+        this.addToBatch([0x22, 0x10 + channelId], ElodinPacketType.TABLE, buffer);
+        return true;
+      }
+      return this.elodin.publishTable([0x22, 0x10 + channelId], buffer);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Publish an actuator message to Elodin DB
    * Matches: elodin_client.publish(packet_id, RawPTMessage) for actuators
    *
