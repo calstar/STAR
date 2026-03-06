@@ -324,21 +324,21 @@ export function loadLcBoardConfig(): Map<string, Set<number>> {
     return lcBoards;
 }
 
-/** Pt100 R0 (Ω) for resistance → temperature conversion */
-const PT100_R0 = 100;
-const PT100_A = 3.9083e-3;
-const PT100_B = -5.775e-7;
+/** Pt1000 R0 (Ω) for resistance → temperature conversion */
+const PT1000_R0 = 1000;
+const PT1000_A = 3.9083e-3;
+const PT1000_B = -5.775e-7;
 
 /**
- * Convert Pt100 resistance (Ω) to temperature (°C). Returns null if out of range.
+ * Convert Pt1000 resistance (Ω) to temperature (°C). Returns null if out of range.
  * Matches frontend sense-conversions.ts for consistency.
  */
-export function pt100ResistanceToTempC(rOhm: number): number | null {
-    const rr = rOhm / PT100_R0;
-    const d = PT100_A * PT100_A - 4 * PT100_B * (1 - rr);
+export function pt1000ResistanceToTempC(rOhm: number): number | null {
+    const rr = rOhm / PT1000_R0;
+    const d = PT1000_A * PT1000_A - 4 * PT1000_B * (1 - rr);
     if (d < 0) return null;
     const sqrtD = Math.sqrt(d);
-    const t = (-PT100_A + sqrtD) / (2 * PT100_B);
+    const t = (-PT1000_A + sqrtD) / (2 * PT1000_B);
     if (t >= -400 && t <= 1100) return t;
     return null;
 }
@@ -349,7 +349,7 @@ export function pt100ResistanceToTempC(rOhm: number): number | null {
  */
 export function rawRtdToTemperatureC(rawValue: number, scaleToOhms: number = 0.001): number | null {
     const rOhm = rawValue * scaleToOhms;
-    return pt100ResistanceToTempC(rOhm);
+    return pt1000ResistanceToTempC(rOhm);
 }
 
 /**

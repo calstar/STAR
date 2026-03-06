@@ -90,11 +90,11 @@ export default function PressureBar({
   }, [displayValue, value, nop, meop, color]);
 
   return (
-      <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-visible select-none w-full">
+    <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-visible select-none w-full">
       {/* Label */}
       <div
         className={`${compact ? 'leading-none' : 'text-2xl'} font-bold uppercase tracking-wider text-gray-300 text-center flex-shrink-0 whitespace-nowrap`}
-        style={compact ? { fontSize: 'min(1.6vw, 22px)' } : undefined}
+        style={compact ? { fontSize: 'clamp(10px, 1.4vw, 22px)' } : undefined}
       >
         {label}
       </div>
@@ -124,8 +124,8 @@ export default function PressureBar({
           style={{ bottom: `${meopPct.toFixed(2)}%` }}
         >
           <span
-            className={`${compact ? 'text-[10px]' : 'text-sm'} font-mono font-extrabold text-red-400 whitespace-nowrap mb-0.5`}
-            style={compact ? { fontSize: 'min(0.7vw, 10px)' } : undefined}
+            className={`${compact ? 'text-[8px]' : 'text-sm'} font-mono font-extrabold text-red-400 whitespace-nowrap mb-0.5`}
+            style={compact ? { fontSize: 'clamp(8px, 0.7vw, 12px)' } : undefined}
           >
             {meop}
           </span>
@@ -138,8 +138,8 @@ export default function PressureBar({
           style={{ bottom: `${nopPct.toFixed(2)}%` }}
         >
           <span
-            className={`${compact ? 'text-[10px]' : 'text-sm'} font-mono font-extrabold text-yellow-400 whitespace-nowrap mb-0.5`}
-            style={compact ? { fontSize: 'min(0.7vw, 10px)' } : undefined}
+            className={`${compact ? 'text-[8px]' : 'text-sm'} font-mono font-extrabold text-yellow-400 whitespace-nowrap mb-0.5`}
+            style={compact ? { fontSize: 'clamp(8px, 0.7vw, 12px)' } : undefined}
           >
             {nop}
           </span>
@@ -158,10 +158,10 @@ export default function PressureBar({
         )}
       </div>
 
-      <div className="flex-shrink-0 text-center leading-none">
+      <div className="flex-shrink-0 text-center leading-none mt-1">
         <div
           className={`${compact ? 'leading-none' : 'text-2xl'} font-bold font-mono tabular-nums`}
-          style={compact ? { color: barColor, fontSize: 'min(2vw, 28px)' } : { color: barColor }}
+          style={compact ? { color: barColor, fontSize: 'clamp(14px, 1.8vw, 28px)' } : { color: barColor }}
         >
           {value !== null ? fmtPressure(value) : '---'}
         </div>

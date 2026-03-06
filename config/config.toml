@@ -39,6 +39,15 @@ connection_retry_attempts = 3
 connection_retry_delay_ms = 1000
 
 # =============================================================================
+# ADC voltage reference nominals (for sense conversions in UI)
+# Used when voltage_reference = 0 (internal) or 2 (5V absolute). Ref 1 = VDD ratiometric.
+# =============================================================================
+[adc]
+internal_v = 2.5       # Nominal internal reference (V); boards with voltage_reference = 0
+vdd_nominal_v = 5.0    # Nominal VDD for display only; ratiometric boards don't use voltage conversion
+absolute_5v_v = 5.0    # Nominal 5V absolute reference (V); boards with voltage_reference = 2
+
+# =============================================================================
 # Board Discovery
 # =============================================================================
 [discovery]
@@ -312,7 +321,7 @@ active_connectors = []
 [actuator_roles]
 # Actuator Board #1 → board_id 12 (names match state_machine_actuators.csv)
 "LOX Main"               = ["NC", 1, 12]
-"Fuel Vent"             = ["NC", 2, 12]
+"Fuel Vent"             = ["NO", 2, 12]
 "Fuel Press"            = ["NC", 3, 12]
 "Fuel Main"             = ["NC", 7, 12]
 "LOX Vent"              = ["NC", 6, 12]

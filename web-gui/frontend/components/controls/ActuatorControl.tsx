@@ -71,7 +71,7 @@ const ACTUATOR_TYPES: Record<ActuatorId, 'NC' | 'NO'> = {
   [ActuatorId.LOX_MAIN]: 'NO',
   [ActuatorId.FUEL_MAIN]: 'NO',
   [ActuatorId.LOX_VENT]: 'NC',
-  [ActuatorId.FUEL_VENT]: 'NC',
+  [ActuatorId.FUEL_VENT]: 'NO',
   [ActuatorId.LOX_PRESS]: 'NO',
   [ActuatorId.FUEL_PRESS]: 'NC',
   [ActuatorId.GSE_LOW_VENT]: 'NC',
@@ -97,6 +97,7 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const currentState = useSensorStore((s) => s.currentState);
   const actuatorExpectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
   const boards = useSensorStore((s) => s.boards as Record<number, { designatedSurvivor?: boolean; voltageReference?: number }>);
+  const voltageRefNominals = useSensorStore((s) => s.voltageRefNominals);
   const setActuatorState = useSensorStore((s) => s.setActuatorState);
   const setActuatorCommandedOverride = useSensorStore((s) => s.setActuatorCommandedOverride);
   const { controlEnabled } = useControlMode();
@@ -125,10 +126,10 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const statusRaw = getSensorValue(entity, 'status')
     ?? getSensorValue(`ACT.ACT_CH${ch}`, 'status');
 
-  // Actuator open threshold from designated survivor board's voltage reference (0=2.5V, 1=VDD raw, 2=5V)
+  // Actuator open threshold from designated survivor board's voltage reference (0=internal, 1=VDD raw, 2=5V); nominals from config [adc]
   const actuatorBoard = boards ? Object.values(boards).find((b) => b.designatedSurvivor) : null;
   const voltageRef = actuatorBoard?.voltageReference ?? 0;
-  const openThreshold = getActuatorOpenThreshold(voltageRef);
+  const openThreshold = getActuatorOpenThreshold(voltageRef, voltageRefNominals);
   const isPowered = statusRaw === 1 || rawAdc > openThreshold;
   // feedbackOpen depends on NC/NO: NC: Powered = OPEN; NO: Powered = CLOSED
   const feedbackOpen = type === 'NO' ? !isPowered : isPowered;

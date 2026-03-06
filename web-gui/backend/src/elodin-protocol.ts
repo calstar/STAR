@@ -38,16 +38,20 @@ export interface EntityMaps {
 
 const RAW_SENSOR_PAYLOAD_SIZE = 21; // u64(8) + u8(1) + pad(3) + u32(4) + u32(4) + u8(1)
 
+/**
+ * Parse raw sensor payload. ADC bytes at offset 12 are interpreted as signed when the
+ * hardware is a signed ADC (e.g. ADS1262 for LC/PT); otherwise unsigned.
+ */
 function parseRawSensorPayload(
   payload: Buffer,
   channelId: number,
   entity: string,
   fieldName: string = 'raw_adc_counts',
+  signedAdc: boolean = false,
 ): ParsedSensorData | null {
   // RawPTMessage layout: u64(0) ts + u8(8) ch + pad3(9-11) + u32(12) raw_adc + u32(16) sample_ts + u8(20)
-  // Require full 21 bytes to avoid reading garbage from truncated/malformed packets.
   if (payload.length < RAW_SENSOR_PAYLOAD_SIZE) return null;
-  const rawValue = payload.readUInt32LE(12);
+  const rawValue = signedAdc ? payload.readInt32LE(12) : payload.readUInt32LE(12);
   const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
   return { entity, component: fieldName, value: rawValue, timestamp: tsMs };
 }
@@ -87,7 +91,8 @@ export function parseRawLCMessage(
     console.warn(`⚠️ Invalid channel ID in raw LC: ${channelId}`);
   }
 
-  const rawAdcCounts = payload.readUInt32LE(12);
+  // LC uses signed 24/32-bit ADC (e.g. ADS1262); interpret as int32 to avoid negative codes showing as ~4e9
+  const rawAdcCounts = payload.readInt32LE(12);
   const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
 
   return {
@@ -110,12 +115,12 @@ export function parseElodinPacket(
 ): ParsedSensorData | null {
   const [high, low] = packetId;
 
-  // ── PT Raw: [0x20, 0x01..0x0E] ──────────────────────────────────────────
+  // ── PT Raw: [0x20, 0x01..0x0E] — signed ADC (ADS1262), avoid uint32 → ~4e9 for negative codes
   if (high === 0x20 && low >= 0x01 && low <= 0x0E) {
     const ch = low;
     const payloadCh = payload.length >= 9 ? payload.readUInt8(8) : ch;
     const baseEntity = entityMaps?.channelToEntityMap?.[payloadCh]?.replace('PT_Cal.', 'PT.') || `PT.CH${payloadCh}`;
-    return parseRawSensorPayload(payload, ch, baseEntity, 'raw_adc_counts');
+    return parseRawSensorPayload(payload, ch, baseEntity, 'raw_adc_counts', true);
   }
 
   // ── PT Calibrated: [0x20, 0x11..0x1E] ───────────────────────────────────
@@ -150,10 +155,10 @@ export function parseElodinPacket(
     return parseCalibratedSensorPayload(payload, ch, `RTD_Cal.CH${ch}`, 'temperature_c');
   }
 
-  // ── LC Raw: [0x23, 0x01..0x14] ──────────────────────────────────────────
+  // ── LC Raw: [0x23, 0x01..0x14] — signed ADC (ADS1262), avoid uint32 → ~4e9 for negative codes
   if (high === 0x23 && low >= 0x01 && low <= 0x14) {
     const ch = low;
-    return parseRawSensorPayload(payload, ch, `LC.CH${ch}`, 'raw_adc_counts');
+    return parseRawSensorPayload(payload, ch, `LC.CH${ch}`, 'raw_adc_counts', true);
   }
 
   // ── LC Calibrated: [0x23, 0x11..0x24] ───────────────────────────────────

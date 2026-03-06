@@ -6,26 +6,16 @@ import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 import { useSensorRate, getSensorRate } from '@/lib/sensor-rate';
 import { kTypeVoltageToTempC, codeToForce } from '@/lib/sense-conversions';
+import { adcToVoltage as adcToVoltageFromRef } from '@/lib/voltageRef';
 import { getEntityColor } from '@/lib/sensor-colors';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const ADC_FULL_SCALE = 2 ** 31;
-const TC_REF_VOLTAGE = 2.5;
-
 const LC_DEFAULTS = {
-  adcRefVoltage: 3.3,
-  excitationVoltage: 5,
   sensitivityMvPerV: 2,
-  pgaGain: 128,
-  fullScaleForceN: 1000,
+  pgaGain: 32,
+  fullScaleForceKg: 300,
 };
-
-function adcToVoltage(rawAdc: number, refVolts: number): number {
-  const u = rawAdc >>> 0;
-  const signed = u > 0x7fffffff ? u - 0x100000000 : u;
-  return (signed / ADC_FULL_SCALE) * refVolts;
-}
 
 // ── Static sensor definitions ─────────────────────────────────────────────────
 
@@ -212,14 +202,13 @@ function HptRow({ sensor }: { sensor: PtSensor }) {
 
 // ── TC row ───────────────────────────────────────────────────────────────────
 
-function TcRow({ entity, label, color }: { entity: string; label: string; color: string }) {
+function TcRow({ entity, label, color, voltageReference }: { entity: string; label: string; color: string; voltageReference: number }) {
   const raw  = useSensorValue(entity, 'raw_adc_counts');
   const rate = useSensorRate(entity, 'raw_adc_counts');
+  const nominals = useSensorStore((s) => s.voltageRefNominals);
 
-  const tempC =
-    raw !== null
-      ? kTypeVoltageToTempC(adcToVoltage(raw, TC_REF_VOLTAGE))
-      : null;
+  const volt = raw !== null ? adcToVoltageFromRef(raw, voltageReference, nominals) : null;
+  const tempC = volt !== null && Number.isFinite(volt) ? kTypeVoltageToTempC(volt) : null;
 
   return (
     <tr className="border-b border-gray-800/40 hover:bg-gray-900/30 transition-colors">
@@ -272,15 +261,13 @@ function LcRow({ entity, label, color }: { entity: string; label: string; color:
   const raw  = useSensorValue(entity, 'raw_adc_counts');
   const rate = useSensorRate(entity, 'raw_adc_counts');
 
-  const forceN =
+  const forceKg =
     raw !== null
       ? codeToForce(
           raw,
-          LC_DEFAULTS.adcRefVoltage,
-          LC_DEFAULTS.excitationVoltage,
           LC_DEFAULTS.sensitivityMvPerV,
           LC_DEFAULTS.pgaGain,
-          LC_DEFAULTS.fullScaleForceN
+          LC_DEFAULTS.fullScaleForceKg
         )
       : null;
 
@@ -294,7 +281,7 @@ function LcRow({ entity, label, color }: { entity: string; label: string; color:
       </td>
       <td className="px-4 py-2 tabular-nums text-purple-300">{fmtAdc(raw)}</td>
       <td className="px-4 py-2 tabular-nums text-orange-400">
-        {fmtForce(forceN)} <span className="text-gray-600 text-xs">N</span>
+        {fmtForce(forceKg)} <span className="text-gray-600 text-xs">kg</span>
       </td>
       <td className="px-4 py-2 tabular-nums text-cyan-400">{fmtHz(rate)} <span className="text-gray-600 text-xs">Hz</span></td>
     </tr>
@@ -314,6 +301,23 @@ function buildChannels(boards: Record<string, any>, type: 'TC' | 'RTD' | 'LC'): 
     channels.push(...active);
   }
   return channels;
+}
+
+/** TC channels with each board's voltage_reference (0=internal, 1=VDD, 2=5V). */
+function buildTcChannelsWithRef(boards: Record<string, any>): { entity: string; label: string; voltageReference: number }[] {
+  const out: { entity: string; label: string; voltageReference: number }[] = [];
+  for (const board of Object.values(boards)) {
+    if (board.type !== 'TC' || board.enabled === false) continue;
+    const ref = Math.min(2, Math.max(0, (board.voltage_reference as number) ?? 0));
+    const active: number[] =
+      Array.isArray(board.active_connectors) && board.active_connectors.length > 0
+        ? (board.active_connectors as number[])
+        : Array.from({ length: (board.num_sensors as number) ?? 10 }, (_, i) => i + 1);
+    for (const ch of active) {
+      out.push({ entity: `TC.CH${ch}`, label: `TC Ch${ch}`, voltageReference: ref });
+    }
+  }
+  return out;
 }
 
 const SENSE_COLORS = ['#F59E0B', '#10B981', '#3B82F6', '#EC4899', '#F87171', '#A78BFA', '#34D399', '#FBBF24', '#60A5FA', '#E879F9'];
@@ -377,18 +381,25 @@ export default function SensorInfoPage() {
 
   // Dynamic channel lists from /api/config, seeded with defaults so the
   // initial render matches the post-config-fetch structure.
-  const [tcChannels,  setTcChannels]  = useState<number[]>(TC_DEFAULT_CHANNELS);
+  const [tcData, setTcData] = useState<{ entity: string; label: string; voltageReference: number }[]>(
+    TC_DEFAULT_CHANNELS.map((ch) => ({ entity: `TC.CH${ch}`, label: `TC Ch${ch}`, voltageReference: 0 }))
+  );
   const [rtdChannels, setRtdChannels] = useState<number[]>(RTD_DEFAULT_CHANNELS);
-  const [lcChannels,  setLcChannels]  = useState<number[]>(LC_DEFAULT_CHANNELS);
+  const [lcChannels, setLcChannels] = useState<number[]>(LC_DEFAULT_CHANNELS);
 
   const loadChannelConfig = useCallback(() => {
     fetch(`${getApiBaseUrl()}/api/config`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: any) => {
-        const boards = data?.config?.boards;
+        const config = data?.config;
+        const boards = config?.boards;
+        const adc = config?.adc;
+        if (adc && typeof adc.internal_v === 'number' && typeof adc.absolute_5v_v === 'number') {
+          useSensorStore.getState().setVoltageRefNominals({ internalV: adc.internal_v, absolute5vV: adc.absolute_5v_v });
+        }
         if (!boards) return;
-        const tc = buildChannels(boards, 'TC');
-        if (tc.length) setTcChannels(tc);
+        const tc = buildTcChannelsWithRef(boards);
+        if (tc.length) setTcData(tc);
         const rtd = buildChannels(boards, 'RTD');
         if (rtd.length) setRtdChannels(rtd);
         const lc = buildChannels(boards, 'LC');
@@ -448,7 +459,7 @@ export default function SensorInfoPage() {
   const pt22Keys = hptSensors
     .filter((s) => (s.boardId ?? 22) === 22)
     .map((s) => ({ entity: s.entity, component: 'pressure_psi' }));
-  const tcKeys = tcChannels.map((ch) => ({ entity: `TC.CH${ch}`, component: 'raw_adc_counts' }));
+  const tcKeys = tcData.map((d) => ({ entity: d.entity, component: 'raw_adc_counts' }));
   const rtdKeys = rtdChannels.map((ch) => ({ entity: `RTD.CH${ch}`, component: 'raw_resistance_counts' }));
   const lcKeys = lcChannels.map((ch) => ({ entity: `LC.CH${ch}`, component: 'raw_adc_counts' }));
 
@@ -554,19 +565,20 @@ export default function SensorInfoPage() {
           color="#F59E0B"
           headers={['Channel', 'ADC Code', 'Temp (derived)', 'Rate']}
         >
-          {tcChannels.map((ch, i) => (
+          {tcData.map((d, i) => (
             <TcRow
-              key={ch}
-              entity={`TC.CH${ch}`}
-              label={`TC Ch${ch}`}
+              key={d.entity}
+              entity={d.entity}
+              label={d.label}
               color={SENSE_COLORS[i % SENSE_COLORS.length]}
+              voltageReference={d.voltageReference}
             />
           ))}
         </SensorTable>
 
         {/* ── RTD (board 31) ───────────────────────────────────────────────── */}
         <SensorTable
-          title="RTD — Pt100 Temperature (Board 31)"
+          title="RTD — Pt1000 Temperature (Board 31)"
           color="#10B981"
           headers={['Channel', 'Raw Resistance', 'Temp', 'Rate']}
         >

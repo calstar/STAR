@@ -4,6 +4,7 @@
 
 import { MessageType, SensorUpdate, ConnectionStatus, CommandPayload } from './types';
 import { useSensorStore } from './store';
+import { updateServerTimeOffset } from './server-time';
 
 export interface WSMessage {
   type: MessageType;
@@ -144,6 +145,10 @@ export class WebSocketClient {
   }
 
   private handleMessage(message: WSMessage): void {
+    if (message.timestamp) {
+      updateServerTimeOffset(message.timestamp);
+    }
+
     // Handle both MessageType enum values and custom string types (like 'state_transitions')
     const typeStr = message.type as string;
     const listeners = this.listeners.get(typeStr);

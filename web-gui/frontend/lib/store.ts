@@ -30,6 +30,7 @@ import {
   NotificationCategory,
   isNotificationOngoing,
 } from './types';
+import type { VoltageRefNominals } from './voltageRef';
 import { recordSensorUpdate } from './sensor-rate';
 interface SensorData {
   [key: string]: number; // entity.component -> value
@@ -59,6 +60,8 @@ interface SensorSystemState {
   /** Manual overrides in DEBUG mode; cleared on state change or when leaving DEBUG. */
   actuatorCommandedOverrides: Record<string, ActuatorState>;
   boards: Record<number, BoardStatus>;
+  /** From config [adc]; used by sense conversions (TC ref, actuator threshold). */
+  voltageRefNominals: VoltageRefNominals;
   notifications: NotificationEntry[];
 
   updateSensor: (update: SensorUpdate) => void;
@@ -72,6 +75,7 @@ interface SensorSystemState {
   getSensorValue: (entity: string, component: string) => number | null;
   setDebugMode: (mode: boolean) => void;
   updateBoards: (boards: BoardStatus[]) => void;
+  setVoltageRefNominals: (nominals: VoltageRefNominals) => void;
   updateNotification: (payload: NotificationPayload) => void;
   clearNotifications: () => void;
 }
@@ -267,6 +271,7 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   actuatorStateByEntity: {},
   actuatorCommandedOverrides: {},
   boards: {},
+  voltageRefNominals: { internalV: 2.5, absolute5vV: 5 },
   notifications: [],
 
   updateSensor: (update: SensorUpdate) => {
@@ -350,6 +355,10 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
       });
       return { boards: next };
     });
+  },
+
+  setVoltageRefNominals: (nominals: VoltageRefNominals) => {
+    set({ voltageRefNominals: nominals });
   },
 
   updateNotification: (payload: NotificationPayload) => {

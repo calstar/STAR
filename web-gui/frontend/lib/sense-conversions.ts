@@ -1,5 +1,5 @@
 /**
- * Sense conversions: K-type thermocouple, Pt100 RTD, load cell.
+ * Sense conversions: K-type thermocouple, Pt1000 RTD, load cell.
  * Ported from external/DiabloAvionics/test_guis/sense_testing_gui.py
  */
 
@@ -31,33 +31,33 @@ export function kTypeVoltageToTempC(vVolts: number): number | null {
   return null;
 }
 
-// Pt100 RTD: R(T) = R0*(1 + A*T + B*T^2) for T >= 0; solve for T
-const PT100_R0 = 100;
-const PT100_A = 3.9083e-3;
-const PT100_B = -5.775e-7;
-const PT100_EXCITATION_UA = 1000;
+// Pt1000 RTD: R(T) = R0*(1 + A*T + B*T^2) for T >= 0; solve for T (R0 = 1000 Ω)
+const PT1000_R0 = 1000;
+const PT1000_A = 3.9083e-3;
+const PT1000_B = -5.775e-7;
+const PT1000_EXCITATION_UA = 1000;
 
 /**
- * Convert Pt100 resistance (Ω) to temperature (°C). Returns null if out of range.
+ * Convert Pt1000 resistance (Ω) to temperature (°C). Returns null if out of range.
  */
-export function pt100ResistanceToTempC(rOhm: number): number | null {
-  const rr = rOhm / PT100_R0;
-  const d = PT100_A * PT100_A - 4 * PT100_B * (1 - rr);
+export function pt1000ResistanceToTempC(rOhm: number): number | null {
+  const rr = rOhm / PT1000_R0;
+  const d = PT1000_A * PT1000_A - 4 * PT1000_B * (1 - rr);
   if (d < 0) return null;
   const sqrtD = Math.sqrt(d);
-  const t = (-PT100_A + sqrtD) / (2 * PT100_B);
+  const t = (-PT1000_A + sqrtD) / (2 * PT1000_B);
   if (t >= -400 && t <= 1100) return t;
   return null;
 }
 
 /**
- * Convert Pt100 differential voltage (V) to temperature (°C).
+ * Convert Pt1000 differential voltage (V) to temperature (°C).
  * excitationUa = IDAC current in µA (default 1000). Returns null if out of range.
  */
-export function pt100VoltageToTempC(vVolts: number, excitationUa: number = PT100_EXCITATION_UA): number | null {
+export function pt1000VoltageToTempC(vVolts: number, excitationUa: number = PT1000_EXCITATION_UA): number | null {
   if (excitationUa <= 0) return null;
   const rOhm = (Math.abs(vVolts) * 1e6) / excitationUa;
-  return pt100ResistanceToTempC(rOhm);
+  return pt1000ResistanceToTempC(rOhm);
 }
 
 const ADC32_FULL_SCALE = 2147483648;
@@ -70,20 +70,18 @@ function uint32ToInt32(u: number): number {
 
 /**
  * Ratiometric load-cell force from raw 32-bit ADC code.
- * Force = (code / code_fs) * full_scale_force.
+ * Reference = excitation, so voltage cancels: full-scale code = (sensitivity * PGA_gain) * ADC_full_scale.
+ * Value (e.g. kg) = (code / code_fs) * fullScaleValue.
  */
 export function codeToForce(
   codeUint32: number,
-  adcRefVoltage: number,
-  excitationVoltage: number,
   sensitivityMvPerV: number,
   pgaGain: number,
-  fullScaleForce: number
+  fullScaleValue: number
 ): number | null {
-  if (adcRefVoltage <= 0 || pgaGain <= 0 || excitationVoltage <= 0 || sensitivityMvPerV <= 0) return null;
+  if (pgaGain <= 0 || sensitivityMvPerV <= 0) return null;
   const codeInt32 = uint32ToInt32(codeUint32 >>> 0);
-  const codeFs =
-    (excitationVoltage * (sensitivityMvPerV / 1000) * pgaGain / adcRefVoltage) * ADC32_FULL_SCALE;
+  const codeFs = (sensitivityMvPerV / 1000) * pgaGain * ADC32_FULL_SCALE;
   if (codeFs <= 0) return null;
-  return (codeInt32 / codeFs) * fullScaleForce;
+  return (codeInt32 / codeFs) * fullScaleValue;
 }

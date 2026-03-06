@@ -23,7 +23,7 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
   const [pending, setPending] = useState(false);
   const { controlEnabled } = useControlMode();
 
-  const isNO = name === 'LOX Main' || name === 'LOX Press' || name === 'Fuel Main';
+  const isNO = name === 'LOX Main' || name === 'LOX Press' || name === 'Fuel Main' || name === 'Fuel Vent';
   const type = isNO ? 'NO' : 'NC';
 
   const canControl = debugMode && controlEnabled;

@@ -54,6 +54,7 @@ export default function WindowLauncher() {
   };
 
   const multiEntries: WindowButtonProps[] = [
+    { id: 'ipad', name: 'iPad View', description: 'Scrollable layout for iPad Air', url: '/window/ipad', accent: '#8B5CF6' },
     { id: 'fuel', name: 'FUEL', description: 'Upstream / downstream pressure & actuators', url: '/window/fuel', accent: '#3498DB' },
     { id: 'lox', name: 'LOX', description: 'Oxidizer pressure & actuators', url: '/window/lox', accent: '#E74C3C' },
     { id: 'chamber', name: 'Chamber', description: 'PT / TC / LC Measurements in one pane', url: '/window/chamber', accent: '#F97316' },

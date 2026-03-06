@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType } from '@/lib/types';
 import { useControlMode } from '@/lib/control-mode';
+import { useSensorStore } from '@/lib/store';
 
 interface ConfigData {
   server_heartbeat?: {
@@ -43,6 +44,7 @@ interface ConfigData {
   sensor_roles_pt_board?: Record<string, number>;
   sensor_roles_pt2?: Record<string, number>;
   abort_pts?: Record<string, number>;
+  adc?: { internal_v?: number; vdd_nominal_v?: number; absolute_5v_v?: number };
   actuator_roles?: Record<string, [string, number] | [string, number, number] | [string, number, string]>;
   actuator_abbrev?: Record<string, string>;
   routing?: Record<string, any>;
@@ -114,6 +116,10 @@ export default function ConfigPage() {
       // config.toml is canonical; don't overlay stale defaults
       const nextConfig = (data.config || {}) as ConfigData;
       setConfig(nextConfig);
+      const adc = nextConfig.adc;
+      if (adc && typeof adc.internal_v === 'number' && typeof adc.absolute_5v_v === 'number') {
+        useSensorStore.getState().setVoltageRefNominals({ internalV: adc.internal_v, absolute5vV: adc.absolute_5v_v });
+      }
       setAdvancedText(JSON.stringify(nextConfig, null, 2));
       setAdvancedError(null);
       setLoading(false);

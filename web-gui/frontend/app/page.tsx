@@ -111,24 +111,7 @@ export default function Home() {
 
   useEffect(() => {
     ws.connect();
-    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    const u3 = ws.on(MessageType.MISSION_START_TIME, (p: unknown) => {
-      const payload = p as MissionStartTime;
-      updateMissionStartTime(payload.missionStartTime);
-    });
-    const u4 = ws.on(MessageType.BOARD_STATUS_UPDATE, (p: unknown) => {
-      const payload = p as BoardStatusPayload;
-      if (payload?.boards) updateBoards(payload.boards as BoardStatus[]);
-    });
-    const u5 = ws.onConnectionStatus((s) => updateConnectionStatus(s));
-    const u6 = ws.on(MessageType.NOTIFICATION, (p: unknown) => updateNotification(p as NotificationPayload));
-    const u7 = ws.on(MessageType.ACTUATOR_UPDATE, (p: unknown) => updateActuator(p as ActuatorUpdate));
-    const u8 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
-      updateActuatorExpectedPositions(p as Record<number, Record<string, 'open' | 'closed' | null>>);
-    });
-    return () => { u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); };
-  }, [ws, updateSensor, updateState, updateConnectionStatus, updateMissionStartTime, updateBoards, updateNotification]);
+  }, [ws]);
 
   const pressureSensors: SensorCardProps[] = [
     ...PRESSURE_SENSORS.map((s) => ({
@@ -165,11 +148,10 @@ export default function Home() {
               };
               ws.sendCommand(cmd);
             }}
-            className={`px-4 py-1.5 rounded-md text-sm font-semibold border transition-colors ${
-              hasAbortDoneBoard && controlEnabled
+            className={`px-4 py-1.5 rounded-md text-sm font-semibold border transition-colors ${hasAbortDoneBoard && controlEnabled
                 ? 'border-red-500 text-red-200 bg-red-900/40 hover:bg-red-800/60'
                 : 'border-gray-700 text-gray-500 bg-gray-900/40 cursor-not-allowed'
-            }`}
+              }`}
           >
             Clear Abort (Sync Actuators)
           </button>
