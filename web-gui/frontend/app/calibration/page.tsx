@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useSensorStore, useGetSensorValue } from '@/lib/store';
+import { useSensorStore, useGetSensorValue, useSensorDataVersion, useLoadCellForceLbf } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import {
   MessageType,
@@ -33,6 +33,28 @@ function fmtPsi(v: number | null | undefined): string {
 function fmtAdc(v: number | null | undefined): string {
   if (v === null || v === undefined || !isFinite(v)) return '---';
   return v.toLocaleString();
+}
+
+const LBF_TO_KG = 0.453592;
+
+// ── Load cell 0-point card: show offset-adjusted force + Zero button ───────────
+function LoadCellZeroCard({ calEntity, label, onZero }: { calEntity: string; label: string; getSensorValue: (e: string, c: string) => number | null; onZero: () => void }) {
+  const forceLbf = useLoadCellForceLbf(calEntity);
+  const kg = forceLbf != null && Number.isFinite(forceLbf) ? forceLbf * LBF_TO_KG : null;
+  const display = kg != null ? kg.toFixed(2) : '—';
+  return (
+    <div className="flex items-center gap-2 rounded border border-gray-700 bg-card px-3 py-2">
+      <span className="text-[10px] font-bold text-gray-500 w-16">{label}</span>
+      <span className="text-sm font-mono text-green-400 tabular-nums w-14">{display} kg</span>
+      <button
+        type="button"
+        onClick={onZero}
+        className="px-2 py-1 text-[10px] font-bold rounded border border-amber-600 bg-amber-900/30 text-amber-300 hover:bg-amber-800/50"
+      >
+        Zero
+      </button>
+    </div>
+  );
 }
 
 // ── Single channel card — compact and readable ─────────────────────────────────
@@ -140,6 +162,7 @@ function ChannelCard({ ch, status, rawAdc, calPsi, onCapture }: ChannelCardProps
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function CalibrationPage() {
   const updateSensor = useSensorStore((s) => s.updateSensor);
+  useSensorDataVersion(); // re-render on sensor flush so getSensorValue() shows fresh data
   const getSensorValue = useGetSensorValue();
   const ws = getWebSocketClient();
   const ptChannels = useSensorConfig();
@@ -155,8 +178,11 @@ export default function CalibrationPage() {
   // Gauge → PT channel mapping (when multiple gauges): gauge index 1..N → channel ids
   const [gaugeToChannels, setGaugeToChannels] = useState<Record<number, number[]>>({ 1: [1] });
   const [gaugeRefs, setGaugeRefs] = useState<Record<number, string>>({});
+  const [lcChannels, setLcChannels] = useState<{ calEntity: string; label: string }[]>([]);
   const phase2Ref = useRef(phase2Active);
   phase2Ref.current = phase2Active;
+
+  const setLoadCellZeroOffset = useSensorStore((s) => s.setLoadCellZeroOffset);
 
   const availableBoards = Array.from(new Set(ptChannels.map((c) => c.boardId))).sort((a, b) => a - b);
   const visibleChannels = ptChannels.filter((c) => selectedBoardId === 'all' || c.boardId === selectedBoardId);
@@ -172,6 +198,25 @@ export default function CalibrationPage() {
       return next;
     });
   }, [numReferenceGauges]);
+
+  useEffect(() => {
+    fetch('/api/config')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { config?: { boards?: Record<string, { type?: string; enabled?: boolean; active_connectors?: number[]; num_sensors?: number }> } } | null) => {
+        const boards = data?.config?.boards;
+        if (!boards) return;
+        const chs: number[] = [];
+        for (const board of Object.values(boards)) {
+          if (board?.type !== 'LC' || board.enabled === false) continue;
+          const active = Array.isArray(board.active_connectors) && board.active_connectors.length > 0
+            ? board.active_connectors
+            : Array.from({ length: board.num_sensors ?? 10 }, (_, i) => i + 1);
+          chs.push(...active);
+        }
+        setLcChannels(chs.map((ch) => ({ calEntity: `LC_Cal.CH${ch}`, label: `LC Ch${ch}` })));
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     ws.connect();
@@ -379,6 +424,39 @@ export default function CalibrationPage() {
           >
             {calFilePath}
           </span>
+        </div>
+      )}
+
+      {/* ── Load cells: 0-point offset (display = raw − offset) ───────── */}
+      {lcChannels.length > 0 && (
+        <div className="flex-shrink-0 border-b border-gray-700 bg-gray-900/50 px-4 py-3">
+          <div className="text-xs font-bold text-gray-400 mb-2">Load cells — 0 point (offset only)</div>
+          <div className="flex flex-wrap items-center gap-3">
+            {lcChannels.map(({ calEntity, label }) => (
+              <LoadCellZeroCard
+                key={calEntity}
+                calEntity={calEntity}
+                label={label}
+                getSensorValue={getSensorValue}
+                onZero={() => {
+                  const raw = getSensorValue(calEntity, 'force_lbf');
+                  if (raw != null && Number.isFinite(raw)) setLoadCellZeroOffset(calEntity, raw);
+                }}
+              />
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                lcChannels.forEach(({ calEntity }) => {
+                  const raw = getSensorValue(calEntity, 'force_lbf');
+                  if (raw != null && Number.isFinite(raw)) setLoadCellZeroOffset(calEntity, raw);
+                });
+              }}
+              className="px-3 py-1.5 text-xs font-bold rounded border border-amber-600 bg-amber-900/30 text-amber-300 hover:bg-amber-800/50"
+            >
+              Zero all LCs
+            </button>
+          </div>
         </div>
       )}
 

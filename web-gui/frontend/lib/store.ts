@@ -48,7 +48,8 @@ const NOTIFICATIONS_MAX = 10;
 
 interface SensorSystemState {
   sensorData: SensorData;
-  _updateVersion?: number; // Internal version counter to force re-renders
+  _updateVersion?: number; // Bumps each flush; subscribe via useSensorDataVersion()
+  lastSensorFlushMs?: number; // Date.now() at last flush — for latency/freshness display
   actuators: Map<number, ActuatorUpdate>;
   currentState: SystemState | null;
   connectionStatus: ConnectionStatus;
@@ -62,9 +63,12 @@ interface SensorSystemState {
   boards: Record<number, BoardStatus>;
   /** From config [adc]; used by sense conversions (TC ref, actuator threshold). */
   voltageRefNominals: VoltageRefNominals;
+  /** Load cell zero offsets (lbf) by cal entity e.g. LC_Cal.CH1. Display = raw_lbf - offset. Persisted to localStorage. */
+  loadCellZeroOffsets: Record<string, number>;
   notifications: NotificationEntry[];
 
   updateSensor: (update: SensorUpdate) => void;
+  setLoadCellZeroOffset: (calEntity: string, offsetLbf: number | null) => void;
   updateActuator: (update: ActuatorUpdate) => void;
   setActuatorState: (entity: string, state: ActuatorState) => void;
   setActuatorCommandedOverride: (entity: string, state: ActuatorState | null) => void;
@@ -80,6 +84,19 @@ interface SensorSystemState {
   clearNotifications: () => void;
 }
 
+const LC_ZERO_STORAGE_KEY = 'sensor_system_loadCellZeroOffsets';
+
+function loadStoredLcZeroOffsets(): Record<string, number> {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LC_ZERO_STORAGE_KEY) : null;
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+  } catch (_) { /* ignore */ }
+  return {};
+}
+
 // ── Alias table ──────────────────────────────────────────────────────────────
 // Maps lookup key → list of fallback keys to try in order.
 const ALIASES: Record<string, string[]> = {
@@ -87,6 +104,10 @@ const ALIASES: Record<string, string[]> = {
   'PT_Cal.Fuel_Upstream.pressure_psi': ['PT_Cal.PT_CH1.pressure_psi', 'PT.Fuel_Upstream.pressure_psi', 'PT.PT_CH1.pressure_psi'],
   'PT_Cal.GSE_Low.pressure_psi': ['PT_Cal.PT_CH2.pressure_psi', 'PT.GSE_Low.pressure_psi', 'PT.PT_CH2.pressure_psi'],
   'PT_Cal.Fuel_Downstream.pressure_psi': ['PT_Cal.PT_CH3.pressure_psi', 'PT.Fuel_Downstream.pressure_psi', 'PT.PT_CH3.pressure_psi'],
+  'PT_Cal.Chamber_Mid_PT_1.pressure_psi': ['PT_Cal.PT_CH4.pressure_psi', 'PT.Chamber_Mid_PT_1.pressure_psi', 'PT.PT_CH4.pressure_psi'],
+  'PT_Cal.Chamber_Mid_PT_2.pressure_psi': ['PT_Cal.PT_CH8.pressure_psi', 'PT.Chamber_Mid_PT_2.pressure_psi', 'PT.PT_CH8.pressure_psi'],
+  'PT_Cal.Chamber_Throat_PT_1.pressure_psi': ['PT_Cal.PT_CH9.pressure_psi', 'PT.Chamber_Throat_PT_1.pressure_psi', 'PT.PT_CH9.pressure_psi'],
+  'PT_Cal.Chamber_Throat_PT_2.pressure_psi': ['PT_Cal.PT_CH10.pressure_psi', 'PT.Chamber_Throat_PT_2.pressure_psi', 'PT.PT_CH10.pressure_psi'],
   'PT_Cal.Fuel_Fill_Tank.pressure_psi': ['PT_Cal.PT_CH4.pressure_psi', 'PT.Fuel_Fill_Tank.pressure_psi', 'PT.PT_CH4.pressure_psi'],
   'PT_Cal.Ox_Upstream.pressure_psi': ['PT_Cal.PT_CH5.pressure_psi', 'PT.Ox_Upstream.pressure_psi', 'PT.PT_CH5.pressure_psi'],
   'PT_Cal.GN2_Regulated.pressure_psi': ['PT_Cal.PT_CH6.pressure_psi', 'PT.GN2_Regulated.pressure_psi', 'PT.PT_CH6.pressure_psi'],
@@ -99,15 +120,19 @@ const ALIASES: Record<string, string[]> = {
   'PT_Cal.GN2_High.pressure_psi': ['PT_Cal.HP_PT_4.pressure_psi', 'PT.GN2_High.pressure_psi'],
   'PT_Cal.HP_PT_4.pressure_psi': ['PT_Cal.GN2_High.pressure_psi', 'PT.GN2_High.pressure_psi'],
 
-  // ── PT raw ADC counts (named → PT_CHX) ──────────────────────────────────
-  'PT_Cal.Fuel_Upstream.raw_adc_counts': ['PT_Cal.PT_CH1.raw_adc_counts', 'PT.Fuel_Upstream.raw_adc_counts', 'PT.PT_CH1.raw_adc_counts'],
-  'PT_Cal.GSE_Low.raw_adc_counts': ['PT_Cal.PT_CH2.raw_adc_counts', 'PT.PT_CH2.raw_adc_counts'],
-  'PT_Cal.PT_CH3.raw_adc_counts': ['PT.PT_CH3.raw_adc_counts'],
-  'PT_Cal.Fuel_Downstream.raw_adc_counts': ['PT_Cal.PT_CH3.raw_adc_counts', 'PT.PT_CH3.raw_adc_counts'],
+  // ── PT raw ADC counts (named → PT.<role> is what backend sends for raw; PT_CHX fallbacks) ─
+  'PT_Cal.Fuel_Upstream.raw_adc_counts': ['PT.Fuel_Upstream.raw_adc_counts', 'PT_Cal.PT_CH1.raw_adc_counts', 'PT.PT_CH1.raw_adc_counts'],
+  'PT_Cal.GSE_Low.raw_adc_counts': ['PT.GSE_Low.raw_adc_counts', 'PT_Cal.PT_CH2.raw_adc_counts', 'PT.PT_CH2.raw_adc_counts'],
+  'PT_Cal.PT_CH3.raw_adc_counts': ['PT.PT_CH3.raw_adc_counts', 'PT.Fuel_Downstream.raw_adc_counts'],
+  'PT_Cal.Fuel_Downstream.raw_adc_counts': ['PT.Fuel_Downstream.raw_adc_counts', 'PT_Cal.PT_CH3.raw_adc_counts', 'PT.PT_CH3.raw_adc_counts'],
+  'PT_Cal.Chamber_Mid_PT_1.raw_adc_counts': ['PT.Chamber_Mid_PT_1.raw_adc_counts', 'PT_Cal.PT_CH4.raw_adc_counts', 'PT.PT_CH4.raw_adc_counts'],
+  'PT_Cal.Chamber_Mid_PT_2.raw_adc_counts': ['PT.Chamber_Mid_PT_2.raw_adc_counts', 'PT_Cal.PT_CH8.raw_adc_counts', 'PT.PT_CH8.raw_adc_counts'],
+  'PT_Cal.Chamber_Throat_PT_1.raw_adc_counts': ['PT.Chamber_Throat_PT_1.raw_adc_counts', 'PT_Cal.PT_CH9.raw_adc_counts', 'PT.PT_CH9.raw_adc_counts'],
+  'PT_Cal.Chamber_Throat_PT_2.raw_adc_counts': ['PT.Chamber_Throat_PT_2.raw_adc_counts', 'PT_Cal.PT_CH10.raw_adc_counts', 'PT.PT_CH10.raw_adc_counts'],
   'PT_Cal.Fuel_Fill_Tank.raw_adc_counts': ['PT_Cal.PT_CH4.raw_adc_counts', 'PT.PT_CH4.raw_adc_counts'],
-  'PT_Cal.Ox_Upstream.raw_adc_counts': ['PT_Cal.PT_CH5.raw_adc_counts', 'PT.PT_CH5.raw_adc_counts'],
-  'PT_Cal.GN2_Regulated.raw_adc_counts': ['PT_Cal.PT_CH6.raw_adc_counts', 'PT.PT_CH6.raw_adc_counts'],
-  'PT_Cal.Ox_Downstream.raw_adc_counts': ['PT_Cal.PT_CH7.raw_adc_counts', 'PT.PT_CH7.raw_adc_counts'],
+  'PT_Cal.Ox_Upstream.raw_adc_counts': ['PT.Ox_Upstream.raw_adc_counts', 'PT_Cal.PT_CH5.raw_adc_counts', 'PT.PT_CH5.raw_adc_counts'],
+  'PT_Cal.GN2_Regulated.raw_adc_counts': ['PT.GN2_Regulated.raw_adc_counts', 'PT_Cal.PT_CH6.raw_adc_counts', 'PT.PT_CH6.raw_adc_counts'],
+  'PT_Cal.Ox_Downstream.raw_adc_counts': ['PT.Ox_Downstream.raw_adc_counts', 'PT_Cal.PT_CH7.raw_adc_counts', 'PT.PT_CH7.raw_adc_counts'],
   // HP PT sensors: named entities only (no PT_CH channel fallback)
   'PT_Cal.GSE_Mid.raw_adc_counts': ['PT_Cal.HP_PT_1.raw_adc_counts', 'PT.GSE_Mid.raw_adc_counts'],
   'PT_Cal.HP_PT_1.raw_adc_counts': ['PT_Cal.GSE_Mid.raw_adc_counts', 'PT.GSE_Mid.raw_adc_counts'],
@@ -177,10 +202,10 @@ const ALIASES: Record<string, string[]> = {
 
 export { ALIASES };
 
-// ── Batched sensor-data updates (30 Hz) ──────────────────────────────────────
-// Accumulate all incoming sensor writes and flush to Zustand once every ~33ms.
-// Backend broadcasts at 30 Hz per entity so this perfectly coalesces bursts
-// into a single setState, keeping React re-renders at ≤30 Hz regardless of
+// ── Batched sensor-data updates (60 Hz) ──────────────────────────────────────
+// Accumulate all incoming sensor writes and flush to Zustand once every ~16ms.
+// Backend broadcasts at 60 Hz per entity so this coalesces bursts into a single
+// setState, keeping React re-renders at ≤60 Hz regardless of
 // how many entities are arriving simultaneously.
 let _pendingSensorWrites: Record<string, number> = {};
 let _sensorTimestamps: Record<string, number> = {};
@@ -221,8 +246,8 @@ function scheduleSensorFlush() {
 }
 
 // Fixed-interval flush: when tab is in background, RAF is paused and setTimeout is heavily
-// throttled (~1s), so bar plots freeze. Flush pending writes every ~33ms regardless of visibility.
-const FLUSH_INTERVAL_MS = 33;
+// throttled (~1s), so bar plots freeze. Flush pending writes every ~16ms (60 Hz) regardless of visibility.
+const FLUSH_INTERVAL_MS = 16;
 if (typeof setInterval !== 'undefined') {
   setInterval(() => {
     if (Object.keys(_pendingSensorWrites).length > 0) {
@@ -238,25 +263,15 @@ function flushSensorWrites() {
   _pendingSensorWrites = {};
   if (Object.keys(batch).length === 0) return;
 
-  // Increment version counter to force re-renders
   _updateVersion++;
-
-  // Always create a completely new object to ensure Zustand detects the change
-  // This is critical for React re-renders - Zustand uses shallow equality checks
-  // Even if values are the same, we need a new object reference to trigger selectors
+  const version = _updateVersion;
+  const now = Date.now();
   useSensorStore.setState((state) => {
-    // Create new object with all existing data first
-    const newSensorData: SensorData = {};
-    for (const [key, value] of Object.entries(state.sensorData)) {
-      newSensorData[key] = value;
-    }
-    // Then apply batched updates - always overwrite to ensure new reference
+    const newSensorData: SensorData = { ...state.sensorData };
     for (const [key, value] of Object.entries(batch)) {
       newSensorData[key] = value;
     }
-    // Return new object with version - this ensures React components re-render
-    // The version counter ensures bar plots update even if values are identical
-    return { sensorData: newSensorData, _updateVersion: _updateVersion };
+    return { sensorData: newSensorData, _updateVersion: version, lastSensorFlushMs: now };
   });
 }
 
@@ -272,7 +287,22 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   actuatorCommandedOverrides: {},
   boards: {},
   voltageRefNominals: { internalV: 2.5, absolute5vV: 5 },
+  loadCellZeroOffsets: loadStoredLcZeroOffsets(),
   notifications: [],
+
+  setLoadCellZeroOffset: (calEntity: string, offsetLbf: number | null) => {
+    set((s) => {
+      const next = { ...s.loadCellZeroOffsets };
+      if (offsetLbf == null) delete next[calEntity];
+      else next[calEntity] = offsetLbf;
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.setItem(LC_ZERO_STORAGE_KEY, JSON.stringify(next));
+        } catch (_) { /* ignore */ }
+      }
+      return { loadCellZeroOffsets: next };
+    });
+  },
 
   updateSensor: (update: SensorUpdate) => {
     recordSensorUpdate(update.entity, update.component);
@@ -319,7 +349,6 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   },
 
   updateState: (update: StateUpdate) => {
-    console.log('[Store] State update received:', update);
     set((s) => ({
       currentState: update.currentState,
       debugMode: update.debugMode !== undefined ? update.debugMode : get().debugMode,
@@ -444,36 +473,46 @@ export function useSensorValue(entity: string, component: string): number | null
   return value;
 }
 
-export function useGetSensorValue(): (entity: string, component: string) => number | null {
-  const sensorData = useSensorStore((state) => state.sensorData);
-  return useCallback(
-    (entity: string, component: string): number | null => {
-      const key = `${entity}.${component}`;
-      const direct = sensorData[key];
-      if (direct !== undefined) return direct;
-      const fallbacks = ALIASES[key];
-      if (fallbacks) {
-        for (const fb of fallbacks) {
-          const v = sensorData[fb];
-          if (v !== undefined) return v;
-        }
-      }
-      return null;
-    },
-    [sensorData]
-  );
+/** Subscribe to sensor flush tick (~60 Hz). Use with useGetSensorValue() so pages that read many values re-render on flush without subscribing to full sensorData. */
+export function useSensorDataVersion(): number {
+  return useSensorStore((s) => s._updateVersion ?? 0);
 }
 
-/** Global commanded state for an actuator: override (DEBUG) or expected from current state. */
+/** Last flush time (Date.now()). Use to show latency: "Data: Xms ago" or "~60 Hz". Backend throttles at 16ms; frontend flushes every FLUSH_INTERVAL_MS (16ms). */
+export function useLastSensorFlushMs(): number | undefined {
+  return useSensorStore((s) => s.lastSensorFlushMs);
+}
+
+/** Read sensor value at call time; does not subscribe so callers don't re-render on every sensor flush. Use useSensorValue(entity, component) for displayed values, or useSensorDataVersion() + this for pages that show many values. */
+export function useGetSensorValue(): (entity: string, component: string) => number | null {
+  return useCallback((entity: string, component: string): number | null => {
+    const state = useSensorStore.getState();
+    const key = `${entity}.${component}`;
+    const direct = state.sensorData[key];
+    if (direct !== undefined) return direct;
+    const fallbacks = ALIASES[key];
+    if (fallbacks) {
+      for (const fb of fallbacks) {
+        const v = state.sensorData[fb];
+        if (v !== undefined) return v;
+      }
+    }
+    return null;
+  }, []);
+}
+
+/** Commanded state: global actuatorStateByEntity (true value from backend/any client), else DEBUG override, else expected for current state. */
 export function useActuatorCommandedState(entity: string): ActuatorState | null {
+  const actuatorStateByEntity = useSensorStore((s) => s.actuatorStateByEntity[entity] ?? null);
   const currentState = useSensorStore((s) => s.currentState);
   const expectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
   const overrides = useSensorStore((s) => s.actuatorCommandedOverrides);
   const debugMode = useSensorStore((s) => s.debugMode);
+  if (actuatorStateByEntity != null) return actuatorStateByEntity;
   const override = overrides[entity] ?? null;
+  if (debugMode && override != null) return override;
   const stateExpected = currentState != null ? (expectedPositions[currentState] ?? {}) : {};
   const expected = stateExpected[entity] ?? null;
-  if (debugMode && override != null) return override;
   if (expected === 'open') return ActuatorState.OPEN;
   if (expected === 'closed') return ActuatorState.CLOSED;
   return null;
@@ -482,4 +521,12 @@ export function useActuatorCommandedState(entity: string): ActuatorState | null 
 /** Global last-known actuator state (from backend or optimistic update). */
 export function useActuatorStateByEntity(entity: string): ActuatorState | null {
   return useSensorStore((s) => s.actuatorStateByEntity[entity] ?? null);
+}
+
+/** Load cell force (lbf) with zero offset applied. Use for display: displayLbf = raw - offset. */
+export function useLoadCellForceLbf(calEntity: string): number | null {
+  const raw = useSensorValue(calEntity, 'force_lbf');
+  const offset = useSensorStore((s) => s.loadCellZeroOffsets[calEntity] ?? 0);
+  if (raw == null || !Number.isFinite(raw)) return null;
+  return raw - offset;
 }

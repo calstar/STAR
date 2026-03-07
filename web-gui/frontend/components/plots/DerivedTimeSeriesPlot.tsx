@@ -9,7 +9,7 @@ import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate } from '@/lib/types';
 
 const DEFAULT_WINDOW_SECONDS = 60;
-const SAMPLE_HZ = 30;
+const SAMPLE_HZ = 60;
 
 export type TransformFn = (rawValue: number) => number | null;
 
@@ -254,8 +254,6 @@ export default function DerivedTimeSeriesPlot({
       const update = payload as SensorUpdate;
       if (!isFinite(update.value)) return;
 
-      cache.addDataPoint(update.entity, update.component, update.value);
-
       const idx = entities.indexOf(update.entity);
       if (idx >= 0 && componentMap[idx] === update.component) {
         const out = transformRef.current(update.value);
@@ -279,6 +277,7 @@ export default function DerivedTimeSeriesPlot({
       const d = dataRef.current;
       const currentTime = Date.now();
 
+      let dataChanged = false;
       if (currentTime - lastDataUpdate >= DATA_UPDATE_INTERVAL) {
         d.time.push(now);
         entities.forEach((_, i) => {
@@ -299,6 +298,7 @@ export default function DerivedTimeSeriesPlot({
           d.values = d.values.map((a) => a.slice(excess));
         }
         lastDataUpdate = currentTime;
+        dataChanged = true;
       }
 
       uplotRef.current.setScale('x', {
@@ -306,23 +306,24 @@ export default function DerivedTimeSeriesPlot({
         max: now,
       });
 
-      const timeData = d.time.length > 0 ? d.time : [now];
-      const valueData = d.values.map((v) => (v.length > 0 ? v : [NaN]));
-      try {
-        uplotRef.current.setData([timeData, ...valueData]);
-      } catch (_) {}
-
-      const allY: number[] = [];
-      valueData.forEach((series) => {
-        series.forEach((v) => {
-          if (Number.isFinite(v)) allY.push(v);
+      if (dataChanged) {
+        const timeData = d.time.length > 0 ? d.time : [now];
+        const valueData = d.values.map((v) => (v.length > 0 ? v : [NaN]));
+        try {
+          uplotRef.current.setData([timeData, ...valueData]);
+        } catch (_) {}
+        const allY: number[] = [];
+        valueData.forEach((series) => {
+          series.forEach((v) => {
+            if (Number.isFinite(v)) allY.push(v);
+          });
         });
-      });
-      if (allY.length > 0) {
-        const yMin = Math.min(...allY);
-        const yMax = Math.max(...allY);
-        const [min, max] = smartYRange(yMin, yMax);
-        uplotRef.current.setScale('y', { min, max });
+        if (allY.length > 0) {
+          const yMin = Math.min(...allY);
+          const yMax = Math.max(...allY);
+          const [min, max] = smartYRange(yMin, yMax);
+          uplotRef.current.setScale('y', { min, max });
+        }
       }
 
       const dims = getDims();

@@ -60,8 +60,8 @@ if lsof -i:$ELODIN_PORT &>/dev/null 2>&1; then
 fi
 
 echo "📂 Replay DB: $DB_PATH"
-echo "📊 Starting Elodin DB on port $ELODIN_PORT..."
-RUST_LOG=warn "$ELODIN_DB_BIN" run "[::]:$ELODIN_PORT" "$DB_PATH" > /tmp/elodin_db_replay.log 2>&1 &
+echo "📊 Starting Elodin DB on port $ELODIN_PORT (--replay = stream stored data as live telemetry)..."
+RUST_LOG=warn "$ELODIN_DB_BIN" run "[::]:$ELODIN_PORT" "$DB_PATH" --replay > /tmp/elodin_db_replay.log 2>&1 &
 ELODIN_PID=$!
 sleep 2
 if ! lsof -i:$ELODIN_PORT &>/dev/null 2>&1; then
@@ -82,9 +82,9 @@ RELAY_PID=$!
 cd ..
 sleep 3
 
-echo "📡 Starting WebSocket server..."
+echo "📡 Starting WebSocket server (REPLAY_MODE=1, sidecar disabled)..."
 cd backend
-ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false npm run dev &
+REPLAY_MODE=1 ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false npm run dev &
 BACKEND_PID=$!
 cd ..
 sleep 2

@@ -3,7 +3,7 @@
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { startDataCache } from '@/lib/data-cache';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, startTransition } from 'react';
 import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, SensorUpdate, ActuatorUpdate, MessageType, NotificationPayload } from '@/lib/types';
 import PressureBar from '@/components/plots/PressureBar';
 import { PRESSURE_BAR_SENSORS, getEntityColor } from '@/lib/sensor-colors';
@@ -31,18 +31,26 @@ const SHORT_LABELS: Record<string, string> = {
   'PT_Cal.GN2_Regulated': 'GN2 REG', 'PT_Cal.Fuel_Upstream': 'FUEL UP', 'PT_Cal.Fuel_Downstream': 'FUEL DN',
   'PT_Cal.Ox_Upstream': 'LOX UP', 'PT_Cal.Ox_Downstream': 'LOX DN', 'PT_Cal.GSE_Low': 'GSE LO',
   'PT_Cal.GSE_Mid': 'GSE MID', 'PT_Cal.GSE_High': 'GSE HI', 'PT_Cal.GN2_High': 'GN2 HI',
+  'PT_Cal.Chamber_Mid_PT_1': 'CHAMBER',
 };
 
 // Separate component for each pressure bar to properly use hooks
 // Dynamic width: ~9% each with max so bars scale with viewport
-function ReactivePressureBar({ label, entity, nop, meop, color }: {
+// When avgEntities is set, value = average of those entities' pressure_psi
+function ReactivePressureBar({ label, entity, nop, meop, color, avgEntities }: {
   label: string;
   entity: string;
   nop?: number;
   meop?: number;
   color: string;
+  avgEntities?: string[];
 }) {
-  const value = useSensorValue(entity, 'pressure_psi');
+  const primaryEntity = avgEntities?.[0] ?? entity;
+  const v1 = useSensorValue(primaryEntity, 'pressure_psi');
+  const v2 = useSensorValue(avgEntities?.[1] ?? primaryEntity, 'pressure_psi');
+  const value = avgEntities && avgEntities.length >= 2 && v1 != null && v2 != null
+    ? (v1 + v2) / 2
+    : v1;
   return (
     <div
       className="min-w-0 h-full overflow-visible flex-1"
@@ -58,12 +66,10 @@ function ReactivePressureBar({ label, entity, nop, meop, color }: {
   );
 }
 
-type PressureBarDef = { label: string; entity: string; nop?: number; meop?: number; color: string };
+type PressureBarDef = { label: string; entity: string; nop?: number; meop?: number; color: string; avgEntities?: string[] };
 
 export default function TopBar() {
-  // Subscribe to sensor updates to ensure bar plots re-render when values change
-  // Subscribe to the entire sensorData object to catch all updates
-  const sensorData = useSensorStore((s) => s.sensorData);
+  // Pressure bars use useSensorValue in ReactivePressureBar — no need to subscribe to full sensorData here
   const currentState = useSensorStore((s) => s.currentState);
   const debugMode = useSensorStore((s) => s.debugMode);
   const setDebugMode = useSensorStore((s) => s.setDebugMode);
@@ -95,6 +101,7 @@ export default function TopBar() {
       nop: s.nop,
       meop: s.meop,
       color: getEntityColor(s.entity),
+      avgEntities: s.avgEntities,
     }));
     setPressureBars(bars);
   }, []);
@@ -151,8 +158,8 @@ export default function TopBar() {
     return () => clearInterval(id);
   }, []);
 
-  // Countdown to Friday March 6, 2026 12:00:00 PST (UTC-8 = 20:00 UTC)
-  const LAUNCH_TARGET_MS = Date.UTC(2026, 2, 6, 20, 0, 0); // month is 0-indexed
+  // Countdown to Saturday March 7, 2026 18:00 PST (UTC-8 = 02:00 UTC Mar 8)
+  const LAUNCH_TARGET_MS = Date.UTC(2026, 2, 8, 2, 0, 0); // month is 0-indexed
   useEffect(() => {
     const tick = () => {
       const diff = LAUNCH_TARGET_MS - Date.now();
@@ -188,46 +195,44 @@ export default function TopBar() {
       nop: s.nop,
       meop: s.meop,
       color: getEntityColor(s.entity),
+      avgEntities: s.avgEntities,
     })) as PressureBarDef[];
   }, [pressureBars]);
 
-  // Simple helper: send a single state-transition command
+  // Fire-and-forget so click feedback is immediate; commands run next frame
   const sendState = (state: SystemState) => {
     if (!controlEnabled) return;
     const cmd: CommandPayload = { commandType: 'state_transition', data: { state } };
-    ws.sendCommand(cmd);
+    requestAnimationFrame(() => ws.sendCommand(cmd));
   };
 
-  // ENGINE ABORT: go to VENT for 5 seconds, then ENGINE_ABORT (same as old ABORT functionality)
   const handleEngineAbort = () => {
     sendState(SystemState.VENT);
-    // After 5 seconds, transition to ENGINE_ABORT
-    setTimeout(() => {
-      sendState(SystemState.ENGINE_ABORT);
-    }, 5000);
+    setTimeout(() => sendState(SystemState.ENGINE_ABORT), 5000);
   };
 
-  // GSE ABORT: go directly to GSE_ABORT state
-  const handleGseAbort = () => {
-    sendState(SystemState.GSE_ABORT);
-  };
+  const handleGseAbort = () => sendState(SystemState.GSE_ABORT);
 
-  // EMERGENCY ABORT: immediately go to EMERGENCY_ABORT state
   const handleEmergencyAbort = () => {
     if (!confirm('⚠️ EMERGENCY ABORT — immediately vent GN2 and abort all operations?')) return;
-    // Go directly to EMERGENCY_ABORT state
     sendState(SystemState.EMERGENCY_ABORT);
+  };
+
+  const handleExtendFire = () => {
+    if (!controlEnabled || currentState !== SystemState.FIRE) return;
+    const cmd: CommandPayload = { commandType: 'extend_fire', data: {} };
+    requestAnimationFrame(() => ws.sendCommand(cmd));
   };
 
   return (
     <div
-      className="bg-card border-b border-gray-800 select-none flex-shrink-0"
+      className="relative z-30 bg-card border-b border-gray-800 select-none flex-shrink-0"
       style={{ height: '18vh' }}
     >
       <div className="flex items-stretch h-full px-4 gap-2 py-2">
 
         {/* Left: brand + connection + clock + countdown */}
-        <div className="flex flex-col justify-start gap-1 flex-shrink-0 pr-6 border-r border-gray-800/60">
+        <div className="flex flex-col justify-start gap-1 flex-shrink-0 pr-2 border-r border-gray-800/60">
           <span className="text-3xl font-bold tracking-widest text-blue-400 uppercase leading-none">
             DIABLO DAQ
           </span>
@@ -252,7 +257,7 @@ export default function TopBar() {
 
         {/* Center: pressure bars — dynamic spacing, scales with viewport */}
         <div className="flex-[2] flex items-stretch justify-end gap-4 sm:gap-6 lg:gap-8 min-w-0 overflow-visible" style={{ maxWidth: '60vw' }}>
-          {effectivePressureBars.map(({ label, entity, nop, meop, color }) => (
+          {effectivePressureBars.map(({ label, entity, nop, meop, color, avgEntities }) => (
             <ReactivePressureBar
               key={entity}
               label={label}
@@ -260,12 +265,13 @@ export default function TopBar() {
               nop={nop}
               meop={meop}
               color={color}
+              avgEntities={avgEntities}
             />
           ))}
         </div>
 
-        {/* Right: state + mode + abort — top-right aligned, natural width, pushed to edge */}
-        <div className="w-[25vw] flex items-stretch justify-between gap-2 flex-shrink-0 pl-3 border-l border-gray-800/60 ml-auto">
+        {/* Right: state + mode + abort — top-right aligned; min width so buttons don't clip */}
+        <div className="w-full max-w-[320px] min-w-[260px] flex items-stretch justify-between gap-2 flex-shrink-0 pl-3 border-l border-gray-800/60 ml-auto">
           <div className="flex flex-col justify-center items-center gap-2 flex-1 min-w-0">
             <span className="text-[10px] xl:text-sm text-gray-400 uppercase tracking-widest font-bold text-center">STATE</span>
             <span className={`text-lg xl:text-2xl font-bold font-mono tracking-wider text-center leading-tight whitespace-normal ${stateColor}`}>
@@ -279,12 +285,12 @@ export default function TopBar() {
               onClick={() => {
                 if (!controlEnabled) return;
                 const newDebugMode = !debugMode;
-                setDebugMode(newDebugMode);
+                startTransition(() => setDebugMode(newDebugMode));
                 const cmd: CommandPayload = {
                   commandType: 'debug_mode',
                   data: { debugMode: newDebugMode }
                 };
-                ws.sendCommand(cmd);
+                requestAnimationFrame(() => ws.sendCommand(cmd));
               }}
               disabled={!controlEnabled}
               className={`w-full py-2 xl:py-4 rounded-xl text-[10px] xl:text-sm font-bold uppercase tracking-wider border transition-all text-center ${debugMode
@@ -324,7 +330,7 @@ export default function TopBar() {
                   e.preventDefault();
                   unlock(passwordInput);
                 }}
-                className="absolute top-full right-0 mt-1 flex flex-col gap-1 bg-background border border-gray-700 rounded px-2 py-2 shadow-lg z-20 w-48"
+                className="absolute top-full right-0 mt-1 flex flex-col gap-1 bg-background border border-gray-700 rounded px-2 py-2 shadow-lg z-50 w-48"
               >
                 <input
                   type="password"
@@ -349,8 +355,17 @@ export default function TopBar() {
             )}
           </div>
 
-          {/* Abort buttons */}
-          <div className="flex flex-col justify-center gap-2 flex-1 min-w-0 border-l border-gray-800/60 pl-2">
+          {/* Extend Fire + Abort buttons — min width so label isn't clipped */}
+          <div className="flex flex-col justify-center gap-2 flex-1 min-w-[7.25rem] border-l border-gray-800/60 pl-2">
+            <button
+              onClick={handleExtendFire}
+              disabled={!controlEnabled || currentState !== SystemState.FIRE}
+              className="w-full min-w-0 py-2 xl:py-3 bg-emerald-800 hover:bg-emerald-700 active:bg-emerald-900 border border-emerald-600
+                         text-white font-semibold text-[10px] xl:text-xs rounded-xl tracking-wider transition-colors disabled:bg-gray-800 disabled:border-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed"
+              title={currentState === SystemState.FIRE ? 'Extend fire to 5s from fire start' : 'Only active in FIRE'}
+            >
+              EXTEND FIRE
+            </button>
             <button
               onClick={handleEngineAbort}
               disabled={!controlEnabled}

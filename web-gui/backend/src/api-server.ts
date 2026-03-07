@@ -90,6 +90,83 @@ function buildSensorConfig(): SensorConfigEntry[] {
     }
   }
 
+  // TC boards with sensor_roles_tc_board (e.g. chamber TCs)
+  for (const [boardKey, boardRaw] of Object.entries(boards)) {
+    const board = boardRaw as Record<string, any>;
+    if (board.type !== 'TC') continue;
+    if (board.enabled === false) continue;
+
+    const boardRolesKey = `sensor_roles_${boardKey}`;
+    const rolesSection = (config as any)[boardRolesKey] as Record<string, number> | undefined;
+    if (!rolesSection || typeof rolesSection !== 'object') continue;
+
+    const boardId: number = typeof board.board_id === 'number' ? board.board_id : 51;
+    const boardIp: string = board.ip || '';
+
+    for (const [roleName, channelId] of Object.entries(rolesSection)) {
+      const ch = typeof channelId === 'number' ? channelId : Number(channelId);
+      if (!isFinite(ch)) continue;
+
+      const entityBase = roleName.replace(/\s+/g, '_');
+      sensors.push({
+        id: ch,
+        role: roleName,
+        boardId,
+        boardIp,
+        isHpPt: false,
+        inCalibrationSequence: false,
+        entity: `TC.${entityBase}`,
+        calEntity: `TC_Cal.${entityBase}`,
+      });
+    }
+  }
+
+  // LC boards: from active_connectors when no sensor_roles_<boardKey>; role "LC ChN"
+  for (const [boardKey, boardRaw] of Object.entries(boards)) {
+    const board = boardRaw as Record<string, any>;
+    if (board.type !== 'LC') continue;
+    if (board.enabled === false) continue;
+
+    const boardId: number = typeof board.board_id === 'number' ? board.board_id : 41;
+    const boardIp: string = board.ip || '';
+    const boardRolesKey = `sensor_roles_${boardKey}`;
+    const rolesSection = (config as any)[boardRolesKey] as Record<string, number> | undefined;
+
+    if (rolesSection && typeof rolesSection === 'object') {
+      for (const [roleName, channelId] of Object.entries(rolesSection)) {
+        const ch = typeof channelId === 'number' ? channelId : Number(channelId);
+        if (!isFinite(ch)) continue;
+        const entityBase = roleName.replace(/\s+/g, '_');
+        sensors.push({
+          id: ch,
+          role: roleName,
+          boardId,
+          boardIp,
+          isHpPt: false,
+          inCalibrationSequence: false,
+          entity: `LC.${entityBase}`,
+          calEntity: `LC_Cal.${entityBase}`,
+        });
+      }
+    } else {
+      const active: number[] = Array.isArray(board.active_connectors) && board.active_connectors.length > 0
+        ? (board.active_connectors as number[])
+        : Array.from({ length: (board.num_sensors ?? 4) }, (_, i) => i + 1);
+      for (const ch of active) {
+        sensors.push({
+          id: ch,
+          role: `LC Ch${ch}`,
+          boardId,
+          boardIp,
+          isHpPt: false,
+          inCalibrationSequence: false,
+          entity: `LC.CH${ch}`,
+          calEntity: `LC_Cal.CH${ch}`,
+        });
+      }
+    }
+  }
+
   // Sort: board order first, then channel id within board
   sensors.sort((a, b) => {
     if (a.boardId !== b.boardId) return a.boardId - b.boardId;

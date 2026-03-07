@@ -153,12 +153,12 @@ class SimulatedBoard:
 
         if self.board_type == BOARD_TYPE_PT:
             if sensor_id in self.hp_pt_connectors:
-                # 4-20 mA scaling.
-                # 4mA = ~412M counts, 20mA = ~2.06B counts (assuming 120 ohm sense resistor)
-                wave = (math.sin(t * 0.3 + self.board_id) + 1) / 2.0
-                curr_ma = 4.0 + wave * 16.0
-                v_sense = (curr_ma / 1000.0) * 120.0
-                return int((v_sense / 2.5) * ADC_MAX)
+                # Same amplitude as regular PT (80M ADC span) so bars/plots look consistent
+                wave = (
+                    math.sin(t * 0.3 + self.board_id * 0.5 + sensor_id * 0.7) + 1
+                ) / 2.0
+                noise = 0 if self.low_noise else random.randint(-5000, 5000)
+                return int(500000000 + wave * 80000000 + noise)
             else:
                 # Regular PT: gentle sine wave around realistic ambient pressure.
                 # Calibration polynomial zero crossing is ~271M ADC (0 PSI).

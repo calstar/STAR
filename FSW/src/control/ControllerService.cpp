@@ -353,8 +353,19 @@ void ControllerService::controllerLoop() {
             have_data = has_measurement_;
         }
 
-        // Require sensor data only when running DDP; test/fallback duty can send PWM without it
-        if (!have_data && !use_test_duty) {
+        // When relay only sends upstream (ch 1, 5), P_d_fuel/P_d_ox stay 0 so engine estimate
+        // and diagnostics (MR, P_ch, F_est) are zero. Use upstream as fallback for injector
+        // pressure so the controller sees varying state instead of defaulting to fixed duty.
+        constexpr double P_D_FROM_U_FRAC = 0.95;
+        if (meas.P_d_fuel <= 0.0 && meas.P_u_fuel > 0.0)
+            meas.P_d_fuel = meas.P_u_fuel * P_D_FROM_U_FRAC;
+        if (meas.P_d_ox <= 0.0 && meas.P_u_ox > 0.0)
+            meas.P_d_ox = meas.P_u_ox * P_D_FROM_U_FRAC;
+
+        // Require sensor data for DDP; test duty can send without it. In fire mode with LUT, run
+        // anyway so we always command duty (even 0) and report P_ch from chamber MP1/2 average.
+        const bool run_without_data = (fire_active_ && lut_.is_loaded());
+        if (!have_data && !use_test_duty && !run_without_data) {
             if (tick == 0 || tick % 50 == 0) {
                 std::cout << "[ControllerService] ⏳ Waiting for sensor data from Elodin relay…"
                           << std::endl;
@@ -377,49 +388,76 @@ void ControllerService::controllerLoop() {
             actuation.u_F_on = td_f > 0.0f;
             actuation.u_O_on = td_o > 0.0f;
             actuation.valid = true;
+            diagnostics.F_ref = (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
+                                   ? cmd.thrust_desired
+                                   : 0.0;
         } else if (lut_.is_loaded()) {
-            // LUT mode: optimal boolean control from precomputed DDP (u_safe_F/O > 0.5 → on)
-            std::map<std::string, double> point;
-            point["P_u_fuel"] = meas.P_u_fuel;
-            point["P_u_ox"] = meas.P_u_ox;
-            double thrust_val = (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
-                                    ? cmd.thrust_desired
-                                    : 0.0;
-            point["thrust_desired"] = thrust_val;
+            // LUT mode: 3 inputs — P_ch (chamber MP1/2 average), P_u_fuel, P_u_ox. Only compute
+            // when FIRE is active; pre-fire dynamics differ from fire-state.
+            const double P_ch_est =
+                (meas.P_ch_mp1 > 0.0 || meas.P_ch_mp2 > 0.0)
+                    ? 0.5 * (meas.P_ch_mp1 + meas.P_ch_mp2)
+                    : 0.0;
 
-            std::map<std::string, double> lut_out;
-            if (lut_.evaluate(point, lut_out)) {
-                double u_f = lut_out.count("u_safe_F") ? lut_out.at("u_safe_F")
-                             : lut_out.count("duty_F") ? lut_out.at("duty_F")
-                                                       : 0.0;
-                double u_o = lut_out.count("u_safe_O") ? lut_out.at("u_safe_O")
-                             : lut_out.count("duty_O") ? lut_out.at("duty_O")
-                                                       : 0.0;
-                // Boolean: threshold at 0.5
-                actuation.duty_F = (u_f > 0.5) ? 1.0 : 0.0;
-                actuation.duty_O = (u_o > 0.5) ? 1.0 : 0.0;
-                actuation.u_F_on = actuation.duty_F > 0.5;
-                actuation.u_O_on = actuation.duty_O > 0.5;
+            if (!fire_active_) {
+                actuation.duty_F = 0.0;
+                actuation.duty_O = 0.0;
+                actuation.u_F_on = false;
+                actuation.u_O_on = false;
                 actuation.valid = true;
+                diagnostics.F_ref = (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
+                                       ? cmd.thrust_desired
+                                       : 0.0;
+                diagnostics.F_estimated = 0.0;
+                diagnostics.MR_estimated = 0.0;
+                diagnostics.P_ch = 0.0;
+            } else {
+                // 3D LUT: P_ch (estimated from chamber MP1/2 avg), P_u_fuel, P_u_ox
+                std::map<std::string, double> point;
+                point["P_ch"] = P_ch_est;
+                point["P_u_fuel"] = meas.P_u_fuel;
+                point["P_u_ox"] = meas.P_u_ox;
 
-                diagnostics.F_ref = thrust_val;
-                // Only report LUT engine predictions when tank pressures are in valid range.
-                // LUT grid typically starts ~2 MPa; below ~100 kPa (14.5 psi) engine is off.
-                constexpr double P_MIN_VALID = 1e5;  // 100 kPa
-                if (meas.P_u_fuel >= P_MIN_VALID && meas.P_u_ox >= P_MIN_VALID) {
-                    if (lut_out.count("F"))
-                        diagnostics.F_estimated = lut_out.at("F");
-                    if (lut_out.count("MR"))
-                        diagnostics.MR_estimated = lut_out.at("MR");
-                    if (lut_out.count("P_ch"))
-                        diagnostics.P_ch = lut_out.at("P_ch");
+                std::map<std::string, double> lut_out;
+                if (lut_.evaluate(point, lut_out)) {
+                    double u_f = lut_out.count("u_safe_F") ? lut_out.at("u_safe_F")
+                                 : lut_out.count("duty_F") ? lut_out.at("duty_F") : 0.0;
+                    double u_o = lut_out.count("u_safe_O") ? lut_out.at("u_safe_O")
+                                 : lut_out.count("duty_O") ? lut_out.at("duty_O") : 0.0;
+                    actuation.duty_F = (u_f > 0.5) ? 1.0 : 0.0;
+                    actuation.duty_O = (u_o > 0.5) ? 1.0 : 0.0;
+                    actuation.u_F_on = actuation.duty_F > 0.5;
+                    actuation.u_O_on = actuation.duty_O > 0.5;
+                    actuation.valid = true;
+
+                    diagnostics.F_ref = (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
+                                            ? cmd.thrust_desired
+                                            : 0.0;
+                    diagnostics.P_ch = P_ch_est;  // Always report chamber from MP1/2 average
+                    constexpr double P_MIN_VALID = 1e5;
+                    if (meas.P_u_fuel >= P_MIN_VALID && meas.P_u_ox >= P_MIN_VALID) {
+                        if (lut_out.count("F"))
+                            diagnostics.F_estimated = lut_out.at("F");
+                        if (lut_out.count("MR"))
+                            diagnostics.MR_estimated = lut_out.at("MR");
+                    } else {
+                        diagnostics.F_estimated = 0.0;
+                        diagnostics.MR_estimated = 0.0;
+                    }
                 } else {
+                    // LUT miss or out-of-range: still command 0/0 and report P_ch so fire mode always outputs
+                    actuation.duty_F = 0.0;
+                    actuation.duty_O = 0.0;
+                    actuation.u_F_on = false;
+                    actuation.u_O_on = false;
+                    actuation.valid = true;
+                    diagnostics.F_ref = (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
+                                            ? cmd.thrust_desired
+                                            : 0.0;
+                    diagnostics.P_ch = P_ch_est;
                     diagnostics.F_estimated = 0.0;
                     diagnostics.MR_estimated = 0.0;
-                    diagnostics.P_ch = 0.0;
                 }
-            } else {
-                actuation.valid = false;
             }
         } else {
             auto [a, d] = controller_->step(meas, nav, cmd);
@@ -644,9 +682,8 @@ void ControllerService::relaySubscriberLoop() {
             {
                 std::lock_guard<std::mutex> lock(input_mutex_);
                 // Channel mapping from config.toml [sensor_roles_pt_board]:
-                // ch=1: FUEL UP → P_u_fuel, ch=3: FUEL DN → P_d_fuel
-                // ch=5: LOX UP → P_u_ox, ch=7: LOX DN → P_d_ox
-                // ch=6: GN2 REG → P_reg / P_copv proxy
+                // ch=1: FUEL UP, 3: FUEL DN, 5: LOX UP, 7: LOX DN, 6: GN2 REG
+                // ch=4: Chamber Mid PT 1, ch=8: Chamber Mid PT 2 (P_ch estimate)
                 if (ch == 1)
                     current_meas_.P_u_fuel = pressure_psi * 6894.76;
                 else if (ch == 5)
@@ -658,7 +695,10 @@ void ControllerService::relaySubscriberLoop() {
                 else if (ch == 6) {
                     current_meas_.P_reg = pressure_psi * 6894.76;
                     current_meas_.P_copv = pressure_psi * 6894.76;
-                }
+                } else if (ch == 4)
+                    current_meas_.P_ch_mp1 = pressure_psi * 6894.76;
+                else if (ch == 8)
+                    current_meas_.P_ch_mp2 = pressure_psi * 6894.76;
                 current_meas_.timestamp = std::chrono::steady_clock::now();
                 has_measurement_ = true;
             }
@@ -726,9 +766,8 @@ void ControllerService::elodinSubscriberLoop() {
                 if (ch == 0)
                     ch = channel_id - 0x10;  // fallback to header
 
-                // Map based on PT names derived from config.toml.
+                // Map based on PT names derived from config.toml (ch 4/8 = Chamber Mid 1/2).
                 std::lock_guard<std::mutex> lock(input_mutex_);
-                // PT_NAMES[] array positions for the controller fields:
                 if (ch == 1)
                     current_meas_.P_u_fuel = pressure_psi * 6894.76;
                 else if (ch == 5)
@@ -740,7 +779,10 @@ void ControllerService::elodinSubscriberLoop() {
                 else if (ch == 6) {
                     current_meas_.P_reg = pressure_psi * 6894.76;
                     current_meas_.P_copv = pressure_psi * 6894.76;
-                }
+                } else if (ch == 4)
+                    current_meas_.P_ch_mp1 = pressure_psi * 6894.76;
+                else if (ch == 8)
+                    current_meas_.P_ch_mp2 = pressure_psi * 6894.76;
 
                 current_meas_.timestamp = std::chrono::steady_clock::now();
                 has_measurement_ = true;

@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import DerivedTimeSeriesPlot from '@/components/plots/DerivedTimeSeriesPlot';
 import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
-import { useSensorStore, useSensorValue } from '@/lib/store';
+import { useSensorStore, useSensorValue, useLoadCellForceLbf } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 import {
   kTypeVoltageToTempC,
+  pt1000VoltageToTempC,
   codeToForce,
 } from '@/lib/sense-conversions';
 import { adcToVoltage as adcToVoltageFromRef } from '@/lib/voltageRef';
@@ -81,20 +82,63 @@ function DerivedReadoutBox({
 }
 
 function TCTempReadout({
-  entity, label, color, voltageReference,
+  entity, calEntity, label, color, voltageReference,
 }: {
-  entity: string; label: string; color: string; voltageReference: number;
+  entity: string; calEntity: string; label: string; color: string; voltageReference: number;
 }) {
+  const calTemp = useSensorValue(calEntity, 'temperature_c');
   const raw = useSensorValue(entity, 'raw_adc_counts');
   const nominals = useSensorStore((s) => s.voltageRefNominals);
-  const volt = raw !== null ? adcToVoltageFromRef(raw, voltageReference, nominals) : null;
-  const temp = volt !== null && Number.isFinite(volt) ? kTypeVoltageToTempC(volt) : null;
-  return <DerivedReadoutBox label={label} value={temp} unit="°C" color={color} decimals={1} />;
+  const volt = raw !== null && Math.abs(raw) < 2e9 ? adcToVoltageFromRef(raw, voltageReference, nominals) : null;
+  const fromRaw = volt !== null && Number.isFinite(volt) ? kTypeVoltageToTempC(volt) : null;
+  // Prefer raw-derived temp so readout matches plot (raw ADC → temp); avoid showing 0 when plot has data
+  const value = fromRaw !== null && Number.isFinite(fromRaw) ? fromRaw : (calTemp !== null && Number.isFinite(calTemp) ? calTemp : null);
+  return <DerivedReadoutBox label={label} value={value} unit="°C" color={color} decimals={1} />;
 }
 
-function RTDTempReadout({ entity, label, color }: { entity: string; label: string; color: string }) {
-  const temp = useSensorValue(entity, 'temperature_c');
-  return <DerivedReadoutBox label={label} value={temp} unit="°C" color={color} decimals={1} />;
+/** RTD temp: prefer RTD_Cal from calibration server; fallback raw ADC→temp when cal not available. */
+const RTD_ADC_REF_V = 2.5;
+
+function RTDTempReadout({
+  entity, calEntity, label, color,
+}: {
+  entity: string; calEntity: string; label: string; color: string;
+}) {
+  const calTemp = useSensorValue(calEntity, 'temperature_c');
+  const raw = useSensorValue(entity, 'raw_resistance_counts');
+  const volt = raw !== null && Number.isFinite(raw) ? adcToVoltageCustom(raw, RTD_ADC_REF_V) : null;
+  const fallbackTemp = volt !== null && Number.isFinite(volt) ? pt1000VoltageToTempC(volt) : null;
+  const value = calTemp !== null && Number.isFinite(calTemp) ? calTemp : fallbackTemp;
+  return <DerivedReadoutBox label={label} value={value} unit="°C" color={color} decimals={1} />;
+}
+
+/** ADC counts → resistance (Ω) for display. R = V*1e6/I, V = (adc/2^31)*ref. */
+function rtdAdcToResistanceOhm(adc: number, refV: number = 2.5, excitationUa: number = 1000): number | null {
+  if (!Number.isFinite(adc)) return null;
+  const volt = adcToVoltageCustom(adc, refV);
+  if (volt === null || !Number.isFinite(volt)) return null;
+  if (excitationUa <= 0) return null;
+  return (Math.abs(volt) * 1e6) / excitationUa;
+}
+
+function RTDRawReadout({ entity, label, color }: { entity: string; label: string; color: string }) {
+  const raw = useSensorValue(entity, 'raw_resistance_counts');
+  const rOhm = raw !== null ? rtdAdcToResistanceOhm(raw) : null;
+  const display = raw !== null ? raw.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—';
+  return (
+    <div className="bg-white/[0.02] backdrop-blur-md border border-white/5 rounded-lg px-3 py-2 flex flex-col gap-1 min-w-0 hover:bg-white/[0.04] flex-1">
+      <div className="flex items-center gap-3">
+        <span className="text-xs text-gray-400 font-bold uppercase tracking-widest truncate">{label}</span>
+        <span className="text-lg font-black font-mono tabular-nums ml-auto" style={{ color }}>
+          {display}
+        </span>
+        <span className="text-xs text-gray-500 font-semibold uppercase">counts</span>
+      </div>
+      <span className="text-xs text-gray-500 font-mono tabular-nums">
+        {rOhm !== null ? `${rOhm.toFixed(2)} Ω` : '— Ω'}
+      </span>
+    </div>
+  );
 }
 
 // ── Shared plot wrapper ───────────────────────────────────────────────────────
@@ -137,18 +181,16 @@ const LC_DEFAULTS = {
   pgaGain: 32,
   fullScaleForceKg: 300,
 };
+const LBF_TO_KG = 0.453592;
 
 function LCForceReadout({
-  entity,
-  label,
-  color,
+  entity, calEntity, label, color,
 }: {
-  entity: string;
-  label: string;
-  color: string;
+  entity: string; calEntity: string; label: string; color: string;
 }) {
+  const calLbf = useLoadCellForceLbf(calEntity); // offset already applied in store
   const raw = useSensorValue(entity, 'raw_adc_counts');
-  const forceKg =
+  const fallbackKg =
     raw !== null
       ? codeToForce(
           raw,
@@ -157,9 +199,11 @@ function LCForceReadout({
           LC_DEFAULTS.fullScaleForceKg
         )
       : null;
-  return (
-    <DerivedReadoutBox label={label} value={forceKg} unit="kg" color={color} decimals={1} />
-  );
+  const value =
+    calLbf !== null && Number.isFinite(calLbf)
+      ? calLbf * LBF_TO_KG
+      : fallbackKg;
+  return <DerivedReadoutBox label={label} value={value} unit="kg" color={color} decimals={1} />;
 }
 
 export default function LCS_TCS_RTDPage() {
@@ -173,6 +217,7 @@ export default function LCS_TCS_RTDPage() {
   const [rtdCalEntities, setRtdCalEntities] = useState<string[]>([]);
   const [rtdLabels, setRtdLabels] = useState<string[]>([]);
   const [lcEntities, setLcEntities] = useState<string[]>([]);
+  const [lcCalEntities, setLcCalEntities] = useState<string[]>([]);
   const [lcLabels, setLcLabels] = useState<string[]>([]);
 
   const loadChannelConfig = useCallback(() => {
@@ -200,6 +245,7 @@ export default function LCS_TCS_RTDPage() {
         const lc = buildChannels(boards, 'LC');
         if (lc.length) {
           setLcEntities(lc.map((ch) => `LC.CH${ch}`));
+          setLcCalEntities(lc.map((ch) => `LC_Cal.CH${ch}`));
           setLcLabels(lc.map((ch) => `LC Ch${ch}`));
         }
       })
@@ -241,10 +287,6 @@ export default function LCS_TCS_RTDPage() {
     [tcRefVoltage]
   );
 
-  // RTD plot: use raw stream so graph shows data even when FSW doesn't send calibrated (no cal file).
-  // Strip shows raw counts; plot shows same raw counts. When FSW sends RTD_Cal + temperature_c, readouts show °C.
-  const rtdTransform = useCallback((v: number) => (Number.isFinite(v) ? v : null), []);
-
   const lcTransform = useCallback((v: number) => {
     const kg = codeToForce(
       v,
@@ -275,6 +317,7 @@ export default function LCS_TCS_RTDPage() {
                     <TCTempReadout
                       key={d.entity}
                       entity={d.entity}
+                      calEntity={d.entity.replace('TC.', 'TC_Cal.')}
                       label={d.label}
                       color={SENSE_COLORS[i % SENSE_COLORS.length]}
                       voltageReference={d.voltageReference}
@@ -324,34 +367,36 @@ export default function LCS_TCS_RTDPage() {
             {rtdEntities.length > 0 ? (
               <>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 flex-shrink-0">
-                  {rtdCalEntities.map((entity, i) => (
+                  {rtdEntities.map((entity, i) => (
                     <RTDTempReadout
                       key={entity}
                       entity={entity}
+                      calEntity={rtdCalEntities[i]}
                       label={`${rtdLabels[i]} T`}
                       color={SENSE_COLORS[i % SENSE_COLORS.length]}
                     />
                   ))}
                 </div>
-                <div className="flex-shrink-0">
-                  <SensorReadoutStrip
-                    variant="compact"
-                    sensors={rtdEntities.map((entity, i) => ({
-                      label: `${rtdLabels[i]} ADC`,
-                      entity,
-                      component: 'raw_resistance_counts',
-                      unit: 'counts',
-                      color: SENSE_COLORS[i % SENSE_COLORS.length],
-                      decimals: 0,
-                    }))}
-                  />
+                <div className="flex flex-wrap gap-1.5 flex-shrink-0">
+                  {rtdEntities.map((entity, i) => (
+                    <RTDRawReadout
+                      key={entity}
+                      entity={entity}
+                      label={`${rtdLabels[i]} ADC`}
+                      color={SENSE_COLORS[i % SENSE_COLORS.length]}
+                    />
+                  ))}
                 </div>
                 <SectionPlot
-                  title="RTD — raw counts (temperature when FSW calibration loaded)"
+                  title="RTD Temperature (°C)"
                   entities={rtdEntities}
                   component="raw_resistance_counts"
-                  transform={rtdTransform}
-                  yLabel="Raw (counts)"
+                  transform={(v) => {
+                    if (!Number.isFinite(v)) return null;
+                    const volt = adcToVoltageCustom(v, RTD_ADC_REF_V);
+                    return pt1000VoltageToTempC(volt) ?? null;
+                  }}
+                  yLabel="Temperature (°C)"
                   labels={rtdLabels}
                   colors={SENSE_COLORS.slice(0, rtdEntities.length)}
                 />
@@ -380,6 +425,7 @@ export default function LCS_TCS_RTDPage() {
                     <LCForceReadout
                       key={entity}
                       entity={entity}
+                      calEntity={lcCalEntities[i]}
                       label={lcLabels[i]}
                       color={SENSE_COLORS[i % SENSE_COLORS.length]}
                     />

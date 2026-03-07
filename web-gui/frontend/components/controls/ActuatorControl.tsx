@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react';
-import { useGetSensorValue, useSensorStore, useActuatorCommandedState } from '@/lib/store';
+import { useSensorStore, useSensorValue, useActuatorCommandedState } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { getActuatorOpenThreshold } from '@/lib/voltageRef';
 import { ActuatorId, ActuatorState, CommandPayload, SystemState } from '@/lib/types';
@@ -92,7 +92,6 @@ interface ActuatorControlProps {
 
 export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const ws = getWebSocketClient();
-  const getSensorValue = useGetSensorValue();
   const debugMode = useSensorStore((s) => s.debugMode);
   const currentState = useSensorStore((s) => s.currentState);
   const actuatorExpectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
@@ -111,20 +110,15 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const stateExpected = currentState != null ? (actuatorExpectedPositions[currentState] ?? {}) : {};
   const expected = stateExpected[entity] ?? null;
 
-  React.useEffect(() => {
-    if (currentState !== null && !debugMode) {
-      console.log(`[ActuatorControl ${ACTUATOR_NAMES[actuatorId]}] State: ${SystemState[currentState]}, Entity: ${entity}, Expected: ${expected}, StateExpected:`, stateExpected);
-    }
-  }, [currentState, entity, expected, stateExpected, actuatorId, debugMode]);
-
   const canControl = debugMode && controlEnabled;
 
-  // Feedback: try named entity first (aliases in store.ts cover the ACT_CHX fallback)
-  const rawAdc = getSensorValue(entity, 'raw_adc_counts')
-    ?? getSensorValue(`ACT.ACT_CH${ch}`, 'raw_adc_counts')
-    ?? 0;
-  const statusRaw = getSensorValue(entity, 'status')
-    ?? getSensorValue(`ACT.ACT_CH${ch}`, 'status');
+  // Subscribe only to these keys so we re-render only when this actuator's data changes
+  const adcNamed = useSensorValue(entity, 'raw_adc_counts');
+  const statusNamed = useSensorValue(entity, 'status');
+  const adcChannel = useSensorValue(`ACT.ACT_CH${ch}`, 'raw_adc_counts');
+  const statusChannel = useSensorValue(`ACT.ACT_CH${ch}`, 'status');
+  const rawAdc = adcNamed ?? adcChannel ?? 0;
+  const statusRaw = statusNamed ?? statusChannel;
 
   // Actuator open threshold from designated survivor board's voltage reference (0=internal, 1=VDD raw, 2=5V); nominals from config [adc]
   const actuatorBoard = boards ? Object.values(boards).find((b) => b.designatedSurvivor) : null;
@@ -156,34 +150,34 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const showMismatch = false;
 
   return (
-    <div className={`rounded-md p-1 border transition-colors h-full flex flex-col relative
+    <div className={`rounded border transition-colors h-full min-h-0 flex flex-col relative p-0.5
       ${showMismatch && mismatch
         ? 'bg-yellow-950/40 border-yellow-600'
         : 'bg-background border-gray-700 hover:border-gray-600'}`}>
-      <div className="absolute top-1 right-1 flex items-center gap-1">
-        {pending && <span className="text-yellow-400 text-[9px] leading-none">⟳</span>}
-        <div className={`w-2.5 h-2.5 rounded-full ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
+      <div className="absolute top-0.5 right-0.5 flex items-center gap-0.5">
+        {pending && <span className="text-yellow-400 text-[8px] leading-none">⟳</span>}
+        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
       </div>
-      <div className="flex-[5] flex items-center min-h-0 overflow-hidden pr-5">
-        <h3 className="font-bold tracking-wider text-text uppercase leading-tight truncate" style={{ fontSize: 'clamp(8px, 2vh, 22px)' }}>
+      <div className="flex-1 flex items-center min-h-0 overflow-hidden pr-4 flex-shrink-0">
+        <h3 className="font-bold tracking-wider text-text uppercase leading-tight truncate text-[9px] xl:text-[10px]">
           {ACTUATOR_NAMES[actuatorId]}
         </h3>
         {showMismatch && mismatch && (
-          <span className="text-[10px] font-bold text-yellow-400 uppercase tracking-wider ml-1">MM</span>
+          <span className="text-[8px] font-bold text-yellow-400 uppercase ml-0.5">MM</span>
         )}
       </div>
 
-      <div className="flex-[2] flex items-center min-h-0 overflow-hidden">
-        <span className="text-[10px] text-text-muted font-mono truncate leading-none">
+      <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden">
+        <span className="text-[8px] text-text-muted font-mono truncate leading-none">
           ADC: {rawAdc.toLocaleString()}
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-0.5 flex-[3] min-h-0">
+      <div className="grid grid-cols-2 gap-0.5 flex-shrink-0 min-h-0">
         <button
           onClick={() => sendCommand(ActuatorState.OPEN)}
           disabled={!canControl}
-          className={`h-full rounded text-[10px] font-bold uppercase tracking-wider leading-none transition-all
+          className={`h-full min-h-0 rounded text-[8px] xl:text-[9px] font-bold uppercase tracking-wider leading-none transition-all py-0.5
             ${commandedOpen
               ? canControl
                 ? 'bg-green-700 text-white ring-1 ring-green-400'
@@ -197,7 +191,7 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
         <button
           onClick={() => sendCommand(ActuatorState.CLOSED)}
           disabled={!canControl}
-          className={`h-full rounded text-[10px] font-bold uppercase tracking-wider leading-none transition-all
+          className={`h-full min-h-0 rounded text-[8px] xl:text-[9px] font-bold uppercase tracking-wider leading-none transition-all py-0.5
             ${commandedClosed
               ? canControl
                 ? 'bg-red-700 text-white ring-1 ring-red-400'

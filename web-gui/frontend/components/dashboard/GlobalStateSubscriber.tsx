@@ -13,7 +13,7 @@ import {
     NotificationPayload,
     ActuatorUpdate
 } from '@/lib/types';
-import { startDataCache } from '@/lib/data-cache';
+import { startDataCache, getDataCache } from '@/lib/data-cache';
 
 export default function GlobalStateSubscriber() {
     const updateSensor = useSensorStore((state) => state.updateSensor);
@@ -36,7 +36,11 @@ export default function GlobalStateSubscriber() {
         }
 
         const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => {
-            updateSensor(p as SensorUpdate);
+            const update = p as SensorUpdate;
+            updateSensor(update);
+            if (Number.isFinite(update.value)) {
+                getDataCache().addDataPoint(update.entity, update.component, update.value);
+            }
         });
         const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => {
             updateState(p as StateUpdate);

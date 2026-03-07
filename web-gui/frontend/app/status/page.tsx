@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo } from 'react';
-import { useSensorStore, useGetSensorValue } from '@/lib/store';
+import { useSensorStore, useGetSensorValue, useSensorDataVersion } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { MessageType, SensorUpdate, BoardStatusPayload, BoardStatus, engineStateCodeToLabel } from '@/lib/types';
@@ -29,6 +29,7 @@ export default function StatusPage() {
   const ws = getWebSocketClient();
   const { actuators } = useActuatorsFromConfig();
   const ACTUATORS = actuators.map((a) => ({ label: a.name, entity: a.entity }));
+  useSensorDataVersion(); // re-render on sensor flush so getSensorValue() shows fresh data
   const getSensorValue = useGetSensorValue();
 
   useEffect(() => {

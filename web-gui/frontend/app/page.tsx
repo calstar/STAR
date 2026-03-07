@@ -4,7 +4,7 @@ import { useSensorStore } from '@/lib/store';
 import { useEffect, useMemo } from 'react';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate, MissionStartTime, CommandPayload, BoardStatus, BoardStatusPayload, NotificationPayload, ActuatorUpdate, ActuatorState } from '@/lib/types';
+import { MessageType, SensorUpdate, StateUpdate, MissionStartTime, BoardStatus, BoardStatusPayload, NotificationPayload, ActuatorUpdate, ActuatorState } from '@/lib/types';
 import WindowLauncher from '@/components/windows/WindowLauncher';
 import { useSensorValue, useActuatorCommandedState } from '@/lib/store';
 import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
@@ -128,34 +128,9 @@ export default function Home() {
   const { actuators: actuatorsFromConfig } = useActuatorsFromConfig();
   const actuators = actuatorsFromConfig.map((a) => ({ label: a.name, entity: a.entity }));
 
-  const hasAbortDoneBoard = boards.some((b) => b.boardState === 4);
-
   return (
     <main className="flex-1 bg-background text-text flex flex-col overflow-auto">
       <div className="w-full px-3 py-2 flex flex-col gap-2 flex-1">
-
-        {/* ── Safety controls ───────────────────────────────────────────── */}
-        <div className="flex items-center justify-between mb-1">
-          <SectionHeader color="bg-red-500">Safety</SectionHeader>
-          <button
-            type="button"
-            disabled={!hasAbortDoneBoard || !controlEnabled}
-            onClick={() => {
-              if (!controlEnabled) return;
-              const cmd: CommandPayload = {
-                commandType: 'clear_abort',
-                data: {},
-              };
-              ws.sendCommand(cmd);
-            }}
-            className={`px-4 py-1.5 rounded-md text-sm font-semibold border transition-colors ${hasAbortDoneBoard && controlEnabled
-                ? 'border-red-500 text-red-200 bg-red-900/40 hover:bg-red-800/60'
-                : 'border-gray-700 text-gray-500 bg-gray-900/40 cursor-not-allowed'
-              }`}
-          >
-            Clear Abort (Sync Actuators)
-          </button>
-        </div>
 
         {/* ── Sensors ────────────────────────────────────────────────── */}
         <div>

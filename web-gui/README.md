@@ -35,17 +35,20 @@ This will start both backend and frontend automatically.
 
 ### Replay a past run (load existing Elodin DB)
 
-To view a previously recorded run in the web GUI (no daq_bridge, simulator, or controller):
+Replay uses **elodin-db's `--replay`** flag: the DB streams stored data as live telemetry (same as external FSW SITL-style replay). No daq_bridge, simulator, or controller.
 
 ```bash
-# By DB name (under ~/.local/share/elodin/)
+# Standalone script (stops any existing DB on 2240, starts past DB with --replay)
+./replay_past_db.sh daq_20260306_043134
+
+# Or via start.sh (by DB name under ~/.local/share/elodin/)
 ./start.sh --replay daq_20260306_043134
 
-# Or set env and use --replay (uses ELODIN_DB_NAME)
+# Or set env and use --replay
 ELODIN_DB_NAME=daq_20260306_043134 ./start.sh --replay
 ```
 
-Past DBs are typically created when you run the full stack with `ELODIN_DB_NAME=daq_YYYYMMDD_HHMMSS` (e.g. from `scripts/startup/start_tmux_dev.sh`). The same DB name can be used with postprocessing (e.g. `scripts/postprocessing/postprocess_run.py --db-name daq_20260306_043134`) and with the GUI replay above.
+Past DBs are created when you run the full stack with `ELODIN_DB_NAME=daq_YYYYMMDD_HHMMSS` (e.g. `scripts/startup/start_tmux_dev.sh`). With `--replay`, elodin-db runs with that DB path and streams recorded data to the relay/GUI like a live run.
 
 ### Option 2: Manual Setup
 

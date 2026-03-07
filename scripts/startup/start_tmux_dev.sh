@@ -90,9 +90,10 @@ if [ -x "$ACTUATOR_BIN" ]; then
 fi
 CMD_WEB_BACKEND="printf '\n  ══ BACKEND — WS :8081 (data from relay only) ══\n\n' && sleep 5 && cd $PROJECT/web-gui/backend && $ACTUATOR_SVC_ENV ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false USE_CALIBRATION_SERVICE_CALIBRATED=false npm run dev 2>&1"
 CMD_WEB_FRONTEND="printf '\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n' && sleep 3 && cd $PROJECT/web-gui/frontend && npm run dev 2>&1"
-# Calibration pane runs C++ calibration_service (replaces old Python sidecar)
+# Calibration: C++ (PT + calibrated TC/RTD/LC when files exist) + Python (TC/RTD/LC raw→physical fallback)
 CAL_VERBOSE="${CAL_VERBOSE:-1}"
-CMD_CAL_PANE="printf '\n  ══ CALIBRATION SERVICE (Relay Raw → DB Calibrated) ══\n\n' && sleep 4 && cd $PROJECT && CAL_VERBOSE=$CAL_VERBOSE exec $CAL_BIN --config config/config.toml --elodin-host 127.0.0.1 --relay-host 127.0.0.1 --relay-port 9091 2>&1"
+CMD_CAL_CPP="printf '\n  ══ CALIBRATION (C++) — Relay TCP → DB ══\n\n' && sleep 4 && cd $PROJECT && CAL_VERBOSE=$CAL_VERBOSE exec $CAL_BIN --config config/config.toml --elodin-host 127.0.0.1 --relay-host 127.0.0.1 --relay-port 9091 2>&1"
+CMD_CAL_PY="printf '\n  ══ CALIBRATION (Python) — TC/RTD/LC raw→physical → DB ══\n\n' && sleep 5 && cd $PROJECT && PYTHONPATH=$PROJECT exec python3 scripts/calibration/calibration_server.py 2>&1"
 CMD_SIM="printf '\n  ══ BOARD SIMULATOR — UDP → :5006 (All Boards) ══\n\n' && sleep 4 && cd $PROJECT && ([ -x scripts/setup_sim_network.sh ] && scripts/setup_sim_network.sh || true) && exec python3 scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 2>&1"
 
 tmux new-session  -d -s "$SESSION" -n main -x 220 -y 60 \
@@ -114,7 +115,9 @@ tmux split-window -v -t "$SESSION:main.1" \
   "bash --norc --noprofile -c \"$CMD_WEB_FRONTEND\""
 
 tmux split-window -v -t "$SESSION:main.2" \
-  "bash --norc --noprofile -c \"$CMD_CAL_PANE\""
+  "bash --norc --noprofile -c \"$CMD_CAL_CPP\""
+tmux split-window -v -t "$SESSION:main.5" \
+  "bash --norc --noprofile -c \"$CMD_CAL_PY\""
 
 # Only launch simulator pane when USE_SIM=1 (default: disabled; set USE_SIM=1 to enable with real hardware)
 if [ "${USE_SIM:-0}" = "1" ]; then
@@ -140,8 +143,8 @@ tmux select-pane -t "$SESSION:main.2"
 echo "┌─────────────────────────────────────────────────────────────┐"
 echo "│  Pipeline: UDP → daq_bridge → DB → relay → backend → UI     │"
 echo "│  0: Elodin DB  1: Relay :9090  2: Backend :8081             │"
-echo "│  3: DAQ Bridge  4: Frontend  5: Calibration  6: Simulator    │"
-echo "│  7: Controller  8: Actuator   CAL_VERBOSE=1 for debug       │"
+echo "│  3: DAQ Bridge  4: Frontend  5: Cal (C++)  6: Cal (Python)  │"
+echo "│  7: Simulator  8: Controller  9: Actuator   CAL_VERBOSE=1   │"
 echo "│  Ctrl+B arrows=switch  D=detach                              │"
 echo "└─────────────────────────────────────────────────────────────┘"
 tmux attach -t "$SESSION"

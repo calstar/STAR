@@ -232,6 +232,104 @@ function loadCalibrationJSON(jsonPath: string): CalibrationMap {
   return calMap;
 }
 
+/** Box-Muller: one sample from N(0,1) */
+function normalSample(): number {
+  const u1 = Math.random();
+  const u2 = Math.random();
+  if (u1 <= 0) return 0;
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
+
+/** Extract 4-tuple [A,B,C,D] from a calibration entry (cubic or first 4 of polyCoeffs). */
+function getCoeffVector(c: CalibrationCoefficients): number[] | null {
+  if (c.polyCoeffs && c.polyCoeffs.length >= 4) return c.polyCoeffs.slice(0, 4);
+  if (c.A !== 0 || c.B !== 0 || c.C !== 0 || c.D !== 0) return [c.A, c.B, c.C, c.D];
+  return null;
+}
+
+const UNCALIBRATED_PT_CHANNELS = [8, 9, 10];
+const SOURCE_CHANNEL_IDS = [1, 2, 3, 4, 5, 6, 7];
+const AGREE_SIGMA = 2;  // keep channels within this many std of mean
+const MIN_AGREEING = 3;
+
+/**
+ * Fill uncalibrated PT channels (8, 9, 10) using mean and std of "agreeing" calibrated channels.
+ * Agreeing = channels 1–7 whose coefficients are within AGREE_SIGMA std of the group mean.
+ * Each filled channel gets one random sample from N(mean, std) per coefficient.
+ */
+function fillUncalibratedChannelsFromAgreeing(calMap: CalibrationMap): void {
+  const toFill = UNCALIBRATED_PT_CHANNELS.filter((id) => !calMap.has(id));
+  if (toFill.length === 0) return;
+
+  const vectors: number[][] = [];
+  const sourceIds: number[] = [];
+  for (const id of SOURCE_CHANNEL_IDS) {
+    const coeffs = calMap.get(id);
+    if (!coeffs) continue;
+    const vec = getCoeffVector(coeffs);
+    if (vec && vec.length === 4) {
+      vectors.push(vec);
+      sourceIds.push(id);
+    }
+  }
+  if (vectors.length < MIN_AGREEING) return;
+
+  // Iteratively drop outliers until stable: keep channels where each coeff is within AGREE_SIGMA std of mean
+  let agreeing = vectors.map((v, i) => ({ vec: v, id: sourceIds[i] }));
+  for (let iter = 0; iter < 5; iter++) {
+    const n = agreeing.length;
+    const mean = [0, 0, 0, 0] as number[];
+    const std = [0, 0, 0, 0] as number[];
+    for (let j = 0; j < 4; j++) {
+      let sum = 0, sumSq = 0;
+      for (let i = 0; i < n; i++) {
+        const x = agreeing[i].vec[j];
+        sum += x;
+        sumSq += x * x;
+      }
+      mean[j] = sum / n;
+      const variance = sumSq / n - mean[j] * mean[j];
+      std[j] = Math.sqrt(Math.max(0, variance)) || 1e-20;
+    }
+    const next = agreeing.filter(({ vec }) => {
+      return vec.every((x, j) => Math.abs(x - mean[j]) <= AGREE_SIGMA * std[j]);
+    });
+    if (next.length === agreeing.length && next.length >= MIN_AGREEING) {
+      agreeing = next;
+      break;
+    }
+    if (next.length < MIN_AGREEING) break;
+    agreeing = next;
+  }
+
+  if (agreeing.length < MIN_AGREEING) return;
+
+  const n = agreeing.length;
+  const mean = [0, 0, 0, 0] as number[];
+  const std = [0, 0, 0, 0] as number[];
+  for (let j = 0; j < 4; j++) {
+    let sum = 0, sumSq = 0;
+    for (let i = 0; i < n; i++) {
+      const x = agreeing[i].vec[j];
+      sum += x;
+      sumSq += x * x;
+    }
+    mean[j] = sum / n;
+    const variance = sumSq / n - mean[j] * mean[j];
+    std[j] = Math.sqrt(Math.max(0, variance)) || 1e-20;
+  }
+
+  for (const channelId of toFill) {
+    const A = mean[0] + std[0] * normalSample();
+    const B = mean[1] + std[1] * normalSample();
+    let C = mean[2] + std[2] * normalSample();
+    const D = mean[3] + std[3] * normalSample();
+    if (C <= 0) C = mean[2]; // keep positive slope for sensible PT
+    calMap.set(channelId, { A, B, C, D });
+  }
+  console.log(`📐 Filled PT channels ${toFill.join(', ')} from agreeing calibrations (n=${agreeing.length}); mean C=${mean[2].toExponential(2)}, D=${mean[3].toFixed(1)}`);
+}
+
 export interface PTCalibrationResult {
   map: CalibrationMap;
   /** Absolute path of the file that was loaded, or null if none found. */
@@ -261,6 +359,7 @@ export function loadPTCalibration(overridePath?: string): PTCalibrationResult {
     if (fs.existsSync(overridePath)) {
       const cal = loadCalibrationJSON(overridePath);
       if (cal.size > 0) {
+        fillUncalibratedChannelsFromAgreeing(cal);
         console.log(`📋 Loading calibration from override: ${overridePath}`);
         console.log(`✅ Loaded PT calibration: ${cal.size} sensors`);
         return { map: cal, filePath: overridePath };
@@ -296,6 +395,7 @@ export function loadPTCalibration(overridePath?: string): PTCalibrationResult {
     console.log(`📋 Loading calibration from: ${latest}`);
     const cal = loadCalibrationJSON(latest);
     if (cal.size > 0) {
+      fillUncalibratedChannelsFromAgreeing(cal);
       console.log(`✅ Loaded PT calibration: ${cal.size} sensors`);
       for (const [sensorId, coeffs] of cal.entries()) {
         console.log(`   Sensor ${sensorId}: A=${coeffs.A.toExponential(2)}, B=${coeffs.B.toExponential(2)}, C=${coeffs.C.toExponential(2)}, D=${coeffs.D.toFixed(2)}`);

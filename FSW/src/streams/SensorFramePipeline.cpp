@@ -65,37 +65,28 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
             return std::nullopt;
         }
 
-        // Convert to SensorBatch format
+        // Convert to SensorBatch format — emit every chunk so we get full rate (amortized data).
         daq_comms::protocol::SensorBatch batch;
 
-        // Use chunk timestamp (convert ms to ns)
         if (!parsed->chunks.empty()) {
             batch.frame_timestamp_ns =
                 static_cast<uint64_t>(parsed->chunks[0].timestamp) * 1000000ULL;
         } else {
             auto now = std::chrono::steady_clock::now();
-            auto duration = now.time_since_epoch();
             batch.frame_timestamp_ns =
-                std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+                std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
         }
 
-        batch.sequence_id = parsed->header.timestamp & 0xFFFF;  // Use lower 16 bits of timestamp
+        batch.sequence_id = parsed->header.timestamp & 0xFFFF;
         batch.is_valid = true;
-
-        // Convert sensor datapoints to sensor samples
-        // Note: We need board_type context to know which sensor type (PT/TC/RTD/LC)
-        // For now, we'll infer from packet source or use a default
-        // TODO: Track board_type per IP address
 
         for (const auto& chunk : parsed->chunks) {
             for (const auto& dp : chunk.datapoints) {
-                // Create samples - we'll need board context to know sensor type
-                // For now, create PT samples as default (will be updated by board discovery)
                 daq_comms::protocol::RawPTSample sample;
                 sample.channel_id = dp.sensor_id;
-                sample.raw_adc_counts = dp.data;  // Already uint32_t, little-endian
+                sample.raw_adc_counts = dp.data;
                 sample.sample_timestamp_ms = chunk.timestamp;
-                sample.status_flags = 0;  // No status flags in DiabloAvionics format
+                sample.status_flags = 0;
                 batch.pt_samples.push_back(sample);
             }
         }

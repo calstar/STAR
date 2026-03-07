@@ -131,8 +131,8 @@ export interface CommandPayload {
   | 'actuator'
   | 'controller_frequency'
   | 'pwm_actuator'
-  | 'clear_abort'
-  | 'debug_mode';
+  | 'debug_mode'
+  | 'extend_fire';
   data: {
     state?: SystemState;
     actuatorId?: ActuatorId;

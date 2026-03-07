@@ -14,6 +14,10 @@ export const ENTITY_COLORS: Record<string, string> = {
   'PT_Cal.GSE_Mid': '#C026D3',
   'PT_Cal.GSE_High': '#7B2FBE',
   'PT_Cal.GN2_High': '#ADFF2F',
+  'PT_Cal.Chamber_Mid_PT_1': '#F97316',
+  'PT_Cal.Chamber_Mid_PT_2': '#FB923C',
+  'PT_Cal.Chamber_Throat_PT_1': '#FDBA74',
+  'PT_Cal.Chamber_Throat_PT_2': '#FED7AA',
   // Channel-to-logical mapping (same color as named role)
   'PT_Cal.PT_CH1': '#3498DB',
   'PT_Cal.PT_CH2': '#F39C12',
@@ -62,15 +66,17 @@ export const PRESSURE_SENSORS = [
   { label: 'GSE Low', entity: 'PT_Cal.GSE_Low', component: 'pressure_psi' as const, color: '#D8B4FE', nop: 500, meop: 700 },
   { label: 'GSE MID', entity: 'PT_Cal.GSE_Mid', component: 'pressure_psi' as const, color: '#C026D3', nop: 4000, meop: 4500 },
   { label: 'GSE High', entity: 'PT_Cal.GSE_High', component: 'pressure_psi' as const, color: '#7B2FBE', nop: 500, meop: 700 },
+  { label: 'Chamber', entity: 'PT_Cal.Chamber_Mid_PT_1', component: 'pressure_psi' as const, color: '#F97316', nop: 500, meop: 650, avgEntities: ['PT_Cal.Chamber_Mid_PT_1', 'PT_Cal.Chamber_Mid_PT_2'] },
 ] as const;
 
-/** For TopBar / compact lists: label + entity + color (and nop/meop where needed) */
-export const PRESSURE_BAR_SENSORS = PRESSURE_SENSORS.map(({ label, entity, color, nop, meop }) => ({
-  label,
-  entity,
-  color,
-  nop,
-  meop,
+/** For TopBar / compact lists: label + entity + color (and nop/meop where needed). avgEntities = average these for display. */
+export const PRESSURE_BAR_SENSORS = PRESSURE_SENSORS.map((s) => ({
+  label: s.label,
+  entity: s.entity,
+  color: s.color,
+  nop: s.nop,
+  meop: s.meop,
+  avgEntities: 'avgEntities' in s ? (s as { avgEntities?: string[] }).avgEntities : undefined,
 }));
 
 /** Actuator colors (consistent across panes) */

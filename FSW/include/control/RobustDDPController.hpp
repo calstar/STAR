@@ -128,6 +128,8 @@ public:
         double P_u_ox;
         double P_d_fuel;
         double P_d_ox;
+        double P_ch_mp1 = 0.0;  // Chamber Mid PT 1 [Pa] — for P_ch estimate
+        double P_ch_mp2 = 0.0;  // Chamber Mid PT 2 [Pa] — for P_ch estimate
         std::chrono::steady_clock::time_point timestamp;
     };
 

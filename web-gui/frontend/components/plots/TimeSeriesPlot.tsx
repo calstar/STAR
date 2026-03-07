@@ -77,8 +77,9 @@ function fmtAxisVal(val: number): string {
 }
 
 // ── Memory constants ──────────────────────────────────────────────────────────
-const DEFAULT_WINDOW_SECONDS = 60;   // 60 s rolling window (can be overridden via prop)
-const SAMPLE_HZ = 30;   // matches backend broadcast rate (~33 ms per entity)
+const DEFAULT_WINDOW_SECONDS = 60;
+const SAMPLE_HZ = 60;   // fallback when cache empty
+const PLOT_MAX_POINTS = 30000;   // cap for full-rate data (e.g. 400 Hz * 60 s)
 
 export default function TimeSeriesPlot({
   title, entities, component, components, colors,
@@ -86,7 +87,7 @@ export default function TimeSeriesPlot({
   windowSeconds = DEFAULT_WINDOW_SECONDS,
 }: TimeSeriesPlotProps) {
   const componentMap = components ?? entities.map(() => component);
-  const MAX_POINTS = windowSeconds * SAMPLE_HZ;
+  const MAX_POINTS = PLOT_MAX_POINTS;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<HTMLDivElement>(null);
@@ -386,15 +387,9 @@ export default function TimeSeriesPlot({
     };
     window.addEventListener('resize', onWinResize);
 
-    // ── WS handler: O(1) — store the latest value per series ─────────────
+    // ── WS handler: track latest value per series (cache filled by GlobalStateSubscriber) ─────
     const unsubSensor = ws.on(MessageType.SENSOR_UPDATE, (payload: unknown) => {
       const update = payload as SensorUpdate;
-
-      // Add to cache immediately
-      if (isFinite(update.value)) {
-        cache.addDataPoint(update.entity, update.component, update.value);
-      }
-
       let idx = entities.indexOf(update.entity);
       if (idx < 0) {
         const canon = resolveEntity(update.entity, update.component);
@@ -437,61 +432,62 @@ export default function TimeSeriesPlot({
       const currentTime = getServerTimeNow();
       let dataChanged = false;
 
-      // Update data at 10 Hz (only when needed)
+      // Sync from cache at ~60 Hz so plot shows full-rate data (all points from backend)
       if (currentTime - lastDataUpdate >= DATA_UPDATE_INTERVAL) {
-        // Guard: if new 'now' would create a non-monotonic time array (e.g. due to
-        // misaligned historical pre-fill), reset the buffer and start fresh.
-        if (d.time.length > 0 && now < d.time[d.time.length - 1] - 1) {
-          d.time = [];
-          d.values = entities.map(() => []);
+        const cached = cache.getAlignedHistory(entities, componentMap, windowSeconds);
+        if (cached && cached.time.length > 0) {
+          d.time = cached.time;
+          d.values = cached.values.map((a) => [...a]);
+          if (d.time.length > MAX_POINTS) {
+            const excess = d.time.length - MAX_POINTS;
+            d.time = d.time.slice(excess);
+            d.values = d.values.map((a) => a.slice(excess));
+          }
+          dataChanged = true;
+        } else {
+          // Fallback when cache empty: push one point per series from latest values
+          if (d.time.length > 0 && now < d.time[d.time.length - 1] - 1) {
+            d.time = [];
+            d.values = entities.map(() => []);
+          }
+          d.time.push(now);
+          entities.forEach((_, i) => {
+            const val = receivedUpdateThisIntervalRef.current[i] ? latestValuesRef.current[i] : NaN;
+            d.values[i].push(val);
+            receivedUpdateThisIntervalRef.current[i] = false;
+          });
+          let first = 0;
+          while (first < d.time.length && d.time[first] < cutoff) first++;
+          if (first > 0) {
+            d.time = d.time.slice(first);
+            d.values = d.values.map((a) => a.slice(first));
+          }
+          if (d.time.length > MAX_POINTS) {
+            const excess = d.time.length - MAX_POINTS;
+            d.time = d.time.slice(excess);
+            d.values = d.values.map((a) => a.slice(excess));
+          }
+          dataChanged = true;
         }
-
-        d.time.push(now);
-        entities.forEach((_, i) => {
-          const val = receivedUpdateThisIntervalRef.current[i] ? latestValuesRef.current[i] : NaN;
-          d.values[i].push(val);
-          receivedUpdateThisIntervalRef.current[i] = false;
-        });
-
-        // Trim older than window
-        let first = 0;
-        while (first < d.time.length && d.time[first] < cutoff) first++;
-        if (first > 0) {
-          d.time = d.time.slice(first);
-          d.values = d.values.map((a) => a.slice(first));
-        }
-        if (d.time.length > MAX_POINTS) {
-          const excess = d.time.length - MAX_POINTS;
-          d.time = d.time.slice(excess);
-          d.values = d.values.map((a) => a.slice(excess));
-        }
-
         lastDataUpdate = currentTime;
-        dataChanged = true;
       }
 
-      // Update x-axis smoothly at 60 FPS (every frame)
-      // This ensures continuous scrolling based on server time
+      // Update x-axis every frame for smooth scrolling
       const xMin = Math.max(0, now - windowSeconds);
       const xMax = now;
-      plotInstanceRef.current.setScale('x', {
-        min: xMin,
-        max: xMax,
-      });
+      plotInstanceRef.current.setScale('x', { min: xMin, max: xMax });
 
-      // Update plot data every frame for smooth rendering
-      const timeData = d.time.length > 0 ? d.time : [now];
-      const valueData = d.values.map(v => v.length > 0 ? v : [NaN]);
-
-      try {
-        // Reset scales periodically (when data changes or every 200ms) to update Y-axis
-        const shouldResetScales = dataChanged || (currentTime - lastYAxisUpdate >= Y_AXIS_UPDATE_INTERVAL);
-        if (shouldResetScales) {
-          lastYAxisUpdate = currentTime;
+      // Only push new data to uPlot when we actually added points (avoids 60 setData/sec)
+      if (dataChanged) {
+        const timeData = d.time.length > 0 ? d.time : [now];
+        const valueData = d.values.map(v => v.length > 0 ? v : [NaN]);
+        try {
+          const shouldResetScales = dataChanged || (currentTime - lastYAxisUpdate >= Y_AXIS_UPDATE_INTERVAL);
+          if (shouldResetScales) lastYAxisUpdate = currentTime;
+          plotInstanceRef.current.setData([timeData, ...valueData], shouldResetScales);
+        } catch (err) {
+          console.error('[TimeSeriesPlot] setData failed:', err);
         }
-        plotInstanceRef.current.setData([timeData, ...valueData], shouldResetScales);
-      } catch (err) {
-        console.error('[TimeSeriesPlot] setData failed:', err);
       }
 
       // ── Continuous size sync — catches layout changes ──────────────────

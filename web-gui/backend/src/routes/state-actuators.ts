@@ -315,12 +315,9 @@ function buildCSVSearchPaths(): string[] {
   return paths;
 }
 
-/** Actuator names that use config-driven commanded state in Idle (NO → OPEN, NC → CLOSED). */
-const IDLE_CONFIG_DRIVEN_MAINS = ['LOX Main', 'Fuel Main'];
-
 /**
- * Commanded state for Idle from config: NO → OPEN (1), NC → CLOSED (0).
- * Used only for IDLE_CONFIG_DRIVEN_MAINS so valve display matches unpowered reality.
+ * Commanded state for Idle (de-energized) from config: NO → OPEN (1), NC → CLOSED (0).
+ * Used for all actuators in config.actuator_roles so IDLE reflects true de-energized state.
  */
 function getIdleCommandedStateFromConfig(actuatorName: string): 0 | 1 | null {
   try {
@@ -347,14 +344,15 @@ export function getStateActuatorMap(): StateActuatorMap {
       console.log(`   Trying: ${path} (found)`);
       const map = parseStateActuatorsCSV(path);
       if (Object.keys(map).length > 0) {
-        // Idle only: LOX Main and Fuel Main commanded from config (NO → OPEN, NC → CLOSED)
-        if (map[SystemState.IDLE]) {
-          for (const name of IDLE_CONFIG_DRIVEN_MAINS) {
-            const cmd = getIdleCommandedStateFromConfig(name);
-            if (cmd !== null) {
-              map[SystemState.IDLE][name] = cmd;
-              console.log(`   Idle override: ${name} = ${cmd ? 'OPEN' : 'CLOSED'} (from config type)`);
-            }
+        // IDLE = de-energized: every actuator with config type gets NO→OPEN, NC→CLOSED
+        if (!map[SystemState.IDLE]) map[SystemState.IDLE] = {};
+        const roles = (() => { try { return readConfig().actuator_roles || {}; } catch { return {}; } })();
+        const roleNames = Object.keys(roles);
+        for (const name of roleNames) {
+          const cmd = getIdleCommandedStateFromConfig(name);
+          if (cmd !== null) {
+            map[SystemState.IDLE][name] = cmd;
+            console.log(`   Idle (de-energized): ${name} = ${cmd ? 'OPEN' : 'CLOSED'} (${cmd ? 'NO' : 'NC'})`);
           }
         }
         console.log(`✅ Loaded state actuator map from: ${path}`);

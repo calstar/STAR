@@ -13,9 +13,9 @@ import { getWebSocketClient } from './websocket';
 import { MessageType } from './types';
 import { getServerTimeNow } from './server-time';
 
-const CACHE_SAMPLE_HZ = 30; // 30 Hz to match backend broadcast rate
 const CACHE_MAX_SECONDS = 300; // 5 minutes of history
-const CACHE_MAX_POINTS = CACHE_MAX_SECONDS * CACHE_SAMPLE_HZ;
+const CACHE_MAX_POINTS = 120000; // ~400 Hz * 300 s (full-rate plot history)
+const CACHE_SAMPLE_HZ = 60; // for interval-based sampling when no WS feed
 
 export interface CachedSeries {
   time: number[];
@@ -140,14 +140,12 @@ class SensorDataCache {
     const lastTime = series.time.length > 0 ? series.time[series.time.length - 1] : -Infinity;
     const timeDiff = now - lastTime;
 
-    if (timeDiff >= 0.05) { // At least 50ms between points (20 Hz max)
+    // Accept every point so plots can show full-rate data (no downsampling here)
+    if (timeDiff >= 0) {
       series.time.push(now);
       series.values.push(value);
-    } else if (timeDiff >= -0.1 && timeDiff < 0.05) {
-      // Update last value if within 100ms (same batch)
-      if (series.values.length > 0) {
-        series.values[series.values.length - 1] = value;
-      }
+    } else if (timeDiff >= -0.1) {
+      if (series.values.length > 0) series.values[series.values.length - 1] = value;
     }
 
     if (series.time.length > CACHE_MAX_POINTS) {
@@ -241,17 +239,22 @@ class SensorDataCache {
 
     const len = time.length;
     // Time-based alignment: for each t in time, use value from each series at most recent time <= t.
-    // Index-based slicing causes spikes when series have different lengths/sampling.
+    // For pressure_psi, treat 0 as gap (NaN) when previous value was non-zero to avoid value/0 spikes.
     const values = keys.map((key) => {
       const s = this.findCachedSeries(key);
       if (!s || s.time.length === 0) return new Array(len).fill(NaN);
+      const isPressure = key.endsWith('.pressure_psi');
       const out: number[] = [];
       let idx = 0;
+      let lastPushed = NaN;
       for (let i = 0; i < len; i++) {
         const t = time[i];
         if (i > 0 && t < time[i - 1]) idx = 0;
         while (idx + 1 < s.time.length && s.time[idx + 1] <= t) idx++;
-        out.push(s.time[idx] <= t ? s.values[idx] : NaN);
+        let val = s.time[idx] <= t ? s.values[idx] : NaN;
+        if (isPressure && val === 0 && lastPushed > 0) val = NaN; // spurious zero → gap
+        out.push(val);
+        if (Number.isFinite(val)) lastPushed = val;
       }
       return out;
     });

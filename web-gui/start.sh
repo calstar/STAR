@@ -57,7 +57,11 @@ if [ -n "$ELODIN_DB_BIN" ]; then
       echo "   Use a name under ~/.local/share/elodin/ (e.g. daq_20260306_043134) or run with ELODIN_DB_NAME=..."
       exit 1
     fi
-    RUST_LOG=warn $ELODIN_DB_BIN run "[::]:$ELODIN_PORT" "$DB_PATH" > /tmp/elodin_db_${DB_NAME}.log 2>&1 &
+    if [ "$REPLAY_MODE" = true ]; then
+      RUST_LOG=warn $ELODIN_DB_BIN run "[::]:$ELODIN_PORT" "$DB_PATH" --replay > /tmp/elodin_db_${DB_NAME}.log 2>&1 &
+    else
+      RUST_LOG=warn $ELODIN_DB_BIN run "[::]:$ELODIN_PORT" "$DB_PATH" > /tmp/elodin_db_${DB_NAME}.log 2>&1 &
+    fi
     ELODIN_PID=$!
     sleep 2
     if lsof -i:$ELODIN_PORT &>/dev/null 2>&1; then

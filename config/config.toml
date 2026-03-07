@@ -82,7 +82,7 @@ necessary_for_abort = true   # This sense board participates in abort logic
 designated_survivor = false
 # Active connectors: list of connector IDs (1-10) that have sensors plugged in
 # Leave empty [] to use all connectors, or specify only active ones
-active_connectors = [1, 2, 3, 4, 5, 6, 7]  # Example: only connectors 1-7 are used
+active_connectors = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]  # 7 GSE/prop + 4 chamber PTs
 
 [boards.pt_board_2]
 type = "PT"
@@ -204,7 +204,7 @@ designated_survivor = false
 voltage_reference = 0
 # Active connectors: list of connector IDs (1-10) that have sensors plugged in
 # Leave empty [] to use all connectors, or specify only active ones
-active_connectors = [2,3,4,5]  # Example: [1, 2, 3, 4, 5] if only connectors 1-5 are used
+active_connectors = [2, 3, 4, 5]  # 4 existing + 4 chamber TCs (Chamber Mid 1&2, Chamber Throat 1&2)
 
 [boards.tc_board_2]
 type = "TC"
@@ -280,16 +280,19 @@ active_connectors = []
 # Sensor Roles - PT Board #1 (board_id = 21)
 # Board-specific mapping to prevent cross-contamination between boards.
 # pt_board in [boards] has board_id = 21.
+# Chamber PTs: connector 4 = Mid 1, 8 = Mid 2, 9 = Throat 1, 10 = Throat 2.
 # =============================================================================
 [sensor_roles_pt_board]
 "Fuel Upstream"      = 1
 "GSE Low"            = 2
-"Fuel Fill Press"    = 4
 "Fuel Downstream"    = 3
+"Chamber Mid PT 1"   = 4
 "Ox Upstream"        = 5
 "GN2 Regulated"      = 6
 "Ox Downstream"      = 7
-"LOX Fill"           = 8
+"Chamber Mid PT 2"   = 8
+"Chamber Throat PT 1" = 9
+"Chamber Throat PT 2" = 10
 
 # =============================================================================
 # Abort PTs - PTs required for abort logic (sensor role name → pressure threshold PSI)
@@ -298,6 +301,16 @@ active_connectors = []
 [abort_pts]
 "Fuel Upstream"   = 400
 "Ox Upstream"     = 400
+
+# =============================================================================
+# Sensor Roles - TC Board #1 (board_id = 51)
+# Chamber TCs: 2 on chamber mid, 2 on chamber throat
+# =============================================================================
+[sensor_roles_tc_board]
+"Chamber Mid TC 1"    = 2
+"Chamber Mid TC 2"    = 3
+"Chamber Throat TC 1" = 4
+"Chamber Throat TC 2" = 5
 
 # =============================================================================
 # Sensor Roles - PT Board #2 (board_id = 22, High-Pressure 4-20 mA sensors)
@@ -445,14 +458,24 @@ csv_paths = [
 [calibration.tc]
 json_dir = "scripts/calibration/calibrations/tc"
 csv_paths = []
+# Raw K-type fallback: ADC ref voltage (V)
+adc_ref_voltage = 2.5
 
 [calibration.rtd]
 json_dir = "scripts/calibration/calibrations/rtd"
 csv_paths = []
+# Raw ADC→temp fallback (when no calibration points): Pt1000 r0=1000
+r0_ohm = 1000
+adc_ref_voltage = 2.5   # ADC reference (V)
+excitation_ua = 1000    # IDAC excitation (µA)
 
 [calibration.lc]
 json_dir = "scripts/calibration/calibrations/lc"
 csv_paths = []
+# Raw LC fallback: sensitivity (mV/V), pga_gain, full_scale_value (lbf or kg)
+sensitivity_mv_per_v = 2.0
+pga_gain = 128.0
+full_scale_value = 100.0
 
 # =============================================================================
 # Pressure Limits (for GUI gauges and alarms)
@@ -504,6 +527,11 @@ NOP = 4000
 MEOP = 5000
 POP = 800
 
+[pressure_limits.Chamber]
+NOP = 500
+MEOP = 650
+POP = 800
+
 # Pressure sensor → fluid system mapping (sensor_id → system)
 [pressure_mappings]
 GN2 = 6
@@ -537,7 +565,7 @@ transitions_csv = "external/DiabloAvionics/test_guis/state_transitions.csv"
 # =============================================================================
 [controller]
 # PWM frequency for actuator control (Hz)
-pwm_frequency_hz = 10.0
+pwm_frequency_hz = 5.0
 # PWM command duration (ms) - how long each command stays active
 pwm_duration_ms = 1000
 # Fallback duty cycles when controller service is unavailable (0.0-1.0).

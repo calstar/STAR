@@ -325,8 +325,9 @@ int main(int argc, char* argv[]) {
                 break;
         }
 
-        if (channel_id > 0 && channel_id <= 15) {
-            if (type_hi == 0x20) {  // PT Raw
+        // PT: ch 1-14; TC/RTD/LC: ch 1-20 (0x14)
+        if (channel_id > 0 && channel_id <= 20) {
+            if (type_hi == 0x20 && channel_id <= 14) {  // PT Raw
                 if (payload_len >= comms::messages::sensor::RawPTMessage::nbytes()) {
                     uint8_t* payload = rx_buffer.data() + 8;
                     comms::messages::sensor::RawPTMessage raw_msg;

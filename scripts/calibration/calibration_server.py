@@ -19,6 +19,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 from scripts.calibration.calibration_orchestrator import CalibrationOrchestrator
 from scripts.calibration.robust_calibration import CalibrationPoint, EnvironmentalState
+from scripts.calibration.sense_conversions import raw_to_physical
 from scripts.calibration.config_loader import (
     load_config,
     build_channel_to_orchestrator_key,
@@ -134,6 +135,23 @@ def _throttle_key(stype: str, ch: int) -> str:
     return f"{stype}:{ch}"
 
 
+def _get_raw_conversion_config():
+    """Get config for raw sense_conversions fallback."""
+    cal = config.get("calibration", {})
+    rtd_cfg = cal.get("rtd", {})
+    tc_cfg = cal.get("tc", {})
+    lc_cfg = cal.get("lc", {})
+    return {
+        "rtd_r0": rtd_cfg.get("r0_ohm", 1000.0),
+        "rtd_adc_ref_v": rtd_cfg.get("adc_ref_voltage", 2.5),
+        "rtd_excitation_ua": rtd_cfg.get("excitation_ua", 1000.0),
+        "tc_adc_ref_v": tc_cfg.get("adc_ref_voltage", 2.5),
+        "lc_sensitivity_mv_per_v": lc_cfg.get("sensitivity_mv_per_v", 2.0),
+        "lc_pga_gain": lc_cfg.get("pga_gain", 128.0),
+        "lc_full_scale_value": lc_cfg.get("full_scale_value", 100.0),
+    }
+
+
 def _process_raw_and_write_calibrated(
     stype: str,
     channel_id: int,
@@ -141,27 +159,41 @@ def _process_raw_and_write_calibrated(
     writer: Any,
     channel_to_key: dict,
 ) -> None:
-    """If orchestrator has calibration for this channel, compute calibrated and write to Elodin."""
-    key = channel_to_key.get((stype, channel_id))
-    if key is None or key not in state.orchestrator.robust:
-        return
-    rcf = state.orchestrator.robust[key]
-    idx = state.orchestrator._key_to_idx.get(key)
-    if idx is None:
-        return
-
+    """Compute calibrated value (RCF or raw conversion) and write to Elodin DB.
+    Writes for TC/RTD/LC even when no orchestrator calibration — uses sense_conversions."""
     now = time.monotonic()
     throttle_key = _throttle_key(stype, channel_id)
     if now - _last_elodin_write.get(throttle_key, 0) < _ELODIN_WRITE_INTERVAL:
         return
 
-    try:
-        # Use RCF directly — works with loaded calibration; engine may have empty online_learners
-        pred, _unc = rcf.predict_pressure_with_uncertainty(
-            float(raw_val), state.env_state
+    pred = None
+    key = channel_to_key.get((stype, channel_id))
+
+    # Path 1: Use RCF if we have calibration for this channel
+    if key and key in state.orchestrator.robust:
+        try:
+            rcf = state.orchestrator.robust[key]
+            pred, _unc = rcf.predict_pressure_with_uncertainty(
+                float(raw_val), state.env_state
+            )
+        except Exception:
+            pass
+
+    # Path 2: Fallback to raw physical conversion (sense_conversions) for TC/RTD/LC
+    if pred is None or not math.isfinite(pred):
+        cfg = _get_raw_conversion_config()
+        pred = raw_to_physical(
+            stype,
+            raw_val,
+            rtd_r0=cfg["rtd_r0"],
+            rtd_adc_ref_v=cfg["rtd_adc_ref_v"],
+            rtd_excitation_ua=cfg["rtd_excitation_ua"],
+            tc_adc_ref_v=cfg["tc_adc_ref_v"],
+            lc_sensitivity_mv_per_v=cfg["lc_sensitivity_mv_per_v"],
+            lc_pga_gain=cfg["lc_pga_gain"],
+            lc_full_scale_value=cfg["lc_full_scale_value"],
         )
-    except Exception:
-        return
+
     if pred is None or not math.isfinite(pred):
         return
 

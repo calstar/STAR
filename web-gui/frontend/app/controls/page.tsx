@@ -62,17 +62,19 @@ export default function ControlsPage() {
         </div>
 
         <div className="flex-1 min-w-0 flex flex-col gap-3 overflow-hidden">
-          <div className="bg-card rounded-xl border border-gray-800 p-4 flex-shrink-0 overflow-auto">
-            <h2 className="text-sm font-bold tracking-widest text-text-muted uppercase mb-4">
+          <div className="bg-card rounded-xl border border-gray-800 p-2 flex flex-col min-h-0 flex-1 max-h-[38vh]">
+            <h2 className="text-[10px] font-bold tracking-widest text-text-muted uppercase mb-1 leading-none flex-shrink-0">
               Actuator Controls
             </h2>
-            <div className="grid grid-cols-4 gap-3 auto-rows-fr">
+            <div className="flex-1 min-h-0 grid grid-cols-4 grid-rows-4 gap-1 overflow-hidden">
               {actuatorsLoading ? (
-                <p className="text-text-muted">Loading actuators from config…</p>
+                <p className="col-span-4 row-span-4 text-text-muted flex items-center">Loading actuators from config…</p>
               ) : (
-                actuatorsFromConfig.map((a) => (
-                  <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
-                ))
+                Array.from({ length: 16 }, (_, i) => {
+                  const a = actuatorsFromConfig[i];
+                  if (!a) return <div key={`empty-${i}`} className="bg-gray-900/30 rounded-md border border-gray-800/50" />;
+                  return <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} />;
+                })
               )}
             </div>
           </div>

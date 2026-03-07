@@ -131,10 +131,10 @@ export function parseElodinPacket(
     return parseCalibratedSensorPayload(payload, ch, entityName, 'pressure_psi');
   }
 
-  // ── TC Raw: [0x21, 0x01..0x14] ──────────────────────────────────────────
+  // ── TC Raw: [0x21, 0x01..0x14] — signed ADC (ADS1262), avoid uint32 → 2^31-1 for negative/saturated codes
   if (high === 0x21 && low >= 0x01 && low <= 0x14) {
     const ch = low;
-    return parseRawSensorPayload(payload, ch, `TC.CH${ch}`, 'raw_adc_counts');
+    return parseRawSensorPayload(payload, ch, `TC.CH${ch}`, 'raw_adc_counts', true);
   }
 
   // ── TC Calibrated: [0x21, 0x11..0x24] ───────────────────────────────────

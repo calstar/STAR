@@ -34,6 +34,7 @@ const viewComponents: Record<string, React.ComponentType> = {
   raw: RawReadoutsPage,
   all: AllPlotsPage,
   controls: ControlsPage,
+  controller: ControllerPage,
   status: StatusPage,
   boards: BoardsPage,
   config: ConfigPage,

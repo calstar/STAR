@@ -147,19 +147,21 @@ export default function IpadDashboard() {
                     </div>
                 </div>
 
-                {/* ── Actuators grid ─────────────────────────────────────────────── */}
-                <div className="bg-card rounded-xl border border-gray-800 p-4 flex flex-col flex-shrink-0 min-h-[400px]">
-                    <h2 className="text-base font-bold tracking-widest text-text-muted uppercase mb-4 leading-none">
+                {/* ── Actuators: 4x4 grid, dynamically sized to fit allotment ─────── */}
+                <div className="bg-card rounded-xl border border-gray-800 p-2 flex flex-col min-h-0 flex-1 max-h-[38vh]">
+                    <h2 className="text-[10px] font-bold tracking-widest text-text-muted uppercase mb-1 leading-none flex-shrink-0">
                         Actuator Controls
                     </h2>
-                    <div className="grid grid-cols-4 gap-3 flex-1" style={{ gridAutoRows: '1fr' }}>
-                        {actuatorsFromConfig.map((a) =>
-                            a.id !== undefined ? (
+                    <div className="flex-1 min-h-0 grid grid-cols-4 grid-rows-4 gap-1 overflow-hidden">
+                        {Array.from({ length: 16 }, (_, i) => {
+                            const a = actuatorsFromConfig[i];
+                            if (!a) return <div key={`empty-${i}`} className="bg-gray-900/30 rounded-md border border-gray-800/50" />;
+                            return a.id !== undefined ? (
                                 <ActuatorControl key={a.name} actuatorId={a.id} />
                             ) : (
                                 <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
-                            )
-                        )}
+                            );
+                        })}
                     </div>
                 </div>
 

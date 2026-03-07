@@ -3,81 +3,8 @@
 import { useSensorValue, useSensorStore } from '@/lib/store';
 import { SystemState } from '@/lib/types';
 
-// Expected actuator positions per system state: 'open' | 'closed' | null (don't care)
-// Updated from new CSV: "Avionics Board Status - State Machine Actuators.csv"
+// Expected position: 'open' | 'closed' | null. Source: backend CSV + config (NO/NC for Idle).
 type ExpectedPosition = 'open' | 'closed' | null;
-
-const EXPECTED_POSITIONS: Record<number, Record<string, ExpectedPosition>> = {
-  [SystemState.DEBUG]: {}, // DEBUG mode - no expected positions, manual control
-  [SystemState.IDLE]: {
-    'ACT.LOX_Main': 'open', 'ACT.Fuel_Main': 'open', 'ACT.LOX_Vent': 'open',
-    'ACT.Fuel_Vent': 'open', 'ACT.LOX_Press': 'open', 'ACT.Fuel_Press': 'open',
-    'ACT.GN2_Vent': 'open',
-  },
-  [SystemState.ARMED]: {
-    'ACT.LOX_Main': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Vent': 'closed',
-    'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Press': 'closed',
-    'ACT.GN2_Vent': 'closed',
-  },
-  [SystemState.FUEL_FILL]: {
-    'ACT.Fuel_Vent': 'open', 'ACT.LOX_Vent': 'open', 'ACT.GN2_Vent': 'open',
-    'ACT.Fuel_Press': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed',
-  },
-  [SystemState.OX_FILL]: {
-    'ACT.Fuel_Vent': 'open', 'ACT.LOX_Vent': 'open', 'ACT.GN2_Vent': 'open',
-    'ACT.Fuel_Press': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed',
-  },
-  [SystemState.GN2_LOW_PRESS]: {
-    'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Press': 'closed',
-    'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GN2_Vent': 'closed',
-  },
-  [SystemState.FUEL_PRESS]: {
-    'ACT.Fuel_Press': 'open', 'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed',
-    'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GN2_Vent': 'closed',
-  },
-  [SystemState.FUEL_VENT]: {
-    'ACT.Fuel_Vent': 'open', 'ACT.Fuel_Press': 'closed', 'ACT.LOX_Vent': 'closed',
-    'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GN2_Vent': 'closed',
-  },
-  [SystemState.OX_PRESS]: {
-    'ACT.LOX_Press': 'open', 'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed',
-    'ACT.Fuel_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GN2_Vent': 'closed',
-  },
-  [SystemState.OX_VENT]: {
-    'ACT.LOX_Vent': 'open', 'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Press': 'closed',
-    'ACT.Fuel_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GN2_Vent': 'closed',
-  },
-  [SystemState.GN2_HIGH_PRESS]: {
-    'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Press': 'closed',
-    'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GN2_Vent': 'closed',
-  },
-  [SystemState.GN2_VENT]: {
-    'ACT.GN2_Vent': 'open', 'ACT.Fuel_Press': 'open', 'ACT.Fuel_Vent': 'closed',
-    'ACT.LOX_Vent': 'closed', 'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed',
-  },
-  [SystemState.CALIBRATE]: {
-    'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Press': 'closed',
-    'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GN2_Vent': 'closed',
-  },
-  [SystemState.READY]: {
-    'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.Fuel_Press': 'closed',
-    'ACT.LOX_Press': 'closed', 'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed', 'ACT.GN2_Vent': 'closed',
-  },
-  [SystemState.FIRE]: {
-    'ACT.Fuel_Main': 'open', 'ACT.Fuel_Press': 'open', 'ACT.LOX_Main': 'open', 'ACT.LOX_Press': 'open',
-    'ACT.Fuel_Vent': 'closed', 'ACT.LOX_Vent': 'closed', 'ACT.GN2_Vent': 'closed',
-  },
-  [SystemState.VENT]: {
-    'ACT.Fuel_Vent': 'open', 'ACT.LOX_Vent': 'open', 'ACT.GN2_Vent': 'open',
-    'ACT.Fuel_Press': 'open', 'ACT.LOX_Press': 'open',
-    'ACT.Fuel_Main': 'closed', 'ACT.LOX_Main': 'closed',
-  },
-  [SystemState.ABORT]: {
-    'ACT.Fuel_Vent': 'open', 'ACT.LOX_Vent': 'open', 'ACT.GN2_Vent': 'open',
-    'ACT.Fuel_Press': 'open', 'ACT.LOX_Press': 'open', 'ACT.Fuel_Main': 'open',
-    'ACT.LOX_Main': 'closed',
-  },
-};
 
 interface ActuatorRowProps {
   label: string;
@@ -151,9 +78,10 @@ interface ActuatorStatePanelProps {
 
 export default function ActuatorStatePanel({ title, actuators }: ActuatorStatePanelProps) {
   const currentState = useSensorStore((s) => s.currentState);
+  const actuatorExpectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
 
-  // Get expected positions for current state
-  const stateExpected = currentState != null ? (EXPECTED_POSITIONS[currentState] ?? {}) : {};
+  // Use backend/CSV expected positions (includes NO/NC for Idle). DEBUG has none.
+  const stateExpected = currentState != null ? (actuatorExpectedPositions[currentState] ?? {}) : {};
 
   return (
     <div className="bg-card rounded-lg p-4 flex flex-col gap-3">

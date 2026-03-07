@@ -16,7 +16,8 @@ export class CalibrationSidecarClient extends EventEmitter {
         super();
         this.config = readConfig();
         const sidecarCfg = this.config.calibration?.sidecar;
-        this.enabled = sidecarCfg?.enabled || false;
+        // Replay mode: no calibration server running; skip sidecar to avoid ECONNREFUSED spam
+        this.enabled = (process.env.REPLAY_MODE !== '1' && process.env.REPLAY_MODE !== 'true') && (sidecarCfg?.enabled || false);
 
         const host = sidecarCfg?.host || '127.0.0.1';
         const port = sidecarCfg?.port || 8100;

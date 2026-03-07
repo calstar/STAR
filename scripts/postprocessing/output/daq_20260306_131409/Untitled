@@ -1,0 +1,1 @@
+ python scripts/postprocessing/postprocess_run.py --db-name daq_20260306_131409 2>&1

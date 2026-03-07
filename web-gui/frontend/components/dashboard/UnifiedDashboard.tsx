@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react';
-import { useSensorStore, useSensorValue, useGetSensorValue } from '@/lib/store';
+import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate, ActuatorUpdate, SystemState, ActuatorId } from '@/lib/types';
 import { startDataCache } from '@/lib/data-cache';
@@ -157,21 +157,21 @@ export default function UnifiedDashboard() {
         {/* ── Right column: Actuators grid (top) + State machine (bottom) ───── */}
         <div className="flex-1 min-w-0 flex flex-col gap-3 overflow-hidden">
 
-          {/* Actuators in 4x4 grid — uses viewport-aware height instead of manual zoom scaling */}
-          <div className="bg-card rounded-xl border border-gray-800 p-3 flex flex-col flex-shrink-0 max-h-[50vh] min-h-0 flex-1">
-            <h2 className="text-xs font-bold tracking-widest text-text-muted uppercase mb-2 leading-none flex-shrink-0">
+          {/* Actuators: 4x4 grid, dynamically sized to fit allotment */}
+          <div className="bg-card rounded-xl border border-gray-800 p-2 flex flex-col min-h-0 flex-1 max-h-[38vh]">
+            <h2 className="text-[10px] font-bold tracking-widest text-text-muted uppercase mb-1 leading-none flex-shrink-0">
               Actuator Controls
             </h2>
-            <div className="flex-1 min-h-0 overflow-auto">
-              <div className="grid grid-cols-4 gap-2 h-full" style={{ gridAutoRows: '1fr' }}>
-                {actuatorsFromConfig.map((a) =>
-                  a.id !== undefined ? (
-                    <ActuatorControl key={a.name} actuatorId={a.id} />
-                  ) : (
-                    <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
-                  )
-                )}
-              </div>
+            <div className="flex-1 min-h-0 grid grid-cols-4 grid-rows-4 gap-1 overflow-hidden">
+              {Array.from({ length: 16 }, (_, i) => {
+                const a = actuatorsFromConfig[i];
+                if (!a) return <div key={`empty-${i}`} className="bg-gray-900/30 rounded border border-gray-800/50 min-h-0" />;
+                return a.id !== undefined ? (
+                  <ActuatorControl key={a.name} actuatorId={a.id} />
+                ) : (
+                  <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
+                );
+              })}
             </div>
           </div>
 

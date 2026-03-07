@@ -107,13 +107,13 @@ class SensorSystemServer {
   private readonly PSI_ABSOLUTE_MIN = -50;   // physically impossible below -50 PSI
   private readonly PSI_ABSOLUTE_MAX = 6000;  // max expected sensor range (HP PT up to 5000 PSI)
 
-  /** Throttle WS broadcasts per entity to ~30 Hz */
+  /** No throttle: send every sensor update so plots can show full-rate data */
   private broadcastLastTime: Map<string, number> = new Map();
-  private readonly BROADCAST_MIN_INTERVAL_MS = 33;
+  private readonly BROADCAST_MIN_INTERVAL_MS = 0;
 
-  /** History cache for plots (last 5 minutes at 30Hz = 9000 points per entity.component) */
+  /** History cache for plots (last 5 min; cap by points to avoid OOM at high rate) */
   private historyCache: Map<string, { time: number[]; values: number[] }> = new Map();
-  private readonly HISTORY_MAX_POINTS = 9000;
+  private readonly HISTORY_MAX_POINTS = 120000; // ~400 Hz * 300 s
 
   /** Server startup time (epoch ms) used as global timebase for all clients/devices. */
   private readonly serverStartTimeMs: number = Date.now();
@@ -139,6 +139,11 @@ class SensorSystemServer {
   private serverHeartbeatTimer: NodeJS.Timeout | null = null;
   /** Abort → AbortDone timer */
   private abortDoneTimer: NodeJS.Timeout | null = null;
+  /** FIRE → IDLE auto-end: timer and start time for 2s default / 5s extended */
+  private fireEndTimer: NodeJS.Timeout | null = null;
+  private fireStartTimeMs: number | null = null;
+  private static readonly FIRE_DURATION_MS = 3000;
+  private static readonly FIRE_EXTENDED_MS = 5000;
 
   /** Controller — always C++ controller_service */
   USE_CPP_CONTROLLER: boolean = true;
@@ -218,7 +223,8 @@ class SensorSystemServer {
     // Initialize Robust Calibration Sidecar (all calibration/fitting lives in Python sidecar)
     this.calibrationSidecar = new CalibrationSidecarClient();
     this.calibrationSidecar.start();
-    console.log('🤖 Robust Calibration Sidecar initialized');
+    if (this.calibrationSidecar.enabled) console.log('🤖 Robust Calibration Sidecar initialized');
+    else if (process.env.REPLAY_MODE === '1' || process.env.REPLAY_MODE === 'true') console.log('📂 Replay mode: calibration sidecar disabled');
 
     // Load sensor/actuator maps from config.toml (single source of truth; DB and backend replicate this)
     const sensorMaps = loadSensorRoleMap();
@@ -656,8 +662,7 @@ class SensorSystemServer {
 
   private setupElodin(): void {
     // Direct Elodin connection is send-only: publishing controller data and registering VTables.
-    // All incoming TABLE data arrives via the relay (setupElodinRelay). We must NOT subscribe to
-    // the stream here — doing so would steal it from the relay (Elodin DB fans to first TCP subscriber only).
+    // All incoming TABLE data arrives via the relay (setupElodinRelay). Replay = elodin-db run --replay (DB streams stored data as live telemetry).
     this.elodin.on('connected', async () => {
       console.log('✅ Elodin connected (send-only: controller VTables + publish; data via relay)');
       await registerControllerVTables(this.elodin);
@@ -698,8 +703,16 @@ class SensorSystemServer {
 
   private handleSensorUpdate(update: SensorUpdate): void {
     if (isNaN(update.value) || !isFinite(update.value)) return;
+    const key = `${update.entity}.${update.component}`;
     if (update.component === 'pressure_psi') {
       if (update.value < this.PSI_ABSOLUTE_MIN || update.value > this.PSI_ABSOLUTE_MAX) return;
+      // Avoid spurious zeros: we subscribe to both raw (we derive psi) and calibrated streams.
+      // When calibrated is 0 or stale it overwrote good data and caused value/0/value/0 in plots.
+      const series = this.historyCache.get(key);
+      if (update.value === 0 && series && series.values.length > 0) {
+        const last = series.values[series.values.length - 1];
+        if (last > 1) return; // keep previous non-zero, skip this 0
+      }
     }
 
     if (this.firstPacketTime === null && (update.entity.startsWith('PT.') || update.entity.startsWith('PT_Cal.') || update.entity.startsWith('ACT.') || update.entity.startsWith('TC.'))) {
@@ -708,14 +721,15 @@ class SensorSystemServer {
       this.broadcast({ type: MessageType.MISSION_START_TIME, timestamp: Date.now(), payload: { missionStartTime: this.firstPacketTime } });
     }
 
-    const key = `${update.entity}.${update.component}`;
     this.sensorCache.set(key, update);
     this.dataLogger.record(key, update.value);
 
     const now = Date.now();
-    const lastBroadcast = this.broadcastLastTime.get(key) ?? 0;
-    if (now - lastBroadcast < this.BROADCAST_MIN_INTERVAL_MS) return;
-    this.broadcastLastTime.set(key, now);
+    if (this.BROADCAST_MIN_INTERVAL_MS > 0) {
+      const lastBroadcast = this.broadcastLastTime.get(key) ?? 0;
+      if (now - lastBroadcast < this.BROADCAST_MIN_INTERVAL_MS) return;
+      this.broadcastLastTime.set(key, now);
+    }
 
     // Save to history cache for plots — time relative to mission start (T+0).
     // NOTE: Elodin timestamps are steady_clock (ns since boot ÷ 1e6 = ms since boot, NOT Unix epoch).
@@ -894,18 +908,9 @@ class SensorSystemServer {
         const update: SensorUpdate = { entity: parsed.entity, component: parsed.component, value: parsed.value, timestamp: epochNow };
         this.handleSensorUpdate(update);
       }
-
-      // Emit ACTUATOR_UPDATE so dashboard actuator panels get state (open/closed from raw ADC threshold).
-      if (parsed.entity.startsWith('ACT.') && parsed.component === 'raw_adc_counts') {
-        const rawAdc = Math.round(parsed.value);
-        const state = rawAdc > 1000 ? 1 : 0; // 1 = OPEN, 0 = CLOSED
-        const name = parsed.entity.replace('ACT.', '').replace(/_/g, ' ');
-        this.broadcast({
-          type: MessageType.ACTUATOR_UPDATE,
-          timestamp: parsed.timestamp,
-          payload: { actuatorId: 0, name, state, rawAdcCounts: rawAdc, timestamp: parsed.timestamp } as ActuatorUpdate,
-        });
-      }
+      // Do NOT derive ACTUATOR_UPDATE from raw_adc_counts here: that overwrites the authoritative
+      // commanded state at telemetry rate and causes oscillation when ADC hovers near threshold.
+      // ACTUATOR_UPDATE is only sent when a command is executed (so actuatorStateByEntity stays stable).
     } catch (error) { console.error('❌ Error handling Elodin packet:', error); }
   }
 
@@ -1056,6 +1061,10 @@ class SensorSystemServer {
           ? this.elodin.sendCommand('state_transition', { state: newState })
           : (this.debugMode || this.actuatorServicePort > 0); // actuator_service is hardware authority when Elodin is down
         if (success) {
+          if (this.currentState === SystemState.FIRE && newState !== SystemState.FIRE) {
+            if (this.fireEndTimer) { clearTimeout(this.fireEndTimer); this.fireEndTimer = null; }
+            this.fireStartTimeMs = null;
+          }
           if (newState === SystemState.ARMED && !this.dataLogger.running) this.dataLogger.start();
           else if ((newState === SystemState.IDLE || newState === SystemState.EMERGENCY_ABORT) && this.dataLogger.running) {
             const stats = this.dataLogger.stop();
@@ -1104,6 +1113,9 @@ class SensorSystemServer {
             if (this.controllerServicePort > 0) {
               forwardFireStateToControllerService(true, this.controllerServicePort).catch(() => {});
             }
+            if (this.fireEndTimer) { clearTimeout(this.fireEndTimer); this.fireEndTimer = null; }
+            this.fireStartTimeMs = Date.now();
+            this.fireEndTimer = setTimeout(() => this.endFireState(), SensorSystemServer.FIRE_DURATION_MS);
           } else if (this.controllerServicePort > 0) {
             forwardFireStateToControllerService(false, this.controllerServicePort).catch(() => {});
           }
@@ -1168,22 +1180,13 @@ class SensorSystemServer {
             }
           }
         }
-      } else if (command.commandType === 'clear_abort') {
-        const current = this.currentState;
-        const isAbortState =
-          current === SystemState.ENGINE_ABORT ||
-          current === SystemState.GSE_ABORT ||
-          current === SystemState.EMERGENCY_ABORT ||
-          current === SystemState.ABORT;
-        const abortState = isAbortState ? current! : SystemState.EMERGENCY_ABORT;
-
-        console.log(`🎯 CLEAR_ABORT command received – syncing actuators to abort pattern for state ${SystemState[abortState]} and broadcasting CLEAR_ABORT`);
-        try {
-          broadcastActuatorExpectedPositions(this, abortState, STATE_ACTUATOR_MAP);
-        } catch (err) {
-          console.error('❌ Failed to broadcast abort actuator positions during clear_abort:', err);
+      } else if (command.commandType === 'extend_fire') {
+        if (this.currentState === SystemState.FIRE && this.fireStartTimeMs != null) {
+          if (this.fireEndTimer) { clearTimeout(this.fireEndTimer); this.fireEndTimer = null; }
+          const remaining = Math.max(0, SensorSystemServer.FIRE_EXTENDED_MS - (Date.now() - this.fireStartTimeMs));
+          this.fireEndTimer = setTimeout(() => this.endFireState(), remaining);
+          console.log(`🎯 FIRE extended to 5s from start – ${(remaining / 1000).toFixed(1)}s remaining`);
         }
-        this.sendClearAbortBroadcast();
       } else if (command.commandType === 'pwm_actuator') {
         if (!this.debugMode && this.currentState !== SystemState.FIRE) {
           console.warn('⚠️ PWM commands are only allowed in FIRE state or Debug mode');
@@ -1375,6 +1378,26 @@ class SensorSystemServer {
     } catch (err) {
       console.error('❌ Error while constructing/sending SERVER_HEARTBEAT packet:', err);
     }
+  }
+
+  /**
+   * Auto-end FIRE state after 2s (or 5s if extended): transition to ARMED, FIRE_STOP, actuators.
+   */
+  private endFireState(): void {
+    if (this.fireEndTimer) { clearTimeout(this.fireEndTimer); this.fireEndTimer = null; }
+    this.fireStartTimeMs = null;
+    if (this.currentState !== SystemState.FIRE) return;
+    const newState = SystemState.ARMED;
+    this.currentState = newState;
+    this.broadcast({ type: MessageType.STATE_UPDATE, timestamp: Date.now(), payload: { currentState: newState, stateName: SystemState[newState], timestamp: Date.now(), debugMode: this.debugMode } });
+    if (this.controllerServicePort > 0) forwardFireStateToControllerService(false, this.controllerServicePort).catch(() => {});
+    if (this.elodin.isConnected()) this.elodin.sendCommand('state_transition', { state: newState });
+    const useCppActuatorService = this.actuatorServicePort > 0;
+    this.manuallyCommandedChannels.clear();
+    stopContinuousActuatorCommands(this);
+    if (useCppActuatorService) forwardStateToActuatorService('ARMED', this.actuatorServicePort).catch(() => {});
+    broadcastActuatorExpectedPositions(this, newState, STATE_ACTUATOR_MAP);
+    console.log('🎯 FIRE state auto-ended – transitioned to ARMED');
   }
 
   /**

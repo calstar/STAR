@@ -115,8 +115,8 @@ export interface CommandPayload {
   | 'controller_frequency'
   | 'pwm_actuator'
   | 'controller_command'
-  | 'clear_abort'
-  | 'debug_mode';
+  | 'debug_mode'
+  | 'extend_fire';
   data: {
     state?: SystemState;
     /** Config-driven: actuator role name from config.toml actuator_roles (e.g. "LOX Main") */

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useMemo, memo } from 'react';
 
 interface PressureBarProps {
   label: string;
@@ -59,7 +59,7 @@ function nonLinearPct(value: number, nop: number, meop: number, maxVal: number):
   }
 }
 
-export default function PressureBar({
+function PressureBar({
   label,
   value,
   nop = 500,
@@ -91,18 +91,18 @@ export default function PressureBar({
 
   return (
     <div className="flex flex-col items-center h-full gap-1 min-h-0 overflow-visible select-none w-full">
-      {/* Label */}
+      {/* Label — viewport-relative so it scales with screen */}
       <div
         className={`${compact ? 'leading-none' : 'text-2xl'} font-bold uppercase tracking-wider text-gray-300 text-center flex-shrink-0 whitespace-nowrap`}
-        style={compact ? { fontSize: 'clamp(10px, 1.4vw, 22px)' } : undefined}
+        style={compact ? { fontSize: 'clamp(8px, 1.1vh, 22px)' } : { fontSize: 'clamp(12px, 1.8vh, 28px)' }}
       >
         {label}
       </div>
 
-      {/* Bar — takes all remaining space */}
+      {/* Bar — takes all remaining space; min height as % of viewport */}
       <div
         className="relative w-full flex-1 rounded-xl border border-white/10 overflow-hidden min-h-0 bg-black/40 shadow-inner"
-        style={{ maxHeight: '100%' }}
+        style={{ maxHeight: '100%', minHeight: compact ? '6vh' : undefined }}
       >
         {sane && value !== null && (
           <div
@@ -112,7 +112,7 @@ export default function PressureBar({
               background: barColor,
               boxShadow: `0 0 15px ${barColor}80`,
               minHeight: value !== null && value !== 0 ? '2px' : '0px',
-              transition: 'height 0.15s ease-out',
+              transition: 'height 0.05s ease-out',
               opacity: value !== null && value !== 0 ? 0.8 : 0.3,
             }}
           />
@@ -125,7 +125,7 @@ export default function PressureBar({
         >
           <span
             className={`${compact ? 'text-[8px]' : 'text-sm'} font-mono font-extrabold text-red-400 whitespace-nowrap mb-0.5`}
-            style={compact ? { fontSize: 'clamp(8px, 0.7vw, 12px)' } : undefined}
+            style={compact ? { fontSize: 'clamp(6px, 0.7vh, 12px)' } : undefined}
           >
             {meop}
           </span>
@@ -139,29 +139,18 @@ export default function PressureBar({
         >
           <span
             className={`${compact ? 'text-[8px]' : 'text-sm'} font-mono font-extrabold text-yellow-400 whitespace-nowrap mb-0.5`}
-            style={compact ? { fontSize: 'clamp(8px, 0.7vw, 12px)' } : undefined}
+            style={compact ? { fontSize: 'clamp(6px, 0.7vh, 12px)' } : undefined}
           >
             {nop}
           </span>
           <div className="w-full border-t-2 border-dashed border-yellow-500/85" />
         </div>
-        {/* Fill top edge */}
-        {sane && value !== null && displayHeight > 0.5 && (
-          <div
-            className="absolute w-full pointer-events-none"
-            style={{
-              bottom: `${displayHeight}%`,
-              borderTop: `2px solid ${barColor}`,
-              filter: 'brightness(1.5)',
-            }}
-          />
-        )}
       </div>
 
       <div className="flex-shrink-0 text-center leading-none mt-1">
         <div
           className={`${compact ? 'leading-none' : 'text-2xl'} font-bold font-mono tabular-nums`}
-          style={compact ? { color: barColor, fontSize: 'clamp(14px, 1.8vw, 28px)' } : { color: barColor }}
+          style={compact ? { color: barColor, fontSize: 'clamp(10px, 1.3vh, 28px)' } : { color: barColor, fontSize: 'clamp(14px, 1.8vh, 28px)' }}
         >
           {value !== null ? fmtPressure(value) : '---'}
         </div>
@@ -169,3 +158,5 @@ export default function PressureBar({
     </div>
   );
 }
+
+export default memo(PressureBar);
