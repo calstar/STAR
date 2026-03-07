@@ -33,6 +33,20 @@ A high-fidelity, cross-platform (web/mobile/desktop) React-based GUI for real-ti
 
 This will start both backend and frontend automatically.
 
+### Replay a past run (load existing Elodin DB)
+
+To view a previously recorded run in the web GUI (no daq_bridge, simulator, or controller):
+
+```bash
+# By DB name (under ~/.local/share/elodin/)
+./start.sh --replay daq_20260306_043134
+
+# Or set env and use --replay (uses ELODIN_DB_NAME)
+ELODIN_DB_NAME=daq_20260306_043134 ./start.sh --replay
+```
+
+Past DBs are typically created when you run the full stack with `ELODIN_DB_NAME=daq_YYYYMMDD_HHMMSS` (e.g. from `scripts/startup/start_tmux_dev.sh`). The same DB name can be used with postprocessing (e.g. `scripts/postprocessing/postprocess_run.py --db-name daq_20260306_043134`) and with the GUI replay above.
+
 ### Option 2: Manual Setup
 
 **Backend:**
