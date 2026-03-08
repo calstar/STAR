@@ -1076,7 +1076,7 @@ class SensorSystemServer {
         else {
           const isAllowed = isTransitionAllowed(currentState, newState);
           if (!isAllowed) {
-            this.broadcast({ type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `❌ Invalid state transition: ${SystemState[currentState]} → ${SystemState[newState]}`, command } });
+            console.warn(`Invalid state transition (not broadcast): ${SystemState[currentState]} → ${SystemState[newState]}`);
             return;
           }
         }
@@ -1247,7 +1247,7 @@ class SensorSystemServer {
       }
     } catch (error) {
       console.error('❌ Command error:', error);
-      this.broadcast({ type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Command failed: ${error}`, command } });
+      // Log only; do not broadcast command errors to UI (avoids mismatch/state-definition noise)
     }
   }
 

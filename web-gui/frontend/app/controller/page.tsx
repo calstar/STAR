@@ -1,22 +1,24 @@
 'use client'
 
 import { useEffect } from 'react';
-import { useSensorStore, useSensorValue } from '@/lib/store';
+import { useSensorStore, useSensorValue, useActuatorCommandedState } from '@/lib/store';
+import { ActuatorState } from '@/lib/types';
 import { getWebSocketClient } from '@/lib/websocket';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { MessageType, SensorUpdate, StateUpdate, SystemState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { getEntityColor } from '@/lib/sensor-colors';
 
+/** Display follows state machine (expected for current state); ADC as readout only. */
 function ValveStatusRow({ label, entity, ch, channel }: { label: string; entity: string; ch: string; channel?: number }) {
-  const status = useSensorValue(entity, 'status');
+  const commanded = useActuatorCommandedState(entity);
   const adcNamed = useSensorValue(entity, 'raw_adc_counts');
   const adcCh = useSensorValue(ch, 'raw_adc_counts');
   const channelEntity = channel != null ? `ACT.ACT_CH${channel}` : '';
   const adcChannel = useSensorValue(channelEntity, 'raw_adc_counts');
   const adc = adcNamed ?? adcCh ?? (channelEntity ? adcChannel : null);
-  const isOpen = status === 1 || (adc !== null && adc > 1000);
-  const hasData = status !== null || adc !== null;
+  const isOpen = commanded === ActuatorState.OPEN;
+  const hasState = commanded === ActuatorState.OPEN || commanded === ActuatorState.CLOSED;
 
   return (
     <div className="flex items-center justify-between py-2 border-b border-gray-800/60 last:border-0">
@@ -25,9 +27,9 @@ function ValveStatusRow({ label, entity, ch, channel }: { label: string; entity:
         {adc !== null && (
           <span className="text-xs font-mono text-gray-500">{adc.toFixed(0)} ADC</span>
         )}
-        <span className={`text-xs font-bold font-mono w-16 text-right ${!hasData ? 'text-gray-600' : isOpen ? 'text-green-400' : 'text-red-400'
+        <span className={`text-xs font-bold font-mono w-16 text-right ${!hasState ? 'text-gray-600' : isOpen ? 'text-green-400' : 'text-red-400'
           }`}>
-          {!hasData ? '---' : isOpen ? '● OPEN' : '○ CLOSED'}
+          {!hasState ? '---' : isOpen ? '● OPEN' : '○ CLOSED'}
         </span>
       </div>
     </div>

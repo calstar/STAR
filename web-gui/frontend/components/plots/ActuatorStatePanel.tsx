@@ -1,6 +1,7 @@
 'use client'
 
-import { useSensorValue } from '@/lib/store';
+import { useSensorValue, useActuatorCommandedState } from '@/lib/store';
+import { ActuatorState } from '@/lib/types';
 
 interface ActuatorRowProps {
   label: string;
@@ -9,14 +10,15 @@ interface ActuatorRowProps {
   channel?: number;
 }
 
+/** Display follows state machine (expected for current state); ADC shown as readout only. */
 function ActuatorRow({ label, entity, color, channel }: ActuatorRowProps) {
-  const status = useSensorValue(entity, 'status');
+  const commanded = useActuatorCommandedState(entity);
   const adcNamed = useSensorValue(entity, 'raw_adc_counts');
   const channelEntity = channel != null ? `ACT.ACT_CH${channel}` : '';
   const adcChannel = useSensorValue(channelEntity, 'raw_adc_counts');
   const adc = adcNamed ?? (channelEntity ? adcChannel : null);
-  const hasData = status !== null || adc !== null;
-  const isOpen = status === 1 || (adc !== null && adc > 1000);
+  const isOpen = commanded === ActuatorState.OPEN;
+  const hasState = commanded === ActuatorState.OPEN || commanded === ActuatorState.CLOSED;
 
   return (
     <div className="flex items-center justify-between rounded-lg px-5 py-4 bg-gray-900/50">
@@ -26,16 +28,16 @@ function ActuatorRow({ label, entity, color, channel }: ActuatorRowProps) {
       </div>
       <div className="flex items-center gap-3">
         <span className="text-base font-mono text-gray-400">
-          {hasData ? (adc?.toLocaleString() ?? '---') : '---'}
+          {adc != null ? adc.toLocaleString() : '---'}
         </span>
         <span
           className={`text-base font-black font-mono px-4 py-2 rounded-lg ${
-            !hasData ? 'bg-gray-800 text-gray-600' :
+            !hasState ? 'bg-gray-800 text-gray-600' :
             isOpen   ? 'bg-green-900/60 text-green-400 border border-green-800' :
                        'bg-red-900/60 text-red-400 border border-red-800'
           }`}
         >
-          {!hasData ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
+          {!hasState ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
         </span>
       </div>
     </div>

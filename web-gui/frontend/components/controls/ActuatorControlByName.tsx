@@ -54,20 +54,15 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
 
   const commandedOpen = commanded === ActuatorState.OPEN;
   const commandedClosed = commanded === ActuatorState.CLOSED;
-  const mismatch = commanded !== null && !pending &&
-    ((commandedOpen && !feedbackOpen) || (commandedClosed && feedbackOpen));
-  const showMismatch = false;
 
   return (
-    <div className={`rounded border transition-colors h-full min-h-0 flex flex-col relative p-0.5
-      ${showMismatch && mismatch ? 'bg-yellow-950/40 border-yellow-600' : 'bg-background border-gray-700 hover:border-gray-600'}`}>
+    <div className="rounded border border-gray-700 hover:border-gray-600 transition-colors h-full min-h-0 flex flex-col relative p-0.5 bg-background">
       <div className="absolute top-0.5 right-0.5 flex items-center gap-0.5">
         {pending && <span className="text-yellow-400 text-[8px] leading-none">⟳</span>}
         <div className={`w-2 h-2 rounded-full flex-shrink-0 ${commanded === null ? 'bg-gray-600' : commandedOpen ? 'bg-green-500' : 'bg-red-500'}`} />
       </div>
       <div className="flex-1 flex items-center min-h-0 overflow-hidden pr-4 flex-shrink-0">
         <h3 className="font-bold tracking-wider text-text uppercase leading-tight truncate text-[9px] xl:text-[10px]">{name}</h3>
-        {showMismatch && mismatch && <span className="text-[8px] font-bold text-yellow-400 uppercase ml-0.5">MM</span>}
       </div>
       <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden">
         <span className="text-[8px] text-text-muted font-mono truncate leading-none">ADC: {rawAdc.toLocaleString()}</span>

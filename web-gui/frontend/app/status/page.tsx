@@ -1,12 +1,34 @@
 'use client'
 
 import { useEffect, useMemo } from 'react';
-import { useSensorStore, useGetSensorValue, useSensorDataVersion } from '@/lib/store';
+import { useSensorStore, useGetSensorValue, useSensorDataVersion, useActuatorCommandedState, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
-import { MessageType, SensorUpdate, BoardStatusPayload, BoardStatus, engineStateCodeToLabel } from '@/lib/types';
+import { MessageType, SensorUpdate, BoardStatusPayload, BoardStatus, engineStateCodeToLabel, ActuatorState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
+
+/** Display follows state machine (expected for current state); ADC as readout only. */
+function ActuatorStatusRow({ label, entity, channel }: { label: string; entity: string; channel?: number }) {
+  const commanded = useActuatorCommandedState(entity);
+  const adcNamed = useSensorValue(entity, 'raw_adc_counts');
+  const channelEntity = channel != null ? `ACT.ACT_CH${channel}` : entity;
+  const adcChannel = useSensorValue(channelEntity, 'raw_adc_counts');
+  const adc = adcNamed ?? adcChannel;
+  const isOpen = commanded === ActuatorState.OPEN;
+  const hasState = commanded === ActuatorState.OPEN || commanded === ActuatorState.CLOSED;
+  return (
+    <div className="flex items-center justify-between py-2 border-b border-gray-800 last:border-0">
+      <span className="text-base font-semibold text-text">{label}</span>
+      <div className="flex items-center gap-3">
+        {adc != null && <span className="text-sm font-mono text-gray-500">ADC: {adc.toLocaleString()}</span>}
+        <span className={`text-base font-bold font-mono px-3 py-1 rounded ${!hasState ? 'bg-gray-800 text-gray-600' : isOpen ? 'bg-green-900/60 text-green-400' : 'bg-red-900/60 text-red-400'}`}>
+          {!hasState ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 const HP_PT_SENSORS = PRESSURE_SENSORS.filter((s) =>
   ['PT_Cal.GSE_Mid', 'PT_Cal.GSE_High', 'PT_Cal.GN2_High'].includes(s.entity)
@@ -105,36 +127,13 @@ export default function StatusPage() {
           </div>
         </div>
 
-        {/* Actuators */}
+        {/* Actuators — display follows state machine diagram (expected for current state) */}
         <div className="bg-card rounded-lg p-4 border border-gray-800">
           <h2 className="text-lg font-bold text-text-muted uppercase tracking-wider mb-3">Actuators</h2>
           <div className="space-y-2">
-            {ACTUATORS.map((a) => {
-              const status = getSensorValue(a.entity, 'status');
-              const adc = getSensorValue(a.entity, 'raw_adc_counts')
-                ?? (a.channel != null ? getSensorValue(`ACT.ACT_CH${a.channel}`, 'raw_adc_counts') : null);
-              const isOpen = status === 1 || (adc !== null && adc > 1000);
-              const hasData = status !== null || adc !== null;
-              return (
-                <div key={a.label} className="flex items-center justify-between py-2 border-b border-gray-800 last:border-0">
-                  <span className="text-base font-semibold text-text">{a.label}</span>
-                  <div className="flex items-center gap-3">
-                    {hasData && (
-                      <span className="text-sm font-mono text-gray-500">
-                        ADC: {adc?.toLocaleString() ?? '---'}
-                      </span>
-                    )}
-                    <span
-                      className={`text-base font-bold font-mono px-3 py-1 rounded ${!hasData ? 'bg-gray-800 text-gray-600' :
-                        isOpen ? 'bg-green-900/60 text-green-400' : 'bg-red-900/60 text-red-400'
-                        }`}
-                    >
-                      {!hasData ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
+            {ACTUATORS.map((a) => (
+              <ActuatorStatusRow key={a.label} label={a.label} entity={a.entity} channel={a.channel} />
+            ))}
           </div>
         </div>
 
@@ -149,7 +148,6 @@ export default function StatusPage() {
                 const isOperational = b.operational ?? b.connected;
                 const statusColor =
                   !isOperational ? 'bg-red-900/60 text-red-400' : 'bg-green-900/60 text-green-400';
-                const unexpectedBg = b.expected ? '' : 'bg-amber-900/20';
                 const freq =
                   b.frequencyHz != null && isFinite(b.frequencyHz)
                     ? `${b.frequencyHz.toFixed(1)} Hz`
@@ -171,7 +169,7 @@ export default function StatusPage() {
                 return (
                   <div
                     key={b.id}
-                    className={`flex flex-col gap-1 py-2 px-3 rounded border border-gray-800 ${unexpectedBg}`}
+                    className="flex flex-col gap-1 py-2 px-3 rounded border border-gray-800"
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex flex-col">
@@ -183,11 +181,6 @@ export default function StatusPage() {
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
-                        {!b.expected && (
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-amber-900/60 text-amber-200 font-semibold uppercase tracking-wide">
-                            Unexpected
-                          </span>
-                        )}
                         {b.designatedSurvivor && (
                           <span className="text-[10px] px-2 py-0.5 rounded bg-blue-900/60 text-blue-200 font-semibold uppercase tracking-wide">
                             Designated
