@@ -132,8 +132,8 @@ export default function DerivedTimeSeriesPlot({
               }
             }
             if (allValues.length > 0) {
-              const dataMin = Math.min(...allValues);
-              const dataMax = Math.max(...allValues);
+              const dataMin = allValues.reduce((a, b) => Math.min(a, b), Infinity);
+              const dataMax = allValues.reduce((a, b) => Math.max(a, b), -Infinity);
               return smartYRange(dataMin, dataMax);
             }
             if (isFinite(mn) && isFinite(mx)) return smartYRange(mn, mx);

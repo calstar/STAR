@@ -121,6 +121,51 @@ function buildSensorConfig(): SensorConfigEntry[] {
     }
   }
 
+  // RTD boards: sensor_roles_<boardKey> or active_connectors with role "RTD ChN"
+  for (const [boardKey, boardRaw] of Object.entries(boards)) {
+    const board = boardRaw as Record<string, any>;
+    if (board.type !== 'RTD') continue;
+    if (board.enabled === false) continue;
+
+    const boardId: number = typeof board.board_id === 'number' ? board.board_id : 31;
+    const boardIp: string = board.ip || '';
+    const boardRolesKey = `sensor_roles_${boardKey}`;
+    const rolesSection = (config as any)[boardRolesKey] as Record<string, number> | undefined;
+    const active: number[] = Array.isArray(board.active_connectors) && board.active_connectors.length > 0
+      ? (board.active_connectors as number[])
+      : Array.from({ length: (board.num_sensors ?? 4) }, (_, i) => i + 1);
+
+    if (rolesSection && typeof rolesSection === 'object') {
+      for (const [roleName, channelId] of Object.entries(rolesSection)) {
+        const ch = typeof channelId === 'number' ? channelId : Number(channelId);
+        if (!isFinite(ch)) continue;
+        sensors.push({
+          id: ch,
+          role: roleName,
+          boardId,
+          boardIp,
+          isHpPt: false,
+          inCalibrationSequence: false,
+          entity: `RTD.CH${ch}`,
+          calEntity: `RTD_Cal.CH${ch}`,
+        });
+      }
+    } else {
+      for (const ch of active) {
+        sensors.push({
+          id: ch,
+          role: `RTD Ch${ch}`,
+          boardId,
+          boardIp,
+          isHpPt: false,
+          inCalibrationSequence: false,
+          entity: `RTD.CH${ch}`,
+          calEntity: `RTD_Cal.CH${ch}`,
+        });
+      }
+    }
+  }
+
   // LC boards: from active_connectors when no sensor_roles_<boardKey>; role "LC ChN"
   for (const [boardKey, boardRaw] of Object.entries(boards)) {
     const board = boardRaw as Record<string, any>;

@@ -925,8 +925,10 @@ class SensorSystemServer {
 
       ws.on('error', (error: Error) => { console.error(`❌ WebSocket client error:`, error); });
 
-      const client: Client = { ws, subscribedSensors: new Set(), lastPing: Date.now() };
+      const client: Client = { ws, subscribedSensors: new Set(), lastPing: Date.now(), lastPong: Date.now() };
       this.clients.set(ws, client);
+
+      ws.on('pong', () => { client.lastPong = Date.now(); });
 
       // Send mission start time so client has correct time base for plots
       if (this.firstPacketTime !== null) {
@@ -959,12 +961,20 @@ class SensorSystemServer {
         try { this.handleMessage(ws, JSON.parse(data.toString())); } catch (error) { console.error('❌ Failed to parse message:', error); }
       });
 
-      ws.on('close', () => { this.clients.delete(ws); });
-      ws.on('error', () => { this.clients.delete(ws); });
+      ws.on('close', () => { clearInterval(pingInterval); this.clients.delete(ws); });
+      ws.on('error', () => { clearInterval(pingInterval); this.clients.delete(ws); });
 
       const pingInterval = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) { client.lastPing = Date.now(); ws.ping(); }
-        else { clearInterval(pingInterval); }
+        if (ws.readyState !== WebSocket.OPEN) { clearInterval(pingInterval); return; }
+        // If no pong since the last ping was sent, the connection is dead
+        if (client.lastPing > 0 && Date.now() - client.lastPong > 90000) {
+          console.warn(`⚠️ WebSocket client ${clientIP} stale (no pong 90s) — closing`);
+          ws.terminate();
+          clearInterval(pingInterval);
+          return;
+        }
+        client.lastPing = Date.now();
+        ws.ping();
       }, 30000);
     });
   }

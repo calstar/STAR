@@ -102,7 +102,11 @@ private:
      */
     bool sendPWMCommand(uint8_t channel, float duty_cycle, float frequency, uint32_t duration_ms);
 
-    /** Send both fuel + LOX PWM commands for a given actuation output. */
+    /** Single UDP packet with both channels (fuel + LOX) for fire-state commands. */
+    bool sendPWMCommands(uint8_t channel1, float duty1, uint8_t channel2, float duty2,
+                         float frequency, uint32_t duration_ms);
+
+    /** Send both fuel + LOX PWM commands for a given actuation output (one packet). */
     void sendActuationPWM(const RobustDDPController::ActuationCommand& act);
 
     // ── Elodin DB (optional) ───────────────────────────────────────────

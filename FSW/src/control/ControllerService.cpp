@@ -55,7 +55,8 @@ static constexpr uint8_t COMMS_VERSION = 0;
 static constexpr size_t HEADER_SIZE = 6;  // <BBI>
 static constexpr size_t BODY_SIZE = 1;    // <B> num_commands
 static constexpr size_t CMD_SIZE = 13;    // <BIff>
-static constexpr size_t SINGLE_CMD_PACKET_SIZE = HEADER_SIZE + BODY_SIZE + CMD_SIZE;  // 20
+static constexpr size_t SINGLE_CMD_PACKET_SIZE = HEADER_SIZE + BODY_SIZE + CMD_SIZE;    // 20
+static constexpr size_t DUAL_CMD_PACKET_SIZE = HEADER_SIZE + BODY_SIZE + CMD_SIZE * 2;  // 33
 
 // ═══════════════════════════════════════════════════════════════════════
 //  CONSTRUCTION / INIT / DESTROY
@@ -310,6 +311,52 @@ bool ControllerService::sendPWMCommand(uint8_t channel, float duty_cycle, float 
     return true;
 }
 
+bool ControllerService::sendPWMCommands(uint8_t channel1, float duty1, uint8_t channel2,
+                                        float duty2, float frequency, uint32_t duration_ms) {
+    if (udp_socket_fd_ < 0)
+        return false;
+
+    uint8_t packet[DUAL_CMD_PACKET_SIZE];
+    size_t offset = 0;
+
+    packet[offset++] = PACKET_TYPE_PWM;
+    packet[offset++] = COMMS_VERSION;
+    auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::system_clock::now().time_since_epoch())
+                      .count();
+    uint32_t ts = static_cast<uint32_t>(now_ms & 0xFFFFFFFF);
+    std::memcpy(&packet[offset], &ts, 4);
+    offset += 4;
+
+    packet[offset++] = 2;  // num_commands
+
+    packet[offset++] = channel1;
+    std::memcpy(&packet[offset], &duration_ms, 4);
+    offset += 4;
+    std::memcpy(&packet[offset], &duty1, 4);
+    offset += 4;
+    std::memcpy(&packet[offset], &frequency, 4);
+    offset += 4;
+
+    packet[offset++] = channel2;
+    std::memcpy(&packet[offset], &duration_ms, 4);
+    offset += 4;
+    std::memcpy(&packet[offset], &duty2, 4);
+    offset += 4;
+    std::memcpy(&packet[offset], &frequency, 4);
+    offset += 4;
+
+    struct sockaddr_in dest {};
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(pwm_config_.actuator_port);
+    if (inet_pton(AF_INET, pwm_config_.actuator_board_ip.c_str(), &dest.sin_addr) != 1)
+        return false;
+
+    ssize_t sent = sendto(udp_socket_fd_, packet, DUAL_CMD_PACKET_SIZE, 0,
+                          reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
+    return sent == static_cast<ssize_t>(DUAL_CMD_PACKET_SIZE);
+}
+
 void ControllerService::sendActuationPWM(const RobustDDPController::ActuationCommand& act) {
     if (!act.valid)
         return;
@@ -317,10 +364,8 @@ void ControllerService::sendActuationPWM(const RobustDDPController::ActuationCom
     float duty_F = static_cast<float>(std::max(0.0, std::min(1.0, act.duty_F)));
     float duty_O = static_cast<float>(std::max(0.0, std::min(1.0, act.duty_O)));
 
-    sendPWMCommand(pwm_config_.fuel_channel, duty_F, pwm_config_.frequency_hz,
-                   pwm_config_.duration_ms);
-    sendPWMCommand(pwm_config_.lox_channel, duty_O, pwm_config_.frequency_hz,
-                   pwm_config_.duration_ms);
+    sendPWMCommands(pwm_config_.fuel_channel, duty_F, pwm_config_.lox_channel, duty_O,
+                    pwm_config_.frequency_hz, pwm_config_.duration_ms);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -389,15 +434,14 @@ void ControllerService::controllerLoop() {
             actuation.u_O_on = td_o > 0.0f;
             actuation.valid = true;
             diagnostics.F_ref = (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
-                                   ? cmd.thrust_desired
-                                   : 0.0;
+                                    ? cmd.thrust_desired
+                                    : 0.0;
         } else if (lut_.is_loaded()) {
             // LUT mode: 3 inputs — P_ch (chamber MP1/2 average), P_u_fuel, P_u_ox. Only compute
             // when FIRE is active; pre-fire dynamics differ from fire-state.
-            const double P_ch_est =
-                (meas.P_ch_mp1 > 0.0 || meas.P_ch_mp2 > 0.0)
-                    ? 0.5 * (meas.P_ch_mp1 + meas.P_ch_mp2)
-                    : 0.0;
+            const double P_ch_est = (meas.P_ch_mp1 > 0.0 || meas.P_ch_mp2 > 0.0)
+                                        ? 0.5 * (meas.P_ch_mp1 + meas.P_ch_mp2)
+                                        : 0.0;
 
             if (!fire_active_) {
                 actuation.duty_F = 0.0;
@@ -406,8 +450,8 @@ void ControllerService::controllerLoop() {
                 actuation.u_O_on = false;
                 actuation.valid = true;
                 diagnostics.F_ref = (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
-                                       ? cmd.thrust_desired
-                                       : 0.0;
+                                        ? cmd.thrust_desired
+                                        : 0.0;
                 diagnostics.F_estimated = 0.0;
                 diagnostics.MR_estimated = 0.0;
                 diagnostics.P_ch = 0.0;
@@ -421,18 +465,21 @@ void ControllerService::controllerLoop() {
                 std::map<std::string, double> lut_out;
                 if (lut_.evaluate(point, lut_out)) {
                     double u_f = lut_out.count("u_safe_F") ? lut_out.at("u_safe_F")
-                                 : lut_out.count("duty_F") ? lut_out.at("duty_F") : 0.0;
+                                 : lut_out.count("duty_F") ? lut_out.at("duty_F")
+                                                           : 0.0;
                     double u_o = lut_out.count("u_safe_O") ? lut_out.at("u_safe_O")
-                                 : lut_out.count("duty_O") ? lut_out.at("duty_O") : 0.0;
+                                 : lut_out.count("duty_O") ? lut_out.at("duty_O")
+                                                           : 0.0;
                     actuation.duty_F = (u_f > 0.5) ? 1.0 : 0.0;
                     actuation.duty_O = (u_o > 0.5) ? 1.0 : 0.0;
                     actuation.u_F_on = actuation.duty_F > 0.5;
                     actuation.u_O_on = actuation.duty_O > 0.5;
                     actuation.valid = true;
 
-                    diagnostics.F_ref = (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
-                                            ? cmd.thrust_desired
-                                            : 0.0;
+                    diagnostics.F_ref =
+                        (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
+                            ? cmd.thrust_desired
+                            : 0.0;
                     diagnostics.P_ch = P_ch_est;  // Always report chamber from MP1/2 average
                     constexpr double P_MIN_VALID = 1e5;
                     if (meas.P_u_fuel >= P_MIN_VALID && meas.P_u_ox >= P_MIN_VALID) {
@@ -445,15 +492,17 @@ void ControllerService::controllerLoop() {
                         diagnostics.MR_estimated = 0.0;
                     }
                 } else {
-                    // LUT miss or out-of-range: still command 0/0 and report P_ch so fire mode always outputs
+                    // LUT miss or out-of-range: still command 0/0 and report P_ch so fire mode
+                    // always outputs
                     actuation.duty_F = 0.0;
                     actuation.duty_O = 0.0;
                     actuation.u_F_on = false;
                     actuation.u_O_on = false;
                     actuation.valid = true;
-                    diagnostics.F_ref = (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
-                                            ? cmd.thrust_desired
-                                            : 0.0;
+                    diagnostics.F_ref =
+                        (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
+                            ? cmd.thrust_desired
+                            : 0.0;
                     diagnostics.P_ch = P_ch_est;
                     diagnostics.F_estimated = 0.0;
                     diagnostics.MR_estimated = 0.0;

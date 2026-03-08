@@ -16,6 +16,7 @@ export interface Client {
     ws: WebSocket;
     subscribedSensors: Set<string>;
     lastPing: number;
+    lastPong: number;
 }
 
 /** Configuration for a PT board that has 4-20 mA high-pressure sensors */

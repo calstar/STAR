@@ -12,10 +12,16 @@ export interface WSMessage {
   payload: unknown;
 }
 
+/** If no message received for this long, treat connection as stale and reconnect (handles half-open / proxy timeouts). */
+const STALE_CONNECTION_MS = 2 * 60 * 1000; // 2 minutes
+const STALE_CHECK_INTERVAL_MS = 30 * 1000; // check every 30s
+
 export class WebSocketClient {
   private ws: WebSocket | null = null;
   private url: string;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private staleCheckTimer: ReturnType<typeof setInterval> | null = null;
+  private lastMessageTime = 0;
   private listeners: Map<string, Set<(payload: unknown) => void>> = new Map();
   private connectionStatusListeners: Set<(status: ConnectionStatus) => void> = new Set();
   private messageQueue: WSMessage[] = []; // Queue messages until WebSocket is ready
@@ -41,6 +47,8 @@ export class WebSocketClient {
       this.ws = new WebSocket(this.url);
 
       this.ws.onopen = () => {
+        this.lastMessageTime = Date.now();
+        this.startStaleCheck();
         console.log('✅ WebSocket connected to backend');
         console.log(`   WebSocket URL: ${this.url}`);
         console.log(`   Ready state: ${this.ws?.readyState} (1=OPEN)`);
@@ -70,6 +78,7 @@ export class WebSocketClient {
       };
 
       this.ws.onmessage = (event) => {
+        this.lastMessageTime = Date.now();
         try {
           const message: WSMessage = JSON.parse(event.data);
           this.handleMessage(message);
@@ -87,6 +96,7 @@ export class WebSocketClient {
       };
 
       this.ws.onclose = (event) => {
+        this.stopStaleCheck();
         console.log(`🔌 WebSocket disconnected (code: ${event.code}, reason: ${event.reason || 'none'})`);
         console.log(`   Ready state: ${this.ws?.readyState} (3=CLOSED)`);
         if (event.code !== 1000) {
@@ -223,6 +233,25 @@ export class WebSocketClient {
     }
   }
 
+  private startStaleCheck(): void {
+    this.stopStaleCheck();
+    this.staleCheckTimer = setInterval(() => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+      if (Date.now() - this.lastMessageTime > STALE_CONNECTION_MS) {
+        console.warn('⚠️ No WebSocket message for 2+ minutes — reconnecting (stale connection)');
+        this.stopStaleCheck();
+        this.ws.close(1000, 'stale');
+      }
+    }, STALE_CHECK_INTERVAL_MS);
+  }
+
+  private stopStaleCheck(): void {
+    if (this.staleCheckTimer) {
+      clearInterval(this.staleCheckTimer);
+      this.staleCheckTimer = null;
+    }
+  }
+
   private scheduleReconnect(): void {
     if (this.reconnectTimer) {
       return;
@@ -236,6 +265,7 @@ export class WebSocketClient {
   }
 
   disconnect(): void {
+    this.stopStaleCheck();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

@@ -25,17 +25,20 @@ export default function LOXGraphsPage() {
   const ptSensors = filterByRole(allSensors, 'Ox', 'LOX').filter(
     (s) => s.calEntity.startsWith('PT') || s.calEntity.startsWith('PT_Cal')
   );
-  const rtdSensors = filterByRole(allSensors, 'Ox', 'LOX').filter(
+  // RTDs: prefer LOX/Ox role names; fallback to all RTDs so the tab shows something if roles don't match
+  const rtdByRole = filterByRole(allSensors, 'Ox', 'LOX').filter(
     (s) => s.calEntity.startsWith('RTD') || s.calEntity.startsWith('RTD_Cal')
   );
+  const rtdSensors =
+    rtdByRole.length > 0
+      ? rtdByRole
+      : allSensors.filter(
+          (s) => s.calEntity.startsWith('RTD') || s.calEntity.startsWith('RTD_Cal')
+        );
 
   const currentSensors = activeTab === 'PT' ? ptSensors : rtdSensors;
-  const componentName = activeTab === 'PT'
-    ? 'pressure_psi'
-    : (rtdSensors.some((s) => s.calEntity.includes('RTD.')) ? 'raw_resistance_counts' : 'temperature_c');
-  const yLabel = activeTab === 'PT'
-    ? 'Pressure (PSI)'
-    : (componentName === 'raw_resistance_counts' ? 'Temp (Raw ADC)' : 'Temperature (°C)');
+  const componentName = activeTab === 'PT' ? 'pressure_psi' : 'temperature_c';
+  const yLabel = activeTab === 'PT' ? 'Pressure (PSI)' : 'Temperature (°C)';
 
   const entities = currentSensors.map((s) => s.calEntity);
   const labels = currentSensors.map((s) => s.role);
