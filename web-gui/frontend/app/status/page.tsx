@@ -28,7 +28,7 @@ export default function StatusPage() {
   const currentState = useSensorStore((s) => s.currentState);
   const ws = getWebSocketClient();
   const { actuators } = useActuatorsFromConfig();
-  const ACTUATORS = actuators.map((a) => ({ label: a.name, entity: a.entity }));
+  const ACTUATORS = actuators.map((a) => ({ label: a.name, entity: a.entity, channel: a.channel }));
   useSensorDataVersion(); // re-render on sensor flush so getSensorValue() shows fresh data
   const getSensorValue = useGetSensorValue();
 
@@ -111,7 +111,8 @@ export default function StatusPage() {
           <div className="space-y-2">
             {ACTUATORS.map((a) => {
               const status = getSensorValue(a.entity, 'status');
-              const adc = getSensorValue(a.entity, 'raw_adc_counts');
+              const adc = getSensorValue(a.entity, 'raw_adc_counts')
+                ?? (a.channel != null ? getSensorValue(`ACT.ACT_CH${a.channel}`, 'raw_adc_counts') : null);
               const isOpen = status === 1 || (adc !== null && adc > 1000);
               const hasData = status !== null || adc !== null;
               return (

@@ -31,6 +31,7 @@ export async function fetchActuatorsFromConfig(): Promise<ActuatorFromConfig[]> 
     if (!roles || typeof roles !== 'object') return [];
     const list: ActuatorFromConfig[] = Object.entries(roles).map(([name, value]) => {
       const arr = Array.isArray(value) ? value : [];
+      // [type, channel] or [type, channel, board_id number] or [type, channel, board_ip string]
       const channel = arr.length >= 2 && typeof arr[1] === 'number' ? arr[1] : 1;
       const boardIp = arr.length >= 3 && typeof arr[2] === 'string' ? arr[2] : undefined;
       return { name, entity: entityFromName(name), channel, boardIp };

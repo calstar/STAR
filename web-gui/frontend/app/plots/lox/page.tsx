@@ -25,16 +25,17 @@ export default function LOXGraphsPage() {
   const ptSensors = filterByRole(allSensors, 'Ox', 'LOX').filter(
     (s) => s.calEntity.startsWith('PT') || s.calEntity.startsWith('PT_Cal')
   );
-  // RTDs: prefer LOX/Ox role names; fallback to all RTDs so the tab shows something if roles don't match
-  const rtdByRole = filterByRole(allSensors, 'Ox', 'LOX').filter(
+  // RTDs: LOX/Ox/Tank role names (config has "LOX Tank 1".."LOX Tank 4"); sort by id for stable order
+  const rtdByRole = filterByRole(allSensors, 'Ox', 'LOX', 'Tank').filter(
     (s) => s.calEntity.startsWith('RTD') || s.calEntity.startsWith('RTD_Cal')
   );
-  const rtdSensors =
+  const rtdSensors = (
     rtdByRole.length > 0
       ? rtdByRole
       : allSensors.filter(
           (s) => s.calEntity.startsWith('RTD') || s.calEntity.startsWith('RTD_Cal')
-        );
+        )
+  ).sort((a, b) => a.id - b.id);
 
   const currentSensors = activeTab === 'PT' ? ptSensors : rtdSensors;
   const componentName = activeTab === 'PT' ? 'pressure_psi' : 'temperature_c';

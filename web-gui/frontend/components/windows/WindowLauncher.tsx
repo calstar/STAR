@@ -67,6 +67,7 @@ export default function WindowLauncher() {
     { id: 'calibration', name: 'Calibration', description: 'RLS + GLR drift · Bayesian auto-recal', url: '/window/calibration', accent: '#A3E635' },
     { id: 'lcs-tcs-rtd', name: 'LCS / TCS / RTD', description: 'Thermocouples, RTDs, load cell — voltage and temperature', url: '/window/lcs-tcs-rtd', accent: '#F59E0B' },
     { id: 'sensor-info', name: 'Sensor Info', description: 'ADC code · converted value · data rate per channel', url: '/window/sensor-info', accent: '#22D3EE' },
+    { id: 'solenoid-char', name: 'Solenoid Characterization', description: 'PWM duty cycle & frequency for solenoid performance', url: '/window/solenoid-char', accent: '#F59E0B' },
   ];
 
   return (

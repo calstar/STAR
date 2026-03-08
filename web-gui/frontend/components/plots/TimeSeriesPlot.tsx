@@ -78,8 +78,8 @@ function fmtAxisVal(val: number): string {
 
 // ── Memory constants ──────────────────────────────────────────────────────────
 const DEFAULT_WINDOW_SECONDS = 60;
-const SAMPLE_HZ = 60;   // fallback when cache empty
-const PLOT_MAX_POINTS = 30000;   // cap for full-rate data (e.g. 400 Hz * 60 s)
+const SAMPLE_HZ = 20;   // sync from cache at 20 Hz for responsive UI
+const PLOT_MAX_POINTS = 6000;   // cap points per series (100 Hz * 60 s)
 
 export default function TimeSeriesPlot({
   title, entities, component, components, colors,
@@ -404,11 +404,10 @@ export default function TimeSeriesPlot({
       }
     });
 
-    // ── Smooth rendering loop using requestAnimationFrame (60 FPS) ────────
-    // Separate data sampling (10 Hz) from rendering (60 FPS) for smooth scrolling
+    // ── Render loop: data sync at 20 Hz, Y-axis at 5 Hz, x-axis every frame ────────
     let lastDataUpdate = 0;
     let lastYAxisUpdate = 0;
-    const DATA_UPDATE_INTERVAL = 1000 / SAMPLE_HZ; // 100ms for data updates
+    const DATA_UPDATE_INTERVAL = 1000 / SAMPLE_HZ; // 50ms at 20 Hz
     const Y_AXIS_UPDATE_INTERVAL = 200; // 200ms for Y-axis auto-scaling (5 Hz)
 
     let animationFrameId: number | null = null;

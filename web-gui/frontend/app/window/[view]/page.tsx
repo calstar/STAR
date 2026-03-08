@@ -25,6 +25,7 @@ import LCS_TCS_RTDPage from '@/app/plots/lcs-tcs-rtd/page';
 import ChamberGraphsPage from '@/app/plots/chamber/page';
 import SensorInfoPage from '@/app/sensor-info/page';
 import MobileGUIPage from '@/app/window/mobile-gui/page';
+import SolenoidCharacterizationPage from '@/app/plots/solenoid-characterization/page';
 
 const viewComponents: Record<string, React.ComponentType> = {
   fuel: FuelGraphsPage,
@@ -44,6 +45,7 @@ const viewComponents: Record<string, React.ComponentType> = {
   chamber: ChamberGraphsPage,
   'sensor-info': SensorInfoPage,
   'mobile-gui': MobileGUIPage,
+  'solenoid-char': SolenoidCharacterizationPage,
 };
 
 export default function WindowViewPage() {

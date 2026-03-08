@@ -8,11 +8,13 @@ import { MessageType, SensorUpdate, StateUpdate, SystemState } from '@/lib/types
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { getEntityColor } from '@/lib/sensor-colors';
 
-function ValveStatusRow({ label, entity, ch }: { label: string; entity: string; ch: string }) {
+function ValveStatusRow({ label, entity, ch, channel }: { label: string; entity: string; ch: string; channel?: number }) {
   const status = useSensorValue(entity, 'status');
   const adcNamed = useSensorValue(entity, 'raw_adc_counts');
   const adcCh = useSensorValue(ch, 'raw_adc_counts');
-  const adc = adcNamed ?? adcCh;
+  const channelEntity = channel != null ? `ACT.ACT_CH${channel}` : '';
+  const adcChannel = useSensorValue(channelEntity, 'raw_adc_counts');
+  const adc = adcNamed ?? adcCh ?? (channelEntity ? adcChannel : null);
   const isOpen = status === 1 || (adc !== null && adc > 1000);
   const hasData = status !== null || adc !== null;
 
@@ -75,7 +77,7 @@ export default function ControllerPage() {
   const currentState = useSensorStore((state) => state.currentState);
   const ws = getWebSocketClient();
   const { actuators } = useActuatorsFromConfig();
-  const VALVES = actuators.map((a) => ({ label: a.name, entity: a.entity, ch: a.entity }));
+  const VALVES = actuators.map((a) => ({ label: a.name, entity: a.entity, ch: a.entity, channel: a.channel }));
 
   useEffect(() => {
     if (!ws.isConnected()) {

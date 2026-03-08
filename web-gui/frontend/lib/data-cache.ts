@@ -13,9 +13,9 @@ import { getWebSocketClient } from './websocket';
 import { MessageType } from './types';
 import { getServerTimeNow } from './server-time';
 
-const CACHE_MAX_SECONDS = 300; // 5 minutes of history
-const CACHE_MAX_POINTS = 120000; // ~400 Hz * 300 s (full-rate plot history)
-const CACHE_SAMPLE_HZ = 60; // for interval-based sampling when no WS feed
+const CACHE_MAX_SECONDS = 60; // 1 minute of history in cache
+const CACHE_MAX_POINTS = 6000; // 100 Hz * 60 s — keep small for fast getAlignedHistory
+const CACHE_SAMPLE_HZ = 20; // sample store at 20 Hz to match backend throttle
 
 export interface CachedSeries {
   time: number[];
@@ -111,10 +111,17 @@ class SensorDataCache {
     }
   }
 
-  /** Manually add a data point (called from WebSocket handler) */
+  private _lastAddPerKey: Record<string, number> = {};
+
+  /** Manually add a data point (called from WebSocket handler). Throttled to 20 Hz per key to reduce lag. */
   addDataPoint(entity: string, component: string, value: number): void {
     if (!isFinite(value)) return;
     const key = `${entity}.${component}`;
+    const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const last = this._lastAddPerKey[key] ?? 0;
+    if (nowMs - last < 50) return; // 20 Hz max per key
+    this._lastAddPerKey[key] = nowMs;
+
     const now = (getServerTimeNow() - getStartupTime()) / 1000;
 
     let series = this.cache.get(key);
@@ -130,9 +137,10 @@ class SensorDataCache {
         if (component === 'pressure_psi') {
           const maxJump = entity.includes('HP_PT') || entity.includes('GSE_Mid') || entity.includes('GSE_High') || entity.includes('GN2_High') ? 500 : 1000;
           if (Math.abs(value - prev) > maxJump) value = prev;
-        } else if (prev !== 0 && Math.abs(value / prev) > 10) {
-          value = prev;  // ratio filter for other components
+        } else if (component !== 'temperature_c' && component !== 'force_lbf') {
+          if (prev !== 0 && Math.abs(value / prev) > 10) value = prev;  // ratio filter for other components
         }
+        // temperature_c / force_lbf: no ratio filter (prev=0 would clamp valid first readings; allow full range)
       }
     }
 

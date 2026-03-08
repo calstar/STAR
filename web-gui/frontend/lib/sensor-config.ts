@@ -8,7 +8,8 @@
  */
 
 import { useEffect, useState } from 'react';
-import { getApiBaseUrl } from './websocket';
+import { getApiBaseUrl, getWebSocketClient } from './websocket';
+import { MessageType } from './types';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -79,6 +80,16 @@ export function useSensorConfig(): SensorConfig[] {
             if (!cancelled) setSensors(s);
         });
         return () => { cancelled = true; };
+    }, []);
+
+    // Refetch whenever config is updated (e.g. config pane save) so all panes see fresh sensor list
+    useEffect(() => {
+        const ws = getWebSocketClient();
+        const unsub = ws.on(MessageType.CONFIG_UPDATED, () => {
+            invalidateSensorConfigCache();
+            fetchSensorConfig().then((s) => setSensors(s));
+        });
+        return unsub;
     }, []);
 
     return sensors;

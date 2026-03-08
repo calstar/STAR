@@ -9,7 +9,7 @@ import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate } from '@/lib/types';
 
 const DEFAULT_WINDOW_SECONDS = 60;
-const SAMPLE_HZ = 60;
+const SAMPLE_HZ = 20;
 
 export type TransformFn = (rawValue: number) => number | null;
 
@@ -74,7 +74,7 @@ export default function DerivedTimeSeriesPlot({
   const [ready, setReady] = useState(false);
 
   const componentMap = entities.map(() => component);
-  const MAX_POINTS = windowSeconds * SAMPLE_HZ;
+  const MAX_POINTS = Math.min(windowSeconds * SAMPLE_HZ, 6000);
 
   useEffect(() => {
     if (!containerRef.current || !plotRef.current) return;

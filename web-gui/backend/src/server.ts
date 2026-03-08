@@ -107,13 +107,13 @@ class SensorSystemServer {
   private readonly PSI_ABSOLUTE_MIN = -50;   // physically impossible below -50 PSI
   private readonly PSI_ABSOLUTE_MAX = 6000;  // max expected sensor range (HP PT up to 5000 PSI)
 
-  /** No throttle: send every sensor update so plots can show full-rate data */
+  /** Throttle broadcast per sensor to avoid WS buffer flood and disconnects */
   private broadcastLastTime: Map<string, number> = new Map();
-  private readonly BROADCAST_MIN_INTERVAL_MS = 0;
+  private readonly BROADCAST_MIN_INTERVAL_MS = 50;
 
-  /** History cache for plots (last 5 min; cap by points to avoid OOM at high rate) */
+  /** History cache for plots; smaller cap so QUERY_HISTORICAL response doesn't kill connection */
   private historyCache: Map<string, { time: number[]; values: number[] }> = new Map();
-  private readonly HISTORY_MAX_POINTS = 120000; // ~400 Hz * 300 s
+  private readonly HISTORY_MAX_POINTS = 6000; // 100 Hz * 60 s
 
   /** Server startup time (epoch ms) used as global timebase for all clients/devices. */
   private readonly serverStartTimeMs: number = Date.now();
@@ -142,8 +142,8 @@ class SensorSystemServer {
   /** FIRE → IDLE auto-end: timer and start time for 2s default / 5s extended */
   private fireEndTimer: NodeJS.Timeout | null = null;
   private fireStartTimeMs: number | null = null;
-  private static readonly FIRE_DURATION_MS = 3000;
-  private static readonly FIRE_EXTENDED_MS = 5000;
+  private static readonly FIRE_DURATION_MS = 2000;
+  private static readonly FIRE_EXTENDED_MS = 3000;
 
   /** Controller — always C++ controller_service */
   USE_CPP_CONTROLLER: boolean = true;
@@ -715,7 +715,7 @@ class SensorSystemServer {
       }
     }
 
-    if (this.firstPacketTime === null && (update.entity.startsWith('PT.') || update.entity.startsWith('PT_Cal.') || update.entity.startsWith('ACT.') || update.entity.startsWith('TC.'))) {
+    if (this.firstPacketTime === null && (update.entity.startsWith('PT.') || update.entity.startsWith('PT_Cal.') || update.entity.startsWith('ACT.') || update.entity.startsWith('TC.') || update.entity.startsWith('RTD.') || update.entity.startsWith('RTD_Cal.') || update.entity.startsWith('LC.') || update.entity.startsWith('LC_Cal.'))) {
       this.firstPacketTime = update.timestamp;
       console.log(`🚀 Mission T+0 set: ${new Date(this.firstPacketTime).toISOString()}`);
       this.broadcast({ type: MessageType.MISSION_START_TIME, timestamp: Date.now(), payload: { missionStartTime: this.firstPacketTime } });
@@ -935,11 +935,20 @@ class SensorSystemServer {
         try { this.send(ws, { type: MessageType.MISSION_START_TIME, timestamp: Date.now(), payload: { missionStartTime: this.firstPacketTime } }); } catch (_) { }
       }
 
-      // Send cached sensor data immediately
+      // Send cached sensor data in small batches so we don't flood the socket on connect
       if (this.sensorCache.size > 0) {
-        this.sensorCache.forEach((update) => {
-          try { this.send(ws, { type: MessageType.SENSOR_UPDATE, timestamp: update.timestamp, payload: update }); } catch (_) { }
-        });
+        const entries = Array.from(this.sensorCache.values());
+        const BATCH = 15;
+        let i = 0;
+        const sendBatch = () => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          const end = Math.min(i + BATCH, entries.length);
+          for (; i < end; i++) {
+            try { this.send(ws, { type: MessageType.SENSOR_UPDATE, timestamp: entries[i].timestamp, payload: entries[i] }); } catch (_) { }
+          }
+          if (i < entries.length) setImmediate(sendBatch);
+        };
+        setImmediate(sendBatch);
       }
 
       // Send initial status with retry
@@ -967,8 +976,8 @@ class SensorSystemServer {
       const pingInterval = setInterval(() => {
         if (ws.readyState !== WebSocket.OPEN) { clearInterval(pingInterval); return; }
         // If no pong since the last ping was sent, the connection is dead
-        if (client.lastPing > 0 && Date.now() - client.lastPong > 90000) {
-          console.warn(`⚠️ WebSocket client ${clientIP} stale (no pong 90s) — closing`);
+        if (client.lastPing > 0 && Date.now() - client.lastPong > 180000) {
+          console.warn(`⚠️ WebSocket client ${clientIP} stale (no pong 180s) — closing`);
           ws.terminate();
           clearInterval(pingInterval);
           return;
@@ -1016,13 +1025,17 @@ class SensorSystemServer {
         console.log(`[CONFIG] Resend config requested by client – reset ${boardCount} board(s) to pending, sending now (force all boards, including sensors)`);
         this.maybeSendConfigPackets({ forceAll: true, includeSensors: true });
         break;
-      case MessageType.QUERY_HISTORICAL:
-        // Send the entire 5 minute history buffer for all sensors to just this client
+      case MessageType.QUERY_HISTORICAL: {
+        // Send history in a single message; cap points per series so payload doesn't kill the connection
+        const MAX_SEND_POINTS = 3000; // keep first load small so WS stays up
         const historyPayload: Record<string, { time: number[]; values: number[] }> = {};
         for (const [key, series] of this.historyCache.entries()) {
+          const len = series.time.length;
+          if (len === 0) continue;
+          const start = len > MAX_SEND_POINTS ? len - MAX_SEND_POINTS : 0;
           historyPayload[key] = {
-            time: series.time,
-            values: series.values,
+            time: series.time.slice(start),
+            values: series.values.slice(start),
           };
         }
         this.send(ws, {
@@ -1031,6 +1044,7 @@ class SensorSystemServer {
           payload: historyPayload,
         });
         break;
+      }
       default:
         console.warn('⚠️ Unknown message type:', message.type);
     }
@@ -1067,6 +1081,7 @@ class SensorSystemServer {
           }
         }
 
+        const prevState = this.currentState;
         const success = this.elodin.isConnected()
           ? this.elodin.sendCommand('state_transition', { state: newState })
           : (this.debugMode || this.actuatorServicePort > 0); // actuator_service is hardware authority when Elodin is down
@@ -1101,13 +1116,7 @@ class SensorSystemServer {
               if (!ok) {
                 console.warn('⚠️ actuator_service not reachable – falling back to direct UDP');
                 applyActuatorsForState(this, newState, STATE_ACTUATOR_MAP);
-                if (newState === SystemState.FIRE) {
-                  const fuelInfo = getActuatorBoardInfo(this, 'Fuel Press');
-                  const loxInfo = getActuatorBoardInfo(this, 'LOX Press');
-                  if (fuelInfo) this.manuallyCommandedChannels.add(`${fuelInfo.channel}@${fuelInfo.boardIp}`);
-                  if (loxInfo) this.manuallyCommandedChannels.add(`${loxInfo.channel}@${loxInfo.boardIp}`);
-                  startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP);
-                } else if (newState !== SystemState.IDLE) {
+                if (newState !== SystemState.IDLE) {
                   startContinuousActuatorCommands(this, newState, STATE_ACTUATOR_MAP);
                 }
               }
@@ -1118,17 +1127,6 @@ class SensorSystemServer {
           }
 
           broadcastActuatorExpectedPositions(this, newState, STATE_ACTUATOR_MAP);
-          if (newState === SystemState.FIRE) {
-            console.log('🎯 FIRE state entered – sending FIRE_START to C++ controller service');
-            if (this.controllerServicePort > 0) {
-              forwardFireStateToControllerService(true, this.controllerServicePort).catch(() => {});
-            }
-            if (this.fireEndTimer) { clearTimeout(this.fireEndTimer); this.fireEndTimer = null; }
-            this.fireStartTimeMs = Date.now();
-            this.fireEndTimer = setTimeout(() => this.endFireState(), SensorSystemServer.FIRE_DURATION_MS);
-          } else if (this.controllerServicePort > 0) {
-            forwardFireStateToControllerService(false, this.controllerServicePort).catch(() => {});
-          }
 
           // Abort UDP broadcasts (ABORT / ABORT_DONE)
           const isAbortState =
@@ -1137,9 +1135,6 @@ class SensorSystemServer {
             newState === SystemState.EMERGENCY_ABORT ||
             newState === SystemState.ABORT;
           if (isAbortState) {
-            if (this.controllerServicePort > 0) {
-              forwardFireStateToControllerService(false, this.controllerServicePort).catch(() => {});
-            }
             if (this.abortDoneTimer) {
               clearTimeout(this.abortDoneTimer);
               this.abortDoneTimer = null;
@@ -1152,6 +1147,21 @@ class SensorSystemServer {
             }, ABORT_DONE_DELAY_MS);
           }
         } else { throw new Error('Failed to send state transition command'); }
+
+        // Fire timer and C++ controller gate
+        if (newState === SystemState.FIRE) {
+          if (this.controllerServicePort > 0) {
+            console.log('🎯 FIRE state entered – sending FIRE_START to C++ controller service');
+            forwardFireStateToControllerService(true, this.controllerServicePort).catch(() => {});
+          }
+          if (this.fireEndTimer) { clearTimeout(this.fireEndTimer); this.fireEndTimer = null; }
+          this.fireStartTimeMs = Date.now();
+          this.fireEndTimer = setTimeout(() => this.endFireState(), SensorSystemServer.FIRE_DURATION_MS);
+        } else if (prevState === SystemState.FIRE) {
+          if (this.controllerServicePort > 0) {
+            forwardFireStateToControllerService(false, this.controllerServicePort).catch(() => {});
+          }
+        }
 
       } else if (command.commandType === 'actuator') {
         const { actuatorName: commandActuatorName, actuatorState } = command.data as { actuatorName?: string; actuatorState?: ActuatorState };
@@ -1400,12 +1410,14 @@ class SensorSystemServer {
     const newState = SystemState.ARMED;
     this.currentState = newState;
     this.broadcast({ type: MessageType.STATE_UPDATE, timestamp: Date.now(), payload: { currentState: newState, stateName: SystemState[newState], timestamp: Date.now(), debugMode: this.debugMode } });
+    console.log('🎯 FIRE auto-ended – sending FIRE_STOP, transitioning to ARMED');
     if (this.controllerServicePort > 0) forwardFireStateToControllerService(false, this.controllerServicePort).catch(() => {});
     if (this.elodin.isConnected()) this.elodin.sendCommand('state_transition', { state: newState });
     const useCppActuatorService = this.actuatorServicePort > 0;
     this.manuallyCommandedChannels.clear();
     stopContinuousActuatorCommands(this);
     if (useCppActuatorService) forwardStateToActuatorService('ARMED', this.actuatorServicePort).catch(() => {});
+    else applyActuatorsForState(this, newState, STATE_ACTUATOR_MAP);
     broadcastActuatorExpectedPositions(this, newState, STATE_ACTUATOR_MAP);
     console.log('🎯 FIRE state auto-ended – transitioned to ARMED');
   }

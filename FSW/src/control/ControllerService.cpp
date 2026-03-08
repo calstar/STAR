@@ -219,9 +219,79 @@ void ControllerService::setNavState(const RobustDDPController::NavState& nav) {
 }
 
 void ControllerService::setFireActive(bool active) {
-    fire_active_ = active;
+    const bool was_active = fire_active_.exchange(active);
     std::cout << "[ControllerService] 🔥 Fire state: "
               << (active ? "ACTIVE — PWM enabled" : "INACTIVE — PWM suppressed") << std::endl;
+
+    if (active && !was_active) {
+        // FIRE_START: send a single open command using the same priority as the loop
+        float td_f = test_duty_fuel_.load();
+        float td_o = test_duty_ox_.load();
+
+        RobustDDPController::ActuationCommand actuation;
+
+        if (td_f > 0.0f || td_o > 0.0f) {
+            // Fallback / test duty: just send whatever is set
+            actuation.duty_F = td_f;
+            actuation.duty_O = td_o;
+            actuation.u_F_on = td_f > 0.0f;
+            actuation.u_O_on = td_o > 0.0f;
+            actuation.valid = true;
+        } else if (lut_.is_loaded()) {
+            RobustDDPController::Measurement meas;
+            {
+                std::lock_guard<std::mutex> lock(input_mutex_);
+                meas = current_meas_;
+            }
+            const double P_ch_est = 0.5 * (meas.P_ch_mp1 + meas.P_ch_mp2);
+            std::map<std::string, double> point;
+            point["P_ch"] = P_ch_est;
+            point["P_u_fuel"] = meas.P_u_fuel;
+            point["P_u_ox"] = meas.P_u_ox;
+            std::map<std::string, double> lut_out;
+            if (lut_.evaluate(point, lut_out)) {
+                double u_f = lut_out.count("u_safe_F") ? lut_out.at("u_safe_F")
+                             : lut_out.count("duty_F") ? lut_out.at("duty_F")
+                                                       : 0.0;
+                double u_o = lut_out.count("u_safe_O") ? lut_out.at("u_safe_O")
+                             : lut_out.count("duty_O") ? lut_out.at("duty_O")
+                                                       : 0.0;
+                actuation.duty_F = (u_f > 0.5) ? 1.0 : 0.0;
+                actuation.duty_O = (u_o > 0.5) ? 1.0 : 0.0;
+                actuation.u_F_on = actuation.duty_F > 0.5;
+                actuation.u_O_on = actuation.duty_O > 0.5;
+                actuation.valid = true;
+            }
+        } else {
+            RobustDDPController::Measurement meas;
+            RobustDDPController::Command cmd;
+            RobustDDPController::NavState nav;
+            {
+                std::lock_guard<std::mutex> lock(input_mutex_);
+                meas = current_meas_;
+                cmd = current_cmd_;
+                nav = current_nav_;
+            }
+            auto [a, d] = controller_->step(meas, nav, cmd);
+            actuation = a;
+        }
+
+        if (actuation.valid)
+            sendActuationPWM(actuation);
+        std::cout << "[ControllerService] 🔥 FIRE open command sent: duty_F=" << actuation.duty_F
+                  << " duty_O=" << actuation.duty_O << std::endl;
+
+    } else if (!active && was_active) {
+        // FIRE_STOP: send a single zero-duty close command on both channels
+        RobustDDPController::ActuationCommand zero;
+        zero.duty_F = 0.0;
+        zero.duty_O = 0.0;
+        zero.u_F_on = false;
+        zero.u_O_on = false;
+        zero.valid = true;
+        sendActuationPWM(zero);
+        std::cout << "[ControllerService] 🛑 FIRE close command sent (duty=0)" << std::endl;
+    }
 }
 
 void ControllerService::setTestDuty(float fuel, float ox) {
@@ -514,10 +584,7 @@ void ControllerService::controllerLoop() {
             diagnostics = d;
         }
 
-        // ── Send PWM commands only when FIRE state is active ──────────
-        if (fire_active_) {
-            sendActuationPWM(actuation);
-        }
+        // ── PWM is edge-triggered (sent once on FIRE_START/STOP), not per-tick ──
 
         // ── Store outputs for external readers ─────────────────────────
         {

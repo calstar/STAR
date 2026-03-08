@@ -35,8 +35,8 @@ const TAB_CONFIG: Record<GSETab, {
     color: '#16A085',
     accentClass: 'bg-teal-500',
     activeClass: 'bg-teal-500 text-black',
-    entities: ['PT_Cal.GSE_Mid', 'PT_Cal.GN2_High'],
-    entityLabels: ['GSE Mid (HP Source)', 'GN2 High (Vehicle)'],
+    entities: ['PT_Cal.GSE_High', 'PT_Cal.GSE_Mid', 'PT_Cal.GN2_High'],
+    entityLabels: ['GSE High (LOX Pressurant)', 'GSE Mid (HP Source)', 'GN2 High (Vehicle)'],
     yLabel: 'Pressure (PSI)',
     actuators: [
       { label: 'GN2 Vent',        entity: 'ACT.GN2_Vent' },

@@ -1,58 +1,30 @@
 'use client'
 
-import { useSensorValue, useSensorStore } from '@/lib/store';
-import { SystemState } from '@/lib/types';
-
-// Expected position: 'open' | 'closed' | null. Source: backend CSV + config (NO/NC for Idle).
-type ExpectedPosition = 'open' | 'closed' | null;
+import { useSensorValue } from '@/lib/store';
 
 interface ActuatorRowProps {
   label: string;
   entity: string;
   color: string;
-  expected: ExpectedPosition;
+  channel?: number;
 }
 
-function ActuatorRow({ label, entity, color, expected }: ActuatorRowProps) {
-  // Try both named entity and channel fallback
+function ActuatorRow({ label, entity, color, channel }: ActuatorRowProps) {
   const status = useSensorValue(entity, 'status');
   const adcNamed = useSensorValue(entity, 'raw_adc_counts');
-
-  // Extract channel number if present (e.g., ACT.ACT_CH7 -> 7)
-  const entityMatch = entity.match(/ACT_CH(\d+)/);
-  const channelNum = entityMatch ? parseInt(entityMatch[1], 10) : null;
-
-  // Try channel-based lookup if we found a channel number
-  // Use a dummy entity that won't match anything if no channel
-  const channelEntity = channelNum ? `ACT.ACT_CH${channelNum}` : 'ACT._DUMMY_NO_CH';
+  const channelEntity = channel != null ? `ACT.ACT_CH${channel}` : '';
   const adcChannel = useSensorValue(channelEntity, 'raw_adc_counts');
-
-  // Prefer named entity, fallback to channel-based (only if channelNum exists)
-  const adc = adcNamed ?? (channelNum ? adcChannel : null);
+  const adc = adcNamed ?? (channelEntity ? adcChannel : null);
   const hasData = status !== null || adc !== null;
   const isOpen = status === 1 || (adc !== null && adc > 1000);
 
-  // Determine if actual state matches expected
-  const mismatch = expected !== null && hasData && (
-    (expected === 'open' && !isOpen) || (expected === 'closed' && isOpen)
-  );
   return (
-    <div className={`flex items-center justify-between rounded-lg px-5 py-4 ${
-      mismatch ? 'bg-yellow-950/40 border border-yellow-600/50' : 'bg-gray-900/50'
-    }`}>
+    <div className="flex items-center justify-between rounded-lg px-5 py-4 bg-gray-900/50">
       <div className="flex items-center gap-3">
         <div className="w-4 h-4 rounded-full" style={{ backgroundColor: color }} />
         <span className="text-base font-bold text-text-muted uppercase tracking-wider">{label}</span>
       </div>
       <div className="flex items-center gap-3">
-        {/* Expected position indicator */}
-        {expected && (
-          <span className={`text-xs font-mono px-2 py-1 rounded ${
-            expected === 'open' ? 'bg-green-900/30 text-green-600' : 'bg-red-900/30 text-red-600'
-          }`}>
-            EXP:{expected === 'open' ? 'O' : 'C'}
-          </span>
-        )}
         <span className="text-base font-mono text-gray-400">
           {hasData ? (adc?.toLocaleString() ?? '---') : '---'}
         </span>
@@ -65,7 +37,6 @@ function ActuatorRow({ label, entity, color, expected }: ActuatorRowProps) {
         >
           {!hasData ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
         </span>
-        {mismatch && <span className="text-yellow-400 text-lg">⚠</span>}
       </div>
     </div>
   );
@@ -73,24 +44,20 @@ function ActuatorRow({ label, entity, color, expected }: ActuatorRowProps) {
 
 interface ActuatorStatePanelProps {
   title: string;
-  actuators: { label: string; entity: string; color: string }[];
+  actuators: { label: string; entity: string; color: string; channel?: number }[];
 }
 
 export default function ActuatorStatePanel({ title, actuators }: ActuatorStatePanelProps) {
-  const currentState = useSensorStore((s) => s.currentState);
-  const actuatorExpectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
-
-  // Use backend/CSV expected positions (includes NO/NC for Idle). DEBUG has none.
-  const stateExpected = currentState != null ? (actuatorExpectedPositions[currentState] ?? {}) : {};
-
   return (
     <div className="bg-card rounded-lg p-4 flex flex-col gap-3">
       <h3 className="text-base font-bold text-text-muted uppercase tracking-widest mb-1">{title}</h3>
       {actuators.map((a) => (
         <ActuatorRow
           key={a.entity}
-          {...a}
-          expected={stateExpected[a.entity] ?? null}
+          label={a.label}
+          entity={a.entity}
+          color={a.color}
+          channel={'channel' in a ? a.channel : undefined}
         />
       ))}
     </div>

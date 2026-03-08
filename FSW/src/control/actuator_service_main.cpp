@@ -366,13 +366,16 @@ int main(int argc, char* argv[]) {
                   << std::endl;
     }
 
-    // Delay CSV (optional): state_name -> actuator_name -> delay in seconds when entering that state
+    // Delay CSV (optional): state_name -> actuator_name -> delay in seconds when entering that
+    // state
     std::map<std::string, std::map<std::string, double>> state_actuator_delays;
-    std::string delay_csv_path = getTomlValue(config_content, "state_machine", "actuator_delay_csv", "");
+    std::string delay_csv_path =
+        getTomlValue(config_content, "state_machine", "actuator_delay_csv", "");
     if (delay_csv_path.empty() && !csv_path.empty()) {
         size_t slash = csv_path.find_last_of("/\\");
-        delay_csv_path = (slash != std::string::npos) ? csv_path.substr(0, slash + 1) + "state_machine_actuator_delays.csv"
-                                                 : "state_machine_actuator_delays.csv";
+        delay_csv_path = (slash != std::string::npos)
+                             ? csv_path.substr(0, slash + 1) + "state_machine_actuator_delays.csv"
+                             : "state_machine_actuator_delays.csv";
     }
     if (delay_csv_path.empty())
         delay_csv_path = "config/state_machine_actuator_delays.csv";
@@ -385,7 +388,8 @@ int main(int argc, char* argv[]) {
         std::ifstream df(delay_csv_path);
         if (!df.is_open() && !delay_csv_path.empty()) {
             for (const char* fb : delay_fallbacks) {
-                if (std::string(fb) == delay_csv_path) continue;
+                if (std::string(fb) == delay_csv_path)
+                    continue;
                 df.open(fb);
                 if (df.is_open()) {
                     delay_csv_path = fb;
@@ -416,16 +420,19 @@ int main(int argc, char* argv[]) {
                         try {
                             if (!cells[col].empty())
                                 sec = std::stod(cells[col]);
-                        } catch (...) {}
+                        } catch (...) {
+                        }
                         if (sec < 0)
                             sec = 0;
                         state_actuator_delays[headers[col]][actuator_name] = sec;
                     }
                 }
             }
-            std::cout << "[ActuatorService] Loaded delay CSV: " << state_actuator_delays.size() << " states" << std::endl;
+            std::cout << "[ActuatorService] Loaded delay CSV: " << state_actuator_delays.size()
+                      << " states" << std::endl;
         } else {
-            std::cout << "[ActuatorService] No delay CSV at " << delay_csv_path << " (optional)" << std::endl;
+            std::cout << "[ActuatorService] No delay CSV at " << delay_csv_path << " (optional)"
+                      << std::endl;
         }
     }
 
@@ -519,6 +526,14 @@ int main(int argc, char* argv[]) {
             }
         }
         const bool use_delays = (delay_it != state_actuator_delays.end());
+        // During Fire state, PWM channels are driven exclusively by the controller service
+        // (duty cycle) — do not send ACTUATOR_COMMAND for Fuel Main, LOX Main, Fuel Press, LOX
+        // Press.
+        const bool is_fire_state = (canon == "fire");
+        auto skip_in_fire = [](const std::string& name) {
+            return name == "Fuel Main" || name == "LOX Main" || name == "Fuel Press" ||
+                   name == "LOX Press";
+        };
 
         if (use_delays) {
             // Build (act_name, pos, delay_sec), sort by delay, then send one-by-one with sleep
@@ -529,6 +544,8 @@ int main(int argc, char* argv[]) {
             };
             std::vector<DelayedCmd> delayed;
             for (const auto& [act_name, pos] : it->second) {
+                if (is_fire_state && skip_in_fire(act_name))
+                    continue;
                 if (actuator_map.find(act_name) == actuator_map.end())
                     continue;
                 double d = 0;
@@ -539,8 +556,9 @@ int main(int argc, char* argv[]) {
                 }
                 delayed.push_back({act_name, pos, d});
             }
-            std::sort(delayed.begin(), delayed.end(),
-                      [](const DelayedCmd& a, const DelayedCmd& b) { return a.delay_sec < b.delay_sec; });
+            std::sort(delayed.begin(), delayed.end(), [](const DelayedCmd& a, const DelayedCmd& b) {
+                return a.delay_sec < b.delay_sec;
+            });
             double prev_t = 0;
             for (const auto& dc : delayed) {
                 if (dc.delay_sec > prev_t) {
@@ -559,6 +577,8 @@ int main(int argc, char* argv[]) {
                  std::vector<daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand>>
             by_board;
         for (const auto& [act_name, pos] : it->second) {
+            if (is_fire_state && skip_in_fire(act_name))
+                continue;
             auto am = actuator_map.find(act_name);
             if (am == actuator_map.end())
                 continue;

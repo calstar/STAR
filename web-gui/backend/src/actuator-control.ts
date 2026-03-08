@@ -346,6 +346,9 @@ export function sendPWMActuatorCommandUDP(
     }
 }
 
+/** In FIRE state these actuators are driven by PWM (controller duty cycle); do not send state-based open/closed commands. */
+const FIRE_PWM_ACTUATORS = new Set<string>(['Fuel Press', 'LOX Press']);
+
 /** Map SystemState enum key to CSV state name (state_machine_actuators.csv headers). */
 const STATE_TO_CSV_NAME: Record<string, string> = {
   IDLE: 'Idle', ARMED: 'Armed', FUEL_FILL: 'Fuel Fill', OX_FILL: 'Ox Fill',
@@ -489,6 +492,10 @@ export function applyActuatorsForState(
     const commandedChannels = new Set<string>();
 
     for (const [actuatorName, val] of Object.entries(expected)) {
+        if (state === SystemState.FIRE && FIRE_PWM_ACTUATORS.has(actuatorName)) {
+            console.log(`   (${actuatorName}) skipped in FIRE — PWM commands only`);
+            continue;
+        }
         const boardInfo = getActuatorBoardInfo(host, actuatorName);
         if (!boardInfo) {
             const channelId = getActuatorChannel(actuatorName, configActuatorChannels);
@@ -579,6 +586,7 @@ export function startContinuousActuatorCommands(
         if (!boardInfo) {
             const channelId = getActuatorChannel(actuatorName, configActuatorChannels);
             if (channelId === undefined || channelId < 1 || channelId > 10) continue;
+            if (state === SystemState.FIRE && FIRE_PWM_ACTUATORS.has(actuatorName)) continue;
             const channelKey = `${channelId}@${host.actuatorIP}`;
             if (!channelCommands.has(channelKey)) {
                 channelCommands.set(channelKey, { actuatorName, guiState: val, boardIp: host.actuatorIP, channel: channelId });
@@ -586,6 +594,7 @@ export function startContinuousActuatorCommands(
             continue;
         }
 
+        if (state === SystemState.FIRE && FIRE_PWM_ACTUATORS.has(actuatorName)) continue;
         const { channel: channelId, boardIp } = boardInfo;
         if (channelId < 1 || channelId > 10) continue;
         const channelKey = `${channelId}@${boardIp}`;
@@ -600,20 +609,11 @@ export function startContinuousActuatorCommands(
 
     host.actuatorCommandInterval = setInterval(() => {
         if (host.currentState === state) {
-            for (const [channelKey, cmd] of channelCommands.entries()) {
-                const channelNum = cmd.channel;
-                const channelKeyWithIp = `${channelNum}@${cmd.boardIp}`;
-                if (host.manuallyCommandedChannels.has(channelKeyWithIp)) {
-                    // In FIRE state, skip press channels (managed by controller loop PWM)
-                    if (state === SystemState.FIRE && (cmd.actuatorName === 'Fuel Press' ||
-                        cmd.actuatorName === 'LOX Press')) {
-                        continue;
-                    }
-                    continue;
-                }
+            for (const [, cmd] of channelCommands.entries()) {
+                if (host.manuallyCommandedChannels.has(`${cmd.channel}@${cmd.boardIp}`)) continue;
                 const actuatorType = getActuatorType(cmd.actuatorName);
                 const hardwareState = guiStateToHardwareState(cmd.guiState, actuatorType);
-                sendActuatorCommandUDP(host, channelNum, hardwareState, cmd.boardIp);
+                sendActuatorCommandUDP(host, cmd.channel, hardwareState, cmd.boardIp);
             }
         } else {
             stopContinuousActuatorCommands(host);

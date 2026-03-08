@@ -304,13 +304,12 @@ active_connectors = []
 
 # =============================================================================
 # Sensor Roles - RTD Board #1 (board_id = 31)
-# LOX tank / oxidizer temperatures — names with LOX/Ox so LOX window shows them
+# LOX tank RTDs: channels 2, 3, 4 (upper, mid, lower) — LOX window plots these
 # =============================================================================
 [sensor_roles_rtd_board]
-"LOX Tank 1" = 1
-"LOX Tank 2" = 2
-"LOX Tank 3" = 3
-"LOX Tank 4" = 4
+"LOX Upper" = 2
+"LOX Mid"   = 3
+"LOX Lower" = 4
 
 # =============================================================================
 # Sensor Roles - TC Board #1 (board_id = 51)
@@ -575,14 +574,14 @@ transitions_csv = "external/DiabloAvionics/test_guis/state_transitions.csv"
 # =============================================================================
 [controller]
 # PWM frequency for actuator control (Hz)
-pwm_frequency_hz = 5.0
+pwm_frequency_hz = 10.0
 # PWM command duration (ms) - how long each command stays active
 pwm_duration_ms = 2000
 # Fallback duty cycles when controller service is unavailable (0.0-1.0).
 # When controller_service runs, non-zero values also act as open-loop test duty (bypass DDP/LUT).
 # For LUT mode, set both to 0 so the LUT is used.
-fallback_fuel_duty_cycle = 0.55
-fallback_ox_duty_cycle = 0.65
+fallback_fuel_duty_cycle = 0.10
+fallback_ox_duty_cycle = 0.15
 # Controller loop update rate (Hz)
 controller_loop_hz = 10.0
 # Controller service URL

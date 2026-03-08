@@ -202,11 +202,9 @@ const ALIASES: Record<string, string[]> = {
 
 export { ALIASES };
 
-// ── Batched sensor-data updates (60 Hz) ──────────────────────────────────────
-// Accumulate all incoming sensor writes and flush to Zustand once every ~16ms.
-// Backend broadcasts at 60 Hz per entity so this coalesces bursts into a single
-// setState, keeping React re-renders at ≤60 Hz regardless of
-// how many entities are arriving simultaneously.
+// ── Batched sensor-data updates (20 Hz) ──────────────────────────────────────
+// Accumulate incoming sensor writes and flush to Zustand every 50ms.
+// Keeps React re-renders at 20 Hz so the UI stays responsive.
 let _pendingSensorWrites: Record<string, number> = {};
 let _sensorTimestamps: Record<string, number> = {};
 let _flushScheduled = false;
@@ -234,20 +232,16 @@ function scheduleSensorFlush() {
   if (_flushScheduled) return;
   _flushScheduled = true;
 
-  // Use requestAnimationFrame for smooth, synchronized updates with React render cycle
   requestAnimationFrame(() => {
     flushSensorWrites();
   });
-
-  // Fallback timeout: if RAF doesn't fire within 50ms, force flush
   setTimeout(() => {
     if (_flushScheduled) flushSensorWrites();
-  }, 50);
+  }, FLUSH_INTERVAL_MS);
 }
 
-// Fixed-interval flush: when tab is in background, RAF is paused and setTimeout is heavily
-// throttled (~1s), so bar plots freeze. Flush pending writes every ~16ms (60 Hz) regardless of visibility.
-const FLUSH_INTERVAL_MS = 16;
+// Flush pending writes at 20 Hz so React re-renders stay light and UI stays responsive.
+const FLUSH_INTERVAL_MS = 50;
 if (typeof setInterval !== 'undefined') {
   setInterval(() => {
     if (Object.keys(_pendingSensorWrites).length > 0) {
@@ -473,12 +467,12 @@ export function useSensorValue(entity: string, component: string): number | null
   return value;
 }
 
-/** Subscribe to sensor flush tick (~60 Hz). Use with useGetSensorValue() so pages that read many values re-render on flush without subscribing to full sensorData. */
+/** Subscribe to sensor flush tick (20 Hz). Use with useGetSensorValue() so pages that read many values re-render on flush without subscribing to full sensorData. */
 export function useSensorDataVersion(): number {
   return useSensorStore((s) => s._updateVersion ?? 0);
 }
 
-/** Last flush time (Date.now()). Use to show latency: "Data: Xms ago" or "~60 Hz". Backend throttles at 16ms; frontend flushes every FLUSH_INTERVAL_MS (16ms). */
+/** Last flush time (Date.now()). Use to show latency. Frontend flushes every FLUSH_INTERVAL_MS (50ms). */
 export function useLastSensorFlushMs(): number | undefined {
   return useSensorStore((s) => s.lastSensorFlushMs);
 }

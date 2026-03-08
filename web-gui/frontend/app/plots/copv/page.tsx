@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import PressureBar from '@/components/plots/PressureBar';
 import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
@@ -20,11 +20,29 @@ export default function COPVGraphsPage() {
   const pressureLimits = usePressureLimits();
   const gn2Limits = getLimitsForSystem(pressureLimits, 'GN2');
 
-  // GN2 sensors: role names containing "GN2"
+  const [activeTab, setActiveTab] = useState<'PT' | 'RTD'>('PT');
+
   const gn2Sensors = filterByRole(allSensors, 'GN2');
-  const entities = gn2Sensors.map((s) => s.calEntity);
-  const labels = gn2Sensors.map((s) => s.role);
-  const colors = entities.map((e) => getEntityColor(e));
+  const copvRtdSensors = allSensors.filter(
+    (s) =>
+      (s.calEntity.startsWith('RTD') || s.calEntity.startsWith('RTD_Cal')) &&
+      s.role.toLowerCase().includes('copv')
+  );
+  const rtdSensors =
+    copvRtdSensors.length > 0
+      ? copvRtdSensors
+      : allSensors.filter(
+          (s) =>
+            (s.calEntity.startsWith('RTD') || s.calEntity.startsWith('RTD_Cal')) &&
+            (s.role.toLowerCase().includes('gn2') || s.role.toLowerCase().includes('copv'))
+        );
+
+  const currentSensors = activeTab === 'PT' ? gn2Sensors : rtdSensors;
+  const currentEntities = currentSensors.map((s) => s.calEntity);
+  const currentLabels = currentSensors.map((s) => s.role);
+  const currentColors = currentEntities.map((e) => getEntityColor(e));
+  const componentName = activeTab === 'PT' ? 'pressure_psi' : 'temperature_c';
+  const yLabel = activeTab === 'PT' ? 'Pressure (PSI)' : 'Temperature (°C)';
 
   const hiSensor = gn2Sensors.find((s) => s.role.toLowerCase().includes('high'));
   const regSensor = gn2Sensors.find((s) => s.role.toLowerCase().includes('reg'));
@@ -41,14 +59,30 @@ export default function COPVGraphsPage() {
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
 
-      <div className="flex items-center flex-shrink-0">
-        <div className="w-1 h-5 bg-green-500 rounded-full mr-3" />
-        <h1 className="text-base font-bold text-green-400 tracking-wider">COPV / GN2 SYSTEM</h1>
+      <div className="flex items-center justify-between flex-shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-1 h-5 bg-green-500 rounded-full mr-3" />
+          <h1 className="text-base font-bold text-green-400 tracking-wider">COPV / GN2 SYSTEM</h1>
+        </div>
+        <div className="flex gap-2 bg-gray-900 rounded-lg p-1">
+          <button
+            onClick={() => setActiveTab('PT')}
+            className={`px-4 py-1.5 text-sm font-bold rounded-md transition-colors ${activeTab === 'PT' ? 'bg-green-500 text-black' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
+          >
+            PTs (Pressures)
+          </button>
+          <button
+            onClick={() => setActiveTab('RTD')}
+            className={`px-4 py-1.5 text-sm font-bold rounded-md transition-colors ${activeTab === 'RTD' ? 'bg-teal-500 text-black' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
+          >
+            RTD (COPV Temp)
+          </button>
+        </div>
       </div>
 
       <div className="flex-shrink-0">
-        <SensorReadoutStrip sensors={gn2Sensors.map((s) => ({
-          label: s.role, entity: s.calEntity, component: 'pressure_psi', color: getEntityColor(s.calEntity),
+        <SensorReadoutStrip sensors={currentSensors.map((s) => ({
+          label: s.role, entity: s.calEntity, component: componentName, color: getEntityColor(s.calEntity),
         }))} />
       </div>
 
@@ -56,15 +90,14 @@ export default function COPVGraphsPage() {
       <div className="flex-1 min-h-0 flex flex-row gap-2">
         {/* Main charts + actuators */}
         <div className="flex-1 flex flex-col gap-2 min-h-0 min-w-0">
-          {/* GN2 pressure */}
           <div className="flex-[3] min-h-0 bg-card rounded-lg p-2 flex flex-col min-w-0">
             <TimeSeriesPlot
-              title="COPV / GN2 Pressure (PSI)"
-              entities={entities}
-              labels={labels}
-              component="pressure_psi"
-              colors={colors}
-              yLabel="Pressure (PSI)"
+              title={activeTab === 'PT' ? 'COPV / GN2 Pressure (PSI)' : 'COPV RTD Temperature (°C)'}
+              entities={currentEntities}
+              labels={currentLabels}
+              component={componentName}
+              colors={currentColors}
+              yLabel={yLabel}
             />
           </div>
 
@@ -78,7 +111,8 @@ export default function COPVGraphsPage() {
           </div>
         </div>
 
-        {/* Pressure bars sidebar (narrower) */}
+        {/* Pressure bars sidebar (PT tab only) */}
+        {activeTab === 'PT' && (
         <div className="w-40 bg-card rounded-lg p-3 flex flex-col gap-2 flex-shrink-0 overflow-visible">
           <div className="text-xs font-bold uppercase tracking-widest text-gray-400 text-center flex-shrink-0">
             Pressures
@@ -92,6 +126,7 @@ export default function COPVGraphsPage() {
             </div>
           </div>
         </div>
+        )}
       </div>
 
     </main>
