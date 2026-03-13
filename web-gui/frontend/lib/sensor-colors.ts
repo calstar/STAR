@@ -76,7 +76,7 @@ export const PRESSURE_BAR_SENSORS = PRESSURE_SENSORS.map((s) => ({
   color: s.color,
   nop: s.nop,
   meop: s.meop,
-  avgEntities: 'avgEntities' in s ? (s as { avgEntities?: string[] }).avgEntities : undefined,
+  avgEntities: 'avgEntities' in s ? [...s.avgEntities] : undefined,
 }));
 
 /** Actuator colors (consistent across panes) */

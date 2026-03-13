@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import TopBar from './TopBar';
 
 // Routes where the full desktop TopBar should be suppressed (they render their own compact header)
-const SUPPRESS_TOPBAR_PATHS = ['/window/mobile-gui'];
+const SUPPRESS_TOPBAR_PATHS = ['/window/mobile-gui', '/window/livestream'];
 
 export default function TopBarWrapper() {
   const pathname = usePathname();

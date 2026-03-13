@@ -8,6 +8,51 @@
 SESSION="sensor-dev"
 PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# Prefer repo venv if present (fixes missing Python deps like scipy/websockets on macOS).
+PYTHON_BIN="$PROJECT/.venv/bin/python"
+if [ ! -x "$PYTHON_BIN" ]; then
+  PYTHON_BIN="$(command -v python3 || true)"
+fi
+if [ -z "$PYTHON_BIN" ]; then
+  echo "❌ python3 not found. Install Python 3.12+ and create a venv:"
+  echo "   python3.12 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
+  exit 1
+fi
+
+# Node.js must be modern enough for the web GUI tooling.
+if ! command -v node >/dev/null 2>&1; then
+  echo "❌ node not found. Install Node.js 20+ (recommended) and retry."
+  exit 1
+fi
+NODE_MAJOR="$(node -v 2>/dev/null | sed 's/^v//' | cut -d. -f1)"
+if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 20 ]; then
+  echo "❌ Node.js 20+ required. Current: $(node -v)"
+  exit 1
+fi
+if [ "$NODE_MAJOR" -ge 23 ]; then
+  echo "⚠️  Node.js $(node -v) detected. If relay/backend crash, switch to Node 20/22."
+fi
+
+# Elodin DB binary (portable path: cargo bin or PATH).
+ELODIN_DB_BIN="$HOME/.cargo/bin/elodin-db"
+if [ ! -x "$ELODIN_DB_BIN" ]; then
+  ELODIN_DB_BIN="$(command -v elodin-db || true)"
+fi
+if [ -z "$ELODIN_DB_BIN" ]; then
+  echo "❌ elodin-db not found. Install it (cargo) and ensure it's on PATH."
+  exit 1
+fi
+
+# Ensure web-gui dependencies are installed (tmux panes assume they exist).
+if [ ! -d "$PROJECT/web-gui/backend/node_modules" ]; then
+  echo "📦 Installing web-gui backend dependencies..."
+  (cd "$PROJECT/web-gui/backend" && npm install) || { echo "❌ backend npm install failed"; exit 1; }
+fi
+if [ ! -d "$PROJECT/web-gui/frontend/node_modules" ]; then
+  echo "📦 Installing web-gui frontend dependencies..."
+  (cd "$PROJECT/web-gui/frontend" && npm install) || { echo "❌ frontend npm install failed"; exit 1; }
+fi
+
 # Check if services are already running via systemd
 if systemctl --user is-active --quiet sensor-backend.service 2>/dev/null; then
   echo "⚠️  Systemd services are currently running!"
@@ -79,7 +124,7 @@ if [ ! -x "$ACTUATOR_BIN" ]; then
 fi
 CMD_ACTUATOR="printf '\n  ══ ACTUATOR SERVICE (TCP :9998 → state → UDP commands) ══\n\n' && sleep 3 && cd $PROJECT && exec $ACTUATOR_BIN --config config/config.toml --port 9998 2>&1"
 
-CMD_DB="printf '\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n' && mkdir -p $HOME/.local/share/elodin && RUST_LOG=debug exec $HOME/.cargo/bin/elodin-db run '[::]:2240' '$ELODIN_DB_DIR'"
+CMD_DB="printf '\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n' && mkdir -p $HOME/.local/share/elodin && RUST_LOG=debug exec $ELODIN_DB_BIN run '[::]:2240' '$ELODIN_DB_DIR'"
 # Relay must connect to DB FIRST (sleep 2s) — daq_bridge sleeps 5s so relay subscribes before any TABLE data flows.
 CMD_RELAY="printf '\n  ══ ELODIN RELAY — WS :9090 (DB → relay → services) ══\n\n' && sleep 2 && cd $PROJECT/web-gui/backend && npm run relay 2>&1"
 # Auto-detect whether the actuator_service binary is available for TCP forwarding.
@@ -93,8 +138,8 @@ CMD_WEB_FRONTEND="printf '\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n'
 # Calibration: C++ (PT + calibrated TC/RTD/LC when files exist) + Python (TC/RTD/LC raw→physical fallback)
 CAL_VERBOSE="${CAL_VERBOSE:-1}"
 CMD_CAL_CPP="printf '\n  ══ CALIBRATION (C++) — Relay TCP → DB ══\n\n' && sleep 4 && cd $PROJECT && CAL_VERBOSE=$CAL_VERBOSE exec $CAL_BIN --config config/config.toml --elodin-host 127.0.0.1 --relay-host 127.0.0.1 --relay-port 9091 2>&1"
-CMD_CAL_PY="printf '\n  ══ CALIBRATION (Python) — TC/RTD/LC raw→physical → DB ══\n\n' && sleep 5 && cd $PROJECT && PYTHONPATH=$PROJECT exec python3 scripts/calibration/calibration_server.py 2>&1"
-CMD_SIM="printf '\n  ══ BOARD SIMULATOR — UDP → :5006 (All Boards) ══\n\n' && sleep 4 && cd $PROJECT && ([ -x scripts/setup_sim_network.sh ] && scripts/setup_sim_network.sh || true) && exec python3 scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 2>&1"
+CMD_CAL_PY="printf '\n  ══ CALIBRATION (Python) — TC/RTD/LC raw→physical → DB ══\n\n' && sleep 5 && cd $PROJECT && PYTHONPATH=$PROJECT exec $PYTHON_BIN scripts/calibration/calibration_server.py 2>&1"
+CMD_SIM="printf '\n  ══ BOARD SIMULATOR — UDP → :5006 (All Boards) ══\n\n' && sleep 4 && cd $PROJECT && ([ -x scripts/setup_sim_network.sh ] && scripts/setup_sim_network.sh || true) && exec $PYTHON_BIN scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 2>&1"
 
 tmux new-session  -d -s "$SESSION" -n main -x 220 -y 60 \
   "bash --norc --noprofile -c \"$CMD_DB\""
