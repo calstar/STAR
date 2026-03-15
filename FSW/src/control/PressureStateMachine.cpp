@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <thread>
 
@@ -250,43 +251,31 @@ void PressureStateMachine::readPressureData() {
     // Match packet_id to sensor message IDs
     std::lock_guard<std::mutex> lock(pressure_mutex_);
 
+    // Parse calibrated PT packets: [timestamp(8), channelId(1), padding(3), pressurePsi(float32,4), ...]
+    // Minimum payload size = 16 bytes to read the pressurePsi field.
+    constexpr size_t CAL_PT_MIN_LEN = 16;
+
     if (packet_id == pt_hp_message_id_ || packet_id == pt_lp_message_id_) {
-        // GN2 pressure sensor (PT_HP or PT_LP)
-        if (payload_len >= sizeof(uint64_t) + sizeof(uint8_t) + 3 + sizeof(uint32_t) +
-                               sizeof(uint32_t) + sizeof(uint8_t)) {
-            // Parse RawPTMessage: timestamp_ns, channel_id, padding(3), raw_adc_counts,
-            // sample_timestamp_ms, status_flags uint64_t timestamp_ns = *reinterpret_cast<const
-            // uint64_t*>(payload); uint8_t channel_id = payload[8];
-            uint32_t raw_adc_counts = *reinterpret_cast<const uint32_t*>(payload + 12);
-            // TODO: Convert ADC counts to PSI using calibration
-            // For now, use a simple conversion (this should use actual calibration)
-            double pressure_psi =
-                static_cast<double>(raw_adc_counts) * 0.001;  // Placeholder conversion
-            latest_pressures_.gn2_pressure_psi = pressure_psi;
+        if (payload_len >= CAL_PT_MIN_LEN) {
+            float psi_f;
+            std::memcpy(&psi_f, payload + 12, sizeof(float));
+            latest_pressures_.gn2_pressure_psi = static_cast<double>(psi_f);
             latest_pressures_.timestamp = std::chrono::steady_clock::now();
             latest_pressures_.valid = true;
         }
     } else if (packet_id == pt_fup_message_id_ || packet_id == pt_fdp_message_id_) {
-        // Fuel pressure sensor (PT_FUP or PT_FDP)
-        if (payload_len >= sizeof(uint64_t) + sizeof(uint8_t) + 3 + sizeof(uint32_t) +
-                               sizeof(uint32_t) + sizeof(uint8_t)) {
-            // uint64_t timestamp_ns = *reinterpret_cast<const uint64_t*>(payload);
-            // uint8_t channel_id = payload[8];
-            uint32_t raw_adc_counts = *reinterpret_cast<const uint32_t*>(payload + 12);
-            double pressure_psi = static_cast<double>(raw_adc_counts) * 0.001;  // Placeholder
-            latest_pressures_.fuel_pressure_psi = pressure_psi;
+        if (payload_len >= CAL_PT_MIN_LEN) {
+            float psi_f;
+            std::memcpy(&psi_f, payload + 12, sizeof(float));
+            latest_pressures_.fuel_pressure_psi = static_cast<double>(psi_f);
             latest_pressures_.timestamp = std::chrono::steady_clock::now();
             latest_pressures_.valid = true;
         }
     } else if (packet_id == pt_oup_message_id_ || packet_id == pt_odp_message_id_) {
-        // Oxidizer pressure sensor (PT_OUP or PT_ODP)
-        if (payload_len >= sizeof(uint64_t) + sizeof(uint8_t) + 3 + sizeof(uint32_t) +
-                               sizeof(uint32_t) + sizeof(uint8_t)) {
-            // uint64_t timestamp_ns = *reinterpret_cast<const uint64_t*>(payload);
-            // uint8_t channel_id = payload[8];
-            uint32_t raw_adc_counts = *reinterpret_cast<const uint32_t*>(payload + 12);
-            double pressure_psi = static_cast<double>(raw_adc_counts) * 0.001;  // Placeholder
-            latest_pressures_.ox_pressure_psi = pressure_psi;
+        if (payload_len >= CAL_PT_MIN_LEN) {
+            float psi_f;
+            std::memcpy(&psi_f, payload + 12, sizeof(float));
+            latest_pressures_.ox_pressure_psi = static_cast<double>(psi_f);
             latest_pressures_.timestamp = std::chrono::steady_clock::now();
             latest_pressures_.valid = true;
         }

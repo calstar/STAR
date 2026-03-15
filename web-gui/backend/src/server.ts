@@ -756,8 +756,9 @@ class SensorSystemServer {
     }
     // else: out-of-order, skip to keep monotonic
     if (series.time.length > this.HISTORY_MAX_POINTS) {
-      series.time = series.time.slice(-this.HISTORY_MAX_POINTS);
-      series.values = series.values.slice(-this.HISTORY_MAX_POINTS);
+      const excess = series.time.length - this.HISTORY_MAX_POINTS;
+      series.time.splice(0, excess);
+      series.values.splice(0, excess);
     }
 
     this.broadcast({ type: MessageType.SENSOR_UPDATE, timestamp: update.timestamp, payload });
@@ -1789,12 +1790,35 @@ class SensorSystemServer {
       });
     }
 
-    // Build X abort PT blocks (abort_pts + sensor_roles). Backend no longer has
-    // access to calibration curves, so it cannot convert PSI thresholds to ADC
-    // codes; abort PT blocks are therefore omitted from the config packet.
+    // Build X abort PT blocks (abort_pts + sensor_roles).
+    // Load calibration polynomials to convert PSI thresholds to ADC codes.
     const abortPtsList: Array<{ ip: number; sensor_id: number; threshold_adc_code: number }> = [];
-    if (Object.keys(abortPts).length > 0) {
-      console.warn('⚠️ abort_pts configured but backend calibration is disabled; abort PT ADC thresholds will not be sent from backend.');
+
+    if (Object.keys(abortPts).length > 0 && ptBoardIP) {
+      const calCoeffs = this.loadPTCalibrationCoeffs();
+      for (const [sensorName, thresholdPsi] of Object.entries(abortPts)) {
+        const sensorId = sensorRoles[sensorName];
+        if (!sensorId || typeof sensorId !== 'number') {
+          console.warn(`⚠️ abort_pt "${sensorName}" not found in sensor_roles_pt_board — skipping`);
+          continue;
+        }
+        const coeffs = calCoeffs[String(sensorId)];
+        if (!coeffs) {
+          console.warn(`⚠️ abort_pt "${sensorName}" (ch ${sensorId}) has no calibration polynomial — skipping`);
+          continue;
+        }
+        const adcCode = this.invertPTPolynomial(coeffs, Number(thresholdPsi));
+        if (adcCode === null) {
+          console.warn(`⚠️ abort_pt "${sensorName}" polynomial inversion failed for ${thresholdPsi} PSI — skipping`);
+          continue;
+        }
+        let ptIp: number;
+        try { ptIp = ipToU32BE(ptBoardIP); } catch { continue; }
+        abortPtsList.push({ ip: ptIp, sensor_id: sensorId, threshold_adc_code: adcCode >>> 0 });
+        console.log(`[CONFIG] abort_pt "${sensorName}" ch${sensorId} @ ${ptBoardIP}: ${thresholdPsi} PSI → ADC code ${adcCode}`);
+      }
+    } else if (Object.keys(abortPts).length > 0) {
+      console.warn('⚠️ abort_pts configured but PT board IP not resolved — abort PT blocks will not be sent.');
     }
 
     const N = Math.min(abortActuators.length, 255);
@@ -1907,6 +1931,82 @@ class SensorSystemServer {
     this.elodinRelay?.disconnect();
     this.elodin.disconnect();
     this.wss.close();
+  }
+
+  /**
+   * Load PT calibration polynomial coefficients from the latest calibration JSON.
+   * Returns map of channel (string) → [A, B, C, D] where psi = A*adc^3 + B*adc^2 + C*adc + D.
+   */
+  private loadPTCalibrationCoeffs(): Record<string, [number, number, number, number]> {
+    try {
+      const config = readConfig();
+      const calPt = (config.calibration as any)?.pt ?? {};
+      const jsonDir: string = calPt.json_dir ?? 'scripts/calibration/calibrations';
+      const resolvedDir = path.isAbsolute(jsonDir) ? jsonDir : path.join(process.cwd(), jsonDir);
+
+      const files = fs.readdirSync(resolvedDir)
+        .filter(f => f.endsWith('.json') && !f.includes('learned_prior'))
+        .sort()
+        .reverse();
+
+      for (const fname of files) {
+        try {
+          const raw = JSON.parse(fs.readFileSync(path.join(resolvedDir, fname), 'utf-8'));
+          const polys = raw?.calibration_polynomials as Record<string, number[]> | undefined;
+          if (!polys) continue;
+          const result: Record<string, [number, number, number, number]> = {};
+          for (const [ch, c] of Object.entries(polys)) {
+            if (Array.isArray(c) && c.length >= 4) {
+              result[ch] = [c[0], c[1], c[2], c[3]];
+            }
+          }
+          if (Object.keys(result).length > 0) {
+            console.log(`[CONFIG] Loaded PT calibration from ${fname} (${Object.keys(result).length} channels)`);
+            return result;
+          }
+        } catch { /* try next */ }
+      }
+    } catch (e) {
+      console.warn('⚠️ Could not load PT calibration coefficients:', e);
+    }
+    return {};
+  }
+
+  /**
+   * Numerically invert psi = A*x^3 + B*x^2 + C*x + D to find x (ADC code) for a given psi target.
+   * Uses binary search over the signed 32-bit ADC range.
+   * Returns null if inversion fails or the function is not monotone in range.
+   */
+  private invertPTPolynomial(
+    coeffs: [number, number, number, number],
+    targetPsi: number,
+  ): number | null {
+    const [A, B, C, D] = coeffs;
+    const evalPoly = (x: number) => A * x * x * x + B * x * x + C * x + D;
+
+    // Search in positive ADC range [0, 2^31-1] and negative [-2^31, 0)
+    // Try both halves since some sensors produce positive ADC, some negative.
+    for (const [lo, hi] of [[0, 2147483647], [-2147483648, 0]] as [number, number][]) {
+      const fLo = evalPoly(lo);
+      const fHi = evalPoly(hi);
+      if ((fLo <= targetPsi && targetPsi <= fHi) || (fHi <= targetPsi && targetPsi <= fLo)) {
+        // targetPsi is in range — binary search
+        let left = lo;
+        let right = hi;
+        for (let i = 0; i < 64; i++) {
+          const mid = Math.round((left + right) / 2);
+          const fMid = evalPoly(mid);
+          if (Math.abs(fMid - targetPsi) < 0.5) return mid;
+          if (fLo < fHi) {
+            if (fMid < targetPsi) left = mid; else right = mid;
+          } else {
+            if (fMid > targetPsi) left = mid; else right = mid;
+          }
+        }
+        return Math.round((left + right) / 2);
+      }
+    }
+    return null;
   }
 }
 

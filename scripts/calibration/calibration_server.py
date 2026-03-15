@@ -17,8 +17,13 @@ import sys
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-from scripts.calibration.calibration_orchestrator import CalibrationOrchestrator  # noqa: E402
-from scripts.calibration.robust_calibration import CalibrationPoint, EnvironmentalState  # noqa: E402
+from scripts.calibration.calibration_orchestrator import (
+    CalibrationOrchestrator,
+)  # noqa: E402
+from scripts.calibration.robust_calibration import (
+    CalibrationPoint,
+    EnvironmentalState,
+)  # noqa: E402
 from scripts.calibration.sense_conversions import raw_to_physical  # noqa: E402
 from scripts.calibration.config_loader import (  # noqa: E402
     load_config,
@@ -180,12 +185,13 @@ def _process_raw_and_write_calibrated(
         except Exception:
             pass
 
-    # Path 2: Fallback to raw physical conversion (sense_conversions) for TC/RTD/LC
+    # Path 2: Fallback to raw physical conversion (sense_conversions) for TC/RTD/LC/PT
     if pred is None or not math.isfinite(pred):
         cfg = _get_raw_conversion_config()
         pred = raw_to_physical(
             stype,
             raw_val,
+            channel_id=channel_id,
             rtd_r0=cfg["rtd_r0"],
             rtd_adc_ref_v=cfg["rtd_adc_ref_v"],
             rtd_excitation_ua=cfg["rtd_excitation_ua"],
@@ -337,7 +343,7 @@ class CalibrationHTTPRequestHandler(BaseHTTPRequestHandler):
 
             channels = []
             for key, rcf in state.orchestrator.robust.items():
-                if key[0] != "PT":
+                if key[0] not in ("PT", "TC", "RTD", "LC"):
                     continue
                 channel_id = key[1]
                 idx = state.orchestrator._key_to_idx.get(key)
@@ -365,10 +371,11 @@ class CalibrationHTTPRequestHandler(BaseHTTPRequestHandler):
 
                 channels.append(
                     {
+                        "sensorType": key[0],
                         "sensorId": channel_id,
                         "updateCount": len(rcf.calibration_points),
                         "rlsUpdateCount": len(rcf.calibration_points),
-                        "lastUpdate": 0,  # Could track this
+                        "lastUpdate": 0,
                         "driftDetected": drift,
                         "meanResidual": summary.get("rmse", 0.0),
                         "glrStat": glr,
@@ -467,19 +474,19 @@ class CalibrationHTTPRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/calibrate":
             ch = req.get("channel")
             adc = req.get("adc_code")
-            ref_psi = req.get("reference_psi")
+            ref_value = req.get("reference_value") or req.get("reference_psi")
+            sensor_type = req.get("sensor_type", "PT")  # PT/TC/RTD/LC
 
-            key = ("PT", ch)
+            key = (sensor_type, ch)
             if key in state.orchestrator.robust:
-                # Add point (triggers TLS/Bayesian in RCF)
+                # Add calibration point (triggers TLS/Bayesian update in RCF)
                 pt = CalibrationPoint(
                     adc_code=adc,
-                    pressure=ref_psi,
+                    pressure=ref_value,
                     timestamp=0,
                     environmental_state=state.env_state,
                 )
                 res = state.orchestrator.robust[key].add_calibration_point(pt)
-                # Save state
                 state.orchestrator._save_all()
                 self.send_response(200)
                 self._send_cors_headers()
@@ -488,11 +495,11 @@ class CalibrationHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(
                     json.dumps({"success": True, "result": res}).encode("utf-8")
                 )
-
-                # Broadcast update
                 asyncio.run_coroutine_threadsafe(
                     broadcast_ws(
-                        json.dumps({"type": "coefficient_update", "channel": ch})
+                        json.dumps(
+                            {"type": "coefficient_update", "sensor_type": sensor_type, "channel": ch}
+                        )
                     ),
                     ws_loop,
                 )
@@ -623,9 +630,15 @@ if __name__ == "__main__":
 
     try:
         while True:
-            # Check for active learning alerts to broadcast
+            # Check for active learning alerts to broadcast.
+            # Atomically snapshot-and-clear to avoid losing alerts appended
+            # by the orchestrator thread between the loop and clear().
             if state.orchestrator.pending_alerts:
-                for alert in state.orchestrator.pending_alerts:
+                alerts, state.orchestrator.pending_alerts = (
+                    state.orchestrator.pending_alerts,
+                    [],
+                )
+                for alert in alerts:
                     asyncio.run_coroutine_threadsafe(
                         broadcast_ws(
                             json.dumps(
@@ -640,7 +653,6 @@ if __name__ == "__main__":
                         ),
                         ws_loop,
                     )
-                state.orchestrator.pending_alerts.clear()
 
             time.sleep(1)
     except KeyboardInterrupt:

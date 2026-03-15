@@ -471,11 +471,25 @@ void ControllerService::controllerLoop() {
         // When relay only sends upstream (ch 1, 5), P_d_fuel/P_d_ox stay 0 so engine estimate
         // and diagnostics (MR, P_ch, F_est) are zero. Use upstream as fallback for injector
         // pressure so the controller sees varying state instead of defaulting to fixed duty.
+        // This is an estimated fallback only — flag it in diagnostics if it triggers during FIRE.
         constexpr double P_D_FROM_U_FRAC = 0.95;
-        if (meas.P_d_fuel <= 0.0 && meas.P_u_fuel > 0.0)
+        bool p_d_fuel_fallback = false;
+        bool p_d_ox_fallback   = false;
+        if (meas.P_d_fuel <= 0.0 && meas.P_u_fuel > 0.0) {
             meas.P_d_fuel = meas.P_u_fuel * P_D_FROM_U_FRAC;
-        if (meas.P_d_ox <= 0.0 && meas.P_u_ox > 0.0)
+            p_d_fuel_fallback = true;
+        }
+        if (meas.P_d_ox <= 0.0 && meas.P_u_ox > 0.0) {
             meas.P_d_ox = meas.P_u_ox * P_D_FROM_U_FRAC;
+            p_d_ox_fallback = true;
+        }
+        if ((p_d_fuel_fallback || p_d_ox_fallback) && fire_active_.load() && tick % 50 == 0) {
+            std::cerr << "[ControllerService] ⚠️  Downstream PT fallback active during FIRE: "
+                      << (p_d_fuel_fallback ? "P_d_fuel " : "")
+                      << (p_d_ox_fallback   ? "P_d_ox "   : "")
+                      << "— using 0.95 * upstream. Install downstream PTs for accurate control."
+                      << std::endl;
+        }
 
         // Require sensor data for DDP; test duty can send without it. In fire mode with LUT, run
         // anyway so we always command duty (even 0) and report P_ch from chamber MP1/2 average.
@@ -584,7 +598,10 @@ void ControllerService::controllerLoop() {
             diagnostics = d;
         }
 
-        // ── PWM is edge-triggered (sent once on FIRE_START/STOP), not per-tick ──
+        // ── Send PWM output every tick while FIRE is active ───────────
+        if (fire_active_.load() && actuation.valid) {
+            sendActuationPWM(actuation);
+        }
 
         // ── Store outputs for external readers ─────────────────────────
         {

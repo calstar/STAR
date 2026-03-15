@@ -74,7 +74,7 @@ function main(): void {
     resubscribeTimer = setTimeout(() => {
       resubscribeTimer = null;
       if (!elodin.isConnected()) return;
-      const missingGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x40, 0x41, 0x42]
+      const missingGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31, 0x40, 0x41, 0x42]
         .filter(g => !seenHighBytes.has(g));
       if (missingGroups.length > 0) {
         const missing = missingGroups.map(g => `0x${g.toString(16)}`).join(', ');
@@ -159,13 +159,29 @@ function main(): void {
     console.error('[Relay] Unhandled rejection (keeping alive):', reason);
   });
 
-  elodin.connect().then((ok) => {
-    if (ok) console.log('[Relay] Connected to Elodin at ' + ELODIN_HOST + ':' + ELODIN_PORT);
-    else process.exit(1);
-  }).catch((e) => {
-    console.error('[Relay] Elodin connection failed:', e);
-    process.exit(1);
-  });
+  const CONNECT_RETRY_BASE_MS = 2000;
+  const CONNECT_RETRY_MAX_MS = 30000;
+  let connectAttempt = 0;
+
+  function connectWithRetry(): void {
+    connectAttempt++;
+    elodin.connect().then((ok) => {
+      if (ok) {
+        connectAttempt = 0;
+        console.log('[Relay] Connected to Elodin at ' + ELODIN_HOST + ':' + ELODIN_PORT);
+      } else {
+        const delay = Math.min(CONNECT_RETRY_BASE_MS * 2 ** (connectAttempt - 1), CONNECT_RETRY_MAX_MS);
+        console.warn(`[Relay] Elodin connect attempt #${connectAttempt} returned false — retrying in ${delay}ms`);
+        setTimeout(connectWithRetry, delay);
+      }
+    }).catch((e) => {
+      const delay = Math.min(CONNECT_RETRY_BASE_MS * 2 ** (connectAttempt - 1), CONNECT_RETRY_MAX_MS);
+      console.error(`[Relay] Elodin connection failed (attempt #${connectAttempt}) — retrying in ${delay}ms:`, e);
+      setTimeout(connectWithRetry, delay);
+    });
+  }
+
+  connectWithRetry();
 }
 
 main();

@@ -177,11 +177,14 @@ export class DataLogger {
   }
 
   private calcHeaderSize(channelCount: number): number {
-    let size = 4 + 2 + 8 + 2; // magic + version + startTime + channelCnt
-    // When writing initial header, channelCount is 0, so no channel name bytes
-    // This is called to know how much to skip when re-reading
-    if (channelCount === 0) return size;
-    // Otherwise we'd need the actual names, but for initial we just use 0
+    // Compute exact byte size for a header with `channelCount` channels.
+    // Used by stop() to skip the initial placeholder (written with 0 channels).
+    let size = 4 + 2 + 8 + 2; // magic(4) + version(2) + startTime(8) + channelCnt(2)
+    for (let i = 0; i < channelCount; i++) {
+      // Variable-length: we would need the actual name lengths, which we don't have here.
+      // Callers always pass 0 (initial placeholder had 0 channels), so the loop never runs.
+      size += 2; // nameLen field only; can't add name bytes without the names
+    }
     return size;
   }
 }

@@ -514,7 +514,8 @@ export function applyActuatorsForState(
 
             if (actuatorName === 'LOX Press') {
                 if (actuatorType !== 'NO') {
-                    console.error(`   ❌❌❌ CRITICAL BUG: LOX Press detected as ${actuatorType} instead of NO! This will cause inverted commands!`);
+                    console.error(`   ❌ ABORT: LOX Press misconfigured as ${actuatorType} instead of NO — skipping command to prevent inverted valve control!`);
+                    continue;
                 }
                 console.log(`   🔍 LOX Press: GUI=${val} (${val === 1 ? 'OPEN' : 'CLOSED'}) → Type=${actuatorType} → HW=${hardwareState} (${hardwareState === 1 ? 'ON' : 'OFF'})`);
             }
@@ -544,7 +545,8 @@ export function applyActuatorsForState(
 
         if (actuatorName === 'LOX Press') {
             if (actuatorType !== 'NO') {
-                console.error(`   ❌❌❌ CRITICAL BUG: LOX Press detected as ${actuatorType} instead of NO! This will cause inverted commands!`);
+                console.error(`   ❌ ABORT: LOX Press misconfigured as ${actuatorType} instead of NO — skipping command to prevent inverted valve control!`);
+                continue;
             }
             console.log(`   🔍 LOX Press: GUI=${val} (${val === 1 ? 'OPEN' : 'CLOSED'}) → Type=${actuatorType} → HW=${hardwareState} (${hardwareState === 1 ? 'ON' : 'OFF'})`);
         }

@@ -28,6 +28,8 @@ export class ElodinClient extends EventEmitter {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private buffer: Buffer = Buffer.alloc(0);
   private hasReceivedData: boolean = false;
+  private writeQueue: Buffer[] = [];
+  private drainPending: boolean = false;
   private packetCount: number = 0;
 
   get connected(): boolean {
@@ -140,6 +142,8 @@ export class ElodinClient extends EventEmitter {
         this.socket.on('close', () => {
           console.log('🔌 Elodin connection closed');
           this._connected = false;
+          this.writeQueue = [];
+          this.drainPending = false;
           this.emit('disconnected');
           this.scheduleReconnect();
         });
@@ -265,14 +269,24 @@ export class ElodinClient extends EventEmitter {
       const header = this.createHeader(packetType, payload.length, packetId);
       const packet = Buffer.concat([header, payload]);
 
-      // Write to socket - Node.js will buffer and flush automatically
-      const flushed = this.socket.write(packet);
+      // If drain is pending, queue the packet rather than dropping it
+      if (this.drainPending) {
+        this.writeQueue.push(packet);
+        return true;
+      }
 
-      // If write buffer is full, socket.write returns false
-      // In that case, we should wait for 'drain' event, but for now just log
+      const flushed = this.socket.write(packet);
       if (!flushed) {
-        if (Math.random() < 0.01) {
-          console.warn(`⚠️ Socket write buffer full for packetId=[0x${packetId[0].toString(16).padStart(2, '0')}, 0x${packetId[1].toString(16).padStart(2, '0')}]`);
+        // Send buffer full — queue subsequent writes until 'drain' fires
+        this.drainPending = true;
+        if (!this.socket.listenerCount('drain')) {
+          this.socket.once('drain', () => {
+            this.drainPending = false;
+            this.flushWriteQueue();
+          });
+        }
+        if (Math.random() < 0.05) {
+          console.warn(`⚠️ Socket write buffer full for packetId=[0x${packetId[0].toString(16).padStart(2, '0')}, 0x${packetId[1].toString(16).padStart(2, '0')}] — queuing`);
         }
       }
 
@@ -348,6 +362,25 @@ export class ElodinClient extends EventEmitter {
     return header;
   }
 
+  private flushWriteQueue(): void {
+    if (!this.socket || !this._connected) {
+      this.writeQueue = [];
+      return;
+    }
+    while (this.writeQueue.length > 0) {
+      const pkt = this.writeQueue.shift()!;
+      const flushed = this.socket.write(pkt);
+      if (!flushed) {
+        this.drainPending = true;
+        this.socket.once('drain', () => {
+          this.drainPending = false;
+          this.flushWriteQueue();
+        });
+        return;
+      }
+    }
+  }
+
   private scheduleReconnect(): void {
     if (this.reconnectTimer) {
       return;
@@ -368,6 +401,9 @@ export class ElodinClient extends EventEmitter {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+
+    this.writeQueue = [];
+    this.drainPending = false;
 
     if (this.socket) {
       this.socket.destroy();
