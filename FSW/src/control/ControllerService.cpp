@@ -292,6 +292,22 @@ void ControllerService::setFireActive(bool active) {
         sendActuationPWM(zero);
         std::cout << "[ControllerService] 🛑 FIRE close command sent (duty=0)" << std::endl;
     }
+
+    // Write fire-state event to Elodin DB [0x44, 0x00]
+    if (elodin_client_ && elodin_connected_) {
+        comms::messages::control::ControllerFireStateMessage fs_msg;
+        std::get<0>(fs_msg.fields) = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                         std::chrono::system_clock::now().time_since_epoch())
+                                         .count();
+        std::get<1>(fs_msg.fields) = active ? uint8_t(1) : uint8_t(0);
+        // Capture current actuation state for context
+        {
+            std::lock_guard<std::mutex> lock(input_mutex_);
+            std::get<2>(fs_msg.fields) = static_cast<float>(current_meas_.P_u_fuel > 0 ? 1.0 : 0.0);
+            std::get<3>(fs_msg.fields) = static_cast<float>(current_meas_.P_u_ox > 0 ? 1.0 : 0.0);
+        }
+        elodin_client_->publish(0x4400, fs_msg);
+    }
 }
 
 void ControllerService::setTestDuty(float fuel, float ox) {
@@ -474,7 +490,7 @@ void ControllerService::controllerLoop() {
         // This is an estimated fallback only — flag it in diagnostics if it triggers during FIRE.
         constexpr double P_D_FROM_U_FRAC = 0.95;
         bool p_d_fuel_fallback = false;
-        bool p_d_ox_fallback   = false;
+        bool p_d_ox_fallback = false;
         if (meas.P_d_fuel <= 0.0 && meas.P_u_fuel > 0.0) {
             meas.P_d_fuel = meas.P_u_fuel * P_D_FROM_U_FRAC;
             p_d_fuel_fallback = true;
@@ -486,7 +502,7 @@ void ControllerService::controllerLoop() {
         if ((p_d_fuel_fallback || p_d_ox_fallback) && fire_active_.load() && tick % 50 == 0) {
             std::cerr << "[ControllerService] ⚠️  Downstream PT fallback active during FIRE: "
                       << (p_d_fuel_fallback ? "P_d_fuel " : "")
-                      << (p_d_ox_fallback   ? "P_d_ox "   : "")
+                      << (p_d_ox_fallback ? "P_d_ox " : "")
                       << "— using 0.95 * upstream. Install downstream PTs for accurate control."
                       << std::endl;
         }
@@ -981,6 +997,24 @@ bool ControllerService::registerControllerTables() {
         raw_field(32, 8, schema(PrimType::F64(), {}, component("CONTROLLER.measurement.P_u_ox"))),
         raw_field(40, 8, schema(PrimType::F64(), {}, component("CONTROLLER.measurement.P_d_fuel"))),
         raw_field(48, 8, schema(PrimType::F64(), {}, component("CONTROLLER.measurement.P_d_ox"))),
+        raw_field(56, 8, schema(PrimType::F64(), {}, component("CONTROLLER.measurement.P_ch_mp1"))),
+        raw_field(64, 8, schema(PrimType::F64(), {}, component("CONTROLLER.measurement.P_ch_mp2"))),
+    });
+
+    // PSM state transition [0x43, 0x00]: U64(8) + U8(1) + U8(1) + U8(1) = 11 bytes
+    auto state_trans_vt = builder::vtable({
+        raw_field(0, 8, schema(PrimType::U64(), {}, component("CONTROLLER.state.timestamp_ns"))),
+        raw_field(8, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.from_state"))),
+        raw_field(9, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.to_state"))),
+        raw_field(10, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.reason"))),
+    });
+
+    // Fire state event [0x44, 0x00]: U64(8) + U8(1) + F32(4) + F32(4) = 17 bytes
+    auto fire_state_vt = builder::vtable({
+        raw_field(0, 8, schema(PrimType::U64(), {}, component("CONTROLLER.fire.timestamp_ns"))),
+        raw_field(8, 1, schema(PrimType::U8(), {}, component("CONTROLLER.fire.fire_active"))),
+        raw_field(9, 4, schema(PrimType::F32(), {}, component("CONTROLLER.fire.duty_F"))),
+        raw_field(13, 4, schema(PrimType::F32(), {}, component("CONTROLLER.fire.duty_O"))),
     });
 
     send_msg(*elodin_client_, VTableMsg{.id = std::make_tuple(uint8_t(0x40), uint8_t(0x00)),
@@ -989,6 +1023,10 @@ bool ControllerService::registerControllerTables() {
                                         .vtable = diagnostics_vt});
     send_msg(*elodin_client_, VTableMsg{.id = std::make_tuple(uint8_t(0x42), uint8_t(0x00)),
                                         .vtable = measurement_vt});
+    send_msg(*elodin_client_, VTableMsg{.id = std::make_tuple(uint8_t(0x43), uint8_t(0x00)),
+                                        .vtable = state_trans_vt});
+    send_msg(*elodin_client_, VTableMsg{.id = std::make_tuple(uint8_t(0x44), uint8_t(0x00)),
+                                        .vtable = fire_state_vt});
 
     std::cout << "[ControllerService] ✅ Registered controller tables with Elodin DB" << std::endl;
     return true;
@@ -1034,7 +1072,6 @@ void ControllerService::writeMeasurementToDB(const RobustDDPController::Measurem
     constexpr uint16_t MEASUREMENT_MESSAGE_ID = 0x4200;
 
     comms::messages::control::ControllerMeasurementMessage msg;
-    // Use system_clock for consistency with DAQ bridge (epoch ms in GUI).
     auto ts_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                      std::chrono::system_clock::now().time_since_epoch())
                      .count();
@@ -1045,6 +1082,8 @@ void ControllerService::writeMeasurementToDB(const RobustDDPController::Measurem
     std::get<4>(msg.fields) = measurement.P_u_ox;
     std::get<5>(msg.fields) = measurement.P_d_fuel;
     std::get<6>(msg.fields) = measurement.P_d_ox;
+    std::get<7>(msg.fields) = measurement.P_ch_mp1;
+    std::get<8>(msg.fields) = measurement.P_ch_mp2;
 
     elodin_client_->publish(MEASUREMENT_MESSAGE_ID, msg);
 }

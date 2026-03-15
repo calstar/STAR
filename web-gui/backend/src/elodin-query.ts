@@ -43,8 +43,8 @@ export class ElodinQueryClient extends EventEmitter {
         const packetIdKey = `${high},${low}`;
 
         if (this.subscribedPacketIds.has(packetIdKey)) {
-          const parsed = parseElodinPacket(header.packetId, payload);
-          if (parsed) {
+          const parsedList = parseElodinPacket(header.packetId, payload);
+          for (const parsed of parsedList) {
             const update: SensorUpdate = {
               entity: parsed.entity,
               component: parsed.component,

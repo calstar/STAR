@@ -13,9 +13,13 @@
  *   LC raw      = [0x23, 0x01..0x14]
  *   LC cal      = [0x23, 0x11..0x24]
  *   ACT         = [0x30, 0x01..0x0A]
- *   CTRL act    = [0x40, 0x00]
- *   CTRL diag   = [0x41, 0x00]
- *   CTRL meas   = [0x42, 0x00]
+ *   ACT state   = [0x31, 0x01..0x14]
+ *   CTRL act    = [0x40, 0x00]   19 bytes: U64+F32+F32+U8+U8+U8
+ *   CTRL diag   = [0x41, 0x00]   62 bytes: U64+6×F64+I32+U8+U8
+ *   CTRL meas   = [0x42, 0x00]   80 bytes: U64+8×F64
+ *   PSM state   = [0x43, 0x00]   11 bytes: U64+U8+U8+U8
+ *   FIRE state  = [0x44, 0x00]   18 bytes: U64+U8+F32+F32
+ *   PSM act cmd = [0x50, 0x60..0x66]  15 bytes: U64+U8+U8+F32+U8
  */
 
 export interface ParsedSensorData {
@@ -112,7 +116,7 @@ export function parseElodinPacket(
   packetId: [number, number],
   payload: Buffer,
   entityMaps?: EntityMaps
-): ParsedSensorData | null {
+): ParsedSensorData[] {
   const [high, low] = packetId;
 
   // ── PT Raw: [0x20, 0x01..0x0E] — signed ADC (ADS1262), avoid uint32 → ~4e9 for negative codes
@@ -120,7 +124,8 @@ export function parseElodinPacket(
     const ch = low;
     const payloadCh = payload.length >= 9 ? payload.readUInt8(8) : ch;
     const baseEntity = entityMaps?.channelToEntityMap?.[payloadCh]?.replace('PT_Cal.', 'PT.') || `PT.CH${payloadCh}`;
-    return parseRawSensorPayload(payload, ch, baseEntity, 'raw_adc_counts', true);
+    const r = parseRawSensorPayload(payload, ch, baseEntity, 'raw_adc_counts', true);
+    return r ? [r] : [];
   }
 
   // ── PT Calibrated: [0x20, 0x11..0x1E] ───────────────────────────────────
@@ -128,43 +133,50 @@ export function parseElodinPacket(
     const ch = low - 0x10;
     const payloadCh = payload.length >= 9 ? payload.readUInt8(8) : ch;
     const entityName = entityMaps?.channelToEntityMap?.[payloadCh] || `PT_Cal.CH${payloadCh}`;
-    return parseCalibratedSensorPayload(payload, ch, entityName, 'pressure_psi');
+    const r = parseCalibratedSensorPayload(payload, ch, entityName, 'pressure_psi');
+    return r ? [r] : [];
   }
 
   // ── TC Raw: [0x21, 0x01..0x14] — signed ADC (ADS1262), avoid uint32 → 2^31-1 for negative/saturated codes
   if (high === 0x21 && low >= 0x01 && low <= 0x14) {
     const ch = low;
-    return parseRawSensorPayload(payload, ch, `TC.CH${ch}`, 'raw_adc_counts', true);
+    const r = parseRawSensorPayload(payload, ch, `TC.CH${ch}`, 'raw_adc_counts', true);
+    return r ? [r] : [];
   }
 
   // ── TC Calibrated: [0x21, 0x11..0x24] ───────────────────────────────────
   if (high === 0x21 && low >= 0x11 && low <= 0x24) {
     const ch = low - 0x10;
-    return parseCalibratedSensorPayload(payload, ch, `TC_Cal.CH${ch}`, 'temperature_c');
+    const r = parseCalibratedSensorPayload(payload, ch, `TC_Cal.CH${ch}`, 'temperature_c');
+    return r ? [r] : [];
   }
 
   // ── RTD Raw: [0x22, 0x01..0x14] ─────────────────────────────────────────
   if (high === 0x22 && low >= 0x01 && low <= 0x14) {
     const ch = low;
-    return parseRawSensorPayload(payload, ch, `RTD.CH${ch}`, 'raw_resistance_counts');
+    const r = parseRawSensorPayload(payload, ch, `RTD.CH${ch}`, 'raw_resistance_counts');
+    return r ? [r] : [];
   }
 
   // ── RTD Calibrated: [0x22, 0x11..0x24] ───────────────────────────────────
   if (high === 0x22 && low >= 0x11 && low <= 0x24) {
     const ch = low - 0x10;
-    return parseCalibratedSensorPayload(payload, ch, `RTD_Cal.CH${ch}`, 'temperature_c');
+    const r = parseCalibratedSensorPayload(payload, ch, `RTD_Cal.CH${ch}`, 'temperature_c');
+    return r ? [r] : [];
   }
 
   // ── LC Raw: [0x23, 0x01..0x14] — signed ADC (ADS1262), avoid uint32 → ~4e9 for negative codes
   if (high === 0x23 && low >= 0x01 && low <= 0x14) {
     const ch = low;
-    return parseRawSensorPayload(payload, ch, `LC.CH${ch}`, 'raw_adc_counts', true);
+    const r = parseRawSensorPayload(payload, ch, `LC.CH${ch}`, 'raw_adc_counts', true);
+    return r ? [r] : [];
   }
 
   // ── LC Calibrated: [0x23, 0x11..0x24] ───────────────────────────────────
   if (high === 0x23 && low >= 0x11 && low <= 0x24) {
     const ch = low - 0x10;
-    return parseCalibratedSensorPayload(payload, ch, `LC_Cal.CH${ch}`, 'force_lbf');
+    const r = parseCalibratedSensorPayload(payload, ch, `LC_Cal.CH${ch}`, 'force_lbf');
+    return r ? [r] : [];
   }
 
   // ── Actuator: [0x30, 0x01..0x0A] ────────────────────────────────────────
@@ -172,7 +184,8 @@ export function parseElodinPacket(
     const ch = low;
     const payloadCh = payload.length >= 9 ? payload.readUInt8(8) : ch;
     const entityName = entityMaps?.actuatorChannelToEntityMap?.[payloadCh] || `ACT.CH${payloadCh}`;
-    return parseRawSensorPayload(payload, ch, entityName, 'raw_adc_counts');
+    const r = parseRawSensorPayload(payload, ch, entityName, 'raw_adc_counts');
+    return r ? [r] : [];
   }
 
   // ── Actuator state (0=closed, 1=open): [0x31, 0x01..0x14] ─────────────────
@@ -182,32 +195,95 @@ export function parseElodinPacket(
     const state = payload.readUInt8(9);
     const entityName = entityMaps?.actuatorChannelToEntityMap?.[payloadCh] || `ACT.CH${payloadCh}`;
     const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
-    return { entity: entityName, component: 'actuator_state', value: state, timestamp: tsMs };
+    return [{ entity: entityName, component: 'actuator_state', value: state, timestamp: tsMs }];
   }
 
   // ── Controller Actuation: [0x40, 0x00] ──────────────────────────────────
-  // Layout: u64(8) timestamp_ns | f32(4) duty_F | f32(4) duty_O | u8 u_F_on | u8 u_O_on | u8 valid
-  // Uses boot-relative ns
+  // Layout: U64(0) timestamp_ns | F32(8) duty_F | F32(12) duty_O | U8(16) u_F_on | U8(17) u_O_on | U8(18) valid
   if (high === 0x40 && low === 0x00 && payload.length >= 19) {
-    const duty_F = payload.readFloatLE(8);
     const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
-    return { entity: 'CONTROLLER.actuation', component: 'duty_F', value: duty_F, timestamp: tsMs };
+    return [
+      { entity: 'CONTROLLER.actuation', component: 'duty_F',  value: payload.readFloatLE(8),  timestamp: tsMs },
+      { entity: 'CONTROLLER.actuation', component: 'duty_O',  value: payload.readFloatLE(12), timestamp: tsMs },
+      { entity: 'CONTROLLER.actuation', component: 'u_F_on',  value: payload.readUInt8(16),   timestamp: tsMs },
+      { entity: 'CONTROLLER.actuation', component: 'u_O_on',  value: payload.readUInt8(17),   timestamp: tsMs },
+      { entity: 'CONTROLLER.actuation', component: 'valid',   value: payload.readUInt8(18),   timestamp: tsMs },
+    ];
   }
 
   // ── Controller Diagnostics: [0x41, 0x00] ────────────────────────────────
-  // Layout: u64(8) ts | f64(8) F_ref | f64 MR_ref | f64 F_estimated | f64 MR_estimated | f64 P_ch | ...
-  if (high === 0x41 && low === 0x00 && payload.length >= 48) {
-    const F_estimated = payload.readDoubleLE(24);
+  // Layout: U64(0) | F64(8) F_ref | F64(16) MR_ref | F64(24) F_est | F64(32) MR_est | F64(40) P_ch |
+  //         F64(48) cost | I32(56) solver_iters | U8(60) safety_filtered | U8(61) cutoff_active
+  if (high === 0x41 && low === 0x00 && payload.length >= 62) {
     const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
-    return { entity: 'CONTROLLER.diagnostics', component: 'F_estimated', value: F_estimated, timestamp: tsMs };
+    return [
+      { entity: 'CONTROLLER.diagnostics', component: 'F_ref',           value: payload.readDoubleLE(8),  timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'MR_ref',          value: payload.readDoubleLE(16), timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'F_estimated',     value: payload.readDoubleLE(24), timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'MR_estimated',    value: payload.readDoubleLE(32), timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'P_ch',            value: payload.readDoubleLE(40), timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'cost',            value: payload.readDoubleLE(48), timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'solver_iters',    value: payload.readInt32LE(56),  timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'safety_filtered', value: payload.readUInt8(60),    timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'cutoff_active',   value: payload.readUInt8(61),    timestamp: tsMs },
+    ];
   }
 
   // ── Controller Measurement: [0x42, 0x00] ────────────────────────────────
-  // Layout: u64(8) ts | f64(8) P_copv | f64 P_reg | f64 P_u_fuel | f64 P_u_ox | f64 P_d_fuel | f64 P_d_ox
-  if (high === 0x42 && low === 0x00 && payload.length >= 32) {
-    const P_u_fuel = payload.readDoubleLE(24);
+  // Layout: U64(0) | F64(8) P_copv | F64(16) P_reg | F64(24) P_u_fuel | F64(32) P_u_ox |
+  //         F64(40) P_d_fuel | F64(48) P_d_ox | F64(56) P_ch_mp1 | F64(64) P_ch_mp2
+  if (high === 0x42 && low === 0x00 && payload.length >= 56) {
     const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
-    return { entity: 'CONTROLLER.measurement', component: 'P_u_fuel', value: P_u_fuel, timestamp: tsMs };
+    const fields: ParsedSensorData[] = [
+      { entity: 'CONTROLLER.measurement', component: 'P_copv',    value: payload.readDoubleLE(8),  timestamp: tsMs },
+      { entity: 'CONTROLLER.measurement', component: 'P_reg',     value: payload.readDoubleLE(16), timestamp: tsMs },
+      { entity: 'CONTROLLER.measurement', component: 'P_u_fuel',  value: payload.readDoubleLE(24), timestamp: tsMs },
+      { entity: 'CONTROLLER.measurement', component: 'P_u_ox',    value: payload.readDoubleLE(32), timestamp: tsMs },
+      { entity: 'CONTROLLER.measurement', component: 'P_d_fuel',  value: payload.readDoubleLE(40), timestamp: tsMs },
+      { entity: 'CONTROLLER.measurement', component: 'P_d_ox',    value: payload.readDoubleLE(48), timestamp: tsMs },
+    ];
+    if (payload.length >= 72) {
+      fields.push({ entity: 'CONTROLLER.measurement', component: 'P_ch_mp1', value: payload.readDoubleLE(56), timestamp: tsMs });
+      fields.push({ entity: 'CONTROLLER.measurement', component: 'P_ch_mp2', value: payload.readDoubleLE(64), timestamp: tsMs });
+    }
+    return fields;
+  }
+
+  // ── PSM State Transition: [0x43, 0x00] ──────────────────────────────────
+  // Layout: U64(0) timestamp_ns | U8(8) from_state | U8(9) to_state | U8(10) reason
+  if (high === 0x43 && low === 0x00 && payload.length >= 11) {
+    const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
+    return [
+      { entity: 'CONTROLLER.state',  component: 'from_state', value: payload.readUInt8(8),  timestamp: tsMs },
+      { entity: 'CONTROLLER.state',  component: 'to_state',   value: payload.readUInt8(9),  timestamp: tsMs },
+      { entity: 'CONTROLLER.state',  component: 'reason',     value: payload.readUInt8(10), timestamp: tsMs },
+    ];
+  }
+
+  // ── Fire State Event: [0x44, 0x00] ──────────────────────────────────────
+  // Layout: U64(0) timestamp_ns | U8(8) fire_active | F32(9) duty_F | F32(13) duty_O
+  if (high === 0x44 && low === 0x00 && payload.length >= 17) {
+    const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
+    return [
+      { entity: 'CONTROLLER.fire', component: 'fire_active', value: payload.readUInt8(8),   timestamp: tsMs },
+      { entity: 'CONTROLLER.fire', component: 'duty_F',      value: payload.readFloatLE(9), timestamp: tsMs },
+      { entity: 'CONTROLLER.fire', component: 'duty_O',      value: payload.readFloatLE(13), timestamp: tsMs },
+    ];
+  }
+
+  // ── PSM Actuator Command: [0x50, 0x60..0x66] ────────────────────────────
+  // Layout: U64(0) | U8(8) actuator_id | U8(9) command_type | F32(10) value | U8(14) status
+  if (high === 0x50 && low >= 0x60 && low <= 0x66 && payload.length >= 15) {
+    const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
+    const actuatorId = payload.readUInt8(8);
+    const cmdType = payload.readUInt8(9);
+    const cmdValue = payload.readFloatLE(10);
+    const status = payload.readUInt8(14);
+    return [
+      { entity: `PSM.actuator.${actuatorId}`, component: 'command_type', value: cmdType,  timestamp: tsMs },
+      { entity: `PSM.actuator.${actuatorId}`, component: 'value',        value: cmdValue, timestamp: tsMs },
+      { entity: `PSM.actuator.${actuatorId}`, component: 'status',       value: status,   timestamp: tsMs },
+    ];
   }
 
   // Log unmapped packet IDs (only when debug enabled)
@@ -218,5 +294,5 @@ export function parseElodinPacket(
     );
   }
 
-  return null;
+  return [];
 }

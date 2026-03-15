@@ -848,12 +848,14 @@ class SensorSystemServer {
         return; // Handled, skip typical sensor parsing
       }
 
-      const parsed = parseElodinPacket(header.packetId, payload, {
+      const parsedList = parseElodinPacket(header.packetId, payload, {
         channelToEntityMap: this.channelToEntityMap,
         actuatorChannelToEntityMap: this.actuatorChannelToEntityMap,
       });
 
-      // Fallback: raw PT → psi when C++ calibration_service isn't providing PT_Cal
+      // Fallback: raw PT → psi when calibration_server.py isn't providing PT_Cal packets yet.
+      // If we already received a calibrated PT_Cal packet for this channel (via 0x20, 0x1x) we
+      // skip the polynomial fallback to avoid stale/double updates.
       if (high === 0x20 && low >= 0x01 && low <= 0x0E && payload.length >= 21) {
         const payloadCh = payload.readUInt8(8);
         const rawAdc = payload.readInt32LE(12);
@@ -886,7 +888,7 @@ class SensorSystemServer {
         }
       }
 
-      if (!parsed) {
+      if (parsedList.length === 0) {
         // Log parse failures: first 5 always, then every 100th, and when ELODIN_DEBUG=1
         if (header.ty === ElodinPacketType.TABLE) {
           this._parseNullCount++;
@@ -902,12 +904,13 @@ class SensorSystemServer {
       // and all subsequent timeSec calculations (relative to firstPacketTime) stay near 0.
       // Mixing clocks causes timeSec = billions → bad data leaks to frontend as spikes.
       const epochNow = Date.now();
-      // Reject corrupted/invalid parsed values to prevent spikes
-      const isValid = Number.isFinite(parsed.value) && !Number.isNaN(parsed.value) &&
-        (parsed.component !== 'pressure_psi' || (parsed.value >= this.PSI_ABSOLUTE_MIN && parsed.value <= this.PSI_ABSOLUTE_MAX));
-      if (isValid) {
-        const update: SensorUpdate = { entity: parsed.entity, component: parsed.component, value: parsed.value, timestamp: epochNow };
-        this.handleSensorUpdate(update);
+      for (const parsed of parsedList) {
+        const isValid = Number.isFinite(parsed.value) && !Number.isNaN(parsed.value) &&
+          (parsed.component !== 'pressure_psi' || (parsed.value >= this.PSI_ABSOLUTE_MIN && parsed.value <= this.PSI_ABSOLUTE_MAX));
+        if (isValid) {
+          const update: SensorUpdate = { entity: parsed.entity, component: parsed.component, value: parsed.value, timestamp: epochNow };
+          this.handleSensorUpdate(update);
+        }
       }
       // Do NOT derive ACTUATOR_UPDATE from raw_adc_counts here: that overwrites the authoritative
       // commanded state at telemetry rate and causes oscillation when ADC hovers near threshold.

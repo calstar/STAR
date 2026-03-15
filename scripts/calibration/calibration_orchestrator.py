@@ -823,6 +823,7 @@ class CalibrationOrchestrator:
         print("  Math:  RLS w/ forgetting → GLR drift → Bayesian recal")
         print("         Empirical Bayes prior propagation across sensors")
         print("         Active learning: system requests recal when needed")
+        print(f"  Data:  relay WebSocket (online updates via _online_update)")
         print(f"  Press Ctrl+C to stop.  Status every {self._status_interval:.0f}s.")
         print(f"{'═'*72}\n")
 
@@ -831,12 +832,10 @@ class CalibrationOrchestrator:
 
         while self.running:
             try:
-                self._drain_queue()
+                # In sidecar mode the relay_subscriber_task calls _online_update() directly;
+                # _drain_queue() is only valid when the UDP receiver is started (CLI mode).
+                # Skip it here to avoid touching an unstarted receiver.
                 now = time.time()
-
-                # Parse actuator status from received packets (if actuator board enabled)
-                if self.actuator_comm:
-                    self._parse_actuator_status()
 
                 if now - last_status > self._status_interval:
                     self._print_status()
@@ -845,7 +844,7 @@ class CalibrationOrchestrator:
                 if now - last_save > self._save_interval:
                     self._save_all()
                     last_save = now
-                time.sleep(0.01)
+                time.sleep(0.5)
             except KeyboardInterrupt:
                 break
             except Exception as e:

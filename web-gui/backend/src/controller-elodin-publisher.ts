@@ -88,14 +88,14 @@ export function encodeControllerDiagnostics(
   // double cost (little-endian)
   buffer.writeDoubleLE(cost, 48);
 
-  // uint8_t safety_filtered
-  buffer.writeUInt8(safetyFiltered ? 1 : 0, 56);
+  // int32_t solver_iters at offset 56 (4-byte aligned, matching C++ ControllerDiagnosticsMessage)
+  buffer.writeInt32LE(solverIters, 56);
 
-  // uint8_t cutoff_active
-  buffer.writeUInt8(cutoffActive ? 1 : 0, 57);
+  // uint8_t safety_filtered at offset 60
+  buffer.writeUInt8(safetyFiltered ? 1 : 0, 60);
 
-  // int32_t solver_iters (little-endian)
-  buffer.writeInt32LE(solverIters, 58);
+  // uint8_t cutoff_active at offset 61
+  buffer.writeUInt8(cutoffActive ? 1 : 0, 61);
 
   return buffer;
 }
