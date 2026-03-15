@@ -10,17 +10,17 @@ import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Any, Optional
 import websockets
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 from pathlib import Path
 
 import sys
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-from scripts.calibration.calibration_orchestrator import CalibrationOrchestrator
-from scripts.calibration.robust_calibration import CalibrationPoint, EnvironmentalState
-from scripts.calibration.sense_conversions import raw_to_physical
-from scripts.calibration.config_loader import (
+from scripts.calibration.calibration_orchestrator import CalibrationOrchestrator  # noqa: E402
+from scripts.calibration.robust_calibration import CalibrationPoint, EnvironmentalState  # noqa: E402
+from scripts.calibration.sense_conversions import raw_to_physical  # noqa: E402
+from scripts.calibration.config_loader import (  # noqa: E402
     load_config,
     build_channel_to_orchestrator_key,
 )
@@ -641,7 +641,6 @@ if __name__ == "__main__":
                         ws_loop,
                     )
                 state.orchestrator.pending_alerts.clear()
-            import time
 
             time.sleep(1)
     except KeyboardInterrupt:

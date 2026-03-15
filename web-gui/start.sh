@@ -114,7 +114,7 @@ if [ ! -d "build" ]; then
     cd ..
 fi
 cd build
-make -j$(nproc) daq_bridge controller_service
+make -j"$(nproc)" daq_bridge controller_service
 
 echo "🚀 Starting daq_bridge (config from repo root)..."
 ./daq_bridge ../../config/config.toml &
@@ -183,5 +183,5 @@ echo ""
 echo "Press Ctrl+C to stop all services"
 
 # Wait for user interrupt
-trap "echo 'Stopping all services...'; kill $BACKEND_PID $FRONTEND_PID $RELAY_PID $DAQ_BRIDGE_PID $SIMULATOR_PID $CONTROLLER_PID $SIDECAR_PID $ELODIN_PID 2>/dev/null; exit" INT TERM
+trap 'echo "Stopping all services..."; kill $BACKEND_PID $FRONTEND_PID $RELAY_PID $DAQ_BRIDGE_PID $SIMULATOR_PID $CONTROLLER_PID $SIDECAR_PID $ELODIN_PID 2>/dev/null; exit' INT TERM
 wait

@@ -18,7 +18,7 @@ if [[ -z "${1:-}" ]]; then
   echo "  DB_NAME: name under ~/.local/share/elodin/ (e.g. daq_20260306_043134) or full path"
   echo ""
   echo "Available DBs under ~/.local/share/elodin/:"
-  ls -1 "$HOME/.local/share/elodin" 2>/dev/null | sed 's/^/  /' || echo "  (none or directory missing)"
+  find "$HOME/.local/share/elodin" -maxdepth 1 -mindepth 1 -printf '  %f\n' 2>/dev/null || echo "  (none or directory missing)"
   exit 1
 fi
 

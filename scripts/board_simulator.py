@@ -66,7 +66,7 @@ class SimulatedBoard:
             # Requires these IPs to be added as aliases to the interface (e.g. lo)
             self.sock.bind((self.ip, 0))
             print(f"[{self.name}] Bound to {self.ip}", flush=True)
-        except Exception as e:
+        except Exception:
             # When config IPs (e.g. 192.168.2.21) are not on this host, use distinct
             # loopback IPs so daq_bridge can route each board's data correctly.
             # 127.0.0.2 = first board, 127.0.0.3 = second, etc.
@@ -80,7 +80,8 @@ class SimulatedBoard:
                 )
             except Exception:
                 print(
-                    f"[{self.name}] Warning: Could not bind to {self.ip} or {fallback_ip}. Sending from default interface.",
+                    f"[{self.name}] Warning: Could not bind to "
+                    f"{self.ip} or {fallback_ip}. Sending from default interface.",
                     flush=True,
                 )
 
