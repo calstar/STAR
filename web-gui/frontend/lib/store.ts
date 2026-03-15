@@ -495,21 +495,34 @@ export function useGetSensorValue(): (entity: string, component: string) => numb
   }, []);
 }
 
-/** Commanded state: global actuatorStateByEntity (true value from backend/any client), else DEBUG override, else expected for current state. */
+/** Commanded state for display: in normal mode use state-machine expected for current state; in DEBUG use override then expected then actuatorStateByEntity. */
 export function useActuatorCommandedState(entity: string): ActuatorState | null {
-  const actuatorStateByEntity = useSensorStore((s) => s.actuatorStateByEntity[entity] ?? null);
   const currentState = useSensorStore((s) => s.currentState);
   const expectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
   const overrides = useSensorStore((s) => s.actuatorCommandedOverrides);
   const debugMode = useSensorStore((s) => s.debugMode);
-  if (actuatorStateByEntity != null) return actuatorStateByEntity;
-  const override = overrides[entity] ?? null;
-  if (debugMode && override != null) return override;
-  const stateExpected = currentState != null ? (expectedPositions[currentState] ?? {}) : {};
-  const expected = stateExpected[entity] ?? null;
-  if (expected === 'open') return ActuatorState.OPEN;
-  if (expected === 'closed') return ActuatorState.CLOSED;
-  return null;
+  const actuatorStateByEntity = useSensorStore((s) => s.actuatorStateByEntity[entity] ?? null);
+
+  // When not in DEBUG, state machine is source of truth: show expected for current state so Idle/Armed etc. are correct
+  if (!debugMode && currentState != null) {
+    const stateExpected = expectedPositions[currentState] ?? {};
+    const expected = stateExpected[entity] ?? null;
+    if (expected === 'open') return ActuatorState.OPEN;
+    if (expected === 'closed') return ActuatorState.CLOSED;
+  }
+
+  if (debugMode) {
+    const override = overrides[entity] ?? null;
+    if (override != null) return override;
+    if (currentState != null) {
+      const stateExpected = expectedPositions[currentState] ?? {};
+      const expected = stateExpected[entity] ?? null;
+      if (expected === 'open') return ActuatorState.OPEN;
+      if (expected === 'closed') return ActuatorState.CLOSED;
+    }
+  }
+
+  return actuatorStateByEntity;
 }
 
 /** Global last-known actuator state (from backend or optimistic update). */

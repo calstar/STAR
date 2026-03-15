@@ -9,29 +9,18 @@ import { MessageType, SensorUpdate, StateUpdate, SystemState } from '@/lib/types
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { getEntityColor } from '@/lib/sensor-colors';
 
-/** Display follows state machine (expected for current state); ADC as readout only. */
-function ValveStatusRow({ label, entity, ch, channel }: { label: string; entity: string; ch: string; channel?: number }) {
+/** Display follows commanded state only (state machine / user command); no ADC. */
+function ValveStatusRow({ label, entity }: { label: string; entity: string }) {
   const commanded = useActuatorCommandedState(entity);
-  const adcNamed = useSensorValue(entity, 'raw_adc_counts');
-  const adcCh = useSensorValue(ch, 'raw_adc_counts');
-  const channelEntity = channel != null ? `ACT.ACT_CH${channel}` : '';
-  const adcChannel = useSensorValue(channelEntity, 'raw_adc_counts');
-  const adc = adcNamed ?? adcCh ?? (channelEntity ? adcChannel : null);
   const isOpen = commanded === ActuatorState.OPEN;
   const hasState = commanded === ActuatorState.OPEN || commanded === ActuatorState.CLOSED;
 
   return (
     <div className="flex items-center justify-between py-2 border-b border-gray-800/60 last:border-0">
       <span className="text-sm text-text-muted">{label}</span>
-      <div className="flex items-center gap-3">
-        {adc !== null && (
-          <span className="text-xs font-mono text-gray-500">{adc.toFixed(0)} ADC</span>
-        )}
-        <span className={`text-xs font-bold font-mono w-16 text-right ${!hasState ? 'text-gray-600' : isOpen ? 'text-green-400' : 'text-red-400'
-          }`}>
-          {!hasState ? '---' : isOpen ? '● OPEN' : '○ CLOSED'}
-        </span>
-      </div>
+      <span className={`text-xs font-bold font-mono w-16 text-right ${!hasState ? 'text-gray-600' : isOpen ? 'text-green-400' : 'text-red-400'}`}>
+        {!hasState ? '---' : isOpen ? '● OPEN' : '○ CLOSED'}
+      </span>
     </div>
   );
 }
@@ -76,6 +65,7 @@ const STATE_NAMES: Record<number, string> = {
 export default function ControllerPage() {
   const updateSensor = useSensorStore((state) => state.updateSensor);
   const updateState = useSensorStore((state) => state.updateState);
+  const updateActuatorExpectedPositions = useSensorStore((state) => state.updateActuatorExpectedPositions);
   const currentState = useSensorStore((state) => state.currentState);
   const ws = getWebSocketClient();
   const { actuators } = useActuatorsFromConfig();
@@ -85,16 +75,12 @@ export default function ControllerPage() {
     if (!ws.isConnected()) {
       ws.connect();
     }
-    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => {
-      updateSensor(p as SensorUpdate);
-    });
-    const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => {
-      const stateUpdate = p as StateUpdate;
-      updateState(stateUpdate);
-      console.log('[ControllerPage] State updated:', stateUpdate);
+    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
+    const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
+    const u3 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
+      updateActuatorExpectedPositions(p as Record<number, Record<string, 'open' | 'closed' | null>>);
     });
 
-    // Also subscribe to sensor updates for the controller entities
     ws.send({
       type: MessageType.SUBSCRIBE_SENSOR,
       timestamp: Date.now(),
@@ -109,8 +95,9 @@ export default function ControllerPage() {
     return () => {
       u1();
       u2();
+      u3();
     };
-  }, [ws, updateSensor, updateState]);
+  }, [ws, updateSensor, updateState, updateActuatorExpectedPositions]);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-3">

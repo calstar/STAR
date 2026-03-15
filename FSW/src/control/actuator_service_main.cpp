@@ -397,6 +397,17 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
+        // Same dir as state CSV (in case state CSV was loaded from a fallback path)
+        if (!df.is_open() && !csv_path.empty()) {
+            size_t slash = csv_path.find_last_of("/\\");
+            if (slash != std::string::npos) {
+                std::string delay_same_dir =
+                    csv_path.substr(0, slash + 1) + "state_machine_actuator_delays.csv";
+                df.open(delay_same_dir);
+                if (df.is_open())
+                    delay_csv_path = delay_same_dir;
+            }
+        }
         if (df.is_open()) {
             std::string line;
             if (std::getline(df, line)) {
@@ -526,16 +537,16 @@ int main(int argc, char* argv[]) {
             }
         }
         const bool use_delays = (delay_it != state_actuator_delays.end());
-        // During Fire state, PWM channels are driven exclusively by the controller service
-        // (duty cycle) — do not send ACTUATOR_COMMAND for Fuel Main, LOX Main, Fuel Press, LOX
-        // Press.
+        // During Fire state, Fuel Press and LOX Press are PWM-driven by controller service only.
+        // Mains (Fuel Main, LOX Main) are state-driven — actuator service sends open for them.
         const bool is_fire_state = (canon == "fire");
         auto skip_in_fire = [](const std::string& name) {
-            return name == "Fuel Main" || name == "LOX Main" || name == "Fuel Press" ||
-                   name == "LOX Press";
+            return name == "Fuel Press" || name == "LOX Press";
         };
 
         if (use_delays) {
+            std::cout << "[ActuatorService] Applying state \"" << state_name
+                      << "\" with per-actuator delays (mains at fire start)" << std::endl;
             // Build (act_name, pos, delay_sec), sort by delay, then send one-by-one with sleep
             struct DelayedCmd {
                 std::string act_name;

@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState } from 'react';
-import { useSensorStore, useSensorValue, useActuatorCommandedState } from '@/lib/store';
+import { useSensorStore, useActuatorCommandedState } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { ActuatorState, CommandPayload } from '@/lib/types';
 import { useControlMode } from '@/lib/control-mode';
@@ -22,22 +22,7 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
   const [pending, setPending] = useState(false);
   const { controlEnabled } = useControlMode();
 
-  const adcNamed = useSensorValue(entity, 'raw_adc_counts');
-  const statusNamed = useSensorValue(entity, 'status');
-  const adcChannel = useSensorValue(`ACT.ACT_CH${channel}`, 'raw_adc_counts');
-  const statusChannel = useSensorValue(`ACT.ACT_CH${channel}`, 'status');
-  const rawAdc = adcNamed ?? adcChannel ?? 0;
-  const statusRaw = statusNamed ?? statusChannel;
-
-  const isNO = name === 'LOX Main' || name === 'LOX Press' || name === 'Fuel Main' || name === 'Fuel Vent';
-  const type = isNO ? 'NO' : 'NC';
-
   const canControl = debugMode && controlEnabled;
-  const voltageThreshold = 50000000;
-  const isPowered = statusRaw === 1 || rawAdc > voltageThreshold;
-
-  // feedbackOpen depends on NC/NO
-  const feedbackOpen = type === 'NO' ? !isPowered : isPowered;
 
   const sendCommand = (state: ActuatorState) => {
     if (!canControl) return;
@@ -64,9 +49,7 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
       <div className="flex-1 flex items-center min-h-0 overflow-hidden pr-4 flex-shrink-0">
         <h3 className="font-bold tracking-wider text-text uppercase leading-tight truncate text-[9px] xl:text-[10px]">{name}</h3>
       </div>
-      <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden">
-        <span className="text-[8px] text-text-muted font-mono truncate leading-none">ADC: {rawAdc.toLocaleString()}</span>
-      </div>
+      <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden" />
       <div className="grid grid-cols-2 gap-0.5 flex-shrink-0 min-h-0">
         <button
           onClick={() => sendCommand(ActuatorState.OPEN)}

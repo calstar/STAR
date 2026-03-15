@@ -1,31 +1,24 @@
 'use client'
 
 import { useEffect, useMemo } from 'react';
-import { useSensorStore, useGetSensorValue, useSensorDataVersion, useActuatorCommandedState, useSensorValue } from '@/lib/store';
+import { useSensorStore, useGetSensorValue, useSensorDataVersion, useActuatorCommandedState } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
-import { MessageType, SensorUpdate, BoardStatusPayload, BoardStatus, engineStateCodeToLabel, ActuatorState } from '@/lib/types';
+import { MessageType, SensorUpdate, StateUpdate, BoardStatusPayload, BoardStatus, engineStateCodeToLabel, ActuatorState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
 
-/** Display follows state machine (expected for current state); ADC as readout only. */
-function ActuatorStatusRow({ label, entity, channel }: { label: string; entity: string; channel?: number }) {
+/** Display follows commanded state only (state machine / user command); no ADC. */
+function ActuatorStatusRow({ label, entity }: { label: string; entity: string }) {
   const commanded = useActuatorCommandedState(entity);
-  const adcNamed = useSensorValue(entity, 'raw_adc_counts');
-  const channelEntity = channel != null ? `ACT.ACT_CH${channel}` : entity;
-  const adcChannel = useSensorValue(channelEntity, 'raw_adc_counts');
-  const adc = adcNamed ?? adcChannel;
   const isOpen = commanded === ActuatorState.OPEN;
   const hasState = commanded === ActuatorState.OPEN || commanded === ActuatorState.CLOSED;
   return (
     <div className="flex items-center justify-between py-2 border-b border-gray-800 last:border-0">
       <span className="text-base font-semibold text-text">{label}</span>
-      <div className="flex items-center gap-3">
-        {adc != null && <span className="text-sm font-mono text-gray-500">ADC: {adc.toLocaleString()}</span>}
-        <span className={`text-base font-bold font-mono px-3 py-1 rounded ${!hasState ? 'bg-gray-800 text-gray-600' : isOpen ? 'bg-green-900/60 text-green-400' : 'bg-red-900/60 text-red-400'}`}>
-          {!hasState ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
-        </span>
-      </div>
+      <span className={`text-base font-bold font-mono px-3 py-1 rounded ${!hasState ? 'bg-gray-800 text-gray-600' : isOpen ? 'bg-green-900/60 text-green-400' : 'bg-red-900/60 text-red-400'}`}>
+        {!hasState ? '---' : isOpen ? 'OPEN' : 'CLOSED'}
+      </span>
     </div>
   );
 }
@@ -46,6 +39,8 @@ function fmtValue(v: number | null): string {
 export default function StatusPage() {
   const updateSensor = useSensorStore((s) => s.updateSensor);
   const updateBoards = useSensorStore((s) => s.updateBoards);
+  const updateState = useSensorStore((s) => s.updateState);
+  const updateActuatorExpectedPositions = useSensorStore((s) => s.updateActuatorExpectedPositions);
   const boardsMap = useSensorStore((s) => s.boards);
   const currentState = useSensorStore((s) => s.currentState);
   const ws = getWebSocketClient();
@@ -63,11 +58,17 @@ export default function StatusPage() {
         updateBoards(payload.boards as BoardStatus[]);
       }
     });
+    const unsubState = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
+    const unsubExpected = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
+      updateActuatorExpectedPositions(p as Record<number, Record<string, 'open' | 'closed' | null>>);
+    });
     return () => {
       unsubSensor();
       unsubBoards();
+      unsubState();
+      unsubExpected();
     };
-  }, [ws, updateSensor, updateBoards]);
+  }, [ws, updateSensor, updateBoards, updateState, updateActuatorExpectedPositions]);
 
   const boards = useMemo(() => {
     return Object.values(boardsMap).sort((a, b) => {
@@ -132,7 +133,7 @@ export default function StatusPage() {
           <h2 className="text-lg font-bold text-text-muted uppercase tracking-wider mb-3">Actuators</h2>
           <div className="space-y-2">
             {ACTUATORS.map((a) => (
-              <ActuatorStatusRow key={a.label} label={a.label} entity={a.entity} channel={a.channel} />
+              <ActuatorStatusRow key={a.label} label={a.label} entity={a.entity} />
             ))}
           </div>
         </div>

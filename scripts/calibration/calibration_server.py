@@ -160,7 +160,8 @@ def _process_raw_and_write_calibrated(
     channel_to_key: dict,
 ) -> None:
     """Compute calibrated value (RCF or raw conversion) and write to Elodin DB.
-    Writes for TC/RTD/LC even when no orchestrator calibration — uses sense_conversions."""
+    Writes for TC/RTD/LC even when no orchestrator calibration — uses sense_conversions.
+    """
     now = time.monotonic()
     throttle_key = _throttle_key(stype, channel_id)
     if now - _last_elodin_write.get(throttle_key, 0) < _ELODIN_WRITE_INTERVAL:

@@ -1,9 +1,8 @@
 'use client'
 
 import React, { useState, useEffect } from 'react';
-import { useSensorStore, useSensorValue, useActuatorCommandedState } from '@/lib/store';
+import { useSensorStore, useActuatorCommandedState } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { getActuatorOpenThreshold } from '@/lib/voltageRef';
 import { ActuatorId, ActuatorState, CommandPayload, SystemState } from '@/lib/types';
 import { useControlMode } from '@/lib/control-mode';
 
@@ -93,8 +92,6 @@ interface ActuatorControlProps {
 export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const ws = getWebSocketClient();
   const debugMode = useSensorStore((s) => s.debugMode);
-  const boards = useSensorStore((s) => s.boards as Record<number, { designatedSurvivor?: boolean; voltageReference?: number }>);
-  const voltageRefNominals = useSensorStore((s) => s.voltageRefNominals);
   const setActuatorState = useSensorStore((s) => s.setActuatorState);
   const setActuatorCommandedOverride = useSensorStore((s) => s.setActuatorCommandedOverride);
   const { controlEnabled } = useControlMode();
@@ -102,26 +99,9 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
 
   const entity = ACTUATOR_ENTITIES[actuatorId];
   const ch = ACTUATOR_CHANNELS[actuatorId];
-  const type = ACTUATOR_TYPES[actuatorId] || 'NC';
   const commanded = useActuatorCommandedState(entity);
 
   const canControl = debugMode && controlEnabled;
-
-  // Subscribe only to these keys so we re-render only when this actuator's data changes
-  const adcNamed = useSensorValue(entity, 'raw_adc_counts');
-  const statusNamed = useSensorValue(entity, 'status');
-  const adcChannel = useSensorValue(`ACT.ACT_CH${ch}`, 'raw_adc_counts');
-  const statusChannel = useSensorValue(`ACT.ACT_CH${ch}`, 'status');
-  const rawAdc = adcNamed ?? adcChannel ?? 0;
-  const statusRaw = statusNamed ?? statusChannel;
-
-  // Actuator open threshold from designated survivor board's voltage reference (0=internal, 1=VDD raw, 2=5V); nominals from config [adc]
-  const actuatorBoard = boards ? Object.values(boards).find((b) => b.designatedSurvivor) : null;
-  const voltageRef = actuatorBoard?.voltageReference ?? 0;
-  const openThreshold = getActuatorOpenThreshold(voltageRef, voltageRefNominals);
-  const isPowered = statusRaw === 1 || rawAdc > openThreshold;
-  // feedbackOpen depends on NC/NO: NC: Powered = OPEN; NO: Powered = CLOSED
-  const feedbackOpen = type === 'NO' ? !isPowered : isPowered;
 
   const sendCommand = (state: ActuatorState) => {
     if (!canControl) return;
@@ -151,11 +131,7 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
         </h3>
       </div>
 
-      <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden">
-        <span className="text-[8px] text-text-muted font-mono truncate leading-none">
-          ADC: {rawAdc.toLocaleString()}
-        </span>
-      </div>
+      <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden" />
 
       <div className="grid grid-cols-2 gap-0.5 flex-shrink-0 min-h-0">
         <button

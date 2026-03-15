@@ -74,7 +74,8 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
         } else {
             auto now = std::chrono::steady_clock::now();
             batch.frame_timestamp_ns =
-                std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+                std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch())
+                    .count();
         }
 
         batch.sequence_id = parsed->header.timestamp & 0xFFFF;

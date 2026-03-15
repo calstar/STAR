@@ -10,8 +10,8 @@
  *   TC cal      = [0x21, 0x11..0x24]
  *   RTD raw     = [0x22, 0x01..0x04]
  *   RTD cal     = [0x22, 0x11..0x14]
- *   LC raw      = [0x23, 0x01..0x04]
- *   LC cal      = [0x23, 0x11..0x14]
+ *   LC raw      = [0x23, 0x01..0x14]
+ *   LC cal      = [0x23, 0x11..0x24]
  *   ACT         = [0x30, 0x01..0x0A]
  *   CTRL act    = [0x40, 0x00]
  *   CTRL diag   = [0x41, 0x00]
@@ -87,7 +87,7 @@ export function parseRawLCMessage(
 
   const channelId = payload.readUInt8(8);
 
-  if (channelId < 1 || channelId > 4) {
+  if (channelId < 1 || channelId > 20) {
     console.warn(`⚠️ Invalid channel ID in raw LC: ${channelId}`);
   }
 

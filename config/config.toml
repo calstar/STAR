@@ -167,7 +167,7 @@ ip = "192.168.2.41"
 send_port = 5005
 num_sensors = 4
 board_id = 41              # LC Board #1 (label on board)
-enabled = true              # flip to true when board is connected
+enabled = false             # flip to true when board is connected
 enable_serial_printing = true
 necessary_for_abort = false
 designated_survivor = false
@@ -183,12 +183,12 @@ ip = "192.168.2.42"
 send_port = 5005
 num_sensors = 4
 board_id = 42              # LC Board #2 (label on board)
-enabled = false
+enabled = true
 enable_serial_printing = true
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 0
-active_connectors = []
+active_connectors = [1, 2, 6]
 
 [boards.tc_board]
 type = "TC"
@@ -574,14 +574,14 @@ transitions_csv = "external/DiabloAvionics/test_guis/state_transitions.csv"
 # =============================================================================
 [controller]
 # PWM frequency for actuator control (Hz)
-pwm_frequency_hz = 10.0
+pwm_frequency_hz = 6.0
 # PWM command duration (ms) - how long each command stays active
 pwm_duration_ms = 2000
 # Fallback duty cycles when controller service is unavailable (0.0-1.0).
 # When controller_service runs, non-zero values also act as open-loop test duty (bypass DDP/LUT).
 # For LUT mode, set both to 0 so the LUT is used.
-fallback_fuel_duty_cycle = 0.10
-fallback_ox_duty_cycle = 0.15
+fallback_fuel_duty_cycle = 0.55
+fallback_ox_duty_cycle = 0.65
 # Controller loop update rate (Hz)
 controller_loop_hz = 10.0
 # Controller service URL
