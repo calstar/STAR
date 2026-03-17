@@ -209,7 +209,7 @@ bool TCPClient::read_exact(void* buffer, size_t len) {
         return false;
     }
 
-    // Match external FSW Socket::read() - reads exactly len bytes (blocking)
+    // Read exactly len bytes (blocking)
     uint8_t* ptr = static_cast<uint8_t*>(buffer);
     size_t remaining = len;
 

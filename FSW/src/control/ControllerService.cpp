@@ -239,15 +239,22 @@ void ControllerService::setFireActive(bool active) {
             actuation.valid = true;
         } else if (lut_.is_loaded()) {
             RobustDDPController::Measurement meas;
+            RobustDDPController::Command cmd;
             {
                 std::lock_guard<std::mutex> lock(input_mutex_);
                 meas = current_meas_;
+                cmd = current_cmd_;
             }
-            const double P_ch_est = 0.5 * (meas.P_ch_mp1 + meas.P_ch_mp2);
             std::map<std::string, double> point;
-            point["P_ch"] = P_ch_est;
             point["P_u_fuel"] = meas.P_u_fuel;
             point["P_u_ox"] = meas.P_u_ox;
+            point["thrust_desired"] = (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
+                                          ? cmd.thrust_desired
+                                          : 0.0;
+            point["MR_ref"] = 2.2;
+            const double P_ch_est = 0.5 * (meas.P_ch_mp1 + meas.P_ch_mp2);
+            if (P_ch_est > 0.0)
+                point["P_ch"] = P_ch_est;
             std::map<std::string, double> lut_out;
             if (lut_.evaluate(point, lut_out)) {
                 double u_f = lut_out.count("u_safe_F") ? lut_out.at("u_safe_F")
@@ -256,10 +263,10 @@ void ControllerService::setFireActive(bool active) {
                 double u_o = lut_out.count("u_safe_O") ? lut_out.at("u_safe_O")
                              : lut_out.count("duty_O") ? lut_out.at("duty_O")
                                                        : 0.0;
-                actuation.duty_F = (u_f > 0.5) ? 1.0 : 0.0;
-                actuation.duty_O = (u_o > 0.5) ? 1.0 : 0.0;
-                actuation.u_F_on = actuation.duty_F > 0.5;
-                actuation.u_O_on = actuation.duty_O > 0.5;
+                actuation.duty_F = std::clamp(u_f, 0.0, 1.0);
+                actuation.duty_O = std::clamp(u_o, 0.0, 1.0);
+                actuation.u_F_on = actuation.duty_F > 0.01;
+                actuation.u_O_on = actuation.duty_O > 0.01;
                 actuation.valid = true;
             }
         } else {
@@ -537,8 +544,8 @@ void ControllerService::controllerLoop() {
                                     ? cmd.thrust_desired
                                     : 0.0;
         } else if (lut_.is_loaded()) {
-            // LUT mode: 3 inputs — P_ch (chamber MP1/2 average), P_u_fuel, P_u_ox. Only compute
-            // when FIRE is active; pre-fire dynamics differ from fire-state.
+            // LUT mode: policy LUT uses P_u_fuel, P_u_ox, thrust_desired, MR_ref.
+            // Optional P_ch for legacy 3D engine LUTs.
             const double P_ch_est = (meas.P_ch_mp1 > 0.0 || meas.P_ch_mp2 > 0.0)
                                         ? 0.5 * (meas.P_ch_mp1 + meas.P_ch_mp2)
                                         : 0.0;
@@ -556,11 +563,16 @@ void ControllerService::controllerLoop() {
                 diagnostics.MR_estimated = 0.0;
                 diagnostics.P_ch = 0.0;
             } else {
-                // 3D LUT: P_ch (estimated from chamber MP1/2 avg), P_u_fuel, P_u_ox
                 std::map<std::string, double> point;
-                point["P_ch"] = P_ch_est;
                 point["P_u_fuel"] = meas.P_u_fuel;
                 point["P_u_ox"] = meas.P_u_ox;
+                point["thrust_desired"] =
+                    (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
+                        ? cmd.thrust_desired
+                        : 0.0;
+                point["MR_ref"] = 2.2;  // Default O/F target (mid-band)
+                if (P_ch_est > 0.0)
+                    point["P_ch"] = P_ch_est;  // For legacy 3D engine LUTs
 
                 std::map<std::string, double> lut_out;
                 if (lut_.evaluate(point, lut_out)) {
@@ -570,17 +582,18 @@ void ControllerService::controllerLoop() {
                     double u_o = lut_out.count("u_safe_O") ? lut_out.at("u_safe_O")
                                  : lut_out.count("duty_O") ? lut_out.at("duty_O")
                                                            : 0.0;
-                    actuation.duty_F = (u_f > 0.5) ? 1.0 : 0.0;
-                    actuation.duty_O = (u_o > 0.5) ? 1.0 : 0.0;
-                    actuation.u_F_on = actuation.duty_F > 0.5;
-                    actuation.u_O_on = actuation.duty_O > 0.5;
+                    // Use continuous duty (0-1) for PWM; clamp to valid range
+                    actuation.duty_F = std::clamp(u_f, 0.0, 1.0);
+                    actuation.duty_O = std::clamp(u_o, 0.0, 1.0);
+                    actuation.u_F_on = actuation.duty_F > 0.01;
+                    actuation.u_O_on = actuation.duty_O > 0.01;
                     actuation.valid = true;
 
                     diagnostics.F_ref =
                         (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
                             ? cmd.thrust_desired
                             : 0.0;
-                    diagnostics.P_ch = P_ch_est;  // Always report chamber from MP1/2 average
+                    diagnostics.P_ch = P_ch_est;
                     constexpr double P_MIN_VALID = 1e5;
                     if (meas.P_u_fuel >= P_MIN_VALID && meas.P_u_ox >= P_MIN_VALID) {
                         if (lut_out.count("F"))

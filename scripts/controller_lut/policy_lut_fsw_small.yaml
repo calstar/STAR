@@ -1,0 +1,31 @@
+# Minimal policy LUT for quick FSW testing (2x2x2x2 = 16 points)
+# engine_lut_path: use precomputed engine LUT for fast DDP (generate engine LUT first)
+engine_config_path: engine_sim/configs/default.yaml
+controller_config_path: engine_sim/configs/robust_ddp_default.yaml
+# engine_lut_path: output/lut/engine_performance.npz  # Uncomment after generating engine LUT
+
+axes:
+  - name: P_u_fuel
+    units: Pa
+    values: [3.0e6, 6.0e6]
+
+  - name: P_u_ox
+    units: Pa
+    values: [3.0e6, 6.0e6]
+
+  - name: thrust_desired
+    units: N
+    values: [0.0, 3000.0]
+
+  - name: MR_ref
+    units: ""
+    values: [1.8, 2.6]
+
+outputs:
+  - u_safe_F
+  - u_safe_O
+  - duty_F
+  - duty_O
+
+metadata:
+  description: Minimal DDP policy LUT for FSW (fast generation)

@@ -1,6 +1,7 @@
 #ifndef DAQ_DIABLO_BOARD_PACKET_PARSER_HPP
 #define DAQ_DIABLO_BOARD_PACKET_PARSER_HPP
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <map>
@@ -107,10 +108,16 @@ public:
 
     /**
      * @brief Parsed board heartbeat packet
+     *
+     * Supports both formats:
+     * - Legacy (4-byte body): board_type, board_id, engine_state, board_state
+     * - New (35-byte body): firmware_hash[32], board_id, engine_state, board_state
+     *   (board_type set to UNKNOWN; infer from config when available)
      */
     struct ParsedBoardHeartbeat {
         PacketHeader header;
         BoardHeartbeat heartbeat;
+        std::array<uint8_t, 32> firmware_hash{};  // SHA-256 of firmware (new format only)
         bool is_valid;
     };
 

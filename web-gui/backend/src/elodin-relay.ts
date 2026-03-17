@@ -38,6 +38,9 @@ function main(): void {
   wss.on('listening', () => {
     console.log(`[Relay] WebSocket server listening on ${RELAY_WS_HOST}:${RELAY_WS_PORT}`);
     console.log(`[Relay] Backends can connect with ELODIN_RELAY_WS_URL=ws://localhost:${RELAY_WS_PORT}`);
+    if (RELAY_DEBUG_HEARTBEAT) {
+      console.log('[Relay] RELAY_DEBUG_HEARTBEAT=1 — will log each heartbeat (0x10) packet');
+    }
   });
 
   // TCP forward for C++ calibration_service (same packet format as WebSocket)
@@ -56,10 +59,12 @@ function main(): void {
   });
 
   let tablePacketCount = 0;
+  let heartbeatPacketCount = 0;
   let resubscribeTimer: NodeJS.Timeout | null = null;
   const MAX_RESUBSCRIBE_ATTEMPTS = parseInt(process.env.RELAY_MAX_RESUBSCRIBE_ATTEMPTS || '24', 10);
+  const RELAY_DEBUG_HEARTBEAT = process.env.RELAY_DEBUG_HEARTBEAT === '1';
   // Track which high-byte packet ID groups have delivered at least one TABLE packet.
-  // Groups: 0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC, 0x30=ACT, 0x31=ACT_STATE, 0x40=CTRL_ACT, 0x41=CTRL_DIAG, 0x42=CTRL_MEAS
+  // Groups: 0x10=heartbeat, 0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC, 0x30=ACT, 0x31=ACT_STATE, 0x40=CTRL_ACT, 0x41=CTRL_DIAG, 0x42=CTRL_MEAS
   const seenHighBytes = new Set<number>();
 
   // Re-send VTableStream subscriptions. Elodin DB rejects subscriptions for
@@ -93,6 +98,12 @@ function main(): void {
     if (header.ty === ElodinPacketType.TABLE) {
       tablePacketCount++;
       seenHighBytes.add(header.packetId[0]);
+      if (header.packetId[0] === 0x10) {
+        heartbeatPacketCount++;
+        if (RELAY_DEBUG_HEARTBEAT) {
+          console.log(`[Relay] Heartbeat #${heartbeatPacketCount} board_id=${header.packetId[1]} payloadLen=${payload.length}`);
+        }
+      }
       // Cancel retry once all expected groups are delivering data
       if (resubscribeTimer) {
         const allGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31, 0x40, 0x41, 0x42];
@@ -147,10 +158,18 @@ function main(): void {
   elodin.on('disconnected', () => {
     console.log('[Relay] Elodin disconnected');
     tablePacketCount = 0;
+    heartbeatPacketCount = 0;
     seenHighBytes.clear();
     if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
   });
   elodin.on('error', () => { });
+
+  // Periodic diagnostic: if we get TABLE packets but no heartbeats, daq_bridge may not be publishing
+  setInterval(() => {
+    if (tablePacketCount > 100 && heartbeatPacketCount === 0 && !seenHighBytes.has(0x10)) {
+      console.warn(`[Relay] ⚠️ Received ${tablePacketCount} TABLE packets but 0 heartbeats (0x10) — is daq_bridge receiving UDP from boards and publishing to Elodin?`);
+    }
+  }, 15000);
 
   process.on('uncaughtException', (err) => {
     console.error('[Relay] Uncaught exception (keeping alive):', err);

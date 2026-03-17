@@ -1,0 +1,39 @@
+# Policy LUT for FSW controller (DDP optimal control u_safe_F, u_safe_O)
+# Axes match what ControllerService passes: P_u_fuel, P_u_ox, thrust_desired, MR_ref
+engine_config_path: engine_sim/configs/default.yaml
+controller_config_path: engine_sim/configs/robust_ddp_default.yaml
+
+# Dense grid for well-defined interpolation (thrust envelope 4934–7268 N)
+# 5x5x7x4 = 700 points
+axes:
+  - name: P_u_fuel
+    units: Pa
+    description: Fuel tank/ullage pressure
+    values: [2.2e6, 2.5e6, 2.9e6, 3.2e6, 3.6e6]
+
+  - name: P_u_ox
+    units: Pa
+    description: Oxidizer tank/ullage pressure
+    values: [2.5e6, 2.8e6, 3.1e6, 3.5e6, 3.7e6]
+
+  - name: thrust_desired
+    units: N
+    description: Desired thrust command
+    values: [0.0, 1500.0, 3000.0, 4500.0, 5500.0, 6000.0, 7000.0]
+
+  - name: MR_ref
+    units: ""
+    description: Reference mixture ratio (O/F)
+    values: [1.8, 2.0, 2.2, 2.6]
+
+outputs:
+  - u_safe_F
+  - u_safe_O
+  - duty_F
+  - duty_O
+  - F
+  - MR
+
+metadata:
+  description: DDP policy LUT for FSW ControllerService
+  notes: 4D grid (P_u_fuel x P_u_ox x thrust_desired x MR_ref). Export with export_lut_for_fsw.py

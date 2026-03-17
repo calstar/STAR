@@ -24,10 +24,14 @@ from scripts.calibration.robust_calibration import (
     CalibrationPoint,
     EnvironmentalState,
 )  # noqa: E402
-from scripts.calibration.sense_conversions import raw_to_physical  # noqa: E402
+from scripts.calibration.sense_conversions import (  # noqa: E402
+    raw_to_physical,
+    hp_pt_adc_to_psi,
+)
 from scripts.calibration.config_loader import (  # noqa: E402
     load_config,
     build_channel_to_orchestrator_key,
+    get_hp_pt_packet_channels,
 )
 
 logging.basicConfig(
@@ -130,31 +134,38 @@ def _parse_raw_signed(payload: bytes) -> Optional[int]:
     return None
 
 
-# Per-channel write throttle (max 10 Hz to Elodin DB)
+# Per-channel write throttle (configurable, default 100 Hz)
 _last_elodin_write: dict = {}
-_ELODIN_WRITE_INTERVAL = 0.1  # seconds
 _first_calibrated_write_logged: set = set()
+_hp_pt_channels_cache: dict = {}  # cached for speed
 
 
 def _throttle_key(stype: str, ch: int) -> str:
     return f"{stype}:{ch}"
 
 
+_raw_conversion_config_cache: dict = {}
+
+
 def _get_raw_conversion_config():
-    """Get config for raw sense_conversions fallback."""
-    cal = config.get("calibration", {})
-    rtd_cfg = cal.get("rtd", {})
-    tc_cfg = cal.get("tc", {})
-    lc_cfg = cal.get("lc", {})
-    return {
-        "rtd_r0": rtd_cfg.get("r0_ohm", 1000.0),
-        "rtd_adc_ref_v": rtd_cfg.get("adc_ref_voltage", 2.5),
-        "rtd_excitation_ua": rtd_cfg.get("excitation_ua", 1000.0),
-        "tc_adc_ref_v": tc_cfg.get("adc_ref_voltage", 2.5),
-        "lc_sensitivity_mv_per_v": lc_cfg.get("sensitivity_mv_per_v", 2.0),
-        "lc_pga_gain": lc_cfg.get("pga_gain", 128.0),
-        "lc_full_scale_value": lc_cfg.get("full_scale_value", 100.0),
-    }
+    """Get config for raw sense_conversions fallback (cached)."""
+    if not _raw_conversion_config_cache:
+        cal = config.get("calibration", {})
+        rtd_cfg = cal.get("rtd", {})
+        tc_cfg = cal.get("tc", {})
+        lc_cfg = cal.get("lc", {})
+        _raw_conversion_config_cache.update(
+            {
+                "rtd_r0": rtd_cfg.get("r0_ohm", 1000.0),
+                "rtd_adc_ref_v": rtd_cfg.get("adc_ref_voltage", 2.5),
+                "rtd_excitation_ua": rtd_cfg.get("excitation_ua", 1000.0),
+                "tc_adc_ref_v": tc_cfg.get("adc_ref_voltage", 2.5),
+                "lc_sensitivity_mv_per_v": lc_cfg.get("sensitivity_mv_per_v", 2.0),
+                "lc_pga_gain": lc_cfg.get("pga_gain", 128.0),
+                "lc_full_scale_value": lc_cfg.get("full_scale_value", 100.0),
+            }
+        )
+    return _raw_conversion_config_cache
 
 
 def _process_raw_and_write_calibrated(
@@ -165,18 +176,27 @@ def _process_raw_and_write_calibrated(
     channel_to_key: dict,
 ) -> None:
     """Compute calibrated value (RCF or raw conversion) and write to Elodin DB.
-    Writes for TC/RTD/LC even when no orchestrator calibration — uses sense_conversions.
+    Reuses prediction from _online_update when fresh to avoid double compute.
     """
+    interval = (
+        config.get("calibration", {}).get("sidecar", {}).get("write_interval_sec", 0.01)
+    )
     now = time.monotonic()
     throttle_key = _throttle_key(stype, channel_id)
-    if now - _last_elodin_write.get(throttle_key, 0) < _ELODIN_WRITE_INTERVAL:
+    if now - _last_elodin_write.get(throttle_key, 0) < interval:
         return
 
     pred = None
     key = channel_to_key.get((stype, channel_id))
 
-    # Path 1: Use RCF if we have calibration for this channel
-    if key and key in state.orchestrator.robust:
+    # Path 1: Reuse fresh prediction from _online_update (avoids duplicate predict)
+    if key and key in state.orchestrator.latest_predictions:
+        p, _, ts = state.orchestrator.latest_predictions[key]
+        if now - ts < 0.5 and math.isfinite(p):
+            pred = p
+
+    # Path 2: Compute via RCF if no fresh prediction
+    if pred is None and key and key in state.orchestrator.robust:
         try:
             rcf = state.orchestrator.robust[key]
             pred, _unc = rcf.predict_pressure_with_uncertainty(
@@ -185,7 +205,20 @@ def _process_raw_and_write_calibrated(
         except Exception:
             pass
 
-    # Path 2: Fallback to raw physical conversion (sense_conversions) for TC/RTD/LC/PT
+    # Path 3: HP PT (4-20 mA) — linear conversion when robust stack excludes HP
+    if pred is None and stype == "PT":
+        if not _hp_pt_channels_cache:
+            _hp_pt_channels_cache.update(get_hp_pt_packet_channels())
+        hp_cfg = _hp_pt_channels_cache.get(channel_id)
+        if hp_cfg:
+            pred = hp_pt_adc_to_psi(
+                raw_val,
+                hp_cfg["full_scale_psi"],
+                hp_cfg["sense_resistor_ohms"],
+                hp_cfg["adc_ref_voltage"],
+            )
+
+    # Path 4: Fallback to raw physical conversion (sense_conversions) for TC/RTD/LC/PT
     if pred is None or not math.isfinite(pred):
         cfg = _get_raw_conversion_config()
         pred = raw_to_physical(
@@ -477,7 +510,8 @@ class CalibrationHTTPRequestHandler(BaseHTTPRequestHandler):
             ref_value = req.get("reference_value") or req.get("reference_psi")
             sensor_type = req.get("sensor_type", "PT")  # PT/TC/RTD/LC
 
-            key = (sensor_type, ch)
+            channel_to_key = build_channel_to_orchestrator_key()
+            key = channel_to_key.get((sensor_type, ch), (sensor_type, ch))
             if key in state.orchestrator.robust:
                 # Add calibration point (triggers TLS/Bayesian update in RCF)
                 pt = CalibrationPoint(
@@ -485,8 +519,14 @@ class CalibrationHTTPRequestHandler(BaseHTTPRequestHandler):
                     pressure=ref_value,
                     timestamp=0,
                     environmental_state=state.env_state,
+                    uncertainty=(
+                        1e-3 if abs(ref_value) < 10 else 0.01
+                    ),  # Paper: human=10⁻⁶ σ²
                 )
                 res = state.orchestrator.robust[key].add_calibration_point(pt)
+                # Paper: zero-point propagation — when |p|<10 PSI, add (v_k,0,0.01) for all k≠j
+                if abs(ref_value) < 10:
+                    state.orchestrator.propagate_zero_point(key, sensor_type)
                 state.orchestrator._save_all()
                 self.send_response(200)
                 self._send_cors_headers()
@@ -498,7 +538,11 @@ class CalibrationHTTPRequestHandler(BaseHTTPRequestHandler):
                 asyncio.run_coroutine_threadsafe(
                     broadcast_ws(
                         json.dumps(
-                            {"type": "coefficient_update", "sensor_type": sensor_type, "channel": ch}
+                            {
+                                "type": "coefficient_update",
+                                "sensor_type": sensor_type,
+                                "channel": ch,
+                            }
                         )
                     ),
                     ws_loop,
@@ -511,19 +555,21 @@ class CalibrationHTTPRequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/zero_all":
             channels = req.get("channels", [])
             state.orchestrator.clear_calibration()
+            channel_to_key = build_channel_to_orchestrator_key()
+            # Paper: zero-point propagation — add (v_k, 0, e_k, 0.01) for each PT
             for ch_data in channels:
-                ch = ch_data.get("id")
+                packet_ch = ch_data.get("id")
                 adc = ch_data.get("adc_code")
-                key = ("PT", ch)
+                key = channel_to_key.get(("PT", packet_ch), ("PT", packet_ch))
                 if key in state.orchestrator.robust:
                     pt = CalibrationPoint(
                         adc_code=adc,
                         pressure=0.0,
                         timestamp=0,
                         environmental_state=state.env_state,
+                        uncertainty=0.01,  # Paper: propagation uncertainty
                     )
                     state.orchestrator.robust[key].add_calibration_point(pt)
-
             state.orchestrator._save_all()
             self.send_response(200)
             self._send_cors_headers()
@@ -560,12 +606,20 @@ class CalibrationHTTPRequestHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/adc_sample":
             samples = req.get("samples", [])
+            channel_to_key = build_channel_to_orchestrator_key()
             for sample in samples:
-                ch = sample.get("channel")
+                packet_ch = sample.get("channel")
                 adc = sample.get("adc")
-                key = ("PT", ch)
-                if key in state.orchestrator.robust:
-                    # Online update for Phase 2
+                if packet_ch is None or adc is None:
+                    continue
+                # Map packet channel ID to orchestrator key (stype, unique_ch)
+                key = None
+                for stype in ("PT", "TC", "RTD", "LC"):
+                    k = channel_to_key.get((stype, packet_ch))
+                    if k and k in state.orchestrator.robust:
+                        key = k
+                        break
+                if key:
                     state.orchestrator._online_update(key, float(adc))
 
             self.send_response(200)

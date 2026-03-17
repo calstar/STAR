@@ -72,6 +72,7 @@ struct ServerHeartbeatConfig {
     uint32_t interval_ms = 1000;
     uint16_t broadcast_port = 5005;
     std::string broadcast_ip = "255.255.255.255";
+    bool send_from_daq_bridge = true;  // false when heartbeat_service is used
 };
 
 // Ordered list of (ip, config) for enabled boards in parse order. Used when board_simulator
@@ -170,6 +171,11 @@ static void load_board_map_from_config(const std::string& config_path,
                 out_hb->broadcast_port = static_cast<uint16_t>(std::stoul(val));
             else if (key == "broadcast_ip")
                 out_hb->broadcast_ip = val;
+            else if (key == "send_from_daq_bridge")
+                out_hb->send_from_daq_bridge = (val == "true" || val == "1");
+        } else if (current_section == "heartbeat_service" && out_hb) {
+            if (key == "enabled" && (val == "true" || val == "1"))
+                out_hb->send_from_daq_bridge = false;  // heartbeat_service owns it
         } else if (current_section.compare(0, 7, "boards.") == 0) {
             if (key == "type")
                 board_type_str = val;
@@ -382,6 +388,27 @@ static BoardType discovery_board_type_to_enum(uint8_t t) {
     }
 }
 
+// Map config BoardType to DiabloBoardPacketParser::BoardType (for overriding when new firmware
+// omits board_type from heartbeat)
+static daq_comms::protocol::DiabloBoardPacketParser::BoardType config_board_type_to_parser(
+    BoardType t) {
+    using ParserBoardType = daq_comms::protocol::DiabloBoardPacketParser::BoardType;
+    switch (t) {
+        case BoardType::PT:
+            return ParserBoardType::PRESSURE_TRANSDUCER;
+        case BoardType::TC:
+            return ParserBoardType::THERMOCOUPLE;
+        case BoardType::RTD:
+            return ParserBoardType::RTD;
+        case BoardType::LC:
+            return ParserBoardType::LOAD_CELL;
+        case BoardType::ACTUATOR:
+            return ParserBoardType::ACTUATOR;
+        default:
+            return ParserBoardType::UNKNOWN;
+    }
+}
+
 int main(int argc, char* argv[]) {
     // Parse command line arguments
     std::string config_path = "config/config.toml";
@@ -516,7 +543,11 @@ int main(int argc, char* argv[]) {
     std::cout << "✅ Sensor pipeline ready on port " << bind_port << std::endl;
 
     if (pipeline.set_broadcast(true)) {
-        std::cout << "✅ Broadcast enabled for SERVER_HEARTBEAT" << std::endl;
+        if (hb_config.send_from_daq_bridge)
+            std::cout << "✅ Broadcast enabled for SERVER_HEARTBEAT" << std::endl;
+        else
+            std::cout << "✅ SERVER_HEARTBEAT from heartbeat_service (daq_bridge skipping)"
+                      << std::endl;
     } else {
         std::cerr << "⚠️  Failed to enable broadcast (heartbeat may not reach boards)" << std::endl;
     }
@@ -624,17 +655,19 @@ int main(int argc, char* argv[]) {
     auto last_config_save = std::chrono::steady_clock::now();
 
     while (running) {
-        // Broadcast SERVER_HEARTBEAT so boards learn our IP:port for SENSOR_DATA
         auto now = std::chrono::steady_clock::now();
-        auto elapsed_ms =
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_heartbeat_send)
-                .count();
-        if (elapsed_ms >= static_cast<int64_t>(hb_config.interval_ms)) {
-            auto pkt = build_server_heartbeat_packet();
-            ssize_t sent = pipeline.send_to(hb_config.broadcast_ip, hb_config.broadcast_port,
-                                            pkt.data(), pkt.size());
-            if (sent > 0)
-                last_heartbeat_send = now;
+        // Broadcast SERVER_HEARTBEAT only when heartbeat_service is not used
+        if (hb_config.send_from_daq_bridge) {
+            auto elapsed_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - last_heartbeat_send)
+                    .count();
+            if (elapsed_ms >= static_cast<int64_t>(hb_config.interval_ms)) {
+                auto pkt = build_server_heartbeat_packet();
+                ssize_t sent = pipeline.send_to(hb_config.broadcast_ip, hb_config.broadcast_port,
+                                                pkt.data(), pkt.size());
+                if (sent > 0)
+                    last_heartbeat_send = now;
+            }
         }
 
         auto batch = pipeline.poll();
@@ -648,6 +681,14 @@ int main(int argc, char* argv[]) {
                 auto parsed =
                     pipeline.get_parser().parse_board_heartbeat(hb->data.data(), hb->data.size());
                 if (parsed && parsed->is_valid) {
+                    // New firmware omits board_type from heartbeat; override from config when known
+                    auto cfg_it = board_map.find(hb->source_ip);
+                    if (cfg_it != board_map.end() &&
+                        parsed->heartbeat.board_type ==
+                            daq_comms::protocol::DiabloBoardPacketParser::BoardType::UNKNOWN) {
+                        parsed->heartbeat.board_type =
+                            config_board_type_to_parser(cfg_it->second.type);
+                    }
                     // MAC for FSWConfigManager (same formula as BoardDiscovery)
                     std::hash<std::string> hasher;
                     uint32_t ip_hash = static_cast<uint32_t>(hasher(hb->source_ip));

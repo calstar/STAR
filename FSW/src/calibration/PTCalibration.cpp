@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -247,6 +248,39 @@ double PTCalibrationManager::calculate_pressure(uint8_t channel_id, int32_t adc_
         return coeffs->calculate_pressure(adc_code);
     }
     return 0.0;  // Uncalibrated
+}
+
+std::optional<int32_t> PTCalibrationCoeffs::invert_to_adc(double target_psi) const {
+    auto eval = [this](double x) {
+        return (A * x * x * x) + (B * x * x) + (C * x) + D;
+    };
+    for (const auto& [lo, hi] : {std::pair<int64_t, int64_t>(0, 2147483647),
+                                 std::pair<int64_t, int64_t>(-2147483648, 0)}) {
+        double f_lo = eval(lo);
+        double f_hi = eval(hi);
+        if (!(std::min(f_lo, f_hi) <= target_psi && target_psi <= std::max(f_lo, f_hi)))
+            continue;
+        double left = lo, right = hi;
+        for (int i = 0; i < 64; ++i) {
+            double mid = std::round((left + right) / 2);
+            double f_mid = eval(mid);
+            if (std::abs(f_mid - target_psi) < 0.5)
+                return static_cast<int32_t>(mid);
+            if (f_lo < f_hi) {
+                if (f_mid < target_psi)
+                    left = mid;
+                else
+                    right = mid;
+            } else {
+                if (f_mid > target_psi)
+                    left = mid;
+                else
+                    right = mid;
+            }
+        }
+        return static_cast<int32_t>(std::round((left + right) / 2));
+    }
+    return std::nullopt;
 }
 
 void PTCalibrationManager::set_default_paths(const std::string& json_dir,

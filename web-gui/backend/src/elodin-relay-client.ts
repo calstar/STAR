@@ -65,13 +65,24 @@ export class ElodinRelayClient extends EventEmitter {
     });
   }
 
+  private static readonly MAX_BUFFER_BYTES = 2 * 1024 * 1024;
+
   private drainPackets(): void {
+    if (this.buffer.length > ElodinRelayClient.MAX_BUFFER_BYTES) {
+      console.error(`[RelayClient] ⚠️ Buffer exceeded ${ElodinRelayClient.MAX_BUFFER_BYTES} bytes — resetting`);
+      this.buffer = Buffer.alloc(0);
+    }
+
     while (this.buffer.length >= 4) {
       const packetLen = this.buffer.readUInt32LE(0);
-      // Minimum packet size with 8-byte header is 8 (len field is 4 in that case)
+
       if (packetLen < 4 || packetLen > 65536) {
-        console.error(`[RelayClient] Packet length too small or too large: ${packetLen}`);
-        this.buffer = this.buffer.subarray(4); // Discard the bad length field
+        const syncOffset = this.findSyncOffset();
+        if (syncOffset > 0) {
+          this.buffer = this.buffer.subarray(syncOffset);
+        } else {
+          this.buffer = this.buffer.subarray(4);
+        }
         continue;
       }
       if (this.buffer.length < packetLen + 4) break;
@@ -89,6 +100,18 @@ export class ElodinRelayClient extends EventEmitter {
       const payload = packet.subarray(8);
       this.emit('packet', header, payload);
     }
+  }
+
+  /** Find offset of next valid packet to recover from chunking/misalignment. */
+  private findSyncOffset(): number {
+    for (let i = 1; i <= Math.min(64, this.buffer.length - 8); i++) {
+      const len = this.buffer.readUInt32LE(i);
+      if (len >= 4 && len <= 65536 && this.buffer.length >= i + 4 + len) {
+        const ty = this.buffer.readUInt8(i + 4);
+        if (ty <= 3) return i; // ElodinPacketType 0-3
+      }
+    }
+    return 0;
   }
 
   disconnect(): void {

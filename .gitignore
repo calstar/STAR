@@ -125,6 +125,10 @@ gmon.out
 # Ignore runtime data directories
 data/
 recordings/
+export/
+export_csv/
+calibration_backups/
+output/
 *.csv.data
 *.json.data
 **/data/*.csv
@@ -188,4 +192,5 @@ $RECYCLE.BIN/
 # Local configuration overrides
 config_local.toml
 *_local.toml
+config/config.toml.auto
 .cache/

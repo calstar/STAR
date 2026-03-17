@@ -29,6 +29,9 @@ export class MessageLogger {
     ERROR: [0x54, 0x00],
     CONNECTION_STATUS: [0x55, 0x00],
     CALIBRATION_STATUS: [0x56, 0x00],
+    BOARD_STATUS_UPDATE: [0x57, 0x00],
+    MISSION_START_TIME: [0x58, 0x00],
+    NOTIFICATION: [0x59, 0x00],
   };
 
   constructor(elodin: ElodinClient) {
@@ -85,6 +88,15 @@ export class MessageLogger {
           break;
         case MessageType.CALIBRATION_STATUS:
           packetId = this.PACKET_IDS.CALIBRATION_STATUS as [number, number];
+          break;
+        case MessageType.BOARD_STATUS_UPDATE:
+          packetId = this.PACKET_IDS.BOARD_STATUS_UPDATE as [number, number];
+          break;
+        case MessageType.MISSION_START_TIME:
+          packetId = this.PACKET_IDS.MISSION_START_TIME as [number, number];
+          break;
+        case MessageType.NOTIFICATION:
+          packetId = this.PACKET_IDS.NOTIFICATION as [number, number];
           break;
         default:
           return; // Ignore uncharted message types

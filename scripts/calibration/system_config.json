@@ -1,0 +1,21 @@
+{
+  "mode": "test",
+  "consensus_enabled": true,
+  "auto_backup_enabled": true,
+  "backup_interval_seconds": 60.0,
+  "max_backup_files": 10,
+  "validation_enabled": true,
+  "health_monitoring_enabled": true,
+  "anomaly_detection_enabled": true,
+  "num_sensors": 37,
+  "model_order": 8,
+  "max_voltage": 10.0,
+  "min_voltage": 0.0,
+  "max_pressure": 1500.0,
+  "min_pressure": -50.0,
+  "max_uncertainty": 500.0,
+  "consensus_agreement_threshold": 0.6,
+  "min_sensors_for_consensus": 2,
+  "backup_directory": "./calibration_backups",
+  "log_directory": "./calibration_logs"
+}

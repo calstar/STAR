@@ -568,6 +568,8 @@ export function startContinuousActuatorCommands(
 ): void {
     stopContinuousActuatorCommands(host);
 
+    if (state === SystemState.IDLE) return;
+
     const expected = STATE_ACTUATOR_MAP[state];
     if (!expected) return;
 

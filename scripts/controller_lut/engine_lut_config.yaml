@@ -1,0 +1,39 @@
+# Engine performance LUT — stems from engine config + tank pressure range.
+# Precomputes everything the robust DDP needs to navigate: F, MR, mdot, injector_dp, stability.
+# DDP uses this for fast engine lookups instead of calling physics each step.
+#
+# Usage:
+#   python -m scripts.controller_lut.generate_controller_lut \
+#     --lut-config scripts/controller_lut/engine_lut_config.yaml \
+#     --output output/lut/engine_performance.npz
+
+engine_config_path: engine_sim/configs/default.yaml
+controller_config_path: null  # Engine-only mode (no DDP, fast generation)
+
+# Dense grid matching policy LUT (engine valid when P_ox >= P_fuel)
+axes:
+  - name: P_u_fuel
+    units: Pa
+    description: Fuel tank/ullage pressure
+    values: [2.2e6, 2.5e6, 2.8e6, 3.0e6, 3.2e6, 3.5e6, 3.6e6]
+
+  - name: P_u_ox
+    units: Pa
+    description: Oxidizer tank/ullage pressure
+    values: [2.5e6, 2.8e6, 3.0e6, 3.2e6, 3.5e6, 3.7e6]
+
+# Everything DDP needs for cost, dynamics, and constraints
+outputs:
+  - F
+  - MR
+  - P_ch
+  - mdot_F
+  - mdot_O
+  - injector_dp_F
+  - injector_dp_O
+  - stability_score
+  - injector_stiffness_ok
+
+metadata:
+  description: Engine performance LUT for DDP — derived from engine config + tank pressure range
+  notes: 2D grid (P_u_fuel × P_u_ox). DDP uses this for fast engine lookups.

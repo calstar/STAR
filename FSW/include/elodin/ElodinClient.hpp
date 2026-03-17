@@ -169,7 +169,7 @@ inline std::array<uint8_t, 2> message_id_to_packet_id(uint16_t message_id) {
             static_cast<uint8_t>(message_id & 0xFF)};
 }
 
-// Helper function matching external FSW's serialize_msg pattern EXACTLY
+// Helper function matching serialize_msg pattern
 // CRITICAL: FSW uses NESTED MessageFactory structure:
 //   Header = MessageFactory<len, type, packet_id, request_id>
 //   ElodinMsg = MessageFactory<header, body>
@@ -217,7 +217,7 @@ std::vector<uint8_t> ElodinClient::serialize_msg(uint16_t message_id, const Mess
     return result;
 }
 
-// Template implementation for publishing (match external FSW pattern)
+// Template implementation for publishing
 template <typename MessageType>
 bool ElodinClient::publish(uint16_t message_id, const MessageType& message) {
     if (!is_connected()) {

@@ -62,6 +62,7 @@ try:
         get_calibration_config,
         resolve_path,
         get_boards,
+        build_orchestrator_key_to_packet_ch,
     )
 
     _cfg_loaded = True
@@ -83,6 +84,17 @@ from autonomous_calibration_engine import (
     OnlineBayesianLearner,
     CalibrationRequest,
 )
+
+try:
+    from calibration_robustness import (
+        RobustnessManager,
+        SystemConfig as RobustnessConfig,
+        OperationMode,
+    )
+
+    ROBUSTNESS_AVAILABLE = True
+except ImportError:
+    ROBUSTNESS_AVAILABLE = False
 
 # ── Actuator communication (2-way: send commands, receive status) ──────
 try:
@@ -161,7 +173,7 @@ def _build_sensor_types() -> Dict[str, SensorTypeInfo]:
 SENSOR_TYPES = _build_sensor_types()
 
 # Number of parameters in environmental-robust basis (from the paper)
-N_PARAMS = 6
+N_PARAMS = 9  # Paper: 9-parameter environmental-robust basis (φ₀–φ₈)
 
 # ═════════════════════════════════════════════════════════════════════════
 #  UDP RECEIVER
@@ -302,7 +314,18 @@ class CalibrationOrchestrator:
                 )
             else:
                 # Process each board separately
+                exclude_hp = (
+                    load_config().get("calibration", {}).get("exclude_hp_pt", True)
+                    if _cfg_loaded
+                    else True
+                )
                 for board in boards:
+                    # Skip HP PT boards (4-20 mA) — they use linear conversion, not robust calibration
+                    if stype == "PT" and exclude_hp and board.get("hp_pt_connectors"):
+                        logger.info(
+                            f"  {stype} ({board.get('name', '?')}, {board.get('ip', '?')}): skipped (HP PT board)"
+                        )
+                        continue
                     board_ip = board.get("ip", info.board_ip or "unknown")
                     board_name = board.get("name", "unknown")
                     num_sensors = board.get("num_sensors", info.num_sensors)
@@ -407,6 +430,23 @@ class CalibrationOrchestrator:
         self.glr_threshold = float(orch_cfg.get("drift_glr_threshold", 2.0))
         self._save_interval = float(orch_cfg.get("auto_save_interval_sec", 300))
         self._status_interval = float(orch_cfg.get("status_interval_sec", 30))
+        # Paper: consensus only in test/calibration mode; disabled in flight
+        self.consensus_enabled = bool(orch_cfg.get("consensus_enabled", True))
+        phase2 = load_config().get("phase2", {}) if _cfg_loaded else {}
+        env_cal = (
+            load_config().get("calibration", {}).get("environmental", {})
+            if _cfg_loaded
+            else {}
+        )
+        self.consensus_threshold = float(phase2.get("consensus_threshold_psi", 1.0))
+        self.min_consensus_sensors = int(env_cal.get("min_consensus_sensors", 2))
+        self.self_cal_alpha_threshold = float(
+            orch_cfg.get("self_cal_alpha_threshold", 0.6)
+        )
+        self.agreement_threshold = float(orch_cfg.get("agreement_threshold", 0.6))
+
+        # Latest predictions per channel for consensus (paper Section 6)
+        self.latest_predictions: Dict[Tuple[str, int], Tuple[float, float, float]] = {}
 
         # Apply GLR threshold to per-channel frameworks
         for rcf in self.robust.values():
@@ -451,6 +491,20 @@ class CalibrationOrchestrator:
             "saves": 0,
             "start_time": time.time(),
         }
+
+        # ── Robustness manager (backup, validation, health) ────────────────
+        self.robustness_manager = None
+        if ROBUSTNESS_AVAILABLE:
+            try:
+                rb_cfg = RobustnessConfig()
+                rb_cfg.model_order = N_PARAMS - 1  # 9 params → order 8
+                rb_cfg.num_sensors = total_channels
+                self.robustness_manager = RobustnessManager(rb_cfg)
+                logger.info(
+                    "🛡️  Robustness manager enabled (backup, validation, health)"
+                )
+            except Exception as e:
+                logger.warning(f"⚠️  Robustness manager init failed: {e}")
 
         logger.info(
             f"🔧 Orchestrator: {', '.join(self.sensor_types.keys())} "
@@ -522,15 +576,26 @@ class CalibrationOrchestrator:
             self.live_adc[key].append(signed)
 
             # Phase 1: collect calibration points when user is collecting
-            # User reference is ground truth — trust it completely (no validation)
+            # User reference is ground truth — validate then add
             if self.collecting and key in self.references:
                 ref_val = self.references[key]
+                unc = self._adc_uncertainty(key)
+                # Robustness validation (optional)
+                if self.robustness_manager:
+                    v_res = self.robustness_manager.validator.validate_pressure(
+                        ref_val, key[1]
+                    )
+                    if not v_res:
+                        self.robustness_manager.health_monitor.log_validation_error(
+                            v_res
+                        )
+                        continue
                 pt = RobustCalPoint(
                     adc_code=float(signed),  # Use raw ADC code directly
                     pressure=ref_val,
                     timestamp=ts,
                     environmental_state=self.env_state,
-                    uncertainty=self._adc_uncertainty(key),
+                    uncertainty=unc,
                 )
                 rcf = self.robust[key]
                 result = rcf.add_calibration_point(pt)
@@ -604,7 +669,9 @@ class CalibrationOrchestrator:
           1. RLS update (if reference available)
           2. Prediction + uncertainty for active-learning check
           3. GLR drift detection → full Bayesian recal if triggered
+          4. Store for consensus (live_adc, latest_predictions)
         """
+        self.live_adc[key].append(adc_code)
         rcf = self.robust[key]
         idx = self._key_to_idx[key]
 
@@ -634,9 +701,12 @@ class CalibrationOrchestrator:
             phi = rcf.environmental_robust_basis_functions(adc_code, self.env_state)
             self.engine.add_calibration_point(idx, phi, ref_val, pt.uncertainty)
 
-        # Active learning check (even without reference)
+        # RCF prediction for consensus and active learning
+        pred, sigma = rcf.predict_pressure_with_uncertainty(adc_code, self.env_state)
+        self.latest_predictions[key] = (pred, sigma, time.time())
+
         phi = rcf.environmental_robust_basis_functions(adc_code, self.env_state)
-        pred, unc, alert = self.engine.predict(idx, phi)
+        _, _, alert = self.engine.predict(idx, phi, adc_code=adc_code)
         if alert is not None:
             self.stats["active_learning_alerts"] += 1
             self.pending_alerts.append(alert)
@@ -844,6 +914,7 @@ class CalibrationOrchestrator:
                 if now - last_save > self._save_interval:
                     self._save_all()
                     last_save = now
+                self._run_consensus_and_self_cal()
                 time.sleep(0.5)
             except KeyboardInterrupt:
                 break
@@ -877,12 +948,144 @@ class CalibrationOrchestrator:
             rcf.calibration_points.clear()
             rcf.theta_mean = rcf.population_prior_mean.copy()
             rcf.theta_cov = rcf.individual_prior_cov.copy()
-            rcf.rls_P = np.eye(6) * 100.0
+            rcf.rls_P = np.eye(rcf.n_params) * 100.0
+            rcf.bias_model.b = np.zeros(3)
+            rcf.bias_model.P_b = np.eye(3) * 0.01
+            rcf.inflation_factor = 1.0
         logger.info("🗑️ Calibration cleared — references and points reset")
+
+    def _run_consensus_and_self_cal(self):
+        """Paper Section 6: consensus + agreement + self-cal when α≥0.6, agreement>0.6."""
+        if not self.consensus_enabled or self.phase != "MONITORING":
+            return
+
+        # Collect PT predictions (same stype for consensus)
+        pt_keys = [k for k in self.latest_predictions if k[0] == "PT"]
+        if len(pt_keys) < self.min_consensus_sensors:
+            return
+
+        now = time.time()
+        active = []
+        for key in pt_keys:
+            pred, sigma, ts = self.latest_predictions[key]
+            if now - ts > 2.0:  # stale
+                continue
+            alpha, _ = self.robust[key].get_autonomy_score()
+            if alpha < 0.2:
+                continue
+            w = alpha / (sigma**2 + 1e-6)
+            active.append((key, pred, sigma, w))
+
+        if len(active) < self.min_consensus_sensors:
+            for key in pt_keys:
+                if key in self.robust:
+                    self.robust[key].inflation_factor = 1.0
+            return
+
+        # Consensus pressure
+        w_sum = sum(w for _, _, _, w in active)
+        p_consensus = sum(p * w for _, p, _, w in active) / w_sum
+        sigma_consensus = 1.0 / np.sqrt(w_sum)
+
+        # Agreement score (paper Eq.)
+        agreement = 1.0
+        for i, (_, pi, si, _) in enumerate(active):
+            for j, (_, pj, sj, _) in enumerate(active):
+                if i >= j:
+                    continue
+                d2 = (pi - pj) ** 2 / (si**2 + sj**2 + 1e-12)
+                agreement *= np.exp(-d2 / (2 * len(active) * (len(active) - 1)))
+
+        if agreement < self.agreement_threshold:
+            # Disagreement: inflate uncertainty (paper Section 7)
+            inflate = 2.0 - agreement
+            for key in pt_keys:
+                if key in self.robust:
+                    self.robust[key].inflation_factor = inflate
+            return
+
+        # Agreement: deflate uncertainty
+        deflate = 0.5 + 0.5 * agreement
+        for key in pt_keys:
+            if key in self.robust:
+                self.robust[key].inflation_factor = deflate
+
+        # Self-calibration for PTs with α≥0.6
+        for key, pred, sigma, w in active:
+            rcf = self.robust[key]
+            alpha, _ = rcf.get_autonomy_score()
+            if alpha < self.self_cal_alpha_threshold:
+                continue
+            buf = self.live_adc.get(key)
+            if not buf or len(buf) < 3:
+                continue
+            mean_adc = float(np.mean(list(buf)))
+            unc = sigma_consensus * (1 + (1 - alpha) / max(alpha, 0.01))
+            pt = RobustCalPoint(
+                adc_code=mean_adc,
+                pressure=p_consensus,
+                timestamp=now,
+                environmental_state=self.env_state,
+                uncertainty=unc,
+            )
+            rcf.add_calibration_point(pt)
+            self.stats["phase1_points"] = self.stats.get("phase1_points", 0) + 1
+            idx = self._key_to_idx.get(key)
+            if idx is not None:
+                phi = rcf.environmental_robust_basis_functions(mean_adc, self.env_state)
+                self.engine.add_calibration_point(idx, phi, p_consensus, unc)
+            logger.debug(
+                f"Self-cal: {key} α={alpha:.2f} agreement={agreement:.2f} p={p_consensus:.1f}"
+            )
+
+    # ── Zero-point propagation (paper Section 9) ───────────────────────────
+    def propagate_zero_point(self, calibrated_key: Tuple[str, int], stype: str):
+        """When human provides zero for one PT, add (v_k, 0, 0.01) for all other PTs of same type."""
+        for key, rcf in self.robust.items():
+            if key[0] != stype or key == calibrated_key:
+                continue
+            buf = self.live_adc.get(key)
+            if buf and len(buf) >= 3:
+                mean_adc = float(np.mean(list(buf)))
+                pt = RobustCalPoint(
+                    adc_code=mean_adc,
+                    pressure=0.0,
+                    timestamp=time.time(),
+                    environmental_state=self.env_state,
+                    uncertainty=0.01,
+                )
+                rcf.add_calibration_point(pt)
+                logger.info(
+                    f"  Zero propagated: {key[0]} CH{key[1]} ← (adc={mean_adc:.0f}, 0 PSI)"
+                )
 
     # ── Save / Load ──────────────────────────────────────────────────────
     def _save_all(self):
         """Save calibration constants to JSON (and CSV) in config calibration path."""
+        # Robustness backup before save
+        if (
+            self.robustness_manager
+            and self.robustness_manager.backup_manager.should_backup()
+        ):
+            pop_prior = self.engine.export_learned_prior()
+            pt_states = {}
+            for key, rcf in self.robust.items():
+                ch = key[1]
+                pt_states[ch] = {
+                    "theta_mean": rcf.theta_mean.tolist(),
+                    "theta_cov": rcf.theta_cov.tolist(),
+                    "n_points": len(rcf.calibration_points),
+                }
+            self.robustness_manager.backup_manager.backup_calibration_state(
+                population_prior={
+                    "population_mean": pop_prior.get("prior_mean", []),
+                    "population_covariance": pop_prior.get("prior_covariance", []),
+                    "effective_sample_size": pop_prior.get("effective_sample_size", 0),
+                },
+                pt_states=pt_states,
+                metadata={"phase": self.phase, "stats": self.stats},
+            )
+
         for stype, info in self.sensor_types.items():
             calibrated = {}
             for key, rcf in self.robust.items():
@@ -923,15 +1126,21 @@ class CalibrationOrchestrator:
                     "forgetting_factor": rcf.forgetting_factor,
                 }
 
-            # Also save legacy polynomial_coeffs for C++ stack compat
-            # The C++ stack reads [A, B, C, D] cubic from JSON
-            # We provide theta_mean[3]*v³ + theta_mean[2]*v² + theta_mean[1]*v + theta_mean[0]
-            # mapped to polynomial form
+            # Legacy polynomial_coeffs [A,B,C,D] for psi = A*adc³ + B*adc² + C*adc + D
+            # 9-param: p = θ₀ + θ₁*v + θ₂*v² + θ₃*v³ with v=adc/1e9 → A=θ₃/1e27, B=θ₂/1e18, C=θ₁/1e9, D=θ₀
+            # Key by packet_ch so sense_conversions fallback can load
+            key_to_packet = build_orchestrator_key_to_packet_ch()
             data["calibration_polynomials"] = {}
             for ch, rcf in sorted(calibrated.items()):
-                # Map 6-param basis → legacy 4-coeff cubic approximation
-                # by evaluating at the environmental state midpoint
-                data["calibration_polynomials"][str(ch)] = rcf.theta_mean.tolist()
+                t = rcf.theta_mean
+                leg = [
+                    t[3] / 1e27 if len(t) > 3 else 0,
+                    t[2] / 1e18 if len(t) > 2 else 0,
+                    t[1] / 1e9 if len(t) > 1 else 0,
+                    t[0] if len(t) > 0 else 0,
+                ]
+                packet_ch = key_to_packet.get((stype, ch), ch)
+                data["calibration_polynomials"][str(packet_ch)] = leg
 
             with open(jp, "w") as f:
                 json.dump(data, f, indent=2)
@@ -979,9 +1188,93 @@ class CalibrationOrchestrator:
         except Exception as e:
             logger.error(f"Save prior: {e}")
 
+    def _load_prior_from_polynomial_calibration(self):
+        """
+        Load polynomial calibration (calibration_poly_coeffs + adc_norm_min/scale)
+        from calibration/ or calibration_backups/ and use as initial theta for RCFs.
+        Fixes 150 PSI reading as 56.8 — the default prior theta[1]=200 has wrong slope.
+        """
+        if _cfg_loaded and not load_config().get("calibration", {}).get(
+            "prior_from_polynomial", True
+        ):
+            return
+        from config_loader import get_repo_root
+
+        repo = get_repo_root()
+        search_dirs = [
+            repo / "calibration",
+            repo / "calibration_backups",
+            repo / "scripts" / "calibration" / "calibrations",
+        ]
+        polys = {}
+        adc_min = {}
+        adc_scale = {}
+        for cal_dir in search_dirs:
+            if not cal_dir.is_dir():
+                continue
+            for fp in sorted(
+                cal_dir.glob("*.json"), key=os.path.getmtime, reverse=True
+            ):
+                if "learned_prior" in fp.name:
+                    continue
+                try:
+                    with open(fp) as f:
+                        data = json.load(f)
+                    p = data.get("calibration_poly_coeffs") or data.get(
+                        "calibration_polynomials"
+                    )
+                    m = data.get("calibration_adc_norm_min") or {}
+                    s = data.get("calibration_adc_norm_scale") or {}
+                    if p and (m or s):
+                        for k, v in p.items():
+                            if isinstance(v, (list, tuple)) and len(v) >= 2:
+                                polys[k] = list(v)
+                                if k in m:
+                                    adc_min[k] = float(m[k])
+                                if k in s:
+                                    adc_scale[k] = float(s[k])
+                        break
+                except Exception:
+                    continue
+            if polys:
+                break
+
+        if not polys:
+            return
+
+        # Map calibration key (101, 102, 1101) -> unique_ch (2101, 2102, 2201)
+        def cal_key_to_unique_ch(k: str) -> Optional[int]:
+            n = int(k)
+            if 100 <= n <= 199:
+                return 2100 + (n - 100)
+            if 1100 <= n <= 1199:
+                return 2200 + (n - 1100)
+            return None
+
+        for ch_str, coeffs in polys.items():
+            uch = cal_key_to_unique_ch(ch_str)
+            if uch is None:
+                continue
+            key = ("PT", uch)
+            if key not in self.robust:
+                continue
+            mn = adc_min.get(ch_str)
+            sc = adc_scale.get(ch_str)
+            if mn is None or sc is None or sc <= 0:
+                continue
+            self.robust[key].set_theta_from_polynomial(coeffs, mn, sc)
+        if polys:
+            logger.info(f"📐 Loaded polynomial priors for {len(polys)} PT channels")
+
     def load_existing(self):
         """Load latest calibrations + learned prior for cold-start Phase 2."""
-        # Load per-channel calibrations
+        self._load_prior_from_polynomial_calibration()
+
+        key_to_packet = build_orchestrator_key_to_packet_ch()
+        packet_to_key = {}
+        for (stype, uch), pch in key_to_packet.items():
+            packet_to_key[(stype, pch)] = (stype, uch)
+
         for stype, info in self.sensor_types.items():
             if not info.calibration_dir.is_dir():
                 continue
@@ -996,19 +1289,59 @@ class CalibrationOrchestrator:
                 with open(latest) as f:
                     data = json.load(f)
                 params = data.get("calibration_parameters", {})
+                polys = data.get("calibration_polynomials", {})
+
                 for ch_str, pdata in params.items():
                     ch = int(ch_str)
                     key = (stype, ch)
                     if key not in self.robust:
                         continue
                     rcf = self.robust[key]
-                    rcf.theta_mean = np.array(pdata["theta_mean"])
-                    rcf.theta_cov = np.array(pdata["theta_cov"])
+                    theta = np.array(pdata["theta_mean"])
+                    cov = np.array(pdata["theta_cov"])
+                    if len(theta) == 6:
+                        theta = np.concatenate([theta, [0.0, 0.0, 0.0]])
+                        cov = np.pad(cov, ((0, 3), (0, 3)), constant_values=0.1)
+                    rcf.theta_mean = theta
+                    rcf.theta_cov = cov
                     if "rls_P" in pdata:
-                        rcf.rls_P = np.array(pdata["rls_P"])
-                logger.info(
-                    f"📂 Loaded {stype}: {latest.name} ({len(params)} channels)"
-                )
+                        rls_P = np.array(pdata["rls_P"])
+                        if rls_P.shape[0] == 6:
+                            rls_P = np.pad(
+                                rls_P, ((0, 3), (0, 3)), constant_values=100.0
+                            )
+                        rcf.rls_P = rls_P
+
+                # Fallback: legacy polynomial-only → theta_mean
+                if not params and polys and stype == "PT":
+                    for pch_str, coeffs in polys.items():
+                        if len(coeffs) < 4:
+                            continue
+                        key = packet_to_key.get((stype, int(pch_str)))
+                        if key is None:
+                            continue
+                        if key not in self.robust:
+                            continue
+                        A, B, C, D = coeffs[0], coeffs[1], coeffs[2], coeffs[3]
+                        theta = np.array(
+                            [
+                                D,
+                                C * 1e9,
+                                B * 1e18,
+                                A * 1e27,
+                                0.0,
+                                0.0,
+                                0.0,
+                                0.0,
+                                0.0,
+                            ]
+                        )
+                        self.robust[key].theta_mean = theta
+                        self.robust[key].theta_cov = np.eye(9) * 0.1
+
+                n = len(params) or (len(polys) if stype == "PT" else 0)
+                if n:
+                    logger.info(f"📂 Loaded {stype}: {latest.name} ({n} channels)")
             except Exception as e:
                 logger.error(f"Load {latest}: {e}")
 

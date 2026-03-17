@@ -1,2 +1,0 @@
-DB_SESSION=test
-CONFIG_PATH=/home/kushmahajan/Diablo-FSW/config/config_base.toml

@@ -230,6 +230,49 @@ def build_channel_to_orchestrator_key() -> Dict[tuple, tuple]:
     return mapping
 
 
+def get_hp_pt_packet_channels() -> Dict[int, dict]:
+    """
+    Return {packet_ch: {full_scale_psi, sense_resistor_ohms, adc_ref_voltage}} for HP PT channels.
+    Used when robust stack excludes HP PTs — calibration_server applies 4-20 mA linear conversion.
+    """
+    result: Dict[int, dict] = {}
+    for board in get_boards_by_type("PT"):
+        if not board.get("enabled", True) or not board.get("hp_pt_connectors"):
+            continue
+        ch_offset = board.get("channel_offset", 0)
+        hp_conns = board.get("hp_pt_connectors", [])
+        if not isinstance(hp_conns, (list, tuple)):
+            continue
+        cfg = {
+            "full_scale_psi": float(board.get("hp_pt_full_scale_psi", 5000.0)),
+            "sense_resistor_ohms": float(board.get("hp_pt_sense_resistor_ohms", 120.0)),
+            "adc_ref_voltage": float(board.get("adc_ref_voltage", 2.5)),
+        }
+        for conn in hp_conns:
+            result[conn + ch_offset] = cfg
+    return result
+
+
+def build_orchestrator_key_to_packet_ch() -> Dict[tuple, int]:
+    """Reverse: (stype, unique_ch) → packet_ch for legacy JSON keying."""
+    mapping: Dict[tuple, int] = {}
+    for stype in ("PT", "TC", "RTD", "LC"):
+        for board in get_boards_by_type(stype):
+            if not board.get("enabled", True):
+                continue
+            board_id = board.get("board_id", 1)
+            ch_offset = board.get("channel_offset", 0)
+            active = board.get("active_connectors", [])
+            if not active:
+                num = board.get("num_sensors", 10)
+                active = list(range(1, num + 1))
+            for conn in active:
+                packet_ch = conn + ch_offset
+                unique_ch = board_id * 100 + conn
+                mapping[(stype, unique_ch)] = packet_ch
+    return mapping
+
+
 def get_calibration_config(sensor_type: str) -> dict:
     """Return [calibration.<sensor_type>] section.
     sensor_type is case-insensitive (pt, tc, rtd, lc)."""

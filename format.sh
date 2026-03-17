@@ -48,7 +48,7 @@ OPTIONS:
     --help           Show this help message
 
 EXAMPLES:
-    $0                    # Format code in FSW/, comms/, and utl/ directories
+    $0                    # Format code in FSW/, daq_comms/, archive/legacy/utl/
     $0 --check            # Check formatting without changes
     $0 --verbose          # Format with verbose output
     $0 --all              # Format all C++ files including external/
@@ -72,7 +72,7 @@ check_clang_format() {
 
 # Function to find C++ files
 find_cpp_files() {
-    local directories=("FSW" "comms" "utl")
+    local directories=("FSW" "daq_comms" "archive/legacy/utl")
 
     if [ "$FORMAT_ALL" = true ]; then
         directories+=("external")

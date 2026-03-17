@@ -137,6 +137,14 @@ class SensorDataCache {
         if (component === 'pressure_psi') {
           const maxJump = entity.includes('HP_PT') || entity.includes('GSE_Mid') || entity.includes('GSE_High') || entity.includes('GN2_High') ? 500 : 1000;
           if (Math.abs(value - prev) > maxJump) value = prev;
+          // Median-based outlier filter: reject single-point glitches
+          const recent = series.values.slice(-5).filter((v) => isFinite(v));
+          if (recent.length >= 2) {
+            const sorted = [...recent].sort((a, b) => a - b);
+            const median = sorted[Math.floor(sorted.length / 2)];
+            const maxDeviation = 15; // PSI — catches 2–5 PSI glitches without blocking real transients
+            if (Math.abs(value - median) > maxDeviation) value = prev;
+          }
         } else if (component !== 'temperature_c' && component !== 'force_lbf') {
           if (prev !== 0 && Math.abs(value / prev) > 10) value = prev;  // ratio filter for other components
         }

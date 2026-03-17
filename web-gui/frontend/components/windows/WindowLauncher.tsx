@@ -62,6 +62,7 @@ export default function WindowLauncher() {
     { id: 'gse', name: 'GSE', description: 'Ground support equipment pressures', url: '/window/gse', accent: '#F39C12' },
     { id: 'status', name: 'Status', description: 'Tabular real-time sensor values', url: '/window/status', accent: '#34D399' },
     { id: 'boards', name: 'Boards / Heartbeats', description: 'Discovered boards and heartbeat status', url: '/window/boards', accent: '#10B981' },
+    { id: 'flash', name: 'Ethernet OTA Flash', description: 'Flash firmware to boards over Ethernet', url: '/window/flash', accent: '#06B6D4' },
     { id: 'config', name: 'Config', description: 'System & board configuration editor', url: '/window/config', accent: '#FBBF24' },
     { id: 'controller', name: 'Controller', description: 'PWM duty cycle & valve states', url: '/window/controller', accent: '#F87171' },
     { id: 'calibration', name: 'Calibration', description: 'RLS + GLR drift · Bayesian auto-recal', url: '/window/calibration', accent: '#A3E635' },

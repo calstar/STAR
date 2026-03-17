@@ -238,7 +238,11 @@ def _load_pt_polynomial(channel_id: int) -> Optional[list[float]]:
     cal_dir = Path(__file__).parent / "calibrations"
     try:
         files = sorted(
-            [f for f in cal_dir.iterdir() if f.suffix == ".json" and "learned_prior" not in f.name],
+            [
+                f
+                for f in cal_dir.iterdir()
+                if f.suffix == ".json" and "learned_prior" not in f.name
+            ],
             reverse=True,
         )
         for fp in files:
@@ -253,6 +257,30 @@ def _load_pt_polynomial(channel_id: int) -> Optional[list[float]]:
     except Exception:
         pass
     return None
+
+
+def hp_pt_adc_to_psi(
+    adc_code: int,
+    full_scale_psi: float,
+    sense_resistor_ohms: float,
+    adc_ref_voltage: float = 2.5,
+) -> float:
+    """
+    4-20 mA HP PT: psi = (i_ma - 4) / 16 * full_scale_psi.
+    v_sense = (adc/2^31)*adc_ref_voltage, i_ma = v_sense/sense_resistor_ohms * 1000.
+    """
+    ADC_MAX = 2147483648.0
+    I_MIN_MA, I_SPAN_MA = 4.0, 16.0
+    adc_signed = _uint32_to_int32(adc_code & 0xFFFFFFFF)
+    if adc_signed >= ADC_MAX or adc_signed < 0:
+        return 0.0
+    v_sense = (float(adc_signed) / ADC_MAX) * adc_ref_voltage
+    i_ma = (v_sense / sense_resistor_ohms) * 1000.0
+    if i_ma < I_MIN_MA:
+        return 0.0
+    if i_ma > 20.0:
+        return full_scale_psi
+    return ((i_ma - I_MIN_MA) / I_SPAN_MA) * full_scale_psi
 
 
 def pt_adc_to_psi(adc_code: int, channel_id: int) -> Optional[float]:

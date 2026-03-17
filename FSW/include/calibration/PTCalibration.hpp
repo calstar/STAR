@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 
 namespace fsw {
@@ -34,6 +35,13 @@ struct PTCalibrationCoeffs {
         double adc = static_cast<double>(adc_code);
         return (A * adc * adc * adc) + (B * adc * adc) + (C * adc) + D;
     }
+
+    /**
+     * @brief Invert psi = A*x^3 + B*x^2 + C*x + D to find ADC code for target PSI
+     * @param target_psi Target pressure in PSI
+     * @return ADC code, or nullopt if out of range
+     */
+    std::optional<int32_t> invert_to_adc(double target_psi) const;
 };
 
 /**

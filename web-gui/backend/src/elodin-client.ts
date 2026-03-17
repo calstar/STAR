@@ -169,33 +169,37 @@ export class ElodinClient extends EventEmitter {
     });
   }
 
+  private static readonly MAX_BUFFER_BYTES = 2 * 1024 * 1024; // 2MB cap to prevent OOM from corrupted stream
+
   private handleData(data: Buffer): void {
-    // Append to buffer
     this.buffer = Buffer.concat([this.buffer, data]);
 
-    // We need at least 4 bytes to read the length
+    // Cap buffer to prevent unbounded growth from malformed/chunked stream
+    if (this.buffer.length > ElodinClient.MAX_BUFFER_BYTES) {
+      console.error(`[ElodinClient] ⚠️ Buffer exceeded ${ElodinClient.MAX_BUFFER_BYTES} bytes — resetting (possible stream corruption)`);
+      this.buffer = Buffer.alloc(0);
+    }
+
+    // Protocol: len(4) = payload + 4 (ty+packetId+requestId). Total packet = 4 + len.
     while (this.buffer.length >= 4) {
       const packetLen = this.buffer.readUInt32LE(0);
 
-      // Total packet size is packetLen + 4.
-      // We need at least that many bytes to process the full packet.
-      if (this.buffer.length < packetLen + 4) {
-        break;
-      }
+      if (this.buffer.length < packetLen + 4) break;
 
-      // Minimum packet size with 8-byte header is 8 (len field is 4 in that case)
-      if (packetLen < 4) {
-        console.error(`[ElodinClient] Packet length too small: ${packetLen}`);
-        this.buffer = this.buffer.subarray(4);
-        // Continue to find a valid packet
+      // len >= 4 (empty payload valid); reject obviously corrupt values
+      if (packetLen < 4 || packetLen > 65536) {
+        const syncOffset = this.findSyncOffset();
+        if (syncOffset > 0) {
+          this.buffer = this.buffer.subarray(syncOffset);
+        } else {
+          this.buffer = this.buffer.subarray(4);
+        }
         continue;
       }
 
-      // Extract complete packet
       const packet = this.buffer.subarray(0, packetLen + 4);
       this.buffer = this.buffer.subarray(packetLen + 4);
 
-      // Parse packet header (8 bytes: len(4) + ty(1) + packetId(2) + requestId(1))
       const header: ElodinPacketHeader = {
         len: packet.readUInt32LE(0),
         ty: packet.readUInt8(4) as ElodinPacketType,
@@ -203,13 +207,11 @@ export class ElodinClient extends EventEmitter {
         requestId: packet.readUInt8(7),
       };
 
-      // Validate header
-      if (header.len < 8 || header.len > 65536) {
-        console.error(`❌ Invalid packet length: ${header.len}`);
+      if (header.len < 4 || header.len > 65536) {
+        console.error(`[ElodinClient] Invalid header.len=${header.len}`);
         continue;
       }
 
-      // Extract payload (skip 8-byte header)
       const payload = packet.subarray(8);
 
       // ALWAYS log packets - this is critical for debugging
@@ -223,6 +225,18 @@ export class ElodinClient extends EventEmitter {
         this.emit('packet', header, payload);
       }
     }
+  }
+
+  /** Find offset of next valid packet to recover from chunking/misalignment. */
+  private findSyncOffset(): number {
+    for (let i = 1; i <= Math.min(64, this.buffer.length - 8); i++) {
+      const len = this.buffer.readUInt32LE(i);
+      if (len >= 4 && len <= 65536 && this.buffer.length >= i + 4 + len) {
+        const ty = this.buffer.readUInt8(i + 4);
+        if (ty <= 3) return i; // ElodinPacketType 0-3
+      }
+    }
+    return 0;
   }
 
   private sendQueryForData(): void {

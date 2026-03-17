@@ -5,6 +5,8 @@
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { readConfig, writeConfig } from './routes/config.js';
+import { uploadFirmware } from './ota-flash.js';
+import { discoverProjects, buildProject, flashAllBoards, type FlashAllBoard } from './ota-build.js';
 import { ElodinQueryClient, QueryOptions } from './elodin-query.js';
 import type { SensorUpdate } from './shared-types.js';
 
@@ -226,6 +228,7 @@ const API_PORT = parseInt(process.env.API_PORT || '8082', 10);
 export interface DebugInfo {
   relayConnected: boolean;
   relayPacketsReceived: number;
+  heartbeatPacketsReceived?: number;
   wsClients: number;
   sensorCacheSize: number;
   useRelay: boolean;
@@ -234,7 +237,9 @@ export interface DebugInfo {
 export function startAPIServer(
   getQueryClient?: () => ElodinQueryClient | null,
   getDebugInfo?: () => DebugInfo | null,
-  onConfigUpdated?: () => void
+  onConfigUpdated?: () => void,
+  getEngineState?: () => number,
+  getCalibrationStatus?: () => Promise<any>
 ): void {
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // CORS headers
@@ -360,6 +365,108 @@ export function startAPIServer(
         const info = getDebugInfo ? getDebugInfo() : null;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(info ?? { error: 'Debug info not available' }));
+      } else if (url.pathname === '/api/engine_state' && req.method === 'GET') {
+        const engineState = getEngineState ? getEngineState() : 0;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ engineState }));
+      } else if (url.pathname === '/api/calibration_status' && req.method === 'GET') {
+        const status = getCalibrationStatus ? await getCalibrationStatus() : null;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(status ?? { error: 'Calibration status not available' }));
+      } else if (url.pathname === '/api/config_packets' && req.method === 'GET') {
+        // Config packets now built by config_broadcast_service.py (standalone). Return empty.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ packets: [] }));
+      } else if (url.pathname === '/api/ota-flash/projects' && req.method === 'GET') {
+        const projects = discoverProjects();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ projects }));
+      } else if (url.pathname === '/api/ota-flash/flash-all' && req.method === 'POST') {
+        const getBoards = (): FlashAllBoard[] => {
+          const config = readConfig();
+          const boards = (config.boards || {}) as Record<string, any>;
+          const out: FlashAllBoard[] = [];
+          for (const [key, raw] of Object.entries(boards)) {
+            const b = raw as any;
+            if (b.enabled === false) continue;
+            const type = b.type || 'UNKNOWN';
+            const ip = typeof b.ip === 'string' ? b.ip : '';
+            const boardId = typeof b.board_id === 'number' ? b.board_id : b.board_number ?? 1;
+            if (!ip || !type) continue;
+            out.push({ key, type, ip, boardId });
+          }
+          return out;
+        };
+        const boards = getBoards();
+        if (boards.length === 0) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, message: 'No enabled boards in config' }));
+          return;
+        }
+        const progressLog: string[] = [];
+        const result = await flashAllBoards(getBoards, (msg) => {
+          progressLog.push(msg);
+          console.log(`[FlashAll] ${msg}`);
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ...result, progressLog }));
+      } else if (url.pathname === '/api/ota-flash' && req.method === 'POST') {
+        const chunks: Buffer[] = [];
+        let totalLen = 0;
+        const MAX_BODY = 4 * 1024 * 1024; // 4MB (firmware ~2MB base64)
+        req.on('data', (chunk: Buffer) => {
+          totalLen += chunk.length;
+          if (totalLen <= MAX_BODY) chunks.push(chunk);
+        });
+        req.on('end', async () => {
+          try {
+            if (totalLen > MAX_BODY) {
+              res.writeHead(413, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Firmware too large (max ~3MB)' }));
+              return;
+            }
+            const body = Buffer.concat(chunks).toString('utf8');
+            const { ip, port = 3232, firmwareBase64, projectPath } = JSON.parse(body);
+            if (!ip || typeof ip !== 'string') {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Missing or invalid ip' }));
+              return;
+            }
+            const portNum = typeof port === 'number' ? port : parseInt(String(port), 10) || 3232;
+
+            let firmwareBuffer: Buffer;
+            if (projectPath && typeof projectPath === 'string') {
+              // Build from DiabloAvionics project
+              const buildResult = await buildProject(projectPath);
+              if (!buildResult.success || !buildResult.firmwareBuffer) {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                  success: false,
+                  bytesSent: 0,
+                  durationMs: 0,
+                  error: buildResult.error || 'Build failed',
+                  buildOutput: buildResult.buildOutput,
+                }));
+                return;
+              }
+              firmwareBuffer = buildResult.firmwareBuffer;
+            } else if (firmwareBase64 && typeof firmwareBase64 === 'string') {
+              firmwareBuffer = Buffer.from(firmwareBase64, 'base64');
+            } else {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Provide firmwareBase64 or projectPath' }));
+              return;
+            }
+
+            const result = await uploadFirmware(firmwareBuffer, ip, portNum);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+          } catch (err: any) {
+            console.error('❌ OTA flash error:', err);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message || 'OTA flash failed' }));
+          }
+        });
       } else {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Not found' }));

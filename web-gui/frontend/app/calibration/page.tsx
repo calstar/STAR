@@ -12,6 +12,7 @@ import {
   CalibrationConfidence,
 } from '@/lib/types';
 import { useSensorConfig, SensorConfig } from '@/lib/sensor-config';
+import { getApiBaseUrl } from '@/lib/websocket';
 
 // ── PT_CHANNELS is now derived from config.toml via useSensorConfig().
 // The hardcoded list below is removed.
@@ -224,7 +225,7 @@ export default function CalibrationPage() {
     const u2 = ws.on(MessageType.CALIBRATION_STATUS, (p: unknown) => {
       const payload = p as CalibrationStatusPayload;
       setCalStatus(payload);
-      setLastUpdate(new Date(payload.timestamp));
+      setLastUpdate(new Date(payload.timestamp ?? Date.now()));
       setPhase2Active(payload.phase2Enabled);
       if (payload.calibrationFilePath != null) setCalFilePath(payload.calibrationFilePath);
     });
@@ -236,6 +237,26 @@ export default function CalibrationPage() {
     });
     return () => { u1(); u2(); u3(); };
   }, [ws, updateSensor]);
+
+  // Poll calibration status (backend no longer syncs every 2s)
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const res = await fetch(`${getApiBaseUrl()}/api/calibration_status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && !data.error) {
+          setCalStatus(data as CalibrationStatusPayload);
+          setLastUpdate(new Date(data.timestamp ?? Date.now()));
+          setPhase2Active(data.phase2Enabled);
+          if (data.calibrationFilePath != null) setCalFilePath(data.calibrationFilePath);
+        }
+      } catch (_) { /* ignore */ }
+    };
+    poll();
+    const id = setInterval(poll, 2000);
+    return () => clearInterval(id);
+  }, []);
 
   const sendCalCmd = useCallback((cmd: CalibrationCommand) => {
     ws.send({ type: MessageType.CALIBRATION_COMMAND, timestamp: Date.now(), payload: cmd });

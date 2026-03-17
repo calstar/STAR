@@ -315,7 +315,13 @@ class ActiveLearningAgent:
         logger.info(f"Active learning agent initialized: {n_sensors} sensors")
 
     def should_request_calibration(
-        self, sensor_id: int, prediction: float, uncertainty: float, voltage: float
+        self,
+        sensor_id: int,
+        prediction: float,
+        uncertainty: float,
+        voltage_or_adc: float,
+        *,
+        is_adc_code: bool = False,
     ) -> Optional[CalibrationRequest]:
         """
         Decide if calibration should be requested for this sensor.
@@ -339,11 +345,16 @@ class ActiveLearningAgent:
             reasons.append(f"high uncertainty ({uncertainty:.1f} PSI)")
             urgency = max(urgency, uncertainty / 100.0)
 
-        # Reason 2: Extrapolation (voltage outside calibrated range)
-        # This would need to be passed in, for now use heuristic
-        if voltage < 0.5 or voltage > 9.5:
-            reasons.append(f"extreme voltage ({voltage:.2f}V)")
-            urgency = max(urgency, 0.8)
+        # Reason 2: Extrapolation (voltage/ADC outside calibrated range)
+        if is_adc_code:
+            # ADC code: 24-bit signed, extrapolation if outside typical range
+            if voltage_or_adc < -1e9 or voltage_or_adc > 2.2e9:
+                reasons.append(f"extreme ADC ({voltage_or_adc:.0f})")
+                urgency = max(urgency, 0.8)
+        else:
+            if voltage_or_adc < 0.5 or voltage_or_adc > 9.5:
+                reasons.append(f"extreme voltage ({voltage_or_adc:.2f}V)")
+                urgency = max(urgency, 0.8)
 
         # Reason 3: Long time since last calibration
         if sensor_id in self.last_calibration_time:
@@ -375,7 +386,7 @@ class ActiveLearningAgent:
 
             return CalibrationRequest(
                 sensor_id=sensor_id,
-                voltage=voltage,
+                voltage=voltage_or_adc,
                 reason="; ".join(reasons),
                 urgency=float(urgency),
                 suggested_pressure_range=suggested_range,
@@ -621,7 +632,10 @@ class AutonomousCalibrationEngine:
                 # Covariance doesn't blend (stays as computed)
 
     def predict(
-        self, sensor_id: int, design_vector: np.ndarray
+        self,
+        sensor_id: int,
+        design_vector: np.ndarray,
+        adc_code: Optional[float] = None,
     ) -> Tuple[float, float, Optional[CalibrationRequest]]:
         """
         Predict pressure with uncertainty and possibly request calibration.
@@ -635,10 +649,15 @@ class AutonomousCalibrationEngine:
         pressure, uncertainty = learner.predict_with_uncertainty(design_vector)
 
         # Check if calibration should be requested
-        voltage = design_vector[1]  # Assume linear term is voltage
-        calibration_request = self.active_learner.should_request_calibration(
-            sensor_id, pressure, uncertainty, voltage
-        )
+        if adc_code is not None:
+            calibration_request = self.active_learner.should_request_calibration(
+                sensor_id, pressure, uncertainty, adc_code, is_adc_code=True
+            )
+        else:
+            voltage = design_vector[1] if len(design_vector) > 1 else 0.0
+            calibration_request = self.active_learner.should_request_calibration(
+                sensor_id, pressure, uncertainty, voltage
+            )
 
         return pressure, uncertainty, calibration_request
 

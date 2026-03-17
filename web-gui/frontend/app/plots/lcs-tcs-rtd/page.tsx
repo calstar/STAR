@@ -12,6 +12,7 @@ import {
   codeToForce,
 } from '@/lib/sense-conversions';
 import { adcToVoltage as adcToVoltageFromRef } from '@/lib/voltageRef';
+import { getApiBaseUrl } from '@/lib/websocket';
 
 const ADC_FULL_SCALE = 2 ** 31;
 
@@ -221,35 +222,43 @@ export default function LCS_TCS_RTDPage() {
   const [lcLabels, setLcLabels] = useState<string[]>([]);
 
   const loadChannelConfig = useCallback(() => {
-    fetch('/api/config')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: any) => {
-        const config = data?.config;
-        const boards = config?.boards;
-        const adc = config?.adc;
-        if (adc && typeof adc.internal_v === 'number' && typeof adc.absolute_5v_v === 'number') {
-          useSensorStore.getState().setVoltageRefNominals({ internalV: adc.internal_v, absolute5vV: adc.absolute_5v_v });
-        }
-        if (!boards) return;
+    Promise.all([
+      fetch('/api/config').then((r) => (r.ok ? r.json() : null)),
+      fetch(`${getApiBaseUrl()}/api/sensor-config`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    ]).then(([configRes, sensorRes]) => {
+      const config = configRes?.config;
+      const boards = config?.boards;
+      const adc = config?.adc;
+      const sensorConfig = sensorRes?.sensors as Array<{ calEntity: string; role: string }> | undefined;
 
-        const tc = buildTcChannelsWithRef(boards);
-        if (tc.length) setTcData(tc);
+      if (adc && typeof adc.internal_v === 'number' && typeof adc.absolute_5v_v === 'number') {
+        useSensorStore.getState().setVoltageRefNominals({ internalV: adc.internal_v, absolute5vV: adc.absolute_5v_v });
+      }
+      if (!boards) return;
 
-        const rtd = buildChannels(boards, 'RTD');
-        if (rtd.length) {
-          setRtdEntities(rtd.map((ch) => `RTD.CH${ch}`));
-          setRtdCalEntities(rtd.map((ch) => `RTD_Cal.CH${ch}`));
-          setRtdLabels(rtd.map((ch) => `RTD Ch${ch}`));
-        }
+      const tc = buildTcChannelsWithRef(boards);
+      if (tc.length) setTcData(tc);
 
-        const lc = buildChannels(boards, 'LC');
-        if (lc.length) {
-          setLcEntities(lc.map((ch) => `LC.CH${ch}`));
-          setLcCalEntities(lc.map((ch) => `LC_Cal.CH${ch}`));
-          setLcLabels(lc.map((ch) => `LC Ch${ch}`));
-        }
-      })
-      .catch(() => {/* leave defaults empty */});
+      const rtd = buildChannels(boards, 'RTD');
+      if (rtd.length) {
+        const entities = rtd.map((ch) => `RTD.CH${ch}`);
+        const calEntities = rtd.map((ch) => `RTD_Cal.CH${ch}`);
+        const labels = rtd.map((ch) => {
+          const role = sensorConfig?.find((s) => s.calEntity === `RTD_Cal.CH${ch}`)?.role;
+          return role ?? `RTD Ch${ch}`;
+        });
+        setRtdEntities(entities);
+        setRtdCalEntities(calEntities);
+        setRtdLabels(labels);
+      }
+
+      const lc = buildChannels(boards, 'LC');
+      if (lc.length) {
+        setLcEntities(lc.map((ch) => `LC.CH${ch}`));
+        setLcCalEntities(lc.map((ch) => `LC_Cal.CH${ch}`));
+        setLcLabels(lc.map((ch) => `LC Ch${ch}`));
+      }
+    }).catch(() => {});
   }, []);
 
   // Fetch board config on mount and whenever backend signals config reload

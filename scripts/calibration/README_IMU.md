@@ -1,6 +1,6 @@
 # IMU Calibration System
 
-Python-based calibration system for IMU sensors (accelerometer, gyroscope, magnetometer), following the pattern from external FSW PT calibration.
+Python-based calibration system for IMU sensors (accelerometer, gyroscope, magnetometer), following the PT calibration pattern.
 
 ## Files
 

@@ -21,6 +21,7 @@ import ControllerPage from '@/app/controller/page';
 import CalibrationPage from '@/app/calibration/page';
 import UnifiedDashboardPage from '@/app/window/unified/page';
 import BoardsPage from '@/app/boards/page';
+import FlashPage from '@/app/flash/page';
 import LCS_TCS_RTDPage from '@/app/plots/lcs-tcs-rtd/page';
 import ChamberGraphsPage from '@/app/plots/chamber/page';
 import SensorInfoPage from '@/app/sensor-info/page';
@@ -38,6 +39,7 @@ const viewComponents: Record<string, React.ComponentType> = {
   controller: ControllerPage,
   status: StatusPage,
   boards: BoardsPage,
+  flash: FlashPage,
   config: ConfigPage,
   calibration: CalibrationPage,
   unified: UnifiedDashboardPage,

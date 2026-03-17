@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo } from 'react';
+import Link from 'next/link';
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, BoardStatusPayload, BoardStatus, engineStateCodeToLabel } from '@/lib/types';
@@ -186,8 +187,16 @@ export default function BoardsPage() {
                         <div className="text-base text-text-muted font-mono mb-2">
                           Heartbeat: {freq}
                         </div>
-                        <div className="text-sm text-gray-500 font-mono mt-auto pt-3 truncate" title={b.ip}>
-                          ID {b.id} · {b.ip}
+                        <div className="flex items-center justify-between gap-2 mt-auto pt-3">
+                          <span className="text-sm text-gray-500 font-mono truncate" title={b.ip}>
+                            ID {b.id} · {b.ip}
+                          </span>
+                          <Link
+                            href={`/flash?ip=${encodeURIComponent(b.ip)}`}
+                            className="text-xs px-2 py-1 rounded bg-cyan-900/50 text-cyan-300 hover:bg-cyan-800/60 font-semibold"
+                          >
+                            Flash
+                          </Link>
                         </div>
                       </div>
                     );

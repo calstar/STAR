@@ -97,13 +97,18 @@ export class DataLogger {
     this.fd = null;
 
     // Now rewrite the file: new header + all existing records
-    // Read all records from the file (skip the old header)
     const oldBuf = fs.readFileSync(this.filePath);
-    const oldHeaderSize = this.calcHeaderSize(0); // initial header had 0 channels
+    const oldHeaderSize = this.calcHeaderSize(0);
 
-    // Build new header with complete channel table
+    // Only copy complete 14-byte records — truncate partial writes to avoid corruption
+    const recordBytes = oldBuf.length - oldHeaderSize;
+    const fullRecordCount = Math.floor(recordBytes / RECORD_SIZE);
+    const records = oldBuf.subarray(oldHeaderSize, oldHeaderSize + fullRecordCount * RECORD_SIZE);
+    if (fullRecordCount * RECORD_SIZE < recordBytes) {
+      console.warn(`[DataLogger] Truncated ${recordBytes - fullRecordCount * RECORD_SIZE} trailing bytes (incomplete record)`);
+    }
+
     const header = this.buildHeader();
-    const records = oldBuf.subarray(oldHeaderSize);
 
     // Rewrite
     const newFd = fs.openSync(this.filePath, 'w');

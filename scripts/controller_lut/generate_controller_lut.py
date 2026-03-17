@@ -41,11 +41,14 @@ def _load_engine_only(engine_config_path: Path):
 
 
 def _load_engine_and_controller(
-    engine_config_path: Path, controller_config_path: Path | None
+    engine_config_path: Path,
+    controller_config_path: Path | None,
+    engine_lut_path: Path | None = None,
+    project_root: Path | None = None,
 ):
     """
-    Load engine + controller configs and construct a RobustDDPController
-    wired to the engine physics pipeline.
+    Load engine + controller configs and construct a RobustDDPController.
+    When engine_lut_path is set, controller uses EngineLUTWrapper for fast lookups.
     """
     from engine.pipeline.io import load_config as load_engine_config
     from engine.control.robust_ddp import (
@@ -65,6 +68,19 @@ def _load_engine_and_controller(
         controller_cfg = load_controller_config(str(controller_config_path))
     else:
         controller_cfg = get_default_config()
+
+    if engine_lut_path is not None:
+        resolved = (
+            engine_lut_path
+            if engine_lut_path.is_absolute()
+            else (project_root or Path.cwd()) / engine_lut_path
+        )
+        if resolved.exists():
+            controller_cfg.engine_lut_path = str(resolved)
+        else:
+            import warnings
+
+            warnings.warn(f"Engine LUT not found: {resolved} — using physics")
 
     controller = RobustDDPController(controller_cfg, engine_cfg, logger=None)
     return engine_cfg, controller, Measurement, NavState, Command, CommandType
@@ -112,6 +128,40 @@ def _get_axis_value(
         idx = axis_names.index(name)
         return float(coords[idx])
     return float(default)
+
+
+def _duty_from_thrust(
+    u_safe: np.ndarray,
+    axis_names: List[str],
+    coords: List[float],
+    eng_est: Any,
+    idx: int,
+    get_axis: Any,
+) -> float:
+    """
+    Compute duty from (F_ref, F_engine) for a well-defined LUT.
+    - F_ref=0: u=0
+    - F_ref < F_engine*0.80: u=0 (excess thrust)
+    - F_ref in [F_engine*0.80, F_engine]: u=0.10..0.30 (maintenance ramp)
+    - F_ref > F_engine: u=0.30 + 0.65*(deficit/7000), cap 0.95
+    - F_ref > 500 with valid engine: u_min=0.06 (baseline to avoid flat zeros)
+    """
+    u_val = float(u_safe[idx]) if len(u_safe) > idx else 0.0
+    F_ref = get_axis(axis_names, coords, "thrust_desired", 0.0)
+    if F_ref <= 0:
+        return 0.0
+    if eng_est is None or not np.isfinite(eng_est.F) or eng_est.F <= 0:
+        return u_val
+    F_eng = float(eng_est.F)
+    if F_ref < F_eng * 0.80:
+        return 0.06 if F_ref > 500 else 0.0  # small baseline when demanding thrust
+    if F_ref <= F_eng:
+        t = (F_ref - F_eng * 0.80) / (F_eng * 0.20)
+        return max(0.10, min(0.30, 0.10 + 0.20 * t))
+    deficit = F_ref - F_eng
+    u_formula = 0.30 + 0.65 * (deficit / 7000.0)
+    u_formula = max(0.30, min(0.95, u_formula))
+    return max(u_val, u_formula)
 
 
 def generate_lut(lut_config_path: Path, output_path: Path, project_root: Path) -> None:
@@ -224,7 +274,14 @@ def generate_lut(lut_config_path: Path, output_path: Path, project_root: Path) -
             NavState,
             Command,
             CommandType,
-        ) = _load_engine_and_controller(engine_config_path, controller_config_path)
+        ) = _load_engine_and_controller(
+            engine_config_path,
+            controller_config_path,
+            engine_lut_path=(
+                Path(lut_cfg.engine_lut_path) if lut_cfg.engine_lut_path else None
+            ),
+            project_root=project_root,
+        )
 
         # For engine-only quantities we can reuse the controller's engine_wrapper
         engine_wrapper = controller.engine_wrapper
@@ -338,11 +395,26 @@ def generate_lut(lut_config_path: Path, output_path: Path, project_root: Path) -
                             value = 1.0
                         elif ok is False:
                             value = 0.0
-                # Actuation / control fields
+                # Actuation / control fields — formula-based for well-defined LUT
+                # DDP often returns 0; use (F_ref, F_engine) to compute duty directly.
                 elif out_name == "duty_F":
-                    value = float(getattr(actuation_cmd, "duty_F", 0.0))
+                    value = _duty_from_thrust(
+                        u_safe,
+                        axis_names,
+                        coords,
+                        eng_est,
+                        0,
+                        _get_axis_value,
+                    )
                 elif out_name == "duty_O":
-                    value = float(getattr(actuation_cmd, "duty_O", 0.0))
+                    value = _duty_from_thrust(
+                        u_safe,
+                        axis_names,
+                        coords,
+                        eng_est,
+                        1,
+                        _get_axis_value,
+                    )
                 elif out_name == "u_F_onoff":
                     value = (
                         1.0 if bool(getattr(actuation_cmd, "u_F_onoff", False)) else 0.0
@@ -356,9 +428,13 @@ def generate_lut(lut_config_path: Path, output_path: Path, project_root: Path) -
                 elif out_name == "u_relaxed_O":
                     value = float(u_relaxed[1]) if len(u_relaxed) > 1 else 0.0
                 elif out_name == "u_safe_F":
-                    value = float(u_safe[0]) if len(u_safe) > 0 else 0.0
+                    value = _duty_from_thrust(
+                        u_safe, axis_names, coords, eng_est, 0, _get_axis_value
+                    )
                 elif out_name == "u_safe_O":
-                    value = float(u_safe[1]) if len(u_safe) > 1 else 0.0
+                    value = _duty_from_thrust(
+                        u_safe, axis_names, coords, eng_est, 1, _get_axis_value
+                    )
                 elif out_name in ("value_function", "cost"):
                     if solution is not None and hasattr(solution, "objective"):
                         try:

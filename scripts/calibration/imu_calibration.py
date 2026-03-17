@@ -7,7 +7,7 @@ Calibrates accelerometers, gyroscopes, and magnetometers using:
 - Zero-velocity calibration for gyroscopes
 - Ellipsoid fitting for magnetometers
 
-Similar to PT calibration pattern from external FSW.
+Similar to PT calibration pattern.
 """
 
 import numpy as np
