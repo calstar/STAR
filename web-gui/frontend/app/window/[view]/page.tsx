@@ -27,6 +27,7 @@ import ChamberGraphsPage from '@/app/plots/chamber/page';
 import SensorInfoPage from '@/app/sensor-info/page';
 import MobileGUIPage from '@/app/window/mobile-gui/page';
 import SolenoidCharacterizationPage from '@/app/plots/solenoid-characterization/page';
+import LivestreamPage from '@/app/livestream/page';
 
 const viewComponents: Record<string, React.ComponentType> = {
   fuel: FuelGraphsPage,
@@ -48,6 +49,7 @@ const viewComponents: Record<string, React.ComponentType> = {
   'sensor-info': SensorInfoPage,
   'mobile-gui': MobileGUIPage,
   'solenoid-char': SolenoidCharacterizationPage,
+  livestream: LivestreamPage,
 };
 
 export default function WindowViewPage() {

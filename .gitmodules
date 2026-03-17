@@ -11,3 +11,6 @@
 [submodule "external/flash"]
 	path = external/flash
 	url = https://github.com/calstar/flash.git
+[submodule "FSW/external/uWebSockets"]
+	path = FSW/external/uWebSockets
+	url = https://github.com/uNetworking/uWebSockets.git
