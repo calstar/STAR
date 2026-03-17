@@ -14,6 +14,7 @@
  *   CAL_VERBOSE=1 for per-packet debug output
  */
 
+#include <atomic>
 #include <csignal>
 #include <cstdlib>
 #include <fstream>
@@ -115,6 +116,12 @@ int main(int argc, char* argv[]) {
 
     std::cout << "[Calibration] PT:  " << pt_calibration.get_calibrated_count() << " channels"
               << std::endl;
+    if (pt_calibration.is_calibrated(5))
+        std::cout << "[Calibration] PT ch5 (Ox Upstream) calibrated — sim will provide valid P_u_ox"
+                  << std::endl;
+    else
+        std::cout << "[Calibration] ⚠️ PT ch5 (Ox Upstream) NOT calibrated — controller will see "
+                     "P_u_ox=0; add ch5 to calibration JSON for sim" << std::endl;
     std::cout << "[Calibration] TC:  " << tc_calibration.calibrated_count() << " channels"
               << std::endl;
     std::cout << "[Calibration] RTD: " << rtd_calibration.calibrated_count() << " channels"
@@ -366,8 +373,12 @@ int main(int argc, char* argv[]) {
                         pt.status_flags = status;
                         batch.pt_samples.push_back(pt);
                         auto cal_msgs = router.route_pt_samples_calibrated(batch, ts_ns);
+                        static std::atomic<bool> logged_ch5{false};
                         for (const auto& [id, msg] : cal_msgs) {
                             elodin_client.publish(id, msg);
+                            if (ch == 5 && !logged_ch5.exchange(true))
+                                std::cout << "[Cal] PT ch5 (Ox Up) first publish: "
+                                          << msg.getField<3>() << " psi (sim valid)" << std::endl;
                             if (verbose() && (packet_count % 100 == 0))
                                 std::cout << "[Cal] PT ch" << (int)ch << " poly" << std::endl;
                         }

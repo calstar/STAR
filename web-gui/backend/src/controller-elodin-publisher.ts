@@ -168,3 +168,29 @@ export function publishControllerDiagnostics(
     return false;
   }
 }
+
+/**
+ * Publish PSM state transition to Elodin DB [0x43, 0x00]
+ * Format: U64 timestamp_ns | U8 from_state | U8 to_state | U8 reason (11 bytes)
+ * Ensures CONTROLLER.state.to_state is in DB for postprocessing when backend owns state.
+ */
+export function publishControllerStateTransition(
+  elodin: ElodinClient,
+  fromState: number,
+  toState: number,
+  reason: number = 0
+): boolean {
+  if (!elodin.isConnected()) return false;
+  try {
+    const timestampNs = BigInt(Date.now()) * BigInt(1_000_000);
+    const buffer = Buffer.alloc(11);
+    buffer.writeBigUInt64LE(timestampNs, 0);
+    buffer.writeUInt8(fromState, 8);
+    buffer.writeUInt8(toState, 9);
+    buffer.writeUInt8(reason, 10);
+    return elodin.publishTable([0x43, 0x00], buffer);
+  } catch (error) {
+    console.error('[ControllerElodinPublisher] ❌ Failed to publish state transition:', error);
+    return false;
+  }
+}

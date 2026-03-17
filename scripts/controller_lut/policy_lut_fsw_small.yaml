@@ -26,6 +26,8 @@ outputs:
   - u_safe_O
   - duty_F
   - duty_O
+  - F
+  - MR
 
 metadata:
   description: Minimal DDP policy LUT for FSW (fast generation)

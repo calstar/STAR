@@ -779,7 +779,10 @@ int main(int argc, char* argv[]) {
             if (idx < static_cast<int>(board_order.size()))
                 effective_cfg = &board_order[idx].second;
         }
-        BoardType board_type = effective_cfg ? effective_cfg->type : BoardType::UNKNOWN;
+        // Use board type from config even when disabled — we still publish actuator/PT data to DB
+        BoardType board_type =
+            board_it != board_map.end() ? board_it->second.type
+                                       : (effective_cfg ? effective_cfg->type : BoardType::UNKNOWN);
         if (board_type == BoardType::UNKNOWN) {
             auto discovered = discovery.get_board_by_ip(source_ip);
             if (discovered) {

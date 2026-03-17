@@ -104,6 +104,18 @@ elodin editor ~/.local/share/elodin/daq_20260307_174529
 
 ## Analysis & Plots
 
+### Quick: plot latest DB run
+
+```bash
+./scripts/postprocessing/plot_latest_db.sh
+```
+
+Finds the most recent Elodin DB (by mtime), exports to CSV, and generates plots. Optional: pass a DB name or path to plot a specific run.
+
+```bash
+./scripts/postprocessing/plot_latest_db.sh daq_20260307_174529
+```
+
 ### Full pipeline (export CSV → analyze → plots)
 
 ```bash
@@ -118,11 +130,16 @@ Plots are written to `./output/postprocessing/latest/`:
 - `pressures.png` — PT pressure time series (LOX, Fuel, GN2, GSE, Chamber)
 - `temperatures.png` — TC/RTD temperature time series
 - `load_cells.png` — Load cell force (N)
-- `actuators.png` — Actuator state (0=OFF, 1=ON; OPEN/CLOSE depends on valve NO/NC)
-- `states.png` — System state (PSM / engine_state)
+- `actuators.png` — Actuator state (0=OFF, 1=ON; forward-fill, no interpolation)
+- `states.png` — System state (PSM / engine_state; forward-fill, no interpolation)
+- `controller.png` — Controller outputs (duty_F/O, F_ref, F_estimated, P_ch, MR)
 - `pressure_summary.png` — Summary statistics table
 - `overview.png` — 5-panel overview (state, pressures, temps, actuators)
 - `run_data_combined.csv` — All raw + calibrated channels, aligned to common time grid
+
+**Discrete data (states, actuators):** Uses forward-fill resampling (no interpolation) so step changes are preserved. Previously, linear interpolation produced bogus intermediate values (e.g. 0.5 between 0 and 1).
+
+**State source:** Prefers `CONTROLLER.state.to_state` (authoritative from PSM) when available; falls back to `BOARD.HB_*.engine_state` from heartbeat.
 
 ### Data semantics
 

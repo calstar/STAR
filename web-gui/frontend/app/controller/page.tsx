@@ -1,13 +1,29 @@
 'use client'
 
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useSensorStore, useSensorValue, useActuatorCommandedState } from '@/lib/store';
 import { ActuatorState } from '@/lib/types';
-import { getWebSocketClient } from '@/lib/websocket';
+import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { MessageType, SensorUpdate, StateUpdate, SystemState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { getEntityColor } from '@/lib/sensor-colors';
+
+const LBF_TO_N = 4.44822;
+
+function buildLcChannels(boards: Record<string, unknown>): number[] {
+  const channels: number[] = [];
+  for (const board of Object.values(boards)) {
+    const b = board as { type?: string; enabled?: boolean; active_connectors?: number[]; num_sensors?: number };
+    if (b.type !== 'LC' || b.enabled === false) continue;
+    const active: number[] =
+      Array.isArray(b.active_connectors) && b.active_connectors.length > 0
+        ? b.active_connectors
+        : Array.from({ length: (b.num_sensors ?? 4) }, (_, i) => i + 1);
+    channels.push(...active);
+  }
+  return Array.from(new Set(channels)).sort((a, b) => a - b);
+}
 
 /** Display follows commanded state only (state machine / user command); no ADC. */
 function ValveStatusRow({ label, entity }: { label: string; entity: string }) {
@@ -26,8 +42,10 @@ function ValveStatusRow({ label, entity }: { label: string; entity: string }) {
 }
 
 function DutyCycleCard({ label, entity, color }: { label: string; entity: string; color: string }) {
-  const dc = useSensorValue(entity, 'duty_cycle') ?? 0;
+  const raw = useSensorValue(entity, 'duty_cycle') ?? 0;
   const on = useSensorValue(entity, 'onoff');
+  // Backend sends 0–1; display as 0–100%
+  const dc = raw <= 1 && raw >= 0 ? raw * 100 : raw;
 
   return (
     <div className="bg-card rounded-xl border border-gray-800 p-4">
@@ -71,6 +89,24 @@ export default function ControllerPage() {
   const { actuators } = useActuatorsFromConfig();
   const VALVES = actuators.map((a) => ({ label: a.name, entity: a.entity, ch: a.entity, channel: a.channel }));
 
+  const [lcChannels, setLcChannels] = useState<number[]>([1]);
+  const loadLcConfig = useCallback(async () => {
+    try {
+      const base = getApiBaseUrl();
+      const res = await fetch(`${base}/api/config`);
+      const cfg = await res.json();
+      const boards = (cfg?.boards ?? {}) as Record<string, unknown>;
+      const chs = buildLcChannels(boards);
+      if (chs.length > 0) setLcChannels(chs);
+    } catch {
+      setLcChannels([1]);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLcConfig();
+  }, [loadLcConfig]);
+
   useEffect(() => {
     if (!ws.isConnected()) {
       ws.connect();
@@ -80,6 +116,7 @@ export default function ControllerPage() {
     const u3 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
       updateActuatorExpectedPositions(p as Record<number, Record<string, 'open' | 'closed' | null>>);
     });
+    const u4 = ws.on(MessageType.CONFIG_UPDATED, loadLcConfig);
 
     ws.send({
       type: MessageType.SUBSCRIBE_SENSOR,
@@ -91,13 +128,26 @@ export default function ControllerPage() {
       timestamp: Date.now(),
       payload: { entity: 'CONTROLLER.Ox' },
     });
+    ws.send({
+      type: MessageType.SUBSCRIBE_SENSOR,
+      timestamp: Date.now(),
+      payload: { entity: 'CONTROLLER.diagnostics' },
+    });
+    lcChannels.forEach((ch) => {
+      ws.send({
+        type: MessageType.SUBSCRIBE_SENSOR,
+        timestamp: Date.now(),
+        payload: { entity: `LC_Cal.CH${ch}` },
+      });
+    });
 
     return () => {
       u1();
       u2();
       u3();
+      u4();
     };
-  }, [ws, updateSensor, updateState, updateActuatorExpectedPositions]);
+  }, [ws, updateSensor, updateState, updateActuatorExpectedPositions, loadLcConfig, lcChannels]);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-3">
@@ -174,16 +224,54 @@ export default function ControllerPage() {
           ))}
         </div>
 
-        {/* Right column: duty cycle time series */}
-        <div className="bg-card rounded-xl border border-gray-800 p-3 flex flex-col min-h-0 min-w-0 overflow-hidden">
-          <TimeSeriesPlot
-            title="PWM Duty Cycles (%)"
-            entities={['CONTROLLER.Fuel', 'CONTROLLER.Ox']}
-            labels={['Fuel Sol.', 'Ox Sol.']}
-            component="duty_cycle"
-            colors={[getEntityColor('CONTROLLER.Fuel'), getEntityColor('CONTROLLER.Ox')]}
-            yLabel="Duty Cycle (%)"
-          />
+        {/* Right column: duty cycle + thrust overlay (stacked) */}
+        <div className="flex flex-col gap-3 min-h-0 min-w-0 overflow-hidden flex-1">
+          <div className="bg-card rounded-xl border border-gray-800 p-3 flex flex-col min-h-[120px] flex-1 min-w-0 overflow-hidden shrink-0">
+            <TimeSeriesPlot
+              title="PWM Duty Cycles (%)"
+              entities={['CONTROLLER.Fuel', 'CONTROLLER.Ox']}
+              labels={['Fuel Sol.', 'Ox Sol.']}
+              component="duty_cycle"
+              colors={[getEntityColor('CONTROLLER.Fuel'), getEntityColor('CONTROLLER.Ox')]}
+              yLabel="Duty Cycle (%)"
+              valueTransforms={[(v) => (v <= 1 && v >= 0 ? v * 100 : v), (v) => (v <= 1 && v >= 0 ? v * 100 : v)]}
+              windowSeconds={60}
+            />
+          </div>
+          <div className="bg-card rounded-xl border border-gray-800 p-3 flex flex-col min-h-[120px] flex-1 min-w-0 overflow-hidden shrink-0">
+            <TimeSeriesPlot
+              key={`thrust-${lcChannels.join(',')}`}
+              title="Thrust (N)"
+              component="F_ref"
+              entities={[
+                'CONTROLLER.diagnostics',
+                'CONTROLLER.diagnostics',
+                ...lcChannels.map((ch) => `LC_Cal.CH${ch}`),
+              ]}
+              components={[
+                'F_ref',
+                'F_estimated',
+                ...lcChannels.map(() => 'force_lbf'),
+              ]}
+              labels={[
+                'Desired',
+                'Estimated',
+                ...lcChannels.map((ch) => `Actual (LC${ch})`),
+              ]}
+              valueTransforms={[
+                undefined,
+                undefined,
+                ...lcChannels.map(() => (v: number) => (isFinite(v) ? v * LBF_TO_N : v)),
+              ]}
+              colors={[
+                '#60A5FA',
+                '#34D399',
+                ...lcChannels.map((_, i) => ['#F59E0B', '#EC4899', '#8B5CF6'][i % 3] ?? '#F59E0B'),
+              ]}
+              yLabel="Thrust (N)"
+              windowSeconds={60}
+            />
+          </div>
         </div>
 
       </div>

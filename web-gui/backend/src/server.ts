@@ -23,7 +23,7 @@ import { registerNavigationVTable } from './elodin-vtable-navigation.js';
 import { ElodinRelayClient } from './elodin-relay-client.js';
 
 import { ElodinPublisherBatched } from './elodin-publisher-batched.js';
-import { publishControllerActuation, publishControllerDiagnostics } from './controller-elodin-publisher.js';
+import { publishControllerActuation, publishControllerDiagnostics, publishControllerStateTransition } from './controller-elodin-publisher.js';
 import { getStateTransitions, isTransitionAllowed } from './routes/state-transitions.js';
 import { getStateActuatorMap, StateActuatorMap, CSV_ACTUATOR_TO_ENTITY, getActuatorChannel } from './routes/state-actuators.js';
 import { startAPIServer, type DebugInfo } from './api-server.js';
@@ -151,11 +151,11 @@ class SensorSystemServer {
   private serverBroadcastIP: string = '255.255.255.255';
   /** Abort → AbortDone timer */
   private abortDoneTimer: NodeJS.Timeout | null = null;
-  /** FIRE → IDLE auto-end: timer and start time for 2s default / 5s extended */
+  /** FIRE → IDLE auto-end: timer and start time (config-driven) */
   private fireEndTimer: NodeJS.Timeout | null = null;
   private fireStartTimeMs: number | null = null;
-  private static readonly FIRE_DURATION_MS = 2000;
-  private static readonly FIRE_EXTENDED_MS = 3000;
+  private fireDurationMs: number = 6000;
+  private fireExtendedMs: number = 10000;
 
   /** Controller — always C++ controller_service */
   USE_CPP_CONTROLLER: boolean = true;
@@ -360,8 +360,12 @@ class SensorSystemServer {
     } else if (ctrlSvc?.port && typeof ctrlSvc.port === 'number') {
       this.controllerServicePort = ctrlSvc.port;
     }
+    const dur = typeof ctrlSvc?.fire_duration_ms === 'number' ? ctrlSvc.fire_duration_ms : parseFloat(ctrlSvc?.fire_duration_ms);
+    const ext = typeof ctrlSvc?.fire_extended_ms === 'number' ? ctrlSvc.fire_extended_ms : parseFloat(ctrlSvc?.fire_extended_ms);
+    this.fireDurationMs = (typeof dur === 'number' && !isNaN(dur) && dur > 0) ? dur : 6000;
+    this.fireExtendedMs = (typeof ext === 'number' && !isNaN(ext) && ext > 0) ? ext : 10000;
     if (this.controllerServicePort > 0) {
-      console.log(`🎯 Controller service enabled — FIRE gate → TCP :${this.controllerServicePort}`);
+      console.log(`🎯 Controller service enabled — FIRE gate → TCP :${this.controllerServicePort} (${this.fireDurationMs}ms hotfire)`);
     }
 
     // Build transition validation map
@@ -1165,6 +1169,7 @@ class SensorSystemServer {
           }
 
           this.currentState = newState;
+          publishControllerStateTransition(this.elodin, prevState ?? SystemState.IDLE, newState, 0);
           this.broadcast({ type: MessageType.STATE_UPDATE, timestamp: Date.now(), payload: { currentState: newState, stateName: SystemState[newState], timestamp: Date.now(), debugMode: this.debugMode } });
 
           const useCppActuatorService = this.actuatorServicePort > 0;
@@ -1224,7 +1229,7 @@ class SensorSystemServer {
           }
           if (this.fireEndTimer) { clearTimeout(this.fireEndTimer); this.fireEndTimer = null; }
           this.fireStartTimeMs = Date.now();
-          this.fireEndTimer = setTimeout(() => this.endFireState(), SensorSystemServer.FIRE_DURATION_MS);
+          this.fireEndTimer = setTimeout(() => this.endFireState(), this.fireDurationMs);
         } else if (prevState === SystemState.FIRE) {
           if (this.controllerServicePort > 0) {
             forwardFireStateToControllerService(false, this.controllerServicePort).catch(() => {});
@@ -1271,9 +1276,9 @@ class SensorSystemServer {
       } else if (command.commandType === 'extend_fire') {
         if (this.currentState === SystemState.FIRE && this.fireStartTimeMs != null) {
           if (this.fireEndTimer) { clearTimeout(this.fireEndTimer); this.fireEndTimer = null; }
-          const remaining = Math.max(0, SensorSystemServer.FIRE_EXTENDED_MS - (Date.now() - this.fireStartTimeMs));
+          const remaining = Math.max(0, this.fireExtendedMs - (Date.now() - this.fireStartTimeMs));
           this.fireEndTimer = setTimeout(() => this.endFireState(), remaining);
-          console.log(`🎯 FIRE extended to 5s from start – ${(remaining / 1000).toFixed(1)}s remaining`);
+          console.log(`🎯 FIRE extended to ${(this.fireExtendedMs / 1000).toFixed(1)}s from start – ${(remaining / 1000).toFixed(1)}s remaining`);
         }
       } else if (command.commandType === 'pwm_actuator') {
         if (!this.debugMode && this.currentState !== SystemState.FIRE) {
@@ -1472,7 +1477,9 @@ class SensorSystemServer {
     this.fireStartTimeMs = null;
     if (this.currentState !== SystemState.FIRE) return;
     const newState = SystemState.ARMED;
+    const prevState = this.currentState as SystemState;
     this.currentState = newState;
+    publishControllerStateTransition(this.elodin, prevState, newState, 0);
     this.broadcast({ type: MessageType.STATE_UPDATE, timestamp: Date.now(), payload: { currentState: newState, stateName: SystemState[newState], timestamp: Date.now(), debugMode: this.debugMode } });
     console.log('🎯 FIRE auto-ended – sending FIRE_STOP, transitioning to ARMED');
     if (this.controllerServicePort > 0) forwardFireStateToControllerService(false, this.controllerServicePort).catch(() => {});

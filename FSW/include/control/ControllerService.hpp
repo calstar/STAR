@@ -2,11 +2,13 @@
 #define FSW_CONTROL_CONTROLLER_SERVICE_HPP
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "ControllerLUT.hpp"
 #include "RobustDDPController.hpp"
@@ -50,13 +52,16 @@ public:
      * @param relay_port       Elodin relay port
      * @param lut_path         Optional path to LUT binary. If non-empty and load succeeds,
      *                         bypasses DDP and uses LUT for boolean control (u_safe_F/O > 0.5).
+     * @param thrust_curve_path Optional path to thrust curve CSV (time_s,thrust_N). When set
+     *                         and fire is active, thrust_desired is interpolated from curve.
      * @return true if initialization succeeded
      */
     bool initialize(const PWMConfig& pwm_config,
                     const RobustDDPController::Config& controller_config,
                     const std::string& elodin_host = "", uint16_t elodin_port = 2240,
                     const std::string& relay_host = "127.0.0.1", uint16_t relay_port = 9090,
-                    const std::string& lut_path = "");
+                    const std::string& lut_path = "",
+                    const std::string& thrust_curve_path = "");
 
     /** Start the controller loop at the given rate. */
     bool start(double loop_rate_hz = 10.0);
@@ -167,6 +172,15 @@ private:
     std::thread relay_subscriber_thread_;
     double loop_rate_hz_ = 10.0;
     double loop_interval_ms_ = 100.0;
+
+    // Thrust curve (time-varying target from Layer 2 pressure curves)
+    std::vector<double> thrust_curve_times_;
+    std::vector<double> thrust_curve_values_;
+    std::chrono::steady_clock::time_point fire_start_time_;
+    bool thrust_curve_loaded_ = false;
+
+    bool loadThrustCurve(const std::string& path);
+    double interpolateThrustCurve(double t_elapsed_s) const;
 };
 
 }  // namespace control

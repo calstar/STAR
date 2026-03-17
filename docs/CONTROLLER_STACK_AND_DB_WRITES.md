@@ -57,8 +57,10 @@ elodin_client_->publish(0x4200, measurement_msg);  // Measurement
 |--------|----------|------|
 | **Calibration server** (Python) | Calibrated PT, TC, RTD, LC [0x20,0x21,0x22,0x23] | When processing raw ADC from relay |
 | **C++ ControllerService** | Actuation, diagnostics, measurement, fire state [0x40–0x44] | Every loop tick when Elodin connected |
+| **C++ PressureStateMachine** | PSM state transition [0x43] | On state entry when PSM runs (e.g. SITL) |
 | **Web backend** | Registers VTables | On Elodin connect |
 | **Web backend** | Controller actuation/diagnostics | When `use_cpp_controller=false` (Python controller mode) |
+| **Web backend** | PSM state transition [0x43] | On every state transition (GUI-driven) so CONTROLLER.state.to_state is in DB |
 
 ## Navigation State
 

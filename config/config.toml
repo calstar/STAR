@@ -109,6 +109,25 @@ designated_survivor = false
 # Leave empty [] to use all connectors, or specify only active ones
 active_connectors = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]  # 7 GSE/prop + 4 chamber PTs
 
+# Sim PT targets (PSI) — board_simulator generates ADC to calibrate to these.
+# System start: 500 psi both tanks, 4k COPV, 1k reg.
+[sim_pt_targets]
+# pt_board channels 1–10 (Fuel Up, GSE Low, Fuel Down, Chamber 1, Ox Up, GN2 Reg, Ox Down, Chamber 2, Throat 1–2)
+1 = 500   # Fuel Upstream
+2 = 450   # GSE Low
+3 = 480   # Fuel Downstream
+4 = 400   # Chamber Mid 1
+5 = 500   # Ox Upstream
+6 = 4000  # GN2 Reg / COPV (controller P_copv, P_reg — storage at 4k)
+7 = 480   # Ox Downstream
+8 = 400   # Chamber Mid 2
+9 = 380   # Chamber Throat 1
+10 = 380  # Chamber Throat 2
+# pt_board_2 HP PT channels 11–14 (GSE High, unused, GSE Mid, GN2 High)
+11 = 3500   # GSE High (HP)
+13 = 1000   # GSE Mid (HP)
+14 = 4000   # GN2 High / COPV (HP)
+
 [boards.pt_board_2]
 type = "PT"
 ip = "192.168.2.22"
@@ -410,6 +429,10 @@ bind_address = "0.0.0.0"
 # PWM is only sent to actuator boards while fire_active is set.
 [controller_service]
 port = 9999
+# Hotfire duration (ms). FIRE state auto-ends after this unless extended.
+fire_duration_ms = 6000
+# Extended fire duration (ms) when user taps "Extend Fire".
+fire_extended_ms = 10000
 
 # =============================================================================
 # Elodin Table Routing - Maps sensor types to Elodin table IDs (config-driven, no fixed hexes in code)
@@ -617,10 +640,10 @@ pwm_duration_ms = 2000
 # Fallback duty cycles when controller service is unavailable (0.0-1.0).
 # When controller_service runs, non-zero values also act as open-loop test duty (bypass DDP/LUT).
 # For LUT mode, set both to 0 so the LUT is used.
-fallback_fuel_duty_cycle = 0.55
-fallback_ox_duty_cycle = 0.65
+fallback_fuel_duty_cycle = 0.0
+fallback_ox_duty_cycle = 0.0
 # Controller loop update rate (Hz)
-controller_loop_hz = 10.0
+controller_loop_hz = 100.0
 # Controller service URL
 controller_service_url = "http://localhost:8000"
 # Controller config path (YAML file relative to engine_sim/configs/). If empty, uses default.
@@ -648,15 +671,16 @@ duty_sweep_steps = [[0.1, 0.1], [0.3, 0.2], [0.5, 0.4], [0.3, 0.3], [0.1, 0.1]]
 # When true, the web backend will not start its own controller loop or send PWM.
 use_cpp_controller = true
 
-# Optional LUT path for boolean control. If set and load succeeds, bypasses DDP
-# and uses precomputed optimal u_safe_F/O from LUT (threshold > 0.5 → on).
-# For LUT mode, set fallback_fuel_duty_cycle and fallback_ox_duty_cycle to 0.
-# Generate: ./scripts/controller_lut/generate_engine_and_policy_lut.sh small
-# lut_path = "output/lut/controller_lut.bin"
+# Policy LUT path for C++ controller. If set and load succeeds, bypasses DDP
+# and uses precomputed duty_F/duty_O from LUT (multilinear interpolation).
+# Generate: ./scripts/controller_lut/generate_engine_and_policy_lut.sh full
+lut_path = "output/lut/controller_policy_fsw.bin"
+# Thrust curve CSV (time_s,thrust_N) from Layer 2 pressure curves. When set, F_ref follows curve.
+thrust_curve_path = "output/lut/thrust_curve.csv"
 
 # Engine LUT path (for Python controller / SITL). Stems from engine config + tank pressure range.
 # When set, DDP uses fast LUT lookups instead of physics. Generate with engine_lut_config.yaml.
-# engine_lut_path = "output/lut/engine_performance.npz"
+engine_lut_path = "output/lut/engine_performance.npz"
 
 # =============================================================================
 # Phase 2 Calibration Settings

@@ -50,6 +50,9 @@ logs/
 *.swo
 *~
 
+# Node modules (root and nested)
+node_modules/
+
 # Python cache and virtual environments
 __pycache__/
 *.py[cod]

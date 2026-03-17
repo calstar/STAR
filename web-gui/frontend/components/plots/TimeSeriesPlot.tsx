@@ -21,6 +21,8 @@ interface TimeSeriesPlotProps {
   height?: number;
   className?: string;
   windowSeconds?: number; // Configurable time window for history
+  /** Optional per-series value transform (e.g. lbf → N). Applied when storing/displaying. */
+  valueTransforms?: ((v: number) => number)[];
 }
 
 // ── Alias reverse lookup ──────────────────────────────────────────────────────
@@ -81,12 +83,19 @@ const DEFAULT_WINDOW_SECONDS = 60;
 const SAMPLE_HZ = 20;   // sync from cache at 20 Hz for responsive UI
 const PLOT_MAX_POINTS = 6000;   // cap points per series (100 Hz * 60 s)
 
+function applyTransform(v: number, transform?: (x: number) => number): number {
+  if (!isFinite(v)) return v;
+  return transform ? transform(v) : v;
+}
+
 export default function TimeSeriesPlot({
   title, entities, component, components, colors,
   yLabel = 'Value', labels, height, className,
   windowSeconds = DEFAULT_WINDOW_SECONDS,
+  valueTransforms,
 }: TimeSeriesPlotProps) {
   const componentMap = components ?? entities.map(() => component);
+  const transforms = valueTransforms ?? entities.map(() => undefined);
   const MAX_POINTS = PLOT_MAX_POINTS;
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -268,7 +277,9 @@ export default function TimeSeriesPlot({
         if (cached && cached.time.length > 0 && cached.values.length > 0) {
           console.log(`[TimeSeriesPlot] Loading ${cached.time.length} cached points for ${entities.join(', ')}`);
           dataRef.current.time = [...cached.time];
-          dataRef.current.values = cached.values.map(v => [...v]);
+          dataRef.current.values = cached.values.map((v, i) =>
+            v.map(x => applyTransform(x, transforms[i]))
+          );
           cached.values.forEach((vals, i) => {
             if (vals && vals.length > 0) {
               // Find last valid value
@@ -436,7 +447,7 @@ export default function TimeSeriesPlot({
         const cached = cache.getAlignedHistory(entities, componentMap, windowSeconds);
         if (cached && cached.time.length > 0) {
           d.time = cached.time;
-          d.values = cached.values.map((a) => [...a]);
+          d.values = cached.values.map((a, i) => a.map(x => applyTransform(x, transforms[i])));
           if (d.time.length > MAX_POINTS) {
             const excess = d.time.length - MAX_POINTS;
             d.time = d.time.slice(excess);
@@ -452,7 +463,7 @@ export default function TimeSeriesPlot({
           d.time.push(now);
           entities.forEach((_, i) => {
             const val = receivedUpdateThisIntervalRef.current[i] ? latestValuesRef.current[i] : NaN;
-            d.values[i].push(val);
+            d.values[i].push(applyTransform(val, transforms[i]));
             receivedUpdateThisIntervalRef.current[i] = false;
           });
           let first = 0;

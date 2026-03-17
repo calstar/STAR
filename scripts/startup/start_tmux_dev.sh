@@ -8,14 +8,18 @@
 SESSION="sensor-dev"
 PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# Prefer repo venv if present (fixes missing Python deps like scipy/websockets on macOS).
-PYTHON_BIN="$PROJECT/.venv/bin/python"
-if [ ! -x "$PYTHON_BIN" ]; then
-  PYTHON_BIN="$(command -v python3 || true)"
+# Prefer: 1) bashrc-activated venv (VIRTUAL_ENV), 2) repo .venv, 3) PATH python3
+PYTHON_BIN=""
+if [ -n "$VIRTUAL_ENV" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+  PYTHON_BIN="$VIRTUAL_ENV/bin/python"
+elif [ -x "$PROJECT/.venv/bin/python" ]; then
+  PYTHON_BIN="$PROJECT/.venv/bin/python"
+else
+  PYTHON_BIN="$(command -v python3 || command -v python || true)"
 fi
 if [ -z "$PYTHON_BIN" ]; then
-  echo "❌ python3 not found. Install Python 3.12+ and create a venv:"
-  echo "   python3.12 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
+  echo "❌ python3 not found. Activate your venv (e.g. source ~/.bashrc) or run:"
+  echo "   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
   exit 1
 fi
 
@@ -115,7 +119,7 @@ CTRL_BIN="$PROJECT/build/FSW/controller_service"
 if [ ! -x "$CTRL_BIN" ]; then
   CTRL_BIN="$PROJECT/FSW/build/controller_service"
 fi
-CTRL_LUT="${LUT_PATH:-$PROJECT/output/lut/controller_lut.bin}"
+CTRL_LUT="${LUT_PATH:-$PROJECT/output/lut/controller_policy_fsw.bin}"
 CTRL_OPTS="--config config/config.toml --elodin-host 127.0.0.1"
 [ -f "$CTRL_LUT" ] && CTRL_OPTS="$CTRL_OPTS --lut-path $CTRL_LUT"
 CMD_CTRL="printf '\n  ══ CONTROLLER SERVICE (DB Calibrated → Actuators) ══\n\n' && sleep 4 && cd $PROJECT && exec $CTRL_BIN $CTRL_OPTS 2>&1"

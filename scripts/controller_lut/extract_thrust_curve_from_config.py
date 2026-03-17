@@ -34,6 +34,13 @@ def main() -> None:
     parser.add_argument(
         "--json", action="store_true", help="Output JSON for downstream use"
     )
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        default=None,
+        help="Write thrust curve (time_s, thrust_N) to CSV for FSW",
+    )
     args = parser.parse_args()
 
     project_root = args.project_root.resolve()
@@ -100,6 +107,18 @@ def main() -> None:
     P_lox_min = float(np.min(P_lox))
     P_lox_max = float(np.max(P_lox))
 
+    if args.output is not None:
+        burn_time_s = pc.target_burn_time_s
+        time_s = np.linspace(0.0, burn_time_s, n_points)
+        out_path = args.output
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w") as f:
+            f.write("time_s,thrust_N\n")
+            for t, F in zip(time_s, thrust):
+                if np.isfinite(F):
+                    f.write(f"{t:.6f},{F:.2f}\n")
+        print(f"Wrote thrust curve to {out_path} ({n_points} points, {burn_time_s:.2f} s)")
+
     if args.json:
         import json
 
@@ -114,7 +133,7 @@ def main() -> None:
             "burn_time_s": pc.target_burn_time_s,
         }
         print(json.dumps(out, indent=2))
-    else:
+    elif args.output is None:
         print(f"Thrust: {F_min:.0f} – {F_max:.0f} N")
         print(f"P_u_fuel: {P_fuel_min/1e6:.2f} – {P_fuel_max/1e6:.2f} MPa")
         print(f"P_u_ox:   {P_lox_min/1e6:.2f} – {P_lox_max/1e6:.2f} MPa")

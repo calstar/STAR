@@ -83,36 +83,39 @@ def plot_policy_lut(lut: dict, out_path: Path) -> None:
     plt.close(fig)
     print(f"Saved {out_path.with_suffix('.thrust.png')}")
 
-    # Duty cycle heatmaps
+    # Duty cycle heatmaps: duty_F (row 0) and duty_O (row 1)
     fig2, axes2 = plt.subplots(
-        n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows), sharex=True, sharey=True
+        2 * n_rows, n_cols, figsize=(5 * n_cols, 4 * 2 * n_rows), sharex=True, sharey=True
     )
-    axes2 = np.atleast_2d(axes2).flatten()
-
+    axes2 = np.atleast_2d(axes2)
     for i, t_val in enumerate(thrust):
-        ax = axes2[i]
+        r, c = i // n_cols, i % n_cols
+        ax_f = axes2[r, c]
+        ax_o = axes2[n_rows + r, c]
         duty_F = outputs["duty_F"][:, :, i, mr_idx]
         duty_O = outputs["duty_O"][:, :, i, mr_idx]
-        # Combined or show duty_F
-        im = ax.pcolormesh(
-            P_fuel,
-            P_ox,
-            duty_F.T,
-            cmap="plasma",
-            shading="auto",
-            vmin=0,
-            vmax=1,
+        im_f = ax_f.pcolormesh(
+            P_fuel, P_ox, duty_F.T, cmap="plasma", shading="auto", vmin=0, vmax=1
         )
-        ax.set_title(f"duty_F @ thrust_des={t_val:.0f} N")
-        ax.set_xlabel("P_u_fuel (MPa)")
-        ax.set_ylabel("P_u_ox (MPa)")
-        ax.set_aspect("equal")
-        plt.colorbar(im, ax=ax, label="duty_F")
-
-    for j in range(n_thrust, len(axes2)):
-        axes2[j].set_visible(False)
+        ax_f.set_title(f"duty_F @ thrust_des={t_val:.0f} N")
+        ax_f.set_xlabel("P_u_fuel (MPa)")
+        ax_f.set_ylabel("P_u_ox (MPa)")
+        ax_f.set_aspect("equal")
+        plt.colorbar(im_f, ax=ax_f, label="duty_F")
+        im_o = ax_o.pcolormesh(
+            P_fuel, P_ox, duty_O.T, cmap="plasma", shading="auto", vmin=0, vmax=1
+        )
+        ax_o.set_title(f"duty_O @ thrust_des={t_val:.0f} N")
+        ax_o.set_xlabel("P_u_fuel (MPa)")
+        ax_o.set_ylabel("P_u_ox (MPa)")
+        ax_o.set_aspect("equal")
+        plt.colorbar(im_o, ax=ax_o, label="duty_O")
+    for j in range(n_thrust, n_rows * n_cols):
+        r, c = j // n_cols, j % n_cols
+        axes2[r, c].set_visible(False)
+        axes2[n_rows + r, c].set_visible(False)
     plt.suptitle(
-        "Controller LUT: Fuel duty cycle vs tank pressures", fontsize=12, y=1.02
+        "Controller LUT: Fuel and LOX duty cycles vs tank pressures", fontsize=12, y=1.02
     )
     plt.tight_layout()
     fig2.savefig(out_path.with_suffix(".duty_fuel.png"), dpi=150, bbox_inches="tight")

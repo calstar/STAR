@@ -39,6 +39,17 @@ static std::string trim(const std::string& s) {
     return (a == std::string::npos) ? "" : s.substr(a, b - a + 1);
 }
 
+/** Resolve path relative to config: paths like output/lut/... are relative to project root. */
+static std::string resolveConfigPath(const std::string& config_path, const std::string& path) {
+    if (path.empty() || (path.size() > 0 && path[0] == '/'))
+        return path;
+    size_t last = config_path.rfind('/');
+    std::string config_dir = (last != std::string::npos) ? config_path.substr(0, last) : ".";
+    last = config_dir.rfind('/');
+    std::string project_root = (last != std::string::npos) ? config_dir.substr(0, last) : ".";
+    return project_root + "/" + path;
+}
+
 static std::string getTomlValue(const std::string& content, const std::string& section,
                                 const std::string& key, const std::string& fallback = "") {
     std::string sec_header = "[" + section + "]";
@@ -489,14 +500,20 @@ int main(int argc, char* argv[]) {
     // ── Initialize ─────────────────────────────────────────────────────
     fsw::control::ControllerService service;
 
-    std::string lut_path = !lut_path_cli.empty()
-                               ? lut_path_cli
-                               : getTomlValue(config_content, "controller", "lut_path", "");
+    std::string lut_path_raw = !lut_path_cli.empty()
+                                   ? lut_path_cli
+                                   : getTomlValue(config_content, "controller", "lut_path", "");
+    std::string thrust_curve_path_raw =
+        getTomlValue(config_content, "controller", "thrust_curve_path", "");
+    std::string lut_path = resolveConfigPath(config_path, lut_path_raw);
+    std::string thrust_curve_path = resolveConfigPath(config_path, thrust_curve_path_raw);
     if (!lut_path.empty())
         std::cout << "  LUT path:       " << lut_path << " (boolean control)" << std::endl;
+    if (!thrust_curve_path.empty())
+        std::cout << "  Thrust curve:   " << thrust_curve_path << std::endl;
 
     if (!service.initialize(pwm, ctrl_cfg, elodin_host, elodin_port, relay_host, relay_port,
-                            lut_path)) {
+                            lut_path, thrust_curve_path)) {
         std::cerr << "❌ Failed to initialize controller service" << std::endl;
         return 1;
     }

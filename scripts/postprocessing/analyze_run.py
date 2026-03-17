@@ -71,9 +71,14 @@ def load_csv_series(export_dir: Path, pattern: str) -> dict[str, pd.DataFrame]:
         stem = f.stem  # PT_Cal.GN2_High.pressure_psi
         parts = stem.split(".")
         if len(parts) >= 3:
-            short = parts[1]  # GN2_High
-            metric = parts[-1]  # pressure_psi
-            short_name = f"{short}" if len(parts) == 3 else f"{short}.{metric}"
+            short = parts[1]  # GN2_High or actuation
+            metric = parts[-1]  # pressure_psi or duty_F
+            # CONTROLLER has multiple metrics per entity (duty_F, duty_O, F_ref, etc.)
+            short_name = (
+                f"{short}_{metric}"
+                if parts[0] == "CONTROLLER"
+                else (f"{short}" if len(parts) == 3 else f"{short}.{metric}")
+            )
         else:
             short_name = stem
         try:
@@ -101,7 +106,7 @@ def resample_to_grid(
     dt: float = 0.1,
     t_max: float | None = None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
-    """Resample multiple series to common time grid. Returns (wide df, time array)."""
+    """Resample multiple series to common time grid. Uses linear interpolation."""
     t_min = 0.0
     if t_max is None:
         all_t = []
@@ -115,6 +120,44 @@ def resample_to_grid(
         t_s = (df["time"] - t0).dt.total_seconds().values
         v = df["value"].values
         out[name] = np.interp(time_grid, t_s, v)
+    return out, time_grid
+
+
+def resample_to_grid_step(
+    series: dict[str, pd.DataFrame],
+    t0: pd.Timestamp,
+    dt: float = 0.1,
+    t_max: float | None = None,
+) -> tuple[pd.DataFrame, np.ndarray]:
+    """Resample discrete data (states, actuators) using forward-fill. No interpolation."""
+    t_min = 0.0
+    if t_max is None:
+        all_t = []
+        for df in series.values():
+            s = (df["time"] - t0).dt.total_seconds()
+            all_t.extend(s.dropna().tolist())
+        t_max = max(all_t) if all_t else 60.0
+    time_grid = np.arange(t_min, t_max + dt * 0.5, dt)
+    out = pd.DataFrame({"t_s": time_grid})
+    for name, df in series.items():
+        t_s = (df["time"] - t0).dt.total_seconds().values
+        v = df["value"].values
+        # Sort by time
+        idx = np.argsort(t_s)
+        t_s = t_s[idx]
+        v = v[idx]
+        # Forward-fill: at each grid point, use value at last sample before t
+        res = np.full(len(time_grid), np.nan)
+        for i, g in enumerate(time_grid):
+            j = np.searchsorted(t_s, g, side="right") - 1
+            if j >= 0:
+                res[i] = v[j]
+        # Fill leading nans with first valid
+        if len(res) > 0 and np.isnan(res[0]):
+            first_valid = np.nonzero(~np.isnan(res))[0]
+            if len(first_valid) > 0:
+                res[: first_valid[0]] = res[first_valid[0]]
+        out[name] = res
     return out, time_grid
 
 
@@ -334,6 +377,65 @@ def plot_summary_stats(
     print(f"  Saved {out_path}")
 
 
+def plot_controller(
+    ctrl_wide: pd.DataFrame,
+    t_s: np.ndarray,
+    out_path: Path,
+) -> None:
+    """Controller outputs: duty cycles, thrust ref/estimated, P_ch."""
+    cols = [c for c in ctrl_wide.columns if c != "t_s"]
+    if not cols:
+        return
+    duty_cols = [c for c in cols if "duty" in c.lower()]
+    thrust_cols = [c for c in cols if "F_" in c or "thrust" in c.lower()]
+    other_cols = [c for c in cols if c not in duty_cols and c not in thrust_cols]
+    n_panels = sum(1 for x in [duty_cols, thrust_cols, other_cols] if x)
+    if n_panels == 0:
+        return
+    fig, axes = plt.subplots(n_panels, 1, figsize=(12, 3 * n_panels), sharex=True)
+    if n_panels == 1:
+        axes = [axes]
+    fig.suptitle("Controller Outputs", fontsize=12, fontweight="bold")
+    idx = 0
+    if duty_cols:
+        ax = axes[idx]
+        for c in duty_cols:
+            ax.plot(t_s, ctrl_wide[c], label=c.replace("_", " "), alpha=0.9)
+        ax.set_ylabel("Duty (0–1)")
+        ax.set_title("Duty Cycles")
+        ax.legend(loc="upper right", fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim(-0.05, 1.05)
+        ax.set_xlim(left=0)
+        idx += 1
+    if thrust_cols:
+        ax = axes[idx]
+        for c in thrust_cols:
+            ax.plot(t_s, ctrl_wide[c], label=c.replace("_", " "), alpha=0.9)
+        ax.set_ylabel("Thrust (N)")
+        ax.set_title("Thrust Ref / Estimated")
+        ax.legend(loc="upper right", fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.set_xlim(left=0)
+        idx += 1
+    if other_cols:
+        ax = axes[idx]
+        for c in other_cols[:4]:
+            ax.plot(t_s, ctrl_wide[c], label=c.replace("_", " "), alpha=0.9)
+        ax.set_ylabel("Value")
+        ax.set_xlabel("Time (s)")
+        ax.set_title("P_ch, MR, etc.")
+        ax.legend(loc="upper right", fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.set_xlim(left=0)
+    for i in range(idx - 1):
+        plt.setp(axes[i].get_xticklabels(), visible=False)
+    plt.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+    print(f"  Saved {out_path}")
+
+
 def plot_overview_4panel(
     pt_wide: pd.DataFrame,
     tc_wide: pd.DataFrame | None,
@@ -468,16 +570,30 @@ def main() -> None:
     if act_series:
         print(f"  Loaded {len(act_series)} actuator channels")
 
-    # Load system state (PSM / engine_state)
-    state_series = load_csv_series(export_dir, "BOARD.*.engine_state.csv")
-    state_series.update(load_csv_series(export_dir, "CONTROLLER.state.to_state.csv"))
-    if state_series:
-        # Prefer first BOARD engine_state if multiple
-        first_key = next(iter(state_series))
-        state_series = {"engine_state": state_series[first_key]}
-        print(f"  Loaded system state from {first_key}")
+    # Load system state (PSM / engine_state). Prefer CONTROLLER.state.to_state (authoritative).
+    ctrl_state = load_csv_series(export_dir, "CONTROLLER.state.to_state.csv")
+    board_state = load_csv_series(export_dir, "BOARD.*.engine_state.csv")
+    if ctrl_state:
+        state_series = {"engine_state": next(iter(ctrl_state.values()))}
+        print(f"  Loaded system state from CONTROLLER.state.to_state")
+    elif board_state:
+        state_series = {"engine_state": next(iter(board_state.values()))}
+        print(f"  Loaded system state from BOARD heartbeat")
     else:
         state_series = {}
+
+    # Load controller outputs (duty, thrust, diagnostics)
+    ctrl_act = load_csv_series(export_dir, "CONTROLLER.actuation.duty_F.csv")
+    ctrl_act.update(load_csv_series(export_dir, "CONTROLLER.actuation.duty_O.csv"))
+    ctrl_act.update(load_csv_series(export_dir, "CONTROLLER.fire.duty_F.csv"))
+    ctrl_act.update(load_csv_series(export_dir, "CONTROLLER.fire.duty_O.csv"))
+    ctrl_diag = load_csv_series(export_dir, "CONTROLLER.diagnostics.F_ref.csv")
+    ctrl_diag.update(load_csv_series(export_dir, "CONTROLLER.diagnostics.F_estimated.csv"))
+    ctrl_diag.update(load_csv_series(export_dir, "CONTROLLER.diagnostics.MR_estimated.csv"))
+    ctrl_diag.update(load_csv_series(export_dir, "CONTROLLER.diagnostics.P_ch.csv"))
+    ctrl_series = {**ctrl_act, **ctrl_diag}
+    if ctrl_series:
+        print(f"  Loaded {len(ctrl_series)} controller channels")
 
     # Load raw sensor data (for combined export)
     pt_raw = load_csv_series(export_dir, "PT.*.raw_adc_counts.csv")
@@ -490,7 +606,14 @@ def main() -> None:
         )
 
     # Common t0 and t_max from all data
-    all_series = {**pt_series, **tc_series, **lc_series, **act_series, **state_series}
+    all_series = {
+        **pt_series,
+        **tc_series,
+        **lc_series,
+        **act_series,
+        **state_series,
+        **ctrl_series,
+    }
     if not all_series:
         print("❌ No data to plot")
         return
@@ -516,10 +639,15 @@ def main() -> None:
         resample_to_grid(lc_series, t0, dt, t_max) if lc_series else (None, None)
     )
     act_wide, _ = (
-        resample_to_grid(act_series, t0, dt, t_max) if act_series else (None, None)
+        resample_to_grid_step(act_series, t0, dt, t_max) if act_series else (None, None)
     )
     state_wide, _ = (
-        resample_to_grid(state_series, t0, dt, t_max) if state_series else (None, None)
+        resample_to_grid_step(state_series, t0, dt, t_max)
+        if state_series
+        else (None, None)
+    )
+    ctrl_wide, _ = (
+        resample_to_grid(ctrl_series, t0, dt, t_max) if ctrl_series else (None, None)
     )
 
     if len(t_s) == 0:
@@ -528,11 +656,27 @@ def main() -> None:
     # Save combined CSV (raw + calibrated) for downstream analysis
     combined = pd.DataFrame({"t_s": t_s})
 
-    def add_to_combined(series: dict, prefix: str) -> None:
+    def add_to_combined(series: dict, prefix: str, step_mode: bool = False) -> None:
         for name, df in series.items():
             t_sec = (df["time"] - t0).dt.total_seconds().values
+            v = df["value"].values
+            idx = np.argsort(t_sec)
+            t_sec = t_sec[idx]
+            v = v[idx]
             col = f"{prefix}{name}" if prefix else name
-            combined[col] = np.interp(t_s, t_sec, df["value"].values)
+            if step_mode:
+                res = np.full(len(t_s), np.nan)
+                for i, g in enumerate(t_s):
+                    j = np.searchsorted(t_sec, g, side="right") - 1
+                    if j >= 0:
+                        res[i] = v[j]
+                if len(res) > 0 and np.isnan(res[0]):
+                    fv = np.nonzero(~np.isnan(res))[0]
+                    if len(fv) > 0:
+                        res[: fv[0]] = res[fv[0]]
+                combined[col] = res
+            else:
+                combined[col] = np.interp(t_s, t_sec, v)
 
     add_to_combined(pt_series, "PT_Cal.")
     add_to_combined(pt_raw, "PT_raw.")
@@ -541,8 +685,9 @@ def main() -> None:
     add_to_combined(rtd_raw, "RTD_raw.")
     add_to_combined(lc_series, "LC_Cal.")
     add_to_combined(lc_raw, "LC_raw.")
-    add_to_combined(act_series, "ACT.")
-    add_to_combined(state_series, "")
+    add_to_combined(act_series, "ACT.", step_mode=True)
+    add_to_combined(state_series, "", step_mode=True)
+    add_to_combined(ctrl_series, "CTRL.")
     combined_path = out_dir / "run_data_combined.csv"
     combined.to_csv(combined_path, index=False)
     print(f"  Saved {combined_path} ({len(combined.columns)-1} channels)")
@@ -560,6 +705,8 @@ def main() -> None:
         plot_actuators(act_wide, t_s, out_dir / "actuators.png")
     if state_wide is not None and not state_wide.empty:
         plot_states(state_wide, t_s, out_dir / "states.png")
+    if ctrl_wide is not None and not ctrl_wide.empty:
+        plot_controller(ctrl_wide, t_s, out_dir / "controller.png")
 
     plot_overview_4panel(
         pt_wide if not pt_wide.empty else pd.DataFrame(),
