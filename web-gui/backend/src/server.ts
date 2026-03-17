@@ -34,6 +34,7 @@ import { DataLogger } from './data-logger.js';
 import { readConfig, getConfigPath } from './routes/config.js';
 import { MessageLogger } from './message-logger.js';
 import { DemoModeGenerator } from './demo-mode.js';
+import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from './countdown-state.js';
 import {
   MessageType,
   SensorUpdate,
@@ -135,6 +136,9 @@ class SensorSystemServer {
   /** Mission T+0 */
   private firstPacketTime: number | null = null;
 
+  /** Shared countdown target time (epoch ms). */
+  private countdownTargetTimeMs: number | null = null;
+
   /** State & debug */
   currentState: SystemState | null = null;
   private debugMode: boolean = false;
@@ -232,6 +236,11 @@ class SensorSystemServer {
     console.log(`   Elodin DB: ${ELODIN_HOST}:${ELODIN_PORT}`);
 
     this.firstPacketTime = null;
+
+    // Countdown target persistence (shared across clients; survives backend restarts).
+    // Default matches the old frontend hardcoded target so behavior doesn't change on rollout.
+    const DEFAULT_LAUNCH_TARGET_MS = Date.UTC(2026, 2, 8, 2, 0, 0); // month is 0-indexed
+    this.countdownTargetTimeMs = loadCountdownTargetTimeMs() ?? DEFAULT_LAUNCH_TARGET_MS;
 
     // Load config
     const config = readConfig();
@@ -980,6 +989,14 @@ class SensorSystemServer {
       if (this.firstPacketTime !== null) {
         try { this.send(ws, { type: MessageType.MISSION_START_TIME, timestamp: Date.now(), payload: { missionStartTime: this.firstPacketTime } }); } catch (_) { }
       }
+      // Send countdown target so clients render consistently on connect
+      try {
+        this.send(ws, {
+          type: MessageType.COUNTDOWN_TARGET_UPDATE,
+          timestamp: Date.now(),
+          payload: { targetTimeMs: this.countdownTargetTimeMs },
+        });
+      } catch (_) { }
 
       // Send cached sensor data in small batches so we don't flood the socket on connect
       if (this.sensorCache.size > 0) {
@@ -1297,6 +1314,20 @@ class SensorSystemServer {
             this.broadcast({ type: MessageType.STATE_UPDATE, timestamp: Date.now(), payload: { currentState: this.currentState, stateName: SystemState[this.currentState], timestamp: Date.now(), debugMode: this.debugMode } });
           }
         }
+      } else if (command.commandType === 'set_countdown_target') {
+        const raw = (command.data as any)?.targetTimeMs as unknown;
+        const next = raw === null ? null : (typeof raw === 'number' ? raw : null);
+        if (next !== null && (!Number.isFinite(next) || next < 946684800000 || next > 4102444800000)) {
+          console.warn('⚠️ set_countdown_target: rejected invalid targetTimeMs:', raw);
+          return;
+        }
+        this.countdownTargetTimeMs = next;
+        saveCountdownTargetTimeMs(this.countdownTargetTimeMs);
+        this.broadcast({
+          type: MessageType.COUNTDOWN_TARGET_UPDATE,
+          timestamp: Date.now(),
+          payload: { targetTimeMs: this.countdownTargetTimeMs },
+        });
       }
     } catch (error) {
       console.error('❌ Command error:', error);

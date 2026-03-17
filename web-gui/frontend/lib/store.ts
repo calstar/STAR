@@ -55,6 +55,8 @@ interface SensorSystemState {
   connectionStatus: ConnectionStatus;
   debugMode: boolean;
   missionStartTime: number | null; // T+0 from first packet (backend)
+  /** Global countdown target time (epoch ms), shared across all clients. */
+  countdownTargetTimeMs: number | null;
   actuatorExpectedPositions: Record<number, Record<string, 'open' | 'closed' | null>>; // state → entity → position
   /** Global actuator state by entity (updated from backend ACTUATOR_UPDATE and on manual command). */
   actuatorStateByEntity: Record<string, ActuatorState>;
@@ -75,6 +77,7 @@ interface SensorSystemState {
   updateState: (update: StateUpdate) => void;
   updateConnectionStatus: (status: ConnectionStatus) => void;
   updateMissionStartTime: (time: number) => void;
+  updateCountdownTargetTime: (timeMs: number | null) => void;
   updateActuatorExpectedPositions: (positions: Record<number, Record<string, 'open' | 'closed' | null>>) => void;
   getSensorValue: (entity: string, component: string) => number | null;
   setDebugMode: (mode: boolean) => void;
@@ -277,6 +280,7 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   connectionStatus: { connected: false, elodinConnected: false },
   debugMode: false,
   missionStartTime: null,
+  countdownTargetTimeMs: null,
   actuatorExpectedPositions: {},
   actuatorStateByEntity: {},
   actuatorCommandedOverrides: {},
@@ -369,6 +373,10 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
 
   updateMissionStartTime: (time: number) => {
     set({ missionStartTime: time });
+  },
+
+  updateCountdownTargetTime: (timeMs: number | null) => {
+    set({ countdownTargetTimeMs: timeMs });
   },
 
   updateBoards: (boards: BoardStatus[]) => {

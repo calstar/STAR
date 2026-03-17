@@ -3,7 +3,7 @@
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { startDataCache } from '@/lib/data-cache';
-import { useCallback, useEffect, useMemo, useState, startTransition } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react';
 import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, SensorUpdate, ActuatorUpdate, MessageType, NotificationPayload } from '@/lib/types';
 import PressureBar from '@/components/plots/PressureBar';
 import { PRESSURE_BAR_SENSORS, getEntityColor } from '@/lib/sensor-colors';
@@ -68,11 +68,25 @@ function ReactivePressureBar({ label, entity, nop, meop, color, avgEntities }: {
 
 type PressureBarDef = { label: string; entity: string; nop?: number; meop?: number; color: string; avgEntities?: string[] };
 
+function formatCountdown(valueMs: number): { value: string; expired: boolean } {
+  if (!Number.isFinite(valueMs)) return { value: '---:--:--', expired: false };
+  if (valueMs <= 0) return { value: '000:00:00', expired: true };
+  const totalSecs = Math.floor(valueMs / 1000);
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  const s = totalSecs % 60;
+  return {
+    value: `${String(h).padStart(3, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`,
+    expired: false,
+  };
+}
+
 export default function TopBar() {
   // Pressure bars use useSensorValue in ReactivePressureBar — no need to subscribe to full sensorData here
   const currentState = useSensorStore((s) => s.currentState);
   const debugMode = useSensorStore((s) => s.debugMode);
   const setDebugMode = useSensorStore((s) => s.setDebugMode);
+  const countdownTargetTimeMs = useSensorStore((s) => s.countdownTargetTimeMs);
   const updateConnectionStatus = useSensorStore((s) => s.updateConnectionStatus);
   const updateState = useSensorStore((s) => s.updateState);
   const updateSensor = useSensorStore((s) => s.updateSensor);
@@ -87,11 +101,17 @@ export default function TopBar() {
     connected: false, elodinConnected: false,
   });
   const [clock, setClock] = useState('');
-  const [countdown, setCountdown] = useState('');
+  const [countdown, setCountdown] = useState('---:--:--');
   const [countdownExpired, setCountdownExpired] = useState(false);
   const [pressureBars, setPressureBars] = useState<PressureBarDef[]>([]);
 
   const ws = getWebSocketClient();
+
+  const [countdownMenuOpen, setCountdownMenuOpen] = useState(false);
+  const countdownRef = useRef<HTMLDivElement | null>(null);
+  const [timeOfDayInput, setTimeOfDayInput] = useState('');
+  const [dateTimeInput, setDateTimeInput] = useState('');
+  const [hitZeroMode, setHitZeroMode] = useState<'time' | 'datetime'>('time');
 
   const loadPressureBars = useCallback(() => {
     // Use PRESSURE_BAR_SENSORS (femboy-style) so GN2 High and all canonical sensors always appear
@@ -158,27 +178,75 @@ export default function TopBar() {
     return () => clearInterval(id);
   }, []);
 
-  // Countdown to Saturday March 7, 2026 18:00 PST (UTC-8 = 02:00 UTC Mar 8)
-  const LAUNCH_TARGET_MS = Date.UTC(2026, 2, 8, 2, 0, 0); // month is 0-indexed
   useEffect(() => {
     const tick = () => {
-      const diff = LAUNCH_TARGET_MS - Date.now();
-      if (diff <= 0) {
-        setCountdown('000:00:00');
-        setCountdownExpired(true);
-      } else {
-        const totalSecs = Math.floor(diff / 1000);
-        const h = Math.floor(totalSecs / 3600);
-        const m = Math.floor((totalSecs % 3600) / 60);
-        const s = totalSecs % 60;
-        setCountdown(`${String(h).padStart(3, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`);
+      if (countdownTargetTimeMs == null) {
+        setCountdown('---:--:--');
         setCountdownExpired(false);
+        return;
       }
+      const diff = countdownTargetTimeMs - Date.now();
+      const formatted = formatCountdown(diff);
+      setCountdown(formatted.value);
+      setCountdownExpired(formatted.expired);
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [countdownTargetTimeMs]);
+
+  useEffect(() => {
+    if (!countdownMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!countdownRef.current?.contains(event.target as Node)) {
+        setCountdownMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', handlePointerDown);
+    return () => window.removeEventListener('mousedown', handlePointerDown);
+  }, [countdownMenuOpen]);
+
+  const sendCountdownTarget = useCallback((targetTimeMs: number | null) => {
+    if (!controlEnabled) return;
+    ws.sendCommand({ commandType: 'set_countdown_target', data: { targetTimeMs } });
+  }, [controlEnabled, ws]);
+
+  const handleAdd30Min = useCallback(() => {
+    const base = countdownTargetTimeMs ?? Date.now();
+    sendCountdownTarget(base + 30 * 60 * 1000);
+    setCountdownMenuOpen(false);
+  }, [countdownTargetTimeMs, sendCountdownTarget]);
+
+  const handleSet10Min = useCallback(() => {
+    sendCountdownTarget(Date.now() + 10 * 60 * 1000);
+    setCountdownMenuOpen(false);
+  }, [sendCountdownTarget]);
+
+  const handleSetHitZeroAt = useCallback(() => {
+    if (hitZeroMode === 'datetime') {
+      const rawDateTime = dateTimeInput.trim();
+      if (!rawDateTime) return;
+      const ms = new Date(rawDateTime).getTime();
+      if (!Number.isFinite(ms)) return;
+      sendCountdownTarget(ms);
+      setCountdownMenuOpen(false);
+      return;
+    }
+
+    const match = timeOfDayInput.trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return;
+    const hh = Math.min(23, Math.max(0, parseInt(match[1], 10)));
+    const mm = Math.min(59, Math.max(0, parseInt(match[2], 10)));
+    const now = new Date();
+    const target = new Date(now);
+    target.setSeconds(0, 0);
+    target.setHours(hh, mm, 0, 0);
+    if (target.getTime() <= now.getTime()) {
+      target.setDate(target.getDate() + 1);
+    }
+    sendCountdownTarget(target.getTime());
+    setCountdownMenuOpen(false);
+  }, [dateTimeInput, hitZeroMode, sendCountdownTarget, timeOfDayInput]);
 
   const effectiveState = currentState ?? SystemState.IDLE;
   const currentStateName = STATE_NAMES[effectiveState] ?? `STATE ${effectiveState}`;
@@ -243,10 +311,135 @@ export default function TopBar() {
             </span>
           </div>
           <span className="text-xl font-mono text-gray-200 tabular-nums font-bold leading-tight">{clock}</span>
-          <div className="flex items-center gap-2">
-            <span className={`text-xl font-mono tabular-nums font-bold leading-tight ${countdownExpired ? 'text-red-400' : 'text-white'}`}>
+          <div ref={countdownRef} className="relative flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setCountdownMenuOpen((open) => !open);
+                if (!timeOfDayInput) {
+                  const now = new Date();
+                  setTimeOfDayInput(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
+                }
+              }}
+              className={`text-xl font-mono tabular-nums font-bold leading-tight transition ${
+                countdownExpired ? 'text-red-400' : 'text-white'
+              } ${controlEnabled ? 'cursor-pointer hover:text-blue-300' : 'cursor-default'}`}
+              title={controlEnabled ? 'Click to adjust countdown' : 'Viewer mode: countdown controls locked'}
+            >
               {countdown}
-            </span>
+            </button>
+
+            {countdownMenuOpen && (
+              <div className="absolute top-full left-0 z-50 mt-2 w-[min(22rem,85vw)] rounded-xl border border-gray-700 bg-black/90 p-3 shadow-xl">
+                <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                  Countdown controls
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleAdd30Min}
+                    disabled={!controlEnabled}
+                    className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs font-semibold text-white hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    +30 minutes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSet10Min}
+                    disabled={!controlEnabled}
+                    className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-xs font-semibold text-white hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Set to 10:00
+                  </button>
+                </div>
+
+                <div className="mt-3 border-t border-gray-800 pt-3">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                    Hit zero at
+                  </div>
+
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <div className="flex items-center rounded-lg border border-gray-700 bg-gray-900 p-0.5">
+                      <button
+                        type="button"
+                        disabled={!controlEnabled}
+                        onClick={() => {
+                          setHitZeroMode('time');
+                          setDateTimeInput('');
+                        }}
+                        className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${
+                          hitZeroMode === 'time'
+                            ? 'bg-white text-black'
+                            : 'text-gray-200 hover:bg-white/10'
+                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                      >
+                        Time
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!controlEnabled}
+                        onClick={() => {
+                          setHitZeroMode('datetime');
+                          setTimeOfDayInput('');
+                        }}
+                        className={`rounded-md px-2 py-1 text-[11px] font-semibold transition ${
+                          hitZeroMode === 'datetime'
+                            ? 'bg-white text-black'
+                            : 'text-gray-200 hover:bg-white/10'
+                        } disabled:opacity-40 disabled:cursor-not-allowed`}
+                      >
+                        Date/Time
+                      </button>
+                    </div>
+
+                    {hitZeroMode === 'time' ? (
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="HH:MM"
+                        value={timeOfDayInput}
+                        onChange={(e) => setTimeOfDayInput(e.target.value)}
+                        className="w-24 rounded-md border border-gray-700 bg-black/60 px-2 py-1 text-xs text-white placeholder:text-gray-500"
+                        disabled={!controlEnabled}
+                      />
+                    ) : (
+                      <input
+                        type="datetime-local"
+                        value={dateTimeInput}
+                        onChange={(e) => setDateTimeInput(e.target.value)}
+                        className="min-w-[12.5rem] flex-1 rounded-md border border-gray-700 bg-black/60 px-2 py-1 text-[11px] text-white"
+                        disabled={!controlEnabled}
+                      />
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={handleSetHitZeroAt}
+                      disabled={!controlEnabled}
+                      className="ml-auto rounded-md border border-gray-700 bg-gray-900 px-2 py-1 text-xs font-semibold text-white hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+                      title={hitZeroMode === 'datetime' ? 'Set to selected date/time' : 'Set to HH:MM (today or tomorrow)'}
+                    >
+                      Set
+                    </button>
+                  </div>
+
+                  <div className="mt-2 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sendCountdownTarget(null);
+                        setCountdownMenuOpen(false);
+                      }}
+                      disabled={!controlEnabled}
+                      className="text-[11px] font-semibold text-gray-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

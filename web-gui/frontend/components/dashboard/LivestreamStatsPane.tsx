@@ -29,11 +29,12 @@ function formatMissionTimer(ms: number): string {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
-  return `${formatTimerSegment(hours, 3)}:${formatTimerSegment(minutes)}:${formatTimerSegment(seconds)}`;
+  // Livestream pane uses 2-digit hours (e.g. 00:10:00) rather than 3-digit (000:10:00).
+  return `${formatTimerSegment(hours, 2)}:${formatTimerSegment(minutes)}:${formatTimerSegment(seconds)}`;
 }
 
 function useMissionTimer() {
-  const missionStartTime = useSensorStore((s) => s.missionStartTime);
+  const countdownTargetTimeMs = useSensorStore((s) => s.countdownTargetTimeMs);
   const [now, setNow] = useState(() => getServerTimeNow());
 
   useEffect(() => {
@@ -42,15 +43,15 @@ function useMissionTimer() {
   }, []);
 
   return useMemo(() => {
-    if (!missionStartTime || missionStartTime <= 0) {
+    if (countdownTargetTimeMs == null || countdownTargetTimeMs <= 0) {
       return {
         prefix: 'T',
         value: '--:--:--',
-        sublabel: 'Awaiting mission time',
+        sublabel: 'Awaiting countdown target',
       };
     }
 
-    const deltaMs = missionStartTime - now;
+    const deltaMs = countdownTargetTimeMs - now;
     const countdownActive = deltaMs > 0;
 
     return {
@@ -58,7 +59,7 @@ function useMissionTimer() {
       value: formatMissionTimer(Math.abs(deltaMs)),
       sublabel: countdownActive ? 'Countdown to T0' : 'Elapsed since T0',
     };
-  }, [missionStartTime, now]);
+  }, [countdownTargetTimeMs, now]);
 }
 
 function formatPressure(value: number | null): string {
@@ -144,7 +145,7 @@ function PressureDial({
           <span className="line-clamp-2 break-words text-[9px] font-semibold uppercase leading-tight tracking-[0.08em] text-neutral-300">
             {selected?.label ?? 'Select PT'}
           </span>
-          <span className="mt-1 font-mono text-[clamp(1.9rem,2.2vw,2.8rem)] font-medium tabular-nums text-white">
+          <span className="mt-1 font-mono text-[clamp(1.75rem,2vw,2.6rem)] font-medium tabular-nums text-white">
             {formatPressure(value)}
           </span>
           <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-neutral-300">PSI</span>
