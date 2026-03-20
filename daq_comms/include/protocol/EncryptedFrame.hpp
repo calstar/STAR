@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "protocol/DiabloBoardPacketParser.hpp"
+
 namespace daq_comms {
 namespace protocol {
 
@@ -85,6 +87,7 @@ struct SensorBatch {
     std::vector<RawTCSample> tc_samples;
     std::vector<RawRTDSample> rtd_samples;
     std::vector<RawLCSample> lc_samples;
+    std::vector<DiabloBoardPacketParser::ParsedSelfTestPacket> self_tests;
 
     bool is_valid;
     std::string error_message;

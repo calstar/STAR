@@ -203,11 +203,11 @@ export function parseElodinPacket(
   if (high === 0x40 && low === 0x00 && payload.length >= 19) {
     const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
     return [
-      { entity: 'CONTROLLER.actuation', component: 'duty_F',  value: payload.readFloatLE(8),  timestamp: tsMs },
-      { entity: 'CONTROLLER.actuation', component: 'duty_O',  value: payload.readFloatLE(12), timestamp: tsMs },
-      { entity: 'CONTROLLER.actuation', component: 'u_F_on',  value: payload.readUInt8(16),   timestamp: tsMs },
-      { entity: 'CONTROLLER.actuation', component: 'u_O_on',  value: payload.readUInt8(17),   timestamp: tsMs },
-      { entity: 'CONTROLLER.actuation', component: 'valid',   value: payload.readUInt8(18),   timestamp: tsMs },
+      { entity: 'CONTROLLER.actuation', component: 'duty_F', value: payload.readFloatLE(8), timestamp: tsMs },
+      { entity: 'CONTROLLER.actuation', component: 'duty_O', value: payload.readFloatLE(12), timestamp: tsMs },
+      { entity: 'CONTROLLER.actuation', component: 'u_F_on', value: payload.readUInt8(16), timestamp: tsMs },
+      { entity: 'CONTROLLER.actuation', component: 'u_O_on', value: payload.readUInt8(17), timestamp: tsMs },
+      { entity: 'CONTROLLER.actuation', component: 'valid', value: payload.readUInt8(18), timestamp: tsMs },
     ];
   }
 
@@ -217,15 +217,15 @@ export function parseElodinPacket(
   if (high === 0x41 && low === 0x00 && payload.length >= 62) {
     const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
     return [
-      { entity: 'CONTROLLER.diagnostics', component: 'F_ref',           value: payload.readDoubleLE(8),  timestamp: tsMs },
-      { entity: 'CONTROLLER.diagnostics', component: 'MR_ref',          value: payload.readDoubleLE(16), timestamp: tsMs },
-      { entity: 'CONTROLLER.diagnostics', component: 'F_estimated',     value: payload.readDoubleLE(24), timestamp: tsMs },
-      { entity: 'CONTROLLER.diagnostics', component: 'MR_estimated',    value: payload.readDoubleLE(32), timestamp: tsMs },
-      { entity: 'CONTROLLER.diagnostics', component: 'P_ch',            value: payload.readDoubleLE(40), timestamp: tsMs },
-      { entity: 'CONTROLLER.diagnostics', component: 'cost',            value: payload.readDoubleLE(48), timestamp: tsMs },
-      { entity: 'CONTROLLER.diagnostics', component: 'solver_iters',    value: payload.readInt32LE(56),  timestamp: tsMs },
-      { entity: 'CONTROLLER.diagnostics', component: 'safety_filtered', value: payload.readUInt8(60),    timestamp: tsMs },
-      { entity: 'CONTROLLER.diagnostics', component: 'cutoff_active',   value: payload.readUInt8(61),    timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'F_ref', value: payload.readDoubleLE(8), timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'MR_ref', value: payload.readDoubleLE(16), timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'F_estimated', value: payload.readDoubleLE(24), timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'MR_estimated', value: payload.readDoubleLE(32), timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'P_ch', value: payload.readDoubleLE(40), timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'cost', value: payload.readDoubleLE(48), timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'solver_iters', value: payload.readInt32LE(56), timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'safety_filtered', value: payload.readUInt8(60), timestamp: tsMs },
+      { entity: 'CONTROLLER.diagnostics', component: 'cutoff_active', value: payload.readUInt8(61), timestamp: tsMs },
     ];
   }
 
@@ -235,12 +235,12 @@ export function parseElodinPacket(
   if (high === 0x42 && low === 0x00 && payload.length >= 56) {
     const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
     const fields: ParsedSensorData[] = [
-      { entity: 'CONTROLLER.measurement', component: 'P_copv',    value: payload.readDoubleLE(8),  timestamp: tsMs },
-      { entity: 'CONTROLLER.measurement', component: 'P_reg',     value: payload.readDoubleLE(16), timestamp: tsMs },
-      { entity: 'CONTROLLER.measurement', component: 'P_u_fuel',  value: payload.readDoubleLE(24), timestamp: tsMs },
-      { entity: 'CONTROLLER.measurement', component: 'P_u_ox',    value: payload.readDoubleLE(32), timestamp: tsMs },
-      { entity: 'CONTROLLER.measurement', component: 'P_d_fuel',  value: payload.readDoubleLE(40), timestamp: tsMs },
-      { entity: 'CONTROLLER.measurement', component: 'P_d_ox',    value: payload.readDoubleLE(48), timestamp: tsMs },
+      { entity: 'CONTROLLER.measurement', component: 'P_copv', value: payload.readDoubleLE(8), timestamp: tsMs },
+      { entity: 'CONTROLLER.measurement', component: 'P_reg', value: payload.readDoubleLE(16), timestamp: tsMs },
+      { entity: 'CONTROLLER.measurement', component: 'P_u_fuel', value: payload.readDoubleLE(24), timestamp: tsMs },
+      { entity: 'CONTROLLER.measurement', component: 'P_u_ox', value: payload.readDoubleLE(32), timestamp: tsMs },
+      { entity: 'CONTROLLER.measurement', component: 'P_d_fuel', value: payload.readDoubleLE(40), timestamp: tsMs },
+      { entity: 'CONTROLLER.measurement', component: 'P_d_ox', value: payload.readDoubleLE(48), timestamp: tsMs },
     ];
     if (payload.length >= 72) {
       fields.push({ entity: 'CONTROLLER.measurement', component: 'P_ch_mp1', value: payload.readDoubleLE(56), timestamp: tsMs });
@@ -254,9 +254,9 @@ export function parseElodinPacket(
   if (high === 0x43 && low === 0x00 && payload.length >= 11) {
     const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
     return [
-      { entity: 'CONTROLLER.state',  component: 'from_state', value: payload.readUInt8(8),  timestamp: tsMs },
-      { entity: 'CONTROLLER.state',  component: 'to_state',   value: payload.readUInt8(9),  timestamp: tsMs },
-      { entity: 'CONTROLLER.state',  component: 'reason',     value: payload.readUInt8(10), timestamp: tsMs },
+      { entity: 'CONTROLLER.state', component: 'from_state', value: payload.readUInt8(8), timestamp: tsMs },
+      { entity: 'CONTROLLER.state', component: 'to_state', value: payload.readUInt8(9), timestamp: tsMs },
+      { entity: 'CONTROLLER.state', component: 'reason', value: payload.readUInt8(10), timestamp: tsMs },
     ];
   }
 
@@ -265,9 +265,9 @@ export function parseElodinPacket(
   if (high === 0x44 && low === 0x00 && payload.length >= 17) {
     const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
     return [
-      { entity: 'CONTROLLER.fire', component: 'fire_active', value: payload.readUInt8(8),   timestamp: tsMs },
-      { entity: 'CONTROLLER.fire', component: 'duty_F',      value: payload.readFloatLE(9), timestamp: tsMs },
-      { entity: 'CONTROLLER.fire', component: 'duty_O',      value: payload.readFloatLE(13), timestamp: tsMs },
+      { entity: 'CONTROLLER.fire', component: 'fire_active', value: payload.readUInt8(8), timestamp: tsMs },
+      { entity: 'CONTROLLER.fire', component: 'duty_F', value: payload.readFloatLE(9), timestamp: tsMs },
+      { entity: 'CONTROLLER.fire', component: 'duty_O', value: payload.readFloatLE(13), timestamp: tsMs },
     ];
   }
 
@@ -280,9 +280,26 @@ export function parseElodinPacket(
     const cmdValue = payload.readFloatLE(10);
     const status = payload.readUInt8(14);
     return [
-      { entity: `PSM.actuator.${actuatorId}`, component: 'command_type', value: cmdType,  timestamp: tsMs },
-      { entity: `PSM.actuator.${actuatorId}`, component: 'value',        value: cmdValue, timestamp: tsMs },
-      { entity: `PSM.actuator.${actuatorId}`, component: 'status',       value: status,   timestamp: tsMs },
+      { entity: `PSM.actuator.${actuatorId}`, component: 'command_type', value: cmdType, timestamp: tsMs },
+      { entity: `PSM.actuator.${actuatorId}`, component: 'value', value: cmdValue, timestamp: tsMs },
+      { entity: `PSM.actuator.${actuatorId}`, component: 'status', value: status, timestamp: tsMs },
+    ];
+  }
+
+  // ── Self Test Result: [0x60, 0x01..0x3F] ────────────────────────────────
+  // Layout: U64(0) timestamp_ns | U8(8) sensor_id | U8(9) result (1=pass, 0=fail)
+  if (high === 0x60 && payload.length >= 10) {
+    const boardId = low;
+    const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
+    const sensorId = payload.readUInt8(8);
+    const result = payload.readUInt8(9);
+    return [
+      {
+        entity: `SELF_TEST.BOARD_${boardId}`,
+        component: `sensor_${sensorId}`,
+        value: result,
+        timestamp: tsMs,
+      },
     ];
   }
 
