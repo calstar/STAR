@@ -142,6 +142,53 @@ DiabloBoardPacketParser::parse_sensor_data(const uint8_t* data, size_t size) con
     return result;
 }
 
+std::optional<DiabloBoardPacketParser::ParsedSelfTestPacket>
+DiabloBoardPacketParser::parse_self_test(const uint8_t* data, size_t size) const {
+    constexpr size_t HEADER_SIZE = 6;
+    constexpr size_t BODY_HEADER_SIZE = 1; // num_sensors
+
+    if (size < HEADER_SIZE + BODY_HEADER_SIZE) {
+        return std::nullopt;
+    }
+
+    ParsedSelfTestPacket result;
+
+    result.header.packet_type = static_cast<PacketType>(data[0]);
+    result.header.version = data[1];
+    result.header.timestamp = read_le_u32(data + 2);
+
+    if (result.header.packet_type != PacketType::SELF_TEST) {
+        return std::nullopt;
+    }
+
+    result.num_sensors = data[6];
+    if (result.num_sensors == 0 || result.num_sensors > 64) {
+        result.is_valid = false;
+        return result; 
+    }
+
+    const size_t expected_size = HEADER_SIZE + BODY_HEADER_SIZE + (static_cast<size_t>(result.num_sensors) * 2);
+    if (size < expected_size) {
+        result.is_valid = false;
+        return result; 
+    }
+
+    size_t offset = HEADER_SIZE + BODY_HEADER_SIZE;
+    for (uint8_t i = 0; i < result.num_sensors; ++i) {
+        if (offset + 2 > size) {
+            result.is_valid = false;
+            return result;
+        }
+        SelfTestResult r;
+        r.sensor_id = data[offset++];
+        r.result = data[offset++];
+        result.results.push_back(r);
+    }
+
+    result.is_valid = (result.results.size() == result.num_sensors);
+    return result;
+}
+
 DiabloBoardPacketParser::BoardSignature DiabloBoardPacketParser::extract_signature(
     const ParsedBoardHeartbeat& heartbeat, const std::string& source_ip) const {
     BoardSignature sig;

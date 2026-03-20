@@ -290,6 +290,38 @@ bool DatabaseConfig::register_heartbeat_tables(ElodinClient& client, uint8_t max
     return registered > 0;
 }
 
+static bool register_self_test_vtable(ElodinClient& client, uint8_t board_id) {
+    std::string entity = "SELF_TEST.BOARD_" + std::to_string(board_id);
+    std::string prefix = entity + ".";
+
+    auto vt = builder::vtable({
+        raw_field(0, 8, schema(PrimType::U64(), {}, component(prefix + "timestamp_ns"))),
+        raw_field(8, 1, schema(PrimType::U8(), {}, component(prefix + "sensor_id"))),
+        raw_field(9, 1, schema(PrimType::U8(), {}, component(prefix + "result"))),
+    });
+
+    uint64_t entity_id = 0x6000 + board_id;
+    if (!send_msg(client, VTableMsg{.id = {0x60, board_id}, .vtable = vt})) return false;
+
+    send_msg(client, set_component_name(prefix + "timestamp_ns"));
+    send_msg(client, set_component_name(prefix + "sensor_id"));
+    send_msg(client, set_component_name(prefix + "result"));
+    send_msg(client, set_entity_name(entity_id, entity));
+    return true;
+}
+
+bool DatabaseConfig::register_self_test_tables(ElodinClient& client, uint8_t max_board_id) {
+    std::cout << "[DatabaseConfig] Registering SELF_TEST VTables..." << std::endl;
+    int registered = 0;
+    for (uint8_t board_id = 1; board_id <= max_board_id; board_id++) {
+        if (register_self_test_vtable(client, board_id)) {
+            registered++;
+        }
+    }
+    std::cout << "[DatabaseConfig] ✅ Registered " << registered << " SELF_TEST VTables" << std::endl;
+    return registered > 0;
+}
+
 bool DatabaseConfig::register_tables_from_config(ElodinClient& client,
                                                  const std::string& /* config_path */) {
     return register_tables(client, nullptr, nullptr);

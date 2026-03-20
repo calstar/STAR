@@ -634,6 +634,7 @@ int main(int argc, char* argv[]) {
         fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names);
         // Register BOARD_HEARTBEAT VTables so backend can consume board status from Elodin.
         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, 64);
+        fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, 64);
         // Drain any response from DB after registration; otherwise recv buffer fills and TABLE
         // writes stall after ~3s
         std::array<uint8_t, 4096> drain_buf;
@@ -756,6 +757,7 @@ int main(int argc, char* argv[]) {
                         fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client,
                                                                                 pt_names);
                         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, 64);
+                        fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, 64);
                     }
                 }
             }
@@ -806,6 +808,38 @@ int main(int argc, char* argv[]) {
                 }
                 board_type = BoardType::PT;
             }
+        }
+
+        // ── Publish SELF_TEST back to Elodin ──
+        if (elodin_connected && elodin_client.is_connected() && !batch.value().self_tests.empty()) {
+            elodin_client.begin_batch();
+            for (const auto& st_packet : batch.value().self_tests) {
+                // board_id is retrieved from heartbeat or routing. However, self test doesn't have board_id in the packet.
+                // We use discovery to map IP to board_id.
+                auto cfg_it = board_map.find(source_ip);
+                uint8_t board_id = (cfg_it != board_map.end() && cfg_it->second.board_id >= 0) ? cfg_it->second.board_id : 0;
+                
+                if (board_id == 0) {
+                    auto discovered = discovery.get_board_by_ip(source_ip);
+                    if (discovered) board_id = discovered->signature.board_id;
+                }
+
+                if (board_id != 0) {
+                    std::array<uint8_t, 2> pkt_id = {0x60, board_id};
+                    using SelfTestElodinMsg = comms::CommsMessage<uint64_t, uint8_t, uint8_t>;
+                    for (const auto& res : st_packet.results) {
+                        SelfTestElodinMsg msg;
+                        msg.setField<0>(receive_timestamp_ns);
+                        msg.setField<1>(res.sensor_id);
+                        msg.setField<2>(res.result);
+                        elodin_client.publish(pkt_id, msg);
+                    }
+                }
+            }
+            if (elodin_client.flush_batch()) elodin_publish_count++;
+            
+            std::array<uint8_t, 4096> drain_buf;
+            while (elodin_client.read_data(drain_buf.data(), drain_buf.size()) > 0) {}
         }
 
         // ── Begin batch: all publishes from this packet go into one buffer ──
