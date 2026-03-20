@@ -65,6 +65,8 @@ export async function registerVTables(client: ElodinClient): Promise<boolean> {
       [0x31, 0x06], [0x31, 0x07], [0x31, 0x08], [0x31, 0x09], [0x31, 0x0A],
       [0x31, 0x0B], [0x31, 0x0C], [0x31, 0x0D], [0x31, 0x0E], [0x31, 0x0F],
       [0x31, 0x10], [0x31, 0x11], [0x31, 0x12], [0x31, 0x13], [0x31, 0x14],
+      // Encoder Raw [0x24, 0x01-0x02]
+      [0x24, 0x01], [0x24, 0x02],
       // Controller outputs (0x40=actuation, 0x41=diagnostics, 0x42=measurement)
       // PSM state transitions (0x43), fire-state events (0x44)
       // PSM actuator commands (0x50, 0x60..0x66)
@@ -75,6 +77,11 @@ export async function registerVTables(client: ElodinClient): Promise<boolean> {
     // Subscriptions for board heartbeats [0x10, board_id (1-64)]
     for (let i = 1; i <= 64; i++) {
       subscriptions.push([0x10, i]);
+    }
+
+    // Self-test results [0x60, board_id (1-64)]
+    for (let i = 1; i <= 64; i++) {
+      subscriptions.push([0x60, i]);
     }
 
     // Try VTableStream

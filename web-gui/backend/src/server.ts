@@ -230,6 +230,9 @@ class SensorSystemServer {
   private readonly SETUP_STUCK_THRESHOLD_MS = 4000;
   private readonly BOARD_STATE_SETUP = 1;
 
+  /** Boards for which we have already emitted a self-test failure notification (avoids repeated alerts). */
+  private selfTestNotifiedBoards: Set<number> = new Set();
+
   /** PT_Cal entities that received calibrated data from calibration_service recently — skip raw fallback to avoid chunking. */
   private lastCalibratedPtEntityMs: Map<string, number> = new Map();
   private readonly PT_CAL_SUPERSEDES_RAW_MS = 2500;
@@ -980,6 +983,31 @@ class SensorSystemServer {
           this.handleSensorUpdate(update);
         }
       }
+
+      // Self-test failure notification: if this was a self-test packet and any sensor failed,
+      // fire a one-time error notification so the operator knows immediately.
+      if (high === 0x60 && parsedList.length > 0) {
+        const boardId = low;
+        for (const parsed of parsedList) {
+          if (parsed.value === 0 && !this.selfTestNotifiedBoards.has(boardId)) {
+            this.selfTestNotifiedBoards.add(boardId);
+            const registry = this.boardRegistryById.get(boardId);
+            const label = registry?.boardNumber != null
+              ? `Board ${registry.boardNumber} (${registry.type})`
+              : `Board ${boardId}`;
+            this.broadcastNotification({
+              key: `self_test_fail_${boardId}`,
+              category: 'error',
+              message: `${label} failed self-test`,
+              timestampMs: Date.now(),
+              ongoing: true,
+            });
+            this.activeNotificationKeys.add(`self_test_fail_${boardId}`);
+            break;
+          }
+        }
+      }
+
       // Do NOT derive ACTUATOR_UPDATE from raw_adc_counts here: that overwrites the authoritative
       // commanded state at telemetry rate and causes oscillation when ADC hovers near threshold.
       // ACTUATOR_UPDATE is only sent when a command is executed (so actuatorStateByEntity stays stable).
