@@ -204,7 +204,7 @@ export default function BoardsPage() {
                             ID {b.id} · {b.ip}
                           </span>
                           <Link
-                            href={`/flash?ip=${encodeURIComponent(b.ip)}`}
+                            href={`/flash?ip=${encodeURIComponent(b.ip)}&boardId=${b.id}`}
                             className="text-xs px-2 py-1 rounded bg-cyan-900/50 text-cyan-300 hover:bg-cyan-800/60 font-semibold"
                           >
                             Flash

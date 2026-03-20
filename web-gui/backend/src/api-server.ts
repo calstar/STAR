@@ -403,13 +403,28 @@ export function startAPIServer(
           res.end(JSON.stringify({ success: false, message: 'No enabled boards in config' }));
           return;
         }
-        const progressLog: string[] = [];
-        const result = await flashAllBoards(getBoards, (msg) => {
-          progressLog.push(msg);
-          console.log(`[FlashAll] ${msg}`);
+
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
         });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ...result, progressLog }));
+
+        const sendSSE = (event: string, data: unknown) => {
+          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+
+        sendSSE('progress', { message: `Starting flash-all for ${boards.length} boards...` });
+
+        const result = await flashAllBoards(getBoards, (msg) => {
+          console.log(`[FlashAll] ${msg}`);
+          sendSSE('progress', { message: msg });
+        }, (boardResult) => {
+          sendSSE('board_result', boardResult);
+        });
+
+        sendSSE('done', result);
+        res.end();
       } else if (url.pathname === '/api/ota-flash' && req.method === 'POST') {
         const chunks: Buffer[] = [];
         let totalLen = 0;
@@ -426,7 +441,7 @@ export function startAPIServer(
               return;
             }
             const body = Buffer.concat(chunks).toString('utf8');
-            const { ip, port = 3232, firmwareBase64, projectPath } = JSON.parse(body);
+            const { ip, port = 3232, firmwareBase64, projectPath, boardId } = JSON.parse(body);
             if (!ip || typeof ip !== 'string') {
               res.writeHead(400, { 'Content-Type': 'application/json' });
               res.end(JSON.stringify({ error: 'Missing or invalid ip' }));
@@ -436,8 +451,9 @@ export function startAPIServer(
 
             let firmwareBuffer: Buffer;
             if (projectPath && typeof projectPath === 'string') {
-              // Build from DiabloAvionics project
-              const buildResult = await buildProject(projectPath);
+              const boardIdNum = typeof boardId === 'number' && boardId > 0 && boardId <= 254 ? boardId : null;
+              const buildFlags = boardIdNum != null ? `-DTEMP_HARDCODE_BOARD_ID=${boardIdNum}` : undefined;
+              const buildResult = await buildProject(projectPath, buildFlags);
               if (!buildResult.success || !buildResult.firmwareBuffer) {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({
