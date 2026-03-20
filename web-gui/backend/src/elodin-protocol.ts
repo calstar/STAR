@@ -179,6 +179,13 @@ export function parseElodinPacket(
     return r ? [r] : [];
   }
 
+  // ── Encoder Raw: [0x24, 0x01..0x02] ──────────────────────────────────────
+  if (high === 0x24 && low >= 0x01 && low <= 0x02) {
+    const ch = low;
+    const r = parseRawSensorPayload(payload, ch, `ENC.CH${ch}`, 'raw_angle');
+    return r ? [r] : [];
+  }
+
   // ── Actuator: [0x30, 0x01..0x0A] ────────────────────────────────────────
   if (high === 0x30 && low >= 0x01 && low <= 0x0A) {
     const ch = low;

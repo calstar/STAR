@@ -775,7 +775,7 @@ class SensorSystemServer {
       }
     }
 
-    if (this.firstPacketTime === null && (update.entity.startsWith('PT.') || update.entity.startsWith('PT_Cal.') || update.entity.startsWith('ACT.') || update.entity.startsWith('TC.') || update.entity.startsWith('RTD.') || update.entity.startsWith('RTD_Cal.') || update.entity.startsWith('LC.') || update.entity.startsWith('LC_Cal.'))) {
+    if (this.firstPacketTime === null && (update.entity.startsWith('PT.') || update.entity.startsWith('PT_Cal.') || update.entity.startsWith('ACT.') || update.entity.startsWith('TC.') || update.entity.startsWith('RTD.') || update.entity.startsWith('RTD_Cal.') || update.entity.startsWith('LC.') || update.entity.startsWith('LC_Cal.') || update.entity.startsWith('ENC.'))) {
       this.firstPacketTime = update.timestamp;
       console.log(`🚀 Mission T+0 set: ${new Date(this.firstPacketTime).toISOString()}`);
       this.broadcast({ type: MessageType.MISSION_START_TIME, timestamp: Date.now(), payload: { missionStartTime: this.firstPacketTime } });
@@ -871,6 +871,7 @@ class SensorSystemServer {
           else if (boardType === 3) typeStr = 'RTD';
           else if (boardType === 4) typeStr = 'LC';
           else if (boardType === 5) typeStr = 'ACTUATOR';
+          else if (boardType === 6) typeStr = 'ENCODER';
 
           status = {
             type: typeStr,

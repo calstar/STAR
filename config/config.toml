@@ -293,6 +293,15 @@ designated_survivor = false
 voltage_reference = 0
 active_connectors = []
 
+[boards.encoder_board]
+type = "ENCODER"
+ip = "192.168.2.61"
+send_port = 5005
+num_sensors = 2
+board_id = 61
+enabled = true
+enable_serial_printing = false
+
 # =============================================================================
 # Multiple Boards Example (commented out - uncomment to use)
 # =============================================================================
@@ -378,6 +387,14 @@ active_connectors = []
 "GSE Mid"   = 3    # Connector 3 = GSE Mid (HP PT)
 "GN2 High" = 4    # Connector 4 is GN2 High (HP PT sensor)
 # Connector 2 currently unused
+
+# =============================================================================
+# Sensor Roles - Encoder Board (board_id = 61)
+# AS5600 magnetic encoders — 12-bit angle (0-4095)
+# =============================================================================
+[sensor_roles_encoder_board]
+"Encoder 1" = 1
+"Encoder 2" = 2
 
 # =============================================================================
 # Actuator Roles - Maps role names to [type, actuator_id, board_id]
@@ -480,10 +497,15 @@ packet_id = [0x31, 0x00]
 channels = 20
 description = "Actuator state (0=closed, 1=open) from current-sense threshold"
 
+[routing.encoder_raw]
+packet_id = [0x24, 0x00]
+channels = 2
+description = "Raw encoder angle (0-4095) — AS5600 12-bit"
+
 # Which routing types daq_bridge publishes to Elodin.
 # PT_Cal/TC_Cal/LC_Cal/RTD_Cal are written by calibration_server (subscribes to relay, applies calibration, writes to Elodin).
 [daq_bridge]
-publish = ["pt_raw", "tc_raw", "rtd_raw", "lc_raw", "actuator_status", "actuator_state"]
+publish = ["pt_raw", "tc_raw", "rtd_raw", "lc_raw", "actuator_status", "actuator_state", "encoder_raw"]
 
 # =============================================================================
 # Calibration
