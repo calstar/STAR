@@ -64,7 +64,16 @@ if systemctl --user is-active --quiet sensor-backend.service 2>/dev/null; then
   exit 1
 fi
 
+if [ -z "$ELODIN_DB_NAME" ]; then
+  read -r -p "Enter optional DB name (press Enter for timestamp default): " CUSTOM_DB_NAME
+  if [ -n "$CUSTOM_DB_NAME" ]; then
+    ELODIN_DB_NAME="$CUSTOM_DB_NAME"
+  fi
+fi
+
 DB_NAME="${ELODIN_DB_NAME:-daq_$(date +%Y%m%d_%H%M%S)}"
+echo "Using DB Name: $DB_NAME"
+
 ELODIN_DB_DIR="$HOME/.local/share/elodin/$DB_NAME"
 HAVE_EXISTING_DB=false
 pgrep -f "elodin-db run.*2240" >/dev/null 2>&1 && HAVE_EXISTING_DB=true

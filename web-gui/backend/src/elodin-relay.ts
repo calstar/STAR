@@ -13,6 +13,8 @@ import * as net from 'net';
 import { WebSocketServer } from 'ws';
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
 import { registerVTables } from './elodin-vtable.js';
+import { registerControllerVTables, registerActuatorCommandedVTables } from './elodin-vtable-controller.js';
+import { loadActuatorChannelToEntityMap } from './sensor-config.js';
 
 const ELODIN_HOST = process.env.ELODIN_HOST || '127.0.0.1';
 const ELODIN_PORT = parseInt(process.env.ELODIN_PORT || '2240', 10);
@@ -28,6 +30,21 @@ function main(): void {
   wss.on('connection', (ws) => {
     clientCount++;
     console.log(`[Relay] Client connected (total ${clientCount})`);
+    ws.on('message', (data: Buffer | string) => {
+      if (typeof data !== 'string') return;
+      try {
+        const msg = JSON.parse(data) as { type?: string; packetId?: number[]; payload?: string };
+        if (msg.type === 'publish' && Array.isArray(msg.packetId) && msg.packetId.length === 2 && typeof msg.payload === 'string') {
+          const payload = Buffer.from(msg.payload, 'base64');
+          if (elodin.isConnected()) {
+            const ok = elodin.publishTable([msg.packetId[0], msg.packetId[1]], payload);
+            console.log(`[Relay] Publish [0x${(msg.packetId[0] as number).toString(16)},0x${(msg.packetId[1] as number).toString(16)}] → Elodin: ${ok ? 'OK' : 'FAIL'}`);
+          } else {
+            console.warn('[Relay] Publish dropped: Elodin not connected');
+          }
+        }
+      } catch (_) { /* ignore malformed */ }
+    });
     ws.on('close', () => {
       clientCount--;
       console.log(`[Relay] Client disconnected (total ${clientCount})`);
@@ -139,13 +156,19 @@ function main(): void {
   });
 
   elodin.on('connected', () => {
-    console.log('[Relay] Elodin connected, sending VTableStream subscriptions...');
+    console.log('[Relay] Elodin connected, registering VTables and sending subscriptions...');
     tablePacketCount = 0;
     seenHighBytes.clear();
     if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
+    // Register CONTROLLER VTables so publish [0x43] from backend→relay→Elodin is accepted
+    registerControllerVTables(elodin).then((ok) => {
+      if (ok) console.log('[Relay] Controller VTables registered (CONTROLLER.state etc.)');
+    }).catch((e) => { console.error('[Relay] Controller VTable registration failed:', e); });
+    const actuatorMap = loadActuatorChannelToEntityMap();
+    registerActuatorCommandedVTables(elodin, actuatorMap).then((ok) => {
+      if (ok) console.log('[Relay] Actuator Commanded VTables registered');
+    }).catch((e) => { console.error('[Relay] Actuator Commanded VTable registration failed:', e); });
     // Use VTableStream (not Stream) so Elodin DB sends whole-row TABLE packets
-    // with original structured IDs [0x20, 0x01..0x1E] rather than per-component
-    // FNV-1a hash IDs that the backend cannot parse.
     registerVTables(elodin).then(() => {
       console.log('[Relay] VTableStream subscriptions sent; relaying TABLE packets to WebSocket clients.');
       scheduleResubscribe(2);

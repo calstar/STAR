@@ -119,6 +119,38 @@ export async function registerControllerVTables(client: ElodinClient): Promise<b
   }
 }
 
+/**
+ * Register VTables for commanded actuator state [0x32, ch].
+ * Separate from [0x31] (current-sense/hardware) so postprocessing uses commanded state.
+ */
+export async function registerActuatorCommandedVTables(
+  client: ElodinClient,
+  actuatorChannelToEntityMap: Record<number, string>
+): Promise<boolean> {
+  if (!client.isConnected()) return false;
+  const vtableMsgId = computeMsgId("VTableMsg");
+  let count = 0;
+  for (let ch = 1; ch <= 20; ch++) {
+    const entity = actuatorChannelToEntityMap[ch] || `ACT.CH${ch}`;
+    const component = `${entity}.actuator_state_commanded`;
+    const vt = encodeVTable({
+      packetId: [0x32, ch],
+      fields: [
+        { offset: 0, size: 8, type: 'u64', component: `${entity}.timestamp_ns` },
+        { offset: 8, size: 1, type: 'u8', component: `${entity}.channel_id` },
+        { offset: 9, size: 1, type: 'u8', component },
+      ],
+    });
+    if (client.sendRawMessage(vtableMsgId, ElodinPacketType.MSG, vt)) {
+      count++;
+    }
+  }
+  if (count > 0) {
+    console.log(`   ✅ Registered ${count} actuator commanded VTables [0x32, 0x01-0x14]`);
+  }
+  return count > 0;
+}
+
 function encodeVTable(config: {
   packetId: [number, number];
   fields: Array<{ offset: number; size: number; type: string; component: string }>;

@@ -212,9 +212,9 @@ const ALIASES: Record<string, string[]> = {
 
 export { ALIASES };
 
-// ── Batched sensor-data updates (20 Hz) ──────────────────────────────────────
-// Accumulate incoming sensor writes and flush to Zustand every 50ms.
-// Keeps React re-renders at 20 Hz so the UI stays responsive.
+// ── Batched sensor-data updates (10 Hz) ──────────────────────────────────────
+// Accumulate incoming sensor writes and flush to Zustand every 100ms.
+// 10 Hz reduces browser lag while keeping display responsive.
 let _pendingSensorWrites: Record<string, number> = {};
 let _sensorTimestamps: Record<string, number> = {};
 let _flushScheduled = false;
@@ -250,8 +250,8 @@ function scheduleSensorFlush() {
   }, FLUSH_INTERVAL_MS);
 }
 
-// Flush pending writes at 20 Hz so React re-renders stay light and UI stays responsive.
-const FLUSH_INTERVAL_MS = 50;
+// Flush pending writes at 10 Hz.
+const FLUSH_INTERVAL_MS = 100;
 if (typeof setInterval !== 'undefined') {
   setInterval(() => {
     if (Object.keys(_pendingSensorWrites).length > 0) {
@@ -263,6 +263,7 @@ if (typeof setInterval !== 'undefined') {
 
 function flushSensorWrites() {
   _flushScheduled = false;
+  if (typeof document !== 'undefined' && document.hidden) return; // defer when tab in background
   const batch = _pendingSensorWrites;
   _pendingSensorWrites = {};
   if (Object.keys(batch).length === 0) return;
@@ -482,12 +483,12 @@ export function useSensorValue(entity: string, component: string): number | null
   return value;
 }
 
-/** Subscribe to sensor flush tick (20 Hz). Use with useGetSensorValue() so pages that read many values re-render on flush without subscribing to full sensorData. */
+/** Subscribe to sensor flush tick (10 Hz). Use with useGetSensorValue() so pages that read many values re-render on flush without subscribing to full sensorData. */
 export function useSensorDataVersion(): number {
   return useSensorStore((s) => s._updateVersion ?? 0);
 }
 
-/** Last flush time (Date.now()). Use to show latency. Frontend flushes every FLUSH_INTERVAL_MS (50ms). */
+/** Last flush time (Date.now()). Use to show latency. Frontend flushes every FLUSH_INTERVAL_MS (100ms). */
 export function useLastSensorFlushMs(): number | undefined {
   return useSensorStore((s) => s.lastSensorFlushMs);
 }

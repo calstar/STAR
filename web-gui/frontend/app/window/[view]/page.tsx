@@ -1,10 +1,6 @@
 'use client'
 
 import { useParams } from 'next/navigation';
-import { useEffect } from 'react';
-import { useSensorStore } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 import WindowDetector from '@/components/windows/WindowDetector';
 
 // Import all page components
@@ -55,25 +51,6 @@ const viewComponents: Record<string, React.ComponentType> = {
 export default function WindowViewPage() {
   const params = useParams();
   const view = params?.view as string;
-
-  const updateSensor = useSensorStore((state) => state.updateSensor);
-  const updateState = useSensorStore((state) => state.updateState);
-  const updateConnectionStatus = useSensorStore((state) => state.updateConnectionStatus);
-  const ws = getWebSocketClient();
-
-  useEffect(() => {
-    ws.connect();
-    const unsubscribeSensor = ws.on(MessageType.SENSOR_UPDATE, (payload: unknown) => {
-      updateSensor(payload as SensorUpdate);
-    });
-    const unsubscribeState = ws.on(MessageType.STATE_UPDATE, (payload: unknown) => {
-      updateState(payload as StateUpdate);
-    });
-    const unsubscribeConn = ws.onConnectionStatus((status) => {
-      updateConnectionStatus(status);
-    });
-    return () => { unsubscribeSensor(); unsubscribeState(); unsubscribeConn(); };
-  }, [ws, updateSensor, updateState, updateConnectionStatus]);
 
   const Component = viewComponents[view];
 

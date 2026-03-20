@@ -6,7 +6,7 @@ import DerivedTimeSeriesPlot from '@/components/plots/DerivedTimeSeriesPlot';
 import ActuatorStatePanel from '@/components/plots/ActuatorStatePanel';
 import { useSensorStore, useSensorValue, useLoadCellForceLbf } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
+import { MessageType } from '@/lib/types';
 import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
 import { useSensorConfig } from '@/lib/sensor-config';
 import { kTypeVoltageToTempC, codeToForce } from '@/lib/sense-conversions';
@@ -107,8 +107,6 @@ function LcKgCompact({ entity, calEntity, label, color }: { entity: string; calE
 }
 
 export default function ChamberGraphsPage() {
-    const updateSensor = useSensorStore((s) => s.updateSensor);
-    const updateState = useSensorStore((s) => s.updateState);
     const ws = getWebSocketClient();
     const allSensors = useSensorConfig();
     // Chamber PTs only (exclude TC/LC with "Chamber" in role); order Mid 1, Mid 2, Throat 1, Throat 2
@@ -148,12 +146,9 @@ export default function ChamberGraphsPage() {
 
     useEffect(() => { loadChannelConfig(); }, [loadChannelConfig]);
     useEffect(() => {
-        ws.connect();
-        const unsub1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-        const unsub2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-        const unsub3 = ws.on(MessageType.CONFIG_UPDATED, () => loadChannelConfig());
-        return () => { unsub1(); unsub2(); unsub3(); };
-    }, [ws, updateSensor, updateState, loadChannelConfig]);
+        const unsub = ws.on(MessageType.CONFIG_UPDATED, () => loadChannelConfig());
+        return () => { unsub(); };
+    }, [ws, loadChannelConfig]);
 
     const voltageRefNominals = useSensorStore((s) => s.voltageRefNominals);
     const tcEntities = tcData.map((d) => d.entity);

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate, ActuatorUpdate, SystemState, ActuatorId } from '@/lib/types';
+import { MessageType, SystemState, ActuatorId } from '@/lib/types';
 import { startDataCache } from '@/lib/data-cache';
 import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
 import ActuatorControl from '@/components/controls/ActuatorControl';
@@ -38,10 +38,6 @@ const TIME_WINDOWS = [
 ];
 
 export default function UnifiedDashboard() {
-  const updateSensor = useSensorStore((state) => state.updateSensor);
-  const updateState = useSensorStore((state) => state.updateState);
-  const updateActuator = useSensorStore((state) => state.updateActuator);
-  const updateConnectionStatus = useSensorStore((state) => state.updateConnectionStatus);
   const currentState = useSensorStore((state) => state.currentState);
   const ws = getWebSocketClient();
   const [timeWindow, setTimeWindow] = useState(60);

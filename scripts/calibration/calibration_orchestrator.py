@@ -461,6 +461,7 @@ class CalibrationOrchestrator:
 
         # ── Pending active-learning alerts ──────────────────────────────
         self.pending_alerts: List[CalibrationRequest] = []
+        self.pending_alerts_max = 50  # cap to prevent unbounded growth
 
         # ── Actuator communication (optional) ────────────────────────────
         self.actuator_comm = None
@@ -710,6 +711,8 @@ class CalibrationOrchestrator:
         if alert is not None:
             self.stats["active_learning_alerts"] += 1
             self.pending_alerts.append(alert)
+            if len(self.pending_alerts) > self.pending_alerts_max:
+                self.pending_alerts = self.pending_alerts[-self.pending_alerts_max :]
             if len(self.pending_alerts) % 5 == 1:
                 stype, ch = key
                 logger.info(

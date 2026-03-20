@@ -204,6 +204,7 @@ enabled = true
 enable_serial_printing = true
 necessary_for_abort = false
 voltage_reference = 0
+channel_offset = 10
 
 [boards.lc_board]
 type = "LC"
@@ -388,7 +389,7 @@ active_connectors = []
 [actuator_roles]
 # Actuator Board #1 → board_id 12 (names match state_machine_actuators.csv)
 "LOX Main"               = ["NC", 1, 12]
-"Fuel Vent"             = ["NO", 2, 12]
+"Fuel Vent"             = ["NC", 2, 12]
 "Fuel Press"            = ["NC", 3, 12]
 "Fuel Main"             = ["NO", 7, 12]
 "LOX Vent"              = ["NO", 6, 12]

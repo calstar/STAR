@@ -1,10 +1,9 @@
 'use client'
 
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useSensorStore, useGetSensorValue, useSensorDataVersion, useActuatorCommandedState } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
-import { MessageType, SensorUpdate, StateUpdate, BoardStatusPayload, BoardStatus, engineStateCodeToLabel, ActuatorState } from '@/lib/types';
+import { BoardStatus, engineStateCodeToLabel, ActuatorState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
 
@@ -37,38 +36,12 @@ function fmtValue(v: number | null): string {
 }
 
 export default function StatusPage() {
-  const updateSensor = useSensorStore((s) => s.updateSensor);
-  const updateBoards = useSensorStore((s) => s.updateBoards);
-  const updateState = useSensorStore((s) => s.updateState);
-  const updateActuatorExpectedPositions = useSensorStore((s) => s.updateActuatorExpectedPositions);
   const boardsMap = useSensorStore((s) => s.boards);
   const currentState = useSensorStore((s) => s.currentState);
-  const ws = getWebSocketClient();
   const { actuators } = useActuatorsFromConfig();
   const ACTUATORS = actuators.map((a) => ({ label: a.name, entity: a.entity, channel: a.channel }));
   useSensorDataVersion(); // re-render on sensor flush so getSensorValue() shows fresh data
   const getSensorValue = useGetSensorValue();
-
-  useEffect(() => {
-    ws.connect();
-    const unsubSensor = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const unsubBoards = ws.on(MessageType.BOARD_STATUS_UPDATE, (p: unknown) => {
-      const payload = p as BoardStatusPayload;
-      if (payload && Array.isArray(payload.boards)) {
-        updateBoards(payload.boards as BoardStatus[]);
-      }
-    });
-    const unsubState = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    const unsubExpected = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
-      updateActuatorExpectedPositions(p as Record<number, Record<string, 'open' | 'closed' | null>>);
-    });
-    return () => {
-      unsubSensor();
-      unsubBoards();
-      unsubState();
-      unsubExpected();
-    };
-  }, [ws, updateSensor, updateBoards, updateState, updateActuatorExpectedPositions]);
 
   const boards = useMemo(() => {
     return Object.values(boardsMap).sort((a, b) => {

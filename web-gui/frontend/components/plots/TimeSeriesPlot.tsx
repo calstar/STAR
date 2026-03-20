@@ -80,8 +80,8 @@ function fmtAxisVal(val: number): string {
 
 // ── Memory constants ──────────────────────────────────────────────────────────
 const DEFAULT_WINDOW_SECONDS = 60;
-const SAMPLE_HZ = 20;   // sync from cache at 20 Hz for responsive UI
-const PLOT_MAX_POINTS = 6000;   // cap points per series (100 Hz * 60 s)
+const SAMPLE_HZ = 10;   // sync from cache at 10 Hz (reduces lag)
+const PLOT_MAX_POINTS = 2000;   // cap points per series
 
 function applyTransform(v: number, transform?: (x: number) => number): number {
   if (!isFinite(v)) return v;
@@ -415,26 +415,20 @@ export default function TimeSeriesPlot({
       }
     });
 
-    // ── Render loop: data sync at 20 Hz, Y-axis at 5 Hz, x-axis every frame ────────
+    // ── Render loop: data sync at SAMPLE_HZ, Y-axis at 5 Hz, x-axis every frame ────────
     let lastDataUpdate = 0;
     let lastYAxisUpdate = 0;
-    const DATA_UPDATE_INTERVAL = 1000 / SAMPLE_HZ; // 50ms at 20 Hz
+    const DATA_UPDATE_INTERVAL = 1000 / SAMPLE_HZ;
     const Y_AXIS_UPDATE_INTERVAL = 200; // 200ms for Y-axis auto-scaling (5 Hz)
 
-    let animationFrameId: number | null = null;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
     const renderLoop = () => {
       if (!initializedRef.current) {
         tryInit();
-        if (!initializedRef.current) {
-          animationFrameId = requestAnimationFrame(renderLoop);
-          return;
-        }
+        if (!initializedRef.current) return;
       }
 
-      if (!plotInstanceRef.current) {
-        animationFrameId = requestAnimationFrame(renderLoop);
-        return;
-      }
+      if (!plotInstanceRef.current) return;
 
       const now = (getServerTimeNow() - startTimeRef.current) / 1000;
       const cutoff = now - windowSeconds;
@@ -442,7 +436,7 @@ export default function TimeSeriesPlot({
       const currentTime = getServerTimeNow();
       let dataChanged = false;
 
-      // Sync from cache at ~60 Hz so plot shows full-rate data (all points from backend)
+      // Sync from cache at SAMPLE_HZ
       if (currentTime - lastDataUpdate >= DATA_UPDATE_INTERVAL) {
         const cached = cache.getAlignedHistory(entities, componentMap, windowSeconds);
         if (cached && cached.time.length > 0) {
@@ -482,12 +476,12 @@ export default function TimeSeriesPlot({
         lastDataUpdate = currentTime;
       }
 
-      // Update x-axis every frame for smooth scrolling
+      // Update x-axis (throttled with data sync)
       const xMin = Math.max(0, now - windowSeconds);
       const xMax = now;
       plotInstanceRef.current.setScale('x', { min: xMin, max: xMax });
 
-      // Only push new data to uPlot when we actually added points (avoids 60 setData/sec)
+      // Push data to uPlot when changed
       if (dataChanged) {
         const timeData = d.time.length > 0 ? d.time : [now];
         const valueData = d.values.map(v => v.length > 0 ? v : [NaN]);
@@ -500,28 +494,26 @@ export default function TimeSeriesPlot({
         }
       }
 
-      // ── Continuous size sync — catches layout changes ──────────────────
+      // Size sync — catches layout changes
       const dims = getDims();
       if (dims && plotInstanceRef.current &&
         (Math.abs(dims.w - plotInstanceRef.current.width) > 2 ||
           Math.abs(dims.h - plotInstanceRef.current.height) > 2)) {
         plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
       }
-
-      // Continue animation loop
-      animationFrameId = requestAnimationFrame(renderLoop);
     };
 
-    // Start the smooth rendering loop
-    animationFrameId = requestAnimationFrame(renderLoop);
+    // Run at 20 Hz instead of 60 fps rAF — reduces CPU and lag
+    intervalId = setInterval(renderLoop, DATA_UPDATE_INTERVAL);
+    renderLoop(); // first run immediately
 
     return () => {
       unsubSensor();
       unsubStatus();
       unsubscribeHistorical();
-      if (animationFrameId !== null) {
-        cancelAnimationFrame(animationFrameId);
-        animationFrameId = null;
+      if (intervalId !== null) {
+        clearInterval(intervalId);
+        intervalId = null;
       }
       ro.disconnect();
       window.removeEventListener('resize', onWinResize);

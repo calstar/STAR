@@ -5,9 +5,7 @@ import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import PressureBar from '@/components/plots/PressureBar';
 import ActuatorStatePanel from '@/components/plots/ActuatorStatePanel';
 import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
-import { useSensorStore, useSensorValue } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
+import { useSensorValue } from '@/lib/store';
 import { getEntityColor, getActuatorColor, PRESSURE_SENSORS } from '@/lib/sensor-colors';
 import { useSensorConfig, filterByRole } from '@/lib/sensor-config';
 
@@ -84,11 +82,7 @@ const TAB_CONFIG: Record<GSETab, {
 };
 
 export default function GSEGraphsPage() {
-  const updateSensor = useSensorStore((s) => s.updateSensor);
-  const updateState = useSensorStore((s) => s.updateState);
-  const ws = getWebSocketClient();
   const allSensors = useSensorConfig();
-
   const [activeTab, setActiveTab] = useState<GSETab>('pressurant');
   const tab = TAB_CONFIG[activeTab];
 
@@ -114,13 +108,6 @@ export default function GSEGraphsPage() {
       color: getEntityColor(entity),
     };
   });
-
-  useEffect(() => {
-    ws.connect();
-    const unsub1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const unsub2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    return () => { unsub1(); unsub2(); };
-  }, [ws, updateSensor, updateState]);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">

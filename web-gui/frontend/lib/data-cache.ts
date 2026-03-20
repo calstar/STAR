@@ -14,8 +14,10 @@ import { MessageType } from './types';
 import { getServerTimeNow } from './server-time';
 
 const CACHE_MAX_SECONDS = 60; // 1 minute of history in cache
-const CACHE_MAX_POINTS = 6000; // 100 Hz * 60 s — keep small for fast getAlignedHistory
-const CACHE_SAMPLE_HZ = 20; // sample store at 20 Hz to match backend throttle
+const CACHE_MAX_POINTS = 2000; // ~33 Hz * 60 s — smaller for faster getAlignedHistory
+const CACHE_SAMPLE_HZ = 10; // sample store at 10 Hz (reduces lag)
+const CACHE_MAX_KEYS = 80; // cap total series to prevent memory bloat over long sessions
+const CACHE_STALE_MS = 2 * 60 * 1000; // prune keys not updated in 2 minutes
 
 export interface CachedSeries {
   time: number[];
@@ -24,7 +26,9 @@ export interface CachedSeries {
 
 class SensorDataCache {
   private cache: Map<string, CachedSeries> = new Map();
+  private lastUpdateMs: Map<string, number> = new Map();
   private interval: ReturnType<typeof setInterval> | null = null;
+  private pruneInterval: ReturnType<typeof setInterval> | null = null;
   private started = false;
   private onHistoricalDataCallbacks: Set<() => void> = new Set();
 
@@ -38,6 +42,7 @@ class SensorDataCache {
     if (this.started) return;
     this.started = true;
     this.interval = setInterval(() => this.sample(), 1000 / CACHE_SAMPLE_HZ);
+    this.pruneInterval = setInterval(() => this.pruneStaleKeys(), 60 * 1000); // every 60s
 
     // Listen for bulk historical data from backend connection
     const ws = getWebSocketClient();
@@ -55,6 +60,7 @@ class SensorDataCache {
             const offset = frontendNow - backendLatest;
             const remappedTime = series.time.map(t => t + offset);
             this.cache.set(key, { time: remappedTime, values: [...series.values] });
+            this.lastUpdateMs.set(key, Date.now());
             count++;
           }
         }
@@ -73,10 +79,39 @@ class SensorDataCache {
       clearInterval(this.interval);
       this.interval = null;
     }
+    if (this.pruneInterval) {
+      clearInterval(this.pruneInterval);
+      this.pruneInterval = null;
+    }
     this.started = false;
   }
 
+  /** Prune stale keys to prevent memory bloat over long sessions (5–10+ min). */
+  private pruneStaleKeys(): void {
+    const now = Date.now();
+    if (this.cache.size <= CACHE_MAX_KEYS) {
+      // Only prune stale; keep under max keys
+      for (const [key, ms] of this.lastUpdateMs) {
+        if (now - ms > CACHE_STALE_MS) {
+          this.cache.delete(key);
+          this.lastUpdateMs.delete(key);
+        }
+      }
+    } else {
+      // Over limit: remove oldest first
+      const byAge = Array.from(this.lastUpdateMs.entries())
+        .sort((a, b) => a[1] - b[1]);
+      const toRemove = this.cache.size - CACHE_MAX_KEYS;
+      for (let i = 0; i < toRemove && i < byAge.length; i++) {
+        const [key] = byAge[i];
+        this.cache.delete(key);
+        this.lastUpdateMs.delete(key);
+      }
+    }
+  }
+
   private sample(): void {
+    if (typeof document !== 'undefined' && document.hidden) return; // pause when tab in background
     try {
       const now = (getServerTimeNow() - getStartupTime()) / 1000;
       const state = useSensorStore.getState();
@@ -105,6 +140,7 @@ class SensorDataCache {
           series.time = series.time.slice(-CACHE_MAX_POINTS);
           series.values = series.values.slice(-CACHE_MAX_POINTS);
         }
+        this.lastUpdateMs.set(key, Date.now());
       }
     } catch (err) {
       console.error('[DataCache] Error sampling:', err);
@@ -113,13 +149,13 @@ class SensorDataCache {
 
   private _lastAddPerKey: Record<string, number> = {};
 
-  /** Manually add a data point (called from WebSocket handler). Throttled to 20 Hz per key to reduce lag. */
+  /** Manually add a data point (called from WebSocket handler). Throttled to 10 Hz per key. */
   addDataPoint(entity: string, component: string, value: number): void {
     if (!isFinite(value)) return;
     const key = `${entity}.${component}`;
     const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const last = this._lastAddPerKey[key] ?? 0;
-    if (nowMs - last < 50) return; // 20 Hz max per key
+    if (nowMs - last < 100) return; // 10 Hz max per key
     this._lastAddPerKey[key] = nowMs;
 
     const now = (getServerTimeNow() - getStartupTime()) / 1000;
@@ -168,6 +204,7 @@ class SensorDataCache {
       series.time = series.time.slice(-CACHE_MAX_POINTS);
       series.values = series.values.slice(-CACHE_MAX_POINTS);
     }
+    this.lastUpdateMs.set(key, Date.now());
   }
 
   /** Get cached history for a single entity.component key. */

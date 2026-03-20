@@ -9,7 +9,7 @@ import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate } from '@/lib/types';
 
 const DEFAULT_WINDOW_SECONDS = 60;
-const SAMPLE_HZ = 20;
+const SAMPLE_HZ = 10;  // reduces lag
 
 export type TransformFn = (rawValue: number) => number | null;
 
@@ -74,7 +74,7 @@ export default function DerivedTimeSeriesPlot({
   const [ready, setReady] = useState(false);
 
   const componentMap = entities.map(() => component);
-  const MAX_POINTS = Math.min(windowSeconds * SAMPLE_HZ, 6000);
+  const MAX_POINTS = Math.min(windowSeconds * SAMPLE_HZ, 2000);
 
   useEffect(() => {
     if (!containerRef.current || !plotRef.current) return;
@@ -265,12 +265,9 @@ export default function DerivedTimeSeriesPlot({
     let lastDataUpdate = 0;
     const DATA_UPDATE_INTERVAL = 1000 / SAMPLE_HZ;
 
-    let animationFrameId: number | null = null;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
     const renderLoop = () => {
-      if (!uplotRef.current) {
-        animationFrameId = requestAnimationFrame(renderLoop);
-        return;
-      }
+      if (!uplotRef.current) return;
 
       const now = (Date.now() - startTimeRef.current) / 1000;
       const cutoff = now - windowSeconds;
@@ -330,8 +327,6 @@ export default function DerivedTimeSeriesPlot({
       if (dims && (Math.abs(dims.w - uplotRef.current.width) > 2 || Math.abs(dims.h - uplotRef.current.height) > 2)) {
         uplotRef.current.setSize({ width: dims.w, height: dims.h });
       }
-
-      animationFrameId = requestAnimationFrame(renderLoop);
     };
 
     requestAnimationFrame(() => {
@@ -340,7 +335,7 @@ export default function DerivedTimeSeriesPlot({
       setTimeout(tryInit, 300);
       setTimeout(tryInit, 600);
     });
-    animationFrameId = requestAnimationFrame(renderLoop);
+    intervalId = setInterval(renderLoop, DATA_UPDATE_INTERVAL);
 
     const ro = new ResizeObserver(() => {
       const dims = getDims();
@@ -354,7 +349,10 @@ export default function DerivedTimeSeriesPlot({
 
     return () => {
       unsubSensor();
-      if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
+      if (intervalId !== null) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
       ro.disconnect();
       uplotRef.current?.destroy();
       uplotRef.current = null;

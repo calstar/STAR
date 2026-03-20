@@ -162,7 +162,6 @@ function ChannelCard({ ch, status, rawAdc, calPsi, onCapture }: ChannelCardProps
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function CalibrationPage() {
-  const updateSensor = useSensorStore((s) => s.updateSensor);
   useSensorDataVersion(); // re-render on sensor flush so getSensorValue() shows fresh data
   const getSensorValue = useGetSensorValue();
   const ws = getWebSocketClient();
@@ -221,7 +220,6 @@ export default function CalibrationPage() {
 
   useEffect(() => {
     ws.connect();
-    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
     const u2 = ws.on(MessageType.CALIBRATION_STATUS, (p: unknown) => {
       const payload = p as CalibrationStatusPayload;
       setCalStatus(payload);
@@ -235,8 +233,8 @@ export default function CalibrationPage() {
       console.error('[Calibration] Backend error:', msg);
       alert(`❌ Calibration: ${msg}`);
     });
-    return () => { u1(); u2(); u3(); };
-  }, [ws, updateSensor]);
+    return () => { u2(); u3(); };
+  }, [ws]);
 
   // Poll calibration status (backend no longer syncs every 2s)
   useEffect(() => {

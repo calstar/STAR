@@ -5,7 +5,7 @@ import DerivedTimeSeriesPlot from '@/components/plots/DerivedTimeSeriesPlot';
 import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
 import { useSensorStore, useSensorValue, useLoadCellForceLbf } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
+import { MessageType } from '@/lib/types';
 import {
   kTypeVoltageToTempC,
   pt1000VoltageToTempC,
@@ -208,8 +208,6 @@ function LCForceReadout({
 }
 
 export default function LCS_TCS_RTDPage() {
-  const updateSensor = useSensorStore((s) => s.updateSensor);
-  const updateState  = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
 
   // Dynamic channel lists from config (TC includes board voltage_reference per channel)
@@ -266,20 +264,10 @@ export default function LCS_TCS_RTDPage() {
     loadChannelConfig();
   }, [loadChannelConfig]);
 
-  // WebSocket subscriptions
   useEffect(() => {
-    ws.connect();
-    const unsub1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) =>
-      updateSensor(p as SensorUpdate)
-    );
-    const unsub2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) =>
-      updateState(p as StateUpdate)
-    );
-    const unsub3 = ws.on(MessageType.CONFIG_UPDATED, () => {
-      loadChannelConfig();
-    });
-    return () => { unsub1(); unsub2(); unsub3(); };
-  }, [ws, updateSensor, updateState, loadChannelConfig]);
+    const unsub = ws.on(MessageType.CONFIG_UPDATED, () => loadChannelConfig());
+    return () => { unsub(); };
+  }, [ws, loadChannelConfig]);
 
   const voltageRefNominals = useSensorStore((s) => s.voltageRefNominals);
   const tcEntities = tcData.map((d) => d.entity);

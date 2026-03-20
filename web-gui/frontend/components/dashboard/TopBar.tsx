@@ -4,7 +4,7 @@ import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { startDataCache } from '@/lib/data-cache';
 import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react';
-import { ConnectionStatus, SystemState, CommandPayload, StateUpdate, SensorUpdate, ActuatorUpdate, MessageType, NotificationPayload } from '@/lib/types';
+import { SystemState, CommandPayload, MessageType } from '@/lib/types';
 import PressureBar from '@/components/plots/PressureBar';
 import { PRESSURE_BAR_SENSORS, getEntityColor } from '@/lib/sensor-colors';
 import NotificationPanel from '@/components/dashboard/NotificationPanel';
@@ -87,19 +87,11 @@ export default function TopBar() {
   const debugMode = useSensorStore((s) => s.debugMode);
   const setDebugMode = useSensorStore((s) => s.setDebugMode);
   const countdownTargetTimeMs = useSensorStore((s) => s.countdownTargetTimeMs);
-  const updateConnectionStatus = useSensorStore((s) => s.updateConnectionStatus);
-  const updateState = useSensorStore((s) => s.updateState);
-  const updateSensor = useSensorStore((s) => s.updateSensor);
-  const updateActuator = useSensorStore((s) => s.updateActuator);
-  const updateActuatorExpectedPositions = useSensorStore((s) => s.updateActuatorExpectedPositions);
-  const updateNotification = useSensorStore((s) => s.updateNotification);
   const { controlEnabled, unlocking, error, unlock, lock } = useControlMode();
   const [passwordInput, setPasswordInput] = useState('');
   const [showUnlockForm, setShowUnlockForm] = useState(false);
 
-  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({
-    connected: false, elodinConnected: false,
-  });
+  const connectionStatus = useSensorStore((s) => s.connectionStatus) ?? { connected: false, elodinConnected: false };
   const [clock, setClock] = useState('');
   const [countdown, setCountdown] = useState('---:--:--');
   const [countdownExpired, setCountdownExpired] = useState(false);
@@ -137,39 +129,9 @@ export default function TopBar() {
     } catch (err) {
       console.error('[TopBar] Failed to start data cache:', err);
     }
-    const unsubConn = ws.onConnectionStatus((status) => {
-      setConnectionStatus(status);
-      updateConnectionStatus(status);
-    });
-    const unsubState = ws.on(MessageType.STATE_UPDATE, (p: unknown) => {
-      updateState(p as StateUpdate);
-    });
-    // CRITICAL: Subscribe to sensor updates to ensure bar plots update
-    const unsubSensor = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => {
-      updateSensor(p as SensorUpdate);
-    });
-    const unsubActuator = ws.on(MessageType.ACTUATOR_UPDATE, (p: unknown) => {
-      updateActuator(p as ActuatorUpdate);
-    });
-    const unsubExpected = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
-      updateActuatorExpectedPositions(p as Record<number, Record<string, 'open' | 'closed' | null>>);
-    });
-    const unsubNotification = ws.on(MessageType.NOTIFICATION, (p: unknown) => {
-      updateNotification(p as NotificationPayload);
-    });
-    const unsubConfig = ws.on(MessageType.CONFIG_UPDATED, () => {
-      loadPressureBars();
-    });
-    return () => {
-      unsubConn();
-      unsubState();
-      unsubSensor();
-      unsubActuator();
-      unsubExpected();
-      unsubNotification();
-      unsubConfig();
-    };
-  }, [ws, updateConnectionStatus, updateState, updateSensor, updateActuator, updateActuatorExpectedPositions, updateNotification, loadPressureBars]);
+    const unsubConfig = ws.on(MessageType.CONFIG_UPDATED, () => loadPressureBars());
+    return () => { unsubConfig(); };
+  }, [ws, loadPressureBars]);
 
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString('en-US', { hour12: true }));

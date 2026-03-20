@@ -25,6 +25,7 @@ export class WebSocketClient {
   private listeners: Map<string, Set<(payload: unknown) => void>> = new Map();
   private connectionStatusListeners: Set<(status: ConnectionStatus) => void> = new Set();
   private messageQueue: WSMessage[] = []; // Queue messages until WebSocket is ready
+  private static readonly MESSAGE_QUEUE_MAX = 50; // Prevent unbounded growth during disconnect
 
   constructor(url: string = 'ws://localhost:8081') {
     this.url = url;
@@ -214,13 +215,17 @@ export class WebSocketClient {
         this.ws.send(JSON.stringify(message));
       } catch (error) {
         console.error('❌ Failed to send WebSocket message:', error);
-        // Queue message for retry
-        this.messageQueue.push(message);
+        // Queue message for retry (cap to prevent memory bloat during long disconnects)
+        if (this.messageQueue.length < WebSocketClient.MESSAGE_QUEUE_MAX) {
+          this.messageQueue.push(message);
+        }
       }
     } else {
-      // Queue message to send when WebSocket is ready
-      console.warn(`⚠️ WebSocket not ready (state: ${this.ws?.readyState}), queuing message`);
-      this.messageQueue.push(message);
+      // Queue message to send when WebSocket is ready (cap to prevent memory bloat)
+      if (this.messageQueue.length < WebSocketClient.MESSAGE_QUEUE_MAX) {
+        console.warn(`⚠️ WebSocket not ready (state: ${this.ws?.readyState}), queuing message`);
+        this.messageQueue.push(message);
+      }
 
       // If WebSocket is connecting, wait for it
       if (!this.ws || this.ws.readyState === WebSocket.CONNECTING) {

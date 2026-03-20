@@ -138,6 +138,9 @@ class RobustCalibrationFramework:
         # Autonomy score (paper Section 8): α = 0.4·α_cal + 0.3·α_unc + 0.2·α_agree + 0.1·α_quality
         self.recent_residuals: deque = deque(maxlen=10)  # for α_agree
         self.recent_uncertainties: deque = deque(maxlen=10)  # for α_unc
+        self.calibration_points_max = (
+            50  # cap to prevent unbounded growth over long sessions
+        )
         self.sigma_ref = 10.0  # PSI reference for α_unc
 
         # Physical calibration map parameters
@@ -382,12 +385,16 @@ class RobustCalibrationFramework:
         adcs = np.array([p.adc_code for p in self.calibration_points])
         v_min, v_max = adcs.min(), adcs.max()
         delta_v = max(v_max - v_min, 1e6)
+        # Cap exp(2*d) to avoid overflow (~709); use 100 for reasonable extrap penalty
+        exp_cap = 100.0
         if adc_code < v_min:
             d = (v_min - adc_code) / delta_v
-            return self.alpha_extrap * d**2 * np.exp(2 * d)
+            exp_val = np.exp(min(2 * d, exp_cap))
+            return self.alpha_extrap * d**2 * exp_val
         if adc_code > v_max:
             d = (adc_code - v_max) / delta_v
-            return self.alpha_extrap * d**2 * np.exp(2 * d)
+            exp_val = np.exp(min(2 * d, exp_cap))
+            return self.alpha_extrap * d**2 * exp_val
         return 0.0
 
     def set_noise_coeffs(self, coeffs: "NoiseCoefficients", tau0: float = 0.01) -> None:
@@ -481,6 +488,10 @@ class RobustCalibrationFramework:
         Add a new calibration point and update the model
         """
         self.calibration_points.append(point)
+        if len(self.calibration_points) > self.calibration_points_max:
+            self.calibration_points = self.calibration_points[
+                -self.calibration_points_max :
+            ]
         phi = self.environmental_robust_basis_functions(
             point.adc_code, point.environmental_state
         )

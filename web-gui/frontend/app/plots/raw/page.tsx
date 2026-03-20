@@ -1,37 +1,21 @@
 'use client'
 
-import { useEffect } from 'react';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
-import { useSensorStore } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 import { getEntityColor } from '@/lib/sensor-colors';
 import { useSensorConfig } from '@/lib/sensor-config';
 
 
 
 export default function RawReadoutsPage() {
-  const updateSensor = useSensorStore((state) => state.updateSensor);
-  const updateState = useSensorStore((state) => state.updateState);
-  const ws = getWebSocketClient();
   const allSensors = useSensorConfig();
 
-  // Derive labels and entities from config
   const labels = allSensors.map((s) => s.role);
   const entities = allSensors.map((s) => s.entity);
   const calEntities = allSensors.map((s) => s.calEntity);
   const colors = entities.map((e) => getEntityColor(e));
   const calColors = calEntities.map((e) => getEntityColor(e));
-
   const half = Math.ceil(allSensors.length / 2);
-
-  useEffect(() => {
-    ws.connect();
-    const unsub1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const unsub2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    return () => { unsub1(); unsub2(); };
-  }, [ws, updateSensor, updateState]);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">

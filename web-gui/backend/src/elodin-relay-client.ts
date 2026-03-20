@@ -125,4 +125,16 @@ export class ElodinRelayClient extends EventEmitter {
   isConnected(): boolean {
     return this._connected;
   }
+
+  /** Publish TABLE packet via relay (relay forwards to Elodin). Use when direct Elodin connection fails. */
+  publishTable(packetId: [number, number], payload: Buffer): boolean {
+    if (!this.ws || this.ws.readyState !== 1) return false;
+    try {
+      const msg = { type: 'publish', packetId, payload: payload.toString('base64') };
+      this.ws.send(JSON.stringify(msg));
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }

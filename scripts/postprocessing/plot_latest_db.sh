@@ -50,6 +50,7 @@ FORMAT=csv "$SCRIPT_DIR/export_elodin_db.sh" "$DB_PATH" "$EXPORT_DIR"
 
 echo ""
 echo "2️⃣  Analyzing and plotting..."
+# State fallback: backend writes to data/state_transitions.csv when Elodin publish fails
 python3 "$SCRIPT_DIR/analyze_run.py" "$EXPORT_DIR" -o "$OUT_DIR"
 
 echo ""

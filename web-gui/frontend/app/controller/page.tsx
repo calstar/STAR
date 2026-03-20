@@ -5,7 +5,7 @@ import { useSensorStore, useSensorValue, useActuatorCommandedState } from '@/lib
 import { ActuatorState } from '@/lib/types';
 import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
-import { MessageType, SensorUpdate, StateUpdate, SystemState } from '@/lib/types';
+import { MessageType, SystemState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { getEntityColor } from '@/lib/sensor-colors';
 
@@ -81,9 +81,6 @@ const STATE_NAMES: Record<number, string> = {
 };
 
 export default function ControllerPage() {
-  const updateSensor = useSensorStore((state) => state.updateSensor);
-  const updateState = useSensorStore((state) => state.updateState);
-  const updateActuatorExpectedPositions = useSensorStore((state) => state.updateActuatorExpectedPositions);
   const currentState = useSensorStore((state) => state.currentState);
   const ws = getWebSocketClient();
   const { actuators } = useActuatorsFromConfig();
@@ -111,12 +108,7 @@ export default function ControllerPage() {
     if (!ws.isConnected()) {
       ws.connect();
     }
-    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    const u3 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
-      updateActuatorExpectedPositions(p as Record<number, Record<string, 'open' | 'closed' | null>>);
-    });
-    const u4 = ws.on(MessageType.CONFIG_UPDATED, loadLcConfig);
+    const unsub = ws.on(MessageType.CONFIG_UPDATED, loadLcConfig);
 
     ws.send({
       type: MessageType.SUBSCRIBE_SENSOR,
@@ -141,13 +133,8 @@ export default function ControllerPage() {
       });
     });
 
-    return () => {
-      u1();
-      u2();
-      u3();
-      u4();
-    };
-  }, [ws, updateSensor, updateState, updateActuatorExpectedPositions, loadLcConfig, lcChannels]);
+    return () => { unsub(); };
+  }, [ws, loadLcConfig, lcChannels]);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-3">

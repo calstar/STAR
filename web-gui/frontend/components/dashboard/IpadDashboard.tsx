@@ -38,10 +38,6 @@ const TIME_WINDOWS = [
 ];
 
 export default function IpadDashboard() {
-    const updateSensor = useSensorStore((state) => state.updateSensor);
-    const updateState = useSensorStore((state) => state.updateState);
-    const updateActuator = useSensorStore((state) => state.updateActuator);
-    const updateConnectionStatus = useSensorStore((state) => state.updateConnectionStatus);
     const currentState = useSensorStore((state) => state.currentState);
     const ws = getWebSocketClient();
     const [timeWindow, setTimeWindow] = useState(60);

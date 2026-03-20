@@ -18,12 +18,12 @@ import { ElodinClient, ElodinPacketType } from './elodin-client.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { ElodinQueryClient } from './elodin-query.js';
 import { parseElodinPacket } from './elodin-protocol.js';
-import { registerControllerVTables } from './elodin-vtable-controller.js';
+import { registerControllerVTables, registerActuatorCommandedVTables } from './elodin-vtable-controller.js';
 import { registerNavigationVTable } from './elodin-vtable-navigation.js';
 import { ElodinRelayClient } from './elodin-relay-client.js';
 
 import { ElodinPublisherBatched } from './elodin-publisher-batched.js';
-import { publishControllerActuation, publishControllerDiagnostics, publishControllerStateTransition } from './controller-elodin-publisher.js';
+import { publishControllerActuation, publishControllerDiagnostics, publishControllerStateTransition, publishActuatorStateToElodin } from './controller-elodin-publisher.js';
 import { getStateTransitions, isTransitionAllowed } from './routes/state-transitions.js';
 import { getStateActuatorMap, StateActuatorMap, CSV_ACTUATOR_TO_ENTITY, getActuatorChannel } from './routes/state-actuators.js';
 import { startAPIServer, type DebugInfo } from './api-server.js';
@@ -118,13 +118,17 @@ class SensorSystemServer {
   private readonly PSI_ABSOLUTE_MIN = -50;   // physically impossible below -50 PSI
   private readonly PSI_ABSOLUTE_MAX = 6000;  // max expected sensor range (HP PT up to 5000 PSI)
 
-  /** Throttle broadcast per sensor to avoid WS buffer flood and disconnects */
+  /** Throttle broadcast per sensor — 100ms = 10 Hz (reduces browser lag) */
   private broadcastLastTime: Map<string, number> = new Map();
-  private readonly BROADCAST_MIN_INTERVAL_MS = 50;
+  private readonly BROADCAST_MIN_INTERVAL_MS = 100;
 
   /** History cache for plots; smaller cap so QUERY_HISTORICAL response doesn't kill connection */
   private historyCache: Map<string, { time: number[]; values: number[] }> = new Map();
+  private historyCacheLastUpdate: Map<string, number> = new Map();
   private readonly HISTORY_MAX_POINTS = 6000; // 100 Hz * 60 s
+  private readonly HISTORY_MAX_KEYS = 60; // cap keys to prevent lag buildup over long sessions
+  private readonly HISTORY_STALE_MS = 5 * 60 * 1000; // prune keys not updated in 5 min
+  private historyPruneInterval: ReturnType<typeof setInterval> | null = null;
 
   /** Server startup time (epoch ms) used as global timebase for all clients/devices. */
   private readonly serverStartTimeMs: number = Date.now();
@@ -429,7 +433,9 @@ class SensorSystemServer {
 
     this.elodin = new ElodinClient(ELODIN_HOST, ELODIN_PORT);
     this.messageLogger = new MessageLogger(this.elodin);
-    if (process.env.ENABLE_MESSAGE_LOGGING !== 'false') this.messageLogger.enable();
+    // MessageLogger simply sends JSON blobs in TABLE packets without VTable registrations
+    // causing Elodin DB to aggressively throw VTableNotFound errors on every packet. Disabled by default.
+    if (process.env.ENABLE_MESSAGE_LOGGING === 'true') this.messageLogger.enable();
     this.elodinPublisher = new ElodinPublisherBatched(this.elodin);
 
     this.setupWebSocket();
@@ -442,8 +448,9 @@ class SensorSystemServer {
     if (process.env.DEMO_MODE === 'true') {
       this.demoMode = new DemoModeGenerator();
       if (this.demoMode.isEnabled()) {
-        console.log('🎭 DemoModeGenerator active — generating synthetic PT/ACT data');
-        this.demoMode.start((update) => this.handleSensorUpdate(update), 10);
+        const demoRateHz = parseInt(process.env.DEMO_RATE_HZ || '50', 10) || 50;
+        console.log(`🎭 DemoModeGenerator active — synthetic PT/ACT data at ${demoRateHz} Hz`);
+        this.demoMode.start((update) => this.handleSensorUpdate(update), demoRateHz);
       }
     }
 
@@ -707,6 +714,7 @@ class SensorSystemServer {
     this.elodin.on('connected', async () => {
       console.log('✅ Elodin connected (send-only: controller VTables + publish; data via relay)');
       await registerControllerVTables(this.elodin);
+      await registerActuatorCommandedVTables(this.elodin, this.actuatorChannelToEntityMap);
       await registerNavigationVTable(this.elodin);
       this.broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true } as ConnectionStatus });
     });
@@ -746,10 +754,20 @@ class SensorSystemServer {
   private handleSensorUpdate(update: SensorUpdate): void {
     if (isNaN(update.value) || !isFinite(update.value)) return;
     const key = `${update.entity}.${update.component}`;
+
+    // Throttle early — skip expensive work when we'd drop the broadcast anyway
+    const now = Date.now();
+    if (this.BROADCAST_MIN_INTERVAL_MS > 0) {
+      const lastBroadcast = this.broadcastLastTime.get(key) ?? 0;
+      if (now - lastBroadcast < this.BROADCAST_MIN_INTERVAL_MS) {
+        this.sensorCache.set(key, update); // keep latest for client connect
+        return;
+      }
+      this.broadcastLastTime.set(key, now);
+    }
+
     if (update.component === 'pressure_psi') {
       if (update.value < this.PSI_ABSOLUTE_MIN || update.value > this.PSI_ABSOLUTE_MAX) return;
-      // Avoid spurious zeros: we subscribe to both raw (we derive psi) and calibrated streams.
-      // When calibrated is 0 or stale it overwrote good data and caused value/0/value/0 in plots.
       const series = this.historyCache.get(key);
       if (update.value === 0 && series && series.values.length > 0) {
         const last = series.values[series.values.length - 1];
@@ -765,13 +783,6 @@ class SensorSystemServer {
 
     this.sensorCache.set(key, update);
     if (!this.dataLoggerServiceEnabled) this.dataLogger.record(key, update.value);
-
-    const now = Date.now();
-    if (this.BROADCAST_MIN_INTERVAL_MS > 0) {
-      const lastBroadcast = this.broadcastLastTime.get(key) ?? 0;
-      if (now - lastBroadcast < this.BROADCAST_MIN_INTERVAL_MS) return;
-      this.broadcastLastTime.set(key, now);
-    }
 
     // Save to history cache for plots — time relative to mission start (T+0).
     // NOTE: Elodin timestamps are steady_clock (ns since boot ÷ 1e6 = ms since boot, NOT Unix epoch).
@@ -802,6 +813,7 @@ class SensorSystemServer {
       series.time.splice(0, excess);
       series.values.splice(0, excess);
     }
+    this.historyCacheLastUpdate.set(key, Date.now());
 
     this.broadcast({ type: MessageType.SENSOR_UPDATE, timestamp: update.timestamp, payload });
     if (this.clients.size === 0 && update.component === 'pressure_psi' && !this._loggedNoFrontendClients) {
@@ -1127,8 +1139,9 @@ class SensorSystemServer {
   private handleCommand(command: CommandPayload): void {
     // Block transition only when Elodin is down AND no actuator_service AND not in debug mode.
     // When actuator_service is running it owns hardware commands, so allow transitions regardless of Elodin.
-    if (command.commandType === 'state_transition' && !this.elodin.isConnected() && !this.debugMode && this.actuatorServicePort <= 0) {
-      console.error('❌ Cannot send state transition: Elodin not connected and no actuator service');
+    const canPublish = this.elodin.isConnected() || this.elodinRelay?.isConnected();
+    if (command.commandType === 'state_transition' && !canPublish && !this.debugMode && this.actuatorServicePort <= 0) {
+      console.error(`❌ Cannot send state transition: elodin=${this.elodin.isConnected()} relay=${this.elodinRelay?.isConnected()} (need one for DB publish)`);
       this.broadcast({ type: MessageType.ERROR, timestamp: Date.now(), payload: { message: 'Elodin DB not connected', command } });
       return;
     }
@@ -1169,7 +1182,7 @@ class SensorSystemServer {
           }
 
           this.currentState = newState;
-          publishControllerStateTransition(this.elodin, prevState ?? SystemState.IDLE, newState, 0);
+          publishControllerStateTransition(this.elodin, prevState ?? SystemState.IDLE, newState, 0, this.elodinRelay);
           this.broadcast({ type: MessageType.STATE_UPDATE, timestamp: Date.now(), payload: { currentState: newState, stateName: SystemState[newState], timestamp: Date.now(), debugMode: this.debugMode } });
 
           const useCppActuatorService = this.actuatorServicePort > 0;
@@ -1177,7 +1190,7 @@ class SensorSystemServer {
             stopContinuousActuatorCommands(this);
             this.manuallyCommandedChannels.clear();
             const enumKey = SystemState[newState] ?? 'IDLE';
-            forwardStateToActuatorService(enumKey, this.actuatorServicePort).catch(() => {});
+            forwardStateToActuatorService(enumKey, this.actuatorServicePort).catch(() => { });
           } else if (this.debugMode) {
             stopContinuousActuatorCommands(this);
             this.manuallyCommandedChannels.clear();
@@ -1200,6 +1213,7 @@ class SensorSystemServer {
           }
 
           broadcastActuatorExpectedPositions(this, newState, STATE_ACTUATOR_MAP);
+          this.publishActuatorStatesForStateToElodin(newState, STATE_ACTUATOR_MAP);
 
           // Abort UDP broadcasts (ABORT / ABORT_DONE)
           const isAbortState =
@@ -1225,14 +1239,14 @@ class SensorSystemServer {
         if (newState === SystemState.FIRE) {
           if (this.controllerServicePort > 0) {
             console.log('🎯 FIRE state entered – sending FIRE_START to C++ controller service');
-            forwardFireStateToControllerService(true, this.controllerServicePort).catch(() => {});
+            forwardFireStateToControllerService(true, this.controllerServicePort).catch(() => { });
           }
           if (this.fireEndTimer) { clearTimeout(this.fireEndTimer); this.fireEndTimer = null; }
           this.fireStartTimeMs = Date.now();
           this.fireEndTimer = setTimeout(() => this.endFireState(), this.fireDurationMs);
         } else if (prevState === SystemState.FIRE) {
           if (this.controllerServicePort > 0) {
-            forwardFireStateToControllerService(false, this.controllerServicePort).catch(() => {});
+            forwardFireStateToControllerService(false, this.controllerServicePort).catch(() => { });
           }
         }
 
@@ -1246,7 +1260,10 @@ class SensorSystemServer {
             forwardActuatorToActuatorService(commandActuatorName, open, this.actuatorServicePort).then((ok) => {
               if (ok) {
                 const boardInfo = getActuatorBoardInfo(this, commandActuatorName);
-                if (boardInfo) this.manuallyCommandedChannels.add(`${boardInfo.channel}@${boardInfo.boardIp}`);
+                if (boardInfo) {
+                  this.manuallyCommandedChannels.add(`${boardInfo.channel}@${boardInfo.boardIp}`);
+                  publishActuatorStateToElodin(this.elodin, boardInfo.channel, open ? 1 : 0, this.elodinRelay);
+                }
                 this.broadcast({ type: MessageType.ACTUATOR_UPDATE, timestamp: Date.now(), payload: { name: commandActuatorName, state: actuatorState, rawAdcCounts: 0, timestamp: Date.now() } as ActuatorUpdate });
               } else {
                 const boardInfo = getActuatorBoardInfo(this, commandActuatorName);
@@ -1255,7 +1272,10 @@ class SensorSystemServer {
                   const hardwareState = guiStateToHardwareState(open ? 1 : 0, actuatorType);
                   this.manuallyCommandedChannels.add(`${boardInfo.channel}@${boardInfo.boardIp}`);
                   const success = sendActuatorCommandUDP(this, boardInfo.channel, hardwareState, boardInfo.boardIp);
-                  if (success) this.broadcast({ type: MessageType.ACTUATOR_UPDATE, timestamp: Date.now(), payload: { name: commandActuatorName, state: actuatorState, rawAdcCounts: 0, timestamp: Date.now() } as ActuatorUpdate });
+                  if (success) {
+                    publishActuatorStateToElodin(this.elodin, boardInfo.channel, hardwareState, this.elodinRelay);
+                    this.broadcast({ type: MessageType.ACTUATOR_UPDATE, timestamp: Date.now(), payload: { name: commandActuatorName, state: actuatorState, rawAdcCounts: 0, timestamp: Date.now() } as ActuatorUpdate });
+                  }
                 }
               }
             });
@@ -1269,6 +1289,7 @@ class SensorSystemServer {
             this.manuallyCommandedChannels.add(`${channelId}@${boardIp}`);
             const success = sendActuatorCommandUDP(this, channelId, hardwareState, boardIp);
             if (success) {
+              publishActuatorStateToElodin(this.elodin, channelId, hardwareState, this.elodinRelay);
               this.broadcast({ type: MessageType.ACTUATOR_UPDATE, timestamp: Date.now(), payload: { name: commandActuatorName, state: actuatorState, rawAdcCounts: 0, timestamp: Date.now() } as ActuatorUpdate });
             }
           }
@@ -1344,6 +1365,27 @@ class SensorSystemServer {
   // Update loop, broadcast, send, shutdown
   // ═══════════════════════════════════════════════════════════════════════════
 
+  /** Prune historyCache to prevent lag buildup over long sessions. */
+  private pruneHistoryCache(): void {
+    const now = Date.now();
+    if (this.historyCache.size <= this.HISTORY_MAX_KEYS) {
+      for (const [key, ms] of this.historyCacheLastUpdate) {
+        if (now - ms > this.HISTORY_STALE_MS) {
+          this.historyCache.delete(key);
+          this.historyCacheLastUpdate.delete(key);
+        }
+      }
+    } else {
+      const byAge = Array.from(this.historyCacheLastUpdate.entries()).sort((a, b) => a[1] - b[1]);
+      const toRemove = this.historyCache.size - this.HISTORY_MAX_KEYS;
+      for (let i = 0; i < toRemove && i < byAge.length; i++) {
+        const [key] = byAge[i];
+        this.historyCache.delete(key);
+        this.historyCacheLastUpdate.delete(key);
+      }
+    }
+  }
+
   /** Current server uptime in milliseconds since this backend process started. */
   private getServerUptimeMs(): number {
     return Date.now() - this.serverStartTimeMs;
@@ -1358,6 +1400,9 @@ class SensorSystemServer {
     });
 
     // Calibration status: frontend polls GET /api/calibration_status (no backend sync loop)
+
+    // Prune historyCache keys to prevent lag buildup over long sessions (5–10+ min)
+    this.historyPruneInterval = setInterval(() => this.pruneHistoryCache(), 60 * 1000);
 
     // Periodic heartbeat diagnostic (every 15s) — helps debug when boards show DISCONNECTED despite sending
     setInterval(() => {
@@ -1469,6 +1514,26 @@ class SensorSystemServer {
 
   }
 
+  /** Publish commanded actuator states to Elodin and broadcast ACTUATOR_UPDATE for DataLogger. */
+  private publishActuatorStatesForStateToElodin(state: SystemState, map: StateActuatorMap): void {
+    const expected = map[state];
+    if (!expected) return;
+    const FIRE_PWM_SKIP = new Set<string>(['Fuel Press', 'LOX Press']);
+    for (const [actuatorName, guiVal] of Object.entries(expected)) {
+      if (state === SystemState.FIRE && FIRE_PWM_SKIP.has(actuatorName)) continue;
+      const boardInfo = getActuatorBoardInfo(this, actuatorName);
+      if (!boardInfo) continue;
+      const actuatorType = getActuatorType(actuatorName);
+      const hardwareState = guiStateToHardwareState(guiVal, actuatorType);
+      publishActuatorStateToElodin(this.elodin, boardInfo.channel, hardwareState, this.elodinRelay);
+      this.broadcast({
+        type: MessageType.ACTUATOR_UPDATE,
+        timestamp: Date.now(),
+        payload: { name: actuatorName, state: guiVal === 1 ? ActuatorState.OPEN : ActuatorState.CLOSED, rawAdcCounts: 0, timestamp: Date.now() } as ActuatorUpdate,
+      });
+    }
+  }
+
   /**
    * Auto-end FIRE state after 2s (or 5s if extended): transition to ARMED, FIRE_STOP, actuators.
    */
@@ -1479,17 +1544,18 @@ class SensorSystemServer {
     const newState = SystemState.ARMED;
     const prevState = this.currentState as SystemState;
     this.currentState = newState;
-    publishControllerStateTransition(this.elodin, prevState, newState, 0);
+    publishControllerStateTransition(this.elodin, prevState, newState, 0, this.elodinRelay);
     this.broadcast({ type: MessageType.STATE_UPDATE, timestamp: Date.now(), payload: { currentState: newState, stateName: SystemState[newState], timestamp: Date.now(), debugMode: this.debugMode } });
     console.log('🎯 FIRE auto-ended – sending FIRE_STOP, transitioning to ARMED');
-    if (this.controllerServicePort > 0) forwardFireStateToControllerService(false, this.controllerServicePort).catch(() => {});
+    if (this.controllerServicePort > 0) forwardFireStateToControllerService(false, this.controllerServicePort).catch(() => { });
     if (this.elodin.isConnected()) this.elodin.sendCommand('state_transition', { state: newState });
     const useCppActuatorService = this.actuatorServicePort > 0;
     this.manuallyCommandedChannels.clear();
     stopContinuousActuatorCommands(this);
-    if (useCppActuatorService) forwardStateToActuatorService('ARMED', this.actuatorServicePort).catch(() => {});
+    if (useCppActuatorService) forwardStateToActuatorService('ARMED', this.actuatorServicePort).catch(() => { });
     else applyActuatorsForState(this, newState, STATE_ACTUATOR_MAP);
     broadcastActuatorExpectedPositions(this, newState, STATE_ACTUATOR_MAP);
+    this.publishActuatorStatesForStateToElodin(newState, STATE_ACTUATOR_MAP);
     console.log('🎯 FIRE state auto-ended – transitioned to ARMED');
   }
 
@@ -1667,6 +1733,7 @@ class SensorSystemServer {
 
   shutdown(): void {
     if (this.updateInterval) clearInterval(this.updateInterval);
+    if (this.historyPruneInterval) { clearInterval(this.historyPruneInterval); this.historyPruneInterval = null; }
     if (this.relayReconnectTimer) { clearInterval(this.relayReconnectTimer); this.relayReconnectTimer = null; }
     this.elodinRelay?.disconnect();
     this.elodin.disconnect();

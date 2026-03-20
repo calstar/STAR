@@ -332,8 +332,6 @@ const LC_DEFAULT_CHANNELS  = [1, 2, 3];      // lc_board  active_connectors
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function SensorInfoPage() {
-  const updateSensor = useSensorStore((s) => s.updateSensor);
-  const updateState  = useSensorStore((s) => s.updateState);
   const ws = getWebSocketClient();
 
   // ── DAQ / relay data-rate probe (Elodin relay → backend) ────────────────────
@@ -471,11 +469,9 @@ export default function SensorInfoPage() {
 
   useEffect(() => {
     ws.connect();
-    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const u2 = ws.on(MessageType.STATE_UPDATE,  (p: unknown) => updateState(p as StateUpdate));
-    const u3 = ws.on(MessageType.CONFIG_UPDATED, () => { loadChannelConfig(); loadPtSensors(); });
-    return () => { u1(); u2(); u3(); };
-  }, [ws, updateSensor, updateState, loadChannelConfig, loadPtSensors]);
+    const unsub = ws.on(MessageType.CONFIG_UPDATED, () => { loadChannelConfig(); loadPtSensors(); });
+    return () => { unsub(); };
+  }, [ws, loadChannelConfig, loadPtSensors]);
 
   return (
     <main className="h-full bg-background text-text overflow-auto">

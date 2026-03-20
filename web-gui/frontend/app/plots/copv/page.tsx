@@ -1,25 +1,19 @@
 'use client'
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import PressureBar from '@/components/plots/PressureBar';
 import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
 import ActuatorStatePanel from '@/components/plots/ActuatorStatePanel';
-import { useSensorStore, useSensorValue } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
+import { useSensorValue } from '@/lib/store';
 import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
 import { useSensorConfig, filterByRole } from '@/lib/sensor-config';
 import { usePressureLimits, getLimitsForSystem } from '@/lib/pressure-limits';
 
 export default function COPVGraphsPage() {
-  const updateSensor = useSensorStore((s) => s.updateSensor);
-  const updateState = useSensorStore((s) => s.updateState);
-  const ws = getWebSocketClient();
   const allSensors = useSensorConfig();
   const pressureLimits = usePressureLimits();
   const gn2Limits = getLimitsForSystem(pressureLimits, 'GN2');
-
   const [activeTab, setActiveTab] = useState<'PT' | 'RTD'>('PT');
 
   const gn2Sensors = filterByRole(allSensors, 'GN2');
@@ -48,13 +42,6 @@ export default function COPVGraphsPage() {
   const regSensor = gn2Sensors.find((s) => s.role.toLowerCase().includes('reg'));
   const hi = useSensorValue(hiSensor?.calEntity ?? '', 'pressure_psi');
   const reg = useSensorValue(regSensor?.calEntity ?? '', 'pressure_psi');
-
-  useEffect(() => {
-    ws.connect();
-    const unsub1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const unsub2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    return () => { unsub1(); unsub2(); };
-  }, [ws, updateSensor, updateState]);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">

@@ -149,8 +149,8 @@ bool ControllerService::initialize(const PWMConfig& pwm_config,
     if (!thrust_curve_path.empty()) {
         if (loadThrustCurve(thrust_curve_path)) {
             thrust_curve_loaded_ = true;
-            std::cout << "[ControllerService] ✅ Thrust curve loaded: " << thrust_curve_path
-                      << " (" << thrust_curve_times_.size() << " points)" << std::endl;
+            std::cout << "[ControllerService] ✅ Thrust curve loaded: " << thrust_curve_path << " ("
+                      << thrust_curve_times_.size() << " points)" << std::endl;
         } else {
             std::cerr << "[ControllerService] ⚠️ Thrust curve load failed: " << thrust_curve_path
                       << std::endl;
@@ -267,7 +267,8 @@ void ControllerService::setFireActive(bool active) {
             double thrust_ref = (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
                                     ? cmd.thrust_desired
                                     : 0.0;
-            if (thrust_curve_loaded_ && cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
+            if (thrust_curve_loaded_ &&
+                cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
                 thrust_ref = interpolateThrustCurve(0.0);  // t=0 at FIRE_START
             point["thrust_desired"] = thrust_ref;
             point["MR_ref"] = 2.2;
@@ -585,10 +586,9 @@ void ControllerService::controllerLoop() {
                 std::map<std::string, double> point;
                 point["P_u_fuel"] = meas.P_u_fuel;
                 point["P_u_ox"] = meas.P_u_ox;
-                double thrust_ref =
-                    (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
-                        ? cmd.thrust_desired
-                        : 0.0;
+                double thrust_ref = (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
+                                        ? cmd.thrust_desired
+                                        : 0.0;
                 if (thrust_curve_loaded_ &&
                     cmd.type == RobustDDPController::CommandType::THRUST_DESIRED) {
                     auto t_elapsed = std::chrono::steady_clock::now() - fire_start_time_;
@@ -665,8 +665,7 @@ void ControllerService::controllerLoop() {
             if (fire_active_.load() && diagnostics.F_estimated == 0.0 && tick % 100 == 0) {
                 std::cerr << "[Controller] ⚠️ F_est=0: P_u_fuel=" << meas.P_u_fuel / 6894.76
                           << " psi, P_u_ox=" << meas.P_u_ox / 6894.76
-                          << " psi (need both ≥14.5 psi). Check relay PT ch1/ch5."
-                          << std::endl;
+                          << " psi (need both ≥14.5 psi). Check relay PT ch1/ch5." << std::endl;
             }
             std::cout << "[Controller] tick=" << tick << " duty_F=" << actuation.duty_F
                       << " duty_O=" << actuation.duty_O << " F_ref=" << diagnostics.F_ref
@@ -1060,6 +1059,51 @@ bool ControllerService::registerControllerTables() {
                                         .vtable = state_trans_vt});
     send_msg(*elodin_client_, VTableMsg{.id = std::make_tuple(uint8_t(0x44), uint8_t(0x00)),
                                         .vtable = fire_state_vt});
+
+    // Send component names so Elodin exports with strings instead of schema hashes
+    std::vector<std::string> actuation_fields = {
+        "CONTROLLER.actuation.timestamp_ns", "CONTROLLER.actuation.duty_F",
+        "CONTROLLER.actuation.duty_O",       "CONTROLLER.actuation.u_F_on",
+        "CONTROLLER.actuation.u_O_on",       "CONTROLLER.actuation.valid"};
+    std::vector<std::string> diagnostics_fields = {"CONTROLLER.diagnostics.timestamp_ns",
+                                                   "CONTROLLER.diagnostics.F_ref",
+                                                   "CONTROLLER.diagnostics.MR_ref",
+                                                   "CONTROLLER.diagnostics.F_estimated",
+                                                   "CONTROLLER.diagnostics.MR_estimated",
+                                                   "CONTROLLER.diagnostics.P_ch",
+                                                   "CONTROLLER.diagnostics.cost",
+                                                   "CONTROLLER.diagnostics.solver_iters",
+                                                   "CONTROLLER.diagnostics.safety_filtered",
+                                                   "CONTROLLER.diagnostics.cutoff_active"};
+    std::vector<std::string> measurement_fields = {
+        "CONTROLLER.measurement.timestamp_ns", "CONTROLLER.measurement.P_copv",
+        "CONTROLLER.measurement.P_reg",        "CONTROLLER.measurement.P_u_fuel",
+        "CONTROLLER.measurement.P_u_ox",       "CONTROLLER.measurement.P_d_fuel",
+        "CONTROLLER.measurement.P_d_ox",       "CONTROLLER.measurement.P_ch_mp1",
+        "CONTROLLER.measurement.P_ch_mp2"};
+    std::vector<std::string> state_fields = {
+        "CONTROLLER.state.timestamp_ns", "CONTROLLER.state.from_state", "CONTROLLER.state.to_state",
+        "CONTROLLER.state.reason"};
+    std::vector<std::string> fire_fields = {"CONTROLLER.fire.timestamp_ns",
+                                            "CONTROLLER.fire.fire_active", "CONTROLLER.fire.duty_F",
+                                            "CONTROLLER.fire.duty_O"};
+
+    for (const auto& f : actuation_fields)
+        send_msg(*elodin_client_, set_component_name(f));
+    for (const auto& f : diagnostics_fields)
+        send_msg(*elodin_client_, set_component_name(f));
+    for (const auto& f : measurement_fields)
+        send_msg(*elodin_client_, set_component_name(f));
+    for (const auto& f : state_fields)
+        send_msg(*elodin_client_, set_component_name(f));
+    for (const auto& f : fire_fields)
+        send_msg(*elodin_client_, set_component_name(f));
+
+    send_msg(*elodin_client_, set_entity_name(0x4000, "CONTROLLER.actuation"));
+    send_msg(*elodin_client_, set_entity_name(0x4100, "CONTROLLER.diagnostics"));
+    send_msg(*elodin_client_, set_entity_name(0x4200, "CONTROLLER.measurement"));
+    send_msg(*elodin_client_, set_entity_name(0x4300, "CONTROLLER.state"));
+    send_msg(*elodin_client_, set_entity_name(0x4400, "CONTROLLER.fire"));
 
     std::cout << "[ControllerService] ✅ Registered controller tables with Elodin DB" << std::endl;
     return true;

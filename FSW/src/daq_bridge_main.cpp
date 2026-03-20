@@ -345,7 +345,6 @@ static void load_sensor_and_actuator_maps(const std::string& config_path,
             if (channel >= 1 && channel <= 10)
                 pt_channel_to_name[channel] = to_entity_name(key);
         } else if (current_section == "sensor_roles_pt2") {
-            // PT board 2 connectors are globally offset by +10 (connector 1 → global channel 11)
             int connector = 0;
             try {
                 connector = std::stoi(val);
@@ -361,8 +360,17 @@ static void load_sensor_and_actuator_maps(const std::string& config_path,
                 continue;
             try {
                 int channel = std::stoi(val.substr(comma + 1));
-                if (channel >= 1 && channel <= 10)
-                    act_channel_to_name[channel] = to_entity_name(key);
+                size_t second_comma = val.find(',', comma + 1);
+                int board_id = -1;
+                if (second_comma != std::string::npos) {
+                    board_id = std::stoi(val.substr(second_comma + 1));
+                }
+                int global_ch = channel;
+                if (board_id == 14) {
+                    global_ch += 10;
+                }
+                if (global_ch >= 1 && global_ch <= 20)
+                    act_channel_to_name[global_ch] = to_entity_name(key);
             } catch (...) {
             }
         }
@@ -780,9 +788,9 @@ int main(int argc, char* argv[]) {
                 effective_cfg = &board_order[idx].second;
         }
         // Use board type from config even when disabled — we still publish actuator/PT data to DB
-        BoardType board_type =
-            board_it != board_map.end() ? board_it->second.type
-                                       : (effective_cfg ? effective_cfg->type : BoardType::UNKNOWN);
+        BoardType board_type = board_it != board_map.end()
+                                   ? board_it->second.type
+                                   : (effective_cfg ? effective_cfg->type : BoardType::UNKNOWN);
         if (board_type == BoardType::UNKNOWN) {
             auto discovered = discovery.get_board_by_ip(source_ip);
             if (discovered) {
@@ -837,10 +845,10 @@ int main(int argc, char* argv[]) {
                 break;
             }
             case BoardType::ACTUATOR: {
+                int ch_offset = effective_cfg ? effective_cfg->channel_offset : 0;
                 constexpr uint32_t ACT_STATE_ADC_THRESHOLD = 1500;  // above = open (1)
                 for (const auto& sample : batch.value().pt_samples) {
-                    uint8_t ch =
-                        static_cast<uint8_t>(sample.channel_id);  // already 1-indexed connector
+                    uint8_t ch = static_cast<uint8_t>(sample.channel_id + ch_offset);
                     std::array<uint8_t, 2> act_pkt = {0x30, ch};
                     comms::messages::sensor::RawPTMessage msg;
                     msg.setField<0>(receive_timestamp_ns);

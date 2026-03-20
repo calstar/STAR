@@ -13,8 +13,12 @@ import { useEffect, useState } from 'react';
 
 const RATE_WINDOW_MS = 2000; // rolling window for Hz computation
 const MAX_TIMESTAMPS = 200; // cap buffer size per key
+const MAX_KEYS = 80; // cap total keys to prevent lag buildup
+const STALE_MS = 2 * 60 * 1000; // prune keys not updated in 2 min
+let _lastPrune = 0;
 
 const _timestamps: Map<string, number[]> = new Map();
+const _lastUpdate: Map<string, number> = new Map();
 
 export function recordSensorUpdate(entity: string, component: string): void {
   if (typeof performance === 'undefined') return;
@@ -28,6 +32,7 @@ export function recordSensorUpdate(entity: string, component: string): void {
   }
 
   ts.push(now);
+  _lastUpdate.set(key, Date.now());
 
   // Prune entries outside the rolling window
   const cutoff = now - RATE_WINDOW_MS;
@@ -37,6 +42,27 @@ export function recordSensorUpdate(entity: string, component: string): void {
 
   // Hard cap to avoid unbounded growth if window grows
   if (ts.length > MAX_TIMESTAMPS) ts.splice(0, ts.length - MAX_TIMESTAMPS);
+
+  // Periodically prune stale keys to prevent Map growth over long sessions
+  if (Date.now() - _lastPrune > 60000) {
+    _lastPrune = Date.now();
+    const cutoffMs = Date.now() - STALE_MS;
+    const toDelete: string[] = [];
+    if (_timestamps.size > MAX_KEYS) {
+      const byAge = Array.from(_lastUpdate.entries()).sort((a, b) => a[1] - b[1]);
+      for (let j = 0; j < _timestamps.size - MAX_KEYS && j < byAge.length; j++) {
+        toDelete.push(byAge[j][0]);
+      }
+    } else {
+      for (const [k, ms] of _lastUpdate) {
+        if (ms < cutoffMs) toDelete.push(k);
+      }
+    }
+    for (const k of toDelete) {
+      _timestamps.delete(k);
+      _lastUpdate.delete(k);
+    }
+  }
 }
 
 export function getSensorRate(entity: string, component: string): number {

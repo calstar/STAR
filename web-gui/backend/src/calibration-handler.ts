@@ -210,6 +210,7 @@ export function handleCalibrationCommand(
             }
             const points = host.calibrationPoints.get(uniqueId) ?? [];
             points.push({ adc, pressure: refPsi });
+            if (points.length > 50) points.splice(0, points.length - 50); // cap to prevent lag buildup
             host.calibrationPoints.set(uniqueId, points);
 
             let coeffs: CalibrationCoefficients | null = null;
@@ -311,7 +312,8 @@ export function handleCalibrationCommand(
 
                 // Replace any prior zero-point (keep non-zero CAPTURE references)
                 const prevPoints = host.calibrationPoints.get(chUniqueId) ?? [];
-                const points = [...prevPoints.filter(p => p.pressure !== 0), { adc: currentAdc, pressure: 0 }];
+                let points = [...prevPoints.filter(p => p.pressure !== 0), { adc: currentAdc, pressure: 0 }];
+                if (points.length > 50) points = points.slice(-50); // cap to prevent lag buildup
                 host.calibrationPoints.set(chUniqueId, points);
 
                 const sidecarPrimaryZero = !!(host.calibrationSidecar && host.calibrationSidecar.enabled);

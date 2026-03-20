@@ -21,8 +21,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
-# SystemState enum (matches web-gui/shared/types.ts) for state timeline
-STATE_NAMES = {
+# PSM SystemState (CONTROLLER.state.to_state) — matches FSW PressureStateMachine
+PSM_STATE_NAMES = {
     0: "DEBUG",
     1: "IDLE",
     2: "ARMED",
@@ -46,6 +46,18 @@ STATE_NAMES = {
     20: "PRESS_STANDBY",
 }
 
+# BOARD heartbeat engine_state (DiabloBoardPacketParser::EngineState) — different enum
+BOARD_ENGINE_STATE_NAMES = {
+    0: "SAFE",
+    1: "PRESSURIZING",
+    2: "LOX_FILL",
+    3: "FIRING",
+    4: "POST_FIRE",
+}
+
+# Legacy alias
+STATE_NAMES = PSM_STATE_NAMES
+
 # Default styling for publication-ready plots
 plt.rcParams.update(
     {
@@ -62,18 +74,136 @@ plt.rcParams.update(
 )
 
 
+PRESS_STANDBY_STATE = 20
+
+
+def _load_actuator_roles(project_root: Path | None = None) -> dict[str, str]:
+    """Load actuator name -> type (NC/NO) from config. Returns {name: 'NC'|'NO'}."""
+    root = project_root or Path(__file__).resolve().parent.parent.parent
+    cfg = root / "config" / "config.toml"
+    if not cfg.exists():
+        return {}
+    out: dict[str, str] = {}
+    try:
+        import tomllib
+
+        with open(cfg, "rb") as f:
+            data = tomllib.load(f)
+        roles = data.get("actuator_roles", {})
+        for name, arr in roles.items():
+            if isinstance(arr, (list, tuple)) and len(arr) >= 1:
+                out[name] = str(arr[0]).upper()
+    except Exception:
+        pass
+    return out
+
+
+def _find_t_start_from_state(
+    state_series: dict[str, pd.DataFrame],
+    target_state: int = PRESS_STANDBY_STATE,
+) -> pd.Timestamp | None:
+    """Find timestamp of last transition to target_state (e.g. PRESS_STANDBY)."""
+    for df in state_series.values():
+        if "value" not in df.columns or "time" not in df.columns:
+            continue
+        mask = df["value"] == target_state
+        if not mask.any():
+            continue
+        # Transition-based (state_transitions): each row = one transition; last row with value==target is correct.
+        # Time-series: find start of last contiguous block of target_state.
+        prev = mask.shift(1, fill_value=False)
+        block_starts = mask & ~prev
+        if block_starts.any():
+            last_start_idx = block_starts[block_starts].index[-1]
+            return df.loc[last_start_idx, "time"]
+        return df.loc[mask, "time"].iloc[-1]
+    return None
+
+
+def _filter_series_from_t(
+    series: dict[str, pd.DataFrame],
+    t_start: pd.Timestamp,
+) -> dict[str, pd.DataFrame]:
+    """Filter each dataframe to rows with time >= t_start."""
+    out = {}
+    for name, df in series.items():
+        if "time" not in df.columns:
+            out[name] = df
+            continue
+        mask = df["time"] >= t_start
+        out[name] = df.loc[mask].copy()
+    return out
+
+
+def _load_state_fallback(export_dir: Path) -> dict[str, pd.DataFrame]:
+    """Load state from data/state_transitions.csv (backend writes during run)."""
+    candidates = [
+        export_dir.parent / "data" / "state_transitions.csv",
+        Path("data") / "state_transitions.csv",
+        Path.cwd() / "data" / "state_transitions.csv",
+        Path(__file__).resolve().parent.parent.parent
+        / "data"
+        / "state_transitions.csv",
+    ]
+    for p in candidates:
+        if p.exists():
+            try:
+                df = pd.read_csv(p)
+                if "timestamp_ms" in df.columns and "to_state" in df.columns:
+                    df["time"] = pd.to_datetime(
+                        df["timestamp_ms"], unit="ms", errors="coerce"
+                    )
+                    df["value"] = pd.to_numeric(df["to_state"], errors="coerce")
+                    df = df[["time", "value"]].dropna(subset=["value"])
+                    if len(df) > 0:
+                        return {"engine_state": df}
+            except Exception as e:
+                print(f"  Skip {p.name}: {e}")
+    return {}
+
+
+def _infer_time_value_cols(df: pd.DataFrame) -> tuple[str, str] | None:
+    """Infer time and value column names. Returns (time_col, value_col) or None."""
+    time_cands = [
+        c for c in df.columns if any(x in c.lower() for x in ("time", "timestamp", "t"))
+    ]
+    val_cands = [
+        c for c in df.columns if any(x in c.lower() for x in ("value", "val", "data"))
+    ]
+    if time_cands and val_cands:
+        return (time_cands[0], val_cands[0])
+    if len(df.columns) >= 2:
+        return (df.columns[0], df.columns[1])
+    return None
+
+
+def _normalize_actuator_value(v: float | str) -> float:
+    """Map actuator state to 0 (OFF) or 1 (ON). Handles numeric and string values."""
+    if pd.isna(v):
+        return np.nan
+    if isinstance(v, (int, float)):
+        return 1.0 if v != 0 else 0.0
+    s = str(v).strip().upper()
+    if s in ("1", "ON", "OPEN", "TRUE"):
+        return 1.0
+    if s in ("0", "OFF", "CLOSED", "FALSE"):
+        return 0.0
+    try:
+        return 1.0 if float(v) != 0 else 0.0
+    except (ValueError, TypeError):
+        return np.nan
+
+
 def load_csv_series(export_dir: Path, pattern: str) -> dict[str, pd.DataFrame]:
     """Load CSVs matching pattern. Returns {short_name: df with 'time' and 'value' cols}."""
     files = list(export_dir.glob(pattern))
     result = {}
     for f in files:
-        # e.g. PT_Cal.GN2_High.pressure_psi.csv -> short_name = GN2_High (pressure_psi)
-        stem = f.stem  # PT_Cal.GN2_High.pressure_psi
+        stem = f.stem
         parts = stem.split(".")
         if len(parts) >= 3:
-            short = parts[1]  # GN2_High or actuation
-            metric = parts[-1]  # pressure_psi or duty_F
-            # CONTROLLER has multiple metrics per entity (duty_F, duty_O, F_ref, etc.)
+            short = parts[1]
+            metric = parts[-1]
             short_name = (
                 f"{short}_{metric}"
                 if parts[0] == "CONTROLLER"
@@ -83,8 +213,22 @@ def load_csv_series(export_dir: Path, pattern: str) -> dict[str, pd.DataFrame]:
             short_name = stem
         try:
             df = pd.read_csv(f)
-            df["time"] = pd.to_datetime(df.iloc[:, 0])
-            df["value"] = pd.to_numeric(df.iloc[:, 1], errors="coerce")
+            pair = _infer_time_value_cols(df)
+            if pair:
+                time_col, val_col = pair
+                df["time"] = pd.to_datetime(df[time_col], errors="coerce")
+                raw_val = df[val_col]
+                if "actuator_state" in str(f) or "actuator" in stem.lower():
+                    df["value"] = raw_val.apply(_normalize_actuator_value)
+                else:
+                    df["value"] = pd.to_numeric(raw_val, errors="coerce")
+            else:
+                df["time"] = pd.to_datetime(df.iloc[:, 0], errors="coerce")
+                raw_val = df.iloc[:, 1]
+                if "actuator_state" in str(f) or "actuator" in stem.lower():
+                    df["value"] = raw_val.apply(_normalize_actuator_value)
+                else:
+                    df["value"] = pd.to_numeric(raw_val, errors="coerce")
             df = df[["time", "value"]].dropna(subset=["value"])
             if len(df) > 0:
                 result[short_name] = df
@@ -111,16 +255,41 @@ def resample_to_grid(
     if t_max is None:
         all_t = []
         for df in series.values():
+            if len(df) == 0:
+                continue
             s = (df["time"] - t0).dt.total_seconds()
             all_t.extend(s.dropna().tolist())
         t_max = max(all_t) if all_t else 60.0
     time_grid = np.arange(t_min, t_max + dt * 0.5, dt)
     out = pd.DataFrame({"t_s": time_grid})
     for name, df in series.items():
+        if len(df) == 0:
+            continue
         t_s = (df["time"] - t0).dt.total_seconds().values
         v = df["value"].values
         out[name] = np.interp(time_grid, t_s, v)
     return out, time_grid
+
+
+def debounce_binary(
+    df: pd.DataFrame, window_sec: float = 0.5, dt: float = 0.1
+) -> pd.DataFrame:
+    """Smooth binary (0/1) columns to remove flicker from ADC noise or interleaved sources.
+    Uses rolling median (majority vote) with window_sec. Returns rounded 0/1."""
+    if df.empty:
+        return df
+    n = max(1, int(round(window_sec / dt)))
+    out = df.copy()
+    for c in out.columns:
+        if c == "t_s":
+            continue
+        vals = out[c].values
+        if np.all(np.isnan(vals)) or not np.any(np.isfinite(vals)):
+            continue
+        # Rolling median = majority vote for binary; round to 0 or 1
+        rolled = pd.Series(vals).rolling(window=n, min_periods=1, center=True).median()
+        out[c] = np.round(rolled.values).astype(float)
+    return out
 
 
 def resample_to_grid_step(
@@ -134,12 +303,16 @@ def resample_to_grid_step(
     if t_max is None:
         all_t = []
         for df in series.values():
+            if len(df) == 0:
+                continue
             s = (df["time"] - t0).dt.total_seconds()
             all_t.extend(s.dropna().tolist())
         t_max = max(all_t) if all_t else 60.0
     time_grid = np.arange(t_min, t_max + dt * 0.5, dt)
     out = pd.DataFrame({"t_s": time_grid})
     for name, df in series.items():
+        if len(df) == 0:
+            continue
         t_s = (df["time"] - t0).dt.total_seconds().values
         v = df["value"].values
         # Sort by time
@@ -267,33 +440,45 @@ def plot_load_cells(
     print(f"  Saved {out_path}")
 
 
+def _apply_actuator_open_closed(
+    data: pd.DataFrame,
+    actuator_roles: dict[str, str],
+) -> pd.DataFrame:
+    """Convert hardware 0/1 to OPEN/CLOSED (0/1) per valve type. NC: 0=CLOSED,1=OPEN. NO: invert."""
+    out = data.copy()
+    for c in out.columns:
+        if c == "t_s":
+            continue
+        role_name = c.replace("_", " ")
+        if actuator_roles.get(role_name, "NC").upper() == "NO":
+            out[c] = 1.0 - np.clip(out[c].values, 0, 1)
+    return out
+
+
 def plot_actuators(
     data: pd.DataFrame,
     t_s: np.ndarray,
     out_path: Path,
+    actuator_roles: dict[str, str] | None = None,
 ) -> None:
-    """Actuator state timeline. Hardware: 0=OFF, 1=ON (OPEN/CLOSE depends on valve NO/NC)."""
+    """Actuator state timeline. Converts hardware 0/1 to OPEN/CLOSED per valve type (NC/NO)."""
     cols = [c for c in data.columns if c != "t_s"]
     if not cols:
         return
+    roles = actuator_roles or {}
+    display = _apply_actuator_open_closed(data, roles)
     n = len(cols)
     fig, axes = plt.subplots(n, 1, figsize=(12, max(4, n * 1.2)), sharex=True)
     if n == 1:
         axes = [axes]
-    fig.suptitle(
-        "Actuator State (0=OFF, 1=ON — OPEN/CLOSE depends on valve type)",
-        fontsize=12,
-        fontweight="bold",
-    )
+    fig.suptitle("Actuator State (OPEN/CLOSED)", fontsize=12, fontweight="bold")
     for ax, c in zip(axes, cols):
-        vals = data[c].values
+        vals = display[c].values
         ax.fill_between(t_s, 0, vals, step="post", alpha=0.7)
         ax.set_ylabel(c.replace("_", " "), fontsize=9)
-        v_min, v_max = np.nanmin(vals), np.nanmax(vals)
-        ax.set_ylim(v_min - 0.2, max(v_max + 0.2, 1.2))
-        uniq = sorted(set(np.unique(vals.astype(int))))
-        ax.set_yticks(uniq if uniq else [0, 1])
-        ax.set_yticklabels([str(int(u)) for u in uniq])
+        ax.set_ylim(-0.2, 1.2)
+        ax.set_yticks([0, 1])
+        ax.set_yticklabels(["CLOSED", "OPEN"])
         ax.grid(True, alpha=0.3, axis="x")
         ax.set_xlim(left=0)
     axes[-1].set_xlabel("Time (s)")
@@ -307,8 +492,10 @@ def plot_states(
     data: pd.DataFrame,
     t_s: np.ndarray,
     out_path: Path,
+    state_names: dict[int, str] | None = None,
 ) -> None:
-    """System state timeline (PSM/engine_state)."""
+    """System state timeline (PSM or BOARD engine_state)."""
+    state_names = state_names or PSM_STATE_NAMES
     cols = [c for c in data.columns if c != "t_s"]
     if not cols:
         return
@@ -317,7 +504,7 @@ def plot_states(
         ax.step(t_s, data[c].values, where="post", label=c.replace("_", " "), alpha=0.9)
     ax.set_ylabel("State (enum)")
     ax.set_xlabel("Time (s)")
-    ax.set_title("System State (PSM / engine_state)")
+    ax.set_title("System State")
     ax.legend(loc="upper right", fontsize=8)
     ax.grid(True, alpha=0.3)
     ax.set_xlim(left=0)
@@ -330,7 +517,7 @@ def plot_states(
     )
     if y_vals:
         ax.set_yticks(y_vals)
-        ax.set_yticklabels([STATE_NAMES.get(v, str(v)) for v in y_vals], fontsize=8)
+        ax.set_yticklabels([state_names.get(v, str(v)) for v in y_vals], fontsize=8)
     plt.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
@@ -420,11 +607,11 @@ def plot_controller(
         idx += 1
     if other_cols:
         ax = axes[idx]
-        for c in other_cols[:4]:
+        for c in other_cols[:8]:
             ax.plot(t_s, ctrl_wide[c], label=c.replace("_", " "), alpha=0.9)
         ax.set_ylabel("Value")
         ax.set_xlabel("Time (s)")
-        ax.set_title("P_ch, MR, etc.")
+        ax.set_title("P_ch, MR, measurement, status")
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, alpha=0.3)
         ax.set_xlim(left=0)
@@ -441,13 +628,16 @@ def plot_overview_4panel(
     tc_wide: pd.DataFrame | None,
     act_wide: pd.DataFrame | None,
     state_wide: pd.DataFrame | None,
+    ctrl_wide: pd.DataFrame | None,
     t_s: np.ndarray,
     out_path: Path,
+    actuator_roles: dict[str, str] | None = None,
 ) -> None:
-    """5-panel overview: state, pressures, temps, actuators."""
+    """Overview: state, pressures, temps, actuators, controller."""
     has_state = state_wide is not None and not state_wide.empty
-    n_panels = 4 + (1 if has_state else 0)
-    ratios = [0.6, 1.2, 1.0, 0.8, 0.5][:n_panels]
+    has_ctrl = ctrl_wide is not None and not ctrl_wide.empty
+    n_panels = 4 + (1 if has_state else 0) + (1 if has_ctrl else 0)
+    ratios = [0.6, 1.2, 1.0, 0.8, 0.5, 0.6][:n_panels]
     fig = plt.figure(figsize=(14, 10))
     gs = GridSpec(n_panels, 1, figure=fig, height_ratios=ratios, hspace=0.35)
     idx = 0
@@ -497,20 +687,35 @@ def plot_overview_4panel(
 
     ax3 = fig.add_subplot(gs[idx], sharex=ax1)
     if act_wide is not None and not act_wide.empty:
-        act_cols = [c for c in act_wide.columns if c != "t_s"][:6]
+        roles = actuator_roles or {}
+        act_display = _apply_actuator_open_closed(act_wide, roles)
+        act_cols = [c for c in act_display.columns if c != "t_s"][:6]
         for c in act_cols:
             ax3.step(
-                t_s, act_wide[c], where="post", label=c.replace("_", " "), alpha=0.8
+                t_s, act_display[c], where="post", label=c.replace("_", " "), alpha=0.8
             )
-    ax3.set_ylabel("Actuator (0=OFF, 1=ON)")
-    ax3.set_xlabel("Time (s)")
-    ax3.set_title("Actuators")
+    ax3.set_ylabel("Actuator")
+    ax3.set_title("Actuators (OPEN/CLOSED)")
     ax3.set_ylim(-0.1, 1.3)
     ax3.set_yticks([0, 1])
-    ax3.set_yticklabels(["OFF", "ON"])
+    ax3.set_yticklabels(["CLOSED", "OPEN"])
     ax3.legend(loc="upper right", ncol=2, fontsize=8)
     ax3.grid(True, alpha=0.3)
+    idx += 1
 
+    if has_ctrl:
+        ax4 = fig.add_subplot(gs[idx], sharex=ax1)
+        ctrl_cols = [c for c in ctrl_wide.columns if c != "t_s"][:8]
+        for c in ctrl_cols:
+            ax4.plot(t_s, ctrl_wide[c], label=c.replace("_", " "), alpha=0.9)
+        ax4.set_ylabel("Value")
+        ax4.set_title("Controller (duty, fire_active, P_ch, etc.)")
+        ax4.legend(loc="upper right", ncol=2, fontsize=8)
+        ax4.grid(True, alpha=0.3)
+        ax4.set_xlim(left=0)
+        idx += 1
+
+    fig.get_axes()[-1].set_xlabel("Time (s)")
     for i in range(idx - 1):
         plt.setp(fig.get_axes()[i].get_xticklabels(), visible=False)
     fig.suptitle("Run Overview", fontsize=12, fontweight="bold", y=1.02)
@@ -547,6 +752,9 @@ def main() -> None:
     print(f"📂 Loading from {export_dir}")
     print(f"📁 Output to {out_dir}")
 
+    project_root = Path(__file__).resolve().parent.parent.parent
+    actuator_roles = _load_actuator_roles(project_root)
+
     # Load PT pressures
     pt_series = load_csv_series(export_dir, "PT_Cal.*.pressure_psi.csv")
     if not pt_series:
@@ -565,33 +773,65 @@ def main() -> None:
     if lc_series:
         print(f"  Loaded {len(lc_series)} load cell channels")
 
-    # Load actuator states (0=OFF, 1=ON hardware; OPEN/CLOSE depends on valve NO/NC)
-    act_series = load_csv_series(export_dir, "ACT.*.actuator_state.csv")
+    # Load actuator states: prefer commanded (0x32) over current-sense (0x31)
+    act_series = load_csv_series(export_dir, "ACT.*.actuator_state_commanded.csv")
+    from_commanded = bool(act_series)
+    if not act_series:
+        act_series = load_csv_series(export_dir, "ACT.*.actuator_state.csv")
+    if not act_series:
+        # Fallback: any actuator_state* (handles export naming variations)
+        act_series = load_csv_series(export_dir, "ACT.*.actuator_state*.csv")
     if act_series:
-        print(f"  Loaded {len(act_series)} actuator channels")
+        print(
+            f"  Loaded {len(act_series)} actuator channels ({'commanded' if from_commanded else 'current-sense'})"
+        )
 
-    # Load system state (PSM / engine_state). Prefer CONTROLLER.state.to_state (authoritative).
-    ctrl_state = load_csv_series(export_dir, "CONTROLLER.state.to_state.csv")
-    board_state = load_csv_series(export_dir, "BOARD.*.engine_state.csv")
-    if ctrl_state:
-        state_series = {"engine_state": next(iter(ctrl_state.values()))}
-        print(f"  Loaded system state from CONTROLLER.state.to_state")
-    elif board_state:
-        state_series = {"engine_state": next(iter(board_state.values()))}
-        print(f"  Loaded system state from BOARD heartbeat")
+    # Load system state (PSM). Order: state_transitions (backend during run) > CONTROLLER > BOARD.
+    state_series = _load_state_fallback(export_dir)
+    state_from_board = False
+    if state_series:
+        print(f"  Loaded system state from data/state_transitions.csv (PSM)")
     else:
-        state_series = {}
+        ctrl_state = load_csv_series(export_dir, "CONTROLLER.state.to_state.csv")
+        board_state = load_csv_series(export_dir, "BOARD.*.engine_state.csv")
+        if ctrl_state:
+            state_series = {"engine_state": next(iter(ctrl_state.values()))}
+            print(f"  Loaded system state from CONTROLLER.state.to_state (PSM)")
+        elif board_state:
+            state_series = {"engine_state": next(iter(board_state.values()))}
+            state_from_board = True
+            print(f"  Loaded system state from BOARD heartbeat (SAFE/PRESSURIZING/...)")
+        else:
+            state_series = {}
 
-    # Load controller outputs (duty, thrust, diagnostics)
-    ctrl_act = load_csv_series(export_dir, "CONTROLLER.actuation.duty_F.csv")
-    ctrl_act.update(load_csv_series(export_dir, "CONTROLLER.actuation.duty_O.csv"))
-    ctrl_act.update(load_csv_series(export_dir, "CONTROLLER.fire.duty_F.csv"))
-    ctrl_act.update(load_csv_series(export_dir, "CONTROLLER.fire.duty_O.csv"))
-    ctrl_diag = load_csv_series(export_dir, "CONTROLLER.diagnostics.F_ref.csv")
-    ctrl_diag.update(load_csv_series(export_dir, "CONTROLLER.diagnostics.F_estimated.csv"))
-    ctrl_diag.update(load_csv_series(export_dir, "CONTROLLER.diagnostics.MR_estimated.csv"))
-    ctrl_diag.update(load_csv_series(export_dir, "CONTROLLER.diagnostics.P_ch.csv"))
-    ctrl_series = {**ctrl_act, **ctrl_diag}
+    # Load controller outputs (actuation, fire, diagnostics, measurement)
+    ctrl_series = {}
+    ctrl_patterns = [
+        "CONTROLLER.actuation.duty_F.csv",
+        "CONTROLLER.actuation.duty_O.csv",
+        "CONTROLLER.actuation.u_F_on.csv",
+        "CONTROLLER.actuation.u_O_on.csv",
+        "CONTROLLER.fire.duty_F.csv",
+        "CONTROLLER.fire.duty_O.csv",
+        "CONTROLLER.fire.fire_active.csv",
+        "CONTROLLER.diagnostics.F_ref.csv",
+        "CONTROLLER.diagnostics.F_estimated.csv",
+        "CONTROLLER.diagnostics.MR_ref.csv",
+        "CONTROLLER.diagnostics.MR_estimated.csv",
+        "CONTROLLER.diagnostics.P_ch.csv",
+        "CONTROLLER.diagnostics.cost.csv",
+        "CONTROLLER.diagnostics.safety_filtered.csv",
+        "CONTROLLER.diagnostics.cutoff_active.csv",
+        "CONTROLLER.measurement.P_ch_mp1.csv",
+        "CONTROLLER.measurement.P_ch_mp2.csv",
+        "CONTROLLER.measurement.P_copv.csv",
+        "CONTROLLER.measurement.P_reg.csv",
+    ]
+    for pat in ctrl_patterns:
+        ctrl_series.update(load_csv_series(export_dir, pat))
+    # Fallback: load any CONTROLLER.*.csv (handles export naming variations)
+    if not ctrl_series:
+        ctrl_series = load_csv_series(export_dir, "CONTROLLER.*.*.csv")
     if ctrl_series:
         print(f"  Loaded {len(ctrl_series)} controller channels")
 
@@ -605,7 +845,6 @@ def main() -> None:
             f"  Loaded raw: PT={len(pt_raw)}, TC={len(tc_raw)}, RTD={len(rtd_raw)}, LC={len(lc_raw)}"
         )
 
-    # Common t0 and t_max from all data
     all_series = {
         **pt_series,
         **tc_series,
@@ -618,11 +857,47 @@ def main() -> None:
         print("❌ No data to plot")
         return
 
-    t0 = min(df["time"].min() for df in all_series.values())
+    # Filter from PRESS_STANDBY onward for last run (if state available)
+    t0: pd.Timestamp
+    t_start = _find_t_start_from_state(state_series, PRESS_STANDBY_STATE)
+    if t_start is not None:
+        print(f"  Filtering from PRESS_STANDBY at {t_start}")
+        pt_series = _filter_series_from_t(pt_series, t_start)
+        tc_series = _filter_series_from_t(tc_series, t_start)
+        lc_series = _filter_series_from_t(lc_series, t_start)
+        act_series = _filter_series_from_t(act_series, t_start)
+        state_series = _filter_series_from_t(state_series, t_start)
+        ctrl_series = _filter_series_from_t(ctrl_series, t_start)
+        pt_raw = _filter_series_from_t(pt_raw, t_start)
+        tc_raw = _filter_series_from_t(tc_raw, t_start)
+        rtd_raw = _filter_series_from_t(rtd_raw, t_start)
+        lc_raw = _filter_series_from_t(lc_raw, t_start)
+        t0 = t_start
+        all_series = {
+            **pt_series,
+            **tc_series,
+            **lc_series,
+            **act_series,
+            **state_series,
+            **ctrl_series,
+        }
+    else:
+        # t0 = start of main run. Use series with most points; exclude outliers.
+        primary_series = {**pt_series, **state_series, **act_series, **ctrl_series}
+        if not primary_series:
+            primary_series = {**tc_series, **lc_series}
+        mins = [(df["time"].min(), len(df)) for df in all_series.values()]
+        mins.sort(key=lambda x: x[0])
+        if len(mins) >= 2:
+            median_min = mins[len(mins) // 2][0]
+            t0 = min(m for m, _ in mins if (median_min - m).total_seconds() < 86400)
+        else:
+            t0 = mins[0][0] if mins else pd.Timestamp.now()
     all_t = []
     for df in all_series.values():
         s = (df["time"] - t0).dt.total_seconds()
-        all_t.extend(s.dropna().tolist())
+        valid = s[(s >= -3600) & (s <= 86400 * 2)]
+        all_t.extend(valid.dropna().tolist())
     t_max = max(all_t) if all_t else 60.0
     dt = 0.1
 
@@ -641,6 +916,8 @@ def main() -> None:
     act_wide, _ = (
         resample_to_grid_step(act_series, t0, dt, t_max) if act_series else (None, None)
     )
+    if act_wide is not None and not act_wide.empty and not from_commanded:
+        act_wide = debounce_binary(act_wide, window_sec=0.5, dt=dt)
     state_wide, _ = (
         resample_to_grid_step(state_series, t0, dt, t_max)
         if state_series
@@ -658,6 +935,8 @@ def main() -> None:
 
     def add_to_combined(series: dict, prefix: str, step_mode: bool = False) -> None:
         for name, df in series.items():
+            if len(df) == 0:
+                continue
             t_sec = (df["time"] - t0).dt.total_seconds().values
             v = df["value"].values
             idx = np.argsort(t_sec)
@@ -702,9 +981,10 @@ def main() -> None:
     if lc_wide is not None and not lc_wide.empty:
         plot_load_cells(lc_wide, t_s, out_dir / "load_cells.png")
     if act_wide is not None and not act_wide.empty:
-        plot_actuators(act_wide, t_s, out_dir / "actuators.png")
+        plot_actuators(act_wide, t_s, out_dir / "actuators.png", actuator_roles)
     if state_wide is not None and not state_wide.empty:
-        plot_states(state_wide, t_s, out_dir / "states.png")
+        names = BOARD_ENGINE_STATE_NAMES if state_from_board else PSM_STATE_NAMES
+        plot_states(state_wide, t_s, out_dir / "states.png", state_names=names)
     if ctrl_wide is not None and not ctrl_wide.empty:
         plot_controller(ctrl_wide, t_s, out_dir / "controller.png")
 
@@ -713,8 +993,10 @@ def main() -> None:
         tc_wide,
         act_wide,
         state_wide,
+        ctrl_wide,
         t_s,
         out_dir / "overview.png",
+        actuator_roles,
     )
 
     print("\n✅ Done.")

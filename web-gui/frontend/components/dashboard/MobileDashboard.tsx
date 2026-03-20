@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate, SystemState, ActuatorUpdate, NotificationPayload, ActuatorId, CommandPayload } from '@/lib/types';
+import { SystemState, ActuatorId, CommandPayload } from '@/lib/types';
 import { startDataCache } from '@/lib/data-cache';
 import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
 import ActuatorControl from '@/components/controls/ActuatorControl';
@@ -79,15 +79,10 @@ export default function MobileDashboard() {
   const currentState = useSensorStore((s) => s.currentState);
   const debugMode = useSensorStore((s) => s.debugMode);
   const setDebugMode = useSensorStore((s) => s.setDebugMode);
-  const updateSensor = useSensorStore((s) => s.updateSensor);
-  const updateState = useSensorStore((s) => s.updateState);
-  const updateConnectionStatus = useSensorStore((s) => s.updateConnectionStatus);
-  const updateActuator = useSensorStore((s) => s.updateActuator);
-  const updateActuatorExpectedPositions = useSensorStore((s) => s.updateActuatorExpectedPositions);
-  const updateNotification = useSensorStore((s) => s.updateNotification);
+  const connectionStatus = useSensorStore((s) => s.connectionStatus) ?? { connected: false, elodinConnected: false };
+  const connected = connectionStatus.connected;
+  const elodinConnected = connectionStatus.elodinConnected;
 
-  const [connected, setConnected] = useState(false);
-  const [elodinConnected, setElodinConnected] = useState(false);
   const [clock, setClock] = useState('');
   const [timeWindow, setTimeWindow] = useState(60);
   const [actuatorsFromConfig, setActuatorsFromConfig] = useState<
@@ -97,25 +92,10 @@ export default function MobileDashboard() {
   const ws = getWebSocketClient();
   const { controlEnabled } = useControlMode();
 
-  // ── WebSocket setup ──────────────────────────────────────────────────────
   useEffect(() => {
     ws.connect();
     try { startDataCache(); } catch { /* already started */ }
-
-    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    const u3 = ws.on(MessageType.ACTUATOR_UPDATE, (p: unknown) => updateActuator(p as ActuatorUpdate));
-    const u4 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
-      updateActuatorExpectedPositions(p as Record<number, Record<string, 'open' | 'closed' | null>>);
-    });
-    const u5 = ws.on(MessageType.NOTIFICATION, (p: unknown) => updateNotification(p as NotificationPayload));
-    const u6 = ws.onConnectionStatus((s) => {
-      setConnected(s.connected);
-      setElodinConnected(s.elodinConnected);
-      updateConnectionStatus(s);
-    });
-    return () => { u1(); u2(); u3(); u4(); u5(); u6(); };
-  }, [ws, updateSensor, updateState, updateActuator, updateActuatorExpectedPositions, updateNotification, updateConnectionStatus]);
+  }, [ws]);
 
   // ── Clock ────────────────────────────────────────────────────────────────
   useEffect(() => {
