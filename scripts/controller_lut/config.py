@@ -44,6 +44,7 @@ class ControllerLUTConfig:
     outputs: List[str]
     engine_config_path: str
     controller_config_path: Optional[str] = None
+    engine_lut_path: Optional[str] = None  # Precomputed engine LUT for fast DDP
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -68,6 +69,7 @@ class ControllerLUTConfig:
             outputs=list(raw.get("outputs", [])),
             engine_config_path=str(raw["engine_config_path"]),
             controller_config_path=raw.get("controller_config_path"),
+            engine_lut_path=raw.get("engine_lut_path"),
             metadata=dict(raw.get("metadata", {})),
         )
 

@@ -381,8 +381,16 @@ export function handleCalibrationCommand(
                 sidecarZeroPayload.push({ id: chUniqueId, adc_code: currentAdc });
                 successCount++;
             }
-            if (host.calibrationSidecar && host.calibrationSidecar.enabled && sidecarZeroPayload.length > 0) {
-                host.calibrationSidecar.zeroAll(sidecarZeroPayload);
+            if (host.calibrationSidecar && host.calibrationSidecar.enabled) {
+                if (!host.calibrationSidecar.isConnected) {
+                    host.broadcast({ type: MessageType.ERROR, timestamp: Date.now(), payload: { message: 'ZERO ALL failed: calibration server not connected. Start calibration_server.py and ensure it listens on the configured port.' } });
+                    console.warn('⚠️ ZERO ALL: sidecar enabled but not connected — start calibration_server.py');
+                } else if (sidecarZeroPayload.length > 0) {
+                    host.calibrationSidecar.zeroAll(sidecarZeroPayload);
+                } else if (skipCount > 0) {
+                    host.broadcast({ type: MessageType.ERROR, timestamp: Date.now(), payload: { message: 'ZERO ALL: no ADC data for any channel. Ensure sensor data is flowing (relay connected, boards sending).' } });
+                    console.warn('⚠️ ZERO ALL: all channels skipped — no raw ADC data yet');
+                }
             }
             console.log(`✅ Zero all complete: ${successCount} channels updated, ${skipCount} skipped`);
             break;

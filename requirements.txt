@@ -20,6 +20,11 @@ matplotlib>=3.5.0,<4.0.0
 # Note: tkinter is included with Python standard library
 
 # ==========================================
+# Config (TOML) — tomllib is stdlib in 3.11+; tomli for older Python
+# ==========================================
+tomli>=2.0.0; python_version < "3.11"
+
+# ==========================================
 # Hardware Communication
 # ==========================================
 pyserial>=3.5

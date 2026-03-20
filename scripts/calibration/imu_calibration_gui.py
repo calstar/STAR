@@ -3,7 +3,7 @@
 IMU Calibration GUI
 
 Interactive GUI for calibrating IMU sensors (accelerometer, gyroscope, magnetometer).
-Similar to PT calibration GUI from external FSW.
+Similar to PT calibration GUI.
 
 Usage:
     python imu_calibration_gui.py [--port PORT] [--sensor-type TYPE]

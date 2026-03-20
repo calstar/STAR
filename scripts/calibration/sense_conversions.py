@@ -9,7 +9,10 @@ points, or for quick raw→physical conversion. Single source of truth for calib
 
 from __future__ import annotations
 
+import json
 import math
+import os
+from pathlib import Path
 from typing import Optional
 
 # K-type thermocouple: voltage (V) -> temperature (°C), ITS-90 rational polynomial (Mosaic/NIST-style)
@@ -226,10 +229,79 @@ def code_to_force(
 # ── Convenience: raw conversion by sensor type ───────────────────────────────
 
 
+def _load_pt_polynomial(channel_id: int) -> Optional[list[float]]:
+    """
+    Load calibration polynomial coefficients [A, B, C, D] for a PT channel from the
+    latest JSON file in scripts/calibration/calibrations/.
+    Polynomial: psi = A*adc^3 + B*adc^2 + C*adc + D
+    """
+    cal_dir = Path(__file__).parent / "calibrations"
+    try:
+        files = sorted(
+            [
+                f
+                for f in cal_dir.iterdir()
+                if f.suffix == ".json" and "learned_prior" not in f.name
+            ],
+            reverse=True,
+        )
+        for fp in files:
+            try:
+                data = json.loads(fp.read_text())
+                polys = data.get("calibration_polynomials", {})
+                key = str(channel_id)
+                if key in polys and len(polys[key]) >= 4:
+                    return list(polys[key][:4])
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def hp_pt_adc_to_psi(
+    adc_code: int,
+    full_scale_psi: float,
+    sense_resistor_ohms: float,
+    adc_ref_voltage: float = 2.5,
+) -> float:
+    """
+    4-20 mA HP PT: psi = (i_ma - 4) / 16 * full_scale_psi.
+    v_sense = (adc/2^31)*adc_ref_voltage, i_ma = v_sense/sense_resistor_ohms * 1000.
+    """
+    ADC_MAX = 2147483648.0
+    I_MIN_MA, I_SPAN_MA = 4.0, 16.0
+    adc_signed = _uint32_to_int32(adc_code & 0xFFFFFFFF)
+    if adc_signed >= ADC_MAX or adc_signed < 0:
+        return 0.0
+    v_sense = (float(adc_signed) / ADC_MAX) * adc_ref_voltage
+    i_ma = (v_sense / sense_resistor_ohms) * 1000.0
+    if i_ma < I_MIN_MA:
+        return 0.0
+    if i_ma > 20.0:
+        return full_scale_psi
+    return ((i_ma - I_MIN_MA) / I_SPAN_MA) * full_scale_psi
+
+
+def pt_adc_to_psi(adc_code: int, channel_id: int) -> Optional[float]:
+    """
+    Convert raw ADC code to PSI using the stored cubic calibration polynomial.
+    Returns None if no calibration is available for the channel.
+    Polynomial: psi = A*adc^3 + B*adc^2 + C*adc + D  (coeffs[0..3] = A, B, C, D)
+    """
+    coeffs = _load_pt_polynomial(channel_id)
+    if coeffs is None:
+        return None
+    A, B, C, D = coeffs
+    x = float(adc_code)
+    return A * x * x * x + B * x * x + C * x + D
+
+
 def raw_to_physical(
     stype: str,
     raw_value: int,
     *,
+    channel_id: Optional[int] = None,
     # RTD (raw is ADC counts; convert via voltage)
     rtd_r0: float = PT1000_R0,
     rtd_adc_ref_v: float = 2.5,
@@ -243,9 +315,12 @@ def raw_to_physical(
 ) -> Optional[float]:
     """
     Convert raw value to physical unit by sensor type.
-    Returns °C for TC/RTD, force (lbf/kg) for LC, or None if conversion fails.
+    Returns PSI for PT (if calibration available), °C for TC/RTD, force (lbf/kg) for LC,
+    or None if conversion fails.
     RTD raw_value is ADC counts (not milliohms); uses raw_rtd_adc_to_temp_c.
     """
+    if stype == "PT":
+        return pt_adc_to_psi(raw_value, channel_id or 0)
     if stype == "RTD":
         return raw_rtd_adc_to_temp_c(
             raw_value,

@@ -1,9 +1,18 @@
 #include "control/PressureStateMachine.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <thread>
+
+#include "comms/messages/control/ControlMessages.hpp"
+#include "comms/messages/control/ControllerMessages.hpp"
+#include "db.hpp"
+
+using namespace vtable;
+using namespace vtable::builder;
 
 namespace fsw {
 namespace control {
@@ -67,6 +76,10 @@ bool PressureStateMachine::initialize(std::shared_ptr<elodin::ElodinClient> elod
               << std::endl;
     std::cout << "[PressureStateMachine]   OX Target: " << thresholds_.ox_target_psi << " PSI"
               << std::endl;
+
+    // Register VTables with Elodin DB so PSM actuator command packets (0x5060-0x5066)
+    // and state transition packets (0x43) are accepted and stored.
+    registerPSMVTables();
 
     return true;
 }
@@ -250,43 +263,31 @@ void PressureStateMachine::readPressureData() {
     // Match packet_id to sensor message IDs
     std::lock_guard<std::mutex> lock(pressure_mutex_);
 
+    // Parse calibrated PT packets: [timestamp(8), channelId(1), padding(3), pressurePsi(float32,4),
+    // ...] Minimum payload size = 16 bytes to read the pressurePsi field.
+    constexpr size_t CAL_PT_MIN_LEN = 16;
+
     if (packet_id == pt_hp_message_id_ || packet_id == pt_lp_message_id_) {
-        // GN2 pressure sensor (PT_HP or PT_LP)
-        if (payload_len >= sizeof(uint64_t) + sizeof(uint8_t) + 3 + sizeof(uint32_t) +
-                               sizeof(uint32_t) + sizeof(uint8_t)) {
-            // Parse RawPTMessage: timestamp_ns, channel_id, padding(3), raw_adc_counts,
-            // sample_timestamp_ms, status_flags uint64_t timestamp_ns = *reinterpret_cast<const
-            // uint64_t*>(payload); uint8_t channel_id = payload[8];
-            uint32_t raw_adc_counts = *reinterpret_cast<const uint32_t*>(payload + 12);
-            // TODO: Convert ADC counts to PSI using calibration
-            // For now, use a simple conversion (this should use actual calibration)
-            double pressure_psi =
-                static_cast<double>(raw_adc_counts) * 0.001;  // Placeholder conversion
-            latest_pressures_.gn2_pressure_psi = pressure_psi;
+        if (payload_len >= CAL_PT_MIN_LEN) {
+            float psi_f;
+            std::memcpy(&psi_f, payload + 12, sizeof(float));
+            latest_pressures_.gn2_pressure_psi = static_cast<double>(psi_f);
             latest_pressures_.timestamp = std::chrono::steady_clock::now();
             latest_pressures_.valid = true;
         }
     } else if (packet_id == pt_fup_message_id_ || packet_id == pt_fdp_message_id_) {
-        // Fuel pressure sensor (PT_FUP or PT_FDP)
-        if (payload_len >= sizeof(uint64_t) + sizeof(uint8_t) + 3 + sizeof(uint32_t) +
-                               sizeof(uint32_t) + sizeof(uint8_t)) {
-            // uint64_t timestamp_ns = *reinterpret_cast<const uint64_t*>(payload);
-            // uint8_t channel_id = payload[8];
-            uint32_t raw_adc_counts = *reinterpret_cast<const uint32_t*>(payload + 12);
-            double pressure_psi = static_cast<double>(raw_adc_counts) * 0.001;  // Placeholder
-            latest_pressures_.fuel_pressure_psi = pressure_psi;
+        if (payload_len >= CAL_PT_MIN_LEN) {
+            float psi_f;
+            std::memcpy(&psi_f, payload + 12, sizeof(float));
+            latest_pressures_.fuel_pressure_psi = static_cast<double>(psi_f);
             latest_pressures_.timestamp = std::chrono::steady_clock::now();
             latest_pressures_.valid = true;
         }
     } else if (packet_id == pt_oup_message_id_ || packet_id == pt_odp_message_id_) {
-        // Oxidizer pressure sensor (PT_OUP or PT_ODP)
-        if (payload_len >= sizeof(uint64_t) + sizeof(uint8_t) + 3 + sizeof(uint32_t) +
-                               sizeof(uint32_t) + sizeof(uint8_t)) {
-            // uint64_t timestamp_ns = *reinterpret_cast<const uint64_t*>(payload);
-            // uint8_t channel_id = payload[8];
-            uint32_t raw_adc_counts = *reinterpret_cast<const uint32_t*>(payload + 12);
-            double pressure_psi = static_cast<double>(raw_adc_counts) * 0.001;  // Placeholder
-            latest_pressures_.ox_pressure_psi = pressure_psi;
+        if (payload_len >= CAL_PT_MIN_LEN) {
+            float psi_f;
+            std::memcpy(&psi_f, payload + 12, sizeof(float));
+            latest_pressures_.ox_pressure_psi = static_cast<double>(psi_f);
             latest_pressures_.timestamp = std::chrono::steady_clock::now();
             latest_pressures_.valid = true;
         }
@@ -444,7 +445,22 @@ void PressureStateMachine::checkTransitions() {
 }
 
 void PressureStateMachine::executeStateEntryActions(SystemState state) {
+    const SystemState from_state = current_state_.load();
     std::cout << "[PressureStateMachine] Entering state: " << getCurrentStateName() << std::endl;
+
+    // Write state transition event to Elodin DB [0x43, 0x00]
+    if (elodin_client_ && elodin_client_->is_connected()) {
+        comms::messages::control::ControllerStateTransitionMessage st_msg;
+        std::get<0>(st_msg.fields) = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                         std::chrono::system_clock::now().time_since_epoch())
+                                         .count();
+        std::get<1>(st_msg.fields) = static_cast<uint8_t>(from_state);
+        std::get<2>(st_msg.fields) = static_cast<uint8_t>(state);
+        std::get<3>(st_msg.fields) = (state == SystemState::ABORT) ? uint8_t(2)
+                                     : abort_requested_.load()     ? uint8_t(2)
+                                                                   : uint8_t(0);
+        elodin_client_->publish(0x4300, st_msg);
+    }
 
     switch (state) {
         case SystemState::ARMED: {
@@ -694,6 +710,47 @@ uint16_t PressureStateMachine::actuatorToMessageID(ActuatorID actuator) const {
         return it->second;
     }
     return 0;
+}
+
+void PressureStateMachine::registerPSMVTables() {
+    if (!elodin_client_ || !elodin_client_->is_connected())
+        return;
+
+    // Local helper — mirrors ControllerService::send_msg but scoped to PSM
+    auto send_vtable_msg = [this](VTableMsg msg) {
+        auto buf = Msg(msg).encode_vec();
+        if (!buf.empty())
+            elodin_client_->send_msg({0, 0}, buf);
+    };
+
+    // Actuator command VTable: U64(8) + U8(1) + U8(1) + F32(4) + U8(1) = 15 bytes
+    auto make_act_vt = []() {
+        return builder::vtable({
+            raw_field(0, 8, schema(PrimType::U64(), {}, component("PSM.actuator.timestamp_ns"))),
+            raw_field(8, 1, schema(PrimType::U8(), {}, component("PSM.actuator.actuator_id"))),
+            raw_field(9, 1, schema(PrimType::U8(), {}, component("PSM.actuator.command_type"))),
+            raw_field(10, 4, schema(PrimType::F32(), {}, component("PSM.actuator.value"))),
+            raw_field(14, 1, schema(PrimType::U8(), {}, component("PSM.actuator.status"))),
+        });
+    };
+
+    for (uint8_t lo = 0x60; lo <= 0x66; ++lo) {
+        send_vtable_msg(
+            VTableMsg{.id = std::make_tuple(uint8_t(0x50), lo), .vtable = make_act_vt()});
+    }
+
+    // PSM state transition VTable [0x43, 0x00]: U64(8) + 3×U8 = 11 bytes
+    auto state_trans_vt = builder::vtable({
+        raw_field(0, 8, schema(PrimType::U64(), {}, component("CONTROLLER.state.timestamp_ns"))),
+        raw_field(8, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.from_state"))),
+        raw_field(9, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.to_state"))),
+        raw_field(10, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.reason"))),
+    });
+    send_vtable_msg(
+        VTableMsg{.id = std::make_tuple(uint8_t(0x43), uint8_t(0x00)), .vtable = state_trans_vt});
+
+    std::cout << "[PressureStateMachine] ✅ Registered PSM VTables (0x5060-0x5066, 0x43)"
+              << std::endl;
 }
 
 }  // namespace control

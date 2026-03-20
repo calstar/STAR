@@ -62,6 +62,16 @@ cd sensor_system
 git submodule update --init --recursive
 ```
 
+### Jetson Xavier NX
+
+One-shot setup for Jetson (ARM64 Ubuntu):
+
+```bash
+./scripts/setup/setup_jetson.sh
+```
+
+See [docs/JETSON_DEPLOYMENT.md](docs/JETSON_DEPLOYMENT.md) for full deployment guide.
+
 ### Build
 
 ```bash

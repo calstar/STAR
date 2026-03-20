@@ -17,10 +17,14 @@ function fmtPressure(v: number): string {
   if (!isFinite(v)) return '---';
   const abs = Math.abs(v);
   if (abs > 99999) return '---';
-  if (abs >= 1000) return v.toFixed(0);
-  if (abs >= 100) return v.toFixed(0);
-  if (abs >= 1) return v.toFixed(1);
-  return v.toFixed(2);
+  // Values >= 1e21 make toFixed() return "1e+21" etc — avoid scientific notation
+  if (abs >= 1e21) return '---';
+  let s: string;
+  if (abs >= 1000) s = v.toFixed(0);
+  else if (abs >= 100) s = v.toFixed(0);
+  else if (abs >= 1) s = v.toFixed(1);
+  else s = v.toFixed(2);
+  return s.includes('e') ? '---' : s;
 }
 
 /**
@@ -127,7 +131,7 @@ function PressureBar({
             className={`${compact ? 'text-[8px]' : 'text-sm'} font-mono font-extrabold text-red-400 whitespace-nowrap mb-0.5`}
             style={compact ? { fontSize: 'clamp(6px, 0.7vh, 12px)' } : undefined}
           >
-            {meop}
+            {typeof meop === 'number' && isFinite(meop) && Math.abs(meop) < 1e21 ? meop.toFixed(0) : meop}
           </span>
           <div className="w-full border-t-2 border-dashed border-red-500/85" />
         </div>
@@ -141,7 +145,7 @@ function PressureBar({
             className={`${compact ? 'text-[8px]' : 'text-sm'} font-mono font-extrabold text-yellow-400 whitespace-nowrap mb-0.5`}
             style={compact ? { fontSize: 'clamp(6px, 0.7vh, 12px)' } : undefined}
           >
-            {nop}
+            {typeof nop === 'number' && isFinite(nop) && Math.abs(nop) < 1e21 ? nop.toFixed(0) : nop}
           </span>
           <div className="w-full border-t-2 border-dashed border-yellow-500/85" />
         </div>

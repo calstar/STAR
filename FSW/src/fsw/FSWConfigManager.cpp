@@ -1,6 +1,7 @@
 #include "fsw/FSWConfigManager.hpp"
 
 #include <chrono>
+#include <iomanip>
 #include <iostream>
 #include <thread>
 

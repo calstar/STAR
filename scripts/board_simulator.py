@@ -24,7 +24,8 @@ BOARD_TYPE_ACTUATOR = 5
 
 class SimulatedBoard:
     def __init__(
-        self, name, board_config, target_ip, target_port, low_noise=False, board_index=0
+        self, name, board_config, target_ip, target_port, low_noise=False, board_index=0,
+        sim_pt_targets=None,
     ):
         self.name = name
         self.board_index = board_index
@@ -32,11 +33,13 @@ class SimulatedBoard:
         self.target_ip = target_ip
         self.target_port = target_port
         self.low_noise = low_noise
+        self.sim_pt_targets = sim_pt_targets or {}
 
         self.ip = board_config.get("ip", "127.0.0.1")
         self.board_id = board_config.get("board_id", 0)
         self.board_type_str = board_config.get("type", "PT")
         self.num_sensors = board_config.get("num_sensors", 10)
+        self.channel_offset = board_config.get("channel_offset", 0)
 
         # Map string type to enum
         type_map = {
@@ -51,6 +54,8 @@ class SimulatedBoard:
         # HP PT specific settings
         self.hp_pt_connectors = set(board_config.get("hp_pt_connectors", []))
         self.excitation_id = board_config.get("excitation_connector_id", -1)
+        self.hp_pt_full_scale_psi = board_config.get("hp_pt_full_scale_psi", 5000.0)
+        self.hp_pt_sense_resistor_ohms = board_config.get("hp_pt_sense_resistor_ohms", 120)
 
         self.running = False
         self.sock = None
@@ -153,24 +158,30 @@ class SimulatedBoard:
             return int(ADC_MAX * 1.8 / 2.5)
 
         if self.board_type == BOARD_TYPE_PT:
+            # Global channel for pt_board_2 (connector 1 → ch11, etc.)
+            global_ch = sensor_id + self.channel_offset
+            target_psi = self.sim_pt_targets.get(global_ch) or self.sim_pt_targets.get(sensor_id)
+
             if sensor_id in self.hp_pt_connectors:
-                # Same amplitude as regular PT (80M ADC span) so bars/plots look consistent
-                wave = (
-                    math.sin(t * 0.3 + self.board_id * 0.5 + sensor_id * 0.7) + 1
-                ) / 2.0
-                noise = 0 if self.low_noise else random.randint(-5000, 5000)
-                return int(500000000 + wave * 80000000 + noise)
+                # HP PT (4-20 mA): psi = (i-4)/16 * full_scale. adc ∝ i.
+                # i_ma = 4 + 16*psi/full_scale; v = i*R/1000; adc = v/2.5 * ADC_MAX
+                psi = target_psi or 4000.0
+                psi = min(psi, self.hp_pt_full_scale_psi)
+                i_ma = 4.0 + 16.0 * (psi / self.hp_pt_full_scale_psi)
+                v_sense = i_ma * self.hp_pt_sense_resistor_ohms / 1000.0
+                adc_base = int(v_sense / 2.5 * ADC_MAX)
+                noise = 0 if self.low_noise else random.randint(-50000, 50000)
+                return max(0, min(adc_base + noise, ADC_MAX - 1))
             else:
-                # Regular PT: gentle sine wave around realistic ambient pressure.
-                # Calibration polynomial zero crossing is ~271M ADC (0 PSI).
-                # Base ~320M → ~20 PSI, ±80M variation → ~0-68 PSI sweep.
-                # This replaces the old 500M-1.3B sweep which mapped to 139-707 PSI
-                # via the cubic polynomial and looked like massive spikes on the plot.
-                wave = (
-                    math.sin(t * 0.3 + self.board_id * 0.5 + sensor_id * 0.7) + 1
-                ) / 2.0
-                noise = 0 if self.low_noise else random.randint(-5000, 5000)
-                return int(320000000 + wave * 80000000 + noise)
+                # Low-pressure PT: calibration psi ≈ C*adc + D (C≈6e-7, D≈-165)
+                # adc ≈ (target_psi + 165) / 6e-7 for typical polynomial
+                psi = target_psi or 500.0
+                adc_per_psi = 2_200_000  # ~(1/6e-7) for typical calibration
+                adc_base = int(500_000 + (psi + 165) * adc_per_psi)
+                wave = (math.sin(t * 0.1 + sensor_id * 0.5) + 1) / 2.0
+                variation = int(20_000_000 * wave)  # ±10M for slight movement
+                noise = 0 if self.low_noise else random.randint(-10000, 10000)
+                return max(0, min(adc_base + variation + noise, ADC_MAX - 1))
 
         elif self.board_type == BOARD_TYPE_LC:
             # Scale for ~0-500 N (force_n)
@@ -229,9 +240,15 @@ def main():
         return
 
     boards = config.get("boards", {})
+    sim_pt_targets = {
+        int(k): float(v)
+        for k, v in config.get("sim_pt_targets", {}).items()
+    }
     simulated_boards = []
 
     print(f"🚀 Starting Simulator - Target: {args.target}:{args.port}")
+    if sim_pt_targets:
+        print(f"   Sim PT targets: {len(sim_pt_targets)} channels (e.g. ch1/ch5=500, ch6=4k)")
 
     active_count = 0
     for name, board_cfg in boards.items():
@@ -251,6 +268,7 @@ def main():
             args.port,
             low_noise=args.low_noise,
             board_index=active_count,
+            sim_pt_targets=sim_pt_targets,
         )
         board.start()
         simulated_boards.append(board)

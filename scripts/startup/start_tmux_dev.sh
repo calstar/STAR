@@ -8,6 +8,55 @@
 SESSION="sensor-dev"
 PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# Prefer: 1) bashrc-activated venv (VIRTUAL_ENV), 2) repo .venv, 3) PATH python3
+PYTHON_BIN=""
+if [ -n "$VIRTUAL_ENV" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+  PYTHON_BIN="$VIRTUAL_ENV/bin/python"
+elif [ -x "$PROJECT/.venv/bin/python" ]; then
+  PYTHON_BIN="$PROJECT/.venv/bin/python"
+else
+  PYTHON_BIN="$(command -v python3 || command -v python || true)"
+fi
+if [ -z "$PYTHON_BIN" ]; then
+  echo "❌ python3 not found. Activate your venv (e.g. source ~/.bashrc) or run:"
+  echo "   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+  exit 1
+fi
+
+# Node.js must be modern enough for the web GUI tooling.
+if ! command -v node >/dev/null 2>&1; then
+  echo "❌ node not found. Install Node.js 20+ (recommended) and retry."
+  exit 1
+fi
+NODE_MAJOR="$(node -v 2>/dev/null | sed 's/^v//' | cut -d. -f1)"
+if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 20 ]; then
+  echo "❌ Node.js 20+ required. Current: $(node -v)"
+  exit 1
+fi
+if [ "$NODE_MAJOR" -ge 23 ]; then
+  echo "⚠️  Node.js $(node -v) detected. If relay/backend crash, switch to Node 20/22."
+fi
+
+# Elodin DB binary (portable path: cargo bin or PATH).
+ELODIN_DB_BIN="$HOME/.cargo/bin/elodin-db"
+if [ ! -x "$ELODIN_DB_BIN" ]; then
+  ELODIN_DB_BIN="$(command -v elodin-db || true)"
+fi
+if [ -z "$ELODIN_DB_BIN" ]; then
+  echo "❌ elodin-db not found. Install it (cargo) and ensure it's on PATH."
+  exit 1
+fi
+
+# Ensure web-gui dependencies are installed (tmux panes assume they exist).
+if [ ! -d "$PROJECT/web-gui/backend/node_modules" ]; then
+  echo "📦 Installing web-gui backend dependencies..."
+  (cd "$PROJECT/web-gui/backend" && npm install) || { echo "❌ backend npm install failed"; exit 1; }
+fi
+if [ ! -d "$PROJECT/web-gui/frontend/node_modules" ]; then
+  echo "📦 Installing web-gui frontend dependencies..."
+  (cd "$PROJECT/web-gui/frontend" && npm install) || { echo "❌ frontend npm install failed"; exit 1; }
+fi
+
 # Check if services are already running via systemd
 if systemctl --user is-active --quiet sensor-backend.service 2>/dev/null; then
   echo "⚠️  Systemd services are currently running!"
@@ -39,6 +88,9 @@ pkill -f "elodin-db run.*2240" 2>/dev/null || true
 pkill -f "elodin-relay" 2>/dev/null || true
 pkill -f "daq_bridge" 2>/dev/null || true
 pkill -f "actuator_service" 2>/dev/null || true
+pkill -f "heartbeat_service" 2>/dev/null || true
+pkill -f "config_broadcast_service" 2>/dev/null || true
+pkill -f "data_logger_service" 2>/dev/null || true
 pkill -f "next dev" 2>/dev/null || true
 pkill -f "tsx watch.*server.ts" 2>/dev/null || true
 # Free backend ports so the new process can bind (frontend needs WS :8081, API :8082)
@@ -67,7 +119,7 @@ CTRL_BIN="$PROJECT/build/FSW/controller_service"
 if [ ! -x "$CTRL_BIN" ]; then
   CTRL_BIN="$PROJECT/FSW/build/controller_service"
 fi
-CTRL_LUT="${LUT_PATH:-$PROJECT/output/lut/controller_lut.bin}"
+CTRL_LUT="${LUT_PATH:-$PROJECT/output/lut/controller_policy_fsw.bin}"
 CTRL_OPTS="--config config/config.toml --elodin-host 127.0.0.1"
 [ -f "$CTRL_LUT" ] && CTRL_OPTS="$CTRL_OPTS --lut-path $CTRL_LUT"
 CMD_CTRL="printf '\n  ══ CONTROLLER SERVICE (DB Calibrated → Actuators) ══\n\n' && sleep 4 && cd $PROJECT && exec $CTRL_BIN $CTRL_OPTS 2>&1"
@@ -79,7 +131,7 @@ if [ ! -x "$ACTUATOR_BIN" ]; then
 fi
 CMD_ACTUATOR="printf '\n  ══ ACTUATOR SERVICE (TCP :9998 → state → UDP commands) ══\n\n' && sleep 3 && cd $PROJECT && exec $ACTUATOR_BIN --config config/config.toml --port 9998 2>&1"
 
-CMD_DB="printf '\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n' && mkdir -p $HOME/.local/share/elodin && RUST_LOG=debug exec $HOME/.cargo/bin/elodin-db run '[::]:2240' '$ELODIN_DB_DIR'"
+CMD_DB="printf '\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n' && mkdir -p $HOME/.local/share/elodin && RUST_LOG=debug exec $ELODIN_DB_BIN run '[::]:2240' '$ELODIN_DB_DIR'"
 # Relay must connect to DB FIRST (sleep 2s) — daq_bridge sleeps 5s so relay subscribes before any TABLE data flows.
 CMD_RELAY="printf '\n  ══ ELODIN RELAY — WS :9090 (DB → relay → services) ══\n\n' && sleep 2 && cd $PROJECT/web-gui/backend && npm run relay 2>&1"
 # Auto-detect whether the actuator_service binary is available for TCP forwarding.
@@ -90,11 +142,25 @@ if [ -x "$ACTUATOR_BIN" ]; then
 fi
 CMD_WEB_BACKEND="printf '\n  ══ BACKEND — WS :8081 (data from relay only) ══\n\n' && sleep 5 && cd $PROJECT/web-gui/backend && $ACTUATOR_SVC_ENV ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false USE_CALIBRATION_SERVICE_CALIBRATED=false npm run dev 2>&1"
 CMD_WEB_FRONTEND="printf '\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n' && sleep 3 && cd $PROJECT/web-gui/frontend && npm run dev 2>&1"
-# Calibration: C++ (PT + calibrated TC/RTD/LC when files exist) + Python (TC/RTD/LC raw→physical fallback)
+# Calibration: Robust stack (Python) is primary; C++ polynomial disabled when USE_ROBUST_CALIBRATION=1 (default)
+USE_ROBUST_CAL="${USE_ROBUST_CALIBRATION:-1}"
 CAL_VERBOSE="${CAL_VERBOSE:-1}"
-CMD_CAL_CPP="printf '\n  ══ CALIBRATION (C++) — Relay TCP → DB ══\n\n' && sleep 4 && cd $PROJECT && CAL_VERBOSE=$CAL_VERBOSE exec $CAL_BIN --config config/config.toml --elodin-host 127.0.0.1 --relay-host 127.0.0.1 --relay-port 9091 2>&1"
-CMD_CAL_PY="printf '\n  ══ CALIBRATION (Python) — TC/RTD/LC raw→physical → DB ══\n\n' && sleep 5 && cd $PROJECT && PYTHONPATH=$PROJECT exec python3 scripts/calibration/calibration_server.py 2>&1"
-CMD_SIM="printf '\n  ══ BOARD SIMULATOR — UDP → :5006 (All Boards) ══\n\n' && sleep 4 && cd $PROJECT && ([ -x scripts/setup_sim_network.sh ] && scripts/setup_sim_network.sh || true) && exec python3 scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 2>&1"
+CMD_CAL_CPP="printf '\n  ══ CALIBRATION (C++) — DISABLED (robust stack active) ══\n\n' && sleep infinity"
+[ "$USE_ROBUST_CAL" = "0" ] && CMD_CAL_CPP="printf '\n  ══ CALIBRATION (C++) — Relay TCP → DB ══\n\n' && sleep 4 && cd $PROJECT && CAL_VERBOSE=$CAL_VERBOSE exec $CAL_BIN --config config/config.toml --elodin-host 127.0.0.1 --relay-host 127.0.0.1 --relay-port 9091 2>&1"
+CMD_CAL_PY="printf '\n  ══ CALIBRATION (Python) — Robust stack (PT/TC/RTD/LC) → DB ══\n\n' && sleep 5 && cd $PROJECT && PYTHONPATH=$PROJECT exec $PYTHON_BIN scripts/calibration/calibration_server.py 2>&1"
+CMD_SIM="printf '\n  ══ BOARD SIMULATOR — UDP → :5006 (All Boards) ══\n\n' && sleep 4 && cd $PROJECT && ([ -x scripts/setup_sim_network.sh ] && scripts/setup_sim_network.sh || true) && exec $PYTHON_BIN scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 2>&1"
+# Heartbeat service: C++ preferred (flight-ready), Python fallback
+HEARTBEAT_BIN="$PROJECT/build/FSW/heartbeat_service"
+[ ! -x "$HEARTBEAT_BIN" ] && HEARTBEAT_BIN="$PROJECT/FSW/build/heartbeat_service"
+CMD_HEARTBEAT="printf '\n  ══ HEARTBEAT SERVICE — SERVER_HEARTBEAT to boards ══\n\n' && sleep 6 && cd $PROJECT && exec $PYTHON_BIN scripts/services/heartbeat_service.py --config config/config.toml 2>&1"
+[ -x "$HEARTBEAT_BIN" ] && CMD_HEARTBEAT="printf '\n  ══ HEARTBEAT SERVICE (C++) — SERVER_HEARTBEAT to boards ══\n\n' && sleep 6 && cd $PROJECT && exec $HEARTBEAT_BIN --config config/config.toml 2>&1"
+# Config broadcast service: C++ preferred (flight-ready), Python fallback
+CONFIG_BIN="$PROJECT/build/FSW/config_broadcast_service"
+[ ! -x "$CONFIG_BIN" ] && CONFIG_BIN="$PROJECT/FSW/build/config_broadcast_service"
+CMD_CONFIG="printf '\n  ══ CONFIG BROADCAST SERVICE — config packets to boards ══\n\n' && sleep 6 && cd $PROJECT && exec $PYTHON_BIN scripts/services/config_broadcast_service.py --config config/config.toml 2>&1"
+[ -x "$CONFIG_BIN" ] && CMD_CONFIG="printf '\n  ══ CONFIG BROADCAST SERVICE (C++) — config packets to boards ══\n\n' && sleep 6 && cd $PROJECT && exec $CONFIG_BIN --config config/config.toml 2>&1"
+# Data logger: connects to backend WS, writes .sensorlog on ARMED→IDLE runs
+CMD_DATALOG="printf '\n  ══ DATA LOGGER SERVICE — .sensorlog recording ══\n\n' && sleep 7 && cd $PROJECT && exec $PYTHON_BIN scripts/services/data_logger_service.py --ws-url ws://127.0.0.1:8081 2>&1"
 
 tmux new-session  -d -s "$SESSION" -n main -x 220 -y 60 \
   "bash --norc --noprofile -c \"$CMD_DB\""
@@ -136,6 +202,13 @@ tmux split-window -v -t "$SESSION:main.5" \
 tmux split-window -v -t "$SESSION:main.6" \
   "bash --norc --noprofile -c \"$CMD_ACTUATOR\""
 
+tmux split-window -v -t "$SESSION:main.2" \
+  "bash --norc --noprofile -c \"$CMD_HEARTBEAT\""
+tmux split-window -v -t "$SESSION:main.2" \
+  "bash --norc --noprofile -c \"$CMD_CONFIG\""
+tmux split-window -v -t "$SESSION:main.2" \
+  "bash --norc --noprofile -c \"$CMD_DATALOG\""
+
 tmux select-layout -t "$SESSION:main" tiled
 
 tmux select-pane -t "$SESSION:main.2"
@@ -143,8 +216,9 @@ tmux select-pane -t "$SESSION:main.2"
 echo "┌─────────────────────────────────────────────────────────────┐"
 echo "│  Pipeline: UDP → daq_bridge → DB → relay → backend → UI     │"
 echo "│  0: Elodin DB  1: Relay :9090  2: Backend :8081             │"
-echo "│  3: DAQ Bridge  4: Frontend  5: Cal (C++)  6: Cal (Python)  │"
-echo "│  7: Simulator  8: Controller  9: Actuator   CAL_VERBOSE=1   │"
+echo "│  3: DAQ Bridge  4: Frontend  5: Cal slot  6: Cal (Python)   │"
+echo "│  7: Sim  8: Controller  9: Actuator  10: Heartbeat  11: Config  12: Datalog │"
+echo "│  Robust stack active (PT/TC/RTD/LC). USE_ROBUST_CAL=0 for C++│"
 echo "│  Ctrl+B arrows=switch  D=detach                              │"
 echo "└─────────────────────────────────────────────────────────────┘"
 tmux attach -t "$SESSION"

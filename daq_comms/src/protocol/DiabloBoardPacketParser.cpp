@@ -28,10 +28,10 @@ std::optional<DiabloBoardPacketParser::PacketType> DiabloBoardPacketParser::pars
 std::optional<DiabloBoardPacketParser::ParsedBoardHeartbeat>
 DiabloBoardPacketParser::parse_board_heartbeat(const uint8_t* data, size_t size) const {
     constexpr size_t HEADER_SIZE = 6;
-    constexpr size_t BODY_SIZE = 4;
-    constexpr size_t TOTAL_SIZE = HEADER_SIZE + BODY_SIZE;
+    constexpr size_t BODY_LEGACY = 4;  // board_type, board_id, engine_state, board_state
+    constexpr size_t BODY_NEW = 35;    // firmware_hash[32], board_id, engine_state, board_state
 
-    if (size < TOTAL_SIZE) {
+    if (size < HEADER_SIZE + BODY_LEGACY) {
         return std::nullopt;
     }
 
@@ -42,16 +42,24 @@ DiabloBoardPacketParser::parse_board_heartbeat(const uint8_t* data, size_t size)
     result.header.version = data[1];
     result.header.timestamp = read_le_u32(data + 2);
 
-    // Verify packet type
     if (result.header.packet_type != PacketType::BOARD_HEARTBEAT) {
         return std::nullopt;
     }
 
-    // Parse body
-    result.heartbeat.board_type = static_cast<BoardType>(data[6]);
-    result.heartbeat.board_id = data[7];
-    result.heartbeat.engine_state = static_cast<EngineState>(data[8]);
-    result.heartbeat.board_state = static_cast<BoardState>(data[9]);
+    if (size >= HEADER_SIZE + BODY_NEW) {
+        // New format: firmware_hash[32], board_id, engine_state, board_state
+        std::memcpy(result.firmware_hash.data(), data + HEADER_SIZE, 32);
+        result.heartbeat.board_type = BoardType::UNKNOWN;  // Not in packet; infer from config
+        result.heartbeat.board_id = data[HEADER_SIZE + 32];
+        result.heartbeat.engine_state = static_cast<EngineState>(data[HEADER_SIZE + 33]);
+        result.heartbeat.board_state = static_cast<BoardState>(data[HEADER_SIZE + 34]);
+    } else {
+        // Legacy format: board_type, board_id, engine_state, board_state
+        result.heartbeat.board_type = static_cast<BoardType>(data[6]);
+        result.heartbeat.board_id = data[7];
+        result.heartbeat.engine_state = static_cast<EngineState>(data[8]);
+        result.heartbeat.board_state = static_cast<BoardState>(data[9]);
+    }
 
     result.is_valid = true;
     return result;
@@ -131,6 +139,53 @@ DiabloBoardPacketParser::parse_sensor_data(const uint8_t* data, size_t size) con
     }
 
     result.is_valid = (result.chunks.size() == result.num_chunks);
+    return result;
+}
+
+std::optional<DiabloBoardPacketParser::ParsedSelfTestPacket>
+DiabloBoardPacketParser::parse_self_test(const uint8_t* data, size_t size) const {
+    constexpr size_t HEADER_SIZE = 6;
+    constexpr size_t BODY_HEADER_SIZE = 1; // num_sensors
+
+    if (size < HEADER_SIZE + BODY_HEADER_SIZE) {
+        return std::nullopt;
+    }
+
+    ParsedSelfTestPacket result;
+
+    result.header.packet_type = static_cast<PacketType>(data[0]);
+    result.header.version = data[1];
+    result.header.timestamp = read_le_u32(data + 2);
+
+    if (result.header.packet_type != PacketType::SELF_TEST) {
+        return std::nullopt;
+    }
+
+    result.num_sensors = data[6];
+    if (result.num_sensors == 0 || result.num_sensors > 64) {
+        result.is_valid = false;
+        return result; 
+    }
+
+    const size_t expected_size = HEADER_SIZE + BODY_HEADER_SIZE + (static_cast<size_t>(result.num_sensors) * 2);
+    if (size < expected_size) {
+        result.is_valid = false;
+        return result; 
+    }
+
+    size_t offset = HEADER_SIZE + BODY_HEADER_SIZE;
+    for (uint8_t i = 0; i < result.num_sensors; ++i) {
+        if (offset + 2 > size) {
+            result.is_valid = false;
+            return result;
+        }
+        SelfTestResult r;
+        r.sensor_id = data[offset++];
+        r.result = data[offset++];
+        result.results.push_back(r);
+    }
+
+    result.is_valid = (result.results.size() == result.num_sensors);
     return result;
 }
 

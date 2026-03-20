@@ -17,6 +17,7 @@ pkill -f "board_simulator" 2>/dev/null || true
 pkill -f "next dev" 2>/dev/null || true
 pkill -f "tsx watch.*server.ts" 2>/dev/null || true
 pkill -f "calibration_server.py" 2>/dev/null || true
+pkill -f "calibration_service" 2>/dev/null || true
 
 # Stop systemd services if they are running
 if systemctl --user is-active --quiet sensor-backend.service 2>/dev/null; then

@@ -1,0 +1,150 @@
+% Robust Calibration Stack Architecture
+% Sensor System — Pressure Transducer, Thermocouple, RTD, Load Cell
+
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\title{Robust Calibration Stack Architecture}
+\author{Sensor System}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Overview}
+
+\textbf{Yes} — the robust calibration stack is the primary calibration path. When \texttt{start\_tmux\_dev.sh} runs (default \texttt{USE\_ROBUST\_CALIBRATION=1}), only \texttt{calibration\_server.py} writes calibrated values to Elodin DB. The C++ \texttt{calibration\_service} (polynomial) is disabled. The Python path implements the full robust mathematical framework described below.
+
+\section{Data Pipeline}
+
+\begin{verbatim}
+UDP :5006 (sensor boards)
+    |
+    v
+daq_bridge --> Elodin DB :2240
+    |
+    v
+Relay :9090 (first TCP subscriber; fans out)
+    |
+    +---> Backend :8081 (UI)
+    |
+    +---> calibration_server.py (Python)
+    |         |
+    |         v
+    |     RobustCalibrationFramework
+    |     (TLS, Bayesian, RLS, GLR)
+    |         |
+    |         v
+    |     Elodin DB (PT_Cal, TC_Cal, RTD_Cal, LC_Cal)
+    |
+    +---> calibration_service (C++, disabled when robust stack active)
+\end{verbatim}
+
+\section{Mathematical Framework}
+
+\subsection{Environmental-Robust Basis Functions}
+
+The calibration map uses a 9-parameter basis $\phi(\text{adc}, e)$ that accounts for environmental state $e = (T, H, V, A, M)$ (temperature, humidity, vibration, aging, mounting):
+
+\begin{align}
+\phi_0 &= 1, \quad \phi_1 = \text{adc\_norm} \\
+\phi_2 &= \text{adc\_norm}^2 + \alpha_1 T \cdot \text{adc\_norm} + \alpha_2 H \cdot \text{adc\_norm} \\
+\phi_3 &= \text{adc\_norm}^3 + \beta_1 T \cdot \text{adc\_norm}^2 + \beta_2 V \cdot \text{adc\_norm} \\
+\phi_4 &= \sqrt{\text{adc\_norm}} + \gamma_1 A \log(\text{adc\_norm}) \\
+\phi_5 &= \log(1 + \text{adc\_norm}) + \delta_1 T + \delta_2 H \\
+\phi_6 &= \text{adc\_norm} \cdot T \cdot H, \quad
+\phi_7 = \text{adc\_norm}^2 \cdot V \cdot M, \quad
+\phi_8 = A \cdot \text{adc\_norm}^3
+\end{align}
+
+where $\text{adc\_norm} = \text{adc\_code} / 10^9$ for numerical stability. The physical quantity (pressure, temperature, force) is predicted as:
+\[
+y = \theta^\top \phi
+\]
+
+\subsection{Total Least Squares (TLS)}
+
+Calibration points $(x_i, y_i)$ with uncertainties $\sigma_i$ are fitted via weighted least squares:
+\[
+\theta_{\text{TLS}} = ( \Phi^\top W \Phi + \epsilon I )^{-1} \Phi^\top W y
+\]
+with $W_{ii} = 1/(\sigma_i^2 + \sigma_{\text{env}}^2)$.
+
+\subsection{Bayesian Hierarchical Update}
+
+Prior: $\theta \sim \mathcal{N}(\mu_0, \Sigma_0)$. Likelihood from TLS: $\theta_{\text{TLS}} \sim \mathcal{N}(\mu_{\text{TLS}}, \Sigma_{\text{TLS}})$. Posterior:
+\[
+\Sigma_{\text{post}}^{-1} = \Sigma_0^{-1} + \Sigma_{\text{TLS}}^{-1}, \quad
+\mu_{\text{post}} = \Sigma_{\text{post}} \left( \Sigma_0^{-1} \mu_0 + \Sigma_{\text{TLS}}^{-1} \mu_{\text{TLS}} \right)
+\]
+
+\subsection{Recursive Least Squares (RLS) with Forgetting}
+
+Online update for each new calibration point:
+\[
+K = \frac{P \phi}{\lambda + \phi^\top P \phi}, \quad
+\theta \leftarrow \theta + K (y - \phi^\top \theta), \quad
+P \leftarrow \frac{P - K \phi^\top P}{\lambda}
+\]
+with forgetting factor $\lambda \approx 0.995$.
+
+\subsection{Generalized Likelihood Ratio (GLR) Drift Detection}
+
+For a window of recent points, compute:
+\[
+\text{GLR} = 2 \left( \mathcal{L}_{\text{unconstrained}} - \mathcal{L}_{\text{current}} \right)
+\]
+where $\mathcal{L}_{\text{unconstrained}}$ is the log-likelihood of a TLS fit to the recent window, and $\mathcal{L}_{\text{current}}$ uses the current $\theta$. If $\text{GLR} > \tau$ (e.g., $\tau = 2$--$3$), drift is detected and a full Bayesian recalibration is triggered.
+
+\subsection{Empirical Bayes Prior Evolution}
+
+Across sensors, the population prior $\mu_{\text{pop}}, \Sigma_{\text{pop}}$ is estimated from individual posteriors:
+\[
+\mu_{\text{pop}} \approx \text{weighted-mean}(\theta_j), \quad
+\Sigma_{\text{pop}} \approx \text{Var}(\theta_j) + \overline{\Sigma_j}
+\]
+Sensors with few points inherit this prior; calibrated sensors contribute to it.
+
+\subsection{Active Learning}
+
+The system requests recalibration when:
+\begin{itemize}
+\item Uncertainty exceeds a threshold (e.g., $> 50$ PSI)
+\item ADC code is outside the calibrated range (extrapolation)
+\item Calibration is stale ($> 1$ hour since last calibration)
+\item Consistent prediction errors across recent samples
+\end{itemize}
+
+\section{Components}
+
+\begin{itemize}
+\item \textbf{RobustCalibrationFramework} (\texttt{robust\_calibration.py}): Per-channel TLS, Bayesian update, RLS, GLR, environmental basis, uncertainty quantification.
+\item \textbf{AutonomousCalibrationEngine} (\texttt{autonomous\_calibration\_engine.py}): Empirical Bayes, drift detection, active learning, online Bayesian learners.
+\item \textbf{CalibrationOrchestrator} (\texttt{calibration\_orchestrator.py}): Phase 1 (interactive TLS+Bayesian) and Phase 2 (continuous RLS+GLR monitoring).
+\item \textbf{RobustnessManager} (\texttt{calibration\_robustness.py}): Backup/recovery, validation, health monitoring, anomaly detection.
+\item \textbf{calibration\_server.py}: HTTP/WS sidecar; subscribes to relay, applies robust calibration, writes to Elodin.
+\end{itemize}
+
+\section{Comparison to Polynomial Calibration}
+
+\begin{center}
+\begin{tabular}{|l|l|l|}
+\hline
+ & Polynomial & Robust Stack \\
+\hline
+Model & $\psi = A \cdot \text{adc}^3 + B \cdot \text{adc}^2 + C \cdot \text{adc} + D$ & $\psi = \theta^\top \phi(\text{adc}, e)$ \\
+Environment & None & $T, H, V, A, M$ \\
+Uncertainty & None & Full covariance \\
+Drift & Manual & GLR auto-detection \\
+Online update & None & RLS with forgetting \\
+Prior & None & Hierarchical Bayesian \\
+Cross-sensor & None & Empirical Bayes \\
+\hline
+\end{tabular}
+\end{center}
+
+\end{document}

@@ -55,6 +55,8 @@ interface SensorSystemState {
   connectionStatus: ConnectionStatus;
   debugMode: boolean;
   missionStartTime: number | null; // T+0 from first packet (backend)
+  /** Global countdown target time (epoch ms), shared across all clients. */
+  countdownTargetTimeMs: number | null;
   actuatorExpectedPositions: Record<number, Record<string, 'open' | 'closed' | null>>; // state → entity → position
   /** Global actuator state by entity (updated from backend ACTUATOR_UPDATE and on manual command). */
   actuatorStateByEntity: Record<string, ActuatorState>;
@@ -75,6 +77,7 @@ interface SensorSystemState {
   updateState: (update: StateUpdate) => void;
   updateConnectionStatus: (status: ConnectionStatus) => void;
   updateMissionStartTime: (time: number) => void;
+  updateCountdownTargetTime: (timeMs: number | null) => void;
   updateActuatorExpectedPositions: (positions: Record<number, Record<string, 'open' | 'closed' | null>>) => void;
   getSensorValue: (entity: string, component: string) => number | null;
   setDebugMode: (mode: boolean) => void;
@@ -100,39 +103,40 @@ function loadStoredLcZeroOffsets(): Record<string, number> {
 // ── Alias table ──────────────────────────────────────────────────────────────
 // Maps lookup key → list of fallback keys to try in order.
 const ALIASES: Record<string, string[]> = {
-  // ── PT calibrated pressure (named → PT_CHX) ─────────────────────────────
-  'PT_Cal.Fuel_Upstream.pressure_psi': ['PT_Cal.PT_CH1.pressure_psi', 'PT.Fuel_Upstream.pressure_psi', 'PT.PT_CH1.pressure_psi'],
-  'PT_Cal.GSE_Low.pressure_psi': ['PT_Cal.PT_CH2.pressure_psi', 'PT.GSE_Low.pressure_psi', 'PT.PT_CH2.pressure_psi'],
-  'PT_Cal.Fuel_Downstream.pressure_psi': ['PT_Cal.PT_CH3.pressure_psi', 'PT.Fuel_Downstream.pressure_psi', 'PT.PT_CH3.pressure_psi'],
-  'PT_Cal.Chamber_Mid_PT_1.pressure_psi': ['PT_Cal.PT_CH4.pressure_psi', 'PT.Chamber_Mid_PT_1.pressure_psi', 'PT.PT_CH4.pressure_psi'],
-  'PT_Cal.Chamber_Mid_PT_2.pressure_psi': ['PT_Cal.PT_CH8.pressure_psi', 'PT.Chamber_Mid_PT_2.pressure_psi', 'PT.PT_CH8.pressure_psi'],
-  'PT_Cal.Chamber_Throat_PT_1.pressure_psi': ['PT_Cal.PT_CH9.pressure_psi', 'PT.Chamber_Throat_PT_1.pressure_psi', 'PT.PT_CH9.pressure_psi'],
-  'PT_Cal.Chamber_Throat_PT_2.pressure_psi': ['PT_Cal.PT_CH10.pressure_psi', 'PT.Chamber_Throat_PT_2.pressure_psi', 'PT.PT_CH10.pressure_psi'],
-  'PT_Cal.Fuel_Fill_Tank.pressure_psi': ['PT_Cal.PT_CH4.pressure_psi', 'PT.Fuel_Fill_Tank.pressure_psi', 'PT.PT_CH4.pressure_psi'],
-  'PT_Cal.Ox_Upstream.pressure_psi': ['PT_Cal.PT_CH5.pressure_psi', 'PT.Ox_Upstream.pressure_psi', 'PT.PT_CH5.pressure_psi'],
-  'PT_Cal.GN2_Regulated.pressure_psi': ['PT_Cal.PT_CH6.pressure_psi', 'PT.GN2_Regulated.pressure_psi', 'PT.PT_CH6.pressure_psi'],
-  'PT_Cal.Ox_Downstream.pressure_psi': ['PT_Cal.PT_CH7.pressure_psi', 'PT.Ox_Downstream.pressure_psi', 'PT.PT_CH7.pressure_psi'],
-  // HP PT sensors: named entities only (no PT_CH channel fallback)
-  'PT_Cal.GSE_Mid.pressure_psi': ['PT_Cal.HP_PT_1.pressure_psi', 'PT.GSE_Mid.pressure_psi'],
-  'PT_Cal.HP_PT_1.pressure_psi': ['PT_Cal.GSE_Mid.pressure_psi', 'PT.GSE_Mid.pressure_psi'],
-  'PT_Cal.GSE_High.pressure_psi': ['PT_Cal.HP_PT_3.pressure_psi', 'PT.GSE_High.pressure_psi'],
-  'PT_Cal.HP_PT_3.pressure_psi': ['PT_Cal.GSE_High.pressure_psi', 'PT.GSE_High.pressure_psi'],
-  'PT_Cal.GN2_High.pressure_psi': ['PT_Cal.HP_PT_4.pressure_psi', 'PT.GN2_High.pressure_psi'],
-  'PT_Cal.HP_PT_4.pressure_psi': ['PT_Cal.GN2_High.pressure_psi', 'PT.GN2_High.pressure_psi'],
+  // ── PT calibrated pressure (named → PT_CHX / CHn) ────────────────────────
+  // Backend may send PT_Cal.CH{n} when channelToEntityMap fails; include as fallbacks
+  'PT_Cal.Fuel_Upstream.pressure_psi': ['PT_Cal.CH1.pressure_psi', 'PT_Cal.PT_CH1.pressure_psi', 'PT.Fuel_Upstream.pressure_psi', 'PT.PT_CH1.pressure_psi'],
+  'PT_Cal.GSE_Low.pressure_psi': ['PT_Cal.CH2.pressure_psi', 'PT_Cal.PT_CH2.pressure_psi', 'PT.GSE_Low.pressure_psi', 'PT.PT_CH2.pressure_psi'],
+  'PT_Cal.Fuel_Downstream.pressure_psi': ['PT_Cal.CH3.pressure_psi', 'PT_Cal.PT_CH3.pressure_psi', 'PT.Fuel_Downstream.pressure_psi', 'PT.PT_CH3.pressure_psi'],
+  'PT_Cal.Chamber_Mid_PT_1.pressure_psi': ['PT_Cal.CH4.pressure_psi', 'PT_Cal.PT_CH4.pressure_psi', 'PT.Chamber_Mid_PT_1.pressure_psi', 'PT.PT_CH4.pressure_psi'],
+  'PT_Cal.Chamber_Mid_PT_2.pressure_psi': ['PT_Cal.CH8.pressure_psi', 'PT_Cal.PT_CH8.pressure_psi', 'PT.Chamber_Mid_PT_2.pressure_psi', 'PT.PT_CH8.pressure_psi'],
+  'PT_Cal.Chamber_Throat_PT_1.pressure_psi': ['PT_Cal.CH9.pressure_psi', 'PT_Cal.PT_CH9.pressure_psi', 'PT.Chamber_Throat_PT_1.pressure_psi', 'PT.PT_CH9.pressure_psi'],
+  'PT_Cal.Chamber_Throat_PT_2.pressure_psi': ['PT_Cal.CH10.pressure_psi', 'PT_Cal.PT_CH10.pressure_psi', 'PT.Chamber_Throat_PT_2.pressure_psi', 'PT.PT_CH10.pressure_psi'],
+  'PT_Cal.Fuel_Fill_Tank.pressure_psi': ['PT_Cal.CH4.pressure_psi', 'PT_Cal.PT_CH4.pressure_psi', 'PT.Fuel_Fill_Tank.pressure_psi', 'PT.PT_CH4.pressure_psi'],
+  'PT_Cal.Ox_Upstream.pressure_psi': ['PT_Cal.CH5.pressure_psi', 'PT_Cal.PT_CH5.pressure_psi', 'PT.Ox_Upstream.pressure_psi', 'PT.PT_CH5.pressure_psi'],
+  'PT_Cal.GN2_Regulated.pressure_psi': ['PT_Cal.CH6.pressure_psi', 'PT_Cal.PT_CH6.pressure_psi', 'PT.GN2_Regulated.pressure_psi', 'PT.PT_CH6.pressure_psi'],
+  'PT_Cal.Ox_Downstream.pressure_psi': ['PT_Cal.CH7.pressure_psi', 'PT_Cal.PT_CH7.pressure_psi', 'PT.Ox_Downstream.pressure_psi', 'PT.PT_CH7.pressure_psi'],
+  // HP PT sensors: CH11=GSE_High, CH13=GSE_Mid, CH14=GN2_High (pt2 channel_offset 10)
+  'PT_Cal.GSE_Mid.pressure_psi': ['PT_Cal.CH13.pressure_psi', 'PT_Cal.HP_PT_1.pressure_psi', 'PT.GSE_Mid.pressure_psi'],
+  'PT_Cal.HP_PT_1.pressure_psi': ['PT_Cal.CH13.pressure_psi', 'PT_Cal.GSE_Mid.pressure_psi', 'PT.GSE_Mid.pressure_psi'],
+  'PT_Cal.GSE_High.pressure_psi': ['PT_Cal.CH11.pressure_psi', 'PT_Cal.HP_PT_3.pressure_psi', 'PT.GSE_High.pressure_psi'],
+  'PT_Cal.HP_PT_3.pressure_psi': ['PT_Cal.CH11.pressure_psi', 'PT_Cal.GSE_High.pressure_psi', 'PT.GSE_High.pressure_psi'],
+  'PT_Cal.GN2_High.pressure_psi': ['PT_Cal.CH14.pressure_psi', 'PT_Cal.HP_PT_4.pressure_psi', 'PT.GN2_High.pressure_psi'],
+  'PT_Cal.HP_PT_4.pressure_psi': ['PT_Cal.CH14.pressure_psi', 'PT_Cal.GN2_High.pressure_psi', 'PT.GN2_High.pressure_psi'],
 
-  // ── PT raw ADC counts (named → PT.<role> is what backend sends for raw; PT_CHX fallbacks) ─
-  'PT_Cal.Fuel_Upstream.raw_adc_counts': ['PT.Fuel_Upstream.raw_adc_counts', 'PT_Cal.PT_CH1.raw_adc_counts', 'PT.PT_CH1.raw_adc_counts'],
-  'PT_Cal.GSE_Low.raw_adc_counts': ['PT.GSE_Low.raw_adc_counts', 'PT_Cal.PT_CH2.raw_adc_counts', 'PT.PT_CH2.raw_adc_counts'],
-  'PT_Cal.PT_CH3.raw_adc_counts': ['PT.PT_CH3.raw_adc_counts', 'PT.Fuel_Downstream.raw_adc_counts'],
-  'PT_Cal.Fuel_Downstream.raw_adc_counts': ['PT.Fuel_Downstream.raw_adc_counts', 'PT_Cal.PT_CH3.raw_adc_counts', 'PT.PT_CH3.raw_adc_counts'],
-  'PT_Cal.Chamber_Mid_PT_1.raw_adc_counts': ['PT.Chamber_Mid_PT_1.raw_adc_counts', 'PT_Cal.PT_CH4.raw_adc_counts', 'PT.PT_CH4.raw_adc_counts'],
-  'PT_Cal.Chamber_Mid_PT_2.raw_adc_counts': ['PT.Chamber_Mid_PT_2.raw_adc_counts', 'PT_Cal.PT_CH8.raw_adc_counts', 'PT.PT_CH8.raw_adc_counts'],
-  'PT_Cal.Chamber_Throat_PT_1.raw_adc_counts': ['PT.Chamber_Throat_PT_1.raw_adc_counts', 'PT_Cal.PT_CH9.raw_adc_counts', 'PT.PT_CH9.raw_adc_counts'],
-  'PT_Cal.Chamber_Throat_PT_2.raw_adc_counts': ['PT.Chamber_Throat_PT_2.raw_adc_counts', 'PT_Cal.PT_CH10.raw_adc_counts', 'PT.PT_CH10.raw_adc_counts'],
-  'PT_Cal.Fuel_Fill_Tank.raw_adc_counts': ['PT_Cal.PT_CH4.raw_adc_counts', 'PT.PT_CH4.raw_adc_counts'],
-  'PT_Cal.Ox_Upstream.raw_adc_counts': ['PT.Ox_Upstream.raw_adc_counts', 'PT_Cal.PT_CH5.raw_adc_counts', 'PT.PT_CH5.raw_adc_counts'],
-  'PT_Cal.GN2_Regulated.raw_adc_counts': ['PT.GN2_Regulated.raw_adc_counts', 'PT_Cal.PT_CH6.raw_adc_counts', 'PT.PT_CH6.raw_adc_counts'],
-  'PT_Cal.Ox_Downstream.raw_adc_counts': ['PT.Ox_Downstream.raw_adc_counts', 'PT_Cal.PT_CH7.raw_adc_counts', 'PT.PT_CH7.raw_adc_counts'],
+  // ── PT raw ADC counts (named → PT.<role> / CHn / PT_CHX fallbacks) ────────
+  'PT_Cal.Fuel_Upstream.raw_adc_counts': ['PT.CH1.raw_adc_counts', 'PT.Fuel_Upstream.raw_adc_counts', 'PT_Cal.PT_CH1.raw_adc_counts', 'PT.PT_CH1.raw_adc_counts'],
+  'PT_Cal.GSE_Low.raw_adc_counts': ['PT.CH2.raw_adc_counts', 'PT.GSE_Low.raw_adc_counts', 'PT_Cal.PT_CH2.raw_adc_counts', 'PT.PT_CH2.raw_adc_counts'],
+  'PT_Cal.PT_CH3.raw_adc_counts': ['PT.CH3.raw_adc_counts', 'PT.PT_CH3.raw_adc_counts', 'PT.Fuel_Downstream.raw_adc_counts'],
+  'PT_Cal.Fuel_Downstream.raw_adc_counts': ['PT.CH3.raw_adc_counts', 'PT.Fuel_Downstream.raw_adc_counts', 'PT_Cal.PT_CH3.raw_adc_counts', 'PT.PT_CH3.raw_adc_counts'],
+  'PT_Cal.Chamber_Mid_PT_1.raw_adc_counts': ['PT.CH4.raw_adc_counts', 'PT.Chamber_Mid_PT_1.raw_adc_counts', 'PT_Cal.PT_CH4.raw_adc_counts', 'PT.PT_CH4.raw_adc_counts'],
+  'PT_Cal.Chamber_Mid_PT_2.raw_adc_counts': ['PT.CH8.raw_adc_counts', 'PT.Chamber_Mid_PT_2.raw_adc_counts', 'PT_Cal.PT_CH8.raw_adc_counts', 'PT.PT_CH8.raw_adc_counts'],
+  'PT_Cal.Chamber_Throat_PT_1.raw_adc_counts': ['PT.CH9.raw_adc_counts', 'PT.Chamber_Throat_PT_1.raw_adc_counts', 'PT_Cal.PT_CH9.raw_adc_counts', 'PT.PT_CH9.raw_adc_counts'],
+  'PT_Cal.Chamber_Throat_PT_2.raw_adc_counts': ['PT.CH10.raw_adc_counts', 'PT.Chamber_Throat_PT_2.raw_adc_counts', 'PT_Cal.PT_CH10.raw_adc_counts', 'PT.PT_CH10.raw_adc_counts'],
+  'PT_Cal.Fuel_Fill_Tank.raw_adc_counts': ['PT.CH4.raw_adc_counts', 'PT_Cal.PT_CH4.raw_adc_counts', 'PT.PT_CH4.raw_adc_counts'],
+  'PT_Cal.Ox_Upstream.raw_adc_counts': ['PT.CH5.raw_adc_counts', 'PT.Ox_Upstream.raw_adc_counts', 'PT_Cal.PT_CH5.raw_adc_counts', 'PT.PT_CH5.raw_adc_counts'],
+  'PT_Cal.GN2_Regulated.raw_adc_counts': ['PT.CH6.raw_adc_counts', 'PT.GN2_Regulated.raw_adc_counts', 'PT_Cal.PT_CH6.raw_adc_counts', 'PT.PT_CH6.raw_adc_counts'],
+  'PT_Cal.Ox_Downstream.raw_adc_counts': ['PT.CH7.raw_adc_counts', 'PT.Ox_Downstream.raw_adc_counts', 'PT_Cal.PT_CH7.raw_adc_counts', 'PT.PT_CH7.raw_adc_counts'],
   // HP PT sensors: named entities only (no PT_CH channel fallback)
   'PT_Cal.GSE_Mid.raw_adc_counts': ['PT_Cal.HP_PT_1.raw_adc_counts', 'PT.GSE_Mid.raw_adc_counts'],
   'PT_Cal.HP_PT_1.raw_adc_counts': ['PT_Cal.GSE_Mid.raw_adc_counts', 'PT.GSE_Mid.raw_adc_counts'],
@@ -198,6 +202,12 @@ const ALIASES: Record<string, string[]> = {
   // GN2 Vent is same as GSE Low Vent (CH5)
   'ACT.GN2_Vent.raw_adc_counts': ['ACT.ACT_CH5.raw_adc_counts', 'ACT.GSE_Low_Vent.raw_adc_counts'],
   'ACT.GN2_Vent.status': ['ACT.ACT_CH5.status', 'ACT.GSE_Low_Vent.status'],
+
+  // ── Controller actuation → Fuel/Ox display (duty 0–1, onoff from u_F_on/u_O_on) ─────
+  'CONTROLLER.Fuel.duty_cycle': ['CONTROLLER.actuation.duty_F', 'CONTROLLER.fire.duty_F'],
+  'CONTROLLER.Fuel.onoff': ['CONTROLLER.actuation.u_F_on', 'CONTROLLER.fire.fire_active'],
+  'CONTROLLER.Ox.duty_cycle': ['CONTROLLER.actuation.duty_O', 'CONTROLLER.fire.duty_O'],
+  'CONTROLLER.Ox.onoff': ['CONTROLLER.actuation.u_O_on', 'CONTROLLER.fire.fire_active'],
 };
 
 export { ALIASES };
@@ -276,6 +286,7 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   connectionStatus: { connected: false, elodinConnected: false },
   debugMode: false,
   missionStartTime: null,
+  countdownTargetTimeMs: null,
   actuatorExpectedPositions: {},
   actuatorStateByEntity: {},
   actuatorCommandedOverrides: {},
@@ -368,6 +379,10 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
 
   updateMissionStartTime: (time: number) => {
     set({ missionStartTime: time });
+  },
+
+  updateCountdownTargetTime: (timeMs: number | null) => {
+    set({ countdownTargetTimeMs: timeMs });
   },
 
   updateBoards: (boards: BoardStatus[]) => {

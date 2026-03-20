@@ -72,7 +72,7 @@ public:
     ssize_t read(void* buffer, size_t max_len);
 
     /**
-     * @brief Read exactly len bytes (blocking, like external FSW Socket::read)
+     * @brief Read exactly len bytes (blocking)
      * @param buffer Buffer to read into
      * @param len Exact number of bytes to read
      * @return true if successful, false on error

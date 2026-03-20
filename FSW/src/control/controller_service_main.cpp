@@ -36,6 +36,7 @@ int main(int argc, char* argv[]) {
     std::string relay_host = "127.0.0.1";
     uint16_t relay_port = 9090;
     double loop_rate_hz = 10.0;
+    std::string lut_path = "";
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -49,6 +50,8 @@ int main(int argc, char* argv[]) {
             loop_rate_hz = std::stod(argv[++i]);
         else if ((arg == "--elodin-port") && i + 1 < argc)
             elodin_port = static_cast<uint16_t>(std::stoi(argv[++i]));
+        else if ((arg == "--lut-path") && i + 1 < argc)
+            lut_path = argv[++i];
         else if (arg == "--config" && i + 1 < argc)
             ++i;  // config path accepted but not used (defaults cover all)
     }
@@ -58,6 +61,8 @@ int main(int argc, char* argv[]) {
               << std::endl;
     std::cout << "[controller_service] Relay: " << relay_host << ":" << relay_port << std::endl;
     std::cout << "[controller_service] Loop rate: " << loop_rate_hz << " Hz" << std::endl;
+    if (!lut_path.empty())
+        std::cout << "[controller_service] LUT path: " << lut_path << std::endl;
 
     // Create controller service
     g_controller_service = std::make_unique<fsw::control::ControllerService>();
@@ -107,7 +112,7 @@ int main(int argc, char* argv[]) {
 
     // Initialize controller service
     if (!g_controller_service->initialize(pwm_config, config, elodin_host, elodin_port, relay_host,
-                                          relay_port)) {
+                                          relay_port, lut_path)) {
         std::cerr << "[controller_service] ❌ Failed to initialize controller service" << std::endl;
         return 1;
     }

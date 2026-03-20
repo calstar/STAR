@@ -60,8 +60,35 @@ using ControllerMeasurementMessage =
                  double,    // (3) P_u_fuel - Fuel upstream pressure [Pa]
                  double,    // (4) P_u_ox - Oxidizer upstream pressure [Pa]
                  double,    // (5) P_d_fuel - Fuel downstream pressure [Pa]
-                 double     // (6) P_d_ox - Oxidizer downstream pressure [Pa]
+                 double,    // (6) P_d_ox - Oxidizer downstream pressure [Pa]
+                 double,    // (7) P_ch_mp1 - Chamber mid-PT 1 [Pa] (0.0 if absent)
+                 double     // (8) P_ch_mp2 - Chamber mid-PT 2 [Pa] (0.0 if absent)
                  >;
+
+/**
+ * @brief PSM state transition event message   [0x43, 0x00]
+ *
+ * Written by PressureStateMachine on every executeStateEntryActions call.
+ * Layout: U64(8) + U8(1) + U8(1) + U8(1) = 11 bytes
+ */
+using ControllerStateTransitionMessage =
+    CommsMessage<uint64_t,  // (0) timestamp_ns
+                 uint8_t,   // (1) from_state
+                 uint8_t,   // (2) to_state
+                 uint8_t    // (3) reason (0=auto-transition, 1=manual, 2=abort)
+                 >;
+
+/**
+ * @brief Fire state / PWM event message   [0x44, 0x00]
+ *
+ * Written by ControllerService::setFireActive on every change.
+ * Layout: U64(8) + U8(1) + F32(4) + F32(4) = 17 bytes
+ */
+using ControllerFireStateMessage = CommsMessage<uint64_t,  // (0) timestamp_ns
+                                                uint8_t,   // (1) fire_active (0=inactive, 1=active)
+                                                float,     // (2) duty_F at activation/deactivation
+                                                float      // (3) duty_O at activation/deactivation
+                                                >;
 
 }  // namespace control
 }  // namespace messages

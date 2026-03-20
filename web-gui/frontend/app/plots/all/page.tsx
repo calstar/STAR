@@ -16,7 +16,7 @@ type TabId = 'fuel' | 'lox' | 'copv' | 'gse' | 'raw';
 const TABS: { id: TabId; label: string; roleKeywords: string[] }[] = [
   { id: 'fuel', label: '⛽ FUEL', roleKeywords: ['Fuel'] },
   { id: 'lox', label: '🧊 LOX', roleKeywords: ['Ox', 'LOX'] },
-  { id: 'copv', label: '🫀 COPV', roleKeywords: ['GN2'] },
+  { id: 'copv', label: '🫀 COPV', roleKeywords: ['GN2', 'COPV'] },
   { id: 'gse', label: '🔧 GSE', roleKeywords: ['GSE'] },
   { id: 'raw', label: '📡 RAW', roleKeywords: [] }, // shows all sensors
 ];

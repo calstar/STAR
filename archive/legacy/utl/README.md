@@ -18,9 +18,6 @@
   - Optimization utilities (QP, LP)
   - Uses Eigen3 as backend
 
-### Legacy Matrix Utilities
-- **`matrix_alg.hpp`** - Basic matrix operations (legacy, consider using LinearAlgebra.hpp)
-
 ## Archived (FSW-Specific)
 
 All FSW-specific utilities have been moved to `archive/utl_fsw/`:

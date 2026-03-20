@@ -35,7 +35,7 @@ This will start both backend and frontend automatically.
 
 ### Replay a past run (load existing Elodin DB)
 
-Replay uses **elodin-db's `--replay`** flag: the DB streams stored data as live telemetry (same as external FSW SITL-style replay). No daq_bridge, simulator, or controller.
+Replay uses **elodin-db's `--replay`** flag: the DB streams stored data as live telemetry (SITL-style replay). No daq_bridge, simulator, or controller.
 
 ```bash
 # Standalone script (stops any existing DB on 2240, starts past DB with --replay)

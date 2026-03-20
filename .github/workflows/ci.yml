@@ -166,7 +166,7 @@ jobs:
           --error-exitcode=1 \
           --xml --xml-version=2 \
           --output-file=cppcheck-report.xml \
-          FSW/ comms/ utl/ daq_comms/ || true
+          FSW/ archive/legacy/utl/ daq_comms/ || true
 
     - name: Upload cppcheck results
       uses: actions/upload-artifact@v4
@@ -178,7 +178,7 @@ jobs:
     - name: Run clang-tidy
       run: |
         # Only run on a subset to avoid timeout
-        find FSW comms utl daq_comms -name "*.cpp" -o -name "*.hpp" | head -20 | \
+        find FSW archive/legacy/utl daq_comms -name "*.cpp" -o -name "*.hpp" | head -20 | \
         xargs -I {} clang-tidy {} \
           -p ${{ env.BUILD_DIR }} \
           -- -std=c++${{ env.CXX_STANDARD }} || true
@@ -203,7 +203,7 @@ jobs:
           --include="*.hpp" \
           --include="*.c" \
           --include="*.h" \
-          FSW/ comms/ utl/ daq_comms/ || true)
+          FSW/ archive/legacy/utl/ daq_comms/ || true)
         if [ -n "$TODOS" ]; then
           echo "::warning::Found TODO/FIXME/HACK comments:"
           echo "$TODOS"
@@ -223,7 +223,7 @@ jobs:
       run: |
         echo "Checking for common include issues..."
         # Check for missing standard library includes
-        if grep -r "#include <iostream>" --include="*.cpp" --include="*.hpp" FSW/ comms/ utl/ daq_comms/ | \
+        if grep -r "#include <iostream>" --include="*.cpp" --include="*.hpp" FSW/ archive/legacy/utl/ daq_comms/ | \
            grep -v "#include <iostream>" | head -5; then
           echo "::warning::Potential missing includes detected"
         fi
@@ -281,7 +281,7 @@ jobs:
           --include="*.hpp" \
           --include="*.py" \
           --include="*.sh" \
-          FSW/ comms/ utl/ daq_comms/ scripts/ || true)
+          FSW/ archive/legacy/utl/ daq_comms/ scripts/ || true)
         if [ -n "$SECRETS" ]; then
           echo "::warning::Potential hardcoded secrets found:"
           echo "$SECRETS"
@@ -295,7 +295,7 @@ jobs:
         UNSAFE=$(grep -rE "\b(strcpy|sprintf|gets|scanf|strcat)\s*\(" \
           --include="*.cpp" \
           --include="*.hpp" \
-          FSW/ comms/ utl/ daq_comms/ || true)
+          FSW/ archive/legacy/utl/ daq_comms/ || true)
         if [ -n "$UNSAFE" ]; then
           echo "::warning::Potentially unsafe C functions found:"
           echo "$UNSAFE"

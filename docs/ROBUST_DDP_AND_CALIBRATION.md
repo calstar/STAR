@@ -129,7 +129,7 @@ double heading = ekf.getHeading();
 ## IMU Calibration System
 
 ### Python Calibration Scripts (Primary)
-Following the pattern from external FSW PT calibration:
+Following the PT calibration pattern:
 - `scripts/calibration/imu_calibration.py` - Core calibration library
 - `scripts/calibration/imu_calibration_gui.py` - Interactive GUI
 - `scripts/calibration/accelerometer_calibration.py` - Accelerometer calibration

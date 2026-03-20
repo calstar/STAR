@@ -88,14 +88,14 @@ export function encodeControllerDiagnostics(
   // double cost (little-endian)
   buffer.writeDoubleLE(cost, 48);
 
-  // uint8_t safety_filtered
-  buffer.writeUInt8(safetyFiltered ? 1 : 0, 56);
+  // int32_t solver_iters at offset 56 (4-byte aligned, matching C++ ControllerDiagnosticsMessage)
+  buffer.writeInt32LE(solverIters, 56);
 
-  // uint8_t cutoff_active
-  buffer.writeUInt8(cutoffActive ? 1 : 0, 57);
+  // uint8_t safety_filtered at offset 60
+  buffer.writeUInt8(safetyFiltered ? 1 : 0, 60);
 
-  // int32_t solver_iters (little-endian)
-  buffer.writeInt32LE(solverIters, 58);
+  // uint8_t cutoff_active at offset 61
+  buffer.writeUInt8(cutoffActive ? 1 : 0, 61);
 
   return buffer;
 }
@@ -165,6 +165,32 @@ export function publishControllerDiagnostics(
     return elodin.publishTable([0x41, 0x00], payload);
   } catch (error) {
     console.error('[ControllerElodinPublisher] ❌ Failed to publish diagnostics:', error);
+    return false;
+  }
+}
+
+/**
+ * Publish PSM state transition to Elodin DB [0x43, 0x00]
+ * Format: U64 timestamp_ns | U8 from_state | U8 to_state | U8 reason (11 bytes)
+ * Ensures CONTROLLER.state.to_state is in DB for postprocessing when backend owns state.
+ */
+export function publishControllerStateTransition(
+  elodin: ElodinClient,
+  fromState: number,
+  toState: number,
+  reason: number = 0
+): boolean {
+  if (!elodin.isConnected()) return false;
+  try {
+    const timestampNs = BigInt(Date.now()) * BigInt(1_000_000);
+    const buffer = Buffer.alloc(11);
+    buffer.writeBigUInt64LE(timestampNs, 0);
+    buffer.writeUInt8(fromState, 8);
+    buffer.writeUInt8(toState, 9);
+    buffer.writeUInt8(reason, 10);
+    return elodin.publishTable([0x43, 0x00], buffer);
+  } catch (error) {
+    console.error('[ControllerElodinPublisher] ❌ Failed to publish state transition:', error);
     return false;
   }
 }

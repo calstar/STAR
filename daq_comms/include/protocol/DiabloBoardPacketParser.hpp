@@ -1,6 +1,7 @@
 #ifndef DAQ_DIABLO_BOARD_PACKET_PARSER_HPP
 #define DAQ_DIABLO_BOARD_PACKET_PARSER_HPP
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <map>
@@ -32,7 +33,8 @@ public:
         ACTUATOR_CONFIG = 6,
         ABORT = 7,
         ABORT_DONE = 8,
-        CLEAR_ABORT = 9
+        CLEAR_ABORT = 9,
+        SELF_TEST = 12
     };
 
     // Board types (matching DAQv2-Comms)
@@ -87,6 +89,14 @@ public:
     };
 
     /**
+     * @brief Self Test Result
+     */
+    struct SelfTestResult {
+        uint8_t sensor_id;
+        uint8_t result; // 1 = good, 0 = bad
+    };
+
+    /**
      * @brief Sensor data chunk
      */
     struct SensorDataChunk {
@@ -106,11 +116,27 @@ public:
     };
 
     /**
+     * @brief Parsed self test packet
+     */
+    struct ParsedSelfTestPacket {
+        PacketHeader header;
+        uint8_t num_sensors;
+        std::vector<SelfTestResult> results;
+        bool is_valid;
+    };
+
+    /**
      * @brief Parsed board heartbeat packet
+     *
+     * Supports both formats:
+     * - Legacy (4-byte body): board_type, board_id, engine_state, board_state
+     * - New (35-byte body): firmware_hash[32], board_id, engine_state, board_state
+     *   (board_type set to UNKNOWN; infer from config when available)
      */
     struct ParsedBoardHeartbeat {
         PacketHeader header;
         BoardHeartbeat heartbeat;
+        std::array<uint8_t, 32> firmware_hash{};  // SHA-256 of firmware (new format only)
         bool is_valid;
     };
 
@@ -135,6 +161,11 @@ public:
      * @brief Parse sensor data packet
      */
     std::optional<ParsedSensorDataPacket> parse_sensor_data(const uint8_t* data, size_t size) const;
+
+    /**
+     * @brief Parse self test packet
+     */
+    std::optional<ParsedSelfTestPacket> parse_self_test(const uint8_t* data, size_t size) const;
 
     /**
      * @brief Extract board signature from heartbeat

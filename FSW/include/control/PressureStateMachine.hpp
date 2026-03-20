@@ -185,6 +185,9 @@ private:
      */
     void sendActuatorCommandUDP(ActuatorID actuator, CommandType command, float value = 0.0f);
 
+    /** @brief Register Elodin VTables for PSM actuator commands and state transitions. */
+    void registerPSMVTables();
+
     /**
      * @brief Get board IP and port for actuator
      */
@@ -219,13 +222,15 @@ private:
     // Configuration
     PressureThresholds thresholds_;
 
-    // Sensor message IDs from config
-    uint16_t pt_hp_message_id_ = 0x2000;   // PT_HP
-    uint16_t pt_lp_message_id_ = 0x2001;   // PT_LP
-    uint16_t pt_fup_message_id_ = 0x2010;  // PT_FUP
-    uint16_t pt_fdp_message_id_ = 0x2011;  // PT_FDP
-    uint16_t pt_oup_message_id_ = 0x2020;  // PT_OUP
-    uint16_t pt_odp_message_id_ = 0x2021;  // PT_ODP
+    // Sensor message IDs — calibrated PT packets ([0x20, 0x10 + channel])
+    // Calibration server writes these; they carry float32 PSI at payload offset 12.
+    // Channel assignments match sensor_roles_pt_board in config.toml.
+    uint16_t pt_hp_message_id_ = 0x2016;   // Calibrated PT CH6  = GN2 Regulated
+    uint16_t pt_lp_message_id_ = 0x2011;   // Calibrated PT CH1  = Fuel Upstream (low-P reference)
+    uint16_t pt_fup_message_id_ = 0x2011;  // Calibrated PT CH1  = Fuel Upstream
+    uint16_t pt_fdp_message_id_ = 0x2013;  // Calibrated PT CH3  = Fuel Downstream
+    uint16_t pt_oup_message_id_ = 0x2015;  // Calibrated PT CH5  = Ox Upstream
+    uint16_t pt_odp_message_id_ = 0x2017;  // Calibrated PT CH7  = Ox Downstream
 
     // Actuator message IDs from config
     std::map<ActuatorID, uint16_t> actuator_message_ids_;

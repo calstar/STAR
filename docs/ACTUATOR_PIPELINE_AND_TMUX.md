@@ -16,6 +16,9 @@ Launches the full stack in a single tmux session. Order matters:
 | 7 | Calibration Service | C++ reads RAW from Elodin, writes CALIBRATED |
 | 8 | Controller Service | C++ reads CALIBRATED, outputs PWM to actuators |
 | 9 | Actuator Service | C++ TCP :9998. Receives `STATE:GSE\n`, sends UDP actuator commands |
+| 10 | Heartbeat Service | C++ (preferred) or Python — polls `/api/engine_state`, broadcasts SERVER_HEARTBEAT |
+| 11 | Config Broadcast Service | C++ (preferred) or Python — sends ACTUATOR_CONFIG/SENSOR_CONFIG |
+| 12 | Data Logger Service | Python — connects to backend WS, writes `.sensorlog` on ARMED→IDLE |
 
 **Routing:** When `actuator_service` is built and `ACTUATOR_SERVICE_ENABLED=true`:
 - State transitions → backend sends `STATE:<name>\n` to TCP :9998 → actuator_service sends UDP.
@@ -34,15 +37,15 @@ Boards listen on **UDP port 5005**. All commands use the same 6-byte header:
 packet_type (1B) | version (1B) | timestamp_ms (4B LE)
 ```
 
-### 1. SERVER_HEARTBEAT (type 2) — from **daq_bridge** only
+### 1. SERVER_HEARTBEAT (type 2) — from **heartbeat_service** (preferred) or **daq_bridge**
 
-- **Who:** `daq_bridge` (not backend)
+- **Who:** `heartbeat_service` (Python) — polls backend `/api/engine_state`, broadcasts with correct engine_state. `daq_bridge` also sends (engine_state=0) when running.
 - **Where:** UDP **broadcast** to `server_heartbeat.broadcast_ip` (e.g. 192.168.2.255) on port 5005
 - **Interval:** `server_heartbeat.interval_ms` (default 1000)
 - **Format:** 7 bytes total: type=2, version=0, timestamp(4), engine_state(1)
-- **Purpose:** Boards learn server IP for sending SENSOR_DATA and heartbeats
+- **Purpose:** Boards learn server IP and engine state; watchdog for connection loss
 
-**Critical:** Backend comment says "SERVER_HEARTBEAT is owned by daq_bridge". Backend has `sendServerHeartbeatUDP()` but it's routed via the same socket for engine-state sync — the main heartbeat source is daq_bridge.
+**Modular:** Backend no longer sends SERVER_HEARTBEAT. Use `python scripts/services/heartbeat_service.py` (included in start_tmux_dev.sh).
 
 ---
 

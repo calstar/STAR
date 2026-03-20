@@ -12,6 +12,22 @@ interface ConfigData {
     broadcast_port?: number;
     broadcast_ip?: string;
   };
+  heartbeat_service?: {
+    enabled?: boolean;
+    backend_url?: string;
+    interval_ms?: number;
+    broadcast_ip?: string;
+    broadcast_port?: number;
+  };
+  config_broadcast_service?: {
+    enabled?: boolean;
+    backend_url?: string;
+    interval_ms?: number;
+  };
+  data_logger_service?: {
+    enabled?: boolean;
+    ws_url?: string;
+  };
   system?: {
     mode?: string;
     state?: string;
@@ -43,11 +59,16 @@ interface ConfigData {
   sensor_roles?: Record<string, number>; // legacy fallback
   sensor_roles_pt_board?: Record<string, number>;
   sensor_roles_pt2?: Record<string, number>;
+  sensor_roles_rtd_board?: Record<string, number>;
+  sensor_roles_tc_board?: Record<string, number>;
   abort_pts?: Record<string, number>;
   adc?: { internal_v?: number; vdd_nominal_v?: number; absolute_5v_v?: number };
   actuator_roles?: Record<string, [string, number] | [string, number, number] | [string, number, string]>;
   actuator_abbrev?: Record<string, string>;
+  actuator_service?: { port?: number; bind_address?: string };
+  controller_service?: { port?: number; fire_duration_ms?: number; fire_extended_ms?: number };
   routing?: Record<string, any>;
+  daq_bridge?: { publish?: string[] };
   calibration?: any;
   pressure_limits?: Record<string, any>;
   pressure_mappings?: Record<string, number>;
@@ -94,11 +115,15 @@ export default function ConfigPage() {
     ws.connect();
     loadConfig();
 
-    const unsubscribe = ws.on(MessageType.CONNECTION_STATUS, () => {
-      // Connection status updates
+    const unsubConn = ws.on(MessageType.CONNECTION_STATUS, () => {});
+    const unsubConfig = ws.on(MessageType.CONFIG_UPDATED, () => {
+      loadConfig();
     });
 
-    return unsubscribe;
+    return () => {
+      unsubConn();
+      unsubConfig();
+    };
   }, [ws]);
 
   const loadConfig = async () => {
@@ -292,13 +317,17 @@ export default function ConfigPage() {
   const tabs = [
     { id: 'system', label: 'System' },
     { id: 'network', label: 'Network' },
-    { id: 'server_heartbeat', label: 'Heartbeat' },
+    { id: 'adc', label: 'ADC' },
+    { id: 'server_heartbeat', label: 'Server Heartbeat' },
+    { id: 'services', label: 'Services' },
     { id: 'database', label: 'Database' },
     { id: 'discovery', label: 'Discovery' },
     { id: 'boards', label: 'Boards' },
     { id: 'sensor_roles', label: 'Sensor Roles' },
     { id: 'actuator_roles', label: 'Actuator Roles' },
     { id: 'controller', label: 'Controller' },
+    { id: 'controller_service', label: 'Controller Service' },
+    { id: 'actuator_service', label: 'Actuator Service' },
     { id: 'phase2', label: 'Phase2' },
     { id: 'calibration', label: 'Calibration' },
     { id: 'pressure_limits', label: 'Pressure Limits' },
@@ -311,7 +340,12 @@ export default function ConfigPage() {
     <main className="min-h-screen bg-background text-text p-8">
       <div className="max-w-7xl mx-auto">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-3xl font-bold">Configuration Editor</h1>
+          <div>
+            <h1 className="text-3xl font-bold">Configuration Editor</h1>
+            <p className="text-sm text-text-muted mt-1">
+              Config auto-refreshes when saved (yours or another client). Reload to fetch latest from disk.
+            </p>
+          </div>
           <div className="flex gap-4">
             <button
               onClick={loadConfig}
@@ -421,6 +455,41 @@ export default function ConfigPage() {
             </div>
           )}
 
+          {activeTab === 'adc' && (
+            <div className="bg-card rounded-lg p-6">
+              <h2 className="text-xl font-bold mb-4">ADC Voltage References</h2>
+              <p className="text-sm text-text-muted mb-4">
+                Used when voltage_reference = 0 (internal) or 2 (5V absolute). Ref 1 = VDD ratiometric.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {renderField(
+                  'Internal (V)',
+                  config.adc?.internal_v,
+                  (val) => updateField('adc', 'internal_v', val),
+                  'number',
+                  undefined,
+                  'Boards with voltage_reference = 0'
+                )}
+                {renderField(
+                  'VDD Nominal (V)',
+                  config.adc?.vdd_nominal_v,
+                  (val) => updateField('adc', 'vdd_nominal_v', val),
+                  'number',
+                  undefined,
+                  'Display only; ratiometric boards'
+                )}
+                {renderField(
+                  'Absolute 5V (V)',
+                  config.adc?.absolute_5v_v,
+                  (val) => updateField('adc', 'absolute_5v_v', val),
+                  'number',
+                  undefined,
+                  'Boards with voltage_reference = 2'
+                )}
+              </div>
+            </div>
+          )}
+
           {activeTab === 'server_heartbeat' && (
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Server Heartbeat</h2>
@@ -442,6 +511,48 @@ export default function ConfigPage() {
                   config.server_heartbeat?.broadcast_ip,
                   (val) => updateField('server_heartbeat', 'broadcast_ip', val)
                 )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'services' && (
+            <div className="bg-card rounded-lg p-6">
+              <h2 className="text-xl font-bold mb-4">Services</h2>
+              <div className="space-y-8">
+                <div className="border border-gray-700 rounded-lg p-4">
+                  <h3 className="text-lg font-semibold mb-3">Heartbeat Service</h3>
+                  <p className="text-sm text-text-muted mb-3">
+                    Polls backend /api/engine_state, broadcasts SERVER_HEARTBEAT to boards.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {renderField('Enabled', config.heartbeat_service?.enabled, (val) => updateField('heartbeat_service', 'enabled', val), 'boolean')}
+                    {renderField('Backend URL', config.heartbeat_service?.backend_url, (val) => updateField('heartbeat_service', 'backend_url', val))}
+                    {renderField('Interval (ms)', config.heartbeat_service?.interval_ms, (val) => updateField('heartbeat_service', 'interval_ms', val), 'number')}
+                    {renderField('Broadcast IP', config.heartbeat_service?.broadcast_ip, (val) => updateField('heartbeat_service', 'broadcast_ip', val))}
+                    {renderField('Broadcast Port', config.heartbeat_service?.broadcast_port, (val) => updateField('heartbeat_service', 'broadcast_port', val), 'number')}
+                  </div>
+                </div>
+                <div className="border border-gray-700 rounded-lg p-4">
+                  <h3 className="text-lg font-semibold mb-3">Config Broadcast Service</h3>
+                  <p className="text-sm text-text-muted mb-3">
+                    Sends ACTUATOR_CONFIG / SENSOR_CONFIG to boards.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {renderField('Enabled', config.config_broadcast_service?.enabled, (val) => updateField('config_broadcast_service', 'enabled', val), 'boolean')}
+                    {renderField('Backend URL', config.config_broadcast_service?.backend_url, (val) => updateField('config_broadcast_service', 'backend_url', val))}
+                    {renderField('Interval (ms)', config.config_broadcast_service?.interval_ms, (val) => updateField('config_broadcast_service', 'interval_ms', val), 'number')}
+                  </div>
+                </div>
+                <div className="border border-gray-700 rounded-lg p-4">
+                  <h3 className="text-lg font-semibold mb-3">Data Logger Service</h3>
+                  <p className="text-sm text-text-muted mb-3">
+                    Records .sensorlog files; connects to backend WebSocket.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {renderField('Enabled', config.data_logger_service?.enabled, (val) => updateField('data_logger_service', 'enabled', val), 'boolean')}
+                    {renderField('WebSocket URL', config.data_logger_service?.ws_url, (val) => updateField('data_logger_service', 'ws_url', val))}
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -696,6 +807,8 @@ export default function ConfigPage() {
                 {([
                   { key: 'sensor_roles_pt_board', title: 'PT Board Roles (sensor_roles_pt_board)' },
                   { key: 'sensor_roles_pt2', title: 'HP PT Roles (sensor_roles_pt2)' },
+                  { key: 'sensor_roles_rtd_board', title: 'RTD Board Roles (sensor_roles_rtd_board)' },
+                  { key: 'sensor_roles_tc_board', title: 'TC Board Roles (sensor_roles_tc_board)' },
                 ] as const).map(({ key, title }) => {
                   const map = (config as any)[key] as Record<string, number> | undefined;
                   const entries = Object.entries(map || {});
@@ -857,6 +970,33 @@ export default function ConfigPage() {
             </div>
           )}
 
+          {activeTab === 'controller_service' && (
+            <div className="bg-card rounded-lg p-6">
+              <h2 className="text-xl font-bold mb-4">Controller Service (C++)</h2>
+              <p className="text-sm text-text-muted mb-4">
+                TCP port for FIRE_START / FIRE_STOP. Backend sends FIRE_START when entering FIRE state.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {renderField('Port', config.controller_service?.port, (val) => updateField('controller_service', 'port', val), 'number')}
+                {renderField('Fire Duration (ms)', config.controller_service?.fire_duration_ms, (val) => updateField('controller_service', 'fire_duration_ms', val), 'number')}
+                {renderField('Fire Extended (ms)', config.controller_service?.fire_extended_ms, (val) => updateField('controller_service', 'fire_extended_ms', val), 'number')}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'actuator_service' && (
+            <div className="bg-card rounded-lg p-6">
+              <h2 className="text-xl font-bold mb-4">Actuator Service (C++)</h2>
+              <p className="text-sm text-text-muted mb-4">
+                When port is set, backend forwards state transitions here; actuator commands sent by C++.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {renderField('Port', config.actuator_service?.port, (val) => updateField('actuator_service', 'port', val), 'number')}
+                {renderField('Bind Address', config.actuator_service?.bind_address, (val) => updateField('actuator_service', 'bind_address', val))}
+              </div>
+            </div>
+          )}
+
           {activeTab === 'controller' && (
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Controller</h2>
@@ -960,6 +1100,30 @@ export default function ConfigPage() {
                   config.calibration?.enabled,
                   (val) => updateField('calibration', 'enabled', val),
                   'boolean'
+                )}
+                {renderField(
+                  'Use Robust Stack',
+                  config.calibration?.use_robust_stack,
+                  (val) => updateField('calibration', 'use_robust_stack', val),
+                  'boolean',
+                  undefined,
+                  'Python calibration_server sole writer; C++ polynomial disabled'
+                )}
+                {renderField(
+                  'Exclude HP PT',
+                  config.calibration?.exclude_hp_pt,
+                  (val) => updateField('calibration', 'exclude_hp_pt', val),
+                  'boolean',
+                  undefined,
+                  'Skip high-pressure 4-20 mA PTs in robust stack'
+                )}
+                {renderField(
+                  'Prior From Polynomial',
+                  config.calibration?.prior_from_polynomial,
+                  (val) => updateField('calibration', 'prior_from_polynomial', val),
+                  'boolean',
+                  undefined,
+                  'Load polynomial calibration as initial priors'
                 )}
 
                 <div className="border-t border-gray-700 pt-4">

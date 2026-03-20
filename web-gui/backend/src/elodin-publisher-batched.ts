@@ -108,7 +108,7 @@ export class ElodinPublisherBatched {
     }
 
     // Create header and add to batch buffer
-    const header = (this.elodin as any).createHeader(packetType, packetId, payload.length);
+    const header = (this.elodin as any).createHeader(packetType, payload.length, packetId);
     const packet = Buffer.concat([header, payload]);
     this.batchBuffer.push(packet);
   }

@@ -25,6 +25,7 @@ export enum MessageType {
   BOARD_STATUS_UPDATE = 'board_status_update',
   NOTIFICATION = 'notification',
   CONFIG_UPDATED = 'config_updated',
+  COUNTDOWN_TARGET_UPDATE = 'countdown_target_update',
 }
 
 // Sensor types
@@ -132,7 +133,8 @@ export interface CommandPayload {
   | 'controller_frequency'
   | 'pwm_actuator'
   | 'debug_mode'
-  | 'extend_fire';
+  | 'extend_fire'
+  | 'set_countdown_target';
   data: {
     state?: SystemState;
     actuatorId?: ActuatorId;
@@ -143,6 +145,8 @@ export interface CommandPayload {
     dutyCycle?: number; // PWM duty cycle 0-1
     duration?: number; // Duration in ms
     debugMode?: boolean; // Debug mode toggle
+    /** Unix timestamp in milliseconds. null clears/pauses the countdown. */
+    targetTimeMs?: number | null;
   };
 }
 
@@ -157,6 +161,12 @@ export interface ConnectionStatus {
 // Mission start time (T+0 from first packet)
 export interface MissionStartTime {
   missionStartTime: number; // Unix timestamp in milliseconds
+}
+
+// Countdown target time (shared global UI state)
+export interface CountdownTargetUpdate {
+  /** Unix timestamp in milliseconds; null = countdown not set */
+  targetTimeMs: number | null;
 }
 
 // ── Calibration types ─────────────────────────────────────────────────────────
