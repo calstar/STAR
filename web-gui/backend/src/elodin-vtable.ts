@@ -19,12 +19,19 @@ import { ElodinClient, ElodinPacketType } from './elodin-client.js';
  *
  * Postcard encoding: u8(high) + u8(low)
  */
-/**
- * Build the full list of VTableStream subscriptions, optionally filtered to
- * only include high-byte groups in `onlyHighBytes`.
- */
-function buildSubscriptions(onlyHighBytes?: Set<number>): Array<[number, number]> {
-    const all: Array<[number, number]> = [
+export async function registerVTables(client: ElodinClient): Promise<boolean> {
+  if (!client.isConnected()) {
+    console.warn('⚠️ Cannot register VTables - Elodin client not connected');
+    return false;
+  }
+
+  console.log('📡 Trying VTableStream subscriptions...');
+  console.log('   VTableStream has structure: std::tuple<uint8_t, uint8_t> msg_id');
+  console.log('');
+
+  try {
+    // All packet IDs we want to subscribe to
+    const subscriptions: Array<[number, number]> = [
       // PT Raw channels (0x20, 0x01-0x0A) — PT board 1
       [0x20, 0x01], [0x20, 0x02], [0x20, 0x03], [0x20, 0x04], [0x20, 0x05],
       [0x20, 0x06], [0x20, 0x07], [0x20, 0x08], [0x20, 0x09], [0x20, 0x0A],
@@ -67,68 +74,52 @@ function buildSubscriptions(onlyHighBytes?: Set<number>): Array<[number, number]
       [0x50, 0x60], [0x50, 0x61], [0x50, 0x62], [0x50, 0x63], [0x50, 0x64], [0x50, 0x65], [0x50, 0x66],
     ];
 
-    for (let i = 1; i <= 64; i++) all.push([0x10, i]);
-    for (let i = 1; i <= 64; i++) all.push([0x60, i]);
-
-    if (!onlyHighBytes) return all;
-    return all.filter(([high]) => onlyHighBytes.has(high));
-}
-
-/**
- * Send VTableStream subscriptions for the given list to Elodin.
- * Returns the number of successfully sent subscriptions.
- */
-function sendSubscriptions(client: ElodinClient, subscriptions: Array<[number, number]>): number {
-  const vtableStreamMsgId = computeMsgId("VTableStream");
-  let successCount = 0;
-  for (const [high, low] of subscriptions) {
-    const payload = Buffer.alloc(2);
-    payload.writeUInt8(high, 0);
-    payload.writeUInt8(low, 1);
-    if (client.sendRawMessage(vtableStreamMsgId, ElodinPacketType.MSG, payload)) {
-      successCount++;
+    // Subscriptions for board heartbeats [0x10, board_id (1-64)]
+    for (let i = 1; i <= 64; i++) {
+      subscriptions.push([0x10, i]);
     }
-  }
-  return successCount;
-}
 
-export async function registerVTables(client: ElodinClient): Promise<boolean> {
-  if (!client.isConnected()) {
-    console.warn('⚠️ Cannot register VTables - Elodin client not connected');
-    return false;
-  }
+    // Self-test results [0x60, board_id (1-64)]
+    for (let i = 1; i <= 64; i++) {
+      subscriptions.push([0x60, i]);
+    }
 
-  console.log('📡 Sending VTableStream subscriptions (all groups)...');
+    // Try VTableStream
+    const vtableStreamMsgId = computeMsgId("VTableStream");
+    console.log(`   VTableStream message ID: [0x${vtableStreamMsgId[0].toString(16).padStart(2, '0')}, 0x${vtableStreamMsgId[1].toString(16).padStart(2, '0')}]`);
 
-  try {
-    const subscriptions = buildSubscriptions();
-    const successCount = sendSubscriptions(client, subscriptions);
+    let successCount = 0;
+    for (const [high, low] of subscriptions) {
+      // Postcard-encoded VTableStream payload: u8(high) + u8(low)
+      // This matches the struct VTableStream { std::tuple<uint8_t, uint8_t> msg_id; }
+      const payload = Buffer.alloc(2);
+      payload.writeUInt8(high, 0);
+      payload.writeUInt8(low, 1);
+
+      // Send as MSG type (0) with VTableStream message packet_id
+      const success = client.sendRawMessage(
+        vtableStreamMsgId,
+        ElodinPacketType.MSG,
+        payload
+      );
+
+      if (success) {
+        successCount++;
+        // Log first few subscriptions
+        if (successCount <= 5) {
+          console.log(`   ✅ VTableStream subscription sent: [0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}]`);
+        }
+      } else {
+        console.error(`   ❌ Failed to send VTableStream for [0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}]`);
+      }
+    }
+
     console.log(`   ✅ VTableStream: Sent ${successCount}/${subscriptions.length} subscriptions`);
+    console.log('   Waiting for TABLE packets from Elodin DB...');
+
     return successCount > 0;
   } catch (error) {
     console.error('❌ Error during VTableStream subscription:', error);
-    return false;
-  }
-}
-
-/**
- * Re-subscribe to only the specified high-byte groups to avoid duplicate
- * subscriptions for groups that are already streaming.
- */
-export async function registerVTablesForGroups(client: ElodinClient, missingHighBytes: Set<number>): Promise<boolean> {
-  if (!client.isConnected() || missingHighBytes.size === 0) return false;
-
-  const subscriptions = buildSubscriptions(missingHighBytes);
-  if (subscriptions.length === 0) return false;
-
-  try {
-    const missing = [...missingHighBytes].map(g => `0x${g.toString(16)}`).join(', ');
-    console.log(`📡 Re-subscribing to missing groups [${missing}] (${subscriptions.length} subscriptions)...`);
-    const successCount = sendSubscriptions(client, subscriptions);
-    console.log(`   ✅ Re-subscribe: ${successCount}/${subscriptions.length}`);
-    return successCount > 0;
-  } catch (error) {
-    console.error('❌ Error during group re-subscription:', error);
     return false;
   }
 }

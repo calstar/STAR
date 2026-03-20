@@ -12,7 +12,7 @@
 import * as net from 'net';
 import { WebSocketServer } from 'ws';
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
-import { registerVTables, registerVTablesForGroups } from './elodin-vtable.js';
+import { registerVTables } from './elodin-vtable.js';
 import { registerControllerVTables, registerActuatorCommandedVTables } from './elodin-vtable-controller.js';
 import { loadActuatorChannelToEntityMap } from './sensor-config.js';
 
@@ -84,10 +84,9 @@ function main(): void {
   // Groups: 0x10=heartbeat, 0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC, 0x30=ACT, 0x31=ACT_STATE, 0x40=CTRL_ACT, 0x41=CTRL_DIAG, 0x42=CTRL_MEAS
   const seenHighBytes = new Set<number>();
 
-  // Re-send VTableStream subscriptions ONLY for missing groups. Elodin DB
-  // doesn't deduplicate subscriptions, so re-subscribing to groups that already
-  // stream causes duplicate packets (e.g. heartbeats at Nx real rate).
-  const EXPECTED_GROUPS = [0x10, 0x20, 0x21, 0x22, 0x23, 0x24, 0x30, 0x31, 0x40, 0x41, 0x42];
+  // Re-send VTableStream subscriptions. Elodin DB rejects subscriptions for
+  // VTables that aren't registered yet, so retry until all expected groups flow.
+  // daq_bridge VTables register in ~2s; controller VTables register a few seconds later.
   function scheduleResubscribe(attempt: number): void {
     if (attempt > MAX_RESUBSCRIBE_ATTEMPTS) {
       console.warn(`[Relay] Reached max resubscribe attempts (${MAX_RESUBSCRIBE_ATTEMPTS}); keeping current subscriptions.`);
@@ -97,11 +96,12 @@ function main(): void {
     resubscribeTimer = setTimeout(() => {
       resubscribeTimer = null;
       if (!elodin.isConnected()) return;
-      const missingGroups = EXPECTED_GROUPS.filter(g => !seenHighBytes.has(g));
+      const missingGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31, 0x40, 0x41, 0x42]
+        .filter(g => !seenHighBytes.has(g));
       if (missingGroups.length > 0) {
         const missing = missingGroups.map(g => `0x${g.toString(16)}`).join(', ');
-        console.log(`[Relay] Missing groups [${missing}] — retrying ONLY those (attempt #${attempt})...`);
-        registerVTablesForGroups(elodin, new Set(missingGroups)).then(() => {
+        console.log(`[Relay] Missing groups [${missing}] — retrying subscriptions (attempt #${attempt})...`);
+        registerVTables(elodin).then(() => {
           scheduleResubscribe(attempt + 1);
         }).catch((e) => {
           console.error('[Relay] Subscription retry failed:', e);
@@ -121,8 +121,10 @@ function main(): void {
           console.log(`[Relay] Heartbeat #${heartbeatPacketCount} board_id=${header.packetId[1]} payloadLen=${payload.length}`);
         }
       }
+      // Cancel retry once all expected groups are delivering data
       if (resubscribeTimer) {
-        if (EXPECTED_GROUPS.every(g => seenHighBytes.has(g))) {
+        const allGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31, 0x40, 0x41, 0x42];
+        if (allGroups.every(g => seenHighBytes.has(g))) {
           clearTimeout(resubscribeTimer);
           resubscribeTimer = null;
         }
