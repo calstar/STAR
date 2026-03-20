@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect, Suspense } from 'react'
+import { useState, useCallback, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { getApiBaseUrl } from '@/lib/websocket'
 
@@ -26,6 +26,7 @@ function FlashPageContent() {
   const searchParams = useSearchParams()
   const [ip, setIp] = useState('192.168.2.5')
   const [port, setPort] = useState(DEFAULT_PORT)
+  const [boardId, setBoardId] = useState(0)
   const [sourceMode, setSourceMode] = useState<SourceMode>('project')
   const [projects, setProjects] = useState<OtaProject[]>([])
   const [selectedProject, setSelectedProject] = useState<string>('')
@@ -34,18 +35,20 @@ function FlashPageContent() {
   const [flashAlling, setFlashAlling] = useState(false)
   const [progress, setProgress] = useState<number | null>(null)
   const [result, setResult] = useState<{ success: boolean; message: string; buildOutput?: string } | null>(null)
-  const [flashAllResult, setFlashAllResult] = useState<{
-    success: boolean
-    total: number
-    flashed: number
-    failed: number
-    results: Array<{ key: string; type: string; ip: string; boardId: number; success: boolean; error?: string }>
-    progressLog?: string[]
+  const [flashAllLog, setFlashAllLog] = useState<string[]>([])
+  const [flashAllBoardResults, setFlashAllBoardResults] = useState<
+    Array<{ key: string; type: string; ip: string; boardId: number; success: boolean; error?: string }>
+  >([])
+  const [flashAllDone, setFlashAllDone] = useState<{
+    success: boolean; total: number; flashed: number; failed: number
   } | null>(null)
+  const flashAllLogRef = useRef<HTMLPreElement>(null)
 
   useEffect(() => {
     const ipParam = searchParams.get('ip')
     if (ipParam) setIp(ipParam)
+    const boardIdParam = searchParams.get('boardId')
+    if (boardIdParam) setBoardId(parseInt(boardIdParam, 10) || 0)
   }, [searchParams])
 
   useEffect(() => {
@@ -83,6 +86,7 @@ function FlashPageContent() {
       }
       if (sourceMode === 'project') {
         body.projectPath = selectedProject
+        if (boardId > 0) body.boardId = boardId
       } else if (file) {
         const buffer = await file.arrayBuffer()
         body.firmwareBase64 = arrayBufferToBase64(buffer)
@@ -119,21 +123,52 @@ function FlashPageContent() {
 
   const handleFlashAll = useCallback(async () => {
     setFlashAlling(true)
-    setFlashAllResult(null)
+    setFlashAllLog([])
+    setFlashAllBoardResults([])
+    setFlashAllDone(null)
     setResult(null)
     try {
       const res = await fetch(`${getApiBaseUrl()}/api/ota-flash/flash-all`, { method: 'POST' })
-      const data = await res.json()
-      setFlashAllResult(data)
+      if (!res.body) {
+        setFlashAllLog(['Error: no response stream'])
+        return
+      }
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        const parts = buffer.split('\n\n')
+        buffer = parts.pop() || ''
+
+        for (const part of parts) {
+          const lines = part.split('\n')
+          let event = ''
+          let data = ''
+          for (const line of lines) {
+            if (line.startsWith('event: ')) event = line.slice(7)
+            else if (line.startsWith('data: ')) data = line.slice(6)
+          }
+          if (!event || !data) continue
+          try {
+            const parsed = JSON.parse(data)
+            if (event === 'progress') {
+              setFlashAllLog((prev) => [...prev, parsed.message])
+              setTimeout(() => flashAllLogRef.current?.scrollTo(0, flashAllLogRef.current.scrollHeight), 0)
+            } else if (event === 'board_result') {
+              setFlashAllBoardResults((prev) => [...prev, parsed])
+            } else if (event === 'done') {
+              setFlashAllDone({ success: parsed.success, total: parsed.total, flashed: parsed.flashed, failed: parsed.failed })
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
     } catch (err: unknown) {
-      setFlashAllResult({
-        success: false,
-        total: 0,
-        flashed: 0,
-        failed: 1,
-        results: [],
-        progressLog: [err instanceof Error ? err.message : 'Request failed'],
-      })
+      setFlashAllLog((prev) => [...prev, err instanceof Error ? err.message : 'Request failed'])
     } finally {
       setFlashAlling(false)
     }
@@ -161,32 +196,43 @@ function FlashPageContent() {
           >
             {flashAlling ? 'Building & flashing all…' : 'Flash all boards'}
           </button>
-          {flashAllResult && (
-            <div className="mt-4 space-y-2">
-              <div
-                className={`p-4 rounded-lg font-medium ${flashAllResult.success
-                  ? 'bg-emerald-950/50 text-emerald-200 border border-emerald-800'
-                  : 'bg-red-950/50 text-red-200 border border-red-800'
-                  }`}
-              >
-                {flashAllResult.flashed}/{flashAllResult.total} flashed
-                {flashAllResult.failed > 0 && `, ${flashAllResult.failed} failed`}
-              </div>
-              {flashAllResult.progressLog && flashAllResult.progressLog.length > 0 && (
-                <pre className="p-3 rounded-lg bg-gray-900 text-xs text-gray-400 overflow-auto max-h-32 font-mono">
-                  {flashAllResult.progressLog.join('\n')}
+          {(flashAlling || flashAllLog.length > 0) && (
+            <div className="mt-4 space-y-3">
+              {flashAllLog.length > 0 && (
+                <pre
+                  ref={flashAllLogRef}
+                  className="p-3 rounded-lg bg-gray-900 text-xs text-gray-300 overflow-auto max-h-48 font-mono"
+                >
+                  {flashAllLog.join('\n')}
                 </pre>
               )}
-              {flashAllResult.results.some((r) => !r.success) && (
-                <ul className="text-sm text-red-300 space-y-1">
-                  {flashAllResult.results
-                    .filter((r) => !r.success)
-                    .map((r) => (
-                      <li key={r.key}>
-                        {r.type} {r.ip} (ID {r.boardId}): {r.error}
-                      </li>
-                    ))}
-                </ul>
+              {flashAllBoardResults.length > 0 && (
+                <div className="space-y-1.5">
+                  {flashAllBoardResults.map((r) => (
+                    <div
+                      key={r.key}
+                      className={`flex items-center justify-between px-3 py-2 rounded-lg text-sm font-mono ${
+                        r.success
+                          ? 'bg-emerald-950/40 text-emerald-200 border border-emerald-900/50'
+                          : 'bg-red-950/40 text-red-200 border border-red-900/50'
+                      }`}
+                    >
+                      <span>{r.type} · {r.ip} · ID {r.boardId}</span>
+                      <span className="font-bold">{r.success ? 'OK' : r.error || 'FAILED'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {flashAllDone && (
+                <div
+                  className={`p-4 rounded-lg font-medium ${flashAllDone.success
+                    ? 'bg-emerald-950/50 text-emerald-200 border border-emerald-800'
+                    : 'bg-red-950/50 text-red-200 border border-red-800'
+                  }`}
+                >
+                  {flashAllDone.flashed}/{flashAllDone.total} flashed
+                  {flashAllDone.failed > 0 && `, ${flashAllDone.failed} failed`}
+                </div>
               )}
             </div>
           )}
@@ -218,6 +264,22 @@ function FlashPageContent() {
               disabled={flashing}
             />
             <p className="text-xs text-text-muted mt-1">Default 3232 (DiabloAvionics Ethernet OTA)</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-text-muted uppercase tracking-wider mb-2">Board ID</label>
+            <input
+              type="number"
+              value={boardId}
+              onChange={(e) => setBoardId(parseInt(e.target.value, 10) || 0)}
+              min={0}
+              max={254}
+              className="w-full px-4 py-2 rounded-lg bg-gray-900 border border-gray-700 text-text font-mono focus:border-primary focus:ring-1 focus:ring-primary"
+              disabled={flashing}
+            />
+            <p className="text-xs text-text-muted mt-1">
+              Compiled into firmware as TEMP_HARDCODE_BOARD_ID. 0 = no override (use board&apos;s SPIFFS/default ID).
+            </p>
           </div>
 
           <div>

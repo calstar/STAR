@@ -202,7 +202,8 @@ const OTA_PORT = 3232;
  */
 export async function flashAllBoards(
   getBoards: () => FlashAllBoard[],
-  onProgress?: (msg: string) => void
+  onProgress?: (msg: string) => void,
+  onBoardResult?: (result: FlashAllResult['results'][number]) => void,
 ): Promise<FlashAllResult> {
   const { uploadFirmware } = await import('./ota-flash.js');
   const boards = getBoards();
@@ -214,7 +215,9 @@ export async function flashAllBoards(
     const b = boards[i];
     const projectPath = BOARD_TYPE_TO_PROJECT[b.type];
     if (!projectPath) {
-      results.push({ ...b, success: false, error: `No firmware project for type ${b.type}` });
+      const r = { ...b, success: false as const, error: `No firmware project for type ${b.type}` };
+      results.push(r);
+      onBoardResult?.(r);
       failed++;
       continue;
     }
@@ -222,7 +225,9 @@ export async function flashAllBoards(
     onProgress?.(`[${i + 1}/${boards.length}] Building ${b.type} (ID ${b.boardId}) for ${b.ip}...`);
     const buildResult = await buildProject(projectPath, `-DTEMP_HARDCODE_BOARD_ID=${b.boardId}`);
     if (!buildResult.success || !buildResult.firmwareBuffer) {
-      results.push({ ...b, success: false, error: buildResult.error || 'Build failed' });
+      const r = { ...b, success: false as const, error: buildResult.error || 'Build failed' };
+      results.push(r);
+      onBoardResult?.(r);
       failed++;
       continue;
     }
@@ -230,10 +235,14 @@ export async function flashAllBoards(
     onProgress?.(`[${i + 1}/${boards.length}] Flashing ${b.ip}...`);
     const uploadResult = await uploadFirmware(buildResult.firmwareBuffer, b.ip, OTA_PORT);
     if (uploadResult.success) {
-      results.push({ ...b, success: true });
+      const r = { ...b, success: true as const };
+      results.push(r);
+      onBoardResult?.(r);
       flashed++;
     } else {
-      results.push({ ...b, success: false, error: uploadResult.error });
+      const r = { ...b, success: false as const, error: uploadResult.error };
+      results.push(r);
+      onBoardResult?.(r);
       failed++;
     }
   }
