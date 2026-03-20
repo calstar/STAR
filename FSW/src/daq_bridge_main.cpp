@@ -408,6 +408,8 @@ static daq_comms::protocol::DiabloBoardPacketParser::BoardType config_board_type
             return ParserBoardType::LOAD_CELL;
         case BoardType::ACTUATOR:
             return ParserBoardType::ACTUATOR;
+        case BoardType::ENCODER:
+            return ParserBoardType::ENCODER;
         default:
             return ParserBoardType::UNKNOWN;
     }
@@ -579,6 +581,9 @@ int main(int argc, char* argv[]) {
         else if (cfg.type == BoardType::LC)
             synthetic.heartbeat.board_type =
                 daq_comms::protocol::DiabloBoardPacketParser::BoardType::LOAD_CELL;
+        else if (cfg.type == BoardType::ENCODER)
+            synthetic.heartbeat.board_type =
+                daq_comms::protocol::DiabloBoardPacketParser::BoardType::ENCODER;
         std::string mac = "00:00:00:00:" + std::to_string(cfg.board_id) + ":00";
         fsw_config->process_board_heartbeat(synthetic, ip, mac);
         proactive_count++;

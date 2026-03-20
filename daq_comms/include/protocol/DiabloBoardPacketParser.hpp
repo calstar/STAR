@@ -44,7 +44,8 @@ public:
         LOAD_CELL = 2,
         RTD = 3,
         THERMOCOUPLE = 4,
-        ACTUATOR = 5
+        ACTUATOR = 5,
+        ENCODER = 6
     };
 
     // Board states

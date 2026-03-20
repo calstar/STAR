@@ -64,7 +64,7 @@ function formatTime(ts: number): string {
 
 /** True if this notification is board-related (heartbeat, connected, lost, stuck, unrecognized). */
 function isBoardNotification(n: NotificationEntry): boolean {
-  if (n.key && (n.key.startsWith('board_') || n.key.startsWith('setup_stuck_') || n.key.startsWith('unrecognized_'))) return true;
+  if (n.key && (n.key.startsWith('board_') || n.key.startsWith('setup_stuck_') || n.key.startsWith('unrecognized_') || n.key.startsWith('self_test_'))) return true;
   return /Board \d+.*(connected|lost|stuck)|Unrecognized board/i.test(n.message);
 }
 
