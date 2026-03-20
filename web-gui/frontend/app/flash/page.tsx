@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { getApiBaseUrl } from '@/lib/websocket'
 
@@ -22,7 +22,7 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary)
 }
 
-export default function FlashPage() {
+function FlashPageContent() {
   const searchParams = useSearchParams()
   const [ip, setIp] = useState('192.168.2.5')
   const [port, setPort] = useState(DEFAULT_PORT)
@@ -164,11 +164,10 @@ export default function FlashPage() {
           {flashAllResult && (
             <div className="mt-4 space-y-2">
               <div
-                className={`p-4 rounded-lg font-medium ${
-                  flashAllResult.success
-                    ? 'bg-emerald-950/50 text-emerald-200 border border-emerald-800'
-                    : 'bg-red-950/50 text-red-200 border border-red-800'
-                }`}
+                className={`p-4 rounded-lg font-medium ${flashAllResult.success
+                  ? 'bg-emerald-950/50 text-emerald-200 border border-emerald-800'
+                  : 'bg-red-950/50 text-red-200 border border-red-800'
+                  }`}
               >
                 {flashAllResult.flashed}/{flashAllResult.total} flashed
                 {flashAllResult.failed > 0 && `, ${flashAllResult.failed} failed`}
@@ -305,9 +304,8 @@ export default function FlashPage() {
           {result && (
             <div className="space-y-2">
               <div
-                className={`p-4 rounded-lg font-medium ${
-                  result.success ? 'bg-emerald-950/50 text-emerald-200 border border-emerald-800' : 'bg-red-950/50 text-red-200 border border-red-800'
-                }`}
+                className={`p-4 rounded-lg font-medium ${result.success ? 'bg-emerald-950/50 text-emerald-200 border border-emerald-800' : 'bg-red-950/50 text-red-200 border border-red-800'
+                  }`}
               >
                 {result.message}
               </div>
@@ -326,5 +324,13 @@ export default function FlashPage() {
         </p>
       </div>
     </main>
+  )
+}
+
+export default function FlashPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-white">Loading...</div>}>
+      <FlashPageContent />
+    </Suspense>
   )
 }

@@ -1,0 +1,33 @@
+name: Web GUI Tests
+
+on:
+  push:
+    branches: [ main, master, "cpp-stack-and-cleanup", "web-gui-tests" ]
+  pull_request:
+    branches: [ main, master, "cpp-stack-and-cleanup" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Use Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        cache-dependency-path: web-gui/frontend/package-lock.json
+        
+    - name: Install Frontend Dependencies
+      working-directory: web-gui/frontend
+      run: npm ci || npm install
+      
+    - name: Run Tests
+      working-directory: web-gui/frontend
+      run: npm run test
+      
+    - name: Verify Build
+      working-directory: web-gui/frontend
+      run: npm run test:build
