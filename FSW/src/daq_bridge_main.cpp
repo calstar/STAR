@@ -57,7 +57,7 @@ void signal_handler(int /* sig */) {
 }
 
 // Board type enum (matches DiabloAvionics)
-enum class BoardType { PT, LC, TC, RTD, ACTUATOR, UNKNOWN };
+enum class BoardType { PT, LC, TC, RTD, ACTUATOR, ENCODER, UNKNOWN };
 
 struct BoardConfig {
     BoardType type;
@@ -111,6 +111,8 @@ static void load_board_map_from_config(const std::string& config_path,
             bt = BoardType::RTD;
         else if (board_type_str == "ACTUATOR")
             bt = BoardType::ACTUATOR;
+        else if (board_type_str == "ENCODER")
+            bt = BoardType::ENCODER;
         if (bt != BoardType::UNKNOWN) {
             BoardConfig cfg{
                 bt, board_ip, board_num_sensors, board_enabled, board_id, board_channel_offset};
@@ -377,6 +379,8 @@ static BoardType discovery_board_type_to_enum(uint8_t t) {
             return BoardType::LC;
         case 5:
             return BoardType::ACTUATOR;
+        case 6:
+            return BoardType::ENCODER;
         default:
             return BoardType::UNKNOWN;
     }
@@ -438,6 +442,9 @@ int main(int argc, char* argv[]) {
                 break;
             case BoardType::ACTUATOR:
                 type_str = "ACTUATOR";
+                break;
+            case BoardType::ENCODER:
+                type_str = "ENCODER";
                 break;
             default:
                 break;
@@ -891,6 +898,22 @@ int main(int argc, char* argv[]) {
                 }
                 break;
             }
+            case BoardType::ENCODER: {
+                for (const auto& sample : batch.value().pt_samples) {
+                    uint8_t ch = sample.channel_id;
+                    std::array<uint8_t, 2> pkt_id = {0x24, ch};
+                    comms::messages::sensor::RawPTMessage msg;
+                    msg.setField<0>(receive_timestamp_ns);
+                    msg.setField<1>(ch);
+                    msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
+                    msg.setField<3>(sample.raw_adc_counts);
+                    msg.setField<4>(sample.sample_timestamp_ms);
+                    msg.setField<5>(sample.status_flags);
+                    if (publishing && is_publish_allowed(pkt_id[0], pkt_id[1], publish_ranges))
+                        elodin_client.publish(pkt_id, msg);
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -941,6 +964,9 @@ int main(int argc, char* argv[]) {
                             break;
                         case BoardType::ACTUATOR:
                             tag = "ACT";
+                            break;
+                        case BoardType::ENCODER:
+                            tag = "ENC";
                             break;
                         default:
                             break;

@@ -26,7 +26,7 @@ export default function BoardsPage() {
   const boardsMap = useSensorStore((s) => s.boards as Record<number, BoardStatus>);
   const ws = getWebSocketClient();
 
-  const TYPE_ORDER = ['ACTUATOR', 'PT', 'LC', 'TC', 'RTD'];
+  const TYPE_ORDER = ['ACTUATOR', 'PT', 'LC', 'TC', 'RTD', 'ENCODER'];
 
   const boardsByType = useMemo(() => {
     const map = boardsMap ?? {};
