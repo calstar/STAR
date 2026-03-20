@@ -6,8 +6,8 @@ import 'uplot/dist/uPlot.min.css';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate } from '@/lib/types';
 
-const RAW_TO_DEG = 360.0 / 4096.0;
-const rawToDeg = (raw: number) => (raw & 0x0FFF) * RAW_TO_DEG;
+export const RAW_TO_DEG = 360.0 / 4096.0;
+export const rawToDeg = (raw: number) => (raw & 0x0FFF) * RAW_TO_DEG;
 
 const TRIGGER_THRESHOLD_DEG = 45;
 const BUFFER_DURATION_MS = 2000;
@@ -26,7 +26,7 @@ interface Sample {
   enc2Deg: number;
 }
 
-interface TransitionResult {
+export interface TransitionResult {
   timeMsRel: number;
   prePlateau: number;
   postPlateau: number;
@@ -39,7 +39,7 @@ interface OverlayData {
   t0Offset: number;
 }
 
-function detectTransition(
+export function detectTransition(
   times: number[],
   values: number[],
 ): TransitionResult | null {
