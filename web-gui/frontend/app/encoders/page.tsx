@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useMemo } from 'react';
-import DerivedTimeSeriesPlot from '@/components/plots/DerivedTimeSeriesPlot';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import DerivedTimeSeriesPlot, { type DerivedTimeSeriesPlotHandle } from '@/components/plots/DerivedTimeSeriesPlot';
 import OscopeTriggerPlot from '@/components/plots/OscopeTriggerPlot';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
@@ -20,6 +20,8 @@ export default function EncodersPage() {
   const updateBoards = useSensorStore((s) => s.updateBoards);
   const boardsMap = useSensorStore((s) => s.boards as Record<number, BoardStatus>);
   const ws = getWebSocketClient();
+  const [isPaused, setIsPaused] = useState(false);
+  const plotRef = useRef<DerivedTimeSeriesPlotHandle>(null);
 
   const enc1Raw = useSensorValue('ENC.CH1', 'raw_angle');
   const enc2Raw = useSensorValue('ENC.CH2', 'raw_angle');
@@ -76,6 +78,40 @@ export default function EncodersPage() {
           </div>
         )}
 
+        {/* Play / Pause / Reset zoom */}
+        <div className="flex items-center gap-1 rounded border border-gray-700 bg-gray-900 px-2 py-1">
+          <button
+            type="button"
+            onClick={() => setIsPaused(false)}
+            className={`rounded px-3 py-1 text-xs font-bold uppercase tracking-wider transition-colors ${
+              !isPaused ? 'bg-violet-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+            }`}
+            title="Resume live updates"
+          >
+            Play
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsPaused(true)}
+            className={`rounded px-3 py-1 text-xs font-bold uppercase tracking-wider transition-colors ${
+              isPaused ? 'bg-amber-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+            }`}
+            title="Pause to zoom"
+          >
+            Pause
+          </button>
+          {isPaused && (
+            <button
+              type="button"
+              onClick={() => plotRef.current?.resetZoom()}
+              className="rounded px-3 py-1 text-xs font-bold uppercase tracking-wider text-gray-400 transition-colors hover:bg-gray-700 hover:text-gray-200"
+              title="Reset zoom to full range"
+            >
+              Reset zoom
+            </button>
+          )}
+        </div>
+
         <div className="ml-auto flex items-center gap-8">
           <div className="text-center">
             <div className="text-xs text-gray-500 uppercase tracking-wider mb-0.5">Encoder 1</div>
@@ -95,6 +131,7 @@ export default function EncodersPage() {
       {/* Live plot */}
       <div className="flex-[2] min-h-[350px]">
         <DerivedTimeSeriesPlot
+          ref={plotRef}
           title="Encoder Angles (Live)"
           entities={ENC_ENTITIES}
           component="raw_angle"
@@ -105,6 +142,10 @@ export default function EncodersPage() {
           windowSeconds={30}
           yRange={[0, 360]}
           yTicks={[0, 90, 180, 270, 360]}
+          enablePlayPause
+          isPaused={isPaused}
+          onPauseChange={setIsPaused}
+          showControls={false}
         />
       </div>
 

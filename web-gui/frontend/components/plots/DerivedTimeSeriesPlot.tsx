@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { getDataCache } from '@/lib/data-cache';
@@ -12,6 +12,11 @@ const DEFAULT_WINDOW_SECONDS = 60;
 const SAMPLE_HZ = 10;  // reduces lag
 
 export type TransformFn = (rawValue: number) => number | null;
+
+export interface DerivedTimeSeriesPlotHandle {
+  resetZoom: () => void;
+  ready: boolean;
+}
 
 interface DerivedTimeSeriesPlotProps {
   title: string;
@@ -26,6 +31,14 @@ interface DerivedTimeSeriesPlotProps {
   className?: string;
   yRange?: [number, number];
   yTicks?: number[];
+  /** When true, enable x-axis drag-to-zoom when paused. */
+  enablePlayPause?: boolean;
+  /** Controlled pause state (use with onPauseChange). If omitted, uses internal state. */
+  isPaused?: boolean;
+  /** Called when pause state should change. Use with isPaused for controlled mode. */
+  onPauseChange?: (paused: boolean) => void;
+  /** When false, do not render Play/Pause/Reset toolbar (render in parent instead). Default true. */
+  showControls?: boolean;
 }
 
 function fmtVal(v: number): string {
@@ -49,7 +62,7 @@ function smartYRange(dataMin: number, dataMax: number): [number, number] {
   return [dataMin - pad, dataMax + pad];
 }
 
-export default function DerivedTimeSeriesPlot({
+const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTimeSeriesPlotProps>(function DerivedTimeSeriesPlot({
   title,
   entities,
   component,
@@ -62,7 +75,11 @@ export default function DerivedTimeSeriesPlot({
   className = '',
   yRange,
   yTicks,
-}: DerivedTimeSeriesPlotProps) {
+  enablePlayPause = false,
+  isPaused: controlledPaused,
+  onPauseChange,
+  showControls = true,
+}, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<HTMLDivElement>(null);
   const uplotRef = useRef<uPlot | null>(null);
@@ -76,6 +93,26 @@ export default function DerivedTimeSeriesPlot({
     values: entities.map(() => []),
   });
   const [ready, setReady] = useState(false);
+  const [internalPaused, setInternalPaused] = useState(false);
+  const isPaused = controlledPaused ?? internalPaused;
+  const setIsPaused = onPauseChange ?? setInternalPaused;
+  const isPausedRef = useRef(false);
+  isPausedRef.current = isPaused;
+
+  useImperativeHandle(ref, () => ({
+    resetZoom() {
+      const u = uplotRef.current;
+      const d = dataRef.current;
+      if (!u || !d.time.length) return;
+      const valid = d.time.filter((t) => Number.isFinite(t));
+      if (valid.length < 2) return;
+      const mn = Math.min(...valid);
+      const mx = Math.max(...valid);
+      const span = mx - mn || 1;
+      u.setScale('x', { min: mn - span * 0.02, max: mx + span * 0.02 });
+    },
+    ready,
+  }), [ready]);
 
   const componentMap = entities.map(() => component);
   const MAX_POINTS = Math.min(windowSeconds * SAMPLE_HZ, 2000);
@@ -110,6 +147,7 @@ export default function DerivedTimeSeriesPlot({
       return { w, h };
     };
 
+    const dragZoomActive = enablePlayPause && isPausedRef.current;
     const buildOpts = (w: number, h: number): uPlot.Options => ({
       width: w,
       height: h,
@@ -184,7 +222,14 @@ export default function DerivedTimeSeriesPlot({
           points: { show: false },
         })),
       ],
-      cursor: { show: true, x: true, y: false },
+      cursor: {
+        show: true,
+        x: true,
+        y: false,
+        drag: dragZoomActive
+          ? { x: true, y: false, setScale: true, uni: 10 }
+          : { x: false, y: false, setScale: false },
+      },
       legend: { show: false },
       padding: [8, 12, 0, 0] as [number, number, number, number],
     });
@@ -278,13 +323,14 @@ export default function DerivedTimeSeriesPlot({
     const renderLoop = () => {
       if (!uplotRef.current) return;
 
+      const paused = enablePlayPause && isPausedRef.current;
       const now = (Date.now() - startTimeRef.current) / 1000;
       const cutoff = now - windowSeconds;
       const d = dataRef.current;
       const currentTime = Date.now();
 
       let dataChanged = false;
-      if (currentTime - lastDataUpdate >= DATA_UPDATE_INTERVAL) {
+      if (!paused && currentTime - lastDataUpdate >= DATA_UPDATE_INTERVAL) {
         d.time.push(now);
         entities.forEach((_, i) => {
           const val = receivedUpdateThisIntervalRef.current[i] ? latestValuesRef.current[i] : NaN;
@@ -307,10 +353,12 @@ export default function DerivedTimeSeriesPlot({
         dataChanged = true;
       }
 
-      uplotRef.current.setScale('x', {
-        min: Math.max(0, now - windowSeconds),
-        max: now,
-      });
+      if (!paused) {
+        uplotRef.current.setScale('x', {
+          min: Math.max(0, now - windowSeconds),
+          max: now,
+        });
+      }
 
       if (dataChanged) {
         const timeData = d.time.length > 0 ? d.time : [now];
@@ -371,13 +419,64 @@ export default function DerivedTimeSeriesPlot({
       uplotRef.current = null;
       setReady(false);
     };
-  }, [entities.join(','), component, windowSeconds, yLabel, colors.join(','), yRange?.join(','), yTicks?.join(',')]);
+  }, [entities.join(','), component, windowSeconds, yLabel, colors.join(','), yRange?.join(','), yTicks?.join(','), enablePlayPause, isPaused]);
 
   return (
     <div
       className={`w-full flex flex-col min-h-0 min-w-0 ${className}`}
       style={height ? { height: height + 32 } : { flex: '1 1 0%' }}
     >
+      {enablePlayPause && showControls && (
+        <div className="flex items-center gap-3 mb-2 flex-shrink-0">
+          {title && (
+            <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wider">{title}</h3>
+          )}
+          <div className="flex items-center gap-1 rounded-md border border-gray-700 bg-gray-900 px-2 py-1">
+            <button
+              type="button"
+              onClick={() => setIsPaused(false)}
+              className={`rounded px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors ${
+                !isPaused ? 'bg-violet-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+              }`}
+              title="Resume live updates"
+              disabled={!ready}
+            >
+              Play
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsPaused(true)}
+              className={`rounded px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors ${
+                isPaused ? 'bg-amber-600 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+              }`}
+              title="Pause to zoom"
+              disabled={!ready}
+            >
+              Pause
+            </button>
+            {isPaused && (
+              <button
+                type="button"
+                onClick={() => {
+                  const u = uplotRef.current;
+                  const d = dataRef.current;
+                  if (!u || !d.time.length) return;
+                  const valid = d.time.filter((t) => Number.isFinite(t));
+                  if (valid.length < 2) return;
+                  const mn = Math.min(...valid);
+                  const mx = Math.max(...valid);
+                  const span = mx - mn || 1;
+                  u.setScale('x', { min: mn - span * 0.02, max: mx + span * 0.02 });
+                }}
+                className="rounded px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-gray-400 transition-colors hover:bg-gray-700 hover:text-gray-200"
+                title="Reset zoom to full range"
+              >
+                Reset zoom
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       <div
         ref={containerRef}
         className="relative flex-1 min-h-[200px] min-w-0"
@@ -392,4 +491,6 @@ export default function DerivedTimeSeriesPlot({
       </div>
     </div>
   );
-}
+});
+
+export default DerivedTimeSeriesPlot;
