@@ -26,7 +26,6 @@ import SolenoidCharacterizationPage from '@/app/plots/solenoid-characterization/
 import EncodersPage from '@/app/encoders/page';
 import LivestreamPage from '@/app/livestream/page';
 import SelfTestsPage from '@/app/self-tests/page';
-import EncodersPage from '@/app/encoders/page';
 
 const viewComponents: Record<string, React.ComponentType> = {
   fuel: FuelGraphsPage,
