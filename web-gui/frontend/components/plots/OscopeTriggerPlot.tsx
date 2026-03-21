@@ -159,23 +159,25 @@ export default function OscopeTriggerPlot() {
 
       if (triggerStateRef.current === 'TRIGGERED') return;
 
-      const nowMs = Date.now();
+      // Use the board's sample timestamp (millis()) for accurate inter-sample timing
+      const boardMs = update.timestamp;
       const enc1 = latestEnc1.current;
       const enc2 = latestEnc2.current;
       if (isNaN(enc1) || isNaN(enc2)) return;
 
-      const sample: Sample = { timeMs: nowMs, enc1Deg: enc1, enc2Deg: enc2 };
+      const sample: Sample = { timeMs: boardMs, enc1Deg: enc1, enc2Deg: enc2 };
       const buf = circularBuffer.current;
       buf.push(sample);
 
-      const cutoff = nowMs - BUFFER_DURATION_MS;
+      // Trim buffer using board timestamps
+      const cutoff = boardMs - BUFFER_DURATION_MS;
       while (buf.length > 0 && buf[0].timeMs < cutoff) buf.shift();
 
       if (triggerStateRef.current !== 'ARMED') return;
 
-      // Collecting post-trigger data
+      // Collecting post-trigger data (use board time for consistent timing)
       if (triggerTimeMs.current !== null) {
-        if (nowMs - triggerTimeMs.current >= POST_TRIGGER_COLLECT_MS) {
+        if (boardMs - triggerTimeMs.current >= POST_TRIGGER_COLLECT_MS) {
           const tTrig = triggerTimeMs.current;
           const windowStart = tTrig - CAPTURE_HALF_MS;
           const windowEnd = tTrig + CAPTURE_HALF_MS;
@@ -206,7 +208,7 @@ export default function OscopeTriggerPlot() {
       const d2 = Math.abs(enc2 - b2);
 
       if (d1 > TRIGGER_THRESHOLD_DEG || d2 > TRIGGER_THRESHOLD_DEG) {
-        triggerTimeMs.current = nowMs;
+        triggerTimeMs.current = boardMs;
       }
     });
 
@@ -379,14 +381,14 @@ export default function OscopeTriggerPlot() {
         {
           label: 'Encoder 1',
           stroke: ENC_COLORS[0],
-          width: 2,
-          points: { show: true, size: 6, fill: ENC_COLORS[0] },
+          width: 0,
+          points: { show: true, size: 8, fill: ENC_COLORS[0], stroke: ENC_COLORS[0] },
         },
         {
           label: 'Encoder 2',
           stroke: ENC_COLORS[1],
-          width: 2,
-          points: { show: true, size: 6, fill: ENC_COLORS[1] },
+          width: 0,
+          points: { show: true, size: 8, fill: ENC_COLORS[1], stroke: ENC_COLORS[1] },
         },
       ],
       hooks: {
