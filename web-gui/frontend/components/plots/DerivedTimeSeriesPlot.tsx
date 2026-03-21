@@ -97,6 +97,7 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
   const isPaused = controlledPaused ?? internalPaused;
   const setIsPaused = onPauseChange ?? setInternalPaused;
   const isPausedRef = useRef(false);
+  const wasPausedRef = useRef(false);
   isPausedRef.current = isPaused;
 
   useImperativeHandle(ref, () => ({
@@ -113,6 +114,16 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
     },
     ready,
   }), [ready]);
+
+  // Update cursor.drag at runtime when pause state changes (avoid destroying plot)
+  useEffect(() => {
+    const u = uplotRef.current;
+    if (!u || !enablePlayPause) return;
+    const dragZoomActive = isPaused;
+    (u.cursor as { drag?: { x?: boolean; y?: boolean; setScale?: boolean; uni?: number } }).drag = dragZoomActive
+      ? { x: true, y: false, setScale: true, uni: 10 }
+      : { x: false, y: false, setScale: false };
+  }, [enablePlayPause, isPaused]);
 
   const componentMap = entities.map(() => component);
   const MAX_POINTS = Math.min(windowSeconds * SAMPLE_HZ, 2000);
@@ -329,6 +340,18 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
       const d = dataRef.current;
       const currentTime = Date.now();
 
+      // Just unpaused: fast-forward to latest data from cache
+      if (enablePlayPause && wasPausedRef.current && !paused) {
+        wasPausedRef.current = false;
+        loadCacheData();
+        const timeData = d.time.length > 0 ? d.time : [now];
+        const valueData = d.values.map((v) => (v.length > 0 ? v : [NaN]));
+        try {
+          uplotRef.current.setData([timeData, ...valueData]);
+        } catch (_) {}
+      }
+      if (paused) wasPausedRef.current = true;
+
       let dataChanged = false;
       if (!paused && currentTime - lastDataUpdate >= DATA_UPDATE_INTERVAL) {
         d.time.push(now);
@@ -419,7 +442,7 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
       uplotRef.current = null;
       setReady(false);
     };
-  }, [entities.join(','), component, windowSeconds, yLabel, colors.join(','), yRange?.join(','), yTicks?.join(','), enablePlayPause, isPaused]);
+  }, [entities.join(','), component, windowSeconds, yLabel, colors.join(','), yRange?.join(','), yTicks?.join(','), enablePlayPause]);
 
   return (
     <div
