@@ -180,14 +180,10 @@ export function parseElodinPacket(
   }
 
   // ── Encoder Raw: [0x24, 0x01..0x02] ──────────────────────────────────────
-  // Use the board's sample_timestamp_ms (offset 16) instead of arrival time
-  // so the oscope trigger plot sees the actual board timing between samples.
   if (high === 0x24 && low >= 0x01 && low <= 0x02) {
-    if (payload.length < RAW_SENSOR_PAYLOAD_SIZE) return [];
     const ch = low;
-    const rawValue = payload.readUInt32LE(12);
-    const boardTimestampMs = payload.readUInt32LE(16);
-    return [{ entity: `ENC.CH${ch}`, component: 'raw_angle', value: rawValue, timestamp: boardTimestampMs }];
+    const r = parseRawSensorPayload(payload, ch, `ENC.CH${ch}`, 'raw_angle');
+    return r ? [r] : [];
   }
 
   // ── Actuator: [0x30, 0x01..0x0A] ────────────────────────────────────────
