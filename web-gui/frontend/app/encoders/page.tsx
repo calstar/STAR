@@ -139,7 +139,7 @@ export default function EncodersPage() {
           colors={ENC_COLORS}
           labels={ENC_LABELS}
           yLabel="Angle (°)"
-          windowSeconds={30}
+          windowSeconds={2}
           yRange={[0, 360]}
           yTicks={[0, 90, 180, 270, 360]}
           enablePlayPause
