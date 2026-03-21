@@ -3,22 +3,24 @@
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { useEffect } from 'react';
-import { MessageType, BoardStatus, BoardStatusPayload } from '@/lib/types';
+import { MessageType, SensorUpdate, BoardStatus, BoardStatusPayload } from '@/lib/types';
 
 export default function SelfTestsPage() {
     const boardsMap = useSensorStore((s) => s.boards as Record<number, BoardStatus>);
     const sensorData = useSensorStore((s) => s.sensorData);
+    const updateSensor = useSensorStore((s) => s.updateSensor);
     const updateBoards = useSensorStore((s) => s.updateBoards);
     const ws = getWebSocketClient();
 
     useEffect(() => {
         ws.connect();
-        const unsub = ws.on(MessageType.BOARD_STATUS_UPDATE, (p: unknown) => {
+        const unsubSensor = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
+        const unsubBoards = ws.on(MessageType.BOARD_STATUS_UPDATE, (p: unknown) => {
             const payload = p as BoardStatusPayload;
             if (payload?.boards) updateBoards(payload.boards as BoardStatus[]);
         });
-        return () => unsub();
-    }, [ws, updateBoards]);
+        return () => { unsubSensor(); unsubBoards(); };
+    }, [ws, updateSensor, updateBoards]);
 
     const testedBoards = Object.values(boardsMap ?? {}).filter(b =>
         Object.keys(sensorData).some(k => k.startsWith(`SELF_TEST.BOARD_${b.id}.`))

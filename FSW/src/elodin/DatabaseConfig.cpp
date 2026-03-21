@@ -190,6 +190,13 @@ bool DatabaseConfig::register_tables(ElodinClient& client,
             registered++;
     }
 
+    // Encoder Raw: channels 1-2 (AS5600 12-bit angle)
+    for (int ch = 1; ch <= 2; ch++) {
+        std::string entity = "ENC.CH" + std::to_string(ch);
+        if (register_raw_sensor_vtable(client, 0x24, ch, 0x2400 + ch, entity, "raw_angle"))
+            registered++;
+    }
+
     std::cout << "[DatabaseConfig] ✅ Registered " << registered << " RAW VTables" << std::endl;
     return registered > 0;
 }
