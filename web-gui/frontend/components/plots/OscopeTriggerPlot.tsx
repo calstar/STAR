@@ -380,13 +380,13 @@ export default function OscopeTriggerPlot() {
           label: 'Encoder 1',
           stroke: ENC_COLORS[0],
           width: 2,
-          points: { show: false },
+          points: { show: true, size: 6, fill: ENC_COLORS[0] },
         },
         {
           label: 'Encoder 2',
           stroke: ENC_COLORS[1],
           width: 2,
-          points: { show: false },
+          points: { show: true, size: 6, fill: ENC_COLORS[1] },
         },
       ],
       hooks: {
