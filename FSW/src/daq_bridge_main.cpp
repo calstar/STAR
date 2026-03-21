@@ -4,7 +4,7 @@
  *
  * This is the simplified bridge. It does exactly three things:
  *   1. Receives raw sensor/heartbeat packets over UDP
- *   2. Parses them using DiabloBoardPacketParser
+ *   2. Parses them using the real DAQv2-Comms library (Diablo::)
  *   3. Publishes to Elodin database (raw sensor data + heartbeats)
  *
  * Calibration is handled by calibration_service.
@@ -17,6 +17,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -26,9 +27,10 @@
 #include <thread>
 #include <vector>
 
-#include "../../daq_comms/include/comms/messages/board/BoardHeartbeatMessage.hpp"
+// DAQv2-Comms: the real protocol library (no copy)
+#include "DAQv2-Comms.h"
+
 #include "../../daq_comms/include/comms/messages/sensor/SensorMessages.hpp"
-#include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
 #include "../../daq_comms/include/transport/NetworkSocket.hpp"
 
 #include "elodin/DatabaseConfig.hpp"
@@ -452,7 +454,6 @@ int main(int argc, char* argv[]) {
     }
     udp_socket.set_broadcast(true);
 
-    daq_comms::protocol::DiabloBoardPacketParser parser;
     std::vector<uint8_t> recv_buf(8192);
 
     // ── Connect to Elodin ────────────────────────────────────────────────────
@@ -547,44 +548,46 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        // ── Parse packet type ────────────────────────────────────────────────
-        auto pkt_type = parser.parse_packet_type(recv_buf.data(), received);
-        if (!pkt_type)
+        // ── Parse packet type (first byte of PacketHeader) ─────────────────
+        if (received < static_cast<ssize_t>(sizeof(Diablo::PacketHeader)))
             continue;
 
+        Diablo::PacketHeader pkt_header;
+        std::memcpy(&pkt_header, recv_buf.data(), sizeof(Diablo::PacketHeader));
+
         // ── Handle BOARD_HEARTBEAT ───────────────────────────────────────────
-        if (*pkt_type == daq_comms::protocol::DiabloBoardPacketParser::PacketType::BOARD_HEARTBEAT) {
-            auto parsed = parser.parse_board_heartbeat(recv_buf.data(), received);
-            if (parsed && parsed->is_valid) {
+        if (pkt_header.packet_type == Diablo::PacketType::BOARD_HEARTBEAT) {
+            Diablo::PacketHeader hb_header;
+            Diablo::BoardHeartbeatPacket hb_data;
+            if (Diablo::parse_board_heartbeat_packet(recv_buf.data(), received, hb_header, hb_data)) {
                 // Override board_type from config when firmware omits it
                 auto cfg_it = board_map.find(source_ip);
                 if (cfg_it != board_map.end() &&
-                    parsed->heartbeat.board_type ==
-                        daq_comms::protocol::DiabloBoardPacketParser::BoardType::UNKNOWN) {
-                    using PBT = daq_comms::protocol::DiabloBoardPacketParser::BoardType;
+                    hb_data.board_type == Diablo::BoardType::UNKNOWN) {
                     switch (cfg_it->second.type) {
-                        case BoardType::PT: parsed->heartbeat.board_type = PBT::PRESSURE_TRANSDUCER; break;
-                        case BoardType::TC: parsed->heartbeat.board_type = PBT::THERMOCOUPLE; break;
-                        case BoardType::RTD: parsed->heartbeat.board_type = PBT::RTD; break;
-                        case BoardType::LC: parsed->heartbeat.board_type = PBT::LOAD_CELL; break;
-                        case BoardType::ACTUATOR: parsed->heartbeat.board_type = PBT::ACTUATOR; break;
+                        case BoardType::PT: hb_data.board_type = Diablo::BoardType::PRESSURE_TRANSDUCER; break;
+                        case BoardType::TC: hb_data.board_type = Diablo::BoardType::THERMOCOUPLE; break;
+                        case BoardType::RTD: hb_data.board_type = Diablo::BoardType::RTD; break;
+                        case BoardType::LC: hb_data.board_type = Diablo::BoardType::LOAD_CELL; break;
+                        case BoardType::ACTUATOR: hb_data.board_type = Diablo::BoardType::ACTUATOR; break;
                         default: break;
                     }
                 }
                 uint64_t hb_ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
                                      std::chrono::steady_clock::now().time_since_epoch())
                                      .count();
-                heartbeat_router.process_heartbeat(*parsed, hb_ts);
+                heartbeat_router.process_heartbeat(hb_header, hb_data, hb_ts);
             }
             continue;
         }
 
         // ── Handle SENSOR_DATA ───────────────────────────────────────────────
-        if (*pkt_type != daq_comms::protocol::DiabloBoardPacketParser::PacketType::SENSOR_DATA)
+        if (pkt_header.packet_type != Diablo::PacketType::SENSOR_DATA)
             continue;
 
-        auto parsed = parser.parse_sensor_data(recv_buf.data(), received);
-        if (!parsed || !parsed->is_valid)
+        Diablo::PacketHeader sensor_header;
+        std::vector<Diablo::SensorDataChunkCollection> chunks;
+        if (!Diablo::parse_sensor_data_packet(recv_buf.data(), received, sensor_header, chunks))
             continue;
 
         packet_count++;
@@ -625,7 +628,7 @@ int main(int argc, char* argv[]) {
             elodin.begin_batch();
 
         // ── Create and publish messages directly ─────────────────────────────
-        for (const auto& chunk : parsed->chunks) {
+        for (const auto& chunk : chunks) {
             for (const auto& dp : chunk.datapoints) {
                 uint8_t channel = static_cast<uint8_t>(dp.sensor_id + ch_offset);
 

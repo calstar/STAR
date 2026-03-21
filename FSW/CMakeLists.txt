@@ -56,7 +56,8 @@ find_package(Eigen3 REQUIRED)
 
 # Link libraries
 target_link_libraries(fsw_daq_lib
-    daq_comms_lib  # Link to daq_comms for messages and parser
+    daq_comms_lib  # Link to daq_comms for messages and transport
+    daqv2_comms    # Link to real DAQv2-Comms protocol library
     Eigen3::Eigen
     Threads::Threads
     pthread
@@ -74,6 +75,7 @@ target_include_directories(daq_bridge PRIVATE
 target_link_libraries(daq_bridge
     fsw_daq_lib
     daq_comms_lib
+    daqv2_comms
     Threads::Threads
     pthread
     ${RT_LIBRARY}
