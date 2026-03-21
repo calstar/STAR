@@ -87,8 +87,15 @@ std::string FSWConfigManager::process_board_heartbeat(
         }
     }
 
-    // Send configuration to board if not already configured
-    if (!boards_configured_[board_id]) {
+    // Send configuration to board if not already configured, OR if the board
+    // is still in Setup state (e.g. after a reboot or missed config).
+    bool board_in_setup = heartbeat.heartbeat.board_state ==
+        daq_comms::protocol::DiabloBoardPacketParser::BoardState::SETUP;
+    if (!boards_configured_[board_id] || board_in_setup) {
+        if (board_in_setup && boards_configured_[board_id]) {
+            std::cout << "[FSWConfig] Board " << (int)board_id
+                      << " still in SETUP — re-sending SENSOR_CONFIG" << std::endl;
+        }
         send_config_to_board(board_id);
     }
 

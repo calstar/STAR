@@ -50,7 +50,6 @@ const viewComponents: Record<string, React.ComponentType> = {
   encoders: EncodersPage,
   livestream: LivestreamPage,
   'self-tests': SelfTestsPage,
-  encoders: EncodersPage,
 };
 
 export default function WindowViewPage() {
