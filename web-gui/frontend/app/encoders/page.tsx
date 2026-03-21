@@ -93,7 +93,7 @@ export default function EncodersPage() {
       </div>
 
       {/* Live plot */}
-      <div className="flex-1 min-h-[250px]">
+      <div className="flex-[2] min-h-[350px]">
         <DerivedTimeSeriesPlot
           title="Encoder Angles (Live)"
           entities={ENC_ENTITIES}
@@ -103,6 +103,8 @@ export default function EncodersPage() {
           labels={ENC_LABELS}
           yLabel="Angle (°)"
           windowSeconds={30}
+          yRange={[0, 360]}
+          yTicks={[0, 90, 180, 270, 360]}
         />
       </div>
 

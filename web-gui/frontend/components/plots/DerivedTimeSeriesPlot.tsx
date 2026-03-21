@@ -24,6 +24,8 @@ interface DerivedTimeSeriesPlotProps {
   windowSeconds?: number;
   height?: number;
   className?: string;
+  yRange?: [number, number];
+  yTicks?: number[];
 }
 
 function fmtVal(v: number): string {
@@ -58,6 +60,8 @@ export default function DerivedTimeSeriesPlot({
   windowSeconds = DEFAULT_WINDOW_SECONDS,
   height,
   className = '',
+  yRange,
+  yTicks,
 }: DerivedTimeSeriesPlotProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<HTMLDivElement>(null);
@@ -119,27 +123,29 @@ export default function DerivedTimeSeriesPlot({
             return [Math.max(0, now - window), now];
           },
         },
-        y: {
-          auto: true,
-          range: (u, mn, mx): [number, number] => {
-            const allValues: number[] = [];
-            for (let i = 1; i < u.data.length; i++) {
-              const series = u.data[i] as number[];
-              if (series) {
-                for (const val of series) {
-                  if (isFinite(val)) allValues.push(val);
+        y: yRange
+          ? { auto: false, range: (): [number, number] => yRange }
+          : {
+            auto: true,
+            range: (u: uPlot, mn: number, mx: number): [number, number] => {
+              const allValues: number[] = [];
+              for (let i = 1; i < u.data.length; i++) {
+                const series = u.data[i] as number[];
+                if (series) {
+                  for (const val of series) {
+                    if (isFinite(val)) allValues.push(val);
+                  }
                 }
               }
-            }
-            if (allValues.length > 0) {
-              const dataMin = allValues.reduce((a, b) => Math.min(a, b), Infinity);
-              const dataMax = allValues.reduce((a, b) => Math.max(a, b), -Infinity);
-              return smartYRange(dataMin, dataMax);
-            }
-            if (isFinite(mn) && isFinite(mx)) return smartYRange(mn, mx);
-            return [-400, 100];
+              if (allValues.length > 0) {
+                const dataMin = allValues.reduce((a, b) => Math.min(a, b), Infinity);
+                const dataMax = allValues.reduce((a, b) => Math.max(a, b), -Infinity);
+                return smartYRange(dataMin, dataMax);
+              }
+              if (isFinite(mn) && isFinite(mx)) return smartYRange(mn, mx);
+              return [-400, 100];
+            },
           },
-        },
       },
       axes: [
         {
@@ -163,7 +169,10 @@ export default function DerivedTimeSeriesPlot({
           size: 60,
           gap: 5,
           space: 80,
-          values: (_u, vals) => vals.map((v) => (v == null ? '' : fmtVal(v))),
+          values: yTicks
+            ? (_u: uPlot, _vals: number[]) => yTicks.map((v) => fmtVal(v))
+            : (_u: uPlot, vals: number[]) => vals.map((v) => (v == null ? '' : fmtVal(v))),
+          ...(yTicks ? { splits: () => yTicks } : {}),
         },
       ],
       series: [
@@ -309,17 +318,21 @@ export default function DerivedTimeSeriesPlot({
         try {
           uplotRef.current.setData([timeData, ...valueData]);
         } catch (_) {}
-        const allY: number[] = [];
-        valueData.forEach((series) => {
-          series.forEach((v) => {
-            if (Number.isFinite(v)) allY.push(v);
+        if (yRange) {
+          uplotRef.current.setScale('y', { min: yRange[0], max: yRange[1] });
+        } else {
+          const allY: number[] = [];
+          valueData.forEach((series) => {
+            series.forEach((v) => {
+              if (Number.isFinite(v)) allY.push(v);
+            });
           });
-        });
-        if (allY.length > 0) {
-          const yMin = Math.min(...allY);
-          const yMax = Math.max(...allY);
-          const [min, max] = smartYRange(yMin, yMax);
-          uplotRef.current.setScale('y', { min, max });
+          if (allY.length > 0) {
+            const yMin = Math.min(...allY);
+            const yMax = Math.max(...allY);
+            const [min, max] = smartYRange(yMin, yMax);
+            uplotRef.current.setScale('y', { min, max });
+          }
         }
       }
 
@@ -358,7 +371,7 @@ export default function DerivedTimeSeriesPlot({
       uplotRef.current = null;
       setReady(false);
     };
-  }, [entities.join(','), component, windowSeconds, yLabel, colors.join(',')]);
+  }, [entities.join(','), component, windowSeconds, yLabel, colors.join(','), yRange?.join(','), yTicks?.join(',')]);
 
   return (
     <div

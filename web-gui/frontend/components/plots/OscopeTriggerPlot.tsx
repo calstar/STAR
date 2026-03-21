@@ -258,14 +258,13 @@ export default function OscopeTriggerPlot() {
     const plot = uplotRef.current;
     if (!plot) return;
 
-    const xMin = Math.min(...relTimes);
-    const xMax = Math.max(...relTimes);
+    const xExtent = Math.max(Math.abs(Math.min(...relTimes)), Math.abs(Math.max(...relTimes)));
     const allVals = [...enc1Vals, ...enc2Vals].filter(isFinite);
     const yMin = Math.min(...allVals);
     const yMax = Math.max(...allVals);
     const yPad = Math.max((yMax - yMin) * 0.15, 5);
 
-    plot.setScale('x', { min: xMin, max: xMax });
+    plot.setScale('x', { min: -xExtent, max: xExtent });
     plot.setScale('y', { min: yMin - yPad, max: yMax + yPad });
     plot.setData([timeArr, enc1Arr, enc2Arr]);
   }, []);
