@@ -219,12 +219,38 @@ else()
 endif()
 
 # Actuator service — receives state transitions, sends UDP commands
+# NOTE: superseded by sequencer_service but kept for reference during migration
 add_executable(actuator_service src/control/actuator_service_main.cpp)
 target_include_directories(actuator_service PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../daq_comms/include
 )
 target_link_libraries(actuator_service daq_comms_lib pthread ${RT_LIBRARY})
+
+# Sequencer service — state machine, actuator commanding, abort, FIRE lifecycle
+# Replaces actuator_service. Publishes state + allowed transitions to Elodin [0x50, 0x00].
+add_executable(sequencer_service
+    src/control/sequencer_main.cpp
+    src/control/SequencerService.cpp
+    src/control/StateMachine.cpp
+    src/control/ActuatorCommander.cpp
+    src/control/AbortBroadcaster.cpp
+    src/control/FireManager.cpp
+)
+target_include_directories(sequencer_service PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../daq_comms/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../archive/legacy/utl
+)
+target_link_libraries(sequencer_service
+    fsw_daq_lib
+    daq_comms_lib
+    daqv2_comms
+    Eigen3::Eigen
+    Threads::Threads
+    pthread
+    ${RT_LIBRARY}
+)
 
 # Heartbeat service — SERVER_HEARTBEAT UDP broadcast (C++ replacement for Python)
 add_executable(heartbeat_service src/services/heartbeat_service_main.cpp)
@@ -240,7 +266,7 @@ target_include_directories(config_broadcast_service PRIVATE
 target_link_libraries(config_broadcast_service fsw_daq_lib pthread ${RT_LIBRARY})
 
 # Install targets
-install(TARGETS fsw_daq_lib daq_bridge controller_service calibration_service actuator_service heartbeat_service config_broadcast_service
+install(TARGETS fsw_daq_lib daq_bridge controller_service calibration_service actuator_service sequencer_service heartbeat_service config_broadcast_service
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
