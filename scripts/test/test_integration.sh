@@ -257,7 +257,7 @@ else
   # board_simulator.py: uses --config for board definitions, --port for UDP target
   # Ensure tomli is installed (needed by board_simulator.py for TOML parsing)
   "$PYTHON_BIN" -c "import tomli" 2>/dev/null || "$PYTHON_BIN" -m pip install tomli -q 2>/dev/null || true
-  "$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --only-type PT > /tmp/integration_fakegen_$$.log 2>&1 &
+  "$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" > /tmp/integration_fakegen_$$.log 2>&1 &
   PIDS+=($!)
 fi
 sleep 2

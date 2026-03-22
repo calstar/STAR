@@ -200,13 +200,11 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
       console.log(`    ${e} (${count} updates)`);
     }
 
-    // Check for PT channels (PT_Cal., PT., or raw PT entity names)
-    const hasPT = [...entities].some(e =>
-      e.startsWith('PT_Cal.') || e.startsWith('PT.') || e.includes('PT'));
-    assert(hasPT, 'Received PT sensor data');
-    if (!hasPT) {
-      console.log(`  ⚠️  No PT entities found. All entities: ${sortedEntities.join(', ')}`);
-    }
+    // Check for known sensor types (PT, RTD, TC, LC, ACT)
+    const knownPrefixes = ['PT_Cal.', 'PT.', 'RTD.', 'TC.', 'LC.', 'ACT.'];
+    const hasKnownSensor = [...entities].some(e =>
+      knownPrefixes.some(prefix => e.startsWith(prefix)));
+    assert(hasKnownSensor, 'Received known sensor data (PT/RTD/TC/LC/ACT)');
 
     // Check numeric values
     const allNumeric = updates.every((u: any) => typeof u.value === 'number' && Number.isFinite(u.value));
