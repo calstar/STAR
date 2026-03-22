@@ -13,10 +13,17 @@
 #   - npm install done in web-gui/backend
 #   - Python 3 with board_simulator.py dependencies (fallback data source)
 #
-# Usage: bash scripts/test/test_integration.sh
+# Usage: bash scripts/test/test_integration.sh [-v|--verbose]
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
+
+VERBOSE=0
+for arg in "$@"; do
+  case "$arg" in
+    -v|--verbose) VERBOSE=1 ;;
+  esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -288,9 +295,11 @@ echo ""
 
 # ── Run WebSocket Data Flow Test ──────────────────────────────────────────────
 
+VERBOSE_FLAG=""
+[ "$VERBOSE" = "1" ] && VERBOSE_FLAG="--verbose"
 (cd "$REPO_ROOT/web-gui/backend" && \
   NODE_PATH="$REPO_ROOT/web-gui/backend/node_modules" \
-  npx tsx "$SCRIPT_DIR/ws_data_flow_test.ts" "$TEST_BACKEND_WS_PORT" "$TEST_BACKEND_API_PORT" "$TEST_ACTUATOR_UDP_PORT")
+  npx tsx "$SCRIPT_DIR/ws_data_flow_test.ts" "$TEST_BACKEND_WS_PORT" "$TEST_BACKEND_API_PORT" "$TEST_ACTUATOR_UDP_PORT" $VERBOSE_FLAG)
 WS_TEST_EXIT=$?
 
 # Print last 30 lines of backend log for diagnostics if test failed

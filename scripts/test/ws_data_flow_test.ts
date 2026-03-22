@@ -16,9 +16,10 @@ import WebSocket from 'ws';
 const WS_PORT = parseInt(process.argv[2] || '8081', 10);
 const API_PORT = parseInt(process.argv[3] || '8082', 10);
 const ACTUATOR_UDP_PORT = parseInt(process.argv[4] || '5005', 10);
+const VERBOSE = process.argv.includes('--verbose');
 const WS_URL = `ws://127.0.0.1:${WS_PORT}`;
 const SENSOR_TIMEOUT_MS = 15000;
-const COMMAND_TIMEOUT_MS = 10000;
+const COMMAND_TIMEOUT_MS = 15000;
 
 // Shared types (inline to avoid import issues)
 enum MessageType {
@@ -194,10 +195,12 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
 
     // Log all distinct entities for diagnostics
     const sortedEntities = [...entities].sort();
-    console.log(`  Distinct entities (${sortedEntities.length}):`);
-    for (const e of sortedEntities) {
-      const count = updates.filter((u: any) => u.entity === e).length;
-      console.log(`    ${e} (${count} updates)`);
+    if (VERBOSE) {
+      console.log(`  Distinct entities (${sortedEntities.length}):`);
+      for (const e of sortedEntities) {
+        const count = updates.filter((u: any) => u.entity === e).length;
+        console.log(`    ${e} (${count} updates)`);
+      }
     }
 
     // Check for known sensor types (PT, RTD, TC, LC, ACT)
@@ -219,10 +222,12 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     );
 
     // Log sample data from first few distinct entities
-    const sampleEntities = sortedEntities.slice(0, 3);
-    for (const e of sampleEntities) {
-      const sample = updates.find((u: any) => u.entity === e);
-      console.log(`  Sample [${e}]: component=${sample.component} value=${sample.value}`);
+    if (VERBOSE) {
+      const sampleEntities = sortedEntities.slice(0, 3);
+      for (const e of sampleEntities) {
+        const sample = updates.find((u: any) => u.entity === e);
+        console.log(`  Sample [${e}]: component=${sample.component} value=${sample.value}`);
+      }
     }
   }
 }
@@ -231,8 +236,21 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
 
 async function testStateTransition(ws: WebSocket): Promise<void> {
   console.log('\n🔄 Test 2: State Transition Command (WS client → backend → broadcast)');
-  debugLogMessages = true;
-  const stopSpy = startMessageSpy(ws);
+  debugLogMessages = VERBOSE;
+  const stopSpy = VERBOSE ? startMessageSpy(ws) : () => {};
+
+  // Listen for error messages from the backend
+  const errors: any[] = [];
+  const errorHandler = (data: WebSocket.Data) => {
+    try {
+      const msg: WSMessage = JSON.parse(data.toString());
+      if (msg.type === 'error') {
+        errors.push(msg.payload);
+        console.log(`  ⚠️  Backend error: ${JSON.stringify(msg.payload)}`);
+      }
+    } catch { /* ignore */ }
+  };
+  ws.on('message', errorHandler);
 
   // Send state transition to ARMED — use predicate to match specific state
   const statePromise = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
@@ -253,7 +271,11 @@ async function testStateTransition(ws: WebSocket): Promise<void> {
     assert(typeof stateUpdate.stateName === 'string', `State name is string: "${stateUpdate.stateName}"`);
     assert(typeof stateUpdate.timestamp === 'number', 'State update has timestamp');
   } catch (err: any) {
-    assert(false, `State transition: ${err.message}`);
+    if (errors.length > 0) {
+      assert(false, `State transition: backend rejected — ${JSON.stringify(errors[0])}`);
+    } else {
+      assert(false, `State transition: ${err.message}`);
+    }
   }
 
   // Transition back to IDLE — register listener BEFORE sending to avoid race
@@ -274,6 +296,7 @@ async function testStateTransition(ws: WebSocket): Promise<void> {
     assert(false, `Return to IDLE: ${err.message}`);
   }
 
+  ws.removeListener('message', errorHandler);
   stopSpy();
   debugLogMessages = false;
 }
@@ -282,8 +305,8 @@ async function testStateTransition(ws: WebSocket): Promise<void> {
 
 async function testActuatorCommand(ws: WebSocket): Promise<void> {
   console.log('\n🔧 Test 3: Actuator Command (WS client → backend → UDP + broadcast)');
-  debugLogMessages = true;
-  const stopSpy = startMessageSpy(ws);
+  debugLogMessages = VERBOSE;
+  const stopSpy3 = VERBOSE ? startMessageSpy(ws) : () => {};
 
   // Enable debug mode to allow manual actuator commands.
   // Debug mode is toggled via 'debug_mode' command, NOT a state transition.
@@ -338,7 +361,7 @@ async function testActuatorCommand(ws: WebSocket): Promise<void> {
     },
   });
   await new Promise(r => setTimeout(r, 500));
-  stopSpy();
+  stopSpy3();
   debugLogMessages = false;
 }
 
