@@ -1137,14 +1137,8 @@ class SensorSystemServer {
   // ═══════════════════════════════════════════════════════════════════════════
 
   private handleCommand(command: CommandPayload): void {
-    // Block transition only when Elodin is down AND no actuator_service AND not in debug mode.
-    // When actuator_service is running it owns hardware commands, so allow transitions regardless of Elodin.
-    const canPublish = this.elodin.isConnected() || this.elodinRelay?.isConnected();
-    if (command.commandType === 'state_transition' && !canPublish && !this.debugMode && this.actuatorServicePort <= 0) {
-      console.error(`❌ Cannot send state transition: elodin=${this.elodin.isConnected()} relay=${this.elodinRelay?.isConnected()} (need one for DB publish)`);
-      this.broadcast({ type: MessageType.ERROR, timestamp: Date.now(), payload: { message: 'Elodin DB not connected', command } });
-      return;
-    }
+    // NOTE: State transitions are purely local — Elodin DB is used for audit
+    // logging only (fire-and-forget). No gate on Elodin connection status.
 
     try {
       if (command.commandType === 'state_transition') {
@@ -1165,14 +1159,14 @@ class SensorSystemServer {
         }
 
         const prevState = this.currentState;
-        // Try direct Elodin first; fall back to relay, debug mode, or actuator_service.
-        // The relay can forward publish commands to Elodin DB via publishTable().
-        // endFireState() already treats sendCommand as fire-and-forget, so local
-        // state transitions don't strictly require the direct connection.
-        const success = this.elodin.isConnected()
-          ? this.elodin.sendCommand('state_transition', { state: newState })
-          : (this.debugMode || this.actuatorServicePort > 0 || (this.elodinRelay?.isConnected() ?? false));
-        if (success) {
+        // Send state command to Elodin DB as fire-and-forget (audit trail only).
+        // State machine is entirely local — Elodin stores transitions for data
+        // logging but is never read back for operational state. This matches
+        // endFireState() which also treats sendCommand as non-blocking.
+        if (this.elodin.isConnected()) {
+          this.elodin.sendCommand('state_transition', { state: newState });
+        }
+        {
           if (this.currentState === SystemState.FIRE && newState !== SystemState.FIRE) {
             if (this.fireEndTimer) { clearTimeout(this.fireEndTimer); this.fireEndTimer = null; }
             this.fireStartTimeMs = null;
