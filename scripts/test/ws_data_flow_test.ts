@@ -123,16 +123,16 @@ function collectMessages(
 
 // ── Test Runner ──────────────────────────────────────────────────────────────
 
-let passed = 0;
-let failed = 0;
+const passedList: string[] = [];
+const failedList: string[] = [];
 
 function assert(condition: boolean, message: string): void {
   if (condition) {
     console.log(`  ✅ ${message}`);
-    passed++;
+    passedList.push(message);
   } else {
     console.error(`  ❌ ${message}`);
-    failed++;
+    failedList.push(message);
   }
 }
 
@@ -367,10 +367,23 @@ async function main(): Promise<void> {
   }
 
   console.log(`\n${'═'.repeat(50)}`);
-  console.log(`Results: ${passed} passed, ${failed} failed`);
+  console.log(`Results: ${passedList.length} passed, ${failedList.length} failed`);
   console.log(`${'═'.repeat(50)}`);
 
-  process.exit(failed > 0 ? 1 : 0);
+  if (failedList.length > 0) {
+    console.log('\nFailed:');
+    for (const msg of failedList) {
+      console.log(`  ❌ ${msg}`);
+    }
+  }
+  if (passedList.length > 0) {
+    console.log('\nPassed:');
+    for (const msg of passedList) {
+      console.log(`  ✅ ${msg}`);
+    }
+  }
+
+  process.exit(failedList.length > 0 ? 1 : 0);
 }
 
 main().catch((err) => {
