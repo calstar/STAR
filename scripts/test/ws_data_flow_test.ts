@@ -236,10 +236,13 @@ const REQUIRED_SENSOR_TYPES = ['PT.', 'RTD.', 'TC.', 'LC.'];
 async function testSensorDataFlow(ws: WebSocket): Promise<void> {
   console.log('\n📡 Test 1: Sensor Data Flow (fake data → DAQ bridge → Elodin → relay → backend → WS)');
 
-  // Subscribe to all channel types (1-10 covers all boards, none go above 10)
+  // Subscribe to all channel types. Channels go up to 20 because boards of
+  // the same type use channel_offset to create a global namespace:
+  //   board 1: offset 0  → CH1-CH10
+  //   board 2: offset 10 → CH11-CH20
   const sensorPrefixes = ['PT_Cal.CH', 'PT.CH', 'RTD.CH', 'TC.CH', 'LC.CH', 'ACT.CH'];
   for (const prefix of sensorPrefixes) {
-    for (let i = 1; i <= 10; i++) {
+    for (let i = 1; i <= 20; i++) {
       send(ws, {
         type: MessageType.SUBSCRIBE_SENSOR,
         timestamp: Date.now(),
