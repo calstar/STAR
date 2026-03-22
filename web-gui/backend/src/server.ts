@@ -1165,9 +1165,13 @@ class SensorSystemServer {
         }
 
         const prevState = this.currentState;
+        // Try direct Elodin first; fall back to relay, debug mode, or actuator_service.
+        // The relay can forward publish commands to Elodin DB via publishTable().
+        // endFireState() already treats sendCommand as fire-and-forget, so local
+        // state transitions don't strictly require the direct connection.
         const success = this.elodin.isConnected()
           ? this.elodin.sendCommand('state_transition', { state: newState })
-          : (this.debugMode || this.actuatorServicePort > 0); // actuator_service is hardware authority when Elodin is down
+          : (this.debugMode || this.actuatorServicePort > 0 || (this.elodinRelay?.isConnected() ?? false));
         if (success) {
           if (this.currentState === SystemState.FIRE && newState !== SystemState.FIRE) {
             if (this.fireEndTimer) { clearTimeout(this.fireEndTimer); this.fireEndTimer = null; }

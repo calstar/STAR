@@ -226,30 +226,46 @@ async function waitForElodinConnection(ws: WebSocket): Promise<void> {
 }
 
 // ── Expected entities from config.toml enabled boards ────────────────────────
-// Every enabled board with active_connectors produces entities named {TYPE}.CH{n}
-// where n = connector_id + channel_offset. We MUST receive data for ALL of these.
+// Entity names use sensor_roles from config (spaces → underscores). Boards
+// without role mappings use generic CHx names. Channels use channel_offset
+// for second boards of the same type.
 //
-// pt_board    (id 21, offset 0):  active [1-10]       → PT.CH1-CH10
-// pt_board_2  (id 22, offset 10): active [1-4]        → PT.CH11-CH14
-// rtd_board   (id 31, offset 0):  active [1,2,3,4]    → RTD.CH1-CH4
-// lc_board_2  (id 42, offset 0):  active [1,2,6]      → LC.CH1, LC.CH2, LC.CH6
-// tc_board    (id 51, offset 0):  active [2,3,4,5]    → TC.CH2-CH5
-// actuator_board_2 (id 12, offset 0):  10 sensors      → ACT.CH1-CH10
-// actuator_board_4 (id 14, offset 10): 10 sensors      → ACT.CH11-CH20
+// pt_board    (id 21): [sensor_roles_pt_board] maps connectors 1-10 to named PTs
+// pt_board_2  (id 22): [sensor_roles_pt2] maps connectors 1,3,4 to named HP PTs
+// rtd_board   (id 31): active [1,2,3,4] → RTD.CH1-CH4
+// lc_board_2  (id 42): active [1,2,6]   → LC.CH1, LC.CH2, LC.CH6
+// tc_board    (id 51): active [2,3,4,5] → TC.CH2-CH5
+//
+// NOTE: Actuator boards (12,14) also produce data but entity names vary.
+//       PT_Cal entities appear when calibration is active.
+//       Both are checked as "extra" but not required.
+
 const EXPECTED_ENTITIES: string[] = [
-  // PT board 1 (offset 0, connectors 1-10)
-  ...Array.from({ length: 10 }, (_, i) => `PT.CH${i + 1}`),
-  // PT board 2 (offset 10, connectors 1-4)
-  ...Array.from({ length: 4 }, (_, i) => `PT.CH${11 + i}`),
-  // RTD board (offset 0, connectors 1-4)
-  ...Array.from({ length: 4 }, (_, i) => `RTD.CH${i + 1}`),
-  // LC board 2 (offset 0, connectors 1,2,6)
+  // pt_board (id 21) — [sensor_roles_pt_board]: 10 named PTs
+  'PT.Fuel_Upstream',        // connector 1
+  'PT.GSE_Low',              // connector 2
+  'PT.Fuel_Downstream',      // connector 3
+  'PT.Chamber_Mid_PT_1',     // connector 4
+  'PT.Ox_Upstream',          // connector 5
+  'PT.GN2_Regulated',        // connector 6
+  'PT.Ox_Downstream',        // connector 7
+  'PT.Chamber_Mid_PT_2',     // connector 8
+  'PT.Chamber_Throat_PT_1',  // connector 9
+  'PT.Chamber_Throat_PT_2',  // connector 10
+
+  // pt_board_2 (id 22) — [sensor_roles_pt2]: 3 HP PTs (connector 2 unused)
+  'PT.GSE_High',             // connector 1
+  'PT.GSE_Mid',              // connector 3
+  'PT.GN2_High',             // connector 4
+
+  // rtd_board (id 31) — active [1,2,3,4], no role-based entity names
+  'RTD.CH1', 'RTD.CH2', 'RTD.CH3', 'RTD.CH4',
+
+  // lc_board_2 (id 42) — active [1,2,6], no role-based entity names
   'LC.CH1', 'LC.CH2', 'LC.CH6',
-  // TC board (offset 0, connectors 2,3,4,5)
+
+  // tc_board (id 51) — active [2,3,4,5], no role-based entity names
   'TC.CH2', 'TC.CH3', 'TC.CH4', 'TC.CH5',
-  // Actuator boards send current sense data — these may or may not produce
-  // sensor_update messages (depends on DAQ bridge routing). Don't require them
-  // but report if present.
 ];
 
 // ── Test 1: Sensor Data Flow ─────────────────────────────────────────────────
