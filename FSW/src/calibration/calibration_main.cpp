@@ -1,20 +1,25 @@
 /**
  * @file calibration_main.cpp
- * @brief Standalone Calibration Service — receives raw from relay, applies calibration, writes to
- * DB
+ * @brief Standalone Calibration Service — subscribes directly to Elodin, applies calibration,
+ *        publishes calibrated VTables back to Elodin.
  *
- * Subscribes to the Elodin Relay TCP forward (port 9091) for raw sensor data (PT, TC, RTD, LC).
- * Applies calibration using loaded JSON/CSV coefficients (same format as original backend).
- * HP PT channels (4-20 mA) use linear conversion from config.toml hp_pt_*.
- * Publishes calibrated sensor data to Elodin DB.
+ * Connects directly to Elodin DB (port 2240) using subscribe_stream() to receive all raw sensor
+ * data (PT, TC, RTD, LC). Publishes calibrated values to the same Elodin instance. No relay
+ * dependency — fully independent of the relay and backend restart cycles.
+ *
+ * Raw data path (always immediate):
+ *   daq_bridge → Elodin [0x20xx raw] → relay → backend → GUI
+ * Calibrated path (~1 ms behind):
+ *   calibration_service ─(subscribes)→ Elodin [0x20xx raw]
+ *                       ─(publishes)→ Elodin [0x20xx+0x10 cal] → relay → backend → GUI
  *
  * Usage:
- *   ./calibration_service [--config PATH] [--elodin-host HOST] [--elodin-port PORT] \
- *                         [--relay-host HOST] [--relay-port PORT]
+ *   ./calibration_service [--config PATH] [--elodin-host HOST] [--elodin-port PORT]
  *   CAL_VERBOSE=1 for per-packet debug output
  */
 
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <cstdlib>
 #include <fstream>
@@ -27,12 +32,10 @@
 
 #include "calibration/PTCalibration.hpp"
 #include "calibration/SensorCalibration.hpp"
+#include "comms/messages/sensor/CalibratedPTMessage.hpp"
 #include "comms/messages/sensor/CalibratedSensorMessages.hpp"
-#include "comms/messages/sensor/SensorMessages.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
-#include "routing/SensorRouter.hpp"
-#include "transport/TCPClient.hpp"
 
 static std::atomic<bool> running{true};
 
@@ -60,7 +63,7 @@ static double convert_hp_pt_to_pressure(int32_t adc_sensor, double full_scale_ps
 }
 
 static void signalHandler(int /*sig*/) {
-    std::cout << "\n[CalibrationService] Caught signal, shutting down…" << std::endl;
+    std::cout << "\n[CalibrationService] Caught signal, shutting down..." << std::endl;
     running = false;
 }
 
@@ -68,8 +71,6 @@ int main(int argc, char* argv[]) {
     std::string config_path = "config/config.toml";
     std::string elodin_host = "127.0.0.1";
     uint16_t elodin_port = 2240;
-    std::string relay_host = "127.0.0.1";
-    uint16_t relay_port = 9091;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -79,20 +80,20 @@ int main(int argc, char* argv[]) {
             elodin_host = argv[++i];
         else if ((arg == "--port" || arg == "--elodin-port") && i + 1 < argc)
             elodin_port = static_cast<uint16_t>(std::atoi(argv[++i]));
-        else if (arg == "--relay-host" && i + 1 < argc)
-            relay_host = argv[++i];
-        else if (arg == "--relay-port" && i + 1 < argc)
-            relay_port = static_cast<uint16_t>(std::atoi(argv[++i]));
+        else if (arg == "--help" || arg == "-h") {
+            std::cout << "Usage: " << argv[0]
+                      << " [--config PATH] [--elodin-host HOST] [--elodin-port PORT]\n";
+            return 0;
+        }
     }
 
     std::cout << "=== Calibration Service (C++) ===" << std::endl;
-    std::cout << "  Elodin DB (publish): " << elodin_host << ":" << elodin_port << std::endl;
-    std::cout << "  Relay TCP (receive): " << relay_host << ":" << relay_port << std::endl;
+    std::cout << "  Elodin DB: " << elodin_host << ":" << elodin_port << std::endl;
 
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
 
-    // Load calibration (same JSON/CSV format as original backend)
+    // Load calibration coefficients
     fsw::calibration::PTCalibrationManager pt_calibration;
     pt_calibration.set_default_paths(
         "scripts/calibration/calibrations",
@@ -116,12 +117,8 @@ int main(int argc, char* argv[]) {
 
     std::cout << "[Calibration] PT:  " << pt_calibration.get_calibrated_count() << " channels"
               << std::endl;
-    if (pt_calibration.is_calibrated(5))
-        std::cout << "[Calibration] PT ch5 (Ox Upstream) calibrated — sim will provide valid P_u_ox"
-                  << std::endl;
-    else
-        std::cout << "[Calibration] ⚠️ PT ch5 (Ox Upstream) NOT calibrated — controller will see "
-                     "P_u_ox=0; add ch5 to calibration JSON for sim" << std::endl;
+    if (!pt_calibration.is_calibrated(5))
+        std::cerr << "[Calibration] WARNING: PT ch5 (Ox Upstream) not calibrated" << std::endl;
     std::cout << "[Calibration] TC:  " << tc_calibration.calibrated_count() << " channels"
               << std::endl;
     std::cout << "[Calibration] RTD: " << rtd_calibration.calibrated_count() << " channels"
@@ -181,7 +178,7 @@ int main(int argc, char* argv[]) {
     const std::map<int, std::string>* pt_names =
         pt_channel_to_name.empty() ? nullptr : &pt_channel_to_name;
 
-    // Parse HP PT config (4-20 mA) from [boards.pt_board_2] or any board with hp_pt_connectors
+    // Parse HP PT config (4-20 mA)
     std::set<uint8_t> hp_pt_channels;
     double hp_pt_full_scale_psi = 5000.0;
     double hp_pt_sense_resistor_ohms = 120.0;
@@ -272,203 +269,145 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Connect to Elodin for publishing only (no subscription)
-    fsw::elodin::ElodinClient elodin_client;
-    if (!elodin_client.connect(elodin_host, elodin_port)) {
-        std::cerr << "❌ Failed to connect to Elodin DB at " << elodin_host << ":" << elodin_port
-                  << std::endl;
-        return 1;
-    }
-
-    fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names);
-    std::cout << "📡 Elodin connected (publish only). Registered calibrated VTables." << std::endl;
-
-    // Connect to relay TCP for receiving raw packets
-    daq_comms::transport::TCPClient relay_client;
-    if (!relay_client.connect(relay_host, relay_port)) {
-        std::cerr << "❌ Failed to connect to relay at " << relay_host << ":" << relay_port
-                  << " (ensure relay is running with RELAY_TCP_FORWARD_PORT=" << relay_port << ")"
-                  << std::endl;
-        return 1;
-    }
-    std::cout << "📡 Relay TCP connected. Receiving raw stream." << std::endl;
     if (verbose())
         std::cout << "[Cal] CAL_VERBOSE=1 — debug output enabled" << std::endl;
 
-    fsw::routing::SensorRouter router;
-    router.set_pt_calibration(&pt_calibration);
-    router.set_tc_calibration(&tc_calibration);
-    router.set_rtd_calibration(&rtd_calibration);
-    router.set_lc_calibration(&lc_calibration);
+    // Single ElodinClient for both subscribe (read) and publish (write)
+    fsw::elodin::ElodinClient elodin_client;
 
-    std::vector<uint8_t> rx_buffer(8192);
+    auto connect_and_register = [&]() -> bool {
+        if (!elodin_client.connect(elodin_host, elodin_port)) {
+            std::cerr << "[Cal] Failed to connect to Elodin at "
+                      << elodin_host << ":" << elodin_port << std::endl;
+            return false;
+        }
+        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names);
+        if (!elodin_client.subscribe_stream()) {
+            std::cerr << "[Cal] Failed to subscribe to Elodin stream" << std::endl;
+            return false;
+        }
+        std::cout << "[Cal] Connected to Elodin, registered calibrated VTables, subscribed."
+                  << std::endl;
+        return true;
+    };
+
+    if (!connect_and_register())
+        return 1;
+
+    uint8_t pkt_buf[8192];
     int packet_count = 0;
+    static std::atomic<bool> logged_ch5{false};
 
-    while (running && relay_client.is_connected() && elodin_client.is_connected()) {
-        uint8_t header[8];
-        if (!relay_client.read_exact(header, 8)) {
-            if (!relay_client.is_connected())
-                break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            continue;
-        }
-
-        uint32_t packet_len = *reinterpret_cast<uint32_t*>(header);
-        uint8_t type_hi = header[5];
-        uint8_t channel_id = header[6];
-
-        if (packet_len < 4 || packet_len > 65536) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            continue;
-        }
-
-        size_t payload_len = packet_len - 4;
-        if (payload_len + 8 > rx_buffer.size())
-            rx_buffer.resize(payload_len + 8);
-
-        std::memcpy(rx_buffer.data(), header, 8);
-        if (payload_len > 0) {
-            if (!relay_client.read_exact(rx_buffer.data() + 8, payload_len))
-                break;
-        }
-
-        // PT: ch 1-14; TC/RTD/LC: ch 1-20 (0x14)
-        if (channel_id > 0 && channel_id <= 20) {
-            if (type_hi == 0x20 && channel_id <= 14) {  // PT Raw
-                if (payload_len >= comms::messages::sensor::RawPTMessage::nbytes()) {
-                    uint8_t* payload = rx_buffer.data() + 8;
-                    comms::messages::sensor::RawPTMessage raw_msg;
-                    raw_msg.deserialize(payload);
-
-                    uint64_t ts_ns = raw_msg.getField<0>();
-                    uint8_t ch = raw_msg.getField<1>();
-                    int32_t raw_adc = static_cast<int32_t>(raw_msg.getField<3>());
-                    uint32_t sample_ts = raw_msg.getField<4>();
-                    uint8_t status = raw_msg.getField<5>();
-
-                    elodin_client.begin_batch();
-
-                    if (hp_pt_channels.count(ch)) {
-                        double psi = convert_hp_pt_to_pressure(raw_adc, hp_pt_full_scale_psi,
-                                                               hp_pt_sense_resistor_ohms,
-                                                               hp_pt_adc_ref_voltage);
-                        std::array<uint8_t, 2> pkt_id = {0x20, static_cast<uint8_t>(0x10 + ch)};
-                        comms::messages::sensor::CalibratedPTMessage cal_msg;
-                        cal_msg.setField<0>(ts_ns);
-                        cal_msg.setField<1>(ch);
-                        cal_msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
-                        cal_msg.setField<3>(static_cast<float>(psi));
-                        cal_msg.setField<4>(static_cast<uint32_t>(raw_adc));
-                        cal_msg.setField<5>(static_cast<uint8_t>(1));
-                        elodin_client.publish(pkt_id, cal_msg);
-                        if (verbose() && (packet_count % 100 == 0))
-                            std::cout << "[Cal] HP PT ch" << (int)ch << " adc=" << raw_adc
-                                      << " psi=" << psi << std::endl;
-                    } else {
-                        daq_comms::protocol::SensorBatch batch;
-                        daq_comms::protocol::RawPTSample pt;
-                        pt.channel_id = ch;
-                        pt.raw_adc_counts = static_cast<uint32_t>(raw_adc);
-                        pt.sample_timestamp_ms = sample_ts;
-                        pt.status_flags = status;
-                        batch.pt_samples.push_back(pt);
-                        auto cal_msgs = router.route_pt_samples_calibrated(batch, ts_ns);
-                        static std::atomic<bool> logged_ch5{false};
-                        for (const auto& [id, msg] : cal_msgs) {
-                            elodin_client.publish(id, msg);
-                            if (ch == 5 && !logged_ch5.exchange(true))
-                                std::cout << "[Cal] PT ch5 (Ox Up) first publish: "
-                                          << msg.getField<3>() << " psi (sim valid)" << std::endl;
-                            if (verbose() && (packet_count % 100 == 0))
-                                std::cout << "[Cal] PT ch" << (int)ch << " poly" << std::endl;
-                        }
-                    }
-                    elodin_client.flush_batch();
-                }
-            } else if (type_hi == 0x21) {  // TC Raw
-                if (payload_len >= comms::messages::sensor::RawTCMessage::nbytes()) {
-                    uint8_t* payload = rx_buffer.data() + 8;
-                    comms::messages::sensor::RawTCMessage raw_msg;
-                    raw_msg.deserialize(payload);
-
-                    uint64_t ts_ns = raw_msg.getField<0>();
-                    uint8_t ch = raw_msg.getField<1>();
-                    uint32_t raw_adc = raw_msg.getField<3>();
-                    uint32_t sample_ts = raw_msg.getField<4>();
-                    uint8_t status = raw_msg.getField<5>();
-
-                    daq_comms::protocol::SensorBatch batch;
-                    daq_comms::protocol::RawTCSample tc;
-                    tc.channel_id = ch;
-                    tc.raw_adc_counts = raw_adc;
-                    tc.sample_timestamp_ms = sample_ts;
-                    tc.status_flags = status;
-                    batch.tc_samples.push_back(tc);
-                    auto cal_msgs = router.route_tc_samples_calibrated(batch, ts_ns);
-                    elodin_client.begin_batch();
-                    for (const auto& [id, msg] : cal_msgs)
-                        elodin_client.publish(id, msg);
-                    elodin_client.flush_batch();
-                }
-            } else if (type_hi == 0x22) {  // RTD Raw
-                if (payload_len >= comms::messages::sensor::RawRTDMessage::nbytes()) {
-                    uint8_t* payload = rx_buffer.data() + 8;
-                    comms::messages::sensor::RawRTDMessage raw_msg;
-                    raw_msg.deserialize(payload);
-
-                    uint64_t ts_ns = raw_msg.getField<0>();
-                    uint8_t ch = raw_msg.getField<1>();
-                    uint32_t raw_adc = raw_msg.getField<3>();
-                    uint32_t sample_ts = raw_msg.getField<4>();
-                    uint8_t status = raw_msg.getField<5>();
-
-                    daq_comms::protocol::SensorBatch batch;
-                    daq_comms::protocol::RawRTDSample rtd;
-                    rtd.channel_id = ch;
-                    rtd.raw_resistance_counts = raw_adc;
-                    rtd.sample_timestamp_ms = sample_ts;
-                    rtd.status_flags = status;
-                    batch.rtd_samples.push_back(rtd);
-                    auto cal_msgs = router.route_rtd_samples_calibrated(batch, ts_ns);
-                    elodin_client.begin_batch();
-                    for (const auto& [id, msg] : cal_msgs)
-                        elodin_client.publish(id, msg);
-                    elodin_client.flush_batch();
-                }
-            } else if (type_hi == 0x23) {  // LC Raw
-                if (payload_len >= comms::messages::sensor::RawLCMessage::nbytes()) {
-                    uint8_t* payload = rx_buffer.data() + 8;
-                    comms::messages::sensor::RawLCMessage raw_msg;
-                    raw_msg.deserialize(payload);
-
-                    uint64_t ts_ns = raw_msg.getField<0>();
-                    uint8_t ch = raw_msg.getField<1>();
-                    uint32_t raw_adc = raw_msg.getField<3>();
-                    uint32_t sample_ts = raw_msg.getField<4>();
-                    uint8_t status = raw_msg.getField<5>();
-
-                    daq_comms::protocol::SensorBatch batch;
-                    daq_comms::protocol::RawLCSample lc;
-                    lc.channel_id = ch;
-                    lc.raw_adc_counts = raw_adc;
-                    lc.sample_timestamp_ms = sample_ts;
-                    lc.status_flags = status;
-                    batch.lc_samples.push_back(lc);
-                    auto cal_msgs = router.route_lc_samples_calibrated(batch, ts_ns);
-                    elodin_client.begin_batch();
-                    for (const auto& [id, msg] : cal_msgs)
-                        elodin_client.publish(id, msg);
-                    elodin_client.flush_batch();
-                }
+    while (running) {
+        if (!elodin_client.is_connected()) {
+            std::cerr << "[Cal] Elodin disconnected, retrying in 2s..." << std::endl;
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            if (elodin_client.reconnect()) {
+                fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names);
+                elodin_client.subscribe_stream();
+                std::cout << "[Cal] Reconnected to Elodin" << std::endl;
             }
+            continue;
         }
+
+        ssize_t pkt_len = elodin_client.read_packet(pkt_buf, sizeof(pkt_buf));
+        if (pkt_len == 0) {
+            continue;
+        }
+        if (pkt_len < 0) {
+            // Disconnect detected by read_packet
+            continue;
+        }
+        if (pkt_len < 8) {
+            continue;
+        }
+
+        // Elodin packet header: [0-3]=len, [4]=type, [5]=vtable_hi, [6]=vtable_lo, [7]=req_id
+        const uint8_t type_hi = pkt_buf[5];
+
+        // Only process raw sensor VTables
+        if (type_hi < 0x20 || type_hi > 0x23)
+            continue;
+
+        const ssize_t payload_len = pkt_len - 8;
+        if (payload_len < 21)
+            continue;
+
+        // Parse 21-byte raw sensor payload directly
+        const uint8_t* p = pkt_buf + 8;
+        const uint64_t ts_ns  = *reinterpret_cast<const uint64_t*>(p);
+        const uint8_t  ch     = p[8];
+        const uint32_t raw_adc = *reinterpret_cast<const uint32_t*>(p + 12);
+        // p[16-19] = sample_timestamp_ms (unused in calibration output)
+        // p[20]    = status_flags        (unused in calibration output)
+
+        if (ch == 0 || ch > 20)
+            continue;
+
+        elodin_client.begin_batch();
+
+        if (type_hi == 0x20 && ch <= 14) {  // PT raw
+            double psi;
+            uint8_t cal_status;
+            if (hp_pt_channels.count(ch)) {
+                psi = convert_hp_pt_to_pressure(static_cast<int32_t>(raw_adc),
+                                                hp_pt_full_scale_psi,
+                                                hp_pt_sense_resistor_ohms,
+                                                hp_pt_adc_ref_voltage);
+                cal_status = 1;
+                if (verbose() && packet_count % 100 == 0)
+                    std::cout << "[Cal] HP PT ch" << (int)ch
+                              << " adc=" << static_cast<int32_t>(raw_adc)
+                              << " psi=" << psi << std::endl;
+            } else {
+                psi = pt_calibration.calculate_pressure(ch, static_cast<int32_t>(raw_adc));
+                cal_status = pt_calibration.is_calibrated(ch) ? 1u : 0u;
+                if (ch == 5 && !logged_ch5.exchange(true))
+                    std::cout << "[Cal] PT ch5 (Ox Up) first publish: " << psi
+                              << " psi" << std::endl;
+                if (verbose() && packet_count % 100 == 0)
+                    std::cout << "[Cal] PT ch" << (int)ch << " adc=" << raw_adc
+                              << " psi=" << psi << std::endl;
+            }
+            comms::messages::sensor::CalibratedPTMessage cal_msg(
+                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0},
+                static_cast<float>(psi), raw_adc, cal_status);
+            elodin_client.publish(static_cast<uint16_t>(0x2000 | (0x10 + ch)), cal_msg);
+
+        } else if (type_hi == 0x21) {  // TC raw
+            double temp_c = tc_calibration.calculate(ch, static_cast<int32_t>(raw_adc));
+            uint8_t cal_status = tc_calibration.is_calibrated(ch) ? 1u : 0u;
+            comms::messages::sensor::CalibratedTCMessage cal_msg(
+                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0},
+                static_cast<float>(temp_c), raw_adc, cal_status);
+            elodin_client.publish(static_cast<uint16_t>(0x2100 | (0x10 + ch)), cal_msg);
+
+        } else if (type_hi == 0x22) {  // RTD raw
+            double temp_c = rtd_calibration.calculate(ch, static_cast<int32_t>(raw_adc));
+            uint8_t cal_status = rtd_calibration.is_calibrated(ch) ? 1u : 0u;
+            comms::messages::sensor::CalibratedRTDMessage cal_msg(
+                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0},
+                static_cast<float>(temp_c), raw_adc, cal_status);
+            elodin_client.publish(static_cast<uint16_t>(0x2200 | (0x10 + ch)), cal_msg);
+
+        } else if (type_hi == 0x23) {  // LC raw
+            double lbf = lc_calibration.calculate(ch, static_cast<int32_t>(raw_adc));
+            uint8_t cal_status = lc_calibration.is_calibrated(ch) ? 1u : 0u;
+            comms::messages::sensor::CalibratedLCMessage cal_msg(
+                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0},
+                static_cast<float>(lbf), raw_adc, cal_status);
+            elodin_client.publish(static_cast<uint16_t>(0x2300 | (0x10 + ch)), cal_msg);
+        }
+
+        elodin_client.flush_batch();
 
         packet_count++;
         if (packet_count % 500 == 0)
-            std::cout << "[Cal] Processed " << packet_count << " raw packets (type=0x" << std::hex
-                      << (int)type_hi << " ch=" << (int)channel_id << std::dec << ")" << std::endl;
+            std::cout << "[Cal] Processed " << packet_count << " raw packets (type=0x"
+                      << std::hex << (int)type_hi << " ch=" << (int)ch << std::dec << ")"
+                      << std::endl;
     }
 
-    std::cout << "✅ Calibration Service stopped." << std::endl;
+    std::cout << "[Cal] Stopped." << std::endl;
     return 0;
 }
