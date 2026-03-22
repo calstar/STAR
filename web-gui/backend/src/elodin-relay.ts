@@ -1,15 +1,11 @@
 /**
- * Elodin Relay — single subscriber to Elodin DB, fans out raw TABLE packets to many WebSocket clients
- * and optionally to a TCP port for C++ calibration_service.
+ * Data Relay — subscribes to Elodin DB, fans out raw TABLE packets to WebSocket clients.
  *
- * Pipeline: raw data → Elodin DB only; all services consume from DB via this relay. That keeps
- * collection invariant to upstream bugs and each service modular/independent.
- *
- * Elodin DB streams to the FIRST TCP subscriber only. This relay is that subscriber and broadcasts
- * to backend, sidecar, calibration_service. Run before backend: npm run relay
+ * Pipeline: Elodin DB → relay → WebSocket :9090 → server.ts → browser.
+ * All C++ services (calibration_service, sequencer_service) connect directly to Elodin DB.
+ * Run before backend: npm run relay
  */
 
-import * as net from 'net';
 import { WebSocketServer } from 'ws';
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
 import { registerVTables, registerControllerVTables, registerActuatorCommandedVTables } from './elodin-vtable.js';
@@ -19,7 +15,6 @@ const ELODIN_HOST = process.env.ELODIN_HOST || '127.0.0.1';
 const ELODIN_PORT = parseInt(process.env.ELODIN_PORT || '2240', 10);
 const RELAY_WS_PORT = parseInt(process.env.RELAY_WS_PORT || '9090', 10);
 const RELAY_WS_HOST = process.env.RELAY_WS_HOST || '0.0.0.0';
-const RELAY_TCP_FORWARD_PORT = parseInt(process.env.RELAY_TCP_FORWARD_PORT || '9091', 10);
 
 function main(): void {
   const elodin = new ElodinClient(ELODIN_HOST, ELODIN_PORT);
@@ -57,21 +52,6 @@ function main(): void {
     if (RELAY_DEBUG_HEARTBEAT) {
       console.log('[Relay] RELAY_DEBUG_HEARTBEAT=1 — will log each heartbeat (0x10) packet');
     }
-  });
-
-  // TCP forward for C++ calibration_service (same packet format as WebSocket)
-  const tcpClients: net.Socket[] = [];
-  const tcpServer = net.createServer((sock) => {
-    tcpClients.push(sock);
-    console.log(`[Relay] TCP client connected (calibration_service) (total ${tcpClients.length})`);
-    sock.on('close', () => {
-      const idx = tcpClients.indexOf(sock);
-      if (idx >= 0) tcpClients.splice(idx, 1);
-    });
-    sock.on('error', () => { });
-  });
-  tcpServer.listen(RELAY_TCP_FORWARD_PORT, '127.0.0.1', () => {
-    console.log(`[Relay] TCP forward listening on 127.0.0.1:${RELAY_TCP_FORWARD_PORT} (calibration_service)`);
   });
 
   let tablePacketCount = 0;
@@ -145,11 +125,6 @@ function main(): void {
     wss.clients.forEach((client) => {
       if (client.readyState === 1) {
         try { client.send(broadcastBuffer); } catch (_) { /* ignore closed client */ }
-      }
-    });
-    tcpClients.forEach((sock) => {
-      if (sock.writable) {
-        try { sock.write(broadcastBuffer); } catch (_) { /* ignore */ }
       }
     });
   });
