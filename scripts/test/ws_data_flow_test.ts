@@ -96,19 +96,25 @@ function waitForMessage(
   });
 }
 
+interface CollectedMessage {
+  payload: any;
+  receivedAt: number;
+}
+
 function collectMessages(
   ws: WebSocket,
   type: string,
   durationMs: number,
-): Promise<any[]> {
+): Promise<CollectedMessage[]> {
   return new Promise((resolve) => {
-    const collected: any[] = [];
+    const collected: CollectedMessage[] = [];
 
     function handler(data: WebSocket.Data) {
+      const receivedAt = Date.now();
       try {
         const msg: WSMessage = JSON.parse(data.toString());
         if (msg.type === type) {
-          collected.push(msg.payload);
+          collected.push({ payload: msg.payload, receivedAt });
         }
       } catch { /* ignore */ }
     }
@@ -190,7 +196,7 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
 
   if (updates.length > 0) {
     // Check entity names
-    const entities = new Set(updates.map((u: any) => u.entity));
+    const entities = new Set(updates.map((u) => u.payload.entity));
     assert(entities.size > 1, `Received data from ${entities.size} distinct entities (expected > 1)`);
 
     // Log all distinct entities for diagnostics
@@ -198,7 +204,7 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     if (VERBOSE) {
       console.log(`  Distinct entities (${sortedEntities.length}):`);
       for (const e of sortedEntities) {
-        const count = updates.filter((u: any) => u.entity === e).length;
+        const count = updates.filter((u) => u.payload.entity === e).length;
         console.log(`    ${e} (${count} updates)`);
       }
     }
@@ -210,23 +216,51 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     assert(hasKnownSensor, 'Received known sensor data (PT/RTD/TC/LC/ACT)');
 
     // Check numeric values
-    const allNumeric = updates.every((u: any) => typeof u.value === 'number' && Number.isFinite(u.value));
+    const allNumeric = updates.every((u) => typeof u.payload.value === 'number' && Number.isFinite(u.payload.value));
     assert(allNumeric, 'All sensor values are finite numbers');
 
     // Check timestamps are recent
     const now = Date.now();
-    const recentTimestamps = updates.filter((u: any) => Math.abs(now - u.timestamp) < 60000);
+    const recentTimestamps = updates.filter((u) => Math.abs(now - u.payload.timestamp) < 60000);
     assert(
       recentTimestamps.length > updates.length * 0.5,
       `${recentTimestamps.length}/${updates.length} timestamps are within 60s of now`,
     );
 
+    // ── Pipeline latency measurement ──────────────────────────────────────
+    // Measures time from message timestamp (set by backend when broadcasting)
+    // to when the WS client receives it. This captures the full pipeline:
+    //   fake data → DAQ bridge → Elodin DB → relay → backend → WS client
+    const latencies = updates
+      .map((u) => u.receivedAt - u.payload.timestamp)
+      .filter((l) => l >= 0 && l < 60000); // discard nonsensical values
+
+    if (latencies.length > 0) {
+      latencies.sort((a, b) => a - b);
+      const min = latencies[0];
+      const max = latencies[latencies.length - 1];
+      const avg = latencies.reduce((s, l) => s + l, 0) / latencies.length;
+      const p50 = latencies[Math.floor(latencies.length * 0.5)];
+      const p95 = latencies[Math.floor(latencies.length * 0.95)];
+      const p99 = latencies[Math.floor(latencies.length * 0.99)];
+
+      console.log('');
+      console.log('  📊 Pipeline Latency (message timestamp → WS client receive):');
+      console.log(`     Samples: ${latencies.length}`);
+      console.log(`     Min:     ${min}ms`);
+      console.log(`     Avg:     ${avg.toFixed(1)}ms`);
+      console.log(`     P50:     ${p50}ms`);
+      console.log(`     P95:     ${p95}ms`);
+      console.log(`     P99:     ${p99}ms`);
+      console.log(`     Max:     ${max}ms`);
+    }
+
     // Log sample data from first few distinct entities
     if (VERBOSE) {
       const sampleEntities = sortedEntities.slice(0, 3);
       for (const e of sampleEntities) {
-        const sample = updates.find((u: any) => u.entity === e);
-        console.log(`  Sample [${e}]: component=${sample.component} value=${sample.value}`);
+        const sample = updates.find((u) => u.payload.entity === e);
+        console.log(`  Sample [${e}]: component=${sample!.payload.component} value=${sample!.payload.value} latency=${sample!.receivedAt - sample!.payload.timestamp}ms`);
       }
     }
   }
