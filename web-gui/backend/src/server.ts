@@ -18,7 +18,7 @@ import { ElodinClient, ElodinPacketType } from './elodin-client.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { ElodinQueryClient } from './elodin-query.js';
 import { parseElodinPacket } from './elodin-protocol.js';
-import { registerControllerVTables, registerActuatorCommandedVTables } from './elodin-vtable-controller.js';
+import { registerControllerVTables, registerActuatorCommandedVTables } from './elodin-vtable.js';
 import { registerNavigationVTable } from './elodin-vtable-navigation.js';
 import { ElodinRelayClient } from './elodin-relay-client.js';
 

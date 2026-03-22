@@ -12,8 +12,7 @@
 import * as net from 'net';
 import { WebSocketServer } from 'ws';
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
-import { registerVTables } from './elodin-vtable.js';
-import { registerControllerVTables, registerActuatorCommandedVTables } from './elodin-vtable-controller.js';
+import { registerVTables, registerControllerVTables, registerActuatorCommandedVTables } from './elodin-vtable.js';
 import { loadActuatorChannelToEntityMap } from './sensor-config.js';
 
 const ELODIN_HOST = process.env.ELODIN_HOST || '127.0.0.1';
@@ -187,10 +186,12 @@ function main(): void {
   });
   elodin.on('error', () => { });
 
-  // Periodic diagnostic: if we get TABLE packets but no heartbeats, daq_bridge may not be publishing
+  // One-time diagnostic: if we get TABLE packets but no heartbeats after 15s
+  let heartbeatWarned = false;
   setInterval(() => {
-    if (tablePacketCount > 100 && heartbeatPacketCount === 0 && !seenHighBytes.has(0x10)) {
-      console.warn(`[Relay] ⚠️ Received ${tablePacketCount} TABLE packets but 0 heartbeats (0x10) — is daq_bridge receiving UDP from boards and publishing to Elodin?`);
+    if (!heartbeatWarned && tablePacketCount > 100 && heartbeatPacketCount === 0) {
+      console.warn('[Relay] Received TABLE packets but no heartbeats (0x10) — daq_bridge may not be publishing');
+      heartbeatWarned = true;
     }
   }, 15000);
 

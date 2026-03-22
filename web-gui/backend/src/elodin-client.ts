@@ -30,18 +30,13 @@ export class ElodinClient extends EventEmitter {
   private hasReceivedData: boolean = false;
   private writeQueue: Buffer[] = [];
   private drainPending: boolean = false;
-  private packetCount: number = 0;
 
   get connected(): boolean {
     return this._connected;
   }
 
-  // Packet IDs for different message types
   private readonly PACKET_IDS = {
     COMMAND: [0xff, 0x01],
-    PT_DATA: [0x01, 0x00],
-    TC_DATA: [0x02, 0x00],
-    IMU_DATA: [0x03, 0x00],
     STATE_MACHINE: [0x20, 0x00],
   };
 
@@ -59,88 +54,45 @@ export class ElodinClient extends EventEmitter {
     return new Promise((resolve) => {
       let connectTimeout: NodeJS.Timeout | null = null;
       try {
-        console.log(`🔌 Creating socket for ${this.host}:${this.port}...`);
         this.socket = new Socket();
         this.socket.setNoDelay(true); // Disable Nagle's algorithm for low latency
         this.socket.setKeepAlive(true, 60000); // Keep connection alive
 
-        // CRITICAL: Set up data handler BEFORE connecting
-        // Elodin DB may send data immediately upon connection
         this.socket.on('data', (data: Buffer) => {
-          // ALWAYS log data chunks - this is critical to see if we're receiving anything
           if (!this.hasReceivedData) {
-            console.log(`📥 FIRST DATA CHUNK from Elodin DB: ${data.length} bytes`);
-            console.log(`   First 64 bytes (hex): ${data.subarray(0, Math.min(64, data.length)).toString('hex')}`);
-            console.log(`   First 64 bytes (ascii): ${data.subarray(0, Math.min(64, data.length)).toString('ascii').replace(/[^\x20-\x7E]/g, '.')}`);
+            console.log(`[ElodinClient] First data chunk: ${data.length} bytes`);
             this.hasReceivedData = true;
-          } else {
-            // Log every 100th chunk to confirm continuous data flow
-            if (Math.random() < 0.01) {
-              console.log(`📥 Data chunk: ${data.length} bytes`);
-            }
           }
           this.handleData(data);
         });
 
-        // Don't set encoding - we need raw Buffer data, not strings
-
-        // Add connection timeout
         connectTimeout = setTimeout(() => {
           if (!this._connected) {
-            console.error(`❌ Connection timeout after 5 seconds to ${this.host}:${this.port}`);
-            console.error(`   Check: Is Elodin DB running? Is the address correct?`);
+            console.error(`[ElodinClient] Connection timeout to ${this.host}:${this.port}`);
             this.socket?.destroy();
             resolve(false);
           }
         }, 5000);
 
         this.socket.on('connect', () => {
-          if (connectTimeout) {
-            clearTimeout(connectTimeout);
-          }
+          if (connectTimeout) clearTimeout(connectTimeout);
           this._connected = true;
           this.emit('connected');
-          console.log(`✅ CONNECTED to Elodin DB at ${this.host}:${this.port}`);
-          console.log(`   Socket local address: ${this.socket?.localAddress}:${this.socket?.localPort}`);
-          console.log(`   Socket remote address: ${this.socket?.remoteAddress}:${this.socket?.remotePort}`);
-          console.log(`📡 Ready to receive TABLE packets from Elodin DB`);
+          console.log(`[ElodinClient] Connected to ${this.host}:${this.port}`);
           resolve(true);
         });
 
         this.socket.on('error', (error: Error) => {
           if (connectTimeout) clearTimeout(connectTimeout);
-          // Don't crash on connection errors - just log and reconnect
           const err = error as any;
-          console.error('❌ Elodin socket error:', error);
-          console.error(`   Error code: ${err.code}`);
-          console.error(`   Error message: ${err.message}`);
-          console.error(`   Error syscall: ${err.syscall}`);
-          console.error(`   Error address: ${err.address}`);
-          console.error(`   Error port: ${err.port}`);
-
-          if (err.code === 'ECONNREFUSED') {
-            console.warn('⚠️ Connection refused - Elodin DB may not be running or wrong address');
-            console.warn(`   Trying to connect to: ${this.host}:${this.port}`);
-            console.warn(`   Elodin DB should be running: elodin-db run calibration_db '[::]:2240'`);
-            console.warn(`   If Elodin DB is on IPv6, try: ::1 or localhost`);
-          } else if (err.code === 'ENOTFOUND' || err.code === 'EAI_AGAIN') {
-            console.error('❌ DNS/Address resolution failed');
-            console.error(`   Cannot resolve: ${this.host}`);
-            console.error(`   Try using: localhost or ::1 or 127.0.0.1`);
-          } else if (err.code === 'ETIMEDOUT') {
-            console.error('❌ Connection timeout');
-            console.error(`   Elodin DB at ${this.host}:${this.port} is not responding`);
-          }
-
+          console.error(`[ElodinClient] Socket error: ${err.code || err.message}`);
           this._connected = false;
-          // Don't emit error event to prevent unhandled error crashes
-          // Just schedule reconnect - errors are already logged above
           resolve(false);
           this.scheduleReconnect();
         });
 
         this.socket.on('close', () => {
-          console.log('🔌 Elodin connection closed');
+          console.log('[ElodinClient] Connection closed');
           this._connected = false;
           this.writeQueue = [];
           this.drainPending = false;
@@ -148,20 +100,15 @@ export class ElodinClient extends EventEmitter {
           this.scheduleReconnect();
         });
 
-        console.log(`🔌 Attempting TCP connection to ${this.host}:${this.port}...`);
-        console.log(`   Socket type: ${this.socket.constructor.name}`);
-
-        // Try connecting - Node.js should handle IPv6 automatically
         try {
           this.socket.connect(this.port, this.host);
-          console.log(`   Connection attempt initiated...`);
         } catch (connectError) {
-          console.error('❌ Failed to initiate connection:', connectError);
+          console.error('[ElodinClient] Failed to initiate connection:', connectError);
           clearTimeout(connectTimeout);
           resolve(false);
         }
       } catch (error) {
-        console.error('❌ Failed to connect to Elodin:', error);
+        console.error('[ElodinClient] Failed to connect:', error);
         this._connected = false;
         this.scheduleReconnect();
         resolve(false);
@@ -214,14 +161,7 @@ export class ElodinClient extends EventEmitter {
 
       const payload = packet.subarray(8);
 
-      // ALWAYS log packets - this is critical for debugging
-      const [high, low] = header.packetId;
-
       if (header.ty === ElodinPacketType.TABLE) {
-        this.packetCount++;
-        if (this.packetCount <= 5 || this.packetCount % 1000 === 0) {
-          console.log(`📥 TABLE packet #${this.packetCount}: packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}`);
-        }
         this.emit('packet', header, payload);
       }
     }
@@ -239,43 +179,12 @@ export class ElodinClient extends EventEmitter {
     return 0;
   }
 
-  private sendQueryForData(): void {
-    if (!this.connected || !this.socket) {
-      console.warn('⚠️ Cannot send query - not connected');
-      return;
-    }
-
-    try {
-      // Try sending a QUERY packet to request data streaming
-      // Packet ID [0x00, 0x00] might be a "subscribe to all" query
-      // This is a guess based on common protocol patterns
-      const queryPacketId: [number, number] = [0x00, 0x00];
-      const emptyPayload = Buffer.alloc(0);
-
-      const header = this.createHeader(
-        ElodinPacketType.QUERY,
-        emptyPayload.length,
-        queryPacketId
-      );
-
-      const packet = Buffer.concat([header, emptyPayload]);
-      this.socket.write(packet);
-      console.log(`📤 Sent QUERY packet to Elodin DB (packetId=[0x00, 0x00])`);
-      console.log(`   This may trigger data streaming if Elodin DB supports it.`);
-    } catch (error) {
-      console.error('❌ Failed to send query:', error);
-    }
-  }
-
   /**
    * Send raw message to Elodin DB
    * Used for VTable registration and other low-level protocol messages
    */
   sendRawMessage(packetId: [number, number], packetType: ElodinPacketType, payload: Buffer): boolean {
     if (!this.connected || !this.socket) {
-      if (Math.random() < 0.01) { // Log occasionally to avoid spam
-        console.warn(`⚠️ Cannot send raw message - not connected (packetId=[0x${packetId[0].toString(16).padStart(2, '0')}, 0x${packetId[1].toString(16).padStart(2, '0')}])`);
-      }
       return false;
     }
 
@@ -291,7 +200,6 @@ export class ElodinClient extends EventEmitter {
 
       const flushed = this.socket.write(packet);
       if (!flushed) {
-        // Send buffer full — queue subsequent writes until 'drain' fires
         this.drainPending = true;
         if (!this.socket.listenerCount('drain')) {
           this.socket.once('drain', () => {
@@ -299,30 +207,11 @@ export class ElodinClient extends EventEmitter {
             this.flushWriteQueue();
           });
         }
-        if (Math.random() < 0.05) {
-          console.warn(`⚠️ Socket write buffer full for packetId=[0x${packetId[0].toString(16).padStart(2, '0')}, 0x${packetId[1].toString(16).padStart(2, '0')}] — queuing`);
-        }
       }
-
-      // Log first few messages to verify they're being sent
-      if (this.packetCount < 10) {
-        const [high, low] = packetId;
-        const packetTypeName = packetType === ElodinPacketType.MSG ? 'MSG' :
-          packetType === ElodinPacketType.TABLE ? 'TABLE' :
-            packetType === ElodinPacketType.COMMAND ? 'COMMAND' :
-              packetType === ElodinPacketType.QUERY ? 'QUERY' : `UNKNOWN(${packetType})`;
-        console.log(`📤 Sent ${packetTypeName} packet: packetId=[0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}], payloadLen=${payload.length}, totalLen=${packet.length}`);
-        if (payload.length <= 16) {
-          console.log(`   Payload (hex): ${payload.toString('hex')}`);
-        }
-      }
-
-      // Increment packet count for logging
-      this.packetCount++;
 
       return true;
     } catch (error) {
-      console.error('❌ Failed to send raw message:', error);
+      console.error('[ElodinClient] Failed to send raw message:', error);
       return false;
     }
   }
@@ -360,7 +249,7 @@ export class ElodinClient extends EventEmitter {
 
       return this.sendRawMessage(packetId, ElodinPacketType.COMMAND, payloadBuffer);
     } catch (error) {
-      console.error('❌ Failed to send command:', error);
+      console.error('[ElodinClient] Failed to send command:', error);
       return false;
     }
   }
@@ -403,8 +292,7 @@ export class ElodinClient extends EventEmitter {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (!this.connected) {
-        console.log('🔄 Attempting to reconnect to Elodin DB...');
-        console.log(`   Make sure Elodin DB is running: elodin-db run calibration_db '[::]:2240'`);
+        console.log('[ElodinClient] Reconnecting...');
         this.connect();
       }
     }, 5000); // Reconnect after 5 seconds
