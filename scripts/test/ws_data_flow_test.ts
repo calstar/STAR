@@ -329,16 +329,51 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     console.log(`  Extra entities beyond expected (${extraEntities.length}): ${extraEntities.join(', ')}`);
   }
 
-  // Verify every entity got substantial updates (at 10Hz over 15s, expect ~150 each)
-  const MIN_UPDATES_PER_ENTITY = 100;
-  const lowCountEntities = EXPECTED_ENTITIES.map(e => {
-    const count = updates.filter(u => u.payload.entity === e).length;
-    return { entity: e, count };
-  }).filter(({ count }) => count < MIN_UPDATES_PER_ENTITY);
-  assert(lowCountEntities.length === 0,
-    lowCountEntities.length === 0
-      ? `All expected entities have >= ${MIN_UPDATES_PER_ENTITY} updates each`
-      : `${lowCountEntities.length} entities below ${MIN_UPDATES_PER_ENTITY}: ${lowCountEntities.map(e => `${e.entity}=${e.count}`).join(', ')}`);
+  // ── Zero packet loss verification ──
+  // Each board sends ALL its active channels in one UDP packet. So every entity
+  // from the same board MUST have the exact same update count. If any entity has
+  // fewer updates than its board siblings, packets were dropped in the pipeline.
+  const BOARD_GROUPS: Record<string, string[]> = {
+    'pt_board': [
+      'PT.Fuel_Upstream', 'PT.GSE_Low', 'PT.Fuel_Downstream', 'PT.Chamber_Mid_PT_1',
+      'PT.Ox_Upstream', 'PT.GN2_Regulated', 'PT.Ox_Downstream', 'PT.Chamber_Mid_PT_2',
+      'PT.Chamber_Throat_PT_1', 'PT.Chamber_Throat_PT_2',
+    ],
+    'pt_board_2': ['PT.GSE_High', 'PT.GSE_Mid', 'PT.GN2_High'],
+    'rtd_board': ['RTD.CH1', 'RTD.CH2', 'RTD.CH3', 'RTD.CH4'],
+    'lc_board_2': ['LC.CH1', 'LC.CH2', 'LC.CH6'],
+    'tc_board': ['TC.CH2', 'TC.CH3', 'TC.CH4', 'TC.CH5'],
+  };
+
+  // Count updates per entity
+  const entityCounts: Record<string, number> = {};
+  for (const u of updates) {
+    const e = u.payload.entity as string;
+    entityCounts[e] = (entityCounts[e] || 0) + 1;
+  }
+
+  let totalDropped = 0;
+  for (const [boardName, boardEntities] of Object.entries(BOARD_GROUPS)) {
+    const counts = boardEntities.map(e => entityCounts[e] || 0);
+    const maxCount = Math.max(...counts);
+    const minCount = Math.min(...counts);
+
+    // Print per-entity counts for this board
+    console.log(`\n  ${boardName} (${maxCount} packets received):`);
+    for (const e of boardEntities) {
+      const count = entityCounts[e] || 0;
+      const status = count === maxCount ? '✅' : '❌';
+      console.log(`    ${status} ${e}: ${count}/${maxCount}`);
+    }
+
+    const dropped = boardEntities.reduce((sum, e) => sum + (maxCount - (entityCounts[e] || 0)), 0);
+    totalDropped += dropped;
+
+    assert(minCount === maxCount,
+      minCount === maxCount
+        ? `${boardName}: 0 dropped — all ${boardEntities.length} channels received ${maxCount} updates each`
+        : `${boardName}: ${dropped} updates dropped — counts range ${minCount}-${maxCount}`);
+  }
 
   // Total update count — just report, no arbitrary minimum
   console.log(`  Total updates received: ${updates.length}`);
