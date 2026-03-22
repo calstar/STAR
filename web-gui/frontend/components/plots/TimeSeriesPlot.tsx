@@ -523,7 +523,7 @@ export default function TimeSeriesPlot({
       setIsInitialized(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entitiesKey, colorsKey, component, yLabel, height, windowKey]);
+  }, [entitiesKey, colorsKey, component, yLabel, windowKey]); // height intentionally omitted — ResizeObserver handles size changes
 
   // Scale legend text to fill one row (measure and adjust until fit)
   useEffect(() => {
