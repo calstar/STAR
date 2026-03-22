@@ -294,8 +294,16 @@ echo "  ✅ UDP listener started (PID ${PIDS[-1]})"
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
-echo "  All services running. Starting tests..."
+echo "  All services running. Checking connections..."
 echo "═══════════════════════════════════════════════════════════════"
+echo ""
+
+# ── Check backend Elodin connection status from log ──────────────────────────
+# The backend logs "CONNECTED to Elodin DB" or "Elodin socket error" on startup.
+# This is critical — state transitions without debug mode require direct Elodin.
+sleep 2  # give backend time to attempt connection
+echo "📋 Backend Elodin connection status:"
+grep -i "elodin\|CONNECT\|socket error\|ECONNREFUSED\|timeout" /tmp/integration_backend_$$.log 2>/dev/null | head -15 || echo "  (no Elodin-related log lines found)"
 echo ""
 
 # ── Run WebSocket Data Flow Test ──────────────────────────────────────────────
@@ -307,11 +315,16 @@ VERBOSE_FLAG=""
   npx tsx "$SCRIPT_DIR/ws_data_flow_test.ts" "$TEST_BACKEND_WS_PORT" "$TEST_BACKEND_API_PORT" "$TEST_ACTUATOR_UDP_PORT" $VERBOSE_FLAG)
 WS_TEST_EXIT=$?
 
-# Print last 30 lines of backend log for diagnostics if test failed
+# Always print Elodin connection lines from backend log (key diagnostic)
+echo ""
+echo "📋 Backend Elodin connection log:"
+grep -i "elodin\|CONNECT\|socket\|relay" /tmp/integration_backend_$$.log 2>/dev/null | head -20 || echo "  (none)"
+
+# Print full backend log tail if test failed
 if [ "$WS_TEST_EXIT" -ne 0 ]; then
   echo ""
-  echo "📋 Backend log (last 30 lines):"
-  tail -30 /tmp/integration_backend_$$.log 2>/dev/null || true
+  echo "📋 Backend log (last 40 lines):"
+  tail -40 /tmp/integration_backend_$$.log 2>/dev/null || true
 fi
 
 # ── Check UDP Commands ────────────────────────────────────────────────────────
