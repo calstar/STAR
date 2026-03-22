@@ -225,11 +225,32 @@ async function waitForElodinConnection(ws: WebSocket): Promise<void> {
   }
 }
 
-// ── Expected sensor types from config.toml enabled boards ────────────────────
-// The DAQ bridge routes by source IP → board type. Each enabled board produces
-// sensor data with entity names like PT.CH{n}, RTD.CH{n}, TC.CH{n}, LC.CH{n}.
-// These are the sensor type prefixes we MUST receive data for:
-const REQUIRED_SENSOR_TYPES = ['PT.', 'RTD.', 'TC.', 'LC.'];
+// ── Expected entities from config.toml enabled boards ────────────────────────
+// Every enabled board with active_connectors produces entities named {TYPE}.CH{n}
+// where n = connector_id + channel_offset. We MUST receive data for ALL of these.
+//
+// pt_board    (id 21, offset 0):  active [1-10]       → PT.CH1-CH10
+// pt_board_2  (id 22, offset 10): active [1-4]        → PT.CH11-CH14
+// rtd_board   (id 31, offset 0):  active [1,2,3,4]    → RTD.CH1-CH4
+// lc_board_2  (id 42, offset 0):  active [1,2,6]      → LC.CH1, LC.CH2, LC.CH6
+// tc_board    (id 51, offset 0):  active [2,3,4,5]    → TC.CH2-CH5
+// actuator_board_2 (id 12, offset 0):  10 sensors      → ACT.CH1-CH10
+// actuator_board_4 (id 14, offset 10): 10 sensors      → ACT.CH11-CH20
+const EXPECTED_ENTITIES: string[] = [
+  // PT board 1 (offset 0, connectors 1-10)
+  ...Array.from({ length: 10 }, (_, i) => `PT.CH${i + 1}`),
+  // PT board 2 (offset 10, connectors 1-4)
+  ...Array.from({ length: 4 }, (_, i) => `PT.CH${11 + i}`),
+  // RTD board (offset 0, connectors 1-4)
+  ...Array.from({ length: 4 }, (_, i) => `RTD.CH${i + 1}`),
+  // LC board 2 (offset 0, connectors 1,2,6)
+  'LC.CH1', 'LC.CH2', 'LC.CH6',
+  // TC board (offset 0, connectors 2,3,4,5)
+  'TC.CH2', 'TC.CH3', 'TC.CH4', 'TC.CH5',
+  // Actuator boards send current sense data — these may or may not produce
+  // sensor_update messages (depends on DAQ bridge routing). Don't require them
+  // but report if present.
+];
 
 // ── Test 1: Sensor Data Flow ─────────────────────────────────────────────────
 
@@ -278,27 +299,40 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     console.log(`    ${prefix.replace('.', '').padEnd(8)} ${info.count.toString().padStart(5)} updates across ${info.entities.size} channels: ${[...info.entities].sort().join(', ')}`);
   }
 
-  // ── Assertions: ALL required sensor types must be present ──
-  for (const requiredType of REQUIRED_SENSOR_TYPES) {
-    const found = typeBreakdown[requiredType];
-    if (found) {
-      assert(true, `${requiredType.replace('.', '')} data received: ${found.count} updates from ${found.entities.size} channels`);
+  // ── Assertions: verify EVERY expected entity was received ──
+  const missing: string[] = [];
+  const received: string[] = [];
+  for (const expected of EXPECTED_ENTITIES) {
+    if (entities.has(expected)) {
+      received.push(expected);
     } else {
-      assert(false, `${requiredType.replace('.', '')} data MISSING — no updates received (expected from enabled board)`);
+      missing.push(expected);
     }
   }
 
-  // Also check for calibrated PT data (PT_Cal) — may or may not be present depending on calibration state
-  const ptCalData = typeBreakdown['PT_Cal.'];
-  if (ptCalData) {
-    console.log(`    ✅ PT_Cal data also present: ${ptCalData.count} updates from ${ptCalData.entities.size} channels`);
+  assert(missing.length === 0,
+    missing.length === 0
+      ? `All ${EXPECTED_ENTITIES.length}/${EXPECTED_ENTITIES.length} expected entities received`
+      : `${received.length}/${EXPECTED_ENTITIES.length} expected entities received — MISSING: ${missing.join(', ')}`);
+
+  // Report any extra entities received beyond what we expected (e.g. ACT, PT_Cal)
+  const extraEntities = sortedEntities.filter(e => !EXPECTED_ENTITIES.includes(e));
+  if (extraEntities.length > 0) {
+    console.log(`  Extra entities beyond expected (${extraEntities.length}): ${extraEntities.join(', ')}`);
   }
 
-  // Check total volume — with multiple boards at 10Hz over 15s, expect substantial data
-  assert(updates.length >= 100, `Total sensor updates: ${updates.length} (expected >= 100)`);
+  // Verify every entity got multiple updates (not just one fluke)
+  const lowCountEntities = EXPECTED_ENTITIES.filter(e => {
+    const count = updates.filter(u => u.payload.entity === e).length;
+    return count < 5; // at 10Hz over 15s, each entity should have many updates
+  });
+  assert(lowCountEntities.length === 0,
+    lowCountEntities.length === 0
+      ? `All expected entities have >= 5 updates each`
+      : `${lowCountEntities.length} entities have < 5 updates: ${lowCountEntities.join(', ')}`);
 
-  // Check entity diversity — with 4+ board types we should see many distinct entities
-  assert(entities.size >= 10, `Distinct entities: ${entities.size} (expected >= 10)`);
+  // Total update count — just report, no arbitrary minimum
+  console.log(`  Total updates received: ${updates.length}`);
 
   if (updates.length > 0) {
     // Check all values are finite numbers
