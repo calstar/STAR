@@ -29,7 +29,6 @@ enum MessageType {
   SENSOR_UPDATE = 'sensor_update',
   ACTUATOR_UPDATE = 'actuator_update',
   STATE_UPDATE = 'state_update',
-  CONNECTION_STATUS = 'connection_status',
 }
 
 enum SystemState {
@@ -212,19 +211,6 @@ async function connectWS(): Promise<WebSocket> {
   });
 }
 
-/** Wait for backend to report elodinConnected=true before running tests */
-async function waitForElodinConnection(ws: WebSocket): Promise<void> {
-  console.log('  Waiting for backend Elodin connection...');
-  try {
-    await waitForMessage(ws, MessageType.CONNECTION_STATUS, 10000,
-      (payload) => payload.elodinConnected === true);
-    console.log('  ✅ Backend reports Elodin connected');
-  } catch {
-    // May have already connected before we started listening — check current state
-    console.log('  ⚠️  No connection_status received (may already be connected)');
-  }
-}
-
 // ── Expected entities from config.toml enabled boards ────────────────────────
 // Entity names use sensor_roles from config (spaces → underscores). Boards
 // without role mappings use generic CHx names. Channels use channel_offset
@@ -385,54 +371,13 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
   }
 }
 
-// ── Connection status diagnostic ─────────────────────────────────────────────
-
-async function checkConnectionStatus(ws: WebSocket): Promise<{ elodinConnected: boolean; connected: boolean } | null> {
-  console.log('\n🔌 Checking backend connection status...');
-
-  // Collect connection_status messages for a short window
-  // The backend broadcasts these periodically and on connection changes
-  const statusMessages = await collectMessages(ws, MessageType.CONNECTION_STATUS, 3000);
-
-  if (statusMessages.length > 0) {
-    const latest = statusMessages[statusMessages.length - 1].payload;
-    console.log(`  Backend reports: connected=${latest.connected} elodinConnected=${latest.elodinConnected}`);
-    if (latest.latency !== undefined) console.log(`  Latency: ${latest.latency}ms`);
-    if (latest.error) console.log(`  Error: ${latest.error}`);
-    return latest;
-  }
-
-  console.log('  ⚠️  No connection_status received in 3s');
-  return null;
-}
-
 // ── Test 2: State Transition Command ─────────────────────────────────────────
 
 async function testStateTransition(ws: WebSocket): Promise<void> {
   console.log('\n🔄 Test 2: State Transition (without debug mode)');
-  console.log('  NOTE: Requires direct Elodin TCP connection (relay alone is read-only)');
   debugLogMessages = VERBOSE;
   const stopSpy = VERBOSE ? startMessageSpy(ws) : () => {};
 
-  // Listen for ALL responses (not just errors) to diagnose silent drops
-  const allResponses: any[] = [];
-  const errors: any[] = [];
-  const responseHandler = (data: WebSocket.Data) => {
-    try {
-      const msg: WSMessage = JSON.parse(data.toString());
-      if (msg.type === 'error') {
-        errors.push(msg.payload);
-        console.log(`  ⚠️  Backend error: ${JSON.stringify(msg.payload)}`);
-      }
-      // Track all state_update and error messages for diagnosis
-      if (msg.type === 'state_update' || msg.type === 'error') {
-        allResponses.push({ type: msg.type, payload: msg.payload, at: Date.now() });
-      }
-    } catch { /* ignore */ }
-  };
-  ws.on('message', responseHandler);
-
-  // Test state transition WITHOUT debug mode (Elodin direct connection should be up)
   const commandLatencies: number[] = [];
 
   // IDLE → ARMED
@@ -453,24 +398,10 @@ async function testStateTransition(ws: WebSocket): Promise<void> {
     assert(typeof stateUpdate.stateName === 'string', `State name is string: "${stateUpdate.stateName}"`);
     assert(typeof stateUpdate.timestamp === 'number', 'State update has timestamp');
   } catch (err: any) {
-    if (errors.length > 0) {
-      assert(false, `State transition IDLE→ARMED: backend rejected — ${JSON.stringify(errors[0])}`);
-    } else {
-      // No error AND no state_update — the transition was silently dropped.
-      // This means elodin.isConnected() is false AND debugMode is false AND actuatorServicePort <= 0.
-      // The canPublish guard passed (relay is connected) but the actual sendCommand path requires
-      // direct Elodin. See server.ts line 1168.
-      console.log('  🔍 DIAGNOSIS: No state_update AND no error received.');
-      console.log('     This means the backend silently dropped the transition.');
-      console.log('     Root cause: direct Elodin TCP connection is not established.');
-      console.log('     The relay connection allows sensor data but cannot send commands.');
-      console.log(`     All responses during wait: ${JSON.stringify(allResponses)}`);
-      assert(false, `State transition IDLE→ARMED: ${err.message} (likely direct Elodin not connected — check backend log)`);
-    }
+    assert(false, `State transition IDLE→ARMED: ${err.message}`);
   }
 
   // ARMED → IDLE
-  errors.length = 0;
   const sentAt2 = Date.now();
   const idlePromise = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
     (payload) => payload.currentState === SystemState.IDLE);
@@ -484,16 +415,11 @@ async function testStateTransition(ws: WebSocket): Promise<void> {
     commandLatencies.push(receivedAt - sentAt2);
     assert(idleUpdate.currentState === SystemState.IDLE, `State returned to IDLE (got ${idleUpdate.currentState})`);
   } catch (err: any) {
-    if (errors.length > 0) {
-      assert(false, `State transition ARMED→IDLE: backend rejected — ${JSON.stringify(errors[0])}`);
-    } else {
-      assert(false, `Return to IDLE: ${err.message} (likely direct Elodin not connected)`);
-    }
+    assert(false, `Return to IDLE: ${err.message}`);
   }
 
   printLatencyStats('State Transition Command Latency (send → state_update received)', commandLatencies);
 
-  ws.removeListener('message', responseHandler);
   stopSpy();
   debugLogMessages = false;
 }
@@ -713,12 +639,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Wait briefly for backend to establish Elodin connection
-  await waitForElodinConnection(ws);
-
   try {
     await testSensorDataFlow(ws);
-    await checkConnectionStatus(ws);
     await testStateTransition(ws);
     await testStateTransitionDebugMode(ws);
     await testActuatorCommands(ws);
