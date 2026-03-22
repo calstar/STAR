@@ -234,8 +234,9 @@ async function testStateTransition(ws: WebSocket): Promise<void> {
   debugLogMessages = true;
   const stopSpy = startMessageSpy(ws);
 
-  // Send state transition to ARMED
-  const statePromise = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS);
+  // Send state transition to ARMED — use predicate to match specific state
+  const statePromise = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+    (payload) => payload.currentState === SystemState.ARMED);
 
   send(ws, {
     type: MessageType.SEND_COMMAND,
@@ -255,8 +256,9 @@ async function testStateTransition(ws: WebSocket): Promise<void> {
     assert(false, `State transition: ${err.message}`);
   }
 
-  // Transition back to IDLE
-  const idlePromise = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS);
+  // Transition back to IDLE — register listener BEFORE sending to avoid race
+  const idlePromise = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+    (payload) => payload.currentState === SystemState.IDLE);
   send(ws, {
     type: MessageType.SEND_COMMAND,
     timestamp: Date.now(),
