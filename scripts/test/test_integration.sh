@@ -122,7 +122,7 @@ fi
 
 # Find Python (for board_simulator fallback)
 PYTHON_BIN=""
-if [ -n "$VIRTUAL_ENV" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+if [ -n "${VIRTUAL_ENV:-}" ] && [ -x "${VIRTUAL_ENV}/bin/python" ]; then
   PYTHON_BIN="$VIRTUAL_ENV/bin/python"
 elif [ -x "$REPO_ROOT/.venv/bin/python" ]; then
   PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
