@@ -169,8 +169,11 @@ sed -i "s/^sensor_port = 5006/sensor_port = $TEST_DAQ_UDP_PORT/" "$TEST_CONFIG"
 sed -i "s/^actuator_cmd_port = 5005/actuator_cmd_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 # Point heartbeat broadcast to localhost to avoid sending to the real subnet
 sed -i 's/^broadcast_ip = .*/broadcast_ip = "127.0.0.1"/' "$TEST_CONFIG"
-# Redirect actuator board IPs to localhost so UDP commands are capturable
-sed -i 's/^ip = "192\.168\.[0-9]*\.[0-9]*"/ip = "127.0.0.1"/' "$TEST_CONFIG"
+# NOTE: Do NOT replace board IPs — the DAQ bridge routes by source IP.
+# The board_simulator falls back to 127.0.0.{2+index} when config IPs
+# (192.168.2.x) aren't bindable, and the DAQ bridge has matching fallback
+# logic for 127.0.0.x addresses. Replacing all IPs to 127.0.0.1 makes the
+# bridge treat every board as the same one (only one sensor type gets through).
 # Replace listen_port on actuator boards to use our test port
 sed -i "s/^listen_port = 5005/listen_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 sed -i "s/^send_port = 5005/send_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"

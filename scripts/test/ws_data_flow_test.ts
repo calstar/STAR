@@ -225,72 +225,89 @@ async function waitForElodinConnection(ws: WebSocket): Promise<void> {
   }
 }
 
+// ── Expected sensor types from config.toml enabled boards ────────────────────
+// The DAQ bridge routes by source IP → board type. Each enabled board produces
+// sensor data with entity names like PT.CH{n}, RTD.CH{n}, TC.CH{n}, LC.CH{n}.
+// These are the sensor type prefixes we MUST receive data for:
+const REQUIRED_SENSOR_TYPES = ['PT.', 'RTD.', 'TC.', 'LC.'];
+
 // ── Test 1: Sensor Data Flow ─────────────────────────────────────────────────
 
 async function testSensorDataFlow(ws: WebSocket): Promise<void> {
   console.log('\n📡 Test 1: Sensor Data Flow (fake data → DAQ bridge → Elodin → relay → backend → WS)');
 
-  // Subscribe to PT channels
-  for (let i = 1; i <= 10; i++) {
-    send(ws, {
-      type: MessageType.SUBSCRIBE_SENSOR,
-      timestamp: Date.now(),
-      payload: { entity: `PT_Cal.PT_CH${i}` },
-    });
-    send(ws, {
-      type: MessageType.SUBSCRIBE_SENSOR,
-      timestamp: Date.now(),
-      payload: { entity: `PT.PT_CH${i}` },
-    });
-  }
-  // Subscribe to actuator, RTD, TC, LC channels
-  for (let i = 1; i <= 10; i++) {
-    send(ws, { type: MessageType.SUBSCRIBE_SENSOR, timestamp: Date.now(), payload: { entity: `ACT.ACT_CH${i}` } });
-    send(ws, { type: MessageType.SUBSCRIBE_SENSOR, timestamp: Date.now(), payload: { entity: `RTD.RTD_CH${i}` } });
-    send(ws, { type: MessageType.SUBSCRIBE_SENSOR, timestamp: Date.now(), payload: { entity: `TC.TC_CH${i}` } });
-    send(ws, { type: MessageType.SUBSCRIBE_SENSOR, timestamp: Date.now(), payload: { entity: `LC.LC_CH${i}` } });
+  // Subscribe to all channel types (1-10 covers all boards, none go above 10)
+  const sensorPrefixes = ['PT_Cal.CH', 'PT.CH', 'RTD.CH', 'TC.CH', 'LC.CH', 'ACT.CH'];
+  for (const prefix of sensorPrefixes) {
+    for (let i = 1; i <= 10; i++) {
+      send(ws, {
+        type: MessageType.SUBSCRIBE_SENSOR,
+        timestamp: Date.now(),
+        payload: { entity: `${prefix}${i}` },
+      });
+    }
   }
 
   console.log('  Collecting sensor updates for 15s...');
   const updates = await collectMessages(ws, MessageType.SENSOR_UPDATE, SENSOR_TIMEOUT_MS);
 
-  // ── Assertions: expect meaningful data volumes ──
-  // With 10Hz fake data over 15s, we should get hundreds of updates minimum
-  const MIN_UPDATES = 50; // conservative — real runs get 1000+
-  assert(updates.length >= MIN_UPDATES, `Received ${updates.length} sensor updates (expected >= ${MIN_UPDATES})`);
+  // ── Group by sensor type ──
+  const entities = new Set(updates.map((u) => u.payload.entity));
+  const sortedEntities = [...entities].sort();
+
+  // Build per-type breakdown
+  const typeBreakdown: Record<string, { entities: Set<string>; count: number }> = {};
+  for (const u of updates) {
+    const entity: string = u.payload.entity;
+    // Extract type prefix (everything before the dot, e.g. "PT" from "PT.CH1")
+    const dotIdx = entity.indexOf('.');
+    const typePrefix = dotIdx >= 0 ? entity.slice(0, dotIdx + 1) : entity;
+    if (!typeBreakdown[typePrefix]) {
+      typeBreakdown[typePrefix] = { entities: new Set(), count: 0 };
+    }
+    typeBreakdown[typePrefix].entities.add(entity);
+    typeBreakdown[typePrefix].count++;
+  }
+
+  // Print breakdown
+  console.log(`\n  Sensor data breakdown (${updates.length} total updates, ${entities.size} entities):`);
+  for (const [prefix, info] of Object.entries(typeBreakdown).sort()) {
+    console.log(`    ${prefix.replace('.', '').padEnd(8)} ${info.count.toString().padStart(5)} updates across ${info.entities.size} channels: ${[...info.entities].sort().join(', ')}`);
+  }
+
+  // ── Assertions: ALL required sensor types must be present ──
+  for (const requiredType of REQUIRED_SENSOR_TYPES) {
+    const found = typeBreakdown[requiredType];
+    if (found) {
+      assert(true, `${requiredType.replace('.', '')} data received: ${found.count} updates from ${found.entities.size} channels`);
+    } else {
+      assert(false, `${requiredType.replace('.', '')} data MISSING — no updates received (expected from enabled board)`);
+    }
+  }
+
+  // Also check for calibrated PT data (PT_Cal) — may or may not be present depending on calibration state
+  const ptCalData = typeBreakdown['PT_Cal.'];
+  if (ptCalData) {
+    console.log(`    ✅ PT_Cal data also present: ${ptCalData.count} updates from ${ptCalData.entities.size} channels`);
+  }
+
+  // Check total volume — with multiple boards at 10Hz over 15s, expect substantial data
+  assert(updates.length >= 100, `Total sensor updates: ${updates.length} (expected >= 100)`);
+
+  // Check entity diversity — with 4+ board types we should see many distinct entities
+  assert(entities.size >= 10, `Distinct entities: ${entities.size} (expected >= 10)`);
 
   if (updates.length > 0) {
-    // Check entity diversity — with multiple boards we should see many distinct entities
-    const entities = new Set(updates.map((u) => u.payload.entity));
-    const MIN_ENTITIES = 3; // at least a few distinct sensor channels
-    assert(entities.size >= MIN_ENTITIES, `Received data from ${entities.size} distinct entities (expected >= ${MIN_ENTITIES})`);
-
-    // Log all distinct entities for diagnostics
-    const sortedEntities = [...entities].sort();
-    if (VERBOSE) {
-      console.log(`  Distinct entities (${sortedEntities.length}):`);
-      for (const e of sortedEntities) {
-        const count = updates.filter((u) => u.payload.entity === e).length;
-        console.log(`    ${e} (${count} updates)`);
-      }
-    }
-
-    // Verify we receive multiple sensor types (not just one kind)
-    const knownPrefixes = ['PT_Cal.', 'PT.', 'RTD.', 'TC.', 'LC.', 'ACT.'];
-    const sensorTypesFound = knownPrefixes.filter(prefix =>
-      [...entities].some(e => e.startsWith(prefix)));
-    assert(sensorTypesFound.length >= 1, `Received ${sensorTypesFound.length} sensor type(s): ${sensorTypesFound.map(p => p.replace('.', '')).join(', ')}`);
-
     // Check all values are finite numbers
-    const allNumeric = updates.every((u) => typeof u.payload.value === 'number' && Number.isFinite(u.payload.value));
-    assert(allNumeric, 'All sensor values are finite numbers');
+    const badValues = updates.filter((u) => typeof u.payload.value !== 'number' || !Number.isFinite(u.payload.value));
+    assert(badValues.length === 0, `All ${updates.length} sensor values are finite numbers${badValues.length > 0 ? ` (${badValues.length} bad)` : ''}`);
 
     // Check timestamps are recent (all should be within 60s)
     const now = Date.now();
-    const recentTimestamps = updates.filter((u) => Math.abs(now - u.payload.timestamp) < 60000);
+    const staleTimestamps = updates.filter((u) => Math.abs(now - u.payload.timestamp) >= 60000);
     assert(
-      recentTimestamps.length === updates.length,
-      `${recentTimestamps.length}/${updates.length} timestamps are within 60s of now`,
+      staleTimestamps.length === 0,
+      `All ${updates.length} timestamps are within 60s of now${staleTimestamps.length > 0 ? ` (${staleTimestamps.length} stale)` : ''}`,
     );
 
     // ── Pipeline latency measurement ──
@@ -300,12 +317,16 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
 
     printLatencyStats('Pipeline Latency (message timestamp → WS client receive)', latencies);
 
-    // Log sample data
+    // Per-type latency breakdown
     if (VERBOSE) {
-      const sampleEntities = sortedEntities.slice(0, 3);
-      for (const e of sampleEntities) {
-        const sample = updates.find((u) => u.payload.entity === e);
-        console.log(`  Sample [${e}]: component=${sample!.payload.component} value=${sample!.payload.value} latency=${sample!.receivedAt - sample!.payload.timestamp}ms`);
+      for (const [prefix, info] of Object.entries(typeBreakdown).sort()) {
+        const typeUpdates = updates.filter((u) => u.payload.entity.startsWith(prefix));
+        const typeLatencies = typeUpdates
+          .map((u) => u.receivedAt - u.payload.timestamp)
+          .filter((l) => l >= 0 && l < 60000);
+        if (typeLatencies.length > 0) {
+          printLatencyStats(`${prefix.replace('.', '')} Latency`, typeLatencies);
+        }
       }
     }
   }
