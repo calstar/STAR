@@ -293,6 +293,13 @@ echo ""
   npx tsx "$SCRIPT_DIR/ws_data_flow_test.ts" "$TEST_BACKEND_WS_PORT" "$TEST_BACKEND_API_PORT" "$TEST_ACTUATOR_UDP_PORT")
 WS_TEST_EXIT=$?
 
+# Print last 30 lines of backend log for diagnostics if test failed
+if [ "$WS_TEST_EXIT" -ne 0 ]; then
+  echo ""
+  echo "📋 Backend log (last 30 lines):"
+  tail -30 /tmp/integration_backend_$$.log 2>/dev/null || true
+fi
+
 # ── Check UDP Commands ────────────────────────────────────────────────────────
 
 echo ""

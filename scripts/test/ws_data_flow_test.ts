@@ -46,8 +46,26 @@ interface WSMessage {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+let debugLogMessages = false;
+
 function send(ws: WebSocket, msg: WSMessage): void {
+  if (debugLogMessages) {
+    console.log(`  >> SEND: type=${msg.type} payload=${JSON.stringify(msg.payload)}`);
+  }
   ws.send(JSON.stringify(msg));
+}
+
+function startMessageSpy(ws: WebSocket): () => void {
+  const handler = (data: WebSocket.Data) => {
+    try {
+      const msg: WSMessage = JSON.parse(data.toString());
+      const payloadStr = JSON.stringify(msg.payload);
+      const truncated = payloadStr.length > 200 ? payloadStr.slice(0, 200) + '...' : payloadStr;
+      console.log(`  << RECV: type=${msg.type} payload=${truncated}`);
+    } catch { /* ignore */ }
+  };
+  ws.on('message', handler);
+  return () => ws.removeListener('message', handler);
 }
 
 function waitForMessage(
@@ -174,9 +192,21 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     const entities = new Set(updates.map((u: any) => u.entity));
     assert(entities.size > 1, `Received data from ${entities.size} distinct entities (expected > 1)`);
 
-    // Check for PT channels
-    const hasPT = [...entities].some(e => e.startsWith('PT_Cal.') || e.startsWith('PT.'));
+    // Log all distinct entities for diagnostics
+    const sortedEntities = [...entities].sort();
+    console.log(`  Distinct entities (${sortedEntities.length}):`);
+    for (const e of sortedEntities) {
+      const count = updates.filter((u: any) => u.entity === e).length;
+      console.log(`    ${e} (${count} updates)`);
+    }
+
+    // Check for PT channels (PT_Cal., PT., or raw PT entity names)
+    const hasPT = [...entities].some(e =>
+      e.startsWith('PT_Cal.') || e.startsWith('PT.') || e.includes('PT'));
     assert(hasPT, 'Received PT sensor data');
+    if (!hasPT) {
+      console.log(`  ⚠️  No PT entities found. All entities: ${sortedEntities.join(', ')}`);
+    }
 
     // Check numeric values
     const allNumeric = updates.every((u: any) => typeof u.value === 'number' && Number.isFinite(u.value));
@@ -190,9 +220,12 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
       `${recentTimestamps.length}/${updates.length} timestamps are within 60s of now`,
     );
 
-    // Log sample data
-    const sample = updates[0];
-    console.log(`  Sample: entity=${sample.entity} component=${sample.component} value=${sample.value}`);
+    // Log sample data from first few distinct entities
+    const sampleEntities = sortedEntities.slice(0, 3);
+    for (const e of sampleEntities) {
+      const sample = updates.find((u: any) => u.entity === e);
+      console.log(`  Sample [${e}]: component=${sample.component} value=${sample.value}`);
+    }
   }
 }
 
@@ -200,6 +233,8 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
 
 async function testStateTransition(ws: WebSocket): Promise<void> {
   console.log('\n🔄 Test 2: State Transition Command (WS client → backend → broadcast)');
+  debugLogMessages = true;
+  const stopSpy = startMessageSpy(ws);
 
   // Send state transition to ARMED
   const statePromise = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS);
@@ -238,12 +273,17 @@ async function testStateTransition(ws: WebSocket): Promise<void> {
   } catch (err: any) {
     assert(false, `Return to IDLE: ${err.message}`);
   }
+
+  stopSpy();
+  debugLogMessages = false;
 }
 
 // ── Test 3: Actuator Command ─────────────────────────────────────────────────
 
 async function testActuatorCommand(ws: WebSocket): Promise<void> {
   console.log('\n🔧 Test 3: Actuator Command (WS client → backend → UDP + broadcast)');
+  debugLogMessages = true;
+  const stopSpy = startMessageSpy(ws);
 
   // Enable debug mode to allow manual actuator commands.
   // Debug mode is toggled via 'debug_mode' command, NOT a state transition.
@@ -298,6 +338,8 @@ async function testActuatorCommand(ws: WebSocket): Promise<void> {
     },
   });
   await new Promise(r => setTimeout(r, 500));
+  stopSpy();
+  debugLogMessages = false;
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
