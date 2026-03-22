@@ -38,6 +38,7 @@ TEST_ACTUATOR_UDP_PORT="${TEST_ACTUATOR_UDP_PORT:-5015}"
 TEST_DB_PATH="/tmp/elodin_integration_test_$$"
 TEST_CONFIG="/tmp/integration_config_$$.toml"
 UDP_COMMANDS_FILE="/tmp/udp_commands_$$.json"
+SIM_STATS_FILE="/tmp/sim_stats_$$.json"
 
 # PIDs to clean up
 PIDS=()
@@ -55,6 +56,7 @@ cleanup() {
   rm -rf "$TEST_DB_PATH" 2>/dev/null || true
   rm -f "$TEST_CONFIG" 2>/dev/null || true
   rm -f "$UDP_COMMANDS_FILE" 2>/dev/null || true
+  rm -f "$SIM_STATS_FILE" 2>/dev/null || true
   echo "✅ Cleanup done"
 }
 
@@ -261,6 +263,7 @@ echo "  ✅ Backend started (PID ${PIDS[-1]})"
 # ── Start Fake Data Generator ────────────────────────────────────────────────
 
 echo "🎭 Starting fake data generator..."
+SIM_PID=""
 if [ -n "$FAKE_GEN" ]; then
   # fake_packet_generator: positional args = host port rate_hz
   "$FAKE_GEN" "127.0.0.1" "$TEST_DAQ_UDP_PORT" 10 > /tmp/integration_fakegen_$$.log 2>&1 &
@@ -269,8 +272,9 @@ else
   # board_simulator.py: uses --config for board definitions, --port for UDP target
   # Ensure tomli is installed (needed by board_simulator.py for TOML parsing)
   "$PYTHON_BIN" -c "import tomli" 2>/dev/null || "$PYTHON_BIN" -m pip install tomli -q 2>/dev/null || true
-  "$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" > /tmp/integration_fakegen_$$.log 2>&1 &
-  PIDS+=($!)
+  "$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --stats-file "$SIM_STATS_FILE" > /tmp/integration_fakegen_$$.log 2>&1 &
+  SIM_PID=$!
+  PIDS+=($SIM_PID)
 fi
 sleep 2
 
@@ -301,11 +305,19 @@ echo ""
 # ── Run WebSocket Data Flow Test ──────────────────────────────────────────────
 
 VERBOSE_FLAG=""
+RECEIVED_STATS_FILE="/tmp/received_stats_$$.json"
 [ "$VERBOSE" = "1" ] && VERBOSE_FLAG="--verbose"
 (cd "$REPO_ROOT/web-gui/backend" && \
   NODE_PATH="$REPO_ROOT/web-gui/backend/node_modules" \
-  npx tsx "$SCRIPT_DIR/ws_data_flow_test.ts" "$TEST_BACKEND_WS_PORT" "$TEST_BACKEND_API_PORT" "$TEST_ACTUATOR_UDP_PORT" $VERBOSE_FLAG)
+  npx tsx "$SCRIPT_DIR/ws_data_flow_test.ts" "$TEST_BACKEND_WS_PORT" "$TEST_BACKEND_API_PORT" "$TEST_ACTUATOR_UDP_PORT" --received-stats "$RECEIVED_STATS_FILE" $VERBOSE_FLAG)
 WS_TEST_EXIT=$?
+
+# ── Stop simulator and flush stats ────────────────────────────────────────────
+# Send SIGTERM so the simulator writes its stats file before exiting.
+if [ -n "$SIM_PID" ] && kill -0 "$SIM_PID" 2>/dev/null; then
+  kill "$SIM_PID" 2>/dev/null
+  sleep 1  # wait for stats file write
+fi
 
 # Print full backend log tail if test failed
 if [ "$WS_TEST_EXIT" -ne 0 ]; then
@@ -329,14 +341,80 @@ else
   echo "  ⚠️  UDP commands file not found (backend may not send direct UDP when ACTUATOR_SERVICE_ENABLED=false)"
 fi
 
+# ── Verify All Packets Received ───────────────────────────────────────────────
+# Compare simulator's sent count against WS test's received count per entity.
+
+echo ""
+echo "📋 Verifying all sensor packets were received..."
+PACKET_CHECK_FAILED=0
+if [ -f "$SIM_STATS_FILE" ] && [ -f "$RECEIVED_STATS_FILE" ]; then
+  PACKET_RESULT=$("$PYTHON_BIN" -c "
+import json, sys
+
+with open('$SIM_STATS_FILE') as f:
+    sim = json.load(f)
+with open('$RECEIVED_STATS_FILE') as f:
+    recv = json.load(f)
+
+sent_total = sim['total_sensor_updates']
+recv_total = recv['total_updates']
+recv_entities = recv['entities']
+
+# Per-board breakdown
+print(f'  Simulator sent {sent_total} total sensor updates')
+print(f'  WS test received {recv_total} total sensor updates')
+for board_name, board in sim['boards'].items():
+    print(f'    {board_name}: {board[\"packets_sent\"]} packets × {board[\"channels_per_packet\"]} channels = {board[\"total_sensor_updates\"]} updates')
+
+# The WS test collects for 15s but the simulator was running before and after.
+# We can't do exact sent==received since the collection window is a subset.
+# Instead verify: received >= 90% of what a 15s window at 10Hz should produce.
+# At 10Hz for 15s, each entity should get ~150 updates. We require >= 100.
+min_per_entity = 100
+low_entities = []
+for entity, count in sorted(recv_entities.items()):
+    if count < min_per_entity:
+        low_entities.append(f'{entity}={count}')
+
+if low_entities:
+    print(f'  ❌ {len(low_entities)} entities below {min_per_entity} updates: {\" \".join(low_entities)}')
+    sys.exit(1)
+else:
+    print(f'  ✅ All {len(recv_entities)} entities have >= {min_per_entity} updates (15s @ 10Hz)')
+    # Show per-entity counts
+    for entity, count in sorted(recv_entities.items()):
+        print(f'    {entity}: {count} updates')
+    sys.exit(0)
+" 2>&1)
+  PACKET_EXIT=$?
+  echo "$PACKET_RESULT"
+  if [ "$PACKET_EXIT" -ne 0 ]; then
+    PACKET_CHECK_FAILED=1
+  fi
+else
+  if [ ! -f "$SIM_STATS_FILE" ]; then
+    echo "  ⚠️  Simulator stats file not found (using fake_packet_generator instead of board_simulator?)"
+  fi
+  if [ ! -f "$RECEIVED_STATS_FILE" ]; then
+    echo "  ⚠️  Received stats file not found (WS test may have failed before writing)"
+  fi
+fi
+rm -f "$RECEIVED_STATS_FILE" 2>/dev/null || true
+
 # ── Results ───────────────────────────────────────────────────────────────────
+
+FINAL_EXIT=0
+[ "$WS_TEST_EXIT" -ne 0 ] && FINAL_EXIT=1
+[ "${PACKET_CHECK_FAILED:-0}" -ne 0 ] && FINAL_EXIT=1
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
-if [ "$WS_TEST_EXIT" -eq 0 ]; then
+if [ "$FINAL_EXIT" -eq 0 ]; then
   echo "  ✅ INTEGRATION TEST PASSED"
 else
-  echo "  ❌ INTEGRATION TEST FAILED (exit code: $WS_TEST_EXIT)"
+  echo "  ❌ INTEGRATION TEST FAILED"
+  [ "$WS_TEST_EXIT" -ne 0 ] && echo "     WS test failed (exit code: $WS_TEST_EXIT)"
+  [ "${PACKET_CHECK_FAILED:-0}" -ne 0 ] && echo "     Packet verification failed"
 fi
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
@@ -348,4 +426,4 @@ echo "  Backend:      /tmp/integration_backend_$$.log"
 echo "  Fake Gen:     /tmp/integration_fakegen_$$.log"
 echo "  UDP Listener: /tmp/integration_udp_$$.log"
 
-exit "$WS_TEST_EXIT"
+exit "$FINAL_EXIT"

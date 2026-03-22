@@ -13,11 +13,17 @@
  */
 
 import WebSocket from 'ws';
+import * as fs from 'fs';
 
 const WS_PORT = parseInt(process.argv[2] || '8081', 10);
 const API_PORT = parseInt(process.argv[3] || '8082', 10);
 const ACTUATOR_UDP_PORT = parseInt(process.argv[4] || '5005', 10);
 const VERBOSE = process.argv.includes('--verbose');
+
+// --received-stats <path>: write received update counts per entity to this file
+const receivedStatsIdx = process.argv.indexOf('--received-stats');
+const RECEIVED_STATS_FILE = receivedStatsIdx >= 0 ? process.argv[receivedStatsIdx + 1] : '';
+
 const WS_URL = `ws://127.0.0.1:${WS_PORT}`;
 const SENSOR_TIMEOUT_MS = 15000;
 const COMMAND_TIMEOUT_MS = 15000;
@@ -323,18 +329,32 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     console.log(`  Extra entities beyond expected (${extraEntities.length}): ${extraEntities.join(', ')}`);
   }
 
-  // Verify every entity got multiple updates (not just one fluke)
-  const lowCountEntities = EXPECTED_ENTITIES.filter(e => {
+  // Verify every entity got substantial updates (at 10Hz over 15s, expect ~150 each)
+  const MIN_UPDATES_PER_ENTITY = 100;
+  const lowCountEntities = EXPECTED_ENTITIES.map(e => {
     const count = updates.filter(u => u.payload.entity === e).length;
-    return count < 5; // at 10Hz over 15s, each entity should have many updates
-  });
+    return { entity: e, count };
+  }).filter(({ count }) => count < MIN_UPDATES_PER_ENTITY);
   assert(lowCountEntities.length === 0,
     lowCountEntities.length === 0
-      ? `All expected entities have >= 5 updates each`
-      : `${lowCountEntities.length} entities have < 5 updates: ${lowCountEntities.join(', ')}`);
+      ? `All expected entities have >= ${MIN_UPDATES_PER_ENTITY} updates each`
+      : `${lowCountEntities.length} entities below ${MIN_UPDATES_PER_ENTITY}: ${lowCountEntities.map(e => `${e.entity}=${e.count}`).join(', ')}`);
 
   // Total update count — just report, no arbitrary minimum
   console.log(`  Total updates received: ${updates.length}`);
+
+  // Write per-entity received counts to file for comparison with simulator stats
+  if (RECEIVED_STATS_FILE) {
+    const perEntity: Record<string, number> = {};
+    for (const u of updates) {
+      const e = u.payload.entity as string;
+      perEntity[e] = (perEntity[e] || 0) + 1;
+    }
+    fs.writeFileSync(RECEIVED_STATS_FILE, JSON.stringify({
+      total_updates: updates.length,
+      entities: perEntity,
+    }, null, 2));
+  }
 
   if (updates.length > 0) {
     // Check all values are finite numbers
