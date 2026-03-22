@@ -245,18 +245,21 @@ async function testStateTransition(ws: WebSocket): Promise<void> {
 async function testActuatorCommand(ws: WebSocket): Promise<void> {
   console.log('\n🔧 Test 3: Actuator Command (WS client → backend → UDP + broadcast)');
 
-  // First go to DEBUG mode to allow manual actuator commands
-  const debugPromise = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS);
+  // Enable debug mode to allow manual actuator commands.
+  // Debug mode is toggled via 'debug_mode' command, NOT a state transition.
+  const debugPromise = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+    (payload) => payload.debugMode === true);
   send(ws, {
     type: MessageType.SEND_COMMAND,
     timestamp: Date.now(),
     payload: {
-      commandType: 'state_transition',
-      data: { state: SystemState.DEBUG },
+      commandType: 'debug_mode',
+      data: { debugMode: true },
     },
   });
   try {
     await debugPromise;
+    console.log('  Entered DEBUG mode');
   } catch {
     console.log('  ⚠️ Could not enter DEBUG mode, skipping actuator command test');
     return;
@@ -271,7 +274,7 @@ async function testActuatorCommand(ws: WebSocket): Promise<void> {
     payload: {
       commandType: 'actuator',
       data: {
-        actuatorName: 'LOX_Main',
+        actuatorName: 'LOX Main',
         actuatorState: ActuatorState.OPEN,
       },
     },
@@ -279,19 +282,19 @@ async function testActuatorCommand(ws: WebSocket): Promise<void> {
 
   try {
     const actUpdate = await actPromise;
-    assert(actUpdate.name === 'LOX_Main' || actUpdate.name?.includes('LOX'), `Actuator update for LOX_Main (got name="${actUpdate.name}")`);
+    assert(actUpdate.name === 'LOX Main' || actUpdate.name?.includes('LOX'), `Actuator update for LOX Main (got name="${actUpdate.name}")`);
     assert(actUpdate.state === ActuatorState.OPEN, `Actuator state is OPEN (got ${actUpdate.state})`);
   } catch (err: any) {
     assert(false, `Actuator command: ${err.message}`);
   }
 
-  // Return to IDLE
+  // Disable debug mode and return to IDLE
   send(ws, {
     type: MessageType.SEND_COMMAND,
     timestamp: Date.now(),
     payload: {
-      commandType: 'state_transition',
-      data: { state: SystemState.IDLE },
+      commandType: 'debug_mode',
+      data: { debugMode: false },
     },
   });
   await new Promise(r => setTimeout(r, 500));
