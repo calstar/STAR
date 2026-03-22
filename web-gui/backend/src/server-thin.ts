@@ -1,0 +1,422 @@
+/**
+ * server-thin.ts — Minimal Node.js WebSocket bridge for browser clients.
+ *
+ * Responsibilities:
+ *   - Relay Elodin sensor/actuator/state packets → SENSOR_UPDATE / ACTUATOR_UPDATE / STATE_UPDATE
+ *   - Board status via Elodin heartbeat packets [0x10, board_id] → BOARD_STATUS_UPDATE (1 Hz)
+ *   - Forward commands to C++ actuator_service (TCP) → TRANSITION / ACTUATOR / DEBUG_MODE / EXTEND_FIRE
+ *   - Rolling in-memory history → HISTORICAL_DATA on connect + QUERY_HISTORICAL
+ *   - MISSION_START_TIME, CONNECTION_STATUS, COUNTDOWN_TARGET_UPDATE
+ *
+ * NOT handled (owned by C++ services):
+ *   - State machine validation — sequencer_service / actuator_service
+ *   - Actuator UDP — actuator_service
+ *   - SERVER_HEARTBEAT — heartbeat_service
+ *   - Config packets — config_broadcast_service
+ *   - Calibration — calibration_service (stub reply)
+ *
+ * Run alongside server.ts on a different port:
+ *   WS_PORT=8082 node server-thin.js
+ *
+ * Frontend switches via:
+ *   NEXT_PUBLIC_WS_URL=ws://localhost:8082
+ */
+
+import * as net from 'net';
+import * as http from 'http';
+import WebSocket, { WebSocketServer } from 'ws';
+import { ElodinRelayClient } from './elodin-relay-client.js';
+import { parseElodinPacket } from './elodin-protocol.js';
+import { loadSensorRoleMap, loadActuatorChannelToEntityMap } from './sensor-config.js';
+import { MessageType, SystemState } from '../../shared/types.js';
+import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUpdate } from '../../shared/types.js';
+
+// ── Config ───────────────────────────────────────────────────────────────────
+
+const WS_PORT       = parseInt(process.env.WS_PORT     ?? '8082', 10);
+const RELAY_URL     = process.env.ELODIN_RELAY_URL      ?? 'ws://localhost:9090';
+const ACT_SVC_PORT  = parseInt(process.env.ACTUATOR_SERVICE_PORT ?? '9998', 10);
+
+const HISTORY_MAX_POINTS = 1000;  // per series
+const HISTORY_MAX_KEYS   = 80;
+const HISTORY_STALE_MS   = 5 * 60 * 1000;
+const BOARD_STATUS_HZ    = 1;     // broadcast rate for board status
+const BROADCAST_MIN_MS   = 100;   // 10 Hz per sensor key
+
+// ── History cache ────────────────────────────────────────────────────────────
+
+interface HistorySeries {
+  time: number[];
+  values: number[];
+  lastMs: number;
+}
+
+const historyCache     = new Map<string, HistorySeries>();
+const historyCacheTime = new Map<string, number>(); // wall-clock last update
+const broadcastLastTime = new Map<string, number>();  // per-key 10 Hz gate
+
+function recordHistory(key: string, timeSec: number, value: number): void {
+  let s = historyCache.get(key);
+  if (!s) {
+    s = { time: [], values: [], lastMs: Date.now() };
+    historyCache.set(key, s);
+  }
+  const lastT = s.time.length > 0 ? s.time[s.time.length - 1] : -Infinity;
+  if (timeSec > lastT) {
+    s.time.push(timeSec);
+    s.values.push(value);
+  } else if (timeSec === lastT) {
+    s.values[s.values.length - 1] = value;
+  }
+  if (s.time.length > HISTORY_MAX_POINTS) {
+    const excess = s.time.length - HISTORY_MAX_POINTS;
+    s.time.splice(0, excess);
+    s.values.splice(0, excess);
+  }
+  s.lastMs = Date.now();
+  historyCacheTime.set(key, Date.now());
+}
+
+function pruneHistory(): void {
+  const now = Date.now();
+  if (historyCache.size <= HISTORY_MAX_KEYS) {
+    for (const [key, s] of historyCache) {
+      if (now - s.lastMs > HISTORY_STALE_MS) {
+        historyCache.delete(key);
+        historyCacheTime.delete(key);
+      }
+    }
+  } else {
+    const byAge = Array.from(historyCacheTime.entries()).sort((a, b) => a[1] - b[1]);
+    const toRemove = historyCache.size - HISTORY_MAX_KEYS;
+    for (let i = 0; i < toRemove && i < byAge.length; i++) {
+      historyCache.delete(byAge[i][0]);
+      historyCacheTime.delete(byAge[i][0]);
+    }
+  }
+}
+
+setInterval(pruneHistory, 60_000);
+
+// ── Mission time ─────────────────────────────────────────────────────────────
+
+let firstPacketTimeMs: number | null = null;
+let countdownTargetMs: number | null = null;
+
+// ── Board status ─────────────────────────────────────────────────────────────
+
+const boardsStatus = new Map<number, BoardStatus>();
+
+function updateBoard(low: number, payload: Buffer): void {
+  if (payload.length < 16) return;
+  const boardId    = low;
+  const boardType  = payload.readUInt8(9);
+  const engineState = payload.readUInt8(10);
+  const boardState = payload.readUInt8(11);
+  const now        = Date.now();
+
+  let typeStr = 'UNKNOWN';
+  if (boardType === 1)      typeStr = 'PT';
+  else if (boardType === 2) typeStr = 'TC';
+  else if (boardType === 3) typeStr = 'RTD';
+  else if (boardType === 4) typeStr = 'LC';
+  else if (boardType === 5) typeStr = 'ACTUATOR';
+
+  let status = boardsStatus.get(boardId);
+  const wasDisconnected = !status || status.lastHeartbeatMs == null || now - (status.lastHeartbeatMs ?? 0) > 2500;
+
+  if (!status) {
+    status = {
+      type: typeStr, boardNumber: null, id: boardId,
+      ip: `192.168.2.${boardId}`, expected: false,
+      connected: true, lastHeartbeatMs: now,
+      heartbeatTimes: [now], boardState, engineState,
+    };
+    boardsStatus.set(boardId, status);
+  } else {
+    status.connected = true;
+    status.lastHeartbeatMs = now;
+    status.boardState = boardState;
+    status.engineState = engineState;
+    status.heartbeatTimes = status.heartbeatTimes ?? [];
+    status.heartbeatTimes.push(now);
+    if (status.heartbeatTimes.length > 20) status.heartbeatTimes.shift();
+  }
+
+  if (wasDisconnected) {
+    broadcastBoardStatus();
+    console.log(`[ThinServer] Board ${boardId} (${typeStr}) connected`);
+  }
+}
+
+// Mark boards with no recent heartbeat as disconnected each tick.
+function markStaleBoards(): void {
+  const now = Date.now();
+  let changed = false;
+  for (const [, status] of boardsStatus) {
+    const stale = status.lastHeartbeatMs == null || now - status.lastHeartbeatMs > 2500;
+    if (stale && status.connected) {
+      status.connected = false;
+      changed = true;
+    }
+  }
+  if (changed) broadcastBoardStatus();
+}
+
+setInterval(markStaleBoards, 1000);
+
+// ── WebSocket server ─────────────────────────────────────────────────────────
+
+const httpServer = http.createServer();
+const wss = new WebSocketServer({ server: httpServer });
+
+function broadcast(message: object): void {
+  const data = JSON.stringify(message);
+  wss.clients.forEach((ws) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      try { ws.send(data); } catch (_) { /* ignore disconnected */ }
+    }
+  });
+}
+
+function send(ws: WebSocket, message: object): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  try { ws.send(JSON.stringify(message)); } catch (_) { }
+}
+
+function broadcastBoardStatus(): void {
+  const boards = Array.from(boardsStatus.values());
+  if (boards.length === 0) return;
+  broadcast({ type: MessageType.BOARD_STATUS_UPDATE, timestamp: Date.now(), payload: { boards } });
+}
+
+setInterval(broadcastBoardStatus, 1000 / BOARD_STATUS_HZ);
+
+// ── Client connection ─────────────────────────────────────────────────────────
+
+wss.on('connection', (ws: WebSocket) => {
+  console.log('[ThinServer] Client connected');
+
+  // Connection status
+  send(ws, {
+    type: MessageType.CONNECTION_STATUS, timestamp: Date.now(),
+    payload: { connected: true, elodinConnected: relay.connected },
+  });
+
+  // Mission start time
+  if (firstPacketTimeMs !== null) {
+    send(ws, {
+      type: MessageType.MISSION_START_TIME, timestamp: Date.now(),
+      payload: { missionStartTime: firstPacketTimeMs },
+    });
+  }
+
+  // Countdown target
+  send(ws, {
+    type: MessageType.COUNTDOWN_TARGET_UPDATE, timestamp: Date.now(),
+    payload: { targetTimeMs: countdownTargetMs },
+  });
+
+  // Board status
+  const boards = Array.from(boardsStatus.values());
+  if (boards.length > 0) {
+    send(ws, { type: MessageType.BOARD_STATUS_UPDATE, timestamp: Date.now(), payload: { boards } });
+  }
+
+  // Historical data
+  sendHistoricalData(ws);
+
+  ws.on('message', (data: Buffer) => {
+    try {
+      const message = JSON.parse(data.toString());
+      handleMessage(ws, message);
+    } catch (err) {
+      console.error('[ThinServer] Bad message:', err);
+    }
+  });
+
+  ws.on('close', () => console.log('[ThinServer] Client disconnected'));
+  ws.on('error', (err) => console.error('[ThinServer] WS error:', err.message));
+});
+
+function sendHistoricalData(ws: WebSocket): void {
+  const MAX_SEND_POINTS = 3000;
+  const payload: Record<string, { time: number[]; values: number[] }> = {};
+  for (const [key, series] of historyCache) {
+    const len = series.time.length;
+    if (len === 0) continue;
+    const start = len > MAX_SEND_POINTS ? len - MAX_SEND_POINTS : 0;
+    payload[key] = { time: series.time.slice(start), values: series.values.slice(start) };
+  }
+  send(ws, { type: MessageType.HISTORICAL_DATA, timestamp: Date.now(), payload });
+}
+
+// ── Message handling ─────────────────────────────────────────────────────────
+
+function handleMessage(ws: WebSocket, message: any): void {
+  switch (message.type) {
+    case MessageType.SEND_COMMAND:
+      handleCommand(ws, message.payload as CommandPayload);
+      break;
+    case MessageType.QUERY_HISTORICAL:
+      sendHistoricalData(ws);
+      break;
+    default:
+      console.warn('[ThinServer] Unknown message type:', message.type);
+  }
+}
+
+function handleCommand(ws: WebSocket, command: CommandPayload): void {
+  switch (command.commandType) {
+    case 'state_transition': {
+      const stateName = SystemState[command.data.state!] ?? String(command.data.state);
+      const csvName = STATE_TO_CSV_NAME[stateName] ?? stateName;
+      sendToActuatorService(`STATE:${csvName}\n`).then((ok) => {
+        if (!ok) send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: 'State transition failed: actuator_service unreachable' } });
+      });
+      break;
+    }
+    case 'actuator': {
+      const open = command.data.actuatorState === 1 || command.data.actuatorState as unknown as string === 'open';
+      sendToActuatorService(`ACTUATOR:${command.data.actuatorName}:${open ? 1 : 0}\n`).then((ok) => {
+        if (!ok) send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: 'Actuator command failed: actuator_service unreachable' } });
+      });
+      break;
+    }
+    case 'debug_mode':
+      sendToActuatorService(`DEBUG_MODE:${command.data.debugMode ? 1 : 0}\n`).catch(() => { });
+      break;
+    case 'extend_fire':
+      sendToActuatorService('EXTEND_FIRE\n').catch(() => { });
+      break;
+    case 'set_countdown_target':
+      countdownTargetMs = command.data.targetTimeMs ?? null;
+      broadcast({ type: MessageType.COUNTDOWN_TARGET_UPDATE, timestamp: Date.now(), payload: { targetTimeMs: countdownTargetMs } });
+      break;
+    default:
+      // stub for unhandled commands (calibration, controller_frequency, etc.)
+      send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Command not supported in thin backend: ${command.commandType}` } });
+  }
+}
+
+// ── Actuator service TCP forwarding ─────────────────────────────────────────
+
+function sendToActuatorService(line: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: '127.0.0.1', port: ACT_SVC_PORT }, () => {
+      socket.write(line, (err) => {
+        socket.end();
+        if (err) {
+          console.error(`[ThinServer] actuator_service write error: ${err.message}`);
+          resolve(false);
+        } else {
+          console.log(`[ThinServer] → actuator_service: ${line.trim()}`);
+          resolve(true);
+        }
+      });
+    });
+    socket.on('error', (err) => {
+      console.warn(`[ThinServer] actuator_service connect error: ${err.message}`);
+      resolve(false);
+    });
+    socket.setTimeout(2000, () => { socket.destroy(); resolve(false); });
+  });
+}
+
+// ── State name map (mirrors actuator-control.ts) ─────────────────────────────
+
+const STATE_TO_CSV_NAME: Record<string, string> = {
+  IDLE: 'Idle', ARMED: 'Armed', FUEL_FILL: 'Fuel Fill', OX_FILL: 'Ox Fill',
+  PRESS_STANDBY: 'Press Standby', GN2_LOW_PRESS: 'GN2 Low Press', GN2_VENT: 'GN2 Low Vent',
+  FUEL_PRESS: 'Fuel Press', FUEL_VENT: 'Fuel Vent', OX_PRESS: 'Ox Press', OX_VENT: 'Ox Vent',
+  GN2_HIGH_PRESS: 'GN2 High Press', GN2_HIGH_VENT: 'GN2 High Vent', CALIBRATE: 'Calibrate',
+  READY: 'Ready', FIRE: 'Fire', VENT: 'Vent',
+  ENGINE_ABORT: 'Engine Abort', GSE_ABORT: 'GSE Abort', EMERGENCY_ABORT: 'Emergency Abort',
+  ABORT: 'Emergency Abort', DEBUG: 'Idle',
+};
+
+// ── Elodin relay ─────────────────────────────────────────────────────────────
+
+const { channelToEntityMap }         = loadSensorRoleMap();
+const actuatorChannelToEntityMap     = loadActuatorChannelToEntityMap();
+
+const relay = new ElodinRelayClient(RELAY_URL);
+
+relay.on('connected', () => {
+  console.log('[ThinServer] Elodin relay connected');
+  broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true } });
+});
+
+relay.on('disconnected', () => {
+  console.log('[ThinServer] Elodin relay disconnected');
+  broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false } });
+  setTimeout(() => relay.connect(), 2000);
+});
+
+relay.on('error', (err: Error) => {
+  console.error('[ThinServer] Relay error:', err.message);
+});
+
+relay.on('packet', (header: any, payload: Buffer) => {
+  try {
+    const [high, low] = header.packetId as [number, number];
+
+    // ── Board heartbeat [0x10, board_id] ────────────────────────────────────
+    if (high === 0x10) {
+      updateBoard(low, payload);
+      return;
+    }
+
+    // ── Parse sensor/actuator/state packets ──────────────────────────────────
+    const parsedList = parseElodinPacket(header.packetId, payload, {
+      channelToEntityMap,
+      actuatorChannelToEntityMap,
+    });
+
+    if (parsedList.length === 0) return;
+
+    const epochNow = Date.now();
+    for (const parsed of parsedList) {
+      if (!Number.isFinite(parsed.value)) continue;
+
+      // Set mission T+0 on first meaningful data packet.
+      if (firstPacketTimeMs === null) {
+        firstPacketTimeMs = epochNow;
+        console.log(`[ThinServer] Mission T+0: ${new Date(firstPacketTimeMs).toISOString()}`);
+        broadcast({ type: MessageType.MISSION_START_TIME, timestamp: Date.now(), payload: { missionStartTime: firstPacketTimeMs } });
+      }
+
+      const key = `${parsed.entity}.${parsed.component}`;
+
+      // 10 Hz throttle per key.
+      const lastBcast = broadcastLastTime.get(key) ?? 0;
+      if (epochNow - lastBcast < BROADCAST_MIN_MS) continue;
+      broadcastLastTime.set(key, epochNow);
+
+      const update: SensorUpdate = { entity: parsed.entity, component: parsed.component, value: parsed.value, timestamp: epochNow };
+      const timeSec = (epochNow - firstPacketTimeMs) / 1000;
+
+      if (timeSec >= 0 && timeSec < 86400) {
+        recordHistory(key, timeSec, parsed.value);
+      }
+
+      broadcast({ type: MessageType.SENSOR_UPDATE, timestamp: epochNow, payload: update });
+    }
+  } catch (err) {
+    console.error('[ThinServer] Packet error:', err);
+  }
+});
+
+// ── Start ─────────────────────────────────────────────────────────────────────
+
+relay.connect().then((ok) => {
+  if (!ok) {
+    console.warn('[ThinServer] Initial relay connect failed — will retry automatically');
+  }
+});
+
+httpServer.listen(WS_PORT, () => {
+  console.log(`[ThinServer] WebSocket server listening on port ${WS_PORT}`);
+  console.log(`[ThinServer] Relay: ${RELAY_URL}`);
+  console.log(`[ThinServer] Actuator service: localhost:${ACT_SVC_PORT}`);
+});
