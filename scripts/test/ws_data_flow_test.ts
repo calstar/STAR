@@ -252,6 +252,30 @@ async function testStateTransition(ws: WebSocket): Promise<void> {
   };
   ws.on('message', errorHandler);
 
+  // Enable debug mode first — without it, state transitions require a direct
+  // Elodin connection (relay alone isn't sufficient). In integration tests
+  // we don't have real hardware, so debug mode is needed.
+  const debugOnPromise = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
+    (payload) => payload.debugMode === true);
+  send(ws, {
+    type: MessageType.SEND_COMMAND,
+    timestamp: Date.now(),
+    payload: {
+      commandType: 'debug_mode',
+      data: { debugMode: true },
+    },
+  });
+  try {
+    await debugOnPromise;
+    console.log('  Debug mode enabled (required for state transitions without direct Elodin)');
+  } catch (err: any) {
+    assert(false, `Could not enable debug mode: ${err.message}`);
+    ws.removeListener('message', errorHandler);
+    stopSpy();
+    debugLogMessages = false;
+    return;
+  }
+
   // Send state transition to ARMED — use predicate to match specific state
   const statePromise = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,
     (payload) => payload.currentState === SystemState.ARMED);
@@ -295,6 +319,14 @@ async function testStateTransition(ws: WebSocket): Promise<void> {
   } catch (err: any) {
     assert(false, `Return to IDLE: ${err.message}`);
   }
+
+  // Disable debug mode
+  send(ws, {
+    type: MessageType.SEND_COMMAND,
+    timestamp: Date.now(),
+    payload: { commandType: 'debug_mode', data: { debugMode: false } },
+  });
+  await new Promise(r => setTimeout(r, 500));
 
   ws.removeListener('message', errorHandler);
   stopSpy();
