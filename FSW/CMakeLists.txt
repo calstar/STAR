@@ -252,10 +252,13 @@ target_link_libraries(sequencer_service
     ${RT_LIBRARY}
 )
 
-# Heartbeat service — SERVER_HEARTBEAT UDP broadcast (C++ replacement for Python)
+# Heartbeat service — SERVER_HEARTBEAT UDP broadcast; reads engine state from Elodin [0x5000]
 add_executable(heartbeat_service src/services/heartbeat_service_main.cpp)
-target_include_directories(heartbeat_service PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(heartbeat_service pthread ${RT_LIBRARY})
+target_include_directories(heartbeat_service PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../daq_comms/include
+)
+target_link_libraries(heartbeat_service fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
 
 # Config broadcast service — ACTUATOR_CONFIG / SENSOR_CONFIG UDP (C++ replacement for Python)
 add_executable(config_broadcast_service src/services/config_broadcast_service_main.cpp)
@@ -265,8 +268,15 @@ target_include_directories(config_broadcast_service PRIVATE
 )
 target_link_libraries(config_broadcast_service fsw_daq_lib pthread ${RT_LIBRARY})
 
+# OTA service — Ethernet firmware flash for ESP32-S3 boards over TCP:3232
+add_executable(ota_service src/services/ota_service_main.cpp)
+target_include_directories(ota_service PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(ota_service Threads::Threads pthread ${RT_LIBRARY})
+
 # Install targets
-install(TARGETS fsw_daq_lib daq_bridge controller_service calibration_service actuator_service sequencer_service heartbeat_service config_broadcast_service
+install(TARGETS fsw_daq_lib daq_bridge controller_service calibration_service actuator_service sequencer_service heartbeat_service config_broadcast_service ota_service
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
