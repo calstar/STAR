@@ -175,7 +175,7 @@ echo ""
 # ── Start Elodin DB ──────────────────────────────────────────────────────────
 
 echo "📊 Starting Elodin DB..."
-mkdir -p "$TEST_DB_PATH"
+rm -rf "$TEST_DB_PATH" 2>/dev/null || true
 RUST_LOG=warn "$ELODIN_DB_BIN" run "[::]:$TEST_ELODIN_PORT" "$TEST_DB_PATH" > /tmp/integration_elodin_$$.log 2>&1 &
 PIDS+=($!)
 sleep 2
