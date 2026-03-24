@@ -4,24 +4,27 @@
 #
 # Spins up the complete pipeline and verifies data flows end-to-end:
 #   fake_packet_generator → DAQ bridge → Elodin DB → Relay → Backend → WS client
-#   WS client → Backend → UDP actuator commands
+#   WS client → Backend → sequencer_service (TCP) → actuator UDP
 #
 # Prerequisites:
-#   - C++ binaries built (cmake/make): daq_bridge (and optionally fake_packet_generator)
+#   - C++ binaries built (cmake/make): daq_bridge, sequencer_service
 #   - elodin-db in PATH or ~/.cargo/bin
 #   - Node.js 20+ with tsx
 #   - npm install done in web-gui/backend
 #   - Python 3 with board_simulator.py dependencies (fallback data source)
 #
-# Usage: bash scripts/test/test_integration.sh [-v|--verbose]
+# Usage: bash scripts/test/test_integration.sh [-v|--verbose] [--legacy]
+#   --legacy  Use server.ts (old backend) instead of server-thin.ts (default)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
 
 VERBOSE=0
+BACKEND=thin
 for arg in "$@"; do
   case "$arg" in
     -v|--verbose) VERBOSE=1 ;;
+    --legacy) BACKEND=legacy ;;
   esac
 done
 
@@ -87,7 +90,7 @@ wait_for_port() {
 }
 
 echo "═══════════════════════════════════════════════════════════════"
-echo "  Full-Stack Integration Test"
+echo "  Full-Stack Integration Test  [backend: $BACKEND]"
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 echo "Ports: Elodin=$TEST_ELODIN_PORT DAQ_UDP=$TEST_DAQ_UDP_PORT Relay=$TEST_RELAY_WS_PORT"
@@ -114,6 +117,18 @@ for path in "$REPO_ROOT/build/FSW/daq_bridge" "$REPO_ROOT/FSW/build/daq_bridge" 
 done
 [ -z "$DAQ_BRIDGE" ] && fail "daq_bridge not found. Build with: cd FSW/build && cmake .. && make daq_bridge"
 echo "  ✅ daq_bridge: $DAQ_BRIDGE"
+
+# Find sequencer_service (optional — command tests skipped if absent)
+SEQ_SVC=""
+for path in "$REPO_ROOT/build/FSW/sequencer_service" "$REPO_ROOT/FSW/build/sequencer_service" "$REPO_ROOT/build/sequencer_service"; do
+  [ -x "$path" ] && SEQ_SVC="$path" && break
+done
+if [ -n "$SEQ_SVC" ]; then
+  echo "  ✅ sequencer_service: $SEQ_SVC"
+else
+  echo "  ⚠️  sequencer_service not found — state/actuator tests will be skipped"
+  echo "       Build with: cd FSW/build && cmake .. && make sequencer_service"
+fi
 
 # Find fake packet generator or board simulator (fallback)
 FAKE_GEN=""
@@ -227,6 +242,24 @@ wait_for_port "$TEST_RELAY_WS_PORT" "Relay" 15 || {
 }
 echo "  ✅ Relay started (PID ${PIDS[-1]})"
 
+# ── Start sequencer_service ──────────────────────────────────────────────────
+# Provides TCP command endpoint on :9998. Both thin and legacy backends forward
+# state/actuator commands here. Reads Elodin port from the test config.
+
+if [ -n "$SEQ_SVC" ]; then
+  echo "⚙️  Starting sequencer_service..."
+  "$SEQ_SVC" --config "$TEST_CONFIG" --port 9998 > /tmp/integration_sequencer_$$.log 2>&1 &
+  PIDS+=($!)
+  sleep 1
+  if kill -0 "${PIDS[-1]}" 2>/dev/null; then
+    echo "  ✅ sequencer_service started (PID ${PIDS[-1]})"
+  else
+    echo "  ⚠️  sequencer_service exited early. Log:"
+    cat /tmp/integration_sequencer_$$.log
+    SEQ_SVC=""  # treat as absent so tests skip gracefully
+  fi
+fi
+
 # ── Start DAQ Bridge ─────────────────────────────────────────────────────────
 # CLI: daq_bridge <config_path> [bind_address] [bind_port]
 # The elodin host/port and sensor_port come from the config file, not CLI args.
@@ -246,19 +279,30 @@ echo "  ✅ DAQ bridge started (PID ${PIDS[-1]})"
 
 # ── Start Backend Server ─────────────────────────────────────────────────────
 
-echo "🖥️  Starting Backend server..."
-(cd "$REPO_ROOT/web-gui/backend" && \
-  WS_PORT=$TEST_BACKEND_WS_PORT \
-  API_PORT=$TEST_BACKEND_API_PORT \
-  ELODIN_HOST=127.0.0.1 \
-  ELODIN_PORT=$TEST_ELODIN_PORT \
-  ELODIN_RELAY_WS_URL="ws://127.0.0.1:$TEST_RELAY_WS_PORT" \
-  ACTUATOR_SERVICE_ENABLED=false \
-  USE_CALIBRATION_SERVICE_CALIBRATED=false \
-  USE_DIRECT_DAQ=false \
-  USE_CPP_CONTROLLER=true \
-  CONFIG_PATH="$TEST_CONFIG" \
-  npx tsx src/server.ts > /tmp/integration_backend_$$.log 2>&1) &
+if [ "$BACKEND" = "thin" ]; then
+  echo "🖥️  Starting Backend server (server-thin.ts)..."
+  (cd "$REPO_ROOT/web-gui/backend" && \
+    WS_PORT=$TEST_BACKEND_WS_PORT \
+    ELODIN_RELAY_URL="ws://127.0.0.1:$TEST_RELAY_WS_PORT" \
+    ACTUATOR_SERVICE_PORT=9998 \
+    CONFIG_PATH="$TEST_CONFIG" \
+    npx tsx src/server-thin.ts > /tmp/integration_backend_$$.log 2>&1) &
+else
+  echo "🖥️  Starting Backend server (server.ts legacy)..."
+  (cd "$REPO_ROOT/web-gui/backend" && \
+    WS_PORT=$TEST_BACKEND_WS_PORT \
+    API_PORT=$TEST_BACKEND_API_PORT \
+    ELODIN_HOST=127.0.0.1 \
+    ELODIN_PORT=$TEST_ELODIN_PORT \
+    ELODIN_RELAY_WS_URL="ws://127.0.0.1:$TEST_RELAY_WS_PORT" \
+    ACTUATOR_SERVICE_ENABLED=false \
+    ACTUATOR_SERVICE_PORT=9998 \
+    USE_CALIBRATION_SERVICE_CALIBRATED=false \
+    USE_DIRECT_DAQ=false \
+    USE_CPP_CONTROLLER=true \
+    CONFIG_PATH="$TEST_CONFIG" \
+    npx tsx src/server.ts > /tmp/integration_backend_$$.log 2>&1) &
+fi
 PIDS+=($!)
 
 wait_for_port "$TEST_BACKEND_WS_PORT" "Backend WS" 15 || {
@@ -315,9 +359,11 @@ echo ""
 VERBOSE_FLAG=""
 RECEIVED_STATS_FILE="/tmp/received_stats_$$.json"
 [ "$VERBOSE" = "1" ] && VERBOSE_FLAG="--verbose"
+SEQ_FLAG=""; [ -n "$SEQ_SVC" ] && SEQ_FLAG="--has-sequencer"
 (cd "$REPO_ROOT/web-gui/backend" && \
   NODE_PATH="$REPO_ROOT/web-gui/backend/node_modules" \
-  npx tsx "$SCRIPT_DIR/ws_data_flow_test.ts" "$TEST_BACKEND_WS_PORT" "$TEST_BACKEND_API_PORT" "$TEST_ACTUATOR_UDP_PORT" --received-stats "$RECEIVED_STATS_FILE" $VERBOSE_FLAG)
+  npx tsx "$SCRIPT_DIR/ws_data_flow_test.ts" "$TEST_BACKEND_WS_PORT" "$TEST_BACKEND_API_PORT" "$TEST_ACTUATOR_UDP_PORT" \
+  --received-stats "$RECEIVED_STATS_FILE" --backend="$BACKEND" $SEQ_FLAG $VERBOSE_FLAG)
 WS_TEST_EXIT=$?
 
 # ── Stop simulator and flush stats ────────────────────────────────────────────
@@ -409,11 +455,12 @@ fi
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 echo "Logs:"
-echo "  Elodin DB:    /tmp/integration_elodin_$$.log"
-echo "  DAQ Bridge:   /tmp/integration_daq_$$.log"
-echo "  Relay:        /tmp/integration_relay_$$.log"
-echo "  Backend:      /tmp/integration_backend_$$.log"
-echo "  Fake Gen:     /tmp/integration_fakegen_$$.log"
-echo "  UDP Listener: /tmp/integration_udp_$$.log"
+echo "  Elodin DB:      /tmp/integration_elodin_$$.log"
+echo "  DAQ Bridge:     /tmp/integration_daq_$$.log"
+echo "  Relay:          /tmp/integration_relay_$$.log"
+echo "  Backend:        /tmp/integration_backend_$$.log"
+[ -n "$SEQ_SVC" ] && echo "  Sequencer:      /tmp/integration_sequencer_$$.log"
+echo "  Fake Gen:       /tmp/integration_fakegen_$$.log"
+echo "  UDP Listener:   /tmp/integration_udp_$$.log"
 
 exit "$FINAL_EXIT"

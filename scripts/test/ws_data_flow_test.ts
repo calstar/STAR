@@ -19,6 +19,9 @@ const WS_PORT = parseInt(process.argv[2] || '8081', 10);
 const API_PORT = parseInt(process.argv[3] || '8082', 10);
 const ACTUATOR_UDP_PORT = parseInt(process.argv[4] || '5005', 10);
 const VERBOSE = process.argv.includes('--verbose');
+const BACKEND = process.argv.find(a => a.startsWith('--backend='))?.split('=')[1] ?? 'legacy';
+const HAS_SEQUENCER = process.argv.includes('--has-sequencer');
+const IS_THIN = BACKEND === 'thin';
 
 // --received-stats <path>: write received update counts per entity to this file
 const receivedStatsIdx = process.argv.indexOf('--received-stats');
@@ -684,7 +687,10 @@ async function testActuatorCommands(ws: WebSocket): Promise<void> {
 
 async function main(): Promise<void> {
   console.log('🧪 WebSocket Data Flow Integration Test');
-  console.log(`   Backend: ${WS_URL}`);
+  console.log(`   Backend: ${WS_URL} (${IS_THIN ? 'server-thin.ts' : 'server.ts legacy'})`);
+  if (IS_THIN) {
+    console.log(`   sequencer_service: ${HAS_SEQUENCER ? 'available' : 'not found — command tests will be skipped'}`);
+  }
   console.log('');
 
   let ws: WebSocket;
@@ -696,11 +702,19 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const canRunCommandTests = !IS_THIN || HAS_SEQUENCER;
+
   try {
     await testSensorDataFlow(ws);
-    await testStateTransition(ws);
-    await testStateTransitionDebugMode(ws);
-    await testActuatorCommands(ws);
+    if (canRunCommandTests) {
+      await testStateTransition(ws);
+      await testStateTransitionDebugMode(ws);
+      await testActuatorCommands(ws);
+    } else {
+      console.log('\n🔄 Test 2: State Transition — SKIPPED (thin backend requires sequencer_service)');
+      console.log('🔄 Test 3: State Transition Debug Mode — SKIPPED');
+      console.log('🔄 Test 4: Actuator Commands — SKIPPED');
+    }
   } finally {
     ws.close();
   }

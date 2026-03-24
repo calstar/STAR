@@ -271,15 +271,21 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
     case 'state_transition': {
       const stateName = SystemState[command.data.state!] ?? String(command.data.state);
       const csvName = STATE_TO_CSV_NAME[stateName] ?? stateName;
-      sendToActuatorService(`STATE:${csvName}\n`).then((ok) => {
-        if (!ok) send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: 'State transition failed: actuator_service unreachable' } });
+      sendToActuatorService(`TRANSITION:${csvName}\n`).then(({ ok, reply }) => {
+        if (!ok) send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition failed: ${reply}` } });
       });
       break;
     }
     case 'actuator': {
       const open = command.data.actuatorState === 1 || command.data.actuatorState as unknown as string === 'open';
-      sendToActuatorService(`ACTUATOR:${command.data.actuatorName}:${open ? 1 : 0}\n`).then((ok) => {
-        if (!ok) send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: 'Actuator command failed: actuator_service unreachable' } });
+      const actuatorName = command.data.actuatorName!;
+      sendToActuatorService(`ACTUATOR:${actuatorName}:${open ? 1 : 0}\n`).then(({ ok, reply }) => {
+        if (ok) {
+          broadcast({ type: MessageType.ACTUATOR_UPDATE, timestamp: Date.now(),
+            payload: { name: actuatorName, state: open ? 1 : 0, rawAdcCounts: 0, timestamp: Date.now() } });
+        } else {
+          send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Actuator command failed: ${reply}` } });
+        }
       });
       break;
     }
@@ -301,25 +307,33 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
 
 // ── Actuator service TCP forwarding ─────────────────────────────────────────
 
-function sendToActuatorService(line: string): Promise<boolean> {
+function sendToActuatorService(line: string): Promise<{ ok: boolean; reply: string }> {
   return new Promise((resolve) => {
+    let replyData = '';
+    let resolved = false;
+    const done = (ok: boolean, reply: string) => {
+      if (resolved) return;
+      resolved = true;
+      resolve({ ok, reply });
+    };
     const socket = net.connect({ host: '127.0.0.1', port: ACT_SVC_PORT }, () => {
-      socket.write(line, (err) => {
-        socket.end();
-        if (err) {
-          console.error(`[ThinServer] actuator_service write error: ${err.message}`);
-          resolve(false);
-        } else {
-          console.log(`[ThinServer] → actuator_service: ${line.trim()}`);
-          resolve(true);
-        }
-      });
+      console.log(`[ThinServer] → actuator_service: ${line.trim()}`);
+      socket.write(line);
     });
+    socket.on('data', (data) => {
+      replyData += data.toString();
+      if (replyData.includes('\n')) {
+        socket.destroy();
+        const reply = replyData.trim();
+        done(reply === 'OK', reply);
+      }
+    });
+    socket.on('close', () => done(false, replyData.trim() || 'connection closed'));
     socket.on('error', (err) => {
       console.warn(`[ThinServer] actuator_service connect error: ${err.message}`);
-      resolve(false);
+      done(false, err.message);
     });
-    socket.setTimeout(2000, () => { socket.destroy(); resolve(false); });
+    socket.setTimeout(2000, () => { socket.destroy(); done(false, 'timeout'); });
   });
 }
 

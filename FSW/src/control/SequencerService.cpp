@@ -148,7 +148,29 @@ bool SequencerService::init(const std::string& config_path) {
 
     // Elodin — connection is best-effort; service runs without it
     const std::string elodin_host = "127.0.0.1";
-    const uint16_t    elodin_port = 2240;
+    uint16_t elodin_port = 2240;
+    {
+        std::istringstream cfg(config_content_);
+        std::string line, cur_sec;
+        while (std::getline(cfg, line)) {
+            if (line.size() > 1 && line[0] == '[') {
+                auto e = line.find(']');
+                cur_sec = (e != std::string::npos) ? line.substr(1, e - 1) : "";
+                continue;
+            }
+            if (cur_sec != "database") continue;
+            auto eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            std::string k = line.substr(0, eq);
+            k.erase(0, k.find_first_not_of(" \t"));
+            k.erase(k.find_last_not_of(" \t") + 1);
+            if (k != "port") continue;
+            std::string v = line.substr(eq + 1);
+            v.erase(0, v.find_first_not_of(" \t\r\n"));
+            v.erase(v.find_last_not_of(" \t\r\n") + 1);
+            try { elodin_port = static_cast<uint16_t>(std::stoi(v)); } catch (...) {}
+        }
+    }
     if (elodin_.connect(elodin_host, elodin_port)) {
         std::cout << "[SequencerService] Connected to Elodin at "
                   << elodin_host << ":" << elodin_port << std::endl;
