@@ -1,5 +1,6 @@
 #include "control/SequencerService.hpp"
 
+#include <array>
 #include <chrono>
 #include <fstream>
 #include <iostream>
@@ -18,8 +19,9 @@ namespace sequencer {
 static constexpr uint16_t VTABLE_SEQUENCER_STATE     = 0x5000;
 static constexpr uint16_t VTABLE_STATE_TRANSITION    = 0x4300;
 
-// SequencerState message: timestamp_ns(u64) | current_state(u8) | allowed_bitmask(u32) | debug_mode(u8)
-using SequencerStateMsg = comms::CommsMessage<uint64_t, uint8_t, uint32_t, uint8_t>;
+// SequencerState: u64 @0 | u8 @8 | pad[3] @9 (align u32) | allowed_bitmask u32 @12 | debug_mode u8 @16 — 17 bytes
+using SequencerStateMsg =
+    comms::CommsMessage<uint64_t, uint8_t, std::array<uint8_t, 3>, uint32_t, uint8_t>;
 
 // StateTransition message: timestamp_ns(u64) | from_state(u8) | to_state(u8) | reason(u8)
 using StateTransitionMsg = comms::CommsMessage<uint64_t, uint8_t, uint8_t, uint8_t>;
@@ -311,7 +313,8 @@ void SequencerService::publishState() {
     const uint32_t mask = state_machine_.allowedBitmask(s);
     const uint8_t dbg  = debug_mode_ ? 1u : 0u;
 
-    SequencerStateMsg msg(now_ns(), static_cast<uint8_t>(s), mask, dbg);
+    SequencerStateMsg msg(now_ns(), static_cast<uint8_t>(s), std::array<uint8_t, 3>{0, 0, 0}, mask,
+                          dbg);
     if (!elodin_.publish(VTABLE_SEQUENCER_STATE, msg))
         std::cerr << "[SequencerService] Failed to publish sequencer state to Elodin" << std::endl;
 }

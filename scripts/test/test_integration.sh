@@ -56,6 +56,11 @@ cleanup() {
   for pid in "${PIDS[@]}"; do
     kill -9 "$pid" 2>/dev/null || true
   done
+  if [ -n "${INTEGRATION_SAVE_LOGS:-}" ]; then
+    mkdir -p /tmp/integration_logs
+    cp "$REPO_ROOT/.tmp/integration_"*"_$$.log" /tmp/integration_logs/ 2>/dev/null || true
+    echo "  (INTEGRATION_SAVE_LOGS: copied integration_*.log to /tmp/integration_logs/)"
+  fi
   rm -rf "$TEST_DB_PATH" 2>/dev/null || true
   rm -f "$TEST_CONFIG" 2>/dev/null || true
   rm -f "$UDP_COMMANDS_FILE" 2>/dev/null || true
@@ -422,6 +427,7 @@ fi
 
 FINAL_EXIT=0
 UDP_CHECK_FAILED=${UDP_CHECK_FAILED:-0}
+ELODIN_CHECK_FAILED=${ELODIN_CHECK_FAILED:-0}
 [ "$WS_TEST_EXIT" -ne 0 ] && FINAL_EXIT=1
 [ "$UDP_CHECK_FAILED" -ne 0 ] && FINAL_EXIT=1
 [ "$ELODIN_CHECK_FAILED" -ne 0 ] && FINAL_EXIT=1

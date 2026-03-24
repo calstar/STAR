@@ -94,11 +94,7 @@ void elodinThread(std::string host, uint16_t port) {
         if (n < 8) continue;
 
         // SequencerState VTable: [0x50, 0x00]
-        // Payload layout (SequencerStateMsg = CommsMessage<u64,u8,u32,u8>):
-        //   [0-7]  u64 timestamp_ns
-        //   [8]    u8  current_state   ← here
-        //   [9-12] u32 allowed_bitmask
-        //   [13]   u8  debug_mode
+        // Payload: u64[0] ts | u8[8] current_state | pad[9..11] | u32[12] bitmask | u8[16] debug_mode
         if (buf[5] == 0x50 && buf[6] == 0x00 && n >= 8 + 9) {
             const uint8_t seq_state = buf[8 + 8];  // header(8) + payload[8]
             g_engine_state.store(stateToEngine(seq_state));

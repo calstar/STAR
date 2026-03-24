@@ -36,7 +36,7 @@ Each sensor type gets a **VTable ID** — a two-byte tuple `[high, low]` that un
 | `0x42` | `0x00` | Controller measurement | - | 80 bytes |
 | `0x43` | `0x00` | PSM state transition | - | 11 bytes |
 | `0x44` | `0x00` | FIRE state | - | 18 bytes |
-| `0x50` | `0x00` | SequencerState | state + bitmask + debug | 14 bytes |
+| `0x50` | `0x00` | SequencerState | state + bitmask + debug | **17 bytes** (see below) |
 | `0x50` | `0x60-0x66` | PSM actuator commands | - | 15 bytes |
 
 **Raw vs Calibrated convention:** Raw channels use `low = channel_id` (1-based). Calibrated channels use `low = 0x10 + channel_id`. Example: PT channel 3 raw = `[0x20, 0x03]`, calibrated = `[0x20, 0x13]`.
@@ -54,6 +54,51 @@ Offset  Size    Type      Field
 16      4       uint32    sample_timestamp_ms (firmware clock)
 20      1       uint8     status_flags / calibration_status
 ```
+
+## Elodin row alignment and SequencerState `[0x50, 0x00]`
+
+Elodin DB validates VTable row layout. **Multi-byte primitives (`u32`, `f32`, `u64`, etc.) must start at offsets that match the database’s alignment rules** — in practice, the same pattern as the 21-byte sensor row: **after a trailing `u8`, insert a 3-byte hole before the next `u32` or `f32` so that field begins at offset 12 (4-byte aligned).**
+
+### What went wrong with a 14-byte SequencerState
+
+An earlier layout packed fields with no gap:
+
+| Field | Offset | Size |
+|-------|--------|------|
+| `timestamp_ns` | 0 | 8 (`u64`) |
+| `current_state` | 8 | 1 (`u8`) |
+| `allowed_bitmask` | **9** | 4 (`u32`) ← **misaligned** (9 is not a multiple of 4) |
+| `debug_mode` | 13 | 1 (`u8`) |
+
+**Total: 14 bytes on the wire.** `comms::CommsMessage` already serializes fields **packed** (no hidden C++ `struct` padding), so the bug was not “wrong sizeof” — it was **semantic layout**.
+
+- **`[0x43, 0x00]`** (state transition: `u64` + three `u8`s) kept working: every field after the timestamp is a single byte, so alignment was never violated.
+- **`[0x50, 0x00]`** failed end-to-end: the C++ client’s `publish()` wrote bytes to TCP successfully (no socket error, no “Failed to publish” path), but **Elodin did not emit `TABLE` rows for `[0x50, 0x00]`** to subscribers. The relay log showed many `TABLE [0x43, …] len=11` lines and **none** for `0x50`, and integration checks that grep `[ThinServer] SequencerState from relay` stayed at zero.
+
+### Correct 17-byte SequencerState layout
+
+Match the sensor pattern: **`u8` at 8, then three padding bytes, then `u32` at 12.**
+
+| Field | Offset | Size | Notes |
+|-------|--------|------|--------|
+| `timestamp_ns` | 0 | 8 | `u64` |
+| `current_state` | 8 | 1 | `u8` |
+| *(padding)* | 9 | 3 | **Must be present on the wire** (zeros); not always listed as separate VTable “schema” fields — see `DatabaseConfig.cpp` |
+| `allowed_bitmask` | 12 | 4 | `u32`, 4-byte aligned |
+| `debug_mode` | 16 | 1 | `u8` |
+
+**Total: 17 bytes.** After this change, the relay sees e.g. `TABLE [0x50, 0x0] len=17` and thin server can parse and log SequencerState.
+
+### Files that must stay in lockstep
+
+If you change this layout, update **all** of the following in one change set:
+
+1. **`FSW/src/control/SequencerService.cpp`** — `SequencerStateMsg` type and `publishState()` (e.g. `CommsMessage<u64, u8, std::array<u8,3>, u32, u8>` with explicit zero padding).
+2. **`FSW/src/elodin/DatabaseConfig.cpp`** — `register_sequencer_vtable()`: `raw_field` offsets and lengths for `[0x50, 0x00]`.
+3. **`web-gui/backend/src/elodin-protocol.ts`** — `parseElodinPacket()` branch for `high === 0x50 && low === 0x00`: `payload.length` minimum and `readUInt32LE` / `readUInt8` offsets.
+4. **`FSW/src/services/heartbeat_service_main.cpp`** (if still relevant) — any comment or parser that documents byte offsets; code that only reads **current state at payload byte 8** remains valid.
+
+The relay still needs **`[0x50, 0x00]` in `SENSOR_SUBSCRIPTIONS`** in `elodin-vtable.ts`; schema registration for this table is done by the **sequencer** via `DatabaseConfig::register_non_sensor_tables`, not necessarily by `registerControllerVTables()`.
 
 ## Files to Modify (in order)
 
@@ -94,7 +139,7 @@ Two things are required in this file, and **both must be done or data will silen
 
 #### 2a. Register the VTable schema (`registerControllerVTables`)
 
-Elodin DB will not accept TABLE publishes or stream data for a VTable ID unless the schema has been registered first. If the DAQ bridge already registers the schema (it does for sensor types 0x20-0x23, 0x30), you can skip this. But for new non-sensor VTables (like SequencerState 0x50), the relay must register the schema.
+Elodin DB will not accept TABLE publishes or stream data for a VTable ID unless the schema has been registered first. If the DAQ bridge already registers the schema (it does for sensor types 0x20-0x23, 0x30), you can skip this. For other streams, whoever **first** publishes must register the schema (e.g. **SequencerState `[0x50, 0x00]`** is registered by `sequencer_service` via `DatabaseConfig::register_non_sensor_tables` — the relay only needs `SENSOR_SUBSCRIPTIONS` unless you also publish that ID from Node and must register there too).
 
 Add to the `vtables` array in `registerControllerVTables()`:
 
@@ -264,6 +309,8 @@ If a VTable isn't registered by the DAQ bridge yet when the relay subscribes, th
 
 6. **Channel IDs are 1-based** — Channel 0 is unused. Low byte `0x01` = channel 1.
 
+7. **`u32` / `f32` after a `u8` without padding** — If Elodin stops streaming `TABLE` packets for your ID but TCP publish appears to succeed, check that multi-byte fields are **4-byte aligned** (use a 3-byte gap before the first `u32`/`f32` after an 8-byte `u64` + 1-byte `u8`, same as the standard 21-byte sensor layout). See **Elodin row alignment and SequencerState** above.
+
 ## Testing
 
 The integration test (`scripts/test/test_integration.sh`) verifies the full pipeline. New sensor types will automatically appear in Test 1 (Sensor Data Flow) if:
@@ -273,3 +320,5 @@ The integration test (`scripts/test/test_integration.sh`) verifies the full pipe
 - The protocol parser handles the packet ID
 
 Check the backend log for `[Elodin] Unmapped packet id=` warnings — set `ELODIN_DEBUG=1` to see packets that arrive but have no parser.
+
+With `sequencer_service` and the thin backend, the integration script also checks that **`[ThinServer] SequencerState from relay`** appears in the backend log (proof that `[0x50, 0x00]` rows are stored in Elodin and relayed). Optional: run with `INTEGRATION_SAVE_LOGS=1` to copy `integration_*.log` to `/tmp/integration_logs/` before cleanup (see `scripts/test/test_integration.sh`).

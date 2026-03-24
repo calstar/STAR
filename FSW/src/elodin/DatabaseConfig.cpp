@@ -297,12 +297,12 @@ bool DatabaseConfig::register_tables_from_config(ElodinClient& client,
 
 // ── Helper: register Sequencer tables ──────────────
 static bool register_sequencer_vtable(ElodinClient& client) {
-    // SequencerState: U64+U8+U32+U8 (14 bytes)
+    // SequencerState: u64@0 + u8@8 + 3-byte hole + u32@12 + u8@16 = 17 bytes (u32 4-aligned like sensor rows)
     auto vt1 = builder::vtable({
         raw_field(0, 8, schema(PrimType::U64(), {}, component("SEQUENCER.state.timestamp_ns"))),
         raw_field(8, 1, schema(PrimType::U8(), {}, component("SEQUENCER.state.current_state"))),
-        raw_field(9, 4, schema(PrimType::U32(), {}, component("SEQUENCER.state.allowed_bitmask"))),
-        raw_field(13, 1, schema(PrimType::U8(), {}, component("SEQUENCER.state.debug_mode"))),
+        raw_field(12, 4, schema(PrimType::U32(), {}, component("SEQUENCER.state.allowed_bitmask"))),
+        raw_field(16, 1, schema(PrimType::U8(), {}, component("SEQUENCER.state.debug_mode"))),
     });
     if (!send_msg(client, VTableMsg{.id = {0x50, 0x00}, .vtable = vt1})) return false;
     send_msg(client, set_component_name("SEQUENCER.state.timestamp_ns"));

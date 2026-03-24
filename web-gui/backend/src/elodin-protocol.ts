@@ -272,12 +272,12 @@ export function parseElodinPacket(
   }
 
   // ── SequencerState: [0x50, 0x00] ─────────────────────────────────────────
-  // Layout: U64(0) timestamp_ns | U8(8) current_state | U32(9) allowed_bitmask | U8(13) debug_mode
-  if (high === 0x50 && low === 0x00 && payload.length >= 14) {
+  // Layout: U64(0) ts | U8(8) current_state | pad 9..11 | U32(12) allowed_bitmask | U8(16) debug_mode
+  if (high === 0x50 && low === 0x00 && payload.length >= 17) {
     const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
     const currentState = payload.readUInt8(8);
-    const allowedBitmask = payload.readUInt32LE(9);
-    const debugMode = payload.readUInt8(13);
+    const allowedBitmask = payload.readUInt32LE(12);
+    const debugMode = payload.readUInt8(16);
     return [
       { entity: '_SEQUENCER_STATE', component: 'state',           value: currentState,    timestamp: tsMs },
       { entity: '_SEQUENCER_STATE', component: 'allowedBitmask',  value: allowedBitmask,  timestamp: tsMs },
