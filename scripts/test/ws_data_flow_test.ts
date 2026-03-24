@@ -810,7 +810,7 @@ async function testElodinStateSync(): Promise<void> {
   await new Promise(r => setTimeout(r, 500));
 
   return new Promise((resolve) => {
-    http.get(`http://127.0.0.1:${API_PORT}/stats`, (res) => {
+    const req = http.get(`http://127.0.0.1:${WS_PORT}/stats`, (res) => {
       let data = '';
       res.on('data', (chunk) => data += chunk);
       res.on('end', () => {
@@ -827,8 +827,16 @@ async function testElodinStateSync(): Promise<void> {
         }
         resolve();
       });
-    }).on('error', (err) => {
+    });
+    
+    req.on('error', (err) => {
       assert(false, `Elodin State Sync: Failed to fetch /stats API (${err.message})`);
+      resolve();
+    });
+
+    req.setTimeout(2000, () => {
+      assert(false, `Elodin State Sync: Timed out fetching /stats API`);
+      req.destroy();
       resolve();
     });
   });
