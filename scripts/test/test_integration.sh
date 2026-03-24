@@ -99,6 +99,16 @@ echo "       Actuator_UDP=$TEST_ACTUATOR_UDP_PORT"
 echo "DB: $TEST_DB_PATH"
 echo ""
 
+# ── Kill stale processes on test ports from previous runs ────────────────────
+for port in $TEST_ELODIN_PORT $TEST_RELAY_WS_PORT $TEST_BACKEND_WS_PORT $TEST_BACKEND_API_PORT; do
+  STALE_PID=$(lsof -ti :$port 2>/dev/null || true)
+  if [ -n "$STALE_PID" ]; then
+    echo "  ⚠️  Killing stale process on port $port (PID $STALE_PID)"
+    kill $STALE_PID 2>/dev/null || true
+  fi
+done
+sleep 0.5
+
 # ── Check prerequisites ──────────────────────────────────────────────────────
 
 echo "📋 Checking prerequisites..."
