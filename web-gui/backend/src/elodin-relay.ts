@@ -75,7 +75,7 @@ function main(): void {
     resubscribeTimer = setTimeout(() => {
       resubscribeTimer = null;
       if (!elodin.isConnected()) return;
-      const missingGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31, 0x40, 0x41, 0x42]
+      const missingGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31, 0x40, 0x41, 0x42, 0x43, 0x50]
         .filter(g => !seenHighBytes.has(g));
       if (missingGroups.length > 0) {
         const missing = missingGroups.map(g => `0x${g.toString(16)}`).join(', ');
@@ -87,7 +87,7 @@ function main(): void {
           scheduleResubscribe(attempt + 1);
         });
       }
-    }, 5000);
+    }, 2000); // reduced from 5000ms to ping faster
   }
 
   let lastTableTime = Date.now();
@@ -109,7 +109,7 @@ function main(): void {
       }
       // Cancel retry once all expected groups are delivering data
       if (resubscribeTimer) {
-        const allGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31, 0x40, 0x41, 0x42];
+        const allGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31, 0x40, 0x41, 0x42, 0x43, 0x50];
         if (allGroups.every(g => seenHighBytes.has(g))) {
           clearTimeout(resubscribeTimer);
           resubscribeTimer = null;

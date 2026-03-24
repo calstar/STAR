@@ -108,27 +108,13 @@ export async function registerControllerVTables(client: ElodinClient): Promise<b
       { offset: 56, size: 8, type: 'f64', component: 'CONTROLLER.measurement.P_ch_mp1' },
       { offset: 64, size: 8, type: 'f64', component: 'CONTROLLER.measurement.P_ch_mp2' },
     ])},
-    // [0x43] State Transition: U64+U8+U8+U8 = 11 bytes
-    { name: 'StateTransition', buf: encodeVTable([0x43, 0x00], [
-      { offset: 0,  size: 8, type: 'u64', component: 'CONTROLLER.state.timestamp_ns' },
-      { offset: 8,  size: 1, type: 'u8',  component: 'CONTROLLER.state.from_state' },
-      { offset: 9,  size: 1, type: 'u8',  component: 'CONTROLLER.state.to_state' },
-      { offset: 10, size: 1, type: 'u8',  component: 'CONTROLLER.state.reason' },
-    ])},
     // [0x44] Fire State: U64+U8+F32+F32 = 17 bytes
     { name: 'FireState', buf: encodeVTable([0x44, 0x00], [
       { offset: 0,  size: 8, type: 'u64', component: 'CONTROLLER.fire.timestamp_ns' },
       { offset: 8,  size: 1, type: 'u8',  component: 'CONTROLLER.fire.fire_active' },
       { offset: 9,  size: 4, type: 'f32', component: 'CONTROLLER.fire.duty_F' },
       { offset: 13, size: 4, type: 'f32', component: 'CONTROLLER.fire.duty_O' },
-    ])},
-    // [0x50, 0x00] SequencerState: U64+U8+U32+U8 = 14 bytes
-    { name: 'SequencerState', buf: encodeVTable([0x50, 0x00], [
-      { offset: 0,  size: 8, type: 'u64', component: 'SEQUENCER.state.timestamp_ns' },
-      { offset: 8,  size: 1, type: 'u8',  component: 'SEQUENCER.state.current_state' },
-      { offset: 9,  size: 4, type: 'u32', component: 'SEQUENCER.state.allowed_bitmask' },
-      { offset: 13, size: 1, type: 'u8',  component: 'SEQUENCER.state.debug_mode' },
-    ])},
+    ])}
   ];
 
   let ok = 0;
