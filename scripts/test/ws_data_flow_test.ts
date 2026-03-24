@@ -86,10 +86,11 @@ function send(ws: WebSocket, msg: WSMessage): void {
   ws.send(JSON.stringify(msg));
 }
 
-function startMessageSpy(ws: WebSocket): () => void {
+function startMessageSpy(ws: WebSocket, filter?: Set<string>): () => void {
   const handler = (data: WebSocket.Data) => {
     try {
       const msg: WSMessage = JSON.parse(data.toString());
+      if (filter && !filter.has(msg.type)) return;
       const payloadStr = JSON.stringify(msg.payload);
       const truncated = payloadStr.length > 200 ? payloadStr.slice(0, 200) + '...' : payloadStr;
       console.log(`  << RECV: type=${msg.type} payload=${truncated}`);
@@ -98,6 +99,12 @@ function startMessageSpy(ws: WebSocket): () => void {
   ws.on('message', handler);
   return () => ws.removeListener('message', handler);
 }
+
+// Message types we care about during command tests (excludes noisy sensor data)
+const CMD_SPY_FILTER = new Set([
+  MessageType.STATE_UPDATE, MessageType.ACTUATOR_UPDATE,
+  MessageType.ERROR, MessageType.CONNECTION_STATUS,
+]);
 
 function waitForMessage(
   ws: WebSocket,
@@ -487,7 +494,7 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
 async function testStateTransition(ws: WebSocket): Promise<void> {
   console.log('\n🔄 Test 2: State Transition (without debug mode)');
   debugLogMessages = VERBOSE;
-  const stopSpy = VERBOSE ? startMessageSpy(ws) : () => {};
+  const stopSpy = startMessageSpy(ws, CMD_SPY_FILTER);
 
   const commandLatencies: number[] = [];
 
@@ -540,7 +547,7 @@ async function testStateTransition(ws: WebSocket): Promise<void> {
 async function testStateTransitionDebugMode(ws: WebSocket): Promise<void> {
   console.log('\n🔄 Test 3: State Transition (debug mode)');
   debugLogMessages = VERBOSE;
-  const stopSpy = VERBOSE ? startMessageSpy(ws) : () => {};
+  const stopSpy = startMessageSpy(ws, CMD_SPY_FILTER);
 
   const errors: any[] = [];
   const errorHandler = (data: WebSocket.Data) => {
@@ -629,7 +636,7 @@ async function testStateTransitionDebugMode(ws: WebSocket): Promise<void> {
 async function testActuatorCommands(ws: WebSocket): Promise<void> {
   console.log(`\n🔧 Test 4: Actuator Commands (${TEST_ACTUATORS.length} actuators, round-trip latency)`);
   debugLogMessages = VERBOSE;
-  const stopSpy = VERBOSE ? startMessageSpy(ws) : () => {};
+  const stopSpy = startMessageSpy(ws, CMD_SPY_FILTER);
 
   // Enable debug mode to allow manual actuator commands
   const debugPromise = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS,

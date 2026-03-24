@@ -292,6 +292,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       const stateName = SystemState[command.data.state!] ?? String(command.data.state);
       const csvName = STATE_TO_CSV_NAME[stateName] ?? stateName;
       sendToActuatorService(`TRANSITION:${csvName}\n`).then(({ ok, reply }) => {
+        console.log(`[ThinServer] State transition ${stateName} → ${csvName}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
         if (!ok) send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition failed: ${reply}` } });
       });
       break;
@@ -310,7 +311,9 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       break;
     }
     case 'debug_mode':
-      sendToActuatorService(`DEBUG_MODE:${command.data.debugMode ? 1 : 0}\n`).catch(() => { });
+      sendToActuatorService(`DEBUG_MODE:${command.data.debugMode ? 1 : 0}\n`).then(({ ok, reply }) => {
+        console.log(`[ThinServer] Debug mode ${command.data.debugMode ? 'ON' : 'OFF'}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
+      }).catch(() => { });
       break;
     case 'extend_fire':
       sendToActuatorService('EXTEND_FIRE\n').catch(() => { });
@@ -417,6 +420,7 @@ relay.on('packet', (header: any, payload: Buffer) => {
       const bitmask       = parsedList.find(p => p.component === 'allowedBitmask')?.value ?? 0;
       const debugModeVal  = parsedList.find(p => p.component === 'debugMode')?.value ?? 0;
       const stateName     = SystemState[stateVal as SystemState] ?? 'UNKNOWN';
+      console.log(`[ThinServer] SequencerState from relay: state=${stateName}(${stateVal}) bitmask=0x${bitmask.toString(16)} debug=${debugModeVal}`);
       broadcast({
         type: MessageType.STATE_UPDATE,
         timestamp: epochNow,
