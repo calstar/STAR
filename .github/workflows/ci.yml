@@ -359,6 +359,11 @@ jobs:
         ctest --output-on-failure --parallel $(nproc) || echo "No CTest tests found"
       continue-on-error: true
 
+    - name: Run Sequencer Elodin Unit Test
+      run: |
+        cd ${{ env.BUILD_DIR }}
+        ./FSW/test_sequencer_elodin
+
     - name: Run Python tests
       run: |
         if [ -d "scripts/test" ]; then

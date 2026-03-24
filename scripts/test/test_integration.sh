@@ -378,6 +378,7 @@ SEQ_FLAG=""; [ -n "$SEQ_SVC" ] && SEQ_FLAG="--has-sequencer"
   --received-stats "$RECEIVED_STATS_FILE" \
   --udp-commands "$UDP_COMMANDS_FILE" \
   --seq-log "$REPO_ROOT/.tmp/integration_sequencer_$$.log" \
+  --backend-log "$REPO_ROOT/.tmp/integration_backend_$$.log" \
   --backend="$BACKEND" $SEQ_FLAG $VERBOSE_FLAG)
 WS_TEST_EXIT=$?
 
@@ -406,14 +407,9 @@ fi
 
 rm -f "$RECEIVED_STATS_FILE" 2>/dev/null || true
 
-# ── Check Elodin DB State Sync ────────────────────────────────────────────────
-# SequencerService writes state transitions to Elodin DB. The Relay streams them
-# to the Thin Server which logs them. We must verify this path to ensure DB saves.
-
-echo ""
-ELODIN_CHECK_FAILED=0
 if [ "$BACKEND" = "thin" ] && [ -n "$SEQ_SVC" ]; then
-  ELODIN_STATES=$(grep -c "\[ThinServer\] SequencerState from relay" "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>/dev/null || echo "0")
+  ELODIN_STATES=$(grep -c "\[ThinServer\] SequencerState from relay" "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>/dev/null || true)
+  [ -z "$ELODIN_STATES" ] && ELODIN_STATES=0
   if [ "$ELODIN_STATES" -gt 0 ]; then
     echo "📋 Elodin State Sync:   ✅ $ELODIN_STATES state update(s) verified in Elodin DB stream"
   else
@@ -425,6 +421,7 @@ fi
 # ── Results ───────────────────────────────────────────────────────────────────
 
 FINAL_EXIT=0
+UDP_CHECK_FAILED=${UDP_CHECK_FAILED:-0}
 [ "$WS_TEST_EXIT" -ne 0 ] && FINAL_EXIT=1
 [ "$UDP_CHECK_FAILED" -ne 0 ] && FINAL_EXIT=1
 [ "$ELODIN_CHECK_FAILED" -ne 0 ] && FINAL_EXIT=1

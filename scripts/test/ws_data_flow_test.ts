@@ -34,6 +34,9 @@ const UDP_COMMANDS_FILE = udpCommandsIdx >= 0 ? process.argv[udpCommandsIdx + 1]
 const seqLogIdx = process.argv.indexOf('--seq-log');
 const SEQ_LOG_FILE = seqLogIdx >= 0 ? process.argv[seqLogIdx + 1] : '';
 
+const backendLogIdx = process.argv.indexOf('--backend-log');
+const BACKEND_LOG_FILE = backendLogIdx >= 0 ? process.argv[backendLogIdx + 1] : '';
+
 const WS_URL = `ws://127.0.0.1:${WS_PORT}`;
 const SENSOR_TIMEOUT_MS = 15000;
 const COMMAND_TIMEOUT_MS = 5000;
@@ -797,6 +800,33 @@ async function testUdpActuatorCommands(): Promise<void> {
   }
 }
 
+// ── Test 6: Elodin State Sync ────────────────────────────────────────────────
+
+async function testElodinStateSync(): Promise<void> {
+  if (!IS_THIN || !HAS_SEQUENCER || !BACKEND_LOG_FILE) return;
+  console.log(`\n📬 Test 6: Elodin State Sync`);
+
+  // Give backend log a moment to flush
+  await new Promise(r => setTimeout(r, 500));
+
+  if (fs.existsSync(BACKEND_LOG_FILE)) {
+    try {
+      const data = fs.readFileSync(BACKEND_LOG_FILE, 'utf-8');
+      const matches = data.match(/\[ThinServer\] SequencerState from relay/g);
+      const count = matches ? matches.length : 0;
+      if (count > 0) {
+        assert(true, `Elodin State Sync: ${count} state update(s) verified in Elodin DB stream`);
+      } else {
+        assert(false, `Elodin State Sync: 0 state updates in stream! State transitions NOT saving to DB.`);
+      }
+    } catch (err) {
+      assert(false, `Elodin State Sync: Could not read backend log file`);
+    }
+  } else {
+    assert(false, `Elodin State Sync: Backend log file not found`);
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -825,11 +855,13 @@ async function main(): Promise<void> {
       await testStateTransitionDebugMode(ws);
       await testActuatorCommands(ws);
       await testUdpActuatorCommands();
+      await testElodinStateSync();
     } else {
       console.log('\n🔄 Test 2: State Transition — SKIPPED (thin backend requires sequencer_service)');
       console.log('🔄 Test 3: State Transition Debug Mode — SKIPPED');
       console.log('🔄 Test 4: Actuator Commands — SKIPPED');
       console.log('📬 Test 5: UDP Actuator Commands — SKIPPED');
+      console.log('📬 Test 6: Elodin State Sync — SKIPPED');
     }
   } finally {
     ws.close();
