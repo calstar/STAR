@@ -60,7 +60,8 @@ cleanup() {
   echo "✅ Cleanup done"
 }
 
-trap cleanup EXIT INT TERM
+trap 'cleanup; exit 130' INT TERM
+trap cleanup EXIT
 
 fail() {
   echo "❌ FAIL: $1"
