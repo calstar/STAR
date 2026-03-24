@@ -86,11 +86,34 @@ for (int ch = 1; ch <= 6; ++ch) {
 }
 ```
 
-### 2. Relay — Subscribe to the New VTable IDs
+### 2. Relay — Register Schema AND Subscribe
 
-**`web-gui/backend/src/elodin-vtable.ts`** (line ~16, `SENSOR_SUBSCRIPTIONS`)
+**`web-gui/backend/src/elodin-vtable.ts`**
 
-The relay only receives packets for VTables it explicitly subscribes to. If you skip this step, the relay will never see your data.
+Two things are required in this file, and **both must be done or data will silently not flow**:
+
+#### 2a. Register the VTable schema (`registerControllerVTables`)
+
+Elodin DB will not accept TABLE publishes or stream data for a VTable ID unless the schema has been registered first. If the DAQ bridge already registers the schema (it does for sensor types 0x20-0x23, 0x30), you can skip this. But for new non-sensor VTables (like SequencerState 0x50), the relay must register the schema.
+
+Add to the `vtables` array in `registerControllerVTables()`:
+
+```typescript
+{ name: 'StrainGauge', buf: encodeVTable([0x25, 0x00], [
+  { offset: 0,  size: 8, type: 'u64', component: 'SG.timestamp_ns' },
+  { offset: 8,  size: 1, type: 'u8',  component: 'SG.channel_id' },
+  { offset: 9,  size: 3, type: 'pad', component: 'SG.padding' },
+  { offset: 12, size: 4, type: 'u32', component: 'SG.raw_adc_counts' },
+  { offset: 16, size: 4, type: 'u32', component: 'SG.sample_timestamp_ms' },
+  { offset: 20, size: 1, type: 'u8',  component: 'SG.status_flags' },
+])},
+```
+
+**If you skip this:** Elodin silently ignores the subscription AND the publisher's data. No errors anywhere. This is the hardest bug to diagnose.
+
+#### 2b. Subscribe to the VTable IDs (`SENSOR_SUBSCRIPTIONS`)
+
+Add every `[high, low]` pair to the `SENSOR_SUBSCRIPTIONS` array:
 
 ```typescript
 const SENSOR_SUBSCRIPTIONS: Array<[number, number]> = [
@@ -104,6 +127,8 @@ const SENSOR_SUBSCRIPTIONS: Array<[number, number]> = [
 ```
 
 This sends `VTableStream` subscription messages to Elodin when the relay connects. Each subscription is a 2-byte payload `[high, low]` sent as a MSG packet with a message ID computed from `fnv1a("VTableStream")`.
+
+**If you skip this:** The relay won't receive the data even though Elodin has it.
 
 ### 3. Protocol Parser — Parse the Binary Payload
 
@@ -227,7 +252,7 @@ If a VTable isn't registered by the DAQ bridge yet when the relay subscribes, th
 
 ## Common Pitfalls
 
-1. **Forgot to add to `SENSOR_SUBSCRIPTIONS`** — The relay won't receive the data. This is the most common miss. Elodin only streams VTables you explicitly subscribe to.
+1. **Forgot to register VTable schema AND/OR subscribe** — Both are required in `elodin-vtable.ts`. If the schema isn't registered, Elodin silently ignores both publishes and subscriptions — no errors logged anywhere. If the schema is registered but you forgot to subscribe, the relay won't receive the data. This is the hardest bug to find because everything appears to work (publisher says OK, no errors) but data never arrives.
 
 2. **Entity name mismatch** — The entity string in `parseElodinPacket` must match what the frontend expects. Use `config.toml` sensor roles for consistency.
 
