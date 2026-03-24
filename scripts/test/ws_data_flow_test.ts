@@ -683,10 +683,10 @@ async function testActuatorCommands(ws: WebSocket): Promise<void> {
       commandLatencies.push(openLatency);
       actuatorsOpened++;
       if (VERBOSE) {
-        console.log(`  ✅ ${actuatorName} → OPEN (${openLatency}ms)`);
+        console.log(`  ✅ WS updated: ${actuatorName} → OPEN (${openLatency}ms)`);
       }
     } catch (err: any) {
-      assert(false, `Actuator OPEN "${actuatorName}": ${err.message}`);
+      assert(false, `WS OPEN update for "${actuatorName}": ${err.message}`);
       continue; // skip close test for this actuator
     }
 
@@ -713,10 +713,10 @@ async function testActuatorCommands(ws: WebSocket): Promise<void> {
       commandLatencies.push(closeLatency);
       actuatorsClosed++;
       if (VERBOSE) {
-        console.log(`  ✅ ${actuatorName} → CLOSED (${closeLatency}ms)`);
+        console.log(`  ✅ WS updated: ${actuatorName} → CLOSED (${closeLatency}ms)`);
       }
     } catch (err: any) {
-      assert(false, `Actuator CLOSE "${actuatorName}": ${err.message}`);
+      assert(false, `WS CLOSE update for "${actuatorName}": ${err.message}`);
     }
 
     // Small delay before next actuator
@@ -725,9 +725,9 @@ async function testActuatorCommands(ws: WebSocket): Promise<void> {
 
   // Summary assertions
   assert(actuatorsOpened === TEST_ACTUATORS.length,
-    `${actuatorsOpened}/${TEST_ACTUATORS.length} actuators opened successfully`);
+    `${actuatorsOpened}/${TEST_ACTUATORS.length} frontend WS updates received for OPEN commands`);
   assert(actuatorsClosed === TEST_ACTUATORS.length,
-    `${actuatorsClosed}/${TEST_ACTUATORS.length} actuators closed successfully`);
+    `${actuatorsClosed}/${TEST_ACTUATORS.length} frontend WS updates received for CLOSE commands`);
 
   printLatencyStats('Actuator Command Round-Trip Latency (send → actuator_update received)', commandLatencies);
 

@@ -431,6 +431,7 @@ rm -f "$RECEIVED_STATS_FILE" 2>/dev/null || true
 
 FINAL_EXIT=0
 [ "$WS_TEST_EXIT" -ne 0 ] && FINAL_EXIT=1
+[ "$UDP_CHECK_FAILED" -ne 0 ] && FINAL_EXIT=1
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
@@ -439,6 +440,7 @@ if [ "$FINAL_EXIT" -eq 0 ]; then
 else
   echo "  ❌ INTEGRATION TEST FAILED"
   [ "$WS_TEST_EXIT" -ne 0 ] && echo "     WS test failed (exit code: $WS_TEST_EXIT)"
+  [ "$UDP_CHECK_FAILED" -ne 0 ] && echo "     UDP test failed (0 or dropped packets)"
 fi
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
