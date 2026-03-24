@@ -466,18 +466,17 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     const broadcast = statsAtWindowEnd.sensorUpdatesBroadcast - statsAtWindowStart.sensorUpdatesBroadcast;
     const wsDelivery = broadcast > 0 ? (updates.length / broadcast * 100).toFixed(1) : '0.0';
 
-    const throttlePct = received > 0 ? ((received - broadcast) / received * 100).toFixed(0) : '0';
-
     console.log(`\n  Backend throughput (15s window):`);
-    console.log(`    ${received.toLocaleString()} updates from relay → 10 Hz throttle → ${broadcast.toLocaleString()} broadcasts (${throttlePct}% filtered)`);
-    console.log(`    ${updates.length.toLocaleString()}/${broadcast.toLocaleString()} broadcasts reached frontend (${wsDelivery}%)`);
+    console.log(`    ${received.toLocaleString()} sensor updates ingested from Elodin (full rate)`);
+    console.log(`    ${broadcast.toLocaleString()} sent to frontend after 10 Hz throttle`);
+    console.log(`    ${updates.length.toLocaleString()} received by test client`);
 
-    assert(received > 0, `Backend received sensor data from relay (got ${received})`);
-    assert(received >= broadcast, `Relay count >= broadcast count (${received} >= ${broadcast})`);
+    assert(received > 0, `Elodin → backend: data flowing (${received.toLocaleString()} updates)`);
+    assert(received >= broadcast, `No phantom broadcasts (${broadcast.toLocaleString()} sent ≤ ${received.toLocaleString()} ingested)`);
 
     const wsDeliveryNum = broadcast > 0 ? updates.length / broadcast : 0;
     assert(wsDeliveryNum >= 0.85,
-      `WS delivery >= 85% (got ${(wsDeliveryNum * 100).toFixed(1)}% — ${updates.length}/${broadcast})`);
+      `Frontend received ${updates.length.toLocaleString()}/${broadcast.toLocaleString()} broadcasts (${(wsDeliveryNum * 100).toFixed(1)}% — need ≥85%)`);
   } else if (IS_THIN) {
     console.log('  ℹ️  Backend stats unavailable — skipping relay→backend loss check');
   }
