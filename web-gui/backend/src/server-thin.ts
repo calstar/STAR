@@ -174,6 +174,7 @@ setInterval(markStaleBoards, 1000);
 const stats = {
   relayEntityUpdatesReceived: 0,  // every finite-value entity parsed from relay
   sensorUpdatesBroadcast:     0,  // SENSOR_UPDATE messages actually sent (post-throttle)
+  sequencerStatesReceived:   0,  // packets successfully streamed through Elodin DB verifying storage
   startTimeMs:                Date.now(),
 };
 
@@ -454,6 +455,7 @@ relay.on('packet', (header: any, payload: Buffer) => {
       const bitmask       = parsedList.find(p => p.component === 'allowedBitmask')?.value ?? 0;
       const debugModeVal  = parsedList.find(p => p.component === 'debugMode')?.value ?? 0;
       console.log(`[ThinServer] SequencerState from relay: state=${stateVal} bitmask=0x${bitmask.toString(16)} debug=${debugModeVal}`);
+      stats.sequencerStatesReceived++;
       // Sync local state from Elodin (backup path — primary is TCP reply)
       currentState = stateVal as SystemState;
       debugMode = debugModeVal === 1;

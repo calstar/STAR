@@ -803,28 +803,35 @@ async function testUdpActuatorCommands(): Promise<void> {
 // ── Test 6: Elodin State Sync ────────────────────────────────────────────────
 
 async function testElodinStateSync(): Promise<void> {
-  if (!IS_THIN || !HAS_SEQUENCER || !BACKEND_LOG_FILE) return;
+  if (!IS_THIN || !HAS_SEQUENCER) return;
   console.log(`\n📬 Test 6: Elodin State Sync`);
 
-  // Give backend log a moment to flush
+  // Give DB and relay a moment to flush packets
   await new Promise(r => setTimeout(r, 500));
 
-  if (fs.existsSync(BACKEND_LOG_FILE)) {
-    try {
-      const data = fs.readFileSync(BACKEND_LOG_FILE, 'utf-8');
-      const matches = data.match(/\[ThinServer\] SequencerState from relay/g);
-      const count = matches ? matches.length : 0;
-      if (count > 0) {
-        assert(true, `Elodin State Sync: ${count} state update(s) verified in Elodin DB stream`);
-      } else {
-        assert(false, `Elodin State Sync: 0 state updates in stream! State transitions NOT saving to DB.`);
-      }
-    } catch (err) {
-      assert(false, `Elodin State Sync: Could not read backend log file`);
-    }
-  } else {
-    assert(false, `Elodin State Sync: Backend log file not found`);
-  }
+  return new Promise((resolve) => {
+    http.get(`http://127.0.0.1:${API_PORT}/stats`, (res) => {
+      let data = '';
+      res.on('data', (chunk) => data += chunk);
+      res.on('end', () => {
+        try {
+          const stats = JSON.parse(data);
+          const count = stats.sequencerStatesReceived ?? 0;
+          if (count > 0) {
+            assert(true, `Elodin State Sync: ${count} state update(s) verified in Elodin DB stream`);
+          } else {
+            assert(false, `Elodin State Sync: 0 state updates in stream! State transitions NOT saving to DB.`);
+          }
+        } catch (e) {
+          assert(false, `Elodin State Sync: Failed to parse /stats JSON`);
+        }
+        resolve();
+      });
+    }).on('error', (err) => {
+      assert(false, `Elodin State Sync: Failed to fetch /stats API (${err.message})`);
+      resolve();
+    });
+  });
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
