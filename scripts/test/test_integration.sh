@@ -343,10 +343,11 @@ fi
 echo "📥 Starting UDP listener for actuator commands..."
 (cd "$REPO_ROOT/web-gui/backend" && \
   NODE_PATH="$REPO_ROOT/web-gui/backend/node_modules" \
-  npx tsx "$SCRIPT_DIR/udp_listener.ts" "$TEST_ACTUATOR_UDP_PORT" "$UDP_COMMANDS_FILE" 30 > /tmp/integration_udp_$$.log 2>&1) &
-PIDS+=($!)
+  npx tsx "$SCRIPT_DIR/udp_listener.ts" "$TEST_ACTUATOR_UDP_PORT" "$UDP_COMMANDS_FILE" 120 > /tmp/integration_udp_$$.log 2>&1) &
+UDP_PID=$!
+PIDS+=($UDP_PID)
 sleep 1
-echo "  ✅ UDP listener started (PID ${PIDS[-1]})"
+echo "  ✅ UDP listener started (PID $UDP_PID)"
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
@@ -380,68 +381,34 @@ if [ "$WS_TEST_EXIT" -ne 0 ]; then
   tail -40 /tmp/integration_backend_$$.log 2>/dev/null || true
 fi
 
-# ── Check UDP Commands ────────────────────────────────────────────────────────
+# ── Check UDP actuator commands ───────────────────────────────────────────────
+# sequencer_service sends UDP to board IPs (overridden to 127.0.0.1 in test config).
+# The UDP listener captures these. Only meaningful when command tests ran.
 
 echo ""
-echo "📋 Checking UDP actuator commands..."
-if [ -f "$UDP_COMMANDS_FILE" ]; then
-  NUM_COMMANDS=$("$PYTHON_BIN" -c "import json; data=json.load(open('$UDP_COMMANDS_FILE')); print(len(data))" 2>/dev/null || echo "0")
-  if [ "$NUM_COMMANDS" -gt "0" ]; then
-    echo "  ✅ Received $NUM_COMMANDS UDP actuator command packet(s)"
+UDP_CHECK_FAILED=0
+if [ -n "$SEQ_SVC" ]; then
+  # Give the UDP listener a moment to flush if it hasn't already
+  kill "$UDP_PID" 2>/dev/null || true
+  sleep 0.5
+  if [ -f "$UDP_COMMANDS_FILE" ]; then
+    NUM_COMMANDS=$("$PYTHON_BIN" -c "import json; data=json.load(open('$UDP_COMMANDS_FILE')); print(len(data))" 2>/dev/null || echo "0")
+    if [ "$NUM_COMMANDS" -gt "0" ]; then
+      echo "📋 UDP actuator commands: ✅ $NUM_COMMANDS packet(s) received by local listener"
+    else
+      echo "📋 UDP actuator commands: ⚠️  0 packets received (sequencer_service may not have sent commands)"
+    fi
   else
-    echo "  ⚠️  No UDP actuator commands received (backend may send via actuator_service TCP instead)"
-  fi
-else
-  echo "  ⚠️  UDP commands file not found (backend may not send direct UDP when ACTUATOR_SERVICE_ENABLED=false)"
-fi
-
-# ── Verify All Packets Received ───────────────────────────────────────────────
-# Compare simulator's sent count against WS test's received count per entity.
-
-echo ""
-echo "📋 Verifying all sensor packets were received..."
-PACKET_CHECK_FAILED=0
-if [ -f "$SIM_STATS_FILE" ] && [ -f "$RECEIVED_STATS_FILE" ]; then
-  PACKET_RESULT=$("$PYTHON_BIN" -c "
-import json, sys
-
-with open('$SIM_STATS_FILE') as f:
-    sim = json.load(f)
-with open('$RECEIVED_STATS_FILE') as f:
-    recv = json.load(f)
-
-sent_total = sim['total_sensor_updates']
-recv_total = recv['total_updates']
-
-print(f'  Simulator sent {sent_total} total sensor updates across lifetime')
-print(f'  WS test received {recv_total} total sensor updates in 15s window')
-for board_name, board in sim['boards'].items():
-    print(f'    {board_name}: {board[\"packets_sent\"]} packets x {board[\"channels_per_packet\"]} ch = {board[\"total_sensor_updates\"]} updates')
-
-# Zero-drop verification is done inside the WS test itself (per-board entity
-# count matching). This section just prints the simulator's stats for context.
-sys.exit(0)
-" 2>&1)
-  PACKET_EXIT=$?
-  echo "$PACKET_RESULT"
-  if [ "$PACKET_EXIT" -ne 0 ]; then
-    PACKET_CHECK_FAILED=1
-  fi
-else
-  if [ ! -f "$SIM_STATS_FILE" ]; then
-    echo "  ⚠️  Simulator stats file not found (using fake_packet_generator instead of board_simulator?)"
-  fi
-  if [ ! -f "$RECEIVED_STATS_FILE" ]; then
-    echo "  ⚠️  Received stats file not found (WS test may have failed before writing)"
+    echo "📋 UDP actuator commands: ⚠️  no packets received (listener file missing)"
   fi
 fi
+
 rm -f "$RECEIVED_STATS_FILE" 2>/dev/null || true
 
 # ── Results ───────────────────────────────────────────────────────────────────
 
 FINAL_EXIT=0
 [ "$WS_TEST_EXIT" -ne 0 ] && FINAL_EXIT=1
-[ "${PACKET_CHECK_FAILED:-0}" -ne 0 ] && FINAL_EXIT=1
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
@@ -450,7 +417,6 @@ if [ "$FINAL_EXIT" -eq 0 ]; then
 else
   echo "  ❌ INTEGRATION TEST FAILED"
   [ "$WS_TEST_EXIT" -ne 0 ] && echo "     WS test failed (exit code: $WS_TEST_EXIT)"
-  [ "${PACKET_CHECK_FAILED:-0}" -ne 0 ] && echo "     Packet verification failed"
 fi
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
