@@ -38,10 +38,10 @@ TEST_RELAY_WS_PORT="${TEST_RELAY_WS_PORT:-9190}"
 TEST_BACKEND_WS_PORT="${TEST_BACKEND_WS_PORT:-8181}"
 TEST_BACKEND_API_PORT="${TEST_BACKEND_API_PORT:-8182}"
 TEST_ACTUATOR_UDP_PORT="${TEST_ACTUATOR_UDP_PORT:-5015}"
-TEST_DB_PATH="/tmp/elodin_integration_test_$$"
-TEST_CONFIG="/tmp/integration_config_$$.toml"
-UDP_COMMANDS_FILE="/tmp/udp_commands_$$.json"
-SIM_STATS_FILE="/tmp/sim_stats_$$.json"
+TEST_DB_PATH="$REPO_ROOT/.tmp/elodin_integration_test_$$"
+TEST_CONFIG="$REPO_ROOT/.tmp/integration_config_$$.toml"
+UDP_COMMANDS_FILE="$REPO_ROOT/.tmp/udp_commands_$$.json"
+SIM_STATS_FILE="$REPO_ROOT/.tmp/sim_stats_$$.json"
 
 # PIDs to clean up
 PIDS=()
@@ -98,6 +98,8 @@ echo "       Backend_WS=$TEST_BACKEND_WS_PORT Backend_API=$TEST_BACKEND_API_PORT
 echo "       Actuator_UDP=$TEST_ACTUATOR_UDP_PORT"
 echo "DB: $TEST_DB_PATH"
 echo ""
+
+mkdir -p "$REPO_ROOT/.tmp"
 
 # ── Kill stale processes on test ports from previous runs ────────────────────
 for port in $TEST_ELODIN_PORT $TEST_RELAY_WS_PORT $TEST_BACKEND_WS_PORT $TEST_BACKEND_API_PORT; do
@@ -220,13 +222,13 @@ echo ""
 
 echo "📊 Starting Elodin DB..."
 rm -rf "$TEST_DB_PATH" 2>/dev/null || true
-RUST_LOG=warn "$ELODIN_DB_BIN" run "[::]:$TEST_ELODIN_PORT" "$TEST_DB_PATH" > /tmp/integration_elodin_$$.log 2>&1 &
+RUST_LOG=warn "$ELODIN_DB_BIN" run "[::]:$TEST_ELODIN_PORT" "$TEST_DB_PATH" > "$REPO_ROOT/.tmp/integration_elodin_$$.log" 2>&1 &
 PIDS+=($!)
 sleep 2
 
 if ! kill -0 "${PIDS[-1]}" 2>/dev/null; then
   echo "  ❌ Elodin DB failed to start. Log:"
-  cat /tmp/integration_elodin_$$.log
+  cat "$REPO_ROOT/.tmp/integration_elodin_$$.log"
   exit 1
 fi
 echo "  ✅ Elodin DB started (PID ${PIDS[-1]})"
@@ -241,12 +243,12 @@ echo "📡 Starting Elodin Relay..."
   ELODIN_PORT=$TEST_ELODIN_PORT \
   RELAY_WS_PORT=$TEST_RELAY_WS_PORT \
   RELAY_WS_HOST=0.0.0.0 \
-  npx tsx src/elodin-relay.ts > /tmp/integration_relay_$$.log 2>&1) &
+  npx tsx src/elodin-relay.ts > "$REPO_ROOT/.tmp/integration_relay_$$.log" 2>&1) &
 PIDS+=($!)
 
 wait_for_port "$TEST_RELAY_WS_PORT" "Relay" 15 || {
   echo "  ❌ Relay failed to start. Log:"
-  cat /tmp/integration_relay_$$.log
+  cat "$REPO_ROOT/.tmp/integration_relay_$$.log"
   exit 1
 }
 echo "  ✅ Relay started (PID ${PIDS[-1]})"
@@ -257,14 +259,14 @@ echo "  ✅ Relay started (PID ${PIDS[-1]})"
 
 if [ -n "$SEQ_SVC" ]; then
   echo "⚙️  Starting sequencer_service..."
-  "$SEQ_SVC" --config "$TEST_CONFIG" --port 9998 > /tmp/integration_sequencer_$$.log 2>&1 &
+  "$SEQ_SVC" --config "$TEST_CONFIG" --port 9998 > "$REPO_ROOT/.tmp/integration_sequencer_$$.log" 2>&1 &
   PIDS+=($!)
   sleep 1
   if kill -0 "${PIDS[-1]}" 2>/dev/null; then
     echo "  ✅ sequencer_service started (PID ${PIDS[-1]})"
   else
     echo "  ⚠️  sequencer_service exited early. Log:"
-    cat /tmp/integration_sequencer_$$.log
+    cat "$REPO_ROOT/.tmp/integration_sequencer_$$.log"
     SEQ_SVC=""  # treat as absent so tests skip gracefully
   fi
 fi
@@ -275,13 +277,13 @@ fi
 # We pass the test config which has the modified ports.
 
 echo "🔗 Starting DAQ bridge..."
-(cd "$REPO_ROOT" && "$DAQ_BRIDGE" "$TEST_CONFIG" > /tmp/integration_daq_$$.log 2>&1) &
+(cd "$REPO_ROOT" && "$DAQ_BRIDGE" "$TEST_CONFIG" > "$REPO_ROOT/.tmp/integration_daq_$$.log" 2>&1) &
 PIDS+=($!)
 sleep 1
 
 if ! kill -0 "${PIDS[-1]}" 2>/dev/null; then
   echo "  ❌ DAQ bridge failed to start. Log:"
-  cat /tmp/integration_daq_$$.log
+  cat "$REPO_ROOT/.tmp/integration_daq_$$.log"
   exit 1
 fi
 echo "  ✅ DAQ bridge started (PID ${PIDS[-1]})"
@@ -295,7 +297,7 @@ if [ "$BACKEND" = "thin" ]; then
     ELODIN_RELAY_URL="ws://127.0.0.1:$TEST_RELAY_WS_PORT" \
     ACTUATOR_SERVICE_PORT=9998 \
     CONFIG_PATH="$TEST_CONFIG" \
-    npx tsx src/server-thin.ts > /tmp/integration_backend_$$.log 2>&1) &
+    npx tsx src/server-thin.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
 else
   echo "🖥️  Starting Backend server (server.ts legacy)..."
   (cd "$REPO_ROOT/web-gui/backend" && \
@@ -310,13 +312,13 @@ else
     USE_DIRECT_DAQ=false \
     USE_CPP_CONTROLLER=true \
     CONFIG_PATH="$TEST_CONFIG" \
-    npx tsx src/server.ts > /tmp/integration_backend_$$.log 2>&1) &
+    npx tsx src/server.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
 fi
 PIDS+=($!)
 
 wait_for_port "$TEST_BACKEND_WS_PORT" "Backend WS" 15 || {
   echo "  ❌ Backend failed to start. Log:"
-  tail -30 /tmp/integration_backend_$$.log
+  tail -30 "$REPO_ROOT/.tmp/integration_backend_$$.log"
   exit 1
 }
 echo "  ✅ Backend started (PID ${PIDS[-1]})"
@@ -327,13 +329,13 @@ echo "🎭 Starting fake data generator..."
 SIM_PID=""
 if [ -n "$FAKE_GEN" ]; then
   # fake_packet_generator: positional args = host port rate_hz
-  "$FAKE_GEN" "127.0.0.1" "$TEST_DAQ_UDP_PORT" 10 > /tmp/integration_fakegen_$$.log 2>&1 &
+  "$FAKE_GEN" "127.0.0.1" "$TEST_DAQ_UDP_PORT" 10 > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
   PIDS+=($!)
 else
   # board_simulator.py: uses --config for board definitions, --port for UDP target
   # Ensure tomli is installed (needed by board_simulator.py for TOML parsing)
   "$PYTHON_BIN" -c "import tomli" 2>/dev/null || "$PYTHON_BIN" -m pip install tomli -q 2>/dev/null || true
-  "$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --stats-file "$SIM_STATS_FILE" > /tmp/integration_fakegen_$$.log 2>&1 &
+  "$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --stats-file "$SIM_STATS_FILE" > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
   SIM_PID=$!
   PIDS+=($SIM_PID)
 fi
@@ -341,7 +343,7 @@ sleep 2
 
 if ! kill -0 "${PIDS[-1]}" 2>/dev/null; then
   echo "  ⚠️  Fake data generator exited early. Log:"
-  cat /tmp/integration_fakegen_$$.log
+  cat "$REPO_ROOT/.tmp/integration_fakegen_$$.log"
   echo "  Continuing anyway (data may have already been sent)..."
 else
   echo "  ✅ Fake data generator started (PID ${PIDS[-1]})"
@@ -352,7 +354,7 @@ fi
 echo "📥 Starting UDP listener for actuator commands..."
 (cd "$REPO_ROOT/web-gui/backend" && \
   NODE_PATH="$REPO_ROOT/web-gui/backend/node_modules" \
-  npx tsx "$SCRIPT_DIR/udp_listener.ts" "$TEST_ACTUATOR_UDP_PORT" "$UDP_COMMANDS_FILE" 120 > /tmp/integration_udp_$$.log 2>&1) &
+  npx tsx "$SCRIPT_DIR/udp_listener.ts" "$TEST_ACTUATOR_UDP_PORT" "$UDP_COMMANDS_FILE" 120 > "$REPO_ROOT/.tmp/integration_udp_$$.log" 2>&1) &
 UDP_PID=$!
 PIDS+=($UDP_PID)
 sleep 1
@@ -367,7 +369,7 @@ echo ""
 # ── Run WebSocket Data Flow Test ──────────────────────────────────────────────
 
 VERBOSE_FLAG=""
-RECEIVED_STATS_FILE="/tmp/received_stats_$$.json"
+RECEIVED_STATS_FILE="$REPO_ROOT/.tmp/received_stats_$$.json"
 [ "$VERBOSE" = "1" ] && VERBOSE_FLAG="--verbose"
 SEQ_FLAG=""; [ -n "$SEQ_SVC" ] && SEQ_FLAG="--has-sequencer"
 (cd "$REPO_ROOT/web-gui/backend" && \
@@ -387,7 +389,7 @@ fi
 if [ "$WS_TEST_EXIT" -ne 0 ]; then
   echo ""
   echo "📋 Backend log (last 40 lines):"
-  tail -40 /tmp/integration_backend_$$.log 2>/dev/null || true
+  tail -40 "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>/dev/null || true
 fi
 
 # ── Check UDP actuator commands ───────────────────────────────────────────────
@@ -430,12 +432,12 @@ fi
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 echo "Logs:"
-echo "  Elodin DB:      /tmp/integration_elodin_$$.log"
-echo "  DAQ Bridge:     /tmp/integration_daq_$$.log"
-echo "  Relay:          /tmp/integration_relay_$$.log"
-echo "  Backend:        /tmp/integration_backend_$$.log"
-[ -n "$SEQ_SVC" ] && echo "  Sequencer:      /tmp/integration_sequencer_$$.log"
-echo "  Fake Gen:       /tmp/integration_fakegen_$$.log"
-echo "  UDP Listener:   /tmp/integration_udp_$$.log"
+echo "  Elodin DB:      $REPO_ROOT/.tmp/integration_elodin_$$.log"
+echo "  DAQ Bridge:     $REPO_ROOT/.tmp/integration_daq_$$.log"
+echo "  Relay:          $REPO_ROOT/.tmp/integration_relay_$$.log"
+echo "  Backend:        $REPO_ROOT/.tmp/integration_backend_$$.log"
+[ -n "$SEQ_SVC" ] && echo "  Sequencer:      $REPO_ROOT/.tmp/integration_sequencer_$$.log"
+echo "  Fake Gen:       $REPO_ROOT/.tmp/integration_fakegen_$$.log"
+echo "  UDP Listener:   $REPO_ROOT/.tmp/integration_udp_$$.log"
 
 exit "$FINAL_EXIT"

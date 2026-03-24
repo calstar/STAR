@@ -93,7 +93,9 @@ function startMessageSpy(ws: WebSocket, filter?: Set<string>): () => void {
       if (filter && !filter.has(msg.type)) return;
       const payloadStr = JSON.stringify(msg.payload);
       const truncated = payloadStr.length > 200 ? payloadStr.slice(0, 200) + '...' : payloadStr;
-      console.log(`  << RECV: type=${msg.type} payload=${truncated}`);
+      if (debugLogMessages) {
+        console.log(`  << RECV: type=${msg.type} payload=${truncated}`);
+      }
     } catch { /* ignore */ }
   };
   ws.on('message', handler);

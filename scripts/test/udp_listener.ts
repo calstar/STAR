@@ -81,6 +81,7 @@ socket.bind(PORT, '0.0.0.0', () => {
   console.log(`📡 UDP listener bound to 0.0.0.0:${PORT}`);
   console.log(`   Writing commands to: ${OUTPUT_FILE}`);
   console.log(`   Timeout: ${TIMEOUT_S}s`);
+  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(commands, null, 2));
 });
 
 // Timeout
