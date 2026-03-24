@@ -38,6 +38,7 @@ TEST_RELAY_WS_PORT="${TEST_RELAY_WS_PORT:-9190}"
 TEST_BACKEND_WS_PORT="${TEST_BACKEND_WS_PORT:-8181}"
 TEST_BACKEND_API_PORT="${TEST_BACKEND_API_PORT:-8182}"
 TEST_ACTUATOR_UDP_PORT="${TEST_ACTUATOR_UDP_PORT:-5015}"
+TEST_STARTUP_LISTEN_PORT="${TEST_STARTUP_LISTEN_PORT:-5014}"
 TEST_DB_PATH="$REPO_ROOT/.tmp/elodin_integration_test_$$"
 TEST_CONFIG="$REPO_ROOT/.tmp/integration_config_$$.toml"
 UDP_COMMANDS_FILE="$REPO_ROOT/.tmp/udp_commands_$$.json"
@@ -100,11 +101,20 @@ echo "════════════════════════�
 echo ""
 echo "Ports: Elodin=$TEST_ELODIN_PORT DAQ_UDP=$TEST_DAQ_UDP_PORT Relay=$TEST_RELAY_WS_PORT"
 echo "       Backend_WS=$TEST_BACKEND_WS_PORT Backend_API=$TEST_BACKEND_API_PORT"
-echo "       Actuator_UDP=$TEST_ACTUATOR_UDP_PORT"
+echo "       Actuator_UDP=$TEST_ACTUATOR_UDP_PORT Startup_listen=$TEST_STARTUP_LISTEN_PORT"
 echo "DB: $TEST_DB_PATH"
 echo ""
 
 mkdir -p "$REPO_ROOT/.tmp"
+
+# ── Kill stale UDP listeners on test ports (otherwise udp_listener bind fails, no JSON file) ──
+for port in $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_DAQ_UDP_PORT; do
+  if fuser "$port/udp" > /dev/null 2>&1; then
+    echo "  ⚠️  Killing stale process(es) on UDP port $port"
+    fuser -k "$port/udp" > /dev/null 2>&1 || true
+  fi
+done
+sleep 0.3
 
 # ── Kill stale processes on test ports from previous runs ────────────────────
 for port in $TEST_ELODIN_PORT $TEST_RELAY_WS_PORT $TEST_BACKEND_WS_PORT $TEST_BACKEND_API_PORT; do
@@ -133,6 +143,26 @@ for path in "$REPO_ROOT/build/FSW/daq_bridge" "$REPO_ROOT/FSW/build/daq_bridge" 
 done
 [ -z "$DAQ_BRIDGE" ] && fail "daq_bridge not found. Build with: cd FSW/build && cmake .. && make daq_bridge"
 echo "  ✅ daq_bridge: $DAQ_BRIDGE"
+
+CONFIG_BROADCAST_SVC=""
+for path in "$REPO_ROOT/build/FSW/config_broadcast_service" "$REPO_ROOT/FSW/build/config_broadcast_service" "$REPO_ROOT/build/config_broadcast_service"; do
+  [ -x "$path" ] && CONFIG_BROADCAST_SVC="$path" && break
+done
+if [ -n "$CONFIG_BROADCAST_SVC" ]; then
+  echo "  ✅ config_broadcast_service: $CONFIG_BROADCAST_SVC"
+else
+  echo "  ⚠️  config_broadcast_service C++ binary not found — using Python fallback if needed"
+fi
+
+HEARTBEAT_SVC=""
+for path in "$REPO_ROOT/build/FSW/heartbeat_service" "$REPO_ROOT/FSW/build/heartbeat_service" "$REPO_ROOT/build/heartbeat_service"; do
+  [ -x "$path" ] && HEARTBEAT_SVC="$path" && break
+done
+if [ -n "$HEARTBEAT_SVC" ]; then
+  echo "  ✅ heartbeat_service: $HEARTBEAT_SVC"
+else
+  echo "  ⚠️  heartbeat_service not found — DAQ bridge will send SERVER_HEARTBEAT (heartbeat_service disabled in test config)"
+fi
 
 # Find sequencer_service (optional — command tests skipped if absent)
 SEQ_SVC=""
@@ -203,6 +233,8 @@ sed -i "s/^sensor_port = 5006/sensor_port = $TEST_DAQ_UDP_PORT/" "$TEST_CONFIG"
 sed -i "s/^actuator_cmd_port = 5005/actuator_cmd_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 # Point heartbeat broadcast to localhost to avoid sending to the real subnet
 sed -i 's/^broadcast_ip = .*/broadcast_ip = "127.0.0.1"/' "$TEST_CONFIG"
+# Align SERVER_HEARTBEAT UDP with the same port as udp_listener (actuator/control path in CI)
+sed -i "s/^broadcast_port = 5005/broadcast_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 # NOTE: Do NOT replace board IPs — the DAQ bridge routes by source IP.
 # The board_simulator falls back to 127.0.0.{2+index} when config IPs
 # (192.168.2.x) aren't bindable, and the DAQ bridge has matching fallback
@@ -215,9 +247,44 @@ sed -i 's/^ip = "192\.168\.2\.11"/ip = "127.0.0.1"/' "$TEST_CONFIG"
 sed -i 's/^ip = "192\.168\.2\.12"/ip = "127.0.0.1"/' "$TEST_CONFIG"
 sed -i 's/^ip = "192\.168\.2\.13"/ip = "127.0.0.1"/' "$TEST_CONFIG"
 sed -i 's/^ip = "192\.168\.2\.14"/ip = "127.0.0.1"/' "$TEST_CONFIG"
+# Encoder board #1 (config [boards.encoder_board_61]) — dedicated loopback so sim can bind without colliding
+sed -i 's/^ip = "192\.168\.2\.61"/ip = "127.0.0.61"/' "$TEST_CONFIG"
 # Replace listen_port on actuator boards to use our test port
 sed -i "s/^listen_port = 5005/listen_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 sed -i "s/^send_port = 5005/send_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+
+# Integration-only: startup E2E (SETUP → SELF_TEST). Encoder uses production [boards.encoder_board_61] + IP sed above.
+cat >> "$TEST_CONFIG" << EOF
+
+[boards.integration_startup]
+enabled = true
+type = "PT"
+board_id = 60
+ip = "127.0.0.60"
+send_port = $TEST_DAQ_UDP_PORT
+listen_port = $TEST_STARTUP_LISTEN_PORT
+num_sensors = 1
+active_connectors = [1]
+voltage_reference = 1
+necessary_for_abort = false
+enable_serial_printing = false
+designated_survivor = false
+EOF
+
+# heartbeat_service enabled=true makes daq_bridge set send_from_daq_bridge=false.
+# If the C++ heartbeat_service binary exists we start it (production-like). Otherwise disable
+# the service in config so daq_bridge still emits SERVER_HEARTBEAT for Test 7.
+if [ -z "$HEARTBEAT_SVC" ]; then
+  HS_TMP="${TEST_CONFIG}.hsfix.$$"
+  awk '
+    /^\[heartbeat_service\]/ { in_hs = 1 }
+    /^\[/ {
+      if ($0 !~ /^\[heartbeat_service\]/) in_hs = 0
+    }
+    in_hs && /^enabled = true/ { sub(/^enabled = true/, "enabled = false") }
+    { print }
+  ' "$TEST_CONFIG" > "$HS_TMP" && mv "$HS_TMP" "$TEST_CONFIG"
+fi
 
 echo "  ✅ Test config: $TEST_CONFIG"
 echo "     DB port=$TEST_ELODIN_PORT  sensor_port=$TEST_DAQ_UDP_PORT  actuator_port=$TEST_ACTUATOR_UDP_PORT"
@@ -292,6 +359,41 @@ if ! kill -0 "${PIDS[-1]}" 2>/dev/null; then
   exit 1
 fi
 echo "  ✅ DAQ bridge started (PID ${PIDS[-1]})"
+
+# ── Heartbeat service (SERVER_HEARTBEAT UDP when [heartbeat_service] enabled) ─
+if [ -n "$HEARTBEAT_SVC" ]; then
+  echo "💓 Starting heartbeat_service..."
+  "$HEARTBEAT_SVC" --config "$TEST_CONFIG" \
+    --elodin-host 127.0.0.1 \
+    --elodin-port "$TEST_ELODIN_PORT" \
+    --broadcast-ip 127.0.0.1 \
+    --broadcast-port "$TEST_ACTUATOR_UDP_PORT" \
+    > "$REPO_ROOT/.tmp/integration_heartbeat_$$.log" 2>&1 &
+  PIDS+=($!)
+  sleep 0.5
+  if kill -0 "${PIDS[-1]}" 2>/dev/null; then
+    echo "  ✅ heartbeat_service started (PID ${PIDS[-1]})"
+  else
+    echo "  ❌ heartbeat_service failed to start. Log:"
+    cat "$REPO_ROOT/.tmp/integration_heartbeat_$$.log"
+    exit 1
+  fi
+fi
+
+# ── Config broadcast (SENSOR_CONFIG / ACTUATOR_CONFIG to boards) ────────────
+if [ "${INTEGRATION_SKIP_STARTUP_E2E:-0}" != "1" ]; then
+  echo "📻 Starting config_broadcast_service..."
+  if [ -n "$CONFIG_BROADCAST_SVC" ]; then
+    ("$CONFIG_BROADCAST_SVC" --config "$TEST_CONFIG" --interval-ms 1500 > "$REPO_ROOT/.tmp/integration_config_broadcast_$$.log" 2>&1) &
+  else
+    (cd "$REPO_ROOT" && PYTHONPATH="$REPO_ROOT/scripts/services:$REPO_ROOT/scripts/calibration" \
+      "$PYTHON_BIN" scripts/services/config_broadcast_service.py --config "$TEST_CONFIG" --interval-ms 1500 \
+      > "$REPO_ROOT/.tmp/integration_config_broadcast_$$.log" 2>&1) &
+  fi
+  PIDS+=($!)
+  sleep 0.5
+  echo "  ✅ config_broadcast_service started (PID ${PIDS[-1]})"
+fi
 
 # ── Start Backend Server ─────────────────────────────────────────────────────
 
@@ -377,6 +479,11 @@ VERBOSE_FLAG=""
 RECEIVED_STATS_FILE="$REPO_ROOT/.tmp/received_stats_$$.json"
 [ "$VERBOSE" = "1" ] && VERBOSE_FLAG="--verbose"
 SEQ_FLAG=""; [ -n "$SEQ_SVC" ] && SEQ_FLAG="--has-sequencer"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+export TEST_DAQ_UDP_PORT TEST_STARTUP_LISTEN_PORT BOARD_STARTUP_SIM="$REPO_ROOT/scripts/board_startup_sim.py" PYTHON_BIN
+export INTEGRATION_SKIP_STARTUP_E2E
+# Test 9 (SELF_TEST E2E): log every SELF_TEST.* SENSOR_UPDATE on the WS client
+[ "$VERBOSE" = "1" ] && export INTEGRATION_SELFTEST_DEBUG=1
 (cd "$REPO_ROOT/web-gui/backend" && \
   NODE_PATH="$REPO_ROOT/web-gui/backend/node_modules" \
   npx tsx "$SCRIPT_DIR/ws_data_flow_test.ts" "$TEST_BACKEND_WS_PORT" "$TEST_BACKEND_API_PORT" "$TEST_ACTUATOR_UDP_PORT" \

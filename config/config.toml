@@ -293,6 +293,22 @@ designated_survivor = false
 voltage_reference = 0
 active_connectors = []
 
+# Encoder board #1 (physical slot #6). board_id 61. Heartbeat uses UNKNOWN(0) on wire until
+# DAQv2-Comms adds BoardType::ENCODER; routing uses [boards.*] type = ENCODER.
+[boards.encoder_board_61]
+type = "ENCODER"
+ip = "192.168.2.61"
+send_port = 5005
+listen_port = 5005
+num_sensors = 1
+board_id = 61
+enabled = true
+enable_serial_printing = false
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 1
+active_connectors = [1]
+
 # =============================================================================
 # Multiple Boards Example (commented out - uncomment to use)
 # =============================================================================
@@ -465,6 +481,11 @@ packet_id = [0x23, 0x00]
 channels = 20
 description = "Raw LC ADC counts"
 
+[routing.encoder_raw]
+packet_id = [0x24, 0x00]
+channels = 14
+description = "Raw encoder ADC counts — 0x01..0x0E"
+
 [routing.lc_calibrated]
 packet_id = [0x23, 0x10]
 channels = 20
@@ -483,7 +504,7 @@ description = "Actuator state (0=closed, 1=open) from current-sense threshold"
 # Which routing types daq_bridge publishes to Elodin.
 # PT_Cal/TC_Cal/LC_Cal/RTD_Cal are written by calibration_server (subscribes to relay, applies calibration, writes to Elodin).
 [daq_bridge]
-publish = ["pt_raw", "tc_raw", "rtd_raw", "lc_raw", "actuator_status", "actuator_state"]
+publish = ["encoder_raw", "pt_raw", "tc_raw", "rtd_raw", "lc_raw", "actuator_status", "actuator_state"]
 
 # =============================================================================
 # Calibration

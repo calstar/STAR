@@ -1,20 +1,21 @@
 #!/usr/bin/env tsx
 /**
- * UDP Listener for Actuator Command Verification
- *
- * Listens on a UDP port for actuator command packets and writes
- * received commands to a temp file for the integration test to check.
+ * UDP listener for integration: actuator commands (type 4), SERVER_HEARTBEAT (type 2), etc.
  *
  * Usage: tsx udp_listener.ts [port] [output_file] [timeout_seconds]
  *
- * DiabloAvionics actuator command format:
- *   Byte 0:    packet_type (4 = ACTUATOR_COMMAND)
- *   Byte 1:    version (0)
+ * Type 4 ACTUATOR_COMMAND (DiabloAvionics):
+ *   Byte 0: packet_type (4)
+ *   Byte 1: version
  *   Bytes 2-5: timestamp (uint32 LE)
- *   Byte 6:    num_actuators
- *   For each actuator:
- *     Byte N:   channel_id (uint8)
- *     Byte N+1: state (uint8, 0=CLOSED, 1=OPEN)
+ *   Byte 6: num_actuators
+ *   Then pairs: channel_id, state
+ *
+ * Type 2 SERVER_HEARTBEAT (daq_bridge):
+ *   Byte 0: 2
+ *   Byte 1: version
+ *   Bytes 2-5: timestamp_ms (uint32 LE)
+ *   Byte 6: engine_state
  */
 
 import * as dgram from 'dgram';
@@ -24,52 +25,78 @@ const PORT = parseInt(process.argv[2] || '5005', 10);
 const OUTPUT_FILE = process.argv[3] || '/tmp/udp_commands.json';
 const TIMEOUT_S = parseInt(process.argv[4] || '30', 10);
 
-interface ActuatorCommand {
-  timestamp: number;
+const PACKET_ACTUATOR_COMMAND = 4;
+const PACKET_SERVER_HEARTBEAT = 2;
+
+interface UdpRecord {
   receivedAt: number;
   packetType: number;
+  rawHex: string;
   version: number;
+  /** uint32 LE from wire (actuator cmd or server heartbeat) */
+  timestamp: number;
   numActuators: number;
   actuators: Array<{ channel: number; state: number }>;
-  rawHex: string;
+  /** Present when packetType === SERVER_HEARTBEAT */
+  engineState?: number;
 }
 
-const commands: ActuatorCommand[] = [];
-
-const socket = dgram.createSocket('udp4');
-
-socket.on('message', (msg: Buffer, rinfo) => {
-  const command: ActuatorCommand = {
-    timestamp: 0,
+function parseMessage(msg: Buffer): UdpRecord {
+  const base: UdpRecord = {
     receivedAt: Date.now(),
-    packetType: 0,
+    packetType: msg.length > 0 ? msg.readUInt8(0) : 0,
+    rawHex: msg.toString('hex'),
     version: 0,
+    timestamp: 0,
     numActuators: 0,
     actuators: [],
-    rawHex: msg.toString('hex'),
   };
 
-  if (msg.length >= 7) {
-    command.packetType = msg.readUInt8(0);
-    command.version = msg.readUInt8(1);
-    command.timestamp = msg.readUInt32LE(2);
-    command.numActuators = msg.readUInt8(6);
+  if (msg.length < 2) return base;
 
+  base.packetType = msg.readUInt8(0);
+  base.version = msg.readUInt8(1);
+
+  if (base.packetType === PACKET_SERVER_HEARTBEAT && msg.length >= 7) {
+    base.timestamp = msg.readUInt32LE(2);
+    base.engineState = msg.readUInt8(6);
+    return base;
+  }
+
+  if (base.packetType === PACKET_ACTUATOR_COMMAND && msg.length >= 7) {
+    base.timestamp = msg.readUInt32LE(2);
+    base.numActuators = msg.readUInt8(6);
     let offset = 7;
-    for (let i = 0; i < command.numActuators && offset + 1 < msg.length; i++) {
-      command.actuators.push({
+    for (let i = 0; i < base.numActuators && offset + 1 < msg.length; i++) {
+      base.actuators.push({
         channel: msg.readUInt8(offset),
         state: msg.readUInt8(offset + 1),
       });
       offset += 2;
     }
+    return base;
   }
 
-  commands.push(command);
-  console.log(`📥 UDP packet from ${rinfo.address}:${rinfo.port} - type=${command.packetType} actuators=${JSON.stringify(command.actuators)}`);
+  if (msg.length >= 6) {
+    base.timestamp = msg.readUInt32LE(2);
+  }
+  return base;
+}
 
-  // Write to file after each packet
-  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(commands, null, 2));
+const packets: UdpRecord[] = [];
+
+const socket = dgram.createSocket('udp4');
+
+socket.on('message', (msg: Buffer, rinfo) => {
+  const rec = parseMessage(msg);
+  packets.push(rec);
+  const extra =
+    rec.packetType === PACKET_SERVER_HEARTBEAT
+      ? `engineState=${rec.engineState ?? 'n/a'}`
+      : `actuators=${JSON.stringify(rec.actuators)}`;
+  console.log(`📥 UDP from ${rinfo.address}:${rinfo.port} type=${rec.packetType} ${extra}`);
+
+  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(packets, null, 2));
 });
 
 socket.on('error', (err) => {
@@ -79,28 +106,26 @@ socket.on('error', (err) => {
 
 socket.bind(PORT, '0.0.0.0', () => {
   console.log(`📡 UDP listener bound to 0.0.0.0:${PORT}`);
-  console.log(`   Writing commands to: ${OUTPUT_FILE}`);
+  console.log(`   Writing packets to: ${OUTPUT_FILE}`);
   console.log(`   Timeout: ${TIMEOUT_S}s`);
-  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(commands, null, 2));
+  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(packets, null, 2));
 });
 
-// Timeout
 setTimeout(() => {
-  console.log(`\n⏱️ Timeout reached (${TIMEOUT_S}s). Received ${commands.length} command(s).`);
-  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(commands, null, 2));
+  console.log(`\n⏱️ Timeout reached (${TIMEOUT_S}s). Received ${packets.length} packet(s).`);
+  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(packets, null, 2));
   socket.close();
   process.exit(0);
 }, TIMEOUT_S * 1000);
 
-// Graceful shutdown
 process.on('SIGINT', () => {
-  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(commands, null, 2));
+  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(packets, null, 2));
   socket.close();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
-  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(commands, null, 2));
+  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(packets, null, 2));
   socket.close();
   process.exit(0);
 });

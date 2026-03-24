@@ -24,9 +24,6 @@ CONFIG_PATH = _REPO_ROOT / "config" / "config.toml"
 if not CONFIG_PATH.is_file():
     CONFIG_PATH = Path("config/config.toml")
 
-TARGET_PORT = 5005
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Config packet broadcaster (standalone)"
@@ -80,10 +77,12 @@ def main() -> int:
     total_sent = 0
     while True:
         try:
-            packets = build_all_config_packets()
-            for pkt_type, board_id, raw, ip in packets:
+            packets = build_all_config_packets(
+                args.config if args.config.is_file() else None
+            )
+            for pkt_type, board_id, raw, ip, listen_port in packets:
                 try:
-                    sock.sendto(raw, (ip, TARGET_PORT))
+                    sock.sendto(raw, (ip, listen_port))
                     total_sent += 1
                 except Exception as e:
                     print(f"[ConfigBroadcast] Send error to {ip}: {e}", file=sys.stderr)

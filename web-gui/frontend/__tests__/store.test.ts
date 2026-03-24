@@ -99,4 +99,29 @@ describe('useSensorStore', () => {
         setActuatorCommandedOverride('ACT.LOX_Main', null);
         expect(useSensorStore.getState().actuatorCommandedOverrides['ACT.LOX_Main']).toBeUndefined();
     });
+
+    it('should buffer and flush SELF_TEST sensor updates', async () => {
+        const { updateSensor } = useSensorStore.getState();
+
+        updateSensor({
+            entity: 'SELF_TEST.BOARD_1',
+            component: 'sensor_2',
+            value: 1,
+            timestamp: Date.now()
+        });
+
+        updateSensor({
+            entity: 'SELF_TEST.BOARD_1',
+            component: 'sensor_3',
+            value: 0,
+            timestamp: Date.now()
+        });
+
+        // Wait for 50ms flush interval
+        await new Promise(resolve => setTimeout(resolve, 60));
+
+        const data = useSensorStore.getState().sensorData;
+        expect(data['SELF_TEST.BOARD_1.sensor_2']).toBe(1);
+        expect(data['SELF_TEST.BOARD_1.sensor_3']).toBe(0);
+    });
 });

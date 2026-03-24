@@ -60,7 +60,7 @@ function main(): void {
   const MAX_RESUBSCRIBE_ATTEMPTS = parseInt(process.env.RELAY_MAX_RESUBSCRIBE_ATTEMPTS || '24', 10);
   const RELAY_DEBUG_HEARTBEAT = process.env.RELAY_DEBUG_HEARTBEAT === '1';
   // Track which high-byte packet ID groups have delivered at least one TABLE packet.
-  // Groups: 0x10=heartbeat, 0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC, 0x30=ACT, 0x31=ACT_STATE, 0x40=CTRL_ACT, 0x41=CTRL_DIAG, 0x42=CTRL_MEAS
+  // Groups: 0x10=heartbeat, 0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC, 0x24=ENC (when encoder enabled), 0x30=ACT, 0x31=ACT_STATE, 0x40=CTRL_ACT, 0x41=CTRL_DIAG, 0x42=CTRL_MEAS, 0x60=SELF_TEST
   const seenHighBytes = new Set<number>();
 
   // Re-send VTableStream subscriptions. Elodin DB rejects subscriptions for
@@ -75,7 +75,7 @@ function main(): void {
     resubscribeTimer = setTimeout(() => {
       resubscribeTimer = null;
       if (!elodin.isConnected()) return;
-      const missingGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31, 0x40, 0x41, 0x42, 0x43, 0x50]
+      const missingGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x24, 0x30, 0x31, 0x40, 0x41, 0x42, 0x43, 0x50, 0x60]
         .filter(g => !seenHighBytes.has(g));
       if (missingGroups.length > 0) {
         const missing = missingGroups.map(g => `0x${g.toString(16)}`).join(', ');
@@ -109,7 +109,7 @@ function main(): void {
       }
       // Cancel retry once all expected groups are delivering data
       if (resubscribeTimer) {
-        const allGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31, 0x40, 0x41, 0x42, 0x43, 0x50];
+        const allGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x24, 0x30, 0x31, 0x40, 0x41, 0x42, 0x43, 0x50, 0x60];
         if (allGroups.every(g => seenHighBytes.has(g))) {
           clearTimeout(resubscribeTimer);
           resubscribeTimer = null;

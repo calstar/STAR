@@ -33,7 +33,8 @@ public:
         ACTUATOR_CONFIG = 6,
         ABORT = 7,
         ABORT_DONE = 8,
-        CLEAR_ABORT = 9
+        CLEAR_ABORT = 9,
+        SELF_TEST = 12
     };
 
     // Board types (matching DAQv2-Comms)
@@ -88,6 +89,14 @@ public:
     };
 
     /**
+     * @brief Self Test Result
+     */
+    struct SelfTestResult {
+        uint8_t sensor_id;
+        uint8_t result; // 1 = good, 0 = bad
+    };
+
+    /**
      * @brief Sensor data chunk
      */
     struct SensorDataChunk {
@@ -103,6 +112,16 @@ public:
         uint8_t num_chunks;
         uint8_t num_sensors;
         std::vector<SensorDataChunk> chunks;
+        bool is_valid;
+    };
+
+    /**
+     * @brief Parsed self test packet
+     */
+    struct ParsedSelfTestPacket {
+        PacketHeader header;
+        uint8_t num_sensors;
+        std::vector<SelfTestResult> results;
         bool is_valid;
     };
 
@@ -142,6 +161,11 @@ public:
      * @brief Parse sensor data packet
      */
     std::optional<ParsedSensorDataPacket> parse_sensor_data(const uint8_t* data, size_t size) const;
+
+    /**
+     * @brief Parse self test packet
+     */
+    std::optional<ParsedSelfTestPacket> parse_self_test(const uint8_t* data, size_t size) const;
 
     /**
      * @brief Extract board signature from heartbeat

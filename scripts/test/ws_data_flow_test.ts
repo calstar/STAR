@@ -15,6 +15,7 @@
 import WebSocket from 'ws';
 import * as fs from 'fs';
 import * as http from 'http';
+import { spawnSync } from 'child_process';
 
 const WS_PORT = parseInt(process.argv[2] || '8081', 10);
 const API_PORT = parseInt(process.argv[3] || '8082', 10);
@@ -38,8 +39,21 @@ const backendLogIdx = process.argv.indexOf('--backend-log');
 const BACKEND_LOG_FILE = backendLogIdx >= 0 ? process.argv[backendLogIdx + 1] : '';
 
 const WS_URL = `ws://127.0.0.1:${WS_PORT}`;
-const SENSOR_TIMEOUT_MS = 15000;
+const SENSOR_TIMEOUT_MS = 5000;
 const COMMAND_TIMEOUT_MS = 5000;
+
+const TEST_DAQ_UDP_PORT = parseInt(process.env.TEST_DAQ_UDP_PORT || '5016', 10);
+const TEST_STARTUP_LISTEN_PORT = parseInt(process.env.TEST_STARTUP_LISTEN_PORT || '0', 10);
+const BOARD_STARTUP_SIM = process.env.BOARD_STARTUP_SIM || '';
+const PYTHON_BIN = process.env.PYTHON_BIN || 'python3';
+const SKIP_STARTUP_E2E = process.env.INTEGRATION_SKIP_STARTUP_E2E === '1';
+/** Set INTEGRATION_SELFTEST_DEBUG=1 or pass --verbose to log every SELF_TEST.* SENSOR_UPDATE during Test 9. */
+const INTEGRATION_SELFTEST_DEBUG = process.env.INTEGRATION_SELFTEST_DEBUG === '1';
+/**
+ * Max time to wait for SELF_TEST on WS after board_startup_sim exits 0 (timer starts only after spawn).
+ * Override with INTEGRATION_SELFTEST_WS_MS on very slow hosts.
+ */
+const SELF_TEST_WS_MS = parseInt(process.env.INTEGRATION_SELFTEST_WS_MS || '8000', 10);
 
 // Shared types (inline to avoid import issues)
 enum MessageType {
@@ -48,6 +62,7 @@ enum MessageType {
   SENSOR_UPDATE = 'sensor_update',
   ACTUATOR_UPDATE = 'actuator_update',
   STATE_UPDATE = 'state_update',
+  BOARD_STATUS_UPDATE = 'board_status_update',
 }
 
 enum SystemState {
@@ -143,6 +158,119 @@ function waitForMessage(
 
     ws.on('message', handler);
   });
+}
+
+/**
+ * Like waitForMessage, but the timeout starts only when armTimeout() is called.
+ * Use when spawnSync runs between attaching the handler and starting the deadline (Test 9).
+ */
+function waitForMessageArmed(
+  ws: WebSocket,
+  type: string,
+  timeoutMs: number,
+  predicate?: (payload: any) => boolean,
+): {
+  promise: Promise<{ payload: any; receivedAt: number }>;
+  armTimeout: () => void;
+  cancel: () => void;
+} {
+  const ctl: { armTimeout?: () => void; cancel?: () => void } = {};
+
+  const promise = new Promise<{ payload: any; receivedAt: number }>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
+
+    function handler(data: WebSocket.Data) {
+      const receivedAt = Date.now();
+      try {
+        const msg: WSMessage = JSON.parse(data.toString());
+        if (msg.type === type && (!predicate || predicate(msg.payload))) {
+          if (settled) return;
+          settled = true;
+          if (timer !== null) {
+            clearTimeout(timer);
+            timer = null;
+          }
+          ws.removeListener('message', handler);
+          resolve({ payload: msg.payload, receivedAt });
+        }
+      } catch {
+        /* ignore malformed */
+      }
+    }
+
+    ws.on('message', handler);
+
+    ctl.armTimeout = () => {
+      if (settled) return;
+      if (timer !== null) return;
+      timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        if (timer !== null) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        ws.removeListener('message', handler);
+        reject(new Error(`Timeout waiting for ${type} (${timeoutMs}ms)`));
+      }, timeoutMs);
+    };
+
+    ctl.cancel = () => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      ws.removeListener('message', handler);
+      reject(new Error(`Cancelled waiting for ${type}`));
+    };
+  });
+
+  return {
+    promise,
+    armTimeout: () => ctl.armTimeout!(),
+    cancel: () => ctl.cancel!(),
+  };
+}
+
+/**
+ * Parallel listener for Test 9: counts SELF_TEST.* sensor_update frames (DAQ → Elodin → relay → thin).
+ * Use snapshot() on failure to see whether the WS client ever saw any self-test traffic.
+ */
+function attachSelfTestNineSniffer(ws: WebSocket): {
+  stop: () => void;
+  snapshot: () => { count: number; samples: string[] };
+} {
+  let count = 0;
+  const samples: string[] = [];
+  const maxSamples = 16;
+  const logEach = INTEGRATION_SELFTEST_DEBUG || VERBOSE;
+
+  const handler = (data: WebSocket.Data) => {
+    try {
+      const msg: WSMessage = JSON.parse(data.toString());
+      if (msg.type !== MessageType.SENSOR_UPDATE || !msg.payload) return;
+      const p = msg.payload;
+      const ent = typeof p.entity === 'string' ? p.entity : '';
+      if (!ent.startsWith('SELF_TEST.')) return;
+      count++;
+      const line = `${ent} ${p.component}=${JSON.stringify(p.value)}`;
+      if (samples.length < maxSamples) samples.push(line);
+      if (logEach) {
+        console.log(`  SELF_TEST on WS: ${line}`);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  ws.on('message', handler);
+  return {
+    stop: () => ws.removeListener('message', handler),
+    snapshot: () => ({ count, samples: [...samples] }),
+  };
 }
 
 interface CollectedMessage {
@@ -280,6 +408,9 @@ const EXPECTED_ENTITIES: string[] = [
 
   // tc_board (id 51) — active [2,3,4,5], no role-based entity names
   'TC.CH2', 'TC.CH3', 'TC.CH4', 'TC.CH5',
+
+  // encoder_board_61 (id 61) — see config.toml [boards.encoder_board_61]
+  'ENC.CH1',
 ];
 
 // ── Test 1: Sensor Data Flow ─────────────────────────────────────────────────
@@ -313,7 +444,7 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
   // the same type use channel_offset to create a global namespace:
   //   board 1: offset 0  → CH1-CH10
   //   board 2: offset 10 → CH11-CH20
-  const sensorPrefixes = ['PT_Cal.CH', 'PT.CH', 'RTD.CH', 'TC.CH', 'LC.CH', 'ACT.CH'];
+  const sensorPrefixes = ['PT_Cal.CH', 'PT.CH', 'RTD.CH', 'TC.CH', 'LC.CH', 'ENC.CH', 'ACT.CH'];
   for (const prefix of sensorPrefixes) {
     for (let i = 1; i <= 20; i++) {
       send(ws, {
@@ -327,7 +458,7 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
   // Snapshot backend stats before the window so we can compute a delta.
   const statsAtWindowStart = IS_THIN ? await fetchBackendStats() : null;
 
-  console.log('  Collecting sensor updates for 15s...');
+  console.log('  Collecting sensor updates for 5s...');
   const updates = await collectMessages(ws, MessageType.SENSOR_UPDATE, SENSOR_TIMEOUT_MS);
 
   const statsAtWindowEnd = IS_THIN ? await fetchBackendStats() : null;
@@ -392,6 +523,7 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     'rtd_board': ['RTD.CH1', 'RTD.CH2', 'RTD.CH3', 'RTD.CH4'],
     'lc_board_2': ['LC.CH1', 'LC.CH2', 'LC.CH6'],
     'tc_board': ['TC.CH2', 'TC.CH3', 'TC.CH4', 'TC.CH5'],
+    'encoder_board': ['ENC.CH1'],
   };
 
   // Count updates per entity
@@ -479,12 +611,12 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
 
   // ── Backend throughput stats (thin backend only) ──────────────────────────
   if (IS_THIN && statsAtWindowStart && statsAtWindowEnd) {
-    // Use window delta so we measure only what happened during the 15s collection.
+    // Use window delta so we measure only what happened during the sensor collection window.
     const received = statsAtWindowEnd.relayEntityUpdatesReceived - statsAtWindowStart.relayEntityUpdatesReceived;
     const broadcast = statsAtWindowEnd.sensorUpdatesBroadcast - statsAtWindowStart.sensorUpdatesBroadcast;
     const wsDelivery = broadcast > 0 ? (updates.length / broadcast * 100).toFixed(1) : '0.0';
 
-    console.log(`\n  Backend throughput (15s window):`);
+    console.log(`\n  Backend throughput (${SENSOR_TIMEOUT_MS / 1000}s window):`);
     console.log(`    ${received.toLocaleString()} sensor updates ingested from Elodin (full rate)`);
     console.log(`    ${broadcast.toLocaleString()} sent to frontend after 10 Hz throttle`);
     console.log(`    ${updates.length.toLocaleString()} received by test client`);
@@ -842,6 +974,170 @@ async function testElodinStateSync(): Promise<void> {
   });
 }
 
+// ── Test 7: SERVER_HEARTBEAT on control UDP (thin + listener file) ─────────
+
+async function testServerHeartbeatUdp(): Promise<void> {
+  if (!IS_THIN || !UDP_COMMANDS_FILE) return;
+  console.log('\n📬 Test 7: SERVER_HEARTBEAT UDP (heartbeat_service or daq_bridge → listener)');
+  // Wait for listener to bind and create the JSON file (integration starts it just before this test).
+  let waited = 0;
+  while (!fs.existsSync(UDP_COMMANDS_FILE) && waited < 8000) {
+    await new Promise((r) => setTimeout(r, 200));
+    waited += 200;
+  }
+  await new Promise((r) => setTimeout(r, 1500));
+  if (!fs.existsSync(UDP_COMMANDS_FILE)) {
+    assert(false, 'SERVER_HEARTBEAT: UDP listener file missing (listener failed to bind or start?)');
+    return;
+  }
+  let packets: { packetType?: number }[] = [];
+  try {
+    const raw = fs.readFileSync(UDP_COMMANDS_FILE, 'utf-8');
+    packets = JSON.parse(raw);
+    if (!Array.isArray(packets)) packets = [];
+  } catch {
+    assert(false, 'SERVER_HEARTBEAT: invalid UDP listener JSON');
+    return;
+  }
+  const hb = packets.filter((p) => p.packetType === 2);
+  assert(hb.length >= 1, `SERVER_HEARTBEAT: expected ≥1 type-2 packet, got ${hb.length}`);
+}
+
+// ── Test 8: Board status from relay → thin → WS ───────────────────────────
+
+async function testBoardStatusToFrontend(ws: WebSocket): Promise<void> {
+  if (!IS_THIN) return;
+  console.log('\n📬 Test 8: BOARD_STATUS_UPDATE (thin backend)');
+  const msgs = await collectMessages(ws, MessageType.BOARD_STATUS_UPDATE, 6000);
+  const saw = msgs.some(
+    (m) =>
+      Array.isArray(m.payload?.boards) &&
+      m.payload.boards.some((b: { boardState?: number }) => typeof b.boardState === 'number'),
+  );
+  assert(saw, 'BOARD_STATUS_UPDATE: at least one board with numeric boardState');
+}
+
+// ── Test 9: Board startup → SELF_TEST → SENSOR_UPDATE ─────────────────────────
+//
+// board_startup_sim.py emulates one board (integration board 60 @ 127.0.0.60):
+//   1) Binds UDP on the board listen port (SENSOR_CONFIG is sent *to* this address:port).
+//   2) Sends BOARD_HEARTBEAT every 1s with board_state = SETUP (real boards do this while waiting for config).
+//   3) Blocks until it receives a datagram whose first byte is SENSOR_CONFIG (type 5) from
+//      config_broadcast_service (same as production startup).
+//   4) Sends a SELF_TEST packet to the DAQ bridge UDP port; DAQ publishes to Elodin → relay → thin → WS.
+//
+// We pause briefly before starting the sim so config_broadcast has usually fired at least once or twice
+// (interval ~1.5s); otherwise the sim can bind after a broadcast and wait until the next cycle.
+// We listen on the WebSocket *before* running the sim so we do not miss the SELF_TEST SENSOR_UPDATE.
+// The timer for “still waiting on WebSocket” starts only *after* the Python process exits 0 (SELF_TEST UDP
+// already sent); that window is INTEGRATION_SELFTEST_WS_MS (spawnSync blocks Node’s event loop).
+
+async function testBoardStartupSelfTestToFrontend(ws: WebSocket): Promise<void> {
+  if (!IS_THIN || SKIP_STARTUP_E2E) return;
+  if (!BOARD_STARTUP_SIM || !fs.existsSync(BOARD_STARTUP_SIM) || TEST_STARTUP_LISTEN_PORT <= 0) {
+    console.log('\n📬 Test 9: Board startup SELF_TEST E2E — SKIPPED (BOARD_STARTUP_SIM / port)');
+    return;
+  }
+  const preSpawnMs = parseInt(process.env.INTEGRATION_SELFTEST_PRESPAWN_MS || '3500', 10);
+
+  console.log('\n📬 Test 9: Board startup → SELF_TEST → WebSocket (board 60)');
+  console.log('  What the sim does: SETUP heartbeats (1 Hz) → wait for SENSOR_CONFIG on board UDP → send SELF_TEST to DAQ.');
+  console.log(
+    `  Addresses: board listens on 127.0.0.60:${TEST_STARTUP_LISTEN_PORT}; SELF_TEST UDP → DAQ :${TEST_DAQ_UDP_PORT}; expect WS entity SELF_TEST.BOARD_60 sensor_2 = pass (1).`,
+  );
+  if (INTEGRATION_SELFTEST_DEBUG || VERBOSE) {
+    console.log('  Debug: set INTEGRATION_SELFTEST_DEBUG=1 or --verbose to log each SELF_TEST.* SENSOR_UPDATE on the socket.');
+  }
+  console.log(
+    `  Pause ${preSpawnMs / 1000}s before starting the sim so config_broadcast has likely sent SENSOR_CONFIG (env INTEGRATION_SELFTEST_PRESPAWN_MS=${preSpawnMs}).`,
+  );
+  await new Promise((r) => setTimeout(r, preSpawnMs));
+
+  const sniff = attachSelfTestNineSniffer(ws);
+  try {
+    const pred = (payload: any) =>
+      payload.entity === 'SELF_TEST.BOARD_60' &&
+      payload.component === 'sensor_2' &&
+      Number(payload.value) === 1;
+
+    const { promise: selfTestPromise, armTimeout, cancel } = waitForMessageArmed(
+      ws,
+      MessageType.SENSOR_UPDATE,
+      SELF_TEST_WS_MS,
+      pred,
+    );
+
+    const tSpawn0 = Date.now();
+    const r = spawnSync(
+      PYTHON_BIN,
+      [
+        BOARD_STARTUP_SIM,
+        '--listen-port',
+        String(TEST_STARTUP_LISTEN_PORT),
+        '--daq-port',
+        String(TEST_DAQ_UDP_PORT),
+        '--board-ip',
+        '127.0.0.60',
+        '--board-id',
+        '60',
+      ],
+      { stdio: 'pipe', encoding: 'utf-8', timeout: 95000 },
+    );
+    const spawnMs = Date.now() - tSpawn0;
+    console.log(
+      `  board_startup_sim finished in ${spawnMs}ms (exit ${r.status ?? 'null'}${r.signal ? ` signal=${r.signal}` : ''}).`,
+    );
+
+    if (r.status !== 0) {
+      cancel();
+      void selfTestPromise.catch(() => {});
+      const errOut = `${r.stderr || ''}${r.stdout || ''}`.slice(0, 1200);
+      console.error(`  Sim log (trimmed):\n${errOut}`);
+      const { count, samples } = sniff.snapshot();
+      console.error(`  SELF_TEST-related SENSOR_UPDATE count on socket during run: ${count}`);
+      if (samples.length) console.error(`  Samples: ${samples.join(' | ')}`);
+      assert(false, `board_startup_sim exit ${r.status}: ${errOut.slice(0, 400)}`);
+      return;
+    }
+
+    if (INTEGRATION_SELFTEST_DEBUG || VERBOSE) {
+      const out = (r.stdout || '').trim();
+      const err = (r.stderr || '').trim();
+      if (out) console.log(`  Sim stdout: ${out.slice(0, 600)}`);
+      if (err) console.log(`  Sim stderr: ${err.slice(0, 600)}`);
+    }
+
+    console.log(
+      `  Waiting up to ${SELF_TEST_WS_MS}ms for that SELF_TEST to appear on this WebSocket (DAQ → Elodin → relay → thin). Env: INTEGRATION_SELFTEST_WS_MS.`,
+    );
+    const tArm = Date.now();
+    armTimeout();
+    try {
+      const { receivedAt } = await selfTestPromise;
+      const wsLagMs = receivedAt - tArm;
+      if (INTEGRATION_SELFTEST_DEBUG || VERBOSE) {
+        console.log(`  Matched on WebSocket after ${wsLagMs}ms (timer started when sim had already sent SELF_TEST).`);
+      }
+      assert(true, 'SELF_TEST.BOARD_60.sensor_2 pass (value=1) received on WebSocket');
+    } catch (e: any) {
+      const { count, samples } = sniff.snapshot();
+      console.error(`  FAIL: ${e.message}`);
+      console.error(`  SELF_TEST SENSOR_UPDATE count on this socket: ${count}`);
+      if (samples.length) {
+        console.error(`  Saw these SELF_TEST lines: ${samples.join(' | ')}`);
+      } else {
+        console.error(
+          '  No SELF_TEST traffic on WebSocket — trace DAQ (UDP from 127.0.0.60), board_id 60 in test config, Elodin publish, relay subscription 0x60, thin parser.',
+        );
+      }
+      console.error('  Re-run with INTEGRATION_SELFTEST_DEBUG=1 or test_integration.sh -v for per-packet logs.');
+      assert(false, `SELF_TEST E2E: ${e.message}`);
+    }
+  } finally {
+    sniff.stop();
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -865,6 +1161,11 @@ async function main(): Promise<void> {
 
   try {
     await testSensorDataFlow(ws);
+    if (IS_THIN) {
+      await testServerHeartbeatUdp();
+      await testBoardStatusToFrontend(ws);
+      await testBoardStartupSelfTestToFrontend(ws);
+    }
     if (canRunCommandTests) {
       await testStateTransition(ws);
       await testStateTransitionDebugMode(ws);

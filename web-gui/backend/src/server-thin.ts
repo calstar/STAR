@@ -41,7 +41,18 @@ const HISTORY_MAX_POINTS = 1000;  // per series
 const HISTORY_MAX_KEYS   = 80;
 const HISTORY_STALE_MS   = 5 * 60 * 1000;
 const BOARD_STATUS_HZ    = 1;     // broadcast rate for board status
-const BROADCAST_MIN_MS   = 100;   // 10 Hz per sensor key
+/** Min interval between WS SENSOR_UPDATE broadcasts for high-rate DAQ streams only (~10 Hz per key). */
+const BROADCAST_MIN_MS   = 100;
+
+/**
+ * True for PT/TC/RTD/LC/ENC raw+cal and actuator raw+state ([0x20]–[0x24], [0x30]–[0x31]).
+ * Heartbeats ([0x10]), self-test ([0x60]), controller ([0x40]–[0x44]), sequencer/PSM ([0x50]), etc. are not throttled.
+ */
+function shouldThrottleSensorStreamPacket(high: number, _low: number): boolean {
+  if (high === 0x20 || high === 0x21 || high === 0x22 || high === 0x23 || high === 0x24) return true;
+  if (high === 0x30 || high === 0x31) return true;
+  return false;
+}
 
 // ── History cache ────────────────────────────────────────────────────────────
 
@@ -476,9 +487,9 @@ relay.on('packet', (header: any, payload: Buffer) => {
       const key = `${parsed.entity}.${parsed.component}`;
       stats.relayEntityUpdatesReceived++;
 
-      // 10 Hz throttle per key.
+      const throttle = shouldThrottleSensorStreamPacket(high, low);
       const lastBcast = broadcastLastTime.get(key) ?? 0;
-      if (epochNow - lastBcast < BROADCAST_MIN_MS) continue;
+      if (throttle && epochNow - lastBcast < BROADCAST_MIN_MS) continue;
       broadcastLastTime.set(key, epochNow);
 
       const update: SensorUpdate = { entity: parsed.entity, component: parsed.component, value: parsed.value, timestamp: epochNow };

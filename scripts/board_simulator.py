@@ -49,6 +49,8 @@ class SimulatedBoard:
             "RTD": BOARD_TYPE_RTD,
             "TC": BOARD_TYPE_TC,
             "ACTUATOR": BOARD_TYPE_ACTUATOR,
+            # Diablo::BoardType has no ENCODER yet — wire UNKNOWN(0); config drives routing.
+            "ENCODER": 0,
         }
         self.board_type = type_map.get(self.board_type_str, BOARD_TYPE_PT)
 
@@ -207,6 +209,11 @@ class SimulatedBoard:
         elif self.board_type == BOARD_TYPE_ACTUATOR:
             return int(1200000 + random.randint(-2000, 2000))
 
+        elif self.board_type_str == "ENCODER":
+            # Deterministic encoder-ish counts for Elodin raw path (signed-friendly magnitude)
+            base = 1_000_000 + sensor_id * 10_000
+            return base + int(500 * math.sin(t + sensor_id))
+
         return random.randint(1000, 5000)
 
 
@@ -267,6 +274,9 @@ def main():
     active_count = 0
     for name, board_cfg in boards.items():
         if not board_cfg.get("enabled", True):
+            continue
+        # Handled only by board_startup_sim.py (SETUP → SELF_TEST E2E)
+        if name == "integration_startup":
             continue
         # Filter by --only-type if specified
         if (

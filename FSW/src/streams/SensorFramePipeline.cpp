@@ -95,6 +95,25 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
         return batch;
     }
 
+    // Handle SELF_TEST packets
+    if (*packet_type == daq_comms::protocol::DiabloBoardPacketParser::PacketType::SELF_TEST) {
+        auto parsed = board_parser_.parse_self_test(receive_buffer_.data(), received);
+        if (!parsed || !parsed->is_valid) {
+            std::cerr << "[Pipeline] SELF_TEST parse failed from " << last_source_ip_ << std::endl;
+            return std::nullopt;
+        }
+
+        daq_comms::protocol::SensorBatch batch;
+        auto now = std::chrono::steady_clock::now();
+        batch.frame_timestamp_ns =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+        batch.sequence_id = parsed->header.timestamp & 0xFFFF;
+        batch.is_valid = true;
+        batch.self_tests.push_back(*parsed);
+
+        return batch;
+    }
+
     // Handle BOARD_HEARTBEAT packets (for board discovery + config broadcast)
     if (*packet_type == daq_comms::protocol::DiabloBoardPacketParser::PacketType::BOARD_HEARTBEAT) {
         last_heartbeat_buffer_.assign(receive_buffer_.data(), receive_buffer_.data() + received);

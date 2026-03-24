@@ -25,6 +25,11 @@ const SENSOR_SUBSCRIPTIONS: Array<[number, number]> = [
   [0x22,0x11],[0x22,0x12],[0x22,0x13],[0x22,0x14],
   // LC Raw+Cal (0x01-0x10, 0x11-0x20)
   ...[...Array(32)].map((_, i) => [0x23, i + 1] as [number, number]),
+  // Encoder Raw (0x01-0x0E) + Cal (0x11-0x1E) — same low-byte scheme as PT
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].map(ch => [0x24, ch] as [number, number]),
+  ...[0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E].map(
+    ch => [0x24, ch] as [number, number],
+  ),
   // Actuator channels (0x30, 0x01-0x0A)
   ...[1,2,3,4,5,6,7,8,9,10].map(ch => [0x30, ch] as [number, number]),
   // Actuator state (0x31, 0x01-0x14)
@@ -50,6 +55,8 @@ export async function registerVTables(client: ElodinClient): Promise<boolean> {
     ...SENSOR_SUBSCRIPTIONS,
     // Board heartbeats [0x10, board_id (1-64)]
     ...[...Array(64)].map((_, i) => [0x10, i + 1] as [number, number]),
+    // SELF_TEST tables [0x60, board_id (1-64)] — published by daq_bridge
+    ...[...Array(64)].map((_, i) => [0x60, i + 1] as [number, number]),
   ];
 
   const vtableStreamMsgId = computeMsgId('VTableStream');

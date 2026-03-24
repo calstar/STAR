@@ -52,7 +52,7 @@ static void signal_handler(int /* sig */) {
 // Board type mapping
 // ─────────────────────────────────────────────────────────────────────────────
 
-enum class BoardType { PT, LC, TC, RTD, ACTUATOR, UNKNOWN };
+enum class BoardType { PT, LC, TC, RTD, ACTUATOR, ENCODER, UNKNOWN };
 
 struct BoardConfig {
     BoardType type;
@@ -129,6 +129,8 @@ static void load_config(const std::string& config_path,
             bt = BoardType::RTD;
         else if (board_type_str == "ACTUATOR")
             bt = BoardType::ACTUATOR;
+        else if (board_type_str == "ENCODER")
+            bt = BoardType::ENCODER;
         if (bt != BoardType::UNKNOWN) {
             BoardConfig cfg{bt, board_ip, board_num_sensors, board_enabled, board_id,
                             board_channel_offset};
@@ -470,6 +472,7 @@ int main(int argc, char* argv[]) {
         fsw::elodin::DatabaseConfig::register_tables(elodin, pt_names, act_names);
         fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin, pt_names);
         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin, 64);
+        fsw::elodin::DatabaseConfig::register_self_test_tables(elodin, 64);
     };
 
     auto drain_elodin = [&]() {
@@ -570,6 +573,10 @@ int main(int argc, char* argv[]) {
                         case BoardType::RTD: hb_data.board_type = Diablo::BoardType::RTD; break;
                         case BoardType::LC: hb_data.board_type = Diablo::BoardType::LOAD_CELL; break;
                         case BoardType::ACTUATOR: hb_data.board_type = Diablo::BoardType::ACTUATOR; break;
+                        case BoardType::ENCODER:
+                            // TODO(encoder-daqv2): use Diablo::BoardType::ENCODER when DAQv2-Comms adds it
+                            hb_data.board_type = Diablo::BoardType::UNKNOWN;
+                            break;
                         default: break;
                     }
                 }
@@ -577,6 +584,47 @@ int main(int argc, char* argv[]) {
                                      std::chrono::steady_clock::now().time_since_epoch())
                                      .count();
                 heartbeat_router.process_heartbeat(hb_header, hb_data, hb_ts);
+            }
+            continue;
+        }
+
+        // ── Handle SELF_TEST ─────────────────────────────────────────────────
+        if (pkt_header.packet_type == Diablo::PacketType::SELF_TEST) {
+            Diablo::PacketHeader st_header;
+            std::vector<Diablo::SelfTestResult> st_results;
+            if (Diablo::parse_self_test_packet(recv_buf.data(), received, st_header, st_results)) {
+                uint8_t board_id = 0;
+                auto cfg_it = board_map.find(source_ip);
+                if (cfg_it != board_map.end() && cfg_it->second.board_id >= 0)
+                    board_id = static_cast<uint8_t>(cfg_it->second.board_id);
+                if (board_id == 0 && source_ip.compare(0, 8, "127.0.0.") == 0 && !board_order.empty()) {
+                    int idx = (source_ip.size() >= 9) ? (std::atoi(source_ip.c_str() + 8) - 2) : 0;
+                    if (idx < 0) idx = 0;
+                    if (idx < static_cast<int>(board_order.size()) &&
+                        board_order[idx].second.board_id >= 0)
+                        board_id = static_cast<uint8_t>(board_order[idx].second.board_id);
+                }
+                if (board_id != 0 && elodin_connected && elodin.is_connected() && !st_results.empty()) {
+                    uint64_t st_ts_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                            std::chrono::system_clock::now().time_since_epoch())
+                                            .count();
+                    std::array<uint8_t, 2> st_pkt = {0x60, board_id};
+                    using SelfTestElodinMsg = comms::CommsMessage<uint64_t, uint8_t, uint8_t>;
+                    elodin.begin_batch();
+                    for (const auto& res : st_results) {
+                        SelfTestElodinMsg msg;
+                        msg.setField<0>(st_ts_ns);
+                        msg.setField<1>(res.sensor_id);
+                        msg.setField<2>(res.result);
+                        elodin.publish(st_pkt, msg);
+                    }
+                    if (elodin.flush_batch()) {
+                        publish_count++;
+                        drain_elodin();
+                    } else {
+                        drop_count++;
+                    }
+                }
             }
             continue;
         }
@@ -674,6 +722,13 @@ int main(int argc, char* argv[]) {
                         }
                         break;
                     }
+
+                    case BoardType::ENCODER:
+                        if (publishing)
+                            publish_raw_sensor(elodin, 0x24, channel, ts_ns, dp.data, chunk.timestamp, 0,
+                                               publish_ranges);
+                        break;
+
                     default:
                         break;
                 }
@@ -704,6 +759,7 @@ int main(int argc, char* argv[]) {
                         case BoardType::TC: tag = "TC"; break;
                         case BoardType::RTD: tag = "RTD"; break;
                         case BoardType::ACTUATOR: tag = "ACT"; break;
+                        case BoardType::ENCODER: tag = "ENC"; break;
                         default: break;
                     }
                 }
