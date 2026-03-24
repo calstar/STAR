@@ -177,6 +177,13 @@ sed -i 's/^broadcast_ip = .*/broadcast_ip = "127.0.0.1"/' "$TEST_CONFIG"
 # (192.168.2.x) aren't bindable, and the DAQ bridge has matching fallback
 # logic for 127.0.0.x addresses. Replacing all IPs to 127.0.0.1 makes the
 # bridge treat every board as the same one (only one sensor type gets through).
+# Replace actuator board IPs to 127.0.0.1 so UDP commands reach our local listener.
+# Unlike sensor boards (where DAQ bridge routes by source IP), actuator commands are
+# sent TO the board IP — so we must point them at localhost for testing.
+sed -i 's/^ip = "192\.168\.2\.11"/ip = "127.0.0.1"/' "$TEST_CONFIG"
+sed -i 's/^ip = "192\.168\.2\.12"/ip = "127.0.0.1"/' "$TEST_CONFIG"
+sed -i 's/^ip = "192\.168\.2\.13"/ip = "127.0.0.1"/' "$TEST_CONFIG"
+sed -i 's/^ip = "192\.168\.2\.14"/ip = "127.0.0.1"/' "$TEST_CONFIG"
 # Replace listen_port on actuator boards to use our test port
 sed -i "s/^listen_port = 5005/listen_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 sed -i "s/^send_port = 5005/send_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
