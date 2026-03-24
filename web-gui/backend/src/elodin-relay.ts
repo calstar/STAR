@@ -90,7 +90,10 @@ function main(): void {
     }, 5000);
   }
 
+  let lastTableTime = Date.now();
+
   elodin.on('packet', (header, payload) => {
+    lastTableTime = Date.now();
     if (header.ty === ElodinPacketType.TABLE) {
       tablePacketCount++;
       seenHighBytes.add(header.packetId[0]);
@@ -140,6 +143,7 @@ function main(): void {
     console.log('[Relay] Elodin connected, registering VTables and sending subscriptions...');
     tablePacketCount = 0;
     seenHighBytes.clear();
+    lastTableTime = Date.now();
     if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
     // Register CONTROLLER VTables so publish [0x43] from backend→relay→Elodin is accepted
     registerControllerVTables(elodin).then((ok) => {
@@ -167,6 +171,19 @@ function main(): void {
     if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
   });
   elodin.on('error', () => { });
+
+  // Watchdog: If no data received for a while, periodically resubscribe.
+  // Connection drops silently sometimes, or Elodin restarts without TCP FIN.
+  setInterval(() => {
+    if (elodin.isConnected() && Date.now() - lastTableTime > 15000) {
+      console.warn('[Relay] Watchdog: No data from Elodin for 15s. Resubscribing to VTables...');
+      lastTableTime = Date.now(); // reset to avoid spamming every tick
+      registerControllerVTables(elodin).catch(() => {});
+      const actuatorMap = loadActuatorChannelToEntityMap();
+      registerActuatorCommandedVTables(elodin, actuatorMap).catch(() => {});
+      registerVTables(elodin).catch(() => {});
+    }
+  }, 5000);
 
   // One-time diagnostic: if we get TABLE packets but no heartbeats after 15s
   let heartbeatWarned = false;

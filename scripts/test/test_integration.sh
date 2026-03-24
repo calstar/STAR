@@ -403,14 +403,25 @@ if [ -n "$SEQ_SVC" ]; then
   kill "$UDP_PID" 2>/dev/null || true
   sleep 0.5
   if [ -f "$UDP_COMMANDS_FILE" ]; then
-    NUM_COMMANDS=$("$PYTHON_BIN" -c "import json; data=json.load(open('$UDP_COMMANDS_FILE')); print(len(data))" 2>/dev/null || echo "0")
-    if [ "$NUM_COMMANDS" -gt "0" ]; then
-      echo "📋 UDP actuator commands: ✅ $NUM_COMMANDS packet(s) received by local listener"
+    # Parse the sequencer log to count how many UDP packets IT claims to have sent
+    SEQ_LOG="$REPO_ROOT/.tmp/integration_sequencer_$$.log"
+    EXPECTED_PACKETS=$(grep -a -c -E "\[Actuator(Commander|Service)\].*(Sent [0-9]+ commands to|Manual: |Actuator [a-zA-Z0-9_ ]+ -> (OPEN|CLOSED))" "$SEQ_LOG" 2>/dev/null || echo 0)
+    ACTUAL_PACKETS=$("$PYTHON_BIN" -c "import json; data=json.load(open('$UDP_COMMANDS_FILE')); print(len(data))" 2>/dev/null || echo "0")
+    
+    if [ "$EXPECTED_PACKETS" -gt "0" ] && [ "$EXPECTED_PACKETS" -le "$ACTUAL_PACKETS" ]; then
+      echo "📋 UDP actuator commands: ✅ All $EXPECTED_PACKETS expected packet(s) received by local listener"
+    elif [ "$EXPECTED_PACKETS" -gt "$ACTUAL_PACKETS" ]; then
+      echo "📋 UDP actuator commands: ❌ Only $ACTUAL_PACKETS/$EXPECTED_PACKETS packets received (DROPPED PACKETS)"
+      UDP_CHECK_FAILED=1
+    elif [ "$EXPECTED_PACKETS" -eq 0 ] && [ "$ACTUAL_PACKETS" -gt 0 ]; then
+      echo "📋 UDP actuator commands: ⚠️  $ACTUAL_PACKETS packets received, but couldn't parse expected count from log."
     else
-      echo "📋 UDP actuator commands: ⚠️  0 packets received (sequencer_service may not have sent commands)"
+      echo "📋 UDP actuator commands: ❌ 0 packets expected/sent, zero received. Sequencer did not run commands."
+      UDP_CHECK_FAILED=1
     fi
   else
-    echo "📋 UDP actuator commands: ⚠️  no packets received (listener file missing)"
+    echo "📋 UDP actuator commands: ❌ no packets received (listener file missing)"
+    UDP_CHECK_FAILED=1
   fi
 fi
 

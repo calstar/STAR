@@ -110,7 +110,7 @@ bool ActuatorCommander::load(const std::string& config_content,
     if (bind_addr_.empty()) bind_addr_ = "0.0.0.0";
 
     const std::string port_str =
-        getTomlValue(config_content, "actuator_service", "port", "5005");
+        getTomlValue(config_content, "network", "actuator_cmd_port", "5005");
     try { actuator_port_ = static_cast<uint16_t>(std::stoi(port_str)); } catch (...) {}
 
     // -- Board IP map: board_id → IP (from [boards.xxx] sections) --
