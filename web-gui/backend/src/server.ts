@@ -1231,7 +1231,6 @@ class SensorSystemServer {
               this.abortDoneTimer = null;
             }, ABORT_DONE_DELAY_MS);
           }
-        } else { throw new Error('Failed to send state transition command'); }
 
         // Fire timer and C++ controller gate
         if (newState === SystemState.FIRE) {
