@@ -94,6 +94,10 @@ function main(): void {
     if (header.ty === ElodinPacketType.TABLE) {
       tablePacketCount++;
       seenHighBytes.add(header.packetId[0]);
+      // Log non-sensor packets (0x40+) to diagnose state/controller flow
+      if (header.packetId[0] >= 0x40) {
+        console.log(`[Relay] TABLE [0x${header.packetId[0].toString(16)}, 0x${header.packetId[1].toString(16)}] len=${payload.length}`);
+      }
       if (header.packetId[0] === 0x10) {
         heartbeatPacketCount++;
         if (RELAY_DEBUG_HEARTBEAT) {
@@ -108,6 +112,9 @@ function main(): void {
           resubscribeTimer = null;
         }
       }
+    } else {
+      // Log non-TABLE packets (MSG, COMMAND, etc) for debugging
+      console.log(`[Relay] Non-TABLE packet: ty=${header.ty} id=[0x${header.packetId[0].toString(16)}, 0x${header.packetId[1].toString(16)}] len=${payload.length}`);
     }
     // Forward as binary: 8-byte header (len LE, ty, packetId[2], requestId) + payload
     const payloadLen = payload.length;
@@ -136,7 +143,7 @@ function main(): void {
     if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
     // Register CONTROLLER VTables so publish [0x43] from backend→relay→Elodin is accepted
     registerControllerVTables(elodin).then((ok) => {
-      if (ok) console.log('[Relay] Controller VTables registered (CONTROLLER.state etc.)');
+      console.log(`[Relay] Controller VTables registered: ${ok ? 'OK' : 'FAILED'} (includes SequencerState [0x50,0x00])`);
     }).catch((e) => { console.error('[Relay] Controller VTable registration failed:', e); });
     const actuatorMap = loadActuatorChannelToEntityMap();
     registerActuatorCommandedVTables(elodin, actuatorMap).then((ok) => {

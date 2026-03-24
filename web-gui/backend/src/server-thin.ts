@@ -410,7 +410,12 @@ relay.on('packet', (header: any, payload: Buffer) => {
       actuatorChannelToEntityMap,
     });
 
-    if (parsedList.length === 0) return;
+    if (parsedList.length === 0) {
+      if (high >= 0x40) {
+        console.log(`[ThinServer] Unmapped packet from relay: [0x${high.toString(16)}, 0x${low.toString(16)}] len=${payload.length}`);
+      }
+      return;
+    }
 
     const epochNow = Date.now();
 
