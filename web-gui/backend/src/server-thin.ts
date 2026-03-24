@@ -410,6 +410,21 @@ relay.on('packet', (header: any, payload: Buffer) => {
     if (parsedList.length === 0) return;
 
     const epochNow = Date.now();
+
+    // ── SequencerState packet → STATE_UPDATE broadcast ───────────────────
+    if (parsedList[0]?.entity === '_SEQUENCER_STATE') {
+      const stateVal      = parsedList.find(p => p.component === 'state')?.value ?? 0;
+      const bitmask       = parsedList.find(p => p.component === 'allowedBitmask')?.value ?? 0;
+      const debugModeVal  = parsedList.find(p => p.component === 'debugMode')?.value ?? 0;
+      const stateName     = SystemState[stateVal as SystemState] ?? 'UNKNOWN';
+      broadcast({
+        type: MessageType.STATE_UPDATE,
+        timestamp: epochNow,
+        payload: { currentState: stateVal, stateName, timestamp: epochNow, debugMode: debugModeVal === 1 },
+      });
+      return;
+    }
+
     for (const parsed of parsedList) {
       if (!Number.isFinite(parsed.value)) continue;
 

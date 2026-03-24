@@ -271,6 +271,20 @@ export function parseElodinPacket(
     ];
   }
 
+  // ── SequencerState: [0x50, 0x00] ─────────────────────────────────────────
+  // Layout: U64(0) timestamp_ns | U8(8) current_state | U32(9) allowed_bitmask | U8(13) debug_mode
+  if (high === 0x50 && low === 0x00 && payload.length >= 14) {
+    const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
+    const currentState = payload.readUInt8(8);
+    const allowedBitmask = payload.readUInt32LE(9);
+    const debugMode = payload.readUInt8(13);
+    return [
+      { entity: '_SEQUENCER_STATE', component: 'state',           value: currentState,    timestamp: tsMs },
+      { entity: '_SEQUENCER_STATE', component: 'allowedBitmask',  value: allowedBitmask,  timestamp: tsMs },
+      { entity: '_SEQUENCER_STATE', component: 'debugMode',       value: debugMode,       timestamp: tsMs },
+    ];
+  }
+
   // ── PSM Actuator Command: [0x50, 0x60..0x66] ────────────────────────────
   // Layout: U64(0) | U8(8) actuator_id | U8(9) command_type | F32(10) value | U8(14) status
   if (high === 0x50 && low >= 0x60 && low <= 0x66 && payload.length >= 15) {
