@@ -14,6 +14,7 @@
 
 import WebSocket from 'ws';
 import * as fs from 'fs';
+import * as http from 'http';
 
 const WS_PORT = parseInt(process.argv[2] || '8081', 10);
 const API_PORT = parseInt(process.argv[3] || '8082', 10);
@@ -265,6 +266,28 @@ const EXPECTED_ENTITIES: string[] = [
 
 // ── Test 1: Sensor Data Flow ─────────────────────────────────────────────────
 
+// ── Backend stats (thin backend only) ────────────────────────────────────────
+
+interface BackendStats {
+  relayEntityUpdatesReceived: number;
+  sensorUpdatesBroadcast: number;
+  uptimeMs: number;
+}
+
+function fetchBackendStats(): Promise<BackendStats | null> {
+  return new Promise((resolve) => {
+    const req = http.get(`http://127.0.0.1:${WS_PORT}/stats`, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(2000, () => { req.destroy(); resolve(null); });
+  });
+}
+
 async function testSensorDataFlow(ws: WebSocket): Promise<void> {
   console.log('\n📡 Test 1: Sensor Data Flow (fake data → DAQ bridge → Elodin → relay → backend → WS)');
 
@@ -388,7 +411,7 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
   }
 
   // Total update count — just report, no arbitrary minimum
-  console.log(`  Total updates received: ${updates.length}`);
+  console.log(`  Total updates received (WS client): ${updates.length}`);
 
   // Write per-entity received counts to file for comparison with simulator stats
   if (RECEIVED_STATS_FILE) {
@@ -427,6 +450,28 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
           printLatencyStats(`${prefix.replace('.', '')} Latency`, typeLatencies);
         }
       }
+    }
+  }
+
+  // ── Backend throughput stats (thin backend only) ──────────────────────────
+  if (IS_THIN) {
+    const backendStats = await fetchBackendStats();
+    if (backendStats) {
+      const { relayEntityUpdatesReceived: received, sensorUpdatesBroadcast: broadcast } = backendStats;
+      const throttleRatio = received > 0 ? ((received - broadcast) / received * 100).toFixed(1) : '0.0';
+      const wsDelivery = broadcast > 0 ? (updates.length / broadcast * 100).toFixed(1) : '0.0';
+      console.log(`\n  Backend throughput:`);
+      console.log(`    Relay → backend:   ${received.toLocaleString()} entity updates received`);
+      console.log(`    Backend → WS:      ${broadcast.toLocaleString()} broadcasts sent (${throttleRatio}% throttled)`);
+      console.log(`    WS client received:${updates.length.toLocaleString()} (${wsDelivery}% of broadcasts)`);
+      // Relay→backend should be lossless (only throttling is expected, not drops)
+      assert(received > 0, `Backend received sensor data from relay (got ${received})`);
+      // WS delivery should be near-perfect (brief 15s window; allow small timing skew)
+      const wsDeliveryNum = broadcast > 0 ? updates.length / broadcast : 0;
+      assert(wsDeliveryNum >= 0.9,
+        `WS delivery >= 90% of broadcasts (got ${(wsDeliveryNum * 100).toFixed(1)}% — ${updates.length}/${broadcast})`);
+    } else {
+      console.log('  ℹ️  Backend stats endpoint not available (legacy backend or stats disabled)');
     }
   }
 }

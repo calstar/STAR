@@ -165,9 +165,29 @@ function markStaleBoards(): void {
 
 setInterval(markStaleBoards, 1000);
 
+// ── Packet stats ─────────────────────────────────────────────────────────────
+// Counts raw entity updates received from relay vs broadcasts sent to WS clients.
+// GET /stats returns these so the integration test can verify no drops occur before
+// the 10 Hz throttle (relay→backend must be lossless; backend→WS is intentionally
+// throttled).
+
+const stats = {
+  relayEntityUpdatesReceived: 0,  // every finite-value entity parsed from relay
+  sensorUpdatesBroadcast:     0,  // SENSOR_UPDATE messages actually sent (post-throttle)
+  startTimeMs:                Date.now(),
+};
+
 // ── WebSocket server ─────────────────────────────────────────────────────────
 
-const httpServer = http.createServer();
+const httpServer = http.createServer((req, res) => {
+  if (req.method === 'GET' && req.url === '/stats') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ...stats, uptimeMs: Date.now() - stats.startTimeMs }));
+    return;
+  }
+  res.writeHead(404);
+  res.end();
+});
 const wss = new WebSocketServer({ server: httpServer });
 
 function broadcast(message: object): void {
@@ -401,6 +421,7 @@ relay.on('packet', (header: any, payload: Buffer) => {
       }
 
       const key = `${parsed.entity}.${parsed.component}`;
+      stats.relayEntityUpdatesReceived++;
 
       // 10 Hz throttle per key.
       const lastBcast = broadcastLastTime.get(key) ?? 0;
@@ -414,6 +435,7 @@ relay.on('packet', (header: any, payload: Buffer) => {
         recordHistory(key, timeSec, parsed.value);
       }
 
+      stats.sensorUpdatesBroadcast++;
       broadcast({ type: MessageType.SENSOR_UPDATE, timestamp: epochNow, payload: update });
     }
   } catch (err) {
