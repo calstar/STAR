@@ -101,10 +101,9 @@ echo ""
 
 # ── Kill stale processes on test ports from previous runs ────────────────────
 for port in $TEST_ELODIN_PORT $TEST_RELAY_WS_PORT $TEST_BACKEND_WS_PORT $TEST_BACKEND_API_PORT; do
-  STALE_PIDS=$(lsof -ti :$port 2>/dev/null | tr '\n' ' ' || true)
-  if [ -n "$STALE_PIDS" ]; then
-    echo "  ⚠️  Killing stale process(es) on port $port (PIDs: $STALE_PIDS)"
-    kill $STALE_PIDS 2>/dev/null || true
+  if fuser "$port/tcp" > /dev/null 2>&1; then
+    echo "  ⚠️  Killing stale process(es) on port $port"
+    fuser -k "$port/tcp" > /dev/null 2>&1 || true
   fi
 done
 sleep 0.5
