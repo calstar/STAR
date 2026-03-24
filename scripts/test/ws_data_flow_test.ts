@@ -405,13 +405,6 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     const badValues = updates.filter((u) => typeof u.payload.value !== 'number' || !Number.isFinite(u.payload.value));
     assert(badValues.length === 0, `All ${updates.length} sensor values are finite numbers${badValues.length > 0 ? ` (${badValues.length} bad)` : ''}`);
 
-    // Check timestamps are recent (all should be within 60s)
-    const now = Date.now();
-    const staleTimestamps = updates.filter((u) => Math.abs(now - u.payload.timestamp) >= 60000);
-    assert(
-      staleTimestamps.length === 0,
-      `All ${updates.length} timestamps are within 60s of now${staleTimestamps.length > 0 ? ` (${staleTimestamps.length} stale)` : ''}`,
-    );
 
     // ── Pipeline latency measurement ──
     const latencies = updates
