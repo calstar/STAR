@@ -306,8 +306,13 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     }
   }
 
+  // Snapshot backend stats before the window so we can compute a delta.
+  const statsAtWindowStart = IS_THIN ? await fetchBackendStats() : null;
+
   console.log('  Collecting sensor updates for 15s...');
   const updates = await collectMessages(ws, MessageType.SENSOR_UPDATE, SENSOR_TIMEOUT_MS);
+
+  const statsAtWindowEnd = IS_THIN ? await fetchBackendStats() : null;
 
   // ── Group by sensor type ──
   const entities = new Set(updates.map((u) => u.payload.entity));
@@ -454,25 +459,31 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
   }
 
   // ── Backend throughput stats (thin backend only) ──────────────────────────
-  if (IS_THIN) {
-    const backendStats = await fetchBackendStats();
-    if (backendStats) {
-      const { relayEntityUpdatesReceived: received, sensorUpdatesBroadcast: broadcast } = backendStats;
-      const throttleRatio = received > 0 ? ((received - broadcast) / received * 100).toFixed(1) : '0.0';
-      const wsDelivery = broadcast > 0 ? (updates.length / broadcast * 100).toFixed(1) : '0.0';
-      console.log(`\n  Backend throughput:`);
-      console.log(`    Relay → backend:   ${received.toLocaleString()} entity updates received`);
-      console.log(`    Backend → WS:      ${broadcast.toLocaleString()} broadcasts sent (${throttleRatio}% throttled)`);
-      console.log(`    WS client received:${updates.length.toLocaleString()} (${wsDelivery}% of broadcasts)`);
-      // Relay→backend should be lossless (only throttling is expected, not drops)
-      assert(received > 0, `Backend received sensor data from relay (got ${received})`);
-      // WS delivery should be near-perfect (brief 15s window; allow small timing skew)
-      const wsDeliveryNum = broadcast > 0 ? updates.length / broadcast : 0;
-      assert(wsDeliveryNum >= 0.9,
-        `WS delivery >= 90% of broadcasts (got ${(wsDeliveryNum * 100).toFixed(1)}% — ${updates.length}/${broadcast})`);
-    } else {
-      console.log('  ℹ️  Backend stats endpoint not available (legacy backend or stats disabled)');
-    }
+  if (IS_THIN && statsAtWindowStart && statsAtWindowEnd) {
+    // Use window delta so we measure only what happened during the 15s collection.
+    const received = statsAtWindowEnd.relayEntityUpdatesReceived - statsAtWindowStart.relayEntityUpdatesReceived;
+    const broadcast = statsAtWindowEnd.sensorUpdatesBroadcast - statsAtWindowStart.sensorUpdatesBroadcast;
+    const throttleRatio = received > 0 ? ((received - broadcast) / received * 100).toFixed(1) : '0.0';
+    const wsDelivery = broadcast > 0 ? (updates.length / broadcast * 100).toFixed(1) : '0.0';
+
+    console.log(`\n  Backend throughput (15s window):`);
+    console.log(`    Relay → backend:    ${received.toLocaleString()} entity updates received`);
+    console.log(`    Backend → WS:       ${broadcast.toLocaleString()} broadcasts sent (${throttleRatio}% throttled by 10 Hz gate)`);
+    console.log(`    WS client received: ${updates.length.toLocaleString()} (${wsDelivery}% of broadcasts)`);
+
+    // Every update that reached the backend must have come from the relay — no drops allowed.
+    assert(received > 0, `Backend received sensor data from relay (got ${received})`);
+
+    // Backend must have received at least as many as it broadcast (sanity check).
+    assert(received >= broadcast,
+      `Backend received >= broadcast (${received} >= ${broadcast})`);
+
+    // WS delivery should be near-perfect — allow 5% for timing skew at window boundaries.
+    const wsDeliveryNum = broadcast > 0 ? updates.length / broadcast : 0;
+    assert(wsDeliveryNum >= 0.95,
+      `WS delivery >= 95% of broadcasts (got ${(wsDeliveryNum * 100).toFixed(1)}% — ${updates.length}/${broadcast})`);
+  } else if (IS_THIN) {
+    console.log('  ℹ️  Backend stats unavailable — skipping relay→backend loss check');
   }
 }
 
