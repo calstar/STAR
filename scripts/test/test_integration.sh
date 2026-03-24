@@ -375,7 +375,10 @@ SEQ_FLAG=""; [ -n "$SEQ_SVC" ] && SEQ_FLAG="--has-sequencer"
 (cd "$REPO_ROOT/web-gui/backend" && \
   NODE_PATH="$REPO_ROOT/web-gui/backend/node_modules" \
   npx tsx "$SCRIPT_DIR/ws_data_flow_test.ts" "$TEST_BACKEND_WS_PORT" "$TEST_BACKEND_API_PORT" "$TEST_ACTUATOR_UDP_PORT" \
-  --received-stats "$RECEIVED_STATS_FILE" --backend="$BACKEND" $SEQ_FLAG $VERBOSE_FLAG)
+  --received-stats "$RECEIVED_STATS_FILE" \
+  --udp-commands "$UDP_COMMANDS_FILE" \
+  --seq-log "$REPO_ROOT/.tmp/integration_sequencer_$$.log" \
+  --backend="$BACKEND" $SEQ_FLAG $VERBOSE_FLAG)
 WS_TEST_EXIT=$?
 
 # ── Stop simulator and flush stats ────────────────────────────────────────────
@@ -393,45 +396,38 @@ if [ "$WS_TEST_EXIT" -ne 0 ]; then
 fi
 
 # ── Check UDP actuator commands ───────────────────────────────────────────────
-# sequencer_service sends UDP to board IPs (overridden to 127.0.0.1 in test config).
-# The UDP listener captures these. Only meaningful when command tests ran.
-
+# UDP actuator commands are now validated internally by ws_data_flow_test.ts
+# test_UdpActuatorCommands(). The script waits 500ms for packets to flush.
 echo ""
-UDP_CHECK_FAILED=0
+
 if [ -n "$SEQ_SVC" ]; then
-  # Give the UDP listener a moment to flush if it hasn't already
   kill "$UDP_PID" 2>/dev/null || true
-  sleep 0.5
-  if [ -f "$UDP_COMMANDS_FILE" ]; then
-    # Parse the sequencer log to count how many UDP packets IT claims to have sent
-    SEQ_LOG="$REPO_ROOT/.tmp/integration_sequencer_$$.log"
-    EXPECTED_PACKETS=$(grep -a -c -E "\[Actuator(Commander|Service)\].*(Sent [0-9]+ commands to|Manual: |Actuator [a-zA-Z0-9_ ]+ -> (OPEN|CLOSED))" "$SEQ_LOG" 2>/dev/null || echo 0)
-    ACTUAL_PACKETS=$("$PYTHON_BIN" -c "import json; data=json.load(open('$UDP_COMMANDS_FILE')); print(len(data))" 2>/dev/null || echo "0")
-    
-    if [ "$EXPECTED_PACKETS" -gt "0" ] && [ "$EXPECTED_PACKETS" -le "$ACTUAL_PACKETS" ]; then
-      echo "📋 UDP actuator commands: ✅ All $EXPECTED_PACKETS expected packet(s) received by local listener"
-    elif [ "$EXPECTED_PACKETS" -gt "$ACTUAL_PACKETS" ]; then
-      echo "📋 UDP actuator commands: ❌ Only $ACTUAL_PACKETS/$EXPECTED_PACKETS packets received (DROPPED PACKETS)"
-      UDP_CHECK_FAILED=1
-    elif [ "$EXPECTED_PACKETS" -eq 0 ] && [ "$ACTUAL_PACKETS" -gt 0 ]; then
-      echo "📋 UDP actuator commands: ⚠️  $ACTUAL_PACKETS packets received, but couldn't parse expected count from log."
-    else
-      echo "📋 UDP actuator commands: ❌ 0 packets expected/sent, zero received. Sequencer did not run commands."
-      UDP_CHECK_FAILED=1
-    fi
-  else
-    echo "📋 UDP actuator commands: ❌ no packets received (listener file missing)"
-    UDP_CHECK_FAILED=1
-  fi
 fi
 
 rm -f "$RECEIVED_STATS_FILE" 2>/dev/null || true
+
+# ── Check Elodin DB State Sync ────────────────────────────────────────────────
+# SequencerService writes state transitions to Elodin DB. The Relay streams them
+# to the Thin Server which logs them. We must verify this path to ensure DB saves.
+
+echo ""
+ELODIN_CHECK_FAILED=0
+if [ "$BACKEND" = "thin" ] && [ -n "$SEQ_SVC" ]; then
+  ELODIN_STATES=$(grep -c "\[ThinServer\] SequencerState from relay" "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>/dev/null || echo "0")
+  if [ "$ELODIN_STATES" -gt 0 ]; then
+    echo "📋 Elodin State Sync:   ✅ $ELODIN_STATES state update(s) verified in Elodin DB stream"
+  else
+    echo "📋 Elodin State Sync:   ❌ 0 state updates in stream! State transitions NOT saving to DB."
+    ELODIN_CHECK_FAILED=1
+  fi
+fi
 
 # ── Results ───────────────────────────────────────────────────────────────────
 
 FINAL_EXIT=0
 [ "$WS_TEST_EXIT" -ne 0 ] && FINAL_EXIT=1
 [ "$UDP_CHECK_FAILED" -ne 0 ] && FINAL_EXIT=1
+[ "$ELODIN_CHECK_FAILED" -ne 0 ] && FINAL_EXIT=1
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
@@ -441,6 +437,7 @@ else
   echo "  ❌ INTEGRATION TEST FAILED"
   [ "$WS_TEST_EXIT" -ne 0 ] && echo "     WS test failed (exit code: $WS_TEST_EXIT)"
   [ "$UDP_CHECK_FAILED" -ne 0 ] && echo "     UDP test failed (0 or dropped packets)"
+  [ "$ELODIN_CHECK_FAILED" -ne 0 ] && echo "     Elodin State Sync failed (no DB records)"
 fi
 echo "═══════════════════════════════════════════════════════════════"
 echo ""

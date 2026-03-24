@@ -6,6 +6,7 @@
 #include <sstream>
 
 #include "comms/CommsMessage.hpp"
+#include "elodin/DatabaseConfig.hpp"
 
 namespace sequencer {
 
@@ -20,8 +21,8 @@ static constexpr uint16_t VTABLE_STATE_TRANSITION    = 0x4300;
 // SequencerState message: timestamp_ns(u64) | current_state(u8) | allowed_bitmask(u32) | debug_mode(u8)
 using SequencerStateMsg = comms::CommsMessage<uint64_t, uint8_t, uint32_t, uint8_t>;
 
-// StateTransition message: timestamp_ns(u64) | from_state(u8) | to_state(u8)
-using StateTransitionMsg = comms::CommsMessage<uint64_t, uint8_t, uint8_t>;
+// StateTransition message: timestamp_ns(u64) | from_state(u8) | to_state(u8) | reason(u8)
+using StateTransitionMsg = comms::CommsMessage<uint64_t, uint8_t, uint8_t, uint8_t>;
 
 static uint64_t now_ns() {
     using namespace std::chrono;
@@ -174,6 +175,7 @@ bool SequencerService::init(const std::string& config_path) {
     if (elodin_.connect(elodin_host, elodin_port)) {
         std::cout << "[SequencerService] Connected to Elodin at "
                   << elodin_host << ":" << elodin_port << std::endl;
+        fsw::elodin::DatabaseConfig::register_non_sensor_tables(elodin_);
     } else {
         std::cerr << "[SequencerService] Cannot connect to Elodin (state will not be published)" << std::endl;
     }
@@ -317,7 +319,7 @@ void SequencerService::publishState() {
 void SequencerService::publishStateTransition(State from, State to) {
     if (!elodin_.is_connected()) return;
 
-    StateTransitionMsg msg(now_ns(), static_cast<uint8_t>(from), static_cast<uint8_t>(to));
+    StateTransitionMsg msg(now_ns(), static_cast<uint8_t>(from), static_cast<uint8_t>(to), 0);
     elodin_.publish(VTABLE_STATE_TRANSITION, msg);
 }
 

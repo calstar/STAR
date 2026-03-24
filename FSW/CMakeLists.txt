@@ -133,6 +133,22 @@ target_link_libraries(test_robust_ddp
     ${RT_LIBRARY}
 )
 
+# Sequencer Elodin DB sync test executable
+add_executable(test_sequencer_elodin test/test_sequencer_elodin.cpp)
+
+target_include_directories(test_sequencer_elodin PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../daq_comms/include
+)
+
+target_link_libraries(test_sequencer_elodin
+    fsw_daq_lib
+    daq_comms_lib
+    Threads::Threads
+    pthread
+    ${RT_LIBRARY}
+)
+
 # Controller Service standalone executable
 add_executable(controller_service src/control/controller_main.cpp)
 

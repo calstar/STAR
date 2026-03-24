@@ -28,6 +28,12 @@ const IS_THIN = BACKEND === 'thin';
 const receivedStatsIdx = process.argv.indexOf('--received-stats');
 const RECEIVED_STATS_FILE = receivedStatsIdx >= 0 ? process.argv[receivedStatsIdx + 1] : '';
 
+const udpCommandsIdx = process.argv.indexOf('--udp-commands');
+const UDP_COMMANDS_FILE = udpCommandsIdx >= 0 ? process.argv[udpCommandsIdx + 1] : '';
+
+const seqLogIdx = process.argv.indexOf('--seq-log');
+const SEQ_LOG_FILE = seqLogIdx >= 0 ? process.argv[seqLogIdx + 1] : '';
+
 const WS_URL = `ws://127.0.0.1:${WS_PORT}`;
 const SENSOR_TIMEOUT_MS = 15000;
 const COMMAND_TIMEOUT_MS = 5000;
@@ -743,6 +749,54 @@ async function testActuatorCommands(ws: WebSocket): Promise<void> {
   debugLogMessages = false;
 }
 
+// ── Test 5: UDP Actuator Commands ────────────────────────────────────────────
+
+async function testUdpActuatorCommands(): Promise<void> {
+  if (!HAS_SEQUENCER || !UDP_COMMANDS_FILE || !SEQ_LOG_FILE) return;
+  console.log(`\n📬 Test 5: UDP Actuator Commands`);
+
+  // Give the UDP listener a moment to flush if it hasn't already
+  await new Promise(r => setTimeout(r, 500));
+
+  let expectedPackets = 0;
+  if (fs.existsSync(SEQ_LOG_FILE)) {
+    try {
+      const seqLog = fs.readFileSync(SEQ_LOG_FILE, 'utf-8');
+      // Match logs for Sent N commands to... or Manual: ... or Actuator ... -> OPEN/CLOSED
+      const regex = /\[Actuator(?:Commander|Service)\].*(?:Sent [0-9]+ commands to|Manual: |Actuator [a-zA-Z0-9_ ]+ -> (?:OPEN|CLOSED))/g;
+      const matches = seqLog.match(regex);
+      expectedPackets = matches ? matches.length : 0;
+    } catch (err) {
+      console.log(`  ⚠️  Could not read sequencer log to determine expected packets.`);
+    }
+  }
+
+  let actualPackets = 0;
+  if (fs.existsSync(UDP_COMMANDS_FILE)) {
+    try {
+      const data = fs.readFileSync(UDP_COMMANDS_FILE, 'utf-8');
+      const parsed = JSON.parse(data);
+      actualPackets = Array.isArray(parsed) ? parsed.length : 0;
+    } catch (err) {
+      assert(false, `UDP actuator commands: no packets received (listener file missing or invalid)`);
+      return;
+    }
+  } else {
+    assert(false, `UDP actuator commands: no packets received (listener file missing)`);
+    return;
+  }
+
+  if (expectedPackets > 0 && expectedPackets <= actualPackets) {
+    assert(true, `UDP actuator commands: All ${expectedPackets} expected packet(s) received by local listener`);
+  } else if (expectedPackets > actualPackets) {
+    assert(false, `UDP actuator commands: Only ${actualPackets}/${expectedPackets} packets received (DROPPED PACKETS)`);
+  } else if (expectedPackets === 0 && actualPackets > 0) {
+    assert(true, `UDP actuator commands: ${actualPackets} packets received (couldn't parse expected count from log)`);
+  } else {
+    assert(false, `UDP actuator commands: 0 packets expected/sent, zero received. Sequencer did not run commands.`);
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -770,10 +824,12 @@ async function main(): Promise<void> {
       await testStateTransition(ws);
       await testStateTransitionDebugMode(ws);
       await testActuatorCommands(ws);
+      await testUdpActuatorCommands();
     } else {
       console.log('\n🔄 Test 2: State Transition — SKIPPED (thin backend requires sequencer_service)');
       console.log('🔄 Test 3: State Transition Debug Mode — SKIPPED');
       console.log('🔄 Test 4: Actuator Commands — SKIPPED');
+      console.log('📬 Test 5: UDP Actuator Commands — SKIPPED');
     }
   } finally {
     ws.close();
