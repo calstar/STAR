@@ -1166,8 +1166,8 @@ class SensorSystemServer {
         if (this.elodin.isConnected()) {
           this.elodin.sendCommand('state_transition', { state: newState });
         }
-        {
-          if (this.currentState === SystemState.FIRE && newState !== SystemState.FIRE) {
+
+        if (this.currentState === SystemState.FIRE && newState !== SystemState.FIRE) {
             if (this.fireEndTimer) { clearTimeout(this.fireEndTimer); this.fireEndTimer = null; }
             this.fireStartTimeMs = null;
           }
