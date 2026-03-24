@@ -134,7 +134,14 @@ target_link_libraries(test_robust_ddp
 )
 
 # Sequencer Elodin DB sync test executable
-add_executable(test_sequencer_elodin test/test_sequencer_elodin.cpp)
+add_executable(test_sequencer_elodin
+    test/test_sequencer_elodin.cpp
+    src/control/SequencerService.cpp
+    src/control/StateMachine.cpp
+    src/control/ActuatorCommander.cpp
+    src/control/AbortBroadcaster.cpp
+    src/control/FireManager.cpp
+)
 
 target_include_directories(test_sequencer_elodin PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
