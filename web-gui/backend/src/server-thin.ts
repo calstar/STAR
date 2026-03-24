@@ -237,6 +237,12 @@ wss.on('connection', (ws: WebSocket) => {
     payload: { targetTimeMs: countdownTargetMs },
   });
 
+  // Current state
+  send(ws, {
+    type: MessageType.STATE_UPDATE, timestamp: Date.now(),
+    payload: { currentState, stateName: SystemState[currentState] ?? 'UNKNOWN', timestamp: Date.now(), debugMode },
+  });
+
   // Board status
   const boards = Array.from(boardsStatus.values());
   if (boards.length > 0) {
@@ -286,14 +292,31 @@ function handleMessage(ws: WebSocket, message: any): void {
   }
 }
 
+// ── Local state tracking (authoritative source is sequencer_service) ────────
+let currentState: SystemState = SystemState.IDLE;
+let debugMode = false;
+
+function broadcastStateUpdate(): void {
+  broadcast({
+    type: MessageType.STATE_UPDATE, timestamp: Date.now(),
+    payload: { currentState, stateName: SystemState[currentState] ?? 'UNKNOWN', timestamp: Date.now(), debugMode },
+  });
+}
+
 function handleCommand(ws: WebSocket, command: CommandPayload): void {
   switch (command.commandType) {
     case 'state_transition': {
-      const stateName = SystemState[command.data.state!] ?? String(command.data.state);
+      const targetState = command.data.state!;
+      const stateName = SystemState[targetState] ?? String(targetState);
       const csvName = STATE_TO_CSV_NAME[stateName] ?? stateName;
       sendToActuatorService(`TRANSITION:${csvName}\n`).then(({ ok, reply }) => {
         console.log(`[ThinServer] State transition ${stateName} → ${csvName}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
-        if (!ok) send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition failed: ${reply}` } });
+        if (ok) {
+          currentState = targetState;
+          broadcastStateUpdate();
+        } else {
+          send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition failed: ${reply}` } });
+        }
       });
       break;
     }
@@ -310,11 +333,17 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       });
       break;
     }
-    case 'debug_mode':
-      sendToActuatorService(`DEBUG_MODE:${command.data.debugMode ? 1 : 0}\n`).then(({ ok, reply }) => {
-        console.log(`[ThinServer] Debug mode ${command.data.debugMode ? 'ON' : 'OFF'}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
+    case 'debug_mode': {
+      const newDebug = !!command.data.debugMode;
+      sendToActuatorService(`DEBUG_MODE:${newDebug ? 1 : 0}\n`).then(({ ok, reply }) => {
+        console.log(`[ThinServer] Debug mode ${newDebug ? 'ON' : 'OFF'}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
+        if (ok) {
+          debugMode = newDebug;
+          broadcastStateUpdate();
+        }
       }).catch(() => { });
       break;
+    }
     case 'extend_fire':
       sendToActuatorService('EXTEND_FIRE\n').catch(() => { });
       break;
@@ -424,13 +453,11 @@ relay.on('packet', (header: any, payload: Buffer) => {
       const stateVal      = parsedList.find(p => p.component === 'state')?.value ?? 0;
       const bitmask       = parsedList.find(p => p.component === 'allowedBitmask')?.value ?? 0;
       const debugModeVal  = parsedList.find(p => p.component === 'debugMode')?.value ?? 0;
-      const stateName     = SystemState[stateVal as SystemState] ?? 'UNKNOWN';
-      console.log(`[ThinServer] SequencerState from relay: state=${stateName}(${stateVal}) bitmask=0x${bitmask.toString(16)} debug=${debugModeVal}`);
-      broadcast({
-        type: MessageType.STATE_UPDATE,
-        timestamp: epochNow,
-        payload: { currentState: stateVal, stateName, timestamp: epochNow, debugMode: debugModeVal === 1 },
-      });
+      console.log(`[ThinServer] SequencerState from relay: state=${stateVal} bitmask=0x${bitmask.toString(16)} debug=${debugModeVal}`);
+      // Sync local state from Elodin (backup path — primary is TCP reply)
+      currentState = stateVal as SystemState;
+      debugMode = debugModeVal === 1;
+      broadcastStateUpdate();
       return;
     }
 
