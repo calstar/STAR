@@ -466,21 +466,18 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     const broadcast = statsAtWindowEnd.sensorUpdatesBroadcast - statsAtWindowStart.sensorUpdatesBroadcast;
     const wsDelivery = broadcast > 0 ? (updates.length / broadcast * 100).toFixed(1) : '0.0';
 
+    const throttlePct = received > 0 ? ((received - broadcast) / received * 100).toFixed(0) : '0';
+
     console.log(`\n  Backend throughput (15s window):`);
-    console.log(`    Relay → backend: ${received.toLocaleString()} packets received (no throttle)`);
-    console.log(`    WS delivery:     ${updates.length.toLocaleString()}/${broadcast.toLocaleString()} packets reached frontend (${wsDelivery}%)`);
+    console.log(`    ${received.toLocaleString()} updates from relay → 10 Hz throttle → ${broadcast.toLocaleString()} broadcasts (${throttlePct}% filtered)`);
+    console.log(`    ${updates.length.toLocaleString()}/${broadcast.toLocaleString()} broadcasts reached frontend (${wsDelivery}%)`);
 
-    // Every update that reached the backend must have come from the relay — no drops allowed.
     assert(received > 0, `Backend received sensor data from relay (got ${received})`);
+    assert(received >= broadcast, `Relay count >= broadcast count (${received} >= ${broadcast})`);
 
-    // Backend must have received at least as many as it broadcast (sanity check).
-    assert(received >= broadcast,
-      `Backend received >= broadcast (${received} >= ${broadcast})`);
-
-    // WS delivery — allow 15% for timing skew at window boundaries.
     const wsDeliveryNum = broadcast > 0 ? updates.length / broadcast : 0;
     assert(wsDeliveryNum >= 0.85,
-      `WS delivery >= 85% of broadcasts (got ${(wsDeliveryNum * 100).toFixed(1)}% — ${updates.length}/${broadcast})`);
+      `WS delivery >= 85% (got ${(wsDeliveryNum * 100).toFixed(1)}% — ${updates.length}/${broadcast})`);
   } else if (IS_THIN) {
     console.log('  ℹ️  Backend stats unavailable — skipping relay→backend loss check');
   }
