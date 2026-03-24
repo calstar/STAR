@@ -56,7 +56,6 @@ jobs:
   build:
     name: Build (${{ matrix.compiler }} - ${{ matrix.build-type }})
     runs-on: ubuntu-latest
-    needs: [format-check]
     timeout-minutes: 30
 
     strategy:
@@ -136,7 +135,6 @@ jobs:
   static-analysis:
     name: Static Analysis
     runs-on: ubuntu-latest
-    needs: [format-check]
     timeout-minutes: 20
 
     steps:
@@ -188,7 +186,6 @@ jobs:
   code-quality:
     name: Code Quality Checks
     runs-on: ubuntu-latest
-    needs: [format-check]
     timeout-minutes: 15
 
     steps:
