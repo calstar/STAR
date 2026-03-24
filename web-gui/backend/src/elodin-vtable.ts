@@ -122,6 +122,13 @@ export async function registerControllerVTables(client: ElodinClient): Promise<b
       { offset: 9,  size: 4, type: 'f32', component: 'CONTROLLER.fire.duty_F' },
       { offset: 13, size: 4, type: 'f32', component: 'CONTROLLER.fire.duty_O' },
     ])},
+    // [0x50, 0x00] SequencerState: U64+U8+U32+U8 = 14 bytes
+    { name: 'SequencerState', buf: encodeVTable([0x50, 0x00], [
+      { offset: 0,  size: 8, type: 'u64', component: 'SEQUENCER.state.timestamp_ns' },
+      { offset: 8,  size: 1, type: 'u8',  component: 'SEQUENCER.state.current_state' },
+      { offset: 9,  size: 4, type: 'u32', component: 'SEQUENCER.state.allowed_bitmask' },
+      { offset: 13, size: 1, type: 'u8',  component: 'SEQUENCER.state.debug_mode' },
+    ])},
   ];
 
   let ok = 0;
