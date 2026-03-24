@@ -30,7 +30,7 @@ const RECEIVED_STATS_FILE = receivedStatsIdx >= 0 ? process.argv[receivedStatsId
 
 const WS_URL = `ws://127.0.0.1:${WS_PORT}`;
 const SENSOR_TIMEOUT_MS = 15000;
-const COMMAND_TIMEOUT_MS = 15000;
+const COMMAND_TIMEOUT_MS = 5000;
 
 // Shared types (inline to avoid import issues)
 enum MessageType {

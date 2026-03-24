@@ -277,7 +277,7 @@ fi
 echo "🔗 Starting DAQ bridge..."
 (cd "$REPO_ROOT" && "$DAQ_BRIDGE" "$TEST_CONFIG" > /tmp/integration_daq_$$.log 2>&1) &
 PIDS+=($!)
-sleep 3
+sleep 1
 
 if ! kill -0 "${PIDS[-1]}" 2>/dev/null; then
   echo "  ❌ DAQ bridge failed to start. Log:"
