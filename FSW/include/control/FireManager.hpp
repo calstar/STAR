@@ -39,6 +39,12 @@ public:
      */
     void setControllerEndpoint(const std::string& host, uint16_t port);
 
+    /** Update fire durations (call before start()). */
+    void configure(uint32_t fire_duration_ms, uint32_t fire_extended_ms) {
+        fire_duration_ms_ = fire_duration_ms;
+        fire_extended_ms_ = fire_extended_ms;
+    }
+
     /**
      * Begin the FIRE countdown.
      * Sends FIRE_START to controller_service.

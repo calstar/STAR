@@ -116,7 +116,7 @@ bool SequencerService::init(const std::string& config_path) {
 
     const uint32_t fire_duration_ms = getInt("state_machine", "fire_duration_ms", 6000);
     const uint32_t fire_extended_ms = getInt("state_machine", "fire_extended_ms", 10000);
-    fire_manager_ = FireManager(fire_duration_ms, fire_extended_ms);
+    fire_manager_.configure(fire_duration_ms, fire_extended_ms);
 
     // Controller service endpoint for FIRE_START / FIRE_STOP
     // Read from config; defaults to 127.0.0.1:8000
