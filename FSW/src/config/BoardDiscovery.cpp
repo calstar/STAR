@@ -1,5 +1,10 @@
 #include "config/BoardDiscovery.hpp"
 
+#include "DiabloPacketUtils.h"
+#include "DiabloPackets.h"
+#include "fsw/BoardTypeWire.hpp"
+#include "util/IpFromMac.hpp"
+
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <net/if.h>
@@ -12,6 +17,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -71,22 +77,18 @@ void BoardDiscovery::stop_discovery() {
 
 void BoardDiscovery::process_board_announcement(const uint8_t* data, size_t size,
                                                 const std::string& source_ip) {
-    // Parse actual DiabloAvionics BOARD_HEARTBEAT packet
-    daq_comms::protocol::DiabloBoardPacketParser parser;
-    auto heartbeat = parser.parse_board_heartbeat(data, size);
-
-    if (!heartbeat || !heartbeat->is_valid) {
+    Diablo::PacketHeader hdr;
+    Diablo::BoardHeartbeatPacket hb;
+    if (!Diablo::parse_board_heartbeat_packet(data, size, hdr, hb)) {
         return;
     }
 
-    // Extract board signature from heartbeat
     BoardSignature signature;
-    signature.board_id = (static_cast<uint32_t>(heartbeat->heartbeat.board_type) << 8) |
-                         heartbeat->heartbeat.board_id;
-    signature.board_type = static_cast<uint8_t>(heartbeat->heartbeat.board_type);
-    signature.hardware_version = 0;  // Not in heartbeat packet
-    signature.firmware_version = heartbeat->header.version;
-    signature.serial_number = heartbeat->heartbeat.board_id;
+    signature.board_id = static_cast<uint32_t>(hb.board_id);
+    signature.board_type = daq_wire::kUnknown;
+    signature.hardware_version = 0;
+    signature.firmware_version = hdr.version;
+    signature.serial_number = hb.board_id;
 
     DiscoveredBoard board;
     board.signature = signature;
@@ -111,15 +113,15 @@ void BoardDiscovery::process_board_announcement(const uint8_t* data, size_t size
     add_or_update_board(board);
 
     // Assign IP: prefer config static IP (192.168.2.21 for board_id 21) over hash-derived
-    uint8_t board_id_octet = static_cast<uint8_t>(heartbeat->heartbeat.board_id);
+    uint8_t board_id_octet = hb.board_id;
     if (signature_to_ip_.find(signature) == signature_to_ip_.end()) {
         std::string assigned_ip;
         auto it = static_ip_overrides_.find(board_id_octet);
         if (it != static_ip_overrides_.end()) {
             assigned_ip = it->second;
         } else {
-            assigned_ip = daq_comms::protocol::DiabloBoardPacketParser::calculate_ip_from_mac(
-                board.mac_address, base_ip_, ip_range_start_, ip_range_end_);
+            assigned_ip = util::calculate_ip_from_mac(board.mac_address, base_ip_, ip_range_start_,
+                                                      ip_range_end_);
         }
         if (is_ip_available(assigned_ip)) {
             signature_to_ip_[signature] = assigned_ip;
@@ -142,61 +144,52 @@ void BoardDiscovery::process_board_announcement(const uint8_t* data, size_t size
 
 void BoardDiscovery::process_sensor_data(const uint8_t* data, size_t size,
                                          const std::string& source_ip) {
-    // Parse actual DiabloAvionics SENSOR_DATA packet
-    daq_comms::protocol::DiabloBoardPacketParser parser;
-    auto sensor_packet = parser.parse_sensor_data(data, size);
-
-    if (!sensor_packet || !sensor_packet->is_valid) {
+    Diablo::PacketHeader hdr;
+    std::vector<Diablo::SensorDataChunkCollection> chunks;
+    if (!Diablo::parse_sensor_data_packet(data, size, hdr, chunks) || chunks.empty()) {
         return;
     }
 
-    // Find board by IP
     auto it = ip_to_signature_.find(source_ip);
-    daq_comms::protocol::DiabloBoardPacketParser::BoardType board_type =
-        daq_comms::protocol::DiabloBoardPacketParser::BoardType::UNKNOWN;
+    uint8_t board_type_wire = daq_wire::kPressureTransducer;
 
     if (it != ip_to_signature_.end()) {
-        // Known board - get type from signature
-        uint8_t sig_type = discovered_boards_[it->second].signature.board_type;
-        board_type = static_cast<daq_comms::protocol::DiabloBoardPacketParser::BoardType>(sig_type);
-    } else {
-        // Unknown board - infer type from sensor data patterns
-        // For now, default to PT (most common)
-        board_type = daq_comms::protocol::DiabloBoardPacketParser::BoardType::PRESSURE_TRANSDUCER;
+        board_type_wire = discovered_boards_[it->second].signature.board_type;
+        if (board_type_wire == daq_wire::kUnknown) {
+            board_type_wire = daq_wire::kPressureTransducer;
+        }
     }
 
-    // Detect sensors from packet
-    auto detected = parser.detect_sensors(*sensor_packet, board_type);
-
-    if (detected.empty()) {
+    std::map<uint8_t, bool> sensor_ids;
+    for (const auto& dp : chunks[0].datapoints) {
+        sensor_ids[dp.sensor_id] = (dp.data != 0);
+    }
+    if (sensor_ids.empty()) {
         return;
     }
 
-    // Convert detected sensors to SensorInfo
     std::vector<SensorInfo> sensors;
-    for (const auto& det : detected) {
+    for (const auto& [sensor_id, is_active] : sensor_ids) {
         SensorInfo info;
-        info.sensor_type = static_cast<uint8_t>(det.board_type);
-        info.channel_id = det.sensor_id;
+        info.sensor_type = board_type_wire;
+        info.channel_id = sensor_id;
         info.sensor_count = 1;
-        info.is_active = det.is_active;
-        info.quality = det.is_active ? 255 : 0;
+        info.is_active = is_active;
+        info.quality = is_active ? 255 : 0;
         sensors.push_back(info);
     }
 
     if (it != ip_to_signature_.end()) {
-        // Update existing board
         auto& board = discovered_boards_[it->second];
         board.sensors = sensors;
         board.active_sensors = sensors.size();
         board.last_seen = std::chrono::steady_clock::now();
         stats_.sensors_detected += sensors.size();
     } else {
-        // Create new board entry
         BoardSignature sig;
         std::hash<std::string> hasher;
         sig.board_id = static_cast<uint32_t>(hasher(source_ip));
-        sig.board_type = static_cast<uint8_t>(board_type);
+        sig.board_type = board_type_wire;
         sig.hardware_version = 0;
         sig.firmware_version = 0;
         sig.serial_number = 0;
@@ -207,7 +200,7 @@ void BoardDiscovery::process_sensor_data(const uint8_t* data, size_t size,
         board.sensors = sensors;
         board.last_seen = std::chrono::steady_clock::now();
         board.is_configured = false;
-        board.port = 5005;  // DiabloAvionics default
+        board.port = 5005;
         board.max_sensors = sensors.size();
         board.active_sensors = sensors.size();
 
@@ -219,31 +212,24 @@ void BoardDiscovery::process_sensor_data(const uint8_t* data, size_t size,
 std::vector<SensorInfo> BoardDiscovery::detect_sensors_from_packet(const uint8_t* data,
                                                                    size_t size) const {
     std::vector<SensorInfo> sensors;
-
-    // Parse actual DiabloAvionics SENSOR_DATA packet
-    daq_comms::protocol::DiabloBoardPacketParser parser;
-    auto sensor_packet = parser.parse_sensor_data(data, size);
-
-    if (!sensor_packet || !sensor_packet->is_valid || sensor_packet->chunks.empty()) {
+    Diablo::PacketHeader hdr;
+    std::vector<Diablo::SensorDataChunkCollection> chunks;
+    if (!Diablo::parse_sensor_data_packet(data, size, hdr, chunks) || chunks.empty()) {
         return sensors;
     }
-
-    // Extract unique sensor IDs from first chunk
     std::map<uint8_t, bool> sensor_ids;
-    for (const auto& dp : sensor_packet->chunks[0].datapoints) {
-        sensor_ids[dp.sensor_id] = (dp.data != 0);  // Active if non-zero
+    for (const auto& dp : chunks[0].datapoints) {
+        sensor_ids[dp.sensor_id] = (dp.data != 0);
     }
-
     for (const auto& [sensor_id, is_active] : sensor_ids) {
         SensorInfo info;
-        info.sensor_type = 0;  // Will be set by board type context
+        info.sensor_type = 0;
         info.channel_id = sensor_id;
         info.sensor_count = 1;
         info.is_active = is_active;
         info.quality = is_active ? 255 : 0;
         sensors.push_back(info);
     }
-
     return sensors;
 }
 

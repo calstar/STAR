@@ -16,8 +16,19 @@ if(NOT TARGET daq_comms_lib)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../daq_comms ${CMAKE_BINARY_DIR}/daq_comms)
 endif()
 
+# DAQv2-Comms (root CMake adds this target; standalone FSW builds need it too)
+if(NOT TARGET daqv2_comms)
+    add_library(daqv2_comms STATIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/../external/DAQv2-Comms/src/DiabloPacketUtils.cpp
+    )
+    target_include_directories(daqv2_comms PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/../external/DAQv2-Comms/src
+    )
+endif()
+
 # Source files for FSW library
 set(FSW_SOURCES
+    src/util/IpFromMac.cpp
     src/config/BoardDiscovery.cpp
     src/config/DynamicConfigManager.cpp
     src/config/SensorAssignment.cpp
@@ -151,6 +162,7 @@ target_include_directories(test_sequencer_elodin PRIVATE
 target_link_libraries(test_sequencer_elodin
     fsw_daq_lib
     daq_comms_lib
+    daqv2_comms
     Threads::Threads
     pthread
     ${RT_LIBRARY}
@@ -248,7 +260,7 @@ target_include_directories(actuator_service PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../daq_comms/include
 )
-target_link_libraries(actuator_service daq_comms_lib pthread ${RT_LIBRARY})
+target_link_libraries(actuator_service daq_comms_lib daqv2_comms pthread ${RT_LIBRARY})
 
 # Sequencer service — state machine, actuator commanding, abort, FIRE lifecycle
 # Replaces actuator_service. Publishes state + allowed transitions to Elodin [0x50, 0x00].

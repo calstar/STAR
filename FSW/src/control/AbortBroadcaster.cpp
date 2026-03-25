@@ -10,12 +10,21 @@
 #include <iostream>
 #include <thread>
 
-// daqv2comms — PacketHeader + PacketType + millis()
+// daqv2comms — PacketHeader + PacketType
 #include "DiabloPackets.h"
 #include "DiabloEnums.h"
-#include "Arduino.h"
 
 namespace sequencer {
+
+namespace {
+uint32_t host_timestamp_ms() {
+    return static_cast<uint32_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count() &
+        0xFFFFFFFF);
+}
+}  // namespace
 
 AbortBroadcaster::AbortBroadcaster(uint16_t port, uint32_t abort_done_delay_ms)
     : port_(port), abort_done_delay_ms_(abort_done_delay_ms) {}
@@ -30,7 +39,7 @@ void AbortBroadcaster::sendPacket(uint8_t packet_type_byte) {
     Diablo::PacketHeader hdr{};
     hdr.packet_type = static_cast<Diablo::PacketType>(packet_type_byte);
     hdr.version     = 0; // DIABLO_COMMS_VERSION
-    hdr.timestamp   = millis();
+    hdr.timestamp   = host_timestamp_ms();
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {

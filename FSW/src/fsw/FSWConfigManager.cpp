@@ -5,6 +5,9 @@
 #include <iostream>
 #include <thread>
 
+#include "DiabloEnums.h"
+#include "DiabloPackets.h"
+
 namespace fsw {
 namespace fsw {
 
@@ -30,10 +33,11 @@ bool FSWConfigManager::initialize(const std::string& bind_address, uint16_t bind
     return true;
 }
 
-std::string FSWConfigManager::process_board_heartbeat(
-    const daq_comms::protocol::DiabloBoardPacketParser::ParsedBoardHeartbeat& heartbeat,
-    const std::string& source_ip, const std::string& mac_address) {
-    uint8_t board_id = heartbeat.heartbeat.board_id;
+std::string FSWConfigManager::process_board_heartbeat(const Diablo::PacketHeader& /* header */,
+                                                      const Diablo::BoardHeartbeatPacket& body,
+                                                      const std::string& source_ip,
+                                                      const std::string& mac_address) {
+    uint8_t board_id = body.board_id;
 
     // Infer system state from board ID or IP
     config::SystemState system_state = infer_system_state(board_id, source_ip);
@@ -89,8 +93,7 @@ std::string FSWConfigManager::process_board_heartbeat(
 
     // Send configuration to board if not already configured, OR if the board
     // is still in Setup state (e.g. after a reboot or missed config).
-    bool board_in_setup = heartbeat.heartbeat.board_state ==
-        daq_comms::protocol::DiabloBoardPacketParser::BoardState::SETUP;
+    bool board_in_setup = body.board_state == Diablo::BoardState::SETUP;
     if (!boards_configured_[board_id] || board_in_setup) {
         if (board_in_setup && boards_configured_[board_id]) {
             std::cout << "[FSWConfig] Board " << (int)board_id

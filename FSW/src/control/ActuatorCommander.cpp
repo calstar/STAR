@@ -256,8 +256,13 @@ bool ActuatorCommander::sendUDP(
     for (const auto& [id, st] : id_state_pairs)
         cmds.push_back({id, st});
 
+    uint32_t ts_ms = static_cast<uint32_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count() &
+        0xFFFFFFFF);
     uint8_t buf[512];
-    size_t len = Diablo::create_actuator_command_packet(cmds, buf, sizeof(buf));
+    size_t len = Diablo::create_actuator_command_packet(cmds, ts_ms, buf, sizeof(buf));
     if (len == 0) {
         std::cerr << "[ActuatorCommander] create_actuator_command_packet returned 0" << std::endl;
         return false;

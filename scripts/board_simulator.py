@@ -122,8 +122,15 @@ class SimulatedBoard:
             time.sleep(0.01)
 
     def _send_heartbeat(self, ts_ms):
-        header = struct.pack("<BB I", PACKET_TYPE_HEARTBEAT, 0, ts_ms)
-        body = struct.pack("<BBBB", self.board_type, self.board_id, 0, 2)
+        # DAQv2-Comms: PacketHeader (6B) + BoardHeartbeatPacket = 32B firmware_hash + board_id +
+        # EngineState + BoardState (no board_type on wire — FSW maps type from config by source IP).
+        header = struct.pack("<BBI", PACKET_TYPE_HEARTBEAT, 0, ts_ms)
+        firmware_hash = bytes(32)
+        engine_safe = 0
+        board_active = 2  # BoardState::ACTIVE (matches prior sim: last byte was 2)
+        body = firmware_hash + struct.pack(
+            "<BBB", self.board_id & 0xFF, engine_safe, board_active
+        )
         try:
             self.sock.sendto(header + body, (self.target_ip, self.target_port))
         except Exception:

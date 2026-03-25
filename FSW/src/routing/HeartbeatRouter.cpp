@@ -15,6 +15,7 @@ HeartbeatRouter::HeartbeatRouter(fsw::elodin::ElodinClient& elodin_client)
 HeartbeatRouter::BoardEvent HeartbeatRouter::process_heartbeat(
     const Diablo::PacketHeader& header,
     const Diablo::BoardHeartbeatPacket& heartbeat,
+    uint8_t board_type_wire,
     uint64_t receive_ts_ns) {
 
     const uint8_t board_id = heartbeat.board_id;
@@ -27,7 +28,7 @@ HeartbeatRouter::BoardEvent HeartbeatRouter::process_heartbeat(
     if (!state.seen_before) {
         state.seen_before = true;
         std::cout << "[HeartbeatRouter] New board seen: id=" << (int)board_id
-                  << " type=" << (int)static_cast<uint8_t>(heartbeat.board_type) << std::endl;
+                  << " type_wire=" << (int)board_type_wire << std::endl;
     } else {
         auto gap = std::chrono::duration_cast<std::chrono::milliseconds>(now - state.last_seen);
         if (gap >= RECONNECT_THRESHOLD) {
@@ -50,7 +51,7 @@ HeartbeatRouter::BoardEvent HeartbeatRouter::process_heartbeat(
         comms::messages::board::BoardHeartbeatElodinMessage msg;
         msg.setField<0>(receive_ts_ns);
         msg.setField<1>(board_id);
-        msg.setField<2>(static_cast<uint8_t>(heartbeat.board_type));
+        msg.setField<2>(board_type_wire);
         msg.setField<3>(static_cast<uint8_t>(heartbeat.engine_state));
         msg.setField<4>(static_cast<uint8_t>(heartbeat.board_state));
         msg.setField<5>(header.timestamp);

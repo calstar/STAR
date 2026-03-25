@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -28,10 +29,29 @@
 #include <thread>
 #include <vector>
 
-#include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
+#include "DiabloPacketUtils.h"
+#include "DiabloPackets.h"
 
 namespace {
 std::atomic<bool> g_running{true};
+
+uint32_t actuator_packet_timestamp_ms() {
+    return static_cast<uint32_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count() &
+        0xFFFFFFFF);
+}
+
+std::vector<uint8_t> build_actuator_command_udp_packet(
+    const std::vector<Diablo::ActuatorCommand>& commands) {
+    uint8_t buf[512];
+    size_t len =
+        Diablo::create_actuator_command_packet(commands, actuator_packet_timestamp_ms(), buf, sizeof(buf));
+    if (len == 0)
+        return {};
+    return std::vector<uint8_t>(buf, buf + len);
+}
 
 void signalHandler(int /*sig*/) {
     std::cout << "\n[ActuatorService] Shutting down..." << std::endl;
@@ -447,7 +467,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    daq_comms::protocol::DiabloBoardPacketParser parser;
     uint16_t ACTUATOR_PORT = 5005;
     std::string port_str = getTomlValue(config_content, "network", "actuator_cmd_port", "5005");
     try { ACTUATOR_PORT = static_cast<uint16_t>(std::stoi(port_str)); } catch (...) {}
@@ -470,11 +489,11 @@ int main(int argc, char* argv[]) {
             std::cerr << "[ActuatorService] Unknown actuator: " << act_name << std::endl;
             return false;
         }
-        daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand cmd;
+        Diablo::ActuatorCommand cmd;
         cmd.actuator_id = static_cast<uint8_t>(am->second.channel);
         int hw = (am->second.is_no) ? (1 - pos) : pos;
         cmd.actuator_state = static_cast<uint8_t>(hw);
-        std::vector<uint8_t> pkt = parser.construct_actuator_command_packet({cmd});
+        std::vector<uint8_t> pkt = build_actuator_command_udp_packet({cmd});
         if (pkt.empty())
             return false;
         int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -586,9 +605,7 @@ int main(int argc, char* argv[]) {
         }
 
         // No delays: group commands by board IP and send in batch
-        std::map<std::string,
-                 std::vector<daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand>>
-            by_board;
+        std::map<std::string, std::vector<Diablo::ActuatorCommand>> by_board;
         for (const auto& [act_name, pos] : it->second) {
             if (is_fire_state && skip_in_fire(act_name))
                 continue;
@@ -596,7 +613,7 @@ int main(int argc, char* argv[]) {
             if (am == actuator_map.end())
                 continue;
 
-            daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand cmd;
+            Diablo::ActuatorCommand cmd;
             cmd.actuator_id = static_cast<uint8_t>(am->second.channel);
             int hw = (am->second.is_no) ? (1 - pos) : pos;
             cmd.actuator_state = static_cast<uint8_t>(hw);
@@ -610,7 +627,7 @@ int main(int argc, char* argv[]) {
         }
 
         for (const auto& [ip, commands] : by_board) {
-            std::vector<uint8_t> pkt = parser.construct_actuator_command_packet(commands);
+            std::vector<uint8_t> pkt = build_actuator_command_udp_packet(commands);
             if (pkt.empty())
                 continue;
 

@@ -488,11 +488,6 @@ packet_id = [0x23, 0x00]
 channels = 20
 description = "Raw LC ADC counts"
 
-[routing.encoder_raw]
-packet_id = [0x24, 0x00]
-channels = 14
-description = "Raw encoder ADC counts — 0x01..0x0E"
-
 [routing.lc_calibrated]
 packet_id = [0x23, 0x10]
 channels = 20

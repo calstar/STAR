@@ -55,9 +55,19 @@ Offset  Size    Type      Field
 20      1       uint8     status_flags / calibration_status
 ```
 
+## Elodin VTable wire alignment (general rule)
+
+Elodin DB validates each VTable row’s **byte offsets**. In practice:
+
+- Any **`u32` or `f32` must start at a 4-byte-aligned offset** (0, 4, 8, 12, …).
+- Any **`u64` must start at an 8-byte-aligned offset** (0, 8, 16, …) when the schema expects it; the common **21-byte sensor row** still uses the “`u8` at 8, then pad, then `u32` at 12” pattern so the value field is 4-aligned.
+- **`comms::CommsMessage` serializes packed** (memcpy fields in order, **no** automatic C++ `struct` padding). So if you place a `u8` and then a `u32`, **you** must insert explicit **padding bytes** on the wire (often **3 bytes of zeros**) so the `u32` lands on a multiple of 4.
+
+If alignment is wrong, publishes may succeed at the TCP layer but **Elodin will not stream `TABLE` rows** for that packet id — subscribers see nothing (silent failure). The SequencerState case below is the canonical example.
+
 ## Elodin row alignment and SequencerState `[0x50, 0x00]`
 
-Elodin DB validates VTable row layout. **Multi-byte primitives (`u32`, `f32`, `u64`, etc.) must start at offsets that match the database’s alignment rules** — in practice, the same pattern as the 21-byte sensor row: **after a trailing `u8`, insert a 3-byte hole before the next `u32` or `f32` so that field begins at offset 12 (4-byte aligned).**
+**Same rule as above, applied after `timestamp_ns` (`u64` ends at offset 8):** the next `u32` cannot start at offset 9. Match the 21-byte sensor pattern: **`u8` at 8, then three padding bytes, then `u32` at 12.**
 
 ### What went wrong with a 14-byte SequencerState
 

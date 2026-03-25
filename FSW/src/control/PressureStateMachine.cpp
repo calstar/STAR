@@ -1,5 +1,9 @@
 #include "control/PressureStateMachine.hpp"
 
+#include "DiabloPacketUtils.h"
+#include "DiabloPackets.h"
+#include "fsw/BoardTypeWire.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -649,14 +653,21 @@ void PressureStateMachine::sendActuatorCommandUDP(ActuatorID actuator, CommandTy
         static_cast<uint8_t>(actuator) + 1;  // Convert 0-indexed to 1-indexed
 
     // Construct actuator command packet (matching DAQv2-Comms format exactly)
-    daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand cmd;
+    Diablo::ActuatorCommand cmd;
     cmd.actuator_id = actuator_channel;
     cmd.actuator_state = actuator_state;
 
-    std::vector<daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand> commands;
+    std::vector<Diablo::ActuatorCommand> commands;
     commands.push_back(cmd);
 
-    std::vector<uint8_t> packet = packet_parser_.construct_actuator_command_packet(commands);
+    uint32_t ts_ms = static_cast<uint32_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count() &
+        0xFFFFFFFF);
+    uint8_t buf[512];
+    size_t len = Diablo::create_actuator_command_packet(commands, ts_ms, buf, sizeof(buf));
+    std::vector<uint8_t> packet(buf, buf + len);
     if (packet.empty()) {
         std::cerr << "[PressureStateMachine] ERROR: Failed to construct actuator command packet"
                   << std::endl;
@@ -690,9 +701,7 @@ std::pair<std::string, uint16_t> PressureStateMachine::getActuatorBoardAddress(
             // Match board_id - check if this board has actuator sensors
             // Board signature contains board_id, check if it matches ACTUATOR_BOARD_ID
             // For now, check if board has actuator sensors or is actuator type
-            if (board.signature.board_type ==
-                static_cast<uint8_t>(
-                    daq_comms::protocol::DiabloBoardPacketParser::BoardType::ACTUATOR)) {
+            if (board.signature.board_type == fsw::daq_wire::kActuator) {
                 return {board.current_ip, board.port > 0 ? board.port : ACTUATOR_BOARD_PORT};
             }
         }

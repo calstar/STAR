@@ -3,6 +3,7 @@
 ## Essential Documentation
 
 ### System Architecture
+- **adding-sensor-streams.md** - Adding Elodin streams (relay, thin parser); **includes VTable wire alignment** — `u32`/`f32` must be 4-byte aligned (`CommsMessage` is packed, so add explicit padding after `u8` when needed; see SequencerState example).
 - **DIABLOAVIONICS_PACKET_FORMAT.md** - Actual DiabloAvionics packet format (6-byte header, little-endian)
 - **DIABLOAVIONICS_ANALYSIS.md** - Complete analysis of DiabloAvionics and DAQv2-Comms systems
 - **SENSOR_ASSIGNMENT_SYSTEM.md** - Sensor assignment, IP assignment, and configuration distribution

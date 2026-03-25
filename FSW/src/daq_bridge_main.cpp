@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -17,11 +18,12 @@
 #include "../../daq_comms/include/comms/messages/board/BoardHeartbeatMessage.hpp"
 #include "../../daq_comms/include/comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "../../daq_comms/include/comms/messages/sensor/SensorMessages.hpp"
-#include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
+
+#include "DAQv2-Comms.h"
+#include "fsw/BoardTypeWire.hpp"
 
 namespace {
 constexpr uint8_t SERVER_HEARTBEAT_PACKET_TYPE = 2;
-constexpr uint8_t DIABLO_COMMS_VERSION = 0;
 
 std::vector<uint8_t> build_server_heartbeat_packet() {
     std::vector<uint8_t> pkt(7);
@@ -379,19 +381,18 @@ static void load_sensor_and_actuator_maps(const std::string& config_path,
     }
 }
 
-// Map discovery signature board_type (DiabloAvionics enum 1=PT,2=TC,3=RTD,4=LC,5=ACTUATOR) to our
-// BoardType
+// Map discovery signature board_type (DAQv2 wire: 1=PT, 2=LC, 3=RTD, 4=TC, 5=ACT, 6=ENC)
 static BoardType discovery_board_type_to_enum(uint8_t t) {
     switch (t) {
-        case 1:
+        case fsw::daq_wire::kPressureTransducer:
             return BoardType::PT;
-        case 2:
-            return BoardType::TC;
-        case 3:
-            return BoardType::RTD;
-        case 4:
+        case fsw::daq_wire::kLoadCell:
             return BoardType::LC;
-        case 5:
+        case fsw::daq_wire::kRtd:
+            return BoardType::RTD;
+        case fsw::daq_wire::kThermocouple:
+            return BoardType::TC;
+        case fsw::daq_wire::kActuator:
             return BoardType::ACTUATOR;
         case 6:
             return BoardType::ENCODER;
@@ -400,26 +401,22 @@ static BoardType discovery_board_type_to_enum(uint8_t t) {
     }
 }
 
-// Map config BoardType to DiabloBoardPacketParser::BoardType (for overriding when new firmware
-// omits board_type from heartbeat)
-static daq_comms::protocol::DiabloBoardPacketParser::BoardType config_board_type_to_parser(
-    BoardType t) {
-    using ParserBoardType = daq_comms::protocol::DiabloBoardPacketParser::BoardType;
+static uint8_t config_board_type_to_wire_u8(BoardType t) {
     switch (t) {
         case BoardType::PT:
-            return ParserBoardType::PRESSURE_TRANSDUCER;
-        case BoardType::TC:
-            return ParserBoardType::THERMOCOUPLE;
-        case BoardType::RTD:
-            return ParserBoardType::RTD;
+            return fsw::daq_wire::kPressureTransducer;
         case BoardType::LC:
-            return ParserBoardType::LOAD_CELL;
+            return fsw::daq_wire::kLoadCell;
+        case BoardType::RTD:
+            return fsw::daq_wire::kRtd;
+        case BoardType::TC:
+            return fsw::daq_wire::kThermocouple;
         case BoardType::ACTUATOR:
-            return ParserBoardType::ACTUATOR;
+            return fsw::daq_wire::kActuator;
         case BoardType::ENCODER:
-            return ParserBoardType::ENCODER;
+            return 6;
         default:
-            return ParserBoardType::UNKNOWN;
+            return fsw::daq_wire::kUnknown;
     }
 }
 
@@ -575,25 +572,21 @@ int main(int argc, char* argv[]) {
     for (const auto& [ip, cfg] : board_map) {
         if (cfg.board_id < 0 || !cfg.enabled || cfg.type == BoardType::ACTUATOR)
             continue;
-        daq_comms::protocol::DiabloBoardPacketParser::ParsedBoardHeartbeat synthetic;
-        synthetic.is_valid = true;
-        synthetic.heartbeat.board_id = static_cast<uint8_t>(cfg.board_id);
-        synthetic.heartbeat.board_type =
-            daq_comms::protocol::DiabloBoardPacketParser::BoardType::PRESSURE_TRANSDUCER;
-        if (cfg.type == BoardType::TC)
-            synthetic.heartbeat.board_type =
-                daq_comms::protocol::DiabloBoardPacketParser::BoardType::THERMOCOUPLE;
-        else if (cfg.type == BoardType::RTD)
-            synthetic.heartbeat.board_type =
-                daq_comms::protocol::DiabloBoardPacketParser::BoardType::RTD;
-        else if (cfg.type == BoardType::LC)
-            synthetic.heartbeat.board_type =
-                daq_comms::protocol::DiabloBoardPacketParser::BoardType::LOAD_CELL;
-        else if (cfg.type == BoardType::ENCODER)
-            synthetic.heartbeat.board_type =
-                daq_comms::protocol::DiabloBoardPacketParser::BoardType::ENCODER;
+        Diablo::BoardHeartbeatPacket synthetic{};
+        std::memset(synthetic.firmware_hash, 0, sizeof(synthetic.firmware_hash));
+        synthetic.board_id = static_cast<uint8_t>(cfg.board_id);
+        synthetic.engine_state = Diablo::EngineState::SAFE;
+        synthetic.board_state = Diablo::BoardState::SETUP;
+        Diablo::PacketHeader syn_hdr{};
+        syn_hdr.packet_type = Diablo::PacketType::BOARD_HEARTBEAT;
+        syn_hdr.version = DIABLO_COMMS_VERSION;
+        syn_hdr.timestamp =
+            static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch())
+                                      .count() &
+                                  0xFFFFFFFF);
         std::string mac = "00:00:00:00:" + std::to_string(cfg.board_id) + ":00";
-        fsw_config->process_board_heartbeat(synthetic, ip, mac);
+        fsw_config->process_board_heartbeat(syn_hdr, synthetic, ip, mac);
         proactive_count++;
     }
     if (proactive_count > 0)
@@ -699,36 +692,33 @@ int main(int argc, char* argv[]) {
             if (hb) {
                 discovery.process_board_announcement(hb->data.data(), hb->data.size(),
                                                      hb->source_ip);
-                auto parsed =
-                    pipeline.get_parser().parse_board_heartbeat(hb->data.data(), hb->data.size());
-                if (parsed && parsed->is_valid) {
-                    // New firmware omits board_type from heartbeat; override from config when known
+                Diablo::PacketHeader ph;
+                Diablo::BoardHeartbeatPacket hb_body;
+                if (Diablo::parse_board_heartbeat_packet(hb->data.data(), hb->data.size(), ph,
+                                                         hb_body)) {
+                    uint8_t board_type_wire = fsw::daq_wire::kUnknown;
                     auto cfg_it = board_map.find(hb->source_ip);
-                    if (cfg_it != board_map.end() &&
-                        parsed->heartbeat.board_type ==
-                            daq_comms::protocol::DiabloBoardPacketParser::BoardType::UNKNOWN) {
-                        parsed->heartbeat.board_type =
-                            config_board_type_to_parser(cfg_it->second.type);
+                    if (cfg_it != board_map.end()) {
+                        board_type_wire = config_board_type_to_wire_u8(cfg_it->second.type);
                     }
-                    // MAC for FSWConfigManager (same formula as BoardDiscovery)
                     std::hash<std::string> hasher;
                     uint32_t ip_hash = static_cast<uint32_t>(hasher(hb->source_ip));
-                    uint32_t sig_id = (static_cast<uint32_t>(parsed->heartbeat.board_type) << 8) |
-                                      parsed->heartbeat.board_id;
+                    uint32_t sig_id =
+                        (static_cast<uint32_t>(board_type_wire) << 8) | hb_body.board_id;
                     std::ostringstream mac;
                     mac << std::hex << std::setw(2) << std::setfill('0') << ((ip_hash >> 16) & 0xFF)
                         << ":" << std::setw(2) << ((ip_hash >> 8) & 0xFF) << ":" << std::setw(2)
                         << (ip_hash & 0xFF) << ":" << std::setw(2) << ((ip_hash >> 24) & 0xFF)
                         << ":" << std::setw(2) << ((sig_id >> 8) & 0xFF) << ":" << std::setw(2)
                         << (sig_id & 0xFF);
-                    fsw_config->process_board_heartbeat(*parsed, hb->source_ip, mac.str());
+                    fsw_config->process_board_heartbeat(ph, hb_body, hb->source_ip, mac.str());
 
-                    // Publish BOARD_HEARTBEAT to Elodin so backend/GUI can track board status.
                     uint64_t hb_receive_ts_ns =
                         std::chrono::duration_cast<std::chrono::nanoseconds>(
                             std::chrono::steady_clock::now().time_since_epoch())
                             .count();
-                    heartbeat_router.process_heartbeat(*parsed, hb_receive_ts_ns);
+                    heartbeat_router.process_heartbeat(ph, hb_body, board_type_wire,
+                                                       hb_receive_ts_ns);
                 }
                 // Periodic save of discovery state so actuator_service can use board IPs
                 auto elapsed =

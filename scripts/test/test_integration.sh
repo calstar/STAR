@@ -519,25 +519,14 @@ fi
 
 rm -f "$RECEIVED_STATS_FILE" 2>/dev/null || true
 
-if [ "$BACKEND" = "thin" ] && [ -n "$SEQ_SVC" ]; then
-  ELODIN_STATES=$(grep -c "\[ThinServer\] SequencerState from relay" "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>/dev/null || true)
-  [ -z "$ELODIN_STATES" ] && ELODIN_STATES=0
-  if [ "$ELODIN_STATES" -gt 0 ]; then
-    echo "📋 Elodin State Sync:   ✅ $ELODIN_STATES state update(s) verified in Elodin DB stream"
-  else
-    echo "📋 Elodin State Sync:   ❌ 0 state updates in stream! State transitions NOT saving to DB."
-    ELODIN_CHECK_FAILED=1
-  fi
-fi
+# Elodin State Sync is asserted inside ws_data_flow_test.ts (Test 6 + /stats); no duplicate line here.
 
 # ── Results ───────────────────────────────────────────────────────────────────
 
 FINAL_EXIT=0
 UDP_CHECK_FAILED=${UDP_CHECK_FAILED:-0}
-ELODIN_CHECK_FAILED=${ELODIN_CHECK_FAILED:-0}
 [ "$WS_TEST_EXIT" -ne 0 ] && FINAL_EXIT=1
 [ "$UDP_CHECK_FAILED" -ne 0 ] && FINAL_EXIT=1
-[ "$ELODIN_CHECK_FAILED" -ne 0 ] && FINAL_EXIT=1
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
@@ -547,7 +536,6 @@ else
   echo "  ❌ INTEGRATION TEST FAILED"
   [ "$WS_TEST_EXIT" -ne 0 ] && echo "     WS test failed (exit code: $WS_TEST_EXIT)"
   [ "$UDP_CHECK_FAILED" -ne 0 ] && echo "     UDP test failed (0 or dropped packets)"
-  [ "$ELODIN_CHECK_FAILED" -ne 0 ] && echo "     Elodin State Sync failed (no DB records)"
 fi
 echo "═══════════════════════════════════════════════════════════════"
 echo ""

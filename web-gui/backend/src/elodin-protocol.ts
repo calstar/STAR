@@ -19,6 +19,7 @@
  *   CTRL meas   = [0x42, 0x00]   80 bytes: U64+8×F64
  *   PSM state   = [0x43, 0x00]   11 bytes: U64+U8+U8+U8
  *   FIRE state  = [0x44, 0x00]   18 bytes: U64+U8+F32+F32
+ *   Sequencer   = [0x50, 0x00]   17 bytes: U64+U8+pad3+U32+u8 (see docs/adding-sensor-streams.md)
  *   PSM act cmd = [0x50, 0x60..0x66]  15 bytes: U64+U8+U8+F32+U8
  */
 
@@ -275,6 +276,19 @@ export function parseElodinPacket(
       { entity: 'CONTROLLER.fire', component: 'fire_active', value: payload.readUInt8(8), timestamp: tsMs },
       { entity: 'CONTROLLER.fire', component: 'duty_F', value: payload.readFloatLE(9), timestamp: tsMs },
       { entity: 'CONTROLLER.fire', component: 'duty_O', value: payload.readFloatLE(13), timestamp: tsMs },
+    ];
+  }
+
+  // ── SequencerState: [0x50, 0x00] — 17 bytes (u32 @12 aligned; docs/adding-sensor-streams.md)
+  if (high === 0x50 && low === 0x00 && payload.length >= 17) {
+    const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
+    const stateVal = payload.readUInt8(8);
+    const allowedBitmask = payload.readUInt32LE(12);
+    const debugMode = payload.readUInt8(16);
+    return [
+      { entity: '_SEQUENCER_STATE', component: 'state', value: stateVal, timestamp: tsMs },
+      { entity: '_SEQUENCER_STATE', component: 'allowedBitmask', value: allowedBitmask, timestamp: tsMs },
+      { entity: '_SEQUENCER_STATE', component: 'debugMode', value: debugMode, timestamp: tsMs },
     ];
   }
 

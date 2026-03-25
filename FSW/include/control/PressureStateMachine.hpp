@@ -10,7 +10,6 @@
 #include <thread>
 
 #include "../../daq_comms/include/comms/messages/control/ControlMessages.hpp"
-#include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
 #include "../../daq_comms/include/transport/NetworkSocket.hpp"
 #include "config/BoardDiscovery.hpp"
 #include "elodin/ElodinClient.hpp"
@@ -211,9 +210,6 @@ private:
     // Actuator board IP and port (from config or discovery)
     std::string actuator_board_ip_;
     uint16_t actuator_board_port_;
-
-    // Packet parser for constructing actuator command packets
-    daq_comms::protocol::DiabloBoardPacketParser packet_parser_;
 
     // Pressure readings (thread-safe)
     mutable std::mutex pressure_mutex_;
