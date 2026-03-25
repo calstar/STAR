@@ -4,21 +4,20 @@ This directory contains GitHub Actions workflows for continuous integration and 
 
 ## Workflows
 
-### `ci.yml` - Main CI Pipeline
+### `ci.yml` - Single CI pipeline
 
-Comprehensive CI pipeline that runs on every push and pull request:
+One workflow run per push/PR (no separate Actions for the same event). Jobs include:
 
-1. **Format Check** - Ensures code follows formatting standards
-2. **Build** - Builds with multiple compilers (GCC 12, Clang 15) and configurations (Debug, Release)
-3. **Static Analysis** - Runs cppcheck and clang-tidy
-4. **Code Quality** - Checks for TODOs, large files, and other quality issues
-5. **Security Scan** - Scans for security vulnerabilities and unsafe code patterns
-6. **Tests** - Runs CTest, Python tests, and integration tests
-7. **Build Summary** - Provides a summary of all job results
-
-### `pre-commit.yml` - Pre-commit Checks
-
-Runs pre-commit hooks to catch issues before code is merged.
+1. **Format Check** — `./format.sh --check`
+2. **Repo standards (pre-commit)** — runs the [pre-commit](https://pre-commit.com/) tool against `.pre-commit-config.yaml` on the whole tree (`pre-commit run --all-files`). This executes **after** push in CI; the name “pre-commit” refers to the tool/config, not the timing. Install hooks locally (`pre-commit install`) to run the same checks **before** you commit.
+3. **Web GUI** — `npm run test` and `npm run test:build` in `web-gui/frontend`
+4. **Build** — multiple compilers (GCC 12, Clang 15) and configurations (Debug, Release)
+5. **Static Analysis** — cppcheck and clang-tidy
+6. **Code Quality** — TODOs, large files, etc.
+7. **Security Scan** — semgrep, secret patterns, unsafe C APIs
+8. **Tests** — CTest, sequencer test, Python tests
+9. **Integration Test** — scripted integration (Rust elodin-db, backend, etc.)
+10. **Build Summary** — table of all job results
 
 ## Setup
 
