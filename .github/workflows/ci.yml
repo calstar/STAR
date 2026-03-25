@@ -472,12 +472,14 @@ jobs:
     - name: Install elodin-db
       run: |
         ELODIN_VERSION="v0.16.1"
-        ELODIN_INSTALLER_URL="https://github.com/elodin-sys/elodin/releases/download/${ELODIN_VERSION}/elodin-installer.sh"
+        # elodin-installer.sh installs the `elodin` CLI only; integration needs `elodin-db`.
+        ELODIN_DB_INSTALLER_URL="https://github.com/elodin-sys/elodin/releases/download/${ELODIN_VERSION}/elodin-db-installer.sh"
 
+        mkdir -p "$HOME/.cargo/bin"
         echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
         export PATH="$HOME/.cargo/bin:$PATH"
 
-        curl --proto '=https' --tlsv1.2 -LsSf "$ELODIN_INSTALLER_URL" | sh
+        curl --proto '=https' --tlsv1.2 -LsSf "$ELODIN_DB_INSTALLER_URL" | sh
 
     - name: Verify elodin-db is on PATH
       run: |
