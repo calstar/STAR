@@ -482,38 +482,38 @@ jobs:
         META_JSON="$(mktemp)"
         cargo metadata --no-deps --format-version 1 > "$META_JSON"
         read -r PKG_NAME BIN_NAME < <(python3 - "$META_JSON" <<'PY'
-import json
-import sys
+        import json
+        import sys
 
-meta_path = sys.argv[1]
-with open(meta_path, "r", encoding="utf-8") as f:
-    meta = json.load(f)
+        meta_path = sys.argv[1]
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
 
-candidates = []
-for pkg in meta.get("packages", []):
-    for t in pkg.get("targets", []):
-        kinds = set(t.get("kind", []))
-        if "bin" in kinds:
-            candidates.append((pkg.get("name", ""), t.get("name", "")))
+        candidates = []
+        for pkg in meta.get("packages", []):
+            for t in pkg.get("targets", []):
+                kinds = set(t.get("kind", []))
+                if "bin" in kinds:
+                    candidates.append((pkg.get("name", ""), t.get("name", "")))
 
-preferred = [("elodin-db", "elodin-db"), ("impeller2-cli", "impeller2-cli")]
-for p in preferred:
-    if p in candidates:
-        print(p[0], p[1])
-        sys.exit(0)
+        preferred = [("elodin-db", "elodin-db"), ("impeller2-cli", "impeller2-cli")]
+        for p in preferred:
+            if p in candidates:
+                print(p[0], p[1])
+                sys.exit(0)
 
-for pkg_name, bin_name in candidates:
-    if "db" in bin_name.lower() or "impeller" in bin_name.lower():
-        print(pkg_name, bin_name)
-        sys.exit(0)
+        for pkg_name, bin_name in candidates:
+            if "db" in bin_name.lower() or "impeller" in bin_name.lower():
+                print(pkg_name, bin_name)
+                sys.exit(0)
 
-if candidates:
-    print(candidates[0][0], candidates[0][1])
-    sys.exit(0)
+        if candidates:
+            print(candidates[0][0], candidates[0][1])
+            sys.exit(0)
 
-print("", "")
-sys.exit(1)
-PY
+        print("", "")
+        sys.exit(1)
+        PY
         )
         rm -f "$META_JSON"
 
