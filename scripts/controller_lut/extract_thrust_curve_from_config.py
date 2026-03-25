@@ -117,7 +117,9 @@ def main() -> None:
             for t, F in zip(time_s, thrust):
                 if np.isfinite(F):
                     f.write(f"{t:.6f},{F:.2f}\n")
-        print(f"Wrote thrust curve to {out_path} ({n_points} points, {burn_time_s:.2f} s)")
+        print(
+            f"Wrote thrust curve to {out_path} ({n_points} points, {burn_time_s:.2f} s)"
+        )
 
     if args.json:
         import json

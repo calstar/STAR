@@ -203,8 +203,16 @@ def _duty_from_thrust_and_mr(
     if eng_est is None or not np.isfinite(eng_est.F) or eng_est.F <= 0:
         return u_F, u_O
     F_eng = float(eng_est.F)
-    mdot_F = float(eng_est.mdot_F) if np.isfinite(eng_est.mdot_F) and eng_est.mdot_F > 0 else 1e-9
-    mdot_O = float(eng_est.mdot_O) if np.isfinite(eng_est.mdot_O) and eng_est.mdot_O > 0 else 1e-9
+    mdot_F = (
+        float(eng_est.mdot_F)
+        if np.isfinite(eng_est.mdot_F) and eng_est.mdot_F > 0
+        else 1e-9
+    )
+    mdot_O = (
+        float(eng_est.mdot_O)
+        if np.isfinite(eng_est.mdot_O) and eng_est.mdot_O > 0
+        else 1e-9
+    )
     mdot_total = mdot_F + mdot_O
     Isp = F_eng / (mdot_total * G0) if mdot_total > 0 else 280.0
 
@@ -243,7 +251,9 @@ def _duty_from_thrust(
     get_axis: Any,
 ) -> float:
     """Legacy: return duty_F or duty_O from MR-aware computation."""
-    duty_F, duty_O = _duty_from_thrust_and_mr(u_safe, axis_names, coords, eng_est, get_axis)
+    duty_F, duty_O = _duty_from_thrust_and_mr(
+        u_safe, axis_names, coords, eng_est, get_axis
+    )
     return duty_F if idx == 0 else duty_O
 
 
@@ -297,8 +307,7 @@ def _compute_engine_point(flat_idx: int) -> Tuple[Tuple[int, ...], Dict[str, flo
     P_u_ox = float(coords[idx_ox])
     est = _worker_engine_wrapper.estimate_from_pressures(P_u_fuel, P_u_ox)
     result = {
-        out_name: _map_engine_output(est, out_name)
-        for out_name in _worker_output_names
+        out_name: _map_engine_output(est, out_name) for out_name in _worker_output_names
     }
     return (multi_idx, result)
 
@@ -320,7 +329,14 @@ def _init_ddp_worker(
     os.chdir(project_root)
     _add_engine_sim_to_path(Path(project_root))
     engine_lut = Path(engine_lut_path) if engine_lut_path else None
-    _, _worker_controller, _worker_Measurement, _worker_NavState, _worker_Command, _worker_CommandType = _load_engine_and_controller(
+    (
+        _,
+        _worker_controller,
+        _worker_Measurement,
+        _worker_NavState,
+        _worker_Command,
+        _worker_CommandType,
+    ) = _load_engine_and_controller(
         Path(engine_config_path),
         Path(controller_config_path),
         engine_lut_path=engine_lut,
@@ -357,8 +373,13 @@ def _compute_ddp_point_sequential(
     P_d_fuel = _get_axis_value(axis_names, coords, "P_d_fuel", P_u_fuel)
     P_d_ox = _get_axis_value(axis_names, coords, "P_d_ox", P_u_ox)
     meas = Measurement(
-        P_copv=P_copv, P_reg=P_reg, P_u_fuel=P_u_fuel, P_u_ox=P_u_ox,
-        P_d_fuel=P_d_fuel, P_d_ox=P_d_ox, timestamp=0.0,
+        P_copv=P_copv,
+        P_reg=P_reg,
+        P_u_fuel=P_u_fuel,
+        P_u_ox=P_u_ox,
+        P_d_fuel=P_d_fuel,
+        P_d_ox=P_d_ox,
+        timestamp=0.0,
     )
     h = _get_axis_value(axis_names, coords, "h", 0.0)
     vz = _get_axis_value(axis_names, coords, "vz", 0.0)
@@ -367,10 +388,14 @@ def _compute_ddp_point_sequential(
     nav = NavState(h=h, vz=vz, theta=theta, mass_estimate=mass_estimate)
     if "thrust_desired" in axis_names:
         thrust_val = _get_axis_value(axis_names, coords, "thrust_desired", 0.0)
-        cmd = Command(command_type=CommandType.THRUST_DESIRED, thrust_desired=float(thrust_val))
+        cmd = Command(
+            command_type=CommandType.THRUST_DESIRED, thrust_desired=float(thrust_val)
+        )
     elif "altitude_goal" in axis_names:
         alt_goal = _get_axis_value(axis_names, coords, "altitude_goal", 0.0)
-        cmd = Command(command_type=CommandType.ALTITUDE_GOAL, altitude_goal=float(alt_goal))
+        cmd = Command(
+            command_type=CommandType.ALTITUDE_GOAL, altitude_goal=float(alt_goal)
+        )
     else:
         cmd = Command(command_type=CommandType.THRUST_DESIRED, thrust_desired=0.0)
 
@@ -416,9 +441,13 @@ def _compute_ddp_point_sequential(
                 ok = eng_est.stability_metrics.get("injector_stiffness_ok")
                 value = 1.0 if ok is True else (0.0 if ok is False else np.nan)
         elif out_name == "duty_F":
-            value = _duty_from_thrust(u_safe, axis_names, coords, eng_est, 0, _get_axis_value)
+            value = _duty_from_thrust(
+                u_safe, axis_names, coords, eng_est, 0, _get_axis_value
+            )
         elif out_name == "duty_O":
-            value = _duty_from_thrust(u_safe, axis_names, coords, eng_est, 1, _get_axis_value)
+            value = _duty_from_thrust(
+                u_safe, axis_names, coords, eng_est, 1, _get_axis_value
+            )
         elif out_name == "u_F_onoff":
             value = 1.0 if bool(getattr(actuation_cmd, "u_F_onoff", False)) else 0.0
         elif out_name == "u_O_onoff":
@@ -428,9 +457,13 @@ def _compute_ddp_point_sequential(
         elif out_name == "u_relaxed_O":
             value = float(u_relaxed[1]) if len(u_relaxed) > 1 else 0.0
         elif out_name == "u_safe_F":
-            value = _duty_from_thrust(u_safe, axis_names, coords, eng_est, 0, _get_axis_value)
+            value = _duty_from_thrust(
+                u_safe, axis_names, coords, eng_est, 0, _get_axis_value
+            )
         elif out_name == "u_safe_O":
-            value = _duty_from_thrust(u_safe, axis_names, coords, eng_est, 1, _get_axis_value)
+            value = _duty_from_thrust(
+                u_safe, axis_names, coords, eng_est, 1, _get_axis_value
+            )
         elif out_name in ("value_function", "cost"):
             if solution is not None and hasattr(solution, "objective"):
                 try:
@@ -438,7 +471,11 @@ def _compute_ddp_point_sequential(
                 except Exception:
                     value = np.nan
             else:
-                value = float(diagnostics.get("last_cost", 0.0)) if "last_cost" in diagnostics else np.nan
+                value = (
+                    float(diagnostics.get("last_cost", 0.0))
+                    if "last_cost" in diagnostics
+                    else np.nan
+                )
         else:
             if out_name in diagnostics:
                 try:
@@ -447,7 +484,11 @@ def _compute_ddp_point_sequential(
                         value = float(val)
                 except Exception:
                     value = np.nan
-            elif eng_est is not None and eng_est.diagnostics is not None and out_name in eng_est.diagnostics:
+            elif (
+                eng_est is not None
+                and eng_est.diagnostics is not None
+                and out_name in eng_est.diagnostics
+            ):
                 try:
                     value = float(eng_est.diagnostics[out_name])
                 except Exception:
@@ -483,9 +524,7 @@ def _compute_ddp_point(flat_idx: int) -> Tuple[Tuple[int, ...], Dict[str, float]
     vz = _get_axis_value(axis_names, coords, "vz", 0.0)
     theta = _get_axis_value(axis_names, coords, "theta", 0.0)
     mass_estimate = _get_axis_value(axis_names, coords, "mass_estimate", 100.0)
-    nav = _worker_NavState(
-        h=h, vz=vz, theta=theta, mass_estimate=mass_estimate
-    )
+    nav = _worker_NavState(h=h, vz=vz, theta=theta, mass_estimate=mass_estimate)
 
     if "thrust_desired" in axis_names:
         thrust_val = _get_axis_value(axis_names, coords, "thrust_desired", 0.0)
@@ -549,9 +588,13 @@ def _compute_ddp_point(flat_idx: int) -> Tuple[Tuple[int, ...], Dict[str, float]
                 ok = eng_est.stability_metrics.get("injector_stiffness_ok")
                 value = 1.0 if ok is True else (0.0 if ok is False else np.nan)
         elif out_name == "duty_F":
-            value = _duty_from_thrust(u_safe, axis_names, coords, eng_est, 0, _get_axis_value)
+            value = _duty_from_thrust(
+                u_safe, axis_names, coords, eng_est, 0, _get_axis_value
+            )
         elif out_name == "duty_O":
-            value = _duty_from_thrust(u_safe, axis_names, coords, eng_est, 1, _get_axis_value)
+            value = _duty_from_thrust(
+                u_safe, axis_names, coords, eng_est, 1, _get_axis_value
+            )
         elif out_name == "u_F_onoff":
             value = 1.0 if bool(getattr(actuation_cmd, "u_F_onoff", False)) else 0.0
         elif out_name == "u_O_onoff":
@@ -561,9 +604,13 @@ def _compute_ddp_point(flat_idx: int) -> Tuple[Tuple[int, ...], Dict[str, float]
         elif out_name == "u_relaxed_O":
             value = float(u_relaxed[1]) if len(u_relaxed) > 1 else 0.0
         elif out_name == "u_safe_F":
-            value = _duty_from_thrust(u_safe, axis_names, coords, eng_est, 0, _get_axis_value)
+            value = _duty_from_thrust(
+                u_safe, axis_names, coords, eng_est, 0, _get_axis_value
+            )
         elif out_name == "u_safe_O":
-            value = _duty_from_thrust(u_safe, axis_names, coords, eng_est, 1, _get_axis_value)
+            value = _duty_from_thrust(
+                u_safe, axis_names, coords, eng_est, 1, _get_axis_value
+            )
         elif out_name in ("value_function", "cost"):
             if solution is not None and hasattr(solution, "objective"):
                 try:
@@ -571,7 +618,11 @@ def _compute_ddp_point(flat_idx: int) -> Tuple[Tuple[int, ...], Dict[str, float]
                 except Exception:
                     value = np.nan
             else:
-                value = float(diagnostics.get("last_cost", 0.0)) if "last_cost" in diagnostics else np.nan
+                value = (
+                    float(diagnostics.get("last_cost", 0.0))
+                    if "last_cost" in diagnostics
+                    else np.nan
+                )
         else:
             if out_name in diagnostics:
                 try:
@@ -580,7 +631,11 @@ def _compute_ddp_point(flat_idx: int) -> Tuple[Tuple[int, ...], Dict[str, float]
                         value = float(val)
                 except Exception:
                     value = np.nan
-            elif eng_est is not None and eng_est.diagnostics is not None and out_name in eng_est.diagnostics:
+            elif (
+                eng_est is not None
+                and eng_est.diagnostics is not None
+                and out_name in eng_est.diagnostics
+            ):
                 try:
                     value = float(eng_est.diagnostics[out_name])
                 except Exception:
@@ -643,11 +698,18 @@ def generate_lut(
             engine_cfg, engine_wrapper = _load_engine_only(engine_config_path)
             for flat_idx in range(total_points):
                 multi_idx, result = _compute_engine_point_sequential(
-                    flat_idx, axis_names, grids, axis_sizes, lut_cfg.outputs, engine_wrapper
+                    flat_idx,
+                    axis_names,
+                    grids,
+                    axis_sizes,
+                    lut_cfg.outputs,
+                    engine_wrapper,
                 )
                 for out_name, val in result.items():
                     data_arrays[out_name][multi_idx] = val
-                if (flat_idx + 1) % max(1, total_points // 50) == 0 or flat_idx == total_points - 1:
+                if (flat_idx + 1) % max(
+                    1, total_points // 50
+                ) == 0 or flat_idx == total_points - 1:
                     pct = 100.0 * (flat_idx + 1) / total_points
                     print(f"[LUT] {flat_idx+1:,}/{total_points:,} points ({pct:5.1f}%)")
         else:
@@ -660,20 +722,28 @@ def generate_lut(
                 list(lut_cfg.outputs),
             )
             done = 0
-            with ProcessPoolExecutor(max_workers=jobs, initializer=_init_engine_worker, initargs=init_args) as ex:
-                futures = {ex.submit(_compute_engine_point, i): i for i in range(total_points)}
+            with ProcessPoolExecutor(
+                max_workers=jobs, initializer=_init_engine_worker, initargs=init_args
+            ) as ex:
+                futures = {
+                    ex.submit(_compute_engine_point, i): i for i in range(total_points)
+                }
                 for fut in as_completed(futures):
                     multi_idx, result = fut.result()
                     for out_name, val in result.items():
                         data_arrays[out_name][multi_idx] = val
                     done += 1
                     if done % max(1, total_points // 50) == 0 or done == total_points:
-                        print(f"[LUT] {done:,}/{total_points:,} points ({100.0*done/total_points:5.1f}%)")
+                        print(
+                            f"[LUT] {done:,}/{total_points:,} points ({100.0*done/total_points:5.1f}%)"
+                        )
     else:
         # ------------------------------------------------------------------
         # DDP-based LUT: map full state/command -> optimal control + engine
         # ------------------------------------------------------------------
-        engine_lut_path = Path(lut_cfg.engine_lut_path) if lut_cfg.engine_lut_path else None
+        engine_lut_path = (
+            Path(lut_cfg.engine_lut_path) if lut_cfg.engine_lut_path else None
+        )
         if jobs <= 1:
             (
                 engine_cfg,
@@ -691,14 +761,27 @@ def generate_lut(
             engine_wrapper = controller.engine_wrapper
             for flat_idx in range(total_points):
                 multi_idx, result = _compute_ddp_point_sequential(
-                    flat_idx, axis_names, grids, axis_sizes, lut_cfg.outputs,
-                    controller, engine_wrapper, Measurement, NavState, Command, CommandType,
+                    flat_idx,
+                    axis_names,
+                    grids,
+                    axis_sizes,
+                    lut_cfg.outputs,
+                    controller,
+                    engine_wrapper,
+                    Measurement,
+                    NavState,
+                    Command,
+                    CommandType,
                 )
                 for out_name, val in result.items():
                     data_arrays[out_name][multi_idx] = val
-                if (flat_idx + 1) % max(1, total_points // 50) == 0 or flat_idx == total_points - 1:
+                if (flat_idx + 1) % max(
+                    1, total_points // 50
+                ) == 0 or flat_idx == total_points - 1:
                     pct = 100.0 * (flat_idx + 1) / total_points
-                    print(f"[LUT/DDP] {flat_idx+1:,}/{total_points:,} points ({pct:5.1f}%)")
+                    print(
+                        f"[LUT/DDP] {flat_idx+1:,}/{total_points:,} points ({pct:5.1f}%)"
+                    )
         else:
             init_args = (
                 str(engine_config_path),
@@ -711,15 +794,21 @@ def generate_lut(
                 list(lut_cfg.outputs),
             )
             done = 0
-            with ProcessPoolExecutor(max_workers=jobs, initializer=_init_ddp_worker, initargs=init_args) as ex:
-                futures = {ex.submit(_compute_ddp_point, i): i for i in range(total_points)}
+            with ProcessPoolExecutor(
+                max_workers=jobs, initializer=_init_ddp_worker, initargs=init_args
+            ) as ex:
+                futures = {
+                    ex.submit(_compute_ddp_point, i): i for i in range(total_points)
+                }
                 for fut in as_completed(futures):
                     multi_idx, result = fut.result()
                     for out_name, val in result.items():
                         data_arrays[out_name][multi_idx] = val
                     done += 1
                     if done % max(1, total_points // 50) == 0 or done == total_points:
-                        print(f"[LUT/DDP] {done:,}/{total_points:,} points ({100.0*done/total_points:5.1f}%)")
+                        print(
+                            f"[LUT/DDP] {done:,}/{total_points:,} points ({100.0*done/total_points:5.1f}%)"
+                        )
 
     # Prepare metadata for saving
     axes_meta: List[Dict[str, Any]] = [

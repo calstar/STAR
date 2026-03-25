@@ -24,6 +24,7 @@ CONFIG_PATH = _REPO_ROOT / "config" / "config.toml"
 if not CONFIG_PATH.is_file():
     CONFIG_PATH = Path("config/config.toml")
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Config packet broadcaster (standalone)"

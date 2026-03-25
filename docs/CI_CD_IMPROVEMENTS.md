@@ -73,9 +73,9 @@ Automated script to install and configure pre-commit hooks:
 ./scripts/setup_pre_commit.sh
 ```
 
-### 5. Pre-commit in CI (`ci.yml` job **Repo standards (pre-commit)**)
+### 5. Pre-commit (local only)
 
-The same `.pre-commit-config.yaml` suite runs in the main pipeline (`pre-commit run --all-files`), not as a separate workflow.
+CI runs **`./format.sh --check`** for C++ style. The full **pre-commit** suite (`.pre-commit-config.yaml`) is optional for developers who install hooks locally; it is **not** run in GitHub Actions.
 
 ### 6. Documentation (`.github/README.md`)
 

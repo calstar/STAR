@@ -46,4 +46,3 @@ export function saveCountdownTargetTimeMs(targetTimeMs: number | null): void {
     console.warn(`⚠️ Failed to persist countdown state to ${statePath}:`, err);
   }
 }
-

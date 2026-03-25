@@ -85,7 +85,11 @@ def plot_policy_lut(lut: dict, out_path: Path) -> None:
 
     # Duty cycle heatmaps: duty_F (row 0) and duty_O (row 1)
     fig2, axes2 = plt.subplots(
-        2 * n_rows, n_cols, figsize=(5 * n_cols, 4 * 2 * n_rows), sharex=True, sharey=True
+        2 * n_rows,
+        n_cols,
+        figsize=(5 * n_cols, 4 * 2 * n_rows),
+        sharex=True,
+        sharey=True,
     )
     axes2 = np.atleast_2d(axes2)
     for i, t_val in enumerate(thrust):
@@ -115,7 +119,9 @@ def plot_policy_lut(lut: dict, out_path: Path) -> None:
         axes2[r, c].set_visible(False)
         axes2[n_rows + r, c].set_visible(False)
     plt.suptitle(
-        "Controller LUT: Fuel and LOX duty cycles vs tank pressures", fontsize=12, y=1.02
+        "Controller LUT: Fuel and LOX duty cycles vs tank pressures",
+        fontsize=12,
+        y=1.02,
     )
     plt.tight_layout()
     fig2.savefig(out_path.with_suffix(".duty_fuel.png"), dpi=150, bbox_inches="tight")

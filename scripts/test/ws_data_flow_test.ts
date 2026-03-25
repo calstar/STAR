@@ -960,7 +960,7 @@ async function testElodinStateSync(): Promise<void> {
         resolve();
       });
     });
-    
+
     req.on('error', (err) => {
       assert(false, `Elodin State Sync: Failed to fetch /stats API (${err.message})`);
       resolve();

@@ -25,7 +25,13 @@ BOARD_TYPE_ACTUATOR = 5
 
 class SimulatedBoard:
     def __init__(
-        self, name, board_config, target_ip, target_port, low_noise=False, board_index=0,
+        self,
+        name,
+        board_config,
+        target_ip,
+        target_port,
+        low_noise=False,
+        board_index=0,
         sim_pt_targets=None,
     ):
         self.name = name
@@ -58,7 +64,9 @@ class SimulatedBoard:
         self.hp_pt_connectors = set(board_config.get("hp_pt_connectors", []))
         self.excitation_id = board_config.get("excitation_connector_id", -1)
         self.hp_pt_full_scale_psi = board_config.get("hp_pt_full_scale_psi", 5000.0)
-        self.hp_pt_sense_resistor_ohms = board_config.get("hp_pt_sense_resistor_ohms", 120)
+        self.hp_pt_sense_resistor_ohms = board_config.get(
+            "hp_pt_sense_resistor_ohms", 120
+        )
 
         self.running = False
         self.sock = None
@@ -172,7 +180,9 @@ class SimulatedBoard:
         if self.board_type == BOARD_TYPE_PT:
             # Global channel for pt_board_2 (connector 1 → ch11, etc.)
             global_ch = sensor_id + self.channel_offset
-            target_psi = self.sim_pt_targets.get(global_ch) or self.sim_pt_targets.get(sensor_id)
+            target_psi = self.sim_pt_targets.get(global_ch) or self.sim_pt_targets.get(
+                sensor_id
+            )
 
             if sensor_id in self.hp_pt_connectors:
                 # HP PT (4-20 mA): psi = (i-4)/16 * full_scale. adc ∝ i.
@@ -269,14 +279,15 @@ def main():
 
     boards = config.get("boards", {})
     sim_pt_targets = {
-        int(k): float(v)
-        for k, v in config.get("sim_pt_targets", {}).items()
+        int(k): float(v) for k, v in config.get("sim_pt_targets", {}).items()
     }
     simulated_boards = []
 
     print(f"🚀 Starting Simulator - Target: {args.target}:{args.port}")
     if sim_pt_targets:
-        print(f"   Sim PT targets: {len(sim_pt_targets)} channels (e.g. ch1/ch5=500, ch6=4k)")
+        print(
+            f"   Sim PT targets: {len(sim_pt_targets)} channels (e.g. ch1/ch5=500, ch6=4k)"
+        )
 
     active_count = 0
     for name, board_cfg in boards.items():
@@ -323,7 +334,9 @@ def main():
             "boards": {},
         }
         for b in simulated_boards:
-            active = b.config.get("active_connectors", list(range(1, b.num_sensors + 1)))
+            active = b.config.get(
+                "active_connectors", list(range(1, b.num_sensors + 1))
+            )
             stats["boards"][b.name] = {
                 "type": b.board_type_str,
                 "board_id": b.board_id,
@@ -340,12 +353,14 @@ def main():
 
     # Register SIGTERM handler so integration test cleanup triggers stats write
     import signal
+
     def _sigterm_handler(signum, frame):
         for b in simulated_boards:
             b.running = False
         time.sleep(0.1)  # let threads finish current send
         write_stats()
         raise SystemExit(0)
+
     signal.signal(signal.SIGTERM, _sigterm_handler)
 
     try:

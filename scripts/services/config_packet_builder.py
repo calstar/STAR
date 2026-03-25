@@ -296,7 +296,9 @@ def build_sensor_config_packet(
     return bytes(buf)
 
 
-def build_all_config_packets(config_path: Optional[Path] = None) -> List[Tuple[str, int, bytes, str, int]]:
+def build_all_config_packets(
+    config_path: Optional[Path] = None,
+) -> List[Tuple[str, int, bytes, str, int]]:
     """Build (packet_type, board_id, packet, ip, listen_port) for all configured boards."""
     import config_loader as _cl
 

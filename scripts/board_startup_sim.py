@@ -24,7 +24,9 @@ DIABLO_VERSION = 0
 
 def build_board_heartbeat(_board_type: int, board_id: int, ts_ms: int) -> bytes:
     """DAQv2 BoardHeartbeatPacket: 32B hash + board_id + engine_state + board_state."""
-    header = struct.pack("<BBI", PACKET_BOARD_HEARTBEAT, DIABLO_VERSION, ts_ms & 0xFFFFFFFF)
+    header = struct.pack(
+        "<BBI", PACKET_BOARD_HEARTBEAT, DIABLO_VERSION, ts_ms & 0xFFFFFFFF
+    )
     firmware_hash = bytes(32)
     body = firmware_hash + struct.pack(
         "<BBB", board_id & 0xFF, ENGINE_SAFE, BOARD_STATE_SETUP
@@ -46,13 +48,20 @@ def build_self_test_packet(sensor_results: list[tuple[int, int]]) -> bytes:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Board startup E2E helper for integration tests")
+    p = argparse.ArgumentParser(
+        description="Board startup E2E helper for integration tests"
+    )
     p.add_argument("--board-ip", default="127.0.0.60")
     p.add_argument("--listen-port", type=int, required=True)
     p.add_argument("--daq-host", default="127.0.0.1")
     p.add_argument("--daq-port", type=int, required=True)
     p.add_argument("--board-id", type=int, default=60)
-    p.add_argument("--board-type", type=int, default=BOARD_TYPE_PT, help="Heartbeat board_type byte")
+    p.add_argument(
+        "--board-type",
+        type=int,
+        default=BOARD_TYPE_PT,
+        help="Heartbeat board_type byte",
+    )
     p.add_argument("--timeout-s", type=float, default=90.0)
     args = p.parse_args()
 
@@ -61,7 +70,10 @@ def main() -> int:
     try:
         sock.bind((args.board_ip, args.listen_port))
     except OSError as e:
-        print(f"[board_startup_sim] bind {args.board_ip}:{args.listen_port} failed: {e}", flush=True)
+        print(
+            f"[board_startup_sim] bind {args.board_ip}:{args.listen_port} failed: {e}",
+            flush=True,
+        )
         return 1
 
     sock.settimeout(0.5)
@@ -85,7 +97,10 @@ def main() -> int:
         try:
             data, _addr = sock.recvfrom(4096)
             if data and len(data) >= 1 and data[0] == PACKET_SENSOR_CONFIG:
-                print("[board_startup_sim] SENSOR_CONFIG received, sending SELF_TEST", flush=True)
+                print(
+                    "[board_startup_sim] SENSOR_CONFIG received, sending SELF_TEST",
+                    flush=True,
+                )
                 # Single pass result for connector 2 — keeps WS path unambiguous (integration asserts sensor_2=1).
                 st = build_self_test_packet([(2, 1)])
                 sock.sendto(st, target)
