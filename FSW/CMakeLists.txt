@@ -24,6 +24,9 @@ if(NOT TARGET daqv2_comms)
     target_include_directories(daqv2_comms PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/../external/DAQv2-Comms/src
     )
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(daqv2_comms PRIVATE "-include" "cstddef")
+    endif()
 endif()
 
 # Source files for FSW library

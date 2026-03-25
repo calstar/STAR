@@ -14,6 +14,11 @@ add_library(daqv2_comms STATIC
 target_include_directories(daqv2_comms PUBLIC
     external/DAQv2-Comms/src
 )
+# DAQv2 headers use size_t without <cstddef>; some libstdc++ versions no longer pull it in via <vector>.
+# Until fixed in external/DAQv2-Comms, force the standard header for this target (GCC/Clang).
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(daqv2_comms PRIVATE "-include" "cstddef")
+endif()
 
 # Active build: daq_comms library + FSW (daq_bridge, controller_service, fsw_web_bridge)
 add_subdirectory(daq_comms)
