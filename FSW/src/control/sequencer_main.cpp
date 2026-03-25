@@ -15,8 +15,6 @@
  * Usage: ./sequencer_service [--config PATH] [--port PORT]
  */
 
-#include "control/SequencerService.hpp"
-
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <signal.h>
@@ -28,6 +26,8 @@
 #include <iostream>
 #include <string>
 #include <thread>
+
+#include "control/SequencerService.hpp"
 
 namespace {
 std::atomic<bool> g_running{true};
@@ -45,7 +45,9 @@ std::string trim(const std::string& s) {
 
 void handleClient(int client_fd, sequencer::SequencerService& svc) {
     // 5-second receive timeout per line
-    struct timeval tv{ .tv_sec = 5, .tv_usec = 0 };
+    struct timeval tv {
+        .tv_sec = 5, .tv_usec = 0
+    };
     setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     std::string buf;
@@ -59,13 +61,17 @@ void handleClient(int client_fd, sequencer::SequencerService& svc) {
         buf.clear();
         char c;
         while (g_running && recv(client_fd, &c, 1, 0) == 1) {
-            if (c == '\n') break;
-            if (buf.size() < 512) buf += c;
+            if (c == '\n')
+                break;
+            if (buf.size() < 512)
+                buf += c;
         }
-        if (buf.empty()) break;
+        if (buf.empty())
+            break;
 
         const std::string cmd = trim(buf);
-        if (cmd.empty()) continue;
+        if (cmd.empty())
+            continue;
 
         // ── TRANSITION:<state_name> ──────────────────────────────────────────
         if (cmd.compare(0, 11, "TRANSITION:") == 0) {
@@ -78,19 +84,21 @@ void handleClient(int client_fd, sequencer::SequencerService& svc) {
                 sendReply("ERR:transition rejected\n");
             }
 
-        // ── ACTUATOR:<role>:<0|1> ────────────────────────────────────────────
+            // ── ACTUATOR:<role>:<0|1> ────────────────────────────────────────────
         } else if (cmd.compare(0, 9, "ACTUATOR:") == 0) {
-            const std::string rest  = trim(cmd.substr(9));
+            const std::string rest = trim(cmd.substr(9));
             const size_t last_colon = rest.rfind(':');
             if (last_colon == std::string::npos || last_colon == 0) {
                 sendReply("ERR:bad ACTUATOR format\n");
                 continue;
             }
             const std::string role_name = trim(rest.substr(0, last_colon));
-            const std::string val_str   = trim(rest.substr(last_colon + 1));
+            const std::string val_str = trim(rest.substr(last_colon + 1));
             int pos = -1;
-            if (val_str == "1" || val_str == "open")   pos = 1;
-            else if (val_str == "0" || val_str == "closed") pos = 0;
+            if (val_str == "1" || val_str == "open")
+                pos = 1;
+            else if (val_str == "0" || val_str == "closed")
+                pos = 0;
             if (pos < 0 || role_name.empty()) {
                 sendReply("ERR:bad ACTUATOR value\n");
             } else if (svc.manualActuator(role_name, pos)) {
@@ -99,7 +107,7 @@ void handleClient(int client_fd, sequencer::SequencerService& svc) {
                 sendReply("ERR:actuator command failed\n");
             }
 
-        // ── DEBUG_MODE:<0|1> ─────────────────────────────────────────────────
+            // ── DEBUG_MODE:<0|1> ─────────────────────────────────────────────────
         } else if (cmd.compare(0, 11, "DEBUG_MODE:") == 0) {
             const std::string val = trim(cmd.substr(11));
             if (val == "1" || val == "true") {
@@ -112,15 +120,19 @@ void handleClient(int client_fd, sequencer::SequencerService& svc) {
                 sendReply("ERR:bad DEBUG_MODE value\n");
             }
 
-        // ── EXTEND_FIRE ──────────────────────────────────────────────────────
+            // ── EXTEND_FIRE ──────────────────────────────────────────────────────
         } else if (cmd == "EXTEND_FIRE") {
-            if (svc.extendFire()) sendReply("OK\n");
-            else                  sendReply("ERR:not in FIRE state\n");
+            if (svc.extendFire())
+                sendReply("OK\n");
+            else
+                sendReply("ERR:not in FIRE state\n");
 
-        // ── RELOAD_CONFIG ────────────────────────────────────────────────────
+            // ── RELOAD_CONFIG ────────────────────────────────────────────────────
         } else if (cmd == "RELOAD_CONFIG") {
-            if (svc.reloadConfig()) sendReply("OK\n");
-            else                    sendReply("ERR:reload failed\n");
+            if (svc.reloadConfig())
+                sendReply("OK\n");
+            else
+                sendReply("ERR:reload failed\n");
 
         } else {
             sendReply("ERR:unknown command\n");
@@ -129,11 +141,11 @@ void handleClient(int client_fd, sequencer::SequencerService& svc) {
 
     close(client_fd);
 }
-} // namespace
+}  // namespace
 
 int main(int argc, char* argv[]) {
     std::string config_path = "config/config.toml";
-    uint16_t    listen_port = 9998;
+    uint16_t listen_port = 9998;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -147,9 +159,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    signal(SIGINT,  signalHandler);
+    signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
-    signal(SIGPIPE, SIG_IGN); // don't crash on broken TCP connections
+    signal(SIGPIPE, SIG_IGN);  // don't crash on broken TCP connections
 
     sequencer::SequencerService svc;
     if (!svc.init(config_path)) {
@@ -168,10 +180,10 @@ int main(int argc, char* argv[]) {
         setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     }
     {
-        struct sockaddr_in addr{};
-        addr.sin_family      = AF_INET;
+        struct sockaddr_in addr {};
+        addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = INADDR_ANY;
-        addr.sin_port        = htons(listen_port);
+        addr.sin_port = htons(listen_port);
         if (bind(listen_fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
             std::cerr << "[Sequencer] bind() failed on port " << listen_port << std::endl;
             close(listen_fd);
@@ -193,11 +205,15 @@ int main(int argc, char* argv[]) {
         fd_set rd;
         FD_ZERO(&rd);
         FD_SET(listen_fd, &rd);
-        struct timeval tv{ .tv_sec = 1, .tv_usec = 0 };
-        if (select(listen_fd + 1, &rd, nullptr, nullptr, &tv) <= 0) continue;
+        struct timeval tv {
+            .tv_sec = 1, .tv_usec = 0
+        };
+        if (select(listen_fd + 1, &rd, nullptr, nullptr, &tv) <= 0)
+            continue;
 
         int client_fd = accept(listen_fd, nullptr, nullptr);
-        if (client_fd < 0) continue;
+        if (client_fd < 0)
+            continue;
 
         // Detach a thread per client; thread lifetime is short (one command exchange)
         std::thread([client_fd, &svc]() {

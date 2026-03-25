@@ -18,7 +18,6 @@
 #include "../../daq_comms/include/comms/messages/board/BoardHeartbeatMessage.hpp"
 #include "../../daq_comms/include/comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "../../daq_comms/include/comms/messages/sensor/SensorMessages.hpp"
-
 #include "DAQv2-Comms.h"
 #include "fsw/BoardTypeWire.hpp"
 
@@ -816,14 +815,17 @@ int main(int argc, char* argv[]) {
         if (elodin_connected && elodin_client.is_connected() && !batch.value().self_tests.empty()) {
             elodin_client.begin_batch();
             for (const auto& st_packet : batch.value().self_tests) {
-                // board_id is retrieved from heartbeat or routing. However, self test doesn't have board_id in the packet.
-                // We use discovery to map IP to board_id.
+                // board_id is retrieved from heartbeat or routing. However, self test doesn't have
+                // board_id in the packet. We use discovery to map IP to board_id.
                 auto cfg_it = board_map.find(source_ip);
-                uint8_t board_id = (cfg_it != board_map.end() && cfg_it->second.board_id >= 0) ? cfg_it->second.board_id : 0;
-                
+                uint8_t board_id = (cfg_it != board_map.end() && cfg_it->second.board_id >= 0)
+                                       ? cfg_it->second.board_id
+                                       : 0;
+
                 if (board_id == 0) {
                     auto discovered = discovery.get_board_by_ip(source_ip);
-                    if (discovered) board_id = discovered->signature.board_id;
+                    if (discovered)
+                        board_id = discovered->signature.board_id;
                 }
 
                 if (board_id != 0) {
@@ -838,10 +840,12 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
-            if (elodin_client.flush_batch()) elodin_publish_count++;
-            
+            if (elodin_client.flush_batch())
+                elodin_publish_count++;
+
             std::array<uint8_t, 4096> drain_buf;
-            while (elodin_client.read_data(drain_buf.data(), drain_buf.size()) > 0) {}
+            while (elodin_client.read_data(drain_buf.data(), drain_buf.size()) > 0) {
+            }
         }
 
         // ── Begin batch: all publishes from this packet go into one buffer ──

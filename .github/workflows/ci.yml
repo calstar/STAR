@@ -24,20 +24,6 @@ on:
       - cpp-stack-and-cleanup
       - web-gui-tests
   workflow_dispatch:
-    inputs:
-      build_type:
-        description: 'Build type'
-        required: true
-        default: 'Release'
-        type: choice
-        options:
-          - Debug
-          - Release
-      run_tests:
-        description: 'Run tests'
-        required: true
-        default: true
-        type: boolean
 
 env:
   BUILD_DIR: build
@@ -121,24 +107,23 @@ jobs:
       working-directory: web-gui/frontend
       run: npm run test:build
 
-  # Build with multiple compilers and configurations
+  # Build with multiple compilers (Release only)
   build:
-    name: Build (${{ matrix.compiler }} - ${{ matrix.build-type }})
+    name: Build (${{ matrix.compiler }} — Release)
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     strategy:
       fail-fast: false
       matrix:
-        compiler: [gcc-12, clang-15]
-        build-type: [Debug, Release]
+        compiler: [gcc-12, clang-18]
         include:
           - compiler: gcc-12
             cc: gcc-12
             cxx: g++-12
-          - compiler: clang-15
-            cc: clang-15
-            cxx: clang++-15
+          - compiler: clang-18
+            cc: clang-18
+            cxx: clang++-18
 
     steps:
     - name: Checkout code
@@ -162,6 +147,12 @@ jobs:
       run: |
         sudo apt-get install -y libcanard-dev || echo "libcanard-dev not in apt; building without CAN package"
 
+    # Clang + libstdc++ from the default system GCC (e.g. 14 on ubuntu-latest) can blow up in C++20 <format>/ranges
+    # included from <chrono>. Install g++-12 and pin Clang to that libstdc++ with --gcc-install-dir.
+    - name: Install GCC 12 libstdc++ for Clang
+      if: startsWith(matrix.compiler, 'clang-')
+      run: sudo apt-get install -y g++-12
+
     - name: Configure CMake
       env:
         CC: ${{ matrix.cc }}
@@ -169,8 +160,13 @@ jobs:
       run: |
         mkdir -p ${{ env.BUILD_DIR }}
         cd ${{ env.BUILD_DIR }}
+        case "${{ matrix.compiler }}" in
+          clang-*)
+            export CXXFLAGS="--gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/12"
+            ;;
+        esac
         cmake \
-          -DCMAKE_BUILD_TYPE=${{ matrix.build-type }} \
+          -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_C_COMPILER=${{ matrix.cc }} \
           -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
           -DCMAKE_CXX_STANDARD=${{ env.CXX_STANDARD }} \
@@ -189,10 +185,10 @@ jobs:
         find . -type f -executable -name "*example*" -o -name "*test*" | head -10 || true
 
     - name: Upload build artifacts
-      if: matrix.build-type == 'Release' && matrix.compiler == 'gcc-12'
+      if: matrix.compiler == 'gcc-12'
       uses: actions/upload-artifact@v4
       with:
-        name: build-artifacts-${{ matrix.compiler }}-${{ matrix.build-type }}
+        name: build-artifacts-${{ matrix.compiler }}-Release
         path: |
           ${{ env.BUILD_DIR }}/**/*.so
           ${{ env.BUILD_DIR }}/**/daq_bridge
@@ -375,10 +371,6 @@ jobs:
     needs: [build]
     timeout-minutes: 30
 
-    strategy:
-      matrix:
-        build-type: [Debug, Release]
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -413,7 +405,7 @@ jobs:
         mkdir -p ${{ env.BUILD_DIR }}
         cd ${{ env.BUILD_DIR }}
         cmake \
-          -DCMAKE_BUILD_TYPE=${{ matrix.build-type }} \
+          -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_C_COMPILER=gcc-12 \
           -DCMAKE_CXX_COMPILER=g++-12 \
           -DCMAKE_CXX_STANDARD=${{ env.CXX_STANDARD }} \

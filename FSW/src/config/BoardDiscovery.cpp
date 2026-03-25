@@ -1,10 +1,5 @@
 #include "config/BoardDiscovery.hpp"
 
-#include "DiabloPacketUtils.h"
-#include "DiabloPackets.h"
-#include "fsw/BoardTypeWire.hpp"
-#include "util/IpFromMac.hpp"
-
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 #include <net/if.h>
@@ -21,6 +16,11 @@
 #include <mutex>
 #include <optional>
 #include <sstream>
+
+#include "DiabloPacketUtils.h"
+#include "DiabloPackets.h"
+#include "fsw/BoardTypeWire.hpp"
+#include "util/IpFromMac.hpp"
 
 namespace fsw {
 namespace config {

@@ -35,14 +35,14 @@ public:
      * @brief Process one BOARD_HEARTBEAT and publish to Elodin.
      *
      * @param header     Parsed packet header (for timestamp).
-     * @param heartbeat  Parsed heartbeat body (DAQv2: firmware hash + id + states; no board_type on wire).
+     * @param heartbeat  Parsed heartbeat body (DAQv2: firmware hash + id + states; no board_type on
+     * wire).
      * @param board_type_wire  Legacy wire enum byte for Elodin (from config when known, else 0).
      * @param receive_ts_ns  Monotonic receive timestamp (nanoseconds).
      */
     BoardEvent process_heartbeat(const Diablo::PacketHeader& header,
                                  const Diablo::BoardHeartbeatPacket& heartbeat,
-                                 uint8_t board_type_wire,
-                                 uint64_t receive_ts_ns);
+                                 uint8_t board_type_wire, uint64_t receive_ts_ns);
 
 private:
     struct PerBoardState {

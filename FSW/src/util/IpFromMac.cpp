@@ -21,8 +21,7 @@ std::string calculate_ip_from_mac(const std::string& mac_address, const std::str
 
     const uint32_t span =
         static_cast<uint32_t>(ip_range_end) - static_cast<uint32_t>(ip_range_start) + 1u;
-    uint8_t ip_octet =
-        static_cast<uint8_t>(ip_range_start + (span > 0 ? (mac_hash % span) : 0));
+    uint8_t ip_octet = static_cast<uint8_t>(ip_range_start + (span > 0 ? (mac_hash % span) : 0));
 
     size_t last_dot = base_ip.rfind('.');
     std::string base = last_dot != std::string::npos ? base_ip.substr(0, last_dot) : base_ip;

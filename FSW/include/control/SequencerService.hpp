@@ -1,14 +1,13 @@
 #pragma once
 
-#include "control/StateMachine.hpp"
-#include "control/ActuatorCommander.hpp"
-#include "control/AbortBroadcaster.hpp"
-#include "control/FireManager.hpp"
-
-#include "elodin/ElodinClient.hpp"
-
 #include <atomic>
 #include <string>
+
+#include "control/AbortBroadcaster.hpp"
+#include "control/ActuatorCommander.hpp"
+#include "control/FireManager.hpp"
+#include "control/StateMachine.hpp"
+#include "elodin/ElodinClient.hpp"
 
 namespace sequencer {
 
@@ -68,18 +67,22 @@ public:
      */
     bool reloadConfig();
 
-    State currentState() const { return current_state_.load(); }
-    bool  isDebugMode()  const { return debug_mode_.load(); }
+    State currentState() const {
+        return current_state_.load();
+    }
+    bool isDebugMode() const {
+        return debug_mode_.load();
+    }
 
 private:
-    StateMachine      state_machine_;
+    StateMachine state_machine_;
     ActuatorCommander actuator_commander_;
-    AbortBroadcaster  abort_broadcaster_;
-    FireManager       fire_manager_;
+    AbortBroadcaster abort_broadcaster_;
+    FireManager fire_manager_;
     fsw::elodin::ElodinClient elodin_;
 
     std::atomic<State> current_state_{State::IDLE};
-    std::atomic<bool>  debug_mode_{false};
+    std::atomic<bool> debug_mode_{false};
 
     std::string config_path_;
     std::string config_content_;
@@ -95,4 +98,4 @@ private:
     bool loadConfig(const std::string& path);
 };
 
-} // namespace sequencer
+}  // namespace sequencer

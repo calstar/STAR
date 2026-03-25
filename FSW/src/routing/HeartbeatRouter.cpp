@@ -13,11 +13,8 @@ HeartbeatRouter::HeartbeatRouter(fsw::elodin::ElodinClient& elodin_client)
 }
 
 HeartbeatRouter::BoardEvent HeartbeatRouter::process_heartbeat(
-    const Diablo::PacketHeader& header,
-    const Diablo::BoardHeartbeatPacket& heartbeat,
-    uint8_t board_type_wire,
-    uint64_t receive_ts_ns) {
-
+    const Diablo::PacketHeader& header, const Diablo::BoardHeartbeatPacket& heartbeat,
+    uint8_t board_type_wire, uint64_t receive_ts_ns) {
     const uint8_t board_id = heartbeat.board_id;
     const auto now = std::chrono::steady_clock::now();
 

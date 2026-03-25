@@ -16,10 +16,11 @@ namespace sequencer {
 //   [0x50, 0x00] = 0x5000 — SequencerState (new: state + allowed transitions + debug_mode)
 //   [0x43, 0x00] = 0x4300 — StateTransition (legacy: matches Node.js backend publication)
 // ─────────────────────────────────────────────────────────────────────────────
-static constexpr uint16_t VTABLE_SEQUENCER_STATE     = 0x5000;
-static constexpr uint16_t VTABLE_STATE_TRANSITION    = 0x4300;
+static constexpr uint16_t VTABLE_SEQUENCER_STATE = 0x5000;
+static constexpr uint16_t VTABLE_STATE_TRANSITION = 0x4300;
 
-// SequencerState: u64 @0 | u8 @8 | pad[3] @9 (align u32) | allowed_bitmask u32 @12 | debug_mode u8 @16 — 17 bytes
+// SequencerState: u64 @0 | u8 @8 | pad[3] @9 (align u32) | allowed_bitmask u32 @12 | debug_mode u8
+// @16 — 17 bytes
 using SequencerStateMsg =
     comms::CommsMessage<uint64_t, uint8_t, std::array<uint8_t, 3>, uint32_t, uint8_t>;
 
@@ -41,7 +42,8 @@ SequencerService::~SequencerService() {
 // ─────────────────────────────────────────────────────────────────────────────
 static std::string readFile(const std::string& path) {
     std::ifstream f(path);
-    if (!f.is_open()) return {};
+    if (!f.is_open())
+        return {};
     std::ostringstream ss;
     ss << f.rdbuf();
     return ss.str();
@@ -55,13 +57,17 @@ bool SequencerService::loadConfig(const std::string& path) {
     };
 
     config_content_ = readFile(path);
-    config_path_    = path;
+    config_path_ = path;
 
     if (config_content_.empty()) {
         for (const char* fb : fallbacks) {
-            if (std::string(fb) == path) continue;
+            if (std::string(fb) == path)
+                continue;
             config_content_ = readFile(fb);
-            if (!config_content_.empty()) { config_path_ = fb; break; }
+            if (!config_content_.empty()) {
+                config_path_ = fb;
+                break;
+            }
         }
     }
 
@@ -70,7 +76,7 @@ bool SequencerService::loadConfig(const std::string& path) {
     else
         std::cout << "[SequencerService] Loaded config: " << config_path_ << std::endl;
 
-    return true; // non-fatal: service can start without config
+    return true;  // non-fatal: service can start without config
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -96,23 +102,30 @@ bool SequencerService::init(const std::string& config_path) {
         const std::string& cc = config_content_;
         const std::string header = "[" + sec + "]";
         auto pos = cc.find(header);
-        if (pos == std::string::npos) return def;
+        if (pos == std::string::npos)
+            return def;
         auto start = pos + header.size();
-        auto next  = cc.find("\n[", start);
-        const std::string section = (next == std::string::npos) ? cc.substr(start) : cc.substr(start, next - start);
+        auto next = cc.find("\n[", start);
+        const std::string section =
+            (next == std::string::npos) ? cc.substr(start) : cc.substr(start, next - start);
         std::istringstream iss(section);
         std::string line;
         while (std::getline(iss, line)) {
             auto eq = line.find('=');
-            if (eq == std::string::npos) continue;
+            if (eq == std::string::npos)
+                continue;
             std::string k = line.substr(0, eq);
             k.erase(0, k.find_first_not_of(" \t"));
             k.erase(k.find_last_not_of(" \t") + 1);
-            if (k != key) continue;
+            if (k != key)
+                continue;
             std::string v = line.substr(eq + 1);
             v.erase(0, v.find_first_not_of(" \t\r\n"));
             v.erase(v.find_last_not_of(" \t\r\n") + 1);
-            try { return static_cast<uint32_t>(std::stoul(v)); } catch (...) {}
+            try {
+                return static_cast<uint32_t>(std::stoul(v));
+            } catch (...) {
+            }
         }
         return def;
     };
@@ -124,7 +137,7 @@ bool SequencerService::init(const std::string& config_path) {
     // Controller service endpoint for FIRE_START / FIRE_STOP
     // Read from config; defaults to 127.0.0.1:8000
     std::string ctrl_host = "127.0.0.1";
-    uint16_t    ctrl_port = 8000;
+    uint16_t ctrl_port = 8000;
     {
         std::istringstream cfg(config_content_);
         std::string line, cur_sec;
@@ -134,17 +147,25 @@ bool SequencerService::init(const std::string& config_path) {
                 cur_sec = (e != std::string::npos) ? line.substr(1, e - 1) : "";
                 continue;
             }
-            if (cur_sec != "controller_service") continue;
+            if (cur_sec != "controller_service")
+                continue;
             auto eq = line.find('=');
-            if (eq == std::string::npos) continue;
+            if (eq == std::string::npos)
+                continue;
             std::string k = line.substr(0, eq);
             k.erase(0, k.find_first_not_of(" \t"));
             k.erase(k.find_last_not_of(" \t") + 1);
             std::string v = line.substr(eq + 1);
             v.erase(0, v.find_first_not_of(" \t\r\n\""));
             v.erase(v.find_last_not_of(" \t\r\n\"") + 1);
-            if (k == "host") ctrl_host = v;
-            else if (k == "port") { try { ctrl_port = static_cast<uint16_t>(std::stoi(v)); } catch (...) {} }
+            if (k == "host")
+                ctrl_host = v;
+            else if (k == "port") {
+                try {
+                    ctrl_port = static_cast<uint16_t>(std::stoi(v));
+                } catch (...) {
+                }
+            }
         }
     }
     fire_manager_.setControllerEndpoint(ctrl_host, ctrl_port);
@@ -161,25 +182,32 @@ bool SequencerService::init(const std::string& config_path) {
                 cur_sec = (e != std::string::npos) ? line.substr(1, e - 1) : "";
                 continue;
             }
-            if (cur_sec != "database") continue;
+            if (cur_sec != "database")
+                continue;
             auto eq = line.find('=');
-            if (eq == std::string::npos) continue;
+            if (eq == std::string::npos)
+                continue;
             std::string k = line.substr(0, eq);
             k.erase(0, k.find_first_not_of(" \t"));
             k.erase(k.find_last_not_of(" \t") + 1);
-            if (k != "port") continue;
+            if (k != "port")
+                continue;
             std::string v = line.substr(eq + 1);
             v.erase(0, v.find_first_not_of(" \t\r\n"));
             v.erase(v.find_last_not_of(" \t\r\n") + 1);
-            try { elodin_port = static_cast<uint16_t>(std::stoi(v)); } catch (...) {}
+            try {
+                elodin_port = static_cast<uint16_t>(std::stoi(v));
+            } catch (...) {
+            }
         }
     }
     if (elodin_.connect(elodin_host, elodin_port)) {
-        std::cout << "[SequencerService] Connected to Elodin at "
-                  << elodin_host << ":" << elodin_port << std::endl;
+        std::cout << "[SequencerService] Connected to Elodin at " << elodin_host << ":"
+                  << elodin_port << std::endl;
         fsw::elodin::DatabaseConfig::register_non_sensor_tables(elodin_);
     } else {
-        std::cerr << "[SequencerService] Cannot connect to Elodin (state will not be published)" << std::endl;
+        std::cerr << "[SequencerService] Cannot connect to Elodin (state will not be published)"
+                  << std::endl;
     }
 
     current_state_ = State::IDLE;
@@ -190,9 +218,7 @@ bool SequencerService::init(const std::string& config_path) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 bool SequencerService::isAbortState(State s) {
-    return s == State::ENGINE_ABORT ||
-           s == State::GSE_ABORT    ||
-           s == State::EMERGENCY_ABORT;
+    return s == State::ENGINE_ABORT || s == State::GSE_ABORT || s == State::EMERGENCY_ABORT;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -207,9 +233,8 @@ bool SequencerService::transitionTo(const std::string& state_name) {
 
     if (!debug_mode_) {
         if (!state_machine_.isAllowed(from, to)) {
-            std::cerr << "[SequencerService] Transition "
-                      << StateMachine::name(from) << " → " << StateMachine::name(to)
-                      << " is not allowed" << std::endl;
+            std::cerr << "[SequencerService] Transition " << StateMachine::name(from) << " → "
+                      << StateMachine::name(to) << " is not allowed" << std::endl;
             return false;
         }
     }
@@ -248,8 +273,8 @@ bool SequencerService::transitionTo(const std::string& state_name) {
     publishStateTransition(from, to);
     publishState();
 
-    std::cout << "[SequencerService] "
-              << StateMachine::name(from) << " → " << StateMachine::name(to) << std::endl;
+    std::cout << "[SequencerService] " << StateMachine::name(from) << " → "
+              << StateMachine::name(to) << std::endl;
     return true;
 }
 
@@ -260,7 +285,7 @@ bool SequencerService::setDebugMode(bool enabled) {
         actuator_commander_.clearAllManualOverrides();
     }
     std::cout << "[SequencerService] Debug mode: " << (enabled ? "ON" : "OFF") << std::endl;
-    publishState(); // push updated debug_mode flag to GUI
+    publishState();  // push updated debug_mode flag to GUI
     return true;
 }
 
@@ -296,7 +321,8 @@ bool SequencerService::reloadConfig() {
     }
     std::string sm_csv = "external/DiabloAvionics/test_guis/state_transitions.csv";
     if (!state_machine_.load(sm_csv)) {
-        std::cerr << "[SequencerService] Reload: failed to reload state transitions CSV" << std::endl;
+        std::cerr << "[SequencerService] Reload: failed to reload state transitions CSV"
+                  << std::endl;
         return false;
     }
     std::cout << "[SequencerService] Config reloaded successfully" << std::endl;
@@ -307,11 +333,12 @@ bool SequencerService::reloadConfig() {
 // Elodin publishing
 // ─────────────────────────────────────────────────────────────────────────────
 void SequencerService::publishState() {
-    if (!elodin_.is_connected()) return;
+    if (!elodin_.is_connected())
+        return;
 
-    const State s      = current_state_.load();
+    const State s = current_state_.load();
     const uint32_t mask = state_machine_.allowedBitmask(s);
-    const uint8_t dbg  = debug_mode_ ? 1u : 0u;
+    const uint8_t dbg = debug_mode_ ? 1u : 0u;
 
     SequencerStateMsg msg(now_ns(), static_cast<uint8_t>(s), std::array<uint8_t, 3>{0, 0, 0}, mask,
                           dbg);
@@ -320,10 +347,11 @@ void SequencerService::publishState() {
 }
 
 void SequencerService::publishStateTransition(State from, State to) {
-    if (!elodin_.is_connected()) return;
+    if (!elodin_.is_connected())
+        return;
 
     StateTransitionMsg msg(now_ns(), static_cast<uint8_t>(from), static_cast<uint8_t>(to), 0);
     elodin_.publish(VTABLE_STATE_TRANSITION, msg);
 }
 
-} // namespace sequencer
+}  // namespace sequencer

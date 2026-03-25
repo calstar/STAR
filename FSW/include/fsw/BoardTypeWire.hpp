@@ -6,7 +6,8 @@
 namespace fsw {
 namespace daq_wire {
 
-/** Legacy DAQv2 wire numeric board_type (Elodin / discovery); heartbeat body no longer carries type. */
+/** Legacy DAQv2 wire numeric board_type (Elodin / discovery); heartbeat body no longer carries
+ * type. */
 constexpr uint8_t kUnknown = 0;
 constexpr uint8_t kPressureTransducer = 1;
 constexpr uint8_t kLoadCell = 2;

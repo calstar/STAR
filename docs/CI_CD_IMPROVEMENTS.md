@@ -28,7 +28,7 @@ This document outlines the improvements made to the CI/CD pipeline and git confi
 
 **New Features:**
 - **Format Check Job** - Runs first, must pass before builds
-- **Matrix Builds** - Tests with GCC 12 and Clang 15, Debug and Release
+- **Matrix Builds** - GCC 12 and Clang 18, Release only (Clang uses GCC 12 libstdc++ in CI)
 - **Static Analysis** - cppcheck and clang-tidy with artifact uploads
 - **Code Quality Checks** - TODO/FIXME detection, large file detection
 - **Security Scanning** - Semgrep and custom security checks

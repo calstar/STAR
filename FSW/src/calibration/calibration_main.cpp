@@ -277,8 +277,8 @@ int main(int argc, char* argv[]) {
 
     auto connect_and_register = [&]() -> bool {
         if (!elodin_client.connect(elodin_host, elodin_port)) {
-            std::cerr << "[Cal] Failed to connect to Elodin at "
-                      << elodin_host << ":" << elodin_port << std::endl;
+            std::cerr << "[Cal] Failed to connect to Elodin at " << elodin_host << ":"
+                      << elodin_port << std::endl;
             return false;
         }
         fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names);
@@ -335,8 +335,8 @@ int main(int argc, char* argv[]) {
 
         // Parse 21-byte raw sensor payload directly
         const uint8_t* p = pkt_buf + 8;
-        const uint64_t ts_ns  = *reinterpret_cast<const uint64_t*>(p);
-        const uint8_t  ch     = p[8];
+        const uint64_t ts_ns = *reinterpret_cast<const uint64_t*>(p);
+        const uint8_t ch = p[8];
         const uint32_t raw_adc = *reinterpret_cast<const uint32_t*>(p + 12);
         // p[16-19] = sample_timestamp_ms (unused in calibration output)
         // p[20]    = status_flags        (unused in calibration output)
@@ -350,52 +350,50 @@ int main(int argc, char* argv[]) {
             double psi;
             uint8_t cal_status;
             if (hp_pt_channels.count(ch)) {
-                psi = convert_hp_pt_to_pressure(static_cast<int32_t>(raw_adc),
-                                                hp_pt_full_scale_psi,
-                                                hp_pt_sense_resistor_ohms,
-                                                hp_pt_adc_ref_voltage);
+                psi = convert_hp_pt_to_pressure(static_cast<int32_t>(raw_adc), hp_pt_full_scale_psi,
+                                                hp_pt_sense_resistor_ohms, hp_pt_adc_ref_voltage);
                 cal_status = 1;
                 if (verbose() && packet_count % 100 == 0)
                     std::cout << "[Cal] HP PT ch" << (int)ch
-                              << " adc=" << static_cast<int32_t>(raw_adc)
-                              << " psi=" << psi << std::endl;
+                              << " adc=" << static_cast<int32_t>(raw_adc) << " psi=" << psi
+                              << std::endl;
             } else {
                 psi = pt_calibration.calculate_pressure(ch, static_cast<int32_t>(raw_adc));
                 cal_status = pt_calibration.is_calibrated(ch) ? 1u : 0u;
                 if (ch == 5 && !logged_ch5.exchange(true))
-                    std::cout << "[Cal] PT ch5 (Ox Up) first publish: " << psi
-                              << " psi" << std::endl;
+                    std::cout << "[Cal] PT ch5 (Ox Up) first publish: " << psi << " psi"
+                              << std::endl;
                 if (verbose() && packet_count % 100 == 0)
-                    std::cout << "[Cal] PT ch" << (int)ch << " adc=" << raw_adc
-                              << " psi=" << psi << std::endl;
+                    std::cout << "[Cal] PT ch" << (int)ch << " adc=" << raw_adc << " psi=" << psi
+                              << std::endl;
             }
             comms::messages::sensor::CalibratedPTMessage cal_msg(
-                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0},
-                static_cast<float>(psi), raw_adc, cal_status);
+                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(psi), raw_adc,
+                cal_status);
             elodin_client.publish(static_cast<uint16_t>(0x2000 | (0x10 + ch)), cal_msg);
 
         } else if (type_hi == 0x21) {  // TC raw
             double temp_c = tc_calibration.calculate(ch, static_cast<int32_t>(raw_adc));
             uint8_t cal_status = tc_calibration.is_calibrated(ch) ? 1u : 0u;
             comms::messages::sensor::CalibratedTCMessage cal_msg(
-                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0},
-                static_cast<float>(temp_c), raw_adc, cal_status);
+                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(temp_c), raw_adc,
+                cal_status);
             elodin_client.publish(static_cast<uint16_t>(0x2100 | (0x10 + ch)), cal_msg);
 
         } else if (type_hi == 0x22) {  // RTD raw
             double temp_c = rtd_calibration.calculate(ch, static_cast<int32_t>(raw_adc));
             uint8_t cal_status = rtd_calibration.is_calibrated(ch) ? 1u : 0u;
             comms::messages::sensor::CalibratedRTDMessage cal_msg(
-                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0},
-                static_cast<float>(temp_c), raw_adc, cal_status);
+                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(temp_c), raw_adc,
+                cal_status);
             elodin_client.publish(static_cast<uint16_t>(0x2200 | (0x10 + ch)), cal_msg);
 
         } else if (type_hi == 0x23) {  // LC raw
             double lbf = lc_calibration.calculate(ch, static_cast<int32_t>(raw_adc));
             uint8_t cal_status = lc_calibration.is_calibrated(ch) ? 1u : 0u;
             comms::messages::sensor::CalibratedLCMessage cal_msg(
-                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0},
-                static_cast<float>(lbf), raw_adc, cal_status);
+                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(lbf), raw_adc,
+                cal_status);
             elodin_client.publish(static_cast<uint16_t>(0x2300 | (0x10 + ch)), cal_msg);
         }
 
@@ -403,9 +401,8 @@ int main(int argc, char* argv[]) {
 
         packet_count++;
         if (packet_count % 500 == 0)
-            std::cout << "[Cal] Processed " << packet_count << " raw packets (type=0x"
-                      << std::hex << (int)type_hi << " ch=" << (int)ch << std::dec << ")"
-                      << std::endl;
+            std::cout << "[Cal] Processed " << packet_count << " raw packets (type=0x" << std::hex
+                      << (int)type_hi << " ch=" << (int)ch << std::dec << ")" << std::endl;
     }
 
     std::cout << "[Cal] Stopped." << std::endl;

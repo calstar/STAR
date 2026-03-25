@@ -45,10 +45,10 @@ std::string trim(const std::string& s) {
 
 // ── OTA Flash ────────────────────────────────────────────────────────────────
 
-static constexpr uint16_t OTA_PORT       = 3232;
-static constexpr size_t   CHUNK_SIZE     = 4096;
-static constexpr int      CONNECT_TIMEOUT_S  = 5;
-static constexpr int      TRANSFER_TIMEOUT_S = 60;
+static constexpr uint16_t OTA_PORT = 3232;
+static constexpr size_t CHUNK_SIZE = 4096;
+static constexpr int CONNECT_TIMEOUT_S = 5;
+static constexpr int TRANSFER_TIMEOUT_S = 60;
 
 bool flashFirmware(const std::string& ip, const std::string& bin_path, std::string& error) {
     // Read firmware file
@@ -71,17 +71,22 @@ bool flashFirmware(const std::string& ip, const std::string& bin_path, std::stri
 
     // TCP connect to board:3232
     int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) { error = "socket() failed"; return false; }
+    if (sock < 0) {
+        error = "socket() failed";
+        return false;
+    }
 
     {
-        struct timeval tv{ .tv_sec = CONNECT_TIMEOUT_S, .tv_usec = 0 };
+        struct timeval tv {
+            .tv_sec = CONNECT_TIMEOUT_S, .tv_usec = 0
+        };
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     }
 
-    struct sockaddr_in addr{};
+    struct sockaddr_in addr {};
     addr.sin_family = AF_INET;
-    addr.sin_port   = htons(OTA_PORT);
+    addr.sin_port = htons(OTA_PORT);
     if (inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) != 1) {
         close(sock);
         error = "invalid IP: " + ip;
@@ -95,7 +100,9 @@ bool flashFirmware(const std::string& ip, const std::string& bin_path, std::stri
 
     // Set longer transfer timeout now that we're connected
     {
-        struct timeval tv{ .tv_sec = TRANSFER_TIMEOUT_S, .tv_usec = 0 };
+        struct timeval tv {
+            .tv_sec = TRANSFER_TIMEOUT_S, .tv_usec = 0
+        };
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     }
@@ -122,8 +129,8 @@ bool flashFirmware(const std::string& ip, const std::string& bin_path, std::stri
         sent += static_cast<size_t>(n);
         int pct = static_cast<int>((sent * 100) / firmware.size());
         if (pct != last_pct) {
-            std::cout << "[OTAService] Flash " << ip << ": " << pct << "% ("
-                      << sent << "/" << file_size << " bytes)" << std::endl;
+            std::cout << "[OTAService] Flash " << ip << ": " << pct << "% (" << sent << "/"
+                      << file_size << " bytes)" << std::endl;
             last_pct = pct;
         }
     }
@@ -149,7 +156,9 @@ bool flashFirmware(const std::string& ip, const std::string& bin_path, std::stri
 // ── TCP command handler ───────────────────────────────────────────────────────
 
 void handleClient(int client_fd) {
-    struct timeval tv{ .tv_sec = 30, .tv_usec = 0 };
+    struct timeval tv {
+        .tv_sec = 30, .tv_usec = 0
+    };
     setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     auto sendReply = [&](const std::string& msg) {
@@ -160,8 +169,10 @@ void handleClient(int client_fd) {
     buf.reserve(512);
     char c;
     while (g_running && recv(client_fd, &c, 1, 0) == 1) {
-        if (c == '\n') break;
-        if (buf.size() < 1024) buf += c;
+        if (c == '\n')
+            break;
+        if (buf.size() < 1024)
+            buf += c;
     }
     const std::string cmd = trim(buf);
 
@@ -171,7 +182,7 @@ void handleClient(int client_fd) {
         if (colon == std::string::npos || colon == 0 || colon + 1 >= rest.size()) {
             sendReply("ERR:bad OTA_FLASH format — use OTA_FLASH:<ip>:<path>\n");
         } else {
-            const std::string ip   = trim(rest.substr(0, colon));
+            const std::string ip = trim(rest.substr(0, colon));
             const std::string path = trim(rest.substr(colon + 1));
             std::cout << "[OTAService] Flashing " << ip << " with " << path << std::endl;
             std::string err;
@@ -206,7 +217,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    signal(SIGINT,  signalHandler);
+    signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
     signal(SIGPIPE, SIG_IGN);
 
@@ -220,10 +231,10 @@ int main(int argc, char* argv[]) {
         setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     }
     {
-        struct sockaddr_in addr{};
-        addr.sin_family      = AF_INET;
+        struct sockaddr_in addr {};
+        addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = INADDR_ANY;
-        addr.sin_port        = htons(listen_port);
+        addr.sin_port = htons(listen_port);
         if (bind(listen_fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
             std::cerr << "[OTAService] bind() failed on port " << listen_port << std::endl;
             close(listen_fd);
@@ -243,13 +254,19 @@ int main(int argc, char* argv[]) {
         fd_set rd;
         FD_ZERO(&rd);
         FD_SET(listen_fd, &rd);
-        struct timeval tv{ .tv_sec = 1, .tv_usec = 0 };
-        if (select(listen_fd + 1, &rd, nullptr, nullptr, &tv) <= 0) continue;
+        struct timeval tv {
+            .tv_sec = 1, .tv_usec = 0
+        };
+        if (select(listen_fd + 1, &rd, nullptr, nullptr, &tv) <= 0)
+            continue;
 
         int client_fd = accept(listen_fd, nullptr, nullptr);
-        if (client_fd < 0) continue;
+        if (client_fd < 0)
+            continue;
 
-        std::thread([client_fd]() { handleClient(client_fd); }).detach();
+        std::thread([client_fd]() {
+            handleClient(client_fd);
+        }).detach();
     }
 
     close(listen_fd);

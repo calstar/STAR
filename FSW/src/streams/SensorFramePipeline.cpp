@@ -62,8 +62,7 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
 
         daq_comms::protocol::SensorBatch batch;
         if (!chunks.empty()) {
-            batch.frame_timestamp_ns =
-                static_cast<uint64_t>(chunks[0].timestamp) * 1000000ULL;
+            batch.frame_timestamp_ns = static_cast<uint64_t>(chunks[0].timestamp) * 1000000ULL;
         } else {
             auto now = std::chrono::steady_clock::now();
             batch.frame_timestamp_ns =

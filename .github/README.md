@@ -11,7 +11,7 @@ One workflow run per push/PR (no separate Actions for the same event). Jobs incl
 1. **Format Check** — `./format.sh --check`
 2. **Repo standards (pre-commit)** — runs the [pre-commit](https://pre-commit.com/) tool against `.pre-commit-config.yaml` on the whole tree (`pre-commit run --all-files`). This executes **after** push in CI; the name “pre-commit” refers to the tool/config, not the timing. Install hooks locally (`pre-commit install`) to run the same checks **before** you commit.
 3. **Web GUI** — `npm run test` and `npm run test:build` in `web-gui/frontend`
-4. **Build** — multiple compilers (GCC 12, Clang 15) and configurations (Debug, Release)
+4. **Build** — GCC 12 and Clang 18, **Release** only; Clang uses GCC 12’s libstdc++ in CI to avoid libstdc++ 14 + C++20 `<format>` breakage
 5. **Static Analysis** — cppcheck and clang-tidy
 6. **Code Quality** — TODOs, large files, etc.
 7. **Security Scan** — semgrep, secret patterns, unsafe C APIs
@@ -55,8 +55,8 @@ pre-commit run --all-files
 ### Build Matrix
 
 The CI builds with:
-- **Compilers**: GCC 12, Clang 15
-- **Build Types**: Debug, Release
+- **Compilers**: GCC 12, Clang 18 (with libstdc++ pinned to GCC 12 in Actions)
+- **Build type (CI)**: Release only
 - **C++ Standard**: C++20
 
 ### Artifacts

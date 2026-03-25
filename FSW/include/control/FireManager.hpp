@@ -29,8 +29,7 @@ public:
      * @param fire_duration_ms    Normal FIRE window in milliseconds (default 6000).
      * @param fire_extended_ms    Extended FIRE window in milliseconds (default 10000).
      */
-    explicit FireManager(uint32_t fire_duration_ms = 6000,
-                         uint32_t fire_extended_ms = 10000);
+    explicit FireManager(uint32_t fire_duration_ms = 6000, uint32_t fire_extended_ms = 10000);
     ~FireManager();
 
     /**
@@ -64,7 +63,9 @@ public:
      */
     void extend();
 
-    bool isActive() const { return active_; }
+    bool isActive() const {
+        return active_;
+    }
 
 private:
     uint32_t fire_duration_ms_;
@@ -84,4 +85,4 @@ private:
     void notifyController(const std::string& msg);
 };
 
-} // namespace sequencer
+}  // namespace sequencer

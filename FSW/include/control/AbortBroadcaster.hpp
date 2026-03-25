@@ -18,8 +18,7 @@ namespace sequencer {
  */
 class AbortBroadcaster {
 public:
-    explicit AbortBroadcaster(uint16_t port = 5005,
-                              uint32_t abort_done_delay_ms = 3000);
+    explicit AbortBroadcaster(uint16_t port = 5005, uint32_t abort_done_delay_ms = 3000);
     ~AbortBroadcaster();
 
     /** Send ABORT broadcast and schedule ABORT_DONE after abort_done_delay_ms. */
@@ -38,4 +37,4 @@ private:
     void waitAndSendAbortDone();
 };
 
-} // namespace sequencer
+}  // namespace sequencer

@@ -1,13 +1,13 @@
 #pragma once
 
-#include "control/StateMachine.hpp"
-
 #include <atomic>
 #include <map>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "control/StateMachine.hpp"
 
 namespace sequencer {
 
@@ -20,10 +20,10 @@ namespace sequencer {
  *          "PWM" — controlled by controller_service, not by sequencer (skipped in FIRE)
  */
 struct ActuatorRole {
-    int channel{0};          // 1-based actuator ID on the board
-    std::string board_ip;    // IP of the board that owns this actuator
-    bool is_no{false};       // Normally Open: invert the logical position
-    bool is_pwm{false};      // PWM type: sequencer skips in FIRE state
+    int channel{0};        // 1-based actuator ID on the board
+    std::string board_ip;  // IP of the board that owns this actuator
+    bool is_no{false};     // Normally Open: invert the logical position
+    bool is_pwm{false};    // PWM type: sequencer skips in FIRE state
 };
 
 /**
@@ -79,7 +79,9 @@ public:
     /** Clear all manual overrides. */
     void clearAllManualOverrides();
 
-    bool isLoaded() const { return loaded_; }
+    bool isLoaded() const {
+        return loaded_;
+    }
 
 private:
     std::map<std::string, ActuatorRole> roles_;
@@ -98,12 +100,12 @@ private:
     bool loaded_{false};
 
     // Resolve state name case-insensitively. Returns end() if not found.
-    std::map<std::string, std::map<std::string, int>>::const_iterator
-    findStateActuators(const std::string& state_name) const;
+    std::map<std::string, std::map<std::string, int>>::const_iterator findStateActuators(
+        const std::string& state_name) const;
 
     // Build and send one UDP actuator command packet to a board.
     bool sendUDP(const std::string& board_ip,
                  const std::vector<std::pair<uint8_t, uint8_t>>& id_state_pairs);
 };
 
-} // namespace sequencer
+}  // namespace sequencer

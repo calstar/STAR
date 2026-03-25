@@ -30,7 +30,7 @@
 #include "elodin/ElodinClient.hpp"
 
 namespace {
-std::atomic<bool>    g_running{true};
+std::atomic<bool> g_running{true};
 std::atomic<uint8_t> g_engine_state{0};
 
 void signalHandler(int /*sig*/) {
@@ -39,7 +39,7 @@ void signalHandler(int /*sig*/) {
 }
 
 constexpr uint8_t SERVER_HEARTBEAT_TYPE = 2;
-constexpr uint8_t DIABLO_VERSION        = 0;
+constexpr uint8_t DIABLO_VERSION = 0;
 
 // ── sequencer::State → EngineState (DiabloEnums.h) ───────────────────────────
 // EngineState: SAFE=0, PRESSURIZING=1, LOX_FILL=2, FIRING=3, POST_FIRE=4
@@ -51,21 +51,36 @@ constexpr uint8_t DIABLO_VERSION        = 0;
 //   PRESS_STANDBY=20
 static constexpr uint8_t stateToEngine(uint8_t s) {
     switch (s) {
-        case 3:  return 1;  // FUEL_FILL      → PRESSURIZING
-        case 4:  return 2;  // OX_FILL        → LOX_FILL
-        case 5:  return 1;  // GN2_LOW_PRESS  → PRESSURIZING
-        case 6:  return 1;  // GN2_VENT       → PRESSURIZING
-        case 7:  return 1;  // FUEL_PRESS     → PRESSURIZING
-        case 8:  return 1;  // FUEL_VENT      → PRESSURIZING
-        case 9:  return 1;  // OX_PRESS       → PRESSURIZING
-        case 10: return 1;  // OX_VENT        → PRESSURIZING
-        case 11: return 1;  // GN2_HIGH_PRESS → PRESSURIZING
-        case 12: return 1;  // GN2_HIGH_VENT  → PRESSURIZING
-        case 13: return 1;  // VENT           → PRESSURIZING
-        case 15: return 1;  // READY          → PRESSURIZING
-        case 16: return 3;  // FIRE           → FIRING
-        case 20: return 1;  // PRESS_STANDBY  → PRESSURIZING
-        default: return 0;  // DEBUG, IDLE, ARMED, CALIBRATE, ABORT states → SAFE
+        case 3:
+            return 1;  // FUEL_FILL      → PRESSURIZING
+        case 4:
+            return 2;  // OX_FILL        → LOX_FILL
+        case 5:
+            return 1;  // GN2_LOW_PRESS  → PRESSURIZING
+        case 6:
+            return 1;  // GN2_VENT       → PRESSURIZING
+        case 7:
+            return 1;  // FUEL_PRESS     → PRESSURIZING
+        case 8:
+            return 1;  // FUEL_VENT      → PRESSURIZING
+        case 9:
+            return 1;  // OX_PRESS       → PRESSURIZING
+        case 10:
+            return 1;  // OX_VENT        → PRESSURIZING
+        case 11:
+            return 1;  // GN2_HIGH_PRESS → PRESSURIZING
+        case 12:
+            return 1;  // GN2_HIGH_VENT  → PRESSURIZING
+        case 13:
+            return 1;  // VENT           → PRESSURIZING
+        case 15:
+            return 1;  // READY          → PRESSURIZING
+        case 16:
+            return 3;  // FIRE           → FIRING
+        case 20:
+            return 1;  // PRESS_STANDBY  → PRESSURIZING
+        default:
+            return 0;  // DEBUG, IDLE, ARMED, CALIBRATE, ABORT states → SAFE
     }
 }
 
@@ -91,10 +106,12 @@ void elodinThread(std::string host, uint16_t port) {
             // Connection lost — reconnect on next iteration
             continue;
         }
-        if (n < 8) continue;
+        if (n < 8)
+            continue;
 
         // SequencerState VTable: [0x50, 0x00]
-        // Payload: u64[0] ts | u8[8] current_state | pad[9..11] | u32[12] bitmask | u8[16] debug_mode
+        // Payload: u64[0] ts | u8[8] current_state | pad[9..11] | u32[12] bitmask | u8[16]
+        // debug_mode
         if (buf[5] == 0x50 && buf[6] == 0x00 && n >= 8 + 9) {
             const uint8_t seq_state = buf[8 + 8];  // header(8) + payload[8]
             g_engine_state.store(stateToEngine(seq_state));
@@ -114,7 +131,8 @@ std::string getTomlValue(const std::string& content, const std::string& section,
                          const std::string& key, const std::string& fallback = "") {
     std::string sec_header = "[" + section + "]";
     auto sec_pos = content.find(sec_header);
-    if (sec_pos == std::string::npos) return fallback;
+    if (sec_pos == std::string::npos)
+        return fallback;
 
     auto search_start = sec_pos + sec_header.size();
     auto next_sec = content.find("\n[", search_start);
@@ -126,20 +144,24 @@ std::string getTomlValue(const std::string& content, const std::string& section,
     std::string line;
     while (std::getline(iss, line)) {
         auto c = line.find('#');
-        if (c != std::string::npos) line = line.substr(0, c);
+        if (c != std::string::npos)
+            line = line.substr(0, c);
         auto eq = line.find('=');
-        if (eq == std::string::npos) continue;
+        if (eq == std::string::npos)
+            continue;
         std::string k = trim(line.substr(0, eq));
         std::string v = trim(line.substr(eq + 1));
-        if (k == key) return v;
+        if (k == key)
+            return v;
     }
     return fallback;
 }
 
 std::vector<uint8_t> buildHeartbeatPacket(uint8_t engine_state) {
     auto now = std::chrono::system_clock::now();
-    auto ms  = std::chrono::duration_cast<std::chrono::milliseconds>(
-                   now.time_since_epoch()).count() & 0xFFFFFFFFu;
+    auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() &
+        0xFFFFFFFFu;
     return {
         SERVER_HEARTBEAT_TYPE,
         DIABLO_VERSION,
@@ -154,12 +176,12 @@ std::vector<uint8_t> buildHeartbeatPacket(uint8_t engine_state) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
-    std::string config_path    = "config/config.toml";
-    std::string elodin_host    = "127.0.0.1";
-    uint16_t    elodin_port    = 2240;
-    int         interval_ms    = 1000;
-    std::string broadcast_ip   = "192.168.2.255";
-    uint16_t    broadcast_port = 5005;
+    std::string config_path = "config/config.toml";
+    std::string elodin_host = "127.0.0.1";
+    uint16_t elodin_port = 2240;
+    int interval_ms = 1000;
+    std::string broadcast_ip = "192.168.2.255";
+    uint16_t broadcast_port = 5005;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -190,7 +212,10 @@ int main(int argc, char* argv[]) {
         if (!f.is_open()) {
             for (const auto& fp : {"config/config.toml", "../config/config.toml"}) {
                 f.open(fp);
-                if (f.is_open()) { config_path = fp; break; }
+                if (f.is_open()) {
+                    config_path = fp;
+                    break;
+                }
             }
         }
         if (f.is_open()) {
@@ -203,25 +228,36 @@ int main(int argc, char* argv[]) {
     if (!config_content.empty()) {
         auto val = getTomlValue(config_content, "heartbeat_service", "interval_ms", "");
         if (!val.empty()) {
-            try { interval_ms = std::max(100, std::stoi(val)); } catch (...) {}
+            try {
+                interval_ms = std::max(100, std::stoi(val));
+            } catch (...) {
+            }
         }
         val = getTomlValue(config_content, "heartbeat_service", "broadcast_ip",
-              getTomlValue(config_content, "server_heartbeat", "broadcast_ip", ""));
-        if (!val.empty()) broadcast_ip = val;
+                           getTomlValue(config_content, "server_heartbeat", "broadcast_ip", ""));
+        if (!val.empty())
+            broadcast_ip = val;
         val = getTomlValue(config_content, "heartbeat_service", "broadcast_port",
-              getTomlValue(config_content, "server_heartbeat", "broadcast_port", ""));
+                           getTomlValue(config_content, "server_heartbeat", "broadcast_port", ""));
         if (!val.empty()) {
-            try { broadcast_port = static_cast<uint16_t>(std::stoi(val)); } catch (...) {}
+            try {
+                broadcast_port = static_cast<uint16_t>(std::stoi(val));
+            } catch (...) {
+            }
         }
         val = getTomlValue(config_content, "heartbeat_service", "elodin_host", "");
-        if (!val.empty()) elodin_host = val;
+        if (!val.empty())
+            elodin_host = val;
         val = getTomlValue(config_content, "heartbeat_service", "elodin_port", "");
         if (!val.empty()) {
-            try { elodin_port = static_cast<uint16_t>(std::stoi(val)); } catch (...) {}
+            try {
+                elodin_port = static_cast<uint16_t>(std::stoi(val));
+            } catch (...) {
+            }
         }
     }
 
-    signal(SIGINT,  signalHandler);
+    signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
 
     // UDP broadcast socket
@@ -238,7 +274,7 @@ int main(int argc, char* argv[]) {
     struct sockaddr_in dest;
     memset(&dest, 0, sizeof(dest));
     dest.sin_family = AF_INET;
-    dest.sin_port   = htons(broadcast_port);
+    dest.sin_port = htons(broadcast_port);
     if (inet_pton(AF_INET, broadcast_ip.c_str(), &dest.sin_addr) != 1) {
         std::cerr << "[HeartbeatService] Invalid broadcast IP: " << broadcast_ip << std::endl;
         close(sock);
@@ -247,8 +283,8 @@ int main(int argc, char* argv[]) {
 
     std::cout << "[HeartbeatService] Started — interval=" << interval_ms
               << "ms broadcast=" << broadcast_ip << ":" << broadcast_port << std::endl;
-    std::cout << "[HeartbeatService] State from Elodin at "
-              << elodin_host << ":" << elodin_port << " [0x5000]" << std::endl;
+    std::cout << "[HeartbeatService] State from Elodin at " << elodin_host << ":" << elodin_port
+              << " [0x5000]" << std::endl;
 
     // Start Elodin subscriber thread
     std::thread elodin_thread(elodinThread, elodin_host, elodin_port);
@@ -261,7 +297,8 @@ int main(int argc, char* argv[]) {
         auto pkt = buildHeartbeatPacket(engine_state);
         ssize_t sent = sendto(sock, pkt.data(), pkt.size(), 0,
                               reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
-        if (sent == static_cast<ssize_t>(pkt.size())) count++;
+        if (sent == static_cast<ssize_t>(pkt.size()))
+            count++;
 
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration<double>(now - last_log).count() >= 10.0) {

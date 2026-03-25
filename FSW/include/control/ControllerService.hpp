@@ -60,8 +60,7 @@ public:
                     const RobustDDPController::Config& controller_config,
                     const std::string& elodin_host = "", uint16_t elodin_port = 2240,
                     const std::string& relay_host = "127.0.0.1", uint16_t relay_port = 9090,
-                    const std::string& lut_path = "",
-                    const std::string& thrust_curve_path = "");
+                    const std::string& lut_path = "", const std::string& thrust_curve_path = "");
 
     /** Start the controller loop at the given rate. */
     bool start(double loop_rate_hz = 10.0);

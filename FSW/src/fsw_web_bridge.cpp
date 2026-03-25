@@ -15,19 +15,20 @@ using json = nlohmann::json;
 
 // Per-VTable 10 Hz throttle for WebSocket broadcasts.
 // Elodin may push data at 100+ Hz; the browser only needs 10 Hz for display.
-static constexpr uint64_t BROADCAST_INTERVAL_MS = 100; // 10 Hz
+static constexpr uint64_t BROADCAST_INTERVAL_MS = 100;  // 10 Hz
 
 static uint64_t now_ms() {
     using namespace std::chrono;
     return static_cast<uint64_t>(
-        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count()
-    );
+        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 
-static bool should_broadcast(std::unordered_map<uint16_t, uint64_t>& last_sent, uint16_t vtable_id) {
+static bool should_broadcast(std::unordered_map<uint16_t, uint64_t> &last_sent,
+                             uint16_t vtable_id) {
     uint64_t now = now_ms();
-    auto& last = last_sent[vtable_id];
-    if (now - last < BROADCAST_INTERVAL_MS) return false;
+    auto &last = last_sent[vtable_id];
+    if (now - last < BROADCAST_INTERVAL_MS)
+        return false;
     last = now;
     return true;
 }
@@ -199,7 +200,8 @@ int main() {
                 if (!entity.empty()) {
                     // Throttle to 10 Hz per VTable — browser doesn't need higher rate
                     uint16_t vtable_id = (static_cast<uint16_t>(high) << 8) | low;
-                    if (!should_broadcast(last_sent, vtable_id)) continue;
+                    if (!should_broadcast(last_sent, vtable_id))
+                        continue;
 
                     json update;
                     update["type"] = "sensor_update";

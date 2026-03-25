@@ -191,8 +191,8 @@ std::vector<BoardInfo> parseBoards(const std::string& content) {
         if (ip.empty() && bid > 0)
             ip = "192.168.2." + std::to_string(bid);
 
-        boards.push_back(
-            {bid, ip, type, enabled, designated, nec_abort, ref, ser, active, num_sens, listen_port});
+        boards.push_back({bid, ip, type, enabled, designated, nec_abort, ref, ser, active, num_sens,
+                          listen_port});
         pos = end + 1;
     }
     return boards;

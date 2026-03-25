@@ -1,9 +1,5 @@
 #include "control/PressureStateMachine.hpp"
 
-#include "DiabloPacketUtils.h"
-#include "DiabloPackets.h"
-#include "fsw/BoardTypeWire.hpp"
-
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -11,9 +7,12 @@
 #include <iostream>
 #include <thread>
 
+#include "DiabloPacketUtils.h"
+#include "DiabloPackets.h"
 #include "comms/messages/control/ControlMessages.hpp"
 #include "comms/messages/control/ControllerMessages.hpp"
 #include "db.hpp"
+#include "fsw/BoardTypeWire.hpp"
 
 using namespace vtable;
 using namespace vtable::builder;
@@ -660,11 +659,10 @@ void PressureStateMachine::sendActuatorCommandUDP(ActuatorID actuator, CommandTy
     std::vector<Diablo::ActuatorCommand> commands;
     commands.push_back(cmd);
 
-    uint32_t ts_ms = static_cast<uint32_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count() &
-        0xFFFFFFFF);
+    uint32_t ts_ms = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count() &
+                                           0xFFFFFFFF);
     uint8_t buf[512];
     size_t len = Diablo::create_actuator_command_packet(commands, ts_ms, buf, sizeof(buf));
     std::vector<uint8_t> packet(buf, buf + len);
