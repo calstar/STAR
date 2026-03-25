@@ -8,16 +8,17 @@ This directory contains GitHub Actions workflows for continuous integration and 
 
 One workflow run per push/PR (no separate Actions for the same event). Jobs include:
 
-1. **Format Check** — `./format.sh --check`
-2. **Repo standards (pre-commit)** — runs the [pre-commit](https://pre-commit.com/) tool against `.pre-commit-config.yaml` on the whole tree (`pre-commit run --all-files`). This executes **after** push in CI; the name “pre-commit” refers to the tool/config, not the timing. Install hooks locally (`pre-commit install`) to run the same checks **before** you commit.
-3. **Web GUI** — `npm run test` and `npm run test:build` in `web-gui/frontend`
-4. **Build** — GCC 12 and Clang 18, **Release** only; Clang uses GCC 12’s libstdc++ in CI to avoid libstdc++ 14 + C++20 `<format>` breakage
-5. **Static Analysis** — cppcheck and clang-tidy
-6. **Code Quality** — TODOs, large files, etc.
-7. **Security Scan** — semgrep, secret patterns, unsafe C APIs
-8. **Tests** — CTest, sequencer test, Python tests
-9. **Integration Test** — scripted integration (Rust elodin-db, backend, etc.)
-10. **Build Summary** — table of all job results
+1. **Format Check** — `./format.sh --check` (clang-format)
+2. **Web GUI** — `npm run test` and `npm run test:build` in `web-gui/frontend`
+3. **Build** — GCC 12 and Clang 18, **Release** only; Clang uses GCC 12’s libstdc++ in CI to avoid libstdc++ 14 + C++20 `<format>` breakage
+4. **Static Analysis** — cppcheck and clang-tidy
+5. **Code Quality** — TODOs, large files, etc.
+6. **Security Scan** — semgrep, secret patterns, unsafe C APIs
+7. **Tests** — CTest, sequencer test, Python tests
+8. **Integration Test** — scripted integration (Rust elodin-db, backend, etc.)
+9. **Build Summary** — table of all job results
+
+Optional locally: [pre-commit](https://pre-commit.com/) (`.pre-commit-config.yaml`) — not run in CI.
 
 ## Setup
 

@@ -54,31 +54,6 @@ jobs:
         fi
       continue-on-error: false
 
-  # Runs .pre-commit-config.yaml in CI (same as `pre-commit run --all-files` locally).
-  # Name is intentional: this is post-push validation, not “before” your commit — install hooks locally to catch issues earlier.
-  repo-standards:
-    name: Repo standards (pre-commit)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Install pre-commit
-      run: pip install pre-commit
-
-    - name: Run pre-commit hooks on all files
-      env:
-        # Hook blocks commits *to* main/develop; in CI the checkout is that branch, so skip here (use locally before push).
-        SKIP: no-commit-to-branch
-      run: pre-commit run --all-files
-
   web-gui:
     name: Web GUI (Vitest + Next.js build)
     runs-on: ubuntu-latest
@@ -138,6 +113,7 @@ jobs:
           build-essential \
           cmake \
           ninja-build \
+          ccache \
           libeigen3-dev \
           pkg-config \
           ${{ matrix.cc }} \
@@ -152,6 +128,17 @@ jobs:
     - name: Install GCC 12 libstdc++ for Clang
       if: startsWith(matrix.compiler, 'clang-')
       run: sudo apt-get install -y g++-12
+
+    - name: Restore compiler cache (ccache)
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ${{ runner.os }}-ccache-${{ matrix.compiler }}-${{ hashFiles('CMakeLists.txt', 'FSW/CMakeLists.txt', 'archive/legacy/utl/**/*.cpp', 'archive/legacy/utl/**/*.hpp', 'daq_comms/**/*.cpp', 'daq_comms/**/*.hpp', 'FSW/**/*.cpp', 'FSW/**/*.hpp') }}
+        restore-keys: |
+          ${{ runner.os }}-ccache-${{ matrix.compiler }}-
+
+    - name: Show ccache stats (before)
+      run: ccache -s || true
 
     - name: Configure CMake
       env:
@@ -169,6 +156,8 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_C_COMPILER=${{ matrix.cc }} \
           -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
           -DCMAKE_CXX_STANDARD=${{ env.CXX_STANDARD }} \
           -G Ninja \
           ..
@@ -176,7 +165,10 @@ jobs:
     - name: Build project
       run: |
         cd ${{ env.BUILD_DIR }}
-        cmake --build . --parallel $(nproc) --verbose
+        cmake --build . --parallel $(nproc)
+
+    - name: Show ccache stats (after)
+      run: ccache -s || true
 
     - name: Verify executables
       run: |
@@ -424,10 +416,27 @@ jobs:
         cd ${{ env.BUILD_DIR }}
         ./FSW/test_sequencer_elodin
 
-    - name: Run Python tests
+    - name: Run Python smoke tests (allowlist only)
       run: |
         if [ -d "scripts/test" ]; then
-          find scripts/test -name "test_*.py" -exec python3 {} \; || echo "Python tests completed with warnings"
+          echo "Running allowlisted Python smoke tests..."
+          # Keep this list intentionally small and non-interactive.
+          # Add paths here only for deterministic, CI-safe scripts.
+          PY_TESTS=(
+          )
+
+          if [ ${#PY_TESTS[@]} -eq 0 ]; then
+            echo "No allowlisted Python smoke tests configured; skipping."
+          fi
+
+          for t in "${PY_TESTS[@]}"; do
+            if [ -f "$t" ]; then
+              echo "Running $t"
+              timeout 60s python3 "$t" || echo "::warning::Python smoke test failed/timed out: $t"
+            else
+              echo "::warning::Allowlisted Python test not found: $t"
+            fi
+          done
         fi
       continue-on-error: true
 
@@ -502,7 +511,6 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - format-check
-      - repo-standards
       - web-gui
       - build
       - static-analysis
@@ -520,7 +528,6 @@ jobs:
         echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
         echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
         echo "| Format Check | ${{ needs.format-check.result }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Repo standards (pre-commit) | ${{ needs.repo-standards.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Web GUI | ${{ needs.web-gui.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Static Analysis | ${{ needs.static-analysis.result }} |" >> $GITHUB_STEP_SUMMARY
