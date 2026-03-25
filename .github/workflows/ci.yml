@@ -158,10 +158,9 @@ jobs:
           ${{ matrix.cc }} \
           ${{ matrix.cxx }}
 
-    - name: Install optional dependencies
+    - name: Install optional dependencies (CAN — best effort)
       run: |
-        sudo apt-get install -y libcanard-dev || echo "libcanard-dev not available, continuing without CAN bus support"
-        continue-on-error: true
+        sudo apt-get install -y libcanard-dev || echo "libcanard-dev not in apt; building without CAN package"
 
     - name: Configure CMake
       env:
