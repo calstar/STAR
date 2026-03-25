@@ -474,12 +474,20 @@ jobs:
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
         echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
         export PATH="$HOME/.cargo/bin:$PATH"
-        cargo install --locked elodin-db
+        ELODIN_SRC="/tmp/elodin-src"
+        rm -rf "$ELODIN_SRC"
+        git clone --depth 1 --branch v0.16.2 https://github.com/elodin-sys/elodin.git "$ELODIN_SRC"
+        (cd "$ELODIN_SRC" && cargo install --path libs/db/cli)
+        # Some installs produce impeller2-cli; keep repo scripts compatible.
+        if [ -x "$HOME/.cargo/bin/impeller2-cli" ] && [ ! -x "$HOME/.cargo/bin/elodin-db" ]; then
+          ln -sf "$HOME/.cargo/bin/impeller2-cli" "$HOME/.cargo/bin/elodin-db"
+        fi
+        rm -rf "$ELODIN_SRC"
 
     - name: Verify elodin-db is on PATH
       run: |
         command -v elodin-db
-        elodin-db --help >/dev/null 2>&1 || true
+        elodin-db --help >/dev/null
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
