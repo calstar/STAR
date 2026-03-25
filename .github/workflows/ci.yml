@@ -472,8 +472,14 @@ jobs:
     - name: Install Rust and elodin-db
       run: |
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-        source "$HOME/.cargo/env"
-        cargo install elodin-db || echo "::warning::elodin-db install failed — skipping integration test"
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        export PATH="$HOME/.cargo/bin:$PATH"
+        cargo install --locked elodin-db
+
+    - name: Verify elodin-db is on PATH
+      run: |
+        command -v elodin-db
+        elodin-db --help >/dev/null 2>&1 || true
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -502,7 +508,6 @@ jobs:
 
     - name: Run integration test
       run: |
-        source "$HOME/.cargo/env"
         bash scripts/test/test_integration.sh
 
   # Build summary
