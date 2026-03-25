@@ -16,6 +16,7 @@ import {
   SystemState,
   ActuatorState,
 } from '@/lib/types';
+import { waitForSensorFlush } from './waitForSensorFlush';
 
 // ── Store reset helper ───────────────────────────────────────────────────────
 
@@ -35,11 +36,6 @@ function resetStore() {
   });
 }
 
-/** Wait for the store's 100ms setInterval flush to fire */
-function waitForFlush(): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, 250));
-}
-
 beforeEach(() => {
   resetStore();
 });
@@ -57,7 +53,7 @@ describe('Sensor data → store', () => {
       timestamp: Date.now(),
     });
 
-    await waitForFlush();
+    await waitForSensorFlush();
 
     const state = useSensorStore.getState();
     expect(state.sensorData['PT_Cal.PT_CH1.pressure_psi']).toBe(42.5);
@@ -75,7 +71,7 @@ describe('Sensor data → store', () => {
       });
     }
 
-    await waitForFlush();
+    await waitForSensorFlush();
 
     const state = useSensorStore.getState();
     for (let ch = 1; ch <= 10; ch++) {
@@ -99,7 +95,7 @@ describe('Sensor data → store', () => {
       timestamp: Date.now(),
     });
 
-    await waitForFlush();
+    await waitForSensorFlush();
 
     const state = useSensorStore.getState();
     expect(state.sensorData['PT.PT_CH1.raw_adc_counts']).toBe(1500000);
@@ -111,11 +107,11 @@ describe('Sensor data → store', () => {
     const now = Date.now();
 
     updateSensor({ entity: 'PT_Cal.PT_CH1', component: 'pressure_psi', value: 50, timestamp: now });
-    await waitForFlush();
+    await waitForSensorFlush();
 
     // Send an older packet — should be rejected
     updateSensor({ entity: 'PT_Cal.PT_CH1', component: 'pressure_psi', value: 999, timestamp: now - 1000 });
-    await waitForFlush();
+    await waitForSensorFlush();
 
     expect(useSensorStore.getState().sensorData['PT_Cal.PT_CH1.pressure_psi']).toBe(50);
   });
@@ -134,7 +130,7 @@ describe('Sensor data → store', () => {
     }
 
     // Wait for flush
-    await waitForFlush();
+    await waitForSensorFlush();
 
     // After flush — all 10 should be present
     const state = useSensorStore.getState();

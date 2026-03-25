@@ -3,7 +3,7 @@ name: Pre-commit Checks
 on:
   pull_request:
   push:
-    branches: [ main, develop, PT_Calibration ]
+    branches: [ main, develop, PT_Calibration, cpp-stack-and-cleanup ]
 
 jobs:
   pre-commit:

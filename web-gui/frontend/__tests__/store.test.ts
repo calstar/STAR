@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useSensorStore } from '@/lib/store';
-import { ActuatorId, ActuatorState, SystemState } from '@/lib/types';
+import { ActuatorState, SystemState } from '@/lib/types';
+import { waitForSensorFlush } from './waitForSensorFlush';
 
 describe('useSensorStore', () => {
     beforeEach(() => {
@@ -58,8 +59,7 @@ describe('useSensorStore', () => {
             timestamp: Date.now()
         });
 
-        // Wait for 50ms flush interval
-        await new Promise(resolve => setTimeout(resolve, 60));
+        await waitForSensorFlush();
 
         const data = useSensorStore.getState().sensorData;
         expect(data['SELF_TEST.BOARD_1.sensor_2']).toBe(1);

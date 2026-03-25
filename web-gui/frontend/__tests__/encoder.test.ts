@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { rawToDeg, detectTransition } from '@/components/plots/OscopeTriggerPlot';
 import { useSensorStore } from '@/lib/store';
 import { SystemState } from '@/lib/types';
+import { waitForSensorFlush } from './waitForSensorFlush';
 
 describe('rawToDeg — AS5600 12-bit angle conversion', () => {
     it('should convert 0 to 0 degrees', () => {
@@ -134,7 +135,7 @@ describe('Encoder sensor data through store', () => {
             timestamp: Date.now(),
         });
 
-        await new Promise(resolve => setTimeout(resolve, 60));
+        await waitForSensorFlush();
 
         const data = useSensorStore.getState().sensorData;
         expect(data['ENC.CH1.raw_angle']).toBe(2048);
@@ -146,12 +147,12 @@ describe('Encoder sensor data through store', () => {
         const now = Date.now();
 
         updateSensor({ entity: 'ENC.CH1', component: 'raw_angle', value: 100, timestamp: now });
-        await new Promise(resolve => setTimeout(resolve, 60));
+        await waitForSensorFlush();
         expect(useSensorStore.getState().sensorData['ENC.CH1.raw_angle']).toBe(100);
 
         // Older packet should be rejected
         updateSensor({ entity: 'ENC.CH1', component: 'raw_angle', value: 50, timestamp: now - 5000 });
-        await new Promise(resolve => setTimeout(resolve, 60));
+        await waitForSensorFlush();
         expect(useSensorStore.getState().sensorData['ENC.CH1.raw_angle']).toBe(100);
     });
 });

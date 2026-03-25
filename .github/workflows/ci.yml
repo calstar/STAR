@@ -2,11 +2,11 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop, PT_Calibration, Test_Branch, unit-testing ]
+    branches: [ main, develop, PT_Calibration, Test_Branch, unit-testing, cpp-stack-and-cleanup ]
     tags:
       - 'v*'
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, develop, cpp-stack-and-cleanup ]
   workflow_dispatch:
     inputs:
       build_type:
