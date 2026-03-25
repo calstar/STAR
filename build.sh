@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 # Build script for the sensor system
 
@@ -14,7 +15,9 @@ cmake ..
 
 # Build the project
 echo "Building project..."
-make -j$(nproc)
-
-echo "✅ Build complete!"
-echo "Executable location: $(pwd)/scripts/fake_sensor_generator"
+if make -j$(nproc); then
+  echo "✅ Build complete!"
+else
+  echo "❌ Build failed!"
+  exit 1
+fi

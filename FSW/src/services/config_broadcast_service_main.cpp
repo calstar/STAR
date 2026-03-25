@@ -36,7 +36,7 @@ void signalHandler(int /*sig*/) {
 
 constexpr uint8_t SENSOR_CONFIG = 5;
 constexpr uint8_t ACTUATOR_CONFIG = 6;
-constexpr uint16_t TARGET_PORT = 5005;
+constexpr uint16_t DEFAULT_LISTEN_PORT = 5005;
 
 std::string trim(const std::string& s) {
     size_t a = s.find_first_not_of(" \t\r\n\"");
@@ -97,6 +97,7 @@ struct BoardInfo {
     bool enable_serial_printing;
     std::vector<int> active_connectors;
     int num_sensors;
+    uint16_t listen_port;
 };
 
 void parseActuatorRole(const std::string& val, int& channel, int& board_id, bool& is_no) {
@@ -149,6 +150,13 @@ std::vector<BoardInfo> parseBoards(const std::string& content) {
         } catch (...) {
         }
 
+        uint16_t listen_port = DEFAULT_LISTEN_PORT;
+        try {
+            listen_port = static_cast<uint16_t>(
+                std::stoul(getTomlValue(content, sec, "listen_port", "5005")));
+        } catch (...) {
+        }
+
         std::vector<int> active;
         std::string active_str = getTomlValue(content, sec, "active_connectors", "");
         if (!active_str.empty()) {
@@ -184,7 +192,7 @@ std::vector<BoardInfo> parseBoards(const std::string& content) {
             ip = "192.168.2." + std::to_string(bid);
 
         boards.push_back(
-            {bid, ip, type, enabled, designated, nec_abort, ref, ser, active, num_sens});
+            {bid, ip, type, enabled, designated, nec_abort, ref, ser, active, num_sens, listen_port});
         pos = end + 1;
     }
     return boards;
@@ -433,7 +441,7 @@ int main(int argc, char* argv[]) {
             actuator_roles[key] = {ch, bid > 0 ? bid : 12, is_no};
     }
 
-    std::vector<std::tuple<uint8_t, std::vector<uint8_t>, std::string>> packets;
+    std::vector<std::tuple<uint8_t, std::vector<uint8_t>, std::string, uint16_t>> packets;
 
     auto build_actuator_config = [&](int is_abort_controller,
                                      bool enable_serial) -> std::vector<uint8_t> {
@@ -545,10 +553,11 @@ int main(int argc, char* argv[]) {
             int is_abort = (b.id == designated_id) ? 1 : 0;
             auto pkt = build_actuator_config(is_abort, b.enable_serial_printing);
             if (!pkt.empty())
-                packets.push_back({ACTUATOR_CONFIG, pkt, b.ip});
-        } else if (b.type == "PT" || b.type == "TC" || b.type == "RTD" || b.type == "LC") {
+                packets.push_back({ACTUATOR_CONFIG, pkt, b.ip, b.listen_port});
+        } else if (b.type == "PT" || b.type == "TC" || b.type == "RTD" || b.type == "LC" ||
+                   b.type == "ENCODER") {
             auto pkt = build_sensor_config(b);
-            packets.push_back({SENSOR_CONFIG, pkt, b.ip});
+            packets.push_back({SENSOR_CONFIG, pkt, b.ip, b.listen_port});
         }
     }
 
@@ -561,7 +570,6 @@ int main(int argc, char* argv[]) {
     struct sockaddr_in dest;
     memset(&dest, 0, sizeof(dest));
     dest.sin_family = AF_INET;
-    dest.sin_port = htons(TARGET_PORT);
 
     std::cout << "[ConfigBroadcast] Started — interval=" << interval_ms << "ms (C++ standalone)"
               << std::endl;
@@ -572,9 +580,10 @@ int main(int argc, char* argv[]) {
     auto last_log = std::chrono::steady_clock::now();
 
     while (g_running) {
-        for (const auto& [pkt_type, pkt, ip] : packets) {
+        for (const auto& [pkt_type, pkt, ip, listen_port] : packets) {
             if (inet_pton(AF_INET, ip.c_str(), &dest.sin_addr) != 1)
                 continue;
+            dest.sin_port = htons(listen_port);
             ssize_t sent = sendto(sock, pkt.data(), pkt.size(), 0,
                                   reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
             if (sent == static_cast<ssize_t>(pkt.size()))

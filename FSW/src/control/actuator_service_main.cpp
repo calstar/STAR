@@ -448,7 +448,9 @@ int main(int argc, char* argv[]) {
     }
 
     daq_comms::protocol::DiabloBoardPacketParser parser;
-    constexpr uint16_t ACTUATOR_PORT = 5005;
+    uint16_t ACTUATOR_PORT = 5005;
+    std::string port_str = getTomlValue(config_content, "network", "actuator_cmd_port", "5005");
+    try { ACTUATOR_PORT = static_cast<uint16_t>(std::stoi(port_str)); } catch (...) {}
 
     auto sendSingleActuator = [&](const std::string& act_name, int pos) -> bool {
         auto am = actuator_map.find(act_name);

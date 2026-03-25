@@ -246,6 +246,14 @@ bool DatabaseConfig::register_calibrated_tables(
             registered++;
     }
 
+    // Encoder Calibrated: channels 1-14 (position_deg — filled when calibration_service supports 0x24)
+    for (int ch = 1; ch <= 14; ch++) {
+        std::string entity = "ENC_Cal.CH" + std::to_string(ch);
+        uint64_t eid = 0x2410 + static_cast<uint64_t>(ch);
+        if (register_calibrated_vtable(client, 0x24, ch, eid, entity, "position_deg", "raw_adc"))
+            registered++;
+    }
+
     std::cout << "[DatabaseConfig] ✅ Registered " << registered << " CALIBRATED VTables"
               << std::endl;
     return registered > 0;
@@ -334,9 +342,47 @@ bool DatabaseConfig::register_tables_from_config(ElodinClient& client,
     return register_tables(client, nullptr, nullptr);
 }
 
-bool DatabaseConfig::register_non_sensor_tables(ElodinClient& /* client */) {
-    // Placeholder for navigation, engine control, etc.
+// ── Helper: register Sequencer tables ──────────────
+static bool register_sequencer_vtable(ElodinClient& client) {
+    // SequencerState: u64@0 + u8@8 + 3-byte hole + u32@12 + u8@16 = 17 bytes (u32 4-aligned like sensor rows)
+    auto vt1 = builder::vtable({
+        raw_field(0, 8, schema(PrimType::U64(), {}, component("SEQUENCER.state.timestamp_ns"))),
+        raw_field(8, 1, schema(PrimType::U8(), {}, component("SEQUENCER.state.current_state"))),
+        raw_field(12, 4, schema(PrimType::U32(), {}, component("SEQUENCER.state.allowed_bitmask"))),
+        raw_field(16, 1, schema(PrimType::U8(), {}, component("SEQUENCER.state.debug_mode"))),
+    });
+    if (!send_msg(client, VTableMsg{.id = {0x50, 0x00}, .vtable = vt1})) return false;
+    send_msg(client, set_component_name("SEQUENCER.state.timestamp_ns"));
+    send_msg(client, set_component_name("SEQUENCER.state.current_state"));
+    send_msg(client, set_component_name("SEQUENCER.state.allowed_bitmask"));
+    send_msg(client, set_component_name("SEQUENCER.state.debug_mode"));
+    send_msg(client, set_entity_name(0x5000, "SEQUENCER.state"));
+
+    // StateTransition: U64+U8+U8+U8 (11 bytes)
+    auto vt2 = builder::vtable({
+        raw_field(0, 8, schema(PrimType::U64(), {}, component("CONTROLLER.state.timestamp_ns"))),
+        raw_field(8, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.from_state"))),
+        raw_field(9, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.to_state"))),
+        raw_field(10, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.reason"))),
+    });
+    if (!send_msg(client, VTableMsg{.id = {0x43, 0x00}, .vtable = vt2})) return false;
+    send_msg(client, set_component_name("CONTROLLER.state.timestamp_ns"));
+    send_msg(client, set_component_name("CONTROLLER.state.from_state"));
+    send_msg(client, set_component_name("CONTROLLER.state.to_state"));
+    send_msg(client, set_component_name("CONTROLLER.state.reason"));
+    send_msg(client, set_entity_name(0x4300, "CONTROLLER.state"));
+
     return true;
+}
+
+bool DatabaseConfig::register_non_sensor_tables(ElodinClient& client) {
+    bool ok = true;
+    if (!register_sequencer_vtable(client)) ok = false;
+    
+    if (ok) {
+        std::cout << "[DatabaseConfig] ✅ Registered Sequencer/Controller VTables" << std::endl;
+    }
+    return ok;
 }
 
 }  // namespace elodin

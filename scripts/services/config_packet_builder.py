@@ -32,7 +32,7 @@ from config_loader import (
 
 SENSOR_CONFIG = 5
 ACTUATOR_CONFIG = 6
-TARGET_PORT = 5005
+DEFAULT_LISTEN_PORT = 5005
 
 
 def _ip_to_u32_le(ip: str) -> int:
@@ -296,8 +296,13 @@ def build_sensor_config_packet(
     return bytes(buf)
 
 
-def build_all_config_packets() -> List[Tuple[str, int, bytes, str]]:
-    """Build (packet_type, board_id, packet, ip) for all configured boards."""
+def build_all_config_packets(config_path: Optional[Path] = None) -> List[Tuple[str, int, bytes, str, int]]:
+    """Build (packet_type, board_id, packet, ip, listen_port) for all configured boards."""
+    import config_loader as _cl
+
+    if config_path is not None:
+        _cl._cached_config = None
+        _cl.load_config(config_path)
     cfg = load_config()
     boards = cfg.get("boards", {})
 
@@ -324,7 +329,7 @@ def build_all_config_packets() -> List[Tuple[str, int, bytes, str]]:
         if bid is not None and ip:
             board_id_to_ip[int(bid)] = ip
 
-    out: List[Tuple[str, int, bytes, str]] = []
+    out: List[Tuple[str, int, bytes, str, int]] = []
 
     for key, board in boards.items():
         if board.get("enabled", True) is False:
@@ -332,15 +337,16 @@ def build_all_config_packets() -> List[Tuple[str, int, bytes, str]]:
         bid = int(board.get("board_id") or board.get("id", 0))
         ip = board.get("ip") or f"192.168.2.{bid}"
         btype = (board.get("type") or "").upper()
+        listen_port = int(board.get("listen_port", DEFAULT_LISTEN_PORT))
 
         if btype == "ACTUATOR":
             is_abort = 1 if bid == designated_id else 0
             ser = 1 if board.get("enable_serial_printing", False) else 0
             pkt = build_actuator_config_packet(is_abort, ser, designated_ip)
             if pkt:
-                out.append(("ACTUATOR_CONFIG", bid, pkt, ip))
+                out.append(("ACTUATOR_CONFIG", bid, pkt, ip, listen_port))
 
-        elif btype in ("PT", "TC", "RTD", "LC"):
+        elif btype in ("PT", "TC", "RTD", "LC", "ENCODER"):
             active = board.get("active_connectors", [])
             if not active:
                 num = board.get("num_sensors", 10)
@@ -350,6 +356,6 @@ def build_all_config_packets() -> List[Tuple[str, int, bytes, str]]:
             nec = bool(board.get("necessary_for_abort", False))
             ser = 1 if board.get("enable_serial_printing", False) else 0
             pkt = build_sensor_config_packet(channels, ref, nec, designated_ip, ser)
-            out.append(("SENSOR_CONFIG", bid, pkt, ip))
+            out.append(("SENSOR_CONFIG", bid, pkt, ip, listen_port))
 
     return out

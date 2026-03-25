@@ -69,6 +69,7 @@ venv.bak/
 # IDE and editor files
 .vscode/
 .idea/
+.claude/
 *.sublime-project
 *.sublime-workspace
 .DS_Store

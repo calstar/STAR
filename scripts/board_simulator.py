@@ -7,6 +7,7 @@ import random
 import tomli
 import os
 import argparse
+import json
 import math
 
 # DiabloAvionics Packet Types
@@ -48,6 +49,8 @@ class SimulatedBoard:
             "RTD": BOARD_TYPE_RTD,
             "TC": BOARD_TYPE_TC,
             "ACTUATOR": BOARD_TYPE_ACTUATOR,
+            # Diablo::BoardType has no ENCODER yet — wire UNKNOWN(0); config drives routing.
+            "ENCODER": 0,
         }
         self.board_type = type_map.get(self.board_type_str, BOARD_TYPE_PT)
 
@@ -60,6 +63,7 @@ class SimulatedBoard:
         self.running = False
         self.sock = None
         self.thread = None
+        self.packets_sent = 0
 
     def start(self):
         self.running = True
@@ -146,6 +150,7 @@ class SimulatedBoard:
             self.sock.sendto(
                 header + body_header + chunk_data, (self.target_ip, self.target_port)
             )
+            self.packets_sent += 1
         except Exception:
             pass
 
@@ -204,6 +209,11 @@ class SimulatedBoard:
         elif self.board_type == BOARD_TYPE_ACTUATOR:
             return int(1200000 + random.randint(-2000, 2000))
 
+        elif self.board_type_str == "ENCODER":
+            # Deterministic encoder-ish counts for Elodin raw path (signed-friendly magnitude)
+            base = 1_000_000 + sensor_id * 10_000
+            return base + int(500 * math.sin(t + sensor_id))
+
         return random.randint(1000, 5000)
 
 
@@ -225,6 +235,17 @@ def main():
         "--low-noise",
         action="store_true",
         help="Reduce PT noise for spike validation (smoother signal)",
+    )
+    parser.add_argument(
+        "--stats-file",
+        metavar="PATH",
+        help="Write JSON stats (packets sent per board) to this file on shutdown",
+    )
+    parser.add_argument(
+        "--duration",
+        type=float,
+        metavar="SECONDS",
+        help="Run for this many seconds then exit (default: run until Ctrl+C)",
     )
     args = parser.parse_args()
 
@@ -253,6 +274,9 @@ def main():
     active_count = 0
     for name, board_cfg in boards.items():
         if not board_cfg.get("enabled", True):
+            continue
+        # Handled only by board_startup_sim.py (SETUP → SELF_TEST E2E)
+        if name == "integration_startup":
             continue
         # Filter by --only-type if specified
         if (
@@ -284,13 +308,54 @@ def main():
 
     print("📡 Simulator is running. Press Ctrl+C to stop.", flush=True)
 
+    def write_stats():
+        if not args.stats_file:
+            return
+        stats = {
+            "total_sensor_packets": sum(b.packets_sent for b in simulated_boards),
+            "boards": {},
+        }
+        for b in simulated_boards:
+            active = b.config.get("active_connectors", list(range(1, b.num_sensors + 1)))
+            stats["boards"][b.name] = {
+                "type": b.board_type_str,
+                "board_id": b.board_id,
+                "packets_sent": b.packets_sent,
+                "channels_per_packet": len(active),
+                "total_sensor_updates": b.packets_sent * len(active),
+            }
+        stats["total_sensor_updates"] = sum(
+            v["total_sensor_updates"] for v in stats["boards"].values()
+        )
+        with open(args.stats_file, "w") as f:
+            json.dump(stats, f, indent=2)
+        print(f"📊 Stats written to {args.stats_file}", flush=True)
+
+    # Register SIGTERM handler so integration test cleanup triggers stats write
+    import signal
+    def _sigterm_handler(signum, frame):
+        for b in simulated_boards:
+            b.running = False
+        time.sleep(0.1)  # let threads finish current send
+        write_stats()
+        raise SystemExit(0)
+    signal.signal(signal.SIGTERM, _sigterm_handler)
+
     try:
-        while True:
-            time.sleep(1)
+        if args.duration:
+            time.sleep(args.duration)
+            print(f"\n⏱️ Duration ({args.duration}s) reached. Stopping...")
+            for b in simulated_boards:
+                b.running = False
+            write_stats()
+        else:
+            while True:
+                time.sleep(1)
     except KeyboardInterrupt:
         print("\nStopping simulator...")
         for b in simulated_boards:
             b.running = False
+        write_stats()
 
 
 if __name__ == "__main__":

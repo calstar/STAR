@@ -293,14 +293,20 @@ designated_survivor = false
 voltage_reference = 0
 active_connectors = []
 
+# Encoder board #1 (slot #6, board_id 61). UNKNOWN heartbeat on wire until DAQv2-Comms ENCODER enum.
 [boards.encoder_board]
 type = "ENCODER"
 ip = "192.168.2.61"
 send_port = 5005
+listen_port = 5005
 num_sensors = 2
 board_id = 61
 enabled = true
 enable_serial_printing = false
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 1
+active_connectors = [1, 2]
 
 # =============================================================================
 # Multiple Boards Example (commented out - uncomment to use)
@@ -481,6 +487,11 @@ description = "Raw RTD resistance counts"
 packet_id = [0x23, 0x00]
 channels = 20
 description = "Raw LC ADC counts"
+
+[routing.encoder_raw]
+packet_id = [0x24, 0x00]
+channels = 14
+description = "Raw encoder ADC counts — 0x01..0x0E"
 
 [routing.lc_calibrated]
 packet_id = [0x23, 0x10]
