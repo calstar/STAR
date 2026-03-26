@@ -5,7 +5,8 @@
  *   OTA_FLASH:<board_ip>:<firmware_path>   — flash existing .bin to board:3232
  *   OTA_BUILD_FLASH|board_ip|abs_project_dir|board_id
  *       — run `pio run` in abs_project_dir (board_id 1–254 sets
- *       PLATFORMIO_BUILD_FLAGS=-DTEMP_HARDCODE_BOARD_ID=N; 0 = no flag), then flash .pio/build/<env>/firmware.bin
+ *       PLATFORMIO_BUILD_FLAGS=-DTEMP_HARDCODE_BOARD_ID=N; 0 = no flag), then flash
+ * .pio/build/<env>/firmware.bin
  *
  * Replies: "OK\n" or "ERR:<reason>\n"
  *
@@ -22,9 +23,8 @@
 #include <netinet/in.h>
 #include <signal.h>
 #include <sys/socket.h>
-#include <unistd.h>
-
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <cstdlib>
@@ -187,7 +187,8 @@ void sanitizeOneLine(std::string& s) {
 }
 
 /** Run pio in projectDir; capture combined stdout/stderr into buildLog. */
-bool runPioBuild(const std::string& projectDir, int boardId, std::string& buildLog, std::string& error) {
+bool runPioBuild(const std::string& projectDir, int boardId, std::string& buildLog,
+                 std::string& error) {
     const std::string ini = projectDir + "/platformio.ini";
     std::ifstream check(ini);
     if (!check.is_open()) {
@@ -256,8 +257,8 @@ bool runPioBuild(const std::string& projectDir, int boardId, std::string& buildL
     return true;
 }
 
-bool buildAndFlash(const std::string& ip, const std::string& projectDir, int boardId, std::string& error,
-                   std::string& buildOutput) {
+bool buildAndFlash(const std::string& ip, const std::string& projectDir, int boardId,
+                   std::string& error, std::string& buildOutput) {
     std::string blog;
     if (!runPioBuild(projectDir, boardId, blog, error)) {
         buildOutput = blog;
@@ -327,7 +328,8 @@ void handleClient(int client_fd) {
             parts.push_back(trim(token));
         }
         if (parts.size() != 4 || parts[0] != "OTA_BUILD_FLASH") {
-            sendReply("ERR:bad OTA_BUILD_FLASH — use OTA_BUILD_FLASH|ip|abs_project_dir|board_id\n");
+            sendReply(
+                "ERR:bad OTA_BUILD_FLASH — use OTA_BUILD_FLASH|ip|abs_project_dir|board_id\n");
         } else {
             const std::string& ip = parts[1];
             const std::string& proj = parts[2];
@@ -335,8 +337,8 @@ void handleClient(int client_fd) {
             if (ip.empty() || proj.empty()) {
                 sendReply("ERR:empty ip or project path\n");
             } else {
-                std::cout << "[OTAService] Build+flash " << ip << " project " << proj << " board_id " << bid
-                          << std::endl;
+                std::cout << "[OTAService] Build+flash " << ip << " project " << proj
+                          << " board_id " << bid << std::endl;
                 std::string err;
                 std::string buildOut;
                 if (buildAndFlash(ip, proj, bid, err, buildOut)) {
@@ -366,9 +368,10 @@ int main(int argc, char* argv[]) {
         if (arg == "--port" && i + 1 < argc) {
             listen_port = static_cast<uint16_t>(std::atoi(argv[++i]));
         } else if (arg == "--help" || arg == "-h") {
-            std::cout << "Usage: " << argv[0] << " [--port PORT]\n"
-                      << "  OTA_FLASH:<ip>:<firmware.bin>\n"
-                      << "  OTA_BUILD_FLASH|ip|abs_platformio_project_dir|board_id (0=no ID flag)\n";
+            std::cout
+                << "Usage: " << argv[0] << " [--port PORT]\n"
+                << "  OTA_FLASH:<ip>:<firmware.bin>\n"
+                << "  OTA_BUILD_FLASH|ip|abs_platformio_project_dir|board_id (0=no ID flag)\n";
             return 0;
         }
     }
