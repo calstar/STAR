@@ -5,17 +5,10 @@ import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 import { useSensorRate, getSensorRate } from '@/lib/sensor-rate';
-import { kTypeVoltageToTempC, codeToForce } from '@/lib/sense-conversions';
-import { adcToVoltage as adcToVoltageFromRef } from '@/lib/voltageRef';
 import { getEntityColor } from '@/lib/sensor-colors';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const LC_DEFAULTS = {
-  sensitivityMvPerV: 2,
-  pgaGain: 32,
-  fullScaleForceKg: 300,
-};
 
 // ── Static sensor definitions ─────────────────────────────────────────────────
 
@@ -202,13 +195,13 @@ function HptRow({ sensor }: { sensor: PtSensor }) {
 
 // ── TC row ───────────────────────────────────────────────────────────────────
 
-function TcRow({ entity, label, color, voltageReference }: { entity: string; label: string; color: string; voltageReference: number }) {
+function TcRow({ entity, label, color }: { entity: string; label: string; color: string; voltageReference: number }) {
   const raw  = useSensorValue(entity, 'raw_adc_counts');
-  const rate = useSensorRate(entity, 'raw_adc_counts');
-  const nominals = useSensorStore((s) => s.voltageRefNominals);
-
-  const volt = raw !== null ? adcToVoltageFromRef(raw, voltageReference, nominals) : null;
-  const tempC = volt !== null && Number.isFinite(volt) ? kTypeVoltageToTempC(volt) : null;
+  const calEntity = entity.replace('TC.', 'TC_Cal.');
+  const tempC = useSensorValue(calEntity, 'temperature_c');
+  const rateRaw = useSensorRate(entity, 'raw_adc_counts');
+  const rateCal = useSensorRate(calEntity, 'temperature_c');
+  const rate = Math.max(rateRaw, rateCal);
 
   return (
     <tr className="border-b border-gray-800/40 hover:bg-gray-900/30 transition-colors">
@@ -259,17 +252,11 @@ function RtdRow({ entity, calEntity, label, color }: { entity: string; calEntity
 
 function LcRow({ entity, label, color }: { entity: string; label: string; color: string }) {
   const raw  = useSensorValue(entity, 'raw_adc_counts');
-  const rate = useSensorRate(entity, 'raw_adc_counts');
-
-  const forceKg =
-    raw !== null
-      ? codeToForce(
-          raw,
-          LC_DEFAULTS.sensitivityMvPerV,
-          LC_DEFAULTS.pgaGain,
-          LC_DEFAULTS.fullScaleForceKg
-        )
-      : null;
+  const calEntity = entity.replace('LC.', 'LC_Cal.');
+  const forceKg = useSensorValue(calEntity, 'force_kg');
+  const rateRaw = useSensorRate(entity, 'raw_adc_counts');
+  const rateCal = useSensorRate(calEntity, 'force_kg');
+  const rate = Math.max(rateRaw, rateCal);
 
   return (
     <tr className="border-b border-gray-800/40 hover:bg-gray-900/30 transition-colors">

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import PressureBar from '@/components/plots/PressureBar';
 import ActuatorStatePanel from '@/components/plots/ActuatorStatePanel';
@@ -9,15 +9,6 @@ import { useSensorValue } from '@/lib/store';
 import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
 import { useSensorConfig, filterByRole } from '@/lib/sensor-config';
 import { usePressureLimits, getLimitsForSystem } from '@/lib/pressure-limits';
-import { pt1000VoltageToTempC } from '@/lib/sense-conversions';
-
-const RTD_ADC_REF_V = 2.5;
-const ADC_FULL_SCALE = 2 ** 31;
-function adcToVoltage(rawAdc: number, refV: number): number {
-  const u = (rawAdc >>> 0) as number;
-  const signed = u > 0x7fffffff ? u - 0x100000000 : u;
-  return (signed / ADC_FULL_SCALE) * refV;
-}
 
 function RtdReadoutStrip({
   sensors,
@@ -42,7 +33,6 @@ function RtdReadoutStrip({
 }
 
 function RtdReadoutBox({
-  entity,
   calEntity,
   label,
   color,
@@ -52,18 +42,7 @@ function RtdReadoutBox({
   label: string;
   color: string;
 }) {
-  const calTemp = useSensorValue(calEntity, 'temperature_c');
-  const raw = useSensorValue(entity, 'raw_resistance_counts');
-  const volt =
-    raw !== null && Number.isFinite(raw) ? adcToVoltage(raw, RTD_ADC_REF_V) : null;
-  const fromRaw =
-    volt !== null && Number.isFinite(volt) ? pt1000VoltageToTempC(volt) : null;
-  const value =
-    calTemp !== null && Number.isFinite(calTemp)
-      ? calTemp
-      : fromRaw !== null && Number.isFinite(fromRaw)
-        ? fromRaw
-        : null;
+  const value = useSensorValue(calEntity, 'temperature_c');
   const display = value !== null ? value.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '---';
   return (
     <div className="bg-white/[0.02] backdrop-blur-md border border-white/5 rounded-xl px-5 py-3.5 flex items-center gap-4 min-w-0 hover:bg-white/[0.04] hover:shadow-lg transition-all duration-300 flex-1">
@@ -108,28 +87,9 @@ export default function LOXGraphsPage() {
   const componentName = activeTab === 'PT' ? 'pressure_psi' : 'temperature_c';
   const yLabel = activeTab === 'PT' ? 'Pressure (PSI)' : 'Temperature (°C)';
 
-  // RTD tab: use raw entities + transform (matches LCS/TCS/RTD pane; RTD_Cal may not flow)
-  const plotEntities =
-    activeTab === 'RTD'
-      ? rtdSensors.map((s) => s.entity)
-      : currentSensors.map((s) => s.calEntity);
-  const plotComponent =
-    activeTab === 'RTD' ? 'raw_resistance_counts' : componentName;
-  const rtdTransform = (v: number) => {
-    if (!Number.isFinite(v)) return NaN;
-    const volt = adcToVoltage(v, RTD_ADC_REF_V);
-    return pt1000VoltageToTempC(volt) ?? NaN;
-  };
-  const valueTransforms =
-    activeTab === 'RTD'
-      ? rtdSensors.map(() => rtdTransform)
-      : undefined;
-
   const entities = currentSensors.map((s) => s.calEntity);
   const labels = currentSensors.map((s) => s.role);
-  const colors = (activeTab === 'RTD' ? plotEntities : entities).map((e) =>
-    getEntityColor(e)
-  );
+  const colors = entities.map((e) => getEntityColor(e));
 
   const upSensor   = ptSensors.find((s) => s.role.toLowerCase().includes('upstream'));
   const downSensor = ptSensors.find((s) => s.role.toLowerCase().includes('downstream'));
@@ -161,7 +121,7 @@ export default function LOXGraphsPage() {
         </div>
       </div>
 
-      {/* Live readout strip — RTD uses raw-derived temp when RTD_Cal not available */}
+      {/* Live readout strip */}
       <div className="flex-shrink-0">
         {activeTab === 'PT' ? (
           <SensorReadoutStrip
@@ -183,12 +143,11 @@ export default function LOXGraphsPage() {
           <div className="flex-[3] min-h-0 bg-card rounded-lg p-2 flex flex-col min-w-0">
             <TimeSeriesPlot
               title={`LOX ${activeTab}`}
-              entities={plotEntities}
+              entities={entities}
               labels={labels}
-              component={plotComponent}
+              component={componentName}
               colors={colors}
               yLabel={yLabel}
-              valueTransforms={valueTransforms}
             />
           </div>
 

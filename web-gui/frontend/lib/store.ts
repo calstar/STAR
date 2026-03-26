@@ -546,10 +546,13 @@ export function useActuatorStateByEntity(entity: string): ActuatorState | null {
   return useSensorStore((s) => s.actuatorStateByEntity[entity] ?? null);
 }
 
-/** Load cell force (lbf) with zero offset applied. Use for display: displayLbf = raw - offset. */
-export function useLoadCellForceLbf(calEntity: string): number | null {
-  const raw = useSensorValue(calEntity, 'force_lbf');
+/** Load cell force (kg) with zero offset applied. Use for display: displayKg = raw - offset. */
+export function useLoadCellForceKg(calEntity: string): number | null {
+  const raw = useSensorValue(calEntity, 'force_kg');
   const offset = useSensorStore((s) => s.loadCellZeroOffsets[calEntity] ?? 0);
   if (raw == null || !Number.isFinite(raw)) return null;
   return raw - offset;
 }
+
+/** @deprecated Use useLoadCellForceKg instead. Legacy alias for backwards compatibility. */
+export const useLoadCellForceLbf = useLoadCellForceKg;

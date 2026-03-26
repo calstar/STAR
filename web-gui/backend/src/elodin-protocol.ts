@@ -176,7 +176,7 @@ export function parseElodinPacket(
   // ── LC Calibrated: [0x23, 0x11..0x24] ───────────────────────────────────
   if (high === 0x23 && low >= 0x11 && low <= 0x24) {
     const ch = low - 0x10;
-    const r = parseCalibratedSensorPayload(payload, ch, `LC_Cal.CH${ch}`, 'force_lbf');
+    const r = parseCalibratedSensorPayload(payload, ch, `LC_Cal.CH${ch}`, 'force_kg');
     return r ? [r] : [];
   }
 

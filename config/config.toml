@@ -570,10 +570,10 @@ excitation_ua = 1000    # IDAC excitation (µA)
 [calibration.lc]
 json_dir = "scripts/calibration/calibrations/lc"
 csv_paths = []
-# Raw LC fallback: sensitivity (mV/V), pga_gain, full_scale_value (lbf or kg)
+# Raw LC fallback: sensitivity (mV/V), pga_gain, full_scale_value (kg)
 sensitivity_mv_per_v = 2.0
-pga_gain = 128.0
-full_scale_value = 100.0
+pga_gain = 32.0
+full_scale_value = 300.0
 
 # =============================================================================
 # Pressure Limits (for GUI gauges and alarms)
