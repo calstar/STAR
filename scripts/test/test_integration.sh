@@ -14,7 +14,7 @@
 #   - Python 3 with board_simulator.py dependencies (fallback data source)
 #
 # Usage: bash scripts/test/test_integration.sh [-v|--verbose] [--legacy]
-#   --legacy  Use server.ts (old backend) instead of server-thin.ts (default)
+#   --legacy  Use server-legacy.ts (old monolithic backend) instead of server.ts (default)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
@@ -398,15 +398,15 @@ fi
 # ── Start Backend Server ─────────────────────────────────────────────────────
 
 if [ "$BACKEND" = "thin" ]; then
-  echo "🖥️  Starting Backend server (server-thin.ts)..."
+  echo "🖥️  Starting Backend server (server.ts)..."
   (cd "$REPO_ROOT/web-gui/backend" && \
     WS_PORT=$TEST_BACKEND_WS_PORT \
     ELODIN_RELAY_URL="ws://127.0.0.1:$TEST_RELAY_WS_PORT" \
     ACTUATOR_SERVICE_PORT=9998 \
     CONFIG_PATH="$TEST_CONFIG" \
-    npx tsx src/server-thin.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
+    npx tsx src/server.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
 else
-  echo "🖥️  Starting Backend server (server.ts legacy)..."
+  echo "🖥️  Starting Backend server (server-legacy.ts)..."
   (cd "$REPO_ROOT/web-gui/backend" && \
     WS_PORT=$TEST_BACKEND_WS_PORT \
     API_PORT=$TEST_BACKEND_API_PORT \
@@ -419,7 +419,7 @@ else
     USE_DIRECT_DAQ=false \
     USE_CPP_CONTROLLER=true \
     CONFIG_PATH="$TEST_CONFIG" \
-    npx tsx src/server.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
+    npx tsx src/server-legacy.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
 fi
 PIDS+=($!)
 

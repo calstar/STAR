@@ -1142,7 +1142,7 @@ async function testBoardStartupSelfTestToFrontend(ws: WebSocket): Promise<void> 
 
 async function main(): Promise<void> {
   console.log('🧪 WebSocket Data Flow Integration Test');
-  console.log(`   Backend: ${WS_URL} (${IS_THIN ? 'server-thin.ts' : 'server.ts legacy'})`);
+  console.log(`   Backend: ${WS_URL} (${IS_THIN ? 'server.ts' : 'server-legacy.ts'})`);
   if (IS_THIN) {
     console.log(`   sequencer_service: ${HAS_SEQUENCER ? 'available' : 'not found — command tests will be skipped'}`);
   }
