@@ -315,7 +315,7 @@ echo "📡 Starting Elodin Relay..."
   ELODIN_PORT=$TEST_ELODIN_PORT \
   RELAY_WS_PORT=$TEST_RELAY_WS_PORT \
   RELAY_WS_HOST=0.0.0.0 \
-  npx tsx src/elodin-relay.ts > "$REPO_ROOT/.tmp/integration_relay_$$.log" 2>&1) &
+  npx tsx src/legacy/elodin-relay.ts > "$REPO_ROOT/.tmp/integration_relay_$$.log" 2>&1) &
 PIDS+=($!)
 
 wait_for_port "$TEST_RELAY_WS_PORT" "Relay" 15 || {

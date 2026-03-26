@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
-import { getConfigPath } from '../routes/config.js';
+import { getConfigPath } from './routes/config.js';
 
 type CountdownStateFile = {
   /** Unix timestamp in milliseconds; null clears/pauses the countdown. */

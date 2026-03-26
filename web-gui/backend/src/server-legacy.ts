@@ -44,7 +44,7 @@ import { DataLogger } from './data-logger.js';
 import { readConfig, getConfigPath } from './routes/config.js';
 import { MessageLogger } from './legacy/message-logger.js';
 import { DemoModeGenerator } from './legacy/demo-mode.js';
-import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from './legacy/countdown-state.js';
+import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from './countdown-state.js';
 import {
   MessageType,
   SensorUpdate,

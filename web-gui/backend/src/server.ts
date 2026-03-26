@@ -112,7 +112,8 @@ setInterval(pruneHistory, 60_000);
 // ── Mission time ─────────────────────────────────────────────────────────────
 
 let firstPacketTimeMs: number | null = null;
-let countdownTargetMs: number | null = null;
+import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from './countdown-state.js';
+let countdownTargetMs: number | null = loadCountdownTargetTimeMs();
 
 // ── Board status ─────────────────────────────────────────────────────────────
 
@@ -367,6 +368,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       break;
     case 'set_countdown_target':
       countdownTargetMs = command.data.targetTimeMs ?? null;
+      saveCountdownTargetTimeMs(countdownTargetMs);
       broadcast({ type: MessageType.COUNTDOWN_TARGET_UPDATE, timestamp: Date.now(), payload: { targetTimeMs: countdownTargetMs } });
       break;
     default:
