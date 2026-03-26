@@ -7,7 +7,8 @@
 #
 # Startup delays in each CMD_* keep pipeline safe (DB before relay before DAQ) regardless of pane order.
 # Command path: thin → TCP :9998 → sequencer_service (matches test_integration.sh).
-# Tmux panes 0–12: sim, daq, db, relay, thin, frontend, heartbeat, config, sequencer, ota, controller, datalog, calibration.
+# Tmux panes 0–11: sim, daq, db, relay, thin backend, frontend, heartbeat, config, sequencer,
+# ota, controller, datalog. Splits always target the highest-index pane so all 12 panes are created.
 
 SESSION="sensor-dev"
 PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -108,7 +109,6 @@ pkill -f "data_logger_service" 2>/dev/null || true
 pkill -f "board_simulator" 2>/dev/null || true
 pkill -f "next dev" 2>/dev/null || true
 pkill -f "tsx watch.*server\.ts" 2>/dev/null || true
-pkill -f "tsx watch.*server\.ts" 2>/dev/null || true
 pkill -f "tsx.*server\.ts" 2>/dev/null || true
 # Thin uses :8081 for HTTP+WS (frontend + datalogger); free 8082 for stray legacy API listeners
 for port in 8081 8082; do
@@ -193,50 +193,51 @@ CMD_CONFIG="printf '\n  ══ CONFIG BROADCAST SERVICE — config packets to bo
 # Data logger: connects to backend WS (same port as frontend default)
 CMD_DATALOG="printf '\n  ══ DATA LOGGER SERVICE — .sensorlog recording ══\n\n' && sleep 7 && cd $PROJECT && exec $PYTHON_BIN scripts/services/data_logger_service.py --ws-url ws://127.0.0.1:${THIN_WS_PORT} 2>&1"
 
-# Calibration service: subscribes to raw Elodin data, publishes calibrated entities (PT_Cal, TC_Cal, RTD_Cal, LC_Cal)
-CAL_BIN="$PROJECT/build/FSW/calibration_service"
-[ ! -x "$CAL_BIN" ] && CAL_BIN="$PROJECT/FSW/build/calibration_service"
-if [ -x "$CAL_BIN" ]; then
-  CMD_CAL="printf '\n  ══ CALIBRATION SERVICE — raw → calibrated (TC/RTD/LC/PT) ══\n\n' && sleep 6 && cd $PROJECT && exec $CAL_BIN --config config/config.toml 2>&1"
-else
-  CMD_CAL="printf '\n  ❌ calibration_service not built — cd FSW/build && cmake .. && make calibration_service\n\n' && sleep infinity"
-fi
-
-tmux_split_h() {
-  tmux split-window -t "$SESSION:main" -h "bash --norc --noprofile -c \"$1\""
+# Split the rightmost (max index) pane each time so pane creation order is 0..11 as listed above.
+# Re-tile after each split so widths stay usable. IMPORTANT: pass one shell string to tmux (like
+# legacy scripts). Separate argv (bash --norc -c $q) does not run the command — panes exit → "dead".
+tmux_split_right() {
+  local last
+  last=$(LC_ALL=C tmux list-panes -t "$SESSION:main" -F '#{pane_index}' | sort -n | tail -1)
+  tmux split-window -h -t "$SESSION:main.${last}" \
+    "bash --norc --noprofile -c \"$1\""
+  tmux select-layout -t "$SESSION:main" tiled
 }
 
-tmux new-session -d -s "$SESSION" -n main -x 220 -y 60 \
+tmux new-session -d -s "$SESSION" -n main -x 240 -y 70 \
   "bash --norc --noprofile -c \"$CMD_SIM\""
 
 tmux set-option -t "$SESSION" remain-on-exit on
 tmux set-option -t "$SESSION" mouse on
 
-tmux_split_h "$CMD_DAQ"
-tmux_split_h "$CMD_DB"
-tmux_split_h "$CMD_RELAY"
-tmux_split_h "$CMD_WEB_BACKEND"
-tmux_split_h "$CMD_WEB_FRONTEND"
-tmux_split_h "$CMD_HEARTBEAT"
-tmux_split_h "$CMD_CONFIG"
-tmux_split_h "$CMD_SEQUENCER"
-tmux_split_h "$CMD_OTA"
-tmux_split_h "$CMD_CTRL"
-tmux_split_h "$CMD_DATALOG"
-tmux_split_h "$CMD_CAL"
+if [ "${USE_SIM:-0}" = "1" ]; then
+  echo -e "\n  🔌 STARTING BOARD SIMULATOR (pane 0)"
+else
+  echo -e "\n  🚫 BOARD SIMULATOR DISABLED (set USE_SIM=1 to enable) — pane 0"
+fi
+
+tmux_split_right "$CMD_DAQ"
+tmux_split_right "$CMD_DB"
+tmux_split_right "$CMD_RELAY"
+tmux_split_right "$CMD_WEB_BACKEND"
+tmux_split_right "$CMD_WEB_FRONTEND"
+tmux_split_right "$CMD_HEARTBEAT"
+tmux_split_right "$CMD_CONFIG"
+tmux_split_right "$CMD_SEQUENCER"
+tmux_split_right "$CMD_OTA"
+tmux_split_right "$CMD_CTRL"
+tmux_split_right "$CMD_DATALOG"
 
 tmux select-layout -t "$SESSION:main" tiled
-
 tmux select-pane -t "$SESSION:main.4"
 
 echo "┌─────────────────────────────────────────────────────────────┐"
 echo "│  Pipeline: UDP → daq_bridge → DB → relay → backend → UI       │"
-echo "│  0: Simulator   1: DAQ bridge   2: Elodin DB                 │"
-echo "│  3: Relay :9090  4: Backend :${THIN_WS_PORT}  5: Frontend :3000      │"
-echo "│  6: Heartbeat   7: Config broadcast   8: Sequencer :9998      │"
+echo "│  0: Simulator   1: DAQ bridge   2: Elodin DB                  │"
+echo "│  3: Relay :9090  4: Thin backend :${THIN_WS_PORT}  5: Frontend :3000 │"
+echo "│  6: Heartbeat   7: Config   8: Sequencer :9998                │"
 echo "│  9: Ethernet OTA :${OTA_CMD_PORT}  10: Controller  11: Data logger │"
-echo "│  12: Calibration (raw → PT_Cal/TC_Cal/RTD_Cal/LC_Cal)        │"
-echo "│  USE_SIM=1 enables simulator                                 │"
+echo "│  USE_SIM=1 enables simulator; run calibration_server separately │"
 echo "│  Override: THIN_WS_PORT THIN_RELAY_URL THIN_ACTUATOR_SERVICE_PORT OTA_SERVICE_CMD_PORT │"
 echo "│  Ctrl+B arrows=switch  D=detach                              │"
 echo "└─────────────────────────────────────────────────────────────┘"

@@ -265,6 +265,12 @@ bool buildAndFlash(const std::string& ip, const std::string& projectDir, int boa
         return false;
     }
     buildOutput = blog;
+    // Successful builds previously had no console output; print captured pio log before flash.
+    if (!blog.empty()) {
+        std::cout << "[OTAService] pio run output:\n" << blog;
+        if (blog.back() != '\n')
+            std::cout << '\n';
+    }
     const std::string envName = readFirstPioEnv(projectDir + "/platformio.ini");
     const std::string binPath = projectDir + "/.pio/build/" + envName + "/firmware.bin";
     std::ifstream bf(binPath);
