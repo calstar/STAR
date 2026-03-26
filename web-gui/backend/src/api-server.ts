@@ -3,10 +3,13 @@
  * Runs alongside WebSocket server
  */
 
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { readConfig, writeConfig } from './routes/config.js';
-import { uploadFirmware } from './ota-flash.js';
-import { discoverProjects, buildProject, flashAllBoards, type FlashAllBoard } from './ota-build.js';
+import { discoverProjects, getEnabledBoardsForFlash, getOtaWorkspaceRoot, BOARD_TYPE_TO_PROJECT } from './ota-build.js';
+import { otaBuildFlash, otaFlashFirmwareFile } from './ota-service-cmd.js';
 import { ElodinQueryClient, QueryOptions } from './elodin-query.js';
 import type { SensorUpdate } from './shared-types.js';
 
@@ -382,22 +385,7 @@ export function startAPIServer(
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ projects }));
       } else if (url.pathname === '/api/ota-flash/flash-all' && req.method === 'POST') {
-        const getBoards = (): FlashAllBoard[] => {
-          const config = readConfig();
-          const boards = (config.boards || {}) as Record<string, any>;
-          const out: FlashAllBoard[] = [];
-          for (const [key, raw] of Object.entries(boards)) {
-            const b = raw as any;
-            if (b.enabled === false) continue;
-            const type = b.type || 'UNKNOWN';
-            const ip = typeof b.ip === 'string' ? b.ip : '';
-            const boardId = typeof b.board_id === 'number' ? b.board_id : b.board_number ?? 1;
-            if (!ip || !type) continue;
-            out.push({ key, type, ip, boardId });
-          }
-          return out;
-        };
-        const boards = getBoards();
+        const boards = getEnabledBoardsForFlash();
         if (boards.length === 0) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, message: 'No enabled boards in config' }));
@@ -414,16 +402,55 @@ export function startAPIServer(
           res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
         };
 
-        sendSSE('progress', { message: `Starting flash-all for ${boards.length} boards...` });
+        sendSSE('progress', { message: `Starting flash-all for ${boards.length} boards (ota_service build+flash)…` });
 
-        const result = await flashAllBoards(getBoards, (msg) => {
-          console.log(`[FlashAll] ${msg}`);
-          sendSSE('progress', { message: msg });
-        }, (boardResult) => {
-          sendSSE('board_result', boardResult);
+        const results: Array<{
+          key: string;
+          type: string;
+          ip: string;
+          boardId: number;
+          success: boolean;
+          error?: string;
+        }> = [];
+        let flashed = 0;
+        let failed = 0;
+        const root = getOtaWorkspaceRoot();
+
+        for (let i = 0; i < boards.length; i++) {
+          const b = boards[i];
+          const rel = BOARD_TYPE_TO_PROJECT[b.type];
+          if (!rel) {
+            const r = { ...b, success: false as const, error: `No firmware project for type ${b.type}` };
+            results.push(r);
+            sendSSE('board_result', r);
+            failed++;
+            continue;
+          }
+          const absProj = path.join(root, rel);
+          sendSSE('progress', {
+            message: `[${i + 1}/${boards.length}] Build+flash ${b.type} (ID ${b.boardId}) → ${b.ip}…`,
+          });
+          const { ok, reply } = await otaBuildFlash(b.ip, absProj, b.boardId);
+          if (ok) {
+            const r = { ...b, success: true as const };
+            results.push(r);
+            sendSSE('board_result', r);
+            flashed++;
+          } else {
+            const r = { ...b, success: false as const, error: reply };
+            results.push(r);
+            sendSSE('board_result', r);
+            failed++;
+          }
+        }
+
+        sendSSE('done', {
+          success: failed === 0,
+          total: boards.length,
+          flashed,
+          failed,
+          results,
         });
-
-        sendSSE('done', result);
         res.end();
       } else if (url.pathname === '/api/ota-flash' && req.method === 'POST') {
         const chunks: Buffer[] = [];
@@ -449,34 +476,64 @@ export function startAPIServer(
             }
             const portNum = typeof port === 'number' ? port : parseInt(String(port), 10) || 3232;
 
-            let firmwareBuffer: Buffer;
+            const t0 = Date.now();
             if (projectPath && typeof projectPath === 'string') {
-              const boardIdNum = typeof boardId === 'number' && boardId > 0 && boardId <= 254 ? boardId : null;
-              const buildFlags = boardIdNum != null ? `-DTEMP_HARDCODE_BOARD_ID=${boardIdNum}` : undefined;
-              const buildResult = await buildProject(projectPath, buildFlags);
-              if (!buildResult.success || !buildResult.firmwareBuffer) {
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({
-                  success: false,
-                  bytesSent: 0,
-                  durationMs: 0,
-                  error: buildResult.error || 'Build failed',
-                  buildOutput: buildResult.buildOutput,
-                }));
+              if (portNum !== 3232) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'ota_service uses board OTA port 3232' }));
                 return;
               }
-              firmwareBuffer = buildResult.firmwareBuffer;
-            } else if (firmwareBase64 && typeof firmwareBase64 === 'string') {
-              firmwareBuffer = Buffer.from(firmwareBase64, 'base64');
-            } else {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'Provide firmwareBase64 or projectPath' }));
+              const root = getOtaWorkspaceRoot();
+              const absProj = path.isAbsolute(projectPath)
+                ? projectPath
+                : path.join(root, projectPath);
+              const bid =
+                typeof boardId === 'number' && boardId >= 0 && boardId <= 254 ? boardId : 0;
+              const { ok, reply } = await otaBuildFlash(ip, absProj, bid);
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  success: ok,
+                  bytesSent: 0,
+                  durationMs: Date.now() - t0,
+                  error: ok ? undefined : reply,
+                }),
+              );
               return;
             }
-
-            const result = await uploadFirmware(firmwareBuffer, ip, portNum);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(result));
+            if (firmwareBase64 && typeof firmwareBase64 === 'string') {
+              if (portNum !== 3232) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'ota_service uses board OTA port 3232' }));
+                return;
+              }
+              const firmwareBuffer = Buffer.from(firmwareBase64, 'base64');
+              const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diablo-ota-'));
+              const fp = path.join(dir, 'firmware.bin');
+              try {
+                fs.writeFileSync(fp, firmwareBuffer);
+                const { ok, reply } = await otaFlashFirmwareFile(ip, fp);
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(
+                  JSON.stringify({
+                    success: ok,
+                    bytesSent: ok ? firmwareBuffer.length : 0,
+                    durationMs: Date.now() - t0,
+                    error: ok ? undefined : reply,
+                  }),
+                );
+              } finally {
+                try {
+                  fs.rmSync(dir, { recursive: true, force: true });
+                } catch {
+                  /* ignore */
+                }
+              }
+              return;
+            }
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Provide firmwareBase64 or projectPath' }));
+            return;
           } catch (err: any) {
             console.error('❌ OTA flash error:', err);
             res.writeHead(500, { 'Content-Type': 'application/json' });

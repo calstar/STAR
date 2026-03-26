@@ -2,7 +2,6 @@
 
 import { useState, useCallback, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { getApiBaseUrl } from '@/lib/websocket'
 
 const DEFAULT_PORT = 3232
 
@@ -52,7 +51,7 @@ function FlashPageContent() {
   }, [searchParams])
 
   useEffect(() => {
-    fetch(`${getApiBaseUrl()}/api/ota-flash/projects`)
+    fetch('/api/ota-flash/projects')
       .then((r) => r.json())
       .then((data) => {
         const list = data.projects ?? []
@@ -92,7 +91,7 @@ function FlashPageContent() {
         body.firmwareBase64 = arrayBufferToBase64(buffer)
       }
 
-      const res = await fetch(`${getApiBaseUrl()}/api/ota-flash`, {
+      const res = await fetch('/api/ota-flash', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -128,7 +127,7 @@ function FlashPageContent() {
     setFlashAllDone(null)
     setResult(null)
     try {
-      const res = await fetch(`${getApiBaseUrl()}/api/ota-flash/flash-all`, { method: 'POST' })
+      const res = await fetch('/api/ota-flash/flash-all', { method: 'POST' })
       if (!res.body) {
         setFlashAllLog(['Error: no response stream'])
         return

@@ -1,6 +1,13 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Import sensor backend .ts sources from app routes (they use .js extensions in ESM imports).
+  webpack: (config) => {
+    config.resolve.extensionAlias = {
+      '.js': ['.ts', '.tsx', '.js', '.jsx'],
+    };
+    return config;
+  },
   // Enable PWA for mobile
   // We'll add PWA config later if needed
   // Allow external access

@@ -7,6 +7,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, execSync } from 'child_process';
+import { readConfig } from './routes/config.js';
 
 const DIABLOAVIONICS_REL = 'external/DiabloAvionics';
 
@@ -18,6 +19,11 @@ function getWorkspaceRoot(): string {
     if (fs.existsSync(p)) return path.resolve(root);
   }
   return path.resolve(cwd, '..', '..'); // fallback: web-gui/backend -> sensor_system
+}
+
+/** Repo root containing external/DiabloAvionics (OTA paths, config). */
+export function getOtaWorkspaceRoot(): string {
+  return getWorkspaceRoot();
 }
 
 export interface OtaProject {
@@ -180,6 +186,27 @@ export interface FlashAllBoard {
   boardId: number;
 }
 
+/** Enabled boards from config.toml (for flash-all UIs). */
+export function getEnabledBoardsForFlash(): FlashAllBoard[] {
+  const config = readConfig();
+  const boards = (config.boards || {}) as Record<string, Record<string, unknown>>;
+  const out: FlashAllBoard[] = [];
+  for (const [key, raw] of Object.entries(boards)) {
+    if (raw.enabled === false) continue;
+    const type = typeof raw.type === 'string' ? raw.type : 'UNKNOWN';
+    const ip = typeof raw.ip === 'string' ? raw.ip : '';
+    const boardId =
+      typeof raw.board_id === 'number'
+        ? raw.board_id
+        : typeof raw.board_number === 'number'
+          ? raw.board_number
+          : 1;
+    if (!ip || !type) continue;
+    out.push({ key, type, ip, boardId });
+  }
+  return out;
+}
+
 export interface FlashAllResult {
   success: boolean;
   total: number;
@@ -193,65 +220,4 @@ export interface FlashAllResult {
     success: boolean;
     error?: string;
   }>;
-}
-
-const OTA_PORT = 3232;
-
-/**
- * Flash all enabled boards from config: compile with board_id per board, then flash to each IP.
- */
-export async function flashAllBoards(
-  getBoards: () => FlashAllBoard[],
-  onProgress?: (msg: string) => void,
-  onBoardResult?: (result: FlashAllResult['results'][number]) => void,
-): Promise<FlashAllResult> {
-  const { uploadFirmware } = await import('./ota-flash.js');
-  const boards = getBoards();
-  const results: FlashAllResult['results'] = [];
-  let flashed = 0;
-  let failed = 0;
-
-  for (let i = 0; i < boards.length; i++) {
-    const b = boards[i];
-    const projectPath = BOARD_TYPE_TO_PROJECT[b.type];
-    if (!projectPath) {
-      const r = { ...b, success: false as const, error: `No firmware project for type ${b.type}` };
-      results.push(r);
-      onBoardResult?.(r);
-      failed++;
-      continue;
-    }
-
-    onProgress?.(`[${i + 1}/${boards.length}] Building ${b.type} (ID ${b.boardId}) for ${b.ip}...`);
-    const buildResult = await buildProject(projectPath, `-DTEMP_HARDCODE_BOARD_ID=${b.boardId}`);
-    if (!buildResult.success || !buildResult.firmwareBuffer) {
-      const r = { ...b, success: false as const, error: buildResult.error || 'Build failed' };
-      results.push(r);
-      onBoardResult?.(r);
-      failed++;
-      continue;
-    }
-
-    onProgress?.(`[${i + 1}/${boards.length}] Flashing ${b.ip}...`);
-    const uploadResult = await uploadFirmware(buildResult.firmwareBuffer, b.ip, OTA_PORT);
-    if (uploadResult.success) {
-      const r = { ...b, success: true as const };
-      results.push(r);
-      onBoardResult?.(r);
-      flashed++;
-    } else {
-      const r = { ...b, success: false as const, error: uploadResult.error };
-      results.push(r);
-      onBoardResult?.(r);
-      failed++;
-    }
-  }
-
-  return {
-    success: failed === 0,
-    total: boards.length,
-    flashed,
-    failed,
-    results,
-  };
 }

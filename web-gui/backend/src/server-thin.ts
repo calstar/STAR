@@ -10,16 +10,15 @@
  *
  * NOT handled (owned by C++ services):
  *   - State machine validation — sequencer_service / actuator_service
- *   - Actuator UDP — actuator_service
+ *   - Actuator UDP — sequencer / actuator_service
  *   - SERVER_HEARTBEAT — heartbeat_service
  *   - Config packets — config_broadcast_service
  *   - Calibration — calibration_service (stub reply)
  *
- * Run alongside server.ts on a different port:
- *   WS_PORT=8082 node server-thin.js
+ * Default WS_PORT is 8082; scripts/startup/start_tmux_dev_thin.sh uses 8081 to match the frontend.
  *
- * Frontend switches via:
- *   NEXT_PUBLIC_WS_URL=ws://localhost:8082
+ * Frontend / dev:
+ *   NEXT_PUBLIC_WS_URL=ws://localhost:<WS_PORT>
  */
 
 import * as net from 'net';
@@ -189,12 +188,22 @@ const stats = {
   startTimeMs:                Date.now(),
 };
 
+// ── Local state (sequencer / actuator_service authoritative) ────────────────
+let currentState: SystemState = SystemState.IDLE;
+let debugMode = false;
+
 // ── WebSocket server ─────────────────────────────────────────────────────────
 
 const httpServer = http.createServer((req, res) => {
-  if (req.method === 'GET' && req.url === '/stats') {
+  const path = (req.url ?? '').split('?')[0] ?? '';
+  if (req.method === 'GET' && path === '/stats') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ...stats, uptimeMs: Date.now() - stats.startTimeMs }));
+    return;
+  }
+  if (req.method === 'GET' && path === '/api/engine_state') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ engineState: currentState }));
     return;
   }
   res.writeHead(404);
@@ -303,10 +312,6 @@ function handleMessage(ws: WebSocket, message: any): void {
       console.warn('[ThinServer] Unknown message type:', message.type);
   }
 }
-
-// ── Local state tracking (authoritative source is sequencer_service) ────────
-let currentState: SystemState = SystemState.IDLE;
-let debugMode = false;
 
 function broadcastStateUpdate(): void {
   broadcast({

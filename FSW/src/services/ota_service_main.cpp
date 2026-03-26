@@ -2,7 +2,10 @@
  * OTA Service — Ethernet firmware flash for DiabloAvionics ESP32-S3 boards.
  *
  * Listens on TCP port 9997 for commands:
- *   OTA_FLASH:<board_ip>:<firmware_path>   — flash .bin to board:3232
+ *   OTA_FLASH:<board_ip>:<firmware_path>   — flash existing .bin to board:3232
+ *   OTA_BUILD_FLASH|board_ip|abs_project_dir|board_id
+ *       — run `pio run` in abs_project_dir (board_id 1–254 sets
+ *       PLATFORMIO_BUILD_FLAGS=-DTEMP_HARDCODE_BOARD_ID=N; 0 = no flag), then flash .pio/build/<env>/firmware.bin
  *
  * Replies: "OK\n" or "ERR:<reason>\n"
  *
@@ -21,10 +24,14 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <sys/wait.h>
+
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -153,6 +160,122 @@ bool flashFirmware(const std::string& ip, const std::string& bin_path, std::stri
     return true;
 }
 
+// ── PlatformIO build (pio run) ───────────────────────────────────────────────
+
+std::string readFirstPioEnv(const std::string& iniPath) {
+    std::ifstream f(iniPath);
+    if (!f.is_open())
+        return "adafruit_feather_esp32s3";
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.size() > 6 && line.compare(0, 5, "[env:") == 0) {
+            size_t end = line.find(']');
+            if (end != std::string::npos && end > 5)
+                return trim(line.substr(5, end - 5));
+        }
+    }
+    return "adafruit_feather_esp32s3";
+}
+
+void sanitizeOneLine(std::string& s) {
+    for (char& c : s) {
+        if (c == '\n' || c == '\r')
+            c = ' ';
+    }
+    if (s.size() > 4000)
+        s.resize(4000);
+}
+
+/** Run pio in projectDir; capture combined stdout/stderr into buildLog. */
+bool runPioBuild(const std::string& projectDir, int boardId, std::string& buildLog, std::string& error) {
+    const std::string ini = projectDir + "/platformio.ini";
+    std::ifstream check(ini);
+    if (!check.is_open()) {
+        error = "no platformio.ini in " + projectDir;
+        return false;
+    }
+    check.close();
+
+    int pipefd[2];
+    if (pipe(pipefd) < 0) {
+        error = "pipe() failed";
+        return false;
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        error = "fork() failed";
+        return false;
+    }
+
+    if (pid == 0) {
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);
+        close(pipefd[1]);
+
+        if (chdir(projectDir.c_str()) != 0) {
+            perror("chdir");
+            _exit(126);
+        }
+        if (boardId > 0 && boardId <= 254) {
+            const std::string fl = "-DTEMP_HARDCODE_BOARD_ID=" + std::to_string(boardId);
+            setenv("PLATFORMIO_BUILD_FLAGS", fl.c_str(), 1);
+        } else {
+            unsetenv("PLATFORMIO_BUILD_FLAGS");
+        }
+
+        execlp("pio", "pio", "run", (char*)nullptr);
+        execlp("platformio", "platformio", "run", (char*)nullptr);
+        _exit(127);
+    }
+
+    close(pipefd[1]);
+    buildLog.clear();
+    char buf[4096];
+    ssize_t n;
+    while ((n = read(pipefd[0], buf, sizeof(buf) - 1)) > 0 && buildLog.size() < 65536) {
+        buf[n] = '\0';
+        buildLog += buf;
+    }
+    close(pipefd[0]);
+
+    int st = 0;
+    if (waitpid(pid, &st, 0) < 0) {
+        error = "waitpid failed";
+        return false;
+    }
+    if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+        int code = WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+        error = "pio run failed (exit " + std::to_string(code) + "): " + buildLog;
+        sanitizeOneLine(error);
+        return false;
+    }
+    return true;
+}
+
+bool buildAndFlash(const std::string& ip, const std::string& projectDir, int boardId, std::string& error,
+                   std::string& buildOutput) {
+    std::string blog;
+    if (!runPioBuild(projectDir, boardId, blog, error)) {
+        buildOutput = blog;
+        return false;
+    }
+    buildOutput = blog;
+    const std::string envName = readFirstPioEnv(projectDir + "/platformio.ini");
+    const std::string binPath = projectDir + "/.pio/build/" + envName + "/firmware.bin";
+    std::ifstream bf(binPath);
+    if (!bf.is_open()) {
+        error = "firmware.bin missing after build: " + binPath;
+        sanitizeOneLine(error);
+        return false;
+    }
+    bf.close();
+    return flashFirmware(ip, binPath, error);
+}
+
 // ── TCP command handler ───────────────────────────────────────────────────────
 
 void handleClient(int client_fd) {
@@ -171,7 +294,7 @@ void handleClient(int client_fd) {
     while (g_running && recv(client_fd, &c, 1, 0) == 1) {
         if (c == '\n')
             break;
-        if (buf.size() < 1024)
+        if (buf.size() < 8192)
             buf += c;
     }
     const std::string cmd = trim(buf);
@@ -191,11 +314,43 @@ void handleClient(int client_fd) {
                 sendReply("OK\n");
             } else {
                 std::cerr << "[OTAService] Flash " << ip << " failed: " << err << std::endl;
+                sanitizeOneLine(err);
                 sendReply("ERR:" + err + "\n");
             }
         }
+    } else if (cmd.compare(0, 16, "OTA_BUILD_FLASH|") == 0) {
+        // OTA_BUILD_FLASH|ip|abs_project_dir|board_id  (path must not contain '|')
+        std::istringstream iss(cmd);
+        std::string token;
+        std::vector<std::string> parts;
+        while (std::getline(iss, token, '|')) {
+            parts.push_back(trim(token));
+        }
+        if (parts.size() != 4 || parts[0] != "OTA_BUILD_FLASH") {
+            sendReply("ERR:bad OTA_BUILD_FLASH — use OTA_BUILD_FLASH|ip|abs_project_dir|board_id\n");
+        } else {
+            const std::string& ip = parts[1];
+            const std::string& proj = parts[2];
+            int bid = std::atoi(parts[3].c_str());
+            if (ip.empty() || proj.empty()) {
+                sendReply("ERR:empty ip or project path\n");
+            } else {
+                std::cout << "[OTAService] Build+flash " << ip << " project " << proj << " board_id " << bid
+                          << std::endl;
+                std::string err;
+                std::string buildOut;
+                if (buildAndFlash(ip, proj, bid, err, buildOut)) {
+                    std::cout << "[OTAService] Build+flash " << ip << " OK" << std::endl;
+                    sendReply("OK\n");
+                } else {
+                    std::cerr << "[OTAService] Build+flash failed: " << err << std::endl;
+                    sanitizeOneLine(err);
+                    sendReply("ERR:" + err + "\n");
+                }
+            }
+        }
     } else if (!cmd.empty()) {
-        sendReply("ERR:unknown command (use OTA_FLASH:<ip>:<path>)\n");
+        sendReply("ERR:unknown command\n");
     }
 
     close(client_fd);
@@ -212,7 +367,8 @@ int main(int argc, char* argv[]) {
             listen_port = static_cast<uint16_t>(std::atoi(argv[++i]));
         } else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: " << argv[0] << " [--port PORT]\n"
-                      << "  Commands: OTA_FLASH:<board_ip>:<firmware_path>\n";
+                      << "  OTA_FLASH:<ip>:<firmware.bin>\n"
+                      << "  OTA_BUILD_FLASH|ip|abs_platformio_project_dir|board_id (0=no ID flag)\n";
             return 0;
         }
     }
@@ -248,7 +404,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "[OTAService] Listening on port " << listen_port << std::endl;
-    std::cout << "[OTAService] Commands: OTA_FLASH:<board_ip>:<firmware_path>" << std::endl;
+    std::cout << "[OTAService] OTA_FLASH:… and OTA_BUILD_FLASH|ip|dir|board_id" << std::endl;
 
     while (g_running) {
         fd_set rd;
