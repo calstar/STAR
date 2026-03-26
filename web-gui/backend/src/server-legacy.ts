@@ -28,23 +28,23 @@ import { ElodinClient, ElodinPacketType } from './elodin-client.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { ElodinQueryClient } from './elodin-query.js';
 import { parseElodinPacket } from './elodin-protocol.js';
-import { registerControllerVTables, registerActuatorCommandedVTables } from './elodin-vtable-controller.js';
-import { registerNavigationVTable } from './elodin-vtable-navigation.js';
+import { registerControllerVTables, registerActuatorCommandedVTables } from './legacy/elodin-vtable-controller.js';
+import { registerNavigationVTable } from './legacy/elodin-vtable-navigation.js';
 import { ElodinRelayClient } from './elodin-relay-client.js';
 
-import { ElodinPublisherBatched } from './elodin-publisher-batched.js';
+import { ElodinPublisherBatched } from './legacy/elodin-publisher-batched.js';
 import { publishControllerActuation, publishControllerDiagnostics, publishControllerStateTransition, publishActuatorStateToElodin } from './controller-elodin-publisher.js';
-import { getStateTransitions, isTransitionAllowed } from './routes/state-transitions.js';
-import { getStateActuatorMap, StateActuatorMap, CSV_ACTUATOR_TO_ENTITY, getActuatorChannel } from './routes/state-actuators.js';
+import { getStateTransitions, isTransitionAllowed } from './legacy/state-transitions.js';
+import { getStateActuatorMap, StateActuatorMap, CSV_ACTUATOR_TO_ENTITY, getActuatorChannel } from './legacy/state-actuators.js';
 import { startAPIServer, type DebugInfo } from './api-server.js';
 import { loadPTCalibration, type CalibrationCoefficients } from './calibration.js';
 import { CalibrationSidecarClient } from './calibration-sidecar.js';
 import { handleCalibrationCommand } from './calibration-handler.js';
 import { DataLogger } from './data-logger.js';
 import { readConfig, getConfigPath } from './routes/config.js';
-import { MessageLogger } from './message-logger.js';
-import { DemoModeGenerator } from './demo-mode.js';
-import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from './countdown-state.js';
+import { MessageLogger } from './legacy/message-logger.js';
+import { DemoModeGenerator } from './legacy/demo-mode.js';
+import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from './legacy/countdown-state.js';
 import {
   MessageType,
   SensorUpdate,
@@ -78,7 +78,7 @@ import {
   forwardStateToActuatorService,
   forwardActuatorToActuatorService,
   forwardFireStateToControllerService,
-} from './actuator-control.js';
+} from './legacy/actuator-control.js';
 
 // ── Expected actuator positions per state (loaded from state_machine_actuators.csv) ─
 let STATE_ACTUATOR_MAP: StateActuatorMap = {};

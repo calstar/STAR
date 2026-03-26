@@ -10,7 +10,7 @@
  * This matches the C++ ElodinClient pattern exactly.
  */
 
-import { ElodinClient, ElodinPacketType } from './elodin-client.js';
+import { ElodinClient, ElodinPacketType } from '../elodin-client.js';
 
 /**
  * Batched Elodin publisher matching DAQ Bridge pattern

@@ -9,7 +9,7 @@
  *   elodin.publish([0x45, 0x00], payload)
  */
 
-import { ElodinClient, ElodinPacketType } from './elodin-client.js';
+import { ElodinClient, ElodinPacketType } from '../elodin-client.js';
 import { computeMsgId } from './elodin-vtable.js';
 
 export async function registerNavigationVTable(client: ElodinClient): Promise<boolean> {

@@ -10,8 +10,8 @@
  */
 
 import * as dgram from 'dgram';
-import { SensorUpdate } from '../../shared/types.js';
-import { readConfig } from './routes/config.js';
+import { SensorUpdate } from '../../../shared/types.js';
+import { readConfig } from '../routes/config.js';
 
 // DiabloAvionics packet format constants
 const PACKET_TYPE_SENSOR_DATA = 3;

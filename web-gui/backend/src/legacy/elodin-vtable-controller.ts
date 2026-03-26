@@ -10,7 +10,7 @@
  * - ControllerFireStateMessage     [0x44, 0x00]  17 bytes
  */
 
-import { ElodinClient, ElodinPacketType } from './elodin-client.js';
+import { ElodinClient, ElodinPacketType } from '../elodin-client.js';
 import { computeMsgId } from './elodin-vtable.js';
 
 export async function registerControllerVTables(client: ElodinClient): Promise<boolean> {

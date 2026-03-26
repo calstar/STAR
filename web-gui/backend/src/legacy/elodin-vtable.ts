@@ -3,7 +3,7 @@
  * Registers VTables so Elodin DB knows how to stream data to us
  */
 
-import { ElodinClient, ElodinPacketType } from './elodin-client.js';
+import { ElodinClient, ElodinPacketType } from '../elodin-client.js';
 
 /**
  * Register VTables with Elodin DB and subscribe to data streams

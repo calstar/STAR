@@ -7,13 +7,13 @@
 import * as dgram from 'dgram';
 import * as net from 'net';
 import { WebSocket } from 'ws';
-import { readConfig } from './routes/config.js';
-import { getActuatorChannel, CSV_ACTUATOR_TO_ENTITY } from './routes/state-actuators.js';
-import type { StateActuatorMap } from './routes/state-actuators.js';
+import { readConfig } from '../routes/config.js';
+import { getActuatorChannel, CSV_ACTUATOR_TO_ENTITY } from './state-actuators.js';
+import type { StateActuatorMap } from './state-actuators.js';
 import {
     MessageType,
     SystemState,
-} from '../../shared/types.js';
+} from '../../../shared/types.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Types used by the server to interact with this module

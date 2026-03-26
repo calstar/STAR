@@ -3,7 +3,7 @@
  * This might be the correct way to subscribe to Elodin DB data streams
  */
 
-import { ElodinClient, ElodinPacketType } from './elodin-client.js';
+import { ElodinClient, ElodinPacketType } from '../elodin-client.js';
 // Import computeMsgId - it's exported from elodin-vtable.ts
 import { computeMsgId } from './elodin-vtable.js';
 

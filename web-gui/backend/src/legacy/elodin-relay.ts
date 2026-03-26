@@ -11,10 +11,10 @@
 
 import * as net from 'net';
 import { WebSocketServer } from 'ws';
-import { ElodinClient, ElodinPacketType } from './elodin-client.js';
+import { ElodinClient, ElodinPacketType } from '../elodin-client.js';
 import { registerVTables } from './elodin-vtable.js';
 import { registerControllerVTables, registerActuatorCommandedVTables } from './elodin-vtable-controller.js';
-import { loadActuatorChannelToEntityMap } from './sensor-config.js';
+import { loadActuatorChannelToEntityMap } from '../sensor-config.js';
 
 const ELODIN_HOST = process.env.ELODIN_HOST || '127.0.0.1';
 const ELODIN_PORT = parseInt(process.env.ELODIN_PORT || '2240', 10);
