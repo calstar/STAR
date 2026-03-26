@@ -131,7 +131,9 @@ DAQ_BIN="$PROJECT/build/FSW/daq_bridge"
 if [ ! -x "$DAQ_BIN" ]; then
   DAQ_BIN="$PROJECT/FSW/build/daq_bridge"
 fi
-CMD_DAQ="printf '\n  ══ DAQ BRIDGE (writes to Elodin — UDP from config → DB) ══\n\n' && echo '  ⏳ Waiting for relay WS :9090 before starting DAQ...' && for i in \$(seq 1 30); do (echo >/dev/tcp/127.0.0.1/9090) 2>/dev/null && break || sleep 1; done && sleep 1 && cd $PROJECT && exec $DAQ_BIN config/config.toml 2>&1"
+# DAQ must wait for relay to grab Elodin's first-subscriber slot (see race condition note above).
+# sleep 10 > relay's sleep 2 + tsx cold-start (~3-5s) + subscription time.
+CMD_DAQ="printf '\n  ══ DAQ BRIDGE (writes to Elodin — UDP from config → DB) ══\n\n' && echo '  ⏳ Waiting for relay to connect first...' && sleep 10 && cd $PROJECT && exec $DAQ_BIN config/config.toml 2>&1"
 
 # Controller Service: Reads CALIBRATED DB → UDP out + Diagnostics DB
 CTRL_BIN="$PROJECT/build/FSW/controller_service"
