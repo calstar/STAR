@@ -1,14 +1,14 @@
 #!/bin/bash
-# Full stack with the default server.ts (thin relay backend).
+# Full stack with the default server.ts (direct Elodin DB backend).
 # Legacy monolithic backend is available via start_tmux_dev_legacy.sh.
 #
 # Thin backend: HTTP + WebSocket on WS_PORT (8081 here so frontend + data_logger defaults work).
-# Env aligns with integration test thin path: ELODIN_RELAY_URL, WS_PORT, ACTUATOR_SERVICE_PORT.
+# Backend connects directly to Elodin DB (no relay). Env: ELODIN_HOST, ELODIN_PORT, WS_PORT.
 #
-# Startup delays in each CMD_* keep pipeline safe (DB before relay before DAQ) regardless of pane order.
+# Startup delays in each CMD_* keep pipeline safe (DB before DAQ) regardless of pane order.
 # Command path: thin → TCP :9998 → sequencer_service (matches test_integration.sh).
-# Tmux panes 0–11: sim, daq, db, relay, thin backend, frontend, heartbeat, config, sequencer,
-# ota, controller, datalog. Splits always target the highest-index pane so all 12 panes are created.
+# Tmux panes 0–10: sim, daq, db, calibration, thin backend, frontend, heartbeat, config, sequencer,
+# ota, controller. Splits always target the highest-index pane so all 11 panes are created.
 
 SESSION="sensor-dev"
 PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -39,7 +39,7 @@ if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 20 ]; then
   exit 1
 fi
 if [ "$NODE_MAJOR" -ge 23 ]; then
-  echo "⚠️  Node.js $(node -v) detected. If relay/backend crash, switch to Node 20/22."
+  echo "⚠️  Node.js $(node -v) detected. If backend crashes, switch to Node 20/22."
 fi
 
 # Elodin DB binary (portable path: cargo bin or PATH).
@@ -65,7 +65,7 @@ fi
 # Check if services are already running via systemd
 if systemctl --user is-active --quiet sensor-backend.service 2>/dev/null; then
   echo "⚠️  Systemd services are currently running!"
-  echo "   Stop them first: systemctl --user stop sensor-elodin sensor-relay sensor-backend sensor-frontend sensor-sidecar sensor-actuator"
+  echo "   Stop them first: systemctl --user stop sensor-elodin sensor-backend sensor-frontend sensor-sidecar sensor-actuator"
   exit 1
 fi
 
@@ -99,7 +99,6 @@ fi
 
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 pkill -f "elodin-db run.*2240" 2>/dev/null || true
-pkill -f "elodin-relay" 2>/dev/null || true
 pkill -f "daq_bridge" 2>/dev/null || true
 pkill -f "sequencer_service" 2>/dev/null || true
 pkill -f "actuator_service" 2>/dev/null || true
@@ -136,10 +135,9 @@ DAQ_BIN="$PROJECT/build/FSW/daq_bridge"
 if [ ! -x "$DAQ_BIN" ]; then
   DAQ_BIN="$PROJECT/FSW/build/daq_bridge"
 fi
-# DAQ must wait for relay to grab Elodin's first-subscriber slot (see race condition note above).
-# sleep 10 > relay's sleep 2 + tsx cold-start (~3-5s) + subscription time.
+# DAQ must wait for Elodin DB to be ready.
 CMD_LOG_DAQ="/tmp/gui_logs/daq.log"
-CMD_DAQ="printf '\n  ══ DAQ BRIDGE (writes to Elodin — UDP from config → DB) ══\n\n' && echo '  ⏳ Waiting for relay to connect first...' && sleep 10 && cd $PROJECT && exec $DAQ_BIN config/config.toml 2>&1 | tee $CMD_LOG_DAQ"
+CMD_DAQ="printf '\n  ══ DAQ BRIDGE (writes to Elodin — UDP from config → DB) ══\n\n' && echo '  ⏳ Waiting for Elodin DB...' && sleep 4 && cd $PROJECT && exec $DAQ_BIN config/config.toml 2>&1 | tee $CMD_LOG_DAQ"
 
 # Controller Service: Reads CALIBRATED DB → UDP out + Diagnostics DB
 CTRL_BIN="$PROJECT/build/FSW/controller_service"
@@ -166,16 +164,12 @@ fi
 
 CMD_LOG_DB="/tmp/gui_logs/db.log"
 CMD_DB="printf '\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n' && mkdir -p $HOME/.local/share/elodin && RUST_LOG=debug exec $ELODIN_DB_BIN run '[::]:2240' '$ELODIN_DB_DIR' 2>&1 | tee $CMD_LOG_DB"
-# Relay must connect to DB FIRST (sleep 2s) — daq_bridge sleeps 5s so relay subscribes before any TABLE data flows.
-CMD_LOG_RELAY="/tmp/gui_logs/relay.log"
-CMD_RELAY="printf '\n  ══ ELODIN RELAY — WS :9090 (DB → relay → services) ══\n\n' && sleep 2 && cd $PROJECT/web-gui/backend && npm run relay 2>&1 | tee $CMD_LOG_RELAY"
 
-# Thin backend (see test_integration.sh BACKEND=thin): ELODIN_RELAY_URL — not ELODIN_RELAY_WS_URL
+# Thin backend connects directly to Elodin DB (no relay needed)
 THIN_WS_PORT="${THIN_WS_PORT:-8081}"
-THIN_RELAY_URL="${THIN_RELAY_URL:-ws://localhost:9090}"
 THIN_ACT_PORT="${THIN_ACTUATOR_SERVICE_PORT:-9998}"
 CMD_LOG_BACKEND="/tmp/gui_logs/backend.log"
-CMD_WEB_BACKEND="printf '\n  ══ BACKEND — HTTP+WS :${THIN_WS_PORT} (server.ts) ══\n\n' && sleep 5 && cd $PROJECT/web-gui/backend && WS_PORT=$THIN_WS_PORT ELODIN_RELAY_URL=$THIN_RELAY_URL ACTUATOR_SERVICE_PORT=$THIN_ACT_PORT npx tsx watch src/server.ts 2>&1 | tee $CMD_LOG_BACKEND"
+CMD_WEB_BACKEND="printf '\n  ══ BACKEND — HTTP+WS :${THIN_WS_PORT} (server.ts → Elodin DB :2240) ══\n\n' && sleep 4 && cd $PROJECT/web-gui/backend && WS_PORT=$THIN_WS_PORT ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT=$THIN_ACT_PORT npx tsx watch src/server.ts 2>&1 | tee $CMD_LOG_BACKEND"
 
 CMD_LOG_FRONTEND="/tmp/gui_logs/frontend.log"
 CMD_WEB_FRONTEND="printf '\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n' && sleep 3 && cd $PROJECT/web-gui/frontend && OTA_SERVICE_PORT=$OTA_CMD_PORT NEXT_PUBLIC_WS_URL=ws://127.0.0.1:${THIN_WS_PORT} npm run dev 2>&1 | tee $CMD_LOG_FRONTEND"
@@ -239,7 +233,6 @@ fi
 
 tmux_split_right "$CMD_DAQ"
 tmux_split_right "$CMD_DB"
-tmux_split_right "$CMD_RELAY"
 tmux_split_right "$CMD_CALIBRATION"
 tmux_split_right "$CMD_WEB_BACKEND"
 tmux_split_right "$CMD_WEB_FRONTEND"
@@ -250,16 +243,16 @@ tmux_split_right "$CMD_OTA"
 tmux_split_right "$CMD_CTRL"
 
 tmux select-layout -t "$SESSION:main" tiled
-tmux select-pane -t "$SESSION:main.5"
+tmux select-pane -t "$SESSION:main.4"
 
 echo "┌─────────────────────────────────────────────────────────────┐"
-echo "│  Pipeline: UDP → daq_bridge → DB → relay → backend → UI       │"
+echo "│  Pipeline: UDP → daq_bridge → DB → backend → UI               │"
 echo "│  0: Simulator   1: DAQ bridge   2: Elodin DB                  │"
-echo "│  3: Relay :9090  4: Calibration  5: Thin backend :${THIN_WS_PORT} │"
-echo "│  6: Frontend :3000  7: Heartbeat   8: Config                  │"
-echo "│  9: Sequencer :9998 10: Ethernet OTA :${OTA_CMD_PORT}  11: Controller │"
+echo "│  3: Calibration  4: Backend :${THIN_WS_PORT}  5: Frontend :3000 │"
+echo "│  6: Heartbeat   7: Config   8: Sequencer :9998                │"
+echo "│  9: Ethernet OTA :${OTA_CMD_PORT}  10: Controller                │"
 echo "│  USE_SIM=1 enables simulator                                  │"
-echo "│  Override: THIN_WS_PORT THIN_RELAY_URL THIN_ACTUATOR_SERVICE_PORT OTA_SERVICE_CMD_PORT │"
+echo "│  Override: THIN_WS_PORT THIN_ACTUATOR_SERVICE_PORT OTA_SERVICE_CMD_PORT │"
 echo "│  Ctrl+B arrows=switch  D=detach                              │"
 echo "└─────────────────────────────────────────────────────────────┘"
 tmux attach -t "$SESSION"

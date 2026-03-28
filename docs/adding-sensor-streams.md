@@ -30,7 +30,8 @@ Each sensor type gets a **VTable ID** — a two-byte tuple `[high, low]` that un
 | `0x23` | `0x01-0x14` | LC raw | `raw_adc_counts` | 21 bytes |
 | `0x23` | `0x11-0x24` | LC calibrated | `force_units` | 21 bytes |
 | `0x30` | `0x01-0x0A` | Actuator feedback | `raw_adc_counts` | 21 bytes |
-| `0x31` | `0x01-0x14` | Actuator state | - | 21 bytes |
+| `0x31` | `0x01-0x14` | Actuator state (current-sense) | `actuator_state` | 10 bytes |
+| `0x32` | `0x01-0x14` | Actuator commanded state | `actuator_state_commanded` | 10 bytes |
 | `0x40` | `0x00` | Controller actuation | - | 19 bytes |
 | `0x41` | `0x00` | Controller diagnostics | - | 62 bytes |
 | `0x42` | `0x00` | Controller measurement | - | 80 bytes |

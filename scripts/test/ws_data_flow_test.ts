@@ -126,9 +126,9 @@ function startMessageSpy(ws: WebSocket, filter?: Set<string>): () => void {
   return () => ws.removeListener('message', handler);
 }
 
-// Message types we care about during command tests (excludes noisy sensor data)
+// Message types we care about during command tests (includes sensor for [0x32] actuator commanded)
 const CMD_SPY_FILTER = new Set([
-  MessageType.STATE_UPDATE, MessageType.ACTUATOR_UPDATE,
+  MessageType.STATE_UPDATE, MessageType.ACTUATOR_UPDATE, MessageType.SENSOR_UPDATE,
   MessageType.ERROR, MessageType.CONNECTION_STATUS,
 ]);
 
@@ -803,11 +803,22 @@ async function testActuatorCommands(ws: WebSocket): Promise<void> {
   let actuatorsOpened = 0;
   let actuatorsClosed = 0;
 
+  // Actuator commanded state now arrives as SENSOR_UPDATE with component 'actuator_state_commanded'
+  // from Elodin DB [0x32, ch] (published by sequencer_service), not as ACTUATOR_UPDATE.
+  // Entity names use the ACT. prefix with underscored role name (e.g., ACT.LOX_Main).
+  const nameToEntity = (name: string) => `ACT.${name.replace(/\s+/g, '_')}`;
+
   for (const actuatorName of TEST_ACTUATORS) {
+    const entity = nameToEntity(actuatorName);
+
+    // Wait for continuous loop to settle (it re-sends state every ~1s via Elodin [0x32])
+    await new Promise(r => setTimeout(r, 1200));
+
     // ── OPEN the actuator ──
+    // Arm listener BEFORE sending command to avoid race with fast Elodin round-trip
+    const openPromise = waitForMessage(ws, MessageType.SENSOR_UPDATE, COMMAND_TIMEOUT_MS,
+      (payload) => payload.entity === entity && payload.component === 'actuator_state_commanded' && payload.value === 1);
     const sentAtOpen = Date.now();
-    const openPromise = waitForMessage(ws, MessageType.ACTUATOR_UPDATE, COMMAND_TIMEOUT_MS,
-      (payload) => payload.name === actuatorName && payload.state === ActuatorState.OPEN);
 
     send(ws, {
       type: MessageType.SEND_COMMAND,
@@ -835,9 +846,10 @@ async function testActuatorCommands(ws: WebSocket): Promise<void> {
     await new Promise(r => setTimeout(r, 200));
 
     // ── CLOSE the actuator ──
+    // Arm listener BEFORE sending command
+    const closePromise = waitForMessage(ws, MessageType.SENSOR_UPDATE, COMMAND_TIMEOUT_MS,
+      (payload) => payload.entity === entity && payload.component === 'actuator_state_commanded' && payload.value === 0);
     const sentAtClose = Date.now();
-    const closePromise = waitForMessage(ws, MessageType.ACTUATOR_UPDATE, COMMAND_TIMEOUT_MS,
-      (payload) => payload.name === actuatorName && payload.state === ActuatorState.CLOSED);
 
     send(ws, {
       type: MessageType.SEND_COMMAND,
@@ -870,7 +882,7 @@ async function testActuatorCommands(ws: WebSocket): Promise<void> {
   assert(actuatorsClosed === TEST_ACTUATORS.length,
     `${actuatorsClosed}/${TEST_ACTUATORS.length} frontend WS updates received for CLOSE commands`);
 
-  printLatencyStats('Actuator Command Round-Trip Latency (send → actuator_update received)', commandLatencies);
+  printLatencyStats('Actuator Command Round-Trip Latency (send → Elodin DB → sensor_update received)', commandLatencies);
 
   // Disable debug mode
   send(ws, {

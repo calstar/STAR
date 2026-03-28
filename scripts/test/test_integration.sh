@@ -3,7 +3,7 @@
 # Full-Stack Integration Test
 #
 # Spins up the complete pipeline and verifies data flows end-to-end:
-#   fake_packet_generator → DAQ bridge → Elodin DB → Relay → Backend → WS client
+#   fake_packet_generator → DAQ bridge → Elodin DB → Backend → WS client
 #   WS client → Backend → sequencer_service (TCP) → actuator UDP
 #
 # Prerequisites:
@@ -34,7 +34,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # Test ports (offset from defaults to avoid conflicts with running instances)
 TEST_ELODIN_PORT="${TEST_ELODIN_PORT:-2241}"
 TEST_DAQ_UDP_PORT="${TEST_DAQ_UDP_PORT:-5016}"
-TEST_RELAY_WS_PORT="${TEST_RELAY_WS_PORT:-9190}"
 TEST_BACKEND_WS_PORT="${TEST_BACKEND_WS_PORT:-8181}"
 TEST_BACKEND_API_PORT="${TEST_BACKEND_API_PORT:-8182}"
 TEST_ACTUATOR_UDP_PORT="${TEST_ACTUATOR_UDP_PORT:-5015}"
@@ -99,7 +98,7 @@ echo "════════════════════════�
 echo "  Full-Stack Integration Test  [backend: $BACKEND]"
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
-echo "Ports: Elodin=$TEST_ELODIN_PORT DAQ_UDP=$TEST_DAQ_UDP_PORT Relay=$TEST_RELAY_WS_PORT"
+echo "Ports: Elodin=$TEST_ELODIN_PORT DAQ_UDP=$TEST_DAQ_UDP_PORT"
 echo "       Backend_WS=$TEST_BACKEND_WS_PORT Backend_API=$TEST_BACKEND_API_PORT"
 echo "       Actuator_UDP=$TEST_ACTUATOR_UDP_PORT Startup_listen=$TEST_STARTUP_LISTEN_PORT"
 echo "DB: $TEST_DB_PATH"
@@ -107,21 +106,54 @@ echo ""
 
 mkdir -p "$REPO_ROOT/.tmp"
 
-# ── Kill stale UDP listeners on test ports (otherwise udp_listener bind fails, no JSON file) ──
-for port in $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_DAQ_UDP_PORT; do
-  if fuser "$port/udp" > /dev/null 2>&1; then
-    echo "  ⚠️  Killing stale process(es) on UDP port $port"
-    fuser -k "$port/udp" > /dev/null 2>&1 || true
+# ── macOS loopback aliases for board simulator ────────────────────────────────
+# On Linux, 127.0.0.x all resolve to lo. On macOS, only 127.0.0.1 works unless
+# we add explicit aliases. The board_simulator binds each board to a distinct
+# 127.0.0.{2+index} IP so the DAQ bridge can route by source address.
+if [ "$(uname)" = "Darwin" ]; then
+  LOOPBACK_IPS=(2 3 4 5 6 7 8 9 60 61)
+  NEED_ALIAS=false
+  for i in "${LOOPBACK_IPS[@]}"; do
+    if ! ifconfig lo0 2>/dev/null | grep -q "127.0.0.$i "; then
+      NEED_ALIAS=true
+      break
+    fi
+  done
+  if [ "$NEED_ALIAS" = true ]; then
+    echo "🔧 Adding macOS loopback aliases for board simulator (requires sudo)..."
+    for i in "${LOOPBACK_IPS[@]}"; do
+      sudo ifconfig lo0 alias "127.0.0.$i" up 2>/dev/null || true
+    done
+    echo "  ✅ Loopback aliases added (127.0.0.{2-9,60,61})"
   fi
+fi
+
+# ── Kill stale listeners on test ports (cross-platform: lsof on macOS, fuser on Linux) ──
+kill_port() {
+  local port=$1 proto=${2:-tcp}
+  local pids
+  if command -v fuser &>/dev/null; then
+    fuser -k "$port/$proto" > /dev/null 2>&1 || true
+  else
+    # macOS: use lsof
+    if [ "$proto" = "udp" ]; then
+      pids=$(lsof -nP -iUDP:"$port" -t 2>/dev/null) || true
+    else
+      pids=$(lsof -nP -iTCP:"$port" -t 2>/dev/null) || true
+    fi
+    for p in $pids; do
+      kill -9 "$p" 2>/dev/null || true
+    done
+  fi
+}
+
+for port in $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_DAQ_UDP_PORT; do
+  kill_port "$port" udp
 done
 sleep 0.3
 
-# ── Kill stale processes on test ports from previous runs ────────────────────
-for port in $TEST_ELODIN_PORT $TEST_RELAY_WS_PORT $TEST_BACKEND_WS_PORT $TEST_BACKEND_API_PORT; do
-  if fuser "$port/tcp" > /dev/null 2>&1; then
-    echo "  ⚠️  Killing stale process(es) on port $port"
-    fuser -k "$port/tcp" > /dev/null 2>&1 || true
-  fi
+for port in $TEST_ELODIN_PORT $TEST_BACKEND_WS_PORT $TEST_BACKEND_API_PORT; do
+  kill_port "$port" tcp
 done
 sleep 0.5
 
@@ -226,15 +258,15 @@ CONFIG_FILE="$REPO_ROOT/config/config.toml"
 
 cp "$CONFIG_FILE" "$TEST_CONFIG"
 # Replace database port (under [database] section)
-sed -i "s/^port = 2240/port = $TEST_ELODIN_PORT/" "$TEST_CONFIG"
+sed -i '' "s/^port = 2240/port = $TEST_ELODIN_PORT/" "$TEST_CONFIG"
 # Replace sensor_port (under [network] section)
-sed -i "s/^sensor_port = 5006/sensor_port = $TEST_DAQ_UDP_PORT/" "$TEST_CONFIG"
+sed -i '' "s/^sensor_port = 5006/sensor_port = $TEST_DAQ_UDP_PORT/" "$TEST_CONFIG"
 # Replace actuator_cmd_port (under [network] section)
-sed -i "s/^actuator_cmd_port = 5005/actuator_cmd_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+sed -i '' "s/^actuator_cmd_port = 5005/actuator_cmd_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 # Point heartbeat broadcast to localhost to avoid sending to the real subnet
-sed -i 's/^broadcast_ip = .*/broadcast_ip = "127.0.0.1"/' "$TEST_CONFIG"
+sed -i '' 's/^broadcast_ip = .*/broadcast_ip = "127.0.0.1"/' "$TEST_CONFIG"
 # Align SERVER_HEARTBEAT UDP with the same port as udp_listener (actuator/control path in CI)
-sed -i "s/^broadcast_port = 5005/broadcast_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+sed -i '' "s/^broadcast_port = 5005/broadcast_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 # NOTE: Do NOT replace board IPs — the DAQ bridge routes by source IP.
 # The board_simulator falls back to 127.0.0.{2+index} when config IPs
 # (192.168.2.x) aren't bindable, and the DAQ bridge has matching fallback
@@ -243,15 +275,15 @@ sed -i "s/^broadcast_port = 5005/broadcast_port = $TEST_ACTUATOR_UDP_PORT/" "$TE
 # Replace actuator board IPs to 127.0.0.1 so UDP commands reach our local listener.
 # Unlike sensor boards (where DAQ bridge routes by source IP), actuator commands are
 # sent TO the board IP — so we must point them at localhost for testing.
-sed -i 's/^ip = "192\.168\.2\.11"/ip = "127.0.0.1"/' "$TEST_CONFIG"
-sed -i 's/^ip = "192\.168\.2\.12"/ip = "127.0.0.1"/' "$TEST_CONFIG"
-sed -i 's/^ip = "192\.168\.2\.13"/ip = "127.0.0.1"/' "$TEST_CONFIG"
-sed -i 's/^ip = "192\.168\.2\.14"/ip = "127.0.0.1"/' "$TEST_CONFIG"
+sed -i '' 's/^ip = "192\.168\.2\.11"/ip = "127.0.0.1"/' "$TEST_CONFIG"
+sed -i '' 's/^ip = "192\.168\.2\.12"/ip = "127.0.0.1"/' "$TEST_CONFIG"
+sed -i '' 's/^ip = "192\.168\.2\.13"/ip = "127.0.0.1"/' "$TEST_CONFIG"
+sed -i '' 's/^ip = "192\.168\.2\.14"/ip = "127.0.0.1"/' "$TEST_CONFIG"
 # Encoder board #1 (config [boards.encoder_board_61]) — dedicated loopback so sim can bind without colliding
-sed -i 's/^ip = "192\.168\.2\.61"/ip = "127.0.0.61"/' "$TEST_CONFIG"
+sed -i '' 's/^ip = "192\.168\.2\.61"/ip = "127.0.0.61"/' "$TEST_CONFIG"
 # Replace listen_port on actuator boards to use our test port
-sed -i "s/^listen_port = 5005/listen_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
-sed -i "s/^send_port = 5005/send_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+sed -i '' "s/^listen_port = 5005/listen_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+sed -i '' "s/^send_port = 5005/send_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 
 # Integration-only: startup E2E (SETUP → SELF_TEST). Encoder uses production [boards.encoder_board_61] + IP sed above.
 cat >> "$TEST_CONFIG" << EOF
@@ -304,26 +336,6 @@ if ! kill -0 "${PIDS[-1]}" 2>/dev/null; then
   exit 1
 fi
 echo "  ✅ Elodin DB started (PID ${PIDS[-1]})"
-
-# ── Start Elodin Relay ───────────────────────────────────────────────────────
-# Relay must start BEFORE daq_bridge so it subscribes to the DB stream first.
-# (Same ordering as start_tmux_dev.sh)
-
-echo "📡 Starting Elodin Relay..."
-(cd "$REPO_ROOT/web-gui/backend" && \
-  ELODIN_HOST=127.0.0.1 \
-  ELODIN_PORT=$TEST_ELODIN_PORT \
-  RELAY_WS_PORT=$TEST_RELAY_WS_PORT \
-  RELAY_WS_HOST=0.0.0.0 \
-  npx tsx src/elodin-relay.ts > "$REPO_ROOT/.tmp/integration_relay_$$.log" 2>&1) &
-PIDS+=($!)
-
-wait_for_port "$TEST_RELAY_WS_PORT" "Relay" 15 || {
-  echo "  ❌ Relay failed to start. Log:"
-  cat "$REPO_ROOT/.tmp/integration_relay_$$.log"
-  exit 1
-}
-echo "  ✅ Relay started (PID ${PIDS[-1]})"
 
 # ── Start sequencer_service ──────────────────────────────────────────────────
 # Provides TCP command endpoint on :9998. Both thin and legacy backends forward
@@ -401,7 +413,8 @@ if [ "$BACKEND" = "thin" ]; then
   echo "🖥️  Starting Backend server (server.ts)..."
   (cd "$REPO_ROOT/web-gui/backend" && \
     WS_PORT=$TEST_BACKEND_WS_PORT \
-    ELODIN_RELAY_URL="ws://127.0.0.1:$TEST_RELAY_WS_PORT" \
+    ELODIN_HOST=127.0.0.1 \
+    ELODIN_PORT=$TEST_ELODIN_PORT \
     ACTUATOR_SERVICE_PORT=9998 \
     CONFIG_PATH="$TEST_CONFIG" \
     npx tsx src/server.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
@@ -542,7 +555,6 @@ echo ""
 echo "Logs:"
 echo "  Elodin DB:      $REPO_ROOT/.tmp/integration_elodin_$$.log"
 echo "  DAQ Bridge:     $REPO_ROOT/.tmp/integration_daq_$$.log"
-echo "  Relay:          $REPO_ROOT/.tmp/integration_relay_$$.log"
 echo "  Backend:        $REPO_ROOT/.tmp/integration_backend_$$.log"
 [ -n "$SEQ_SVC" ] && echo "  Sequencer:      $REPO_ROOT/.tmp/integration_sequencer_$$.log"
 echo "  Fake Gen:       $REPO_ROOT/.tmp/integration_fakegen_$$.log"

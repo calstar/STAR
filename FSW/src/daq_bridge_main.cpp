@@ -301,7 +301,11 @@ static bool is_publish_allowed(uint8_t high, uint8_t low, const std::vector<Publ
 // Load channel → name from config.toml [sensor_roles*] and [actuator_roles] so DB matches backend.
 static void load_sensor_and_actuator_maps(const std::string& config_path,
                                           std::map<int, std::string>& pt_channel_to_name,
-                                          std::map<int, std::string>& act_channel_to_name) {
+                                          std::map<int, std::string>& act_channel_to_name,
+                                          std::map<int, std::string>& tc_channel_to_name,
+                                          std::map<int, std::string>& rtd_channel_to_name,
+                                          std::map<int, std::string>& lc_channel_to_name,
+                                          std::map<int, std::string>& enc_channel_to_name) {
     std::ifstream f(config_path);
     if (!f.is_open())
         return;
@@ -376,6 +380,29 @@ static void load_sensor_and_actuator_maps(const std::string& config_path,
                     act_channel_to_name[global_ch] = to_entity_name(key);
             } catch (...) {
             }
+        } else if (current_section == "sensor_roles_tc_board" ||
+                   current_section == "sensor_roles_tc_board_2") {
+            int channel = 0;
+            try { channel = std::stoi(val); } catch (...) { continue; }
+            if (channel >= 1 && channel <= 20)
+                tc_channel_to_name[channel] = to_entity_name(key);
+        } else if (current_section == "sensor_roles_rtd_board" ||
+                   current_section == "sensor_roles_rtd_board_2") {
+            int channel = 0;
+            try { channel = std::stoi(val); } catch (...) { continue; }
+            if (channel >= 1 && channel <= 20)
+                rtd_channel_to_name[channel] = to_entity_name(key);
+        } else if (current_section == "sensor_roles_lc_board" ||
+                   current_section == "sensor_roles_lc_board_2") {
+            int channel = 0;
+            try { channel = std::stoi(val); } catch (...) { continue; }
+            if (channel >= 1 && channel <= 20)
+                lc_channel_to_name[channel] = to_entity_name(key);
+        } else if (current_section == "sensor_roles_encoder_board") {
+            int channel = 0;
+            try { channel = std::stoi(val); } catch (...) { continue; }
+            if (channel >= 1 && channel <= 14)
+                enc_channel_to_name[channel] = to_entity_name(key);
         }
     }
 }
@@ -621,21 +648,29 @@ int main(int argc, char* argv[]) {
     fsw::routing::HeartbeatRouter heartbeat_router(elodin_client);
     bool elodin_connected = false;
     std::map<int, std::string> pt_channel_to_name, act_channel_to_name;
-    load_sensor_and_actuator_maps(config_path, pt_channel_to_name, act_channel_to_name);
-    const std::map<int, std::string>* pt_names =
-        pt_channel_to_name.empty() ? nullptr : &pt_channel_to_name;
-    const std::map<int, std::string>* act_names =
-        act_channel_to_name.empty() ? nullptr : &act_channel_to_name;
+    std::map<int, std::string> tc_channel_to_name, rtd_channel_to_name;
+    std::map<int, std::string> lc_channel_to_name, enc_channel_to_name;
+    load_sensor_and_actuator_maps(config_path, pt_channel_to_name, act_channel_to_name,
+                                  tc_channel_to_name, rtd_channel_to_name,
+                                  lc_channel_to_name, enc_channel_to_name);
+    const auto* pt_names  = pt_channel_to_name.empty()  ? nullptr : &pt_channel_to_name;
+    const auto* act_names = act_channel_to_name.empty()  ? nullptr : &act_channel_to_name;
+    const auto* tc_names  = tc_channel_to_name.empty()  ? nullptr : &tc_channel_to_name;
+    const auto* rtd_names = rtd_channel_to_name.empty() ? nullptr : &rtd_channel_to_name;
+    const auto* lc_names  = lc_channel_to_name.empty()  ? nullptr : &lc_channel_to_name;
+    const auto* enc_names = enc_channel_to_name.empty() ? nullptr : &enc_channel_to_name;
 
     if (elodin_client.connect(db_host, db_port)) {
         elodin_connected = true;
         std::cout << "✅ Connected to Elodin database" << std::endl;
         // Register RAW VTables
-        if (!fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_names, act_names)) {
+        if (!fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_names, act_names,
+                                                           tc_names, rtd_names, lc_names, enc_names)) {
             std::cerr << "⚠️  RAW VTable registration failed" << std::endl;
         }
         // Register CALIBRATED VTables (inline calibration — no separate service)
-        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names);
+        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names,
+                                                                 tc_names, rtd_names, lc_names, enc_names);
         // Register BOARD_HEARTBEAT VTables so backend can consume board status from Elodin.
         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, 64);
         fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, 64);
@@ -754,9 +789,12 @@ int main(int argc, char* argv[]) {
                         std::cout << "✅ Reconnected to Elodin — re-registering VTables"
                                   << std::endl;
                         fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_names,
-                                                                     act_names);
+                                                                     act_names, tc_names,
+                                                                     rtd_names, lc_names, enc_names);
                         fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client,
-                                                                                pt_names);
+                                                                                pt_names, tc_names,
+                                                                                rtd_names, lc_names,
+                                                                                enc_names);
                         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, 64);
                         fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, 64);
                     }
@@ -886,6 +924,11 @@ int main(int argc, char* argv[]) {
             }
             case BoardType::ACTUATOR: {
                 int ch_offset = effective_cfg ? effective_cfg->channel_offset : 0;
+                // NOTE: Actuator boards report raw ADC current-sense readings, not
+                // discrete on/off state.  We derive open/closed by thresholding
+                // the current draw — this is a heuristic, not authoritative.
+                // A solenoid drawing current above the threshold is *likely* open,
+                // but the raw ADC value ([0x30]) is the ground truth from the board.
                 constexpr uint32_t ACT_STATE_ADC_THRESHOLD = 1500;  // above = open (1)
                 for (const auto& sample : batch.value().pt_samples) {
                     uint8_t ch = static_cast<uint8_t>(sample.channel_id + ch_offset);

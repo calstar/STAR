@@ -30,7 +30,11 @@ public:
      */
     static bool register_tables(ElodinClient& client,
                                 const std::map<int, std::string>* pt_channel_to_name = nullptr,
-                                const std::map<int, std::string>* act_channel_to_name = nullptr);
+                                const std::map<int, std::string>* act_channel_to_name = nullptr,
+                                const std::map<int, std::string>* tc_channel_to_name = nullptr,
+                                const std::map<int, std::string>* rtd_channel_to_name = nullptr,
+                                const std::map<int, std::string>* lc_channel_to_name = nullptr,
+                                const std::map<int, std::string>* enc_channel_to_name = nullptr);
 
     /**
      * @brief Register CALIBRATED VTables (for calibration_service).
@@ -40,7 +44,12 @@ public:
      * calibration service, not the raw data ingestion bridge.
      */
     static bool register_calibrated_tables(
-        ElodinClient& client, const std::map<int, std::string>* pt_channel_to_name = nullptr);
+        ElodinClient& client,
+        const std::map<int, std::string>* pt_channel_to_name = nullptr,
+        const std::map<int, std::string>* tc_channel_to_name = nullptr,
+        const std::map<int, std::string>* rtd_channel_to_name = nullptr,
+        const std::map<int, std::string>* lc_channel_to_name = nullptr,
+        const std::map<int, std::string>* enc_channel_to_name = nullptr);
 
     /**
      * @brief Register BOARD_HEARTBEAT VTables (one per board_id in [1, max_board_id]).

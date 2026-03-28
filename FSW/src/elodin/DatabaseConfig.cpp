@@ -135,7 +135,11 @@ static bool register_actuator_state_vtable(ElodinClient& client, uint8_t type_hi
 
 bool DatabaseConfig::register_tables(ElodinClient& client,
                                      const std::map<int, std::string>* pt_channel_to_name,
-                                     const std::map<int, std::string>* act_channel_to_name) {
+                                     const std::map<int, std::string>* act_channel_to_name,
+                                     const std::map<int, std::string>* tc_channel_to_name,
+                                     const std::map<int, std::string>* rtd_channel_to_name,
+                                     const std::map<int, std::string>* lc_channel_to_name,
+                                     const std::map<int, std::string>* enc_channel_to_name) {
     std::cout << "[DatabaseConfig] Registering RAW VTables (config-driven)..." << std::endl;
     int registered = 0;
 
@@ -168,33 +172,66 @@ bool DatabaseConfig::register_tables(ElodinClient& client,
                   << std::endl;
     }
 
-    // TC Raw: channels 1-20, generic names (no named roles in config yet)
-    for (int ch = 1; ch <= 20; ch++) {
-        std::string entity = "TC.CH" + std::to_string(ch);
-        if (register_raw_sensor_vtable(client, 0x21, ch, 0x2100 + ch, entity, "raw_adc_counts"))
-            registered++;
+    // ── TC Raw: config-driven, fallback to generic CH names ────────────────
+    if (tc_channel_to_name && !tc_channel_to_name->empty()) {
+        for (const auto& [ch, name] : *tc_channel_to_name) {
+            std::string entity = "TC." + name;
+            if (register_raw_sensor_vtable(client, 0x21, ch, 0x2100 + ch, entity, "raw_adc_counts"))
+                registered++;
+        }
+    } else {
+        for (int ch = 1; ch <= 20; ch++) {
+            std::string entity = "TC.CH" + std::to_string(ch);
+            if (register_raw_sensor_vtable(client, 0x21, ch, 0x2100 + ch, entity, "raw_adc_counts"))
+                registered++;
+        }
     }
 
-    // RTD Raw: channels 1-20
-    for (int ch = 1; ch <= 20; ch++) {
-        std::string entity = "RTD.CH" + std::to_string(ch);
-        if (register_raw_sensor_vtable(client, 0x22, ch, 0x2200 + ch, entity,
-                                       "raw_resistance_counts"))
-            registered++;
+    // ── RTD Raw: config-driven, fallback to generic CH names ────────────────
+    if (rtd_channel_to_name && !rtd_channel_to_name->empty()) {
+        for (const auto& [ch, name] : *rtd_channel_to_name) {
+            std::string entity = "RTD." + name;
+            if (register_raw_sensor_vtable(client, 0x22, ch, 0x2200 + ch, entity,
+                                           "raw_resistance_counts"))
+                registered++;
+        }
+    } else {
+        for (int ch = 1; ch <= 20; ch++) {
+            std::string entity = "RTD.CH" + std::to_string(ch);
+            if (register_raw_sensor_vtable(client, 0x22, ch, 0x2200 + ch, entity,
+                                           "raw_resistance_counts"))
+                registered++;
+        }
     }
 
-    // LC Raw: channels 1-20
-    for (int ch = 1; ch <= 20; ch++) {
-        std::string entity = "LC.CH" + std::to_string(ch);
-        if (register_raw_sensor_vtable(client, 0x23, ch, 0x2300 + ch, entity, "raw_adc_counts"))
-            registered++;
+    // ── LC Raw: config-driven, fallback to generic CH names ─────────────────
+    if (lc_channel_to_name && !lc_channel_to_name->empty()) {
+        for (const auto& [ch, name] : *lc_channel_to_name) {
+            std::string entity = "LC." + name;
+            if (register_raw_sensor_vtable(client, 0x23, ch, 0x2300 + ch, entity, "raw_adc_counts"))
+                registered++;
+        }
+    } else {
+        for (int ch = 1; ch <= 20; ch++) {
+            std::string entity = "LC.CH" + std::to_string(ch);
+            if (register_raw_sensor_vtable(client, 0x23, ch, 0x2300 + ch, entity, "raw_adc_counts"))
+                registered++;
+        }
     }
 
-    // Encoder Raw: channels 1-2 (AS5600 12-bit angle)
-    for (int ch = 1; ch <= 2; ch++) {
-        std::string entity = "ENC.CH" + std::to_string(ch);
-        if (register_raw_sensor_vtable(client, 0x24, ch, 0x2400 + ch, entity, "raw_angle"))
-            registered++;
+    // ── Encoder Raw: config-driven, fallback to generic CH names ────────────
+    if (enc_channel_to_name && !enc_channel_to_name->empty()) {
+        for (const auto& [ch, name] : *enc_channel_to_name) {
+            std::string entity = "ENC." + name;
+            if (register_raw_sensor_vtable(client, 0x24, ch, 0x2400 + ch, entity, "raw_angle"))
+                registered++;
+        }
+    } else {
+        for (int ch = 1; ch <= 2; ch++) {
+            std::string entity = "ENC.CH" + std::to_string(ch);
+            if (register_raw_sensor_vtable(client, 0x24, ch, 0x2400 + ch, entity, "raw_angle"))
+                registered++;
+        }
     }
 
     std::cout << "[DatabaseConfig] ✅ Registered " << registered << " RAW VTables" << std::endl;
@@ -206,7 +243,12 @@ bool DatabaseConfig::register_tables(ElodinClient& client,
 // ════════════════════════════════════════════════════════════════════════════
 
 bool DatabaseConfig::register_calibrated_tables(
-    ElodinClient& client, const std::map<int, std::string>* pt_channel_to_name) {
+    ElodinClient& client,
+    const std::map<int, std::string>* pt_channel_to_name,
+    const std::map<int, std::string>* tc_channel_to_name,
+    const std::map<int, std::string>* rtd_channel_to_name,
+    const std::map<int, std::string>* lc_channel_to_name,
+    const std::map<int, std::string>* enc_channel_to_name) {
     std::cout << "[DatabaseConfig] Registering CALIBRATED VTables..." << std::endl;
     int registered = 0;
 
@@ -221,38 +263,74 @@ bool DatabaseConfig::register_calibrated_tables(
         }
     }
 
-    // RTD Calibrated (Pt100 temperature): channels 1-20
-    for (int ch = 1; ch <= 20; ch++) {
-        std::string entity = "RTD_Cal.CH" + std::to_string(ch);
-        uint64_t eid = 0x2210 + static_cast<uint64_t>(ch);
-        if (register_calibrated_vtable(client, 0x22, ch, eid, entity, "temperature_c",
-                                       "raw_resistance"))
-            registered++;
+    // ── TC Calibrated: config-driven, fallback to generic CH names ────────
+    if (tc_channel_to_name && !tc_channel_to_name->empty()) {
+        for (const auto& [ch, name] : *tc_channel_to_name) {
+            std::string entity = "TC_Cal." + name;
+            uint64_t eid = 0x2110 + static_cast<uint64_t>(ch);
+            if (register_calibrated_vtable(client, 0x21, ch, eid, entity, "temperature_c", "raw_adc"))
+                registered++;
+        }
+    } else {
+        for (int ch = 1; ch <= 20; ch++) {
+            std::string entity = "TC_Cal.CH" + std::to_string(ch);
+            uint64_t eid = 0x2110 + static_cast<uint64_t>(ch);
+            if (register_calibrated_vtable(client, 0x21, ch, eid, entity, "temperature_c", "raw_adc"))
+                registered++;
+        }
     }
 
-    // TC Calibrated: channels 1-20
-    for (int ch = 1; ch <= 20; ch++) {
-        std::string entity = "TC_Cal.CH" + std::to_string(ch);
-        uint64_t eid = 0x2110 + static_cast<uint64_t>(ch);
-        if (register_calibrated_vtable(client, 0x21, ch, eid, entity, "temperature_c", "raw_adc"))
-            registered++;
+    // ── RTD Calibrated: config-driven, fallback to generic CH names ─────────
+    if (rtd_channel_to_name && !rtd_channel_to_name->empty()) {
+        for (const auto& [ch, name] : *rtd_channel_to_name) {
+            std::string entity = "RTD_Cal." + name;
+            uint64_t eid = 0x2210 + static_cast<uint64_t>(ch);
+            if (register_calibrated_vtable(client, 0x22, ch, eid, entity, "temperature_c",
+                                           "raw_resistance"))
+                registered++;
+        }
+    } else {
+        for (int ch = 1; ch <= 20; ch++) {
+            std::string entity = "RTD_Cal.CH" + std::to_string(ch);
+            uint64_t eid = 0x2210 + static_cast<uint64_t>(ch);
+            if (register_calibrated_vtable(client, 0x22, ch, eid, entity, "temperature_c",
+                                           "raw_resistance"))
+                registered++;
+        }
     }
 
-    // LC Calibrated: channels 1-20
-    for (int ch = 1; ch <= 20; ch++) {
-        std::string entity = "LC_Cal.CH" + std::to_string(ch);
-        uint64_t eid = 0x2310 + static_cast<uint64_t>(ch);
-        if (register_calibrated_vtable(client, 0x23, ch, eid, entity, "force_n", "raw_adc"))
-            registered++;
+    // ── LC Calibrated: config-driven, fallback to generic CH names ──────────
+    if (lc_channel_to_name && !lc_channel_to_name->empty()) {
+        for (const auto& [ch, name] : *lc_channel_to_name) {
+            std::string entity = "LC_Cal." + name;
+            uint64_t eid = 0x2310 + static_cast<uint64_t>(ch);
+            if (register_calibrated_vtable(client, 0x23, ch, eid, entity, "force_n", "raw_adc"))
+                registered++;
+        }
+    } else {
+        for (int ch = 1; ch <= 20; ch++) {
+            std::string entity = "LC_Cal.CH" + std::to_string(ch);
+            uint64_t eid = 0x2310 + static_cast<uint64_t>(ch);
+            if (register_calibrated_vtable(client, 0x23, ch, eid, entity, "force_n", "raw_adc"))
+                registered++;
+        }
     }
 
-    // Encoder Calibrated: channels 1-14 (position_deg — filled when calibration_service supports
-    // 0x24)
-    for (int ch = 1; ch <= 14; ch++) {
-        std::string entity = "ENC_Cal.CH" + std::to_string(ch);
-        uint64_t eid = 0x2410 + static_cast<uint64_t>(ch);
-        if (register_calibrated_vtable(client, 0x24, ch, eid, entity, "position_deg", "raw_adc"))
-            registered++;
+    // ── Encoder Calibrated: config-driven, fallback to generic CH names ─────
+    if (enc_channel_to_name && !enc_channel_to_name->empty()) {
+        for (const auto& [ch, name] : *enc_channel_to_name) {
+            std::string entity = "ENC_Cal." + name;
+            uint64_t eid = 0x2410 + static_cast<uint64_t>(ch);
+            if (register_calibrated_vtable(client, 0x24, ch, eid, entity, "position_deg", "raw_adc"))
+                registered++;
+        }
+    } else {
+        for (int ch = 1; ch <= 14; ch++) {
+            std::string entity = "ENC_Cal.CH" + std::to_string(ch);
+            uint64_t eid = 0x2410 + static_cast<uint64_t>(ch);
+            if (register_calibrated_vtable(client, 0x24, ch, eid, entity, "position_deg", "raw_adc"))
+                registered++;
+        }
     }
 
     std::cout << "[DatabaseConfig] ✅ Registered " << registered << " CALIBRATED VTables"
@@ -385,6 +463,20 @@ bool DatabaseConfig::register_non_sensor_tables(ElodinClient& client) {
     bool ok = true;
     if (!register_sequencer_vtable(client))
         ok = false;
+
+    // Register actuator commanded state VTables [0x32, global_ch] for up to 4 boards × 10 channels
+    // Global channel = (board_id - 11) * 10 + local_channel (boards 11-14, channels 1-10)
+    int act_cmd_count = 0;
+    for (int global_ch = 1; global_ch <= 40; ++global_ch) {
+        std::string entity_name = "ACT_CMD.CH" + std::to_string(global_ch);
+        uint64_t entity_id = (static_cast<uint64_t>(0x32) << 8) | static_cast<uint64_t>(global_ch);
+        if (register_actuator_state_vtable(client, 0x32, static_cast<uint8_t>(global_ch), entity_id,
+                                           entity_name))
+            act_cmd_count++;
+    }
+    if (act_cmd_count > 0)
+        std::cout << "[DatabaseConfig] ✅ Registered " << act_cmd_count
+                  << " actuator commanded VTables [0x32]" << std::endl;
 
     if (ok) {
         std::cout << "[DatabaseConfig] ✅ Registered Sequencer/Controller VTables" << std::endl;

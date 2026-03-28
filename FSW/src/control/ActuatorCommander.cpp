@@ -16,8 +16,15 @@
 
 // daqv2comms — all packet construction goes through here
 #include "DiabloPacketUtils.h"
+#include "comms/CommsMessage.hpp"
 
 namespace sequencer {
+
+// ── Actuator commanded state [0x32, ch] — published to Elodin DB ─────────────
+// Layout: u64 timestamp_ns | u8 channel_id | u8 actuator_state = 10 bytes
+// No alignment issue: all post-u64 fields are u8.
+using ActuatorCommandedMsg = comms::CommsMessage<uint64_t, uint8_t, uint8_t>;
+static constexpr uint8_t VTABLE_ACT_CMD_HI = 0x32;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -87,10 +94,12 @@ static bool parseActuatorRole(const std::string& val, ActuatorRole& out,
 
         if (c2 != std::string::npos) {
             int bid = std::stoi(trimVal(val.substr(c2 + 1)));
+            out.board_id = bid;
             auto it = board_id_to_ip.find(bid);
             out.board_ip =
                 (it != board_id_to_ip.end()) ? it->second : "192.168.2." + std::to_string(bid);
         } else {
+            out.board_id = 11;  // fallback
             out.board_ip = "192.168.2.11";  // fallback
         }
     } catch (...) {
@@ -330,8 +339,9 @@ void ActuatorCommander::applyForState(State state) {
 
     const bool is_fire = (state == State::FIRE);
 
-    // Group commands by board IP
+    // Group commands by board IP and collect logical positions for DB publishing
     std::map<std::string, std::vector<std::pair<uint8_t, uint8_t>>> by_board;
+    std::vector<std::pair<uint8_t, uint8_t>> logical_commands;  // channel, logical_pos
     std::unique_lock lock(overrides_mutex_);
     for (const auto& [act_name, logical_pos] : it->second) {
         auto role_it = roles_.find(act_name);
@@ -349,6 +359,9 @@ void ActuatorCommander::applyForState(State state) {
 
         uint8_t hw_state = static_cast<uint8_t>(role.is_no ? (1 - pos) : pos);
         by_board[role.board_ip].emplace_back(static_cast<uint8_t>(role.channel), hw_state);
+        // Global channel: (board_id - 11) * 10 + channel → unique across all actuator boards
+        uint8_t global_ch = static_cast<uint8_t>((role.board_id - 11) * 10 + role.channel);
+        logical_commands.emplace_back(global_ch, static_cast<uint8_t>(pos));
     }
     lock.unlock();
 
@@ -358,6 +371,11 @@ void ActuatorCommander::applyForState(State state) {
                       << " for state " << state_name << std::endl;
         else
             std::cerr << "[ActuatorCommander] UDP send failed to " << ip << std::endl;
+    }
+
+    // Publish commanded state to Elodin DB [0x32, ch]
+    for (const auto& [ch, pos] : logical_commands) {
+        publishCommandedState(ch, pos);
     }
 }
 
@@ -410,9 +428,12 @@ bool ActuatorCommander::sendSingleActuator(const std::string& name, int pos) {
     const ActuatorRole& role = it->second;
     uint8_t hw_state = static_cast<uint8_t>(role.is_no ? (1 - pos) : pos);
     bool ok = sendUDP(role.board_ip, {{static_cast<uint8_t>(role.channel), hw_state}});
-    if (ok)
+    if (ok) {
         std::cout << "[ActuatorCommander] Manual: " << name << " -> "
                   << (pos == 1 ? "OPEN" : "CLOSED") << std::endl;
+        uint8_t global_ch = static_cast<uint8_t>((role.board_id - 11) * 10 + role.channel);
+        publishCommandedState(global_ch, static_cast<uint8_t>(pos));
+    }
     return ok;
 }
 
@@ -432,6 +453,40 @@ void ActuatorCommander::clearManualOverride(const std::string& name) {
 void ActuatorCommander::clearAllManualOverrides() {
     std::lock_guard lock(overrides_mutex_);
     manual_overrides_.clear();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// publishCommandedState — write [0x32, channel_id] to Elodin DB
+// ─────────────────────────────────────────────────────────────────────────────
+void ActuatorCommander::publishCommandedState(uint8_t channel_id, uint8_t logical_pos) {
+    if (!elodin_ || !elodin_->is_connected())
+        return;
+
+    auto ts_ns = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+
+    ActuatorCommandedMsg msg(ts_ns, channel_id, logical_pos);
+    std::array<uint8_t, 2> table_id = {VTABLE_ACT_CMD_HI, channel_id};
+    elodin_->publish(table_id, msg);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// publishInitialState — seed Elodin DB with de-energized positions for all actuators
+// ─────────────────────────────────────────────────────────────────────────────
+void ActuatorCommander::publishInitialState() {
+    if (!elodin_ || !elodin_->is_connected())
+        return;
+
+    for (const auto& [name, role] : roles_) {
+        // De-energized: NC → closed (0), NO → open (1)
+        uint8_t logical_pos = role.is_no ? 1 : 0;
+        uint8_t global_ch = static_cast<uint8_t>((role.board_id - 11) * 10 + role.channel);
+        publishCommandedState(global_ch, logical_pos);
+    }
+    std::cout << "[ActuatorCommander] Published initial state for " << roles_.size()
+              << " actuators to Elodin DB" << std::endl;
 }
 
 }  // namespace sequencer

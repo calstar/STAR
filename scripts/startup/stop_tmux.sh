@@ -11,7 +11,6 @@ tmux kill-session -t "sensor" 2>/dev/null || true
 
 # Kill background processes
 pkill -f "elodin-db run.*2240" 2>/dev/null || true
-pkill -f "elodin-relay" 2>/dev/null || true
 pkill -f "daq_bridge" 2>/dev/null || true
 pkill -f "board_simulator" 2>/dev/null || true
 pkill -f "next dev" 2>/dev/null || true

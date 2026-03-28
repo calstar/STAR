@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "control/StateMachine.hpp"
+#include "elodin/ElodinClient.hpp"
 
 namespace sequencer {
 
@@ -21,6 +22,7 @@ namespace sequencer {
  */
 struct ActuatorRole {
     int channel{0};        // 1-based actuator ID on the board
+    int board_id{0};       // Board ID (e.g. 11, 12, 13, 14)
     std::string board_ip;  // IP of the board that owns this actuator
     bool is_no{false};     // Normally Open: invert the logical position
     bool is_pwm{false};    // PWM type: sequencer skips in FIRE state
@@ -79,6 +81,13 @@ public:
     /** Clear all manual overrides. */
     void clearAllManualOverrides();
 
+    /** Set the Elodin client for publishing commanded state [0x32, ch] to the DB. */
+    void setElodinClient(fsw::elodin::ElodinClient* client) { elodin_ = client; }
+
+    /** Publish initial de-energized state for all actuators to Elodin DB [0x32].
+     *  Does NOT send UDP commands — only populates the DB so the frontend has data on startup. */
+    void publishInitialState();
+
     bool isLoaded() const {
         return loaded_;
     }
@@ -98,6 +107,7 @@ private:
     std::string bind_addr_{"0.0.0.0"};
     uint16_t actuator_port_{5005};
     bool loaded_{false};
+    fsw::elodin::ElodinClient* elodin_{nullptr};
 
     // Resolve state name case-insensitively. Returns end() if not found.
     std::map<std::string, std::map<std::string, int>>::const_iterator findStateActuators(
@@ -106,6 +116,10 @@ private:
     // Build and send one UDP actuator command packet to a board.
     bool sendUDP(const std::string& board_ip,
                  const std::vector<std::pair<uint8_t, uint8_t>>& id_state_pairs);
+
+    // Publish commanded actuator state [0x32, global_channel] to Elodin DB.
+    // global_channel encodes board + local channel to avoid collisions across boards.
+    void publishCommandedState(uint8_t global_channel, uint8_t logical_pos);
 };
 
 }  // namespace sequencer

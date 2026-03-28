@@ -511,34 +511,21 @@ export function useGetSensorValue(): (entity: string, component: string) => numb
   }, []);
 }
 
-/** Commanded state for display: in normal mode use state-machine expected for current state; in DEBUG use override then expected then actuatorStateByEntity. */
+/**
+ * Commanded actuator state from Elodin DB.
+ * Reads [0x32] commanded state first; falls back to [0x31] current-sense if no commanded data yet.
+ */
 export function useActuatorCommandedState(entity: string): ActuatorState | null {
-  const currentState = useSensorStore((s) => s.currentState);
-  const expectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
-  const overrides = useSensorStore((s) => s.actuatorCommandedOverrides);
-  const debugMode = useSensorStore((s) => s.debugMode);
-  const actuatorStateByEntity = useSensorStore((s) => s.actuatorStateByEntity[entity] ?? null);
-
-  // When not in DEBUG, state machine is source of truth: show expected for current state so Idle/Armed etc. are correct
-  if (!debugMode && currentState != null) {
-    const stateExpected = expectedPositions[currentState] ?? {};
-    const expected = stateExpected[entity] ?? null;
-    if (expected === 'open') return ActuatorState.OPEN;
-    if (expected === 'closed') return ActuatorState.CLOSED;
+  const commanded = useSensorValue(entity, 'actuator_state_commanded');
+  if (commanded != null && isFinite(commanded)) {
+    return commanded === 1 ? ActuatorState.OPEN : ActuatorState.CLOSED;
   }
-
-  if (debugMode) {
-    const override = overrides[entity] ?? null;
-    if (override != null) return override;
-    if (currentState != null) {
-      const stateExpected = expectedPositions[currentState] ?? {};
-      const expected = stateExpected[entity] ?? null;
-      if (expected === 'open') return ActuatorState.OPEN;
-      if (expected === 'closed') return ActuatorState.CLOSED;
-    }
+  // Fallback to current-sense [0x31] if no [0x32] data yet
+  const sensed = useSensorValue(entity, 'actuator_state');
+  if (sensed != null && isFinite(sensed)) {
+    return sensed === 1 ? ActuatorState.OPEN : ActuatorState.CLOSED;
   }
-
-  return actuatorStateByEntity;
+  return null;
 }
 
 /** Global last-known actuator state (from backend or optimistic update). */

@@ -197,6 +197,10 @@ export function parseElodinPacket(
   }
 
   // ── Actuator state (0=closed, 1=open): [0x31, 0x01..0x14] ─────────────────
+  // NOTE: This is derived from raw ADC current-sense readings, not a discrete
+  // hardware state.  The daq_bridge thresholds the current draw to guess
+  // open/closed — see ACT_STATE_ADC_THRESHOLD in daq_bridge_main.cpp.
+  // The raw ADC value ([0x30]) is the actual measurement from the board.
   if (high === 0x31 && low >= 0x01 && payload.length >= 10) {
     const ch = low;
     const payloadCh = payload.readUInt8(8);
@@ -204,6 +208,19 @@ export function parseElodinPacket(
     const entityName = entityMaps?.actuatorChannelToEntityMap?.[payloadCh] || `ACT.CH${payloadCh}`;
     const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
     return [{ entity: entityName, component: 'actuator_state', value: state, timestamp: tsMs }];
+  }
+
+  // ── Actuator commanded state: [0x32, 0x01..0x14] ────────────────────────
+  // Published by sequencer_service when it commands actuators (state transitions + manual).
+  // Layout: u64 timestamp_ns | u8 channel_id | u8 actuator_state (0=closed, 1=open) = 10 bytes
+  // Global channel = (board_id - 11) * 10 + local_channel, up to 40
+  if (high === 0x32 && low >= 0x01 && low <= 0x28 && payload.length >= 10) {
+    const ch = low;
+    const payloadCh = payload.readUInt8(8);
+    const state = payload.readUInt8(9);
+    const entityName = entityMaps?.actuatorChannelToEntityMap?.[payloadCh] || `ACT.CH${payloadCh}`;
+    const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
+    return [{ entity: entityName, component: 'actuator_state_commanded', value: state, timestamp: tsMs }];
   }
 
   // ── Controller Actuation: [0x40, 0x00] ──────────────────────────────────

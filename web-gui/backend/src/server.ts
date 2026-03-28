@@ -3,6 +3,7 @@
  * (Formerly server-thin.ts — now the default backend server.)
  *
  * Responsibilities:
+ *   - Connect directly to Elodin DB (TCP :2240), register VTables, subscribe
  *   - Relay Elodin sensor/actuator/state packets → SENSOR_UPDATE / ACTUATOR_UPDATE / STATE_UPDATE
  *   - Board status via Elodin heartbeat packets [0x10, board_id] → BOARD_STATUS_UPDATE (1 Hz)
  *   - Forward commands to C++ actuator_service (TCP) → TRANSITION / ACTUATOR / DEBUG_MODE / EXTEND_FIRE
@@ -23,18 +24,24 @@
 import * as net from 'net';
 import * as http from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
-import { ElodinRelayClient } from './elodin-relay-client.js';
+import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { loadSensorRoleMap, loadActuatorChannelToEntityMap } from './sensor-config.js';
+import { registerVTables } from './legacy/elodin-vtable.js';
+import { registerControllerVTables } from './legacy/elodin-vtable-controller.js';
 import { createAPIHandler } from './api-server.js';
 import { readConfig } from './routes/config.js';
+import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY } from './legacy/state-actuators.js';
+import type { StateActuatorMap } from './legacy/state-actuators.js';
 import { MessageType, SystemState } from '../../shared/types.js';
+import type { NotificationPayload } from '../../shared/types.js';
 import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUpdate } from '../../shared/types.js';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
 const WS_PORT       = parseInt(process.env.WS_PORT     ?? '8081', 10);
-const RELAY_URL     = process.env.ELODIN_RELAY_URL      ?? 'ws://localhost:9090';
+const ELODIN_HOST   = process.env.ELODIN_HOST           ?? '127.0.0.1';
+const ELODIN_PORT   = parseInt(process.env.ELODIN_PORT  ?? '2240', 10);
 const ACT_SVC_PORT  = parseInt(process.env.ACTUATOR_SERVICE_PORT ?? '9998', 10);
 
 const HISTORY_MAX_POINTS = 1000;  // per series
@@ -47,11 +54,12 @@ const BOARD_STATUS_HZ    = 1;     // broadcast rate for board status
 const BROADCAST_MIN_MS   = 50;
 
 /**
- * True for PT/TC/RTD/LC/ENC raw+cal and actuator raw+state ([0x20]–[0x24], [0x30]–[0x31]).
- * Heartbeats ([0x10]), self-test ([0x60]), controller ([0x40]–[0x44]), sequencer/PSM ([0x50]), etc. are not throttled.
+ * True for PT/TC/RTD/LC raw+cal and actuator raw+state ([0x20]–[0x23], [0x30]–[0x31]).
+ * Encoder ([0x24]), heartbeats ([0x10]), self-test ([0x60]), controller ([0x40]–[0x44]),
+ * sequencer/PSM ([0x50]), etc. are not throttled.
  */
 function shouldThrottleSensorStreamPacket(high: number, _low: number): boolean {
-  if (high === 0x20 || high === 0x21 || high === 0x22 || high === 0x23 || high === 0x24) return true;
+  if (high === 0x20 || high === 0x21 || high === 0x22 || high === 0x23) return true;
   if (high === 0x30 || high === 0x31) return true;
   return false;
 }
@@ -155,6 +163,68 @@ function loadBoardsFromConfig(): void {
 
 loadBoardsFromConfig();
 
+// ── State actuator map (expected positions per state from CSV) ────────────────
+
+const STATE_ACTUATOR_MAP: StateActuatorMap = getStateActuatorMap();
+
+/** Build entity→expected map for a given state. Returns { "ACT.LOX_Main": 1, ... } */
+function getExpectedPositions(state: SystemState): Record<string, number> {
+  const expected = STATE_ACTUATOR_MAP[state];
+  if (!expected) return {};
+  const result: Record<string, number> = {};
+  for (const [name, value] of Object.entries(expected)) {
+    const entity = CSV_ACTUATOR_TO_ENTITY[name] || `ACT.${name.replace(/\s+/g, '_')}`;
+    result[entity] = value;
+  }
+  return result;
+}
+
+// ── Actuator state mismatch detection ────────────────────────────────────────
+
+/** Last-known actuator_state (sensed from [0x31] current-sense) per entity */
+const actuatorSensedState = new Map<string, number>();
+const ACTUATOR_MISMATCH_DELAY_MS = 100;
+let actuatorMismatchTimer: NodeJS.Timeout | null = null;
+
+function scheduleActuatorMismatchCheck(state: SystemState): void {
+  if (actuatorMismatchTimer) clearTimeout(actuatorMismatchTimer);
+  actuatorMismatchTimer = setTimeout(() => {
+    actuatorMismatchTimer = null;
+    checkActuatorMismatch(state);
+  }, ACTUATOR_MISMATCH_DELAY_MS);
+}
+
+function checkActuatorMismatch(state: SystemState): void {
+  const expected = getExpectedPositions(state);
+  if (Object.keys(expected).length === 0) return;
+
+  const now = Date.now();
+  const mismatched: string[] = [];
+
+  for (const [entity, expectedPos] of Object.entries(expected)) {
+    const sensed = actuatorSensedState.get(entity);
+    if (sensed === undefined) continue; // no data yet — don't alert
+    if (sensed !== expectedPos) {
+      const expLabel = expectedPos === 1 ? 'OPEN' : 'CLOSED';
+      const actLabel = sensed === 1 ? 'OPEN' : 'CLOSED';
+      const name = entity.replace('ACT.', '').replace(/_/g, ' ');
+      mismatched.push(`${name} (expected ${expLabel}, sensed ${actLabel})`);
+    }
+  }
+
+  const key = 'actuator_mismatch';
+  if (mismatched.length > 0) {
+    const stateName = SystemState[state] ?? 'UNKNOWN';
+    const msg = `Actuator mismatch in ${stateName}: ${mismatched.join(', ')}`;
+    console.warn(`[ThinServer] ⚠️ ${msg}`);
+    broadcastNotification({ key, category: 'warning', message: msg, timestampMs: now, ongoing: true });
+    activeNotificationKeys.add(key);
+  } else if (activeNotificationKeys.has(key)) {
+    broadcastNotification({ key, category: 'warning', message: 'Actuator positions match expected', timestampMs: now, ongoing: false });
+    activeNotificationKeys.delete(key);
+  }
+}
+
 function updateBoard(low: number, payload: Buffer): void {
   if (payload.length < 16) return;
   const boardId    = low;
@@ -198,16 +268,86 @@ function updateBoard(low: number, payload: Buffer): void {
   }
 }
 
-// Mark boards with no recent heartbeat as disconnected each tick.
+// ── Board notifications ──────────────────────────────────────────────────────
+
+const BOARD_STATE_SETUP = 1;
+const SETUP_STUCK_THRESHOLD_MS = 4000;
+
+const prevConnectedState = new Map<number, boolean>();
+const boardFirstSeenSetupMs = new Map<number, number>();
+const activeNotificationKeys = new Set<string>();
+const selfTestNotifiedBoards = new Set<number>();
+
+function broadcastNotification(payload: NotificationPayload): void {
+  broadcast({ type: MessageType.NOTIFICATION, timestamp: Date.now(), payload });
+}
+
+function boardLabel(status: BoardStatus): string {
+  const num = status.boardNumber ?? status.id;
+  return `Board ${num} (${status.type})`;
+}
+
+// Mark boards with no recent heartbeat as disconnected each tick,
+// and generate notifications for board health changes.
 function markStaleBoards(): void {
   const now = Date.now();
   let changed = false;
-  for (const [, status] of boardsStatus) {
+  for (const [id, status] of boardsStatus) {
     const stale = status.lastHeartbeatMs == null || now - status.lastHeartbeatMs > 2500;
     if (stale && status.connected) {
       status.connected = false;
       changed = true;
     }
+
+    const prev = prevConnectedState.get(id);
+    const label = boardLabel(status);
+
+    // Board connection lost
+    const lostKey = `board_lost_${id}`;
+    if (prev === true && !status.connected) {
+      broadcastNotification({ key: lostKey, category: 'error', message: `${label} connection lost`, timestampMs: now, ongoing: true });
+      activeNotificationKeys.add(lostKey);
+    } else if (status.connected && activeNotificationKeys.has(lostKey)) {
+      broadcastNotification({ key: lostKey, category: 'error', message: `${label} connection lost`, timestampMs: now, ongoing: false });
+      activeNotificationKeys.delete(lostKey);
+    }
+
+    // Board connected (one-shot)
+    if ((prev === false || prev === undefined) && status.connected) {
+      broadcastNotification({ category: 'info', message: `${label} connected`, timestampMs: now });
+    }
+
+    // Board stuck in setup
+    const stuckKey = `setup_stuck_${id}`;
+    const inSetup = status.connected && status.boardState === BOARD_STATE_SETUP;
+    if (inSetup) {
+      if (!boardFirstSeenSetupMs.has(id)) boardFirstSeenSetupMs.set(id, now);
+      const first = boardFirstSeenSetupMs.get(id)!;
+      if (now - first > SETUP_STUCK_THRESHOLD_MS && !activeNotificationKeys.has(stuckKey)) {
+        broadcastNotification({ key: stuckKey, category: 'error', message: `${label} stuck in setup`, timestampMs: first, ongoing: true });
+        activeNotificationKeys.add(stuckKey);
+      }
+    } else {
+      boardFirstSeenSetupMs.delete(id);
+      if (activeNotificationKeys.has(stuckKey)) {
+        broadcastNotification({ key: stuckKey, category: 'error', message: `${label} stuck in setup`, timestampMs: now, ongoing: false });
+        activeNotificationKeys.delete(stuckKey);
+      }
+    }
+
+    // Unrecognized board
+    const unrecKey = `unrecognized_${id}`;
+    if (status.connected && !status.expected) {
+      if (!activeNotificationKeys.has(unrecKey)) {
+        broadcastNotification({ key: unrecKey, category: 'warning', message: `Unrecognized board at ${status.ip}`, timestampMs: now, ongoing: true });
+        activeNotificationKeys.add(unrecKey);
+      }
+    } else if (!status.connected && activeNotificationKeys.has(unrecKey)) {
+      broadcastNotification({ key: unrecKey, category: 'warning', message: `Unrecognized board at ${status.ip}`, timestampMs: now, ongoing: false });
+      activeNotificationKeys.delete(unrecKey);
+    }
+
+    prevConnectedState.set(id, status.connected);
   }
   if (changed) broadcastBoardStatus();
 }
@@ -215,13 +355,12 @@ function markStaleBoards(): void {
 setInterval(markStaleBoards, 1000);
 
 // ── Packet stats ─────────────────────────────────────────────────────────────
-// Counts raw entity updates received from relay vs broadcasts sent to WS clients.
+// Counts raw entity updates received from Elodin DB vs broadcasts sent to WS clients.
 // GET /stats returns these so the integration test can verify no drops occur before
-// the 10 Hz throttle (relay→backend must be lossless; backend→WS is intentionally
-// throttled).
+// the throttle (Elodin→backend must be lossless; backend→WS is intentionally throttled).
 
 const stats = {
-  relayEntityUpdatesReceived: 0,  // every finite-value entity parsed from relay
+  relayEntityUpdatesReceived: 0,  // every finite-value entity parsed from Elodin DB
   sensorUpdatesBroadcast:     0,  // SENSOR_UPDATE messages actually sent (post-throttle)
   sequencerStatesReceived:   0,  // packets successfully streamed through Elodin DB verifying storage
   startTimeMs:                Date.now(),
@@ -294,7 +433,7 @@ wss.on('connection', (ws: WebSocket) => {
   // Connection status
   send(ws, {
     type: MessageType.CONNECTION_STATUS, timestamp: Date.now(),
-    payload: { connected: true, elodinConnected: relay.connected },
+    payload: { connected: true, elodinConnected: elodin.isConnected() },
   });
 
   // Mission start time
@@ -388,6 +527,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
         if (ok) {
           currentState = targetState;
           broadcastStateUpdate();
+          scheduleActuatorMismatchCheck(currentState);
         } else {
           send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition failed: ${reply}` } });
         }
@@ -398,10 +538,9 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       const open = command.data.actuatorState === 1 || command.data.actuatorState as unknown as string === 'open';
       const actuatorName = command.data.actuatorName!;
       sendToActuatorService(`ACTUATOR:${actuatorName}:${open ? 1 : 0}\n`).then(({ ok, reply }) => {
-        if (ok) {
-          broadcast({ type: MessageType.ACTUATOR_UPDATE, timestamp: Date.now(),
-            payload: { name: actuatorName, state: open ? 1 : 0, rawAdcCounts: 0, timestamp: Date.now() } });
-        } else {
+        // No optimistic ACTUATOR_UPDATE broadcast — the sequencer publishes [0x32] to Elodin DB,
+        // which the backend receives and forwards as SENSOR_UPDATE with component 'actuator_state_commanded'.
+        if (!ok) {
           send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Actuator command failed: ${reply}` } });
         }
       });
@@ -476,29 +615,68 @@ const STATE_TO_CSV_NAME: Record<string, string> = {
   ABORT: 'Emergency Abort', DEBUG: 'Idle',
 };
 
-// ── Elodin relay ─────────────────────────────────────────────────────────────
+// ── Elodin DB direct connection ──────────────────────────────────────────────
 
 const { channelToEntityMap }         = loadSensorRoleMap();
 const actuatorChannelToEntityMap     = loadActuatorChannelToEntityMap();
 
-const relay = new ElodinRelayClient(RELAY_URL);
+const elodin = new ElodinClient(ELODIN_HOST, ELODIN_PORT);
 
-relay.on('connected', () => {
-  console.log('[ThinServer] Elodin relay connected');
+// VTable resubscription — Elodin DB rejects subscriptions for VTables not yet
+// registered by other services (e.g., daq_bridge). Retry every 5s until all
+// expected packet groups flow.
+let resubscribeTimer: NodeJS.Timeout | null = null;
+const MAX_RESUBSCRIBE_ATTEMPTS = 24;
+
+function scheduleResubscribe(attempt: number): void {
+  if (attempt > MAX_RESUBSCRIBE_ATTEMPTS) return;
+  if (resubscribeTimer) return;
+  resubscribeTimer = setTimeout(() => {
+    resubscribeTimer = null;
+    if (!elodin.isConnected()) return;
+    registerVTables(elodin).then(() => {
+      scheduleResubscribe(attempt + 1);
+    }).catch(() => {
+      scheduleResubscribe(attempt + 1);
+    });
+  }, 5000);
+}
+
+elodin.on('connected', () => {
+  console.log('[ThinServer] Elodin DB connected');
   broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true } });
+
+  if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
+
+  // Register controller VTables so publish [0x43] from backend→Elodin is accepted
+  registerControllerVTables(elodin).then((ok) => {
+    if (ok) console.log('[ThinServer] Controller VTables registered');
+  }).catch((e) => { console.error('[ThinServer] Controller VTable registration failed:', e); });
+
+  // [0x32] actuator commanded VTables are registered by sequencer_service (C++) — no need to
+  // duplicate here. The backend only needs to subscribe (done in registerVTables below).
+
+  // Subscribe to all VTableStream channels
+  registerVTables(elodin).then(() => {
+    console.log('[ThinServer] VTableStream subscriptions sent; receiving TABLE packets directly from Elodin DB.');
+    scheduleResubscribe(2);
+  }).catch((e) => {
+    console.error('[ThinServer] Initial subscription failed:', e);
+    scheduleResubscribe(1);
+  });
 });
 
-relay.on('disconnected', () => {
-  console.log('[ThinServer] Elodin relay disconnected');
+elodin.on('disconnected', () => {
+  console.log('[ThinServer] Elodin DB disconnected');
   broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false } });
-  setTimeout(() => relay.connect(), 2000);
+  if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
 });
 
-relay.on('error', (err: Error) => {
-  console.error('[ThinServer] Relay error:', err.message);
+elodin.on('error', (err: Error) => {
+  console.error('[ThinServer] Elodin error:', err.message);
 });
 
-relay.on('packet', (header: any, payload: Buffer) => {
+elodin.on('packet', (header: any, payload: Buffer) => {
   try {
     const [high, low] = header.packetId as [number, number];
 
@@ -516,29 +694,56 @@ relay.on('packet', (header: any, payload: Buffer) => {
 
     if (parsedList.length === 0) {
       if (high >= 0x40) {
-        console.log(`[ThinServer] Unmapped packet from relay: [0x${high.toString(16)}, 0x${low.toString(16)}] len=${payload.length}`);
+        console.log(`[ThinServer] Unmapped packet from Elodin: [0x${high.toString(16)}, 0x${low.toString(16)}] len=${payload.length}`);
       }
       return;
     }
 
     const epochNow = Date.now();
 
+    // ── Self-test failure → NOTIFICATION ────────────────────────────────
+    if (high === 0x60 && parsedList.length > 0) {
+      const boardId = low;
+      for (const parsed of parsedList) {
+        if (parsed.value === 0 && !selfTestNotifiedBoards.has(boardId)) {
+          selfTestNotifiedBoards.add(boardId);
+          const status = boardsStatus.get(boardId);
+          const label = status ? boardLabel(status) : `Board ${boardId}`;
+          broadcastNotification({
+            key: `self_test_fail_${boardId}`,
+            category: 'error',
+            message: `${label} failed self-test`,
+            timestampMs: epochNow,
+            ongoing: true,
+          });
+          activeNotificationKeys.add(`self_test_fail_${boardId}`);
+          break;
+        }
+      }
+    }
+
     // ── SequencerState packet → STATE_UPDATE broadcast ───────────────────
     if (parsedList[0]?.entity === '_SEQUENCER_STATE') {
       const stateVal      = parsedList.find(p => p.component === 'state')?.value ?? 0;
       const bitmask       = parsedList.find(p => p.component === 'allowedBitmask')?.value ?? 0;
       const debugModeVal  = parsedList.find(p => p.component === 'debugMode')?.value ?? 0;
-      console.log(`[ThinServer] SequencerState from relay: state=${stateVal} bitmask=0x${bitmask.toString(16)} debug=${debugModeVal}`);
+      console.log(`[ThinServer] SequencerState from Elodin: state=${stateVal} bitmask=0x${bitmask.toString(16)} debug=${debugModeVal}`);
       stats.sequencerStatesReceived++;
       // Sync local state from Elodin (backup path — primary is TCP reply)
       currentState = stateVal as SystemState;
       debugMode = debugModeVal === 1;
       broadcastStateUpdate();
+      scheduleActuatorMismatchCheck(currentState);
       return;
     }
 
     for (const parsed of parsedList) {
       if (!Number.isFinite(parsed.value)) continue;
+
+      // Track actuator sensed state [0x31] for mismatch detection
+      if (parsed.component === 'actuator_state') {
+        actuatorSensedState.set(parsed.entity, parsed.value);
+      }
 
       // Set mission T+0 on first meaningful data packet.
       if (firstPacketTimeMs === null) {
@@ -572,14 +777,14 @@ relay.on('packet', (header: any, payload: Buffer) => {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-relay.connect().then((ok) => {
+elodin.connect().then((ok) => {
   if (!ok) {
-    console.warn('[ThinServer] Initial relay connect failed — will retry automatically');
+    console.warn('[ThinServer] Initial Elodin DB connect failed — will retry automatically');
   }
 });
 
 httpServer.listen(WS_PORT, () => {
   console.log(`[ThinServer] WebSocket server listening on port ${WS_PORT}`);
-  console.log(`[ThinServer] Relay: ${RELAY_URL}`);
+  console.log(`[ThinServer] Elodin DB: ${ELODIN_HOST}:${ELODIN_PORT}`);
   console.log(`[ThinServer] Actuator service: localhost:${ACT_SVC_PORT}`);
 });

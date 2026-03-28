@@ -92,8 +92,6 @@ interface ActuatorControlProps {
 export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const ws = getWebSocketClient();
   const debugMode = useSensorStore((s) => s.debugMode);
-  const setActuatorState = useSensorStore((s) => s.setActuatorState);
-  const setActuatorCommandedOverride = useSensorStore((s) => s.setActuatorCommandedOverride);
   const { controlEnabled } = useControlMode();
   const [pending, setPending] = useState(false);
 
@@ -110,10 +108,9 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
       data: { actuatorId, actuatorName: ACTUATOR_NAMES[actuatorId], actuatorState: state },
     };
     ws.sendCommand(command);
-    setActuatorState(entity, state);
-    if (debugMode) setActuatorCommandedOverride(entity, state);
+    // No optimistic update — state will arrive via Elodin DB [0x32] → SENSOR_UPDATE
     setPending(true);
-    setTimeout(() => setPending(false), 1000);
+    setTimeout(() => setPending(false), 2000);
   };
 
   const commandedOpen = commanded === ActuatorState.OPEN;

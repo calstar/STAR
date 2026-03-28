@@ -205,6 +205,8 @@ bool SequencerService::init(const std::string& config_path) {
         std::cout << "[SequencerService] Connected to Elodin at " << elodin_host << ":"
                   << elodin_port << std::endl;
         fsw::elodin::DatabaseConfig::register_non_sensor_tables(elodin_);
+        actuator_commander_.setElodinClient(&elodin_);
+        actuator_commander_.publishInitialState();
     } else {
         std::cerr << "[SequencerService] Cannot connect to Elodin (state will not be published)"
                   << std::endl;
