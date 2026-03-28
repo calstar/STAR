@@ -3,7 +3,8 @@
  *
  * Call `recordSensorUpdate(entity, component)` every time a sensor value
  * arrives (e.g. inside store.ts `updateSensor`). The tracker maintains a
- * rolling 2-second timestamp buffer per key and computes Hz on demand.
+ * rolling 3-second timestamp buffer per key and computes Hz on demand,
+ * smoothed with an exponential moving average to avoid noisy jumps.
  *
  * `useSensorRate(entity, component)` is a React hook that polls the tracker
  * at 500 ms intervals and returns the current update frequency in Hz.
@@ -11,14 +12,16 @@
 
 import { useEffect, useState } from 'react';
 
-const RATE_WINDOW_MS = 2000; // rolling window for Hz computation
-const MAX_TIMESTAMPS = 200; // cap buffer size per key
+const RATE_WINDOW_MS = 3000; // rolling window for Hz computation
+const MAX_TIMESTAMPS = 300; // cap buffer size per key
 const MAX_KEYS = 80; // cap total keys to prevent lag buildup
 const STALE_MS = 2 * 60 * 1000; // prune keys not updated in 2 min
+const EMA_ALPHA = 0.3; // smoothing factor (0..1); lower = smoother
 let _lastPrune = 0;
 
 const _timestamps: Map<string, number[]> = new Map();
 const _lastUpdate: Map<string, number> = new Map();
+const _emaRate: Map<string, number> = new Map();
 
 export function recordSensorUpdate(entity: string, component: string): void {
   if (typeof performance === 'undefined') return;
@@ -61,6 +64,7 @@ export function recordSensorUpdate(entity: string, component: string): void {
     for (const k of toDelete) {
       _timestamps.delete(k);
       _lastUpdate.delete(k);
+      _emaRate.delete(k);
     }
   }
 }
@@ -83,7 +87,14 @@ export function getSensorRate(entity: string, component: string): number {
   const span = ts[ts.length - 1] - ts[start];
   if (span <= 0) return 0;
 
-  return ((recent - 1) / span) * 1000;
+  const rawHz = ((recent - 1) / span) * 1000;
+
+  // Apply EMA smoothing to avoid noisy jumps
+  const prev = _emaRate.get(key) ?? rawHz;
+  const smoothed = EMA_ALPHA * rawHz + (1 - EMA_ALPHA) * prev;
+  _emaRate.set(key, smoothed);
+
+  return smoothed;
 }
 
 /**

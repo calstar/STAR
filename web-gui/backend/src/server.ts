@@ -27,6 +27,7 @@ import { ElodinRelayClient } from './elodin-relay-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { loadSensorRoleMap, loadActuatorChannelToEntityMap } from './sensor-config.js';
 import { createAPIHandler } from './api-server.js';
+import { readConfig } from './routes/config.js';
 import { MessageType, SystemState } from '../../shared/types.js';
 import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUpdate } from '../../shared/types.js';
 
@@ -40,8 +41,9 @@ const HISTORY_MAX_POINTS = 1000;  // per series
 const HISTORY_MAX_KEYS   = 80;
 const HISTORY_STALE_MS   = 5 * 60 * 1000;
 const BOARD_STATUS_HZ    = 1;     // broadcast rate for board status
-/** Min interval between WS SENSOR_UPDATE broadcasts for high-rate DAQ streams only (~10 Hz per key). */
-const BROADCAST_MIN_MS   = 100;
+/** Min interval between WS SENSOR_UPDATE broadcasts for high-rate DAQ streams only (~10 Hz per key).
+ *  Set to 90 ms (not 100) so that 10 Hz sources aren't randomly dropped by Date.now() jitter. */
+const BROADCAST_MIN_MS   = 90;
 
 /**
  * True for PT/TC/RTD/LC/ENC raw+cal and actuator raw+state ([0x20]–[0x24], [0x30]–[0x31]).
@@ -117,6 +119,40 @@ let countdownTargetMs: number | null = loadCountdownTargetTimeMs();
 // ── Board status ─────────────────────────────────────────────────────────────
 
 const boardsStatus = new Map<number, BoardStatus>();
+
+// Pre-populate expected boards from config.toml so the frontend knows about them
+// before any heartbeats arrive.
+function loadBoardsFromConfig(): void {
+  try {
+    const config = readConfig();
+    const boards = (config.boards || {}) as Record<string, any>;
+    for (const [, raw] of Object.entries(boards)) {
+      const board = raw as any;
+      if (board.enabled === false) continue;
+      const id: number | undefined = typeof board.board_id === 'number' ? board.board_id : undefined;
+      if (id === undefined) continue;
+      const type: string = board.type || 'UNKNOWN';
+      const boardNumber: number | null = typeof board.board_number === 'number'
+        ? board.board_number
+        : (typeof board.board_id === 'number' ? board.board_id : null);
+      const ip = typeof board.ip === 'string' ? board.ip : `192.168.2.${id}`;
+      boardsStatus.set(id, {
+        type, boardNumber, id, ip,
+        expected: true,
+        connected: false,
+        lastHeartbeatMs: null,
+        heartbeatTimes: [],
+        boardState: null,
+        engineState: null,
+      });
+    }
+    console.log(`[ThinServer] Loaded ${boardsStatus.size} boards from config.toml`);
+  } catch (err) {
+    console.warn('[ThinServer] Could not load boards from config.toml:', err);
+  }
+}
+
+loadBoardsFromConfig();
 
 function updateBoard(low: number, payload: Buffer): void {
   if (payload.length < 16) return;
