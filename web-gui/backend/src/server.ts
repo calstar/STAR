@@ -53,9 +53,9 @@ const HISTORY_MAX_KEYS   = 80;
 const HISTORY_STALE_MS   = 5 * 60 * 1000;
 const BOARD_STATUS_HZ    = 1;     // broadcast rate for board status
 /** Min interval between WS SENSOR_UPDATE broadcasts for high-rate DAQ streams only.
- *  95 ms caps at ~10.5 Hz per key — passes 10 Hz sources with jitter headroom
- *  while preventing higher-rate streams from flooding the frontend. */
-const BROADCAST_MIN_MS   = 95;
+ *  50 ms caps at ~20 Hz per key — comfortably passes 10 Hz sources even with
+ *  network jitter and Date.now() quantization. */
+const BROADCAST_MIN_MS   = 50;
 
 /**
  * True for PT/TC/RTD/LC raw+cal and actuator raw+state ([0x20]–[0x23], [0x30]–[0x31]).

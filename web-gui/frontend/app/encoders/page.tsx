@@ -21,7 +21,16 @@ export default function EncodersPage() {
   const boardsMap = useSensorStore((s) => s.boards as Record<number, BoardStatus>);
   const ws = getWebSocketClient();
   const [isPaused, setIsPaused] = useState(false);
+  const [windowSeconds, setWindowSeconds] = useState(10);
   const plotRef = useRef<DerivedTimeSeriesPlotHandle>(null);
+
+  const TIME_WINDOWS = [
+    { label: '2s', seconds: 2 },
+    { label: '5s', seconds: 5 },
+    { label: '10s', seconds: 10 },
+    { label: '30s', seconds: 30 },
+    { label: '60s', seconds: 60 },
+  ];
 
   const enc1Raw = useSensorValue('ENC.CH1', 'raw_angle');
   const enc2Raw = useSensorValue('ENC.CH2', 'raw_angle');
@@ -77,6 +86,24 @@ export default function EncodersPage() {
             <span className="text-sm font-mono text-gray-300">{encoderBoard.id}</span>
           </div>
         )}
+
+        {/* Time window selector */}
+        <div className="flex items-center gap-1 rounded border border-gray-700 bg-gray-900 px-2 py-1">
+          <span className="text-xs text-gray-500 mr-1">Window:</span>
+          {TIME_WINDOWS.map((w) => (
+            <button
+              key={w.label}
+              onClick={() => setWindowSeconds(w.seconds)}
+              className={`rounded px-2 py-1 text-xs font-bold transition-colors ${
+                windowSeconds === w.seconds
+                  ? 'bg-violet-600 text-white'
+                  : 'text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+              }`}
+            >
+              {w.label}
+            </button>
+          ))}
+        </div>
 
         {/* Play / Pause / Reset zoom */}
         <div className="flex items-center gap-1 rounded border border-gray-700 bg-gray-900 px-2 py-1">
@@ -139,7 +166,7 @@ export default function EncodersPage() {
           colors={ENC_COLORS}
           labels={ENC_LABELS}
           yLabel="Angle (°)"
-          windowSeconds={2}
+          windowSeconds={windowSeconds}
           yRange={[0, 360]}
           yTicks={[0, 90, 180, 270, 360]}
           enablePlayPause
