@@ -33,7 +33,7 @@ import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUp
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
-const WS_PORT       = parseInt(process.env.WS_PORT     ?? '8082', 10);
+const WS_PORT       = parseInt(process.env.WS_PORT     ?? '8081', 10);
 const RELAY_URL     = process.env.ELODIN_RELAY_URL      ?? 'ws://localhost:9090';
 const ACT_SVC_PORT  = parseInt(process.env.ACTUATOR_SERVICE_PORT ?? '9998', 10);
 

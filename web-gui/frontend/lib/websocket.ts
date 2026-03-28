@@ -296,9 +296,9 @@ export function getApiBaseUrl(): string {
   }
   if (typeof window !== 'undefined' && window.location.hostname) {
     const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
-    return `${protocol}//${window.location.hostname}:8082`;
+    return `${protocol}//${window.location.hostname}:8081`;
   }
-  return 'http://localhost:8082';
+  return 'http://localhost:8081';
 }
 
 // Auto-detect WebSocket URL based on current hostname
