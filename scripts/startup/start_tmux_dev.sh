@@ -52,6 +52,17 @@ if [ -z "$ELODIN_DB_BIN" ]; then
   exit 1
 fi
 
+# Build C++ binaries (ensures daq_bridge, sequencer, heartbeat, etc. are up to date)
+echo "🔨 Building C++ binaries..."
+FSW_BUILD_DIR="$PROJECT/FSW/build"
+if [ ! -d "$FSW_BUILD_DIR" ]; then
+  mkdir -p "$FSW_BUILD_DIR"
+  (cd "$FSW_BUILD_DIR" && cmake ..)
+fi
+NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+(cd "$FSW_BUILD_DIR" && make -j"$NPROC" 2>&1) || { echo "❌ C++ build failed"; exit 1; }
+echo "  ✅ C++ binaries built"
+
 # Ensure web-gui dependencies are installed (tmux panes assume they exist).
 if [ ! -d "$PROJECT/web-gui/backend/node_modules" ]; then
   echo "📦 Installing web-gui backend dependencies..."

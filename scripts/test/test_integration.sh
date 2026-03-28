@@ -157,6 +157,20 @@ for port in $TEST_ELODIN_PORT $TEST_BACKEND_WS_PORT $TEST_BACKEND_API_PORT; do
 done
 sleep 0.5
 
+# ── Build C++ binaries ───────────────────────────────────────────────────────
+
+echo "🔨 Building C++ binaries..."
+FSW_BUILD_DIR="$REPO_ROOT/FSW/build"
+if [ ! -d "$FSW_BUILD_DIR" ]; then
+  mkdir -p "$FSW_BUILD_DIR"
+  (cd "$FSW_BUILD_DIR" && cmake ..)
+fi
+(cd "$FSW_BUILD_DIR" && make -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)" \
+  daq_bridge sequencer_service heartbeat_service config_broadcast_service 2>&1) \
+  || fail "C++ build failed"
+echo "  ✅ C++ binaries built"
+echo ""
+
 # ── Check prerequisites ──────────────────────────────────────────────────────
 
 echo "📋 Checking prerequisites..."
