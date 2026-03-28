@@ -27,7 +27,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { loadSensorRoleMap, loadActuatorChannelToEntityMap } from './sensor-config.js';
-import { registerVTables } from './legacy/elodin-vtable.js';
+import { registerVTables, clearSubscriptionState } from './legacy/elodin-vtable.js';
 import { registerControllerVTables } from './legacy/elodin-vtable-controller.js';
 import { createAPIHandler } from './api-server.js';
 import { readConfig } from './routes/config.js';
@@ -427,6 +427,13 @@ let debugMode = false;
 
 const apiHandler = createAPIHandler({
   getEngineState: () => currentState,
+  getDebugInfo: () => ({
+    relayConnected: elodin.isConnected(),
+    relayPacketsReceived: stats.relayEntityUpdatesReceived,
+    wsClients: wss.clients.size,
+    sensorCacheSize: historyCache.size,
+    useRelay: false,
+  }),
 });
 
 const httpServer = http.createServer(async (req, res) => {
@@ -757,6 +764,7 @@ elodin.on('disconnected', () => {
   console.log('[ThinServer] Elodin DB disconnected');
   broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false } });
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
+  clearSubscriptionState();
 });
 
 elodin.on('error', (err: Error) => {
@@ -830,7 +838,12 @@ elodin.on('packet', (header: any, payload: Buffer) => {
 
       // Track actuator sensed state [0x31] for mismatch detection
       if (parsed.component === 'actuator_state') {
+        const prev = actuatorSensedState.get(parsed.entity);
         actuatorSensedState.set(parsed.entity, parsed.value);
+        // Re-check mismatch when sensed state changes (clears "current" flag when resolved)
+        if (prev !== parsed.value && activeNotificationKeys.has('actuator_mismatch')) {
+          scheduleActuatorMismatchCheck(currentState);
+        }
       }
 
       // Track raw ADC for calibration zero_all (PT entities: "PT.CH1" → uniqueId = 100 + ch)

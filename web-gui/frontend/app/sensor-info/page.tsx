@@ -238,7 +238,7 @@ function RtdRow({ entity, calEntity, label, color }: { entity: string; calEntity
         </div>
       </td>
       <td className="px-4 py-2 tabular-nums text-purple-300">
-        {fmtResistance(rawRes)} <span className="text-gray-600 text-xs">Ω</span>
+        {fmtAdc(rawRes)}
       </td>
       <td className="px-4 py-2 tabular-nums text-green-400">
         {fmtTemp(tempC)} <span className="text-gray-600 text-xs">°C</span>
@@ -563,7 +563,7 @@ export default function SensorInfoPage() {
         <SensorTable
           title="RTD — Pt1000 Temperature (Board 31)"
           color="#10B981"
-          headers={['Channel', 'Raw Resistance', 'Temp', 'Rate']}
+          headers={['Channel', 'ADC Code', 'Temp', 'Rate']}
         >
           {rtdChannels.map((ch, i) => (
             <RtdRow

@@ -5,6 +5,16 @@
 
 import { ElodinClient, ElodinPacketType } from '../elodin-client.js';
 
+// Track which [high, low] pairs have already been successfully subscribed
+// to avoid duplicate subscriptions on resubscribe retries (which cause
+// Elodin to deliver each packet N times, inflating frequency calculations).
+const subscribedPairs = new Set<string>();
+
+/** Clear subscription tracking on disconnect so we resubscribe fresh on reconnect. */
+export function clearSubscriptionState(): void {
+  subscribedPairs.clear();
+}
+
 /**
  * Register VTables with Elodin DB and subscribe to data streams
  *
@@ -95,7 +105,14 @@ export async function registerVTables(client: ElodinClient): Promise<boolean> {
     console.log(`   VTableStream message ID: [0x${vtableStreamMsgId[0].toString(16).padStart(2, '0')}, 0x${vtableStreamMsgId[1].toString(16).padStart(2, '0')}]`);
 
     let successCount = 0;
+    let skippedCount = 0;
     for (const [high, low] of subscriptions) {
+      const key = `${high},${low}`;
+      if (subscribedPairs.has(key)) {
+        skippedCount++;
+        continue;
+      }
+
       // Postcard-encoded VTableStream payload: u8(high) + u8(low)
       // This matches the struct VTableStream { std::tuple<uint8_t, uint8_t> msg_id; }
       const payload = Buffer.alloc(2);
@@ -110,6 +127,7 @@ export async function registerVTables(client: ElodinClient): Promise<boolean> {
       );
 
       if (success) {
+        subscribedPairs.add(key);
         successCount++;
         // Log first few subscriptions
         if (successCount <= 5) {
@@ -120,7 +138,7 @@ export async function registerVTables(client: ElodinClient): Promise<boolean> {
       }
     }
 
-    console.log(`   ✅ VTableStream: Sent ${successCount}/${subscriptions.length} subscriptions`);
+    console.log(`   ✅ VTableStream: Sent ${successCount} new, skipped ${skippedCount} already subscribed (${subscriptions.length} total)`);
     console.log('   Waiting for TABLE packets from Elodin DB...');
 
     return successCount > 0;
