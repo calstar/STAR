@@ -425,7 +425,8 @@ int main(int argc, char* argv[]) {
                       << elodin_port << std::endl;
             return false;
         }
-        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names);
+        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names,
+                                                                 nullptr, nullptr, nullptr, nullptr);
         if (!elodin_client.subscribe_stream()) {
             std::cerr << "[Cal] Failed to subscribe to Elodin stream" << std::endl;
             return false;
@@ -447,7 +448,8 @@ int main(int argc, char* argv[]) {
             std::cerr << "[Cal] Elodin disconnected, retrying in 2s..." << std::endl;
             std::this_thread::sleep_for(std::chrono::seconds(2));
             if (elodin_client.reconnect()) {
-                fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names);
+                fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names,
+                                                                         nullptr, nullptr, nullptr, nullptr);
                 elodin_client.subscribe_stream();
                 std::cout << "[Cal] Reconnected to Elodin" << std::endl;
             }

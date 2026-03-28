@@ -111,7 +111,7 @@ class SimulatedBoard:
         last_sensor_data = 0
 
         heartbeat_interval = 1.0  # 1 Hz
-        sensor_interval = 0.1  # 10 Hz
+        sensor_interval = 0.02 if self.board_type_str == "ENCODER" else 0.1  # 50 Hz for ENCODER, 10 Hz for others
 
         while self.running:
             now = time.time()
