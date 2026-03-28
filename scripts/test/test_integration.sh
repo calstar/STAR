@@ -256,17 +256,26 @@ echo "📝 Creating test config..."
 CONFIG_FILE="$REPO_ROOT/config/config.toml"
 [ ! -f "$CONFIG_FILE" ] && fail "config/config.toml not found"
 
+# Cross-platform in-place sed (macOS requires -i '', Linux requires -i)
+sedi() {
+  if [ "$(uname)" = "Darwin" ]; then
+    sed -i '' "$@"
+  else
+    sed -i "$@"
+  fi
+}
+
 cp "$CONFIG_FILE" "$TEST_CONFIG"
 # Replace database port (under [database] section)
-sed -i '' "s/^port = 2240/port = $TEST_ELODIN_PORT/" "$TEST_CONFIG"
+sedi "s/^port = 2240/port = $TEST_ELODIN_PORT/" "$TEST_CONFIG"
 # Replace sensor_port (under [network] section)
-sed -i '' "s/^sensor_port = 5006/sensor_port = $TEST_DAQ_UDP_PORT/" "$TEST_CONFIG"
+sedi "s/^sensor_port = 5006/sensor_port = $TEST_DAQ_UDP_PORT/" "$TEST_CONFIG"
 # Replace actuator_cmd_port (under [network] section)
-sed -i '' "s/^actuator_cmd_port = 5005/actuator_cmd_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+sedi "s/^actuator_cmd_port = 5005/actuator_cmd_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 # Point heartbeat broadcast to localhost to avoid sending to the real subnet
-sed -i '' 's/^broadcast_ip = .*/broadcast_ip = "127.0.0.1"/' "$TEST_CONFIG"
+sedi 's/^broadcast_ip = .*/broadcast_ip = "127.0.0.1"/' "$TEST_CONFIG"
 # Align SERVER_HEARTBEAT UDP with the same port as udp_listener (actuator/control path in CI)
-sed -i '' "s/^broadcast_port = 5005/broadcast_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+sedi "s/^broadcast_port = 5005/broadcast_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 # NOTE: Do NOT replace board IPs — the DAQ bridge routes by source IP.
 # The board_simulator falls back to 127.0.0.{2+index} when config IPs
 # (192.168.2.x) aren't bindable, and the DAQ bridge has matching fallback
@@ -275,15 +284,15 @@ sed -i '' "s/^broadcast_port = 5005/broadcast_port = $TEST_ACTUATOR_UDP_PORT/" "
 # Replace actuator board IPs to 127.0.0.1 so UDP commands reach our local listener.
 # Unlike sensor boards (where DAQ bridge routes by source IP), actuator commands are
 # sent TO the board IP — so we must point them at localhost for testing.
-sed -i '' 's/^ip = "192\.168\.2\.11"/ip = "127.0.0.1"/' "$TEST_CONFIG"
-sed -i '' 's/^ip = "192\.168\.2\.12"/ip = "127.0.0.1"/' "$TEST_CONFIG"
-sed -i '' 's/^ip = "192\.168\.2\.13"/ip = "127.0.0.1"/' "$TEST_CONFIG"
-sed -i '' 's/^ip = "192\.168\.2\.14"/ip = "127.0.0.1"/' "$TEST_CONFIG"
+sedi 's/^ip = "192\.168\.2\.11"/ip = "127.0.0.1"/' "$TEST_CONFIG"
+sedi 's/^ip = "192\.168\.2\.12"/ip = "127.0.0.1"/' "$TEST_CONFIG"
+sedi 's/^ip = "192\.168\.2\.13"/ip = "127.0.0.1"/' "$TEST_CONFIG"
+sedi 's/^ip = "192\.168\.2\.14"/ip = "127.0.0.1"/' "$TEST_CONFIG"
 # Encoder board #1 (config [boards.encoder_board_61]) — dedicated loopback so sim can bind without colliding
-sed -i '' 's/^ip = "192\.168\.2\.61"/ip = "127.0.0.61"/' "$TEST_CONFIG"
+sedi 's/^ip = "192\.168\.2\.61"/ip = "127.0.0.61"/' "$TEST_CONFIG"
 # Replace listen_port on actuator boards to use our test port
-sed -i '' "s/^listen_port = 5005/listen_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
-sed -i '' "s/^send_port = 5005/send_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+sedi "s/^listen_port = 5005/listen_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+sedi "s/^send_port = 5005/send_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 
 # Integration-only: startup E2E (SETUP → SELF_TEST). Encoder uses production [boards.encoder_board_61] + IP sed above.
 cat >> "$TEST_CONFIG" << EOF
