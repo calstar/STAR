@@ -33,6 +33,9 @@ import { createAPIHandler } from './api-server.js';
 import { readConfig } from './routes/config.js';
 import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY } from './legacy/state-actuators.js';
 import type { StateActuatorMap } from './legacy/state-actuators.js';
+import { handleCalibrationCommand, type CalibrationHost } from './calibration-handler.js';
+import { loadPTCalibration, calculatePressure, type CalibrationCoefficients } from './calibration.js';
+import { Phase2CalibrationEngine } from './calibration-phase2.js';
 import { MessageType, SystemState } from '../../shared/types.js';
 import type { NotificationPayload } from '../../shared/types.js';
 import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUpdate } from '../../shared/types.js';
@@ -49,9 +52,9 @@ const HISTORY_MAX_KEYS   = 80;
 const HISTORY_STALE_MS   = 5 * 60 * 1000;
 const BOARD_STATUS_HZ    = 1;     // broadcast rate for board status
 /** Min interval between WS SENSOR_UPDATE broadcasts for high-rate DAQ streams only.
- *  50 ms caps at ~20 Hz per key — comfortably passes 10 Hz sources even with
- *  network jitter and Date.now() quantization. */
-const BROADCAST_MIN_MS   = 50;
+ *  95 ms caps at ~10.5 Hz per key — passes 10 Hz sources with jitter headroom
+ *  while preventing higher-rate streams from flooding the frontend. */
+const BROADCAST_MIN_MS   = 95;
 
 /**
  * True for PT/TC/RTD/LC raw+cal and actuator raw+state ([0x20]–[0x23], [0x30]–[0x31]).
@@ -124,6 +127,37 @@ setInterval(pruneHistory, 60_000);
 let firstPacketTimeMs: number | null = null;
 import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from './countdown-state.js';
 let countdownTargetMs: number | null = loadCountdownTargetTimeMs();
+
+// ── Calibration state ────────────────────────────────────────────────────────
+
+const ptCalibration = new Map<number, CalibrationCoefficients>();
+const calibrationPoints = new Map<number, { adc: number; pressure: number }[]>();
+const lastRawAdc = new Map<number, number>();
+let ptCalibrationFilePath: string | null = null;
+
+// Load existing calibration file if available
+try {
+  const loaded = loadPTCalibration();
+  if (loaded.map.size > 0) {
+    for (const [k, v] of loaded.map) ptCalibration.set(k, v);
+    ptCalibrationFilePath = loaded.filePath;
+    console.log(`[ThinServer] Loaded ${ptCalibration.size} PT calibrations from ${loaded.filePath}`);
+  }
+} catch { /* no calibration file — fine */ }
+
+const phase2Engine = new Phase2CalibrationEngine();
+
+const calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
+const calibrationHost: CalibrationHost = {
+  ptCalibration,
+  ptCalibrationFilePath,
+  calibrationPoints,
+  phase2Engine,
+  channelToEntityMap: calChannelToEntityMap,
+  lastRawAdc,
+  send,
+  broadcast,
+};
 
 // ── Board status ─────────────────────────────────────────────────────────────
 
@@ -420,6 +454,18 @@ function send(ws: WebSocket, message: object): void {
 function broadcastBoardStatus(): void {
   const boards = Array.from(boardsStatus.values());
   if (boards.length === 0) return;
+
+  // Compute frequencyHz from heartbeatTimes for each board
+  for (const b of boards) {
+    const times = b.heartbeatTimes;
+    if (times && times.length >= 2) {
+      const span = times[times.length - 1] - times[0];
+      if (span > 0) {
+        (b as any).frequencyHz = (times.length - 1) / (span / 1000);
+      }
+    }
+  }
+
   broadcast({ type: MessageType.BOARD_STATUS_UPDATE, timestamp: Date.now(), payload: { boards } });
 }
 
@@ -462,6 +508,22 @@ wss.on('connection', (ws: WebSocket) => {
     send(ws, { type: MessageType.BOARD_STATUS_UPDATE, timestamp: Date.now(), payload: { boards } });
   }
 
+  // Initial actuator positions from state machine CSV (IDLE state defaults).
+  // Sent as SENSOR_UPDATE with component 'actuator_state_commanded' so the frontend
+  // shows correct positions before any [0x32] data arrives from Elodin.
+  const idlePositions = getExpectedPositions(currentState);
+  const now = Date.now();
+  for (const [entity, value] of Object.entries(idlePositions)) {
+    // Only send defaults if no real data has arrived for this actuator yet
+    const key = `${entity}.actuator_state_commanded`;
+    if (!historyCache.has(key)) {
+      send(ws, {
+        type: MessageType.SENSOR_UPDATE, timestamp: now,
+        payload: { entity, component: 'actuator_state_commanded', value, timestamp: now },
+      });
+    }
+  }
+
   // Historical data
   sendHistoricalData(ws);
 
@@ -499,6 +561,9 @@ function handleMessage(ws: WebSocket, message: any): void {
       break;
     case MessageType.QUERY_HISTORICAL:
       sendHistoricalData(ws);
+      break;
+    case MessageType.CALIBRATION_COMMAND:
+      handleCalibrationCommand(calibrationHost, ws, message.payload);
       break;
     case MessageType.SUBSCRIBE_SENSOR:
     case MessageType.UNSUBSCRIBE_SENSOR:
@@ -743,6 +808,15 @@ elodin.on('packet', (header: any, payload: Buffer) => {
       // Track actuator sensed state [0x31] for mismatch detection
       if (parsed.component === 'actuator_state') {
         actuatorSensedState.set(parsed.entity, parsed.value);
+      }
+
+      // Track raw ADC for calibration zero_all (PT entities: "PT.CH1" → uniqueId = 100 + ch)
+      if (parsed.component === 'raw_adc_counts' && parsed.entity.startsWith('PT.')) {
+        const chMatch = parsed.entity.match(/\.CH(\d+)$/);
+        if (chMatch) {
+          const chId = parseInt(chMatch[1], 10);
+          lastRawAdc.set(100 + chId, parsed.value);
+        }
       }
 
       // Set mission T+0 on first meaningful data packet.

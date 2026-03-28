@@ -974,6 +974,12 @@ int main(int argc, char* argv[]) {
                         if (is_publish_allowed(id[0], id[1], publish_ranges))
                             elodin_client.publish(id, msg);
                 }
+                auto lc_cal = router.route_lc_samples_calibrated(lc_batch, receive_timestamp_ns);
+                if (publishing) {
+                    for (const auto& [id, msg] : lc_cal)
+                        if (is_publish_allowed(id[0], id[1], publish_ranges))
+                            elodin_client.publish(id, msg);
+                }
                 break;
             }
             case BoardType::TC: {
@@ -991,6 +997,12 @@ int main(int argc, char* argv[]) {
                 auto tc_raw = router.route_tc_samples(tc_batch, receive_timestamp_ns);
                 if (publishing) {
                     for (const auto& [id, msg] : tc_raw)
+                        if (is_publish_allowed(id[0], id[1], publish_ranges))
+                            elodin_client.publish(id, msg);
+                }
+                auto tc_cal = router.route_tc_samples_calibrated(tc_batch, receive_timestamp_ns);
+                if (publishing) {
+                    for (const auto& [id, msg] : tc_cal)
                         if (is_publish_allowed(id[0], id[1], publish_ranges))
                             elodin_client.publish(id, msg);
                 }

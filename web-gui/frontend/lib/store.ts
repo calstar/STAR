@@ -516,12 +516,13 @@ export function useGetSensorValue(): (entity: string, component: string) => numb
  * Reads [0x32] commanded state first; falls back to [0x31] current-sense if no commanded data yet.
  */
 export function useActuatorCommandedState(entity: string): ActuatorState | null {
+  // Both hooks must always be called (React rules of hooks — no early returns between hooks)
   const commanded = useSensorValue(entity, 'actuator_state_commanded');
+  const sensed = useSensorValue(entity, 'actuator_state');
+
   if (commanded != null && isFinite(commanded)) {
     return commanded === 1 ? ActuatorState.OPEN : ActuatorState.CLOSED;
   }
-  // Fallback to current-sense [0x31] if no [0x32] data yet
-  const sensed = useSensorValue(entity, 'actuator_state');
   if (sensed != null && isFinite(sensed)) {
     return sensed === 1 ? ActuatorState.OPEN : ActuatorState.CLOSED;
   }

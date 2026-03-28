@@ -93,22 +93,27 @@ bool ElodinClient::subscribe_stream() {
         send_msg(msgstream_id, data);
     };
 
-    // PT Raw (0x20, 0x01-0x0A)
-    for (uint8_t ch = 1; ch <= 10; ++ch)
+    // PT Raw (0x20, 0x01-0x0E) — channels 1-10 (LP) + 11-14 (HP)
+    for (uint8_t ch = 1; ch <= 14; ++ch)
         subscribe(0x20, ch);
-    // PT Calibrated (0x20, 0x11-0x1A)
-    for (uint8_t ch = 0x11; ch <= 0x1A; ++ch)
+    // PT Calibrated (0x20, 0x11-0x1E)
+    for (uint8_t ch = 0x11; ch <= 0x1E; ++ch)
         subscribe(0x20, ch);
-    // TC Raw and Cal
-    for (uint8_t ch = 1; ch <= 4; ++ch)
+    // TC Raw (0x21, 0x01-0x14) and Cal (0x21, 0x11-0x24)
+    for (uint8_t ch = 1; ch <= 20; ++ch)
         subscribe(0x21, ch);
-    for (uint8_t ch = 0x11; ch <= 0x14; ++ch)
+    for (uint8_t ch = 0x11; ch <= 0x24; ++ch)
         subscribe(0x21, ch);
-    // RTD Raw and Cal
-    for (uint8_t ch = 1; ch <= 4; ++ch)
+    // RTD Raw (0x22, 0x01-0x14) and Cal (0x22, 0x11-0x24)
+    for (uint8_t ch = 1; ch <= 20; ++ch)
         subscribe(0x22, ch);
-    for (uint8_t ch = 0x11; ch <= 0x14; ++ch)
+    for (uint8_t ch = 0x11; ch <= 0x24; ++ch)
         subscribe(0x22, ch);
+    // LC Raw (0x23, 0x01-0x14) and Cal (0x23, 0x11-0x24)
+    for (uint8_t ch = 1; ch <= 20; ++ch)
+        subscribe(0x23, ch);
+    for (uint8_t ch = 0x11; ch <= 0x24; ++ch)
+        subscribe(0x23, ch);
 
     return true;
 }
