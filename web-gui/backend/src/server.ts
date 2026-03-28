@@ -41,9 +41,10 @@ const HISTORY_MAX_POINTS = 1000;  // per series
 const HISTORY_MAX_KEYS   = 80;
 const HISTORY_STALE_MS   = 5 * 60 * 1000;
 const BOARD_STATUS_HZ    = 1;     // broadcast rate for board status
-/** Min interval between WS SENSOR_UPDATE broadcasts for high-rate DAQ streams only (~10 Hz per key).
- *  Set to 90 ms (not 100) so that 10 Hz sources aren't randomly dropped by Date.now() jitter. */
-const BROADCAST_MIN_MS   = 90;
+/** Min interval between WS SENSOR_UPDATE broadcasts for high-rate DAQ streams only.
+ *  50 ms caps at ~20 Hz per key — comfortably passes 10 Hz sources even with
+ *  network jitter and Date.now() quantization. */
+const BROADCAST_MIN_MS   = 50;
 
 /**
  * True for PT/TC/RTD/LC/ENC raw+cal and actuator raw+state ([0x20]–[0x24], [0x30]–[0x31]).
@@ -247,7 +248,16 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   // Delegate all /api/* routes to the API handler
-  if (await apiHandler(req, res)) return;
+  try {
+    if (await apiHandler(req, res)) return;
+  } catch (err) {
+    console.error('[ThinServer] API handler error:', err);
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Internal server error' }));
+    }
+    return;
+  }
 
   res.writeHead(404);
   res.end();
