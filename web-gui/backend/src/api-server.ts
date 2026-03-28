@@ -1,12 +1,12 @@
 /**
- * HTTP API server for config management and Elodin DB queries
- * Runs alongside WebSocket server
+ * HTTP API routes for config management and Elodin DB queries.
+ * Exports a request handler to be mounted on an existing HTTP server.
  */
 
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { createServer, IncomingMessage, ServerResponse } from 'http';
+import { IncomingMessage, ServerResponse } from 'http';
 import { readConfig, writeConfig } from './routes/config.js';
 import { discoverProjects, getEnabledBoardsForFlash, getOtaWorkspaceRoot, BOARD_TYPE_TO_PROJECT } from './ota-build.js';
 import { otaBuildFlash, otaFlashFirmwareFile } from './ota-service-cmd.js';
@@ -226,8 +226,6 @@ function buildSensorConfig(): SensorConfigEntry[] {
   return sensors;
 }
 
-const API_PORT = parseInt(process.env.API_PORT || '8082', 10);
-
 export interface DebugInfo {
   relayConnected: boolean;
   relayPacketsReceived: number;
@@ -237,14 +235,26 @@ export interface DebugInfo {
   useRelay: boolean;
 }
 
-export function startAPIServer(
-  getQueryClient?: () => ElodinQueryClient | null,
-  getDebugInfo?: () => DebugInfo | null,
-  onConfigUpdated?: () => void,
-  getEngineState?: () => number,
-  getCalibrationStatus?: () => Promise<any>
-): void {
-  const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+export interface APIHandlerOptions {
+  getQueryClient?: () => ElodinQueryClient | null;
+  getDebugInfo?: () => DebugInfo | null;
+  onConfigUpdated?: () => void;
+  getEngineState?: () => number;
+  getCalibrationStatus?: () => Promise<any>;
+}
+
+/**
+ * Create an HTTP request handler for all /api/* routes.
+ * Mount this on an existing http.Server — it does NOT create its own server.
+ * Returns true if the request was handled, false if not (so the caller can fall through).
+ */
+export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
+  const { getQueryClient, getDebugInfo, onConfigUpdated, getEngineState, getCalibrationStatus } = opts;
+
+  return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
+    const urlPath = (req.url ?? '').split('?')[0] ?? '';
+    if (!urlPath.startsWith('/api/')) return false;
+
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -253,7 +263,7 @@ export function startAPIServer(
     if (req.method === 'OPTIONS') {
       res.writeHead(200);
       res.end();
-      return;
+      return true;
     }
 
     const url = new URL(req.url || '/', `http://${req.headers.host}`);
@@ -549,19 +559,8 @@ export function startAPIServer(
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: error.message }));
     }
-  });
 
-  // Register error handler BEFORE calling listen()
-  server.on('error', (error: any) => {
-    if (error.code === 'EADDRINUSE') {
-      console.error(`❌ Port ${API_PORT} already in use. Free it and restart: fuser -k ${API_PORT}/tcp`);
-      process.exit(1);
-    } else {
-      console.error('❌ API server error:', error);
-    }
-  });
-
-  server.listen(API_PORT, () => {
-    console.log(`📡 API server listening on port ${API_PORT}`);
-  });
+    return true;
+  };
 }
+

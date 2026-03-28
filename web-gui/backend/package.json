@@ -6,7 +6,6 @@
   "type": "module",
   "scripts": {
     "dev": "USE_CPP_CONTROLLER=true USE_DIRECT_DAQ=false tsx watch src/server.ts",
-    "dev:legacy": "USE_CPP_CONTROLLER=true USE_DIRECT_DAQ=false tsx watch src/server-legacy.ts",
     "build": "tsc",
     "start": "USE_CPP_CONTROLLER=true USE_DIRECT_DAQ=false node dist/server.js",
     "relay": "NODE_OPTIONS='--max-old-space-size=8192' tsx src/elodin-relay.ts",

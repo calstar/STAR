@@ -16,8 +16,6 @@
  *   - Config packets — config_broadcast_service
  *   - Calibration — calibration_service (stub reply)
  *
- * Legacy monolithic server preserved as server-legacy.ts for reference/rollback.
- *
  * Frontend / dev:
  *   NEXT_PUBLIC_WS_URL=ws://localhost:<WS_PORT>
  */
@@ -28,6 +26,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinRelayClient } from './elodin-relay-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { loadSensorRoleMap, loadActuatorChannelToEntityMap } from './sensor-config.js';
+import { createAPIHandler } from './api-server.js';
 import { MessageType, SystemState } from '../../shared/types.js';
 import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUpdate } from '../../shared/types.js';
 
@@ -195,20 +194,25 @@ const stats = {
 let currentState: SystemState = SystemState.IDLE;
 let debugMode = false;
 
-// ── WebSocket server ─────────────────────────────────────────────────────────
+// ── HTTP + WebSocket server ──────────────────────────────────────────────────
 
-const httpServer = http.createServer((req, res) => {
-  const path = (req.url ?? '').split('?')[0] ?? '';
-  if (req.method === 'GET' && path === '/stats') {
+const apiHandler = createAPIHandler({
+  getEngineState: () => currentState,
+});
+
+const httpServer = http.createServer(async (req, res) => {
+  const urlPath = (req.url ?? '').split('?')[0] ?? '';
+
+  // Internal stats endpoint (not part of public API)
+  if (req.method === 'GET' && urlPath === '/stats') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ...stats, uptimeMs: Date.now() - stats.startTimeMs }));
     return;
   }
-  if (req.method === 'GET' && path === '/api/engine_state') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ engineState: currentState }));
-    return;
-  }
+
+  // Delegate all /api/* routes to the API handler
+  if (await apiHandler(req, res)) return;
+
   res.writeHead(404);
   res.end();
 });
