@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSensorStore, NotificationEntry } from '@/lib/store';
+import { useEffect, useRef, useState } from 'react';
+import { useSensorStore } from '@/lib/store';
 
 const MIN_FONT_PX = 10;
 const MAX_FONT_PX = 18;
@@ -62,17 +62,11 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('en-US', { hour12: false });
 }
 
-/** True if this notification is board-related (heartbeat, connected, lost, stuck, unrecognized). */
-function isBoardNotification(n: NotificationEntry): boolean {
-  if (n.key && (n.key.startsWith('board_') || n.key.startsWith('setup_stuck_') || n.key.startsWith('unrecognized_') || n.key.startsWith('self_test_'))) return true;
-  return /Board \d+.*(connected|lost|stuck)|Unrecognized board/i.test(n.message);
-}
-
 export default function NotificationPanel() {
   const notifications = useSensorStore((s) => s.notifications);
   const clearNotifications = useSensorStore((s) => s.clearNotifications);
 
-  const items = useMemo(() => notifications.filter(isBoardNotification), [notifications]);
+  const items = notifications;
 
   const lastMaxTsRef = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

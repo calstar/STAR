@@ -27,7 +27,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { loadSensorRoleMap, loadActuatorChannelToEntityMap } from './sensor-config.js';
-import { registerVTables } from './legacy/elodin-vtable.js';
+import { registerVTables, clearSubscriptionState } from './legacy/elodin-vtable.js';
 import { registerControllerVTables } from './legacy/elodin-vtable-controller.js';
 import { createAPIHandler } from './api-server.js';
 import { readConfig } from './routes/config.js';
@@ -735,6 +735,7 @@ elodin.on('disconnected', () => {
   console.log('[ThinServer] Elodin DB disconnected');
   broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false } });
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
+  clearSubscriptionState();
 });
 
 elodin.on('error', (err: Error) => {

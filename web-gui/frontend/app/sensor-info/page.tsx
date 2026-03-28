@@ -466,12 +466,12 @@ export default function SensorInfoPage() {
 
         <div className="flex items-center gap-3 mb-1">
           <h1 className="text-2xl font-bold tracking-widest text-gray-300 uppercase">Sensor Info</h1>
-          <span className="text-xs text-gray-500 font-mono">ADC · Converted · Data Rate per channel</span>
+          <span className="text-xs text-gray-500 font-mono">ADC · Converted · Rate = updates/sec per channel received by GUI</span>
         </div>
 
         <div className="flex flex-wrap gap-3 mb-2">
           <div className="bg-card border border-gray-800 rounded-lg px-4 py-3 text-xs font-mono text-gray-300">
-            <div className="text-[10px] uppercase text-gray-500 tracking-widest mb-1">DAQ Stream (Elodin relay)</div>
+            <div className="text-[10px] uppercase text-gray-500 tracking-widest mb-1">DAQ Stream (Elodin DB)</div>
             <div className="flex gap-6 items-baseline">
               <div>
                 <span className="text-gray-500 mr-1">Packets:</span>
@@ -483,13 +483,13 @@ export default function SensorInfoPage() {
               </div>
             </div>
             <div className="text-[10px] text-gray-600 mt-1">
-              Approximates UDP → DAQ → Elodin stream rate seen by the backend.
+              Total packets/sec from Elodin DB seen by the backend (all sensor types combined).
             </div>
           </div>
 
           <div className="bg-card border border-gray-800 rounded-lg px-4 py-3 text-[11px] font-mono text-gray-300 flex flex-col gap-1">
             <div className="text-[10px] uppercase text-gray-500 tracking-widest mb-1">
-              Board Rates (DAQ → Elodin)
+              Board Total Rates (all channels summed)
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-x-4 gap-y-1">
               <div>

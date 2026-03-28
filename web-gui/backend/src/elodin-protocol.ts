@@ -138,8 +138,8 @@ export function parseElodinPacket(
     return r ? [r] : [];
   }
 
-  // ── TC Raw: [0x21, 0x01..0x14] — signed ADC (ADS1262), avoid uint32 → 2^31-1 for negative/saturated codes
-  if (high === 0x21 && low >= 0x01 && low <= 0x14) {
+  // ── TC Raw: [0x21, 0x01..0x10] — signed ADC (ADS1262), avoid uint32 → 2^31-1 for negative/saturated codes
+  if (high === 0x21 && low >= 0x01 && low <= 0x10) {
     const ch = low;
     const r = parseRawSensorPayload(payload, ch, `TC.CH${ch}`, 'raw_adc_counts', true);
     return r ? [r] : [];
@@ -152,8 +152,8 @@ export function parseElodinPacket(
     return r ? [r] : [];
   }
 
-  // ── RTD Raw: [0x22, 0x01..0x14] ─────────────────────────────────────────
-  if (high === 0x22 && low >= 0x01 && low <= 0x14) {
+  // ── RTD Raw: [0x22, 0x01..0x10] ─────────────────────────────────────────
+  if (high === 0x22 && low >= 0x01 && low <= 0x10) {
     const ch = low;
     const r = parseRawSensorPayload(payload, ch, `RTD.CH${ch}`, 'raw_resistance_counts');
     return r ? [r] : [];
@@ -166,8 +166,8 @@ export function parseElodinPacket(
     return r ? [r] : [];
   }
 
-  // ── LC Raw: [0x23, 0x01..0x14] — signed ADC (ADS1262), avoid uint32 → ~4e9 for negative codes
-  if (high === 0x23 && low >= 0x01 && low <= 0x14) {
+  // ── LC Raw: [0x23, 0x01..0x10] — signed ADC (ADS1262), avoid uint32 → ~4e9 for negative codes
+  if (high === 0x23 && low >= 0x01 && low <= 0x10) {
     const ch = low;
     const r = parseRawSensorPayload(payload, ch, `LC.CH${ch}`, 'raw_adc_counts', true);
     return r ? [r] : [];

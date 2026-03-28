@@ -12,7 +12,7 @@
 import * as net from 'net';
 import { WebSocketServer } from 'ws';
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
-import { registerVTables } from './legacy/elodin-vtable.js';
+import { registerVTables, clearSubscriptionState } from './legacy/elodin-vtable.js';
 import { registerControllerVTables, registerActuatorCommandedVTables } from './legacy/elodin-vtable-controller.js';
 import { loadActuatorChannelToEntityMap } from './sensor-config.js';
 
@@ -178,6 +178,7 @@ function main(): void {
     heartbeatPacketCount = 0;
     seenHighBytes.clear();
     if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
+    clearSubscriptionState();
   });
   elodin.on('error', () => { });
 
