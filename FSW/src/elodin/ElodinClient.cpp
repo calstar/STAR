@@ -72,9 +72,9 @@ void ElodinClient::flush_buffer() {
 }
 
 bool ElodinClient::subscribe_stream() {
-    // MsgStream packet: 8-byte header + 2-byte Postcard payload ([hi, lo])
-    // packetId for MsgStream = FNV-1a("MsgStream") = [0x1d, 0x4a]
-    std::array<uint8_t, 2> msgstream_id = {0x1d, 0x4a};
+    // VTableStream packet: 8-byte header + 2-byte Postcard payload ([hi, lo])
+    // packetId for VTableStream = FNV-1a("VTableStream") = [0x11, 0x0d]
+    std::array<uint8_t, 2> msgstream_id = {0x11, 0x0d};
 
     auto subscribe = [&](uint8_t hi, uint8_t lo) {
         // Correct format: 8-byte header + 2-byte payload = 10 bytes total

@@ -46,7 +46,7 @@ export class ElodinRelayClient extends EventEmitter {
           this.buffer = Buffer.concat([this.buffer, buf]);
           this.drainPackets();
         });
-        ws.on('close', () => {
+        ws.on('close', (code, reason) => {
           if (this.ws === ws) {
             this._connected = false;
             this.ws = null;

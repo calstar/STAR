@@ -105,11 +105,16 @@ pkill -f "sequencer_service" 2>/dev/null || true
 pkill -f "actuator_service" 2>/dev/null || true
 pkill -f "heartbeat_service" 2>/dev/null || true
 pkill -f "config_broadcast_service" 2>/dev/null || true
-pkill -f "data_logger_service" 2>/dev/null || true
+pkill -f "calibration_service" 2>/dev/null || true
 pkill -f "board_simulator" 2>/dev/null || true
 pkill -f "next dev" 2>/dev/null || true
 pkill -f "tsx watch.*server\.ts" 2>/dev/null || true
 pkill -f "tsx.*server\.ts" 2>/dev/null || true
+
+# Prepare log directory
+mkdir -p /tmp/gui_logs
+rm -f /tmp/gui_logs/*.log
+
 # Thin uses :8081 for HTTP+WS (frontend + datalogger); free 8082 for stray legacy API listeners
 for port in 8081 8082; do
   pid=$(lsof -ti:$port 2>/dev/null) || true
@@ -133,7 +138,8 @@ if [ ! -x "$DAQ_BIN" ]; then
 fi
 # DAQ must wait for relay to grab Elodin's first-subscriber slot (see race condition note above).
 # sleep 10 > relay's sleep 2 + tsx cold-start (~3-5s) + subscription time.
-CMD_DAQ="printf '\n  ══ DAQ BRIDGE (writes to Elodin — UDP from config → DB) ══\n\n' && echo '  ⏳ Waiting for relay to connect first...' && sleep 10 && cd $PROJECT && exec $DAQ_BIN config/config.toml 2>&1"
+CMD_LOG_DAQ="/tmp/gui_logs/daq.log"
+CMD_DAQ="printf '\n  ══ DAQ BRIDGE (writes to Elodin — UDP from config → DB) ══\n\n' && echo '  ⏳ Waiting for relay to connect first...' && sleep 10 && cd $PROJECT && exec $DAQ_BIN config/config.toml 2>&1 | tee $CMD_LOG_DAQ"
 
 # Controller Service: Reads CALIBRATED DB → UDP out + Diagnostics DB
 CTRL_BIN="$PROJECT/build/FSW/controller_service"
@@ -143,7 +149,8 @@ fi
 CTRL_LUT="${LUT_PATH:-$PROJECT/output/lut/controller_policy_fsw.bin}"
 CTRL_OPTS="--config config/config.toml --elodin-host 127.0.0.1"
 [ -f "$CTRL_LUT" ] && CTRL_OPTS="$CTRL_OPTS --lut-path $CTRL_LUT"
-CMD_CTRL="printf '\n  ══ CONTROLLER SERVICE (DB Calibrated → Actuators) ══\n\n' && sleep 4 && cd $PROJECT && exec $CTRL_BIN $CTRL_OPTS 2>&1"
+CMD_LOG_CTRL="/tmp/gui_logs/controller.log"
+CMD_CTRL="printf '\n  ══ CONTROLLER SERVICE (DB Calibrated → Actuators) ══\n\n' && sleep 4 && cd $PROJECT && exec $CTRL_BIN $CTRL_OPTS 2>&1 | tee $CMD_LOG_CTRL"
 
 # Sequencer service: state machine + actuator UDP (same TCP :9998 text protocol as server.ts)
 SEQ_BIN="$PROJECT/build/FSW/sequencer_service"
@@ -151,32 +158,39 @@ if [ ! -x "$SEQ_BIN" ]; then
   SEQ_BIN="$PROJECT/FSW/build/sequencer_service"
 fi
 if [ -x "$SEQ_BIN" ]; then
-  CMD_SEQUENCER="printf '\n  ══ SEQUENCER SERVICE (TCP :9998 — TRANSITION / ACTUATOR / …) ══\n\n' && sleep 3 && cd $PROJECT && exec $SEQ_BIN --config config/config.toml --port 9998 2>&1"
+  CMD_LOG_SEQUENCER="/tmp/gui_logs/sequencer.log"
+  CMD_SEQUENCER="printf '\n  ══ SEQUENCER SERVICE (TCP :9998 — TRANSITION / ACTUATOR / …) ══\n\n' && sleep 3 && cd $PROJECT && exec $SEQ_BIN --config config/config.toml --port 9998 2>&1 | tee $CMD_LOG_SEQUENCER"
 else
   CMD_SEQUENCER="printf '\n  ❌ sequencer_service not found. Build: cd FSW/build && cmake .. && make sequencer_service\n\n' && sleep infinity"
 fi
 
-CMD_DB="printf '\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n' && mkdir -p $HOME/.local/share/elodin && RUST_LOG=debug exec $ELODIN_DB_BIN run '[::]:2240' '$ELODIN_DB_DIR'"
+CMD_LOG_DB="/tmp/gui_logs/db.log"
+CMD_DB="printf '\n  ══ ELODIN DB — :2240 (raw data lands here only) ══\n\n' && mkdir -p $HOME/.local/share/elodin && RUST_LOG=debug exec $ELODIN_DB_BIN run '[::]:2240' '$ELODIN_DB_DIR' 2>&1 | tee $CMD_LOG_DB"
 # Relay must connect to DB FIRST (sleep 2s) — daq_bridge sleeps 5s so relay subscribes before any TABLE data flows.
-CMD_RELAY="printf '\n  ══ ELODIN RELAY — WS :9090 (DB → relay → services) ══\n\n' && sleep 2 && cd $PROJECT/web-gui/backend && npm run relay 2>&1"
+CMD_LOG_RELAY="/tmp/gui_logs/relay.log"
+CMD_RELAY="printf '\n  ══ ELODIN RELAY — WS :9090 (DB → relay → services) ══\n\n' && sleep 2 && cd $PROJECT/web-gui/backend && npm run relay 2>&1 | tee $CMD_LOG_RELAY"
 
 # Thin backend (see test_integration.sh BACKEND=thin): ELODIN_RELAY_URL — not ELODIN_RELAY_WS_URL
 THIN_WS_PORT="${THIN_WS_PORT:-8081}"
 THIN_RELAY_URL="${THIN_RELAY_URL:-ws://localhost:9090}"
 THIN_ACT_PORT="${THIN_ACTUATOR_SERVICE_PORT:-9998}"
-CMD_WEB_BACKEND="printf '\n  ══ BACKEND — HTTP+WS :${THIN_WS_PORT} (server.ts) ══\n\n' && sleep 5 && cd $PROJECT/web-gui/backend && WS_PORT=$THIN_WS_PORT ELODIN_RELAY_URL=$THIN_RELAY_URL ACTUATOR_SERVICE_PORT=$THIN_ACT_PORT npx tsx watch src/server.ts 2>&1"
+CMD_LOG_BACKEND="/tmp/gui_logs/backend.log"
+CMD_WEB_BACKEND="printf '\n  ══ BACKEND — HTTP+WS :${THIN_WS_PORT} (server.ts) ══\n\n' && sleep 5 && cd $PROJECT/web-gui/backend && WS_PORT=$THIN_WS_PORT ELODIN_RELAY_URL=$THIN_RELAY_URL ACTUATOR_SERVICE_PORT=$THIN_ACT_PORT npx tsx watch src/server.ts 2>&1 | tee $CMD_LOG_BACKEND"
 
-CMD_WEB_FRONTEND="printf '\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n' && sleep 3 && cd $PROJECT/web-gui/frontend && OTA_SERVICE_PORT=$OTA_CMD_PORT NEXT_PUBLIC_WS_URL=ws://127.0.0.1:${THIN_WS_PORT} npm run dev 2>&1"
+CMD_LOG_FRONTEND="/tmp/gui_logs/frontend.log"
+CMD_WEB_FRONTEND="printf '\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n' && sleep 3 && cd $PROJECT/web-gui/frontend && OTA_SERVICE_PORT=$OTA_CMD_PORT NEXT_PUBLIC_WS_URL=ws://127.0.0.1:${THIN_WS_PORT} npm run dev 2>&1 | tee $CMD_LOG_FRONTEND"
 
 if [ -x "$OTA_BIN" ]; then
-  CMD_OTA="printf '\n  ══ ETHERNET OTA SERVICE — TCP :${OTA_CMD_PORT} (pio build+flash here) ══\n\n' && exec $OTA_BIN --port $OTA_CMD_PORT 2>&1"
+  CMD_LOG_OTA="/tmp/gui_logs/ota.log"
+  CMD_OTA="printf '\n  ══ ETHERNET OTA SERVICE — TCP :${OTA_CMD_PORT} (pio build+flash here) ══\n\n' && exec $OTA_BIN --port $OTA_CMD_PORT 2>&1 | tee $CMD_LOG_OTA"
 else
   CMD_OTA="printf '\n  ❌ ota_service not built — cd FSW/build && cmake .. && make ota_service\n\n' && sleep infinity"
 fi
 
 # Board simulator (pane 0); set USE_SIM=1 to run (default off for real hardware)
 if [ "${USE_SIM:-0}" = "1" ]; then
-  CMD_SIM="printf '\n  ══ BOARD SIMULATOR — UDP → :5006 (All Boards) ══\n\n' && sleep 4 && cd $PROJECT && ([ -x scripts/setup_sim_network.sh ] && scripts/setup_sim_network.sh || true) && exec $PYTHON_BIN scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 2>&1"
+  CMD_LOG_SIM="/tmp/gui_logs/sim.log"
+  CMD_SIM="printf '\n  ══ BOARD SIMULATOR — UDP → :5006 (All Boards) ══\n\n' && sleep 4 && cd $PROJECT && ([ -x scripts/setup_sim_network.sh ] && scripts/setup_sim_network.sh || true) && exec $PYTHON_BIN scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 2>&1 | tee $CMD_LOG_SIM"
 else
   CMD_SIM="printf '\n  ══ BOARD SIMULATOR — DISABLED (USE_SIM=1 to enable) ══\n\n' && sleep infinity"
 fi
@@ -185,15 +199,20 @@ HEARTBEAT_BIN="$PROJECT/build/FSW/heartbeat_service"
 [ ! -x "$HEARTBEAT_BIN" ] && HEARTBEAT_BIN="$PROJECT/FSW/build/heartbeat_service"
 HB_BACKEND_URL="http://127.0.0.1:${THIN_WS_PORT}"
 # Python heartbeat polls /api/engine_state; C++ reads sequencer state from Elodin (no backend URL).
-CMD_HEARTBEAT="printf '\n  ══ HEARTBEAT SERVICE — SERVER_HEARTBEAT to boards ══\n\n' && sleep 6 && cd $PROJECT && exec $PYTHON_BIN scripts/services/heartbeat_service.py --config config/config.toml --backend-url $HB_BACKEND_URL 2>&1"
-[ -x "$HEARTBEAT_BIN" ] && CMD_HEARTBEAT="printf '\n  ══ HEARTBEAT SERVICE (C++) — SERVER_HEARTBEAT to boards ══\n\n' && sleep 6 && cd $PROJECT && exec $HEARTBEAT_BIN --config config/config.toml 2>&1"
+CMD_LOG_HB="/tmp/gui_logs/heartbeat.log"
+CMD_HEARTBEAT="printf '\n  ══ HEARTBEAT SERVICE — SERVER_HEARTBEAT to boards ══\n\n' && sleep 6 && cd $PROJECT && exec $PYTHON_BIN scripts/services/heartbeat_service.py --config config/config.toml --backend-url $HB_BACKEND_URL 2>&1 | tee $CMD_LOG_HB"
+[ -x "$HEARTBEAT_BIN" ] && CMD_HEARTBEAT="printf '\n  ══ HEARTBEAT SERVICE (C++) — SERVER_HEARTBEAT to boards ══\n\n' && sleep 6 && cd $PROJECT && exec $HEARTBEAT_BIN --config config/config.toml 2>&1 | tee $CMD_LOG_HB"
 # Config broadcast service: C++ preferred (flight-ready), Python fallback
 CONFIG_BIN="$PROJECT/build/FSW/config_broadcast_service"
 [ ! -x "$CONFIG_BIN" ] && CONFIG_BIN="$PROJECT/FSW/build/config_broadcast_service"
-CMD_CONFIG="printf '\n  ══ CONFIG BROADCAST SERVICE — config packets to boards ══\n\n' && sleep 6 && cd $PROJECT && exec $PYTHON_BIN scripts/services/config_broadcast_service.py --config config/config.toml 2>&1"
-[ -x "$CONFIG_BIN" ] && CMD_CONFIG="printf '\n  ══ CONFIG BROADCAST SERVICE (C++) — config packets to boards ══\n\n' && sleep 6 && cd $PROJECT && exec $CONFIG_BIN --config config/config.toml 2>&1"
-# Data logger: connects to backend WS (same port as frontend default)
-CMD_DATALOG="printf '\n  ══ DATA LOGGER SERVICE — .sensorlog recording ══\n\n' && sleep 7 && cd $PROJECT && exec $PYTHON_BIN scripts/services/data_logger_service.py --ws-url ws://127.0.0.1:${THIN_WS_PORT} 2>&1"
+CMD_LOG_CONFIG="/tmp/gui_logs/config.log"
+CMD_CONFIG="printf '\n  ══ CONFIG BROADCAST SERVICE — config packets to boards ══\n\n' && sleep 6 && cd $PROJECT && exec $PYTHON_BIN scripts/services/config_broadcast_service.py --config config/config.toml 2>&1 | tee $CMD_LOG_CONFIG"
+[ -x "$CONFIG_BIN" ] && CMD_CONFIG="printf '\n  ══ CONFIG BROADCAST SERVICE (C++) — config packets to boards ══\n\n' && sleep 6 && cd $PROJECT && exec $CONFIG_BIN --config config/config.toml 2>&1 | tee $CMD_LOG_CONFIG"
+# Calibration service: reads raw DB PT/TC packets, publishes calibrated ones
+CALIB_BIN="$PROJECT/build/FSW/calibration_service"
+[ ! -x "$CALIB_BIN" ] && CALIB_BIN="$PROJECT/FSW/build/calibration_service"
+CMD_LOG_CALIBRATION="/tmp/gui_logs/calibration.log"
+CMD_CALIBRATION="printf '\n  ══ CALIBRATION SERVICE — DB Raw → DB Calibrated ══\n\n' && sleep 4 && cd $PROJECT && exec $CALIB_BIN --config config/config.toml 2>&1 | tee $CMD_LOG_CALIBRATION"
 
 # Split the rightmost (max index) pane each time so pane creation order is 0..11 as listed above.
 # Re-tile after each split so widths stay usable. IMPORTANT: pass one shell string to tmux (like
@@ -221,6 +240,7 @@ fi
 tmux_split_right "$CMD_DAQ"
 tmux_split_right "$CMD_DB"
 tmux_split_right "$CMD_RELAY"
+tmux_split_right "$CMD_CALIBRATION"
 tmux_split_right "$CMD_WEB_BACKEND"
 tmux_split_right "$CMD_WEB_FRONTEND"
 tmux_split_right "$CMD_HEARTBEAT"
@@ -228,18 +248,17 @@ tmux_split_right "$CMD_CONFIG"
 tmux_split_right "$CMD_SEQUENCER"
 tmux_split_right "$CMD_OTA"
 tmux_split_right "$CMD_CTRL"
-tmux_split_right "$CMD_DATALOG"
 
 tmux select-layout -t "$SESSION:main" tiled
-tmux select-pane -t "$SESSION:main.4"
+tmux select-pane -t "$SESSION:main.5"
 
 echo "┌─────────────────────────────────────────────────────────────┐"
 echo "│  Pipeline: UDP → daq_bridge → DB → relay → backend → UI       │"
 echo "│  0: Simulator   1: DAQ bridge   2: Elodin DB                  │"
-echo "│  3: Relay :9090  4: Thin backend :${THIN_WS_PORT}  5: Frontend :3000 │"
-echo "│  6: Heartbeat   7: Config   8: Sequencer :9998                │"
-echo "│  9: Ethernet OTA :${OTA_CMD_PORT}  10: Controller  11: Data logger │"
-echo "│  USE_SIM=1 enables simulator; run calibration_server separately │"
+echo "│  3: Relay :9090  4: Calibration  5: Thin backend :${THIN_WS_PORT} │"
+echo "│  6: Frontend :3000  7: Heartbeat   8: Config                  │"
+echo "│  9: Sequencer :9998 10: Ethernet OTA :${OTA_CMD_PORT}  11: Controller │"
+echo "│  USE_SIM=1 enables simulator                                  │"
 echo "│  Override: THIN_WS_PORT THIN_RELAY_URL THIN_ACTUATOR_SERVICE_PORT OTA_SERVICE_CMD_PORT │"
 echo "│  Ctrl+B arrows=switch  D=detach                              │"
 echo "└─────────────────────────────────────────────────────────────┘"

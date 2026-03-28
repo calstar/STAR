@@ -294,7 +294,7 @@ echo ""
 
 echo "📊 Starting Elodin DB..."
 rm -rf "$TEST_DB_PATH" 2>/dev/null || true
-RUST_LOG=warn "$ELODIN_DB_BIN" run "[::]:$TEST_ELODIN_PORT" "$TEST_DB_PATH" > "$REPO_ROOT/.tmp/integration_elodin_$$.log" 2>&1 &
+RUST_LOG=debug "$ELODIN_DB_BIN" run "[::]:$TEST_ELODIN_PORT" "$TEST_DB_PATH" > "$REPO_ROOT/.tmp/integration_elodin_$$.log" 2>&1 &
 PIDS+=($!)
 sleep 2
 

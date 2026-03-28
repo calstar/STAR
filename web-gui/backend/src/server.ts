@@ -133,6 +133,7 @@ function updateBoard(low: number, payload: Buffer): void {
   else if (boardType === 3) typeStr = 'RTD';
   else if (boardType === 4) typeStr = 'LC';
   else if (boardType === 5) typeStr = 'ACTUATOR';
+  else if (boardType === 6 || boardId === 61) typeStr = 'ENCODER';
 
   let status = boardsStatus.get(boardId);
   const wasDisconnected = !status || status.lastHeartbeatMs == null || now - (status.lastHeartbeatMs ?? 0) > 2500;
@@ -309,6 +310,10 @@ function handleMessage(ws: WebSocket, message: any): void {
       break;
     case MessageType.QUERY_HISTORICAL:
       sendHistoricalData(ws);
+      break;
+    case MessageType.SUBSCRIBE_SENSOR:
+    case MessageType.UNSUBSCRIBE_SENSOR:
+      // Thin backend broadcasts all updates to all clients, ignore filter requests safely.
       break;
     default:
       console.warn('[ThinServer] Unknown message type:', message.type);

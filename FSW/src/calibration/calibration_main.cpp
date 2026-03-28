@@ -437,27 +437,35 @@ int main(int argc, char* argv[]) {
         }
 
         ssize_t pkt_len = elodin_client.read_packet(pkt_buf, sizeof(pkt_buf));
-        if (pkt_len == 0) {
-            continue;
-        }
-        if (pkt_len < 0) {
-            // Disconnect detected by read_packet
-            continue;
-        }
-        if (pkt_len < 8) {
-            continue;
+        if (pkt_len <= 0) continue;
+        if (pkt_len < 8) continue;
+
+        const uint8_t type_hi = pkt_buf[5];
+        const uint8_t type_lo = pkt_buf[6];
+        const uint8_t ty = pkt_buf[4];
+        
+        static int debug_limit = 0;
+        if (debug_limit < 10) {
+            std::cout << "[Cal] Received packet ty=" << (int)ty 
+                      << " id=[" << std::hex << (int)type_hi << "," << (int)type_lo << std::dec << "]"
+                      << " pkt_len=" << pkt_len << std::endl;
+            debug_limit++;
         }
 
-        // Elodin packet header: [0-3]=len, [4]=type, [5]=vtable_hi, [6]=vtable_lo, [7]=req_id
-        const uint8_t type_hi = pkt_buf[5];
+        if (ty != 1) continue; // Only process TABLE packets
 
         // Only process raw sensor VTables
         if (type_hi < 0x20 || type_hi > 0x23)
             continue;
 
         const ssize_t payload_len = pkt_len - 8;
-        if (payload_len < 21)
+        if (payload_len < 21) {
+            if (debug_limit < 20) {
+                std::cout << "[Cal] Dropped small payload: " << payload_len << std::endl;
+                debug_limit++;
+            }
             continue;
+        }
 
         // Parse 21-byte raw sensor payload directly
         const uint8_t* p = pkt_buf + 8;
@@ -558,7 +566,7 @@ int main(int argc, char* argv[]) {
         elodin_client.flush_batch();
 
         packet_count++;
-        if (packet_count % 500 == 0)
+        if (packet_count % 10000 == 0)
             std::cout << "[Cal] Processed " << packet_count << " raw packets (type=0x" << std::hex
                       << (int)type_hi << " ch=" << (int)ch << std::dec << ")" << std::endl;
     }
