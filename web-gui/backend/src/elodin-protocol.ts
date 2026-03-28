@@ -2,7 +2,8 @@
  * Elodin Protocol Parser
  * Parses binary Elodin messages into structured data.
  *
- * ALL entity names come from config.toml via EntityMaps — NO hardcoded maps.
+ * All entity names are generic channel-based (PT.CH1, ACT.CH3, TC_Cal.CH5).
+ * Role names ("Fuel Upstream") are frontend display metadata only.
  * Packet IDs use the direct [high, low] scheme:
  *   PT raw      = [0x20, 0x01..0x0E]
  *   PT cal      = [0x20, 0x11..0x1E]
@@ -30,11 +31,9 @@ export interface ParsedSensorData {
   timestamp: number;
 }
 
-/** Config-driven entity maps (from config.toml sensor_roles / actuator_roles). */
+/** @deprecated Entity maps no longer used — all entities are generic TYPE.CH<n>. */
 export interface EntityMaps {
-  /** channel_id → "PT_Cal.FUEL_UP" etc (from sensor_roles) */
   channelToEntityMap?: Record<number, string>;
-  /** channel_id → "ACT.LOX_Main" etc (from actuator_roles) */
   actuatorChannelToEntityMap?: Record<number, string>;
 }
 
@@ -72,6 +71,8 @@ function parseCalibratedSensorPayload(
   const calibratedValue = payload.readFloatLE(12);
   if (!Number.isFinite(calibratedValue) || Number.isNaN(calibratedValue)) return null;
   if (fieldName === 'pressure_psi' && (calibratedValue < -100 || calibratedValue > 10000)) return null;
+  if (fieldName === 'temperature_c' && (calibratedValue < -200 || calibratedValue > 2000)) return null;
+  if (fieldName === 'force_kg' && (calibratedValue < -10000 || calibratedValue > 50000)) return null;
   const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
   return { entity, component: fieldName, value: calibratedValue, timestamp: tsMs };
 }
@@ -124,8 +125,7 @@ export function parseElodinPacket(
   if (high === 0x20 && low >= 0x01 && low <= 0x0E) {
     const ch = low;
     const payloadCh = payload.length >= 9 ? payload.readUInt8(8) : ch;
-    const baseEntity = entityMaps?.channelToEntityMap?.[payloadCh]?.replace('PT_Cal.', 'PT.') || `PT.CH${payloadCh}`;
-    const r = parseRawSensorPayload(payload, ch, baseEntity, 'raw_adc_counts', true);
+    const r = parseRawSensorPayload(payload, ch, `PT.CH${payloadCh}`, 'raw_adc_counts', true);
     return r ? [r] : [];
   }
 
@@ -133,8 +133,7 @@ export function parseElodinPacket(
   if (high === 0x20 && low >= 0x11 && low <= 0x1E) {
     const ch = low - 0x10;
     const payloadCh = payload.length >= 9 ? payload.readUInt8(8) : ch;
-    const entityName = entityMaps?.channelToEntityMap?.[payloadCh] || `PT_Cal.CH${payloadCh}`;
-    const r = parseCalibratedSensorPayload(payload, ch, entityName, 'pressure_psi');
+    const r = parseCalibratedSensorPayload(payload, ch, `PT_Cal.CH${payloadCh}`, 'pressure_psi');
     return r ? [r] : [];
   }
 
@@ -187,12 +186,11 @@ export function parseElodinPacket(
     return r ? [r] : [];
   }
 
-  // ── Actuator: [0x30, 0x01..0x0A] ────────────────────────────────────────
-  if (high === 0x30 && low >= 0x01 && low <= 0x0A) {
+  // ── Actuator: [0x30, 0x01..0x14] ────────────────────────────────────────
+  if (high === 0x30 && low >= 0x01 && low <= 0x14) {
     const ch = low;
     const payloadCh = payload.length >= 9 ? payload.readUInt8(8) : ch;
-    const entityName = entityMaps?.actuatorChannelToEntityMap?.[payloadCh] || `ACT.CH${payloadCh}`;
-    const r = parseRawSensorPayload(payload, ch, entityName, 'raw_adc_counts');
+    const r = parseRawSensorPayload(payload, ch, `ACT.CH${payloadCh}`, 'raw_adc_counts');
     return r ? [r] : [];
   }
 
@@ -205,9 +203,8 @@ export function parseElodinPacket(
     const ch = low;
     const payloadCh = payload.readUInt8(8);
     const state = payload.readUInt8(9);
-    const entityName = entityMaps?.actuatorChannelToEntityMap?.[payloadCh] || `ACT.CH${payloadCh}`;
     const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
-    return [{ entity: entityName, component: 'actuator_state', value: state, timestamp: tsMs }];
+    return [{ entity: `ACT.CH${payloadCh}`, component: 'actuator_state', value: state, timestamp: tsMs }];
   }
 
   // ── Actuator commanded state: [0x32, 0x01..0x14] ────────────────────────
@@ -218,9 +215,8 @@ export function parseElodinPacket(
     const ch = low;
     const payloadCh = payload.readUInt8(8);
     const state = payload.readUInt8(9);
-    const entityName = entityMaps?.actuatorChannelToEntityMap?.[payloadCh] || `ACT.CH${payloadCh}`;
     const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
-    return [{ entity: entityName, component: 'actuator_state_commanded', value: state, timestamp: tsMs }];
+    return [{ entity: `ACT.CH${payloadCh}`, component: 'actuator_state_commanded', value: state, timestamp: tsMs }];
   }
 
   // ── Controller Actuation: [0x40, 0x00] ──────────────────────────────────

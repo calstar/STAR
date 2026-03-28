@@ -1,18 +1,15 @@
 /**
  * Zustand store for sensor system state
  *
- * ENTITY NAME ALIASES
- * The backend can run in two modes:
- *  1. Direct-DAQ mode → emits named entities  e.g. PT_Cal.Fuel_Upstream.pressure_psi
- *  2. Elodin-DB mode  → emits channel entities e.g. PT_Cal.PT_CH1.pressure_psi
+ * DATA PLANE: All sensor data uses generic channel-based entity names
+ * (PT.CH1, ACT.CH3, TC_Cal.CH5). The database and backend always use these.
  *
- * Sensor-role → channel mapping (from config.toml):
- *   Fuel Upstream = CH1, GSE Low = CH2, Fuel Downstream = CH4, ...; GSE Mid = board 2 connector 4
- *   Ox Upstream   = CH5, GN2 Regulated = CH6, Ox Downstream = CH7
+ * DISPLAY PLANE: Role names ("Fuel Upstream", "LOX Main") are loaded from
+ * /api/config and used only for display labels in the frontend.
  *
- * Actuator-role → channel mapping (from config.toml actuator_roles):
- *   LOX Main = CH1, Fuel Vent = CH2, Fuel Press = CH3, GSE Low Vent = CH5
- *   LOX Vent = CH6, Fuel Main  = CH7, LOX Press  = CH8
+ * ALIAS SYSTEM: Components can reference named entities (e.g. PT_Cal.Fuel_Upstream)
+ * for readability. The alias system resolves these to generic channel keys at runtime,
+ * built dynamically from config.toml sensor_roles / actuator_roles.
  */
 
 import { create } from 'zustand';
@@ -100,115 +97,131 @@ function loadStoredLcZeroOffsets(): Record<string, number> {
   return {};
 }
 
-// ── Alias table ──────────────────────────────────────────────────────────────
-// Maps lookup key → list of fallback keys to try in order.
-const ALIASES: Record<string, string[]> = {
-  // ── PT calibrated pressure (named → PT_CHX / CHn) ────────────────────────
-  // Backend may send PT_Cal.CH{n} when channelToEntityMap fails; include as fallbacks
-  'PT_Cal.Fuel_Upstream.pressure_psi': ['PT_Cal.CH1.pressure_psi', 'PT_Cal.PT_CH1.pressure_psi', 'PT.Fuel_Upstream.pressure_psi', 'PT.PT_CH1.pressure_psi'],
-  'PT_Cal.GSE_Low.pressure_psi': ['PT_Cal.CH2.pressure_psi', 'PT_Cal.PT_CH2.pressure_psi', 'PT.GSE_Low.pressure_psi', 'PT.PT_CH2.pressure_psi'],
-  'PT_Cal.Fuel_Downstream.pressure_psi': ['PT_Cal.CH3.pressure_psi', 'PT_Cal.PT_CH3.pressure_psi', 'PT.Fuel_Downstream.pressure_psi', 'PT.PT_CH3.pressure_psi'],
-  'PT_Cal.Chamber_Mid_PT_1.pressure_psi': ['PT_Cal.CH4.pressure_psi', 'PT_Cal.PT_CH4.pressure_psi', 'PT.Chamber_Mid_PT_1.pressure_psi', 'PT.PT_CH4.pressure_psi'],
-  'PT_Cal.Chamber_Mid_PT_2.pressure_psi': ['PT_Cal.CH8.pressure_psi', 'PT_Cal.PT_CH8.pressure_psi', 'PT.Chamber_Mid_PT_2.pressure_psi', 'PT.PT_CH8.pressure_psi'],
-  'PT_Cal.Chamber_Throat_PT_1.pressure_psi': ['PT_Cal.CH9.pressure_psi', 'PT_Cal.PT_CH9.pressure_psi', 'PT.Chamber_Throat_PT_1.pressure_psi', 'PT.PT_CH9.pressure_psi'],
-  'PT_Cal.Chamber_Throat_PT_2.pressure_psi': ['PT_Cal.CH10.pressure_psi', 'PT_Cal.PT_CH10.pressure_psi', 'PT.Chamber_Throat_PT_2.pressure_psi', 'PT.PT_CH10.pressure_psi'],
-  'PT_Cal.Fuel_Fill_Tank.pressure_psi': ['PT_Cal.CH4.pressure_psi', 'PT_Cal.PT_CH4.pressure_psi', 'PT.Fuel_Fill_Tank.pressure_psi', 'PT.PT_CH4.pressure_psi'],
-  'PT_Cal.Ox_Upstream.pressure_psi': ['PT_Cal.CH5.pressure_psi', 'PT_Cal.PT_CH5.pressure_psi', 'PT.Ox_Upstream.pressure_psi', 'PT.PT_CH5.pressure_psi'],
-  'PT_Cal.GN2_Regulated.pressure_psi': ['PT_Cal.CH6.pressure_psi', 'PT_Cal.PT_CH6.pressure_psi', 'PT.GN2_Regulated.pressure_psi', 'PT.PT_CH6.pressure_psi'],
-  'PT_Cal.Ox_Downstream.pressure_psi': ['PT_Cal.CH7.pressure_psi', 'PT_Cal.PT_CH7.pressure_psi', 'PT.Ox_Downstream.pressure_psi', 'PT.PT_CH7.pressure_psi'],
-  // HP PT sensors: CH11=GSE_High, CH13=GSE_Mid, CH14=GN2_High (pt2 channel_offset 10)
-  'PT_Cal.GSE_Mid.pressure_psi': ['PT_Cal.CH13.pressure_psi', 'PT_Cal.HP_PT_1.pressure_psi', 'PT.GSE_Mid.pressure_psi'],
-  'PT_Cal.HP_PT_1.pressure_psi': ['PT_Cal.CH13.pressure_psi', 'PT_Cal.GSE_Mid.pressure_psi', 'PT.GSE_Mid.pressure_psi'],
-  'PT_Cal.GSE_High.pressure_psi': ['PT_Cal.CH11.pressure_psi', 'PT_Cal.HP_PT_3.pressure_psi', 'PT.GSE_High.pressure_psi'],
-  'PT_Cal.HP_PT_3.pressure_psi': ['PT_Cal.CH11.pressure_psi', 'PT_Cal.GSE_High.pressure_psi', 'PT.GSE_High.pressure_psi'],
-  'PT_Cal.GN2_High.pressure_psi': ['PT_Cal.CH14.pressure_psi', 'PT_Cal.HP_PT_4.pressure_psi', 'PT.GN2_High.pressure_psi'],
-  'PT_Cal.HP_PT_4.pressure_psi': ['PT_Cal.CH14.pressure_psi', 'PT_Cal.GN2_High.pressure_psi', 'PT.GN2_High.pressure_psi'],
+// ── Dynamic alias system ─────────────────────────────────────────────────────
+// Data flows with generic TYPE.CH<n> entity names. Components can still reference
+// named entities (e.g. PT_Cal.Fuel_Upstream) — the alias system resolves them
+// to the generic channel key at runtime.
+//
+// Aliases are built dynamically from /api/config (sensor_roles, actuator_roles)
+// when the config loads. Static controller aliases are always present.
 
-  // ── PT raw ADC counts (named → PT.<role> / CHn / PT_CHX fallbacks) ────────
-  'PT_Cal.Fuel_Upstream.raw_adc_counts': ['PT.CH1.raw_adc_counts', 'PT.Fuel_Upstream.raw_adc_counts', 'PT_Cal.PT_CH1.raw_adc_counts', 'PT.PT_CH1.raw_adc_counts'],
-  'PT_Cal.GSE_Low.raw_adc_counts': ['PT.CH2.raw_adc_counts', 'PT.GSE_Low.raw_adc_counts', 'PT_Cal.PT_CH2.raw_adc_counts', 'PT.PT_CH2.raw_adc_counts'],
-  'PT_Cal.PT_CH3.raw_adc_counts': ['PT.CH3.raw_adc_counts', 'PT.PT_CH3.raw_adc_counts', 'PT.Fuel_Downstream.raw_adc_counts'],
-  'PT_Cal.Fuel_Downstream.raw_adc_counts': ['PT.CH3.raw_adc_counts', 'PT.Fuel_Downstream.raw_adc_counts', 'PT_Cal.PT_CH3.raw_adc_counts', 'PT.PT_CH3.raw_adc_counts'],
-  'PT_Cal.Chamber_Mid_PT_1.raw_adc_counts': ['PT.CH4.raw_adc_counts', 'PT.Chamber_Mid_PT_1.raw_adc_counts', 'PT_Cal.PT_CH4.raw_adc_counts', 'PT.PT_CH4.raw_adc_counts'],
-  'PT_Cal.Chamber_Mid_PT_2.raw_adc_counts': ['PT.CH8.raw_adc_counts', 'PT.Chamber_Mid_PT_2.raw_adc_counts', 'PT_Cal.PT_CH8.raw_adc_counts', 'PT.PT_CH8.raw_adc_counts'],
-  'PT_Cal.Chamber_Throat_PT_1.raw_adc_counts': ['PT.CH9.raw_adc_counts', 'PT.Chamber_Throat_PT_1.raw_adc_counts', 'PT_Cal.PT_CH9.raw_adc_counts', 'PT.PT_CH9.raw_adc_counts'],
-  'PT_Cal.Chamber_Throat_PT_2.raw_adc_counts': ['PT.CH10.raw_adc_counts', 'PT.Chamber_Throat_PT_2.raw_adc_counts', 'PT_Cal.PT_CH10.raw_adc_counts', 'PT.PT_CH10.raw_adc_counts'],
-  'PT_Cal.Fuel_Fill_Tank.raw_adc_counts': ['PT.CH4.raw_adc_counts', 'PT_Cal.PT_CH4.raw_adc_counts', 'PT.PT_CH4.raw_adc_counts'],
-  'PT_Cal.Ox_Upstream.raw_adc_counts': ['PT.CH5.raw_adc_counts', 'PT.Ox_Upstream.raw_adc_counts', 'PT_Cal.PT_CH5.raw_adc_counts', 'PT.PT_CH5.raw_adc_counts'],
-  'PT_Cal.GN2_Regulated.raw_adc_counts': ['PT.CH6.raw_adc_counts', 'PT.GN2_Regulated.raw_adc_counts', 'PT_Cal.PT_CH6.raw_adc_counts', 'PT.PT_CH6.raw_adc_counts'],
-  'PT_Cal.Ox_Downstream.raw_adc_counts': ['PT.CH7.raw_adc_counts', 'PT.Ox_Downstream.raw_adc_counts', 'PT_Cal.PT_CH7.raw_adc_counts', 'PT.PT_CH7.raw_adc_counts'],
-  // HP PT sensors: named entities only (no PT_CH channel fallback)
-  'PT_Cal.GSE_Mid.raw_adc_counts': ['PT_Cal.HP_PT_1.raw_adc_counts', 'PT.GSE_Mid.raw_adc_counts'],
-  'PT_Cal.HP_PT_1.raw_adc_counts': ['PT_Cal.GSE_Mid.raw_adc_counts', 'PT.GSE_Mid.raw_adc_counts'],
-  'PT_Cal.GSE_High.raw_adc_counts': ['PT_Cal.HP_PT_3.raw_adc_counts', 'PT.GSE_High.raw_adc_counts'],
-  'PT_Cal.HP_PT_3.raw_adc_counts': ['PT_Cal.GSE_High.raw_adc_counts', 'PT.GSE_High.raw_adc_counts'],
-  'PT_Cal.GN2_High.raw_adc_counts': ['PT_Cal.HP_PT_4.raw_adc_counts', 'PT.GN2_High.raw_adc_counts'],
-  'PT_Cal.HP_PT_4.raw_adc_counts': ['PT_Cal.GN2_High.raw_adc_counts', 'PT.GN2_High.raw_adc_counts'],
-
-  // HP PT diagnostics
-  'PT_Cal.GSE_Mid.current_ma': ['PT_Cal.HP_PT_1.current_ma'],
-  'PT_Cal.HP_PT_1.current_ma': ['PT_Cal.GSE_Mid.current_ma'],
-  'PT_Cal.GSE_High.current_ma': ['PT_Cal.HP_PT_3.current_ma'],
-  'PT_Cal.HP_PT_3.current_ma': ['PT_Cal.GSE_High.current_ma'],
-  'PT_Cal.GN2_High.current_ma': ['PT_Cal.HP_PT_4.current_ma'],
-  'PT_Cal.HP_PT_4.current_ma': ['PT_Cal.GN2_High.current_ma'],
-
-  'PT_Cal.GSE_Mid.sense_voltage': ['PT_Cal.HP_PT_1.sense_voltage'],
-  'PT_Cal.HP_PT_1.sense_voltage': ['PT_Cal.GSE_Mid.sense_voltage'],
-  'PT_Cal.GSE_High.sense_voltage': ['PT_Cal.HP_PT_3.sense_voltage'],
-  'PT_Cal.HP_PT_3.sense_voltage': ['PT_Cal.GSE_High.sense_voltage'],
-  'PT_Cal.GN2_High.sense_voltage': ['PT_Cal.HP_PT_4.sense_voltage'],
-  'PT_Cal.HP_PT_4.sense_voltage': ['PT_Cal.GN2_High.sense_voltage'],
-
-  'PT_Cal.GSE_Mid.excitation_voltage': ['PT_Cal.HP_PT_1.excitation_voltage'],
-  'PT_Cal.HP_PT_1.excitation_voltage': ['PT_Cal.GSE_Mid.excitation_voltage'],
-  'PT_Cal.GSE_High.excitation_voltage': ['PT_Cal.HP_PT_3.excitation_voltage'],
-  'PT_Cal.HP_PT_3.excitation_voltage': ['PT_Cal.GSE_High.excitation_voltage'],
-  'PT_Cal.GN2_High.excitation_voltage': ['PT_Cal.HP_PT_4.excitation_voltage'],
-  'PT_Cal.HP_PT_4.excitation_voltage': ['PT_Cal.GN2_High.excitation_voltage'],
-
-  // ── PT raw (PT. namespace) → PT_Cal namespace fallback ──────────────────
-  'PT.PT_CH1.raw_adc_counts': ['PT_Cal.PT_CH1.raw_adc_counts', 'PT.Fuel_Upstream.raw_adc_counts'],
-  'PT.PT_CH2.raw_adc_counts': ['PT_Cal.PT_CH2.raw_adc_counts', 'PT.GSE_Low.raw_adc_counts'],
-  'PT.PT_CH3.raw_adc_counts': ['PT_Cal.PT_CH3.raw_adc_counts', 'PT.Fuel_Downstream.raw_adc_counts'],
-  'PT.PT_CH4.raw_adc_counts': ['PT_Cal.PT_CH4.raw_adc_counts', 'PT.Fuel_Fill_Tank.raw_adc_counts'],
-  'PT.PT_CH5.raw_adc_counts': ['PT_Cal.PT_CH5.raw_adc_counts', 'PT.Ox_Upstream.raw_adc_counts'],
-  'PT.PT_CH6.raw_adc_counts': ['PT_Cal.PT_CH6.raw_adc_counts', 'PT.GN2_Regulated.raw_adc_counts'],
-  'PT.PT_CH7.raw_adc_counts': ['PT_Cal.PT_CH7.raw_adc_counts', 'PT.Ox_Downstream.raw_adc_counts'],
-  'PT.PT_CH8.raw_adc_counts': ['PT_Cal.PT_CH8.raw_adc_counts'],
-  'PT.PT_CH9.raw_adc_counts': ['PT_Cal.PT_CH9.raw_adc_counts'],
-  'PT.PT_CH10.raw_adc_counts': ['PT_Cal.PT_CH10.raw_adc_counts'],
-
-  // ── Actuator named → ACT_CHX (from config.toml actuator_roles) ──────────
-  'ACT.LOX_Main.raw_adc_counts': ['ACT.ACT_CH1.raw_adc_counts'],
-  'ACT.LOX_Main.status': ['ACT.ACT_CH1.status'],
-  'ACT.Fuel_Vent.raw_adc_counts': ['ACT.ACT_CH2.raw_adc_counts'],
-  'ACT.Fuel_Vent.status': ['ACT.ACT_CH2.status'],
-  'ACT.Fuel_Press.raw_adc_counts': ['ACT.ACT_CH3.raw_adc_counts'],
-  'ACT.Fuel_Press.status': ['ACT.ACT_CH3.status'],
-  'ACT.GSE_Low_Vent.raw_adc_counts': ['ACT.ACT_CH5.raw_adc_counts'],
-  'ACT.GSE_Low_Vent.status': ['ACT.ACT_CH5.status'],
-  'ACT.LOX_Vent.raw_adc_counts': ['ACT.ACT_CH6.raw_adc_counts'],
-  'ACT.LOX_Vent.status': ['ACT.ACT_CH6.status'],
-  'ACT.Fuel_Main.raw_adc_counts': ['ACT.ACT_CH7.raw_adc_counts'],
-  'ACT.Fuel_Main.status': ['ACT.ACT_CH7.status'],
-  'ACT.LOX_Press.raw_adc_counts': ['ACT.ACT_CH8.raw_adc_counts'],
-  'ACT.LOX_Press.status': ['ACT.ACT_CH8.status'],
-  // Additional actuators from new CSV
-  'ACT.Fuel_Fill_Vent.raw_adc_counts': ['ACT.ACT_CH9.raw_adc_counts'],
-  'ACT.Fuel_Fill_Vent.status': ['ACT.ACT_CH9.status'],
-  'ACT.Fuel_Fill_Press.raw_adc_counts': ['ACT.ACT_CH10.raw_adc_counts'],
-  'ACT.Fuel_Fill_Press.status': ['ACT.ACT_CH10.status'],
-  // GN2 Vent is same as GSE Low Vent (CH5)
-  'ACT.GN2_Vent.raw_adc_counts': ['ACT.ACT_CH5.raw_adc_counts', 'ACT.GSE_Low_Vent.raw_adc_counts'],
-  'ACT.GN2_Vent.status': ['ACT.ACT_CH5.status', 'ACT.GSE_Low_Vent.status'],
-
-  // ── Controller actuation → Fuel/Ox display (duty 0–1, onoff from u_F_on/u_O_on) ─────
+const STATIC_ALIASES: Record<string, string[]> = {
+  // Controller actuation → Fuel/Ox display
   'CONTROLLER.Fuel.duty_cycle': ['CONTROLLER.actuation.duty_F', 'CONTROLLER.fire.duty_F'],
   'CONTROLLER.Fuel.onoff': ['CONTROLLER.actuation.u_F_on', 'CONTROLLER.fire.fire_active'],
   'CONTROLLER.Ox.duty_cycle': ['CONTROLLER.actuation.duty_O', 'CONTROLLER.fire.duty_O'],
   'CONTROLLER.Ox.onoff': ['CONTROLLER.actuation.u_O_on', 'CONTROLLER.fire.fire_active'],
 };
+
+// Mutable alias table — starts with statics, gets sensor/actuator aliases added at runtime.
+let ALIASES: Record<string, string[]> = { ...STATIC_ALIASES };
+
+/**
+ * Build aliases from config.toml role mappings.
+ * Called when /api/config response arrives.
+ *
+ * For each role like "Fuel Upstream" = 1 in [sensor_roles_pt_board]:
+ *   PT_Cal.Fuel_Upstream.* → PT_Cal.CH1.*
+ *   PT.Fuel_Upstream.*     → PT.CH1.*
+ *
+ * For actuator_roles like "LOX Main" = ["NC", 1, 12]:
+ *   ACT.LOX_Main.* → ACT.CH<global_ch>.*
+ */
+export function buildAliasesFromConfig(config: any): void {
+  const aliases: Record<string, string[]> = { ...STATIC_ALIASES };
+
+  const addAlias = (namedKey: string, genericKey: string) => {
+    if (!aliases[namedKey]) aliases[namedKey] = [];
+    if (!aliases[namedKey].includes(genericKey)) aliases[namedKey].push(genericKey);
+  };
+
+  // Common components for different sensor types
+  const ptComponents = ['pressure_psi', 'raw_adc_counts', 'raw_adc', 'current_ma', 'sense_voltage', 'excitation_voltage'];
+  const tcComponents = ['temperature_c', 'raw_adc_counts', 'raw_adc'];
+  const rtdComponents = ['temperature_c', 'raw_resistance_counts', 'raw_resistance'];
+  const lcComponents = ['force_kg', 'force_n', 'raw_adc_counts', 'raw_adc'];
+  const actComponents = ['raw_adc_counts', 'actuator_state', 'actuator_state_commanded', 'status'];
+
+  // Helper: add aliases for a sensor role with multiple prefixes and components
+  const addSensorAliases = (name: string, channel: number, rawPrefix: string, calPrefix: string, components: string[]) => {
+    const entityName = name.replace(/\s+/g, '_');
+    for (const comp of components) {
+      addAlias(`${calPrefix}.${entityName}.${comp}`, `${calPrefix}.CH${channel}.${comp}`);
+      addAlias(`${rawPrefix}.${entityName}.${comp}`, `${rawPrefix}.CH${channel}.${comp}`);
+    }
+  };
+
+  const boards = config?.boards || {};
+  const sensorSections: Record<string, { rawPrefix: string; calPrefix: string; components: string[]; offset: number }> = {};
+
+  // Map board keys to their sensor type info
+  for (const [boardKey, boardRaw] of Object.entries(boards)) {
+    const board = boardRaw as any;
+    if (board.enabled === false) continue;
+    const type = board.type as string;
+    const offset = board.channel_offset ?? 0;
+
+    // Look for sensor_roles_<boardKey> section in config
+    const rolesKey = `sensor_roles_${boardKey}`;
+    const roles = config[rolesKey] as Record<string, number> | undefined;
+    if (!roles || typeof roles !== 'object') continue;
+
+    let rawPrefix = '', calPrefix = '', components: string[] = [];
+    if (type === 'PT') { rawPrefix = 'PT'; calPrefix = 'PT_Cal'; components = ptComponents; }
+    else if (type === 'TC') { rawPrefix = 'TC'; calPrefix = 'TC_Cal'; components = tcComponents; }
+    else if (type === 'RTD') { rawPrefix = 'RTD'; calPrefix = 'RTD_Cal'; components = rtdComponents; }
+    else if (type === 'LC') { rawPrefix = 'LC'; calPrefix = 'LC_Cal'; components = lcComponents; }
+    else continue;
+
+    for (const [roleName, channelId] of Object.entries(roles)) {
+      const ch = typeof channelId === 'number' ? channelId : Number(channelId);
+      if (!isFinite(ch)) continue;
+      addSensorAliases(roleName, ch + offset, rawPrefix, calPrefix, components);
+    }
+  }
+
+  // sensor_roles_pt2 (HP PT — offset by 10)
+  const pt2Roles = config.sensor_roles_pt2 as Record<string, number> | undefined;
+  if (pt2Roles && typeof pt2Roles === 'object') {
+    for (const [name, connector] of Object.entries(pt2Roles)) {
+      const ch = (typeof connector === 'number' ? connector : Number(connector)) + 10;
+      if (isFinite(ch)) addSensorAliases(name, ch, 'PT', 'PT_Cal', ptComponents);
+    }
+  }
+
+  // Actuator roles
+  const actRoles = config.actuator_roles as Record<string, any> | undefined;
+  if (actRoles && typeof actRoles === 'object') {
+    for (const [name, value] of Object.entries(actRoles)) {
+      const arr = Array.isArray(value) ? value : [];
+      if (arr.length < 2) continue;
+      const localCh = typeof arr[1] === 'number' ? arr[1] : Number(arr[1]);
+      const boardId = arr.length >= 3 && typeof arr[2] === 'number' ? arr[2] : 12;
+      // Global channel: (board_id - 11) * 10 + local_channel
+      const globalCh = (boardId - 11) * 10 + localCh;
+      if (!isFinite(globalCh) || globalCh < 1) continue;
+      const entityName = name.replace(/\s+/g, '_');
+      for (const comp of actComponents) {
+        addAlias(`ACT.${entityName}.${comp}`, `ACT.CH${globalCh}.${comp}`);
+      }
+    }
+  }
+
+  // Encoder roles
+  const encRoles = config.sensor_roles_encoder_board as Record<string, number> | undefined;
+  if (encRoles && typeof encRoles === 'object') {
+    for (const [name, ch] of Object.entries(encRoles)) {
+      const channel = typeof ch === 'number' ? ch : Number(ch);
+      if (!isFinite(channel)) continue;
+      const entityName = name.replace(/\s+/g, '_');
+      addAlias(`ENC.${entityName}.raw_angle`, `ENC.CH${channel}.raw_angle`);
+      addAlias(`ENC_Cal.${entityName}.position_deg`, `ENC_Cal.CH${channel}.position_deg`);
+    }
+  }
+
+  ALIASES = aliases;
+  console.log(`[Store] Built ${Object.keys(aliases).length} entity aliases from config`);
+}
 
 export { ALIASES };
 

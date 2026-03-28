@@ -466,6 +466,28 @@ wait_for_port "$TEST_BACKEND_WS_PORT" "Backend WS" 15 || {
 }
 echo "  ✅ Backend started (PID ${PIDS[-1]})"
 
+# ── Start Calibration Service ────────────────────────────────────────────────
+
+CALIB_SVC=""
+for path in "$REPO_ROOT/build/FSW/calibration_service" "$REPO_ROOT/FSW/build/calibration_service" "$REPO_ROOT/build/calibration_service"; do
+  [ -x "$path" ] && CALIB_SVC="$path" && break
+done
+if [ -n "$CALIB_SVC" ]; then
+  echo "🔬 Starting calibration_service..."
+  "$CALIB_SVC" --config "$TEST_CONFIG" --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
+    > "$REPO_ROOT/.tmp/integration_calibration_$$.log" 2>&1 &
+  PIDS+=($!)
+  sleep 1
+  if kill -0 "${PIDS[-1]}" 2>/dev/null; then
+    echo "  ✅ calibration_service started (PID ${PIDS[-1]})"
+  else
+    echo "  ⚠️  calibration_service failed to start. Log:"
+    tail -10 "$REPO_ROOT/.tmp/integration_calibration_$$.log"
+  fi
+else
+  echo "  ⚠️  calibration_service not found — calibrated data tests will show 0 entities"
+fi
+
 # ── Start Fake Data Generator ────────────────────────────────────────────────
 
 echo "🎭 Starting fake data generator..."
@@ -476,9 +498,9 @@ if [ -n "$FAKE_GEN" ]; then
   PIDS+=($!)
 else
   # board_simulator.py: uses --config for board definitions, --port for UDP target
-  # Ensure tomli is installed (needed by board_simulator.py for TOML parsing)
+  # --low-noise: constant ADC values per channel for calibration spike detection
   "$PYTHON_BIN" -c "import tomli" 2>/dev/null || "$PYTHON_BIN" -m pip install tomli -q 2>/dev/null || true
-  "$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --stats-file "$SIM_STATS_FILE" > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
+  "$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --stats-file "$SIM_STATS_FILE" > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
   SIM_PID=$!
   PIDS+=($SIM_PID)
 fi
@@ -580,6 +602,7 @@ echo "  Elodin DB:      $REPO_ROOT/.tmp/integration_elodin_$$.log"
 echo "  DAQ Bridge:     $REPO_ROOT/.tmp/integration_daq_$$.log"
 echo "  Backend:        $REPO_ROOT/.tmp/integration_backend_$$.log"
 [ -n "$SEQ_SVC" ] && echo "  Sequencer:      $REPO_ROOT/.tmp/integration_sequencer_$$.log"
+echo "  Calibration:    $REPO_ROOT/.tmp/integration_calibration_$$.log"
 echo "  Fake Gen:       $REPO_ROOT/.tmp/integration_fakegen_$$.log"
 echo "  UDP Listener:   $REPO_ROOT/.tmp/integration_udp_$$.log"
 

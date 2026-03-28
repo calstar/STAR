@@ -3,7 +3,7 @@
  */
 
 import { MessageType, SensorUpdate, ConnectionStatus, CommandPayload } from './types';
-import { useSensorStore } from './store';
+import { useSensorStore, buildAliasesFromConfig } from './store';
 import { updateServerTimeOffset } from './server-time';
 
 export interface WSMessage {
@@ -135,6 +135,10 @@ export class WebSocketClient {
       const cfgRes = await fetch(`${getApiBaseUrl()}/api/config`);
       if (cfgRes.ok) {
         const cfgData = await cfgRes.json();
+        // Build dynamic aliases from config so named entities resolve to generic CH<n> keys
+        if (cfgData.config) {
+          buildAliasesFromConfig(cfgData.config);
+        }
         const actRoles = cfgData.config?.actuator_roles || {};
         Object.keys(actRoles).forEach(role => {
           sensors.add(`ACT.${role.replace(/\\s+/g, '_')}`);

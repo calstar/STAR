@@ -383,33 +383,25 @@ async function connectWS(): Promise<WebSocket> {
 //       Both are checked as "extra" but not required.
 
 const EXPECTED_ENTITIES: string[] = [
-  // pt_board (id 21) — [sensor_roles_pt_board]: 10 named PTs
-  'PT.Fuel_Upstream',        // connector 1
-  'PT.GSE_Low',              // connector 2
-  'PT.Fuel_Downstream',      // connector 3
-  'PT.Chamber_Mid_PT_1',     // connector 4
-  'PT.Ox_Upstream',          // connector 5
-  'PT.GN2_Regulated',        // connector 6
-  'PT.Ox_Downstream',        // connector 7
-  'PT.Chamber_Mid_PT_2',     // connector 8
-  'PT.Chamber_Throat_PT_1',  // connector 9
-  'PT.Chamber_Throat_PT_2',  // connector 10
+  // All entities now use generic TYPE.CH<n> names (role names are frontend display metadata only).
 
-  // pt_board_2 (id 22) — [sensor_roles_pt2]: 3 HP PTs (connector 2 unused)
-  'PT.GSE_High',             // connector 1
-  'PT.GSE_Mid',              // connector 3
-  'PT.GN2_High',             // connector 4
+  // pt_board (id 21) — 10 channels
+  'PT.CH1', 'PT.CH2', 'PT.CH3', 'PT.CH4', 'PT.CH5',
+  'PT.CH6', 'PT.CH7', 'PT.CH8', 'PT.CH9', 'PT.CH10',
 
-  // rtd_board (id 31) — active [1,2,3,4], no role-based entity names
+  // pt_board_2 (id 22) — 10 connectors, offset 10 → global ch 11-20 (simulator sends all 10)
+  'PT.CH11', 'PT.CH12', 'PT.CH13', 'PT.CH14',
+
+  // rtd_board (id 31) — active [1,2,3,4]
   'RTD.CH1', 'RTD.CH2', 'RTD.CH3', 'RTD.CH4',
 
-  // lc_board_2 (id 42) — active [1,2,6], no role-based entity names
+  // lc_board_2 (id 42) — active [1,2,6]
   'LC.CH1', 'LC.CH2', 'LC.CH6',
 
-  // tc_board (id 51) — active [2,3,4,5], no role-based entity names
+  // tc_board (id 51) — active [2,3,4,5]
   'TC.CH2', 'TC.CH3', 'TC.CH4', 'TC.CH5',
 
-  // encoder_board_61 (id 61) — see config.toml [boards.encoder_board_61]
+  // encoder_board (id 61) — 2 channels
   'ENC.CH1',
 ];
 
@@ -803,10 +795,16 @@ async function testActuatorCommands(ws: WebSocket): Promise<void> {
   let actuatorsOpened = 0;
   let actuatorsClosed = 0;
 
-  // Actuator commanded state now arrives as SENSOR_UPDATE with component 'actuator_state_commanded'
-  // from Elodin DB [0x32, ch] (published by sequencer_service), not as ACTUATOR_UPDATE.
-  // Entity names use the ACT. prefix with underscored role name (e.g., ACT.LOX_Main).
-  const nameToEntity = (name: string) => `ACT.${name.replace(/\s+/g, '_')}`;
+  // Actuator commanded state arrives as SENSOR_UPDATE with generic ACT.CH<globalCh> entity.
+  // Global channel = (board_id - 11) * 10 + local_channel.
+  const ACTUATOR_GLOBAL_CH: Record<string, number> = {
+    'LOX Main': 11, 'Fuel Vent': 12, 'Fuel Press': 13, 'Fuel Main': 17,
+    'LOX Vent': 16, 'LOX Press': 18, 'GSE Low Press Vent': 15, 'Fuel Fill Press': 20,
+    'Fuel Fill Vent': 31, 'GSE LOX Fill Vent': 32, 'GSE High Press Control': 33,
+    'GSE Med Press Control': 34, 'GSE High Press Vent': 35, 'GN2 Vent': 36,
+    'LOX Fill': 37, 'LOX Dump': 38,
+  };
+  const nameToEntity = (name: string) => `ACT.CH${ACTUATOR_GLOBAL_CH[name] ?? 1}`;
 
   for (const actuatorName of TEST_ACTUATORS) {
     const entity = nameToEntity(actuatorName);
@@ -941,6 +939,103 @@ async function testUdpActuatorCommands(): Promise<void> {
     assert(true, `UDP actuator commands: ${actualPackets} packets received (couldn't parse expected count from log)`);
   } else {
     assert(false, `UDP actuator commands: 0 packets expected/sent, zero received. Sequencer did not run commands.`);
+  }
+}
+
+// ── Test 10: Calibrated Data Stability ────────────────────────────────────────
+
+async function testCalibratedDataStability(ws: WebSocket): Promise<void> {
+  console.log('\n📊 Test 10: Calibrated Data Stability (spike detection)');
+
+  // Calibrated entities we expect (from calibration_service defaults)
+  const CALIBRATED_COMPONENTS: Record<string, string> = {
+    'PT_Cal': 'pressure_psi',
+    'TC_Cal': 'temperature_c',
+    'RTD_Cal': 'temperature_c',
+    'LC_Cal': 'force_kg',
+  };
+
+  // Collect calibrated SENSOR_UPDATE values for 8 seconds
+  const COLLECT_MS = 8000;
+  const values = new Map<string, number[]>();  // "entity.component" -> values
+
+  const collectPromise = new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      ws.removeListener('message', handler);
+      resolve();
+    }, COLLECT_MS);
+
+    function handler(data: WebSocket.Data) {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.type !== MessageType.SENSOR_UPDATE) return;
+        const { entity, component, value } = msg.payload;
+        if (!entity || !component || !Number.isFinite(value)) return;
+
+        // Only track calibrated entities
+        const prefix = entity.split('.')[0];
+        const expectedComp = CALIBRATED_COMPONENTS[prefix];
+        if (!expectedComp || component !== expectedComp) return;
+
+        const key = `${entity}.${component}`;
+        if (!values.has(key)) values.set(key, []);
+        values.get(key)!.push(value);
+      } catch { /* ignore */ }
+    }
+
+    ws.on('message', handler);
+  });
+
+  await collectPromise;
+
+  // Analyze stability
+  console.log(`  Collected calibrated data for ${COLLECT_MS / 1000}s: ${values.size} entities`);
+
+  if (values.size === 0) {
+    assert(false, 'No calibrated data received (calibration_service may not be running)');
+    return;
+  }
+
+  let totalSpikes = 0;
+  let entitiesWithSpikes = 0;
+  const spikeDetails: string[] = [];
+
+  for (const [key, vals] of values) {
+    if (vals.length < 3) continue;
+
+    const sorted = [...vals].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const mean = vals.reduce((s, v) => s + v, 0) / vals.length;
+    const min = sorted[0];
+    const max = sorted[sorted.length - 1];
+    const variance = vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length;
+    const stddev = Math.sqrt(variance);
+
+    // Spike = value deviating more than 20% from median (or > 5 stddev if stddev is very small)
+    const absThreshold = Math.abs(median) * 0.2 || 10;  // 20% or at least 10 units
+    const spikes = vals.filter(v => Math.abs(v - median) > absThreshold);
+
+    if (VERBOSE || spikes.length > 0) {
+      const status = spikes.length > 0 ? '❌' : '✅';
+      console.log(`  ${status} ${key}: n=${vals.length} mean=${mean.toFixed(2)} stddev=${stddev.toFixed(4)} min=${min.toFixed(2)} max=${max.toFixed(2)} spikes=${spikes.length}`);
+      if (spikes.length > 0 && spikes.length <= 5) {
+        console.log(`     Spike values: [${spikes.map(v => v.toFixed(2)).join(', ')}]`);
+      }
+    }
+
+    if (spikes.length > 0) {
+      totalSpikes += spikes.length;
+      entitiesWithSpikes++;
+      spikeDetails.push(`${key} (${spikes.length} spikes, median=${median.toFixed(2)})`);
+    }
+  }
+
+  console.log(`  Summary: ${values.size} entities, ${totalSpikes} total spikes across ${entitiesWithSpikes} entities`);
+
+  if (entitiesWithSpikes > 0) {
+    assert(false, `Calibrated data spikes in ${entitiesWithSpikes} entities: ${spikeDetails.join('; ')}`);
+  } else {
+    assert(true, `All ${values.size} calibrated entities stable (0 spikes in ${COLLECT_MS / 1000}s)`);
   }
 }
 
@@ -1173,6 +1268,7 @@ async function main(): Promise<void> {
 
   try {
     await testSensorDataFlow(ws);
+    await testCalibratedDataStability(ws);
     if (IS_THIN) {
       await testServerHeartbeatUdp();
       await testBoardStatusToFrontend(ws);

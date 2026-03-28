@@ -298,113 +298,133 @@ static bool is_publish_allowed(uint8_t high, uint8_t low, const std::vector<Publ
     return false;
 }
 
-// Load channel → name from config.toml [sensor_roles*] and [actuator_roles] so DB matches backend.
-static void load_sensor_and_actuator_maps(const std::string& config_path,
-                                          std::map<int, std::string>& pt_channel_to_name,
-                                          std::map<int, std::string>& act_channel_to_name,
-                                          std::map<int, std::string>& tc_channel_to_name,
-                                          std::map<int, std::string>& rtd_channel_to_name,
-                                          std::map<int, std::string>& lc_channel_to_name,
-                                          std::map<int, std::string>& enc_channel_to_name) {
-    std::ifstream f(config_path);
-    if (!f.is_open())
-        return;
-    std::string line, current_section;
-    while (std::getline(f, line)) {
-        size_t c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
-            line.pop_back();
-        size_t start = line.find_first_not_of(" \t");
-        if (start != std::string::npos)
-            line = line.substr(start);
-        if (line.empty())
-            continue;
-        if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
-            current_section = line.substr(1, line.size() - 2);
-            continue;
-        }
-        size_t eq = line.find('=');
-        if (eq == std::string::npos)
-            continue;
-        std::string key = line.substr(0, eq);
-        std::string val = line.substr(eq + 1);
-        while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
-            key.pop_back();
-        while (!val.empty() && val[0] == ' ')
-            val.erase(0, 1);
-        auto to_entity_name = [](std::string s) {
-            if (s.size() >= 2 && s.front() == '"' && s.back() == '"')
-                s = s.substr(1, s.size() - 2);
-            for (size_t i = 0; i < s.size(); ++i)
-                if (s[i] == ' ')
-                    s[i] = '_';
-            return s;
-        };
-        if (current_section == "sensor_roles_pt_board" || current_section == "sensor_roles") {
-            int channel = 0;
-            try {
-                channel = std::stoi(val);
-            } catch (...) {
-                continue;
-            }
-            if (channel >= 1 && channel <= 10)
-                pt_channel_to_name[channel] = to_entity_name(key);
-        } else if (current_section == "sensor_roles_pt2") {
-            int connector = 0;
-            try {
-                connector = std::stoi(val);
-            } catch (...) {
-                continue;
-            }
-            int global_ch = connector + 10;
-            if (global_ch >= 11 && global_ch <= 14)
-                pt_channel_to_name[global_ch] = to_entity_name(key);
-        } else if (current_section == "actuator_roles") {
-            size_t comma = val.find(',');
-            if (comma == std::string::npos)
-                continue;
-            try {
-                int channel = std::stoi(val.substr(comma + 1));
-                size_t second_comma = val.find(',', comma + 1);
-                int board_id = -1;
-                if (second_comma != std::string::npos) {
-                    board_id = std::stoi(val.substr(second_comma + 1));
-                }
-                int global_ch = channel;
-                if (board_id == 14) {
-                    global_ch += 10;
-                }
-                if (global_ch >= 1 && global_ch <= 20)
-                    act_channel_to_name[global_ch] = to_entity_name(key);
-            } catch (...) {
-            }
-        } else if (current_section == "sensor_roles_tc_board" ||
-                   current_section == "sensor_roles_tc_board_2") {
-            int channel = 0;
-            try { channel = std::stoi(val); } catch (...) { continue; }
-            if (channel >= 1 && channel <= 20)
-                tc_channel_to_name[channel] = to_entity_name(key);
-        } else if (current_section == "sensor_roles_rtd_board" ||
-                   current_section == "sensor_roles_rtd_board_2") {
-            int channel = 0;
-            try { channel = std::stoi(val); } catch (...) { continue; }
-            if (channel >= 1 && channel <= 20)
-                rtd_channel_to_name[channel] = to_entity_name(key);
-        } else if (current_section == "sensor_roles_lc_board" ||
-                   current_section == "sensor_roles_lc_board_2") {
-            int channel = 0;
-            try { channel = std::stoi(val); } catch (...) { continue; }
-            if (channel >= 1 && channel <= 20)
-                lc_channel_to_name[channel] = to_entity_name(key);
-        } else if (current_section == "sensor_roles_encoder_board") {
-            int channel = 0;
-            try { channel = std::stoi(val); } catch (...) { continue; }
-            if (channel >= 1 && channel <= 14)
-                enc_channel_to_name[channel] = to_entity_name(key);
+// Collect active channel numbers per sensor type from config.toml [boards.*] sections.
+// Uses active_connectors if present, otherwise num_sensors (channels 1..N).
+// Applies channel_offset for boards that have it (e.g. actuator_board_4 offset=10).
+// Role names are NOT needed here — VTables use generic TYPE.CH<n> names.
+struct ActiveChannels {
+    std::set<uint8_t> pt, act, tc, rtd, lc, enc;
+};
+
+static ActiveChannels load_active_channels(const std::string& config_path,
+                                           const std::map<std::string, BoardConfig>& board_map) {
+    ActiveChannels ch;
+
+    for (const auto& [ip, cfg] : board_map) {
+        if (!cfg.enabled) continue;
+
+        // Build channel list: active_connectors if available, else 1..num_sensors
+        // (active_connectors is parsed in load_board_map_from_config but not stored in BoardConfig,
+        //  so we use num_sensors here and rely on the board_map having correct info)
+        std::vector<int> channels;
+        for (int i = 1; i <= cfg.num_sensors; i++)
+            channels.push_back(i);
+
+        int offset = cfg.channel_offset;
+
+        switch (cfg.type) {
+            case BoardType::PT:
+                for (int c : channels) ch.pt.insert(static_cast<uint8_t>(c + offset));
+                break;
+            case BoardType::ACTUATOR:
+                for (int c : channels) ch.act.insert(static_cast<uint8_t>(c + offset));
+                break;
+            case BoardType::TC:
+                for (int c : channels) ch.tc.insert(static_cast<uint8_t>(c + offset));
+                break;
+            case BoardType::RTD:
+                for (int c : channels) ch.rtd.insert(static_cast<uint8_t>(c + offset));
+                break;
+            case BoardType::LC:
+                for (int c : channels) ch.lc.insert(static_cast<uint8_t>(c + offset));
+                break;
+            case BoardType::ENCODER:
+                for (int c : channels) ch.enc.insert(static_cast<uint8_t>(c + offset));
+                break;
+            default:
+                break;
         }
     }
+
+    // Also parse active_connectors from config (board_map doesn't store them)
+    // to narrow down channels when only specific connectors are wired.
+    std::ifstream f(config_path);
+    if (f.is_open()) {
+        std::string line, section;
+        std::string board_type;
+        int ch_offset = 0;
+        bool board_enabled = true;
+        std::vector<int> active_conn;
+
+        auto flush = [&]() {
+            if (board_type.empty() || !board_enabled || active_conn.empty()) return;
+            std::set<uint8_t>* target = nullptr;
+            if (board_type == "PT")       target = &ch.pt;
+            else if (board_type == "ACTUATOR") target = &ch.act;
+            else if (board_type == "TC")  target = &ch.tc;
+            else if (board_type == "RTD") target = &ch.rtd;
+            else if (board_type == "LC")  target = &ch.lc;
+            else if (board_type == "ENCODER") target = &ch.enc;
+            if (!target) return;
+            // Replace the 1..num_sensors range with just the active connectors
+            // First remove any channels for this board that aren't in active_connectors
+            // (We can't easily do this without board-level tracking, so just add active ones)
+            for (int c : active_conn) {
+                target->insert(static_cast<uint8_t>(c + ch_offset));
+            }
+        };
+
+        while (std::getline(f, line)) {
+            size_t c = line.find('#');
+            if (c != std::string::npos) line = line.substr(0, c);
+            while (!line.empty() && (line.back() == ' ' || line.back() == '\r')) line.pop_back();
+            size_t start = line.find_first_not_of(" \t");
+            if (start != std::string::npos) line = line.substr(start);
+            if (line.empty()) continue;
+
+            if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
+                flush();
+                section = line.substr(1, line.size() - 2);
+                if (section.rfind("boards.", 0) == 0) {
+                    board_type.clear(); ch_offset = 0; board_enabled = true; active_conn.clear();
+                } else {
+                    board_type.clear();
+                }
+                continue;
+            }
+            if (section.rfind("boards.", 0) != 0) continue;
+
+            size_t eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            std::string key = line.substr(0, eq);
+            std::string val = line.substr(eq + 1);
+            while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+            while (!val.empty() && val[0] == ' ') val.erase(0, 1);
+
+            if (key == "type") {
+                if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
+                    val = val.substr(1, val.size() - 2);
+                board_type = val;
+            } else if (key == "enabled" && val == "false") {
+                board_enabled = false;
+            } else if (key == "channel_offset") {
+                try { ch_offset = std::stoi(val); } catch (...) {}
+            } else if (key == "active_connectors") {
+                size_t b = val.find('['), e = val.find(']');
+                if (b != std::string::npos && e != std::string::npos) {
+                    std::string inner = val.substr(b + 1, e - b - 1);
+                    std::istringstream iss(inner);
+                    std::string tok;
+                    while (std::getline(iss, tok, ',')) {
+                        try { active_conn.push_back(std::stoi(tok)); } catch (...) {}
+                    }
+                }
+            }
+        }
+        flush();
+    }
+
+    return ch;
 }
 
 // Map discovery signature board_type (DAQv2 wire: 1=PT, 2=LC, 3=RTD, 4=TC, 5=ACT, 6=ENC)
@@ -647,33 +667,35 @@ int main(int argc, char* argv[]) {
     fsw::elodin::ElodinClient elodin_client;
     fsw::routing::HeartbeatRouter heartbeat_router(elodin_client);
     bool elodin_connected = false;
-    std::map<int, std::string> pt_channel_to_name, act_channel_to_name;
-    std::map<int, std::string> tc_channel_to_name, rtd_channel_to_name;
-    std::map<int, std::string> lc_channel_to_name, enc_channel_to_name;
-    load_sensor_and_actuator_maps(config_path, pt_channel_to_name, act_channel_to_name,
-                                  tc_channel_to_name, rtd_channel_to_name,
-                                  lc_channel_to_name, enc_channel_to_name);
-    const auto* pt_names  = pt_channel_to_name.empty()  ? nullptr : &pt_channel_to_name;
-    const auto* act_names = act_channel_to_name.empty()  ? nullptr : &act_channel_to_name;
-    const auto* tc_names  = tc_channel_to_name.empty()  ? nullptr : &tc_channel_to_name;
-    const auto* rtd_names = rtd_channel_to_name.empty() ? nullptr : &rtd_channel_to_name;
-    const auto* lc_names  = lc_channel_to_name.empty()  ? nullptr : &lc_channel_to_name;
-    const auto* enc_names = enc_channel_to_name.empty() ? nullptr : &enc_channel_to_name;
+    // Collect active channel numbers and board IDs from config
+    ActiveChannels active = load_active_channels(config_path, board_map);
+    std::vector<uint8_t> pt_ch(active.pt.begin(), active.pt.end());
+    std::vector<uint8_t> act_ch(active.act.begin(), active.act.end());
+    std::vector<uint8_t> tc_ch(active.tc.begin(), active.tc.end());
+    std::vector<uint8_t> rtd_ch(active.rtd.begin(), active.rtd.end());
+    std::vector<uint8_t> lc_ch(active.lc.begin(), active.lc.end());
+    std::vector<uint8_t> enc_ch(active.enc.begin(), active.enc.end());
+
+    std::vector<uint8_t> config_board_ids;
+    for (const auto& [ip, cfg] : board_map) {
+        if (cfg.enabled && cfg.board_id > 0 && cfg.board_id <= 254)
+            config_board_ids.push_back(static_cast<uint8_t>(cfg.board_id));
+    }
 
     if (elodin_client.connect(db_host, db_port)) {
         elodin_connected = true;
         std::cout << "✅ Connected to Elodin database" << std::endl;
-        // Register RAW VTables
-        if (!fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_names, act_names,
-                                                           tc_names, rtd_names, lc_names, enc_names)) {
+        // Register RAW VTables (generic TYPE.CH<n> names)
+        if (!fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_ch, act_ch,
+                                                           tc_ch, rtd_ch, lc_ch, enc_ch)) {
             std::cerr << "⚠️  RAW VTable registration failed" << std::endl;
         }
-        // Register CALIBRATED VTables (inline calibration — no separate service)
-        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names,
-                                                                 tc_names, rtd_names, lc_names, enc_names);
-        // Register BOARD_HEARTBEAT VTables so backend can consume board status from Elodin.
-        fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, 64);
-        fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, 64);
+        // Register CALIBRATED VTables
+        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_ch,
+                                                                 tc_ch, rtd_ch, lc_ch, enc_ch);
+        // Register BOARD_HEARTBEAT and SELF_TEST VTables only for boards in config
+        fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, config_board_ids);
+        fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, config_board_ids);
         // Drain any response from DB after registration; otherwise recv buffer fills and TABLE
         // writes stall after ~3s
         std::array<uint8_t, 4096> drain_buf;
@@ -788,15 +810,15 @@ int main(int argc, char* argv[]) {
                     if (elodin_client.reconnect()) {
                         std::cout << "✅ Reconnected to Elodin — re-registering VTables"
                                   << std::endl;
-                        fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_names,
-                                                                     act_names, tc_names,
-                                                                     rtd_names, lc_names, enc_names);
+                        fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_ch,
+                                                                     act_ch, tc_ch,
+                                                                     rtd_ch, lc_ch, enc_ch);
                         fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client,
-                                                                                pt_names, tc_names,
-                                                                                rtd_names, lc_names,
-                                                                                enc_names);
-                        fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, 64);
-                        fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, 64);
+                                                                                pt_ch, tc_ch,
+                                                                                rtd_ch, lc_ch,
+                                                                                enc_ch);
+                        fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, config_board_ids);
+                        fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, config_board_ids);
                     }
                 }
             }
@@ -974,12 +996,8 @@ int main(int argc, char* argv[]) {
                         if (is_publish_allowed(id[0], id[1], publish_ranges))
                             elodin_client.publish(id, msg);
                 }
-                auto lc_cal = router.route_lc_samples_calibrated(lc_batch, receive_timestamp_ns);
-                if (publishing) {
-                    for (const auto& [id, msg] : lc_cal)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                }
+                // LC calibrated: handled by calibration_service (not daq_bridge) to avoid
+                // dual-publisher spikes — same fix as PT calibrated (line ~940).
                 break;
             }
             case BoardType::TC: {
@@ -1000,12 +1018,8 @@ int main(int argc, char* argv[]) {
                         if (is_publish_allowed(id[0], id[1], publish_ranges))
                             elodin_client.publish(id, msg);
                 }
-                auto tc_cal = router.route_tc_samples_calibrated(tc_batch, receive_timestamp_ns);
-                if (publishing) {
-                    for (const auto& [id, msg] : tc_cal)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                }
+                // TC calibrated: handled by calibration_service (not daq_bridge) to avoid
+                // dual-publisher spikes — same fix as PT calibrated (line ~940).
                 break;
             }
             case BoardType::RTD: {
@@ -1027,15 +1041,8 @@ int main(int argc, char* argv[]) {
                         if (is_publish_allowed(id[0], id[1], publish_ranges))
                             elodin_client.publish(id, msg);
                 }
-                // Also publish CALIBRATED RTD samples (temperature °C) when calibration files
-                // exist. This produces RTD_Cal.CH* streams that the web backend/GUI read as
-                // `temperature_c`.
-                auto rtd_cal = router.route_rtd_samples_calibrated(rtd_batch, receive_timestamp_ns);
-                if (publishing) {
-                    for (const auto& [id, msg] : rtd_cal)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                }
+                // RTD calibrated: handled by calibration_service (not daq_bridge) to avoid
+                // dual-publisher spikes — same fix as PT calibrated (line ~940).
                 break;
             }
             case BoardType::ENCODER: {

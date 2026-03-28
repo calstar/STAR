@@ -26,6 +26,7 @@
 #include <iostream>
 #include <map>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -198,57 +199,89 @@ int main(int argc, char* argv[]) {
     std::cout << "[Calibration] LC:  " << lc_calibration.calibrated_count() << " channels"
               << std::endl;
 
-    // Parse PT channel names from config for VTable registration
-    std::map<int, std::string> pt_channel_to_name;
+    // Collect active channel numbers from config for VTable registration.
+    // VTables use generic TYPE_Cal.CH<n> names — role names are frontend-only metadata.
+    std::set<uint8_t> pt_ch_set, tc_ch_set, rtd_ch_set, lc_ch_set, enc_ch_set;
     {
         std::ifstream cfg(config_path);
         if (cfg.is_open()) {
             std::string line, section;
+            std::string board_type;
+            int ch_offset = 0;
+            bool board_enabled = true;
+            std::vector<int> active_conn;
+            int num_sensors = 0;
+
+            auto flush_board = [&]() {
+                if (board_type.empty() || !board_enabled) return;
+                std::vector<int> channels;
+                if (!active_conn.empty()) {
+                    channels = active_conn;
+                } else if (num_sensors > 0) {
+                    for (int i = 1; i <= num_sensors; i++) channels.push_back(i);
+                }
+                std::set<uint8_t>* target = nullptr;
+                if (board_type == "PT")       target = &pt_ch_set;
+                else if (board_type == "TC")  target = &tc_ch_set;
+                else if (board_type == "RTD") target = &rtd_ch_set;
+                else if (board_type == "LC")  target = &lc_ch_set;
+                else if (board_type == "ENCODER") target = &enc_ch_set;
+                if (target) {
+                    for (int c : channels)
+                        target->insert(static_cast<uint8_t>(c + ch_offset));
+                }
+            };
+
             while (std::getline(cfg, line)) {
                 size_t c = line.find('#');
-                if (c != std::string::npos)
-                    line = line.substr(0, c);
-                while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
-                    line.pop_back();
+                if (c != std::string::npos) line = line.substr(0, c);
+                while (!line.empty() && (line.back() == ' ' || line.back() == '\r')) line.pop_back();
                 size_t start = line.find_first_not_of(" \t");
-                if (start != std::string::npos)
-                    line = line.substr(start);
-                if (line.empty())
-                    continue;
+                if (start != std::string::npos) line = line.substr(start);
+                if (line.empty()) continue;
+
                 if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
+                    flush_board();
                     section = line.substr(1, line.size() - 2);
+                    if (section.rfind("boards.", 0) == 0) {
+                        board_type.clear(); ch_offset = 0; board_enabled = true;
+                        active_conn.clear(); num_sensors = 0;
+                    } else { board_type.clear(); }
                     continue;
                 }
-                if (section != "sensor_roles_pt_board" && section != "sensor_roles_pt2" &&
-                    section != "sensor_roles")
-                    continue;
+                if (section.rfind("boards.", 0) != 0) continue;
                 size_t eq = line.find('=');
-                if (eq == std::string::npos)
-                    continue;
+                if (eq == std::string::npos) continue;
                 std::string key = line.substr(0, eq);
                 std::string val = line.substr(eq + 1);
-                while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
-                    key.pop_back();
-                while (!val.empty() && val[0] == ' ')
-                    val.erase(0, 1);
-                if (key.size() >= 2 && key.front() == '"' && key.back() == '"')
-                    key = key.substr(1, key.size() - 2);
-                for (auto& ch : key)
-                    if (ch == ' ')
-                        ch = '_';
-                int channel = 0;
-                try {
-                    channel = std::stoi(val);
-                } catch (...) {
-                    continue;
+                while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+                while (!val.empty() && val[0] == ' ') val.erase(0, 1);
+
+                if (key == "type") {
+                    if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
+                        val = val.substr(1, val.size() - 2);
+                    board_type = val;
+                } else if (key == "enabled" && val == "false") { board_enabled = false; }
+                else if (key == "channel_offset") { try { ch_offset = std::stoi(val); } catch (...) {} }
+                else if (key == "num_sensors") { try { num_sensors = std::stoi(val); } catch (...) {} }
+                else if (key == "active_connectors") {
+                    size_t b = val.find('['), e = val.find(']');
+                    if (b != std::string::npos && e != std::string::npos) {
+                        std::istringstream iss(val.substr(b + 1, e - b - 1));
+                        std::string tok;
+                        while (std::getline(iss, tok, ','))
+                            try { active_conn.push_back(std::stoi(tok)); } catch (...) {}
+                    }
                 }
-                if (channel > 0)
-                    pt_channel_to_name[channel] = key;
             }
+            flush_board();
         }
     }
-    const std::map<int, std::string>* pt_names =
-        pt_channel_to_name.empty() ? nullptr : &pt_channel_to_name;
+    std::vector<uint8_t> pt_ch(pt_ch_set.begin(), pt_ch_set.end());
+    std::vector<uint8_t> tc_ch(tc_ch_set.begin(), tc_ch_set.end());
+    std::vector<uint8_t> rtd_ch(rtd_ch_set.begin(), rtd_ch_set.end());
+    std::vector<uint8_t> lc_ch(lc_ch_set.begin(), lc_ch_set.end());
+    std::vector<uint8_t> enc_ch(enc_ch_set.begin(), enc_ch_set.end());
 
     // Parse HP PT config (4-20 mA)
     std::set<uint8_t> hp_pt_channels;
@@ -425,8 +458,8 @@ int main(int argc, char* argv[]) {
                       << elodin_port << std::endl;
             return false;
         }
-        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names,
-                                                                 nullptr, nullptr, nullptr, nullptr);
+        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_ch,
+                                                                 tc_ch, rtd_ch, lc_ch, enc_ch);
         if (!elodin_client.subscribe_stream()) {
             std::cerr << "[Cal] Failed to subscribe to Elodin stream" << std::endl;
             return false;
@@ -448,8 +481,8 @@ int main(int argc, char* argv[]) {
             std::cerr << "[Cal] Elodin disconnected, retrying in 2s..." << std::endl;
             std::this_thread::sleep_for(std::chrono::seconds(2));
             if (elodin_client.reconnect()) {
-                fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names,
-                                                                         nullptr, nullptr, nullptr, nullptr);
+                fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_ch,
+                                                                         tc_ch, rtd_ch, lc_ch, enc_ch);
                 elodin_client.subscribe_stream();
                 std::cout << "[Cal] Reconnected to Elodin" << std::endl;
             }
@@ -477,9 +510,14 @@ int main(int argc, char* argv[]) {
         if (ty != 1)
             continue;  // Only process TABLE packets
 
-        // Only process raw sensor VTables
+        // Only process RAW sensor VTables (low byte 0x01-0x0F).
+        // Calibrated packets use low byte 0x10+ (e.g. [0x20, 0x13] = PT cal ch3).
+        // Without this filter, we'd re-process our OWN calibrated output as raw ADC,
+        // interpreting the float32 pressure/temperature as a uint32 ADC code → spikes.
         if (type_hi < 0x20 || type_hi > 0x23)
             continue;
+        if (type_lo >= 0x10)
+            continue;  // skip calibrated packets (our own output)
 
         const ssize_t payload_len = pkt_len - 8;
         if (payload_len < 21) {

@@ -26,7 +26,7 @@ import * as http from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
-import { loadSensorRoleMap, loadActuatorChannelToEntityMap } from './sensor-config.js';
+import { loadSensorRoleMap } from './sensor-config.js';
 import { registerVTables, clearSubscriptionState } from './legacy/elodin-vtable.js';
 import { registerControllerVTables } from './legacy/elodin-vtable-controller.js';
 import { createAPIHandler } from './api-server.js';
@@ -711,8 +711,8 @@ const STATE_TO_CSV_NAME: Record<string, string> = {
 
 // ── Elodin DB direct connection ──────────────────────────────────────────────
 
-const { channelToEntityMap }         = loadSensorRoleMap();
-const actuatorChannelToEntityMap     = loadActuatorChannelToEntityMap();
+// Entity maps no longer needed — protocol parser uses generic TYPE.CH<n> names.
+// Role names are frontend display metadata loaded from /api/config.
 
 const elodin = new ElodinClient(ELODIN_HOST, ELODIN_PORT);
 
@@ -783,10 +783,7 @@ elodin.on('packet', (header: any, payload: Buffer) => {
     }
 
     // ── Parse sensor/actuator/state packets ──────────────────────────────────
-    const parsedList = parseElodinPacket(header.packetId, payload, {
-      channelToEntityMap,
-      actuatorChannelToEntityMap,
-    });
+    const parsedList = parseElodinPacket(header.packetId, payload);
 
     if (parsedList.length === 0) {
       if (high >= 0x40) {

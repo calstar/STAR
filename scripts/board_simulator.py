@@ -200,25 +200,30 @@ class SimulatedBoard:
                 psi = target_psi or 500.0
                 adc_per_psi = 2_200_000  # ~(1/6e-7) for typical calibration
                 adc_base = int(500_000 + (psi + 165) * adc_per_psi)
+                if self.low_noise:
+                    return max(0, min(adc_base, ADC_MAX - 1))
                 wave = (math.sin(t * 0.1 + sensor_id * 0.5) + 1) / 2.0
                 variation = int(20_000_000 * wave)  # ±10M for slight movement
-                noise = 0 if self.low_noise else random.randint(-10000, 10000)
+                noise = random.randint(-10000, 10000)
                 return max(0, min(adc_base + variation + noise, ADC_MAX - 1))
 
         elif self.board_type == BOARD_TYPE_LC:
-            # Scale for ~0-500 N (force_n)
+            if self.low_noise:
+                return 10_000_000 + sensor_id * 1_000_000
             wave = (math.sin(t * 0.2 + self.board_id) + 1) / 2.0
             val = int(wave * 50000000 + random.randint(-500, 500))
             return max(0, min(val, ADC_MAX - 1))
 
         elif self.board_type == BOARD_TYPE_TC:
-            # Scale for ~20-100 C (temperature_c)
+            if self.low_noise:
+                return 4_000_000 + sensor_id * 500_000
             wave = (math.sin(t * 0.1 + self.board_id * 0.5) + 1) / 2.0
             val = int(2000000 + wave * 8000000 + random.randint(-500, 500))
             return max(0, min(val, ADC_MAX - 1))
 
         elif self.board_type == BOARD_TYPE_RTD:
-            # Scale for ~20-50 C (temperature_c)
+            if self.low_noise:
+                return 2_500_000 + sensor_id * 300_000
             wave = (math.sin(t * 0.05 + sensor_id) + 1) / 2.0
             val = int(2000000 + wave * 3000000 + random.randint(-100, 100))
             return max(0, min(val, ADC_MAX - 1))
