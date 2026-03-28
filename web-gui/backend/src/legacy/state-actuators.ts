@@ -7,7 +7,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { SystemState } from '../../../../shared/types.js';
+import { SystemState } from '../../../shared/types.js';
 import { readConfig } from '../routes/config.js';
 
 // ES module __dirname equivalent
