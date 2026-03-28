@@ -27,12 +27,13 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
 import { loadSensorRoleMap, loadActuatorChannelToEntityMap } from './sensor-config.js';
-import { registerVTables, clearSubscriptionState } from './legacy/elodin-vtable.js';
+import { registerVTables } from './legacy/elodin-vtable.js';
 import { registerControllerVTables } from './legacy/elodin-vtable-controller.js';
 import { createAPIHandler } from './api-server.js';
 import { readConfig } from './routes/config.js';
 import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY } from './legacy/state-actuators.js';
 import type { StateActuatorMap } from './legacy/state-actuators.js';
+import { getStateTransitions } from './legacy/state-transitions.js';
 import { handleCalibrationCommand, type CalibrationHost } from './calibration-handler.js';
 import { loadPTCalibration, calculatePressure, type CalibrationCoefficients } from './calibration.js';
 import { Phase2CalibrationEngine } from './calibration-phase2.js';
@@ -217,7 +218,7 @@ function getExpectedPositions(state: SystemState): Record<string, number> {
 
 /** Last-known actuator_state (sensed from [0x31] current-sense) per entity */
 const actuatorSensedState = new Map<string, number>();
-const ACTUATOR_MISMATCH_DELAY_MS = 100;
+const ACTUATOR_MISMATCH_DELAY_MS = 5000;
 let actuatorMismatchTimer: NodeJS.Timeout | null = null;
 
 function scheduleActuatorMismatchCheck(state: SystemState): void {
@@ -300,6 +301,24 @@ function updateBoard(low: number, payload: Buffer): void {
     broadcastBoardStatus();
     console.log(`[ThinServer] Board ${boardId} (${typeStr}) connected`);
   }
+}
+
+// Periodic heartbeat rate diagnostic — log actual arrival rates so we can
+// see if Elodin is delivering duplicates vs boards sending too fast.
+let hbDiagCount = new Map<number, number>();
+setInterval(() => {
+  if (hbDiagCount.size > 0) {
+    const entries = Array.from(hbDiagCount.entries())
+      .map(([id, count]) => `board ${id}=${count}/s`)
+      .join(', ');
+    console.log(`[ThinServer] Heartbeat arrival rate: ${entries}`);
+    hbDiagCount.clear();
+  }
+}, 5000);
+
+// Count heartbeat arrivals (called from packet handler before updateBoard)
+function countHeartbeat(boardId: number): void {
+  hbDiagCount.set(boardId, (hbDiagCount.get(boardId) ?? 0) + 1);
 }
 
 // ── Board notifications ──────────────────────────────────────────────────────
@@ -569,6 +588,9 @@ function handleMessage(ws: WebSocket, message: any): void {
     case MessageType.UNSUBSCRIBE_SENSOR:
       // Thin backend broadcasts all updates to all clients, ignore filter requests safely.
       break;
+    case 'get_state_transitions':
+      send(ws, { type: 'state_transitions', timestamp: Date.now(), payload: { transitions: getStateTransitions() } });
+      break;
     default:
       console.warn('[ThinServer] Unknown message type:', message.type);
   }
@@ -735,7 +757,6 @@ elodin.on('disconnected', () => {
   console.log('[ThinServer] Elodin DB disconnected');
   broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false } });
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
-  clearSubscriptionState();
 });
 
 elodin.on('error', (err: Error) => {
@@ -748,6 +769,7 @@ elodin.on('packet', (header: any, payload: Buffer) => {
 
     // ── Board heartbeat [0x10, board_id] ────────────────────────────────────
     if (high === 0x10) {
+      countHeartbeat(low);
       updateBoard(low, payload);
       return;
     }
