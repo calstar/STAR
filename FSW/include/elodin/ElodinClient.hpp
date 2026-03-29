@@ -72,6 +72,13 @@ public:
     bool subscribe_stream();
 
     /**
+     * @brief Subscribe to specific tables by ID.
+     * @param table_ids Vector of (hi, lo) byte pairs identifying each table.
+     * @return true if all subscribe messages were sent.
+     */
+    bool subscribe_tables(const std::vector<std::pair<uint8_t, uint8_t>>& table_ids);
+
+    /**
      * @brief Begin batching — subsequent publish() calls go into an internal buffer.
      * Call flush_batch() to send everything in one TCP write.
      */

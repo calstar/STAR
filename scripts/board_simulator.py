@@ -222,14 +222,21 @@ class SimulatedBoard:
             return max(0, min(val, ADC_MAX - 1))
 
         elif self.board_type == BOARD_TYPE_RTD:
+            # Pt1000 at ~25°C: R≈1097Ω, I_exc=1000µA → V=1.097V
+            # ADC = (V/Vref) * 2^31 ≈ 942M.  Small offset per sensor_id.
             if self.low_noise:
-                return 2_500_000 + sensor_id * 300_000
+                return 942_000_000 + sensor_id * 5_000_000
             wave = (math.sin(t * 0.05 + sensor_id) + 1) / 2.0
-            val = int(2000000 + wave * 3000000 + random.randint(-100, 100))
+            val = int(900_000_000 + wave * 100_000_000 + random.randint(-100, 100))
             return max(0, min(val, ADC_MAX - 1))
 
         elif self.board_type == BOARD_TYPE_ACTUATOR:
-            return int(1200000 + random.randint(-2000, 2000))
+            # 12-bit ADC (0-4095), 3.3V ref, V-to-I transfer = 1:1
+            # Slow sine wave for visual testing (~0-2.0A)
+            wave = (math.sin(t * 0.2 + sensor_id * 0.7) + 1) / 2.0
+            base = int(wave * 2500)  # 0-2500 counts ≈ 0-2.0A
+            noise = 0 if self.low_noise else random.randint(-5, 5)
+            return max(0, min(base + noise, 4095))
 
         elif self.board_type_str == "ENCODER":
             # Deterministic encoder-ish counts for Elodin raw path (signed-friendly magnitude)

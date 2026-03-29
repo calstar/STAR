@@ -23,6 +23,7 @@ const ACTUATOR_UDP_PORT = parseInt(process.argv[4] || '5005', 10);
 const VERBOSE = process.argv.includes('--verbose');
 const BACKEND = process.argv.find(a => a.startsWith('--backend='))?.split('=')[1] ?? 'legacy';
 const HAS_SEQUENCER = process.argv.includes('--has-sequencer');
+const HAS_CONTROLLER = process.argv.includes('--has-controller');
 const IS_THIN = BACKEND === 'thin';
 
 // --received-stats <path>: write received update counts per entity to this file
@@ -37,6 +38,9 @@ const SEQ_LOG_FILE = seqLogIdx >= 0 ? process.argv[seqLogIdx + 1] : '';
 
 const backendLogIdx = process.argv.indexOf('--backend-log');
 const BACKEND_LOG_FILE = backendLogIdx >= 0 ? process.argv[backendLogIdx + 1] : '';
+
+const controllerLogIdx = process.argv.indexOf('--controller-log');
+const CONTROLLER_LOG_FILE = controllerLogIdx >= 0 ? process.argv[controllerLogIdx + 1] : '';
 
 const WS_URL = `ws://127.0.0.1:${WS_PORT}`;
 const SENSOR_TIMEOUT_MS = 5000;
@@ -436,7 +440,7 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
   // the same type use channel_offset to create a global namespace:
   //   board 1: offset 0  → CH1-CH10
   //   board 2: offset 10 → CH11-CH20
-  const sensorPrefixes = ['PT_Cal.CH', 'PT.CH', 'RTD.CH', 'TC.CH', 'LC.CH', 'ENC.CH', 'ACT.CH'];
+  const sensorPrefixes = ['PT_Cal.CH', 'PT.CH', 'RTD.CH', 'TC.CH', 'LC.CH', 'ENC.CH', 'ACT.CH', 'ACT_Cal.CH'];
   for (const prefix of sensorPrefixes) {
     for (let i = 1; i <= 20; i++) {
       send(ws, {
@@ -953,6 +957,7 @@ async function testCalibratedDataStability(ws: WebSocket): Promise<void> {
     'TC_Cal': 'temperature_c',
     'RTD_Cal': 'temperature_c',
     'LC_Cal': 'force_kg',
+    'ACT_Cal': 'current_a',
   };
 
   // Collect calibrated SENSOR_UPDATE values for 8 seconds
@@ -1245,6 +1250,192 @@ async function testBoardStartupSelfTestToFrontend(ws: WebSocket): Promise<void> 
   }
 }
 
+// ── Test 11: Sensor Config Entity Format ──────────────────────────────────────
+// Verify that /api/sensor-config returns generic channel-based entity names
+// (PT.CH1, TC_Cal.CH2) and NOT role-based names (PT.Fuel_Upstream).
+
+async function testSensorConfigEntityFormat(): Promise<void> {
+  console.log('\n📋 Test 11: Sensor Config Entity Format (generic CH<n> names)');
+
+  let sensors: any[] = [];
+  try {
+    const res = await new Promise<string>((resolve, reject) => {
+      const req = http.get(`http://127.0.0.1:${WS_PORT}/api/sensor-config`, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => resolve(data));
+      });
+      req.on('error', reject);
+      req.setTimeout(3000, () => { req.destroy(); reject(new Error('Timeout')); });
+    });
+    const parsed = JSON.parse(res);
+    sensors = parsed.sensors || [];
+  } catch (e: any) {
+    assert(false, `Failed to fetch /api/sensor-config: ${e.message}`);
+    return;
+  }
+
+  assert(sensors.length > 0, `sensor-config returned ${sensors.length} sensors`);
+
+  // Every entity must match TYPE.CH<N> (e.g. PT.CH1, TC.CH3, RTD.CH2, LC.CH5)
+  const entityPattern = /^(PT|TC|RTD|LC|ENC)\.CH\d+$/;
+  const calEntityPattern = /^(PT|TC|RTD|LC|ENC)_Cal\.CH\d+$/;
+
+  const badEntities: string[] = [];
+  const badCalEntities: string[] = [];
+  const typesSeen = new Set<string>();
+
+  for (const s of sensors) {
+    const entity = s.entity as string;
+    const calEntity = s.calEntity as string;
+
+    // Extract sensor type
+    const dotIdx = entity.indexOf('.');
+    if (dotIdx > 0) typesSeen.add(entity.slice(0, dotIdx));
+
+    if (!entityPattern.test(entity)) {
+      badEntities.push(entity);
+    }
+    if (!calEntityPattern.test(calEntity)) {
+      badCalEntities.push(calEntity);
+    }
+  }
+
+  assert(badEntities.length === 0,
+    badEntities.length === 0
+      ? `All ${sensors.length} entity names use generic CH<n> format`
+      : `${badEntities.length} entities use non-generic names: ${badEntities.slice(0, 5).join(', ')}${badEntities.length > 5 ? '...' : ''}`);
+
+  assert(badCalEntities.length === 0,
+    badCalEntities.length === 0
+      ? `All ${sensors.length} calEntity names use generic CH<n> format`
+      : `${badCalEntities.length} calEntities use non-generic names: ${badCalEntities.slice(0, 5).join(', ')}${badCalEntities.length > 5 ? '...' : ''}`);
+
+  // Verify at least PT, TC, RTD, LC are present
+  const requiredTypes = ['PT', 'TC', 'RTD', 'LC'];
+  const missingTypes = requiredTypes.filter(t => !typesSeen.has(t));
+  assert(missingTypes.length === 0,
+    missingTypes.length === 0
+      ? `All required sensor types present: ${requiredTypes.join(', ')}`
+      : `Missing sensor types in config: ${missingTypes.join(', ')}`);
+}
+
+// ── Test 12: Raw AND Calibrated Data Presence ─────────────────────────────────
+// For each sensor type (PT, TC, RTD, LC), verify that BOTH raw codes AND
+// calibrated values appear in the SENSOR_UPDATE stream.
+
+async function testRawAndCalibratedPresence(ws: WebSocket): Promise<void> {
+  console.log('\n📊 Test 12: Raw AND Calibrated Data Presence (all sensor types)');
+
+  // Subscribe broadly to raw and calibrated for all types
+  const prefixes = ['PT.CH', 'PT_Cal.CH', 'TC.CH', 'TC_Cal.CH', 'RTD.CH', 'RTD_Cal.CH', 'LC.CH', 'LC_Cal.CH'];
+  for (const prefix of prefixes) {
+    for (let i = 1; i <= 20; i++) {
+      send(ws, {
+        type: MessageType.SUBSCRIBE_SENSOR,
+        timestamp: Date.now(),
+        payload: { entity: `${prefix}${i}` },
+      });
+    }
+  }
+
+  const COLLECT_MS = 8000;
+  console.log(`  Collecting sensor updates for ${COLLECT_MS / 1000}s...`);
+  const updates = await collectMessages(ws, MessageType.SENSOR_UPDATE, COLLECT_MS);
+
+  // Group received entities by sensor type and raw/calibrated
+  const rawByType: Record<string, Set<string>> = {};
+  const calByType: Record<string, Set<string>> = {};
+
+  // Also track which calibrated components we see per type
+  const calComponents: Record<string, string> = {
+    'PT': 'pressure_psi',
+    'TC': 'temperature_c',
+    'RTD': 'temperature_c',
+    'LC': 'force_kg',
+  };
+
+  for (const u of updates) {
+    const entity: string = u.payload.entity;
+    const component: string = u.payload.component;
+    const dotIdx = entity.indexOf('.');
+    if (dotIdx < 0) continue;
+    const prefix = entity.slice(0, dotIdx);
+
+    if (prefix.endsWith('_Cal')) {
+      const baseType = prefix.replace('_Cal', '');
+      if (!calByType[baseType]) calByType[baseType] = new Set();
+      calByType[baseType].add(entity);
+    } else {
+      if (!rawByType[prefix]) rawByType[prefix] = new Set();
+      rawByType[prefix].add(entity);
+    }
+  }
+
+  // Assert both raw and calibrated present for each sensor type
+  const SENSOR_TYPES = ['PT', 'TC', 'RTD', 'LC'];
+  for (const sensorType of SENSOR_TYPES) {
+    const rawCount = rawByType[sensorType]?.size ?? 0;
+    const calCount = calByType[sensorType]?.size ?? 0;
+
+    assert(rawCount > 0,
+      rawCount > 0
+        ? `${sensorType}: raw data present (${rawCount} channels: ${[...(rawByType[sensorType] || [])].sort().join(', ')})`
+        : `${sensorType}: NO raw data received`);
+
+    assert(calCount > 0,
+      calCount > 0
+        ? `${sensorType}: calibrated data present (${calCount} channels: ${[...(calByType[sensorType] || [])].sort().join(', ')})`
+        : `${sensorType}: NO calibrated data received (calibration_service may not be running)`);
+  }
+}
+
+// ── Test: Controller Data Flow ────────────────────────────────────────────────
+
+async function testControllerDataFlow(): Promise<void> {
+  console.log('\n📡 Test: Controller Data Flow (controller_service log verification)');
+
+  // Verify the controller service is running, connected to Elodin, and producing output
+  // by checking its log file for key markers.
+  if (!CONTROLLER_LOG_FILE) {
+    assert(false, 'Controller log file not specified (--controller-log)');
+    return;
+  }
+
+  let logContent = '';
+  try {
+    logContent = fs.readFileSync(CONTROLLER_LOG_FILE, 'utf-8');
+  } catch {
+    assert(false, `Could not read controller log: ${CONTROLLER_LOG_FILE}`);
+    return;
+  }
+
+  // 1. Elodin publisher connected
+  const elodinConnected = logContent.includes('Connected to Elodin database');
+  assert(elodinConnected, 'Controller connected to Elodin DB (publisher)');
+
+  // 2. Elodin subscriber connected and subscribed to calibrated PT
+  const subscriberConnected = logContent.includes('Elodin subscriber connected');
+  assert(subscriberConnected, 'Controller Elodin subscriber connected (calibrated PT)');
+
+  // 3. Controller loop is running (check for tick output)
+  const tickMatch = logContent.match(/tick=(\d+)/g);
+  const lastTick = tickMatch ? parseInt(tickMatch[tickMatch.length - 1].split('=')[1]) : 0;
+  assert(lastTick > 10, `Controller loop running (last tick=${lastTick})`);
+
+  // 4. Controller tables registered with Elodin
+  const tablesRegistered = logContent.includes('Registered controller tables');
+  assert(tablesRegistered, 'Controller VTables registered with Elodin DB');
+
+  if (VERBOSE) {
+    const hasPT = logContent.includes('PT ch1') || logContent.includes('PT ch5');
+    const hasTestDuty = logContent.includes('Test duty override');
+    console.log(`    PT data received: ${hasPT ? 'yes' : 'no'}`);
+    console.log(`    Test duty active: ${hasTestDuty ? 'yes' : 'no'}`);
+    console.log(`    Last tick: ${lastTick}`);
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -1252,6 +1443,7 @@ async function main(): Promise<void> {
   console.log(`   Backend: ${WS_URL} (${IS_THIN ? 'server.ts' : 'server-legacy.ts'})`);
   if (IS_THIN) {
     console.log(`   sequencer_service: ${HAS_SEQUENCER ? 'available' : 'not found — command tests will be skipped'}`);
+    console.log(`   controller_service: ${HAS_CONTROLLER ? 'available' : 'not found — controller tests will be skipped'}`);
   }
   console.log('');
 
@@ -1267,7 +1459,9 @@ async function main(): Promise<void> {
   const canRunCommandTests = !IS_THIN || HAS_SEQUENCER;
 
   try {
+    await testSensorConfigEntityFormat();
     await testSensorDataFlow(ws);
+    await testRawAndCalibratedPresence(ws);
     await testCalibratedDataStability(ws);
     if (IS_THIN) {
       await testServerHeartbeatUdp();
@@ -1286,6 +1480,11 @@ async function main(): Promise<void> {
       console.log('🔄 Test 4: Actuator Commands — SKIPPED');
       console.log('📬 Test 5: UDP Actuator Commands — SKIPPED');
       console.log('📬 Test 6: Elodin State Sync — SKIPPED');
+    }
+    if (HAS_CONTROLLER) {
+      await testControllerDataFlow();
+    } else {
+      console.log('\n📡 Test: Controller Data Flow — SKIPPED (controller_service not found)');
     }
   } finally {
     ws.close();

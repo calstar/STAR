@@ -66,7 +66,8 @@ static constexpr size_t DUAL_CMD_PACKET_SIZE = HEADER_SIZE + BODY_SIZE + CMD_SIZ
 
 ControllerService::ControllerService()
     : controller_(std::make_unique<RobustDDPController>()),
-      elodin_client_(std::make_unique<fsw::elodin::ElodinClient>()) {
+      elodin_client_(std::make_unique<fsw::elodin::ElodinClient>()),
+      elodin_subscriber_(std::make_unique<fsw::elodin::ElodinClient>()) {
 }
 
 ControllerService::~ControllerService() {
@@ -80,11 +81,10 @@ ControllerService::~ControllerService() {
 bool ControllerService::initialize(const PWMConfig& pwm_config,
                                    const RobustDDPController::Config& controller_config,
                                    const std::string& elodin_host, uint16_t elodin_port,
-                                   const std::string& relay_host, uint16_t relay_port,
                                    const std::string& lut_path,
                                    const std::string& thrust_curve_path) {
-    relay_host_ = relay_host;
-    relay_port_ = relay_port;
+    elodin_host_ = elodin_host;
+    elodin_port_ = elodin_port;
     pwm_config_ = pwm_config;
 
     // ── Create UDP socket for PWM commands ──────────────────────────────
@@ -118,15 +118,24 @@ bool ControllerService::initialize(const PWMConfig& pwm_config,
                   << std::endl;
     }
 
-    // ── Load PT calibration (for raw ADC → PSI in relay subscriber) ───────
-    pt_calibration_.load_calibration();
-    if (pt_calibration_.get_calibrated_count() > 0)
-        std::cout << "[ControllerService] ✅ PT calibration loaded ("
-                  << pt_calibration_.get_calibrated_count() << " channels)" << std::endl;
-    else
-        std::cout << "[ControllerService] ⚠️  No PT calibration files found — "
-                     "using linear ADC fallback"
-                  << std::endl;
+    // ── Elodin subscriber (dedicated read-only connection for calibrated PT) ──
+    if (!elodin_host.empty()) {
+        if (elodin_subscriber_->connect(elodin_host, elodin_port)) {
+            elodin_sub_connected_ = true;
+            // Subscribe to calibrated PT tables [0x20, 0x11..0x1A]
+            std::vector<std::pair<uint8_t, uint8_t>> cal_pt_tables;
+            for (uint8_t ch = 0x11; ch <= 0x1A; ++ch)
+                cal_pt_tables.push_back({0x20, ch});
+            elodin_subscriber_->subscribe_tables(cal_pt_tables);
+            std::cout << "[ControllerService] ✅ Elodin subscriber connected — "
+                         "subscribed to calibrated PT [0x20, 0x11-0x1A]"
+                      << std::endl;
+        } else {
+            std::cerr << "[ControllerService] ⚠️  Elodin subscriber connection failed — "
+                         "controller will not receive sensor data"
+                      << std::endl;
+        }
+    }
 
     // ── Initialize controller ───────────────────────────────────────────
     if (!controller_->initialize(controller_config)) {
@@ -189,7 +198,9 @@ bool ControllerService::start(double loop_rate_hz) {
     loop_interval_ms_ = 1000.0 / loop_rate_hz;
 
     controller_thread_ = std::thread(&ControllerService::controllerLoop, this);
-    relay_subscriber_thread_ = std::thread(&ControllerService::relaySubscriberLoop, this);
+    if (elodin_sub_connected_) {
+        elodin_subscriber_thread_ = std::thread(&ControllerService::elodinSubscriberLoop, this);
+    }
 
     std::cout << "[ControllerService] ✅ Started controller loop at " << loop_rate_hz << " Hz"
               << std::endl;
@@ -704,7 +715,9 @@ void ControllerService::controllerLoop() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  RELAY WEBSOCKET SUBSCRIBER
+//  DEPRECATED — RELAY WEBSOCKET SUBSCRIBER
+//  Replaced by direct Elodin DB subscription (elodinSubscriberLoop).
+//  This code is retained for reference but is no longer started.
 //  Minimal WebSocket client — connects to Elodin Relay (ws://host:port)
 //  and parses binary frames containing Elodin TABLE packets.
 // ═══════════════════════════════════════════════════════════════════════
@@ -895,17 +908,15 @@ void ControllerService::relaySubscriberLoop() {
 }
 
 void ControllerService::elodinSubscriberLoop() {
-    std::cout << "[ControllerService] 🎧 Elodin subscriber loop started." << std::endl;
-    // Subscribe to Elodin data streams
-    if (elodin_client_->is_connected()) {
-        elodin_client_->subscribe_stream();
-    }
+    std::cout << "[ControllerService] 🎧 Elodin subscriber loop started (dedicated subscriber client)."
+              << std::endl;
+    // Subscription already done in initialize() via subscribe_tables()
     std::vector<uint8_t> rx_buffer(8192);
 
-    while (running_ && elodin_client_->is_connected()) {
+    while (running_ && elodin_subscriber_->is_connected()) {
         // 8-byte Elodin header: len(4) ty(1) id_hi(1) id_lo(1) req_id(1)
         uint8_t header[8];
-        if (!elodin_client_->read_packet_header(header)) {
+        if (!elodin_subscriber_->read_packet_header(header)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
@@ -925,7 +936,7 @@ void ControllerService::elodinSubscriberLoop() {
         std::memcpy(rx_buffer.data(), header, 8);
 
         if (payload_len > 0) {
-            ssize_t read_bytes = elodin_client_->read_data(rx_buffer.data() + 8, payload_len);
+            ssize_t read_bytes = elodin_subscriber_->read_data(rx_buffer.data() + 8, payload_len);
             if (read_bytes != static_cast<ssize_t>(payload_len))
                 continue;
         }

@@ -117,9 +117,9 @@ export class WebSocketClient {
 
     // Core channels up to 32 to be safe
     for (let i = 1; i <= 32; i++) {
-      sensors.add(`PT_Cal.PT_CH${i}`);
-      sensors.add(`PT.PT_CH${i}`);
-      sensors.add(`ACT.ACT_CH${i}`);
+      sensors.add(`PT_Cal.CH${i}`);
+      sensors.add(`PT.CH${i}`);
+      sensors.add(`ACT.CH${i}`);
     }
 
     try {

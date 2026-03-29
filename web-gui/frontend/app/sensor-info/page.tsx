@@ -14,7 +14,8 @@ import { getEntityColor } from '@/lib/sensor-colors';
 
 interface PtSensor {
   label: string;
-  entity: string; // PT_Cal. namespace
+  rawEntity: string;  // PT.CH1 — for raw_adc_counts
+  calEntity: string;  // PT_Cal.CH1 — for pressure_psi
   color: string;
   channelId?: number;
   boardId?: number;
@@ -51,6 +52,11 @@ function fmtMa(v: number | null): string {
 function fmtForce(v: number | null): string {
   if (v === null || !isFinite(v)) return '---';
   return v.toFixed(2);
+}
+
+function fmtCurrent(v: number | null): string {
+  if (v === null || !isFinite(v)) return '---';
+  return v.toFixed(3);
 }
 
 function fmtResistance(v: number | null): string {
@@ -126,10 +132,10 @@ function SensorTable({
 // ── PT row ───────────────────────────────────────────────────────────────────
 
 function PtRow({ sensor }: { sensor: PtSensor }) {
-  const adc     = useSensorValue(sensor.entity, 'raw_adc_counts');
-  const psi     = useSensorValue(sensor.entity, 'pressure_psi');
-  const rateAdc = useSensorRate(sensor.entity, 'raw_adc_counts');
-  const ratePsi = useSensorRate(sensor.entity, 'pressure_psi');
+  const adc     = useSensorValue(sensor.rawEntity, 'raw_adc_counts');
+  const psi     = useSensorValue(sensor.calEntity, 'pressure_psi');
+  const rateAdc = useSensorRate(sensor.rawEntity, 'raw_adc_counts');
+  const ratePsi = useSensorRate(sensor.calEntity, 'pressure_psi');
   const rate    = Math.max(rateAdc, ratePsi);
 
   return (
@@ -159,11 +165,11 @@ function PtRow({ sensor }: { sensor: PtSensor }) {
 // ── HPT row ──────────────────────────────────────────────────────────────────
 
 function HptRow({ sensor }: { sensor: PtSensor }) {
-  const adc      = useSensorValue(sensor.entity, 'raw_adc_counts');
-  const psi      = useSensorValue(sensor.entity, 'pressure_psi');
-  const ma       = useSensorValue(sensor.entity, 'current_ma');
-  const rateAdc  = useSensorRate(sensor.entity, 'raw_adc_counts');
-  const ratePsi  = useSensorRate(sensor.entity, 'pressure_psi');
+  const adc      = useSensorValue(sensor.rawEntity, 'raw_adc_counts');
+  const psi      = useSensorValue(sensor.calEntity, 'pressure_psi');
+  const ma       = useSensorValue(sensor.calEntity, 'current_ma');
+  const rateAdc  = useSensorRate(sensor.rawEntity, 'raw_adc_counts');
+  const ratePsi  = useSensorRate(sensor.calEntity, 'pressure_psi');
   const rate     = Math.max(rateAdc, ratePsi);
 
   return (
@@ -275,6 +281,33 @@ function LcRow({ entity, label, color }: { entity: string; label: string; color:
   );
 }
 
+// ── ACT row ──────────────────────────────────────────────────────────────
+
+function ActRow({ entity, label, color }: { entity: string; label: string; color: string }) {
+  const raw  = useSensorValue(entity, 'raw_adc_counts');
+  const calEntity = entity.replace('ACT.', 'ACT_Cal.');
+  const currentA = useSensorValue(calEntity, 'current_a');
+  const rateRaw = useSensorRate(entity, 'raw_adc_counts');
+  const rateCal = useSensorRate(calEntity, 'current_a');
+  const rate = Math.max(rateRaw, rateCal);
+
+  return (
+    <tr className="border-b border-gray-800/40 hover:bg-gray-900/30 transition-colors">
+      <td className="px-4 py-2">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+          <span className="text-gray-200 font-sans font-medium text-xs">{label}</span>
+        </div>
+      </td>
+      <td className="px-4 py-2 tabular-nums text-purple-300">{fmtAdc(raw)}</td>
+      <td className="px-4 py-2 tabular-nums text-yellow-400">
+        {fmtCurrent(currentA)} <span className="text-gray-600 text-xs">A</span>
+      </td>
+      <td className="px-4 py-2 tabular-nums text-cyan-400">{fmtHz(rate)} <span className="text-gray-600 text-xs">Hz</span></td>
+    </tr>
+  );
+}
+
 // ── Channel builder from /api/config ─────────────────────────────────────────
 
 function buildChannels(boards: Record<string, any>, type: 'TC' | 'RTD' | 'LC'): number[] {
@@ -315,6 +348,7 @@ const SENSE_COLORS = ['#F59E0B', '#10B981', '#3B82F6', '#EC4899', '#F87171', '#A
 const TC_DEFAULT_CHANNELS  = [2, 3, 4, 5];   // tc_board  active_connectors
 const RTD_DEFAULT_CHANNELS = [1, 2, 3, 4];   // rtd_board active_connectors
 const LC_DEFAULT_CHANNELS  = [1, 2, 3];      // lc_board  active_connectors
+const ACT_DEFAULT_CHANNELS = Array.from({ length: 20 }, (_, i) => i + 1);  // actuator boards 12+14
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
@@ -371,6 +405,7 @@ export default function SensorInfoPage() {
   );
   const [rtdChannels, setRtdChannels] = useState<number[]>(RTD_DEFAULT_CHANNELS);
   const [lcChannels, setLcChannels] = useState<number[]>(LC_DEFAULT_CHANNELS);
+  const [actChannels, setActChannels] = useState<number[]>(ACT_DEFAULT_CHANNELS);
 
   const loadChannelConfig = useCallback(() => {
     fetch(`${getApiBaseUrl()}/api/config`)
@@ -389,6 +424,8 @@ export default function SensorInfoPage() {
         if (rtd.length) setRtdChannels(rtd);
         const lc = buildChannels(boards, 'LC');
         if (lc.length) setLcChannels(lc);
+        const act = buildChannels(boards, 'ACTUATOR');
+        if (act.length) setActChannels(act);
       })
       .catch(() => {/* keep defaults on failure */});
   }, []);
@@ -408,11 +445,13 @@ export default function SensorInfoPage() {
           .filter((s) => typeof s?.calEntity === 'string' && (s.calEntity as string).startsWith('PT_Cal.'))
           .map((s) => {
             const role = String(s.role || s.calEntity);
-            const entity = String(s.calEntity);
+            const calEntity = String(s.calEntity);
+            const rawEntity = String(s.entity);
             return {
               label: role,
-              entity,
-              color: getEntityColor(entity),
+              rawEntity,
+              calEntity,
+              color: getEntityColor(calEntity),
               channelId: typeof s.id === 'number' ? s.id : undefined,
               boardId: typeof s.boardId === 'number' ? s.boardId : undefined,
               boardIp: typeof s.boardIp === 'string' ? s.boardIp : undefined,
@@ -440,19 +479,21 @@ export default function SensorInfoPage() {
   // ── Board-level DAQ breakdown (approximate, from per-entity stream rates) ────
   const pt21Keys = ptSensors
     .filter((s) => (s.boardId ?? 21) === 21)
-    .map((s) => ({ entity: s.entity, component: 'pressure_psi' }));
+    .map((s) => ({ entity: s.calEntity, component: 'pressure_psi' }));
   const pt22Keys = hptSensors
     .filter((s) => (s.boardId ?? 22) === 22)
-    .map((s) => ({ entity: s.entity, component: 'pressure_psi' }));
+    .map((s) => ({ entity: s.calEntity, component: 'pressure_psi' }));
   const tcKeys = tcData.map((d) => ({ entity: d.entity, component: 'raw_adc_counts' }));
   const rtdKeys = rtdChannels.map((ch) => ({ entity: `RTD.CH${ch}`, component: 'raw_resistance_counts' }));
   const lcKeys = lcChannels.map((ch) => ({ entity: `LC.CH${ch}`, component: 'raw_adc_counts' }));
+  const actKeys = actChannels.map((ch) => ({ entity: `ACT.CH${ch}`, component: 'raw_adc_counts' }));
 
   const pt21Rate = useBoardRate(pt21Keys);
   const pt22Rate = useBoardRate(pt22Keys);
   const tcRate = useBoardRate(tcKeys);
   const rtdRate = useBoardRate(rtdKeys);
   const lcRate = useBoardRate(lcKeys);
+  const actRate = useBoardRate(actKeys);
 
   useEffect(() => {
     ws.connect();
@@ -491,7 +532,7 @@ export default function SensorInfoPage() {
             <div className="text-[10px] uppercase text-gray-500 tracking-widest mb-1">
               Board Total Rates (all channels summed)
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-x-4 gap-y-1">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-x-4 gap-y-1">
               <div>
                 <div className="text-[10px] text-gray-500">PT B21</div>
                 <div className="text-cyan-400">{fmtHz(pt21Rate)} Hz</div>
@@ -512,6 +553,10 @@ export default function SensorInfoPage() {
                 <div className="text-[10px] text-gray-500">LC B41</div>
                 <div className="text-cyan-400">{fmtHz(lcRate)} Hz</div>
               </div>
+              <div>
+                <div className="text-[10px] text-gray-500">ACT B12/14</div>
+                <div className="text-cyan-400">{fmtHz(actRate)} Hz</div>
+              </div>
             </div>
           </div>
         </div>
@@ -525,7 +570,7 @@ export default function SensorInfoPage() {
           {ptSensors.length === 0 ? (
             <tr><td colSpan={4} className="px-4 py-3 text-gray-600 text-xs">Loading PT roles…</td></tr>
           ) : (
-            ptSensors.map((s) => <PtRow key={s.entity} sensor={s} />)
+            ptSensors.map((s) => <PtRow key={s.calEntity} sensor={s} />)
           )}
         </SensorTable>
 
@@ -538,7 +583,7 @@ export default function SensorInfoPage() {
           {hptSensors.length === 0 ? (
             <tr><td colSpan={5} className="px-4 py-3 text-gray-600 text-xs">Loading HP PT roles…</td></tr>
           ) : (
-            hptSensors.map((s) => <HptRow key={s.entity} sensor={s} />)
+            hptSensors.map((s) => <HptRow key={s.calEntity} sensor={s} />)
           )}
         </SensorTable>
 
@@ -587,6 +632,22 @@ export default function SensorInfoPage() {
               key={ch}
               entity={`LC.CH${ch}`}
               label={`LC Ch${ch}`}
+              color={SENSE_COLORS[i % SENSE_COLORS.length]}
+            />
+          ))}
+        </SensorTable>
+
+        {/* ── ACT (Actuators – boards 12, 14) ──────────────────────────── */}
+        <SensorTable
+          title="ACT — Actuator Current Sense (Boards 12, 14)"
+          color="#EF4444"
+          headers={['Channel', 'ADC Code', 'Current', 'Rate']}
+        >
+          {actChannels.map((ch, i) => (
+            <ActRow
+              key={ch}
+              entity={`ACT.CH${ch}`}
+              label={`ACT Ch${ch}`}
               color={SENSE_COLORS[i % SENSE_COLORS.length]}
             />
           ))}

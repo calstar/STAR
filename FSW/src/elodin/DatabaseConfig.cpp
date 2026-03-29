@@ -152,8 +152,6 @@ bool DatabaseConfig::register_tables(ElodinClient& client,
         std::string entity = "ACT.CH" + std::to_string(ch);
         if (register_raw_sensor_vtable(client, 0x30, ch, 0x3000 + ch, entity, "raw_adc_counts"))
             registered++;
-        if (register_actuator_state_vtable(client, 0x31, ch, 0x3100 + ch, entity))
-            registered++;
     }
 
     for (uint8_t ch : tc_channels) {

@@ -140,7 +140,7 @@ export function buildAliasesFromConfig(config: any): void {
   const tcComponents = ['temperature_c', 'raw_adc_counts', 'raw_adc'];
   const rtdComponents = ['temperature_c', 'raw_resistance_counts', 'raw_resistance'];
   const lcComponents = ['force_kg', 'force_n', 'raw_adc_counts', 'raw_adc'];
-  const actComponents = ['raw_adc_counts', 'actuator_state', 'actuator_state_commanded', 'status'];
+  const actComponents = ['raw_adc_counts', 'actuator_state_commanded', 'current_a', 'status'];
 
   // Helper: add aliases for a sensor role with multiple prefixes and components
   const addSensorAliases = (name: string, channel: number, rawPrefix: string, calPrefix: string, components: string[]) => {
@@ -526,18 +526,13 @@ export function useGetSensorValue(): (entity: string, component: string) => numb
 
 /**
  * Commanded actuator state from Elodin DB.
- * Reads [0x32] commanded state first; falls back to [0x31] current-sense if no commanded data yet.
+ * Reads [0x32] commanded state (binary open/closed from sequencer).
  */
 export function useActuatorCommandedState(entity: string): ActuatorState | null {
-  // Both hooks must always be called (React rules of hooks — no early returns between hooks)
   const commanded = useSensorValue(entity, 'actuator_state_commanded');
-  const sensed = useSensorValue(entity, 'actuator_state');
 
   if (commanded != null && isFinite(commanded)) {
     return commanded === 1 ? ActuatorState.OPEN : ActuatorState.CLOSED;
-  }
-  if (sensed != null && isFinite(sensed)) {
-    return sensed === 1 ? ActuatorState.OPEN : ActuatorState.CLOSED;
   }
   return null;
 }

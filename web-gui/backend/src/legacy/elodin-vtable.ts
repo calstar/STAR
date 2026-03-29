@@ -68,14 +68,10 @@ export async function registerVTables(client: ElodinClient): Promise<boolean> {
       [0x23, 0x11], [0x23, 0x12], [0x23, 0x13], [0x23, 0x14], [0x23, 0x15],
       [0x23, 0x16], [0x23, 0x17], [0x23, 0x18], [0x23, 0x19], [0x23, 0x1A],
       [0x23, 0x1B], [0x23, 0x1C], [0x23, 0x1D], [0x23, 0x1E], [0x23, 0x1F], [0x23, 0x20],
-      // Actuator channels (0x30, 0x01-0x0A)
-      [0x30, 0x01], [0x30, 0x02], [0x30, 0x03], [0x30, 0x04], [0x30, 0x05],
-      [0x30, 0x06], [0x30, 0x07], [0x30, 0x08], [0x30, 0x09], [0x30, 0x0A],
-      // Actuator state (0=closed, 1=open) [0x31, 0x01-0x14]
-      [0x31, 0x01], [0x31, 0x02], [0x31, 0x03], [0x31, 0x04], [0x31, 0x05],
-      [0x31, 0x06], [0x31, 0x07], [0x31, 0x08], [0x31, 0x09], [0x31, 0x0A],
-      [0x31, 0x0B], [0x31, 0x0C], [0x31, 0x0D], [0x31, 0x0E], [0x31, 0x0F],
-      [0x31, 0x10], [0x31, 0x11], [0x31, 0x12], [0x31, 0x13], [0x31, 0x14],
+      // Actuator raw channels (0x30, 0x01-0x14) — 20 channels across boards 12 and 14
+      ...Array.from({ length: 20 }, (_, i) => [0x30, i + 1] as [number, number]),
+      // Actuator calibrated current (0x31, 0x11-0x24) — ACT_Cal channels 1-20
+      ...Array.from({ length: 20 }, (_, i) => [0x31, 0x11 + i] as [number, number]),
       // Actuator commanded state (sequencer publishes on state transitions) [0x32, global_ch]
       // Global channel = (board_id - 11) * 10 + local_channel (up to 4 boards × 10 channels = 40)
       ...Array.from({ length: 40 }, (_, i) => [0x32, i + 1] as [number, number]),
@@ -103,6 +99,17 @@ export async function registerVTables(client: ElodinClient): Promise<boolean> {
     // Try VTableStream
     const vtableStreamMsgId = computeMsgId("VTableStream");
     console.log(`   VTableStream message ID: [0x${vtableStreamMsgId[0].toString(16).padStart(2, '0')}, 0x${vtableStreamMsgId[1].toString(16).padStart(2, '0')}]`);
+
+    // Calibrated VTable subscriptions (low byte >= 0x10) may have been sent
+    // before calibration_service registered them with Elodin. Elodin silently
+    // drops subscriptions for unregistered VTables. Clear these on each retry
+    // so they get re-sent until they actually stick.
+    for (const key of [...subscribedPairs]) {
+      const [, lowStr] = key.split(',');
+      if (parseInt(lowStr, 10) >= 0x10) {
+        subscribedPairs.delete(key);
+      }
+    }
 
     let successCount = 0;
     let skippedCount = 0;

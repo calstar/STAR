@@ -38,6 +38,7 @@ TEST_BACKEND_WS_PORT="${TEST_BACKEND_WS_PORT:-8181}"
 TEST_BACKEND_API_PORT="${TEST_BACKEND_API_PORT:-8182}"
 TEST_ACTUATOR_UDP_PORT="${TEST_ACTUATOR_UDP_PORT:-5015}"
 TEST_STARTUP_LISTEN_PORT="${TEST_STARTUP_LISTEN_PORT:-5014}"
+TEST_CONTROLLER_PORT="${TEST_CONTROLLER_PORT:-9997}"
 TEST_DB_PATH="$REPO_ROOT/.tmp/elodin_integration_test_$$"
 TEST_CONFIG="$REPO_ROOT/.tmp/integration_config_$$.toml"
 UDP_COMMANDS_FILE="$REPO_ROOT/.tmp/udp_commands_$$.json"
@@ -46,9 +47,55 @@ SIM_STATS_FILE="$REPO_ROOT/.tmp/sim_stats_$$.json"
 # PIDs to clean up
 PIDS=()
 
+# Process names that the integration test launches. Used by both pre-flight
+# cleanup (kill zombies from a previous crashed run) and post-test cleanup.
+INTEGRATION_PROCESS_NAMES=(
+  daq_bridge
+  sequencer_service
+  heartbeat_service
+  config_broadcast_service
+  calibration_service
+  controller_service
+  board_simulator
+  board_startup_sim
+)
+
+# Kill any leftover processes from a previous integration test run that may
+# still be holding ports.  Only targets processes whose command line contains
+# our repo path or the well-known binary names, to avoid killing unrelated
+# processes.
+kill_stale_integration_processes() {
+  local label="${1:-}"
+  local killed=0
+  for name in "${INTEGRATION_PROCESS_NAMES[@]}"; do
+    # pkill -f matches the full command line; anchor to our repo to avoid
+    # killing unrelated system processes with similar names.
+    pkill -f "$REPO_ROOT.*$name" 2>/dev/null && killed=$((killed + 1)) || true
+  done
+  # Backend server (tsx src/server.ts) — match on the server.ts path
+  pkill -f "$REPO_ROOT/web-gui/backend.*server\.ts" 2>/dev/null && killed=$((killed + 1)) || true
+  # Elodin DB — match on the test DB path pattern
+  pkill -f "elodin.*integration_test" 2>/dev/null && killed=$((killed + 1)) || true
+  # Also kill any process bound to our test ports
+  for port in $TEST_ELODIN_PORT $TEST_DAQ_UDP_PORT $TEST_BACKEND_WS_PORT $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT; do
+    lsof -ti ":$port" 2>/dev/null | xargs kill 2>/dev/null || true
+  done
+  if [ "$killed" -gt 0 ]; then
+    sleep 1
+    # SIGKILL stragglers
+    for name in "${INTEGRATION_PROCESS_NAMES[@]}"; do
+      pkill -9 -f "$REPO_ROOT.*$name" 2>/dev/null || true
+    done
+    pkill -9 -f "$REPO_ROOT/web-gui/backend.*server\.ts" 2>/dev/null || true
+    pkill -9 -f "elodin.*integration_test" 2>/dev/null || true
+    [ -n "$label" ] && echo "  $label: killed $killed stale process group(s)"
+  fi
+}
+
 cleanup() {
   echo ""
   echo "🧹 Cleaning up..."
+  # First kill tracked PIDs (graceful, then force)
   for pid in "${PIDS[@]}"; do
     kill "$pid" 2>/dev/null || true
   done
@@ -56,6 +103,8 @@ cleanup() {
   for pid in "${PIDS[@]}"; do
     kill -9 "$pid" 2>/dev/null || true
   done
+  # Then sweep for anything that escaped PID tracking (e.g. child processes)
+  kill_stale_integration_processes
   if [ -n "${INTEGRATION_SAVE_LOGS:-}" ]; then
     mkdir -p /tmp/integration_logs
     cp "$REPO_ROOT/.tmp/integration_"*"_$$.log" /tmp/integration_logs/ 2>/dev/null || true
@@ -155,6 +204,8 @@ sleep 0.3
 for port in $TEST_ELODIN_PORT $TEST_BACKEND_WS_PORT $TEST_BACKEND_API_PORT; do
   kill_port "$port" tcp
 done
+# FSWConfigManager in daq_bridge binds to UDP 5008 (hardcoded); kill stale holders
+kill_port 5008 udp
 sleep 0.5
 
 # ── Build C++ binaries ───────────────────────────────────────────────────────
@@ -166,7 +217,7 @@ if [ ! -d "$FSW_BUILD_DIR" ]; then
   (cd "$FSW_BUILD_DIR" && cmake ..)
 fi
 (cd "$FSW_BUILD_DIR" && make -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)" \
-  daq_bridge sequencer_service heartbeat_service config_broadcast_service 2>&1) \
+  daq_bridge sequencer_service heartbeat_service config_broadcast_service calibration_service controller_service 2>&1) \
   || fail "C++ build failed"
 echo "  ✅ C++ binaries built"
 echo ""
@@ -220,6 +271,17 @@ if [ -n "$SEQ_SVC" ]; then
 else
   echo "  ⚠️  sequencer_service not found — state/actuator tests will be skipped"
   echo "       Build with: cd FSW/build && cmake .. && make sequencer_service"
+fi
+
+# Find controller_service (optional — controller tests skipped if absent)
+CONTROLLER_SVC=""
+for path in "$REPO_ROOT/build/FSW/controller_service" "$REPO_ROOT/FSW/build/controller_service" "$REPO_ROOT/build/controller_service"; do
+  [ -x "$path" ] && CONTROLLER_SVC="$path" && break
+done
+if [ -n "$CONTROLLER_SVC" ]; then
+  echo "  ✅ controller_service: $CONTROLLER_SVC"
+else
+  echo "  ⚠️  controller_service not found — controller tests will be skipped"
 fi
 
 # Find fake packet generator or board simulator (fallback)
@@ -309,6 +371,10 @@ sedi "s/^listen_port = 5005/listen_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFI
 sedi "s/^send_port = 5005/send_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
 
 # Integration-only: startup E2E (SETUP → SELF_TEST). Encoder uses production [boards.encoder_board_61] + IP sed above.
+# Set fallback duty cycles so controller publishes to Elodin even without sensor data
+sedi 's/^fallback_fuel_duty_cycle = 0.0/fallback_fuel_duty_cycle = 0.1/' "$TEST_CONFIG"
+sedi 's/^fallback_ox_duty_cycle = 0.0/fallback_ox_duty_cycle = 0.1/' "$TEST_CONFIG"
+
 cat >> "$TEST_CONFIG" << EOF
 
 [boards.integration_startup]
@@ -344,6 +410,9 @@ fi
 echo "  ✅ Test config: $TEST_CONFIG"
 echo "     DB port=$TEST_ELODIN_PORT  sensor_port=$TEST_DAQ_UDP_PORT  actuator_port=$TEST_ACTUATOR_UDP_PORT"
 echo ""
+
+# ── Pre-flight: kill zombies from previous crashed runs ──────────────────────
+kill_stale_integration_processes "Pre-flight"
 
 # ── Start Elodin DB ──────────────────────────────────────────────────────────
 
@@ -488,6 +557,24 @@ else
   echo "  ⚠️  calibration_service not found — calibrated data tests will show 0 entities"
 fi
 
+# ── Start Controller Service ─────────────────────────────────────────────────
+if [ -n "$CONTROLLER_SVC" ]; then
+  echo "🎛️  Starting controller_service..."
+  "$CONTROLLER_SVC" --config "$TEST_CONFIG" \
+    --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
+    --control-port "$TEST_CONTROLLER_PORT" \
+    > "$REPO_ROOT/.tmp/integration_controller_$$.log" 2>&1 &
+  PIDS+=($!)
+  sleep 1
+  if kill -0 "${PIDS[-1]}" 2>/dev/null; then
+    echo "  ✅ controller_service started (PID ${PIDS[-1]})"
+  else
+    echo "  ⚠️  controller_service failed to start. Log:"
+    tail -10 "$REPO_ROOT/.tmp/integration_controller_$$.log"
+    CONTROLLER_SVC=""
+  fi
+fi
+
 # ── Start Fake Data Generator ────────────────────────────────────────────────
 
 echo "🎭 Starting fake data generator..."
@@ -537,6 +624,7 @@ VERBOSE_FLAG=""
 RECEIVED_STATS_FILE="$REPO_ROOT/.tmp/received_stats_$$.json"
 [ "$VERBOSE" = "1" ] && VERBOSE_FLAG="--verbose"
 SEQ_FLAG=""; [ -n "$SEQ_SVC" ] && SEQ_FLAG="--has-sequencer"
+CTRL_FLAG=""; [ -n "$CONTROLLER_SVC" ] && CTRL_FLAG="--has-controller"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 export TEST_DAQ_UDP_PORT TEST_STARTUP_LISTEN_PORT BOARD_STARTUP_SIM="$REPO_ROOT/scripts/board_startup_sim.py" PYTHON_BIN
 export INTEGRATION_SKIP_STARTUP_E2E
@@ -549,7 +637,8 @@ export INTEGRATION_SKIP_STARTUP_E2E
   --udp-commands "$UDP_COMMANDS_FILE" \
   --seq-log "$REPO_ROOT/.tmp/integration_sequencer_$$.log" \
   --backend-log "$REPO_ROOT/.tmp/integration_backend_$$.log" \
-  --backend="$BACKEND" $SEQ_FLAG $VERBOSE_FLAG)
+  --controller-log "$REPO_ROOT/.tmp/integration_controller_$$.log" \
+  --backend="$BACKEND" $SEQ_FLAG $CTRL_FLAG $VERBOSE_FLAG)
 WS_TEST_EXIT=$?
 
 # ── Stop simulator and flush stats ────────────────────────────────────────────
@@ -602,6 +691,7 @@ echo "  Elodin DB:      $REPO_ROOT/.tmp/integration_elodin_$$.log"
 echo "  DAQ Bridge:     $REPO_ROOT/.tmp/integration_daq_$$.log"
 echo "  Backend:        $REPO_ROOT/.tmp/integration_backend_$$.log"
 [ -n "$SEQ_SVC" ] && echo "  Sequencer:      $REPO_ROOT/.tmp/integration_sequencer_$$.log"
+[ -n "$CONTROLLER_SVC" ] && echo "  Controller:     $REPO_ROOT/.tmp/integration_controller_$$.log"
 echo "  Calibration:    $REPO_ROOT/.tmp/integration_calibration_$$.log"
 echo "  Fake Gen:       $REPO_ROOT/.tmp/integration_fakegen_$$.log"
 echo "  UDP Listener:   $REPO_ROOT/.tmp/integration_udp_$$.log"

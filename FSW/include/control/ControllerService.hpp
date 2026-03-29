@@ -48,8 +48,6 @@ public:
      * @param controller_config Controller algorithm configuration
      * @param elodin_host      Elodin DB host (empty string = skip DB)
      * @param elodin_port      Elodin DB port (default 2240)
-     * @param relay_host       Elodin relay host for sensor data
-     * @param relay_port       Elodin relay port
      * @param lut_path         Optional path to LUT binary. If non-empty and load succeeds,
      *                         bypasses DDP and uses LUT for boolean control (u_safe_F/O > 0.5).
      * @param thrust_curve_path Optional path to thrust curve CSV (time_s,thrust_N). When set
@@ -59,7 +57,6 @@ public:
     bool initialize(const PWMConfig& pwm_config,
                     const RobustDDPController::Config& controller_config,
                     const std::string& elodin_host = "", uint16_t elodin_port = 2240,
-                    const std::string& relay_host = "127.0.0.1", uint16_t relay_port = 9090,
                     const std::string& lut_path = "", const std::string& thrust_curve_path = "");
 
     /** Start the controller loop at the given rate. */
@@ -122,6 +119,7 @@ private:
     // ── Controller loop ────────────────────────────────────────────────
     void controllerLoop();
     void elodinSubscriberLoop();
+    // DEPRECATED — relay WebSocket subscriber, replaced by direct Elodin subscription
     void relaySubscriberLoop();
 
     // ── State ──────────────────────────────────────────────────────────
@@ -138,15 +136,21 @@ private:
     // Optional LUT for boolean control (bypasses DDP when loaded)
     ControllerLUT lut_;
 
-    // Elodin DB (write-only; used for publishing actuation/diagnostics)
+    // Elodin DB — publisher (write-only; used for publishing actuation/diagnostics)
     std::unique_ptr<elodin::ElodinClient> elodin_client_;
     bool elodin_connected_ = false;
 
-    // Relay WebSocket (for reading PT sensor data)
+    // Elodin DB — subscriber (read-only; dedicated to receiving calibrated PT data)
+    std::unique_ptr<elodin::ElodinClient> elodin_subscriber_;
+    bool elodin_sub_connected_ = false;
+    std::string elodin_host_;
+    uint16_t elodin_port_ = 2240;
+
+    // DEPRECATED — Relay WebSocket (replaced by direct Elodin subscription above)
     std::string relay_host_ = "127.0.0.1";
     uint16_t relay_port_ = 9090;
 
-    // Inline PT calibration (raw ADC → PSI) — loaded from default JSON calibration files
+    // DEPRECATED — PT calibration was only used by relay subscriber for raw ADC → PSI
     fsw::calibration::PTCalibrationManager pt_calibration_;
 
     // PWM output

@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState } from 'react';
-import { useSensorStore, useActuatorCommandedState } from '@/lib/store';
+import { useSensorStore, useActuatorCommandedState, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { ActuatorState, CommandPayload } from '@/lib/types';
 import { useControlMode } from '@/lib/control-mode';
@@ -17,6 +17,8 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
   const ws = getWebSocketClient();
   const debugMode = useSensorStore((s) => s.debugMode);
   const commanded = useActuatorCommandedState(entity);
+  const calEntity = entity.replace('ACT.', 'ACT_Cal.');
+  const currentA = useSensorValue(calEntity, 'current_a');
   const [pending, setPending] = useState(false);
   const { controlEnabled } = useControlMode();
 
@@ -46,7 +48,11 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
       <div className="flex-1 flex items-center min-h-0 overflow-hidden pr-4 flex-shrink-0">
         <h3 className="font-bold tracking-wider text-text uppercase leading-tight truncate text-[9px] xl:text-[10px]">{name}</h3>
       </div>
-      <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden" />
+      <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden px-0.5">
+        <span className="text-[9px] tabular-nums text-yellow-400 font-mono">
+          {currentA != null && isFinite(currentA) ? `${currentA.toFixed(2)} A` : '--- A'}
+        </span>
+      </div>
       <div className="grid grid-cols-2 gap-0.5 flex-shrink-0 min-h-0">
         <button
           onClick={() => sendCommand(ActuatorState.OPEN)}

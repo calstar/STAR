@@ -120,6 +120,16 @@ static double convert_rtd_adc_to_temp_c(int32_t adc_raw, double adc_ref_voltage,
 }
 
 /**
+ * Actuator current-sense: 12-bit ADC → current (amps).
+ * 3.3V reference, V-to-I transfer function = 1:1.
+ */
+static double convert_act_adc_to_current(uint32_t adc_raw) {
+    constexpr double ADC_MAX_12BIT = 4095.0;
+    constexpr double V_REF = 3.3;
+    return (static_cast<double>(adc_raw) / ADC_MAX_12BIT) * V_REF;
+}
+
+/**
  * Ratiometric load cell: raw ADC → force (kg).
  * Reference = excitation, so voltage cancels: code_fs = (sensitivity * PGA_gain) * 2^31.
  * force = (code / code_fs) * full_scale_value.
@@ -201,7 +211,7 @@ int main(int argc, char* argv[]) {
 
     // Collect active channel numbers from config for VTable registration.
     // VTables use generic TYPE_Cal.CH<n> names — role names are frontend-only metadata.
-    std::set<uint8_t> pt_ch_set, tc_ch_set, rtd_ch_set, lc_ch_set, enc_ch_set;
+    std::set<uint8_t> pt_ch_set, tc_ch_set, rtd_ch_set, lc_ch_set, enc_ch_set, act_ch_set;
     {
         std::ifstream cfg(config_path);
         if (cfg.is_open()) {
@@ -226,6 +236,7 @@ int main(int argc, char* argv[]) {
                 else if (board_type == "RTD") target = &rtd_ch_set;
                 else if (board_type == "LC")  target = &lc_ch_set;
                 else if (board_type == "ENCODER") target = &enc_ch_set;
+                else if (board_type == "ACTUATOR") target = &act_ch_set;
                 if (target) {
                     for (int c : channels)
                         target->insert(static_cast<uint8_t>(c + ch_offset));
@@ -282,6 +293,7 @@ int main(int argc, char* argv[]) {
     std::vector<uint8_t> rtd_ch(rtd_ch_set.begin(), rtd_ch_set.end());
     std::vector<uint8_t> lc_ch(lc_ch_set.begin(), lc_ch_set.end());
     std::vector<uint8_t> enc_ch(enc_ch_set.begin(), enc_ch_set.end());
+    std::vector<uint8_t> act_ch(act_ch_set.begin(), act_ch_set.end());
 
     // Parse HP PT config (4-20 mA)
     std::set<uint8_t> hp_pt_channels;
@@ -514,7 +526,7 @@ int main(int argc, char* argv[]) {
         // Calibrated packets use low byte 0x10+ (e.g. [0x20, 0x13] = PT cal ch3).
         // Without this filter, we'd re-process our OWN calibrated output as raw ADC,
         // interpreting the float32 pressure/temperature as a uint32 ADC code → spikes.
-        if (type_hi < 0x20 || type_hi > 0x23)
+        if ((type_hi < 0x20 || type_hi > 0x23) && type_hi != 0x30)
             continue;
         if (type_lo >= 0x10)
             continue;  // skip calibrated packets (our own output)
@@ -625,6 +637,19 @@ int main(int argc, char* argv[]) {
                 ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(force_kg), raw_adc,
                 cal_status);
             elodin_client.publish(static_cast<uint16_t>(0x2300 | (0x10 + ch)), cal_msg);
+
+        } else if (type_hi == 0x30) {  // Actuator raw current-sense (12-bit ADC)
+            double current_a = convert_act_adc_to_current(raw_adc);
+            uint8_t cal_status = 1;
+            if (verbose() && packet_count % 100 == 0)
+                std::cout << "[Cal] ACT ch" << (int)ch << " adc=" << raw_adc
+                          << " current=" << current_a << "A" << std::endl;
+            comms::messages::sensor::CalibratedACTMessage cal_msg(
+                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(current_a), raw_adc,
+                cal_status);
+            // Use 0x31 for calibrated actuator (not 0x30+0x10, since 20 raw channels would collide)
+            // Low byte = 0x10 + ch to match register_calibrated_vtable convention
+            elodin_client.publish(static_cast<uint16_t>(0x3100 | (0x10 + ch)), cal_msg);
         }
 
         elodin_client.flush_batch();

@@ -111,6 +111,25 @@ bool ElodinClient::subscribe_stream() {
     return true;
 }
 
+bool ElodinClient::subscribe_tables(const std::vector<std::pair<uint8_t, uint8_t>>& table_ids) {
+    std::array<uint8_t, 2> msgstream_id = {0x11, 0x0d};
+
+    for (const auto& [hi, lo] : table_ids) {
+        std::vector<uint8_t> data(10, 0x00);
+        uint32_t len = 2 + 4;
+        std::memcpy(data.data(), &len, 4);
+        data[4] = static_cast<uint8_t>(fsw::elodin::PacketType::MSG);
+        data[5] = msgstream_id[0];
+        data[6] = msgstream_id[1];
+        data[7] = 0x00;
+        data[8] = hi;
+        data[9] = lo;
+        send_msg(msgstream_id, data);
+    }
+
+    return true;
+}
+
 void ElodinClient::begin_batch() {
     batching_ = true;
     batch_buffer_.clear();

@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react';
-import { useSensorStore, useActuatorCommandedState } from '@/lib/store';
+import { useSensorStore, useActuatorCommandedState, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { ActuatorId, ActuatorState, CommandPayload, SystemState } from '@/lib/types';
 import { useControlMode } from '@/lib/control-mode';
@@ -98,6 +98,8 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
   const entity = ACTUATOR_ENTITIES[actuatorId];
   const ch = ACTUATOR_CHANNELS[actuatorId];
   const commanded = useActuatorCommandedState(entity);
+  const calEntity = entity.replace('ACT.', 'ACT_Cal.');
+  const currentA = useSensorValue(calEntity, 'current_a');
 
   const canControl = debugMode && controlEnabled;
 
@@ -128,7 +130,11 @@ export default function ActuatorControl({ actuatorId }: ActuatorControlProps) {
         </h3>
       </div>
 
-      <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden" />
+      <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden px-0.5">
+        <span className="text-[9px] tabular-nums text-yellow-400 font-mono">
+          {currentA != null && isFinite(currentA) ? `${currentA.toFixed(2)} A` : '--- A'}
+        </span>
+      </div>
 
       <div className="grid grid-cols-2 gap-0.5 flex-shrink-0 min-h-0">
         <button

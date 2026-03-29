@@ -51,6 +51,20 @@ using CalibratedLCMessage = CommsMessage<uint64_t,                // (0) timesta
                                          uint8_t    // (5) calibration_status — 0=uncal, 1=cal
                                          >;
 
+/**
+ * @brief Calibrated Actuator current-sense message for Elodin
+ *
+ * 12-bit ADC, 3.3V ref, V-to-I transfer = 1:1.
+ * Layout: uint64_t(8) + uint8_t(1) + pad[3](3) + float(4) + uint32_t(4) + uint8_t(1) = 21 bytes
+ */
+using CalibratedACTMessage = CommsMessage<uint64_t,                // (0) timestamp_ns
+                                          uint8_t,                 // (1) channel_id
+                                          std::array<uint8_t, 3>,  // (2) padding
+                                          float,    // (3) current_a — current in amps
+                                          uint32_t, // (4) raw_adc_counts — for reference
+                                          uint8_t   // (5) calibration_status — 0=uncal, 1=cal
+                                          >;
+
 }  // namespace sensor
 }  // namespace messages
 }  // namespace comms

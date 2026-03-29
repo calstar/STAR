@@ -946,12 +946,8 @@ int main(int argc, char* argv[]) {
             }
             case BoardType::ACTUATOR: {
                 int ch_offset = effective_cfg ? effective_cfg->channel_offset : 0;
-                // NOTE: Actuator boards report raw ADC current-sense readings, not
-                // discrete on/off state.  We derive open/closed by thresholding
-                // the current draw — this is a heuristic, not authoritative.
-                // A solenoid drawing current above the threshold is *likely* open,
-                // but the raw ADC value ([0x30]) is the ground truth from the board.
-                constexpr uint32_t ACT_STATE_ADC_THRESHOLD = 1500;  // above = open (1)
+                // Actuator boards report raw ADC current-sense readings (12-bit, 3.3V ref).
+                // Calibration service converts to current (amps) via [0x30, 0x10+ch].
                 for (const auto& sample : batch.value().pt_samples) {
                     uint8_t ch = static_cast<uint8_t>(sample.channel_id + ch_offset);
                     std::array<uint8_t, 2> act_pkt = {0x30, ch};
@@ -964,17 +960,6 @@ int main(int argc, char* argv[]) {
                     msg.setField<5>(sample.status_flags);
                     if (publishing && is_publish_allowed(act_pkt[0], act_pkt[1], publish_ranges))
                         elodin_client.publish(act_pkt, msg);
-                    // Publish actuator state (0=closed, 1=open) to [0x31, ch]
-                    std::array<uint8_t, 2> state_pkt = {0x31, ch};
-                    if (publishing &&
-                        is_publish_allowed(state_pkt[0], state_pkt[1], publish_ranges)) {
-                        comms::messages::sensor::ActuatorStateMessage state_msg;
-                        state_msg.setField<0>(receive_timestamp_ns);
-                        state_msg.setField<1>(ch);
-                        state_msg.setField<2>(sample.raw_adc_counts > ACT_STATE_ADC_THRESHOLD ? 1
-                                                                                              : 0);
-                        elodin_client.publish(state_pkt, state_msg);
-                    }
                 }
                 break;
             }

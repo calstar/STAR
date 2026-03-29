@@ -261,8 +261,6 @@ int main(int argc, char* argv[]) {
     std::string config_path = "../../config/config.toml";
     std::string elodin_host = "";  // empty = use config.toml [database].host
     uint16_t elodin_port = 0;      // 0 = use config.toml [database].port
-    std::string relay_host = "127.0.0.1";
-    uint16_t relay_port = 9090;
     uint16_t control_port = 0;  // 0 = use config.toml [controller_service].port
     double thrust_desired = 1000.0;
     bool elodin_host_from_cli = false;
@@ -284,10 +282,6 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--elodin-port" && i + 1 < argc) {
             elodin_port = static_cast<uint16_t>(std::atoi(argv[++i]));
             elodin_port_from_cli = true;
-        } else if (arg == "--relay-host" && i + 1 < argc) {
-            relay_host = argv[++i];
-        } else if (arg == "--relay-port" && i + 1 < argc) {
-            relay_port = static_cast<uint16_t>(std::atoi(argv[++i]));
         } else if (arg == "--control-port" && i + 1 < argc) {
             control_port = static_cast<uint16_t>(std::atoi(argv[++i]));
         } else if (arg == "--thrust" && i + 1 < argc) {
@@ -512,7 +506,7 @@ int main(int argc, char* argv[]) {
     if (!thrust_curve_path.empty())
         std::cout << "  Thrust curve:   " << thrust_curve_path << std::endl;
 
-    if (!service.initialize(pwm, ctrl_cfg, elodin_host, elodin_port, relay_host, relay_port,
+    if (!service.initialize(pwm, ctrl_cfg, elodin_host, elodin_port,
                             lut_path, thrust_curve_path)) {
         std::cerr << "❌ Failed to initialize controller service" << std::endl;
         return 1;
