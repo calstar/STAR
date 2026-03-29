@@ -121,11 +121,11 @@ let ALIASES: Record<string, string[]> = { ...STATIC_ALIASES };
  * Called when /api/config response arrives.
  *
  * For each role like "Fuel Upstream" = 1 in [sensor_roles_pt_board]:
- *   PT_Cal.Fuel_Upstream.* → PT_Cal.CH1.*
- *   PT.Fuel_Upstream.*     → PT.CH1.*
+ *   PT1_Cal.Fuel_Upstream.* → PT1_Cal.CH1.*
+ *   PT1.Fuel_Upstream.*     → PT1.CH1.*
  *
  * For actuator_roles like "LOX Main" = ["NC", 1, 12]:
- *   ACT.LOX_Main.* → ACT.CH<global_ch>.*
+ *   ACT2.LOX_Main.* → ACT2.CH1.*
  */
 export function buildAliasesFromConfig(config: any): void {
   const aliases: Record<string, string[]> = { ...STATIC_ALIASES };
@@ -141,6 +141,7 @@ export function buildAliasesFromConfig(config: any): void {
   const rtdComponents = ['temperature_c', 'raw_resistance_counts', 'raw_resistance'];
   const lcComponents = ['force_kg', 'force_n', 'raw_adc_counts', 'raw_adc'];
   const actComponents = ['raw_adc_counts', 'actuator_state_commanded', 'current_a', 'status'];
+  const actCmdComponents = ['actuator_state_commanded'];
 
   // Helper: add aliases for a sensor role with multiple prefixes and components
   const addSensorAliases = (name: string, channel: number, rawPrefix: string, calPrefix: string, components: string[]) => {
@@ -152,14 +153,14 @@ export function buildAliasesFromConfig(config: any): void {
   };
 
   const boards = config?.boards || {};
-  const sensorSections: Record<string, { rawPrefix: string; calPrefix: string; components: string[]; offset: number }> = {};
 
   // Map board keys to their sensor type info
   for (const [boardKey, boardRaw] of Object.entries(boards)) {
     const board = boardRaw as any;
     if (board.enabled === false) continue;
     const type = board.type as string;
-    const offset = board.channel_offset ?? 0;
+    const boardId = typeof board.board_id === 'number' ? board.board_id : 1;
+    const boardNumber = boardId % 10;
 
     // Look for sensor_roles_<boardKey> section in config
     const rolesKey = `sensor_roles_${boardKey}`;
@@ -167,29 +168,29 @@ export function buildAliasesFromConfig(config: any): void {
     if (!roles || typeof roles !== 'object') continue;
 
     let rawPrefix = '', calPrefix = '', components: string[] = [];
-    if (type === 'PT') { rawPrefix = 'PT'; calPrefix = 'PT_Cal'; components = ptComponents; }
-    else if (type === 'TC') { rawPrefix = 'TC'; calPrefix = 'TC_Cal'; components = tcComponents; }
-    else if (type === 'RTD') { rawPrefix = 'RTD'; calPrefix = 'RTD_Cal'; components = rtdComponents; }
-    else if (type === 'LC') { rawPrefix = 'LC'; calPrefix = 'LC_Cal'; components = lcComponents; }
+    if (type === 'PT') { rawPrefix = `PT${boardNumber}`; calPrefix = `PT${boardNumber}_Cal`; components = ptComponents; }
+    else if (type === 'TC') { rawPrefix = `TC${boardNumber}`; calPrefix = `TC${boardNumber}_Cal`; components = tcComponents; }
+    else if (type === 'RTD') { rawPrefix = `RTD${boardNumber}`; calPrefix = `RTD${boardNumber}_Cal`; components = rtdComponents; }
+    else if (type === 'LC') { rawPrefix = `LC${boardNumber}`; calPrefix = `LC${boardNumber}_Cal`; components = lcComponents; }
     else continue;
 
     for (const [roleName, channelId] of Object.entries(roles)) {
       const ch = typeof channelId === 'number' ? channelId : Number(channelId);
       if (!isFinite(ch)) continue;
-      addSensorAliases(roleName, ch + offset, rawPrefix, calPrefix, components);
+      addSensorAliases(roleName, ch, rawPrefix, calPrefix, components);
     }
   }
 
-  // sensor_roles_pt2 (HP PT — offset by 10)
+  // sensor_roles_pt2 (HP PT — board_id 22 → board_number 2)
   const pt2Roles = config.sensor_roles_pt2 as Record<string, number> | undefined;
   if (pt2Roles && typeof pt2Roles === 'object') {
     for (const [name, connector] of Object.entries(pt2Roles)) {
-      const ch = (typeof connector === 'number' ? connector : Number(connector)) + 10;
-      if (isFinite(ch)) addSensorAliases(name, ch, 'PT', 'PT_Cal', ptComponents);
+      const ch = typeof connector === 'number' ? connector : Number(connector);
+      if (isFinite(ch)) addSensorAliases(name, ch, 'PT2', 'PT2_Cal', ptComponents);
     }
   }
 
-  // Actuator roles
+  // Actuator roles — board-namespaced: ACT2.CH1, ACT4.CH3
   const actRoles = config.actuator_roles as Record<string, any> | undefined;
   if (actRoles && typeof actRoles === 'object') {
     for (const [name, value] of Object.entries(actRoles)) {
@@ -197,25 +198,27 @@ export function buildAliasesFromConfig(config: any): void {
       if (arr.length < 2) continue;
       const localCh = typeof arr[1] === 'number' ? arr[1] : Number(arr[1]);
       const boardId = arr.length >= 3 && typeof arr[2] === 'number' ? arr[2] : 12;
-      // Global channel: (board_id - 11) * 10 + local_channel
-      const globalCh = (boardId - 11) * 10 + localCh;
-      if (!isFinite(globalCh) || globalCh < 1) continue;
+      const boardNumber = boardId % 10;
+      if (!isFinite(localCh) || localCh < 1) continue;
       const entityName = name.replace(/\s+/g, '_');
       for (const comp of actComponents) {
-        addAlias(`ACT.${entityName}.${comp}`, `ACT.CH${globalCh}.${comp}`);
+        addAlias(`ACT${boardNumber}.${entityName}.${comp}`, `ACT${boardNumber}.CH${localCh}.${comp}`);
+      }
+      for (const comp of actCmdComponents) {
+        addAlias(`ACT_CMD.B${boardNumber}.${entityName}.${comp}`, `ACT_CMD.B${boardNumber}.CH${localCh}.${comp}`);
       }
     }
   }
 
-  // Encoder roles
+  // Encoder roles — board_id 61 → board_number 1
   const encRoles = config.sensor_roles_encoder_board as Record<string, number> | undefined;
   if (encRoles && typeof encRoles === 'object') {
     for (const [name, ch] of Object.entries(encRoles)) {
       const channel = typeof ch === 'number' ? ch : Number(ch);
       if (!isFinite(channel)) continue;
       const entityName = name.replace(/\s+/g, '_');
-      addAlias(`ENC.${entityName}.raw_angle`, `ENC.CH${channel}.raw_angle`);
-      addAlias(`ENC_Cal.${entityName}.position_deg`, `ENC_Cal.CH${channel}.position_deg`);
+      addAlias(`ENC1.${entityName}.raw_angle`, `ENC1.CH${channel}.raw_angle`);
+      addAlias(`ENC1_Cal.${entityName}.position_deg`, `ENC1_Cal.CH${channel}.position_deg`);
     }
   }
 

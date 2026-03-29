@@ -93,20 +93,17 @@ bool ElodinClient::subscribe_stream() {
         send_msg(msgstream_id, data);
     };
 
-    // Subscribe to RAW sensor VTables only — calibrated output is published by us,
-    // no need to subscribe (and re-receiving our own output wastes bandwidth).
-    // PT Raw (0x20, 0x01-0x0E) — channels 1-10 (LP) + 11-14 (HP)
-    for (uint8_t ch = 1; ch <= 14; ++ch)
-        subscribe(0x20, ch);
-    // TC Raw (0x21, 0x01-0x10)
-    for (uint8_t ch = 1; ch <= 0x10; ++ch)
-        subscribe(0x21, ch);
-    // RTD Raw (0x22, 0x01-0x10)
-    for (uint8_t ch = 1; ch <= 0x10; ++ch)
-        subscribe(0x22, ch);
-    // LC Raw (0x23, 0x01-0x10)
-    for (uint8_t ch = 1; ch <= 0x10; ++ch)
-        subscribe(0x23, ch);
+    // Subscribe to RAW sensor VTables using board-namespaced 32-slot blocks.
+    // Each board gets a 32-slot block: raw channels at (board_number-1)*0x20 + 1..10
+    // Subscribe to boards 1-8 for each sensor type to cover all possible boards.
+    const uint8_t sensor_types[] = {0x20, 0x21, 0x22, 0x23, 0x24, 0x30};
+    for (uint8_t type_hi : sensor_types) {
+        for (int bn = 1; bn <= 8; ++bn) {
+            uint8_t base = static_cast<uint8_t>((bn - 1) * 0x20);
+            for (uint8_t ch = 1; ch <= 10; ++ch)
+                subscribe(type_hi, static_cast<uint8_t>(base + ch));
+        }
+    }
 
     return true;
 }

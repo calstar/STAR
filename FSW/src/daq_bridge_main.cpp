@@ -66,7 +66,6 @@ struct BoardConfig {
     int num_sensors;
     bool enabled;
     int board_id;            // Added board_id
-    int channel_offset = 0;  // For PT board 2 (HP): connector 1 → global ch 11
 };
 
 struct ServerHeartbeatConfig {
@@ -77,7 +76,7 @@ struct ServerHeartbeatConfig {
 };
 
 // Ordered list of (ip, config) for enabled boards in parse order. Used when board_simulator
-// falls back to 127.0.0.2, 127.0.0.3, ... so each simulated board gets correct channel_offset.
+// falls back to 127.0.0.2, 127.0.0.3, ... so each simulated board gets correct board_id.
 using BoardOrder = std::vector<std::pair<std::string, BoardConfig>>;
 
 // Minimal config parse: [database] host/port, [network] sensor_port/bind_ip, [server_heartbeat],
@@ -97,7 +96,6 @@ static void load_board_map_from_config(const std::string& config_path,
     std::string board_type_str, board_ip;
     int board_num_sensors = 10;
     int board_id = -1;  // Added board_id
-    int board_channel_offset = 0;
     bool board_enabled = true;
     auto add_board = [&]() {
         if (board_ip.empty())
@@ -117,7 +115,7 @@ static void load_board_map_from_config(const std::string& config_path,
             bt = BoardType::ENCODER;
         if (bt != BoardType::UNKNOWN) {
             BoardConfig cfg{
-                bt, board_ip, board_num_sensors, board_enabled, board_id, board_channel_offset};
+                bt, board_ip, board_num_sensors, board_enabled, board_id};
             board_map[board_ip] = cfg;
             if (out_board_order && board_enabled)
                 out_board_order->emplace_back(board_ip, std::move(cfg));
@@ -125,7 +123,6 @@ static void load_board_map_from_config(const std::string& config_path,
         board_ip.clear();
         board_type_str.clear();
         board_id = -1;
-        board_channel_offset = 0;
     };
     while (std::getline(f, line)) {
         size_t c = line.find('#');
@@ -142,7 +139,7 @@ static void load_board_map_from_config(const std::string& config_path,
             add_board();
             current_section = line.substr(1, line.size() - 2);
             board_num_sensors = 10;
-            board_id = -1;  // Reset board_id for new section
+            board_id = -1;
             board_enabled = true;
             continue;
         }
@@ -188,8 +185,6 @@ static void load_board_map_from_config(const std::string& config_path,
                 board_num_sensors = std::stoi(val);
             else if (key == "board_id")
                 board_id = std::stoi(val);  // Parse board_id
-            else if (key == "channel_offset")
-                board_channel_offset = std::stoi(val);
             else if (key == "enabled")
                 board_enabled = (val == "true" || val == "1");
         }
@@ -199,232 +194,101 @@ static void load_board_map_from_config(const std::string& config_path,
     // 127.0.0.2, 127.0.0.3, ... (one per board). board_order maps index→config for that fallback.
 }
 
-// Config-driven publish allowlist: [routing.*] packet_id + channels, [daq_bridge] publish = [...]
-// Emulates backend (server.ts) loading mapping from config; no fixed hex codes in code.
-struct PublishRange {
-    uint8_t high;
-    uint8_t low_max;  // allow low byte 0x01 .. low_max (1-based channel count)
-};
-static std::vector<PublishRange> load_publish_ranges(const std::string& config_path) {
-    std::vector<PublishRange> out;
-    std::map<std::string, std::pair<uint8_t, int>> routing;  // name -> (high, channels)
-    std::set<std::string> publish_names;
+// Collect active boards with their local channels per sensor type from config.toml [boards.*].
+// Returns a map from BoardType to a vector of BoardChannels (one per enabled board).
+// No channel_offset — channels are local connector IDs (1-10).
+using BoardChannels = fsw::elodin::BoardChannels;
+
+static std::map<BoardType, std::vector<BoardChannels>> load_active_boards(
+    const std::string& config_path) {
+    std::map<BoardType, std::vector<BoardChannels>> result;
+
     std::ifstream f(config_path);
-    if (!f.is_open())
-        return out;
-    std::string line, current_section;
-    auto parse_hex_byte = [](const std::string& s) -> int {
-        if (s.size() >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
-            return static_cast<int>(std::strtoul(s.c_str(), nullptr, 16));
+    if (!f.is_open()) return result;
+
+    std::string line, section;
+    std::string board_type_str;
+    int board_id = -1;
+    bool board_enabled = true;
+    std::vector<uint8_t> active_conn;
+    int num_sensors = 10;
+
+    auto flush = [&]() {
+        if (board_type_str.empty() || !board_enabled || board_id < 0) return;
+        BoardType bt = BoardType::UNKNOWN;
+        if (board_type_str == "PT")       bt = BoardType::PT;
+        else if (board_type_str == "TC")  bt = BoardType::TC;
+        else if (board_type_str == "RTD") bt = BoardType::RTD;
+        else if (board_type_str == "LC")  bt = BoardType::LC;
+        else if (board_type_str == "ENCODER") bt = BoardType::ENCODER;
+        else if (board_type_str == "ACTUATOR") bt = BoardType::ACTUATOR;
+        if (bt == BoardType::UNKNOWN) return;
+
+        BoardChannels bc;
+        bc.board_id = static_cast<uint8_t>(board_id);
+        bc.board_number = static_cast<uint8_t>(board_id % 10);
+        if (!active_conn.empty()) {
+            bc.channels = active_conn;
+        } else {
+            for (int i = 1; i <= num_sensors; i++)
+                bc.channels.push_back(static_cast<uint8_t>(i));
         }
-        return static_cast<int>(std::strtoul(s.c_str(), nullptr, 10));
+        result[bt].push_back(std::move(bc));
     };
-    auto parse_array_first_byte = [&parse_hex_byte](const std::string& val) -> int {
-        size_t i = val.find('0');
-        if (i == std::string::npos)
-            return -1;
-        size_t j = val.find_first_of(",]", i);
-        std::string sub = (j != std::string::npos) ? val.substr(i, j - i) : val.substr(i);
-        return parse_hex_byte(sub);
-    };
+
     while (std::getline(f, line)) {
         size_t c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
-            line.pop_back();
+        if (c != std::string::npos) line = line.substr(0, c);
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\r')) line.pop_back();
         size_t start = line.find_first_not_of(" \t");
-        if (start != std::string::npos)
-            line = line.substr(start);
-        if (line.empty())
-            continue;
+        if (start != std::string::npos) line = line.substr(start);
+        if (line.empty()) continue;
+
         if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
-            current_section = line.substr(1, line.size() - 2);
+            flush();
+            section = line.substr(1, line.size() - 2);
+            if (section.rfind("boards.", 0) == 0) {
+                board_type_str.clear(); board_id = -1; board_enabled = true;
+                active_conn.clear(); num_sensors = 10;
+            } else {
+                board_type_str.clear();
+            }
             continue;
         }
+        if (section.rfind("boards.", 0) != 0) continue;
+
         size_t eq = line.find('=');
-        if (eq == std::string::npos)
-            continue;
+        if (eq == std::string::npos) continue;
         std::string key = line.substr(0, eq);
         std::string val = line.substr(eq + 1);
-        while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
-            key.pop_back();
-        while (!val.empty() && val[0] == ' ')
-            val.erase(0, 1);
-        if (current_section.compare(0, 8, "routing.") == 0) {
-            std::string rname = current_section.substr(8);
-            if (key == "packet_id") {
-                int high = parse_array_first_byte(val);
-                if (high >= 0 && high <= 255) {
-                    auto& p = routing[rname];
-                    p.first = static_cast<uint8_t>(high);
-                    if (p.second == 0)
-                        p.second = 10;
-                }
-            } else if (key == "channels") {
-                int ch = parse_hex_byte(val);
-                if (ch > 0 && ch <= 255)
-                    routing[current_section.substr(8)].second = ch;
-            }
-        } else if (current_section == "daq_bridge" && key == "publish") {
-            // Parse ["pt_raw", "actuator_status"] - extract quoted tokens
-            for (size_t i = 0; i < val.size(); ++i) {
-                if (val[i] == '"') {
-                    size_t j = val.find('"', i + 1);
-                    if (j != std::string::npos) {
-                        publish_names.insert(val.substr(i + 1, j - i - 1));
-                        i = j;
-                    }
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+        while (!val.empty() && val[0] == ' ') val.erase(0, 1);
+
+        if (key == "type") {
+            if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
+                val = val.substr(1, val.size() - 2);
+            board_type_str = val;
+        } else if (key == "enabled" && val == "false") {
+            board_enabled = false;
+        } else if (key == "board_id") {
+            try { board_id = std::stoi(val); } catch (...) {}
+        } else if (key == "num_sensors") {
+            try { num_sensors = std::stoi(val); } catch (...) {}
+        } else if (key == "active_connectors") {
+            size_t b = val.find('['), e = val.find(']');
+            if (b != std::string::npos && e != std::string::npos) {
+                std::string inner = val.substr(b + 1, e - b - 1);
+                std::istringstream iss(inner);
+                std::string tok;
+                while (std::getline(iss, tok, ',')) {
+                    try { active_conn.push_back(static_cast<uint8_t>(std::stoi(tok))); } catch (...) {}
                 }
             }
         }
     }
-    for (const auto& name : publish_names) {
-        auto it = routing.find(name);
-        if (it != routing.end() && it->second.second > 0) {
-            uint8_t low_max = static_cast<uint8_t>(std::min(255, it->second.second));
-            out.push_back({it->second.first, low_max});
-        }
-    }
-    return out;
-}
-static bool is_publish_allowed(uint8_t high, uint8_t low, const std::vector<PublishRange>& ranges) {
-    if (low < 0x01)
-        return false;
-    for (const auto& r : ranges) {
-        if (r.high == high && low <= r.low_max)
-            return true;
-    }
-    return false;
-}
+    flush();
 
-// Collect active channel numbers per sensor type from config.toml [boards.*] sections.
-// Uses active_connectors if present, otherwise num_sensors (channels 1..N).
-// Applies channel_offset for boards that have it (e.g. actuator_board_4 offset=10).
-// Role names are NOT needed here — VTables use generic TYPE.CH<n> names.
-struct ActiveChannels {
-    std::set<uint8_t> pt, act, tc, rtd, lc, enc;
-};
-
-static ActiveChannels load_active_channels(const std::string& config_path,
-                                           const std::map<std::string, BoardConfig>& board_map) {
-    ActiveChannels ch;
-
-    for (const auto& [ip, cfg] : board_map) {
-        if (!cfg.enabled) continue;
-
-        // Build channel list: active_connectors if available, else 1..num_sensors
-        // (active_connectors is parsed in load_board_map_from_config but not stored in BoardConfig,
-        //  so we use num_sensors here and rely on the board_map having correct info)
-        std::vector<int> channels;
-        for (int i = 1; i <= cfg.num_sensors; i++)
-            channels.push_back(i);
-
-        int offset = cfg.channel_offset;
-
-        switch (cfg.type) {
-            case BoardType::PT:
-                for (int c : channels) ch.pt.insert(static_cast<uint8_t>(c + offset));
-                break;
-            case BoardType::ACTUATOR:
-                for (int c : channels) ch.act.insert(static_cast<uint8_t>(c + offset));
-                break;
-            case BoardType::TC:
-                for (int c : channels) ch.tc.insert(static_cast<uint8_t>(c + offset));
-                break;
-            case BoardType::RTD:
-                for (int c : channels) ch.rtd.insert(static_cast<uint8_t>(c + offset));
-                break;
-            case BoardType::LC:
-                for (int c : channels) ch.lc.insert(static_cast<uint8_t>(c + offset));
-                break;
-            case BoardType::ENCODER:
-                for (int c : channels) ch.enc.insert(static_cast<uint8_t>(c + offset));
-                break;
-            default:
-                break;
-        }
-    }
-
-    // Also parse active_connectors from config (board_map doesn't store them)
-    // to narrow down channels when only specific connectors are wired.
-    std::ifstream f(config_path);
-    if (f.is_open()) {
-        std::string line, section;
-        std::string board_type;
-        int ch_offset = 0;
-        bool board_enabled = true;
-        std::vector<int> active_conn;
-
-        auto flush = [&]() {
-            if (board_type.empty() || !board_enabled || active_conn.empty()) return;
-            std::set<uint8_t>* target = nullptr;
-            if (board_type == "PT")       target = &ch.pt;
-            else if (board_type == "ACTUATOR") target = &ch.act;
-            else if (board_type == "TC")  target = &ch.tc;
-            else if (board_type == "RTD") target = &ch.rtd;
-            else if (board_type == "LC")  target = &ch.lc;
-            else if (board_type == "ENCODER") target = &ch.enc;
-            if (!target) return;
-            // Replace the 1..num_sensors range with just the active connectors
-            // First remove any channels for this board that aren't in active_connectors
-            // (We can't easily do this without board-level tracking, so just add active ones)
-            for (int c : active_conn) {
-                target->insert(static_cast<uint8_t>(c + ch_offset));
-            }
-        };
-
-        while (std::getline(f, line)) {
-            size_t c = line.find('#');
-            if (c != std::string::npos) line = line.substr(0, c);
-            while (!line.empty() && (line.back() == ' ' || line.back() == '\r')) line.pop_back();
-            size_t start = line.find_first_not_of(" \t");
-            if (start != std::string::npos) line = line.substr(start);
-            if (line.empty()) continue;
-
-            if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
-                flush();
-                section = line.substr(1, line.size() - 2);
-                if (section.rfind("boards.", 0) == 0) {
-                    board_type.clear(); ch_offset = 0; board_enabled = true; active_conn.clear();
-                } else {
-                    board_type.clear();
-                }
-                continue;
-            }
-            if (section.rfind("boards.", 0) != 0) continue;
-
-            size_t eq = line.find('=');
-            if (eq == std::string::npos) continue;
-            std::string key = line.substr(0, eq);
-            std::string val = line.substr(eq + 1);
-            while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
-            while (!val.empty() && val[0] == ' ') val.erase(0, 1);
-
-            if (key == "type") {
-                if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
-                    val = val.substr(1, val.size() - 2);
-                board_type = val;
-            } else if (key == "enabled" && val == "false") {
-                board_enabled = false;
-            } else if (key == "channel_offset") {
-                try { ch_offset = std::stoi(val); } catch (...) {}
-            } else if (key == "active_connectors") {
-                size_t b = val.find('['), e = val.find(']');
-                if (b != std::string::npos && e != std::string::npos) {
-                    std::string inner = val.substr(b + 1, e - b - 1);
-                    std::istringstream iss(inner);
-                    std::string tok;
-                    while (std::getline(iss, tok, ',')) {
-                        try { active_conn.push_back(std::stoi(tok)); } catch (...) {}
-                    }
-                }
-            }
-        }
-        flush();
-    }
-
-    return ch;
+    return result;
 }
 
 // Map discovery signature board_type (DAQv2 wire: 1=PT, 2=LC, 3=RTD, 4=TC, 5=ACT, 6=ENC)
@@ -538,13 +402,6 @@ int main(int argc, char* argv[]) {
     fsw::config::SystemState system_state =
         is_flight_daq ? fsw::config::SystemState::FLIGHT : fsw::config::SystemState::GSE;
     std::cout << "[System] Mode: " << (is_flight_daq ? "FLIGHT" : "GROUND") << std::endl;
-
-    // ── Publish allowlist from config [routing.*] + [daq_bridge] publish (modular, no fixed hexes)
-    std::vector<PublishRange> publish_ranges = load_publish_ranges(config_path);
-    std::cout << "[Config] Publish to DB (from config):";
-    for (const auto& r : publish_ranges)
-        std::cout << " 0x" << std::hex << (int)r.high << std::dec << "/1.." << (int)r.low_max;
-    std::cout << std::endl;
 
     // ── FSW Config Manager ──
     std::cout << "[FSW] Initializing configuration manager..." << std::endl;
@@ -667,14 +524,14 @@ int main(int argc, char* argv[]) {
     fsw::elodin::ElodinClient elodin_client;
     fsw::routing::HeartbeatRouter heartbeat_router(elodin_client);
     bool elodin_connected = false;
-    // Collect active channel numbers and board IDs from config
-    ActiveChannels active = load_active_channels(config_path, board_map);
-    std::vector<uint8_t> pt_ch(active.pt.begin(), active.pt.end());
-    std::vector<uint8_t> act_ch(active.act.begin(), active.act.end());
-    std::vector<uint8_t> tc_ch(active.tc.begin(), active.tc.end());
-    std::vector<uint8_t> rtd_ch(active.rtd.begin(), active.rtd.end());
-    std::vector<uint8_t> lc_ch(active.lc.begin(), active.lc.end());
-    std::vector<uint8_t> enc_ch(active.enc.begin(), active.enc.end());
+    // Collect active boards with local channels from config (board-namespaced, no channel_offset)
+    auto active_boards = load_active_boards(config_path);
+    const auto& pt_boards  = active_boards[BoardType::PT];
+    const auto& act_boards = active_boards[BoardType::ACTUATOR];
+    const auto& tc_boards  = active_boards[BoardType::TC];
+    const auto& rtd_boards = active_boards[BoardType::RTD];
+    const auto& lc_boards  = active_boards[BoardType::LC];
+    const auto& enc_boards = active_boards[BoardType::ENCODER];
 
     std::vector<uint8_t> config_board_ids;
     for (const auto& [ip, cfg] : board_map) {
@@ -685,14 +542,14 @@ int main(int argc, char* argv[]) {
     if (elodin_client.connect(db_host, db_port)) {
         elodin_connected = true;
         std::cout << "✅ Connected to Elodin database" << std::endl;
-        // Register RAW VTables (generic TYPE.CH<n> names)
-        if (!fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_ch, act_ch,
-                                                           tc_ch, rtd_ch, lc_ch, enc_ch)) {
+        // Register RAW VTables (board-namespaced TYPE<n>.CH<m> names)
+        if (!fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_boards, act_boards,
+                                                           tc_boards, rtd_boards, lc_boards, enc_boards)) {
             std::cerr << "⚠️  RAW VTable registration failed" << std::endl;
         }
         // Register CALIBRATED VTables
-        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_ch,
-                                                                 tc_ch, rtd_ch, lc_ch, enc_ch, act_ch);
+        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_boards,
+                                                                 tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
         // Register BOARD_HEARTBEAT and SELF_TEST VTables only for boards in config
         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, config_board_ids);
         fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, config_board_ids);
@@ -810,13 +667,13 @@ int main(int argc, char* argv[]) {
                     if (elodin_client.reconnect()) {
                         std::cout << "✅ Reconnected to Elodin — re-registering VTables"
                                   << std::endl;
-                        fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_ch,
-                                                                     act_ch, tc_ch,
-                                                                     rtd_ch, lc_ch, enc_ch);
+                        fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_boards,
+                                                                     act_boards, tc_boards,
+                                                                     rtd_boards, lc_boards, enc_boards);
                         fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client,
-                                                                                pt_ch, tc_ch,
-                                                                                rtd_ch, lc_ch,
-                                                                                enc_ch, act_ch);
+                                                                                pt_boards, tc_boards,
+                                                                                rtd_boards, lc_boards,
+                                                                                enc_boards, act_boards);
                         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, config_board_ids);
                         fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, config_board_ids);
                     }
@@ -859,7 +716,7 @@ int main(int argc, char* argv[]) {
             if (discovered) {
                 board_type = discovery_board_type_to_enum(discovered->signature.board_type);
                 if (board_type != BoardType::UNKNOWN)
-                    board_map[source_ip] = {board_type, source_ip, 10, true, -1, 0};
+                    board_map[source_ip] = {board_type, source_ip, 10, true, -1};
             }
             if (board_type == BoardType::UNKNOWN) {
                 if (unknown_ips.find(source_ip) == unknown_ips.end()) {
@@ -913,137 +770,54 @@ int main(int argc, char* argv[]) {
         if (publishing)
             elodin_client.begin_batch();
 
+        // Board-namespaced packet IDs: low byte = (board_number-1)*0x10 + local_channel
+        uint8_t board_number = effective_cfg ? static_cast<uint8_t>(effective_cfg->board_id % 10) : 1;
+        uint8_t board_offset = static_cast<uint8_t>((board_number - 1) * 0x20);
+
+        // Helper lambda: build board-namespaced packet and publish a raw sample
+        auto publish_raw_sample = [&](uint8_t type_hi, const auto& sample) {
+            uint8_t pkt_lo = static_cast<uint8_t>(board_offset + sample.channel_id);
+            std::array<uint8_t, 2> pkt_id = {type_hi, pkt_lo};
+            comms::messages::sensor::RawPTMessage msg;
+            msg.setField<0>(receive_timestamp_ns);
+            msg.setField<1>(sample.channel_id);
+            msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
+            msg.setField<3>(sample.raw_adc_counts);
+            msg.setField<4>(sample.sample_timestamp_ms);
+            msg.setField<5>(sample.status_flags);
+            if (publishing)
+                elodin_client.publish(pkt_id, msg);
+        };
+
         switch (board_type) {
             case BoardType::PT: {
-                // Apply channel_offset for PT board 2 (HP) so connector 1 → global ch 11
-                auto pt_batch = batch.value();
-                int ch_offset = effective_cfg ? effective_cfg->channel_offset : 0;
-                if (ch_offset != 0) {
-                    for (auto& s : pt_batch.pt_samples)
-                        s.channel_id = static_cast<uint8_t>(s.channel_id + ch_offset);
-                }
-                auto pt_msgs = router.route_pt_samples(pt_batch, receive_timestamp_ns);
-                if (publishing) {
-                    for (const auto& [id, msg] : pt_msgs)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                }
-                // Inline calibration DISABLED: the C++ polynomial calibration receives ADC as
-                // uint32_t, casts to int32_t via calculate_pressure(). For 24-bit ADC near-zero
-                // values stored as large uint32 (two's complement), the sign change produces wildly
-                // wrong PSI (e.g., -163 PSI at ambient). The backend (server.ts) already applies
-                // the same JSON polynomials correctly, so publishing conflicting calibrated PT data
-                // to Elodin DB causes oscillation between the backend's correct values and these
-                // garbage values. Calibration runs in the backend only.
-                // if (publishing) {
-                //     auto cal_msgs =
-                //         router.route_pt_samples_calibrated(pt_batch, receive_timestamp_ns);
-                //     for (const auto& [id, msg] : cal_msgs)
-                //         if (is_publish_allowed(id[0], id[1], publish_ranges))
-                //             elodin_client.publish(id, msg);
-                // }
+                for (const auto& sample : batch.value().pt_samples)
+                    publish_raw_sample(0x20, sample);
                 break;
             }
             case BoardType::ACTUATOR: {
-                int ch_offset = effective_cfg ? effective_cfg->channel_offset : 0;
-                // Actuator boards report raw ADC current-sense readings (12-bit, 3.3V ref).
-                // Calibration service converts to current (amps) via [0x30, 0x10+ch].
-                for (const auto& sample : batch.value().pt_samples) {
-                    uint8_t ch = static_cast<uint8_t>(sample.channel_id + ch_offset);
-                    std::array<uint8_t, 2> act_pkt = {0x30, ch};
-                    comms::messages::sensor::RawPTMessage msg;
-                    msg.setField<0>(receive_timestamp_ns);
-                    msg.setField<1>(ch);
-                    msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
-                    msg.setField<3>(sample.raw_adc_counts);
-                    msg.setField<4>(sample.sample_timestamp_ms);
-                    msg.setField<5>(sample.status_flags);
-                    if (publishing && is_publish_allowed(act_pkt[0], act_pkt[1], publish_ranges))
-                        elodin_client.publish(act_pkt, msg);
-                }
+                for (const auto& sample : batch.value().pt_samples)
+                    publish_raw_sample(0x30, sample);
                 break;
             }
             case BoardType::LC: {
-                daq_comms::protocol::SensorBatch lc_batch = batch.value();
-                lc_batch.lc_samples.clear();
-                for (const auto& s : lc_batch.pt_samples) {
-                    daq_comms::protocol::RawLCSample lc;
-                    lc.channel_id = s.channel_id;
-                    lc.raw_adc_counts = s.raw_adc_counts;
-                    lc.sample_timestamp_ms = s.sample_timestamp_ms;
-                    lc.status_flags = s.status_flags;
-                    lc_batch.lc_samples.push_back(lc);
-                }
-                lc_batch.pt_samples.clear();
-                auto lc_raw = router.route_lc_samples(lc_batch, receive_timestamp_ns);
-                if (publishing) {
-                    for (const auto& [id, msg] : lc_raw)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                }
-                // LC calibrated: handled by calibration_service (not daq_bridge) to avoid
-                // dual-publisher spikes — same fix as PT calibrated (line ~940).
+                for (const auto& sample : batch.value().pt_samples)
+                    publish_raw_sample(0x23, sample);
                 break;
             }
             case BoardType::TC: {
-                daq_comms::protocol::SensorBatch tc_batch = batch.value();
-                tc_batch.tc_samples.clear();
-                for (const auto& s : tc_batch.pt_samples) {
-                    daq_comms::protocol::RawTCSample tc;
-                    tc.channel_id = s.channel_id;
-                    tc.raw_adc_counts = s.raw_adc_counts;
-                    tc.sample_timestamp_ms = s.sample_timestamp_ms;
-                    tc.status_flags = s.status_flags;
-                    tc_batch.tc_samples.push_back(tc);
-                }
-                tc_batch.pt_samples.clear();
-                auto tc_raw = router.route_tc_samples(tc_batch, receive_timestamp_ns);
-                if (publishing) {
-                    for (const auto& [id, msg] : tc_raw)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                }
-                // TC calibrated: handled by calibration_service (not daq_bridge) to avoid
-                // dual-publisher spikes — same fix as PT calibrated (line ~940).
+                for (const auto& sample : batch.value().pt_samples)
+                    publish_raw_sample(0x21, sample);
                 break;
             }
             case BoardType::RTD: {
-                daq_comms::protocol::SensorBatch rtd_batch = batch.value();
-                rtd_batch.rtd_samples.clear();
-                for (const auto& s : rtd_batch.pt_samples) {
-                    daq_comms::protocol::RawRTDSample rtd;
-                    rtd.channel_id = s.channel_id;
-                    rtd.raw_resistance_counts = s.raw_adc_counts;
-                    rtd.sample_timestamp_ms = s.sample_timestamp_ms;
-                    rtd.status_flags = s.status_flags;
-                    rtd_batch.rtd_samples.push_back(rtd);
-                }
-                rtd_batch.pt_samples.clear();
-                // Publish RAW RTD samples (ADC counts echoed as raw_resistance_counts)
-                auto rtd_raw = router.route_rtd_samples(rtd_batch, receive_timestamp_ns);
-                if (publishing) {
-                    for (const auto& [id, msg] : rtd_raw)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                }
-                // RTD calibrated: handled by calibration_service (not daq_bridge) to avoid
-                // dual-publisher spikes — same fix as PT calibrated (line ~940).
+                for (const auto& sample : batch.value().pt_samples)
+                    publish_raw_sample(0x22, sample);
                 break;
             }
             case BoardType::ENCODER: {
-                for (const auto& sample : batch.value().pt_samples) {
-                    uint8_t ch = sample.channel_id;
-                    std::array<uint8_t, 2> pkt_id = {0x24, ch};
-                    comms::messages::sensor::RawPTMessage msg;
-                    msg.setField<0>(receive_timestamp_ns);
-                    msg.setField<1>(ch);
-                    msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
-                    msg.setField<3>(sample.raw_adc_counts);
-                    msg.setField<4>(sample.sample_timestamp_ms);
-                    msg.setField<5>(sample.status_flags);
-                    if (publishing && is_publish_allowed(pkt_id[0], pkt_id[1], publish_ranges))
-                        elodin_client.publish(pkt_id, msg);
-                }
+                for (const auto& sample : batch.value().pt_samples)
+                    publish_raw_sample(0x24, sample);
                 break;
             }
             default:

@@ -28,9 +28,9 @@ export interface SensorConfigEntry {
   isHpPt: boolean;
   /** true → eligible for calibration capture */
   inCalibrationSequence: boolean;
-  /** Raw ADC entity string, e.g. "PT.CH1" */
+  /** Raw ADC entity string, e.g. "PT1.CH1" */
   entity: string;
-  /** Calibrated entity string, e.g. "PT_Cal.CH1" */
+  /** Calibrated entity string, e.g. "PT1_Cal.CH1" */
   calEntity: string;
 }
 
@@ -80,8 +80,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
       if (isHpBoard && !hpPtConnectors.has(channelId)) continue;
 
       const isHpPt = isHpBoard && hpPtConnectors.has(channelId);
-      const channelOffset: number = typeof board.channel_offset === 'number' ? board.channel_offset : 0;
-      const globalCh = channelId + channelOffset;
+      const boardNumber = boardId % 10;
 
       sensors.push({
         id: channelId,
@@ -90,8 +89,8 @@ function buildSensorConfig(): SensorConfigEntry[] {
         boardIp,
         isHpPt,
         inCalibrationSequence: true,
-        entity: `PT.CH${globalCh}`,
-        calEntity: `PT_Cal.CH${globalCh}`,
+        entity: `PT${boardNumber}.CH${channelId}`,
+        calEntity: `PT${boardNumber}_Cal.CH${channelId}`,
       });
     }
   }
@@ -109,12 +108,11 @@ function buildSensorConfig(): SensorConfigEntry[] {
     const boardId: number = typeof board.board_id === 'number' ? board.board_id : 51;
     const boardIp: string = board.ip || '';
 
+    const boardNumber: number = boardId % 10;
     for (const [roleName, channelId] of Object.entries(rolesSection)) {
       const ch = typeof channelId === 'number' ? channelId : Number(channelId);
       if (!isFinite(ch)) continue;
 
-      const channelOffset: number = typeof board.channel_offset === 'number' ? board.channel_offset : 0;
-      const globalCh = ch + channelOffset;
       sensors.push({
         id: ch,
         role: roleName,
@@ -122,8 +120,8 @@ function buildSensorConfig(): SensorConfigEntry[] {
         boardIp,
         isHpPt: false,
         inCalibrationSequence: false,
-        entity: `TC.CH${globalCh}`,
-        calEntity: `TC_Cal.CH${globalCh}`,
+        entity: `TC${boardNumber}.CH${ch}`,
+        calEntity: `TC${boardNumber}_Cal.CH${ch}`,
       });
     }
   }
@@ -142,6 +140,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
       ? (board.active_connectors as number[])
       : Array.from({ length: (board.num_sensors ?? 4) }, (_, i) => i + 1);
 
+    const boardNumber: number = boardId % 10;
     if (rolesSection && typeof rolesSection === 'object') {
       for (const [roleName, channelId] of Object.entries(rolesSection)) {
         const ch = typeof channelId === 'number' ? channelId : Number(channelId);
@@ -153,8 +152,8 @@ function buildSensorConfig(): SensorConfigEntry[] {
           boardIp,
           isHpPt: false,
           inCalibrationSequence: false,
-          entity: `RTD.CH${ch}`,
-          calEntity: `RTD_Cal.CH${ch}`,
+          entity: `RTD${boardNumber}.CH${ch}`,
+          calEntity: `RTD${boardNumber}_Cal.CH${ch}`,
         });
       }
     } else {
@@ -166,8 +165,8 @@ function buildSensorConfig(): SensorConfigEntry[] {
           boardIp,
           isHpPt: false,
           inCalibrationSequence: false,
-          entity: `RTD.CH${ch}`,
-          calEntity: `RTD_Cal.CH${ch}`,
+          entity: `RTD${boardNumber}.CH${ch}`,
+          calEntity: `RTD${boardNumber}_Cal.CH${ch}`,
         });
       }
     }
@@ -184,12 +183,11 @@ function buildSensorConfig(): SensorConfigEntry[] {
     const boardRolesKey = `sensor_roles_${boardKey}`;
     const rolesSection = (config as any)[boardRolesKey] as Record<string, number> | undefined;
 
+    const boardNumber: number = boardId % 10;
     if (rolesSection && typeof rolesSection === 'object') {
       for (const [roleName, channelId] of Object.entries(rolesSection)) {
         const ch = typeof channelId === 'number' ? channelId : Number(channelId);
         if (!isFinite(ch)) continue;
-        const channelOffset: number = typeof board.channel_offset === 'number' ? board.channel_offset : 0;
-        const globalCh = ch + channelOffset;
         sensors.push({
           id: ch,
           role: roleName,
@@ -197,8 +195,8 @@ function buildSensorConfig(): SensorConfigEntry[] {
           boardIp,
           isHpPt: false,
           inCalibrationSequence: false,
-          entity: `LC.CH${globalCh}`,
-          calEntity: `LC_Cal.CH${globalCh}`,
+          entity: `LC${boardNumber}.CH${ch}`,
+          calEntity: `LC${boardNumber}_Cal.CH${ch}`,
         });
       }
     } else {
@@ -213,8 +211,8 @@ function buildSensorConfig(): SensorConfigEntry[] {
           boardIp,
           isHpPt: false,
           inCalibrationSequence: false,
-          entity: `LC.CH${ch}`,
-          calEntity: `LC_Cal.CH${ch}`,
+          entity: `LC${boardNumber}.CH${ch}`,
+          calEntity: `LC${boardNumber}_Cal.CH${ch}`,
         });
       }
     }

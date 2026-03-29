@@ -2,19 +2,14 @@
  * Elodin Protocol Parser
  * Parses binary Elodin messages into structured data.
  *
- * All entity names are generic channel-based (PT.CH1, ACT.CH3, TC_Cal.CH5).
+ * All entity names are board-namespaced channel-based (PT1.CH1, ACT2.CH3, TC1_Cal.CH5).
  * Role names ("Fuel Upstream") are frontend display metadata only.
- * Packet IDs use the direct [high, low] scheme:
- *   PT raw      = [0x20, 0x01..0x0E]
- *   PT cal      = [0x20, 0x11..0x1E]
- *   TC raw      = [0x21, 0x01..0x14]
- *   TC cal      = [0x21, 0x11..0x24]
- *   RTD raw     = [0x22, 0x01..0x04]
- *   RTD cal     = [0x22, 0x11..0x14]
- *   LC raw      = [0x23, 0x01..0x14]
- *   LC cal      = [0x23, 0x11..0x24]
- *   ACT         = [0x30, 0x01..0x0A]
- *   ACT state   = [0x31, 0x01..0x14]
+ * Packet IDs use the board-aware [high, low] scheme:
+ *   low byte = (board_number - 1) * 0x20 + channel  (raw)
+ *              (board_number - 1) * 0x20 + 0x10 + channel  (calibrated)
+ *   board_number = board_id % 10
+ *   Example: PT board 1 raw CH3 = [0x20, 0x03], PT board 1 cal CH3 = [0x20, 0x13]
+ *            PT board 2 raw CH1 = [0x20, 0x11], ACT board 4 raw CH5 = [0x30, 0x45]
  *   CTRL act    = [0x40, 0x00]   19 bytes: U64+F32+F32+U8+U8+U8
  *   CTRL diag   = [0x41, 0x00]   62 bytes: U64+6×F64+I32+U8+U8
  *   CTRL meas   = [0x42, 0x00]   80 bytes: U64+8×F64
@@ -80,7 +75,7 @@ function parseCalibratedSensorPayload(
 /**
  * Parse LC (Load Cell) Raw Message (21 bytes)
  * Layout: same as PT/TC raw — uint64_t (8) + uint8_t (1) + padding[3] (3) + uint32_t (4) + uint32_t (4) + uint8_t (1)
- * Entity names match FSW DatabaseConfig: LC.CH1 .. LC.CH4
+ * Entity names match FSW DatabaseConfig: LC1.CH1 .. LC2.CH6
  */
 export function parseRawLCMessage(
   payload: Buffer,
@@ -121,102 +116,121 @@ export function parseElodinPacket(
 ): ParsedSensorData[] {
   const [high, low] = packetId;
 
-  // ── PT Raw: [0x20, 0x01..0x0E] — signed ADC (ADS1262), avoid uint32 → ~4e9 for negative codes
-  if (high === 0x20 && low >= 0x01 && low <= 0x0E) {
-    const ch = low;
-    const payloadCh = payload.length >= 9 ? payload.readUInt8(8) : ch;
-    const r = parseRawSensorPayload(payload, ch, `PT.CH${payloadCh}`, 'raw_adc_counts', true);
-    return r ? [r] : [];
+  // ── Generic sensor type decoder ──────────────────────────────────────────
+  // New packet ID scheme: low byte = (board_number - 1) * 0x20 + channel (raw)
+  //                                   (board_number - 1) * 0x20 + 0x10 + channel (calibrated)
+  // Each board gets a 32-slot block. Within a block:
+  //   0x01-0x0A = raw channels 1-10
+  //   0x11-0x1A = calibrated channels 1-10
+
+  // Helper to decode board_number and channel from low byte
+  const decodeLow = (low: number): { boardNumber: number; channel: number; isRaw: boolean } => {
+    const blockOffset = low & 0x1F;  // position within 32-slot block
+    const isRaw = blockOffset < 0x10;
+    const boardNumber = (low >> 5) + 1;
+    const channel = blockOffset & 0x0F;
+    return { boardNumber, channel, isRaw };
+  };
+
+  // ── PT: [0x20, ...] ──────────────────────────────────────────────────────
+  if (high === 0x20 && low >= 0x01) {
+    const { boardNumber, channel, isRaw } = decodeLow(low);
+    if (channel >= 1 && channel <= 10) {
+      if (isRaw) {
+        const r = parseRawSensorPayload(payload, channel, `PT${boardNumber}.CH${channel}`, 'raw_adc_counts', true);
+        return r ? [r] : [];
+      } else {
+        const r = parseCalibratedSensorPayload(payload, channel, `PT${boardNumber}_Cal.CH${channel}`, 'pressure_psi');
+        return r ? [r] : [];
+      }
+    }
   }
 
-  // ── PT Calibrated: [0x20, 0x11..0x1E] ───────────────────────────────────
-  if (high === 0x20 && low >= 0x11 && low <= 0x1E) {
-    const ch = low - 0x10;
-    const payloadCh = payload.length >= 9 ? payload.readUInt8(8) : ch;
-    const r = parseCalibratedSensorPayload(payload, ch, `PT_Cal.CH${payloadCh}`, 'pressure_psi');
-    return r ? [r] : [];
+  // ── TC: [0x21, ...] ──────────────────────────────────────────────────────
+  if (high === 0x21 && low >= 0x01) {
+    const { boardNumber, channel, isRaw } = decodeLow(low);
+    if (channel >= 1 && channel <= 10) {
+      if (isRaw) {
+        const r = parseRawSensorPayload(payload, channel, `TC${boardNumber}.CH${channel}`, 'raw_adc_counts', true);
+        return r ? [r] : [];
+      } else {
+        const r = parseCalibratedSensorPayload(payload, channel, `TC${boardNumber}_Cal.CH${channel}`, 'temperature_c');
+        return r ? [r] : [];
+      }
+    }
   }
 
-  // ── TC Raw: [0x21, 0x01..0x10] — signed ADC (ADS1262), avoid uint32 → 2^31-1 for negative/saturated codes
-  if (high === 0x21 && low >= 0x01 && low <= 0x10) {
-    const ch = low;
-    const r = parseRawSensorPayload(payload, ch, `TC.CH${ch}`, 'raw_adc_counts', true);
-    return r ? [r] : [];
+  // ── RTD: [0x22, ...] ─────────────────────────────────────────────────────
+  if (high === 0x22 && low >= 0x01) {
+    const { boardNumber, channel, isRaw } = decodeLow(low);
+    if (channel >= 1 && channel <= 10) {
+      if (isRaw) {
+        const r = parseRawSensorPayload(payload, channel, `RTD${boardNumber}.CH${channel}`, 'raw_resistance_counts');
+        return r ? [r] : [];
+      } else {
+        const r = parseCalibratedSensorPayload(payload, channel, `RTD${boardNumber}_Cal.CH${channel}`, 'temperature_c');
+        return r ? [r] : [];
+      }
+    }
   }
 
-  // ── TC Calibrated: [0x21, 0x11..0x24] ───────────────────────────────────
-  if (high === 0x21 && low >= 0x11 && low <= 0x24) {
-    const ch = low - 0x10;
-    const r = parseCalibratedSensorPayload(payload, ch, `TC_Cal.CH${ch}`, 'temperature_c');
-    return r ? [r] : [];
+  // ── LC: [0x23, ...] ──────────────────────────────────────────────────────
+  if (high === 0x23 && low >= 0x01) {
+    const { boardNumber, channel, isRaw } = decodeLow(low);
+    if (channel >= 1 && channel <= 10) {
+      if (isRaw) {
+        const r = parseRawSensorPayload(payload, channel, `LC${boardNumber}.CH${channel}`, 'raw_adc_counts', true);
+        return r ? [r] : [];
+      } else {
+        const r = parseCalibratedSensorPayload(payload, channel, `LC${boardNumber}_Cal.CH${channel}`, 'force_kg');
+        return r ? [r] : [];
+      }
+    }
   }
 
-  // ── RTD Raw: [0x22, 0x01..0x10] ─────────────────────────────────────────
-  if (high === 0x22 && low >= 0x01 && low <= 0x10) {
-    const ch = low;
-    const r = parseRawSensorPayload(payload, ch, `RTD.CH${ch}`, 'raw_resistance_counts');
-    return r ? [r] : [];
+  // ── Encoder: [0x24, ...] ──────────────────────────────────────────────────
+  if (high === 0x24 && low >= 0x01) {
+    const { boardNumber, channel, isRaw } = decodeLow(low);
+    if (channel >= 1 && channel <= 10) {
+      const r = parseRawSensorPayload(payload, channel, `ENC${boardNumber}.CH${channel}`, 'raw_angle');
+      return r ? [r] : [];
+    }
   }
 
-  // ── RTD Calibrated: [0x22, 0x11..0x24] ───────────────────────────────────
-  if (high === 0x22 && low >= 0x11 && low <= 0x24) {
-    const ch = low - 0x10;
-    const r = parseCalibratedSensorPayload(payload, ch, `RTD_Cal.CH${ch}`, 'temperature_c');
-    return r ? [r] : [];
+  // ── Actuator raw: [0x30, ...] ─────────────────────────────────────────────
+  if (high === 0x30 && low >= 0x01) {
+    const { boardNumber, channel, isRaw } = decodeLow(low);
+    if (channel >= 1 && channel <= 10) {
+      if (isRaw) {
+        const r = parseRawSensorPayload(payload, channel, `ACT${boardNumber}.CH${channel}`, 'raw_adc_counts');
+        return r ? [r] : [];
+      } else {
+        const r = parseCalibratedSensorPayload(payload, channel, `ACT${boardNumber}_Cal.CH${channel}`, 'current_a');
+        return r ? [r] : [];
+      }
+    }
   }
 
-  // ── LC Raw: [0x23, 0x01..0x10] — signed ADC (ADS1262), avoid uint32 → ~4e9 for negative codes
-  if (high === 0x23 && low >= 0x01 && low <= 0x10) {
-    const ch = low;
-    const r = parseRawSensorPayload(payload, ch, `LC.CH${ch}`, 'raw_adc_counts', true);
-    return r ? [r] : [];
-  }
-
-  // ── LC Calibrated: [0x23, 0x11..0x24] ───────────────────────────────────
-  if (high === 0x23 && low >= 0x11 && low <= 0x24) {
-    const ch = low - 0x10;
-    const r = parseCalibratedSensorPayload(payload, ch, `LC_Cal.CH${ch}`, 'force_kg');
-    return r ? [r] : [];
-  }
-
-  // ── Encoder Raw: [0x24, 0x01..0x02] ──────────────────────────────────────
-  if (high === 0x24 && low >= 0x01 && low <= 0x02) {
-    const ch = low;
-    const r = parseRawSensorPayload(payload, ch, `ENC.CH${ch}`, 'raw_angle');
-    return r ? [r] : [];
-  }
-
-  // ── Actuator: [0x30, 0x01..0x14] ────────────────────────────────────────
-  if (high === 0x30 && low >= 0x01 && low <= 0x14) {
-    const ch = low;
-    const payloadCh = payload.length >= 9 ? payload.readUInt8(8) : ch;
-    const r = parseRawSensorPayload(payload, ch, `ACT.CH${payloadCh}`, 'raw_adc_counts');
-    return r ? [r] : [];
-  }
-
-  // ── Actuator state (0=closed, 1=open): [0x31, 0x01..0x14] ─────────────────
+  // ── Actuator state (0=closed, 1=open): [0x31, ...] ────────────────────────
   // NOTE: This is derived from raw ADC current-sense readings, not a discrete
   // hardware state.  The daq_bridge thresholds the current draw to guess
   // open/closed — see ACT_STATE_ADC_THRESHOLD in daq_bridge_main.cpp.
-  // The raw ADC value ([0x30]) is the actual measurement from the board.
   if (high === 0x31 && low >= 0x01 && payload.length >= 10) {
-    const ch = low;
-    const payloadCh = payload.readUInt8(8);
+    const { boardNumber, channel } = decodeLow(low);
     const state = payload.readUInt8(9);
     const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
-    return [{ entity: `ACT.CH${payloadCh}`, component: 'actuator_state', value: state, timestamp: tsMs }];
+    return [{ entity: `ACT${boardNumber}.CH${channel}`, component: 'actuator_state', value: state, timestamp: tsMs }];
   }
 
-  // ── Actuator commanded state: [0x32, 0x01..0x14] ────────────────────────
-  // Published by sequencer_service when it commands actuators (state transitions + manual).
+  // ── Actuator commanded state: [0x32, ...] ─────────────────────────────────
+  // Published by sequencer_service when it commands actuators.
   // Layout: u64 timestamp_ns | u8 channel_id | u8 actuator_state (0=closed, 1=open) = 10 bytes
-  // Global channel = (board_id - 11) * 10 + local_channel, up to 40
-  if (high === 0x32 && low >= 0x01 && low <= 0x28 && payload.length >= 10) {
-    const ch = low;
-    const payloadCh = payload.readUInt8(8);
+  // Low byte uses (board_number - 1) * 0x20 + channel
+  if (high === 0x32 && low >= 0x01 && payload.length >= 10) {
+    const { boardNumber, channel } = decodeLow(low);
     const state = payload.readUInt8(9);
     const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
-    return [{ entity: `ACT.CH${payloadCh}`, component: 'actuator_state_commanded', value: state, timestamp: tsMs }];
+    return [{ entity: `ACT_CMD.B${boardNumber}.CH${channel}`, component: 'actuator_state_commanded', value: state, timestamp: tsMs }];
   }
 
   // ── Controller Actuation: [0x40, 0x00] ──────────────────────────────────

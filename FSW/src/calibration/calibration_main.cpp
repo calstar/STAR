@@ -209,38 +209,36 @@ int main(int argc, char* argv[]) {
     std::cout << "[Calibration] LC:  " << lc_calibration.calibrated_count() << " channels"
               << std::endl;
 
-    // Collect active channel numbers from config for VTable registration.
-    // VTables use generic TYPE_Cal.CH<n> names — role names are frontend-only metadata.
-    std::set<uint8_t> pt_ch_set, tc_ch_set, rtd_ch_set, lc_ch_set, enc_ch_set, act_ch_set;
+    // Collect active boards with local channels for VTable registration (board-namespaced).
+    using BoardChannels = fsw::elodin::BoardChannels;
+    std::vector<BoardChannels> pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards, act_boards;
     {
         std::ifstream cfg(config_path);
         if (cfg.is_open()) {
             std::string line, section;
             std::string board_type;
-            int ch_offset = 0;
+            int board_id = 0;
             bool board_enabled = true;
             std::vector<int> active_conn;
             int num_sensors = 0;
 
             auto flush_board = [&]() {
-                if (board_type.empty() || !board_enabled) return;
-                std::vector<int> channels;
+                if (board_type.empty() || !board_enabled || board_id == 0) return;
+                std::vector<uint8_t> channels;
                 if (!active_conn.empty()) {
-                    channels = active_conn;
+                    for (int c : active_conn) channels.push_back(static_cast<uint8_t>(c));
                 } else if (num_sensors > 0) {
-                    for (int i = 1; i <= num_sensors; i++) channels.push_back(i);
+                    for (int i = 1; i <= num_sensors; i++) channels.push_back(static_cast<uint8_t>(i));
                 }
-                std::set<uint8_t>* target = nullptr;
-                if (board_type == "PT")       target = &pt_ch_set;
-                else if (board_type == "TC")  target = &tc_ch_set;
-                else if (board_type == "RTD") target = &rtd_ch_set;
-                else if (board_type == "LC")  target = &lc_ch_set;
-                else if (board_type == "ENCODER") target = &enc_ch_set;
-                else if (board_type == "ACTUATOR") target = &act_ch_set;
-                if (target) {
-                    for (int c : channels)
-                        target->insert(static_cast<uint8_t>(c + ch_offset));
-                }
+                if (channels.empty()) return;
+                BoardChannels bc{static_cast<uint8_t>(board_id),
+                                 static_cast<uint8_t>(board_id % 10), channels};
+                if (board_type == "PT")            pt_boards.push_back(bc);
+                else if (board_type == "TC")       tc_boards.push_back(bc);
+                else if (board_type == "RTD")      rtd_boards.push_back(bc);
+                else if (board_type == "LC")       lc_boards.push_back(bc);
+                else if (board_type == "ENCODER")  enc_boards.push_back(bc);
+                else if (board_type == "ACTUATOR") act_boards.push_back(bc);
             };
 
             while (std::getline(cfg, line)) {
@@ -255,7 +253,7 @@ int main(int argc, char* argv[]) {
                     flush_board();
                     section = line.substr(1, line.size() - 2);
                     if (section.rfind("boards.", 0) == 0) {
-                        board_type.clear(); ch_offset = 0; board_enabled = true;
+                        board_type.clear(); board_id = 0; board_enabled = true;
                         active_conn.clear(); num_sensors = 0;
                     } else { board_type.clear(); }
                     continue;
@@ -273,7 +271,7 @@ int main(int argc, char* argv[]) {
                         val = val.substr(1, val.size() - 2);
                     board_type = val;
                 } else if (key == "enabled" && val == "false") { board_enabled = false; }
-                else if (key == "channel_offset") { try { ch_offset = std::stoi(val); } catch (...) {} }
+                else if (key == "board_id") { try { board_id = std::stoi(val); } catch (...) {} }
                 else if (key == "num_sensors") { try { num_sensors = std::stoi(val); } catch (...) {} }
                 else if (key == "active_connectors") {
                     size_t b = val.find('['), e = val.find(']');
@@ -288,19 +286,13 @@ int main(int argc, char* argv[]) {
             flush_board();
         }
     }
-    std::vector<uint8_t> pt_ch(pt_ch_set.begin(), pt_ch_set.end());
-    std::vector<uint8_t> tc_ch(tc_ch_set.begin(), tc_ch_set.end());
-    std::vector<uint8_t> rtd_ch(rtd_ch_set.begin(), rtd_ch_set.end());
-    std::vector<uint8_t> lc_ch(lc_ch_set.begin(), lc_ch_set.end());
-    std::vector<uint8_t> enc_ch(enc_ch_set.begin(), enc_ch_set.end());
-    std::vector<uint8_t> act_ch(act_ch_set.begin(), act_ch_set.end());
 
-    // Parse HP PT config (4-20 mA)
+    // Parse HP PT config (4-20 mA) — uses local connector IDs (no channel_offset)
     std::set<uint8_t> hp_pt_channels;
     double hp_pt_full_scale_psi = 5000.0;
     double hp_pt_sense_resistor_ohms = 120.0;
     double hp_pt_adc_ref_voltage = 2.5;
-    int channel_offset = 10;
+    uint8_t hp_pt_board_number = 2;  // board_id % 10 for the HP PT board
     {
         std::ifstream cfg2(config_path);
         if (cfg2.is_open()) {
@@ -352,14 +344,14 @@ int main(int argc, char* argv[]) {
                         try {
                             int conn = std::stoi(num);
                             if (conn >= 1 && conn <= 10)
-                                hp_pt_channels.insert(static_cast<uint8_t>(conn + channel_offset));
+                                hp_pt_channels.insert(static_cast<uint8_t>(conn));
                         } catch (...) {
                         }
                         pos = end + 1;
                     }
-                } else if (key == "channel_offset") {
+                } else if (key == "board_id") {
                     try {
-                        channel_offset = std::stoi(val);
+                        hp_pt_board_number = static_cast<uint8_t>(std::stoi(val) % 10);
                     } catch (...) {
                     }
                 } else if (key == "hp_pt_full_scale_psi") {
@@ -470,8 +462,8 @@ int main(int argc, char* argv[]) {
                       << elodin_port << std::endl;
             return false;
         }
-        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_ch,
-                                                                 tc_ch, rtd_ch, lc_ch, enc_ch, act_ch);
+        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_boards,
+                                                                 tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
         if (!elodin_client.subscribe_stream()) {
             std::cerr << "[Cal] Failed to subscribe to Elodin stream" << std::endl;
             return false;
@@ -493,8 +485,8 @@ int main(int argc, char* argv[]) {
             std::cerr << "[Cal] Elodin disconnected, retrying in 2s..." << std::endl;
             std::this_thread::sleep_for(std::chrono::seconds(2));
             if (elodin_client.reconnect()) {
-                fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_ch,
-                                                                         tc_ch, rtd_ch, lc_ch, enc_ch, act_ch);
+                fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_boards,
+                                                                         tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
                 elodin_client.subscribe_stream();
                 std::cout << "[Cal] Reconnected to Elodin" << std::endl;
             }
@@ -522,14 +514,20 @@ int main(int argc, char* argv[]) {
         if (ty != 1)
             continue;  // Only process TABLE packets
 
-        // Only process RAW sensor VTables (low byte 0x01-0x0F).
-        // Calibrated packets use low byte 0x10+ (e.g. [0x20, 0x13] = PT cal ch3).
-        // Without this filter, we'd re-process our OWN calibrated output as raw ADC,
-        // interpreting the float32 pressure/temperature as a uint32 ADC code → spikes.
-        if ((type_hi < 0x20 || type_hi > 0x23) && type_hi != 0x30)
+        // Only process RAW sensor packets. Board-namespaced packet IDs:
+        //   Raw:        low byte = (board_number-1)*0x10 + channel  (bit 4 = 0)
+        //   Calibrated: low byte = (board_number-1)*0x10 + 0x10 + channel  (bit 4 = 1)
+        // Skip calibrated packets (our own output) to avoid re-processing.
+        if ((type_hi < 0x20 || type_hi > 0x24) && type_hi != 0x30)
             continue;
-        if (type_lo >= 0x10)
-            continue;  // skip calibrated packets (our own output)
+        // Within each 32-slot block: raw = offset 0x01-0x0A, cal = offset 0x11-0x1A
+        // Check if this is a calibrated packet (our own output) by testing if
+        // the offset within the block is >= 0x10
+        uint8_t block_offset = type_lo & 0x1F;  // position within 32-slot block
+        if (block_offset >= 0x10)
+            continue;  // calibrated packet (our own output)
+        if (block_offset == 0 || block_offset > 10)
+            continue;  // channel must be 1-10
 
         const ssize_t payload_len = pkt_len - 8;
         if (payload_len < 21) {
@@ -548,36 +546,40 @@ int main(int argc, char* argv[]) {
         // p[16-19] = sample_timestamp_ms (unused in calibration output)
         // p[20]    = status_flags        (unused in calibration output)
 
-        if (ch == 0 || ch > 20)
+        if (ch == 0 || ch > 10)
             continue;
+
+        // Board-namespaced: raw low byte = (board_number-1)*0x20 + channel
+        // Calibrated = raw_lo + 0x10 (within same 32-slot block)
+        uint8_t cal_lo = static_cast<uint8_t>(type_lo + 0x10);
+        uint8_t board_number = static_cast<uint8_t>((type_lo >> 5) + 1);
+        // channel is already extracted as ch = p[8] from the payload
 
         elodin_client.begin_batch();
 
-        if (type_hi == 0x20 && ch <= 14) {  // PT raw
+        if (type_hi == 0x20) {  // PT raw
             double psi;
             uint8_t cal_status;
-            if (hp_pt_channels.count(ch)) {
+            // HP PT uses local connector IDs (no offset) — check board_number matches HP PT board
+            if (board_number == hp_pt_board_number && hp_pt_channels.count(ch)) {
                 psi = convert_hp_pt_to_pressure(static_cast<int32_t>(raw_adc), hp_pt_full_scale_psi,
                                                 hp_pt_sense_resistor_ohms, hp_pt_adc_ref_voltage);
                 cal_status = 1;
                 if (verbose() && packet_count % 100 == 0)
-                    std::cout << "[Cal] HP PT ch" << (int)ch
+                    std::cout << "[Cal] HP PT B" << (int)board_number << " ch" << (int)ch
                               << " adc=" << static_cast<int32_t>(raw_adc) << " psi=" << psi
                               << std::endl;
             } else {
                 psi = pt_calibration.calculate_pressure(ch, static_cast<int32_t>(raw_adc));
                 cal_status = pt_calibration.is_calibrated(ch) ? 1u : 0u;
-                if (ch == 5 && !logged_ch5.exchange(true))
-                    std::cout << "[Cal] PT ch5 (Ox Up) first publish: " << psi << " psi"
-                              << std::endl;
                 if (verbose() && packet_count % 100 == 0)
-                    std::cout << "[Cal] PT ch" << (int)ch << " adc=" << raw_adc << " psi=" << psi
-                              << std::endl;
+                    std::cout << "[Cal] PT B" << (int)board_number << " ch" << (int)ch
+                              << " adc=" << raw_adc << " psi=" << psi << std::endl;
             }
             comms::messages::sensor::CalibratedPTMessage cal_msg(
                 ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(psi), raw_adc,
                 cal_status);
-            elodin_client.publish(static_cast<uint16_t>(0x2000 | (0x10 + ch)), cal_msg);
+            elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
 
         } else if (type_hi == 0x21) {  // TC raw
             double temp_c;
@@ -588,15 +590,12 @@ int main(int argc, char* argv[]) {
             } else {
                 temp_c =
                     convert_tc_adc_to_temp_c(static_cast<int32_t>(raw_adc), tc_adc_ref_voltage);
-                cal_status = 0;  // default ITS-90 formula, not calibrated
+                cal_status = 0;
             }
-            if (verbose() && packet_count % 100 == 0)
-                std::cout << "[Cal] TC ch" << (int)ch << " adc=" << raw_adc << " temp=" << temp_c
-                          << "°C (cal=" << (int)cal_status << ")" << std::endl;
             comms::messages::sensor::CalibratedTCMessage cal_msg(
                 ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(temp_c), raw_adc,
                 cal_status);
-            elodin_client.publish(static_cast<uint16_t>(0x2100 | (0x10 + ch)), cal_msg);
+            elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
 
         } else if (type_hi == 0x22) {  // RTD raw
             double temp_c;
@@ -608,15 +607,12 @@ int main(int argc, char* argv[]) {
                 temp_c =
                     convert_rtd_adc_to_temp_c(static_cast<int32_t>(raw_adc), rtd_adc_ref_voltage,
                                               rtd_excitation_ua, rtd_r0_ohm);
-                cal_status = 0;  // default CVD formula, not calibrated
+                cal_status = 0;
             }
-            if (verbose() && packet_count % 100 == 0)
-                std::cout << "[Cal] RTD ch" << (int)ch << " adc=" << raw_adc << " temp=" << temp_c
-                          << "°C (cal=" << (int)cal_status << ")" << std::endl;
             comms::messages::sensor::CalibratedRTDMessage cal_msg(
                 ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(temp_c), raw_adc,
                 cal_status);
-            elodin_client.publish(static_cast<uint16_t>(0x2200 | (0x10 + ch)), cal_msg);
+            elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
 
         } else if (type_hi == 0x23) {  // LC raw
             double force_kg;
@@ -628,28 +624,21 @@ int main(int argc, char* argv[]) {
                 force_kg =
                     convert_lc_adc_to_force(static_cast<int32_t>(raw_adc), lc_sensitivity_mv_per_v,
                                             lc_pga_gain, lc_full_scale_value);
-                cal_status = 0;  // default ratiometric formula, not calibrated
+                cal_status = 0;
             }
-            if (verbose() && packet_count % 100 == 0)
-                std::cout << "[Cal] LC ch" << (int)ch << " adc=" << raw_adc << " force=" << force_kg
-                          << "kg (cal=" << (int)cal_status << ")" << std::endl;
             comms::messages::sensor::CalibratedLCMessage cal_msg(
                 ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(force_kg), raw_adc,
                 cal_status);
-            elodin_client.publish(static_cast<uint16_t>(0x2300 | (0x10 + ch)), cal_msg);
+            elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
 
         } else if (type_hi == 0x30) {  // Actuator raw current-sense (12-bit ADC)
             double current_a = convert_act_adc_to_current(raw_adc);
             uint8_t cal_status = 1;
-            if (verbose() && packet_count % 100 == 0)
-                std::cout << "[Cal] ACT ch" << (int)ch << " adc=" << raw_adc
-                          << " current=" << current_a << "A" << std::endl;
+            // ACT calibrated uses type_hi 0x30, same cal_lo formula (bit 4 set)
             comms::messages::sensor::CalibratedACTMessage cal_msg(
                 ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(current_a), raw_adc,
                 cal_status);
-            // Use 0x31 for calibrated actuator (not 0x30+0x10, since 20 raw channels would collide)
-            // Low byte = 0x10 + ch to match register_calibrated_vtable convention
-            elodin_client.publish(static_cast<uint16_t>(0x3100 | (0x10 + ch)), cal_msg);
+            elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
         }
 
         elodin_client.flush_batch();

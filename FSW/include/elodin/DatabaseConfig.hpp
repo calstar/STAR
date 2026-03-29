@@ -11,10 +11,23 @@ namespace fsw {
 namespace elodin {
 
 /**
+ * @brief Per-board channel info for board-namespaced entity registration.
+ *
+ * board_id:     raw board ID from config (e.g. 21, 22, 12, 14)
+ * board_number: board_id % 10 (e.g. 1, 2, 2, 4) — used in entity names and packet IDs
+ * channels:     local connector IDs (1-10) that are active on this board
+ */
+struct BoardChannels {
+    uint8_t board_id;
+    uint8_t board_number;  // board_id % 10
+    std::vector<uint8_t> channels;  // local channels (1-10)
+};
+
+/**
  * @brief Register sensor table schemas with Elodin database.
  *
- * All VTables use generic channel-based entity names (e.g. PT.CH1, TC.CH5,
- * ACT.CH3).  Role names (e.g. "Fuel Upstream") are metadata only — the
+ * All VTables use board-namespaced entity names (e.g. PT1.CH1, TC1.CH5,
+ * ACT2.CH3).  Role names (e.g. "Fuel Upstream") are metadata only — the
  * frontend maps channel → display name from config.toml at render time.
  *
  * Two separate entry points:
@@ -26,29 +39,29 @@ public:
     /**
      * @brief Register RAW sensor / actuator VTables.
      *
-     * Each vector lists global channel numbers for that sensor type.
-     * Entity names: PT.CH<n>, ACT.CH<n>, TC.CH<n>, RTD.CH<n>, LC.CH<n>, ENC.CH<n>.
+     * Each vector lists boards with their local channels.
+     * Entity names: PT<board_number>.CH<n>, ACT<board_number>.CH<n>, etc.
      */
     static bool register_tables(ElodinClient& client,
-                                const std::vector<uint8_t>& pt_channels,
-                                const std::vector<uint8_t>& act_channels,
-                                const std::vector<uint8_t>& tc_channels,
-                                const std::vector<uint8_t>& rtd_channels,
-                                const std::vector<uint8_t>& lc_channels,
-                                const std::vector<uint8_t>& enc_channels);
+                                const std::vector<BoardChannels>& pt_boards,
+                                const std::vector<BoardChannels>& act_boards,
+                                const std::vector<BoardChannels>& tc_boards,
+                                const std::vector<BoardChannels>& rtd_boards,
+                                const std::vector<BoardChannels>& lc_boards,
+                                const std::vector<BoardChannels>& enc_boards);
 
     /**
      * @brief Register CALIBRATED VTables.
      *
-     * Entity names: PT_Cal.CH<n>, TC_Cal.CH<n>, RTD_Cal.CH<n>, LC_Cal.CH<n>, ENC_Cal.CH<n>.
+     * Entity names: PT<board_number>_Cal.CH<n>, TC<board_number>_Cal.CH<n>, etc.
      */
     static bool register_calibrated_tables(ElodinClient& client,
-                                           const std::vector<uint8_t>& pt_channels,
-                                           const std::vector<uint8_t>& tc_channels,
-                                           const std::vector<uint8_t>& rtd_channels,
-                                           const std::vector<uint8_t>& lc_channels,
-                                           const std::vector<uint8_t>& enc_channels,
-                                           const std::vector<uint8_t>& act_channels);
+                                           const std::vector<BoardChannels>& pt_boards,
+                                           const std::vector<BoardChannels>& tc_boards,
+                                           const std::vector<BoardChannels>& rtd_boards,
+                                           const std::vector<BoardChannels>& lc_boards,
+                                           const std::vector<BoardChannels>& enc_boards,
+                                           const std::vector<BoardChannels>& act_boards);
 
     /**
      * @brief Register BOARD_HEARTBEAT VTables for specific board IDs.
@@ -62,8 +75,9 @@ public:
     static bool register_self_test_tables(ElodinClient& client,
                                           const std::vector<uint8_t>& board_ids);
 
-    /** @brief Placeholder for navigation / engine control tables */
-    static bool register_non_sensor_tables(ElodinClient& client);
+    /** @brief Register sequencer/controller and ACT_CMD tables */
+    static bool register_non_sensor_tables(ElodinClient& client,
+                                           const std::vector<BoardChannels>& act_boards = {});
 };
 
 }  // namespace elodin

@@ -387,34 +387,34 @@ async function connectWS(): Promise<WebSocket> {
 //       Both are checked as "extra" but not required.
 
 const EXPECTED_ENTITIES: string[] = [
-  // All entities now use generic TYPE.CH<n> names (role names are frontend display metadata only).
+  // Board-namespaced: TYPE<board_number>.CH<local_channel>
 
-  // pt_board (id 21) — 10 channels
-  'PT.CH1', 'PT.CH2', 'PT.CH3', 'PT.CH4', 'PT.CH5',
-  'PT.CH6', 'PT.CH7', 'PT.CH8', 'PT.CH9', 'PT.CH10',
+  // pt_board (id 21, board_number 1) — 10 channels
+  'PT1.CH1', 'PT1.CH2', 'PT1.CH3', 'PT1.CH4', 'PT1.CH5',
+  'PT1.CH6', 'PT1.CH7', 'PT1.CH8', 'PT1.CH9', 'PT1.CH10',
 
-  // pt_board_2 (id 22) — 10 connectors, offset 10 → global ch 11-20 (simulator sends all 10)
-  'PT.CH11', 'PT.CH12', 'PT.CH13', 'PT.CH14',
+  // pt_board_2 (id 22, board_number 2) — active [1,2,3,4]
+  'PT2.CH1', 'PT2.CH2', 'PT2.CH3', 'PT2.CH4',
 
-  // rtd_board (id 31) — active [1,2,3,4]
-  'RTD.CH1', 'RTD.CH2', 'RTD.CH3', 'RTD.CH4',
+  // rtd_board (id 31, board_number 1) — active [1,2,3,4]
+  'RTD1.CH1', 'RTD1.CH2', 'RTD1.CH3', 'RTD1.CH4',
 
-  // lc_board_2 (id 42) — active [1,2,6]
-  'LC.CH1', 'LC.CH2', 'LC.CH6',
+  // lc_board_2 (id 42, board_number 2) — active [1,2,6]
+  'LC2.CH1', 'LC2.CH2', 'LC2.CH6',
 
-  // tc_board (id 51) — active [2,3,4,5]
-  'TC.CH2', 'TC.CH3', 'TC.CH4', 'TC.CH5',
+  // tc_board (id 51, board_number 1) — active [2,3,4,5]
+  'TC1.CH2', 'TC1.CH3', 'TC1.CH4', 'TC1.CH5',
 
-  // encoder_board (id 61) — 2 channels
-  'ENC.CH1',
+  // encoder_board (id 61, board_number 1) — 2 channels
+  'ENC1.CH1',
 
-  // actuator_board_2 (id 12) — 10 channels
-  'ACT.CH1', 'ACT.CH2', 'ACT.CH3', 'ACT.CH4', 'ACT.CH5',
-  'ACT.CH6', 'ACT.CH7', 'ACT.CH8', 'ACT.CH9', 'ACT.CH10',
+  // actuator_board_2 (id 12, board_number 2) — 10 channels
+  'ACT2.CH1', 'ACT2.CH2', 'ACT2.CH3', 'ACT2.CH4', 'ACT2.CH5',
+  'ACT2.CH6', 'ACT2.CH7', 'ACT2.CH8', 'ACT2.CH9', 'ACT2.CH10',
 
-  // actuator_board_4 (id 14) — 10 channels, offset 10
-  'ACT.CH11', 'ACT.CH12', 'ACT.CH13', 'ACT.CH14', 'ACT.CH15',
-  'ACT.CH16', 'ACT.CH17', 'ACT.CH18', 'ACT.CH19', 'ACT.CH20',
+  // actuator_board_4 (id 14, board_number 4) — 10 channels
+  'ACT4.CH1', 'ACT4.CH2', 'ACT4.CH3', 'ACT4.CH4', 'ACT4.CH5',
+  'ACT4.CH6', 'ACT4.CH7', 'ACT4.CH8', 'ACT4.CH9', 'ACT4.CH10',
 ];
 
 // ── Test 1: Sensor Data Flow ─────────────────────────────────────────────────
@@ -448,7 +448,15 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
   // the same type use channel_offset to create a global namespace:
   //   board 1: offset 0  → CH1-CH10
   //   board 2: offset 10 → CH11-CH20
-  const sensorPrefixes = ['PT_Cal.CH', 'PT.CH', 'RTD.CH', 'TC.CH', 'LC.CH', 'ENC.CH', 'ACT.CH', 'ACT_Cal.CH'];
+  // Board-namespaced prefixes: subscribe to all possible board numbers
+  const sensorPrefixes = [
+    'PT1.CH', 'PT2.CH', 'PT1_Cal.CH', 'PT2_Cal.CH',
+    'RTD1.CH', 'RTD1_Cal.CH',
+    'TC1.CH', 'TC1_Cal.CH',
+    'LC2.CH', 'LC2_Cal.CH',
+    'ENC1.CH', 'ENC1_Cal.CH',
+    'ACT2.CH', 'ACT4.CH', 'ACT2_Cal.CH', 'ACT4_Cal.CH',
+  ];
   for (const prefix of sensorPrefixes) {
     for (let i = 1; i <= 20; i++) {
       send(ws, {
@@ -518,23 +526,22 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
   // from the same board MUST have the exact same update count. If any entity has
   // fewer updates than its board siblings, packets were dropped in the pipeline.
   const BOARD_GROUPS: Record<string, string[]> = {
-    'pt_board': [
-      'PT.Fuel_Upstream', 'PT.GSE_Low', 'PT.Fuel_Downstream', 'PT.Chamber_Mid_PT_1',
-      'PT.Ox_Upstream', 'PT.GN2_Regulated', 'PT.Ox_Downstream', 'PT.Chamber_Mid_PT_2',
-      'PT.Chamber_Throat_PT_1', 'PT.Chamber_Throat_PT_2',
+    'pt_board (B1)': [
+      'PT1.CH1', 'PT1.CH2', 'PT1.CH3', 'PT1.CH4', 'PT1.CH5',
+      'PT1.CH6', 'PT1.CH7', 'PT1.CH8', 'PT1.CH9', 'PT1.CH10',
     ],
-    'pt_board_2': ['PT.GSE_High', 'PT.GSE_Mid', 'PT.GN2_High'],
-    'rtd_board': ['RTD.CH1', 'RTD.CH2', 'RTD.CH3', 'RTD.CH4'],
-    'lc_board_2': ['LC.CH1', 'LC.CH2', 'LC.CH6'],
-    'tc_board': ['TC.CH2', 'TC.CH3', 'TC.CH4', 'TC.CH5'],
-    'encoder_board': ['ENC.CH1'],
-    'actuator_board_2': [
-      'ACT.CH1', 'ACT.CH2', 'ACT.CH3', 'ACT.CH4', 'ACT.CH5',
-      'ACT.CH6', 'ACT.CH7', 'ACT.CH8', 'ACT.CH9', 'ACT.CH10',
+    'pt_board_2 (B2)': ['PT2.CH1', 'PT2.CH2', 'PT2.CH3', 'PT2.CH4'],
+    'rtd_board (B1)': ['RTD1.CH1', 'RTD1.CH2', 'RTD1.CH3', 'RTD1.CH4'],
+    'lc_board_2 (B2)': ['LC2.CH1', 'LC2.CH2', 'LC2.CH6'],
+    'tc_board (B1)': ['TC1.CH2', 'TC1.CH3', 'TC1.CH4', 'TC1.CH5'],
+    'encoder_board (B1)': ['ENC1.CH1'],
+    'actuator_board_2 (B2)': [
+      'ACT2.CH1', 'ACT2.CH2', 'ACT2.CH3', 'ACT2.CH4', 'ACT2.CH5',
+      'ACT2.CH6', 'ACT2.CH7', 'ACT2.CH8', 'ACT2.CH9', 'ACT2.CH10',
     ],
-    'actuator_board_4': [
-      'ACT.CH11', 'ACT.CH12', 'ACT.CH13', 'ACT.CH14', 'ACT.CH15',
-      'ACT.CH16', 'ACT.CH17', 'ACT.CH18', 'ACT.CH19', 'ACT.CH20',
+    'actuator_board_4 (B4)': [
+      'ACT4.CH1', 'ACT4.CH2', 'ACT4.CH3', 'ACT4.CH4', 'ACT4.CH5',
+      'ACT4.CH6', 'ACT4.CH7', 'ACT4.CH8', 'ACT4.CH9', 'ACT4.CH10',
     ],
   };
 
@@ -815,16 +822,19 @@ async function testActuatorCommands(ws: WebSocket): Promise<void> {
   let actuatorsOpened = 0;
   let actuatorsClosed = 0;
 
-  // Actuator commanded state arrives as SENSOR_UPDATE with generic ACT.CH<globalCh> entity.
-  // Global channel = (board_id - 11) * 10 + local_channel.
-  const ACTUATOR_GLOBAL_CH: Record<string, number> = {
-    'LOX Main': 11, 'Fuel Vent': 12, 'Fuel Press': 13, 'Fuel Main': 17,
-    'LOX Vent': 16, 'LOX Press': 18, 'GSE Low Press Vent': 15, 'Fuel Fill Press': 20,
-    'Fuel Fill Vent': 31, 'GSE LOX Fill Vent': 32, 'GSE High Press Control': 33,
-    'GSE Med Press Control': 34, 'GSE High Press Vent': 35, 'GN2 Vent': 36,
-    'LOX Fill': 37, 'LOX Dump': 38,
+  // Actuator commanded state: ACT_CMD.B<board_number>.CH<local_channel>
+  // Board 12 = board_number 2, Board 14 = board_number 4.
+  const ACTUATOR_ENTITY: Record<string, string> = {
+    'LOX Main': 'ACT_CMD.B2.CH1', 'Fuel Vent': 'ACT_CMD.B2.CH2',
+    'Fuel Press': 'ACT_CMD.B2.CH3', 'GSE Low Press Vent': 'ACT_CMD.B2.CH5',
+    'LOX Vent': 'ACT_CMD.B2.CH6', 'Fuel Main': 'ACT_CMD.B2.CH7',
+    'LOX Press': 'ACT_CMD.B2.CH8', 'Fuel Fill Press': 'ACT_CMD.B2.CH10',
+    'Fuel Fill Vent': 'ACT_CMD.B4.CH1', 'GSE LOX Fill Vent': 'ACT_CMD.B4.CH2',
+    'GSE High Press Control': 'ACT_CMD.B4.CH3', 'GSE Med Press Control': 'ACT_CMD.B4.CH4',
+    'GSE High Press Vent': 'ACT_CMD.B4.CH5', 'GN2 Vent': 'ACT_CMD.B4.CH6',
+    'LOX Fill': 'ACT_CMD.B4.CH7', 'LOX Dump': 'ACT_CMD.B4.CH8',
   };
-  const nameToEntity = (name: string) => `ACT.CH${ACTUATOR_GLOBAL_CH[name] ?? 1}`;
+  const nameToEntity = (name: string) => ACTUATOR_ENTITY[name] ?? 'ACT_CMD.B2.CH1';
 
   for (const actuatorName of TEST_ACTUATORS) {
     const entity = nameToEntity(actuatorName);
@@ -968,12 +978,15 @@ async function testCalibratedDataStability(ws: WebSocket): Promise<void> {
   console.log('\n📊 Test 10: Calibrated Data Stability (spike detection)');
 
   // Calibrated entities we expect (from calibration_service defaults)
+  // Board-namespaced calibrated prefixes: PT1_Cal, PT2_Cal, etc.
   const CALIBRATED_COMPONENTS: Record<string, string> = {
-    'PT_Cal': 'pressure_psi',
-    'TC_Cal': 'temperature_c',
-    'RTD_Cal': 'temperature_c',
-    'LC_Cal': 'force_kg',
-    'ACT_Cal': 'current_a',
+    'PT1_Cal': 'pressure_psi',
+    'PT2_Cal': 'pressure_psi',
+    'TC1_Cal': 'temperature_c',
+    'RTD1_Cal': 'temperature_c',
+    'LC2_Cal': 'force_kg',
+    'ACT2_Cal': 'current_a',
+    'ACT4_Cal': 'current_a',
   };
 
   // Collect calibrated SENSOR_UPDATE values for 8 seconds
@@ -1293,9 +1306,9 @@ async function testSensorConfigEntityFormat(): Promise<void> {
 
   assert(sensors.length > 0, `sensor-config returned ${sensors.length} sensors`);
 
-  // Every entity must match TYPE.CH<N> (e.g. PT.CH1, TC.CH3, RTD.CH2, LC.CH5)
-  const entityPattern = /^(PT|TC|RTD|LC|ENC)\.CH\d+$/;
-  const calEntityPattern = /^(PT|TC|RTD|LC|ENC)_Cal\.CH\d+$/;
+  // Every entity must match TYPE<N>.CH<N> (e.g. PT1.CH1, TC1.CH3, RTD1.CH2, LC2.CH5)
+  const entityPattern = /^(PT|TC|RTD|LC|ENC|ACT)\d+\.CH\d+$/;
+  const calEntityPattern = /^(PT|TC|RTD|LC|ENC|ACT)\d+_Cal\.CH\d+$/;
 
   const badEntities: string[] = [];
   const badCalEntities: string[] = [];
@@ -1305,9 +1318,9 @@ async function testSensorConfigEntityFormat(): Promise<void> {
     const entity = s.entity as string;
     const calEntity = s.calEntity as string;
 
-    // Extract sensor type
+    // Extract sensor type (strip board number: "PT1" → "PT")
     const dotIdx = entity.indexOf('.');
-    if (dotIdx > 0) typesSeen.add(entity.slice(0, dotIdx));
+    if (dotIdx > 0) typesSeen.add(entity.slice(0, dotIdx).replace(/\d+$/, ''));
 
     if (!entityPattern.test(entity)) {
       badEntities.push(entity);
@@ -1342,9 +1355,15 @@ async function testSensorConfigEntityFormat(): Promise<void> {
 
 async function testRawAndCalibratedPresence(ws: WebSocket): Promise<void> {
   console.log('\n📊 Test 12: Raw AND Calibrated Data Presence (all sensor types)');
+  // Wait for backend resubscribe cycle to pick up calibrated vtables registered by calibration_service
+  await new Promise(r => setTimeout(r, 6000));
 
   // Subscribe broadly to raw and calibrated for all types
-  const prefixes = ['PT.CH', 'PT_Cal.CH', 'TC.CH', 'TC_Cal.CH', 'RTD.CH', 'RTD_Cal.CH', 'LC.CH', 'LC_Cal.CH'];
+  const prefixes = [
+    'PT1.CH', 'PT2.CH', 'PT1_Cal.CH', 'PT2_Cal.CH',
+    'TC1.CH', 'TC1_Cal.CH', 'RTD1.CH', 'RTD1_Cal.CH',
+    'LC2.CH', 'LC2_Cal.CH',
+  ];
   for (const prefix of prefixes) {
     for (let i = 1; i <= 20; i++) {
       send(ws, {
@@ -1378,13 +1397,15 @@ async function testRawAndCalibratedPresence(ws: WebSocket): Promise<void> {
     if (dotIdx < 0) continue;
     const prefix = entity.slice(0, dotIdx);
 
+    // Strip board number: "PT1_Cal" → "PT", "PT1" → "PT"
     if (prefix.endsWith('_Cal')) {
-      const baseType = prefix.replace('_Cal', '');
+      const baseType = prefix.replace(/_Cal$/, '').replace(/\d+$/, '');
       if (!calByType[baseType]) calByType[baseType] = new Set();
       calByType[baseType].add(entity);
     } else {
-      if (!rawByType[prefix]) rawByType[prefix] = new Set();
-      rawByType[prefix].add(entity);
+      const baseType = prefix.replace(/\d+$/, '');
+      if (!rawByType[baseType]) rawByType[baseType] = new Set();
+      rawByType[baseType].add(entity);
     }
   }
 

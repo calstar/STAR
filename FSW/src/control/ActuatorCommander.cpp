@@ -360,7 +360,7 @@ void ActuatorCommander::applyForState(State state) {
         uint8_t hw_state = static_cast<uint8_t>(role.is_no ? (1 - pos) : pos);
         by_board[role.board_ip].emplace_back(static_cast<uint8_t>(role.channel), hw_state);
         // Global channel: (board_id - 11) * 10 + channel → unique across all actuator boards
-        uint8_t global_ch = static_cast<uint8_t>((role.board_id - 11) * 10 + role.channel);
+        uint8_t global_ch = static_cast<uint8_t>((role.board_id % 10 - 1) * 0x20 + role.channel);
         logical_commands.emplace_back(global_ch, static_cast<uint8_t>(pos));
     }
     lock.unlock();
@@ -431,7 +431,7 @@ bool ActuatorCommander::sendSingleActuator(const std::string& name, int pos) {
     if (ok) {
         std::cout << "[ActuatorCommander] Manual: " << name << " -> "
                   << (pos == 1 ? "OPEN" : "CLOSED") << std::endl;
-        uint8_t global_ch = static_cast<uint8_t>((role.board_id - 11) * 10 + role.channel);
+        uint8_t global_ch = static_cast<uint8_t>((role.board_id % 10 - 1) * 0x20 + role.channel);
         publishCommandedState(global_ch, static_cast<uint8_t>(pos));
     }
     return ok;
@@ -482,7 +482,7 @@ void ActuatorCommander::publishInitialState() {
     for (const auto& [name, role] : roles_) {
         // De-energized: NC → closed (0), NO → open (1)
         uint8_t logical_pos = role.is_no ? 1 : 0;
-        uint8_t global_ch = static_cast<uint8_t>((role.board_id - 11) * 10 + role.channel);
+        uint8_t global_ch = static_cast<uint8_t>((role.board_id % 10 - 1) * 0x20 + role.channel);
         publishCommandedState(global_ch, logical_pos);
     }
     std::cout << "[ActuatorCommander] Published initial state for " << roles_.size()
