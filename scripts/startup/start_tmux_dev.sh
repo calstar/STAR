@@ -53,6 +53,8 @@ if [ -z "$ELODIN_DB_BIN" ]; then
 fi
 
 # Build C++ binaries (ensures daq_bridge, sequencer, heartbeat, etc. are up to date)
+# IMPORTANT: This build MUST complete before any tmux pane launches a C++ binary.
+# Without this, services may start with stale binaries from a previous build.
 echo "🔨 Building C++ binaries..."
 FSW_BUILD_DIR="$PROJECT/FSW/build"
 if [ ! -d "$FSW_BUILD_DIR" ]; then
@@ -61,6 +63,9 @@ if [ ! -d "$FSW_BUILD_DIR" ]; then
 fi
 NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 (cd "$FSW_BUILD_DIR" && make -j"$NPROC" 2>&1) || { echo "❌ C++ build failed"; exit 1; }
+# Touch all output binaries so their mtime reflects this build, not a stale one.
+# This guards against make deciding nothing changed (e.g. only .hpp touched).
+find "$FSW_BUILD_DIR" -maxdepth 1 -type f -perm +111 -newer "$FSW_BUILD_DIR/CMakeCache.txt" -exec touch {} + 2>/dev/null || true
 echo "  ✅ C++ binaries built"
 
 # Ensure web-gui dependencies are installed (tmux panes assume they exist).
@@ -141,6 +146,10 @@ if [ ! -x "$OTA_BIN" ]; then
 fi
 pkill -f "ota_service" 2>/dev/null || true
 
+# wait_for_elodin: poll until Elodin DB is accepting TCP connections on port 2240.
+# Replaces fixed sleep delays so services start as soon as the DB is ready.
+WAIT_FOR_ELODIN="echo '  ⏳ Waiting for Elodin DB (port 2240)...' && for i in \$(seq 1 30); do (echo >/dev/tcp/127.0.0.1/2240) 2>/dev/null && break; sleep 1; done"
+
 # Publisher: writes UDP sensor data → Elodin DB. Without this, nothing is written to the DB.
 DAQ_BIN="$PROJECT/build/FSW/daq_bridge"
 if [ ! -x "$DAQ_BIN" ]; then
@@ -148,7 +157,7 @@ if [ ! -x "$DAQ_BIN" ]; then
 fi
 # DAQ must wait for Elodin DB to be ready.
 CMD_LOG_DAQ="/tmp/gui_logs/daq.log"
-CMD_DAQ="printf '\n  ══ DAQ BRIDGE (writes to Elodin — UDP from config → DB) ══\n\n' && echo '  ⏳ Waiting for Elodin DB...' && sleep 4 && cd $PROJECT && exec $DAQ_BIN config/config.toml 2>&1 | tee $CMD_LOG_DAQ"
+CMD_DAQ="printf '\n  ══ DAQ BRIDGE (writes to Elodin — UDP from config → DB) ══\n\n' && $WAIT_FOR_ELODIN && cd $PROJECT && exec $DAQ_BIN config/config.toml 2>&1 | tee $CMD_LOG_DAQ"
 
 # Controller Service: Reads CALIBRATED DB → UDP out + Diagnostics DB
 CTRL_BIN="$PROJECT/build/FSW/controller_service"
@@ -159,7 +168,7 @@ CTRL_LUT="${LUT_PATH:-$PROJECT/output/lut/controller_policy_fsw.bin}"
 CTRL_OPTS="--config config/config.toml --elodin-host 127.0.0.1"
 [ -f "$CTRL_LUT" ] && CTRL_OPTS="$CTRL_OPTS --lut-path $CTRL_LUT"
 CMD_LOG_CTRL="/tmp/gui_logs/controller.log"
-CMD_CTRL="printf '\n  ══ CONTROLLER SERVICE (DB Calibrated → Actuators) ══\n\n' && sleep 4 && cd $PROJECT && exec $CTRL_BIN $CTRL_OPTS 2>&1 | tee $CMD_LOG_CTRL"
+CMD_CTRL="printf '\n  ══ CONTROLLER SERVICE (DB Calibrated → Actuators) ══\n\n' && $WAIT_FOR_ELODIN && cd $PROJECT && exec $CTRL_BIN $CTRL_OPTS 2>&1 | tee $CMD_LOG_CTRL"
 
 # Sequencer service: state machine + actuator UDP (same TCP :9998 text protocol as server.ts)
 SEQ_BIN="$PROJECT/build/FSW/sequencer_service"
@@ -168,7 +177,7 @@ if [ ! -x "$SEQ_BIN" ]; then
 fi
 if [ -x "$SEQ_BIN" ]; then
   CMD_LOG_SEQUENCER="/tmp/gui_logs/sequencer.log"
-  CMD_SEQUENCER="printf '\n  ══ SEQUENCER SERVICE (TCP :9998 — TRANSITION / ACTUATOR / …) ══\n\n' && sleep 3 && cd $PROJECT && exec $SEQ_BIN --config config/config.toml --port 9998 2>&1 | tee $CMD_LOG_SEQUENCER"
+  CMD_SEQUENCER="printf '\n  ══ SEQUENCER SERVICE (TCP :9998 — TRANSITION / ACTUATOR / …) ══\n\n' && $WAIT_FOR_ELODIN && cd $PROJECT && exec $SEQ_BIN --config config/config.toml --port 9998 2>&1 | tee $CMD_LOG_SEQUENCER"
 else
   CMD_SEQUENCER="printf '\n  ❌ sequencer_service not found. Build: cd FSW/build && cmake .. && make sequencer_service\n\n' && sleep infinity"
 fi
@@ -180,7 +189,7 @@ CMD_DB="printf '\n  ══ ELODIN DB — :2240 (raw data lands here only) ══
 THIN_WS_PORT="${THIN_WS_PORT:-8081}"
 THIN_ACT_PORT="${THIN_ACTUATOR_SERVICE_PORT:-9998}"
 CMD_LOG_BACKEND="/tmp/gui_logs/backend.log"
-CMD_WEB_BACKEND="printf '\n  ══ BACKEND — HTTP+WS :${THIN_WS_PORT} (server.ts → Elodin DB :2240) ══\n\n' && sleep 4 && cd $PROJECT/web-gui/backend && WS_PORT=$THIN_WS_PORT ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT=$THIN_ACT_PORT npx tsx watch src/server.ts 2>&1 | tee $CMD_LOG_BACKEND"
+CMD_WEB_BACKEND="printf '\n  ══ BACKEND — HTTP+WS :${THIN_WS_PORT} (server.ts → Elodin DB :2240) ══\n\n' && $WAIT_FOR_ELODIN && cd $PROJECT/web-gui/backend && WS_PORT=$THIN_WS_PORT ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT=$THIN_ACT_PORT npx tsx watch src/server.ts 2>&1 | tee $CMD_LOG_BACKEND"
 
 CMD_LOG_FRONTEND="/tmp/gui_logs/frontend.log"
 CMD_WEB_FRONTEND="printf '\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n' && sleep 3 && cd $PROJECT/web-gui/frontend && OTA_SERVICE_PORT=$OTA_CMD_PORT NEXT_PUBLIC_WS_URL=ws://127.0.0.1:${THIN_WS_PORT} npm run dev 2>&1 | tee $CMD_LOG_FRONTEND"
@@ -195,7 +204,7 @@ fi
 # Board simulator (pane 0); set USE_SIM=1 to run (default off for real hardware)
 if [ "${USE_SIM:-0}" = "1" ]; then
   CMD_LOG_SIM="/tmp/gui_logs/sim.log"
-  CMD_SIM="printf '\n  ══ BOARD SIMULATOR — UDP → :5006 (All Boards) ══\n\n' && sleep 4 && cd $PROJECT && ([ -x scripts/setup_sim_network.sh ] && scripts/setup_sim_network.sh || true) && exec $PYTHON_BIN scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 2>&1 | tee $CMD_LOG_SIM"
+  CMD_SIM="printf '\n  ══ BOARD SIMULATOR — UDP → :5006 (All Boards) ══\n\n' && $WAIT_FOR_ELODIN && cd $PROJECT && ([ -x scripts/setup_sim_network.sh ] && scripts/setup_sim_network.sh || true) && exec $PYTHON_BIN scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006 2>&1 | tee $CMD_LOG_SIM"
 else
   CMD_SIM="printf '\n  ══ BOARD SIMULATOR — DISABLED (USE_SIM=1 to enable) ══\n\n' && sleep infinity"
 fi
@@ -217,7 +226,7 @@ CMD_CONFIG="printf '\n  ══ CONFIG BROADCAST SERVICE — config packets to bo
 CALIB_BIN="$PROJECT/build/FSW/calibration_service"
 [ ! -x "$CALIB_BIN" ] && CALIB_BIN="$PROJECT/FSW/build/calibration_service"
 CMD_LOG_CALIBRATION="/tmp/gui_logs/calibration.log"
-CMD_CALIBRATION="printf '\n  ══ CALIBRATION SERVICE — DB Raw → DB Calibrated ══\n\n' && sleep 4 && cd $PROJECT && exec $CALIB_BIN --config config/config.toml 2>&1 | tee $CMD_LOG_CALIBRATION"
+CMD_CALIBRATION="printf '\n  ══ CALIBRATION SERVICE — DB Raw → DB Calibrated ══\n\n' && $WAIT_FOR_ELODIN && cd $PROJECT && exec $CALIB_BIN --config config/config.toml 2>&1 | tee $CMD_LOG_CALIBRATION"
 
 # Split the rightmost (max index) pane each time so pane creation order is 0..11 as listed above.
 # Re-tile after each split so widths stay usable. IMPORTANT: pass one shell string to tmux (like

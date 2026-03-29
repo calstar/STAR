@@ -47,7 +47,8 @@ public:
                                            const std::vector<uint8_t>& tc_channels,
                                            const std::vector<uint8_t>& rtd_channels,
                                            const std::vector<uint8_t>& lc_channels,
-                                           const std::vector<uint8_t>& enc_channels);
+                                           const std::vector<uint8_t>& enc_channels,
+                                           const std::vector<uint8_t>& act_channels);
 
     /**
      * @brief Register BOARD_HEARTBEAT VTables for specific board IDs.

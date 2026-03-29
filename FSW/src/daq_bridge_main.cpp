@@ -692,7 +692,7 @@ int main(int argc, char* argv[]) {
         }
         // Register CALIBRATED VTables
         fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_ch,
-                                                                 tc_ch, rtd_ch, lc_ch, enc_ch);
+                                                                 tc_ch, rtd_ch, lc_ch, enc_ch, act_ch);
         // Register BOARD_HEARTBEAT and SELF_TEST VTables only for boards in config
         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, config_board_ids);
         fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, config_board_ids);
@@ -816,7 +816,7 @@ int main(int argc, char* argv[]) {
                         fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client,
                                                                                 pt_ch, tc_ch,
                                                                                 rtd_ch, lc_ch,
-                                                                                enc_ch);
+                                                                                enc_ch, act_ch);
                         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, config_board_ids);
                         fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, config_board_ids);
                     }

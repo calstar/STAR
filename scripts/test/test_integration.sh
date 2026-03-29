@@ -357,13 +357,11 @@ sedi "s/^broadcast_port = 5005/broadcast_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST
 # (192.168.2.x) aren't bindable, and the DAQ bridge has matching fallback
 # logic for 127.0.0.x addresses. Replacing all IPs to 127.0.0.1 makes the
 # bridge treat every board as the same one (only one sensor type gets through).
-# Replace actuator board IPs to 127.0.0.1 so UDP commands reach our local listener.
-# Unlike sensor boards (where DAQ bridge routes by source IP), actuator commands are
-# sent TO the board IP — so we must point them at localhost for testing.
-sedi 's/^ip = "192\.168\.2\.11"/ip = "127.0.0.1"/' "$TEST_CONFIG"
-sedi 's/^ip = "192\.168\.2\.12"/ip = "127.0.0.1"/' "$TEST_CONFIG"
-sedi 's/^ip = "192\.168\.2\.13"/ip = "127.0.0.1"/' "$TEST_CONFIG"
-sedi 's/^ip = "192\.168\.2\.14"/ip = "127.0.0.1"/' "$TEST_CONFIG"
+# Do NOT replace actuator board IPs. Keeping 192.168.2.{11-14} means the
+# simulator falls back to 127.0.0.{2+index}, which the DAQ bridge routes via
+# board_order (same fallback logic used by PT/TC/RTD/LC boards).
+# UDP commands from sequencer go to 192.168.2.x (not routable in test), but
+# Test 4 (actuator commands) validates via Elodin SENSOR_UPDATE, not UDP.
 # Encoder board #1 (config [boards.encoder_board_61]) — dedicated loopback so sim can bind without colliding
 sedi 's/^ip = "192\.168\.2\.61"/ip = "127.0.0.61"/' "$TEST_CONFIG"
 # Replace listen_port on actuator boards to use our test port
@@ -420,13 +418,12 @@ echo "📊 Starting Elodin DB..."
 rm -rf "$TEST_DB_PATH" 2>/dev/null || true
 RUST_LOG=debug "$ELODIN_DB_BIN" run "[::]:$TEST_ELODIN_PORT" "$TEST_DB_PATH" > "$REPO_ROOT/.tmp/integration_elodin_$$.log" 2>&1 &
 PIDS+=($!)
-sleep 2
 
-if ! kill -0 "${PIDS[-1]}" 2>/dev/null; then
+wait_for_port "$TEST_ELODIN_PORT" "Elodin DB" 10 || {
   echo "  ❌ Elodin DB failed to start. Log:"
   cat "$REPO_ROOT/.tmp/integration_elodin_$$.log"
   exit 1
-fi
+}
 echo "  ✅ Elodin DB started (PID ${PIDS[-1]})"
 
 # ── Start sequencer_service ──────────────────────────────────────────────────
@@ -587,7 +584,7 @@ else
   # board_simulator.py: uses --config for board definitions, --port for UDP target
   # --low-noise: constant ADC values per channel for calibration spike detection
   "$PYTHON_BIN" -c "import tomli" 2>/dev/null || "$PYTHON_BIN" -m pip install tomli -q 2>/dev/null || true
-  "$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --stats-file "$SIM_STATS_FILE" > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
+  "$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --skip-startup --stats-file "$SIM_STATS_FILE" > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
   SIM_PID=$!
   PIDS+=($SIM_PID)
 fi

@@ -194,7 +194,8 @@ bool DatabaseConfig::register_calibrated_tables(ElodinClient& client,
                                                 const std::vector<uint8_t>& tc_channels,
                                                 const std::vector<uint8_t>& rtd_channels,
                                                 const std::vector<uint8_t>& lc_channels,
-                                                const std::vector<uint8_t>& enc_channels) {
+                                                const std::vector<uint8_t>& enc_channels,
+                                                const std::vector<uint8_t>& act_channels) {
     std::cout << "[DatabaseConfig] Registering CALIBRATED VTables..." << std::endl;
     int registered = 0;
 
@@ -225,6 +226,13 @@ bool DatabaseConfig::register_calibrated_tables(ElodinClient& client,
     for (uint8_t ch : enc_channels) {
         std::string entity = "ENC_Cal.CH" + std::to_string(ch);
         if (register_calibrated_vtable(client, 0x24, ch, 0x2410 + ch, entity, "position_deg", "raw_adc"))
+            registered++;
+    }
+
+    // Actuators use 0x31 for calibrated (not 0x30+0x10 offset, since 20 channels would collide)
+    for (uint8_t ch : act_channels) {
+        std::string entity = "ACT_Cal.CH" + std::to_string(ch);
+        if (register_calibrated_vtable(client, 0x31, ch, 0x3100 + ch, entity, "current_a", "raw_adc"))
             registered++;
     }
 

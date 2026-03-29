@@ -407,6 +407,14 @@ const EXPECTED_ENTITIES: string[] = [
 
   // encoder_board (id 61) — 2 channels
   'ENC.CH1',
+
+  // actuator_board_2 (id 12) — 10 channels
+  'ACT.CH1', 'ACT.CH2', 'ACT.CH3', 'ACT.CH4', 'ACT.CH5',
+  'ACT.CH6', 'ACT.CH7', 'ACT.CH8', 'ACT.CH9', 'ACT.CH10',
+
+  // actuator_board_4 (id 14) — 10 channels, offset 10
+  'ACT.CH11', 'ACT.CH12', 'ACT.CH13', 'ACT.CH14', 'ACT.CH15',
+  'ACT.CH16', 'ACT.CH17', 'ACT.CH18', 'ACT.CH19', 'ACT.CH20',
 ];
 
 // ── Test 1: Sensor Data Flow ─────────────────────────────────────────────────
@@ -520,6 +528,14 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     'lc_board_2': ['LC.CH1', 'LC.CH2', 'LC.CH6'],
     'tc_board': ['TC.CH2', 'TC.CH3', 'TC.CH4', 'TC.CH5'],
     'encoder_board': ['ENC.CH1'],
+    'actuator_board_2': [
+      'ACT.CH1', 'ACT.CH2', 'ACT.CH3', 'ACT.CH4', 'ACT.CH5',
+      'ACT.CH6', 'ACT.CH7', 'ACT.CH8', 'ACT.CH9', 'ACT.CH10',
+    ],
+    'actuator_board_4': [
+      'ACT.CH11', 'ACT.CH12', 'ACT.CH13', 'ACT.CH14', 'ACT.CH15',
+      'ACT.CH16', 'ACT.CH17', 'ACT.CH18', 'ACT.CH19', 'ACT.CH20',
+    ],
   };
 
   // Count updates per entity

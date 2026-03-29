@@ -495,13 +495,13 @@ description = "Calibrated LC force"
 
 [routing.actuator_status]
 packet_id = [0x30, 0x00]
-channels = 10
+channels = 20
 description = "Actuator current sense readings"
 
-[routing.actuator_state]
+[routing.actuator_cal]
 packet_id = [0x31, 0x00]
 channels = 20
-description = "Actuator state (0=closed, 1=open) from current-sense threshold"
+description = "Calibrated actuator current (amps) from calibration_service"
 
 [routing.encoder_raw]
 packet_id = [0x24, 0x00]
@@ -511,7 +511,7 @@ description = "Raw encoder angle (0-4095) — AS5600 12-bit"
 # Which routing types daq_bridge publishes to Elodin.
 # PT_Cal/TC_Cal/LC_Cal/RTD_Cal are written by calibration_server (subscribes to relay, applies calibration, writes to Elodin).
 [daq_bridge]
-publish = ["pt_raw", "tc_raw", "rtd_raw", "lc_raw", "actuator_status", "actuator_state", "encoder_raw"]
+publish = ["pt_raw", "tc_raw", "rtd_raw", "lc_raw", "actuator_status", "actuator_cal", "encoder_raw"]
 
 # =============================================================================
 # Calibration

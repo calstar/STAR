@@ -10,10 +10,17 @@ import argparse
 import json
 import math
 
-# DiabloAvionics Packet Types
+# DiabloAvionics Packet Types (DAQv2-Comms DiabloEnums.h)
 PACKET_TYPE_HEARTBEAT = 1
 PACKET_TYPE_SENSOR_DATA = 3
 PACKET_TYPE_ACTUATOR_COMMAND = 4
+PACKET_TYPE_SENSOR_CONFIG = 5
+PACKET_TYPE_SELF_TEST = 12
+
+# Board States (DAQv2-Comms DiabloEnums.h)
+BOARD_STATE_SETUP = 1
+BOARD_STATE_ACTIVE = 2
+BOARD_STATE_SELF_TEST = 10
 
 # Board Types
 BOARD_TYPE_PT = 1
@@ -33,6 +40,7 @@ class SimulatedBoard:
         low_noise=False,
         board_index=0,
         sim_pt_targets=None,
+        skip_startup=False,
     ):
         self.name = name
         self.board_index = board_index
@@ -47,6 +55,7 @@ class SimulatedBoard:
         self.board_type_str = board_config.get("type", "PT")
         self.num_sensors = board_config.get("num_sensors", 10)
         self.channel_offset = board_config.get("channel_offset", 0)
+        self.listen_port = board_config.get("listen_port", 5005)
 
         # Map string type to enum
         type_map = {
@@ -68,6 +77,12 @@ class SimulatedBoard:
             "hp_pt_sense_resistor_ohms", 120
         )
 
+        # State machine (matches SensorHotfireCore.h lifecycle)
+        self.board_state = BOARD_STATE_ACTIVE if skip_startup else BOARD_STATE_SETUP
+        self.setup_start_time = None
+        self.setup_timeout = 10.0  # fallback to ACTIVE if no SENSOR_CONFIG
+        self.can_receive = False  # whether socket is bound to listen_port
+
         self.running = False
         self.sock = None
         self.thread = None
@@ -78,29 +93,44 @@ class SimulatedBoard:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
+        bind_ip = self.ip
+        bind_port = self.listen_port if self.board_state == BOARD_STATE_SETUP else 0
+
         try:
-            # Bind to the flight IP defined in config.toml
-            # Requires these IPs to be added as aliases to the interface (e.g. lo)
-            self.sock.bind((self.ip, 0))
-            print(f"[{self.name}] Bound to {self.ip}", flush=True)
+            self.sock.bind((bind_ip, bind_port))
+            self.can_receive = bind_port != 0
+            print(
+                f"[{self.name}] Bound to {bind_ip}:{bind_port}", flush=True
+            )
         except Exception:
             # When config IPs (e.g. 192.168.2.21) are not on this host, use distinct
             # loopback IPs so daq_bridge can route each board's data correctly.
             # 127.0.0.2 = first board, 127.0.0.3 = second, etc.
             fallback_ip = f"127.0.0.{2 + self.board_index}"
             try:
-                self.sock.bind((fallback_ip, 0))
+                self.sock.bind((fallback_ip, bind_port))
                 self.ip = fallback_ip
+                self.can_receive = bind_port != 0
                 print(
-                    f"[{self.name}] Bound to {fallback_ip} (config IP {self.config.get('ip')} unavailable)",
+                    f"[{self.name}] Bound to {fallback_ip}:{bind_port} (config IP {self.config.get('ip')} unavailable)",
                     flush=True,
                 )
             except Exception:
-                print(
-                    f"[{self.name}] Warning: Could not bind to "
-                    f"{self.ip} or {fallback_ip}. Sending from default interface.",
-                    flush=True,
-                )
+                # Last resort: ephemeral port, can't receive SENSOR_CONFIG
+                try:
+                    self.sock.bind((fallback_ip, 0))
+                    self.ip = fallback_ip
+                except Exception:
+                    pass
+                if self.board_state == BOARD_STATE_SETUP:
+                    print(
+                        f"[{self.name}] Warning: Could not bind to port {bind_port}, skipping startup lifecycle",
+                        flush=True,
+                    )
+                    self.board_state = BOARD_STATE_ACTIVE
+
+        # Non-blocking for interleaved send/receive
+        self.sock.settimeout(0)
 
         self.thread = threading.Thread(target=self._run)
         self.thread.daemon = True
@@ -109,6 +139,7 @@ class SimulatedBoard:
     def _run(self):
         last_heartbeat = 0
         last_sensor_data = 0
+        self.setup_start_time = time.time()
 
         heartbeat_interval = 1.0  # 1 Hz
         sensor_interval = 0.02 if self.board_type_str == "ENCODER" else 0.1  # 50 Hz for ENCODER, 10 Hz for others
@@ -117,17 +148,74 @@ class SimulatedBoard:
             now = time.time()
             ts_ms = int(now * 1000) & 0xFFFFFFFF
 
-            # Send Heartbeat
+            # --- SETUP: check for SENSOR_CONFIG ---
+            if self.board_state == BOARD_STATE_SETUP:
+                if self.can_receive:
+                    self._check_for_sensor_config()
+                # Timeout fallback
+                if self.board_state == BOARD_STATE_SETUP and (now - self.setup_start_time) > self.setup_timeout:
+                    print(
+                        f"[{self.name}] SETUP timeout ({self.setup_timeout}s), going ACTIVE",
+                        flush=True,
+                    )
+                    self.board_state = BOARD_STATE_ACTIVE
+
+            # --- Send Heartbeat (all states, matching firmware) ---
             if now - last_heartbeat >= heartbeat_interval:
                 self._send_heartbeat(ts_ms)
                 last_heartbeat = now
 
-            # Send Sensor Data
-            if now - last_sensor_data >= sensor_interval:
-                self._send_sensor_data(ts_ms)
-                last_sensor_data = now
+            # --- Send Sensor Data (ACTIVE only, matching firmware) ---
+            if self.board_state == BOARD_STATE_ACTIVE:
+                if now - last_sensor_data >= sensor_interval:
+                    self._send_sensor_data(ts_ms)
+                    last_sensor_data = now
 
             time.sleep(0.01)
+
+    def _check_for_sensor_config(self):
+        """Non-blocking check for SENSOR_CONFIG packet from config_broadcast_service."""
+        try:
+            data, addr = self.sock.recvfrom(4096)
+            if data and len(data) >= 1 and data[0] == PACKET_TYPE_SENSOR_CONFIG:
+                print(
+                    f"[{self.name}] SENSOR_CONFIG received from {addr}, running self-test",
+                    flush=True,
+                )
+                # Firmware: run self-test once, send results, immediately go ACTIVE
+                # (SensorHotfireCore.h: SelfTest state is transient — same loop iteration)
+                self._send_self_test()
+                self.board_state = BOARD_STATE_ACTIVE
+                print(
+                    f"[{self.name}] SELF_TEST sent, transitioning to ACTIVE",
+                    flush=True,
+                )
+        except (BlockingIOError, socket.timeout, OSError):
+            pass
+
+    def _send_self_test(self):
+        """Send SELF_TEST packet with pass results for all active connectors.
+
+        Matches firmware SelfTestPacket: header(6B) + adc_good(1B) + num_sensors(1B)
+        + N x (sensor_id(1B) + result(1B)).
+        """
+        active_connectors = self.config.get("active_connectors", [])
+        if not active_connectors:
+            active_connectors = list(range(1, self.num_sensors + 1))
+
+        ts_ms = int(time.time() * 1000) & 0xFFFFFFFF
+        header = struct.pack("<BBI", PACKET_TYPE_SELF_TEST, 0, ts_ms)
+
+        adc_good = 1  # ADC TDAC self-test passed
+        n = min(len(active_connectors), 255)
+        body = struct.pack("BB", adc_good, n)
+        for sensor_id in active_connectors[:n]:
+            body += struct.pack("BB", sensor_id & 0xFF, 1)  # 1 = pass
+
+        try:
+            self.sock.sendto(header + body, (self.target_ip, self.target_port))
+        except Exception:
+            pass
 
     def _send_heartbeat(self, ts_ms):
         # DAQv2-Comms: PacketHeader (6B) + BoardHeartbeatPacket = 32B firmware_hash + board_id +
@@ -135,9 +223,8 @@ class SimulatedBoard:
         header = struct.pack("<BBI", PACKET_TYPE_HEARTBEAT, 0, ts_ms)
         firmware_hash = bytes(32)
         engine_safe = 0
-        board_active = 2  # BoardState::ACTIVE (matches prior sim: last byte was 2)
         body = firmware_hash + struct.pack(
-            "<BBB", self.board_id & 0xFF, engine_safe, board_active
+            "<BBB", self.board_id & 0xFF, engine_safe, self.board_state
         )
         try:
             self.sock.sendto(header + body, (self.target_ip, self.target_port))
@@ -276,6 +363,11 @@ def main():
         metavar="SECONDS",
         help="Run for this many seconds then exit (default: run until Ctrl+C)",
     )
+    parser.add_argument(
+        "--skip-startup",
+        action="store_true",
+        help="Skip SETUP/SELF_TEST lifecycle, go directly to ACTIVE",
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.config):
@@ -300,6 +392,8 @@ def main():
         print(
             f"   Sim PT targets: {len(sim_pt_targets)} channels (e.g. ch1/ch5=500, ch6=4k)"
         )
+    if not args.skip_startup:
+        print("   Startup lifecycle: SETUP → SELF_TEST → ACTIVE (matching firmware)")
 
     active_count = 0
     for name, board_cfg in boards.items():
@@ -323,20 +417,22 @@ def main():
             low_noise=args.low_noise,
             board_index=active_count,
             sim_pt_targets=sim_pt_targets,
+            skip_startup=args.skip_startup,
         )
         board.start()
         simulated_boards.append(board)
         active_count += 1
+        state_label = "ACTIVE" if args.skip_startup else "SETUP"
         print(
-            f"✅ Simulated {name:15} | Type: {board.board_type_str:4} | ID: {board.board_id:2} | Source: {board.ip}"
+            f"  [{state_label:6}] {name:15} | Type: {board.board_type_str:4} | ID: {board.board_id:2} | Source: {board.ip}:{board.listen_port}"
         )
 
     if active_count == 0:
-        print("⚠️ No enabled boards found in config!", flush=True)
+        print("No enabled boards found in config!", flush=True)
     else:
-        print(f"✨ {active_count} boards active and simulating data.", flush=True)
+        print(f"{active_count} boards started.", flush=True)
 
-    print("📡 Simulator is running. Press Ctrl+C to stop.", flush=True)
+    print("Simulator is running. Press Ctrl+C to stop.", flush=True)
 
     def write_stats():
         if not args.stats_file:
@@ -361,7 +457,7 @@ def main():
         )
         with open(args.stats_file, "w") as f:
             json.dump(stats, f, indent=2)
-        print(f"📊 Stats written to {args.stats_file}", flush=True)
+        print(f"Stats written to {args.stats_file}", flush=True)
 
     # Register SIGTERM handler so integration test cleanup triggers stats write
     import signal
@@ -378,7 +474,7 @@ def main():
     try:
         if args.duration:
             time.sleep(args.duration)
-            print(f"\n⏱️ Duration ({args.duration}s) reached. Stopping...")
+            print(f"\nDuration ({args.duration}s) reached. Stopping...")
             for b in simulated_boards:
                 b.running = False
             write_stats()
