@@ -72,6 +72,7 @@ export default function WindowLauncher() {
     { id: 'sensor-info', name: 'Sensor Info', description: 'ADC code · converted value · data rate per channel', url: '/window/sensor-info', accent: '#22D3EE' },
     { id: 'solenoid-char', name: 'Solenoid Characterization', description: 'PWM duty cycle & frequency for solenoid performance', url: '/window/solenoid-char', accent: '#F59E0B' },
     { id: 'encoders', name: 'Encoders', description: 'Encoder board angles and connection status', url: '/window/encoders', accent: '#7C3AED' },
+    { id: 'feed-char', name: 'Feed System Char', description: 'CdA, MDOT, Reynolds Number characterization', url: '/window/feed-char', accent: '#3B82F6' },
   ];
 
   return (

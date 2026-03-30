@@ -77,6 +77,50 @@ plt.rcParams.update(
 PRESS_STANDBY_STATE = 20
 
 
+def _load_sensor_names(project_root: Path | None = None) -> dict[str, str]:
+    """Load PT/TC/RTD/LC channel IDs -> role names from config.toml."""
+    root = project_root or Path(__file__).resolve().parent.parent.parent
+    cfg = root / "config" / "config.toml"
+    if not cfg.exists():
+        return {}
+    out: dict[str, str] = {}
+    try:
+        import tomllib
+
+        with open(cfg, "rb") as f:
+            data = tomllib.load(f)
+
+        # PT Board 1 (CH1-10)
+        roles1 = data.get("sensor_roles_pt_board", {})
+        for name, ch in roles1.items():
+            out[f"PT_Cal.CH{ch}"] = name
+            out[f"PT_raw.CH{ch}"] = f"{name} (raw)"
+
+        # PT Board 2 (CH11-20+)
+        roles2 = data.get("sensor_roles_pt2", {})
+        for name, ch in roles2.items():
+            # channel_offset for board 2 is often 10
+            real_ch = ch + 10
+            out[f"PT_Cal.CH{real_ch}"] = name
+            out[f"PT_raw.CH{real_ch}"] = f"{name} (raw)"
+
+        # TC Board 1
+        roles_tc = data.get("sensor_roles_tc_board", {})
+        for name, ch in roles_tc.items():
+            out[f"TC_Cal.CH{ch}"] = name
+            out[f"TC_raw.CH{ch}"] = f"{name} (raw)"
+
+        # RTD Board 1
+        roles_rtd = data.get("sensor_roles_rtd_board", {})
+        for name, ch in roles_rtd.items():
+            out[f"RTD_Cal.CH{ch}"] = name
+            out[f"RTD_raw.CH{ch}"] = name
+
+    except Exception:
+        pass
+    return out
+
+
 def _load_actuator_roles(project_root: Path | None = None) -> dict[str, str]:
     """Load actuator name -> type (NC/NO) from config. Returns {name: 'NC'|'NO'}."""
     root = project_root or Path(__file__).resolve().parent.parent.parent
@@ -118,6 +162,20 @@ def _find_t_start_from_state(
             return df.loc[last_start_idx, "time"]
         return df.loc[mask, "time"].iloc[-1]
     return None
+
+
+def _find_t0_from_data(*series_dicts: dict[str, pd.DataFrame]) -> pd.Timestamp:
+    """Find earliest timestamp across all non-empty series."""
+    earliest = []
+    for sd in series_dicts:
+        if not sd:
+            continue
+        for df in sd.values():
+            if not df.empty and "time" in df.columns:
+                earliest.append(df["time"].min())
+    if not earliest:
+        return pd.Timestamp.now()
+    return min(earliest)
 
 
 def _filter_series_from_t(
@@ -248,10 +306,13 @@ def resample_to_grid(
     series: dict[str, pd.DataFrame],
     t0: pd.Timestamp,
     dt: float = 0.1,
+    t_min: float = 0.0,
     t_max: float | None = None,
+    max_gap_sec: float | None = None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
-    """Resample multiple series to common time grid. Uses linear interpolation."""
-    t_min = 0.0
+    """Resample multiple series to common time grid. Uses linear interpolation.
+    If max_gap_sec is provided, gaps in input t_s exceeding this will be NaNs in output.
+    """
     if t_max is None:
         all_t = []
         for df in series.values():
@@ -267,7 +328,26 @@ def resample_to_grid(
             continue
         t_s = (df["time"] - t0).dt.total_seconds().values
         v = df["value"].values
-        out[name] = np.interp(time_grid, t_s, v)
+        # Sort if needed
+        idx = np.argsort(t_s)
+        t_s = t_s[idx]
+        v = v[idx]
+
+        res = np.interp(time_grid, t_s, v)
+
+        # Mask gaps if requested
+        if max_gap_sec is not None and len(t_s) > 1:
+            gaps = np.diff(t_s)
+            large_gap_indices = np.where(gaps > max_gap_sec)[0]
+            for idx in large_gap_indices:
+                t_gap_start = t_s[idx]
+                t_gap_end = t_s[idx + 1]
+                # Any grid points falling strictly within this gap (with a small buffer) become NaN
+                mask = (time_grid > t_gap_start + dt * 0.1) & (
+                    time_grid < t_gap_end - dt * 0.1
+                )
+                res[mask] = np.nan
+        out[name] = res
     return out, time_grid
 
 
@@ -296,10 +376,13 @@ def resample_to_grid_step(
     series: dict[str, pd.DataFrame],
     t0: pd.Timestamp,
     dt: float = 0.1,
+    t_min: float = 0.0,
     t_max: float | None = None,
+    max_gap_sec: float | None = None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
-    """Resample discrete data (states, actuators) using forward-fill. No interpolation."""
-    t_min = 0.0
+    """Resample discrete data (states, actuators) using forward-fill. No interpolation.
+    If max_gap_sec is provided, gaps in input t_s exceeding this will be NaNs in output.
+    """
     if t_max is None:
         all_t = []
         for df in series.values():
@@ -324,7 +407,11 @@ def resample_to_grid_step(
         for i, g in enumerate(time_grid):
             j = np.searchsorted(t_s, g, side="right") - 1
             if j >= 0:
-                res[i] = v[j]
+                # Also check gap to previous sample
+                if max_gap_sec is not None and (g - t_s[j]) > max_gap_sec:
+                    res[i] = np.nan
+                else:
+                    res[i] = v[j]
         # Fill leading nans with first valid
         if len(res) > 0 and np.isnan(res[0]):
             first_valid = np.nonzero(~np.isnan(res))[0]
@@ -365,7 +452,16 @@ def plot_pressures(
         ax = ax_flat[idx]
         for c in cols:
             if c in data.columns:
-                ax.plot(t_s, data[c], label=c.replace("_", " "), alpha=0.9)
+                # Use both lines and markers to make drop-outs very apparent
+                ax.plot(
+                    t_s,
+                    data[c],
+                    marker=".",
+                    markersize=4,
+                    linestyle="-",
+                    label=c.replace("_", " "),
+                    alpha=0.9,
+                )
         ax.set_title(title)
         ax.set_ylabel("PSI")
         ax.legend(loc="upper right", fontsize=8)
@@ -735,6 +831,15 @@ def main() -> None:
     parser.add_argument(
         "--output", "-o", default=None, help="Output directory for plots"
     )
+    parser.add_argument(
+        "--max-gap",
+        type=float,
+        default=0.2,
+        help="Max gap in seconds before marking drop-out (default: 0.2)",
+    )
+    parser.add_argument(
+        "--crop-fire", action="store_true", help="Crop to 6-second FIRE window"
+    )
     args = parser.parse_args()
 
     export_dir = Path(args.export_dir)
@@ -857,139 +962,174 @@ def main() -> None:
         print("❌ No data to plot")
         return
 
-    # Filter from PRESS_STANDBY onward for last run (if state available)
+    # Resample all to high-res grid (100Hz) for alignment
+    dt = 0.01
     t0: pd.Timestamp
-    t_start = _find_t_start_from_state(state_series, PRESS_STANDBY_STATE)
-    if t_start is not None:
-        print(f"  Filtering from PRESS_STANDBY at {t_start}")
-        pt_series = _filter_series_from_t(pt_series, t_start)
-        tc_series = _filter_series_from_t(tc_series, t_start)
-        lc_series = _filter_series_from_t(lc_series, t_start)
-        act_series = _filter_series_from_t(act_series, t_start)
-        state_series = _filter_series_from_t(state_series, t_start)
-        ctrl_series = _filter_series_from_t(ctrl_series, t_start)
-        pt_raw = _filter_series_from_t(pt_raw, t_start)
-        tc_raw = _filter_series_from_t(tc_raw, t_start)
-        rtd_raw = _filter_series_from_t(rtd_raw, t_start)
-        lc_raw = _filter_series_from_t(lc_raw, t_start)
-        t0 = t_start
-        all_series = {
-            **pt_series,
-            **tc_series,
-            **lc_series,
-            **act_series,
-            **state_series,
-            **ctrl_series,
-        }
-    else:
-        # t0 = start of main run. Use series with most points; exclude outliers.
-        primary_series = {**pt_series, **state_series, **act_series, **ctrl_series}
-        if not primary_series:
-            primary_series = {**tc_series, **lc_series}
-        mins = [(df["time"].min(), len(df)) for df in all_series.values()]
-        mins.sort(key=lambda x: x[0])
-        if len(mins) >= 2:
-            median_min = mins[len(mins) // 2][0]
-            t0 = min(m for m, _ in mins if (median_min - m).total_seconds() < 86400)
-        else:
-            t0 = mins[0][0] if mins else pd.Timestamp.now()
-    all_t = []
-    for df in all_series.values():
-        s = (df["time"] - t0).dt.total_seconds()
-        valid = s[(s >= -3600) & (s <= 86400 * 2)]
-        all_t.extend(valid.dropna().tolist())
-    t_max = max(all_t) if all_t else 60.0
-    dt = 0.1
+    t_min_crop = 0.0
+    t_max_crop = None
 
-    # Resample to common grid (same t_max for all)
+    if args.crop_fire:
+        FIRE_STATE = 16
+        t_data_min = _find_t0_from_data(pt_series, tc_series)
+        fire_times = []
+        for name, df in state_series.items():
+            if "state" in name.lower() and not df.empty:
+                # Only look for fire starts after data starts (to avoid stale states)
+                t_fire = df[(df["value"] == FIRE_STATE) & (df["time"] >= t_data_min)][
+                    "time"
+                ]
+                if not t_fire.empty:
+                    fire_times.append(t_fire.min())
+
+        if fire_times:
+            t0 = min(fire_times)
+            print(f"🔥 Found relevant FIRE state starts at {t0}")
+            t_min_crop = -1.0
+            t_max_crop = 7.0
+        else:
+            # Fallback: search for pressure spike if state missing
+            print(
+                "⚠️ FIRE state not found in data window, searching for pressure peak..."
+            )
+            t0 = t_data_min
+            for name, df in pt_series.items():
+                if "chamber" in name.lower() and not df.empty:
+                    peak_time = df.loc[df["value"].idxmax(), "time"]
+                    if df["value"].max() > 100:
+                        t0 = peak_time - 2.0  # Center on spike
+                        print(
+                            f"🎯 Found pressure spike at {peak_time}, centering there."
+                        )
+                        t_min_crop = 0.0
+                        t_max_crop = 8.0  # Show 8s around spike
+                        break
+    else:
+        t_start = _find_t_start_from_state(state_series, PRESS_STANDBY_STATE)
+        if t_start is not None:
+            print(f"  Filtering from PRESS_STANDBY at {t_start}")
+            t0 = t_start
+        else:
+            t0 = _find_t0_from_data(pt_series, temp_series)
+
+    # Calculate global t_max if not already constrained
+    if t_max_crop is None:
+        all_t = []
+        for df in all_series.values():
+            if len(df) > 0:
+                all_t.extend((df["time"] - t0).dt.total_seconds().dropna().tolist())
+        t_max_val = max(all_t) if all_t else 60.0
+    else:
+        t_max_val = t_max_crop
+
+    pt_data, t_grid = resample_to_grid(
+        pt_series, t0, dt, t_min=t_min_crop, t_max=t_max_val, max_gap_sec=args.max_gap
+    )
+    # Resample all to high-resolution common grid (100Hz)
     pt_wide, t_s = (
-        resample_to_grid(pt_series, t0, dt, t_max)
+        resample_to_grid(
+            pt_series,
+            t0,
+            dt,
+            t_min=t_min_crop,
+            t_max=t_max_val,
+            max_gap_sec=args.max_gap,
+        )
         if pt_series
         else (pd.DataFrame(), np.array([]))
     )
     tc_wide, _ = (
-        resample_to_grid(tc_series, t0, dt, t_max) if tc_series else (None, None)
+        resample_to_grid(
+            tc_series,
+            t0,
+            dt,
+            t_min=t_min_crop,
+            t_max=t_max_val,
+            max_gap_sec=args.max_gap,
+        )
+        if tc_series
+        else (None, None)
     )
     lc_wide, _ = (
-        resample_to_grid(lc_series, t0, dt, t_max) if lc_series else (None, None)
+        resample_to_grid(
+            lc_series,
+            t0,
+            dt,
+            t_min=t_min_crop,
+            t_max=t_max_val,
+            max_gap_sec=args.max_gap,
+        )
+        if lc_series
+        else (None, None)
     )
     act_wide, _ = (
-        resample_to_grid_step(act_series, t0, dt, t_max) if act_series else (None, None)
+        resample_to_grid_step(
+            act_series,
+            t0,
+            dt,
+            t_min=t_min_crop,
+            t_max=t_max_val,
+            max_gap_sec=args.max_gap,
+        )
+        if act_series
+        else (None, None)
     )
     if act_wide is not None and not act_wide.empty and not from_commanded:
         act_wide = debounce_binary(act_wide, window_sec=0.5, dt=dt)
     state_wide, _ = (
-        resample_to_grid_step(state_series, t0, dt, t_max)
+        resample_to_grid_step(
+            state_series,
+            t0,
+            dt,
+            t_min=t_min_crop,
+            t_max=t_max_val,
+            max_gap_sec=args.max_gap,
+        )
         if state_series
         else (None, None)
     )
     ctrl_wide, _ = (
-        resample_to_grid(ctrl_series, t0, dt, t_max) if ctrl_series else (None, None)
+        resample_to_grid(
+            ctrl_series,
+            t0,
+            dt,
+            t_min=t_min_crop,
+            t_max=t_max_val,
+            max_gap_sec=args.max_gap,
+        )
+        if ctrl_series
+        else (None, None)
     )
 
-    if len(t_s) == 0:
-        t_s = np.arange(0, t_max + dt * 0.5, dt)
+    # Map columns to sensor names from config
+    sensor_names = _load_sensor_names(project_root)
+    for df in [pt_wide, tc_wide, lc_wide]:
+        if df is not None:
+            df.rename(columns=sensor_names, inplace=True)
 
-    # Save combined CSV (raw + calibrated) for downstream analysis
+    # Save combined CSV for downstream analysis
     combined = pd.DataFrame({"t_s": t_s})
+    for df in [pt_wide, tc_wide, lc_wide, act_wide, state_wide, ctrl_wide]:
+        if df is not None and not df.empty:
+            for c in df.columns:
+                if c != "t_s":
+                    combined[c] = df[c].values
+    combined.to_csv(out_dir / "run_data_combined.csv", index=False)
 
-    def add_to_combined(series: dict, prefix: str, step_mode: bool = False) -> None:
-        for name, df in series.items():
-            if len(df) == 0:
-                continue
-            t_sec = (df["time"] - t0).dt.total_seconds().values
-            v = df["value"].values
-            idx = np.argsort(t_sec)
-            t_sec = t_sec[idx]
-            v = v[idx]
-            col = f"{prefix}{name}" if prefix else name
-            if step_mode:
-                res = np.full(len(t_s), np.nan)
-                for i, g in enumerate(t_s):
-                    j = np.searchsorted(t_sec, g, side="right") - 1
-                    if j >= 0:
-                        res[i] = v[j]
-                if len(res) > 0 and np.isnan(res[0]):
-                    fv = np.nonzero(~np.isnan(res))[0]
-                    if len(fv) > 0:
-                        res[: fv[0]] = res[fv[0]]
-                combined[col] = res
-            else:
-                combined[col] = np.interp(t_s, t_sec, v)
-
-    add_to_combined(pt_series, "PT_Cal.")
-    add_to_combined(pt_raw, "PT_raw.")
-    add_to_combined(tc_series, "TC_Cal.")
-    add_to_combined(tc_raw, "TC_raw.")
-    add_to_combined(rtd_raw, "RTD_raw.")
-    add_to_combined(lc_series, "LC_Cal.")
-    add_to_combined(lc_raw, "LC_raw.")
-    add_to_combined(act_series, "ACT.", step_mode=True)
-    add_to_combined(state_series, "", step_mode=True)
-    add_to_combined(ctrl_series, "CTRL.")
-    combined_path = out_dir / "run_data_combined.csv"
-    combined.to_csv(combined_path, index=False)
-    print(f"  Saved {combined_path} ({len(combined.columns)-1} channels)")
-
-    # Generate plots
     print("\n📊 Generating plots...")
-    if not pt_wide.empty:
-        plot_pressures(pt_wide, t_s, out_dir / "pressures.png")
+    plot_pressures(pt_wide, t_s, out_dir / "pressures.png")
+    if pt_series:
         plot_summary_stats(pt_series, out_dir / "pressure_summary.png")
-    if tc_wide is not None and not tc_wide.empty:
+    if tc_wide is not None:
         plot_temperatures(tc_wide, t_s, out_dir / "temperatures.png")
-    if lc_wide is not None and not lc_wide.empty:
+    if lc_wide is not None:
         plot_load_cells(lc_wide, t_s, out_dir / "load_cells.png")
-    if act_wide is not None and not act_wide.empty:
+    if act_wide is not None:
         plot_actuators(act_wide, t_s, out_dir / "actuators.png", actuator_roles)
-    if state_wide is not None and not state_wide.empty:
-        names = BOARD_ENGINE_STATE_NAMES if state_from_board else PSM_STATE_NAMES
-        plot_states(state_wide, t_s, out_dir / "states.png", state_names=names)
-    if ctrl_wide is not None and not ctrl_wide.empty:
-        plot_controller(ctrl_wide, t_s, out_dir / "controller.png")
+    if state_wide is not None:
+        plot_states(state_wide, t_s, out_dir / "states.png")
 
     plot_overview_4panel(
-        pt_wide if not pt_wide.empty else pd.DataFrame(),
+        pt_wide,
         tc_wide,
         act_wide,
         state_wide,
@@ -998,8 +1138,6 @@ def main() -> None:
         out_dir / "overview.png",
         actuator_roles,
     )
-
-    print("\n✅ Done.")
 
 
 if __name__ == "__main__":
