@@ -166,7 +166,7 @@ CMD_LOG_BACKEND="/tmp/gui_logs/backend.log"
 CMD_WEB_BACKEND='printf "\n  ══ BACKEND — HTTP+WS :'"${THIN_WS_PORT}"' (server.ts → Elodin DB :2240) ══\n\n" && '"$WAIT_FOR_ELODIN"' && cd '"$PROJECT"'/web-gui/backend && WS_PORT='"$THIN_WS_PORT"' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='"$THIN_ACT_PORT"' npx tsx watch src/server.ts 2>&1 | tee '"$CMD_LOG_BACKEND"
 
 CMD_LOG_FRONTEND="/tmp/gui_logs/frontend.log"
-CMD_WEB_FRONTEND='printf "\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n" && sleep 3 && cd '"$PROJECT"'/web-gui/frontend && OTA_SERVICE_PORT='"$OTA_CMD_PORT"' NEXT_PUBLIC_WS_URL=ws://127.0.0.1:'"${THIN_WS_PORT}"' npm run dev 2>&1 | tee '"$CMD_LOG_FRONTEND"
+CMD_WEB_FRONTEND='printf "\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n" && sleep 3 && cd '"$PROJECT"'/web-gui/frontend && OTA_SERVICE_PORT='"$OTA_CMD_PORT"' npm run dev 2>&1 | tee '"$CMD_LOG_FRONTEND"
 
 if [ -x "$OTA_BIN" ]; then
   CMD_LOG_OTA="/tmp/gui_logs/ota.log"
@@ -286,7 +286,7 @@ launch_background() {
   echo "    Backend:      PID $! → $LOGDIR/backend.log"
 
   # Frontend
-  nohup bash -c "cd '$PROJECT/web-gui/frontend' && NEXT_PUBLIC_WS_URL='ws://127.0.0.1:${THIN_WS_PORT}' exec npm run dev" >> "$LOGDIR/frontend.log" 2>&1 &
+  nohup bash -c "cd '$PROJECT/web-gui/frontend' && exec npm run dev" >> "$LOGDIR/frontend.log" 2>&1 &
   echo "    Frontend:     PID $! → $LOGDIR/frontend.log"
 
   echo ""
@@ -295,8 +295,9 @@ launch_background() {
   echo ""
 }
 
+sim_escaped="$("$PYTHON_BIN" -c 'import shlex,sys; print(shlex.quote(sys.argv[1]))' "$CMD_SIM")"
 if tmux new-session -d -s "$SESSION" -n main -x 240 -y 70 \
-  "bash --norc --noprofile -c '$CMD_SIM'" 2>/dev/null; then
+  "bash --norc --noprofile -c ${sim_escaped}" 2>/dev/null; then
 
   tmux set-option -t "$SESSION" remain-on-exit on
   tmux set-option -t "$SESSION" mouse on
