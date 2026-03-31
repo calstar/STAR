@@ -16,7 +16,8 @@ void compute_allan_variance(const std::vector<double>& timeseries, double tau0,
     if (n < 10) {
         if (n > 0) {
             double mean = 0;
-            for (double x : timeseries) mean += x;
+            for (double x : timeseries)
+                mean += x;
             mean /= static_cast<double>(n);
             double v = 0;
             for (double x : timeseries) {
@@ -41,7 +42,8 @@ void compute_allan_variance(const std::vector<double>& timeseries, double tau0,
         clusters.reserve(num_triplets + 3);
         for (size_t i = 0; i < num_triplets + 2 && (i + 1) * m <= n; ++i) {
             double sum = 0;
-            for (size_t k = 0; k < m; ++k) sum += timeseries[i * m + k];
+            for (size_t k = 0; k < m; ++k)
+                sum += timeseries[i * m + k];
             clusters.push_back(sum / static_cast<double>(m));
         }
         if (clusters.size() < 3)
@@ -92,8 +94,8 @@ NoiseCoefficients fit_noise_coefficients(const std::vector<double>& tau_arr,
         c.tau_min = tau_arr[n / 2];
     c.tau_min = std::clamp(c.tau_min, tau_arr.front(), tau_arr.back());
     double tm = c.tau_min;
-    c.sigma_min = std::sqrt(c.Q * c.Q / (2.0 * tm) + 2.0 * std::log(2.0) * c.B * c.B + c.K * c.K * tm / 6.0 +
-                            c.R * c.R * tm * tm / 20.0);
+    c.sigma_min = std::sqrt(c.Q * c.Q / (2.0 * tm) + 2.0 * std::log(2.0) * c.B * c.B +
+                            c.K * c.K * tm / 6.0 + c.R * c.R * tm * tm / 20.0);
     return c;
 }
 

@@ -44,15 +44,18 @@ public:
 
     explicit RobustCalibrationFramework(int sensor_id);
 
-    /** Seed θ from factory cubic P(adc); maps to linear-in-adc_norm prior like Python set_theta_from_polynomial fallback. */
+    /** Seed θ from factory cubic P(adc); maps to linear-in-adc_norm prior like Python
+     * set_theta_from_polynomial fallback. */
     void seed_from_factory_cubic(const PTCalibrationCoeffs& c);
 
-    void set_theta_from_polynomial(const std::vector<double>& poly_coeffs, double adc_norm_min, double adc_norm_scale);
+    void set_theta_from_polynomial(const std::vector<double>& poly_coeffs, double adc_norm_min,
+                                   double adc_norm_scale);
 
     void set_noise_coeffs(const NoiseCoefficients& c, double tau0 = 0.01);
 
     /** Mean + σ; updates bias propagation clock. */
-    std::pair<double, double> predict_pressure_with_uncertainty(double adc_code, const EnvironmentalState& env);
+    std::pair<double, double> predict_pressure_with_uncertainty(double adc_code,
+                                                                const EnvironmentalState& env);
 
     /** Mean PSI for streaming (default env, used by calibration_service). */
     double predict_pressure_psi(double adc_code);
@@ -98,8 +101,8 @@ private:
     double alpha_v_;
     double alpha_extrap_;
 
-    Eigen::MatrixXd env_var_env_;         // 5x5
-    Eigen::MatrixXd env_var_interaction_; // 5x5
+    Eigen::MatrixXd env_var_env_;          // 5x5
+    Eigen::MatrixXd env_var_interaction_;  // 5x5
 
     struct PhysicalParams {
         double alpha1 = 0.001, alpha2 = 0.0001;
@@ -130,11 +133,14 @@ private:
     std::pair<Eigen::VectorXd, Eigen::MatrixXd> total_least_squares_calibration(
         const std::vector<CalibrationPoint>& points) const;
 
-    std::pair<Eigen::VectorXd, Eigen::MatrixXd> bayesian_update(const std::vector<CalibrationPoint>& new_points);
+    std::pair<Eigen::VectorXd, Eigen::MatrixXd> bayesian_update(
+        const std::vector<CalibrationPoint>& new_points);
 
-    std::pair<Eigen::VectorXd, Eigen::MatrixXd> recursive_least_squares_update(const CalibrationPoint& point);
+    std::pair<Eigen::VectorXd, Eigen::MatrixXd> recursive_least_squares_update(
+        const CalibrationPoint& point);
 
-    std::pair<double, bool> generalized_likelihood_ratio_test(const std::vector<CalibrationPoint>& points) const;
+    std::pair<double, bool> generalized_likelihood_ratio_test(
+        const std::vector<CalibrationPoint>& points) const;
 
     double extrapolation_variance(double adc_code) const;
 

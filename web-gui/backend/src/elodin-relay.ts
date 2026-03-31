@@ -116,7 +116,7 @@ function main(): void {
       if (tablePacketCount % 10000 === 0) {
         console.log(`[Relay] Forwarded ${tablePacketCount} TABLE packets stream from DB...`);
       }
-      
+
       if (header.packetId[0] === 0x10 || header.packetId[1] === 0x10) {
         heartbeatPacketCount++;
         if (RELAY_DEBUG_HEARTBEAT) {

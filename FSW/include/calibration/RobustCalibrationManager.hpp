@@ -1,8 +1,8 @@
 #ifndef ROBUST_CALIBRATION_MANAGER_HPP
 #define ROBUST_CALIBRATION_MANAGER_HPP
 
-#include <cstdint>
 #include <Eigen/Dense>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -22,8 +22,9 @@ struct SensorState {
 };
 
 /**
- * Runtime PT calibration via RobustCalibrationFramework (9-D basis, TLS / Bayesian / RLS / GLR / bias),
- * seeded from factory cubic. Streaming pressure uses predict_pressure_psi(), not a live cubic polynomial.
+ * Runtime PT calibration via RobustCalibrationFramework (9-D basis, TLS / Bayesian / RLS / GLR /
+ * bias), seeded from factory cubic. Streaming pressure uses predict_pressure_psi(), not a live
+ * cubic polynomial.
  */
 class RobustCalibrationManager {
 public:

@@ -476,4 +476,3 @@ export async function registerActuatorCommandedVTables(
     }
     return count > 0;
 }
-

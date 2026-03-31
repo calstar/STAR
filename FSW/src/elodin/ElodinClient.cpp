@@ -72,7 +72,8 @@ void ElodinClient::flush_buffer() {
 }
 
 void ElodinClient::set_recv_timeout_ms(int timeout_ms) {
-    if (socket_) socket_->set_recv_timeout_ms(timeout_ms);
+    if (socket_)
+        socket_->set_recv_timeout_ms(timeout_ms);
 }
 
 bool ElodinClient::subscribe_stream() {
@@ -197,7 +198,8 @@ ssize_t ElodinClient::read_packet(uint8_t* packet_buffer, size_t max_len) {
     if (!socket_->read_exact(packet_buffer, 8)) {
         last_error_ = socket_->last_error();
         // SO_RCVTIMEO fired — yield without treating as a connection error
-        if (last_error_ == "TIMEOUT") return 0;
+        if (last_error_ == "TIMEOUT")
+            return 0;
         return -1;
     }
 

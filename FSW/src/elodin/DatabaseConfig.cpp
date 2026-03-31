@@ -68,8 +68,8 @@ static bool register_raw_sensor_vtable(
 //   cal_status
 static bool register_calibrated_vtable(
     ElodinClient& client,
-    uint8_t type_hi,     // high byte (0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC)
-    uint8_t pkt_lo,      // full low byte for packet ID (already includes board offset + 0x10)
+    uint8_t type_hi,  // high byte (0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC)
+    uint8_t pkt_lo,   // full low byte for packet ID (already includes board offset + 0x10)
     uint64_t entity_id, const std::string& entity_name,
     const std::string& cal_field_name,  // "pressure_psi", "temperature_c", "force_lbf"
     const std::string& raw_field_name   // "raw_adc", "raw_resistance"
@@ -144,67 +144,85 @@ bool DatabaseConfig::register_tables(ElodinClient& client,
 
     for (const auto& board : pt_boards) {
         for (uint8_t ch : board.channels) {
-            std::string entity = "PT" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
+            std::string entity =
+                "PT" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
             uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
             uint64_t entity_id = (static_cast<uint64_t>(0x20) << 8) | lo;
-            if (register_raw_sensor_vtable(client, 0x20, lo, entity_id, entity, "raw_adc_counts"))
-                { registered++; pt_count++; }
+            if (register_raw_sensor_vtable(client, 0x20, lo, entity_id, entity, "raw_adc_counts")) {
+                registered++;
+                pt_count++;
+            }
         }
     }
 
     for (const auto& board : act_boards) {
         for (uint8_t ch : board.channels) {
-            std::string entity = "ACT" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
+            std::string entity =
+                "ACT" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
             uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
             uint64_t entity_id = (static_cast<uint64_t>(0x30) << 8) | lo;
-            if (register_raw_sensor_vtable(client, 0x30, lo, entity_id, entity, "raw_adc_counts"))
-                { registered++; act_count++; }
+            if (register_raw_sensor_vtable(client, 0x30, lo, entity_id, entity, "raw_adc_counts")) {
+                registered++;
+                act_count++;
+            }
         }
     }
 
     for (const auto& board : tc_boards) {
         for (uint8_t ch : board.channels) {
-            std::string entity = "TC" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
+            std::string entity =
+                "TC" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
             uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
             uint64_t entity_id = (static_cast<uint64_t>(0x21) << 8) | lo;
-            if (register_raw_sensor_vtable(client, 0x21, lo, entity_id, entity, "raw_adc_counts"))
-                { registered++; tc_count++; }
+            if (register_raw_sensor_vtable(client, 0x21, lo, entity_id, entity, "raw_adc_counts")) {
+                registered++;
+                tc_count++;
+            }
         }
     }
 
     for (const auto& board : rtd_boards) {
         for (uint8_t ch : board.channels) {
-            std::string entity = "RTD" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
+            std::string entity =
+                "RTD" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
             uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
             uint64_t entity_id = (static_cast<uint64_t>(0x22) << 8) | lo;
-            if (register_raw_sensor_vtable(client, 0x22, lo, entity_id, entity, "raw_resistance_counts"))
-                { registered++; rtd_count++; }
+            if (register_raw_sensor_vtable(client, 0x22, lo, entity_id, entity,
+                                           "raw_resistance_counts")) {
+                registered++;
+                rtd_count++;
+            }
         }
     }
 
     for (const auto& board : lc_boards) {
         for (uint8_t ch : board.channels) {
-            std::string entity = "LC" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
+            std::string entity =
+                "LC" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
             uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
             uint64_t entity_id = (static_cast<uint64_t>(0x23) << 8) | lo;
-            if (register_raw_sensor_vtable(client, 0x23, lo, entity_id, entity, "raw_adc_counts"))
-                { registered++; lc_count++; }
+            if (register_raw_sensor_vtable(client, 0x23, lo, entity_id, entity, "raw_adc_counts")) {
+                registered++;
+                lc_count++;
+            }
         }
     }
 
     for (const auto& board : enc_boards) {
         for (uint8_t ch : board.channels) {
-            std::string entity = "ENC" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
+            std::string entity =
+                "ENC" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
             uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
             uint64_t entity_id = (static_cast<uint64_t>(0x24) << 8) | lo;
-            if (register_raw_sensor_vtable(client, 0x24, lo, entity_id, entity, "raw_angle"))
-                { registered++; enc_count++; }
+            if (register_raw_sensor_vtable(client, 0x24, lo, entity_id, entity, "raw_angle")) {
+                registered++;
+                enc_count++;
+            }
         }
     }
 
-    std::cout << "[DatabaseConfig] ✅ Registered " << registered << " RAW VTables ("
-              << pt_count << " PT, " << act_count << " ACT, "
-              << tc_count << " TC, " << rtd_count << " RTD, "
+    std::cout << "[DatabaseConfig] ✅ Registered " << registered << " RAW VTables (" << pt_count
+              << " PT, " << act_count << " ACT, " << tc_count << " TC, " << rtd_count << " RTD, "
               << lc_count << " LC, " << enc_count << " ENC)" << std::endl;
     return registered > 0;
 }
@@ -225,50 +243,60 @@ bool DatabaseConfig::register_calibrated_tables(ElodinClient& client,
 
     for (const auto& board : pt_boards) {
         for (uint8_t ch : board.channels) {
-            std::string entity = "PT" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
+            std::string entity =
+                "PT" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
             uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + 0x10 + ch);
             uint64_t entity_id = (static_cast<uint64_t>(0x20) << 8) | lo;
-            if (register_calibrated_vtable(client, 0x20, lo, entity_id, entity, "pressure_psi", "raw_adc"))
+            if (register_calibrated_vtable(client, 0x20, lo, entity_id, entity, "pressure_psi",
+                                           "raw_adc"))
                 registered++;
         }
     }
 
     for (const auto& board : tc_boards) {
         for (uint8_t ch : board.channels) {
-            std::string entity = "TC" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
+            std::string entity =
+                "TC" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
             uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + 0x10 + ch);
             uint64_t entity_id = (static_cast<uint64_t>(0x21) << 8) | lo;
-            if (register_calibrated_vtable(client, 0x21, lo, entity_id, entity, "temperature_c", "raw_adc"))
+            if (register_calibrated_vtable(client, 0x21, lo, entity_id, entity, "temperature_c",
+                                           "raw_adc"))
                 registered++;
         }
     }
 
     for (const auto& board : rtd_boards) {
         for (uint8_t ch : board.channels) {
-            std::string entity = "RTD" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
+            std::string entity =
+                "RTD" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
             uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + 0x10 + ch);
             uint64_t entity_id = (static_cast<uint64_t>(0x22) << 8) | lo;
-            if (register_calibrated_vtable(client, 0x22, lo, entity_id, entity, "temperature_c", "raw_resistance"))
+            if (register_calibrated_vtable(client, 0x22, lo, entity_id, entity, "temperature_c",
+                                           "raw_resistance"))
                 registered++;
         }
     }
 
     for (const auto& board : lc_boards) {
         for (uint8_t ch : board.channels) {
-            std::string entity = "LC" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
+            std::string entity =
+                "LC" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
             uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + 0x10 + ch);
             uint64_t entity_id = (static_cast<uint64_t>(0x23) << 8) | lo;
-            if (register_calibrated_vtable(client, 0x23, lo, entity_id, entity, "force_n", "raw_adc"))
+            if (register_calibrated_vtable(client, 0x23, lo, entity_id, entity, "force_n",
+                                           "raw_adc"))
                 registered++;
         }
     }
 
     for (const auto& board : enc_boards) {
         for (uint8_t ch : board.channels) {
-            std::string entity = "ENC" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
+            std::string entity =
+                "ENC" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
             uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + 0x10 + ch);
             uint64_t entity_id = (static_cast<uint64_t>(0x24) << 8) | lo;
-            if (register_calibrated_vtable(client, 0x24, lo, entity_id, entity, "position_deg", "raw_adc"))
+            if (register_calibrated_vtable(client, 0x24, lo, entity_id, entity, "position_deg",
+                                           "raw_adc"))
                 registered++;
         }
     }
@@ -276,15 +304,18 @@ bool DatabaseConfig::register_calibrated_tables(ElodinClient& client,
     // Actuators use 0x31 for calibrated (separate type byte to avoid collision with raw 0x30)
     for (const auto& board : act_boards) {
         for (uint8_t ch : board.channels) {
-            std::string entity = "ACT" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
+            std::string entity =
+                "ACT" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
             uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + 0x10 + ch);
             uint64_t entity_id = (static_cast<uint64_t>(0x31) << 8) | lo;
-            if (register_calibrated_vtable(client, 0x31, lo, entity_id, entity, "current_a", "raw_adc"))
+            if (register_calibrated_vtable(client, 0x31, lo, entity_id, entity, "current_a",
+                                           "raw_adc"))
                 registered++;
         }
     }
 
-    std::cout << "[DatabaseConfig] ✅ Registered " << registered << " CALIBRATED VTables" << std::endl;
+    std::cout << "[DatabaseConfig] ✅ Registered " << registered << " CALIBRATED VTables"
+              << std::endl;
     return registered > 0;
 }
 
@@ -413,7 +444,8 @@ static bool register_calibration_command_vtable(ElodinClient& client) {
         raw_field(0, 8, schema(PrimType::U64(), {}, component("CALIBRATION.command.timestamp_ns"))),
         raw_field(8, 1, schema(PrimType::U8(), {}, component("CALIBRATION.command.type"))),
         raw_field(9, 1, schema(PrimType::U8(), {}, component("CALIBRATION.command.sensor_id"))),
-        raw_field(12, 4, schema(PrimType::F32(), {}, component("CALIBRATION.command.reference_value"))),
+        raw_field(12, 4,
+                  schema(PrimType::F32(), {}, component("CALIBRATION.command.reference_value"))),
     });
     if (!send_msg(client, VTableMsg{.id = {0x46, 0x00}, .vtable = vt}))
         return false;
@@ -439,8 +471,8 @@ bool DatabaseConfig::register_non_sensor_tables(ElodinClient& client,
         for (const auto& board : act_boards) {
             for (uint8_t ch : board.channels) {
                 uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
-                std::string entity_name = "ACT_CMD.B" + std::to_string(board.board_number) +
-                                          ".CH" + std::to_string(ch);
+                std::string entity_name =
+                    "ACT_CMD.B" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
                 uint64_t entity_id = (static_cast<uint64_t>(0x32) << 8) | lo;
                 if (register_actuator_state_vtable(client, 0x32, lo, entity_id, entity_name))
                     act_cmd_count++;
@@ -451,8 +483,8 @@ bool DatabaseConfig::register_non_sensor_tables(ElodinClient& client,
         for (int bn = 1; bn <= 4; ++bn) {
             for (int ch = 1; ch <= 10; ++ch) {
                 uint8_t lo = static_cast<uint8_t>((bn - 1) * 0x20 + ch);
-                std::string entity_name = "ACT_CMD.B" + std::to_string(bn) +
-                                          ".CH" + std::to_string(ch);
+                std::string entity_name =
+                    "ACT_CMD.B" + std::to_string(bn) + ".CH" + std::to_string(ch);
                 uint64_t entity_id = (static_cast<uint64_t>(0x32) << 8) | lo;
                 if (register_actuator_state_vtable(client, 0x32, lo, entity_id, entity_name))
                     act_cmd_count++;

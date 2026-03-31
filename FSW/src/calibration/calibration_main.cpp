@@ -22,8 +22,8 @@
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
-#include <fstream>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <set>
@@ -154,7 +154,7 @@ static void signalHandler(int /*sig*/) {
 
 /** Match Elodin low byte to config board_id (same layout as daq_bridge). */
 static uint8_t resolve_board_id_pt(uint8_t type_lo, uint8_t ch,
-                                 const std::vector<fsw::elodin::BoardChannels>& pt_boards) {
+                                   const std::vector<fsw::elodin::BoardChannels>& pt_boards) {
     for (const auto& bc : pt_boards) {
         uint8_t mod = bc.board_id % 10;
         uint8_t bn_norm = (mod == 0) ? 10 : mod;
@@ -278,63 +278,98 @@ int main(int argc, char* argv[]) {
             int num_sensors = 0;
 
             auto flush_board = [&]() {
-                if (board_type.empty() || !board_enabled || board_id == 0) return;
+                if (board_type.empty() || !board_enabled || board_id == 0)
+                    return;
                 std::vector<uint8_t> channels;
                 if (!active_conn.empty()) {
-                    for (int c : active_conn) channels.push_back(static_cast<uint8_t>(c));
+                    for (int c : active_conn)
+                        channels.push_back(static_cast<uint8_t>(c));
                 } else if (num_sensors > 0) {
-                    for (int i = 1; i <= num_sensors; i++) channels.push_back(static_cast<uint8_t>(i));
+                    for (int i = 1; i <= num_sensors; i++)
+                        channels.push_back(static_cast<uint8_t>(i));
                 }
-                if (channels.empty()) return;
+                if (channels.empty())
+                    return;
                 BoardChannels bc{static_cast<uint8_t>(board_id),
                                  static_cast<uint8_t>(board_id % 10), channels};
-                if (board_type == "PT")            pt_boards.push_back(bc);
-                else if (board_type == "TC")       tc_boards.push_back(bc);
-                else if (board_type == "RTD")      rtd_boards.push_back(bc);
-                else if (board_type == "LC")       lc_boards.push_back(bc);
-                else if (board_type == "ENCODER")  enc_boards.push_back(bc);
-                else if (board_type == "ACTUATOR") act_boards.push_back(bc);
+                if (board_type == "PT")
+                    pt_boards.push_back(bc);
+                else if (board_type == "TC")
+                    tc_boards.push_back(bc);
+                else if (board_type == "RTD")
+                    rtd_boards.push_back(bc);
+                else if (board_type == "LC")
+                    lc_boards.push_back(bc);
+                else if (board_type == "ENCODER")
+                    enc_boards.push_back(bc);
+                else if (board_type == "ACTUATOR")
+                    act_boards.push_back(bc);
             };
 
             while (std::getline(cfg, line)) {
                 size_t c = line.find('#');
-                if (c != std::string::npos) line = line.substr(0, c);
-                while (!line.empty() && (line.back() == ' ' || line.back() == '\r')) line.pop_back();
+                if (c != std::string::npos)
+                    line = line.substr(0, c);
+                while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
+                    line.pop_back();
                 size_t start = line.find_first_not_of(" \t");
-                if (start != std::string::npos) line = line.substr(start);
-                if (line.empty()) continue;
+                if (start != std::string::npos)
+                    line = line.substr(start);
+                if (line.empty())
+                    continue;
 
                 if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
                     flush_board();
                     section = line.substr(1, line.size() - 2);
                     if (section.rfind("boards.", 0) == 0) {
-                        board_type.clear(); board_id = 0; board_enabled = true;
-                        active_conn.clear(); num_sensors = 0;
-                    } else { board_type.clear(); }
+                        board_type.clear();
+                        board_id = 0;
+                        board_enabled = true;
+                        active_conn.clear();
+                        num_sensors = 0;
+                    } else {
+                        board_type.clear();
+                    }
                     continue;
                 }
-                if (section.rfind("boards.", 0) != 0) continue;
+                if (section.rfind("boards.", 0) != 0)
+                    continue;
                 size_t eq = line.find('=');
-                if (eq == std::string::npos) continue;
+                if (eq == std::string::npos)
+                    continue;
                 std::string key = line.substr(0, eq);
                 std::string val = line.substr(eq + 1);
-                while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
-                while (!val.empty() && val[0] == ' ') val.erase(0, 1);
+                while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
+                    key.pop_back();
+                while (!val.empty() && val[0] == ' ')
+                    val.erase(0, 1);
 
                 if (key == "type") {
                     if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
                         val = val.substr(1, val.size() - 2);
                     board_type = val;
-                } else if (key == "enabled" && val == "false") { board_enabled = false; }
-                else if (key == "board_id") { try { board_id = std::stoi(val); } catch (...) {} }
-                else if (key == "num_sensors") { try { num_sensors = std::stoi(val); } catch (...) {} }
-                else if (key == "active_connectors") {
+                } else if (key == "enabled" && val == "false") {
+                    board_enabled = false;
+                } else if (key == "board_id") {
+                    try {
+                        board_id = std::stoi(val);
+                    } catch (...) {
+                    }
+                } else if (key == "num_sensors") {
+                    try {
+                        num_sensors = std::stoi(val);
+                    } catch (...) {
+                    }
+                } else if (key == "active_connectors") {
                     size_t b = val.find('['), e = val.find(']');
                     if (b != std::string::npos && e != std::string::npos) {
                         std::istringstream iss(val.substr(b + 1, e - b - 1));
                         std::string tok;
                         while (std::getline(iss, tok, ','))
-                            try { active_conn.push_back(std::stoi(tok)); } catch (...) {}
+                            try {
+                                active_conn.push_back(std::stoi(tok));
+                            } catch (...) {
+                            }
                     }
                 }
             }
@@ -543,8 +578,8 @@ int main(int argc, char* argv[]) {
                       << elodin_port << std::endl;
             return false;
         }
-        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_boards,
-                                                                 tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
+        fsw::elodin::DatabaseConfig::register_calibrated_tables(
+            elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
         if (!elodin_client.subscribe_stream()) {
             std::cerr << "[Cal] Failed to subscribe to Elodin stream" << std::endl;
             return false;
@@ -577,8 +612,9 @@ int main(int argc, char* argv[]) {
             std::cerr << "[Cal] Elodin disconnected, retrying in 2s..." << std::endl;
             std::this_thread::sleep_for(std::chrono::seconds(2));
             if (elodin_client.reconnect()) {
-                fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_boards,
-                                                                         tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
+                fsw::elodin::DatabaseConfig::register_calibrated_tables(
+                    elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards,
+                    act_boards);
                 elodin_client.subscribe_stream();
                 elodin_client.subscribe_tables({{0x46, 0x00}});
                 elodin_client.set_recv_timeout_ms(3000);
@@ -593,10 +629,13 @@ int main(int argc, char* argv[]) {
         // its VTables AFTER we subscribed — re-subscribe to pick them up.
         {
             auto now_s = std::chrono::steady_clock::now();
-            auto since_pkt = std::chrono::duration_cast<std::chrono::seconds>(now_s - last_packet_time).count();
-            auto since_sub = std::chrono::duration_cast<std::chrono::seconds>(now_s - last_resubscribe).count();
+            auto since_pkt =
+                std::chrono::duration_cast<std::chrono::seconds>(now_s - last_packet_time).count();
+            auto since_sub =
+                std::chrono::duration_cast<std::chrono::seconds>(now_s - last_resubscribe).count();
             if (since_pkt >= 5 && since_sub >= 5) {
-                std::cout << "[Cal] No packets for " << since_pkt << "s — re-subscribing to raw streams" << std::endl;
+                std::cout << "[Cal] No packets for " << since_pkt
+                          << "s — re-subscribing to raw streams" << std::endl;
                 elodin_client.subscribe_stream();
                 elodin_client.subscribe_tables({{0x46, 0x00}});
                 last_resubscribe = now_s;
@@ -617,7 +656,8 @@ int main(int argc, char* argv[]) {
         if (ty != 0 && ty != 1)
             continue;
 
-        // Only log first few ACTUAL sensor/command packets (skip registration ACKs with type_hi >= 0x80)
+        // Only log first few ACTUAL sensor/command packets (skip registration ACKs with type_hi >=
+        // 0x80)
         static int debug_limit = 0;
         if (debug_limit < 10 && type_hi < 0x80) {
             std::cout << "[Cal] Received packet ty=" << (int)ty << " id=[0x" << std::hex
@@ -632,28 +672,32 @@ int main(int argc, char* argv[]) {
             if (pkt_len >= 8 + 16) {
                 const uint8_t* p = pkt_buf + 8;
                 uint8_t cmd_type = p[8];
-                uint16_t sensor_id = static_cast<uint16_t>(p[9]) | (static_cast<uint16_t>(p[10]) << 8);
+                uint16_t sensor_id =
+                    static_cast<uint16_t>(p[9]) | (static_cast<uint16_t>(p[10]) << 8);
                 float ref_val = *reinterpret_cast<const float*>(p + 12);
-                
-                std::cout << "[Cal] Received CalibrationCommand: type=" << (int)cmd_type 
-                          << " sensor=" << static_cast<int>(sensor_id) << " ref=" << ref_val << std::endl;
-                
-                if (cmd_type == 0) { // Zero All
-                    if (sensor_id == 0) { // All sensors
+
+                std::cout << "[Cal] Received CalibrationCommand: type=" << (int)cmd_type
+                          << " sensor=" << static_cast<int>(sensor_id) << " ref=" << ref_val
+                          << std::endl;
+
+                if (cmd_type == 0) {       // Zero All
+                    if (sensor_id == 0) {  // All sensors
                         for (auto const& [id, val] : last_adc_map) {
                             robust_manager.zero_sensor(id, val);
                         }
-                        std::cout << "[Cal] Performed Zero All for " << last_adc_map.size() << " sensors" << std::endl;
+                        std::cout << "[Cal] Performed Zero All for " << last_adc_map.size()
+                                  << " sensors" << std::endl;
                     } else {
                         if (last_adc_map.count(sensor_id)) {
                             robust_manager.zero_sensor(sensor_id, last_adc_map[sensor_id]);
                         }
                     }
-                } else if (cmd_type == 1) { // Capture Reference
+                } else if (cmd_type == 1) {  // Capture Reference
                     if (last_adc_map.count(sensor_id)) {
-                        robust_manager.update_calibration(sensor_id, last_adc_map[sensor_id], ref_val);
+                        robust_manager.update_calibration(sensor_id, last_adc_map[sensor_id],
+                                                          ref_val);
                     }
-                } else if (cmd_type == 2) { // Save
+                } else if (cmd_type == 2) {  // Save
                     robust_manager.save_adjustments(adjustments_path);
                     std::cout << "[Cal] Adjustments saved to " << adjustments_path << std::endl;
                 }

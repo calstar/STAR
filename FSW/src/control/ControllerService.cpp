@@ -917,8 +917,9 @@ void ControllerService::relaySubscriberLoop() {
 }
 
 void ControllerService::elodinSubscriberLoop() {
-    std::cout << "[ControllerService] 🎧 Elodin subscriber loop started (dedicated subscriber client)."
-              << std::endl;
+    std::cout
+        << "[ControllerService] 🎧 Elodin subscriber loop started (dedicated subscriber client)."
+        << std::endl;
     // Subscription already done in initialize() via subscribe_tables()
     std::vector<uint8_t> rx_buffer(8192);
 
@@ -979,7 +980,7 @@ void ControllerService::elodinSubscriberLoop() {
                 cal_msg.deserialize(payload);
 
                 float pressure_psi = cal_msg.getField<3>();  // calibrated_pressure_psi
-                uint8_t ch = cal_msg.getField<1>();           // channel_id from message
+                uint8_t ch = cal_msg.getField<1>();          // channel_id from message
                 if (ch == 0)
                     ch = static_cast<uint8_t>(pid_lo - 0x10);  // fallback to header
 

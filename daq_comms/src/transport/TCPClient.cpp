@@ -237,9 +237,10 @@ bool TCPClient::read_exact(void* buffer, size_t len) {
 }
 
 void TCPClient::set_recv_timeout_ms(int timeout_ms) {
-    if (socket_fd_ < 0) return;
+    if (socket_fd_ < 0)
+        return;
     struct timeval tv;
-    tv.tv_sec  = timeout_ms / 1000;
+    tv.tv_sec = timeout_ms / 1000;
     tv.tv_usec = (timeout_ms % 1000) * 1000;
     setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 }

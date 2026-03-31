@@ -21,8 +21,8 @@ struct NoiseCoefficients {
 };
 
 /** Measurement σ from paper Section 7 (Python measurement_uncertainty). */
-inline double measurement_uncertainty(double tau, const NoiseCoefficients& coeffs, double voltage = 0.0,
-                                      double sigma_base = 1e-3) {
+inline double measurement_uncertainty(double tau, const NoiseCoefficients& coeffs,
+                                      double voltage = 0.0, double sigma_base = 1e-3) {
     double var = sigma_base * sigma_base;
     var += coeffs.Q * coeffs.Q / (2.0 * tau);
     var += 2.0 * std::log(2.0) * coeffs.B * coeffs.B;

@@ -1,10 +1,10 @@
 #include "calibration/RobustCalibrationFramework.hpp"
 
-#include "calibration/PTCalibration.hpp"
-
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+
+#include "calibration/PTCalibration.hpp"
 
 namespace fsw {
 namespace calibration {
@@ -12,7 +12,8 @@ namespace calibration {
 namespace {
 constexpr double kLog2 = 0.69314718055994530942;
 
-double steady_secs(std::chrono::steady_clock::time_point t0, std::chrono::steady_clock::time_point t1) {
+double steady_secs(std::chrono::steady_clock::time_point t0,
+                   std::chrono::steady_clock::time_point t1) {
     return std::chrono::duration<double>(t1 - t0).count();
 }
 }  // namespace
@@ -62,7 +63,8 @@ void RobustCalibrationFramework::seed_from_factory_cubic(const PTCalibrationCoef
 }
 
 void RobustCalibrationFramework::set_theta_from_polynomial(const std::vector<double>& poly_coeffs,
-                                                             double adc_norm_min, double adc_norm_scale) {
+                                                           double adc_norm_min,
+                                                           double adc_norm_scale) {
     if (poly_coeffs.size() < 2 || adc_norm_scale <= 0)
         return;
     double c0 = poly_coeffs[0];
@@ -84,7 +86,8 @@ void RobustCalibrationFramework::bias_propagate(double dt) {
         return;
     Eigen::Vector3d phi_b = (-dt * bias_tau_.array().inverse()).array().exp();
     Eigen::Matrix3d Phi = phi_b.asDiagonal();
-    Eigen::Vector3d q = bias_process_noise_ * (1.0 - (-2.0 * dt * bias_tau_.array().inverse()).array().exp());
+    Eigen::Vector3d q =
+        bias_process_noise_ * (1.0 - (-2.0 * dt * bias_tau_.array().inverse()).array().exp());
     Eigen::Matrix3d Q = q.asDiagonal();
     bias_b_ = Phi * bias_b_;
     bias_P_ = Phi * bias_P_ * Phi.transpose() + Q;
@@ -109,8 +112,8 @@ double RobustCalibrationFramework::bias_variance() const {
     return (h.transpose() * bias_P_ * h)(0, 0);
 }
 
-Eigen::VectorXd RobustCalibrationFramework::environmental_basis(double adc_code,
-                                                                const EnvironmentalState& env) const {
+Eigen::VectorXd RobustCalibrationFramework::environmental_basis(
+    double adc_code, const EnvironmentalState& env) const {
     const double T = env.temperature;
     const double H = env.humidity;
     const double V = env.vibration;
@@ -122,7 +125,8 @@ Eigen::VectorXd RobustCalibrationFramework::environmental_basis(double adc_code,
     Eigen::VectorXd phi(N);
     phi(0) = 1.0;
     phi(1) = adc_norm;
-    phi(2) = adc_norm * adc_norm + physical_.alpha1 * T * adc_norm + physical_.alpha2 * H * adc_norm;
+    phi(2) =
+        adc_norm * adc_norm + physical_.alpha1 * T * adc_norm + physical_.alpha2 * H * adc_norm;
     phi(3) = adc_norm * adc_norm * adc_norm + physical_.beta1 * T * adc_norm * adc_norm +
              physical_.beta2 * V * adc_norm;
     phi(4) = std::sqrt(v) + physical_.gamma1 * A * std::log(v);
@@ -133,7 +137,8 @@ Eigen::VectorXd RobustCalibrationFramework::environmental_basis(double adc_code,
     return phi;
 }
 
-std::pair<Eigen::VectorXd, Eigen::MatrixXd> RobustCalibrationFramework::total_least_squares_calibration(
+std::pair<Eigen::VectorXd, Eigen::MatrixXd>
+RobustCalibrationFramework::total_least_squares_calibration(
     const std::vector<CalibrationPoint>& points) const {
     if (points.size() < 3)
         return {theta_mean_, theta_cov_};
@@ -143,7 +148,8 @@ std::pair<Eigen::VectorXd, Eigen::MatrixXd> RobustCalibrationFramework::total_le
     Eigen::VectorXd p_obs(n);
     Eigen::VectorXd weights(n);
     for (int i = 0; i < n; ++i) {
-        Phi.row(i) = environmental_basis(points[static_cast<size_t>(i)].adc_code, points[static_cast<size_t>(i)].env)
+        Phi.row(i) = environmental_basis(points[static_cast<size_t>(i)].adc_code,
+                                         points[static_cast<size_t>(i)].env)
                          .transpose();
         p_obs(i) = points[static_cast<size_t>(i)].pressure;
         double u = points[static_cast<size_t>(i)].uncertainty;
@@ -185,8 +191,8 @@ std::pair<Eigen::VectorXd, Eigen::MatrixXd> RobustCalibrationFramework::bayesian
     return {post_mean, post_cov};
 }
 
-std::pair<Eigen::VectorXd, Eigen::MatrixXd> RobustCalibrationFramework::recursive_least_squares_update(
-    const CalibrationPoint& point) {
+std::pair<Eigen::VectorXd, Eigen::MatrixXd>
+RobustCalibrationFramework::recursive_least_squares_update(const CalibrationPoint& point) {
     Eigen::VectorXd phi = environmental_basis(point.adc_code, point.env);
     Eigen::VectorXd Pphi = rls_P_ * phi;
     double denom = forgetting_factor_ + phi.dot(Pphi);
@@ -260,15 +266,15 @@ double RobustCalibrationFramework::extrapolation_variance(double adc_code) const
 double RobustCalibrationFramework::compute_measurement_variance(double adc_code, double tau) const {
     const double adc_norm = adc_code / 1e9;
     if (noise_coeffs_) {
-        double sigma =
-            measurement_uncertainty(tau, *noise_coeffs_, adc_norm * 2.5, std::sqrt(env_variance_base_));
+        double sigma = measurement_uncertainty(tau, *noise_coeffs_, adc_norm * 2.5,
+                                               std::sqrt(env_variance_base_));
         return sigma * sigma;
     }
     return env_variance_base_ + alpha_v_ * adc_norm * adc_norm;
 }
 
-std::pair<double, double> RobustCalibrationFramework::predict_pressure_with_uncertainty(double adc_code,
-                                                                                        const EnvironmentalState& env) {
+std::pair<double, double> RobustCalibrationFramework::predict_pressure_with_uncertainty(
+    double adc_code, const EnvironmentalState& env) {
     auto now = std::chrono::steady_clock::now();
     double dt = steady_secs(last_pred_time_, now);
     dt = std::clamp(dt, 0.001, 10.0);
@@ -291,7 +297,8 @@ std::pair<double, double> RobustCalibrationFramework::predict_pressure_with_unce
     double interaction_var =
         adc_norm * adc_norm * (ev.transpose() * env_var_interaction_ * ev)(0, 0);
 
-    double total_var = meas_var + parameter_variance + extrap_var + bias_var + env_var + interaction_var;
+    double total_var =
+        meas_var + parameter_variance + extrap_var + bias_var + env_var + interaction_var;
     double sigma = std::sqrt(std::max(total_var, 1e-12)) * inflation_factor_;
     recent_uncertainties_.push_back(sigma);
     if (recent_uncertainties_.size() > 10)
@@ -307,9 +314,10 @@ double RobustCalibrationFramework::predict_pressure_psi(double adc_code) {
 void RobustCalibrationFramework::add_calibration_point(const CalibrationPoint& point) {
     calibration_points_.push_back(point);
     if (calibration_points_.size() > kCalibrationPointsMax)
-        calibration_points_.erase(calibration_points_.begin(),
-                                  calibration_points_.begin() +
-                                      static_cast<std::ptrdiff_t>(calibration_points_.size() - kCalibrationPointsMax));
+        calibration_points_.erase(
+            calibration_points_.begin(),
+            calibration_points_.begin() +
+                static_cast<std::ptrdiff_t>(calibration_points_.size() - kCalibrationPointsMax));
 
     Eigen::VectorXd phi = environmental_basis(point.adc_code, point.env);
     double pred_before = phi.dot(theta_mean_) + bias_contribution();
