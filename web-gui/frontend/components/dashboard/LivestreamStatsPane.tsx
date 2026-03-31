@@ -191,7 +191,10 @@ export default function LivestreamStatsPane() {
 
   const pressureOptions = useMemo<PressureOption[]>(() => {
     const configBacked = sensors
-      .filter((sensor) => sensor.calEntity.startsWith('PT_Cal.'))
+      .filter((sensor) => {
+        const calEntity = sensor.calEntity;
+        return calEntity.startsWith('PT_Cal.') || /^PT\\d+_Cal\\.CH\\d+$/.test(calEntity);
+      })
       .map((sensor) => {
         const known = PRESSURE_SENSORS.find((entry) => entry.entity === sensor.calEntity);
         return {

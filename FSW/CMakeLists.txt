@@ -45,6 +45,9 @@ set(FSW_SOURCES
     src/control/PressureStateMachine.cpp
     src/calibration/PTCalibration.cpp
     src/calibration/SensorCalibration.cpp
+    src/calibration/AllanVariance.cpp
+    src/calibration/RobustCalibrationFramework.cpp
+    src/calibration/RobustCalibrationManager.cpp
     src/control/ControllerLUT.cpp
     src/control/RobustDDPController.cpp
     src/control/ControllerService.cpp

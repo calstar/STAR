@@ -1,5 +1,6 @@
-#include "data_logger/DataLoggerService.hpp"
 #include <iostream>
+
+#include "data_logger/DataLoggerService.hpp"
 
 int main(int argc, char** argv) {
     if (argc < 2) {

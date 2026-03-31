@@ -122,13 +122,20 @@ bool ControllerService::initialize(const PWMConfig& pwm_config,
     if (!elodin_host.empty()) {
         if (elodin_subscriber_->connect(elodin_host, elodin_port)) {
             elodin_sub_connected_ = true;
-            // Subscribe to calibrated PT tables [0x20, 0x11..0x1A]
+            // Subscribe to calibrated PT tables for all board-number slots.
+            // low byte encoding: (board_number-1)*0x20 + 0x10 + channel
             std::vector<std::pair<uint8_t, uint8_t>> cal_pt_tables;
-            for (uint8_t ch = 0x11; ch <= 0x1A; ++ch)
-                cal_pt_tables.push_back({0x20, ch});
+            for (uint8_t board_number = 1; board_number <= 10; ++board_number) {
+                const uint8_t base = static_cast<uint8_t>((board_number - 1) * 0x20);
+                for (uint8_t ch = 1; ch <= 10; ++ch) {
+                    cal_pt_tables.push_back({0x20, static_cast<uint8_t>(base + 0x10 + ch)});
+                }
+            }
+            // Sequencer state stream [0x50,0x00] for FIRE gate parity.
+            cal_pt_tables.push_back({0x50, 0x00});
             elodin_subscriber_->subscribe_tables(cal_pt_tables);
             std::cout << "[ControllerService] ✅ Elodin subscriber connected — "
-                         "subscribed to calibrated PT [0x20, 0x11-0x1A]"
+                         "subscribed to calibrated PT + Sequencer state"
                       << std::endl;
         } else {
             std::cerr << "[ControllerService] ⚠️  Elodin subscriber connection failed — "
@@ -246,6 +253,8 @@ void ControllerService::setNavState(const RobustDDPController::NavState& nav) {
 
 void ControllerService::setFireActive(bool active) {
     const bool was_active = fire_active_.exchange(active);
+    if (was_active == active)
+        return;
     std::cout << "[ControllerService] 🔥 Fire state: "
               << (active ? "ACTIVE — PWM enabled" : "INACTIVE — PWM suppressed") << std::endl;
 
@@ -942,10 +951,26 @@ void ControllerService::elodinSubscriberLoop() {
         }
 
         uint8_t type_hi = header[5];
-        uint8_t channel_id = header[6];
+        uint8_t pid_lo = header[6];
 
-        // 0x20 is PT category. 0x11 to 0x1A are CALIBRATED channels (0x10 + ch_id)
-        if (type_hi == 0x20 && channel_id > 0x10 && channel_id <= 0x1A) {
+        // Sequencer state [0x50,0x00] -> keep controller FIRE gate in parity even
+        // if TCP FIRE_START/FIRE_STOP control path misses an edge.
+        if (type_hi == 0x50 && pid_lo == 0x00 && payload_len >= 17) {
+            uint8_t state_val = rx_buffer[8 + 8];
+            // State enum order: FIRE is value 16 in current state machine.
+            // Keep this as hard parity fallback with sequencer source of truth.
+            setFireActive(state_val == 16);
+            continue;
+        }
+
+        // 0x20 is PT category; calibrated channels for the low-pressure PT board (#1,
+        // board_id=21 → board_number=1) are encoded as pid_lo in 0x11..0x1A.
+        // Do NOT mask off board bits here (e.g. &0x1F) or we will mis-map HP PT
+        // channels into Fuel/Ox channels and the controller will sit on zeros.
+        if (type_hi == 0x20) {
+            if (pid_lo < 0x11 || pid_lo > 0x1A)
+                continue;
+
             if (payload_len >= comms::messages::sensor::CalibratedPTMessage::nbytes()) {
                 uint8_t* payload = rx_buffer.data() + 8;
 
@@ -954,9 +979,9 @@ void ControllerService::elodinSubscriberLoop() {
                 cal_msg.deserialize(payload);
 
                 float pressure_psi = cal_msg.getField<3>();  // calibrated_pressure_psi
-                uint8_t ch = cal_msg.getField<1>();          // channel_id from message
+                uint8_t ch = cal_msg.getField<1>();           // channel_id from message
                 if (ch == 0)
-                    ch = channel_id - 0x10;  // fallback to header
+                    ch = static_cast<uint8_t>(pid_lo - 0x10);  // fallback to header
 
                 // Map based on PT names derived from config.toml (ch 4/8 = Chamber Mid 1/2).
                 std::lock_guard<std::mutex> lock(input_mutex_);

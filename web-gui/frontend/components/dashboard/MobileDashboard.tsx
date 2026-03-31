@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useSensorStore, useSensorValue } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
+import { getApiBaseUrl, getWebSocketClient } from '@/lib/websocket';
 import { SystemState, ActuatorId, CommandPayload } from '@/lib/types';
 import { startDataCache } from '@/lib/data-cache';
 import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
@@ -11,6 +11,7 @@ import ActuatorControlByName from '@/components/controls/ActuatorControlByName';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { PRESSURE_SENSORS, PRESSURE_BAR_SENSORS } from '@/lib/sensor-colors';
 import { useControlMode } from '@/lib/control-mode';
+import { useSensorConfig } from '@/lib/sensor-config';
 
 // ── Constants shared with TopBar/UnifiedDashboard ────────────────────────────
 
@@ -38,12 +39,6 @@ const NAME_TO_ACTUATOR_ID: Partial<Record<string, ActuatorId>> = {
   'Fuel Fill Vent': ActuatorId.FUEL_FILL_VENT, 'LOX Fill': ActuatorId.LOX_FILL,
   'LOX Dump': ActuatorId.LOX_DUMP,
 };
-
-const PRESSURE_SENSORS_PLOT = PRESSURE_SENSORS.map((s) => ({
-  label: s.label.replace('Upstream', 'Up').replace('Downstream', 'Down').replace('Regulated', 'Reg'),
-  entity: s.entity,
-  color: s.color,
-}));
 
 const TIME_WINDOWS = [
   { label: '10s', seconds: 10 },
@@ -86,11 +81,12 @@ export default function MobileDashboard() {
   const [clock, setClock] = useState('');
   const [timeWindow, setTimeWindow] = useState(60);
   const [actuatorsFromConfig, setActuatorsFromConfig] = useState<
-    { name: string; channel: number; entity: string; id?: ActuatorId }[]
+    { name: string; channel: number; entity: string; boardId?: number; id?: ActuatorId }[]
   >([]);
 
   const ws = getWebSocketClient();
   const { controlEnabled } = useControlMode();
+  const sensors = useSensorConfig();
 
   useEffect(() => {
     ws.connect();
@@ -107,7 +103,7 @@ export default function MobileDashboard() {
 
   // ── Config fetch ─────────────────────────────────────────────────────────
   useEffect(() => {
-    fetch('/api/config')
+    fetch(`${getApiBaseUrl()}/api/config`)
       .then((r) => r.ok ? r.json() : null)
       .then((data: { config?: { actuator_roles?: Record<string, [string, number] | [string, number, string]> } } | null) => {
         const roles = data?.config?.actuator_roles;
@@ -115,8 +111,9 @@ export default function MobileDashboard() {
         setActuatorsFromConfig(
           Object.entries(roles).map(([name, value]) => {
             const channel = Array.isArray(value) && value.length >= 2 && typeof value[1] === 'number' ? value[1] : 1;
+            const boardId = Array.isArray(value) && value.length >= 3 && typeof value[2] === 'number' ? value[2] : undefined;
             const entity = `ACT.${name.replace(/\s+/g, '_')}`;
-            return { name, channel, entity, id: NAME_TO_ACTUATOR_ID[name] };
+            return { name, channel, entity, boardId, id: NAME_TO_ACTUATOR_ID[name] };
           })
         );
       })
@@ -145,11 +142,37 @@ export default function MobileDashboard() {
     sendState(SystemState.EMERGENCY_ABORT);
   };
 
-  const pressurePills = PRESSURE_BAR_SENSORS.map((s) => ({
-    label: SHORT_LABELS[s.entity] ?? s.label,
-    entity: s.entity,
-    color: s.color,
-  }));
+  const roleToEntity = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of sensors) m.set(String(s.role || ''), String(s.calEntity || ''));
+    return m;
+  }, [sensors]);
+
+  const pickEntity = useCallback((roles: string[], fallback: string) => {
+    for (const r of roles) {
+      const e = roleToEntity.get(r);
+      if (e) return e;
+    }
+    return fallback;
+  }, [roleToEntity]);
+
+  const pressurePills = useMemo(() => [
+    { label: 'GN2 HI', entity: pickEntity(['GN2 High'], 'PT_Cal.GN2_High') },
+    { label: 'GN2 REG', entity: pickEntity(['GN2 Regulated'], 'PT_Cal.GN2_Regulated') },
+    { label: 'FUEL UP', entity: pickEntity(['Fuel Upstream'], 'PT_Cal.Fuel_Upstream') },
+    { label: 'FUEL DN', entity: pickEntity(['Fuel Downstream'], 'PT_Cal.Fuel_Downstream') },
+    { label: 'LOX UP', entity: pickEntity(['Ox Upstream', 'LOX Upstream'], 'PT_Cal.Ox_Upstream') },
+    { label: 'LOX DN', entity: pickEntity(['Ox Downstream', 'LOX Downstream'], 'PT_Cal.Ox_Downstream') },
+    { label: 'GSE LO', entity: pickEntity(['GSE Low'], 'PT_Cal.GSE_Low') },
+    { label: 'GSE MID', entity: pickEntity(['GSE Mid'], 'PT_Cal.GSE_Mid') },
+    { label: 'GSE HI', entity: pickEntity(['GSE High'], 'PT_Cal.GSE_High') },
+  ].map((s) => ({ ...s, color: PRESSURE_SENSORS.find((p) => p.entity === s.entity)?.color ?? '#38BDF8' })), [pickEntity]);
+
+  const pressureSensorsPlot = useMemo(() => pressurePills.map((p) => ({
+    label: p.label,
+    entity: p.entity,
+    color: p.color,
+  })), [pressurePills]);
 
   return (
     <div className="flex flex-col h-full overflow-y-auto overflow-x-hidden bg-background text-text">
@@ -255,10 +278,10 @@ export default function MobileDashboard() {
           <div className="flex-1 min-h-0">
             <TimeSeriesPlot
               title="All Pressure Sensors (PSI)"
-              entities={PRESSURE_SENSORS_PLOT.map((s) => s.entity)}
-              labels={PRESSURE_SENSORS_PLOT.map((s) => s.label)}
+              entities={pressureSensorsPlot.map((s) => s.entity)}
+              labels={pressureSensorsPlot.map((s) => s.label)}
               component="pressure_psi"
-              colors={PRESSURE_SENSORS_PLOT.map((s) => s.color)}
+              colors={pressureSensorsPlot.map((s) => s.color)}
               yLabel="PSI"
               windowSeconds={timeWindow}
             />
@@ -275,7 +298,7 @@ export default function MobileDashboard() {
               a.id !== undefined ? (
                 <ActuatorControl key={a.name} actuatorId={a.id} />
               ) : (
-                <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
+                <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} boardId={a.boardId} />
               )
             )}
           </div>

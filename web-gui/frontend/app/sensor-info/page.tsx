@@ -442,7 +442,11 @@ export default function SensorInfoPage() {
         if (!Array.isArray(sensors)) return;
 
         const mapped = sensors
-          .filter((s) => typeof s?.calEntity === 'string' && (s.calEntity as string).startsWith('PT_Cal.'))
+          .filter((s) => {
+            if (typeof s?.calEntity !== 'string') return false;
+            const calEntity = s.calEntity as string;
+            return calEntity.startsWith('PT_Cal.') || /^PT\\d+_Cal\\.CH\\d+$/.test(calEntity);
+          })
           .map((s) => {
             const role = String(s.role || s.calEntity);
             const calEntity = String(s.calEntity);

@@ -84,6 +84,12 @@ public:
      */
     std::string last_error() const;
 
+    /**
+     * @brief Set socket receive timeout (0 = blocking)
+     * @param timeout_ms Receive timeout in milliseconds
+     */
+    void set_recv_timeout_ms(int timeout_ms);
+
 private:
     int socket_fd_;
     bool connected_;

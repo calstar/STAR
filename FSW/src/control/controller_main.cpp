@@ -22,6 +22,7 @@
 #include <atomic>
 #include <csignal>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -236,18 +237,24 @@ static void runControlServer(fsw::control::ControllerService* svc, uint16_t port
                 break;
             buf += c;
         }
-        ::close(client);
 
         if (buf == "FIRE_START") {
             svc->setFireActive(true);
             std::cout << "[ControllerService] 🔥 FIRE_START received — PWM gate open" << std::endl;
+            const char* reply = "OK\n";
+            ::send(client, reply, std::strlen(reply), 0);
         } else if (buf == "FIRE_STOP") {
             svc->setFireActive(false);
             std::cout << "[ControllerService] 🛑 FIRE_STOP received — PWM gate closed" << std::endl;
+            const char* reply = "OK\n";
+            ::send(client, reply, std::strlen(reply), 0);
         } else {
             std::cerr << "[ControllerService] ⚠️  Unknown control cmd: \"" << buf << "\""
                       << std::endl;
+            const char* reply = "ERR\n";
+            ::send(client, reply, std::strlen(reply), 0);
         }
+        ::close(client);
     }
     ::close(listen_fd);
 }

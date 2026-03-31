@@ -12,7 +12,7 @@
 import * as net from 'net';
 import { WebSocketServer } from 'ws';
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
-import { registerVTables, clearSubscriptionState } from './legacy/elodin-vtable.js';
+import { registerVTables, clearSubscriptionState } from './elodin-vtable-registry.js';
 import { registerControllerVTables, registerActuatorCommandedVTables } from './legacy/elodin-vtable-controller.js';
 import { loadActuatorChannelToEntityMap } from './sensor-config.js';
 

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import ActuatorStatePanel from '@/components/plots/ActuatorStatePanel';
 import { useSensorStore, useSensorValue, useLoadCellForceKg } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
+import { getApiBaseUrl, getWebSocketClient } from '@/lib/websocket';
 import { MessageType } from '@/lib/types';
 import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
 import { useSensorConfig } from '@/lib/sensor-config';
@@ -90,7 +90,12 @@ export default function ChamberGraphsPage() {
     const allSensors = useSensorConfig();
     // Chamber PTs only (exclude TC/LC with "Chamber" in role); order Mid 1, Mid 2, Throat 1, Throat 2
     const ptSensors = CHAMBER_PT_ROLES_ORDER
-      .map((role) => allSensors.find((s) => s.calEntity.startsWith('PT_Cal.') && s.role === role))
+      .map((role) =>
+        allSensors.find((s) => {
+          const calEntity = s.calEntity;
+          return (calEntity.startsWith('PT_Cal.') || /^PT\\d+_Cal\\.CH\\d+$/.test(calEntity)) && s.role === role;
+        })
+      )
       .filter((s): s is NonNullable<typeof s> => s != null);
 
     const [tcData, setTcData] = useState<{ entity: string; label: string; voltageReference: number }[]>([]);
@@ -98,7 +103,7 @@ export default function ChamberGraphsPage() {
     const [lcLabels, setLcLabels] = useState<string[]>([]);
 
     const loadChannelConfig = useCallback(() => {
-      fetch('/api/config')
+      fetch(`${getApiBaseUrl()}/api/config`)
         .then((r) => (r.ok ? r.json() : null))
         .then((data: any) => {
           const config = data?.config;

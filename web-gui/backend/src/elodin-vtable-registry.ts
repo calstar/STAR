@@ -1,12 +1,13 @@
 /**
- * VTable Registration for Elodin DB
+ * Elodin DB — VTable registration and VTableStream subscriptions
  *
- * Consolidated from legacy/elodin-vtable.ts and legacy/elodin-vtable-controller.ts.
- * Registers VTables and VTableStream subscriptions so Elodin DB streams
- * TABLE packets to connected clients.
+ * Single source of truth for thin backend + relay: config-driven stream IDs,
+ * deduplicated subscriptions, calibrated-stream retry (Elodin drops subs before
+ * tables exist), and instrumentation-friendly logging.
  */
 
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
+import { readConfig } from './routes/config.js';
 
 // ── FNV-1a hash (matching db.hpp msg_id) ────────────────────────────────────
 
@@ -70,58 +71,159 @@ function encodeVTable(config: {
     return buffer.subarray(0, off);
 }
 
-// ── VTableStream subscriptions ──────────────────────────────────────────────
+// ── VTableStream subscriptions (board-namespaced IDs, config + fallbacks) ───
+
+/** Subscribed [high,low] keys — avoids duplicate subs on 5s retry (duplicate delivery / inflated rates). */
+const subscribedVTableStreamPairs = new Set<string>();
+
+/** Call on Elodin disconnect so the next connect re-sends all streams cleanly. */
+export function clearSubscriptionState(): void {
+    subscribedVTableStreamPairs.clear();
+}
 
 /**
- * Subscribe to all known VTableStream packet IDs.
- * Elodin DB will begin streaming TABLE packets for each subscription.
+ * Build packet IDs to subscribe: config.toml boards (32-slot low-byte scheme) + dev fallbacks +
+ * controller / sequencer / heartbeat / self-test / calibration command.
  */
-export async function subscribeToVTables(client: ElodinClient): Promise<boolean> {
+function buildVTableStreamSubscriptionList(): Array<[number, number]> {
+    const subscriptions: Array<[number, number]> = [];
+    const seen = new Set<string>();
+    const addUnique = (high: number, low: number): void => {
+        const key = `${high},${low}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            subscriptions.push([high, low]);
+        }
+    };
+
+    const addBoard = (typeHi: number, boardNumber: number, channels: number[]): void => {
+        for (const ch of channels) {
+            addUnique(typeHi, (boardNumber - 1) * 0x20 + ch);
+            addUnique(typeHi, (boardNumber - 1) * 0x20 + 0x10 + ch);
+        }
+    };
+
+    try {
+        const cfg = readConfig();
+        const boards = (cfg.boards || {}) as Record<string, unknown>;
+        for (const [, raw] of Object.entries(boards)) {
+            const b = raw as Record<string, unknown>;
+            if (b.enabled === false) continue;
+            const t = String(b.type ?? '').toUpperCase();
+            const id = Number(b.board_id ?? b.id ?? 0);
+            if (!Number.isFinite(id) || id <= 0) continue;
+            const mod = id % 10;
+            const boardNumberRaw = mod === 0 ? 10 : mod;
+            const boardNumber = ((boardNumberRaw - 1) % 8) + 1;
+            const n = Number(b.num_sensors ?? 0);
+            const rawConnectors = Array.isArray(b.active_connectors) && (b.active_connectors as unknown[]).length > 0
+                ? (b.active_connectors as unknown[])
+                : Array.isArray(b.active_connections) && (b.active_connections as unknown[]).length > 0
+                    ? (b.active_connections as unknown[])
+                    : [];
+            const active = rawConnectors.length > 0
+                ? rawConnectors.map((x) => Number(x)).filter((x) => Number.isFinite(x) && x >= 1 && x <= 10)
+                : n > 0
+                    ? Array.from({ length: Math.min(10, n) }, (_, i) => i + 1)
+                    : [];
+            if (active.length === 0) continue;
+
+            const typeHi =
+                t === 'PT' ? 0x20
+                    : t === 'TC' ? 0x21
+                        : t === 'RTD' ? 0x22
+                            : t === 'LC' ? 0x23
+                                : t === 'ENC' || t === 'ENCODER' ? 0x24
+                                    : t === 'ACTUATOR' ? 0x30
+                                        : -1;
+            if (typeHi < 0) continue;
+            addBoard(typeHi, boardNumber, active);
+        }
+    } catch (e) {
+        console.warn('[VTableStream] config-driven subscriptions failed, using fallbacks only:', e);
+    }
+
+    addBoard(0x20, 1, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    addBoard(0x20, 2, [1, 2, 3, 4]);
+    addBoard(0x30, 2, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    addBoard(0x30, 4, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    addBoard(0x21, 1, [2, 3, 4, 5]);
+    addBoard(0x22, 1, [1, 2, 3, 4]);
+    addBoard(0x23, 2, [1, 2, 6]);
+    addBoard(0x24, 1, [1, 2]);
+
+    for (let bn = 1; bn <= 4; bn++) {
+        for (let ch = 1; ch <= 10; ch++) {
+            addUnique(0x32, (bn - 1) * 0x20 + ch);
+        }
+    }
+
+    [
+        [0x40, 0x00], [0x41, 0x00], [0x42, 0x00], [0x43, 0x00], [0x44, 0x00],
+        [0x50, 0x00],
+        [0x50, 0x60], [0x50, 0x61], [0x50, 0x62], [0x50, 0x63], [0x50, 0x64], [0x50, 0x65], [0x50, 0x66],
+    ].forEach(([h, l]) => addUnique(h, l));
+
+    for (let i = 1; i <= 64; i++) {
+        addUnique(0x10, i);
+        addUnique(0x60, i);
+    }
+
+    addUnique(0x46, 0x00);
+
+    return subscriptions;
+}
+
+/**
+ * Register VTableStream interest with Elodin (MSG to VTableStream). DAQ/calibration
+ * services own VTableMsg schema registration; we only subscribe to packet IDs.
+ */
+export async function registerVTables(client: ElodinClient): Promise<boolean> {
     if (!client.isConnected()) {
-        console.warn('⚠️ Cannot subscribe - Elodin client not connected');
+        console.warn('⚠️ Cannot subscribe VTableStreams — Elodin client not connected');
         return false;
     }
 
-    console.log('📡 Sending VTableStream subscriptions...');
+    console.log('📡 VTableStream subscriptions (config + fallbacks)...');
 
     try {
-        const subscriptions: Array<[number, number]> = [
-            // PT Raw 1–14 + Cal 0x11–0x1E
-            ...range(0x20, 0x01, 0x0E), ...range(0x20, 0x11, 0x1E),
-            // TC Raw/Cal 1–20 + 0x11–0x24
-            ...range(0x21, 0x01, 0x14), ...range(0x21, 0x11, 0x24),
-            // RTD Raw/Cal 1–20 + 0x11–0x24
-            ...range(0x22, 0x01, 0x14), ...range(0x22, 0x11, 0x24),
-            // LC Raw/Cal 1–20 + 0x11–0x24
-            ...range(0x23, 0x01, 0x14), ...range(0x23, 0x11, 0x24),
-            // Encoder Raw/Cal 1–14
-            ...range(0x24, 0x01, 0x0E), ...range(0x24, 0x11, 0x1E),
-            // Actuator feedback (Raw) + state (Cal) 1–20
-            ...range(0x30, 0x01, 0x14), ...range(0x31, 0x01, 0x14),
-            // Actuator Commanded (0x32)
-            ...range(0x32, 0x01, 0x14),
-            // Controller: actuation, diagnostics, measurement, state, fire
-            [0x40, 0x00], [0x41, 0x00], [0x42, 0x00], [0x43, 0x00], [0x44, 0x00],
-            // Sequencer state
-            [0x50, 0x00],
-            // Heartbeats 1–64
-            ...range(0x10, 0x01, 0x40),
-            // Self-test results 1–64
-            ...range(0x60, 0x01, 0x40),
-        ];
-
+        const subscriptions = buildVTableStreamSubscriptionList();
         const vtableStreamMsgId = computeMsgId('VTableStream');
-        let count = 0;
+        console.log(`   VTableStream msg_id: [0x${vtableStreamMsgId[0].toString(16).padStart(2, '0')}, 0x${vtableStreamMsgId[1].toString(16).padStart(2, '0')}]`);
+
+        // Clear ALL subscriptions on each retry cycle — Elodin silently drops VTableStream
+        // requests for VTables that aren't registered yet (daq_bridge/calibration_service may
+        // register theirs after the backend's first subscribe). Re-sending is idempotent.
+        subscribedVTableStreamPairs.clear();
+
+        let successCount = 0;
+        let skippedCount = 0;
         for (const [high, low] of subscriptions) {
+            const key = `${high},${low}`;
+            if (subscribedVTableStreamPairs.has(key)) {
+                skippedCount++;
+                continue;
+            }
             const payload = Buffer.alloc(2);
             payload.writeUInt8(high, 0);
             payload.writeUInt8(low, 1);
-            if (client.sendRawMessage(vtableStreamMsgId, ElodinPacketType.MSG, payload)) count++;
+            const ok = client.sendRawMessage(vtableStreamMsgId, ElodinPacketType.MSG, payload);
+            if (ok) {
+                subscribedVTableStreamPairs.add(key);
+                successCount++;
+                if (successCount <= 5) {
+                    console.log(`   ✅ VTableStream subscription sent: [0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}]`);
+                }
+            } else {
+                console.error(`   ❌ VTableStream send failed: [0x${high.toString(16).padStart(2, '0')}, 0x${low.toString(16).padStart(2, '0')}]`);
+            }
         }
-        console.log(`   ✅ VTableStream: ${count}/${subscriptions.length} subscriptions sent`);
-        return count > 0;
-    } catch (e) {
-        console.error('❌ VTableStream error:', e);
+
+        console.log(`   ✅ VTableStream: sent ${successCount} new, skipped ${skippedCount} already subscribed (${subscriptions.length} total)`);
+        console.log('   (Heartbeats [0x10] and sensor rows are TABLE packets once daq_bridge / calibration_service publish.)');
+        return successCount > 0;
+    } catch (error) {
+        console.error('❌ VTableStream subscription error:', error);
         return false;
     }
 }
@@ -375,12 +477,3 @@ export async function registerActuatorCommandedVTables(
     return count > 0;
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-function range(high: number, lowStart: number, lowEnd: number): Array<[number, number]> {
-    const out: Array<[number, number]> = [];
-    for (let lo = lowStart; lo <= lowEnd; lo++) {
-        out.push([high, lo]);
-    }
-    return out;
-}

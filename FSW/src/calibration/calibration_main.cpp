@@ -23,6 +23,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <fstream>
+#include <filesystem>
 #include <iostream>
 #include <map>
 #include <set>
@@ -32,6 +33,7 @@
 #include <vector>
 
 #include "calibration/PTCalibration.hpp"
+#include "calibration/RobustCalibrationManager.hpp"
 #include "calibration/SensorCalibration.hpp"
 #include "comms/messages/sensor/CalibratedPTMessage.hpp"
 #include "comms/messages/sensor/CalibratedSensorMessages.hpp"
@@ -150,10 +152,25 @@ static void signalHandler(int /*sig*/) {
     running = false;
 }
 
+/** Match Elodin low byte to config board_id (same layout as daq_bridge). */
+static uint8_t resolve_board_id_pt(uint8_t type_lo, uint8_t ch,
+                                 const std::vector<fsw::elodin::BoardChannels>& pt_boards) {
+    for (const auto& bc : pt_boards) {
+        uint8_t mod = bc.board_id % 10;
+        uint8_t bn_norm = (mod == 0) ? 10 : mod;
+        uint8_t expected_lo =
+            static_cast<uint8_t>(static_cast<uint16_t>(bn_norm - 1u) * 0x20u + ch);
+        if (expected_lo == type_lo)
+            return bc.board_id;
+    }
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     std::string config_path = "config/config.toml";
     std::string elodin_host = "127.0.0.1";
     uint16_t elodin_port = 2240;
+    std::string adjustments_path = "scripts/calibration/calibrations/adjustments.json";
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -163,10 +180,46 @@ int main(int argc, char* argv[]) {
             elodin_host = argv[++i];
         else if ((arg == "--port" || arg == "--elodin-port") && i + 1 < argc)
             elodin_port = static_cast<uint16_t>(std::atoi(argv[++i]));
+        else if (arg == "--adjustments" && i + 1 < argc)
+            adjustments_path = argv[++i];
         else if (arg == "--help" || arg == "-h") {
             std::cout << "Usage: " << argv[0]
                       << " [--config PATH] [--elodin-host HOST] [--elodin-port PORT]\n";
             return 0;
+        }
+    }
+
+    // If the caller didn't explicitly pass an adjustments file, default to the latest
+    // robust calibration backup so priors are always well-informed.
+    const std::string default_adj = "scripts/calibration/calibrations/adjustments.json";
+    if (adjustments_path == default_adj) {
+        const char* env_override = std::getenv("CAL_BACKUP_PATH");
+        if (env_override && env_override[0] != '\0') {
+            adjustments_path = env_override;
+        } else {
+            const std::string backup_dir = "calibration_backups";
+            std::string best_path;
+            auto best_time = std::filesystem::file_time_type::min();
+            try {
+                for (const auto& entry : std::filesystem::directory_iterator(backup_dir)) {
+                    if (!entry.is_regular_file())
+                        continue;
+                    const std::string name = entry.path().filename().string();
+                    if (entry.path().extension() != ".json")
+                        continue;
+                    if (name.rfind("calibration_backup_", 0) != 0)
+                        continue;
+                    const auto t = entry.last_write_time();
+                    if (t > best_time) {
+                        best_time = t;
+                        best_path = entry.path().string();
+                    }
+                }
+            } catch (...) {
+                // If directory doesn't exist, we'll fall back to the default adjustments.json.
+            }
+            if (!best_path.empty())
+                adjustments_path = best_path;
         }
     }
 
@@ -182,6 +235,8 @@ int main(int argc, char* argv[]) {
         "scripts/calibration/calibrations",
         "external/DiabloAvionics/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv");
     pt_calibration.load_calibration();
+
+    fsw::calibration::RobustCalibrationManager robust_manager;
 
     fsw::calibration::SensorCalibrationManager tc_calibration("TC", "°C", 3);
     tc_calibration.load_calibration(
@@ -288,6 +343,11 @@ int main(int argc, char* argv[]) {
     }
 
     // Parse HP PT config (4-20 mA) — uses local connector IDs (no channel_offset)
+    // In simulation, synthetic PT ADC values are not a 4-20 mA current loop.
+    const bool use_sim_mode = []() {
+        const char* v = std::getenv("USE_SIM");
+        return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T');
+    }();
     std::set<uint8_t> hp_pt_channels;
     double hp_pt_full_scale_psi = 5000.0;
     double hp_pt_sense_resistor_ohms = 120.0;
@@ -450,6 +510,27 @@ int main(int argc, char* argv[]) {
     std::cout << "[Calibration] LC default:  " << lc_sensitivity_mv_per_v
               << "mV/V, PGA=" << lc_pga_gain << ", FS=" << lc_full_scale_value << "kg" << std::endl;
 
+    const fsw::calibration::PTCalibrationCoeffs* fallback_pt_coeffs = nullptr;
+    for (uint8_t probe_ch = 1; probe_ch <= 10; ++probe_ch) {
+        if (pt_calibration.is_calibrated(probe_ch)) {
+            fallback_pt_coeffs = pt_calibration.get_calibration(probe_ch);
+            break;
+        }
+    }
+    for (const auto& bc : pt_boards) {
+        for (uint8_t local_ch : bc.channels) {
+            uint16_t uid = static_cast<uint16_t>(bc.board_id) * 100u + local_ch;
+            if (pt_calibration.is_calibrated(local_ch)) {
+                robust_manager.initialize_sensor(uid, *pt_calibration.get_calibration(local_ch));
+            } else if (fallback_pt_coeffs != nullptr) {
+                // Keep channels alive even when per-channel baseline fit is missing.
+                robust_manager.initialize_sensor(uid, *fallback_pt_coeffs);
+            }
+        }
+    }
+
+    robust_manager.load_adjustments(adjustments_path);
+
     if (verbose())
         std::cout << "[Cal] CAL_VERBOSE=1 — debug output enabled" << std::endl;
 
@@ -468,6 +549,10 @@ int main(int argc, char* argv[]) {
             std::cerr << "[Cal] Failed to subscribe to Elodin stream" << std::endl;
             return false;
         }
+        if (!elodin_client.subscribe_tables({{0x46, 0x00}})) {
+            std::cerr << "[Cal] Failed to subscribe to CalibrationCommand [0x46,0x00]" << std::endl;
+            return false;
+        }
         std::cout << "[Cal] Connected to Elodin, registered calibrated VTables, subscribed."
                   << std::endl;
         return true;
@@ -475,10 +560,17 @@ int main(int argc, char* argv[]) {
 
     if (!connect_and_register())
         return 1;
+    // Allow read_packet() to yield every 3 s so the re-subscribe check can fire
+    // when Elodin silently drops subscriptions (daq_bridge VTables not yet registered).
+    elodin_client.set_recv_timeout_ms(3000);
 
-    uint8_t pkt_buf[8192];
+    uint8_t pkt_buf[65536];  // 64 KB — handles large Elodin subscription-ACK bursts
     int packet_count = 0;
     static std::atomic<bool> logged_ch5{false};
+    auto last_save = std::chrono::steady_clock::now();
+    auto last_packet_time = std::chrono::steady_clock::now();
+    auto last_resubscribe = std::chrono::steady_clock::now();
+    std::map<uint16_t, int32_t> last_adc_map;
 
     while (running) {
         if (!elodin_client.is_connected()) {
@@ -488,9 +580,27 @@ int main(int argc, char* argv[]) {
                 fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_boards,
                                                                          tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
                 elodin_client.subscribe_stream();
+                elodin_client.subscribe_tables({{0x46, 0x00}});
+                elodin_client.set_recv_timeout_ms(3000);
+                last_resubscribe = std::chrono::steady_clock::now();
+                last_packet_time = std::chrono::steady_clock::now();
                 std::cout << "[Cal] Reconnected to Elodin" << std::endl;
             }
             continue;
+        }
+
+        // If no raw sensor packets received for 5 s, daq_bridge may have registered
+        // its VTables AFTER we subscribed — re-subscribe to pick them up.
+        {
+            auto now_s = std::chrono::steady_clock::now();
+            auto since_pkt = std::chrono::duration_cast<std::chrono::seconds>(now_s - last_packet_time).count();
+            auto since_sub = std::chrono::duration_cast<std::chrono::seconds>(now_s - last_resubscribe).count();
+            if (since_pkt >= 5 && since_sub >= 5) {
+                std::cout << "[Cal] No packets for " << since_pkt << "s — re-subscribing to raw streams" << std::endl;
+                elodin_client.subscribe_stream();
+                elodin_client.subscribe_tables({{0x46, 0x00}});
+                last_resubscribe = now_s;
+            }
         }
 
         ssize_t pkt_len = elodin_client.read_packet(pkt_buf, sizeof(pkt_buf));
@@ -503,21 +613,54 @@ int main(int argc, char* argv[]) {
         const uint8_t type_lo = pkt_buf[6];
         const uint8_t ty = pkt_buf[4];
 
+        // Elodin TABLE packets can arrive with type 0 or 1 depending on stream path/version.
+        if (ty != 0 && ty != 1)
+            continue;
+
+        // Only log first few ACTUAL sensor/command packets (skip registration ACKs with type_hi >= 0x80)
         static int debug_limit = 0;
-        if (debug_limit < 10) {
-            std::cout << "[Cal] Received packet ty=" << (int)ty << " id=[" << std::hex
-                      << (int)type_hi << "," << (int)type_lo << std::dec << "]"
+        if (debug_limit < 10 && type_hi < 0x80) {
+            std::cout << "[Cal] Received packet ty=" << (int)ty << " id=[0x" << std::hex
+                      << (int)type_hi << ",0x" << (int)type_lo << std::dec << "]"
                       << " pkt_len=" << pkt_len << std::endl;
             debug_limit++;
         }
 
-        if (ty != 1)
-            continue;  // Only process TABLE packets
+        // Only process RAW sensor packets or Calibration Commands.
+        if (type_hi == 0x46) {
+            // CalibrationCommand: ts(8) | cmd(1) | sensor_id(2 LE) | pad(1) | ref_f32(4)
+            if (pkt_len >= 8 + 16) {
+                const uint8_t* p = pkt_buf + 8;
+                uint8_t cmd_type = p[8];
+                uint16_t sensor_id = static_cast<uint16_t>(p[9]) | (static_cast<uint16_t>(p[10]) << 8);
+                float ref_val = *reinterpret_cast<const float*>(p + 12);
+                
+                std::cout << "[Cal] Received CalibrationCommand: type=" << (int)cmd_type 
+                          << " sensor=" << static_cast<int>(sensor_id) << " ref=" << ref_val << std::endl;
+                
+                if (cmd_type == 0) { // Zero All
+                    if (sensor_id == 0) { // All sensors
+                        for (auto const& [id, val] : last_adc_map) {
+                            robust_manager.zero_sensor(id, val);
+                        }
+                        std::cout << "[Cal] Performed Zero All for " << last_adc_map.size() << " sensors" << std::endl;
+                    } else {
+                        if (last_adc_map.count(sensor_id)) {
+                            robust_manager.zero_sensor(sensor_id, last_adc_map[sensor_id]);
+                        }
+                    }
+                } else if (cmd_type == 1) { // Capture Reference
+                    if (last_adc_map.count(sensor_id)) {
+                        robust_manager.update_calibration(sensor_id, last_adc_map[sensor_id], ref_val);
+                    }
+                } else if (cmd_type == 2) { // Save
+                    robust_manager.save_adjustments(adjustments_path);
+                    std::cout << "[Cal] Adjustments saved to " << adjustments_path << std::endl;
+                }
+            }
+            continue;
+        }
 
-        // Only process RAW sensor packets. Board-namespaced packet IDs:
-        //   Raw:        low byte = (board_number-1)*0x10 + channel  (bit 4 = 0)
-        //   Calibrated: low byte = (board_number-1)*0x10 + 0x10 + channel  (bit 4 = 1)
-        // Skip calibrated packets (our own output) to avoid re-processing.
         if ((type_hi < 0x20 || type_hi > 0x24) && type_hi != 0x30)
             continue;
         // Within each 32-slot block: raw = offset 0x01-0x0A, cal = offset 0x11-0x1A
@@ -553,7 +696,9 @@ int main(int argc, char* argv[]) {
         // Calibrated = raw_lo + 0x10 (within same 32-slot block)
         uint8_t cal_lo = static_cast<uint8_t>(type_lo + 0x10);
         uint8_t board_number = static_cast<uint8_t>((type_lo >> 5) + 1);
-        // channel is already extracted as ch = p[8] from the payload
+        uint8_t bid = resolve_board_id_pt(type_lo, ch, pt_boards);
+        uint16_t uid =
+            bid ? static_cast<uint16_t>(bid) * 100u + ch : static_cast<uint16_t>(100u + ch);
 
         elodin_client.begin_batch();
 
@@ -561,20 +706,22 @@ int main(int argc, char* argv[]) {
             double psi;
             uint8_t cal_status;
             // HP PT uses local connector IDs (no offset) — check board_number matches HP PT board
-            if (board_number == hp_pt_board_number && hp_pt_channels.count(ch)) {
+            if (!use_sim_mode && board_number == hp_pt_board_number && hp_pt_channels.count(ch)) {
                 psi = convert_hp_pt_to_pressure(static_cast<int32_t>(raw_adc), hp_pt_full_scale_psi,
                                                 hp_pt_sense_resistor_ohms, hp_pt_adc_ref_voltage);
                 cal_status = 1;
+                last_adc_map[uid] = static_cast<int32_t>(raw_adc);
                 if (verbose() && packet_count % 100 == 0)
                     std::cout << "[Cal] HP PT B" << (int)board_number << " ch" << (int)ch
                               << " adc=" << static_cast<int32_t>(raw_adc) << " psi=" << psi
                               << std::endl;
             } else {
-                psi = pt_calibration.calculate_pressure(ch, static_cast<int32_t>(raw_adc));
+                last_adc_map[uid] = static_cast<int32_t>(raw_adc);
+                psi = robust_manager.predict_pressure_psi(uid, static_cast<int32_t>(raw_adc));
                 cal_status = pt_calibration.is_calibrated(ch) ? 1u : 0u;
                 if (verbose() && packet_count % 100 == 0)
                     std::cout << "[Cal] PT B" << (int)board_number << " ch" << (int)ch
-                              << " adc=" << raw_adc << " psi=" << psi << std::endl;
+                              << " adc=" << raw_adc << " psi=" << psi << " (robust)" << std::endl;
             }
             comms::messages::sensor::CalibratedPTMessage cal_msg(
                 ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(psi), raw_adc,
@@ -634,19 +781,27 @@ int main(int argc, char* argv[]) {
         } else if (type_hi == 0x30) {  // Actuator raw current-sense (12-bit ADC)
             double current_a = convert_act_adc_to_current(raw_adc);
             uint8_t cal_status = 1;
-            // ACT calibrated uses type_hi 0x30, same cal_lo formula (bit 4 set)
+            // ACT calibrated VTable registered under 0x31 (to avoid collision with raw 0x30)
             comms::messages::sensor::CalibratedACTMessage cal_msg(
                 ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(current_a), raw_adc,
                 cal_status);
-            elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
+            elodin_client.publish(static_cast<uint16_t>((0x31 << 8) | cal_lo), cal_msg);
         }
 
         elodin_client.flush_batch();
 
+        last_packet_time = std::chrono::steady_clock::now();
         packet_count++;
         if (packet_count % 10000 == 0)
             std::cout << "[Cal] Processed " << packet_count << " raw packets (type=0x" << std::hex
                       << (int)type_hi << " ch=" << (int)ch << std::dec << ")" << std::endl;
+
+        // Periodic auto-save every 5 minutes
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_save).count() > 300) {
+            robust_manager.save_adjustments(adjustments_path);
+            last_save = now;
+        }
     }
 
     std::cout << "[Cal] Stopped." << std::endl;

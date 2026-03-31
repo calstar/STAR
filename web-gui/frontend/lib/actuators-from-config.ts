@@ -4,11 +4,13 @@
  */
 
 import React from 'react';
+import { getApiBaseUrl } from './websocket';
 
 export interface ActuatorFromConfig {
   name: string;
   entity: string;
   channel: number;
+  boardId?: number;
   boardIp?: string;
 }
 
@@ -24,7 +26,7 @@ function entityFromName(name: string): string {
  */
 export async function fetchActuatorsFromConfig(): Promise<ActuatorFromConfig[]> {
   try {
-    const res = await fetch('/api/config');
+    const res = await fetch(`${getApiBaseUrl()}/api/config`);
     if (!res.ok) return [];
     const data = await res.json();
     const roles = data?.config?.actuator_roles ?? data?.actuator_roles;
@@ -33,8 +35,9 @@ export async function fetchActuatorsFromConfig(): Promise<ActuatorFromConfig[]> 
       const arr = Array.isArray(value) ? value : [];
       // [type, channel] or [type, channel, board_id number] or [type, channel, board_ip string]
       const channel = arr.length >= 2 && typeof arr[1] === 'number' ? arr[1] : 1;
+      const boardId = arr.length >= 3 && typeof arr[2] === 'number' ? arr[2] : undefined;
       const boardIp = arr.length >= 3 && typeof arr[2] === 'string' ? arr[2] : undefined;
-      return { name, entity: entityFromName(name), channel, boardIp };
+      return { name, entity: entityFromName(name), channel, boardId, boardIp };
     });
     return list;
   } catch {

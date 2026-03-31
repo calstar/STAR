@@ -11,12 +11,16 @@ export interface ActuatorControlByNameProps {
   name: string;
   channel: number;
   entity: string;
+  boardId?: number;
 }
 
-export default function ActuatorControlByName({ name, channel, entity }: ActuatorControlByNameProps) {
+export default function ActuatorControlByName({ name, channel, entity, boardId }: ActuatorControlByNameProps) {
   const ws = getWebSocketClient();
   const debugMode = useSensorStore((s) => s.debugMode);
-  const commanded = useActuatorCommandedState(entity);
+  const boardNumber = boardId != null ? ((boardId % 10) || 10) : null;
+  const roleKey = name.replace(/\s+/g, '_');
+  const commandedEntity = boardNumber != null ? `ACT_CMD.B${boardNumber}.${roleKey}` : entity;
+  const commanded = useActuatorCommandedState(commandedEntity);
   const calEntity = entity.replace('ACT.', 'ACT_Cal.');
   const currentA = useSensorValue(calEntity, 'current_a');
   const [pending, setPending] = useState(false);

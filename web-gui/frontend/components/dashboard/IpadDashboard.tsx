@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useSensorStore, useSensorValue } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
+import { getApiBaseUrl, getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate, ActuatorUpdate, SystemState, ActuatorId } from '@/lib/types';
 import { startDataCache } from '@/lib/data-cache';
 import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
@@ -41,11 +41,11 @@ export default function IpadDashboard() {
     const currentState = useSensorStore((state) => state.currentState);
     const ws = getWebSocketClient();
     const [timeWindow, setTimeWindow] = useState(60);
-    const [actuatorsFromConfig, setActuatorsFromConfig] = useState<{ name: string; channel: number; entity: string; id?: ActuatorId }[]>([]);
+    const [actuatorsFromConfig, setActuatorsFromConfig] = useState<{ name: string; channel: number; entity: string; boardId?: number; id?: ActuatorId }[]>([]);
     const [pressureSensorsPlot, setPressureSensorsPlot] = useState<{ label: string; entity: string; color: string }[]>([]);
 
     const loadActuatorsFromConfig = useCallback(() => {
-        fetch('/api/config')
+        fetch(`${getApiBaseUrl()}/api/config`)
             .then((r) => (r.ok ? r.json() : null))
             .then((data: { config?: { actuator_roles?: Record<string, any> } } | null) => {
                 const roles = data?.config?.actuator_roles;
@@ -53,8 +53,9 @@ export default function IpadDashboard() {
                 setActuatorsFromConfig(
                     Object.entries(roles).map(([name, value]) => {
                         const channel = Array.isArray(value) && value.length >= 2 && typeof value[1] === 'number' ? value[1] : 1;
+                        const boardId = Array.isArray(value) && value.length >= 3 && typeof value[2] === 'number' ? value[2] : undefined;
                         const entity = `ACT.${name.replace(/\s+/g, '_')}`;
-                        return { name, channel, entity, id: NAME_TO_ACTUATOR_ID[name] };
+                        return { name, channel, entity, boardId, id: NAME_TO_ACTUATOR_ID[name] };
                     })
                 );
             })
@@ -62,13 +63,21 @@ export default function IpadDashboard() {
     }, []);
 
     const loadPressureSensors = useCallback(() => {
-        fetch('/api/sensor-config')
+        fetch(`${getApiBaseUrl()}/api/sensor-config`)
             .then((r) => (r.ok ? r.json() : null))
             .then((data: any) => {
                 const sensors = data?.sensors as any[] | undefined;
                 if (!Array.isArray(sensors)) return;
+                const isCalPt = (calEntity: unknown) => {
+                    if (typeof calEntity !== 'string') return false;
+                    // Two formats we might see from backend:
+                    //  - Canonical named entities: "PT_Cal.Fuel_Upstream"
+                    //  - Board/channel entities: "PT1_Cal.CH1"
+                    return calEntity.startsWith('PT_Cal.') || /^PT\\d+_Cal\\.CH\\d+$/.test(calEntity);
+                };
+
                 const pts = sensors
-                    .filter((s) => typeof s?.calEntity === 'string' && (s.calEntity as string).startsWith('PT_Cal.'))
+                    .filter((s) => isCalPt(s?.calEntity))
                     .map((s) => {
                         const role = String(s.role || s.calEntity);
                         const label = role.replace('Upstream', 'Up').replace('Downstream', 'Down').replace('Regulated', 'Reg');
@@ -155,7 +164,7 @@ export default function IpadDashboard() {
                             return a.id !== undefined ? (
                                 <ActuatorControl key={a.name} actuatorId={a.id} />
                             ) : (
-                                <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
+                                <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} boardId={a.boardId} />
                             );
                         })}
                     </div>

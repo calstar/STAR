@@ -7,8 +7,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocket } from 'ws';
-import { loadPTCalibration, calculatePressure, CalibrationCoefficients } from './calibration.js';
-import { Phase2CalibrationEngine } from './calibration-phase2.js';
+import { loadPTCalibration, CalibrationCoefficients } from './calibration.js';
+import { readConfig } from './routes/config.js';
 import {
     MessageType,
 } from '../../shared/types.js';
@@ -25,132 +25,65 @@ export interface CalibrationHost {
     ptCalibrationFilePath: string | null;
     /** Accumulated (adc, pressure) points per channel for ADC→pressure fit. */
     calibrationPoints: Map<number, CalibrationPoint[]>;
-    phase2Engine: Phase2CalibrationEngine | null;
-    calibrationSidecar?: any; // Add sidecar for robust calibration routing
+    /** calibration_service (FSW) owns RLS / robust adjustments; backend only forwards commands via Elodin. */
+    calibrationSidecar?: any;
     channelToEntityMap?: Record<number, string>;
     boardChannelToEntityMaps?: Map<string, Record<number, string>>;
     ipToBoardId?: Map<string, number>;
     lastRawAdc: Map<number, number>;
     send(ws: WebSocket, message: any): void;
     broadcast(message: any): void;
+    elodin?: any; // Elodin client for publishing commands
     /** If set, called after ptCalibration is updated so the UI can show the new fit immediately. */
     pushCalibrationUpdate?(uniqueId: number): void;
 }
 
 /**
- * Normalize ADC to x in [0,1] to avoid ill-conditioned Vandermonde (same idea as pt_cali.py scale).
- * Returns x[], adcMin, adcScale.
+ * Publish a CalibrationCommand [0x46, 0x00] packet to Elodin DB.
+ * Layout: [timestamp_ns(8), command_type(1), sensor_id(uint16 LE), pad(1), reference_value(f32)]
  */
-function normalizeAdc(adc: number[]): { x: number[]; adcMin: number; adcScale: number } {
-    const adcMin = Math.min(...adc);
-    const adcMax = Math.max(...adc);
-    const adcScale = Math.max(adcMax - adcMin, 1);
-    const x = adc.map((a) => (a - adcMin) / adcScale);
-    return { x, adcMin, adcScale };
-}
-
-const EPSILON = 1e-10;
-
-/**
- * Numpy-style polyfit: P(x) = c0 + c1*x + c2*x^2 + ... in normalized x.
- * Same algorithm as pt_cali.py (np.polyfit / np.polyval) but in normalized x for stability.
- * - 1 point @ 0 PSI: P = 0 (polyCoeffs = [0]).
- * - 2+ points: order = min(n-1, 3), least-squares with epsilon regularization.
- */
-function fitAdcToPressure(points: CalibrationPoint[]): CalibrationCoefficients | null {
-    if (points.length < 1) return null;
-    if (points.length === 1) {
-        const { pressure } = points[0];
-        if (Math.abs(pressure) > 1e-6) return null;
-        return { A: 0, B: 0, C: 0, D: 0, polyCoeffs: [0], adcNormMin: points[0].adc, adcNormScale: 1 };
+function publishCalibrationCommand(host: CalibrationHost, type: number, sensorId: number, ref: number): void {
+    if (!host.elodin) {
+        console.warn('⚠️ Cannot publish calibration command: Elodin not connected');
+        return;
     }
-    const adc = points.map((p) => p.adc);
-    const y = points.map((p) => p.pressure);
-    const n = points.length;
-    const { x, adcMin, adcScale } = normalizeAdc(adc);
-    const order = Math.min(n - 1, 3);
-    const nCoeff = order + 1;
-
-    // Vandermonde: row i = [1, x_i, x_i^2, x_i^3] (ascending powers, P(x)=c0+c1*x+...)
-    const X: number[][] = [];
-    for (let i = 0; i < n; i++) {
-        const row: number[] = [1];
-        let v = 1;
-        for (let k = 1; k < nCoeff; k++) {
-            v *= x[i];
-            row.push(v);
-        }
-        X.push(row);
-    }
-
-    // Normal equations XtX * b = XtY (same as np.polyfit least-squares)
-    const XtX: number[][] = Array.from({ length: nCoeff }, () => new Array(nCoeff).fill(0));
-    const XtY: number[] = new Array(nCoeff).fill(0);
-    for (let i = 0; i < n; i++) {
-        const row = X[i];
-        for (let j = 0; j < nCoeff; j++)
-            for (let k = 0; k < nCoeff; k++) XtX[j][k] += row[j] * row[k];
-        for (let j = 0; j < nCoeff; j++) XtY[j] += row[j] * y[i];
-    }
-
-    // Regularize like pt_cali.py (epsilon) to avoid singular/ill-conditioned
-    let maxDiag = 0;
-    for (let j = 0; j < nCoeff; j++) maxDiag = Math.max(maxDiag, Math.abs(XtX[j][j]));
-    const reg = EPSILON * (1 + maxDiag);
-    for (let j = 0; j < nCoeff; j++) XtX[j][j] += reg;
-
-    const b = solveSquare(XtX, XtY);
-    if (b == null) return null;
-    const polyCoeffs = [...b];
-    const out: CalibrationCoefficients = {
-        A: 0, B: 0, C: 0, D: 0,
-        polyCoeffs,
-        adcNormMin: adcMin,
-        adcNormScale: adcScale,
-    };
-    return coeffsFinite(out) ? out : null;
-}
-
-/** True if coeffs are usable (polyCoeffs all finite, or A,B,C,D finite; norm params valid). */
-function coeffsFinite(c: CalibrationCoefficients): boolean {
-    if (c.polyCoeffs != null && c.polyCoeffs.length > 0) {
-        if (c.polyCoeffs.some((v) => !Number.isFinite(v))) return false;
-        if (c.adcNormMin != null && !Number.isFinite(c.adcNormMin)) return false;
-        if (c.adcNormScale != null && (!Number.isFinite(c.adcNormScale) || c.adcNormScale <= 0)) return false;
-        return true;
-    }
-    if (!Number.isFinite(c.A) || !Number.isFinite(c.B) || !Number.isFinite(c.C) || !Number.isFinite(c.D)) return false;
-    if (c.adcNormMin != null && !Number.isFinite(c.adcNormMin)) return false;
-    if (c.adcNormScale != null && (!Number.isFinite(c.adcNormScale) || c.adcNormScale <= 0)) return false;
-    return true;
-}
-
-/** Solve n×n system V * x = b (Gaussian elimination with partial pivot). */
-function solveSquare(V: number[][], b: number[]): number[] | null {
-    const n = V.length;
-    const A = V.map(row => [...row]);
-    const y = [...b];
-    for (let col = 0; col < n; col++) {
-        let pivot = col;
-        for (let r = col + 1; r < n; r++) if (Math.abs(A[r][col]) > Math.abs(A[pivot][col])) pivot = r;
-        [A[col], A[pivot]] = [A[pivot], A[col]];
-        [y[col], y[pivot]] = [y[pivot], y[col]];
-        const v = A[col][col];
-        if (Math.abs(v) < 1e-12) return null;
-        for (let j = col; j < n; j++) A[col][j] /= v;
-        y[col] /= v;
-        for (let r = 0; r < n; r++) {
-            if (r === col) continue;
-            const f = A[r][col];
-            for (let j = col; j < n; j++) A[r][j] -= f * A[col][j];
-            y[r] -= f * y[col];
-        }
-    }
-    return y;
+    const payload = Buffer.alloc(16);
+    // timestamp_ns (8 bytes)
+    payload.writeBigUInt64LE(BigInt(Date.now()) * 1000000n, 0);
+    payload.writeUInt8(type, 8);
+    payload.writeUInt16LE(sensorId & 0xffff, 9);
+    payload.writeUInt8(0, 11);
+    payload.writeFloatLE(ref, 12);
+    host.elodin.publishTable([0x46, 0x00], payload);
 }
 
 function getActiveChannels(host: CalibrationHost): number[] {
     const channels = new Set<number>();
+
+    // Preferred: derive PT channels directly from config boards (board_id * 100 + channel).
+    // This matches calibration_service unique IDs and avoids mismatches with legacy maps.
+    try {
+        const config = readConfig() as any;
+        const boards = (config?.boards || {}) as Record<string, any>;
+        for (const [, boardRaw] of Object.entries(boards)) {
+            const board = boardRaw as any;
+            if (board?.enabled === false) continue;
+            if (board?.type !== 'PT') continue;
+            const boardId = Number(board?.board_id);
+            if (!Number.isFinite(boardId)) continue;
+            const activeChannels: number[] =
+                Array.isArray(board.active_connectors) && board.active_connectors.length > 0
+                    ? board.active_connectors.map((v: unknown) => Number(v)).filter((v: number) => Number.isFinite(v) && v >= 1)
+                    : Array.from({ length: Math.max(0, Number(board.num_sensors) || 0) }, (_, i) => i + 1);
+            for (const ch of activeChannels) channels.add(boardId * 100 + ch);
+        }
+    } catch {
+        // Keep legacy fallbacks below.
+    }
+
+    if (channels.size > 0) {
+        return Array.from(channels).sort((a, b) => a - b);
+    }
 
     // Board-aware uniqueness: boardId * 100 + channelId
     if (host.boardChannelToEntityMaps && host.ipToBoardId) {
@@ -200,201 +133,41 @@ export function handleCalibrationCommand(
                 });
                 return;
             }
-            const adc = host.lastRawAdc.get(uniqueId) ?? 0;
-            if (adc === 0) {
+            if (!host.elodin) {
                 host.send(ws, {
                     type: MessageType.ERROR, timestamp: Date.now(),
-                    payload: { message: 'No ADC data for channel yet' }
+                    payload: { message: 'Elodin not connected — start calibration_service and DB; cannot forward capture_reference.' }
                 });
                 return;
             }
-            const points = host.calibrationPoints.get(uniqueId) ?? [];
-            points.push({ adc, pressure: refPsi });
-            if (points.length > 50) points.splice(0, points.length - 50); // cap to prevent lag buildup
-            host.calibrationPoints.set(uniqueId, points);
-
-            let coeffs: CalibrationCoefficients | null = null;
-            const sidecarPrimary = !!(host.calibrationSidecar && host.calibrationSidecar.enabled);
-
-            if (sidecarPrimary) {
-                host.calibrationSidecar.calibrateChannel(uniqueId, adc, refPsi);
-            } else {
-                coeffs = fitAdcToPressure(points);
-                if (!coeffs) {
-                    const adcArr = points.map((pt) => pt.adc);
-                    const sameAdc = adcArr.length === 2 && Math.abs(adcArr[1] - adcArr[0]) < 1e-9;
-                    host.send(ws, {
-                        type: MessageType.ERROR, timestamp: Date.now(),
-                        payload: {
-                            message: sameAdc
-                                ? 'Same ADC for both points — change pressure between ZERO ALL and CAPTURE, then CAPTURE again.'
-                                : 'Cannot build fit. Run ZERO ALL to add a 0 PSI point, then CAPTURE at one or more known pressures.'
-                        }
-                    });
-                    return;
-                }
-                const testReading = calculatePressure(adc, coeffs);
-                if (!Number.isFinite(testReading)) {
-                    host.send(ws, {
-                        type: MessageType.ERROR, timestamp: Date.now(),
-                        payload: { message: 'Fit produced invalid reading; using constant 0 PSI for this channel.' }
-                    });
-                    coeffs = { A: 0, B: 0, C: 0, D: 0 };
-                }
-                host.ptCalibration.set(uniqueId, coeffs);
-                host.pushCalibrationUpdate?.(uniqueId);
-            }
-            // Internal Phase 2 engine is only used when sidecar is not primary.
-            if (!sidecarPrimary && host.phase2Engine && coeffs) {
-                host.phase2Engine.initializeSensor(uniqueId, coeffs);
-                const state = host.phase2Engine.getSensorState(uniqueId);
-                if (state) {
-                    state.adjustment = { A: 0, B: 0, C: 0, D: 0 };
-                    state.smoothedPrediction = refPsi;
-                    state.lastGroundTruth = refPsi;
-                    state.lastGroundTruthTime = Date.now();
-                    state.rlsUpdateCount++;
-                }
-            }
-
-            console.log(
-                `📐 Calibration: CH${sensorId} (Board ${boardId}) ADC=${adc} ref=${refPsi} PSI → ` +
-                (sidecarPrimary
-                    ? 'delegated to robust sidecar'
-                    : `local ADC→pressure fit from ${points.length} point(s)`)
-            );
+            publishCalibrationCommand(host, 1, uniqueId, refPsi);
+            console.log(`📐 Calibration: CH${sensorId} (Board ${boardId}) ref=${refPsi} PSI → calibration_service (Elodin)`);
             break;
         }
         case 'enable_phase2':
-            if (host.phase2Engine) {
-                host.phase2Engine.setEnabled(true);
-            } else {
-                console.warn('⚠️ Phase 2 engine not available');
-            }
+            console.log('[Calibration] enable_phase2 ignored — robust calibration runs in calibration_service');
             break;
         case 'disable_phase2':
-            if (host.phase2Engine) {
-                host.phase2Engine.setEnabled(false);
-            } else {
-                console.warn('⚠️ Phase 2 engine not available');
-            }
+            console.log('[Calibration] disable_phase2 ignored — robust calibration runs in calibration_service');
             break;
         case 'reset_channel':
-            const activeChannelsReset = getActiveChannels(host);
-            if (uniqueId == null || !activeChannelsReset.includes(uniqueId)) {
-                host.send(ws, {
-                    type: MessageType.ERROR, timestamp: Date.now(),
-                    payload: { message: `Channel ${sensorId} on Board ${boardId} is not a valid PT channel` }
-                });
-                return;
-            }
-            if (host.phase2Engine && uniqueId != null) {
-                host.phase2Engine.resetAdjustment(uniqueId);
-                console.log(`🔄 Phase 2 adjustment reset for CH${sensorId} (Board ${boardId})`);
-            } else {
-                console.warn('⚠️ Phase 2 engine not available or uniqueId missing');
-            }
+            host.send(ws, {
+                type: MessageType.ERROR, timestamp: Date.now(),
+                payload: { message: 'reset_channel is not supported from the GUI; edit adjustments on disk or restart calibration_service.' }
+            });
             break;
         case 'zero_all': {
-            console.log('🎯 ZERO ALL PTs — adding (ADC, 0 PSI) calibration point per channel');
-            let successCount = 0;
-            let skipCount = 0;
-            const channelsToUpdate = getActiveChannels(host);
-            const sidecarZeroPayload: { id: number; adc_code: number }[] = [];
-
-            for (const chUniqueId of channelsToUpdate) {
-                const currentAdc = host.lastRawAdc.get(chUniqueId) ?? 0;
-                if (currentAdc === 0) {
-                    console.log(`   ID ${chUniqueId}: no ADC data yet, skipping`);
-                    skipCount++;
-                    continue;
-                }
-
-                // Replace any prior zero-point (keep non-zero CAPTURE references)
-                const prevPoints = host.calibrationPoints.get(chUniqueId) ?? [];
-                let points = [...prevPoints.filter(p => p.pressure !== 0), { adc: currentAdc, pressure: 0 }];
-                if (points.length > 50) points = points.slice(-50); // cap to prevent lag buildup
-                host.calibrationPoints.set(chUniqueId, points);
-
-                const sidecarPrimaryZero = !!(host.calibrationSidecar && host.calibrationSidecar.enabled);
-
-                // When sidecar is enabled, it owns the zero-point update; we just
-                // accumulate points and forward raw ADC codes. Local polynomial fit
-                // remains as a fallback when sidecar is disabled.
-                if (!sidecarPrimaryZero) {
-                    let coeffs: CalibrationCoefficients;
-                    if (points.length === 1) {
-                        // Single point = zero point only. Don't use constant-0 polynomial
-                        // (which would force every ADC to 0 PSI). If we have a prior
-                        // calibration, shift it so current ADC → 0 PSI; otherwise constant 0.
-                        // Use the same fallback pattern as the packet processor: unique board
-                        // key first (e.g. 101), then plain channel key (e.g. 1) for JSON-loaded cal.
-                        const chId = chUniqueId % 100;
-                        const existing = host.ptCalibration.get(chUniqueId) ?? host.ptCalibration.get(chId);
-                        const hasPriorCurve =
-                            existing &&
-                            coeffsFinite(existing) &&
-                            ((existing.polyCoeffs != null && existing.polyCoeffs.length > 1) ||
-                                (Math.abs(existing.A) + Math.abs(existing.B) + Math.abs(existing.C) > 1e-15));
-                        if (hasPriorCurve) {
-                            const pZero = calculatePressure(currentAdc, existing!);
-                            if (!Number.isFinite(pZero)) {
-                                coeffs = { A: 0, B: 0, C: 0, D: 0, polyCoeffs: [0], adcNormMin: currentAdc, adcNormScale: 1 };
-                            } else {
-                                if (existing!.polyCoeffs != null && existing!.polyCoeffs.length > 0) {
-                                    const newPoly = [...existing!.polyCoeffs];
-                                    newPoly[0] = (newPoly[0] ?? 0) - pZero;
-                                    coeffs = { ...existing!, polyCoeffs: newPoly };
-                                } else {
-                                    coeffs = { ...existing!, D: existing!.D - pZero };
-                                }
-                            }
-                        } else {
-                            coeffs = { A: 0, B: 0, C: 0, D: 0, polyCoeffs: [0], adcNormMin: currentAdc, adcNormScale: 1 };
-                        }
-                    } else {
-                        coeffs = fitAdcToPressure(points) ?? { A: 0, B: 0, C: 0, D: 0 };
-                        const reading = calculatePressure(currentAdc, coeffs);
-                        if (!Number.isFinite(reading) && points.length > 1) {
-                            console.warn(`   ID ${chUniqueId}: fit failed or produced NaN (${points.length} pts), using constant 0 PSI`);
-                            coeffs = { A: 0, B: 0, C: 0, D: 0 };
-                        }
-                    }
-                    host.ptCalibration.set(chUniqueId, coeffs);
-                    host.pushCalibrationUpdate?.(chUniqueId);
-                    if (host.phase2Engine) {
-                        try {
-                            host.phase2Engine.initializeSensor(chUniqueId, coeffs);
-                            const state = host.phase2Engine.getSensorState(chUniqueId);
-                            if (state) {
-                                state.adjustment = { A: 0, B: 0, C: 0, D: 0 };
-                                state.smoothedPrediction = 0;
-                                state.lastGroundTruth = 0;
-                                state.lastGroundTruthTime = Date.now();
-                                state.rlsUpdateCount++;
-                            }
-                        } catch (err) {
-                            console.warn(`   ID ${chUniqueId}: Phase 2 update failed (non-critical):`, err);
-                        }
-                    }
-                    const newReading = calculatePressure(currentAdc, coeffs);
-                    console.log(`   ID ${chUniqueId}: ADC=${currentAdc} → 0 PSI (${points.length} pt fit), reading=${Number.isFinite(newReading) ? newReading.toFixed(2) : 'NaN'} PSI`);
-                }
-                sidecarZeroPayload.push({ id: chUniqueId, adc_code: currentAdc });
-                successCount++;
+            console.log('🎯 ZERO ALL PTs — forwarding to calibration_service via Elodin');
+            if (!host.elodin) {
+                host.broadcast({
+                    type: MessageType.ERROR, timestamp: Date.now(),
+                    payload: { message: 'ZERO ALL failed: Elodin not connected. Start calibration_service and the database.' }
+                });
+                break;
             }
-            if (host.calibrationSidecar && host.calibrationSidecar.enabled) {
-                if (!host.calibrationSidecar.isConnected) {
-                    host.broadcast({ type: MessageType.ERROR, timestamp: Date.now(), payload: { message: 'ZERO ALL failed: calibration server not connected. Start calibration_server.py and ensure it listens on the configured port.' } });
-                    console.warn('⚠️ ZERO ALL: sidecar enabled but not connected — start calibration_server.py');
-                } else if (sidecarZeroPayload.length > 0) {
-                    host.calibrationSidecar.zeroAll(sidecarZeroPayload);
-                } else if (skipCount > 0) {
-                    host.broadcast({ type: MessageType.ERROR, timestamp: Date.now(), payload: { message: 'ZERO ALL: no ADC data for any channel. Ensure sensor data is flowing (relay connected, boards sending).' } });
-                    console.warn('⚠️ ZERO ALL: all channels skipped — no raw ADC data yet');
-                }
-            }
-            console.log(`✅ Zero all complete: ${successCount} channels updated, ${skipCount} skipped`);
+            // Forward one command; calibration_service owns per-channel ADC checks and prior updates.
+            publishCalibrationCommand(host, 0, 0, 0);
+            console.log('✅ Zero all forwarded as global command (sensor_id=0)');
             break;
         }
         case 'save_coefficients': {
@@ -412,7 +185,7 @@ export function handleCalibrationCommand(
                 const channelsToSave = getActiveChannels(host);
                 for (const ch of channelsToSave) {
                     const ptCoeffs = host.ptCalibration.get(ch);
-                    const coeffs = (ptCoeffs?.polyCoeffs?.length ? ptCoeffs : null) ?? host.phase2Engine?.getCalibration(ch) ?? ptCoeffs;
+                    const coeffs = (ptCoeffs?.polyCoeffs?.length ? ptCoeffs : null) ?? ptCoeffs;
                     if (coeffs) {
                         calibration_polynomials[String(ch)] = [coeffs.A, coeffs.B, coeffs.C, coeffs.D];
                         if (coeffs.polyCoeffs?.length) calibration_poly_coeffs[String(ch)] = coeffs.polyCoeffs;
@@ -441,6 +214,10 @@ export function handleCalibrationCommand(
                 fs.writeFileSync(filename, JSON.stringify(data, null, 2));
                 console.log(`💾 Calibration saved to ${filename}`);
                 host.ptCalibrationFilePath = filename;
+
+                // Also trigger save in C++ service
+                publishCalibrationCommand(host, 2, 0, 0);
+
                 host.send(ws, {
                     type: MessageType.CALIBRATION_STATUS, timestamp: Date.now(),
                     payload: { message: 'Calibration saved', path: filename }
@@ -462,12 +239,6 @@ export function handleCalibrationCommand(
             for (const ch of channelsToClear) {
                 host.ptCalibration.set(ch, { ...defaultCoeffs });
             }
-            if (host.phase2Engine) {
-                host.phase2Engine.clearAll();
-                host.ptCalibration.forEach((coeffs, sensorId) => {
-                    host.phase2Engine!.initializeSensor(sensorId, coeffs);
-                });
-            }
             host.lastRawAdc.clear();
             console.log('🗑️ Calibration cleared — ZERO ALL then CAPTURE to build ADC→pressure fit');
             break;
@@ -476,13 +247,15 @@ export function handleCalibrationCommand(
             console.warn('⚠️ Unknown calibration command:', commandType);
     }
 
-    // Always immediately broadcast updated status after a command
-    if (host.phase2Engine) {
-        const channels = host.phase2Engine.getAllStatus();
-        host.broadcast({
-            type: MessageType.CALIBRATION_STATUS,
+    host.broadcast({
+        type: MessageType.CALIBRATION_STATUS,
+        timestamp: Date.now(),
+        payload: {
+            channels: [],
+            phase2Enabled: true,
             timestamp: Date.now(),
-            payload: { channels, phase2Enabled: host.phase2Engine.isEnabled(), timestamp: Date.now(), calibrationFilePath: host.ptCalibrationFilePath },
-        });
-    }
+            calibrationFilePath: host.ptCalibrationFilePath,
+            message: 'Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.',
+        },
+    });
 }

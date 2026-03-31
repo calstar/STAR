@@ -407,10 +407,30 @@ static bool register_sequencer_vtable(ElodinClient& client) {
     return true;
 }
 
+static bool register_calibration_command_vtable(ElodinClient& client) {
+    // CalibrationCommand: u64 timestamp_ns | u8 type | u8 sensor_id | u16 pad | f32 reference_value
+    auto vt = builder::vtable({
+        raw_field(0, 8, schema(PrimType::U64(), {}, component("CALIBRATION.command.timestamp_ns"))),
+        raw_field(8, 1, schema(PrimType::U8(), {}, component("CALIBRATION.command.type"))),
+        raw_field(9, 1, schema(PrimType::U8(), {}, component("CALIBRATION.command.sensor_id"))),
+        raw_field(12, 4, schema(PrimType::F32(), {}, component("CALIBRATION.command.reference_value"))),
+    });
+    if (!send_msg(client, VTableMsg{.id = {0x46, 0x00}, .vtable = vt}))
+        return false;
+    send_msg(client, set_component_name("CALIBRATION.command.timestamp_ns"));
+    send_msg(client, set_component_name("CALIBRATION.command.type"));
+    send_msg(client, set_component_name("CALIBRATION.command.sensor_id"));
+    send_msg(client, set_component_name("CALIBRATION.command.reference_value"));
+    send_msg(client, set_entity_name(0x4600, "CALIBRATION.command"));
+    return true;
+}
+
 bool DatabaseConfig::register_non_sensor_tables(ElodinClient& client,
                                                 const std::vector<BoardChannels>& act_boards) {
     bool ok = true;
     if (!register_sequencer_vtable(client))
+        ok = false;
+    if (!register_calibration_command_vtable(client))
         ok = false;
 
     // Register actuator commanded state VTables [0x32, (board_number-1)*0x20 + ch]

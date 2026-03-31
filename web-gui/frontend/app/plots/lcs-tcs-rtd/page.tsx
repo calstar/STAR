@@ -173,7 +173,7 @@ export default function LCS_TCS_RTDPage() {
 
   const loadChannelConfig = useCallback(() => {
     Promise.all([
-      fetch('/api/config').then((r) => (r.ok ? r.json() : null)),
+      fetch(`${getApiBaseUrl()}/api/config`).then((r) => (r.ok ? r.json() : null)),
       fetch(`${getApiBaseUrl()}/api/sensor-config`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     ]).then(([configRes, sensorRes]) => {
       const config = configRes?.config;

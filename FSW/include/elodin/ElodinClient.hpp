@@ -127,6 +127,12 @@ public:
     void flush_buffer();
 
     /**
+     * @brief Set socket receive timeout so read_packet() can yield.
+     * 0 = blocking (default). Call after connect().
+     */
+    void set_recv_timeout_ms(int timeout_ms);
+
+    /**
      * @brief Read incoming data packet from Elodin (non-blocking)
      * @param buffer Buffer to read into
      * @param max_len Maximum bytes to read

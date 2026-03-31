@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useSensorStore, useGetSensorValue, useSensorDataVersion, useLoadCellForceLbf } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import {
@@ -170,7 +170,7 @@ export default function CalibrationPage() {
   const [calStatus, setCalStatus] = useState<CalibrationStatusPayload | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [calFilePath, setCalFilePath] = useState<string | null>(null);
-  const [phase2Active, setPhase2Active] = useState(true);
+  const [phase2Active, setPhase2Active] = useState(true); // reflects backend flag; RLS lives in calibration_service
   const [numReferenceGauges, setNumReferenceGauges] = useState(1);
   const [singleRefPsi, setSingleRefPsi] = useState('');
   const [selectedBoardId, setSelectedBoardId] = useState<number | 'all'>('all');
@@ -179,9 +179,6 @@ export default function CalibrationPage() {
   const [gaugeToChannels, setGaugeToChannels] = useState<Record<number, number[]>>({ 1: [1] });
   const [gaugeRefs, setGaugeRefs] = useState<Record<number, string>>({});
   const [lcChannels, setLcChannels] = useState<{ calEntity: string; label: string }[]>([]);
-  const phase2Ref = useRef(phase2Active);
-  phase2Ref.current = phase2Active;
-
   const setLoadCellZeroOffset = useSensorStore((s) => s.setLoadCellZeroOffset);
 
   const availableBoards = Array.from(new Set(ptChannels.map((c) => c.boardId))).sort((a, b) => a - b);
@@ -200,7 +197,7 @@ export default function CalibrationPage() {
   }, [numReferenceGauges]);
 
   useEffect(() => {
-    fetch('/api/config')
+    fetch(`${getApiBaseUrl()}/api/config`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { config?: { boards?: Record<string, { type?: string; enabled?: boolean; active_connectors?: number[]; num_sensors?: number }> } } | null) => {
         const boards = data?.config?.boards;
@@ -308,10 +305,6 @@ export default function CalibrationPage() {
     setGaugeRefs({});
   }, [sendCalCmd, numReferenceGauges, gaugeToChannels, gaugeRefs, ptChannels]);
 
-  const togglePhase2 = useCallback(() => {
-    sendCalCmd({ commandType: phase2Ref.current ? 'disable_phase2' : 'enable_phase2' });
-  }, [sendCalCmd]);
-
   const handleSave = useCallback(() => {
     sendCalCmd({ commandType: 'save_coefficients' });
   }, [sendCalCmd]);
@@ -401,15 +394,12 @@ export default function CalibrationPage() {
           >
             CLEAR
           </button>
-          <button
-            onClick={togglePhase2}
-            className={`px-3 py-1.5 text-xs font-bold rounded border transition-all ${phase2Active
-              ? 'bg-green-900/30 border-green-700 text-green-400'
-              : 'bg-gray-800 border-gray-600 text-gray-500'
-              }`}
+          <span
+            className="px-3 py-1.5 text-xs font-bold rounded border bg-green-900/30 border-green-700 text-green-400 cursor-default"
+            title="Recursive calibration runs in calibration_service (FSW). This UI only sends commands and shows Elodin data."
           >
-            Robust {phase2Active ? 'ON' : 'OFF'}
-          </button>
+            FSW {phase2Active ? 'active' : 'idle'}
+          </span>
           <button
             onClick={handleSave}
             className="px-3 py-1.5 text-xs font-bold rounded border bg-blue-900/30

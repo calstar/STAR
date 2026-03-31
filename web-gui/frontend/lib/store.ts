@@ -144,11 +144,31 @@ export function buildAliasesFromConfig(config: any): void {
   const actCmdComponents = ['actuator_state_commanded'];
 
   // Helper: add aliases for a sensor role with multiple prefixes and components
-  const addSensorAliases = (name: string, channel: number, rawPrefix: string, calPrefix: string, components: string[]) => {
+  const addSensorAliases = (
+    name: string,
+    channel: number,
+    rawPrefix: string,
+    calPrefix: string,
+    components: string[],
+    addLegacyPtAliases = false
+  ) => {
     const entityName = name.replace(/\s+/g, '_');
+    const baseRaw = rawPrefix.replace(/\d+$/, '');
+    const baseCal = `${baseRaw}_Cal`;
     for (const comp of components) {
+      // Board-scoped role and channel aliases (PT1.*, RTD1.*, LC2.*, etc.)
       addAlias(`${calPrefix}.${entityName}.${comp}`, `${calPrefix}.CH${channel}.${comp}`);
       addAlias(`${rawPrefix}.${entityName}.${comp}`, `${rawPrefix}.CH${channel}.${comp}`);
+      addAlias(`${baseCal}.CH${channel}.${comp}`, `${calPrefix}.CH${channel}.${comp}`);
+      addAlias(`${baseRaw}.CH${channel}.${comp}`, `${rawPrefix}.CH${channel}.${comp}`);
+      addAlias(`${baseCal}.${entityName}.${comp}`, `${calPrefix}.CH${channel}.${comp}`);
+      addAlias(`${baseRaw}.${entityName}.${comp}`, `${rawPrefix}.CH${channel}.${comp}`);
+      // Back-compat: many UI panes still reference PT_Cal.<Role> / PT.<Role>.
+      // Map those legacy keys to board-scoped PTn(_Cal).CHm streams.
+      if (addLegacyPtAliases) {
+        addAlias(`PT_Cal.${entityName}.${comp}`, `${calPrefix}.CH${channel}.${comp}`);
+        addAlias(`PT.${entityName}.${comp}`, `${rawPrefix}.CH${channel}.${comp}`);
+      }
     }
   };
 
@@ -161,11 +181,14 @@ export function buildAliasesFromConfig(config: any): void {
     const type = board.type as string;
     const boardId = typeof board.board_id === 'number' ? board.board_id : 1;
     const boardNumber = boardId % 10;
+    const activeChannels: number[] =
+      Array.isArray(board.active_connectors) && board.active_connectors.length > 0
+        ? board.active_connectors.map((v: unknown) => Number(v)).filter((v: number) => Number.isFinite(v) && v >= 1)
+        : Array.from({ length: Math.max(0, Number(board.num_sensors) || 0) }, (_, i) => i + 1);
 
     // Look for sensor_roles_<boardKey> section in config
     const rolesKey = `sensor_roles_${boardKey}`;
     const roles = config[rolesKey] as Record<string, number> | undefined;
-    if (!roles || typeof roles !== 'object') continue;
 
     let rawPrefix = '', calPrefix = '', components: string[] = [];
     if (type === 'PT') { rawPrefix = `PT${boardNumber}`; calPrefix = `PT${boardNumber}_Cal`; components = ptComponents; }
@@ -174,10 +197,23 @@ export function buildAliasesFromConfig(config: any): void {
     else if (type === 'LC') { rawPrefix = `LC${boardNumber}`; calPrefix = `LC${boardNumber}_Cal`; components = lcComponents; }
     else continue;
 
+    // Always add board-level channel aliases so generic keys (e.g. LC_Cal.CH6, RTD.CH1)
+    // resolve to board-scoped streams even when sensor_roles_<boardKey> is absent.
+    const baseRaw = rawPrefix.replace(/\d+$/, '');
+    const baseCal = `${baseRaw}_Cal`;
+    for (const ch of activeChannels) {
+      for (const comp of components) {
+        addAlias(`${baseCal}.CH${ch}.${comp}`, `${calPrefix}.CH${ch}.${comp}`);
+        addAlias(`${baseRaw}.CH${ch}.${comp}`, `${rawPrefix}.CH${ch}.${comp}`);
+      }
+    }
+
+    if (!roles || typeof roles !== 'object') continue;
+
     for (const [roleName, channelId] of Object.entries(roles)) {
       const ch = typeof channelId === 'number' ? channelId : Number(channelId);
       if (!isFinite(ch)) continue;
-      addSensorAliases(roleName, ch, rawPrefix, calPrefix, components);
+      addSensorAliases(roleName, ch, rawPrefix, calPrefix, components, type === 'PT');
     }
   }
 
@@ -186,7 +222,7 @@ export function buildAliasesFromConfig(config: any): void {
   if (pt2Roles && typeof pt2Roles === 'object') {
     for (const [name, connector] of Object.entries(pt2Roles)) {
       const ch = typeof connector === 'number' ? connector : Number(connector);
-      if (isFinite(ch)) addSensorAliases(name, ch, 'PT2', 'PT2_Cal', ptComponents);
+      if (isFinite(ch)) addSensorAliases(name, ch, 'PT2', 'PT2_Cal', ptComponents, true);
     }
   }
 
@@ -343,6 +379,19 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
     const filteredValue = filterSensorValue(key, update.value);
     // Accumulate in pending batch — flush at next animation frame
     _pendingSensorWrites[key] = filteredValue;
+
+    // Back-compat for legacy LC panes expecting force_lbf / force_n.
+    // Backend now publishes canonical force_kg.
+    if (update.component === 'force_kg') {
+      const lbf = filteredValue * 2.2046226218;
+      const n = filteredValue * 9.80665;
+      const lbfKey = `${update.entity}.force_lbf`;
+      const nKey = `${update.entity}.force_n`;
+      _sensorTimestamps[lbfKey] = update.timestamp;
+      _sensorTimestamps[nKey] = update.timestamp;
+      _pendingSensorWrites[lbfKey] = lbf;
+      _pendingSensorWrites[nKey] = n;
+    }
   },
 
   updateActuator: (update: ActuatorUpdate) => {

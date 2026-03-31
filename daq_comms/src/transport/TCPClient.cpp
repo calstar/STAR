@@ -219,6 +219,10 @@ bool TCPClient::read_exact(void* buffer, size_t len) {
             if (errno == EINTR) {
                 continue;  // Retry on interrupt
             }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                last_error_ = "TIMEOUT";
+                return false;
+            }
             last_error_ = "Read failed: " + std::string(strerror(errno));
             return false;
         } else if (r == 0) {
@@ -230,6 +234,14 @@ bool TCPClient::read_exact(void* buffer, size_t len) {
     }
 
     return true;
+}
+
+void TCPClient::set_recv_timeout_ms(int timeout_ms) {
+    if (socket_fd_ < 0) return;
+    struct timeval tv;
+    tv.tv_sec  = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 }
 
 }  // namespace transport

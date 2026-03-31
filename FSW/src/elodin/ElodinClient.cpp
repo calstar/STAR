@@ -71,6 +71,10 @@ void ElodinClient::flush_buffer() {
     }
 }
 
+void ElodinClient::set_recv_timeout_ms(int timeout_ms) {
+    if (socket_) socket_->set_recv_timeout_ms(timeout_ms);
+}
+
 bool ElodinClient::subscribe_stream() {
     // VTableStream packet: 8-byte header + 2-byte Postcard payload ([hi, lo])
     // packetId for VTableStream = FNV-1a("VTableStream") = [0x11, 0x0d]
@@ -104,6 +108,9 @@ bool ElodinClient::subscribe_stream() {
                 subscribe(type_hi, static_cast<uint8_t>(base + ch));
         }
     }
+
+    // Calibration commands from backend GUI -> calibration_service.
+    subscribe(0x46, 0x00);
 
     return true;
 }
@@ -189,6 +196,8 @@ ssize_t ElodinClient::read_packet(uint8_t* packet_buffer, size_t max_len) {
     // Read packet header (8 bytes)
     if (!socket_->read_exact(packet_buffer, 8)) {
         last_error_ = socket_->last_error();
+        // SO_RCVTIMEO fired — yield without treating as a connection error
+        if (last_error_ == "TIMEOUT") return 0;
         return -1;
     }
 

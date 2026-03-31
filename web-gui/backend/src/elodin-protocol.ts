@@ -60,16 +60,22 @@ function parseCalibratedSensorPayload(
   channelId: number,
   entity: string,
   fieldName: string = 'pressure_psi',
-): ParsedSensorData | null {
+  rawFields: string[] = ['raw_adc_counts', 'raw_adc'],
+): ParsedSensorData[] {
   // CalibratedPTMessage: u64(0) ts + u8(8) ch + pad3(9-11) + float(12) psi + u32(16) raw + u8(20)
-  if (payload.length < RAW_SENSOR_PAYLOAD_SIZE) return null;
+  if (payload.length < RAW_SENSOR_PAYLOAD_SIZE) return [];
   const calibratedValue = payload.readFloatLE(12);
-  if (!Number.isFinite(calibratedValue) || Number.isNaN(calibratedValue)) return null;
-  if (fieldName === 'pressure_psi' && (calibratedValue < -100 || calibratedValue > 10000)) return null;
-  if (fieldName === 'temperature_c' && (calibratedValue < -200 || calibratedValue > 2000)) return null;
-  if (fieldName === 'force_kg' && (calibratedValue < -10000 || calibratedValue > 50000)) return null;
+  if (!Number.isFinite(calibratedValue) || Number.isNaN(calibratedValue)) return [];
+  if (fieldName === 'pressure_psi' && (calibratedValue < -100 || calibratedValue > 10000)) return [];
+  if (fieldName === 'temperature_c' && (calibratedValue < -200 || calibratedValue > 2000)) return [];
+  if (fieldName === 'force_kg' && (calibratedValue < -10000 || calibratedValue > 50000)) return [];
   const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);
-  return { entity, component: fieldName, value: calibratedValue, timestamp: tsMs };
+  const rawValue = payload.readUInt32LE(16);
+  const out: ParsedSensorData[] = [{ entity, component: fieldName, value: calibratedValue, timestamp: tsMs }];
+  for (const rawField of rawFields) {
+    out.push({ entity, component: rawField, value: rawValue, timestamp: tsMs });
+  }
+  return out;
 }
 
 /**
@@ -141,7 +147,7 @@ export function parseElodinPacket(
         return r ? [r] : [];
       } else {
         const r = parseCalibratedSensorPayload(payload, channel, `PT${boardNumber}_Cal.CH${channel}`, 'pressure_psi');
-        return r ? [r] : [];
+        return r;
       }
     }
   }
@@ -155,7 +161,7 @@ export function parseElodinPacket(
         return r ? [r] : [];
       } else {
         const r = parseCalibratedSensorPayload(payload, channel, `TC${boardNumber}_Cal.CH${channel}`, 'temperature_c');
-        return r ? [r] : [];
+        return r;
       }
     }
   }
@@ -168,8 +174,8 @@ export function parseElodinPacket(
         const r = parseRawSensorPayload(payload, channel, `RTD${boardNumber}.CH${channel}`, 'raw_resistance_counts');
         return r ? [r] : [];
       } else {
-        const r = parseCalibratedSensorPayload(payload, channel, `RTD${boardNumber}_Cal.CH${channel}`, 'temperature_c');
-        return r ? [r] : [];
+        const r = parseCalibratedSensorPayload(payload, channel, `RTD${boardNumber}_Cal.CH${channel}`, 'temperature_c', ['raw_resistance_counts', 'raw_adc_counts', 'raw_adc']);
+        return r;
       }
     }
   }
@@ -183,7 +189,7 @@ export function parseElodinPacket(
         return r ? [r] : [];
       } else {
         const r = parseCalibratedSensorPayload(payload, channel, `LC${boardNumber}_Cal.CH${channel}`, 'force_kg');
-        return r ? [r] : [];
+        return r;
       }
     }
   }
@@ -206,7 +212,7 @@ export function parseElodinPacket(
         return r ? [r] : [];
       } else {
         const r = parseCalibratedSensorPayload(payload, channel, `ACT${boardNumber}_Cal.CH${channel}`, 'current_a');
-        return r ? [r] : [];
+        return r;
       }
     }
   }

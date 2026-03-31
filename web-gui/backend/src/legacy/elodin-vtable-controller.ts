@@ -11,7 +11,7 @@
  */
 
 import { ElodinClient, ElodinPacketType } from '../elodin-client.js';
-import { computeMsgId } from './elodin-vtable.js';
+import { computeMsgId } from '../elodin-vtable-registry.js';
 
 export async function registerControllerVTables(client: ElodinClient): Promise<boolean> {
   if (!client.isConnected()) {

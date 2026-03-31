@@ -27,33 +27,27 @@ namespace time {
  * Use this for ALL Elodin DB timestamp_ns fields.
  */
 inline uint64_t monotonic_ns() {
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()
-        ).count()
-    );
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count());
 }
 
 /**
  * @brief Get current monotonic time in microseconds since boot.
  */
 inline uint64_t monotonic_us() {
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()
-        ).count()
-    );
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count());
 }
 
 /**
  * @brief Get current monotonic time in milliseconds since boot.
  */
 inline uint64_t monotonic_ms() {
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()
-        ).count()
-    );
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     std::chrono::steady_clock::now().time_since_epoch())
+                                     .count());
 }
 
 /**
@@ -68,22 +62,16 @@ inline std::chrono::steady_clock::time_point monotonic_now() {
  */
 inline uint64_t to_ns(std::chrono::steady_clock::time_point tp) {
     return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            tp.time_since_epoch()
-        ).count()
-    );
+        std::chrono::duration_cast<std::chrono::nanoseconds>(tp.time_since_epoch()).count());
 }
 
 /**
  * @brief Compute elapsed nanoseconds between two time points.
  */
-inline uint64_t elapsed_ns(
-    std::chrono::steady_clock::time_point start,
-    std::chrono::steady_clock::time_point end
-) {
+inline uint64_t elapsed_ns(std::chrono::steady_clock::time_point start,
+                           std::chrono::steady_clock::time_point end) {
     return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count()
-    );
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count());
 }
 
 }  // namespace time

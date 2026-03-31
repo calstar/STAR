@@ -4,8 +4,7 @@
  */
 
 import { ElodinClient, ElodinPacketType } from '../elodin-client.js';
-// Import computeMsgId - it's exported from elodin-vtable.ts
-import { computeMsgId } from './elodin-vtable.js';
+import { computeMsgId } from '../elodin-vtable-registry.js';
 
 /**
  * Subscribe using Stream message with StreamFilter
