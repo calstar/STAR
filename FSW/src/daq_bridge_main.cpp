@@ -65,7 +65,7 @@ struct BoardConfig {
     std::string ip;
     int num_sensors;
     bool enabled;
-    int board_id;            // Added board_id
+    int board_id;  // Added board_id
 };
 
 struct ServerHeartbeatConfig {
@@ -114,8 +114,7 @@ static void load_board_map_from_config(const std::string& config_path,
         else if (board_type_str == "ENCODER")
             bt = BoardType::ENCODER;
         if (bt != BoardType::UNKNOWN) {
-            BoardConfig cfg{
-                bt, board_ip, board_num_sensors, board_enabled, board_id};
+            BoardConfig cfg{bt, board_ip, board_num_sensors, board_enabled, board_id};
             board_map[board_ip] = cfg;
             if (out_board_order && board_enabled)
                 out_board_order->emplace_back(board_ip, std::move(cfg));
@@ -204,7 +203,8 @@ static std::map<BoardType, std::vector<BoardChannels>> load_active_boards(
     std::map<BoardType, std::vector<BoardChannels>> result;
 
     std::ifstream f(config_path);
-    if (!f.is_open()) return result;
+    if (!f.is_open())
+        return result;
 
     std::string line, section;
     std::string board_type_str;
@@ -214,19 +214,30 @@ static std::map<BoardType, std::vector<BoardChannels>> load_active_boards(
     int num_sensors = 10;
 
     auto flush = [&]() {
-        if (board_type_str.empty() || !board_enabled || board_id < 0) return;
+        if (board_type_str.empty() || !board_enabled || board_id < 0)
+            return;
         BoardType bt = BoardType::UNKNOWN;
-        if (board_type_str == "PT")       bt = BoardType::PT;
-        else if (board_type_str == "TC")  bt = BoardType::TC;
-        else if (board_type_str == "RTD") bt = BoardType::RTD;
-        else if (board_type_str == "LC")  bt = BoardType::LC;
-        else if (board_type_str == "ENCODER") bt = BoardType::ENCODER;
-        else if (board_type_str == "ACTUATOR") bt = BoardType::ACTUATOR;
-        if (bt == BoardType::UNKNOWN) return;
+        if (board_type_str == "PT")
+            bt = BoardType::PT;
+        else if (board_type_str == "TC")
+            bt = BoardType::TC;
+        else if (board_type_str == "RTD")
+            bt = BoardType::RTD;
+        else if (board_type_str == "LC")
+            bt = BoardType::LC;
+        else if (board_type_str == "ENCODER")
+            bt = BoardType::ENCODER;
+        else if (board_type_str == "ACTUATOR")
+            bt = BoardType::ACTUATOR;
+        if (bt == BoardType::UNKNOWN)
+            return;
 
         BoardChannels bc;
         bc.board_id = static_cast<uint8_t>(board_id);
-        bc.board_number = static_cast<uint8_t>(board_id % 10);
+        {
+            int m = board_id % 10;
+            bc.board_number = static_cast<uint8_t>(m == 0 ? 10 : m);
+        }
         if (!active_conn.empty()) {
             bc.channels = active_conn;
         } else {
@@ -238,31 +249,42 @@ static std::map<BoardType, std::vector<BoardChannels>> load_active_boards(
 
     while (std::getline(f, line)) {
         size_t c = line.find('#');
-        if (c != std::string::npos) line = line.substr(0, c);
-        while (!line.empty() && (line.back() == ' ' || line.back() == '\r')) line.pop_back();
+        if (c != std::string::npos)
+            line = line.substr(0, c);
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
+            line.pop_back();
         size_t start = line.find_first_not_of(" \t");
-        if (start != std::string::npos) line = line.substr(start);
-        if (line.empty()) continue;
+        if (start != std::string::npos)
+            line = line.substr(start);
+        if (line.empty())
+            continue;
 
         if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
             flush();
             section = line.substr(1, line.size() - 2);
             if (section.rfind("boards.", 0) == 0) {
-                board_type_str.clear(); board_id = -1; board_enabled = true;
-                active_conn.clear(); num_sensors = 10;
+                board_type_str.clear();
+                board_id = -1;
+                board_enabled = true;
+                active_conn.clear();
+                num_sensors = 10;
             } else {
                 board_type_str.clear();
             }
             continue;
         }
-        if (section.rfind("boards.", 0) != 0) continue;
+        if (section.rfind("boards.", 0) != 0)
+            continue;
 
         size_t eq = line.find('=');
-        if (eq == std::string::npos) continue;
+        if (eq == std::string::npos)
+            continue;
         std::string key = line.substr(0, eq);
         std::string val = line.substr(eq + 1);
-        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
-        while (!val.empty() && val[0] == ' ') val.erase(0, 1);
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
+            key.pop_back();
+        while (!val.empty() && val[0] == ' ')
+            val.erase(0, 1);
 
         if (key == "type") {
             if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
@@ -271,9 +293,15 @@ static std::map<BoardType, std::vector<BoardChannels>> load_active_boards(
         } else if (key == "enabled" && val == "false") {
             board_enabled = false;
         } else if (key == "board_id") {
-            try { board_id = std::stoi(val); } catch (...) {}
+            try {
+                board_id = std::stoi(val);
+            } catch (...) {
+            }
         } else if (key == "num_sensors") {
-            try { num_sensors = std::stoi(val); } catch (...) {}
+            try {
+                num_sensors = std::stoi(val);
+            } catch (...) {
+            }
         } else if (key == "active_connectors") {
             size_t b = val.find('['), e = val.find(']');
             if (b != std::string::npos && e != std::string::npos) {
@@ -281,7 +309,10 @@ static std::map<BoardType, std::vector<BoardChannels>> load_active_boards(
                 std::istringstream iss(inner);
                 std::string tok;
                 while (std::getline(iss, tok, ',')) {
-                    try { active_conn.push_back(static_cast<uint8_t>(std::stoi(tok))); } catch (...) {}
+                    try {
+                        active_conn.push_back(static_cast<uint8_t>(std::stoi(tok)));
+                    } catch (...) {
+                    }
                 }
             }
         }
@@ -526,11 +557,11 @@ int main(int argc, char* argv[]) {
     bool elodin_connected = false;
     // Collect active boards with local channels from config (board-namespaced, no channel_offset)
     auto active_boards = load_active_boards(config_path);
-    const auto& pt_boards  = active_boards[BoardType::PT];
+    const auto& pt_boards = active_boards[BoardType::PT];
     const auto& act_boards = active_boards[BoardType::ACTUATOR];
-    const auto& tc_boards  = active_boards[BoardType::TC];
+    const auto& tc_boards = active_boards[BoardType::TC];
     const auto& rtd_boards = active_boards[BoardType::RTD];
-    const auto& lc_boards  = active_boards[BoardType::LC];
+    const auto& lc_boards = active_boards[BoardType::LC];
     const auto& enc_boards = active_boards[BoardType::ENCODER];
 
     std::vector<uint8_t> config_board_ids;
@@ -544,12 +575,13 @@ int main(int argc, char* argv[]) {
         std::cout << "✅ Connected to Elodin database" << std::endl;
         // Register RAW VTables (board-namespaced TYPE<n>.CH<m> names)
         if (!fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_boards, act_boards,
-                                                           tc_boards, rtd_boards, lc_boards, enc_boards)) {
+                                                          tc_boards, rtd_boards, lc_boards,
+                                                          enc_boards)) {
             std::cerr << "⚠️  RAW VTable registration failed" << std::endl;
         }
         // Register CALIBRATED VTables
-        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_boards,
-                                                                 tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
+        fsw::elodin::DatabaseConfig::register_calibrated_tables(
+            elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
         // Register BOARD_HEARTBEAT and SELF_TEST VTables only for boards in config
         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, config_board_ids);
         fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, config_board_ids);
@@ -667,15 +699,16 @@ int main(int argc, char* argv[]) {
                     if (elodin_client.reconnect()) {
                         std::cout << "✅ Reconnected to Elodin — re-registering VTables"
                                   << std::endl;
-                        fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_boards,
-                                                                     act_boards, tc_boards,
-                                                                     rtd_boards, lc_boards, enc_boards);
-                        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client,
-                                                                                pt_boards, tc_boards,
-                                                                                rtd_boards, lc_boards,
-                                                                                enc_boards, act_boards);
-                        fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, config_board_ids);
-                        fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, config_board_ids);
+                        fsw::elodin::DatabaseConfig::register_tables(
+                            elodin_client, pt_boards, act_boards, tc_boards, rtd_boards, lc_boards,
+                            enc_boards);
+                        fsw::elodin::DatabaseConfig::register_calibrated_tables(
+                            elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards,
+                            act_boards);
+                        fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client,
+                                                                               config_board_ids);
+                        fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client,
+                                                                               config_board_ids);
                     }
                 }
             }
@@ -744,6 +777,15 @@ int main(int argc, char* argv[]) {
                     if (discovered)
                         board_id = discovered->signature.board_id;
                 }
+                // Integration fallback: startup sim commonly uses loopback board IPs
+                // like 127.0.0.60. If config/discovery mapping is unavailable, derive
+                // board_id from the last octet so SELF_TEST still reaches Elodin.
+                if (board_id == 0 && source_ip.compare(0, 8, "127.0.0.") == 0) {
+                    int ip_octet = (source_ip.size() >= 9) ? std::atoi(source_ip.c_str() + 8) : 0;
+                    if (ip_octet > 0 && ip_octet <= 255) {
+                        board_id = static_cast<uint8_t>(ip_octet);
+                    }
+                }
 
                 if (board_id != 0) {
                     std::array<uint8_t, 2> pkt_id = {0x60, board_id};
@@ -771,8 +813,14 @@ int main(int argc, char* argv[]) {
             elodin_client.begin_batch();
 
         // Board-namespaced packet IDs: low byte = (board_number-1)*0x10 + local_channel
-        uint8_t board_number = effective_cfg ? static_cast<uint8_t>(effective_cfg->board_id % 10) : 1;
-        uint8_t board_offset = static_cast<uint8_t>((board_number - 1) * 0x20);
+        // Match GUI / sequencer: board_id % 10 == 0 → use slot 10 (boards 10, 20, …).
+        uint8_t board_number = 1;
+        if (effective_cfg) {
+            int bn = static_cast<int>(effective_cfg->board_id % 10);
+            board_number = static_cast<uint8_t>(bn == 0 ? 10 : bn);
+        }
+        uint8_t board_offset =
+            static_cast<uint8_t>((static_cast<unsigned>(board_number) - 1u) * 0x20u);
 
         // Helper lambda: build board-namespaced packet and publish a raw sample
         auto publish_raw_sample = [&](uint8_t type_hi, const auto& sample) {

@@ -200,6 +200,12 @@ double RobustCalibrationManager::predict_pressure_psi(uint16_t sensor_id, int32_
     return it->second.framework->predict_pressure_psi(static_cast<double>(adc_code));
 }
 
+bool RobustCalibrationManager::has_sensor(uint16_t sensor_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = states_.find(sensor_id);
+    return it != states_.end() && it->second.framework != nullptr;
+}
+
 void RobustCalibrationManager::reset_adjustment(uint16_t sensor_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = states_.find(sensor_id);

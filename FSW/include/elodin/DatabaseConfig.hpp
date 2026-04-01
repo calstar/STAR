@@ -14,12 +14,12 @@ namespace elodin {
  * @brief Per-board channel info for board-namespaced entity registration.
  *
  * board_id:     raw board ID from config (e.g. 21, 22, 12, 14)
- * board_number: board_id % 10 (e.g. 1, 2, 2, 4) — used in entity names and packet IDs
+ * board_number: Elodin / daq slot = (board_id % 10) with 0 → 10 (e.g. id 12→2, id 10→10)
  * channels:     local connector IDs (1-10) that are active on this board
  */
 struct BoardChannels {
     uint8_t board_id;
-    uint8_t board_number;  // board_id % 10
+    uint8_t board_number;           // board_id % 10
     std::vector<uint8_t> channels;  // local channels (1-10)
 };
 
@@ -42,8 +42,7 @@ public:
      * Each vector lists boards with their local channels.
      * Entity names: PT<board_number>.CH<n>, ACT<board_number>.CH<n>, etc.
      */
-    static bool register_tables(ElodinClient& client,
-                                const std::vector<BoardChannels>& pt_boards,
+    static bool register_tables(ElodinClient& client, const std::vector<BoardChannels>& pt_boards,
                                 const std::vector<BoardChannels>& act_boards,
                                 const std::vector<BoardChannels>& tc_boards,
                                 const std::vector<BoardChannels>& rtd_boards,

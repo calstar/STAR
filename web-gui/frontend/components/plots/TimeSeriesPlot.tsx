@@ -52,8 +52,9 @@ function applyTransform(v: number, transform?: (x: number) => number): number {
 }
 
 const DEFAULT_WINDOW_SECONDS = 60;
-const RENDER_INTERVAL_MS     = 100; // 10 Hz
-const Y_AXIS_INTERVAL_MS     = 200; // 5 Hz
+// Match data-cache ~40 Hz so uPlot gets enough points for smooth pressure traces (was 10 Hz → stair steps).
+const RENDER_INTERVAL_MS     = 25;
+const Y_AXIS_INTERVAL_MS     = 200;
 
 export default function TimeSeriesPlot({
   title, entities, component, components, colors,
@@ -215,7 +216,7 @@ export default function TimeSeriesPlot({
     };
     window.addEventListener('resize', onWinResize);
 
-    // ── 10 Hz render loop — reads DataCache directly, no local buffer ─────────
+    // ── Render loop — reads DataCache (see RENDER_INTERVAL_MS) ─────────────────
     let lastDataUpdate  = 0;
     let lastYAxisUpdate = 0;
 

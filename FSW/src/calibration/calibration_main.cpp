@@ -16,10 +16,14 @@
  * Usage:
  *   ./calibration_service [--config PATH] [--elodin-host HOST] [--elodin-port PORT]
  *   CAL_VERBOSE=1 for per-packet debug output
+ *   CAL_USE_FACTORY_PT=1 / kLpPtDefaultFactoryOnly — LP PT = factory cubic (bypass robust)
+ *   CAL_USE_ROBUST_PT=1 — force robust blend even if factory-only default is on
+ *   CAL_BACKUP_PATH — override robust prior JSON (else latest calibration_backups/*.json)
  */
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
@@ -47,16 +51,31 @@ static bool verbose() {
     return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y');
 }
 
-/** 4-20 mA HP PT: psi = (i_ma - 4) / 16 * full_scale_psi. ADC signed, ADC_MAX=2^31. */
-static double convert_hp_pt_to_pressure(int32_t adc_sensor, double full_scale_psi,
+static bool env_flag_true(const char* name) {
+    const char* v = std::getenv(name);
+    return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T');
+}
+
+/** Set false after test. CAL_USE_ROBUST_PT=1 overrides and re-enables robust blend. */
+static constexpr bool kLpPtDefaultFactoryOnly = false;
+
+static bool lp_pt_use_factory_only() {
+    if (env_flag_true("CAL_USE_ROBUST_PT"))
+        return false;
+    return kLpPtDefaultFactoryOnly || env_flag_true("CAL_USE_FACTORY_PT");
+}
+
+/** 4-20 mA HP PT: psi = (i_ma - 4) / 16 * full_scale_psi. Wire format is u32; scale to 2^31 full
+ * scale. */
+static double convert_hp_pt_to_pressure(uint32_t adc_raw, double full_scale_psi,
                                         double sense_resistor_ohms, double adc_ref_voltage) {
     constexpr double ADC_MAX = 2147483648.0;
     constexpr double I_MIN_MA = 4.0;
     constexpr double I_SPAN_MA = 16.0;
 
-    if (adc_sensor >= static_cast<int32_t>(ADC_MAX) || adc_sensor < 0)
+    if (adc_raw >= static_cast<uint32_t>(ADC_MAX))
         return 0.0;
-    double v_sense = (static_cast<double>(adc_sensor) / ADC_MAX) * adc_ref_voltage;
+    double v_sense = (static_cast<double>(adc_raw) / ADC_MAX) * adc_ref_voltage;
     double i_ma = (v_sense / sense_resistor_ohms) * 1000.0;
     if (i_ma < I_MIN_MA)
         return 0.0;
@@ -152,18 +171,30 @@ static void signalHandler(int /*sig*/) {
     running = false;
 }
 
-/** Match Elodin low byte to config board_id (same layout as daq_bridge). */
-static uint8_t resolve_board_id_pt(uint8_t type_lo, uint8_t ch,
-                                   const std::vector<fsw::elodin::BoardChannels>& pt_boards) {
-    for (const auto& bc : pt_boards) {
-        uint8_t mod = bc.board_id % 10;
-        uint8_t bn_norm = (mod == 0) ? 10 : mod;
-        uint8_t expected_lo =
-            static_cast<uint8_t>(static_cast<uint16_t>(bn_norm - 1u) * 0x20u + ch);
-        if (expected_lo == type_lo)
-            return bc.board_id;
+/**
+ * Map Elodin PT raw packet low byte + connector ch → robust calibration uid (board_id*100+ch).
+ * Uses the same slot rule as daq_bridge: slot = board_id % 10, with 0 treated as 10.
+ */
+static uint16_t resolve_pt_sensor_uid(uint8_t type_lo, uint8_t ch,
+                                      const std::vector<fsw::elodin::BoardChannels>& pt_boards) {
+    if (ch == 0 || ch > 10)
+        return static_cast<uint16_t>(100u + ch);
+    uint8_t bn_slot = 1;
+    if (type_lo >= ch) {
+        unsigned delta = static_cast<unsigned>(type_lo - ch);
+        bn_slot = static_cast<uint8_t>(delta / 0x20u + 1u);
+        if (bn_slot < 1)
+            bn_slot = 1;
+        if (bn_slot > 10)
+            bn_slot = 10;
     }
-    return 0;
+    for (const auto& bc : pt_boards) {
+        int mod = static_cast<int>(bc.board_id % 10);
+        int slot = (mod == 0) ? 10 : mod;
+        if (slot == static_cast<int>(bn_slot))
+            return static_cast<uint16_t>(bc.board_id) * 100u + ch;
+    }
+    return static_cast<uint16_t>(100u + ch);
 }
 
 int main(int argc, char* argv[]) {
@@ -290,8 +321,9 @@ int main(int argc, char* argv[]) {
                 }
                 if (channels.empty())
                     return;
-                BoardChannels bc{static_cast<uint8_t>(board_id),
-                                 static_cast<uint8_t>(board_id % 10), channels};
+                int slot_mod = board_id % 10;
+                uint8_t board_number = static_cast<uint8_t>(slot_mod == 0 ? 10 : slot_mod);
+                BoardChannels bc{static_cast<uint8_t>(board_id), board_number, channels};
                 if (board_type == "PT")
                     pt_boards.push_back(bc);
                 else if (board_type == "TC")
@@ -387,11 +419,16 @@ int main(int argc, char* argv[]) {
     double hp_pt_full_scale_psi = 5000.0;
     double hp_pt_sense_resistor_ohms = 120.0;
     double hp_pt_adc_ref_voltage = 2.5;
-    uint8_t hp_pt_board_number = 2;  // board_id % 10 for the HP PT board
+    // Elodin slot (board_id % 10, 0→10) of the board that defines hp_pt_connectors — only that
+    // board's packets use the 4–20 mA path. Do NOT take board_id from unrelated [boards.*]
+    // sections (e.g. encoder 61 → slot 1) or LP PT CH1/3/4 get misclassified as HP and read 0 PSI.
+    uint8_t hp_pt_board_number = 255;  // no HP PT until we parse a non-empty hp_pt_connectors
     {
         std::ifstream cfg2(config_path);
         if (cfg2.is_open()) {
             std::string line, section, board_section;
+            std::string hp_pt_source_section;     // [boards.*] that defined hp_pt_connectors
+            uint8_t pending_slot_in_section = 0;  // board_id % 10 in current [boards.*]
             while (std::getline(cfg2, line)) {
                 size_t c = line.find('#');
                 if (c != std::string::npos)
@@ -405,8 +442,10 @@ int main(int argc, char* argv[]) {
                     continue;
                 if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
                     section = line.substr(1, line.size() - 2);
-                    if (section.find("boards.") == 0)
+                    if (section.find("boards.") == 0) {
                         board_section = section;
+                        pending_slot_in_section = 0;
+                    }
                     continue;
                 }
                 if (board_section.empty())
@@ -444,9 +483,17 @@ int main(int argc, char* argv[]) {
                         }
                         pos = end + 1;
                     }
+                    if (!hp_pt_channels.empty()) {
+                        hp_pt_source_section = board_section;
+                        if (pending_slot_in_section > 0)
+                            hp_pt_board_number = pending_slot_in_section;
+                    }
                 } else if (key == "board_id") {
                     try {
-                        hp_pt_board_number = static_cast<uint8_t>(std::stoi(val) % 10);
+                        int mod = std::stoi(val) % 10;
+                        pending_slot_in_section = static_cast<uint8_t>(mod == 0 ? 10 : mod);
+                        if (!hp_pt_channels.empty() && board_section == hp_pt_source_section)
+                            hp_pt_board_number = pending_slot_in_section;
                     } catch (...) {
                     }
                 } else if (key == "hp_pt_full_scale_psi") {
@@ -564,7 +611,19 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    robust_manager.load_adjustments(adjustments_path);
+    std::cout << "[Calibration] Robust adjustments path: " << adjustments_path << std::endl;
+    std::cout << "[Calibration]   (override with --adjustments, CAL_BACKUP_PATH, or "
+                 "calibration_backups/calibration_backup_*.json mtime)"
+              << std::endl;
+    if (!robust_manager.load_adjustments(adjustments_path)) {
+        std::cout << "[Calibration]   File missing/unreadable — using factory-seeded robust only"
+                  << std::endl;
+    }
+    if (lp_pt_use_factory_only()) {
+        std::cout << "[Calibration] LP PT: factory cubic only (kLpPtDefaultFactoryOnly or "
+                     "CAL_USE_FACTORY_PT; override with CAL_USE_ROBUST_PT=1)"
+                  << std::endl;
+    }
 
     if (verbose())
         std::cout << "[Cal] CAL_VERBOSE=1 — debug output enabled" << std::endl;
@@ -725,11 +784,12 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        // Parse 21-byte raw sensor payload directly
+        // Parse 21-byte raw sensor payload directly (ADS1262 etc. use signed 32-bit codes at +12)
         const uint8_t* p = pkt_buf + 8;
         const uint64_t ts_ns = *reinterpret_cast<const uint64_t*>(p);
         const uint8_t ch = p[8];
-        const uint32_t raw_adc = *reinterpret_cast<const uint32_t*>(p + 12);
+        const int32_t adc_i32 = *reinterpret_cast<const int32_t*>(p + 12);
+        const uint32_t adc_u32 = *reinterpret_cast<const uint32_t*>(p + 12);
         // p[16-19] = sample_timestamp_ms (unused in calibration output)
         // p[20]    = status_flags        (unused in calibration output)
 
@@ -740,9 +800,7 @@ int main(int argc, char* argv[]) {
         // Calibrated = raw_lo + 0x10 (within same 32-slot block)
         uint8_t cal_lo = static_cast<uint8_t>(type_lo + 0x10);
         uint8_t board_number = static_cast<uint8_t>((type_lo >> 5) + 1);
-        uint8_t bid = resolve_board_id_pt(type_lo, ch, pt_boards);
-        uint16_t uid =
-            bid ? static_cast<uint16_t>(bid) * 100u + ch : static_cast<uint16_t>(100u + ch);
+        uint16_t uid = resolve_pt_sensor_uid(type_lo, ch, pt_boards);
 
         elodin_client.begin_batch();
 
@@ -751,24 +809,47 @@ int main(int argc, char* argv[]) {
             uint8_t cal_status;
             // HP PT uses local connector IDs (no offset) — check board_number matches HP PT board
             if (!use_sim_mode && board_number == hp_pt_board_number && hp_pt_channels.count(ch)) {
-                psi = convert_hp_pt_to_pressure(static_cast<int32_t>(raw_adc), hp_pt_full_scale_psi,
+                psi = convert_hp_pt_to_pressure(adc_u32, hp_pt_full_scale_psi,
                                                 hp_pt_sense_resistor_ohms, hp_pt_adc_ref_voltage);
                 cal_status = 1;
-                last_adc_map[uid] = static_cast<int32_t>(raw_adc);
+                last_adc_map[uid] = static_cast<int32_t>(adc_u32);
                 if (verbose() && packet_count % 100 == 0)
                     std::cout << "[Cal] HP PT B" << (int)board_number << " ch" << (int)ch
-                              << " adc=" << static_cast<int32_t>(raw_adc) << " psi=" << psi
+                              << " adc=" << static_cast<int32_t>(adc_u32) << " psi=" << psi
                               << std::endl;
             } else {
-                last_adc_map[uid] = static_cast<int32_t>(raw_adc);
-                psi = robust_manager.predict_pressure_psi(uid, static_cast<int32_t>(raw_adc));
+                last_adc_map[uid] = adc_i32;
+                double psi_rob = robust_manager.predict_pressure_psi(uid, adc_i32);
+                double psi_fac = pt_calibration.calculate_pressure(ch, adc_i32);
+                // Default: robust (online RLS + saved theta). Factory is fallback when robust has
+                // no state, or when robust is flat ~0 while factory still has signal.
+                //
+                // Those three cases zero fuel/chamber readouts while raw ADC moves:
+                //   • restored theta from calibration_backups/*.json or adjustments.json
+                //   • Zero All / zero points driving predict → 0
+                //   • old gate |psi_fac| > 0.01 hid small-but-valid factory noise/span
+                //
+                if (lp_pt_use_factory_only() && pt_calibration.is_calibrated(ch)) {
+                    psi = psi_fac;
+                } else if (!robust_manager.has_sensor(uid)) {
+                    psi = psi_fac;
+                } else if (std::fabs(psi_rob) < 1e-3 && pt_calibration.is_calibrated(ch) &&
+                           std::fabs(psi_fac) > 1e-5) {
+                    psi = psi_fac;
+                } else {
+                    psi = psi_rob;
+                }
                 cal_status = pt_calibration.is_calibrated(ch) ? 1u : 0u;
                 if (verbose() && packet_count % 100 == 0)
                     std::cout << "[Cal] PT B" << (int)board_number << " ch" << (int)ch
-                              << " adc=" << raw_adc << " psi=" << psi << " (robust)" << std::endl;
+                              << " adc=" << adc_i32 << " psi=" << psi << " (robust+fallback)"
+                              << std::endl;
             }
             comms::messages::sensor::CalibratedPTMessage cal_msg(
-                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(psi), raw_adc,
+                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(psi),
+                (!use_sim_mode && board_number == hp_pt_board_number && hp_pt_channels.count(ch))
+                    ? adc_u32
+                    : static_cast<uint32_t>(adc_i32),
                 cal_status);
             elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
 
@@ -776,58 +857,55 @@ int main(int argc, char* argv[]) {
             double temp_c;
             uint8_t cal_status;
             if (tc_calibration.is_calibrated(ch)) {
-                temp_c = tc_calibration.calculate(ch, static_cast<int32_t>(raw_adc));
+                temp_c = tc_calibration.calculate(ch, adc_i32);
                 cal_status = 1;
             } else {
-                temp_c =
-                    convert_tc_adc_to_temp_c(static_cast<int32_t>(raw_adc), tc_adc_ref_voltage);
+                temp_c = convert_tc_adc_to_temp_c(adc_i32, tc_adc_ref_voltage);
                 cal_status = 0;
             }
             comms::messages::sensor::CalibratedTCMessage cal_msg(
-                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(temp_c), raw_adc,
-                cal_status);
+                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(temp_c),
+                static_cast<uint32_t>(adc_i32), cal_status);
             elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
 
         } else if (type_hi == 0x22) {  // RTD raw
             double temp_c;
             uint8_t cal_status;
             if (rtd_calibration.is_calibrated(ch)) {
-                temp_c = rtd_calibration.calculate(ch, static_cast<int32_t>(raw_adc));
+                temp_c = rtd_calibration.calculate(ch, adc_i32);
                 cal_status = 1;
             } else {
-                temp_c =
-                    convert_rtd_adc_to_temp_c(static_cast<int32_t>(raw_adc), rtd_adc_ref_voltage,
-                                              rtd_excitation_ua, rtd_r0_ohm);
+                temp_c = convert_rtd_adc_to_temp_c(adc_i32, rtd_adc_ref_voltage, rtd_excitation_ua,
+                                                   rtd_r0_ohm);
                 cal_status = 0;
             }
             comms::messages::sensor::CalibratedRTDMessage cal_msg(
-                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(temp_c), raw_adc,
-                cal_status);
+                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(temp_c),
+                static_cast<uint32_t>(adc_i32), cal_status);
             elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
 
         } else if (type_hi == 0x23) {  // LC raw
             double force_kg;
             uint8_t cal_status;
             if (lc_calibration.is_calibrated(ch)) {
-                force_kg = lc_calibration.calculate(ch, static_cast<int32_t>(raw_adc));
+                force_kg = lc_calibration.calculate(ch, adc_i32);
                 cal_status = 1;
             } else {
-                force_kg =
-                    convert_lc_adc_to_force(static_cast<int32_t>(raw_adc), lc_sensitivity_mv_per_v,
-                                            lc_pga_gain, lc_full_scale_value);
+                force_kg = convert_lc_adc_to_force(adc_i32, lc_sensitivity_mv_per_v, lc_pga_gain,
+                                                   lc_full_scale_value);
                 cal_status = 0;
             }
             comms::messages::sensor::CalibratedLCMessage cal_msg(
-                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(force_kg), raw_adc,
-                cal_status);
+                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(force_kg),
+                static_cast<uint32_t>(adc_i32), cal_status);
             elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
 
         } else if (type_hi == 0x30) {  // Actuator raw current-sense (12-bit ADC)
-            double current_a = convert_act_adc_to_current(raw_adc);
+            double current_a = convert_act_adc_to_current(adc_u32);
             uint8_t cal_status = 1;
             // ACT calibrated VTable registered under 0x31 (to avoid collision with raw 0x30)
             comms::messages::sensor::CalibratedACTMessage cal_msg(
-                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(current_a), raw_adc,
+                ts_ns, ch, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(current_a), adc_u32,
                 cal_status);
             elodin_client.publish(static_cast<uint16_t>((0x31 << 8) | cal_lo), cal_msg);
         }

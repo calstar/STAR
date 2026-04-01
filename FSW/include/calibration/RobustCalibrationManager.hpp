@@ -39,6 +39,9 @@ public:
     /** Mean PSI from the robust model (default environment). */
     double predict_pressure_psi(uint16_t sensor_id, int32_t adc_code);
 
+    /** True if this sensor_id was initialized for robust tracking (factory-baselined). */
+    bool has_sensor(uint16_t sensor_id) const;
+
     void reset_adjustment(uint16_t sensor_id);
 
     bool save_adjustments(const std::string& path) const;

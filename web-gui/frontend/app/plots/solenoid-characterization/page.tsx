@@ -32,7 +32,7 @@ export default function SolenoidCharacterizationPage() {
 
   const ptSensors = allSensors.filter(
     (s) =>
-      ((s.calEntity.startsWith('PT_Cal.') || /^PT\\d+_Cal\\.CH\\d+$/.test(s.calEntity)) ||
+      ((s.calEntity.startsWith('PT_Cal.') || /^PT\d+_Cal\.CH\d+$/.test(s.calEntity)) ||
         s.calEntity.startsWith('PT.')) &&
       !s.calEntity.includes('RTD')
   );

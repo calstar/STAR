@@ -115,6 +115,8 @@ const STATIC_ALIASES: Record<string, string[]> = {
 
 // Mutable alias table — starts with statics, gets sensor/actuator aliases added at runtime.
 let ALIASES: Record<string, string[]> = { ...STATIC_ALIASES };
+// ACT.<Role_Name> -> ACT_CMD.B<board>.CH<channel>
+let ACT_ROLE_TO_CMD_ENTITY: Record<string, string> = {};
 
 /**
  * Build aliases from config.toml role mappings.
@@ -129,6 +131,7 @@ let ALIASES: Record<string, string[]> = { ...STATIC_ALIASES };
  */
 export function buildAliasesFromConfig(config: any): void {
   const aliases: Record<string, string[]> = { ...STATIC_ALIASES };
+  const roleToCmdEntity: Record<string, string> = {};
 
   const addAlias = (namedKey: string, genericKey: string) => {
     if (!aliases[namedKey]) aliases[namedKey] = [];
@@ -180,7 +183,8 @@ export function buildAliasesFromConfig(config: any): void {
     if (board.enabled === false) continue;
     const type = board.type as string;
     const boardId = typeof board.board_id === 'number' ? board.board_id : 1;
-    const boardNumber = boardId % 10;
+    const mod = boardId % 10;
+    const boardNumber = mod === 0 ? 10 : mod;
     const activeChannels: number[] =
       Array.isArray(board.active_connectors) && board.active_connectors.length > 0
         ? board.active_connectors.map((v: unknown) => Number(v)).filter((v: number) => Number.isFinite(v) && v >= 1)
@@ -234,11 +238,17 @@ export function buildAliasesFromConfig(config: any): void {
       if (arr.length < 2) continue;
       const localCh = typeof arr[1] === 'number' ? arr[1] : Number(arr[1]);
       const boardId = arr.length >= 3 && typeof arr[2] === 'number' ? arr[2] : 12;
-      const boardNumber = boardId % 10;
+      const mod = boardId % 10;
+      const boardNumber = mod === 0 ? 10 : mod;
       if (!isFinite(localCh) || localCh < 1) continue;
       const entityName = name.replace(/\s+/g, '_');
+      const roleEntity = `ACT.${entityName}`;
+      roleToCmdEntity[roleEntity] = `ACT_CMD.B${boardNumber}.CH${localCh}`;
       for (const comp of actComponents) {
         addAlias(`ACT${boardNumber}.${entityName}.${comp}`, `ACT${boardNumber}.CH${localCh}.${comp}`);
+        // actuators-from-config uses ACT.{Role} and ActuatorControlByName uses ACT_Cal.{Role} for current_a
+        addAlias(`ACT.${entityName}.${comp}`, `ACT${boardNumber}.CH${localCh}.${comp}`);
+        addAlias(`ACT_Cal.${entityName}.${comp}`, `ACT${boardNumber}_Cal.CH${localCh}.${comp}`);
       }
       for (const comp of actCmdComponents) {
         addAlias(`ACT_CMD.B${boardNumber}.${entityName}.${comp}`, `ACT_CMD.B${boardNumber}.CH${localCh}.${comp}`);
@@ -259,6 +269,7 @@ export function buildAliasesFromConfig(config: any): void {
   }
 
   ALIASES = aliases;
+  ACT_ROLE_TO_CMD_ENTITY = roleToCmdEntity;
   console.log(`[Store] Built ${Object.keys(aliases).length} entity aliases from config`);
 }
 
@@ -272,24 +283,6 @@ let _sensorTimestamps: Record<string, number> = {};
 let _flushScheduled = false;
 let _updateVersion = 0; // Version counter to force re-renders even if values are identical
 
-// ── Data filtering for spikes ────────────────────────────────────────────────
-// Simple moving average filter to smooth out random spikes in sensor data
-const FILTER_WINDOW_SIZE = 5; // Number of samples to average
-const MAX_SPIKE_THRESHOLD_ABSOLUTE = 200; // PSI - absolute threshold for large values (increased from 50 to handle rapid pressurization)
-const MAX_SPIKE_THRESHOLD_PERCENT = 0.5; // 50% - percentage threshold for relative changes
-
-interface FilterState {
-  history: number[];
-  lastRawValue: number | null;  // Last raw value (before filtering) for spike detection
-  lastFilteredValue: number | null;  // Last filtered value (average) for return
-}
-
-const _filterState: Map<string, FilterState> = new Map();
-
-function filterSensorValue(key: string, value: number): number {
-  return value;
-}
-
 function scheduleSensorFlush() {
   if (_flushScheduled) return;
   _flushScheduled = true;
@@ -302,8 +295,8 @@ function scheduleSensorFlush() {
   }, FLUSH_INTERVAL_MS);
 }
 
-// Flush pending writes at 10 Hz.
-const FLUSH_INTERVAL_MS = 100;
+// Flush pending writes (~20 Hz). Actuator commanded state flushes immediately (see updateSensor).
+const FLUSH_INTERVAL_MS = 50;
 if (typeof setInterval !== 'undefined') {
   setInterval(() => {
     if (Object.keys(_pendingSensorWrites).length > 0) {
@@ -315,7 +308,6 @@ if (typeof setInterval !== 'undefined') {
 
 function flushSensorWrites() {
   _flushScheduled = false;
-  if (typeof document !== 'undefined' && document.hidden) return; // defer when tab in background
   const batch = _pendingSensorWrites;
   _pendingSensorWrites = {};
   if (Object.keys(batch).length === 0) return;
@@ -366,25 +358,24 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
     recordSensorUpdate(update.entity, update.component);
     const key = `${update.entity}.${update.component}`;
 
-    // Late packet rejection: ensure we don't overwrite new data with buffered old data
-    const prevTimestamp = _sensorTimestamps[key] || 0;
-    // If packet is older than the newest we've seen (and not a reboot), drop it.
-    // (Allow reboot detect: if timestamp drops by > 60 seconds, accept it)
-    if (update.timestamp < prevTimestamp && (prevTimestamp - update.timestamp < 60000)) {
+    // Track last timestamp for diagnostics only. Do not drop “older” timestamps: Elodin/WebSocket
+    // bursts often deliver calibrated PT rows slightly out of order vs raw; rejecting them left
+    // pressure_psi stuck at 0 while raw_adc_counts kept updating.
+    _sensorTimestamps[key] = Math.max(_sensorTimestamps[key] || 0, update.timestamp);
+
+    _pendingSensorWrites[key] = update.value;
+
+    if (update.component === 'actuator_state_commanded' || update.component === 'actuator_state') {
+      _flushScheduled = false;
+      flushSensorWrites();
       return;
     }
-    _sensorTimestamps[key] = update.timestamp;
-
-    // Filter out spikes before storing
-    const filteredValue = filterSensorValue(key, update.value);
-    // Accumulate in pending batch — flush at next animation frame
-    _pendingSensorWrites[key] = filteredValue;
 
     // Back-compat for legacy LC panes expecting force_lbf / force_n.
     // Backend now publishes canonical force_kg.
     if (update.component === 'force_kg') {
-      const lbf = filteredValue * 2.2046226218;
-      const n = filteredValue * 9.80665;
+      const lbf = update.value * 2.2046226218;
+      const n = update.value * 9.80665;
       const lbfKey = `${update.entity}.force_lbf`;
       const nKey = `${update.entity}.force_n`;
       _sensorTimestamps[lbfKey] = update.timestamp;
@@ -392,6 +383,8 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
       _pendingSensorWrites[lbfKey] = lbf;
       _pendingSensorWrites[nKey] = n;
     }
+
+    scheduleSensorFlush();
   },
 
   updateActuator: (update: ActuatorUpdate) => {
@@ -581,7 +574,29 @@ export function useGetSensorValue(): (entity: string, component: string) => numb
  * Reads [0x32] commanded state (binary open/closed from sequencer).
  */
 export function useActuatorCommandedState(entity: string): ActuatorState | null {
-  const commanded = useSensorValue(entity, 'actuator_state_commanded');
+  const roleMapped = ACT_ROLE_TO_CMD_ENTITY[entity];
+  const commanded = useSensorStore((state) => {
+    const read = (e: string): number | null => {
+      const key = `${e}.actuator_state_commanded`;
+      const direct = state.sensorData[key];
+      if (direct !== undefined) return direct;
+      const fallbacks = ALIASES[key];
+      if (fallbacks) {
+        for (const fb of fallbacks) {
+          const v = state.sensorData[fb];
+          if (v !== undefined) return v;
+        }
+      }
+      return null;
+    };
+    const primary = read(entity);
+    if (primary != null) return primary;
+    if (roleMapped) {
+      const mapped = read(roleMapped);
+      if (mapped != null) return mapped;
+    }
+    return null;
+  });
 
   if (commanded != null && isFinite(commanded)) {
     return commanded === 1 ? ActuatorState.OPEN : ActuatorState.CLOSED;

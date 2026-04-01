@@ -103,7 +103,10 @@ def main() -> int:
                 )
                 # Single pass result for connector 2 — keeps WS path unambiguous (integration asserts sensor_2=1).
                 st = build_self_test_packet([(2, 1)])
-                sock.sendto(st, target)
+                # Send a small burst to avoid single-packet UDP loss flaking the E2E test.
+                for _ in range(3):
+                    sock.sendto(st, target)
+                    time.sleep(0.05)
                 sock.close()
                 return 0
         except socket.timeout:

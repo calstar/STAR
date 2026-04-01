@@ -6,7 +6,7 @@
  *  - Pre-allocated Float64Array ring buffers — zero heap allocations on write.
  *  - GlobalStateSubscriber owns the single SENSOR_UPDATE WS subscription and
  *    calls addDataPoint(); DataCache.start() handles HISTORICAL_DATA only.
- *  - sample() still runs at 10 Hz from Zustand store as a fallback in case
+ *  - sample() still runs at CACHE_SAMPLE_HZ from Zustand store as a fallback in case
  *    GlobalStateSubscriber hasn't fired yet (e.g. rapid reconnects).
  *  - getAlignedHistory() allocates once per call (unavoidable for uPlot).
  */
@@ -18,10 +18,14 @@ import { MessageType } from './types';
 import { getServerTimeNow } from './server-time';
 
 const CACHE_MAX_SECONDS = 60;
-const CACHE_MAX_POINTS  = 2000; // 10 Hz * 200 s
-const CACHE_SAMPLE_HZ   = 10;
-const CACHE_MAX_KEYS    = 80;
-const CACHE_STALE_MS    = 2 * 60 * 1000;
+// ~40 Hz × ~100 s cap — higher point density removes stair-stepped uPlot lines when WS is fast.
+const CACHE_MAX_POINTS  = 4000;
+const CACHE_SAMPLE_HZ   = 40;
+// The stack routinely publishes >80 entity.component streams. A low key cap causes
+// live series eviction and "dead" plots until hard refresh reloads historical data.
+const CACHE_MAX_KEYS    = 2000;
+// Keep inactive series around longer so slower/episodic channels do not disappear.
+const CACHE_STALE_MS    = 30 * 60 * 1000;
 
 // ── Ring buffer series ────────────────────────────────────────────────────────
 interface RingSeries {
@@ -112,30 +116,15 @@ class SensorDataCache {
     return s.len < CACHE_MAX_POINTS ? 0 : s.head;
   }
 
-  private lastVal(s: RingSeries): number {
-    if (s.len === 0) return NaN;
-    return s.vBuf[(s.head - 1 + CACHE_MAX_POINTS) % CACHE_MAX_POINTS];
-  }
-
   private lastTime(s: RingSeries): number {
     if (s.len === 0) return -Infinity;
     return s.tBuf[(s.head - 1 + CACHE_MAX_POINTS) % CACHE_MAX_POINTS];
   }
 
-  /** Last n values in chronological order (newest last). */
-  private lastNValues(s: RingSeries, n: number): number[] {
-    const count = Math.min(n, s.len);
-    const out: number[] = new Array(count);
-    for (let i = 0; i < count; i++) {
-      out[i] = s.vBuf[(s.head - count + i + CACHE_MAX_POINTS) % CACHE_MAX_POINTS];
-    }
-    return out;
-  }
-
   /**
    * Read a time-windowed slice of the ring buffer as plain arrays.
    * Returns null if the series has no data within the window.
-   * One allocation per call — only called at render rate (~10 Hz).
+   * One allocation per call — called at plot render rate (~40 Hz).
    */
   private readWindow(s: RingSeries, cutoff: number): { time: number[]; values: number[] } | null {
     if (s.len === 0) return null;
@@ -163,18 +152,18 @@ class SensorDataCache {
 
   private pruneStaleKeys(): void {
     const now = Date.now();
-    if (this.cache.size <= CACHE_MAX_KEYS) {
-      for (const [key, s] of this.cache) {
-        if (now - s.lastMs > CACHE_STALE_MS) this.cache.delete(key);
-      }
-    } else {
+    for (const [key, s] of this.cache) {
+      if (now - s.lastMs > CACHE_STALE_MS) this.cache.delete(key);
+    }
+    // Emergency bound only (protect against unbounded growth in pathological cases).
+    if (this.cache.size > CACHE_MAX_KEYS) {
       const byAge = Array.from(this.cache.entries()).sort((a, b) => a[1].lastMs - b[1].lastMs);
       const toRemove = this.cache.size - CACHE_MAX_KEYS;
       for (let i = 0; i < toRemove && i < byAge.length; i++) this.cache.delete(byAge[i][0]);
     }
   }
 
-  // ── 10 Hz background sampler (fallback) ────────────────────────────────────
+  // ── Background sampler (fallback if WS path misses) ───────────────────────
 
   private sample(): void {
     if (typeof document !== 'undefined' && document.hidden) return;
@@ -203,37 +192,18 @@ class SensorDataCache {
 
   private _lastAddPerKey: Record<string, number> = {};
 
-  /** Add a data point (called by GlobalStateSubscriber on SENSOR_UPDATE). Throttled to 10 Hz. */
+  /** Add a data point (called by GlobalStateSubscriber on SENSOR_UPDATE). Light throttle per key. */
   addDataPoint(entity: string, component: string, value: number): void {
     if (!isFinite(value)) return;
     const key   = `${entity}.${component}`;
     const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const last  = this._lastAddPerKey[key] ?? 0;
-    if (nowMs - last < 100) return; // 10 Hz max per key
+    const minIntervalMs = 1000 / CACHE_SAMPLE_HZ;
+    if (nowMs - last < minIntervalMs) return;
     this._lastAddPerKey[key] = nowMs;
 
     const now = (getServerTimeNow() - getStartupTime()) / 1000;
     const s   = this.getOrCreate(key);
-
-    // Spike rejection — runs on the most recent ring values, no allocation.
-    const prev = this.lastVal(s);
-    if (isFinite(prev)) {
-      if (component === 'pressure_psi') {
-        const maxJump = entity.includes('HP_PT') || entity.includes('GSE_Mid') ||
-                        entity.includes('GSE_High') || entity.includes('GN2_High') ? 500 : 1000;
-        if (Math.abs(value - prev) > maxJump) { value = prev; }
-        else {
-          const recent = this.lastNValues(s, 5).filter(v => isFinite(v));
-          if (recent.length >= 2) {
-            const sorted = [...recent].sort((a, b) => a - b);
-            const median = sorted[Math.floor(sorted.length / 2)];
-            if (Math.abs(value - median) > 15) value = prev; // 15 PSI deviation cap
-          }
-        }
-      } else if (component !== 'temperature_c' && component !== 'force_lbf') {
-        if (prev !== 0 && Math.abs(value / prev) > 10) value = prev;
-      }
-    }
 
     const lt = this.lastTime(s);
     if (now >= lt) {
@@ -311,18 +281,13 @@ class SensorDataCache {
       const w = this.readWindow(s, cutoff);
       if (!w) return new Array<number>(len).fill(NaN);
 
-      const isPressure = key.endsWith('.pressure_psi');
       const out: number[] = new Array(len);
       let j = 0;
-      let lastPushed = NaN;
 
       for (let i = 0; i < len; i++) {
         const t = time[i];
         while (j + 1 < w.time.length && w.time[j + 1] <= t) j++;
-        let val = w.time[j] <= t ? w.values[j] : NaN;
-        if (isPressure && val === 0 && lastPushed > 0) val = NaN; // spurious zero → gap
-        out[i] = val;
-        if (Number.isFinite(val)) lastPushed = val;
+        out[i] = w.time[j] <= t ? w.values[j] : NaN;
       }
       return out;
     });

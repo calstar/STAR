@@ -6,10 +6,11 @@ import { startDataCache } from '@/lib/data-cache';
 import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react';
 import { SystemState, CommandPayload, MessageType } from '@/lib/types';
 import PressureBar from '@/components/plots/PressureBar';
-import { PRESSURE_BAR_SENSORS, getEntityColor } from '@/lib/sensor-colors';
+import { PRESSURE_BAR_SENSORS } from '@/lib/sensor-colors';
 import NotificationPanel from '@/components/dashboard/NotificationPanel';
 import { useControlMode } from '@/lib/control-mode';
 import { useSensorConfig } from '@/lib/sensor-config';
+import { buildPressureBarDefsFromSensorConfig, type PressureBarDef } from '@/lib/pressure-bar-defs';
 
 const STATE_NAMES: Record<number, string> = {
   0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
@@ -67,8 +68,6 @@ function ReactivePressureBar({ label, entity, nop, meop, color, avgEntities }: {
   );
 }
 
-type PressureBarDef = { label: string; entity: string; nop?: number; meop?: number; color: string; avgEntities?: string[] };
-
 function formatCountdown(valueMs: number): { value: string; expired: boolean } {
   if (!Number.isFinite(valueMs)) return { value: '---:--:--', expired: false };
   if (valueMs <= 0) return { value: '000:00:00', expired: true };
@@ -108,31 +107,7 @@ export default function TopBar() {
   const [hitZeroMode, setHitZeroMode] = useState<'time' | 'datetime'>('time');
 
   const loadPressureBars = useCallback(() => {
-    const byRole = new Map<string, string>();
-    for (const s of sensors) byRole.set(String(s.role || ''), String(s.calEntity || ''));
-    const pick = (roles: string[], fallbackEntity: string) => {
-      for (const r of roles) {
-        const e = byRole.get(r);
-        if (e) return e;
-      }
-      return fallbackEntity;
-    };
-    const chamberMid1 = pick(['Chamber Mid PT 1'], 'PT_Cal.Chamber_Mid_PT_1');
-    const chamberMid2 = pick(['Chamber Mid PT 2'], 'PT_Cal.Chamber_Mid_PT_2');
-
-    const bars: PressureBarDef[] = [
-      { label: 'GN2 HI', entity: pick(['GN2 High'], 'PT_Cal.GN2_High'), nop: 900, meop: 950, color: '#ADFF2F' },
-      { label: 'GN2 REG', entity: pick(['GN2 Regulated'], 'PT_Cal.GN2_Regulated'), nop: 900, meop: 950, color: '#228B22' },
-      { label: 'FUEL UP', entity: pick(['Fuel Upstream'], 'PT_Cal.Fuel_Upstream'), nop: 600, meop: 650, color: '#FF4500' },
-      { label: 'FUEL DN', entity: pick(['Fuel Downstream'], 'PT_Cal.Fuel_Downstream'), nop: 600, meop: 650, color: '#CC0000' },
-      { label: 'LOX UP', entity: pick(['Ox Upstream', 'LOX Upstream'], 'PT_Cal.Ox_Upstream'), nop: 600, meop: 650, color: '#38BDF8' },
-      { label: 'LOX DN', entity: pick(['Ox Downstream', 'LOX Downstream'], 'PT_Cal.Ox_Downstream'), nop: 600, meop: 650, color: '#4169E1' },
-      { label: 'GSE LO', entity: pick(['GSE Low'], 'PT_Cal.GSE_Low'), nop: 500, meop: 700, color: '#D8B4FE' },
-      { label: 'GSE MID', entity: pick(['GSE Mid'], 'PT_Cal.GSE_Mid'), nop: 4000, meop: 4500, color: '#C026D3' },
-      { label: 'GSE HI', entity: pick(['GSE High'], 'PT_Cal.GSE_High'), nop: 500, meop: 700, color: '#7B2FBE' },
-      { label: 'CHAMBER', entity: chamberMid1, nop: 500, meop: 650, color: '#F97316', avgEntities: [chamberMid1, chamberMid2] },
-    ];
-    setPressureBars(bars);
+    setPressureBars(buildPressureBarDefsFromSensorConfig(sensors));
   }, [sensors]);
 
   useEffect(() => {
@@ -242,7 +217,6 @@ export default function TopBar() {
       nop: s.nop,
       meop: s.meop,
       color: s.color,
-      avgEntities: s.avgEntities,
     })) as PressureBarDef[];
   }, [pressureBars]);
 

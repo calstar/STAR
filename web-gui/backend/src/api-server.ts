@@ -34,6 +34,18 @@ export interface SensorConfigEntry {
   calEntity: string;
 }
 
+function asBoardId(raw: unknown, fallback: number): number {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** Match FSW/Elodin: (board_id % 10) with 0 → 10 for PTn / TCn / RTDn / LCn. */
+function elodinSlotFromBoardId(boardId: number): number {
+  const m = boardId % 10;
+  return m === 0 ? 10 : m;
+}
+
 function buildSensorConfig(): SensorConfigEntry[] {
   const config = readConfig();
   const boards = (config.boards || {}) as Record<string, any>;
@@ -45,7 +57,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
     if (board.enabled === false) continue;
 
     const boardIp: string = board.ip || '';
-    const boardId: number = typeof board.board_id === 'number' ? board.board_id : 1;
+    const boardId = asBoardId(board.board_id, 1);
     const isHpBoard = Array.isArray(board.hp_pt_connectors) && board.hp_pt_connectors.length > 0;
     const excitationConnectorId: number = board.excitation_connector_id ?? -1;
     const hpPtConnectors: Set<number> = new Set(
@@ -80,7 +92,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
       if (isHpBoard && !hpPtConnectors.has(channelId)) continue;
 
       const isHpPt = isHpBoard && hpPtConnectors.has(channelId);
-      const boardNumber = boardId % 10;
+      const boardNumber = elodinSlotFromBoardId(boardId);
 
       sensors.push({
         id: channelId,
@@ -105,10 +117,10 @@ function buildSensorConfig(): SensorConfigEntry[] {
     const rolesSection = (config as any)[boardRolesKey] as Record<string, number> | undefined;
     if (!rolesSection || typeof rolesSection !== 'object') continue;
 
-    const boardId: number = typeof board.board_id === 'number' ? board.board_id : 51;
+    const boardId = asBoardId(board.board_id, 51);
     const boardIp: string = board.ip || '';
 
-    const boardNumber: number = boardId % 10;
+    const boardNumber = elodinSlotFromBoardId(boardId);
     for (const [roleName, channelId] of Object.entries(rolesSection)) {
       const ch = typeof channelId === 'number' ? channelId : Number(channelId);
       if (!isFinite(ch)) continue;
@@ -132,7 +144,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
     if (board.type !== 'RTD') continue;
     if (board.enabled === false) continue;
 
-    const boardId: number = typeof board.board_id === 'number' ? board.board_id : 31;
+    const boardId = asBoardId(board.board_id, 31);
     const boardIp: string = board.ip || '';
     const boardRolesKey = `sensor_roles_${boardKey}`;
     const rolesSection = (config as any)[boardRolesKey] as Record<string, number> | undefined;
@@ -140,7 +152,7 @@ function buildSensorConfig(): SensorConfigEntry[] {
       ? (board.active_connectors as number[])
       : Array.from({ length: (board.num_sensors ?? 4) }, (_, i) => i + 1);
 
-    const boardNumber: number = boardId % 10;
+    const boardNumber = elodinSlotFromBoardId(boardId);
     if (rolesSection && typeof rolesSection === 'object') {
       for (const [roleName, channelId] of Object.entries(rolesSection)) {
         const ch = typeof channelId === 'number' ? channelId : Number(channelId);
@@ -178,12 +190,12 @@ function buildSensorConfig(): SensorConfigEntry[] {
     if (board.type !== 'LC') continue;
     if (board.enabled === false) continue;
 
-    const boardId: number = typeof board.board_id === 'number' ? board.board_id : 41;
+    const boardId = asBoardId(board.board_id, 41);
     const boardIp: string = board.ip || '';
     const boardRolesKey = `sensor_roles_${boardKey}`;
     const rolesSection = (config as any)[boardRolesKey] as Record<string, number> | undefined;
 
-    const boardNumber: number = boardId % 10;
+    const boardNumber = elodinSlotFromBoardId(boardId);
     if (rolesSection && typeof rolesSection === 'object') {
       for (const [roleName, channelId] of Object.entries(rolesSection)) {
         const ch = typeof channelId === 'number' ? channelId : Number(channelId);
@@ -564,4 +576,3 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
     return true;
   };
 }
-

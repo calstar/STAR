@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useSensorStore, ALIASES } from '@/lib/store';
+import { useSensorStore, ALIASES, buildAliasesFromConfig } from '@/lib/store';
 import {
   SystemState,
   ActuatorState,
@@ -102,18 +102,17 @@ describe('Sensor data → store', () => {
     expect(state.sensorData['PT_Cal.PT_CH1.pressure_psi']).toBe(75.0);
   });
 
-  it('should reject late packets (older timestamp)', async () => {
+  it('should apply updates in arrival order (no timestamp-based drop)', async () => {
     const { updateSensor } = useSensorStore.getState();
     const now = Date.now();
 
     updateSensor({ entity: 'PT_Cal.PT_CH1', component: 'pressure_psi', value: 50, timestamp: now });
     await waitForSensorFlush();
 
-    // Send an older packet — should be rejected
     updateSensor({ entity: 'PT_Cal.PT_CH1', component: 'pressure_psi', value: 999, timestamp: now - 1000 });
     await waitForSensorFlush();
 
-    expect(useSensorStore.getState().sensorData['PT_Cal.PT_CH1.pressure_psi']).toBe(50);
+    expect(useSensorStore.getState().sensorData['PT_Cal.PT_CH1.pressure_psi']).toBe(999);
   });
 
   it('should batch updates (pending writes accumulate before flush)', async () => {
@@ -142,10 +141,25 @@ describe('Sensor data → store', () => {
 // ── Test 2: Alias resolution (uses direct setState, no batching needed) ──────
 
 describe('Alias resolution via getSensorValue()', () => {
+  beforeEach(() => {
+    buildAliasesFromConfig({
+      boards: {
+        pt1: { type: 'PT', board_id: 1, enabled: true, num_sensors: 10 },
+      },
+      sensor_roles_pt1: {
+        'Fuel Upstream': 1,
+        PT_CH1: 1,
+      },
+      actuator_roles: {
+        'LOX Main': ['NC', 1, 12],
+      },
+    });
+  });
+
   it('should resolve named entity to channel data via alias', () => {
-    // Write directly to sensorData to test alias resolution without batching
+    // Board-scoped stream key (backend + Elodin use PT1_Cal.CH*).
     useSensorStore.setState({
-      sensorData: { 'PT_Cal.CH1.pressure_psi': 100.5 },
+      sensorData: { 'PT1_Cal.CH1.pressure_psi': 100.5 },
     });
 
     const value = useSensorStore.getState().getSensorValue('PT_Cal.Fuel_Upstream', 'pressure_psi');
@@ -163,10 +177,10 @@ describe('Alias resolution via getSensorValue()', () => {
 
   it('should resolve actuator aliases (named → channel)', () => {
     useSensorStore.setState({
-      sensorData: { 'ACT.ACT_CH1.raw_adc_counts': 1500000 },
+      sensorData: { 'ACT2.CH1.raw_adc_counts': 1500000 },
     });
 
-    const value = useSensorStore.getState().getSensorValue('ACT.LOX_Main', 'raw_adc_counts');
+    const value = useSensorStore.getState().getSensorValue('ACT2.LOX_Main', 'raw_adc_counts');
     expect(value).toBe(1500000);
   });
 
@@ -199,10 +213,9 @@ describe('Alias resolution via getSensorValue()', () => {
 
   it('should resolve PT raw aliases across namespaces', () => {
     useSensorStore.setState({
-      sensorData: { 'PT_Cal.PT_CH1.raw_adc_counts': 1234567 },
+      sensorData: { 'PT1.CH1.raw_adc_counts': 1234567 },
     });
 
-    // PT.PT_CH1 should resolve via alias to PT_Cal.PT_CH1
     const value = useSensorStore.getState().getSensorValue('PT.PT_CH1', 'raw_adc_counts');
     expect(value).toBe(1234567);
   });

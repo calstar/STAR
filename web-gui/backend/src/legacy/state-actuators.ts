@@ -124,6 +124,32 @@ export interface StateActuatorMap {
  * Resolve an actuator CSV name to its board channel ID.
  * All data sourced from config.toml actuator_roles.
  */
+/**
+ * Map a CSV / role / GUI actuator name to the Elodin [0x32] entity the thin server and parser use.
+ * Uses the same board slot rule as FSW: board_id % 10 with 0 → 10.
+ */
+export function resolveActuatorCmdEntity(actuatorName: string): string | null {
+  try {
+    const config = readConfig();
+    const roles = config.actuator_roles as Record<string, unknown[]> | undefined;
+    if (!roles) return null;
+    let entry = roles[actuatorName];
+    if (!entry && ACTUATOR_ABBREV_MAP[actuatorName]) {
+      const full = ACTUATOR_ABBREV_MAP[actuatorName];
+      entry = roles[full];
+    }
+    if (!Array.isArray(entry) || entry.length < 2) return null;
+    const localCh = typeof entry[1] === 'number' ? entry[1] : Number(entry[1]);
+    if (!Number.isFinite(localCh) || localCh < 1) return null;
+    const boardId = entry.length >= 3 && typeof entry[2] === 'number' ? entry[2] : 12;
+    const mod = boardId % 10;
+    const bn = mod === 0 ? 10 : mod;
+    return `ACT_CMD.B${bn}.CH${localCh}`;
+  } catch {
+    return null;
+  }
+}
+
 export function getActuatorChannel(
   actuatorName: string,
   configActuatorChannels: Record<string, number>,

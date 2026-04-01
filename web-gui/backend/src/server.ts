@@ -31,7 +31,7 @@ import { registerVTables, clearSubscriptionState } from './elodin-vtable-registr
 import { registerControllerVTables } from './legacy/elodin-vtable-controller.js';
 import { createAPIHandler } from './api-server.js';
 import { readConfig } from './routes/config.js';
-import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY } from './legacy/state-actuators.js';
+import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity } from './legacy/state-actuators.js';
 import type { StateActuatorMap } from './legacy/state-actuators.js';
 import { getStateTransitions } from './legacy/state-transitions.js';
 import { handleCalibrationCommand, type CalibrationHost } from './calibration-handler.js';
@@ -47,6 +47,9 @@ const ELODIN_HOST = process.env.ELODIN_HOST ?? '127.0.0.1';
 const ELODIN_PORT = parseInt(process.env.ELODIN_PORT ?? '2240', 10);
 const ACT_SVC_PORT = parseInt(process.env.ACTUATOR_SERVICE_PORT ?? '9998', 10);
 const CTRL_SVC_PORT = parseInt(process.env.CONTROLLER_SERVICE_PORT ?? '9999', 10);
+const THIN_VERBOSE_CONNECTION_LOG = process.env.THIN_VERBOSE_CONNECTION_LOG === '1';
+const THIN_HEARTBEAT_DIAG_LOG = process.env.THIN_HEARTBEAT_DIAG_LOG === '1';
+const THIN_STATS_LOG = process.env.THIN_STATS_LOG === '1';
 
 const HISTORY_MAX_POINTS = 1000;  // per series
 const HISTORY_MAX_KEYS = 80;
@@ -236,6 +239,28 @@ function getExpectedPositions(state: SystemState): Record<string, number> {
   return result;
 }
 
+/** Push CSV-derived commanded actuator states using ACT_CMD.B*.CH* keys (matches Elodin [0x32] + GUI). */
+function broadcastCommandedActuatorsForState(state: SystemState): void {
+  const raw = STATE_ACTUATOR_MAP[state];
+  if (!raw) return;
+  const epochNow = Date.now();
+  for (const [actuatorName, value] of Object.entries(raw)) {
+    const cmdEntity = resolveActuatorCmdEntity(actuatorName);
+    if (!cmdEntity) continue;
+    const key = `${cmdEntity}.actuator_state_commanded`;
+    if (firstPacketTimeMs !== null) {
+      const timeSec = (epochNow - firstPacketTimeMs) / 1000;
+      if (timeSec >= 0 && timeSec < 86400) recordHistory(key, timeSec, value);
+    }
+    stats.sensorUpdatesBroadcast++;
+    broadcast({
+      type: MessageType.SENSOR_UPDATE,
+      timestamp: epochNow,
+      payload: { entity: cmdEntity, component: 'actuator_state_commanded', value, timestamp: epochNow },
+    });
+  }
+}
+
 // ── Actuator state mismatch detection ────────────────────────────────────────
 
 /** Last-known actuator_state (sensed from [0x31] current-sense) per entity */
@@ -321,7 +346,9 @@ function updateBoard(low: number, payload: Buffer): void {
 
   if (wasDisconnected) {
     broadcastBoardStatus();
-    console.log(`[ThinServer] Board ${boardId} (${typeStr}) connected`);
+    if (THIN_VERBOSE_CONNECTION_LOG) {
+      console.log(`[ThinServer] Board ${boardId} (${typeStr}) connected`);
+    }
   }
 }
 
@@ -329,14 +356,14 @@ function updateBoard(low: number, payload: Buffer): void {
 // see if Elodin is delivering duplicates vs boards sending too fast.
 let hbDiagCount = new Map<number, number>();
 setInterval(() => {
-  if (hbDiagCount.size > 0) {
+  if (THIN_HEARTBEAT_DIAG_LOG && hbDiagCount.size > 0) {
     const entries = Array.from(hbDiagCount.entries())
       .map(([id, count]) => `board ${id}=${count}/s`)
       .join(', ');
     console.log(`[ThinServer] Heartbeat arrival rate: ${entries}`);
-    hbDiagCount.clear();
   }
-  if (stats.relayEntityUpdatesReceived > 0) {
+  hbDiagCount.clear();
+  if (THIN_STATS_LOG && stats.relayEntityUpdatesReceived > 0) {
     console.log(`[ThinServer] Stats: entityUpdates=${stats.relayEntityUpdatesReceived} broadcasts=${stats.sensorUpdatesBroadcast} wsClients=${wss.clients.size}`);
   }
 }, 5000);
@@ -559,18 +586,16 @@ wss.on('connection', (ws: WebSocket) => {
     send(ws, { type: MessageType.BOARD_STATUS_UPDATE, timestamp: Date.now(), payload: { boards } });
   }
 
-  // Initial actuator positions from state machine CSV (IDLE state defaults).
-  // Sent as SENSOR_UPDATE with component 'actuator_state_commanded' so the frontend
-  // shows correct positions before any [0x32] data arrives from Elodin.
-  const idlePositions = getExpectedPositions(currentState);
-  const now = Date.now();
-  for (const [entity, value] of Object.entries(idlePositions)) {
-    // Only send defaults if no real data has arrived for this actuator yet
-    const key = `${entity}.actuator_state_commanded`;
-    if (!historyCache.has(key)) {
+  // Commanded actuator snapshot for current state (ACT_CMD.B*.CH* keys — same as [0x32] parser + GUI).
+  const snap = STATE_ACTUATOR_MAP[currentState];
+  if (snap) {
+    const t = Date.now();
+    for (const [actuatorName, value] of Object.entries(snap)) {
+      const cmdEntity = resolveActuatorCmdEntity(actuatorName);
+      if (!cmdEntity) continue;
       send(ws, {
-        type: MessageType.SENSOR_UPDATE, timestamp: now,
-        payload: { entity, component: 'actuator_state_commanded', value, timestamp: now },
+        type: MessageType.SENSOR_UPDATE, timestamp: t,
+        payload: { entity: cmdEntity, component: 'actuator_state_commanded', value, timestamp: t },
       });
     }
   }
@@ -642,23 +667,30 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       const targetState = command.data.state!;
       const stateName = SystemState[targetState] ?? String(targetState);
       const csvName = STATE_TO_CSV_NAME[stateName] ?? stateName;
+      // Optimistic UI: reflect requested state immediately; roll back if sequencer rejects.
+      currentState = targetState;
+      broadcastStateUpdate();
+      // Actuator tiles read ACT_CMD.* from CSV snapshot — do not wait for actuator_service TCP
+      // (that round-trip was causing ~1–2s lag vs state buttons).
+      broadcastCommandedActuatorsForState(currentState);
+      if (targetState === SystemState.FIRE && prevState !== SystemState.FIRE) {
+        sendToControllerService('FIRE_START\n').catch(() => { /* non-fatal */ });
+      } else if (prevState === SystemState.FIRE && targetState !== SystemState.FIRE) {
+        sendToControllerService('FIRE_STOP\n').catch(() => { /* non-fatal */ });
+      }
       sendToActuatorService(`TRANSITION:${csvName}\n`).then(({ ok, reply }) => {
         console.log(`[ThinServer] State transition ${stateName} → ${csvName}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
         if (ok) {
-          currentState = targetState;
-          broadcastStateUpdate();
           scheduleActuatorMismatchCheck(currentState);
-          // Gate controller output by FIRE state parity.
-          if (targetState === SystemState.FIRE && prevState !== SystemState.FIRE) {
-            sendToControllerService('FIRE_START\n').then(({ ok: ctrlOk, reply: ctrlReply }) => {
-              console.log(`[ThinServer] → controller_service FIRE_START: ${ctrlOk ? 'OK' : 'FAIL'} (${ctrlReply})`);
-            }).catch(() => { /* non-fatal */ });
-          } else if (prevState === SystemState.FIRE && targetState !== SystemState.FIRE) {
-            sendToControllerService('FIRE_STOP\n').then(({ ok: ctrlOk, reply: ctrlReply }) => {
-              console.log(`[ThinServer] → controller_service FIRE_STOP: ${ctrlOk ? 'OK' : 'FAIL'} (${ctrlReply})`);
-            }).catch(() => { /* non-fatal */ });
-          }
         } else {
+          currentState = prevState;
+          broadcastStateUpdate();
+          broadcastCommandedActuatorsForState(prevState);
+          if (prevState === SystemState.FIRE && targetState !== SystemState.FIRE) {
+            sendToControllerService('FIRE_START\n').catch(() => { });
+          } else if (targetState === SystemState.FIRE && prevState !== SystemState.FIRE) {
+            sendToControllerService('FIRE_STOP\n').catch(() => { });
+          }
           send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition failed: ${reply}` } });
         }
       });
@@ -667,10 +699,31 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
     case 'actuator': {
       const open = command.data.actuatorState === 1 || command.data.actuatorState as unknown as string === 'open';
       const actuatorName = command.data.actuatorName!;
+      const cmdEntity = resolveActuatorCmdEntity(actuatorName);
+      const v = open ? 1 : 0;
+
+      const pushActuatorCmdBroadcast = (val: number) => {
+        if (!cmdEntity) return;
+        const ts = Date.now();
+        const key = `${cmdEntity}.actuator_state_commanded`;
+        if (firstPacketTimeMs !== null) {
+          const timeSec = (ts - firstPacketTimeMs) / 1000;
+          if (timeSec >= 0 && timeSec < 86400) recordHistory(key, timeSec, val);
+        }
+        stats.sensorUpdatesBroadcast++;
+        broadcast({
+          type: MessageType.SENSOR_UPDATE,
+          timestamp: ts,
+          payload: { entity: cmdEntity, component: 'actuator_state_commanded', value: val, timestamp: ts },
+        });
+      };
+
+      // Optimistic: UI updates immediately; TCP to actuator_service still authoritative — revert on failure.
+      pushActuatorCmdBroadcast(v);
+
       sendToActuatorService(`ACTUATOR:${actuatorName}:${open ? 1 : 0}\n`).then(({ ok, reply }) => {
-        // No optimistic ACTUATOR_UPDATE broadcast — the sequencer publishes [0x32] to Elodin DB,
-        // which the backend receives and forwards as SENSOR_UPDATE with component 'actuator_state_commanded'.
         if (!ok) {
+          pushActuatorCmdBroadcast(open ? 0 : 1);
           send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Actuator command failed: ${reply}` } });
         }
       });
@@ -778,13 +831,16 @@ const STATE_TO_CSV_NAME: Record<string, string> = {
 // expected packet groups flow.
 let resubscribeTimer: NodeJS.Timeout | null = null;
 const MAX_RESUBSCRIBE_ATTEMPTS = 24;
+let shouldResubscribe = true;
 
 function scheduleResubscribe(attempt: number): void {
+  if (!shouldResubscribe) return;
   if (attempt > MAX_RESUBSCRIBE_ATTEMPTS) return;
   if (resubscribeTimer) return;
   resubscribeTimer = setTimeout(() => {
     resubscribeTimer = null;
     if (!elodin.isConnected()) return;
+    if (!shouldResubscribe) return;
     registerVTables(elodin).then(() => {
       scheduleResubscribe(attempt + 1);
     }).catch(() => {
@@ -798,6 +854,7 @@ elodin.on('connected', () => {
   broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true } });
 
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
+  shouldResubscribe = true;
 
   calibrationHost.elodin = elodin;
   registerVTables(elodin).then(() => {
@@ -874,6 +931,7 @@ elodin.on('packet', (header: any, payload: Buffer) => {
       currentState = stateVal as SystemState;
       debugMode = debugModeVal === 1;
       broadcastStateUpdate();
+      broadcastCommandedActuatorsForState(currentState);
       scheduleActuatorMismatchCheck(currentState);
       if (currentState === SystemState.FIRE && prevState !== SystemState.FIRE) {
         sendToControllerService('FIRE_START\n').catch(() => { /* non-fatal */ });
@@ -905,8 +963,12 @@ elodin.on('packet', (header: any, payload: Buffer) => {
       // Set mission T+0 on first meaningful data packet.
       if (firstPacketTimeMs === null) {
         firstPacketTimeMs = epochNow;
-        console.log(`[ThinServer] Mission T+0: ${new Date(firstPacketTimeMs).toISOString()}`);
+        if (THIN_VERBOSE_CONNECTION_LOG) {
+          console.log(`[ThinServer] Mission T+0: ${new Date(firstPacketTimeMs).toISOString()}`);
+        }
         broadcast({ type: MessageType.MISSION_START_TIME, timestamp: Date.now(), payload: { missionStartTime: firstPacketTimeMs } });
+        shouldResubscribe = false;
+        if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
       }
 
       const key = `${parsed.entity}.${parsed.component}`;

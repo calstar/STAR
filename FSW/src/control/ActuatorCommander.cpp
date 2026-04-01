@@ -26,6 +26,15 @@ namespace sequencer {
 using ActuatorCommandedMsg = comms::CommsMessage<uint64_t, uint8_t, uint8_t>;
 static constexpr uint8_t VTABLE_ACT_CMD_HI = 0x32;
 
+/** Elodin low byte for [0x32, lo]: (board_slot - 1) * 0x20 + local_channel; slot = board_id % 10, 0
+ * → 10. */
+static uint8_t actuator_elodin_low_byte(uint32_t board_id, uint8_t local_channel) {
+    int bn = static_cast<int>(board_id % 10);
+    if (bn == 0)
+        bn = 10;
+    return static_cast<uint8_t>((bn - 1) * 0x20 + local_channel);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -99,7 +108,7 @@ static bool parseActuatorRole(const std::string& val, ActuatorRole& out,
             out.board_ip =
                 (it != board_id_to_ip.end()) ? it->second : "192.168.2." + std::to_string(bid);
         } else {
-            out.board_id = 11;  // fallback
+            out.board_id = 11;              // fallback
             out.board_ip = "192.168.2.11";  // fallback
         }
     } catch (...) {
@@ -360,7 +369,8 @@ void ActuatorCommander::applyForState(State state) {
         uint8_t hw_state = static_cast<uint8_t>(role.is_no ? (1 - pos) : pos);
         by_board[role.board_ip].emplace_back(static_cast<uint8_t>(role.channel), hw_state);
         // Global channel: (board_id - 11) * 10 + channel → unique across all actuator boards
-        uint8_t global_ch = static_cast<uint8_t>((role.board_id % 10 - 1) * 0x20 + role.channel);
+        uint8_t global_ch =
+            actuator_elodin_low_byte(role.board_id, static_cast<uint8_t>(role.channel));
         logical_commands.emplace_back(global_ch, static_cast<uint8_t>(pos));
     }
     lock.unlock();
@@ -431,7 +441,8 @@ bool ActuatorCommander::sendSingleActuator(const std::string& name, int pos) {
     if (ok) {
         std::cout << "[ActuatorCommander] Manual: " << name << " -> "
                   << (pos == 1 ? "OPEN" : "CLOSED") << std::endl;
-        uint8_t global_ch = static_cast<uint8_t>((role.board_id % 10 - 1) * 0x20 + role.channel);
+        uint8_t global_ch =
+            actuator_elodin_low_byte(role.board_id, static_cast<uint8_t>(role.channel));
         publishCommandedState(global_ch, static_cast<uint8_t>(pos));
     }
     return ok;
@@ -462,10 +473,9 @@ void ActuatorCommander::publishCommandedState(uint8_t channel_id, uint8_t logica
     if (!elodin_ || !elodin_->is_connected())
         return;
 
-    auto ts_ns = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count());
+    auto ts_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                           std::chrono::steady_clock::now().time_since_epoch())
+                                           .count());
 
     ActuatorCommandedMsg msg(ts_ns, channel_id, logical_pos);
     std::array<uint8_t, 2> table_id = {VTABLE_ACT_CMD_HI, channel_id};
@@ -482,7 +492,8 @@ void ActuatorCommander::publishInitialState() {
     for (const auto& [name, role] : roles_) {
         // De-energized: NC → closed (0), NO → open (1)
         uint8_t logical_pos = role.is_no ? 1 : 0;
-        uint8_t global_ch = static_cast<uint8_t>((role.board_id % 10 - 1) * 0x20 + role.channel);
+        uint8_t global_ch =
+            actuator_elodin_low_byte(role.board_id, static_cast<uint8_t>(role.channel));
         publishCommandedState(global_ch, logical_pos);
     }
     std::cout << "[ActuatorCommander] Published initial state for " << roles_.size()

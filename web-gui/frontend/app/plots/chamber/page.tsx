@@ -93,7 +93,7 @@ export default function ChamberGraphsPage() {
       .map((role) =>
         allSensors.find((s) => {
           const calEntity = s.calEntity;
-          return (calEntity.startsWith('PT_Cal.') || /^PT\\d+_Cal\\.CH\\d+$/.test(calEntity)) && s.role === role;
+          return (calEntity.startsWith('PT_Cal.') || /^PT\d+_Cal\.CH\d+$/.test(calEntity)) && s.role === role;
         })
       )
       .filter((s): s is NonNullable<typeof s> => s != null);

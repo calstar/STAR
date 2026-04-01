@@ -12,8 +12,16 @@ export interface WSMessage {
   payload: unknown;
 }
 
-/** If no message received for this long, treat connection as stale and reconnect (handles half-open / proxy timeouts). */
-const STALE_CONNECTION_MS = 2 * 60 * 1000; // 2 minutes
+/** If no message received for this long, treat connection as stale and reconnect.
+ *  Disabled by default because some hardware runs can have sparse/bursty streams and
+ *  aggressive stale-closing causes false frontend disconnect loops.
+ *  Enable by setting NEXT_PUBLIC_WS_STALE_MS to a positive integer (ms).
+ */
+const STALE_CONNECTION_MS = (() => {
+  const raw = (typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_WS_STALE_MS : undefined) ?? '';
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+})();
 const STALE_CHECK_INTERVAL_MS = 30 * 1000; // check every 30s
 
 export class WebSocketClient {
@@ -33,14 +41,19 @@ export class WebSocketClient {
 
   connect(): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
+      // Idempotent connect: many components call ws.connect() on mount.
+      // Never tear down a healthy socket from a repeated connect request.
       console.log('✅ WebSocket already connected');
       return;
     }
+    if (this.ws?.readyState === WebSocket.CONNECTING) {
+      // Another caller already initiated connection; let it complete.
+      return;
+    }
 
-    // Close existing connection if any
-    if (this.ws) {
-      console.log('🔌 Closing existing WebSocket connection...');
-      this.ws.close();
+    // If a previous socket is CLOSING/CLOSED, discard reference and create a new one.
+    if (this.ws && (this.ws.readyState === WebSocket.CLOSING || this.ws.readyState === WebSocket.CLOSED)) {
+      this.ws = null;
     }
 
     try {
@@ -243,11 +256,14 @@ export class WebSocketClient {
   }
 
   private startStaleCheck(): void {
+    if (STALE_CONNECTION_MS <= 0) return;
     this.stopStaleCheck();
     this.staleCheckTimer = setInterval(() => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+      // Ignore stale checks while tab is backgrounded to avoid reconnect churn.
+      if (typeof document !== 'undefined' && document.hidden) return;
       if (Date.now() - this.lastMessageTime > STALE_CONNECTION_MS) {
-        console.warn('⚠️ No WebSocket message for 2+ minutes — reconnecting (stale connection)');
+        console.warn(`⚠️ No WebSocket message for ${Math.round(STALE_CONNECTION_MS / 1000)}s — reconnecting (stale connection)`);
         this.stopStaleCheck();
         this.ws.close(1000, 'stale');
       }
@@ -292,11 +308,30 @@ export class WebSocketClient {
 }
 
 // Singleton instance
-let wsClient: WebSocketClient | null = null;
+// In Next.js dev, HMR can re-evaluate modules and reset module-scoped variables.
+// Storing the singleton on `globalThis` keeps the connection stable across hot reloads.
+const wsClientGlobal = globalThis as unknown as {
+  __sensorSystemWsClient?: WebSocketClient;
+};
 
 export function getApiBaseUrl(): string {
   if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL;
+    const envUrl = process.env.NEXT_PUBLIC_API_URL;
+    // Guard against common misconfig: hardcoded localhost while viewing UI from another host.
+    if (typeof window !== 'undefined') {
+      try {
+        const parsed = new URL(envUrl);
+        const isLocalEnv = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+        const isRemoteClient = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+        if (isLocalEnv && isRemoteClient) {
+          const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+          return `${protocol}//${window.location.hostname}:8081`;
+        }
+      } catch {
+        // Fall through to existing behavior.
+      }
+    }
+    return envUrl;
   }
   if (typeof window !== 'undefined' && window.location.hostname) {
     const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
@@ -309,7 +344,22 @@ export function getApiBaseUrl(): string {
 function getWebSocketUrl(): string {
   // Use environment variable if set
   if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_WS_URL) {
-    return process.env.NEXT_PUBLIC_WS_URL;
+    const envUrl = process.env.NEXT_PUBLIC_WS_URL;
+    // Guard against localhost trap when client is remote (tablet/laptop on network).
+    if (typeof window !== 'undefined') {
+      try {
+        const parsed = new URL(envUrl);
+        const isLocalEnv = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+        const isRemoteClient = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+        if (isLocalEnv && isRemoteClient) {
+          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          return `${protocol}//${window.location.hostname}:8081`;
+        }
+      } catch {
+        // Fall through to existing behavior.
+      }
+    }
+    return envUrl;
   }
 
   // Auto-detect from current hostname (for network access)
@@ -329,10 +379,10 @@ function getWebSocketUrl(): string {
 }
 
 export function getWebSocketClient(): WebSocketClient {
-  if (!wsClient) {
+  if (!wsClientGlobal.__sensorSystemWsClient) {
     const url = getWebSocketUrl();
     console.log(`🔧 Creating WebSocket client singleton with URL: ${url}`);
-    wsClient = new WebSocketClient(url);
+    wsClientGlobal.__sensorSystemWsClient = new WebSocketClient(url);
   }
-  return wsClient;
+  return wsClientGlobal.__sensorSystemWsClient;
 }

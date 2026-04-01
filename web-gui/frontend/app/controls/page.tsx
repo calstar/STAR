@@ -1,11 +1,12 @@
 'use client'
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
 import ActuatorControlByName from '@/components/controls/ActuatorControlByName';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
-import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
+import { useSensorConfig } from '@/lib/sensor-config';
+import { buildPressurePlotSeriesFromSensorList } from '@/lib/pressure-bar-defs';
 
 const STATE_NAMES: Record<number, string> = {
   0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
@@ -15,14 +16,10 @@ const STATE_NAMES: Record<number, string> = {
   18: 'GSE ABORT', 19: 'EMERGENCY ABORT', 20: 'PRESS STANDBY',
 };
 
-const PRESSURE_SENSORS_PLOT = PRESSURE_SENSORS.map((s) => ({
-  label: s.label.replace('Upstream', 'Up').replace('Downstream', 'Down').replace('Regulated', 'Reg'),
-  entity: s.entity,
-  color: s.color,
-}));
-
 export default function ControlsPage() {
   const { actuators: actuatorsFromConfig, loading: actuatorsLoading } = useActuatorsFromConfig();
+  const sensors = useSensorConfig();
+  const pressurePlot = useMemo(() => buildPressurePlotSeriesFromSensorList(sensors), [sensors]);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden">
@@ -31,10 +28,10 @@ export default function ControlsPage() {
           <div className="bg-card rounded-xl border border-gray-800 p-4 h-full flex flex-col min-h-0">
             <TimeSeriesPlot
               title="All Pressure Sensors (PSI)"
-              entities={PRESSURE_SENSORS_PLOT.map(s => s.entity)}
-              labels={PRESSURE_SENSORS_PLOT.map(s => s.label)}
+              entities={pressurePlot.map(s => s.entity)}
+              labels={pressurePlot.map(s => s.label)}
               component="pressure_psi"
-              colors={PRESSURE_SENSORS_PLOT.map(s => s.color)}
+              colors={pressurePlot.map(s => s.color)}
               yLabel="Pressure (PSI)"
               windowSeconds={30}
             />

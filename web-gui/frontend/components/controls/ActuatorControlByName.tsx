@@ -18,8 +18,9 @@ export default function ActuatorControlByName({ name, channel, entity, boardId }
   const ws = getWebSocketClient();
   const debugMode = useSensorStore((s) => s.debugMode);
   const boardNumber = boardId != null ? ((boardId % 10) || 10) : null;
-  const roleKey = name.replace(/\s+/g, '_');
-  const commandedEntity = boardNumber != null ? `ACT_CMD.B${boardNumber}.${roleKey}` : entity;
+  // Subscribe to canonical commanded-state stream emitted by backend parser:
+  // ACT_CMD.B<board>.CH<channel>.actuator_state_commanded
+  const commandedEntity = boardNumber != null ? `ACT_CMD.B${boardNumber}.CH${channel}` : entity;
   const commanded = useActuatorCommandedState(commandedEntity);
   const calEntity = entity.replace('ACT.', 'ACT_Cal.');
   const currentA = useSensorValue(calEntity, 'current_a');
@@ -34,10 +35,18 @@ export default function ActuatorControlByName({ name, channel, entity, boardId }
       commandType: 'actuator',
       data: { actuatorName: name, actuatorState: state },
     };
+    const val = state === ActuatorState.OPEN ? 1 : 0;
+    if (boardNumber != null) {
+      useSensorStore.getState().updateSensor({
+        entity: commandedEntity,
+        component: 'actuator_state_commanded',
+        value: val,
+        timestamp: Date.now(),
+      });
+    }
     ws.sendCommand(command);
-    // No optimistic update — state will arrive via Elodin DB [0x32] → SENSOR_UPDATE
     setPending(true);
-    setTimeout(() => setPending(false), 2000);
+    window.setTimeout(() => setPending(false), 450);
   };
 
   const commandedOpen = commanded === ActuatorState.OPEN;
