@@ -13,7 +13,7 @@
  */
 
 import { create } from 'zustand';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import {
   SensorUpdate,
   ActuatorUpdate,
@@ -82,6 +82,10 @@ interface SensorSystemState {
   setVoltageRefNominals: (nominals: VoltageRefNominals) => void;
   updateNotification: (payload: NotificationPayload) => void;
   clearNotifications: () => void;
+  /** Calibrated PT entities hidden from combined Pressure History plots (top bar click toggles). */
+  pressureHistoryHiddenEntities: Record<string, true>;
+  togglePressureHistoryPlotVisibility: (plotEntityKeys: string[]) => void;
+  clearPressureHistoryHidden: () => void;
 }
 
 const LC_ZERO_STORAGE_KEY = 'sensor_system_loadCellZeroOffsets';
@@ -349,6 +353,24 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   voltageRefNominals: { internalV: 2.5, absolute5vV: 5 },
   loadCellZeroOffsets: loadStoredLcZeroOffsets(),
   notifications: [],
+  pressureHistoryHiddenEntities: {},
+
+  togglePressureHistoryPlotVisibility: (plotEntityKeys: string[]) => {
+    const keys = plotEntityKeys.filter(Boolean).filter((e, i, a) => a.indexOf(e) === i);
+    if (keys.length === 0) return;
+    set((s) => {
+      const next: Record<string, true> = { ...s.pressureHistoryHiddenEntities };
+      const allCurrentlyShown = keys.every((e) => !next[e]);
+      if (allCurrentlyShown) {
+        for (const e of keys) next[e] = true;
+      } else {
+        for (const e of keys) delete next[e];
+      }
+      return { pressureHistoryHiddenEntities: next };
+    });
+  },
+
+  clearPressureHistoryHidden: () => set({ pressureHistoryHiddenEntities: {} }),
 
   setLoadCellZeroOffset: (calEntity: string, offsetLbf: number | null) => {
     set((s) => {
@@ -550,6 +572,17 @@ export function useSensorValue(entity: string, component: string): number | null
   });
 
   return value;
+}
+
+/** Combined Pressure History series with top-bar hide toggles applied; avoids an empty plot by clearing toggles when needed. */
+export function usePressureHistoryPlotSeries<T extends { entity: string }>(base: T[]): T[] {
+  const hidden = useSensorStore((s) => s.pressureHistoryHiddenEntities);
+  const clearHidden = useSensorStore((s) => s.clearPressureHistoryHidden);
+  const filtered = useMemo(() => base.filter((row) => !hidden[row.entity]), [base, hidden]);
+  useEffect(() => {
+    if (filtered.length === 0 && base.length > 0) clearHidden();
+  }, [filtered.length, base.length, clearHidden]);
+  return filtered.length > 0 ? filtered : base;
 }
 
 /** Subscribe to sensor flush tick (10 Hz). Use with useGetSensorValue() so pages that read many values re-render on flush without subscribing to full sensorData. */

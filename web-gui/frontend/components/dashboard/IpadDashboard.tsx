@@ -1,9 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react';
-import { useSensorStore, useSensorValue } from '@/lib/store';
+import { useSensorStore, useSensorValue, usePressureHistoryPlotSeries } from '@/lib/store';
 import { getApiBaseUrl, getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate, ActuatorUpdate, SystemState } from '@/lib/types';
+import { MessageType, SensorUpdate, StateUpdate, ActuatorUpdate, SystemState, ActuatorId } from '@/lib/types';
 import { startDataCache } from '@/lib/data-cache';
 import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
 import ActuatorControlByName from '@/components/controls/ActuatorControlByName';
@@ -80,6 +80,7 @@ export default function IpadDashboard() {
     }, [ws, loadActuatorsFromConfig, loadPressureSensors]);
 
     const isFireState = currentState === SystemState.FIRE;
+    const pressurePlotForChart = usePressureHistoryPlotSeries(pressureSensorsPlot);
 
     return (
         <main className="min-h-full w-full bg-background text-text flex flex-col overflow-y-auto">

@@ -1,9 +1,9 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react';
-import { useSensorStore, useSensorValue } from '@/lib/store';
+import { useSensorStore, useSensorValue, usePressureHistoryPlotSeries } from '@/lib/store';
 import { getApiBaseUrl, getWebSocketClient } from '@/lib/websocket';
-import { SystemState, CommandPayload } from '@/lib/types';
+import { SystemState, ActuatorId, CommandPayload } from '@/lib/types';
 import { startDataCache } from '@/lib/data-cache';
 import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
 import ActuatorControlByName from '@/components/controls/ActuatorControlByName';
@@ -139,6 +139,7 @@ export default function MobileDashboard() {
 
   const pressureBarDefs = useMemo(() => buildPressureBarDefsFromSensorConfig(sensors), [sensors]);
   const pressureSensorsPlot = useMemo(() => buildPressurePlotSeriesFromSensorList(sensors), [sensors]);
+  const pressurePlotForChart = usePressureHistoryPlotSeries(pressureSensorsPlot);
 
   return (
     <div className="flex flex-col h-full overflow-y-auto overflow-x-hidden bg-background text-text">
@@ -250,10 +251,10 @@ export default function MobileDashboard() {
           <div className="flex-1 min-h-0">
             <TimeSeriesPlot
               title="All Pressure Sensors (PSI)"
-              entities={pressureSensorsPlot.map((s) => s.entity)}
-              labels={pressureSensorsPlot.map((s) => s.label)}
+              entities={pressurePlotForChart.map((s) => s.entity)}
+              labels={pressurePlotForChart.map((s) => s.label)}
               component="pressure_psi"
-              colors={pressureSensorsPlot.map((s) => s.color)}
+              colors={pressurePlotForChart.map((s) => s.color)}
               yLabel="PSI"
               windowSeconds={timeWindow}
             />

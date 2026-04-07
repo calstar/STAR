@@ -7,6 +7,7 @@ import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { useSensorConfig } from '@/lib/sensor-config';
 import { buildPressurePlotSeriesFromSensorList } from '@/lib/pressure-bar-defs';
+import { usePressureHistoryPlotSeries } from '@/lib/store';
 
 const STATE_NAMES: Record<number, string> = {
   0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
@@ -20,6 +21,7 @@ export default function ControlsPage() {
   const { actuators: actuatorsFromConfig, loading: actuatorsLoading } = useActuatorsFromConfig();
   const sensors = useSensorConfig();
   const pressurePlot = useMemo(() => buildPressurePlotSeriesFromSensorList(sensors), [sensors]);
+  const pressurePlotForChart = usePressureHistoryPlotSeries(pressurePlot);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden">
@@ -28,10 +30,10 @@ export default function ControlsPage() {
           <div className="bg-card rounded-xl border border-gray-800 p-4 h-full flex flex-col min-h-0">
             <TimeSeriesPlot
               title="All Pressure Sensors (PSI)"
-              entities={pressurePlot.map(s => s.entity)}
-              labels={pressurePlot.map(s => s.label)}
+              entities={pressurePlotForChart.map(s => s.entity)}
+              labels={pressurePlotForChart.map(s => s.label)}
               component="pressure_psi"
-              colors={pressurePlot.map(s => s.color)}
+              colors={pressurePlotForChart.map(s => s.color)}
               yLabel="Pressure (PSI)"
               windowSeconds={30}
             />

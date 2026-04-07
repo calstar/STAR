@@ -79,6 +79,12 @@ export const PRESSURE_BAR_SENSORS = PRESSURE_SENSORS.map((s) => ({
   meop: s.meop,
 }));
 
+/** Plot series keys toggled when clicking the matching top-bar pressure bar (hide/show on Pressure History). */
+export function plotEntityKeysForPressureBar(entity: string, avgEntities?: string[]): string[] {
+  if (avgEntities && avgEntities.length > 0) return [...avgEntities];
+  return [entity];
+}
+
 /** Actuator colors (consistent across panes) */
 export const ACTUATOR_COLORS: Record<string, string> = {
   'ACT.LOX_Main': '#27AE60',
