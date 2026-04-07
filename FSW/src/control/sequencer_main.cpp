@@ -201,12 +201,12 @@ int main(int argc, char* argv[]) {
               << "| DEBUG_MODE:<0|1> | EXTEND_FIRE | RELOAD_CONFIG" << std::endl;
 
     while (g_running) {
-        // select() with 1-second timeout so we can check g_running
+        // select() with 10 ms timeout — keeps g_running check while staying low-latency
         fd_set rd;
         FD_ZERO(&rd);
         FD_SET(listen_fd, &rd);
         struct timeval tv {
-            .tv_sec = 1, .tv_usec = 0
+            .tv_sec = 0, .tv_usec = 10000
         };
         if (select(listen_fd + 1, &rd, nullptr, nullptr, &tv) <= 0)
             continue;

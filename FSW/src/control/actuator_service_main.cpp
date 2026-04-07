@@ -713,8 +713,8 @@ int main(int argc, char* argv[]) {
 
     while (g_running) {
         struct timeval tv;
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
+        tv.tv_sec = 0;
+        tv.tv_usec = 10000;  // 10 ms — wake quickly for low-latency command dispatch
         fd_set rd;
         FD_ZERO(&rd);
         FD_SET(listen_fd, &rd);
@@ -766,6 +766,9 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
+        // Reply before close so Node.js resolves ok=true and keeps the optimistic UI update.
+        const char* reply = handled ? "OK\n" : "ERR\n";
+        write(client, reply, strlen(reply));
         close(client);
     }
 
