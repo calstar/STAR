@@ -17,13 +17,13 @@ import sys
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-from scripts.calibration.calibration_orchestrator import (
+from scripts.calibration.calibration_orchestrator import (  # noqa: E402
     CalibrationOrchestrator,
-)  # noqa: E402
-from scripts.calibration.robust_calibration import (
+)
+from scripts.calibration.robust_calibration import (  # noqa: E402
     CalibrationPoint,
     EnvironmentalState,
-)  # noqa: E402
+)
 from scripts.calibration.sense_conversions import (  # noqa: E402
     raw_to_physical,
     hp_pt_adc_to_psi,
@@ -32,6 +32,8 @@ from scripts.calibration.config_loader import (  # noqa: E402
     load_config,
     build_channel_to_orchestrator_key,
     get_hp_pt_packet_channels,
+    decode_board_namespaced_low,
+    packet_ch_for_board_connector,
 )
 
 logging.basicConfig(
@@ -67,31 +69,44 @@ class ElodinWriter:
             return False
 
     def write_calibrated_pt(
-        self, channel_id: int, pressure_psi: float, raw_adc: int = 0
+        self,
+        connector_id: int,
+        pressure_psi: float,
+        raw_adc: int,
+        *,
+        raw_packet_low: int,
     ) -> bool:
         """
-        Write a calibrated PT TABLE packet to Elodin DB.
-        Packet ID: [0x20, 0x10 + channel_id]. Payload: ts_ns(8)+ch(1)+pad(3)+psi(f32)+raw(u32)+flags(1)
+        Write calibrated PT to Elodin. Packet low byte = raw_packet_low + 0x10 (board-namespaced),
+        matching FSW calibration_service / daq_bridge (NOT legacy 0x10 + global_ch).
         """
-        return self._write_calibrated(0x20, channel_id, pressure_psi, raw_adc)
+        return self._write_calibrated(
+            0x20, raw_packet_low, connector_id, pressure_psi, raw_adc
+        )
 
     def _write_calibrated(
-        self, high: int, channel_id: int, value: float, raw_counts: int
+        self,
+        high: int,
+        raw_packet_low: int,
+        connector_id: int,
+        value: float,
+        raw_counts: int,
     ) -> bool:
-        """Generic calibrated write: 21-byte payload, packet_id [high, 0x10+channel_id]."""
+        """21-byte TABLE row; cal packet id [high, raw_low + 0x10] (same rule as C++ cal_main)."""
         if not self.connected or not self.sock:
             return False
         try:
+            cal_low = (raw_packet_low + 0x10) & 0xFF
             ts_ns = time.time_ns()
             payload = struct.pack("<Q", ts_ns)
-            payload += struct.pack("<B", channel_id)
+            payload += struct.pack("<B", connector_id & 0xFF)
             payload += bytes(3)
             payload += struct.pack("<f", value)
-            payload += struct.pack("<I", raw_counts & 0xFFFFFFFF)  # handle signed (LC)
+            payload += struct.pack("<I", raw_counts & 0xFFFFFFFF)
             payload += struct.pack("<B", 0)
             header = struct.pack("<I", len(payload) + 4)
             header += struct.pack("<B", 1)  # TABLE
-            header += struct.pack("<BB", high, 0x10 + channel_id)
+            header += struct.pack("<BB", high, cal_low)
             header += struct.pack("<B", 0)
             self.sock.sendall(header + payload)
             return True
@@ -102,20 +117,35 @@ class ElodinWriter:
             return False
 
     def write_calibrated_tc(
-        self, channel_id: int, temperature_c: float, raw_adc: int
+        self,
+        connector_id: int,
+        temperature_c: float,
+        raw_adc: int,
+        *,
+        raw_packet_low: int,
     ) -> bool:
-        """Write calibrated TC to Elodin. Packet ID: [0x21, 0x10+channel_id]."""
-        return self._write_calibrated(0x21, channel_id, temperature_c, raw_adc)
+        return self._write_calibrated(
+            0x21, raw_packet_low, connector_id, temperature_c, raw_adc
+        )
 
     def write_calibrated_rtd(
-        self, channel_id: int, temperature_c: float, raw_counts: int
+        self,
+        connector_id: int,
+        temperature_c: float,
+        raw_counts: int,
+        *,
+        raw_packet_low: int,
     ) -> bool:
-        """Write calibrated RTD to Elodin. Packet ID: [0x22, 0x10+channel_id]."""
-        return self._write_calibrated(0x22, channel_id, temperature_c, raw_counts)
+        return self._write_calibrated(
+            0x22, raw_packet_low, connector_id, temperature_c, raw_counts
+        )
 
-    def write_calibrated_lc(self, channel_id: int, force: float, raw_adc: int) -> bool:
-        """Write calibrated LC to Elodin. Packet ID: [0x23, 0x10+channel_id]."""
-        return self._write_calibrated(0x23, channel_id, force, raw_adc)
+    def write_calibrated_lc(
+        self, connector_id: int, force: float, raw_adc: int, *, raw_packet_low: int
+    ) -> bool:
+        return self._write_calibrated(
+            0x23, raw_packet_low, connector_id, force, raw_adc
+        )
 
 
 def _parse_raw_adc(payload: bytes) -> Optional[int]:
@@ -134,10 +164,28 @@ def _parse_raw_signed(payload: bytes) -> Optional[int]:
     return None
 
 
+def _parse_int32_at_12(payload: bytes) -> Optional[int]:
+    """Signed ADC at offset 12 (PT/LP, TC, RTD raw on wire)."""
+    if len(payload) >= 21:
+        return struct.unpack_from("<i", payload, 12)[0]
+    return None
+
+
 # Per-channel write throttle (configurable, default 100 Hz)
 _last_elodin_write: dict = {}
 _first_calibrated_write_logged: set = set()
 _hp_pt_channels_cache: dict = {}  # cached for speed
+
+
+def _parse_pt_raw_for_packet_ch(payload: bytes, packet_ch: int) -> Optional[int]:
+    """HP PT: unsigned 4–20 mA code scale; LP PT: signed ADS1262 counts (matches FSW)."""
+    if len(payload) < 21:
+        return None
+    if not _hp_pt_channels_cache:
+        _hp_pt_channels_cache.update(get_hp_pt_packet_channels())
+    if packet_ch in _hp_pt_channels_cache:
+        return struct.unpack_from("<I", payload, 12)[0]
+    return struct.unpack_from("<i", payload, 12)[0]
 
 
 def _throttle_key(stype: str, ch: int) -> str:
@@ -170,24 +218,27 @@ def _get_raw_conversion_config():
 
 def _process_raw_and_write_calibrated(
     stype: str,
-    channel_id: int,
+    packet_ch: int,
     raw_val: int,
     writer: Any,
     channel_to_key: dict,
+    *,
+    connector_id: int,
+    raw_packet_low: int,
 ) -> None:
-    """Compute calibrated value (RCF or raw conversion) and write to Elodin DB.
-    Reuses prediction from _online_update when fresh to avoid double compute.
-    """
-    interval = (
-        config.get("calibration", {}).get("sidecar", {}).get("write_interval_sec", 0.01)
-    )
+    """Compute calibrated value (RCF or raw conversion) and optionally write to Elodin DB."""
+    sidecar_cfg = config.get("calibration", {}).get("sidecar", {})
+    if not sidecar_cfg.get("write_to_elodin", True):
+        return
+
+    interval = float(sidecar_cfg.get("write_interval_sec", 0.01))
     now = time.monotonic()
-    throttle_key = _throttle_key(stype, channel_id)
+    throttle_key = _throttle_key(stype, packet_ch)
     if now - _last_elodin_write.get(throttle_key, 0) < interval:
         return
 
     pred = None
-    key = channel_to_key.get((stype, channel_id))
+    key = channel_to_key.get((stype, packet_ch))
 
     # Path 1: Reuse fresh prediction from _online_update (avoids duplicate predict)
     if key and key in state.orchestrator.latest_predictions:
@@ -209,7 +260,7 @@ def _process_raw_and_write_calibrated(
     if pred is None and stype == "PT":
         if not _hp_pt_channels_cache:
             _hp_pt_channels_cache.update(get_hp_pt_packet_channels())
-        hp_cfg = _hp_pt_channels_cache.get(channel_id)
+        hp_cfg = _hp_pt_channels_cache.get(packet_ch)
         if hp_cfg:
             pred = hp_pt_adc_to_psi(
                 raw_val,
@@ -224,7 +275,7 @@ def _process_raw_and_write_calibrated(
         pred = raw_to_physical(
             stype,
             raw_val,
-            channel_id=channel_id,
+            channel_id=packet_ch,
             rtd_r0=cfg["rtd_r0"],
             rtd_adc_ref_v=cfg["rtd_adc_ref_v"],
             rtd_excitation_ua=cfg["rtd_excitation_ua"],
@@ -242,18 +293,26 @@ def _process_raw_and_write_calibrated(
         writer.connect()
 
     if stype == "PT":
-        writer.write_calibrated_pt(channel_id, float(pred), raw_val)
+        writer.write_calibrated_pt(
+            connector_id, float(pred), raw_val, raw_packet_low=raw_packet_low
+        )
     elif stype == "TC":
-        writer.write_calibrated_tc(channel_id, float(pred), raw_val)
+        writer.write_calibrated_tc(
+            connector_id, float(pred), raw_val, raw_packet_low=raw_packet_low
+        )
     elif stype == "RTD":
-        writer.write_calibrated_rtd(channel_id, float(pred), raw_val)
+        writer.write_calibrated_rtd(
+            connector_id, float(pred), raw_val, raw_packet_low=raw_packet_low
+        )
     elif stype == "LC":
-        writer.write_calibrated_lc(channel_id, float(pred), raw_val)
-    k = (stype, channel_id)
+        writer.write_calibrated_lc(
+            connector_id, float(pred), raw_val, raw_packet_low=raw_packet_low
+        )
+    k = (stype, packet_ch)
     if k not in _first_calibrated_write_logged:
         _first_calibrated_write_logged.add(k)
         logger.info(
-            f"[Cal] First calibrated write: {stype} ch{channel_id} → {pred:.2f}"
+            f"[Cal] First calibrated write: {stype} packet_ch={packet_ch} → {pred:.2f}"
         )
 
 
@@ -273,8 +332,10 @@ async def relay_subscriber_task():
     elodin_port = elodin_cfg.get("port", 2240)
     writer = ElodinWriter(elodin_host, elodin_port)
     channel_to_key = build_channel_to_orchestrator_key()
+    _we = sidecar_cfg.get("write_to_elodin", True)
     logger.info(
-        f"[Relay] Relay subscriber starting → {relay_url} (channel map: {len(channel_to_key)} entries)"
+        f"[Relay] Relay subscriber starting → {relay_url} (channel map: {len(channel_to_key)} entries, "
+        f"write_to_elodin={_we})"
     )
 
     while True:
@@ -292,37 +353,67 @@ async def relay_subscriber_task():
                     if ty != 1:  # TABLE = 1
                         continue
 
-                    channel_id = low
                     stype = None
                     raw_val = None
+                    connector_id: Optional[int] = None
+                    packet_ch: Optional[int] = None
 
-                    # Raw PT: [0x20, 0x01..0x0E]
-                    if high == 0x20 and 0x01 <= low <= 0x0E:
-                        raw_val = _parse_raw_adc(payload)
-                        stype = "PT"
-                    # Raw TC: [0x21, 0x01..0x14]
-                    elif high == 0x21 and 0x01 <= low <= 0x14:
-                        raw_val = _parse_raw_adc(payload)
-                        stype = "TC"
-                    # Raw RTD: [0x22, 0x01..0x14]
-                    elif high == 0x22 and 0x01 <= low <= 0x14:
-                        raw_val = _parse_raw_adc(payload)
-                        stype = "RTD"
-                    # Raw LC: [0x23, 0x01..0x14]
-                    elif high == 0x23 and 0x01 <= low <= 0x14:
-                        raw_val = _parse_raw_signed(payload)
-                        stype = "LC"
-
-                    if stype is None or raw_val is None:
+                    dec = decode_board_namespaced_low(low)
+                    if dec is None:
+                        continue
+                    board_slot, connector_id, is_raw = dec
+                    if not is_raw:
                         continue
 
-                    key = channel_to_key.get((stype, channel_id))
+                    if high == 0x20:
+                        stype = "PT"
+                        packet_ch = packet_ch_for_board_connector(
+                            "PT", board_slot, connector_id
+                        )
+                        if packet_ch is not None:
+                            raw_val = _parse_pt_raw_for_packet_ch(payload, packet_ch)
+                    elif high == 0x21:
+                        stype = "TC"
+                        packet_ch = packet_ch_for_board_connector(
+                            "TC", board_slot, connector_id
+                        )
+                        if packet_ch is not None:
+                            raw_val = _parse_int32_at_12(payload)
+                    elif high == 0x22:
+                        stype = "RTD"
+                        packet_ch = packet_ch_for_board_connector(
+                            "RTD", board_slot, connector_id
+                        )
+                        if packet_ch is not None:
+                            raw_val = _parse_int32_at_12(payload)
+                    elif high == 0x23:
+                        stype = "LC"
+                        packet_ch = packet_ch_for_board_connector(
+                            "LC", board_slot, connector_id
+                        )
+                        if packet_ch is not None:
+                            raw_val = _parse_raw_signed(payload)
+
+                    if (
+                        stype is None
+                        or raw_val is None
+                        or packet_ch is None
+                        or connector_id is None
+                    ):
+                        continue
+
+                    key = channel_to_key.get((stype, packet_ch))
                     if key and key in state.orchestrator.robust:
                         state.orchestrator._online_update(key, float(raw_val))
 
-                    # Compute calibrated and write to Elodin DB
                     _process_raw_and_write_calibrated(
-                        stype, channel_id, raw_val, writer, channel_to_key
+                        stype,
+                        packet_ch,
+                        raw_val,
+                        writer,
+                        channel_to_key,
+                        connector_id=connector_id,
+                        raw_packet_low=low,
                     )
 
         except Exception as e:

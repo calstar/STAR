@@ -303,6 +303,13 @@ std::pair<double, double> RobustCalibrationFramework::predict_pressure_with_unce
     recent_uncertainties_.push_back(sigma);
     if (recent_uncertainties_.size() > 10)
         recent_uncertainties_.pop_front();
+    // Cubic seed + bad ADC / θ can yield ±inf / 1e12; never publish that to Elodin.
+    constexpr double kPsiAbsMax = 25000.0;
+    constexpr double kPsiNegMin = -3000.0;
+    if (!std::isfinite(predicted))
+        predicted = 0.0;
+    else
+        predicted = std::clamp(predicted, kPsiNegMin, kPsiAbsMax);
     return {predicted, sigma};
 }
 

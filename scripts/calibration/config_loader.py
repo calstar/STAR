@@ -17,8 +17,6 @@ Usage:
 
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -42,7 +40,7 @@ _toml_load = None
 try:
     import tomllib  # Python ≥ 3.11
 
-    def _toml_load(path: Path) -> dict:
+    def _toml_load(path: Path) -> dict:  # noqa: F811
         with open(path, "rb") as f:
             return tomllib.load(f)
 
@@ -53,7 +51,7 @@ if _toml_load is None:
     try:
         import tomli  # pip install tomli
 
-        def _toml_load(path: Path) -> dict:
+        def _toml_load(path: Path) -> dict:  # noqa: F811
             with open(path, "rb") as f:
                 return tomli.load(f)
 
@@ -64,7 +62,7 @@ if _toml_load is None:
     try:
         import toml  # pip install toml
 
-        def _toml_load(path: Path) -> dict:
+        def _toml_load(path: Path) -> dict:  # noqa: F811
             return toml.load(str(path))
 
     except ImportError:
@@ -75,12 +73,11 @@ if _toml_load is None:
     # (handles only what our config.toml actually uses)
     import re as _re
 
-    def _toml_load(path: Path) -> dict:
+    def _toml_load(path: Path) -> dict:  # noqa: F811
         """Minimal TOML parser — enough for config.toml."""
         text = path.read_text()
         root: dict = {}
         current_section: dict = root
-        section_path: list = []
 
         for raw_line in text.splitlines():
             line = raw_line.strip()
@@ -91,7 +88,6 @@ if _toml_load is None:
             m = _re.match(r"^\[([^\]]+)\]$", line)
             if m:
                 keys = m.group(1).split(".")
-                section_path = keys
                 d = root
                 for k in keys:
                     d = d.setdefault(k, {})
@@ -206,6 +202,48 @@ def get_boards_by_type(board_type: str) -> List[dict]:
     return result
 
 
+def decode_board_namespaced_low(low: int) -> Optional[tuple]:
+    """
+    Decode daq_bridge / Elodin low byte: (board_slot, connector_1_10, is_raw).
+    Matches web-gui elodin-protocol decodeLow (PT/TC/RTD/LC 0x20–0x23).
+    Returns None if not a valid raw/cal sensor slot.
+    """
+    if low < 1:
+        return None
+    block_offset = low & 0x1F
+    is_raw = block_offset < 0x10
+    board_slot = (low >> 5) + 1
+    connector = block_offset & 0x0F
+    if connector < 1 or connector > 10:
+        return None
+    return (board_slot, connector, is_raw)
+
+
+def packet_ch_for_board_connector(
+    stype: str, board_slot: int, connector: int
+) -> Optional[int]:
+    """
+    Map physical board slot + connector to orchestrator/HP map packet channel (connector + channel_offset).
+    """
+    for board in get_boards_by_type(stype):
+        if not board.get("enabled", True):
+            continue
+        board_id = int(board.get("board_id", 1))
+        mod = board_id % 10
+        slot = 10 if mod == 0 else mod
+        if slot != board_slot:
+            continue
+        ch_offset = int(board.get("channel_offset", 0) or 0)
+        active = board.get("active_connectors", [])
+        if not active:
+            num = int(board.get("num_sensors", 10) or 10)
+            active = list(range(1, num + 1))
+        if connector not in active:
+            continue
+        return int(connector + ch_offset)
+    return None
+
+
 def build_channel_to_orchestrator_key() -> Dict[tuple, tuple]:
     """
     Build mapping (stype, packet_channel_id) → (stype, unique_ch) for relay packets.
@@ -313,7 +351,7 @@ def resolve_path(rel_path: str) -> Path:
 
 def print_config_summary():
     """Print a human-readable summary of the loaded config."""
-    cfg = load_config()
+    load_config()
     net = get_network_config()
     db = get_database_config()
     boards = get_boards()
@@ -324,13 +362,14 @@ def print_config_summary():
         f"  Network:   bind={net.get('bind_ip','?')}  sensor_port={net.get('sensor_port','?')}"
     )
     print(f"  Database:  {db.get('host','?')}:{db.get('port','?')}")
-    print(f"  Boards:")
+    print("  Boards:")
     for name, b in boards.items():
         status = "✅" if b.get("enabled", True) else "⬜"
         print(
-            f"    {status} {name:<20s}  type={b.get('type','?'):<8s}  ip={b.get('ip','?'):<16s}  sensors={b.get('num_sensors','?')}"
+            f"    {status} {name:<20s}  type={b.get('type', '?'):<8s}"
+            f"  ip={b.get('ip', '?'):<16s}  sensors={b.get('num_sensors', '?')}"
         )
-    print(f"  Calibration:")
+    print("  Calibration:")
     for st in ["pt", "tc", "rtd", "lc"]:
         cc = get_calibration_config(st)
         if cc:

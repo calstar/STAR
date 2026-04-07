@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -268,19 +267,28 @@ def hp_pt_adc_to_psi(
     """
     4-20 mA HP PT: psi = (i_ma - 4) / 16 * full_scale_psi.
     v_sense = (adc/2^31)*adc_ref_voltage, i_ma = v_sense/sense_resistor_ohms * 1000.
+    Wire codes are unsigned 0..2^31-1 (match FSW calibration_main convert_hp_pt_to_pressure).
     """
     ADC_MAX = 2147483648.0
     I_MIN_MA, I_SPAN_MA = 4.0, 16.0
-    adc_signed = _uint32_to_int32(adc_code & 0xFFFFFFFF)
-    if adc_signed >= ADC_MAX or adc_signed < 0:
+    adc_u = adc_code & 0xFFFFFFFF
+    if adc_u >= int(ADC_MAX):
         return 0.0
-    v_sense = (float(adc_signed) / ADC_MAX) * adc_ref_voltage
+    if sense_resistor_ohms <= 0.0 or not math.isfinite(adc_ref_voltage):
+        return 0.0
+    v_sense = (float(adc_u) / ADC_MAX) * adc_ref_voltage
     i_ma = (v_sense / sense_resistor_ohms) * 1000.0
+    if not math.isfinite(v_sense) or not math.isfinite(i_ma):
+        return 0.0
     if i_ma < I_MIN_MA:
         return 0.0
+    # Clamp >20 mA to 20 mA (do not snap to full_scale — that discontinuity caused plot spikes).
     if i_ma > 20.0:
-        return full_scale_psi
-    return ((i_ma - I_MIN_MA) / I_SPAN_MA) * full_scale_psi
+        i_ma = 20.0
+    psi = ((i_ma - I_MIN_MA) / I_SPAN_MA) * full_scale_psi
+    if not math.isfinite(psi):
+        return 0.0
+    return max(0.0, min(psi, full_scale_psi * 1.05))
 
 
 def pt_adc_to_psi(adc_code: int, channel_id: int) -> Optional[float]:

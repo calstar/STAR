@@ -245,7 +245,10 @@ bool PTCalibrationManager::is_calibrated(uint8_t channel_id) const {
 double PTCalibrationManager::calculate_pressure(uint8_t channel_id, int32_t adc_code) const {
     const auto* coeffs = get_calibration(channel_id);
     if (coeffs) {
-        return coeffs->calculate_pressure(adc_code);
+        double p = coeffs->calculate_pressure(adc_code);
+        if (!std::isfinite(p))
+            return 0.0;
+        return std::clamp(p, -3000.0, 20000.0);
     }
     return 0.0;  // Uncalibrated
 }
