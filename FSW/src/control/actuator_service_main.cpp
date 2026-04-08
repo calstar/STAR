@@ -38,7 +38,11 @@ std::atomic<bool> g_running{true};
 std::vector<uint8_t> build_actuator_command_udp_packet(
     const std::vector<Diablo::ActuatorCommand>& commands) {
     uint8_t buf[512];
-    size_t len = Diablo::create_actuator_command_packet(commands, buf, sizeof(buf));
+    uint32_t ts_ms = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count() &
+                                           0xFFFFFFFFu);
+    size_t len = Diablo::create_actuator_command_packet(commands, ts_ms, buf, sizeof(buf));
     if (len == 0)
         return {};
     return std::vector<uint8_t>(buf, buf + len);

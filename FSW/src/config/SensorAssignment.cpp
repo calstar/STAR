@@ -1,6 +1,7 @@
 #include "config/SensorAssignment.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
@@ -284,9 +285,13 @@ std::vector<uint8_t> SensorAssignmentManager::generate_board_config_packet(uint8
     constexpr size_t MAX_PACKET_SIZE = 512;
     uint8_t buffer[MAX_PACKET_SIZE];
 
+    uint32_t ts_ms = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count() &
+                                           0xFFFFFFFFu);
     size_t written = Diablo::create_sensor_config_packet(
         sensor_ids, reference_voltage, necessary_for_abort, controller_ip, enable_serial_printing,
-        buffer, sizeof(buffer));
+        ts_ms, buffer, sizeof(buffer));
 
     if (written == 0 || written > MAX_PACKET_SIZE) {
         std::cerr << "[SensorAssignment] Failed to serialize SENSOR_CONFIG for board "
