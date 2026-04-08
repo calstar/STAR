@@ -30,10 +30,10 @@ struct ActuatorRole {
 
 /**
  * Sends UDP actuator commands based on state transitions.
- * Manages the continuous re-send loop (1 Hz) and manual overrides for debug mode.
+ * Manages the continuous re-send loop (~10 Hz). Debug mode: manual overrides apply until
+ * cleared (Sequencer clears them on every state transition so the CSV wins when changing state).
  *
- * Thread-safe: applyForState, setManualOverride, clearManualOverride, stopContinuousLoop
- * may be called from multiple threads.
+ * Thread-safe: applyForState, setManualOverride, clearAllManualOverrides, stopContinuousLoop.
  */
 class ActuatorCommander {
 public:
@@ -61,24 +61,13 @@ public:
     /** Stop the continuous re-send loop (blocks until the thread exits). */
     void stopContinuousLoop();
 
-    /**
-     * Send a single actuator command by role name (for debug manual override).
-     * @param name  Role name (e.g. "LOX Main").
-     * @param pos   0 = closed, 1 = open.
-     * @return true if sent successfully.
-     */
+    /** Send one UDP packet for a single role (debug manual command). */
     bool sendSingleActuator(const std::string& name, int pos);
 
-    /**
-     * Register a manual override for a role (debug mode).
-     * The continuous loop will hold this value instead of the state-default.
-     */
+    /** Debug: hold this logical position for the role until cleared or state transition. */
     void setManualOverride(const std::string& name, int pos);
 
-    /** Clear a specific manual override; continuous loop returns to state-default. */
-    void clearManualOverride(const std::string& name);
-
-    /** Clear all manual overrides. */
+    /** Clear all manual overrides (e.g. leaving debug mode or transitioning state). */
     void clearAllManualOverrides();
 
     /** Set the Elodin client for publishing commanded state [0x32, ch] to the DB. */

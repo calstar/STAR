@@ -139,6 +139,8 @@ python3 scripts/postprocessing/validate_export.py ./export_csv
 
 # 3. Run analysis and generate plots
 python3 scripts/postprocessing/analyze_run.py ./export_csv -o ./output/postprocessing/latest
+# Full timeline (no PRESS_STANDBY anchor):
+python3 scripts/postprocessing/analyze_run.py ./export_csv -o ./output/postprocessing/latest --full-run
 ```
 
 Plots are written to `./output/postprocessing/latest/`:
@@ -153,6 +155,10 @@ Plots are written to `./output/postprocessing/latest/`:
 - `run_data_combined.csv` — All raw + calibrated channels, aligned to common time grid
 
 **Discrete data (states, actuators):** Uses forward-fill resampling (no interpolation) so step changes are preserved. Previously, linear interpolation produced bogus intermediate values (e.g. 0.5 between 0 and 1).
+
+**Time anchor:** Default is **first** PRESS_STANDBY in state data (not last — last can sit near shutdown and leave ~0–0.05 s of data). Use `--full-run` for the full export; `--anchor-last-press-standby` for old “last transition” behavior.
+
+**Actuator CSVs (`ACT_CMD.*.actuator_state_commanded`):** Elodin logs **commanded** state **on change** only (sparse rows). Postprocessing step-holds those samples across the full plot window (flat lines = “no change”). If a channel never received a command in the run, its export may be empty or single-sample — that is a logging limitation, not necessarily a bad DB write.
 
 **State source:** Prefers `CONTROLLER.state.to_state` (authoritative from PSM) when available; falls back to `BOARD.HB_*.engine_state` from heartbeat.
 

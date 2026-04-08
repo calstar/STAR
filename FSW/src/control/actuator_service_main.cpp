@@ -159,50 +159,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Build actuator name -> {channel, board_ip}
-    // Prefer board discovery (config.toml.auto from daq_bridge heartbeats) for IPs.
     std::map<std::string, ActuatorMapping> actuator_map;
     std::map<int, std::string> board_id_to_ip;
-
-    // Load from config.toml.auto (daq_bridge writes this from heartbeat discovery)
-    std::string auto_path = config_path + ".auto";
-    {
-        std::ifstream fa(auto_path);
-        if (fa.is_open()) {
-            std::ostringstream ss;
-            ss << fa.rdbuf();
-            std::string auto_content = ss.str();
-            size_t pos = 0;
-            while (pos < auto_content.size()) {
-                size_t next = auto_content.find("[board_", pos);
-                if (next == std::string::npos)
-                    break;
-                size_t end = auto_content.find(']', next);
-                if (end == std::string::npos)
-                    break;
-                std::string sec = auto_content.substr(next + 1, end - next - 1);
-                std::string bt = getTomlValue(auto_content, sec, "board_type", "");
-                std::string ip = getTomlValue(auto_content, sec, "ip", "");
-                if (bt == "5" && !ip.empty()) {  // board_type 5 = ACTUATOR
-                    size_t last_dot = ip.rfind('.');
-                    if (last_dot != std::string::npos) {
-                        try {
-                            int bid = std::stoi(ip.substr(last_dot + 1));
-                            if (bid >= 1 && bid <= 254) {
-                                board_id_to_ip[bid] = ip;
-                                std::cout << "[ActuatorService] Discovery: board " << bid << " -> "
-                                          << ip << std::endl;
-                            }
-                        } catch (...) {
-                        }
-                    }
-                }
-                pos = end + 1;
-            }
-            if (!board_id_to_ip.empty())
-                std::cout << "[ActuatorService] Using " << board_id_to_ip.size()
-                          << " actuator board IPs from discovery (config.toml.auto)" << std::endl;
-        }
-    }
 
     if (!config_content.empty()) {
         // Find all [boards.xxx] sections with type=ACTUATOR (static config fallback)
@@ -221,7 +179,7 @@ int main(int argc, char* argv[]) {
             if (!ip.empty()) {
                 try {
                     int id = std::stoi(id_str);
-                    if (id > 0 && !board_id_to_ip.count(id))  // discovery overrides; skip if set
+                    if (id > 0 && !board_id_to_ip.count(id))
                         board_id_to_ip[id] = ip;
                 } catch (...) {
                 }

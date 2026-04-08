@@ -110,41 +110,6 @@ static std::map<int, std::string> buildBoardIpMap(const std::string& config_cont
                                                   const std::string& config_path) {
     std::map<int, std::string> m;
 
-    // Prefer config.toml.auto (daq_bridge heartbeat discovery) when available
-    std::string auto_path = config_path + ".auto";
-    {
-        std::ifstream fa(auto_path);
-        if (fa.is_open()) {
-            std::ostringstream ss;
-            ss << fa.rdbuf();
-            std::string ac = ss.str();
-            size_t pos = 0;
-            while (pos < ac.size()) {
-                size_t next = ac.find("[board_", pos);
-                if (next == std::string::npos)
-                    break;
-                size_t end = ac.find(']', next);
-                if (end == std::string::npos)
-                    break;
-                std::string sec = ac.substr(next + 1, end - next - 1);
-                std::string bt = getTomlValue(ac, sec, "board_type", "");
-                std::string ip = getTomlValue(ac, sec, "ip", "");
-                if (bt == "5" && !ip.empty()) {  // board_type 5 = ACTUATOR
-                    size_t ld = ip.rfind('.');
-                    if (ld != std::string::npos) {
-                        try {
-                            int bid = std::stoi(ip.substr(ld + 1));
-                            if (bid >= 1 && bid <= 254)
-                                m[bid] = ip;
-                        } catch (...) {
-                        }
-                    }
-                }
-                pos = end + 1;
-            }
-        }
-    }
-
     // Fallback: scan [boards.xxx] sections in config.toml
     if (!config_content.empty()) {
         size_t pos = 0;

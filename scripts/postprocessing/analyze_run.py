@@ -9,6 +9,11 @@ Usage:
 
   Export dir defaults to ./export_csv (from FORMAT=csv export_elodin_db.sh).
   Output dir defaults to ./output/postprocessing/latest.
+
+  By default, if PSM state is available, t=0 is the *first* transition to
+  PRESS_STANDBY (state 20). Use --anchor-last-press-standby only if you want the
+  last such transition (often near shutdown — can truncate plots). Pass
+  --full-run to anchor at the first sensor timestamp (entire capture).
 """
 
 from __future__ import annotations
@@ -143,22 +148,28 @@ def _load_actuator_roles(project_root: Path | None = None) -> dict[str, str]:
 def _find_t_start_from_state(
     state_series: dict[str, pd.DataFrame],
     target_state: int = PRESS_STANDBY_STATE,
+    *,
+    last: bool = False,
 ) -> pd.Timestamp | None:
-    """Find timestamp of last transition to target_state (e.g. PRESS_STANDBY)."""
+    """Find timestamp of a transition into target_state (e.g. PRESS_STANDBY).
+
+    Default ``last=False``: **first** transition (start of first contiguous block) —
+    better for aligning “press sequence” plots. Set ``last=True`` for the last
+    transition (e.g. shutdown) — can leave almost no data after t0.
+    """
+    pick = -1 if last else 0
     for df in state_series.values():
         if "value" not in df.columns or "time" not in df.columns:
             continue
         mask = df["value"] == target_state
         if not mask.any():
             continue
-        # Transition-based (state_transitions): each row = one transition; last row with value==target is correct.
-        # Time-series: find start of last contiguous block of target_state.
         prev = mask.shift(1, fill_value=False)
         block_starts = mask & ~prev
         if block_starts.any():
-            last_start_idx = block_starts[block_starts].index[-1]
-            return df.loc[last_start_idx, "time"]
-        return df.loc[mask, "time"].iloc[-1]
+            idx = block_starts[block_starts].index[pick]
+            return df.loc[idx, "time"]
+        return df.loc[mask, "time"].iloc[pick]
     return None
 
 
@@ -233,6 +244,41 @@ def _infer_time_value_cols(df: pd.DataFrame) -> tuple[str, str] | None:
     return None
 
 
+def _infer_actuator_export_cols(df: pd.DataFrame) -> tuple[str, str] | None:
+    """Elodin flattened exports often name the value column ACT_CMD.*.actuator_state_commanded."""
+    time_cands = [
+        c for c in df.columns if any(x in c.lower() for x in ("time", "timestamp", "t"))
+    ]
+    val_cands = [
+        c
+        for c in df.columns
+        if any(
+            x in c.lower()
+            for x in (
+                "actuator_state",
+                "commanded",
+                "value",
+                "val",
+                "data",
+            )
+        )
+    ]
+    # Prefer the component column, not a stray "value" from another field
+    for c in val_cands:
+        if "actuator_state" in c.lower():
+            if time_cands:
+                return (time_cands[0], c)
+    if time_cands and val_cands:
+        return (time_cands[0], val_cands[0])
+    if len(df.columns) >= 2 and time_cands:
+        others = [c for c in df.columns if c not in time_cands]
+        if others:
+            return (time_cands[0], others[0])
+    if len(df.columns) >= 2:
+        return (df.columns[0], df.columns[1])
+    return None
+
+
 def _normalize_actuator_value(v: float | str) -> float:
     """Map actuator state to 0 (OFF) or 1 (ON). Handles numeric and string values."""
     if pd.isna(v):
@@ -274,7 +320,10 @@ def load_csv_series(export_dir: Path, pattern: str) -> dict[str, pd.DataFrame]:
             short_name = stem
         try:
             df = pd.read_csv(f)
-            pair = _infer_time_value_cols(df)
+            if "ACT_CMD" in stem or "actuator_state" in stem.lower():
+                pair = _infer_actuator_export_cols(df)
+            else:
+                pair = _infer_time_value_cols(df)
             if pair:
                 time_col, val_col = pair
                 df["time"] = pd.to_datetime(df[time_col], errors="coerce")
@@ -290,7 +339,7 @@ def load_csv_series(export_dir: Path, pattern: str) -> dict[str, pd.DataFrame]:
                     df["value"] = raw_val.apply(_normalize_actuator_value)
                 else:
                     df["value"] = pd.to_numeric(raw_val, errors="coerce")
-            df = df[["time", "value"]].dropna(subset=["value"])
+            df = df[["time", "value"]].dropna(subset=["time", "value"])
             if len(df) > 0:
                 result[short_name] = df
         except Exception as e:
@@ -381,10 +430,12 @@ def resample_to_grid_step(
     dt: float = 0.1,
     t_min: float = 0.0,
     t_max: float | None = None,
-    max_gap_sec: float | None = None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
-    """Resample discrete data (states, actuators) using forward-fill. No interpolation.
-    If max_gap_sec is provided, gaps in input t_s exceeding this will be NaNs in output.
+    """Resample discrete data (states, actuators) using step-hold forward-fill.
+
+    ACT_CMD rows are sparse (Elodin only logs on change). A single sample must
+    plot as a flat line for the whole window — use pandas ffill/bfill on a union
+    index, not per-point searchsorted (which leaves gaps when samples are sparse).
     """
     if t_max is None:
         all_t = []
@@ -396,31 +447,23 @@ def resample_to_grid_step(
         t_max = max(all_t) if all_t else 60.0
     time_grid = np.arange(t_min, t_max + dt * 0.5, dt)
     out = pd.DataFrame({"t_s": time_grid})
+    grid_index = pd.Index(time_grid)
     for name, df in series.items():
         if len(df) == 0:
             continue
-        t_s = (df["time"] - t0).dt.total_seconds().values
-        v = df["value"].values
-        # Sort by time
-        idx = np.argsort(t_s)
-        t_s = t_s[idx]
-        v = v[idx]
-        # Forward-fill: at each grid point, use value at last sample before t
-        res = np.full(len(time_grid), np.nan)
-        for i, g in enumerate(time_grid):
-            j = np.searchsorted(t_s, g, side="right") - 1
-            if j >= 0:
-                # Also check gap to previous sample
-                if max_gap_sec is not None and (g - t_s[j]) > max_gap_sec:
-                    res[i] = np.nan
-                else:
-                    res[i] = v[j]
-        # Fill leading nans with first valid
-        if len(res) > 0 and np.isnan(res[0]):
-            first_valid = np.nonzero(~np.isnan(res))[0]
-            if len(first_valid) > 0:
-                res[: first_valid[0]] = res[first_valid[0]]
-        out[name] = res
+        t_rel = (df["time"] - t0).dt.total_seconds().astype(float)
+        v = pd.to_numeric(df["value"], errors="coerce").astype(float)
+        ser = pd.Series(v.values, index=t_rel.values)
+        ser = ser[np.isfinite(ser.index)]
+        ser = ser[~ser.index.duplicated(keep="last")]
+        ser = ser.sort_index()
+        ser = ser.dropna()
+        if ser.empty:
+            out[name] = np.full(len(time_grid), np.nan)
+            continue
+        u = ser.index.union(grid_index).sort_values()
+        filled = ser.reindex(u).ffill().bfill()
+        out[name] = filled.reindex(grid_index).values
     return out, time_grid
 
 
@@ -841,7 +884,19 @@ def main() -> None:
         help="Max gap in seconds before marking drop-out (default: 0.2)",
     )
     parser.add_argument(
-        "--crop-fire", action="store_true", help="Crop to 6-second FIRE window"
+        "--crop-fire",
+        action="store_true",
+        help="Anchor at FIRE state (or chamber pressure spike) and crop window",
+    )
+    parser.add_argument(
+        "--full-run",
+        action="store_true",
+        help="Do not anchor at PRESS_STANDBY; use earliest PT/TC time as t=0 (plot full export)",
+    )
+    parser.add_argument(
+        "--anchor-last-press-standby",
+        action="store_true",
+        help="Anchor t=0 at last PRESS_STANDBY (often near shutdown); default is first PRESS_STANDBY",
     )
     args = parser.parse_args()
 
@@ -881,8 +936,13 @@ def main() -> None:
     if lc_series:
         print(f"  Loaded {len(lc_series)} load cell channels")
 
-    # Load actuator states: prefer commanded (0x32, ACT_CMD.*) over current-sense (0x31, ACT*.CH*)
+    # Load actuator states: prefer commanded (0x32, ACT_CMD.*) over current-sense (ACT*.CH*)
     act_series = load_csv_series(export_dir, "ACT_CMD.*.actuator_state_commanded.csv")
+    # Nested export dirs (some elodin-db layouts)
+    if export_dir.is_dir():
+        nested = load_csv_series(export_dir, "**/ACT_CMD*.actuator_state_commanded.csv")
+        for k, v in nested.items():
+            act_series.setdefault(k, v)
     from_commanded = bool(act_series)
     if not act_series:
         act_series = load_csv_series(export_dir, "ACT*.CH*.actuator_state.csv")
@@ -1007,20 +1067,59 @@ def main() -> None:
                         t_max_crop = 8.0  # Show 8s around spike
                         break
     else:
-        t_start = _find_t_start_from_state(state_series, PRESS_STANDBY_STATE)
-        if t_start is not None:
-            print(f"  Filtering from PRESS_STANDBY at {t_start}")
-            t0 = t_start
-        else:
+        if args.full_run:
             t0 = _find_t0_from_data(pt_series, tc_series)
+            print(f"  Time axis t=0 at earliest sensor data ({t0}) — full run (--full-run)")
+        else:
+            t_start = _find_t_start_from_state(
+                state_series,
+                PRESS_STANDBY_STATE,
+                last=args.anchor_last_press_standby,
+            )
+            if t_start is not None:
+                t0 = t_start
+                which = "last" if args.anchor_last_press_standby else "first"
+                print(
+                    f"  Time axis t=0 at {which} PRESS_STANDBY → {t_start} "
+                    f"(plots omit earlier time; use --full-run for entire capture)"
+                )
+            else:
+                t0 = _find_t0_from_data(pt_series, tc_series)
+                print(
+                    f"  No PRESS_STANDBY in state data; t=0 at earliest sensor data ({t0})"
+                )
 
-    # Calculate global t_max if not already constrained
+    # Calculate global t_max if not already constrained (exclude state log — it can
+    # extend past DAQ or skew bounds; use sensors/actuators/controller only).
     if t_max_crop is None:
-        all_t = []
-        for df in all_series.values():
-            if len(df) > 0:
-                all_t.extend((df["time"] - t0).dt.total_seconds().dropna().tolist())
+        all_t: list[float] = []
+        for sd in (pt_series, tc_series, lc_series, act_series, ctrl_series):
+            if not sd:
+                continue
+            for df in sd.values():
+                if len(df) > 0:
+                    all_t.extend((df["time"] - t0).dt.total_seconds().dropna().tolist())
         t_max_val = max(all_t) if all_t else 60.0
+        if t_max_val <= 0:
+            print(
+                "⚠️  All samples are before t0 — re-anchoring at earliest sensor time"
+            )
+            t0 = _find_t0_from_data(pt_series, tc_series)
+            all_t = []
+            for sd in (pt_series, tc_series, lc_series, act_series, ctrl_series):
+                if not sd:
+                    continue
+                for df in sd.values():
+                    if len(df) > 0:
+                        all_t.extend(
+                            (df["time"] - t0).dt.total_seconds().dropna().tolist()
+                        )
+            t_max_val = max(all_t) if all_t else 60.0
+        elif t_max_val < 2.0:
+            print(
+                f"⚠️  Short timeline after PRESS_STANDBY anchor ({t_max_val:.3f}s). "
+                "If this looks wrong, use --full-run or avoid --anchor-last-press-standby."
+            )
     else:
         t_max_val = t_max_crop
 
@@ -1068,7 +1167,6 @@ def main() -> None:
             dt,
             t_min=t_min_crop,
             t_max=t_max_val,
-            max_gap_sec=args.max_gap,
         )
         if act_series
         else (None, None)
@@ -1082,7 +1180,6 @@ def main() -> None:
             dt,
             t_min=t_min_crop,
             t_max=t_max_val,
-            max_gap_sec=args.max_gap,
         )
         if state_series
         else (None, None)

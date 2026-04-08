@@ -43,6 +43,7 @@ std::vector<uint8_t> build_server_heartbeat_packet() {
 #include "calibration/PTCalibration.hpp"
 #include "calibration/SensorCalibration.hpp"
 #include "config/BoardDiscovery.hpp"
+#include "config/LoadActiveBoards.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
 #include "fsw/FSWConfigManager.hpp"
@@ -57,8 +58,8 @@ void signal_handler(int /* sig */) {
     std::cout << "\n[DAQ Bridge] Shutting down..." << std::endl;
 }
 
-// Board type enum (matches DiabloAvionics)
-enum class BoardType { PT, LC, TC, RTD, ACTUATOR, ENCODER, UNKNOWN };
+// Board type enum (matches DiabloAvionics / config [boards.*])
+using BoardType = fsw::config::ActiveBoardKind;
 
 struct BoardConfig {
     BoardType type;
@@ -191,135 +192,6 @@ static void load_board_map_from_config(const std::string& config_path,
     add_board();
     // NOTE: do NOT add 127.0.0.1→PT. When simulator can't bind to config IPs, it uses
     // 127.0.0.2, 127.0.0.3, ... (one per board). board_order maps index→config for that fallback.
-}
-
-// Collect active boards with their local channels per sensor type from config.toml [boards.*].
-// Returns a map from BoardType to a vector of BoardChannels (one per enabled board).
-// No channel_offset — channels are local connector IDs (1-10).
-using BoardChannels = fsw::elodin::BoardChannels;
-
-static std::map<BoardType, std::vector<BoardChannels>> load_active_boards(
-    const std::string& config_path) {
-    std::map<BoardType, std::vector<BoardChannels>> result;
-
-    std::ifstream f(config_path);
-    if (!f.is_open())
-        return result;
-
-    std::string line, section;
-    std::string board_type_str;
-    int board_id = -1;
-    bool board_enabled = true;
-    std::vector<uint8_t> active_conn;
-    int num_sensors = 10;
-
-    auto flush = [&]() {
-        if (board_type_str.empty() || !board_enabled || board_id < 0)
-            return;
-        BoardType bt = BoardType::UNKNOWN;
-        if (board_type_str == "PT")
-            bt = BoardType::PT;
-        else if (board_type_str == "TC")
-            bt = BoardType::TC;
-        else if (board_type_str == "RTD")
-            bt = BoardType::RTD;
-        else if (board_type_str == "LC")
-            bt = BoardType::LC;
-        else if (board_type_str == "ENCODER")
-            bt = BoardType::ENCODER;
-        else if (board_type_str == "ACTUATOR")
-            bt = BoardType::ACTUATOR;
-        if (bt == BoardType::UNKNOWN)
-            return;
-
-        BoardChannels bc;
-        bc.board_id = static_cast<uint8_t>(board_id);
-        {
-            int m = board_id % 10;
-            bc.board_number = static_cast<uint8_t>(m == 0 ? 10 : m);
-        }
-        if (!active_conn.empty()) {
-            bc.channels = active_conn;
-        } else {
-            for (int i = 1; i <= num_sensors; i++)
-                bc.channels.push_back(static_cast<uint8_t>(i));
-        }
-        result[bt].push_back(std::move(bc));
-    };
-
-    while (std::getline(f, line)) {
-        size_t c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
-            line.pop_back();
-        size_t start = line.find_first_not_of(" \t");
-        if (start != std::string::npos)
-            line = line.substr(start);
-        if (line.empty())
-            continue;
-
-        if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
-            flush();
-            section = line.substr(1, line.size() - 2);
-            if (section.rfind("boards.", 0) == 0) {
-                board_type_str.clear();
-                board_id = -1;
-                board_enabled = true;
-                active_conn.clear();
-                num_sensors = 10;
-            } else {
-                board_type_str.clear();
-            }
-            continue;
-        }
-        if (section.rfind("boards.", 0) != 0)
-            continue;
-
-        size_t eq = line.find('=');
-        if (eq == std::string::npos)
-            continue;
-        std::string key = line.substr(0, eq);
-        std::string val = line.substr(eq + 1);
-        while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
-            key.pop_back();
-        while (!val.empty() && val[0] == ' ')
-            val.erase(0, 1);
-
-        if (key == "type") {
-            if (val.size() >= 2 && val.front() == '"' && val.back() == '"')
-                val = val.substr(1, val.size() - 2);
-            board_type_str = val;
-        } else if (key == "enabled" && val == "false") {
-            board_enabled = false;
-        } else if (key == "board_id") {
-            try {
-                board_id = std::stoi(val);
-            } catch (...) {
-            }
-        } else if (key == "num_sensors") {
-            try {
-                num_sensors = std::stoi(val);
-            } catch (...) {
-            }
-        } else if (key == "active_connectors") {
-            size_t b = val.find('['), e = val.find(']');
-            if (b != std::string::npos && e != std::string::npos) {
-                std::string inner = val.substr(b + 1, e - b - 1);
-                std::istringstream iss(inner);
-                std::string tok;
-                while (std::getline(iss, tok, ',')) {
-                    try {
-                        active_conn.push_back(static_cast<uint8_t>(std::stoi(tok)));
-                    } catch (...) {
-                    }
-                }
-            }
-        }
-    }
-    flush();
-
-    return result;
 }
 
 // Map discovery signature board_type (DAQv2 wire: 1=PT, 2=LC, 3=RTD, 4=TC, 5=ACT, 6=ENC)
@@ -575,7 +447,7 @@ int main(int argc, char* argv[]) {
     fsw::routing::HeartbeatRouter heartbeat_router(elodin_client);
     bool elodin_connected = false;
     // Collect active boards with local channels from config (board-namespaced, no channel_offset)
-    auto active_boards = load_active_boards(config_path);
+    auto active_boards = fsw::config::load_active_boards(config_path);
     const auto& pt_boards = active_boards[BoardType::PT];
     const auto& act_boards = active_boards[BoardType::ACTUATOR];
     const auto& tc_boards = active_boards[BoardType::TC];
@@ -684,18 +556,8 @@ int main(int argc, char* argv[]) {
                     heartbeat_router.process_heartbeat(ph, hb_body, board_type_wire,
                                                        hb_receive_ts_ns);
                 }
-                // Periodic save of discovery state so actuator_service can use board IPs
-                auto elapsed =
-                    std::chrono::duration_cast<std::chrono::seconds>(now - last_config_save)
-                        .count();
-                if (elapsed >= 5) {
-                    auto boards = discovery.get_discovered_boards();
-                    if (!boards.empty()) {
-                        config_manager.update_with_boards(boards);
-                        config_manager.save_config(config_path + ".auto");
-                        last_config_save = now;
-                    }
-                }
+                // NOTE: config.toml.auto generation removed. Board discovery remains in-memory
+                // for this process only; other services must use config/config.toml.
             }
 
             std::this_thread::sleep_for(std::chrono::microseconds(500));
@@ -970,8 +832,6 @@ int main(int argc, char* argv[]) {
 
     // Shutdown
     auto boards = discovery.get_discovered_boards();
-    config_manager.update_with_boards(boards);
-    config_manager.save_config(config_path + ".auto");
     std::cout << "[Discovery] Found " << boards.size() << " boards" << std::endl;
     std::cout << "[DAQ Bridge] Shutdown complete" << std::endl;
     return 0;

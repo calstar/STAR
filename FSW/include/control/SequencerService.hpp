@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <string>
+#include <thread>
 
 #include "control/AbortBroadcaster.hpp"
 #include "control/ActuatorCommander.hpp"
@@ -51,9 +52,8 @@ public:
     bool setDebugMode(bool enabled);
 
     /**
-     * Send a manual actuator command (debug mode only).
-     * @param name  Role name (e.g. "LOX Main").
-     * @param pos   0 = closed, 1 = open.
+     * Debug mode only: manual OPEN/CLOSE for one role. Overrides persist until a state
+     * transition (which clears overrides and applies the new state's CSV).
      */
     bool manualActuator(const std::string& name, int pos);
 
@@ -87,6 +87,9 @@ private:
     std::string config_path_;
     std::string config_content_;
 
+    std::thread state_snapshot_thread_;
+    std::atomic<bool> state_snapshot_stop_{false};
+
     // Abort states where AbortBroadcaster should fire
     static bool isAbortState(State s);
 
@@ -94,6 +97,8 @@ private:
     void publishState();
     // Publish raw state transition to Elodin [0x43, 0x00] (legacy VTable)
     void publishStateTransition(State from, State to);
+    /** 1 Hz CONTROLLER.state rows (from=to=current) so exports/GUI have a dense system-state stream. */
+    void startStateSnapshotPublisher();
 
     bool loadConfig(const std::string& path);
 };

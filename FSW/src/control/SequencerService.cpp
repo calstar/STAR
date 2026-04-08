@@ -5,8 +5,10 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <thread>
 
 #include "comms/CommsMessage.hpp"
+#include "config/LoadActiveBoards.hpp"
 #include "elodin/DatabaseConfig.hpp"
 
 namespace sequencer {
@@ -35,6 +37,9 @@ static uint64_t now_ns() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 SequencerService::~SequencerService() {
+    state_snapshot_stop_ = true;
+    if (state_snapshot_thread_.joinable())
+        state_snapshot_thread_.join();
     actuator_commander_.stopContinuousLoop();
     fire_manager_.stop();
 }
@@ -204,7 +209,11 @@ bool SequencerService::init(const std::string& config_path) {
     if (elodin_.connect(elodin_host, elodin_port)) {
         std::cout << "[SequencerService] Connected to Elodin at " << elodin_host << ":"
                   << elodin_port << std::endl;
-        fsw::elodin::DatabaseConfig::register_non_sensor_tables(elodin_);
+        const auto boards_map = fsw::config::load_active_boards(config_path_);
+        const auto it_act = boards_map.find(fsw::config::ActiveBoardKind::ACTUATOR);
+        const std::vector<fsw::elodin::BoardChannels> act_boards =
+            (it_act != boards_map.end()) ? it_act->second : std::vector<fsw::elodin::BoardChannels>{};
+        fsw::elodin::DatabaseConfig::register_non_sensor_tables(elodin_, act_boards);
         actuator_commander_.setElodinClient(&elodin_);
         actuator_commander_.publishInitialState();
     } else {
@@ -215,6 +224,9 @@ bool SequencerService::init(const std::string& config_path) {
     current_state_ = State::IDLE;
     // Publish initial state so any already-connected backend/GUI knows we started at IDLE.
     publishState();
+    // Command IDLE actuators and keep resending so manual debug clicks cannot stick vs CSV.
+    actuator_commander_.applyForState(State::IDLE);
+    actuator_commander_.startContinuousLoop(State::IDLE);
     std::cout << "[SequencerService] Initialized. Current state: "
               << StateMachine::name(State::IDLE) << std::endl;
     return true;
@@ -242,6 +254,9 @@ bool SequencerService::transitionTo(const std::string& state_name) {
             return false;
         }
     }
+
+    // New state wins over debug manual actuator overrides.
+    actuator_commander_.clearAllManualOverrides();
 
     // Stop current continuous loop before applying the new state
     actuator_commander_.stopContinuousLoop();
@@ -285,9 +300,8 @@ bool SequencerService::transitionTo(const std::string& state_name) {
 // ─────────────────────────────────────────────────────────────────────────────
 bool SequencerService::setDebugMode(bool enabled) {
     debug_mode_ = enabled;
-    if (!enabled) {
+    if (!enabled)
         actuator_commander_.clearAllManualOverrides();
-    }
     std::cout << "[SequencerService] Debug mode: " << (enabled ? "ON" : "OFF") << std::endl;
     publishState();  // push updated debug_mode flag to GUI
     return true;
@@ -356,6 +370,21 @@ void SequencerService::publishStateTransition(State from, State to) {
 
     StateTransitionMsg msg(now_ns(), static_cast<uint8_t>(from), static_cast<uint8_t>(to), 0);
     elodin_.publish(VTABLE_STATE_TRANSITION, msg);
+}
+
+void SequencerService::startStateSnapshotPublisher() {
+    if (state_snapshot_thread_.joinable())
+        return;
+    state_snapshot_stop_ = false;
+    state_snapshot_thread_ = std::thread([this]() {
+        while (!state_snapshot_stop_) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (!elodin_.is_connected())
+                continue;
+            const State s = current_state_.load();
+            publishStateTransition(s, s);
+        }
+    });
 }
 
 }  // namespace sequencer

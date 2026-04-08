@@ -754,13 +754,18 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
         });
       };
 
-      // Optimistic: UI updates immediately; TCP to actuator_service still authoritative — revert on failure.
+      // Optimistic UI; debug manual commands keep the clicked value (sequencer does not re-CSV).
       pushActuatorCmdBroadcast(v);
 
       sendToActuatorService(`ACTUATOR:${actuatorName}:${open ? 1 : 0}\n`).then(({ ok, reply }) => {
         if (!ok) {
           pushActuatorCmdBroadcast(open ? 0 : 1);
           send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Actuator command failed: ${reply}` } });
+          return;
+        }
+        // Non-debug: snap tiles to full state CSV. Debug: keep manual override (do not overwrite click).
+        if (!debugMode) {
+          broadcastCommandedActuatorsForState(currentState);
         }
       });
       break;
