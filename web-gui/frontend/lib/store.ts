@@ -275,32 +275,41 @@ export function buildAliasesFromConfig(config: any): void {
 
 export { ALIASES };
 
-// ── Batched sensor-data updates (10 Hz) ──────────────────────────────────────
-// Accumulate incoming sensor writes and flush to Zustand every 100ms.
-// 10 Hz reduces browser lag while keeping display responsive.
+// ── Batched sensor-data updates ───────────────────────────────────────────────
+// Accumulate all incoming sensor writes (including actuator states) and flush
+// to Zustand in one batch per animation frame. This prevents dozens of
+// synchronous setState calls when a state transition broadcasts 20 actuator
+// commanded states at once.
 let _pendingSensorWrites: Record<string, number> = {};
 let _sensorTimestamps: Record<string, number> = {};
 let _flushScheduled = false;
-let _updateVersion = 0; // Version counter to force re-renders even if values are identical
+let _updateVersion = 0;
 
-function scheduleSensorFlush() {
+const FLUSH_INTERVAL_MS = 50;
+
+function scheduleSensorFlush(highPriority = false) {
   if (_flushScheduled) return;
   _flushScheduled = true;
-
-  requestAnimationFrame(() => {
-    flushSensorWrites();
-  });
-  setTimeout(() => {
-    if (_flushScheduled) flushSensorWrites();
-  }, FLUSH_INTERVAL_MS);
+  if (highPriority && typeof Promise !== 'undefined') {
+    // Microtask: flush at end of current JS task (before next event loop tick).
+    // This coalesces multiple actuator_state_commanded writes from one broadcast
+    // into a single Zustand setState instead of N separate ones.
+    Promise.resolve().then(() => {
+      if (_flushScheduled) flushSensorWrites();
+    });
+  } else if (typeof requestAnimationFrame !== 'undefined') {
+    requestAnimationFrame(() => {
+      if (_flushScheduled) flushSensorWrites();
+    });
+  } else {
+    setTimeout(() => { if (_flushScheduled) flushSensorWrites(); }, FLUSH_INTERVAL_MS);
+  }
 }
 
-// Flush pending writes (~20 Hz). Actuator commanded state flushes immediately (see updateSensor).
-const FLUSH_INTERVAL_MS = 50;
+// Safety-net interval: flush any leftover pending writes even if RAF/microtask was skipped.
 if (typeof setInterval !== 'undefined') {
   setInterval(() => {
-    if (Object.keys(_pendingSensorWrites).length > 0) {
-      _flushScheduled = false;
+    if (_flushScheduled || Object.keys(_pendingSensorWrites).length > 0) {
       flushSensorWrites();
     }
   }, FLUSH_INTERVAL_MS);
@@ -310,15 +319,16 @@ function flushSensorWrites() {
   _flushScheduled = false;
   const batch = _pendingSensorWrites;
   _pendingSensorWrites = {};
-  if (Object.keys(batch).length === 0) return;
+  const keys = Object.keys(batch);
+  if (keys.length === 0) return;
 
   _updateVersion++;
   const version = _updateVersion;
   const now = Date.now();
   useSensorStore.setState((state) => {
     const newSensorData: SensorData = { ...state.sensorData };
-    for (const [key, value] of Object.entries(batch)) {
-      newSensorData[key] = value;
+    for (let i = 0; i < keys.length; i++) {
+      newSensorData[keys[i]] = batch[keys[i]];
     }
     return { sensorData: newSensorData, _updateVersion: version, lastSensorFlushMs: now };
   });
@@ -366,8 +376,9 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
     _pendingSensorWrites[key] = update.value;
 
     if (update.component === 'actuator_state_commanded' || update.component === 'actuator_state') {
-      _flushScheduled = false;
-      flushSensorWrites();
+      // High-priority: flush via microtask so all actuator writes from a single
+      // state-transition broadcast coalesce into one Zustand setState.
+      scheduleSensorFlush(true);
       return;
     }
 

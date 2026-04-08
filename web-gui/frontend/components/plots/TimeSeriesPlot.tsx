@@ -54,7 +54,8 @@ function applyTransform(v: number, transform?: (x: number) => number): number {
 const DEFAULT_WINDOW_SECONDS = 60;
 // Match data-cache ~40 Hz so uPlot gets enough points for smooth pressure traces (was 10 Hz → stair steps).
 const RENDER_INTERVAL_MS     = 25;
-const Y_AXIS_INTERVAL_MS     = 200;
+// Y-axis scale is only allowed to recompute this often. Higher = less shaking under noisy data.
+const Y_AXIS_INTERVAL_MS     = 1500;
 
 export default function TimeSeriesPlot({
   title, entities, component, components, colors,
@@ -106,6 +107,10 @@ export default function TimeSeriesPlot({
     const seriesLabels = entities.map((e, i) => labels?.[i] ?? e.split('.').pop() ?? e);
 
     // ── uPlot options ─────────────────────────────────────────────────────────
+    // Per-plot Y-axis bounds cache for hysteresis — shared between buildOpts and render loop.
+    // auto:false means uPlot never auto-scales Y; we drive it explicitly every Y_AXIS_INTERVAL_MS.
+    const _yCache: { last: [number, number] | null } = { last: null };
+
     const buildOpts = (w: number, h: number): uPlot.Options => ({
       width: w, height: h, pxAlign: true,
       scales: {
@@ -117,16 +122,10 @@ export default function TimeSeriesPlot({
           },
         },
         y: {
-          auto: true,
-          range: (u, mn, mx): [number, number] => {
-            const all: number[] = [];
-            for (let i = 1; i < u.data.length; i++) {
-              for (const v of u.data[i] as number[]) if (isFinite(v)) all.push(v);
-            }
-            if (all.length > 0) return smartYRange(Math.min(...all), Math.max(...all));
-            if (isFinite(mn) && isFinite(mx)) return smartYRange(mn, mx);
-            return [0, 100];
-          },
+          // auto: false — prevents uPlot from recalculating Y on every setScale('x') call
+          // (which fires 40×/sec and causes visible axis jumping). Y bounds are set
+          // explicitly via setScale('y', ...) in the render loop every Y_AXIS_INTERVAL_MS.
+          auto: false,
         },
       },
       axes: [
@@ -238,23 +237,44 @@ export default function TimeSeriesPlot({
         if (cached && cached.time.length > 0) {
           const tData = cached.time;
           const vData = cached.values.map((v, i) => v.map(x => applyTransform(x, transforms[i])));
-          const resetScales = nowMs - lastYAxisUpdate >= Y_AXIS_INTERVAL_MS;
-          if (resetScales) lastYAxisUpdate = nowMs;
           try {
-            plotInstanceRef.current.setData([tData, ...vData], resetScales);
+            // Always pass false — Y auto-scaling is handled explicitly below.
+            plotInstanceRef.current.setData([tData, ...vData], false);
           } catch (err) {
             console.error('[TimeSeriesPlot] setData failed:', err);
           }
+
+          // Explicit Y-axis update with hysteresis, rate-limited to Y_AXIS_INTERVAL_MS.
+          // auto:false means uPlot never auto-scales; we drive it here so setScale('x')
+          // calls in the scroll path above never cause Y to jump.
+          if (nowMs - lastYAxisUpdate >= Y_AXIS_INTERVAL_MS) {
+            lastYAxisUpdate = nowMs;
+            let mn = Infinity, mx = -Infinity;
+            for (const series of vData) {
+              for (const v of series) {
+                if (isFinite(v)) {
+                  if (v < mn) mn = v;
+                  if (v > mx) mx = v;
+                }
+              }
+            }
+            if (isFinite(mn) && isFinite(mx)) {
+              const proposed = smartYRange(mn, mx);
+              let shouldUpdate = !_yCache.last;
+              if (_yCache.last) {
+                const span = _yCache.last[1] - _yCache.last[0];
+                const thr = Math.max(span * 0.20, 2.0);
+                shouldUpdate = Math.abs(proposed[0] - _yCache.last[0]) >= thr ||
+                               Math.abs(proposed[1] - _yCache.last[1]) >= thr;
+              }
+              if (shouldUpdate) {
+                _yCache.last = proposed;
+                plotInstanceRef.current.setScale('y', { min: proposed[0], max: proposed[1] });
+              }
+            }
+          }
         }
         lastDataUpdate = nowMs;
-      }
-
-      // Size sync
-      const dims = getDims();
-      if (dims && plotInstanceRef.current &&
-        (Math.abs(dims.w - plotInstanceRef.current.width) > 2 ||
-         Math.abs(dims.h - plotInstanceRef.current.height) > 2)) {
-        plotInstanceRef.current.setSize({ width: dims.w, height: dims.h });
       }
     };
 

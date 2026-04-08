@@ -218,6 +218,25 @@ class SensorDataCache {
 
   // ── Public read API ─────────────────────────────────────────────────────────
 
+  // ── Reverse alias index (rebuilt lazily when ALIASES size changes) ───────────
+  // Maps fallback key → canonical key for O(1) reverse lookup instead of O(n) scan.
+  private reverseAliasIndex: Map<string, string> = new Map();
+  private reverseAliasBuiltSize = 0;
+
+  private ensureReverseAliasIndex(): void {
+    const aliasEntries = Object.entries(ALIASES);
+    if (aliasEntries.length === this.reverseAliasBuiltSize) return;
+    this.reverseAliasIndex.clear();
+    for (const [canonical, fallbacks] of aliasEntries) {
+      for (const fb of fallbacks) {
+        if (!this.reverseAliasIndex.has(fb)) {
+          this.reverseAliasIndex.set(fb, canonical);
+        }
+      }
+    }
+    this.reverseAliasBuiltSize = aliasEntries.length;
+  }
+
   /**
    * Find cached series for a key, checking forward and reverse aliases.
    */
@@ -234,12 +253,15 @@ class SensorDataCache {
       }
     }
 
-    // Reverse aliases: if this key is a fallback for some canonical
-    for (const [canonical, fallbackList] of Object.entries(ALIASES)) {
-      if (fallbackList.includes(key)) {
-        s = this.cache.get(canonical);
-        if (s && s.len > 0) return s;
-        for (const fb of fallbackList) {
+    // Reverse alias: O(1) lookup via pre-built index
+    this.ensureReverseAliasIndex();
+    const canonical = this.reverseAliasIndex.get(key);
+    if (canonical) {
+      s = this.cache.get(canonical);
+      if (s && s.len > 0) return s;
+      const cFallbacks = ALIASES[canonical];
+      if (cFallbacks) {
+        for (const fb of cFallbacks) {
           s = this.cache.get(fb);
           if (s && s.len > 0) return s;
         }

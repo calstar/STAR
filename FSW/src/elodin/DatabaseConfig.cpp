@@ -283,7 +283,7 @@ bool DatabaseConfig::register_calibrated_tables(ElodinClient& client,
                 "LC" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
             uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + 0x10 + ch);
             uint64_t entity_id = (static_cast<uint64_t>(0x23) << 8) | lo;
-            if (register_calibrated_vtable(client, 0x23, lo, entity_id, entity, "force_n",
+            if (register_calibrated_vtable(client, 0x23, lo, entity_id, entity, "force_kg",
                                            "raw_adc"))
                 registered++;
         }

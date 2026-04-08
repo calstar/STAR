@@ -213,6 +213,8 @@ bool SequencerService::init(const std::string& config_path) {
     }
 
     current_state_ = State::IDLE;
+    // Publish initial state so any already-connected backend/GUI knows we started at IDLE.
+    publishState();
     std::cout << "[SequencerService] Initialized. Current state: "
               << StateMachine::name(State::IDLE) << std::endl;
     return true;

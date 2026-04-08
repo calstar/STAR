@@ -341,22 +341,6 @@ function buildCSVSearchPaths(): string[] {
   return paths;
 }
 
-/**
- * Commanded state for Idle (de-energized) from config: NO → OPEN (1), NC → CLOSED (0).
- * Used for all actuators in config.actuator_roles so IDLE reflects true de-energized state.
- */
-function getIdleCommandedStateFromConfig(actuatorName: string): 0 | 1 | null {
-  try {
-    const config = readConfig();
-    const roles = config.actuator_roles || {};
-    const value = roles[actuatorName];
-    if (Array.isArray(value) && value.length >= 1 && value[0] === 'NO') return 1;
-    if (Array.isArray(value) && value.length >= 1) return 0; // NC or other
-  } catch {
-    console.warn(`⚠️ Could not get actuator type for "${actuatorName}" from config`);
-  }
-  return null;
-}
 
 export function getStateActuatorMap(): StateActuatorMap {
   const possiblePaths = buildCSVSearchPaths();
@@ -370,17 +354,6 @@ export function getStateActuatorMap(): StateActuatorMap {
       console.log(`   Trying: ${path} (found)`);
       const map = parseStateActuatorsCSV(path);
       if (Object.keys(map).length > 0) {
-        // IDLE = de-energized: every actuator with config type gets NO→OPEN, NC→CLOSED
-        if (!map[SystemState.IDLE]) map[SystemState.IDLE] = {};
-        const roles = (() => { try { return readConfig().actuator_roles || {}; } catch { return {}; } })();
-        const roleNames = Object.keys(roles);
-        for (const name of roleNames) {
-          const cmd = getIdleCommandedStateFromConfig(name);
-          if (cmd !== null) {
-            map[SystemState.IDLE][name] = cmd;
-            console.log(`   Idle (de-energized): ${name} = ${cmd ? 'OPEN' : 'CLOSED'} (${cmd ? 'NO' : 'NC'})`);
-          }
-        }
         console.log(`✅ Loaded state actuator map from: ${path}`);
         return map;
       } else {

@@ -291,6 +291,28 @@ def get_hp_pt_packet_channels() -> Dict[int, dict]:
     return result
 
 
+def get_excitation_packet_channels() -> Dict[int, dict]:
+    """
+    Return {packet_ch: {adc_ref_voltage, divider_attenuation}} for boards with a
+    dedicated excitation voltage monitor connector (excitation_connector_id >= 1).
+    The calibration server uses this to publish the loop excitation voltage (V)
+    instead of trying to apply pressure calibration to the channel.
+    """
+    result: Dict[int, dict] = {}
+    for board in get_boards_by_type("PT"):
+        if not board.get("enabled", True):
+            continue
+        exc_conn = board.get("excitation_connector_id", -1)
+        if not isinstance(exc_conn, int) or exc_conn < 1:
+            continue
+        ch_offset = int(board.get("channel_offset", 0) or 0)
+        result[exc_conn + ch_offset] = {
+            "adc_ref_voltage": float(board.get("adc_ref_voltage", 2.5)),
+            "divider_attenuation": float(board.get("excitation_divider_attenuation", 1.0)),
+        }
+    return result
+
+
 def build_orchestrator_key_to_packet_ch() -> Dict[tuple, int]:
     """Reverse: (stype, unique_ch) → packet_ch for legacy JSON keying."""
     mapping: Dict[tuple, int] = {}

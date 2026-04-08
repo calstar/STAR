@@ -278,7 +278,7 @@ export async function registerSensorVTables(
     const types = [
         { hi: 0x21, prefix: 'TC', unit: 'temperature_c' },
         { hi: 0x22, prefix: 'RTD', unit: 'temperature_c' },
-        { hi: 0x23, prefix: 'LC', unit: 'force_n' }
+        { hi: 0x23, prefix: 'LC', unit: 'force_kg' }
     ];
     for (const t of types) {
         for (let ch = 1; ch <= 20; ch++) {

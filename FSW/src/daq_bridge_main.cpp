@@ -507,7 +507,6 @@ int main(int argc, char* argv[]) {
         if (cfg.board_id < 0 || !cfg.enabled || cfg.type == BoardType::ACTUATOR)
             continue;
         Diablo::BoardHeartbeatPacket synthetic{};
-        std::memset(synthetic.firmware_hash, 0, sizeof(synthetic.firmware_hash));
         synthetic.board_id = static_cast<uint8_t>(cfg.board_id);
         synthetic.engine_state = Diablo::EngineState::SAFE;
         synthetic.board_state = Diablo::BoardState::SETUP;

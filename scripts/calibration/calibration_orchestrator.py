@@ -1095,7 +1095,11 @@ class CalibrationOrchestrator:
                 if key[0] != stype:
                     continue
                 ch = key[1]
-                if len(rcf.calibration_points) >= self.min_points:
+                # Include channels that have enough calibration points OR have been
+                # RLS-updated autonomously so the learned theta persists across restarts.
+                has_points = len(rcf.calibration_points) >= self.min_points
+                has_rls = getattr(rcf, "rls_updates", 0) > 0
+                if has_points or has_rls:
                     calibrated[ch] = rcf
             if not calibrated:
                 continue
@@ -1360,6 +1364,42 @@ class CalibrationOrchestrator:
                 )
             except Exception as e:
                 logger.error(f"Load prior: {e}")
+
+        # Load auto-saved RLS state from adjustments.json (framework_v2 format).
+        # This overrides the timestamped file load above with the most recent
+        # autonomous calibration state (written every ~2 min by calibration_server).
+        adj_path = Path(__file__).parent / "calibrations" / "adjustments.json"
+        if adj_path.exists():
+            try:
+                with open(adj_path) as f:
+                    adj_data = json.load(f)
+                fw2 = adj_data.get("framework_v2", {})
+                loaded_adj = 0
+                for unique_ch_str, pdata in fw2.items():
+                    theta = pdata.get("theta_mean")
+                    cov = pdata.get("theta_cov")
+                    if not theta or not cov:
+                        continue
+                    key = ("PT", int(unique_ch_str))
+                    if key not in self.robust:
+                        continue
+                    t = np.array(theta)
+                    c = np.array(cov)
+                    if len(t) == 6:
+                        t = np.concatenate([t, [0.0, 0.0, 0.0]])
+                        c = np.pad(c, ((0, 3), (0, 3)), constant_values=0.1)
+                    if t.shape[0] == 9:
+                        self.robust[key].theta_mean = t
+                        if c.shape == (9, 9):
+                            self.robust[key].theta_cov = c
+                        loaded_adj += 1
+                if loaded_adj:
+                    logger.info(
+                        f"📂 Loaded adjustments.json: {loaded_adj} PT channels "
+                        f"(saved {adj_data.get('auto_saved_at', '?')})"
+                    )
+            except Exception as e:
+                logger.error(f"Load adjustments.json: {e}")
 
     # ── Status ───────────────────────────────────────────────────────────
     def _print_status(self):

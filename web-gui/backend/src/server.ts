@@ -73,38 +73,54 @@ function shouldThrottleSensorStreamPacket(high: number, _low: number): boolean {
   return false;
 }
 
-// ── History cache ────────────────────────────────────────────────────────────
+// ── History cache (ring buffer) ───────────────────────────────────────────────
+// Uses Float64Array ring buffers to avoid O(n) splice shifts on every write.
 
 interface HistorySeries {
-  time: number[];
-  values: number[];
+  tBuf: Float64Array;
+  vBuf: Float64Array;
+  head: number;   // next write index
+  len:  number;   // fill count 0..HISTORY_MAX_POINTS
   lastMs: number;
 }
 
 const historyCache = new Map<string, HistorySeries>();
 const historyCacheTime = new Map<string, number>(); // wall-clock last update
-const broadcastLastTime = new Map<string, number>();  // per-key 10 Hz gate
+const broadcastLastTime = new Map<string, number>();  // per-key throttle gate
 
 function recordHistory(key: string, timeSec: number, value: number): void {
   let s = historyCache.get(key);
   if (!s) {
-    s = { time: [], values: [], lastMs: Date.now() };
+    s = { tBuf: new Float64Array(HISTORY_MAX_POINTS), vBuf: new Float64Array(HISTORY_MAX_POINTS), head: 0, len: 0, lastMs: 0 };
     historyCache.set(key, s);
   }
-  const lastT = s.time.length > 0 ? s.time[s.time.length - 1] : -Infinity;
-  if (timeSec > lastT) {
-    s.time.push(timeSec);
-    s.values.push(value);
-  } else if (timeSec === lastT) {
-    s.values[s.values.length - 1] = value;
+  // Overwrite last entry if same timestamp; otherwise advance ring.
+  const lastIdx = (s.head - 1 + HISTORY_MAX_POINTS) % HISTORY_MAX_POINTS;
+  if (s.len > 0 && s.tBuf[lastIdx] === timeSec) {
+    s.vBuf[lastIdx] = value;
+  } else {
+    s.tBuf[s.head] = timeSec;
+    s.vBuf[s.head] = value;
+    s.head = (s.head + 1) % HISTORY_MAX_POINTS;
+    if (s.len < HISTORY_MAX_POINTS) s.len++;
   }
-  if (s.time.length > HISTORY_MAX_POINTS) {
-    const excess = s.time.length - HISTORY_MAX_POINTS;
-    s.time.splice(0, excess);
-    s.values.splice(0, excess);
+  const now = Date.now();
+  s.lastMs = now;
+  historyCacheTime.set(key, now);
+}
+
+/** Read ring buffer as plain arrays for sendHistoricalData (allocates once per call, OK since it's only on connect). */
+function readHistorySeries(s: HistorySeries): { time: number[]; values: number[] } {
+  const len = s.len;
+  const tail = len < HISTORY_MAX_POINTS ? 0 : s.head;
+  const time: number[] = new Array(len);
+  const values: number[] = new Array(len);
+  for (let i = 0; i < len; i++) {
+    const idx = (tail + i) % HISTORY_MAX_POINTS;
+    time[i]   = s.tBuf[idx];
+    values[i] = s.vBuf[idx];
   }
-  s.lastMs = Date.now();
-  historyCacheTime.set(key, Date.now());
+  return { time, values };
 }
 
 function pruneHistory(): void {
@@ -153,12 +169,10 @@ try {
 
 const calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
 
-/** Map PT{n}.CH{m} entity to uniqueId = board_id*100+local_ch (matches calibration_service). */
-function uniqueIdFromPtEntity(entity: string): number | null {
-  const m = entity.match(/^PT(\d+)(?:_Cal)?\.CH(\d+)$/);
-  if (!m) return null;
-  const slot = parseInt(m[1], 10);
-  const ch = parseInt(m[2], 10);
+/** Cached slot→board_id map for uniqueIdFromPtEntity — built once, avoids config re-reads on hot path. */
+const _ptSlotToBoardId = new Map<number, number>();
+function _ensurePtSlotCache(): void {
+  if (_ptSlotToBoardId.size > 0) return;
   try {
     const config = readConfig();
     const boards = (config.boards || {}) as Record<string, Record<string, unknown>>;
@@ -167,11 +181,20 @@ function uniqueIdFromPtEntity(entity: string): number | null {
       const typ = raw.type;
       if (typeof bid !== 'number' || typ !== 'PT') continue;
       const mod = bid % 10;
-      const slotWant = mod === 0 ? 10 : mod;
-      if (slotWant === slot) return bid * 100 + ch;
+      _ptSlotToBoardId.set(mod === 0 ? 10 : mod, bid);
     }
-  } catch { /* use fallback */ }
-  return slot * 100 + ch;
+  } catch { /* fine — fallback below */ }
+}
+
+/** Map PT{n}.CH{m} entity to uniqueId = board_id*100+local_ch (matches calibration_service). */
+function uniqueIdFromPtEntity(entity: string): number | null {
+  const m = entity.match(/^PT(\d+)(?:_Cal)?\.CH(\d+)$/);
+  if (!m) return null;
+  const slot = parseInt(m[1], 10);
+  const ch = parseInt(m[2], 10);
+  _ensurePtSlotCache();
+  const bid = _ptSlotToBoardId.get(slot);
+  return bid !== undefined ? bid * 100 + ch : slot * 100 + ch;
 }
 
 const calibrationHost: CalibrationHost = {
@@ -516,6 +539,7 @@ const httpServer = http.createServer(async (req, res) => {
 const wss = new WebSocketServer({ server: httpServer });
 
 function broadcast(message: object): void {
+  if (wss.clients.size === 0) return;
   const data = JSON.stringify(message);
   wss.clients.forEach((ws) => {
     if (ws.readyState === WebSocket.OPEN) {
@@ -620,10 +644,12 @@ function sendHistoricalData(ws: WebSocket): void {
   const MAX_SEND_POINTS = 3000;
   const payload: Record<string, { time: number[]; values: number[] }> = {};
   for (const [key, series] of historyCache) {
-    const len = series.time.length;
-    if (len === 0) continue;
-    const start = len > MAX_SEND_POINTS ? len - MAX_SEND_POINTS : 0;
-    payload[key] = { time: series.time.slice(start), values: series.values.slice(start) };
+    if (series.len === 0) continue;
+    const { time, values } = readHistorySeries(series);
+    const start = time.length > MAX_SEND_POINTS ? time.length - MAX_SEND_POINTS : 0;
+    payload[key] = start > 0
+      ? { time: time.slice(start), values: values.slice(start) }
+      : { time, values };
   }
   send(ws, { type: MessageType.HISTORICAL_DATA, timestamp: Date.now(), payload });
 }
@@ -818,12 +844,15 @@ const elodin = new ElodinClient(ELODIN_HOST, ELODIN_PORT);
 
 const STATE_TO_CSV_NAME: Record<string, string> = {
   IDLE: 'Idle', ARMED: 'Armed', FUEL_FILL: 'Fuel Fill', OX_FILL: 'Ox Fill',
-  PRESS_STANDBY: 'Press Standby', GN2_LOW_PRESS: 'GN2 Low Press', GN2_VENT: 'GN2 Low Vent',
-  FUEL_PRESS: 'Fuel Press', FUEL_VENT: 'Fuel Vent', OX_PRESS: 'Ox Press', OX_VENT: 'Ox Vent',
-  GN2_HIGH_PRESS: 'GN2 High Press', GN2_HIGH_VENT: 'GN2 High Vent', CALIBRATE: 'Calibrate',
-  READY: 'Ready', FIRE: 'Fire', VENT: 'Vent',
-  ENGINE_ABORT: 'Engine Abort', GSE_ABORT: 'GSE Abort', EMERGENCY_ABORT: 'Emergency Abort',
-  ABORT: 'Emergency Abort', DEBUG: 'Idle',
+  PRESS_STANDBY: 'Press Standby',
+  GN2_LOW_PRESS: 'GN2 Low Press', GN2_VENT: 'GN2 Low Vent',
+  FUEL_PRESS: 'Fuel Press', FUEL_VENT: 'Fuel Vent',
+  OX_PRESS: 'Ox Press', OX_VENT: 'Ox Vent',
+  GN2_HIGH_PRESS: 'GN2 High Press', GN2_HIGH_VENT: 'GN2 High Vent',
+  CALIBRATE: 'Calibrate', READY: 'Ready', FIRE: 'Fire', VENT: 'Vent',
+  ENGINE_ABORT: 'Engine Abort', GSE_ABORT: 'GSE Abort',
+  EMERGENCY_ABORT: 'Emergency Abort', ABORT: 'Emergency Abort',
+  DEBUG: 'Idle',
 };
 
 // VTable resubscription — Elodin DB rejects subscriptions for VTables not yet
@@ -925,7 +954,9 @@ elodin.on('packet', (header: any, payload: Buffer) => {
       const stateVal = parsedList.find(p => p.component === 'state')?.value ?? 0;
       const bitmask = parsedList.find(p => p.component === 'allowedBitmask')?.value ?? 0;
       const debugModeVal = parsedList.find(p => p.component === 'debugMode')?.value ?? 0;
-      console.log(`[ThinServer] SequencerState from Elodin: state=${stateVal} bitmask=0x${bitmask.toString(16)} debug=${debugModeVal}`);
+      if (THIN_VERBOSE_CONNECTION_LOG) {
+        console.log(`[ThinServer] SequencerState from Elodin: state=${stateVal} bitmask=0x${bitmask.toString(16)} debug=${debugModeVal}`);
+      }
       stats.sequencerStatesReceived++;
       // Sync local state from Elodin (backup path — primary is TCP reply)
       currentState = stateVal as SystemState;

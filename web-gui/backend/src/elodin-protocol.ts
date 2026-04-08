@@ -70,7 +70,7 @@ function parseCalibratedSensorPayload(
   if (payload.length < RAW_SENSOR_PAYLOAD_SIZE) return [];
   const calibratedValue = payload.readFloatLE(12);
   if (!Number.isFinite(calibratedValue) || Number.isNaN(calibratedValue)) return [];
-  if (fieldName === 'pressure_psi' && (calibratedValue < -100 || calibratedValue > 10000)) return [];
+  if (fieldName === 'pressure_psi' && (calibratedValue < -50 || calibratedValue > 10000)) return [];
   if (fieldName === 'temperature_c' && (calibratedValue < -200 || calibratedValue > 2000)) return [];
   if (fieldName === 'force_kg' && (calibratedValue < -10000 || calibratedValue > 50000)) return [];
   const tsMs = Number(payload.readBigUInt64LE(0) / 1000000n);

@@ -298,12 +298,8 @@ bool ActuatorCommander::sendUDP(const std::string& board_ip,
     for (const auto& [id, st] : id_state_pairs)
         cmds.push_back({id, st});
 
-    uint32_t ts_ms = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                               std::chrono::steady_clock::now().time_since_epoch())
-                                               .count() &
-                                           0xFFFFFFFF);
     uint8_t buf[512];
-    size_t len = Diablo::create_actuator_command_packet(cmds, ts_ms, buf, sizeof(buf));
+    size_t len = Diablo::create_actuator_command_packet(cmds, buf, sizeof(buf));
     if (len == 0) {
         std::cerr << "[ActuatorCommander] create_actuator_command_packet returned 0" << std::endl;
         return false;
@@ -329,8 +325,14 @@ bool ActuatorCommander::sendUDP(const std::string& board_ip,
         return false;
     }
 
-    ssize_t sent =
-        sendto(sock, buf, len, 0, reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
+    // Send 3× in rapid succession (1 ms apart) so the command lands in the
+    // board's UDP receive window regardless of its loop() polling rate.
+    ssize_t sent = -1;
+    for (int i = 0; i < 3; ++i) {
+        sent = sendto(sock, buf, len, 0, reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
+        if (i < 2)
+            usleep(1000);  // 1 ms between retries
+    }
     close(sock);
     return sent == static_cast<ssize_t>(len);
 }

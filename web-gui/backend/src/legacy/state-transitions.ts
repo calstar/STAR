@@ -64,7 +64,7 @@ export function parseStateTransitionsCSV(csvPath: string): Transition[] {
       const fromStateName = row[0].trim();
       const fromState = CSV_STATE_MAP[fromStateName];
 
-      if (!fromState && fromStateName !== '') {
+      if (fromState === undefined && fromStateName !== '') {
         continue; // Skip unknown states
       }
 
@@ -77,7 +77,7 @@ export function parseStateTransitionsCSV(csvPath: string): Transition[] {
           if (!toStateName) continue;
           const toState = CSV_STATE_MAP[toStateName];
 
-          if (toState && fromState) {
+          if (toState !== undefined && fromState !== undefined) {
             transitions.push({ from: fromState, to: toState });
           }
         }

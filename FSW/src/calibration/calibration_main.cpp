@@ -32,10 +32,12 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "calibration/PTCalibration.hpp"
@@ -54,6 +56,14 @@ std::array<uint32_t, 11> g_hp_board_last_u32{};
 std::array<uint8_t, 11> g_hp_ma_live{};
 /** Low-pass of measured excitation voltage (V) for slow supply tracking. */
 double g_hp_v_exc_ema = -1.0;
+
+/** Per-sensor zero offsets (PSI) applied to factory polynomial output after Zero All command. */
+std::unordered_map<uint16_t, double> g_zero_offsets;
+std::mutex g_zero_offsets_mutex;
+
+/** Per-sensor EMA state for LP PT output smoothing (initialized to NaN = not yet set). */
+std::unordered_map<uint16_t, double> g_lp_ema;
+constexpr double LP_EMA_ALPHA = 0.25;  // ~4-sample effective window
 
 }  // namespace
 
@@ -498,7 +508,9 @@ int main(int argc, char* argv[]) {
     }
 
     // Parse HP PT config (4-20 mA) — uses local connector IDs (no channel_offset)
-    // In simulation, synthetic PT ADC values are not a 4-20 mA current loop.
+    // board_simulator.py back-calculates i_ma from the target PSI and sends valid
+    // 4-20 mA ADC codes for HP PT connectors, so the 4-20 mA path is correct in
+    // both sim and real-hardware modes.
     const bool use_sim_mode = []() {
         const char* v = std::getenv("USE_SIM");
         return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T');
@@ -862,14 +874,38 @@ int main(int argc, char* argv[]) {
 
                 if (cmd_type == 0) {       // Zero All
                     if (sensor_id == 0) {  // All sensors
+                        std::lock_guard<std::mutex> lk(g_zero_offsets_mutex);
+                        g_lp_ema.clear();  // reset EMA so zeroed value reaches GUI immediately
                         for (auto const& [id, val] : last_adc_map) {
                             robust_manager.zero_sensor(id, val);
+                            // Offset the factory polynomial output to read 0 PSI at current ADC.
+                            const uint8_t bid = static_cast<uint8_t>(id / 100);
+                            const uint8_t lch = static_cast<uint8_t>(id % 100);
+                            const uint8_t bn  = (bid % 10) == 0 ? 10u : (bid % 10);
+                            const uint8_t log_ch = pt_calibration_logical_channel(bn, lch);
+                            if (pt_calibration.is_calibrated(log_ch)) {
+                                const double psi_now = pt_calibration.calculate_pressure(log_ch, val);
+                                if (std::isfinite(psi_now))
+                                    g_zero_offsets[id] = -psi_now;
+                            }
                         }
                         std::cout << "[Cal] Performed Zero All for " << last_adc_map.size()
                                   << " sensors" << std::endl;
                     } else {
                         if (last_adc_map.count(sensor_id)) {
+                            std::lock_guard<std::mutex> lk(g_zero_offsets_mutex);
                             robust_manager.zero_sensor(sensor_id, last_adc_map[sensor_id]);
+                            const uint8_t bid = static_cast<uint8_t>(sensor_id / 100);
+                            const uint8_t lch = static_cast<uint8_t>(sensor_id % 100);
+                            const uint8_t bn  = (bid % 10) == 0 ? 10u : (bid % 10);
+                            const uint8_t log_ch = pt_calibration_logical_channel(bn, lch);
+                            if (pt_calibration.is_calibrated(log_ch)) {
+                                const double psi_now = pt_calibration.calculate_pressure(
+                                    log_ch, last_adc_map[sensor_id]);
+                                if (std::isfinite(psi_now))
+                                    g_zero_offsets[sensor_id] = -psi_now;
+                            }
+                            g_lp_ema.erase(sensor_id);
                         }
                     }
                 } else if (cmd_type == 1) {  // Capture Reference
@@ -939,8 +975,12 @@ int main(int argc, char* argv[]) {
             uint16_t uid = resolve_pt_sensor_uid(type_lo, ch_eff, pt_boards);
             double psi;
             uint8_t cal_status;
-            if (!use_sim_mode && board_number == hp_pt_board_number &&
-                hp_pt_channels.count(ch_eff)) {
+            const bool is_hp_ch = board_number == hp_pt_board_number &&
+                                  hp_pt_channels.count(ch_eff);
+            // board_simulator.py generates valid 4-20 mA ADC codes for HP PT connectors
+            // (back-calculates i_ma from target PSI), so apply the 4-20 mA path in both
+            // sim and real-hardware modes — no use_sim_mode guard needed here.
+            if (is_hp_ch) {
                 const bool exc_ok =
                     hp_pt_excitation_connector_id >= 1 && hp_pt_excitation_connector_id <= 10;
                 const uint32_t adc_exc =
@@ -957,8 +997,9 @@ int main(int argc, char* argv[]) {
                               << static_cast<int>(ch_eff)
                               << " adc=" << static_cast<int32_t>(adc_u32) << " psi=" << psi
                               << std::endl;
-            } else if (!use_sim_mode && board_number == hp_pt_board_number &&
+            } else if (board_number == hp_pt_board_number &&
                        !hp_pt_channels.empty() && !hp_pt_channels.count(ch_eff)) {
+                // Non-HP connector on the HP PT board (e.g., excitation monitor): output 0 PSI.
                 psi = 0.0;
                 cal_status = 0;
                 last_adc_map[uid] = adc_i32;
@@ -983,13 +1024,24 @@ int main(int argc, char* argv[]) {
                     psi = (1.0 - kRobustWeight) * psi_fac + kRobustWeight * psi_rob;
                 }
                 cal_status = fac_ok ? 1u : 0u;
+                // Apply zero offset then EMA for LP PT channels.
+                {
+                    std::lock_guard<std::mutex> lk(g_zero_offsets_mutex);
+                    auto it_off = g_zero_offsets.find(uid);
+                    if (it_off != g_zero_offsets.end()) psi += it_off->second;
+                }
+                {
+                    auto& ema = g_lp_ema[uid];
+                    if (!std::isfinite(ema)) ema = psi;
+                    else ema = LP_EMA_ALPHA * psi + (1.0 - LP_EMA_ALPHA) * ema;
+                    psi = ema;
+                }
                 if (verbose() && packet_count % 100 == 0)
                     std::cout << "[Cal] PT B" << static_cast<int>(board_number) << " ch"
                               << static_cast<int>(ch_eff) << " adc=" << adc_i32 << " psi=" << psi
                               << " (robust+fallback)" << std::endl;
             }
-            if (!use_sim_mode && board_number == hp_pt_board_number &&
-                hp_pt_channels.count(ch_eff)) {
+            if (is_hp_ch) {
                 if (!std::isfinite(psi))
                     psi = 0.0;
                 else
@@ -1002,10 +1054,7 @@ int main(int argc, char* argv[]) {
             }
             comms::messages::sensor::CalibratedPTMessage cal_msg(
                 ts_ns, ch_eff, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(psi),
-                (!use_sim_mode && board_number == hp_pt_board_number &&
-                 hp_pt_channels.count(ch_eff))
-                    ? adc_u32
-                    : static_cast<uint32_t>(adc_i32),
+                is_hp_ch ? adc_u32 : static_cast<uint32_t>(adc_i32),
                 cal_status);
             elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
 

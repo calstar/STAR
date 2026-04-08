@@ -90,31 +90,29 @@ def _load_sensor_names(project_root: Path | None = None) -> dict[str, str]:
         with open(cfg, "rb") as f:
             data = tomllib.load(f)
 
-        # PT Board 1 (CH1-10)
+        # PT Board 1 (board slot 1 → entity prefix PT1 / PT1_Cal)
         roles1 = data.get("sensor_roles_pt_board", {})
         for name, ch in roles1.items():
-            out[f"PT_Cal.CH{ch}"] = name
-            out[f"PT_raw.CH{ch}"] = f"{name} (raw)"
+            out[f"PT1_Cal.CH{ch}"] = name
+            out[f"PT1.CH{ch}"] = f"{name} (raw)"
 
-        # PT Board 2 (CH11-20+)
+        # PT Board 2 (board slot 2 → entity prefix PT2 / PT2_Cal, local channels 1-10)
         roles2 = data.get("sensor_roles_pt2", {})
         for name, ch in roles2.items():
-            # channel_offset for board 2 is often 10
-            real_ch = ch + 10
-            out[f"PT_Cal.CH{real_ch}"] = name
-            out[f"PT_raw.CH{real_ch}"] = f"{name} (raw)"
+            out[f"PT2_Cal.CH{ch}"] = name
+            out[f"PT2.CH{ch}"] = f"{name} (raw)"
 
         # TC Board 1
         roles_tc = data.get("sensor_roles_tc_board", {})
         for name, ch in roles_tc.items():
-            out[f"TC_Cal.CH{ch}"] = name
-            out[f"TC_raw.CH{ch}"] = f"{name} (raw)"
+            out[f"TC1_Cal.CH{ch}"] = name
+            out[f"TC1.CH{ch}"] = f"{name} (raw)"
 
         # RTD Board 1
         roles_rtd = data.get("sensor_roles_rtd_board", {})
         for name, ch in roles_rtd.items():
-            out[f"RTD_Cal.CH{ch}"] = name
-            out[f"RTD_raw.CH{ch}"] = name
+            out[f"RTD1_Cal.CH{ch}"] = name
+            out[f"RTD1.CH{ch}"] = name
 
     except Exception:
         pass
@@ -260,13 +258,18 @@ def load_csv_series(export_dir: Path, pattern: str) -> dict[str, pd.DataFrame]:
         stem = f.stem
         parts = stem.split(".")
         if len(parts) >= 3:
+            entity = parts[0]
             short = parts[1]
             metric = parts[-1]
-            short_name = (
-                f"{short}_{metric}"
-                if parts[0] == "CONTROLLER"
-                else (f"{short}" if len(parts) == 3 else f"{short}.{metric}")
-            )
+            if entity == "CONTROLLER":
+                # e.g. CONTROLLER.actuation.duty_F → "actuation_duty_F"
+                short_name = f"{short}_{metric}"
+            elif len(parts) == 3:
+                # e.g. PT1_Cal.CH1.pressure_psi → "PT1_Cal.CH1"
+                short_name = f"{entity}.{short}"
+            else:
+                # e.g. ACT_CMD.B1.CH1.actuator_state_commanded → "ACT_CMD.B1.CH1"
+                short_name = f"{entity}.{parts[1]}.{parts[2]}"
         else:
             short_name = stem
         try:
@@ -524,8 +527,8 @@ def plot_load_cells(
     fig, ax = plt.subplots(figsize=(12, 4))
     for c in cols:
         ax.plot(t_s, data[c], label=c, alpha=0.9)
-    ax.set_title("Load Cell Force (N)")
-    ax.set_ylabel("Force (N)")
+    ax.set_title("Load Cell Force (kg)")
+    ax.set_ylabel("Force (kg)")
     ax.set_xlabel("Time (s)")
     ax.legend(loc="upper right", fontsize=8)
     ax.grid(True, alpha=0.3)
@@ -860,32 +863,32 @@ def main() -> None:
     project_root = Path(__file__).resolve().parent.parent.parent
     actuator_roles = _load_actuator_roles(project_root)
 
-    # Load PT pressures
-    pt_series = load_csv_series(export_dir, "PT_Cal.*.pressure_psi.csv")
+    # Load PT pressures (board-numbered entities: PT1_Cal.CH*, PT2_Cal.CH*, …)
+    pt_series = load_csv_series(export_dir, "PT*_Cal.*.pressure_psi.csv")
     if not pt_series:
-        print("  No PT_Cal pressure_psi data found")
+        print("  No PT*_Cal pressure_psi data found")
     else:
         print(f"  Loaded {len(pt_series)} PT pressure channels")
 
-    # Load TC temps
-    tc_series = load_csv_series(export_dir, "TC_Cal.*.temperature_c.csv")
-    tc_series.update(load_csv_series(export_dir, "RTD_Cal.*.temperature_c.csv"))
+    # Load TC/RTD temps
+    tc_series = load_csv_series(export_dir, "TC*_Cal.*.temperature_c.csv")
+    tc_series.update(load_csv_series(export_dir, "RTD*_Cal.*.temperature_c.csv"))
     if tc_series:
         print(f"  Loaded {len(tc_series)} temperature channels")
 
-    # Load load cells
-    lc_series = load_csv_series(export_dir, "LC_Cal.*.force_n.csv")
+    # Load load cells (unit is force_kg from calibration_service)
+    lc_series = load_csv_series(export_dir, "LC*_Cal.*.force_kg.csv")
     if lc_series:
         print(f"  Loaded {len(lc_series)} load cell channels")
 
-    # Load actuator states: prefer commanded (0x32) over current-sense (0x31)
-    act_series = load_csv_series(export_dir, "ACT.*.actuator_state_commanded.csv")
+    # Load actuator states: prefer commanded (0x32, ACT_CMD.*) over current-sense (0x31, ACT*.CH*)
+    act_series = load_csv_series(export_dir, "ACT_CMD.*.actuator_state_commanded.csv")
     from_commanded = bool(act_series)
     if not act_series:
-        act_series = load_csv_series(export_dir, "ACT.*.actuator_state.csv")
+        act_series = load_csv_series(export_dir, "ACT*.CH*.actuator_state.csv")
     if not act_series:
-        # Fallback: any actuator_state* (handles export naming variations)
-        act_series = load_csv_series(export_dir, "ACT.*.actuator_state*.csv")
+        # Fallback: any actuator_state* from non-CMD tables
+        act_series = load_csv_series(export_dir, "ACT*.CH*.actuator_state*.csv")
     if act_series:
         print(
             f"  Loaded {len(act_series)} actuator channels ({'commanded' if from_commanded else 'current-sense'})"
@@ -940,11 +943,11 @@ def main() -> None:
     if ctrl_series:
         print(f"  Loaded {len(ctrl_series)} controller channels")
 
-    # Load raw sensor data (for combined export)
-    pt_raw = load_csv_series(export_dir, "PT.*.raw_adc_counts.csv")
-    tc_raw = load_csv_series(export_dir, "TC.*.raw_adc_counts.csv")
-    rtd_raw = load_csv_series(export_dir, "RTD.*.raw_resistance_counts.csv")
-    lc_raw = load_csv_series(export_dir, "LC.*.raw_adc_counts.csv")
+    # Load raw sensor data (board-numbered: PT1.CH*, PT2.CH*, …)
+    pt_raw = load_csv_series(export_dir, "PT*.CH*.raw_adc_counts.csv")
+    tc_raw = load_csv_series(export_dir, "TC*.CH*.raw_adc_counts.csv")
+    rtd_raw = load_csv_series(export_dir, "RTD*.CH*.raw_resistance_counts.csv")
+    lc_raw = load_csv_series(export_dir, "LC*.CH*.raw_adc_counts.csv")
     if pt_raw or tc_raw or rtd_raw or lc_raw:
         print(
             f"  Loaded raw: PT={len(pt_raw)}, TC={len(tc_raw)}, RTD={len(rtd_raw)}, LC={len(lc_raw)}"
@@ -1009,7 +1012,7 @@ def main() -> None:
             print(f"  Filtering from PRESS_STANDBY at {t_start}")
             t0 = t_start
         else:
-            t0 = _find_t0_from_data(pt_series, temp_series)
+            t0 = _find_t0_from_data(pt_series, tc_series)
 
     # Calculate global t_max if not already constrained
     if t_max_crop is None:
@@ -1021,9 +1024,6 @@ def main() -> None:
     else:
         t_max_val = t_max_crop
 
-    pt_data, t_grid = resample_to_grid(
-        pt_series, t0, dt, t_min=t_min_crop, t_max=t_max_val, max_gap_sec=args.max_gap
-    )
     # Resample all to high-resolution common grid (100Hz)
     pt_wide, t_s = (
         resample_to_grid(
