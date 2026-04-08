@@ -419,10 +419,10 @@ active_connectors = [1, 2]
 "LOX Vent"              = ["NC", 6, 12]
 "LOX Press"             = ["NO", 8, 12]
 "GSE Low Press Vent"    = ["NC", 5, 12]
-"Fuel Fill Press"       = ["NC", 10, 12]
+"Fuel Fill Press"       = ["NC", 2, 14]
 # Actuator Board #2 → board_id 14
 "Fuel Fill Vent"        = ["NC", 1, 14]
-"GSE LOX Fill Vent"     = ["NC", 2, 14]
+"GSE LOX Fill Vent"     = ["NC", 10, 14]
 "GSE High Press Control" = ["NC", 3, 14]
 "GSE Med Press Control" = ["NC", 4, 14]
 "GSE High Press Vent"   = ["NC", 5, 14]
@@ -657,7 +657,8 @@ display_ma_samples = 1
 [state_machine]
 actuator_csv = "config/state_machine_actuators.csv"
 actuator_delay_csv = "config/state_machine_actuator_delays.csv"
-transitions_csv = "external/DiabloAvionics/test_guis/state_transitions.csv"
+# Repo-local matrix (same schema as DiabloAvionics test_guis); backend resolves via state_machine.transitions_csv
+transitions_csv = "config/state_transitions.csv"
 
 # =============================================================================
 # Controller Settings (PWM Control)

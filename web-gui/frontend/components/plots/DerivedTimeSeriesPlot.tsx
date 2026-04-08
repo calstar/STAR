@@ -126,7 +126,7 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
   }, [enablePlayPause, isPaused]);
 
   const componentMap = entities.map(() => component);
-  const MAX_POINTS = Math.min(windowSeconds * SAMPLE_HZ, 2000);
+  const MAX_POINTS = Math.min(windowSeconds * SAMPLE_HZ, 16000);
 
   useEffect(() => {
     if (!containerRef.current || !plotRef.current) return;

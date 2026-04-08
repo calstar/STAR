@@ -128,7 +128,8 @@ export interface StateActuatorMap {
  * Map a CSV / role / GUI actuator name to the Elodin [0x32] entity the thin server and parser use.
  * Uses the same board slot rule as FSW: board_id % 10 with 0 → 10.
  */
-export function resolveActuatorCmdEntity(actuatorName: string): string | null {
+/** Resolve role / CSV name → { board slot, local channel } from actuator_roles (same rule as FSW). */
+export function resolveActuatorBoardSlotAndChannel(actuatorName: string): { bn: number; localCh: number } | null {
   try {
     const config = readConfig();
     const roles = config.actuator_roles as Record<string, unknown[]> | undefined;
@@ -144,10 +145,24 @@ export function resolveActuatorCmdEntity(actuatorName: string): string | null {
     const boardId = entry.length >= 3 && typeof entry[2] === 'number' ? entry[2] : 12;
     const mod = boardId % 10;
     const bn = mod === 0 ? 10 : mod;
-    return `ACT_CMD.B${bn}.CH${localCh}`;
+    return { bn, localCh };
   } catch {
     return null;
   }
+}
+
+/** Elodin [0x32] commanded entity — matches sequencer / DatabaseConfig. */
+export function resolveActuatorCmdEntity(actuatorName: string): string | null {
+  const r = resolveActuatorBoardSlotAndChannel(actuatorName);
+  if (!r) return null;
+  return `ACT_CMD.B${r.bn}.CH${r.localCh}`;
+}
+
+/** Telemetry entity for [0x31] actuator_state — must match elodin-protocol.ts */
+export function resolveActuatorTelemetryEntity(actuatorName: string): string | null {
+  const r = resolveActuatorBoardSlotAndChannel(actuatorName);
+  if (!r) return null;
+  return `ACT${r.bn}.CH${r.localCh}`;
 }
 
 export function getActuatorChannel(

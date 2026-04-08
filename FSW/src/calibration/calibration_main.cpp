@@ -16,8 +16,10 @@
  * Usage:
  *   ./calibration_service [--config PATH] [--elodin-host HOST] [--elodin-port PORT]
  *   CAL_VERBOSE=1 for per-packet debug output
- *   CAL_USE_FACTORY_PT=1 / kLpPtDefaultFactoryOnly — LP PT = factory cubic (bypass robust)
- *   CAL_USE_ROBUST_PT=1 — force robust blend even if factory-only default is on
+ *   LP PT (non–HP board): default = factory cubic from JSON/CSV (same as validated letsfix stack).
+ *   CAL_USE_ROBUST_PT=1 — 100% robust mean when initialized (for lab / prior experiments)
+ *   CAL_USE_ROBUST_BLEND=1 — 75% robust + 25% factory (do not use for flight unless characterized)
+ *   CAL_USE_FACTORY_PT=1 — force factory cubic even if robust env flags are set mistakenly
  *   CAL_BACKUP_PATH — override robust prior JSON (else latest calibration_backups/*.json)
  */
 
@@ -79,15 +81,22 @@ static bool env_flag_true(const char* name) {
     return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T');
 }
 
-/** Default true: streaming LP PT uses factory cubic when loaded (stable). Set CAL_USE_ROBUST_PT=1
- * to mix in robust (25%) for drift experiments — never uses the old |rob|<1e-3 discrete switch
- * (400↔0 spikes). */
+/** Default true: LP PT uses factory cubic from calibration files (hardware-trusted). The prior
+ * cpp-stack default (75% robust) pulled bad psi from adjustments.json priors — restore
+ * letsfix-style factory-first unless the operator opts into robust paths via env. */
 static constexpr bool kLpPtDefaultFactoryOnly = true;
 
 static bool lp_pt_use_factory_only() {
-    if (env_flag_true("CAL_USE_ROBUST_PT"))
+    if (env_flag_true("CAL_USE_FACTORY_PT"))
+        return true;
+    if (env_flag_true("CAL_USE_ROBUST_PT") || env_flag_true("CAL_USE_ROBUST_BLEND"))
         return false;
-    return kLpPtDefaultFactoryOnly || env_flag_true("CAL_USE_FACTORY_PT");
+    return kLpPtDefaultFactoryOnly;
+}
+
+/** 100% robust mean when sensor initialized (CAL_USE_ROBUST_PT=1). */
+static bool lp_pt_use_pure_robust() {
+    return env_flag_true("CAL_USE_ROBUST_PT");
 }
 
 /**
@@ -98,6 +107,18 @@ static bool lp_pt_use_factory_only() {
  * together. Optional: per-channel mA hysteresis kills threshold flicker at ~4 mA open-circuit
  * noise.
  */
+/**
+ * HP PT shunt codes are defined as unsigned in [0, 2^31) vs 2.5 V ref (see board_simulator).
+ * The same 21-byte field is often viewed as int32 in tools; a "reasonable" negative signed code
+ * becomes uint32 >= 2^31 and convert_hp_pt_to_pressure used to return 0 PSI for all channels.
+ */
+static uint32_t coerce_hp_pt_adc_counts(int32_t /* as_signed */, uint32_t as_unsigned) {
+    constexpr uint32_t kMaxCode = 2147483647u;  // 2^31 - 1, top of normalized scale
+    // HP 4–20 mA shunt codes are defined as unsigned vs 2.5 V ref. Always interpret the wire as
+    // uint32 — int32 sign makes many valid codes look "negative" and the old path returned 0.
+    return as_unsigned > kMaxCode ? kMaxCode : as_unsigned;
+}
+
 static double convert_hp_pt_to_pressure(uint8_t local_ch, uint32_t adc_raw, double full_scale_psi,
                                         double sense_resistor_ohms, double adc_ref_voltage,
                                         uint32_t adc_exc_raw, bool use_excitation_norm,
@@ -113,12 +134,13 @@ static double convert_hp_pt_to_pressure(uint8_t local_ch, uint32_t adc_raw, doub
 
     if (local_ch < 1 || local_ch > 10)
         return 0.0;
-    if (adc_raw >= static_cast<uint32_t>(ADC_MAX))
-        return 0.0;
     if (sense_resistor_ohms <= 0.0 || !std::isfinite(adc_ref_voltage))
         return 0.0;
 
-    double v_sense = (static_cast<double>(adc_raw) / ADC_MAX) * adc_ref_voltage;
+    // Clamp to [0, 2^31-1] for voltage ratio (do not reject 2^31.. as hard zero).
+    uint32_t adc = std::min(adc_raw, static_cast<uint32_t>(ADC_MAX) - 1u);
+
+    double v_sense = (static_cast<double>(adc) / ADC_MAX) * adc_ref_voltage;
 
     if (use_excitation_norm && adc_exc_raw > 128u && adc_exc_raw < static_cast<uint32_t>(ADC_MAX) &&
         exc_divider_attenuation > 1e-9) {
@@ -750,11 +772,13 @@ int main(int argc, char* argv[]) {
                   << std::endl;
     }
     if (lp_pt_use_factory_only()) {
-        std::cout << "[Calibration] LP PT: factory cubic for streaming (default). "
-                     "Export CAL_USE_ROBUST_PT=1 for 75/25 factory/robust blend."
+        std::cout << "[Calibration] LP PT: factory cubic (default / CAL_USE_FACTORY_PT)"
+                  << std::endl;
+    } else if (lp_pt_use_pure_robust()) {
+        std::cout << "[Calibration] LP PT: CAL_USE_ROBUST_PT=1 — 100% robust when initialized"
                   << std::endl;
     } else {
-        std::cout << "[Calibration] LP PT: CAL_USE_ROBUST_PT=1 — 75% factory + 25% robust blend"
+        std::cout << "[Calibration] LP PT: CAL_USE_ROBUST_BLEND=1 — 75% robust + 25% factory anchor"
                   << std::endl;
     }
 
@@ -881,10 +905,11 @@ int main(int argc, char* argv[]) {
                             // Offset the factory polynomial output to read 0 PSI at current ADC.
                             const uint8_t bid = static_cast<uint8_t>(id / 100);
                             const uint8_t lch = static_cast<uint8_t>(id % 100);
-                            const uint8_t bn  = (bid % 10) == 0 ? 10u : (bid % 10);
+                            const uint8_t bn = (bid % 10) == 0 ? 10u : (bid % 10);
                             const uint8_t log_ch = pt_calibration_logical_channel(bn, lch);
                             if (pt_calibration.is_calibrated(log_ch)) {
-                                const double psi_now = pt_calibration.calculate_pressure(log_ch, val);
+                                const double psi_now =
+                                    pt_calibration.calculate_pressure(log_ch, val);
                                 if (std::isfinite(psi_now))
                                     g_zero_offsets[id] = -psi_now;
                             }
@@ -897,7 +922,7 @@ int main(int argc, char* argv[]) {
                             robust_manager.zero_sensor(sensor_id, last_adc_map[sensor_id]);
                             const uint8_t bid = static_cast<uint8_t>(sensor_id / 100);
                             const uint8_t lch = static_cast<uint8_t>(sensor_id % 100);
-                            const uint8_t bn  = (bid % 10) == 0 ? 10u : (bid % 10);
+                            const uint8_t bn = (bid % 10) == 0 ? 10u : (bid % 10);
                             const uint8_t log_ch = pt_calibration_logical_channel(bn, lch);
                             if (pt_calibration.is_calibrated(log_ch)) {
                                 const double psi_now = pt_calibration.calculate_pressure(
@@ -969,14 +994,18 @@ int main(int argc, char* argv[]) {
         elodin_client.begin_batch();
 
         if (type_hi == 0x20) {  // PT raw
-            if (board_number == hp_pt_board_number && ch_eff >= 1 && ch_eff <= 10)
-                g_hp_board_last_u32[static_cast<size_t>(ch_eff)] = adc_u32;
+            uint32_t hp_wire_adc = 0u;
+            if (board_number == hp_pt_board_number) {
+                hp_wire_adc = coerce_hp_pt_adc_counts(adc_i32, adc_u32);
+                if (ch_eff >= 1 && ch_eff <= 10)
+                    g_hp_board_last_u32[static_cast<size_t>(ch_eff)] = hp_wire_adc;
+            }
 
             uint16_t uid = resolve_pt_sensor_uid(type_lo, ch_eff, pt_boards);
             double psi;
             uint8_t cal_status;
-            const bool is_hp_ch = board_number == hp_pt_board_number &&
-                                  hp_pt_channels.count(ch_eff);
+            const bool is_hp_ch =
+                board_number == hp_pt_board_number && hp_pt_channels.count(ch_eff);
             // board_simulator.py generates valid 4-20 mA ADC codes for HP PT connectors
             // (back-calculates i_ma from target PSI), so apply the 4-20 mA path in both
             // sim and real-hardware modes — no use_sim_mode guard needed here.
@@ -987,18 +1016,17 @@ int main(int argc, char* argv[]) {
                     exc_ok ? g_hp_board_last_u32[static_cast<size_t>(hp_pt_excitation_connector_id)]
                            : 0u;
                 const bool use_norm = exc_ok && adc_exc >= 128u;
-                psi = convert_hp_pt_to_pressure(ch_eff, adc_u32, hp_pt_full_scale_psi,
+                psi = convert_hp_pt_to_pressure(ch_eff, hp_wire_adc, hp_pt_full_scale_psi,
                                                 hp_pt_sense_resistor_ohms, hp_pt_adc_ref_voltage,
                                                 adc_exc, use_norm, hp_pt_exc_div_atten);
                 cal_status = 1;
-                last_adc_map[uid] = static_cast<int32_t>(adc_u32);
+                last_adc_map[uid] = static_cast<int32_t>(hp_wire_adc);
                 if (verbose() && packet_count % 100 == 0)
                     std::cout << "[Cal] HP PT B" << static_cast<int>(board_number) << " ch"
-                              << static_cast<int>(ch_eff)
-                              << " adc=" << static_cast<int32_t>(adc_u32) << " psi=" << psi
-                              << std::endl;
-            } else if (board_number == hp_pt_board_number &&
-                       !hp_pt_channels.empty() && !hp_pt_channels.count(ch_eff)) {
+                              << static_cast<int>(ch_eff) << " adc_s=" << adc_i32
+                              << " adc_hp=" << hp_wire_adc << " psi=" << psi << std::endl;
+            } else if (board_number == hp_pt_board_number && !hp_pt_channels.empty() &&
+                       !hp_pt_channels.count(ch_eff)) {
                 // Non-HP connector on the HP PT board (e.g., excitation monitor): output 0 PSI.
                 psi = 0.0;
                 cal_status = 0;
@@ -1017,23 +1045,27 @@ int main(int argc, char* argv[]) {
                     psi = psi_fac;
                 } else if (lp_pt_use_factory_only()) {
                     psi = psi_fac;
+                } else if (lp_pt_use_pure_robust()) {
+                    psi = psi_rob;
                 } else {
-                    // CAL_USE_ROBUST_PT=1: weighted blend only (old |psi_rob|<1e-3 branch toggled
-                    // factory vs robust sample-to-sample and produced full-scale GUI spikes).
-                    constexpr double kRobustWeight = 0.25;
-                    psi = (1.0 - kRobustWeight) * psi_fac + kRobustWeight * psi_rob;
+                    // Default: robust-dominant blend (factory anchors rare large excursions).
+                    constexpr double kFactoryWeight = 0.25;
+                    psi = (1.0 - kFactoryWeight) * psi_rob + kFactoryWeight * psi_fac;
                 }
                 cal_status = fac_ok ? 1u : 0u;
                 // Apply zero offset then EMA for LP PT channels.
                 {
                     std::lock_guard<std::mutex> lk(g_zero_offsets_mutex);
                     auto it_off = g_zero_offsets.find(uid);
-                    if (it_off != g_zero_offsets.end()) psi += it_off->second;
+                    if (it_off != g_zero_offsets.end())
+                        psi += it_off->second;
                 }
                 {
                     auto& ema = g_lp_ema[uid];
-                    if (!std::isfinite(ema)) ema = psi;
-                    else ema = LP_EMA_ALPHA * psi + (1.0 - LP_EMA_ALPHA) * ema;
+                    if (!std::isfinite(ema))
+                        ema = psi;
+                    else
+                        ema = LP_EMA_ALPHA * psi + (1.0 - LP_EMA_ALPHA) * ema;
                     psi = ema;
                 }
                 if (verbose() && packet_count % 100 == 0)
@@ -1054,8 +1086,7 @@ int main(int argc, char* argv[]) {
             }
             comms::messages::sensor::CalibratedPTMessage cal_msg(
                 ts_ns, ch_eff, std::array<uint8_t, 3>{0, 0, 0}, static_cast<float>(psi),
-                is_hp_ch ? adc_u32 : static_cast<uint32_t>(adc_i32),
-                cal_status);
+                is_hp_ch ? adc_u32 : static_cast<uint32_t>(adc_i32), cal_status);
             elodin_client.publish(static_cast<uint16_t>((type_hi << 8) | cal_lo), cal_msg);
 
         } else if (type_hi == 0x21) {  // TC raw

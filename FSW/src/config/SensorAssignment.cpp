@@ -1,7 +1,6 @@
 #include "config/SensorAssignment.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <iomanip>

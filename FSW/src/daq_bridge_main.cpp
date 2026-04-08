@@ -507,6 +507,26 @@ int main(int argc, char* argv[]) {
         if (cfg.board_id < 0 || !cfg.enabled || cfg.type == BoardType::ACTUATOR)
             continue;
         Diablo::BoardHeartbeatPacket synthetic{};
+        switch (cfg.type) {
+            case BoardType::PT:
+                synthetic.board_type = Diablo::BoardType::PRESSURE_TRANSDUCER;
+                break;
+            case BoardType::LC:
+                synthetic.board_type = Diablo::BoardType::LOAD_CELL;
+                break;
+            case BoardType::TC:
+                synthetic.board_type = Diablo::BoardType::THERMOCOUPLE;
+                break;
+            case BoardType::RTD:
+                synthetic.board_type = Diablo::BoardType::RTD;
+                break;
+            case BoardType::ACTUATOR:
+                synthetic.board_type = Diablo::BoardType::ACTUATOR;
+                break;
+            default:
+                synthetic.board_type = Diablo::BoardType::UNKNOWN;
+                break;
+        }
         synthetic.board_id = static_cast<uint8_t>(cfg.board_id);
         synthetic.engine_state = Diablo::EngineState::SAFE;
         synthetic.board_state = Diablo::BoardState::SETUP;

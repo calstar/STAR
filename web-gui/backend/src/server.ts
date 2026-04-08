@@ -31,7 +31,7 @@ import { registerVTables, clearSubscriptionState } from './elodin-vtable-registr
 import { registerControllerVTables } from './legacy/elodin-vtable-controller.js';
 import { createAPIHandler } from './api-server.js';
 import { readConfig } from './routes/config.js';
-import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity } from './legacy/state-actuators.js';
+import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } from './legacy/state-actuators.js';
 import type { StateActuatorMap } from './legacy/state-actuators.js';
 import { getStateTransitions } from './legacy/state-transitions.js';
 import { handleCalibrationCommand, type CalibrationHost } from './calibration-handler.js';
@@ -51,8 +51,9 @@ const THIN_VERBOSE_CONNECTION_LOG = process.env.THIN_VERBOSE_CONNECTION_LOG === 
 const THIN_HEARTBEAT_DIAG_LOG = process.env.THIN_HEARTBEAT_DIAG_LOG === '1';
 const THIN_STATS_LOG = process.env.THIN_STATS_LOG === '1';
 
-const HISTORY_MAX_POINTS = 1000;  // per series
-const HISTORY_MAX_KEYS = 80;
+// ~20 Hz × 300 s (5 min window) ≈ 6000; keep extra for HISTORICAL_DATA on reconnect.
+const HISTORY_MAX_POINTS = 16000;  // per series
+const HISTORY_MAX_KEYS = 200;
 const HISTORY_STALE_MS = 5 * 60 * 1000;
 const BOARD_STATUS_HZ = 1;     // broadcast rate for board status
 /** Board marked disconnected if no Elodin [0x10] heartbeat for this long. Too low causes UI flap when DB or TCP jitters; heartbeats are usually multi-Hz but not hard-real-time. */
@@ -250,12 +251,21 @@ loadBoardsFromConfig();
 
 const STATE_ACTUATOR_MAP: StateActuatorMap = getStateActuatorMap();
 
-/** Build entity→expected map for a given state. Returns { "ACT.LOX_Main": 1, ... } */
+/**
+ * Build entity→expected map for a given state.
+ * Keys must match Elodin [0x31] actuator_state entities (ACT{n}.CH{m}), not ACT.Role_Name,
+ * or mismatch detection never lines up with sensed state.
+ */
 function getExpectedPositions(state: SystemState): Record<string, number> {
   const expected = STATE_ACTUATOR_MAP[state];
   if (!expected) return {};
   const result: Record<string, number> = {};
   for (const [name, value] of Object.entries(expected)) {
+    const tel = resolveActuatorTelemetryEntity(name);
+    if (tel) {
+      result[tel] = value;
+      continue;
+    }
     const entity = CSV_ACTUATOR_TO_ENTITY[name] || `ACT.${name.replace(/\s+/g, '_')}`;
     result[entity] = value;
   }

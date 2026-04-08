@@ -10,11 +10,10 @@
 #include <vector>
 
 #include "calibration/AllanVariance.hpp"
+#include "calibration/PTCalibration.hpp"
 
 namespace fsw {
 namespace calibration {
-
-struct PTCalibrationCoeffs;
 
 /** Environmental state [T, H, V, A, M] — scripts/calibration/robust_calibration.py */
 struct EnvironmentalState {
@@ -44,9 +43,12 @@ public:
 
     explicit RobustCalibrationFramework(int sensor_id);
 
-    /** Seed θ from factory cubic P(adc); maps to linear-in-adc_norm prior like Python
-     * set_theta_from_polynomial fallback. */
+    /** Seed θ by ridge LS so Φ·θ ≈ factory cubic P(adc) on an ADC grid (same env as streaming).
+     * The old 2-parameter linear seed could not match a cubic → robust read low vs factory. */
     void seed_from_factory_cubic(const PTCalibrationCoeffs& c);
+
+    /** Max |Φ·θ − P_factory(adc)| over a dense ADC grid — sanity-check saved adjustments.json. */
+    double max_abs_error_vs_factory(const PTCalibrationCoeffs& factory_cubic) const;
 
     void set_theta_from_polynomial(const std::vector<double>& poly_coeffs, double adc_norm_min,
                                    double adc_norm_scale);

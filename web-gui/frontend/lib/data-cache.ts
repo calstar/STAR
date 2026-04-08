@@ -17,9 +17,9 @@ import { getWebSocketClient } from './websocket';
 import { MessageType } from './types';
 import { getServerTimeNow } from './server-time';
 
-const CACHE_MAX_SECONDS = 60;
-// ~40 Hz × ~100 s cap — higher point density removes stair-stepped uPlot lines when WS is fast.
-const CACHE_MAX_POINTS  = 4000;
+// Ring capacity must cover longest dashboard window (5 min = 300 s) at effective WS rate (~20 Hz
+// after backend throttle) → 300×20 ≈ 6000; use headroom for 10 min + bursts.
+const CACHE_MAX_POINTS  = 16000;
 const CACHE_SAMPLE_HZ   = 40;
 // The stack routinely publishes >80 entity.component streams. A low key cap causes
 // live series eviction and "dead" plots until hard refresh reloads historical data.
@@ -130,7 +130,7 @@ class SensorDataCache {
     if (s.len === 0) return null;
     const t = this.tail(s);
 
-    // Linear scan to find first index >= cutoff (at most CACHE_MAX_POINTS = 2000 iterations).
+    // Linear scan to find first index >= cutoff (at most CACHE_MAX_POINTS iterations).
     let startOffset = 0;
     while (startOffset < s.len && s.tBuf[(t + startOffset) % CACHE_MAX_POINTS] < cutoff) {
       startOffset++;

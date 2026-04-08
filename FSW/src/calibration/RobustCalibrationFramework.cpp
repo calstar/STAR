@@ -43,23 +43,71 @@ RobustCalibrationFramework::RobustCalibrationFramework(int sensor_id)
     env_var_interaction_ = Eigen::MatrixXd::Identity(5, 5) * 0.00001;
 }
 
+namespace {
+constexpr int kFactorySeedGridPoints = 48;
+constexpr double kRidgeLambda = 1e-3;
+
+int32_t clamp_adc_i32(double adc_d) {
+    constexpr double lo = -2147483648.0;
+    constexpr double hi = 2147483647.0;
+    if (adc_d <= lo)
+        return static_cast<int32_t>(lo);
+    if (adc_d >= hi)
+        return static_cast<int32_t>(hi);
+    return static_cast<int32_t>(std::llround(adc_d));
+}
+}  // namespace
+
 void RobustCalibrationFramework::seed_from_factory_cubic(const PTCalibrationCoeffs& c) {
-    static const double adcs[] = {-2e8, 0.0, 5e8, 1e9, 1.8e9};
-    Eigen::MatrixXd A(5, 2);
-    Eigen::VectorXd y(5);
-    for (int i = 0; i < 5; ++i) {
-        double adc_d = adcs[i];
-        int32_t adc = static_cast<int32_t>(std::clamp(adc_d, -2.147e9, 2.147e9));
-        A(i, 0) = 1.0;
-        A(i, 1) = adc_d / 1e9;
-        y(i) = c.calculate_pressure(adc);
+    // Factory: psi = A*adc^3 + ... in raw int32 counts. Robust model: psi ≈ phi(adc)^T theta with
+    // 9-D environmental basis. Fit theta by ridge regression on a grid so streaming predictions
+    // match the factory curve (not a linear approximation of a cubic).
+    EnvironmentalState env;
+    Eigen::MatrixXd Phi(kFactorySeedGridPoints, N);
+    Eigen::VectorXd y(kFactorySeedGridPoints);
+    const double lo = -2e8;
+    const double hi = 1.8e9;
+    for (int i = 0; i < kFactorySeedGridPoints; ++i) {
+        double t = static_cast<double>(i) / static_cast<double>(kFactorySeedGridPoints - 1);
+        double adc_d = lo + t * (hi - lo);
+        int32_t adc_i = clamp_adc_i32(adc_d);
+        Phi.row(i) = environmental_basis(static_cast<double>(adc_i), env).transpose();
+        y(i) = c.calculate_pressure(adc_i);
     }
-    Eigen::Vector2d t = A.colPivHouseholderQr().solve(y);
-    theta_mean_.setZero();
-    theta_mean_(0) = t(0);
-    theta_mean_(1) = t(1);
-    theta_cov_ = Eigen::MatrixXd::Identity(N, N) * 0.05;
+    Eigen::MatrixXd normal = Phi.transpose() * Phi + kRidgeLambda * Eigen::MatrixXd::Identity(N, N);
+    Eigen::VectorXd rhs = Phi.transpose() * y;
+    Eigen::LDLT<Eigen::MatrixXd> ldlt(normal);
+    if (ldlt.info() != Eigen::Success) {
+        theta_mean_.setZero();
+        theta_mean_ << 0.0, 200.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0;
+        theta_cov_ = Eigen::MatrixXd::Identity(N, N) * 0.05;
+        rls_P_ = Eigen::MatrixXd::Identity(N, N) * 100.0;
+        return;
+    }
+    theta_mean_ = ldlt.solve(rhs);
+    Eigen::VectorXd resid = Phi * theta_mean_ - y;
+    double rmse = std::sqrt(resid.squaredNorm() / static_cast<double>(kFactorySeedGridPoints));
+    double var = std::max(rmse * rmse, 1e-8);
+    theta_cov_ = Eigen::MatrixXd::Identity(N, N) * var;
     rls_P_ = Eigen::MatrixXd::Identity(N, N) * 100.0;
+}
+
+double RobustCalibrationFramework::max_abs_error_vs_factory(const PTCalibrationCoeffs& c) const {
+    EnvironmentalState env;
+    double max_e = 0.0;
+    const int n = 64;
+    const double lo = -2e8;
+    const double hi = 1.8e9;
+    for (int i = 0; i < n; ++i) {
+        double t = static_cast<double>(i) / static_cast<double>(n - 1);
+        double adc_d = lo + t * (hi - lo);
+        int32_t adc_i = clamp_adc_i32(adc_d);
+        Eigen::VectorXd phi = environmental_basis(static_cast<double>(adc_i), env);
+        double pr = phi.dot(theta_mean_);
+        double pf = c.calculate_pressure(adc_i);
+        max_e = std::max(max_e, std::abs(pr - pf));
+    }
+    return max_e;
 }
 
 void RobustCalibrationFramework::set_theta_from_polynomial(const std::vector<double>& poly_coeffs,

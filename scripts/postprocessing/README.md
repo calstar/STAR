@@ -9,7 +9,7 @@ Export Elodin DB data to parquet, CSV, or Arrow for analysis. This document desc
 | **daq_bridge** | Raw PT, TC, RTD, LC [0x20,0x21,0x22,0x23] | Every packet | No |
 | **daq_bridge** | Actuator status [0x30], actuator state [0x31] | Every packet | No |
 | **daq_bridge** | Board heartbeats [0x10] | Every heartbeat | No |
-| **calibration_server** | Calibrated PT, TC, RTD, LC [0x20/0x21/0x22/0x23 + 0x10] | Max 100 Hz/ch | **Yes** (throttle) |
+| **calibration_service** (C++) / **calibration_server** (Python) | Calibrated PT, TC, RTD, LC [0x20/0x21/0x22/0x23 + 0x10] | Max ~100 Hz/ch | **Yes** (throttle) |
 | **ControllerService** | Actuation [0x40], diagnostics [0x41] | Every tick | No |
 | **ControllerService** | Measurement [0x42] | Every 10th tick | **Yes** (10% sample) |
 | **ControllerService** | PSM state [0x43], fire state [0x44] | On change | No |
@@ -116,14 +116,29 @@ Finds the most recent Elodin DB (by mtime), exports to CSV, and generates plots.
 ./scripts/postprocessing/plot_latest_db.sh daq_20260307_174529
 ```
 
-### Full pipeline (export CSV → analyze → plots)
+### Validate export (quick DB write check)
+
+After CSV export, summarize what entity families landed on disk (PT cal, actuators, controller, etc.):
+
+```bash
+python3 scripts/postprocessing/validate_export.py ./export_csv
+# Fail the script if no calibrated PT series (typical GSE/hotfire expectation):
+python3 scripts/postprocessing/validate_export.py ./export_csv --strict
+```
+
+`plot_latest_db.sh` runs `validate_export.py` automatically before `analyze_run.py`.
+
+### Full pipeline (export CSV → validate → analyze → plots)
 
 ```bash
 # 1. Export last run to CSV
 FORMAT=csv ./scripts/postprocessing/export_elodin_db.sh ~/.local/share/elodin/daq_YYYYMMDD_HHMMSS ./export_csv
 
-# 2. Run analysis and generate plots
-python scripts/postprocessing/analyze_run.py ./export_csv -o ./output/postprocessing/latest
+# 2. Validate (optional; included in plot_latest_db.sh)
+python3 scripts/postprocessing/validate_export.py ./export_csv
+
+# 3. Run analysis and generate plots
+python3 scripts/postprocessing/analyze_run.py ./export_csv -o ./output/postprocessing/latest
 ```
 
 Plots are written to `./output/postprocessing/latest/`:

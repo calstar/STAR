@@ -5,8 +5,10 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 #include <vector>
 
@@ -137,6 +139,18 @@ std::optional<Eigen::MatrixXd> parse_fixed_matrix(const std::string& block, cons
     return m;
 }
 
+/** Saved θ that drifts far from the factory cubic is usually bad priors — drop them. */
+double robust_prior_max_psi_mismatch() {
+    const char* s = std::getenv("CAL_ROBUST_PRIOR_MAX_PSI_ERR");
+    if (!s || !*s)
+        return 125.0;
+    char* end = nullptr;
+    double v = std::strtod(s, &end);
+    if (end == s || !std::isfinite(v) || v <= 0.0)
+        return 125.0;
+    return v;
+}
+
 }  // namespace
 
 SensorState::SensorState() = default;
@@ -151,17 +165,35 @@ void RobustCalibrationManager::initialize_sensor(uint16_t sensor_id,
     state.framework = std::make_unique<RobustCalibrationFramework>(static_cast<int>(sensor_id));
     state.framework->seed_from_factory_cubic(baseline);
 
+    const double prior_limit = robust_prior_max_psi_mismatch();
+
     // If priors were loaded before (or after) framework creation, apply the most specific ones.
     if (restored_theta_mean_.count(sensor_id) && restored_theta_cov_.count(sensor_id)) {
         state.framework->set_theta_mean_for_restore(restored_theta_mean_[sensor_id]);
         state.framework->set_theta_cov_for_restore(restored_theta_cov_[sensor_id]);
         state.framework->set_rls_P_for_restore(restored_theta_cov_[sensor_id]);
+        if (state.framework->max_abs_error_vs_factory(baseline) > prior_limit) {
+            std::cerr << "[RobustCalibration] Discarding adjustments prior for sensor "
+                      << static_cast<int>(sensor_id) << ": max |robust-factory| > " << prior_limit
+                      << " PSI on ADC grid — re-seeding from factory cubic.\n";
+            state.framework->seed_from_factory_cubic(baseline);
+        }
     } else if (restored_theta_mean_.count(sensor_id)) {
         state.framework->set_theta_mean_for_restore(restored_theta_mean_[sensor_id]);
+        if (state.framework->max_abs_error_vs_factory(baseline) > prior_limit) {
+            std::cerr << "[RobustCalibration] Discarding adjustments mean-only prior for sensor "
+                      << static_cast<int>(sensor_id) << " — re-seeding from factory cubic.\n";
+            state.framework->seed_from_factory_cubic(baseline);
+        }
     } else if (population_theta_mean_ && population_theta_cov_) {
         state.framework->set_theta_mean_for_restore(*population_theta_mean_);
         state.framework->set_theta_cov_for_restore(*population_theta_cov_);
         state.framework->set_rls_P_for_restore(*population_theta_cov_);
+        if (state.framework->max_abs_error_vs_factory(baseline) > prior_limit) {
+            std::cerr << "[RobustCalibration] Discarding population prior for sensor "
+                      << static_cast<int>(sensor_id) << " — re-seeding from factory cubic.\n";
+            state.framework->seed_from_factory_cubic(baseline);
+        }
     }
 }
 

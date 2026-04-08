@@ -2,66 +2,66 @@
 # DO NOT EDIT MANUALLY - This file is updated automatically
 
 [board_0]
-active_sensors = 127
+active_sensors = 92
 board_id = 0x41
 board_type = 0
 ip = 192.168.2.22
 mac_address = 9e:fb:ec:0d:00:29
-max_sensors = 252
+max_sensors = 180
 port = 5005
 
 [board_1]
-active_sensors = 0
+active_sensors = 92
 board_id = 0x47
 board_type = 0
 ip = 192.168.2.14
 mac_address = "ea:00:ac:b7:00:2f"
-max_sensors = 0
+max_sensors = 180
 port = 5005
 
 [board_2]
-active_sensors = 127
+active_sensors = 92
 board_id = 0x80
 board_type = 0
 ip = 192.168.2.12
 mac_address = 69:dd:b3:f3:00:50
-max_sensors = 252
+max_sensors = 180
 port = 5005
 
 [board_3]
-active_sensors = 127
+active_sensors = 92
 board_id = 0x96
 board_type = 0
 ip = 192.168.2.31
 mac_address = 91:a9:8b:32:00:60
-max_sensors = 252
+max_sensors = 180
 port = 5005
 
 [board_4]
-active_sensors = 127
+active_sensors = 92
 board_id = 0x101
 board_type = 0
 ip = 192.168.2.42
 mac_address = 93:ab:89:65:00:65
-max_sensors = 252
+max_sensors = 180
 port = 5005
 
 [board_5]
-active_sensors = 127
+active_sensors = 92
 board_id = 0x226
 board_type = 0
 ip = 192.168.2.21
 mac_address = "ef:84:60:1a:00:e2"
-max_sensors = 252
+max_sensors = 180
 port = 5005
 
 [board_6]
-active_sensors = 127
+active_sensors = 92
 board_id = 0x246
 board_type = 0
 ip = 192.168.2.51
 mac_address = "d0:4d:2b:19:00:f6"
-max_sensors = 252
+max_sensors = 180
 port = 5005
 
 [database]
