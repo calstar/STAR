@@ -1,3 +1,18 @@
+const path = require('path');
+const fs = require('fs');
+
+/** @iarna/toml lives in backend/package.json; Next resolves deps from frontend/. Webpack must alias explicitly. */
+function resolveIarnaTomlPackageRoot() {
+  const candidates = [
+    path.join(__dirname, 'node_modules', '@iarna', 'toml'),
+    path.join(__dirname, '..', 'backend', 'node_modules', '@iarna', 'toml'),
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, 'package.json'))) return dir;
+  }
+  return candidates[0];
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -5,6 +20,10 @@ const nextConfig = {
   webpack: (config) => {
     config.resolve.extensionAlias = {
       '.js': ['.ts', '.tsx', '.js', '.jsx'],
+    };
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      '@iarna/toml': resolveIarnaTomlPackageRoot(),
     };
     return config;
   },

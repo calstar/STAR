@@ -70,6 +70,11 @@ jobs:
         cache: 'npm'
         cache-dependency-path: web-gui/frontend/package-lock.json
 
+    # API routes import ../backend/src/* which uses @iarna/toml; install backend so resolution + alias work in next build.
+    - name: Install backend dependencies
+      working-directory: web-gui/backend
+      run: npm ci || npm install
+
     - name: Install frontend dependencies
       working-directory: web-gui/frontend
       run: npm ci || npm install
