@@ -45,8 +45,8 @@ struct PTCalibrationCoeffs {
 };
 
 /**
- * PT board slot (1–10, from board_id % 10 with 0→10) + local connector (1–10) → factory/JSON logical
- * channel index (slot 1 → 1..10, slot 2 → 11..20, …). Same rule as calibration_service.
+ * PT board slot (1–10, from board_id % 10 with 0→10) + local connector (1–10) → factory/JSON
+ * logical channel index (slot 1 → 1..10, slot 2 → 11..20, …). Same rule as calibration_service.
  */
 inline uint8_t pt_logical_calibration_channel(uint8_t board_slot_number, uint8_t local_connector) {
     if (local_connector == 0 || local_connector > 10)
@@ -87,8 +87,9 @@ public:
 
     /**
      * @brief Auto-load calibration from default paths
-     * Default: factory CSV first, then newest GUI JSON overlays every channel it lists (fixes CSV PT6≠GN2 ch6).
-     * CAL_PT_JSON_MISSING_ONLY=1 — JSON only fills gaps (legacy). CAL_PT_JSON_FIRST=1 — JSON only, then CSV.
+     * Default: factory CSV first, then newest GUI JSON overlays every channel it lists (fixes CSV
+     * PT6≠GN2 ch6). CAL_PT_JSON_MISSING_ONLY=1 — JSON only fills gaps (legacy). CAL_PT_JSON_FIRST=1
+     * — JSON only, then CSV.
      * @return true if any calibration was loaded
      */
     bool load_calibration();

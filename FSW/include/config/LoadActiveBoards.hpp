@@ -11,15 +11,7 @@ namespace fsw {
 namespace config {
 
 /** Board kinds from [boards.*] in config.toml (order matches prior daq_bridge enum). */
-enum class ActiveBoardKind : uint8_t {
-    PT,
-    LC,
-    TC,
-    RTD,
-    ACTUATOR,
-    ENCODER,
-    UNKNOWN
-};
+enum class ActiveBoardKind : uint8_t { PT, LC, TC, RTD, ACTUATOR, ENCODER, UNKNOWN };
 
 /**
  * Parse [boards.*] sections: enabled boards, board_id, channels / num_sensors / active_connectors.

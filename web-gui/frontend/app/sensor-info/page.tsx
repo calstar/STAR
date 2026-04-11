@@ -310,7 +310,7 @@ function ActRow({ entity, label, color }: { entity: string; label: string; color
 
 // ── Channel builder from /api/config ─────────────────────────────────────────
 
-function buildChannels(boards: Record<string, any>, type: 'TC' | 'RTD' | 'LC'): number[] {
+function buildChannels(boards: Record<string, any>, type: 'TC' | 'RTD' | 'LC' | 'ACTUATOR'): number[] {
   const channels: number[] = [];
   for (const board of Object.values(boards)) {
     if (board.type !== type || board.enabled === false) continue;

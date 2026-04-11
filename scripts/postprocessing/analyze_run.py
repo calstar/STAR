@@ -694,7 +694,9 @@ def plot_pressures_full_run(
     for j in range(n, nrows * ncols):
         r, cc = j // ncols, j % ncols
         axes[r][cc].set_visible(False)
-    fig.suptitle("All calibrated pressures (full timeline)", fontsize=12, fontweight="bold")
+    fig.suptitle(
+        "All calibrated pressures (full timeline)", fontsize=12, fontweight="bold"
+    )
     if len(t_s):
         axes[0][0].set_xlim(float(t_s[0]), float(t_s[-1]))
     axes[-1][0].set_xlabel("Time (s)")
@@ -875,9 +877,7 @@ def plot_actuators(
         axes = [axes]
     fig.suptitle("Actuator State (OPEN/CLOSED)", fontsize=12, fontweight="bold")
     for i, (ax, c) in enumerate(zip(axes, cols)):
-        _fill_actuator_channel_axis(
-            ax, t_s, display[c].values, c, color=f"C{i % 10}"
-        )
+        _fill_actuator_channel_axis(ax, t_s, display[c].values, c, color=f"C{i % 10}")
         ax.set_xlim(left=0)
     axes[-1].set_xlabel("Time (s)")
     plt.tight_layout()
@@ -1395,7 +1395,9 @@ def main() -> None:
     cfg_toml = _read_config_toml(config_path)
     if cfg_toml is None:
         if not config_path.exists():
-            print(f"  ⚠️  Config not found: {config_path} (using generic channel labels)")
+            print(
+                f"  ⚠️  Config not found: {config_path} (using generic channel labels)"
+            )
         cfg_data: dict = {}
     else:
         cfg_data = cfg_toml
@@ -1571,7 +1573,9 @@ def main() -> None:
     else:
         if args.full_run:
             t0 = _find_t0_from_data(pt_series, tc_series)
-            print(f"  Time axis t=0 at earliest sensor data ({t0}) — full run (--full-run)")
+            print(
+                f"  Time axis t=0 at earliest sensor data ({t0}) — full run (--full-run)"
+            )
         else:
             t_start = _find_t_start_from_state(
                 state_series,
@@ -1603,9 +1607,7 @@ def main() -> None:
                     all_t.extend((df["time"] - t0).dt.total_seconds().dropna().tolist())
         t_max_val = max(all_t) if all_t else 60.0
         if t_max_val <= 0:
-            print(
-                "⚠️  All samples are before t0 — re-anchoring at earliest sensor time"
-            )
+            print("⚠️  All samples are before t0 — re-anchoring at earliest sensor time")
             t0 = _find_t0_from_data(pt_series, tc_series)
             all_t = []
             for sd in (pt_series, tc_series, lc_series, act_series, ctrl_series):
@@ -1763,7 +1765,12 @@ def main() -> None:
         ),
     )
 
-    if act_wide is not None and not act_wide.empty and pt_wide is not None and not pt_wide.empty:
+    if (
+        act_wide is not None
+        and not act_wide.empty
+        and pt_wide is not None
+        and not pt_wide.empty
+    ):
         act_disp_snap = _apply_actuator_open_closed(act_wide, actuator_roles)
         plot_gn2_ox_valve_snapshots(pt_wide, act_disp_snap, t_s, out_dir)
 

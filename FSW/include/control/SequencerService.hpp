@@ -97,7 +97,8 @@ private:
     void publishState();
     // Publish raw state transition to Elodin [0x43, 0x00] (legacy VTable)
     void publishStateTransition(State from, State to);
-    /** 1 Hz CONTROLLER.state rows (from=to=current) so exports/GUI have a dense system-state stream. */
+    /** 1 Hz CONTROLLER.state rows (from=to=current) so exports/GUI have a dense system-state
+     * stream. */
     void startStateSnapshotPublisher();
 
     bool loadConfig(const std::string& path);

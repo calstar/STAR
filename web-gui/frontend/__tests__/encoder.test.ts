@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { rawToDeg, detectTransition } from '@/components/plots/OscopeTriggerPlot';
-import { useSensorStore } from '@/lib/store';
+import { useSensorStore, resetEncoderAcceptTimestampsForTests } from '@/lib/store';
 import { SystemState } from '@/lib/types';
 import { waitForSensorFlush } from './waitForSensorFlush';
 
@@ -107,6 +107,7 @@ describe('detectTransition — step detection algorithm', () => {
 
 describe('Encoder sensor data through store', () => {
     beforeEach(() => {
+        resetEncoderAcceptTimestampsForTests();
         useSensorStore.setState({
             sensorData: {},
             actuators: new Map(),

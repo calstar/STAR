@@ -152,8 +152,9 @@ double robust_prior_max_psi_mismatch() {
     return v;
 }
 
-/** After loading adjustments.json, θ may still match an old factory seed (e.g. Ox used PT1 fallback).
- *  If restored θ disagrees with the current factory cubic, re-seed so ADC→PSI tracks merged JSON/CSV.
+/** After loading adjustments.json, θ may still match an old factory seed (e.g. Ox used PT1
+ * fallback). If restored θ disagrees with the current factory cubic, re-seed so ADC→PSI tracks
+ * merged JSON/CSV.
  */
 void reconcile_frameworks_with_factory_baseline(std::map<uint16_t, SensorState>& states) {
     const double lim = robust_prior_max_psi_mismatch();

@@ -5,6 +5,15 @@ import { useSensorStore } from '@/lib/store';
 import uPlot from 'uplot';
 import React from 'react';
 
+// Avoid real WebSocket (Node undici vs jsdom Event causes unhandled rejections in Vitest).
+vi.mock('@/lib/websocket', () => ({
+    getWebSocketClient: () => ({
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+        onConnectionStatus: vi.fn(() => vi.fn()),
+    }),
+}));
+
 // Mock uPlot
 vi.mock('uplot', () => {
     const mockUPlot = vi.fn().mockImplementation(function mockUPlot(this: any) {

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react';
-import { useSensorStore } from '@/lib/store';
+import { useSensorStore, type NotificationEntry } from '@/lib/store';
 
 const MIN_FONT_PX = 10;
 const MAX_FONT_PX = 18;

@@ -60,9 +60,9 @@ using CalibratedLCMessage = CommsMessage<uint64_t,                // (0) timesta
 using CalibratedACTMessage = CommsMessage<uint64_t,                // (0) timestamp_ns
                                           uint8_t,                 // (1) channel_id
                                           std::array<uint8_t, 3>,  // (2) padding
-                                          float,    // (3) current_a — current in amps
-                                          uint32_t, // (4) raw_adc_counts — for reference
-                                          uint8_t   // (5) calibration_status — 0=uncal, 1=cal
+                                          float,     // (3) current_a — current in amps
+                                          uint32_t,  // (4) raw_adc_counts — for reference
+                                          uint8_t    // (5) calibration_status — 0=uncal, 1=cal
                                           >;
 
 }  // namespace sensor

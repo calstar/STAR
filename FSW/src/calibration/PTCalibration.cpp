@@ -6,8 +6,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <regex>
@@ -133,16 +133,16 @@ bool PTCalibrationManager::load_calibration() {
         try_csv();
         const char* missing_only_env = std::getenv("CAL_PT_JSON_MISSING_ONLY");
         const bool json_missing_only =
-            missing_only_env &&
-            (missing_only_env[0] == '1' || missing_only_env[0] == 'y' || missing_only_env[0] == 'Y' ||
-             missing_only_env[0] == 't' || missing_only_env[0] == 'T');
+            missing_only_env && (missing_only_env[0] == '1' || missing_only_env[0] == 'y' ||
+                                 missing_only_env[0] == 'Y' || missing_only_env[0] == 't' ||
+                                 missing_only_env[0] == 'T');
         if (!default_json_dir_.empty() && fs::exists(default_json_dir_)) {
             std::string json_file = find_latest_json_file(default_json_dir_);
             if (!json_file.empty() && load_from_json(json_file, json_missing_only)) {
                 if (json_missing_only) {
-                    std::cout << "[PTCalibration] Merged missing channels from JSON only: " << json_file
-                              << " (total " << calibrations_.size() << " logical channels)"
-                              << std::endl;
+                    std::cout << "[PTCalibration] Merged missing channels from JSON only: "
+                              << json_file << " (total " << calibrations_.size()
+                              << " logical channels)" << std::endl;
                 } else {
                     std::cout << "[PTCalibration] Overlaid GUI JSON on CSV: " << json_file
                               << " (logical channels present in JSON replace CSV; total keys "
@@ -342,7 +342,8 @@ void PTCalibrationManager::set_default_paths(const std::string& json_dir,
     default_csv_path_ = csv_path;
 }
 
-/** Match calibration_orchestrator._load_prior_from_polynomial_calibration: skip non-factory JSON. */
+/** Match calibration_orchestrator._load_prior_from_polynomial_calibration: skip non-factory JSON.
+ */
 static bool skip_json_for_pt_polynomial_load(const std::string& filename) {
     if (filename == "adjustments.json")
         return true;
@@ -368,8 +369,7 @@ std::string PTCalibrationManager::find_latest_json_file(const std::string& json_
             continue;
         auto file_time = fs::last_write_time(entry.path());
         auto time_t =
-            std::chrono::duration_cast<std::chrono::seconds>(file_time.time_since_epoch())
-                .count();
+            std::chrono::duration_cast<std::chrono::seconds>(file_time.time_since_epoch()).count();
 
         if (time_t > latest_time) {
             latest_time = time_t;

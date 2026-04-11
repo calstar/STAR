@@ -17,11 +17,10 @@
  *   ./calibration_service [--config PATH] [--elodin-host HOST] [--elodin-port PORT]
  *   CAL_VERBOSE=1 for per-packet debug output
  *   LP PT (non–HP board): default = factory cubic from CSV/JSON (same priority as letsfix / stable
- *   stack). RobustCalibrationManager still seeds from that factory curve and loads adjustments.json;
- *   streaming uses factory unless you opt into robust below.
- *   CAL_USE_ROBUST_PT=1 — 100% robust mean for streaming (when sensor initialized)
- *   CAL_USE_ROBUST_BLEND=1 — 75% robust + 25% factory
- *   CAL_USE_FACTORY_PT=1 — force factory cubic (same as default; explicit)
+ *   stack). RobustCalibrationManager still seeds from that factory curve and loads
+ * adjustments.json; streaming uses factory unless you opt into robust below. CAL_USE_ROBUST_PT=1 —
+ * 100% robust mean for streaming (when sensor initialized) CAL_USE_ROBUST_BLEND=1 — 75% robust +
+ * 25% factory CAL_USE_FACTORY_PT=1 — force factory cubic (same as default; explicit)
  *   CAL_BACKUP_PATH — override robust prior JSON (else latest calibration_backups/*.json)
  */
 
@@ -307,17 +306,14 @@ static uint16_t resolve_pt_sensor_uid(uint8_t type_lo, uint8_t ch,
  * branch so Zero All reads 0 PSI at the current ADC. (Using only factory psi for the offset while
  * streaming robust caused psi_display ≈ psi_rob - psi_fac, e.g. GN2 / GSE wrong after Zero All.)
  */
-static double lp_pt_psi_before_offset(
-    uint8_t board_number,
-    uint8_t local_ch,
-    uint16_t uid,
-    int32_t adc_i32,
-    const fsw::calibration::PTCalibrationManager& pt_calibration,
-    fsw::calibration::RobustCalibrationManager& robust_manager) {
-    const uint8_t pt_log_ch = fsw::calibration::pt_logical_calibration_channel(board_number, local_ch);
+static double lp_pt_psi_before_offset(uint8_t board_number, uint8_t local_ch, uint16_t uid,
+                                      int32_t adc_i32,
+                                      const fsw::calibration::PTCalibrationManager& pt_calibration,
+                                      fsw::calibration::RobustCalibrationManager& robust_manager) {
+    const uint8_t pt_log_ch =
+        fsw::calibration::pt_logical_calibration_channel(board_number, local_ch);
     const bool fac_ok = pt_calibration.is_calibrated(pt_log_ch);
-    const double psi_fac =
-        fac_ok ? pt_calibration.calculate_pressure(pt_log_ch, adc_i32) : 0.0;
+    const double psi_fac = fac_ok ? pt_calibration.calculate_pressure(pt_log_ch, adc_i32) : 0.0;
     const double psi_rob = robust_manager.predict_pressure_psi(uid, adc_i32);
 
     if (!fac_ok)
@@ -925,17 +921,16 @@ int main(int argc, char* argv[]) {
                             const uint8_t lch = static_cast<uint8_t>(id % 100);
                             const uint8_t bn = (bid % 10) == 0 ? 10u : (bid % 10);
                             const bool is_hp = (hp_pt_board_number != 255) &&
-                                                 (bn == hp_pt_board_number) &&
-                                                 hp_pt_channels.count(lch);
+                                               (bn == hp_pt_board_number) &&
+                                               hp_pt_channels.count(lch);
                             robust_manager.zero_sensor(id, val);
                             if (is_hp) {
                                 g_zero_offsets.erase(id);
                                 continue;
                             }
                             // Offset must match streaming path (robust vs factory), after RCF zero.
-                            const double psi_base =
-                                lp_pt_psi_before_offset(bn, lch, id, val, pt_calibration,
-                                                        robust_manager);
+                            const double psi_base = lp_pt_psi_before_offset(
+                                bn, lch, id, val, pt_calibration, robust_manager);
                             if (std::isfinite(psi_base))
                                 g_zero_offsets[id] = -psi_base;
                         }
@@ -948,8 +943,8 @@ int main(int argc, char* argv[]) {
                             const uint8_t lch = static_cast<uint8_t>(sensor_id % 100);
                             const uint8_t bn = (bid % 10) == 0 ? 10u : (bid % 10);
                             const bool is_hp = (hp_pt_board_number != 255) &&
-                                                 (bn == hp_pt_board_number) &&
-                                                 hp_pt_channels.count(lch);
+                                               (bn == hp_pt_board_number) &&
+                                               hp_pt_channels.count(lch);
                             robust_manager.zero_sensor(sensor_id, last_adc_map[sensor_id]);
                             if (!is_hp) {
                                 const double psi_base = lp_pt_psi_before_offset(

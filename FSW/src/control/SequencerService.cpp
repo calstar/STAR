@@ -212,7 +212,8 @@ bool SequencerService::init(const std::string& config_path) {
         const auto boards_map = fsw::config::load_active_boards(config_path_);
         const auto it_act = boards_map.find(fsw::config::ActiveBoardKind::ACTUATOR);
         const std::vector<fsw::elodin::BoardChannels> act_boards =
-            (it_act != boards_map.end()) ? it_act->second : std::vector<fsw::elodin::BoardChannels>{};
+            (it_act != boards_map.end()) ? it_act->second
+                                         : std::vector<fsw::elodin::BoardChannels>{};
         fsw::elodin::DatabaseConfig::register_non_sensor_tables(elodin_, act_boards);
         actuator_commander_.setElodinClient(&elodin_);
         actuator_commander_.publishInitialState();

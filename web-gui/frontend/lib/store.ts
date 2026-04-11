@@ -279,6 +279,11 @@ export function buildAliasesFromConfig(config: any): void {
 
 export { ALIASES };
 
+/** Test helper: encoder ordering map is module-local and not cleared by Zustand setState. */
+export function resetEncoderAcceptTimestampsForTests(): void {
+  _encoderLastAcceptedTs = {};
+}
+
 // ── Batched sensor-data updates ───────────────────────────────────────────────
 // Accumulate all incoming sensor writes (including actuator states) and flush
 // to Zustand in one batch per animation frame. This prevents dozens of
@@ -286,6 +291,8 @@ export { ALIASES };
 // commanded states at once.
 let _pendingSensorWrites: Record<string, number> = {};
 let _sensorTimestamps: Record<string, number> = {};
+/** Last accepted message time per key — used to drop stale ENC*.raw_angle samples only. */
+let _encoderLastAcceptedTs: Record<string, number> = {};
 let _flushScheduled = false;
 let _updateVersion = 0;
 
@@ -387,8 +394,19 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   },
 
   updateSensor: (update: SensorUpdate) => {
-    recordSensorUpdate(update.entity, update.component);
     const key = `${update.entity}.${update.component}`;
+
+    // Encoder angle: reject strictly older timestamps so a late UDP/WS frame cannot rewind the plot.
+    // (PT/LC streams stay last-write-wins; see data-flow tests for out-of-order calibrated PT.)
+    const isEncoderRawAngle =
+      update.component === 'raw_angle' && /^ENC\d*\./.test(update.entity);
+    if (isEncoderRawAngle) {
+      const lastTs = _encoderLastAcceptedTs[key] ?? 0;
+      if (update.timestamp < lastTs) return;
+      _encoderLastAcceptedTs[key] = update.timestamp;
+    }
+
+    recordSensorUpdate(update.entity, update.component);
 
     // Track last timestamp for diagnostics only. Do not drop “older” timestamps: Elodin/WebSocket
     // bursts often deliver calibrated PT rows slightly out of order vs raw; rejecting them left

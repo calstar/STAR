@@ -71,7 +71,9 @@ public:
     void clearAllManualOverrides();
 
     /** Set the Elodin client for publishing commanded state [0x32, ch] to the DB. */
-    void setElodinClient(fsw::elodin::ElodinClient* client) { elodin_ = client; }
+    void setElodinClient(fsw::elodin::ElodinClient* client) {
+        elodin_ = client;
+    }
 
     /** Publish initial de-energized state for all actuators to Elodin DB [0x32].
      *  Does NOT send UDP commands — only populates the DB so the frontend has data on startup. */
