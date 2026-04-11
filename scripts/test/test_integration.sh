@@ -101,6 +101,9 @@ kill_stale_integration_processes() {
 
 # shellcheck disable=SC2317  # EXIT trap; body is reachable at teardown
 cleanup() {
+  # Never let teardown fail the CI job: kill/OOM/SIGKILL on children makes `wait` non-zero,
+  # and with `set -e` bash would exit 1 after a passing test when reaping background jobs.
+  set +e
   echo ""
   echo "🧹 Cleaning up..."
   # First kill tracked PIDs (graceful, then force)
@@ -112,7 +115,7 @@ cleanup() {
     kill -9 "$pid" 2>/dev/null || true
   done
   # Then sweep for anything that escaped PID tracking (e.g. child processes)
-  kill_stale_integration_processes
+  kill_stale_integration_processes || true
   if [ -n "${INTEGRATION_SAVE_LOGS:-}" ]; then
     mkdir -p /tmp/integration_logs
     cp "$REPO_ROOT/.tmp/integration_"*"_$$.log" /tmp/integration_logs/ 2>/dev/null || true
@@ -122,6 +125,11 @@ cleanup() {
   rm -f "$TEST_CONFIG" 2>/dev/null || true
   rm -f "$UDP_COMMANDS_FILE" 2>/dev/null || true
   rm -f "$SIM_STATS_FILE" 2>/dev/null || true
+  # Reap tracked jobs so implicit wait on shell exit does not see Killed/OOM status.
+  for pid in "${PIDS[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+  wait 2>/dev/null || true
   echo "✅ Cleanup done"
 }
 
