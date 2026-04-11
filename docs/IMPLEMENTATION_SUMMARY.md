@@ -69,7 +69,7 @@ This document summarizes the implementation of three major components:
 ### IMU Calibration System
 
 **Python Calibration Scripts (Primary Method):**
-Following the pattern from external FSW PT calibration:
+Following the PT calibration pattern:
 - `imu_calibration.py` - Core calibration library with accelerometer, gyroscope, and magnetometer calibrators
 - `imu_calibration_gui.py` - Interactive GUI with real-time plots
 - `accelerometer_calibration.py` - Static position calibration script

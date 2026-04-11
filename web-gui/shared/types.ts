@@ -26,6 +26,7 @@ export enum MessageType {
   BOARD_STATUS_UPDATE = 'board_status_update',
   NOTIFICATION = 'notification',
   CONFIG_UPDATED = 'config_updated',
+  COUNTDOWN_TARGET_UPDATE = 'countdown_target_update',
 }
 
 // Sensor types
@@ -116,7 +117,8 @@ export interface CommandPayload {
   | 'pwm_actuator'
   | 'controller_command'
   | 'debug_mode'
-  | 'extend_fire';
+  | 'extend_fire'
+  | 'set_countdown_target';
   data: {
     state?: SystemState;
     /** Config-driven: actuator role name from config.toml actuator_roles (e.g. "LOX Main") */
@@ -131,6 +133,8 @@ export interface CommandPayload {
     pressure_fuel_target?: number; // Target fuel pressure [PSI or Pa]
     pressure_ox_target?: number;   // Target ox pressure [PSI or Pa]
     debugMode?: boolean; // Debug mode toggle
+    /** Unix timestamp in milliseconds. null clears/pauses the countdown. */
+    targetTimeMs?: number | null;
   };
 }
 
@@ -145,6 +149,12 @@ export interface ConnectionStatus {
 // Mission start time (T+0 from first packet)
 export interface MissionStartTime {
   missionStartTime: number; // Unix timestamp in milliseconds
+}
+
+// Countdown target time (shared global UI state)
+export interface CountdownTargetUpdate {
+  /** Unix timestamp in milliseconds; null = countdown not set */
+  targetTimeMs: number | null;
 }
 
 // ── Calibration types ─────────────────────────────────────────────────────────

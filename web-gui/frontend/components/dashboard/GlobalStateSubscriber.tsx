@@ -10,6 +10,7 @@ import {
     BoardStatusPayload,
     BoardStatus,
     MissionStartTime,
+    CountdownTargetUpdate,
     NotificationPayload,
     ActuatorUpdate
 } from '@/lib/types';
@@ -21,6 +22,7 @@ export default function GlobalStateSubscriber() {
     const updateActuator = useSensorStore((state) => state.updateActuator);
     const updateConnectionStatus = useSensorStore((state) => state.updateConnectionStatus);
     const updateMissionStartTime = useSensorStore((state) => state.updateMissionStartTime);
+    const updateCountdownTargetTime = useSensorStore((state) => state.updateCountdownTargetTime);
     const updateBoards = useSensorStore((state) => state.updateBoards);
     const updateNotification = useSensorStore((state) => state.updateNotification);
     const updateActuatorExpectedPositions = useSensorStore((state) => state.updateActuatorExpectedPositions);
@@ -63,13 +65,17 @@ export default function GlobalStateSubscriber() {
         const u8 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
             updateActuatorExpectedPositions(p as Record<number, Record<string, 'open' | 'closed' | null>>);
         });
+        const u9 = ws.on(MessageType.COUNTDOWN_TARGET_UPDATE, (p: unknown) => {
+            const payload = p as CountdownTargetUpdate;
+            updateCountdownTargetTime(payload.targetTimeMs);
+        });
 
         return () => {
-            u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8();
+            u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); u9();
         };
     }, [
         updateSensor, updateState, updateActuator, updateConnectionStatus,
-        updateMissionStartTime, updateBoards, updateNotification, updateActuatorExpectedPositions
+        updateMissionStartTime, updateCountdownTargetTime, updateBoards, updateNotification, updateActuatorExpectedPositions
     ]);
 
     return null;

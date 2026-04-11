@@ -1,22 +1,19 @@
 /**
  * Zustand store for sensor system state
  *
- * ENTITY NAME ALIASES
- * The backend can run in two modes:
- *  1. Direct-DAQ mode → emits named entities  e.g. PT_Cal.Fuel_Upstream.pressure_psi
- *  2. Elodin-DB mode  → emits channel entities e.g. PT_Cal.PT_CH1.pressure_psi
+ * DATA PLANE: All sensor data uses generic channel-based entity names
+ * (PT.CH1, ACT.CH3, TC_Cal.CH5). The database and backend always use these.
  *
- * Sensor-role → channel mapping (from config.toml):
- *   Fuel Upstream = CH1, GSE Low = CH2, Fuel Downstream = CH4, ...; GSE Mid = board 2 connector 4
- *   Ox Upstream   = CH5, GN2 Regulated = CH6, Ox Downstream = CH7
+ * DISPLAY PLANE: Role names ("Fuel Upstream", "LOX Main") are loaded from
+ * /api/config and used only for display labels in the frontend.
  *
- * Actuator-role → channel mapping (from config.toml actuator_roles):
- *   LOX Main = CH1, Fuel Vent = CH2, Fuel Press = CH3, GSE Low Vent = CH5
- *   LOX Vent = CH6, Fuel Main  = CH7, LOX Press  = CH8
+ * ALIAS SYSTEM: Components can reference named entities (e.g. PT_Cal.Fuel_Upstream)
+ * for readability. The alias system resolves these to generic channel keys at runtime,
+ * built dynamically from config.toml sensor_roles / actuator_roles.
  */
 
 import { create } from 'zustand';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import {
   SensorUpdate,
   ActuatorUpdate,
@@ -55,6 +52,8 @@ interface SensorSystemState {
   connectionStatus: ConnectionStatus;
   debugMode: boolean;
   missionStartTime: number | null; // T+0 from first packet (backend)
+  /** Global countdown target time (epoch ms), shared across all clients. */
+  countdownTargetTimeMs: number | null;
   actuatorExpectedPositions: Record<number, Record<string, 'open' | 'closed' | null>>; // state → entity → position
   /** Global actuator state by entity (updated from backend ACTUATOR_UPDATE and on manual command). */
   actuatorStateByEntity: Record<string, ActuatorState>;
@@ -75,6 +74,7 @@ interface SensorSystemState {
   updateState: (update: StateUpdate) => void;
   updateConnectionStatus: (status: ConnectionStatus) => void;
   updateMissionStartTime: (time: number) => void;
+  updateCountdownTargetTime: (timeMs: number | null) => void;
   updateActuatorExpectedPositions: (positions: Record<number, Record<string, 'open' | 'closed' | null>>) => void;
   getSensorValue: (entity: string, component: string) => number | null;
   setDebugMode: (mode: boolean) => void;
@@ -82,6 +82,10 @@ interface SensorSystemState {
   setVoltageRefNominals: (nominals: VoltageRefNominals) => void;
   updateNotification: (payload: NotificationPayload) => void;
   clearNotifications: () => void;
+  /** Calibrated PT entities hidden from combined Pressure History plots (top bar click toggles). */
+  pressureHistoryHiddenEntities: Record<string, true>;
+  togglePressureHistoryPlotVisibility: (plotEntityKeys: string[]) => void;
+  clearPressureHistoryHidden: () => void;
 }
 
 const LC_ZERO_STORAGE_KEY = 'sensor_system_loadCellZeroOffsets';
@@ -97,155 +101,226 @@ function loadStoredLcZeroOffsets(): Record<string, number> {
   return {};
 }
 
-// ── Alias table ──────────────────────────────────────────────────────────────
-// Maps lookup key → list of fallback keys to try in order.
-const ALIASES: Record<string, string[]> = {
-  // ── PT calibrated pressure (named → PT_CHX) ─────────────────────────────
-  'PT_Cal.Fuel_Upstream.pressure_psi': ['PT_Cal.PT_CH1.pressure_psi', 'PT.Fuel_Upstream.pressure_psi', 'PT.PT_CH1.pressure_psi'],
-  'PT_Cal.GSE_Low.pressure_psi': ['PT_Cal.PT_CH2.pressure_psi', 'PT.GSE_Low.pressure_psi', 'PT.PT_CH2.pressure_psi'],
-  'PT_Cal.Fuel_Downstream.pressure_psi': ['PT_Cal.PT_CH3.pressure_psi', 'PT.Fuel_Downstream.pressure_psi', 'PT.PT_CH3.pressure_psi'],
-  'PT_Cal.Chamber_Mid_PT_1.pressure_psi': ['PT_Cal.PT_CH4.pressure_psi', 'PT.Chamber_Mid_PT_1.pressure_psi', 'PT.PT_CH4.pressure_psi'],
-  'PT_Cal.Chamber_Mid_PT_2.pressure_psi': ['PT_Cal.PT_CH8.pressure_psi', 'PT.Chamber_Mid_PT_2.pressure_psi', 'PT.PT_CH8.pressure_psi'],
-  'PT_Cal.Chamber_Throat_PT_1.pressure_psi': ['PT_Cal.PT_CH9.pressure_psi', 'PT.Chamber_Throat_PT_1.pressure_psi', 'PT.PT_CH9.pressure_psi'],
-  'PT_Cal.Chamber_Throat_PT_2.pressure_psi': ['PT_Cal.PT_CH10.pressure_psi', 'PT.Chamber_Throat_PT_2.pressure_psi', 'PT.PT_CH10.pressure_psi'],
-  'PT_Cal.Fuel_Fill_Tank.pressure_psi': ['PT_Cal.PT_CH4.pressure_psi', 'PT.Fuel_Fill_Tank.pressure_psi', 'PT.PT_CH4.pressure_psi'],
-  'PT_Cal.Ox_Upstream.pressure_psi': ['PT_Cal.PT_CH5.pressure_psi', 'PT.Ox_Upstream.pressure_psi', 'PT.PT_CH5.pressure_psi'],
-  'PT_Cal.GN2_Regulated.pressure_psi': ['PT_Cal.PT_CH6.pressure_psi', 'PT.GN2_Regulated.pressure_psi', 'PT.PT_CH6.pressure_psi'],
-  'PT_Cal.Ox_Downstream.pressure_psi': ['PT_Cal.PT_CH7.pressure_psi', 'PT.Ox_Downstream.pressure_psi', 'PT.PT_CH7.pressure_psi'],
-  // HP PT sensors: named entities only (no PT_CH channel fallback)
-  'PT_Cal.GSE_Mid.pressure_psi': ['PT_Cal.HP_PT_1.pressure_psi', 'PT.GSE_Mid.pressure_psi'],
-  'PT_Cal.HP_PT_1.pressure_psi': ['PT_Cal.GSE_Mid.pressure_psi', 'PT.GSE_Mid.pressure_psi'],
-  'PT_Cal.GSE_High.pressure_psi': ['PT_Cal.HP_PT_3.pressure_psi', 'PT.GSE_High.pressure_psi'],
-  'PT_Cal.HP_PT_3.pressure_psi': ['PT_Cal.GSE_High.pressure_psi', 'PT.GSE_High.pressure_psi'],
-  'PT_Cal.GN2_High.pressure_psi': ['PT_Cal.HP_PT_4.pressure_psi', 'PT.GN2_High.pressure_psi'],
-  'PT_Cal.HP_PT_4.pressure_psi': ['PT_Cal.GN2_High.pressure_psi', 'PT.GN2_High.pressure_psi'],
+// ── Dynamic alias system ─────────────────────────────────────────────────────
+// Data flows with generic TYPE.CH<n> entity names. Components can still reference
+// named entities (e.g. PT_Cal.Fuel_Upstream) — the alias system resolves them
+// to the generic channel key at runtime.
+//
+// Aliases are built dynamically from /api/config (sensor_roles, actuator_roles)
+// when the config loads. Static controller aliases are always present.
 
-  // ── PT raw ADC counts (named → PT.<role> is what backend sends for raw; PT_CHX fallbacks) ─
-  'PT_Cal.Fuel_Upstream.raw_adc_counts': ['PT.Fuel_Upstream.raw_adc_counts', 'PT_Cal.PT_CH1.raw_adc_counts', 'PT.PT_CH1.raw_adc_counts'],
-  'PT_Cal.GSE_Low.raw_adc_counts': ['PT.GSE_Low.raw_adc_counts', 'PT_Cal.PT_CH2.raw_adc_counts', 'PT.PT_CH2.raw_adc_counts'],
-  'PT_Cal.PT_CH3.raw_adc_counts': ['PT.PT_CH3.raw_adc_counts', 'PT.Fuel_Downstream.raw_adc_counts'],
-  'PT_Cal.Fuel_Downstream.raw_adc_counts': ['PT.Fuel_Downstream.raw_adc_counts', 'PT_Cal.PT_CH3.raw_adc_counts', 'PT.PT_CH3.raw_adc_counts'],
-  'PT_Cal.Chamber_Mid_PT_1.raw_adc_counts': ['PT.Chamber_Mid_PT_1.raw_adc_counts', 'PT_Cal.PT_CH4.raw_adc_counts', 'PT.PT_CH4.raw_adc_counts'],
-  'PT_Cal.Chamber_Mid_PT_2.raw_adc_counts': ['PT.Chamber_Mid_PT_2.raw_adc_counts', 'PT_Cal.PT_CH8.raw_adc_counts', 'PT.PT_CH8.raw_adc_counts'],
-  'PT_Cal.Chamber_Throat_PT_1.raw_adc_counts': ['PT.Chamber_Throat_PT_1.raw_adc_counts', 'PT_Cal.PT_CH9.raw_adc_counts', 'PT.PT_CH9.raw_adc_counts'],
-  'PT_Cal.Chamber_Throat_PT_2.raw_adc_counts': ['PT.Chamber_Throat_PT_2.raw_adc_counts', 'PT_Cal.PT_CH10.raw_adc_counts', 'PT.PT_CH10.raw_adc_counts'],
-  'PT_Cal.Fuel_Fill_Tank.raw_adc_counts': ['PT_Cal.PT_CH4.raw_adc_counts', 'PT.PT_CH4.raw_adc_counts'],
-  'PT_Cal.Ox_Upstream.raw_adc_counts': ['PT.Ox_Upstream.raw_adc_counts', 'PT_Cal.PT_CH5.raw_adc_counts', 'PT.PT_CH5.raw_adc_counts'],
-  'PT_Cal.GN2_Regulated.raw_adc_counts': ['PT.GN2_Regulated.raw_adc_counts', 'PT_Cal.PT_CH6.raw_adc_counts', 'PT.PT_CH6.raw_adc_counts'],
-  'PT_Cal.Ox_Downstream.raw_adc_counts': ['PT.Ox_Downstream.raw_adc_counts', 'PT_Cal.PT_CH7.raw_adc_counts', 'PT.PT_CH7.raw_adc_counts'],
-  // HP PT sensors: named entities only (no PT_CH channel fallback)
-  'PT_Cal.GSE_Mid.raw_adc_counts': ['PT_Cal.HP_PT_1.raw_adc_counts', 'PT.GSE_Mid.raw_adc_counts'],
-  'PT_Cal.HP_PT_1.raw_adc_counts': ['PT_Cal.GSE_Mid.raw_adc_counts', 'PT.GSE_Mid.raw_adc_counts'],
-  'PT_Cal.GSE_High.raw_adc_counts': ['PT_Cal.HP_PT_3.raw_adc_counts', 'PT.GSE_High.raw_adc_counts'],
-  'PT_Cal.HP_PT_3.raw_adc_counts': ['PT_Cal.GSE_High.raw_adc_counts', 'PT.GSE_High.raw_adc_counts'],
-  'PT_Cal.GN2_High.raw_adc_counts': ['PT_Cal.HP_PT_4.raw_adc_counts', 'PT.GN2_High.raw_adc_counts'],
-  'PT_Cal.HP_PT_4.raw_adc_counts': ['PT_Cal.GN2_High.raw_adc_counts', 'PT.GN2_High.raw_adc_counts'],
-
-  // HP PT diagnostics
-  'PT_Cal.GSE_Mid.current_ma': ['PT_Cal.HP_PT_1.current_ma'],
-  'PT_Cal.HP_PT_1.current_ma': ['PT_Cal.GSE_Mid.current_ma'],
-  'PT_Cal.GSE_High.current_ma': ['PT_Cal.HP_PT_3.current_ma'],
-  'PT_Cal.HP_PT_3.current_ma': ['PT_Cal.GSE_High.current_ma'],
-  'PT_Cal.GN2_High.current_ma': ['PT_Cal.HP_PT_4.current_ma'],
-  'PT_Cal.HP_PT_4.current_ma': ['PT_Cal.GN2_High.current_ma'],
-
-  'PT_Cal.GSE_Mid.sense_voltage': ['PT_Cal.HP_PT_1.sense_voltage'],
-  'PT_Cal.HP_PT_1.sense_voltage': ['PT_Cal.GSE_Mid.sense_voltage'],
-  'PT_Cal.GSE_High.sense_voltage': ['PT_Cal.HP_PT_3.sense_voltage'],
-  'PT_Cal.HP_PT_3.sense_voltage': ['PT_Cal.GSE_High.sense_voltage'],
-  'PT_Cal.GN2_High.sense_voltage': ['PT_Cal.HP_PT_4.sense_voltage'],
-  'PT_Cal.HP_PT_4.sense_voltage': ['PT_Cal.GN2_High.sense_voltage'],
-
-  'PT_Cal.GSE_Mid.excitation_voltage': ['PT_Cal.HP_PT_1.excitation_voltage'],
-  'PT_Cal.HP_PT_1.excitation_voltage': ['PT_Cal.GSE_Mid.excitation_voltage'],
-  'PT_Cal.GSE_High.excitation_voltage': ['PT_Cal.HP_PT_3.excitation_voltage'],
-  'PT_Cal.HP_PT_3.excitation_voltage': ['PT_Cal.GSE_High.excitation_voltage'],
-  'PT_Cal.GN2_High.excitation_voltage': ['PT_Cal.HP_PT_4.excitation_voltage'],
-  'PT_Cal.HP_PT_4.excitation_voltage': ['PT_Cal.GN2_High.excitation_voltage'],
-
-  // ── PT raw (PT. namespace) → PT_Cal namespace fallback ──────────────────
-  'PT.PT_CH1.raw_adc_counts': ['PT_Cal.PT_CH1.raw_adc_counts', 'PT.Fuel_Upstream.raw_adc_counts'],
-  'PT.PT_CH2.raw_adc_counts': ['PT_Cal.PT_CH2.raw_adc_counts', 'PT.GSE_Low.raw_adc_counts'],
-  'PT.PT_CH3.raw_adc_counts': ['PT_Cal.PT_CH3.raw_adc_counts', 'PT.Fuel_Downstream.raw_adc_counts'],
-  'PT.PT_CH4.raw_adc_counts': ['PT_Cal.PT_CH4.raw_adc_counts', 'PT.Fuel_Fill_Tank.raw_adc_counts'],
-  'PT.PT_CH5.raw_adc_counts': ['PT_Cal.PT_CH5.raw_adc_counts', 'PT.Ox_Upstream.raw_adc_counts'],
-  'PT.PT_CH6.raw_adc_counts': ['PT_Cal.PT_CH6.raw_adc_counts', 'PT.GN2_Regulated.raw_adc_counts'],
-  'PT.PT_CH7.raw_adc_counts': ['PT_Cal.PT_CH7.raw_adc_counts', 'PT.Ox_Downstream.raw_adc_counts'],
-  'PT.PT_CH8.raw_adc_counts': ['PT_Cal.PT_CH8.raw_adc_counts'],
-  'PT.PT_CH9.raw_adc_counts': ['PT_Cal.PT_CH9.raw_adc_counts'],
-  'PT.PT_CH10.raw_adc_counts': ['PT_Cal.PT_CH10.raw_adc_counts'],
-
-  // ── Actuator named → ACT_CHX (from config.toml actuator_roles) ──────────
-  'ACT.LOX_Main.raw_adc_counts': ['ACT.ACT_CH1.raw_adc_counts'],
-  'ACT.LOX_Main.status': ['ACT.ACT_CH1.status'],
-  'ACT.Fuel_Vent.raw_adc_counts': ['ACT.ACT_CH2.raw_adc_counts'],
-  'ACT.Fuel_Vent.status': ['ACT.ACT_CH2.status'],
-  'ACT.Fuel_Press.raw_adc_counts': ['ACT.ACT_CH3.raw_adc_counts'],
-  'ACT.Fuel_Press.status': ['ACT.ACT_CH3.status'],
-  'ACT.GSE_Low_Vent.raw_adc_counts': ['ACT.ACT_CH5.raw_adc_counts'],
-  'ACT.GSE_Low_Vent.status': ['ACT.ACT_CH5.status'],
-  'ACT.LOX_Vent.raw_adc_counts': ['ACT.ACT_CH6.raw_adc_counts'],
-  'ACT.LOX_Vent.status': ['ACT.ACT_CH6.status'],
-  'ACT.Fuel_Main.raw_adc_counts': ['ACT.ACT_CH7.raw_adc_counts'],
-  'ACT.Fuel_Main.status': ['ACT.ACT_CH7.status'],
-  'ACT.LOX_Press.raw_adc_counts': ['ACT.ACT_CH8.raw_adc_counts'],
-  'ACT.LOX_Press.status': ['ACT.ACT_CH8.status'],
-  // Additional actuators from new CSV
-  'ACT.Fuel_Fill_Vent.raw_adc_counts': ['ACT.ACT_CH9.raw_adc_counts'],
-  'ACT.Fuel_Fill_Vent.status': ['ACT.ACT_CH9.status'],
-  'ACT.Fuel_Fill_Press.raw_adc_counts': ['ACT.ACT_CH10.raw_adc_counts'],
-  'ACT.Fuel_Fill_Press.status': ['ACT.ACT_CH10.status'],
-  // GN2 Vent is same as GSE Low Vent (CH5)
-  'ACT.GN2_Vent.raw_adc_counts': ['ACT.ACT_CH5.raw_adc_counts', 'ACT.GSE_Low_Vent.raw_adc_counts'],
-  'ACT.GN2_Vent.status': ['ACT.ACT_CH5.status', 'ACT.GSE_Low_Vent.status'],
+const STATIC_ALIASES: Record<string, string[]> = {
+  // Controller actuation → Fuel/Ox display
+  'CONTROLLER.Fuel.duty_cycle': ['CONTROLLER.actuation.duty_F', 'CONTROLLER.fire.duty_F'],
+  'CONTROLLER.Fuel.onoff': ['CONTROLLER.actuation.u_F_on', 'CONTROLLER.fire.fire_active'],
+  'CONTROLLER.Ox.duty_cycle': ['CONTROLLER.actuation.duty_O', 'CONTROLLER.fire.duty_O'],
+  'CONTROLLER.Ox.onoff': ['CONTROLLER.actuation.u_O_on', 'CONTROLLER.fire.fire_active'],
 };
+
+// Mutable alias table — starts with statics, gets sensor/actuator aliases added at runtime.
+let ALIASES: Record<string, string[]> = { ...STATIC_ALIASES };
+// ACT.<Role_Name> -> ACT_CMD.B<board>.CH<channel>
+let ACT_ROLE_TO_CMD_ENTITY: Record<string, string> = {};
+
+/**
+ * Build aliases from config.toml role mappings.
+ * Called when /api/config response arrives.
+ *
+ * For each role like "Fuel Upstream" = 1 in [sensor_roles_pt_board]:
+ *   PT1_Cal.Fuel_Upstream.* → PT1_Cal.CH1.*
+ *   PT1.Fuel_Upstream.*     → PT1.CH1.*
+ *
+ * For actuator_roles like "LOX Main" = ["NC", 1, 12]:
+ *   ACT2.LOX_Main.* → ACT2.CH1.*
+ */
+export function buildAliasesFromConfig(config: any): void {
+  const aliases: Record<string, string[]> = { ...STATIC_ALIASES };
+  const roleToCmdEntity: Record<string, string> = {};
+
+  const addAlias = (namedKey: string, genericKey: string) => {
+    if (!aliases[namedKey]) aliases[namedKey] = [];
+    if (!aliases[namedKey].includes(genericKey)) aliases[namedKey].push(genericKey);
+  };
+
+  // Common components for different sensor types
+  const ptComponents = ['pressure_psi', 'raw_adc_counts', 'raw_adc', 'current_ma', 'sense_voltage', 'excitation_voltage'];
+  const tcComponents = ['temperature_c', 'raw_adc_counts', 'raw_adc'];
+  const rtdComponents = ['temperature_c', 'raw_resistance_counts', 'raw_resistance'];
+  const lcComponents = ['force_kg', 'force_n', 'raw_adc_counts', 'raw_adc'];
+  const actComponents = ['raw_adc_counts', 'actuator_state_commanded', 'current_a', 'status'];
+  const actCmdComponents = ['actuator_state_commanded'];
+
+  // Helper: add aliases for a sensor role with multiple prefixes and components
+  const addSensorAliases = (
+    name: string,
+    channel: number,
+    rawPrefix: string,
+    calPrefix: string,
+    components: string[],
+    addLegacyPtAliases = false
+  ) => {
+    const entityName = name.replace(/\s+/g, '_');
+    const baseRaw = rawPrefix.replace(/\d+$/, '');
+    const baseCal = `${baseRaw}_Cal`;
+    for (const comp of components) {
+      // Board-scoped role and channel aliases (PT1.*, RTD1.*, LC2.*, etc.)
+      addAlias(`${calPrefix}.${entityName}.${comp}`, `${calPrefix}.CH${channel}.${comp}`);
+      addAlias(`${rawPrefix}.${entityName}.${comp}`, `${rawPrefix}.CH${channel}.${comp}`);
+      addAlias(`${baseCal}.CH${channel}.${comp}`, `${calPrefix}.CH${channel}.${comp}`);
+      addAlias(`${baseRaw}.CH${channel}.${comp}`, `${rawPrefix}.CH${channel}.${comp}`);
+      addAlias(`${baseCal}.${entityName}.${comp}`, `${calPrefix}.CH${channel}.${comp}`);
+      addAlias(`${baseRaw}.${entityName}.${comp}`, `${rawPrefix}.CH${channel}.${comp}`);
+      // Back-compat: many UI panes still reference PT_Cal.<Role> / PT.<Role>.
+      // Map those legacy keys to board-scoped PTn(_Cal).CHm streams.
+      if (addLegacyPtAliases) {
+        addAlias(`PT_Cal.${entityName}.${comp}`, `${calPrefix}.CH${channel}.${comp}`);
+        addAlias(`PT.${entityName}.${comp}`, `${rawPrefix}.CH${channel}.${comp}`);
+      }
+    }
+  };
+
+  const boards = config?.boards || {};
+
+  // Map board keys to their sensor type info
+  for (const [boardKey, boardRaw] of Object.entries(boards)) {
+    const board = boardRaw as any;
+    if (board.enabled === false) continue;
+    const type = board.type as string;
+    const boardId = typeof board.board_id === 'number' ? board.board_id : 1;
+    const mod = boardId % 10;
+    const boardNumber = mod === 0 ? 10 : mod;
+    const activeChannels: number[] =
+      Array.isArray(board.active_connectors) && board.active_connectors.length > 0
+        ? board.active_connectors.map((v: unknown) => Number(v)).filter((v: number) => Number.isFinite(v) && v >= 1)
+        : Array.from({ length: Math.max(0, Number(board.num_sensors) || 0) }, (_, i) => i + 1);
+
+    // Look for sensor_roles_<boardKey> section in config
+    const rolesKey = `sensor_roles_${boardKey}`;
+    const roles = config[rolesKey] as Record<string, number> | undefined;
+
+    let rawPrefix = '', calPrefix = '', components: string[] = [];
+    if (type === 'PT') { rawPrefix = `PT${boardNumber}`; calPrefix = `PT${boardNumber}_Cal`; components = ptComponents; }
+    else if (type === 'TC') { rawPrefix = `TC${boardNumber}`; calPrefix = `TC${boardNumber}_Cal`; components = tcComponents; }
+    else if (type === 'RTD') { rawPrefix = `RTD${boardNumber}`; calPrefix = `RTD${boardNumber}_Cal`; components = rtdComponents; }
+    else if (type === 'LC') { rawPrefix = `LC${boardNumber}`; calPrefix = `LC${boardNumber}_Cal`; components = lcComponents; }
+    else continue;
+
+    // Always add board-level channel aliases so generic keys (e.g. LC_Cal.CH6, RTD.CH1)
+    // resolve to board-scoped streams even when sensor_roles_<boardKey> is absent.
+    const baseRaw = rawPrefix.replace(/\d+$/, '');
+    const baseCal = `${baseRaw}_Cal`;
+    for (const ch of activeChannels) {
+      for (const comp of components) {
+        addAlias(`${baseCal}.CH${ch}.${comp}`, `${calPrefix}.CH${ch}.${comp}`);
+        addAlias(`${baseRaw}.CH${ch}.${comp}`, `${rawPrefix}.CH${ch}.${comp}`);
+      }
+    }
+
+    if (!roles || typeof roles !== 'object') continue;
+
+    for (const [roleName, channelId] of Object.entries(roles)) {
+      const ch = typeof channelId === 'number' ? channelId : Number(channelId);
+      if (!isFinite(ch)) continue;
+      addSensorAliases(roleName, ch, rawPrefix, calPrefix, components, type === 'PT');
+    }
+  }
+
+  // sensor_roles_pt2 (HP PT — board_id 22 → board_number 2)
+  const pt2Roles = config.sensor_roles_pt2 as Record<string, number> | undefined;
+  if (pt2Roles && typeof pt2Roles === 'object') {
+    for (const [name, connector] of Object.entries(pt2Roles)) {
+      const ch = typeof connector === 'number' ? connector : Number(connector);
+      if (isFinite(ch)) addSensorAliases(name, ch, 'PT2', 'PT2_Cal', ptComponents, true);
+    }
+  }
+
+  // Actuator roles — board-namespaced: ACT2.CH1, ACT4.CH3
+  const actRoles = config.actuator_roles as Record<string, any> | undefined;
+  if (actRoles && typeof actRoles === 'object') {
+    for (const [name, value] of Object.entries(actRoles)) {
+      const arr = Array.isArray(value) ? value : [];
+      if (arr.length < 2) continue;
+      const localCh = typeof arr[1] === 'number' ? arr[1] : Number(arr[1]);
+      const boardId = arr.length >= 3 && typeof arr[2] === 'number' ? arr[2] : 12;
+      const mod = boardId % 10;
+      const boardNumber = mod === 0 ? 10 : mod;
+      if (!isFinite(localCh) || localCh < 1) continue;
+      const entityName = name.replace(/\s+/g, '_');
+      const roleEntity = `ACT.${entityName}`;
+      roleToCmdEntity[roleEntity] = `ACT_CMD.B${boardNumber}.CH${localCh}`;
+      for (const comp of actComponents) {
+        addAlias(`ACT${boardNumber}.${entityName}.${comp}`, `ACT${boardNumber}.CH${localCh}.${comp}`);
+        // actuators-from-config uses ACT.{Role} and ActuatorControlByName uses ACT_Cal.{Role} for current_a
+        addAlias(`ACT.${entityName}.${comp}`, `ACT${boardNumber}.CH${localCh}.${comp}`);
+        addAlias(`ACT_Cal.${entityName}.${comp}`, `ACT${boardNumber}_Cal.CH${localCh}.${comp}`);
+      }
+      for (const comp of actCmdComponents) {
+        addAlias(`ACT_CMD.B${boardNumber}.${entityName}.${comp}`, `ACT_CMD.B${boardNumber}.CH${localCh}.${comp}`);
+      }
+    }
+  }
+
+  // Encoder roles — board_id 61 → board_number 1
+  const encRoles = config.sensor_roles_encoder_board as Record<string, number> | undefined;
+  if (encRoles && typeof encRoles === 'object') {
+    for (const [name, ch] of Object.entries(encRoles)) {
+      const channel = typeof ch === 'number' ? ch : Number(ch);
+      if (!isFinite(channel)) continue;
+      const entityName = name.replace(/\s+/g, '_');
+      addAlias(`ENC1.${entityName}.raw_angle`, `ENC1.CH${channel}.raw_angle`);
+      addAlias(`ENC1_Cal.${entityName}.position_deg`, `ENC1_Cal.CH${channel}.position_deg`);
+    }
+  }
+
+  ALIASES = aliases;
+  ACT_ROLE_TO_CMD_ENTITY = roleToCmdEntity;
+  console.log(`[Store] Built ${Object.keys(aliases).length} entity aliases from config`);
+}
 
 export { ALIASES };
 
-// ── Batched sensor-data updates (20 Hz) ──────────────────────────────────────
-// Accumulate incoming sensor writes and flush to Zustand every 50ms.
-// Keeps React re-renders at 20 Hz so the UI stays responsive.
+/** Test helper: encoder ordering map is module-local and not cleared by Zustand setState. */
+export function resetEncoderAcceptTimestampsForTests(): void {
+  _encoderLastAcceptedTs = {};
+}
+
+// ── Batched sensor-data updates ───────────────────────────────────────────────
+// Accumulate all incoming sensor writes (including actuator states) and flush
+// to Zustand in one batch per animation frame. This prevents dozens of
+// synchronous setState calls when a state transition broadcasts 20 actuator
+// commanded states at once.
 let _pendingSensorWrites: Record<string, number> = {};
 let _sensorTimestamps: Record<string, number> = {};
+/** Last accepted message time per key — used to drop stale ENC*.raw_angle samples only. */
+let _encoderLastAcceptedTs: Record<string, number> = {};
 let _flushScheduled = false;
-let _updateVersion = 0; // Version counter to force re-renders even if values are identical
+let _updateVersion = 0;
 
-// ── Data filtering for spikes ────────────────────────────────────────────────
-// Simple moving average filter to smooth out random spikes in sensor data
-const FILTER_WINDOW_SIZE = 5; // Number of samples to average
-const MAX_SPIKE_THRESHOLD_ABSOLUTE = 200; // PSI - absolute threshold for large values (increased from 50 to handle rapid pressurization)
-const MAX_SPIKE_THRESHOLD_PERCENT = 0.5; // 50% - percentage threshold for relative changes
+const FLUSH_INTERVAL_MS = 50;
 
-interface FilterState {
-  history: number[];
-  lastRawValue: number | null;  // Last raw value (before filtering) for spike detection
-  lastFilteredValue: number | null;  // Last filtered value (average) for return
-}
-
-const _filterState: Map<string, FilterState> = new Map();
-
-function filterSensorValue(key: string, value: number): number {
-  return value;
-}
-
-function scheduleSensorFlush() {
+function scheduleSensorFlush(highPriority = false) {
   if (_flushScheduled) return;
   _flushScheduled = true;
-
-  requestAnimationFrame(() => {
-    flushSensorWrites();
-  });
-  setTimeout(() => {
-    if (_flushScheduled) flushSensorWrites();
-  }, FLUSH_INTERVAL_MS);
+  if (highPriority && typeof Promise !== 'undefined') {
+    // Microtask: flush at end of current JS task (before next event loop tick).
+    // This coalesces multiple actuator_state_commanded writes from one broadcast
+    // into a single Zustand setState instead of N separate ones.
+    Promise.resolve().then(() => {
+      if (_flushScheduled) flushSensorWrites();
+    });
+  } else if (typeof requestAnimationFrame !== 'undefined') {
+    requestAnimationFrame(() => {
+      if (_flushScheduled) flushSensorWrites();
+    });
+  } else {
+    setTimeout(() => { if (_flushScheduled) flushSensorWrites(); }, FLUSH_INTERVAL_MS);
+  }
 }
 
-// Flush pending writes at 20 Hz so React re-renders stay light and UI stays responsive.
-const FLUSH_INTERVAL_MS = 50;
+// Safety-net interval: flush any leftover pending writes even if RAF/microtask was skipped.
 if (typeof setInterval !== 'undefined') {
   setInterval(() => {
-    if (Object.keys(_pendingSensorWrites).length > 0) {
-      _flushScheduled = false;
+    if (_flushScheduled || Object.keys(_pendingSensorWrites).length > 0) {
       flushSensorWrites();
     }
   }, FLUSH_INTERVAL_MS);
@@ -255,15 +330,16 @@ function flushSensorWrites() {
   _flushScheduled = false;
   const batch = _pendingSensorWrites;
   _pendingSensorWrites = {};
-  if (Object.keys(batch).length === 0) return;
+  const keys = Object.keys(batch);
+  if (keys.length === 0) return;
 
   _updateVersion++;
   const version = _updateVersion;
   const now = Date.now();
   useSensorStore.setState((state) => {
     const newSensorData: SensorData = { ...state.sensorData };
-    for (const [key, value] of Object.entries(batch)) {
-      newSensorData[key] = value;
+    for (let i = 0; i < keys.length; i++) {
+      newSensorData[keys[i]] = batch[keys[i]];
     }
     return { sensorData: newSensorData, _updateVersion: version, lastSensorFlushMs: now };
   });
@@ -276,6 +352,7 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   connectionStatus: { connected: false, elodinConnected: false },
   debugMode: false,
   missionStartTime: null,
+  countdownTargetTimeMs: null,
   actuatorExpectedPositions: {},
   actuatorStateByEntity: {},
   actuatorCommandedOverrides: {},
@@ -283,6 +360,24 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   voltageRefNominals: { internalV: 2.5, absolute5vV: 5 },
   loadCellZeroOffsets: loadStoredLcZeroOffsets(),
   notifications: [],
+  pressureHistoryHiddenEntities: {},
+
+  togglePressureHistoryPlotVisibility: (plotEntityKeys: string[]) => {
+    const keys = plotEntityKeys.filter(Boolean).filter((e, i, a) => a.indexOf(e) === i);
+    if (keys.length === 0) return;
+    set((s) => {
+      const next: Record<string, true> = { ...s.pressureHistoryHiddenEntities };
+      const allCurrentlyShown = keys.every((e) => !next[e]);
+      if (allCurrentlyShown) {
+        for (const e of keys) next[e] = true;
+      } else {
+        for (const e of keys) delete next[e];
+      }
+      return { pressureHistoryHiddenEntities: next };
+    });
+  },
+
+  clearPressureHistoryHidden: () => set({ pressureHistoryHiddenEntities: {} }),
 
   setLoadCellZeroOffset: (calEntity: string, offsetLbf: number | null) => {
     set((s) => {
@@ -299,22 +394,48 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   },
 
   updateSensor: (update: SensorUpdate) => {
-    recordSensorUpdate(update.entity, update.component);
     const key = `${update.entity}.${update.component}`;
 
-    // Late packet rejection: ensure we don't overwrite new data with buffered old data
-    const prevTimestamp = _sensorTimestamps[key] || 0;
-    // If packet is older than the newest we've seen (and not a reboot), drop it.
-    // (Allow reboot detect: if timestamp drops by > 60 seconds, accept it)
-    if (update.timestamp < prevTimestamp && (prevTimestamp - update.timestamp < 60000)) {
+    // Encoder angle: reject strictly older timestamps so a late UDP/WS frame cannot rewind the plot.
+    // (PT/LC streams stay last-write-wins; see data-flow tests for out-of-order calibrated PT.)
+    const isEncoderRawAngle =
+      update.component === 'raw_angle' && /^ENC\d*\./.test(update.entity);
+    if (isEncoderRawAngle) {
+      const lastTs = _encoderLastAcceptedTs[key] ?? 0;
+      if (update.timestamp < lastTs) return;
+      _encoderLastAcceptedTs[key] = update.timestamp;
+    }
+
+    recordSensorUpdate(update.entity, update.component);
+
+    // Track last timestamp for diagnostics only. Do not drop “older” timestamps: Elodin/WebSocket
+    // bursts often deliver calibrated PT rows slightly out of order vs raw; rejecting them left
+    // pressure_psi stuck at 0 while raw_adc_counts kept updating.
+    _sensorTimestamps[key] = Math.max(_sensorTimestamps[key] || 0, update.timestamp);
+
+    _pendingSensorWrites[key] = update.value;
+
+    if (update.component === 'actuator_state_commanded' || update.component === 'actuator_state') {
+      // High-priority: flush via microtask so all actuator writes from a single
+      // state-transition broadcast coalesce into one Zustand setState.
+      scheduleSensorFlush(true);
       return;
     }
-    _sensorTimestamps[key] = update.timestamp;
 
-    // Filter out spikes before storing
-    const filteredValue = filterSensorValue(key, update.value);
-    // Accumulate in pending batch — flush at next animation frame
-    _pendingSensorWrites[key] = filteredValue;
+    // Back-compat for legacy LC panes expecting force_lbf / force_n.
+    // Backend now publishes canonical force_kg.
+    if (update.component === 'force_kg') {
+      const lbf = update.value * 2.2046226218;
+      const n = update.value * 9.80665;
+      const lbfKey = `${update.entity}.force_lbf`;
+      const nKey = `${update.entity}.force_n`;
+      _sensorTimestamps[lbfKey] = update.timestamp;
+      _sensorTimestamps[nKey] = update.timestamp;
+      _pendingSensorWrites[lbfKey] = lbf;
+      _pendingSensorWrites[nKey] = n;
+    }
+
+    scheduleSensorFlush();
   },
 
   updateActuator: (update: ActuatorUpdate) => {
@@ -368,6 +489,10 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
 
   updateMissionStartTime: (time: number) => {
     set({ missionStartTime: time });
+  },
+
+  updateCountdownTargetTime: (timeMs: number | null) => {
+    set({ countdownTargetTimeMs: timeMs });
   },
 
   updateBoards: (boards: BoardStatus[]) => {
@@ -467,12 +592,23 @@ export function useSensorValue(entity: string, component: string): number | null
   return value;
 }
 
-/** Subscribe to sensor flush tick (20 Hz). Use with useGetSensorValue() so pages that read many values re-render on flush without subscribing to full sensorData. */
+/** Combined Pressure History series with top-bar hide toggles applied; avoids an empty plot by clearing toggles when needed. */
+export function usePressureHistoryPlotSeries<T extends { entity: string }>(base: T[]): T[] {
+  const hidden = useSensorStore((s) => s.pressureHistoryHiddenEntities);
+  const clearHidden = useSensorStore((s) => s.clearPressureHistoryHidden);
+  const filtered = useMemo(() => base.filter((row) => !hidden[row.entity]), [base, hidden]);
+  useEffect(() => {
+    if (filtered.length === 0 && base.length > 0) clearHidden();
+  }, [filtered.length, base.length, clearHidden]);
+  return filtered.length > 0 ? filtered : base;
+}
+
+/** Subscribe to sensor flush tick (10 Hz). Use with useGetSensorValue() so pages that read many values re-render on flush without subscribing to full sensorData. */
 export function useSensorDataVersion(): number {
   return useSensorStore((s) => s._updateVersion ?? 0);
 }
 
-/** Last flush time (Date.now()). Use to show latency. Frontend flushes every FLUSH_INTERVAL_MS (50ms). */
+/** Last flush time (Date.now()). Use to show latency. Frontend flushes every FLUSH_INTERVAL_MS (100ms). */
 export function useLastSensorFlushMs(): number | undefined {
   return useSensorStore((s) => s.lastSensorFlushMs);
 }
@@ -495,34 +631,39 @@ export function useGetSensorValue(): (entity: string, component: string) => numb
   }, []);
 }
 
-/** Commanded state for display: in normal mode use state-machine expected for current state; in DEBUG use override then expected then actuatorStateByEntity. */
+/**
+ * Commanded actuator state from Elodin DB.
+ * Reads [0x32] commanded state (binary open/closed from sequencer).
+ */
 export function useActuatorCommandedState(entity: string): ActuatorState | null {
-  const currentState = useSensorStore((s) => s.currentState);
-  const expectedPositions = useSensorStore((s) => s.actuatorExpectedPositions);
-  const overrides = useSensorStore((s) => s.actuatorCommandedOverrides);
-  const debugMode = useSensorStore((s) => s.debugMode);
-  const actuatorStateByEntity = useSensorStore((s) => s.actuatorStateByEntity[entity] ?? null);
-
-  // When not in DEBUG, state machine is source of truth: show expected for current state so Idle/Armed etc. are correct
-  if (!debugMode && currentState != null) {
-    const stateExpected = expectedPositions[currentState] ?? {};
-    const expected = stateExpected[entity] ?? null;
-    if (expected === 'open') return ActuatorState.OPEN;
-    if (expected === 'closed') return ActuatorState.CLOSED;
-  }
-
-  if (debugMode) {
-    const override = overrides[entity] ?? null;
-    if (override != null) return override;
-    if (currentState != null) {
-      const stateExpected = expectedPositions[currentState] ?? {};
-      const expected = stateExpected[entity] ?? null;
-      if (expected === 'open') return ActuatorState.OPEN;
-      if (expected === 'closed') return ActuatorState.CLOSED;
+  const roleMapped = ACT_ROLE_TO_CMD_ENTITY[entity];
+  const commanded = useSensorStore((state) => {
+    const read = (e: string): number | null => {
+      const key = `${e}.actuator_state_commanded`;
+      const direct = state.sensorData[key];
+      if (direct !== undefined) return direct;
+      const fallbacks = ALIASES[key];
+      if (fallbacks) {
+        for (const fb of fallbacks) {
+          const v = state.sensorData[fb];
+          if (v !== undefined) return v;
+        }
+      }
+      return null;
+    };
+    const primary = read(entity);
+    if (primary != null) return primary;
+    if (roleMapped) {
+      const mapped = read(roleMapped);
+      if (mapped != null) return mapped;
     }
-  }
+    return null;
+  });
 
-  return actuatorStateByEntity;
+  if (commanded != null && isFinite(commanded)) {
+    return commanded === 1 ? ActuatorState.OPEN : ActuatorState.CLOSED;
+  }
+  return null;
 }
 
 /** Global last-known actuator state (from backend or optimistic update). */
@@ -530,10 +671,13 @@ export function useActuatorStateByEntity(entity: string): ActuatorState | null {
   return useSensorStore((s) => s.actuatorStateByEntity[entity] ?? null);
 }
 
-/** Load cell force (lbf) with zero offset applied. Use for display: displayLbf = raw - offset. */
-export function useLoadCellForceLbf(calEntity: string): number | null {
-  const raw = useSensorValue(calEntity, 'force_lbf');
+/** Load cell force (kg) with zero offset applied. Use for display: displayKg = raw - offset. */
+export function useLoadCellForceKg(calEntity: string): number | null {
+  const raw = useSensorValue(calEntity, 'force_kg');
   const offset = useSensorStore((s) => s.loadCellZeroOffsets[calEntity] ?? 0);
   if (raw == null || !Number.isFinite(raw)) return null;
   return raw - offset;
 }
+
+/** @deprecated Use useLoadCellForceKg instead. Legacy alias for backwards compatibility. */
+export const useLoadCellForceLbf = useLoadCellForceKg;

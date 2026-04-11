@@ -1,13 +1,14 @@
 'use client'
 
 import { useSensorStore } from '@/lib/store';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, SensorUpdate, StateUpdate, MissionStartTime, BoardStatus, BoardStatusPayload, NotificationPayload, ActuatorUpdate, ActuatorState } from '@/lib/types';
 import WindowLauncher from '@/components/windows/WindowLauncher';
 import { useSensorValue, useActuatorCommandedState } from '@/lib/store';
-import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
+import { useSensorConfig } from '@/lib/sensor-config';
+import { buildPressureBarDefsFromSensorConfig } from '@/lib/pressure-bar-defs';
 import { useControlMode } from '@/lib/control-mode';
 
 // ── Sensor value card ────────────────────────────────────────────────────────
@@ -19,10 +20,15 @@ interface SensorCardProps {
   color: string;
   nop?: number;
   meop?: number;
+  avgEntities?: string[];
 }
 
-function SensorCard({ label, entity, component, unit = 'PSI', color, nop, meop }: SensorCardProps) {
-  const value = useSensorValue(entity, component);
+function SensorCard({ label, entity, component, unit = 'PSI', color, nop, meop, avgEntities }: SensorCardProps) {
+  const primary = avgEntities?.[0] ?? entity;
+  const v1 = useSensorValue(primary, component);
+  const v2 = useSensorValue(avgEntities?.[1] ?? primary, component);
+  const value =
+    avgEntities && avgEntities.length >= 2 && v1 != null && v2 != null ? (v1 + v2) / 2 : v1;
 
   let valueColor = color;
   let statusClass = 'border-gray-800';
@@ -97,6 +103,12 @@ export default function Home() {
   const boardsMap = useSensorStore((state) => state.boards as Record<number, BoardStatus>);
   const ws = getWebSocketClient();
   const { controlEnabled } = useControlMode();
+  const sensors = useSensorConfig();
+  const [pressureStrip, setPressureStrip] = useState(() => buildPressureBarDefsFromSensorConfig([]));
+
+  const reloadPressureStrip = useCallback(() => {
+    setPressureStrip(buildPressureBarDefsFromSensorConfig(sensors));
+  }, [sensors]);
 
   const boards = useMemo(() => {
     const map = boardsMap ?? {};
@@ -110,19 +122,26 @@ export default function Home() {
   }, [boardsMap]);
 
   useEffect(() => {
-    ws.connect();
-  }, [ws]);
+    reloadPressureStrip();
+  }, [reloadPressureStrip]);
 
-  const pressureSensors: SensorCardProps[] = [
-    ...PRESSURE_SENSORS.map((s) => ({
-      label: s.label.replace('Upstream', 'Up').replace('Downstream', 'Down'),
-      entity: s.entity,
-      component: s.component,
-      color: s.color,
-      nop: s.nop,
-      meop: s.meop,
-    })),
-  ];
+  useEffect(() => {
+    ws.connect();
+    const off = ws.on(MessageType.CONFIG_UPDATED, () => reloadPressureStrip());
+    return () => {
+      off();
+    };
+  }, [ws, reloadPressureStrip]);
+
+  const pressureSensors: SensorCardProps[] = pressureStrip.map((s) => ({
+    label: s.label.replace('Upstream', 'Up').replace('Downstream', 'Down'),
+    entity: s.entity,
+    component: 'pressure_psi',
+    color: s.color,
+    nop: s.nop,
+    meop: s.meop,
+    avgEntities: s.avgEntities,
+  }));
 
   // Show all actuators (matching Controls page)
   const { actuators: actuatorsFromConfig } = useActuatorsFromConfig();

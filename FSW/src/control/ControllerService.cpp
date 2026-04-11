@@ -19,7 +19,9 @@
 
 #include <chrono>
 #include <cstring>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <thread>
 
 #include "comms/messages/control/ControllerMessages.hpp"
@@ -64,7 +66,8 @@ static constexpr size_t DUAL_CMD_PACKET_SIZE = HEADER_SIZE + BODY_SIZE + CMD_SIZ
 
 ControllerService::ControllerService()
     : controller_(std::make_unique<RobustDDPController>()),
-      elodin_client_(std::make_unique<fsw::elodin::ElodinClient>()) {
+      elodin_client_(std::make_unique<fsw::elodin::ElodinClient>()),
+      elodin_subscriber_(std::make_unique<fsw::elodin::ElodinClient>()) {
 }
 
 ControllerService::~ControllerService() {
@@ -78,10 +81,10 @@ ControllerService::~ControllerService() {
 bool ControllerService::initialize(const PWMConfig& pwm_config,
                                    const RobustDDPController::Config& controller_config,
                                    const std::string& elodin_host, uint16_t elodin_port,
-                                   const std::string& relay_host, uint16_t relay_port,
-                                   const std::string& lut_path) {
-    relay_host_ = relay_host;
-    relay_port_ = relay_port;
+                                   const std::string& lut_path,
+                                   const std::string& thrust_curve_path) {
+    elodin_host_ = elodin_host;
+    elodin_port_ = elodin_port;
     pwm_config_ = pwm_config;
 
     // ── Create UDP socket for PWM commands ──────────────────────────────
@@ -115,15 +118,31 @@ bool ControllerService::initialize(const PWMConfig& pwm_config,
                   << std::endl;
     }
 
-    // ── Load PT calibration (for raw ADC → PSI in relay subscriber) ───────
-    pt_calibration_.load_calibration();
-    if (pt_calibration_.get_calibrated_count() > 0)
-        std::cout << "[ControllerService] ✅ PT calibration loaded ("
-                  << pt_calibration_.get_calibrated_count() << " channels)" << std::endl;
-    else
-        std::cout << "[ControllerService] ⚠️  No PT calibration files found — "
-                     "using linear ADC fallback"
-                  << std::endl;
+    // ── Elodin subscriber (dedicated read-only connection for calibrated PT) ──
+    if (!elodin_host.empty()) {
+        if (elodin_subscriber_->connect(elodin_host, elodin_port)) {
+            elodin_sub_connected_ = true;
+            // Subscribe to calibrated PT tables for all board-number slots.
+            // low byte encoding: (board_number-1)*0x20 + 0x10 + channel
+            std::vector<std::pair<uint8_t, uint8_t>> cal_pt_tables;
+            for (uint8_t board_number = 1; board_number <= 10; ++board_number) {
+                const uint8_t base = static_cast<uint8_t>((board_number - 1) * 0x20);
+                for (uint8_t ch = 1; ch <= 10; ++ch) {
+                    cal_pt_tables.push_back({0x20, static_cast<uint8_t>(base + 0x10 + ch)});
+                }
+            }
+            // Sequencer state stream [0x50,0x00] for FIRE gate parity.
+            cal_pt_tables.push_back({0x50, 0x00});
+            elodin_subscriber_->subscribe_tables(cal_pt_tables);
+            std::cout << "[ControllerService] ✅ Elodin subscriber connected — "
+                         "subscribed to calibrated PT + Sequencer state"
+                      << std::endl;
+        } else {
+            std::cerr << "[ControllerService] ⚠️  Elodin subscriber connection failed — "
+                         "controller will not receive sensor data"
+                      << std::endl;
+        }
+    }
 
     // ── Initialize controller ───────────────────────────────────────────
     if (!controller_->initialize(controller_config)) {
@@ -139,6 +158,18 @@ bool ControllerService::initialize(const PWMConfig& pwm_config,
                 << std::endl;
         } else {
             std::cerr << "[ControllerService] ⚠️ LUT load failed — falling back to DDP" << std::endl;
+        }
+    }
+
+    // ── Optional thrust curve (time-varying target from Layer 2) ─────────
+    if (!thrust_curve_path.empty()) {
+        if (loadThrustCurve(thrust_curve_path)) {
+            thrust_curve_loaded_ = true;
+            std::cout << "[ControllerService] ✅ Thrust curve loaded: " << thrust_curve_path << " ("
+                      << thrust_curve_times_.size() << " points)" << std::endl;
+        } else {
+            std::cerr << "[ControllerService] ⚠️ Thrust curve load failed: " << thrust_curve_path
+                      << std::endl;
         }
     }
 
@@ -174,7 +205,9 @@ bool ControllerService::start(double loop_rate_hz) {
     loop_interval_ms_ = 1000.0 / loop_rate_hz;
 
     controller_thread_ = std::thread(&ControllerService::controllerLoop, this);
-    relay_subscriber_thread_ = std::thread(&ControllerService::relaySubscriberLoop, this);
+    if (elodin_sub_connected_) {
+        elodin_subscriber_thread_ = std::thread(&ControllerService::elodinSubscriberLoop, this);
+    }
 
     std::cout << "[ControllerService] ✅ Started controller loop at " << loop_rate_hz << " Hz"
               << std::endl;
@@ -220,10 +253,13 @@ void ControllerService::setNavState(const RobustDDPController::NavState& nav) {
 
 void ControllerService::setFireActive(bool active) {
     const bool was_active = fire_active_.exchange(active);
+    if (was_active == active)
+        return;
     std::cout << "[ControllerService] 🔥 Fire state: "
               << (active ? "ACTIVE — PWM enabled" : "INACTIVE — PWM suppressed") << std::endl;
 
     if (active && !was_active) {
+        fire_start_time_ = std::chrono::steady_clock::now();
         // FIRE_START: send a single open command using the same priority as the loop
         float td_f = test_duty_fuel_.load();
         float td_o = test_duty_ox_.load();
@@ -239,15 +275,26 @@ void ControllerService::setFireActive(bool active) {
             actuation.valid = true;
         } else if (lut_.is_loaded()) {
             RobustDDPController::Measurement meas;
+            RobustDDPController::Command cmd;
             {
                 std::lock_guard<std::mutex> lock(input_mutex_);
                 meas = current_meas_;
+                cmd = current_cmd_;
             }
-            const double P_ch_est = 0.5 * (meas.P_ch_mp1 + meas.P_ch_mp2);
             std::map<std::string, double> point;
-            point["P_ch"] = P_ch_est;
             point["P_u_fuel"] = meas.P_u_fuel;
             point["P_u_ox"] = meas.P_u_ox;
+            double thrust_ref = (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
+                                    ? cmd.thrust_desired
+                                    : 0.0;
+            if (thrust_curve_loaded_ &&
+                cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
+                thrust_ref = interpolateThrustCurve(0.0);  // t=0 at FIRE_START
+            point["thrust_desired"] = thrust_ref;
+            point["MR_ref"] = 2.2;
+            const double P_ch_est = 0.5 * (meas.P_ch_mp1 + meas.P_ch_mp2);
+            if (P_ch_est > 0.0)
+                point["P_ch"] = P_ch_est;
             std::map<std::string, double> lut_out;
             if (lut_.evaluate(point, lut_out)) {
                 double u_f = lut_out.count("u_safe_F") ? lut_out.at("u_safe_F")
@@ -256,10 +303,10 @@ void ControllerService::setFireActive(bool active) {
                 double u_o = lut_out.count("u_safe_O") ? lut_out.at("u_safe_O")
                              : lut_out.count("duty_O") ? lut_out.at("duty_O")
                                                        : 0.0;
-                actuation.duty_F = (u_f > 0.5) ? 1.0 : 0.0;
-                actuation.duty_O = (u_o > 0.5) ? 1.0 : 0.0;
-                actuation.u_F_on = actuation.duty_F > 0.5;
-                actuation.u_O_on = actuation.duty_O > 0.5;
+                actuation.duty_F = std::clamp(u_f, 0.0, 1.0);
+                actuation.duty_O = std::clamp(u_o, 0.0, 1.0);
+                actuation.u_F_on = actuation.duty_F > 0.01;
+                actuation.u_O_on = actuation.duty_O > 0.01;
                 actuation.valid = true;
             }
         } else {
@@ -291,6 +338,22 @@ void ControllerService::setFireActive(bool active) {
         zero.valid = true;
         sendActuationPWM(zero);
         std::cout << "[ControllerService] 🛑 FIRE close command sent (duty=0)" << std::endl;
+    }
+
+    // Write fire-state event to Elodin DB [0x44, 0x00]
+    if (elodin_client_ && elodin_connected_) {
+        comms::messages::control::ControllerFireStateMessage fs_msg;
+        std::get<0>(fs_msg.fields) = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                         std::chrono::system_clock::now().time_since_epoch())
+                                         .count();
+        std::get<1>(fs_msg.fields) = active ? uint8_t(1) : uint8_t(0);
+        // Capture current actuation state for context
+        {
+            std::lock_guard<std::mutex> lock(input_mutex_);
+            std::get<2>(fs_msg.fields) = static_cast<float>(current_meas_.P_u_fuel > 0 ? 1.0 : 0.0);
+            std::get<3>(fs_msg.fields) = static_cast<float>(current_meas_.P_u_ox > 0 ? 1.0 : 0.0);
+        }
+        elodin_client_->publish(0x4400, fs_msg);
     }
 }
 
@@ -471,11 +534,25 @@ void ControllerService::controllerLoop() {
         // When relay only sends upstream (ch 1, 5), P_d_fuel/P_d_ox stay 0 so engine estimate
         // and diagnostics (MR, P_ch, F_est) are zero. Use upstream as fallback for injector
         // pressure so the controller sees varying state instead of defaulting to fixed duty.
+        // This is an estimated fallback only — flag it in diagnostics if it triggers during FIRE.
         constexpr double P_D_FROM_U_FRAC = 0.95;
-        if (meas.P_d_fuel <= 0.0 && meas.P_u_fuel > 0.0)
+        bool p_d_fuel_fallback = false;
+        bool p_d_ox_fallback = false;
+        if (meas.P_d_fuel <= 0.0 && meas.P_u_fuel > 0.0) {
             meas.P_d_fuel = meas.P_u_fuel * P_D_FROM_U_FRAC;
-        if (meas.P_d_ox <= 0.0 && meas.P_u_ox > 0.0)
+            p_d_fuel_fallback = true;
+        }
+        if (meas.P_d_ox <= 0.0 && meas.P_u_ox > 0.0) {
             meas.P_d_ox = meas.P_u_ox * P_D_FROM_U_FRAC;
+            p_d_ox_fallback = true;
+        }
+        if ((p_d_fuel_fallback || p_d_ox_fallback) && fire_active_.load() && tick % 50 == 0) {
+            std::cerr << "[ControllerService] ⚠️  Downstream PT fallback active during FIRE: "
+                      << (p_d_fuel_fallback ? "P_d_fuel " : "")
+                      << (p_d_ox_fallback ? "P_d_ox " : "")
+                      << "— using 0.95 * upstream. Install downstream PTs for accurate control."
+                      << std::endl;
+        }
 
         // Require sensor data for DDP; test duty can send without it. In fire mode with LUT, run
         // anyway so we always command duty (even 0) and report P_ch from chamber MP1/2 average.
@@ -507,8 +584,8 @@ void ControllerService::controllerLoop() {
                                     ? cmd.thrust_desired
                                     : 0.0;
         } else if (lut_.is_loaded()) {
-            // LUT mode: 3 inputs — P_ch (chamber MP1/2 average), P_u_fuel, P_u_ox. Only compute
-            // when FIRE is active; pre-fire dynamics differ from fire-state.
+            // LUT mode: policy LUT uses P_u_fuel, P_u_ox, thrust_desired, MR_ref.
+            // Optional P_ch for legacy 3D engine LUTs.
             const double P_ch_est = (meas.P_ch_mp1 > 0.0 || meas.P_ch_mp2 > 0.0)
                                         ? 0.5 * (meas.P_ch_mp1 + meas.P_ch_mp2)
                                         : 0.0;
@@ -526,11 +603,22 @@ void ControllerService::controllerLoop() {
                 diagnostics.MR_estimated = 0.0;
                 diagnostics.P_ch = 0.0;
             } else {
-                // 3D LUT: P_ch (estimated from chamber MP1/2 avg), P_u_fuel, P_u_ox
                 std::map<std::string, double> point;
-                point["P_ch"] = P_ch_est;
                 point["P_u_fuel"] = meas.P_u_fuel;
                 point["P_u_ox"] = meas.P_u_ox;
+                double thrust_ref = (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
+                                        ? cmd.thrust_desired
+                                        : 0.0;
+                if (thrust_curve_loaded_ &&
+                    cmd.type == RobustDDPController::CommandType::THRUST_DESIRED) {
+                    auto t_elapsed = std::chrono::steady_clock::now() - fire_start_time_;
+                    double t_s = std::chrono::duration<double>(t_elapsed).count();
+                    thrust_ref = interpolateThrustCurve(t_s);
+                }
+                point["thrust_desired"] = thrust_ref;
+                point["MR_ref"] = 2.2;  // Default O/F target (mid-band)
+                if (P_ch_est > 0.0)
+                    point["P_ch"] = P_ch_est;  // For legacy 3D engine LUTs
 
                 std::map<std::string, double> lut_out;
                 if (lut_.evaluate(point, lut_out)) {
@@ -540,17 +628,15 @@ void ControllerService::controllerLoop() {
                     double u_o = lut_out.count("u_safe_O") ? lut_out.at("u_safe_O")
                                  : lut_out.count("duty_O") ? lut_out.at("duty_O")
                                                            : 0.0;
-                    actuation.duty_F = (u_f > 0.5) ? 1.0 : 0.0;
-                    actuation.duty_O = (u_o > 0.5) ? 1.0 : 0.0;
-                    actuation.u_F_on = actuation.duty_F > 0.5;
-                    actuation.u_O_on = actuation.duty_O > 0.5;
+                    // Use continuous duty (0-1) for PWM; clamp to valid range
+                    actuation.duty_F = std::clamp(u_f, 0.0, 1.0);
+                    actuation.duty_O = std::clamp(u_o, 0.0, 1.0);
+                    actuation.u_F_on = actuation.duty_F > 0.01;
+                    actuation.u_O_on = actuation.duty_O > 0.01;
                     actuation.valid = true;
 
-                    diagnostics.F_ref =
-                        (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
-                            ? cmd.thrust_desired
-                            : 0.0;
-                    diagnostics.P_ch = P_ch_est;  // Always report chamber from MP1/2 average
+                    diagnostics.F_ref = thrust_ref;
+                    diagnostics.P_ch = P_ch_est;
                     constexpr double P_MIN_VALID = 1e5;
                     if (meas.P_u_fuel >= P_MIN_VALID && meas.P_u_ox >= P_MIN_VALID) {
                         if (lut_out.count("F"))
@@ -569,10 +655,7 @@ void ControllerService::controllerLoop() {
                     actuation.u_F_on = false;
                     actuation.u_O_on = false;
                     actuation.valid = true;
-                    diagnostics.F_ref =
-                        (cmd.type == RobustDDPController::CommandType::THRUST_DESIRED)
-                            ? cmd.thrust_desired
-                            : 0.0;
+                    diagnostics.F_ref = thrust_ref;
                     diagnostics.P_ch = P_ch_est;
                     diagnostics.F_estimated = 0.0;
                     diagnostics.MR_estimated = 0.0;
@@ -584,7 +667,10 @@ void ControllerService::controllerLoop() {
             diagnostics = d;
         }
 
-        // ── PWM is edge-triggered (sent once on FIRE_START/STOP), not per-tick ──
+        // ── Send PWM output every tick while FIRE is active ───────────
+        if (fire_active_.load() && actuation.valid) {
+            sendActuationPWM(actuation);
+        }
 
         // ── Store outputs for external readers ─────────────────────────
         {
@@ -595,6 +681,12 @@ void ControllerService::controllerLoop() {
 
         // ── Log to console (10% sample) ────────────────────────────────
         if (tick % 10 == 0) {
+            // Diagnostic: when F_est=0 and fire active, log pressure state to debug missing PT data
+            if (fire_active_.load() && diagnostics.F_estimated == 0.0 && tick % 100 == 0) {
+                std::cerr << "[Controller] ⚠️ F_est=0: P_u_fuel=" << meas.P_u_fuel / 6894.76
+                          << " psi, P_u_ox=" << meas.P_u_ox / 6894.76
+                          << " psi (need both ≥14.5 psi). Check relay PT ch1/ch5." << std::endl;
+            }
             std::cout << "[Controller] tick=" << tick << " duty_F=" << actuation.duty_F
                       << " duty_O=" << actuation.duty_O << " F_ref=" << diagnostics.F_ref
                       << " F_est=" << diagnostics.F_estimated << " MR=" << diagnostics.MR_estimated
@@ -632,7 +724,9 @@ void ControllerService::controllerLoop() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  RELAY WEBSOCKET SUBSCRIBER
+//  DEPRECATED — RELAY WEBSOCKET SUBSCRIBER
+//  Replaced by direct Elodin DB subscription (elodinSubscriberLoop).
+//  This code is retained for reference but is no longer started.
 //  Minimal WebSocket client — connects to Elodin Relay (ws://host:port)
 //  and parses binary frames containing Elodin TABLE packets.
 // ═══════════════════════════════════════════════════════════════════════
@@ -724,6 +818,8 @@ void ControllerService::relaySubscriberLoop() {
     std::cout << "[ControllerService] Relay subscriber: ws://" << relay_host_ << ":" << relay_port_
               << std::endl;
     std::vector<uint8_t> frame;
+    static std::atomic<bool> logged_ch1{false};
+    static std::atomic<bool> logged_ch5{false};
 
     while (running_) {
         int fd = ws_tcp_connect(relay_host_, relay_port_);
@@ -763,23 +859,8 @@ void ControllerService::relaySubscriberLoop() {
             uint8_t ch = 0;
 
             if (pid_lo >= 0x01 && pid_lo <= 0x0A) {
-                // ── Raw PT [0x20, 0x01..0x0A] — calibrate inline ──────────
-                if (payload_size < comms::messages::sensor::RawPTMessage::nbytes())
-                    continue;
-                comms::messages::sensor::RawPTMessage raw_msg;
-                raw_msg.deserialize(payload);
-                ch = raw_msg.getField<1>();  // channel_id from message
-                if (ch == 0)
-                    ch = pid_lo;  // fallback to packet low byte
-                uint32_t raw_adc = raw_msg.getField<3>();
-                double psi_d =
-                    pt_calibration_.calculate_pressure(ch, static_cast<int32_t>(raw_adc));
-                if (!std::isfinite(psi_d) || psi_d < -50.0 || psi_d > 15000.0) {
-                    // Fallback: simple linear scale (320M ADC ≈ 20 PSI, 80M range ≈ 0–68 PSI)
-                    constexpr double ADC_MAX = 2147483648.0;
-                    psi_d = (static_cast<double>(raw_adc) / ADC_MAX) * 500.0;
-                }
-                pressure_psi = static_cast<float>(psi_d);
+                // ── Raw PT [0x20, 0x01..0x0A] — skip; controller uses calibrated stream only ──
+                continue;
             } else if (pid_lo >= 0x11 && pid_lo <= 0x1A) {
                 // ── Calibrated PT [0x20, 0x11..0x1A] — use directly ───────
                 if (payload_size < comms::messages::sensor::CalibratedPTMessage::nbytes())
@@ -800,11 +881,17 @@ void ControllerService::relaySubscriberLoop() {
                 // Channel mapping from config.toml [sensor_roles_pt_board]:
                 // ch=1: FUEL UP, 3: FUEL DN, 5: LOX UP, 7: LOX DN, 6: GN2 REG
                 // ch=4: Chamber Mid PT 1, ch=8: Chamber Mid PT 2 (P_ch estimate)
-                if (ch == 1)
+                if (ch == 1) {
                     current_meas_.P_u_fuel = pressure_psi * 6894.76;
-                else if (ch == 5)
+                    if (!logged_ch1.exchange(true))
+                        std::cout << "[ControllerService] ✅ PT ch1 (Fuel Up) received: "
+                                  << pressure_psi << " psi" << std::endl;
+                } else if (ch == 5) {
                     current_meas_.P_u_ox = pressure_psi * 6894.76;
-                else if (ch == 3)
+                    if (!logged_ch5.exchange(true))
+                        std::cout << "[ControllerService] ✅ PT ch5 (Ox Up) received: "
+                                  << pressure_psi << " psi" << std::endl;
+                } else if (ch == 3)
                     current_meas_.P_d_fuel = pressure_psi * 6894.76;
                 else if (ch == 7)
                     current_meas_.P_d_ox = pressure_psi * 6894.76;
@@ -830,17 +917,16 @@ void ControllerService::relaySubscriberLoop() {
 }
 
 void ControllerService::elodinSubscriberLoop() {
-    std::cout << "[ControllerService] 🎧 Elodin subscriber loop started." << std::endl;
-    // Subscribe to Elodin data streams
-    if (elodin_client_->is_connected()) {
-        elodin_client_->subscribe_stream();
-    }
+    std::cout
+        << "[ControllerService] 🎧 Elodin subscriber loop started (dedicated subscriber client)."
+        << std::endl;
+    // Subscription already done in initialize() via subscribe_tables()
     std::vector<uint8_t> rx_buffer(8192);
 
-    while (running_ && elodin_client_->is_connected()) {
+    while (running_ && elodin_subscriber_->is_connected()) {
         // 8-byte Elodin header: len(4) ty(1) id_hi(1) id_lo(1) req_id(1)
         uint8_t header[8];
-        if (!elodin_client_->read_packet_header(header)) {
+        if (!elodin_subscriber_->read_packet_header(header)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
@@ -860,16 +946,32 @@ void ControllerService::elodinSubscriberLoop() {
         std::memcpy(rx_buffer.data(), header, 8);
 
         if (payload_len > 0) {
-            ssize_t read_bytes = elodin_client_->read_data(rx_buffer.data() + 8, payload_len);
+            ssize_t read_bytes = elodin_subscriber_->read_data(rx_buffer.data() + 8, payload_len);
             if (read_bytes != static_cast<ssize_t>(payload_len))
                 continue;
         }
 
         uint8_t type_hi = header[5];
-        uint8_t channel_id = header[6];
+        uint8_t pid_lo = header[6];
 
-        // 0x20 is PT category. 0x11 to 0x1A are CALIBRATED channels (0x10 + ch_id)
-        if (type_hi == 0x20 && channel_id > 0x10 && channel_id <= 0x1A) {
+        // Sequencer state [0x50,0x00] -> keep controller FIRE gate in parity even
+        // if TCP FIRE_START/FIRE_STOP control path misses an edge.
+        if (type_hi == 0x50 && pid_lo == 0x00 && payload_len >= 17) {
+            uint8_t state_val = rx_buffer[8 + 8];
+            // State enum order: FIRE is value 16 in current state machine.
+            // Keep this as hard parity fallback with sequencer source of truth.
+            setFireActive(state_val == 16);
+            continue;
+        }
+
+        // 0x20 is PT category; calibrated channels for the low-pressure PT board (#1,
+        // board_id=21 → board_number=1) are encoded as pid_lo in 0x11..0x1A.
+        // Do NOT mask off board bits here (e.g. &0x1F) or we will mis-map HP PT
+        // channels into Fuel/Ox channels and the controller will sit on zeros.
+        if (type_hi == 0x20) {
+            if (pid_lo < 0x11 || pid_lo > 0x1A)
+                continue;
+
             if (payload_len >= comms::messages::sensor::CalibratedPTMessage::nbytes()) {
                 uint8_t* payload = rx_buffer.data() + 8;
 
@@ -880,7 +982,7 @@ void ControllerService::elodinSubscriberLoop() {
                 float pressure_psi = cal_msg.getField<3>();  // calibrated_pressure_psi
                 uint8_t ch = cal_msg.getField<1>();          // channel_id from message
                 if (ch == 0)
-                    ch = channel_id - 0x10;  // fallback to header
+                    ch = static_cast<uint8_t>(pid_lo - 0x10);  // fallback to header
 
                 // Map based on PT names derived from config.toml (ch 4/8 = Chamber Mid 1/2).
                 std::lock_guard<std::mutex> lock(input_mutex_);
@@ -964,6 +1066,24 @@ bool ControllerService::registerControllerTables() {
         raw_field(32, 8, schema(PrimType::F64(), {}, component("CONTROLLER.measurement.P_u_ox"))),
         raw_field(40, 8, schema(PrimType::F64(), {}, component("CONTROLLER.measurement.P_d_fuel"))),
         raw_field(48, 8, schema(PrimType::F64(), {}, component("CONTROLLER.measurement.P_d_ox"))),
+        raw_field(56, 8, schema(PrimType::F64(), {}, component("CONTROLLER.measurement.P_ch_mp1"))),
+        raw_field(64, 8, schema(PrimType::F64(), {}, component("CONTROLLER.measurement.P_ch_mp2"))),
+    });
+
+    // PSM state transition [0x43, 0x00]: U64(8) + U8(1) + U8(1) + U8(1) = 11 bytes
+    auto state_trans_vt = builder::vtable({
+        raw_field(0, 8, schema(PrimType::U64(), {}, component("CONTROLLER.state.timestamp_ns"))),
+        raw_field(8, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.from_state"))),
+        raw_field(9, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.to_state"))),
+        raw_field(10, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.reason"))),
+    });
+
+    // Fire state event [0x44, 0x00]: U64(8) + U8(1) + F32(4) + F32(4) = 17 bytes
+    auto fire_state_vt = builder::vtable({
+        raw_field(0, 8, schema(PrimType::U64(), {}, component("CONTROLLER.fire.timestamp_ns"))),
+        raw_field(8, 1, schema(PrimType::U8(), {}, component("CONTROLLER.fire.fire_active"))),
+        raw_field(9, 4, schema(PrimType::F32(), {}, component("CONTROLLER.fire.duty_F"))),
+        raw_field(13, 4, schema(PrimType::F32(), {}, component("CONTROLLER.fire.duty_O"))),
     });
 
     send_msg(*elodin_client_, VTableMsg{.id = std::make_tuple(uint8_t(0x40), uint8_t(0x00)),
@@ -972,6 +1092,55 @@ bool ControllerService::registerControllerTables() {
                                         .vtable = diagnostics_vt});
     send_msg(*elodin_client_, VTableMsg{.id = std::make_tuple(uint8_t(0x42), uint8_t(0x00)),
                                         .vtable = measurement_vt});
+    send_msg(*elodin_client_, VTableMsg{.id = std::make_tuple(uint8_t(0x43), uint8_t(0x00)),
+                                        .vtable = state_trans_vt});
+    send_msg(*elodin_client_, VTableMsg{.id = std::make_tuple(uint8_t(0x44), uint8_t(0x00)),
+                                        .vtable = fire_state_vt});
+
+    // Send component names so Elodin exports with strings instead of schema hashes
+    std::vector<std::string> actuation_fields = {
+        "CONTROLLER.actuation.timestamp_ns", "CONTROLLER.actuation.duty_F",
+        "CONTROLLER.actuation.duty_O",       "CONTROLLER.actuation.u_F_on",
+        "CONTROLLER.actuation.u_O_on",       "CONTROLLER.actuation.valid"};
+    std::vector<std::string> diagnostics_fields = {"CONTROLLER.diagnostics.timestamp_ns",
+                                                   "CONTROLLER.diagnostics.F_ref",
+                                                   "CONTROLLER.diagnostics.MR_ref",
+                                                   "CONTROLLER.diagnostics.F_estimated",
+                                                   "CONTROLLER.diagnostics.MR_estimated",
+                                                   "CONTROLLER.diagnostics.P_ch",
+                                                   "CONTROLLER.diagnostics.cost",
+                                                   "CONTROLLER.diagnostics.solver_iters",
+                                                   "CONTROLLER.diagnostics.safety_filtered",
+                                                   "CONTROLLER.diagnostics.cutoff_active"};
+    std::vector<std::string> measurement_fields = {
+        "CONTROLLER.measurement.timestamp_ns", "CONTROLLER.measurement.P_copv",
+        "CONTROLLER.measurement.P_reg",        "CONTROLLER.measurement.P_u_fuel",
+        "CONTROLLER.measurement.P_u_ox",       "CONTROLLER.measurement.P_d_fuel",
+        "CONTROLLER.measurement.P_d_ox",       "CONTROLLER.measurement.P_ch_mp1",
+        "CONTROLLER.measurement.P_ch_mp2"};
+    std::vector<std::string> state_fields = {
+        "CONTROLLER.state.timestamp_ns", "CONTROLLER.state.from_state", "CONTROLLER.state.to_state",
+        "CONTROLLER.state.reason"};
+    std::vector<std::string> fire_fields = {"CONTROLLER.fire.timestamp_ns",
+                                            "CONTROLLER.fire.fire_active", "CONTROLLER.fire.duty_F",
+                                            "CONTROLLER.fire.duty_O"};
+
+    for (const auto& f : actuation_fields)
+        send_msg(*elodin_client_, set_component_name(f));
+    for (const auto& f : diagnostics_fields)
+        send_msg(*elodin_client_, set_component_name(f));
+    for (const auto& f : measurement_fields)
+        send_msg(*elodin_client_, set_component_name(f));
+    for (const auto& f : state_fields)
+        send_msg(*elodin_client_, set_component_name(f));
+    for (const auto& f : fire_fields)
+        send_msg(*elodin_client_, set_component_name(f));
+
+    send_msg(*elodin_client_, set_entity_name(0x4000, "CONTROLLER.actuation"));
+    send_msg(*elodin_client_, set_entity_name(0x4100, "CONTROLLER.diagnostics"));
+    send_msg(*elodin_client_, set_entity_name(0x4200, "CONTROLLER.measurement"));
+    send_msg(*elodin_client_, set_entity_name(0x4300, "CONTROLLER.state"));
+    send_msg(*elodin_client_, set_entity_name(0x4400, "CONTROLLER.fire"));
 
     std::cout << "[ControllerService] ✅ Registered controller tables with Elodin DB" << std::endl;
     return true;
@@ -1017,7 +1186,6 @@ void ControllerService::writeMeasurementToDB(const RobustDDPController::Measurem
     constexpr uint16_t MEASUREMENT_MESSAGE_ID = 0x4200;
 
     comms::messages::control::ControllerMeasurementMessage msg;
-    // Use system_clock for consistency with DAQ bridge (epoch ms in GUI).
     auto ts_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                      std::chrono::system_clock::now().time_since_epoch())
                      .count();
@@ -1028,8 +1196,60 @@ void ControllerService::writeMeasurementToDB(const RobustDDPController::Measurem
     std::get<4>(msg.fields) = measurement.P_u_ox;
     std::get<5>(msg.fields) = measurement.P_d_fuel;
     std::get<6>(msg.fields) = measurement.P_d_ox;
+    std::get<7>(msg.fields) = measurement.P_ch_mp1;
+    std::get<8>(msg.fields) = measurement.P_ch_mp2;
 
     elodin_client_->publish(MEASUREMENT_MESSAGE_ID, msg);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  THRUST CURVE (Layer 2 pressure curve → time-varying target)
+// ═══════════════════════════════════════════════════════════════════════
+
+bool ControllerService::loadThrustCurve(const std::string& path) {
+    thrust_curve_times_.clear();
+    thrust_curve_values_.clear();
+
+    std::ifstream f(path);
+    if (!f.is_open())
+        return false;
+
+    std::string line;
+    if (!std::getline(f, line) || line.find("time_s") == std::string::npos)
+        return false;  // Expect header "time_s,thrust_N"
+
+    while (std::getline(f, line)) {
+        if (line.empty())
+            continue;
+        std::istringstream iss(line);
+        double t, F;
+        char comma;
+        if (iss >> t >> comma >> F) {
+            thrust_curve_times_.push_back(t);
+            thrust_curve_values_.push_back(F);
+        }
+    }
+    return thrust_curve_times_.size() >= 2;
+}
+
+double ControllerService::interpolateThrustCurve(double t_elapsed_s) const {
+    if (thrust_curve_times_.empty() || thrust_curve_values_.empty())
+        return 0.0;
+
+    if (t_elapsed_s <= thrust_curve_times_.front())
+        return thrust_curve_values_.front();
+    if (t_elapsed_s >= thrust_curve_times_.back())
+        return thrust_curve_values_.back();
+
+    for (size_t i = 0; i + 1 < thrust_curve_times_.size(); ++i) {
+        double t0 = thrust_curve_times_[i];
+        double t1 = thrust_curve_times_[i + 1];
+        if (t_elapsed_s >= t0 && t_elapsed_s <= t1) {
+            double alpha = (t_elapsed_s - t0) / (t1 - t0);
+            return thrust_curve_values_[i] * (1.0 - alpha) + thrust_curve_values_[i + 1] * alpha;
+        }
+    }
+    return thrust_curve_values_.back();
 }
 
 }  // namespace control

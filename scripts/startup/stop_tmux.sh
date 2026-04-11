@@ -1,27 +1,52 @@
 #!/bin/bash
-# Stop script for Tmux sessions and related background processes
+# Stop all Sensor System processes, tmux sessions, and ports.
 
 echo "Stopping Sensor System tmux sessions and processes..."
 
-# Kill all sensor-related tmux sessions
-tmux kill-session -t "sensor-dev" 2>/dev/null || true
-tmux kill-session -t "sensor-db-only" 2>/dev/null || true
-tmux kill-session -t "sensor-logs" 2>/dev/null || true
-tmux kill-session -t "sensor" 2>/dev/null || true
+# ── Tmux sessions ─────────────────────────────────────────────────────────────
+for session in sensor-dev sensor-db-only sensor-logs sensor; do
+    tmux kill-session -t "$session" 2>/dev/null || true
+done
 
-# Kill background processes
-pkill -f "elodin-db run.*2240" 2>/dev/null || true
-pkill -f "elodin-relay" 2>/dev/null || true
-pkill -f "daq_bridge" 2>/dev/null || true
-pkill -f "board_simulator" 2>/dev/null || true
-pkill -f "next dev" 2>/dev/null || true
-pkill -f "tsx watch.*server.ts" 2>/dev/null || true
-pkill -f "calibration_server.py" 2>/dev/null || true
+# ── C++ FSW services ──────────────────────────────────────────────────────────
+pkill -f "daq_bridge"                  2>/dev/null || true
+pkill -f "calibration_service"         2>/dev/null || true
+pkill -f "sequencer_service"           2>/dev/null || true
+pkill -f "actuator_service"            2>/dev/null || true
+pkill -f "heartbeat_service"           2>/dev/null || true
+pkill -f "config_broadcast_service"    2>/dev/null || true
+pkill -f "controller_service"          2>/dev/null || true
+pkill -f "ota_service"                 2>/dev/null || true
+pkill -f "board_simulator"             2>/dev/null || true
 
-# Stop systemd services if they are running
-if systemctl --user is-active --quiet sensor-backend.service 2>/dev/null; then
-    echo "Stopping systemd services..."
-    systemctl --user stop sensor-backend sensor-frontend sensor-sidecar sensor-elodin 2>/dev/null || true
-fi
+# ── Elodin DB ─────────────────────────────────────────────────────────────────
+pkill -f "elodin-db run.*2240"         2>/dev/null || true
 
-echo "✅ All tmux sessions and related processes have been stopped."
+# ── Web GUI (frontend + backend) ──────────────────────────────────────────────
+pkill -f "next dev"                    2>/dev/null || true
+pkill -f "tsx.*server.ts"              2>/dev/null || true
+pkill -f "node.*server"                2>/dev/null || true
+
+# ── Python calibration sidecar ────────────────────────────────────────────────
+pkill -f "calibration_server.py"       2>/dev/null || true
+
+# ── Systemd user services (stop AND disable restart so they don't come back) ──
+for svc in sensor-calibration sensor-daq sensor-actuator sensor-controller sensor-heartbeat sensor-config-broadcast sensor-backend sensor-frontend sensor-sidecar sensor-elodin; do
+    if systemctl --user is-active --quiet "${svc}.service" 2>/dev/null; then
+        echo "  Stopping systemd service: $svc"
+        systemctl --user stop "${svc}.service" 2>/dev/null || true
+    fi
+done
+
+# ── Brief grace period then force-kill anything still holding ports ───────────
+sleep 0.5
+
+for port in 9999 9998 9997 8081 8082 2240 5005; do
+    pid=$(ss -tlpn "sport = :${port}" 2>/dev/null | grep -oP '(?<=pid=)\d+' | head -1)
+    if [ -n "$pid" ]; then
+        echo "  Force-killing PID $pid still on port $port"
+        kill -9 "$pid" 2>/dev/null || true
+    fi
+done
+
+echo "✅ All sessions and processes stopped."

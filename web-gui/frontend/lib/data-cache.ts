@@ -1,10 +1,14 @@
 /**
- * Background data cache — samples sensor store at 1 Hz so that plots
+ * Background data cache — ring-buffer storage per sensor so plots
  * have historical data available even before the window/tab opens.
  *
- * Call `startDataCache()` once at app boot (e.g. TopBar).  Every
- * TimeSeriesPlot calls `getDataCache().getAlignedHistory(...)` on
- * mount to pre-fill its buffer.
+ * Architecture:
+ *  - Pre-allocated Float64Array ring buffers — zero heap allocations on write.
+ *  - GlobalStateSubscriber owns the single SENSOR_UPDATE WS subscription and
+ *    calls addDataPoint(); DataCache.start() handles HISTORICAL_DATA only.
+ *  - sample() still runs at CACHE_SAMPLE_HZ from Zustand store as a fallback in case
+ *    GlobalStateSubscriber hasn't fired yet (e.g. rapid reconnects).
+ *  - getAlignedHistory() allocates once per call (unavoidable for uPlot).
  */
 
 import { useSensorStore, ALIASES } from './store';
@@ -13,22 +17,34 @@ import { getWebSocketClient } from './websocket';
 import { MessageType } from './types';
 import { getServerTimeNow } from './server-time';
 
-const CACHE_MAX_SECONDS = 60; // 1 minute of history in cache
-const CACHE_MAX_POINTS = 6000; // 100 Hz * 60 s — keep small for fast getAlignedHistory
-const CACHE_SAMPLE_HZ = 20; // sample store at 20 Hz to match backend throttle
+// Ring capacity must cover longest dashboard window (5 min = 300 s) at effective WS rate (~20 Hz
+// after backend throttle) → 300×20 ≈ 6000; use headroom for 10 min + bursts.
+const CACHE_MAX_POINTS  = 16000;
+const CACHE_SAMPLE_HZ   = 40;
+// The stack routinely publishes >80 entity.component streams. A low key cap causes
+// live series eviction and "dead" plots until hard refresh reloads historical data.
+const CACHE_MAX_KEYS    = 2000;
+// Keep inactive series around longer so slower/episodic channels do not disappear.
+const CACHE_STALE_MS    = 30 * 60 * 1000;
 
-export interface CachedSeries {
-  time: number[];
-  values: number[];
+// ── Ring buffer series ────────────────────────────────────────────────────────
+interface RingSeries {
+  tBuf:   Float64Array; // timestamps (T+ seconds from startup)
+  vBuf:   Float64Array; // values
+  head:   number;       // next write index (mod CACHE_MAX_POINTS)
+  len:    number;       // fill count (0..CACHE_MAX_POINTS)
+  lastMs: number;       // wall-clock ms of last write (for stale pruning)
 }
 
+// ── Cache class ───────────────────────────────────────────────────────────────
 class SensorDataCache {
-  private cache: Map<string, CachedSeries> = new Map();
-  private interval: ReturnType<typeof setInterval> | null = null;
+  private cache: Map<string, RingSeries> = new Map();
+  private sampleInterval: ReturnType<typeof setInterval> | null = null;
+  private pruneInterval:  ReturnType<typeof setInterval> | null = null;
   private started = false;
   private onHistoricalDataCallbacks: Set<() => void> = new Set();
 
-  /** Register a callback to be invoked whenever HISTORICAL_DATA is loaded from the backend. */
+  /** Register a callback invoked whenever HISTORICAL_DATA loads from the backend. */
   onHistoricalData(cb: () => void): () => void {
     this.onHistoricalDataCallbacks.add(cb);
     return () => this.onHistoricalDataCallbacks.delete(cb);
@@ -37,9 +53,9 @@ class SensorDataCache {
   start(): void {
     if (this.started) return;
     this.started = true;
-    this.interval = setInterval(() => this.sample(), 1000 / CACHE_SAMPLE_HZ);
+    this.sampleInterval = setInterval(() => this.sample(), 1000 / CACHE_SAMPLE_HZ);
+    this.pruneInterval  = setInterval(() => this.pruneStaleKeys(), 60_000);
 
-    // Listen for bulk historical data from backend connection
     const ws = getWebSocketClient();
     ws.on(MessageType.HISTORICAL_DATA, (payload: unknown) => {
       try {
@@ -47,16 +63,18 @@ class SensorDataCache {
         const frontendNow = (getServerTimeNow() - getStartupTime()) / 1000;
         let count = 0;
         for (const [key, series] of Object.entries(data)) {
-          if (series.time && series.values && series.time.length > 0) {
-            // Remap backend timestamps so the most recent historical point aligns with
-            // the current frontend time. This prevents non-monotonic time arrays when
-            // live data (at frontend-relative time) gets appended after pre-fill.
-            const backendLatest = series.time[series.time.length - 1];
-            const offset = frontendNow - backendLatest;
-            const remappedTime = series.time.map(t => t + offset);
-            this.cache.set(key, { time: remappedTime, values: [...series.values] });
-            count++;
+          if (!series.time?.length || !series.values?.length) continue;
+          // Remap so most-recent historical point aligns with current frontend time,
+          // preventing non-monotonic time arrays when live data is appended.
+          const backendLatest = series.time[series.time.length - 1];
+          const offset = frontendNow - backendLatest;
+          const s = this.getOrCreate(key);
+          // Reset ring and bulk-load all points.
+          s.head = 0; s.len = 0;
+          for (let i = 0; i < series.time.length; i++) {
+            this.ringWrite(s, series.time[i] + offset, series.values[i]);
           }
+          count++;
         }
         if (count > 0) {
           console.log(`[DataCache] Loaded historical data for ${count} entities from backend`);
@@ -69,41 +87,100 @@ class SensorDataCache {
   }
 
   stop(): void {
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
+    if (this.sampleInterval) { clearInterval(this.sampleInterval); this.sampleInterval = null; }
+    if (this.pruneInterval)  { clearInterval(this.pruneInterval);  this.pruneInterval  = null; }
     this.started = false;
   }
 
+  // ── Ring buffer primitives ──────────────────────────────────────────────────
+
+  private getOrCreate(key: string): RingSeries {
+    let s = this.cache.get(key);
+    if (!s) {
+      s = { tBuf: new Float64Array(CACHE_MAX_POINTS), vBuf: new Float64Array(CACHE_MAX_POINTS), head: 0, len: 0, lastMs: 0 };
+      this.cache.set(key, s);
+    }
+    return s;
+  }
+
+  private ringWrite(s: RingSeries, t: number, v: number): void {
+    s.tBuf[s.head] = t;
+    s.vBuf[s.head] = v;
+    s.head = (s.head + 1) % CACHE_MAX_POINTS;
+    if (s.len < CACHE_MAX_POINTS) s.len++;
+    s.lastMs = Date.now();
+  }
+
+  /** Oldest slot index in the ring. */
+  private tail(s: RingSeries): number {
+    return s.len < CACHE_MAX_POINTS ? 0 : s.head;
+  }
+
+  private lastTime(s: RingSeries): number {
+    if (s.len === 0) return -Infinity;
+    return s.tBuf[(s.head - 1 + CACHE_MAX_POINTS) % CACHE_MAX_POINTS];
+  }
+
+  /**
+   * Read a time-windowed slice of the ring buffer as plain arrays.
+   * Returns null if the series has no data within the window.
+   * One allocation per call — called at plot render rate (~40 Hz).
+   */
+  private readWindow(s: RingSeries, cutoff: number): { time: number[]; values: number[] } | null {
+    if (s.len === 0) return null;
+    const t = this.tail(s);
+
+    // Linear scan to find first index >= cutoff (at most CACHE_MAX_POINTS iterations).
+    let startOffset = 0;
+    while (startOffset < s.len && s.tBuf[(t + startOffset) % CACHE_MAX_POINTS] < cutoff) {
+      startOffset++;
+    }
+    const count = s.len - startOffset;
+    if (count <= 0) return null;
+
+    const time   = new Array<number>(count);
+    const values = new Array<number>(count);
+    for (let i = 0; i < count; i++) {
+      const idx = (t + startOffset + i) % CACHE_MAX_POINTS;
+      time[i]   = s.tBuf[idx];
+      values[i] = s.vBuf[idx];
+    }
+    return { time, values };
+  }
+
+  // ── Stale key pruning ───────────────────────────────────────────────────────
+
+  private pruneStaleKeys(): void {
+    const now = Date.now();
+    for (const [key, s] of this.cache) {
+      if (now - s.lastMs > CACHE_STALE_MS) this.cache.delete(key);
+    }
+    // Emergency bound only (protect against unbounded growth in pathological cases).
+    if (this.cache.size > CACHE_MAX_KEYS) {
+      const byAge = Array.from(this.cache.entries()).sort((a, b) => a[1].lastMs - b[1].lastMs);
+      const toRemove = this.cache.size - CACHE_MAX_KEYS;
+      for (let i = 0; i < toRemove && i < byAge.length; i++) this.cache.delete(byAge[i][0]);
+    }
+  }
+
+  // ── Background sampler (fallback if WS path misses) ───────────────────────
+
   private sample(): void {
+    if (typeof document !== 'undefined' && document.hidden) return;
     try {
-      const now = (getServerTimeNow() - getStartupTime()) / 1000;
+      const now   = (getServerTimeNow() - getStartupTime()) / 1000;
       const state = useSensorStore.getState();
-      if (!state || !state.sensorData) return;
-      const sensorData = state.sensorData;
-
-      for (const [key, value] of Object.entries(sensorData)) {
+      if (!state?.sensorData) return;
+      for (const [key, value] of Object.entries(state.sensorData)) {
         if (value === null || value === undefined || !isFinite(value)) continue;
-
-        let series = this.cache.get(key);
-        if (!series) {
-          series = { time: [], values: [] };
-          this.cache.set(key, series);
-        }
-
-        // Only add if time has advanced (avoid duplicates)
-        if (series.time.length === 0 || series.time[series.time.length - 1] < now) {
-          series.time.push(now);
-          series.values.push(value);
+        const s = this.getOrCreate(key);
+        if (this.lastTime(s) < now) {
+          this.ringWrite(s, now, value);
         } else {
-          // Update last value if same timestamp
-          series.values[series.values.length - 1] = value;
-        }
-
-        if (series.time.length > CACHE_MAX_POINTS) {
-          series.time = series.time.slice(-CACHE_MAX_POINTS);
-          series.values = series.values.slice(-CACHE_MAX_POINTS);
+          // Same timestamp — update value in place.
+          const prev = (s.head - 1 + CACHE_MAX_POINTS) % CACHE_MAX_POINTS;
+          s.vBuf[prev] = value;
+          s.lastMs = Date.now();
         }
       }
     } catch (err) {
@@ -111,158 +188,128 @@ class SensorDataCache {
     }
   }
 
+  // ── Public write API ────────────────────────────────────────────────────────
+
   private _lastAddPerKey: Record<string, number> = {};
 
-  /** Manually add a data point (called from WebSocket handler). Throttled to 20 Hz per key to reduce lag. */
+  /** Add a data point (called by GlobalStateSubscriber on SENSOR_UPDATE). Light throttle per key. */
   addDataPoint(entity: string, component: string, value: number): void {
     if (!isFinite(value)) return;
-    const key = `${entity}.${component}`;
+    const key   = `${entity}.${component}`;
     const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    const last = this._lastAddPerKey[key] ?? 0;
-    if (nowMs - last < 50) return; // 20 Hz max per key
+    const last  = this._lastAddPerKey[key] ?? 0;
+    const minIntervalMs = 1000 / CACHE_SAMPLE_HZ;
+    if (nowMs - last < minIntervalMs) return;
     this._lastAddPerKey[key] = nowMs;
 
     const now = (getServerTimeNow() - getStartupTime()) / 1000;
+    const s   = this.getOrCreate(key);
 
-    let series = this.cache.get(key);
-    if (!series) {
-      series = { time: [], values: [] };
-      this.cache.set(key, series);
-    }
-
-    // Spike rejection: prevent obvious spikes from entering time series (bar uses latest, so unaffected)
-    if (series.values.length > 0) {
-      const prev = series.values[series.values.length - 1];
-      if (isFinite(prev)) {
-        if (component === 'pressure_psi') {
-          const maxJump = entity.includes('HP_PT') || entity.includes('GSE_Mid') || entity.includes('GSE_High') || entity.includes('GN2_High') ? 500 : 1000;
-          if (Math.abs(value - prev) > maxJump) value = prev;
-        } else if (component !== 'temperature_c' && component !== 'force_lbf') {
-          if (prev !== 0 && Math.abs(value / prev) > 10) value = prev;  // ratio filter for other components
-        }
-        // temperature_c / force_lbf: no ratio filter (prev=0 would clamp valid first readings; allow full range)
-      }
-    }
-
-    // Always add new point - allow some time tolerance for batching
-    const lastTime = series.time.length > 0 ? series.time[series.time.length - 1] : -Infinity;
-    const timeDiff = now - lastTime;
-
-    // Accept every point so plots can show full-rate data (no downsampling here)
-    if (timeDiff >= 0) {
-      series.time.push(now);
-      series.values.push(value);
-    } else if (timeDiff >= -0.1) {
-      if (series.values.length > 0) series.values[series.values.length - 1] = value;
-    }
-
-    if (series.time.length > CACHE_MAX_POINTS) {
-      series.time = series.time.slice(-CACHE_MAX_POINTS);
-      series.values = series.values.slice(-CACHE_MAX_POINTS);
+    const lt = this.lastTime(s);
+    if (now >= lt) {
+      this.ringWrite(s, now, value);
+    } else if (now >= lt - 0.1) {
+      // Within 100ms of last — update last value in place.
+      const idx = (s.head - 1 + CACHE_MAX_POINTS) % CACHE_MAX_POINTS;
+      s.vBuf[idx] = value;
+      s.lastMs = Date.now();
     }
   }
 
-  /** Get cached history for a single entity.component key. */
-  getHistory(key: string): CachedSeries | null {
-    const series = this.cache.get(key);
-    if (!series || series.time.length === 0) return null;
-    return { time: [...series.time], values: [...series.values] };
+  // ── Public read API ─────────────────────────────────────────────────────────
+
+  // ── Reverse alias index (rebuilt lazily when ALIASES size changes) ───────────
+  // Maps fallback key → canonical key for O(1) reverse lookup instead of O(n) scan.
+  private reverseAliasIndex: Map<string, string> = new Map();
+  private reverseAliasBuiltSize = 0;
+
+  private ensureReverseAliasIndex(): void {
+    const aliasEntries = Object.entries(ALIASES);
+    if (aliasEntries.length === this.reverseAliasBuiltSize) return;
+    this.reverseAliasIndex.clear();
+    for (const [canonical, fallbacks] of aliasEntries) {
+      for (const fb of fallbacks) {
+        if (!this.reverseAliasIndex.has(fb)) {
+          this.reverseAliasIndex.set(fb, canonical);
+        }
+      }
+    }
+    this.reverseAliasBuiltSize = aliasEntries.length;
   }
 
   /**
-   * Find cached series for a key, checking aliases if direct lookup fails.
+   * Find cached series for a key, checking forward and reverse aliases.
    */
-  private findCachedSeries(key: string): CachedSeries | null {
-    // Try direct lookup first
-    let series = this.cache.get(key);
-    if (series && series.time.length > 0) return series;
+  private findSeries(key: string): RingSeries | null {
+    let s = this.cache.get(key);
+    if (s && s.len > 0) return s;
 
-    // Check forward aliases (canonical → fallbacks)
+    // Forward aliases: canonical → fallbacks
     const fallbacks = ALIASES[key];
     if (fallbacks) {
       for (const fb of fallbacks) {
-        series = this.cache.get(fb);
-        if (series && series.time.length > 0) return series;
+        s = this.cache.get(fb);
+        if (s && s.len > 0) return s;
       }
     }
 
-    // Check reverse aliases (PT_CHX → canonical)
-    // If key is a fallback (e.g., PT_Cal.PT_CH1.pressure_psi), find the canonical entity
-    for (const [canonical, fallbackList] of Object.entries(ALIASES)) {
-      if (fallbackList.includes(key)) {
-        // This key is a fallback for canonical, so check if canonical exists in cache
-        series = this.cache.get(canonical);
-        if (series && series.time.length > 0) return series;
-        // Also check if any of canonical's fallbacks exist
-        for (const fb of fallbackList) {
-          series = this.cache.get(fb);
-          if (series && series.time.length > 0) return series;
+    // Reverse alias: O(1) lookup via pre-built index
+    this.ensureReverseAliasIndex();
+    const canonical = this.reverseAliasIndex.get(key);
+    if (canonical) {
+      s = this.cache.get(canonical);
+      if (s && s.len > 0) return s;
+      const cFallbacks = ALIASES[canonical];
+      if (cFallbacks) {
+        for (const fb of cFallbacks) {
+          s = this.cache.get(fb);
+          if (s && s.len > 0) return s;
         }
       }
     }
-
     return null;
   }
 
   /**
-   * Build pre-filled time + values arrays from cache for a set of entities.
-   * Returns data suitable for direct assignment to dataRef in TimeSeriesPlot.
+   * Build aligned time + values arrays for a set of entity/component pairs.
+   * Uses the first series with data as the time base; aligns others via
+   * nearest-neighbour lookup. One allocation per call (called at render rate).
    */
   getAlignedHistory(
     entities: string[],
     componentMap: string[],
     windowSeconds: number,
   ): { time: number[]; values: number[][] } | null {
-    const now = (getServerTimeNow() - getStartupTime()) / 1000;
+    const now    = (getServerTimeNow() - getStartupTime()) / 1000;
     const cutoff = now - windowSeconds;
+    const keys   = entities.map((e, i) => `${e}.${componentMap[i]}`);
 
-    const keys = entities.map((e, i) => `${e}.${componentMap[i]}`);
-
-    // Find any series that has data to use as time base (check aliases)
-    let baseSeries: CachedSeries | undefined;
-    let baseKey: string | undefined;
+    // Find time base — first series with data in the window.
+    let baseWindow: { time: number[]; values: number[] } | null = null;
     for (const k of keys) {
-      const s = this.findCachedSeries(k);
-      if (s && s.time.length > 0) {
-        baseSeries = s;
-        baseKey = k;
-        break;
-      }
+      const s = this.findSeries(k);
+      if (!s) continue;
+      const w = this.readWindow(s, cutoff);
+      if (w && w.time.length > 0) { baseWindow = w; break; }
     }
-    if (!baseSeries || !baseKey) {
-      // Debug: log cache state
-      const cacheKeys = Array.from(this.cache.keys());
-      if (cacheKeys.length > 0) {
-        console.log(`[DataCache] Cache has ${cacheKeys.length} keys, but none match requested:`, keys);
-      }
-      return null;
-    }
+    if (!baseWindow) return null;
 
-    // Find start index within window
-    let startIdx = 0;
-    while (startIdx < baseSeries.time.length && baseSeries.time[startIdx] < cutoff) startIdx++;
+    const time = baseWindow.time;
+    const len  = time.length;
 
-    const time = baseSeries.time.slice(startIdx);
-    if (time.length === 0) return null;
-
-    const len = time.length;
-    // Time-based alignment: for each t in time, use value from each series at most recent time <= t.
-    // For pressure_psi, treat 0 as gap (NaN) when previous value was non-zero to avoid value/0 spikes.
     const values = keys.map((key) => {
-      const s = this.findCachedSeries(key);
-      if (!s || s.time.length === 0) return new Array(len).fill(NaN);
-      const isPressure = key.endsWith('.pressure_psi');
-      const out: number[] = [];
-      let idx = 0;
-      let lastPushed = NaN;
+      const s = this.findSeries(key);
+      if (!s) return new Array<number>(len).fill(NaN);
+      const w = this.readWindow(s, cutoff);
+      if (!w) return new Array<number>(len).fill(NaN);
+
+      const out: number[] = new Array(len);
+      let j = 0;
+
       for (let i = 0; i < len; i++) {
         const t = time[i];
-        if (i > 0 && t < time[i - 1]) idx = 0;
-        while (idx + 1 < s.time.length && s.time[idx + 1] <= t) idx++;
-        let val = s.time[idx] <= t ? s.values[idx] : NaN;
-        if (isPressure && val === 0 && lastPushed > 0) val = NaN; // spurious zero → gap
-        out.push(val);
-        if (Number.isFinite(val)) lastPushed = val;
+        while (j + 1 < w.time.length && w.time[j + 1] <= t) j++;
+        out[i] = w.time[j] <= t ? w.values[j] : NaN;
       }
       return out;
     });
@@ -271,13 +318,11 @@ class SensorDataCache {
   }
 }
 
-// Singleton
+// ── Singleton ─────────────────────────────────────────────────────────────────
 let _instance: SensorDataCache | null = null;
 
 export function getDataCache(): SensorDataCache {
-  if (!_instance) {
-    _instance = new SensorDataCache();
-  }
+  if (!_instance) _instance = new SensorDataCache();
   return _instance;
 }
 

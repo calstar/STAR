@@ -1,6 +1,10 @@
 /**
- * Sense conversions: K-type thermocouple, Pt1000 RTD, load cell.
- * Ported from external/DiabloAvionics/test_guis/sense_testing_gui.py
+ * @deprecated These formulas are now applied server-side by the C++ calibration_service
+ * (FSW/src/calibration/calibration_main.cpp). The frontend reads calibrated entities
+ * (TC_Cal, RTD_Cal, LC_Cal) directly from the backend WebSocket. This file is kept
+ * as reference for the conversion formulas.
+ *
+ * Original source: external/DiabloAvionics/test_guis/sense_testing_gui.py
  */
 
 // K-type thermocouple: voltage (V) -> temperature (°C), ITS-90 rational polynomial (Mosaic/NIST-style)

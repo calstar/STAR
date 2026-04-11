@@ -1,9 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react';
-import { useSensorStore } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
+import { useState } from 'react';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import ActuatorStatePanel from '@/components/plots/ActuatorStatePanel';
 import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
@@ -16,7 +13,7 @@ type TabId = 'fuel' | 'lox' | 'copv' | 'gse' | 'raw';
 const TABS: { id: TabId; label: string; roleKeywords: string[] }[] = [
   { id: 'fuel', label: '⛽ FUEL', roleKeywords: ['Fuel'] },
   { id: 'lox', label: '🧊 LOX', roleKeywords: ['Ox', 'LOX'] },
-  { id: 'copv', label: '🫀 COPV', roleKeywords: ['GN2'] },
+  { id: 'copv', label: '🫀 COPV', roleKeywords: ['GN2', 'COPV'] },
   { id: 'gse', label: '🔧 GSE', roleKeywords: ['GSE'] },
   { id: 'raw', label: '📡 RAW', roleKeywords: [] }, // shows all sensors
 ];
@@ -108,18 +105,8 @@ function RawTab({ sensors }: { sensors: SensorConfig[] }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function AllPlotsPage() {
-  const updateSensor = useSensorStore((s) => s.updateSensor);
-  const updateState = useSensorStore((s) => s.updateState);
   const [activeTab, setActiveTab] = useState<TabId>('fuel');
-  const ws = getWebSocketClient();
   const allSensors = useSensorConfig();
-
-  useEffect(() => {
-    ws.connect();
-    const unsub1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const unsub2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    return () => { unsub1(); unsub2(); };
-  }, [ws, updateSensor, updateState]);
 
   const activeTabDef = TABS.find((t) => t.id === activeTab)!;
 

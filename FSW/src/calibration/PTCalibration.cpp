@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -88,23 +90,70 @@ PTCalibrationManager::PTCalibrationManager() {
 }
 
 bool PTCalibrationManager::load_calibration() {
-    // Try JSON first (from calibration GUI)
-    if (!default_json_dir_.empty() && fs::exists(default_json_dir_)) {
-        std::string json_file = find_latest_json_file(default_json_dir_);
-        if (!json_file.empty() && load_from_json(json_file)) {
-            std::cout << "[PTCalibration] Loaded " << calibrations_.size()
-                      << " calibrations from JSON: " << json_file << std::endl;
-            return true;
-        }
-    }
+    calibrations_.clear();
 
-    // Fall back to CSV
-    if (!default_csv_path_.empty() && fs::exists(default_csv_path_)) {
-        if (load_from_csv(default_csv_path_)) {
-            std::cout << "[PTCalibration] Loaded " << calibrations_.size()
-                      << " calibrations from CSV: " << default_csv_path_ << std::endl;
-            return true;
+    // Default: load Diablo factory CSV first (stable), then GUI JSON exports. Override with
+    // CAL_PT_JSON_FIRST=1 to prefer the newest JSON in scripts/calibration/calibrations/.
+    const char* jf = std::getenv("CAL_PT_JSON_FIRST");
+    const bool json_first =
+        jf && (jf[0] == '1' || jf[0] == 'y' || jf[0] == 'Y' || jf[0] == 't' || jf[0] == 'T');
+
+    auto try_csv = [this]() -> bool {
+        if (!default_csv_path_.empty() && fs::exists(default_csv_path_)) {
+            if (load_from_csv(default_csv_path_)) {
+                std::cout << "[PTCalibration] Loaded " << calibrations_.size()
+                          << " calibrations from CSV (factory): " << default_csv_path_ << std::endl;
+                return true;
+            }
         }
+        return false;
+    };
+
+    auto try_json = [this]() -> bool {
+        if (!default_json_dir_.empty() && fs::exists(default_json_dir_)) {
+            std::string json_file = find_latest_json_file(default_json_dir_);
+            if (!json_file.empty() && load_from_json(json_file, false)) {
+                std::cout << "[PTCalibration] Loaded " << calibrations_.size()
+                          << " calibrations from JSON: " << json_file << std::endl;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    if (json_first) {
+        if (try_json())
+            return true;
+        if (try_csv())
+            return true;
+    } else {
+        // CSV column labels (PT1, PT6, …) are bench IDs — they may not match vehicle logical
+        // connectors (e.g. "PT6" in CSV ≠ GN2 Reg on connector 6). Newest GUI JSON is keyed by
+        // logical channel; overlay it on CSV so ch 5/6/7 etc. get the right cubics.
+        try_csv();
+        const char* missing_only_env = std::getenv("CAL_PT_JSON_MISSING_ONLY");
+        const bool json_missing_only =
+            missing_only_env && (missing_only_env[0] == '1' || missing_only_env[0] == 'y' ||
+                                 missing_only_env[0] == 'Y' || missing_only_env[0] == 't' ||
+                                 missing_only_env[0] == 'T');
+        if (!default_json_dir_.empty() && fs::exists(default_json_dir_)) {
+            std::string json_file = find_latest_json_file(default_json_dir_);
+            if (!json_file.empty() && load_from_json(json_file, json_missing_only)) {
+                if (json_missing_only) {
+                    std::cout << "[PTCalibration] Merged missing channels from JSON only: "
+                              << json_file << " (total " << calibrations_.size()
+                              << " logical channels)" << std::endl;
+                } else {
+                    std::cout << "[PTCalibration] Overlaid GUI JSON on CSV: " << json_file
+                              << " (logical channels present in JSON replace CSV; total keys "
+                              << calibrations_.size() << ")" << std::endl;
+                }
+            }
+        }
+        if (!calibrations_.empty())
+            return true;
+        if (try_json())
+            return true;
     }
 
     std::cout << "[PTCalibration] ⚠️  No calibration files found - sensors will be uncalibrated"
@@ -112,7 +161,7 @@ bool PTCalibrationManager::load_calibration() {
     return false;
 }
 
-bool PTCalibrationManager::load_from_json(const std::string& json_path) {
+bool PTCalibrationManager::load_from_json(const std::string& json_path, bool merge_missing_only) {
     std::ifstream file(json_path);
     if (!file.is_open()) {
         std::cerr << "[PTCalibration] Failed to open JSON file: " << json_path << std::endl;
@@ -136,6 +185,8 @@ bool PTCalibrationManager::load_from_json(const std::string& json_path) {
     for (; iter != end; ++iter) {
         std::smatch match = *iter;
         uint8_t channel_id = static_cast<uint8_t>(std::stoi(match[1].str()));
+        if (merge_missing_only && calibrations_.find(channel_id) != calibrations_.end())
+            continue;
         double A = std::stod(match[2].str());
         double B = std::stod(match[3].str());
         double C = std::stod(match[4].str());
@@ -244,15 +295,61 @@ bool PTCalibrationManager::is_calibrated(uint8_t channel_id) const {
 double PTCalibrationManager::calculate_pressure(uint8_t channel_id, int32_t adc_code) const {
     const auto* coeffs = get_calibration(channel_id);
     if (coeffs) {
-        return coeffs->calculate_pressure(adc_code);
+        double p = coeffs->calculate_pressure(adc_code);
+        if (!std::isfinite(p))
+            return 0.0;
+        return std::clamp(p, -3000.0, 20000.0);
     }
     return 0.0;  // Uncalibrated
+}
+
+std::optional<int32_t> PTCalibrationCoeffs::invert_to_adc(double target_psi) const {
+    auto eval = [this](double x) {
+        return (A * x * x * x) + (B * x * x) + (C * x) + D;
+    };
+    for (const auto& [lo, hi] : {std::pair<int64_t, int64_t>(0, 2147483647),
+                                 std::pair<int64_t, int64_t>(-2147483648, 0)}) {
+        double f_lo = eval(lo);
+        double f_hi = eval(hi);
+        if (!(std::min(f_lo, f_hi) <= target_psi && target_psi <= std::max(f_lo, f_hi)))
+            continue;
+        double left = lo, right = hi;
+        for (int i = 0; i < 64; ++i) {
+            double mid = std::round((left + right) / 2);
+            double f_mid = eval(mid);
+            if (std::abs(f_mid - target_psi) < 0.5)
+                return static_cast<int32_t>(mid);
+            if (f_lo < f_hi) {
+                if (f_mid < target_psi)
+                    left = mid;
+                else
+                    right = mid;
+            } else {
+                if (f_mid > target_psi)
+                    left = mid;
+                else
+                    right = mid;
+            }
+        }
+        return static_cast<int32_t>(std::round((left + right) / 2));
+    }
+    return std::nullopt;
 }
 
 void PTCalibrationManager::set_default_paths(const std::string& json_dir,
                                              const std::string& csv_path) {
     default_json_dir_ = json_dir;
     default_csv_path_ = csv_path;
+}
+
+/** Match calibration_orchestrator._load_prior_from_polynomial_calibration: skip non-factory JSON.
+ */
+static bool skip_json_for_pt_polynomial_load(const std::string& filename) {
+    if (filename == "adjustments.json")
+        return true;
+    if (filename.find("learned_prior") != std::string::npos)
+        return true;
+    return false;
 }
 
 std::string PTCalibrationManager::find_latest_json_file(const std::string& json_dir) const {
@@ -265,16 +362,18 @@ std::string PTCalibrationManager::find_latest_json_file(const std::string& json_
 
 #if __cplusplus >= 201703L
     for (const auto& entry : fs::directory_iterator(json_dir)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".json") {
-            auto file_time = fs::last_write_time(entry.path());
-            auto time_t =
-                std::chrono::duration_cast<std::chrono::seconds>(file_time.time_since_epoch())
-                    .count();
+        if (!entry.is_regular_file() || entry.path().extension() != ".json")
+            continue;
+        const std::string fname = entry.path().filename().string();
+        if (skip_json_for_pt_polynomial_load(fname))
+            continue;
+        auto file_time = fs::last_write_time(entry.path());
+        auto time_t =
+            std::chrono::duration_cast<std::chrono::seconds>(file_time.time_since_epoch()).count();
 
-            if (time_t > latest_time) {
-                latest_time = time_t;
-                latest_file = entry.path().string();
-            }
+        if (time_t > latest_time) {
+            latest_time = time_t;
+            latest_file = entry.path().string();
         }
     }
 #else
@@ -285,6 +384,8 @@ std::string PTCalibrationManager::find_latest_json_file(const std::string& json_
         while ((entry = readdir(dir)) != nullptr) {
             std::string filename = entry->d_name;
             if (filename.length() > 5 && filename.substr(filename.length() - 5) == ".json") {
+                if (skip_json_for_pt_polynomial_load(filename))
+                    continue;
                 std::string full_path = json_dir + "/" + filename;
                 struct stat file_stat;
                 if (stat(full_path.c_str(), &file_stat) == 0 && S_ISREG(file_stat.st_mode)) {

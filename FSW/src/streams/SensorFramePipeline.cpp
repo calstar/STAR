@@ -4,6 +4,10 @@
 #include <cstring>
 #include <iostream>
 
+#include "DiabloEnums.h"
+#include "DiabloPacketUtils.h"
+#include "DiabloPackets.h"
+
 namespace fsw {
 namespace streams {
 
@@ -22,7 +26,6 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
         return std::nullopt;
     }
 
-    // Receive raw bytes with source IP tracking
     uint16_t source_port = 0;
     ssize_t received = socket_->receive_from(receive_buffer_.data(), receive_buffer_.size(),
                                              last_source_ip_, source_port);
@@ -37,51 +40,39 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
         return std::nullopt;
     }
 
-    // Parse packet type
-    auto packet_type = board_parser_.parse_packet_type(receive_buffer_.data(), received);
-    if (!packet_type) {
-        static size_t unknown_type_count = 0;
-        if (++unknown_type_count <= 5 || unknown_type_count % 200 == 0) {
-            uint8_t fb = received > 0 ? receive_buffer_[0] : 0;
-            std::cerr << "[Pipeline] Unknown packet type #" << unknown_type_count
-                      << " (first_byte=" << static_cast<int>(fb) << ", size=" << received
-                      << ") from " << last_source_ip_ << " — expected 1=HEARTBEAT 3=SENSOR_DATA"
-                      << std::endl;
-        }
+    if (received < static_cast<ssize_t>(sizeof(Diablo::PacketHeader))) {
         return std::nullopt;
     }
 
-    // Handle SENSOR_DATA packets
-    if (*packet_type == daq_comms::protocol::DiabloBoardPacketParser::PacketType::SENSOR_DATA) {
-        auto parsed = board_parser_.parse_sensor_data(receive_buffer_.data(), received);
-        if (!parsed || !parsed->is_valid) {
+    Diablo::PacketHeader peek{};
+    std::memcpy(&peek, receive_buffer_.data(), sizeof(peek));
+
+    if (peek.packet_type == Diablo::PacketType::SENSOR_DATA) {
+        Diablo::PacketHeader sensor_header;
+        std::vector<Diablo::SensorDataChunkCollection> chunks;
+        if (!Diablo::parse_sensor_data_packet(receive_buffer_.data(), static_cast<size_t>(received),
+                                              sensor_header, chunks)) {
             static size_t parse_fail_count = 0;
             if (++parse_fail_count <= 10 || parse_fail_count % 500 == 0) {
                 std::cerr << "[Pipeline] SENSOR_DATA parse failed #" << parse_fail_count
-                          << " (size=" << received
-                          << ", valid=" << (parsed ? parsed->is_valid : false) << ") from "
-                          << last_source_ip_ << std::endl;
+                          << " (size=" << received << ") from " << last_source_ip_ << std::endl;
             }
             return std::nullopt;
         }
 
-        // Convert to SensorBatch format — emit every chunk so we get full rate (amortized data).
         daq_comms::protocol::SensorBatch batch;
-
-        if (!parsed->chunks.empty()) {
-            batch.frame_timestamp_ns =
-                static_cast<uint64_t>(parsed->chunks[0].timestamp) * 1000000ULL;
+        if (!chunks.empty()) {
+            batch.frame_timestamp_ns = static_cast<uint64_t>(chunks[0].timestamp) * 1000000ULL;
         } else {
             auto now = std::chrono::steady_clock::now();
             batch.frame_timestamp_ns =
                 std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch())
                     .count();
         }
-
-        batch.sequence_id = parsed->header.timestamp & 0xFFFF;
+        batch.sequence_id = sensor_header.timestamp & 0xFFFF;
         batch.is_valid = true;
 
-        for (const auto& chunk : parsed->chunks) {
+        for (const auto& chunk : chunks) {
             for (const auto& dp : chunk.datapoints) {
                 daq_comms::protocol::RawPTSample sample;
                 sample.channel_id = dp.sensor_id;
@@ -91,13 +82,43 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
                 batch.pt_samples.push_back(sample);
             }
         }
-
         return batch;
     }
 
-    // Handle BOARD_HEARTBEAT packets (for board discovery + config broadcast)
-    if (*packet_type == daq_comms::protocol::DiabloBoardPacketParser::PacketType::BOARD_HEARTBEAT) {
-        last_heartbeat_buffer_.assign(receive_buffer_.data(), receive_buffer_.data() + received);
+    if (peek.packet_type == Diablo::PacketType::SELF_TEST) {
+        Diablo::PacketHeader st_header;
+        uint8_t adc_good = 0;
+        std::vector<Diablo::SelfTestResult> st_results;
+        if (!Diablo::parse_self_test_packet(receive_buffer_.data(), static_cast<size_t>(received),
+                                            st_header, adc_good, st_results)) {
+            std::cerr << "[Pipeline] SELF_TEST parse failed from " << last_source_ip_ << std::endl;
+            return std::nullopt;
+        }
+
+        daq_comms::protocol::SensorBatch batch;
+        auto now = std::chrono::steady_clock::now();
+        batch.frame_timestamp_ns =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+        batch.sequence_id = st_header.timestamp & 0xFFFF;
+        batch.is_valid = true;
+
+        daq_comms::protocol::ParsedSelfTestPacket parsed;
+        parsed.packet_type = static_cast<uint8_t>(st_header.packet_type);
+        parsed.version = st_header.version;
+        parsed.timestamp = st_header.timestamp;
+        parsed.adc_good = adc_good;
+        parsed.num_sensors = static_cast<uint8_t>(st_results.size());
+        parsed.is_valid = true;
+        for (const auto& r : st_results) {
+            parsed.results.push_back({r.sensor_id, r.result});
+        }
+        batch.self_tests.push_back(std::move(parsed));
+        return batch;
+    }
+
+    if (peek.packet_type == Diablo::PacketType::BOARD_HEARTBEAT) {
+        last_heartbeat_buffer_.assign(receive_buffer_.data(),
+                                      receive_buffer_.data() + static_cast<size_t>(received));
         last_heartbeat_source_ip_ = last_source_ip_;
         return std::nullopt;
     }

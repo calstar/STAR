@@ -1,82 +1,17 @@
 #include "config/SensorAssignment.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 
-#include "../../../external/DAQv2-Comms/src/DiabloEnums.h"
-#include "../../../external/DAQv2-Comms/src/DiabloPackets.h"
+#include "DiabloPacketUtils.h"
 
 namespace fsw {
 namespace config {
-
-namespace {
-
-constexpr uint8_t kDiabloCommsVersion = 0;
-
-// Local copy of DAQv2-Comms create_sensor_config_packet implementation,
-// adapted to build on FSW (no Arduino.h). This keeps the on-wire layout
-// exactly matched to Diablo::parse_sensor_config_packet on the boards.
-size_t create_sensor_config_packet_fsw(const std::vector<uint8_t>& sensor_ids,
-                                       uint8_t reference_voltage, bool necessary_for_abort,
-                                       uint32_t controller_ip, uint8_t enable_serial_printing,
-                                       uint8_t* buffer, size_t buffer_size) {
-    const size_t header_size = sizeof(Diablo::PacketHeader);
-    const size_t num_sensors = sensor_ids.size();
-
-    if (num_sensors > 255) {
-        return 0;
-    }
-
-    const size_t body_size = 1u                                 // num_sensors
-                             + num_sensors                      // sensor_ids
-                             + 1u                               // reference_voltage
-                             + 1u                               // necessary_for_abort
-                             + (necessary_for_abort ? 4u : 0u)  // controller_ip (conditional)
-                             + 1u;                              // enable_serial_printing
-    const size_t total_size = header_size + body_size;
-
-    if (buffer_size < total_size) {
-        return 0;
-    }
-
-    Diablo::PacketHeader header;
-    header.packet_type = Diablo::PacketType::SENSOR_CONFIG;
-    header.version = kDiabloCommsVersion;
-    header.timestamp = 0u;  // Boards do not depend on absolute timestamp from FSW configs.
-
-    uint8_t* ptr = buffer;
-    std::memcpy(ptr, &header, header_size);
-    ptr += header_size;
-
-    *ptr = static_cast<uint8_t>(num_sensors);
-    ptr += 1;
-
-    if (num_sensors) {
-        std::memcpy(ptr, sensor_ids.data(), num_sensors);
-        ptr += num_sensors;
-    }
-
-    *ptr = reference_voltage;
-    ptr += 1;
-
-    *ptr = necessary_for_abort ? 1u : 0u;
-    ptr += 1;
-
-    if (necessary_for_abort) {
-        std::memcpy(ptr, &controller_ip, sizeof(uint32_t));
-        ptr += sizeof(uint32_t);
-    }
-
-    *ptr = enable_serial_printing;
-
-    return total_size;
-}
-
-}  // namespace
 
 SensorAssignmentManager::SensorAssignmentManager()
     : gse_base_ip_("192.168.2.0"),
@@ -350,9 +285,13 @@ std::vector<uint8_t> SensorAssignmentManager::generate_board_config_packet(uint8
     constexpr size_t MAX_PACKET_SIZE = 512;
     uint8_t buffer[MAX_PACKET_SIZE];
 
-    size_t written = create_sensor_config_packet_fsw(
+    uint32_t ts_ms = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count() &
+                                           0xFFFFFFFFu);
+    size_t written = Diablo::create_sensor_config_packet(
         sensor_ids, reference_voltage, necessary_for_abort, controller_ip, enable_serial_printing,
-        buffer, sizeof(buffer));
+        ts_ms, buffer, sizeof(buffer));
 
     if (written == 0 || written > MAX_PACKET_SIZE) {
         std::cerr << "[SensorAssignment] Failed to serialize SENSOR_CONFIG for board "

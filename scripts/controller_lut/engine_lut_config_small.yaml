@@ -1,0 +1,26 @@
+# Minimal engine LUT for quick testing (5×5 = 25 points)
+engine_config_path: engine_sim/configs/default.yaml
+controller_config_path: null
+
+axes:
+  - name: P_u_fuel
+    units: Pa
+    values: [2.0e6, 4.0e6, 6.0e6, 8.0e6, 10.0e6]
+
+  - name: P_u_ox
+    units: Pa
+    values: [2.0e6, 4.0e6, 6.0e6, 8.0e6, 10.0e6]
+
+outputs:
+  - F
+  - MR
+  - P_ch
+  - mdot_F
+  - mdot_O
+  - injector_dp_F
+  - injector_dp_O
+  - stability_score
+  - injector_stiffness_ok
+
+metadata:
+  description: Small engine LUT for fast DDP

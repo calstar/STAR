@@ -1,25 +1,71 @@
 'use client'
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import PressureBar from '@/components/plots/PressureBar';
 import ActuatorStatePanel from '@/components/plots/ActuatorStatePanel';
 import SensorReadoutStrip from '@/components/plots/SensorReadoutStrip';
-import { useSensorStore, useSensorValue } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
+import { useSensorValue } from '@/lib/store';
 import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
 import { useSensorConfig, filterByRole } from '@/lib/sensor-config';
 import { usePressureLimits, getLimitsForSystem } from '@/lib/pressure-limits';
 
+function RtdReadoutStrip({
+  sensors,
+  colors,
+}: {
+  sensors: { entity: string; calEntity: string; role: string }[];
+  colors: string[];
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {sensors.map((s, i) => (
+        <RtdReadoutBox
+          key={s.entity}
+          entity={s.entity}
+          calEntity={s.calEntity}
+          label={s.role}
+          color={colors[i] ?? getEntityColor(s.entity)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function RtdReadoutBox({
+  calEntity,
+  label,
+  color,
+}: {
+  entity: string;
+  calEntity: string;
+  label: string;
+  color: string;
+}) {
+  const value = useSensorValue(calEntity, 'temperature_c');
+  const display = value !== null ? value.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '---';
+  return (
+    <div className="bg-white/[0.02] backdrop-blur-md border border-white/5 rounded-xl px-5 py-3.5 flex items-center gap-4 min-w-0 hover:bg-white/[0.04] hover:shadow-lg transition-all duration-300 flex-1">
+      <span className="text-[13px] text-gray-400 font-bold uppercase tracking-widest truncate">
+        {label}
+      </span>
+      <span
+        className="text-3xl font-black font-mono tabular-nums ml-auto"
+        style={{ color, textShadow: `0 0 15px ${color}60` }}
+      >
+        {display}
+      </span>
+      <span className="text-xs text-gray-500 font-bold uppercase tracking-widest">
+        °C
+      </span>
+    </div>
+  );
+}
+
 export default function LOXGraphsPage() {
-  const updateSensor = useSensorStore((s) => s.updateSensor);
-  const updateState = useSensorStore((s) => s.updateState);
-  const ws = getWebSocketClient();
   const allSensors = useSensorConfig();
   const pressureLimits = usePressureLimits();
   const loxLimits = getLimitsForSystem(pressureLimits, 'LOX');
-
   const [activeTab, setActiveTab] = useState<'PT' | 'RTD'>('PT');
 
   const ptSensors = filterByRole(allSensors, 'Ox', 'LOX').filter(
@@ -50,13 +96,6 @@ export default function LOXGraphsPage() {
   const up   = useSensorValue(upSensor?.calEntity   ?? '', 'pressure_psi');
   const down = useSensorValue(downSensor?.calEntity ?? '', 'pressure_psi');
 
-  useEffect(() => {
-    ws.connect();
-    const unsub1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const unsub2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    return () => { unsub1(); unsub2(); };
-  }, [ws, updateSensor, updateState]);
-
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden p-3 gap-2">
 
@@ -84,9 +123,18 @@ export default function LOXGraphsPage() {
 
       {/* Live readout strip */}
       <div className="flex-shrink-0">
-        <SensorReadoutStrip sensors={currentSensors.map((s) => ({
-          label: s.role, entity: s.calEntity, component: componentName, color: getEntityColor(s.calEntity),
-        }))} />
+        {activeTab === 'PT' ? (
+          <SensorReadoutStrip
+            sensors={currentSensors.map((s) => ({
+              label: s.role,
+              entity: s.calEntity,
+              component: componentName,
+              color: getEntityColor(s.calEntity),
+            }))}
+          />
+        ) : (
+          <RtdReadoutStrip sensors={rtdSensors} colors={colors} />
+        )}
       </div>
 
       {/* Body: chart + sidebar */}

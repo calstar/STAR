@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo } from 'react';
+import Link from 'next/link';
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { MessageType, BoardStatusPayload, BoardStatus, engineStateCodeToLabel } from '@/lib/types';
@@ -24,9 +25,10 @@ const CARD_ACCENTS = [
 export default function BoardsPage() {
   const updateBoards = useSensorStore((s) => s.updateBoards);
   const boardsMap = useSensorStore((s) => s.boards as Record<number, BoardStatus>);
+  const sensorData = useSensorStore((s) => s.sensorData);
   const ws = getWebSocketClient();
 
-  const TYPE_ORDER = ['ACTUATOR', 'PT', 'LC', 'TC', 'RTD'];
+  const TYPE_ORDER = ['ACTUATOR', 'PT', 'LC', 'TC', 'RTD', 'ENCODER'];
 
   const boardsByType = useMemo(() => {
     const map = boardsMap ?? {};
@@ -106,6 +108,11 @@ export default function BoardsPage() {
                 </h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                   {boards.map((b, index) => {
+                    const testKeys = Object.keys(sensorData).filter((k) => k.startsWith(`SELF_TEST.BOARD_${b.id}.`));
+                    let testStatus: 'Untested' | 'Passed' | 'Failed' = 'Untested';
+                    if (testKeys.length > 0) {
+                      testStatus = testKeys.every(k => sensorData[k] === 1) ? 'Passed' : 'Failed';
+                    }
                     const accent = CARD_ACCENTS[index % CARD_ACCENTS.length];
                     const freq =
                       b.frequencyHz != null && isFinite(b.frequencyHz)
@@ -147,11 +154,10 @@ export default function BoardsPage() {
                             <div className="text-text-muted mb-1.5 text-sm uppercase tracking-wider">State</div>
                             <div className="flex items-center gap-2.5 text-text">
                               <div
-                                className={`w-3.5 h-3.5 rounded-full flex-shrink-0 ${
-                                  boardStateLabel === 'Active' ? 'bg-green-500' :
+                                className={`w-3.5 h-3.5 rounded-full flex-shrink-0 ${boardStateLabel === 'Active' ? 'bg-green-500' :
                                   boardStateLabel === 'Setup' ? 'bg-blue-500' :
-                                  boardStateLabel === 'Abort' || boardStateLabel === 'Abort done' ? 'bg-red-500' : 'bg-gray-500'
-                                }`}
+                                    boardStateLabel === 'Abort' || boardStateLabel === 'Abort done' ? 'bg-red-500' : 'bg-gray-500'
+                                  }`}
                               />
                               <span className="font-mono font-bold text-lg truncate">
                                 {boardStateLabel.toUpperCase()}
@@ -165,9 +171,8 @@ export default function BoardsPage() {
                         {b.configured !== undefined && (
                           <div className="flex items-center gap-2 mb-2">
                             <span
-                              className={`text-xs px-2 py-1 rounded font-semibold uppercase tracking-wide font-mono ${
-                                b.configured ? 'bg-emerald-900/60 text-emerald-200' : 'bg-gray-800 text-gray-500'
-                              }`}
+                              className={`text-xs px-2 py-1 rounded font-semibold uppercase tracking-wide font-mono ${b.configured ? 'bg-emerald-900/60 text-emerald-200' : 'bg-gray-800 text-gray-500'
+                                }`}
                             >
                               {b.configured ? 'Config sent' : 'Unconfigured'}
                             </span>
@@ -183,11 +188,27 @@ export default function BoardsPage() {
                             Config error: {b.configError}
                           </div>
                         )}
+                        <div className="flex items-center gap-2 mb-2 font-mono">
+                          <span className="text-text-muted text-sm uppercase tracking-wider">Self Test:</span>
+                          <span className={`text-sm font-bold ${testStatus === 'Passed' ? 'text-green-400' :
+                            testStatus === 'Failed' ? 'text-red-400' : 'text-gray-500'
+                            }`}>
+                            {testStatus === 'Passed' ? 'ALL PASSED' : testStatus === 'Failed' ? 'FAILED' : 'UNTESTED'}
+                          </span>
+                        </div>
                         <div className="text-base text-text-muted font-mono mb-2">
                           Heartbeat: {freq}
                         </div>
-                        <div className="text-sm text-gray-500 font-mono mt-auto pt-3 truncate" title={b.ip}>
-                          ID {b.id} · {b.ip}
+                        <div className="flex items-center justify-between gap-2 mt-auto pt-3">
+                          <span className="text-sm text-gray-500 font-mono truncate" title={b.ip}>
+                            ID {b.id} · {b.ip}
+                          </span>
+                          <Link
+                            href={`/flash?ip=${encodeURIComponent(b.ip)}&boardId=${b.id}`}
+                            className="text-xs px-2 py-1 rounded bg-cyan-900/50 text-cyan-300 hover:bg-cyan-800/60 font-semibold"
+                          >
+                            Flash
+                          </Link>
                         </div>
                       </div>
                     );
@@ -198,6 +219,44 @@ export default function BoardsPage() {
           })}
         </div>
       )}
+
+      <div className="mt-12">
+        <h2 className="text-2xl font-bold text-text mb-4 tracking-tight">Self Tests</h2>
+        {(() => {
+          const testedBoards = Object.values(boardsMap ?? {}).filter(b =>
+            Object.keys(sensorData).some(k => k.startsWith(`SELF_TEST.BOARD_${b.id}.`))
+          );
+          if (testedBoards.length === 0) {
+            return <div className="text-text-muted italic">No self test data available yet.</div>;
+          }
+          return (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {testedBoards.map(b => {
+                const testKeys = Object.keys(sensorData).filter((k) => k.startsWith(`SELF_TEST.BOARD_${b.id}.`));
+                const allPassed = testKeys.every(k => sensorData[k] === 1);
+                return (
+                  <div key={b.id} className={`rounded-xl border p-5 ${allPassed ? 'border-green-900/50 bg-green-950/10' : 'border-red-900/50 bg-red-950/10'}`}>
+                    <h3 className="text-lg font-bold mb-3">{b.type || 'BOARD'} {b.boardNumber} (ID {b.id})</h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
+                      {testKeys.map(k => {
+                        const sensorMatch = k.match(/sensor_(\d+)/);
+                        const sensorId = sensorMatch ? sensorMatch[1] : '?';
+                        const passed = sensorData[k] === 1;
+                        return (
+                          <div key={k} className="flex items-center justify-between bg-black/20 px-3 py-2 rounded border border-white/5">
+                            <span className="font-mono text-sm text-text-muted">CH {sensorId}</span>
+                            <span className={`font-bold text-sm ${passed ? 'text-green-400' : 'text-red-400'}`}>{passed ? 'PASS' : 'FAIL'}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+      </div>
     </main>
   );
 }

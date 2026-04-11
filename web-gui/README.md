@@ -35,7 +35,7 @@ This will start both backend and frontend automatically.
 
 ### Replay a past run (load existing Elodin DB)
 
-Replay uses **elodin-db's `--replay`** flag: the DB streams stored data as live telemetry (same as external FSW SITL-style replay). No daq_bridge, simulator, or controller.
+Replay uses **elodin-db's `--replay`** flag: the DB streams stored data as live telemetry (SITL-style replay). No daq_bridge, simulator, or controller.
 
 ```bash
 # Standalone script (stops any existing DB on 2240, starts past DB with --replay)
@@ -49,6 +49,34 @@ ELODIN_DB_NAME=daq_20260306_043134 ./start.sh --replay
 ```
 
 Past DBs are created when you run the full stack with `ELODIN_DB_NAME=daq_YYYYMMDD_HHMMSS` (e.g. `scripts/startup/start_tmux_dev.sh`). With `--replay`, elodin-db runs with that DB path and streams recorded data to the relay/GUI like a live run.
+
+### Testing lag (demo mode, no hardware)
+
+To test real-time data feed and lag fixes without hardware:
+
+```bash
+# Demo mode: synthetic PT sweep + actuator data at 50 Hz
+./start.sh --demo
+```
+
+Then:
+1. Open the dashboard (e.g. http://localhost:3000)
+2. Watch the pressure gauges sweep (0 → POP → 0 over ~60 s)
+3. Toggle actuators in DEBUG mode — actuator state updates appear in real time
+4. Let it run **5–10 minutes** — if lag builds up, the sweep becomes choppy or the UI freezes
+
+**Load test (hammer the GUI):**
+```bash
+# 2000 Hz demo + 200 Hz broadcast (bypasses normal 50 Hz throttle)
+LOAD_TEST=1 DEMO_RATE_HZ=2000 ./start.sh --demo
+```
+
+Or max stress (4000 Hz input, 200 Hz to frontend):
+```bash
+LOAD_TEST=1 DEMO_RATE_HZ=4000 ./start.sh --demo
+```
+
+Run for 10+ minutes while toggling actuators and watching gauges — if lag builds, the sweep gets choppy or UI freezes.
 
 ### Option 2: Manual Setup
 

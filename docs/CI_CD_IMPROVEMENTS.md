@@ -28,7 +28,7 @@ This document outlines the improvements made to the CI/CD pipeline and git confi
 
 **New Features:**
 - **Format Check Job** - Runs first, must pass before builds
-- **Matrix Builds** - Tests with GCC 12 and Clang 15, Debug and Release
+- **Matrix Builds** - GCC 12 and Clang 18, Release only (Clang uses GCC 12 libstdc++ in CI)
 - **Static Analysis** - cppcheck and clang-tidy with artifact uploads
 - **Code Quality Checks** - TODO/FIXME detection, large file detection
 - **Security Scanning** - Semgrep and custom security checks
@@ -73,9 +73,9 @@ Automated script to install and configure pre-commit hooks:
 ./scripts/setup_pre_commit.sh
 ```
 
-### 5. Pre-commit CI Workflow (`.github/workflows/pre-commit.yml`)
+### 5. Pre-commit (local only)
 
-Runs pre-commit checks in CI to ensure consistency.
+CI runs **`./format.sh --check`** for C++ style. The full **pre-commit** suite (`.pre-commit-config.yaml`) is optional for developers who install hooks locally; it is **not** run in GitHub Actions.
 
 ### 6. Documentation (`.github/README.md`)
 

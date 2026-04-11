@@ -6,6 +6,20 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Threads REQUIRED)
 
+# DAQv2-Comms: the real protocol library (from external/DAQv2-Comms submodule)
+# Arduino.h shim lives alongside the source so it compiles on Linux.
+add_library(daqv2_comms STATIC
+    external/DAQv2-Comms/src/DiabloPacketUtils.cpp
+)
+target_include_directories(daqv2_comms PUBLIC
+    external/DAQv2-Comms/src
+)
+# DAQv2 headers use size_t without <cstddef>; some libstdc++ versions no longer pull it in via <vector>.
+# Until fixed in external/DAQv2-Comms, force the standard header for this target (GCC/Clang).
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(daqv2_comms PRIVATE "-include" "cstddef")
+endif()
+
 # Active build: daq_comms library + FSW (daq_bridge, controller_service, fsw_web_bridge)
 add_subdirectory(daq_comms)
 add_subdirectory(FSW)

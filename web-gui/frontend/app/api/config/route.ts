@@ -4,7 +4,7 @@
 
 export async function GET() {
   try {
-    const backendUrl = process.env.BACKEND_API_URL || 'http://localhost:8082';
+    const backendUrl = process.env.BACKEND_API_URL || 'http://localhost:8081';
     const response = await fetch(`${backendUrl}/api/config`);
 
     if (!response.ok) {
@@ -20,7 +20,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const backendUrl = process.env.BACKEND_API_URL || 'http://localhost:8082';
+    const backendUrl = process.env.BACKEND_API_URL || 'http://localhost:8081';
     const body = await request.json();
 
     const response = await fetch(`${backendUrl}/api/config`, {

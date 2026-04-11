@@ -72,6 +72,13 @@ public:
     bool subscribe_stream();
 
     /**
+     * @brief Subscribe to specific tables by ID.
+     * @param table_ids Vector of (hi, lo) byte pairs identifying each table.
+     * @return true if all subscribe messages were sent.
+     */
+    bool subscribe_tables(const std::vector<std::pair<uint8_t, uint8_t>>& table_ids);
+
+    /**
      * @brief Begin batching — subsequent publish() calls go into an internal buffer.
      * Call flush_batch() to send everything in one TCP write.
      */
@@ -118,6 +125,12 @@ public:
      * @brief Flush the write buffer to the database
      */
     void flush_buffer();
+
+    /**
+     * @brief Set socket receive timeout so read_packet() can yield.
+     * 0 = blocking (default). Call after connect().
+     */
+    void set_recv_timeout_ms(int timeout_ms);
 
     /**
      * @brief Read incoming data packet from Elodin (non-blocking)
@@ -169,7 +182,7 @@ inline std::array<uint8_t, 2> message_id_to_packet_id(uint16_t message_id) {
             static_cast<uint8_t>(message_id & 0xFF)};
 }
 
-// Helper function matching external FSW's serialize_msg pattern EXACTLY
+// Helper function matching serialize_msg pattern
 // CRITICAL: FSW uses NESTED MessageFactory structure:
 //   Header = MessageFactory<len, type, packet_id, request_id>
 //   ElodinMsg = MessageFactory<header, body>
@@ -217,7 +230,7 @@ std::vector<uint8_t> ElodinClient::serialize_msg(uint16_t message_id, const Mess
     return result;
 }
 
-// Template implementation for publishing (match external FSW pattern)
+// Template implementation for publishing
 template <typename MessageType>
 bool ElodinClient::publish(uint16_t message_id, const MessageType& message) {
     if (!is_connected()) {

@@ -1,10 +1,6 @@
 'use client'
 
 import { useParams } from 'next/navigation';
-import { useEffect } from 'react';
-import { useSensorStore } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
 import WindowDetector from '@/components/windows/WindowDetector';
 
 // Import all page components
@@ -21,11 +17,16 @@ import ControllerPage from '@/app/controller/page';
 import CalibrationPage from '@/app/calibration/page';
 import UnifiedDashboardPage from '@/app/window/unified/page';
 import BoardsPage from '@/app/boards/page';
+import FlashPage from '@/app/flash/page';
 import LCS_TCS_RTDPage from '@/app/plots/lcs-tcs-rtd/page';
 import ChamberGraphsPage from '@/app/plots/chamber/page';
 import SensorInfoPage from '@/app/sensor-info/page';
 import MobileGUIPage from '@/app/window/mobile-gui/page';
 import SolenoidCharacterizationPage from '@/app/plots/solenoid-characterization/page';
+import EncodersPage from '@/app/encoders/page';
+import LivestreamPage from '@/app/livestream/page';
+import SelfTestsPage from '@/app/self-tests/page';
+import FeedCharacterizationPage from '@/app/plots/feed-characterization/page';
 
 const viewComponents: Record<string, React.ComponentType> = {
   fuel: FuelGraphsPage,
@@ -38,6 +39,7 @@ const viewComponents: Record<string, React.ComponentType> = {
   controller: ControllerPage,
   status: StatusPage,
   boards: BoardsPage,
+  flash: FlashPage,
   config: ConfigPage,
   calibration: CalibrationPage,
   unified: UnifiedDashboardPage,
@@ -46,30 +48,15 @@ const viewComponents: Record<string, React.ComponentType> = {
   'sensor-info': SensorInfoPage,
   'mobile-gui': MobileGUIPage,
   'solenoid-char': SolenoidCharacterizationPage,
+  encoders: EncodersPage,
+  livestream: LivestreamPage,
+  'self-tests': SelfTestsPage,
+  'feed-char': FeedCharacterizationPage,
 };
 
 export default function WindowViewPage() {
   const params = useParams();
   const view = params?.view as string;
-
-  const updateSensor = useSensorStore((state) => state.updateSensor);
-  const updateState = useSensorStore((state) => state.updateState);
-  const updateConnectionStatus = useSensorStore((state) => state.updateConnectionStatus);
-  const ws = getWebSocketClient();
-
-  useEffect(() => {
-    ws.connect();
-    const unsubscribeSensor = ws.on(MessageType.SENSOR_UPDATE, (payload: unknown) => {
-      updateSensor(payload as SensorUpdate);
-    });
-    const unsubscribeState = ws.on(MessageType.STATE_UPDATE, (payload: unknown) => {
-      updateState(payload as StateUpdate);
-    });
-    const unsubscribeConn = ws.onConnectionStatus((status) => {
-      updateConnectionStatus(status);
-    });
-    return () => { unsubscribeSensor(); unsubscribeState(); unsubscribeConn(); };
-  }, [ws, updateSensor, updateState, updateConnectionStatus]);
 
   const Component = viewComponents[view];
 

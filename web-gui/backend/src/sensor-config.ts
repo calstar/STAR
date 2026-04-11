@@ -17,8 +17,13 @@ export function loadActuatorChannelToEntityMap(): Record<number, string> {
         const roles = (config.actuator_roles || {}) as Record<string, [string, number] | [string, number, number]>;
         for (const [name, value] of Object.entries(roles)) {
             if (Array.isArray(value) && value.length >= 2 && typeof value[1] === 'number') {
-                const channelId = value[1];
-                out[channelId] = `ACT.${name.replace(/\s+/g, '_')}`;
+                const localChannel = value[1];
+                const boardId = (value.length >= 3 && typeof value[2] === 'number') ? value[2] : 11;
+                // Per-board channel mapping (for [0x30], [0x31] — DAQ bridge resolves by source IP)
+                out[localChannel] = `ACT.${name.replace(/\s+/g, '_')}`;
+                // Global channel mapping (for [0x32] — sequencer publishes with global IDs)
+                const globalChannel = (boardId - 11) * 10 + localChannel;
+                out[globalChannel] = `ACT.${name.replace(/\s+/g, '_')}`;
             }
         }
     } catch (_) { /* use empty map */ }

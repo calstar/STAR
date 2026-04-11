@@ -5,7 +5,7 @@ import { getWebSocketClient } from '@/lib/websocket';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
 import { useSensorConfig } from '@/lib/sensor-config';
 import { useSensorStore } from '@/lib/store';
-import { MessageType, SensorUpdate, StateUpdate, SystemState } from '@/lib/types';
+import { MessageType, SystemState } from '@/lib/types';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { getEntityColor } from '@/lib/sensor-colors';
 
@@ -18,8 +18,6 @@ const DURATION_MAX = 300;
 
 export default function SolenoidCharacterizationPage() {
   const ws = getWebSocketClient();
-  const updateSensor = useSensorStore((s) => s.updateSensor);
-  const updateState = useSensorStore((s) => s.updateState);
   const currentState = useSensorStore((s) => s.currentState);
   const debugMode = useSensorStore((s) => s.debugMode);
   const { actuators, loading: actuatorsLoading } = useActuatorsFromConfig();
@@ -34,17 +32,11 @@ export default function SolenoidCharacterizationPage() {
 
   const ptSensors = allSensors.filter(
     (s) =>
-      (s.calEntity.startsWith('PT_Cal.') || s.calEntity.startsWith('PT.')) &&
+      ((s.calEntity.startsWith('PT_Cal.') || /^PT\d+_Cal\.CH\d+$/.test(s.calEntity)) ||
+        s.calEntity.startsWith('PT.')) &&
       !s.calEntity.includes('RTD')
   );
   const canSendPwm = debugMode || currentState === SystemState.FIRE;
-
-  useEffect(() => {
-    ws.connect();
-    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    return () => { u1(); u2(); };
-  }, [ws, updateSensor, updateState]);
 
   useEffect(() => {
     if (actuators.length > 0 && !actuatorName) {

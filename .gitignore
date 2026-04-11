@@ -50,6 +50,9 @@ logs/
 *.swo
 *~
 
+# Node modules (root and nested)
+node_modules/
+
 # Python cache and virtual environments
 __pycache__/
 *.py[cod]
@@ -66,6 +69,7 @@ venv.bak/
 # IDE and editor files
 .vscode/
 .idea/
+.claude/
 *.sublime-project
 *.sublime-workspace
 .DS_Store
@@ -125,6 +129,10 @@ gmon.out
 # Ignore runtime data directories
 data/
 recordings/
+export/
+export_csv/
+calibration_backups/
+output/
 *.csv.data
 *.json.data
 **/data/*.csv

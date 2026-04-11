@@ -51,6 +51,39 @@ This will:
   - `data/<output_name>` arrays
   - A JSON `meta` blob with axis/output metadata and config paths
 
+### Lookup architecture: engine config + tank pressure range
+
+The lookup **stems downstream** from engine config (`engine_sim/configs/*.yaml`) and
+a tank pressure range. This produces a multi-dimensional LUT with everything the
+robust DDP needs: F, MR, P_ch, mdot_F, mdot_O, injector_dp, stability.
+
+### Pipeline: engine LUT → policy LUT
+
+```bash
+# Full pipeline (~15 s small, ~2 hr full)
+./scripts/controller_lut/generate_engine_and_policy_lut.sh small
+```
+
+1. **Engine LUT** — from engine config + tank pressure range (no DDP, fast)
+2. **Policy LUT** — DDP uses engine LUT for fast lookups
+3. **Export** — FSW binary
+
+Outputs: `output/lut/engine_performance.npz`, `output/lut/controller_policy_fsw.bin`
+
+### FSW controller
+
+Run the FSW controller with:
+
+```bash
+./build/FSW/controller_service --lut-path output/lut/controller_policy_fsw.bin --relay-host 127.0.0.1
+```
+
+The FSW ControllerService passes `P_u_fuel`, `P_u_ox`, `thrust_desired`, `MR_ref`
+to the LUT and uses continuous duty (0–1) for PWM output.
+
+**Python controller:** Set `engine_lut_path` in `robust_ddp_default.yaml` to use
+the engine LUT for fast DDP (instead of physics).
+
 ### Using a LUT at runtime
 
 The `EngineLUT` class (`engine_lut.py`) loads a `.npz` file and provides

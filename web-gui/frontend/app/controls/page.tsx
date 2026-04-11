@@ -1,15 +1,13 @@
 'use client'
 
-import React, { useEffect } from 'react';
+import React, { useMemo } from 'react';
 import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
 import ActuatorControlByName from '@/components/controls/ActuatorControlByName';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
-import { getWebSocketClient } from '@/lib/websocket';
-import { useSensorStore } from '@/lib/store';
 import { useActuatorsFromConfig } from '@/lib/actuators-from-config';
-import { MessageType, SensorUpdate, StateUpdate, ActuatorUpdate } from '@/lib/types';
-import { useSensorValue } from '@/lib/store';
-import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
+import { useSensorConfig } from '@/lib/sensor-config';
+import { buildPressurePlotSeriesFromSensorList } from '@/lib/pressure-bar-defs';
+import { usePressureHistoryPlotSeries } from '@/lib/store';
 
 const STATE_NAMES: Record<number, string> = {
   0: 'DEBUG', 1: 'IDLE', 2: 'ARMED', 3: 'FUEL FILL', 4: 'OX FILL',
@@ -19,30 +17,11 @@ const STATE_NAMES: Record<number, string> = {
   18: 'GSE ABORT', 19: 'EMERGENCY ABORT', 20: 'PRESS STANDBY',
 };
 
-const PRESSURE_SENSORS_PLOT = PRESSURE_SENSORS.map((s) => ({
-  label: s.label.replace('Upstream', 'Up').replace('Downstream', 'Down').replace('Regulated', 'Reg'),
-  entity: s.entity,
-  color: s.color,
-}));
-
 export default function ControlsPage() {
-  const ws = getWebSocketClient();
-  const updateSensor = useSensorStore((state) => state.updateSensor);
-  const updateState  = useSensorStore((state) => state.updateState);
-  const updateActuator = useSensorStore((s) => s.updateActuator);
-  const updateActuatorExpectedPositions = useSensorStore((s) => s.updateActuatorExpectedPositions);
   const { actuators: actuatorsFromConfig, loading: actuatorsLoading } = useActuatorsFromConfig();
-
-  useEffect(() => {
-    ws.connect();
-    const u1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-    const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-    const u3 = ws.on(MessageType.ACTUATOR_UPDATE, (p: unknown) => updateActuator(p as ActuatorUpdate));
-    const u4 = ws.on(MessageType.ACTUATOR_EXPECTED_POSITIONS_UPDATE, (p: unknown) => {
-      updateActuatorExpectedPositions(p as Record<number, Record<string, 'open' | 'closed' | null>>);
-    });
-    return () => { u1(); u2(); u3(); u4(); };
-  }, [ws, updateSensor, updateState, updateActuator, updateActuatorExpectedPositions]);
+  const sensors = useSensorConfig();
+  const pressurePlot = useMemo(() => buildPressurePlotSeriesFromSensorList(sensors), [sensors]);
+  const pressurePlotForChart = usePressureHistoryPlotSeries(pressurePlot);
 
   return (
     <main className="h-full bg-background text-text flex flex-col overflow-hidden">
@@ -51,10 +30,10 @@ export default function ControlsPage() {
           <div className="bg-card rounded-xl border border-gray-800 p-4 h-full flex flex-col min-h-0">
             <TimeSeriesPlot
               title="All Pressure Sensors (PSI)"
-              entities={PRESSURE_SENSORS_PLOT.map(s => s.entity)}
-              labels={PRESSURE_SENSORS_PLOT.map(s => s.label)}
+              entities={pressurePlotForChart.map(s => s.entity)}
+              labels={pressurePlotForChart.map(s => s.label)}
               component="pressure_psi"
-              colors={PRESSURE_SENSORS_PLOT.map(s => s.color)}
+              colors={pressurePlotForChart.map(s => s.color)}
               yLabel="Pressure (PSI)"
               windowSeconds={30}
             />
@@ -73,7 +52,7 @@ export default function ControlsPage() {
                 Array.from({ length: 16 }, (_, i) => {
                   const a = actuatorsFromConfig[i];
                   if (!a) return <div key={`empty-${i}`} className="bg-gray-900/30 rounded-md border border-gray-800/50" />;
-                  return <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} />;
+                  return <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} boardId={a.boardId} />;
                 })
               )}
             </div>

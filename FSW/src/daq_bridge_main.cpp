@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -17,11 +18,11 @@
 #include "../../daq_comms/include/comms/messages/board/BoardHeartbeatMessage.hpp"
 #include "../../daq_comms/include/comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "../../daq_comms/include/comms/messages/sensor/SensorMessages.hpp"
-#include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
+#include "DAQv2-Comms.h"
+#include "fsw/BoardTypeWire.hpp"
 
 namespace {
 constexpr uint8_t SERVER_HEARTBEAT_PACKET_TYPE = 2;
-constexpr uint8_t DIABLO_COMMS_VERSION = 0;
 
 std::vector<uint8_t> build_server_heartbeat_packet() {
     std::vector<uint8_t> pkt(7);
@@ -42,6 +43,7 @@ std::vector<uint8_t> build_server_heartbeat_packet() {
 #include "calibration/PTCalibration.hpp"
 #include "calibration/SensorCalibration.hpp"
 #include "config/BoardDiscovery.hpp"
+#include "config/LoadActiveBoards.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
 #include "fsw/FSWConfigManager.hpp"
@@ -56,26 +58,26 @@ void signal_handler(int /* sig */) {
     std::cout << "\n[DAQ Bridge] Shutting down..." << std::endl;
 }
 
-// Board type enum (matches DiabloAvionics)
-enum class BoardType { PT, LC, TC, RTD, ACTUATOR, UNKNOWN };
+// Board type enum (matches DiabloAvionics / config [boards.*])
+using BoardType = fsw::config::ActiveBoardKind;
 
 struct BoardConfig {
     BoardType type;
     std::string ip;
     int num_sensors;
     bool enabled;
-    int board_id;            // Added board_id
-    int channel_offset = 0;  // For PT board 2 (HP): connector 1 → global ch 11
+    int board_id;  // Added board_id
 };
 
 struct ServerHeartbeatConfig {
     uint32_t interval_ms = 1000;
     uint16_t broadcast_port = 5005;
     std::string broadcast_ip = "255.255.255.255";
+    bool send_from_daq_bridge = true;  // false when heartbeat_service is used
 };
 
 // Ordered list of (ip, config) for enabled boards in parse order. Used when board_simulator
-// falls back to 127.0.0.2, 127.0.0.3, ... so each simulated board gets correct channel_offset.
+// falls back to 127.0.0.2, 127.0.0.3, ... so each simulated board gets correct board_id.
 using BoardOrder = std::vector<std::pair<std::string, BoardConfig>>;
 
 // Minimal config parse: [database] host/port, [network] sensor_port/bind_ip, [server_heartbeat],
@@ -95,7 +97,6 @@ static void load_board_map_from_config(const std::string& config_path,
     std::string board_type_str, board_ip;
     int board_num_sensors = 10;
     int board_id = -1;  // Added board_id
-    int board_channel_offset = 0;
     bool board_enabled = true;
     auto add_board = [&]() {
         if (board_ip.empty())
@@ -111,9 +112,10 @@ static void load_board_map_from_config(const std::string& config_path,
             bt = BoardType::RTD;
         else if (board_type_str == "ACTUATOR")
             bt = BoardType::ACTUATOR;
+        else if (board_type_str == "ENCODER")
+            bt = BoardType::ENCODER;
         if (bt != BoardType::UNKNOWN) {
-            BoardConfig cfg{
-                bt, board_ip, board_num_sensors, board_enabled, board_id, board_channel_offset};
+            BoardConfig cfg{bt, board_ip, board_num_sensors, board_enabled, board_id};
             board_map[board_ip] = cfg;
             if (out_board_order && board_enabled)
                 out_board_order->emplace_back(board_ip, std::move(cfg));
@@ -121,7 +123,6 @@ static void load_board_map_from_config(const std::string& config_path,
         board_ip.clear();
         board_type_str.clear();
         board_id = -1;
-        board_channel_offset = 0;
     };
     while (std::getline(f, line)) {
         size_t c = line.find('#');
@@ -138,7 +139,7 @@ static void load_board_map_from_config(const std::string& config_path,
             add_board();
             current_section = line.substr(1, line.size() - 2);
             board_num_sensors = 10;
-            board_id = -1;  // Reset board_id for new section
+            board_id = -1;
             board_enabled = true;
             continue;
         }
@@ -170,6 +171,11 @@ static void load_board_map_from_config(const std::string& config_path,
                 out_hb->broadcast_port = static_cast<uint16_t>(std::stoul(val));
             else if (key == "broadcast_ip")
                 out_hb->broadcast_ip = val;
+            else if (key == "send_from_daq_bridge")
+                out_hb->send_from_daq_bridge = (val == "true" || val == "1");
+        } else if (current_section == "heartbeat_service" && out_hb) {
+            if (key == "enabled" && (val == "true" || val == "1"))
+                out_hb->send_from_daq_bridge = false;  // heartbeat_service owns it
         } else if (current_section.compare(0, 7, "boards.") == 0) {
             if (key == "type")
                 board_type_str = val;
@@ -179,8 +185,6 @@ static void load_board_map_from_config(const std::string& config_path,
                 board_num_sensors = std::stoi(val);
             else if (key == "board_id")
                 board_id = std::stoi(val);  // Parse board_id
-            else if (key == "channel_offset")
-                board_channel_offset = std::stoi(val);
             else if (key == "enabled")
                 board_enabled = (val == "true" || val == "1");
         }
@@ -190,195 +194,42 @@ static void load_board_map_from_config(const std::string& config_path,
     // 127.0.0.2, 127.0.0.3, ... (one per board). board_order maps index→config for that fallback.
 }
 
-// Config-driven publish allowlist: [routing.*] packet_id + channels, [daq_bridge] publish = [...]
-// Emulates backend (server.ts) loading mapping from config; no fixed hex codes in code.
-struct PublishRange {
-    uint8_t high;
-    uint8_t low_max;  // allow low byte 0x01 .. low_max (1-based channel count)
-};
-static std::vector<PublishRange> load_publish_ranges(const std::string& config_path) {
-    std::vector<PublishRange> out;
-    std::map<std::string, std::pair<uint8_t, int>> routing;  // name -> (high, channels)
-    std::set<std::string> publish_names;
-    std::ifstream f(config_path);
-    if (!f.is_open())
-        return out;
-    std::string line, current_section;
-    auto parse_hex_byte = [](const std::string& s) -> int {
-        if (s.size() >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
-            return static_cast<int>(std::strtoul(s.c_str(), nullptr, 16));
-        }
-        return static_cast<int>(std::strtoul(s.c_str(), nullptr, 10));
-    };
-    auto parse_array_first_byte = [&parse_hex_byte](const std::string& val) -> int {
-        size_t i = val.find('0');
-        if (i == std::string::npos)
-            return -1;
-        size_t j = val.find_first_of(",]", i);
-        std::string sub = (j != std::string::npos) ? val.substr(i, j - i) : val.substr(i);
-        return parse_hex_byte(sub);
-    };
-    while (std::getline(f, line)) {
-        size_t c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
-            line.pop_back();
-        size_t start = line.find_first_not_of(" \t");
-        if (start != std::string::npos)
-            line = line.substr(start);
-        if (line.empty())
-            continue;
-        if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
-            current_section = line.substr(1, line.size() - 2);
-            continue;
-        }
-        size_t eq = line.find('=');
-        if (eq == std::string::npos)
-            continue;
-        std::string key = line.substr(0, eq);
-        std::string val = line.substr(eq + 1);
-        while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
-            key.pop_back();
-        while (!val.empty() && val[0] == ' ')
-            val.erase(0, 1);
-        if (current_section.compare(0, 8, "routing.") == 0) {
-            std::string rname = current_section.substr(8);
-            if (key == "packet_id") {
-                int high = parse_array_first_byte(val);
-                if (high >= 0 && high <= 255) {
-                    auto& p = routing[rname];
-                    p.first = static_cast<uint8_t>(high);
-                    if (p.second == 0)
-                        p.second = 10;
-                }
-            } else if (key == "channels") {
-                int ch = parse_hex_byte(val);
-                if (ch > 0 && ch <= 255)
-                    routing[current_section.substr(8)].second = ch;
-            }
-        } else if (current_section == "daq_bridge" && key == "publish") {
-            // Parse ["pt_raw", "actuator_status"] - extract quoted tokens
-            for (size_t i = 0; i < val.size(); ++i) {
-                if (val[i] == '"') {
-                    size_t j = val.find('"', i + 1);
-                    if (j != std::string::npos) {
-                        publish_names.insert(val.substr(i + 1, j - i - 1));
-                        i = j;
-                    }
-                }
-            }
-        }
-    }
-    for (const auto& name : publish_names) {
-        auto it = routing.find(name);
-        if (it != routing.end() && it->second.second > 0) {
-            uint8_t low_max = static_cast<uint8_t>(std::min(255, it->second.second));
-            out.push_back({it->second.first, low_max});
-        }
-    }
-    return out;
-}
-static bool is_publish_allowed(uint8_t high, uint8_t low, const std::vector<PublishRange>& ranges) {
-    if (low < 0x01)
-        return false;
-    for (const auto& r : ranges) {
-        if (r.high == high && low <= r.low_max)
-            return true;
-    }
-    return false;
-}
-
-// Load channel → name from config.toml [sensor_roles*] and [actuator_roles] so DB matches backend.
-static void load_sensor_and_actuator_maps(const std::string& config_path,
-                                          std::map<int, std::string>& pt_channel_to_name,
-                                          std::map<int, std::string>& act_channel_to_name) {
-    std::ifstream f(config_path);
-    if (!f.is_open())
-        return;
-    std::string line, current_section;
-    while (std::getline(f, line)) {
-        size_t c = line.find('#');
-        if (c != std::string::npos)
-            line = line.substr(0, c);
-        while (!line.empty() && (line.back() == ' ' || line.back() == '\r'))
-            line.pop_back();
-        size_t start = line.find_first_not_of(" \t");
-        if (start != std::string::npos)
-            line = line.substr(start);
-        if (line.empty())
-            continue;
-        if (line.size() >= 2 && line[0] == '[' && line.back() == ']') {
-            current_section = line.substr(1, line.size() - 2);
-            continue;
-        }
-        size_t eq = line.find('=');
-        if (eq == std::string::npos)
-            continue;
-        std::string key = line.substr(0, eq);
-        std::string val = line.substr(eq + 1);
-        while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
-            key.pop_back();
-        while (!val.empty() && val[0] == ' ')
-            val.erase(0, 1);
-        auto to_entity_name = [](std::string s) {
-            if (s.size() >= 2 && s.front() == '"' && s.back() == '"')
-                s = s.substr(1, s.size() - 2);
-            for (size_t i = 0; i < s.size(); ++i)
-                if (s[i] == ' ')
-                    s[i] = '_';
-            return s;
-        };
-        if (current_section == "sensor_roles_pt_board" || current_section == "sensor_roles") {
-            int channel = 0;
-            try {
-                channel = std::stoi(val);
-            } catch (...) {
-                continue;
-            }
-            if (channel >= 1 && channel <= 10)
-                pt_channel_to_name[channel] = to_entity_name(key);
-        } else if (current_section == "sensor_roles_pt2") {
-            // PT board 2 connectors are globally offset by +10 (connector 1 → global channel 11)
-            int connector = 0;
-            try {
-                connector = std::stoi(val);
-            } catch (...) {
-                continue;
-            }
-            int global_ch = connector + 10;
-            if (global_ch >= 11 && global_ch <= 14)
-                pt_channel_to_name[global_ch] = to_entity_name(key);
-        } else if (current_section == "actuator_roles") {
-            size_t comma = val.find(',');
-            if (comma == std::string::npos)
-                continue;
-            try {
-                int channel = std::stoi(val.substr(comma + 1));
-                if (channel >= 1 && channel <= 10)
-                    act_channel_to_name[channel] = to_entity_name(key);
-            } catch (...) {
-            }
-        }
-    }
-}
-
-// Map discovery signature board_type (DiabloAvionics enum 1=PT,2=TC,3=RTD,4=LC,5=ACTUATOR) to our
-// BoardType
+// Map discovery signature board_type (DAQv2 wire: 1=PT, 2=LC, 3=RTD, 4=TC, 5=ACT, 6=ENC)
 static BoardType discovery_board_type_to_enum(uint8_t t) {
     switch (t) {
-        case 1:
+        case fsw::daq_wire::kPressureTransducer:
             return BoardType::PT;
-        case 2:
-            return BoardType::TC;
-        case 3:
-            return BoardType::RTD;
-        case 4:
+        case fsw::daq_wire::kLoadCell:
             return BoardType::LC;
-        case 5:
+        case fsw::daq_wire::kRtd:
+            return BoardType::RTD;
+        case fsw::daq_wire::kThermocouple:
+            return BoardType::TC;
+        case fsw::daq_wire::kActuator:
             return BoardType::ACTUATOR;
+        case 6:
+            return BoardType::ENCODER;
         default:
             return BoardType::UNKNOWN;
+    }
+}
+
+static uint8_t config_board_type_to_wire_u8(BoardType t) {
+    switch (t) {
+        case BoardType::PT:
+            return fsw::daq_wire::kPressureTransducer;
+        case BoardType::LC:
+            return fsw::daq_wire::kLoadCell;
+        case BoardType::RTD:
+            return fsw::daq_wire::kRtd;
+        case BoardType::TC:
+            return fsw::daq_wire::kThermocouple;
+        case BoardType::ACTUATOR:
+            return fsw::daq_wire::kActuator;
+        case BoardType::ENCODER:
+            return 6;
+        default:
+            return fsw::daq_wire::kUnknown;
     }
 }
 
@@ -439,6 +290,9 @@ int main(int argc, char* argv[]) {
             case BoardType::ACTUATOR:
                 type_str = "ACTUATOR";
                 break;
+            case BoardType::ENCODER:
+                type_str = "ENCODER";
+                break;
             default:
                 break;
         }
@@ -451,13 +305,6 @@ int main(int argc, char* argv[]) {
     fsw::config::SystemState system_state =
         is_flight_daq ? fsw::config::SystemState::FLIGHT : fsw::config::SystemState::GSE;
     std::cout << "[System] Mode: " << (is_flight_daq ? "FLIGHT" : "GROUND") << std::endl;
-
-    // ── Publish allowlist from config [routing.*] + [daq_bridge] publish (modular, no fixed hexes)
-    std::vector<PublishRange> publish_ranges = load_publish_ranges(config_path);
-    std::cout << "[Config] Publish to DB (from config):";
-    for (const auto& r : publish_ranges)
-        std::cout << " 0x" << std::hex << (int)r.high << std::dec << "/1.." << (int)r.low_max;
-    std::cout << std::endl;
 
     // ── FSW Config Manager ──
     std::cout << "[FSW] Initializing configuration manager..." << std::endl;
@@ -516,7 +363,11 @@ int main(int argc, char* argv[]) {
     std::cout << "✅ Sensor pipeline ready on port " << bind_port << std::endl;
 
     if (pipeline.set_broadcast(true)) {
-        std::cout << "✅ Broadcast enabled for SERVER_HEARTBEAT" << std::endl;
+        if (hb_config.send_from_daq_bridge)
+            std::cout << "✅ Broadcast enabled for SERVER_HEARTBEAT" << std::endl;
+        else
+            std::cout << "✅ SERVER_HEARTBEAT from heartbeat_service (daq_bridge skipping)"
+                      << std::endl;
     } else {
         std::cerr << "⚠️  Failed to enable broadcast (heartbeat may not reach boards)" << std::endl;
     }
@@ -527,22 +378,20 @@ int main(int argc, char* argv[]) {
     for (const auto& [ip, cfg] : board_map) {
         if (cfg.board_id < 0 || !cfg.enabled || cfg.type == BoardType::ACTUATOR)
             continue;
-        daq_comms::protocol::DiabloBoardPacketParser::ParsedBoardHeartbeat synthetic;
-        synthetic.is_valid = true;
-        synthetic.heartbeat.board_id = static_cast<uint8_t>(cfg.board_id);
-        synthetic.heartbeat.board_type =
-            daq_comms::protocol::DiabloBoardPacketParser::BoardType::PRESSURE_TRANSDUCER;
-        if (cfg.type == BoardType::TC)
-            synthetic.heartbeat.board_type =
-                daq_comms::protocol::DiabloBoardPacketParser::BoardType::THERMOCOUPLE;
-        else if (cfg.type == BoardType::RTD)
-            synthetic.heartbeat.board_type =
-                daq_comms::protocol::DiabloBoardPacketParser::BoardType::RTD;
-        else if (cfg.type == BoardType::LC)
-            synthetic.heartbeat.board_type =
-                daq_comms::protocol::DiabloBoardPacketParser::BoardType::LOAD_CELL;
+        Diablo::BoardHeartbeatPacket synthetic{};
+        synthetic.board_id = static_cast<uint8_t>(cfg.board_id);
+        synthetic.engine_state = Diablo::EngineState::SAFE;
+        synthetic.board_state = Diablo::BoardState::SETUP;
+        Diablo::PacketHeader syn_hdr{};
+        syn_hdr.packet_type = Diablo::PacketType::BOARD_HEARTBEAT;
+        syn_hdr.version = DIABLO_COMMS_VERSION;
+        syn_hdr.timestamp =
+            static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch())
+                                      .count() &
+                                  0xFFFFFFFF);
         std::string mac = "00:00:00:00:" + std::to_string(cfg.board_id) + ":00";
-        fsw_config->process_board_heartbeat(synthetic, ip, mac);
+        fsw_config->process_board_heartbeat(syn_hdr, synthetic, ip, mac);
         proactive_count++;
     }
     if (proactive_count > 0)
@@ -577,24 +426,36 @@ int main(int argc, char* argv[]) {
     fsw::elodin::ElodinClient elodin_client;
     fsw::routing::HeartbeatRouter heartbeat_router(elodin_client);
     bool elodin_connected = false;
-    std::map<int, std::string> pt_channel_to_name, act_channel_to_name;
-    load_sensor_and_actuator_maps(config_path, pt_channel_to_name, act_channel_to_name);
-    const std::map<int, std::string>* pt_names =
-        pt_channel_to_name.empty() ? nullptr : &pt_channel_to_name;
-    const std::map<int, std::string>* act_names =
-        act_channel_to_name.empty() ? nullptr : &act_channel_to_name;
+    // Collect active boards with local channels from config (board-namespaced, no channel_offset)
+    auto active_boards = fsw::config::load_active_boards(config_path);
+    const auto& pt_boards = active_boards[BoardType::PT];
+    const auto& act_boards = active_boards[BoardType::ACTUATOR];
+    const auto& tc_boards = active_boards[BoardType::TC];
+    const auto& rtd_boards = active_boards[BoardType::RTD];
+    const auto& lc_boards = active_boards[BoardType::LC];
+    const auto& enc_boards = active_boards[BoardType::ENCODER];
+
+    std::vector<uint8_t> config_board_ids;
+    for (const auto& [ip, cfg] : board_map) {
+        if (cfg.enabled && cfg.board_id > 0 && cfg.board_id <= 254)
+            config_board_ids.push_back(static_cast<uint8_t>(cfg.board_id));
+    }
 
     if (elodin_client.connect(db_host, db_port)) {
         elodin_connected = true;
         std::cout << "✅ Connected to Elodin database" << std::endl;
-        // Register RAW VTables
-        if (!fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_names, act_names)) {
+        // Register RAW VTables (board-namespaced TYPE<n>.CH<m> names)
+        if (!fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_boards, act_boards,
+                                                          tc_boards, rtd_boards, lc_boards,
+                                                          enc_boards)) {
             std::cerr << "⚠️  RAW VTable registration failed" << std::endl;
         }
-        // Register CALIBRATED VTables (inline calibration — no separate service)
-        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client, pt_names);
-        // Register BOARD_HEARTBEAT VTables so backend can consume board status from Elodin.
-        fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, 64);
+        // Register CALIBRATED VTables
+        fsw::elodin::DatabaseConfig::register_calibrated_tables(
+            elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards, act_boards);
+        // Register BOARD_HEARTBEAT and SELF_TEST VTables only for boards in config
+        fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, config_board_ids);
+        fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, config_board_ids);
         // Drain any response from DB after registration; otherwise recv buffer fills and TABLE
         // writes stall after ~3s
         std::array<uint8_t, 4096> drain_buf;
@@ -624,17 +485,19 @@ int main(int argc, char* argv[]) {
     auto last_config_save = std::chrono::steady_clock::now();
 
     while (running) {
-        // Broadcast SERVER_HEARTBEAT so boards learn our IP:port for SENSOR_DATA
         auto now = std::chrono::steady_clock::now();
-        auto elapsed_ms =
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_heartbeat_send)
-                .count();
-        if (elapsed_ms >= static_cast<int64_t>(hb_config.interval_ms)) {
-            auto pkt = build_server_heartbeat_packet();
-            ssize_t sent = pipeline.send_to(hb_config.broadcast_ip, hb_config.broadcast_port,
-                                            pkt.data(), pkt.size());
-            if (sent > 0)
-                last_heartbeat_send = now;
+        // Broadcast SERVER_HEARTBEAT only when heartbeat_service is not used
+        if (hb_config.send_from_daq_bridge) {
+            auto elapsed_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - last_heartbeat_send)
+                    .count();
+            if (elapsed_ms >= static_cast<int64_t>(hb_config.interval_ms)) {
+                auto pkt = build_server_heartbeat_packet();
+                ssize_t sent = pipeline.send_to(hb_config.broadcast_ip, hb_config.broadcast_port,
+                                                pkt.data(), pkt.size());
+                if (sent > 0)
+                    last_heartbeat_send = now;
+            }
         }
 
         auto batch = pipeline.poll();
@@ -645,41 +508,36 @@ int main(int argc, char* argv[]) {
             if (hb) {
                 discovery.process_board_announcement(hb->data.data(), hb->data.size(),
                                                      hb->source_ip);
-                auto parsed =
-                    pipeline.get_parser().parse_board_heartbeat(hb->data.data(), hb->data.size());
-                if (parsed && parsed->is_valid) {
-                    // MAC for FSWConfigManager (same formula as BoardDiscovery)
+                Diablo::PacketHeader ph;
+                Diablo::BoardHeartbeatPacket hb_body;
+                if (Diablo::parse_board_heartbeat_packet(hb->data.data(), hb->data.size(), ph,
+                                                         hb_body)) {
+                    uint8_t board_type_wire = fsw::daq_wire::kUnknown;
+                    auto cfg_it = board_map.find(hb->source_ip);
+                    if (cfg_it != board_map.end()) {
+                        board_type_wire = config_board_type_to_wire_u8(cfg_it->second.type);
+                    }
                     std::hash<std::string> hasher;
                     uint32_t ip_hash = static_cast<uint32_t>(hasher(hb->source_ip));
-                    uint32_t sig_id = (static_cast<uint32_t>(parsed->heartbeat.board_type) << 8) |
-                                      parsed->heartbeat.board_id;
+                    uint32_t sig_id =
+                        (static_cast<uint32_t>(board_type_wire) << 8) | hb_body.board_id;
                     std::ostringstream mac;
                     mac << std::hex << std::setw(2) << std::setfill('0') << ((ip_hash >> 16) & 0xFF)
                         << ":" << std::setw(2) << ((ip_hash >> 8) & 0xFF) << ":" << std::setw(2)
                         << (ip_hash & 0xFF) << ":" << std::setw(2) << ((ip_hash >> 24) & 0xFF)
                         << ":" << std::setw(2) << ((sig_id >> 8) & 0xFF) << ":" << std::setw(2)
                         << (sig_id & 0xFF);
-                    fsw_config->process_board_heartbeat(*parsed, hb->source_ip, mac.str());
+                    fsw_config->process_board_heartbeat(ph, hb_body, hb->source_ip, mac.str());
 
-                    // Publish BOARD_HEARTBEAT to Elodin so backend/GUI can track board status.
                     uint64_t hb_receive_ts_ns =
                         std::chrono::duration_cast<std::chrono::nanoseconds>(
                             std::chrono::steady_clock::now().time_since_epoch())
                             .count();
-                    heartbeat_router.process_heartbeat(*parsed, hb_receive_ts_ns);
+                    heartbeat_router.process_heartbeat(ph, hb_body, board_type_wire,
+                                                       hb_receive_ts_ns);
                 }
-                // Periodic save of discovery state so actuator_service can use board IPs
-                auto elapsed =
-                    std::chrono::duration_cast<std::chrono::seconds>(now - last_config_save)
-                        .count();
-                if (elapsed >= 5) {
-                    auto boards = discovery.get_discovered_boards();
-                    if (!boards.empty()) {
-                        config_manager.update_with_boards(boards);
-                        config_manager.save_config(config_path + ".auto");
-                        last_config_save = now;
-                    }
-                }
+                // NOTE: config.toml.auto generation removed. Board discovery remains in-memory
+                // for this process only; other services must use config/config.toml.
             }
 
             std::this_thread::sleep_for(std::chrono::microseconds(500));
@@ -702,11 +560,16 @@ int main(int argc, char* argv[]) {
                     if (elodin_client.reconnect()) {
                         std::cout << "✅ Reconnected to Elodin — re-registering VTables"
                                   << std::endl;
-                        fsw::elodin::DatabaseConfig::register_tables(elodin_client, pt_names,
-                                                                     act_names);
-                        fsw::elodin::DatabaseConfig::register_calibrated_tables(elodin_client,
-                                                                                pt_names);
-                        fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, 64);
+                        fsw::elodin::DatabaseConfig::register_tables(
+                            elodin_client, pt_boards, act_boards, tc_boards, rtd_boards, lc_boards,
+                            enc_boards);
+                        fsw::elodin::DatabaseConfig::register_calibrated_tables(
+                            elodin_client, pt_boards, tc_boards, rtd_boards, lc_boards, enc_boards,
+                            act_boards);
+                        fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client,
+                                                                               config_board_ids);
+                        fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client,
+                                                                               config_board_ids);
                     }
                 }
             }
@@ -738,13 +601,16 @@ int main(int argc, char* argv[]) {
             if (idx < static_cast<int>(board_order.size()))
                 effective_cfg = &board_order[idx].second;
         }
-        BoardType board_type = effective_cfg ? effective_cfg->type : BoardType::UNKNOWN;
+        // Use board type from config even when disabled — we still publish actuator/PT data to DB
+        BoardType board_type = board_it != board_map.end()
+                                   ? board_it->second.type
+                                   : (effective_cfg ? effective_cfg->type : BoardType::UNKNOWN);
         if (board_type == BoardType::UNKNOWN) {
             auto discovered = discovery.get_board_by_ip(source_ip);
             if (discovered) {
                 board_type = discovery_board_type_to_enum(discovered->signature.board_type);
                 if (board_type != BoardType::UNKNOWN)
-                    board_map[source_ip] = {board_type, source_ip, 10, true, -1, 0};
+                    board_map[source_ip] = {board_type, source_ip, 10, true, -1};
             }
             if (board_type == BoardType::UNKNOWN) {
                 if (unknown_ips.find(source_ip) == unknown_ips.end()) {
@@ -756,139 +622,111 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        // ── Publish SELF_TEST back to Elodin ──
+        if (elodin_connected && elodin_client.is_connected() && !batch.value().self_tests.empty()) {
+            elodin_client.begin_batch();
+            for (const auto& st_packet : batch.value().self_tests) {
+                // board_id is retrieved from heartbeat or routing. However, self test doesn't have
+                // board_id in the packet. We use discovery to map IP to board_id.
+                auto cfg_it = board_map.find(source_ip);
+                uint8_t board_id = (cfg_it != board_map.end() && cfg_it->second.board_id >= 0)
+                                       ? cfg_it->second.board_id
+                                       : 0;
+
+                if (board_id == 0) {
+                    auto discovered = discovery.get_board_by_ip(source_ip);
+                    if (discovered)
+                        board_id = discovered->signature.board_id;
+                }
+                // Integration fallback: startup sim commonly uses loopback board IPs
+                // like 127.0.0.60. If config/discovery mapping is unavailable, derive
+                // board_id from the last octet so SELF_TEST still reaches Elodin.
+                if (board_id == 0 && source_ip.compare(0, 8, "127.0.0.") == 0) {
+                    int ip_octet = (source_ip.size() >= 9) ? std::atoi(source_ip.c_str() + 8) : 0;
+                    if (ip_octet > 0 && ip_octet <= 255) {
+                        board_id = static_cast<uint8_t>(ip_octet);
+                    }
+                }
+
+                if (board_id != 0) {
+                    std::array<uint8_t, 2> pkt_id = {0x60, board_id};
+                    using SelfTestElodinMsg = comms::CommsMessage<uint64_t, uint8_t, uint8_t>;
+                    for (const auto& res : st_packet.results) {
+                        SelfTestElodinMsg msg;
+                        msg.setField<0>(receive_timestamp_ns);
+                        msg.setField<1>(res.sensor_id);
+                        msg.setField<2>(res.result);
+                        elodin_client.publish(pkt_id, msg);
+                    }
+                }
+            }
+            if (elodin_client.flush_batch())
+                elodin_publish_count++;
+
+            std::array<uint8_t, 4096> drain_buf;
+            while (elodin_client.read_data(drain_buf.data(), drain_buf.size()) > 0) {
+            }
+        }
+
         // ── Begin batch: all publishes from this packet go into one buffer ──
         bool publishing = elodin_connected && elodin_client.is_connected();
         if (publishing)
             elodin_client.begin_batch();
 
+        // Board-namespaced packet IDs: low byte = (board_number-1)*0x10 + local_channel
+        // Match GUI / sequencer: board_id % 10 == 0 → use slot 10 (boards 10, 20, …).
+        uint8_t board_number = 1;
+        if (effective_cfg) {
+            int bn = static_cast<int>(effective_cfg->board_id % 10);
+            board_number = static_cast<uint8_t>(bn == 0 ? 10 : bn);
+        }
+        uint8_t board_offset =
+            static_cast<uint8_t>((static_cast<unsigned>(board_number) - 1u) * 0x20u);
+
+        // Helper lambda: build board-namespaced packet and publish a raw sample
+        auto publish_raw_sample = [&](uint8_t type_hi, const auto& sample) {
+            uint8_t pkt_lo = static_cast<uint8_t>(board_offset + sample.channel_id);
+            std::array<uint8_t, 2> pkt_id = {type_hi, pkt_lo};
+            comms::messages::sensor::RawPTMessage msg;
+            msg.setField<0>(receive_timestamp_ns);
+            msg.setField<1>(sample.channel_id);
+            msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
+            msg.setField<3>(sample.raw_adc_counts);
+            msg.setField<4>(sample.sample_timestamp_ms);
+            msg.setField<5>(sample.status_flags);
+            if (publishing)
+                elodin_client.publish(pkt_id, msg);
+        };
+
         switch (board_type) {
             case BoardType::PT: {
-                // Apply channel_offset for PT board 2 (HP) so connector 1 → global ch 11
-                auto pt_batch = batch.value();
-                int ch_offset = effective_cfg ? effective_cfg->channel_offset : 0;
-                if (ch_offset != 0) {
-                    for (auto& s : pt_batch.pt_samples)
-                        s.channel_id = static_cast<uint8_t>(s.channel_id + ch_offset);
-                }
-                auto pt_msgs = router.route_pt_samples(pt_batch, receive_timestamp_ns);
-                if (publishing) {
-                    for (const auto& [id, msg] : pt_msgs)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                }
-                // Inline calibration DISABLED: the C++ polynomial calibration receives ADC as
-                // uint32_t, casts to int32_t via calculate_pressure(). For 24-bit ADC near-zero
-                // values stored as large uint32 (two's complement), the sign change produces wildly
-                // wrong PSI (e.g., -163 PSI at ambient). The backend (server.ts) already applies
-                // the same JSON polynomials correctly, so publishing conflicting calibrated PT data
-                // to Elodin DB causes oscillation between the backend's correct values and these
-                // garbage values. Calibration runs in the backend only.
-                // if (publishing) {
-                //     auto cal_msgs =
-                //         router.route_pt_samples_calibrated(pt_batch, receive_timestamp_ns);
-                //     for (const auto& [id, msg] : cal_msgs)
-                //         if (is_publish_allowed(id[0], id[1], publish_ranges))
-                //             elodin_client.publish(id, msg);
-                // }
+                for (const auto& sample : batch.value().pt_samples)
+                    publish_raw_sample(0x20, sample);
                 break;
             }
             case BoardType::ACTUATOR: {
-                constexpr uint32_t ACT_STATE_ADC_THRESHOLD = 1500;  // above = open (1)
-                for (const auto& sample : batch.value().pt_samples) {
-                    uint8_t ch =
-                        static_cast<uint8_t>(sample.channel_id);  // already 1-indexed connector
-                    std::array<uint8_t, 2> act_pkt = {0x30, ch};
-                    comms::messages::sensor::RawPTMessage msg;
-                    msg.setField<0>(receive_timestamp_ns);
-                    msg.setField<1>(ch);
-                    msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
-                    msg.setField<3>(sample.raw_adc_counts);
-                    msg.setField<4>(sample.sample_timestamp_ms);
-                    msg.setField<5>(sample.status_flags);
-                    if (publishing && is_publish_allowed(act_pkt[0], act_pkt[1], publish_ranges))
-                        elodin_client.publish(act_pkt, msg);
-                    // Publish actuator state (0=closed, 1=open) to [0x31, ch]
-                    std::array<uint8_t, 2> state_pkt = {0x31, ch};
-                    if (publishing &&
-                        is_publish_allowed(state_pkt[0], state_pkt[1], publish_ranges)) {
-                        comms::messages::sensor::ActuatorStateMessage state_msg;
-                        state_msg.setField<0>(receive_timestamp_ns);
-                        state_msg.setField<1>(ch);
-                        state_msg.setField<2>(sample.raw_adc_counts > ACT_STATE_ADC_THRESHOLD ? 1
-                                                                                              : 0);
-                        elodin_client.publish(state_pkt, state_msg);
-                    }
-                }
+                for (const auto& sample : batch.value().pt_samples)
+                    publish_raw_sample(0x30, sample);
                 break;
             }
             case BoardType::LC: {
-                daq_comms::protocol::SensorBatch lc_batch = batch.value();
-                lc_batch.lc_samples.clear();
-                for (const auto& s : lc_batch.pt_samples) {
-                    daq_comms::protocol::RawLCSample lc;
-                    lc.channel_id = s.channel_id;
-                    lc.raw_adc_counts = s.raw_adc_counts;
-                    lc.sample_timestamp_ms = s.sample_timestamp_ms;
-                    lc.status_flags = s.status_flags;
-                    lc_batch.lc_samples.push_back(lc);
-                }
-                lc_batch.pt_samples.clear();
-                auto lc_raw = router.route_lc_samples(lc_batch, receive_timestamp_ns);
-                if (publishing) {
-                    for (const auto& [id, msg] : lc_raw)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                }
+                for (const auto& sample : batch.value().pt_samples)
+                    publish_raw_sample(0x23, sample);
                 break;
             }
             case BoardType::TC: {
-                daq_comms::protocol::SensorBatch tc_batch = batch.value();
-                tc_batch.tc_samples.clear();
-                for (const auto& s : tc_batch.pt_samples) {
-                    daq_comms::protocol::RawTCSample tc;
-                    tc.channel_id = s.channel_id;
-                    tc.raw_adc_counts = s.raw_adc_counts;
-                    tc.sample_timestamp_ms = s.sample_timestamp_ms;
-                    tc.status_flags = s.status_flags;
-                    tc_batch.tc_samples.push_back(tc);
-                }
-                tc_batch.pt_samples.clear();
-                auto tc_raw = router.route_tc_samples(tc_batch, receive_timestamp_ns);
-                if (publishing) {
-                    for (const auto& [id, msg] : tc_raw)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                }
+                for (const auto& sample : batch.value().pt_samples)
+                    publish_raw_sample(0x21, sample);
                 break;
             }
             case BoardType::RTD: {
-                daq_comms::protocol::SensorBatch rtd_batch = batch.value();
-                rtd_batch.rtd_samples.clear();
-                for (const auto& s : rtd_batch.pt_samples) {
-                    daq_comms::protocol::RawRTDSample rtd;
-                    rtd.channel_id = s.channel_id;
-                    rtd.raw_resistance_counts = s.raw_adc_counts;
-                    rtd.sample_timestamp_ms = s.sample_timestamp_ms;
-                    rtd.status_flags = s.status_flags;
-                    rtd_batch.rtd_samples.push_back(rtd);
-                }
-                rtd_batch.pt_samples.clear();
-                // Publish RAW RTD samples (ADC counts echoed as raw_resistance_counts)
-                auto rtd_raw = router.route_rtd_samples(rtd_batch, receive_timestamp_ns);
-                if (publishing) {
-                    for (const auto& [id, msg] : rtd_raw)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                }
-                // Also publish CALIBRATED RTD samples (temperature °C) when calibration files
-                // exist. This produces RTD_Cal.CH* streams that the web backend/GUI read as
-                // `temperature_c`.
-                auto rtd_cal = router.route_rtd_samples_calibrated(rtd_batch, receive_timestamp_ns);
-                if (publishing) {
-                    for (const auto& [id, msg] : rtd_cal)
-                        if (is_publish_allowed(id[0], id[1], publish_ranges))
-                            elodin_client.publish(id, msg);
-                }
+                for (const auto& sample : batch.value().pt_samples)
+                    publish_raw_sample(0x22, sample);
+                break;
+            }
+            case BoardType::ENCODER: {
+                for (const auto& sample : batch.value().pt_samples)
+                    publish_raw_sample(0x24, sample);
                 break;
             }
             default:
@@ -942,6 +780,9 @@ int main(int argc, char* argv[]) {
                         case BoardType::ACTUATOR:
                             tag = "ACT";
                             break;
+                        case BoardType::ENCODER:
+                            tag = "ENC";
+                            break;
                         default:
                             break;
                     }
@@ -971,8 +812,6 @@ int main(int argc, char* argv[]) {
 
     // Shutdown
     auto boards = discovery.get_discovered_boards();
-    config_manager.update_with_boards(boards);
-    config_manager.save_config(config_path + ".auto");
     std::cout << "[Discovery] Found " << boards.size() << " boards" << std::endl;
     std::cout << "[DAQ Bridge] Shutdown complete" << std::endl;
     return 0;

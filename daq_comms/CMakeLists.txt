@@ -1,11 +1,7 @@
 # CMakeLists.txt for daq_comms library
-# Contains only: messages and parser (avionics communication layer)
+# Transport + shared message types (on-wire Diablo framing lives in external/DAQv2-Comms only).
 
-# Source files for daq_comms library (messages and parser only)
 set(DAQ_COMMS_SOURCES
-    src/protocol/EncryptedFrame.cpp
-    src/protocol/PacketParser.cpp
-    src/protocol/DiabloBoardPacketParser.cpp
     src/transport/NetworkSocket.cpp
     src/transport/TCPClient.cpp
 )

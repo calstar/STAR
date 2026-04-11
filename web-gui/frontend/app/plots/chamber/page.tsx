@@ -2,26 +2,16 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
-import DerivedTimeSeriesPlot from '@/components/plots/DerivedTimeSeriesPlot';
 import ActuatorStatePanel from '@/components/plots/ActuatorStatePanel';
-import { useSensorStore, useSensorValue, useLoadCellForceLbf } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate } from '@/lib/types';
+import { useSensorStore, useSensorValue, useLoadCellForceKg } from '@/lib/store';
+import { getApiBaseUrl, getWebSocketClient } from '@/lib/websocket';
+import { MessageType } from '@/lib/types';
 import { getEntityColor, getActuatorColor } from '@/lib/sensor-colors';
 import { useSensorConfig } from '@/lib/sensor-config';
-import { kTypeVoltageToTempC, codeToForce } from '@/lib/sense-conversions';
-import { adcToVoltage as adcToVoltageFromRef } from '@/lib/voltageRef';
 
 /** Chamber PT role names in display order (config: sensor_roles_pt_board channels 4, 8, 9, 10). */
 const CHAMBER_PT_ROLES_ORDER = ['Chamber Mid PT 1', 'Chamber Mid PT 2', 'Chamber Throat PT 1', 'Chamber Throat PT 2'];
-const ADC_FULL_SCALE = 2 ** 31;
 const WINDOW_SECONDS = 60;
-
-function adcToVoltageCustom(rawAdc: number, refVolts: number): number {
-  const u = rawAdc >>> 0;
-  const signed = u > 0x7fffffff ? u - 0x100000000 : u;
-  return (signed / ADC_FULL_SCALE) * refVolts;
-}
 
 function buildChannels(boards: Record<string, any>, type: 'TC' | 'RTD' | 'LC'): number[] {
   const channels: number[] = [];
@@ -52,8 +42,6 @@ function buildTcChannelsWithRef(boards: Record<string, any>): { entity: string; 
   return out;
 }
 
-const LC_DEFAULTS = { sensitivityMvPerV: 2, pgaGain: 32, fullScaleForceKg: 300 };
-const LBF_TO_KG = 0.453592;
 
 const READOUT_CARD_CLASS = 'bg-white/[0.02] border border-white/5 rounded-lg px-3 py-2.5 flex items-center gap-3 min-w-[5rem] flex-1 basis-0';
 
@@ -73,14 +61,8 @@ function PtPsiCompact({ entity, label, color }: { entity: string; label: string;
   );
 }
 
-function TcTempCompact({ entity, calEntity, label, color, voltageReference }: { entity: string; calEntity: string; label: string; color: string; voltageReference: number }) {
-  const calTemp = useSensorValue(calEntity, 'temperature_c');
-  const raw = useSensorValue(entity, 'raw_adc_counts');
-  const nominals = useSensorStore((s) => s.voltageRefNominals);
-  const volt = raw !== null && Math.abs(raw) < 2e9 ? adcToVoltageFromRef(raw, voltageReference, nominals) : null;
-  const fromRaw = volt !== null && Number.isFinite(volt) ? kTypeVoltageToTempC(volt) : null;
-  // Use raw-derived temp when available so readout matches the TC plot (which uses raw_adc_counts); avoid showing 0 when plot has data
-  const value = fromRaw !== null && Number.isFinite(fromRaw) ? fromRaw : (calTemp !== null && Number.isFinite(calTemp) ? calTemp : null);
+function TcTempCompact({ calEntity, label, color }: { entity: string; calEntity: string; label: string; color: string; voltageReference: number }) {
+  const value = useSensorValue(calEntity, 'temperature_c');
   const display = value !== null && Number.isFinite(value) ? value.toFixed(1) : '—';
   return (
     <div className={READOUT_CARD_CLASS}>
@@ -91,11 +73,8 @@ function TcTempCompact({ entity, calEntity, label, color, voltageReference }: { 
   );
 }
 
-function LcKgCompact({ entity, calEntity, label, color }: { entity: string; calEntity: string; label: string; color: string }) {
-  const calLbf = useLoadCellForceLbf(calEntity); // offset already applied in store
-  const raw = useSensorValue(entity, 'raw_adc_counts');
-  const fallbackKg = raw !== null ? codeToForce(raw, LC_DEFAULTS.sensitivityMvPerV, LC_DEFAULTS.pgaGain, LC_DEFAULTS.fullScaleForceKg) : null;
-  const value = calLbf != null && Number.isFinite(calLbf) ? calLbf * LBF_TO_KG : fallbackKg;
+function LcKgCompact({ calEntity, label, color }: { entity: string; calEntity: string; label: string; color: string }) {
+  const value = useLoadCellForceKg(calEntity); // offset already applied in store, C++ outputs kg
   const display = value !== null && Number.isFinite(value) ? value.toFixed(1) : '—';
   return (
     <div className={READOUT_CARD_CLASS}>
@@ -107,13 +86,16 @@ function LcKgCompact({ entity, calEntity, label, color }: { entity: string; calE
 }
 
 export default function ChamberGraphsPage() {
-    const updateSensor = useSensorStore((s) => s.updateSensor);
-    const updateState = useSensorStore((s) => s.updateState);
     const ws = getWebSocketClient();
     const allSensors = useSensorConfig();
     // Chamber PTs only (exclude TC/LC with "Chamber" in role); order Mid 1, Mid 2, Throat 1, Throat 2
     const ptSensors = CHAMBER_PT_ROLES_ORDER
-      .map((role) => allSensors.find((s) => s.calEntity.startsWith('PT_Cal.') && s.role === role))
+      .map((role) =>
+        allSensors.find((s) => {
+          const calEntity = s.calEntity;
+          return (calEntity.startsWith('PT_Cal.') || /^PT\d+_Cal\.CH\d+$/.test(calEntity)) && s.role === role;
+        })
+      )
       .filter((s): s is NonNullable<typeof s> => s != null);
 
     const [tcData, setTcData] = useState<{ entity: string; label: string; voltageReference: number }[]>([]);
@@ -121,7 +103,7 @@ export default function ChamberGraphsPage() {
     const [lcLabels, setLcLabels] = useState<string[]>([]);
 
     const loadChannelConfig = useCallback(() => {
-      fetch('/api/config')
+      fetch(`${getApiBaseUrl()}/api/config`)
         .then((r) => (r.ok ? r.json() : null))
         .then((data: any) => {
           const config = data?.config;
@@ -148,30 +130,14 @@ export default function ChamberGraphsPage() {
 
     useEffect(() => { loadChannelConfig(); }, [loadChannelConfig]);
     useEffect(() => {
-        ws.connect();
-        const unsub1 = ws.on(MessageType.SENSOR_UPDATE, (p: unknown) => updateSensor(p as SensorUpdate));
-        const unsub2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => updateState(p as StateUpdate));
-        const unsub3 = ws.on(MessageType.CONFIG_UPDATED, () => loadChannelConfig());
-        return () => { unsub1(); unsub2(); unsub3(); };
-    }, [ws, updateSensor, updateState, loadChannelConfig]);
+        const unsub = ws.on(MessageType.CONFIG_UPDATED, () => loadChannelConfig());
+        return () => { unsub(); };
+    }, [ws, loadChannelConfig]);
 
-    const voltageRefNominals = useSensorStore((s) => s.voltageRefNominals);
     const tcEntities = tcData.map((d) => d.entity);
+    const tcCalEntities = tcData.map((d) => d.entity.replace('TC.', 'TC_Cal.'));
     const tcLabels = tcData.map((d) => d.label);
-    const tcRefForPlot = tcData[0]?.voltageReference ?? 0;
-    const tcRefVoltage = tcRefForPlot === 1 ? NaN : (tcRefForPlot === 0 ? voltageRefNominals.internalV : voltageRefNominals.absolute5vV);
-    const tcTransform = useCallback(
-      (v: number) => {
-        if (!Number.isFinite(tcRefVoltage)) return null;
-        const volt = adcToVoltageCustom(v, tcRefVoltage);
-        return volt !== null && Number.isFinite(volt) ? kTypeVoltageToTempC(volt) : null;
-      },
-      [tcRefVoltage]
-    );
-    const lcTransform = useCallback((v: number) => {
-      const kg = codeToForce(v, LC_DEFAULTS.sensitivityMvPerV, LC_DEFAULTS.pgaGain, LC_DEFAULTS.fullScaleForceKg);
-      return kg ?? NaN;
-    }, []);
+    const lcCalEntities = lcEntities.map((e) => e.replace('LC.', 'LC_Cal.'));
 
     const ptEntities = ptSensors.map(s => s.calEntity);
     const ptLabels = ptSensors.map(s => s.role);
@@ -219,7 +185,7 @@ export default function ChamberGraphsPage() {
                         <div className="flex-1 min-h-0 flex flex-col">
                             <div className="text-xs font-medium text-gray-500 flex-shrink-0 px-1">TC Temperatures (°C)</div>
                             {tcEntities.length > 0 ? (
-                              <DerivedTimeSeriesPlot title="" entities={tcEntities} component="raw_adc_counts" transform={tcTransform} yLabel="Temperature (°C)" labels={tcLabels} colors={tcColors} windowSeconds={WINDOW_SECONDS} />
+                              <TimeSeriesPlot title="" entities={tcCalEntities} component="temperature_c" yLabel="Temperature (°C)" labels={tcLabels} colors={tcColors} windowSeconds={WINDOW_SECONDS} />
                             ) : (
                               <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">No TC boards in config</div>
                             )}
@@ -227,7 +193,7 @@ export default function ChamberGraphsPage() {
                         <div className="flex-1 min-h-0 flex flex-col">
                             <div className="text-xs font-medium text-gray-500 flex-shrink-0 px-1">LC Forces (kg)</div>
                             {lcEntities.length > 0 ? (
-                              <DerivedTimeSeriesPlot title="" entities={lcEntities} component="raw_adc_counts" transform={lcTransform} yLabel="Force (kg)" labels={lcLabels} colors={lcColors} windowSeconds={WINDOW_SECONDS} />
+                              <TimeSeriesPlot title="" entities={lcCalEntities} component="force_kg" yLabel="Force (kg)" labels={lcLabels} colors={lcColors} windowSeconds={WINDOW_SECONDS} />
                             ) : (
                               <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">No LC boards in config</div>
                             )}

@@ -43,12 +43,15 @@ Format C++ code using clang-format
 
 OPTIONS:
     --check          Check formatting without making changes
-    --verbose        Show verbose output
+    --verbose        Show verbose output (and per-file errors when --check fails)
     --all            Format all C++ files (including external dependencies)
     --help           Show this help message
 
+ENVIRONMENT:
+    FORMAT_JOBS      Parallel clang-format processes (default: CPU count via nproc/sysctl, else 8).
+
 EXAMPLES:
-    $0                    # Format code in FSW/, comms/, and utl/ directories
+    $0                    # Format code in FSW/, daq_comms/, archive/legacy/utl/
     $0 --check            # Check formatting without changes
     $0 --verbose          # Format with verbose output
     $0 --all              # Format all C++ files including external/
@@ -72,7 +75,7 @@ check_clang_format() {
 
 # Function to find C++ files
 find_cpp_files() {
-    local directories=("FSW" "comms" "utl")
+    local directories=("FSW" "daq_comms" "archive/legacy/utl")
 
     if [ "$FORMAT_ALL" = true ]; then
         directories+=("external")
@@ -80,17 +83,37 @@ find_cpp_files() {
 
     for dir in "${directories[@]}"; do
         if [ -d "$dir" ]; then
-            find "$dir" -name "*.cpp" -o -name "*.hpp" -o -name "*.c" -o -name "*.h"
+            # Skip vendored and generated trees for normal runs.
+            # This keeps formatting focused on first-party code and avoids traversing
+            # large submodule/vendor directories like FSW/external/uWebSockets.
+            find "$dir" \
+                \( -path "$dir/external" -o -path "$dir/external/*" -o -path "$dir/build" -o -path "$dir/build/*" \) -prune -o \
+                -type f \( -name "*.cpp" -o -name "*.hpp" -o -name "*.c" -o -name "*.h" \) -print
         else
             print_warning "Directory $dir not found, skipping..."
         fi
     done
 }
 
+# Parallel clang-format jobs (one file per process — multi-file argv can hang on some clang-format versions).
+format_parallel_jobs() {
+    if [ -n "${FORMAT_JOBS:-}" ]; then
+        echo "$FORMAT_JOBS"
+    elif command -v nproc &>/dev/null; then
+        nproc
+    elif command -v sysctl &>/dev/null; then
+        sysctl -n hw.ncpu 2>/dev/null || echo 8
+    else
+        echo 8
+    fi
+}
+
 # Function to format files
 format_files() {
     local files=($(find_cpp_files))
     local total_files=${#files[@]}
+    local jobs
+    jobs="$(format_parallel_jobs)"
 
     if [ $total_files -eq 0 ]; then
         print_warning "No C++ files found to format"
@@ -98,72 +121,41 @@ format_files() {
     fi
 
     print_status "Found $total_files C++ files"
+    print_status "Running clang-format ($jobs parallel jobs, one file at a time)…"
 
-    local changed_files=()
-    local unchanged_files=()
-
-    for file in "${files[@]}"; do
-        if [ "$VERBOSE" = true ]; then
-            print_status "Processing: $file"
-        fi
-
-        if [ "$CHECK_ONLY" = true ]; then
-            # Check if file is properly formatted
-            if ! clang-format --dry-run --Werror "$file" &>/dev/null; then
-                changed_files+=("$file")
-                if [ "$VERBOSE" = true ]; then
-                    print_error "Formatting issues found in: $file"
-                fi
-            else
-                unchanged_files+=("$file")
-            fi
-        else
-            # Actually format the file
-            local temp_file=$(mktemp)
-            if clang-format "$file" > "$temp_file"; then
-                if ! cmp -s "$file" "$temp_file"; then
-                    mv "$temp_file" "$file"
-                    changed_files+=("$file")
-                    if [ "$VERBOSE" = true ]; then
-                        print_success "Formatted: $file"
-                    fi
-                else
-                    unchanged_files+=("$file")
-                    rm "$temp_file"
-                fi
-            else
-                print_error "Failed to format: $file"
-                rm -f "$temp_file"
-                return 1
-            fi
-        fi
-    done
-
-    # Print summary
     if [ "$CHECK_ONLY" = true ]; then
-        if [ ${#changed_files[@]} -eq 0 ]; then
+        if printf '%s\0' "${files[@]}" | xargs -0 -P "$jobs" -n 1 clang-format --dry-run --Werror --; then
             print_success "All files are properly formatted!"
             return 0
-        else
-            print_error "Found formatting issues in ${#changed_files[@]} files:"
-            for file in "${changed_files[@]}"; do
+        fi
+        print_error "Some files need formatting. Listing offenders…"
+        local bad=()
+        for file in "${files[@]}"; do
+            if ! clang-format --dry-run --Werror "$file" &>/dev/null; then
+                bad+=("$file")
+                if [ "$VERBOSE" = true ]; then
+                    print_error "  $file"
+                fi
+            fi
+        done
+        if [ "$VERBOSE" != true ] && [ ${#bad[@]} -gt 0 ]; then
+            for file in "${bad[@]}"; do
                 echo "  - $file"
             done
-            print_error "Run '$0' to fix formatting issues"
-            return 1
         fi
+        print_error "Run '$0' (without --check) to fix formatting issues"
+        return 1
+    fi
+
+    if ! printf '%s\0' "${files[@]}" | xargs -0 -P "$jobs" -n 1 clang-format -i --; then
+        print_error "clang-format failed"
+        return 1
+    fi
+
+    if [ "$VERBOSE" = true ]; then
+        print_success "clang-format -i completed for $total_files files (use git diff to see edits)"
     else
-        if [ ${#changed_files[@]} -eq 0 ]; then
-            print_success "All files were already properly formatted!"
-        else
-            print_success "Formatted ${#changed_files[@]} files"
-            if [ "$VERBOSE" = true ]; then
-                echo "Changed files:"
-                for file in "${changed_files[@]}"; do
-                    echo "  - $file"
-                done
-            fi
-        fi
+        print_success "clang-format finished ($total_files files)"
     fi
 }
 

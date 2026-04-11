@@ -7,9 +7,13 @@
 #include <memory>
 #include <string>
 
-#include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
 #include "../../daq_comms/include/transport/NetworkSocket.hpp"
 #include "config/SensorAssignment.hpp"
+
+namespace Diablo {
+struct PacketHeader;
+struct BoardHeartbeatPacket;
+}  // namespace Diablo
 
 namespace fsw {
 namespace fsw {
@@ -39,9 +43,10 @@ public:
      * @param mac_address Board MAC address
      * @return Assigned IP address
      */
-    std::string process_board_heartbeat(
-        const daq_comms::protocol::DiabloBoardPacketParser::ParsedBoardHeartbeat& heartbeat,
-        const std::string& source_ip, const std::string& mac_address);
+    std::string process_board_heartbeat(const Diablo::PacketHeader& header,
+                                        const Diablo::BoardHeartbeatPacket& body,
+                                        const std::string& source_ip,
+                                        const std::string& mac_address);
 
     /**
      * @brief Assign sensors to a board

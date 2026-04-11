@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -28,10 +29,24 @@
 #include <thread>
 #include <vector>
 
-#include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
+#include "DiabloPacketUtils.h"
+#include "DiabloPackets.h"
 
 namespace {
 std::atomic<bool> g_running{true};
+
+std::vector<uint8_t> build_actuator_command_udp_packet(
+    const std::vector<Diablo::ActuatorCommand>& commands) {
+    uint8_t buf[512];
+    uint32_t ts_ms = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count() &
+                                           0xFFFFFFFFu);
+    size_t len = Diablo::create_actuator_command_packet(commands, ts_ms, buf, sizeof(buf));
+    if (len == 0)
+        return {};
+    return std::vector<uint8_t>(buf, buf + len);
+}
 
 void signalHandler(int /*sig*/) {
     std::cout << "\n[ActuatorService] Shutting down..." << std::endl;
@@ -148,50 +163,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Build actuator name -> {channel, board_ip}
-    // Prefer board discovery (config.toml.auto from daq_bridge heartbeats) for IPs.
     std::map<std::string, ActuatorMapping> actuator_map;
     std::map<int, std::string> board_id_to_ip;
-
-    // Load from config.toml.auto (daq_bridge writes this from heartbeat discovery)
-    std::string auto_path = config_path + ".auto";
-    {
-        std::ifstream fa(auto_path);
-        if (fa.is_open()) {
-            std::ostringstream ss;
-            ss << fa.rdbuf();
-            std::string auto_content = ss.str();
-            size_t pos = 0;
-            while (pos < auto_content.size()) {
-                size_t next = auto_content.find("[board_", pos);
-                if (next == std::string::npos)
-                    break;
-                size_t end = auto_content.find(']', next);
-                if (end == std::string::npos)
-                    break;
-                std::string sec = auto_content.substr(next + 1, end - next - 1);
-                std::string bt = getTomlValue(auto_content, sec, "board_type", "");
-                std::string ip = getTomlValue(auto_content, sec, "ip", "");
-                if (bt == "5" && !ip.empty()) {  // board_type 5 = ACTUATOR
-                    size_t last_dot = ip.rfind('.');
-                    if (last_dot != std::string::npos) {
-                        try {
-                            int bid = std::stoi(ip.substr(last_dot + 1));
-                            if (bid >= 1 && bid <= 254) {
-                                board_id_to_ip[bid] = ip;
-                                std::cout << "[ActuatorService] Discovery: board " << bid << " -> "
-                                          << ip << std::endl;
-                            }
-                        } catch (...) {
-                        }
-                    }
-                }
-                pos = end + 1;
-            }
-            if (!board_id_to_ip.empty())
-                std::cout << "[ActuatorService] Using " << board_id_to_ip.size()
-                          << " actuator board IPs from discovery (config.toml.auto)" << std::endl;
-        }
-    }
 
     if (!config_content.empty()) {
         // Find all [boards.xxx] sections with type=ACTUATOR (static config fallback)
@@ -210,7 +183,7 @@ int main(int argc, char* argv[]) {
             if (!ip.empty()) {
                 try {
                     int id = std::stoi(id_str);
-                    if (id > 0 && !board_id_to_ip.count(id))  // discovery overrides; skip if set
+                    if (id > 0 && !board_id_to_ip.count(id))
                         board_id_to_ip[id] = ip;
                 } catch (...) {
                 }
@@ -447,8 +420,12 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    daq_comms::protocol::DiabloBoardPacketParser parser;
-    constexpr uint16_t ACTUATOR_PORT = 5005;
+    uint16_t ACTUATOR_PORT = 5005;
+    std::string port_str = getTomlValue(config_content, "network", "actuator_cmd_port", "5005");
+    try {
+        ACTUATOR_PORT = static_cast<uint16_t>(std::stoi(port_str));
+    } catch (...) {
+    }
 
     auto sendSingleActuator = [&](const std::string& act_name, int pos) -> bool {
         auto am = actuator_map.find(act_name);
@@ -468,11 +445,11 @@ int main(int argc, char* argv[]) {
             std::cerr << "[ActuatorService] Unknown actuator: " << act_name << std::endl;
             return false;
         }
-        daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand cmd;
+        Diablo::ActuatorCommand cmd;
         cmd.actuator_id = static_cast<uint8_t>(am->second.channel);
         int hw = (am->second.is_no) ? (1 - pos) : pos;
         cmd.actuator_state = static_cast<uint8_t>(hw);
-        std::vector<uint8_t> pkt = parser.construct_actuator_command_packet({cmd});
+        std::vector<uint8_t> pkt = build_actuator_command_udp_packet({cmd});
         if (pkt.empty())
             return false;
         int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -584,9 +561,7 @@ int main(int argc, char* argv[]) {
         }
 
         // No delays: group commands by board IP and send in batch
-        std::map<std::string,
-                 std::vector<daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand>>
-            by_board;
+        std::map<std::string, std::vector<Diablo::ActuatorCommand>> by_board;
         for (const auto& [act_name, pos] : it->second) {
             if (is_fire_state && skip_in_fire(act_name))
                 continue;
@@ -594,7 +569,7 @@ int main(int argc, char* argv[]) {
             if (am == actuator_map.end())
                 continue;
 
-            daq_comms::protocol::DiabloBoardPacketParser::ActuatorCommand cmd;
+            Diablo::ActuatorCommand cmd;
             cmd.actuator_id = static_cast<uint8_t>(am->second.channel);
             int hw = (am->second.is_no) ? (1 - pos) : pos;
             cmd.actuator_state = static_cast<uint8_t>(hw);
@@ -608,7 +583,7 @@ int main(int argc, char* argv[]) {
         }
 
         for (const auto& [ip, commands] : by_board) {
-            std::vector<uint8_t> pkt = parser.construct_actuator_command_packet(commands);
+            std::vector<uint8_t> pkt = build_actuator_command_udp_packet(commands);
             if (pkt.empty())
                 continue;
 
@@ -692,8 +667,8 @@ int main(int argc, char* argv[]) {
 
     while (g_running) {
         struct timeval tv;
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
+        tv.tv_sec = 0;
+        tv.tv_usec = 10000;  // 10 ms — wake quickly for low-latency command dispatch
         fd_set rd;
         FD_ZERO(&rd);
         FD_SET(listen_fd, &rd);
@@ -745,6 +720,9 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
+        // Reply before close so Node.js resolves ok=true and keeps the optimistic UI update.
+        const char* reply = handled ? "OK\n" : "ERR\n";
+        write(client, reply, strlen(reply));
         close(client);
     }
 

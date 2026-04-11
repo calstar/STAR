@@ -97,7 +97,9 @@ echo "📡 Starting WebSocket server (data via relay)..."
 cd backend
 BACKEND_ENV="ELODIN_RELAY_WS_URL=ws://localhost:9090 USE_DIRECT_DAQ=false"
 $DEMO_MODE && BACKEND_ENV="$BACKEND_ENV DEMO_MODE=true"
-$BACKEND_ENV npm run dev &
+[ -n "${DEMO_RATE_HZ:-}" ] && BACKEND_ENV="$BACKEND_ENV DEMO_RATE_HZ=$DEMO_RATE_HZ"
+[ -n "${LOAD_TEST:-}" ] && BACKEND_ENV="$BACKEND_ENV LOAD_TEST=$LOAD_TEST"
+env $BACKEND_ENV npm run dev &
 BACKEND_PID=$!
 cd ..
 

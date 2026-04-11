@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState } from 'react';
-import { useSensorStore, useActuatorCommandedState } from '@/lib/store';
+import { useSensorStore, useActuatorCommandedState, useSensorValue } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { ActuatorState, CommandPayload } from '@/lib/types';
 import { useControlMode } from '@/lib/control-mode';
@@ -11,14 +11,19 @@ export interface ActuatorControlByNameProps {
   name: string;
   channel: number;
   entity: string;
+  boardId?: number;
 }
 
-export default function ActuatorControlByName({ name, channel, entity }: ActuatorControlByNameProps) {
+export default function ActuatorControlByName({ name, channel, entity, boardId }: ActuatorControlByNameProps) {
   const ws = getWebSocketClient();
   const debugMode = useSensorStore((s) => s.debugMode);
-  const setActuatorState = useSensorStore((s) => s.setActuatorState);
-  const setActuatorCommandedOverride = useSensorStore((s) => s.setActuatorCommandedOverride);
-  const commanded = useActuatorCommandedState(entity);
+  const boardNumber = boardId != null ? ((boardId % 10) || 10) : null;
+  // Subscribe to canonical commanded-state stream emitted by backend parser:
+  // ACT_CMD.B<board>.CH<channel>.actuator_state_commanded
+  const commandedEntity = boardNumber != null ? `ACT_CMD.B${boardNumber}.CH${channel}` : entity;
+  const commanded = useActuatorCommandedState(commandedEntity);
+  const calEntity = entity.replace('ACT.', 'ACT_Cal.');
+  const currentA = useSensorValue(calEntity, 'current_a');
   const [pending, setPending] = useState(false);
   const { controlEnabled } = useControlMode();
 
@@ -30,11 +35,18 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
       commandType: 'actuator',
       data: { actuatorName: name, actuatorState: state },
     };
+    const val = state === ActuatorState.OPEN ? 1 : 0;
+    if (boardNumber != null) {
+      useSensorStore.getState().updateSensor({
+        entity: commandedEntity,
+        component: 'actuator_state_commanded',
+        value: val,
+        timestamp: Date.now(),
+      });
+    }
     ws.sendCommand(command);
-    setActuatorState(entity, state);
-    if (debugMode) setActuatorCommandedOverride(entity, state);
     setPending(true);
-    setTimeout(() => setPending(false), 1000);
+    window.setTimeout(() => setPending(false), 450);
   };
 
   const commandedOpen = commanded === ActuatorState.OPEN;
@@ -49,7 +61,11 @@ export default function ActuatorControlByName({ name, channel, entity }: Actuato
       <div className="flex-1 flex items-center min-h-0 overflow-hidden pr-4 flex-shrink-0">
         <h3 className="font-bold tracking-wider text-text uppercase leading-tight truncate text-[9px] xl:text-[10px]">{name}</h3>
       </div>
-      <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden" />
+      <div className="flex-shrink-0 flex items-center min-h-0 overflow-hidden px-0.5">
+        <span className="text-[9px] tabular-nums text-yellow-400 font-mono">
+          {currentA != null && isFinite(currentA) ? `${currentA.toFixed(2)} A` : '--- A'}
+        </span>
+      </div>
       <div className="grid grid-cols-2 gap-0.5 flex-shrink-0 min-h-0">
         <button
           onClick={() => sendCommand(ActuatorState.OPEN)}

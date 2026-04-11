@@ -1,33 +1,15 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react';
-import { useSensorStore, useSensorValue } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate, StateUpdate, ActuatorUpdate, SystemState, ActuatorId } from '@/lib/types';
+import { useSensorStore, useSensorValue, usePressureHistoryPlotSeries } from '@/lib/store';
+import { getApiBaseUrl, getWebSocketClient } from '@/lib/websocket';
+import { MessageType, SystemState, ActuatorId } from '@/lib/types';
 import { startDataCache } from '@/lib/data-cache';
 import StateMachineDiagram from '@/components/controls/StateMachineDiagram';
-import ActuatorControl from '@/components/controls/ActuatorControl';
 import ActuatorControlByName from '@/components/controls/ActuatorControlByName';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
-import { PRESSURE_SENSORS, getEntityColor } from '@/lib/sensor-colors';
-
-const NAME_TO_ACTUATOR_ID: Partial<Record<string, ActuatorId>> = {
-  'LOX Main': ActuatorId.LOX_MAIN, 'Fuel Main': ActuatorId.FUEL_MAIN,
-  'LOX Vent': ActuatorId.LOX_VENT, 'Fuel Vent': ActuatorId.FUEL_VENT,
-  'GN2 Vent': ActuatorId.GSE_LOW_VENT, 'GSE Low Vent': ActuatorId.GSE_LOW_VENT,
-  'GSE High Press Vent': ActuatorId.GSE_HIGH_PRESS_VENT, 'GSE LOX Fill Vent': ActuatorId.GSE_LOX_FILL_VENT,
-  'LOX Press': ActuatorId.LOX_PRESS, 'Fuel Press': ActuatorId.FUEL_PRESS,
-  'Fuel Fill Press': ActuatorId.FUEL_FILL_PRESS, 'GSE High Press Control': ActuatorId.GSE_HIGH_PRESS_CONTROL,
-  'GSE Med Press Control': ActuatorId.GSE_MED_PRESS_CONTROL,
-  'Fuel Fill Vent': ActuatorId.FUEL_FILL_VENT, 'LOX Fill': ActuatorId.LOX_FILL,
-  'LOX Dump': ActuatorId.LOX_DUMP,
-};
-
-const FALLBACK_PRESSURE_SENSORS_PLOT = PRESSURE_SENSORS.map((s) => ({
-  label: s.label.replace('Upstream', 'Up').replace('Downstream', 'Down').replace('Regulated', 'Reg'),
-  entity: s.entity,
-  color: s.color,
-}));
+import type { SensorConfig } from '@/lib/sensor-config';
+import { buildPressurePlotSeriesFromSensorList, type PressurePlotSeries } from '@/lib/pressure-bar-defs';
 
 // Time window options for history plotting
 const TIME_WINDOWS = [
@@ -38,18 +20,17 @@ const TIME_WINDOWS = [
 ];
 
 export default function UnifiedDashboard() {
-  const updateSensor = useSensorStore((state) => state.updateSensor);
-  const updateState = useSensorStore((state) => state.updateState);
-  const updateActuator = useSensorStore((state) => state.updateActuator);
-  const updateConnectionStatus = useSensorStore((state) => state.updateConnectionStatus);
   const currentState = useSensorStore((state) => state.currentState);
   const ws = getWebSocketClient();
   const [timeWindow, setTimeWindow] = useState(60);
-  const [actuatorsFromConfig, setActuatorsFromConfig] = useState<{ name: string; channel: number; entity: string; id?: ActuatorId }[]>([]);
-  const [pressureSensorsPlot, setPressureSensorsPlot] = useState<{ label: string; entity: string; color: string }[]>([]);
+  const [actuatorsFromConfig, setActuatorsFromConfig] = useState<{ name: string; channel: number; entity: string; boardId?: number }[]>([]);
+  const [pressureSensorsPlot, setPressureSensorsPlot] = useState<PressurePlotSeries[]>(() =>
+    buildPressurePlotSeriesFromSensorList([]));
+
+  const FALLBACK_PRESSURE_SENSORS_PLOT: PressurePlotSeries[] = [];
 
   const loadActuatorsFromConfig = useCallback(() => {
-    fetch('/api/config')
+    fetch(`${getApiBaseUrl()}/api/config`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { config?: { actuator_roles?: Record<string, any>; adc?: { internal_v?: number; absolute_5v_v?: number } } } | null) => {
         const config = data?.config;
@@ -62,8 +43,9 @@ export default function UnifiedDashboard() {
         setActuatorsFromConfig(
           Object.entries(roles).map(([name, value]) => {
             const channel = Array.isArray(value) && value.length >= 2 && typeof value[1] === 'number' ? value[1] : 1;
+            const boardId = Array.isArray(value) && value.length >= 3 && typeof value[2] === 'number' ? value[2] : undefined;
             const entity = `ACT.${name.replace(/\s+/g, '_')}`;
-            return { name, channel, entity, id: NAME_TO_ACTUATOR_ID[name] };
+            return { name, channel, entity, boardId };
           })
         );
       })
@@ -71,22 +53,19 @@ export default function UnifiedDashboard() {
   }, []);
 
   const loadPressureSensors = useCallback(() => {
-    fetch('/api/sensor-config')
+    fetch(`${getApiBaseUrl()}/api/sensor-config`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((data: any) => {
-        const sensors = data?.sensors as any[] | undefined;
-        if (!Array.isArray(sensors)) return;
-        const pts = sensors
-          .filter((s) => typeof s?.calEntity === 'string' && (s.calEntity as string).startsWith('PT_Cal.'))
-          .map((s) => {
-            const role = String(s.role || s.calEntity);
-            const label = role.replace('Upstream', 'Up').replace('Downstream', 'Down').replace('Regulated', 'Reg');
-            const entity = String(s.calEntity);
-            return { label, entity, color: getEntityColor(entity) };
-          });
-        if (pts.length > 0) setPressureSensorsPlot(pts);
+      .then((data: { sensors?: SensorConfig[] } | null) => {
+        const sensors = data?.sensors;
+        if (!Array.isArray(sensors) || sensors.length === 0) {
+          setPressureSensorsPlot(buildPressurePlotSeriesFromSensorList([]));
+          return;
+        }
+        setPressureSensorsPlot(buildPressurePlotSeriesFromSensorList(sensors));
       })
-      .catch(() => { });
+      .catch(() => {
+        setPressureSensorsPlot(buildPressurePlotSeriesFromSensorList([]));
+      });
   }, []);
 
   useEffect(() => {
@@ -109,7 +88,7 @@ export default function UnifiedDashboard() {
 
   const isFireState = currentState === SystemState.FIRE;
   const effectivePressureSensorsPlot = pressureSensorsPlot.length > 0 ? pressureSensorsPlot : FALLBACK_PRESSURE_SENSORS_PLOT;
-
+  const pressurePlotForChart = usePressureHistoryPlotSeries(effectivePressureSensorsPlot);
   return (
     <main className="h-full w-full bg-background text-text flex flex-col overflow-hidden">
       {/* ── Main content: 3-section split view ─────────────────────────────── */}
@@ -143,10 +122,10 @@ export default function UnifiedDashboard() {
             <div className="flex-1 min-h-0">
               <TimeSeriesPlot
                 title="All Pressure Sensors (PSI)"
-                entities={effectivePressureSensorsPlot.map(s => s.entity)}
-                labels={effectivePressureSensorsPlot.map(s => s.label)}
+                entities={pressurePlotForChart.map(s => s.entity)}
+                labels={pressurePlotForChart.map(s => s.label)}
                 component="pressure_psi"
-                colors={effectivePressureSensorsPlot.map(s => s.color)}
+                colors={pressurePlotForChart.map(s => s.color)}
                 yLabel="Pressure (PSI)"
                 windowSeconds={timeWindow}
               />
@@ -166,11 +145,7 @@ export default function UnifiedDashboard() {
               {Array.from({ length: 16 }, (_, i) => {
                 const a = actuatorsFromConfig[i];
                 if (!a) return <div key={`empty-${i}`} className="bg-gray-900/30 rounded border border-gray-800/50 min-h-0" />;
-                return a.id !== undefined ? (
-                  <ActuatorControl key={a.name} actuatorId={a.id} />
-                ) : (
-                  <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} />
-                );
+                return <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} boardId={a.boardId} />;
               })}
             </div>
           </div>

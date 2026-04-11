@@ -1,18 +1,20 @@
 /**
- * Elodin Relay — single subscriber to Elodin DB, fans out raw TABLE packets to many WebSocket clients
+ * Elodin Relay — subscribes to Elodin DB, fans out raw TABLE packets to many WebSocket clients
  * and optionally to a TCP port for C++ calibration_service.
  *
  * Pipeline: raw data → Elodin DB only; all services consume from DB via this relay. That keeps
  * collection invariant to upstream bugs and each service modular/independent.
  *
- * Elodin DB streams to the FIRST TCP subscriber only. This relay is that subscriber and broadcasts
+ * Elodin DB streams to all connected TCP subscribers. This relay broadcasts
  * to backend, sidecar, calibration_service. Run before backend: npm run relay
  */
 
 import * as net from 'net';
 import { WebSocketServer } from 'ws';
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
-import { registerVTables } from './elodin-vtable.js';
+import { registerVTables, clearSubscriptionState } from './elodin-vtable-registry.js';
+import { registerControllerVTables, registerActuatorCommandedVTables } from './legacy/elodin-vtable-controller.js';
+import { loadActuatorChannelToEntityMap } from './sensor-config.js';
 
 const ELODIN_HOST = process.env.ELODIN_HOST || '127.0.0.1';
 const ELODIN_PORT = parseInt(process.env.ELODIN_PORT || '2240', 10);
@@ -28,6 +30,21 @@ function main(): void {
   wss.on('connection', (ws) => {
     clientCount++;
     console.log(`[Relay] Client connected (total ${clientCount})`);
+    ws.on('message', (data: Buffer | string) => {
+      if (typeof data !== 'string') return;
+      try {
+        const msg = JSON.parse(data) as { type?: string; packetId?: number[]; payload?: string };
+        if (msg.type === 'publish' && Array.isArray(msg.packetId) && msg.packetId.length === 2 && typeof msg.payload === 'string') {
+          const payload = Buffer.from(msg.payload, 'base64');
+          if (elodin.isConnected()) {
+            const ok = elodin.publishTable([msg.packetId[0], msg.packetId[1]], payload);
+            console.log(`[Relay] Publish [0x${(msg.packetId[0] as number).toString(16)},0x${(msg.packetId[1] as number).toString(16)}] → Elodin: ${ok ? 'OK' : 'FAIL'}`);
+          } else {
+            console.warn('[Relay] Publish dropped: Elodin not connected');
+          }
+        }
+      } catch (_) { /* ignore malformed */ }
+    });
     ws.on('close', () => {
       clientCount--;
       console.log(`[Relay] Client disconnected (total ${clientCount})`);
@@ -38,6 +55,9 @@ function main(): void {
   wss.on('listening', () => {
     console.log(`[Relay] WebSocket server listening on ${RELAY_WS_HOST}:${RELAY_WS_PORT}`);
     console.log(`[Relay] Backends can connect with ELODIN_RELAY_WS_URL=ws://localhost:${RELAY_WS_PORT}`);
+    if (RELAY_DEBUG_HEARTBEAT) {
+      console.log('[Relay] RELAY_DEBUG_HEARTBEAT=1 — will log each heartbeat (0x10) packet');
+    }
   });
 
   // TCP forward for C++ calibration_service (same packet format as WebSocket)
@@ -56,10 +76,14 @@ function main(): void {
   });
 
   let tablePacketCount = 0;
+  let heartbeatPacketCount = 0;
+  // Track data flow to prove logs
+  let firstPacketLogged = 0;
   let resubscribeTimer: NodeJS.Timeout | null = null;
   const MAX_RESUBSCRIBE_ATTEMPTS = parseInt(process.env.RELAY_MAX_RESUBSCRIBE_ATTEMPTS || '24', 10);
+  const RELAY_DEBUG_HEARTBEAT = process.env.RELAY_DEBUG_HEARTBEAT === '1';
   // Track which high-byte packet ID groups have delivered at least one TABLE packet.
-  // Groups: 0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC, 0x30=ACT, 0x31=ACT_STATE, 0x40=CTRL_ACT, 0x41=CTRL_DIAG, 0x42=CTRL_MEAS
+  // Groups: 0x10=heartbeat, 0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC, 0x30=ACT, 0x31=ACT_STATE, 0x40=CTRL_ACT, 0x41=CTRL_DIAG, 0x42=CTRL_MEAS
   const seenHighBytes = new Set<number>();
 
   // Re-send VTableStream subscriptions. Elodin DB rejects subscriptions for
@@ -67,38 +91,36 @@ function main(): void {
   // daq_bridge VTables register in ~2s; controller VTables register a few seconds later.
   function scheduleResubscribe(attempt: number): void {
     if (attempt > MAX_RESUBSCRIBE_ATTEMPTS) {
-      console.warn(`[Relay] Reached max resubscribe attempts (${MAX_RESUBSCRIBE_ATTEMPTS}); keeping current subscriptions.`);
-      return;
+      return; // Stop after max attempts (default 24x5s = 2 minutes) to prevent endless loop overhead
     }
     if (resubscribeTimer) return;
     resubscribeTimer = setTimeout(() => {
       resubscribeTimer = null;
       if (!elodin.isConnected()) return;
-      const missingGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x40, 0x41, 0x42]
-        .filter(g => !seenHighBytes.has(g));
-      if (missingGroups.length > 0) {
-        const missing = missingGroups.map(g => `0x${g.toString(16)}`).join(', ');
-        console.log(`[Relay] Missing groups [${missing}] — retrying subscriptions (attempt #${attempt})...`);
-        registerVTables(elodin).then(() => {
-          scheduleResubscribe(attempt + 1);
-        }).catch((e) => {
-          console.error('[Relay] Subscription retry failed:', e);
-          scheduleResubscribe(attempt + 1);
-        });
-      }
+      registerVTables(elodin).then(() => {
+        scheduleResubscribe(attempt + 1);
+      }).catch((e) => {
+        console.error('[Relay] Subscription retry failed:', e);
+        scheduleResubscribe(attempt + 1);
+      });
     }, 5000);
   }
 
   elodin.on('packet', (header, payload) => {
     if (header.ty === ElodinPacketType.TABLE) {
       tablePacketCount++;
-      seenHighBytes.add(header.packetId[0]);
-      // Cancel retry once all expected groups are delivering data
-      if (resubscribeTimer) {
-        const allGroups = [0x10, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31, 0x40, 0x41, 0x42];
-        if (allGroups.every(g => seenHighBytes.has(g))) {
-          clearTimeout(resubscribeTimer);
-          resubscribeTimer = null;
+      if (firstPacketLogged < 5 && header.packetId[0] !== 0x10) {
+        console.log(`[Relay] Verified data passing DB -> Relay: TABLE [0x${header.packetId[0].toString(16)}, 0x${header.packetId[1].toString(16)}] len=${payload.length}`);
+        firstPacketLogged++;
+      }
+      if (tablePacketCount % 10000 === 0) {
+        console.log(`[Relay] Forwarded ${tablePacketCount} TABLE packets stream from DB...`);
+      }
+
+      if (header.packetId[0] === 0x10 || header.packetId[1] === 0x10) {
+        heartbeatPacketCount++;
+        if (RELAY_DEBUG_HEARTBEAT) {
+          console.log(`[Relay] Heartbeat #${heartbeatPacketCount} board_id=${header.packetId[1]} payloadLen=${payload.length}`);
         }
       }
     }
@@ -128,13 +150,19 @@ function main(): void {
   });
 
   elodin.on('connected', () => {
-    console.log('[Relay] Elodin connected, sending VTableStream subscriptions...');
+    console.log('[Relay] Elodin connected, registering VTables and sending subscriptions...');
     tablePacketCount = 0;
     seenHighBytes.clear();
     if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
+    // Register CONTROLLER VTables so publish [0x43] from backend→relay→Elodin is accepted
+    registerControllerVTables(elodin).then((ok) => {
+      if (ok) console.log('[Relay] Controller VTables registered (CONTROLLER.state etc.)');
+    }).catch((e) => { console.error('[Relay] Controller VTable registration failed:', e); });
+    const actuatorMap = loadActuatorChannelToEntityMap();
+    registerActuatorCommandedVTables(elodin, actuatorMap).then((ok) => {
+      if (ok) console.log('[Relay] Actuator Commanded VTables registered');
+    }).catch((e) => { console.error('[Relay] Actuator Commanded VTable registration failed:', e); });
     // Use VTableStream (not Stream) so Elodin DB sends whole-row TABLE packets
-    // with original structured IDs [0x20, 0x01..0x1E] rather than per-component
-    // FNV-1a hash IDs that the backend cannot parse.
     registerVTables(elodin).then(() => {
       console.log('[Relay] VTableStream subscriptions sent; relaying TABLE packets to WebSocket clients.');
       scheduleResubscribe(2);
@@ -147,10 +175,19 @@ function main(): void {
   elodin.on('disconnected', () => {
     console.log('[Relay] Elodin disconnected');
     tablePacketCount = 0;
+    heartbeatPacketCount = 0;
     seenHighBytes.clear();
     if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
+    clearSubscriptionState();
   });
   elodin.on('error', () => { });
+
+  // Periodic diagnostic: if we get TABLE packets but no heartbeats, daq_bridge may not be publishing
+  setInterval(() => {
+    if (tablePacketCount > 100 && heartbeatPacketCount === 0 && !seenHighBytes.has(0x10)) {
+      console.warn(`[Relay] ⚠️ Received ${tablePacketCount} TABLE packets but 0 heartbeats (0x10) — is daq_bridge receiving UDP from boards and publishing to Elodin?`);
+    }
+  }, 15000);
 
   process.on('uncaughtException', (err) => {
     console.error('[Relay] Uncaught exception (keeping alive):', err);
@@ -159,13 +196,29 @@ function main(): void {
     console.error('[Relay] Unhandled rejection (keeping alive):', reason);
   });
 
-  elodin.connect().then((ok) => {
-    if (ok) console.log('[Relay] Connected to Elodin at ' + ELODIN_HOST + ':' + ELODIN_PORT);
-    else process.exit(1);
-  }).catch((e) => {
-    console.error('[Relay] Elodin connection failed:', e);
-    process.exit(1);
-  });
+  const CONNECT_RETRY_BASE_MS = 2000;
+  const CONNECT_RETRY_MAX_MS = 30000;
+  let connectAttempt = 0;
+
+  function connectWithRetry(): void {
+    connectAttempt++;
+    elodin.connect().then((ok) => {
+      if (ok) {
+        connectAttempt = 0;
+        console.log('[Relay] Connected to Elodin at ' + ELODIN_HOST + ':' + ELODIN_PORT);
+      } else {
+        const delay = Math.min(CONNECT_RETRY_BASE_MS * 2 ** (connectAttempt - 1), CONNECT_RETRY_MAX_MS);
+        console.warn(`[Relay] Elodin connect attempt #${connectAttempt} returned false — retrying in ${delay}ms`);
+        setTimeout(connectWithRetry, delay);
+      }
+    }).catch((e) => {
+      const delay = Math.min(CONNECT_RETRY_BASE_MS * 2 ** (connectAttempt - 1), CONNECT_RETRY_MAX_MS);
+      console.error(`[Relay] Elodin connection failed (attempt #${connectAttempt}) — retrying in ${delay}ms:`, e);
+      setTimeout(connectWithRetry, delay);
+    });
+  }
+
+  connectWithRetry();
 }
 
 main();

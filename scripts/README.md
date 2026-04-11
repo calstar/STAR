@@ -35,6 +35,11 @@ Python scripts for sensor calibration:
 - `test_calibration_system.py` - Test calibration system
 - `autonomous_calibration_engine.py` - Autonomous calibration engine
 
+### `postprocessing/` - Elodin DB Export & Analysis
+Export and analyze flight data from Elodin DB:
+- `README.md` - DB schema, packet IDs, downsampling (controller measurement 10%, calibrated 100 Hz)
+- `export_elodin_db.sh` - Export DB to parquet/CSV for analysis
+
 ### `tools/` - Utility Tools
 General-purpose utility scripts:
 - `channel_plotter.py` - Plot sensor channel data
@@ -84,6 +89,15 @@ python3 scripts/calibration/calibration_sequence.py
 
 # Start calibration GUI
 python3 scripts/calibration/smart_calibration_gui.py
+```
+
+### Postprocessing (Export Elodin DB)
+```bash
+# Export DB to parquet (default)
+./scripts/postprocessing/export_elodin_db.sh ~/.local/share/elodin/daq_20260307_174529 ./export
+
+# Export to CSV
+FORMAT=csv ./scripts/postprocessing/export_elodin_db.sh ~/.local/share/elodin/daq_20260307_174529 ./export
 ```
 
 ### Building C++ Tools

@@ -1,0 +1,1 @@
+After any big change run an integration test this found here: scripts/test/test_integration.sh

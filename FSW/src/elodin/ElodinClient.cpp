@@ -71,10 +71,15 @@ void ElodinClient::flush_buffer() {
     }
 }
 
+void ElodinClient::set_recv_timeout_ms(int timeout_ms) {
+    if (socket_)
+        socket_->set_recv_timeout_ms(timeout_ms);
+}
+
 bool ElodinClient::subscribe_stream() {
-    // MsgStream packet: 8-byte header + 2-byte Postcard payload ([hi, lo])
-    // packetId for MsgStream = FNV-1a("MsgStream") = [0x1d, 0x4a]
-    std::array<uint8_t, 2> msgstream_id = {0x1d, 0x4a};
+    // VTableStream packet: 8-byte header + 2-byte Postcard payload ([hi, lo])
+    // packetId for VTableStream = FNV-1a("VTableStream") = [0x11, 0x0d]
+    std::array<uint8_t, 2> msgstream_id = {0x11, 0x0d};
 
     auto subscribe = [&](uint8_t hi, uint8_t lo) {
         // Correct format: 8-byte header + 2-byte payload = 10 bytes total
@@ -93,22 +98,39 @@ bool ElodinClient::subscribe_stream() {
         send_msg(msgstream_id, data);
     };
 
-    // PT Raw (0x20, 0x01-0x0A)
-    for (uint8_t ch = 1; ch <= 10; ++ch)
-        subscribe(0x20, ch);
-    // PT Calibrated (0x20, 0x11-0x1A)
-    for (uint8_t ch = 0x11; ch <= 0x1A; ++ch)
-        subscribe(0x20, ch);
-    // TC Raw and Cal
-    for (uint8_t ch = 1; ch <= 4; ++ch)
-        subscribe(0x21, ch);
-    for (uint8_t ch = 0x11; ch <= 0x14; ++ch)
-        subscribe(0x21, ch);
-    // RTD Raw and Cal
-    for (uint8_t ch = 1; ch <= 4; ++ch)
-        subscribe(0x22, ch);
-    for (uint8_t ch = 0x11; ch <= 0x14; ++ch)
-        subscribe(0x22, ch);
+    // Subscribe to RAW sensor VTables using board-namespaced 32-slot blocks.
+    // Each board gets a 32-slot block: raw channels at (board_number-1)*0x20 + 1..10
+    // Subscribe to boards 1-8 for each sensor type to cover all possible boards.
+    const uint8_t sensor_types[] = {0x20, 0x21, 0x22, 0x23, 0x24, 0x30};
+    for (uint8_t type_hi : sensor_types) {
+        for (int bn = 1; bn <= 8; ++bn) {
+            uint8_t base = static_cast<uint8_t>((bn - 1) * 0x20);
+            for (uint8_t ch = 1; ch <= 10; ++ch)
+                subscribe(type_hi, static_cast<uint8_t>(base + ch));
+        }
+    }
+
+    // Calibration commands from backend GUI -> calibration_service.
+    subscribe(0x46, 0x00);
+
+    return true;
+}
+
+bool ElodinClient::subscribe_tables(const std::vector<std::pair<uint8_t, uint8_t>>& table_ids) {
+    std::array<uint8_t, 2> msgstream_id = {0x11, 0x0d};
+
+    for (const auto& [hi, lo] : table_ids) {
+        std::vector<uint8_t> data(10, 0x00);
+        uint32_t len = 2 + 4;
+        std::memcpy(data.data(), &len, 4);
+        data[4] = static_cast<uint8_t>(fsw::elodin::PacketType::MSG);
+        data[5] = msgstream_id[0];
+        data[6] = msgstream_id[1];
+        data[7] = 0x00;
+        data[8] = hi;
+        data[9] = lo;
+        send_msg(msgstream_id, data);
+    }
 
     return true;
 }
@@ -175,6 +197,9 @@ ssize_t ElodinClient::read_packet(uint8_t* packet_buffer, size_t max_len) {
     // Read packet header (8 bytes)
     if (!socket_->read_exact(packet_buffer, 8)) {
         last_error_ = socket_->last_error();
+        // SO_RCVTIMEO fired — yield without treating as a connection error
+        if (last_error_ == "TIMEOUT")
+            return 0;
         return -1;
     }
 

@@ -4,21 +4,21 @@ This directory contains GitHub Actions workflows for continuous integration and 
 
 ## Workflows
 
-### `ci.yml` - Main CI Pipeline
+### `ci.yml` - Single CI pipeline
 
-Comprehensive CI pipeline that runs on every push and pull request:
+One workflow run per push/PR (no separate Actions for the same event). Jobs include:
 
-1. **Format Check** - Ensures code follows formatting standards
-2. **Build** - Builds with multiple compilers (GCC 12, Clang 15) and configurations (Debug, Release)
-3. **Static Analysis** - Runs cppcheck and clang-tidy
-4. **Code Quality** - Checks for TODOs, large files, and other quality issues
-5. **Security Scan** - Scans for security vulnerabilities and unsafe code patterns
-6. **Tests** - Runs CTest, Python tests, and integration tests
-7. **Build Summary** - Provides a summary of all job results
+1. **Format Check** — `./format.sh --check` (clang-format)
+2. **Web GUI** — `npm run test` and `npm run test:build` in `web-gui/frontend`
+3. **Build** — GCC 12 and Clang 18, **Release** only; Clang uses GCC 12’s libstdc++ in CI to avoid libstdc++ 14 + C++20 `<format>` breakage
+4. **Static Analysis** — cppcheck and clang-tidy
+5. **Code Quality** — TODOs, large files, etc.
+6. **Security Scan** — semgrep, secret patterns, unsafe C APIs
+7. **Tests** — CTest, sequencer test, Python tests
+8. **Integration Test** — scripted integration (Rust elodin-db, backend, etc.)
+9. **Build Summary** — table of all job results
 
-### `pre-commit.yml` - Pre-commit Checks
-
-Runs pre-commit hooks to catch issues before code is merged.
+Optional locally: [pre-commit](https://pre-commit.com/) (`.pre-commit-config.yaml`) — not run in CI.
 
 ## Setup
 
@@ -56,8 +56,8 @@ pre-commit run --all-files
 ### Build Matrix
 
 The CI builds with:
-- **Compilers**: GCC 12, Clang 15
-- **Build Types**: Debug, Release
+- **Compilers**: GCC 12, Clang 18 (with libstdc++ pinned to GCC 12 in Actions)
+- **Build type (CI)**: Release only
 - **C++ Standard**: C++20
 
 ### Artifacts

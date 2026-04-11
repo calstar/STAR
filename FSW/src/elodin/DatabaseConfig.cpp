@@ -1,7 +1,6 @@
 #include "elodin/DatabaseConfig.hpp"
 
 #include <iostream>
-#include <map>
 #include <string>
 
 #include "db.hpp"  // utl/db.hpp — VTable builder, Msg, postcard encoding
@@ -69,8 +68,8 @@ static bool register_raw_sensor_vtable(
 //   cal_status
 static bool register_calibrated_vtable(
     ElodinClient& client,
-    uint8_t type_hi,     // high byte (0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC)
-    uint8_t channel_id,  // 1-based
+    uint8_t type_hi,  // high byte (0x20=PT, 0x21=TC, 0x22=RTD, 0x23=LC)
+    uint8_t pkt_lo,   // full low byte for packet ID (already includes board offset + 0x10)
     uint64_t entity_id, const std::string& entity_name,
     const std::string& cal_field_name,  // "pressure_psi", "temperature_c", "force_lbf"
     const std::string& raw_field_name   // "raw_adc", "raw_resistance"
@@ -86,8 +85,7 @@ static bool register_calibrated_vtable(
         raw_field(20, 1, schema(PrimType::U8(), {}, component(prefix + "cal_status"))),
     });
 
-    uint8_t lo = static_cast<uint8_t>(0x10 + channel_id);
-    if (!send_msg(client, VTableMsg{.id = {type_hi, lo}, .vtable = vt})) {
+    if (!send_msg(client, VTableMsg{.id = {type_hi, pkt_lo}, .vtable = vt})) {
         std::cerr << "[DatabaseConfig] ❌ Calibrated VTable failed: " << entity_name << std::endl;
         return false;
     }
@@ -134,63 +132,98 @@ static bool register_actuator_state_vtable(ElodinClient& client, uint8_t type_hi
 // ════════════════════════════════════════════════════════════════════════════
 
 bool DatabaseConfig::register_tables(ElodinClient& client,
-                                     const std::map<int, std::string>* pt_channel_to_name,
-                                     const std::map<int, std::string>* act_channel_to_name) {
-    std::cout << "[DatabaseConfig] Registering RAW VTables (config-driven)..." << std::endl;
+                                     const std::vector<BoardChannels>& pt_boards,
+                                     const std::vector<BoardChannels>& act_boards,
+                                     const std::vector<BoardChannels>& tc_boards,
+                                     const std::vector<BoardChannels>& rtd_boards,
+                                     const std::vector<BoardChannels>& lc_boards,
+                                     const std::vector<BoardChannels>& enc_boards) {
+    std::cout << "[DatabaseConfig] Registering RAW VTables (board-namespaced)..." << std::endl;
     int registered = 0;
+    int pt_count = 0, act_count = 0, tc_count = 0, rtd_count = 0, lc_count = 0, enc_count = 0;
 
-    // ── PT Raw: only register channels that exist in config ────────────────
-    if (pt_channel_to_name && !pt_channel_to_name->empty()) {
-        for (const auto& [ch, name] : *pt_channel_to_name) {
-            std::string entity = "PT." + name;
-            uint64_t eid = 0x2000 + ch;
-            if (register_raw_sensor_vtable(client, 0x20, ch, eid, entity, "raw_adc_counts"))
+    for (const auto& board : pt_boards) {
+        for (uint8_t ch : board.channels) {
+            std::string entity =
+                "PT" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
+            uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
+            uint64_t entity_id = (static_cast<uint64_t>(0x20) << 8) | lo;
+            if (register_raw_sensor_vtable(client, 0x20, lo, entity_id, entity, "raw_adc_counts")) {
                 registered++;
+                pt_count++;
+            }
         }
-    } else {
-        std::cerr << "[DatabaseConfig] ⚠️  No PT sensor roles in config — no PT VTables registered"
-                  << std::endl;
     }
 
-    // ── Actuator Raw: only register channels that exist in config ──────────
-    if (act_channel_to_name && !act_channel_to_name->empty()) {
-        for (const auto& [ch, name] : *act_channel_to_name) {
-            std::string entity = "ACT." + name;
-            uint64_t eid = 0x3000 + ch;
-            if (register_raw_sensor_vtable(client, 0x30, ch, eid, entity, "raw_adc_counts"))
+    for (const auto& board : act_boards) {
+        for (uint8_t ch : board.channels) {
+            std::string entity =
+                "ACT" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
+            uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
+            uint64_t entity_id = (static_cast<uint64_t>(0x30) << 8) | lo;
+            if (register_raw_sensor_vtable(client, 0x30, lo, entity_id, entity, "raw_adc_counts")) {
                 registered++;
-            // Actuator state (0=closed, 1=open) — packet_id [0x31, ch]
-            if (register_actuator_state_vtable(client, 0x31, ch, 0x3100 + ch, entity))
-                registered++;
+                act_count++;
+            }
         }
-    } else {
-        std::cerr << "[DatabaseConfig] ⚠️  No actuator roles in config — no ACT VTables registered"
-                  << std::endl;
     }
 
-    // TC Raw: channels 1-20, generic names (no named roles in config yet)
-    for (int ch = 1; ch <= 20; ch++) {
-        std::string entity = "TC.CH" + std::to_string(ch);
-        if (register_raw_sensor_vtable(client, 0x21, ch, 0x2100 + ch, entity, "raw_adc_counts"))
-            registered++;
+    for (const auto& board : tc_boards) {
+        for (uint8_t ch : board.channels) {
+            std::string entity =
+                "TC" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
+            uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
+            uint64_t entity_id = (static_cast<uint64_t>(0x21) << 8) | lo;
+            if (register_raw_sensor_vtable(client, 0x21, lo, entity_id, entity, "raw_adc_counts")) {
+                registered++;
+                tc_count++;
+            }
+        }
     }
 
-    // RTD Raw: channels 1-20
-    for (int ch = 1; ch <= 20; ch++) {
-        std::string entity = "RTD.CH" + std::to_string(ch);
-        if (register_raw_sensor_vtable(client, 0x22, ch, 0x2200 + ch, entity,
-                                       "raw_resistance_counts"))
-            registered++;
+    for (const auto& board : rtd_boards) {
+        for (uint8_t ch : board.channels) {
+            std::string entity =
+                "RTD" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
+            uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
+            uint64_t entity_id = (static_cast<uint64_t>(0x22) << 8) | lo;
+            if (register_raw_sensor_vtable(client, 0x22, lo, entity_id, entity,
+                                           "raw_resistance_counts")) {
+                registered++;
+                rtd_count++;
+            }
+        }
     }
 
-    // LC Raw: channels 1-20
-    for (int ch = 1; ch <= 20; ch++) {
-        std::string entity = "LC.CH" + std::to_string(ch);
-        if (register_raw_sensor_vtable(client, 0x23, ch, 0x2300 + ch, entity, "raw_adc_counts"))
-            registered++;
+    for (const auto& board : lc_boards) {
+        for (uint8_t ch : board.channels) {
+            std::string entity =
+                "LC" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
+            uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
+            uint64_t entity_id = (static_cast<uint64_t>(0x23) << 8) | lo;
+            if (register_raw_sensor_vtable(client, 0x23, lo, entity_id, entity, "raw_adc_counts")) {
+                registered++;
+                lc_count++;
+            }
+        }
     }
 
-    std::cout << "[DatabaseConfig] ✅ Registered " << registered << " RAW VTables" << std::endl;
+    for (const auto& board : enc_boards) {
+        for (uint8_t ch : board.channels) {
+            std::string entity =
+                "ENC" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
+            uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
+            uint64_t entity_id = (static_cast<uint64_t>(0x24) << 8) | lo;
+            if (register_raw_sensor_vtable(client, 0x24, lo, entity_id, entity, "raw_angle")) {
+                registered++;
+                enc_count++;
+            }
+        }
+    }
+
+    std::cout << "[DatabaseConfig] ✅ Registered " << registered << " RAW VTables (" << pt_count
+              << " PT, " << act_count << " ACT, " << tc_count << " TC, " << rtd_count << " RTD, "
+              << lc_count << " LC, " << enc_count << " ENC)" << std::endl;
     return registered > 0;
 }
 
@@ -198,45 +231,87 @@ bool DatabaseConfig::register_tables(ElodinClient& client,
 // PUBLIC API — CALIBRATED VTables only (for calibration_service)
 // ════════════════════════════════════════════════════════════════════════════
 
-bool DatabaseConfig::register_calibrated_tables(
-    ElodinClient& client, const std::map<int, std::string>* pt_channel_to_name) {
+bool DatabaseConfig::register_calibrated_tables(ElodinClient& client,
+                                                const std::vector<BoardChannels>& pt_boards,
+                                                const std::vector<BoardChannels>& tc_boards,
+                                                const std::vector<BoardChannels>& rtd_boards,
+                                                const std::vector<BoardChannels>& lc_boards,
+                                                const std::vector<BoardChannels>& enc_boards,
+                                                const std::vector<BoardChannels>& act_boards) {
     std::cout << "[DatabaseConfig] Registering CALIBRATED VTables..." << std::endl;
     int registered = 0;
 
-    // ── PT Calibrated: only register channels that exist in config ─────────
-    if (pt_channel_to_name && !pt_channel_to_name->empty()) {
-        for (const auto& [ch, name] : *pt_channel_to_name) {
-            std::string entity = "PT_Cal." + name;
-            uint64_t eid = 0x2010 + ch;
-            if (register_calibrated_vtable(client, 0x20, ch, eid, entity, "pressure_psi",
+    for (const auto& board : pt_boards) {
+        for (uint8_t ch : board.channels) {
+            std::string entity =
+                "PT" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
+            uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + 0x10 + ch);
+            uint64_t entity_id = (static_cast<uint64_t>(0x20) << 8) | lo;
+            if (register_calibrated_vtable(client, 0x20, lo, entity_id, entity, "pressure_psi",
                                            "raw_adc"))
                 registered++;
         }
     }
 
-    // RTD Calibrated (Pt100 temperature): channels 1-20
-    for (int ch = 1; ch <= 20; ch++) {
-        std::string entity = "RTD_Cal.CH" + std::to_string(ch);
-        uint64_t eid = 0x2210 + static_cast<uint64_t>(ch);
-        if (register_calibrated_vtable(client, 0x22, ch, eid, entity, "temperature_c",
-                                       "raw_resistance"))
-            registered++;
+    for (const auto& board : tc_boards) {
+        for (uint8_t ch : board.channels) {
+            std::string entity =
+                "TC" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
+            uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + 0x10 + ch);
+            uint64_t entity_id = (static_cast<uint64_t>(0x21) << 8) | lo;
+            if (register_calibrated_vtable(client, 0x21, lo, entity_id, entity, "temperature_c",
+                                           "raw_adc"))
+                registered++;
+        }
     }
 
-    // TC Calibrated: channels 1-20
-    for (int ch = 1; ch <= 20; ch++) {
-        std::string entity = "TC_Cal.CH" + std::to_string(ch);
-        uint64_t eid = 0x2110 + static_cast<uint64_t>(ch);
-        if (register_calibrated_vtable(client, 0x21, ch, eid, entity, "temperature_c", "raw_adc"))
-            registered++;
+    for (const auto& board : rtd_boards) {
+        for (uint8_t ch : board.channels) {
+            std::string entity =
+                "RTD" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
+            uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + 0x10 + ch);
+            uint64_t entity_id = (static_cast<uint64_t>(0x22) << 8) | lo;
+            if (register_calibrated_vtable(client, 0x22, lo, entity_id, entity, "temperature_c",
+                                           "raw_resistance"))
+                registered++;
+        }
     }
 
-    // LC Calibrated: channels 1-20
-    for (int ch = 1; ch <= 20; ch++) {
-        std::string entity = "LC_Cal.CH" + std::to_string(ch);
-        uint64_t eid = 0x2310 + static_cast<uint64_t>(ch);
-        if (register_calibrated_vtable(client, 0x23, ch, eid, entity, "force_n", "raw_adc"))
-            registered++;
+    for (const auto& board : lc_boards) {
+        for (uint8_t ch : board.channels) {
+            std::string entity =
+                "LC" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
+            uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + 0x10 + ch);
+            uint64_t entity_id = (static_cast<uint64_t>(0x23) << 8) | lo;
+            if (register_calibrated_vtable(client, 0x23, lo, entity_id, entity, "force_kg",
+                                           "raw_adc"))
+                registered++;
+        }
+    }
+
+    for (const auto& board : enc_boards) {
+        for (uint8_t ch : board.channels) {
+            std::string entity =
+                "ENC" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
+            uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + 0x10 + ch);
+            uint64_t entity_id = (static_cast<uint64_t>(0x24) << 8) | lo;
+            if (register_calibrated_vtable(client, 0x24, lo, entity_id, entity, "position_deg",
+                                           "raw_adc"))
+                registered++;
+        }
+    }
+
+    // Actuators use 0x31 for calibrated (separate type byte to avoid collision with raw 0x30)
+    for (const auto& board : act_boards) {
+        for (uint8_t ch : board.channels) {
+            std::string entity =
+                "ACT" + std::to_string(board.board_number) + "_Cal.CH" + std::to_string(ch);
+            uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + 0x10 + ch);
+            uint64_t entity_id = (static_cast<uint64_t>(0x31) << 8) | lo;
+            if (register_calibrated_vtable(client, 0x31, lo, entity_id, entity, "current_a",
+                                           "raw_adc"))
+                registered++;
+        }
     }
 
     std::cout << "[DatabaseConfig] ✅ Registered " << registered << " CALIBRATED VTables"
@@ -248,15 +323,16 @@ bool DatabaseConfig::register_calibrated_tables(
 // PUBLIC API — BOARD HEARTBEAT VTables
 // ════════════════════════════════════════════════════════════════════════════
 
-bool DatabaseConfig::register_heartbeat_tables(ElodinClient& client, uint8_t max_board_id) {
-    std::cout << "[DatabaseConfig] Registering BOARD_HEARTBEAT VTables (boards 1-"
-              << (int)max_board_id << ")..." << std::endl;
+bool DatabaseConfig::register_heartbeat_tables(ElodinClient& client,
+                                               const std::vector<uint8_t>& board_ids) {
+    std::cout << "[DatabaseConfig] Registering BOARD_HEARTBEAT VTables (" << board_ids.size()
+              << " boards)..." << std::endl;
     int registered = 0;
 
     // Board heartbeat layout (16 bytes, no padding required):
     //   u64 timestamp_ns (0,8) | u8 board_id (8) | u8 board_type (9)
     //   u8 engine_state (10)   | u8 board_state (11) | u32 packet_ts_ms (12,4)
-    for (uint8_t board_id = 1; board_id <= max_board_id; board_id++) {
+    for (uint8_t board_id : board_ids) {
         std::string entity = "BOARD.HB_" + std::to_string(board_id);
         std::string prefix = entity + ".";
 
@@ -290,14 +366,139 @@ bool DatabaseConfig::register_heartbeat_tables(ElodinClient& client, uint8_t max
     return registered > 0;
 }
 
-bool DatabaseConfig::register_tables_from_config(ElodinClient& client,
-                                                 const std::string& /* config_path */) {
-    return register_tables(client, nullptr, nullptr);
+static bool register_self_test_vtable(ElodinClient& client, uint8_t board_id) {
+    std::string entity = "SELF_TEST.BOARD_" + std::to_string(board_id);
+    std::string prefix = entity + ".";
+
+    auto vt = builder::vtable({
+        raw_field(0, 8, schema(PrimType::U64(), {}, component(prefix + "timestamp_ns"))),
+        raw_field(8, 1, schema(PrimType::U8(), {}, component(prefix + "sensor_id"))),
+        raw_field(9, 1, schema(PrimType::U8(), {}, component(prefix + "result"))),
+    });
+
+    uint64_t entity_id = 0x6000 + board_id;
+    if (!send_msg(client, VTableMsg{.id = {0x60, board_id}, .vtable = vt}))
+        return false;
+
+    send_msg(client, set_component_name(prefix + "timestamp_ns"));
+    send_msg(client, set_component_name(prefix + "sensor_id"));
+    send_msg(client, set_component_name(prefix + "result"));
+    send_msg(client, set_entity_name(entity_id, entity));
+    return true;
 }
 
-bool DatabaseConfig::register_non_sensor_tables(ElodinClient& /* client */) {
-    // Placeholder for navigation, engine control, etc.
+bool DatabaseConfig::register_self_test_tables(ElodinClient& client,
+                                               const std::vector<uint8_t>& board_ids) {
+    std::cout << "[DatabaseConfig] Registering SELF_TEST VTables (" << board_ids.size()
+              << " boards)..." << std::endl;
+    int registered = 0;
+    for (uint8_t board_id : board_ids) {
+        if (register_self_test_vtable(client, board_id)) {
+            registered++;
+        }
+    }
+    std::cout << "[DatabaseConfig] ✅ Registered " << registered << " SELF_TEST VTables"
+              << std::endl;
+    return registered > 0;
+}
+
+// ── Helper: register Sequencer tables ──────────────
+static bool register_sequencer_vtable(ElodinClient& client) {
+    // SequencerState: u64@0 + u8@8 + 3-byte hole + u32@12 + u8@16 = 17 bytes (u32 4-aligned like
+    // sensor rows)
+    auto vt1 = builder::vtable({
+        raw_field(0, 8, schema(PrimType::U64(), {}, component("SEQUENCER.state.timestamp_ns"))),
+        raw_field(8, 1, schema(PrimType::U8(), {}, component("SEQUENCER.state.current_state"))),
+        raw_field(12, 4, schema(PrimType::U32(), {}, component("SEQUENCER.state.allowed_bitmask"))),
+        raw_field(16, 1, schema(PrimType::U8(), {}, component("SEQUENCER.state.debug_mode"))),
+    });
+    if (!send_msg(client, VTableMsg{.id = {0x50, 0x00}, .vtable = vt1}))
+        return false;
+    send_msg(client, set_component_name("SEQUENCER.state.timestamp_ns"));
+    send_msg(client, set_component_name("SEQUENCER.state.current_state"));
+    send_msg(client, set_component_name("SEQUENCER.state.allowed_bitmask"));
+    send_msg(client, set_component_name("SEQUENCER.state.debug_mode"));
+    send_msg(client, set_entity_name(0x5000, "SEQUENCER.state"));
+
+    // StateTransition: U64+U8+U8+U8 (11 bytes)
+    auto vt2 = builder::vtable({
+        raw_field(0, 8, schema(PrimType::U64(), {}, component("CONTROLLER.state.timestamp_ns"))),
+        raw_field(8, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.from_state"))),
+        raw_field(9, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.to_state"))),
+        raw_field(10, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.reason"))),
+    });
+    if (!send_msg(client, VTableMsg{.id = {0x43, 0x00}, .vtable = vt2}))
+        return false;
+    send_msg(client, set_component_name("CONTROLLER.state.timestamp_ns"));
+    send_msg(client, set_component_name("CONTROLLER.state.from_state"));
+    send_msg(client, set_component_name("CONTROLLER.state.to_state"));
+    send_msg(client, set_component_name("CONTROLLER.state.reason"));
+    send_msg(client, set_entity_name(0x4300, "CONTROLLER.state"));
+
     return true;
+}
+
+static bool register_calibration_command_vtable(ElodinClient& client) {
+    // CalibrationCommand: u64 timestamp_ns | u8 type | u8 sensor_id | u16 pad | f32 reference_value
+    auto vt = builder::vtable({
+        raw_field(0, 8, schema(PrimType::U64(), {}, component("CALIBRATION.command.timestamp_ns"))),
+        raw_field(8, 1, schema(PrimType::U8(), {}, component("CALIBRATION.command.type"))),
+        raw_field(9, 1, schema(PrimType::U8(), {}, component("CALIBRATION.command.sensor_id"))),
+        raw_field(12, 4,
+                  schema(PrimType::F32(), {}, component("CALIBRATION.command.reference_value"))),
+    });
+    if (!send_msg(client, VTableMsg{.id = {0x46, 0x00}, .vtable = vt}))
+        return false;
+    send_msg(client, set_component_name("CALIBRATION.command.timestamp_ns"));
+    send_msg(client, set_component_name("CALIBRATION.command.type"));
+    send_msg(client, set_component_name("CALIBRATION.command.sensor_id"));
+    send_msg(client, set_component_name("CALIBRATION.command.reference_value"));
+    send_msg(client, set_entity_name(0x4600, "CALIBRATION.command"));
+    return true;
+}
+
+bool DatabaseConfig::register_non_sensor_tables(ElodinClient& client,
+                                                const std::vector<BoardChannels>& act_boards) {
+    bool ok = true;
+    if (!register_sequencer_vtable(client))
+        ok = false;
+    if (!register_calibration_command_vtable(client))
+        ok = false;
+
+    // Register actuator commanded state VTables [0x32, (board_number-1)*0x20 + ch]
+    int act_cmd_count = 0;
+    if (!act_boards.empty()) {
+        for (const auto& board : act_boards) {
+            for (uint8_t ch : board.channels) {
+                uint8_t lo = static_cast<uint8_t>((board.board_number - 1) * 0x20 + ch);
+                std::string entity_name =
+                    "ACT_CMD.B" + std::to_string(board.board_number) + ".CH" + std::to_string(ch);
+                uint64_t entity_id = (static_cast<uint64_t>(0x32) << 8) | lo;
+                if (register_actuator_state_vtable(client, 0x32, lo, entity_id, entity_name))
+                    act_cmd_count++;
+            }
+        }
+    } else {
+        // Fallback: register for 4 boards x 10 channels when no board info available
+        for (int bn = 1; bn <= 4; ++bn) {
+            for (int ch = 1; ch <= 10; ++ch) {
+                uint8_t lo = static_cast<uint8_t>((bn - 1) * 0x20 + ch);
+                std::string entity_name =
+                    "ACT_CMD.B" + std::to_string(bn) + ".CH" + std::to_string(ch);
+                uint64_t entity_id = (static_cast<uint64_t>(0x32) << 8) | lo;
+                if (register_actuator_state_vtable(client, 0x32, lo, entity_id, entity_name))
+                    act_cmd_count++;
+            }
+        }
+    }
+    if (act_cmd_count > 0)
+        std::cout << "[DatabaseConfig] ✅ Registered " << act_cmd_count
+                  << " actuator commanded VTables [0x32]" << std::endl;
+
+    if (ok) {
+        std::cout << "[DatabaseConfig] ✅ Registered Sequencer/Controller VTables" << std::endl;
+    }
+    return ok;
 }
 
 }  // namespace elodin

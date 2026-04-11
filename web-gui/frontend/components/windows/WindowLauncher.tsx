@@ -55,6 +55,7 @@ export default function WindowLauncher() {
 
   const multiEntries: WindowButtonProps[] = [
     { id: 'ipad', name: 'iPad View', description: 'Scrollable layout for iPad Air', url: '/window/ipad', accent: '#8B5CF6' },
+    { id: 'livestream', name: 'Livestream Stats', description: 'Broadcast pane with state, mission timer, and selectable PT dials', url: '/window/livestream', accent: '#38BDF8' },
     { id: 'fuel', name: 'FUEL', description: 'Upstream / downstream pressure & actuators', url: '/window/fuel', accent: '#3498DB' },
     { id: 'lox', name: 'LOX', description: 'Oxidizer pressure & actuators', url: '/window/lox', accent: '#E74C3C' },
     { id: 'chamber', name: 'Chamber', description: 'PT / TC / LC Measurements in one pane', url: '/window/chamber', accent: '#F97316' },
@@ -62,12 +63,16 @@ export default function WindowLauncher() {
     { id: 'gse', name: 'GSE', description: 'Ground support equipment pressures', url: '/window/gse', accent: '#F39C12' },
     { id: 'status', name: 'Status', description: 'Tabular real-time sensor values', url: '/window/status', accent: '#34D399' },
     { id: 'boards', name: 'Boards / Heartbeats', description: 'Discovered boards and heartbeat status', url: '/window/boards', accent: '#10B981' },
+    { id: 'self-tests', name: 'Board Self Tests', description: 'Detailed breakdowns for diagnostics passed/failed per hotfire frame', url: '/window/self-tests', accent: '#A855F7' },
+    { id: 'flash', name: 'Ethernet OTA Flash', description: 'Flash firmware to boards over Ethernet', url: '/window/flash', accent: '#06B6D4' },
     { id: 'config', name: 'Config', description: 'System & board configuration editor', url: '/window/config', accent: '#FBBF24' },
     { id: 'controller', name: 'Controller', description: 'PWM duty cycle & valve states', url: '/window/controller', accent: '#F87171' },
     { id: 'calibration', name: 'Calibration', description: 'RLS + GLR drift · Bayesian auto-recal', url: '/window/calibration', accent: '#A3E635' },
     { id: 'lcs-tcs-rtd', name: 'LCS / TCS / RTD', description: 'Thermocouples, RTDs, load cell — voltage and temperature', url: '/window/lcs-tcs-rtd', accent: '#F59E0B' },
     { id: 'sensor-info', name: 'Sensor Info', description: 'ADC code · converted value · data rate per channel', url: '/window/sensor-info', accent: '#22D3EE' },
     { id: 'solenoid-char', name: 'Solenoid Characterization', description: 'PWM duty cycle & frequency for solenoid performance', url: '/window/solenoid-char', accent: '#F59E0B' },
+    { id: 'encoders', name: 'Encoders', description: 'Encoder board angles and connection status', url: '/window/encoders', accent: '#7C3AED' },
+    { id: 'feed-char', name: 'Feed System Char', description: 'CdA, MDOT, Reynolds Number characterization', url: '/window/feed-char', accent: '#3B82F6' },
   ];
 
   return (

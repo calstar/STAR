@@ -209,7 +209,7 @@ bool TCPClient::read_exact(void* buffer, size_t len) {
         return false;
     }
 
-    // Match external FSW Socket::read() - reads exactly len bytes (blocking)
+    // Read exactly len bytes (blocking)
     uint8_t* ptr = static_cast<uint8_t*>(buffer);
     size_t remaining = len;
 
@@ -218,6 +218,10 @@ bool TCPClient::read_exact(void* buffer, size_t len) {
         if (r < 0) {
             if (errno == EINTR) {
                 continue;  // Retry on interrupt
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                last_error_ = "TIMEOUT";
+                return false;
             }
             last_error_ = "Read failed: " + std::string(strerror(errno));
             return false;
@@ -230,6 +234,15 @@ bool TCPClient::read_exact(void* buffer, size_t len) {
     }
 
     return true;
+}
+
+void TCPClient::set_recv_timeout_ms(int timeout_ms) {
+    if (socket_fd_ < 0)
+        return;
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    setsockopt(socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 }
 
 }  // namespace transport

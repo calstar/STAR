@@ -5,7 +5,8 @@
 #include <cstdint>
 #include <map>
 
-#include "../../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
+#include "DiabloEnums.h"
+#include "DiabloPackets.h"
 #include "elodin/ElodinClient.hpp"
 
 namespace fsw {
@@ -33,20 +34,20 @@ public:
     /**
      * @brief Process one BOARD_HEARTBEAT and publish to Elodin.
      *
-     * @param hb             Parsed heartbeat (must be valid).
+     * @param header     Parsed packet header (for timestamp).
+     * @param heartbeat  Parsed heartbeat body (DAQv2: firmware hash + id + states; no board_type on
+     * wire).
+     * @param board_type_wire  Legacy wire enum byte for Elodin (from config when known, else 0).
      * @param receive_ts_ns  Monotonic receive timestamp (nanoseconds).
-     * @return BoardEvent indicating whether a reconnect or Setup re-entry was detected.
      */
-    BoardEvent process_heartbeat(
-        const daq_comms::protocol::DiabloBoardPacketParser::ParsedBoardHeartbeat& hb,
-        uint64_t receive_ts_ns);
+    BoardEvent process_heartbeat(const Diablo::PacketHeader& header,
+                                 const Diablo::BoardHeartbeatPacket& heartbeat,
+                                 uint8_t board_type_wire, uint64_t receive_ts_ns);
 
 private:
-    using BoardState = daq_comms::protocol::DiabloBoardPacketParser::BoardState;
-
     struct PerBoardState {
         std::chrono::steady_clock::time_point last_seen;
-        BoardState last_board_state = BoardState::SETUP;
+        Diablo::BoardState last_board_state = Diablo::BoardState::SETUP;
         bool seen_before = false;
     };
 

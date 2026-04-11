@@ -57,27 +57,33 @@ export function getEntityColor(entity: string): string {
 
 // Order and colors aligned with femboy for consistent calibrated values across plots
 export const PRESSURE_SENSORS = [
-  { label: 'GN2 High', entity: 'PT_Cal.GN2_High', component: 'pressure_psi' as const, color: '#ADFF2F', nop: 900, meop: 950 },
-  { label: 'GN2 Regulated', entity: 'PT_Cal.GN2_Regulated', component: 'pressure_psi' as const, color: '#228B22', nop: 900, meop: 950 },
-  { label: 'Fuel Upstream', entity: 'PT_Cal.Fuel_Upstream', component: 'pressure_psi' as const, color: '#FF4500', nop: 600, meop: 650 },
-  { label: 'Fuel Downstream', entity: 'PT_Cal.Fuel_Downstream', component: 'pressure_psi' as const, color: '#CC0000', nop: 600, meop: 650 },
-  { label: 'LOX Upstream', entity: 'PT_Cal.Ox_Upstream', component: 'pressure_psi' as const, color: '#38BDF8', nop: 600, meop: 650 },
-  { label: 'LOX Downstream', entity: 'PT_Cal.Ox_Downstream', component: 'pressure_psi' as const, color: '#4169E1', nop: 600, meop: 650 },
-  { label: 'GSE Low', entity: 'PT_Cal.GSE_Low', component: 'pressure_psi' as const, color: '#D8B4FE', nop: 500, meop: 700 },
-  { label: 'GSE MID', entity: 'PT_Cal.GSE_Mid', component: 'pressure_psi' as const, color: '#C026D3', nop: 4000, meop: 4500 },
-  { label: 'GSE High', entity: 'PT_Cal.GSE_High', component: 'pressure_psi' as const, color: '#7B2FBE', nop: 500, meop: 700 },
-  { label: 'Chamber', entity: 'PT_Cal.Chamber_Mid_PT_1', component: 'pressure_psi' as const, color: '#F97316', nop: 500, meop: 650, avgEntities: ['PT_Cal.Chamber_Mid_PT_1', 'PT_Cal.Chamber_Mid_PT_2'] },
+  { label: 'GN2 High', entity: 'PT1_Cal.CH9', component: 'pressure_psi' as const, color: '#ADFF2F', nop: 900, meop: 950 },
+  { label: 'GN2 Regulated', entity: 'PT1_Cal.CH6', component: 'pressure_psi' as const, color: '#228B22', nop: 900, meop: 950 },
+  { label: 'Fuel Upstream', entity: 'PT1_Cal.CH1', component: 'pressure_psi' as const, color: '#FF4500', nop: 600, meop: 650 },
+  { label: 'Fuel Downstream', entity: 'PT1_Cal.CH3', component: 'pressure_psi' as const, color: '#CC0000', nop: 600, meop: 650 },
+  { label: 'LOX Upstream', entity: 'PT1_Cal.CH5', component: 'pressure_psi' as const, color: '#38BDF8', nop: 600, meop: 650 },
+  { label: 'LOX Downstream', entity: 'PT1_Cal.CH7', component: 'pressure_psi' as const, color: '#4169E1', nop: 600, meop: 650 },
+  { label: 'GSE Low', entity: 'PT1_Cal.CH2', component: 'pressure_psi' as const, color: '#D8B4FE', nop: 500, meop: 700 },
+  { label: 'GSE MID', entity: 'PT1_Cal.CH8', component: 'pressure_psi' as const, color: '#C026D3', nop: 4000, meop: 4500 },
+  { label: 'GSE High', entity: 'PT1_Cal.CH10', component: 'pressure_psi' as const, color: '#7B2FBE', nop: 500, meop: 700 },
+  // Fallback strip only — prefer buildPressureBarDefsFromSensorConfig for dashboard alignment.
+  { label: 'Chamber', entity: 'PT1_Cal.CH4', component: 'pressure_psi' as const, color: '#F97316', nop: 500, meop: 650 },
 ] as const;
 
-/** For TopBar / compact lists: label + entity + color (and nop/meop where needed). avgEntities = average these for display. */
+/** For TopBar fallback only — prefer buildPressureBarDefsFromSensorConfig when sensor-config has loaded. */
 export const PRESSURE_BAR_SENSORS = PRESSURE_SENSORS.map((s) => ({
   label: s.label,
   entity: s.entity,
   color: s.color,
   nop: s.nop,
   meop: s.meop,
-  avgEntities: 'avgEntities' in s ? (s as { avgEntities?: string[] }).avgEntities : undefined,
 }));
+
+/** Plot series keys toggled when clicking the matching top-bar pressure bar (hide/show on Pressure History). */
+export function plotEntityKeysForPressureBar(entity: string, avgEntities?: string[]): string[] {
+  if (avgEntities && avgEntities.length > 0) return [...avgEntities];
+  return [entity];
+}
 
 /** Actuator colors (consistent across panes) */
 export const ACTUATOR_COLORS: Record<string, string> = {

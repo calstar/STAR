@@ -328,8 +328,11 @@ export default function StateMachineDiagram() {
       return;
     }
 
-    updateState({ currentState: targetState, stateName: STATE_NAMES[targetState], timestamp: Date.now() });
-
+    updateState({
+      currentState: targetState,
+      stateName: STATE_NAMES[targetState] ?? `STATE ${targetState}`,
+      timestamp: Date.now(),
+    });
     const command: CommandPayload = {
       commandType: 'state_transition',
       data: { state: targetState },
@@ -426,57 +429,7 @@ export default function StateMachineDiagram() {
             );
           })}
 
-          {/* Normal transition arrows from the current state - only show to reachable states that exist in diagram */}
-          {forwardTransitions
-            .filter(t => !ALWAYS_REACHABLE.includes(t.to) && reachableStates.has(t.to) && STATE_POS[t.to] !== undefined)
-            .map((t, i) => {
-              const isBidir = reverseSet.has(t.to);
-              // Offset the "forward" arrow to one side so its return pair is visible
-              const offset = isBidir ? -BIDIR_OFFSET : 0;
-              return (
-                <path
-                  key={`fwd-${t.from}-${t.to}-${i}`}
-                  d={arrowPath(t.from, t.to, offset)}
-                  fill="none"
-                  stroke="#34D399"
-                  strokeWidth={3}
-                  markerEnd="url(#arr-green)"
-                  style={{ transition: 'all 0.2s' }}
-                />
-              );
-            })}
-
-          {/* Return arrows (states that can come BACK to current state) - only show if the source state exists in diagram */}
-          {transitions
-            .filter(t => t.to === effectiveState && t.from !== effectiveState && !ALWAYS_REACHABLE.includes(t.from) && STATE_POS[t.from] !== undefined)
-            .map((t, i) => (
-              <path
-                key={`ret-${t.from}-${t.to}-${i}`}
-                d={arrowPath(t.from, t.to, BIDIR_OFFSET)}
-                fill="none"
-                stroke="#60A5FA"
-                strokeWidth={2}
-                strokeDasharray="6 4"
-                markerEnd="url(#arr-blue)"
-                style={{ transition: 'all 0.2s' }}
-              />
-            ))}
-
-          {/* Emergency arrows from current state */}
-          {emergencyTargets.map((target, i) => (
-            <path
-              key={`emg-${effectiveState}-${target}-${i}`}
-              d={arrowPath(effectiveState, target)}
-              fill="none"
-              stroke="#EF4444"
-              strokeWidth={3}
-              strokeDasharray="8 5"
-              markerEnd="url(#arr-red)"
-              style={{ transition: 'all 0.2s' }}
-            />
-          ))}
-
-          {/* State nodes — rendered last so they sit on top of arrows */}
+          {/* State nodes */}
           {states.map((state) => (
             <StateNode
               key={state}

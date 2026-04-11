@@ -12,8 +12,6 @@
 #include <string>
 #include <vector>
 
-#include "../../daq_comms/include/protocol/DiabloBoardPacketParser.hpp"
-
 namespace fsw {
 namespace config {
 
