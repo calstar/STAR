@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <vector>
 
@@ -149,6 +150,23 @@ double robust_prior_max_psi_mismatch() {
     if (end == s || !std::isfinite(v) || v <= 0.0)
         return 125.0;
     return v;
+}
+
+/** After loading adjustments.json, θ may still match an old factory seed (e.g. Ox used PT1 fallback).
+ *  If restored θ disagrees with the current factory cubic, re-seed so ADC→PSI tracks merged JSON/CSV.
+ */
+void reconcile_frameworks_with_factory_baseline(std::map<uint16_t, SensorState>& states) {
+    const double lim = robust_prior_max_psi_mismatch();
+    for (auto& [id, st] : states) {
+        if (!st.framework)
+            continue;
+        if (st.framework->max_abs_error_vs_factory(st.baseline) > lim) {
+            std::cerr << "[RobustCalibration] Sensor " << static_cast<int>(id)
+                      << ": loaded θ vs current factory cubic mismatch > " << lim
+                      << " PSI (ADC grid) — re-seeding robust from factory baseline.\n";
+            st.framework->seed_from_factory_cubic(st.baseline);
+        }
+    }
 }
 
 }  // namespace
@@ -365,6 +383,7 @@ bool RobustCalibrationManager::load_adjustments(const std::string& path) {
                 state.framework->set_rls_P_for_restore(restored_theta_cov_[id]);
             }
         }
+        reconcile_frameworks_with_factory_baseline(states_);
         return true;
     }
 
@@ -404,6 +423,7 @@ bool RobustCalibrationManager::load_adjustments(const std::string& path) {
             }
             i = en + 1;
         }
+        reconcile_frameworks_with_factory_baseline(states_);
         return true;
     }
 
@@ -489,6 +509,7 @@ bool RobustCalibrationManager::load_adjustments(const std::string& path) {
                 state.framework->set_rls_P_for_restore(*population_theta_cov_);
             }
         }
+        reconcile_frameworks_with_factory_baseline(states_);
         return true;
     }
 

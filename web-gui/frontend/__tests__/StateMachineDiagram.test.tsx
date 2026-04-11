@@ -80,5 +80,6 @@ describe('StateMachineDiagram', () => {
             commandType: 'state_transition',
             data: { state: SystemState.FIRE }
         });
+        expect(useSensorStore.getState().currentState).toBe(SystemState.FIRE);
     });
 });

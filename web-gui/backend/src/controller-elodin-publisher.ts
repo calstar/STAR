@@ -240,26 +240,39 @@ export function publishControllerStateTransition(
 }
 
 /**
- * Publish commanded actuator state to Elodin DB [0x32, channelId]
- * Format: U64 timestamp_ns | U8 channel_id | U8 actuator_state (10 bytes)
+ * Elodin table low byte for [0x32, lo]: (board_slot - 1) * 0x20 + local_channel;
+ * slot = board_id % 10, 0 → 10. Matches FSW ActuatorCommander::actuator_elodin_low_byte.
+ */
+export function actuatorElodinLowByte(boardId: number, localChannel: number): number {
+  const slot = (boardId >>> 0) % 10;
+  const bn = slot === 0 ? 10 : slot;
+  return ((bn - 1) * 0x20 + localChannel) & 0xff;
+}
+
+/**
+ * Publish commanded actuator state to Elodin DB [0x32, lowByte]
+ * Format: U64 timestamp_ns | U8 channel_id (global low) | U8 actuator_state (10 bytes)
  * Uses [0x32] (commanded) not [0x31] (current-sense). Uses relay when direct Elodin down.
  */
 export function publishActuatorStateToElodin(
   elodin: ElodinClient,
-  channelId: number,
+  boardId: number,
+  localChannel: number,
   actuatorState: number,
   relay: ElodinRelayClient | null = null
 ): boolean {
   const target = getPublishTarget(elodin, relay);
   if (!target) return false;
-  if (channelId < 1 || channelId > 20) return false;
+  if (localChannel < 1 || localChannel > 32) return false;
+  const low = actuatorElodinLowByte(boardId, localChannel);
+  if (low < 1) return false;
   try {
     const timestampNs = BigInt(Date.now()) * BigInt(1_000_000);
     const buffer = Buffer.alloc(10);
     buffer.writeBigUInt64LE(timestampNs, 0);
-    buffer.writeUInt8(channelId, 8);
+    buffer.writeUInt8(low, 8);
     buffer.writeUInt8(actuatorState === 1 ? 1 : 0, 9); // 0=closed/off, 1=open/on
-    return target.publishTable([0x32, channelId], buffer);
+    return target.publishTable([0x32, low], buffer);
   } catch (error) {
     console.error('[ControllerElodinPublisher] ❌ Failed to publish actuator state:', error);
     return false;

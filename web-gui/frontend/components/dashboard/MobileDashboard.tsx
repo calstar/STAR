@@ -67,6 +67,7 @@ function PressurePill({
 
 export default function MobileDashboard() {
   const currentState = useSensorStore((s) => s.currentState);
+  const updateState = useSensorStore((s) => s.updateState);
   const debugMode = useSensorStore((s) => s.debugMode);
   const setDebugMode = useSensorStore((s) => s.setDebugMode);
   const connectionStatus = useSensorStore((s) => s.connectionStatus) ?? { connected: false, elodinConnected: false };
@@ -123,6 +124,11 @@ export default function MobileDashboard() {
 
   const sendState = (state: SystemState) => {
     if (!controlEnabled) return;
+    updateState({
+      currentState: state,
+      stateName: STATE_NAMES[state] ?? `STATE ${state}`,
+      timestamp: Date.now(),
+    });
     const cmd: CommandPayload = { commandType: 'state_transition', data: { state } };
     ws.sendCommand(cmd);
   };

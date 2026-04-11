@@ -45,6 +45,20 @@ struct PTCalibrationCoeffs {
 };
 
 /**
+ * PT board slot (1–10, from board_id % 10 with 0→10) + local connector (1–10) → factory/JSON logical
+ * channel index (slot 1 → 1..10, slot 2 → 11..20, …). Same rule as calibration_service.
+ */
+inline uint8_t pt_logical_calibration_channel(uint8_t board_slot_number, uint8_t local_connector) {
+    if (local_connector == 0 || local_connector > 10)
+        return local_connector;
+    const int idx =
+        (static_cast<int>(board_slot_number) - 1) * 10 + static_cast<int>(local_connector);
+    if (idx < 1 || idx > 255)
+        return local_connector;
+    return static_cast<uint8_t>(idx);
+}
+
+/**
  * @brief PT Calibration Manager
  *
  * Loads and manages PT calibration coefficients from JSON or CSV files.
@@ -58,9 +72,11 @@ public:
     /**
      * @brief Load calibration from JSON file (from calibration GUI)
      * @param json_path Path to JSON calibration file
-     * @return true if loaded successfully
+     * @param merge_missing_only If true, only add channels not already present after CSV; if false,
+     *        every channel in JSON overwrites the same logical key (GUI per-connector calibration).
+     * @return true if at least one channel was loaded/merged
      */
-    bool load_from_json(const std::string& json_path);
+    bool load_from_json(const std::string& json_path, bool merge_missing_only = false);
 
     /**
      * @brief Load calibration from CSV file (from DiabloAvionics)
@@ -71,7 +87,8 @@ public:
 
     /**
      * @brief Auto-load calibration from default paths
-     * Tries JSON first, then CSV
+     * Default: factory CSV first, then newest GUI JSON overlays every channel it lists (fixes CSV PT6≠GN2 ch6).
+     * CAL_PT_JSON_MISSING_ONLY=1 — JSON only fills gaps (legacy). CAL_PT_JSON_FIRST=1 — JSON only, then CSV.
      * @return true if any calibration was loaded
      */
     bool load_calibration();

@@ -328,7 +328,11 @@ export default function StateMachineDiagram() {
       return;
     }
 
-    // No optimistic update — state will arrive via Elodin DB [0x50] → STATE_UPDATE
+    updateState({
+      currentState: targetState,
+      stateName: STATE_NAMES[targetState] ?? `STATE ${targetState}`,
+      timestamp: Date.now(),
+    });
     const command: CommandPayload = {
       commandType: 'state_transition',
       data: { state: targetState },

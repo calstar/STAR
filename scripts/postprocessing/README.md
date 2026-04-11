@@ -110,7 +110,7 @@ elodin editor ~/.local/share/elodin/daq_20260307_174529
 ./scripts/postprocessing/plot_latest_db.sh
 ```
 
-Finds the most recent Elodin DB (by mtime), exports to CSV, and generates plots. Optional: pass a DB name or path to plot a specific run.
+Finds the most recent Elodin DB (by mtime), exports to CSV, and generates plots. **By default** the analysis uses **`--full-run`** (entire capture) so pressure and actuator timelines match the whole session. Set `FULL_RUN=0` to anchor at first PRESS_STANDBY instead. Optional: pass a DB name or path to plot a specific run.
 
 ```bash
 ./scripts/postprocessing/plot_latest_db.sh daq_20260307_174529
@@ -144,15 +144,16 @@ python3 scripts/postprocessing/analyze_run.py ./export_csv -o ./output/postproce
 ```
 
 Plots are written to `./output/postprocessing/latest/`:
-- `pressures.png` — PT pressure time series (LOX, Fuel, GN2, GSE, Chamber)
+- `pressures.png` — PT pressure time series by domain (LOX, Fuel, GN2/GSE, Chamber)
+- `pressures_full_run.png` — **Every** calibrated PT channel on its own subplot (full timeline)
 - `temperatures.png` — TC/RTD temperature time series
 - `load_cells.png` — Load cell force (N)
-- `actuators.png` — Actuator state (0=OFF, 1=ON; forward-fill, no interpolation)
+- `actuators.png` — **All** actuator commanded states (OPEN/CLOSED; step-hold over full timeline)
 - `states.png` — System state (PSM / engine_state; forward-fill, no interpolation)
-- `controller.png` — Controller outputs (duty_F/O, F_ref, F_estimated, P_ch, MR)
+- `controller.png` — Controller outputs (duty_F/O, F_ref, F_estimated, P_ch, MR, …)
 - `pressure_summary.png` — Summary statistics table
-- `overview.png` — 5-panel overview (state, pressures, temps, actuators)
-- `run_data_combined.csv` — All raw + calibrated channels, aligned to common time grid
+- `overview.png` — Multi-panel overview (state, pressures, temps, actuators, controller)
+- `run_data_combined.csv` — All channels, aligned to common time grid
 
 **Discrete data (states, actuators):** Uses forward-fill resampling (no interpolation) so step changes are preserved. Previously, linear interpolation produced bogus intermediate values (e.g. 0.5 between 0 and 1).
 

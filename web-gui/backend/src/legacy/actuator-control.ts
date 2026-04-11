@@ -24,7 +24,7 @@ export interface ActuatorHost {
     actuatorSocket: dgram.Socket | null;
     actuatorIP: string;
     actuatorPort: number;
-    actuatorBoardMap: Map<string, { channel: number; boardIp: string }>;
+    actuatorBoardMap: Map<string, { channel: number; boardIp: string; boardId: number }>;
     actuatorBoardIPs: Set<string>;
     manuallyCommandedChannels: Set<string>;
     actuatorCommandInterval: NodeJS.Timeout | null;
@@ -69,29 +69,53 @@ export function loadActuatorBoardMap(
         }
 
         let defaultBoardIp = '';
+        let fallbackBoardId = 11;
         for (const [, boardConfig] of Object.entries(boards)) {
             const board = boardConfig as any;
             if (board.type === 'ACTUATOR' && board.enabled !== false) {
                 defaultBoardIp = board.ip || defaultBoardIp;
-                break;
+                const id =
+                    typeof board.id === 'number'
+                        ? board.id
+                        : typeof board.board_id === 'number'
+                          ? board.board_id
+                          : null;
+                if (id != null) {
+                    fallbackBoardId = id;
+                    break;
+                }
             }
         }
+
+        const ipToBoardId = (): Map<string, number> => {
+            const m = new Map<string, number>();
+            for (const [id, ip] of boardIdToIp) {
+                m.set(ip, id);
+            }
+            return m;
+        };
+        const ipBoard = ipToBoardId();
 
         for (const [name, value] of Object.entries(actuatorRoles)) {
             if (Array.isArray(value)) {
                 const type = value[0] as string;
                 const channel = value[1] as number;
                 let boardIp = defaultBoardIp;
+                let boardId = fallbackBoardId;
                 if (value.length >= 3) {
                     if (typeof value[2] === 'number') {
+                        boardId = value[2];
                         boardIp = boardIdToIp.get(value[2]) || defaultBoardIp;
                     } else if (typeof value[2] === 'string') {
                         boardIp = value[2]; // legacy board_ip string
+                        boardId = ipBoard.get(boardIp) ?? fallbackBoardId;
                     }
+                } else {
+                    boardId = ipBoard.get(boardIp) ?? fallbackBoardId;
                 }
 
-                host.actuatorBoardMap.set(name, { channel, boardIp });
-                console.log(`📋 Actuator mapping: ${name} → CH${channel} @ ${boardIp}`);
+                host.actuatorBoardMap.set(name, { channel, boardIp, boardId });
+                console.log(`📋 Actuator mapping: ${name} → CH${channel} @ ${boardIp} (board_id=${boardId})`);
             }
         }
 
@@ -106,7 +130,10 @@ export function loadActuatorBoardMap(
 // Actuator info helpers
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export function getActuatorBoardInfo(host: ActuatorHost, actuatorName: string): { channel: number; boardIp: string } | null {
+export function getActuatorBoardInfo(
+    host: ActuatorHost,
+    actuatorName: string,
+): { channel: number; boardIp: string; boardId: number } | null {
     return host.actuatorBoardMap.get(actuatorName) || null;
 }
 

@@ -7,6 +7,10 @@
 #   ./plot_latest_db.sh /path/to/db         # use full path
 #
 # Output: ./output/postprocessing/latest/*.png
+#
+# Env:
+#   FULL_RUN=1 (default) — plot entire DB duration (--full-run).
+#   FULL_RUN=0 — anchor at first PRESS_STANDBY when state data exists.
 
 set -e
 
@@ -54,8 +58,18 @@ python3 "$SCRIPT_DIR/validate_export.py" "$EXPORT_DIR" || exit 1
 
 echo ""
 echo "3️⃣  Analyzing and plotting..."
+# Default: --full-run (entire capture timeline for pressure + actuator curves).
+# Set FULL_RUN=0 to anchor at first PRESS_STANDBY instead (shorter press-focused window).
+FULL_RUN="${FULL_RUN:-1}"
+AR_EXTRA=()
+if [[ "$FULL_RUN" == "1" || "$FULL_RUN" == "yes" || "$FULL_RUN" == "true" ]]; then
+  AR_EXTRA=(--full-run)
+  echo "   (FULL_RUN=1: time axis = full DB capture)"
+else
+  echo "   (FULL_RUN=0: time axis anchored at PRESS_STANDBY when present)"
+fi
 # State fallback: backend writes to data/state_transitions.csv when Elodin publish fails
-python3 "$SCRIPT_DIR/analyze_run.py" "$EXPORT_DIR" -o "$OUT_DIR"
+python3 "$SCRIPT_DIR/analyze_run.py" "$EXPORT_DIR" -o "$OUT_DIR" "${AR_EXTRA[@]}"
 
 echo ""
 echo "✅ Plots saved to $OUT_DIR"

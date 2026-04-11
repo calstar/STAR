@@ -16,10 +16,12 @@
  * Usage:
  *   ./calibration_service [--config PATH] [--elodin-host HOST] [--elodin-port PORT]
  *   CAL_VERBOSE=1 for per-packet debug output
- *   LP PT (non–HP board): default = factory cubic from JSON/CSV (same as validated letsfix stack).
- *   CAL_USE_ROBUST_PT=1 — 100% robust mean when initialized (for lab / prior experiments)
- *   CAL_USE_ROBUST_BLEND=1 — 75% robust + 25% factory (do not use for flight unless characterized)
- *   CAL_USE_FACTORY_PT=1 — force factory cubic even if robust env flags are set mistakenly
+ *   LP PT (non–HP board): default = factory cubic from CSV/JSON (same priority as letsfix / stable
+ *   stack). RobustCalibrationManager still seeds from that factory curve and loads adjustments.json;
+ *   streaming uses factory unless you opt into robust below.
+ *   CAL_USE_ROBUST_PT=1 — 100% robust mean for streaming (when sensor initialized)
+ *   CAL_USE_ROBUST_BLEND=1 — 75% robust + 25% factory
+ *   CAL_USE_FACTORY_PT=1 — force factory cubic (same as default; explicit)
  *   CAL_BACKUP_PATH — override robust prior JSON (else latest calibration_backups/*.json)
  */
 
@@ -59,7 +61,7 @@ std::array<uint8_t, 11> g_hp_ma_live{};
 /** Low-pass of measured excitation voltage (V) for slow supply tracking. */
 double g_hp_v_exc_ema = -1.0;
 
-/** Per-sensor zero offsets (PSI) applied to factory polynomial output after Zero All command. */
+/** Per-sensor zero offsets (PSI) applied after LP PT path (factory or robust) and Zero All. */
 std::unordered_map<uint16_t, double> g_zero_offsets;
 std::mutex g_zero_offsets_mutex;
 
@@ -81,9 +83,8 @@ static bool env_flag_true(const char* name) {
     return v && (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't' || v[0] == 'T');
 }
 
-/** Default true: LP PT uses factory cubic from calibration files (hardware-trusted). The prior
- * cpp-stack default (75% robust) pulled bad psi from adjustments.json priors — restore
- * letsfix-style factory-first unless the operator opts into robust paths via env. */
+/** Default true: LP PT uses factory cubic for streaming (letsfix / hardware-trusted). Set
+ * CAL_USE_ROBUST_PT=1 or CAL_USE_ROBUST_BLEND=1 to opt into robust-dominated output. */
 static constexpr bool kLpPtDefaultFactoryOnly = true;
 
 static bool lp_pt_use_factory_only() {
@@ -94,9 +95,9 @@ static bool lp_pt_use_factory_only() {
     return kLpPtDefaultFactoryOnly;
 }
 
-/** 100% robust mean when sensor initialized (CAL_USE_ROBUST_PT=1). */
-static bool lp_pt_use_pure_robust() {
-    return env_flag_true("CAL_USE_ROBUST_PT");
+/** Optional 75% robust / 25% factory blend. */
+static bool lp_pt_use_robust_blend() {
+    return env_flag_true("CAL_USE_ROBUST_BLEND");
 }
 
 /**
@@ -186,20 +187,6 @@ static double convert_hp_pt_to_pressure(uint8_t local_ch, uint32_t adc_raw, doub
     if (!std::isfinite(psi))
         return 0.0;
     return std::clamp(psi, 0.0, full_scale_psi * 1.05);
-}
-
-/**
- * Factory / robust PT polynomial lookup key (board-scoped).
- * Wire Elodin channel is always 1..10 per board; JSON must not reuse PT1.CH3 coeffs for PT2.CH3.
- * Mapping: board 1 → 1..10, board 2 → 11..20, board 3 → 21..30, …
- */
-static uint8_t pt_calibration_logical_channel(uint8_t board_number, uint8_t local_ch) {
-    if (local_ch == 0 || local_ch > 10)
-        return local_ch;
-    const int idx = (static_cast<int>(board_number) - 1) * 10 + static_cast<int>(local_ch);
-    if (idx < 1 || idx > 255)
-        return local_ch;
-    return static_cast<uint8_t>(idx);
 }
 
 /**
@@ -313,6 +300,37 @@ static uint16_t resolve_pt_sensor_uid(uint8_t type_lo, uint8_t ch,
             return static_cast<uint16_t>(bc.board_id) * 100u + ch;
     }
     return static_cast<uint16_t>(100u + ch);
+}
+
+/**
+ * LP PT pressure exactly as published before zero offset and EMA — must match the streaming
+ * branch so Zero All reads 0 PSI at the current ADC. (Using only factory psi for the offset while
+ * streaming robust caused psi_display ≈ psi_rob - psi_fac, e.g. GN2 / GSE wrong after Zero All.)
+ */
+static double lp_pt_psi_before_offset(
+    uint8_t board_number,
+    uint8_t local_ch,
+    uint16_t uid,
+    int32_t adc_i32,
+    const fsw::calibration::PTCalibrationManager& pt_calibration,
+    fsw::calibration::RobustCalibrationManager& robust_manager) {
+    const uint8_t pt_log_ch = fsw::calibration::pt_logical_calibration_channel(board_number, local_ch);
+    const bool fac_ok = pt_calibration.is_calibrated(pt_log_ch);
+    const double psi_fac =
+        fac_ok ? pt_calibration.calculate_pressure(pt_log_ch, adc_i32) : 0.0;
+    const double psi_rob = robust_manager.predict_pressure_psi(uid, adc_i32);
+
+    if (!fac_ok)
+        return psi_rob;
+    if (!robust_manager.has_sensor(uid))
+        return psi_fac;
+    if (lp_pt_use_factory_only())
+        return psi_fac;
+    if (lp_pt_use_robust_blend()) {
+        constexpr double kFactoryWeight = 0.25;
+        return (1.0 - kFactoryWeight) * psi_rob + kFactoryWeight * psi_fac;
+    }
+    return psi_rob;
 }
 
 int main(int argc, char* argv[]) {
@@ -753,7 +771,8 @@ int main(int argc, char* argv[]) {
     for (const auto& bc : pt_boards) {
         for (uint8_t local_ch : bc.channels) {
             uint16_t uid = static_cast<uint16_t>(bc.board_id) * 100u + local_ch;
-            const uint8_t log_ch = pt_calibration_logical_channel(bc.board_number, local_ch);
+            const uint8_t log_ch =
+                fsw::calibration::pt_logical_calibration_channel(bc.board_number, local_ch);
             if (pt_calibration.is_calibrated(log_ch)) {
                 robust_manager.initialize_sensor(uid, *pt_calibration.get_calibration(log_ch));
             } else if (fallback_pt_coeffs != nullptr) {
@@ -772,13 +791,14 @@ int main(int argc, char* argv[]) {
                   << std::endl;
     }
     if (lp_pt_use_factory_only()) {
-        std::cout << "[Calibration] LP PT: factory cubic (default / CAL_USE_FACTORY_PT)"
+        std::cout << "[Calibration] LP PT: factory cubic (default / CAL_USE_FACTORY_PT) — "
+                     "letsfix-style stable path"
                   << std::endl;
-    } else if (lp_pt_use_pure_robust()) {
-        std::cout << "[Calibration] LP PT: CAL_USE_ROBUST_PT=1 — 100% robust when initialized"
+    } else if (lp_pt_use_robust_blend()) {
+        std::cout << "[Calibration] LP PT: CAL_USE_ROBUST_BLEND=1 — 75% robust + 25% factory"
                   << std::endl;
     } else {
-        std::cout << "[Calibration] LP PT: CAL_USE_ROBUST_BLEND=1 — 75% robust + 25% factory anchor"
+        std::cout << "[Calibration] LP PT: CAL_USE_ROBUST_PT=1 — 100% robust when initialized"
                   << std::endl;
     }
 
@@ -901,34 +921,44 @@ int main(int argc, char* argv[]) {
                         std::lock_guard<std::mutex> lk(g_zero_offsets_mutex);
                         g_lp_ema.clear();  // reset EMA so zeroed value reaches GUI immediately
                         for (auto const& [id, val] : last_adc_map) {
-                            robust_manager.zero_sensor(id, val);
-                            // Offset the factory polynomial output to read 0 PSI at current ADC.
                             const uint8_t bid = static_cast<uint8_t>(id / 100);
                             const uint8_t lch = static_cast<uint8_t>(id % 100);
                             const uint8_t bn = (bid % 10) == 0 ? 10u : (bid % 10);
-                            const uint8_t log_ch = pt_calibration_logical_channel(bn, lch);
-                            if (pt_calibration.is_calibrated(log_ch)) {
-                                const double psi_now =
-                                    pt_calibration.calculate_pressure(log_ch, val);
-                                if (std::isfinite(psi_now))
-                                    g_zero_offsets[id] = -psi_now;
+                            const bool is_hp = (hp_pt_board_number != 255) &&
+                                                 (bn == hp_pt_board_number) &&
+                                                 hp_pt_channels.count(lch);
+                            robust_manager.zero_sensor(id, val);
+                            if (is_hp) {
+                                g_zero_offsets.erase(id);
+                                continue;
                             }
+                            // Offset must match streaming path (robust vs factory), after RCF zero.
+                            const double psi_base =
+                                lp_pt_psi_before_offset(bn, lch, id, val, pt_calibration,
+                                                        robust_manager);
+                            if (std::isfinite(psi_base))
+                                g_zero_offsets[id] = -psi_base;
                         }
                         std::cout << "[Cal] Performed Zero All for " << last_adc_map.size()
                                   << " sensors" << std::endl;
                     } else {
                         if (last_adc_map.count(sensor_id)) {
                             std::lock_guard<std::mutex> lk(g_zero_offsets_mutex);
-                            robust_manager.zero_sensor(sensor_id, last_adc_map[sensor_id]);
                             const uint8_t bid = static_cast<uint8_t>(sensor_id / 100);
                             const uint8_t lch = static_cast<uint8_t>(sensor_id % 100);
                             const uint8_t bn = (bid % 10) == 0 ? 10u : (bid % 10);
-                            const uint8_t log_ch = pt_calibration_logical_channel(bn, lch);
-                            if (pt_calibration.is_calibrated(log_ch)) {
-                                const double psi_now = pt_calibration.calculate_pressure(
-                                    log_ch, last_adc_map[sensor_id]);
-                                if (std::isfinite(psi_now))
-                                    g_zero_offsets[sensor_id] = -psi_now;
+                            const bool is_hp = (hp_pt_board_number != 255) &&
+                                                 (bn == hp_pt_board_number) &&
+                                                 hp_pt_channels.count(lch);
+                            robust_manager.zero_sensor(sensor_id, last_adc_map[sensor_id]);
+                            if (!is_hp) {
+                                const double psi_base = lp_pt_psi_before_offset(
+                                    bn, lch, sensor_id, last_adc_map[sensor_id], pt_calibration,
+                                    robust_manager);
+                                if (std::isfinite(psi_base))
+                                    g_zero_offsets[sensor_id] = -psi_base;
+                            } else {
+                                g_zero_offsets.erase(sensor_id);
                             }
                             g_lp_ema.erase(sensor_id);
                         }
@@ -1033,7 +1063,8 @@ int main(int argc, char* argv[]) {
                 last_adc_map[uid] = adc_i32;
             } else {
                 last_adc_map[uid] = adc_i32;
-                const uint8_t pt_log_ch = pt_calibration_logical_channel(board_number, ch_eff);
+                const uint8_t pt_log_ch =
+                    fsw::calibration::pt_logical_calibration_channel(board_number, ch_eff);
                 const bool fac_ok = pt_calibration.is_calibrated(pt_log_ch);
                 const double psi_fac =
                     fac_ok ? pt_calibration.calculate_pressure(pt_log_ch, adc_i32) : 0.0;
@@ -1045,12 +1076,12 @@ int main(int argc, char* argv[]) {
                     psi = psi_fac;
                 } else if (lp_pt_use_factory_only()) {
                     psi = psi_fac;
-                } else if (lp_pt_use_pure_robust()) {
-                    psi = psi_rob;
-                } else {
-                    // Default: robust-dominant blend (factory anchors rare large excursions).
+                } else if (lp_pt_use_robust_blend()) {
                     constexpr double kFactoryWeight = 0.25;
                     psi = (1.0 - kFactoryWeight) * psi_rob + kFactoryWeight * psi_fac;
+                } else {
+                    // Default: full robust prediction (matches calibration_server.py RCF path).
+                    psi = psi_rob;
                 }
                 cal_status = fac_ok ? 1u : 0u;
                 // Apply zero offset then EMA for LP PT channels.
@@ -1071,7 +1102,7 @@ int main(int argc, char* argv[]) {
                 if (verbose() && packet_count % 100 == 0)
                     std::cout << "[Cal] PT B" << static_cast<int>(board_number) << " ch"
                               << static_cast<int>(ch_eff) << " adc=" << adc_i32 << " psi=" << psi
-                              << " (robust+fallback)" << std::endl;
+                              << std::endl;
             }
             if (is_hp_ch) {
                 if (!std::isfinite(psi))

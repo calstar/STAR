@@ -79,7 +79,8 @@ public:
      */
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedPTMessage>>
     route_pt_samples_calibrated(const daq_comms::protocol::SensorBatch& batch,
-                                uint64_t receive_timestamp_ns) const;
+                                uint64_t receive_timestamp_ns,
+                                uint8_t pt_board_slot = 1) const;
 
     /**
      * @brief Set PT calibration manager (legacy)

@@ -93,6 +93,7 @@ function formatCountdown(valueMs: number): { value: string; expired: boolean } {
 export default function TopBar() {
   // Pressure bars use useSensorValue in ReactivePressureBar — no need to subscribe to full sensorData here
   const currentState = useSensorStore((s) => s.currentState);
+  const updateState = useSensorStore((s) => s.updateState);
   const debugMode = useSensorStore((s) => s.debugMode);
   const setDebugMode = useSensorStore((s) => s.setDebugMode);
   const countdownTargetTimeMs = useSensorStore((s) => s.countdownTargetTimeMs);
@@ -229,9 +230,14 @@ export default function TopBar() {
     })) as PressureBarDef[];
   }, [pressureBars]);
 
-  // Fire-and-forget so click feedback is immediate; commands run next frame
+  // Optimistic UI + fire-and-forget; commands run next frame
   const sendState = (state: SystemState) => {
     if (!controlEnabled) return;
+    updateState({
+      currentState: state,
+      stateName: STATE_NAMES[state] ?? `STATE ${state}`,
+      timestamp: Date.now(),
+    });
     const cmd: CommandPayload = { commandType: 'state_transition', data: { state } };
     requestAnimationFrame(() => ws.sendCommand(cmd));
   };

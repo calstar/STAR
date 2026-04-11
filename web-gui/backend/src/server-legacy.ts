@@ -117,7 +117,7 @@ class SensorSystemServer {
   /** Port of C++ actuator_service (TCP). When set, state transitions are forwarded there instead of sending UDP directly. */
   actuatorServicePort: number = 0;
   controllerServicePort: number = 0;
-  actuatorBoardMap: Map<string, { channel: number; boardIp: string }> = new Map();
+  actuatorBoardMap: Map<string, { channel: number; boardIp: string; boardId: number }> = new Map();
   actuatorBoardIPs: Set<string> = new Set();
   private tcBoards: Map<string, Set<number>> = new Map();
   private rtdBoards: Map<string, Set<number>> = new Map();
@@ -1298,7 +1298,7 @@ class SensorSystemServer {
                 const boardInfo = getActuatorBoardInfo(this, commandActuatorName);
                 if (boardInfo) {
                   this.manuallyCommandedChannels.add(`${boardInfo.channel}@${boardInfo.boardIp}`);
-                  publishActuatorStateToElodin(this.elodin, boardInfo.channel, open ? 1 : 0, this.elodinRelay);
+                  publishActuatorStateToElodin(this.elodin, boardInfo.boardId, boardInfo.channel, open ? 1 : 0, this.elodinRelay);
                 }
                 this.broadcast({ type: MessageType.ACTUATOR_UPDATE, timestamp: Date.now(), payload: { name: commandActuatorName, state: actuatorState, rawAdcCounts: 0, timestamp: Date.now() } as ActuatorUpdate });
               } else {
@@ -1309,7 +1309,7 @@ class SensorSystemServer {
                   this.manuallyCommandedChannels.add(`${boardInfo.channel}@${boardInfo.boardIp}`);
                   const success = sendActuatorCommandUDP(this, boardInfo.channel, hardwareState, boardInfo.boardIp);
                   if (success) {
-                    publishActuatorStateToElodin(this.elodin, boardInfo.channel, hardwareState, this.elodinRelay);
+                    publishActuatorStateToElodin(this.elodin, boardInfo.boardId, boardInfo.channel, hardwareState, this.elodinRelay);
                     this.broadcast({ type: MessageType.ACTUATOR_UPDATE, timestamp: Date.now(), payload: { name: commandActuatorName, state: actuatorState, rawAdcCounts: 0, timestamp: Date.now() } as ActuatorUpdate });
                   }
                 }
@@ -1325,7 +1325,7 @@ class SensorSystemServer {
             this.manuallyCommandedChannels.add(`${channelId}@${boardIp}`);
             const success = sendActuatorCommandUDP(this, channelId, hardwareState, boardIp);
             if (success) {
-              publishActuatorStateToElodin(this.elodin, channelId, hardwareState, this.elodinRelay);
+              publishActuatorStateToElodin(this.elodin, boardInfo.boardId, channelId, hardwareState, this.elodinRelay);
               this.broadcast({ type: MessageType.ACTUATOR_UPDATE, timestamp: Date.now(), payload: { name: commandActuatorName, state: actuatorState, rawAdcCounts: 0, timestamp: Date.now() } as ActuatorUpdate });
             }
           }
@@ -1561,7 +1561,7 @@ class SensorSystemServer {
       if (!boardInfo) continue;
       const actuatorType = getActuatorType(actuatorName);
       const hardwareState = guiStateToHardwareState(guiVal, actuatorType);
-      publishActuatorStateToElodin(this.elodin, boardInfo.channel, hardwareState, this.elodinRelay);
+      publishActuatorStateToElodin(this.elodin, boardInfo.boardId, boardInfo.channel, hardwareState, this.elodinRelay);
       this.broadcast({
         type: MessageType.ACTUATOR_UPDATE,
         timestamp: Date.now(),

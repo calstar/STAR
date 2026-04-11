@@ -9,6 +9,7 @@ Usage:
 
   Export dir defaults to ./export_csv (from FORMAT=csv export_elodin_db.sh).
   Output dir defaults to ./output/postprocessing/latest.
+  Use --config PATH.toml if your roles live outside the default config/config.toml.
 
   By default, if PSM state is available, t=0 is the *first* transition to
   PRESS_STANDBY (state 20). Use --anchor-last-press-standby only if you want the
@@ -19,6 +20,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -63,6 +66,36 @@ BOARD_ENGINE_STATE_NAMES = {
 # Legacy alias
 STATE_NAMES = PSM_STATE_NAMES
 
+# Uppercase PSM name → enum (for string exports / CSV logs)
+_PSM_NAME_TO_INT: dict[str, int] = {
+    v.upper().replace(" ", "_"): k for k, v in PSM_STATE_NAMES.items()
+}
+
+# CONTROLLER.* CSV short_name (from load_csv_series) → plot legend title
+CONTROLLER_DISPLAY_LABELS: dict[str, str] = {
+    "actuation_duty_F": "Actuation duty (fuel)",
+    "actuation_duty_O": "Actuation duty (oxidizer)",
+    "actuation_u_F_on": "Actuation valve command fuel",
+    "actuation_u_O_on": "Actuation valve command oxidizer",
+    "fire_duty_F": "Fire duty (fuel)",
+    "fire_duty_O": "Fire duty (oxidizer)",
+    "fire_fire_active": "Fire active",
+    "diagnostics_F_ref": "Thrust reference (N)",
+    "diagnostics_F_estimated": "Thrust estimated (N)",
+    "diagnostics_MR_ref": "Mixture ratio reference",
+    "diagnostics_MR_estimated": "Mixture ratio estimated",
+    "diagnostics_P_ch": "Chamber pressure (diagnostic)",
+    "diagnostics_cost": "Controller cost",
+    "diagnostics_safety_filtered": "Safety filtered",
+    "diagnostics_cutoff_active": "Cutoff active",
+    "diagnostics_solver_iters": "Solver iterations",
+    "measurement_P_ch_mp1": "Chamber pressure MP1",
+    "measurement_P_ch_mp2": "Chamber pressure MP2",
+    "measurement_P_copv": "COPV pressure",
+    "measurement_P_reg": "Regulated pressure",
+    "state_to_state": "PSM state (raw enum)",
+}
+
 # Default styling for publication-ready plots
 plt.rcParams.update(
     {
@@ -82,66 +115,154 @@ plt.rcParams.update(
 PRESS_STANDBY_STATE = 20
 
 
-def _load_sensor_names(project_root: Path | None = None) -> dict[str, str]:
-    """Load PT/TC/RTD/LC channel IDs -> role names from config.toml."""
-    root = project_root or Path(__file__).resolve().parent.parent.parent
-    cfg = root / "config" / "config.toml"
-    if not cfg.exists():
-        return {}
-    out: dict[str, str] = {}
+def _parse_toml_file(path: Path) -> dict:
+    """Load TOML: stdlib tomllib (3.11+) or PyPI tomli on older Python (same package you already have)."""
+    if sys.version_info >= (3, 11):
+        import tomllib as _toml
+    else:
+        try:
+            import tomli as _toml
+        except ModuleNotFoundError as e:
+            raise ModuleNotFoundError(
+                "Python <3.11 requires the 'tomli' package (pip install tomli). "
+                "Note: the stdlib module is named 'tomllib' (with a 'b'); PyPI only has 'tomli'."
+            ) from e
+
+    with open(path, "rb") as f:
+        return _toml.load(f)
+
+
+def _read_config_toml(path: Path) -> dict | None:
+    if not path.exists():
+        return None
     try:
-        import tomllib
+        return _parse_toml_file(path)
+    except ModuleNotFoundError as e:
+        print(f"  ⚠️  Could not read config {path}: {e}")
+        return None
+    except Exception as e:
+        print(f"  ⚠️  Could not read config {path}: {e}")
+        return None
 
-        with open(cfg, "rb") as f:
-            data = tomllib.load(f)
 
-        # PT Board 1 (board slot 1 → entity prefix PT1 / PT1_Cal)
-        roles1 = data.get("sensor_roles_pt_board", {})
-        for name, ch in roles1.items():
-            out[f"PT1_Cal.CH{ch}"] = name
-            out[f"PT1.CH{ch}"] = f"{name} (raw)"
+def _int_sensor_channel(ch) -> int | None:
+    if isinstance(ch, bool):
+        return None
+    if isinstance(ch, (int, float)):
+        return int(ch)
+    if isinstance(ch, str):
+        try:
+            return int(float(ch.strip()))
+        except ValueError:
+            return None
+    return None
 
-        # PT Board 2 (board slot 2 → entity prefix PT2 / PT2_Cal, local channels 1-10)
-        roles2 = data.get("sensor_roles_pt2", {})
-        for name, ch in roles2.items():
-            out[f"PT2_Cal.CH{ch}"] = name
-            out[f"PT2.CH{ch}"] = f"{name} (raw)"
 
-        # TC Board 1
-        roles_tc = data.get("sensor_roles_tc_board", {})
-        for name, ch in roles_tc.items():
-            out[f"TC1_Cal.CH{ch}"] = name
-            out[f"TC1.CH{ch}"] = f"{name} (raw)"
+def _actuator_board_slot(board_id: int) -> int:
+    """Elodin ACT_CMD board index: board_id % 10, 0 → 10 (matches FSW / backend)."""
+    b = int(board_id)
+    if b < 0:
+        b = b % (1 << 32)
+    s = b % 10
+    return 10 if s == 0 else s
 
-        # RTD Board 1
-        roles_rtd = data.get("sensor_roles_rtd_board", {})
-        for name, ch in roles_rtd.items():
-            out[f"RTD1_Cal.CH{ch}"] = name
-            out[f"RTD1.CH{ch}"] = name
 
-    except Exception:
-        pass
+def _sensor_names_from_data(data: dict) -> dict[str, str]:
+    """PT/TC/RTD column names (e.g. PT1_Cal.CH4) → role labels from config tables."""
+    out: dict[str, str] = {}
+    if not data:
+        return out
+
+    def _add_pt_board(bi: int, roles: dict) -> None:
+        for name, ch_raw in roles.items():
+            ch = _int_sensor_channel(ch_raw)
+            if ch is None:
+                continue
+            label = str(name).strip().strip('"').strip("'")
+            out[f"PT{bi}_Cal.CH{ch}"] = label
+            out[f"PT{bi}.CH{ch}"] = f"{label} (raw)"
+
+    pt_board = data.get("sensor_roles_pt_board", {})
+    if isinstance(pt_board, dict):
+        _add_pt_board(1, pt_board)
+    for key, roles in data.items():
+        if not isinstance(roles, dict):
+            continue
+        m = re.match(r"^sensor_roles_pt(\d+)$", key)
+        if m:
+            _add_pt_board(int(m.group(1)), roles)
+
+    roles_tc = data.get("sensor_roles_tc_board", {})
+    if isinstance(roles_tc, dict):
+        for name, ch_raw in roles_tc.items():
+            ch = _int_sensor_channel(ch_raw)
+            if ch is None:
+                continue
+            label = str(name).strip().strip('"').strip("'")
+            out[f"TC1_Cal.CH{ch}"] = label
+            out[f"TC1.CH{ch}"] = f"{label} (raw)"
+
+    roles_rtd = data.get("sensor_roles_rtd_board", {})
+    if isinstance(roles_rtd, dict):
+        for name, ch_raw in roles_rtd.items():
+            ch = _int_sensor_channel(ch_raw)
+            if ch is None:
+                continue
+            label = str(name).strip().strip('"').strip("'")
+            out[f"RTD1_Cal.CH{ch}"] = label
+            out[f"RTD1.CH{ch}"] = label
+
     return out
 
 
-def _load_actuator_roles(project_root: Path | None = None) -> dict[str, str]:
-    """Load actuator name -> type (NC/NO) from config. Returns {name: 'NC'|'NO'}."""
+def _load_sensor_names(
+    project_root: Path | None = None, config_path: Path | None = None
+) -> dict[str, str]:
+    """Load PT/TC/RTD channel IDs -> human-readable role names from config.toml."""
     root = project_root or Path(__file__).resolve().parent.parent.parent
-    cfg = root / "config" / "config.toml"
-    if not cfg.exists():
-        return {}
-    out: dict[str, str] = {}
-    try:
-        import tomllib
+    path = config_path or (root / "config" / "config.toml")
+    data = _read_config_toml(path)
+    return _sensor_names_from_data(data or {})
 
-        with open(cfg, "rb") as f:
-            data = tomllib.load(f)
-        roles = data.get("actuator_roles", {})
-        for name, arr in roles.items():
-            if isinstance(arr, (list, tuple)) and len(arr) >= 1:
-                out[name] = str(arr[0]).upper()
-    except Exception:
-        pass
+
+def _actuator_roles_from_data(data: dict) -> dict[str, str]:
+    """actuator role name -> NC/NO from actuator_roles table."""
+    out: dict[str, str] = {}
+    roles = data.get("actuator_roles", {})
+    if not isinstance(roles, dict):
+        return out
+    for name, arr in roles.items():
+        label = str(name).strip().strip('"').strip("'")
+        if isinstance(arr, (list, tuple)) and len(arr) >= 1:
+            out[label] = str(arr[0]).upper()
+    return out
+
+
+def _load_actuator_roles(
+    project_root: Path | None = None, config_path: Path | None = None
+) -> dict[str, str]:
+    root = project_root or Path(__file__).resolve().parent.parent.parent
+    path = config_path or (root / "config" / "config.toml")
+    data = _read_config_toml(path)
+    return _actuator_roles_from_data(data or {})
+
+
+def _actuator_cmd_labels_from_data(data: dict) -> dict[str, str]:
+    """Map ACT_CMD.B<slot>.CH<n> dataframe columns to actuator role names."""
+    out: dict[str, str] = {}
+    roles = data.get("actuator_roles", {})
+    if not isinstance(roles, dict):
+        return out
+    for name, arr in roles.items():
+        if not isinstance(arr, (list, tuple)) or len(arr) < 3:
+            continue
+        label = str(name).strip().strip('"').strip("'")
+        ch = _int_sensor_channel(arr[1])
+        bid = _int_sensor_channel(arr[2])
+        if ch is None or bid is None:
+            continue
+        bn = _actuator_board_slot(bid)
+        out[f"ACT_CMD.B{bn}.CH{ch}"] = label
     return out
 
 
@@ -202,6 +323,31 @@ def _filter_series_from_t(
     return out
 
 
+def _coerce_state_values_to_psm_enum(s: pd.Series) -> pd.Series:
+    """Map mixed numeric / string PSM state column to float enum values."""
+    num = pd.to_numeric(s, errors="coerce")
+    out = num.copy()
+    need = num.isna() & s.notna()
+    if need.any():
+        for idx in s.index[need]:
+            raw = str(s.loc[idx]).strip()
+            up = raw.upper().replace(" ", "_")
+            if "." in up:
+                up = up.split(".")[-1]
+            if up in _PSM_NAME_TO_INT:
+                out.loc[idx] = float(_PSM_NAME_TO_INT[up])
+    return out
+
+
+def _prepare_state_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure time + numeric PSM enum value; drop invalid rows."""
+    if df.empty or "value" not in df.columns:
+        return df
+    out = df.copy()
+    out["value"] = _coerce_state_values_to_psm_enum(out["value"])
+    return out[["time", "value"]].dropna(subset=["time", "value"])
+
+
 def _load_state_fallback(export_dir: Path) -> dict[str, pd.DataFrame]:
     """Load state from data/state_transitions.csv (backend writes during run)."""
     candidates = [
@@ -220,13 +366,31 @@ def _load_state_fallback(export_dir: Path) -> dict[str, pd.DataFrame]:
                     df["time"] = pd.to_datetime(
                         df["timestamp_ms"], unit="ms", errors="coerce"
                     )
-                    df["value"] = pd.to_numeric(df["to_state"], errors="coerce")
-                    df = df[["time", "value"]].dropna(subset=["value"])
+                    df["value"] = df["to_state"]
+                    df = _prepare_state_dataframe(df)
                     if len(df) > 0:
                         return {"engine_state": df}
             except Exception as e:
                 print(f"  Skip {p.name}: {e}")
     return {}
+
+
+def _load_controller_state_from_export(export_dir: Path) -> dict[str, pd.DataFrame]:
+    """PSM state from Elodin export CONTROLLER.state.to_state (full DB timeline)."""
+    ctrl = load_csv_series(export_dir, "CONTROLLER.state.to_state.csv")
+    if export_dir.is_dir():
+        nested = load_csv_series(export_dir, "**/CONTROLLER.state.to_state.csv")
+        for k, v in nested.items():
+            ctrl.setdefault(k, v)
+    if not ctrl:
+        return {}
+    df = next(iter(ctrl.values()))
+    if df.empty:
+        return {}
+    df = _prepare_state_dataframe(df)
+    if df.empty:
+        return {}
+    return {"engine_state": df}
 
 
 def _infer_time_value_cols(df: pd.DataFrame) -> tuple[str, str] | None:
@@ -277,6 +441,44 @@ def _infer_actuator_export_cols(df: pd.DataFrame) -> tuple[str, str] | None:
     if len(df.columns) >= 2:
         return (df.columns[0], df.columns[1])
     return None
+
+
+_ACT_SENSE_SERIES_TO_CMD = re.compile(r"^ACT(\d+)\.CH(\d+)$")
+
+
+def _act_sense_series_key_to_cmd_key(sense_key: str) -> str | None:
+    """Map export short name ACT2.CH3 → ACT_CMD.B2.CH3 (same convention as Elodin decode)."""
+    m = _ACT_SENSE_SERIES_TO_CMD.match(sense_key)
+    if m:
+        return f"ACT_CMD.B{m.group(1)}.CH{m.group(2)}"
+    return None
+
+
+def merge_act_sense_fallback_for_act_cmd(
+    cmd_series: dict[str, pd.DataFrame],
+    sense_series: dict[str, pd.DataFrame],
+) -> dict[str, pd.DataFrame]:
+    """Fill ACT_CMD.* keys missing from commanded export using ACT*.CH* current-sense (0x31)."""
+    out = dict(cmd_series)
+    for sk, sdf in sense_series.items():
+        ck = _act_sense_series_key_to_cmd_key(sk)
+        if ck and ck not in out:
+            out[ck] = sdf
+    return out
+
+
+def reorder_actuator_wide_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Sort actuator columns by board then channel for readable multi-panel plots."""
+    cols = [c for c in df.columns if c != "t_s"]
+
+    def sort_key(name: str) -> tuple:
+        m = re.search(r"ACT_CMD\.B(\d+)\.CH(\d+)", name)
+        if m:
+            return (0, int(m.group(1)), int(m.group(2)), name)
+        return (1, 0, 0, name)
+
+    ordered = sorted(cols, key=sort_key)
+    return df[["t_s"] + ordered]
 
 
 def _normalize_actuator_value(v: float | str) -> float:
@@ -467,6 +669,41 @@ def resample_to_grid_step(
     return out, time_grid
 
 
+def plot_pressures_full_run(
+    data: pd.DataFrame,
+    t_s: np.ndarray,
+    out_path: Path,
+) -> None:
+    """Every calibrated PT channel on its own subplot — full run, no grouping omissions."""
+    cols = [c for c in data.columns if c != "t_s"]
+    if not cols:
+        return
+    n = len(cols)
+    ncols = min(4, max(1, n))
+    nrows = (n + ncols - 1) // ncols
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(3.6 * ncols, 2.3 * nrows), sharex=True, squeeze=False
+    )
+    for i, c in enumerate(cols):
+        r, cc = i // ncols, i % ncols
+        ax = axes[r][cc]
+        ax.plot(t_s, data[c].values, color="C0", linewidth=0.9, alpha=0.95)
+        ax.set_title(str(c).replace("_", " ")[:44], fontsize=8)
+        ax.set_ylabel("PSI", fontsize=8)
+        ax.grid(True, alpha=0.3)
+    for j in range(n, nrows * ncols):
+        r, cc = j // ncols, j % ncols
+        axes[r][cc].set_visible(False)
+    fig.suptitle("All calibrated pressures (full timeline)", fontsize=12, fontweight="bold")
+    if len(t_s):
+        axes[0][0].set_xlim(float(t_s[0]), float(t_s[-1]))
+    axes[-1][0].set_xlabel("Time (s)")
+    plt.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+    print(f"  Saved {out_path}")
+
+
 def plot_pressures(
     data: pd.DataFrame,
     t_s: np.ndarray,
@@ -510,7 +747,9 @@ def plot_pressures(
                 )
         ax.set_title(title)
         ax.set_ylabel("PSI")
-        ax.legend(loc="upper right", fontsize=8)
+        _handles, leg_labels = ax.get_legend_handles_labels()
+        if leg_labels:
+            ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, alpha=0.3)
         ax.set_xlim(left=0)
 
@@ -597,6 +836,27 @@ def _apply_actuator_open_closed(
     return out
 
 
+def _fill_actuator_channel_axis(
+    ax,
+    t_s: np.ndarray,
+    y: np.ndarray,
+    label: str,
+    *,
+    color: str | None = None,
+    y_label_fontsize: float = 9,
+) -> None:
+    """Draw one actuator strip: step-held line at CLOSED (0) or OPEN (1), no area fill."""
+    kw: dict = {"where": "post", "linewidth": 1.25}
+    if color is not None:
+        kw["color"] = color
+    ax.step(t_s, y, **kw)
+    ax.set_ylabel(label.replace("_", " "), fontsize=y_label_fontsize)
+    ax.set_ylim(-0.2, 1.2)
+    ax.set_yticks([0, 1])
+    ax.set_yticklabels(["CLOSED", "OPEN"])
+    ax.grid(True, alpha=0.3, axis="x")
+
+
 def plot_actuators(
     data: pd.DataFrame,
     t_s: np.ndarray,
@@ -614,20 +874,173 @@ def plot_actuators(
     if n == 1:
         axes = [axes]
     fig.suptitle("Actuator State (OPEN/CLOSED)", fontsize=12, fontweight="bold")
-    for ax, c in zip(axes, cols):
-        vals = display[c].values
-        ax.fill_between(t_s, 0, vals, step="post", alpha=0.7)
-        ax.set_ylabel(c.replace("_", " "), fontsize=9)
-        ax.set_ylim(-0.2, 1.2)
-        ax.set_yticks([0, 1])
-        ax.set_yticklabels(["CLOSED", "OPEN"])
-        ax.grid(True, alpha=0.3, axis="x")
+    for i, (ax, c) in enumerate(zip(axes, cols)):
+        _fill_actuator_channel_axis(
+            ax, t_s, display[c].values, c, color=f"C{i % 10}"
+        )
         ax.set_xlim(left=0)
     axes[-1].set_xlabel("Time (s)")
     plt.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
     print(f"  Saved {out_path}")
+
+
+def _rising_edge_times(
+    t_s: np.ndarray, v: np.ndarray, *, t_min: float = 0.0
+) -> list[float]:
+    """Times where logical actuator goes from CLOSED (0) to OPEN (1), step-hold semantics."""
+    y = np.clip(np.asarray(v, dtype=float), 0.0, 1.0)
+    hi = y >= 0.5
+    # Low before first sample → allow edge at index 0 if hi[0]
+    pad = np.concatenate([[False], hi[:-1]])
+    rise = hi & ~pad
+    out = [float(t_s[i]) for i in np.where(rise)[0] if float(t_s[i]) >= t_min]
+    return out
+
+
+def _resolve_dataframe_column(df: pd.DataFrame, *candidates: str) -> str | None:
+    """Pick first column that exists or case-insensitive / substring match to candidates."""
+    for want in candidates:
+        if want in df.columns:
+            return want
+        wl = want.lower()
+        for c in df.columns:
+            if c == "t_s":
+                continue
+            if c.lower() == wl:
+                return c
+    for want in candidates:
+        parts = want.lower().split()
+        for c in df.columns:
+            if c == "t_s":
+                continue
+            cl = c.lower()
+            if all(p in cl for p in parts):
+                return c
+    return None
+
+
+def plot_gn2_ox_valve_snapshots(
+    pt_wide: pd.DataFrame,
+    act_display: pd.DataFrame,
+    t_s: np.ndarray,
+    out_dir: Path,
+    *,
+    pre_s: float = 3.0,
+    post_s: float = 7.0,
+) -> None:
+    """Two 10 s windows (pre_s before, post_s after opening) for GN2 High + Ox PTs + trigger valve."""
+    gn2 = _resolve_dataframe_column(pt_wide, "GN2 High")
+    ox_u = _resolve_dataframe_column(pt_wide, "Ox Upstream")
+    ox_d = _resolve_dataframe_column(pt_wide, "Ox Downstream")
+    fuel = _resolve_dataframe_column(act_display, "Fuel Press")
+    loxm = _resolve_dataframe_column(act_display, "LOX Main")
+
+    if not gn2 or not ox_u or not ox_d:
+        print(
+            "  Skip GN2/Ox snapshots: need GN2 High, Ox Upstream, Ox Downstream in PT data"
+        )
+        return
+
+    specs: list[tuple[str, str | None, str, float]] = []
+    t_fp: float | None = None
+    if fuel:
+        fp_edges = _rising_edge_times(t_s, act_display[fuel].values, t_min=40.0)
+        if fp_edges:
+            t_fp = fp_edges[0]
+            specs.append(
+                (
+                    "fuel_press_open",
+                    fuel,
+                    f"GN2 High + Ox (Fuel Press opens, lab t={t_fp:.2f}s)",
+                    t_fp,
+                )
+            )
+    t_lm_min = 120.0
+    if t_fp is not None:
+        t_lm_min = max(t_lm_min, t_fp + 30.0)
+    if loxm:
+        lm_edges = _rising_edge_times(t_s, act_display[loxm].values, t_min=t_lm_min)
+        if lm_edges:
+            t_lm = lm_edges[-1]
+            specs.append(
+                (
+                    "lox_main_open",
+                    loxm,
+                    f"GN2 High + Ox (LOX Main opens, lab t={t_lm:.2f}s)",
+                    t_lm,
+                )
+            )
+
+    if not specs:
+        print(
+            "  Skip GN2/Ox snapshots: no Fuel Press / LOX Main opening edges matched filters"
+        )
+        return
+
+    for key, valve_col, title, t_center in specs:
+        t0, t1 = t_center - pre_s, t_center + post_s
+        m = (t_s >= t0) & (t_s <= t1)
+        if not np.any(m):
+            continue
+        t_rel = t_s[m] - t_center
+        fig, (axp, axa) = plt.subplots(
+            2,
+            1,
+            figsize=(10, 5.5),
+            sharex=True,
+            gridspec_kw={"height_ratios": [2.2, 1.0]},
+        )
+        axp.plot(
+            t_rel,
+            pt_wide[gn2].values[m],
+            label="GN2 High",
+            color="C0",
+            linewidth=1.2,
+        )
+        axp.plot(
+            t_rel,
+            pt_wide[ox_u].values[m],
+            label="Ox Upstream",
+            color="C1",
+            linewidth=1.0,
+            alpha=0.9,
+        )
+        axp.plot(
+            t_rel,
+            pt_wide[ox_d].values[m],
+            label="Ox Downstream",
+            color="C2",
+            linewidth=1.0,
+            alpha=0.9,
+        )
+        axp.axvline(0.0, color="k", linestyle="--", linewidth=0.9, alpha=0.55)
+        axp.set_ylabel("Pressure (PSI)")
+        axp.set_title(title)
+        axp.legend(loc="upper right", fontsize=8)
+        axp.grid(True, alpha=0.3)
+        axp.set_xlim(-pre_s, post_s)
+
+        if valve_col:
+            axa.step(
+                t_rel,
+                act_display[valve_col].values[m],
+                where="post",
+                color="C3",
+                linewidth=1.25,
+            )
+            axa.set_ylim(-0.15, 1.15)
+            axa.set_yticks([0, 1])
+            axa.set_yticklabels(["CLOSED", "OPEN"])
+            axa.set_ylabel(valve_col.replace("_", " "), fontsize=9)
+            axa.grid(True, alpha=0.3, axis="x")
+        axa.set_xlabel("Time relative to valve OPEN (s) — 0 = opening edge")
+        plt.tight_layout()
+        out_path = out_dir / f"snapshot_{key}_gn2_ox.png"
+        fig.savefig(out_path)
+        plt.close(fig)
+        print(f"  Saved {out_path} (window [{t0:.2f}s, {t1:.2f}s] lab time)")
 
 
 def plot_states(
@@ -651,11 +1064,12 @@ def plot_states(
     ax.grid(True, alpha=0.3)
     ax.set_xlim(left=0)
     y_vals = sorted(
-        set(
-            int(round(v))
-            for v in np.unique(data[cols[0]].dropna().values)
-            if not np.isnan(v)
-        )
+        {
+            int(round(float(v)))
+            for c in cols
+            for v in np.unique(data[c].dropna().values)
+            if np.isfinite(v)
+        }
     )
     if y_vals:
         ax.set_yticks(y_vals)
@@ -669,15 +1083,17 @@ def plot_states(
 def plot_summary_stats(
     pt_data: dict[str, pd.DataFrame],
     out_path: Path,
+    sensor_names: dict[str, str] | None = None,
 ) -> None:
     """Summary statistics table for pressures."""
+    labels = sensor_names or {}
     rows = []
     for name, df in pt_data.items():
         v = df["value"].dropna()
         if len(v) > 0:
             rows.append(
                 {
-                    "Sensor": name,
+                    "Sensor": labels.get(name, name),
                     "Mean (PSI)": f"{v.mean():.2f}",
                     "Std (PSI)": f"{v.std():.2f}",
                     "Min (PSI)": f"{v.min():.2f}",
@@ -774,14 +1190,34 @@ def plot_overview_4panel(
     t_s: np.ndarray,
     out_path: Path,
     actuator_roles: dict[str, str] | None = None,
+    state_names: dict[int, str] | None = None,
 ) -> None:
     """Overview: state, pressures, temps, actuators, controller."""
     has_state = state_wide is not None and not state_wide.empty
     has_ctrl = ctrl_wide is not None and not ctrl_wide.empty
-    n_panels = 4 + (1 if has_state else 0) + (1 if has_ctrl else 0)
-    ratios = [0.6, 1.2, 1.0, 0.8, 0.5, 0.6][:n_panels]
-    fig = plt.figure(figsize=(14, 10))
-    gs = GridSpec(n_panels, 1, figure=fig, height_ratios=ratios, hspace=0.35)
+    roles_ov = actuator_roles or {}
+    act_display_ov = (
+        _apply_actuator_open_closed(act_wide, roles_ov)
+        if act_wide is not None and not act_wide.empty
+        else None
+    )
+    act_cols_ov = (
+        [c for c in act_display_ov.columns if c != "t_s"]
+        if act_display_ov is not None
+        else []
+    )
+    n_act_ch = max(1, len(act_cols_ov))
+    act_ratio = min(3.0, max(0.95, 0.1 * n_act_ch))
+    ratios: list[float] = []
+    if has_state:
+        ratios.append(0.65)
+    ratios.extend([1.2, 1.05, act_ratio])
+    if has_ctrl:
+        ratios.append(0.55)
+    n_panels = len(ratios)
+    fig_h = min(22.0, 9.0 + 0.32 * max(0, len(act_cols_ov) - 6))
+    fig = plt.figure(figsize=(14, fig_h))
+    gs = GridSpec(n_panels, 1, figure=fig, height_ratios=ratios, hspace=0.32)
     idx = 0
     share_ax = None
 
@@ -802,6 +1238,21 @@ def plot_overview_4panel(
         ax0.legend(loc="upper right", fontsize=8)
         ax0.grid(True, alpha=0.3)
         ax0.set_xlim(left=0)
+        if state_names:
+            st_cols = [c for c in state_wide.columns if c != "t_s"]
+            y_vals = sorted(
+                {
+                    int(round(float(v)))
+                    for c in st_cols
+                    for v in state_wide[c].dropna().unique()
+                    if np.isfinite(v)
+                }
+            )
+            if y_vals:
+                ax0.set_yticks(y_vals)
+                ax0.set_yticklabels(
+                    [state_names.get(v, str(v)) for v in y_vals], fontsize=8
+                )
         idx += 1
 
     ax1 = fig.add_subplot(gs[idx], sharex=share_ax)
@@ -827,22 +1278,33 @@ def plot_overview_4panel(
     ax2.grid(True, alpha=0.3)
     idx += 1
 
-    ax3 = fig.add_subplot(gs[idx], sharex=ax1)
-    if act_wide is not None and not act_wide.empty:
-        roles = actuator_roles or {}
-        act_display = _apply_actuator_open_closed(act_wide, roles)
-        act_cols = [c for c in act_display.columns if c != "t_s"][:6]
-        for c in act_cols:
-            ax3.step(
-                t_s, act_display[c], where="post", label=c.replace("_", " "), alpha=0.8
+    # Actuators: one row per valve (matches actuators.png). Overlaying steps on one axis
+    # collapsed all traces onto y=0/1 and looked like false "flat lines".
+    if act_display_ov is not None and act_cols_ov:
+        sub = gs[idx].subgridspec(len(act_cols_ov), 1, hspace=0.2)
+        act_axes: list = []
+        for i, c in enumerate(act_cols_ov):
+            axx = fig.add_subplot(
+                sub[i, 0],
+                sharex=ax1 if i == 0 else act_axes[0],
             )
-    ax3.set_ylabel("Actuator")
-    ax3.set_title("Actuators (OPEN/CLOSED)")
-    ax3.set_ylim(-0.1, 1.3)
-    ax3.set_yticks([0, 1])
-    ax3.set_yticklabels(["CLOSED", "OPEN"])
-    ax3.legend(loc="upper right", ncol=2, fontsize=8)
-    ax3.grid(True, alpha=0.3)
+            act_axes.append(axx)
+            _fill_actuator_channel_axis(
+                axx,
+                t_s,
+                act_display_ov[c].values,
+                c,
+                color=f"C{i % 10}",
+                y_label_fontsize=7,
+            )
+            axx.set_xlim(left=0)
+            if i < len(act_cols_ov) - 1:
+                plt.setp(axx.get_xticklabels(), visible=False)
+        act_axes[0].set_title("Actuators (OPEN/CLOSED)", fontsize=10)
+    else:
+        ax3 = fig.add_subplot(gs[idx], sharex=ax1)
+        ax3.set_title("Actuators (no data)")
+        ax3.grid(True, alpha=0.3)
     idx += 1
 
     if has_ctrl:
@@ -857,11 +1319,14 @@ def plot_overview_4panel(
         ax4.set_xlim(left=0)
         idx += 1
 
-    fig.get_axes()[-1].set_xlabel("Time (s)")
-    for i in range(idx - 1):
-        plt.setp(fig.get_axes()[i].get_xticklabels(), visible=False)
-    fig.suptitle("Run Overview", fontsize=12, fontweight="bold", y=1.02)
-    plt.tight_layout()
+    _all_ax = fig.get_axes()
+    if _all_ax:
+        _all_ax[-1].set_xlabel("Time (s)")
+        for _a in _all_ax[:-1]:
+            plt.setp(_a.get_xticklabels(), visible=False)
+    fig.suptitle("Run Overview", fontsize=12, fontweight="bold", y=1.01)
+    with np.errstate(all="ignore"):
+        fig.tight_layout(rect=[0.02, 0.02, 0.98, 0.97])
     fig.savefig(out_path)
     plt.close(fig)
     print(f"  Saved {out_path}")
@@ -873,6 +1338,12 @@ def main() -> None:
     )
     parser.add_argument(
         "export_dir", nargs="?", default="./export_csv", help="CSV export directory"
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="config.toml for PT/TC/RTD/actuator display names (default: <repo>/config/config.toml)",
     )
     parser.add_argument(
         "--output", "-o", default=None, help="Output directory for plots"
@@ -916,7 +1387,27 @@ def main() -> None:
     print(f"📁 Output to {out_dir}")
 
     project_root = Path(__file__).resolve().parent.parent.parent
-    actuator_roles = _load_actuator_roles(project_root)
+    config_path = (
+        args.config.resolve()
+        if args.config
+        else project_root / "config" / "config.toml"
+    )
+    cfg_toml = _read_config_toml(config_path)
+    if cfg_toml is None:
+        if not config_path.exists():
+            print(f"  ⚠️  Config not found: {config_path} (using generic channel labels)")
+        cfg_data: dict = {}
+    else:
+        cfg_data = cfg_toml
+
+    sensor_names = _sensor_names_from_data(cfg_data)
+    actuator_roles = _actuator_roles_from_data(cfg_data)
+    actuator_cmd_labels = _actuator_cmd_labels_from_data(cfg_data)
+    if cfg_toml is not None and (sensor_names or actuator_cmd_labels):
+        print(
+            f"  Display names from {config_path.name}: "
+            f"{len(sensor_names)} sensor aliases, {len(actuator_cmd_labels)} actuators"
+        )
 
     # Load PT pressures (board-numbered entities: PT1_Cal.CH*, PT2_Cal.CH*, …)
     pt_series = load_csv_series(export_dir, "PT*_Cal.*.pressure_psi.csv")
@@ -936,41 +1427,52 @@ def main() -> None:
     if lc_series:
         print(f"  Loaded {len(lc_series)} load cell channels")
 
-    # Load actuator states: prefer commanded (0x32, ACT_CMD.*) over current-sense (ACT*.CH*)
+    # Load actuator states: prefer commanded (0x32, ACT_CMD.*); merge missing channels from sense (0x31).
     act_series = load_csv_series(export_dir, "ACT_CMD.*.actuator_state_commanded.csv")
-    # Nested export dirs (some elodin-db layouts)
     if export_dir.is_dir():
         nested = load_csv_series(export_dir, "**/ACT_CMD*.actuator_state_commanded.csv")
         for k, v in nested.items():
             act_series.setdefault(k, v)
     from_commanded = bool(act_series)
-    if not act_series:
-        act_series = load_csv_series(export_dir, "ACT*.CH*.actuator_state.csv")
-    if not act_series:
-        # Fallback: any actuator_state* from non-CMD tables
-        act_series = load_csv_series(export_dir, "ACT*.CH*.actuator_state*.csv")
+
+    sense_series = load_csv_series(export_dir, "ACT*.CH*.actuator_state.csv")
+    if export_dir.is_dir():
+        nested_sense = load_csv_series(export_dir, "**/ACT*.CH*.actuator_state.csv")
+        for k, v in nested_sense.items():
+            sense_series.setdefault(k, v)
+
+    if act_series:
+        act_series = merge_act_sense_fallback_for_act_cmd(act_series, sense_series)
+    else:
+        act_series = sense_series
+        if not act_series:
+            act_series = load_csv_series(export_dir, "ACT*.CH*.actuator_state*.csv")
     if act_series:
         print(
             f"  Loaded {len(act_series)} actuator channels ({'commanded' if from_commanded else 'current-sense'})"
         )
 
-    # Load system state (PSM). Order: state_transitions (backend during run) > CONTROLLER > BOARD.
-    state_series = _load_state_fallback(export_dir)
+    # Load system state: prefer Elodin CONTROLLER export (full timeline); else backend CSV; else BOARD.
     state_from_board = False
+    state_series = _load_controller_state_from_export(export_dir)
     if state_series:
-        print(f"  Loaded system state from data/state_transitions.csv (PSM)")
+        print(
+            "  Loaded system state from CONTROLLER.state.to_state (Elodin export, PSM)"
+        )
     else:
-        ctrl_state = load_csv_series(export_dir, "CONTROLLER.state.to_state.csv")
-        board_state = load_csv_series(export_dir, "BOARD.*.engine_state.csv")
-        if ctrl_state:
-            state_series = {"engine_state": next(iter(ctrl_state.values()))}
-            print(f"  Loaded system state from CONTROLLER.state.to_state (PSM)")
-        elif board_state:
-            state_series = {"engine_state": next(iter(board_state.values()))}
-            state_from_board = True
-            print(f"  Loaded system state from BOARD heartbeat (SAFE/PRESSURIZING/...)")
+        state_series = _load_state_fallback(export_dir)
+        if state_series:
+            print("  Loaded system state from data/state_transitions.csv (PSM)")
         else:
-            state_series = {}
+            board_state = load_csv_series(export_dir, "BOARD.*.engine_state.csv")
+            if board_state:
+                state_series = {"engine_state": next(iter(board_state.values()))}
+                state_from_board = True
+                print(
+                    "  Loaded system state from BOARD heartbeat (SAFE/PRESSURIZING/...)"
+                )
+            else:
+                state_series = {}
 
     # Load controller outputs (actuation, fire, diagnostics, measurement)
     ctrl_series = {}
@@ -1173,6 +1675,8 @@ def main() -> None:
     )
     if act_wide is not None and not act_wide.empty and not from_commanded:
         act_wide = debounce_binary(act_wide, window_sec=0.5, dt=dt)
+    if act_wide is not None and not act_wide.empty:
+        act_wide = reorder_actuator_wide_columns(act_wide)
     state_wide, _ = (
         resample_to_grid_step(
             state_series,
@@ -1197,11 +1701,16 @@ def main() -> None:
         else (None, None)
     )
 
-    # Map columns to sensor names from config
-    sensor_names = _load_sensor_names(project_root)
+    # Map dataframe columns to human-readable names from config
     for df in [pt_wide, tc_wide, lc_wide]:
         if df is not None:
             df.rename(columns=sensor_names, inplace=True)
+    if act_wide is not None and actuator_cmd_labels:
+        act_wide.rename(columns=actuator_cmd_labels, inplace=True)
+    if state_wide is not None and "engine_state" in state_wide.columns:
+        state_wide.rename(columns={"engine_state": "System state"}, inplace=True)
+    if ctrl_wide is not None and not ctrl_wide.empty:
+        ctrl_wide.rename(columns=CONTROLLER_DISPLAY_LABELS, inplace=True)
 
     # Save combined CSV for downstream analysis
     combined = pd.DataFrame({"t_s": t_s})
@@ -1214,8 +1723,12 @@ def main() -> None:
 
     print("\n📊 Generating plots...")
     plot_pressures(pt_wide, t_s, out_dir / "pressures.png")
+    if pt_wide is not None and not pt_wide.empty:
+        plot_pressures_full_run(pt_wide, t_s, out_dir / "pressures_full_run.png")
     if pt_series:
-        plot_summary_stats(pt_series, out_dir / "pressure_summary.png")
+        plot_summary_stats(
+            pt_series, out_dir / "pressure_summary.png", sensor_names=sensor_names
+        )
     if tc_wide is not None:
         plot_temperatures(tc_wide, t_s, out_dir / "temperatures.png")
     if lc_wide is not None:
@@ -1223,7 +1736,16 @@ def main() -> None:
     if act_wide is not None:
         plot_actuators(act_wide, t_s, out_dir / "actuators.png", actuator_roles)
     if state_wide is not None:
-        plot_states(state_wide, t_s, out_dir / "states.png")
+        plot_states(
+            state_wide,
+            t_s,
+            out_dir / "states.png",
+            state_names=(
+                BOARD_ENGINE_STATE_NAMES if state_from_board else PSM_STATE_NAMES
+            ),
+        )
+    if ctrl_wide is not None and not ctrl_wide.empty:
+        plot_controller(ctrl_wide, t_s, out_dir / "controller.png")
 
     plot_overview_4panel(
         pt_wide,
@@ -1234,7 +1756,16 @@ def main() -> None:
         t_s,
         out_dir / "overview.png",
         actuator_roles,
+        state_names=(
+            (BOARD_ENGINE_STATE_NAMES if state_from_board else PSM_STATE_NAMES)
+            if state_series
+            else None
+        ),
     )
+
+    if act_wide is not None and not act_wide.empty and pt_wide is not None and not pt_wide.empty:
+        act_disp_snap = _apply_actuator_open_closed(act_wide, actuator_roles)
+        plot_gn2_ox_valve_snapshots(pt_wide, act_disp_snap, t_s, out_dir)
 
 
 if __name__ == "__main__":

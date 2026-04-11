@@ -132,7 +132,8 @@ SensorRouter::route_pt_samples(const daq_comms::protocol::SensorBatch& batch,
 
 std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedPTMessage>>
 SensorRouter::route_pt_samples_calibrated(const daq_comms::protocol::SensorBatch& batch,
-                                          uint64_t receive_timestamp_ns) const {
+                                          uint64_t receive_timestamp_ns,
+                                          uint8_t pt_board_slot) const {
     std::vector<std::pair<std::array<uint8_t, 2>, comms::messages::sensor::CalibratedPTMessage>>
         messages;
 
@@ -146,8 +147,10 @@ SensorRouter::route_pt_samples_calibrated(const daq_comms::protocol::SensorBatch
         std::array<uint8_t, 2> pkt_id = {0x20, static_cast<uint8_t>(0x10 + sample.channel_id)};
 
         int32_t adc_code = static_cast<int32_t>(sample.raw_adc_counts);
-        double pressure_psi = pt_calibration_->calculate_pressure(sample.channel_id, adc_code);
-        uint8_t calibration_status = pt_calibration_->is_calibrated(sample.channel_id) ? 1 : 0;
+        const uint8_t log_ch = calibration::pt_logical_calibration_channel(
+            pt_board_slot, static_cast<uint8_t>(sample.channel_id));
+        double pressure_psi = pt_calibration_->calculate_pressure(log_ch, adc_code);
+        uint8_t calibration_status = pt_calibration_->is_calibrated(log_ch) ? 1 : 0;
 
         comms::messages::sensor::CalibratedPTMessage msg;
         msg.setField<0>(receive_timestamp_ns);
