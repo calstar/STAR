@@ -1,0 +1,16 @@
+[submodule "external/DAQv2-Comms"]
+	path = external/DAQv2-Comms
+	url = https://github.com/calstar/DAQv2-Comms.git
+[submodule "external/DiabloAvionics"]
+	path = external/DiabloAvionics
+	url = https://github.com/calstar/DiabloAvionics.git
+[submodule "engine_sim"]
+	path = engine_sim
+	url = git@github.com:KushMahajan/EngineDesign.git
+	branch = christmas
+[submodule "external/flash"]
+	path = external/flash
+	url = https://github.com/calstar/flash.git
+[submodule "FSW/external/uWebSockets"]
+	path = FSW/external/uWebSockets
+	url = https://github.com/uNetworking/uWebSockets.git

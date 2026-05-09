@@ -1,0 +1,51 @@
+engine_config_path: engine_sim/configs/default.yaml
+controller_config_path: engine_sim/configs/robust_ddp_default.yaml
+
+# Minimal DDP LUT example for fast generation.
+# Axes focus on the main quantities that determine thrust and control:
+# - Measurement: P_u_fuel, P_u_ox
+# - Command: thrust_desired
+axes:
+  - name: P_u_fuel
+    units: Pa
+    description: Fuel tank/ullage pressure
+    values: [2.0e6, 4.0e6]
+
+  - name: P_u_ox
+    units: Pa
+    description: Oxidizer tank/ullage pressure
+    values: [2.0e6, 4.0e6]
+
+  - name: thrust_desired
+    units: N
+    description: Desired thrust command
+    values: [3000.0, 7000.0]
+
+outputs:
+  # Engine / prediction quantities
+  - F
+  - MR
+  - P_ch
+  - mdot_F
+  - mdot_O
+  - injector_dp_F
+  - injector_dp_O
+  - stability_score
+  - injector_stiffness_ok
+
+  # DDP optimal control and diagnostics
+  - u_relaxed_F
+  - u_relaxed_O
+  - u_safe_F
+  - u_safe_O
+  - duty_F
+  - duty_O
+  - value_function
+
+metadata:
+  description: Small DDP LUT configuration for RobustDDPController (engine_sim) focused on tank pressures and thrust command.
+  notes: >
+    This configuration is intentionally tiny (2x2x2 = 8 points) so the full
+    engine + DDP evaluation completes quickly. Once verified, you can extend
+    it back toward the higher-dimensional plan using engine_sim/configs/default.yaml
+    and robust_ddp_default.yaml for chamber and injector intrinsics.

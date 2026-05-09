@@ -1,0 +1,55 @@
+# Flash Dependencies List
+# This file lists all executables, libraries, and files that need to be flashed
+
+## Executables
+daq_bridge                    # Main DAQ bridge with state machine
+send_all_sensors_from_config  # Test program for config-based sensors
+send_all_message_types        # Test program for all message types
+test_fsw_simulator            # FSW simulator
+esp32_pt_streamer            # ESP32 PT streamer
+fake_esp32_packet_gen         # Fake ESP32 packet generator
+sitl_simulator               # SITL simulator (if built)
+test_robust_ddp              # Robust DDP controller test (if built)
+test_imu_calibration         # IMU calibration test (if built)
+
+## Libraries
+libdaq_comms_lib.so    # DAQ communications (messages, parser, transport, UDP)
+libfsw_daq_lib.so      # FSW DAQ (config, routing, elodin, control/state machine, calibration)
+
+## Config Files
+config/config_flight_daq.toml
+config/config_ground_daq.toml
+config/config.toml
+
+## Scripts
+scripts/startup/startup_daq_db.sh
+scripts/startup/startup_daq_bridge.sh
+scripts/startup/start_full_system.sh
+
+## New Dependencies (State Machine & UDP Actuator Commands)
+# PressureStateMachine (compiled into libfsw_daq_lib.so)
+#   - Reads pressure data from Elodin
+#   - Sends actuator commands via UDP to boards
+#   - State machine for pressure-based control
+# DiabloBoardPacketParser (compiled into libdaq_comms_lib.so)
+#   - Constructs actuator command packets (matching DAQv2-Comms format)
+#   - Little-endian packet format
+# UDPSocket (compiled into libdaq_comms_lib.so)
+#   - UDP transport for sending commands to actuator boards
+#   - Reused socket pattern (like DiabloAvionics GUI)
+# ElodinClient (compiled into libfsw_daq_lib.so)
+#   - Reads pressure data packets from Elodin
+#   - Mutex-protected read operations
+
+## Runtime Dependencies
+# Eigen3 (must be installed on target system - handled by external/flash)
+# pthread (standard library)
+# rt (real-time library)
+
+## External Flash Integration
+# The external/flash repository provides:
+# - Cross-platform system setup (macOS, Linux, Windows/WSL)
+# - Python environment setup
+# - Elodin editor/database installation
+# - Development tools installation
+# Run external/flash/install.sh on new systems before deploying executables

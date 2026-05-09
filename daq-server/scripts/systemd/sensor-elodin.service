@@ -1,0 +1,15 @@
+[Unit]
+Description=Sensor System Elodin DB
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/mkdir -p %h/.local/share/elodin
+ExecStart=%h/.cargo/bin/elodin-db run '[::]:2240' '%h/.local/share/elodin/daq_live'
+Restart=always
+RestartSec=5
+Environment=RUST_LOG=info
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,552 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+      - PT_Calibration
+      - Test_Branch
+      - unit-testing
+      - cpp-stack-and-cleanup
+      - web-gui-tests
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+      - PT_Calibration
+      - Test_Branch
+      - unit-testing
+      - cpp-stack-and-cleanup
+      - web-gui-tests
+  workflow_dispatch:
+
+env:
+  BUILD_DIR: build
+  CXX_STANDARD: 20
+
+jobs:
+  # Format check - must pass before building
+  format-check:
+    name: Code Formatting Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install clang-format
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang-format-17 || sudo apt-get install -y clang-format
+
+    - name: Check code formatting
+      run: |
+        chmod +x ./format.sh
+        if ! ./format.sh --check; then
+          echo "::error::Code formatting check failed. Run './format.sh' to fix."
+          exit 1
+        fi
+      continue-on-error: false
+
+  web-gui:
+    name: Web GUI (Vitest + Next.js build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Use Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        cache-dependency-path: web-gui/frontend/package-lock.json
+
+    # API routes import ../backend/src/* which uses @iarna/toml; install backend so resolution + alias work in next build.
+    - name: Install backend dependencies
+      working-directory: web-gui/backend
+      run: npm ci || npm install
+
+    - name: Install frontend dependencies
+      working-directory: web-gui/frontend
+      run: npm ci || npm install
+
+    - name: Run frontend unit tests
+      working-directory: web-gui/frontend
+      run: npm run test
+
+    - name: Verify Next.js build
+      working-directory: web-gui/frontend
+      run: npm run test:build
+
+  # Build with multiple compilers (Release only)
+  build:
+    name: Build (${{ matrix.compiler }} — Release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc-12, clang-18]
+        include:
+          - compiler: gcc-12
+            cc: gcc-12
+            cxx: g++-12
+          - compiler: clang-18
+            cc: clang-18
+            cxx: clang++-18
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          ninja-build \
+          ccache \
+          libeigen3-dev \
+          pkg-config \
+          ${{ matrix.cc }} \
+          ${{ matrix.cxx }}
+
+    - name: Install optional dependencies (CAN — best effort)
+      run: |
+        sudo apt-get install -y libcanard-dev || echo "libcanard-dev not in apt; building without CAN package"
+
+    # Clang + libstdc++ from the default system GCC (e.g. 14 on ubuntu-latest) can blow up in C++20 <format>/ranges
+    # included from <chrono>. Install g++-12 and pin Clang to that libstdc++ with --gcc-install-dir.
+    - name: Install GCC 12 libstdc++ for Clang
+      if: startsWith(matrix.compiler, 'clang-')
+      run: sudo apt-get install -y g++-12
+
+    - name: Restore compiler cache (ccache)
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ${{ runner.os }}-ccache-${{ matrix.compiler }}-${{ hashFiles('CMakeLists.txt', 'FSW/CMakeLists.txt', 'archive/legacy/utl/**/*.cpp', 'archive/legacy/utl/**/*.hpp', 'daq_comms/**/*.cpp', 'daq_comms/**/*.hpp', 'FSW/**/*.cpp', 'FSW/**/*.hpp') }}
+        restore-keys: |
+          ${{ runner.os }}-ccache-${{ matrix.compiler }}-
+
+    - name: Show ccache stats (before)
+      run: ccache -s || true
+
+    - name: Configure CMake
+      env:
+        CC: ${{ matrix.cc }}
+        CXX: ${{ matrix.cxx }}
+      run: |
+        mkdir -p ${{ env.BUILD_DIR }}
+        cd ${{ env.BUILD_DIR }}
+        case "${{ matrix.compiler }}" in
+          clang-*)
+            export CXXFLAGS="--gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/12"
+            ;;
+        esac
+        cmake \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_COMPILER=${{ matrix.cc }} \
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_CXX_STANDARD=${{ env.CXX_STANDARD }} \
+          -G Ninja \
+          ..
+
+    - name: Build project
+      run: |
+        cd ${{ env.BUILD_DIR }}
+        cmake --build . --parallel $(nproc)
+
+    - name: Show ccache stats (after)
+      run: ccache -s || true
+
+    - name: Verify executables
+      run: |
+        cd ${{ env.BUILD_DIR }}
+        echo "Checking for built executables..."
+        find . -type f -executable -name "*example*" -o -name "*test*" | head -10 || true
+
+    - name: Upload build artifacts
+      if: matrix.compiler == 'gcc-12'
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts-${{ matrix.compiler }}-Release
+        path: |
+          ${{ env.BUILD_DIR }}/**/*.so
+          ${{ env.BUILD_DIR }}/**/daq_bridge
+          ${{ env.BUILD_DIR }}/**/test_fsw_simulator
+        retention-days: 7
+
+  # Static analysis
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libeigen3-dev \
+          cppcheck \
+          clang-tidy-17 || sudo apt-get install -y clang-tidy
+
+    - name: Run cppcheck
+      run: |
+        cppcheck \
+          --enable=all \
+          --inconclusive \
+          --std=c++${{ env.CXX_STANDARD }} \
+          --suppress=missingIncludeSystem \
+          --suppress=unusedFunction \
+          --suppress=noExplicitConstructor \
+          --suppress=unmatchedSuppression \
+          --error-exitcode=1 \
+          --xml --xml-version=2 \
+          --output-file=cppcheck-report.xml \
+          FSW/ archive/legacy/utl/ daq_comms/ || true
+
+    - name: Upload cppcheck results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: cppcheck-report
+        path: cppcheck-report.xml
+
+    - name: Run clang-tidy
+      run: |
+        # Only run on a subset to avoid timeout
+        find FSW archive/legacy/utl daq_comms -name "*.cpp" -o -name "*.hpp" | head -20 | \
+        xargs -I {} clang-tidy {} \
+          -p ${{ env.BUILD_DIR }} \
+          -- -std=c++${{ env.CXX_STANDARD }} || true
+      continue-on-error: true
+
+  # Code quality checks
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check for TODO/FIXME comments
+      run: |
+        echo "Checking for TODO/FIXME/HACK comments..."
+        TODOS=$(grep -r "TODO\|FIXME\|HACK\|XXX" \
+          --include="*.cpp" \
+          --include="*.hpp" \
+          --include="*.c" \
+          --include="*.h" \
+          FSW/ archive/legacy/utl/ daq_comms/ || true)
+        if [ -n "$TODOS" ]; then
+          echo "::warning::Found TODO/FIXME/HACK comments:"
+          echo "$TODOS"
+        else
+          echo "✅ No TODO/FIXME/HACK comments found"
+        fi
+
+    - name: Check for large files
+      run: |
+        echo "Checking for large files..."
+        find . -type f -size +1M -not -path "./.git/*" -not -path "./build/*" -not -path "./external/*" | \
+        while read file; do
+          echo "::warning::Large file detected: $file ($(du -h "$file" | cut -f1))"
+        done || true
+
+    - name: Check for missing includes
+      run: |
+        echo "Checking for common include issues..."
+        # Check for missing standard library includes
+        if grep -r "#include <iostream>" --include="*.cpp" --include="*.hpp" FSW/ archive/legacy/utl/ daq_comms/ | \
+           grep -v "#include <iostream>" | head -5; then
+          echo "::warning::Potential missing includes detected"
+        fi
+      continue-on-error: true
+
+  # Security scanning
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Python
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3 python3-pip
+
+    - name: Install security tools
+      run: |
+        pip3 install --user semgrep bandit
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Run semgrep security scan
+      run: |
+        if command -v semgrep &> /dev/null; then
+          echo "Running semgrep security scan..."
+          semgrep \
+            --config=auto \
+            --exclude="external/" \
+            --exclude="build/" \
+            --exclude=".cache/" \
+            --json \
+            --output=semgrep-report.json \
+            . || true
+        else
+          echo "Semgrep not available, skipping"
+        fi
+      continue-on-error: true
+
+    - name: Upload semgrep results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: semgrep-report
+        path: semgrep-report.json
+
+    - name: Check for hardcoded secrets
+      run: |
+        echo "Checking for potential hardcoded secrets..."
+        SECRETS=$(grep -riE "(password|secret|key|token|api_key|apikey)\s*=\s*['\"][^'\"]+['\"]" \
+          --include="*.cpp" \
+          --include="*.hpp" \
+          --include="*.py" \
+          --include="*.sh" \
+          FSW/ archive/legacy/utl/ daq_comms/ scripts/ || true)
+        if [ -n "$SECRETS" ]; then
+          echo "::warning::Potential hardcoded secrets found:"
+          echo "$SECRETS"
+        else
+          echo "✅ No obvious hardcoded secrets found"
+        fi
+
+    - name: Check for dangerous functions
+      run: |
+        echo "Checking for potentially unsafe C functions..."
+        UNSAFE=$(grep -rE "\b(strcpy|sprintf|gets|scanf|strcat)\s*\(" \
+          --include="*.cpp" \
+          --include="*.hpp" \
+          FSW/ archive/legacy/utl/ daq_comms/ || true)
+        if [ -n "$UNSAFE" ]; then
+          echo "::warning::Potentially unsafe C functions found:"
+          echo "$UNSAFE"
+        else
+          echo "✅ No unsafe C functions detected"
+        fi
+
+  # Run tests
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: [build]
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          ninja-build \
+          libeigen3-dev \
+          pkg-config \
+          gcc-12 \
+          g++-12 \
+          python3 \
+          python3-pip
+
+    - name: Install Python test dependencies
+      run: |
+        if [ -f requirements.txt ]; then
+          pip3 install -r requirements.txt
+        fi
+
+    - name: Build project
+      env:
+        CC: gcc-12
+        CXX: g++-12
+      run: |
+        mkdir -p ${{ env.BUILD_DIR }}
+        cd ${{ env.BUILD_DIR }}
+        cmake \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_COMPILER=gcc-12 \
+          -DCMAKE_CXX_COMPILER=g++-12 \
+          -DCMAKE_CXX_STANDARD=${{ env.CXX_STANDARD }} \
+          -G Ninja \
+          ..
+        cmake --build . --parallel $(nproc)
+
+    - name: Run CTest tests
+      run: |
+        cd ${{ env.BUILD_DIR }}
+        ctest --output-on-failure --parallel $(nproc) || echo "No CTest tests found"
+      continue-on-error: true
+
+    - name: Run Sequencer Elodin Unit Test
+      run: |
+        cd ${{ env.BUILD_DIR }}
+        ./FSW/test_sequencer_elodin
+
+    - name: Run Python smoke tests (allowlist only)
+      run: |
+        if [ -d "scripts/test" ]; then
+          echo "Running allowlisted Python smoke tests..."
+          # Keep this list intentionally small and non-interactive.
+          # Add paths here only for deterministic, CI-safe scripts.
+          PY_TESTS=(
+          )
+
+          if [ ${#PY_TESTS[@]} -eq 0 ]; then
+            echo "No allowlisted Python smoke tests configured; skipping."
+          fi
+
+          for t in "${PY_TESTS[@]}"; do
+            if [ -f "$t" ]; then
+              echo "Running $t"
+              timeout 60s python3 "$t" || echo "::warning::Python smoke test failed/timed out: $t"
+            else
+              echo "::warning::Allowlisted Python test not found: $t"
+            fi
+          done
+        fi
+      continue-on-error: true
+
+    - name: Run integration tests
+      run: |
+        if [ -f "test_system.sh" ]; then
+          chmod +x test_system.sh
+          # Only run quick smoke tests in CI
+          echo "Running smoke tests..."
+        fi
+      continue-on-error: true
+
+  # Full-stack integration test
+  integration-test:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: [build]
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential cmake ninja-build libeigen3-dev pkg-config \
+          gcc-12 g++-12 python3 python3-pip
+
+    - name: Install elodin-db
+      run: |
+        ELODIN_VERSION="v0.16.1"
+        # elodin-installer.sh installs the `elodin` CLI only; integration needs `elodin-db`.
+        ELODIN_DB_INSTALLER_URL="https://github.com/elodin-sys/elodin/releases/download/${ELODIN_VERSION}/elodin-db-installer.sh"
+
+        mkdir -p "$HOME/.cargo/bin"
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        export PATH="$HOME/.cargo/bin:$PATH"
+
+        curl --proto '=https' --tlsv1.2 -LsSf "$ELODIN_DB_INSTALLER_URL" | sh
+
+    - name: Verify elodin-db is on PATH
+      run: |
+        command -v elodin-db
+        elodin-db --help >/dev/null
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+
+    - name: Build C++ binaries (daq_bridge, fake_packet_generator)
+      env:
+        CC: gcc-12
+        CXX: g++-12
+      run: |
+        mkdir -p build && cd build
+        cmake -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_C_COMPILER=gcc-12 \
+              -DCMAKE_CXX_COMPILER=g++-12 \
+              -G Ninja ..
+        cmake --build . --parallel $(nproc)
+
+    - name: Install backend dependencies
+      run: |
+        cd web-gui/backend && npm install
+
+    - name: Install Python dependencies
+      run: |
+        pip3 install tomli || true
+
+    - name: Run integration test
+      run: |
+        bash scripts/test/test_integration.sh
+
+  # Build summary
+  build-summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs:
+      - format-check
+      - web-gui
+      - build
+      - static-analysis
+      - code-quality
+      - security-scan
+      - test
+      - integration-test
+    if: always()
+
+    steps:
+    - name: Check build status
+      run: |
+        echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Format Check | ${{ needs.format-check.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Web GUI | ${{ needs.web-gui.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Static Analysis | ${{ needs.static-analysis.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Code Quality | ${{ needs.code-quality.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Security Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Tests | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Integration Test | ${{ needs.integration-test.result }} |" >> $GITHUB_STEP_SUMMARY

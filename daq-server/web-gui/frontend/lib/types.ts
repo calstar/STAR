@@ -1,0 +1,279 @@
+/**
+ * Shared TypeScript types for frontend and backend
+ */
+
+// WebSocket message types
+export enum MessageType {
+  // Client → Server
+  SUBSCRIBE_SENSOR = 'subscribe_sensor',
+  UNSUBSCRIBE_SENSOR = 'unsubscribe_sensor',
+  SEND_COMMAND = 'send_command',
+  QUERY_HISTORICAL = 'query_historical',
+  CALIBRATION_COMMAND = 'calibration_command',
+  RESEND_CONFIG = 'resend_config',
+  // Server → Client
+  SENSOR_UPDATE = 'sensor_update',
+  ACTUATOR_UPDATE = 'actuator_update',
+  STATE_UPDATE = 'state_update',
+  ERROR = 'error',
+  CONNECTION_STATUS = 'connection_status',
+  CALIBRATION_STATUS = 'calibration_status',
+  CONTROLLER_UPDATE = 'controller_update',
+  MISSION_START_TIME = 'mission_start_time',
+  ACTUATOR_EXPECTED_POSITIONS_UPDATE = 'actuator_expected_positions_update',
+  HISTORICAL_DATA = 'historical_data',
+  BOARD_STATUS_UPDATE = 'board_status_update',
+  NOTIFICATION = 'notification',
+  CONFIG_UPDATED = 'config_updated',
+  COUNTDOWN_TARGET_UPDATE = 'countdown_target_update',
+}
+
+// Sensor types
+export enum SensorType {
+  PT_CAL = 'PT_Cal',
+  PT_RAW = 'PT',
+  ACT = 'ACT',
+  TC = 'TC',
+  RTD = 'RTD',
+  LC = 'LC',
+}
+
+// State machine states
+export enum SystemState {
+  DEBUG = 0,
+  IDLE = 1,
+  ARMED = 2,
+  FUEL_FILL = 3,
+  OX_FILL = 4,
+  GN2_LOW_PRESS = 5,
+  GN2_VENT = 6,
+  FUEL_PRESS = 7,
+  FUEL_VENT = 8,
+  OX_PRESS = 9,
+  OX_VENT = 10,
+  GN2_HIGH_PRESS = 11,
+  GN2_HIGH_VENT = 12,
+  VENT = 13,
+  CALIBRATE = 14,
+  READY = 15,
+  FIRE = 16,
+  ENGINE_ABORT = 17,
+  GSE_ABORT = 18,
+  EMERGENCY_ABORT = 19,
+  PRESS_STANDBY = 20,
+  // Legacy alias for backwards compatibility
+  ABORT = 19, // Maps to EMERGENCY_ABORT
+}
+
+// Actuator IDs
+export enum ActuatorId {
+  LOX_MAIN = 0,
+  FUEL_MAIN = 1,
+  LOX_VENT = 2,
+  FUEL_VENT = 3,
+  LOX_PRESS = 4,
+  FUEL_PRESS = 5,
+  GSE_LOW_VENT = 6,
+  // Extended actuators (non-state-machine, but controllable in DEBUG)
+  FUEL_FILL_VENT = 7,
+  FUEL_FILL_PRESS = 8,
+  LOX_FILL = 9,
+  LOX_DUMP = 10,
+  GSE_HIGH_PRESS_VENT = 11,
+  GSE_LOX_FILL_VENT = 12,
+  GSE_HIGH_PRESS_CONTROL = 13,
+  GSE_MED_PRESS_CONTROL = 14,
+  TEST_ACTUATOR_2 = 15,
+}
+
+// Actuator states
+export enum ActuatorState {
+  CLOSED = 0,
+  OPEN = 1,
+  UNKNOWN = 2,
+}
+
+// WebSocket message structure
+export interface WSMessage {
+  type: MessageType;
+  timestamp: number;
+  payload: unknown;
+}
+
+// Sensor update payload
+export interface SensorUpdate {
+  entity: string; // e.g., "PT_Cal.GN2_Regulated"
+  component: string; // e.g., "pressure_psi"
+  value: number;
+  timestamp: number;
+}
+
+// Actuator update payload
+export interface ActuatorUpdate {
+  actuatorId: ActuatorId;
+  name: string;
+  state: ActuatorState;
+  rawAdcCounts: number;
+  timestamp: number;
+}
+
+// State machine update payload
+export interface StateUpdate {
+  currentState: SystemState;
+  stateName: string;
+  timestamp: number;
+  debugMode?: boolean; // Debug mode status
+}
+
+// Command payload
+export interface CommandPayload {
+  commandType:
+  | 'state_transition'
+  | 'actuator'
+  | 'controller_frequency'
+  | 'pwm_actuator'
+  | 'debug_mode'
+  | 'extend_fire'
+  | 'set_countdown_target';
+  data: {
+    state?: SystemState;
+    actuatorId?: ActuatorId;
+    /** Config-driven: command by actuator role name (config.toml actuator_roles) */
+    actuatorName?: string;
+    actuatorState?: ActuatorState;
+    frequency?: number; // Controller frequency in Hz
+    dutyCycle?: number; // PWM duty cycle 0-1
+    duration?: number; // Duration in ms
+    debugMode?: boolean; // Debug mode toggle
+    /** Unix timestamp in milliseconds. null clears/pauses the countdown. */
+    targetTimeMs?: number | null;
+  };
+}
+
+// Connection status
+export interface ConnectionStatus {
+  connected: boolean;
+  elodinConnected: boolean;
+  latency?: number;
+  error?: string;
+}
+
+// Mission start time (T+0 from first packet)
+export interface MissionStartTime {
+  missionStartTime: number; // Unix timestamp in milliseconds
+}
+
+// Countdown target time (shared global UI state)
+export interface CountdownTargetUpdate {
+  /** Unix timestamp in milliseconds; null = countdown not set */
+  targetTimeMs: number | null;
+}
+
+// ── Calibration types ─────────────────────────────────────────────────────────
+
+export type CalibrationConfidence = 'MAXIMUM' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNCALIBRATED';
+
+export interface CalibrationChannelStatus {
+  sensorId: number;
+  updateCount: number;   // total readings processed (monitoring + RLS)
+  rlsUpdateCount: number;   // ground-truth RLS updates only
+  lastUpdate: number;
+  driftDetected: boolean;
+  meanResidual: number;
+  glrStat: number;
+  confidence: CalibrationConfidence;
+  coeffs: { A: number; B: number; C: number; D: number };
+  phase2Active: boolean;
+  covarianceTrace: number;   // sum of P diagonal — proxy for uncertainty
+}
+
+export interface CalibrationStatusPayload {
+  channels: CalibrationChannelStatus[];
+  phase2Enabled: boolean;
+  timestamp: number;
+  /** Absolute path of the calibration file that was loaded at startup, or null if none. */
+  calibrationFilePath?: string | null;
+}
+
+export type CalibrationCommandType =
+  | 'capture_reference'
+  | 'fit_channel'
+  | 'reset_channel'
+  | 'enable_phase2'
+  | 'disable_phase2'
+  | 'zero_all'
+  | 'save_coefficients'
+  | 'clear_calibration';
+
+export interface CalibrationCommand {
+  commandType: CalibrationCommandType;
+  sensorId?: number;
+  boardId?: number;
+  referencePressure?: number;
+}
+// ── Board / heartbeat status ───────────────────────────────────────────────────
+
+export interface BoardStatus {
+  type: string;
+  boardNumber: number | null;
+  id: number;
+  ip: string;
+  expected: boolean;
+  connected: boolean;
+  /** True when connected and board state is Setup or Active. */
+  operational?: boolean;
+  lastHeartbeatMs: number | null;
+  frequencyHz: number | null;
+  boardState: number | null;
+  engineState: number | null;
+  configured?: boolean;
+  configError?: string;
+  configLastSentAt?: number;
+  necessaryForAbort?: boolean;
+  designatedSurvivor?: boolean;
+  /** 0 = Internal 2.5V, 1 = VDD ratiometric, 2 = 5V absolute */
+  voltageReference?: number;
+}
+
+export interface BoardStatusPayload {
+  boards: BoardStatus[];
+}
+
+// ── Notification types ─────────────────────────────────────────────────────
+
+export type NotificationCategory = 'info' | 'warning' | 'error';
+
+export interface NotificationPayloadOngoing {
+  key: string;
+  category: NotificationCategory;
+  message: string;
+  timestampMs: number;
+  ongoing: boolean;
+}
+
+export interface NotificationPayloadOneShot {
+  category: NotificationCategory;
+  message: string;
+  timestampMs: number;
+}
+
+export type NotificationPayload = NotificationPayloadOngoing | NotificationPayloadOneShot;
+
+export function isNotificationOngoing(p: NotificationPayload): p is NotificationPayloadOngoing {
+  return 'key' in p && 'ongoing' in p;
+}
+
+// ── Engine state helpers ─────────────────────────────────────────────────────
+
+/**
+ * Map a numeric engine_state code (from SystemState / wire) to a human-readable
+ * label. Falls back to 'UNKNOWN' if the code is not recognized.
+ */
+export function engineStateCodeToLabel(code: number | null | undefined): string {
+  if (code === null || code === undefined) return 'UNKNOWN';
+  const name = (SystemState as any)[code];
+  if (typeof name === 'string') {
+    return name.replace(/_/g, ' ');
+  }
+  return 'UNKNOWN';
+}

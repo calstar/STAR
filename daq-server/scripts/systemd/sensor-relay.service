@@ -1,0 +1,17 @@
+[Unit]
+Description=Sensor System Elodin Relay (single DB subscriber, fans out to backend/clients)
+After=network.target sensor-elodin.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sensor_system/web-gui/backend
+ExecStart=/usr/bin/npm run relay
+Restart=always
+RestartSec=5
+Environment=ELODIN_HOST=::1
+Environment=ELODIN_PORT=2240
+Environment=RELAY_WS_PORT=9090
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

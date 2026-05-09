@@ -1,0 +1,199 @@
+# Diablo-FSW Sensor System .gitignore
+
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# Compiled executables
+scripts/fake_sensor_generator
+scripts/fake_sensor_generator_remote
+
+# Database files and directories
+*.db
+*.sqlite
+*.sqlite3
+.local/
+*_metadata/
+
+# Elodin database directories (runtime only, NOT source code)
+# Only ignore runtime database directories, not source code in FSW/src/elodin/ or FSW/include/elodin/
+**/elodin/*.db
+**/elodin/*.sqlite
+**/elodin/*.sqlite3
+**/.local/share/elodin/
+.elodin/
+elodin_data/
+
+# Log files
+*.log
+logs/
+**/log/
+**/logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# Node modules (root and nested)
+node_modules/
+
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# IDE and editor files
+.vscode/
+.idea/
+.claude/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+
+# Runtime and session files
+shell/last_run.txt
+groundstation/scripts/last_run.txt
+*.pid
+*.lock
+
+# Generated configuration files (keep base configs)
+config/config_dev.toml
+config/config_prod.toml
+config/config_jetson_enhanced.toml
+config/config_groundstation_enhanced.toml
+
+# Backup files
+*.backup
+*_backup
+*.orig
+
+# System files
+.nfs*
+
+# Test outputs and coverage
+coverage/
+*.coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Documentation build artifacts
+docs/_build/
+docs/html/
+docs/latex/
+
+# Package files
+*.tar.gz
+*.zip
+*.tar.bz2
+*.tar.xz
+
+# Core dumps
+core
+core.*
+
+# Profiling data
+*.prof
+gmon.out
+
+# Sensor data files (runtime data only, NOT config/template files)
+# IMPORTANT: We need to allow important CSV/JSON config files while ignoring runtime data
+# Use specific patterns to ignore data directories, but allow config files
+
+# Ignore runtime data directories
+data/
+recordings/
+export/
+export_csv/
+calibration_backups/
+output/
+*.csv.data
+*.json.data
+**/data/*.csv
+**/data/*.json
+**/recordings/*.csv
+**/recordings/*.json
+**/logs/*.csv
+**/logs/*.json
+
+# BUT allow important config/template files (exceptions)
+!config/*.json
+!config/*.csv
+!**/test_guis/*.csv
+!**/test_guis/*.json
+!**/calibration/*.json
+!**/calibration/*.csv
+!**/package.json
+!**/package-lock.json
+!**/tsconfig.json
+!**/system_config.json
+!**/fsw_gui_config.json
+!**/config.json
+!**/actuator_labels.json
+!**/sensor_labels.json
+
+# Network and socket files
+*.sock
+*.socket
+
+# Process ID files
+*.pid
+
+# Tmux session files
+.tmux/
+
+# Local environment files
+.env
+.env.local
+.env.*.local
+
+# macOS specific
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Linux specific
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# Windows specific (in case someone uses WSL)
+*.lnk
+desktop.ini
+$RECYCLE.BIN/
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Local configuration overrides
+config_local.toml
+*_local.toml
+.cache/

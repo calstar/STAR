@@ -1,0 +1,109 @@
+# Flight DAQ Configuration
+# Used for flight sensors and actuators during flight operations
+# During hotfire, everything connects to ground DAQ
+
+# ============================================================================
+# System Configuration
+# ============================================================================
+[system]
+mode = "FLIGHT"
+state = "FLIGHT"
+
+# Flight network configuration
+[system.network]
+base_ip = "192.168.3.0"
+ip_range_start = 100
+ip_range_end = 150
+bind_address = "0.0.0.0"
+bind_port = 5005
+
+# ============================================================================
+# Database Configuration (Elodin)
+# ============================================================================
+[database]
+db_host = "127.0.0.1"
+db_port = 2240
+auto_flush_interval_ms = 100
+max_buffer_size = 2048
+connection_retry_attempts = 3
+connection_retry_delay_ms = 1000
+
+# ============================================================================
+# Flight Sensors Configuration
+# ============================================================================
+# Flight sensors and actuators are assigned to flight DAQ
+
+[sensors.flight.pt]
+# High pressure PT capable of going up to 5k PSI reading
+PT_HP = { board_id = 0, channel = 0, message_id = 0x2000, max_psi = 5000, purpose = "High pressure" }
+
+# COPV PT post regulator (1000psi)
+PT_LP = { board_id = 0, channel = 1, message_id = 0x2001, max_psi = 1000, purpose = "COPV post regulator" }
+
+# Upstream Fuel PT (1000 psi)
+PT_FUP = { board_id = 1, channel = 0, message_id = 0x2010, max_psi = 1000, purpose = "Fuel upstream" }
+
+# Downstream Fuel PT (1000 psi)
+PT_FDP = { board_id = 1, channel = 1, message_id = 0x2011, max_psi = 1000, purpose = "Fuel downstream" }
+
+# Upstream Oxidizer PT (1000 PSI)
+PT_OUP = { board_id = 2, channel = 0, message_id = 0x2020, max_psi = 1000, purpose = "Oxidizer upstream" }
+
+# Downstream Oxidizer PT (1000 PSI)
+PT_ODP = { board_id = 2, channel = 1, message_id = 0x2021, max_psi = 1000, purpose = "Oxidizer downstream" }
+
+# Flight RTDs, TCs, LCs, Actuators
+[sensors.flight.rtd]
+# RTD on COPV
+RTD_COPV = { board_id = 3, channel = 0, message_id = 0x2230, purpose = "COPV temperature", location = "COPV" }
+
+# RTDs along LOX tank (3 sensors)
+RTD_LOX_1 = { board_id = 3, channel = 1, message_id = 0x2231, purpose = "LOX tank temperature top", location = "LOX_tank" }
+RTD_LOX_2 = { board_id = 3, channel = 2, message_id = 0x2232, purpose = "LOX tank temperature middle", location = "LOX_tank" }
+RTD_LOX_3 = { board_id = 3, channel = 3, message_id = 0x2233, purpose = "LOX tank temperature bottom", location = "LOX_tank" }
+
+[sensors.flight.tc]
+# Thermocouples along chamber (multiple sensors)
+TC_CHAMBER_1 = { board_id = 4, channel = 0, message_id = 0x2140, purpose = "Chamber temperature front", location = "chamber" }
+TC_CHAMBER_2 = { board_id = 4, channel = 1, message_id = 0x2141, purpose = "Chamber temperature middle", location = "chamber" }
+TC_CHAMBER_3 = { board_id = 4, channel = 2, message_id = 0x2142, purpose = "Chamber temperature rear", location = "chamber" }
+TC_CHAMBER_4 = { board_id = 4, channel = 3, message_id = 0x2143, purpose = "Chamber temperature side", location = "chamber" }
+
+[sensors.flight.lc]
+# Load cells on chamber (3 sensors)
+LC_CHAMBER_1 = { board_id = 5, channel = 0, message_id = 0x2350, purpose = "Chamber load cell 1", location = "chamber" }
+LC_CHAMBER_2 = { board_id = 5, channel = 1, message_id = 0x2351, purpose = "Chamber load cell 2", location = "chamber" }
+LC_CHAMBER_3 = { board_id = 5, channel = 2, message_id = 0x2352, purpose = "Chamber load cell 3", location = "chamber" }
+
+[sensors.flight.actuator]
+# Actuator/valve assignments for flight system
+ACTUATOR_LOX_MAIN = { board_id = 6, channel = 0, message_id = 0x5060, purpose = "LOX main valve", location = "lox_line" }
+ACTUATOR_FUEL_MAIN = { board_id = 6, channel = 1, message_id = 0x5061, purpose = "Fuel main valve", location = "fuel_line" }
+ACTUATOR_LOX_VENT = { board_id = 6, channel = 2, message_id = 0x5062, purpose = "LOX vent valve", location = "lox_line" }
+ACTUATOR_FUEL_VENT = { board_id = 6, channel = 3, message_id = 0x5063, purpose = "Fuel vent valve", location = "fuel_line" }
+ACTUATOR_LOX_PRESS = { board_id = 6, channel = 4, message_id = 0x5064, purpose = "LOX pressurant valve", location = "lox_line" }
+ACTUATOR_FUEL_PRESS = { board_id = 6, channel = 5, message_id = 0x5065, purpose = "Fuel pressurant valve", location = "fuel_line" }
+
+# ============================================================================
+# Board Discovery Configuration
+# ============================================================================
+[discovery]
+enabled = true
+network_interface = "eth0"
+mode = "hybrid"
+announcement_port = 2245
+discovery_timeout_seconds = 30
+auto_update_config = true
+config_update_interval_seconds = 60
+
+# ============================================================================
+# Sensor Data Settings
+# ============================================================================
+[sensor_data]
+update_rate_hz = 10
+enable_all_sensors = true
+
+# Calibration settings
+[calibration]
+enabled = true
+calibration_file = "calibration/data/flight_calibration.json"

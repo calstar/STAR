@@ -1,0 +1,22 @@
+[Unit]
+Description=Sensor System Web GUI Backend
+After=network.target sensor-relay.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sensor_system/web-gui/backend
+ExecStart=/usr/bin/npm run dev
+Restart=always
+RestartSec=5
+# DB → relay → backend: all data from Elodin via relay (modular, invariant to upstream)
+Environment=ELODIN_RELAY_WS_URL=ws://localhost:9090
+Environment=USE_DIRECT_DAQ=false
+Environment=USE_CALIBRATION_SERVICE_CALIBRATED=false
+# State transitions → C++ actuator_service (TCP :9998) → UDP to boards
+Environment=ACTUATOR_SERVICE_PORT=9998
+# PWM during FIRE → C++ controller_service (reads Elodin, runs RobustDDP, sends UDP PWM)
+Environment=USE_CPP_CONTROLLER=true
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

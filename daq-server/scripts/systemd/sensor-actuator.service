@@ -1,0 +1,14 @@
+[Unit]
+Description=Sensor System Actuator Service (C++ — state→UDP commands)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sensor_system
+ExecStart=/bin/bash -c 'if [ -x ./build/FSW/actuator_service ]; then exec ./build/FSW/actuator_service --config config/config.toml --port 9998; elif [ -x ./FSW/build/actuator_service ]; then exec ./FSW/build/actuator_service --config config/config.toml --port 9998; else echo "actuator_service not found — run: cd build && cmake .. && make actuator_service"; exit 1; fi'
+Restart=always
+RestartSec=5
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

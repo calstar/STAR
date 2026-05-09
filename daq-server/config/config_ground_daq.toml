@@ -1,0 +1,124 @@
+# Ground Systems DAQ Configuration
+# Used for GSE sensors and during hotfire (everything connects here)
+# During flight: flight sensors/actuators go to flight DAQ, everything else here
+
+# ============================================================================
+# System Configuration
+# ============================================================================
+[system]
+mode = "GROUND"
+state = "GSE"
+
+# Ground network configuration
+[system.network]
+base_ip = "192.168.2.0"
+ip_range_start = 100
+ip_range_end = 150
+bind_address = "0.0.0.0"
+bind_port = 5005
+
+# ============================================================================
+# Database Configuration (Elodin)
+# ============================================================================
+[database]
+db_host = "127.0.0.1"
+db_port = 2240
+auto_flush_interval_ms = 100
+max_buffer_size = 2048
+connection_retry_attempts = 3
+connection_retry_delay_ms = 1000
+
+# ============================================================================
+# GSE Sensors Configuration
+# ============================================================================
+# GSE sensors are assigned to ground DAQ
+
+[sensors.gse.pt]
+# LOX Fill PT that goes up to 1000 psi
+PT_OF = { board_id = 10, channel = 0, packet_id = [0x20, 0xA0], max_psi = 1000, purpose = "LOX fill pressure", component = "lox_fill" }
+
+# Fuel fill PT that goes up to 1000 psi
+PT_FF = { board_id = 11, channel = 0, packet_id = [0x20, 0xB0], max_psi = 1000, purpose = "Fuel fill pressure", component = "fuel_fill" }
+
+# High pressure fill with PT rated to 5000 psi
+PT_HPF = { board_id = 12, channel = 0, packet_id = [0x20, 0xC0], max_psi = 5000, purpose = "High pressure fill", component = "pressurant_fill" }
+
+# Medium press fill with PT rated to 2000 PSI
+PT_MPF = { board_id = 12, channel = 1, packet_id = [0x20, 0xC1], max_psi = 2000, purpose = "Medium pressure fill", component = "pressurant_fill" }
+
+# Low pressure line with PT rated to 1000 psi
+PT_LPF = { board_id = 12, channel = 2, packet_id = [0x20, 0xC2], max_psi = 1000, purpose = "Low pressure fill", component = "pressurant_fill" }
+
+[sensors.gse.rtd]
+# GSE RTD sensors (if any)
+# Add GSE-specific RTDs here if needed
+
+[sensors.gse.tc]
+# GSE Thermocouple sensors (if any)
+# Add GSE-specific TCs here if needed
+
+[sensors.gse.lc]
+# GSE Load cell sensors (if any)
+# Add GSE-specific LCs here if needed
+
+# ============================================================================
+# Hotfire Configuration
+# ============================================================================
+# During hotfire, ALL sensors (including flight sensors) connect to ground DAQ
+[hotfire]
+enabled = false  # Set to true during hotfire
+include_flight_sensors = true  # During hotfire, flight sensors also connect here
+
+# Flight sensors that connect to ground DAQ during hotfire
+[sensors.hotfire.flight_pt]
+# These are the same flight PT sensors, but routed to ground DAQ during hotfire
+PT_HP = { board_id = 0, channel = 0, packet_id = [0x20, 0x00], max_psi = 5000, purpose = "High pressure" }
+PT_LP = { board_id = 0, channel = 1, packet_id = [0x20, 0x01], max_psi = 1000, purpose = "COPV post regulator" }
+PT_FUP = { board_id = 1, channel = 0, packet_id = [0x20, 0x10], max_psi = 1000, purpose = "Fuel upstream" }
+PT_FDP = { board_id = 1, channel = 1, packet_id = [0x20, 0x11], max_psi = 1000, purpose = "Fuel downstream" }
+PT_OUP = { board_id = 2, channel = 0, packet_id = [0x20, 0x20], max_psi = 1000, purpose = "Oxidizer upstream" }
+PT_ODP = { board_id = 2, channel = 1, packet_id = [0x20, 0x21], max_psi = 1000, purpose = "Oxidizer downstream" }
+
+[sensors.hotfire.flight_rtd]
+# Flight RTDs during hotfire
+RTD_COPV = { board_id = 3, channel = 0, packet_id = [0x22, 0x30], purpose = "COPV temperature", location = "COPV" }
+RTD_LOX_1 = { board_id = 3, channel = 1, packet_id = [0x22, 0x31], purpose = "LOX tank temperature top", location = "LOX_tank" }
+RTD_LOX_2 = { board_id = 3, channel = 2, packet_id = [0x22, 0x32], purpose = "LOX tank temperature middle", location = "LOX_tank" }
+RTD_LOX_3 = { board_id = 3, channel = 3, packet_id = [0x22, 0x33], purpose = "LOX tank temperature bottom", location = "LOX_tank" }
+
+[sensors.hotfire.flight_tc]
+# Flight TCs during hotfire
+TC_CHAMBER_1 = { board_id = 4, channel = 0, packet_id = [0x21, 0x40], purpose = "Chamber temperature front", location = "chamber" }
+TC_CHAMBER_2 = { board_id = 4, channel = 1, packet_id = [0x21, 0x41], purpose = "Chamber temperature middle", location = "chamber" }
+TC_CHAMBER_3 = { board_id = 4, channel = 2, packet_id = [0x21, 0x42], purpose = "Chamber temperature rear", location = "chamber" }
+TC_CHAMBER_4 = { board_id = 4, channel = 3, packet_id = [0x21, 0x43], purpose = "Chamber temperature side", location = "chamber" }
+
+[sensors.hotfire.flight_lc]
+# Flight LCs during hotfire
+LC_CHAMBER_1 = { board_id = 5, channel = 0, packet_id = [0x23, 0x50], purpose = "Chamber load cell 1", location = "chamber" }
+LC_CHAMBER_2 = { board_id = 5, channel = 1, packet_id = [0x23, 0x51], purpose = "Chamber load cell 2", location = "chamber" }
+LC_CHAMBER_3 = { board_id = 5, channel = 2, packet_id = [0x23, 0x52], purpose = "Chamber load cell 3", location = "chamber" }
+
+# ============================================================================
+# Board Discovery Configuration
+# ============================================================================
+[discovery]
+enabled = true
+network_interface = "eth0"
+mode = "hybrid"
+announcement_port = 2245
+discovery_timeout_seconds = 30
+auto_update_config = true
+config_update_interval_seconds = 60
+
+# ============================================================================
+# Sensor Data Settings
+# ============================================================================
+[sensor_data]
+update_rate_hz = 10
+enable_all_sensors = true
+
+# Calibration settings
+[calibration]
+enabled = true
+calibration_file = "calibration/data/ground_calibration.json"
