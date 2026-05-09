@@ -1,0 +1,6 @@
+# Prefer PyQt5 on macOS (PyQt6 6.5+ can segfault with pyqtgraph there).
+# Install one of:  pip install PyQt5   OR   pip install "PyQt6>=6.4,<6.5"
+PyQt5>=5.15
+# PyQt6>=6.4,<6.5
+pyqtgraph>=0.13.4
+numpy>=1.24
