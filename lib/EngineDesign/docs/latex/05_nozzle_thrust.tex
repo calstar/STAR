@@ -1,0 +1,64 @@
+\section{Nozzle Flow \& Thrust}
+
+\subsection{Introduction}
+This chapter details the physics of expansion through the nozzle and the resulting thrust generation. The model accounts for isentropic expansion, shifting equilibrium composition, and nozzle efficiency.
+
+\subsection{Key Files Referenced}
+The physics models documented in this chapter are implemented in:
+\begin{itemize}
+    \item \texttt{engine/core/nozzle.py} - Thrust and ISP calculations
+    \item \texttt{engine/pipeline/nozzle_dynamics.py} - Shifting equilibrium and expansion physics
+\end{itemize}
+
+\subsection{Nomenclature}
+\begin{description}
+    \item[$\thrust$] Total thrust [\si{N}]
+    \item[$v_{exit}$] Exit velocity [\si{m/s}]
+    \item[$P_{exit}$] Exit pressure [\si{Pa}]
+    \item[$P_{amb}$] Ambient pressure [\si{Pa}]
+    \item[$A_{exit}$] Exit area [\si{m^2}]
+    \item[$C_f$] Thrust coefficient [dimensionless]
+    \item[$\Isp$] Specific impulse [\si{s}]
+    \item[$\epsilon$] Expansion ratio ($A_e/A_t$) [dimensionless]
+\end{description}
+
+\subsection{Thrust Equation}
+The total thrust is the sum of momentum and pressure components:
+\begin{equation}
+\thrust = \mdot v_{exit} + (P_{exit} - P_{amb}) A_{exit}
+\end{equation}
+
+\subsection{Isentropic Expansion}
+
+\subsubsection{Exit Mach Number}
+The exit Mach number $M_e$ is solved from the expansion ratio $\epsilon$:
+\begin{equation}
+\epsilon = \frac{1}{M_e} \left[\frac{2}{\gamma+1} \left(1 + \frac{\gamma-1}{2} M_e^2\right)\right]^{\frac{\gamma+1}{2(\gamma-1)}}
+\end{equation}
+
+\subsubsection{Exit Conditions}
+Static pressure and temperature at the nozzle exit:
+\begin{equation}
+P_{exit} = P_c \left(1 + \frac{\gamma-1}{2} M_e^2\right)^{-\frac{\gamma}{\gamma-1}}
+\end{equation}
+\begin{equation}
+v_{exit} = M_e \sqrt{\gamma R T_{exit}}
+\end{equation}
+
+\subsection{Thrust Coefficient ($C_f$)}
+The ideal thrust coefficient is:
+\begin{equation}
+C_{f,ideal} = \sqrt{\frac{2\gamma^2}{\gamma-1} \left(\frac{2}{\gamma+1}\right)^{\frac{\gamma+1}{\gamma-1}} \left[1 - \left(\frac{P_{exit}}{P_c}\right)^{\frac{\gamma-1}{\gamma}}\right]} + \epsilon \left(\frac{P_{exit} - P_{amb}}{P_c}\right)
+\end{equation}
+The actual thrust coefficient accounts for nozzle efficiency $\eta_{noz}$:
+\begin{equation}
+C_{f,actual} = \eta_{noz} C_{f,ideal}
+\end{equation}
+
+\subsection{Specific Impulse ($\Isp$)}
+\begin{equation}
+\Isp = \frac{\thrust}{\mdot g_0}
+\end{equation}
+
+\subsection{Shifting Equilibrium}
+If enabled, the system accounts for chemical composition changes during expansion, updating $\gamma$ and $R$ locally as the gas cools. This provides a more accurate ISP prediction compared to frozen flow assumptions.

@@ -1,0 +1,132 @@
+\contentsline {section}{\numberline {1}Introduction}{4}{}%
+\contentsline {subsection}{\numberline {1.1}Who Should Read This Document}{4}{}%
+\contentsline {subsection}{\numberline {1.2}Document Structure}{4}{}%
+\contentsline {subsection}{\numberline {1.3}System Overview}{4}{}%
+\contentsline {subsection}{\numberline {1.4}Control Objective}{5}{}%
+\contentsline {section}{\numberline {2}Background: Optimal Control Theory}{5}{}%
+\contentsline {subsection}{\numberline {2.1}What is Optimal Control?}{5}{}%
+\contentsline {subsection}{\numberline {2.2}The General Optimal Control Problem}{5}{}%
+\contentsline {subsection}{\numberline {2.3}Discrete-Time Formulation}{6}{}%
+\contentsline {subsection}{\numberline {2.4}What is Differential Dynamic Programming (DDP)?}{6}{}%
+\contentsline {subsection}{\numberline {2.5}The Bellman Principle of Optimality}{6}{}%
+\contentsline {subsection}{\numberline {2.6}Why DDP Works}{7}{}%
+\contentsline {section}{\numberline {3}First Principles Physics}{7}{}%
+\contentsline {subsection}{\numberline {3.1}Ideal Gas Law}{7}{}%
+\contentsline {subsubsection}{\numberline {3.1.1}Derivation from Kinetic Theory}{7}{}%
+\contentsline {subsection}{\numberline {3.2}Polytropic Process}{8}{}%
+\contentsline {subsection}{\numberline {3.3}Compressible Gas Flow}{8}{}%
+\contentsline {subsubsection}{\numberline {3.3.1}Critical Pressure Ratio}{8}{}%
+\contentsline {subsubsection}{\numberline {3.3.2}Choked Flow}{8}{}%
+\contentsline {subsubsection}{\numberline {3.3.3}Subsonic Flow}{9}{}%
+\contentsline {subsection}{\numberline {3.4}Mass Conservation}{9}{}%
+\contentsline {subsection}{\numberline {3.5}Ullage Volume Dynamics}{9}{}%
+\contentsline {section}{\numberline {4}System Dynamics}{9}{}%
+\contentsline {subsection}{\numberline {4.1}State Vector}{9}{}%
+\contentsline {subsection}{\numberline {4.2}Control Vector}{10}{}%
+\contentsline {subsection}{\numberline {4.3}Discrete-Time Dynamics}{10}{}%
+\contentsline {subsubsection}{\numberline {4.3.1}COPV Gas Mass Update}{10}{}%
+\contentsline {subsubsection}{\numberline {4.3.2}COPV Pressure}{10}{}%
+\contentsline {subsubsection}{\numberline {4.3.3}Regulator Pressure}{10}{}%
+\contentsline {subsubsection}{\numberline {4.3.4}Gas Flow from COPV to Regulator}{11}{}%
+\contentsline {subsubsection}{\numberline {4.3.5}Gas Flow from Regulator to Tanks}{11}{}%
+\contentsline {subsubsection}{\numberline {4.3.6}Ullage Volume Update}{11}{}%
+\contentsline {subsubsection}{\numberline {4.3.7}Tank Gas Mass Update}{11}{}%
+\contentsline {subsubsection}{\numberline {4.3.8}Tank Pressure}{11}{}%
+\contentsline {subsubsection}{\numberline {4.3.9}Feed Line Pressure Dynamics}{11}{}%
+\contentsline {section}{\numberline {5}Differential Dynamic Programming}{12}{}%
+\contentsline {subsection}{\numberline {5.1}Problem Formulation}{12}{}%
+\contentsline {subsection}{\numberline {5.2}Running Cost}{12}{}%
+\contentsline {subsubsection}{\numberline {5.2.1}Thrust Tracking}{12}{}%
+\contentsline {subsubsection}{\numberline {5.2.2}Mixture Ratio Tracking}{12}{}%
+\contentsline {subsubsection}{\numberline {5.2.3}Gas Consumption}{12}{}%
+\contentsline {subsection}{\numberline {5.3}Bellman Equation}{12}{}%
+\contentsline {subsection}{\numberline {5.4}Linearization}{13}{}%
+\contentsline {subsection}{\numberline {5.5}Backward Pass}{13}{}%
+\contentsline {subsubsection}{\numberline {5.5.1}Cost Derivatives}{13}{}%
+\contentsline {subsubsection}{\numberline {5.5.2}Q-Function}{13}{}%
+\contentsline {subsubsection}{\numberline {5.5.3}Optimal Control Update}{13}{}%
+\contentsline {subsubsection}{\numberline {5.5.4}Regularization}{14}{}%
+\contentsline {subsubsection}{\numberline {5.5.5}Value Function Update}{14}{}%
+\contentsline {subsection}{\numberline {5.6}Forward Pass}{14}{}%
+\contentsline {subsubsection}{\numberline {5.6.1}Line Search}{14}{}%
+\contentsline {subsubsection}{\numberline {5.6.2}Forward Rollout}{14}{}%
+\contentsline {section}{\numberline {6}Robustification}{14}{}%
+\contentsline {subsection}{\numberline {6.1}Uncertainty Inflation}{14}{}%
+\contentsline {section}{\numberline {7}Constraints}{14}{}%
+\contentsline {subsection}{\numberline {7.1}Soft Constraints}{14}{}%
+\contentsline {subsection}{\numberline {7.2}Hard Constraints}{14}{}%
+\contentsline {section}{\numberline {8}Numerical Implementation}{15}{}%
+\contentsline {subsection}{\numberline {8.1}Why Finite Differences?}{15}{}%
+\contentsline {subsection}{\numberline {8.2}Finite Differences: The Basic Idea}{15}{}%
+\contentsline {subsection}{\numberline {8.3}Choosing $\epsilon $}{15}{}%
+\contentsline {subsection}{\numberline {8.4}Computing the Dynamics Jacobian $\mathbf {A}_k$}{16}{}%
+\contentsline {subsection}{\numberline {8.5}Computing the Control Jacobian $\mathbf {B}_k$}{16}{}%
+\contentsline {subsection}{\numberline {8.6}Computing Cost Derivatives}{17}{}%
+\contentsline {subsection}{\numberline {8.7}Computing Hessians}{18}{}%
+\contentsline {subsection}{\numberline {8.8}Cholesky Decomposition for Positive Definiteness}{18}{}%
+\contentsline {subsection}{\numberline {8.9}Convergence Criteria}{19}{}%
+\contentsline {subsection}{\numberline {8.10}Value Function Hessian Projection}{19}{}%
+\contentsline {section}{\numberline {9}Complete Controller Logic Walkthrough}{19}{}%
+\contentsline {subsection}{\numberline {9.1}High-Level Control Loop}{19}{}%
+\contentsline {subsection}{\numberline {9.2}Step 1: Read Sensors}{20}{}%
+\contentsline {subsection}{\numberline {9.3}Step 2: Build State Vector}{20}{}%
+\contentsline {subsection}{\numberline {9.4}Step 3: Generate Reference}{21}{}%
+\contentsline {subsection}{\numberline {9.5}Step 4: Solve DDP}{21}{}%
+\contentsline {subsubsection}{\numberline {9.5.1}4.1: Initialize Control Sequence}{21}{}%
+\contentsline {subsubsection}{\numberline {9.5.2}4.2: Forward Rollout}{22}{}%
+\contentsline {subsubsection}{\numberline {9.5.3}4.3: Backward Pass}{22}{}%
+\contentsline {subsubsection}{\numberline {9.5.4}4.4: Forward Line Search}{23}{}%
+\contentsline {subsubsection}{\numberline {9.5.5}4.5: Iterate}{23}{}%
+\contentsline {subsection}{\numberline {9.6}Step 5: Apply Control}{23}{}%
+\contentsline {subsection}{\numberline {9.7}Step 6: Update Internal State}{24}{}%
+\contentsline {subsection}{\numberline {9.8}Complete Example: One Control Step}{24}{}%
+\contentsline {section}{\numberline {10}Detailed Dynamics Derivation}{25}{}%
+\contentsline {subsection}{\numberline {10.1}Complete State Update Equations}{25}{}%
+\contentsline {subsubsection}{\numberline {10.1.1}COPV Gas Mass and Pressure}{25}{}%
+\contentsline {subsubsection}{\numberline {10.1.2}Regulator Pressure with Oscillations}{25}{}%
+\contentsline {subsubsection}{\numberline {10.1.3}Gas Flow Calculations}{25}{}%
+\contentsline {subsubsection}{\numberline {10.1.4}Tank Ullage Volume Dynamics}{26}{}%
+\contentsline {subsubsection}{\numberline {10.1.5}Tank Gas Mass and Pressure}{26}{}%
+\contentsline {subsection}{\numberline {10.2}Startup Behavior}{26}{}%
+\contentsline {subsection}{\numberline {10.3}End State Behavior}{26}{}%
+\contentsline {section}{\numberline {11}Complete DDP Algorithm}{27}{}%
+\contentsline {subsection}{\numberline {11.1}Full Algorithm Pseudocode}{27}{}%
+\contentsline {subsection}{\numberline {11.2}Forward Rollout Details}{27}{}%
+\contentsline {subsection}{\numberline {11.3}Backward Pass Details}{28}{}%
+\contentsline {subsection}{\numberline {11.4}Forward Line Search Details}{29}{}%
+\contentsline {section}{\numberline {12}Cost Function Detailed Derivation}{29}{}%
+\contentsline {subsection}{\numberline {12.1}Thrust Tracking Cost}{29}{}%
+\contentsline {subsection}{\numberline {12.2}Mixture Ratio Tracking Cost}{30}{}%
+\contentsline {subsection}{\numberline {12.3}Gas Consumption Cost}{30}{}%
+\contentsline {subsection}{\numberline {12.4}Constraint Penalties}{30}{}%
+\contentsline {section}{\numberline {13}Linearization via Finite Differences}{30}{}%
+\contentsline {subsection}{\numberline {13.1}State Jacobian $\mathbf {A}_k$}{30}{}%
+\contentsline {subsection}{\numberline {13.2}Control Jacobian $\mathbf {B}_k$}{30}{}%
+\contentsline {subsection}{\numberline {13.3}Cost Derivatives}{31}{}%
+\contentsline {subsubsection}{\numberline {13.3.1}State Gradient $\ell _{\mathbf {x}}$}{31}{}%
+\contentsline {subsubsection}{\numberline {13.3.2}Control Gradient $\ell _{\mathbf {u}}$}{31}{}%
+\contentsline {subsubsection}{\numberline {13.3.3}State Hessian $\ell _{\mathbf {xx}}$}{31}{}%
+\contentsline {subsubsection}{\numberline {13.3.4}Control Hessian $\ell _{\mathbf {uu}}$}{31}{}%
+\contentsline {subsubsection}{\numberline {13.3.5}Cross-Derivative $\ell _{\mathbf {ux}}$}{31}{}%
+\contentsline {section}{\numberline {14}Numerical Stability}{31}{}%
+\contentsline {subsection}{\numberline {14.1}Cholesky Decomposition for Positive Definiteness}{31}{}%
+\contentsline {subsection}{\numberline {14.2}Condition Number Check}{32}{}%
+\contentsline {subsection}{\numberline {14.3}Value Function Hessian Projection}{32}{}%
+\contentsline {section}{\numberline {15}Constraint Handling}{32}{}%
+\contentsline {subsection}{\numberline {15.1}Hard Constraints}{32}{}%
+\contentsline {subsection}{\numberline {15.2}Constraint Violation Computation}{32}{}%
+\contentsline {section}{\numberline {16}Implementation Parameters}{33}{}%
+\contentsline {subsection}{\numberline {16.1}Default Configuration}{33}{}%
+\contentsline {subsection}{\numberline {16.2}Physical Constants}{33}{}%
+\contentsline {section}{\numberline {17}Common Issues and Troubleshooting}{33}{}%
+\contentsline {subsection}{\numberline {17.1}Controller Not Responding}{33}{}%
+\contentsline {subsection}{\numberline {17.2}Objective Function Blowing Up}{34}{}%
+\contentsline {subsection}{\numberline {17.3}Pressure Not Dropping at Startup}{34}{}%
+\contentsline {subsection}{\numberline {17.4}DDP Not Converging}{34}{}%
+\contentsline {subsection}{\numberline {17.5}Numerical Instability}{34}{}%
+\contentsline {section}{\numberline {18}Practical Implementation Tips}{35}{}%
+\contentsline {subsection}{\numberline {18.1}Initialization}{35}{}%
+\contentsline {subsection}{\numberline {18.2}Parameter Tuning}{35}{}%
+\contentsline {subsection}{\numberline {18.3}Debugging}{35}{}%
+\contentsline {subsection}{\numberline {18.4}Performance Optimization}{36}{}%
+\contentsline {section}{\numberline {19}Summary}{36}{}%

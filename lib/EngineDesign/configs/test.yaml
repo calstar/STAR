@@ -1,0 +1,322 @@
+fluids:
+  oxidizer:
+    name: LOX
+    density: 1140.0
+    viscosity: 0.00018
+    surface_tension: 0.013
+    vapor_pressure: 101325.0
+    specific_heat: 2300.0
+    thermal_conductivity: 0.15
+    temperature: 90.0
+  fuel:
+    name: RP-1
+    density: 780.0
+    viscosity: 0.002
+    surface_tension: 0.025
+    vapor_pressure: 1000.0
+    specific_heat: 2000.0
+    thermal_conductivity: 0.13
+    temperature: 293.0
+injector:
+  type: pintle
+  geometry:
+    lox:
+      n_orifices: 12
+      d_orifice: 0.003
+      theta_orifice: 30.0
+      A_entry: 8.0e-06
+      d_hydraulic: 0.003
+    fuel:
+      d_pintle_tip: 0.015
+      d_reservoir_inner: 0.016
+      h_gap: 0.0005
+      A_entry: 1.2e-05
+      d_hydraulic: 0.001
+feed_system:
+  oxidizer:
+    d_inlet: 0.009525
+    A_hydraulic: 7.13e-05
+    K0: 2.0
+    K1: 0.0
+    phi_type: none
+  fuel:
+    d_inlet: 0.009525
+    A_hydraulic: 7.13e-05
+    K0: 2.0
+    K1: 0.0
+    phi_type: none
+regen_cooling:
+  enabled: false
+  d_inlet: 0.009525
+  L_inlet: 0.5
+  n_channels: 100
+  channel_width: 0.0009
+  channel_height: 0.001
+  channel_length: 0.18162
+  d_outlet: null
+  L_outlet: 0.1
+  roughness: 0.0
+  K_manifold_split: 0.5
+  K_manifold_merge: 0.3
+  Cd_entrance_inf: 0.8
+  a_Re_entrance: 0.1
+  Cd_entrance_min: 0.6
+  Cd_exit_inf: 0.9
+  a_Re_exit: 0.1
+  Cd_exit_min: 0.7
+  use_heat_transfer: true
+  wall_thickness: 0.002
+  wall_thermal_conductivity: 320.0
+  chamber_inner_diameter: 0.08491
+  hot_gas_prandtl: 0.7
+  hot_gas_viscosity: 4.0e-05
+  hot_gas_thermal_conductivity: 0.12
+  radiation_emissivity_hot: 0.85
+  radiation_view_factor: 1.0
+  n_segments: 20
+  gas_turbulence_intensity: 0.1
+  coolant_turbulence_intensity: 0.05
+  hot_gas_cp: 2200.0
+  recovery_factor: null
+film_cooling:
+  enabled: false
+  mass_fraction: 0.05
+  injection_temperature: null
+  effectiveness_ref: 0.45
+  decay_length: 0.05
+  apply_to_fraction_of_length: 0.6
+  slot_height: 0.00035
+  reference_blowing_ratio: 0.6
+  blowing_exponent: 0.62
+  turbulence_reference_intensity: 0.08
+  turbulence_sensitivity: 1.0
+  turbulence_exponent: 1.0
+  turbulence_min_multiplier: 0.5
+  reference_wall_temperature: 1100.0
+  density_override: null
+  cp_override: null
+ablative_cooling:
+  enabled: true
+  material_density: 1600.0
+  heat_of_ablation: 2500000.0
+  thermal_conductivity: 0.35
+  specific_heat: 1500.0
+  initial_thickness: 0.008
+  surface_temperature_limit: 1200.0
+  coverage_fraction: 0.9
+  pyrolysis_temperature: 950.0
+  blowing_efficiency: 0.75
+  use_physics_based_blowing: true
+  blowing_coefficient: 0.5
+  blowing_min_reduction_factor: 0.1
+  turbulence_reference_intensity: 0.08
+  turbulence_sensitivity: 1.5
+  turbulence_exponent: 1.0
+  turbulence_max_multiplier: 3.0
+  throat_recession_multiplier: null
+  char_layer_conductivity: 0.2
+  char_layer_thickness: 0.001
+  surface_emissivity: 0.85
+  ambient_temperature: 300.0
+  radiative_sink_minimum_threshold: 400.0
+  radiative_sink_fallback_temperature: 600.0
+  track_geometry_evolution: true
+  nozzle_ablative: false
+graphite_insert:
+  enabled: true
+  material_density: 2260.0
+  heat_of_ablation: 15000000.0
+  thermal_conductivity: 100.0
+  specific_heat: 710.0
+  initial_thickness: 0.006
+  surface_temperature_limit: 2500.0
+  oxidation_temperature: 800.0
+  oxidation_rate: 1.0e-06
+  activation_energy: 190000.0
+  oxidation_reference_temperature: 973.0
+  oxidation_reference_pressure: 21000.0
+  recession_multiplier: null
+  char_layer_conductivity: 5.0
+  char_layer_thickness: 0.0005
+  coverage_fraction: 1.0
+  emissivity: null
+  ambient_temperature: null
+  feedback_fraction_min: null
+  feedback_fraction_max: null
+  oxidation_enthalpy: null
+  ablation_surface_temperature: null
+  oxidation_pressure_exponent: null
+  oxidation_pre_exponential: null
+  mixture_mw: null
+  oxidation_stoichiometry_ratio: null
+stainless_steel_case: null
+discharge:
+  oxidizer:
+    Cd_inf: 0.4
+    a_Re: 0.15
+    Cd_min: 0.15
+    use_pressure_correction: false
+    P_ref: 5000000.0
+    a_P: 0.0
+    use_temperature_correction: false
+    T_ref: 90.0
+    a_T: 0.0
+  fuel:
+    Cd_inf: 0.65
+    a_Re: 0.2
+    Cd_min: 0.2
+    use_pressure_correction: false
+    P_ref: 5000000.0
+    a_P: 0.0
+    use_temperature_correction: false
+    T_ref: 300.0
+    a_T: 0.0
+spray:
+  momentum_flux_ratio: true
+  spray_angle:
+    model: TMR
+    k: 0.5
+    n: 0.5
+  weber:
+    We_min: 15.0
+  smd:
+    model: lefebvre
+    C: 0.5
+    m: 0.6
+    p: 0.0
+  evaporation:
+    K: 300000.0
+    x_star_limit: 0.05
+    use_constraint: true
+  use_turbulence_corrections: false
+  turbulence_breakup_gain: 1.0
+  turbulence_penetration_gain: 0.5
+combustion:
+  cea:
+    use_parallel_cea_build: true
+    cea_parallel_workers: null
+    ox_name: LOX
+    fuel_name: RP-1
+    expansion_ratio: 3.2159
+    cache_file: output/cache/cea_cache_LOX_RP1_3D.npz
+    Pc_range:
+    - 1000000.0
+    - 9000000.0
+    MR_range:
+    - 1.6
+    - 3.5
+    eps_range:
+    - 4.0
+    - 15.0
+    n_points: 34
+  efficiency:
+    model: exponential
+    C: 0.3
+    K: 0.15
+    use_spray_correction: false
+    spray_penalty_factor: 0.8
+    use_mixture_coupling: true
+    use_cooling_coupling: true
+    use_turbulence_coupling: true
+    mixture_efficiency_floor: 0.25
+    cooling_efficiency_floor: 0.25
+    turbulence_efficiency_floor: 0.3
+    target_turbulence_intensity: 0.08
+    turbulence_penalty_exponent: 1.0
+    target_smd_microns: 50.0
+    xstar_limit_mm: 50.0
+    xstar_penalty_exponent: 2.0
+    we_reference: 100.0
+    we_penalty_exponent: 0.5
+    smd_penalty_exponent: 1.0
+    use_advanced_model: true
+    use_finite_rate_chemistry: true
+    use_shifting_equilibrium: true
+chamber:
+  volume: 0.002765411
+  A_throat: 0.002491361
+  length: 0.260327
+  Lstar: 1.11
+  chamber_inner_diameter: 0.12065
+  design_pressure: 2068428.0
+  design_thrust: 7000.0
+  design_force_coefficient: 1.3583788572564002
+  design_MR: 2.5
+  design_cea_solver_used: true
+  design_cea_solver_info:
+    converged: true
+    iterations: 7
+    final_Cf: 1.3583788572564002
+    final_eps: 3.2158509403987114
+nozzle:
+  A_throat: 0.002491361
+  A_exit: 0.008011847
+  expansion_ratio: 3.2159
+  exit_diameter: 0.101
+  efficiency: 0.95
+solver:
+  method: brentq
+  Pc_bounds:
+  - 100000.0
+  - 8000000.0
+  tolerance: 1.0e-06
+  max_iterations: 100
+  closure:
+    max_iterations: 6
+    Cd_reduction_factor: 0.95
+    tolerance: 0.0001
+lox_tank:
+  lox_h: 1.14
+  lox_radius: 0.06985
+  ox_tank_pos: 0.8
+  mass: 4.035
+fuel_tank:
+  rp1_h: 0.609
+  rp1_radius: 0.0762
+  fuel_tank_pos: 3.0
+  mass: 8.762
+press_tank:
+  press_h: 0.457
+  press_radius: 0.0762
+  pres_tank_pos: 3.6
+  dry_mass: null
+  initial_gas_mass: null
+  mass: null
+rocket:
+  airframe_mass: 78.72
+  engine_mass: 8.0
+  lox_tank_structure_mass: 5.0
+  fuel_tank_structure_mass: 3.0
+  engine_cm_offset: 0.15
+  propulsion_dry_mass: 21.0
+  propulsion_cm_offset: 0.4
+  copv_dry_mass: 2.969
+  inertia:
+  - 8.0
+  - 8.0
+  - 0.5
+  radius: 0.078359
+  rocket_length: 7.5
+  motor_position: 0.0
+  fins:
+    no_fins: 4
+    root_chord: 0.626872
+    tip_chord: 0.20066
+    fin_span: 0.20066
+    fin_position: 0.4826
+  mass: null
+  cm_wo_motor: null
+  dry_mass: null
+  motor_inertia: null
+  motor: null
+environment:
+  date:
+  - 2025
+  - 12
+  - 6
+  - 18
+  latitude: 35.34722
+  longitude: -117.8099547
+  elevation: 626.67
+thrust:
+  burn_time: 10.0

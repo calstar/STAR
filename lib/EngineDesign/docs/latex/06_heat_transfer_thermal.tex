@@ -1,0 +1,67 @@
+\section{Heat Transfer \& Thermal Protection}
+
+\subsection{Introduction}
+This chapter details the heat transfer mechanisms and thermal protection systems (TPS) used in the rocket engine. The models cover convective and radiative heat transfer from the hot gas, and various cooling methods including film, regenerative, and ablative cooling.
+
+\subsection{Key Files Referenced}
+The physics models documented in this chapter are implemented in:
+\begin{itemize}
+    \item \texttt{engine/pipeline/thermal/ablative_cooling.py} - Ablative cooling and recession models
+    \item \texttt{engine/pipeline/thermal/regen_cooling.py} - Regenerative cooling and channel flow
+    \item \texttt{engine/pipeline/thermal/film_cooling.py} - Liquid/gas film cooling models
+    \item \texttt{engine/pipeline/thermal/graphite_cooling.py} - Graphite insert thermal response
+\end{itemize}
+
+\subsection{Nomenclature}
+\begin{description}
+    \item[$q''$] Heat flux [\si{W/m^2}]
+    \item[$h_g$] Gas-side heat transfer coefficient [\si{W/(m^2.K)}]
+    \item[$T_{aw}$] Adiabatic wall temperature [\si{K}]
+    \item[$T_w$] Wall temperature [\si{K}]
+    \item[$\epsilon$] Emissivity [dimensionless]
+    \item[$\sigma$] Stefan-Boltzmann constant [\si{W/(m^2.K^4)}]
+    \item[$B$] Blowing parameter [dimensionless]
+    \item[$\dot{r}$] Recession rate [\si{m/s}]
+    \item[$H_{abl}$] Heat of ablation [\si{J/kg}]
+\end{description}
+
+\subsection{Gas-Side Heat Transfer}
+
+\subsubsection{Convective Heat Flux}
+The convective heat flux is modeled using the Bartz correlation or similar Nusselt number relations:
+\begin{equation}
+q''_{conv} = h_g (T_{aw} - T_w)
+\end{equation}
+
+\subsubsection{Radiative Heat Flux}
+Radiative heat transfer from the combustion products (primarily $H_2O$ and $CO_2$):
+\begin{equation}
+q''_{rad} = \sigma (\epsilon_g T_g^4 - \alpha_w T_w^4)
+\end{equation}
+
+\subsection{Cooling Mechanisms}
+
+\subsubsection{Film Cooling}
+Film cooling reduces the heat flux by injecting a coolant layer along the wall. The effectiveness $\eta$ is modeled as:
+\begin{equation}
+\eta = \frac{T_{aw} - T_{aw,film}}{T_{aw} - T_{coolant}} = f(x/ms)
+\end{equation}
+
+\subsubsection{Regenerative Cooling}
+For regenerative cooling, the heat balance between the gas and the coolant is:
+\begin{equation}
+q'' = h_g (T_{aw} - T_{wg}) = \frac{k_w}{t_w} (T_{wg} - T_{wc}) = h_c (T_{wc} - T_c)
+\end{equation}
+
+\subsubsection{Ablative Cooling}
+Ablative cooling protects the wall through endothermic decomposition and material recession. The recession rate $\dot{r}$ is:
+\begin{equation}
+\dot{r} = \frac{q''_{net}}{\rho_{abl} H_{abl}}
+\end{equation}
+The net heat flux is corrected for blowing effects:
+\begin{equation}
+q''_{blown} = q''_{unblown} \frac{\ln(1+B)}{B}
+\end{equation}
+
+\subsection{Graphite Inserts}
+Graphite inserts in the throat are modeled with high-temperature thermal conductivity and specific heat, accounting for surface oxidation and sublimation at extreme temperatures.

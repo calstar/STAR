@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+/* Custom CSS variables for the dark engineering theme */
+:root {
+  --color-bg-primary: #0a0a0f;
+  --color-bg-secondary: #12121a;
+  --color-bg-tertiary: #1a1a24;
+  --color-accent: #3b82f6;
+  --color-accent-hover: #2563eb;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-text-primary: #f8fafc;
+  --color-text-secondary: #94a3b8;
+  --color-border: #2d2d3a;
+}
+
+/* Base styles */
+body {
+  @apply bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] antialiased;
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Consolas', monospace;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-secondary);
+}

@@ -1,0 +1,109 @@
+\section{Combustion Stability Analysis}
+
+\subsection{Introduction}
+This chapter details the physics-based models for combustion and feed system stability. The analysis covers low-frequency chugging, high-frequency acoustic modes, and feed system coupling (POGO/surge). The system uses both lumped-parameter and spatially-distributed wave propagation models to assess stability margins.
+
+\subsection{Key Files Referenced}
+The physics models documented in this chapter are implemented in:
+\begin{itemize}
+    \item \texttt{engine/pipeline/stability/analysis.py} - Main stability analysis routines
+    \item \texttt{engine/pipeline/stability/spatial.py} - Spatially-distributed stability models
+    \item \texttt{engine/pipeline/stability/enhanced.py} - Enhanced physics-based stability models
+    \item \texttt{engine/pipeline/stability/physics.py} - Core stability physics relations
+\end{itemize}
+
+\subsection{Nomenclature}
+\begin{description}
+    \item[$f$] Frequency [\si{Hz}]
+    \item[$\tau_{res}$] Residence time [\si{s}]
+    \item[$L^*$] Characteristic length [\si{m}]
+    \item[$c^*$] Characteristic velocity [\si{m/s}]
+    \item[$a$] Speed of sound [\si{m/s}]
+    \item[$V_c$] Chamber volume [\si{m^3}]
+    \item[$A_t$] Throat area [\si{m^2}]
+    \item[$Z$] Acoustic impedance [\si{Pa.s/m^3}]
+    \item[$\alpha$] Wave growth rate [\si{1/s}]
+    \item[$K$] Bulk modulus [\si{Pa}]
+    \item[$\Delta P_{feed}$] Feed system pressure drop [\si{Pa}]
+\end{description}
+
+\subsection{Low-Frequency Stability (Chugging)}
+
+\subsubsection{Residence Time Model}
+The fundamental chugging frequency is estimated from the chamber residence time:
+\begin{equation}
+\tau_{res} = \frac{L^*}{c^*} = \frac{V_c}{A_t c^*}
+\end{equation}
+\begin{equation}
+f_{res} = \frac{1}{2\pi \tau_{res}}
+\end{equation}
+
+\subsubsection{Helmholtz Resonance Model}
+For chambers acting as a volume-compliance element, the Helmholtz frequency is:
+\begin{equation}
+f_H = \frac{a}{2\pi} \sqrt{\frac{A_t}{V_c L_{eff}}}
+\end{equation}
+where $L_{eff} \approx 0.5 d_t$ is the effective neck length.
+
+\subsubsection{Stability Index}
+A heuristic stability index is calculated based on chamber pressure, $L^*$, and frequency:
+\begin{equation}
+I_{stab} = \text{min}\left(1, \left(\frac{P_c}{P_{ref}}\right)^{0.3}\right) \cdot \text{min}\left(1, \left(\frac{L^*}{L^*_{ref}}\right)^{0.2}\right) \cdot f_{factor}
+\end{equation}
+
+\subsection{Acoustic Modes}
+
+\subsubsection{Longitudinal Modes}
+Longitudinal frequencies are modeled using an open-closed tube approximation:
+\begin{equation}
+f_{nL} = \frac{(2n-1) a}{4 L_c}
+\end{equation}
+
+\subsubsection{Transverse Modes}
+Transverse (tangential/radial) modes for a cylindrical chamber:
+\begin{equation}
+f_{nT} = \frac{\alpha_n a}{\pi D_c}
+\end{equation}
+where $\alpha_n$ are the roots of the Bessel function derivative $J'_m(\alpha) = 0$ (e.g., 1.841, 3.054).
+
+\subsection{Feed System Stability}
+
+\subsubsection{POGO and Surge}
+Feed line resonance frequencies:
+\begin{equation}
+f_{pogo} = \frac{a_{prop}}{4 L_{line}} \quad \text{(Closed-Open)}
+\end{equation}
+\begin{equation}
+f_{surge} = \frac{a_{prop}}{2 L_{line}} \quad \text{(Closed-Closed)}
+\end{equation}
+where $a_{prop} = \sqrt{K/\rho}$.
+
+\subsubsection{Water Hammer}
+The theoretical maximum pressure spike for an instantaneous valve closure:
+\begin{equation}
+\Delta P_{wh} = \rho a_{prop} \Delta v
+\end{equation}
+The water hammer margin is defined as:
+\begin{equation}
+M_{wh} = \frac{\Delta P_{feed}}{\Delta P_{wh}}
+\end{equation}
+
+\subsection{Spatial Stability Analysis}
+The enhanced model solves the wave equation spatially to determine local growth rates $\alpha$:
+\begin{equation}
+\alpha = \frac{\dot{E}_{in} - \dot{E}_{diss}}{2 E_{stored}}
+\end{equation}
+where:
+\begin{itemize}
+    \item $\dot{E}_{in} \propto P_c \dot{m} / \rho$ (Combustion energy input)
+    \item $\dot{E}_{diss} \propto \rho u^2 / L_c$ (Viscous/acoustic dissipation)
+    \item $E_{stored} = \frac{1}{2} \rho a^2$ (Acoustic energy density)
+\end{itemize}
+
+\subsection{Pintle-Specific Effects}
+Pintle geometry introduces localized effects on stability:
+\begin{itemize}
+    \item \textbf{Impingement}: Fuel spray hitting the wall creates pressure fluctuation sources.
+    \item \textbf{Recirculation}: Zones near the pintle tip provide either damping (via turbulence) or amplification.
+    \item \textbf{Ablation}: Uneven wall recession creates impedance mismatches $Z = \rho a / A(x)$, reflecting waves.
+\end{itemize}

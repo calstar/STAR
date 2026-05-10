@@ -1,0 +1,62 @@
+\section{Time-Varying Coupled Analysis}
+
+\subsection{Introduction}
+This chapter details the physics of time-varying engine performance, focusing on the coupled evolution of geometry, thermodynamics, and stability. Unlike static analysis, time-varying analysis accounts for the cumulative effects of ablation, propellant depletion, and transient operating conditions over the full burn duration.
+
+\subsection{Key Files Referenced}
+The physics models documented in this chapter are implemented in:
+\begin{itemize}
+    \item \texttt{engine/core/runner.py} - Time-series evaluation (\texttt{evaluate\_arrays\_with\_time})
+    \item \texttt{engine/pipeline/thermal/ablative\_geometry.py} - Geometry evolution from material loss
+    \item \texttt{engine/pipeline/localized\_ablation.py} - Enhanced ablation at impingement zones
+    \item \texttt{engine/pipeline/time\_varying\_solver.py} - Fully-coupled transient solver
+\end{itemize}
+
+\subsection{Nomenclature}
+\begin{description}
+    \item[$\dot{r}$] Recession rate [\si{m/s}]
+    \item[$H_{abl}$] Heat of ablation [\si{J/kg}]
+    \item[$V_c(t)$] Time-varying chamber volume [\si{m^3}]
+    \item[$A_t(t)$] Time-varying throat area [\si{m^2}]
+    \item[$\epsilon(t)$] Time-varying expansion ratio
+    \item[$q''_{imp}$] Impingement heat flux [\si{W/m^2}]
+\end{description}
+
+\subsection{Geometry Evolution}
+The engine geometry is updated at each time step based on the cumulative material loss from the ablative liner and graphite insert.
+
+\subsubsection{Chamber Volume and Throat Area}
+The instantaneous chamber volume and throat area are calculated by integrating the local recession rates:
+\begin{equation}
+D(x, t) = D_0(x) + 2 \int_0^t \dot{r}(x, \tau) d\tau
+\end{equation}
+\begin{equation}
+A_t(t) = \frac{\pi}{4} D_t(t)^2, \quad V_c(t) = \int_0^{L_c} \frac{\pi}{4} D(x, t)^2 dx
+\end{equation}
+
+\subsection{Localized Ablation (Fuel Impingement)}
+For pintle injectors, the fuel spray creates localized zones of enhanced heat flux where it impinges on the chamber wall.
+
+\subsubsection{Impingement Zone Modeling}
+The impingement heat flux is modeled using a Gaussian distribution centered at the impingement point $L_{imp}$:
+\begin{equation}
+q''_{total}(x) = q''_{base}(x) \cdot \left[1 + (M_{imp} - 1) \cdot \exp\left(-0.5 \left(\frac{x - L_{imp}}{\sigma_{imp}}\right)^2\right)\right]
+\end{equation}
+where $M_{imp}$ is the peak multiplier (typically 2.0--5.0x).
+
+\subsection{Coupled Solver Logic}
+The time-varying solver iterates through the burn duration, performing the following steps at each interval $\Delta t$:
+\begin{enumerate}
+    \item \textbf{Static Evaluation}: Solve for $P_c, \dot{m}, F$ using current geometry $V_c(t), A_t(t)$.
+    \item \textbf{Thermal Analysis}: Compute local heat fluxes $q''(x)$ and recession rates $\dot{r}(x)$.
+    \item \textbf{Stability Check}: Evaluate stability margins for the current geometry and operating point.
+    \item \textbf{State Update}: Update cumulative recession and advance geometry for $t + \Delta t$.
+\end{enumerate}
+
+\subsection{Transient Effects on Performance}
+As the throat area $A_t$ increases due to recession, the chamber pressure $P_c$ typically decreases for a fixed propellant supply. This leads to:
+\begin{itemize}
+    \item \textbf{Thrust Decay}: Reduction in momentum thrust.
+    \item \textbf{Expansion Loss}: Shift in expansion ratio $\epsilon = A_e/A_t$, leading to potential over-expansion or under-expansion losses.
+    \item \textbf{Stability Shifts}: Changes in acoustic frequencies and chugging margins as $L^*$ and $V_c$ evolve.
+\end{itemize}

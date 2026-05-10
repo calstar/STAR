@@ -1,0 +1,64 @@
+\section{Optimization Algorithms}
+
+\subsection{Introduction}
+The engine design is optimized using a multi-layer hierarchical approach. This strategy decouples static geometric parameters from time-varying pressure profiles and thermal protection systems, allowing for efficient convergence of complex, non-linear rocket engine models.
+
+\subsection{Key Files Referenced}
+The physics models documented in this chapter are implemented in:
+\begin{itemize}
+    \item \texttt{engine/optimizer/layers/layer1_static_optimization.py} - Static geometry optimization
+    \item \texttt{engine/optimizer/layers/layer2_pressure.py} - Pressure curve optimization
+    \item \texttt{engine/optimizer/main_optimizer.py} - Multi-layer coordination and objective functions
+\end{itemize}
+
+\subsection{Nomenclature}
+\begin{description}
+    \item[$\mathbf{x}_{L1}$] Static design variables (Geometry, initial pressures)
+    \item[$\mathbf{x}_{L2}$] Time-varying variables (Pressure segments)
+    \item[$f_{obj}$] Objective function value
+    \item[$w_i$] Weighting factors for objective components
+    \item[$\epsilon$] Error or tolerance
+\end{description}
+
+\subsection{Layer 1: Static Optimization}
+Layer 1 optimizes the core engine geometry and initial operating point. It assumes steady-state conditions at the start of the burn.
+
+\subsubsection{Design Variables}
+\begin{itemize}
+    \item \textbf{Chamber}: Throat area $A_t$, characteristic length $L^*$.
+    \item \textbf{Nozzle}: Expansion ratio $\epsilon = A_e/A_t$.
+    \item \textbf{Injector}: Pintle tip diameter, annular gap height, orifice diameters.
+    \item \textbf{Pressures}: Initial LOX and fuel tank pressures.
+\end{itemize}
+
+\subsubsection{Algorithms}
+The system supports multiple optimization backends:
+\begin{itemize}
+    \item \textbf{CMA-ES}: Covariance Matrix Adaptation Evolution Strategy for global derivative-free optimization.
+    \item \textbf{Differential Evolution}: For robust global search in large parameter spaces.
+    \item \textbf{SLSQP}: Sequential Least Squares Programming for local gradient-based refinement.
+\end{itemize}
+
+\subsection{Layer 2: Pressure Curve Optimization}
+Layer 2 optimizes the pressure profiles over the full burn duration to meet total impulse and mixture ratio requirements while respecting tank capacities.
+
+\subsubsection{Segmented Pressure Model}
+Pressure curves are modeled as a series of $N$ segments (typically 10-20). Each segment is defined by:
+\begin{itemize}
+    \item \textbf{Type}: Linear or Blowdown.
+    \item \textbf{Blowdown Physics}: $P(t) = P_{start} \cdot (1 + k \cdot t)^{-n}$ where $k$ is the blowdown parameter.
+\end{itemize}
+
+\subsection{Objective Function Formulation}
+The optimizer minimizes a weighted sum of squared errors and penalties:
+\begin{equation}
+f_{obj} = w_F \cdot \left(\frac{F - F_{target}}{F_{target}}\right)^2 + w_{MR} \cdot \left(\frac{MR - MR_{optimal}}{MR_{optimal}}\right)^2 + \sum \text{Penalties}
+\end{equation}
+Typical weights: $w_F = 200.0$, $w_{MR} = 300.0$.
+
+\subsection{Constraints and Requirements}
+\begin{itemize}
+    \item \textbf{Geometric Constraints}: Max chamber OD, max nozzle exit diameter, max engine length.
+    \item \textbf{Performance Requirements}: Target thrust, target apogee, minimum stability margins.
+    \item \textbf{Resource Constraints}: COPV volume, tank capacities.
+\end{itemize}

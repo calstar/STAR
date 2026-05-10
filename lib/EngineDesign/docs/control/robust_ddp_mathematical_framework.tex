@@ -1,0 +1,2004 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{geometry}
+
+\geometry{margin=1in}
+
+\title{Robust Differential Dynamic Programming for Rocket Engine Control:\\
+A Complete Mathematical Framework from First Principles}
+\author{Engine Design Team}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+This document provides a comprehensive mathematical treatment of the robust Differential Dynamic Programming (DDP) controller for liquid rocket engine control. We derive all equations from first principles, beginning with fundamental physics and building up to the complete control framework.
+
+\subsection{Who Should Read This Document}
+
+This document is designed for:
+\begin{itemize}
+    \item Engineers new to optimal control who want to understand DDP from the ground up
+    \item Students learning control theory who need detailed derivations
+    \item Practitioners implementing rocket engine controllers who need complete mathematical foundations
+    \item Anyone who wants to understand every step of the controller logic
+\end{itemize}
+
+We assume only basic knowledge of:
+\begin{itemize}
+    \item Calculus (derivatives, integrals)
+    \item Linear algebra (matrices, vectors)
+    \item Basic physics (ideal gas law, conservation laws)
+\end{itemize}
+
+All other concepts are explained from first principles.
+
+\subsection{Document Structure}
+
+The document is organized as follows:
+\begin{enumerate}
+    \item \textbf{Background Theory}: Introduction to optimal control and DDP
+    \item \textbf{First Principles Physics}: Derivation of all physical laws from basics
+    \item \textbf{System Modeling}: Complete mathematical model of the rocket engine system
+    \item \textbf{Control Problem Formulation}: How we frame the control problem
+    \item \textbf{DDP Algorithm}: Step-by-step explanation of the DDP algorithm
+    \item \textbf{Controller Implementation}: Detailed walkthrough of the control loop
+    \item \textbf{Numerical Methods}: How we compute derivatives and solve equations
+\end{enumerate}
+
+\subsection{System Overview}
+
+The system consists of:
+\begin{itemize}
+    \item \textbf{COPV} (Composite Overwrapped Pressure Vessel): High-pressure gas storage (typically 2750 psi, 4.5-6L volume)
+    \item \textbf{Regulator}: Pressure-reducing valve maintaining fixed output pressure (typically 1000 psi)
+    \item \textbf{Solenoid Valves}: PWM-controlled valves for fuel and oxidizer pressurization
+    \item \textbf{Propellant Tanks}: Fuel (RP-1) and oxidizer (LOX) tanks with ullage volumes
+    \item \textbf{Engine}: Combustion chamber producing thrust from propellant flow
+\end{itemize}
+
+\subsection{Control Objective}
+
+The controller must:
+\begin{enumerate}
+    \item Track reference thrust $F_{\text{ref}}(t)$ and mixture ratio $\text{MR}_{\text{ref}}(t)$
+    \item Minimize gas consumption from COPV
+    \item Satisfy constraints (pressure limits, mixture ratio bounds, etc.)
+    \item Handle uncertainties and disturbances robustly
+\end{enumerate}
+
+\section{Background: Optimal Control Theory}
+
+Before diving into the specific controller, we need to understand the general framework of optimal control. This section provides the theoretical foundation.
+
+\subsection{What is Optimal Control?}
+
+Optimal control is the problem of finding a control input $\mathbf{u}(t)$ that minimizes a cost function $J$ while satisfying system dynamics and constraints.
+
+\textbf{Intuitive Example}: Imagine driving a car. You want to:
+\begin{itemize}
+    \item Minimize fuel consumption (cost)
+    \item Follow the speed limit (constraints)
+    \item Arrive at your destination (dynamics: position changes with velocity)
+\end{itemize}
+
+Optimal control finds the best way to press the gas pedal over time.
+
+\subsection{The General Optimal Control Problem}
+
+Given a system:
+\begin{equation}
+\dot{\mathbf{x}}(t) = \mathbf{f}(\mathbf{x}(t), \mathbf{u}(t), t)
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\mathbf{x}(t)$ is the \textbf{state} (e.g., position, velocity, pressure)
+    \item $\mathbf{u}(t)$ is the \textbf{control} (e.g., throttle, valve opening)
+    \item $\mathbf{f}$ is the \textbf{dynamics} (how state evolves)
+\end{itemize}
+
+We want to minimize:
+\begin{equation}
+J = \int_0^T \ell(\mathbf{x}(t), \mathbf{u}(t), t) dt + \phi(\mathbf{x}(T))
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\ell$ is the \textbf{running cost} (cost at each moment)
+    \item $\phi$ is the \textbf{terminal cost} (cost at the end)
+\end{itemize}
+
+\subsection{Discrete-Time Formulation}
+
+In practice, we work with discrete time steps. Instead of continuous time $t$, we have time steps $k = 0, 1, 2, \ldots, N-1$.
+
+The dynamics become:
+\begin{equation}
+\mathbf{x}_{k+1} = \mathbf{f}(\mathbf{x}_k, \mathbf{u}_k, k)
+\end{equation}
+
+The cost becomes:
+\begin{equation}
+J = \sum_{k=0}^{N-1} \ell(\mathbf{x}_k, \mathbf{u}_k, k) + \phi(\mathbf{x}_N)
+\end{equation}
+
+\textbf{Why discrete?} Real controllers run on computers with fixed time steps (e.g., 100 Hz = 0.01 s per step).
+
+\subsection{What is Differential Dynamic Programming (DDP)?}
+
+DDP is an algorithm for solving optimal control problems. It works by:
+\begin{enumerate}
+    \item Starting with an initial guess for the control sequence
+    \item Linearizing the dynamics around the current trajectory
+    \item Computing how to improve the control (backward pass)
+    \item Testing the improved control (forward pass)
+    \item Repeating until convergence
+\end{enumerate}
+
+\textbf{Key Insight}: DDP uses the structure of the problem (dynamics are known) to efficiently find optimal controls, unlike generic optimization that treats it as a black box.
+
+\subsection{The Bellman Principle of Optimality}
+
+The fundamental principle behind DDP is Bellman's principle of optimality:
+
+\textit{"An optimal policy has the property that whatever the initial state and initial decision are, the remaining decisions must constitute an optimal policy with regard to the state resulting from the first decision."}
+
+In mathematical terms, if we define the \textbf{value function}:
+\begin{equation}
+V_k(\mathbf{x}_k) = \min_{\mathbf{u}_k, \mathbf{u}_{k+1}, \ldots} \left[ \sum_{j=k}^{N-1} \ell(\mathbf{x}_j, \mathbf{u}_j, j) + \phi(\mathbf{x}_N) \right]
+\end{equation}
+
+Then Bellman's equation says:
+\begin{equation}
+V_k(\mathbf{x}_k) = \min_{\mathbf{u}_k} \left[ \ell(\mathbf{x}_k, \mathbf{u}_k, k) + V_{k+1}(\mathbf{f}(\mathbf{x}_k, \mathbf{u}_k)) \right]
+\end{equation}
+
+\textbf{Intuition}: The best cost-to-go from state $\mathbf{x}_k$ is the minimum over all controls $\mathbf{u}_k$ of: (immediate cost) + (best cost-to-go from next state).
+
+This is a \textbf{recursive} relationship: to know $V_k$, we need $V_{k+1}$. So we compute backwards from the end ($V_N = \phi$) to the beginning ($V_0$).
+
+\subsection{Why DDP Works}
+
+DDP is powerful because:
+\begin{enumerate}
+    \item \textbf{Exploits structure}: Uses the known dynamics to compute gradients efficiently
+    \item \textbf{Second-order information}: Uses Hessians (curvature) for faster convergence
+    \item \textbf{Feedback gains}: Produces not just open-loop control, but feedback gains for robustness
+    \item \textbf{Handles constraints}: Can incorporate constraints through penalties or projections
+\end{enumerate}
+
+\section{First Principles Physics}
+
+\subsection{Ideal Gas Law}
+
+The fundamental relationship for gas pressure is the ideal gas law. This law comes from kinetic theory of gases, which models gas as many tiny particles bouncing around.
+
+\subsubsection{Derivation from Kinetic Theory}
+
+Imagine a box of volume $V$ containing $N$ gas molecules, each with mass $m_0$. The molecules move randomly and collide with the walls.
+
+When a molecule hits a wall, it exerts a force. The total force per unit area (pressure) is:
+\begin{equation}
+P = \frac{N m_0 \bar{v}^2}{3V}
+\end{equation}
+
+where $\bar{v}^2$ is the average squared velocity.
+
+From thermodynamics, we know that kinetic energy is related to temperature:
+\begin{equation}
+\frac{1}{2} m_0 \bar{v}^2 = \frac{3}{2} k_B T
+\end{equation}
+
+where $k_B$ is Boltzmann's constant.
+
+Combining these and defining $R = k_B / m_0$ (specific gas constant) and $m = N m_0$ (total mass):
+\begin{equation}
+P = \frac{m R T}{V}
+\end{equation}
+
+For real gases, we add a compressibility factor $Z$:
+\begin{equation}
+P = \frac{m R T}{V Z}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $P$ = pressure [Pa] - force per unit area
+    \item $m$ = gas mass [kg] - total mass of gas
+    \item $R$ = specific gas constant [J/(kg·K)] = 296.8 for N$_2$ - depends on gas type
+    \item $T$ = temperature [K] - average kinetic energy of molecules
+    \item $V$ = volume [m$^3$] - space the gas occupies
+    \item $Z$ = compressibility factor (1.0 for ideal gas) - correction for real gas effects
+\end{itemize}
+
+\textbf{Key Insight}: Pressure increases if you:
+\begin{itemize}
+    \item Add more gas (increase $m$)
+    \item Heat the gas (increase $T$)
+    \item Compress the gas (decrease $V$)
+\end{itemize}
+
+\textbf{For our system}: We use this to compute tank pressures from gas mass, temperature, and ullage volume.
+
+\subsection{Polytropic Process}
+
+For real systems, gas expansion/compression follows a polytropic process:
+
+\begin{equation}
+PV^n = \text{constant}
+\end{equation}
+
+where $n$ is the polytropic exponent:
+\begin{itemize}
+    \item $n = 1.0$: Isothermal (constant temperature)
+    \item $n = 1.4$: Adiabatic (no heat transfer, $\gamma$ for diatomic gas)
+    \item $n = 1.2$: Typical for blowdown (some heat transfer with tank walls)
+\end{itemize}
+
+The temperature evolution follows:
+
+\begin{equation}
+T = T_0 \left(\frac{\rho}{\rho_0}\right)^{n-1} = T_0 \left(\frac{m/V}{m_0/V_0}\right)^{n-1}
+\end{equation}
+
+where $\rho = m/V$ is the gas density.
+
+\subsection{Compressible Gas Flow}
+
+For gas flow through orifices (valves, regulator), we use compressible flow equations.
+
+\subsubsection{Critical Pressure Ratio}
+
+For choked (sonic) flow, the critical pressure ratio is:
+
+\begin{equation}
+\left(\frac{P_{\text{down}}}{P_{\text{up}}}\right)_{\text{crit}} = \left(\frac{2}{\gamma + 1}\right)^{\frac{\gamma}{\gamma - 1}}
+\end{equation}
+
+For N$_2$ with $\gamma = 1.4$:
+\begin{equation}
+\left(\frac{P_{\text{down}}}{P_{\text{up}}}\right)_{\text{crit}} = \left(\frac{2}{2.4}\right)^{\frac{1.4}{0.4}} = 0.528
+\end{equation}
+
+\subsubsection{Choked Flow}
+
+When $P_{\text{down}}/P_{\text{up}} < 0.528$, flow is choked (sonic at orifice):
+
+\begin{equation}
+\dot{m} = C_d A P_{\text{up}} \sqrt{\frac{\gamma}{R T_{\text{up}}}} \left(\frac{2}{\gamma + 1}\right)^{\frac{\gamma + 1}{2(\gamma - 1)}}
+\end{equation}
+
+Defining the choked flow constant:
+\begin{equation}
+C^* = \sqrt{\gamma \left(\frac{2}{\gamma + 1}\right)^{\frac{\gamma + 1}{\gamma - 1}}}
+\end{equation}
+
+The mass flow rate becomes:
+\begin{equation}
+\dot{m} = C_d A \frac{P_{\text{up}}}{\sqrt{R T_{\text{up}}}} C^*
+\end{equation}
+
+\subsubsection{Subsonic Flow}
+
+When $P_{\text{down}}/P_{\text{up}} \geq 0.528$, flow is subsonic:
+
+\begin{equation}
+\dot{m} = C_d A P_{\text{up}} \sqrt{\frac{2\gamma}{(\gamma - 1) R T_{\text{up}}}} \sqrt{\left(\frac{P_{\text{down}}}{P_{\text{up}}}\right)^{\frac{2}{\gamma}} - \left(\frac{P_{\text{down}}}{P_{\text{up}}}\right)^{\frac{\gamma + 1}{\gamma}}}
+\end{equation}
+
+\subsection{Mass Conservation}
+
+For the COPV:
+\begin{equation}
+\dot{m}_{\text{copv}} = -\dot{m}_{\text{to\_reg}} - \dot{m}_{\text{loss}}
+\end{equation}
+
+For tank ullage:
+\begin{equation}
+\dot{m}_{\text{gas,F}} = \dot{m}_{\text{gas,F,in}} \quad \text{(when valve open)}
+\end{equation}
+\begin{equation}
+\dot{m}_{\text{gas,F}} = 0 \quad \text{(when valve closed, pure blowdown)}
+\end{equation}
+
+\subsection{Ullage Volume Dynamics}
+
+As propellant flows to the engine, ullage volume increases:
+
+\begin{equation}
+\dot{V}_{u,F} = \frac{\dot{m}_F}{\rho_F}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\dot{V}_{u,F}$ = ullage volume growth rate [m$^3$/s]
+    \item $\dot{m}_F$ = fuel mass flow rate to engine [kg/s]
+    \item $\rho_F$ = fuel density [kg/m$^3$] = 800 for RP-1
+\end{itemize}
+
+\section{System Dynamics}
+
+\subsection{State Vector}
+
+The complete state vector is:
+
+\begin{equation}
+\mathbf{x} = \begin{bmatrix}
+P_{\text{copv}} \\
+P_{\text{reg}} \\
+P_{u,F} \\
+P_{u,O} \\
+P_{d,F} \\
+P_{d,O} \\
+V_{u,F} \\
+V_{u,O} \\
+m_{\text{gas,copv}} \\
+m_{\text{gas,F}} \\
+m_{\text{gas,O}}
+\end{bmatrix} \in \mathbb{R}^{11}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $P_{\text{copv}}$ = COPV pressure [Pa]
+    \item $P_{\text{reg}}$ = Regulator output pressure [Pa]
+    \item $P_{u,F}$, $P_{u,O}$ = Upstream (tank) pressures [Pa]
+    \item $P_{d,F}$, $P_{d,O}$ = Downstream (feed line) pressures [Pa]
+    \item $V_{u,F}$, $V_{u,O}$ = Ullage volumes [m$^3$]
+    \item $m_{\text{gas,copv}}$, $m_{\text{gas,F}}$, $m_{\text{gas,O}}$ = Gas masses [kg]
+\end{itemize}
+
+\subsection{Control Vector}
+
+The control input is:
+
+\begin{equation}
+\mathbf{u} = \begin{bmatrix}
+u_F \\
+u_O
+\end{bmatrix} \in [0,1]^2
+\end{equation}
+
+where $u_F, u_O$ are duty cycles (0 = valve closed, 1 = valve fully open).
+
+\subsection{Discrete-Time Dynamics}
+
+The system evolves according to:
+
+\begin{equation}
+\mathbf{x}_{k+1} = \mathbf{f}(\mathbf{x}_k, \mathbf{u}_k, \Delta t, \dot{m}_F, \dot{m}_O)
+\end{equation}
+
+where $\dot{m}_F, \dot{m}_O$ are propellant mass flow rates (from engine physics).
+
+\subsubsection{COPV Gas Mass Update}
+
+\begin{equation}
+m_{\text{gas,copv},k+1} = m_{\text{gas,copv},k} - \Delta t \left(\dot{m}_{\text{to\_reg}} + \dot{m}_{\text{loss}}\right)
+\end{equation}
+
+\subsubsection{COPV Pressure}
+
+Using ideal gas law with polytropic temperature:
+
+\begin{equation}
+T_{\text{copv},k+1} = T_{\text{copv},0} \left(\frac{\rho_{\text{copv},k+1}}{\rho_{\text{copv},0}}\right)^{n-1}
+\end{equation}
+
+\begin{equation}
+P_{\text{copv},k+1} = \frac{m_{\text{gas,copv},k+1} R T_{\text{copv},k+1}}{V_{\text{copv}} Z}
+\end{equation}
+
+\subsubsection{Regulator Pressure}
+
+Fixed setpoint regulator:
+
+\begin{equation}
+P_{\text{reg},k+1} = \begin{cases}
+P_{\text{setpoint}} & \text{if } P_{\text{copv},k} \geq P_{\text{setpoint}} \\
+P_{\text{copv},k} & \text{if } P_{\text{copv},k} < P_{\text{setpoint}}
+\end{cases}
+\end{equation}
+
+With oscillations due to PWM control:
+
+\begin{equation}
+P_{\text{reg},k+1} = P_{\text{reg},k+1,\text{base}} + A_{\text{osc}} \sin(\phi_k)
+\end{equation}
+
+where $A_{\text{osc}} = 0.06 P_{\text{setpoint}} \cdot u_{\text{total}}$ and $\phi_k$ is the PWM phase.
+
+\subsubsection{Gas Flow from COPV to Regulator}
+
+Using choked/subsonic flow equations:
+
+\begin{equation}
+\dot{m}_{\text{to\_reg}} = \begin{cases}
+C_d A_{\text{reg}} \frac{P_{\text{copv}}}{\sqrt{R T_{\text{copv}}}} C^* & \text{if choked} \\
+C_d A_{\text{reg}} P_{\text{copv}} \sqrt{\frac{2\gamma}{(\gamma-1)RT_{\text{copv}}}} \sqrt{\text{pr}^{\frac{2}{\gamma}} - \text{pr}^{\frac{\gamma+1}{\gamma}}} & \text{if subsonic}
+\end{cases}
+\end{equation}
+
+where $\text{pr} = P_{\text{reg}}/P_{\text{copv}}$.
+
+Flow is gated by control:
+\begin{equation}
+\dot{m}_{\text{to\_reg}} = \dot{m}_{\text{to\_reg},\text{max}} \cdot u_{\text{total}}
+\end{equation}
+
+where $u_{\text{total}} = \max(u_F, u_O)$.
+
+\subsubsection{Gas Flow from Regulator to Tanks}
+
+For fuel tank:
+
+\begin{equation}
+\dot{m}_{\text{gas,F}} = \begin{cases}
+C_d A_{\text{valve,F}} \frac{P_{\text{reg}}}{\sqrt{R T_{\text{reg}}}} C^* \cdot u_F & \text{if choked} \\
+C_d A_{\text{valve,F}} P_{\text{reg}} \sqrt{\frac{2\gamma}{(\gamma-1)RT_{\text{reg}}}} \sqrt{\text{pr}_F^{\frac{2}{\gamma}} - \text{pr}_F^{\frac{\gamma+1}{\gamma}}} \cdot u_F & \text{if subsonic}
+\end{cases}
+\end{equation}
+
+where $\text{pr}_F = P_{u,F}/P_{\text{reg}}$.
+
+\subsubsection{Ullage Volume Update}
+
+\begin{equation}
+V_{u,F,k+1} = V_{u,F,k} + \Delta t \frac{\dot{m}_{F,\text{pressure\_dependent}}}{\rho_F}
+\end{equation}
+
+where $\dot{m}_{F,\text{pressure\_dependent}}$ accounts for pressure-dependent flow:
+
+\begin{equation}
+\dot{m}_{F,\text{pressure\_dependent}} = \dot{m}_F \sqrt{\frac{P_{u,F}}{P_{\text{ref},F}}}
+\end{equation}
+
+This creates exponential blowdown: as pressure decreases, mass flow decreases, making decay exponential.
+
+\subsubsection{Tank Gas Mass Update}
+
+\begin{equation}
+m_{\text{gas,F},k+1} = m_{\text{gas,F},k} + \Delta t \cdot \dot{m}_{\text{gas,F}}
+\end{equation}
+
+\subsubsection{Tank Pressure}
+
+Using ideal gas law with polytropic temperature:
+
+\begin{equation}
+T_{\text{gas,F},k+1} = T_{\text{gas,F},0} \left(\frac{\rho_{F,k+1}}{\rho_{F,0}}\right)^{n-1}
+\end{equation}
+
+\begin{equation}
+P_{u,F,k+1} = \frac{m_{\text{gas,F},k+1} R T_{\text{gas,F},k+1}}{V_{u,F,k+1} Z}
+\end{equation}
+
+\subsubsection{Feed Line Pressure Dynamics}
+
+First-order lag:
+
+\begin{equation}
+P_{d,F,k+1} = P_{d,F,k} + \Delta t \frac{P_{u,F,k} - P_{d,F,k}}{\tau_{\text{line},F}}
+\end{equation}
+
+\section{Differential Dynamic Programming}
+
+\subsection{Problem Formulation}
+
+We seek to minimize:
+
+\begin{equation}
+J = \sum_{k=0}^{N-1} \ell(\mathbf{x}_k, \mathbf{u}_k, k) + \phi(\mathbf{x}_N)
+\end{equation}
+
+subject to:
+\begin{equation}
+\mathbf{x}_{k+1} = \mathbf{f}(\mathbf{x}_k, \mathbf{u}_k, \Delta t, \dot{m}_F, \dot{m}_O)
+\end{equation}
+
+\subsection{Running Cost}
+
+\begin{equation}
+\ell(\mathbf{x}_k, \mathbf{u}_k, k) = q_F (F_k - F_{\text{ref},k})^2 + q_{\text{MR}} (\text{MR}_k - \text{MR}_{\text{ref},k})^2 + q_{\text{gas}} \Delta P_{\text{copv}} + q_{\text{switch}} \|\mathbf{u}_k - \mathbf{u}_{k-1}\|^2 + \text{constraint penalties}
+\end{equation}
+
+\subsubsection{Thrust Tracking}
+
+Normalized error to prevent blowup:
+
+\begin{equation}
+F_{\text{error}} = \frac{F_k - F_{\text{ref},k}}{\max(|F_{\text{ref},k}|, 1.0)}
+\end{equation}
+
+\begin{equation}
+\text{Cost}_F = \begin{cases}
+q_F F_{\text{error}}^2 \cdot 2.0 & \text{if } F_{\text{error}} < 0 \text{ (thrust too low)} \\
+q_F F_{\text{error}}^2 & \text{if } F_{\text{error}} \geq 0
+\end{cases}
+\end{equation}
+
+\subsubsection{Mixture Ratio Tracking}
+
+\begin{equation}
+\text{MR}_{\text{error}} = \frac{\text{MR}_k - \text{MR}_{\text{ref},k}}{\max(|\text{MR}_{\text{ref},k}|, 1.0)}
+\end{equation}
+
+\begin{equation}
+\text{Cost}_{\text{MR}} = q_{\text{MR}} \text{MR}_{\text{error}}^2
+\end{equation}
+
+\subsubsection{Gas Consumption}
+
+\begin{equation}
+\Delta P_{\text{copv}} = \Delta t \left(c_F u_F + c_O u_O + \text{loss}\right)
+\end{equation}
+
+\begin{equation}
+\text{Cost}_{\text{gas}} = q_{\text{gas}} \Delta P_{\text{copv}}
+\end{equation}
+
+\subsection{Bellman Equation}
+
+The value function satisfies:
+
+\begin{equation}
+V_k(\mathbf{x}_k) = \min_{\mathbf{u}_k} \left[\ell(\mathbf{x}_k, \mathbf{u}_k, k) + V_{k+1}(\mathbf{f}(\mathbf{x}_k, \mathbf{u}_k))\right]
+\end{equation}
+
+\subsection{Linearization}
+
+We linearize the dynamics around a nominal trajectory:
+
+\begin{equation}
+\delta \mathbf{x}_{k+1} = \mathbf{A}_k \delta \mathbf{x}_k + \mathbf{B}_k \delta \mathbf{u}_k
+\end{equation}
+
+where:
+\begin{equation}
+\mathbf{A}_k = \frac{\partial \mathbf{f}}{\partial \mathbf{x}}\Big|_{\mathbf{x}_k, \mathbf{u}_k}, \quad \mathbf{B}_k = \frac{\partial \mathbf{f}}{\partial \mathbf{u}}\Big|_{\mathbf{x}_k, \mathbf{u}_k}
+\end{equation}
+
+Computed via finite differences:
+
+\begin{equation}
+[\mathbf{A}_k]_{i,j} = \frac{f_i(\mathbf{x}_k + \epsilon \mathbf{e}_j, \mathbf{u}_k) - f_i(\mathbf{x}_k, \mathbf{u}_k)}{\epsilon}
+\end{equation}
+
+\subsection{Backward Pass}
+
+\subsubsection{Cost Derivatives}
+
+\begin{equation}
+\ell_{\mathbf{x}} = \frac{\partial \ell}{\partial \mathbf{x}}, \quad \ell_{\mathbf{u}} = \frac{\partial \ell}{\partial \mathbf{u}}
+\end{equation}
+
+\begin{equation}
+\ell_{\mathbf{xx}} = \frac{\partial^2 \ell}{\partial \mathbf{x}^2}, \quad \ell_{\mathbf{uu}} = \frac{\partial^2 \ell}{\partial \mathbf{u}^2}, \quad \ell_{\mathbf{ux}} = \frac{\partial^2 \ell}{\partial \mathbf{u} \partial \mathbf{x}}
+\end{equation}
+
+Computed via finite differences with engine re-estimation when tank pressures change.
+
+\subsubsection{Q-Function}
+
+\begin{equation}
+Q(\delta \mathbf{x}_k, \delta \mathbf{u}_k) = \ell(\mathbf{x}_k + \delta \mathbf{x}_k, \mathbf{u}_k + \delta \mathbf{u}_k) + V_{k+1}(\mathbf{f}(\mathbf{x}_k + \delta \mathbf{x}_k, \mathbf{u}_k + \delta \mathbf{u}_k))
+\end{equation}
+
+Expanding to second order:
+
+\begin{equation}
+Q \approx Q_0 + \mathbf{Q}_{\mathbf{x}}^T \delta \mathbf{x}_k + \mathbf{Q}_{\mathbf{u}}^T \delta \mathbf{u}_k + \frac{1}{2} \delta \mathbf{x}_k^T \mathbf{Q}_{\mathbf{xx}} \delta \mathbf{x}_k + \frac{1}{2} \delta \mathbf{u}_k^T \mathbf{Q}_{\mathbf{uu}} \delta \mathbf{u}_k + \delta \mathbf{u}_k^T \mathbf{Q}_{\mathbf{ux}} \delta \mathbf{x}_k
+\end{equation}
+
+where:
+\begin{align}
+\mathbf{Q}_{\mathbf{x}} &= \ell_{\mathbf{x}} + \mathbf{A}_k^T \mathbf{V}_{\mathbf{x},k+1} \\
+\mathbf{Q}_{\mathbf{u}} &= \ell_{\mathbf{u}} + \mathbf{B}_k^T \mathbf{V}_{\mathbf{x},k+1} \\
+\mathbf{Q}_{\mathbf{xx}} &= \ell_{\mathbf{xx}} + \mathbf{A}_k^T \mathbf{V}_{\mathbf{xx},k+1} \mathbf{A}_k \\
+\mathbf{Q}_{\mathbf{uu}} &= \ell_{\mathbf{uu}} + \mathbf{B}_k^T \mathbf{V}_{\mathbf{xx},k+1} \mathbf{B}_k \\
+\mathbf{Q}_{\mathbf{ux}} &= \ell_{\mathbf{ux}} + \mathbf{B}_k^T \mathbf{V}_{\mathbf{xx},k+1} \mathbf{A}_k
+\end{align}
+
+\subsubsection{Optimal Control Update}
+
+Minimizing $Q$ with respect to $\delta \mathbf{u}_k$:
+
+\begin{equation}
+\frac{\partial Q}{\partial \delta \mathbf{u}_k} = \mathbf{Q}_{\mathbf{u}} + \mathbf{Q}_{\mathbf{uu}} \delta \mathbf{u}_k + \mathbf{Q}_{\mathbf{ux}} \delta \mathbf{x}_k = 0
+\end{equation}
+
+Solving:
+
+\begin{equation}
+\delta \mathbf{u}_k^* = -\mathbf{Q}_{\mathbf{uu}}^{-1} \mathbf{Q}_{\mathbf{u}} - \mathbf{Q}_{\mathbf{uu}}^{-1} \mathbf{Q}_{\mathbf{ux}} \delta \mathbf{x}_k
+\end{equation}
+
+Defining feedforward and feedback gains:
+
+\begin{equation}
+\mathbf{k}_k = -\mathbf{Q}_{\mathbf{uu}}^{-1} \mathbf{Q}_{\mathbf{u}}, \quad \mathbf{K}_k = -\mathbf{Q}_{\mathbf{uu}}^{-1} \mathbf{Q}_{\mathbf{ux}}
+\end{equation}
+
+\subsubsection{Regularization}
+
+To ensure $\mathbf{Q}_{\mathbf{uu}}$ is positive definite:
+
+\begin{equation}
+\mathbf{Q}_{\mathbf{uu},\text{reg}} = \mathbf{Q}_{\mathbf{uu}} + \lambda \mathbf{I}
+\end{equation}
+
+where $\lambda$ is Levenberg-Marquardt regularization.
+
+\subsubsection{Value Function Update}
+
+\begin{equation}
+\mathbf{V}_{\mathbf{x},k} = \mathbf{Q}_{\mathbf{x}} + \mathbf{K}_k^T \mathbf{Q}_{\mathbf{uu}} \mathbf{k}_k + \mathbf{K}_k^T \mathbf{Q}_{\mathbf{u}} + \mathbf{Q}_{\mathbf{ux}}^T \mathbf{k}_k
+\end{equation}
+
+\begin{equation}
+\mathbf{V}_{\mathbf{xx},k} = \mathbf{Q}_{\mathbf{xx}} + \mathbf{K}_k^T \mathbf{Q}_{\mathbf{uu}} \mathbf{K}_k + \mathbf{K}_k^T \mathbf{Q}_{\mathbf{ux}} + \mathbf{Q}_{\mathbf{ux}}^T \mathbf{K}_k
+\end{equation}
+
+\subsection{Forward Pass}
+
+\subsubsection{Line Search}
+
+We update the control sequence:
+
+\begin{equation}
+\mathbf{u}_k^{\text{new}} = \mathbf{u}_k + \alpha \mathbf{k}_k + \mathbf{K}_k (\mathbf{x}_k^{\text{new}} - \mathbf{x}_k)
+\end{equation}
+
+where $\alpha$ is found via line search to minimize cost.
+
+\subsubsection{Forward Rollout}
+
+\begin{equation}
+\mathbf{x}_{k+1}^{\text{new}} = \mathbf{f}(\mathbf{x}_k^{\text{new}}, \mathbf{u}_k^{\text{new}}, \Delta t, \dot{m}_F, \dot{m}_O)
+\end{equation}
+
+\section{Robustification}
+
+\subsection{Uncertainty Inflation}
+
+We inflate the value function Hessian to account for uncertainties:
+
+\begin{equation}
+\mathbf{V}_{\mathbf{xx},k} \leftarrow \mathbf{V}_{\mathbf{xx},k} + \gamma \text{diag}(\bar{\mathbf{w}}^2)
+\end{equation}
+
+where $\bar{\mathbf{w}}$ are residual bounds and $\gamma$ is the robustification weight.
+
+\section{Constraints}
+
+\subsection{Soft Constraints}
+
+Constraint violations are penalized in the cost:
+
+\begin{equation}
+\text{Cost}_{\text{constraint}} = w_{\text{constraint}} \max(0, \text{violation})^2
+\end{equation}
+
+\subsection{Hard Constraints}
+
+Hard constraints are checked and violations reported:
+\begin{itemize}
+    \item COPV minimum pressure
+    \item Ullage maximum volume
+    \item Mixture ratio bounds
+    \item Injector pressure drop minimum
+\end{itemize}
+
+\section{Numerical Implementation}
+
+This section explains how we actually compute the derivatives and solve the equations numerically. These are the "nuts and bolts" of the implementation.
+
+\subsection{Why Finite Differences?}
+
+We need to compute derivatives like $\frac{\partial \mathbf{f}}{\partial \mathbf{x}}$ and $\frac{\partial \ell}{\partial \mathbf{x}}$. 
+
+\textbf{Option 1: Analytical derivatives} - Derive formulas by hand. This is:
+\begin{itemize}
+    \item \textbf{Pros}: Exact, fast
+    \item \textbf{Cons}: Very tedious for complex functions, error-prone
+\end{itemize}
+
+\textbf{Option 2: Automatic differentiation} - Use libraries like JAX/TensorFlow. This is:
+\begin{itemize}
+    \item \textbf{Pros}: Exact, automatic
+    \item \textbf{Cons}: Requires rewriting code, adds dependencies
+\end{itemize}
+
+\textbf{Option 3: Finite differences} - Approximate derivatives numerically. This is:
+\begin{itemize}
+    \item \textbf{Pros}: Simple, works with any function, no code changes needed
+    \item \textbf{Cons}: Approximate (but very accurate with small $\epsilon$)
+\end{itemize}
+
+We use finite differences because it's simple and accurate enough.
+
+\subsection{Finite Differences: The Basic Idea}
+
+The derivative is defined as:
+\begin{equation}
+\frac{\partial f}{\partial x_i} = \lim_{\epsilon \to 0} \frac{f(\mathbf{x} + \epsilon \mathbf{e}_i) - f(\mathbf{x})}{\epsilon}
+\end{equation}
+
+We approximate this by using a small but finite $\epsilon$:
+\begin{equation}
+\frac{\partial f}{\partial x_i} \approx \frac{f(\mathbf{x} + \epsilon \mathbf{e}_i) - f(\mathbf{x})}{\epsilon}
+\end{equation}
+
+where $\mathbf{e}_i$ is the $i$-th unit vector (zeros except 1 at position $i$).
+
+\textbf{Example}: For $f(x, y) = x^2 + y^2$:
+\begin{equation}
+\frac{\partial f}{\partial x} \approx \frac{f(x + \epsilon, y) - f(x, y)}{\epsilon} = \frac{(x+\epsilon)^2 + y^2 - (x^2 + y^2)}{\epsilon} = \frac{2x\epsilon + \epsilon^2}{\epsilon} = 2x + \epsilon
+\end{equation}
+
+With $\epsilon = 10^{-6}$, this is extremely close to the true derivative $2x$.
+
+\subsection{Choosing $\epsilon$}
+
+The choice of $\epsilon$ is critical:
+\begin{itemize}
+    \item \textbf{Too small} (e.g., $10^{-12}$): Numerical roundoff errors dominate
+    \item \textbf{Too large} (e.g., $10^{-3}$): Approximation error is large
+    \item \textbf{Just right} (e.g., $10^{-6}$): Good balance
+\end{itemize}
+
+We use $\epsilon = 10^{-6}$ as a standard choice.
+
+\subsection{Computing the Dynamics Jacobian $\mathbf{A}_k$}
+
+The dynamics Jacobian $\mathbf{A}_k = \frac{\partial \mathbf{f}}{\partial \mathbf{x}}$ is an $11 \times 11$ matrix.
+
+\textbf{Algorithm}:
+\begin{verbatim}
+A = zeros(11, 11)
+for i = 0 to 10:
+    x_pert = x.copy()
+    x_pert[i] += epsilon
+    f_pert = f(x_pert, u, dt, mdot_F, mdot_O)
+    f_nom = f(x, u, dt, mdot_F, mdot_O)
+    A[:, i] = (f_pert - f_nom) / epsilon
+\end{verbatim}
+
+\textbf{What this does}: For each state component $i$, we:
+\begin{enumerate}
+    \item Perturb it by $\epsilon$
+    \item Simulate dynamics forward
+    \item See how all 11 states change
+    \item This gives column $i$ of $\mathbf{A}_k$
+\end{enumerate}
+
+\textbf{Example}: If we increase $P_{\text{copv}}$ by $\epsilon$, how does this affect all 11 states?
+\begin{itemize}
+    \item $P_{\text{copv}}$ itself increases (obviously)
+    \item $P_{\text{reg}}$ might increase (if regulator can supply more)
+    \item Gas flow rates increase (higher upstream pressure)
+    \item Tank pressures might increase (more gas flowing in)
+    \item etc.
+\end{itemize}
+
+The $i$-th column of $\mathbf{A}_k$ captures all these effects.
+
+\subsection{Computing the Control Jacobian $\mathbf{B}_k$}
+
+Similarly, $\mathbf{B}_k = \frac{\partial \mathbf{f}}{\partial \mathbf{u}}$ is an $11 \times 2$ matrix.
+
+\textbf{Algorithm}:
+\begin{verbatim}
+B = zeros(11, 2)
+for j = 0 to 1:
+    u_pert = u.copy()
+    u_pert[j] = clip(u_pert[j] + epsilon, 0, 1)
+    f_pert = f(x, u_pert, dt, mdot_F, mdot_O)
+    f_nom = f(x, u, dt, mdot_F, mdot_O)
+    B[:, j] = (f_pert - f_nom) / epsilon
+\end{verbatim}
+
+\textbf{What this does}: For each control component $j$ (fuel or oxidizer valve):
+\begin{enumerate}
+    \item Increase duty cycle by $\epsilon$
+    \item Simulate dynamics forward
+    \item See how all 11 states change
+\end{enumerate}
+
+\textbf{Example}: If we increase $u_F$ (fuel valve) by $\epsilon$:
+\begin{itemize}
+    \item More gas flows to fuel tank ($m_{\text{gas,F}}$ increases)
+    \item Fuel tank pressure increases ($P_{u,F}$ increases)
+    \item Fuel mass flow to engine increases ($\dot{m}_F$ increases)
+    \item Ullage volume grows faster ($V_{u,F}$ increases faster)
+    \item etc.
+\end{itemize}
+
+\subsection{Computing Cost Derivatives}
+
+The cost function $\ell(\mathbf{x}, \mathbf{u})$ depends on:
+\begin{itemize}
+    \item State $\mathbf{x}$ (pressures, volumes, gas masses)
+    \item Control $\mathbf{u}$ (duty cycles)
+    \item Engine estimates (thrust, mixture ratio, mass flows)
+\end{itemize}
+
+\textbf{State gradient $\ell_{\mathbf{x}}$}:
+\begin{verbatim}
+lx = zeros(11)
+for i = 0 to 10:
+    x_pert = x.copy()
+    x_pert[i] += epsilon
+    
+    # Re-estimate engine if tank pressures changed
+    if i in [IDX_P_U_F, IDX_P_U_O]:
+        eng_est_pert = engine_wrapper.estimate_from_pressures(
+            x_pert[IDX_P_U_F], x_pert[IDX_P_U_O]
+        )
+    else:
+        eng_est_pert = eng_est
+    
+    cost_pert = running_cost(x_pert, u, eng_est_pert, F_ref, MR_ref, ...)
+    cost_nom = running_cost(x, u, eng_est, F_ref, MR_ref, ...)
+    lx[i] = (cost_pert - cost_nom) / epsilon
+\end{verbatim}
+
+\textbf{Control gradient $\ell_{\mathbf{u}}$}:
+\begin{verbatim}
+lu = zeros(2)
+for j = 0 to 1:
+    u_pert = u.copy()
+    u_pert[j] = clip(u_pert[j] + epsilon, 0, 1)
+    cost_pert = running_cost(x, u_pert, eng_est, F_ref, MR_ref, ...)
+    cost_nom = running_cost(x, u, eng_est, F_ref, MR_ref, ...)
+    lu[j] = (cost_pert - cost_nom) / epsilon
+\end{verbatim}
+
+\textbf{Why re-estimate engine?} When tank pressures change, engine performance changes (thrust, mixture ratio, mass flows). We need accurate derivatives, so we re-estimate.
+
+\subsection{Computing Hessians}
+
+For second derivatives, we use the central difference formula:
+\begin{equation}
+\frac{\partial^2 f}{\partial x_i^2} \approx \frac{f(\mathbf{x} + \epsilon \mathbf{e}_i) - 2f(\mathbf{x}) + f(\mathbf{x} - \epsilon \mathbf{e}_i)}{\epsilon^2}
+\end{equation}
+
+\textbf{Why central difference?} More accurate than forward difference for second derivatives.
+
+\textbf{Diagonal approximation}: We only compute diagonal elements of Hessians (off-diagonal set to zero). This is:
+\begin{itemize}
+    \item Much faster ($O(n)$ instead of $O(n^2)$)
+    \item Usually sufficient (cross-terms are often small)
+\end{itemize}
+
+\subsection{Cholesky Decomposition for Positive Definiteness}
+
+In the backward pass, we need to invert $\mathbf{Q}_{\mathbf{uu}}$:
+\begin{equation}
+\mathbf{k}_k = -\mathbf{Q}_{\mathbf{uu}}^{-1} \mathbf{Q}_{\mathbf{u}}
+\end{equation}
+
+For this to work, $\mathbf{Q}_{\mathbf{uu}}$ must be \textbf{positive definite} (all eigenvalues $> 0$).
+
+\textbf{Why?} If $\mathbf{Q}_{\mathbf{uu}}$ is not positive definite:
+\begin{itemize}
+    \item It might not be invertible
+    \item Even if invertible, the solution might be unstable
+    \item The optimization problem might not have a minimum
+\end{itemize}
+
+\textbf{How to check?} Use Cholesky decomposition:
+\begin{equation}
+\mathbf{Q}_{\mathbf{uu}} = \mathbf{L} \mathbf{L}^T
+\end{equation}
+
+where $\mathbf{L}$ is lower triangular.
+
+\textbf{Key fact}: A matrix is positive definite if and only if it has a Cholesky decomposition.
+
+\textbf{Algorithm}:
+\begin{verbatim}
+lambda_reg = lambda_init
+for attempt = 0 to max_attempts:
+    Quu_reg = Quu + lambda_reg * I
+    try:
+        L = cholesky(Quu_reg)  # If succeeds, matrix is positive definite
+        break
+    except LinAlgError:
+        lambda_reg *= 10  # Add more regularization
+\end{verbatim}
+
+\textbf{What is regularization?} Adding $\lambda \mathbf{I}$ to the matrix:
+\begin{itemize}
+    \item Makes eigenvalues larger (more positive)
+    \item Ensures positive definiteness
+    \item But: Too much regularization makes the controller conservative (less responsive)
+\end{itemize}
+
+\textbf{Balance}: We want the minimum regularization that ensures stability.
+
+\subsection{Convergence Criteria}
+
+The DDP algorithm iterates until convergence. We check:
+
+\begin{equation}
+|\text{Cost}_{\text{new}} - \text{Cost}_{\text{old}}| < \epsilon_{\text{conv}}
+\end{equation}
+
+where $\epsilon_{\text{conv}} = 10^{-3}$ (typical value).
+
+\textbf{What does this mean?} If the cost changes by less than 0.001 between iterations, we've converged.
+
+\textbf{Why not $10^{-6}$?} Too strict - might never converge due to numerical errors.
+
+\textbf{Why not $10^{-1}$?} Too loose - might stop before finding good solution.
+
+\textbf{Other stopping criteria}:
+\begin{itemize}
+    \item Maximum iterations reached (e.g., 20 iterations)
+    \item Regularization too high (e.g., $\lambda > 10^6$) - indicates numerical issues
+    \item Cost increases significantly - indicates divergence
+\end{itemize}
+
+\subsection{Value Function Hessian Projection}
+
+The value function Hessian $\mathbf{V}_{\mathbf{xx}}$ should be \textbf{positive semi-definite} (all eigenvalues $\geq 0$).
+
+\textbf{Why?} The value function represents "cost-to-go" - it should always be non-negative, and the Hessian captures curvature.
+
+\textbf{Problem}: Due to numerical errors, $\mathbf{V}_{\mathbf{xx}}$ might have negative eigenvalues.
+
+\textbf{Solution}: Project to positive semi-definite using eigendecomposition:
+
+\begin{enumerate}
+    \item Compute eigendecomposition:
+    \begin{equation}
+    \mathbf{V}_{\mathbf{xx}} = \mathbf{Q} \boldsymbol{\Lambda} \mathbf{Q}^T
+    \end{equation}
+    where $\boldsymbol{\Lambda}$ is diagonal (eigenvalues), $\mathbf{Q}$ is orthogonal (eigenvectors).
+    
+    \item Project negative eigenvalues to zero:
+    \begin{equation}
+    \boldsymbol{\Lambda}_{\text{proj}} = \max(\boldsymbol{\Lambda}, 0)
+    \end{equation}
+    
+    \item Reconstruct:
+    \begin{equation}
+    \mathbf{V}_{\mathbf{xx},\text{proj}} = \mathbf{Q} \boldsymbol{\Lambda}_{\text{proj}} \mathbf{Q}^T
+    \end{equation}
+\end{enumerate}
+
+\textbf{Intuition}: We're "flattening out" any negative curvature, which would indicate the value function decreases in some direction (impossible for a cost function).
+
+\section{Complete Controller Logic Walkthrough}
+
+This section provides a step-by-step walkthrough of the controller logic, as if you were debugging it line-by-line. We'll trace through exactly what happens when the controller runs.
+
+\subsection{High-Level Control Loop}
+
+The controller runs in a loop at a fixed frequency (typically 100 Hz = every 0.01 seconds). Each iteration:
+
+\begin{enumerate}
+    \item \textbf{Read sensors}: Get current pressures, temperatures, etc.
+    \item \textbf{Build state}: Convert sensor readings into state vector
+    \item \textbf{Generate reference}: Compute desired thrust and mixture ratio
+    \item \textbf{Solve DDP}: Find optimal control sequence
+    \item \textbf{Apply control}: Send commands to valves
+    \item \textbf{Update internal state}: Store information for next iteration
+\end{enumerate}
+
+Let's go through each step in detail.
+
+\subsection{Step 1: Read Sensors}
+
+The controller receives a \textbf{Measurement} object containing:
+\begin{itemize}
+    \item $P_{\text{copv}}$: COPV pressure [Pa]
+    \item $P_{\text{reg}}$: Regulator output pressure [Pa]
+    \item $P_{u,F}$, $P_{u,O}$: Tank (upstream) pressures [Pa]
+    \item $P_{d,F}$, $P_{d,O}$: Feed line (downstream) pressures [Pa]
+    \item Timestamp
+\end{itemize}
+
+These come from pressure transducers in the physical system.
+
+\textbf{Example}: At time $t = 0.5$ s:
+\begin{itemize}
+    \item $P_{\text{copv}} = 18.96 \times 10^6$ Pa (2750 psi)
+    \item $P_{\text{reg}} = 6.89 \times 10^6$ Pa (1000 psi)
+    \item $P_{u,F} = 5.0 \times 10^6$ Pa (725 psi)
+    \item $P_{u,O} = 5.0 \times 10^6$ Pa (725 psi)
+\end{itemize}
+
+\subsection{Step 2: Build State Vector}
+
+The controller maintains an internal state vector $\mathbf{x} \in \mathbb{R}^{11}$:
+
+\begin{equation}
+\mathbf{x} = \begin{bmatrix}
+P_{\text{copv}} \\
+P_{\text{reg}} \\
+P_{u,F} \\
+P_{u,O} \\
+P_{d,F} \\
+P_{d,O} \\
+V_{u,F} \\
+V_{u,O} \\
+m_{\text{gas,copv}} \\
+m_{\text{gas,F}} \\
+m_{\text{gas,O}}
+\end{bmatrix}
+\end{equation}
+
+\textbf{Direct measurements} (from sensors):
+\begin{itemize}
+    \item $P_{\text{copv}}$, $P_{\text{reg}}$, $P_{u,F}$, $P_{u,O}$, $P_{d,F}$, $P_{d,O}$ come directly from sensors
+\end{itemize}
+
+\textbf{Estimated/internal states}:
+\begin{itemize}
+    \item $V_{u,F}$, $V_{u,O}$: Ullage volumes - tracked internally, initialized from config
+    \item $m_{\text{gas,copv}}$, $m_{\text{gas,F}}$, $m_{\text{gas,O}}$: Gas masses - computed from pressure using ideal gas law
+\end{itemize}
+
+\textbf{How gas masses are computed}:
+From ideal gas law: $P = mRT/(VZ)$, so:
+\begin{equation}
+m = \frac{PVZ}{RT}
+\end{equation}
+
+For COPV:
+\begin{equation}
+m_{\text{gas,copv}} = \frac{P_{\text{copv}} V_{\text{copv}} Z}{R T_{\text{copv}}}
+\end{equation}
+
+For tanks:
+\begin{equation}
+m_{\text{gas,F}} = \frac{P_{u,F} V_{u,F} Z}{R T_{\text{gas,F}}}
+\end{equation}
+
+\textbf{Initialization}: On first step, gas masses are computed from initial pressures and volumes. On subsequent steps, they're updated by the dynamics model.
+
+\subsection{Step 3: Generate Reference}
+
+The controller needs to know what thrust $F_{\text{ref}}$ and mixture ratio $\text{MR}_{\text{ref}}$ to track.
+
+\textbf{Reference generation logic}:
+\begin{enumerate}
+    \item If command is "thrust desired": $F_{\text{ref}} = F_{\text{desired}}$
+    \item If command is "altitude goal": Compute $F_{\text{ref}}$ needed to achieve altitude (using vehicle dynamics)
+    \item $\text{MR}_{\text{ref}}$ is typically constant (e.g., 2.0) or from Layer 2 optimization
+\end{enumerate}
+
+The reference is generated for the entire prediction horizon ($N$ steps ahead).
+
+\textbf{Example}: Command says "maintain 1000 N thrust for 0.5 seconds":
+\begin{equation}
+F_{\text{ref}} = [1000, 1000, 1000, \ldots, 1000] \quad \text{(50 values for } N=50 \text{)}
+\end{equation}
+
+\subsection{Step 4: Solve DDP}
+
+This is the core of the controller. The DDP solver finds the optimal control sequence.
+
+\subsubsection{4.1: Initialize Control Sequence}
+
+Start with an initial guess $\mathbf{u}_{\text{init}}$. Options:
+\begin{itemize}
+    \item \textbf{Warm start}: Use previous solution (shifted by one step)
+    \item \textbf{Cold start}: Use constant values (e.g., 0.1 for both valves)
+    \item \textbf{Heuristic}: Use simple rule (e.g., proportional to thrust error)
+\end{itemize}
+
+\textbf{Example}: Warm start from previous iteration:
+\begin{equation}
+\mathbf{u}_{\text{init}}[k] = \begin{cases}
+\mathbf{u}_{\text{prev}}[k+1] & \text{if } k < N-1 \\
+\mathbf{u}_{\text{prev}}[N-1] & \text{if } k = N-1
+\end{cases}
+\end{equation}
+
+\subsubsection{4.2: Forward Rollout}
+
+Simulate the system forward using the current control sequence:
+
+\textbf{For each time step $k = 0, 1, \ldots, N-1$}:
+\begin{enumerate}
+    \item Get current state: $\mathbf{x}_k$
+    \item Get current control: $\mathbf{u}_k$
+    \item Estimate engine performance:
+    \begin{equation}
+    \text{eng\_est}_k = \text{engine\_wrapper.estimate\_from\_pressures}(P_{u,F,k}, P_{u,O,k})
+    \end{equation}
+    This returns: $F_k$, $\text{MR}_k$, $\dot{m}_{F,k}$, $\dot{m}_{O,k}$
+    
+    \item Step dynamics:
+    \begin{equation}
+    \mathbf{x}_{k+1} = \mathbf{f}(\mathbf{x}_k, \mathbf{u}_k, \Delta t, \dot{m}_{F,k}, \dot{m}_{O,k})
+    \end{equation}
+    
+    \item Compute cost:
+    \begin{equation}
+    \ell_k = \text{running\_cost}(\mathbf{x}_k, \mathbf{u}_k, \text{eng\_est}_k, F_{\text{ref},k}, \text{MR}_{\text{ref},k})
+    \end{equation}
+\end{enumerate}
+
+\textbf{Total cost}:
+\begin{equation}
+J = \sum_{k=0}^{N-1} \ell_k
+\end{equation}
+
+\subsubsection{4.3: Backward Pass}
+
+Compute how to improve the control. This is the heart of DDP.
+
+\textbf{Initialize terminal value function}:
+\begin{equation}
+\mathbf{V}_{\mathbf{x},N} = \mathbf{0}, \quad \mathbf{V}_{\mathbf{xx},N} = \mathbf{0}
+\end{equation}
+
+\textbf{For each time step $k = N-1, N-2, \ldots, 0$ (backwards!)}:
+
+\begin{enumerate}
+    \item \textbf{Linearize dynamics}: Compute how small changes in state/control affect next state
+    \begin{equation}
+    \mathbf{A}_k = \frac{\partial \mathbf{f}}{\partial \mathbf{x}}\Big|_{\mathbf{x}_k, \mathbf{u}_k}, \quad \mathbf{B}_k = \frac{\partial \mathbf{f}}{\partial \mathbf{u}}\Big|_{\mathbf{x}_k, \mathbf{u}_k}
+    \end{equation}
+    
+    Computed via finite differences (see Section on Numerical Methods).
+    
+    \item \textbf{Compute cost derivatives}: How does cost change with state/control?
+    \begin{equation}
+    \ell_{\mathbf{x}}, \ell_{\mathbf{u}}, \ell_{\mathbf{xx}}, \ell_{\mathbf{uu}}, \ell_{\mathbf{ux}} = \text{cost\_derivatives}(\mathbf{x}_k, \mathbf{u}_k, \ldots)
+    \end{equation}
+    
+    \item \textbf{Compute Q-function derivatives}: Combine cost and value function
+    \begin{align}
+    \mathbf{Q}_{\mathbf{x}} &= \ell_{\mathbf{x}} + \mathbf{A}_k^T \mathbf{V}_{\mathbf{x},k+1} \\
+    \mathbf{Q}_{\mathbf{u}} &= \ell_{\mathbf{u}} + \mathbf{B}_k^T \mathbf{V}_{\mathbf{x},k+1} \\
+    \mathbf{Q}_{\mathbf{xx}} &= \ell_{\mathbf{xx}} + \mathbf{A}_k^T \mathbf{V}_{\mathbf{xx},k+1} \mathbf{A}_k \\
+    \mathbf{Q}_{\mathbf{uu}} &= \ell_{\mathbf{uu}} + \mathbf{B}_k^T \mathbf{V}_{\mathbf{xx},k+1} \mathbf{B}_k \\
+    \mathbf{Q}_{\mathbf{ux}} &= \ell_{\mathbf{ux}} + \mathbf{B}_k^T \mathbf{V}_{\mathbf{xx},k+1} \mathbf{A}_k
+    \end{align}
+    
+    \textbf{Intuition}: $\mathbf{Q}_{\mathbf{u}}$ tells us "if I increase control by $\delta \mathbf{u}$, how much does total cost change?" We want to move in the direction that decreases cost.
+    
+    \item \textbf{Regularize}: Ensure $\mathbf{Q}_{\mathbf{uu}}$ is positive definite
+    \begin{equation}
+    \mathbf{Q}_{\mathbf{uu},\text{reg}} = \mathbf{Q}_{\mathbf{uu}} + \lambda \mathbf{I}
+    \end{equation}
+    
+    \item \textbf{Compute gains}: How should we change control?
+    \begin{equation}
+    \mathbf{k}_k = -(\mathbf{Q}_{\mathbf{uu},\text{reg}})^{-1} \mathbf{Q}_{\mathbf{u}}, \quad \mathbf{K}_k = -(\mathbf{Q}_{\mathbf{uu},\text{reg}})^{-1} \mathbf{Q}_{\mathbf{ux}}
+    \end{equation}
+    
+    \textbf{Intuition}:
+    \begin{itemize}
+        \item $\mathbf{k}_k$: Feedforward gain - "change control by this amount regardless of state"
+        \item $\mathbf{K}_k$: Feedback gain - "if state deviates by $\delta \mathbf{x}$, change control by $\mathbf{K}_k \delta \mathbf{x}$"
+    \end{itemize}
+    
+    \item \textbf{Update value function}: Propagate backwards
+    \begin{align}
+    \mathbf{V}_{\mathbf{x},k} &= \mathbf{Q}_{\mathbf{x}} + \mathbf{K}_k^T \mathbf{Q}_{\mathbf{uu},\text{reg}} \mathbf{k}_k + \mathbf{K}_k^T \mathbf{Q}_{\mathbf{u}} + \mathbf{Q}_{\mathbf{ux}}^T \mathbf{k}_k \\
+    \mathbf{V}_{\mathbf{xx},k} &= \mathbf{Q}_{\mathbf{xx}} + \mathbf{K}_k^T \mathbf{Q}_{\mathbf{uu},\text{reg}} \mathbf{K}_k + \mathbf{K}_k^T \mathbf{Q}_{\mathbf{ux}} + \mathbf{Q}_{\mathbf{ux}}^T \mathbf{K}_k
+    \end{align}
+\end{enumerate}
+
+\subsubsection{4.4: Forward Line Search}
+
+Test the improved control and find the best step size.
+
+\textbf{Control update}:
+\begin{equation}
+\mathbf{u}_k^{\text{new}} = \mathbf{u}_k + \alpha \mathbf{k}_k + \mathbf{K}_k (\mathbf{x}_k^{\text{new}} - \mathbf{x}_k)
+\end{equation}
+
+where $\alpha$ is the step size (found via line search).
+
+\textbf{Line search algorithm}:
+\begin{enumerate}
+    \item Start with $\alpha = \alpha_{\text{init}}$ (e.g., 2.0)
+    \item For each $\alpha$:
+    \begin{enumerate}
+        \item Compute new control sequence
+        \item Forward rollout with new control
+        \item Compute new cost $J_{\text{new}}$
+        \item If $J_{\text{new}} < J_{\text{old}}$: accept and break
+    \end{enumerate}
+    \item If no improvement: reduce $\alpha$ (e.g., $\alpha \leftarrow \alpha/2$) and try again
+    \item Stop when $\alpha < \alpha_{\min}$ or improvement found
+\end{enumerate}
+
+\subsubsection{4.5: Iterate}
+
+Repeat steps 4.2-4.4 until:
+\begin{itemize}
+    \item Cost converges: $|J_{\text{new}} - J_{\text{old}}| < \epsilon_{\text{conv}}$
+    \item Maximum iterations reached
+    \item Numerical issues (regularization too high)
+\end{itemize}
+
+\subsection{Step 5: Apply Control}
+
+Take the first control from the optimal sequence:
+\begin{equation}
+\mathbf{u}_{\text{apply}} = \mathbf{u}_0^{\text{optimal}}
+\end{equation}
+
+This is the \textbf{receding horizon} approach: solve for $N$ steps ahead, but only apply the first step.
+
+\textbf{Why?} At the next iteration, we'll have new sensor readings and solve again. This makes the controller robust to disturbances.
+
+\subsection{Step 6: Update Internal State}
+
+Store information for next iteration:
+\begin{itemize}
+    \item Previous state: $\mathbf{x}_{\text{prev}} = \mathbf{x}$
+    \item Previous applied control: $\mathbf{u}_{\text{prev}} = \mathbf{u}_{\text{apply}}$
+    \item Previous DDP solution: $\mathbf{u}_{\text{seq,prev}} = \mathbf{u}^{\text{optimal}}$ (for warm start)
+    \item Updated ullage volumes: $V_{u,F}$, $V_{u,O}$ (from dynamics)
+\end{itemize}
+
+\subsection{Complete Example: One Control Step}
+
+Let's trace through a complete example with numbers.
+
+\textbf{Initial conditions}:
+\begin{itemize}
+    \item $P_{\text{copv}} = 18.96 \times 10^6$ Pa
+    \item $P_{\text{reg}} = 6.89 \times 10^6$ Pa
+    \item $P_{u,F} = 5.0 \times 10^6$ Pa
+    \item $V_{u,F} = 0.01$ m$^3$ (10 L)
+    \item Command: $F_{\text{ref}} = 1000$ N
+\end{itemize}
+
+\textbf{Step 1}: Read sensors (already have pressures above)
+
+\textbf{Step 2}: Build state
+\begin{equation}
+\mathbf{x} = [18.96 \times 10^6, 6.89 \times 10^6, 5.0 \times 10^6, 5.0 \times 10^6, \ldots, 0.01, 0.01, \ldots]^T
+\end{equation}
+
+Compute gas masses:
+\begin{equation}
+m_{\text{gas,copv}} = \frac{18.96 \times 10^6 \times 0.006 \times 1.0}{296.8 \times 293} = 0.130 \text{ kg}
+\end{equation}
+
+\textbf{Step 3}: Generate reference
+\begin{equation}
+F_{\text{ref}} = [1000, 1000, \ldots, 1000] \quad \text{(50 values)}
+\end{equation}
+
+\textbf{Step 4}: Solve DDP
+\begin{enumerate}
+    \item Forward rollout: Simulate with current control, get $J = 5000$
+    \item Backward pass: Compute gains $\mathbf{k}_k$, $\mathbf{K}_k$
+    \item Line search: Find $\alpha = 1.5$ gives $J = 3000$ (improvement!)
+    \item Iterate: After 5 iterations, $J = 500$ (converged)
+\end{enumerate}
+
+\textbf{Step 5}: Apply control
+\begin{equation}
+\mathbf{u}_{\text{apply}} = [0.3, 0.25] \quad \text{(30\% fuel valve, 25\% oxidizer valve)}
+\end{equation}
+
+\textbf{Step 6}: Update state
+\begin{itemize}
+    \item Store $\mathbf{x}_{\text{prev}}$, $\mathbf{u}_{\text{prev}}$
+    \item Update $V_{u,F}$ based on propellant consumed
+\end{itemize}
+
+\section{Detailed Dynamics Derivation}
+
+\subsection{Complete State Update Equations}
+
+We now derive the complete discrete-time update equations for each state component.
+
+\subsubsection{COPV Gas Mass and Pressure}
+
+Starting from mass conservation:
+\begin{equation}
+m_{\text{gas,copv},k+1} = m_{\text{gas,copv},k} - \Delta t \left(\dot{m}_{\text{to\_reg},k} + \dot{m}_{\text{loss}}\right)
+\end{equation}
+
+The temperature update (polytropic):
+\begin{equation}
+T_{\text{copv},k+1} = T_{\text{copv},0} \left(\frac{m_{\text{gas,copv},k+1}/V_{\text{copv}}}{m_{\text{gas,copv},0}/V_{\text{copv}}}\right)^{n-1} = T_{\text{copv},0} \left(\frac{m_{\text{gas,copv},k+1}}{m_{\text{gas,copv},0}}\right)^{n-1}
+\end{equation}
+
+Pressure from ideal gas law:
+\begin{equation}
+P_{\text{copv},k+1} = \frac{m_{\text{gas,copv},k+1} R T_{\text{copv},k+1}}{V_{\text{copv}} Z}
+\end{equation}
+
+\subsubsection{Regulator Pressure with Oscillations}
+
+The base regulator pressure:
+\begin{equation}
+P_{\text{reg},\text{base},k+1} = \begin{cases}
+P_{\text{setpoint}} & \text{if } P_{\text{copv},k} \geq P_{\text{setpoint}} \\
+P_{\text{copv},k} & \text{if } P_{\text{copv},k} < P_{\text{setpoint}}
+\end{cases}
+\end{equation}
+
+With PWM oscillations (hardware-matching):
+\begin{equation}
+P_{\text{reg},k+1} = P_{\text{reg},\text{base},k+1} + 0.06 P_{\text{setpoint}} \cdot u_{\text{total}} \cdot \sin(2\pi (u_F + u_O))
+\end{equation}
+
+Clamped to $\pm 10\%$ of setpoint.
+
+\subsubsection{Gas Flow Calculations}
+
+For COPV to regulator, we compute the pressure ratio:
+\begin{equation}
+\text{pr} = \frac{P_{\text{reg}}}{P_{\text{copv}}}
+\end{equation}
+
+Critical ratio for N$_2$ ($\gamma = 1.4$):
+\begin{equation}
+\text{pr}_{\text{crit}} = \left(\frac{2}{2.4}\right)^{\frac{1.4}{0.4}} = 0.528
+\end{equation}
+
+If $\text{pr} < 0.528$ (choked):
+\begin{equation}
+C^* = \sqrt{1.4 \left(\frac{2}{2.4}\right)^{\frac{2.4}{0.4}}} = \sqrt{1.4 \cdot 0.528^{6}} \approx 0.684
+\end{equation}
+
+\begin{equation}
+\dot{m}_{\text{to\_reg},\text{max}} = 0.7 \cdot 2 \times 10^{-5} \cdot \frac{P_{\text{copv}}}{\sqrt{296.8 \cdot T_{\text{copv}}}} \cdot 0.684
+\end{equation}
+
+If $\text{pr} \geq 0.528$ (subsonic):
+\begin{equation}
+\dot{m}_{\text{to\_reg},\text{max}} = 0.7 \cdot 2 \times 10^{-5} \cdot P_{\text{copv}} \sqrt{\frac{2.8}{0.4 \cdot 296.8 \cdot T_{\text{copv}}}} \sqrt{\text{pr}^{1.429} - \text{pr}^{1.714}}
+\end{equation}
+
+Gated by control:
+\begin{equation}
+\dot{m}_{\text{to\_reg}} = \dot{m}_{\text{to\_reg},\text{max}} \cdot \max(u_F, u_O)
+\end{equation}
+
+\subsubsection{Tank Ullage Volume Dynamics}
+
+The ullage volume grows as propellant is consumed:
+\begin{equation}
+V_{u,F,k+1} = V_{u,F,k} + \Delta t \frac{\dot{m}_{F,\text{pressure\_dependent}}}{\rho_F}
+\end{equation}
+
+Pressure-dependent mass flow (for exponential blowdown):
+\begin{equation}
+\dot{m}_{F,\text{pressure\_dependent}} = \dot{m}_F \sqrt{\frac{P_{u,F}}{P_{\text{ref},F}}}
+\end{equation}
+
+where $P_{\text{ref},F} = 5 \times 10^6$ Pa (725 psi).
+
+This creates exponential decay because:
+\begin{equation}
+\frac{dP}{dt} = \frac{d}{dt}\left(\frac{mRT}{V}\right) = -\frac{mRT}{V^2} \frac{dV}{dt} = -\frac{P}{V} \frac{\dot{m}_F}{\rho_F} = -k P
+\end{equation}
+
+where $k = \frac{\dot{m}_F}{V \rho_F} \propto \sqrt{P}$, giving $P(t) = P_0 e^{-k t}$.
+
+\subsubsection{Tank Gas Mass and Pressure}
+
+Gas mass update:
+\begin{equation}
+m_{\text{gas,F},k+1} = m_{\text{gas,F},k} + \Delta t \cdot \dot{m}_{\text{gas,F}}
+\end{equation}
+
+Temperature (polytropic):
+\begin{equation}
+T_{\text{gas,F},k+1} = T_{\text{gas,F},0} \left(\frac{m_{\text{gas,F},k+1}/V_{u,F,k+1}}{m_{\text{gas,F},0}/V_{u,F,0}}\right)^{n-1}
+\end{equation}
+
+Pressure:
+\begin{equation}
+P_{u,F,k+1} = \frac{m_{\text{gas,F},k+1} R T_{\text{gas,F},k+1}}{V_{u,F,k+1} Z}
+\end{equation}
+
+\subsection{Startup Behavior}
+
+At startup, when flow begins ($\dot{m}_F > 0$):
+\begin{enumerate}
+    \item Ullage volume increases: $V_{u,F,k+1} > V_{u,F,k}$
+    \item If valve closed ($u_F = 0$): gas mass constant, $m_{\text{gas,F},k+1} = m_{\text{gas,F},k}$
+    \item Pressure drops immediately: $P_{u,F,k+1} = \frac{m_{\text{gas,F},k} R T}{V_{u,F,k+1}} < P_{u,F,k}$
+    \item Controller hasn't responded yet (catch-up phase)
+\end{enumerate}
+
+\subsection{End State Behavior}
+
+When all propellant is exhausted:
+\begin{itemize}
+    \item Ullage volumes approach full tank volumes: $V_{u,F} \to V_{\text{tank,F}}$, $V_{u,O} \to V_{\text{tank,O}}$
+    \item Tank volumes are much larger than COPV: $V_{\text{tank}} \gg V_{\text{copv}}$
+    \item Final pressure: $P_{\text{final}} \approx P_{\text{initial}} \cdot \frac{V_{\text{copv}}}{V_{\text{tank}}} \ll P_{\text{initial}}$
+    \item Example: 2750 psi in 4.5L COPV $\to$ ~1100 psi in 11L fuel tank (if all gas goes to one tank)
+    \item With both tanks and growing ullage, final pressure can be 10-20\% of initial
+\end{itemize}
+
+\section{Complete DDP Algorithm}
+
+\subsection{Full Algorithm Pseudocode}
+
+\begin{verbatim}
+function solve_ddp(x0, u_seq_init, F_ref, MR_ref, cfg, params, engine_wrapper):
+    u_seq = u_seq_init
+    reg = reg_init
+    
+    for iteration = 1 to max_iterations:
+        // Forward rollout
+        x_seq, eng_estimates, cost, violations = forward_rollout(
+            x0, u_seq, F_ref, MR_ref, cfg, params, engine_wrapper
+        )
+        
+        // Check convergence
+        if |cost - prev_cost| < tolerance:
+            break
+        
+        // Backward pass
+        k_seq, K_seq, Vx, Vxx = backward_pass(
+            x_seq, u_seq, eng_estimates, F_ref, MR_ref, 
+            cfg, params, engine_wrapper, reg, w_bar
+        )
+        
+        // Forward line search
+        u_seq_new, alpha, cost_new = forward_line_search(
+            x0, u_seq, k_seq, K_seq, x_seq, F_ref, MR_ref,
+            cfg, params, engine_wrapper, alpha_init, alpha_min
+        )
+        
+        // Update
+        if cost_new < cost:
+            u_seq = u_seq_new
+            reg = max(reg / reg_factor, reg_init)
+        else:
+            reg *= reg_factor
+            if reg > 1e6:
+                reg = reg_init
+                u_seq = u_seq + small_random_perturbation
+    
+    return best_solution
+\end{verbatim}
+
+\subsection{Forward Rollout Details}
+
+For each time step $k = 0, \ldots, N-1$:
+
+\begin{enumerate}
+    \item Get current state: $\mathbf{x}_k$
+    \item Estimate engine performance:
+    \begin{equation}
+    \text{eng\_est}_k = \text{engine\_wrapper.estimate\_from\_pressures}(P_{u,F,k}, P_{u,O,k})
+    \end{equation}
+    This returns: $F_k$, $\text{MR}_k$, $\dot{m}_{F,k}$, $\dot{m}_{O,k}$
+    
+    \item Compute constraints:
+    \begin{equation}
+    \text{constraints}_k = \text{constraint\_values}(\mathbf{x}_k, \text{eng\_est}_k, \text{cfg})
+    \end{equation}
+    
+    \item Compute running cost:
+    \begin{equation}
+    \ell_k = \text{running\_cost}(\mathbf{x}_k, \mathbf{u}_k, \text{eng\_est}_k, F_{\text{ref},k}, \text{MR}_{\text{ref},k}, \text{cfg}, \text{constraints}_k, \Delta t)
+    \end{equation}
+    
+    \item Step dynamics:
+    \begin{equation}
+    \mathbf{x}_{k+1} = \mathbf{f}(\mathbf{x}_k, \mathbf{u}_k, \Delta t, \dot{m}_{F,k}, \dot{m}_{O,k}, \text{params})
+    \end{equation}
+\end{enumerate}
+
+Total cost:
+\begin{equation}
+J = \sum_{k=0}^{N-1} \ell_k
+\end{equation}
+
+\subsection{Backward Pass Details}
+
+Initialize terminal value function:
+\begin{equation}
+\mathbf{V}_{\mathbf{x},N} = \mathbf{0}, \quad \mathbf{V}_{\mathbf{xx},N} = \mathbf{0}
+\end{equation}
+
+For $k = N-1, \ldots, 0$:
+
+\begin{enumerate}
+    \item Linearize dynamics:
+    \begin{equation}
+    \mathbf{A}_k = \frac{\partial \mathbf{f}}{\partial \mathbf{x}}\Big|_{\mathbf{x}_k, \mathbf{u}_k}, \quad \mathbf{B}_k = \frac{\partial \mathbf{f}}{\partial \mathbf{u}}\Big|_{\mathbf{x}_k, \mathbf{u}_k}
+    \end{equation}
+    
+    \item Compute cost derivatives:
+    \begin{equation}
+    \ell_{\mathbf{x}}, \ell_{\mathbf{u}}, \ell_{\mathbf{xx}}, \ell_{\mathbf{uu}}, \ell_{\mathbf{ux}} = \text{cost\_derivatives}(\mathbf{x}_k, \mathbf{u}_k, \text{eng\_est}_k, F_{\text{ref},k}, \text{MR}_{\text{ref},k}, \text{cfg}, \Delta t, \text{engine\_wrapper})
+    \end{equation}
+    
+    \item Compute Q-function derivatives:
+    \begin{align}
+    \mathbf{Q}_{\mathbf{x}} &= \ell_{\mathbf{x}} + \mathbf{A}_k^T \mathbf{V}_{\mathbf{x},k+1} \\
+    \mathbf{Q}_{\mathbf{u}} &= \ell_{\mathbf{u}} + \mathbf{B}_k^T \mathbf{V}_{\mathbf{x},k+1} \\
+    \mathbf{Q}_{\mathbf{xx}} &= \ell_{\mathbf{xx}} + \mathbf{A}_k^T \mathbf{V}_{\mathbf{xx},k+1} \mathbf{A}_k \\
+    \mathbf{Q}_{\mathbf{uu}} &= \ell_{\mathbf{uu}} + \mathbf{B}_k^T \mathbf{V}_{\mathbf{xx},k+1} \mathbf{B}_k \\
+    \mathbf{Q}_{\mathbf{ux}} &= \ell_{\mathbf{ux}} + \mathbf{B}_k^T \mathbf{V}_{\mathbf{xx},k+1} \mathbf{A}_k
+    \end{align}
+    
+    \item Robustification:
+    \begin{equation}
+    \mathbf{Q}_{\mathbf{xx}} \leftarrow \mathbf{Q}_{\mathbf{xx}} + \gamma \text{diag}(\bar{\mathbf{w}}^2)
+    \end{equation}
+    
+    \item Regularization:
+    \begin{equation}
+    \mathbf{Q}_{\mathbf{uu},\text{reg}} = \mathbf{Q}_{\mathbf{uu}} + \lambda \mathbf{I}
+    \end{equation}
+    
+    Ensure positive definite using Cholesky decomposition.
+    
+    \item Compute gains:
+    \begin{equation}
+    \mathbf{k}_k = -(\mathbf{Q}_{\mathbf{uu},\text{reg}})^{-1} \mathbf{Q}_{\mathbf{u}}, \quad \mathbf{K}_k = -(\mathbf{Q}_{\mathbf{uu},\text{reg}})^{-1} \mathbf{Q}_{\mathbf{ux}}
+    \end{equation}
+    
+    Scale gains: $\mathbf{k}_k \leftarrow 2.0 \cdot \mathbf{k}_k$, $\mathbf{K}_k \leftarrow 2.0 \cdot \mathbf{K}_k$
+    
+    \item Update value function:
+    \begin{align}
+    \mathbf{V}_{\mathbf{x},k} &= \mathbf{Q}_{\mathbf{x}} + \mathbf{K}_k^T \mathbf{Q}_{\mathbf{uu},\text{reg}} \mathbf{k}_k + \mathbf{K}_k^T \mathbf{Q}_{\mathbf{u}} + \mathbf{Q}_{\mathbf{ux}}^T \mathbf{k}_k \\
+    \mathbf{V}_{\mathbf{xx},k} &= \mathbf{Q}_{\mathbf{xx}} + \mathbf{K}_k^T \mathbf{Q}_{\mathbf{uu},\text{reg}} \mathbf{K}_k + \mathbf{K}_k^T \mathbf{Q}_{\mathbf{ux}} + \mathbf{Q}_{\mathbf{ux}}^T \mathbf{K}_k
+    \end{align}
+    
+    Project $\mathbf{V}_{\mathbf{xx},k}$ to positive semi-definite.
+\end{enumerate}
+
+\subsection{Forward Line Search Details}
+
+Initialize:
+\begin{equation}
+\alpha = \min(5.0 \cdot \alpha_{\text{init}}, 5.0)
+\end{equation}
+
+If $J_{\text{nom}} > 10^4$:
+\begin{equation}
+\alpha = \min(10.0 \cdot \alpha_{\text{init}}, 10.0)
+\end{equation}
+
+While $\alpha \geq \alpha_{\text{min}}$:
+
+\begin{enumerate}
+    \item For each $k = 0, \ldots, N-1$:
+    \begin{equation}
+    \delta \mathbf{x}_k = \mathbf{x}_k^{\text{new}} - \mathbf{x}_k^{\text{nom}}
+    \end{equation}
+    
+    \begin{equation}
+    \delta \mathbf{u}_k = \alpha \mathbf{k}_k + \mathbf{K}_k \delta \mathbf{x}_k
+    \end{equation}
+    
+    Scale: $\delta \mathbf{u}_k \leftarrow 2.0 \cdot \delta \mathbf{u}_k$
+    
+    \begin{equation}
+    \mathbf{u}_k^{\text{new}} = \text{clip}(\mathbf{u}_k^{\text{nom}} + \delta \mathbf{u}_k, 0, 1)
+    \end{equation}
+    
+    \item Forward rollout with new control:
+    \begin{equation}
+    \mathbf{x}_{k+1}^{\text{new}} = \mathbf{f}(\mathbf{x}_k^{\text{new}}, \mathbf{u}_k^{\text{new}}, \Delta t, \dot{m}_F, \dot{m}_O)
+    \end{equation}
+    
+    \item Compute cost: $J_{\text{new}}$
+    
+    \item If $J_{\text{new}} < J_{\text{best}}$:
+    \begin{equation}
+    J_{\text{best}} = J_{\text{new}}, \quad \alpha_{\text{best}} = \alpha, \quad \mathbf{u}_{\text{best}} = \mathbf{u}^{\text{new}}
+    \end{equation}
+    
+    If improvement $> 10^{-6}$: break
+    
+    \item Reduce step size: $\alpha \leftarrow \alpha / 2$
+\end{enumerate}
+
+\section{Cost Function Detailed Derivation}
+
+\subsection{Thrust Tracking Cost}
+
+The thrust error is:
+\begin{equation}
+F_{\text{error}} = F_k - F_{\text{ref},k}
+\end{equation}
+
+Normalized to prevent numerical blowup:
+\begin{equation}
+F_{\text{error},\text{norm}} = \frac{F_{\text{error}}}{\max(|F_{\text{ref},k}|, 1.0)}
+\end{equation}
+
+Cost with asymmetric penalty:
+\begin{equation}
+\text{Cost}_F = \begin{cases}
+q_F F_{\text{error},\text{norm}}^2 \cdot 2.0 & \text{if } F_{\text{error}} < 0 \text{ (thrust deficit)} \\
+q_F F_{\text{error},\text{norm}}^2 & \text{if } F_{\text{error}} \geq 0 \text{ (thrust excess)}
+\end{cases}
+\end{equation}
+
+The 2x penalty for thrust deficit strongly incentivizes increasing control when thrust is too low.
+
+\subsection{Mixture Ratio Tracking Cost}
+
+\begin{equation}
+\text{MR}_{\text{error}} = \text{MR}_k - \text{MR}_{\text{ref},k}
+\end{equation}
+
+\begin{equation}
+\text{MR}_{\text{error},\text{norm}} = \frac{\text{MR}_{\text{error}}}{\max(|\text{MR}_{\text{ref},k}|, 1.0)}
+\end{equation}
+
+\begin{equation}
+\text{Cost}_{\text{MR}} = q_{\text{MR}} \text{MR}_{\text{error},\text{norm}}^2
+\end{equation}
+
+\subsection{Gas Consumption Cost}
+
+Approximate COPV pressure drop:
+\begin{equation}
+\Delta P_{\text{copv}} = \Delta t \left(c_F u_F + c_O u_O + \text{loss}\right)
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $c_F = 10^5$ Pa/s per unit $u_F$
+    \item $c_O = 10^5$ Pa/s per unit $u_O$
+    \item $\text{loss} = 10^3$ Pa/s (leakage)
+\end{itemize}
+
+Cost:
+\begin{equation}
+\text{Cost}_{\text{gas}} = q_{\text{gas}} \Delta P_{\text{copv}}
+\end{equation}
+
+With $q_{\text{gas}} = 0.001$, this is a small penalty to allow controller freedom.
+
+\subsection{Constraint Penalties}
+
+For each hard constraint violation:
+\begin{equation}
+\text{Cost}_{\text{constraint}} = w_{\text{constraint}} \left(\frac{\text{violation}}{\max(|\text{violation}|, 1.0)}\right)^2
+\end{equation}
+
+where $w_{\text{constraint}} = 10^4$ (moderate penalty, normalized to prevent blowup).
+
+\section{Linearization via Finite Differences}
+
+\subsection{State Jacobian $\mathbf{A}_k$}
+
+For each state component $i = 0, \ldots, 10$:
+
+\begin{equation}
+[\mathbf{A}_k]_{:,i} = \frac{\mathbf{f}(\mathbf{x}_k + \epsilon \mathbf{e}_i, \mathbf{u}_k) - \mathbf{f}(\mathbf{x}_k, \mathbf{u}_k)}{\epsilon}
+\end{equation}
+
+where $\epsilon = 10^{-6}$ and $\mathbf{e}_i$ is the $i$-th unit vector.
+
+\subsection{Control Jacobian $\mathbf{B}_k$}
+
+For each control component $j = 0, 1$:
+
+\begin{equation}
+[\mathbf{B}_k]_{:,j} = \frac{\mathbf{f}(\mathbf{x}_k, \mathbf{u}_k + \epsilon \mathbf{e}_j) - \mathbf{f}(\mathbf{x}_k, \mathbf{u}_k)}{\epsilon}
+\end{equation}
+
+where $\mathbf{u}_k + \epsilon \mathbf{e}_j$ is clipped to $[0, 1]$.
+
+\subsection{Cost Derivatives}
+
+\subsubsection{State Gradient $\ell_{\mathbf{x}}$}
+
+For each state component $i$:
+
+\begin{equation}
+[\ell_{\mathbf{x}}]_i = \frac{\ell(\mathbf{x}_k + \epsilon \mathbf{e}_i, \mathbf{u}_k) - \ell(\mathbf{x}_k, \mathbf{u}_k)}{\epsilon}
+\end{equation}
+
+If $i$ corresponds to $P_{u,F}$ or $P_{u,O}$, re-estimate engine performance:
+\begin{equation}
+\text{eng\_est}_{\text{pert}} = \text{engine\_wrapper.estimate\_from\_pressures}(P_{u,F,\text{pert}}, P_{u,O,\text{pert}})
+\end{equation}
+
+\subsubsection{Control Gradient $\ell_{\mathbf{u}}$}
+
+For each control component $j$:
+
+\begin{equation}
+[\ell_{\mathbf{u}}]_j = \frac{\ell(\mathbf{x}_k, \mathbf{u}_k + \epsilon \mathbf{e}_j) - \ell(\mathbf{x}_k, \mathbf{u}_k)}{\epsilon}
+\end{equation}
+
+\subsubsection{State Hessian $\ell_{\mathbf{xx}}$}
+
+Diagonal approximation (for efficiency):
+
+\begin{equation}
+[\ell_{\mathbf{xx}}]_{i,i} = \frac{\ell(\mathbf{x}_k + \epsilon \mathbf{e}_i, \mathbf{u}_k) - 2\ell(\mathbf{x}_k, \mathbf{u}_k) + \ell(\mathbf{x}_k - \epsilon \mathbf{e}_i, \mathbf{u}_k)}{\epsilon^2}
+\end{equation}
+
+Off-diagonal terms set to zero.
+
+\subsubsection{Control Hessian $\ell_{\mathbf{uu}}$}
+
+Diagonal approximation:
+
+\begin{equation}
+[\ell_{\mathbf{uu}}]_{j,j} = \frac{\ell(\mathbf{x}_k, \mathbf{u}_k + \epsilon \mathbf{e}_j) - 2\ell(\mathbf{x}_k, \mathbf{u}_k) + \ell(\mathbf{x}_k, \mathbf{u}_k - \epsilon \mathbf{e}_j)}{\epsilon^2}
+\end{equation}
+
+\subsubsection{Cross-Derivative $\ell_{\mathbf{ux}}$}
+
+Set to zero for efficiency (cross-coupling handled through dynamics).
+
+\section{Numerical Stability}
+
+\subsection{Cholesky Decomposition for Positive Definiteness}
+
+To check if $\mathbf{Q}_{\mathbf{uu}}$ is positive definite:
+
+\begin{equation}
+\mathbf{Q}_{\mathbf{uu}} = \mathbf{L} \mathbf{L}^T
+\end{equation}
+
+If Cholesky succeeds, matrix is positive definite. If it fails, add regularization:
+\begin{equation}
+\mathbf{Q}_{\mathbf{uu}} \leftarrow \mathbf{Q}_{\mathbf{uu}} + \lambda \mathbf{I}
+\end{equation}
+
+Increase $\lambda$ by factor of 10 until Cholesky succeeds (up to 5 attempts).
+
+\subsection{Condition Number Check}
+
+Compute condition number:
+\begin{equation}
+\kappa(\mathbf{Q}_{\mathbf{uu}}) = \frac{\sigma_{\max}}{\sigma_{\min}}
+\end{equation}
+
+If $\kappa > 10^{12}$, add extra regularization:
+\begin{equation}
+\mathbf{Q}_{\mathbf{uu}} \leftarrow \mathbf{Q}_{\mathbf{uu}} + 0.1 \lambda \mathbf{I}
+\end{equation}
+
+\subsection{Value Function Hessian Projection}
+
+Ensure $\mathbf{V}_{\mathbf{xx}}$ is positive semi-definite:
+
+\begin{enumerate}
+    \item Symmetrize: $\mathbf{V}_{\mathbf{xx}} \leftarrow \frac{1}{2}(\mathbf{V}_{\mathbf{xx}} + \mathbf{V}_{\mathbf{xx}}^T)$
+    
+    \item Try Cholesky: $\mathbf{V}_{\mathbf{xx}} + 10^{-8} \mathbf{I} = \mathbf{L} \mathbf{L}^T$
+    
+    \item If fails, eigendecomposition:
+    \begin{equation}
+    \mathbf{V}_{\mathbf{xx}} = \mathbf{Q} \boldsymbol{\Lambda} \mathbf{Q}^T
+    \end{equation}
+    
+    Project negative eigenvalues to zero:
+    \begin{equation}
+    \boldsymbol{\Lambda} \leftarrow \max(\boldsymbol{\Lambda}, 0)
+    \end{equation}
+    
+    Reconstruct:
+    \begin{equation}
+    \mathbf{V}_{\mathbf{xx}} = \mathbf{Q} \boldsymbol{\Lambda} \mathbf{Q}^T
+    \end{equation}
+    
+    \item If eigendecomposition fails, add regularization and use diagonal approximation.
+\end{enumerate}
+
+\section{Constraint Handling}
+
+\subsection{Hard Constraints}
+
+\begin{itemize}
+    \item \textbf{COPV minimum}: $P_{\text{copv}} \geq P_{\text{copv},\min}$ (typically 145 psi = 1 MPa)
+    \item \textbf{Ullage maximum}: $V_{u,F} \leq V_{\text{tank,F}}$, $V_{u,O} \leq V_{\text{tank,O}}$
+    \item \textbf{Mixture ratio bounds}: $\text{MR}_{\min} \leq \text{MR} \leq \text{MR}_{\max}$ (typically 1.5 to 3.0)
+    \item \textbf{Injector pressure drop}: $P_d - P_{\text{chamber}} \geq \text{dp}_{\min}$ (typically 10\% of $P_d$)
+\end{itemize}
+
+\subsection{Constraint Violation Computation}
+
+For COPV minimum:
+\begin{equation}
+\text{violation}_{\text{copv}} = P_{\text{copv},\min} - P_{\text{copv}}
+\end{equation}
+
+Positive = violation, negative = satisfied with margin.
+
+For mixture ratio:
+\begin{equation}
+\text{violation}_{\text{MR},\min} = \text{MR}_{\min} - \text{MR}
+\end{equation}
+\begin{equation}
+\text{violation}_{\text{MR},\max} = \text{MR} - \text{MR}_{\max}
+\end{equation}
+
+\section{Implementation Parameters}
+
+\subsection{Default Configuration}
+
+\begin{itemize}
+    \item Prediction horizon: $N = 50$ steps
+    \item Time step: $\Delta t = 0.01$ s (100 Hz)
+    \item Horizon length: $N \Delta t = 0.5$ s
+    \item Cost weights: $q_F = 100$, $q_{\text{MR}} = 10$, $q_{\text{gas}} = 0.001$, $q_{\text{switch}} = 0.0001$
+    \item Max iterations: 20
+    \item Convergence tolerance: $10^{-3}$
+    \item Line search: $\alpha_{\text{init}} = 2.0$, $\alpha_{\min} = 10^{-5}$
+    \item Regularization: $\lambda_{\text{init}} = 10^{-4}$, $\lambda_{\text{factor}} = 5.0$
+\end{itemize}
+
+\subsection{Physical Constants}
+
+\begin{itemize}
+    \item Gas constant: $R = 296.8$ J/(kg·K) for N$_2$
+    \item Specific heat ratio: $\gamma = 1.4$ for N$_2$
+    \item Polytropic exponent: $n = 1.2$ (typical for blowdown)
+    \item Discharge coefficients: $C_d = 0.7$ (regulator), $C_d = 0.65$ (valves)
+    \item Flow areas: $A_{\text{reg}} = 2 \times 10^{-5}$ m$^2$, $A_{\text{valve}} = 5 \times 10^{-5}$ m$^2$
+    \item Propellant densities: $\rho_F = 800$ kg/m$^3$ (RP-1), $\rho_O = 1140$ kg/m$^3$ (LOX)
+\end{itemize}
+
+\section{Common Issues and Troubleshooting}
+
+This section addresses common issues that arise when implementing or debugging the controller.
+
+\subsection{Controller Not Responding}
+
+\textbf{Symptom}: Control inputs don't change, or change very slowly.
+
+\textbf{Possible causes}:
+\begin{enumerate}
+    \item \textbf{Cost weights too small}: If $q_F$ is too small, controller doesn't care about thrust tracking. \textbf{Fix}: Increase $q_F$.
+    \item \textbf{Regularization too high}: Large $\lambda$ makes controller conservative. \textbf{Fix}: Reduce $\lambda_{\text{init}}$ or check why regularization is increasing.
+    \item \textbf{Gains too small}: If $\mathbf{k}_k$ and $\mathbf{K}_k$ are tiny, control changes are negligible. \textbf{Fix}: Check $\mathbf{Q}_{\mathbf{u}}$ - if it's small, the cost gradient is weak.
+    \item \textbf{Line search failing}: If $\alpha$ is always too small, improvements are rejected. \textbf{Fix}: Check if cost is actually decreasing in forward rollout.
+\end{enumerate}
+
+\subsection{Objective Function Blowing Up}
+
+\textbf{Symptom}: Cost $J$ becomes very large (e.g., $> 10^6$).
+
+\textbf{Possible causes}:
+\begin{enumerate}
+    \item \textbf{Unnormalized cost terms}: If thrust error is 1000 N and $q_F = 100$, cost is $100 \times 1000^2 = 10^8$. \textbf{Fix}: Normalize errors: $F_{\text{error}} / \max(F_{\text{ref}}, 1)$.
+    \item \textbf{Constraint violations}: Large constraint penalties. \textbf{Fix}: Check constraint values, ensure they're reasonable.
+    \item \textbf{Invalid engine estimates}: If engine can't operate (pressures too low), estimates might be invalid. \textbf{Fix}: Add checks for valid engine estimates.
+\end{enumerate}
+
+\subsection{Pressure Not Dropping at Startup}
+
+\textbf{Symptom}: When flow starts, pressure doesn't drop immediately.
+
+\textbf{Possible causes}:
+\begin{enumerate}
+    \item \textbf{Gas mass increasing too fast}: If gas flows into tank faster than ullage grows, pressure increases. \textbf{Fix}: Check gas flow rates, ensure they're reasonable.
+    \item \textbf{Ullage volume not updating}: If $V_{u,F}$ doesn't increase when propellant flows, pressure won't drop. \textbf{Fix}: Check ullage volume update equation.
+    \item \textbf{Initial conditions wrong}: If initial gas mass is too high, pressure starts too high. \textbf{Fix}: Check initialization from ideal gas law.
+\end{enumerate}
+
+\subsection{DDP Not Converging}
+
+\textbf{Symptom}: Cost doesn't decrease, or oscillates.
+
+\textbf{Possible causes}:
+\begin{enumerate}
+    \item \textbf{Step size too large}: If $\alpha$ is too large, we overshoot the minimum. \textbf{Fix}: Reduce $\alpha_{\text{init}}$.
+    \item \textbf{Linearization inaccurate}: If dynamics are highly nonlinear, linearization is poor. \textbf{Fix}: Check dynamics model, ensure it's smooth.
+    \item \textbf{Local minimum}: DDP finds local, not global, minimum. \textbf{Fix}: Try different initial guesses, or add random perturbations.
+\end{enumerate}
+
+\subsection{Numerical Instability}
+
+\textbf{Symptom}: NaN or Inf values, or eigenvalues not converging.
+
+\textbf{Possible causes}:
+\begin{enumerate}
+    \item \textbf{Matrix condition number too high}: If $\kappa(\mathbf{Q}_{\mathbf{uu}}) > 10^{12}$, inversion is unstable. \textbf{Fix}: Add more regularization.
+    \item \textbf{State values extreme}: If pressures are $> 10^8$ Pa or $< 0$, numerical errors occur. \textbf{Fix}: Add bounds checking, clamp values.
+    \item \textbf{Division by zero}: If volumes or masses are zero, divisions fail. \textbf{Fix}: Add checks: $V > \epsilon$, $m > \epsilon$.
+\end{enumerate}
+
+\section{Practical Implementation Tips}
+
+\subsection{Initialization}
+
+\textbf{State initialization}:
+\begin{itemize}
+    \item Pressures: From sensors (if available) or from config
+    \item Ullage volumes: From config or estimate from initial propellant mass
+    \item Gas masses: Compute from ideal gas law: $m = PVZ/(RT)$
+\end{itemize}
+
+\textbf{Control initialization}:
+\begin{itemize}
+    \item Warm start: Use previous solution (shifted)
+    \item Cold start: Use small constant values (e.g., 0.1)
+    \item Heuristic: Proportional to thrust error
+\end{itemize}
+
+\subsection{Parameter Tuning}
+
+\textbf{Cost weights}:
+\begin{itemize}
+    \item Start with $q_F = 100$, $q_{\text{MR}} = 10$, $q_{\text{gas}} = 0.001$
+    \item If thrust tracking poor: Increase $q_F$
+    \item If gas consumption high: Increase $q_{\text{gas}}$
+    \item If control chattering: Increase $q_{\text{switch}}$
+\end{itemize}
+
+\textbf{DDP parameters}:
+\begin{itemize}
+    \item $\alpha_{\text{init}} = 2.0$: Good starting point
+    \item $\lambda_{\text{init}} = 10^{-4}$: Small regularization
+    \item $N = 50$: Horizon length (balance between computation and prediction)
+\end{itemize}
+
+\subsection{Debugging}
+
+\textbf{Print statements}:
+\begin{itemize}
+    \item Cost at each iteration
+    \item Control values
+    \item State values (especially pressures)
+    \item Engine estimates (thrust, mixture ratio)
+\end{itemize}
+
+\textbf{Visualization}:
+\begin{itemize}
+    \item Plot cost vs iteration
+    \item Plot control sequence
+    \item Plot state trajectory
+    \item Plot thrust tracking
+\end{itemize}
+
+\subsection{Performance Optimization}
+
+\textbf{Computation time}:
+\begin{itemize}
+    \item Use diagonal Hessian approximation (faster)
+    \item Reduce horizon length $N$ (if acceptable)
+    \item Reduce max iterations (if converged early)
+    \item Cache engine estimates (if pressures haven't changed)
+\end{itemize}
+
+\textbf{Memory}:
+\begin{itemize}
+    \item Store only necessary data (not full trajectory history)
+    \item Use float32 instead of float64 (if acceptable precision)
+\end{itemize}
+
+\section{Summary}
+
+This framework provides a complete mathematical treatment of robust DDP control for liquid rocket engines, from first principles physics through numerical implementation. The key innovations are:
+
+\begin{enumerate}
+    \item Gas mass tracking for proper mass conservation
+    \item Polytropic processes for realistic temperature changes
+    \item Choked/subsonic flow equations for accurate gas flow
+    \item Normalized cost functions to prevent numerical blowup
+    \item Robustification for uncertainty handling
+    \item Hardware-matching oscillations and damping
+    \item Startup behavior: immediate pressure drop when flow starts
+    \item End state: final pressure much lower due to volume expansion
+\end{enumerate}
+
+The complete system is now ready for implementation and validation against hardware data.
+
+\end{document}
+

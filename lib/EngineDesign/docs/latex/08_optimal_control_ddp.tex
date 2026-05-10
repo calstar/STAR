@@ -1,0 +1,73 @@
+\section{Optimal Control Theory (DDP)}
+
+\subsection{Introduction}
+This chapter details the mathematical formulation of the Differential Dynamic Programming (DDP) solver used for robust thrust and mixture ratio control. The controller solves a finite-horizon optimal control problem at each time step to determine the optimal duty cycles for the propellant tank pressurization valves.
+
+\subsection{Key Files Referenced}
+The physics models documented in this chapter are implemented in:
+\begin{itemize}
+    \item \texttt{docs/control/DDP_SOLVER.md} - Detailed DDP algorithm documentation
+    \item \texttt{engine/control/robust_ddp/} - Core DDP solver and dynamics implementation
+    \item \texttt{backend/routers/control.py} - Controller integration and state management
+\end{itemize}
+
+\subsection{Nomenclature}
+\begin{description}
+    \item[$\mathbf{x}$] State vector $[P_{copv}, P_{reg}, P_{u,F}, P_{u,O}, P_{d,F}, P_{d,O}, V_{u,F}, V_{u,O}]^T$
+    \item[$\mathbf{u}$] Control vector $[u_F, u_O]^T$ (duty cycles $\in [0, 1]$)
+    \item[$J$] Total cost (objective function)
+    \item[$l(\mathbf{x}, \mathbf{u})$] Running cost (stage cost)
+    \item[$V(\mathbf{x})$] Value function (cost-to-go)
+    \item[$Q$] Action-value function
+    \item[$\mathbf{k}, \mathbf{K}$] Feedforward and feedback control gains
+    \item[$\mathbf{w}$] Model uncertainty / residual bounds
+\end{description}
+
+\subsection{Objective Function}
+The controller minimizes a multi-objective cost function over a horizon $N$:
+\begin{equation}
+J = \sum_{k=0}^{N-1} l_k(\mathbf{x}_k, \mathbf{u}_k) + l_N(\mathbf{x}_N)
+\end{equation}
+The running cost $l_k$ includes tracking errors and penalties:
+\begin{equation}
+l_k = q_F(F - F_{ref})^2 + q_{MR}(MR - MR_{ref})^2 + q_{gas}\Delta P_{copv} + \sum \text{Penalties}
+\end{equation}
+Penalties are applied for:
+\begin{itemize}
+    \item Minimum COPV pressure (safety)
+    \item Maximum ullage pressure (structural limit)
+    \item Minimum injector pressure drop (stiffness/stability)
+\end{itemize}
+
+\subsection{DDP Algorithm}
+
+\subsubsection{Backward Pass (Value Function Update)}
+The solver computes the quadratic approximation of the action-value function $Q$ around the nominal trajectory:
+\begin{align}
+Q_x &= l_x + A^T V_x' \\
+Q_u &= l_u + B^T V_x' \\
+Q_{xx} &= l_{xx} + A^T V_{xx}' A + \gamma \text{diag}(\mathbf{w}^2) \\
+Q_{uu} &= l_{uu} + B^T V_{xx}' B \\
+Q_{ux} &= l_{ux} + B^T V_{xx}' A
+\end{align}
+where $\gamma \text{diag}(\mathbf{w}^2)$ is the robustification term accounting for model uncertainty.
+
+\subsubsection{Control Law}
+The optimal control update is composed of feedforward ($\mathbf{k}$) and feedback ($\mathbf{K}$) terms:
+\begin{equation}
+\mathbf{u}_{new} = \mathbf{u} + \alpha \mathbf{k} + \mathbf{K}(\mathbf{x}_{new} - \mathbf{x})
+\end{equation}
+where:
+\begin{align}
+\mathbf{k} &= -Q_{uu}^{-1} Q_u \\
+\mathbf{K} &= -Q_{uu}^{-1} Q_{ux}
+\end{align}
+and $\alpha$ is the step size determined by line search.
+
+\subsection{System Dynamics Integration}
+The DDP solver is coupled with the full engine physics pipeline. At each rollout step, it evaluates:
+\begin{enumerate}
+    \item \textbf{Engine Performance}: $F, MR = \text{EngineWrapper}(P_{u,F}, P_{u,O})$
+    \item \textbf{State Propagation}: $\mathbf{x}_{k+1} = f(\mathbf{x}_k, \mathbf{u}_k, \dot{m}_F, \dot{m}_O)$
+\end{enumerate}
+The dynamics $f$ account for gas expansion, regulator flow, and propellant depletion.

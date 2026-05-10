@@ -1,0 +1,73 @@
+\section{Compressible Flow \& Chamber Pressure Solution}
+
+\subsection{Introduction}
+This chapter describes the physics of compressible flow within the rocket engine and the numerical algorithm used to solve for the steady-state chamber pressure. The core principle is the balance of mass flow supplied by the injectors and the mass flow demanded by the choked throat.
+
+\subsection{Key Files Referenced}
+The physics models documented in this chapter are implemented in:
+\begin{itemize}
+    \item \texttt{engine/core/chamber_solver.py} - Main pressure solver and residual function
+    \item \texttt{engine/core/chamber_physics_fixed.py} - Compressible flow relations
+    \item \texttt{engine/core/mach_solver.py} - Numerical solver for local Mach numbers
+    \item \texttt{engine/core/closure.py} - Flow coupling between tanks, injector, and chamber
+\end{itemize}
+
+\subsection{Nomenclature}
+\begin{description}
+    \item[$P_c$] Chamber pressure [\si{Pa}]
+    \item[$\mdot_{supply}$] Mass flow rate from injectors [\si{kg/s}]
+    \item[$\mdot_{demand}$] Mass flow rate through throat [\si{kg/s}]
+    \item[$A^*$] Throat area [\si{m^2}]
+    \item[$\gamma$] Specific heat ratio [dimensionless]
+    \item[$R$] Gas constant [\si{J/(kg.K)}]
+    \item[$T_c$] Chamber temperature [\si{K}]
+    \item[$M$] Mach number [dimensionless]
+\end{description}
+
+\subsection{Supply-Demand Balance}
+The steady-state chamber pressure $P_c$ is found when the supply mass flow equals the demand mass flow:
+\begin{equation}
+\mathcal{R}(P_c) = \mdot_{supply}(P_c) - \mdot_{demand}(P_c) = 0
+\end{equation}
+
+\subsubsection{Supply Mass Flow}
+The supply flow $\mdot_{supply}$ is determined by the injector flow solver (see Chapter 1), which depends on the pressure drop $\Delta P = P_{tank} - P_c$:
+\begin{equation}
+\mdot_{supply} = \mdot_{ox}(P_c) + \mdot_{fuel}(P_c)
+\end{equation}
+
+\subsubsection{Demand Mass Flow (Choked Flow)}
+For a choked nozzle, the mass flow is determined by the chamber conditions and throat area:
+\begin{equation}
+\mdot_{demand} = \frac{P_c A^*}{\sqrt{T_c}} \sqrt{\frac{\gamma}{R} \left(\frac{2}{\gamma+1}\right)^{\frac{\gamma+1}{\gamma-1}}}
+\end{equation}
+
+\subsection{Numerical Solution Algorithm}
+The solver uses the Brent-Dekker method (\texttt{brentq}) or Newton-Raphson to find the root of the residual function $\mathcal{R}(P_c)$.
+
+\subsubsection{Residual Function}
+The residual is calculated by:
+\begin{enumerate}
+    \item Guessing $P_c$.
+    \item Solving for $\mdot_{supply}$ using injector physics.
+    \item Calculating thermochemical properties ($T_c, \gamma, R$) from CEA.
+    \item Calculating $\mdot_{demand}$ using the choked flow equation.
+    \item Returning the difference.
+\end{enumerate}
+
+\subsection{Internal Flow Profiles}
+
+\subsubsection{Area-Mach Relation}
+The local Mach number $M$ at any axial position with area $A$ is found by solving:
+\begin{equation}
+\frac{A}{A^*} = \frac{1}{M} \left[\frac{2}{\gamma+1} \left(1 + \frac{\gamma-1}{2} M^2\right)\right]^{\frac{\gamma+1}{2(\gamma-1)}}
+\end{equation}
+
+\subsubsection{Stagnation Relations}
+Local static pressure $P$ and temperature $T$ are related to chamber (stagnation) conditions by:
+\begin{equation}
+\frac{P_c}{P} = \left(1 + \frac{\gamma-1}{2} M^2\right)^{\frac{\gamma}{\gamma-1}}
+\end{equation}
+\begin{equation}
+\frac{T_c}{T} = 1 + \frac{\gamma-1}{2} M^2
+\end{equation}

@@ -1,0 +1,68 @@
+# .gitignore for Engine Design Repository
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Output directory (logs, plots, cache) - all generated files
+output/
+!output/.gitkeep
+
+# Individual generated files that might be in root
+*.log
+*.npz
+*.png
+*.jpg
+*.pdf
+*.dxf
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Include important files
+!README.md
+!requirements.txt
+!.gitignore
+
+# Include all source directories
+!engine/
+!engine/**
+!ui/
+!ui/**
+!copv/
+!copv/**
+!configs/
+!configs/**
+!docs/
+!docs/**
+!scripts/
+!scripts/**
+
+# But ignore pycache in source directories
+engine/**/__pycache__/
+ui/**/__pycache__/
+copv/**/__pycache__/
+scripts/**/__pycache__/

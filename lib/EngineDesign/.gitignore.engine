@@ -1,0 +1,35 @@
+# .gitignore for Engine Design Repository
+# Ignore everything by default
+*
+
+# But include pintle engine files
+!pintle_models/
+!pintle_pipeline/
+!examples/pintle_engine/
+
+# Within pintle directories, ignore cache and compiled files
+**/__pycache__/
+**/*.pyc
+**/*.npz
+**/*.png
+**/*.jpg
+**/*.pdf
+
+# But include important pintle source files
+!pintle_models/*.py
+!pintle_pipeline/*.py
+!pintle_pipeline/*.md
+!examples/pintle_engine/*.py
+!examples/pintle_engine/*.yaml
+!examples/pintle_engine/*.md
+!examples/pintle_engine/*.tex
+
+# Include README in root
+!README.md
+
+# Include .gitignore itself
+!.gitignore
+
+# Include requirements
+!requirements.txt
+

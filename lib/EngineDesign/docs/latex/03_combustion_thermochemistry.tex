@@ -1,0 +1,85 @@
+\section{Combustion Thermochemistry \& Efficiency}
+
+\subsection{Introduction}
+This chapter covers the thermochemistry of combustion and the physics-based models for efficiency. The system integrates CEA equilibrium results with corrections for finite-rate kinetics, mixing quality, and residence time.
+
+\subsection{Key Files Referenced}
+The physics models documented in this chapter are implemented in:
+\begin{itemize}
+    \item \texttt{engine/pipeline/combustion_eff.py} - Combustion efficiency and $L^*$ models
+    \item \texttt{engine/pipeline/combustion_physics.py} - Thermochemical properties and CEA integration
+    \item \texttt{engine/pipeline/reaction_chemistry.py} - Finite-rate kinetics and reaction progress
+\end{itemize}
+
+\subsection{Nomenclature}
+\begin{description}
+    \item[$c^*$] Characteristic velocity [\si{m/s}]
+    \item[$L^*$] Characteristic length [\si{m}]
+    \item[$\eta_{c^*}$] Combustion efficiency [dimensionless]
+    \item[$\tau_{res}$] Residence time [\si{s}]
+    \item[$\tau_{chem}$] Chemical time scale [\si{s}]
+    \item[$\tau_{mix}$] Mixing time scale [\si{s}]
+    \item[$Da$] Damköhler number [dimensionless]
+    \item[$X(t)$] Reaction progress [dimensionless]
+    \item[$k$] Reaction rate constant [\si{1/s}]
+\end{description}
+
+\subsection{Characteristic Parameters}
+
+\subsubsection{Characteristic Length ($L^*$)}
+\begin{equation}
+L^* = \frac{V_c}{A_t}
+\end{equation}
+
+\subsubsection{Characteristic Velocity ($c^*$)}
+The ideal characteristic velocity from CEA is:
+\begin{equation}
+c^*_{ideal} = \frac{\sqrt{\gamma R T_c}}{\gamma \sqrt{\left(\frac{2}{\gamma+1}\right)^{\frac{\gamma+1}{\gamma-1}}}}
+\end{equation}
+The actual characteristic velocity accounts for efficiency:
+\begin{equation}
+c^*_{actual} = \eta_{c^*} c^*_{ideal}
+\end{equation}
+
+\subsection{Combustion Efficiency Models}
+
+\subsubsection{Mixing-Limited Efficiency}
+The mixing efficiency $\eta_{mix}$ is modeled based on the momentum flux ratio $J$ and spray overlap:
+\begin{equation}
+\eta_{mix} = 1 - \exp(-a_{mix} J^{b_{mix}})
+\end{equation}
+
+\subsubsection{Vaporization-Limited Efficiency}
+Based on the evaporation length $x^*$ relative to the chamber length $L_c$:
+\begin{equation}
+\eta_{vap} = \min\left(1, \frac{L_c}{x^*}\right)^{a_{vap}}
+\end{equation}
+
+\subsubsection{Kinetics-Limited Efficiency}
+Using the Damköhler number $Da = \tau_{res} / \tau_{chem}$:
+\begin{equation}
+\eta_{kin} = 1 - \frac{1}{1 + Da}
+\end{equation}
+
+\subsubsection{Total Combustion Efficiency}
+The overall efficiency is the product of individual loss mechanisms:
+\begin{equation}
+\eta_{c^*} = \eta_{mix} \cdot \eta_{vap} \cdot \eta_{kin}
+\end{equation}
+
+\subsection{Reaction Progress and Kinetics}
+
+\subsubsection{Reaction Progress Variable}
+The reaction progress $X(t)$ evolves from 0 (unburnt) to 1 (equilibrium):
+\begin{equation}
+\frac{dX}{dt} = k (1 - X)^n
+\end{equation}
+
+\subsubsection{Arrhenius Rate}
+The reaction rate constant $k$ follows the Arrhenius law:
+\begin{equation}
+k = A \exp\left(-\frac{E_a}{RT}\right)
+\end{equation}
+
+\subsection{CEA Integration}
+The system uses a pre-computed CEA cache to interpolate equilibrium properties ($T_c$, $\gamma$, $M$, $c^*$) as functions of chamber pressure $P_c$ and mixture ratio $MR$.

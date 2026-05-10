@@ -1,0 +1,68 @@
+# Default configuration for Robust DDP Thrust Controller
+# 
+# This configuration is optimized for LOX/RP-1 pintle injector engines.
+# Adjust parameters based on your specific engine and mission requirements.
+
+# Prediction horizon
+N: 50                    # Number of time steps
+dt: 0.01                  # Time step [s] (10 ms = 100 Hz control rate)
+
+# Control constraints
+dwell_time: 0.05          # Minimum time between control changes [s] (50 ms = 20 Hz max)
+duty_quantization: 0.01   # Duty cycle quantization for PWM solenoids (1% steps)
+
+# Cost function weights
+qF: 1.0                   # Thrust tracking weight
+qMR: 10.0                 # Mixture ratio weight (high priority to maintain O/F)
+qGas: 0.1                 # Gas consumption weight (minimize COPV usage)
+qSwitch: 0.01             # Control switching cost (smooth control)
+
+# Constraints
+MR_min: 1.5               # Minimum mixture ratio (O/F)
+MR_max: 3.0               # Maximum mixture ratio (O/F)
+injector_dp_frac: 0.1     # Minimum injector pressure drop fraction (10%)
+eps_i: 0.001             # Constraint violation tolerance
+P_u_max: 10000000.0       # Maximum upstream pressure [Pa] (~1450 psi)
+P_copv_min: 1000000.0     # Minimum COPV pressure [Pa] (~145 psi)
+headroom_dp_min: 50000.0 # Minimum headroom pressure drop [Pa] (~7.25 psi)
+
+# Robustness parameters
+rho: 0.1                  # Disturbance bound (uncertainty in model)
+eta: 0.01                 # Robustness margin (safety factor)
+
+# Solver parameters
+max_iterations: 10        # Maximum DDP iterations per step
+convergence_tol: 0.0001   # Convergence tolerance
+
+# Dynamics parameters
+# COPV blowdown model: P_copv[k+1] = P_copv[k] - dt*(cF*u_F + cO*u_O + loss)
+copv_cF: 100000.0          # COPV consumption coefficient for fuel [Pa/s per unit u_F]
+copv_cO: 100000.0          # COPV consumption coefficient for oxidizer [Pa/s per unit u_O]
+copv_loss: 1000.0          # COPV leakage/heat loss [Pa/s]
+
+# Regulator model
+reg_setpoint: null         # Regulator setpoint [Pa] (null = derived from COPV)
+                          # Example: 6894760.0 for 1000 psi setpoint
+reg_ratio: 0.8             # P_reg / P_copv ratio if setpoint not specified
+                          # Example: 0.364 for 1000 psi from 2750 psi COPV
+
+# Ullage pressurization flow coefficients [1/s]
+alpha_F: 10.0              # Fuel pressurization flow coefficient
+alpha_O: 10.0              # Oxidizer pressurization flow coefficient
+
+# Propellant densities [kg/m³]
+rho_F: 800.0               # Fuel density (RP-1)
+rho_O: 1140.0              # Oxidizer density (LOX)
+
+# Feed line time constants [s]
+tau_line_F: 0.01           # Fuel feed line time constant
+tau_line_O: 0.01           # Oxidizer feed line time constant
+
+# Policy LUT (precomputed controller policy for fast runtime)
+use_policy_lut: false       # Set true to use LUT instead of online DDP
+policy_lut_path: null      # Path to policy_lut.npz (e.g. configs/policy_lut.npz)
+
+# Engine LUT (precomputed engine performance; stems from engine config + tank pressure range)
+# When set, DDP uses fast LUT lookups instead of physics. Speeds up both online DDP and policy generation.
+engine_lut_path: null      # Path to engine_performance.npz (e.g. output/lut/engine_performance.npz)
+

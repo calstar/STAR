@@ -1,0 +1,90 @@
+\section{Spray Physics \& Atomization}
+
+\subsection{Introduction}
+This chapter describes the physics of propellant atomization, spray formation, and evaporation. The models track the transformation of liquid propellant streams into droplets and their subsequent gasification.
+
+\subsection{Key Files Referenced}
+The physics models documented in this chapter are implemented in:
+\begin{itemize}
+    \item \texttt{engine/core/spray.py} - Spray and atomization models
+    \item \texttt{engine/core/injectors/pintle.py} - Spray integration for pintle injectors
+\end{itemize}
+
+\subsection{Nomenclature}
+\begin{description}
+    \item[$J$] Momentum flux ratio [dimensionless]
+    \item[$TMR$] Thrust momentum ratio [dimensionless]
+    \item[$\theta$] Spray angle [\si{rad}]
+    \item[$We$] Weber number [dimensionless]
+    \item[$Oh$] Ohnesorge number [dimensionless]
+    \item[$D_{32}$] Sauter Mean Diameter (SMD) [\si{m}]
+    \item[$\tau_{evap}$] Evaporation time [\si{s}]
+    \item[$x^*$] Evaporation length [\si{m}]
+    \item[$\sigma$] Surface tension [\si{N/m}]
+\end{description}
+
+\subsection{Momentum and Spray Angle}
+
+\subsubsection{Momentum Flux Ratio}
+The momentum flux ratio $J$ characterizes the relative strength of the oxidizer and fuel streams:
+\begin{equation}
+J = \frac{\rho_{ox} u_{ox}^2}{\rho_{fuel} u_{fuel}^2}
+\end{equation}
+
+\subsubsection{Thrust Momentum Ratio (TMR)}
+For pintle injectors, the TMR is defined as:
+\begin{equation}
+TMR = \frac{\mdot_{fuel} u_{fuel}}{\mdot_{ox} u_{ox}}
+\end{equation}
+
+\subsubsection{Spray Angle}
+The spray angle $\theta$ is modeled as a function of the momentum ratio:
+\begin{equation}
+\theta = \arctan(a_J \sqrt{J})
+\end{equation}
+Alternatively, using TMR:
+\begin{equation}
+\theta = \arccos\left(\frac{1}{1 + TMR}\right)
+\end{equation}
+
+\subsection{Atomization (SMD Models)}
+
+\subsubsection{Weber Number}
+The Weber number characterizes droplet breakup:
+\begin{equation}
+We = \frac{\rho_{gas} u_{rel}^2 D}{\sigma}
+\end{equation}
+
+\subsubsection{Ohnesorge Number}
+The Ohnesorge number accounts for viscous effects:
+\begin{equation}
+Oh = \frac{\mu_{liq}}{\sqrt{\rho_{liq} \sigma D}}
+\end{equation}
+
+\subsubsection{Sauter Mean Diameter (SMD)}
+The SMD is modeled using the Lefebvre correlation for pressure-atomized sprays:
+\begin{equation}
+D_{32} = a_1 \sigma^{0.5} \mu_{liq}^{0.1} \mdot^{0.1} \Delta P^{-0.5} \rho_{gas}^{-0.25}
+\end{equation}
+For pintle-specific geometries:
+\begin{equation}
+D_{32, pintle} = a_2 \left(\frac{\sigma}{\rho_{gas} u_{rel}^2}\right)^{0.5} \left(\frac{h_{gap}}{d_{orifice}}\right)^{0.25}
+\end{equation}
+
+\subsection{Evaporation and Gasification}
+
+\subsubsection{Evaporation Time}
+The characteristic time for droplet evaporation is:
+\begin{equation}
+\tau_{evap} = \frac{D_{32}^2}{K_{evap}}
+\end{equation}
+where $K_{evap}$ is the evaporation constant.
+
+\subsubsection{Evaporation Length}
+The axial distance required for complete evaporation:
+\begin{equation}
+x^* = u_{drop} \tau_{evap}
+\end{equation}
+
+\subsection{Pintle-Specific Spray Integration}
+For the pintle injector, the spray angle and atomization quality are coupled to the annular gap height and the radial momentum of the fuel sheet.

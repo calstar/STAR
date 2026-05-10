@@ -1,0 +1,17 @@
+numpy
+scipy
+pandas
+matplotlib
+pydantic
+PyYAML
+rocketcea
+rocketpy
+streamlit
+plotly
+ezdxf
+cma
+CoolProp
+# FastAPI backend
+fastapi
+uvicorn[standard]
+python-multipart

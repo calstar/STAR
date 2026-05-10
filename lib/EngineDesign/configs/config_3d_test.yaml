@@ -1,0 +1,167 @@
+# Quick test config for 3D CEA cache
+# Uses smaller grid (5^3 = 125 points, ~1 min build time)
+
+# Copy of config_minimal.yaml with reduced n_points for fast testing
+
+chamber:
+  volume: 0.000154  # m³ (154 cm³)
+  A_throat: 0.000857892  # m² (857.9 mm²)
+  length: 0.18  # m (180 mm)
+  Lstar: null  # Will be calculated from volume/A_throat
+  
+  # CEA Configuration (3D mode with small grid for testing)
+  cea:
+    ox_name: "LOX"
+    fuel_name: "RP-1"
+    expansion_ratio: 6.54
+    cache_file: "cea_cache_LOX_RP1_3D_test.npz"  # Separate test cache
+    Pc_range: [2.0e6, 9.0e6]
+    MR_range: [1.6, 3.5]
+    eps_range: [4.0, 15.0]  # 3D cache enabled
+    n_points: 5  # 5³ = 125 points (~1 min build time)
+  
+  efficiency:
+    model: "exponential"
+    C: 0.15
+    K: 0.0015
+    L_star_ref: 1.0
+    min_efficiency: 0.85
+    mixture_efficiency_enabled: true
+    mixture_smd_penalty: 0.5
+    mixture_evap_penalty: 0.3
+    mixture_weber_penalty: 0.2
+    mixture_efficiency_floor: 0.70
+    cooling_efficiency_enabled: true
+    turbulence_efficiency_enabled: true
+    turbulence_intensity_ref: 0.08
+    turbulence_gain: 0.5
+
+nozzle:
+  A_throat: 0.000857892  # m²
+  A_exit: 0.005615906  # m²
+  expansion_ratio: 6.54
+  efficiency: 0.98
+
+# Injector (pintle)
+injector:
+  type: "pintle"
+  lox:
+    n_orifices: 16
+    orifice_area: 2.484e-06  # m² per orifice
+    angle_deg: 45.0
+  fuel:
+    pintle_diameter: 0.01905  # m (0.750 in)
+    gap_thickness: 0.000313  # m (0.313 mm)
+
+# Discharge coefficients
+discharge:
+  Cd_inf: 0.65
+  a_Re: 50.0
+  Cd_min: 0.40
+  enable_pressure_dependence: false
+  enable_temperature_dependence: false
+
+# Feed system
+feed_system:
+  oxidizer:
+    K0: 5.0
+    K1: 0.001
+    d_inlet: 0.009525  # m (3/8 in)
+  fuel:
+    K0: 5.0
+    K1: 0.001
+    d_inlet: 0.009525  # m (3/8 in)
+
+# Regenerative cooling
+regen_cooling:
+  enabled: true
+  n_channels: 100
+  channel_width: 0.002  # m
+  channel_height: 0.003  # m
+  channel_length: 0.18  # m
+  wall_thickness: 0.002  # m
+  wall_conductivity: 50.0  # W/(m·K)
+  Cd_entrance_inf: 0.70
+  a_Re_entrance: 80.0
+  Cd_entrance_min: 0.50
+  Cd_exit_inf: 0.85
+  a_Re_exit: 60.0
+  Cd_exit_min: 0.60
+
+# Film cooling
+film_cooling:
+  enabled: false
+
+# Ablative cooling (ENABLED for test)
+ablative_cooling:
+  enabled: true
+  material_density: 1500.0  # kg/m³
+  heat_of_ablation: 4.0e6  # J/kg
+  specific_heat: 1200.0  # J/(kg·K)
+  pyrolysis_temperature: 600.0  # K
+  coverage_fraction: 1.0
+  # Blowing effect (pyrolysis gas protection)
+  use_physics_based_blowing: true  # If true, computes B = m_dot_pyrolysis/m_dot_external
+  blowing_coefficient: 0.5  # Coefficient c in f(B) = 1/(1 + c*B). Typical range: 0.3-0.8
+  blowing_min_reduction_factor: 0.1  # Minimum fraction of convective heat that remains (max reduction = 1 - this). Default 0.1 = max 90% reduction
+  blowing_efficiency: 0.75  # Legacy constant factor (used if use_physics_based_blowing=false)
+  # Radiative heat transfer
+  surface_emissivity: 0.85  # Emissivity for radiative heat transfer (0-1, typical 0.8-0.9 for charred ablators)
+  ambient_temperature: 300.0  # K - Ambient/surrounding temperature for radiative heat transfer
+  radiative_sink_minimum_threshold: 400.0  # K - If ambient_temperature is below this, uses fallback temperature
+  radiative_sink_fallback_temperature: 600.0  # K - Fallback temperature when ambient is too low (represents heated steel layer)
+  # Turbulence effects
+  turbulence_reference_intensity: 0.08
+  turbulence_sensitivity: 1.5
+  turbulence_exponent: 1.0
+  turbulence_max_multiplier: 3.0
+  # Geometry evolution parameters
+  throat_recession_multiplier: null
+  char_layer_conductivity: 0.2
+  char_layer_thickness: 0.001
+  track_geometry_evolution: true
+  nozzle_ablative: true  # Enable nozzle exit recession
+
+# Spray physics
+spray:
+  momentum_flux_ratio: true
+  spray_angle:
+    k: 12.0
+    n: 0.5
+  weber:
+    We_min: 15.0
+  smd:
+    C_smd: 3.67
+    We_exp: -0.259
+    Re_exp: 0.25
+    rho_ratio_exp: 0.25
+  evaporation:
+    C_evap: 5.0
+    d32_exp: 1.0
+    P_exp: -0.5
+    T_exp: 0.5
+  use_turbulence_corrections: true
+  turbulence_breakup_gain: 1.0
+  turbulence_penetration_gain: 0.5
+
+# Propellant properties
+propellants:
+  oxidizer:
+    name: "LOX"
+    density: 1141.0  # kg/m³
+    viscosity: 0.000195  # Pa·s
+    surface_tension: 0.0133  # N/m
+    boiling_point: 90.2  # K
+  fuel:
+    name: "RP-1"
+    density: 810.0  # kg/m³
+    viscosity: 0.00164  # Pa·s
+    surface_tension: 0.026  # N/m
+    boiling_point: 489.0  # K
+
+# Solver settings
+solver:
+  Pc_guess: 4.0e6  # Pa
+  tol: 1e-6
+  max_iter: 50
+
