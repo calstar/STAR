@@ -1,0 +1,14 @@
+[Unit]
+Description=Sensor System Config Broadcast Service (C++ — ACTUATOR_CONFIG/SENSOR_CONFIG to boards)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sensor_system
+ExecStart=/bin/bash -c 'if [ -x ./build/bin/config_broadcast_service ]; then exec ./build/bin/config_broadcast_service --config config/config.toml; else exec python3 archive/legacy/python-services/config_broadcast_service.py --config config/config.toml; fi'
+Restart=always
+RestartSec=5
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

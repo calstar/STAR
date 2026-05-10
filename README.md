@@ -1,116 +1,218 @@
-# Sensor System - DiabloAvionics DAQ
+# Diablo DAQ System
 
-## Overview
+Ground support data acquisition, monitoring, and control system for Diablo Avionics rocket test operations.
 
-Sensor data acquisition system for rocket flight and ground support equipment (GSE). Uses DiabloAvionics packet format for communication with ESP32 sensor boards.
+The product is a full-stack pipeline: ESP32 sensor boards → UDP → DAQ bridge → Elodin time-series DB → backend → web GUI. Everything lives under `diablo_server/`.
 
-## Architecture
+---
 
-- **Flight DAQ**: Handles flight sensors and actuators (192.168.3.0/24)
-- **Ground DAQ**: Handles GSE sensors and during hotfire (192.168.2.0/24)
-- **Packet Format**: DiabloAvionics 6-byte header (no magic, no checksum, little-endian)
-- **Database**: Elodin for time-series data storage and visualization
+## Repo Structure
+
+```
+Diablo-FSW/
+├── diablo_server/          # All pipeline product code
+│   ├── daq_bridge/         # C++ UDP receiver → Elodin DB publisher
+│   ├── services/           # C++ background services
+│   │   ├── sequencer/      # State machine + actuator UDP (TCP :9998)
+│   │   ├── calibration/    # Raw sensor → calibrated sensor (Elodin→Elodin)
+│   │   ├── controller/     # RobustDDP controller (Elodin→PWM UDP)
+│   │   ├── heartbeat/      # SERVER_HEARTBEAT UDP to boards
+│   │   ├── config_broadcast/ # SENSOR_CONFIG / ACTUATOR_CONFIG to boards
+│   │   ├── data_logger/    # CSV data logger from Elodin
+│   │   └── ota/            # Ethernet OTA firmware flash
+│   ├── lib/                # Shared C++ library (fsw_daq_lib.so)
+│   │   ├── include/        # Public headers (ElodinClient, StateMachine, …)
+│   │   └── src/            # Implementation
+│   ├── transport/          # daq_comms C++ packet parsing library
+│   │   ├── include/
+│   │   └── src/
+│   ├── backend/            # Node.js/TypeScript backend (server.ts → WS+HTTP)
+│   ├── frontend/           # React/Next.js web GUI
+│   └── shared/             # Shared TypeScript types
+│
+├── config/                 # Runtime config files
+│   ├── config.toml         # Main system config (boards, sensors, actuators)
+│   ├── config_flight_daq.toml
+│   └── config_ground_daq.toml
+│
+├── external/               # Git submodules
+│   ├── DAQv2-Comms/        # ESP32 comms library (daqv2_comms CMake target)
+│   ├── DiabloAvionics/     # Board firmware + state machine CSVs
+│   └── uWebSockets/        # WebSocket library for C++ services
+│
+├── deploy/                 # Deployment and operations scripts
+│   ├── startup/            # tmux dev stack launchers (start_tmux_dev.sh, etc.)
+│   ├── setup/              # One-time setup scripts (Jetson, network, etc.)
+│   └── systemd/            # systemd unit files for production Jetson deployment
+│
+├── test/                   # All test scripts and helpers
+│   ├── test_integration.sh # Full-stack integration test (run via `int` alias)
+│   ├── ws_data_flow_test.ts  # WebSocket data flow assertions (called by integration test)
+│   ├── udp_listener.ts     # Captures actuator UDP commands during integration test
+│   └── verify_packet_reception.sh
+│
+├── sim/                    # Simulators
+│   ├── board_simulator.py  # Simulates all ESP32 sensor boards over UDP
+│   └── board_startup_sim.py # Simulates board startup handshake (SETUP→SELF_TEST)
+│
+├── tools/                  # Developer utilities (not part of the runtime pipeline)
+│   ├── calibration/        # Python calibration analysis tools and GUIs
+│   ├── controller_lut/     # Controller look-up table generation
+│   ├── debug/              # Debug and diagnostic scripts
+│   ├── gui/                # Standalone GUI tools
+│   └── postprocessing/     # Post-flight data analysis
+│
+├── scripts/                # Build and format scripts
+│   ├── build.sh            # CMake build wrapper (used by `build` alias)
+│   └── format.sh           # clang-format + prettier
+│
+├── archive/                # Legacy code kept for reference
+│   └── legacy/             # Old Python services, old C++ monolith, nav, SITL
+│
+└── build/                  # CMake build output (gitignored)
+    ├── bin/                # All compiled executables
+    └── lib/                # Shared libraries (fsw_daq_lib.so, etc.)
+```
+
+---
 
 ## Quick Start
 
-### Ground DAQ (Development/Hotfire)
-```bash
-# Start Elodin database
-./scripts/startup/startup_daq_db.sh
+### Prerequisites
 
-# Start Ground DAQ
-./build/daq_comms/daq_bridge config/config_ground_daq.toml
+- CMake 3.16+, a C++17 compiler (GCC or Clang)
+- Node.js 20+ with `npm`
+- `elodin-db` binary in PATH or `~/.cargo/bin/`
+- Python 3 with `tomli` for simulators: `pip install tomli`
+- `tmux` for the dev stack
+
+### Clone
+
+```bash
+git clone --recursive <repo-url>
+cd Diablo-FSW
 ```
 
-### Flight DAQ (Flight Operations)
-```bash
-# Start Flight DAQ
-./build/daq_comms/daq_bridge config/config_flight_daq.toml
-```
-
-## Configuration
-
-See `config/README.md` for detailed configuration documentation.
-
-- **config_flight_daq.toml**: Flight sensors and actuators
-- **config_ground_daq.toml**: GSE sensors, hotfire mode (all sensors)
-
-## Sensor Assignments
-
-### Flight Sensors (Flight DAQ)
-- PT_HP, PT_LP (Board 0)
-- PT_FUP, PT_FDP (Board 1)
-- PT_OUP, PT_ODP (Board 2)
-- RTDs, TCs, LCs, Actuators (to be added)
-
-### GSE Sensors (Ground DAQ)
-- PT_OF (Board 10 - LOX Fill)
-- PT_FF (Board 11 - Fuel Fill)
-- PT_HPF, PT_MPF, PT_LPF (Board 12 - Pressurant Fill)
-- RTDs, TCs, LCs (to be added)
-
-## Building
-
-### Initial Setup
+Or if already cloned:
 
 ```bash
-# Clone repository with submodules
-git clone --recursive <repository-url>
-cd sensor_system
-
-# OR if already cloned, initialize submodules
 git submodule update --init --recursive
 ```
 
-### Jetson Xavier NX
-
-One-shot setup for Jetson (ARM64 Ubuntu):
+### Build C++
 
 ```bash
-./scripts/setup/setup_jetson.sh
-```
-
-See [docs/JETSON_DEPLOYMENT.md](docs/JETSON_DEPLOYMENT.md) for full deployment guide.
-
-### Build
-
-```bash
-mkdir -p build
-cd build
+mkdir build && cd build
 cmake ..
-cmake --build .
+make -j$(nproc)
 ```
 
-## External Dependencies
+Binaries land in `build/bin/`, shared libs in `build/lib/`.
 
-This repository uses git submodules for external dependencies:
+Or use the alias:
 
-- **external/DAQv2-Comms**: ESP32 Ethernet communication library for Diablo DAQ system
-- **external/DiabloAvionics**: DiabloAvionics firmware and board code
+```bash
+build   # runs scripts/build.sh from repo root
+```
 
-To update submodules to latest versions:
+### Install Frontend/Backend Dependencies
+
+```bash
+cd diablo_server/backend && npm install
+cd diablo_server/frontend && npm install
+```
+
+---
+
+## Running the Dev Stack
+
+Start the full pipeline (Elodin DB + DAQ bridge + backend + frontend + services):
+
+```bash
+gui         # starts deploy/startup/start_tmux_dev.sh in a tmux session
+stopgui     # kills the tmux session
+guitest     # same as gui but with USE_SIM=1 (board simulator instead of hardware)
+```
+
+Navigate to **http://localhost:3000** for the web GUI.
+
+---
+
+## Integration Test
+
+Runs a full pipeline smoke test: board simulator → DAQ bridge → Elodin → backend → WebSocket client → sequencer TCP:
+
+```bash
+int         # runs test/test_integration.sh
+```
+
+The test builds any missing binaries, starts all services on offset ports, runs ~39 checks, and cleans up. See `CLAUDE.md` for the canonical path.
+
+---
+
+## Configuration
+
+All runtime config lives in `config/config.toml`. Key sections:
+
+- `[database]` — Elodin DB host/port
+- `[network]` — UDP sensor_port, actuator_cmd_port, broadcast settings
+- `[boards.*]` — Per-board IP, type, sensor channel mappings
+- `[actuator_roles]` — Named actuator → board/channel mapping
+- `[sensor_roles_*]` — Named sensor → board/channel mapping
+- `[state_machine]` — FIRE timing parameters
+- `[calibration]` — Calibration service parameters
+
+State machine transitions and actuator positions per state are defined in:
+- `external/DiabloAvionics/test_guis/state_transitions.csv`
+- `external/DiabloAvionics/test_guis/state_machine_actuators.csv`
+
+---
+
+## Architecture
+
+```
+ESP32 boards (UDP)
+       │
+       ▼
+  daq_bridge  ──────────────────────────────► Elodin DB :2240
+  (C++, build/bin/)                               │
+                                                  │
+  calibration_service  ◄──────────────────────────┤
+  (reads raw PT/TC → writes PT_Cal/TC_Cal)         │
+                                                  ▼
+  controller_service   ◄── Elodin calibrated   backend (server.ts)
+  (RobustDDP → PWM UDP)                            │
+                                                  ▼
+  sequencer_service    ◄── WS SEND_COMMAND   browser WebSocket
+  (TCP :9998 state machine + actuator UDP)         │
+                                                  ▼
+                                             frontend (Next.js :3000)
+```
+
+---
+
+## Deployment (Jetson Xavier NX)
+
+Run the one-shot Jetson setup:
+
+```bash
+./deploy/setup/setup_jetson.sh
+```
+
+For production systemd services, see `deploy/systemd/`. The working directory for all services is the repo root; binaries are resolved as `./build/bin/<name>`.
+
+---
+
+## Submodules
+
+| Submodule | Purpose |
+|-----------|---------|
+| `external/DAQv2-Comms` | ESP32 Ethernet packet format (CMake: `daqv2_comms`) |
+| `external/DiabloAvionics` | Board firmware + state machine CSV definitions |
+| `external/uWebSockets` | C++ WebSocket library used by OTA service |
+
+Update all submodules:
+
 ```bash
 git submodule update --remote --recursive
 ```
-
-To update a specific submodule:
-```bash
-cd external/DAQv2-Comms
-git pull origin main
-cd ../..
-git add external/DAQv2-Comms
-git commit -m "Update DAQv2-Comms submodule"
-```
-
-## Documentation
-
-See `docs/README.md` for complete documentation.
-
-## Key Features
-
-- ✅ DiabloAvionics packet parsing (actual format)
-- ✅ Board discovery and IP assignment
-- ✅ Sensor-to-board mapping
-- ✅ GSE/FLIGHT state management
-- ✅ Elodin database integration
-- ✅ Split Flight/Ground DAQ configurations

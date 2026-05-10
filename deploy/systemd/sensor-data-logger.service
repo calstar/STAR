@@ -1,0 +1,18 @@
+[Unit]
+Description=Sensor Data Logger (C++)
+After=sensor-elodin.service
+PartOf=sensor-fsw.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sensor_system
+ExecStart=%h/sensor_system/build/bin/data_logger_service %h/sensor_system/config/config.toml
+Restart=always
+RestartSec=3
+WatchdogSec=30
+MemoryMax=512M
+Environment=LD_LIBRARY_PATH=%h/sensor_system/build/lib
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

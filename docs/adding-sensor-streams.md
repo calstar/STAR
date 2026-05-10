@@ -39,6 +39,7 @@ Each sensor type gets a **VTable ID** — a two-byte tuple `[high, low]` that un
 | `0x44` | `0x00` | FIRE state | - | 18 bytes |
 | `0x50` | `0x00` | SequencerState | state + bitmask + debug | **17 bytes** (see below) |
 | `0x50` | `0x60-0x66` | PSM actuator commands | - | 15 bytes |
+| `0x60` | `0x01-0xFF` | Self-test results | `sensor_id` + `result` | 10 bytes |
 
 **Raw vs Calibrated convention:** Raw channels use `low = channel_id` (1-based). Calibrated channels use `low = 0x10 + channel_id`. Example: PT channel 3 raw = `[0x20, 0x03]`, calibrated = `[0x20, 0x13]`.
 

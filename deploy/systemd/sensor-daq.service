@@ -1,0 +1,14 @@
+[Unit]
+Description=Sensor System DAQ Bridge (UDP → Elodin DB)
+After=network.target sensor-elodin.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sensor_system
+ExecStart=/bin/bash -c 'if [ -x ./build/bin/daq_bridge ]; then exec ./build/bin/daq_bridge config/config.toml; else echo "daq_bridge not found — run: cd build && cmake .. && make daq_bridge"; exit 1; fi'
+Restart=always
+RestartSec=5
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

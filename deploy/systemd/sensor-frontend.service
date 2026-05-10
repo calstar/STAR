@@ -1,0 +1,14 @@
+[Unit]
+Description=Sensor System Web GUI Frontend
+After=network.target sensor-backend.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sensor_system/diablo_server/frontend
+ExecStart=/usr/bin/npm run dev
+Restart=always
+RestartSec=5
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

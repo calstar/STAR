@@ -5,24 +5,26 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Threads REQUIRED)
+find_package(ZLIB REQUIRED)
+find_package(OpenSSL REQUIRED)
 
-# DAQv2-Comms: the real protocol library (from external/DAQv2-Comms submodule)
-# Arduino.h shim lives alongside the source so it compiles on Linux.
+# All binaries land in build/bin/ for predictable paths in scripts
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+
+# DAQv2-Comms: wire protocol library (external submodule)
 add_library(daqv2_comms STATIC
     external/DAQv2-Comms/src/DiabloPacketUtils.cpp
 )
 target_include_directories(daqv2_comms PUBLIC
     external/DAQv2-Comms/src
 )
-# DAQv2 headers use size_t without <cstddef>; some libstdc++ versions no longer pull it in via <vector>.
-# Until fixed in external/DAQv2-Comms, force the standard header for this target (GCC/Clang).
+# DAQv2 headers use size_t without <cstddef>; force the standard header (GCC/Clang)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(daqv2_comms PRIVATE "-include" "cstddef")
 endif()
 
-# Active build: daq_comms library + FSW (daq_bridge, controller_service, fsw_web_bridge)
-add_subdirectory(daq_comms)
-add_subdirectory(FSW)
+add_subdirectory(diablo_server)
 
 enable_testing()
 if(EXISTS ${CMAKE_SOURCE_DIR}/tests)
