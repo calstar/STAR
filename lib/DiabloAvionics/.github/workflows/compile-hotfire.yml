@@ -1,0 +1,57 @@
+name: Compile Hotfire Scripts
+
+on:
+  push:
+
+jobs:
+  build-firmware:
+    name: Build ${{ matrix.project }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          - Hotfire_Code/PT_Hotfire
+          - Hotfire_Code/TC_Hotfire
+          - Hotfire_Code/RTD_Hotfire
+          - Hotfire_Code/LC_Hotfire
+          - Hotfire_Code/Actuator_Hotfire
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Compile firmware
+        run: pio run
+        working-directory: ${{ matrix.project }}
+
+  run-tests:
+    name: Run Unit Tests
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Run native tests
+        run: pio test -e native
+        working-directory: Hotfire_Code/Hotfire_Tests

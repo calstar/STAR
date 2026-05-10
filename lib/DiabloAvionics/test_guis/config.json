@@ -1,0 +1,43 @@
+{
+    "actuator_role_names": [
+        "LOX Main",
+        "Fuel Main",
+        "Fuel Vent",
+        "Fuel Press",
+        "LOX Vent",
+        "LOX Press"
+    ],
+    "actuator_roles": {
+        "LOX Main": 0,
+        "Fuel Main": 0,
+        "Fuel Vent": 0,
+        "Fuel Press": 0,
+        "LOX Vent": 0,
+        "LOX Press": 0
+    },
+    "sensor_roles": {
+        "LOX Upstream": 0,
+        "LOX Downstream": 0,
+        "Low Press PT": 0,
+        "Fuel Downstream": 0
+    },
+    "network": {
+        "actuator_ip": "192.168.2.12",
+        "actuator_port": 5005,
+        "sensor_ip_filter": "192.168.2.21",
+        "receive_port": 5006
+    },
+    "display": {
+        "adc_bits": 32,
+        "ref_voltage": 2.5,
+        "window_seconds": 10.0,
+        "y_axis_min": 0.0,
+        "y_axis_max": 700.0,
+        "y_axis_autoscale": true
+    },
+    "num_connectors": 10,
+    "num_actuators": 10,
+    "paths": {
+        "pt_calibration_csv": []
+    }
+}

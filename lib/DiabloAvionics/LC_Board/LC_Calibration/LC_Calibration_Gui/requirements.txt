@@ -1,0 +1,4 @@
+pyqtgraph>=0.13.0
+numpy>=1.20.0
+PyQt6>=6.0.0; sys_platform != "darwin"
+PyQt5>=5.15.0; sys_platform == "darwin"

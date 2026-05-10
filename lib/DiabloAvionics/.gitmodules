@@ -1,0 +1,3 @@
+[submodule "libraries/DAQv2-Comms"]
+	path = libraries/DAQv2-Comms
+	url = https://github.com/calstar/DAQv2-Comms.git
