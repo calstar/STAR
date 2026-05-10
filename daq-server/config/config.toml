@@ -548,7 +548,7 @@ status_interval_sec = 30     # Phase 2 status print interval
 # json_path = "scripts/calibration/calibrations/calibration_YYYY-MM-DD....json"  # optional override
 json_dir = "scripts/calibration/calibrations"
 csv_paths = [
-    "../lib/DiabloAvionics/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv"
+    "../firmware/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv"
 ]
 # Polynomial: psi = A*(adc^3) + B*(adc^2) + C*adc + D
 

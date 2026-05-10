@@ -201,9 +201,9 @@ bool ActuatorCommander::load(const std::string& config_content, const std::strin
 
     // -- State→actuator CSV --
     const char* fallbacks[] = {
-        "lib/DiabloAvionics/test_guis/state_machine_actuators.csv",
-        "../lib/DiabloAvionics/test_guis/state_machine_actuators.csv",
-        "../../lib/DiabloAvionics/test_guis/state_machine_actuators.csv",
+        "firmware/test_guis/state_machine_actuators.csv",
+        "../firmware/test_guis/state_machine_actuators.csv",
+        "../../firmware/test_guis/state_machine_actuators.csv",
     };
 
     std::ifstream f(csv_path);

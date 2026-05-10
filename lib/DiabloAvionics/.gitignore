@@ -1,9 +1,0 @@
-**/.vscode
-.vscode/
-*.csv
-.venv/
-__pycache__/
-.cpp.d
-.cpp.o
-.pio/
-.claude
