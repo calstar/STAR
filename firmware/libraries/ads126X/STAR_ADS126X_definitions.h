@@ -99,6 +99,7 @@ extern "C" {
 #define ADS126X_SINC3             0b010
 #define ADS126X_SINC4             0b011
 #define ADS126X_FIR               0b100
+#define ADS126X_SINC5             0b101 // high-speed filter; valid only at rates > 7200 SPS
 #define ADS126X_BIAS_ADC1         0b0 // selects the ADC to connect the sensor bias
 #define ADS126X_BIAS_ADC2         0b1
 #define ADS126X_BIAS_PULLUP       0b0 // selects the sensor bias for pull-up or pull-down

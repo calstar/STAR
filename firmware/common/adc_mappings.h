@@ -1,10 +1,6 @@
 #pragma once
 #include "STAR_ADS126X.h"
 
-// NOTE: ADS126X_SINC5 is not defined in STAR_ADS126X_definitions.h.
-// If high data rates (14400 / 19200 / 38400 SPS) are ever needed, add:
-//   #define ADS126X_SINC5  0b101   (verify value against datasheet before use)
-
 // Compile-time check: rates <= 7200 SPS require SINC1-4;
 //                     rates 14400 / 19200 / 38400 SPS require SINC5.
 constexpr bool ads126x_filter_rate_valid(uint8_t filter, uint8_t data_rate)
