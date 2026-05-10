@@ -12,12 +12,12 @@ find_package(OpenSSL REQUIRED)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
-# DAQv2-Comms: wire protocol library (external submodule)
+# DAQv2-Comms: wire protocol library (subtree at repo-root lib/DAQv2-Comms)
 add_library(daqv2_comms STATIC
-    external/DAQv2-Comms/src/DiabloPacketUtils.cpp
+    ../lib/DAQv2-Comms/src/DiabloPacketUtils.cpp
 )
 target_include_directories(daqv2_comms PUBLIC
-    external/DAQv2-Comms/src
+    ../lib/DAQv2-Comms/src
 )
 # DAQv2 headers use size_t without <cstddef>; force the standard header (GCC/Clang)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

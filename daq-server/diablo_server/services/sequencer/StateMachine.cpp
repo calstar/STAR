@@ -125,9 +125,9 @@ static std::string trimCell(const std::string& s) {
 
 bool StateMachine::load(const std::string& csv_path) {
     const char* fallbacks[] = {
-        "external/DiabloAvionics/test_guis/state_transitions.csv",
-        "../external/DiabloAvionics/test_guis/state_transitions.csv",
-        "../../external/DiabloAvionics/test_guis/state_transitions.csv",
+        "lib/DiabloAvionics/test_guis/state_transitions.csv",
+        "../lib/DiabloAvionics/test_guis/state_transitions.csv",
+        "../../lib/DiabloAvionics/test_guis/state_transitions.csv",
     };
 
     std::ifstream f(csv_path);
