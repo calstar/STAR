@@ -50,10 +50,9 @@ The backend loads from `config.calibration.pt.json_path` (e.g. `scripts/calibrat
 
 ### 3. **Channel ID / unique ID mapping**
 
-- daq_bridge: `sample.channel_id` — connector 1–10 for board 1; for board 2 with `channel_offset=10`, connector 1 → channel 11.
+- daq_bridge / Elodin packet low byte: **local** connector id **1–10** per board slot (`(board_number-1)*0x20 + channel`).
 - PTCalibration JSON keys: `"1"`, `"2"`, … — typically per-board connector.
-- If the C++ uses global channel (11, 12, …) but calibration was stored under connector (1, 2, …), the wrong coefficients can be applied.
-- **Check:** `daq_bridge_main.cpp` applies `channel_offset` before routing; calibration lookup uses that shifted channel. Ensure calibration keys match.
+- The GUI’s `sensor_roles_pt2` reverse map adds **+10** to keys only so HP PT role lookups don’t collide with board 1 in that legacy map (hardcoded in TypeScript; not a config.toml knob).
 
 ### 4. **ADC byte order or interpretation**
 

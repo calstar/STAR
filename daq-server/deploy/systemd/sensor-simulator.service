@@ -1,0 +1,14 @@
+[Unit]
+Description=Sensor System Board Simulator (synthetic UDP when no hardware)
+After=network.target sensor-daq.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sensor_system
+ExecStart=/usr/bin/python3 sim/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006
+Restart=always
+RestartSec=5
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

@@ -9,18 +9,18 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-if [[ ! -f ./format.sh ]]; then
-  echo "pre-push: ./format.sh not found at repo root" >&2
+if [[ ! -f ./scripts/format.sh ]]; then
+  echo "pre-push: ./scripts/format.sh not found" >&2
   exit 1
 fi
 
-chmod +x ./format.sh 2>/dev/null || true
-./format.sh
+chmod +x ./scripts/format.sh 2>/dev/null || true
+./scripts/format.sh
 
 # Only consider trees format.sh touches — ignore unrelated dirty files elsewhere.
-if ! git diff --quiet HEAD -- FSW daq_comms archive/legacy/utl 2>/dev/null; then
+if ! git diff --quiet HEAD -- diablo_server archive/legacy/utl 2>/dev/null; then
   echo "" >&2
-  echo "pre-push: format.sh changed tracked files under FSW/, daq_comms/, or archive/legacy/utl/." >&2
+  echo "pre-push: format.sh changed tracked files under diablo_server/ or archive/legacy/utl/." >&2
   echo "         Stage and commit (or amend), then push again." >&2
   exit 1
 fi

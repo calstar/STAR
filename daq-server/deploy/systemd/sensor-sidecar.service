@@ -1,0 +1,15 @@
+[Unit]
+Description=Sensor System Calibration Sidecar
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sensor_system
+ExecStart=/bin/bash -c 'if [ -x %h/sensor_system/.venv/bin/python ]; then exec %h/sensor_system/.venv/bin/python tools/calibration/calibration_server.py; elif [ -x %h/fsw/venv/bin/python3 ]; then exec %h/fsw/venv/bin/python3 tools/calibration/calibration_server.py; else exec python3 tools/calibration/calibration_server.py; fi'
+Restart=always
+RestartSec=5
+Environment=PYTHONPATH=%h/sensor_system
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

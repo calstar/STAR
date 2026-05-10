@@ -1,29 +1,7 @@
 name: CI/CD Pipeline
 
-on:
-  push:
-    branches:
-      - main
-      - master
-      - develop
-      - PT_Calibration
-      - Test_Branch
-      - unit-testing
-      - cpp-stack-and-cleanup
-      - web-gui-tests
-    tags:
-      - 'v*'
-  pull_request:
-    branches:
-      - main
-      - master
-      - develop
-      - PT_Calibration
-      - Test_Branch
-      - unit-testing
-      - cpp-stack-and-cleanup
-      - web-gui-tests
-  workflow_dispatch:
+# Quoted `on` — YAML 1.1 treats bare `on` as boolean true, which breaks workflow triggers in some parsers.
+'on': [push, pull_request, workflow_dispatch]
 
 env:
   BUILD_DIR: build
@@ -47,9 +25,9 @@ jobs:
 
     - name: Check code formatting
       run: |
-        chmod +x ./format.sh
-        if ! ./format.sh --check; then
-          echo "::error::Code formatting check failed. Run './format.sh' to fix."
+        chmod +x ./scripts/format.sh
+        if ! ./scripts/format.sh --check; then
+          echo "::error::Code formatting check failed. Run './scripts/format.sh' to fix."
           exit 1
         fi
       continue-on-error: false
@@ -68,23 +46,23 @@ jobs:
       with:
         node-version: '20.x'
         cache: 'npm'
-        cache-dependency-path: web-gui/frontend/package-lock.json
+        cache-dependency-path: diablo_server/frontend/package-lock.json
 
     # API routes import ../backend/src/* which uses @iarna/toml; install backend so resolution + alias work in next build.
     - name: Install backend dependencies
-      working-directory: web-gui/backend
+      working-directory: diablo_server/backend
       run: npm ci || npm install
 
     - name: Install frontend dependencies
-      working-directory: web-gui/frontend
+      working-directory: diablo_server/frontend
       run: npm ci || npm install
 
     - name: Run frontend unit tests
-      working-directory: web-gui/frontend
+      working-directory: diablo_server/frontend
       run: npm run test
 
     - name: Verify Next.js build
-      working-directory: web-gui/frontend
+      working-directory: diablo_server/frontend
       run: npm run test:build
 
   # Build with multiple compilers (Release only)
@@ -138,7 +116,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~/.ccache
-        key: ${{ runner.os }}-ccache-${{ matrix.compiler }}-${{ hashFiles('CMakeLists.txt', 'FSW/CMakeLists.txt', 'archive/legacy/utl/**/*.cpp', 'archive/legacy/utl/**/*.hpp', 'daq_comms/**/*.cpp', 'daq_comms/**/*.hpp', 'FSW/**/*.cpp', 'FSW/**/*.hpp') }}
+        key: ${{ runner.os }}-ccache-${{ matrix.compiler }}-${{ hashFiles('CMakeLists.txt', 'diablo_server/CMakeLists.txt', 'archive/legacy/utl/**/*.cpp', 'archive/legacy/utl/**/*.hpp', 'diablo_server/**/*.cpp', 'diablo_server/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-ccache-${{ matrix.compiler }}-
 
@@ -179,7 +157,7 @@ jobs:
       run: |
         cd ${{ env.BUILD_DIR }}
         echo "Checking for built executables..."
-        find . -type f -executable -name "*example*" -o -name "*test*" | head -10 || true
+        find bin/ -type f -executable | head -10 || true
 
     - name: Upload build artifacts
       if: matrix.compiler == 'gcc-12'
@@ -187,9 +165,9 @@ jobs:
       with:
         name: build-artifacts-${{ matrix.compiler }}-Release
         path: |
-          ${{ env.BUILD_DIR }}/**/*.so
-          ${{ env.BUILD_DIR }}/**/daq_bridge
-          ${{ env.BUILD_DIR }}/**/test_fsw_simulator
+          ${{ env.BUILD_DIR }}/lib/*.so
+          ${{ env.BUILD_DIR }}/bin/daq_bridge
+          ${{ env.BUILD_DIR }}/bin/sequencer_service
         retention-days: 7
 
   # Static analysis
@@ -225,7 +203,7 @@ jobs:
           --error-exitcode=1 \
           --xml --xml-version=2 \
           --output-file=cppcheck-report.xml \
-          FSW/ archive/legacy/utl/ daq_comms/ || true
+          diablo_server/ archive/legacy/utl/ || true
 
     - name: Upload cppcheck results
       uses: actions/upload-artifact@v4
@@ -237,7 +215,7 @@ jobs:
     - name: Run clang-tidy
       run: |
         # Only run on a subset to avoid timeout
-        find FSW archive/legacy/utl daq_comms -name "*.cpp" -o -name "*.hpp" | head -20 | \
+        find diablo_server archive/legacy/utl -name "*.cpp" -o -name "*.hpp" | head -20 | \
         xargs -I {} clang-tidy {} \
           -p ${{ env.BUILD_DIR }} \
           -- -std=c++${{ env.CXX_STANDARD }} || true
@@ -261,7 +239,7 @@ jobs:
           --include="*.hpp" \
           --include="*.c" \
           --include="*.h" \
-          FSW/ archive/legacy/utl/ daq_comms/ || true)
+          diablo_server/ archive/legacy/utl/ || true)
         if [ -n "$TODOS" ]; then
           echo "::warning::Found TODO/FIXME/HACK comments:"
           echo "$TODOS"
@@ -280,8 +258,7 @@ jobs:
     - name: Check for missing includes
       run: |
         echo "Checking for common include issues..."
-        # Check for missing standard library includes
-        if grep -r "#include <iostream>" --include="*.cpp" --include="*.hpp" FSW/ archive/legacy/utl/ daq_comms/ | \
+        if grep -r "#include <iostream>" --include="*.cpp" --include="*.hpp" diablo_server/ archive/legacy/utl/ | \
            grep -v "#include <iostream>" | head -5; then
           echo "::warning::Potential missing includes detected"
         fi
@@ -339,7 +316,7 @@ jobs:
           --include="*.hpp" \
           --include="*.py" \
           --include="*.sh" \
-          FSW/ archive/legacy/utl/ daq_comms/ scripts/ || true)
+          diablo_server/ archive/legacy/utl/ scripts/ || true)
         if [ -n "$SECRETS" ]; then
           echo "::warning::Potential hardcoded secrets found:"
           echo "$SECRETS"
@@ -353,7 +330,7 @@ jobs:
         UNSAFE=$(grep -rE "\b(strcpy|sprintf|gets|scanf|strcat)\s*\(" \
           --include="*.cpp" \
           --include="*.hpp" \
-          FSW/ archive/legacy/utl/ daq_comms/ || true)
+          diablo_server/ archive/legacy/utl/ || true)
         if [ -n "$UNSAFE" ]; then
           echo "::warning::Potentially unsafe C functions found:"
           echo "$UNSAFE"
@@ -419,11 +396,11 @@ jobs:
     - name: Run Sequencer Elodin Unit Test
       run: |
         cd ${{ env.BUILD_DIR }}
-        ./FSW/test_sequencer_elodin
+        ./bin/test_sequencer_elodin
 
     - name: Run Python smoke tests (allowlist only)
       run: |
-        if [ -d "scripts/test" ]; then
+        if [ -d "test" ]; then
           echo "Running allowlisted Python smoke tests..."
           # Keep this list intentionally small and non-interactive.
           # Add paths here only for deterministic, CI-safe scripts.
@@ -447,8 +424,8 @@ jobs:
 
     - name: Run integration tests
       run: |
-        if [ -f "test_system.sh" ]; then
-          chmod +x test_system.sh
+        if [ -f "test/test_system.sh" ]; then
+          chmod +x test/test_system.sh
           # Only run quick smoke tests in CI
           echo "Running smoke tests..."
         fi
@@ -459,7 +436,7 @@ jobs:
     name: Integration Test
     runs-on: ubuntu-latest
     needs: [build]
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
     - name: Checkout code
@@ -496,7 +473,7 @@ jobs:
       with:
         node-version: '20.x'
 
-    - name: Build C++ binaries (daq_bridge, fake_packet_generator)
+    - name: Build C++ binaries
       env:
         CC: gcc-12
         CXX: g++-12
@@ -510,15 +487,74 @@ jobs:
 
     - name: Install backend dependencies
       run: |
-        cd web-gui/backend && npm install
+        cd diablo_server/backend && npm install
 
     - name: Install Python dependencies
       run: |
         pip3 install tomli || true
 
+    # WebSocket / stack checks only. Browser E2E runs in job playwright-guitest-e2e (full guitest stack).
     - name: Run integration test
       run: |
-        bash scripts/test/test_integration.sh
+        bash test/test_integration.sh
+
+  # Full guitest stack + Playwright (same as local: bash test/e2e_guitest_playwright.sh)
+  playwright-guitest-e2e:
+    name: Playwright E2E (guitest stack)
+    runs-on: ubuntu-latest
+    needs: [build]
+    timeout-minutes: 45
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential cmake ninja-build libeigen3-dev pkg-config \
+          gcc-12 g++-12 python3 python3-pip tmux
+
+    - name: Install elodin-db
+      run: |
+        ELODIN_VERSION="v0.16.1"
+        ELODIN_DB_INSTALLER_URL="https://github.com/elodin-sys/elodin/releases/download/${ELODIN_VERSION}/elodin-db-installer.sh"
+        mkdir -p "$HOME/.cargo/bin"
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        export PATH="$HOME/.cargo/bin:$PATH"
+        curl --proto '=https' --tlsv1.2 -LsSf "$ELODIN_DB_INSTALLER_URL" | sh
+
+    - name: Verify elodin-db is on PATH
+      run: command -v elodin-db && elodin-db --help >/dev/null
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        cache-dependency-path: diablo_server/frontend/package-lock.json
+
+    - name: Install backend dependencies
+      run: cd diablo_server/backend && npm ci || npm install
+
+    - name: Install frontend dependencies and Playwright Chromium (system libs + browser)
+      run: |
+        cd diablo_server/frontend
+        npm ci || npm install
+        npx playwright install --with-deps chromium
+
+    - name: Install Python dependencies (sim / config)
+      run: pip3 install tomli || pip3 install --user tomli || true
+
+    # test/e2e_guitest_playwright.sh runs USE_SIM=1 scripts/build.sh then starts the stack (tmux or fallback).
+    - name: Run Playwright guitest E2E
+      env:
+        CC: gcc-12
+        CXX: g++-12
+      run: bash test/e2e_guitest_playwright.sh
 
   # Build summary
   build-summary:
@@ -533,6 +569,7 @@ jobs:
       - security-scan
       - test
       - integration-test
+      - playwright-guitest-e2e
     if: always()
 
     steps:
@@ -550,3 +587,4 @@ jobs:
         echo "| Security Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Tests | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Integration Test | ${{ needs.integration-test.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Playwright E2E (guitest) | ${{ needs.playwright-guitest-e2e.result }} |" >> $GITHUB_STEP_SUMMARY
