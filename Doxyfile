@@ -1,0 +1,196 @@
+# Doxyfile for the STAR umbrella repo.
+# Run from the repo root:
+#     doxygen Doxyfile
+# Output is written to docs/doxygen/ (gitignored).
+
+#---------------------------------------------------------------------------
+# Project
+#---------------------------------------------------------------------------
+PROJECT_NAME           = "STAR"
+PROJECT_BRIEF          = "Cal STAR — firmware, DAQ server, and engine design"
+PROJECT_NUMBER         =
+OUTPUT_DIRECTORY       = docs/doxygen
+CREATE_SUBDIRS         = NO
+ALLOW_UNICODE_NAMES    = YES
+OUTPUT_LANGUAGE        = English
+BRIEF_MEMBER_DESC      = YES
+REPEAT_BRIEF           = YES
+ALWAYS_DETAILED_SEC    = NO
+INLINE_INHERITED_MEMB  = NO
+FULL_PATH_NAMES        = YES
+STRIP_FROM_PATH        = .
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = YES
+MULTILINE_CPP_IS_BRIEF = NO
+INHERIT_DOCS           = YES
+TAB_SIZE               = 4
+MARKDOWN_SUPPORT       = YES
+AUTOLINK_SUPPORT       = YES
+BUILTIN_STL_SUPPORT    = YES
+
+#---------------------------------------------------------------------------
+# Build — extract everything so undocumented code still shows up
+#---------------------------------------------------------------------------
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_PRIV_VIRTUAL   = YES
+EXTRACT_PACKAGE        = YES
+EXTRACT_STATIC         = YES
+EXTRACT_LOCAL_CLASSES  = YES
+EXTRACT_LOCAL_METHODS  = YES
+EXTRACT_ANON_NSPACES   = YES
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+INTERNAL_DOCS          = YES
+CASE_SENSE_NAMES       = SYSTEM
+SHOW_INCLUDE_FILES     = YES
+SHOW_GROUPED_MEMB_INC  = NO
+FORCE_LOCAL_INCLUDES   = NO
+INLINE_INFO            = YES
+SORT_MEMBER_DOCS       = YES
+SORT_BRIEF_DOCS        = NO
+GENERATE_TODOLIST      = YES
+GENERATE_TESTLIST      = YES
+GENERATE_BUGLIST       = YES
+GENERATE_DEPRECATEDLIST= YES
+
+#---------------------------------------------------------------------------
+# Input
+#---------------------------------------------------------------------------
+INPUT                  = firmware \
+                         lib \
+                         daq-server \
+                         EngineDesign
+
+INPUT_ENCODING         = UTF-8
+RECURSIVE              = YES
+
+FILE_PATTERNS          = *.c \
+                         *.cc \
+                         *.cxx \
+                         *.cpp \
+                         *.c++ \
+                         *.h \
+                         *.hh \
+                         *.hpp \
+                         *.hxx \
+                         *.ino \
+                         *.py \
+                         *.md
+
+EXTENSION_MAPPING      = ino=C++ \
+                         no_extension=C++
+
+# Excludes — build artifacts, archives, third-party, venvs, node_modules
+EXCLUDE                = firmware/Archive \
+                         daq-server/archive \
+                         daq-server/build \
+                         daq-server/build-ci \
+                         daq-server/build-clang-ci \
+                         daq-server/external \
+                         daq-server/node_modules \
+                         daq-server/output \
+                         daq-server/.venv \
+                         EngineDesign/archive \
+                         EngineDesign/output \
+                         EngineDesign/.venv \
+                         docs/doxygen
+
+EXCLUDE_SYMLINKS       = NO
+
+EXCLUDE_PATTERNS       = */__pycache__/* \
+                         */.git/* \
+                         */.venv/* \
+                         */venv/* \
+                         */node_modules/* \
+                         */build/* \
+                         */build-*/* \
+                         */dist/* \
+                         */.pytest_cache/* \
+                         */.mypy_cache/* \
+                         */.ruff_cache/*
+
+EXCLUDE_SYMBOLS        =
+
+USE_MDFILE_AS_MAINPAGE =
+
+#---------------------------------------------------------------------------
+# Source browser
+#---------------------------------------------------------------------------
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+STRIP_CODE_COMMENTS    = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+REFERENCES_LINK_SOURCE = YES
+VERBATIM_HEADERS       = YES
+
+#---------------------------------------------------------------------------
+# HTML output
+#---------------------------------------------------------------------------
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+HTML_FILE_EXTENSION    = .html
+HTML_COLORSTYLE        = AUTO_LIGHT
+HTML_DYNAMIC_MENUS     = YES
+HTML_DYNAMIC_SECTIONS  = NO
+GENERATE_TREEVIEW      = YES
+FULL_SIDEBAR           = NO
+DISABLE_INDEX          = NO
+SEARCHENGINE           = YES
+
+#---------------------------------------------------------------------------
+# Disable other output formats
+#---------------------------------------------------------------------------
+GENERATE_LATEX         = NO
+GENERATE_RTF           = NO
+GENERATE_MAN           = NO
+GENERATE_XML           = NO
+GENERATE_DOCBOOK       = NO
+GENERATE_AUTOGEN_DEF   = NO
+GENERATE_SQLITE3       = NO
+GENERATE_PERLMOD       = NO
+
+#---------------------------------------------------------------------------
+# Preprocessor
+#---------------------------------------------------------------------------
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = NO
+EXPAND_ONLY_PREDEF     = NO
+SEARCH_INCLUDES        = YES
+SKIP_FUNCTION_MACROS   = YES
+
+#---------------------------------------------------------------------------
+# Diagrams (requires graphviz / dot)
+#---------------------------------------------------------------------------
+HAVE_DOT               = YES
+DOT_NUM_THREADS        = 0
+CLASS_GRAPH            = YES
+COLLABORATION_GRAPH    = YES
+GROUP_GRAPHS           = YES
+UML_LOOK               = NO
+TEMPLATE_RELATIONS     = NO
+INCLUDE_GRAPH          = YES
+INCLUDED_BY_GRAPH      = YES
+CALL_GRAPH             = NO
+CALLER_GRAPH           = NO
+GRAPHICAL_HIERARCHY    = YES
+DIRECTORY_GRAPH        = YES
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES
+DOT_TRANSPARENT        = NO
+DOT_GRAPH_MAX_NODES    = 75
+MAX_DOT_GRAPH_DEPTH    = 0
+
+#---------------------------------------------------------------------------
+# Warnings — keep loud so doc rot is visible, but don't fail builds
+#---------------------------------------------------------------------------
+QUIET                  = NO
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_IF_DOC_ERROR      = YES
+WARN_IF_INCOMPLETE_DOC = YES
+WARN_NO_PARAMDOC       = NO
+WARN_AS_ERROR          = NO
+WARN_FORMAT            = "$file:$line: $text"
+WARN_LOGFILE           = docs/doxygen/doxygen-warnings.log
