@@ -28,7 +28,9 @@ jobs:
           dot -V
 
       - name: Build docs
-        run: doxygen Doxyfile
+        run: |
+          mkdir -p docs/doxygen
+          doxygen Doxyfile
 
       - name: Upload warnings log
         if: always()
