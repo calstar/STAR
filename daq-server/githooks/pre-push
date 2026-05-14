@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pre-push: run repo formatter so pushes match CI ./format.sh --check.
 #
-# Enable once per clone:
+# Enable once per clone (from daq-server/):
 #   git config core.hooksPath githooks
 #
 set -euo pipefail
@@ -9,18 +9,22 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-if [[ ! -f ./scripts/format.sh ]]; then
-  echo "pre-push: ./scripts/format.sh not found" >&2
+FORMAT_SH="$ROOT/format.sh"
+if [[ ! -f "$FORMAT_SH" ]]; then
+  echo "pre-push: $FORMAT_SH not found" >&2
   exit 1
 fi
 
-chmod +x ./scripts/format.sh 2>/dev/null || true
-./scripts/format.sh
+chmod +x "$FORMAT_SH" 2>/dev/null || true
+"$FORMAT_SH"
 
 # Only consider trees format.sh touches — ignore unrelated dirty files elsewhere.
-if ! git diff --quiet HEAD -- diablo_server archive/legacy/utl 2>/dev/null; then
+if ! git diff --quiet HEAD -- daq-server/diablo_server daq-server/archive/legacy/utl firmware 2>/dev/null; then
   echo "" >&2
-  echo "pre-push: format.sh changed tracked files under diablo_server/ or archive/legacy/utl/." >&2
+  echo "pre-push: format.sh changed tracked files under one of:" >&2
+  echo "           daq-server/diablo_server/" >&2
+  echo "           daq-server/archive/legacy/utl/" >&2
+  echo "           firmware/    (excludes firmware/Archive, firmware/libraries, firmware/.pio)" >&2
   echo "         Stage and commit (or amend), then push again." >&2
   exit 1
 fi

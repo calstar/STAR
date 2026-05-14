@@ -7,8 +7,8 @@
 #include <Arduino.h>
 #include <MCP23S17.h>
 #include <SPI.h>
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
 namespace solenoids {
 
@@ -17,23 +17,12 @@ constexpr bool SOLENOID_ACTIVE_HIGH = true;  // set to false if LOW = open
 constexpr int PYRO_CS_1 = 48;
 
 // ===================== PUBLIC ENUM =====================
-enum SolenoidID {
-  OVP = 0,
-  FVP,
-  OUP,
-  FUP,
-  ODP,
-  FDP,
-  PVF,
-  PVO
-};
+enum SolenoidID { OVP = 0, FVP, OUP, FUP, ODP, FDP, PVF, PVO };
 
 // ===================== API =====================
 
 // Initializes the MCP23S17 and configures all solenoid channels as outputs.
-void init(SPIClass& spi,
-          int sclk, int miso, int mosi,
-          int cs_pin,
+void init(SPIClass& spi, int sclk, int miso, int mosi, int cs_pin,
           uint8_t mcp_hw_addr = 0x00);
 
 // Individual solenoid controls

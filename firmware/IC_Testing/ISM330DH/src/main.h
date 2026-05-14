@@ -1,14 +1,14 @@
 #pragma once
 
-#include <cstdint>
-
 #include <STAR_ISM330DH.h>
+
+#include <cstdint>
 
 // SPI bus pins (per board schematic)
 #define ISM330_SCLK_PIN 2
 #define ISM330_MOSI_PIN 3
 #define ISM330_MISO_PIN 16
-#define ISM330_CS_PIN   20
+#define ISM330_CS_PIN 20
 
 // IMU interrupt pins
 #define ISM330_INT1_PIN 21
@@ -32,8 +32,8 @@
 
 // ST driver: wake LSB weight FS/64 → mg per threshold step
 static constexpr uint8_t ISM330_WKUP_THS = []() -> uint8_t {
-	constexpr float mgPerLsb = (ISM330_ACCEL_FS_G * 1000.0f) / 64.0f;
-	float raw = (ISM330_WAKEUP_THRESHOLD_G * 1000.0f) / mgPerLsb;
-	uint8_t v = (raw > 63.0f) ? 63 : static_cast<uint8_t>(raw);
-	return (v < 1) ? 1 : v;
+    constexpr float mgPerLsb = (ISM330_ACCEL_FS_G * 1000.0f) / 64.0f;
+    float raw = (ISM330_WAKEUP_THRESHOLD_G * 1000.0f) / mgPerLsb;
+    uint8_t v = (raw > 63.0f) ? 63 : static_cast<uint8_t>(raw);
+    return (v < 1) ? 1 : v;
 }();

@@ -84,14 +84,12 @@ bool flashFirmware(const std::string& ip, const std::string& bin_path, std::stri
     }
 
     {
-        struct timeval tv {
-            .tv_sec = CONNECT_TIMEOUT_S, .tv_usec = 0
-        };
+        struct timeval tv{.tv_sec = CONNECT_TIMEOUT_S, .tv_usec = 0};
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     }
 
-    struct sockaddr_in addr {};
+    struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(OTA_PORT);
     if (inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) != 1) {
@@ -107,9 +105,7 @@ bool flashFirmware(const std::string& ip, const std::string& bin_path, std::stri
 
     // Set longer transfer timeout now that we're connected
     {
-        struct timeval tv {
-            .tv_sec = TRANSFER_TIMEOUT_S, .tv_usec = 0
-        };
+        struct timeval tv{.tv_sec = TRANSFER_TIMEOUT_S, .tv_usec = 0};
         setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     }
@@ -286,9 +282,7 @@ bool buildAndFlash(const std::string& ip, const std::string& projectDir, int boa
 // ── TCP command handler ───────────────────────────────────────────────────────
 
 void handleClient(int client_fd) {
-    struct timeval tv {
-        .tv_sec = 30, .tv_usec = 0
-    };
+    struct timeval tv{.tv_sec = 30, .tv_usec = 0};
     setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     auto sendReply = [&](const std::string& msg) {
@@ -396,7 +390,7 @@ int main(int argc, char* argv[]) {
         setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     }
     {
-        struct sockaddr_in addr {};
+        struct sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = INADDR_ANY;
         addr.sin_port = htons(listen_port);
@@ -419,9 +413,7 @@ int main(int argc, char* argv[]) {
         fd_set rd;
         FD_ZERO(&rd);
         FD_SET(listen_fd, &rd);
-        struct timeval tv {
-            .tv_sec = 1, .tv_usec = 0
-        };
+        struct timeval tv{.tv_sec = 1, .tv_usec = 0};
         if (select(listen_fd + 1, &rd, nullptr, nullptr, &tv) <= 0)
             continue;
 

@@ -174,7 +174,7 @@ Matches FSW `PressureStateMachine::SystemState`:
 
 ## Similar to DiabloAvionics GUI
 
-This GUI is designed to match the functionality and layout of `external/DiabloAvionics/test_guis/combined_gui.py`:
+This GUI is designed to match the functionality and layout of `firmware/test_guis/combined_gui/combined_gui.py`:
 
 - ✅ Same layout (sensor plot left, actuator control right)
 - ✅ Same top bar with pressure gauges

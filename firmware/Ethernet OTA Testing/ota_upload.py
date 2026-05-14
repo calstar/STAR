@@ -26,17 +26,17 @@ import time
 import shutil
 
 # ── Defaults ──────────────────────────────────────────────────
-DEFAULT_IP       = "192.168.2.5"
-DEFAULT_PORT     = 3232
-CHUNK_SIZE       = 4096
-CONNECT_TIMEOUT  = 5      # seconds
-TRANSFER_TIMEOUT = 30     # seconds
+DEFAULT_IP = "192.168.2.5"
+DEFAULT_PORT = 3232
+CHUNK_SIZE = 4096
+CONNECT_TIMEOUT = 5  # seconds
+TRANSFER_TIMEOUT = 30  # seconds
 
 # Path to the PlatformIO project (relative to this script)
-SCRIPT_DIR    = os.path.dirname(os.path.abspath(__file__))
-PROJECT_DIR   = os.path.join(SCRIPT_DIR, "OTA_Test_Firmware")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.join(SCRIPT_DIR, "OTA_Test_Firmware")
 PIO_BUILD_DIR = os.path.join(PROJECT_DIR, ".pio", "build", "adafruit_feather_esp32s3")
-FIRMWARE_BIN  = os.path.join(PIO_BUILD_DIR, "firmware.bin")
+FIRMWARE_BIN = os.path.join(PIO_BUILD_DIR, "firmware.bin")
 
 
 def print_banner():
@@ -58,7 +58,16 @@ def find_pio_command() -> str:
         user_profile = os.environ.get("USERPROFILE", "")
         paths_to_check = [
             os.path.join(user_profile, ".platformio", "penv", "Scripts", "pio.exe"),
-            os.path.join(user_profile, "AppData", "Local", "Programs", "Python", "Python313", "Scripts", "pio.exe"), # common alternative
+            os.path.join(
+                user_profile,
+                "AppData",
+                "Local",
+                "Programs",
+                "Python",
+                "Python313",
+                "Scripts",
+                "pio.exe",
+            ),  # common alternative
             "C:\\Python313\\Scripts\\pio.exe",
         ]
         for path in paths_to_check:
@@ -71,7 +80,7 @@ def find_pio_command() -> str:
 
 def compile_firmware(message: str) -> str:
     """Compile the firmware with the given OTA_MESSAGE baked in.
-    
+
     Returns the path to the compiled .bin file.
     """
     print(f"[COMPILE] Message to bake into firmware:")
@@ -82,7 +91,7 @@ def compile_firmware(message: str) -> str:
     # This appends to whatever is in platformio.ini's build_flags.
     env = os.environ.copy()
     escaped_msg = message.replace('"', '\\"')
-    extra_flags = f'-DOTA_MESSAGE=\'"{escaped_msg}"\''
+    extra_flags = f"-DOTA_MESSAGE='\"{escaped_msg}\"'"
     env["PLATFORMIO_BUILD_FLAGS"] = extra_flags
 
     pio_cmd = find_pio_command()
@@ -92,11 +101,7 @@ def compile_firmware(message: str) -> str:
 
     try:
         result = subprocess.run(
-            [pio_cmd, "run"],
-            cwd=PROJECT_DIR,
-            env=env,
-            capture_output=True,
-            text=True
+            [pio_cmd, "run"], cwd=PROJECT_DIR, env=env, capture_output=True, text=True
         )
     except FileNotFoundError:
         print("[COMPILE] ERROR: 'pio' command not found.")
@@ -189,9 +194,11 @@ def upload_firmware(bin_path: str, ip: str, port: int):
                     last_percent = percent
                     elapsed = time.time() - start_time
                     rate = sent / elapsed / 1024 if elapsed > 0 else 0
-                    print(f"[UPLOAD] Progress: {percent:3d}%  "
-                          f"({sent:,} / {file_size:,} bytes)  "
-                          f"[{rate:.1f} KB/s]")
+                    print(
+                        f"[UPLOAD] Progress: {percent:3d}%  "
+                        f"({sent:,} / {file_size:,} bytes)  "
+                        f"[{rate:.1f} KB/s]"
+                    )
 
         elapsed = time.time() - start_time
         print()
@@ -204,7 +211,9 @@ def upload_firmware(bin_path: str, ip: str, port: int):
             if "OK" in response:
                 print(f"[UPLOAD] SUCCESS: ESP32 received firmware and is rebooting.")
             else:
-                print(f"[UPLOAD] WARNING: Connection closed without 'OK' response. Response was: '{response}'")
+                print(
+                    f"[UPLOAD] WARNING: Connection closed without 'OK' response. Response was: '{response}'"
+                )
         except socket.timeout:
             print(f"[UPLOAD] WARNING: Timed out waiting for 'OK' confirmation.")
 
@@ -225,25 +234,25 @@ def main():
         description="Compile and OTA-upload firmware to ESP32-S3 over Ethernet"
     )
     parser.add_argument(
-        "--message", "-m",
+        "--message",
+        "-m",
         default=None,
-        help='Message to bake into firmware (default: timestamped string)'
+        help="Message to bake into firmware (default: timestamped string)",
     )
     parser.add_argument(
-        "--ip",
-        default=DEFAULT_IP,
-        help=f'ESP32 IP address (default: {DEFAULT_IP})'
+        "--ip", default=DEFAULT_IP, help=f"ESP32 IP address (default: {DEFAULT_IP})"
     )
     parser.add_argument(
-        "--port", "-p",
+        "--port",
+        "-p",
         type=int,
         default=DEFAULT_PORT,
-        help=f'ESP32 OTA TCP port (default: {DEFAULT_PORT})'
+        help=f"ESP32 OTA TCP port (default: {DEFAULT_PORT})",
     )
     parser.add_argument(
         "--skip-compile",
         action="store_true",
-        help='Skip compilation, just upload the existing binary'
+        help="Skip compilation, just upload the existing binary",
     )
     args = parser.parse_args()
 

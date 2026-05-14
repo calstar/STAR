@@ -28,4 +28,4 @@ constexpr int PIN_EX1 = 20;
 constexpr int PIN_EX2 = 21;
 constexpr int PIN_EX3 = 22;
 
-} // namespace stacklight_pins
+}  // namespace stacklight_pins

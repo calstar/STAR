@@ -1,0 +1,12 @@
+# Repo-root Python tooling config for STAR.
+#
+# Black auto-discovers the nearest pyproject.toml walking up from each
+# source file. Subpackages (e.g. EngineDesign/pyproject.toml) do not
+# define [tool.black], so Black falls through to this file — keeping
+# the whole repo on one style without per-tree duplication.
+#
+# Not a Python package itself — no [build-system] / [project] tables.
+
+[tool.black]
+line-length = 88
+target-version = ["py39", "py310", "py311", "py312"]

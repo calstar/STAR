@@ -1,12 +1,8 @@
 #!/bin/bash
 # Flash script for DAQ Sensor System
 # Handles flashing of all executables and dependencies
-# Integrates with external/flash cross-platform installer system
 
 set -e
-
-# Check if external flash is available
-FLASH_INSTALLER_DIR="${FLASH_INSTALLER_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../external/flash" && pwd 2>/dev/null || echo "")}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -265,33 +261,8 @@ log_warn() {
     echo -e "${YELLOW}[WARNING] $1${NC}"
 }
 
-# Check for external flash installer
-check_external_flash() {
-    if [ -n "$FLASH_INSTALLER_DIR" ] && [ -d "$FLASH_INSTALLER_DIR" ]; then
-        log_info "External flash installer found at: $FLASH_INSTALLER_DIR"
-        if [ -f "$FLASH_INSTALLER_DIR/install.sh" ]; then
-            log_info "External flash installer available - use it for system setup"
-        fi
-    else
-        log_warn "External flash installer not found - system dependencies may need manual installation"
-    fi
-}
-
-# Check for external flash installer
-check_external_flash() {
-    if [ -n "$FLASH_INSTALLER_DIR" ] && [ -d "$FLASH_INSTALLER_DIR" ]; then
-        echo -e "${BLUE}External flash installer found at: $FLASH_INSTALLER_DIR${NC}"
-        if [ -f "$FLASH_INSTALLER_DIR/install.sh" ]; then
-            echo -e "${BLUE}External flash installer available - use it for system setup${NC}"
-        fi
-    else
-        echo -e "${YELLOW}WARNING: External flash installer not found - system dependencies may need manual installation${NC}"
-    fi
-}
-
 # Main execution
 check_build
-check_external_flash
 
 if [ "$FLASH_ALL" = true ]; then
     FLASH_EXECUTABLES=true

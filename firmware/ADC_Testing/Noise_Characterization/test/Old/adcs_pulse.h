@@ -20,9 +20,9 @@
 //   struct ReadResult {
 //     int32_t  raw;       // signed ADC code
 //     uint32_t sample_time; //Sample read abs time
-//     uint32_t read_time_dur;   // SPI read time in us. Total time of adc::read()
-//     uint32_t conv_time_dur;   // Conversion time. Time from startADC to DRDY
-//     bool     ok;        // true if DRDY arrived
+//     uint32_t read_time_dur;   // SPI read time in us. Total time of
+//     adc::read() uint32_t conv_time_dur;   // Conversion time. Time from
+//     startADC to DRDY bool     ok;        // true if DRDY arrived
 //   };
 
 //   struct ChannelRead {
@@ -36,15 +36,13 @@
 //     ChannelRead samples[MAX_CHANNELS];  // outputs of read(chs[i])
 //     size_t      count;                  // how many entries are valid
 //     uint32_t    total_time;             // total sweep time (us)
-//     uint32_t    failures;               // number of channels where ok == false
+//     uint32_t    failures;               // number of channels where ok ==
+//     false
 //   };
-
-
 
 // // Call once at startup. Sets up SPI, pins, resets the ADC, waits for DRDY.
 // // Returns true if the ADC responds. Initializes the ADS1263.
 // bool init();
-    
 
 // bool configure(uint8_t negativeReference = REF_SKIP,
 //                uint8_t positiveReference = REF_SKIP,
@@ -54,24 +52,19 @@
 //                uint8_t sincFilter        = FILT_SKIP,
 //                uint8_t rate              = ADS126X_RATE_38400);
 
-
-
 // ADS126X& device(void);
 
-// void setChannel(uint8_t channel); // Checks if MUX has changed, if so -> sets new MUX. This uses moloriouses adcread1 rn... 
-//                                   // but it should not take up extra time, as no conversion has happened yet
+// void setChannel(uint8_t channel); // Checks if MUX has changed, if so -> sets
+// new MUX. This uses moloriouses adcread1 rn...
+//                                   // but it should not take up extra time, as
+//                                   no conversion has happened yet
 
 // // Read one channel once, blocking until DRDY.
 // // Returns signed 32-bit raw ADC code and 32-bit unsigned read time
 // ReadResult read(uint8_t channel);
 
-
-
 // AllResults readAll(const uint8_t* channels, size_t num_channels);
-
-
 
 // } // namespace adcs
 
 // #endif // ADCS_H_
-

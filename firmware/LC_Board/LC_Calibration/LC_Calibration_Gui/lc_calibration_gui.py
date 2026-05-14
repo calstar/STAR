@@ -29,16 +29,20 @@ if sys.platform == "darwin":
     os.environ.setdefault("QT_MAC_WANTS_LAYER", "1")
     try:
         from PyQt5 import QtCore, QtGui, QtWidgets
+
         _QT_HORIZ = QtCore.Qt.Horizontal
     except ImportError:
         from PyQt6 import QtCore, QtGui, QtWidgets
+
         _QT_HORIZ = QtCore.Qt.Orientation.Horizontal
 else:
     try:
         from PyQt6 import QtCore, QtGui, QtWidgets
+
         _QT_HORIZ = QtCore.Qt.Orientation.Horizontal
     except ImportError:
         from PyQt5 import QtCore, QtGui, QtWidgets
+
         _QT_HORIZ = QtCore.Qt.Horizontal
 
 import pyqtgraph as pg
@@ -71,16 +75,16 @@ SENSOR_TO_CONNECTOR = [1, 2, 3, 6, 7]
 
 # Colors for the 10 LC connectors
 LC_COLORS = [
-    (255, 80, 80),    # Red - LC 1
-    (80, 255, 80),    # Green - LC 2
-    (80, 150, 255),   # Blue - LC 3
-    (255, 200, 80),   # Orange - LC 4
-    (200, 80, 255),   # Purple - LC 5
-    (80, 255, 255),   # Cyan - LC 6
+    (255, 80, 80),  # Red - LC 1
+    (80, 255, 80),  # Green - LC 2
+    (80, 150, 255),  # Blue - LC 3
+    (255, 200, 80),  # Orange - LC 4
+    (200, 80, 255),  # Purple - LC 5
+    (80, 255, 255),  # Cyan - LC 6
     (255, 150, 150),  # Light Red - LC 7
     (150, 255, 150),  # Light Green - LC 8
     (150, 200, 255),  # Light Blue - LC 9
-    (255, 255, 80),   # Yellow - LC 10
+    (255, 255, 80),  # Yellow - LC 10
 ]
 
 
@@ -110,19 +114,29 @@ def parse_sensor_data_packet(data: bytes) -> Optional[Tuple[dict, List[dict]]]:
         return None
     offset += SENSOR_DATA_PACKET_SIZE
     per_chunk = SENSOR_DATA_CHUNK_SIZE + num_sensors * SENSOR_DATAPOINT_SIZE
-    if len(data) < PACKET_HEADER_SIZE + SENSOR_DATA_PACKET_SIZE + num_chunks * per_chunk:
+    if (
+        len(data)
+        < PACKET_HEADER_SIZE + SENSOR_DATA_PACKET_SIZE + num_chunks * per_chunk
+    ):
         return None
     chunks = []
     for _ in range(num_chunks):
-        chunk_ts, = struct.unpack(SENSOR_DATA_CHUNK_FORMAT, data[offset : offset + SENSOR_DATA_CHUNK_SIZE])
+        (chunk_ts,) = struct.unpack(
+            SENSOR_DATA_CHUNK_FORMAT, data[offset : offset + SENSOR_DATA_CHUNK_SIZE]
+        )
         offset += SENSOR_DATA_CHUNK_SIZE
         datapoints = []
         for _ in range(num_sensors):
-            sid, val = struct.unpack(SENSOR_DATAPOINT_FORMAT, data[offset : offset + SENSOR_DATAPOINT_SIZE])
+            sid, val = struct.unpack(
+                SENSOR_DATAPOINT_FORMAT, data[offset : offset + SENSOR_DATAPOINT_SIZE]
+            )
             datapoints.append({"sensor_id": sid, "data": val})
             offset += SENSOR_DATAPOINT_SIZE
         chunks.append({"timestamp": chunk_ts, "datapoints": datapoints})
-    return ({"packet_type": packet_type, "version": version, "timestamp": timestamp}, chunks)
+    return (
+        {"packet_type": packet_type, "version": version, "timestamp": timestamp},
+        chunks,
+    )
 
 
 class UDPReceiver(QtCore.QThread):
@@ -149,11 +163,21 @@ class UDPReceiver(QtCore.QThread):
 
     def get_stats(self) -> Dict:
         if self.start_time is None:
-            return {"packets": 0, "bytes": 0, "packets_per_sec": 0.0, "bytes_per_sec": 0.0}
+            return {
+                "packets": 0,
+                "bytes": 0,
+                "packets_per_sec": 0.0,
+                "bytes_per_sec": 0.0,
+            }
         elapsed = time.time() - self.start_time
         pps = self.total_packets / elapsed if elapsed > 0 else 0.0
         bps = self.total_bytes / elapsed if elapsed > 0 else 0.0
-        return {"packets": self.total_packets, "bytes": self.total_bytes, "packets_per_sec": pps, "bytes_per_sec": bps}
+        return {
+            "packets": self.total_packets,
+            "bytes": self.total_bytes,
+            "packets_per_sec": pps,
+            "bytes_per_sec": bps,
+        }
 
     def run(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -199,7 +223,7 @@ class SettingsWindow(QtWidgets.QDialog):
         self.resize(360, 200)
 
         layout = QtWidgets.QVBoxLayout(self)
-        
+
         # Window seconds
         layout.addWidget(QtWidgets.QLabel("Viewing window (seconds)"))
         row = QtWidgets.QHBoxLayout()
@@ -246,7 +270,7 @@ class LCPlotWindow(QtWidgets.QMainWindow):
         self.status_label.setStyleSheet("font-weight: bold; padding: 5px;")
         top.addWidget(self.status_label)
         top.addStretch()
-        
+
         btn_settings = QtWidgets.QPushButton("Settings")
         btn_settings.clicked.connect(self._open_settings)
         top.addWidget(btn_settings)
@@ -273,7 +297,7 @@ class LCPlotWindow(QtWidgets.QMainWindow):
         self.plot.showGrid(x=True, y=True, alpha=0.3)
         self.plot.setTitle("LC Calibration - All Connectors")
         self.plot.setClipToView(True)
-        self.plot.setDownsampling(mode='peak')
+        self.plot.setDownsampling(mode="peak")
         self.plot.setMouseEnabled(x=True, y=True)
         self.legend = self.plot.addLegend(labelTextSize="10pt")
         main.addWidget(self.plot, 1)
@@ -301,13 +325,13 @@ class LCPlotWindow(QtWidgets.QMainWindow):
         # Statistics box
         box = QtWidgets.QGroupBox("Statistics")
         form = QtWidgets.QVBoxLayout(box)
-        
+
         self.lbl_sps = QtWidgets.QLabel("Packets/sec: n/a")
         form.addWidget(self.lbl_sps)
-        
+
         form.addWidget(self._hline())
         form.addWidget(QtWidgets.QLabel("Current voltage:"))
-        
+
         self.per_lc = {}
         for conn in SENSOR_TO_CONNECTOR:  # Only show connectors we're reading
             lbl = QtWidgets.QLabel(f"LC {conn}: n/a")
@@ -328,7 +352,7 @@ class LCPlotWindow(QtWidgets.QMainWindow):
         self.t0 = None  # First timestamp (wall clock time)
         self.t = {conn: deque(maxlen=MAX_POINTS) for conn in SENSOR_TO_CONNECTOR}
         self.v = {conn: deque(maxlen=MAX_POINTS) for conn in SENSOR_TO_CONNECTOR}
-        
+
         # For SPS calculation
         self.last_sps_time = None
         self.last_sps_count = 0
@@ -382,9 +406,9 @@ class LCPlotWindow(QtWidgets.QMainWindow):
         has_data = any(len(self.t.get(conn, [])) > 0 for conn in SENSOR_TO_CONNECTOR)
         if not has_data and not self._plot_needs_update:
             return
-        
+
         self._plot_needs_update = False
-        
+
         # Update curves
         for conn in SENSOR_TO_CONNECTOR:
             cb = self.chk.get(conn)
@@ -403,7 +427,7 @@ class LCPlotWindow(QtWidgets.QMainWindow):
         for conn in SENSOR_TO_CONNECTOR:
             if self.chk[conn].isChecked() and self.t.get(conn):
                 latest = max(latest, self.t[conn][-1] if self.t[conn] else 0.0)
-        
+
         if has_data and latest > 0:
             xmin = max(0.0, latest - self.window_seconds)
             self.plot.setXRange(xmin, max(xmin + 1e-3, latest), padding=0)
@@ -423,7 +447,9 @@ class LCPlotWindow(QtWidgets.QMainWindow):
                         self.plot.setYRange(vmin - pad, vmax + pad, padding=0)
                     else:
                         rng = vmax - vmin
-                        self.plot.setYRange(vmin - 0.1 * rng, vmax + 0.1 * rng, padding=0)
+                        self.plot.setYRange(
+                            vmin - 0.1 * rng, vmax + 0.1 * rng, padding=0
+                        )
 
         # Current voltage display
         if has_data:
@@ -442,7 +468,9 @@ class LCPlotWindow(QtWidgets.QMainWindow):
         if self.receiver is None:
             return
         s = self.receiver.get_stats()
-        self.lbl_sps.setText(f"Packets/sec: {s['packets_per_sec']:.2f} | Total: {s['packets']}")
+        self.lbl_sps.setText(
+            f"Packets/sec: {s['packets_per_sec']:.2f} | Total: {s['packets']}"
+        )
 
     def _open_settings(self):
         dlg = SettingsWindow(self)
@@ -457,69 +485,66 @@ class LCPlotWindow(QtWidgets.QMainWindow):
         """Export current data to CSV file"""
         total_points = sum(len(self.t[conn]) for conn in SENSOR_TO_CONNECTOR)
         if total_points == 0:
-            QtWidgets.QMessageBox.warning(self, "No Data", "No data available to export.")
+            QtWidgets.QMessageBox.warning(
+                self, "No Data", "No data available to export."
+            )
             return
-        
+
         if self.test_start_time:
             timestamp = self.test_start_time.strftime("%Y%m%d_%H%M%S")
         else:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         default_filename = f"lc_calibration_{timestamp}.csv"
-        
+
         filename, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self,
-            "Save CSV File",
-            default_filename,
-            "CSV Files (*.csv);;All Files (*)"
+            self, "Save CSV File", default_filename, "CSV Files (*.csv);;All Files (*)"
         )
-        
+
         if not filename:
             return
-        
+
         try:
-            with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+            with open(filename, "w", newline="", encoding="utf-8") as csvfile:
                 writer = csv.writer(csvfile)
-                
+
                 # Write header
                 header = ["Time (s)"]
                 for conn in SENSOR_TO_CONNECTOR:
                     header.append(f"LC {conn} (V)")
                 writer.writerow(header)
-                
+
                 # Find max points across all connectors
                 max_points = max(len(self.t[conn]) for conn in SENSOR_TO_CONNECTOR)
-                
+
                 # Write data
                 for i in range(max_points):
                     row = []
-                    
+
                     # Use first connector's time as reference
                     if i < len(self.t[SENSOR_TO_CONNECTOR[0]]):
                         row.append(f"{self.t[SENSOR_TO_CONNECTOR[0]][i]:.6f}")
                     else:
                         row.append("")
-                    
+
                     # Add voltage for each connector
                     for conn in SENSOR_TO_CONNECTOR:
                         if i < len(self.v[conn]):
                             row.append(f"{self.v[conn][i]:.6f}")
                         else:
                             row.append("")
-                    
+
                     writer.writerow(row)
-            
+
             points_per_connector = [len(self.t[conn]) for conn in SENSOR_TO_CONNECTOR]
             QtWidgets.QMessageBox.information(
                 self,
                 "Export Successful",
                 f"Data exported successfully to:\n{filename}\n\n"
-                f"Points per connector: {points_per_connector}"
+                f"Points per connector: {points_per_connector}",
             )
         except Exception as e:
             QtWidgets.QMessageBox.critical(
-                self,
-                "Export Failed",
-                f"Failed to export data:\n{str(e)}"
+                self, "Export Failed", f"Failed to export data:\n{str(e)}"
             )
 
     def closeEvent(self, event: QtGui.QCloseEvent):
@@ -532,17 +557,26 @@ class LCPlotWindow(QtWidgets.QMainWindow):
 # ---------------------- Entry point ----------------------
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="LC Calibration GUI – live LC plots from DAQv2-Comms UDP")
-    parser.add_argument("-p", "--port", type=int, default=DEFAULT_PORT, help=f"UDP port (default {DEFAULT_PORT})")
+
+    parser = argparse.ArgumentParser(
+        description="LC Calibration GUI – live LC plots from DAQv2-Comms UDP"
+    )
+    parser.add_argument(
+        "-p",
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=f"UDP port (default {DEFAULT_PORT})",
+    )
     parser.add_argument("-a", "--address", default="0.0.0.0", help="Bind address")
     args = parser.parse_args()
-    
+
     app = QtWidgets.QApplication(sys.argv)
     pg.setConfigOptions(antialias=False)
     w = LCPlotWindow(port=args.port, bind_address=args.address)
     w.show()
     try:
-        sys.exit(app.exec() if hasattr(app, 'exec') else app.exec_())
+        sys.exit(app.exec() if hasattr(app, "exec") else app.exec_())
     except KeyboardInterrupt:
         sys.exit(0)
 

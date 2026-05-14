@@ -24,23 +24,37 @@ extern bool g_mock_adc_checksum;
 
 class ADS126X {
 public:
-    void bypassPGA() {}
-    void setInputMux(uint8_t pos, uint8_t neg) {}
-    void setOutputTDACP(uint8_t on) {}
-    void setOutputTDACN(uint8_t on) {}
-    void setOutputmagnitudeTDACP(uint8_t mag) {}
-    void setOutputmagnitudeTDACN(uint8_t mag) {}
-    void setReference(uint8_t neg, uint8_t pos) {}
-    
+    void bypassPGA() {
+    }
+    void setInputMux(uint8_t pos, uint8_t neg) {
+    }
+    void setOutputTDACP(uint8_t on) {
+    }
+    void setOutputTDACN(uint8_t on) {
+    }
+    void setOutputmagnitudeTDACP(uint8_t mag) {
+    }
+    void setOutputmagnitudeTDACN(uint8_t mag) {
+    }
+    void setReference(uint8_t neg, uint8_t pos) {
+    }
+
     ads126x_reading readADC1() {
         return {g_mock_adc_value, g_mock_adc_checksum};
     }
-    
-    void setIDAC1Mag(uint8_t mag) {}
-    void setIDAC2Mag(uint8_t mag) {}
-    void setBiasADC(uint8_t adc) {}
-    void setBiasPolarity(uint8_t pol) {}
-    void setBiasMagnitude(uint8_t mag) {}
-    void stopADC1() {}
-    void startADC1() {}
+
+    void setIDAC1Mag(uint8_t mag) {
+    }
+    void setIDAC2Mag(uint8_t mag) {
+    }
+    void setBiasADC(uint8_t adc) {
+    }
+    void setBiasPolarity(uint8_t pol) {
+    }
+    void setBiasMagnitude(uint8_t mag) {
+    }
+    void stopADC1() {
+    }
+    void startADC1() {
+    }
 };
