@@ -29,6 +29,7 @@
 #
 #   1. Checks you're on macOS (with Homebrew) or Linux
 #   2. Installs Homebrew packages: cmake, openssl@3, eigen, tmux, node@20
+#      Installs black (pinned 25.11.0) via pip --user — see comments inline.
 #   3. Installs Rust (if missing) and elodin-db (the time-series telemetry DB)
 #   4. Creates a Python venv at daq-server/.venv and installs requirements
 #   5. Installs npm packages for diablo_server/{backend,frontend}
@@ -90,6 +91,27 @@ if [ "$OS" = "Darwin" ]; then
 else
   warn "Linux: install equivalents manually with apt/dnf:"
   warn "  cmake, libssl-dev, libeigen3-dev, tmux, nodejs (20+), npm"
+fi
+
+# Install black via pip --user (NOT brew). Reasons:
+#   (1) format.sh and the pre-push hook run outside the venv, so they need
+#       black on $PATH — the venv install alone isn't enough.
+#   (2) brew's black formula tracks latest, which can be black 26+. That
+#       requires Python ≥3.10. macOS's system Python is 3.9, so brew's
+#       black might be unusable.
+#   (3) Pinning the exact version (25.11.0) keeps laptops and CI in sync —
+#       same pin as daq-server/requirements.txt and the workflow.
+echo "  pip3 install --user black==25.11.0"
+pip3 install --user --quiet black==25.11.0 || pip3 install --user --quiet --break-system-packages black==25.11.0
+ok "black 25.11.0 installed (pip --user)"
+
+# Tell the user how to ensure it's on PATH if it isn't already.
+PY_VER="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+PY_USER_BIN="$HOME/Library/Python/$PY_VER/bin"
+[ "$OS" = "Linux" ] && PY_USER_BIN="$HOME/.local/bin"
+if ! command -v black >/dev/null 2>&1; then
+  warn "black installed but not on \$PATH yet. Add this to your shell rc:"
+  warn "  export PATH=\"$PY_USER_BIN:\$PATH\""
 fi
 
 # ─── 2. Rust + elodin-db ─────────────────────────────────────────────────────
@@ -198,6 +220,44 @@ make -j"$JOBS" \
 ok "All target binaries built"
 
 cd "$REPO_ROOT"
+
+# ─── 6. Local format-on-push hook (optional) ─────────────────────────────────
+step "Local format-on-push hook (optional)"
+
+cat <<'EOF'
+  We ship a pre-push hook at daq-server/githooks/pre-push that runs ./format.sh
+  before every push. If formatting changes anything, the push is blocked so you
+  can stage + commit the fixes — catching format failures locally instead of in
+  CI.
+
+  Note: this is a local convenience only. The real enforcement is GitHub
+  branch protection requiring the CI format-check job to pass before merge.
+
+  Enabling sets:     git config core.hooksPath daq-server/githooks
+  Disable later:     git config --unset core.hooksPath
+  Bypass once:       git push --no-verify
+
+EOF
+
+ENABLE_HOOK=""
+if [ -t 0 ]; then
+  read -rp "  Enable format-on-push hook? [Y/n] " ENABLE_HOOK || ENABLE_HOOK=""
+else
+  warn "Non-interactive shell — skipping (hook NOT enabled)"
+fi
+
+case "${ENABLE_HOOK:-y}" in
+  [Yy]*|"")
+    if [ ! -x daq-server/githooks/pre-push ]; then
+      chmod +x daq-server/githooks/pre-push 2>/dev/null || true
+    fi
+    git config core.hooksPath daq-server/githooks
+    ok "Enabled — core.hooksPath = daq-server/githooks"
+    ;;
+  *)
+    warn "Skipped — enable later with: git config core.hooksPath daq-server/githooks"
+    ;;
+esac
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
 step "Setup complete"

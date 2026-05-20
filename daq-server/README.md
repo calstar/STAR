@@ -163,8 +163,8 @@ All runtime config lives in `config/config.toml`. Key sections:
 - `[calibration]` — Calibration service parameters
 
 State machine transitions and actuator positions per state are defined in:
-- `external/DiabloAvionics/test_guis/state_transitions.csv`
-- `external/DiabloAvionics/test_guis/state_machine_actuators.csv`
+- `firmware/test_guis/state_transitions.csv`
+- `firmware/test_guis/state_machine_actuators.csv`
 
 ---
 
@@ -203,16 +203,24 @@ For production systemd services, see `deploy/systemd/`. The working directory fo
 
 ---
 
-## Submodules
+## External dependencies
+
+Most code that used to live in external repos is now vendored in-tree:
+
+| Path | Purpose |
+|------|---------|
+| `lib/DAQv2-Comms/` | ESP32 Ethernet packet format (CMake: `daqv2_comms`) |
+| `firmware/` (PT_Board, RTD_Board, LC_Board, test_guis, …) | Board firmware + state machine CSV definitions (formerly `DiabloAvionics`) |
+| `EngineDesign/` | Engine simulator (formerly `engine_sim` submodule; `daq-server/engine_sim` is a symlink to it) |
+
+The one remaining real submodule:
 
 | Submodule | Purpose |
 |-----------|---------|
-| `external/DAQv2-Comms` | ESP32 Ethernet packet format (CMake: `daqv2_comms`) |
-| `external/DiabloAvionics` | Board firmware + state machine CSV definitions |
-| `external/uWebSockets` | C++ WebSocket library used by OTA service |
+| `daq-server/external/uWebSockets` | C++ WebSocket library used by OTA service |
 
-Update all submodules:
+Initialize / update:
 
 ```bash
-git submodule update --remote --recursive
+git submodule update --init --recursive
 ```

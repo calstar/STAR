@@ -21,7 +21,7 @@ public:
      * @param startTime: The timespec struct with the start time of the timer
      * @return: The elapsed time in seconds as a double
      */
-    static inline double toc(const struct timespec &startTime) {
+    static inline double toc(const struct timespec& startTime) {
         struct timespec endTime;
         clock_gettime(CLOCK_MONOTONIC, &endTime);
         return (static_cast<double>(endTime.tv_sec) - static_cast<double>(startTime.tv_sec)) +
@@ -34,7 +34,7 @@ public:
      * @param time_s: (output) Sets time_s to the current time in seconds as a
      * double
      */
-    static inline void get_time(double &time_s) {
+    static inline void get_time(double& time_s) {
         struct timespec curTime;
         clock_gettime(CLOCK_MONOTONIC, &curTime);
         time_s = curTime.tv_sec + curTime.tv_nsec / 1e9;
@@ -55,7 +55,7 @@ public:
      * @param time_ns: (output) Sets time_ns to the current time in nanoseconds
      * as an int64_t
      */
-    static inline void get_time(uint64_t &time_ns) {
+    static inline void get_time(uint64_t& time_ns) {
         struct timespec curTime;
         clock_gettime(CLOCK_MONOTONIC, &curTime);
         time_ns = static_cast<uint64_t>(curTime.tv_sec) * static_cast<int64_t>(1000000000) +
@@ -79,7 +79,7 @@ public:
      * @param time_nsec: (output) Sets time_nsec to the nanoseconds part of the
      * current time
      */
-    static inline void get_time(int32_t &time_sec, int32_t &time_nsec) {
+    static inline void get_time(int32_t& time_sec, int32_t& time_nsec) {
         struct timespec curTime;
         clock_gettime(CLOCK_MONOTONIC, &curTime);
         time_sec = static_cast<int32_t>(curTime.tv_sec);

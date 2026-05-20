@@ -36,16 +36,29 @@ struct Layout {
 
 constexpr Layout PT_Board{
     // ETH_MOSI, ETH_MISO, ETH_SCLK, ETH_CS, ETH_INT, ETH_RST
-    40, 41, 39, 38, 37, 21,
+    40,
+    41,
+    39,
+    38,
+    37,
+    21,
 
     // ADC_MOSI, ADC_MISO, ADC_SCLK
-    13, 21, 12,
+    13,
+    21,
+    12,
 
     // ADC_CS_1, ADC_RESET_1, ADC_START_1, ADC_DRDY_1
-    11, 9, 10, 14,
+    11,
+    9,
+    10,
+    14,
 
     // ADC_CS_2, ADC_RESET_2, ADC_START_2, ADC_DRDY_2
-    -1, -1, -1, -1,
+    -1,
+    -1,
+    -1,
+    -1,
 
     // LED
     16,
@@ -53,16 +66,29 @@ constexpr Layout PT_Board{
 
 constexpr Layout LC_Board{
     // ETH_MOSI, ETH_MISO, ETH_SCLK, ETH_CS, ETH_INT, ETH_RST
-    40, 41, 39, 38, 37, 21,
+    40,
+    41,
+    39,
+    38,
+    37,
+    21,
 
     // ADC_MOSI, ADC_MISO, ADC_SCLK
-    11, 10, 12,
+    11,
+    10,
+    12,
 
     // ADC_CS_1, ADC_RESET_1, ADC_START_1, ADC_DRDY_1
-    13, 8, 14, 9,
+    13,
+    8,
+    14,
+    9,
 
     // ADC_CS_2, ADC_RESET_2, ADC_START_2, ADC_DRDY_2
-    47, 18, 48, 21,
+    47,
+    18,
+    48,
+    21,
 
     // LED
     16,
@@ -70,16 +96,29 @@ constexpr Layout LC_Board{
 
 constexpr Layout RTD_Board{
     // ETH_MOSI, ETH_MISO, ETH_SCLK, ETH_CS, ETH_INT, ETH_RST
-    40, 41, 39, 38, 37, 21,
+    40,
+    41,
+    39,
+    38,
+    37,
+    21,
 
     // ADC_MOSI, ADC_MISO, ADC_SCLK
-    11, 10, 12,
+    11,
+    10,
+    12,
 
     // ADC_CS_1, ADC_RESET_1, ADC_START_1, ADC_DRDY_1
-    13, 8, 14, 9,
+    13,
+    8,
+    14,
+    9,
 
     // ADC_CS_2, ADC_RESET_2, ADC_START_2, ADC_DRDY_2
-    47, 18, 48, 21,
+    47,
+    18,
+    48,
+    21,
 
     // LED
     15,
@@ -87,16 +126,29 @@ constexpr Layout RTD_Board{
 
 constexpr Layout TC_Board{
     // ETH_MOSI, ETH_MISO, ETH_SCLK, ETH_CS, ETH_INT, ETH_RST
-    40, 41, 39, 38, 37, 21,
+    40,
+    41,
+    39,
+    38,
+    37,
+    21,
 
     // ADC_MOSI, ADC_MISO, ADC_SCLK
-    11, 10, 12,
+    11,
+    10,
+    12,
 
     // ADC_CS_1, ADC_RESET_1, ADC_START_1, ADC_DRDY_1
-    13, -1, 14, 9,
+    13,
+    -1,
+    14,
+    9,
 
     // ADC_CS_2, ADC_RESET_2, ADC_START_2, ADC_DRDY_2
-    -1, -1, -1, -1,
+    -1,
+    -1,
+    -1,
+    -1,
 
     // LED
     16,
@@ -108,4 +160,4 @@ constexpr Layout TC_Board{
 
 constexpr const Layout& Pins = PINS_ACTIVE_LAYOUT;
 
-} // namespace sense_board_pins
+}  // namespace sense_board_pins

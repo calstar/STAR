@@ -30,16 +30,20 @@ if sys.platform == "darwin":
     os.environ.setdefault("QT_MAC_WANTS_LAYER", "1")
     try:
         from PyQt5 import QtCore, QtGui, QtWidgets
+
         _QT_HORIZ = QtCore.Qt.Horizontal
     except ImportError:
         from PyQt6 import QtCore, QtGui, QtWidgets
+
         _QT_HORIZ = QtCore.Qt.Orientation.Horizontal
 else:
     try:
         from PyQt6 import QtCore, QtGui, QtWidgets
+
         _QT_HORIZ = QtCore.Qt.Orientation.Horizontal
     except ImportError:
         from PyQt5 import QtCore, QtGui, QtWidgets
+
         _QT_HORIZ = QtCore.Qt.Horizontal
 
 import pyqtgraph as pg
@@ -60,40 +64,79 @@ SENSOR_DATA_CHUNK_SIZE = 4
 SENSOR_DATAPOINT_FORMAT = "<Bf"  # sensor_id uint8, data float (sent as uint32 bits)
 SENSOR_DATAPOINT_SIZE = 5
 
-DEFAULT_PORT = 5007   # PT board; Actuator_Testing uses 5006 so both can run together
+DEFAULT_PORT = 5007  # PT board; Actuator_Testing uses 5006 so both can run together
 DEFAULT_WINDOW_SECONDS = 30.0
 MAX_POINTS = 8000
 UPDATE_INTERVAL_MS = 50
 NUM_PTS = 10
 
 PT_COLORS = [
-    (255, 80, 80), (80, 255, 80), (80, 150, 255), (255, 200, 80),
-    (200, 80, 255), (80, 255, 255), (255, 150, 150), (150, 255, 150),
-    (150, 200, 255), (255, 255, 80),
+    (255, 80, 80),
+    (80, 255, 80),
+    (80, 150, 255),
+    (255, 200, 80),
+    (200, 80, 255),
+    (80, 255, 255),
+    (255, 150, 150),
+    (150, 255, 150),
+    (150, 200, 255),
+    (255, 255, 80),
 ]
 
 # Per-PT pressure calibration: pressure = A*V^3 + B*V^2 + C*V + D
 # (A, B, C, D) for each PT 1..10. PT 6–10 use PT 1 cal until you add values.
 PT_CALIBRATION = [
-    (-1.14351422603069e-09, 6.07260454422966e-06, 0.0926898002815586, -45.4811452217083),   # PT 1
-    (-8.46148513e-09, 3.85591637e-05, 1.50430101e-01, -8.31516318e+01),                     # PT 2
-    (-1.12886040e-08, 5.37687043e-05, 1.24582809e-01, -7.92816379e+01),                     # PT 3
-    (-2.92357884e-09, 1.60928197e-05, 1.73172679e-01, -8.41620248e+01),                     # PT 4
-    (-2.07890243e-09, 7.98159784e-06, 1.92631458e-01, -7.84202084e+01),                     # PT 5
-    (-1.14351422603069e-09, 6.07260454422966e-06, 0.0926898002815586, -45.4811452217083),   # PT 6 (placeholder)
-    (-1.14351422603069e-09, 6.07260454422966e-06, 0.0926898002815586, -45.4811452217083),   # PT 7 (placeholder)
-    (-1.14351422603069e-09, 6.07260454422966e-06, 0.0926898002815586, -45.4811452217083),   # PT 8 (placeholder)
-    (-1.14351422603069e-09, 6.07260454422966e-06, 0.0926898002815586, -45.4811452217083),   # PT 9 (placeholder)
-    (-1.14351422603069e-09, 6.07260454422966e-06, 0.0926898002815586, -45.4811452217083),   # PT 10 (placeholder)
+    (
+        -1.14351422603069e-09,
+        6.07260454422966e-06,
+        0.0926898002815586,
+        -45.4811452217083,
+    ),  # PT 1
+    (-8.46148513e-09, 3.85591637e-05, 1.50430101e-01, -8.31516318e01),  # PT 2
+    (-1.12886040e-08, 5.37687043e-05, 1.24582809e-01, -7.92816379e01),  # PT 3
+    (-2.92357884e-09, 1.60928197e-05, 1.73172679e-01, -8.41620248e01),  # PT 4
+    (-2.07890243e-09, 7.98159784e-06, 1.92631458e-01, -7.84202084e01),  # PT 5
+    (
+        -1.14351422603069e-09,
+        6.07260454422966e-06,
+        0.0926898002815586,
+        -45.4811452217083,
+    ),  # PT 6 (placeholder)
+    (
+        -1.14351422603069e-09,
+        6.07260454422966e-06,
+        0.0926898002815586,
+        -45.4811452217083,
+    ),  # PT 7 (placeholder)
+    (
+        -1.14351422603069e-09,
+        6.07260454422966e-06,
+        0.0926898002815586,
+        -45.4811452217083,
+    ),  # PT 8 (placeholder)
+    (
+        -1.14351422603069e-09,
+        6.07260454422966e-06,
+        0.0926898002815586,
+        -45.4811452217083,
+    ),  # PT 9 (placeholder)
+    (
+        -1.14351422603069e-09,
+        6.07260454422966e-06,
+        0.0926898002815586,
+        -45.4811452217083,
+    ),  # PT 10 (placeholder)
 ]
 
 PRESSURE_UNIT = "psi"
 
 
-def calculate_pressure(raw_value: float, a: float, b: float, c: float, d: float) -> float:
+def calculate_pressure(
+    raw_value: float, a: float, b: float, c: float, d: float
+) -> float:
     """Convert raw voltage to pressure using polynomial calibration."""
     v = float(raw_value)
-    return (a * (v ** 3)) + (b * (v ** 2)) + (c * v) + d
+    return (a * (v**3)) + (b * (v**2)) + (c * v) + d
 
 
 def parse_packet_header(data: bytes) -> Optional[Tuple[int, int, int]]:
@@ -122,19 +165,29 @@ def parse_sensor_data_packet(data: bytes) -> Optional[Tuple[dict, List[dict]]]:
         return None
     offset += SENSOR_DATA_PACKET_SIZE
     per_chunk = SENSOR_DATA_CHUNK_SIZE + num_sensors * SENSOR_DATAPOINT_SIZE
-    if len(data) < PACKET_HEADER_SIZE + SENSOR_DATA_PACKET_SIZE + num_chunks * per_chunk:
+    if (
+        len(data)
+        < PACKET_HEADER_SIZE + SENSOR_DATA_PACKET_SIZE + num_chunks * per_chunk
+    ):
         return None
     chunks = []
     for _ in range(num_chunks):
-        chunk_ts, = struct.unpack(SENSOR_DATA_CHUNK_FORMAT, data[offset : offset + SENSOR_DATA_CHUNK_SIZE])
+        (chunk_ts,) = struct.unpack(
+            SENSOR_DATA_CHUNK_FORMAT, data[offset : offset + SENSOR_DATA_CHUNK_SIZE]
+        )
         offset += SENSOR_DATA_CHUNK_SIZE
         datapoints = []
         for _ in range(num_sensors):
-            sid, val = struct.unpack(SENSOR_DATAPOINT_FORMAT, data[offset : offset + SENSOR_DATAPOINT_SIZE])
+            sid, val = struct.unpack(
+                SENSOR_DATAPOINT_FORMAT, data[offset : offset + SENSOR_DATAPOINT_SIZE]
+            )
             datapoints.append({"sensor_id": sid, "data": val})
             offset += SENSOR_DATAPOINT_SIZE
         chunks.append({"timestamp": chunk_ts, "datapoints": datapoints})
-    return ({"packet_type": packet_type, "version": version, "timestamp": timestamp}, chunks)
+    return (
+        {"packet_type": packet_type, "version": version, "timestamp": timestamp},
+        chunks,
+    )
 
 
 class UDPReceiver(QtCore.QThread):
@@ -161,11 +214,21 @@ class UDPReceiver(QtCore.QThread):
 
     def get_stats(self) -> Dict:
         if self.start_time is None:
-            return {"packets": 0, "bytes": 0, "packets_per_sec": 0.0, "bytes_per_sec": 0.0}
+            return {
+                "packets": 0,
+                "bytes": 0,
+                "packets_per_sec": 0.0,
+                "bytes_per_sec": 0.0,
+            }
         elapsed = time.time() - self.start_time
         pps = self.total_packets / elapsed if elapsed > 0 else 0.0
         bps = self.total_bytes / elapsed if elapsed > 0 else 0.0
-        return {"packets": self.total_packets, "bytes": self.total_bytes, "packets_per_sec": pps, "bytes_per_sec": bps}
+        return {
+            "packets": self.total_packets,
+            "bytes": self.total_bytes,
+            "packets_per_sec": pps,
+            "bytes_per_sec": bps,
+        }
 
     def run(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -276,7 +339,9 @@ class PTPlotWindow(QtWidgets.QMainWindow):
             self.pt_toggles[i] = cb
             row.addWidget(cb)
             vl = QtWidgets.QLabel(f"-- {PRESSURE_UNIT}")
-            vl.setStyleSheet(f"color: rgb{PT_COLORS[i % len(PT_COLORS)]}; font-weight: bold; min-width: 60px;")
+            vl.setStyleSheet(
+                f"color: rgb{PT_COLORS[i % len(PT_COLORS)]}; font-weight: bold; min-width: 60px;"
+            )
             self.pt_voltage_labels[i] = vl
             row.addWidget(vl)
             pt_layout.addLayout(row)
@@ -312,7 +377,7 @@ class PTPlotWindow(QtWidgets.QMainWindow):
             plot = self.plot_item.plot([], [], pen=pen, name=self.pt_label(i))
             self.sensor_plots[i] = plot
             self.sensor_data[i] = deque(maxlen=MAX_POINTS)
-        for it in (self.legend.items or []):
+        for it in self.legend.items or []:
             if len(it) >= 2:
                 try:
                     it[1].setColor("w")
@@ -370,9 +435,15 @@ class PTPlotWindow(QtWidgets.QMainWindow):
         self.packets_label.setText(f"Packets: {s['packets']}")
         self.pps_label.setText(f"Packets/sec: {s['packets_per_sec']:.2f}")
         b = s["bytes"]
-        self.bytes_label.setText(f"Bytes: {b/1024:.2f} KB" if b >= 1024 else f"Bytes: {b} B")
+        self.bytes_label.setText(
+            f"Bytes: {b/1024:.2f} KB" if b >= 1024 else f"Bytes: {b} B"
+        )
         bp = s["bytes_per_sec"]
-        self.bps_label.setText(f"Bytes/sec: {bp/1024:.2f} KB/s" if bp >= 1024 else f"Bytes/sec: {bp:.2f} B/s")
+        self.bps_label.setText(
+            f"Bytes/sec: {bp/1024:.2f} KB/s"
+            if bp >= 1024
+            else f"Bytes/sec: {bp:.2f} B/s"
+        )
 
     def save_csv(self):
         """Save all PT timestamp and voltage data to a CSV file."""
@@ -444,14 +515,23 @@ class PTPlotWindow(QtWidgets.QMainWindow):
 
 def main():
     import argparse
-    p = argparse.ArgumentParser(description="PT Board Multi – live PT plots from DAQv2-Comms UDP")
-    p.add_argument("-p", "--port", type=int, default=DEFAULT_PORT, help=f"UDP port (default {DEFAULT_PORT})")
+
+    p = argparse.ArgumentParser(
+        description="PT Board Multi – live PT plots from DAQv2-Comms UDP"
+    )
+    p.add_argument(
+        "-p",
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=f"UDP port (default {DEFAULT_PORT})",
+    )
     p.add_argument("-a", "--address", default="0.0.0.0", help="Bind address")
     a = p.parse_args()
     app = QtWidgets.QApplication(sys.argv)
     w = PTPlotWindow(port=a.port, bind_address=a.address)
     w.show()
-    sys.exit(app.exec_() if hasattr(app, 'exec_') else app.exec())
+    sys.exit(app.exec_() if hasattr(app, "exec_") else app.exec())
 
 
 if __name__ == "__main__":

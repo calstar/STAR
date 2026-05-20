@@ -41,7 +41,7 @@ with **raw ADC** (e.g. 500M–1.1B range).
 
 daq_bridge loads calibration from:
 1. `scripts/calibration/calibrations/*.json` (JSON from calibration GUI)
-2. `external/DiabloAvionics/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv`
+2. `firmware/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv`
 
 The backend loads from `config.calibration.pt.json_path` (e.g. `scripts/calibration/calibrations/...`).
 

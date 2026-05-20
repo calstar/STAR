@@ -116,12 +116,10 @@ void FireManager::notifyController(const std::string& msg) {
     if (sock < 0)
         return;
 
-    struct timeval tv {
-        .tv_sec = 1, .tv_usec = 0
-    };
+    struct timeval tv{.tv_sec = 1, .tv_usec = 0};
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
-    struct sockaddr_in dest {};
+    struct sockaddr_in dest{};
     dest.sin_family = AF_INET;
     dest.sin_port = htons(controller_port_);
     if (inet_pton(AF_INET, controller_host_.c_str(), &dest.sin_addr) != 1) {

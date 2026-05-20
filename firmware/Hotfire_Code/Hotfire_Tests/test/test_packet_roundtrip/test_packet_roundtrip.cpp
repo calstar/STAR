@@ -5,13 +5,14 @@
  * Also tests buffer-too-small and edge cases.
  */
 #include <unity.h>
+
 #include <cstring>
 #include <vector>
 
 // DAQv2-Comms (uses our Arduino.h stub via -I stubs)
 #include "DiabloEnums.h"
-#include "DiabloPackets.h"
 #include "DiabloPacketUtils.h"
+#include "DiabloPackets.h"
 
 // Pull in the implementation
 #include "DiabloPacketUtils.cpp"
@@ -29,25 +30,29 @@ void test_board_heartbeat_roundtrip() {
 
     const uint32_t ts = 99999u;
     uint8_t buf[512];
-    size_t n = Diablo::create_board_heartbeat_packet(hb_in, ts, buf, sizeof(buf));
+    size_t n =
+        Diablo::create_board_heartbeat_packet(hb_in, ts, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     Diablo::PacketHeader hdr_out;
     Diablo::BoardHeartbeatPacket hb_out;
-    TEST_ASSERT_TRUE(Diablo::parse_board_heartbeat_packet(buf, n, hdr_out, hb_out));
+    TEST_ASSERT_TRUE(
+        Diablo::parse_board_heartbeat_packet(buf, n, hdr_out, hb_out));
 
     TEST_ASSERT_EQUAL(Diablo::PacketType::BOARD_HEARTBEAT, hdr_out.packet_type);
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(42, hb_out.board_id);
-    TEST_ASSERT_EQUAL((int)Diablo::EngineState::FIRING, (int)hb_out.engine_state);
+    TEST_ASSERT_EQUAL((int)Diablo::EngineState::FIRING,
+                      (int)hb_out.engine_state);
     TEST_ASSERT_EQUAL((int)Diablo::BoardState::ACTIVE, (int)hb_out.board_state);
     TEST_ASSERT_EQUAL_MEMORY(hb_in.firmware_hash, hb_out.firmware_hash, 32);
 }
 
 void test_board_heartbeat_buffer_too_small() {
     Diablo::BoardHeartbeatPacket hb_in{};
-    uint8_t buf[2]; // way too small
-    TEST_ASSERT_EQUAL(0, Diablo::create_board_heartbeat_packet(hb_in, 0u, buf, sizeof(buf)));
+    uint8_t buf[2];  // way too small
+    TEST_ASSERT_EQUAL(
+        0, Diablo::create_board_heartbeat_packet(hb_in, 0u, buf, sizeof(buf)));
 }
 
 void test_board_heartbeat_parse_wrong_type() {
@@ -55,13 +60,15 @@ void test_board_heartbeat_parse_wrong_type() {
     uint8_t buf[512];
     Diablo::BoardHeartbeatPacket hb_in{};
     hb_in.board_id = 1;
-    size_t n = Diablo::create_board_heartbeat_packet(hb_in, 1u, buf, sizeof(buf));
+    size_t n =
+        Diablo::create_board_heartbeat_packet(hb_in, 1u, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
     // Corrupt the packet type
     buf[0] = (uint8_t)Diablo::PacketType::SENSOR_DATA;
     Diablo::PacketHeader hdr;
     Diablo::BoardHeartbeatPacket hb_out;
-    TEST_ASSERT_FALSE(Diablo::parse_board_heartbeat_packet(buf, n, hdr, hb_out));
+    TEST_ASSERT_FALSE(
+        Diablo::parse_board_heartbeat_packet(buf, n, hdr, hb_out));
 }
 
 // ---------------------------------------------------------------------------
@@ -84,8 +91,10 @@ void test_server_heartbeat_roundtrip() {
 
     Diablo::PacketHeader hdr_out;
     Diablo::ServerHeartbeatPacket srv_out;
-    TEST_ASSERT_TRUE(Diablo::parse_server_heartbeat_packet(buf, total, hdr_out, srv_out));
-    TEST_ASSERT_EQUAL((int)Diablo::EngineState::LOX_FILL, (int)srv_out.engine_state);
+    TEST_ASSERT_TRUE(
+        Diablo::parse_server_heartbeat_packet(buf, total, hdr_out, srv_out));
+    TEST_ASSERT_EQUAL((int)Diablo::EngineState::LOX_FILL,
+                      (int)srv_out.engine_state);
     TEST_ASSERT_EQUAL(12345, hdr_out.timestamp);
 }
 
@@ -111,12 +120,14 @@ void test_sensor_data_roundtrip() {
 
     const uint32_t hdr_ts = 5555u;
     uint8_t buf[512];
-    size_t n = Diablo::create_sensor_data_packet(chunks, num_sensors, hdr_ts, buf, sizeof(buf));
+    size_t n = Diablo::create_sensor_data_packet(chunks, num_sensors, hdr_ts,
+                                                 buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     Diablo::PacketHeader hdr_out;
     std::vector<Diablo::SensorDataChunkCollection> chunks_out;
-    TEST_ASSERT_TRUE(Diablo::parse_sensor_data_packet(buf, n, hdr_out, chunks_out));
+    TEST_ASSERT_TRUE(
+        Diablo::parse_sensor_data_packet(buf, n, hdr_out, chunks_out));
 
     TEST_ASSERT_EQUAL(hdr_ts, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(2, chunks_out.size());
@@ -137,8 +148,9 @@ void test_sensor_data_buffer_too_small() {
     c1.add_datapoint(2, 200);
     chunks.push_back(c1);
 
-    uint8_t buf[4]; // too small
-    TEST_ASSERT_EQUAL(0, Diablo::create_sensor_data_packet(chunks, 2, 0u, buf, sizeof(buf)));
+    uint8_t buf[4];  // too small
+    TEST_ASSERT_EQUAL(
+        0, Diablo::create_sensor_data_packet(chunks, 2, 0u, buf, sizeof(buf)));
 }
 
 // ---------------------------------------------------------------------------
@@ -147,18 +159,20 @@ void test_sensor_data_buffer_too_small() {
 
 void test_actuator_command_roundtrip() {
     std::vector<Diablo::ActuatorCommand> cmds;
-    cmds.push_back({1, 1}); // actuator 1 ON
-    cmds.push_back({3, 0}); // actuator 3 OFF
-    cmds.push_back({7, 1}); // actuator 7 ON
+    cmds.push_back({1, 1});  // actuator 1 ON
+    cmds.push_back({3, 0});  // actuator 3 OFF
+    cmds.push_back({7, 1});  // actuator 7 ON
 
     const uint32_t ts = 7777u;
     uint8_t buf[512];
-    size_t n = Diablo::create_actuator_command_packet(cmds, ts, buf, sizeof(buf));
+    size_t n =
+        Diablo::create_actuator_command_packet(cmds, ts, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     Diablo::PacketHeader hdr_out;
     std::vector<Diablo::ActuatorCommand> cmds_out;
-    TEST_ASSERT_TRUE(Diablo::parse_actuator_command_packet(buf, n, hdr_out, cmds_out));
+    TEST_ASSERT_TRUE(
+        Diablo::parse_actuator_command_packet(buf, n, hdr_out, cmds_out));
 
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(3, cmds_out.size());
@@ -171,9 +185,10 @@ void test_actuator_command_roundtrip() {
 }
 
 void test_actuator_command_empty_list() {
-    std::vector<Diablo::ActuatorCommand> cmds; // empty
+    std::vector<Diablo::ActuatorCommand> cmds;  // empty
     uint8_t buf[512];
-    TEST_ASSERT_EQUAL(0, Diablo::create_actuator_command_packet(cmds, 0u, buf, sizeof(buf)));
+    TEST_ASSERT_EQUAL(
+        0, Diablo::create_actuator_command_packet(cmds, 0u, buf, sizeof(buf)));
 }
 
 // ---------------------------------------------------------------------------
@@ -196,7 +211,8 @@ void test_pwm_actuator_roundtrip() {
 
     Diablo::PacketHeader hdr_out;
     std::vector<Diablo::PWMActuatorCommand> cmds_out;
-    TEST_ASSERT_TRUE(Diablo::parse_pwm_actuator_packet(buf, n, hdr_out, cmds_out));
+    TEST_ASSERT_TRUE(
+        Diablo::parse_pwm_actuator_packet(buf, n, hdr_out, cmds_out));
 
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(1, cmds_out.size());
@@ -214,14 +230,14 @@ void test_sensor_config_roundtrip_with_abort() {
     std::vector<uint8_t> sensor_ids = {1, 3, 5, 7};
     uint8_t ref_voltage = 1;  // VDD
     bool necessary_for_abort = true;
-    uint32_t controller_ip = 0xC0A80232; // 192.168.2.50
+    uint32_t controller_ip = 0xC0A80232;  // 192.168.2.50
     uint8_t enable_serial = 1;
 
     const uint32_t ts = 11111u;
     uint8_t buf[512];
     size_t n = Diablo::create_sensor_config_packet(
-        sensor_ids, ref_voltage, necessary_for_abort,
-        controller_ip, enable_serial, ts, buf, sizeof(buf));
+        sensor_ids, ref_voltage, necessary_for_abort, controller_ip,
+        enable_serial, ts, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     Diablo::PacketHeader hdr_out;
@@ -247,13 +263,13 @@ void test_sensor_config_roundtrip_without_abort() {
     std::vector<uint8_t> sensor_ids = {2};
     uint8_t ref_voltage = 0;
     bool necessary_for_abort = false;
-    uint32_t controller_ip = 0; // should not be written
+    uint32_t controller_ip = 0;  // should not be written
 
     const uint32_t ts = 11112u;
     uint8_t buf[512];
     size_t n = Diablo::create_sensor_config_packet(
-        sensor_ids, ref_voltage, necessary_for_abort,
-        controller_ip, 0, ts, buf, sizeof(buf));
+        sensor_ids, ref_voltage, necessary_for_abort, controller_ip, 0, ts, buf,
+        sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     Diablo::PacketHeader hdr_out;
@@ -269,14 +285,14 @@ void test_sensor_config_roundtrip_without_abort() {
     TEST_ASSERT_EQUAL(1, ids_out.size());
     TEST_ASSERT_EQUAL(2, ids_out[0]);
     TEST_ASSERT_FALSE(abort_out);
-    TEST_ASSERT_EQUAL(0, ip_out); // parser should zero it
+    TEST_ASSERT_EQUAL(0, ip_out);  // parser should zero it
 }
 
 void test_sensor_config_empty_sensors() {
-    std::vector<uint8_t> sensor_ids; // empty
+    std::vector<uint8_t> sensor_ids;  // empty
     uint8_t buf[512];
-    size_t n = Diablo::create_sensor_config_packet(
-        sensor_ids, 0, false, 0, 1, 11113u, buf, sizeof(buf));
+    size_t n = Diablo::create_sensor_config_packet(sensor_ids, 0, false, 0, 1,
+                                                   11113u, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     Diablo::PacketHeader hdr_out;
@@ -295,14 +311,15 @@ void test_sensor_config_empty_sensors() {
 
 void test_actuator_config_roundtrip() {
     std::vector<Diablo::AbortActuatorLocation> actuators;
-    actuators.push_back({0xC0A80201, 1, 1, 0}); // IP, id, vent=on, abort=off
-    actuators.push_back({0xC0A80202, 3, 0, 1}); // different board
+    actuators.push_back({0xC0A80201, 1, 1, 0});  // IP, id, vent=on, abort=off
+    actuators.push_back({0xC0A80202, 3, 0, 1});  // different board
 
     std::vector<Diablo::AbortPTLocation> pts;
-    pts.push_back({0xC0A80203, 2, 500000}); // IP, sensor_id, threshold
+    pts.push_back({0xC0A80203, 2, 500000});  // IP, sensor_id, threshold
 
     uint8_t buf[512];
-    size_t n = Diablo::create_actuator_config_packet(1, actuators, pts, 1, 22222u, buf, sizeof(buf));
+    size_t n = Diablo::create_actuator_config_packet(1, actuators, pts, 1,
+                                                     22222u, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     Diablo::PacketHeader hdr_out;
@@ -329,10 +346,11 @@ void test_actuator_config_roundtrip() {
 void test_actuator_config_no_pts() {
     std::vector<Diablo::AbortActuatorLocation> actuators;
     actuators.push_back({0xC0A80201, 1, 1, 1});
-    std::vector<Diablo::AbortPTLocation> pts; // empty
+    std::vector<Diablo::AbortPTLocation> pts;  // empty
 
     uint8_t buf[512];
-    size_t n = Diablo::create_actuator_config_packet(0, actuators, pts, 0, 22223u, buf, sizeof(buf));
+    size_t n = Diablo::create_actuator_config_packet(0, actuators, pts, 0,
+                                                     22223u, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     Diablo::PacketHeader hdr_out;
@@ -355,19 +373,21 @@ void test_actuator_config_no_pts() {
 
 void test_self_test_roundtrip() {
     std::vector<Diablo::SelfTestResult> results;
-    results.push_back({1, 1}); // sensor 1 good
-    results.push_back({2, 0}); // sensor 2 bad
-    results.push_back({5, 1}); // sensor 5 good
+    results.push_back({1, 1});  // sensor 1 good
+    results.push_back({2, 0});  // sensor 2 bad
+    results.push_back({5, 1});  // sensor 5 good
 
     const uint32_t ts = 33333u;
     uint8_t buf[512];
-    size_t n = Diablo::create_self_test_packet(1, results, ts, buf, sizeof(buf));
+    size_t n =
+        Diablo::create_self_test_packet(1, results, ts, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     Diablo::PacketHeader hdr_out;
     uint8_t adc_good_out;
     std::vector<Diablo::SelfTestResult> results_out;
-    TEST_ASSERT_TRUE(Diablo::parse_self_test_packet(buf, n, hdr_out, adc_good_out, results_out));
+    TEST_ASSERT_TRUE(Diablo::parse_self_test_packet(buf, n, hdr_out,
+                                                    adc_good_out, results_out));
 
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(1, adc_good_out);
@@ -383,13 +403,15 @@ void test_self_test_adc_bad() {
     results.push_back({1, 0});
 
     uint8_t buf[512];
-    size_t n = Diablo::create_self_test_packet(0, results, 33334u, buf, sizeof(buf));
+    size_t n =
+        Diablo::create_self_test_packet(0, results, 33334u, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     Diablo::PacketHeader hdr_out;
     uint8_t adc_good_out;
     std::vector<Diablo::SelfTestResult> results_out;
-    TEST_ASSERT_TRUE(Diablo::parse_self_test_packet(buf, n, hdr_out, adc_good_out, results_out));
+    TEST_ASSERT_TRUE(Diablo::parse_self_test_packet(buf, n, hdr_out,
+                                                    adc_good_out, results_out));
     TEST_ASSERT_EQUAL(33334u, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(0, adc_good_out);
 }
@@ -407,13 +429,15 @@ void test_abort_done_roundtrip() {
 
     Diablo::PacketHeader hdr_out;
     TEST_ASSERT_TRUE(Diablo::parse_abort_done_packet(buf, n, hdr_out));
-    TEST_ASSERT_EQUAL((int)Diablo::PacketType::ABORT_DONE, (int)hdr_out.packet_type);
+    TEST_ASSERT_EQUAL((int)Diablo::PacketType::ABORT_DONE,
+                      (int)hdr_out.packet_type);
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
 }
 
 void test_abort_done_buffer_too_small() {
     uint8_t buf[2];
-    TEST_ASSERT_EQUAL(0, Diablo::create_abort_done_packet(0u, buf, sizeof(buf)));
+    TEST_ASSERT_EQUAL(0,
+                      Diablo::create_abort_done_packet(0u, buf, sizeof(buf)));
 }
 
 // ---------------------------------------------------------------------------
@@ -423,23 +447,28 @@ void test_abort_done_buffer_too_small() {
 void test_parse_null_buffer() {
     Diablo::PacketHeader hdr;
     Diablo::BoardHeartbeatPacket hb;
-    TEST_ASSERT_FALSE(Diablo::parse_board_heartbeat_packet(nullptr, 100, hdr, hb));
+    TEST_ASSERT_FALSE(
+        Diablo::parse_board_heartbeat_packet(nullptr, 100, hdr, hb));
 
     std::vector<Diablo::SensorDataChunkCollection> chunks;
-    TEST_ASSERT_FALSE(Diablo::parse_sensor_data_packet(nullptr, 100, hdr, chunks));
+    TEST_ASSERT_FALSE(
+        Diablo::parse_sensor_data_packet(nullptr, 100, hdr, chunks));
 
     std::vector<Diablo::ActuatorCommand> cmds;
-    TEST_ASSERT_FALSE(Diablo::parse_actuator_command_packet(nullptr, 100, hdr, cmds));
+    TEST_ASSERT_FALSE(
+        Diablo::parse_actuator_command_packet(nullptr, 100, hdr, cmds));
 }
 
 // ---------------------------------------------------------------------------
 // Unity runner
 // ---------------------------------------------------------------------------
 
-void setUp() {}
-void tearDown() {}
+void setUp() {
+}
+void tearDown() {
+}
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
     UNITY_BEGIN();
 
     // Board Heartbeat

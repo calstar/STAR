@@ -138,9 +138,9 @@ DEMO_SIGNAL_FUNCTIONS = [
 
 # PT 4 -> linear, PT 1 -> quadratic, PT 5 -> cubic (indices into _DEMO_NORM_ARRAYS), 0-800 psi
 DEMO_PT_SPECIAL_SIGNALS = {
-    4: (10, 0.0, 800.0),   # linear_cycle
-    1: (11, 0.0, 800.0),   # quadratic_cycle
-    5: (12, 0.0, 800.0),   # cubic_cycle
+    4: (10, 0.0, 800.0),  # linear_cycle
+    1: (11, 0.0, 800.0),  # quadratic_cycle
+    5: (12, 0.0, 800.0),  # cubic_cycle
 }
 
 
@@ -199,9 +199,7 @@ def create_sensor_data_packet(
         return b""
     per_chunk_size = SENSOR_DATA_CHUNK_SIZE + num_sensors * SENSOR_DATAPOINT_SIZE
     total_size = (
-        PACKET_HEADER_SIZE
-        + SENSOR_DATA_PACKET_SIZE
-        + num_chunks * per_chunk_size
+        PACKET_HEADER_SIZE + SENSOR_DATA_PACKET_SIZE + num_chunks * per_chunk_size
     )
     if total_size > max_packet_size:
         return b""
@@ -218,7 +216,11 @@ def create_sensor_data_packet(
         offset += SENSOR_DATA_CHUNK_SIZE
         for sensor_id, adc_code in datapoints:
             struct.pack_into(
-                SENSOR_DATAPOINT_FORMAT, packet, offset, sensor_id, adc_code & 0xFFFFFFFF
+                SENSOR_DATAPOINT_FORMAT,
+                packet,
+                offset,
+                sensor_id,
+                adc_code & 0xFFFFFFFF,
             )
             offset += SENSOR_DATAPOINT_SIZE
     return bytes(packet)

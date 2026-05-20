@@ -1,7 +1,20 @@
-name: CI/CD Pipeline
+name: DAQ Server CI/CD
 
 # Quoted `on` — YAML 1.1 treats bare `on` as boolean true, which breaks workflow triggers in some parsers.
-'on': [push, pull_request, workflow_dispatch]
+'on':
+  push:
+    paths:
+      - 'daq-server/**'
+      - '.github/workflows/daq-server-ci.yml'
+  pull_request:
+    paths:
+      - 'daq-server/**'
+      - '.github/workflows/daq-server-ci.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: daq-server
 
 env:
   BUILD_DIR: build
@@ -18,16 +31,44 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Install clang-format
+    # Install clang-format from the official LLVM apt repo so CI matches modern
+    # macOS/Linux dev environments. Ubuntu's default `clang-format` package is
+    # v18; designated-initializer formatting changed between v18 and v19, which
+    # produced false-positive format failures on code that's clean on developer
+    # laptops. Pinning to 19 keeps CI and local in sync.
+    #
+    # We use a /usr/local/bin/ symlink (not update-alternatives) because
+    # update-alternatives priorities can get out-shouted by Ubuntu's stock
+    # clang-format package. /usr/local/bin/ comes before /usr/bin/ on the
+    # default $PATH, so the symlink wins unconditionally.
+    - name: Install clang-format 19 (LLVM apt repo)
       run: |
+        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+        echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main" | sudo tee /etc/apt/sources.list.d/llvm.list
         sudo apt-get update
-        sudo apt-get install -y clang-format-17 || sudo apt-get install -y clang-format
+        sudo apt-get install -y clang-format-19
+        sudo ln -sf /usr/bin/clang-format-19 /usr/local/bin/clang-format
+        # Verify: this should print "Ubuntu clang-format version 19.x.x"
+        clang-format --version
+        which clang-format
+
+    # format.sh also runs `black --check` on Python under firmware/.
+    # --user avoids PEP 668 ("externally-managed-environment") on Ubuntu 22.04+.
+    #
+    # Pinned to 25.11.0 because: developer laptops with system Python 3.9 (macOS
+    # default) can't install black 26.x (requires Python ≥3.10). Pinning here
+    # keeps CI in sync with laptops until everyone has a newer Python.
+    - name: Install black
+      run: |
+        pip install --user black==25.11.0
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
 
     - name: Check code formatting
+      working-directory: .
       run: |
-        chmod +x ./scripts/format.sh
-        if ! ./scripts/format.sh --check; then
-          echo "::error::Code formatting check failed. Run './scripts/format.sh' to fix."
+        chmod +x ./format.sh
+        if ! ./format.sh --check; then
+          echo "::error::Code formatting check failed. Run './format.sh' from the repo root to fix."
           exit 1
         fi
       continue-on-error: false
@@ -46,23 +87,23 @@ jobs:
       with:
         node-version: '20.x'
         cache: 'npm'
-        cache-dependency-path: diablo_server/frontend/package-lock.json
+        cache-dependency-path: daq-server/diablo_server/frontend/package-lock.json
 
     # API routes import ../backend/src/* which uses @iarna/toml; install backend so resolution + alias work in next build.
     - name: Install backend dependencies
-      working-directory: diablo_server/backend
+      working-directory: daq-server/diablo_server/backend
       run: npm ci || npm install
 
     - name: Install frontend dependencies
-      working-directory: diablo_server/frontend
+      working-directory: daq-server/diablo_server/frontend
       run: npm ci || npm install
 
     - name: Run frontend unit tests
-      working-directory: diablo_server/frontend
+      working-directory: daq-server/diablo_server/frontend
       run: npm run test
 
     - name: Verify Next.js build
-      working-directory: diablo_server/frontend
+      working-directory: daq-server/diablo_server/frontend
       run: npm run test:build
 
   # Build with multiple compilers (Release only)
@@ -116,7 +157,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~/.ccache
-        key: ${{ runner.os }}-ccache-${{ matrix.compiler }}-${{ hashFiles('CMakeLists.txt', 'diablo_server/CMakeLists.txt', 'archive/legacy/utl/**/*.cpp', 'archive/legacy/utl/**/*.hpp', 'diablo_server/**/*.cpp', 'diablo_server/**/*.hpp') }}
+        key: ${{ runner.os }}-ccache-${{ matrix.compiler }}-${{ hashFiles('daq-server/CMakeLists.txt', 'daq-server/diablo_server/CMakeLists.txt', 'daq-server/archive/legacy/utl/**/*.cpp', 'daq-server/archive/legacy/utl/**/*.hpp', 'daq-server/diablo_server/**/*.cpp', 'daq-server/diablo_server/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-ccache-${{ matrix.compiler }}-
 
@@ -165,9 +206,9 @@ jobs:
       with:
         name: build-artifacts-${{ matrix.compiler }}-Release
         path: |
-          ${{ env.BUILD_DIR }}/lib/*.so
-          ${{ env.BUILD_DIR }}/bin/daq_bridge
-          ${{ env.BUILD_DIR }}/bin/sequencer_service
+          daq-server/${{ env.BUILD_DIR }}/lib/*.so
+          daq-server/${{ env.BUILD_DIR }}/bin/daq_bridge
+          daq-server/${{ env.BUILD_DIR }}/bin/sequencer_service
         retention-days: 7
 
   # Static analysis
@@ -210,7 +251,7 @@ jobs:
       if: always()
       with:
         name: cppcheck-report
-        path: cppcheck-report.xml
+        path: daq-server/cppcheck-report.xml
 
     - name: Run clang-tidy
       run: |
@@ -306,7 +347,7 @@ jobs:
       if: always()
       with:
         name: semgrep-report
-        path: semgrep-report.json
+        path: daq-server/semgrep-report.json
 
     - name: Check for hardcoded secrets
       run: |
@@ -535,10 +576,10 @@ jobs:
       with:
         node-version: '20.x'
         cache: 'npm'
-        cache-dependency-path: diablo_server/frontend/package-lock.json
+        cache-dependency-path: daq-server/diablo_server/frontend/package-lock.json
 
     - name: Install backend dependencies
-      run: cd diablo_server/backend && npm ci || npm install
+      run: cd diablo_server/backend && (npm ci || npm install)
 
     - name: Install frontend dependencies and Playwright Chromium (system libs + browser)
       run: |
@@ -573,7 +614,11 @@ jobs:
     if: always()
 
     steps:
+    # Override the workflow-level `defaults.run.working-directory: daq-server`.
+    # This job has no checkout step, so that directory doesn't exist on the
+    # runner — bash would fail to start with "No such file or directory".
     - name: Check build status
+      working-directory: .
       run: |
         echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY

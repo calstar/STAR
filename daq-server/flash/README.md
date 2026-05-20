@@ -1,6 +1,6 @@
 # Flash Script Documentation
 
-This directory contains scripts for flashing executables, libraries, and configuration files to target systems (local or remote). It integrates with the external `calstar/flash` cross-platform installer system.
+This directory contains scripts for flashing executables, libraries, and configuration files to target systems (local or remote).
 
 ## Overview
 
@@ -9,18 +9,6 @@ The flash script handles deployment of:
 - **Libraries**: `libdaq_comms_lib.so`, `libfsw_daq_lib.so`
 - **Config Files**: Flight/ground DAQ configurations
 - **Scripts**: Startup and system scripts
-
-## Integration with External Flash
-
-This script works alongside the `external/flash` repository which provides:
-- Cross-platform system setup (macOS, Linux, Windows/WSL)
-- Python environment setup
-- Elodin editor/database installation
-- Development tools installation
-
-**To set up a new system:**
-1. First run the external flash installer: `external/flash/install.sh`
-2. Then use this script to deploy built executables: `flash/flash.sh`
 
 ## Usage
 
@@ -118,7 +106,7 @@ The flash script handles all current program dependencies:
 - `ElodinClient` - Elodin database client for reading pressure data
 
 ### Runtime Dependencies
-- **Eigen3** - Must be installed on target system (handled by external/flash)
+- **Eigen3** - Must be installed on target system
 - **pthread** - Standard library
 - **rt** - Real-time library
 
@@ -127,7 +115,7 @@ The flash script handles all current program dependencies:
 For remote flashing, ensure:
 1. SSH access is configured
 2. Target directory is writable
-3. Required dependencies (Eigen3, etc.) are installed on target (use external/flash/install.sh first)
+3. Required dependencies (Eigen3, etc.) are installed on target
 
 ## Notes
 
@@ -135,15 +123,3 @@ For remote flashing, ensure:
 - Libraries are automatically added to library cache on local systems
 - Scripts are made executable automatically
 - Missing files are skipped with warnings
-- Integrates with external flash installer for system setup
-
-## External Flash Installer
-
-The `external/flash` repository provides cross-platform installation:
-- System package installation (cmake, git, python, etc.)
-- Python virtual environment setup
-- Elodin editor/database installation
-- OpenCV installation
-- Development tools (bashdb, etc.)
-
-Run `external/flash/install.sh` on a new system before deploying executables.

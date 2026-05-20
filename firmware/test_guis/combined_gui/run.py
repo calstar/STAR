@@ -11,5 +11,5 @@ os.chdir(_here)  # So relative paths in config resolve correctly
 
 from combined_gui import main
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

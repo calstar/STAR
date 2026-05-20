@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+
 #include "STAR_ADS126X.h"
 
 namespace SensorSelfTest {
@@ -9,8 +10,8 @@ namespace SensorSelfTest {
 // ADC TDAC test: VDD reference. TDACP = 0.6*AVDD, TDACN = 0.5*AVDD.
 // Differential = 0.1*AVDD. Reference = AVDD. So code = 0.1 * 2^31.
 // We allow ±1% of the expected code.
-constexpr int32_t ADC_TDAC_EXPECTED_CODE = 214748364;           // 0.1 * 2^31
-constexpr int32_t ADC_TDAC_TOLERANCE     = 2147484;            // 1% of expected code
+constexpr int32_t ADC_TDAC_EXPECTED_CODE = 214748364;  // 0.1 * 2^31
+constexpr int32_t ADC_TDAC_TOLERANCE = 2147484;        // 1% of expected code
 
 // Sensor bias test (SBMAG = 0b110 → 10MΩ pull resistor via MODE1):
 // Open circuit  → bias pulls pin to rail → code saturates at +FS (~2^31)
@@ -20,7 +21,7 @@ constexpr int32_t ADC_TDAC_TOLERANCE     = 2147484;            // 1% of expected
 //   |code| > 60% FS  → DISCONNECTED
 //   between          → AMBIGUOUS
 constexpr int32_t SENSOR_BIAS_CLOSED_THRESHOLD = 858993459;  // 40% of 2^31
-constexpr int32_t SENSOR_BIAS_OPEN_THRESHOLD   = 1288490188; // 60% of 2^31
+constexpr int32_t SENSOR_BIAS_OPEN_THRESHOLD = 1288490188;   // 60% of 2^31
 
 // Analog settling delay (ms) after mux switch during bias test.
 // The 10MΩ bias resistor × parasitic capacitance (traces, connectors)
@@ -32,9 +33,9 @@ constexpr unsigned long BIAS_SETTLE_MS = 50;
 constexpr uint8_t BIAS_AVG_SAMPLES = 4;
 
 enum class BiasResult : uint8_t {
-  CONNECTED    = 0,  // |code| < closed threshold — sensor is present
-  AMBIGUOUS    = 1,  // between thresholds — uncertain
-  DISCONNECTED = 2,  // |code| > open threshold — no sensor
+    CONNECTED = 0,     // |code| < closed threshold — sensor is present
+    AMBIGUOUS = 1,     // between thresholds — uncertain
+    DISCONNECTED = 2,  // |code| > open threshold — no sensor
 };
 
 /**
@@ -46,12 +47,13 @@ enum class BiasResult : uint8_t {
  */
 struct AdcSelfTestResult {
     bool passed;
-    int32_t code;         // raw ADC code read
+    int32_t code;  // raw ADC code read
     bool checksum_valid;
 };
 
 inline AdcSelfTestResult run_adc_self_test(ADS126X& adc, uint8_t drdy_pin,
-                              uint8_t original_ref_neg, uint8_t original_ref_pos) {
+                                           uint8_t original_ref_neg,
+                                           uint8_t original_ref_pos) {
     adc.bypassPGA();
     adc.setInputMux(ADS126X_TDAC, ADS126X_TDAC);
 
@@ -88,7 +90,8 @@ inline AdcSelfTestResult run_adc_self_test(ADS126X& adc, uint8_t drdy_pin,
     }
 
     int32_t diff = code - ADC_TDAC_EXPECTED_CODE;
-    if (diff < 0) diff = -diff;
+    if (diff < 0)
+        diff = -diff;
 
     return {diff <= ADC_TDAC_TOLERANCE, code, true};
 }
@@ -108,7 +111,7 @@ inline void sensor_bias_enable(ADS126X& adc) {
 
 struct BiasReadResult {
     BiasResult result;
-    int32_t code;         // raw signed ADC code
+    int32_t code;  // raw signed ADC code
     bool checksum_valid;
 };
 
@@ -162,11 +165,14 @@ inline BiasReadResult read_sensor_bias(ADS126X& adc, uint8_t drdy_pin,
 
     int32_t val = static_cast<int32_t>(sum / good_count);
     int32_t abs_val = (val < 0) ? -val : val;
-    
+
     BiasResult r;
-    if (abs_val < SENSOR_BIAS_CLOSED_THRESHOLD)      r = BiasResult::CONNECTED;
-    else if (abs_val >= SENSOR_BIAS_OPEN_THRESHOLD)   r = BiasResult::DISCONNECTED;
-    else                                               r = BiasResult::AMBIGUOUS;
+    if (abs_val < SENSOR_BIAS_CLOSED_THRESHOLD)
+        r = BiasResult::CONNECTED;
+    else if (abs_val >= SENSOR_BIAS_OPEN_THRESHOLD)
+        r = BiasResult::DISCONNECTED;
+    else
+        r = BiasResult::AMBIGUOUS;
 
     return {r, val, true};
 }
@@ -176,4 +182,4 @@ inline void sensor_bias_disable(ADS126X& adc) {
     adc.setBiasMagnitude(ADS126X_BIAS_MAG_0);
 }
 
-} // namespace SensorSelfTest
+}  // namespace SensorSelfTest

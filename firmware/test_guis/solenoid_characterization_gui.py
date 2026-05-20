@@ -24,26 +24,40 @@ from collections import deque
 
 # Default PT calibration path when config paths are empty
 PT_CALIBRATION_CSV = str(
-    Path(__file__).parent.parent / "PT_Board" / "Calibration" / "PT Calibration Attempt 2026-02-04_test2.csv"
+    Path(__file__).parent.parent
+    / "PT_Board"
+    / "Calibration"
+    / "PT Calibration Attempt 2026-02-04_test2.csv"
 )
 
 # Fix Qt "cocoa" platform plugin on macOS when Homebrew Qt plugins path lacks platforms/
-if sys.platform == 'darwin':
-    _qt_plugins = os.environ.get('QT_QPA_PLATFORM_PLUGIN_PATH')
+if sys.platform == "darwin":
+    _qt_plugins = os.environ.get("QT_QPA_PLATFORM_PLUGIN_PATH")
     if not _qt_plugins or not os.path.isdir(_qt_plugins):
         _candidates = [
-            '/opt/homebrew/share/qt/plugins/platforms',
-            '/opt/homebrew/Cellar/qtbase/6.10.1/share/qt/plugins/platforms',
+            "/opt/homebrew/share/qt/plugins/platforms",
+            "/opt/homebrew/Cellar/qtbase/6.10.1/share/qt/plugins/platforms",
         ]
-        if os.path.isdir('/opt/homebrew/Cellar/qtbase'):
-            for _name in sorted(os.listdir('/opt/homebrew/Cellar/qtbase'), reverse=True):
-                _p = os.path.join('/opt/homebrew/Cellar/qtbase', _name, 'share', 'qt', 'plugins', 'platforms')
+        if os.path.isdir("/opt/homebrew/Cellar/qtbase"):
+            for _name in sorted(
+                os.listdir("/opt/homebrew/Cellar/qtbase"), reverse=True
+            ):
+                _p = os.path.join(
+                    "/opt/homebrew/Cellar/qtbase",
+                    _name,
+                    "share",
+                    "qt",
+                    "plugins",
+                    "platforms",
+                )
                 if os.path.isdir(_p):
                     _candidates.insert(1, _p)
                     break
         for _p in _candidates:
-            if os.path.isdir(_p) and any(_f.startswith('libqcocoa') for _f in os.listdir(_p)):
-                os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = _p
+            if os.path.isdir(_p) and any(
+                _f.startswith("libqcocoa") for _f in os.listdir(_p)
+            ):
+                os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = _p
                 break
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -70,27 +84,27 @@ class PacketType:
     NO_CONNECTION_ABORT = 11
 
 
-DEFAULT_SENSOR_IP = '192.168.2.21'
-DEFAULT_ACTUATOR_IP = '192.168.2.12'
+DEFAULT_SENSOR_IP = "192.168.2.21"
+DEFAULT_ACTUATOR_IP = "192.168.2.12"
 DEFAULT_DEVICE_PORT = 5005
 DEFAULT_RECEIVE_PORT = 5006
 
-PACKET_HEADER_FORMAT = '<BBI'
+PACKET_HEADER_FORMAT = "<BBI"
 PACKET_HEADER_SIZE = 6
-ACTUATOR_COMMAND_PACKET_FORMAT = '<B'
+ACTUATOR_COMMAND_PACKET_FORMAT = "<B"
 ACTUATOR_COMMAND_PACKET_SIZE = 1
-ACTUATOR_COMMAND_FORMAT = '<BB'
+ACTUATOR_COMMAND_FORMAT = "<BB"
 ACTUATOR_COMMAND_SIZE = 2
-PWM_ACTUATOR_COMMAND_PACKET_FORMAT = '<B'
+PWM_ACTUATOR_COMMAND_PACKET_FORMAT = "<B"
 PWM_ACTUATOR_COMMAND_PACKET_SIZE = 1
 # PWM Command: actuator_id (u8), duration_ms (u32), duty_cycle (float), frequency (float)
-PWM_ACTUATOR_COMMAND_FORMAT = '<BIff'
+PWM_ACTUATOR_COMMAND_FORMAT = "<BIff"
 PWM_ACTUATOR_COMMAND_SIZE = 13
-SENSOR_DATA_PACKET_FORMAT = '<BB'
+SENSOR_DATA_PACKET_FORMAT = "<BB"
 SENSOR_DATA_PACKET_SIZE = 2
-SENSOR_DATA_CHUNK_FORMAT = '<I'
+SENSOR_DATA_CHUNK_FORMAT = "<I"
 SENSOR_DATA_CHUNK_SIZE = 4
-SENSOR_DATAPOINT_FORMAT = '<BI'
+SENSOR_DATAPOINT_FORMAT = "<BI"
 SENSOR_DATAPOINT_SIZE = 5
 
 DEFAULT_WINDOW_SECONDS = 10.0
@@ -99,8 +113,20 @@ MAX_POINTS = 150000
 UPDATE_INTERVAL_MS = 50
 # Board sends one timestamp per chunk; samples within a chunk are spaced at this rate (match stream_one_adc DATA_RATE).
 SAMPLE_RATE_HZ = 7200
-DEFAULT_ACTUATOR_ROLE_NAMES = ["LOX Main", "Fuel Main", "Fuel Vent", "Fuel Press", "LOX Vent", "LOX Press"]
-DEFAULT_SENSOR_ROLE_NAMES = ["LOX Upstream", "LOX Downstream", "Low Press PT", "Fuel Downstream"]
+DEFAULT_ACTUATOR_ROLE_NAMES = [
+    "LOX Main",
+    "Fuel Main",
+    "Fuel Vent",
+    "Fuel Press",
+    "LOX Vent",
+    "LOX Press",
+]
+DEFAULT_SENSOR_ROLE_NAMES = [
+    "LOX Upstream",
+    "LOX Downstream",
+    "Low Press PT",
+    "Fuel Downstream",
+]
 
 CONFIG_FILE = Path(__file__).parent / "config.json"
 
@@ -136,10 +162,12 @@ class ConfigManager:
     def load(self):
         if CONFIG_FILE.exists():
             try:
-                with open(CONFIG_FILE, 'r') as f:
+                with open(CONFIG_FILE, "r") as f:
                     loaded = json.load(f)
                     self._update_dict(self.config, loaded)
-                    if "sensor_roles" in loaded and isinstance(loaded["sensor_roles"], dict):
+                    if "sensor_roles" in loaded and isinstance(
+                        loaded["sensor_roles"], dict
+                    ):
                         self.config["sensor_roles"] = dict(loaded["sensor_roles"])
                 self._backfill_role_names()
             except Exception as e:
@@ -149,7 +177,11 @@ class ConfigManager:
 
     def _backfill_role_names(self):
         roles = self.config.setdefault("actuator_roles", {})
-        names = self.config.get("actuator_role_names") or list(roles.keys()) or list(DEFAULT_ACTUATOR_ROLE_NAMES)
+        names = (
+            self.config.get("actuator_role_names")
+            or list(roles.keys())
+            or list(DEFAULT_ACTUATOR_ROLE_NAMES)
+        )
         self.config["actuator_role_names"] = names
         for name in names:
             if name not in roles:
@@ -162,11 +194,13 @@ class ConfigManager:
             self.config["paths"] = {"pt_calibration_csv": []}
         if isinstance(self.config.get("paths", {}).get("pt_calibration_csv"), str):
             old_val = self.config["paths"]["pt_calibration_csv"]
-            self.config["paths"]["pt_calibration_csv"] = [old_val] if old_val and str(old_val).strip() else []
+            self.config["paths"]["pt_calibration_csv"] = (
+                [old_val] if old_val and str(old_val).strip() else []
+            )
 
     def save(self):
         try:
-            with open(CONFIG_FILE, 'w') as f:
+            with open(CONFIG_FILE, "w") as f:
                 json.dump(self.config, f, indent=4)
         except Exception as e:
             print(f"Error saving config: {e}")
@@ -179,7 +213,11 @@ class ConfigManager:
                 target[k] = v
 
     def get_actuator_role_names(self):
-        return self.config.get("actuator_role_names") or list(self.config.get("actuator_roles", {}).keys()) or list(DEFAULT_ACTUATOR_ROLE_NAMES)
+        return (
+            self.config.get("actuator_role_names")
+            or list(self.config.get("actuator_roles", {}).keys())
+            or list(DEFAULT_ACTUATOR_ROLE_NAMES)
+        )
 
     def get_sensor_role_names(self):
         return list(self.config.get("sensor_roles", {}).keys())
@@ -223,8 +261,8 @@ class ConfigManager:
             if isinstance(aid, list) and len(aid) == 2 and aid[1] == actuator_id:
                 return aid[0]
             elif aid == actuator_id:
-                return 'NC'
-        return 'NC'
+                return "NC"
+        return "NC"
 
 
 CONFIG = ConfigManager()
@@ -235,11 +273,15 @@ pg.setConfigOptions(antialias=False)
 
 
 # ---------------------- PT calibration ----------------------
-def calculate_pressure(adc_code: float, PT_A: float, PT_B: float, PT_C: float, PT_D: float) -> float:
-    return (PT_A * (adc_code ** 3)) + (PT_B * (adc_code ** 2)) + (PT_C * adc_code) + PT_D
+def calculate_pressure(
+    adc_code: float, PT_A: float, PT_B: float, PT_C: float, PT_D: float
+) -> float:
+    return (PT_A * (adc_code**3)) + (PT_B * (adc_code**2)) + (PT_C * adc_code) + PT_D
 
 
-def load_pt_calibration(csv_paths) -> Tuple[Dict[int, Tuple[float, float, float, float]], Optional[str]]:
+def load_pt_calibration(
+    csv_paths,
+) -> Tuple[Dict[int, Tuple[float, float, float, float]], Optional[str]]:
     result = {}
     duplicates = {}
     if isinstance(csv_paths, str):
@@ -312,16 +354,16 @@ def extract_solenoid_timing_live(
 ) -> Dict:
     """
     Extract solenoid valve timing from pressure data using derivative-based edge detection.
-    
+
     Detects 4 events:
       - t_open_start: When valve starts opening (pressure begins changing after OPEN cmd)
       - t_open_end: When valve is fully open (pressure stabilizes at low point)
       - t_close_start: When valve starts closing (pressure begins recovering)
       - t_close_end: When valve is fully closed (pressure returns to baseline)
-    
+
     This algorithm handles overlapping command/response timing where the physical valve
     response lags behind electrical commands by hundreds of milliseconds.
-    
+
     Args:
         t: Time array in seconds
         P: Pressure array in psi
@@ -336,7 +378,7 @@ def extract_solenoid_timing_live(
         sustain_samples: Number of consecutive samples to confirm a state (default: 10)
         search_max_sec: Maximum time after command to search for events (default: 5s)
         open_is_drop: If True, opening causes pressure drop; if False, opening causes pressure rise
-    
+
     Returns:
         Dictionary with timing results including t_open_start, t_open_end, t_close_start, t_close_end
     """
@@ -390,7 +432,9 @@ def extract_solenoid_timing_live(
             return float(np.median(P_s[i_start:i_end]))
         return float(np.median(P_s[idx]))
 
-    def _first_sustained_idx(cond: np.ndarray, start_idx: int, end_idx: Optional[int] = None) -> Optional[int]:
+    def _first_sustained_idx(
+        cond: np.ndarray, start_idx: int, end_idx: Optional[int] = None
+    ) -> Optional[int]:
         """Find first index where condition is sustained for sustain_samples consecutive samples."""
         s = max(1, int(sustain_samples))
         if end_idx is None:
@@ -401,13 +445,15 @@ def extract_solenoid_timing_live(
         return None
 
     # Get baseline pressure before OPEN command
-    P_baseline = _median_in_window(max(t[0], t_open_cmd - pre_window_sec), t_open_cmd - 0.001)
-    
+    P_baseline = _median_in_window(
+        max(t[0], t_open_cmd - pre_window_sec), t_open_cmd - 0.001
+    )
+
     # Define search region
     i_open_cmd = int(np.searchsorted(t, t_open_cmd + guard_sec))
     i_search_end = int(np.searchsorted(t, t_open_cmd + search_max_sec))
     i_search_end = min(i_search_end, len(t) - 1)
-    
+
     # For OPEN detection: look for derivative in expected direction
     # If open_is_drop=True, opening causes negative derivative (pressure falls)
     if open_is_drop:
@@ -415,7 +461,7 @@ def extract_solenoid_timing_live(
         cond_open_start = dP_dt < -derivative_threshold_psi_s
         cond_open_settled = np.abs(dP_dt) < settle_threshold_psi_s
     else:
-        # Opening: look for sustained positive derivative  
+        # Opening: look for sustained positive derivative
         cond_open_start = dP_dt > derivative_threshold_psi_s
         cond_open_settled = np.abs(dP_dt) < settle_threshold_psi_s
 
@@ -425,29 +471,29 @@ def extract_solenoid_timing_live(
     t_open_start = None
     t_open_end = None
     P_open_post = None
-    
+
     search_from = i_open_cmd
     while search_from < i_search_end:
         candidate = _first_sustained_idx(cond_open_start, search_from, i_search_end)
         if candidate is None:
             break
-        
+
         # Check if this leads to a real pressure change
         # Look ahead 100ms and check if pressure has actually changed (not just spiked)
         i_look_ahead = min(candidate + int(0.1 * fs), i_search_end - 1)
         P_at_candidate = float(P_s[candidate])
         P_ahead = float(P_s[i_look_ahead])
-        
+
         if open_is_drop:
             pressure_change = P_at_candidate - P_ahead
         else:
             pressure_change = P_ahead - P_at_candidate
-        
+
         if pressure_change >= min_step_psi:
             # Valid opening detected
             i_open_start = candidate
             t_open_start = float(t[i_open_start])
-            
+
             # Find when opening ends: User requested "when peak pressure drop rate starts"
             # We interpret this as the time of maximum derivative magnitude (peak flow acceleration)
             # Search for peak derivative between t_open_start and end of search window
@@ -460,19 +506,19 @@ def extract_solenoid_timing_live(
                 else:
                     # Look for MAXIMUM derivative (most positive)
                     i_peak = i_open_start + np.argmax(dP_dt[peak_search_region])
-                
+
                 t_open_end = float(t[i_peak])
                 P_open_post = float(P_s[i_peak])
             else:
-                t_open_end = t_open_start # Should not happen given logic above
+                t_open_end = t_open_start  # Should not happen given logic above
                 P_open_post = float(P_s[i_open_start])
-            
+
             # Since we found t_open_start, we break (only one open event expected)
             break
         else:
             # False positive - skip ahead and keep searching
             search_from = candidate + sustain_samples
-    
+
     # For CLOSE detection: look for reverse derivative direction
     # The minimum pressure point marks the transition from opening to closing
     # We search from after t_open_end (if found) or after i_open_start
@@ -480,7 +526,7 @@ def extract_solenoid_timing_live(
         search_start_for_close = i_open_start + sustain_samples
     else:
         search_start_for_close = i_open_cmd
-    
+
     # Find minimum pressure point in the search region (this is "fully open")
     search_region = slice(search_start_for_close, i_search_end)
     if search_region.stop > search_region.start:
@@ -496,7 +542,7 @@ def extract_solenoid_timing_live(
     if t_open_end is None and t_min is not None:
         t_open_end = t_min
         P_open_post = P_min
-    
+
     # For CLOSE: look for derivative in opposite direction to open
     if open_is_drop:
         # Closing: look for sustained positive derivative (pressure rises)
@@ -505,24 +551,30 @@ def extract_solenoid_timing_live(
         # Closing: look for sustained negative derivative (pressure falls)
         cond_close_start = dP_dt < -derivative_threshold_psi_s
     cond_close_settled = np.abs(dP_dt) < settle_threshold_psi_s
-    
+
     # Search for close start after the minimum pressure point
     t_close_start = None
     t_close_end = None
     P_close_pre = P_min
     P_close_post = None
-    
+
     if i_min_local is not None:
-        i_close_start = _first_sustained_idx(cond_close_start, i_min_local, i_search_end)
+        i_close_start = _first_sustained_idx(
+            cond_close_start, i_min_local, i_search_end
+        )
         if i_close_start is not None:
             t_close_start = float(t[i_close_start])
-            
+
             # Find when closing ends (derivative settles)
-            i_close_end = _first_sustained_idx(cond_close_settled, i_close_start + sustain_samples, i_search_end)
+            i_close_end = _first_sustained_idx(
+                cond_close_settled, i_close_start + sustain_samples, i_search_end
+            )
             if i_close_end is not None:
                 t_close_end = float(t[i_close_end])
-                P_close_post = float(np.median(P_s[i_close_end:min(i_close_end + 50, len(P_s))]))
-    
+                P_close_post = float(
+                    np.median(P_s[i_close_end : min(i_close_end + 50, len(P_s))])
+                )
+
     def _maybe_delay(t_cmd: float, t_evt: Optional[float]) -> Optional[float]:
         return None if t_evt is None else float(t_evt - t_cmd)
 
@@ -571,7 +623,9 @@ def extract_solenoid_timing_from_commands(
     Use this for CSV/offline; use extract_solenoid_timing_live for live GUI.
     """
     if time_col not in df or pressure_col not in df or actuation_col not in df:
-        raise ValueError(f"df must contain columns: {time_col}, {pressure_col}, {actuation_col}")
+        raise ValueError(
+            f"df must contain columns: {time_col}, {pressure_col}, {actuation_col}"
+        )
     t = df[time_col].to_numpy(dtype=float)
     P_raw = df[pressure_col].to_numpy(dtype=float)
     finite = np.isfinite(P_raw)
@@ -582,13 +636,18 @@ def extract_solenoid_timing_from_commands(
     open_rows = df.index[act == open_token].to_list()
     close_rows = df.index[act == close_token].to_list()
     if len(open_rows) != 1 or len(close_rows) != 1:
-        raise ValueError(f"Expected exactly 1 '{open_token}' and 1 '{close_token}' row in {actuation_col}")
+        raise ValueError(
+            f"Expected exactly 1 '{open_token}' and 1 '{close_token}' row in {actuation_col}"
+        )
     t_open_cmd = float(t[open_rows[0]])
     t_close_cmd = float(t[close_rows[0]])
     if t_open_cmd >= t_close_cmd:
         raise ValueError("OPEN command must occur before CLOSED command")
     return extract_solenoid_timing_live(
-        t, P, t_open_cmd, t_close_cmd,
+        t,
+        P,
+        t_open_cmd,
+        t_close_cmd,
         smooth_window_sec=smooth_window_sec,
         derivative_threshold_psi_s=derivative_threshold_psi_s,
         settle_threshold_psi_s=settle_threshold_psi_s,
@@ -606,7 +665,9 @@ def parse_packet_header(data: bytes) -> Optional[Tuple[int, int, int]]:
     if len(data) < PACKET_HEADER_SIZE:
         return None
     try:
-        packet_type, version, timestamp = struct.unpack(PACKET_HEADER_FORMAT, data[:PACKET_HEADER_SIZE])
+        packet_type, version, timestamp = struct.unpack(
+            PACKET_HEADER_FORMAT, data[:PACKET_HEADER_SIZE]
+        )
         return (packet_type, version, timestamp)
     except struct.error:
         return None
@@ -622,22 +683,22 @@ def parse_sensor_data_packet(data: bytes) -> Optional[Tuple[dict, List[dict]]]:
     offset = PACKET_HEADER_SIZE
     try:
         num_chunks, num_sensors = struct.unpack(
-            SENSOR_DATA_PACKET_FORMAT,
-            data[offset:offset + SENSOR_DATA_PACKET_SIZE]
+            SENSOR_DATA_PACKET_FORMAT, data[offset : offset + SENSOR_DATA_PACKET_SIZE]
         )
     except struct.error:
         return None
     offset += SENSOR_DATA_PACKET_SIZE
     per_chunk_size = SENSOR_DATA_CHUNK_SIZE + (num_sensors * SENSOR_DATAPOINT_SIZE)
-    expected_size = PACKET_HEADER_SIZE + SENSOR_DATA_PACKET_SIZE + (num_chunks * per_chunk_size)
+    expected_size = (
+        PACKET_HEADER_SIZE + SENSOR_DATA_PACKET_SIZE + (num_chunks * per_chunk_size)
+    )
     if len(data) < expected_size:
         return None
     chunks = []
     for chunk_idx in range(num_chunks):
         try:
-            chunk_timestamp, = struct.unpack(
-                SENSOR_DATA_CHUNK_FORMAT,
-                data[offset:offset + SENSOR_DATA_CHUNK_SIZE]
+            (chunk_timestamp,) = struct.unpack(
+                SENSOR_DATA_CHUNK_FORMAT, data[offset : offset + SENSOR_DATA_CHUNK_SIZE]
             )
         except struct.error:
             return None
@@ -647,73 +708,103 @@ def parse_sensor_data_packet(data: bytes) -> Optional[Tuple[dict, List[dict]]]:
             try:
                 sensor_id, sensor_data = struct.unpack(
                     SENSOR_DATAPOINT_FORMAT,
-                    data[offset:offset + SENSOR_DATAPOINT_SIZE]
+                    data[offset : offset + SENSOR_DATAPOINT_SIZE],
                 )
-                datapoints.append({'sensor_id': sensor_id, 'data': sensor_data})
+                datapoints.append({"sensor_id": sensor_id, "data": sensor_data})
                 offset += SENSOR_DATAPOINT_SIZE
             except struct.error:
                 return None
-        chunks.append({'timestamp': chunk_timestamp, 'datapoints': datapoints})
-    header_dict = {'packet_type': packet_type, 'version': version, 'timestamp': timestamp}
+        chunks.append({"timestamp": chunk_timestamp, "datapoints": datapoints})
+    header_dict = {
+        "packet_type": packet_type,
+        "version": version,
+        "timestamp": timestamp,
+    }
     return (header_dict, chunks)
 
 
 def create_actuator_command_packet(commands: List[Tuple[int, int]]) -> bytes:
     if len(commands) == 0 or len(commands) > 255:
-        return b''
+        return b""
     header_size = PACKET_HEADER_SIZE
     body_size = ACTUATOR_COMMAND_PACKET_SIZE
     commands_size = len(commands) * ACTUATOR_COMMAND_SIZE
     total_size = header_size + body_size + commands_size
     if total_size > MAX_PACKET_SIZE:
-        return b''
+        return b""
     packet = bytearray(total_size)
     offset = 0
-    struct.pack_into(PACKET_HEADER_FORMAT, packet, offset, PacketType.ACTUATOR_COMMAND, DIABLO_COMMS_VERSION, int(time.time() * 1000) & 0xFFFFFFFF)
+    struct.pack_into(
+        PACKET_HEADER_FORMAT,
+        packet,
+        offset,
+        PacketType.ACTUATOR_COMMAND,
+        DIABLO_COMMS_VERSION,
+        int(time.time() * 1000) & 0xFFFFFFFF,
+    )
     offset += PACKET_HEADER_SIZE
     struct.pack_into(ACTUATOR_COMMAND_PACKET_FORMAT, packet, offset, len(commands))
     offset += ACTUATOR_COMMAND_PACKET_SIZE
     for actuator_id, actuator_state in commands:
-        struct.pack_into(ACTUATOR_COMMAND_FORMAT, packet, offset, actuator_id, actuator_state)
+        struct.pack_into(
+            ACTUATOR_COMMAND_FORMAT, packet, offset, actuator_id, actuator_state
+        )
         offset += ACTUATOR_COMMAND_SIZE
     return bytes(packet)
 
 
-def create_pwm_actuator_command_packet(commands: List[Tuple[int, int, float, float]]) -> bytes:
+def create_pwm_actuator_command_packet(
+    commands: List[Tuple[int, int, float, float]],
+) -> bytes:
     """
     Creates a PWM Actuator Command packet.
     Packet layout: PacketHeader + PWMActuatorCommandPacket + N PWMActuatorCommand.
-    
+
     commands: List of tuples (actuator_id, duration_ms, duty_cycle, frequency)
               Note: duration is in ms (uint32), duty_cycle is float (0.0-1.0), frequency is float (Hz)
     """
     if len(commands) == 0 or len(commands) > 255:
-        return b''
-        
+        return b""
+
     header_size = PACKET_HEADER_SIZE
     body_size = PWM_ACTUATOR_COMMAND_PACKET_SIZE
     commands_size = len(commands) * PWM_ACTUATOR_COMMAND_SIZE
     total_size = header_size + body_size + commands_size
-    
+
     if total_size > MAX_PACKET_SIZE:
-        return b''
-        
+        return b""
+
     packet = bytearray(total_size)
     offset = 0
-    
+
     # Header
-    struct.pack_into(PACKET_HEADER_FORMAT, packet, offset, PacketType.PWM_ACTUATOR_COMMAND, DIABLO_COMMS_VERSION, int(time.time() * 1000) & 0xFFFFFFFF)
+    struct.pack_into(
+        PACKET_HEADER_FORMAT,
+        packet,
+        offset,
+        PacketType.PWM_ACTUATOR_COMMAND,
+        DIABLO_COMMS_VERSION,
+        int(time.time() * 1000) & 0xFFFFFFFF,
+    )
     offset += PACKET_HEADER_SIZE
-    
+
     # Body (num_commands)
     struct.pack_into(PWM_ACTUATOR_COMMAND_PACKET_FORMAT, packet, offset, len(commands))
     offset += PWM_ACTUATOR_COMMAND_PACKET_SIZE
-    
+
     # Commands
     for actuator_id, duration_ms, duty_cycle, frequency in commands:
-        struct.pack_into(PWM_ACTUATOR_COMMAND_FORMAT, packet, offset, actuator_id, duration_ms, duty_cycle, frequency)
+        struct.pack_into(
+            PWM_ACTUATOR_COMMAND_FORMAT,
+            packet,
+            offset,
+            actuator_id,
+            duration_ms,
+            duty_cycle,
+            frequency,
+        )
         offset += PWM_ACTUATOR_COMMAND_SIZE
-        
+
     return bytes(packet)
 
 
@@ -722,7 +813,7 @@ class UDPReceiver(QtCore.QThread):
     sensor_data_received = QtCore.pyqtSignal(dict, list, str)
     status_update = QtCore.pyqtSignal(str)
 
-    def __init__(self, port: int = DEFAULT_RECEIVE_PORT, bind_address: str = '0.0.0.0'):
+    def __init__(self, port: int = DEFAULT_RECEIVE_PORT, bind_address: str = "0.0.0.0"):
         super().__init__()
         self.port = port
         self.bind_address = bind_address
@@ -780,7 +871,13 @@ class FullPlotWindow(QtWidgets.QMainWindow):
     Displays per-pair metrics (including ΔP) and averages in a table.
     """
 
-    def __init__(self, times: np.ndarray, pressures: np.ndarray, actuator_events: List[Tuple[float, str]], sensor_label: str):
+    def __init__(
+        self,
+        times: np.ndarray,
+        pressures: np.ndarray,
+        actuator_events: List[Tuple[float, str]],
+        sensor_label: str,
+    ):
         super().__init__()
         self.setWindowTitle(f"Full Plot & Timing Analysis - {sensor_label}")
         self.resize(1200, 800)
@@ -810,37 +907,53 @@ class FullPlotWindow(QtWidgets.QMainWindow):
         self.btn_save_csv = QtWidgets.QPushButton("Save CSV")
         self.btn_save_csv.clicked.connect(self.on_save_csv)
         toolbar.addWidget(self.btn_save_csv)
-        
+
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
         # --- Plot (top 65%) ---
         self.plot_widget = pg.PlotWidget(title=f"Pressure: {sensor_label}")
-        self.plot_widget.setBackground('k')
-        self.plot_widget.setLabel('left', 'Pressure (psi)')
-        self.plot_widget.setLabel('bottom', 'Time (seconds)')
+        self.plot_widget.setBackground("k")
+        self.plot_widget.setLabel("left", "Pressure (psi)")
+        self.plot_widget.setLabel("bottom", "Time (seconds)")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.5)
         layout.addWidget(self.plot_widget, 65)
 
         # Plot pressure curve
-        self.plot_widget.plot(self.times, self.pressures, pen=pg.mkPen((80, 150, 255), width=2), name="Pressure")
+        self.plot_widget.plot(
+            self.times,
+            self.pressures,
+            pen=pg.mkPen((80, 150, 255), width=2),
+            name="Pressure",
+        )
 
         # --- Results table (bottom 35%) ---
         self.table = QtWidgets.QTableWidget()
         self.table.setColumnCount(12)
-        self.table.setHorizontalHeaderLabels([
-            "Pair #", 
-            "Open Cmd (s)", "Open Start (s)", "Open End (s)",
-            "Close Cmd (s)", "Close Start (s)", "Close End (s)",
-            "Open Delay dT (s)", "Open Full dT (s)", 
-            "Close Delay dT (s)", "Close Full dT (s)",
-            "Total dP (psi)"
-        ])
+        self.table.setHorizontalHeaderLabels(
+            [
+                "Pair #",
+                "Open Cmd (s)",
+                "Open Start (s)",
+                "Open End (s)",
+                "Close Cmd (s)",
+                "Close Start (s)",
+                "Close End (s)",
+                "Open Delay dT (s)",
+                "Open Full dT (s)",
+                "Close Delay dT (s)",
+                "Close Full dT (s)",
+                "Total dP (psi)",
+            ]
+        )
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
         self.table.setAlternatingRowColors(True)
         # Set explicit colors for readable alternating rows
-        self.table.setStyleSheet("""
+        self.table.setStyleSheet(
+            """
             QTableWidget {
                 background-color: #1e1e1e;
                 alternate-background-color: #2d2d2d;
@@ -856,18 +969,29 @@ class FullPlotWindow(QtWidgets.QMainWindow):
                 padding: 4px;
                 border: 1px solid #444444;
             }
-        """)
+        """
+        )
         layout.addWidget(self.table, 35)
 
         # Crosshair for plot
-        self.v_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('y', width=1, style=QtCore.Qt.PenStyle.DotLine))
-        self.h_line = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen('y', width=1, style=QtCore.Qt.PenStyle.DotLine))
+        self.v_line = pg.InfiniteLine(
+            angle=90,
+            movable=False,
+            pen=pg.mkPen("y", width=1, style=QtCore.Qt.PenStyle.DotLine),
+        )
+        self.h_line = pg.InfiniteLine(
+            angle=0,
+            movable=False,
+            pen=pg.mkPen("y", width=1, style=QtCore.Qt.PenStyle.DotLine),
+        )
         self.plot_widget.addItem(self.v_line, ignoreBounds=True)
         self.plot_widget.addItem(self.h_line, ignoreBounds=True)
-        self.hover_label = pg.TextItem(text="", anchor=(0, 1), color='y')
+        self.hover_label = pg.TextItem(text="", anchor=(0, 1), color="y")
         self.plot_widget.addItem(self.hover_label, ignoreBounds=True)
         # Reduce rateLimit to 20 to reduce cursor lag
-        self.proxy = pg.SignalProxy(self.plot_widget.scene().sigMouseMoved, rateLimit=20, slot=self._mouse_moved)
+        self.proxy = pg.SignalProxy(
+            self.plot_widget.scene().sigMouseMoved, rateLimit=20, slot=self._mouse_moved
+        )
 
         # Run analysis and populate UI
         self._run_analysis()
@@ -908,15 +1032,29 @@ class FullPlotWindow(QtWidgets.QMainWindow):
         pairs = self._pair_events()
         for t_open, t_close in pairs:
             try:
-                result = extract_solenoid_timing_live(self.times, self.pressures, t_open, t_close)
+                result = extract_solenoid_timing_live(
+                    self.times, self.pressures, t_open, t_close
+                )
                 # Compute deltaP
                 P_open_pre = result.get("P_open_pre")
                 P_open_post = result.get("P_open_post")
                 P_close_pre = result.get("P_close_pre")
                 P_close_post = result.get("P_close_post")
-                result["delta_P_open"] = (P_open_pre - P_open_post) if (P_open_pre is not None and P_open_post is not None) else None
-                result["delta_P_close"] = (P_close_post - P_close_pre) if (P_close_post is not None and P_close_pre is not None) else None
-                result["total_dP"] = (P_open_pre - P_close_post) if (P_open_pre is not None and P_close_post is not None) else None
+                result["delta_P_open"] = (
+                    (P_open_pre - P_open_post)
+                    if (P_open_pre is not None and P_open_post is not None)
+                    else None
+                )
+                result["delta_P_close"] = (
+                    (P_close_post - P_close_pre)
+                    if (P_close_post is not None and P_close_pre is not None)
+                    else None
+                )
+                result["total_dP"] = (
+                    (P_open_pre - P_close_post)
+                    if (P_open_pre is not None and P_close_post is not None)
+                    else None
+                )
                 self.timing_results.append(result)
             except ValueError:
                 # Skip pairs that fail analysis (e.g., not enough data)
@@ -935,10 +1073,22 @@ class FullPlotWindow(QtWidgets.QMainWindow):
         # Open Start/End = Cyan (dash/solid), Close Start/End = Magenta (dash/solid)
         for result in self.timing_results:
             lines_def = [
-                (result.get("t_open_start"), (0, 255, 255), QtCore.Qt.PenStyle.DashLine),
+                (
+                    result.get("t_open_start"),
+                    (0, 255, 255),
+                    QtCore.Qt.PenStyle.DashLine,
+                ),
                 (result.get("t_open_end"), (0, 255, 255), QtCore.Qt.PenStyle.SolidLine),
-                (result.get("t_close_start"), (255, 0, 255), QtCore.Qt.PenStyle.DashLine),
-                (result.get("t_close_end"), (255, 0, 255), QtCore.Qt.PenStyle.SolidLine),
+                (
+                    result.get("t_close_start"),
+                    (255, 0, 255),
+                    QtCore.Qt.PenStyle.DashLine,
+                ),
+                (
+                    result.get("t_close_end"),
+                    (255, 0, 255),
+                    QtCore.Qt.PenStyle.SolidLine,
+                ),
             ]
             for t_val, color, style in lines_def:
                 if t_val is not None:
@@ -948,6 +1098,7 @@ class FullPlotWindow(QtWidgets.QMainWindow):
 
     def _populate_table(self):
         """Populate table with per-pair results and averages."""
+
         def _fmt(val, decimals=4):
             return f"{val:.{decimals}f}" if val is not None else "N/A"
 
@@ -958,18 +1109,40 @@ class FullPlotWindow(QtWidgets.QMainWindow):
         for i, result in enumerate(self.timing_results):
             self.table.setItem(i, 0, QtWidgets.QTableWidgetItem(str(i + 1)))
             # Timestamps
-            self.table.setItem(i, 1, QtWidgets.QTableWidgetItem(_fmt(result.get("t_open_cmd"))))
-            self.table.setItem(i, 2, QtWidgets.QTableWidgetItem(_fmt(result.get("t_open_start"))))
-            self.table.setItem(i, 3, QtWidgets.QTableWidgetItem(_fmt(result.get("t_open_end"))))
-            self.table.setItem(i, 4, QtWidgets.QTableWidgetItem(_fmt(result.get("t_close_cmd"))))
-            self.table.setItem(i, 5, QtWidgets.QTableWidgetItem(_fmt(result.get("t_close_start"))))
-            self.table.setItem(i, 6, QtWidgets.QTableWidgetItem(_fmt(result.get("t_close_end"))))
+            self.table.setItem(
+                i, 1, QtWidgets.QTableWidgetItem(_fmt(result.get("t_open_cmd")))
+            )
+            self.table.setItem(
+                i, 2, QtWidgets.QTableWidgetItem(_fmt(result.get("t_open_start")))
+            )
+            self.table.setItem(
+                i, 3, QtWidgets.QTableWidgetItem(_fmt(result.get("t_open_end")))
+            )
+            self.table.setItem(
+                i, 4, QtWidgets.QTableWidgetItem(_fmt(result.get("t_close_cmd")))
+            )
+            self.table.setItem(
+                i, 5, QtWidgets.QTableWidgetItem(_fmt(result.get("t_close_start")))
+            )
+            self.table.setItem(
+                i, 6, QtWidgets.QTableWidgetItem(_fmt(result.get("t_close_end")))
+            )
             # Delays & dP
-            self.table.setItem(i, 7, QtWidgets.QTableWidgetItem(_fmt(result.get("open_delay"))))
-            self.table.setItem(i, 8, QtWidgets.QTableWidgetItem(_fmt(result.get("open_time"))))
-            self.table.setItem(i, 9, QtWidgets.QTableWidgetItem(_fmt(result.get("close_delay"))))
-            self.table.setItem(i, 10, QtWidgets.QTableWidgetItem(_fmt(result.get("close_time"))))
-            self.table.setItem(i, 11, QtWidgets.QTableWidgetItem(_fmt(result.get("total_dP"), 2)))
+            self.table.setItem(
+                i, 7, QtWidgets.QTableWidgetItem(_fmt(result.get("open_delay")))
+            )
+            self.table.setItem(
+                i, 8, QtWidgets.QTableWidgetItem(_fmt(result.get("open_time")))
+            )
+            self.table.setItem(
+                i, 9, QtWidgets.QTableWidgetItem(_fmt(result.get("close_delay")))
+            )
+            self.table.setItem(
+                i, 10, QtWidgets.QTableWidgetItem(_fmt(result.get("close_time")))
+            )
+            self.table.setItem(
+                i, 11, QtWidgets.QTableWidgetItem(_fmt(result.get("total_dP"), 2))
+            )
 
         # Averages row
         def _avg(key):
@@ -983,12 +1156,22 @@ class FullPlotWindow(QtWidgets.QMainWindow):
         # Skip averaging absolute timestamps (cols 1-6)
         for c in range(1, 7):
             self.table.setItem(avg_row, c, QtWidgets.QTableWidgetItem(""))
-            
-        self.table.setItem(avg_row, 7, QtWidgets.QTableWidgetItem(_fmt(_avg("open_delay"))))
-        self.table.setItem(avg_row, 8, QtWidgets.QTableWidgetItem(_fmt(_avg("open_time"))))
-        self.table.setItem(avg_row, 9, QtWidgets.QTableWidgetItem(_fmt(_avg("close_delay"))))
-        self.table.setItem(avg_row, 10, QtWidgets.QTableWidgetItem(_fmt(_avg("close_time"))))
-        self.table.setItem(avg_row, 11, QtWidgets.QTableWidgetItem(_fmt(_avg("total_dP"), 2)))
+
+        self.table.setItem(
+            avg_row, 7, QtWidgets.QTableWidgetItem(_fmt(_avg("open_delay")))
+        )
+        self.table.setItem(
+            avg_row, 8, QtWidgets.QTableWidgetItem(_fmt(_avg("open_time")))
+        )
+        self.table.setItem(
+            avg_row, 9, QtWidgets.QTableWidgetItem(_fmt(_avg("close_delay")))
+        )
+        self.table.setItem(
+            avg_row, 10, QtWidgets.QTableWidgetItem(_fmt(_avg("close_time")))
+        )
+        self.table.setItem(
+            avg_row, 11, QtWidgets.QTableWidgetItem(_fmt(_avg("total_dP"), 2))
+        )
 
         # Bold the averages row and set distinct background color for readability
         avg_bg = QtGui.QColor(40, 60, 80)  # Dark blue-gray
@@ -1019,7 +1202,12 @@ class FullPlotWindow(QtWidgets.QMainWindow):
             # Build timing event map from analysis results
             timing_map = {}  # t -> "EVENT_NAME"
             for result in self.timing_results:
-                for key in ["t_open_start", "t_open_end", "t_close_start", "t_close_end"]:
+                for key in [
+                    "t_open_start",
+                    "t_open_end",
+                    "t_close_start",
+                    "t_close_end",
+                ]:
                     val = result.get(key)
                     if val is not None:
                         # Find closest timestamp in data
@@ -1029,7 +1217,10 @@ class FullPlotWindow(QtWidgets.QMainWindow):
                             timing_map[closest_t] = key.upper()
 
             # Build actuator event map
-            event_at_t = {t: ("OPEN" if k == "open" else "CLOSED") for t, k in self.actuator_events}
+            event_at_t = {
+                t: ("OPEN" if k == "open" else "CLOSED")
+                for t, k in self.actuator_events
+            }
 
             # Build rows
             rows = []
@@ -1062,7 +1253,9 @@ class FullPlotWindow(QtWidgets.QMainWindow):
             mouse_point = self.plot_widget.plotItem.vb.mapSceneToView(pos)
             self.v_line.setPos(mouse_point.x())
             self.h_line.setPos(mouse_point.y())
-            self.hover_label.setText(f"t={mouse_point.x():.4f}, P={mouse_point.y():.2f}")
+            self.hover_label.setText(
+                f"t={mouse_point.x():.4f}, P={mouse_point.y():.2f}"
+            )
             self.hover_label.setPos(mouse_point.x(), mouse_point.y())
 
 
@@ -1070,7 +1263,13 @@ class FullPlotWindow(QtWidgets.QMainWindow):
 class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
     """Single window: PT selector, actuator selector, one pressure graph, OPEN/CLOSED buttons, vertical event lines."""
 
-    def __init__(self, receiver: UDPReceiver, device_ip: str, device_port: int, bind_address: str = '0.0.0.0'):
+    def __init__(
+        self,
+        receiver: UDPReceiver,
+        device_ip: str,
+        device_port: int,
+        bind_address: str = "0.0.0.0",
+    ):
         super().__init__()
         self.setWindowTitle("Solenoid Characterization")
         self.receiver = receiver
@@ -1086,7 +1285,9 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
         self.adc_bits = CONFIG.config["display"]["adc_bits"]
         self.reference_voltage = CONFIG.config["display"]["ref_voltage"]
         # Sliding window: 10–120 s (slider updates this)
-        config_window = CONFIG.config["display"].get("window_seconds", DEFAULT_WINDOW_SECONDS)
+        config_window = CONFIG.config["display"].get(
+            "window_seconds", DEFAULT_WINDOW_SECONDS
+        )
         self.window_seconds = max(10.0, min(120.0, float(config_window)))
         self.y_axis_auto_scale = CONFIG.config["display"].get("y_axis_autoscale", True)
         self.y_axis_min = float(CONFIG.config["display"].get("y_axis_min", 0.0))
@@ -1095,20 +1296,22 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
         base = Path(__file__).parent
         paths = CONFIG.get_pt_calibration_csv_paths()
         resolved = [str(base / p) for p in paths] if paths else []
-        self.pt_calibration, self.pt_calibration_error = load_pt_calibration(resolved if resolved else [])
+        self.pt_calibration, self.pt_calibration_error = load_pt_calibration(
+            resolved if resolved else []
+        )
         if self.pt_calibration_error:
             print(f"PT Calibration Error: {self.pt_calibration_error}")
 
         self.actuator_events: List[Tuple[float, str]] = []  # (t_sec, "open"|"closed")
         self.event_lines: List[pg.InfiniteLine] = []
-        
+
         # Board Sync state
         self.board_t0_ms: Optional[int] = None
         # (board_accum_ms, wall_time_sec) for the latest received packet
         self.last_sync_params: Optional[Tuple[float, float]] = None
 
         self.command_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        
+
         self.init_ui()
 
         self.receiver.sensor_data_received.connect(self.on_sensor_data)
@@ -1150,12 +1353,12 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
         if self.actuator_combo.count() == 0:
             for aid in range(1, NUM_ACTUATORS + 1):
                 self.actuator_combo.addItem(f"Actuator {aid}", aid)
-        
+
         # Default to Actuator 7 if present
         idx_7 = self.actuator_combo.findData(7)
         if idx_7 >= 0:
             self.actuator_combo.setCurrentIndex(idx_7)
-            
+
         self.actuator_combo.currentIndexChanged.connect(self._on_actuator_changed)
         top.addWidget(self.actuator_combo)
 
@@ -1178,7 +1381,9 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
         top.addWidget(self.status_label)
         top.addWidget(QtWidgets.QLabel("Selected PT rate:"))
         self.pt_sample_rate_label = QtWidgets.QLabel("-- Hz")
-        self.pt_sample_rate_label.setStyleSheet("font-family: monospace; min-width: 90px;")
+        self.pt_sample_rate_label.setStyleSheet(
+            "font-family: monospace; min-width: 90px;"
+        )
         top.addWidget(self.pt_sample_rate_label)
         top.addStretch()
         layout.addLayout(top)
@@ -1200,29 +1405,31 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
         layout.addLayout(window_row)
 
         self.plot_widget = pg.GraphicsLayoutWidget()
-        self.plot_widget.setBackground('k')
+        self.plot_widget.setBackground("k")
         layout.addWidget(self.plot_widget, 1)
 
         self.plot_item = self.plot_widget.addPlot(title="Pressure (selected PT)")
-        self.plot_item.setTitle("Pressure (selected PT)", color='w', size='14pt')
-        self.plot_item.setLabel('left', 'Pressure (psi)', color='w')
-        self.plot_item.setLabel('bottom', 'Time (seconds)', color='w')
+        self.plot_item.setTitle("Pressure (selected PT)", color="w", size="14pt")
+        self.plot_item.setLabel("left", "Pressure (psi)", color="w")
+        self.plot_item.setLabel("bottom", "Time (seconds)", color="w")
         self.plot_item.showGrid(x=True, y=True, alpha=0.5)
-        self.plot_item.getViewBox().setBackgroundColor('k')
+        self.plot_item.getViewBox().setBackgroundColor("k")
         font = QtGui.QFont()
         font.setPointSize(12)
-        for axis_name in ('left', 'bottom'):
+        for axis_name in ("left", "bottom"):
             ax = self.plot_item.getAxis(axis_name)
             ax.setStyle(tickFont=font)
-            ax.setPen(pg.mkPen('w', width=0.5))
-            ax.setTextPen('w')
+            ax.setPen(pg.mkPen("w", width=0.5))
+            ax.setTextPen("w")
         try:
-            self.plot_item.getAxis('left').label.setFont(font)
-            self.plot_item.getAxis('bottom').label.setFont(font)
+            self.plot_item.getAxis("left").label.setFont(font)
+            self.plot_item.getAxis("bottom").label.setFont(font)
         except AttributeError:
             pass
 
-        self.pt_curve = self.plot_item.plot([], [], pen=pg.mkPen((80, 150, 255), width=2), name="PT (psi)")
+        self.pt_curve = self.plot_item.plot(
+            [], [], pen=pg.mkPen((80, 150, 255), width=2), name="PT (psi)"
+        )
 
         # Live PT readout (top-right of plot, in data coordinates)
         self.pt_readout = pg.TextItem(text="", anchor=(1, 1), color=(200, 220, 255))
@@ -1242,7 +1449,7 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
         self.closed_btn.clicked.connect(self.on_closed_clicked)
         btn_row.addWidget(self.open_btn)
         btn_row.addWidget(self.closed_btn)
-        
+
         self.full_plot_btn = QtWidgets.QPushButton("Full Plot")
         self.full_plot_btn.setMinimumHeight(40)
         self.full_plot_btn.clicked.connect(self.on_full_plot_clicked)
@@ -1341,9 +1548,15 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
         if not path:
             return
         try:
-            pressure_data = list(self.sensor_psi_data[pt_id]) if pt_id in self.sensor_psi_data else []
+            pressure_data = (
+                list(self.sensor_psi_data[pt_id])
+                if pt_id in self.sensor_psi_data
+                else []
+            )
             if not pressure_data:
-                QtWidgets.QMessageBox.warning(self, "Save CSV", "No pressure data to save.")
+                QtWidgets.QMessageBox.warning(
+                    self, "Save CSV", "No pressure data to save."
+                )
                 return
 
             # Analyze timing events for all pairs
@@ -1358,7 +1571,7 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
             for i in range(len(sorted_events)):
                 if i in processed_indices:
                     continue
-                
+
                 t_open, kind = sorted_events[i]
                 if kind == "open":
                     # Find next closed
@@ -1369,51 +1582,61 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
                             t_close = sorted_events[j][0]
                             close_idx = j
                             break
-                    
+
                     if t_close:
                         # Mark close as processed so we don't use it again (though finding OPEN skips it anyway)
                         processed_indices.add(close_idx)
-                        
+
                         try:
                             # Run detection on full data window
-                            res = extract_solenoid_timing_live(t_all, P_all, t_open, t_close)
+                            res = extract_solenoid_timing_live(
+                                t_all, P_all, t_open, t_close
+                            )
                             # Map results to closest samples
-                            for key in ["t_open_start", "t_open_end", "t_close_start", "t_close_end"]:
+                            for key in [
+                                "t_open_start",
+                                "t_open_end",
+                                "t_close_start",
+                                "t_close_end",
+                            ]:
                                 val = res.get(key)
                                 if val is not None:
                                     # Find closest timestamp in data
                                     idx = (np.abs(t_all - val)).argmin()
                                     closest_t = t_all[idx]
                                     # Use a small tolerance to ensure we map to the right sample
-                                    if abs(closest_t - val) < 0.05: # 50ms tolerance
+                                    if abs(closest_t - val) < 0.05:  # 50ms tolerance
                                         timing_map[closest_t] = key.upper()
                         except ValueError:
                             pass
 
             # Build merged rows: (time_sec, pressure_psi, ACTUATION, TIMING_EVENT)
             rows = []
-            event_at_t = {t: ("OPEN" if k == "open" else "CLOSED") for t, k in self.actuator_events}
-            
+            event_at_t = {
+                t: ("OPEN" if k == "open" else "CLOSED")
+                for t, k in self.actuator_events
+            }
+
             for t, psi in pressure_data:
                 act = event_at_t.get(t, "")
                 timing = timing_map.get(t, "")
                 rows.append((t, f"{psi:.4f}", act, timing))
-            
+
             # Ensure command events are included if exact timestamps didn't align with samples
             # (Though map above handles existing pressure samples, commands are from different source)
             # Insert logic similar to original to ensure commands are present
             # But here we focus on adding content to existing pressure rows mostly.
             # If command time is distinct, we insert a new row.
-            
+
             # Copy existing rows to check against
             existing_ts = set(r[0] for r in rows)
-            
+
             for t, kind in self.actuator_events:
-                 if not any(abs(t - et) < 1e-9 for et in existing_ts):
+                if not any(abs(t - et) < 1e-9 for et in existing_ts):
                     rows.append((t, "", "OPEN" if kind == "open" else "CLOSED", ""))
-            
+
             rows.sort(key=lambda r: r[0])
-            
+
             with open(path, "w", newline="", encoding="utf-8") as f:
                 w = csv.writer(f)
                 w.writerow(["time_sec", "pressure_psi", "ACTUATION", "TIMING_EVENT"])
@@ -1443,7 +1666,7 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
         if self.board_t0_ms is None or self.last_sync_params is None:
             # Fallback if no data yet: just use wall clock relative to start
             return time.time() - self.stats_start_time
-        
+
         last_board_ms, last_wall_sec = self.last_sync_params
         now_wall = time.time()
         elapsed_sec = now_wall - last_wall_sec
@@ -1457,7 +1680,7 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
     def on_sensor_data(self, header: dict, chunks: List[dict], source_ip: str):
         if source_ip != self.filter_source_ip:
             return
-        
+
         dt_sec = 1.0 / SAMPLE_RATE_HZ
         arrival_wall_time = time.time()
 
@@ -1465,29 +1688,31 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
             chunk_ts_ms = chunk["timestamp"]
             if self.board_t0_ms is None:
                 self.board_t0_ms = chunk_ts_ms
-            
+
             # Base time for this chunk in plot seconds (relative to first packet)
             # Timestamp corresponds to START of chunk (based on firmware logic)
             chunk_base_sec = (chunk_ts_ms - self.board_t0_ms) / 1000.0
-            
+
             # Identify the latest sample time in this chunk for sync update
-            last_sample_ms = chunk_ts_ms + (len(chunk["datapoints"]) - 1) * dt_sec * 1000.0
+            last_sample_ms = (
+                chunk_ts_ms + (len(chunk["datapoints"]) - 1) * dt_sec * 1000.0
+            )
 
             for i, dp in enumerate(chunk["datapoints"]):
                 # Sample time based entirely on board crystal (timestamp + index)
                 sample_time = chunk_base_sec + i * dt_sec
-                
+
                 sensor_id = dp["sensor_id"]
                 if sensor_id not in self.sensor_data:
                     self.sensor_data[sensor_id] = deque(maxlen=MAX_POINTS)
                     self.sensor_adc_codes[sensor_id] = deque(maxlen=MAX_POINTS)
                     if sensor_id in self.pt_calibration:
                         self.sensor_psi_data[sensor_id] = deque(maxlen=MAX_POINTS)
-                
+
                 # Enforce monotonicity in case of timestamp jitter/resets (though rare with millis)
                 deq = self.sensor_data[sensor_id]
                 if len(deq) > 0 and sample_time <= deq[-1][0]:
-                     sample_time = deq[-1][0] + dt_sec
+                    sample_time = deq[-1][0] + dt_sec
 
                 code_uint32 = dp["data"]
                 voltage = self.code_to_voltage(code_uint32)
@@ -1497,7 +1722,7 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
                     a, b, c, d = self.pt_calibration[sensor_id]
                     psi = calculate_pressure(code_uint32, a, b, c, d)
                     self.sensor_psi_data[sensor_id].append((sample_time, psi))
-            
+
             # Update sync params with the effective board time of the last processed sample
             # and the current wall time.
             self.last_sync_params = (last_sample_ms, arrival_wall_time)
@@ -1513,9 +1738,13 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
     def _add_event_line(self, t_sec: float, kind: str):
         self.actuator_events.append((t_sec, kind))
         if kind == "open":
-            pen = pg.mkPen(color=(80, 255, 80), width=1.5, style=QtCore.Qt.PenStyle.DashLine)
+            pen = pg.mkPen(
+                color=(80, 255, 80), width=1.5, style=QtCore.Qt.PenStyle.DashLine
+            )
         else:
-            pen = pg.mkPen(color=(255, 80, 80), width=1.5, style=QtCore.Qt.PenStyle.DashLine)
+            pen = pg.mkPen(
+                color=(255, 80, 80), width=1.5, style=QtCore.Qt.PenStyle.DashLine
+            )
         line = pg.InfiniteLine(pos=t_sec, angle=90, pen=pen, movable=False)
         self.plot_item.addItem(line)
         self.event_lines.append(line)
@@ -1527,7 +1756,7 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
         # Use estimated board time for event
         t_sec = self.get_current_board_time()
         actuator_type = CONFIG.get_actuator_type_by_id(aid)
-        if actuator_type == 'NO':
+        if actuator_type == "NO":
             hardware_command = 0
         else:
             hardware_command = 1
@@ -1541,7 +1770,7 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
         # Use estimated board time for event
         t_sec = self.get_current_board_time()
         actuator_type = CONFIG.get_actuator_type_by_id(aid)
-        if actuator_type == 'NO':
+        if actuator_type == "NO":
             hardware_command = 1
         else:
             hardware_command = 0
@@ -1557,26 +1786,23 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
         if pt_id is None or pt_id not in self.sensor_psi_data:
             QtWidgets.QMessageBox.warning(self, "Full Plot", "No data to plot.")
             return
-            
+
         psi_deque = self.sensor_psi_data[pt_id]
         if not psi_deque:
             QtWidgets.QMessageBox.warning(self, "Full Plot", "No data to plot.")
             return
-            
+
         times = np.array([t for t, _ in psi_deque])
         pressures = np.array([p for _, p in psi_deque])
-        
-        # Filter actuator events to those within the data range (or all if we want context, 
+
+        # Filter actuator events to those within the data range (or all if we want context,
         # but the prompt implied "our test", maybe just current buffer is fine)
         # We'll pass all current events.
-        
+
         label = CONFIG.get_sensor_label(pt_id) or f"PT {pt_id}"
-        
+
         self.full_plot_window = FullPlotWindow(
-            times, 
-            pressures, 
-            list(self.actuator_events), 
-            label
+            times, pressures, list(self.actuator_events), label
         )
         self.full_plot_window.show()
 
@@ -1585,35 +1811,39 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
         if not aid:
             QtWidgets.QMessageBox.warning(self, "PWM", "Select an actuator first.")
             return
-            
+
         duty = self.pwm_duty_spin.value() / 100.0
         freq = self.pwm_freq_spin.value()
         duration_s = self.pwm_duration_spin.value()
-        
+
         if freq <= 0 or duration_s <= 0:
-            QtWidgets.QMessageBox.warning(self, "PWM", "Frequency and duration must be positive.")
+            QtWidgets.QMessageBox.warning(
+                self, "PWM", "Frequency and duration must be positive."
+            )
             return
 
         # Create and send PWM packet
         duration_ms = int(duration_s * 1000)
         # commands: List of tuples (actuator_id, duration_ms, duty_cycle, frequency)
         commands = [(aid, duration_ms, duty, freq)]
-        
+
         try:
             packet = create_pwm_actuator_command_packet(commands)
             if packet:
                 self.command_sock.sendto(packet, (self.device_ip, self.device_port))
-                self.status_label.setText(f"Sent PWM: ID={aid} {duration_s}s @ {freq}Hz {duty*100:.1f}%")
-                
+                self.status_label.setText(
+                    f"Sent PWM: ID={aid} {duration_s}s @ {freq}Hz {duty*100:.1f}%"
+                )
+
                 # Add event lines for visualization
                 # "Open" line at start
                 t_start = self.get_current_board_time()
                 self._add_event_line(t_start, "open")
-                
+
                 # "Closed" line at end (estimated)
                 t_end = t_start + duration_s
                 self._add_event_line(t_end, "closed")
-                
+
         except OSError as e:
             self.status_label.setText(f"Error sending PWM: {e}")
             print(f"Error sending PWM command: {e}")
@@ -1631,15 +1861,25 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
         window_start = current_time - time_window
 
         # Trim event lines and events that have left the sliding window (keeps view and memory bounded)
-        while self.actuator_events and self.event_lines and self.actuator_events[0][0] < window_start:
+        while (
+            self.actuator_events
+            and self.event_lines
+            and self.actuator_events[0][0] < window_start
+        ):
             self.actuator_events.pop(0)
             line = self.event_lines.pop(0)
             self.plot_item.removeItem(line)
 
         pt_id = self.get_selected_pt_id()
         if pt_id is None or pt_id not in self.sensor_psi_data:
-            chan = (CONFIG.get_sensor_label(pt_id) or f"PT {pt_id}") if pt_id is not None else ""
-            self.pt_sample_rate_label.setText(f"{chan}: -- Hz".strip(": ") if chan else "-- Hz")
+            chan = (
+                (CONFIG.get_sensor_label(pt_id) or f"PT {pt_id}")
+                if pt_id is not None
+                else ""
+            )
+            self.pt_sample_rate_label.setText(
+                f"{chan}: -- Hz".strip(": ") if chan else "-- Hz"
+            )
             self.pt_curve.setData([], [])
             self.pt_readout.setText("")
             self.plot_item.setXRange(window_start, current_time, padding=0.02)
@@ -1687,7 +1927,6 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
             self.pt_readout.setText("")
             self.plot_item.setXRange(window_start, current_time, padding=0.02)
 
-
     def closeEvent(self, event):
         if self.command_sock:
             try:
@@ -1699,22 +1938,67 @@ class SolenoidCharacterizationWindow(QtWidgets.QMainWindow):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description='Solenoid Characterization GUI')
-    parser.add_argument('-i', '--ip', type=str, default=CONFIG.config["network"]["actuator_ip"], help='Actuator board IP')
-    parser.add_argument('-p', '--port', type=int, default=CONFIG.config["network"]["receive_port"], help='UDP receive port')
-    parser.add_argument('-d', '--device-port', type=int, default=CONFIG.config["network"]["actuator_port"], help='Actuator command port')
-    parser.add_argument('-a', '--address', type=str, default='0.0.0.0', help='Bind address for receiver')
+
+    parser = argparse.ArgumentParser(description="Solenoid Characterization GUI")
+    parser.add_argument(
+        "-i",
+        "--ip",
+        type=str,
+        default=CONFIG.config["network"]["actuator_ip"],
+        help="Actuator board IP",
+    )
+    parser.add_argument(
+        "-p",
+        "--port",
+        type=int,
+        default=CONFIG.config["network"]["receive_port"],
+        help="UDP receive port",
+    )
+    parser.add_argument(
+        "-d",
+        "--device-port",
+        type=int,
+        default=CONFIG.config["network"]["actuator_port"],
+        help="Actuator command port",
+    )
+    parser.add_argument(
+        "-a", "--address", type=str, default="0.0.0.0", help="Bind address for receiver"
+    )
     args = parser.parse_args()
 
     app = QtWidgets.QApplication(sys.argv)
     app.setStyle("Fusion")
     palette = QtGui.QPalette()
-    palette.setColor(QtGui.QPalette.ColorGroup.All, QtGui.QPalette.ColorRole.Window, QtGui.QColor(53, 53, 53))
-    palette.setColor(QtGui.QPalette.ColorGroup.All, QtGui.QPalette.ColorRole.WindowText, QtCore.Qt.GlobalColor.white)
-    palette.setColor(QtGui.QPalette.ColorGroup.All, QtGui.QPalette.ColorRole.Base, QtGui.QColor(25, 25, 25))
-    palette.setColor(QtGui.QPalette.ColorGroup.All, QtGui.QPalette.ColorRole.Text, QtCore.Qt.GlobalColor.white)
-    palette.setColor(QtGui.QPalette.ColorGroup.All, QtGui.QPalette.ColorRole.Button, QtGui.QColor(53, 53, 53))
-    palette.setColor(QtGui.QPalette.ColorGroup.All, QtGui.QPalette.ColorRole.ButtonText, QtCore.Qt.GlobalColor.white)
+    palette.setColor(
+        QtGui.QPalette.ColorGroup.All,
+        QtGui.QPalette.ColorRole.Window,
+        QtGui.QColor(53, 53, 53),
+    )
+    palette.setColor(
+        QtGui.QPalette.ColorGroup.All,
+        QtGui.QPalette.ColorRole.WindowText,
+        QtCore.Qt.GlobalColor.white,
+    )
+    palette.setColor(
+        QtGui.QPalette.ColorGroup.All,
+        QtGui.QPalette.ColorRole.Base,
+        QtGui.QColor(25, 25, 25),
+    )
+    palette.setColor(
+        QtGui.QPalette.ColorGroup.All,
+        QtGui.QPalette.ColorRole.Text,
+        QtCore.Qt.GlobalColor.white,
+    )
+    palette.setColor(
+        QtGui.QPalette.ColorGroup.All,
+        QtGui.QPalette.ColorRole.Button,
+        QtGui.QColor(53, 53, 53),
+    )
+    palette.setColor(
+        QtGui.QPalette.ColorGroup.All,
+        QtGui.QPalette.ColorRole.ButtonText,
+        QtCore.Qt.GlobalColor.white,
+    )
     app.setPalette(palette)
 
     receiver = UDPReceiver(port=args.port, bind_address=args.address)
@@ -1736,5 +2020,5 @@ def main():
     sys.exit(app.exec())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
