@@ -62,6 +62,7 @@ export interface UploadResponse {
 export interface EvaluateRequest {
   lox_pressure_psi: number;
   fuel_pressure_psi: number;
+  use_cold_flow_cd?: boolean;  // When false, strips saved Cd fit and uses Re-based formula
 }
 
 // Runner results - same field names as runner.evaluate() returns
@@ -290,6 +291,7 @@ export interface GenerateProfileRequest {
   n_steps: number;
   lox_profile: ProfileParams;
   fuel_profile: ProfileParams;
+  use_cold_flow_cd?: boolean;  // When false, strips saved Cd fit and uses Re-based formula
 }
 
 // Pressure segment for segment-based curve building
@@ -299,6 +301,11 @@ export interface PressureSegment {
   start_pressure_psi: number;
   end_pressure_psi: number;
   k: number;                 // Blowdown decay constant (0.1-3.0)
+}
+
+export interface SolenoidScheduleInterval {
+  t_open: number;
+  t_close: number;
 }
 
 // Request for segment-based generation
@@ -311,6 +318,15 @@ export interface SegmentsRequest {
   blowdown_mode?: boolean;
   lox_initial_pressure_psi?: number;
   fuel_initial_pressure_psi?: number;
+  // Water flow test parameters
+  waterflow_mode?: boolean;
+  // Initial propellant/water mass overrides (from tank fill visualizer UI)
+  lox_initial_mass_kg?: number;
+  fuel_initial_mass_kg?: number;
+  // Optional pressurant solenoid schedules (blowdown mode only)
+  lox_solenoid_schedule?: SolenoidScheduleInterval[];
+  fuel_solenoid_schedule?: SolenoidScheduleInterval[];
+  use_cold_flow_cd?: boolean;  // When false, strips saved Cd fit and uses Re-based formula
 }
 
 // Time-series data returned from the API
@@ -327,6 +343,8 @@ export interface TimeSeriesData {
   mdot_total_kg_s: number[];
   cstar_actual_m_s: number[];
   gamma: number[];
+  /** Nozzle exit static pressure [psi] (combustion runs only; omitted for water-flow test) */
+  P_exit_psi?: number[];
   // Tank fill levels (propellant mass remaining)
   lox_mass_remaining_kg?: number[];
   fuel_mass_remaining_kg?: number[];
@@ -348,11 +366,13 @@ export interface TimeSeriesData {
   A_throat_m2?: number[];
   V_chamber_initial_m3?: number;
   A_throat_initial_m2?: number;
-  // COPV pressure trace
+  // COPV pressure trace (single shared COPV for both tanks)
   copv_pressure_psi?: number[];
   // Correlation matrix data
   correlation_matrix?: number[][];
   correlation_labels?: string[];
+  // Water flow test flag
+  is_waterflow?: boolean;
   // Heat Flux Profiles (Regen Cooling)
   heat_flux_profiles_w_m2?: number[][];
   wall_temp_profiles_k?: number[][];
@@ -364,6 +384,21 @@ export interface TimeSeriesData {
   ablative_q_rad_profiles_w_m2?: number[][];
   ablative_q_net_profiles_w_m2?: number[][];
   ablative_throat_index?: number;
+}
+
+// Shutdown event reported when the engine terminates before the end of the scheduled burn
+export interface ShutdownEvent {
+  time_s: number;
+  step_index: number;
+  reason: 'supply_below_demand' | 'pressure_bounds_invalid' | string;
+  details: {
+    P_tank_O_Pa?: number;
+    P_tank_F_Pa?: number;
+    Pc_max_Pa?: number;
+    Pc_min_Pa?: number;
+    residual_min?: number;
+    residual_max?: number;
+  };
 }
 
 // Summary statistics
@@ -382,6 +417,22 @@ export interface TimeSeriesSummary {
   copv_initial_mass_kg?: number;
   copv_min_margin_psi?: number;
   copv_volume_L?: number;
+  /** Ambient/back pressure used for thrust [psi], for overlay on exit pressure plot */
+  target_P_exit_psi?: number;
+  // Present only when the engine shut down before the end of the scheduled burn
+  shutdown_event?: ShutdownEvent | null;
+  // Water flow test fields
+  is_waterflow?: boolean;
+  avg_mdot_lox_kg_s?: number;
+  avg_mdot_fuel_kg_s?: number;
+  avg_mdot_total_kg_s?: number;
+  peak_mdot_lox_kg_s?: number;
+  peak_mdot_fuel_kg_s?: number;
+  total_lox_consumed_kg?: number;
+  total_fuel_consumed_kg?: number;
+  total_water_consumed_kg?: number;
+  flow_duration_s?: number;
+  Cd_used?: number;
 }
 
 // Response for generate endpoint
@@ -875,6 +926,10 @@ export interface Layer2Settings {
   de_maxiter?: number;
   de_popsize?: number;
   de_n_time_points?: number;
+  /** Pure blowdown: coupled tank physics + same post-blowdown engine evaluation as Time Series Analysis */
+  pure_blowdown?: boolean;
+  /** Skip the impulse-vs-required-impulse penalty in the objective */
+  disable_impulse_requirement?: boolean;
 }
 
 export interface Layer2Results {
@@ -985,6 +1040,12 @@ export function runLayer2Optimization(
   }
   if (settings.de_n_time_points !== undefined) {
     params.append('de_n_time_points', settings.de_n_time_points.toString());
+  }
+  if (settings.pure_blowdown) {
+    params.append('pure_blowdown', 'true');
+  }
+  if (settings.disable_impulse_requirement) {
+    params.append('disable_impulse_requirement', 'true');
   }
 
   const url = `${API_BASE}/optimizer/layer2?${params.toString()}`;

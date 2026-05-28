@@ -235,6 +235,9 @@ def simulate_coupled_blowdown(
     n_polytropic: float = 1.2,
     use_real_gas: bool = True,
     n2_Z_csv: str = "n2_Z_lookup.csv",
+    independent_depletion: bool = False,
+    m_lox_override_kg: Optional[float] = None,
+    m_fuel_override_kg: Optional[float] = None,
 ) -> Dict[str, Dict[str, np.ndarray]]:
     """
     Simulate coupled blowdown for both LOX and fuel tanks.
@@ -249,7 +252,12 @@ def simulate_coupled_blowdown(
         Initial tank pressures
     config : EngineConfig
         Configuration object with tank geometry
-        
+    independent_depletion : bool
+        If False (default, hot-fire): when either tank empties, both flows go to zero
+        (flameout — no combustion without both propellants).
+        If True (waterflow): each tank flows independently; depletion of one side does
+        not stop the other — the remaining tank keeps flowing until it too is empty.
+
     Returns
     -------
     dict with full time-series traces for both tanks
@@ -321,6 +329,12 @@ def simulate_coupled_blowdown(
 
     rho_lox, V_lox, m_lox = get_tank_params('oxidizer', 'lox_tank', 'lox_h', 'lox_radius')
     rho_fuel, V_fuel, m_fuel = get_tank_params('fuel', 'fuel_tank', 'rp1_h', 'rp1_radius')
+
+    # Apply user-supplied mass overrides (from UI fill-level input)
+    if m_lox_override_kg is not None:
+        m_lox = float(m_lox_override_kg)
+    if m_fuel_override_kg is not None:
+        m_fuel = float(m_fuel_override_kg)
     
     A_inj_lox = get_injector_area('oxidizer')
     A_inj_fuel = get_injector_area('fuel')
@@ -399,18 +413,30 @@ def simulate_coupled_blowdown(
         P_lox_new = lox_tank.step(mdot_lox_liquid, dt, mdot_lox_gas)
         P_fuel_new = fuel_tank.step(mdot_fuel_liquid, dt, mdot_fuel_gas)
         
-        # Evaluate Engine with NEW pressures to get NEW LIQUID mdot
-        # CRITICAL: If EITHER tank is depleted, engine flame-out occurs -> zero flow
-        if lox_depleted or fuel_depleted:
-            # Flameout condition: no combustion without both propellants
-            mdot_lox_new = 0.0
-            mdot_fuel_new = 0.0
-        elif lox_tank.m_prop > 0 and fuel_tank.m_prop > 0:
-            mdot_lox_new, mdot_fuel_new = evaluate_engine_fn(P_lox_new, P_fuel_new)
+        # Evaluate flow with NEW pressures to get NEW LIQUID mdot
+        if independent_depletion:
+            # Waterflow: each side flows independently until its own tank is empty
+            if not lox_depleted and not fuel_depleted:
+                mdot_lox_new, mdot_fuel_new = evaluate_engine_fn(P_lox_new, P_fuel_new)
+            elif not lox_depleted:
+                mdot_lox_new, _ = evaluate_engine_fn(P_lox_new, P_fuel_new)
+                mdot_fuel_new = 0.0
+            elif not fuel_depleted:
+                _, mdot_fuel_new = evaluate_engine_fn(P_lox_new, P_fuel_new)
+                mdot_lox_new = 0.0
+            else:
+                mdot_lox_new = 0.0
+                mdot_fuel_new = 0.0
         else:
-            # Safety fallback
-            mdot_lox_new = 0.0
-            mdot_fuel_new = 0.0
+            # Hot-fire: if EITHER tank is depleted, flameout — zero both flows
+            if lox_depleted or fuel_depleted:
+                mdot_lox_new = 0.0
+                mdot_fuel_new = 0.0
+            elif lox_tank.m_prop > 0 and fuel_tank.m_prop > 0:
+                mdot_lox_new, mdot_fuel_new = evaluate_engine_fn(P_lox_new, P_fuel_new)
+            else:
+                mdot_lox_new = 0.0
+                mdot_fuel_new = 0.0
         
         # Store History
         history['lox']['P_Pa'][i] = P_lox_new

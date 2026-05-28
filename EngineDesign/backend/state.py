@@ -13,16 +13,37 @@ class AppState:
         self.runner: Optional[PintleEngineRunner] = None
         self.config_path: Optional[str] = None
     
-    def set_config(self, config: PintleEngineConfig, config_path: Optional[str] = None) -> None:
-        """Set config and create a new runner instance."""
+    def set_config(
+        self,
+        config: PintleEngineConfig,
+        config_path: Optional[str] = None,
+        defer_runner: bool = False,
+    ) -> None:
+        """Set config and optionally create the runner immediately.
+
+        When ``defer_runner`` is True, only the config is stored; call
+        :meth:`ensure_runner` before any code path that needs ``PintleEngineRunner``
+        (CEA cache build can take a long time and must not block FastAPI startup).
+        """
         self.config = config
-        self.runner = PintleEngineRunner(config)
         if config_path is not None:
             self.config_path = config_path
-    
+        if defer_runner:
+            self.runner = None
+        else:
+            self.runner = PintleEngineRunner(config)
+
+    def ensure_runner(self) -> PintleEngineRunner:
+        """Build the runner on first use if it was deferred or cleared."""
+        if self.config is None:
+            raise RuntimeError("No config loaded; cannot create runner")
+        if self.runner is None:
+            self.runner = PintleEngineRunner(self.config)
+        return self.runner
+
     def has_config(self) -> bool:
-        """Check if a config is loaded."""
-        return self.config is not None and self.runner is not None
+        """True once a validated config object is loaded (runner may still be building)."""
+        return self.config is not None
 
 
 # Global singleton instance

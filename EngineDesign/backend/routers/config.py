@@ -59,6 +59,43 @@ async def get_config():
     return {"config": config_to_dict(app_state.config)}
 
 
+@router.post("/reload")
+async def reload_config():
+    """Re-read the active config YAML from disk and replace in-memory state.
+
+    Useful after hand-editing the YAML outside the UI: `GET /api/config` always
+    returns the in-memory snapshot, so without this endpoint disk edits are
+    invisible until the file is re-uploaded.
+    """
+    if not app_state.config_path:
+        raise HTTPException(
+            status_code=404,
+            detail="No config path known. Upload a config file first.",
+        )
+    path = Path(app_state.config_path)
+    if not path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Config file no longer exists on disk: {path}",
+        )
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        new_config = PintleEngineConfig(**data)
+        app_state.set_config(new_config, str(path))
+        return {
+            "status": "success",
+            "message": f"Reloaded config from {path.name}",
+            "config": config_to_dict(new_config),
+        }
+    except yaml.YAMLError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}")
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=f"Config validation error: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reload config: {e}")
+
+
 @router.put("")
 async def update_config(updates: dict):
     """Update the current config with partial updates.

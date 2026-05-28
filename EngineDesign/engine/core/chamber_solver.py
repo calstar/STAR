@@ -17,6 +17,7 @@ from engine.pipeline.thermal.ablative_cooling import (
     compute_ablative_response,
     compute_ablative_heat_flux_profile,
 )
+from engine.core.exceptions import EngineShutdownException
 from engine.pipeline.numerical_robustness import (
     PhysicalConstraints,
     NumericalStability,
@@ -263,25 +264,39 @@ class ChamberSolver:
         Pc_max = min(Pc_max, self.config.solver.Pc_bounds[1])
         
         if Pc_max <= Pc_min:
-            raise ValueError(f"Invalid pressure bounds: Pc_max ({Pc_max}) <= Pc_min ({Pc_min})")
+            raise EngineShutdownException(
+                "pressure_bounds_invalid",
+                {
+                    "P_tank_O_Pa": P_tank_O,
+                    "P_tank_F_Pa": P_tank_F,
+                    "Pc_max_Pa": Pc_max,
+                    "Pc_min_Pa": Pc_min,
+                },
+            )
         
         # Initial guess
         if Pc_guess is None:
             Pc_guess = (Pc_min + Pc_max) / 2
         
-        # Create residual function with tank pressures bound
-        # Create residual function with tank pressures bound
-        # Also pass debug to residual if needed in future (currently residual uses instance state, but we can't easily pass debug to it without changing signature broadly or storing state)
-        # However, residual calls eta_cstar which needs debug...
-        # Wait, residual() calls eta_cstar() inside.
-        # I need to update residual() to use debug flag.
-        # I'll store `self._debug = debug` temporarily or modify residual validation.
-        # Storing on self is easiest for this scope.
         self._debug = debug
 
         def residual_func(Pc):
             return self.residual(Pc, P_tank_O, P_tank_F)
         
+        # Branch continuity: when Pc_guess is from a previous time step,
+        # narrow the bracket to prevent jumping between multiple roots
+        # (S-curve bifurcation from nonlinear eta-Pc coupling).
+        if Pc_min < Pc_guess < Pc_max:
+            narrow_frac = 0.20
+            Pc_lo = max(Pc_min, Pc_guess * (1.0 - narrow_frac))
+            Pc_hi = min(Pc_max, Pc_guess * (1.0 + narrow_frac))
+            res_lo = residual_func(Pc_lo)
+            res_hi = residual_func(Pc_hi)
+            if (np.isfinite(res_lo) and np.isfinite(res_hi)
+                    and res_lo * res_hi < 0):
+                Pc_min = Pc_lo
+                Pc_max = Pc_hi
+
         # Check residual signs at bounds before solving
         residual_min = residual_func(Pc_min)
         residual_max = residual_func(Pc_max)
@@ -329,11 +344,29 @@ class ChamberSolver:
                 
                 # Initialize skip_solve flag
                 skip_solve = False
-                
-                # Check if residual is small at Pc_max (near solution)
-                residual_tolerance = 0.1  # kg/s - accept if within 0.1 kg/s
-                
-                if residual_max < residual_tolerance:
+
+                # Before giving up, try expanding Pc_max with smaller feed-loss margins.
+                # The initial 15% margin is conservative; true feed losses are often 3-8%.
+                # If a tighter margin gives a valid bracket (sign change), use it.
+                _bracket_expanded = False
+                for retry_margin in [0.05, 0.02]:
+                    Pc_max_retry = min(P_tank_O, P_tank_F) * (1.0 - retry_margin)
+                    Pc_max_retry = min(Pc_max_retry, self.config.solver.Pc_bounds[1])
+                    if Pc_max_retry <= Pc_max:
+                        continue
+                    residual_retry = residual_func(Pc_max_retry)
+                    if np.isfinite(residual_retry) and residual_retry < 0:
+                        # Valid bracket found — expand and solve normally
+                        Pc_max = Pc_max_retry
+                        residual_max = residual_retry
+                        _bracket_expanded = True
+                        break
+
+                if not _bracket_expanded:
+                    # Check if residual is small at Pc_max (near solution)
+                    residual_tolerance = 0.1  # kg/s - accept if within 0.1 kg/s
+
+                if not _bracket_expanded and residual_max < residual_tolerance:
                     # Residual is small - we're very close to solution
                     # Use Pc_max as solution with warning
                     # import warnings
@@ -348,8 +381,8 @@ class ChamberSolver:
                     success = True
                     # Skip the root finding loop below
                     skip_solve = True
-                else:
-                    # Residual is significant - diagnose the issue
+                elif not _bracket_expanded:
+                    # Residual is significant and bracket expansion failed - diagnose the issue
                     # Get diagnostics at Pc_max to understand supply/demand
                     try:
                         mdot_O_test, mdot_F_test, diag_test = flows(
@@ -382,6 +415,11 @@ class ChamberSolver:
                             "turbulence_intensity": diag_test.get("turbulence_intensity_mix", DEFAULT_TURBULENCE_INTENSITY_ND),
                             "fuel_props": self._get_fuel_props(),
                         }
+                        # Injection velocities are required by the advanced efficiency model
+                        if "u_F" in diag_test:
+                            advanced_params_test["u_fuel"] = diag_test["u_F"]
+                        if "u_O" in diag_test:
+                            advanced_params_test["u_lox"] = diag_test["u_O"]
                         
                         # Calculate efficiency
                         eta_test = eta_cstar(
@@ -443,7 +481,14 @@ class ChamberSolver:
                         )
                     
             else:
-                # Supply < Demand at all Pc (both negative)
+                # Supply < Demand at all Pc (both negative).
+                # This is often a numerical artifact: the efficiency model produces
+                # near-zero eta_cstar at very low Pc_min, inflating mdot_demand to
+                # unphysical values even at normal tank pressures. Raise ValueError
+                # so the time-series loop creates a NaN state and continues, rather
+                # than treating this as a definitive engine shutdown.
+                # True tank-depletion shutdowns are caught earlier by the
+                # pressure_bounds_invalid check (when Pc_max ≤ Pc_min).
                 raise ValueError(
                     f"No solution: Supply < Demand at all Pc. "
                     f"Residual at bounds: [{residual_min:.4f}, {residual_max:.4f}] kg/s. "
@@ -483,15 +528,20 @@ class ChamberSolver:
                         full_output=True
                     )
                     success = result.converged
-                    
-                    # Validate convergence
-                    conv_check = NumericalStability.check_convergence(
-                        convergence_history,
-                        self.config.solver.tolerance,
-                        min_iterations=3
-                    )
-                    if not conv_check.passed and conv_check.severity == "error":
-                        raise RuntimeError(f"Convergence validation failed: {conv_check.message}")
+
+                    # Validate convergence — but if brentq itself reports converged
+                    # (interval is tiny), accept it even if the custom residual check
+                    # fails. This handles discontinuous supply functions (e.g. spray
+                    # constraint Cd correction) where the root lies at a step jump and
+                    # the residual at the solution point is large but the Pc is correct.
+                    if not result.converged:
+                        conv_check = NumericalStability.check_convergence(
+                            convergence_history,
+                            self.config.solver.tolerance,
+                            min_iterations=3
+                        )
+                        if not conv_check.passed and conv_check.severity == "error":
+                            raise RuntimeError(f"Convergence validation failed: {conv_check.message}")
                         
                 else:
                     # Fallback to Newton's method (less robust)

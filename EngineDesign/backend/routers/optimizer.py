@@ -17,6 +17,8 @@ from backend.routers.config import config_to_dict
 from engine.pipeline.config_schemas import DesignRequirementsConfig
 from engine.optimizer.layers.layer1_static_optimization import run_layer1_optimization
 from engine.optimizer.layers.layer2_pressure import run_layer2_pressure
+from engine.optimizer.layers.layer2_blowdown import run_layer2_blowdown
+from engine.pipeline.layer2_tank_capacity import resolve_layer2_tank_capacities_kg
 from engine.optimizer.layers.layer3_thermal_protection import run_layer3_thermal_protection
 
 
@@ -284,12 +286,8 @@ async def run_layer1(
             detail="No config loaded. Upload a config file first."
         )
     
-    if not app_state.runner:
-        raise HTTPException(
-            status_code=400,
-            detail="Runner not initialized. Please check config."
-        )
-    
+    app_state.ensure_runner()
+
     # Check for design requirements
     if app_state.config.design_requirements is None:
         raise HTTPException(
@@ -509,7 +507,9 @@ async def run_layer2(
     save_plots: bool = False,
     de_maxiter: int = 5,
     de_popsize: int = 2,
-    de_n_time_points: int = 25
+    de_n_time_points: int = 25,
+    pure_blowdown: bool = False,
+    disable_impulse_requirement: bool = False,
 ):
     """Run Layer 2 optimization with Server-Sent Events for progress updates."""
     if not app_state.has_config():
@@ -518,12 +518,8 @@ async def run_layer2(
             detail="No config loaded. Run Layer 1 or upload a config first."
         )
     
-    if not app_state.runner:
-        raise HTTPException(
-            status_code=400,
-            detail="Runner not initialized."
-        )
-    
+    app_state.ensure_runner()
+
     # Check for design requirements
     if app_state.config.design_requirements is None:
         raise HTTPException(
@@ -589,9 +585,14 @@ async def run_layer2(
                 elif r.propulsion_dry_mass is not None:
                     rocket_dry_mass_kg = (r.airframe_mass or 0) + r.propulsion_dry_mass
             
-            # Tank capacities
-            lox_capacity = reqs.lox_tank_capacity_kg or 25.0
-            fuel_capacity = reqs.fuel_tank_capacity_kg or 15.0
+            # Tank capacities: tank volume × fluid density from config; optional design_requirements override; then defaults
+            lox_capacity, fuel_capacity = resolve_layer2_tank_capacities_kg(
+                app_state.config,
+                design_lox_kg=reqs.lox_tank_capacity_kg,
+                design_fuel_kg=reqs.fuel_tank_capacity_kg,
+                default_lox_kg=25.0,
+                default_fuel_kg=15.0,
+            )
             
             objective_history = []
             objective_history_lock = threading.Lock()
@@ -631,6 +632,31 @@ async def run_layer2(
             current_stop_event = _stop_event
             
             def run_opt():
+                if pure_blowdown:
+                    return run_layer2_blowdown(
+                        optimized_config=app_state.config,
+                        initial_lox_pressure_pa=initial_lox_p,
+                        initial_fuel_pressure_pa=initial_fuel_p,
+                        peak_thrust=target_thrust,
+                        target_apogee_m=target_apogee,
+                        rocket_dry_mass_kg=rocket_dry_mass_kg,
+                        max_lox_tank_capacity_kg=lox_capacity,
+                        max_fuel_tank_capacity_kg=fuel_capacity,
+                        target_burn_time=burn_time,
+                        n_time_points=200,
+                        update_progress=update_progress,
+                        optimal_of_ratio=reqs.optimal_of_ratio,
+                        min_stability_margin=reqs.chugging_margin_min,
+                        max_iterations=max_iterations,
+                        save_evaluation_plots=save_plots,
+                        objective_callback=objective_callback,
+                        pressure_curve_callback=pressure_curve_callback,
+                        stop_event=current_stop_event,
+                        de_maxiter=de_maxiter,
+                        de_popsize=de_popsize,
+                        de_n_time_points=de_n_time_points,
+                        disable_impulse_requirement=disable_impulse_requirement,
+                    )
                 return run_layer2_pressure(
                     optimized_config=app_state.config,
                     initial_lox_pressure_pa=initial_lox_p,
@@ -647,10 +673,13 @@ async def run_layer2(
                     pressure_curve_callback=pressure_curve_callback,
                     max_iterations=max_iterations,
                     save_evaluation_plots=save_plots,
-                    stop_event=current_stop_event,  # Use captured event
+                    stop_event=current_stop_event,
                     de_maxiter=de_maxiter,
                     de_popsize=de_popsize,
                     de_n_time_points=de_n_time_points,
+                    optimal_of_ratio=reqs.optimal_of_ratio,
+                    min_stability_margin=reqs.chugging_margin_min,
+                    disable_impulse_requirement=disable_impulse_requirement,
                 )
             
             # Wait, I need to check the design requirements for tank capacities
@@ -883,12 +912,8 @@ async def run_layer3(
             detail="No config loaded. Run Layer 2 or upload a config first."
         )
     
-    if not app_state.runner:
-        raise HTTPException(
-            status_code=400,
-            detail="Runner not initialized."
-        )
-    
+    app_state.ensure_runner()
+
     # Verify config has pressure_curves from Layer 2
     if not hasattr(app_state.config, 'pressure_curves') or app_state.config.pressure_curves is None:
         raise HTTPException(

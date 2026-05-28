@@ -21,6 +21,7 @@ import copy
 
 from engine.pipeline.config_schemas import PintleEngineConfig, ensure_chamber_geometry, ChamberGeometryConfig
 from engine.core.chamber_solver import ChamberSolver
+from engine.core.exceptions import EngineShutdownException
 from engine.core.nozzle import calculate_thrust
 from engine.pipeline.reaction_chemistry import (
     calculate_chamber_reaction_progress,
@@ -174,6 +175,7 @@ class TimeVaryingCoupledSolver:
         
         # Initialize state history
         self.state_history: List[TimeVaryingState] = []
+        self.shutdown_info: Optional[dict] = None
     
     def solve_time_step(
         self,
@@ -272,7 +274,9 @@ class TimeVaryingCoupledSolver:
         solver = ChamberSolver(config_current, self.cea_cache)
         
         # Solve chamber pressure with updated geometry
-        Pc, diagnostics = solver.solve(P_tank_O, P_tank_F, Pc_guess=None)
+        # Use previous Pc as guess for branch continuity (prevents S-curve bifurcation jumps)
+        Pc_prev = previous_state.Pc if previous_state is not None and np.isfinite(previous_state.Pc) else None
+        Pc, diagnostics = solver.solve(P_tank_O, P_tank_F, Pc_guess=Pc_prev)
         
         # Extract diagnostics
         MR = diagnostics["MR"]
@@ -1041,6 +1045,204 @@ class TimeVaryingCoupledSolver:
         
         return state
     
+    def _make_nan_state(self, time: float, previous_state=None) -> TimeVaryingState:
+        """Create a NaN performance state for a failed time step, preserving geometry."""
+        if previous_state is not None:
+            V_chamber = previous_state.V_chamber
+            A_throat = previous_state.A_throat
+            A_exit = previous_state.A_exit
+            Lstar = previous_state.Lstar
+            D_chamber = previous_state.D_chamber
+            D_throat = previous_state.D_throat
+            D_exit = previous_state.D_exit
+            eps = previous_state.eps
+            recession_chamber = previous_state.recession_chamber
+            recession_throat = previous_state.recession_throat
+            recession_exit = previous_state.recession_exit
+            recession_graphite = previous_state.recession_graphite
+            graphite_thickness_remaining = previous_state.graphite_thickness_remaining
+        else:
+            V_chamber = self.V_chamber_initial
+            A_throat = self.A_throat_initial
+            A_exit = self.A_exit_initial
+            Lstar = V_chamber / A_throat if A_throat > 0 else 0.0
+            D_chamber = self.D_chamber_initial
+            D_throat = self.D_throat_initial
+            D_exit = self.D_exit_initial
+            eps = A_exit / A_throat if A_throat > 0 else 1.0
+            recession_chamber = 0.0
+            recession_throat = 0.0
+            recession_exit = 0.0
+            recession_graphite = 0.0
+            graphite_cfg = getattr(self.config, 'graphite_insert', None)
+            graphite_thickness_remaining = (
+                graphite_cfg.initial_thickness
+                if graphite_cfg and graphite_cfg.enabled
+                else 0.0
+            )
+
+        return TimeVaryingState(
+            time=time,
+            V_chamber=V_chamber,
+            A_throat=A_throat,
+            A_exit=A_exit,
+            Lstar=Lstar,
+            D_chamber=D_chamber,
+            D_throat=D_throat,
+            D_exit=D_exit,
+            eps=eps,
+            recession_chamber=recession_chamber,
+            recession_throat=recession_throat,
+            recession_exit=recession_exit,
+            recession_graphite=recession_graphite,
+            graphite_thickness_remaining=graphite_thickness_remaining,
+            reaction_progress={"progress_injection": np.nan, "progress_mid": np.nan, "progress_throat": np.nan},
+            tau_residence=np.nan,
+            tau_effective=np.nan,
+            Pc=np.nan,
+            Tc=np.nan,
+            MR=np.nan,
+            mdot_total=np.nan,
+            F=np.nan,
+            Isp=np.nan,
+            v_exit=np.nan,
+            P_exit=np.nan,
+            T_exit=np.nan,
+            M_exit=np.nan,
+            gamma_chamber=np.nan,
+            gamma_exit=np.nan,
+            R_chamber=np.nan,
+            R_exit=np.nan,
+            equilibrium_factor=np.nan,
+            chugging_frequency=np.nan,
+            chugging_stability_margin=np.nan,
+            stability_state="unstable",
+            stability_score=np.nan,
+            acoustic_modes={},
+            feed_stability={},
+            heat_flux_chamber=np.nan,
+            heat_flux_throat=np.nan,
+            ablative_recession_rate=np.nan,
+            graphite_recession_rate=np.nan,
+            throat_oxidation_recession_rate=np.nan,
+            throat_ablation_recession_rate=np.nan,
+            mach_number=np.nan,
+            eta_cstar=np.nan,
+            reynolds_number=np.nan,
+            residence_time=np.nan,
+            T_ablative_surface=np.nan,
+            T_stainless_chamber=np.nan,
+            T_graphite_surface=np.nan,
+            T_stainless_throat=np.nan,
+            nozzle_efficiency=np.nan,
+            nozzle_max_heat_flux=np.nan,
+            nozzle_max_wall_temp=np.nan,
+            nozzle_is_melting=False,
+            nozzle_hotspot_count=0,
+            diagnostics=None,
+        )
+
+    def _make_zero_state(self, t: float, last_state: Optional[TimeVaryingState]) -> TimeVaryingState:
+        """Create a zero-performance state for post-shutdown time steps.
+
+        All performance fields (Pc, thrust, mdot, Isp, …) are 0.0.
+        Geometry is preserved from the last valid state so plots don't jump.
+        """
+        if last_state is not None:
+            V_chamber = last_state.V_chamber
+            A_throat = last_state.A_throat
+            A_exit = last_state.A_exit
+            Lstar = last_state.Lstar
+            D_chamber = last_state.D_chamber
+            D_throat = last_state.D_throat
+            D_exit = last_state.D_exit
+            eps = last_state.eps
+            recession_chamber = last_state.recession_chamber
+            recession_throat = last_state.recession_throat
+            recession_exit = last_state.recession_exit
+            recession_graphite = last_state.recession_graphite
+            graphite_thickness_remaining = last_state.graphite_thickness_remaining
+        else:
+            V_chamber = self.V_chamber_initial
+            A_throat = self.A_throat_initial
+            A_exit = self.A_exit_initial
+            Lstar = V_chamber / A_throat if A_throat > 0 else 0.0
+            D_chamber = self.D_chamber_initial
+            D_throat = self.D_throat_initial
+            D_exit = self.D_exit_initial
+            eps = A_exit / A_throat if A_throat > 0 else 1.0
+            recession_chamber = 0.0
+            recession_throat = 0.0
+            recession_exit = 0.0
+            recession_graphite = 0.0
+            graphite_cfg = getattr(self.config, 'graphite_insert', None)
+            graphite_thickness_remaining = (
+                graphite_cfg.initial_thickness
+                if graphite_cfg and graphite_cfg.enabled
+                else 0.0
+            )
+
+        return TimeVaryingState(
+            time=t,
+            V_chamber=V_chamber,
+            A_throat=A_throat,
+            A_exit=A_exit,
+            Lstar=Lstar,
+            D_chamber=D_chamber,
+            D_throat=D_throat,
+            D_exit=D_exit,
+            eps=eps,
+            recession_chamber=recession_chamber,
+            recession_throat=recession_throat,
+            recession_exit=recession_exit,
+            recession_graphite=recession_graphite,
+            graphite_thickness_remaining=graphite_thickness_remaining,
+            reaction_progress={"progress_injection": 0.0, "progress_mid": 0.0, "progress_throat": 0.0},
+            tau_residence=0.0,
+            tau_effective=0.0,
+            Pc=0.0,
+            Tc=0.0,
+            MR=0.0,
+            mdot_total=0.0,
+            F=0.0,
+            Isp=0.0,
+            v_exit=0.0,
+            P_exit=0.0,
+            T_exit=0.0,
+            M_exit=0.0,
+            gamma_chamber=0.0,
+            gamma_exit=0.0,
+            R_chamber=0.0,
+            R_exit=0.0,
+            equilibrium_factor=0.0,
+            chugging_frequency=0.0,
+            chugging_stability_margin=0.0,
+            stability_state="shutdown",
+            stability_score=0.0,
+            acoustic_modes={},
+            feed_stability={},
+            heat_flux_chamber=0.0,
+            heat_flux_throat=0.0,
+            ablative_recession_rate=0.0,
+            graphite_recession_rate=0.0,
+            throat_oxidation_recession_rate=0.0,
+            throat_ablation_recession_rate=0.0,
+            mach_number=0.0,
+            eta_cstar=0.0,
+            reynolds_number=0.0,
+            residence_time=0.0,
+            T_ablative_surface=0.0,
+            T_stainless_chamber=0.0,
+            T_graphite_surface=0.0,
+            T_stainless_throat=0.0,
+            nozzle_efficiency=0.0,
+            nozzle_max_heat_flux=0.0,
+            nozzle_max_wall_temp=0.0,
+            nozzle_is_melting=False,
+            nozzle_hotspot_count=0,
+            diagnostics=None,
+        )
+
     def solve_time_series(
         self,
         times: np.ndarray,
@@ -1049,7 +1251,7 @@ class TimeVaryingCoupledSolver:
     ) -> List[TimeVaryingState]:
         """
         Solve complete time series with full coupling.
-        
+
         Parameters:
         -----------
         times : np.ndarray
@@ -1058,7 +1260,7 @@ class TimeVaryingCoupledSolver:
             Oxidizer tank pressures [Pa]
         P_tank_F : np.ndarray
             Fuel tank pressures [Pa]
-        
+
         Returns:
         --------
         states : List[TimeVaryingState]
@@ -1066,24 +1268,57 @@ class TimeVaryingCoupledSolver:
         """
         if len(times) != len(P_tank_O) or len(times) != len(P_tank_F):
             raise ValueError("times, P_tank_O, and P_tank_F must have same length")
-        
+
+        self.shutdown_info = None  # reset on each run
+
         states = []
         previous_state = None
-        
+
         for i, t in enumerate(times):
-            dt = times[i] - times[i-1] if i > 0 else 0.0
-            
-            state = self.solve_time_step(
-                time=t,
-                dt=dt,
-                P_tank_O=P_tank_O[i],
-                P_tank_F=P_tank_F[i],
-                previous_state=previous_state,
-            )
-            
+            dt = times[i] - times[i - 1] if i > 0 else 0.0
+
+            try:
+                state = self.solve_time_step(
+                    time=t,
+                    dt=dt,
+                    P_tank_O=P_tank_O[i],
+                    P_tank_F=P_tank_F[i],
+                    previous_state=previous_state,
+                )
+            except EngineShutdownException as _shutdown_err:
+                import logging as _logging
+                _logging.getLogger("evaluate").info(
+                    f"[TIME_VARYING] Engine shutdown at step {i} (t={t:.3f}s): "
+                    f"{_shutdown_err.reason}. Filling remaining {len(times) - i} "
+                    f"step(s) with zero-performance states."
+                )
+                self.shutdown_info = {
+                    "time_s": float(t),
+                    "step_index": i,
+                    "reason": _shutdown_err.reason,
+                    "details": _shutdown_err.details,
+                }
+                # Fill all remaining time steps (including this one) with
+                # zero-performance states so array lengths stay consistent.
+                for j in range(i, len(times)):
+                    states.append(self._make_zero_state(times[j], previous_state))
+                break
+            except Exception as _step_err:
+                import logging as _logging
+                _logging.getLogger("evaluate").warning(
+                    f"[TIME_VARYING] Step {i} (t={t:.3f}s, "
+                    f"P_lox={P_tank_O[i]/6894.76:.1f} psi, "
+                    f"P_fuel={P_tank_F[i]/6894.76:.1f} psi) failed: {_step_err}. "
+                    f"Using NaN state."
+                )
+                state = self._make_nan_state(t, previous_state)
+                states.append(state)
+                previous_state = state
+                continue
+
             states.append(state)
             previous_state = state
-        
+
         self.state_history = states
         return states
     

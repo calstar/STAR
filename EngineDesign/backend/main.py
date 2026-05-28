@@ -17,18 +17,7 @@ project_root = Path(__file__).resolve().parents[1]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-# Import control router first (required for controller)
-from backend.routers import control
-
-# Import other routers optionally (may fail if dependencies missing)
-_optional_routers = {}
-for router_name in ['config', 'evaluate', 'timeseries', 'flight', 'geometry', 'optimizer']:
-    try:
-        router_module = __import__(f'backend.routers.{router_name}', fromlist=[router_name])
-        _optional_routers[router_name] = router_module
-    except (ImportError, TypeError) as e:
-        print(f"Warning: Router '{router_name}' unavailable (non-critical): {e}")
-
+from backend.routers import config, evaluate, timeseries, flight, geometry, optimizer, control, experiment
 from backend.state import app_state
 from engine.pipeline.io import load_config
 
@@ -37,11 +26,13 @@ from engine.pipeline.io import load_config
 async def lifespan(app: FastAPI):
     """Application lifespan - load default config on startup."""
     # Try to load default config on startup
-    default_config_path = project_root / "configs" / "default.yaml"
+    default_config_path = project_root / "configs" / "diablo_config.yaml"
     if default_config_path.exists():
         try:
             config_obj = load_config(str(default_config_path))
-            app_state.set_config(config_obj, str(default_config_path))
+            app_state.set_config(
+                config_obj, str(default_config_path), defer_runner=True
+            )
             print(f"Loaded default config from {default_config_path}")
         except Exception as e:
             print(f"Warning: Could not load default config: {e}")
@@ -73,16 +64,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers (control is required, others optional)
+# Include routers
+app.include_router(config.router)
+app.include_router(evaluate.router)
+app.include_router(timeseries.router)
+app.include_router(flight.router)
+app.include_router(geometry.router)
+app.include_router(optimizer.router)
 app.include_router(control.router)
-
-# Include optional routers if they loaded successfully
-for router_name, router_module in _optional_routers.items():
-    try:
-        app.include_router(router_module.router)
-        print(f"✅ Loaded router: {router_name}")
-    except Exception as e:
-        print(f"Warning: Failed to include router '{router_name}': {e}")
+app.include_router(experiment.router)
 
 
 @app.get("/")
@@ -102,5 +92,6 @@ async def health():
     return {
         "status": "healthy",
         "config_loaded": app_state.has_config(),
+        "runner_ready": app_state.runner is not None,
     }
 

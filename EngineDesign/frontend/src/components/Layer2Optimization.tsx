@@ -94,9 +94,11 @@ export function Layer2Optimization({ requirements }: Layer2OptimizationProps) {
     const [settings, setSettings] = useState<Layer2Settings>({
         max_iterations: 20,
         save_plots: false,
+        disable_impulse_requirement: false,
         de_maxiter: 5,
         de_popsize: 2,
         de_n_time_points: 25,
+        pure_blowdown: false,
     });
     const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -571,6 +573,36 @@ export function Layer2Optimization({ requirements }: Layer2OptimizationProps) {
                                 <span className="text-xs text-[var(--color-text-secondary)]">Save PNG Plots</span>
                             </label>
                         </div>
+                        <div className="md:col-span-2 lg:col-span-2 flex flex-col gap-2">
+                            <label className="flex items-start gap-2 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={settings.pure_blowdown ?? false}
+                                    onChange={(e) => setSettings({ ...settings, pure_blowdown: e.target.checked })}
+                                    className="mt-0.5 rounded border-teal-500/60 bg-[var(--color-bg-primary)] accent-teal-500"
+                                />
+                                <span>
+                                    <span className="text-xs font-semibold text-teal-400">Pure Blowdown</span>
+                                    <span className="block text-[11px] text-[var(--color-text-secondary)] mt-0.5">
+                                        Optimize initial tank pressures and propellant masses (4-D) using coupled blowdown physics — same engine time-series evaluation as Time Series → Pure Blowdown (hot-fire), including flameout masking and config ablative geometry tracking when enabled.
+                                    </span>
+                                </span>
+                            </label>
+                            <label className="flex items-start gap-2 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={settings.disable_impulse_requirement ?? false}
+                                    onChange={(e) => setSettings({ ...settings, disable_impulse_requirement: e.target.checked })}
+                                    className="mt-0.5 rounded border-orange-500/60 bg-[var(--color-bg-primary)] accent-orange-500"
+                                />
+                                <span>
+                                    <span className="text-xs font-semibold text-orange-400">Disable Impulse Requirement</span>
+                                    <span className="block text-[11px] text-[var(--color-text-secondary)] mt-0.5">
+                                        Skip the impulse-vs-apogee penalty so the optimizer does not reward shorter burns or less propellant. Useful when target apogee is not the binding constraint.
+                                    </span>
+                                </span>
+                            </label>
+                        </div>
                     </div>
                 )}
             </div>
@@ -803,6 +835,188 @@ export function Layer2Optimization({ requirements }: Layer2OptimizationProps) {
                                                 dataKey="of_ratio"
                                                 name="O/F Ratio"
                                                 stroke="#eab308"
+                                                strokeWidth={2}
+                                                dot={false}
+                                                isAnimationActive={false}
+                                            />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                        )}
+
+                    {/* Chamber Pressure Curve Chart */}
+                    {results.summary.thrust_curve_time && results.summary.pc_curve_values &&
+                        results.summary.thrust_curve_time.length > 0 && results.summary.pc_curve_values.length > 0 && (
+                            <div className="mt-6">
+                                <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
+                                    <span className="text-blue-400">🫧</span> Chamber Pressure Curve (Time Series, No Ablation/Oxidation)
+                                </h4>
+                                <div className="h-[300px] w-full">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart
+                                            data={results.summary.thrust_curve_time.map((t: number, i: number) => ({
+                                                time: t,
+                                                pc_psi: ((results.summary.pc_curve_values[i] || 0) / 6894.76),
+                                            }))}
+                                            margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                                        >
+                                            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.3} />
+                                            <XAxis
+                                                dataKey="time"
+                                                unit=" s"
+                                                stroke="var(--color-text-secondary)"
+                                                tick={{ fontSize: 12 }}
+                                            />
+                                            <YAxis
+                                                stroke="var(--color-text-secondary)"
+                                                tick={{ fontSize: 12 }}
+                                                label={{ value: 'Pc (psi)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
+                                            />
+                                            <Tooltip
+                                                contentStyle={{ backgroundColor: 'var(--color-bg-primary)', border: '1px solid var(--color-border)', borderRadius: '8px' }}
+                                            />
+                                            <Legend />
+                                            <Line
+                                                type="monotone"
+                                                dataKey="pc_psi"
+                                                name="Pc"
+                                                stroke="#60a5fa"
+                                                strokeWidth={2}
+                                                dot={false}
+                                                isAnimationActive={false}
+                                            />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                        )}
+
+                    {/* Mass Flow Curves Chart */}
+                    {results.summary.thrust_curve_time && (results.summary.mdot_total_curve_values || results.summary.mdot_O_curve_values || results.summary.mdot_F_curve_values) &&
+                        results.summary.thrust_curve_time.length > 0 && (
+                            <div className="mt-6">
+                                <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
+                                    <span className="text-cyan-400">💨</span> Mass Flow (Time Series, No Ablation/Oxidation)
+                                </h4>
+                                <div className="h-[300px] w-full">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart
+                                            data={results.summary.thrust_curve_time.map((t: number, i: number) => ({
+                                                time: t,
+                                                mdot_total: (results.summary.mdot_total_curve_values?.[i] ?? 0),
+                                                mdot_O: (results.summary.mdot_O_curve_values?.[i] ?? 0),
+                                                mdot_F: (results.summary.mdot_F_curve_values?.[i] ?? 0),
+                                            }))}
+                                            margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                                        >
+                                            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.3} />
+                                            <XAxis
+                                                dataKey="time"
+                                                unit=" s"
+                                                stroke="var(--color-text-secondary)"
+                                                tick={{ fontSize: 12 }}
+                                            />
+                                            <YAxis
+                                                stroke="var(--color-text-secondary)"
+                                                tick={{ fontSize: 12 }}
+                                                label={{ value: 'mdot (kg/s)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
+                                            />
+                                            <Tooltip
+                                                contentStyle={{ backgroundColor: 'var(--color-bg-primary)', border: '1px solid var(--color-border)', borderRadius: '8px' }}
+                                            />
+                                            <Legend />
+                                            {results.summary.mdot_total_curve_values && (
+                                                <Line
+                                                    type="monotone"
+                                                    dataKey="mdot_total"
+                                                    name="mdot_total"
+                                                    stroke="#22c55e"
+                                                    strokeWidth={2}
+                                                    dot={false}
+                                                    isAnimationActive={false}
+                                                />
+                                            )}
+                                            {results.summary.mdot_O_curve_values && (
+                                                <Line
+                                                    type="monotone"
+                                                    dataKey="mdot_O"
+                                                    name="mdot_O"
+                                                    stroke="#3b82f6"
+                                                    strokeWidth={2}
+                                                    dot={false}
+                                                    isAnimationActive={false}
+                                                />
+                                            )}
+                                            {results.summary.mdot_F_curve_values && (
+                                                <Line
+                                                    type="monotone"
+                                                    dataKey="mdot_F"
+                                                    name="mdot_F"
+                                                    stroke="#ef4444"
+                                                    strokeWidth={2}
+                                                    dot={false}
+                                                    isAnimationActive={false}
+                                                />
+                                            )}
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                        )}
+
+                    {/* Tank Fill Level Chart */}
+                    {results.summary.thrust_curve_time &&
+                        results.summary.lox_fill_fraction_curve &&
+                        results.summary.fuel_fill_fraction_curve &&
+                        results.summary.thrust_curve_time.length > 0 &&
+                        results.summary.lox_fill_fraction_curve.length > 0 &&
+                        results.summary.fuel_fill_fraction_curve.length > 0 && (
+                            <div className="mt-6">
+                                <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-4 flex items-center gap-2">
+                                    <span className="text-indigo-400">🛢️</span> Tank Fill Level (Percent of Capacity)
+                                </h4>
+                                <div className="h-[300px] w-full">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart
+                                            data={results.summary.thrust_curve_time.map((t: number, i: number) => ({
+                                                time: t,
+                                                lox_fill_pct: ((results.summary.lox_fill_fraction_curve?.[i] ?? 0) * 100.0),
+                                                fuel_fill_pct: ((results.summary.fuel_fill_fraction_curve?.[i] ?? 0) * 100.0),
+                                            }))}
+                                            margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                                        >
+                                            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.3} />
+                                            <XAxis
+                                                dataKey="time"
+                                                unit=" s"
+                                                stroke="var(--color-text-secondary)"
+                                                tick={{ fontSize: 12 }}
+                                            />
+                                            <YAxis
+                                                stroke="var(--color-text-secondary)"
+                                                tick={{ fontSize: 12 }}
+                                                domain={[0, 100]}
+                                                label={{ value: 'Fill (%)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
+                                            />
+                                            <Tooltip
+                                                contentStyle={{ backgroundColor: 'var(--color-bg-primary)', border: '1px solid var(--color-border)', borderRadius: '8px' }}
+                                            />
+                                            <Legend />
+                                            <Line
+                                                type="monotone"
+                                                dataKey="lox_fill_pct"
+                                                name="LOX Fill (%)"
+                                                stroke="#3b82f6"
+                                                strokeWidth={2}
+                                                dot={false}
+                                                isAnimationActive={false}
+                                            />
+                                            <Line
+                                                type="monotone"
+                                                dataKey="fuel_fill_pct"
+                                                name="Fuel Fill (%)"
+                                                stroke="#ef4444"
                                                 strokeWidth={2}
                                                 dot={false}
                                                 isAnimationActive={false}

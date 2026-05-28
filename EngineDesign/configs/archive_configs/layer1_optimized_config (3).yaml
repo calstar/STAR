@@ -225,7 +225,7 @@ fuel_tank:
   mass: 7.0
   rp1_h: 0.609
   rp1_radius: 0.0762
-  tank_volume_m3: 0.011109
+  tank_volume_m3: 0.00915
 graphite_insert:
   ablation_surface_temperature: 3000.0
   ablation_transition_width: 200.0
@@ -283,7 +283,7 @@ lox_tank:
   lox_radius: 0.06985
   mass: 6.75
   ox_tank_pos: 0.8
-  tank_volume_m3: 0.017474
+  tank_volume_m3: 0.01265
 nozzle: null
 optimizer:
   hybrid:

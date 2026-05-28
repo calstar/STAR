@@ -9,7 +9,7 @@ import numpy as np
 from engine.pipeline.config_schemas import PintleEngineConfig, CoaxialInjectorConfig
 from engine.pipeline.feed_loss import delta_p_feed
 from engine.pipeline.thermal.regen_cooling import delta_p_regen_channels
-from engine.core.discharge import cd_from_re, calculate_reynolds_number
+from engine.core.discharge import cd_from_re, calculate_reynolds_number, effective_cda
 from engine.core.spray import (
     momentum_flux_ratio,
     thrust_momentum_ratio,
@@ -135,13 +135,15 @@ class CoaxialInjector(InjectorModel):
 
                     T_tank_O = 90.0
                     T_tank_F = 300.0
-                    Cd_O_quick_base = cd_from_re(Re_O_quick, discharge_O, P_inlet=P_inj_O, T_inlet=T_tank_O)
-                    Cd_F_quick_base = cd_from_re(Re_F_quick, discharge_F, P_inlet=P_inj_F, T_inlet=T_tank_F)
-                    Cd_O_quick = min(Cd_O_quick_base, Cd_O_eff)
-                    Cd_F_quick = min(Cd_F_quick_base, Cd_F_eff)
+                    CdA_O_quick = effective_cda(discharge_O, A_core, delta_p_inj_O, Re_O_quick, P_inlet=P_inj_O, T_inlet=T_tank_O)
+                    CdA_F_quick = effective_cda(discharge_F, A_annulus, delta_p_inj_F, Re_F_quick, P_inlet=P_inj_F, T_inlet=T_tank_F)
+                    if discharge_O.cda_fit_a is None:
+                        CdA_O_quick = min(CdA_O_quick, Cd_O_eff * A_core)
+                    if discharge_F.cda_fit_a is None:
+                        CdA_F_quick = min(CdA_F_quick, Cd_F_eff * A_annulus)
 
-                    mdot_O = Cd_O_quick * A_core * np.sqrt(2 * rho_O * delta_p_inj_O)
-                    mdot_F = Cd_F_quick * A_annulus * np.sqrt(2 * rho_F * delta_p_inj_F)
+                    mdot_O = CdA_O_quick * np.sqrt(2 * rho_O * delta_p_inj_O)
+                    mdot_F = CdA_F_quick * np.sqrt(2 * rho_F * delta_p_inj_F)
 
             delta_p_inj_O = max(0.0, P_inj_O - Pc)
             delta_p_inj_F = max(0.0, P_inj_F - Pc)
@@ -160,18 +162,22 @@ class CoaxialInjector(InjectorModel):
             Re_O = calculate_reynolds_number(rho_O, u_O, d_hyd_core, mu_O)
             Re_F = calculate_reynolds_number(rho_F, u_F, d_hyd_annulus, mu_F)
 
-            Cd_O_base = cd_from_re(Re_O, discharge_O, P_inlet=P_inj_O, T_inlet=90.0)
-            Cd_F_base = cd_from_re(Re_F, discharge_F, P_inlet=P_inj_F, T_inlet=300.0)
-            Cd_O = min(Cd_O_base, Cd_O_eff)
-            Cd_F = min(Cd_F_base, Cd_F_eff)
+            CdA_O = effective_cda(discharge_O, A_core, delta_p_inj_O, Re_O, P_inlet=P_inj_O, T_inlet=90.0)
+            CdA_F = effective_cda(discharge_F, A_annulus, delta_p_inj_F, Re_F, P_inlet=P_inj_F, T_inlet=300.0)
+            if discharge_O.cda_fit_a is None:
+                CdA_O = min(CdA_O, Cd_O_eff * A_core)
+            if discharge_F.cda_fit_a is None:
+                CdA_F = min(CdA_F, Cd_F_eff * A_annulus)
+            Cd_O = CdA_O / A_core if A_core > 0 else 0.0
+            Cd_F = CdA_F / A_annulus if A_annulus > 0 else 0.0
 
             if delta_p_inj_O > 0:
-                mdot_O = Cd_O * A_core * np.sqrt(2 * rho_O * delta_p_inj_O)
+                mdot_O = CdA_O * np.sqrt(2 * rho_O * delta_p_inj_O)
             else:
                 mdot_O = 0.0
 
             if delta_p_inj_F > 0:
-                mdot_F = Cd_F * A_annulus * np.sqrt(2 * rho_F * delta_p_inj_F)
+                mdot_F = CdA_F * np.sqrt(2 * rho_F * delta_p_inj_F)
             else:
                 mdot_F = 0.0
 
@@ -232,6 +238,16 @@ class CoaxialInjector(InjectorModel):
                     "D32_F": D32_F,
                     "x_star": x_star_combined,
                     "swirl_angle_deg": geometry.annulus.swirl_angle,
+                    # Injector velocities (required by advanced combustion-eff model)
+                    "u_O": float(u_O),
+                    "u_F": float(u_F),
+                    # Injector pressure diagnostics
+                    "P_injector_O": float(P_inj_O),
+                    "P_injector_F": float(P_inj_F),
+                    "delta_p_injector_O": float(delta_p_inj_O),
+                    "delta_p_injector_F": float(delta_p_inj_F),
+                    "delta_p_feed_O": float(delta_p_feed_O),
+                    "delta_p_feed_F": float(delta_p_feed_F),
                     # Discharge coefficients
                     "Cd_O": float(Cd_O),
                     "Cd_F": float(Cd_F),

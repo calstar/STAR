@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   LineChart,
   Line,
@@ -10,10 +10,12 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from 'recharts';
-import type { TimeSeriesData } from '../api/client';
+import type { TimeSeriesData, TimeSeriesSummary } from '../api/client';
 
 interface HeatFluxProfileChartProps {
   data: TimeSeriesData;
+  /** Used to cap playback at burnout (shutdown time or scheduled burn length). */
+  summary?: TimeSeriesSummary;
 }
 
 interface ProfileDataPoint {
@@ -41,8 +43,139 @@ function getTimeSliceColor(index: number, total: number): string {
   return `hsl(${hue}, 70%, 50%)`;
 }
 
-export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
+/** Last index with a non-empty incident profile aligned to the axial grid (finite q at least once). */
+function pickAblativeProfileTimeIndex(
+  axialLen: number,
+  incidentProfiles: number[][] | undefined,
+  preferredIndices: number[],
+  nTimes: number,
+): number {
+  const usable = (idx: number): boolean => {
+    const prof = incidentProfiles?.[idx];
+    if (!prof || prof.length === 0) return false;
+    if (axialLen > 0 && prof.length !== axialLen) return false;
+    return prof.some((q) => Number.isFinite(q));
+  };
+
+  for (let i = preferredIndices.length - 1; i >= 0; i--) {
+    const idx = preferredIndices[i];
+    if (usable(idx)) return idx;
+  }
+  for (let idx = nTimes - 1; idx >= 0; idx--) {
+    if (usable(idx)) return idx;
+  }
+  if (preferredIndices.length > 0) return preferredIndices[preferredIndices.length - 1];
+  return Math.max(0, nTimes - 1);
+}
+
+/** Simulation time (s) at end of burn: early shutdown, else scheduled burn, else last sample. */
+function effectiveBurnOutTimeS(time: number[] | undefined, summary?: TimeSeriesSummary): number {
+  if (!time?.length) return 0;
+  const tLast = time[time.length - 1];
+  const tFirst = time[0];
+  const shutdown = summary?.shutdown_event?.time_s;
+  if (shutdown != null && Number.isFinite(shutdown)) {
+    return Math.min(Math.max(shutdown, tFirst), tLast);
+  }
+  const scheduled = summary?.burn_time_s;
+  if (scheduled != null && Number.isFinite(scheduled)) {
+    return Math.min(Math.max(scheduled, tFirst), tLast);
+  }
+  return tLast;
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+/** Bracket sim time t for linear interpolation between stored time samples. */
+function timeToInterpParams(t: number, timeArr: number[]): { i0: number; i1: number; frac: number } {
+  const n = timeArr.length;
+  if (n === 0) return { i0: 0, i1: 0, frac: 0 };
+  if (n === 1) return { i0: 0, i1: 0, frac: 0 };
+  if (t <= timeArr[0]) return { i0: 0, i1: 0, frac: 0 };
+  if (t >= timeArr[n - 1]) return { i0: n - 1, i1: n - 1, frac: 0 };
+  let lo = 0;
+  let hi = n - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (timeArr[mid] <= t) lo = mid;
+    else hi = mid;
+  }
+  const t0 = timeArr[lo];
+  const t1 = timeArr[lo + 1];
+  const frac = (t - t0) / (t1 - t0);
+  return { i0: lo, i1: lo + 1, frac };
+}
+
+function lerpProfileMW(
+  pa: number[] | undefined,
+  pb: number[] | undefined,
+  posIdx: number,
+  frac: number,
+): number | undefined {
+  const a = pa?.[posIdx];
+  const b = pb?.[posIdx];
+  const fa = a !== undefined && Number.isFinite(a);
+  const fb = b !== undefined && Number.isFinite(b);
+  if (!fa && !fb) return undefined;
+  if (!fa) return fb !== undefined ? b! / 1e6 : undefined;
+  if (!fb) return a! / 1e6;
+  return lerp(a!, b!, frac) / 1e6;
+}
+
+/**
+ * Y extent in MW/m² for fixed axis while scrubbing.
+ * Uses a high percentile for the top of scale so a single bogus spike (bad timestep, rad T⁴ blow-up,
+ * etc. in W/m²) does not stretch the axis to billions while the rest of the burn is ~10² MW/m².
+ */
+function ablativeFluxYExtentMW(
+  tBurnoutS: number,
+  timeArr: number[],
+  incidentProfiles?: number[][],
+  netProfiles?: number[][],
+  convProfiles?: number[][],
+  radProfiles?: number[][],
+): [number, number] {
+  const samplesMw: number[] = [];
+  const scanProfile = (p: number[] | undefined) => {
+    if (!p) return;
+    for (const w of p) {
+      if (!Number.isFinite(w)) continue;
+      samplesMw.push(w / 1e6);
+    }
+  };
+  for (let i = 0; i < timeArr.length; i++) {
+    if (timeArr[i] > tBurnoutS + 1e-12) break;
+    scanProfile(incidentProfiles?.[i]);
+    scanProfile(netProfiles?.[i]);
+    scanProfile(convProfiles?.[i]);
+    scanProfile(radProfiles?.[i]);
+  }
+  if (samplesMw.length === 0) return [0, 1];
+  const sorted = [...samplesMw].sort((a, b) => a - b);
+  const minMw = sorted[0];
+  // 99.9th percentile index: drop the worst ~0.1% of samples (spikes). n < 5: use true max.
+  const hiIdx =
+    sorted.length < 5
+      ? sorted.length - 1
+      : Math.min(sorted.length - 1, Math.floor(0.999 * (sorted.length - 1)));
+  const maxMw = sorted[hiIdx];
+  if (!Number.isFinite(maxMw)) return [0, 1];
+  const ymax = maxMw > 0 ? maxMw * 1.1 : 1;
+  const ymin = Number.isFinite(minMw) ? Math.min(0, minMw) : 0;
+  return [ymin, ymax];
+}
+
+/** 50% of real time: 0.5 s simulation per 1 s wall clock. */
+const ABLATIVE_PLAYBACK_SIM_PER_WALL_S = 0.5;
+
+export function HeatFluxProfileChart({ data, summary }: HeatFluxProfileChartProps) {
   const [selectedTimeIndices, setSelectedTimeIndices] = useState<number[]>([]);
+  const [ablativeSimTime, setAblativeSimTime] = useState(0);
+  const [ablativePlaying, setAblativePlaying] = useState(false);
+  const ablativeRafRef = useRef<number>(0);
+  const ablativeLastWallRef = useRef<number | null>(null);
 
   // Extract heat flux profile data (regen cooling)
   const {
@@ -56,7 +189,6 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
     ablative_q_conv_profiles_w_m2,
     ablative_q_rad_profiles_w_m2,
     ablative_q_net_profiles_w_m2,
-    ablative_throat_index,
   } = data;
 
   // Check if we have regen heat flux profile data
@@ -98,6 +230,55 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
   // Use selected indices or default
   const activeIndices = selectedTimeIndices.length > 0 ? selectedTimeIndices : defaultTimeIndices;
 
+  const nTimes = time?.length ?? 0;
+
+  const tBurnoutS = useMemo(
+    () => effectiveBurnOutTimeS(time, summary),
+    [time, summary],
+  );
+
+  // Reset ablative sim time when a new time series is loaded (not when regen slice toggles change).
+  const ablativeSeriesKey = useMemo(
+    () => `${nTimes}:${ablative_q_incident_profiles_w_m2?.length ?? 0}`,
+    [nTimes, ablative_q_incident_profiles_w_m2?.length],
+  );
+
+  useEffect(() => {
+    if (!hasAblativeHeatFluxData || !ablative_axial_positions_m?.length || nTimes <= 0 || !time?.length) return;
+    const idx = pickAblativeProfileTimeIndex(
+      ablative_axial_positions_m.length,
+      ablative_q_incident_profiles_w_m2,
+      [],
+      nTimes,
+    );
+    const tInit = Math.min(Math.max(time[idx] ?? 0, 0), tBurnoutS);
+    setAblativeSimTime(tInit);
+    setAblativePlaying(false);
+  }, [ablativeSeriesKey, hasAblativeHeatFluxData, ablative_axial_positions_m, ablative_q_incident_profiles_w_m2, nTimes, time, tBurnoutS]);
+
+  useEffect(() => {
+    if (!ablativePlaying || tBurnoutS <= 0 || !time?.length) {
+      ablativeLastWallRef.current = null;
+      return;
+    }
+    const tick = (now: number) => {
+      if (ablativeLastWallRef.current === null) ablativeLastWallRef.current = now;
+      const dtWall = (now - ablativeLastWallRef.current) / 1000;
+      ablativeLastWallRef.current = now;
+      setAblativeSimTime((prev) => {
+        let next = prev + ABLATIVE_PLAYBACK_SIM_PER_WALL_S * dtWall;
+        if (next >= tBurnoutS) next = 0;
+        return next;
+      });
+      ablativeRafRef.current = requestAnimationFrame(tick);
+    };
+    ablativeRafRef.current = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(ablativeRafRef.current);
+      ablativeLastWallRef.current = null;
+    };
+  }, [ablativePlaying, tBurnoutS]);
+
   // Transform data for recharts - regen heat flux profiles
   const heatFluxChartData: ProfileDataPoint[] = useMemo(() => {
     if (!hasRegenHeatFluxData || !axial_positions_m) return [];
@@ -122,10 +303,10 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
   // Transform data for recharts - ablative heat flux profiles (incident vs net)
   // Backend already outputs throat-centered coordinates: x=0 at throat, negative=chamber, positive=nozzle
   const ablativeChartData: AblativeDataPoint[] = useMemo(() => {
-    if (!hasAblativeHeatFluxData || !ablative_axial_positions_m) return [];
+    if (!hasAblativeHeatFluxData || !ablative_axial_positions_m || !time?.length) return [];
 
-    // Use the last time index by default (steady state), or selected index
-    const timeIdx = activeIndices.length > 0 ? activeIndices[activeIndices.length - 1] : (time?.length ? time.length - 1 : 0);
+    const simT = Math.min(Math.max(ablativeSimTime, 0), tBurnoutS);
+    const { i0, i1, frac } = timeToInterpParams(simT, time);
 
     return ablative_axial_positions_m.map((pos, posIdx) => {
       const point: AblativeDataPoint = {
@@ -133,29 +314,69 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
         position: pos * 1000,
       };
 
-      const incidentProfile = ablative_q_incident_profiles_w_m2?.[timeIdx];
-      const netProfile = ablative_q_net_profiles_w_m2?.[timeIdx];
-      const convProfile = ablative_q_conv_profiles_w_m2?.[timeIdx];
-      const radProfile = ablative_q_rad_profiles_w_m2?.[timeIdx];
-
-      if (incidentProfile && incidentProfile[posIdx] !== undefined) {
-        point.q_incident = incidentProfile[posIdx] / 1e6; // Convert to MW/m²
-      }
-      if (netProfile && netProfile[posIdx] !== undefined) {
-        point.q_net = netProfile[posIdx] / 1e6;
-      }
-      if (convProfile && convProfile[posIdx] !== undefined) {
-        point.q_conv = convProfile[posIdx] / 1e6;
-      }
-      if (radProfile && radProfile[posIdx] !== undefined) {
-        point.q_rad = radProfile[posIdx] / 1e6;
-      }
+      const qI = lerpProfileMW(
+        ablative_q_incident_profiles_w_m2?.[i0],
+        ablative_q_incident_profiles_w_m2?.[i1],
+        posIdx,
+        frac,
+      );
+      const qN = lerpProfileMW(
+        ablative_q_net_profiles_w_m2?.[i0],
+        ablative_q_net_profiles_w_m2?.[i1],
+        posIdx,
+        frac,
+      );
+      const qC = lerpProfileMW(
+        ablative_q_conv_profiles_w_m2?.[i0],
+        ablative_q_conv_profiles_w_m2?.[i1],
+        posIdx,
+        frac,
+      );
+      const qR = lerpProfileMW(
+        ablative_q_rad_profiles_w_m2?.[i0],
+        ablative_q_rad_profiles_w_m2?.[i1],
+        posIdx,
+        frac,
+      );
+      if (qI !== undefined) point.q_incident = qI;
+      if (qN !== undefined) point.q_net = qN;
+      if (qC !== undefined) point.q_conv = qC;
+      if (qR !== undefined) point.q_rad = qR;
 
       return point;
     });
-  }, [hasAblativeHeatFluxData, ablative_axial_positions_m, ablative_q_incident_profiles_w_m2, 
-      ablative_q_net_profiles_w_m2, ablative_q_conv_profiles_w_m2, ablative_q_rad_profiles_w_m2, 
-      activeIndices, time]);
+  }, [
+    hasAblativeHeatFluxData,
+    ablative_axial_positions_m,
+    ablative_q_incident_profiles_w_m2,
+    ablative_q_net_profiles_w_m2,
+    ablative_q_conv_profiles_w_m2,
+    ablative_q_rad_profiles_w_m2,
+    ablativeSimTime,
+    tBurnoutS,
+    time,
+  ]);
+
+  const ablativeYAxisDomain = useMemo((): [number, number] => {
+    if (!hasAblativeHeatFluxData || !time?.length) return [0, 1];
+    return ablativeFluxYExtentMW(
+      tBurnoutS,
+      time,
+      ablative_q_incident_profiles_w_m2,
+      ablative_q_net_profiles_w_m2,
+      ablative_q_conv_profiles_w_m2,
+      ablative_q_rad_profiles_w_m2,
+    );
+  }, [
+    hasAblativeHeatFluxData,
+    time,
+    tBurnoutS,
+    ablative_q_incident_profiles_w_m2,
+    ablative_q_net_profiles_w_m2,
+    ablative_q_conv_profiles_w_m2,
+    ablative_q_rad_profiles_w_m2,
+    ablativeSeriesKey,
+  ]);
 
   // Throat position is now at x=0 (after coordinate transformation)
   const throatPositionMm = 0;
@@ -274,8 +495,8 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
         <p className="text-xs text-[var(--color-text-tertiary)] mt-2">
           Debug: ablative_axial_positions_m = {ablative_axial_positions_m?.length ?? 'undefined'}, 
           ablative_q_incident_profiles = {ablative_q_incident_profiles_w_m2?.length ?? 'undefined'}
-          {ablative_q_incident_profiles_w_m2?.length > 0 && (
-            <>, first profile length = {ablative_q_incident_profiles_w_m2[0]?.length ?? 'undefined'}</>
+          {(ablative_q_incident_profiles_w_m2?.length ?? 0) > 0 && (
+            <>, first profile length = {ablative_q_incident_profiles_w_m2?.[0]?.length ?? 'undefined'}</>
           )}
         </p>
       </div>
@@ -441,18 +662,51 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
       {/* Ablative Heat Flux vs Axial Position (incident vs net) */}
       {hasAblativeHeatFluxData && ablativeChartData.length > 0 && (
         <div className="p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
             <h4 className="text-sm font-semibold text-[var(--color-text-primary)]">
               Ablative Cooling: Heat Flux vs Axial Position
             </h4>
-            <div className="text-xs text-[var(--color-text-secondary)]">
-              t = {time?.[activeIndices.length > 0 ? activeIndices[activeIndices.length - 1] : (time?.length ? time.length - 1 : 0)]?.toFixed(2)}s
+            <div className="text-xs text-[var(--color-text-secondary)] tabular-nums text-right">
+              t = {formatValue(Math.min(Math.max(ablativeSimTime, 0), tBurnoutS), 3)}s · 0–{formatValue(tBurnoutS, 2)}s
             </div>
           </div>
-          <p className="text-xs text-[var(--color-text-secondary)] mb-4">
+          <p className="text-xs text-[var(--color-text-secondary)] mb-2">
             Incident heat flux (conv + rad) and net heat flux after blowing relief. 
             x = 0 at throat, negative towards injector (matches chamber geometry plot).
           </p>
+          <p className="text-xs text-[var(--color-text-tertiary)] mb-4">
+            50% real-time playback (0.5 s simulated per 1 s clock), looping 0–{formatValue(tBurnoutS, 2)} s burnout.
+          </p>
+
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <button
+              type="button"
+              aria-label={ablativePlaying ? 'Pause animation' : 'Play animation'}
+              onClick={() => setAblativePlaying((p) => !p)}
+              disabled={tBurnoutS <= 0 || nTimes <= 1}
+              className="inline-flex items-center justify-center min-w-[2.5rem] h-9 px-3 rounded-lg text-xs font-medium border border-[var(--color-border)] bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] hover:border-blue-500/50 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+            >
+              {ablativePlaying ? 'Pause' : 'Play'}
+            </button>
+            <div className="flex-1 min-w-[12rem] flex flex-col gap-1">
+              <label htmlFor="ablative-time-slider" className="sr-only">
+                Simulation time for ablative heat flux profile (0 to burnout)
+              </label>
+              <input
+                id="ablative-time-slider"
+                type="range"
+                min={0}
+                max={tBurnoutS}
+                step="any"
+                value={Math.min(Math.max(ablativeSimTime, 0), tBurnoutS)}
+                onChange={(e) => {
+                  setAblativePlaying(false);
+                  setAblativeSimTime(Number(e.target.value));
+                }}
+                className="w-full h-2 rounded-full appearance-none cursor-pointer accent-blue-500 bg-[var(--color-bg-primary)] border border-[var(--color-border)]"
+              />
+            </div>
+          </div>
 
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={ablativeChartData} margin={{ top: 5, right: 30, left: 20, bottom: 25 }}>
@@ -471,6 +725,9 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
                 }}
               />
               <YAxis
+                type="number"
+                domain={ablativeYAxisDomain}
+                allowDataOverflow
                 stroke="var(--color-text-secondary)"
                 tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
                 label={{ 

@@ -1,0 +1,72 @@
+\documentclass[12pt]{article}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+
+\title{Cold-Flow Experimentation and Injector Characterization Methodology}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+The experimentation tab is designed to characterize the discharge coefficient ($C_d$) of the injector orifices using cold-flow water tests. These empirical characterizations are then used to predict the mass flow rates of the real propellants under actual hot-fire operating conditions. Furthermore, the extracted $C_d$ profiles are directly integrated into the engine's dynamic chamber pressure ($P_c$) solver for time-series performance evaluation.
+
+\section{Cold-Flow Characterization}
+During a cold-flow water test, multiple data points (rows) are collected. Each row consists of a time interval $\Delta t = t_f - t_0$, a measured mass of water discharged $\Delta W$, and a recorded injector pressure drop $\Delta P$.
+
+\subsection{Per-Row Calculations}
+For each individual test run, the mass flow rate of water is calculated as:
+\begin{equation}
+\dot{m}_{water} = \frac{\Delta W}{\Delta t}
+\end{equation}
+Using the incompressible orifice flow equation, the experimental discharge coefficient $C_d$ is evaluated as:
+\begin{equation}
+C_d = \frac{\dot{m}_{water}}{A \sqrt{2 \rho_{water} \Delta P}}
+\end{equation}
+where $A$ is the geometric flow area of the orifice and $\rho_{water}$ is the density of water.
+
+\subsection{Data Validation Metrics}
+To ensure the reliability of the characterized data, each test run additionally computes two non-dimensional metrics:
+\begin{itemize}
+    \item \textbf{Cavitation Ratio ($CN$)}: Evaluated as $CN = \frac{\Delta P}{P_{vapor}}$, where $P_{vapor}$ is the vapor pressure of water (approx. $2337\text{ Pa}$ at room temperature). This warns the user if the test approaches cavitating conditions ($CN < 2$), which would cause multi-phase flow and artificially skew the measured $C_d$.
+    \item \textbf{Reynolds Number ($Re$)}: Calculated as $Re = \frac{\rho_{water} v d}{\mu_{water}}$, where $v$ is the characteristic flow velocity and $d$ is the hydraulic orifice diameter. This facilitates a similarity check against real-propellant flows to ensure the discharge mechanics are occurring in a comparable flow regime.
+\end{itemize}
+
+\section{Dynamic Discharge Coefficient Model}
+Because the discharge coefficient is not strictly constant across differing pressure drops, the experimentation tab builds a regression model for $C_d$ as a function of the pressure drop. This avoids the inaccuracy of assuming a constant $C_d$. The chosen empirical fit is:
+\begin{equation}
+C_d(\Delta P) = a \sqrt{\Delta P} + b
+\end{equation}
+The coefficients $a$ and $b$ are determined by performing a linear regression of the per-row $C_d$ values against $\sqrt{\Delta P}$. This fitting process is done independently for both the oxidizer and the fuel circuits.
+
+\section{Interaction with the Chamber Pressure ($P_c$) Solver}
+In simulated engine runs (i.e., time-series evaluations), the mass flow through the injector cannot be determined in a single step because the downstream pressure is the chamber pressure $P_c$, which itself depends on the total mass flow rate entering the chamber.
+
+\subsection{The Coupled Solver Iteration}
+To calculate performance parameters such as thrust and specific impulse, the core engine runner employs an iterative solver to find the equilibrium chamber pressure. The interaction loop is structured as follows:
+\begin{enumerate}
+    \item \textbf{Guess $P_c$}: The solver starts with an initial guess for the chamber pressure.
+    \item \textbf{Calculate Pressure Drop}: The actual injector pressure drop is evaluated as $\Delta P_{inj} = P_{tank} - \Delta P_{feed} - P_c$.
+    \item \textbf{Dynamic $C_d$ Evaluation}: Instead of using a fixed average $C_d$ or evaluating $C_d$ at the total static tank pressure, the solver passes the actual calculated $\Delta P_{inj}$ into the experimentally-derived empirical model:
+    \begin{equation}
+    C_d = a \sqrt{\Delta P_{inj}} + b
+    \end{equation}
+    \item \textbf{Calculate Mass Flow}: The mass flow rate for each propellant is then accurately calculated:
+    \begin{equation}
+    \dot{m} = C_d A \sqrt{2 \rho \Delta P_{inj}}
+    \end{equation}
+    \item \textbf{Choked Flow Comparison}: The total instantiated mass flow ($\dot{m}_{O} + \dot{m}_{F}$) and the resulting mixture ratio are fed into the Chemical Equilibrium with Applications (CEA) module to compute the theoretical characteristic velocity ($c^*$). The solver then computes the implied chamber pressure needed to choke this specific mass flow through the nozzle throat:
+    \begin{equation}
+    P_{c, implied} = \frac{\dot{m}_{total} c^*}{A_t}
+    \end{equation}
+    \item \textbf{Convergence Validation}: The guessed $P_c$ is compared to $P_{c, implied}$. An iterative root-finding algorithm adjusts the guessed $P_c$ until convergence is achieved ($P_c \approx P_{c, implied}$).
+\end{enumerate}
+
+\subsection{Summary of Interaction}
+The integration of the experimentation tab with the core engine solver enables a seamless transition from real-world hardware tests to highly accurate digital simulations. By injecting the hardware-derived curve fits ($a$ and $b$) directly into the solver's \texttt{DischargeConfig}, theoretical Reynolds-based models are bypassed. Because the solver rigorously re-evaluates the true dynamic $C_d$ at every numerical step based on the evolving $P_c$, the mass flow naturally balances. This guarantees that variations seen in cold-flow characterization are physically and accurately reflected in the predicted hot-fire equilibrium.
+
+\end{document}

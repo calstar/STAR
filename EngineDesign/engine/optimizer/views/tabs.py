@@ -16,6 +16,7 @@ from pathlib import Path
 import plotly.graph_objects as go
 
 from engine.pipeline.config_schemas import PintleEngineConfig
+from engine.pipeline.layer2_tank_capacity import resolve_layer2_tank_capacities_kg
 from engine.core.runner import PintleEngineRunner
 
 # Import from optimization_layers
@@ -2207,10 +2208,6 @@ def _layer2_tab(config_obj: PintleEngineConfig, runner: Optional[PintleEngineRun
             optimal_of_ratio = requirements.get("optimal_of_ratio", None)
             min_stability_margin = requirements.get("min_stability_margin", None)
             
-            # Tank capacities (from design requirements tab)
-            max_lox_tank_capacity_kg = requirements.get("lox_tank_capacity_kg", 10.0)
-            max_fuel_tank_capacity_kg = requirements.get("fuel_tank_capacity_kg", 10.0)
-            
             # Rocket dry mass (stored by design requirements tab)
             rocket_dry_mass_kg = st.session_state.get("rocket_dry_mass", None)
             if rocket_dry_mass_kg is None:
@@ -2226,6 +2223,15 @@ def _layer2_tab(config_obj: PintleEngineConfig, runner: Optional[PintleEngineRun
 
             # Prefer the uploaded optimized config if present; otherwise fall back to the in-memory Layer 1 optimized config.
             base_layer2_config = uploaded_layer1_config or layer1_config
+
+            # Tank capacities: ``tank_volume_m3`` (or π r² h) × ``fluids`` density; optional tab overrides; then defaults
+            max_lox_tank_capacity_kg, max_fuel_tank_capacity_kg = resolve_layer2_tank_capacities_kg(
+                base_layer2_config,
+                design_lox_kg=requirements.get("lox_tank_capacity_kg"),
+                design_fuel_kg=requirements.get("fuel_tank_capacity_kg"),
+                default_lox_kg=10.0,
+                default_fuel_kg=10.0,
+            )
 
             P_O_start_psi = None
             P_F_start_psi = None

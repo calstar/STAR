@@ -1,5 +1,8 @@
 # .gitignore for Engine Design Repository
 
+# Claude Code
+CLAUDE.md
+
 # Python cache
 __pycache__/
 *.py[cod]

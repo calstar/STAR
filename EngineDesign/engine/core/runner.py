@@ -211,13 +211,6 @@ class PintleEngineRunner:
             fh.setFormatter(file_formatter)
             logger.addHandler(fh)
             
-            # Console handler
-            ch = logging.StreamHandler()
-            ch.setLevel(logging.INFO)
-            console_formatter = logging.Formatter('%(message)s')
-            ch.setFormatter(console_formatter)
-            logger.addHandler(ch)
-            
             logger.info("Debug logging enabled. Writing to %s", log_file)
         else:
             # Remove existing handlers
@@ -644,7 +637,8 @@ class PintleEngineRunner:
                 point_results = self.evaluate(
                     float(P_tank_O.flat[i]),
                     float(P_tank_F.flat[i]),
-                    P_ambient=P_ambient
+                    P_ambient=P_ambient,
+                    debug=True,
                 )
                 
                 # Store scalar results (including eps for 3D CEA cache)
@@ -737,7 +731,8 @@ class PintleEngineRunner:
                 solver = TimeVaryingCoupledSolver(self.config, self.cea_cache)
                 states = solver.solve_time_series(times, P_tank_O, P_tank_F)
                 results = solver.get_results_dict()
-                
+                results["shutdown_info"] = solver.shutdown_info  # None or shutdown dict
+
                 # Add additional metrics for compatibility
                 results["mdot_O"] = results["mdot_total"] * results["MR"] / (1.0 + results["MR"])
                 results["mdot_F"] = results["mdot_total"] / (1.0 + results["MR"])

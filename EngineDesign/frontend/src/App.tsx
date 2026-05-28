@@ -9,6 +9,7 @@ import { ChamberGeometry } from './components/ChamberGeometry';
 import { Optimizer } from './components/Optimizer';
 import { ControllerMode } from './components/ControllerMode';
 import { OptimizerDemo } from './components/OptimizerDemo';
+import { ExperimentMode } from './components/ExperimentMode';
 import { getConfig, getHealth } from './api/client';
 import type { EngineConfig } from './api/client';
 
@@ -20,7 +21,9 @@ type Tab =
   | 'geometry'
   | 'optimizer'
   | 'controller'
-  | 'demo' | 'config';
+  | 'demo'
+  | 'experiment'
+  | 'config';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('forward');
@@ -87,10 +90,10 @@ function App() {
           </div>
 
           {/* Navigation tabs */}
-          <nav className="flex gap-1 -mb-px">
+          <nav className="flex gap-1 -mb-px overflow-x-auto" style={{scrollbarWidth: 'none'}}>
             <button
               onClick={() => setActiveTab('forward')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'forward'
+              className={`flex-shrink-0 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'forward'
                 ? 'border-blue-500 text-blue-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -99,7 +102,7 @@ function App() {
             </button>
             <button
               onClick={() => setActiveTab('timeseries')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'timeseries'
+              className={`flex-shrink-0 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'timeseries'
                 ? 'border-purple-500 text-purple-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -108,7 +111,7 @@ function App() {
             </button>
             <button
               onClick={() => setActiveTab('plotter')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'plotter'
+              className={`flex-shrink-0 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'plotter'
                 ? 'border-emerald-500 text-emerald-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -117,7 +120,7 @@ function App() {
             </button>
             <button
               onClick={() => setActiveTab('flight')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'flight'
+              className={`flex-shrink-0 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'flight'
                 ? 'border-orange-500 text-orange-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -126,7 +129,7 @@ function App() {
             </button>
             <button
               onClick={() => setActiveTab('geometry')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'geometry'
+              className={`flex-shrink-0 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'geometry'
                 ? 'border-rose-500 text-rose-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -135,7 +138,7 @@ function App() {
             </button>
             <button
               onClick={() => setActiveTab('optimizer')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'optimizer'
+              className={`flex-shrink-0 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'optimizer'
                 ? 'border-yellow-500 text-yellow-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -144,7 +147,7 @@ function App() {
             </button>
             <button
               onClick={() => setActiveTab('controller')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'controller'
+              className={`flex-shrink-0 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'controller'
                 ? 'border-teal-500 text-teal-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -153,7 +156,7 @@ function App() {
             </button>
             <button
               onClick={() => setActiveTab('demo')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'demo'
+              className={`flex-shrink-0 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'demo'
                 ? 'border-cyan-500 text-cyan-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -161,8 +164,17 @@ function App() {
               Demo
             </button>
             <button
+              onClick={() => setActiveTab('experiment')}
+              className={`flex-shrink-0 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'experiment'
+                ? 'border-amber-500 text-amber-400'
+                : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
+                }`}
+            >
+              Experiment
+            </button>
+            <button
               onClick={() => setActiveTab('config')}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'config'
+              className={`flex-shrink-0 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'config'
                 ? 'border-blue-500 text-blue-400'
                 : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
                 }`}
@@ -277,6 +289,10 @@ function App() {
             )}
             <OptimizerDemo config={config} />
           </div>
+        </div>
+
+        <div className={tabPanelClass('experiment')}>
+          <ExperimentMode config={config} onConfigUpdated={handleConfigLoaded} />
         </div>
 
         <div className={tabPanelClass('config')}>

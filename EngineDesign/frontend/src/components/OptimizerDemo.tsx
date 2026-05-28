@@ -345,7 +345,7 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
     setLayer2PressureCurves([]);
     
     const eventSource = runLayer2Optimization(
-      { max_iterations: 20, save_plots: false, de_maxiter: 5, de_popsize: 3 },
+      { max_iterations: 20, save_plots: false, de_maxiter: 5, de_popsize: 3, pure_blowdown: false },
       (event: Layer2ProgressEvent) => {
         if (event.type === 'progress' || event.type === 'status') {
           setLayer2Progress((event.progress || 0) * 100);

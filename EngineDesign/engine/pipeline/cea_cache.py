@@ -32,6 +32,26 @@ def _get_CEA_Obj():
             )
     return _CEA_Obj
 
+
+def resolve_cea_fuel_name_for_rocketcea(config: CEAConfig) -> str:
+    """
+    RocketCEA ``fuelName`` for CEA runs. If ``fuel_blend`` is set on ``CEAConfig``,
+    registers the blend via ``get_propellant_name`` and returns the generated name
+    (e.g. ``Ethanol_90_H2O_10``); otherwise returns ``fuel_name``.
+    """
+    fb = getattr(config, "fuel_blend", None)
+    if fb is not None:
+        from rocketcea.blends import get_propellant_name
+
+        return str(
+            get_propellant_name(
+                Name=list(fb.components),
+                PcentL=list(fb.weight_percent),
+            )
+        )
+    return str(config.fuel_name)
+
+
 # Create module-level logger
 logger = logging.getLogger("evaluate")
 
@@ -136,6 +156,8 @@ def _compute_cea_point_chunk(
     fuel_name: str,
     expansion_ratio: Optional[float] = None,
     lock: Optional[Any] = None,
+    fuel_blend_components: Optional[Tuple[str, ...]] = None,
+    fuel_blend_weight_percent: Optional[Tuple[float, ...]] = None,
 ) -> List[Tuple[int, int, int, float, float, float, float, float, float]]:
     """
     Worker function for parallel CEA cache building.
@@ -161,6 +183,14 @@ def _compute_cea_point_chunk(
     results : List[Tuple[int, int, int, float, float, float, float, float, float]]
         List of (i, j, k_idx, cstar, Cf, Tc, gamma, R, M) tuples
     """
+    # Worker processes get a fresh ``fuelCards`` import; re-register blends in each worker.
+    if fuel_blend_components is not None and fuel_blend_weight_percent is not None:
+        from rocketcea.blends import get_propellant_name
+
+        get_propellant_name(
+            Name=list(fuel_blend_components),
+            PcentL=list(fuel_blend_weight_percent),
+        )
     # Lazy import CEA_Obj only when needed
     CEA_Obj = _get_CEA_Obj()
     # Create CEA object per worker (each process gets its own)
@@ -206,6 +236,7 @@ class CEACache:
     
     def __init__(self, config: CEAConfig):
         self.config = config
+        self._cea_fuel_name = resolve_cea_fuel_name_for_rocketcea(config)
         # Make cache file path absolute (relative to current working directory or project root)
         # Also check output/cache/ directory
         if os.path.isabs(config.cache_file):
@@ -217,15 +248,18 @@ class CEACache:
             # 3. output/cache/ directory (common location)
             # 4. output/cache/ relative to project root
             cache_found = False
-            parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            # ``cea_cache.py`` is ``engine/pipeline/`` → repository root is three levels up
+            project_root = os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            )
             
             # Try current directory
             if os.path.exists(config.cache_file):
                 self.cache_file = os.path.abspath(config.cache_file)
                 cache_found = True
             # Try project root
-            elif os.path.exists(os.path.join(parent_dir, config.cache_file)):
-                self.cache_file = os.path.join(parent_dir, config.cache_file)
+            elif os.path.exists(os.path.join(project_root, config.cache_file)):
+                self.cache_file = os.path.join(project_root, config.cache_file)
                 cache_found = True
             # Try output/cache/ in current directory
             output_cache_cur = os.path.join("output", "cache", os.path.basename(config.cache_file))
@@ -233,13 +267,13 @@ class CEACache:
                 self.cache_file = os.path.abspath(output_cache_cur)
                 cache_found = True
             # Try output/cache/ relative to project root
-            output_cache_root = os.path.join(parent_dir, "output", "cache", os.path.basename(config.cache_file))
+            output_cache_root = os.path.join(project_root, "output", "cache", os.path.basename(config.cache_file))
             if not cache_found and os.path.exists(output_cache_root):
                 self.cache_file = output_cache_root
                 cache_found = True
             # If still not found, check if any .npz file exists in output/cache/ (use first one found)
             if not cache_found:
-                for cache_dir in [os.path.join("output", "cache"), os.path.join(parent_dir, "output", "cache")]:
+                for cache_dir in [os.path.join("output", "cache"), os.path.join(project_root, "output", "cache")]:
                     if os.path.isdir(cache_dir):
                         for file in os.listdir(cache_dir):
                             if file.endswith(".npz") and "cea_cache" in file.lower():
@@ -253,7 +287,7 @@ class CEACache:
             if not cache_found:
                 # Cache doesn't exist - will need to build it (requires rocketcea)
                 # Use project root as default location
-                self.cache_file = os.path.join(parent_dir, config.cache_file)
+                self.cache_file = os.path.join(project_root, config.cache_file)
         
         # Determine if using 3D cache (Pc, MR, eps) or 2D cache (Pc, MR)
         self.use_3d = config.eps_range is not None
@@ -299,7 +333,7 @@ class CEACache:
 
         meta_expected = {
             "ox_name": self.config.ox_name,
-            "fuel_name": self.config.fuel_name,
+            "fuel_name": self._cea_fuel_name,
             "expansion_ratio": self.config.expansion_ratio,
             "Pc_range": list(self.config.Pc_range),
             "MR_range": list(self.config.MR_range),
@@ -479,7 +513,7 @@ class CEACache:
         """Sequential CEA cache building (original method)"""
         # Lazy import CEA_Obj only when needed
         CEA_Obj = _get_CEA_Obj()
-        chamber = CEA_Obj(oxName=self.config.ox_name, fuelName=self.config.fuel_name)
+        chamber = CEA_Obj(oxName=self.config.ox_name, fuelName=self._cea_fuel_name)
         
         # Initialize tables
         shape = (self.n_points, self.n_points, self.n_points) if self.use_3d else (self.n_points, self.n_points)
@@ -583,12 +617,15 @@ class CEACache:
         # Prepare worker function
         # The function is defined at module level (above), so it's directly accessible
         # On Windows with 'spawn', workers will re-import this module and find the function
+        fb = getattr(self.config, "fuel_blend", None)
         worker_func = partial(
             _compute_cea_point_chunk,
             ox_name=self.config.ox_name,
-            fuel_name=self.config.fuel_name,
+            fuel_name=self._cea_fuel_name,
             expansion_ratio=self.config.expansion_ratio if not self.use_3d else None,
             lock=cea_lock,  # Pass lock to serialize RocketCEA calls
+            fuel_blend_components=tuple(fb.components) if fb is not None else None,
+            fuel_blend_weight_percent=tuple(fb.weight_percent) if fb is not None else None,
         )
         
         # Process chunks in parallel
@@ -627,7 +664,7 @@ class CEACache:
         """Save CEA data to cache file"""
         meta = {
             "ox_name": self.config.ox_name,
-            "fuel_name": self.config.fuel_name,
+            "fuel_name": self._cea_fuel_name,
             "expansion_ratio": self.config.expansion_ratio,
             "Pc_range": list(self.config.Pc_range),
             "MR_range": list(self.config.MR_range),

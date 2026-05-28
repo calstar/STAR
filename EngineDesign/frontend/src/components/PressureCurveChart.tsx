@@ -1,4 +1,3 @@
-import React from 'react';
 import {
   LineChart,
   Line,
@@ -8,6 +7,7 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  ReferenceLine,
 } from 'recharts';
 import type { TimeSeriesData, TimeSeriesSummary } from '../api/client';
 import { HeatFluxProfileChart } from './HeatFluxProfileChart';
@@ -42,6 +42,9 @@ interface ChartDataPoint {
   copv_pressure?: number;
    lox_mass_remaining?: number;
    fuel_mass_remaining?: number;
+  Cd_O?: number;
+  Cd_F?: number;
+  P_exit?: number;
 }
 
 function formatValue(value: number | null | undefined, decimals: number = 2): string {
@@ -75,7 +78,6 @@ function getCorrelationColor(value: number): string {
 }
 
 function CorrelationHeatmap({ matrix, labels }: CorrelationHeatmapProps) {
-  const n = labels.length;
   const cellSize = 52;
   const labelWidth = 90;
 
@@ -204,6 +206,9 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
     copv_pressure: data.copv_pressure_psi?.[i],
     lox_mass_remaining: data.lox_mass_remaining_kg?.[i],
     fuel_mass_remaining: data.fuel_mass_remaining_kg?.[i],
+    Cd_O: data.Cd_O?.[i],
+    Cd_F: data.Cd_F?.[i],
+    P_exit: data.P_exit_psi?.[i],
   }));
 
   // Calculate max time for x-axis domain
@@ -219,6 +224,20 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
 
   // Format tick as integer seconds
   const formatTick = (value: number) => Math.round(value).toString();
+
+  const hasDeltaPInjO =
+    Array.isArray(data.delta_P_injector_O_psi) && data.delta_P_injector_O_psi.length === data.time.length;
+  const hasDeltaPInjF =
+    Array.isArray(data.delta_P_injector_F_psi) && data.delta_P_injector_F_psi.length === data.time.length;
+  const showInjectorDeltaChart = hasDeltaPInjO || hasDeltaPInjF;
+
+  const showExitPressureChart =
+    !data.is_waterflow &&
+    Array.isArray(data.P_exit_psi) &&
+    data.P_exit_psi.length === data.time.length;
+  const targetExitPsi = summary.target_P_exit_psi;
+  const hasTargetExit =
+    targetExitPsi != null && Number.isFinite(targetExitPsi) && targetExitPsi > 0;
 
   const customTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
@@ -265,6 +284,9 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
       case 'A_throat_pct_change': return '%';
       case 'lox_mass_remaining':
       case 'fuel_mass_remaining': return 'kg';
+      case 'Cd_O':
+      case 'Cd_F': return '';
+      case 'P_exit': return 'psi';
       default: return '';
     }
   };
@@ -381,6 +403,66 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
         </ResponsiveContainer>
       </div>
 
+      {/* Exit pressure vs ambient target */}
+      {showExitPressureChart && (
+        <div className="p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
+          <h4 className="text-sm font-semibold mb-4 text-[var(--color-text-primary)]">
+            Exit Pressure vs Time
+            {hasTargetExit && (
+              <span className="text-xs font-normal text-[var(--color-text-secondary)] ml-2">
+                (dashed = ambient / target {targetExitPsi.toFixed(2)} psi)
+              </span>
+            )}
+          </h4>
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
+              <XAxis
+                dataKey="time"
+                type="number"
+                domain={[minTime, maxTimeInt]}
+                ticks={integerTicks}
+                stroke="var(--color-text-secondary)"
+                tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
+                tickFormatter={formatTick}
+                allowDecimals={false}
+                label={{ value: 'Time (s)', position: 'insideBottom', offset: -5, fill: 'var(--color-text-secondary)' }}
+              />
+              <YAxis
+                stroke="#f43f5e"
+                tick={{ fill: '#f43f5e', fontSize: 11 }}
+                label={{ value: 'P_exit (psi)', angle: -90, position: 'insideLeft', fill: '#f43f5e' }}
+              />
+              <Tooltip content={customTooltip} />
+              <Legend />
+              {hasTargetExit && (
+                <ReferenceLine
+                  y={targetExitPsi}
+                  stroke="var(--color-text-secondary)"
+                  strokeDasharray="6 4"
+                  strokeWidth={2}
+                  ifOverflow="extendDomain"
+                  label={{
+                    value: 'Target (ambient)',
+                    position: 'insideTopRight',
+                    fill: 'var(--color-text-secondary)',
+                    fontSize: 11,
+                  }}
+                />
+              )}
+              <Line
+                type="monotone"
+                dataKey="P_exit"
+                name="Exit pressure"
+                stroke="#f43f5e"
+                strokeWidth={2}
+                dot={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
       {/* 3. Mass Flow Rates */}
       <div className="p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
         <h4 className="text-sm font-semibold mb-4 text-[var(--color-text-primary)]">
@@ -473,7 +555,59 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
         </ResponsiveContainer>
       </div>
 
-      {/* 5. COPV & Tank Pressures vs Time */}
+      {/* 5. Cd vs Time */}
+      {(data.Cd_O || data.Cd_F) && (
+        <div className="p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
+          <h4 className="text-sm font-semibold mb-4 text-[var(--color-text-primary)]">
+            Discharge Coefficient (Cd) vs Time
+          </h4>
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.5} />
+              <XAxis
+                dataKey="time"
+                type="number"
+                domain={[minTime, maxTimeInt]}
+                ticks={integerTicks}
+                stroke="var(--color-text-secondary)"
+                tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
+                tickFormatter={formatTick}
+                allowDecimals={false}
+                label={{ value: 'Time (s)', position: 'insideBottom', offset: -5, fill: 'var(--color-text-secondary)' }}
+              />
+              <YAxis
+                stroke="var(--color-text-secondary)"
+                tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
+                label={{ value: 'Cd', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
+              />
+              <Tooltip content={customTooltip} />
+              <Legend />
+              {data.Cd_O && (
+                <Line
+                  type="monotone"
+                  dataKey="Cd_O"
+                  name="LOX Cd"
+                  stroke="#06b6d4"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              )}
+              {data.Cd_F && (
+                <Line
+                  type="monotone"
+                  dataKey="Cd_F"
+                  name="Fuel Cd"
+                  stroke="#f97316"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* 6. COPV & Tank Pressures vs Time */}
       {(data.copv_pressure_psi || data.P_tank_O_psi) && (
         <div className="p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
           <div className="flex items-center justify-between mb-4">
@@ -509,21 +643,35 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
                 label={{ value: 'Time (s)', position: 'insideBottom', offset: -5, fill: 'var(--color-text-secondary)' }}
               />
               <YAxis
+                yAxisId="left"
                 stroke="var(--color-text-secondary)"
                 tick={{ fill: 'var(--color-text-secondary)', fontSize: 11 }}
-                label={{ value: 'Pressure (psi)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
+                label={{ value: 'Tank Pressure (psi)', angle: -90, position: 'insideLeft', fill: 'var(--color-text-secondary)' }}
               />
+              {data.copv_pressure_psi && (
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  stroke="#22c55e"
+                  tick={{ fill: '#22c55e', fontSize: 11 }}
+                  label={{ value: 'COPV Pressure (psi)', angle: 90, position: 'insideRight', fill: '#22c55e' }}
+                />
+              )}
               <Tooltip content={customTooltip} />
               <Legend />
+              {data.copv_pressure_psi && (
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="copv_pressure"
+                  name="COPV"
+                  stroke="#22c55e"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              )}
               <Line
-                type="monotone"
-                dataKey="copv_pressure"
-                name="COPV"
-                stroke="#22c55e"
-                strokeWidth={2}
-                dot={false}
-              />
-              <Line
+                yAxisId="left"
                 type="monotone"
                 dataKey="P_tank_O"
                 name="LOX Tank"
@@ -532,6 +680,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
                 dot={false}
               />
               <Line
+                yAxisId="left"
                 type="monotone"
                 dataKey="P_tank_F"
                 name="Fuel Tank"
@@ -596,8 +745,8 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
         </div>
       )}
 
-      {/* 6. Injector Pressure Drops */}
-      {data.delta_P_injector_O_psi && data.delta_P_injector_F_psi && (
+      {/* 6. Injector Pressure Drops (LOX + fuel when present) */}
+      {showInjectorDeltaChart && (
         <div className="p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
           <h4 className="text-sm font-semibold mb-4 text-[var(--color-text-primary)]">
             Injector Pressure Drops vs Time
@@ -623,22 +772,28 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
               />
               <Tooltip content={customTooltip} />
               <Legend />
-              <Line
-                type="monotone"
-                dataKey="delta_P_injector_O"
-                name="LOX ΔP"
-                stroke="#06b6d4"
-                strokeWidth={2}
-                dot={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="delta_P_injector_F"
-                name="Fuel ΔP"
-                stroke="#f97316"
-                strokeWidth={2}
-                dot={false}
-              />
+              {hasDeltaPInjO && (
+                <Line
+                  type="monotone"
+                  dataKey="delta_P_injector_O"
+                  name="LOX ΔP_inj"
+                  stroke="#06b6d4"
+                  strokeWidth={2}
+                  dot={false}
+                  connectNulls
+                />
+              )}
+              {hasDeltaPInjF && (
+                <Line
+                  type="monotone"
+                  dataKey="delta_P_injector_F"
+                  name="Fuel ΔP_inj"
+                  stroke="#f97316"
+                  strokeWidth={2}
+                  dot={false}
+                  connectNulls
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -857,7 +1012,7 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
       )}
 
       {/* 10. Heat Flux Profile Charts */}
-      <HeatFluxProfileChart data={data} />
+      <HeatFluxProfileChart data={data} summary={summary} />
 
       {/* Correlation Heatmap */}
       {data.correlation_matrix && data.correlation_labels && data.correlation_labels.length >= 2 && (
@@ -928,13 +1083,13 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
             <tbody>
               {data.time.slice(0, 50).map((t, i) => (
                 <tr key={i} className="border-b border-[var(--color-border)]/50 hover:bg-[var(--color-bg-primary)]/50">
-                  <td className="py-1.5 px-2 text-[var(--color-text-primary)]">{t.toFixed(3)}</td>
-                  <td className="py-1.5 px-2 text-right text-cyan-400">{data.P_tank_O_psi[i].toFixed(1)}</td>
-                  <td className="py-1.5 px-2 text-right text-orange-400">{data.P_tank_F_psi[i].toFixed(1)}</td>
-                  <td className="py-1.5 px-2 text-right text-green-400">{data.Pc_psi[i].toFixed(1)}</td>
-                  <td className="py-1.5 px-2 text-right text-blue-400">{data.thrust_kN[i].toFixed(3)}</td>
-                  <td className="py-1.5 px-2 text-right text-purple-400">{data.Isp_s[i].toFixed(1)}</td>
-                  <td className="py-1.5 px-2 text-right text-yellow-400">{data.MR[i].toFixed(3)}</td>
+                  <td className="py-1.5 px-2 text-[var(--color-text-primary)]">{(t ?? 0).toFixed(3)}</td>
+                  <td className="py-1.5 px-2 text-right text-cyan-400">{(data.P_tank_O_psi[i] ?? 0).toFixed(1)}</td>
+                  <td className="py-1.5 px-2 text-right text-orange-400">{(data.P_tank_F_psi[i] ?? 0).toFixed(1)}</td>
+                  <td className="py-1.5 px-2 text-right text-green-400">{(data.Pc_psi[i] ?? 0).toFixed(1)}</td>
+                  <td className="py-1.5 px-2 text-right text-blue-400">{(data.thrust_kN[i] ?? 0).toFixed(3)}</td>
+                  <td className="py-1.5 px-2 text-right text-purple-400">{(data.Isp_s[i] ?? 0).toFixed(1)}</td>
+                  <td className="py-1.5 px-2 text-right text-yellow-400">{(data.MR[i] ?? 0).toFixed(3)}</td>
                 </tr>
               ))}
             </tbody>

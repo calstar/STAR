@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from typing import Literal, Optional, Union, List, Dict, Tuple, Set
 import numpy as np
 
@@ -278,6 +278,11 @@ class DischargeConfig(BaseModel):
     use_temperature_correction: bool = Field(default=False, description="Enable temperature-dependent Cd (viscosity effects)")
     T_ref: float = Field(default=300.0, gt=0, description="Reference temperature for temperature correction [K]")
     a_T: float = Field(default=0.0, description="Temperature correction coefficient")
+    # Cold-flow experiment fit: CdA = cda_fit_a * sqrt(ΔP_pa) + cda_fit_b  [m²]
+    # When set, this overrides the Re-based formula. CdA is evaluated at the
+    # actual injector ΔP = P_inj - Pc during each solver iteration.
+    cda_fit_a: Optional[float] = Field(default=None, description="Cold-flow CdA fit slope [m²/Pa^0.5]: CdA = a·√ΔP_pa + b")
+    cda_fit_b: Optional[float] = Field(default=None, description="Cold-flow CdA fit intercept [m²]: CdA = a·√ΔP_pa + b")
 
 
 class SprayAngleConfig(BaseModel):
@@ -327,12 +332,38 @@ class SprayConfig(BaseModel):
     turbulence_penetration_gain: float = Field(default=0.5, ge=0, description="Gain applied to evaporation length reduction due to turbulence")
 
 
+class CEAFuelBlendConfig(BaseModel):
+    """RocketCEA liquid fuel blend (names must exist in ``rocketcea`` ``fuelCards``, e.g. Ethanol + H2O)."""
+
+    components: List[str] = Field(
+        min_length=2,
+        description="Fuel card names in order, e.g. ['Ethanol', 'H2O']",
+    )
+    weight_percent: List[float] = Field(
+        min_length=2,
+        description="Weight % of each component (must sum to 100)",
+    )
+
+    @model_validator(mode="after")
+    def _validate_blend(self):
+        if len(self.components) != len(self.weight_percent):
+            raise ValueError("components and weight_percent must have the same length")
+        s = float(sum(self.weight_percent))
+        if abs(s - 100.0) > 0.02:
+            raise ValueError(f"fuel blend weight_percent must sum to 100 (got {s})")
+        return self
+
+
 class CEAConfig(BaseModel):
     use_parallel_cea_build: bool = Field(default=True, description="Use parallel processing for CEA cache building")
     cea_parallel_workers: Optional[int] = Field(default=None, description="Number of parallel workers (None = auto-detect, limited to 8)")
     """CEA (Chemical Equilibrium Analysis) configuration"""
     ox_name: str = Field(default="LOX", description="Oxidizer name")
-    fuel_name: str = Field(default="RP-1", description="Fuel name")
+    fuel_name: str = Field(default="RP-1", description="Fuel name (RocketCEA card); ignored for CEA if fuel_blend is set")
+    fuel_blend: Optional[CEAFuelBlendConfig] = Field(
+        default=None,
+        description="If set, registers a RocketCEa fuel blend and uses it for CEA (e.g. 90 wt%% Ethanol / 10 wt%% water)",
+    )
     expansion_ratio: float = Field(gt=1, description="Nozzle expansion ratio (initial/default value)")
     cache_file: str = Field(default="cea_cache_LOX_RP1.npz", description="Cache filename")
     Pc_range: List[float] = Field(
@@ -622,6 +653,39 @@ class FuelTankConfig(BaseModel):
     tank_volume_m3: Optional[float] = Field(default=None, gt=0, description="RP-1 tank volume [m³]. If not provided, will be calculated from rp1_h and rp1_radius using π×r²×h")
 
 
+class PressSystemConfig(BaseModel):
+    """Pressurant regulator and line characterization for COPV→tank resupply."""
+
+    reg_cv: float = Field(
+        default=0.06,
+        gt=0,
+        description="Regulator Cv (Aqua 1120 spec: 0.06)",
+    )
+    reg_droop_coeff: float = Field(
+        default=0.070,
+        ge=0,
+        description="Regulator outlet droop [psi/psi]: P_reg = P_set0 + k*(P_COPV0 - P_COPV)",
+    )
+    reg_setpoint_psi: float = Field(
+        gt=0,
+        description="Regulator outlet setpoint [psi] at reg_initial_copv_psi",
+    )
+    reg_initial_copv_psi: float = Field(
+        gt=0,
+        description="COPV pressure [psi] when setpoint was calibrated",
+    )
+    line_cv_lox: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="LOX branch downstream line + solenoid lumped Cv. None until fitted from test data.",
+    )
+    line_cv_fuel: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Fuel branch downstream line + solenoid lumped Cv. None until fitted from test data.",
+    )
+
+
 class PressTankConfig(BaseModel):
     """Pressurant (COPV) tank configuration for flight simulation.
     
@@ -871,6 +935,10 @@ class PintleEngineConfig(BaseModel):
     lox_tank: Optional[LOXTankConfig] = Field(default=None, description="LOX tank configuration for flight simulation")
     fuel_tank: Optional[FuelTankConfig] = Field(default=None, description="Fuel tank configuration for flight simulation")
     press_tank: Optional[PressTankConfig] = Field(default=None, description="Pressurant tank configuration for flight simulation")
+    press_system: Optional[PressSystemConfig] = Field(
+        default=None,
+        description="Pressurant regulator and line Cv for COPV resupply ODE",
+    )
     rocket: Optional[RocketConfig] = Field(default=None, description="Rocket configuration for flight simulation")
     environment: Optional[EnvironmentConfig] = Field(default=None, description="Environment configuration for flight simulation")
     thrust: Optional[ThrustConfig] = Field(default=None, description="Thrust configuration for flight simulation")

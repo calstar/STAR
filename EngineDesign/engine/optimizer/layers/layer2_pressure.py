@@ -283,6 +283,198 @@ def calculate_required_impulse_from_mass(
     return required_impulse
 
 
+# When 95% of impulse lands before the end of this window, apply only a *soft* nudge (see layer2_objective).
+LAYER2_BURN_TIME_SOFT_SCALE = 3.0
+
+# Soft incentive to use as much of the target burn time as possible.
+# Penalty = ((target - effective) / target)^2 * SCALE.  Quadratic so short burns
+# feel it strongly (e.g. 50% utilisation → 25% × 15 = 3.75) while burns close to
+# target are barely nudged (e.g. 90% utilisation → 1% × 15 = 0.15).
+LAYER2_BURN_DURATION_SCALE = 30.0
+
+
+def effective_burn_time_for_layer2_objective(
+    time_hist: np.ndarray,
+    mdot_O_hist: np.ndarray,
+    mdot_F_hist: np.ndarray,
+    target_burn_time: float,
+) -> float:
+    """
+    Duration bound for Layer 2 burn-time and required-impulse helpers: min(target, physical flow end).
+
+    If the schedule or tank model stops meaningful flow before ``target_burn_time`` (e.g. target
+    15 s but only ~10 s of propellant flow), we should not treat the remaining window as time the
+    optimizer could have used for impulse—avoids over-penalizing those cases.
+    """
+    from scipy.integrate import cumulative_trapezoid
+
+    time_hist = np.asarray(time_hist, dtype=float)
+    mdot_O_hist = np.asarray(mdot_O_hist, dtype=float)
+    mdot_F_hist = np.asarray(mdot_F_hist, dtype=float)
+    n = min(time_hist.size, mdot_O_hist.size, mdot_F_hist.size)
+    if n < 2:
+        return float(target_burn_time)
+    time_hist = time_hist[:n]
+    mdot_tot = mdot_O_hist[:n] + mdot_F_hist[:n]
+    cum = cumulative_trapezoid(mdot_tot, time_hist, initial=0.0)
+    total = float(cum[-1])
+    if total <= 1e-12 or not np.isfinite(total):
+        return float(target_burn_time)
+    frac = cum / total
+    idx = int(np.searchsorted(frac, 0.999, side="right"))
+    if idx >= n:
+        idx = n - 1
+    t_mass = float(time_hist[idx])
+    peak = float(np.nanmax(mdot_tot))
+    if np.isfinite(peak) and peak > 0:
+        thresh = max(peak * 1e-3, 1e-9)
+        active = np.where(mdot_tot > thresh)[0]
+        t_mdot = float(time_hist[int(active[-1])]) if active.size else t_mass
+    else:
+        t_mdot = t_mass
+    t_phys = min(t_mass, t_mdot)
+    return float(min(target_burn_time, max(0.0, t_phys)))
+
+
+def active_burn_prefix_len(
+    time_hist: np.ndarray,
+    mdot_O_hist: np.ndarray,
+    mdot_F_hist: np.ndarray,
+    target_burn_time: float,
+    thrust_hist: Optional[np.ndarray] = None,
+) -> int:
+    """
+    Return a prefix length representing the active burn region.
+
+    Layer 2 can include a post-burnout tail where mdot/thrust/MR are forced to 0.
+    For objective checks and summary averages we must ignore that tail.
+
+    We assume burnout is one-way (active then off) and return the last index (inclusive)
+    where the burn is still "meaningfully" active within the effective burn window.
+
+    IMPORTANT: Some masking paths zero thrust/MR after burnout but do not fully zero mdot.
+    If `thrust_hist` is provided, we use it in addition to mdot to detect burnout robustly.
+    """
+    time_hist = np.asarray(time_hist, dtype=float)
+    mdot_O_hist = np.asarray(mdot_O_hist, dtype=float)
+    mdot_F_hist = np.asarray(mdot_F_hist, dtype=float)
+    thrust_arr = None if thrust_hist is None else np.asarray(thrust_hist, dtype=float)
+    n = min(
+        time_hist.size,
+        mdot_O_hist.size,
+        mdot_F_hist.size,
+        (thrust_arr.size if thrust_arr is not None else time_hist.size),
+    )
+    if n < 2:
+        return int(n)
+
+    time_hist = time_hist[:n]
+    mdot_tot = mdot_O_hist[:n] + mdot_F_hist[:n]
+    eff = effective_burn_time_for_layer2_objective(time_hist, mdot_O_hist[:n], mdot_F_hist[:n], target_burn_time)
+
+    peak_mdot = float(np.nanmax(mdot_tot)) if mdot_tot.size else 0.0
+    mdot_thresh = max(peak_mdot * 1e-3, 1e-9) if np.isfinite(peak_mdot) and peak_mdot > 0 else 0.0
+    mdot_ok = mdot_tot > mdot_thresh if mdot_thresh > 0 else np.ones_like(time_hist, dtype=bool)
+
+    if thrust_arr is not None:
+        thrust_arr = thrust_arr[:n]
+        peak_thrust = float(np.nanmax(thrust_arr)) if thrust_arr.size else 0.0
+        # If thrust is meaningful, treat thrust as the authoritative "burning" signal.
+        if np.isfinite(peak_thrust) and peak_thrust > 0:
+            thrust_thresh = max(peak_thrust * 1e-3, 1.0)
+            thrust_ok = thrust_arr > thrust_thresh
+            active_mask = (time_hist <= eff + 1e-9) & thrust_ok
+        else:
+            # Fallback: thrust not usable; use mdot only.
+            active_mask = (time_hist <= eff + 1e-9) & mdot_ok
+    else:
+        active_mask = (time_hist <= eff + 1e-9) & mdot_ok
+
+    active = np.where(active_mask)[0]
+
+    if active.size == 0:
+        return int(min(n, 2))
+    return int(active[-1] + 1)
+
+
+def _delta_p_injector_pair_from_diagnostic(diag: Any) -> Tuple[Optional[float], Optional[float]]:
+    """Extract LOX / fuel injector ΔP [Pa] from a per-time-step diagnostics dict."""
+    if not isinstance(diag, dict) or diag.get("error"):
+        return None, None
+    inj = diag.get("injector_pressure")
+    if isinstance(inj, dict) and ("delta_p_injector_O" in inj or "delta_p_injector_F" in inj):
+        dp_o = inj.get("delta_p_injector_O")
+        dp_f = inj.get("delta_p_injector_F")
+    else:
+        dp_o = diag.get("delta_p_injector_O")
+        dp_f = diag.get("delta_p_injector_F")
+    out_o: Optional[float] = None
+    out_f: Optional[float] = None
+    if dp_o is not None and np.isfinite(dp_o):
+        out_o = float(dp_o)
+    if dp_f is not None and np.isfinite(dp_f):
+        out_f = float(dp_f)
+    return out_o, out_f
+
+
+def injector_dp_ratio_penalty_from_results(
+    results_layer2: Dict[str, Any],
+    available_n: int,
+    min_delta_p_over_pc: float = 0.15,
+    max_delta_p_over_pc: Optional[float] = 0.50,
+    scale: float = 400.0,
+) -> float:
+    """
+    Penalize ΔP_inj / Pc outside an acceptable band (per time step, both streams).
+
+    For each stream, ratio r = ΔP_inj / Pc. Violation is distance outside
+    [min_delta_p_over_pc, max_delta_p_over_pc] (lower shortfall + upper excess).
+    Per time step we take the worse of LOX and fuel, then average over steps.
+
+    Typical guidance: keep injection drop large enough for atomization (~15–25% of Pc)
+    but not so large that tank pressure is wasted; upper bound is tunable.
+
+    If max_delta_p_over_pc is None, only the lower bound is enforced (legacy one-sided).
+    """
+    if available_n < 1 or "Pc" not in results_layer2:
+        return 0.0
+    lo = float(min_delta_p_over_pc)
+    hi = float(max_delta_p_over_pc) if max_delta_p_over_pc is not None else None
+    if hi is not None and hi < lo:
+        hi = lo
+
+    Pc_hist = np.atleast_1d(results_layer2["Pc"])[:available_n]
+    diagnostics = results_layer2.get("diagnostics", [])
+    if not isinstance(diagnostics, list):
+        return 0.0
+
+    violations: List[float] = []
+    for i in range(available_n):
+        Pc = float(Pc_hist[i])
+        if not np.isfinite(Pc) or Pc <= 0:
+            continue
+        diag = diagnostics[i] if i < len(diagnostics) else {}
+        dp_o, dp_f = _delta_p_injector_pair_from_diagnostic(diag)
+        if dp_o is None or dp_f is None:
+            continue
+        r_o = dp_o / Pc
+        r_f = dp_f / Pc
+
+        def _band_violation(r: float) -> float:
+            v = max(0.0, lo - r)
+            if hi is not None:
+                v += max(0.0, r - hi)
+            return v
+
+        v_o = _band_violation(r_o)
+        v_f = _band_violation(r_f)
+        violations.append(max(v_o, v_f))
+
+    if not violations:
+        return 0.0
+    return float(np.mean(violations)) * scale
+
+
 # Fixed segment configuration for Layer 2 optimization
 # We use a shared-segment parameterization:
 #   - Shared length ratios across LOX and fuel
@@ -413,11 +605,14 @@ def run_layer2a_minimum_pressures(
         total_fuel_mass = float(np.trapezoid(mdot_F_hist, time_hist))
         total_propellant_mass = total_lox_mass + total_fuel_mass
 
+        effective_burn_time = effective_burn_time_for_layer2_objective(
+            time_hist, mdot_O_hist, mdot_F_hist, target_burn_time
+        )
         required_impulse = calculate_required_impulse_from_mass(
             target_apogee_m,
             rocket_dry_mass_kg,
             total_propellant_mass,
-            target_burn_time,
+            effective_burn_time,
         )
         total_impulse = float(np.trapezoid(thrust_hist, time_hist))
 
@@ -566,6 +761,7 @@ def run_layer2_pressure(
     de_n_time_points: int = 25,  # Reduced from 50 for faster execution
     use_controller_simulation: bool = False,  # Toggle for robust DDP controller feasibility penalty
     controller_config: Optional[Any] = None,  # ControllerConfig instance if available
+    disable_impulse_requirement: bool = False,  # Skip impulse-vs-apogee penalty (avoids short-burn incentive)
 ) -> Tuple[PintleEngineConfig, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any], bool]:
     """
     Run Layer 2: Pressure Curve Optimization.
@@ -630,6 +826,8 @@ def run_layer2_pressure(
         layer2_logger.info(f"Target O/F ratio: {optimal_of_ratio:.2f}")
     if min_stability_margin is not None:
         layer2_logger.info(f"Min stability margin: {min_stability_margin:.3f}")
+    if disable_impulse_requirement:
+        layer2_logger.info("Impulse requirement: DISABLED (impulse penalty zeroed)")
     layer2_logger.info("")
     
     # Set up evaluation plot file if requested
@@ -1373,22 +1571,11 @@ def run_layer2_pressure(
                     handler.flush()
                 return finish_evaluation(1e6)
             
-            # Check OF ratio validity
-            MR_hist = np.atleast_1d(results_layer2.get("MR", np.full(available_n, optimal_of_ratio if optimal_of_ratio else 2.3)))
-            MR_hist = MR_hist[:available_n]
-            finite_MR_mask = np.isfinite(MR_hist) & (MR_hist > 0) & (MR_hist < 100)  # Reasonable bounds
-            finite_MR_count = np.sum(finite_MR_mask)
-            
-            if finite_MR_count < available_n * 0.5:
-                # More than 50% of OF ratios are invalid - reject
-                layer2_logger.warning(
-                    f"    Too many invalid OF ratios for eval #{eval_num}: "
-                    f"only {finite_MR_count}/{available_n} ({finite_MR_count/available_n*100:.1f}%) are valid. "
-                    f"Returning large penalty."
-                )
-                for handler in layer2_logger.handlers:
-                    handler.flush()
-                return finish_evaluation(1e6)
+            # Extract MR history here; we validate it after we detect burnout / active burn prefix.
+            # This avoids rejecting otherwise-good solutions just because the post-burnout tail is zero-masked.
+            MR_hist = np.atleast_1d(
+                results_layer2.get("MR", np.full(available_n, optimal_of_ratio if optimal_of_ratio else 2.3))
+            )[:available_n]
             
             # Now safely replace NaN values with defaults for remaining calculations
             # (but we've already validated that we have enough valid data)
@@ -1421,28 +1608,57 @@ def run_layer2_pressure(
                 posinf=0.0,
                 neginf=0.0,
             )
+
+            # Detect and trim post-burnout tail so averages/validity don't include forced zeros.
+            active_n = active_burn_prefix_len(time_hist, mdot_O_hist, mdot_F_hist, target_burn_time, thrust_hist=thrust_hist)
+            active_n = max(2, min(active_n, available_n))
+            thrust_hist = thrust_hist[:active_n]
+            time_hist = time_hist[:active_n]
+            mdot_O_hist = mdot_O_hist[:active_n]
+            mdot_F_hist = mdot_F_hist[:active_n]
+            MR_hist = MR_hist[:active_n]
+            available_n = active_n
+
+            finite_MR_mask = np.isfinite(MR_hist) & (MR_hist > 0) & (MR_hist < 100)
+            finite_MR_count = int(np.sum(finite_MR_mask))
+            if finite_MR_count < max(1.0, available_n * 0.5):
+                layer2_logger.warning(
+                    f"    Too many invalid OF ratios for eval #{eval_num} after trimming burnout tail: "
+                    f"only {finite_MR_count}/{available_n} ({finite_MR_count/max(available_n,1)*100:.1f}%) are valid. "
+                    f"Returning large penalty."
+                )
+                for handler in layer2_logger.handlers:
+                    handler.flush()
+                return finish_evaluation(1e6)
             
             # Integrate mass flow rates to get total propellant consumed
             total_lox_mass = float(np.trapezoid(mdot_O_hist, time_hist))  # kg
             total_fuel_mass = float(np.trapezoid(mdot_F_hist, time_hist))  # kg
             total_propellant_mass = total_lox_mass + total_fuel_mass
             
-            # Calculate required impulse based on actual propellant consumption
+            # Required impulse uses the physical burn cap so we do not demand extra Δv for
+            # gravity losses over time the vehicle cannot still be burning.
+            effective_burn_time = effective_burn_time_for_layer2_objective(
+                time_hist, mdot_O_hist, mdot_F_hist, target_burn_time
+            )
             required_impulse = calculate_required_impulse_from_mass(
                 target_apogee_m,
                 rocket_dry_mass_kg,
                 total_propellant_mass,
-                target_burn_time,
+                effective_burn_time,
             )
             
             # Check 1: Total impulse must be >= required impulse
             total_impulse = float(np.trapezoid(thrust_hist, time_hist))  # N·s
-            impulse_deficit = max(0, required_impulse - total_impulse)
-            impulse_penalty = (impulse_deficit / max(required_impulse, 1e-9)) * 200.0  # Large penalty if insufficient
+            if disable_impulse_requirement:
+                impulse_penalty = 0.0
+            else:
+                impulse_deficit = max(0, required_impulse - total_impulse)
+                impulse_penalty = (impulse_deficit / max(required_impulse, 1e-9)) * 20.0
             
-            # Soft preference: keep the burn active closer to the target_burn_time.
-            # We measure when 95% of the total impulse has been delivered; if that
-            # happens too early relative to target_burn_time, we add a penalty.
+            # Soft nudge only when 95% of impulse is delivered *before* the end of the effective
+            # burn window (min of target and propellant-limited end). No extra penalty for "slack"
+            # after flow has already stopped.
             burn_time_penalty = 0.0
             if total_impulse > 0:
                 # Cumulative impulse over time
@@ -1452,12 +1668,21 @@ def run_layer2_pressure(
                 if idx_95 >= len(time_hist):
                     idx_95 = len(time_hist) - 1
                 t95 = float(time_hist[idx_95])
-                # If 95% of impulse is achieved significantly before target_burn_time,
-                # penalize the "slack" time to encourage more impulse later in the burn.
-                burn_completion_slack = max(0.0, target_burn_time - t95)
-                # Normalize by target_burn_time so penalty is dimensionless.
-                burn_time_penalty = (burn_completion_slack / max(target_burn_time, 1e-9)) * 20.0
-            
+                if t95 + 1e-9 < effective_burn_time:
+                    burn_completion_slack = max(0.0, effective_burn_time - t95)
+                    burn_time_penalty = (
+                        burn_completion_slack / max(effective_burn_time, 1e-9)
+                    ) * LAYER2_BURN_TIME_SOFT_SCALE
+
+            # Soft incentive: prefer burns that use the full target burn time.
+            # Measured against target_burn_time (not effective), so the optimizer
+            # cannot avoid this by collapsing the burn window early.
+            burn_duration_penalty = 0.0
+            if target_burn_time > 0:
+                utilisation = min(effective_burn_time / target_burn_time, 1.0)
+                shortfall = 1.0 - utilisation  # 0 = perfect, 1 = instant burnout
+                burn_duration_penalty = shortfall * shortfall * LAYER2_BURN_DURATION_SCALE
+
             # Check 2: Propellant mass must not exceed tank capacity
             lox_capacity_exceeded = max(0, total_lox_mass - max_lox_tank_capacity_kg)
             fuel_capacity_exceeded = max(0, total_fuel_mass - max_fuel_tank_capacity_kg)
@@ -1476,6 +1701,7 @@ def run_layer2_pressure(
                     posinf=0.0,
                     neginf=0.0,
                 )
+                stability_scores = stability_scores[:available_n]
                 min_stability = float(np.min(stability_scores))
             else:
                 chugging = results_layer2.get("chugging_stability_margin", np.array([1.0]))
@@ -1485,6 +1711,7 @@ def run_layer2_pressure(
                     posinf=0.0,
                     neginf=0.0,
                 )
+                chugging = chugging[:available_n]
                 min_stability = max(0.0, min(1.0, (float(np.min(chugging)) - 0.3) * 1.5))
             
             stability_penalty = 0.0
@@ -1497,6 +1724,7 @@ def run_layer2_pressure(
                     posinf=0.0,
                     neginf=0.0,
                 )
+                chugging_margins = chugging_margins[:available_n]
                 min_chugging = float(np.min(chugging_margins))
                 if min_chugging < min_stability_margin:
                     stability_penalty = (min_stability_margin - min_chugging) * 50.0
@@ -1574,6 +1802,15 @@ def run_layer2_pressure(
                 else:
                     # No valid Pc values - should be caught by thrust check, but just in case
                     pc_penalty = 100.0
+
+            # Check 5b: Injector ΔP/Pc band (per time step, both streams)
+            injector_dp_penalty = injector_dp_ratio_penalty_from_results(
+                results_layer2,
+                available_n,
+                min_delta_p_over_pc=0.15,
+                max_delta_p_over_pc=0.50,
+                scale=400.0,
+            )
             
             # Check 6: COPV Initial Pressure Optimization
             # Run COPV solver to determine minimum required initial pressure (P0_Pa)
@@ -1753,10 +1990,12 @@ def run_layer2_pressure(
             components = [
                 impulse_penalty,
                 burn_time_penalty,
+                burn_duration_penalty,
                 capacity_penalty,
                 stability_penalty,
                 of_penalty,
                 pc_penalty,
+                injector_dp_penalty,
                 copv_penalty,
                 controller_penalty,
             ]
@@ -1803,6 +2042,7 @@ def run_layer2_pressure(
                 layer2_logger.info(
                     f"    ✓ New best objective: {obj:.6f} "
                     f"(penalties: impulse={impulse_penalty:.2f}, burn_time={burn_time_penalty:.2f}, "
+                    f"burn_dur={burn_duration_penalty:.2f}, "
                     f"capacity={capacity_penalty:.2f}, stability={stability_penalty:.2f}, "
                     f"O/F={of_penalty:.2f}, Pc_stab={pc_penalty:.2f}, COPV={copv_penalty:.2f}) "
                     f"- Evaluation took {eval_time:.2f}s"
@@ -2215,12 +2455,22 @@ def run_layer2_pressure(
             total_fuel_mass_final = float(np.trapezoid(mdot_F_final, time_array))
             total_propellant_mass = total_lox_mass_final + total_fuel_mass_final
             
-            # Calculate required impulse from actual propellant consumption
+            n_fin = min(
+                len(time_array),
+                len(np.atleast_1d(mdot_O_final)),
+                len(np.atleast_1d(mdot_F_final)),
+            )
+            eff_burn_final = effective_burn_time_for_layer2_objective(
+                time_array[:n_fin],
+                np.atleast_1d(mdot_O_final)[:n_fin],
+                np.atleast_1d(mdot_F_final)[:n_fin],
+                target_burn_time,
+            )
             required_impulse_final = calculate_required_impulse_from_mass(
                 target_apogee_m,
                 rocket_dry_mass_kg,
                 total_propellant_mass,
-                target_burn_time,
+                eff_burn_final,
             )
             
             # Log final results
@@ -2252,9 +2502,32 @@ def run_layer2_pressure(
         min_stability_margin_val = None
         if results_final is not None:  # Only calculate if results_final was successfully computed
             try:
+                n_fin = min(len(time_array), len(mdot_O_final), len(mdot_F_final))
+                active_n_final = active_burn_prefix_len(
+                    time_array[:n_fin],
+                    np.atleast_1d(mdot_O_final)[:n_fin],
+                    np.atleast_1d(mdot_F_final)[:n_fin],
+                    target_burn_time,
+                    thrust_hist=np.atleast_1d(thrust_final)[:n_fin],
+                )
+                # Prefer a burn mask based on thrust being meaningfully > 0.
+                # This avoids averaging in post-burnout zero-masked MR/stability even if mdot stays nonzero.
+                thrust_arr = np.atleast_1d(thrust_final)[:n_fin].astype(float)
+                peak_thrust = float(np.nanmax(thrust_arr)) if thrust_arr.size else 0.0
+                if np.isfinite(peak_thrust) and peak_thrust > 0:
+                    thrust_thresh = max(peak_thrust * 1e-3, 1.0)
+                    burn_mask = thrust_arr > thrust_thresh
+                else:
+                    burn_mask = np.ones_like(thrust_arr, dtype=bool)
+                if active_n_final > 0:
+                    burn_mask = burn_mask[:active_n_final]
+
                 MR_hist = np.atleast_1d(results_final.get("MR", []))
                 if len(MR_hist) > 0:
-                    valid_MR = MR_hist[np.isfinite(MR_hist)]
+                    MR_hist = MR_hist[:n_fin].astype(float)
+                    if active_n_final > 0:
+                        MR_hist = MR_hist[:active_n_final]
+                    valid_MR = MR_hist[burn_mask & np.isfinite(MR_hist) & (MR_hist > 0)]
                     if len(valid_MR) > 0:
                         avg_of_ratio = float(np.mean(valid_MR))
                 
@@ -2262,8 +2535,10 @@ def run_layer2_pressure(
                 # evaluate_arrays_with_time now includes comprehensive stability analysis (all 3 types)
                 chugging_margins = results_final.get("chugging_stability_margin", None)
                 if chugging_margins is not None:
-                    chugging_margins = np.atleast_1d(chugging_margins)
-                    valid_margins = chugging_margins[np.isfinite(chugging_margins)]
+                    chugging_margins = np.atleast_1d(chugging_margins)[:n_fin].astype(float)
+                    if active_n_final > 0:
+                        chugging_margins = chugging_margins[:active_n_final]
+                    valid_margins = chugging_margins[burn_mask & np.isfinite(chugging_margins) & (chugging_margins > 0)]
                     if len(valid_margins) > 0:
                         min_stability_margin_val = float(np.min(valid_margins))
                         layer2_logger.info(f"Extracted min stability margin (comprehensive): {min_stability_margin_val:.3f} from {len(valid_margins)} time points")
@@ -2353,6 +2628,10 @@ def run_layer2_pressure(
         thrust_curve_time = None
         thrust_curve_values = None
         of_curve_values = None
+        pc_curve_values = None
+        mdot_O_curve_values = None
+        mdot_F_curve_values = None
+        mdot_total_curve_values = None
         delta_p_inj_O_values = None
         delta_p_inj_F_values = None
         if results_final is not None and thrust_final is not None and len(thrust_final) > 0:
@@ -2365,7 +2644,34 @@ def run_layer2_pressure(
             MR_final = np.atleast_1d(results_final.get("MR", np.zeros(len(thrust_final))))
             if len(MR_final) > 0:
                 of_curve_values = MR_final.tolist() if hasattr(MR_final, 'tolist') else list(MR_final)
+
+            # Extract chamber pressure curve (Pc) for frontend plotting
+            Pc_final = np.atleast_1d(results_final.get("Pc", np.zeros(len(thrust_final))))
+            if len(Pc_final) > 0:
+                pc_curve_values = Pc_final.tolist() if hasattr(Pc_final, "tolist") else list(Pc_final)
             
+            mdot_O_final_curve = np.atleast_1d(results_final.get("mdot_O", np.zeros(len(thrust_final))))
+            mdot_F_final_curve = np.atleast_1d(results_final.get("mdot_F", np.zeros(len(thrust_final))))
+            mdot_total_final_curve = np.atleast_1d(results_final.get("mdot_total", np.zeros(len(thrust_final))))
+            if len(mdot_O_final_curve) > 0:
+                mdot_O_curve_values = (
+                    mdot_O_final_curve.tolist()
+                    if hasattr(mdot_O_final_curve, "tolist")
+                    else list(mdot_O_final_curve)
+                )
+            if len(mdot_F_final_curve) > 0:
+                mdot_F_curve_values = (
+                    mdot_F_final_curve.tolist()
+                    if hasattr(mdot_F_final_curve, "tolist")
+                    else list(mdot_F_final_curve)
+                )
+            if len(mdot_total_final_curve) > 0:
+                mdot_total_curve_values = (
+                    mdot_total_final_curve.tolist()
+                    if hasattr(mdot_total_final_curve, "tolist")
+                    else list(mdot_total_final_curve)
+                )
+
             # Extract injector pressure drops from diagnostics
             diagnostics_list = results_final.get("diagnostics", [])
             layer2_logger.info(f"Extracting injector pressure drops: diagnostics_list length={len(diagnostics_list)}, thrust_final length={len(thrust_final)}")
@@ -2437,6 +2743,50 @@ def run_layer2_pressure(
             else:
                 layer2_logger.warning("No diagnostics found in results_final - cannot extract injector pressure drops")
         
+        # ---- fill level curves (fraction of physical max capacity) ----
+        lox_fill_fraction_curve = None
+        fuel_fill_fraction_curve = None
+        lox_mass_remaining_curve_kg = None
+        fuel_mass_remaining_curve_kg = None
+        try:
+            if (
+                mdot_O_curve_values is not None
+                and mdot_F_curve_values is not None
+                and thrust_curve_time is not None
+                and max_lox_tank_capacity_kg > 0
+                and max_fuel_tank_capacity_kg > 0
+            ):
+                t = np.asarray(thrust_curve_time, dtype=float)
+                mdot_O = np.asarray(mdot_O_curve_values, dtype=float)
+                mdot_F = np.asarray(mdot_F_curve_values, dtype=float)
+                n_fill = int(min(t.size, mdot_O.size, mdot_F.size))
+                if n_fill > 1:
+                    t = t[:n_fill]
+                    mdot_O = mdot_O[:n_fill]
+                    mdot_F = mdot_F[:n_fill]
+                    dt = np.diff(t)
+                    dt = np.nan_to_num(dt, nan=0.0, posinf=0.0, neginf=0.0)
+                    dt = np.maximum(dt, 0.0)
+                    # Trapezoid cumulative integral without SciPy dependency here.
+                    lox_consumed = np.concatenate(
+                        ([0.0], np.cumsum(0.5 * (mdot_O[1:] + mdot_O[:-1]) * dt))
+                    )
+                    fuel_consumed = np.concatenate(
+                        ([0.0], np.cumsum(0.5 * (mdot_F[1:] + mdot_F[:-1]) * dt))
+                    )
+                    lox_remaining = np.clip(float(max_lox_tank_capacity_kg) - lox_consumed, 0.0, float(max_lox_tank_capacity_kg))
+                    fuel_remaining = np.clip(float(max_fuel_tank_capacity_kg) - fuel_consumed, 0.0, float(max_fuel_tank_capacity_kg))
+                    lox_mass_remaining_curve_kg = lox_remaining.tolist()
+                    fuel_mass_remaining_curve_kg = fuel_remaining.tolist()
+                    lox_fill_fraction_curve = (lox_remaining / float(max_lox_tank_capacity_kg)).tolist()
+                    fuel_fill_fraction_curve = (fuel_remaining / float(max_fuel_tank_capacity_kg)).tolist()
+        except Exception:
+            # Non-critical: keep fill curves unset if any unexpected shape issues occur.
+            lox_fill_fraction_curve = None
+            fuel_fill_fraction_curve = None
+            lox_mass_remaining_curve_kg = None
+            fuel_mass_remaining_curve_kg = None
+
         summary = {
             "lox_segments": n_segments_used,
             "fuel_segments": n_segments_used,
@@ -2464,6 +2814,18 @@ def run_layer2_pressure(
             "thrust_curve_values": thrust_curve_values,
             # O/F ratio (mixture ratio) curve data for frontend plotting
             "of_curve_values": of_curve_values,
+            # Chamber pressure curve data for frontend plotting (Pa)
+            "pc_curve_values": pc_curve_values,
+            # Mass flow curves for frontend plotting (kg/s)
+            "mdot_O_curve_values": mdot_O_curve_values,
+            "mdot_F_curve_values": mdot_F_curve_values,
+            "mdot_total_curve_values": mdot_total_curve_values,
+            # Tank fill level curves (% of physical max capacity, 0-1). For regulated Layer 2
+            # we approximate remaining propellant as (capacity - ∫mdot dt).
+            "lox_fill_fraction_curve": lox_fill_fraction_curve,
+            "fuel_fill_fraction_curve": fuel_fill_fraction_curve,
+            "lox_mass_remaining_curve_kg": lox_mass_remaining_curve_kg,
+            "fuel_mass_remaining_curve_kg": fuel_mass_remaining_curve_kg,
             # Injector pressure drops (LOX and Fuel) for frontend plotting
             "delta_p_inj_O_psi": delta_p_inj_O_values,
             "delta_p_inj_F_psi": delta_p_inj_F_values,
@@ -2530,7 +2892,22 @@ def run_layer2_pressure(
         except Exception as e:
             layer2_logger.warning(f"Failed to save pressure curves to config: {repr(e)}")
             # Don't fail the entire optimization if config saving fails
-    
+
+    # Persist initial pressures and propellant masses to tank configs so the
+    # downloaded YAML carries the full operating point.
+    try:
+        psi_factor = 1.0 / 6894.76
+        if optimized_config.lox_tank is not None:
+            optimized_config.lox_tank.initial_pressure_psi = float(P_tank_O_optimized[0]) * psi_factor
+            if total_lox_mass_final > 0:
+                optimized_config.lox_tank.mass = float(total_lox_mass_final)
+        if optimized_config.fuel_tank is not None:
+            optimized_config.fuel_tank.initial_pressure_psi = float(P_tank_F_optimized[0]) * psi_factor
+            if total_fuel_mass_final > 0:
+                optimized_config.fuel_tank.mass = float(total_fuel_mass_final)
+    except Exception as e:
+        layer2_logger.warning(f"Failed to persist tank fields to config: {repr(e)}")
+
     # Clean up handler to prevent file handle issues
     layer2_logger.handlers.clear()
     

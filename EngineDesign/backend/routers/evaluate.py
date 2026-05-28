@@ -1,10 +1,12 @@
 """Engine evaluation endpoints."""
 
+import copy
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 import numpy as np
 
 from backend.state import app_state
+from engine.core.runner import PintleEngineRunner
 
 router = APIRouter(prefix="/api/evaluate", tags=["evaluate"])
 
@@ -18,6 +20,7 @@ class EvaluateRequest(BaseModel):
     """Request body for forward evaluation."""
     lox_pressure_psi: float = Field(..., gt=0, description="LOX tank pressure in psi")
     fuel_pressure_psi: float = Field(..., gt=0, description="Fuel tank pressure in psi")
+    use_cold_flow_cd: bool = Field(default=True, description="Use saved cold-flow Cd fit if present. When False, strips fit and uses Re-based formula.")
 
 
 def convert_numpy(obj):
@@ -55,8 +58,19 @@ async def evaluate(request: EvaluateRequest):
     P_tank_F = request.fuel_pressure_psi * PSI_TO_PA
     
     try:
+        app_state.ensure_runner()
+        # If cold-flow Cd is disabled, strip fit coefficients from a temp config copy
+        if not request.use_cold_flow_cd:
+            cfg = copy.deepcopy(app_state.config)
+            for fluid in ("oxidizer", "fuel"):
+                if fluid in cfg.discharge:
+                    cfg.discharge[fluid].cda_fit_a = None
+                    cfg.discharge[fluid].cda_fit_b = None
+            runner = PintleEngineRunner(cfg)
+        else:
+            runner = app_state.runner
         # Get raw results from runner - ambient pressure computed from config elevation
-        results = app_state.runner.evaluate(P_tank_O, P_tank_F, debug=True)
+        results = runner.evaluate(P_tank_O, P_tank_F, debug=True)
         
         # Convert numpy types to JSON-serializable and return directly
         # Frontend uses the same field names as runner.py outputs

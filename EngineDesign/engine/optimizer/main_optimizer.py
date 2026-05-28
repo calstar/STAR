@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from engine.pipeline.config_schemas import PintleEngineConfig
+from engine.pipeline.layer2_tank_capacity import resolve_layer2_tank_capacities_kg
 from engine.core.runner import PintleEngineRunner
 
 # Import chamber geometry functions for proper calculations
@@ -368,18 +369,17 @@ def run_full_engine_optimization_with_flight_sim(
             # Get rocket mass and tank capacity from config (if available)
             # These are needed for impulse and capacity calculations in layer2_pressure
             rocket_dry_mass_kg = getattr(config_obj.rocket, 'dry_mass_kg', None) if hasattr(config_obj, 'rocket') else None
-            max_lox_tank_capacity_kg = getattr(config_obj.rocket, 'lox_tank_capacity_kg', None) if hasattr(config_obj, 'rocket') else None
-            max_fuel_tank_capacity_kg = getattr(config_obj.rocket, 'fuel_tank_capacity_kg', None) if hasattr(config_obj, 'rocket') else None
-            
-            # Fallback estimates if not available
+            dr = getattr(config_obj, "design_requirements", None)
+            max_lox_tank_capacity_kg, max_fuel_tank_capacity_kg = resolve_layer2_tank_capacities_kg(
+                config_obj,
+                design_lox_kg=getattr(dr, "lox_tank_capacity_kg", None) if dr is not None else None,
+                design_fuel_kg=getattr(dr, "fuel_tank_capacity_kg", None) if dr is not None else None,
+                default_lox_kg=20.0,
+                default_fuel_kg=10.0,
+            )
             if rocket_dry_mass_kg is None:
                 # Estimate: engine + tanks + COPV + airframe
                 rocket_dry_mass_kg = 50.0  # Conservative default
-            if max_lox_tank_capacity_kg is None:
-                # Estimate based on propellant mass needed for burn
-                max_lox_tank_capacity_kg = 20.0  # Conservative default
-            if max_fuel_tank_capacity_kg is None:
-                max_fuel_tank_capacity_kg = 10.0  # Conservative default
             
             # Run Layer 2a: Pressure curve optimization
             update_progress("Layer 2a: Pressure Curve Optimization", 0.60, "Optimizing pressure curves for full burn...")
@@ -430,16 +430,16 @@ def run_full_engine_optimization_with_flight_sim(
             
             # Get rocket mass and tank capacity from config (if available)
             rocket_dry_mass_kg = getattr(config_obj.rocket, 'dry_mass_kg', None) if hasattr(config_obj, 'rocket') else None
-            max_lox_tank_capacity_kg = getattr(config_obj.rocket, 'lox_tank_capacity_kg', None) if hasattr(config_obj, 'rocket') else None
-            max_fuel_tank_capacity_kg = getattr(config_obj.rocket, 'fuel_tank_capacity_kg', None) if hasattr(config_obj, 'rocket') else None
-            
-            # Fallback estimates if not available
+            dr = getattr(config_obj, "design_requirements", None)
+            max_lox_tank_capacity_kg, max_fuel_tank_capacity_kg = resolve_layer2_tank_capacities_kg(
+                config_obj,
+                design_lox_kg=getattr(dr, "lox_tank_capacity_kg", None) if dr is not None else None,
+                design_fuel_kg=getattr(dr, "fuel_tank_capacity_kg", None) if dr is not None else None,
+                default_lox_kg=20.0,
+                default_fuel_kg=10.0,
+            )
             if rocket_dry_mass_kg is None:
                 rocket_dry_mass_kg = 50.0
-            if max_lox_tank_capacity_kg is None:
-                max_lox_tank_capacity_kg = 20.0
-            if max_fuel_tank_capacity_kg is None:
-                max_fuel_tank_capacity_kg = 10.0
             
             # Run Layer 2a: Pressure curve optimization
             update_progress("Layer 2a: Pressure Curve Optimization", 0.60, "Optimizing pressure curves for full burn...")
@@ -511,18 +511,17 @@ def run_full_engine_optimization_with_flight_sim(
             # Get rocket mass and tank capacity from config (if available)
             # These are needed for impulse and capacity calculations in layer2_pressure
             rocket_dry_mass_kg = getattr(config_obj.rocket, 'dry_mass_kg', None) if hasattr(config_obj, 'rocket') else None
-            max_lox_tank_capacity_kg = getattr(config_obj.rocket, 'lox_tank_capacity_kg', None) if hasattr(config_obj, 'rocket') else None
-            max_fuel_tank_capacity_kg = getattr(config_obj.rocket, 'fuel_tank_capacity_kg', None) if hasattr(config_obj, 'rocket') else None
-            
-            # Fallback estimates if not available
+            dr = getattr(config_obj, "design_requirements", None)
+            max_lox_tank_capacity_kg, max_fuel_tank_capacity_kg = resolve_layer2_tank_capacities_kg(
+                config_obj,
+                design_lox_kg=getattr(dr, "lox_tank_capacity_kg", None) if dr is not None else None,
+                design_fuel_kg=getattr(dr, "fuel_tank_capacity_kg", None) if dr is not None else None,
+                default_lox_kg=20.0,
+                default_fuel_kg=10.0,
+            )
             if rocket_dry_mass_kg is None:
                 # Estimate: engine + tanks + COPV + airframe
                 rocket_dry_mass_kg = 50.0  # Conservative default
-            if max_lox_tank_capacity_kg is None:
-                # Estimate based on propellant mass needed for burn
-                max_lox_tank_capacity_kg = 20.0  # Conservative default
-            if max_fuel_tank_capacity_kg is None:
-                max_fuel_tank_capacity_kg = 10.0  # Conservative default
             
             # Run Layer 2a: Pressure curve optimization
             update_progress("Layer 2a: Pressure Curve Optimization", 0.60, "Optimizing pressure curves for full burn...")

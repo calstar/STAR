@@ -1,6 +1,12 @@
 import { useState, useCallback, useEffect } from 'react';
 import { evaluate } from '../api/client';
 import type { RunnerResults, EngineConfig } from '../api/client';
+
+function hasCdFit(config: EngineConfig | null): boolean {
+  const d = config?.discharge as Record<string, unknown> | undefined;
+  const fuel = d?.fuel as Record<string, unknown> | undefined;
+  return fuel?.cda_fit_a != null;
+}
 import { ResultsDisplay } from './ResultsDisplay';
 
 interface ForwardModeProps {
@@ -20,6 +26,7 @@ export function ForwardMode({ config }: ForwardModeProps) {
   const [ambientPressure, setAmbientPressure] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [useColdFlowCd, setUseColdFlowCd] = useState(true);
 
   // Update defaults when config changes
   useEffect(() => {
@@ -54,6 +61,7 @@ export function ForwardMode({ config }: ForwardModeProps) {
     const result = await evaluate({
       lox_pressure_psi: lox,
       fuel_pressure_psi: fuel,
+      use_cold_flow_cd: hasCdFit(config) ? useColdFlowCd : undefined,
     });
 
     setIsLoading(false);
@@ -68,7 +76,7 @@ export function ForwardMode({ config }: ForwardModeProps) {
       // Store ambient pressure from response (computed from config elevation)
       setAmbientPressure(result.data.inputs.ambient_pressure_pa);
     }
-  }, [loxPressure, fuelPressure]);
+  }, [loxPressure, fuelPressure, useColdFlowCd, config]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -137,6 +145,24 @@ export function ForwardMode({ config }: ForwardModeProps) {
             </div>
           </div>
         </div>
+
+        {/* Cold-flow Cd toggle — only shown when fit is saved in config */}
+        {hasCdFit(config) && (
+          <div className="mt-4 flex items-center gap-3">
+            <button
+              role="switch"
+              aria-checked={useColdFlowCd}
+              onClick={() => setUseColdFlowCd(v => !v)}
+              className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${useColdFlowCd ? 'bg-amber-500' : 'bg-gray-600'}`}
+            >
+              <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${useColdFlowCd ? 'translate-x-4' : 'translate-x-0'}`} />
+            </button>
+            <span className="text-sm text-[var(--color-text-secondary)]">
+              Use CdA Cold Flow&nbsp;
+              <span className="font-mono text-xs text-[var(--color-text-secondary)] opacity-70">(CdA = a·√ΔP + b)</span>
+            </span>
+          </div>
+        )}
 
         {/* Evaluate button */}
         <button
