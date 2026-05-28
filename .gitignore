@@ -1,2 +1,5 @@
 # Doxygen output
 docs/doxygen/
+
+# Claude Code
+.claude/
