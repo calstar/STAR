@@ -23,14 +23,15 @@
 
 #include "STAR_ADS126X.h"
 
+// clang-format off
 // MUST be defined before sense_board_pins.h / connector_adc_map.h
 #define PINS_ACTIVE_LAYOUT sense_board_pins::RTD_Board
-
+#include "sense_board_pins.h"
+#include "connector_adc_map.h"
+#include "adc_mappings.h"
 #include "SensorHotfireCore.h"
 #include "SensorSelfTest.h"
-#include "adc_mappings.h"
-#include "connector_adc_map.h"
-#include "sense_board_pins.h"
+// clang-format on
 
 using namespace sense_board_pins;
 
