@@ -1779,6 +1779,14 @@ def _layer1_tab(config_obj: PintleEngineConfig, runner: Optional[PintleEngineRun
         with cols_status[2]:
             st.metric("Total Iterations", f"{total_iterations}")
 
+        perf_l1 = optimization_results.get("performance") or {}
+        if perf_l1.get("injector_dp_out_of_range"):
+            st.warning(
+                "Injector ΔP_inj/Pc is outside the configured oxidizer/fuel preferred bands "
+                "(injector_dp_out_of_range). Adjust bands under design_requirements, relax geometry/pressure bounds, "
+                "or tune W_DP."
+            )
+
         if final_change is not None and np.isfinite(final_change):
             st.caption(
                 f"Convergence uses max relative geometry change between coupled pintle/chamber iterations "

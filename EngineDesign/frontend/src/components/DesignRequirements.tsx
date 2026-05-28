@@ -1,72 +1,55 @@
-import { useState, useEffect } from 'react';
-import type { EngineConfig, DesignRequirements as DesignRequirementsType, FrozenParameters } from '../api/client';
+import type { DesignRequirements as DesignRequirementsType, FrozenParameters } from '../api/client';
+
+/** Default Design Requirements used until API/config loads. */
+export const DEFAULT_DESIGN_REQUIREMENTS: DesignRequirementsType = {
+  target_thrust: 7000.0,
+  target_apogee: 3048.0,
+  optimal_of_ratio: 2.3,
+  target_burn_time: 10.0,
+  max_lox_tank_pressure_psi: 700.0,
+  max_fuel_tank_pressure_psi: 850.0,
+  max_engine_length: 0.5,
+  max_chamber_outer_diameter: 0.15,
+  max_nozzle_exit_diameter: 0.101,
+  min_Lstar: 0.95,
+  max_Lstar: 1.27,
+  min_stability_score: 0.75,
+  require_stable_state: true,
+  stability_margin_handicap: 0.0,
+  min_stability_margin: 1.2,
+  chugging_margin_min: 0.2,
+  acoustic_margin_min: 0.1,
+  feed_stability_min: 0.15,
+  copv_free_volume_L: 4.5,
+};
 
 interface DesignRequirementsProps {
-  config: EngineConfig | null;
-  onSave: (requirements: DesignRequirementsType) => void;
+  requirements: DesignRequirementsType;
+  onRequirementsChange: (next: DesignRequirementsType) => void;
+  onSave: () => void;
 }
 
-export function DesignRequirements({ config, onSave }: DesignRequirementsProps) {
-  // Initialize with defaults or from config
-  const [requirements, setRequirements] = useState<DesignRequirementsType>({
-    // Performance targets
-    target_thrust: 7000.0,
-    target_apogee: 3048.0,
-    optimal_of_ratio: 2.3,
-    target_burn_time: 10.0,
-
-    // Tank pressures
-    max_lox_tank_pressure_psi: 700.0,
-    max_fuel_tank_pressure_psi: 850.0,
-
-    // Geometry constraints
-    max_engine_length: 0.5,
-    max_chamber_outer_diameter: 0.15,
-    max_nozzle_exit_diameter: 0.101,
-
-    // L* constraints
-    min_Lstar: 0.95,
-    max_Lstar: 1.27,
-
-    // Stability requirements (new comprehensive analysis)
-    min_stability_score: 0.75,
-    require_stable_state: true,
-    stability_margin_handicap: 0.0,
-
-    // Stability requirements (legacy margins)
-    min_stability_margin: 1.2,
-    chugging_margin_min: 0.2,
-    acoustic_margin_min: 0.1,
-    feed_stability_min: 0.15,
-
-    // COPV
-    copv_free_volume_L: 4.5,
-  });
-
-  // Auto-fill from config when available
-  useEffect(() => {
-    if (config?.design_requirements) {
-      setRequirements(config.design_requirements as DesignRequirementsType);
-    }
-  }, [config]);
-
+export function DesignRequirements({
+  requirements,
+  onRequirementsChange,
+  onSave,
+}: DesignRequirementsProps) {
   const handleSave = () => {
-    onSave(requirements);
+    onSave();
   };
 
   const updateField = (field: keyof DesignRequirementsType, value: number | boolean) => {
-    setRequirements(prev => ({ ...prev, [field]: value }));
+    onRequirementsChange({ ...requirements, [field]: value });
   };
 
-  // Helper to update a frozen parameter value
   const updateFrozenParam = (field: keyof FrozenParameters, value: number | undefined) => {
-    setRequirements(prev => ({
-      ...prev,
+    onRequirementsChange({
+      ...requirements,
       frozen_parameters: {
-        ...prev.frozen_parameters,
+        ...requirements.frozen_parameters,
         [field]: value,
       },
-    }));
+    });
   };
 
   // Helper to check if a parameter is frozen

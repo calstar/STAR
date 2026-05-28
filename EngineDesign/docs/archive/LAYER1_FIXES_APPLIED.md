@@ -39,7 +39,7 @@ COBYLA: 70% → 95% (300 evals, 9% of budget)
 ---
 
 ### **Fix #3: CMA-ES Population Tuning** 🟡→✅
-**Problem**: Population size ~11 for 10D problem, slightly small for noisy objectives  
+**Problem**: Population size ~11 for the ~10D pintle problem (14 DOF for impinging), slightly small for noisy objectives  
 **Solution**: Increase minimum population from 8→12, maximum from 32→40  
 **Impact**: Better gradient estimation with discrete variables  
 

@@ -745,6 +745,7 @@ def calculate_reaction_time_scale(
     P_ref: float = 4.0e6,   # Reference pressure [Pa]
     T_ref: float = 3500.0,  # Reference temperature [K]
     n_pressure: float = 0.8,  # Pressure exponent
+    Tc_floor: Optional[float] = None,
 ) -> float:
     """
     Estimate chemical reaction time scale for rocket combustion.
@@ -777,6 +778,10 @@ def calculate_reaction_time_scale(
         Reference temperature [K] (default 3500 K)
     n_pressure : float
         Pressure exponent (default 0.8)
+    Tc_floor : float, optional
+        If provided, evaluates temperature sensitivity using ``Tc_eff = max(Tc, Tc_floor)``.
+        This avoids pathological τ_chem inflation when CEA reports unusually low chamber
+        temperatures for a given propellant/MR/Pc grid point.
     
     Returns
     -------
@@ -796,8 +801,12 @@ def calculate_reaction_time_scale(
     # Pressure effect (higher pressure → faster reactions)
     pressure_factor = (P_ref / max(Pc, 1e5)) ** n_pressure
     
+    Tc_eff = float(Tc)
+    if Tc_floor is not None and np.isfinite(float(Tc_floor)) and float(Tc_floor) > 0:
+        Tc_eff = float(max(Tc_eff, float(Tc_floor)))
+
     # Temperature effect with clamped exponent to prevent numerical overflow
-    exp_arg = Ea_norm * (T_ref / max(Tc, 1000.0) - 1.0)
+    exp_arg = Ea_norm * (T_ref / max(Tc_eff, 1000.0) - 1.0)
     exp_arg_clamped = np.clip(exp_arg, -20.0, 20.0)  # Prevent exp overflow
     temp_factor = np.exp(exp_arg_clamped)
     
@@ -805,10 +814,10 @@ def calculate_reaction_time_scale(
     
     # Warning if tau_chem seems unrealistically high for rocket conditions
     # (indicates miscalibration of tau_ref)
-    if tau_chem > 1e-3 and Tc > 2500 and Pc > 0.5e6:
+    if tau_chem > 1e-3 and Tc_eff > 2500 and Pc > 0.5e6:
         warnings.warn(
             f"[KINETICS_WARN] tau_chem={tau_chem*1e3:.2f} ms is high for "
-            f"Tc={Tc:.0f} K, Pc={Pc/1e6:.2f} MPa. Consider reducing tau_ref "
+            f"Tc_eff={Tc_eff:.0f} K (raw Tc={Tc:.0f} K), Pc={Pc/1e6:.2f} MPa. Consider reducing tau_ref "
             f"(current: {tau_ref*1e6:.1f} μs). Typical LOX/RP-1: 10-100 μs."
         )
     
@@ -1002,6 +1011,42 @@ def calculate_mixing_efficiency(
     return float(eta_mix)
 
 
+def _mass_flux_weighted_d32_um(
+    d32_o_m: Optional[float],
+    d32_f_m: Optional[float],
+    *,
+    MR_of: float,
+) -> float:
+    """Mass-flux–weighted mean D32 [m] from per-stream Sauter means (O/F mass ratio MR = mdot_O/mdot_F).
+
+    For two parallel spray classes, literature often reports an *effective* SMD as a flux-weighted
+    average rather than max(D32_O, D32_F) (which is overly conservative for chamber-scale η models).
+    """
+    vals: list[float] = []
+    for v in (d32_o_m, d32_f_m):
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(fv) and fv > 0:
+            vals.append(fv)
+    if not vals:
+        raise ValueError("No valid positive D32_O / D32_F values for SMD aggregation.")
+    if len(vals) == 1:
+        return float(vals[0])
+    do = float(d32_o_m) if d32_o_m is not None else float("nan")
+    df = float(d32_f_m) if d32_f_m is not None else float("nan")
+    if not (np.isfinite(do) and do > 0 and np.isfinite(df) and df > 0):
+        return float(max(vals))
+    mr = float(MR_of)
+    if not np.isfinite(mr) or mr <= 0:
+        return float(0.5 * (do + df))
+    w_o = float(mr / (1.0 + mr))
+    w_f = float(1.0 / (1.0 + mr))
+    return float(w_o * do + w_f * df)
+
 
 
 def calculate_combustion_efficiency_advanced(
@@ -1126,12 +1171,25 @@ def calculate_combustion_efficiency_advanced(
                 "Expected dict with 'D32_O' or 'D32_F' keys."
             )
         
-        SMD = spray_diagnostics.get("D32_O") or spray_diagnostics.get("D32_F")
-        if SMD is None or SMD <= 0:
+        d32_o = spray_diagnostics.get("D32_O")
+        d32_f = spray_diagnostics.get("D32_F")
+        vals = []
+        for v in (d32_o, d32_f):
+            if v is None:
+                continue
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(fv) and fv > 0:
+                vals.append(fv)
+        if not vals:
             raise ValueError(
                 f"spray_diagnostics must contain non-zero 'D32_O' or 'D32_F' for SMD. "
                 f"Got keys: {list(spray_diagnostics.keys())}, D32_O={spray_diagnostics.get('D32_O')}, D32_F={spray_diagnostics.get('D32_F')}"
             )
+        # Effective SMD for η_L*: mass-flux–weighted mean of stream Sauter means (MR = mdot_O/mdot_F).
+        SMD = _mass_flux_weighted_d32_um(d32_o, d32_f, MR_of=float(MR))
 
         
         # Use Tc (Ideal) for residence time, call with new signature
@@ -1172,6 +1230,7 @@ def calculate_combustion_efficiency_advanced(
         P_ref=config.tau_ref_P,
         T_ref=config.tau_ref_T,
         n_pressure=config.n_pressure,
+        Tc_floor=getattr(config, "tau_Tc_floor_K", None),
     )
     Da = calculate_damkohler_number(tau_res, tau_chem)
     
@@ -1219,7 +1278,20 @@ def calculate_combustion_efficiency_advanced(
     # Get SMD for debug output (may not be available)
     SMD = 100e-6  # default
     if spray_diagnostics is not None:
-        SMD = spray_diagnostics.get("D32_O", 0.0) or spray_diagnostics.get("D32_F", 0.0) or 100e-6
+        d32_o = spray_diagnostics.get("D32_O")
+        d32_f = spray_diagnostics.get("D32_F")
+        cand = []
+        for v in (d32_o, d32_f):
+            if v is None:
+                continue
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(fv) and fv > 0:
+                cand.append(fv)
+        if cand:
+            SMD = _mass_flux_weighted_d32_um(d32_o, d32_f, MR_of=float(MR))
     
     if debug:
         logger = logging.getLogger("evaluate")

@@ -27,15 +27,15 @@ injector:
   type: impinging
   geometry:
     oxidizer:
-      n_elements: 19
-      d_jet: 0.002394080093665191
-      impingement_angle: 51.393589047401264
-      spacing: 0.0065793662557137485
+      n_elements: 18
+      d_jet: 0.0029682419398978075
+      impingement_angle: 76.41972873865588
+      spacing: 0.01152443197468241
     fuel:
-      n_elements: 19
-      d_jet: 0.0012160896422973634
-      impingement_angle: 35.031958574334034
-      spacing: 0.003066760942797662
+      n_elements: 18
+      d_jet: 0.0020731739365082054
+      impingement_angle: 71.70486123914873
+      spacing: 0.005139588135346511
 feed_system:
   fuel:
     d_inlet: 0.009525
@@ -44,8 +44,10 @@ feed_system:
     K1: 0.0
     phi_type: none
   oxidizer:
-    d_inlet: 0.013470353244117012
-    A_hydraulic: 0.00014251150082346222
+    # Dual balanced parallel 3/8" runs: A_eff = 2 × A(3/8") ⇒ d_eq = √2 × 0.009525 m
+    # (see engine.pipeline.constants FEED_LINE_DUAL_3_8_*)
+    d_inlet: 0.01347035
+    A_hydraulic: 1.425115e-4
     K0: 2.0
     K1: 0.0
     phi_type: none
@@ -71,7 +73,7 @@ regen_cooling:
   use_heat_transfer: true
   wall_thickness: 0.002
   wall_thermal_conductivity: 320.0
-  chamber_inner_diameter: 0.08491
+  chamber_inner_diameter: 0.1516
   hot_gas_prandtl: 0.7
   hot_gas_viscosity: 4.0e-05
   hot_gas_thermal_conductivity: 0.12
@@ -100,7 +102,7 @@ film_cooling:
   density_override: null
   cp_override: null
 ablative_cooling:
-  enabled: true
+  enabled: false
   material_density: 1600.0
   heat_of_ablation: 2500000.0
   thermal_conductivity: 0.35
@@ -127,7 +129,7 @@ ablative_cooling:
   track_geometry_evolution: true
   nozzle_ablative: false
 graphite_insert:
-  enabled: true
+  enabled: false
   material_density: 2260.0
   heat_of_ablation: 15000000.0
   thermal_conductivity: 100.0
@@ -165,14 +167,14 @@ graphite_insert:
 stainless_steel_case: null
 discharge:
   fuel:
-    Cd_inf: 0.65
+    Cd_inf: 0.3
     a_Re: 0.2
     Cd_min: 0.2
     use_pressure_correction: false
     P_ref: 5000000.0
     a_P: 0.0
     use_temperature_correction: false
-    T_ref: 300.0
+    T_ref: 112.0
     a_T: 0.0
   oxidizer:
     Cd_inf: 0.4
@@ -197,7 +199,6 @@ spray:
     C: 0.5
     m: 0.6
     p: 0.0
-    we_corr_max: null
   pintle:
     C: 15.0
     B: 2.0
@@ -216,7 +217,7 @@ combustion:
     cea_parallel_workers: null
     ox_name: LOX
     fuel_name: CH4
-    expansion_ratio: 7.443037974683544
+    expansion_ratio: 7.01837178880855
     cache_file: output/cache/cea_cache_LOX_CH4_3D.npz
     Pc_range:
     - 1000000.0
@@ -256,7 +257,6 @@ combustion:
     tau_ref_P: 4000000.0
     tau_ref_T: 3500.0
     n_pressure: 0.8
-    tau_Tc_floor_K: null
     T_star_fuel_cap_K: 500.0
     A0_hydrocarbon: 10000000.0
     Ea_hydrocarbon: 80000.0
@@ -269,20 +269,20 @@ combustion:
     n_pre_hydrogen: 0.2
 chamber_geometry:
   design_pressure: 2413166.0
-  design_thrust: 7000.0
-  design_MR: 2.55
-  chamber_diameter: 0.08128817919965281
-  Lstar: 0.7844947625915301
-  exit_diameter: 0.08593141448093443
-  expansion_ratio: 6.142319923551047
+  design_thrust: 8000.0
+  design_MR: 3.5
+  chamber_diameter: 0.1516000000009351
+  Lstar: 1.488868914012949
+  exit_diameter: 0.11178028224862731
+  expansion_ratio: 7.01837178880855
   nozzle_efficiency: 0.95
-  A_throat: 0.0009441942896755954
-  A_exit: 0.005799543397177538
-  volume: 0.0007407154751193346
-  length: 0.1652309407918849
-  length_cylindrical: 0.121
-  length_contraction: 0.0451
-  Cf: 1.7269231759146062
+  A_throat: 0.0013982470588664619
+  A_exit: 0.009813417711732905
+  volume: 0.002081806580056309
+  length: 0.1693026360826941
+  length_cylindrical: 0.116
+  length_contraction: 0.047
+  Cf: 1.7507967461487417
 chamber: null
 nozzle: null
 solver:
@@ -297,35 +297,21 @@ solver:
     Cd_reduction_factor: 0.95
     tolerance: 0.0001
 optimizer:
-  mode: hybrid_cma_blocks
-  hybrid:
-    elite_k: 50
-    block_method: corr_greedy
-    num_blocks: 3
-    overlap_fraction: 0.0
-    cycles: 3
-    lambda0: 0.001
-    lambda_mult: 10.0
-    lambda_max: 1.0
-    lambda_normalize: true
-    per_block_budget_fraction: 0.5
-    refresh_every_pass: true
-    refresh_budget_fraction: 0.1
-    refresh_sigma_scale: 0.2
-    num_tracks: 1
+  mode: cma
+  hybrid: null
 lox_tank:
   lox_h: 1.14
   lox_radius: 0.06985
   ox_tank_pos: 0.8
   mass: 6.75
-  initial_pressure_psi: 815.076572373751
+  initial_pressure_psi: 720.0
   tank_volume_m3: 0.017474
 fuel_tank:
   rp1_h: 0.609
   rp1_radius: 0.0762
   fuel_tank_pos: 3.0
   mass: 7.0
-  initial_pressure_psi: 677.0686453149768
+  initial_pressure_psi: 720.0
   tank_volume_m3: 0.011109
 press_tank:
   press_h: 0.457
@@ -370,27 +356,27 @@ environment:
   - 18
   latitude: 35.34722
   longitude: -117.8099547
-  elevation: 626.67
+  elevation: 3048.0
 thrust:
   burn_time: 10.0
 design_requirements:
   target_thrust: 8000.0
   target_apogee: 3048.0
   optimal_of_ratio: 3.5
-  target_burn_time: 5.8
-  max_lox_tank_pressure_psi: 700.0
-  max_fuel_tank_pressure_psi: 700.0
+  target_burn_time: 6.0
+  max_lox_tank_pressure_psi: 900.0
+  max_fuel_tank_pressure_psi: 900.0
   max_P_tank_O: null
   max_P_tank_F: null
   max_engine_length: 0.4
-  max_chamber_outer_diameter: 0.2032
-  max_nozzle_exit_diameter: 0.2032
+  max_chamber_outer_diameter: 0.177
+  max_nozzle_exit_diameter: 0.177
   min_Lstar: 0.76
   max_Lstar: 1.5
-  min_stability_score: 0.75
-  require_stable_state: true
+  min_stability_score: 0.58
+  require_stable_state: false
   stability_margin_handicap: 0.0
-  min_stability_margin: 1.2
+  min_stability_margin: 1.05
   chugging_margin_min: 0.2
   acoustic_margin_min: 0.1
   feed_stability_min: 0.15
@@ -398,51 +384,28 @@ design_requirements:
   fuel_tank_capacity_kg: null
   copv_free_volume_L: 4.5
   copv_free_volume_m3: null
-  injector_dp_ratio_O_min: 0.15
-  injector_dp_ratio_O_max: 0.35
-  injector_dp_ratio_F_min: 0.15
-  injector_dp_ratio_F_max: 0.35
-  W_geom_ao_af_momentum: 0.0
-  W_MOM: 2400.0
-  impinging_momentum_R_min: 0.8
-  impinging_momentum_R_max: 1.2
-  layer1_impinging_angle_deg_min: 55.0
-  layer1_impinging_angle_deg_max: 90.0
-  W_IMPINGING_ANGLE: 400.0
-  # Prefer coherent paired doublets (engineering preference; does not widen validation gates).
-  W_IMPINGING_JET_ASYM: 180.0
-  layer1_impinging_jet_angle_max_asym_deg: 26.0
-  # Mild preference to center P_exit on P_amb inside the hinge deadband (0 = legacy flat plateau).
-  layer1_exit_pressure_inside_quad_scale: 0.38
+  injector_dp_ratio_O_min: 0.2
+  injector_dp_ratio_O_max: 0.45
+  injector_dp_ratio_F_min: 0.2
+  injector_dp_ratio_F_max: 0.55
+  W_geom_ao_af_momentum: 3500.0
+  W_MOM: 30000.0
+  impinging_momentum_R_min: 0.93
+  impinging_momentum_R_max: 1.07
   layer1_impinging_n_doublets_max: 20
-  layer1_random_seed: null
-  # Real ``evaluate()`` + same scalar as CMA workers; only improves initial mean (0 = off).
-  layer1_cma_warmstart_trials: 16
-  layer1_cma_warmstart_sigma_frac: 0.04
-  # Tighten CMA step size on first restart only after warm-start (reduces 1e6 first-generation wall).
-  layer1_cma_restart0_sigma_scale: 0.48
-  # Local polish after CMA-ES: tighter than legacy 1e-6; optional second pass nudges weighted obj further.
-  layer1_lbfgs_gtol: 1.0e-9
-  layer1_lbfgs_second_pass: true
-  W_DP: 500.0
-  W_DP_O: 1000.0
-  W_DP_F: 1000.0
-  layer1_infeasibility_gate_eps: null
-  layer1_W_THRUST: 60000.0
-  layer1_W_OF: 20000.0
-  layer1_W_OF_low_MR_scale: 1.0
-  layer1_W_OF_high_MR_scale: 1.0
-  layer1_of_validation_tol: null
-  layer1_thrust_validation_rel_tol: null
-  W_CHAMBER_SHAPE: 2500.0
-  layer1_chamber_dt_ratio_min: 2.2
-  layer1_chamber_dt_ratio_max: 3.2
-  layer1_chamber_ld_ratio_min: 1.6
-  layer1_chamber_ld_ratio_max: 3.2
-  layer1_stagnation_pressure_frac_min: 0.65
-  layer1_stagnation_pressure_frac_max: 0.95
-  layer1_expansion_ratio_min: 3.0
-  layer1_expansion_ratio_max: 14.0
+  layer1_random_seed: 42
+  W_DP: 800.0
+  W_DP_O: 12000.0
+  W_DP_F: 175000.0
+  layer1_infeasibility_gate_eps: 0.002
+  layer1_W_THRUST: 8000.0
+  layer1_W_OF: 4800000.0
+  layer1_W_OF_low_MR_scale: 70.0
+  layer1_W_OF_high_MR_scale: 120.0
+  layer1_of_validation_tol: 0.044
+  layer1_thrust_validation_rel_tol: 0.2
+  layer1_stagnation_pressure_frac_min: null
+  layer1_stagnation_pressure_frac_max: null
   layer1_P_O_start_psi_min: null
   layer1_P_O_start_psi_max: null
   layer1_P_F_start_psi_min: null
@@ -451,7 +414,7 @@ design_requirements:
     A_throat_mm2: null
     Lstar_mm: null
     expansion_ratio: null
-    D_chamber_outer_mm: null
+    D_chamber_outer_mm: 177.0
     d_pintle_tip_mm: null
     h_gap_mm: null
     n_orifices: null

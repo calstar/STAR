@@ -682,6 +682,30 @@ export interface DesignRequirements {
   copv_free_volume_L?: number;
   copv_free_volume_m3?: number;
 
+  // Layer 1 injector gates/weights
+  injector_dp_ratio_O_min?: number;
+  injector_dp_ratio_O_max?: number;
+  injector_dp_ratio_F_min?: number;
+  injector_dp_ratio_F_max?: number;
+  W_DP?: number;
+  W_DP_O?: number;
+  W_DP_F?: number;
+  W_DP_HIGH?: number;
+  W_MOM?: number;
+  impinging_momentum_R_min?: number;
+  impinging_momentum_R_max?: number;
+  layer1_stagnation_pressure_frac_min?: number;
+  layer1_stagnation_pressure_frac_max?: number;
+  layer1_expansion_ratio_min?: number;
+  layer1_expansion_ratio_max?: number;
+  layer1_impinging_n_doublets_max?: number;
+  layer1_W_OF?: number;
+  layer1_W_OF_low_MR_scale?: number;
+  layer1_W_OF_high_MR_scale?: number;
+  W_SMD?: number;
+  target_smd_microns?: number;
+  layer1_smd_rel_tol?: number;
+
   // Frozen parameters (optional - for locking specific values during optimization)
   frozen_parameters?: FrozenParameters;
 }
@@ -773,6 +797,24 @@ export interface Layer1Results {
       actual_pressure_ratio?: number;
       [key: string]: unknown;
     };
+    /** Echo of design_requirements dict consumed by Layer 1 (audit). */
+    layer1_requirements_used?: Record<string, unknown>;
+
+    /** Impinging jet momentum ratio sqrt(rho_O*v_O_bulk²/(rho_F*v_F_bulk²)); ~1 is balanced impingement. */
+    momentum_ratio_R?: number;
+    momentum_balance_penalty?: number;
+    momentum_gate_passed?: boolean;
+    v_O_bulk?: number;
+    v_F_bulk?: number;
+    A_jet_O?: number;
+    A_jet_F?: number;
+    rho_O_momentum?: number;
+    rho_F_momentum?: number;
+    d_jet_O?: number;
+    d_jet_F?: number;
+    momentum_ratio_n_elements_O?: number;
+    momentum_ratio_n_elements_F?: number;
+
     [key: string]: unknown;
   };
   validation: Record<string, unknown>;
@@ -783,6 +825,20 @@ export interface Layer1Results {
     best_objective: number;
   }>;
   iteration_history?: Array<Record<string, unknown>>;
+  convergence_info?: {
+    converged?: boolean;
+    iterations?: number;
+    final_change?: number;
+    best_objective?: number;
+    best_objective_breakdown?: Record<string, unknown>;
+    /** Thrust / O-F / P_exit relative errors and RMS (dimensionless); use for “true” physics convergence. */
+    primary_relative_residual?: {
+      rel_thrust?: number;
+      rel_of?: number;
+      rel_P_exit?: number;
+      rms_primary?: number;
+    };
+  };
   config?: EngineConfig;
   config_yaml?: string;
 }

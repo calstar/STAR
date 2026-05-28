@@ -5,6 +5,7 @@ import os
 import re
 import json
 import sys
+import threading
 import logging
 from typing import Tuple, Optional, List, Dict, Any
 from multiprocessing import Pool, cpu_count, Manager
@@ -206,54 +207,23 @@ class CEACache:
     
     def __init__(self, config: CEAConfig):
         self.config = config
-        # Make cache file path absolute (relative to current working directory or project root)
-        # Also check output/cache/ directory
+        # Resolve a deterministic cache path for this config.
+        # Important: never silently swap to a different *.npz file, which can hide
+        # fuel/range changes and make runs appear inconsistent.
         if os.path.isabs(config.cache_file):
             self.cache_file = config.cache_file
         else:
-            # Try multiple locations in order:
-            # 1. Current directory
-            # 2. Project root (parent of parent of this file)
-            # 3. output/cache/ directory (common location)
-            # 4. output/cache/ relative to project root
-            cache_found = False
-            parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            
-            # Try current directory
-            if os.path.exists(config.cache_file):
-                self.cache_file = os.path.abspath(config.cache_file)
-                cache_found = True
-            # Try project root
-            elif os.path.exists(os.path.join(parent_dir, config.cache_file)):
-                self.cache_file = os.path.join(parent_dir, config.cache_file)
-                cache_found = True
-            # Try output/cache/ in current directory
-            output_cache_cur = os.path.join("output", "cache", os.path.basename(config.cache_file))
-            if os.path.exists(output_cache_cur):
-                self.cache_file = os.path.abspath(output_cache_cur)
-                cache_found = True
-            # Try output/cache/ relative to project root
-            output_cache_root = os.path.join(parent_dir, "output", "cache", os.path.basename(config.cache_file))
-            if not cache_found and os.path.exists(output_cache_root):
-                self.cache_file = output_cache_root
-                cache_found = True
-            # If still not found, check if any .npz file exists in output/cache/ (use first one found)
-            if not cache_found:
-                for cache_dir in [os.path.join("output", "cache"), os.path.join(parent_dir, "output", "cache")]:
-                    if os.path.isdir(cache_dir):
-                        for file in os.listdir(cache_dir):
-                            if file.endswith(".npz") and "cea_cache" in file.lower():
-                                self.cache_file = os.path.join(cache_dir, file)
-                                cache_found = True
-                                print(f"[INFO] Found CEA cache in output/cache/: {file}")
-                                break
-                        if cache_found:
-                            break
-            
-            if not cache_found:
-                # Cache doesn't exist - will need to build it (requires rocketcea)
-                # Use project root as default location
-                self.cache_file = os.path.join(parent_dir, config.cache_file)
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            candidates = [
+                os.path.abspath(config.cache_file),
+                os.path.join(project_root, config.cache_file),
+            ]
+            resolved = None
+            for cand in candidates:
+                if os.path.exists(cand):
+                    resolved = cand
+                    break
+            self.cache_file = resolved if resolved is not None else candidates[1]
         
         # Determine if using 3D cache (Pc, MR, eps) or 2D cache (Pc, MR)
         self.use_3d = config.eps_range is not None
@@ -447,6 +417,20 @@ class CEACache:
         
         # Only parallelize if explicitly enabled and for large grids
         should_use_parallel = use_parallel and total_points > 100
+
+        # macOS / Python: multiprocessing.Manager()/Pool started from a *non-main* thread
+        # (e.g. FastAPI Layer‑1 optimizer via ThreadPoolExecutor) often raises
+        # ``OSError: [Errno 1] Operation not permitted``. Sequential build avoids that.
+        if (
+            should_use_parallel
+            and sys.platform == "darwin"
+            and threading.current_thread() is not threading.main_thread()
+        ):
+            print(
+                "   [WARNING] macOS + background thread: disabling parallel CEA build "
+                "(avoids multiprocessing OSError errno 1); using sequential cache build."
+            )
+            should_use_parallel = False
         
         if should_use_parallel and not is_windows:
             # Linux/Mac: use parallel processing with lock (serialized RocketCEA calls)

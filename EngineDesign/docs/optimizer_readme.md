@@ -3,6 +3,45 @@
 The **Full Engine Optimizer UI** is an end‑to‑end design environment for a LOX/RP‑1 pintle engine.  
 It couples injector sizing, chamber/nozzle geometry, stability analysis, thermal protection, and (optionally) flight performance checks into a single multi‑layer optimization pipeline.
 
+### Injector types (`injector.type`)
+
+The same `PintleEngineConfig` schema supports two injector models selected by YAML:
+
+| Type | Forward model | Layer 1 design vector (static optimization) |
+|------|----------------|---------------------------------------------|
+| `pintle` (default) | `PintleInjector` via `get_injector_model()` | **10** variables: `A_throat`, `L*`, `ε`, `D_chamber_outer`, pintle tip, gap, `n_orifices`, `d_orifice`, `P_O_start_psi`, `P_F_start_psi` |
+| `impinging` | `ImpingingInjector` | **13** variables: same first four chamber DOFs, then **one** shared integer `n_doublets` (LOX and fuel `n_elements`; snapped at index **4**), then **independent** LOX/fuel: `d_jet`, `impingement_angle`, `spacing`, then `P_O_start_psi`, `P_F_start_psi` |
+
+**YAML shape for impinging** (validated at load time):
+
+```yaml
+injector:
+  type: impinging
+  geometry:
+    oxidizer:
+      n_elements: <int>       # should match fuel count for paired unlike doublets (Layer 1 ties both to ``n_doublets``)
+      d_jet: <m>
+      impingement_angle: <deg>
+      spacing: <m>
+    fuel:
+      n_elements: <int>
+      d_jet: <m>
+      impingement_angle: <deg>
+      spacing: <m>
+```
+
+Runnable smoke configurations: `configs/impinging_smoke.yaml` (LOX/Ethanol, brackets chamber pressure) and `configs/impinging_lox_ch4.yaml` (LOX/methane impinging, `optimizer.mode: cma` for short Layer 1 runs). Pass `layer1_smoke=True` to `run_layer1_optimization` to force pure CMA-ES regardless of YAML when using a hybrid config.
+
+#### Geometric vs effective injector area
+
+Physical jet layout (spacing, packing, jet diameter vs chamber) uses **geometric** port areas:
+
+\(A_{\mathrm{geom},O} = n_O \, \pi (d_{\mathrm{jet},O}/2)^2\), and similarly for fuel.
+
+Mass flow and discharge use \( \dot{m} = C_d \, A_{\mathrm{geom}} \sqrt{2\rho\,\Delta P} \). For **flow-capacity** screening (injector area vs throat, Layer‑1 infeasibility hints, `effective_injector_area_ratio`), the codebase uses **effective** areas \(A_{\mathrm{eff}} = C_{d,\mathrm{current}} \, A_{\mathrm{geom}}\), where \(C_{d,\mathrm{current}}\) comes from the existing `cd_from_re` model inside each injector solve (same values as in solver diagnostics: `Cd_O`, `Cd_F`). \(C_d\) and \(A_{\mathrm{eff}}\) update every static evaluation and every transient timestep when \(\Delta P\) and Reynolds number change.
+
+Spacing, jet packing, and face-fit constraints continue to use **geometric** areas only.
+
 This UI is implemented in `design_optimization_view.py` and built on:
 - `PintleEngineConfig` / `config_minimal.yaml` (and optionally any exported `optimized_engine.yaml`) for configuration
 - `PintleEngineRunner` for performance and stability evaluation

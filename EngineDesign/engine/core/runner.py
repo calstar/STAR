@@ -518,6 +518,10 @@ class PintleEngineRunner:
             "R_exit": R_exit,  # Exit gas constant (for shifting equilibrium)
             "Cd_O": Cd_O,
             "Cd_F": Cd_F,
+            "A_geom_O": diagnostics.get("A_geom_O"),
+            "A_geom_F": diagnostics.get("A_geom_F"),
+            "A_eff_O": diagnostics.get("A_eff_O"),
+            "A_eff_F": diagnostics.get("A_eff_F"),
             "cooling": cooling_results,
             "stability": stability_results,
             "stability_results": stability_results,  # Alias for compatibility with optimization code

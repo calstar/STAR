@@ -18,6 +18,10 @@ env/
 *.swp
 *.swo
 
+# Node dependencies (any location)
+node_modules/
+**/node_modules/
+
 # Output directory (logs, plots, cache) - all generated files
 output/
 !output/.gitkeep
@@ -60,6 +64,11 @@ Thumbs.db
 !docs/**
 !scripts/
 !scripts/**
+
+# Solver download artifacts under configs/ (must come after !configs/**)
+configs/layer1_optimized_config*.yaml
+configs/Layer*Optimized*Config*.yaml
+configs/config_2*_*.yaml
 
 # But ignore pycache in source directories
 engine/**/__pycache__/
