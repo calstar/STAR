@@ -3,10 +3,10 @@
 #include <Arduino.h>
 
 enum class FlightState : uint8_t {
-	Idle = 0,
-	Launch = 1,
-	Active = 2,
-	Venting = 3,
+    Idle = 0,
+    Launch = 1,
+    Active = 2,
+    Venting = 3,
 };
 
 void flightStateInit();

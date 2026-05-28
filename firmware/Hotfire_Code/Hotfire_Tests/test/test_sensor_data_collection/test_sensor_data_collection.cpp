@@ -5,6 +5,7 @@
  * before serializing into network packets.
  */
 #include <unity.h>
+
 #include <cstring>
 #include <vector>
 
@@ -42,7 +43,7 @@ void test_chunk_add_over_capacity() {
     Diablo::SensorDataChunkCollection chunk(100, 2);
     TEST_ASSERT_TRUE(chunk.add_datapoint(1, 100));
     TEST_ASSERT_TRUE(chunk.add_datapoint(2, 200));
-    TEST_ASSERT_FALSE(chunk.add_datapoint(3, 300)); // over capacity
+    TEST_ASSERT_FALSE(chunk.add_datapoint(3, 300));  // over capacity
     TEST_ASSERT_EQUAL(2, chunk.size());
 }
 
@@ -73,7 +74,7 @@ void test_chunk_zero_capacity() {
     Diablo::SensorDataChunkCollection chunk(100, 0);
     TEST_ASSERT_EQUAL(0, chunk.size());
     TEST_ASSERT_TRUE(chunk.empty());
-    TEST_ASSERT_TRUE(chunk.full()); // 0 >= 0
+    TEST_ASSERT_TRUE(chunk.full());  // 0 >= 0
     TEST_ASSERT_FALSE(chunk.add_datapoint(1, 100));
 }
 
@@ -88,10 +89,12 @@ void test_chunk_single_sensor() {
 // Unity runner
 // ===========================================================================
 
-void setUp() {}
-void tearDown() {}
+void setUp() {
+}
+void tearDown() {
+}
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
     UNITY_BEGIN();
 
     RUN_TEST(test_chunk_constructor);
@@ -103,5 +106,4 @@ int main(int argc, char **argv) {
     RUN_TEST(test_chunk_single_sensor);
 
     return UNITY_END();
-
 }

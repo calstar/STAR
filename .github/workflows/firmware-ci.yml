@@ -1,7 +1,14 @@
-name: Compile Hotfire Scripts
+name: Firmware CI
 
 on:
   push:
+    paths:
+      - 'firmware/**'
+      - '.github/workflows/firmware-ci.yml'
+  pull_request:
+    paths:
+      - 'firmware/**'
+      - '.github/workflows/firmware-ci.yml'
 
 jobs:
   build-firmware:
@@ -33,7 +40,7 @@ jobs:
 
       - name: Compile firmware
         run: pio run
-        working-directory: ${{ matrix.project }}
+        working-directory: firmware/${{ matrix.project }}
 
   run-tests:
     name: Run Unit Tests
@@ -54,4 +61,4 @@ jobs:
 
       - name: Run native tests
         run: pio test -e native
-        working-directory: Hotfire_Code/Hotfire_Tests
+        working-directory: firmware/Hotfire_Code/Hotfire_Tests

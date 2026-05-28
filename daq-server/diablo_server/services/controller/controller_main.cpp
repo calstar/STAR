@@ -167,7 +167,7 @@ static void runControlServer(fsw::control::ControllerService* svc, uint16_t port
     int opt = 1;
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-    struct sockaddr_in addr {};
+    struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(port);
@@ -182,9 +182,7 @@ static void runControlServer(fsw::control::ControllerService* svc, uint16_t port
               << "  (FIRE_START | FIRE_STOP)" << std::endl;
 
     while (g_running) {
-        struct timeval tv {
-            1, 0
-        };
+        struct timeval tv{1, 0};
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(listen_fd, &fds);

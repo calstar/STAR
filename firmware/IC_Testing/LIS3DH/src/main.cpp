@@ -1,9 +1,9 @@
-#include <Arduino.h>
-#include <SPI.h>
+#include "main.h"
+
 #include <Adafruit_LIS3DH.h>
 #include <Adafruit_Sensor.h>
-
-#include "main.h"
+#include <Arduino.h>
+#include <SPI.h>
 
 static SPIClass lis_spi(FSPI);
 static Adafruit_LIS3DH lis(LIS3DH_CS_PIN, &lis_spi);
@@ -15,15 +15,18 @@ void IRAM_ATTR onInterrupt() {
 
 void setup() {
     Serial.begin(115200);
-    while (!Serial) delay(10);
+    while (!Serial)
+        delay(10);
 
     Serial.println("LIS3DH firmware starting...");
 
-    lis_spi.begin(LIS3DH_CLK_PIN, LIS3DH_MISO_PIN, LIS3DH_MOSI_PIN, LIS3DH_CS_PIN);
+    lis_spi.begin(LIS3DH_CLK_PIN, LIS3DH_MISO_PIN, LIS3DH_MOSI_PIN,
+                  LIS3DH_CS_PIN);
 
     if (!lis.begin()) {
         Serial.println("ERROR: LIS3DH not found. Check wiring!");
-        while (1) delay(100);
+        while (1)
+            delay(100);
     }
 
     lis.setDataRate(ACCEL_ODR);
@@ -32,15 +35,24 @@ void setup() {
     lis.configureHighGInterrupt(INT1_THS_VALUE, INT1_DUR_VALUE);
 
     pinMode(LIS3DH_INT1_PIN, INPUT);
-    attachInterrupt(digitalPinToInterrupt(LIS3DH_INT1_PIN), onInterrupt, RISING);
+    attachInterrupt(digitalPinToInterrupt(LIS3DH_INT1_PIN), onInterrupt,
+                    RISING);
 
     Serial.println("-----------------------------------");
     Serial.print("Range:         ±");
     switch (ACCEL_RANGE) {
-        case LIS3DH_RANGE_2_G:  Serial.println("2g");  break;
-        case LIS3DH_RANGE_4_G:  Serial.println("4g");  break;
-        case LIS3DH_RANGE_8_G:  Serial.println("8g");  break;
-        case LIS3DH_RANGE_16_G: Serial.println("16g"); break;
+        case LIS3DH_RANGE_2_G:
+            Serial.println("2g");
+            break;
+        case LIS3DH_RANGE_4_G:
+            Serial.println("4g");
+            break;
+        case LIS3DH_RANGE_8_G:
+            Serial.println("8g");
+            break;
+        case LIS3DH_RANGE_16_G:
+            Serial.println("16g");
+            break;
     }
     Serial.print("INT threshold: ");
     Serial.print(INTERRUPT_THRESHOLD_G);
@@ -66,9 +78,12 @@ void loop() {
             Serial.print("[INTERRUPT] High-G event detected! INT1_SRC=0x");
             Serial.print(src, HEX);
             Serial.print("  axes:");
-            if (src & 0x02) Serial.print(" XH");
-            if (src & 0x08) Serial.print(" YH");
-            if (src & 0x20) Serial.print(" ZH");
+            if (src & 0x02)
+                Serial.print(" XH");
+            if (src & 0x08)
+                Serial.print(" YH");
+            if (src & 0x20)
+                Serial.print(" ZH");
             Serial.println();
         }
     }

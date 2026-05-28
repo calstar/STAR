@@ -5,15 +5,14 @@
 // // #define DRDY_PIN 45
 // // #define DOUT 41
 // // #define DIN 47
-// // #define SCLK     
+// // #define SCLK
 // // #define CS 40
-
 
 // //Module 8
 // #define DRDY_PIN 14
 // #define DOUT 41 // MISO
 // #define DIN 5   // MOSI
-// #define SCLK 13 
+// #define SCLK 13
 // #define CS 37
 // #define START 43
 
@@ -22,7 +21,6 @@
 // #define TEXT_OUTPUT 0
 // #define PT_NUM_START 0
 // #define NUM_PTS 10
-
 
 // // --- Buffer settings ---
 // static const size_t PKT_MAX = 1000;   // packet size in bytes
@@ -128,8 +126,6 @@
 //     Serial.print("\r\n"); // CRLF as expected by the Python script
 //   }
 // }
-
-
 
 // inline void flushPacketIfNeeded(bool force = false) {
 //   uint32_t now = millis();

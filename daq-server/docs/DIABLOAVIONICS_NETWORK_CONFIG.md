@@ -103,7 +103,7 @@ Body:
 
 4. **Test with GUI**:
    ```bash
-   cd external/DiabloAvionics/test_guis
+   cd firmware/test_guis/combined_gui
    python3 combined_gui.py
    ```
    - If GUI receives data, boards are working
@@ -160,8 +160,7 @@ sudo ip addr add 192.168.2.20/24 dev enx00e04c680240
 
 ## References
 
-- DiabloAvionics Repository: `external/DiabloAvionics/`
-- GUI Code: `external/DiabloAvionics/test_guis/combined_gui.py`
+- GUI Code: `firmware/test_guis/combined_gui/combined_gui.py`
 - Board Firmware Examples:
-  - `external/DiabloAvionics/ADC_Testing/Actuator_Testing/src/main.cpp`
-  - `external/DiabloAvionics/PT_Board/PT_BOARD_Multi/PT_BOARD_Multi_Send/src/main.cpp`
+  - `firmware/ADC_Testing/Actuator_Testing/src/main.cpp`
+  - `firmware/PT_Board/PT_BOARD_Multi/PT_BOARD_Multi_Send/src/main.cpp`

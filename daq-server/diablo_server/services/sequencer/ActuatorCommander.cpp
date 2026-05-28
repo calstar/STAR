@@ -314,7 +314,7 @@ bool ActuatorCommander::sendUDP(const std::string& board_ip,
     if (sock < 0)
         return false;
 
-    struct sockaddr_in local {};
+    struct sockaddr_in local{};
     local.sin_family = AF_INET;
     inet_pton(AF_INET, bind_addr_.c_str(), &local.sin_addr);
     if (bind(sock, reinterpret_cast<struct sockaddr*>(&local), sizeof(local)) < 0) {
@@ -322,7 +322,7 @@ bool ActuatorCommander::sendUDP(const std::string& board_ip,
         return false;
     }
 
-    struct sockaddr_in dest {};
+    struct sockaddr_in dest{};
     dest.sin_family = AF_INET;
     dest.sin_port = htons(actuator_port_);
     if (inet_pton(AF_INET, board_ip.c_str(), &dest.sin_addr) != 1) {

@@ -20,8 +20,9 @@
 //     Serial.print("Channel: "); Serial.println(channel);
 //     Serial.print("Raw value: "); Serial.println(result.raw);
 //     Serial.print("Sample time (us): "); Serial.println(result.sample_time);
-//     Serial.print("Read duration (us): "); Serial.println(result.read_time_dur);
-//     Serial.print("Conversion time (us): "); Serial.println(result.conv_time_dur);
+//     Serial.print("Read duration (us): ");
+//     Serial.println(result.read_time_dur); Serial.print("Conversion time (us):
+//     "); Serial.println(result.conv_time_dur);
 //     Serial.println("-------------");
 //   } else {
 //     Serial.println("ADC read failed or timed out.");

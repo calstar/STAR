@@ -25,21 +25,21 @@
 
 class DummySocket {
 public:
-    DummySocket(const std::string &ip, uint16_t port) {
+    DummySocket(const std::string& ip, uint16_t port) {
         std::cout << "[DummySocket] Pretending to connect to " << ip << ":" << port << "\n";
     }
-    void write_all_elodin(const void *data, size_t len) {
+    void write_all_elodin(const void* data, size_t len) {
         std::cout << "[DummySocket] Simulating write of " << len << " bytes.\n";
     }
 
-    int write_all(const void *data, size_t len, std::string msg) {
+    int write_all(const void* data, size_t len, std::string msg) {
         std::clog << "[DummySocket] writing: " << msg << std::endl;
         return static_cast<int>(len);
     }
 
 private:
     // dummy implementation
-    int _write_all(const void *data, size_t len) {
+    int _write_all(const void* data, size_t len) {
         std::cout << "[DummySocket] Simulating write of " << len << " bytes.\n";
         return static_cast<int>(len);
     }
@@ -51,7 +51,7 @@ private:
 
 class Socket {
 public:
-    Socket(const char *ip, uint16_t port, size_t elodin_buf_cap = DEFAULT_ELODIN_BUF_CAP) {
+    Socket(const char* ip, uint16_t port, size_t elodin_buf_cap = DEFAULT_ELODIN_BUF_CAP) {
         ELODIN_BUF_CAP = elodin_buf_cap;
         _elodin_buf = nullptr;  // Initialize to null first
 
@@ -97,7 +97,7 @@ public:
         // int flags = fcntl(fd_, F_GETFL, 0);
         // fcntl(fd_, F_SETFL, flags | O_NONBLOCK);
 
-        if (::connect(fd_, reinterpret_cast<struct sockaddr *>(&server_addr), sizeof(server_addr)) <
+        if (::connect(fd_, reinterpret_cast<struct sockaddr*>(&server_addr), sizeof(server_addr)) <
             0) {
             int err = errno;
             delete[] _elodin_buf;
@@ -115,9 +115,9 @@ public:
         _elodin_buf = nullptr;  // Set to null to catch use-after-destruction
     }
 
-    void write_all_elodin(const void *data, size_t len) {
+    void write_all_elodin(const void* data, size_t len) {
         std::lock_guard<std::mutex> lock(buffer_mutex_);  // Thread safety
-        const uint8_t *src = static_cast<const uint8_t *>(data);
+        const uint8_t* src = static_cast<const uint8_t*>(data);
 
         // Add safety check for null buffer
         if (!_elodin_buf) {
@@ -150,8 +150,8 @@ public:
     /**
      * @note Reads exactly len bytes
      */
-    void read(void *buffer, size_t len) {
-        auto ptr = static_cast<uint8_t *>(buffer);
+    void read(void* buffer, size_t len) {
+        auto ptr = static_cast<uint8_t*>(buffer);
         size_t remaining = len;
         while (remaining > 0) {
             ssize_t r = ::read(fd_, ptr, remaining);
@@ -165,7 +165,7 @@ public:
         }
     }
 
-    void write_all(const void *data, size_t len, std::string msg) {
+    void write_all(const void* data, size_t len, std::string msg) {
         std::clog << "Writing :" << msg << std::endl;
         _write_all(data, len);
     }
@@ -173,13 +173,13 @@ public:
     /**
      * Overloaded write_all function that doesn't print a message
      */
-    void write_all(const void *data, size_t len) {
+    void write_all(const void* data, size_t len) {
         _write_all(data, len);
     }
 
 private:
-    void _write_all(const void *data, size_t len) {
-        auto ptr = static_cast<const uint8_t *>(data);
+    void _write_all(const void* data, size_t len) {
+        auto ptr = static_cast<const uint8_t*>(data);
         auto remaining = len;
 
         while (remaining > 0) {
@@ -202,7 +202,7 @@ private:
     // Default buffer size of 1024 bytes, can be overridden in constructor
     static constexpr size_t DEFAULT_ELODIN_BUF_CAP = 1024;
     size_t ELODIN_BUF_CAP;
-    uint8_t *_elodin_buf;
+    uint8_t* _elodin_buf;
     size_t _elodin_buf_used = 0;
     std::mutex buffer_mutex_;
 };
