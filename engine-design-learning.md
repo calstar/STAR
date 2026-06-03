@@ -6,15 +6,17 @@
 - [x] Chemistry — propellant reactions, stoichiometry, fuel-rich vs ox-rich, dissociation, why fuel-rich never crosses stoichiometric during transients
 
 ## 2. Engine Cycle & Structure
-- [ ] Combustion chamber sizing — L*, characteristic length
+- [x] Combustion chamber sizing — L*, characteristic length, contraction ratio, convergent geometry
 - [x] Nozzle design — de Laval nozzle, area ratio, throat geometry, why converging-diverging is required
 - [ ] Propellant feed systems — pressure-fed vs. pump-fed cycles
 - [ ] Injector design — impinging, coaxial, swirl types
+- [x] Ignition sequencing — fuel lead/lag, hard start risk, LOX pooling vs fuel pooling, why fuel-rich never crosses stoichiometric during transients
 
 ## 3. Performance Optimization
-- [x] Specific impulse (Isp) — the key figure of merit
-- [ ] Mixture ratio (O/F) optimization
-- [ ] Thrust coefficient and characteristic velocity (c*)
+- [x] Specific impulse (Isp) — the key figure of merit, Isp = c* · Cf / g0
+- [x] Mixture ratio (O/F) — stoichiometric vs optimal, why fuel-rich wins on Isp + protection + safety
+- [x] Thrust coefficient (Cf) — nozzle figure of merit, momentum + pressure thrust terms
+- [x] Characteristic velocity (c*) — combustion figure of merit, independent of throat geometry
 - [ ] Nozzle expansion ratio for altitude optimization
 
 ## 4. The Design Pipeline
