@@ -3,7 +3,7 @@
 ## 1. Physics Foundation
 - [x] Thermodynamics — first law, enthalpy, isentropic flow, stagnation quantities
 - [x] Fluid mechanics — compressible flow, Mach number, choked flow, area-velocity relation
-- [ ] Chemistry — propellant reactions, specific impulse, stoichiometry
+- [x] Chemistry — propellant reactions, stoichiometry, fuel-rich vs ox-rich, dissociation, why fuel-rich never crosses stoichiometric during transients
 
 ## 2. Engine Cycle & Structure
 - [ ] Combustion chamber sizing — L*, characteristic length
