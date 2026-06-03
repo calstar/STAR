@@ -4,8 +4,8 @@
       "id": "node_1",
       "type": "RTD",
       "position": {
-        "x": 470,
-        "y": -230
+        "x": 840,
+        "y": -220
       },
       "data": {
         "componentType": "RTD",
@@ -15,7 +15,9 @@
       "measured": {
         "width": 60,
         "height": 60
-      }
+      },
+      "selected": false,
+      "dragging": false
     },
     {
       "id": "node_3",
@@ -40,7 +42,7 @@
       "id": "node_5",
       "type": "MAN",
       "position": {
-        "x": 340,
+        "x": 440,
         "y": -80
       },
       "data": {
@@ -59,7 +61,7 @@
       "id": "node_7",
       "type": "MAN",
       "position": {
-        "x": 600,
+        "x": 680,
         "y": -80
       },
       "data": {
@@ -120,6 +122,21 @@
         "fluidType": "default"
       },
       "id": "xy-edge__node_5r-node_7l"
+    },
+    {
+      "type": "smoothstep",
+      "style": {
+        "stroke": "#94a3b8",
+        "strokeWidth": 2
+      },
+      "source": "node_7",
+      "sourceHandle": "r",
+      "target": "node_1",
+      "targetHandle": "b",
+      "data": {
+        "fluidType": "default"
+      },
+      "id": "xy-edge__node_7r-node_1b"
     }
   ]
 }
