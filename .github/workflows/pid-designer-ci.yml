@@ -1,0 +1,54 @@
+name: P&ID Designer CI
+
+'on':
+  push:
+    paths:
+      - 'pid-designer/**'
+      - '.github/workflows/pid-designer-ci.yml'
+  pull_request:
+    paths:
+      - 'pid-designer/**'
+      - '.github/workflows/pid-designer-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  frontend:
+    name: Frontend (TypeScript build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        cache-dependency-path: pid-designer/frontend/package-lock.json
+
+    - name: Install dependencies
+      working-directory: pid-designer/frontend
+      run: npm ci || npm install
+
+    - name: TypeScript build
+      working-directory: pid-designer/frontend
+      run: npm run build
+
+  backend:
+    name: Backend (import check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: pip install "fastapi>=0.128" "uvicorn[standard]>=0.34" "pydantic>=2.12"
+
+    - name: Verify imports
+      working-directory: pid-designer
+      run: python3 -c "import backend.main; print('backend imports OK')"
