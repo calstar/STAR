@@ -12,12 +12,6 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Install backend deps if needed
-if ! python3 -c "import fastapi, uvicorn, pydantic" 2>/dev/null; then
-  echo "Installing backend dependencies..."
-  pip3 install -r backend/requirements.txt
-fi
-
 # Install frontend deps if needed
 if [ ! -d "frontend/node_modules" ]; then
   echo "Installing frontend dependencies..."
