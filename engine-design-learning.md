@@ -21,7 +21,7 @@
 - [ ] Mission requirements → thrust & burn time → propellant mass
 - [ ] Chamber pressure selection → nozzle sizing → injector design
 - [ ] Thermal analysis → regenerative or ablative cooling
-- [x] Iteration via tools — NASA CEA (next session)
+- [x] Iteration via tools — NASA CEA
 
 ## 5. Practical Engineering
 - [ ] Combustion instability — chugging, screaming
@@ -37,6 +37,6 @@
 ## Starting Point
 1. [x] **Tsiolkovsky rocket equation** → understand Isp and why it matters
 2. [x] **Isentropic flow relations** → understand how gas accelerates through a nozzle
-3. [ ] **NASA CEA** → run a first combustion simulation
+3. [x] **NASA CEA** → run a first combustion simulation
 
 **Reference:** *Rocket Propulsion Elements* — Sutton & Biblarz (chapters 3 & 5)
