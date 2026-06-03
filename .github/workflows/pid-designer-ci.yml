@@ -47,8 +47,7 @@ jobs:
         python-version: '3.11'
 
     - name: Install dependencies
-      working-directory: pid-designer
-      run: pip install -r backend/requirements.txt
+      run: pip install "fastapi>=0.128" "uvicorn[standard]>=0.34" "pydantic>=2.12"
 
     - name: Verify imports
       working-directory: pid-designer
