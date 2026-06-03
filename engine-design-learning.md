@@ -31,7 +31,7 @@
 ---
 
 ## Starting Point
-1. **Tsiolkovsky rocket equation** → understand Isp and why it matters
+1. [x] **Tsiolkovsky rocket equation** → understand Isp and why it matters
 2. **Isentropic flow relations** → understand how gas accelerates through a nozzle
 3. **NASA CEA** → run a first combustion simulation
 
