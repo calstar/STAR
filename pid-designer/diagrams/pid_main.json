@@ -1,0 +1,57 @@
+{
+  "nodes": [
+    {
+      "id": "node_1",
+      "type": "RTD",
+      "position": {
+        "x": 470,
+        "y": -230
+      },
+      "data": {
+        "componentType": "RTD",
+        "label": "RTD_#",
+        "fluidType": "default"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      }
+    },
+    {
+      "id": "node_3",
+      "type": "RTD",
+      "position": {
+        "x": 260,
+        "y": -220
+      },
+      "data": {
+        "componentType": "RTD",
+        "label": "RTD_#",
+        "fluidType": "default"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      },
+      "selected": true,
+      "dragging": false
+    }
+  ],
+  "edges": [
+    {
+      "type": "smoothstep",
+      "style": {
+        "stroke": "#94a3b8",
+        "strokeWidth": 2
+      },
+      "source": "node_3",
+      "sourceHandle": "r",
+      "target": "node_1",
+      "targetHandle": "l",
+      "data": {
+        "fluidType": "default"
+      },
+      "id": "xy-edge__node_3r-node_1l"
+    }
+  ]
+}
