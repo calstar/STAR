@@ -4,7 +4,7 @@ import { DraggableLabel } from './DraggableLabel';
 
 const W = 60, H = 60;
 
-export function SensorNode({ id, data, selected }: NodeProps<{ data: PIDNodeData }>) {
+export function SensorNode({ id, data, selected }: NodeProps) {
   const { componentType, label, labelOffset, rotation } = data as unknown as PIDNodeData;
 
   return (

@@ -4,7 +4,7 @@ import { DraggableLabel } from './DraggableLabel';
 
 const W = 60, H = 60;
 
-export function PRNode({ id, data, selected }: NodeProps<{ data: PIDNodeData }>) {
+export function PRNode({ id, data, selected }: NodeProps) {
   const { label, labelOffset, rotation } = data as unknown as PIDNodeData;
   const stroke = selected ? '#3b82f6' : '#94a3b8';
 

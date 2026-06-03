@@ -7,7 +7,7 @@ interface TextNodeData {
   color?: string;
 }
 
-export function TextNode({ id, data, selected }: NodeProps<{ data: TextNodeData }>) {
+export function TextNode({ id, data, selected }: NodeProps) {
   const { setNodes } = useReactFlow();
   const nodeData = data as unknown as TextNodeData;
 

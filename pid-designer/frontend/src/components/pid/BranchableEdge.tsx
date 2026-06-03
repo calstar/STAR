@@ -17,7 +17,7 @@ const J_HALF = 5;
 
 export function BranchableEdge(props: EdgeProps) {
   const {
-    id, source, sourceHandle, target, targetHandle,
+    id, source, target,
     sourceX, sourceY, targetX, targetY,
     sourcePosition, targetPosition,
     style, data,
@@ -80,7 +80,6 @@ export function BranchableEdge(props: EdgeProps) {
         const toJunction: Edge = {
           id: `${id}-to-${junctionId}`,
           source,
-          sourceHandle: sourceHandle ?? undefined,
           target: junctionId,
           targetHandle: 't',
           type: 'smoothstep',
@@ -92,7 +91,6 @@ export function BranchableEdge(props: EdgeProps) {
           source: junctionId,
           sourceHandle: 'b',
           target,
-          targetHandle: targetHandle ?? undefined,
           type: 'smoothstep',
           style: { stroke: strokeColor, strokeWidth: 2 },
           data: { fluidType, sourcePosition: Position.Bottom, targetPosition: overrideTargetPos ?? targetPosition },
@@ -100,7 +98,7 @@ export function BranchableEdge(props: EdgeProps) {
         return [...filtered, toJunction, fromJunction];
       });
     });
-  }, [dot, id, source, sourceHandle, target, targetHandle, strokeColor, fluidType,
+  }, [dot, id, source, target, strokeColor, fluidType,
       overrideSourcePos, overrideTargetPos, sourcePosition, targetPosition,
       setNodes, setEdges]);
 

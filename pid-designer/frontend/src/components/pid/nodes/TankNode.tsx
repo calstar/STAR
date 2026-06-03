@@ -6,7 +6,7 @@ import { DraggableLabel } from './DraggableLabel';
 const TANK_W = 60, TANK_H = 100;
 const INJ_W = 60, INJ_H = 100;
 
-export function TankNode({ id, data, selected }: NodeProps<{ data: PIDNodeData }>) {
+export function TankNode({ id, data, selected }: NodeProps) {
   const { componentType, label, labelOffset, fluidType, rotation } = data as unknown as PIDNodeData;
   const stroke = selected ? '#3b82f6' : '#94a3b8';
   const fluidColor = FLUID_COLORS[fluidType ?? 'default'];

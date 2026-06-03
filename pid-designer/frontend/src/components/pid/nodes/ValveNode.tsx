@@ -27,7 +27,7 @@ function ManualValve({ selected }: { selected: boolean }) {
   );
 }
 
-export function ValveNode({ id, data, selected }: NodeProps<{ data: PIDNodeData }>) {
+export function ValveNode({ id, data, selected }: NodeProps) {
   const { componentType, label, labelOffset, rotation } = data as unknown as PIDNodeData;
   const actuator = componentType === 'SOL' ? 'S' : 'P';
   return (

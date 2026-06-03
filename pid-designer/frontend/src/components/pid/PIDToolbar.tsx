@@ -256,7 +256,7 @@ export function PIDToolbar({
           {historyStatus === 'idle' && history.length === 0 && <p className="text-xs text-slate-600 py-2">No checkpoints yet.</p>}
           {historyStatus === 'idle' && history.length > 0 && (
             <div className="flex flex-col gap-1">
-              {history.map((entry, i) => (
+              {history.map((entry) => (
                 <button
                   key={entry.hash}
                   onClick={() => handleRestore(entry.hash, entry.title)}
