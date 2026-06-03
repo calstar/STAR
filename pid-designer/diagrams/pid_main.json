@@ -33,7 +33,45 @@
         "width": 60,
         "height": 60
       },
-      "selected": true,
+      "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "node_5",
+      "type": "MAN",
+      "position": {
+        "x": 340,
+        "y": -80
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "MAN_#",
+        "fluidType": "default"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "node_7",
+      "type": "MAN",
+      "position": {
+        "x": 600,
+        "y": -80
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "MAN_#",
+        "fluidType": "default"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      },
+      "selected": false,
       "dragging": false
     }
   ],
@@ -52,6 +90,36 @@
         "fluidType": "default"
       },
       "id": "xy-edge__node_3r-node_1l"
+    },
+    {
+      "type": "smoothstep",
+      "style": {
+        "stroke": "#94a3b8",
+        "strokeWidth": 2
+      },
+      "source": "node_3",
+      "sourceHandle": "b",
+      "target": "node_5",
+      "targetHandle": "l",
+      "data": {
+        "fluidType": "default"
+      },
+      "id": "xy-edge__node_3b-node_5l"
+    },
+    {
+      "type": "smoothstep",
+      "style": {
+        "stroke": "#94a3b8",
+        "strokeWidth": 2
+      },
+      "source": "node_5",
+      "sourceHandle": "r",
+      "target": "node_7",
+      "targetHandle": "l",
+      "data": {
+        "fluidType": "default"
+      },
+      "id": "xy-edge__node_5r-node_7l"
     }
   ]
 }
