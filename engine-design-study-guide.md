@@ -122,7 +122,7 @@ $$\text{C}_2\text{H}_5\text{OH} + 3\text{O}_2 \rightarrow 2\text{CO}_2 + 3\text{
 
 $$\text{O/F}_\text{stoich} = \frac{3 \times 32}{46} \approx 2.09$$
 
-**Temperature vs mixture ratio:** Temperature peaks at stoichiometric. Both fuel-rich and oxidizer-rich are cooler — excess of either component acts as thermal ballast, absorbing heat without contributing energy.
+**Temperature vs mixture ratio:** Temperature peaks at stoichiometric. Both fuel-rich and oxidizer-rich are cooler. The mechanism is covered in Section 17 — "thermal ballast" is an imprecise shorthand; the actual cause is a combination of reduced total heat release (incomplete oxidation) and endothermic decomposition of excess fuel.
 
 **Why fuel-rich is optimal for Isp:** Excess fuel (H2, CO) lowers exhaust M_w. Since v_e ∝ sqrt(T_0 / M_w), the M_w reduction outweighs the modest temperature reduction.
 
@@ -363,6 +363,88 @@ L* is the total vaporization budget across the entire size distribution. There i
 $$\eta_{c^*} \approx 1 - 0.3 \cdot e^{-0.15 \cdot L^*}$$
 
 As L* grows, more of the size distribution tail is captured, efficiency asymptotes to 1. Below the minimum L* for a given injector, large droplets exit the throat unreacted and c* drops sharply.
+
+---
+
+---
+
+## 16. Hard Starts
+
+A hard start occurs when propellant accumulates in the chamber before ignition establishes. When ignition fires, the accumulated bolus combusts at once rather than as a steady stream → pressure transient above design Pc. If the spike exceeds the burst pressure of the weakest component → failure.
+
+**Spike severity depends on:**
+- Accumulation time before ignition — more time = more mass = larger spike
+- Physical state of accumulated propellant — vapor ignites faster than liquid → sharper pressure rise rate
+- Chamber volume — larger volume dilutes a given mass → smaller pressure fraction
+
+**LOX-rich accumulation — the actual dangers:**
+
+LOX does **not** combust without fuel. It cannot self-ignite. The dangers of LOX pooling are distinct from combustion:
+
+1. *Oxidizer-rich combustion when fuel arrives:* very high O/F → extreme local temperature → burns through chamber and nozzle hardware. This is a hardware destruction mechanism.
+2. *Rapid LOX vaporization:* liquid oxygen expanding ~860:1 on phase change creates pressure spike purely from phase change, before any combustion occurs.
+3. *Materials compatibility:* some elastomers, hydrocarbons, and aluminum alloys react violently with liquid oxygen under impact or shock — a design concern rather than a sequencing concern.
+
+**Fuel-rich accumulation — the harder pressure spike:**
+
+Fuel vapor (ethanol: 3.3–19% flammability range in air) fills the chamber volume. When ignition fires, deflagration is spatially distributed across the entire chamber — high energy release rate. The accumulated fuel mass represents real stored chemical energy that converts to pressure. This is the dominant hard start concern for fuel-lead engines if ignition timing slips.
+
+**Fuel-lead mitigation:**
+
+Fuel arrives first → igniter fires in fuel-rich atmosphere → LOX arrives into established flame → ignites immediately at the contact front → O/F transitions from fuel-rich toward design value. The system never spends time with LOX pooling in an unignited state.
+
+**Pre-purge and ignition reality:**
+
+Textbook sequencing calls for a nitrogen purge before ignition to eliminate the uncontrolled air oxygen variable. In practice:
+
+- Most student teams skip pre-purge — it adds valves, GN₂ supply, and sequencing logic
+- Pre-purge frequently causes ignition failures: a spark igniter requires a flammable mixture at the spark gap. A nitrogen-filled chamber has no flammability — the spark fires and quenches immediately without establishing a flame kernel
+
+Without purge, air O₂ in the chamber supports the initial fuel-air combustion. This is stoichiometrically limited by the small mass of air O₂ — the combustion event is small and self-terminating. It establishes the pilot flame kernel; LOX then takes over as the primary oxidizer. The trade: accept a small, bounded uncontrolled combustion event in exchange for reliable ignition.
+
+---
+
+## 17. Fuel-Rich Combustion Chemistry
+
+**What actually burns:**
+
+Combustion requires an oxidizer. In fuel-rich conditions only the stoichiometric fraction of fuel reacts with the available LOX. The excess fuel cannot combust — there is no oxidizer to drive it.
+
+**What happens to excess fuel at 3000 K:**
+
+Thermal decomposition (pyrolysis), not combustion. For ethanol, dominant routes:
+
+$$\text{C}_2\text{H}_5\text{OH} \rightarrow \text{CO} + 2\text{H}_2 + \text{fragments} \quad (\text{endothermic})$$
+
+$$\text{C}_2\text{H}_5\text{OH} \rightarrow \text{C}_2\text{H}_4 + \text{H}_2\text{O} \quad (\text{endothermic})$$
+
+These reactions require energy input — they are endothermic. The products (CO, H₂) would need additional oxidizer to combust further, which is unavailable in fuel-rich conditions.
+
+**Why fuel-rich combustion is cooler — two effects:**
+
+*1. Less total heat released (dominant effect):*
+
+Insufficient oxygen means incomplete oxidation. Carbon stops at CO instead of going all the way to CO₂:
+
+$$\text{C} + \tfrac{1}{2}\text{O}_2 \rightarrow \text{CO} \quad \Delta H \approx -111 \text{ kJ/mol}$$
+
+$$\text{C} + \text{O}_2 \rightarrow \text{CO}_2 \quad \Delta H \approx -394 \text{ kJ/mol}$$
+
+The difference (283 kJ/mol) stays locked in the CO bond — never converted to heat. Similarly, hydrogen staying as H₂ instead of burning to H₂O retains 242 kJ/mol as chemical potential energy. The equilibrium products in a fuel-rich burn contain substantial CO and H₂ — these represent energy released from the propellants that did not appear as chamber temperature.
+
+*2. Excess mass absorbs heat (secondary effect):*
+
+The decomposition products must be heated from injection temperature to flame temperature. Same heat release distributed over more total mass → lower final equilibrium temperature. This is the physical kernel of truth in calling excess fuel "thermal ballast" — but the mechanism is endothermic decomposition acting as a heat sink, not chemically inert mass.
+
+**The "thermal ballast" framing — why it is imprecise:**
+
+Excess fuel is not chemically passive. It decomposes endothermically and produces intermediate species. The framing implies the fuel is an inert heat absorber. The more correct description: excess fuel reduces total heat released (incomplete oxidation) while simultaneously acting as a heat sink through endothermic decomposition. Both effects reduce flame temperature; the incomplete oxidation effect dominates.
+
+**Why Isp peaks fuel-rich despite lower temperature:**
+
+$$I_{sp} \propto \sqrt{\frac{T_c}{M_w}}$$
+
+At stoichiometric: exhaust is mostly CO₂ (Mw = 44) and H₂O (Mw = 18). At fuel-rich: exhaust shifts toward CO (Mw = 28), H₂ (Mw = 2), and lighter species. The molecular weight of the exhaust drops significantly. Even though T_c also drops, the reduction in Mw wins — the ratio T/Mw increases and Isp rises. Temperature is a penalty of going fuel-rich; lower Mw is a larger benefit.
 
 ---
 
