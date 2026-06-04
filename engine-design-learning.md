@@ -11,13 +11,17 @@
 - [ ] Propellant feed systems — pressure-fed vs. pump-fed cycles
 - [ ] Injector design — impinging, coaxial, swirl types
 - [x] Ignition sequencing — fuel lead/lag, hard start risk, LOX pooling vs fuel pooling, why fuel-rich never crosses stoichiometric during transients
+- [ ] Hard starts — revisit in more depth; LOX-rich vs fuel-rich hard start danger (disagreement: LOX cannot ignite on its own and is stoichiometrically limited by available fuel — come back to this)
+- [ ] Fuel combustion chemistry in fuel-rich conditions — what actually burns when there is insufficient LOX, incomplete combustion products (CO, H2, soot), and whether fuel can react at all with zero oxidizer (thermal decomposition / pyrolysis vs. combustion)
 
 ## 3. Performance Optimization
 - [x] Specific impulse (Isp) — the key figure of merit, Isp = c* · Cf / g0
 - [x] Mixture ratio (O/F) — stoichiometric vs optimal, why fuel-rich wins on Isp + protection + safety
 - [x] Thrust coefficient (Cf) — nozzle figure of merit, momentum + pressure thrust terms
 - [x] Characteristic velocity (c*) — combustion figure of merit, independent of throat geometry
-- [ ] Nozzle expansion ratio for altitude optimization
+- [x] Nozzle expansion ratio for altitude optimization — ε → Me → Pe direction chain (larger ε → higher Me → lower Pe); fixed compromise means slightly overexpanded at launch, perfectly expanded at design altitude, underexpanded above; Summerfield separation criterion Pe/Pa < ~0.4; Cf vs altitude numerical table for the engine (ε=4.54 is diameter-constrained, near-optimal for low-altitude sounding rocket burn)
+- [x] Γ(γ) function — choked mass flux: ṁ = P0·At·Γ/sqrt(Ru·T0/Mw); appears in c* denominator and Cf momentum term; cancels completely in the c*·Cf product — Γ does not appear in Isp
+- [x] R_u — universal gas constant 8.314 J/(mol·K); specific gas constant R = R_u/Mw; R_u/Mw in exit velocity equation is thermal energy per kg — lower Mw means more energy per kg for the same flame temperature
 
 ## 4. The Design Pipeline
 - [ ] Mission requirements → thrust & burn time → propellant mass

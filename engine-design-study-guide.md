@@ -67,6 +67,7 @@ $$v_e = \sqrt{\frac{2\gamma}{\gamma-1}\frac{R_u T_0}{M_w}\left[1 - \left(\frac{P
 
 - **T_0** — chamber stagnation temperature. Higher is better.
 - **M_w** — exhaust molecular weight. Lower is better. This is why LOX/LH2 beats LOX/RP-1 despite similar flame temperature — exhaust M_w ≈ 9 vs 22.
+- **R_u / M_w** — this ratio is the specific gas constant R for the exhaust mixture (units: J/kg·K). R_u = 8.314 J/(mol·K) is universal and fixed; M_w is what varies between propellants. Lower M_w → larger R → more thermal energy per kilogram of exhaust.
 - **P_e/P_0** — nozzle expansion. Smaller ratio → more expansion → higher v_e. Goes to zero in vacuum.
 - **P_e** is the fluid pressure at the exit plane, NOT ambient. Ambient sets whether the nozzle is over/under/perfectly expanded.
 
@@ -199,6 +200,25 @@ c* depends only on flame temperature, molecular weight, and γ — pure combusti
 
 **Measured directly from a hot fire:** just measure P_c, A_t, and ṁ. Compares to CEA prediction to get c* efficiency — isolates combustion problems from nozzle problems.
 
+**The Γ(γ) function** is the choked mass flux coefficient. It falls out of the choked throat derivation:
+
+$$\dot{m} = \frac{P_0 \cdot A_t \cdot \Gamma(\gamma)}{\sqrt{R_u T_0 / M_w}} \qquad \Gamma(\gamma) = \sqrt{\gamma}\left(\frac{2}{\gamma+1}\right)^{(\gamma+1)/2(\gamma-1)}$$
+
+Γ is a pure function of γ — it captures all the isentropic-ratio algebra for a choked throat into one number. Higher γ → slightly higher Γ → more mass flow per unit P0·At.
+
+| γ | Γ(γ) |
+|---|---|
+| 1.15 | 0.634 |
+| 1.20 | 0.648 |
+| 1.40 (air) | 0.685 |
+| 1.67 (monatomic) | 0.726 |
+
+**Γ cancels in Isp.** The Cf momentum term also contains Γ in the numerator:
+
+$$C_{f,mom} = \Gamma(\gamma) \cdot \sqrt{\frac{2\gamma}{\gamma-1}\left[1 - \left(\frac{P_e}{P_c}\right)^{(\gamma-1)/\gamma}\right]}$$
+
+In the product c* · C_f,mom, the Γ in the denominator of c* and the Γ in the numerator of C_f cancel exactly, leaving only v_e. Γ does not appear in Isp — it is only relevant for relating Pc, At, and ṁ to each other via the c* equation.
+
 ---
 
 ## 12. Thrust Coefficient C_f
@@ -223,6 +243,41 @@ P_c and A_t vanish. Isp is determined entirely by combustion quality (c*) and no
 
 ---
 
+## 13. Nozzle Expansion Ratio & Altitude
+
+$$\varepsilon = \frac{A_e}{A_t}$$
+
+**Direction chain (monotonic, one-directional):**
+
+$$\varepsilon \uparrow \implies M_e \uparrow \implies P_e \downarrow$$
+
+Larger exit area → flow expands further → higher Mach → lower static exit pressure. The area-Mach relation ties ε to Me; isentropic relations then give Pe/P0.
+
+**The altitude mismatch problem:** Pe is fixed by geometry. Pa drops continuously from ~101 kPa at sea level to zero in vacuum. A single fixed ε cannot be perfectly expanded at all altitudes.
+
+**Fixed compromise:** Choose ε such that Pe is slightly below Pa at launch (slightly overexpanded — negative pressure term, but no separation if Pe/Pa > ~0.4). As altitude increases and Pa drops, the nozzle passes through perfectly expanded at the design altitude, then becomes underexpanded above it.
+
+**Summerfield separation criterion:** Flow separates from the nozzle wall when:
+
+$$\frac{P_e}{P_a} \lesssim 0.4$$
+
+Separation causes asymmetric side loads and a de facto shorter nozzle. Overexpansion is the dangerous direction; underexpansion is merely inefficient.
+
+**Your engine (ε = 4.54):** Constrained by 101 mm max exit diameter. Optimizer wanted ε = 6–8 but the diameter cap forced ε = 4.54. At estimated runtime Pc ≈ 2.9 MPa, Pe ≈ 107 kPa vs Pa ≈ 94 kPa — slightly underexpanded at launch. Near-optimal for a sounding rocket burn that stays at low altitude.
+
+**Cf at different expansion ratios** (Pc = 2.9 MPa, Pa = 94 kPa, γ = 1.2):
+
+| ε | Pe (kPa) | Condition | Cf sea level | Cf vacuum |
+|---|---|---|---|---|
+| 4.54 (current) | 107 | slightly underexpanded | 1.48 | 1.63 |
+| 4.93 (optimal SL) | 94 | perfectly expanded | 1.48 | 1.64 |
+| 8 | 51 | overexpanded | 1.45 | 1.71 |
+| 15 | 16 | badly overexpanded | 1.31 | 1.79 |
+
+**Mission profile governs the penalty:** For a sounding rocket burning below 5 km, the sea-level column dominates — going to ε = 8 loses ~2% at sea level while gaining ~5% in vacuum, a net loss for a low-altitude burn. For a vacuum upper stage, larger ε is always better.
+
+---
+
 ## Key Physical Intuitions
 
 1. **Enthalpy vs internal energy:** Enthalpy is the right energy variable for flowing systems because it includes flow work P/ρ. Using u requires tracking the boundary work term separately.
@@ -238,6 +293,10 @@ P_c and A_t vanish. Isp is determined entirely by combustion quality (c*) and no
 6. **Fuel-rich operation** wins simultaneously on Isp, wall protection, corrosion resistance, and transient safety.
 
 7. **γ represents** the fraction of molecular energy that is translational (visible as temperature). More internal modes → lower γ → less efficient nozzle expansion. Combustion products γ ≈ 1.14–1.2 vs air γ = 1.4.
+
+8. **Γ(γ) cancels in Isp.** It appears in the denominator of c* and numerator of Cf — they cancel exactly when multiplied. Γ only matters for relating Pc, At, and ṁ to each other (the c* equation). It has no effect on the final Isp.
+
+9. **R_u/Mw is what drives the molecular weight effect on Isp.** R_u = 8.314 J/(mol·K) is fixed. The specific gas constant R = R_u/Mw is what varies. Lower Mw → larger R → more thermal energy per kg → higher ve for the same flame temperature.
 
 ---
 
