@@ -300,4 +300,70 @@ Separation causes asymmetric side loads and a de facto shorter nozzle. Overexpan
 
 ---
 
+---
+
+## 14. Injector Design
+
+The injector does two things: meters mass flow (sets O/F by controlling orifice areas) and atomizes propellants (breaks liquid into droplets so they vaporize and mix before combustion). Both matter — orifice areas set O/F, spray pattern drives c* efficiency.
+
+**The four types:**
+
+**Impinging:** Jets aimed at each other. Collision shatters both streams into a spray fan.
+- *Like-on-like* (LOX/LOX and fuel/fuel pairs separately): global O/F set by total manifold flows. Forgiving of element-to-element variation.
+- *Unlike* (one LOX + one fuel per element): each element must individually deliver correct O/F. Sensitive to orifice manufacturing tolerance and manifold pressure non-uniformity. If one element is off, that zone burns at the wrong ratio.
+
+**Coaxial:** Slow inner jet surrounded by fast outer annulus. The velocity difference drives Kelvin-Helmholtz instability at the interface — the fast outer stream drags on the slow inner surface, creating radial waves that grow in amplitude until their crests detach as droplets. The detached pieces (ligaments) break further into fine droplets.
+
+Velocity ratio is the design variable:
+
+$$\frac{v_{outer}}{v_{inner}} = \frac{\dot{m}_{outer}}{\dot{m}_{inner}} \times \frac{\rho_{inner}}{\rho_{outer}} \times \frac{A_{inner}}{A_{outer}}$$
+
+- **LOX/LH2** at O/F = 5, equal areas: ratio = (1/5) × (1141/71) × 1 = 3.2. Density contrast (16×) overwhelms the mass flow ratio. Easily pushed to 10-20 with modest geometry.
+- **LOX/Ethanol** at O/F = 1.7, equal areas: ratio = (1/1.7) × (1141/789) × 1 = 0.86. Inner stream is *faster* than outer. Getting to ratio = 5 requires A_inner/A_outer = 5.8 — an extremely narrow annulus that is fragile and hard to manufacture. Coaxial is poorly suited.
+
+**Swirl:** Propellant enters through tangential ports, spins inside a cavity. Centrifugal force pushes liquid to the outer wall, forming a hollow vortex with a gas core. Exits as a spinning hollow cone. The thin rotating sheet is inherently unstable and breaks into very fine droplets without needing an external fast stream. High atomization quality, wide spray cone. Used extensively in Russian engines. For bipropellants: two concentric swirl elements whose spinning cones collide and interpenetrate.
+
+**Pintle:** Single central post carrying one propellant with radial holes at the tip. The other propellant flows as an annular sheet axially around the base. They collide at the tip. The velocity vectors add:
+
+$$\frac{v_{radial}}{v_{axial}} = TMR \quad \text{(Total Momentum Ratio)}$$
+
+TMR determines the spray cone half-angle. High TMR → spray goes radially toward walls. Low TMR → spray stays axial near centreline. Design target: outer edge of spray cone reaches ~70–80% of chamber radius — good cross-section coverage without direct wall impingement.
+
+*Why throttleable:* Moving the post axially changes the annular gap area → changes flow rate at fixed pressure drop. Wide throttle ratios (10:1) achievable. Used on Apollo LM descent engine.
+
+*Why acoustically stable:* A single large element covers the whole chamber face with no regular spatial pattern. Array injectors can have element spacing that matches acoustic wavelengths and couple to chamber modes. The pintle doesn't.
+
+**Why oxidizer through the central post:**
+1. *Coking:* Small hot radial holes + fuel = carbon deposits that block flow over time. Oxidizer doesn't thermally decompose.
+2. *Post cooling:* Cryogenic LOX (-183°C) flowing through the post cools it from inside.
+3. *Wall protection:* Fuel in the annular position means the outer spray contacts the wall — fuel-rich mixture is cooler and less corrosive than oxidizer-rich.
+
+**Radial vs axial spray trade-off (all injector types):**
+- More radial → short mixing length, fills chamber cross-section quickly, but spray hits walls sooner → high wall heat flux, tight droplet size requirement
+- More axial → long mixing length, lower wall heat flux, but requires more L* for complete combustion
+
+---
+
+## 15. Droplet Vaporization & L* Revisited
+
+**The D² law:** A droplet's lifetime scales with its initial diameter squared:
+
+$$\tau_{evap} \sim \frac{D_0^2}{K}$$
+
+where K is the evaporation constant (function of chamber temperature, pressure, propellant). Vaporization distance = v × τ_evap ∝ D₀². Doubling droplet diameter quadruples the distance needed to vaporize. This is why atomization quality dominates combustion length.
+
+**After vaporization:** The rate-limiting step is mixing (turbulent), not chemistry. Chemical reaction at 3000 K and several MPa is near-instantaneous once fuel and oxidizer vapors are co-located. Mixing is fast but not instant — it's the actual bottleneck after vaporization.
+
+**What L* actually provides:** The injector produces a distribution of droplet sizes. Small droplets vaporize near the injector face. Large droplets vaporize further down. The chamber must be large enough that even the largest droplets in the distribution vaporize before the throat. Any droplet that reaches the throat as a liquid exits unreacted — propellant mass paid for, zero energy extracted.
+
+L* is the total vaporization budget across the entire size distribution. There is no clean "vaporization zone then combustion zone" — different droplets are vaporizing at different points throughout the entire chamber simultaneously.
+
+**The injector–L* trade-off:** Better injector → smaller maximum droplet size → shorter vaporization distance → same c* efficiency at lower L*. Injector quality and L* are two levers on the same outcome. The c* efficiency curve reflects this:
+
+$$\eta_{c^*} \approx 1 - 0.3 \cdot e^{-0.15 \cdot L^*}$$
+
+As L* grows, more of the size distribution tail is captured, efficiency asymptotes to 1. Below the minimum L* for a given injector, large droplets exit the throat unreacted and c* drops sharply.
+
+---
+
 *Reference: Rocket Propulsion Elements — Sutton & Biblarz, chapters 3 & 5*
