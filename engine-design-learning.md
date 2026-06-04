@@ -8,7 +8,7 @@
 ## 2. Engine Cycle & Structure
 - [x] Combustion chamber sizing — L*, characteristic length, contraction ratio, convergent geometry
 - [x] Nozzle design — de Laval nozzle, area ratio, throat geometry, why converging-diverging is required
-- [ ] Propellant feed systems — pressure-fed vs. pump-fed cycles
+- [x] Propellant feed systems — pressure-fed vs blowdown; polytropic pressurant expansion (n=1.2, GN2); blowdown ratios LOX 1.47 / fuel 1.80; injector orifice equation; brentq Pc solve at each timestep
 - [ ] Injector design — impinging, coaxial, swirl types
 - [x] Ignition sequencing — fuel lead/lag, hard start risk, LOX pooling vs fuel pooling, why fuel-rich never crosses stoichiometric during transients
 - [ ] Hard starts — revisit in more depth; LOX-rich vs fuel-rich hard start danger (disagreement: LOX cannot ignite on its own and is stoichiometrically limited by available fuel — come back to this)
