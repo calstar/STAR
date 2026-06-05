@@ -1407,3 +1407,171 @@ export function runLayer3Optimization(
 
   return eventSource;
 }
+
+// ============================================================================
+// Tank Freeze (ethanol/LOX concentric tank) Types and API
+// ============================================================================
+
+export type TankFreezeFluid = 'ethanol' | 'lox' | 'methane';
+
+export interface TankFreezeRequest {
+  // Geometry
+  r_i: number;               // [m]
+  wall_thickness_mm: number; // [mm]; r_o = r_i + this
+  H: number;                 // [m]
+  r_tank_outer_m?: number | null; // [m]; required when the freezable fluid is outside
+  // Fluid selection (the colder-boiling fluid acts as the fixed-T sink)
+  fluid_inner: TankFreezeFluid;
+  fluid_outer: TankFreezeFluid;
+  // Conditions
+  P_tank_pa: number;              // sink-side pressure -> T_sink = Tsat(P)
+  P_fuel_pa?: number | null;      // fuel(bulk)-side pressure; shifts T_fr (Clausius-Clapeyron)
+  T_eth0: number;
+  m_liq0: number;
+  // Run controls
+  t_mission_min: number;
+  t_solidify_max_min: number;
+  delta_seed?: number;
+  r_min?: number;
+  plot_points?: number;
+  // Optional thresholds
+  mu_pump_max?: number | null;   // [Pa s]
+  delta_ice_max?: number | null; // [m]
+  // Conservatism bounds
+  bound_mode: 'both' | 'freeze_time' | 'nominal';
+  h1_high?: number;
+  h1_low?: number;
+  // Material overrides (null -> model defaults)
+  k_s?: number | null;
+  rho_s?: number | null;
+  c_p_s?: number | null;
+  L_fus?: number | null;
+  T_fr?: number | null;
+  k_Al?: number | null;
+  lox_chf?: number | null;
+}
+
+export interface TankFreezeBoundResult {
+  bound_label: string;
+  h1_multiplier: number;
+  // Time series (decimated)
+  t_s: number[];
+  ice_thickness_m: number[];
+  Qin_W: number[];
+  Qout_W: number[];
+  T_eth_K: number[];
+  mu_eth_Pa_s: number[];
+  h1_W_m2K: number[];
+  T_w_K: number[];
+  q_lox_W_m2: number[];
+  m_liq_kg: number[];
+  // Headline scalars
+  T_LOX_K: number; // sink saturation temperature (wire name kept for compat)
+  delta_eq_m: number | null;
+  classification: 'BOUNDED' | 'UNBOUNDED' | 'NO_FREEZING' | 'NO_HEAT_FLOW';
+  ice_at_mission_m: number | null;
+  T_eth_at_mission_K: number | null;
+  mu_at_mission_Pa_s: number | null;
+  t_to_95pct_eq_s: number | null;
+  t_solidify_s: number | null;
+  solidify_capped: boolean;
+  t_mu_cross_s: number | null;
+  t_ice_cross_s: number | null;
+  energy_balance_error_pct: number;
+  stefan_number: number;
+  lox_chf_W_m2: number;
+  flags: string[];
+  // Configuration metadata
+  bulk_fluid: TankFreezeFluid;
+  sink_fluid: TankFreezeFluid;
+  bulk_inside: boolean;
+  mode: 'freeze' | 'cooling' | 'no_heat_flow';
+}
+
+export interface TankFreezeStreamEvent {
+  type: 'status' | 'progress' | 'complete' | 'error';
+  progress?: number;
+  sim_time_s?: number;
+  bound?: string;
+  message?: string;
+  results?: TankFreezeBoundResult[];
+  error?: string;
+  detail?: string;
+}
+
+/**
+ * Non-streaming tank freeze run.
+ */
+export async function runTankFreeze(
+  requestData: TankFreezeRequest
+): Promise<ApiResponse<{ results: TankFreezeBoundResult[] }>> {
+  return request<{ results: TankFreezeBoundResult[] }>('/tank-freeze/run', {
+    method: 'POST',
+    body: JSON.stringify(requestData),
+  });
+}
+
+/**
+ * Streaming tank freeze run (progress events while the sim marches, then
+ * a 'complete' event carrying the full results).
+ */
+export function runTankFreezeStream(
+  requestData: TankFreezeRequest,
+  onEvent: (event: TankFreezeStreamEvent) => void,
+  onError?: (error: string) => void
+): AbortController {
+  const abortController = new AbortController();
+
+  fetch(`${API_BASE}/tank-freeze/run-stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(requestData),
+    signal: abortController.signal,
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const detail = errorData.detail;
+        const message =
+          typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : `HTTP ${response.status}`;
+        throw new Error(message);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('Response body is not readable');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              onEvent(data);
+            } catch (e) {
+              console.error('Error parsing stream event:', e);
+            }
+          }
+        }
+      }
+    })
+    .catch((err) => {
+      if (err.name === 'AbortError') return;
+      console.error('Stream error:', err);
+      if (onError) onError(err.message);
+    });
+
+  return abortController;
+}

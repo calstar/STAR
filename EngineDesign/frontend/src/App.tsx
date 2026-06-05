@@ -9,6 +9,7 @@ import { ChamberGeometry } from './components/ChamberGeometry';
 import { Optimizer } from './components/Optimizer';
 import { ControllerMode } from './components/ControllerMode';
 import { OptimizerDemo } from './components/OptimizerDemo';
+import { TankFreeze } from './components/TankFreeze';
 import { getConfig, getHealth } from './api/client';
 import type { EngineConfig } from './api/client';
 
@@ -20,6 +21,7 @@ type Tab =
   | 'geometry'
   | 'optimizer'
   | 'controller'
+  | 'tankfreeze'
   | 'demo' | 'config';
 
 function App() {
@@ -152,6 +154,15 @@ function App() {
               Controller
             </button>
             <button
+              onClick={() => setActiveTab('tankfreeze')}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'tankfreeze'
+                ? 'border-sky-500 text-sky-400'
+                : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:border-[var(--color-border)]'
+                }`}
+            >
+              Tank Freeze
+            </button>
+            <button
               onClick={() => setActiveTab('demo')}
               className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'demo'
                 ? 'border-cyan-500 text-cyan-400'
@@ -265,6 +276,11 @@ function App() {
             )}
             <ControllerMode config={config} />
           </div>
+        </div>
+
+        {/* Tank Freeze is standalone — no engine config required */}
+        <div className={tabPanelClass('tankfreeze')}>
+          <TankFreeze />
         </div>
 
         <div className={tabPanelClass('demo')}>

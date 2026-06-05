@@ -37,6 +37,7 @@
 ## 6. Code Deep Dives (revisit after understanding the parts)
 - [ ] Supply vs. demand pressure equilibrium — how ChamberSolver.solve() works, brentq on mdot_supply(Pc) = mdot_demand(Pc), and why Pc emerges from physics rather than being prescribed
 - [ ] O/F ratio in the optimizer — why it's a config input not a sweep variable, how Layer 1 drives injector geometry to hit the target MR, and how MR is computed dynamically from actual flow rates during simulation
+- [ ] Optimization engine deep dive — how the actual optimizer works: CMA-ES (Covariance Matrix Adaptation Evolution Strategy), the hybrid CMA-blocks mode, what the objective function looks like across all 10 Layer 1 variables, how the optimizer avoids local minima, and why gradient-free methods are needed here
 
 ---
 
