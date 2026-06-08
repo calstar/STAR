@@ -40,6 +40,7 @@ function withDefaults(user: Record<string, unknown>, defaults: Record<string, un
   return out;
 }
 
+/** Fill missing keys when switching pintle → impinging; mirrors configs/default.yaml. */
 const IMPINGING_BASELINE_DEFAULTS: Record<string, unknown> = {
   max_chamber_outer_diameter: 0.2032,
   max_nozzle_exit_diameter: 0.2032,
@@ -55,24 +56,24 @@ const IMPINGING_BASELINE_DEFAULTS: Record<string, unknown> = {
   layer1_W_OF: 2.0e4,
   layer1_W_OF_low_MR_scale: 1.0,
   layer1_W_OF_high_MR_scale: 1.0,
-  W_MOM: 2400.0,
-  impinging_momentum_R_min: 0.8,
-  impinging_momentum_R_max: 1.2,
-  W_DP: 500.0,
-  W_DP_O: 1000.0,
-  W_DP_F: 1000.0,
-  W_DP_HIGH: 8000.0,
+  W_MOM: 30000.0,
+  impinging_momentum_R_min: 0.9,
+  impinging_momentum_R_max: 1.1,
+  W_DP: 800.0,
+  W_DP_O: 12000.0,
+  W_DP_F: 175000.0,
+  W_DP_HIGH: 25000.0,
   W_IMPINGING_ANGLE: 400.0,
   layer1_impinging_angle_deg_min: 55.0,
   layer1_impinging_angle_deg_max: 90.0,
   W_IMPINGING_JET_ASYM: 180.0,
   layer1_impinging_jet_angle_max_asym_deg: 26.0,
   layer1_exit_pressure_inside_quad_scale: 0.38,
-  W_SMD: 0.0,
+  W_SMD: 2000.0,
   W_CHAMBER_SHAPE: 2500.0,
   layer1_chamber_dt_ratio_min: 2.2,
   layer1_chamber_dt_ratio_max: 3.2,
-  layer1_chamber_ld_ratio_min: 1.6,
+  layer1_chamber_ld_ratio_min: 1.0,
   layer1_chamber_ld_ratio_max: 3.2,
   target_smd_microns: 50.0,
   layer1_smd_rel_tol: 0.20,
@@ -91,6 +92,44 @@ const IMPINGING_FROZEN_RESETS: Record<string, unknown> = {
   d_orifice_mm: null,
 };
 
+/** A_O/A_F for R≈1 at the given MR and bulk densities (matches Layer-1 backend). */
+function expectedGeomAoAfForUnitMomentumRatio(
+  optimalOf: number,
+  rhoO: number,
+  rhoF: number,
+): number {
+  if (!(optimalOf > 0 && rhoO > 0 && rhoF > 0)) return NaN;
+  return optimalOf / Math.sqrt(rhoO / rhoF);
+}
+
+/** Rescale template jet diameters to optimal_of before impinging seed geometry is saved. */
+function rescaleImpingingJetDiametersForMr(
+  dJetO: number,
+  dJetF: number,
+  nElementsO: number,
+  nElementsF: number,
+  optimalOf: number,
+  rhoO: number,
+  rhoF: number,
+): { dJetO: number; dJetF: number } {
+  const expAf = expectedGeomAoAfForUnitMomentumRatio(optimalOf, rhoO, rhoF);
+  if (!Number.isFinite(expAf) || expAf <= 0) return { dJetO, dJetF };
+  const nO = Math.max(1, Math.round(nElementsO));
+  const nF = Math.max(1, Math.round(nElementsF));
+  const aO = nO * Math.PI * (dJetO / 2) ** 2;
+  const aF = nF * Math.PI * (dJetF / 2) ** 2;
+  if (!(aF > 0)) return { dJetO, dJetF };
+  const actualAf = aO / aF;
+  const ratioScale = expAf / actualAf;
+  if (Math.abs(ratioScale - 1) < 0.02) return { dJetO, dJetF };
+  const aONew = aO * Math.sqrt(ratioScale);
+  const aFNew = aF / Math.sqrt(ratioScale);
+  return {
+    dJetO: Math.sqrt((4 * aONew) / (nO * Math.PI)),
+    dJetF: Math.sqrt((4 * aFNew) / (nF * Math.PI)),
+  };
+}
+
 interface Layer1OptimizationProps {
   requirements: DesignRequirements;
   isDirty: boolean;
@@ -103,12 +142,84 @@ interface Layer1OptimizationProps {
 function formatLayer1ResidualScalar(best: number): string {
   if (!Number.isFinite(best)) return String(best);
   if (best === 0) return '0';
-  const ax = Math.abs(best);
-  if (ax >= 100) return best.toFixed(2);
-  if (ax >= 10) return best.toFixed(3);
-  if (ax >= 0.05) return best.toFixed(4);
-  if (ax >= 1e-4) return best.toExponential(4);
-  return best.toExponential(3);
+  const abs = Math.abs(best);
+  if (abs >= 1000 || (abs > 0 && abs < 0.01)) return best.toExponential(2);
+  return best.toLocaleString(undefined, { maximumFractionDigits: 4, minimumFractionDigits: 0 });
+}
+
+const LAYER1_BASE_INFEAS = 1e6;
+
+function historyNumber(h: Record<string, unknown>, key: string): number | null {
+  const v = h[key];
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** Maps each design-parameter chart to the constraint residual field stored in iteration_history. */
+const PARAM_CONSTRAINT_RESIDUAL: Record<string, { field: string; label: string; logScale?: boolean }> = {
+  Lstar: { field: 'band_violation_Lstar_sq', label: 'L* band violation²' },
+  expansion_ratio: { field: 'band_violation_expansion_sq', label: 'Expansion band violation²' },
+  A_throat: { field: 'penalty_chamber_shape', label: 'Chamber shape penalty', logScale: true },
+  D_chamber_outer: { field: 'penalty_chamber_shape', label: 'Chamber shape penalty', logScale: true },
+  D_chamber_inner: { field: 'penalty_chamber_shape', label: 'Chamber shape penalty', logScale: true },
+  exit_diameter: { field: 'penalty_chamber_shape', label: 'Chamber shape penalty', logScale: true },
+  P_O_start_psi: { field: 'band_violation_dp_O_sq', label: 'ΔP_O/Pc band violation²' },
+  P_F_start_psi: { field: 'band_violation_dp_F_sq', label: 'ΔP_F/Pc band violation²' },
+  n_doublets: { field: 'band_violation_momentum_R_sq', label: 'R band violation²' },
+  d_jet_O: { field: 'band_violation_momentum_R_sq', label: 'R band violation²' },
+  d_jet_F: { field: 'band_violation_momentum_R_sq', label: 'R band violation²' },
+  spacing_O: { field: 'band_violation_momentum_R_sq', label: 'R band violation²' },
+  spacing_F: { field: 'band_violation_momentum_R_sq', label: 'R band violation²' },
+  impingement_angle_O: { field: 'band_violation_angle_sq', label: 'Angle band violation²' },
+  impingement_angle_F: { field: 'band_violation_angle_sq', label: 'Angle band violation²' },
+  d_pintle_tip: { field: 'penalty_thrust', label: 'Thrust penalty', logScale: true },
+  h_gap: { field: 'penalty_thrust', label: 'Thrust penalty', logScale: true },
+  n_orifices: { field: 'penalty_of', label: 'O/F penalty', logScale: true },
+  d_orifice: { field: 'penalty_injector_dp', label: 'Injector ΔP penalty', logScale: true },
+};
+
+const OBJECTIVE_TERM_PLOTS: Array<{ field: string; label: string; color: string; logScale?: boolean }> = [
+  { field: 'objective', label: 'Weighted objective (sum of penalties)', color: '#ef4444', logScale: true },
+  { field: 'penalty_thrust', label: 'Thrust penalty', color: '#22c55e', logScale: true },
+  { field: 'penalty_of', label: 'O/F penalty', color: '#14b8a6', logScale: true },
+  { field: 'penalty_exit', label: 'Exit pressure penalty', color: '#06b6d4', logScale: true },
+  { field: 'penalty_injector_dp', label: 'Injector ΔP penalty', color: '#3b82f6', logScale: true },
+  { field: 'penalty_momentum', label: 'Momentum R penalty', color: '#8b5cf6', logScale: true },
+  { field: 'penalty_chamber_shape', label: 'Chamber shape penalty', color: '#a855f7', logScale: true },
+  { field: 'penalty_impingement_angle', label: 'Impingement angle penalty', color: '#d946ef', logScale: true },
+  { field: 'penalty_smd', label: 'SMD penalty', color: '#ec4899', logScale: true },
+  { field: 'thrust_error', label: 'Thrust rel. error (dimensionless)', color: '#84cc16' },
+  { field: 'of_error', label: 'O/F rel. error (dimensionless)', color: '#eab308' },
+  { field: 'injector_dp_ratio_O', label: 'ΔP_O/Pc (actual)', color: '#0ea5e9' },
+  { field: 'injector_dp_ratio_F', label: 'ΔP_F/Pc (actual)', color: '#6366f1' },
+  { field: 'momentum_ratio_R', label: 'Momentum ratio R', color: '#f43f5e' },
+];
+
+type ParamDef = readonly [string, string, string, number, number, number];
+
+function extractHistoryParamPoint(
+  h: Record<string, unknown>,
+  parameters: ReadonlyArray<ParamDef>,
+  getVar: (h: Record<string, unknown>, key: string, xIdx: number, defaultVal: number, scale?: number) => number,
+): Record<string, number | null> {
+  const point: Record<string, number | null> = {};
+  parameters.forEach(([key, , , xIdx, defaultVal, scale]) => {
+    if (key === 'D_chamber_inner') {
+      const outer = getVar(h, 'D_chamber_outer', 3, 0.1, 1.0);
+      const inner = (h.D_chamber_inner as number) ?? (outer - 0.0254);
+      point[key] = inner * 1000;
+    } else if (key === 'exit_diameter') {
+      const A_throat_m2 = getVar(h, 'A_throat', 0, 0.001, 1.0);
+      const expansion_ratio_val = getVar(h, 'expansion_ratio', 2, 10.0, 1.0);
+      const D_exit_m = Math.sqrt(Math.max(0, (4 * A_throat_m2 * expansion_ratio_val) / Math.PI));
+      point[key] = D_exit_m * 1000;
+    } else if (key === 'n_orifices' || key === 'n_doublets') {
+      point[key] = Math.round(getVar(h, key, xIdx, defaultVal, scale));
+    } else {
+      const v = getVar(h, key, xIdx, defaultVal, scale);
+      point[key] = Number.isFinite(v) ? v : null;
+    }
+  });
+  return point;
 }
 
 // Helper component for result cards
@@ -309,7 +420,6 @@ function ParameterConvergencePlots({
     return defaultVal * scale;
   };
 
-  const iterations = iterationHistory.map((h, i) => (h.iteration as number | undefined) ?? i);
   const hasFiniteKey = (key: string): boolean =>
     iterationHistory.some((h) => typeof h[key] === 'number' && Number.isFinite(h[key] as number));
   const hasImpingingHistory =
@@ -351,71 +461,287 @@ function ParameterConvergencePlots({
     ...(hasImpingingHistory ? impingingParameters : pintleParameters),
   ] as const;
 
-  // Extract data for each parameter
-  const plotData = iterations.map((iter, idx) => {
-    const h = iterationHistory[idx];
-    const point: Record<string, number | string> = { iteration: iter };
-    parameters.forEach(([key, , , xIdx, defaultVal, scale]) => {
-      if (key === 'D_chamber_inner') {
-        // Special handling for inner diameter (derived from outer)
-        const outer = getVar(h, 'D_chamber_outer', 3, 0.1, 1.0);
-        const inner = (h.D_chamber_inner as number) ?? (outer - 0.0254);
-        point[key] = inner * 1000;
-      } else if (key === 'exit_diameter') {
-        // Calculate exit diameter from A_throat and expansion_ratio
-        // D_exit = sqrt(4 * A_throat * expansion_ratio / pi) in meters, then convert to mm
-        const A_throat_m2 = getVar(h, 'A_throat', 0, 0.001, 1.0);
-        const expansion_ratio_val = getVar(h, 'expansion_ratio', 2, 10.0, 1.0);
-        const D_exit_m = Math.sqrt(Math.max(0, (4 * A_throat_m2 * expansion_ratio_val) / Math.PI));
-        point[key] = D_exit_m * 1000; // Convert to mm
-      } else if (key === 'n_orifices' || key === 'n_doublets') {
-        point[key] = Math.round(getVar(h, key, xIdx, defaultVal, scale));
-      } else {
-        point[key] = getVar(h, key, xIdx, defaultVal, scale);
+  const hasTermFields = iterationHistory.some((h) => historyNumber(h, 'penalty_thrust') !== null);
+
+  let bestObj = Infinity;
+  let incumbentParams: Record<string, number | null> | null = null;
+  let incumbentResiduals: Record<string, number | null> | null = null;
+  let lastIncumbentIter = -1;
+  let maxStagnation = 0;
+
+  const plotData = iterationHistory.map((h, idx) => {
+    const iteration = (h.iteration as number | undefined) ?? idx;
+    const obj = historyNumber(h, 'objective');
+    if (obj !== null && obj < LAYER1_BASE_INFEAS && h.eval_success !== false && obj < bestObj) {
+      if (lastIncumbentIter >= 0) {
+        maxStagnation = Math.max(maxStagnation, iteration - lastIncumbentIter);
       }
-    });
-    return point;
+      lastIncumbentIter = iteration;
+      bestObj = obj;
+      incumbentParams = extractHistoryParamPoint(h, parameters, getVar);
+      incumbentResiduals = {};
+      for (const [key] of parameters) {
+        const spec = PARAM_CONSTRAINT_RESIDUAL[key];
+        incumbentResiduals[key] = spec ? historyNumber(h, spec.field) : null;
+      }
+    }
+    const out: Record<string, number | string | null> = { iteration };
+    if (incumbentParams && incumbentResiduals) {
+      for (const [key] of parameters) {
+        out[key] = incumbentParams[key] ?? null;
+        out[`residual_${key}`] = incumbentResiduals[key] ?? null;
+      }
+    }
+    return out;
   });
+
+  const fmtResidual = (v: number): string =>
+    Math.abs(v) >= 1000 || (v !== 0 && Math.abs(v) < 0.01)
+      ? v.toExponential(1)
+      : v.toLocaleString(undefined, { maximumFractionDigits: 4 });
+
+  const logDomain = (values: number[]): [number, number] | undefined => {
+    const pos = values.filter((v) => Number.isFinite(v) && v > 0);
+    if (pos.length === 0) return undefined;
+    const lo = Math.min(...pos);
+    const hi = Math.max(...pos);
+    return [
+      Math.max(1e-12, Math.pow(10, Math.floor(Math.log10(lo)) - 0.3)),
+      Math.pow(10, Math.ceil(Math.log10(hi)) + 0.3),
+    ];
+  };
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {parameters.map(([key, label, unit]) => (
-        <div key={key} className="bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg p-4">
-          <h5 className="text-sm font-semibold text-[var(--color-text-primary)] mb-2">
-            {label} {unit && `(${unit})`}
-          </h5>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={plotData} margin={{ top: 5, right: 10, left: 5, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.3} />
-              <XAxis
-                dataKey="iteration"
-                stroke="var(--color-text-secondary)"
-                tick={{ fill: 'var(--color-text-secondary)', fontSize: 9 }}
-              />
-              <YAxis
-                stroke="var(--color-text-secondary)"
-                tick={{ fill: 'var(--color-text-secondary)', fontSize: 9 }}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: 'var(--color-bg-secondary)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: '0.5rem',
-                  fontSize: '12px'
-                }}
-              />
-              <Line
-                type="monotone"
-                dataKey={key}
-                stroke="#3b82f6"
-                strokeWidth={1.5}
-                dot={false}
-                isAnimationActive={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+      <div className="col-span-full flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--color-text-secondary)]">
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block w-3 h-0.5" style={{ backgroundColor: '#3b82f6' }} /> Incumbent parameter (left)
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block w-3 h-0.5" style={{ backgroundColor: '#ef4444' }} /> This parameter&apos;s constraint residual (right)
+        </span>
+        <span className="opacity-80">
+          {hasTermFields
+            ? 'Flat segments = no improving feasible incumbent (CMA/L-BFGS probing). Right axis = per-parameter constraint residual (0 = in band).'
+            : 'Re-run Layer 1 to populate per-term residuals (older runs only stored total objective).'}
+          {maxStagnation > 50 ? ` Longest stall: ~${maxStagnation} evals without improvement.` : ''}
+        </span>
+      </div>
+      {parameters.map(([key, label, unit]) => {
+        const residualSpec = PARAM_CONSTRAINT_RESIDUAL[key];
+        const residualKey = `residual_${key}`;
+        const residualValues = plotData
+          .map((p) => p[residualKey])
+          .filter((v): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0);
+        const residualDomain = residualSpec?.logScale ? logDomain(residualValues) : undefined;
+        const hasResidualOverlay = residualSpec !== undefined && plotData.some((p) => p[residualKey] != null);
+
+        return (
+          <div key={key} className="bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg p-4">
+            <h5 className="text-sm font-semibold text-[var(--color-text-primary)] mb-2">
+              {label} {unit && `(${unit})`}
+            </h5>
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={plotData} margin={{ top: 5, right: 6, left: 5, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.3} />
+                <XAxis
+                  dataKey="iteration"
+                  stroke="var(--color-text-secondary)"
+                  tick={{ fill: 'var(--color-text-secondary)', fontSize: 9 }}
+                />
+                <YAxis
+                  yAxisId="left"
+                  stroke="#3b82f6"
+                  tick={{ fill: 'var(--color-text-secondary)', fontSize: 9 }}
+                />
+                {hasResidualOverlay && residualDomain && (
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    scale="log"
+                    domain={residualDomain}
+                    allowDataOverflow
+                    width={46}
+                    stroke="#ef4444"
+                    tick={{ fill: '#ef4444', fontSize: 9 }}
+                    tickFormatter={(v: number) => fmtResidual(v)}
+                  />
+                )}
+                {hasResidualOverlay && !residualDomain && (
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    width={46}
+                    stroke="#ef4444"
+                    tick={{ fill: '#ef4444', fontSize: 9 }}
+                    tickFormatter={(v: number) => fmtResidual(v)}
+                  />
+                )}
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'var(--color-bg-secondary)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: '0.5rem',
+                    fontSize: '12px',
+                  }}
+                  formatter={(value: number | string, name: string) => {
+                    if (name === residualKey && residualSpec) {
+                      return [
+                        typeof value === 'number' ? fmtResidual(value) : value,
+                        residualSpec.label,
+                      ];
+                    }
+                    return [
+                      typeof value === 'number' ? value.toLocaleString(undefined, { maximumFractionDigits: 4 }) : value,
+                      `${label}${unit ? ` (${unit})` : ''}`,
+                    ];
+                  }}
+                />
+                <Line
+                  yAxisId="left"
+                  type="monotone"
+                  dataKey={key}
+                  stroke="#3b82f6"
+                  strokeWidth={1.5}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+                {hasResidualOverlay && (
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey={residualKey}
+                    stroke="#ef4444"
+                    strokeWidth={1}
+                    strokeOpacity={0.75}
+                    dot={false}
+                    isAnimationActive={false}
+                    connectNulls={false}
+                  />
+                )}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ObjectiveTermPlots({
+  iterationHistory,
+  bestBreakdown,
+}: {
+  iterationHistory: Array<Record<string, unknown>>;
+  bestBreakdown?: Record<string, unknown>;
+}) {
+  const termFields = OBJECTIVE_TERM_PLOTS.map((t) => t.field);
+  let bestObj = Infinity;
+  let incumbent: Record<string, number | null> | null = null;
+
+  const plotData = iterationHistory.map((h, idx) => {
+    const iteration = (h.iteration as number | undefined) ?? idx;
+    const obj = historyNumber(h, 'objective');
+    if (obj !== null && obj < LAYER1_BASE_INFEAS && h.eval_success !== false && obj < bestObj) {
+      bestObj = obj;
+      incumbent = {};
+      for (const f of termFields) {
+        incumbent[f] = historyNumber(h, f);
+      }
+    }
+    const row: Record<string, number | string | null> = { iteration };
+    if (incumbent) {
+      for (const f of termFields) {
+        row[f] = incumbent[f];
+      }
+    }
+    return row;
+  });
+
+  const hasHistoryTerms = iterationHistory.some((h) => historyNumber(h, 'penalty_thrust') !== null);
+  const fmt = (v: number) => formatLayer1ResidualScalar(v);
+
+  const logDomain = (field: string): [number, number] | undefined => {
+    const pos = plotData
+      .map((p) => p[field])
+      .filter((v): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0);
+    if (pos.length === 0) return undefined;
+    const lo = Math.min(...pos);
+    const hi = Math.max(...pos);
+    return [
+      Math.max(1e-12, Math.pow(10, Math.floor(Math.log10(lo)) - 0.3)),
+      Math.pow(10, Math.ceil(Math.log10(hi)) + 0.3),
+    ];
+  };
+
+  const breakdownRows: Array<[string, string]> = [
+    ['objective', 'Weighted objective (total)'],
+    ['thrust_penalty', 'Thrust'],
+    ['of_penalty', 'O/F'],
+    ['exit_pressure_penalty', 'Exit P'],
+    ['injector_dp_penalty', 'Injector ΔP'],
+    ['momentum_balance_penalty', 'Momentum R'],
+    ['chamber_shape_penalty', 'Chamber shape'],
+    ['impingement_angle_penalty', 'Impingement angle'],
+    ['smd_penalty', 'SMD'],
+  ];
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+        Each chart tracks the incumbent (best feasible) value of one weighted penalty term.
+        The optimizer scalar is the sum of these terms (when feasible). Non-zero values show
+        what is still out of band or blocking validation.
+      </p>
+      {bestBreakdown && (
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-3">
+          <p className="text-xs text-[var(--color-text-secondary)] mb-2">Final incumbent breakdown</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-1 font-mono text-xs">
+            {breakdownRows.map(([k, label]) => {
+              const v = bestBreakdown[k];
+              if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+              return (
+                <div key={k} className="flex justify-between gap-2">
+                  <span className="text-[var(--color-text-secondary)]">{label}</span>
+                  <span className={v > 0 ? 'text-amber-400' : 'text-emerald-400'}>{fmt(v)}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
-      ))}
+      )}
+      {hasHistoryTerms ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {OBJECTIVE_TERM_PLOTS.map(({ field, label, color, logScale }) => {
+            const domain = logScale ? logDomain(field) : undefined;
+            const hasData = plotData.some((p) => p[field] != null);
+            if (!hasData) return null;
+            return (
+              <div key={field} className="bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg p-4">
+                <h5 className="text-sm font-semibold text-[var(--color-text-primary)] mb-2">{label}</h5>
+                <ResponsiveContainer width="100%" height={180}>
+                  <LineChart data={plotData} margin={{ top: 5, right: 4, left: 4, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.3} />
+                    <XAxis dataKey="iteration" tick={{ fontSize: 9 }} stroke="var(--color-text-secondary)" />
+                    <YAxis
+                      scale={domain ? 'log' : 'auto'}
+                      domain={domain ?? ['auto', 'auto']}
+                      tick={{ fontSize: 9 }}
+                      stroke={color}
+                      tickFormatter={(v: number) => fmt(v)}
+                      width={52}
+                    />
+                    <Tooltip formatter={(value: number | string) => [typeof value === 'number' ? fmt(value) : value, label]} />
+                    <Line type="monotone" dataKey={field} stroke={color} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-xs text-amber-300/90">Re-run Layer 1 to record per-term history (this run predates term logging).</p>
+      )}
     </div>
   );
 }
@@ -453,9 +779,11 @@ export function Layer1Optimization({
     if (objectiveHistory.length === 0) {
       return { minObj: 1, maxObj: 1 };
     }
-    const values = objectiveHistory.map(h => h.objective).filter(v => typeof v === 'number' && isFinite(v));
+    const values = objectiveHistory
+      .map(h => h.objective)
+      .filter(v => typeof v === 'number' && isFinite(v) && v > 0 && v < LAYER1_BASE_INFEAS);
     if (values.length === 0) {
-      return { minObj: 1, maxObj: 1 };
+      return { minObj: 1, maxObj: LAYER1_BASE_INFEAS };
     }
     return {
       minObj: Math.min(...values),
@@ -476,8 +804,12 @@ export function Layer1Optimization({
     return (props: any) => {
       const { cx, cy, payload } = props;
       if (!payload || typeof payload.objective !== 'number' || !isFinite(payload.objective) || payload.objective <= 0) {
-        // Return invisible dot for invalid data
         return <circle cx={cx} cy={cy} r={0} fill="none" />;
+      }
+
+      // Infeasibility floor (obj≈1e6): tiny gray marker — not the meaningful basin
+      if (payload.objective >= LAYER1_BASE_INFEAS) {
+        return <circle cx={cx} cy={cy} r={1.5} fill="#64748b" opacity={0.35} />;
       }
 
       if (logRange === 0 || minObj === maxObj) {
@@ -595,20 +927,39 @@ export function Layer1Optimization({
       injector: {
         ...(injector as Record<string, unknown>),
         type: 'impinging',
-        geometry: {
-          oxidizer: {
-            n_elements: 20,
-            d_jet: 0.00264,
-            impingement_angle: 50.0,
-            spacing: 0.006,
-          },
-          fuel: {
-            n_elements: 20,
-            d_jet: 0.00179,
-            impingement_angle: 60.0,
-            spacing: 0.006,
-          },
-        },
+        geometry: (() => {
+          const fluids = (cfg.data?.config?.fluids as Record<string, Record<string, unknown>> | undefined) ?? {};
+          const rhoO = Number(fluids.oxidizer?.density ?? 1140);
+          const rhoF = Number(fluids.fuel?.density ?? 422.6);
+          const optimalOf = Number(
+            designReq.optimal_of_ratio ?? mergedDesignRequirements.optimal_of_ratio ?? 3.5
+          );
+          const nElements = 20;
+          const templateJet = 0.002;
+          const scaled = rescaleImpingingJetDiametersForMr(
+            templateJet,
+            templateJet,
+            nElements,
+            nElements,
+            optimalOf,
+            rhoO,
+            rhoF
+          );
+          return {
+            oxidizer: {
+              n_elements: nElements,
+              d_jet: scaled.dJetO,
+              impingement_angle: 50.0,
+              spacing: 0.006,
+            },
+            fuel: {
+              n_elements: nElements,
+              d_jet: scaled.dJetF,
+              impingement_angle: 60.0,
+              spacing: 0.006,
+            },
+          };
+        })(),
       },
       design_requirements: mergedDesignRequirements,
     };
@@ -920,11 +1271,22 @@ export function Layer1Optimization({
 
           {/* Parameter Convergence Plots */}
           {showParameterPlots && results?.iteration_history && results.iteration_history.length > 0 && (
-            <div className="mt-6 border-t border-[var(--color-border)] pt-6">
-              <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-4">
-                Parameter Convergence History
-              </h4>
-              <ParameterConvergencePlots iterationHistory={results.iteration_history} geometry={results.geometry} />
+            <div className="mt-6 border-t border-[var(--color-border)] pt-6 space-y-8">
+              <div>
+                <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-4">
+                  Parameter Convergence History
+                </h4>
+                <ParameterConvergencePlots iterationHistory={results.iteration_history} geometry={results.geometry} />
+              </div>
+              <div>
+                <h4 className="text-md font-semibold text-[var(--color-text-primary)] mb-4">
+                  Objective &amp; Constraint Term Residuals
+                </h4>
+                <ObjectiveTermPlots
+                  iterationHistory={results.iteration_history}
+                  bestBreakdown={results.convergence_info?.best_objective_breakdown as Record<string, unknown> | undefined}
+                />
+              </div>
             </div>
           )}
         </div>
@@ -1207,9 +1569,9 @@ export function Layer1Optimization({
                   footnote={(() => {
                     const v = results.convergence_info.best_objective;
                     if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) {
-                      return 'Weighted sum of squared penalties (W≈1e2–1e4); not comparable to 1e-14 machine epsilon.';
+                      return 'Weighted sum of squared penalties; infeasible runs floor at ~1e6.';
                     }
-                    return `Weighted scalar (same as log plot): log10 ≈ ${Math.log10(v).toFixed(3)}. Compare physics RMS below.`;
+                    return `Weighted penalty sum (W×term²); log10 ≈ ${Math.log10(v).toFixed(3)}. Sum of breakdown terms ≈ objective when feasible.`;
                   })()}
                 />
                 <ResultCard
@@ -1283,10 +1645,12 @@ export function Layer1Optimization({
                         .filter(([key, value]) =>
                           typeof value === 'number' &&
                           Number.isFinite(value) &&
-                          (key.endsWith('_penalty') || key === 'infeasibility_penalty')
+                          (key.endsWith('_penalty') ||
+                            key === 'infeasibility_penalty' ||
+                            key === 'objective')
                         )
                         .sort((a, b) => Number(b[1]) - Number(a[1]))
-                        .slice(0, 6)
+                        .slice(0, 10)
                         .map(([key, value]) => (
                           <div key={key} className="flex justify-between text-sm">
                             <span className="text-[var(--color-text-secondary)]">{key}</span>

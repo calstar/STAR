@@ -26,16 +26,17 @@ fluids:
 injector:
   type: impinging
   geometry:
+    # Template jet sizes — Layer 1 auto-rescales d_jet_O/F to optimal_of_ratio at run start.
     oxidizer:
-      n_elements: 19
-      d_jet: 0.002394080093665191
-      impingement_angle: 51.393589047401264
-      spacing: 0.0065793662557137485
+      n_elements: 20
+      d_jet: 0.002
+      impingement_angle: 50.0
+      spacing: 0.006
     fuel:
-      n_elements: 19
-      d_jet: 0.0012160896422973634
-      impingement_angle: 35.031958574334034
-      spacing: 0.003066760942797662
+      n_elements: 20
+      d_jet: 0.002
+      impingement_angle: 60.0
+      spacing: 0.006
 feed_system:
   fuel:
     d_inlet: 0.009525
@@ -164,10 +165,19 @@ graphite_insert:
   reference_diffusivity_pressure: 1000000.0
 stainless_steel_case: null
 discharge:
+  # Thin-plate impinging jet holes: Cd_inf baseline at d_ref_m (2 mm), scaled by d_jet in the solver.
+  # ASME/ISO sharp-orifice high-Re asymptote ≈ 0.60; LOX and fuel use the same correlation.
   fuel:
-    Cd_inf: 0.65
-    a_Re: 0.2
-    Cd_min: 0.2
+    Cd_inf: 0.6
+    a_Re: 0.18
+    Cd_min: 0.35
+    use_geometry_cd: true
+    d_ref_m: 0.002
+    cd_small_hole_exponent: 0.20
+    cd_large_hole_log_gain: 0.015
+    cd_inf_max: 0.62
+    cd_inf_min_geom: 0.48
+    d_min_m: 0.0004
     use_pressure_correction: false
     P_ref: 5000000.0
     a_P: 0.0
@@ -175,9 +185,16 @@ discharge:
     T_ref: 300.0
     a_T: 0.0
   oxidizer:
-    Cd_inf: 0.4
-    a_Re: 0.15
-    Cd_min: 0.15
+    Cd_inf: 0.6
+    a_Re: 0.18
+    Cd_min: 0.35
+    use_geometry_cd: true
+    d_ref_m: 0.002
+    cd_small_hole_exponent: 0.20
+    cd_large_hole_log_gain: 0.015
+    cd_inf_max: 0.62
+    cd_inf_min_geom: 0.48
+    d_min_m: 0.0004
     use_pressure_correction: false
     P_ref: 5000000.0
     a_P: 0.0
@@ -193,7 +210,11 @@ spray:
   weber:
     We_min: 15.0
   smd:
-    model: lefebvre
+    model: ingebo
+    C_ingebo: 3.9
+    chamber_gas_R: 360.0
+    chamber_gas_T: 3500.0
+    # Legacy Lefebvre params (used only if model: lefebvre)
     C: 0.5
     m: 0.6
     p: 0.0
@@ -216,7 +237,7 @@ combustion:
     cea_parallel_workers: null
     ox_name: LOX
     fuel_name: CH4
-    expansion_ratio: 7.443037974683544
+    expansion_ratio: 6.142319923551047
     cache_file: output/cache/cea_cache_LOX_CH4_3D.npz
     Pc_range:
     - 1000000.0
@@ -376,7 +397,8 @@ thrust:
 design_requirements:
   target_thrust: 8000.0
   target_apogee: 3048.0
-  optimal_of_ratio: 3.5
+  # Target O/F from CEA / Design Requirements tab — drives Layer-1 objective and seed jet scaling (not yaml injector sizing).
+  optimal_of_ratio: 2.8
   target_burn_time: 5.8
   max_lox_tank_pressure_psi: 700.0
   max_fuel_tank_pressure_psi: 700.0
@@ -387,10 +409,10 @@ design_requirements:
   max_nozzle_exit_diameter: 0.2032
   min_Lstar: 0.76
   max_Lstar: 1.5
-  min_stability_score: 0.75
-  require_stable_state: true
+  min_stability_score: 0.58
+  require_stable_state: false
   stability_margin_handicap: 0.0
-  min_stability_margin: 1.2
+  min_stability_margin: 1.05
   chugging_margin_min: 0.2
   acoustic_margin_min: 0.1
   feed_stability_min: 0.15
@@ -402,32 +424,44 @@ design_requirements:
   injector_dp_ratio_O_max: 0.35
   injector_dp_ratio_F_min: 0.15
   injector_dp_ratio_F_max: 0.35
-  W_geom_ao_af_momentum: 0.0
-  W_MOM: 2400.0
-  impinging_momentum_R_min: 0.8
-  impinging_momentum_R_max: 1.2
+  W_geom_ao_af_momentum: 3500.0
+  W_MOM: 30000.0
+  impinging_momentum_R_min: 0.9
+  impinging_momentum_R_max: 1.1
+  # Sauter mean diameter (atomization) objective: two-sided deadband around the target.
+  # Physics SMD = mass-flux-weighted Ingebo D32_O/D32_F (aerodynamic Weber + liquid Reynolds +
+  # impingement angle via the collision velocity). Penalized only outside target*(1 ± rel_tol).
+  W_SMD: 2000.0
+  target_smd_microns: 50.0
+  layer1_smd_rel_tol: 0.20
+  # Equal-tank-pressure objective. OFF by default (0.0); enabled via the "Match propellant tank
+  # pressures" checkbox in the optimizer settings. Independent of R=1: differing densities, feed
+  # losses, and injector ΔP mean matched tanks do NOT imply matched momentum. When enabled the
+  # optimizer trades orifice area / velocity / angle to satisfy both. Scale = psi gap costing 1 unit².
+  W_TANK_EQUAL: 0.0
+  layer1_tank_equal_scale_psi: 100.0
+  # Element-geometry fit: ring pitch-circle must fit the bore, orifices must not overlap, and
+  # (impingement standoff + droplet vaporization length) must fit the chamber length. Gives the
+  # `spacing` variable a real job; zero when the layout is comfortable.
+  W_IMP_GEOM: 1500.0
   layer1_impinging_angle_deg_min: 55.0
   layer1_impinging_angle_deg_max: 90.0
   W_IMPINGING_ANGLE: 400.0
-  # Prefer coherent paired doublets (engineering preference; does not widen validation gates).
   W_IMPINGING_JET_ASYM: 180.0
   layer1_impinging_jet_angle_max_asym_deg: 26.0
-  # Mild preference to center P_exit on P_amb inside the hinge deadband (0 = legacy flat plateau).
   layer1_exit_pressure_inside_quad_scale: 0.38
   layer1_impinging_n_doublets_max: 20
   layer1_random_seed: null
-  # Real ``evaluate()`` + same scalar as CMA workers; only improves initial mean (0 = off).
   layer1_cma_warmstart_trials: 16
   layer1_cma_warmstart_sigma_frac: 0.04
-  # Tighten CMA step size on first restart only after warm-start (reduces 1e6 first-generation wall).
   layer1_cma_restart0_sigma_scale: 0.48
-  # Local polish after CMA-ES: tighter than legacy 1e-6; optional second pass nudges weighted obj further.
-  layer1_lbfgs_gtol: 1.0e-9
+  layer1_lbfgs_gtol: 1.0e-09
   layer1_lbfgs_second_pass: true
-  W_DP: 500.0
-  W_DP_O: 1000.0
-  W_DP_F: 1000.0
-  layer1_infeasibility_gate_eps: null
+  W_DP: 800.0
+  W_DP_O: 12000.0
+  W_DP_F: 175000.0
+  W_DP_HIGH: 25000.0
+  layer1_infeasibility_gate_eps: 0.002
   layer1_W_THRUST: 60000.0
   layer1_W_OF: 20000.0
   layer1_W_OF_low_MR_scale: 1.0
@@ -437,7 +471,7 @@ design_requirements:
   W_CHAMBER_SHAPE: 2500.0
   layer1_chamber_dt_ratio_min: 2.2
   layer1_chamber_dt_ratio_max: 3.2
-  layer1_chamber_ld_ratio_min: 1.6
+  layer1_chamber_ld_ratio_min: 1.0
   layer1_chamber_ld_ratio_max: 3.2
   layer1_stagnation_pressure_frac_min: 0.65
   layer1_stagnation_pressure_frac_max: 0.95

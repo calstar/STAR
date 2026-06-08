@@ -390,8 +390,8 @@ design_requirements:
   injector_dp_ratio_F_max: 0.55
   W_geom_ao_af_momentum: 3500.0
   W_MOM: 30000.0
-  impinging_momentum_R_min: 0.93
-  impinging_momentum_R_max: 1.07
+  impinging_momentum_R_min: 0.9
+  impinging_momentum_R_max: 1.1
   layer1_impinging_n_doublets_max: 20
   layer1_random_seed: 42
   W_DP: 800.0

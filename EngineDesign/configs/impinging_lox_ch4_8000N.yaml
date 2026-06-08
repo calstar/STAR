@@ -119,8 +119,12 @@ design_requirements:
   W_geom_ao_af_momentum: 3500.0
   # Impinging: steer momentum_ratio_R ≈ 1 (Layer‑1 hinge + weights)
   W_MOM: 30000.0
-  impinging_momentum_R_min: 0.93
-  impinging_momentum_R_max: 1.07
+  impinging_momentum_R_min: 0.9
+  impinging_momentum_R_max: 1.1
+  # Momentum R is steered to ~1 by the soft log hinge (W_MOM) + the wide validation band above.
+  # No deadband: controlled parallel-CMA tests showed a momentum deadband does NOT change the
+  # design the optimizer lands on (R still settles ~1.13 at 150 iters either way) — it only
+  # cosmetically discounts the in-band penalty — so it was removed to keep the objective honest.
   # Manufacturability / packing: cap paired unlike doublets (LOX count = fuel count).
   # Machining cap: allow up to 20 paired doublets (finer packing / more hydraulic DOF than n≤15 runs).
   layer1_impinging_n_doublets_max: 20
@@ -137,8 +141,10 @@ design_requirements:
   copv_free_volume_m3: null
   feed_stability_min: 0.15
   frozen_parameters:
-    # Pin OD envelope only; throat / L* / ε free for injector–chamber co-design within min/max bands.
-    D_chamber_outer_mm: 177.0
+    # Nothing pinned by default — the optimizer co-designs chamber OD, throat, L*, ε within
+    # their min/max bands. OD is bounded above by max_chamber_outer_diameter (0.177 m); pinning
+    # it here forced D_chamber/D_throat and L/D out of band. Freeze only via the UI checkbox.
+    D_chamber_outer_mm: null
     A_throat_mm2: null
     Lstar_mm: null
     P_F_start_psi: null

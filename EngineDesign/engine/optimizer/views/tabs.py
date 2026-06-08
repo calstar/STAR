@@ -489,7 +489,16 @@ def _design_requirements_tab(config_obj: PintleEngineConfig) -> PintleEngineConf
             key="opt_max_fuel_pressure",
             help="Maximum operating pressure in fuel tank."
         )
-    
+
+        match_tank_pressures = st.checkbox(
+            "Match propellant tank pressures",
+            value=False,
+            key="opt_match_tank_pressures",
+            help="If checked, the optimizer adds an objective driving the LOX and fuel tank "
+                 "pressures toward each other (independent of momentum-ratio matching). "
+                 "Default off."
+        )
+
     with col2:
         st.markdown("### Geometry Constraints")
         
@@ -621,8 +630,20 @@ def _design_requirements_tab(config_obj: PintleEngineConfig) -> PintleEngineConf
     max_P_tank_O = max_lox_tank_pressure * 6894.76  # psi to Pa
     max_P_tank_F = max_fuel_tank_pressure * 6894.76
     
+    # Pull objective weights and other design-requirement fields from the loaded YAML config so
+    # the optimizer receives them without requiring the user to re-enter every weight in the UI.
+    # UI-set keys (thrust, pressure, stability, etc.) overwrite any same-named YAML values below.
+    _dr_from_config: dict = {}
+    _dr_obj = getattr(config_obj, "design_requirements", None)
+    if _dr_obj is not None:
+        try:
+            _dr_from_config = _dr_obj.model_dump(exclude_none=False)
+        except Exception:
+            pass
+
     # Store all requirements in session state
     st.session_state["design_requirements"] = {
+        **_dr_from_config,  # YAML weights/requirements as base (W_SMD, W_MOM, W_IMP_GEOM, etc.)
         # Performance targets
         "target_thrust": target_thrust,
         "target_apogee": target_apogee,
@@ -633,6 +654,9 @@ def _design_requirements_tab(config_obj: PintleEngineConfig) -> PintleEngineConf
         "max_P_tank_F": max_P_tank_F,
         "max_lox_tank_pressure_psi": max_lox_tank_pressure,
         "max_fuel_tank_pressure_psi": max_fuel_tank_pressure,
+        # Equal-tank-pressure objective (opt-in via checkbox; default off)
+        "W_TANK_EQUAL": 800.0 if match_tank_pressures else 0.0,
+        "layer1_tank_equal_scale_psi": 100.0,
         # Geometry constraints
         "max_engine_length": max_engine_length,
         "max_chamber_outer_diameter": max_chamber_outer_diameter,
@@ -1638,7 +1662,15 @@ def _layer1_tab(config_obj: PintleEngineConfig, runner: Optional[PintleEngineRun
             key="layer1_thrust_tol",
             help="Acceptable deviation from target thrust"
         ) / 100.0
-    
+
+    match_tank_pressures_l1 = st.checkbox(
+        "Match propellant tank pressures",
+        value=False,
+        key="layer1_match_tank_pressures",
+        help="Adds an objective driving LOX and fuel tank pressures toward each other. "
+             "Independent of momentum-ratio matching (R=1)."
+    )
+
     # Live objective convergence plot container (persists while optimization runs)
     st.markdown("#### Layer 1 Objective Convergence")
     objective_plot_container = st.empty()
@@ -1661,7 +1693,10 @@ def _layer1_tab(config_obj: PintleEngineConfig, runner: Optional[PintleEngineRun
                 "thrust": thrust_tolerance,
                 "apogee": 0.15,  # Not used for Layer 1
             }
-            
+
+            requirements = dict(requirements)
+            requirements["W_TANK_EQUAL"] = 800.0 if match_tank_pressures_l1 else 0.0
+
             # Reset any previous objective history
             st.session_state["layer1_objective_history"] = []
             

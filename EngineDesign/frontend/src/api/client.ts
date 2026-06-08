@@ -624,21 +624,23 @@ export async function getChamberGeometry(): Promise<ApiResponse<ChamberGeometryR
 
 // Frozen parameters for Layer 1 optimization (user-friendly units)
 export interface FrozenParameters {
+  // `null` = explicitly unfrozen (clears a YAML/baseline pin via the backend merge);
+  // `undefined`/absent = leave as-is. See updateFrozenParam in DesignRequirements.tsx.
   // Chamber geometry
-  A_throat_mm2?: number;           // Throat area [mm²]
-  Lstar_mm?: number;               // Characteristic length L* [mm]
-  expansion_ratio?: number;        // Expansion ratio (A_exit/A_throat)
-  D_chamber_outer_mm?: number;     // Chamber outer diameter [mm]
+  A_throat_mm2?: number | null;    // Throat area [mm²]
+  Lstar_mm?: number | null;        // Characteristic length L* [mm]
+  expansion_ratio?: number | null; // Expansion ratio (A_exit/A_throat)
+  D_chamber_outer_mm?: number | null; // Chamber outer diameter [mm]
 
   // Injector geometry
-  d_pintle_tip_mm?: number;        // Pintle tip diameter [mm]
-  h_gap_mm?: number;               // Annular gap height [mm]
-  n_orifices?: number;             // Number of LOX orifices
-  d_orifice_mm?: number;           // LOX orifice diameter [mm]
+  d_pintle_tip_mm?: number | null; // Pintle tip diameter [mm]
+  h_gap_mm?: number | null;        // Annular gap height [mm]
+  n_orifices?: number | null;      // Number of LOX orifices
+  d_orifice_mm?: number | null;    // LOX orifice diameter [mm]
 
   // Initial tank pressures
-  P_O_start_psi?: number;          // Initial LOX tank pressure [psi]
-  P_F_start_psi?: number;          // Initial fuel tank pressure [psi]
+  P_O_start_psi?: number | null;   // Initial LOX tank pressure [psi]
+  P_F_start_psi?: number | null;   // Initial fuel tank pressure [psi]
 }
 
 export interface DesignRequirements {
@@ -705,6 +707,8 @@ export interface DesignRequirements {
   W_SMD?: number;
   target_smd_microns?: number;
   layer1_smd_rel_tol?: number;
+  W_TANK_EQUAL?: number;
+  layer1_tank_equal_scale_psi?: number;
 
   // Frozen parameters (optional - for locking specific values during optimization)
   frozen_parameters?: FrozenParameters;

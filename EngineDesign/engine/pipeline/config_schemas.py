@@ -268,9 +268,58 @@ class AblativeCoolingConfig(BaseModel):
 
 class DischargeConfig(BaseModel):
     """Discharge coefficient configuration"""
-    Cd_inf: float = Field(gt=0, le=1, description="Cd at infinite Re")
+    Cd_inf: float = Field(
+        gt=0,
+        le=1,
+        description=(
+            "Baseline Cd at infinite Re for the reference orifice diameter d_ref_m "
+            "(thin-plate sharp hole, typically 0.60 for machined impinging jets)."
+        ),
+    )
     a_Re: float = Field(ge=0, description="Reynolds number correction parameter")
     Cd_min: float = Field(default=0.2, ge=0, le=1, description="Minimum Cd")
+    use_geometry_cd: bool = Field(
+        default=True,
+        description=(
+            "When True, Cd_inf is scaled from jet/orifice diameter d_hyd via cd_inf_from_orifice_diameter "
+            "before the Re correction (impinging jets; pintle orifice OD / fuel gap hydraulic diameter)."
+        ),
+    )
+    d_ref_m: float = Field(
+        default=0.002,
+        gt=0,
+        description="Reference hole diameter [m] where Cd_inf equals the Cd_inf baseline (default 2 mm).",
+    )
+    cd_small_hole_exponent: float = Field(
+        default=0.20,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "For d < d_ref: Cd_inf scales as Cd_inf * (d/d_ref)^exponent (small-hole manufacturing / L/t penalty)."
+        ),
+    )
+    cd_large_hole_log_gain: float = Field(
+        default=0.015,
+        ge=0.0,
+        description="For d > d_ref: Cd_inf += gain * ln(d/d_ref), capped at cd_inf_max.",
+    )
+    cd_inf_max: float = Field(
+        default=0.62,
+        gt=0,
+        le=1,
+        description="Upper cap on geometry-based Cd_inf (slightly radiused / large-hole asymptote).",
+    )
+    cd_inf_min_geom: float = Field(
+        default=0.48,
+        gt=0,
+        le=1,
+        description="Lower floor on geometry-based Cd_inf for very small holes.",
+    )
+    d_min_m: float = Field(
+        default=0.0004,
+        gt=0,
+        description="Minimum diameter used in Cd_geom [m] (below this, clamp to d_min_m).",
+    )
     # Pressure and temperature dependence (optional)
     use_pressure_correction: bool = Field(default=False, description="Enable pressure-dependent Cd (compressibility effects)")
     P_ref: float = Field(default=5.0e6, gt=0, description="Reference pressure for pressure correction [Pa]")
@@ -289,13 +338,44 @@ class SprayAngleConfig(BaseModel):
 
 class SMDConfig(BaseModel):
     """Sauter Mean Diameter configuration"""
-    model: Literal["lefebvre", "nukiyama_tanasawa"] = Field(
+    model: Literal["lefebvre", "nukiyama_tanasawa", "ingebo"] = Field(
         default="lefebvre",
-        description="SMD model type"
+        description=(
+            "SMD model type. 'ingebo' is the established impinging-jet correlation "
+            "D32 = C_ingebo·d·(We_g·Re_l)^(-1/4) driven by the impingement relative velocity "
+            "(recommended for impinging doublets). 'lefebvre' is the legacy We^-m·(1+Oh)^p form."
+        ),
     )
     C: float = Field(default=0.5, gt=0, description="Lefebvre constant C")
     m: float = Field(default=0.6, gt=0, description="Lefebvre exponent m")
-    p: float = Field(default=0.0, description="Lefebvre exponent p")
+    p: float = Field(default=0.0, description="Lefebvre exponent p (viscous term (1+Oh)^p)")
+    C_ingebo: float = Field(
+        default=3.9,
+        gt=0,
+        description=(
+            "Prefactor for the Ingebo impinging-jet SMD correlation "
+            "D32 = C_ingebo·d·(We_g·Re_l)^(-1/4). Literature reports ~3.9-5.0; "
+            "calibrate against a reference/target SMD."
+        ),
+    )
+    chamber_gas_R: float = Field(
+        default=360.0,
+        gt=0,
+        description=(
+            "Representative specific gas constant [J/(kg·K)] of the combustion gas, used only to "
+            "estimate the chamber gas density (rho_g = Pc/(R·T)) for the aerodynamic Weber number "
+            "in the Ingebo correlation. The injector solve runs before CEA chamber state is "
+            "available, so this is a configured representative value (LOX/CH4 ≈ 360)."
+        ),
+    )
+    chamber_gas_T: float = Field(
+        default=3500.0,
+        gt=0,
+        description=(
+            "Representative combustion-gas temperature [K] for the chamber gas density estimate "
+            "rho_g = Pc/(R·T) used in the Ingebo aerodynamic Weber number (LOX/CH4 ≈ 3500)."
+        ),
+    )
     we_corr_max: Optional[float] = Field(
         default=None,
         gt=0.0,
@@ -849,7 +929,15 @@ class DesignRequirementsConfig(BaseModel):
     impinging_momentum_R_max: Optional[float] = Field(
         default=None,
         gt=0.0,
-        description="Preferred upper edge for momentum_ratio_R hinge.",
+        description="Preferred upper edge for momentum_ratio_R validation gate (impinging-only).",
+    )
+    layer1_momentum_log_deadband_rel: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Multiplicative deadband for Layer-1 log-space momentum pull toward R=1 "
+            "(optimizer soft term; code default 0.008 when unset)."
+        ),
     )
     layer1_impinging_angle_deg_min: Optional[float] = Field(
         default=None,
@@ -887,6 +975,60 @@ class DesignRequirementsConfig(BaseModel):
         description=(
             "Impinging paired jets only: allowable |θ_O−θ_F| before asymmetry hinge activates [deg]. "
             "Unset ⇒ optimizer defaults (see layer1_static_optimization)."
+        ),
+    )
+    # Layer 1 impinging-only: SMD (atomization) objective. Penalizes the mass-flux-weighted
+    # effective Sauter mean diameter (taken directly from the injector-physics Ingebo D32, which
+    # already captures aerodynamic Weber, liquid Reynolds/viscosity, and impingement angle via the
+    # law-of-cosines relative velocity) when it falls outside a *two-sided* band around the target.
+    W_SMD: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Layer 1 impinging-only weight on the SMD range penalty. 0/None disables. The penalty is "
+            "a two-sided deadband: zero inside [target·(1−tol), target·(1+tol)], squared outside."
+        ),
+    )
+    target_smd_microns: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Target effective Sauter mean diameter [µm] for the SMD objective (e.g. 50).",
+    )
+    layer1_smd_rel_tol: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Half-width of the SMD deadband as a fraction of target (e.g. 0.20 ⇒ band is "
+            "target·[0.8, 1.2]). Unset ⇒ optimizer default (0.20)."
+        ),
+    )
+    # Layer 1 impinging-only: equal feed/tank pressure objective. Drives the LOX and fuel tank
+    # stagnation pressures together. This is a SEPARATE objective from R≈1 — equal tank pressure does
+    # NOT imply momentum matching because the two sides have different densities, feed-line losses,
+    # and injector ΔP (different hole sizes/angles).
+    W_TANK_EQUAL: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Layer 1 impinging-only weight on ((P_tank_O − P_tank_F)/scale)². 0/None disables."
+        ),
+    )
+    layer1_tank_equal_scale_psi: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Normalizing scale [psi] for the equal-tank-pressure penalty. Unset ⇒ 100 psi.",
+    )
+    # Layer 1 impinging-only: injector geometry / vaporization-fit objective. Couples the impingement
+    # standoff (where the streams meet) and the droplet vaporization length to the available chamber
+    # length, and penalizes ring overflow / element overlap. Gives the ``spacing`` design variable a
+    # real physical effect (impingement distance + pitch-circle diameter).
+    W_IMP_GEOM: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Layer 1 impinging-only weight on the geometry/vaporization-fit penalty (normalized "
+            "squared violations of: L_imp+x* within the evaporation budget, ring pitch diameter "
+            "within the chamber bore, and element non-overlap). 0/None disables."
         ),
     )
     layer1_exit_pressure_inside_quad_scale: Optional[float] = Field(
@@ -966,7 +1108,7 @@ class DesignRequirementsConfig(BaseModel):
     layer1_infeasibility_gate_eps: Optional[float] = Field(
         default=None,
         ge=0.0,
-        description="Treat infeasibility_score ≤ eps as feasible for thrust/MR/ΔP objective blending.",
+        description="Treat infeasibility_score ≤ eps as feasible for thrust/MR/ΔP objective blending (code default 0.002).",
     )
     layer1_W_THRUST: Optional[float] = Field(
         default=None,

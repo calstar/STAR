@@ -1,22 +1,24 @@
 import type { DesignRequirements as DesignRequirementsType, FrozenParameters } from '../api/client';
 
 /** Default Design Requirements used until API/config loads. */
+/** Must match configs/default.yaml design_requirements until API/config loads. */
 export const DEFAULT_DESIGN_REQUIREMENTS: DesignRequirementsType = {
-  target_thrust: 7000.0,
+  target_thrust: 8000.0,
   target_apogee: 3048.0,
-  optimal_of_ratio: 2.3,
-  target_burn_time: 10.0,
+  optimal_of_ratio: 3.5,
+  target_burn_time: 5.8,
   max_lox_tank_pressure_psi: 700.0,
-  max_fuel_tank_pressure_psi: 850.0,
-  max_engine_length: 0.5,
-  max_chamber_outer_diameter: 0.15,
-  max_nozzle_exit_diameter: 0.101,
-  min_Lstar: 0.95,
-  max_Lstar: 1.27,
-  min_stability_score: 0.75,
-  require_stable_state: true,
+  max_fuel_tank_pressure_psi: 700.0,
+  W_TANK_EQUAL: 0.0,
+  max_engine_length: 0.4,
+  max_chamber_outer_diameter: 0.2032,
+  max_nozzle_exit_diameter: 0.2032,
+  min_Lstar: 0.76,
+  max_Lstar: 1.5,
+  min_stability_score: 0.58,
+  require_stable_state: false,
   stability_margin_handicap: 0.0,
-  min_stability_margin: 1.2,
+  min_stability_margin: 1.05,
   chugging_margin_min: 0.2,
   acoustic_margin_min: 0.1,
   feed_stability_min: 0.15,
@@ -43,11 +45,15 @@ export function DesignRequirements({
   };
 
   const updateFrozenParam = (field: keyof FrozenParameters, value: number | undefined) => {
+    // Send an explicit `null` (not `undefined`) when clearing a pin. `undefined` is dropped by
+    // JSON.stringify, so the backend would never see the key and could not remove a pin that
+    // originated from the loaded YAML — leaving the parameter silently frozen. `null` lets the
+    // backend merge logic pop it, so unchecking the box actually un-freezes the parameter.
     onRequirementsChange({
       ...requirements,
       frozen_parameters: {
         ...requirements.frozen_parameters,
-        [field]: value,
+        [field]: value === undefined ? null : value,
       },
     });
   };
@@ -122,7 +128,9 @@ export function DesignRequirements({
               max="4.0"
               step="0.1"
             />
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Target oxidizer-to-fuel mixture ratio. LOX/RP-1 optimal: 2.4-2.8 for Isp, 2.2-2.5 for stability.</p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+              Target oxidizer-to-fuel mixture ratio from CEA or mission analysis. Layer 1 rescales impinging seed jets to this MR at run start; the optimizer still adjusts jet diameters.
+            </p>
           </div>
 
           <div>
@@ -146,6 +154,28 @@ export function DesignRequirements({
       {/* Tank Pressures */}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
         <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">🔋 Tank Pressures</h3>
+        <div className="mb-4 flex items-center gap-3">
+          <input
+            type="checkbox"
+            id="match_tank_pressures"
+            checked={!!requirements.W_TANK_EQUAL}
+            onChange={(e) => {
+              const matched = e.target.checked;
+              onRequirementsChange({
+                ...requirements,
+                W_TANK_EQUAL: matched ? 800.0 : 0.0,
+                max_fuel_tank_pressure_psi: matched ? requirements.max_lox_tank_pressure_psi : requirements.max_fuel_tank_pressure_psi,
+              });
+            }}
+            className="w-4 h-4 accent-blue-500"
+          />
+          <label htmlFor="match_tank_pressures" className="text-sm font-medium text-[var(--color-text-primary)] cursor-pointer">
+            Match propellant tank pressures
+          </label>
+          <span className="text-xs text-[var(--color-text-secondary)]">
+            Optimizer drives LOX and fuel tanks to the same pressure (independent of momentum-ratio matching).
+          </span>
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
@@ -154,13 +184,20 @@ export function DesignRequirements({
             <input
               type="number"
               value={requirements.max_lox_tank_pressure_psi}
-              onChange={(e) => updateField('max_lox_tank_pressure_psi', parseFloat(e.target.value))}
+              onChange={(e) => {
+                const val = parseFloat(e.target.value);
+                onRequirementsChange({
+                  ...requirements,
+                  max_lox_tank_pressure_psi: val,
+                  max_fuel_tank_pressure_psi: requirements.W_TANK_EQUAL ? val : requirements.max_fuel_tank_pressure_psi,
+                });
+              }}
               className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
               min="100"
               max="5000"
               step="25"
             />
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Maximum operating pressure in LOX tank. Sets upper bound for chamber pressure.</p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Maximum operating pressure in LOX tank.</p>
           </div>
 
           <div>
@@ -171,12 +208,19 @@ export function DesignRequirements({
               type="number"
               value={requirements.max_fuel_tank_pressure_psi}
               onChange={(e) => updateField('max_fuel_tank_pressure_psi', parseFloat(e.target.value))}
-              className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={!!requirements.W_TANK_EQUAL}
+              className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                requirements.W_TANK_EQUAL
+                  ? 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] cursor-not-allowed opacity-50'
+                  : 'bg-[var(--color-bg-primary)] border-[var(--color-border)] text-[var(--color-text-primary)]'
+              }`}
               min="100"
               max="5000"
               step="25"
             />
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Maximum operating pressure in fuel tank.</p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+              {requirements.W_TANK_EQUAL ? 'Locked to LOX tank pressure.' : 'Maximum operating pressure in fuel tank.'}
+            </p>
           </div>
         </div>
       </div>

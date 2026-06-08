@@ -25,10 +25,15 @@ from engine.optimizer.layers.layer1_static_optimization import (
     run_layer1_optimization,
     _expected_geom_ao_af_for_unit_momentum_ratio,
     _geom_ao_af_momentum_hint_squared,
+    _rescale_impinging_jet_diameters_for_mr_target,
+    _impinging_hard_geometry_blocks_eval,
+    _impinging_infeasibility_flow_capacity_terms,
+    _impinging_infeasibility_layout_terms,
     _impinging_jet_pair_asymmetry_squared,
     _layer1_exit_pressure_sq_term,
     _impinging_momentum_band_violation_squared,
     _impinging_momentum_hinge_squared,
+    _impinging_momentum_log_target_squared,
     _layer1_cma_warmstart_candidates,
     _merge_runner_eval_into_performance,
     _snap_integer_dims,
@@ -175,6 +180,15 @@ class TestLayer1ImpingingVector(unittest.TestCase):
         self.assertGreater(_impinging_momentum_hinge_squared(0.84, r_band_lo=lo, r_band_hi=hi), 0.0)
         self.assertGreater(_impinging_momentum_hinge_squared(1.16, r_band_lo=lo, r_band_hi=hi), 0.0)
 
+    def test_momentum_hinge_default_band_matches_validation_at_0948(self):
+        """Layer 1 default band [0.9, 1.1]: passing validation must not pay W_MOM."""
+        lo, hi = 0.9, 1.1
+        self.assertAlmostEqual(
+            _impinging_momentum_hinge_squared(0.948, r_band_lo=lo, r_band_hi=hi),
+            0.0,
+            places=12,
+        )
+
     def test_momentum_band_violation_squared_zero_inside(self):
         self.assertAlmostEqual(
             _impinging_momentum_band_violation_squared(1.0, r_band_lo=0.8, r_band_hi=1.2),
@@ -185,6 +199,31 @@ class TestLayer1ImpingingVector(unittest.TestCase):
     def test_momentum_band_violation_squared_positive_outside(self):
         v = _impinging_momentum_band_violation_squared(0.619, r_band_lo=0.8, r_band_hi=1.2)
         self.assertGreater(v, 0.0)
+
+    def test_momentum_log_target_zero_at_unity(self):
+        self.assertAlmostEqual(
+            _impinging_momentum_log_target_squared(1.0, rel_deadband=0.008),
+            0.0,
+            places=12,
+        )
+
+    def test_momentum_log_target_active_inside_wide_band(self):
+        """Wide validation band used to zero the hinge; log target still penalizes R≠1."""
+        lo, hi = 0.85, 1.15
+        self.assertAlmostEqual(
+            _impinging_momentum_hinge_squared(1.05, r_band_lo=lo, r_band_hi=hi),
+            0.0,
+            places=12,
+        )
+        self.assertGreater(
+            _impinging_momentum_log_target_squared(1.05, rel_deadband=0.008),
+            0.0,
+        )
+
+    def test_momentum_log_target_grows_away_from_one(self):
+        v_near = _impinging_momentum_log_target_squared(1.02, rel_deadband=0.008)
+        v_far = _impinging_momentum_log_target_squared(1.10, rel_deadband=0.008)
+        self.assertGreater(v_far, v_near)
 
     def test_expected_geom_ao_af_matches_mr_over_sqrt_density_ratio(self):
         rho_o = 1141.0
@@ -204,6 +243,43 @@ class TestLayer1ImpingingVector(unittest.TestCase):
         self.assertAlmostEqual(sq, 0.0, places=12)
         self.assertAlmostEqual(ao_af, exp, places=12)
         self.assertAlmostEqual(exp2, exp, places=12)
+
+    def test_rescale_impinging_jets_matches_target_ao_af_for_mr(self):
+        rho_o = 1141.0
+        rho_f = 422.6
+        for mr in (2.8, 3.5):
+            exp_af = _expected_geom_ao_af_for_unit_momentum_ratio(mr, rho_o, rho_f)
+            d_o, d_f = _rescale_impinging_jet_diameters_for_mr_target(
+                0.00264,
+                0.00179,
+                n_elements_O=20,
+                n_elements_F=20,
+                optimal_of=mr,
+                rho_o=rho_o,
+                rho_f=rho_f,
+            )
+            a_o = 20 * math.pi * (d_o / 2.0) ** 2
+            a_f = 20 * math.pi * (d_f / 2.0) ** 2
+            self.assertAlmostEqual(a_o / a_f, exp_af, places=3)
+
+    def test_rescale_impinging_jets_noop_when_already_matched(self):
+        rho_o = 1141.0
+        rho_f = 422.6
+        mr = 2.8
+        exp_af = _expected_geom_ao_af_for_unit_momentum_ratio(mr, rho_o, rho_f)
+        d_f = 0.00179
+        d_o = math.sqrt(exp_af) * d_f
+        out_o, out_f = _rescale_impinging_jet_diameters_for_mr_target(
+            d_o,
+            d_f,
+            n_elements_O=20,
+            n_elements_F=20,
+            optimal_of=mr,
+            rho_o=rho_o,
+            rho_f=rho_f,
+        )
+        self.assertAlmostEqual(out_o, d_o, places=6)
+        self.assertAlmostEqual(out_f, d_f, places=6)
 
     def test_design_vector_length_is_13_for_paired_impinging_doublets(self):
         b = _impinging_bounds_placeholder()
@@ -510,6 +586,87 @@ class TestLayer1ImpingingVector(unittest.TestCase):
             places=12,
         )
         self.assertAlmostEqual(_impinging_jet_pair_asymmetry_squared(17.0, 42.0, max_delta_deg=28.0), 0.0)
+
+    def test_impinging_layout_infeasibility_overlap_and_pitch(self):
+        """Unlike doublet layout: jet overlap + n·spacing/π pitch circle vs bore."""
+        score_ok = _impinging_infeasibility_layout_terms(
+            d_jet_O=0.002,
+            d_jet_F=0.0018,
+            sp_O=0.012,
+            sp_F=0.011,
+            n_el_O=20,
+            n_el_F=20,
+            D_chamber_inner=0.15,
+        )
+        self.assertAlmostEqual(score_ok, 0.0, places=12)
+
+        score_overlap = _impinging_infeasibility_layout_terms(
+            d_jet_O=0.014,
+            d_jet_F=0.0018,
+            sp_O=0.012,
+            sp_F=0.011,
+            n_el_O=20,
+            n_el_F=20,
+            D_chamber_inner=0.15,
+        )
+        self.assertGreater(score_overlap, 0.0)
+
+        # pitch diameter = n*sp/pi must fit bore
+        score_pitch = _impinging_infeasibility_layout_terms(
+            d_jet_O=0.002,
+            d_jet_F=0.0018,
+            sp_O=0.030,
+            sp_F=0.030,
+            n_el_O=20,
+            n_el_F=20,
+            D_chamber_inner=0.10,
+        )
+        self.assertGreater(score_pitch, 0.0)
+
+    def test_impinging_hard_geometry_blocks_eval(self):
+        self.assertTrue(
+            _impinging_hard_geometry_blocks_eval(
+                d_jet_O=0.015,
+                d_jet_F=0.002,
+                sp_O=0.010,
+                sp_F=0.010,
+                D_chamber_inner=0.15,
+                D_throat_check=0.04,
+                A_chamber_check=0.017,
+                A_throat_check=1.0e-4,
+            )
+        )
+        self.assertFalse(
+            _impinging_hard_geometry_blocks_eval(
+                d_jet_O=0.002,
+                d_jet_F=0.002,
+                sp_O=0.012,
+                sp_F=0.012,
+                D_chamber_inner=0.15,
+                D_throat_check=0.04,
+                A_chamber_check=0.017,
+                A_throat_check=1.0e-4,
+            )
+        )
+
+    def test_impinging_flow_capacity_infeasibility(self):
+        A_throat = 1.0e-4
+        self.assertAlmostEqual(
+            _impinging_infeasibility_flow_capacity_terms(
+                A_lox_flow=8.0e-5,
+                A_fuel_flow=7.0e-5,
+                A_throat_check=A_throat,
+            ),
+            0.0,
+            places=12,
+        )
+        over = _impinging_infeasibility_flow_capacity_terms(
+            A_lox_flow=1.2e-4,
+            A_fuel_flow=7.0e-5,
+            A_throat_check=A_throat,
+            flow_cap=0.95,
+        )
+        self.assertAlmostEqual(over, (1.2e-4 / A_throat - 0.95) ** 2, places=12)
 
 
 if __name__ == "__main__":
