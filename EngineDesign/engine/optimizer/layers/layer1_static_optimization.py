@@ -31,6 +31,7 @@ from engine.core.injectors.flow_capacity import (
     merge_effective_area_warnings,
 )
 from engine.optimizer.injector_dp_penalty import (
+    injector_dp_bands_from_requirements,
     injector_dp_ratio_penalty_weighted,
     injector_dp_ratios_from_eval_result,
     injector_dp_ratio_within_gate,
@@ -67,8 +68,8 @@ _LAYER1_DEFAULT_MIN_STABILITY_MARGIN = 1.2
 
 # Fallback injector ΔP/Pc bands when ``constants_dict`` omits keys (must match
 # ``requirements.get("injector_dp_ratio_*")`` defaults in ``run_layer1_optimization``).
-_LAYER1_DEFAULT_DP_O_BAND = (0.15, 0.40)
-_LAYER1_DEFAULT_DP_F_BAND = (0.15, 0.40)
+_LAYER1_DEFAULT_DP_O_BAND = (0.20, 0.40)
+_LAYER1_DEFAULT_DP_F_BAND = (0.20, 0.40)
 
 # Fallback when ``layer1_exit_pressure_inside_quad_scale`` is absent from constants (matches
 # ``_requirement_float(..., "layer1_exit_pressure_inside_quad_scale", 0.35)``).
@@ -2979,13 +2980,10 @@ def run_layer1_optimization(
         else layer1_W_DP
     )
     layer1_W_DP_HIGH = _requirement_float(requirements, "W_DP_HIGH", 480.0)
-    layer1_dp_o_band: Tuple[float, float] = (
-        float(requirements.get("injector_dp_ratio_O_min", 0.15)),
-        float(requirements.get("injector_dp_ratio_O_max", 0.40)),
-    )
-    layer1_dp_f_band: Tuple[float, float] = (
-        float(requirements.get("injector_dp_ratio_F_min", 0.15)),
-        float(requirements.get("injector_dp_ratio_F_max", 0.40)),
+    layer1_dp_o_band, layer1_dp_f_band = injector_dp_bands_from_requirements(
+        requirements,
+        default_o=_LAYER1_DEFAULT_DP_O_BAND,
+        default_f=_LAYER1_DEFAULT_DP_F_BAND,
     )
     _lio_sf_raw = requirements.get("injector_dp_ratio_O_soft_floor")
     layer1_dp_o_soft_floor: Optional[float] = (

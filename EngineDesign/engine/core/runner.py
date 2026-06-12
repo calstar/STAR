@@ -118,7 +118,9 @@ class PintleEngineRunner:
         Pc_guess: Optional[float] = None,
         P_ambient: Optional[float] = None,
         debug: bool = False,
-        silent: bool = False
+        silent: bool = False,
+        rich_stability: bool = False,
+        stability_overrides: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Any]:
         """
         Evaluate engine performance at given tank pressures.
@@ -164,7 +166,11 @@ class PintleEngineRunner:
         """
         # Wrap entire evaluation in try-except to log errors before re-raising
         try:
-            return self._evaluate_internal(P_tank_O, P_tank_F, Pc_guess, P_ambient, debug, silent)
+            return self._evaluate_internal(
+                P_tank_O, P_tank_F, Pc_guess, P_ambient, debug, silent,
+                rich_stability=rich_stability,
+                stability_overrides=stability_overrides,
+            )
         except Exception as e:
             # Log error with full traceback if debug is enabled
             if debug:
@@ -186,7 +192,9 @@ class PintleEngineRunner:
         Pc_guess: Optional[float] = None,
         P_ambient: Optional[float] = None,
         debug: bool = False,
-        silent: bool = False
+        silent: bool = False,
+        rich_stability: bool = False,
+        stability_overrides: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Any]:
         """Internal evaluation implementation (wrapped by evaluate() for error logging)."""
         # Configure logging
@@ -532,6 +540,17 @@ class PintleEngineRunner:
             "elevation": elevation,  # Elevation from config (0 if not set)
             "diagnostics": diagnostics,
         }
+
+        if rich_stability:
+            try:
+                from engine.pipeline.stability.report import build_rich_report
+                results["stability_rich"] = build_rich_report(
+                    self.config, Pc, MR, mdot_total, cstar_actual, gamma, R, Tc,
+                    diagnostics, cg, overrides=stability_overrides,
+                )
+            except Exception as e:
+                import warnings
+                warnings.warn(f"Rich stability report failed: {e}")
         
         # Print comprehensive results summary
         log_info("\n" + "="*80)

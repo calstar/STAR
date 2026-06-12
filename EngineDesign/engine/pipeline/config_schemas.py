@@ -885,7 +885,7 @@ class DesignRequirementsConfig(BaseModel):
     
     # Injector ΔP_inj / Pc soft penalty bands (Layer 1); quadratic hinge outside each interval
     injector_dp_ratio_O_min: float = Field(
-        default=0.15,
+        default=0.20,
         ge=0.0,
         description="Preferred lower edge for oxidizer ΔP_inj/Pc (soft hinge)",
     )
@@ -895,7 +895,7 @@ class DesignRequirementsConfig(BaseModel):
         description="Preferred upper edge for oxidizer ΔP_inj/Pc (soft hinge)",
     )
     injector_dp_ratio_F_min: float = Field(
-        default=0.15,
+        default=0.20,
         ge=0.0,
         description="Preferred lower edge for fuel ΔP_inj/Pc (soft hinge)",
     )
@@ -903,6 +903,10 @@ class DesignRequirementsConfig(BaseModel):
         default=0.40,
         gt=0.0,
         description="Preferred upper edge for fuel ΔP_inj/Pc (soft hinge)",
+    )
+    feed_pressure_model: str = Field(
+        default="dome_regulated",
+        description="Tank pressure time model: blowdown (decaying segments) or dome_regulated (eq. 6.2)",
     )
     W_geom_ao_af_momentum: float = Field(
         default=0.0,

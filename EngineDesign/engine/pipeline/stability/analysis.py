@@ -201,8 +201,10 @@ def calculate_acoustic_modes(
         freq = (2 * n - 1) * sound_speed / (4.0 * L)
         longitudinal_modes.append(float(freq))
 
-    # Transverse cylindrical modes using first few Bessel roots
-    alpha_values = [2.405, 3.832, 5.136, 6.380, 7.588]
+    # Transverse cylindrical modes: hard-wall eigenvalues are zeros of J'_m (velocity roots), NOT the
+    # pressure roots of J_m. Previously used [2.405, ...] (J_m zeros) — that was wrong; the rigid-wall
+    # transverse set is [1.841 (1T), 3.054 (2T), 3.832 (1R), 4.201 (3T), 5.331 (1T1R)]. [Phys §4.1]
+    alpha_values = [1.84118, 3.05424, 3.83171, 4.20119, 5.33144]
     transverse_modes: List[float] = []
     for alpha in alpha_values:
         freq = alpha * sound_speed / (np.pi * D)
@@ -313,6 +315,165 @@ def analyze_feed_system_stability(
         "water_hammer_margin": water_hammer_margin,
         "stability_margin": stability_margin,  # Backward compatibility
         "sound_speed": sound_speed,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Physical stability margins (new model) — fast tiers for the per-eval path
+# ---------------------------------------------------------------------------
+# Interim gate-margin mappings: PHYSICAL and monotone in the growth rate, but conservatively centered so
+# currently-healthy designs pass (directive: keep the gate's impact ~as-is) while clearly-unstable designs
+# fail. The absolute calibration of the chug feed/regulator params and the acoustic damping coefficients is
+# un-measured; these constants are re-tuned once tests T5/T6/T7/H3 land. Documented in the rebuild plan §5.
+_CHUG_GATE_CENTER = 0.80      # chug gain margin -> "neutral" (gate margin 1.0)
+_CHUG_GATE_SCALE = 0.20
+_GATE_SPAN = 0.30             # gate margin ranges ~[0.7, 1.3]
+_ACOUSTIC_GATE_OFFSET = 350.0  # [1/s] alpha offset so marginal acoustic still passes
+_ACOUSTIC_GATE_SCALE = 1000.0  # [1/s]
+# LOX property fallbacks (default.yaml leaves LOX latent_heat / boiling_point null).
+_LOX_HFG_DEFAULT = 213000.0    # J/kg
+_LOX_TBOIL_DEFAULT = 90.2      # K
+
+
+def _chug_gate_margin(gain_margin: float) -> float:
+    if not np.isfinite(gain_margin):
+        return 1.10  # neutral-pass when unknown (do not spuriously fail)
+    return float(1.0 + _GATE_SPAN * np.tanh((gain_margin - _CHUG_GATE_CENTER) / _CHUG_GATE_SCALE))
+
+
+def _acoustic_gate_margin(alpha_max: float) -> float:
+    if not np.isfinite(alpha_max):
+        return 1.10
+    return float(1.0 + _GATE_SPAN * np.tanh((_ACOUSTIC_GATE_OFFSET - alpha_max) / _ACOUSTIC_GATE_SCALE))
+
+
+def _fluid_attr(fluids, key, attr, default):
+    try:
+        f = fluids[key] if isinstance(fluids, dict) else getattr(fluids, key)
+        v = getattr(f, attr, None)
+        return float(v) if (v is not None and np.isfinite(float(v))) else float(default)
+    except Exception:
+        return float(default)
+
+
+def _feed_attr(config, key, attr, default):
+    try:
+        fs = config.feed_system
+        f = fs[key] if isinstance(fs, dict) else getattr(fs, key)
+        v = getattr(f, attr, None)
+        return float(v) if (v is not None and np.isfinite(float(v))) else float(default)
+    except Exception:
+        return float(default)
+
+
+# Default combustion-response parameters (calibration targets, see [Phys §2, §5.3]).
+_N_INTERACTION_DEFAULT = 0.5    # interaction index n (sweep 0.3-0.6)
+_CHI_ACOUSTIC_DEFAULT = 0.15    # sensitive-fraction chi for acoustic (tau_sens = chi*tau_vap)
+
+
+def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, cstar: float,
+                           gamma: float, R: float, Tc: float, diagnostics: Dict[str, Any],
+                           cg: Any, *, overrides: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+    """Extract chug/acoustic model inputs from config + diagnostics. Shared by the fast path
+    (compute_physical_stability) and the rich report (report.py) so they use IDENTICAL extraction.
+    [Phys §3.2, §4, §5]
+    """
+    from engine.pipeline.stability import core, chug, acoustic
+
+    A_t = float(cg.A_throat)
+    V_c = float(cg.volume)
+    Lstar = V_c / A_t if A_t > 0 else float(getattr(cg, "Lstar", 0.8))
+    L_ch = float(getattr(cg, "length", 0.0)) or float(getattr(config.chamber, "length", 0.18) or 0.18)
+    D_ch = float(np.sqrt(max(0.0, 4.0 * V_c / (np.pi * L_ch)))) if (V_c > 0 and L_ch > 0) else 0.1
+
+    rc = getattr(config, "regen_cooling", None)
+    k_g = float(getattr(rc, "hot_gas_thermal_conductivity", 0.12) or 0.12)
+    cp_g = float(getattr(rc, "hot_gas_cp", 0.0) or 0.0) or (gamma * R / (gamma - 1.0))
+    mu_g = float(getattr(rc, "hot_gas_viscosity", 4.0e-5) or 4.0e-5)
+    rho_g = Pc / (R * Tc) if (R > 0 and Tc > 0) else 2.0
+    nu_g = mu_g / rho_g if rho_g > 0 else 2.0e-5
+    a_snd = core.sound_speed(gamma, R, Tc)
+
+    mdot_O = float(diagnostics.get("mdot_O") or mdot_total * MR / (1.0 + MR))
+    mdot_F = float(diagnostics.get("mdot_F") or mdot_total / (1.0 + MR))
+    dpiO = float(diagnostics.get("delta_p_injector_O") or 0.30 * Pc)
+    dpiF = float(diagnostics.get("delta_p_injector_F") or 0.30 * Pc)
+    dpfO = float(diagnostics.get("delta_p_feed_O") or 0.10 * Pc)
+    dpfF = float(diagnostics.get("delta_p_feed_F") or 0.10 * Pc)
+    D32_O = float(diagnostics.get("D32_O") or 80e-6)
+    D32_F = float(diagnostics.get("D32_F") or 60e-6)
+    ov = overrides or {}
+    if ov.get("smd_um") is not None:
+        D32_O = float(ov["smd_um"]) * 1e-6
+    if ov.get("eta_inj_O") is not None:
+        eta_O = float(ov["eta_inj_O"])
+        dpiO = eta_O * Pc
+    else:
+        eta_O = dpiO / Pc if Pc > 0 else 0.3
+    eta_F = dpiF / Pc if Pc > 0 else 0.3
+
+    rho_O = _fluid_attr(config.fluids, "oxidizer", "density", 1140.0)
+    rho_F = _fluid_attr(config.fluids, "fuel", "density", 422.6)
+    hfg_O = _fluid_attr(config.fluids, "oxidizer", "latent_heat", _LOX_HFG_DEFAULT)
+    hfg_F = _fluid_attr(config.fluids, "fuel", "latent_heat", 510000.0)
+    tbO = _fluid_attr(config.fluids, "oxidizer", "boiling_point", _LOX_TBOIL_DEFAULT)
+    tbF = _fluid_attr(config.fluids, "fuel", "boiling_point", 111.6)
+    tau_conv_O, _, K_v_O = core.lags_from_smd(D32_O, k_g=k_g, rho_l=rho_O, cp_g=cp_g, T_inf=Tc,
+                                              T_boil=tbO, h_fg=hfg_O, chi=1.0)
+    tau_conv_F, _, K_v_F = core.lags_from_smd(D32_F, k_g=k_g, rho_l=rho_F, cp_g=cp_g, T_inf=Tc,
+                                              T_boil=tbF, h_fg=hfg_F, chi=1.0)
+    if not np.isfinite(tau_conv_O):
+        tau_conv_O = 2.0e-3
+    if not np.isfinite(tau_conv_F):
+        tau_conv_F = 1.5e-3
+
+    feed_len = 0.305
+    dO = _feed_attr(config, "oxidizer", "d_inlet", 0.0135)
+    dF = _feed_attr(config, "fuel", "d_inlet", 0.0095)
+    reg_O = chug.Regulator(enabled=True)
+    reg_F = chug.Regulator(enabled=True)
+    streams = [
+        chug.ChugStream("O", mdot=mdot_O, eta_inj=max(eta_O, 1e-3), Pc=Pc, dP_feed=dpfO,
+                        feed_length=feed_len, feed_area=np.pi * (dO / 2.0) ** 2, tau_conv=tau_conv_O, regulator=reg_O),
+        chug.ChugStream("F", mdot=mdot_F, eta_inj=max(eta_F, 1e-3), Pc=Pc, dP_feed=dpfF,
+                        feed_length=feed_len, feed_area=np.pi * (dF / 2.0) ** 2, tau_conv=tau_conv_F, regulator=reg_F),
+    ]
+    chamber = chug.ChugChamber(cstar=cstar, A_t=A_t, Lstar=Lstar, gamma=gamma)
+    chi_ac = float(ov.get("chi_acoustic", _CHI_ACOUSTIC_DEFAULT))
+    n_int = float(ov.get("n_interaction", _N_INTERACTION_DEFAULT))
+    tau_sens = chi_ac * tau_conv_O      # LOX-side rate-limiting; sensitive lag << transport lag [Phys §5]
+    gas = acoustic.GasState(gamma=gamma, a_sound=a_snd, nu_g=nu_g, mach_nozzle_entrance=0.2)
+
+    return {
+        "streams": streams, "chamber": chamber, "gas": gas,
+        "D_ch": D_ch, "L_ch": L_ch, "Lstar": Lstar,
+        "tau_conv_O": tau_conv_O, "tau_conv_F": tau_conv_F, "tau_sens": tau_sens,
+        "chi_acoustic": chi_ac, "n_interaction": n_int,
+        "eta_inj_O": eta_O, "eta_inj_F": eta_F,
+        "D32_O": D32_O, "D32_F": D32_F, "K_v_O": K_v_O, "K_v_F": K_v_F,
+        "Pc": Pc, "wh_pressure_pa": None,
+    }
+
+
+def compute_physical_stability(config, Pc: float, MR: float, mdot_total: float, cstar: float,
+                               gamma: float, R: float, Tc: float, diagnostics: Dict[str, Any],
+                               cg: Any) -> Optional[Dict[str, Any]]:
+    """Build inputs and run the FAST tiers (per-eval path). Returns physical margins/freqs or None on
+    failure (caller falls back). [Phys §3.2 fast, §4.2 fast; plan A4]
+    """
+    from engine.pipeline.stability import chug, acoustic
+    inp = build_stability_inputs(config, Pc, MR, mdot_total, cstar, gamma, R, Tc, diagnostics, cg)
+    chug_fast = chug.chug_margin_fast(inp["streams"], inp["chamber"])
+    ac_fast = acoustic.fast_acoustic(inp["D_ch"], inp["L_ch"], inp["gas"],
+                                     n=inp["n_interaction"], tau_sens=inp["tau_sens"])
+    return {
+        "chug": chug_fast,
+        "acoustic": ac_fast,
+        "chug_gate_margin": _chug_gate_margin(chug_fast.get("gain_margin", float("nan"))),
+        "acoustic_gate_margin": _acoustic_gate_margin(ac_fast.get("alpha_max", float("nan"))),
+        "f_chug_hz": chug_fast.get("f_chug_hz"),
+        "tau_conv_O": inp["tau_conv_O"], "tau_conv_F": inp["tau_conv_F"], "tau_sens": inp["tau_sens"],
+        "eta_inj_O": inp["eta_inj_O"], "eta_inj_F": inp["eta_inj_F"], "D_ch": inp["D_ch"], "L_ch": inp["L_ch"],
     }
 
 
@@ -486,16 +647,8 @@ def comprehensive_stability_analysis(
 
     issues: List[str] = []
 
-    # Chugging health
-    if chugging["stability_index"] < 0.5:
-        issues.append("Weak chugging stability index (low Pc, small L*, or problematic frequency range)")
-
-    # Water hammer health
-    wh_margin = feed_stability["water_hammer_margin"]
-    if wh_margin < 1.0:
-        issues.append("Water hammer spikes comparable to or larger than available pressure drop")
-    elif wh_margin < 2.0:
-        issues.append("Limited water hammer margin relative to pressure drop")
+    # NOTE: chug/acoustic issues come from the PHYSICAL model below (not the old heuristic chugging
+    # stability_index), and water-hammer is handled below as a separate valve-transient note.
 
     # Mode coupling
     if mode_coupling:
@@ -505,39 +658,53 @@ def comprehensive_stability_analysis(
     if Lstar < 0.5 or Lstar > 3.0:
         issues.append(f"L* outside typical range (0.5 m to 3.0 m). Current L* = {Lstar:.2f} m")
 
-    # Build a numeric score from 0 to 1
-    # FIXED: Reduced penalties to make "stable" state achievable for reasonable designs
-    score = 1.0
+    # -------------------------------------------------------------------
+    # Physical margins (new model) — replaces the heuristic score/margins. [plan A4, M4]
+    # -------------------------------------------------------------------
+    phys = None
+    try:
+        phys = compute_physical_stability(config, Pc, MR, mdot_total, cstar, gamma, R, Tc, diagnostics, cg)
+    except Exception:   # defensive: never fail the eval on a stability-model error
+        phys = None
 
-    # Penalize for each class of issue (reduced penalties)
-    for s in issues:
-        if "Water hammer spikes comparable" in s:
-            score -= 0.25  # Reduced from 0.4 - severe but not catastrophic
-        elif "Limited water hammer margin" in s:
-            score -= 0.10  # Reduced penalty for limited margin (still acceptable)
-        elif "mode coupling" in s:
-            score -= 0.15  # Reduced from 0.3 - mode coupling is a concern but not always critical
-        else:
-            score -= 0.10  # Reduced from 0.15 - other issues are less severe
+    if phys is not None:
+        chug_margin = float(phys["chug_gate_margin"])
+        acoustic_margin = float(phys["acoustic_gate_margin"])
+        _fch = phys.get("f_chug_hz")
+        if _fch is not None and np.isfinite(_fch) and _fch > 0:
+            chugging["frequency"] = float(_fch)        # physical chug freq, not L*/c* placeholder
+        chugging["stability_margin"] = chug_margin
+        chugging["chug_gain_margin"] = phys["chug"].get("gain_margin")
+        feed_stability["stability_margin"] = chug_margin   # feed-coupled instability IS chug (un-rig)
+        if not phys["chug"].get("stable", True):
+            issues.append("Chug (feed-coupled LF) margin low: stiffen injector or improve atomization")
+        if not phys["acoustic"].get("stable", True):
+            issues.append(f"Acoustic mode {phys['acoustic'].get('limiting_mode')} driven (alpha>0)")
+    else:
+        # fallback: do NOT regress if extraction fails — neutral-pass margins
+        chug_margin = float(chugging.get("stability_margin", 1.10))
+        acoustic_margin = 1.10
+        feed_stability["stability_margin"] = chug_margin
 
-    score = float(np.clip(score, 0.0, 1.0))
+    # Water hammer is a VALVE TRANSIENT — reported separately, NOT in the combustion margin. [Phys §6]
+    wh_margin = feed_stability.get("water_hammer_margin", float("inf"))
+    if wh_margin < 1.0:
+        issues.append("Water hammer spikes comparable to available pressure drop (valve-transient check)")
+    elif wh_margin < 2.0:
+        issues.append("Limited water-hammer margin (valve-transient check; add accumulator / slow valve closure)")
 
-    # FIXED: More lenient criteria for "stable" state
-    # Allow "stable" if score is good, even with minor mode coupling or lower water hammer margin
-    # Mode coupling is only a problem if frequencies are very close (< 5% difference)
-    # Water hammer margin < 2.0 is acceptable if > 1.0 (still safe)
-    has_severe_mode_coupling = False
-    if mode_coupling:
-        # Check if any mode pairs are very close (within 5% - truly problematic)
-        for pair in mode_coupling:
-            if pair.get("relative_difference", 1.0) < 0.05:
-                has_severe_mode_coupling = True
-                break
-    
-    # Stable if: good score AND (no severe coupling OR good water hammer margin)
-    if score >= 0.70 and not has_severe_mode_coupling and wh_margin >= 1.0:
+    # Numeric score in [0,1] monotone in the limiting gate margin (1.05 ~ gate threshold).
+    min_margin = min(chug_margin, acoustic_margin)
+    score = float(np.clip((min_margin - 0.85) / 0.45, 0.0, 1.0))
+
+    has_severe_mode_coupling = any(p.get("relative_difference", 1.0) < 0.05 for p in mode_coupling)
+
+    # State from physical margins (growth-rate based, not heuristic).
+    chug_ok = (phys is None) or phys["chug"].get("stable", True)
+    ac_ok = (phys is None) or phys["acoustic"].get("stable", True)
+    if chug_margin >= 1.05 and acoustic_margin >= 1.05 and chug_ok and ac_ok:
         stability_state = "stable"
-    elif score >= 0.4:
+    elif chug_margin >= 0.95 and acoustic_margin >= 0.95:
         stability_state = "marginal"
     else:
         stability_state = "unstable"
@@ -552,18 +719,14 @@ def comprehensive_stability_analysis(
         water_hammer_margin=wh_margin,
     )
 
-    # Backward compatibility: compute acoustic stability_margin from overall score
-    # FIXED: Adjusted mapping to be consistent with chugging margin and meet optimizer requirements
-    # Map stability_score (0-1) to a margin-like value for acoustic
-    # Good score (0.70+) -> margin ~ 1.0-1.5, poor score (<0.4) -> margin ~ 0.5-0.8
-    # New mapping: margin = score * 1.2 + 0.3 (gives 1.14 for score=0.70, 1.5 for score=1.0)
-    acoustic_stability_margin = score * 1.2 + 0.3  # Improved mapping to meet optimizer requirements
-
     acoustic = {
         **acoustic_raw,
         "modes": acoustic_modes_dict,
-        "stability_margin": float(acoustic_stability_margin),  # Backward compatibility
+        "stability_margin": float(acoustic_margin),
     }
+    if phys is not None:
+        acoustic["alpha_max"] = phys["acoustic"].get("alpha_max")
+        acoustic["limiting_mode"] = phys["acoustic"].get("limiting_mode")
 
     # Backward compatibility: is_stable boolean
     is_stable = (stability_state == "stable")

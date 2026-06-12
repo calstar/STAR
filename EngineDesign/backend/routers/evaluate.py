@@ -14,10 +14,21 @@ PSI_TO_PA = 6894.76
 PA_TO_PSI = 1.0 / PSI_TO_PA
 
 
+class StabilityOverrides(BaseModel):
+    """Optional forward-mode knobs for rich stability re-evaluation."""
+    eta_inj_O: float | None = Field(default=None, gt=0, le=0.6, description="Oxidizer ΔP_inj/Pc")
+    smd_um: float | None = Field(default=None, gt=0, le=200, description="LOX SMD [µm]")
+    n_interaction: float | None = Field(default=None, gt=0, le=2, description="Combustion interaction index n")
+    chi_acoustic: float | None = Field(default=None, gt=0, le=1, description="Acoustic sensitive-fraction χ")
+
+
 class EvaluateRequest(BaseModel):
     """Request body for forward evaluation."""
     lox_pressure_psi: float = Field(..., gt=0, description="LOX tank pressure in psi")
     fuel_pressure_psi: float = Field(..., gt=0, description="Fuel tank pressure in psi")
+    stability_overrides: StabilityOverrides | None = Field(
+        default=None, description="Optional stability sensitivity overrides (forward mode sliders)",
+    )
 
 
 def convert_numpy(obj):
@@ -56,7 +67,14 @@ async def evaluate(request: EvaluateRequest):
     
     try:
         # Get raw results from runner - ambient pressure computed from config elevation
-        results = app_state.runner.evaluate(P_tank_O, P_tank_F, debug=True)
+        overrides = None
+        if request.stability_overrides is not None:
+            overrides = {
+                k: v for k, v in request.stability_overrides.model_dump().items() if v is not None
+            } or None
+        results = app_state.runner.evaluate(
+            P_tank_O, P_tank_F, debug=True, rich_stability=True, stability_overrides=overrides,
+        )
         
         # Convert numpy types to JSON-serializable and return directly
         # Frontend uses the same field names as runner.py outputs

@@ -11,6 +11,32 @@ import numpy as np
 # iterative closure residuals do not falsely fail when hinge penalty is (~) zero at the boundary.
 _DEFAULT_INJECTOR_DP_GATE_RTOL = 2.0e-4
 
+# Preferred ΔP_inj/Pc band (design default; was [0.15, 0.35] before M6 recalibration).
+_DEFAULT_DP_O_BAND = (0.20, 0.40)
+_DEFAULT_DP_F_BAND = (0.20, 0.40)
+_LEGACY_DP_BAND = (0.15, 0.35)
+
+
+def injector_dp_bands_from_requirements(
+    requirements: Dict[str, Any],
+    *,
+    default_o: Tuple[float, float] = _DEFAULT_DP_O_BAND,
+    default_f: Tuple[float, float] = _DEFAULT_DP_F_BAND,
+) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+    """Read oxidizer/fuel ΔP_inj/Pc bands; migrate legacy [0.15, 0.35] yaml to [0.20, 0.40]."""
+
+    def _one(min_key: str, max_key: str, default: Tuple[float, float]) -> Tuple[float, float]:
+        lo = float(requirements.get(min_key, default[0]))
+        hi = float(requirements.get(max_key, default[1]))
+        if abs(lo - _LEGACY_DP_BAND[0]) < 1e-9 and abs(hi - _LEGACY_DP_BAND[1]) < 1e-9:
+            return _DEFAULT_DP_O_BAND
+        return (lo, hi)
+
+    return (
+        _one("injector_dp_ratio_O_min", "injector_dp_ratio_O_max", default_o),
+        _one("injector_dp_ratio_F_min", "injector_dp_ratio_F_max", default_f),
+    )
+
 
 def injector_dp_ratio_within_gate(
     r: Optional[float],
@@ -81,7 +107,7 @@ def injector_dp_ratio_penalty_weighted(
     w_dp: float,
     w_dp_high: float = 0.0,
     *,
-    o_band: Tuple[float, float] = (0.20, 0.35),
+    o_band: Tuple[float, float] = (0.20, 0.40),
     f_band: Tuple[float, float] = (0.50, 1.20),
     w_dp_o: Optional[float] = None,
     w_dp_f: Optional[float] = None,

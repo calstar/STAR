@@ -59,9 +59,17 @@ export interface UploadResponse {
 }
 
 // Evaluation types - matches runner.evaluate() output from engine/core/runner.py
+export interface StabilityOverridesRequest {
+  eta_inj_O?: number;
+  smd_um?: number;
+  n_interaction?: number;
+  chi_acoustic?: number;
+}
+
 export interface EvaluateRequest {
   lox_pressure_psi: number;
   fuel_pressure_psi: number;
+  stability_overrides?: StabilityOverridesRequest;
 }
 
 // Runner results - same field names as runner.evaluate() returns
@@ -209,6 +217,9 @@ export interface RunnerResults {
 
   // Full diagnostics
   diagnostics: Record<string, unknown>;
+
+  // Rich stability payload (forward mode / report) — see stability/types.ts
+  stability_rich?: Record<string, unknown>;
 }
 
 export interface EvaluateResponse {
