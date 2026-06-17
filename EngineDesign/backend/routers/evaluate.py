@@ -75,7 +75,13 @@ async def evaluate(request: EvaluateRequest):
         results = app_state.runner.evaluate(
             P_tank_O, P_tank_F, debug=True, rich_stability=True, stability_overrides=overrides,
         )
-        
+
+        # "Warn + flag for re-solve": if the chamber was seeded for a different injector/propellant
+        # than is now live, surface a non-fatal warning so the forward result is read as a seed, not
+        # a validated design.
+        from engine.pipeline.config_switch import design_staleness
+        design_warning = design_staleness(app_state.config)
+
         # Convert numpy types to JSON-serializable and return directly
         # Frontend uses the same field names as runner.py outputs
         # P_ambient and elevation are now included in results from runner
@@ -87,6 +93,7 @@ async def evaluate(request: EvaluateRequest):
                 "ambient_pressure_pa": results.get("P_ambient", 101325.0),
                 "elevation_m": results.get("elevation", 0.0),
             },
+            "design_warning": design_warning,
             "results": convert_numpy(results),
         }
         

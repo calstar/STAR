@@ -345,16 +345,17 @@ function GeometryTable({ geometry }: { geometry: Record<string, any> }) {
     { key: 'spacing_F', label: 'Fuel Element Spacing', unit: 'mm', scale: 1000, decimals: 3 },
   ];
 
-  const hasImpingingFields = injectorType === 'impinging' || [
-    'd_jet_O', 'd_jet_F', 'n_elements_O', 'n_elements_F',
-    'd_jet_oxidizer', 'd_jet_fuel',
-  ].some((k) => geometry[k] !== undefined);
+  // The backend tags results with injector_type (INJECTOR_PARITY_PLAN W4) — make it authoritative,
+  // falling back to field-presence only for older/untagged payloads.
+  const hasImpingingFields = ['d_jet_O', 'd_jet_F', 'n_elements_O', 'n_elements_F',
+    'd_jet_oxidizer', 'd_jet_fuel'].some((k) => geometry[k] !== undefined);
   const hasPintleFields = ['d_pintle_tip', 'h_gap', 'n_orifices', 'd_orifice'].some((k) => geometry[k] !== undefined);
-  const params = [
-    ...baseParams,
-    ...(hasImpingingFields ? impingingParams : []),
-    ...(!hasImpingingFields && hasPintleFields ? pintleParams : []),
-  ];
+  const injectorParams =
+    injectorType === 'pintle' ? pintleParams :
+    injectorType === 'impinging' ? impingingParams :
+    hasImpingingFields ? impingingParams :
+    hasPintleFields ? pintleParams : [];
+  const params = [...baseParams, ...injectorParams];
 
   return (
     <div className="bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg overflow-hidden">

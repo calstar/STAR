@@ -21,6 +21,7 @@ class FluidConfig(BaseModel):
     latent_heat: Optional[float] = Field(default=None, gt=0, description="Latent heat of vaporization [J/kg] (fuel only)")
     boiling_point: Optional[float] = Field(default=None, gt=0, description="Boiling point at 1 atm [K] (fuel only)")
     molecular_weight: Optional[float] = Field(default=None, gt=0, description="Molecular weight [g/mol] (fuel only)")
+    bulk_modulus_pa: Optional[float] = Field(default=None, gt=0, description="Liquid bulk modulus [Pa] — feed acoustics / water-hammer (stability). Preset-supplied; see configs/propellants/.")
 
 
 class PintleLOXConfig(BaseModel):
@@ -830,11 +831,21 @@ class FrozenParametersConfig(BaseModel):
     expansion_ratio: Optional[float] = Field(default=None, gt=1, description="Frozen expansion ratio (A_exit/A_throat)")
     D_chamber_outer_mm: Optional[float] = Field(default=None, gt=0, description="Frozen chamber outer diameter [mm]")
     
-    # Injector geometry
-    d_pintle_tip_mm: Optional[float] = Field(default=None, gt=0, description="Frozen pintle tip diameter [mm]")
-    h_gap_mm: Optional[float] = Field(default=None, gt=0, description="Frozen annular gap height [mm]")
-    n_orifices: Optional[int] = Field(default=None, gt=0, description="Frozen number of LOX orifices")
-    d_orifice_mm: Optional[float] = Field(default=None, gt=0, description="Frozen LOX orifice diameter [mm]")
+    # Injector geometry — PINTLE (applies when injector.type == 'pintle')
+    d_pintle_tip_mm: Optional[float] = Field(default=None, gt=0, description="[pintle] Frozen pintle tip diameter [mm]")
+    h_gap_mm: Optional[float] = Field(default=None, gt=0, description="[pintle] Frozen annular gap height [mm]")
+    n_orifices: Optional[int] = Field(default=None, gt=0, description="[pintle] Frozen number of LOX orifices")
+    d_orifice_mm: Optional[float] = Field(default=None, gt=0, description="[pintle] Frozen LOX orifice diameter [mm]")
+    # Injector geometry — IMPINGING / doublet (applies when injector.type == 'impinging'). These were
+    # already honored by the Layer-1 frozen-param mapping; the schema just needed to declare them so the
+    # UI offers them and they validate (INJECTOR_PARITY_PLAN W1). Key names match the optimizer mapping.
+    n_doublets: Optional[int] = Field(default=None, gt=0, description="[impinging] Frozen number of paired unlike doublets")
+    d_jet_O_mm: Optional[float] = Field(default=None, gt=0, description="[impinging] Frozen LOX jet diameter [mm]")
+    d_jet_F_mm: Optional[float] = Field(default=None, gt=0, description="[impinging] Frozen fuel jet diameter [mm]")
+    impingement_angle_O_deg: Optional[float] = Field(default=None, gt=0, le=180, description="[impinging] Frozen LOX included impingement angle [deg]")
+    impingement_angle_F_deg: Optional[float] = Field(default=None, gt=0, le=180, description="[impinging] Frozen fuel included impingement angle [deg]")
+    spacing_O_mm: Optional[float] = Field(default=None, gt=0, description="[impinging] Frozen LOX element spacing [mm]")
+    spacing_F_mm: Optional[float] = Field(default=None, gt=0, description="[impinging] Frozen fuel element spacing [mm]")
     
     # Initial tank pressures
     P_O_start_psi: Optional[float] = Field(default=None, gt=0, description="Frozen initial LOX tank pressure [psi]")
@@ -1331,6 +1342,10 @@ class PressureCurvesConfig(BaseModel):
 
 class PintleEngineConfig(BaseModel):
     """Complete pintle engine configuration"""
+    # Propellant preset name (configs/propellants/<name>.yaml). Resolved by io.load_config BEFORE
+    # validation: preset supplies fluids/CEA baseline, explicit YAML fields override. Plain str (not
+    # Literal) on purpose — adding a new propellant must require zero code changes (UNIFICATION P7).
+    propellant_preset: Optional[str] = Field(default=None, description="Propellant preset to merge (e.g. 'methalox', 'ethalox', 'kerolox'); explicit fields win over preset")
     fluids: Dict[str, FluidConfig]
     injector: InjectorConfig
     feed_system: Dict[str, FeedSystemConfig]  # "oxidizer" and "fuel"
@@ -1358,6 +1373,10 @@ class PintleEngineConfig(BaseModel):
     thrust: Optional[ThrustConfig] = Field(default=None, description="Thrust configuration for flight simulation")
     design_requirements: Optional[DesignRequirementsConfig] = Field(default=None, description="Design requirements for optimizer")
     pressure_curves: Optional[PressureCurvesConfig] = Field(default=None, description="Optimized pressure curves from Layer 2 optimization")
+    # Provenance stamp: which {injector, propellant} the current chamber was last solved/seeded for.
+    # Forward mode warns ("needs re-optimization") when the live injector/propellant no longer match —
+    # see engine.pipeline.config_switch.design_staleness. Set on canonical load & propellant overlay.
+    design_valid_for: Optional[Dict[str, Optional[str]]] = Field(default=None, description="{'injector','propellant'} the chamber geometry was solved for (forward-mode staleness flag)")
 
     @field_validator("feed_system", "discharge")
     @classmethod
@@ -1366,6 +1385,19 @@ class PintleEngineConfig(BaseModel):
         if "oxidizer" not in v or "fuel" not in v:
             raise ValueError("Must specify both 'oxidizer' and 'fuel' branches")
         return v
+
+    @model_validator(mode="after")
+    def injector_aware_geometry_cd_default(self):
+        """FINDING F1 fix (UNIFICATION P3): ``use_geometry_cd`` schema-defaults to True (drilled
+        impinging orifices). For PINTLE the geometry-Cd correlation doesn't apply (annulus/orifice
+        Cd is fixed Cd_inf; the solver never calls it) — so when the field was NOT explicitly given,
+        derive False for pintle. Explicit YAML values are respected (model_fields_set check)."""
+        if getattr(getattr(self, "injector", None), "type", None) == "pintle":
+            for side in ("oxidizer", "fuel"):
+                d = self.discharge.get(side) if isinstance(self.discharge, dict) else None
+                if d is not None and "use_geometry_cd" not in d.model_fields_set:
+                    d.use_geometry_cd = False
+        return self
 
     @model_validator(mode="after")
     def align_expansion_ratio_with_exit_throat_areas(self):
@@ -1478,5 +1510,11 @@ def ensure_chamber_geometry(config: PintleEngineConfig) -> ChamberGeometryConfig
         length_contraction=length_contraction,
         Cf=Cf,
     )
-    
+
     return config.chamber_geometry
+
+
+# Injector-agnostic alias (UNIFICATION P3 naming): the config models any bipropellant engine
+# (pintle / impinging / coaxial), not just pintle. New code should prefer `EngineConfig`; the
+# `PintleEngineConfig` name is retained for backward compatibility with the 57 existing references.
+EngineConfig = PintleEngineConfig

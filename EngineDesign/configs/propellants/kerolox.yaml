@@ -1,0 +1,42 @@
+# Propellant preset: KEROLOX (LOX / RP-1) — *** DRAFT: verify before flight use ***
+# This preset exists as the Phase-7 acceptance test of the unification architecture: the software
+# must run this combo with ZERO code changes. Values marked TODO must be verified against a
+# propellant handbook before trusting results; density/boiling_point sourced from
+# engine/pipeline/constants.py (DEFAULT_FUEL_* RP-1 defaults); the rest are standard handbook
+# RP-1 values entered as drafts.
+fluids:
+  fuel:
+    name: RP-1
+    density: 810.0            # constants.py DEFAULT_FUEL_DENS_KG_M3
+    viscosity: 0.0017         # DRAFT ~20 C handbook value — TODO verify
+    surface_tension: 0.023    # DRAFT — TODO verify
+    vapor_pressure: 300.0     # DRAFT (low-volatility kerosene) — TODO verify
+    specific_heat: 2000.0     # constants.py DEFAULT_COOLANT_SPEC_HEAT (RP-1)
+    thermal_conductivity: 0.1 # constants.py DEFAULT_COOLANT_THERMAL_COND
+    temperature: 293.0
+    latent_heat: 246000.0     # DRAFT J/kg — TODO verify
+    boiling_point: 489.0      # constants.py DEFAULT_FUEL_BOILING_POINT_K
+    molecular_weight: 170.0   # DRAFT (C12 kerosene surrogate) — TODO verify
+    bulk_modulus_pa: 1300000000.0    # DRAFT kerosene — TODO verify
+  oxidizer:
+    name: LOX
+    density: 1140.0
+    viscosity: 0.00018
+    surface_tension: 0.013
+    vapor_pressure: 101325.0
+    specific_heat: 2300.0
+    thermal_conductivity: 0.15
+    temperature: 90.0
+    latent_heat: 213000.0
+    boiling_point: 90.2
+    molecular_weight: 32.0
+    bulk_modulus_pa: 1500000000.0
+combustion:
+  cea:
+    ox_name: LOX
+    fuel_name: RP-1           # rocketcea built-in name
+    cache_file: output/cache/cea_cache_LOX_RP1_3D.npz   # generated on first run (~minutes)
+    Pc_range: [1000000.0, 9000000.0]
+    MR_range: [1.6, 3.2]
+    eps_range: [4.0, 15.0]
+    n_points: 34

@@ -667,7 +667,7 @@ export function Layer4Optimization({
                 value={fuelMass.toString()}
                 onChange={(v) => setFuelMass(parseFloat(v) || 0)}
                 unit="kg"
-                help="RP-1 fuel propellant mass"
+                help="Fuel propellant mass"
               />
               {/* Tank capacity info */}
               <div className={`mt-2 text-xs p-2 rounded ${fuelOverfilled ? 'bg-yellow-500/10 border border-yellow-500/30' : 'bg-[var(--color-bg-tertiary)]'}`}>

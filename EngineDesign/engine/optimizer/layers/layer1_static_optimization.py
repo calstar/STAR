@@ -5612,6 +5612,9 @@ def run_layer1_optimization(
     )
     # Build results dict
     results = {
+        # Top-level injector_type tag so the UI dispatches result rendering to the right param set
+        # (INJECTOR_PARITY_PLAN W4). optimized_parameters already carries type-appropriate keys.
+        "injector_type": getattr(getattr(optimized_config, "injector", None), "type", None),
         "performance": final_performance,
         "iteration_history": iteration_history,
         "convergence_info": {

@@ -230,6 +230,9 @@ export interface EvaluateResponse {
     ambient_pressure_pa: number;  // Computed from elevation
     elevation_m: number;          // Elevation from config
   };
+  // Non-fatal "needs re-optimization" flag: set when the chamber was seeded for a different
+  // injector/propellant than is now live (e.g. after a propellant switch without re-solving).
+  design_warning?: string | null;
   results: RunnerResults;
 }
 
@@ -264,6 +267,35 @@ export async function updateConfig(updates: Partial<EngineConfig>): Promise<ApiR
   return request<ConfigResponse>('/config', {
     method: 'PUT',
     body: JSON.stringify(updates),
+  });
+}
+
+// --- Injector / propellant switching (UNIFICATION P6) ---
+export interface SwitchOptions {
+  injectors: string[];
+  propellants: string[];
+  current: { injector: string | null; propellant: string | null };
+}
+
+export interface SwitchResponse {
+  status: string;
+  config: EngineConfig;
+  binding_warnings: string[];
+  // "Needs re-optimization": set when a propellant overlay left the chamber seeded for the old
+  // propellant. null after a clean injector swap (canonical configs are internally coherent).
+  design_warning?: string | null;
+}
+
+export async function getSwitchOptions(): Promise<ApiResponse<SwitchOptions>> {
+  return request<SwitchOptions>('/config/options');
+}
+
+export async function switchConfig(
+  body: { injector_type?: string | null; propellant_preset?: string | null }
+): Promise<ApiResponse<SwitchResponse>> {
+  return request<SwitchResponse>('/config/switch', {
+    method: 'POST',
+    body: JSON.stringify(body),
   });
 }
 
@@ -643,15 +675,37 @@ export interface FrozenParameters {
   expansion_ratio?: number | null; // Expansion ratio (A_exit/A_throat)
   D_chamber_outer_mm?: number | null; // Chamber outer diameter [mm]
 
-  // Injector geometry
+  // Injector geometry — PINTLE
   d_pintle_tip_mm?: number | null; // Pintle tip diameter [mm]
   h_gap_mm?: number | null;        // Annular gap height [mm]
   n_orifices?: number | null;      // Number of LOX orifices
   d_orifice_mm?: number | null;    // LOX orifice diameter [mm]
+  // Injector geometry — IMPINGING / doublet (INJECTOR_PARITY_PLAN W1)
+  n_doublets?: number | null;          // Number of paired unlike doublets
+  d_jet_O_mm?: number | null;          // LOX jet diameter [mm]
+  d_jet_F_mm?: number | null;          // Fuel jet diameter [mm]
+  impingement_angle_O_deg?: number | null; // LOX included impingement angle [deg]
+  impingement_angle_F_deg?: number | null; // Fuel included impingement angle [deg]
+  spacing_O_mm?: number | null;        // LOX element spacing [mm]
+  spacing_F_mm?: number | null;        // Fuel element spacing [mm]
 
   // Initial tank pressures
   P_O_start_psi?: number | null;   // Initial LOX tank pressure [psi]
   P_F_start_psi?: number | null;   // Initial fuel tank pressure [psi]
+}
+
+// Per-injector field schema (INJECTOR_PARITY_PLAN W5) — drives type-correct UI rendering.
+export interface InjectorSchema {
+  injector_type: string;
+  frozen_param_fields: string[];
+  geometry_fields: Record<string, unknown>;
+  smd_model: string;
+  use_geometry_cd: boolean;
+}
+
+export async function getInjectorSchema(injectorType?: string): Promise<ApiResponse<InjectorSchema>> {
+  const q = injectorType ? `?injector_type=${encodeURIComponent(injectorType)}` : '';
+  return request<InjectorSchema>(`/config/injector_schema${q}`);
 }
 
 export interface DesignRequirements {

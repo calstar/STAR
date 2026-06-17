@@ -62,7 +62,7 @@ def _vaporization_profile(inp: Dict[str, Any], Pc: float, n_pts: int = 40) -> Di
     D32 = inp["D32_O"]
     K_v = inp["K_v_O"]
     L_ch = inp["L_ch"]
-    rho_O = 1140.0
+    rho_O = float(inp.get("rho_O", 1140.0))   # config-sourced via build_stability_inputs (P2c)
     eta = inp["eta_inj_O"]
     # representative droplet axial speed ~ LOX injection velocity v=sqrt(2*dP/rho) (Cd~0.6)
     v_drop = 0.6 * float(np.sqrt(max(2.0 * eta * Pc / rho_O, 1.0)))
@@ -107,7 +107,8 @@ def _feed_pressure_traces(inp: Dict[str, Any], Pc: float, n_pts: int = 40,
 def _water_hammer(inp: Dict[str, Any]) -> Dict[str, Any]:
     """Viz #8 (separate): Joukowsky spike vs available feed dP. Valve transient, NOT combustion."""
     s = inp["streams"][0]
-    rho, K = 1140.0, 1.5e9
+    rho = float(inp.get("rho_O", 1140.0))      # config-sourced (P2c)
+    K = float(inp.get("K_bulk_O", 1.5e9))      # fluids.oxidizer.bulk_modulus_pa (preset); T5 measures
     a_liq = float(np.sqrt(K / rho))
     v = float(s.mdot / (rho * s.feed_area)) if s.feed_area > 0 else 0.0
     spike = rho * a_liq * v
@@ -234,6 +235,17 @@ def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: fl
             "dP_reg_max_psi": float(streams[0].regulator.max_excursion_pa / _PA_PER_PSI),
             "eta_inj_O": inp["eta_inj_O"], "eta_inj_F": inp["eta_inj_F"],
             "smd_O_um": float(inp["D32_O"] * 1e6),
+            # Every recorded silent-default substitution this process has made (P2c registry).
+            # Empty list = config fully specified the physics. The hardcoded-Cd bug class, surfaced.
+            "fallbacks_used": _fallbacks_used(),
         },
         "sensitivity": sens,
     }
+
+
+def _fallbacks_used():
+    try:
+        from engine.pipeline.assumptions import fallbacks_used
+        return fallbacks_used()
+    except ImportError:
+        return []

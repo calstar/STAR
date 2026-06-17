@@ -22,6 +22,7 @@ export function ForwardMode({ config }: ForwardModeProps) {
   const [ambientPressure, setAmbientPressure] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [designWarning, setDesignWarning] = useState<string | null>(null);
   const [stabilityOverrides, setStabilityOverrides] = useState<StabilityOverrides>({});
 
   // Update defaults when config changes
@@ -68,11 +69,14 @@ export function ForwardMode({ config }: ForwardModeProps) {
       setError(result.error);
       setResults(null);
       setAmbientPressure(null);
+      setDesignWarning(null);
     } else if (result.data) {
       // Results come directly from runner.evaluate() - same format as Streamlit UI
       setResults(result.data.results);
       // Store ambient pressure from response (computed from config elevation)
       setAmbientPressure(result.data.inputs.ambient_pressure_pa);
+      // "Warn + flag for re-solve": chamber seeded for a different injector/propellant than is live
+      setDesignWarning(result.data.design_warning ?? null);
     }
   }, [loxPressure, fuelPressure, stabilityOverrides]);
 
@@ -170,6 +174,16 @@ export function ForwardMode({ config }: ForwardModeProps) {
         {error && (
           <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
             {error}
+          </div>
+        )}
+
+        {/* Design-staleness warning: chamber seeded for a different injector/propellant than is live */}
+        {designWarning && !error && (
+          <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-400 text-sm flex items-start gap-2">
+            <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <span>{designWarning}</span>
           </div>
         )}
       </div>

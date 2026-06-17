@@ -10,7 +10,7 @@ interface ConfigEditorProps {
 // Section metadata for better labels and descriptions
 const SECTION_META: Record<string, { label: string; icon: string; description: string }> = {
   fluids: { label: 'Fluids', icon: '💧', description: 'Oxidizer and fuel properties' },
-  injector: { label: 'Injector', icon: '🔧', description: 'Pintle injector geometry' },
+  injector: { label: 'Injector', icon: '🔧', description: 'Injector geometry (pintle or impinging doublet)' },
   feed_system: { label: 'Feed System', icon: '⚡', description: 'Propellant feed configuration' },
   regen_cooling: { label: 'Regenerative Cooling', icon: '❄️', description: 'Cooling channel parameters' },
   film_cooling: { label: 'Film Cooling', icon: '🌊', description: 'Film cooling settings' },
@@ -50,6 +50,12 @@ const FIELD_LABELS: Record<string, string> = {
   d_pintle_tip: 'Pintle Tip Diameter (m)',
   d_reservoir_inner: 'Reservoir Inner Diameter (m)',
   h_gap: 'Gap Height (m)',
+  // Impinging / doublet injector fields (INJECTOR_PARITY_PLAN W6 — friendly labels so the generic
+  // editor shows names, not raw keys, when injector.type == 'impinging').
+  n_elements: 'Number of Elements',
+  d_jet: 'Jet Diameter (m)',
+  impingement_angle: 'Impingement Angle (°)',
+  spacing: 'Element Spacing (m)',
   d_inlet: 'Inlet Diameter (m)',
   A_hydraulic: 'Hydraulic Area (m²)',
   K0: 'Loss Coefficient K₀',
@@ -114,9 +120,9 @@ const FIELD_LABELS: Record<string, string> = {
   lox_h: 'LOX Tank Height (m)',
   lox_radius: 'LOX Tank Radius (m)',
   ox_tank_pos: 'LOX Tank Position (m)',
-  // Fuel Tank
-  rp1_h: 'RP-1 Tank Height (m)',
-  rp1_radius: 'RP-1 Tank Radius (m)',
+  // Fuel Tank (keys are legacy 'rp1_*' but the tank is generic — label by role, not propellant)
+  rp1_h: 'Fuel Tank Height (m)',
+  rp1_radius: 'Fuel Tank Radius (m)',
   fuel_tank_pos: 'Fuel Tank Position (m)',
   // Pressurant Tank
   press_h: 'Pressurant Tank Height (m)',

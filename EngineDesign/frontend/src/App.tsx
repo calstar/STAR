@@ -9,6 +9,8 @@ import { ChamberGeometry } from './components/ChamberGeometry';
 import { Optimizer } from './components/Optimizer';
 import { ControllerMode } from './components/ControllerMode';
 import { OptimizerDemo } from './components/OptimizerDemo';
+import ConfigurationSelector from './components/ConfigurationSelector';
+import { emitConfigChanged } from './lib/configBus';
 import { getConfig, getHealth } from './api/client';
 import type { EngineConfig } from './api/client';
 
@@ -53,6 +55,7 @@ function App() {
 
   const handleConfigLoaded = (newConfig: EngineConfig) => {
     setConfig(newConfig);
+    emitConfigChanged(newConfig); // uploading a different-injector config also refreshes dependent UI
   };
 
   return (
@@ -69,20 +72,23 @@ function App() {
                 </svg>
               </div>
               <div>
-                <h1 className="text-lg font-bold text-[var(--color-text-primary)]">Pintle Engine Designer</h1>
-                <p className="text-xs text-[var(--color-text-secondary)]">LOX/RP-1 Rocket Engine Simulation</p>
+                <h1 className="text-lg font-bold text-[var(--color-text-primary)]">Liquid Engine Designer</h1>
+                <p className="text-xs text-[var(--color-text-secondary)]">Bipropellant rocket engine simulation</p>
               </div>
             </div>
 
-            {/* Connection status */}
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${isConnected === null ? 'bg-yellow-500 animate-pulse' :
-                isConnected ? 'bg-green-500' : 'bg-red-500'
-                }`} />
-              <span className="text-sm text-[var(--color-text-secondary)]">
-                {isConnected === null ? 'Connecting...' :
-                  isConnected ? 'Connected' : 'Disconnected'}
-              </span>
+            {/* First-class config selectors + connection status */}
+            <div className="flex items-center gap-6">
+              <ConfigurationSelector onConfigChange={setConfig} />
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${isConnected === null ? 'bg-yellow-500 animate-pulse' :
+                  isConnected ? 'bg-green-500' : 'bg-red-500'
+                  }`} />
+                <span className="text-sm text-[var(--color-text-secondary)]">
+                  {isConnected === null ? 'Connecting...' :
+                    isConnected ? 'Connected' : 'Disconnected'}
+                </span>
+              </div>
             </div>
           </div>
 

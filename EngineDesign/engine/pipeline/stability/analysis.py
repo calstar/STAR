@@ -348,12 +348,17 @@ def _acoustic_gate_margin(alpha_max: float) -> float:
 
 
 def _fluid_attr(fluids, key, attr, default):
+    """Config-first fluid property lookup. ``default=None`` is allowed and returned as-is when the
+    property is missing — callers use that to route the fallback through the assumptions registry
+    (UNIFICATION P2c) instead of silently substituting."""
     try:
         f = fluids[key] if isinstance(fluids, dict) else getattr(fluids, key)
         v = getattr(f, attr, None)
-        return float(v) if (v is not None and np.isfinite(float(v))) else float(default)
+        if v is not None and np.isfinite(float(v)):
+            return float(v)
+        return None if default is None else float(default)
     except Exception:
-        return float(default)
+        return None if default is None else float(default)
 
 
 def _feed_attr(config, key, attr, default):
@@ -412,12 +417,22 @@ def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, csta
         eta_O = dpiO / Pc if Pc > 0 else 0.3
     eta_F = dpiF / Pc if Pc > 0 else 0.3
 
-    rho_O = _fluid_attr(config.fluids, "oxidizer", "density", 1140.0)
-    rho_F = _fluid_attr(config.fluids, "fuel", "density", 422.6)
-    hfg_O = _fluid_attr(config.fluids, "oxidizer", "latent_heat", _LOX_HFG_DEFAULT)
-    hfg_F = _fluid_attr(config.fluids, "fuel", "latent_heat", 510000.0)
-    tbO = _fluid_attr(config.fluids, "oxidizer", "boiling_point", _LOX_TBOIL_DEFAULT)
-    tbF = _fluid_attr(config.fluids, "fuel", "boiling_point", 111.6)
+    from engine.pipeline.assumptions import assume
+
+    def _fluid(key, attr, fb_value, fb_unit):
+        v = _fluid_attr(config.fluids, key, attr, None)
+        if v is not None:
+            return v
+        return assume(f"stability.fluids.{key}.{attr}", fb_value, unit=fb_unit,
+                      reason=f"fluids.{key}.{attr} missing from config (use a propellant preset)")
+
+    rho_O = _fluid("oxidizer", "density", 1140.0, "kg/m^3")
+    rho_F = _fluid("fuel", "density", 422.6, "kg/m^3")          # methalox-lineage fallback — recorded
+    hfg_O = _fluid("oxidizer", "latent_heat", _LOX_HFG_DEFAULT, "J/kg")
+    hfg_F = _fluid("fuel", "latent_heat", 510000.0, "J/kg")
+    tbO = _fluid("oxidizer", "boiling_point", _LOX_TBOIL_DEFAULT, "K")
+    tbF = _fluid("fuel", "boiling_point", 111.6, "K")
+    K_bulk_O = _fluid("oxidizer", "bulk_modulus_pa", 1.5e9, "Pa")
     tau_conv_O, _, K_v_O = core.lags_from_smd(D32_O, k_g=k_g, rho_l=rho_O, cp_g=cp_g, T_inf=Tc,
                                               T_boil=tbO, h_fg=hfg_O, chi=1.0)
     tau_conv_F, _, K_v_F = core.lags_from_smd(D32_F, k_g=k_g, rho_l=rho_F, cp_g=cp_g, T_inf=Tc,
@@ -451,6 +466,7 @@ def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, csta
         "chi_acoustic": chi_ac, "n_interaction": n_int,
         "eta_inj_O": eta_O, "eta_inj_F": eta_F,
         "D32_O": D32_O, "D32_F": D32_F, "K_v_O": K_v_O, "K_v_F": K_v_F,
+        "rho_O": rho_O, "rho_F": rho_F, "K_bulk_O": K_bulk_O,
         "Pc": Pc, "wh_pressure_pa": None,
     }
 
@@ -566,16 +582,18 @@ def comprehensive_stability_analysis(
         feed_length = 1.0
         feed_diameter = 0.01
 
-    # Propellant density (oxidizer)
-    if hasattr(config, "propellants") and config.propellants is not None:
-        if isinstance(config.propellants, dict):
-            prop_density = float(config.propellants.get("oxidizer", {}).get("density", 1140.0))
-        else:
-            prop_density = float(getattr(config.propellants.oxidizer, "density", 1140.0))
-    else:
-        prop_density = 1140.0
-
-    bulk_modulus = 1.5e9  # LOX order of magnitude
+    # Oxidizer density / bulk modulus from config.fluids (the old `config.propellants` lookup was a
+    # dead key — it ALWAYS fell through to 1140. UNIFICATION P2c: config-first, recorded fallback.)
+    prop_density = _fluid_attr(config.fluids, "oxidizer", "density", None)
+    if prop_density is None:
+        from engine.pipeline.assumptions import assume
+        prop_density = assume("stability.feed.rho_oxidizer", 1140.0, unit="kg/m^3",
+                              reason="fluids.oxidizer.density missing")
+    bulk_modulus = _fluid_attr(config.fluids, "oxidizer", "bulk_modulus_pa", None)
+    if bulk_modulus is None:
+        from engine.pipeline.assumptions import assume
+        bulk_modulus = assume("stability.feed.bulk_modulus_O", 1.5e9, unit="Pa",
+                              reason="fluids.oxidizer.bulk_modulus_pa missing (set via propellant preset); measure via water-hammer test T5")
 
     # Estimate oxidizer flow velocity
     A_feed = np.pi * (feed_diameter / 2.0) ** 2

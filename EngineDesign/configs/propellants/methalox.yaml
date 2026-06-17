@@ -1,0 +1,41 @@
+# Propellant preset: METHALOX (LOX / liquid methane)
+# Sources: fluids = configs/default.yaml as of engine/fork-changes (validated by anchor B);
+# LOX latent_heat/boiling_point = standard values (previously hardcoded fallbacks in
+# stability/analysis.py — now preset-supplied per UNIFICATION_PLAN Phase 2a/4).
+# bulk_modulus_pa: stability feed-acoustics input (was hardcoded 1.5e9 LOX-order in report.py).
+fluids:
+  fuel:
+    name: Methane
+    density: 422.6
+    viscosity: 0.00012
+    surface_tension: 0.0134
+    vapor_pressure: 101325.0
+    specific_heat: 3348.0
+    thermal_conductivity: 0.204
+    temperature: 112.0
+    latent_heat: 510000.0
+    boiling_point: 111.65
+    molecular_weight: 16.04
+    bulk_modulus_pa: null   # TODO: LCH4 near NBP — measure/source before trusting feed acoustics for fuel side
+  oxidizer:
+    name: LOX
+    density: 1140.0
+    viscosity: 0.00018
+    surface_tension: 0.013
+    vapor_pressure: 101325.0
+    specific_heat: 2300.0
+    thermal_conductivity: 0.15
+    temperature: 90.0
+    latent_heat: 213000.0      # J/kg, standard LOX (was _LOX_HFG_DEFAULT in stability/analysis.py)
+    boiling_point: 90.2        # K, standard LOX (was _LOX_TBOIL_DEFAULT)
+    molecular_weight: 32.0
+    bulk_modulus_pa: 1500000000.0     # order-of-magnitude LOX (was hardcoded in stability/report.py); refine via test T5
+combustion:
+  cea:
+    ox_name: LOX
+    fuel_name: CH4
+    cache_file: output/cache/cea_cache_LOX_CH4_3D.npz
+    Pc_range: [1000000.0, 9000000.0]
+    MR_range: [2.4, 4.2]
+    eps_range: [4.0, 15.0]
+    n_points: 34
