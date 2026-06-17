@@ -54,8 +54,6 @@
 //   Serial.println(isPulse ? "Pulse (one-shot)" : "Continuous");
 // }
 
-
-
 // void setPulseMode() {
 //   // Read current MODE0
 //   uint8_t mode0 = readReg(REG_MODE0);

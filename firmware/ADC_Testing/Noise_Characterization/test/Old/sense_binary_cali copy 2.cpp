@@ -4,16 +4,11 @@
 // #include "board_pins.h"
 // #include "adcs.h"
 
-
 // // 1 = ASCII voltages for the Python calibration script
 // // 0 = packed binary records (original behavior)
 // #define TEXT_OUTPUT 0
 // #define PT_NUM_START 0
 // #define NUM_PTS 10
-
-
-
-
 
 // // --- Buffer settings ---
 // static const size_t PKT_MAX = 1000;   // packet size in bytes
@@ -48,8 +43,6 @@
 //   Serial.begin(115200);
 //   SPI.begin(SCLK, MISO, MOSI, CS);
 
-
-
 //   if (!adcs::init()) {
 //     while (1) {delay(1000);}
 //   }
@@ -57,7 +50,6 @@
 //   if (!adcs::configure()) {
 //     while (1) {delay(1000);}
 //   }
-
 
 // adc.startADC1();
 // }
@@ -123,8 +115,6 @@
 //     Serial.print("\r\n"); // CRLF as expected by the Python script
 //   }
 // }
-
-
 
 // inline void flushPacketIfNeeded(bool force = false) {
 //   uint32_t now = millis();

@@ -423,7 +423,7 @@ bool ControllerService::sendPWMCommand(uint8_t channel, float duty_cycle, float 
     }
 
     // ── Send via UDP ───────────────────────────────────────────────────
-    struct sockaddr_in dest {};
+    struct sockaddr_in dest{};
     dest.sin_family = AF_INET;
     dest.sin_port = htons(pwm_config_.actuator_port);
     if (inet_pton(AF_INET, pwm_config_.actuator_board_ip.c_str(), &dest.sin_addr) != 1) {
@@ -479,7 +479,7 @@ bool ControllerService::sendPWMCommands(uint8_t channel1, float duty1, uint8_t c
     std::memcpy(&packet[offset], &frequency, 4);
     offset += 4;
 
-    struct sockaddr_in dest {};
+    struct sockaddr_in dest{};
     dest.sin_family = AF_INET;
     dest.sin_port = htons(pwm_config_.actuator_port);
     if (inet_pton(AF_INET, pwm_config_.actuator_board_ip.c_str(), &dest.sin_addr) != 1)
@@ -735,7 +735,7 @@ static int ws_tcp_connect(const std::string& host, uint16_t port) {
     int fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0)
         return -1;
-    struct sockaddr_in addr {};
+    struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     if (inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {

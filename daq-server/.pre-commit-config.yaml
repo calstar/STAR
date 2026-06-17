@@ -77,7 +77,7 @@ repos:
     hooks:
       - id: check-formatting
         name: Check code formatting
-        entry: bash -c './format.sh --check || exit 1'
+        entry: bash -c '"$(git rev-parse --show-toplevel)"/format.sh --check || exit 1'
         language: system
         files: \.(cpp|hpp|c|h)$
         pass_filenames: false

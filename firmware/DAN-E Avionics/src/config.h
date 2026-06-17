@@ -1,7 +1,7 @@
 #pragma once
 
-#include <Arduino.h>
 #include <Adafruit_LIS3DH.h>
+#include <Arduino.h>
 #include <STAR_ISM330DH.h>
 
 // -----------------------------------------------------------------------------
@@ -31,24 +31,30 @@ static constexpr uint8_t INTERRUPT_DURATION_COUNTS = 10;
 static constexpr lis3dh_dataRate_t ACCEL_ODR = LIS3DH_DATARATE_400_HZ;
 
 static constexpr float lis3dh_lsb_mg(lis3dh_range_t range) {
-	switch (range) {
-		case LIS3DH_RANGE_2_G: return 16.0f;
-		case LIS3DH_RANGE_4_G: return 32.0f;
-		case LIS3DH_RANGE_8_G: return 62.0f;
-		case LIS3DH_RANGE_16_G: return 186.0f;
-		default: return 16.0f;
-	}
+    switch (range) {
+        case LIS3DH_RANGE_2_G:
+            return 16.0f;
+        case LIS3DH_RANGE_4_G:
+            return 32.0f;
+        case LIS3DH_RANGE_8_G:
+            return 62.0f;
+        case LIS3DH_RANGE_16_G:
+            return 186.0f;
+        default:
+            return 16.0f;
+    }
 }
 
 static constexpr uint8_t INT1_THS_VALUE = []() -> uint8_t {
-	float lsb = lis3dh_lsb_mg(ACCEL_RANGE);
-	float raw = (INTERRUPT_THRESHOLD_G * 1000.0f) / lsb;
-	uint8_t val = (raw > 127.0f) ? 127 : (uint8_t)raw;
-	return (val == 0) ? 1 : val;
+    float lsb = lis3dh_lsb_mg(ACCEL_RANGE);
+    float raw = (INTERRUPT_THRESHOLD_G * 1000.0f) / lsb;
+    uint8_t val = (raw > 127.0f) ? 127 : (uint8_t)raw;
+    return (val == 0) ? 1 : val;
 }();
 
 static constexpr uint8_t INT1_DUR_VALUE =
-	(INTERRUPT_DURATION_COUNTS > 127) ? 127 : (uint8_t)INTERRUPT_DURATION_COUNTS;
+    (INTERRUPT_DURATION_COUNTS > 127) ? 127
+                                      : (uint8_t)INTERRUPT_DURATION_COUNTS;
 
 // -----------------------------------------------------------------------------
 // ISM330DHCX — match IC_Testing/ISM330DH main.h
@@ -60,10 +66,10 @@ static constexpr uint8_t ISM330_WAKEUP_DUR = 2;
 static constexpr bool ISM330_ROUTE_DRDY_TO_INT1 = false;
 
 static constexpr uint8_t ISM330_WKUP_THS = []() -> uint8_t {
-	constexpr float mgPerLsb = (ISM330_ACCEL_FS_G * 1000.0f) / 64.0f;
-	float raw = (ISM330_WAKEUP_THRESHOLD_G * 1000.0f) / mgPerLsb;
-	uint8_t v = (raw > 63.0f) ? 63 : static_cast<uint8_t>(raw);
-	return (v < 1) ? 1 : v;
+    constexpr float mgPerLsb = (ISM330_ACCEL_FS_G * 1000.0f) / 64.0f;
+    float raw = (ISM330_WAKEUP_THRESHOLD_G * 1000.0f) / mgPerLsb;
+    uint8_t v = (raw > 63.0f) ? 63 : static_cast<uint8_t>(raw);
+    return (v < 1) ? 1 : v;
 }();
 
 // -----------------------------------------------------------------------------

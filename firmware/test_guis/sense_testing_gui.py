@@ -25,26 +25,38 @@ import shutil
 LEADERBOARD_JSON = Path(__file__).resolve().parent / "sense_testing_leaderboard.json"
 
 # Fix Qt platform on macOS
-if sys.platform == 'darwin':
+if sys.platform == "darwin":
     import os
-    _qt_plugins = os.environ.get('QT_QPA_PLATFORM_PLUGIN_PATH')
+
+    _qt_plugins = os.environ.get("QT_QPA_PLATFORM_PLUGIN_PATH")
     if not _qt_plugins or not os.path.isdir(_qt_plugins):
         _candidates = [
-            '/opt/homebrew/share/qt/plugins/platforms',
-            '/opt/homebrew/opt/qt/share/qt/plugins/platforms',
-            '/usr/local/share/qt/plugins/platforms',
-            '/usr/local/opt/qt/share/qt/plugins/platforms',
-            '/opt/homebrew/Cellar/qtbase/6.10.1/share/qt/plugins/platforms',
+            "/opt/homebrew/share/qt/plugins/platforms",
+            "/opt/homebrew/opt/qt/share/qt/plugins/platforms",
+            "/usr/local/share/qt/plugins/platforms",
+            "/usr/local/opt/qt/share/qt/plugins/platforms",
+            "/opt/homebrew/Cellar/qtbase/6.10.1/share/qt/plugins/platforms",
         ]
-        if os.path.isdir('/opt/homebrew/Cellar/qtbase'):
-            for _name in sorted(os.listdir('/opt/homebrew/Cellar/qtbase'), reverse=True):
-                _p = os.path.join('/opt/homebrew/Cellar/qtbase', _name, 'share', 'qt', 'plugins', 'platforms')
+        if os.path.isdir("/opt/homebrew/Cellar/qtbase"):
+            for _name in sorted(
+                os.listdir("/opt/homebrew/Cellar/qtbase"), reverse=True
+            ):
+                _p = os.path.join(
+                    "/opt/homebrew/Cellar/qtbase",
+                    _name,
+                    "share",
+                    "qt",
+                    "plugins",
+                    "platforms",
+                )
                 if os.path.isdir(_p):
                     _candidates.insert(1, _p)
                     break
         for _p in _candidates:
-            if os.path.isdir(_p) and any(_f.startswith('libqcocoa') for _f in os.listdir(_p)):
-                os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = _p
+            if os.path.isdir(_p) and any(
+                _f.startswith("libqcocoa") for _f in os.listdir(_p)
+            ):
+                os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = _p
                 break
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -53,50 +65,77 @@ import numpy as np
 
 # Protocol constants (DAQv2-Comms)
 MAX_PACKET_SIZE = 512
-PACKET_HEADER_FORMAT = '<BBI'
+PACKET_HEADER_FORMAT = "<BBI"
 PACKET_HEADER_SIZE = 6
-BOARD_HEARTBEAT_BODY_FORMAT = '<32sBBB'   # firmware_hash[32], board_id, engine_state, board_state
+BOARD_HEARTBEAT_BODY_FORMAT = (
+    "<32sBBB"  # firmware_hash[32], board_id, engine_state, board_state
+)
 BOARD_HEARTBEAT_BODY_SIZE = 35
-PacketType = type('PacketType', (), {
-    'BOARD_HEARTBEAT': 1,
-    'SERVER_HEARTBEAT': 2,
-    'SENSOR_DATA': 3,
-    'SENSOR_CONFIG': 5,
-    'ABORT': 7,
-    'CLEAR_ABORT': 9,
-    'NO_CONNECTION_ABORT': 11,
-    'SELF_TEST': 12,
-})()
-BoardState = type('BoardState', (), {
-    'SETUP': 1, 'ACTIVE': 2,
-    'CONNECTION_LOSS_DETECTED': 3, 'NO_CONNECTION_ABORT': 4,
-    'NO_CONN_ABORT_FOLLOWER': 5, 'PT_ABORT': 6, 'NO_PT_ABORT': 7,
-    'ABORT_FINISHED': 8, 'STANDALONE_ABORT': 9, 'SELF_TEST': 10,
-})()
+PacketType = type(
+    "PacketType",
+    (),
+    {
+        "BOARD_HEARTBEAT": 1,
+        "SERVER_HEARTBEAT": 2,
+        "SENSOR_DATA": 3,
+        "SENSOR_CONFIG": 5,
+        "ABORT": 7,
+        "CLEAR_ABORT": 9,
+        "NO_CONNECTION_ABORT": 11,
+        "SELF_TEST": 12,
+    },
+)()
+BoardState = type(
+    "BoardState",
+    (),
+    {
+        "SETUP": 1,
+        "ACTIVE": 2,
+        "CONNECTION_LOSS_DETECTED": 3,
+        "NO_CONNECTION_ABORT": 4,
+        "NO_CONN_ABORT_FOLLOWER": 5,
+        "PT_ABORT": 6,
+        "NO_PT_ABORT": 7,
+        "ABORT_FINISHED": 8,
+        "STANDALONE_ABORT": 9,
+        "SELF_TEST": 10,
+    },
+)()
 DIABLO_COMMS_VERSION = 0
-SENSOR_DATA_PACKET_FORMAT = '<BB'
+SENSOR_DATA_PACKET_FORMAT = "<BB"
 SENSOR_DATA_PACKET_SIZE = 2
-SENSOR_DATA_CHUNK_FORMAT = '<I'
+SENSOR_DATA_CHUNK_FORMAT = "<I"
 SENSOR_DATA_CHUNK_SIZE = 4
-SENSOR_DATAPOINT_FORMAT = '<BI'
+SENSOR_DATAPOINT_FORMAT = "<BI"
 SENSOR_DATAPOINT_SIZE = 5
 
 DEFAULT_PORT = 5006
-DEFAULT_REF_VOLTAGE = 2.5  # Internal ref / PT typical; use 3.3 for TC_Board VDD reference
+DEFAULT_REF_VOLTAGE = (
+    2.5  # Internal ref / PT typical; use 3.3 for TC_Board VDD reference
+)
 DEFAULT_WINDOW_SECONDS = 10.0
 MAX_POINTS = 10000
 MAX_DISPLAY_CHANNELS = 10  # checkboxes Ch 1 .. Ch 10
 UPDATE_INTERVAL_MS = 50
-HEARTBEAT_TIMEOUT_SEC = 2.5  # Show "Connection: Lost" after this many seconds without a heartbeat
+HEARTBEAT_TIMEOUT_SEC = (
+    2.5  # Show "Connection: Lost" after this many seconds without a heartbeat
+)
 HEARTBEAT_RATE_WINDOW = 20  # number of heartbeats to compute rate
 SERVER_HEARTBEAT_INTERVAL_MS = 500  # send server heartbeat every 500 ms when enabled
 DEFAULT_SEND_PORT = 5005  # boards typically listen on 5005 for server packets
 DEFAULT_TARGET_IP = "192.168.2.101"  # Stream_ADC_Data board default static IP
 
 SENSOR_COLORS = [
-    (255, 80, 80), (80, 255, 80), (80, 150, 255), (255, 200, 80),
-    (200, 80, 255), (80, 255, 255), (255, 150, 150), (150, 255, 150),
-    (150, 200, 255), (255, 255, 80),
+    (255, 80, 80),
+    (80, 255, 80),
+    (80, 150, 255),
+    (255, 200, 80),
+    (200, 80, 255),
+    (80, 255, 255),
+    (255, 150, 150),
+    (150, 255, 150),
+    (150, 200, 255),
+    (255, 255, 80),
 ]
 
 
@@ -126,7 +165,14 @@ class OTAWorker(QtCore.QThread):
     progress = QtCore.pyqtSignal(str)
     finished = QtCore.pyqtSignal(bool, str)
 
-    def __init__(self, project_dir: Path, env_name: str, ip: str, port: int, board_id: Optional[int] = None):
+    def __init__(
+        self,
+        project_dir: Path,
+        env_name: str,
+        ip: str,
+        port: int,
+        board_id: Optional[int] = None,
+    ):
         super().__init__()
         self._project_dir = project_dir
         self._env_name = env_name
@@ -140,13 +186,17 @@ class OTAWorker(QtCore.QThread):
                 self.finished.emit(False, "OTA cancelled.")
                 return
             self.progress.emit("[OTA] Compiling firmware...")
-            bin_path = compile_firmware(self._project_dir, self._env_name, board_id=self._board_id)
+            bin_path = compile_firmware(
+                self._project_dir, self._env_name, board_id=self._board_id
+            )
             if self.isInterruptionRequested():
                 self.finished.emit(False, "OTA cancelled.")
                 return
             self.progress.emit(f"[OTA] Build OK: {bin_path}")
             self.progress.emit("[OTA] Starting upload...")
-            upload_firmware_to_esp32(bin_path, self._ip, self._port, progress_cb=self.progress.emit)
+            upload_firmware_to_esp32(
+                bin_path, self._ip, self._port, progress_cb=self.progress.emit
+            )
             if self.isInterruptionRequested():
                 self.finished.emit(False, "OTA cancelled.")
                 return
@@ -164,7 +214,9 @@ def parse_packet_header(data: bytes) -> Optional[Tuple[int, int, int]]:
         return None
 
 
-def parse_board_heartbeat_packet(data: bytes) -> Optional[Tuple[tuple, bytes, int, int, int]]:
+def parse_board_heartbeat_packet(
+    data: bytes,
+) -> Optional[Tuple[tuple, bytes, int, int, int]]:
     """Returns (header, firmware_hash, board_id, engine_state, board_state) or None.
 
     firmware_hash is the 32-byte SHA-256 of the running firmware binary.
@@ -177,7 +229,7 @@ def parse_board_heartbeat_packet(data: bytes) -> Optional[Tuple[tuple, bytes, in
     try:
         body = struct.unpack(
             BOARD_HEARTBEAT_BODY_FORMAT,
-            data[PACKET_HEADER_SIZE:PACKET_HEADER_SIZE + BOARD_HEARTBEAT_BODY_SIZE],
+            data[PACKET_HEADER_SIZE : PACKET_HEADER_SIZE + BOARD_HEARTBEAT_BODY_SIZE],
         )
     except struct.error:
         return None
@@ -229,16 +281,16 @@ def parse_self_test_packet(data: bytes) -> Optional[Tuple[dict, List[dict]]]:
 
 def board_state_name(state: int) -> str:
     names = {
-        BoardState.SETUP:                    "Setup",
-        BoardState.ACTIVE:                   "Active",
+        BoardState.SETUP: "Setup",
+        BoardState.ACTIVE: "Active",
         BoardState.CONNECTION_LOSS_DETECTED: "Conn Loss",
-        BoardState.NO_CONNECTION_ABORT:      "No Conn Abort",
-        BoardState.NO_CONN_ABORT_FOLLOWER:   "No Conn Follower",
-        BoardState.PT_ABORT:                 "PT Abort",
-        BoardState.NO_PT_ABORT:              "No PT Abort",
-        BoardState.ABORT_FINISHED:           "Abort Finished",
-        BoardState.STANDALONE_ABORT:         "Standalone Abort",
-        BoardState.SELF_TEST:                "Self Test",
+        BoardState.NO_CONNECTION_ABORT: "No Conn Abort",
+        BoardState.NO_CONN_ABORT_FOLLOWER: "No Conn Follower",
+        BoardState.PT_ABORT: "PT Abort",
+        BoardState.NO_PT_ABORT: "No PT Abort",
+        BoardState.ABORT_FINISHED: "Abort Finished",
+        BoardState.STANDALONE_ABORT: "Standalone Abort",
+        BoardState.SELF_TEST: "Self Test",
     }
     return names.get(state, f"Unknown ({state})")
 
@@ -252,43 +304,108 @@ def parse_sensor_data_packet(data: bytes) -> Optional[Tuple[dict, List[dict]]]:
     offset = PACKET_HEADER_SIZE
     try:
         num_chunks, num_sensors = struct.unpack(
-            SENSOR_DATA_PACKET_FORMAT,
-            data[offset:offset + SENSOR_DATA_PACKET_SIZE]
+            SENSOR_DATA_PACKET_FORMAT, data[offset : offset + SENSOR_DATA_PACKET_SIZE]
         )
     except struct.error:
         return None
     offset += SENSOR_DATA_PACKET_SIZE
     per_chunk_size = SENSOR_DATA_CHUNK_SIZE + (num_sensors * SENSOR_DATAPOINT_SIZE)
-    expected_size = PACKET_HEADER_SIZE + SENSOR_DATA_PACKET_SIZE + (num_chunks * per_chunk_size)
+    expected_size = (
+        PACKET_HEADER_SIZE + SENSOR_DATA_PACKET_SIZE + (num_chunks * per_chunk_size)
+    )
     if len(data) < expected_size:
         return None
     chunks = []
     for _ in range(num_chunks):
-        chunk_ts, = struct.unpack(SENSOR_DATA_CHUNK_FORMAT, data[offset:offset + SENSOR_DATA_CHUNK_SIZE])
+        (chunk_ts,) = struct.unpack(
+            SENSOR_DATA_CHUNK_FORMAT, data[offset : offset + SENSOR_DATA_CHUNK_SIZE]
+        )
         offset += SENSOR_DATA_CHUNK_SIZE
         datapoints = []
         for _ in range(num_sensors):
-            sensor_id, raw_data = struct.unpack(SENSOR_DATAPOINT_FORMAT, data[offset:offset + SENSOR_DATAPOINT_SIZE])
+            sensor_id, raw_data = struct.unpack(
+                SENSOR_DATAPOINT_FORMAT, data[offset : offset + SENSOR_DATAPOINT_SIZE]
+            )
             offset += SENSOR_DATAPOINT_SIZE
-            datapoints.append({'sensor_id': sensor_id, 'data': raw_data})
-        chunks.append({'timestamp': chunk_ts, 'datapoints': datapoints})
+            datapoints.append({"sensor_id": sensor_id, "data": raw_data})
+        chunks.append({"timestamp": chunk_ts, "datapoints": datapoints})
     return (header, chunks)
 
 
 def code_to_voltage(code_uint32: int, ref_voltage: float) -> float:
     """Convert raw ADC code to voltage. Assumes 32-bit signed ADC."""
-    code_int32 = struct.unpack('i', struct.pack('I', code_uint32))[0]
+    code_int32 = struct.unpack("i", struct.pack("I", code_uint32))[0]
     return (code_int32 * ref_voltage) / 2147483648.0
 
 
 # K-type thermocouple: voltage (V) -> temperature (°C), ITS-90 rational polynomial (Mosaic/NIST-style)
 # Each row: (v_min_mV, v_max_mV, T0, V0, p1, p2, p3, p4, q1, q2, q3)
 _K_TYPE_INVERSE = (
-    (-6.404, -3.554, -121.47164, -4.1790858, 36.069513, 30.722076, 7.791386, 0.52593997, 0.93939547, 0.2779128, 0.02516334),
-    (-3.554, 4.096, -8.7935962, -0.34489914, 25.678719, -0.49887904, -0.44705222, -0.044869202, 0.00023893439, -0.02039775, -0.0018424107),
-    (4.096, 16.397, 310.18976, 12.631386, 24.061949, 4.0158622, 0.26853917, -0.0097188544, 0.16995872, 0.011413069, -0.00039275155),
-    (16.397, 33.275, 605.72562, 25.148718, 23.539401, 0.046547228, 0.0134444, 0.0005923685, 0.00083445513, 0.0004612144, 0.00002548812),
-    (33.275, 69.553, 1018.4705, 41.99385, 25.783239, -1.8363403, 0.05617666, 0.000185324, -0.074803355, 0.002384186, 0.0),
+    (
+        -6.404,
+        -3.554,
+        -121.47164,
+        -4.1790858,
+        36.069513,
+        30.722076,
+        7.791386,
+        0.52593997,
+        0.93939547,
+        0.2779128,
+        0.02516334,
+    ),
+    (
+        -3.554,
+        4.096,
+        -8.7935962,
+        -0.34489914,
+        25.678719,
+        -0.49887904,
+        -0.44705222,
+        -0.044869202,
+        0.00023893439,
+        -0.02039775,
+        -0.0018424107,
+    ),
+    (
+        4.096,
+        16.397,
+        310.18976,
+        12.631386,
+        24.061949,
+        4.0158622,
+        0.26853917,
+        -0.0097188544,
+        0.16995872,
+        0.011413069,
+        -0.00039275155,
+    ),
+    (
+        16.397,
+        33.275,
+        605.72562,
+        25.148718,
+        23.539401,
+        0.046547228,
+        0.0134444,
+        0.0005923685,
+        0.00083445513,
+        0.0004612144,
+        0.00002548812,
+    ),
+    (
+        33.275,
+        69.553,
+        1018.4705,
+        41.99385,
+        25.783239,
+        -1.8363403,
+        0.05617666,
+        0.000185324,
+        -0.074803355,
+        0.002384186,
+        0.0,
+    ),
 )
 
 
@@ -311,23 +428,27 @@ def k_type_voltage_to_temperature_c(v_volts: float) -> Optional[float]:
 # RTD_Testing uses ADS126X_IDAC_MAG_1000 = 1000 µA (both IDAC1 and IDAC2 set to 1000 µA).
 # R = |V_diff| / I_excitation (use |V| so reversed wiring still gives valid R).
 # R(T) = R0*(1 + A*T + B*T^2) for T >= 0; solve for T
-PT1000_R0 = 1000.0   # ohms at 0°C
+PT1000_R0 = 1000.0  # ohms at 0°C
 PT1000_A = 3.9083e-3
 PT1000_B = -5.775e-7
 PT1000_EXCITATION_UA = 1000.0  # match RTD_Testing: ADS126X_IDAC_MAG_1000
 
 
-def pt1000_voltage_to_temperature_c(v_volts: float, excitation_ua: float = 1000.0) -> Optional[float]:
+def pt1000_voltage_to_temperature_c(
+    v_volts: float, excitation_ua: float = 1000.0
+) -> Optional[float]:
     """Convert Pt1000 RTD differential voltage (V) to temperature (°C). excitation_ua = IDAC current in µA (default 1000). Returns None if out of range."""
     if excitation_ua <= 0:
         return None
     # Use abs so reversed differential polarity (e.g. one channel wired opposite) still gives valid R
-    r_ohm = (abs(v_volts) * 1e6) / excitation_ua  # R = V/I, I in A = excitation_ua * 1e-6
+    r_ohm = (
+        abs(v_volts) * 1e6
+    ) / excitation_ua  # R = V/I, I in A = excitation_ua * 1e-6
     rr = r_ohm / PT1000_R0
     d = PT1000_A * PT1000_A - 4 * PT1000_B * (1 - rr)
     if d < 0:
         return None
-    sqrt_d = d ** 0.5
+    sqrt_d = d**0.5
     # Use the root that lies in physical range: (-A + sqrt_d)/(2*B) gives 0–850°C for rr>=1, <0°C for rr<1
     t = (-PT1000_A + sqrt_d) / (2 * PT1000_B)
     # Allow wide range so both channels display (e.g. ch1 negative voltage -> cold reading)
@@ -355,11 +476,21 @@ def code_to_force(
     V_ADC_fs = V_bridge_fs * pga_gain, so code_fs = (V_ADC_fs / V_ref) * 2^31.
     Force = (code / code_fs) * full_scale_force.
     """
-    if adc_ref_voltage <= 0 or pga_gain <= 0 or excitation_voltage <= 0 or sensitivity_mv_per_v <= 0:
+    if (
+        adc_ref_voltage <= 0
+        or pga_gain <= 0
+        or excitation_voltage <= 0
+        or sensitivity_mv_per_v <= 0
+    ):
         return None
     code_int32 = struct.unpack("i", struct.pack("I", code_uint32))[0]
     # code_fs = (V_exc * sens/1000 * pga_gain / V_ref) * 2^31
-    code_fs = (excitation_voltage * (sensitivity_mv_per_v / 1000.0) * pga_gain / adc_ref_voltage) * ADC32_FULL_SCALE
+    code_fs = (
+        excitation_voltage
+        * (sensitivity_mv_per_v / 1000.0)
+        * pga_gain
+        / adc_ref_voltage
+    ) * ADC32_FULL_SCALE
     if code_fs <= 0:
         return None
     proportion = code_int32 / code_fs
@@ -376,7 +507,16 @@ def find_pio_command() -> str:
         user_profile = os.environ.get("USERPROFILE", "")
         paths_to_check = [
             os.path.join(user_profile, ".platformio", "penv", "Scripts", "pio.exe"),
-            os.path.join(user_profile, "AppData", "Local", "Programs", "Python", "Python313", "Scripts", "pio.exe"),
+            os.path.join(
+                user_profile,
+                "AppData",
+                "Local",
+                "Programs",
+                "Python",
+                "Python313",
+                "Scripts",
+                "pio.exe",
+            ),
             "C:\\Python313\\Scripts\\pio.exe",
         ]
         for path in paths_to_check:
@@ -386,7 +526,9 @@ def find_pio_command() -> str:
     return "pio"
 
 
-def compile_firmware(project_dir: Path, env_name: str, board_id: Optional[int] = None) -> Path:
+def compile_firmware(
+    project_dir: Path, env_name: str, board_id: Optional[int] = None
+) -> Path:
     """Compile a PlatformIO project and return firmware.bin path.
 
     If board_id is provided, append a BOARD_ID build flag so Hotfire
@@ -403,7 +545,9 @@ def compile_firmware(project_dir: Path, env_name: str, board_id: Optional[int] =
         if bid is not None and 0 <= bid <= 254:
             extra_flag = f"-DBOARD_ID={bid}"
             existing = env.get("PLATFORMIO_BUILD_FLAGS", "").strip()
-            env["PLATFORMIO_BUILD_FLAGS"] = f"{existing} {extra_flag}".strip() if existing else extra_flag
+            env["PLATFORMIO_BUILD_FLAGS"] = (
+                f"{existing} {extra_flag}".strip() if existing else extra_flag
+            )
     pio_cmd = find_pio_command()
     cmd = [pio_cmd, "run"]
     if env_name:
@@ -427,7 +571,9 @@ def compile_firmware(project_dir: Path, env_name: str, board_id: Optional[int] =
     for root, _dirs, files in os.walk(build_dir):
         if "firmware.bin" in files:
             return Path(root) / "firmware.bin"
-    raise FileNotFoundError("firmware.bin not found under .pio/build; check env name or PlatformIO config.")
+    raise FileNotFoundError(
+        "firmware.bin not found under .pio/build; check env name or PlatformIO config."
+    )
 
 
 def upload_firmware_to_esp32(
@@ -437,6 +583,7 @@ def upload_firmware_to_esp32(
     progress_cb: Optional[Callable[[str], None]] = None,
 ) -> None:
     """Send firmware binary to ESP32 over TCP using Ethernet OTA protocol."""
+
     def emit(msg: str) -> None:
         if progress_cb is not None:
             progress_cb(msg)
@@ -473,7 +620,9 @@ def upload_firmware_to_esp32(
                     last_percent = percent
                     elapsed = max(time.time() - start_time, 1e-6)
                     rate_kb = sent / elapsed / 1024.0
-                    emit(f"[UPLOAD] {percent}% ({sent}/{file_size} bytes, {rate_kb:.1f} KB/s)")
+                    emit(
+                        f"[UPLOAD] {percent}% ({sent}/{file_size} bytes, {rate_kb:.1f} KB/s)"
+                    )
 
         emit("[UPLOAD] Transfer complete, waiting for OK...")
         try:
@@ -496,7 +645,7 @@ def _make_header(packet_type: int) -> bytes:
 
 def build_server_heartbeat_packet() -> bytes:
     """Server heartbeat: header + 1 byte engine_state (0 = SAFE)."""
-    return _make_header(PacketType.SERVER_HEARTBEAT) + struct.pack('<B', 0)
+    return _make_header(PacketType.SERVER_HEARTBEAT) + struct.pack("<B", 0)
 
 
 def build_sensor_config_packet(
@@ -542,10 +691,10 @@ def build_sensor_config_packet(
 
     # optional controller_ip (big-endian) if necessary_for_abort is set and IP provided
     if necessary_for_abort and controller_ip:
-        parts = [int(x) for x in controller_ip.strip().split('.')]
+        parts = [int(x) for x in controller_ip.strip().split(".")]
         if len(parts) == 4 and all(0 <= p <= 255 for p in parts):
             ip_be = (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]
-            body.extend(struct.pack('>I', ip_be))
+            body.extend(struct.pack(">I", ip_be))
 
     # enable_serial_printing byte
     body.append(1 if enable_serial_printing else 0)
@@ -564,16 +713,29 @@ def build_header_only_packet(packet_type: int) -> bytes:
 
 class UDPReceiver(QtCore.QThread):
     sensor_data_received = QtCore.pyqtSignal(dict, list, str)
-    sensor_data_packet_status = QtCore.pyqtSignal(str, bool)  # source_ip, parsed_ok (True=ok, False=malformed)
-    board_heartbeat_received = QtCore.pyqtSignal(float, int, int, int, str, bytes)  # timestamp, board_id, board_state, engine_state, source_ip, firmware_hash
+    sensor_data_packet_status = QtCore.pyqtSignal(
+        str, bool
+    )  # source_ip, parsed_ok (True=ok, False=malformed)
+    board_heartbeat_received = QtCore.pyqtSignal(
+        float, int, int, int, str, bytes
+    )  # timestamp, board_id, board_state, engine_state, source_ip, firmware_hash
     status_update = QtCore.pyqtSignal(str)
-    self_test_received = QtCore.pyqtSignal(dict, list, str)  # header_dict, results, source_ip
+    self_test_received = QtCore.pyqtSignal(
+        dict, list, str
+    )  # header_dict, results, source_ip
 
-    def __init__(self, port: int, bind_address: str = '0.0.0.0', sock: Optional[socket.socket] = None):
+    def __init__(
+        self,
+        port: int,
+        bind_address: str = "0.0.0.0",
+        sock: Optional[socket.socket] = None,
+    ):
         super().__init__()
         self.port = port
         self.bind_address = bind_address
-        self.sock = sock  # if provided, use shared socket (main thread uses it for sendto too)
+        self.sock = (
+            sock  # if provided, use shared socket (main thread uses it for sendto too)
+        )
         self._owned_socket = sock is None
         self._stop = False
         self.total_packets = 0
@@ -590,13 +752,18 @@ class UDPReceiver(QtCore.QThread):
 
     def get_stats(self) -> Dict:
         if self.start_time is None:
-            return {'packets': 0, 'bytes': 0, 'packets_per_sec': 0.0, 'bytes_per_sec': 0.0}
+            return {
+                "packets": 0,
+                "bytes": 0,
+                "packets_per_sec": 0.0,
+                "bytes_per_sec": 0.0,
+            }
         elapsed = time.time() - self.start_time
         return {
-            'packets': self.total_packets,
-            'bytes': self.total_bytes,
-            'packets_per_sec': self.total_packets / elapsed if elapsed > 0 else 0,
-            'bytes_per_sec': self.total_bytes / elapsed if elapsed > 0 else 0,
+            "packets": self.total_packets,
+            "bytes": self.total_bytes,
+            "packets_per_sec": self.total_packets / elapsed if elapsed > 0 else 0,
+            "bytes_per_sec": self.total_bytes / elapsed if elapsed > 0 else 0,
         }
 
     def run(self):
@@ -627,7 +794,12 @@ class UDPReceiver(QtCore.QThread):
                     if result:
                         _h, firmware_hash, board_id, engine_state, board_state = result
                         self.board_heartbeat_received.emit(
-                            time.time(), board_id, board_state, engine_state, addr[0], firmware_hash
+                            time.time(),
+                            board_id,
+                            board_state,
+                            engine_state,
+                            addr[0],
+                            firmware_hash,
                         )
                 elif header[0] == PacketType.SELF_TEST:
                     result = parse_self_test_packet(data)
@@ -639,8 +811,14 @@ class UDPReceiver(QtCore.QThread):
                     self.sensor_data_packet_status.emit(addr[0], result is not None)
                     if result:
                         header_tuple, chunks_list = result
-                        header_dict = {'packet_type': header_tuple[0], 'version': header_tuple[1], 'timestamp': header_tuple[2]}
-                        self.sensor_data_received.emit(header_dict, chunks_list, addr[0])
+                        header_dict = {
+                            "packet_type": header_tuple[0],
+                            "version": header_tuple[1],
+                            "timestamp": header_tuple[2],
+                        }
+                        self.sensor_data_received.emit(
+                            header_dict, chunks_list, addr[0]
+                        )
             except socket.timeout:
                 continue
             except Exception as e:
@@ -656,7 +834,9 @@ class UDPReceiver(QtCore.QThread):
 
 
 class SenseTestingGUIWindow(QtWidgets.QMainWindow):
-    def __init__(self, port: int = DEFAULT_PORT, ref_voltage: float = DEFAULT_REF_VOLTAGE):
+    def __init__(
+        self, port: int = DEFAULT_PORT, ref_voltage: float = DEFAULT_REF_VOLTAGE
+    ):
         super().__init__()
         self.setWindowTitle("Sense Testing GUI")
         self.resize(1000, 620)
@@ -667,11 +847,20 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         self.stats_start_time = None
         self.sensor_data: Dict[int, deque] = {}
         self.sensor_plots: Dict[int, pg.PlotDataItem] = {}
-        self.plot_enabled: Dict[int, bool] = {i: True for i in range(1, MAX_DISPLAY_CHANNELS + 1)}
+        self.plot_enabled: Dict[int, bool] = {
+            i: True for i in range(1, MAX_DISPLAY_CHANNELS + 1)
+        }
         self.channel_checkboxes: Dict[int, QtWidgets.QCheckBox] = {}
-        self.network_stats = {'packets': '0', 'pps': '0.0', 'bytes': '0 B', 'bps': '0.0 B/s'}
+        self.network_stats = {
+            "packets": "0",
+            "pps": "0.0",
+            "bytes": "0 B",
+            "bps": "0.0 B/s",
+        }
         self.window_seconds = DEFAULT_WINDOW_SECONDS
-        self.force_leaderboard: List[Tuple[str, float]] = []  # (name, force) sorted by force desc
+        self.force_leaderboard: List[Tuple[str, float]] = (
+            []
+        )  # (name, force) sorted by force desc
 
         # Board status (heartbeats)
         self.heartbeat_timestamps: deque = deque(maxlen=HEARTBEAT_RATE_WINDOW)
@@ -687,7 +876,7 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         self._send_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._send_sock.settimeout(0.5)
         try:
-            self._send_sock.bind(('', port))
+            self._send_sock.bind(("", port))
             self._shared_sock = self._send_sock  # pass to receiver
         except OSError:
             self._send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -714,7 +903,9 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         self.ref_voltage_spin.setRange(0.1, 10.0)
         self.ref_voltage_spin.setSingleStep(0.1)
         self.ref_voltage_spin.setValue(ref_voltage)
-        self.ref_voltage_spin.setToolTip("Internal ref / PT: 2.5 V (default); TC_Board VDD: 3.3 V")
+        self.ref_voltage_spin.setToolTip(
+            "Internal ref / PT: 2.5 V (default); TC_Board VDD: 3.3 V"
+        )
         self.ref_voltage_spin.valueChanged.connect(self._on_ref_voltage_changed)
         toolbar.addWidget(self.ref_voltage_spin)
 
@@ -731,24 +922,36 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
 
         toolbar.addSpacing(20)
         self.show_temp_k_cb = QtWidgets.QCheckBox("Show temperature (K-type)")
-        self.show_temp_k_cb.setToolTip("Convert voltage to °C using K-type thermocouple calibration.")
+        self.show_temp_k_cb.setToolTip(
+            "Convert voltage to °C using K-type thermocouple calibration."
+        )
         self.show_temp_k_cb.stateChanged.connect(self._on_show_temperature_k_changed)
         toolbar.addWidget(self.show_temp_k_cb)
 
         self.show_temp_pt1000_cb = QtWidgets.QCheckBox("Show temperature (Pt1000 RTD)")
-        self.show_temp_pt1000_cb.setToolTip("Convert differential voltage to °C for Pt1000 RTD (1000 µA excitation).")
-        self.show_temp_pt1000_cb.stateChanged.connect(self._on_show_temperature_pt1000_changed)
+        self.show_temp_pt1000_cb.setToolTip(
+            "Convert differential voltage to °C for Pt1000 RTD (1000 µA excitation)."
+        )
+        self.show_temp_pt1000_cb.stateChanged.connect(
+            self._on_show_temperature_pt1000_changed
+        )
         toolbar.addWidget(self.show_temp_pt1000_cb)
 
         toolbar.addSpacing(20)
         self.show_force_lc_cb = QtWidgets.QCheckBox("Show force (load cell)")
-        self.show_force_lc_cb.setToolTip("Ratiometric: force from raw 32-bit ADC code (no voltage step). Uses Reference voltage (V) as ADC ref, plus excitation, sensitivity (mV/V), PGA gain, full scale force.")
+        self.show_force_lc_cb.setToolTip(
+            "Ratiometric: force from raw 32-bit ADC code (no voltage step). Uses Reference voltage (V) as ADC ref, plus excitation, sensitivity (mV/V), PGA gain, full scale force."
+        )
         self.show_force_lc_cb.stateChanged.connect(self._on_show_force_lc_changed)
         toolbar.addWidget(self.show_force_lc_cb)
 
         self.show_encoder_angle_cb = QtWidgets.QCheckBox("Show angle (encoder)")
-        self.show_encoder_angle_cb.setToolTip("Interpret raw uint32 as AS5600 12-bit angle (0–4095) and display as degrees (0–360°).")
-        self.show_encoder_angle_cb.stateChanged.connect(self._on_show_encoder_angle_changed)
+        self.show_encoder_angle_cb.setToolTip(
+            "Interpret raw uint32 as AS5600 12-bit angle (0–4095) and display as degrees (0–360°)."
+        )
+        self.show_encoder_angle_cb.stateChanged.connect(
+            self._on_show_encoder_angle_changed
+        )
         toolbar.addWidget(self.show_encoder_angle_cb)
 
         toolbar.addSpacing(20)
@@ -773,21 +976,27 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         self.lc_sensitivity_spin.setRange(0.01, 100.0)
         self.lc_sensitivity_spin.setValue(2.0)
         self.lc_sensitivity_spin.setDecimals(3)
-        self.lc_sensitivity_spin.setToolTip("Load cell sensitivity at full scale, mV per V of excitation.")
+        self.lc_sensitivity_spin.setToolTip(
+            "Load cell sensitivity at full scale, mV per V of excitation."
+        )
         force_row.addWidget(self.lc_sensitivity_spin)
         force_row.addWidget(QtWidgets.QLabel("PGA gain:"))
         self.lc_pga_gain_spin = QtWidgets.QDoubleSpinBox()
         self.lc_pga_gain_spin.setRange(1.0, 128.0)
         self.lc_pga_gain_spin.setValue(32.0)
         self.lc_pga_gain_spin.setDecimals(1)
-        self.lc_pga_gain_spin.setToolTip("PGA gain used on the board (e.g. 32 for ADS126X_GAIN_32).")
+        self.lc_pga_gain_spin.setToolTip(
+            "PGA gain used on the board (e.g. 32 for ADS126X_GAIN_32)."
+        )
         force_row.addWidget(self.lc_pga_gain_spin)
         force_row.addWidget(QtWidgets.QLabel("Full scale force:"))
         self.lc_full_scale_spin = QtWidgets.QDoubleSpinBox()
         self.lc_full_scale_spin.setRange(0.001, 1e9)
         self.lc_full_scale_spin.setValue(300.0)
         self.lc_full_scale_spin.setDecimals(2)
-        self.lc_full_scale_spin.setToolTip("Force at full scale (same unit as desired display, e.g. N or lbf).")
+        self.lc_full_scale_spin.setToolTip(
+            "Force at full scale (same unit as desired display, e.g. N or lbf)."
+        )
         force_row.addWidget(self.lc_full_scale_spin)
         force_row.addStretch()
         layout.addLayout(force_row)
@@ -808,8 +1017,12 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
             cb = QtWidgets.QCheckBox(f"Ch {ch}")
             cb.setChecked(True)
             r, g, b = SENSOR_COLORS[(ch - 1) % len(SENSOR_COLORS)]
-            cb.setStyleSheet(f"QCheckBox {{ color: rgb({r},{g},{b}); font-weight: bold; }}")
-            cb.stateChanged.connect(lambda state, c=ch: self._on_channel_toggled(c, state))
+            cb.setStyleSheet(
+                f"QCheckBox {{ color: rgb({r},{g},{b}); font-weight: bold; }}"
+            )
+            cb.stateChanged.connect(
+                lambda state, c=ch: self._on_channel_toggled(c, state)
+            )
             self.channel_checkboxes[ch] = cb
             channel_row.addWidget(cb)
         channel_row.addStretch()
@@ -818,24 +1031,24 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         # Main content: plot + board status panel
         content = QtWidgets.QHBoxLayout()
         # Plot (dark background — make axis labels and ticks white so they stand out)
-        self.plot_widget = pg.PlotWidget(background='#1e1e1e')
-        _axis_style = {'color': '#FFFFFF', 'font-size': '11pt'}
-        self.plot_widget.setLabel('left', 'Voltage (V)', **_axis_style)
-        self.plot_widget.setLabel('bottom', 'Time (s)', **_axis_style)
-        for axis_name in ('left', 'bottom'):
+        self.plot_widget = pg.PlotWidget(background="#1e1e1e")
+        _axis_style = {"color": "#FFFFFF", "font-size": "11pt"}
+        self.plot_widget.setLabel("left", "Voltage (V)", **_axis_style)
+        self.plot_widget.setLabel("bottom", "Time (s)", **_axis_style)
+        for axis_name in ("left", "bottom"):
             ax = self.plot_widget.getPlotItem().getAxis(axis_name)
             try:
-                if hasattr(ax, 'setStyle'):
-                    ax.setStyle(tickTextColor='#FFFFFF', tickFont=QtGui.QFont(None, 10))
+                if hasattr(ax, "setStyle"):
+                    ax.setStyle(tickTextColor="#FFFFFF", tickFont=QtGui.QFont(None, 10))
             except Exception:
                 pass
             try:
-                if hasattr(ax, 'label') and hasattr(ax.label, 'setColor'):
-                    ax.label.setColor('#FFFFFF')
+                if hasattr(ax, "label") and hasattr(ax.label, "setColor"):
+                    ax.label.setColor("#FFFFFF")
             except Exception:
                 pass
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
-        self.plot_widget.enableAutoRange(axis='y')
+        self.plot_widget.enableAutoRange(axis="y")
         self.plot_widget.addLegend(offset=(10, 10))
         content.addWidget(self.plot_widget, stretch=1)
 
@@ -856,7 +1069,9 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         self.board_ip_label = QtWidgets.QLabel("Source: —")
         board_layout.addWidget(self.board_ip_label)
         self.firmware_hash_label = QtWidgets.QLabel("Firmware hash: —")
-        self.firmware_hash_label.setStyleSheet("color: #8ab; font-size: 11px; font-family: monospace;")
+        self.firmware_hash_label.setStyleSheet(
+            "color: #8ab; font-size: 11px; font-family: monospace;"
+        )
         board_layout.addWidget(self.firmware_hash_label)
         self.sensor_data_status_label = QtWidgets.QLabel("Sensor data packets: —")
         self.sensor_data_status_label.setStyleSheet("color: #8ab; font-size: 11px;")
@@ -883,7 +1098,6 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         self.send_heartbeat_cb.stateChanged.connect(self._on_send_heartbeat_changed)
         cmd_layout.addWidget(self.send_heartbeat_cb)
 
-
         target_row = QtWidgets.QHBoxLayout()
         target_row.addWidget(QtWidgets.QLabel("Target IP:"))
         self.target_ip_edit = QtWidgets.QLineEdit()
@@ -897,7 +1111,9 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         self.target_port_spin = QtWidgets.QSpinBox()
         self.target_port_spin.setRange(1, 65535)
         self.target_port_spin.setValue(DEFAULT_SEND_PORT)
-        self.target_port_spin.setToolTip("Board listens on 5005. Use 5005 to send server heartbeat and commands.")
+        self.target_port_spin.setToolTip(
+            "Board listens on 5005. Use 5005 to send server heartbeat and commands."
+        )
         port_row.addWidget(self.target_port_spin)
         cmd_layout.addLayout(port_row)
 
@@ -910,12 +1126,18 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         sens_layout = QtWidgets.QVBoxLayout(sens_grp)
         self.necessary_for_abort_cb = QtWidgets.QCheckBox("Necessary for abort")
         sens_layout.addWidget(self.necessary_for_abort_cb)
-        self.enable_serial_printing_cb = QtWidgets.QCheckBox("Enable serial printing on board")
-        self.enable_serial_printing_cb.setToolTip("If checked, sensor config packet tells the board to enable Serial output (DAQv2-Comms field).")
+        self.enable_serial_printing_cb = QtWidgets.QCheckBox(
+            "Enable serial printing on board"
+        )
+        self.enable_serial_printing_cb.setToolTip(
+            "If checked, sensor config packet tells the board to enable Serial output (DAQv2-Comms field)."
+        )
         sens_layout.addWidget(self.enable_serial_printing_cb)
         sens_layout.addWidget(QtWidgets.QLabel("Sensor IDs (comma-separated):"))
         self.sensor_ids_edit = QtWidgets.QLineEdit()
-        self.sensor_ids_edit.setPlaceholderText("e.g. 1,2,3,10  (leave empty for board default)")
+        self.sensor_ids_edit.setPlaceholderText(
+            "e.g. 1,2,3,10  (leave empty for board default)"
+        )
         self.sensor_ids_edit.setText("1,2,3,4,5,6,7,8,9,10")
         sens_layout.addWidget(self.sensor_ids_edit)
         sens_layout.addWidget(QtWidgets.QLabel("Reference voltage:"))
@@ -945,13 +1167,19 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         abort_grp = QtWidgets.QGroupBox("Abort packets")
         abort_layout = QtWidgets.QVBoxLayout(abort_grp)
         self.send_abort_btn = QtWidgets.QPushButton("Send Abort")
-        self.send_abort_btn.clicked.connect(lambda: self._send_header_only(PacketType.ABORT))
+        self.send_abort_btn.clicked.connect(
+            lambda: self._send_header_only(PacketType.ABORT)
+        )
         abort_layout.addWidget(self.send_abort_btn)
         self.send_clear_abort_btn = QtWidgets.QPushButton("Send Clear Abort")
-        self.send_clear_abort_btn.clicked.connect(lambda: self._send_header_only(PacketType.CLEAR_ABORT))
+        self.send_clear_abort_btn.clicked.connect(
+            lambda: self._send_header_only(PacketType.CLEAR_ABORT)
+        )
         abort_layout.addWidget(self.send_clear_abort_btn)
         self.send_no_conn_abort_btn = QtWidgets.QPushButton("Send No Conn Abort")
-        self.send_no_conn_abort_btn.clicked.connect(lambda: self._send_header_only(PacketType.NO_CONNECTION_ABORT))
+        self.send_no_conn_abort_btn.clicked.connect(
+            lambda: self._send_header_only(PacketType.NO_CONNECTION_ABORT)
+        )
         abort_layout.addWidget(self.send_no_conn_abort_btn)
         cmd_layout.addWidget(abort_grp)
 
@@ -971,7 +1199,9 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         ota_proj_row = QtWidgets.QHBoxLayout()
         ota_proj_row.addWidget(QtWidgets.QLabel("PlatformIO project:"))
         self.ota_project_dir_edit = QtWidgets.QLineEdit()
-        self.ota_project_dir_edit.setPlaceholderText("Path to PlatformIO project folder")
+        self.ota_project_dir_edit.setPlaceholderText(
+            "Path to PlatformIO project folder"
+        )
         ota_proj_row.addWidget(self.ota_project_dir_edit)
         self.ota_project_browse_btn = QtWidgets.QPushButton("Browse")
         self.ota_project_browse_btn.clicked.connect(self._browse_ota_project_dir)
@@ -985,7 +1215,6 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         self.ota_env_edit.setText("adafruit_feather_esp32s3")
         ota_env_row.addWidget(self.ota_env_edit)
         ota_layout.addLayout(ota_env_row)
-
 
         ota_port_row = QtWidgets.QHBoxLayout()
         ota_port_row.addWidget(QtWidgets.QLabel("OTA TCP port:"))
@@ -1008,7 +1237,9 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         ota_layout.addLayout(ota_board_id_row)
 
         self.ota_upload_btn = QtWidgets.QPushButton("Compile && Upload")
-        self.ota_upload_btn.setToolTip("Compile selected PlatformIO project and upload firmware via Ethernet OTA to the Target IP.")
+        self.ota_upload_btn.setToolTip(
+            "Compile selected PlatformIO project and upload firmware via Ethernet OTA to the Target IP."
+        )
         self.ota_upload_btn.clicked.connect(self._on_ota_compile_and_upload_clicked)
         ota_layout.addWidget(self.ota_upload_btn)
 
@@ -1028,8 +1259,12 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         right_column_layout.addWidget(ota_grp)
 
         leaderboard_grp = QtWidgets.QGroupBox("Max force")
-        leaderboard_grp.setStyleSheet("QGroupBox { font-size: 10px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 4px 2px 4px; }")
-        leaderboard_grp.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Maximum)
+        leaderboard_grp.setStyleSheet(
+            "QGroupBox { font-size: 10px; } QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 4px 2px 4px; }"
+        )
+        leaderboard_grp.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Maximum
+        )
         leaderboard_layout = QtWidgets.QVBoxLayout(leaderboard_grp)
         leaderboard_layout.setContentsMargins(6, 4, 6, 4)
         leaderboard_layout.setSpacing(2)
@@ -1041,7 +1276,9 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         self.leaderboard_name_edit.setMaximumWidth(88)
         lb_row.addWidget(self.leaderboard_name_edit)
         self.leaderboard_add_btn = QtWidgets.QPushButton("Add max")
-        self.leaderboard_add_btn.setToolTip("Add max force in current time window to leaderboard.")
+        self.leaderboard_add_btn.setToolTip(
+            "Add max force in current time window to leaderboard."
+        )
         self.leaderboard_add_btn.clicked.connect(self._on_add_max_force_to_leaderboard)
         lb_row.addWidget(self.leaderboard_add_btn)
         leaderboard_layout.addLayout(lb_row)
@@ -1057,7 +1294,9 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         self._load_leaderboard()
 
         # Stats bar
-        self.stats_label = QtWidgets.QLabel("Packets: 0  |  Pkts/s: 0  |  Bytes: 0  |  B/s: 0")
+        self.stats_label = QtWidgets.QLabel(
+            "Packets: 0  |  Pkts/s: 0  |  Bytes: 0  |  B/s: 0"
+        )
         layout.addWidget(self.stats_label)
 
         self.receiver = None
@@ -1072,7 +1311,9 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         port = self.port_spin.value()
         self.receiver = UDPReceiver(port=port, sock=self._shared_sock)
         self.receiver.sensor_data_received.connect(self._on_sensor_data)
-        self.receiver.sensor_data_packet_status.connect(self._on_sensor_data_packet_status)
+        self.receiver.sensor_data_packet_status.connect(
+            self._on_sensor_data_packet_status
+        )
         self.receiver.board_heartbeat_received.connect(self._on_board_heartbeat)
         self.receiver.self_test_received.connect(self._on_self_test_results)
         self.receiver.status_update.connect(self.status_label.setText)
@@ -1121,28 +1362,39 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
 
         self.ota_log.clear()
         if board_id_opt is not None:
-            self.ota_log.appendPlainText(f"[OTA] Starting — target {ip}:{port}, board ID {board_id_opt}")
+            self.ota_log.appendPlainText(
+                f"[OTA] Starting — target {ip}:{port}, board ID {board_id_opt}"
+            )
         else:
-            self.ota_log.appendPlainText(f"[OTA] Starting — target {ip}:{port} (no board ID override)")
+            self.ota_log.appendPlainText(
+                f"[OTA] Starting — target {ip}:{port} (no board ID override)"
+            )
         self.ota_upload_btn.setEnabled(False)
 
-        self._ota_worker = OTAWorker(project_dir, env_name, ip, port, board_id=board_id_opt)
+        self._ota_worker = OTAWorker(
+            project_dir, env_name, ip, port, board_id=board_id_opt
+        )
         self._ota_worker.progress.connect(self._on_ota_progress)
         self._ota_worker.finished.connect(self._on_ota_finished)
         self._ota_worker.start()
 
     def _on_ota_progress(self, msg: str):
         self.ota_log.appendPlainText(msg)
-        self.ota_log.verticalScrollBar().setValue(self.ota_log.verticalScrollBar().maximum())
+        self.ota_log.verticalScrollBar().setValue(
+            self.ota_log.verticalScrollBar().maximum()
+        )
 
     def _on_ota_finished(self, ok: bool, msg: str):
         self.ota_log.appendPlainText(msg)
-        self.ota_log.verticalScrollBar().setValue(self.ota_log.verticalScrollBar().maximum())
+        self.ota_log.verticalScrollBar().setValue(
+            self.ota_log.verticalScrollBar().maximum()
+        )
         self.ota_upload_btn.setEnabled(True)
         self.ota_upload_btn.setEnabled(True)
 
     def _on_show_temperature_k_changed(self, state):
         from PyQt6.QtCore import Qt
+
         self.show_temperature_k_type = state == Qt.CheckState.Checked.value
         if self.show_temperature_k_type and self.show_temp_pt1000_cb.isChecked():
             self.show_temp_pt1000_cb.setChecked(False)
@@ -1153,6 +1405,7 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
 
     def _on_show_temperature_pt1000_changed(self, state):
         from PyQt6.QtCore import Qt
+
         self.show_temperature_pt1000 = state == Qt.CheckState.Checked.value
         if self.show_temperature_pt1000 and self.show_temp_k_cb.isChecked():
             self.show_temp_k_cb.setChecked(False)
@@ -1163,6 +1416,7 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
 
     def _on_show_force_lc_changed(self, state):
         from PyQt6.QtCore import Qt
+
         if state == Qt.CheckState.Checked.value:
             if self.show_temp_k_cb.isChecked():
                 self.show_temp_k_cb.setChecked(False)
@@ -1173,6 +1427,7 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
 
     def _on_show_encoder_angle_changed(self, state):
         from PyQt6.QtCore import Qt
+
         if state == Qt.CheckState.Checked.value:
             if self.show_temp_k_cb.isChecked():
                 self.show_temp_k_cb.setChecked(False)
@@ -1184,7 +1439,9 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
     def _on_add_max_force_to_leaderboard(self):
         """Find max force in current time window and add (name, force) to leaderboard."""
         if self.stats_start_time is None:
-            self.status_label.setText("No data yet — start receiving to add to leaderboard.")
+            self.status_label.setText(
+                "No data yet — start receiving to add to leaderboard."
+            )
             return
         current_time = time.time() - self.stats_start_time
         time_window = self.window_seconds
@@ -1203,7 +1460,9 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
                     if f is not None and (max_force is None or f > max_force):
                         max_force = f
         if max_force is None:
-            self.status_label.setText("No valid force in current window (check Show force & data).")
+            self.status_label.setText(
+                "No valid force in current window (check Show force & data)."
+            )
             return
         name = self.leaderboard_name_edit.text().strip() or "Anonymous"
         self.force_leaderboard.append((name, max_force))
@@ -1240,6 +1499,7 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
 
     def _on_channel_toggled(self, channel: int, state):
         from PyQt6.QtCore import Qt
+
         self.plot_enabled[channel] = state == Qt.CheckState.Checked.value
         if channel in self.sensor_plots:
             self.sensor_plots[channel].setVisible(self.plot_enabled[channel])
@@ -1247,12 +1507,26 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
     def _on_sensor_data_packet_status(self, source_ip: str, parsed_ok: bool):
         if parsed_ok:
             self.sensor_data_status_label.setText(f"Sensor data: from {source_ip} (ok)")
-            self.sensor_data_status_label.setStyleSheet("color: #2ecc71; font-size: 11px;")
+            self.sensor_data_status_label.setStyleSheet(
+                "color: #2ecc71; font-size: 11px;"
+            )
         else:
-            self.sensor_data_status_label.setText(f"Sensor data: from {source_ip} (malformed)")
-            self.sensor_data_status_label.setStyleSheet("color: #e67e22; font-size: 11px;")
+            self.sensor_data_status_label.setText(
+                f"Sensor data: from {source_ip} (malformed)"
+            )
+            self.sensor_data_status_label.setStyleSheet(
+                "color: #e67e22; font-size: 11px;"
+            )
 
-    def _on_board_heartbeat(self, timestamp: float, board_id: int, board_state: int, engine_state: int, source_ip: str, firmware_hash: bytes):
+    def _on_board_heartbeat(
+        self,
+        timestamp: float,
+        board_id: int,
+        board_state: int,
+        engine_state: int,
+        source_ip: str,
+        firmware_hash: bytes,
+    ):
         self.heartbeat_timestamps.append(timestamp)
         self.last_heartbeat_time = timestamp
         self.board_id = board_id
@@ -1359,19 +1633,23 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         receive_time = time.time() - base_time
 
         for chunk in chunks:
-            for dp in chunk['datapoints']:
-                sensor_id = dp['sensor_id']
-                code_uint32 = dp['data']
+            for dp in chunk["datapoints"]:
+                sensor_id = dp["sensor_id"]
+                code_uint32 = dp["data"]
 
                 if sensor_id not in self.sensor_data:
                     self.sensor_data[sensor_id] = deque(maxlen=MAX_POINTS)
                     if sensor_id not in self.plot_enabled:
                         self.plot_enabled[sensor_id] = True
                     if sensor_id in self.channel_checkboxes:
-                        self.channel_checkboxes[sensor_id].setChecked(self.plot_enabled[sensor_id])
+                        self.channel_checkboxes[sensor_id].setChecked(
+                            self.plot_enabled[sensor_id]
+                        )
                     color = SENSOR_COLORS[(sensor_id - 1) % len(SENSOR_COLORS)]
                     pen = pg.mkPen(color=color, width=2)
-                    plot = self.plot_widget.plot([], [], pen=pen, name=f"Ch {sensor_id}")
+                    plot = self.plot_widget.plot(
+                        [], [], pen=pen, name=f"Ch {sensor_id}"
+                    )
                     plot.setVisible(self.plot_enabled.get(sensor_id, True))
                     self.sensor_plots[sensor_id] = plot
 
@@ -1382,10 +1660,10 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
             return
         stats = self.receiver.get_stats()
         self.network_stats = {
-            'packets': str(stats['packets']),
-            'pps': f"{stats['packets_per_sec']:.1f}",
-            'bytes': f"{stats['bytes']} B",
-            'bps': f"{stats['bytes_per_sec']:.0f} B/s",
+            "packets": str(stats["packets"]),
+            "pps": f"{stats['packets_per_sec']:.1f}",
+            "bytes": f"{stats['bytes']} B",
+            "bps": f"{stats['bytes_per_sec']:.0f} B/s",
         }
         self.stats_label.setText(
             f"Packets: {self.network_stats['packets']}  |  "
@@ -1404,22 +1682,30 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
             self.heartbeat_rate_label.setText("Heartbeat rate: — Hz")
 
         if self.board_state is not None:
-            self.board_state_label.setText(f"Board state: {board_state_name(self.board_state)}")
+            self.board_state_label.setText(
+                f"Board state: {board_state_name(self.board_state)}"
+            )
         else:
             self.board_state_label.setText("Board state: —")
 
         if self.last_heartbeat_time is not None:
             if now - self.last_heartbeat_time > HEARTBEAT_TIMEOUT_SEC:
                 self.connection_label.setText("Connection: Lost")
-                self.connection_label.setStyleSheet("font-weight: bold; color: #e74c3c;")
+                self.connection_label.setStyleSheet(
+                    "font-weight: bold; color: #e74c3c;"
+                )
             else:
                 self.connection_label.setText("Connection: Connected")
-                self.connection_label.setStyleSheet("font-weight: bold; color: #2ecc71;")
+                self.connection_label.setStyleSheet(
+                    "font-weight: bold; color: #2ecc71;"
+                )
         else:
             self.connection_label.setText("Connection: —")
             self.connection_label.setStyleSheet("font-weight: bold;")
 
-        self.board_id_label.setText(f"Board ID: {self.board_id if self.board_id is not None else '—'}")
+        self.board_id_label.setText(
+            f"Board ID: {self.board_id if self.board_id is not None else '—'}"
+        )
         self.board_ip_label.setText(f"Source: {self.board_source_ip or '—'}")
 
         current_time = time.time() - self.stats_start_time
@@ -1429,7 +1715,7 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
         use_k_type = self.show_temp_k_cb.isChecked()
         use_force = self.show_force_lc_cb.isChecked()
         use_encoder = self.show_encoder_angle_cb.isChecked()
-        _label_style = {'color': '#FFFFFF', 'font-size': '11pt'}
+        _label_style = {"color": "#FFFFFF", "font-size": "11pt"}
         if use_encoder:
             self.plot_widget.setLabel("left", "Angle (°)", **_label_style)
         elif use_force:
@@ -1456,8 +1742,8 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
                 y_unit, y_scale = "V", 1.0
             self.plot_widget.setLabel("left", f"Voltage ({y_unit})", **_label_style)
         ax_left = self.plot_widget.getPlotItem().getAxis("left")
-        if hasattr(ax_left, 'label') and hasattr(ax_left.label, 'setColor'):
-            ax_left.label.setColor('#FFFFFF')
+        if hasattr(ax_left, "label") and hasattr(ax_left.label, "setColor"):
+            ax_left.label.setColor("#FFFFFF")
 
         for sensor_id, data_deque in self.sensor_data.items():
             if sensor_id not in self.sensor_plots:
@@ -1487,7 +1773,9 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
                             values.append(force)
                     elif use_pt1000:
                         v = code_to_voltage(code, self.ref_voltage)
-                        temp = pt1000_voltage_to_temperature_c(v, excitation_ua=PT1000_EXCITATION_UA)
+                        temp = pt1000_voltage_to_temperature_c(
+                            v, excitation_ua=PT1000_EXCITATION_UA
+                        )
                         if temp is not None:
                             times.append(t)
                             values.append(temp)
@@ -1505,7 +1793,9 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
                 self.sensor_plots[sensor_id].setData(times, values)
 
         if current_time > time_window:
-            self.plot_widget.setXRange(current_time - time_window, current_time, padding=0)
+            self.plot_widget.setXRange(
+                current_time - time_window, current_time, padding=0
+            )
         else:
             self.plot_widget.setXRange(0, time_window, padding=0)
 
@@ -1532,10 +1822,24 @@ class SenseTestingGUIWindow(QtWidgets.QMainWindow):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Sense Testing GUI: plot sensor voltage, track board status, send server/abort packets")
-    parser.add_argument('-p', '--port', type=int, default=DEFAULT_PORT, help=f"UDP port (default: {DEFAULT_PORT})")
-    parser.add_argument('-r', '--ref-voltage', type=float, default=DEFAULT_REF_VOLTAGE,
-                        help=f"ADC reference voltage in V (default: {DEFAULT_REF_VOLTAGE})")
+
+    parser = argparse.ArgumentParser(
+        description="Sense Testing GUI: plot sensor voltage, track board status, send server/abort packets"
+    )
+    parser.add_argument(
+        "-p",
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=f"UDP port (default: {DEFAULT_PORT})",
+    )
+    parser.add_argument(
+        "-r",
+        "--ref-voltage",
+        type=float,
+        default=DEFAULT_REF_VOLTAGE,
+        help=f"ADC reference voltage in V (default: {DEFAULT_REF_VOLTAGE})",
+    )
     args = parser.parse_args()
 
     app = QtWidgets.QApplication(sys.argv)
@@ -1554,5 +1858,5 @@ def main():
     sys.exit(app.exec())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

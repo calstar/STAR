@@ -13,7 +13,6 @@
 // #define PT_NUM_START 0
 // #define NUM_PTS 10
 
-
 // static inline void flushPacketIfNeeded(bool force);
 // static void sendSweepIfNeeded(const adcs::AllResults& sweep);
 
@@ -21,7 +20,8 @@
 
 // static constexpr uint8_t  PAD_CH   = 0xFF;         // "no channel"
 // static constexpr int32_t  SENT_I32 = INT32_MIN;    // "missing" for signed 32
-// static constexpr uint32_t SENT_U32 = 0xFFFFFFFFu;  // "missing" for unsigned 32
+// static constexpr uint32_t SENT_U32 = 0xFFFFFFFFu;  // "missing" for unsigned
+// 32
 
 // // --- Buffer settings ---
 // static const size_t PKT_MAX = 1024;   // packet size in bytes
@@ -49,7 +49,6 @@
 //   uint32_t packet_time_us;  // FULL micros() when this packet is sent
 // };
 
-
 // struct Rec18 {
 //   uint8_t  ch;              // channel id
 //   uint8_t  ok;              // 0 or 1
@@ -68,13 +67,12 @@
 //     for (int k = 0; k < 8; ++k) {
 //       uint32_t mask = -(crc & 1u);
 //       crc = (crc >> 1) ^ (0xEDB88320u & mask);
-      
+
 //     }
 //   }
-  
+
 //   return crc ^ 0xFFFFFFFFu;
 // }
-
 
 // static void sendSweepPacket(const adcs::AllResults& sweep) {
 //   uint32_t packet_time = micros();
@@ -90,19 +88,19 @@
 //     return;
 //   }
 
-//   // Build packet into the small scratch buffer (reuse your existing “active”)
-//   uint8_t* buf = standby; // use standby as a scratch area so we don't disturb "active"
-//   size_t off = 0;
+//   // Build packet into the small scratch buffer (reuse your existing
+//   “active”) uint8_t* buf = standby; // use standby as a scratch area so we
+//   don't disturb "active" size_t off = 0;
 
 //   PacketHeader h;
 //   memcpy(h.magic, "AD26", 4);
 //   h.version        = 2;
 //   h.flags          = 0x01;
 //   h.count          = n_fixed;
-//   h.failures       = sweep.failures + static_cast<uint16_t>((n_fixed > sweep.count) ? (n_fixed - sweep.count) : 0);
-//   h.total_time_us  = sweep.total_time;
-//   h.packet_time_us = packet_time;
-//   memcpy(buf + off, &h, sizeof(h)); off += sizeof(h);
+//   h.failures       = sweep.failures + static_cast<uint16_t>((n_fixed >
+//   sweep.count) ? (n_fixed - sweep.count) : 0); h.total_time_us  =
+//   sweep.total_time; h.packet_time_us = packet_time; memcpy(buf + off, &h,
+//   sizeof(h)); off += sizeof(h);
 
 //   const size_t n_real = (sweep.count <= n_fixed) ? sweep.count : n_fixed;
 //   for (size_t i = 0; i < n_real; ++i) {
@@ -142,7 +140,6 @@
 //   // Do not Serial.write here. Let the timed flush handle it.
 // }
 
-
 // void setup() {
 //   Serial.begin(230400);
 //   SPI.begin(SCLK, MISOp, MOSIp, CS);
@@ -169,7 +166,6 @@
 //     flushPacketIfNeeded(false);  // flush by time
 //   }
 // }
-
 
 // static inline void flushPacketIfNeeded(bool force = false) {
 //   uint32_t now = millis();

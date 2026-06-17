@@ -51,7 +51,7 @@ void AbortBroadcaster::sendPacket(uint8_t packet_type_byte) {
     int broadcast = 1;
     setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast));
 
-    struct sockaddr_in dest {};
+    struct sockaddr_in dest{};
     dest.sin_family = AF_INET;
     dest.sin_port = htons(port_);
     dest.sin_addr.s_addr = INADDR_BROADCAST;

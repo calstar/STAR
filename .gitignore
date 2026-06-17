@@ -1,2 +1,12 @@
 # Doxygen output
 docs/doxygen/
+
+# Claude Code
+.claude/
+
+# PlatformIO build artifacts
+.pio/
+**/.pio/
+
+# DAQ output data
+scripts/postprocessing/output/

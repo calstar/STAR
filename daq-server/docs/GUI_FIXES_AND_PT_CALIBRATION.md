@@ -19,7 +19,7 @@
 **Solution**:
 - Integrated PT calibration framework from `scripts/calibration/pt_calibration_gui.py`
 - Supports both CSV and JSON calibration formats:
-  - **CSV**: From DiabloAvionics calibration files (path: `external/DiabloAvionics/PT_Board/Calibration/`)
+  - **CSV**: From PT board calibration files (path: `firmware/PT_Board/Calibration/`)
   - **JSON**: From calibration GUI output (path: `scripts/calibration/calibrations/*.json`)
 - Calibration uses cubic polynomial: `psi = A * (adc_code^3) + B * (adc_code^2) + C * adc_code + D`
 - Calibration is automatically loaded on GUI startup
@@ -50,7 +50,7 @@ python3 scripts/calibration/pt_calibration_gui.py
 ### Loading Calibration in GUI
 The GUI automatically loads calibration in this order:
 1. **JSON files** from `scripts/calibration/calibrations/` (most recent first)
-2. **CSV files** from `external/DiabloAvionics/PT_Board/Calibration/`
+2. **CSV files** from `firmware/PT_Board/Calibration/`
 
 ### Calibration Format
 

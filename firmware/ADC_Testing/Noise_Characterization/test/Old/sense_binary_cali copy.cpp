@@ -7,17 +7,14 @@
 // // #define DRDY_PIN 45
 // // #define DOUT 41
 // // #define DIN 47
-// // #define SCLK     
+// // #define SCLK
 // // #define CS 40
-
-
 
 // // 1 = ASCII voltages for the Python calibration script
 // // 0 = packed binary records (original behavior)
 // #define TEXT_OUTPUT 1
 // #define PT_NUM_START 0
 // #define NUM_PTS 10
-
 
 // // --- Buffer settings ---
 // static const size_t PKT_MAX = 1000;   // packet size in bytes
@@ -131,8 +128,6 @@
 //     Serial.print("\r\n"); // CRLF as expected by the Python script
 //   }
 // }
-
-
 
 // inline void flushPacketIfNeeded(bool force = false) {
 //   uint32_t now = millis();

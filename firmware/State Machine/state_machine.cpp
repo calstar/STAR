@@ -1,7 +1,7 @@
 #include <iostream>
-#include <string>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 // ============================================================================
@@ -9,8 +9,7 @@
 // ============================================================================
 
 // Sensor readings and system state parameters
-struct SystemParameters
-{
+struct SystemParameters {
     // Pressures (psi)
     float PT_HP = 0.0f;
     float PT_LP = 0.0f;
@@ -49,24 +48,35 @@ struct SystemParameters
 // STATE MACHINE BASE CLASS
 // ============================================================================
 
-class EngineState
-{
+class EngineState {
 public:
     virtual ~EngineState() = default;
-    virtual void on_enter(SystemParameters &params) = 0; // Called when entering the state
-    virtual bool update(SystemParameters &params) = 0; // Called repeatedly while in the state// Returns true if state should automatically transition to next state
-    virtual void on_exit(SystemParameters &params) = 0; // Called when exiting the state
-    virtual std::string get_name() const = 0; // Get human-readable state name
-    virtual bool validate_entry(const SystemParameters &params) const = 0; // Define what conditions must be met to enter this state// Each state checks the current SystemParameters and returns whether entry is valid
-    virtual std::vector<std::string> get_allowed_transitions() const // Return an empty vector if no manual transitions are allowed // Define which states can be transitioned to FROM this state
+    virtual void on_enter(
+        SystemParameters& params) = 0;  // Called when entering the state
+    virtual bool update(
+        SystemParameters&
+            params) = 0;  // Called repeatedly while in the state// Returns true
+                          // if state should automatically transition to next
+                          // state
+    virtual void on_exit(
+        SystemParameters& params) = 0;         // Called when exiting the state
+    virtual std::string get_name() const = 0;  // Get human-readable state name
+    virtual bool validate_entry(const SystemParameters& params)
+        const = 0;  // Define what conditions must be met to enter this state//
+                    // Each state checks the current SystemParameters and
+                    // returns whether entry is valid
+    virtual std::vector<std::string> get_allowed_transitions()
+        const  // Return an empty vector if no manual transitions are allowed //
+               // Define which states can be transitioned to FROM this state
     {
         return {};
     }
-    virtual std::string get_next_state_name() const
-    {
+    virtual std::string get_next_state_name() const {
         return "";
     }
-    virtual bool is_automatic() const // If true, this state automatically checks transition requirements for get_next_state_name()
+    virtual bool is_automatic()
+        const  // If true, this state automatically checks transition
+               // requirements for get_next_state_name()
     {
         return false;
     }
@@ -76,20 +86,27 @@ public:
 // STATE MACHINE MANAGER
 // ============================================================================
 
-class EngineFSM
-{
+class EngineFSM {
 public:
     EngineFSM();
 
-    void register_state(const std::string &state_name, std::shared_ptr<EngineState> state);
-    bool request_transition(const std::string &target_state, SystemParameters &params); //manual transition
-    void update(SystemParameters &params);
+    void register_state(const std::string& state_name,
+                        std::shared_ptr<EngineState> state);
+    bool request_transition(const std::string& target_state,
+                            SystemParameters& params);  // manual transition
+    void update(SystemParameters& params);
     std::string get_current_state() const;
-    std::vector<std::string> get_available_transitions(const SystemParameters &params) const; // Get all states that can be transitioned to from the current state// Includes only states whose validation criteria are currently met
+    std::vector<std::string> get_available_transitions(
+        const SystemParameters& params)
+        const;  // Get all states that can be transitioned to from the current
+                // state// Includes only states whose validation criteria are
+                // currently met
 
 private:
-    void transition_to_state(const std::string &state_name, SystemParameters &params);
-    bool can_enter_state(const std::string &state_name, const SystemParameters &params) const;
+    void transition_to_state(const std::string& state_name,
+                             SystemParameters& params);
+    bool can_enter_state(const std::string& state_name,
+                         const SystemParameters& params) const;
 
     std::map<std::string, std::shared_ptr<EngineState>> states;
     std::string current_state;
@@ -99,29 +116,26 @@ private:
 // IMPLEMENTATION
 // ============================================================================
 
-EngineFSM::EngineFSM() : current_state("") {}
+EngineFSM::EngineFSM() : current_state("") {
+}
 
-void EngineFSM::register_state(const std::string &state_name,
-                               std::shared_ptr<EngineState> state)
-{
-    if (states.find(state_name) != states.end())
-    {
-        std::cerr << "Warning: State '" << state_name << "' already registered\n";
+void EngineFSM::register_state(const std::string& state_name,
+                               std::shared_ptr<EngineState> state) {
+    if (states.find(state_name) != states.end()) {
+        std::cerr << "Warning: State '" << state_name
+                  << "' already registered\n";
         return;
     }
     states[state_name] = state;
 
     // Initialize to first registered state
-    if (current_state.empty())
-    {
+    if (current_state.empty()) {
         current_state = state_name;
     }
 }
 
-void EngineFSM::update(SystemParameters &params)
-{
-    if (states.find(current_state) == states.end())
-    {
+void EngineFSM::update(SystemParameters& params) {
+    if (states.find(current_state) == states.end()) {
         return;
     }
 
@@ -131,34 +145,30 @@ void EngineFSM::update(SystemParameters &params)
     current->update(params);
 
     // If this is an automatic state, check if we should transition
-    if (current->is_automatic())
-    {
+    if (current->is_automatic()) {
         std::string next_state_name = current->get_next_state_name();
 
-        if (!next_state_name.empty() && states.find(next_state_name) != states.end())
-        {
+        if (!next_state_name.empty() &&
+            states.find(next_state_name) != states.end()) {
             // Check if the next state's validation criteria are met
-            if (can_enter_state(next_state_name, params))
-            {
+            if (can_enter_state(next_state_name, params)) {
                 transition_to_state(next_state_name, params);
             }
         }
     }
 }
 
-bool EngineFSM::request_transition(const std::string &target_state,
-                                    SystemParameters &params)
-{
+bool EngineFSM::request_transition(const std::string& target_state,
+                                   SystemParameters& params) {
     // Check if target state exists
-    if (states.find(target_state) == states.end())
-    {
-        std::cerr << "Error: Target state '" << target_state << "' not registered\n";
+    if (states.find(target_state) == states.end()) {
+        std::cerr << "Error: Target state '" << target_state
+                  << "' not registered\n";
         return false;
     }
 
     // Check if target state's validation criteria are met
-    if (!can_enter_state(target_state, params))
-    {
+    if (!can_enter_state(target_state, params)) {
         std::cerr << "Error: Cannot enter state '" << target_state
                   << "' - validation criteria not met\n";
         return false;
@@ -168,60 +178,53 @@ bool EngineFSM::request_transition(const std::string &target_state,
     return true;
 }
 
-void EngineFSM::transition_to_state(const std::string &state_name,
-                                    SystemParameters &params)
-{
+void EngineFSM::transition_to_state(const std::string& state_name,
+                                    SystemParameters& params) {
     // Exit current state
-    if (states.find(current_state) != states.end())
-    {
+    if (states.find(current_state) != states.end()) {
         states[current_state]->on_exit(params);
-        std::cout << "Exiting state: " << states[current_state]->get_name() << "\n";
+        std::cout << "Exiting state: " << states[current_state]->get_name()
+                  << "\n";
     }
 
     // Enter new state
     current_state = state_name;
     states[current_state]->on_enter(params);
-    std::cout << "Entering state: " << states[current_state]->get_name() << "\n";
+    std::cout << "Entering state: " << states[current_state]->get_name()
+              << "\n";
 }
 
-std::string EngineFSM::get_current_state() const
-{
+std::string EngineFSM::get_current_state() const {
     return current_state;
 }
 
-bool EngineFSM::can_enter_state(const std::string &state_name,
-                                const SystemParameters &params) const
-{
-    if (states.find(state_name) == states.end())
-    {
+bool EngineFSM::can_enter_state(const std::string& state_name,
+                                const SystemParameters& params) const {
+    if (states.find(state_name) == states.end()) {
         return false;
     }
     auto allowed = states.at(current_state)->get_allowed_transitions();
-    if (std::find(allowed.begin(), allowed.end(), state_name) == allowed.end())
-    {
-        return false; // Not an allowed transition from current state
+    if (std::find(allowed.begin(), allowed.end(), state_name) ==
+        allowed.end()) {
+        return false;  // Not an allowed transition from current state
     }
     return states.at(state_name)->validate_entry(params);
 }
 
 std::vector<std::string> EngineFSM::get_available_transitions(
-    const SystemParameters &params) const
-{
+    const SystemParameters& params) const {
     std::vector<std::string> available;
 
     // Get the list of allowed transitions from the current state
-    if (states.find(current_state) == states.end())
-    {
+    if (states.find(current_state) == states.end()) {
         return available;
     }
 
     auto allowed = states.at(current_state)->get_allowed_transitions();
 
     // Filter to only those whose validation criteria are met
-    for (const auto &target_state : allowed)
-    {
-        if (can_enter_state(target_state, params))
-        {
+    for (const auto& target_state : allowed) {
+        if (can_enter_state(target_state, params)) {
             available.push_back(target_state);
         }
     }
@@ -263,9 +266,8 @@ public:
     }
 };
 
-// Example: Automatic state (transitions automatically when next state's conditions are met)
-class PressurizeState : public EngineState {
-private:
+// Example: Automatic state (transitions automatically when next state's
+conditions are met) class PressurizeState : public EngineState { private:
     // Track state duration or progress
     int iteration_count = 0;
 
@@ -282,7 +284,8 @@ public:
         if (iteration_count % 10 == 0) {
             std::cout << "  Pressurize: Pressurizing tanks...\n";
         }
-        return false;  // Don't return true; let is_automatic() handle transitions
+        return false;  // Don't return true; let is_automatic() handle
+transitions
     }
 
     void on_exit(const SystemParameters& params) override {
@@ -361,9 +364,9 @@ while (true) {
 
     // Display available transitions to user
     auto available = fsm.get_available_transitions(params);
-    std::cout << "Available transitions from " << fsm.get_current_state() << ":\n";
-    for (const auto& state : available) {
-        std::cout << "  - " << state << "\n";
+    std::cout << "Available transitions from " << fsm.get_current_state() <<
+":\n"; for (const auto& state : available) { std::cout << "  - " << state <<
+"\n";
     }
 
     // Update state machine (handles automatic transitions)

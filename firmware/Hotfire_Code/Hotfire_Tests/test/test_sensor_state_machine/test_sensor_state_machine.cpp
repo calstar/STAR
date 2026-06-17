@@ -3,20 +3,21 @@
  *
  * Tests the sensor state machine transitions, packet processing, and
  * heartbeat state encoding.
- * 
+ *
  * Rather than including SensorHotfireCore.h directly (which pulls in
  * heavy ESP32 dependencies), we extract the testable pure-logic functions
  * here. This mirrors the approach used for the actuator tests.
  */
 #include <unity.h>
+
 #include <cstring>
 #include <vector>
 
 // DAQv2-Comms
 #include "DiabloEnums.h"
-#include "DiabloPackets.h"
-#include "DiabloPacketUtils.h"
 #include "DiabloPacketUtils.cpp"
+#include "DiabloPacketUtils.h"
+#include "DiabloPackets.h"
 
 // ---------------------------------------------------------------------------
 // Replicate the sensor state machine enums and transition logic
@@ -53,7 +54,8 @@ struct StoredConfig {
 
 // Replicate applyPacketTransition from SensorHotfireCore.h
 static State applyPacketTransition(State state, IncomingPacketKind kind,
-                                    bool necessary_for_abort, bool run_self_test) {
+                                   bool necessary_for_abort,
+                                   bool run_self_test) {
     switch (state) {
         case State::WaitingForServer:
             if (kind == IncomingPacketKind::SensorConfig) {
@@ -65,7 +67,8 @@ static State applyPacketTransition(State state, IncomingPacketKind kind,
             }
             break;
         case State::Active:
-            if (kind == IncomingPacketKind::NoConnAbort && necessary_for_abort) {
+            if (kind == IncomingPacketKind::NoConnAbort &&
+                necessary_for_abort) {
                 return State::StandaloneAbort;
             }
             break;
@@ -75,27 +78,31 @@ static State applyPacketTransition(State state, IncomingPacketKind kind,
             }
             break;
     }
-    return state; // No transition
+    return state;  // No transition
 }
 
 // Replicate readPacketHeader from SensorHotfireCore.h
 static IncomingPacketKind readPacketHeader(const uint8_t* buf, size_t len) {
-    if (len < sizeof(Diablo::PacketHeader)) return IncomingPacketKind::None;
+    if (len < sizeof(Diablo::PacketHeader))
+        return IncomingPacketKind::None;
     Diablo::PacketHeader hdr;
     memcpy(&hdr, buf, sizeof(hdr));
     switch (hdr.packet_type) {
-        case Diablo::PacketType::SERVER_HEARTBEAT: return IncomingPacketKind::ServerHeartbeat;
-        case Diablo::PacketType::SENSOR_CONFIG:    return IncomingPacketKind::SensorConfig;
-        case Diablo::PacketType::CLEAR_ABORT:      return IncomingPacketKind::ClearAbort;
-        default: return IncomingPacketKind::None;
+        case Diablo::PacketType::SERVER_HEARTBEAT:
+            return IncomingPacketKind::ServerHeartbeat;
+        case Diablo::PacketType::SENSOR_CONFIG:
+            return IncomingPacketKind::SensorConfig;
+        case Diablo::PacketType::CLEAR_ABORT:
+            return IncomingPacketKind::ClearAbort;
+        default:
+            return IncomingPacketKind::None;
     }
 }
 
 // Replicate processIncomingPacket (simplified, testing-focused)
-static IncomingPacketKind processIncomingPacket(
-    StoredConfig& stored_config,
-    const uint8_t* buf, size_t len)
-{
+static IncomingPacketKind processIncomingPacket(StoredConfig& stored_config,
+                                                const uint8_t* buf,
+                                                size_t len) {
     IncomingPacketKind kind = readPacketHeader(buf, len);
 
     if (kind == IncomingPacketKind::SensorConfig) {
@@ -107,7 +114,8 @@ static IncomingPacketKind processIncomingPacket(
         uint32_t controller_ip;
         uint8_t serial;
         if (Diablo::parse_sensor_config_packet(buf, len, hdr_out, ids, ref,
-                                                abort_needed, controller_ip, serial)) {
+                                               abort_needed, controller_ip,
+                                               serial)) {
             stored_config.valid = true;
             stored_config.num_sensors = ids.size();
             for (size_t i = 0; i < ids.size() && i < 10; i++) {
@@ -126,15 +134,20 @@ static IncomingPacketKind processIncomingPacket(
 // Replicate the heartbeat state→BoardState mapping from loop()
 static Diablo::BoardState getBoardStateForHeartbeat(State state) {
     switch (state) {
-        case State::WaitingForServer: return Diablo::BoardState::SETUP;
-        case State::Active:           return Diablo::BoardState::ACTIVE;
-        case State::StandaloneAbort:  return Diablo::BoardState::STANDALONE_ABORT;
-        case State::SelfTest:         return Diablo::BoardState::SELF_TEST;
-        default:                      return Diablo::BoardState::SETUP;
+        case State::WaitingForServer:
+            return Diablo::BoardState::SETUP;
+        case State::Active:
+            return Diablo::BoardState::ACTIVE;
+        case State::StandaloneAbort:
+            return Diablo::BoardState::STANDALONE_ABORT;
+        case State::SelfTest:
+            return Diablo::BoardState::SELF_TEST;
+        default:
+            return Diablo::BoardState::SETUP;
     }
 }
 
-} // namespace SensorSM
+}  // namespace SensorSM
 
 // ===========================================================================
 // State transition tests
@@ -168,15 +181,15 @@ void test_sensor_heartbeat_stays_waiting() {
 
 void test_sensor_noconn_abort_with_necessary() {
     auto next = SensorSM::applyPacketTransition(
-        SensorSM::State::Active,
-        SensorSM::IncomingPacketKind::NoConnAbort, true, false);
+        SensorSM::State::Active, SensorSM::IncomingPacketKind::NoConnAbort,
+        true, false);
     TEST_ASSERT_EQUAL((int)SensorSM::State::StandaloneAbort, (int)next);
 }
 
 void test_sensor_noconn_abort_without_necessary() {
     auto next = SensorSM::applyPacketTransition(
-        SensorSM::State::Active,
-        SensorSM::IncomingPacketKind::NoConnAbort, false, false);
+        SensorSM::State::Active, SensorSM::IncomingPacketKind::NoConnAbort,
+        false, false);
     TEST_ASSERT_EQUAL((int)SensorSM::State::Active, (int)next);
 }
 
@@ -189,15 +202,15 @@ void test_sensor_clear_abort_returns_to_active() {
 
 void test_sensor_clear_abort_in_active_stays() {
     auto next = SensorSM::applyPacketTransition(
-        SensorSM::State::Active,
-        SensorSM::IncomingPacketKind::ClearAbort, false, false);
+        SensorSM::State::Active, SensorSM::IncomingPacketKind::ClearAbort,
+        false, false);
     TEST_ASSERT_EQUAL((int)SensorSM::State::Active, (int)next);
 }
 
 void test_sensor_none_packet_doesnt_transition() {
     auto next = SensorSM::applyPacketTransition(
-        SensorSM::State::Active,
-        SensorSM::IncomingPacketKind::None, false, false);
+        SensorSM::State::Active, SensorSM::IncomingPacketKind::None, false,
+        false);
     TEST_ASSERT_EQUAL((int)SensorSM::State::Active, (int)next);
 }
 
@@ -220,19 +233,21 @@ void test_sensor_process_server_heartbeat_packet() {
 
     SensorSM::StoredConfig cfg{};
     auto kind = SensorSM::processIncomingPacket(cfg, buf, total);
-    TEST_ASSERT_EQUAL((int)SensorSM::IncomingPacketKind::ServerHeartbeat, (int)kind);
+    TEST_ASSERT_EQUAL((int)SensorSM::IncomingPacketKind::ServerHeartbeat,
+                      (int)kind);
 }
 
 void test_sensor_process_sensor_config_packet() {
     std::vector<uint8_t> sensor_ids = {1, 2, 3};
     uint8_t buf[512];
-    size_t n = Diablo::create_sensor_config_packet(
-        sensor_ids, 0, false, 0, 1, 9001u, buf, sizeof(buf));
+    size_t n = Diablo::create_sensor_config_packet(sensor_ids, 0, false, 0, 1,
+                                                   9001u, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     SensorSM::StoredConfig cfg{};
     auto kind = SensorSM::processIncomingPacket(cfg, buf, n);
-    TEST_ASSERT_EQUAL((int)SensorSM::IncomingPacketKind::SensorConfig, (int)kind);
+    TEST_ASSERT_EQUAL((int)SensorSM::IncomingPacketKind::SensorConfig,
+                      (int)kind);
 
     TEST_ASSERT_TRUE(cfg.valid);
     TEST_ASSERT_EQUAL(3, cfg.num_sensors);
@@ -251,7 +266,8 @@ void test_sensor_process_sensor_config_with_abort() {
 
     SensorSM::StoredConfig cfg{};
     auto kind = SensorSM::processIncomingPacket(cfg, buf, n);
-    TEST_ASSERT_EQUAL((int)SensorSM::IncomingPacketKind::SensorConfig, (int)kind);
+    TEST_ASSERT_EQUAL((int)SensorSM::IncomingPacketKind::SensorConfig,
+                      (int)kind);
 
     TEST_ASSERT_TRUE(cfg.valid);
     TEST_ASSERT_TRUE(cfg.necessary_for_abort);
@@ -285,11 +301,15 @@ void test_sensor_process_too_short_returns_none() {
 // ===========================================================================
 
 void test_sensor_heartbeat_state_mapping_table() {
-    struct { SensorSM::State state; Diablo::BoardState expected; } mappings[] = {
-        { SensorSM::State::WaitingForServer, Diablo::BoardState::SETUP },
-        { SensorSM::State::Active,           Diablo::BoardState::ACTIVE },
-        { SensorSM::State::StandaloneAbort,  Diablo::BoardState::STANDALONE_ABORT },
-        { SensorSM::State::SelfTest,         Diablo::BoardState::SELF_TEST },
+    struct {
+        SensorSM::State state;
+        Diablo::BoardState expected;
+    } mappings[] = {
+        {SensorSM::State::WaitingForServer, Diablo::BoardState::SETUP},
+        {SensorSM::State::Active, Diablo::BoardState::ACTIVE},
+        {SensorSM::State::StandaloneAbort,
+         Diablo::BoardState::STANDALONE_ABORT},
+        {SensorSM::State::SelfTest, Diablo::BoardState::SELF_TEST},
     };
 
     for (auto& m : mappings) {
@@ -305,15 +325,18 @@ void test_sensor_heartbeat_state_mapping_table() {
         hb.board_state = got;
 
         uint8_t buf[512];
-        size_t n = Diablo::create_board_heartbeat_packet(hb, 9003u, buf, sizeof(buf));
+        size_t n =
+            Diablo::create_board_heartbeat_packet(hb, 9003u, buf, sizeof(buf));
         TEST_ASSERT_GREATER_THAN(0, n);
 
         Diablo::PacketHeader hdr_out;
         Diablo::BoardHeartbeatPacket hb_out;
-        TEST_ASSERT_TRUE(Diablo::parse_board_heartbeat_packet(buf, n, hdr_out, hb_out));
+        TEST_ASSERT_TRUE(
+            Diablo::parse_board_heartbeat_packet(buf, n, hdr_out, hb_out));
         TEST_ASSERT_EQUAL((int)m.expected, (int)hb_out.board_state);
         TEST_ASSERT_EQUAL(42, hb_out.board_id);
-        TEST_ASSERT_EQUAL((int)Diablo::EngineState::SAFE, (int)hb_out.engine_state);
+        TEST_ASSERT_EQUAL((int)Diablo::EngineState::SAFE,
+                          (int)hb_out.engine_state);
     }
 }
 
@@ -321,10 +344,12 @@ void test_sensor_heartbeat_state_mapping_table() {
 // Unity runner
 // ===========================================================================
 
-void setUp() {}
-void tearDown() {}
+void setUp() {
+}
+void tearDown() {
+}
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
     UNITY_BEGIN();
 
     // State transitions

@@ -6,7 +6,6 @@
 // #include <ADS126X.h>
 // #include <esp_system.h>
 
-
 // #define ETH_CLK_PIN   7
 // #define ETH_MISO_PIN  41
 // #define ETH_MOSI_PIN  13
@@ -127,7 +126,6 @@
 //     // Clear buffer
 //     bufferIndex = 0;
 // }
-
 
 //   delay(5); // adjust data rate
 // }

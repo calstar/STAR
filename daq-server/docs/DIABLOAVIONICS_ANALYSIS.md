@@ -172,6 +172,6 @@ From analyzing the board code:
 
 - [DiabloAvionics Repository](https://github.com/calstar/DiabloAvionics)
 - [DAQv2-Comms Library](https://github.com/calstar/DAQv2-Comms)
-- Packet format defined in: `external/DAQv2-Comms/src/DiabloPackets.h`
-- Packet utilities: `external/DAQv2-Comms/src/DiabloPacketUtils.cpp`
-- Board examples: `external/DiabloAvionics/PT_Board/`, `RTD_Board/`, `LC_Board/`
+- Packet format defined in: `lib/DAQv2-Comms/src/DiabloPackets.h`
+- Packet utilities: `lib/DAQv2-Comms/src/DiabloPacketUtils.cpp`
+- Board examples: `firmware/PT_Board/`, `firmware/RTD_Board/`, `firmware/LC_Board/`

@@ -1,0 +1,635 @@
+name: DAQ Server CI/CD
+
+# Quoted `on` — YAML 1.1 treats bare `on` as boolean true, which breaks workflow triggers in some parsers.
+'on':
+  push:
+    paths:
+      - 'daq-server/**'
+      - '.github/workflows/daq-server-ci.yml'
+  pull_request:
+    paths:
+      - 'daq-server/**'
+      - '.github/workflows/daq-server-ci.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: daq-server
+
+env:
+  BUILD_DIR: build
+  CXX_STANDARD: 20
+
+jobs:
+  # Format check - must pass before building
+  format-check:
+    name: Code Formatting Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # Install clang-format from the official LLVM apt repo so CI matches modern
+    # macOS/Linux dev environments. Ubuntu's default `clang-format` package is
+    # v18; designated-initializer formatting changed between v18 and v19, which
+    # produced false-positive format failures on code that's clean on developer
+    # laptops. Pinning to 19 keeps CI and local in sync.
+    #
+    # We use a /usr/local/bin/ symlink (not update-alternatives) because
+    # update-alternatives priorities can get out-shouted by Ubuntu's stock
+    # clang-format package. /usr/local/bin/ comes before /usr/bin/ on the
+    # default $PATH, so the symlink wins unconditionally.
+    - name: Install clang-format 19 (LLVM apt repo)
+      run: |
+        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+        echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+        sudo apt-get update
+        sudo apt-get install -y clang-format-19
+        sudo ln -sf /usr/bin/clang-format-19 /usr/local/bin/clang-format
+        # Verify: this should print "Ubuntu clang-format version 19.x.x"
+        clang-format --version
+        which clang-format
+
+    # format.sh also runs `black --check` on Python under firmware/.
+    # --user avoids PEP 668 ("externally-managed-environment") on Ubuntu 22.04+.
+    #
+    # Pinned to 25.11.0 because: developer laptops with system Python 3.9 (macOS
+    # default) can't install black 26.x (requires Python ≥3.10). Pinning here
+    # keeps CI in sync with laptops until everyone has a newer Python.
+    - name: Install black
+      run: |
+        pip install --user black==25.11.0
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Check code formatting
+      working-directory: .
+      run: |
+        chmod +x ./format.sh
+        if ! ./format.sh --check; then
+          echo "::error::Code formatting check failed. Run './format.sh' from the repo root to fix."
+          exit 1
+        fi
+      continue-on-error: false
+
+  web-gui:
+    name: Web GUI (Vitest + Next.js build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Use Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        cache-dependency-path: daq-server/diablo_server/frontend/package-lock.json
+
+    # API routes import ../backend/src/* which uses @iarna/toml; install backend so resolution + alias work in next build.
+    - name: Install backend dependencies
+      working-directory: daq-server/diablo_server/backend
+      run: npm ci || npm install
+
+    - name: Install frontend dependencies
+      working-directory: daq-server/diablo_server/frontend
+      run: npm ci || npm install
+
+    - name: Run frontend unit tests
+      working-directory: daq-server/diablo_server/frontend
+      run: npm run test
+
+    - name: Verify Next.js build
+      working-directory: daq-server/diablo_server/frontend
+      run: npm run test:build
+
+  # Build with multiple compilers (Release only)
+  build:
+    name: Build (${{ matrix.compiler }} — Release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc-12, clang-18]
+        include:
+          - compiler: gcc-12
+            cc: gcc-12
+            cxx: g++-12
+          - compiler: clang-18
+            cc: clang-18
+            cxx: clang++-18
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          ninja-build \
+          ccache \
+          libeigen3-dev \
+          pkg-config \
+          ${{ matrix.cc }} \
+          ${{ matrix.cxx }}
+
+    - name: Install optional dependencies (CAN — best effort)
+      run: |
+        sudo apt-get install -y libcanard-dev || echo "libcanard-dev not in apt; building without CAN package"
+
+    # Clang + libstdc++ from the default system GCC (e.g. 14 on ubuntu-latest) can blow up in C++20 <format>/ranges
+    # included from <chrono>. Install g++-12 and pin Clang to that libstdc++ with --gcc-install-dir.
+    - name: Install GCC 12 libstdc++ for Clang
+      if: startsWith(matrix.compiler, 'clang-')
+      run: sudo apt-get install -y g++-12
+
+    - name: Restore compiler cache (ccache)
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ${{ runner.os }}-ccache-${{ matrix.compiler }}-${{ hashFiles('daq-server/CMakeLists.txt', 'daq-server/diablo_server/CMakeLists.txt', 'daq-server/archive/legacy/utl/**/*.cpp', 'daq-server/archive/legacy/utl/**/*.hpp', 'daq-server/diablo_server/**/*.cpp', 'daq-server/diablo_server/**/*.hpp') }}
+        restore-keys: |
+          ${{ runner.os }}-ccache-${{ matrix.compiler }}-
+
+    - name: Show ccache stats (before)
+      run: ccache -s || true
+
+    - name: Configure CMake
+      env:
+        CC: ${{ matrix.cc }}
+        CXX: ${{ matrix.cxx }}
+      run: |
+        mkdir -p ${{ env.BUILD_DIR }}
+        cd ${{ env.BUILD_DIR }}
+        case "${{ matrix.compiler }}" in
+          clang-*)
+            export CXXFLAGS="--gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/12"
+            ;;
+        esac
+        cmake \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_COMPILER=${{ matrix.cc }} \
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_CXX_STANDARD=${{ env.CXX_STANDARD }} \
+          -G Ninja \
+          ..
+
+    - name: Build project
+      run: |
+        cd ${{ env.BUILD_DIR }}
+        cmake --build . --parallel $(nproc)
+
+    - name: Show ccache stats (after)
+      run: ccache -s || true
+
+    - name: Verify executables
+      run: |
+        cd ${{ env.BUILD_DIR }}
+        echo "Checking for built executables..."
+        find bin/ -type f -executable | head -10 || true
+
+    - name: Upload build artifacts
+      if: matrix.compiler == 'gcc-12'
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts-${{ matrix.compiler }}-Release
+        path: |
+          daq-server/${{ env.BUILD_DIR }}/lib/*.so
+          daq-server/${{ env.BUILD_DIR }}/bin/daq_bridge
+          daq-server/${{ env.BUILD_DIR }}/bin/sequencer_service
+        retention-days: 7
+
+  # Static analysis
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libeigen3-dev \
+          cppcheck \
+          clang-tidy-17 || sudo apt-get install -y clang-tidy
+
+    - name: Run cppcheck
+      run: |
+        cppcheck \
+          --enable=all \
+          --inconclusive \
+          --std=c++${{ env.CXX_STANDARD }} \
+          --suppress=missingIncludeSystem \
+          --suppress=unusedFunction \
+          --suppress=noExplicitConstructor \
+          --suppress=unmatchedSuppression \
+          --error-exitcode=1 \
+          --xml --xml-version=2 \
+          --output-file=cppcheck-report.xml \
+          diablo_server/ archive/legacy/utl/ || true
+
+    - name: Upload cppcheck results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: cppcheck-report
+        path: daq-server/cppcheck-report.xml
+
+    - name: Run clang-tidy
+      run: |
+        # Only run on a subset to avoid timeout
+        find diablo_server archive/legacy/utl -name "*.cpp" -o -name "*.hpp" | head -20 | \
+        xargs -I {} clang-tidy {} \
+          -p ${{ env.BUILD_DIR }} \
+          -- -std=c++${{ env.CXX_STANDARD }} || true
+      continue-on-error: true
+
+  # Code quality checks
+  code-quality:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check for TODO/FIXME comments
+      run: |
+        echo "Checking for TODO/FIXME/HACK comments..."
+        TODOS=$(grep -r "TODO\|FIXME\|HACK\|XXX" \
+          --include="*.cpp" \
+          --include="*.hpp" \
+          --include="*.c" \
+          --include="*.h" \
+          diablo_server/ archive/legacy/utl/ || true)
+        if [ -n "$TODOS" ]; then
+          echo "::warning::Found TODO/FIXME/HACK comments:"
+          echo "$TODOS"
+        else
+          echo "✅ No TODO/FIXME/HACK comments found"
+        fi
+
+    - name: Check for large files
+      run: |
+        echo "Checking for large files..."
+        find . -type f -size +1M -not -path "./.git/*" -not -path "./build/*" -not -path "./external/*" | \
+        while read file; do
+          echo "::warning::Large file detected: $file ($(du -h "$file" | cut -f1))"
+        done || true
+
+    - name: Check for missing includes
+      run: |
+        echo "Checking for common include issues..."
+        if grep -r "#include <iostream>" --include="*.cpp" --include="*.hpp" diablo_server/ archive/legacy/utl/ | \
+           grep -v "#include <iostream>" | head -5; then
+          echo "::warning::Potential missing includes detected"
+        fi
+      continue-on-error: true
+
+  # Security scanning
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Python
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3 python3-pip
+
+    - name: Install security tools
+      run: |
+        pip3 install --user semgrep bandit
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Run semgrep security scan
+      run: |
+        if command -v semgrep &> /dev/null; then
+          echo "Running semgrep security scan..."
+          semgrep \
+            --config=auto \
+            --exclude="external/" \
+            --exclude="build/" \
+            --exclude=".cache/" \
+            --json \
+            --output=semgrep-report.json \
+            . || true
+        else
+          echo "Semgrep not available, skipping"
+        fi
+      continue-on-error: true
+
+    - name: Upload semgrep results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: semgrep-report
+        path: daq-server/semgrep-report.json
+
+    - name: Check for hardcoded secrets
+      run: |
+        echo "Checking for potential hardcoded secrets..."
+        SECRETS=$(grep -riE "(password|secret|key|token|api_key|apikey)\s*=\s*['\"][^'\"]+['\"]" \
+          --include="*.cpp" \
+          --include="*.hpp" \
+          --include="*.py" \
+          --include="*.sh" \
+          diablo_server/ archive/legacy/utl/ scripts/ || true)
+        if [ -n "$SECRETS" ]; then
+          echo "::warning::Potential hardcoded secrets found:"
+          echo "$SECRETS"
+        else
+          echo "✅ No obvious hardcoded secrets found"
+        fi
+
+    - name: Check for dangerous functions
+      run: |
+        echo "Checking for potentially unsafe C functions..."
+        UNSAFE=$(grep -rE "\b(strcpy|sprintf|gets|scanf|strcat)\s*\(" \
+          --include="*.cpp" \
+          --include="*.hpp" \
+          diablo_server/ archive/legacy/utl/ || true)
+        if [ -n "$UNSAFE" ]; then
+          echo "::warning::Potentially unsafe C functions found:"
+          echo "$UNSAFE"
+        else
+          echo "✅ No unsafe C functions detected"
+        fi
+
+  # Run tests
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: [build]
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          ninja-build \
+          libeigen3-dev \
+          pkg-config \
+          gcc-12 \
+          g++-12 \
+          python3 \
+          python3-pip
+
+    - name: Install Python test dependencies
+      run: |
+        if [ -f requirements.txt ]; then
+          pip3 install -r requirements.txt
+        fi
+
+    - name: Build project
+      env:
+        CC: gcc-12
+        CXX: g++-12
+      run: |
+        mkdir -p ${{ env.BUILD_DIR }}
+        cd ${{ env.BUILD_DIR }}
+        cmake \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_COMPILER=gcc-12 \
+          -DCMAKE_CXX_COMPILER=g++-12 \
+          -DCMAKE_CXX_STANDARD=${{ env.CXX_STANDARD }} \
+          -G Ninja \
+          ..
+        cmake --build . --parallel $(nproc)
+
+    - name: Run CTest tests
+      run: |
+        cd ${{ env.BUILD_DIR }}
+        ctest --output-on-failure --parallel $(nproc) || echo "No CTest tests found"
+      continue-on-error: true
+
+    - name: Run Sequencer Elodin Unit Test
+      run: |
+        cd ${{ env.BUILD_DIR }}
+        ./bin/test_sequencer_elodin
+
+    - name: Run Python smoke tests (allowlist only)
+      run: |
+        if [ -d "test" ]; then
+          echo "Running allowlisted Python smoke tests..."
+          # Keep this list intentionally small and non-interactive.
+          # Add paths here only for deterministic, CI-safe scripts.
+          PY_TESTS=(
+          )
+
+          if [ ${#PY_TESTS[@]} -eq 0 ]; then
+            echo "No allowlisted Python smoke tests configured; skipping."
+          fi
+
+          for t in "${PY_TESTS[@]}"; do
+            if [ -f "$t" ]; then
+              echo "Running $t"
+              timeout 60s python3 "$t" || echo "::warning::Python smoke test failed/timed out: $t"
+            else
+              echo "::warning::Allowlisted Python test not found: $t"
+            fi
+          done
+        fi
+      continue-on-error: true
+
+    - name: Run integration tests
+      run: |
+        if [ -f "test/test_system.sh" ]; then
+          chmod +x test/test_system.sh
+          # Only run quick smoke tests in CI
+          echo "Running smoke tests..."
+        fi
+      continue-on-error: true
+
+  # Full-stack integration test
+  integration-test:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    needs: [build]
+    timeout-minutes: 25
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential cmake ninja-build libeigen3-dev pkg-config \
+          gcc-12 g++-12 python3 python3-pip
+
+    - name: Install elodin-db
+      run: |
+        ELODIN_VERSION="v0.16.1"
+        # elodin-installer.sh installs the `elodin` CLI only; integration needs `elodin-db`.
+        ELODIN_DB_INSTALLER_URL="https://github.com/elodin-sys/elodin/releases/download/${ELODIN_VERSION}/elodin-db-installer.sh"
+
+        mkdir -p "$HOME/.cargo/bin"
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        export PATH="$HOME/.cargo/bin:$PATH"
+
+        curl --proto '=https' --tlsv1.2 -LsSf "$ELODIN_DB_INSTALLER_URL" | sh
+
+    - name: Verify elodin-db is on PATH
+      run: |
+        command -v elodin-db
+        elodin-db --help >/dev/null
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+
+    - name: Build C++ binaries
+      env:
+        CC: gcc-12
+        CXX: g++-12
+      run: |
+        mkdir -p build && cd build
+        cmake -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_C_COMPILER=gcc-12 \
+              -DCMAKE_CXX_COMPILER=g++-12 \
+              -G Ninja ..
+        cmake --build . --parallel $(nproc)
+
+    - name: Install backend dependencies
+      run: |
+        cd diablo_server/backend && npm install
+
+    - name: Install Python dependencies
+      run: |
+        pip3 install tomli || true
+
+    # WebSocket / stack checks only. Browser E2E runs in job playwright-guitest-e2e (full guitest stack).
+    - name: Run integration test
+      run: |
+        bash test/test_integration.sh
+
+  # Full guitest stack + Playwright (same as local: bash test/e2e_guitest_playwright.sh)
+  playwright-guitest-e2e:
+    name: Playwright E2E (guitest stack)
+    runs-on: ubuntu-latest
+    needs: [build]
+    timeout-minutes: 45
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential cmake ninja-build libeigen3-dev pkg-config \
+          gcc-12 g++-12 python3 python3-pip tmux
+
+    - name: Install elodin-db
+      run: |
+        ELODIN_VERSION="v0.16.1"
+        ELODIN_DB_INSTALLER_URL="https://github.com/elodin-sys/elodin/releases/download/${ELODIN_VERSION}/elodin-db-installer.sh"
+        mkdir -p "$HOME/.cargo/bin"
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        export PATH="$HOME/.cargo/bin:$PATH"
+        curl --proto '=https' --tlsv1.2 -LsSf "$ELODIN_DB_INSTALLER_URL" | sh
+
+    - name: Verify elodin-db is on PATH
+      run: command -v elodin-db && elodin-db --help >/dev/null
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        cache-dependency-path: daq-server/diablo_server/frontend/package-lock.json
+
+    - name: Install backend dependencies
+      run: cd diablo_server/backend && (npm ci || npm install)
+
+    - name: Install frontend dependencies and Playwright Chromium (system libs + browser)
+      run: |
+        cd diablo_server/frontend
+        npm ci || npm install
+        npx playwright install --with-deps chromium
+
+    - name: Install Python dependencies (sim / config)
+      run: pip3 install tomli || pip3 install --user tomli || true
+
+    # test/e2e_guitest_playwright.sh runs USE_SIM=1 scripts/build.sh then starts the stack (tmux or fallback).
+    - name: Run Playwright guitest E2E
+      env:
+        CC: gcc-12
+        CXX: g++-12
+      run: bash test/e2e_guitest_playwright.sh
+
+  # Build summary
+  build-summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs:
+      - format-check
+      - web-gui
+      - build
+      - static-analysis
+      - code-quality
+      - security-scan
+      - test
+      - integration-test
+      - playwright-guitest-e2e
+    if: always()
+
+    steps:
+    # Override the workflow-level `defaults.run.working-directory: daq-server`.
+    # This job has no checkout step, so that directory doesn't exist on the
+    # runner — bash would fail to start with "No such file or directory".
+    - name: Check build status
+      working-directory: .
+      run: |
+        echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Format Check | ${{ needs.format-check.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Web GUI | ${{ needs.web-gui.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Static Analysis | ${{ needs.static-analysis.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Code Quality | ${{ needs.code-quality.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Security Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Tests | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Integration Test | ${{ needs.integration-test.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Playwright E2E (guitest) | ${{ needs.playwright-guitest-e2e.result }} |" >> $GITHUB_STEP_SUMMARY

@@ -1,15 +1,17 @@
+#include "main.h"
+
+#include <Adafruit_BME280.h>
 #include <Arduino.h>
-#include <Wire.h>
-#include <SPI.h>
+#include <DAQv2-Comms.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
+#include <SPI.h>
+#include <Wire.h>
 #include <esp_mac.h>
-#include <Adafruit_BME280.h>
-#include <DAQv2-Comms.h>
+
 #include "firmware_hash.h"
 #include "hotfire_ota.h"
 #include "pins.h"
-#include "main.h"
 
 static Adafruit_BME280 bme;
 static EthernetUDP udp;
@@ -27,7 +29,8 @@ static uint8_t pkt_buf[64];
 
 void setup() {
     Serial.begin(115200);
-    while (!Serial) delay(10);
+    while (!Serial)
+        delay(10);
 
     FirmwareHash::print();
     Serial.println("Environmental Tracker starting...");
@@ -35,8 +38,10 @@ void setup() {
     // BME280
     Wire.begin(PIN_SDA, PIN_SCL);
     if (!bme.begin(BME280_I2C_ADDR, &Wire)) {
-        Serial.println("ERROR: BME280 not found. Check wiring and I2C address!");
-        while (1) delay(100);
+        Serial.println(
+            "ERROR: BME280 not found. Check wiring and I2C address!");
+        while (1)
+            delay(100);
     }
     Serial.println("BME280 OK");
 
@@ -73,17 +78,19 @@ void loop() {
 
     // OTA — non-blocking poll; blocks only if a client actually connects
     EthernetClient ota_client = ota_server.available();
-    if (ota_client) hotfire_handleOTA(ota_client);
+    if (ota_client)
+        hotfire_handleOTA(ota_client);
 
     // Receive UDP — log SERVER_HEARTBEAT, discard everything else
     int pkt_size = udp.parsePacket();
     if (pkt_size > 0) {
         int bytes_read = udp.read(pkt_buf, sizeof(pkt_buf));
-        if (bytes_read > 0 &&
-            static_cast<Diablo::PacketType>(pkt_buf[0]) == Diablo::PacketType::SERVER_HEARTBEAT) {
+        if (bytes_read > 0 && static_cast<Diablo::PacketType>(pkt_buf[0]) ==
+                                  Diablo::PacketType::SERVER_HEARTBEAT) {
             Diablo::PacketHeader hdr;
             Diablo::ServerHeartbeatPacket data;
-            if (Diablo::parse_server_heartbeat_packet(pkt_buf, bytes_read, hdr, data)) {
+            if (Diablo::parse_server_heartbeat_packet(pkt_buf, bytes_read, hdr,
+                                                      data)) {
                 Serial.print("Server heartbeat received (t=");
                 Serial.print(hdr.timestamp);
                 Serial.println("ms)");
@@ -97,9 +104,9 @@ void loop() {
     if (now - last_env_send >= ENV_SEND_INTERVAL_MS) {
         last_env_send = now;
 
-        float temp       = bme.readTemperature();
-        uint32_t press   = (uint32_t)bme.readPressure();
-        float hum        = bme.readHumidity();
+        float temp = bme.readTemperature();
+        uint32_t press = (uint32_t)bme.readPressure();
+        float hum = bme.readHumidity();
 
         size_t n = Diablo::create_environmental_data_packet(
             temp, press, hum, millis(), pkt_buf, sizeof(pkt_buf));
@@ -112,18 +119,19 @@ void loop() {
         Serial.printf("ENV: %.2f C  %lu Pa  %.2f %%RH\n", temp, press, hum);
     }
 
-    // Send BOARD_HEARTBEAT at ENV_HEARTBEAT_INTERVAL_MS — always BoardState::ACTIVE
+    // Send BOARD_HEARTBEAT at ENV_HEARTBEAT_INTERVAL_MS — always
+    // BoardState::ACTIVE
     if (now - last_heartbeat >= ENV_HEARTBEAT_INTERVAL_MS) {
         last_heartbeat = now;
 
         Diablo::BoardHeartbeatPacket hb;
         memcpy(hb.firmware_hash, FirmwareHash::get(), 32);
-        hb.board_id     = ENV_BOARD_ID;
+        hb.board_id = ENV_BOARD_ID;
         hb.engine_state = Diablo::EngineState::SAFE;
-        hb.board_state  = Diablo::BoardState::ACTIVE;
+        hb.board_state = Diablo::BoardState::ACTIVE;
 
-        size_t n = Diablo::create_board_heartbeat_packet(
-            hb, millis(), pkt_buf, sizeof(pkt_buf));
+        size_t n = Diablo::create_board_heartbeat_packet(hb, millis(), pkt_buf,
+                                                         sizeof(pkt_buf));
         if (n > 0) {
             udp.beginPacket(server_ip, ENV_SERVER_PORT);
             udp.write(pkt_buf, n);
