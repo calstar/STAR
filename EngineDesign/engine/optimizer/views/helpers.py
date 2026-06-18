@@ -43,6 +43,10 @@ def _display_current_engine_config(config_obj: PintleEngineConfig) -> None:
             if hasattr(geometry, 'lox'):
                 st.caption(f"Orifices: {geometry.lox.n_orifices} × {geometry.lox.d_orifice*1000:.2f} mm")
                 st.caption(f"Orifice Angle: {geometry.lox.theta_orifice:.1f}°")
+        elif hasattr(config_obj, 'injector') and config_obj.injector.type == "impinging":
+            g = config_obj.injector.geometry
+            st.caption(f"Impinging — LOX: {g.oxidizer.n_elements}× Ø{g.oxidizer.d_jet*1000:.2f} mm @ {g.oxidizer.impingement_angle:.0f}°")
+            st.caption(f"Impinging — Fuel: {g.fuel.n_elements}× Ø{g.fuel.d_jet*1000:.2f} mm @ {g.fuel.impingement_angle:.0f}°")
     
     with col2:
         st.markdown("#### 🔥 Chamber")
@@ -98,19 +102,87 @@ def _show_complete_optimization_results(
     
     with result_tabs[1]:
         # Injector parameters
-        st.markdown("### 🔧 Optimized Pintle Injector")
         params = optimization_results.get("optimized_parameters", {})
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Pintle Tip Ø", f"{params.get('d_pintle_tip', 0) * 1000:.2f} mm")
-            st.metric("Gap Height", f"{params.get('h_gap', 0) * 1000:.3f} mm")
-        with col2:
-            st.metric("Orifice Count", f"{int(params.get('n_orifices', 0))}")
-            st.metric("Orifice Ø", f"{params.get('d_orifice', 0) * 1000:.2f} mm")
-        with col3:
-            st.metric("Orifice Angle", f"{params.get('theta_orifice', 90):.1f}°")
-            st.metric("(Perpendicular)", "✅ Fixed at 90°")
+        inj_type = getattr(getattr(config_after, "injector", None), "type", None)
+        if inj_type == "impinging":
+            st.markdown("### 🔧 Optimized Impinging Injector")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown("**Oxidizer jets**")
+                st.metric("Count", f"{int(params.get('n_elements_oxidizer', 0))}")
+                st.metric("Jet Ø", f"{params.get('d_jet_oxidizer', 0) * 1000:.2f} mm")
+                st.metric("Impinge. angle", f"{params.get('impingement_angle_oxidizer', 0):.1f}°")
+            with col2:
+                st.markdown("**Fuel jets**")
+                st.metric("Count", f"{int(params.get('n_elements_fuel', 0))}")
+                st.metric("Jet Ø", f"{params.get('d_jet_fuel', 0) * 1000:.2f} mm")
+                st.metric("Impinge. angle", f"{params.get('impingement_angle_fuel', 0):.1f}°")
+            with col3:
+                st.metric("Spacing (ox)", f"{params.get('spacing_oxidizer', 0) * 1000:.2f} mm")
+                st.metric("Spacing (fuel)", f"{params.get('spacing_fuel', 0) * 1000:.2f} mm")
+            perf_tab = optimization_results.get("performance", {}) or {}
+            mr_tab = perf_tab.get("momentum_ratio_R")
+            if mr_tab is not None and np.isfinite(mr_tab):
+                st.metric(
+                    "Jet momentum ratio R",
+                    f"{float(mr_tab):.3f}",
+                    help="sqrt((ρ_O v_O²)/(ρ_F v_F²)) from bulk jet velocities; ~1 is balanced",
+                )
+            mbp_tab = perf_tab.get("momentum_balance_penalty")
+            if mbp_tab is not None and np.isfinite(mbp_tab):
+                st.metric(
+                    "Momentum balance penalty",
+                    f"{float(mbp_tab):.4g}",
+                    help="W_MOM × max(0, |log R| − log 1.1)²; zero inside R ∈ [1/1.1, 1.1]",
+                )
+            _diag_perf = perf_tab.get("diagnostics") if isinstance(perf_tab.get("diagnostics"), dict) else {}
+            def _pv(key: str):
+                v = perf_tab.get(key)
+                if v is None and _diag_perf:
+                    v = _diag_perf.get(key)
+                return v
+            cd_o = _pv("Cd_O")
+            cd_f = _pv("Cd_F")
+            if cd_o is not None and np.isfinite(cd_o):
+                st.metric("Cd (LOX)", f"{float(cd_o):.3f}")
+            if cd_f is not None and np.isfinite(cd_f):
+                st.metric("Cd (fuel)", f"{float(cd_f):.3f}")
+            for lab, k in (
+                ("A_geom LOX [mm²]", "A_geom_O"),
+                ("A_geom fuel [mm²]", "A_geom_F"),
+                ("A_eff LOX [mm²]", "A_eff_O"),
+                ("A_eff fuel [mm²]", "A_eff_F"),
+            ):
+                av = _pv(k)
+                if av is not None and np.isfinite(av):
+                    st.metric(lab, f"{float(av) * 1e6:.3f}")
+            dp_o = _pv("delta_p_injector_O")
+            dp_f = _pv("delta_p_injector_F")
+            if dp_o is not None and np.isfinite(dp_o):
+                st.metric("ΔP inj LOX", f"{float(dp_o) / 1e6:.3f} MPa")
+            if dp_f is not None and np.isfinite(dp_f):
+                st.metric("ΔP inj fuel", f"{float(dp_f) / 1e6:.3f} MPa")
+            idro = _pv("injector_dp_ratio_O")
+            idrf = _pv("injector_dp_ratio_F")
+            idpen = _pv("injector_dp_penalty")
+            if idro is not None and np.isfinite(idro):
+                st.metric("ΔP/Pc (LOX)", f"{float(idro):.4f}")
+            if idrf is not None and np.isfinite(idrf):
+                st.metric("ΔP/Pc (fuel)", f"{float(idrf):.4f}")
+            if idpen is not None and np.isfinite(idpen):
+                st.metric("Injector ΔP penalty", f"{float(idpen):.4g}")
+        else:
+            st.markdown("### 🔧 Optimized Pintle Injector")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Pintle Tip Ø", f"{params.get('d_pintle_tip', 0) * 1000:.2f} mm")
+                st.metric("Gap Height", f"{params.get('h_gap', 0) * 1000:.3f} mm")
+            with col2:
+                st.metric("Orifice Count", f"{int(params.get('n_orifices', 0))}")
+                st.metric("Orifice Ø", f"{params.get('d_orifice', 0) * 1000:.2f} mm")
+            with col3:
+                st.metric("Orifice Angle", f"{params.get('theta_orifice', 90):.1f}°")
+                st.metric("(Perpendicular)", "✅ Fixed at 90°")
         
         st.markdown("### 🔥 Optimized Chamber Geometry")
         col1, col2, col3 = st.columns(3)
@@ -508,7 +580,37 @@ def _show_full_engine_comparison(
             "After": f"{performance.get('MR', 0):.3f}",
             "Change": "Optimized"
         })
-        
+        mr_sum = performance.get("momentum_ratio_R")
+        if (
+            mr_sum is not None
+            and np.isfinite(mr_sum)
+            and getattr(getattr(config_after, "injector", None), "type", None) == "impinging"
+        ):
+            comparison_data.append({
+                "Component": "Injector",
+                "Parameter": "Momentum ratio R (≈1)",
+                "Before": "-",
+                "After": f"{float(mr_sum):.3f}",
+                "Change": "jet momentum balance",
+            })
+            mbp_cmp = performance.get("momentum_balance_penalty")
+            if mbp_cmp is not None and np.isfinite(mbp_cmp):
+                comparison_data.append({
+                    "Component": "Injector",
+                    "Parameter": "Momentum balance penalty",
+                    "Before": "-",
+                    "After": f"{float(mbp_cmp):.4g}",
+                    "Change": "W_MOM × hinge",
+                })
+            if performance.get("injector_dp_out_of_range"):
+                comparison_data.append({
+                    "Component": "Injector",
+                    "Parameter": "ΔP_inj / Pc guard",
+                    "Before": "-",
+                    "After": "outside configured oxidizer/fuel ΔP_inj/Pc bands",
+                    "Change": "injector_dp_out_of_range",
+                })
+
         # Stability
         stability = performance.get("stability_results", {})
         chugging = stability.get("chugging", {})
@@ -563,7 +665,28 @@ def _show_engine_validation_checks(
         "Error": f"{of_error:.1f}%",
         "Status": "✅ Pass" if of_error < 15 else "⚠️ Check"
     })
-    
+
+    idr_o = performance.get("injector_dp_ratio_O")
+    idr_f = performance.get("injector_dp_ratio_F")
+    dp_bad = bool(performance.get("injector_dp_out_of_range"))
+    lo_o = float(requirements.get("injector_dp_ratio_O_min", 0.20))
+    hi_o = float(requirements.get("injector_dp_ratio_O_max", 0.35))
+    lo_f = float(requirements.get("injector_dp_ratio_F_min", 0.50))
+    hi_f = float(requirements.get("injector_dp_ratio_F_max", 1.20))
+    checks.append({
+        "Check": "Injector ΔP/Pc (streams)",
+        "Target": f"O:[{lo_o:.2f},{hi_o:.2f}], F:[{lo_f:.2f},{hi_f:.2f}]",
+        "Actual": (
+            f"O:{float(idr_o):.3f}, F:{float(idr_f):.3f}"
+            if idr_o is not None and idr_f is not None
+            and np.isfinite(idr_o)
+            and np.isfinite(idr_f)
+            else "—"
+        ),
+        "Error": "-",
+        "Status": "⚠️ Outside bands" if dp_bad else "✅ Pass",
+    })
+
     # L* check
     from engine.pipeline.config_schemas import ensure_chamber_geometry
     cg = ensure_chamber_geometry(config)
@@ -807,28 +930,48 @@ def _show_injector_comparison(
 
 def _display_injector_parameters(config: PintleEngineConfig, optimization_results: Dict[str, Any]) -> None:
     """Display optimized injector parameters."""
-    if not hasattr(config, 'injector') or config.injector.type != "pintle":
-        st.warning("No pintle injector configuration found")
+    if not hasattr(config, 'injector'):
+        st.warning("No injector configuration found")
         return
     
     geometry = config.injector.geometry
+    inj_type = config.injector.type
     
     col1, col2, col3 = st.columns(3)
     
-    with col1:
-        st.markdown("#### 🔧 Fuel Geometry")
-        if hasattr(geometry, 'fuel'):
-            st.metric("Pintle Tip Diameter", f"{geometry.fuel.d_pintle_tip * 1000:.2f} mm")
-            st.metric("Gap Height", f"{geometry.fuel.h_gap * 1000:.2f} mm")
-            if hasattr(geometry.fuel, 'd_reservoir_inner'):
-                st.metric("Reservoir Inner Diameter", f"{geometry.fuel.d_reservoir_inner * 1000:.2f} mm")
-    
-    with col2:
-        st.markdown("#### 🔵 Oxidizer Geometry")
-        if hasattr(geometry, 'lox'):
-            st.metric("Number of Orifices", f"{geometry.lox.n_orifices}")
-            st.metric("Orifice Diameter", f"{geometry.lox.d_orifice * 1000:.2f} mm")
-            st.metric("Orifice Angle", f"{geometry.lox.theta_orifice:.1f}°")
+    if inj_type == "pintle":
+        with col1:
+            st.markdown("#### 🔧 Fuel Geometry")
+            if hasattr(geometry, 'fuel'):
+                st.metric("Pintle Tip Diameter", f"{geometry.fuel.d_pintle_tip * 1000:.2f} mm")
+                st.metric("Gap Height", f"{geometry.fuel.h_gap * 1000:.2f} mm")
+                if hasattr(geometry.fuel, 'd_reservoir_inner'):
+                    st.metric("Reservoir Inner Diameter", f"{geometry.fuel.d_reservoir_inner * 1000:.2f} mm")
+        
+        with col2:
+            st.markdown("#### 🔵 Oxidizer Geometry")
+            if hasattr(geometry, 'lox'):
+                st.metric("Number of Orifices", f"{geometry.lox.n_orifices}")
+                st.metric("Orifice Diameter", f"{geometry.lox.d_orifice * 1000:.2f} mm")
+                st.metric("Orifice Angle", f"{geometry.lox.theta_orifice:.1f}°")
+    elif inj_type == "impinging":
+        with col1:
+            st.markdown("#### 🔵 Oxidizer jets")
+            ox = geometry.oxidizer
+            st.metric("Elements", f"{ox.n_elements}")
+            st.metric("Jet diameter", f"{ox.d_jet * 1000:.2f} mm")
+            st.metric("Impingement angle", f"{ox.impingement_angle:.1f}°")
+            st.metric("Spacing", f"{ox.spacing * 1000:.2f} mm")
+        with col2:
+            st.markdown("#### 🔧 Fuel jets")
+            fu = geometry.fuel
+            st.metric("Elements", f"{fu.n_elements}")
+            st.metric("Jet diameter", f"{fu.d_jet * 1000:.2f} mm")
+            st.metric("Impingement angle", f"{fu.impingement_angle:.1f}°")
+            st.metric("Spacing", f"{fu.spacing * 1000:.2f} mm")
+    else:
+        st.warning(f"Unsupported injector type: {inj_type!r}")
+        return
     
     with col3:
         st.markdown("#### ⚡ Performance")
@@ -986,7 +1129,7 @@ def _display_optimized_parameters(optimization_results: Dict[str, Any], config: 
             "expansion_ratio": cg.expansion_ratio,
         }
     
-    # Pintle parameters
+    # Injector parameters
     if hasattr(config, 'injector') and config.injector.type == "pintle":
         geometry = config.injector.geometry
         if hasattr(geometry, 'fuel'):
@@ -996,6 +1139,16 @@ def _display_optimized_parameters(optimization_results: Dict[str, Any], config: 
             opt_params["n_orifices"] = geometry.lox.n_orifices
             opt_params["d_orifice"] = geometry.lox.d_orifice
             opt_params["theta_orifice"] = geometry.lox.theta_orifice
+    elif hasattr(config, 'injector') and config.injector.type == "impinging":
+        g = config.injector.geometry
+        opt_params["n_elements_oxidizer"] = g.oxidizer.n_elements
+        opt_params["d_jet_oxidizer"] = g.oxidizer.d_jet
+        opt_params["impingement_angle_oxidizer"] = g.oxidizer.impingement_angle
+        opt_params["spacing_oxidizer"] = g.oxidizer.spacing
+        opt_params["n_elements_fuel"] = g.fuel.n_elements
+        opt_params["d_jet_fuel"] = g.fuel.d_jet
+        opt_params["impingement_angle_fuel"] = g.fuel.impingement_angle
+        opt_params["spacing_fuel"] = g.fuel.spacing
     
     # Display in columns
     col1, col2, col3 = st.columns(3)
@@ -1017,8 +1170,13 @@ def _display_optimized_parameters(optimization_results: Dict[str, Any], config: 
             st.metric("Number of Orifices", f"{int(opt_params.get('n_orifices', 0))}")
             st.metric("Orifice Diameter", f"{opt_params.get('d_orifice', 0) * 1000:.2f} mm")
             st.metric("Orifice Angle", f"{opt_params.get('theta_orifice', 0):.1f}°")
+        elif "d_jet_oxidizer" in opt_params:
+            st.markdown("#### 🔧 Impinging injector")
+            st.metric("LOX elements × Ø", f"{int(opt_params.get('n_elements_oxidizer', 0))} × {opt_params.get('d_jet_oxidizer', 0) * 1000:.2f} mm")
+            st.metric("Fuel elements × Ø", f"{int(opt_params.get('n_elements_fuel', 0))} × {opt_params.get('d_jet_fuel', 0) * 1000:.2f} mm")
+            st.metric("Spacing ox / fuel", f"{opt_params.get('spacing_oxidizer', 0) * 1000:.2f} / {opt_params.get('spacing_fuel', 0) * 1000:.2f} mm")
         else:
-            st.info("No pintle parameters optimized")
+            st.info("No injector geometry parameters in results")
     
     with col3:
         st.markdown("#### ⚡ Performance")
@@ -1028,6 +1186,28 @@ def _display_optimized_parameters(optimization_results: Dict[str, Any], config: 
             st.metric("Isp", f"{performance.get('Isp', 0):.1f} s")
             st.metric("Chamber Pressure", f"{performance.get('Pc', 0) / 1e6:.2f} MPa")
             st.metric("Mass Flow", f"{performance.get('mdot_total', 0):.3f} kg/s")
+            _dperf_c = performance.get("diagnostics") if isinstance(performance.get("diagnostics"), dict) else {}
+            def _perf_pick_c(k: str):
+                v = performance.get(k)
+                if v is None and _dperf_c:
+                    v = _dperf_c.get(k)
+                return v
+            if getattr(getattr(config, "injector", None), "type", None) == "impinging":
+                mr_p = performance.get("momentum_ratio_R")
+                if mr_p is not None and np.isfinite(mr_p):
+                    st.metric("Momentum ratio R (≈1)", f"{float(mr_p):.3f}")
+                mbp_p = performance.get("momentum_balance_penalty")
+                if mbp_p is not None and np.isfinite(mbp_p):
+                    st.metric("Momentum balance penalty", f"{float(mbp_p):.4g}")
+            idro_c = _perf_pick_c("injector_dp_ratio_O")
+            idrf_c = _perf_pick_c("injector_dp_ratio_F")
+            idpen_c = _perf_pick_c("injector_dp_penalty")
+            if idro_c is not None and np.isfinite(idro_c):
+                st.metric("ΔP/Pc (LOX)", f"{float(idro_c):.4f}")
+            if idrf_c is not None and np.isfinite(idrf_c):
+                st.metric("ΔP/Pc (fuel)", f"{float(idrf_c):.4f}")
+            if idpen_c is not None and np.isfinite(idpen_c):
+                st.metric("Injector ΔP penalty", f"{float(idpen_c):.4g}")
             
             # Stability
             stability = performance.get("stability_results", {})

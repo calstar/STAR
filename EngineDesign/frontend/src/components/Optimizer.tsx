@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { DesignRequirements } from './DesignRequirements';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { DesignRequirements, DEFAULT_DESIGN_REQUIREMENTS } from './DesignRequirements';
 import { Layer1Optimization } from './Layer1Optimization';
 import { Layer2Optimization } from './Layer2Optimization';
 import { Layer3Optimization } from './Layer3Optimization';
@@ -12,6 +12,7 @@ import type {
   DesignRequirements as DesignRequirementsType,
   EngineConfig
 } from '../api/client';
+import { stableStringify } from '../utils/stableStringify';
 
 interface OptimizerProps {
   config: EngineConfig | null;
@@ -21,34 +22,60 @@ type SubTab = 'requirements' | 'layer1' | 'layer2' | 'layer3' | 'layer4';
 
 export function Optimizer({ config }: OptimizerProps) {
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('requirements');
-  const [requirements, setRequirements] = useState<DesignRequirementsType | null>(null);
+  const [requirements, setRequirements] = useState<DesignRequirementsType>(DEFAULT_DESIGN_REQUIREMENTS);
+  const [savedRequirements, setSavedRequirements] = useState<DesignRequirementsType>(DEFAULT_DESIGN_REQUIREMENTS);
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const isDirty = useMemo(
+    () => stableStringify(requirements) !== stableStringify(savedRequirements),
+    [requirements, savedRequirements]
+  );
 
   // Keep all sub-tab panels mounted; hide inactive ones to preserve state
   const subTabPanelClass = (tab: SubTab) => (activeSubTab === tab ? '' : 'hidden');
 
-  // Load requirements on mount
   useEffect(() => {
     loadRequirements();
   }, []);
 
+  useEffect(() => {
+    if (config?.design_requirements) {
+      const dr = config.design_requirements as DesignRequirementsType;
+      setRequirements(dr);
+      setSavedRequirements(dr);
+    }
+  }, [config]);
+
   const loadRequirements = async () => {
     const response = await getDesignRequirements();
     if (response.data?.requirements) {
-      setRequirements(response.data.requirements);
+      const r = response.data.requirements;
+      setRequirements(r);
+      setSavedRequirements(r);
     }
   };
 
-  const handleSave = async (reqs: DesignRequirementsType) => {
+  const saveRequirementsToServer = useCallback(async (reqs: DesignRequirementsType) => {
     const response = await saveDesignRequirements(reqs);
+    if (response.error) {
+      return response;
+    }
+    if (response.data?.requirements) {
+      const r = response.data.requirements;
+      setRequirements(r);
+      setSavedRequirements(r);
+    }
+    return response;
+  }, []);
+
+  const handleSave = async () => {
+    const response = await saveRequirementsToServer(requirements);
 
     if (response.error) {
       setSaveStatus({ type: 'error', message: response.error });
-    } else if (response.data) {
-      setRequirements(response.data.requirements);
+    } else {
       setSaveStatus({ type: 'success', message: 'Design requirements saved successfully!' });
 
-      // Clear success message after 3 seconds
       setTimeout(() => {
         setSaveStatus(null);
       }, 3000);
@@ -134,19 +161,39 @@ export function Optimizer({ config }: OptimizerProps) {
       {/* Sub-tab Content - keep all mounted to preserve state */}
       <div className="mt-6">
         <div className={subTabPanelClass('requirements')}>
-          <DesignRequirements config={config} onSave={handleSave} />
+          <DesignRequirements
+            requirements={requirements}
+            onRequirementsChange={setRequirements}
+            onSave={handleSave}
+          />
         </div>
         <div className={subTabPanelClass('layer1')}>
-          <Layer1Optimization requirements={requirements} />
+          <Layer1Optimization
+            requirements={requirements}
+            isDirty={isDirty}
+            saveRequirementsToServer={saveRequirementsToServer}
+          />
         </div>
         <div className={subTabPanelClass('layer2')}>
-          <Layer2Optimization requirements={requirements} />
+          <Layer2Optimization
+            requirements={requirements}
+            isDirty={isDirty}
+            saveRequirementsToServer={saveRequirementsToServer}
+          />
         </div>
         <div className={subTabPanelClass('layer3')}>
-          <Layer3Optimization requirements={requirements} />
+          <Layer3Optimization
+            requirements={requirements}
+            isDirty={isDirty}
+            saveRequirementsToServer={saveRequirementsToServer}
+          />
         </div>
         <div className={subTabPanelClass('layer4')}>
-          <Layer4Optimization requirements={requirements} />
+          <Layer4Optimization
+            requirements={requirements}
+            isDirty={isDirty}
+            saveRequirementsToServer={saveRequirementsToServer}
+          />
         </div>
       </div>
     </div>

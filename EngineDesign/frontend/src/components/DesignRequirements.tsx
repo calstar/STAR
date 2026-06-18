@@ -1,72 +1,95 @@
-import { useState, useEffect } from 'react';
-import type { EngineConfig, DesignRequirements as DesignRequirementsType, FrozenParameters } from '../api/client';
+import { useState, useEffect, useCallback } from 'react';
+import { getInjectorSchema } from '../api/client';
+import { useConfigChanged } from '../lib/configBus';
+import type { DesignRequirements as DesignRequirementsType, FrozenParameters } from '../api/client';
+
+/** Default Design Requirements used until API/config loads. */
+/** Must match configs/default.yaml design_requirements until API/config loads. */
+export const DEFAULT_DESIGN_REQUIREMENTS: DesignRequirementsType = {
+  target_thrust: 8000.0,
+  target_apogee: 3048.0,
+  optimal_of_ratio: 2.8,
+  target_burn_time: 5.8,
+  max_lox_tank_pressure_psi: 700.0,
+  max_fuel_tank_pressure_psi: 700.0,
+  W_TANK_EQUAL: 0.0,
+  max_engine_length: 0.4,
+  max_chamber_outer_diameter: 0.2032,
+  max_nozzle_exit_diameter: 0.2032,
+  min_Lstar: 0.76,
+  max_Lstar: 1.5,
+  min_stability_score: 0.58,
+  require_stable_state: false,
+  stability_margin_handicap: 0.0,
+  min_stability_margin: 1.05,
+  chugging_margin_min: 0.2,
+  acoustic_margin_min: 0.1,
+  feed_stability_min: 0.15,
+  copv_free_volume_L: 4.5,
+};
 
 interface DesignRequirementsProps {
-  config: EngineConfig | null;
-  onSave: (requirements: DesignRequirementsType) => void;
+  requirements: DesignRequirementsType;
+  onRequirementsChange: (next: DesignRequirementsType) => void;
+  onSave: () => void;
 }
 
-export function DesignRequirements({ config, onSave }: DesignRequirementsProps) {
-  // Initialize with defaults or from config
-  const [requirements, setRequirements] = useState<DesignRequirementsType>({
-    // Performance targets
-    target_thrust: 7000.0,
-    target_apogee: 3048.0,
-    optimal_of_ratio: 2.3,
-    target_burn_time: 10.0,
+// Metadata for every injector-specific frozen field (both families). The frozen-injector UI renders
+// ONLY the fields the backend says apply to the current injector type (INJECTOR_PARITY_PLAN W5), so
+// switching to doublet shows doublet freezes — not pintle ones.
+const FROZEN_INJECTOR_META: Record<string, { label: string; def: number; min: number; max: number; step: number; int?: boolean }> = {
+  d_pintle_tip_mm: { label: 'Pintle Tip Ø [mm]', def: 25, min: 10, max: 50, step: 1 },
+  h_gap_mm: { label: 'Gap Height [mm]', def: 1.0, min: 0.2, max: 3.0, step: 0.1 },
+  n_orifices: { label: '# LOX Orifices', def: 16, min: 4, max: 48, step: 2, int: true },
+  d_orifice_mm: { label: 'Orifice Ø [mm]', def: 2.5, min: 0.5, max: 8, step: 0.1 },
+  n_doublets: { label: '# Doublets', def: 20, min: 5, max: 40, step: 1, int: true },
+  d_jet_O_mm: { label: 'LOX Jet Ø [mm]', def: 2.0, min: 0.5, max: 6, step: 0.1 },
+  d_jet_F_mm: { label: 'Fuel Jet Ø [mm]', def: 2.0, min: 0.5, max: 6, step: 0.1 },
+  impingement_angle_O_deg: { label: 'LOX Imp. Angle [°]', def: 50, min: 20, max: 90, step: 1 },
+  impingement_angle_F_deg: { label: 'Fuel Imp. Angle [°]', def: 60, min: 20, max: 90, step: 1 },
+  spacing_O_mm: { label: 'LOX Spacing [mm]', def: 6, min: 1, max: 20, step: 0.5 },
+  spacing_F_mm: { label: 'Fuel Spacing [mm]', def: 6, min: 1, max: 20, step: 0.5 },
+};
 
-    // Tank pressures
-    max_lox_tank_pressure_psi: 700.0,
-    max_fuel_tank_pressure_psi: 850.0,
-
-    // Geometry constraints
-    max_engine_length: 0.5,
-    max_chamber_outer_diameter: 0.15,
-    max_nozzle_exit_diameter: 0.101,
-
-    // L* constraints
-    min_Lstar: 0.95,
-    max_Lstar: 1.27,
-
-    // Stability requirements (new comprehensive analysis)
-    min_stability_score: 0.75,
-    require_stable_state: true,
-    stability_margin_handicap: 0.0,
-
-    // Stability requirements (legacy margins)
-    min_stability_margin: 1.2,
-    chugging_margin_min: 0.2,
-    acoustic_margin_min: 0.1,
-    feed_stability_min: 0.15,
-
-    // COPV
-    copv_free_volume_L: 4.5,
-  });
-
-  // Auto-fill from config when available
-  useEffect(() => {
-    if (config?.design_requirements) {
-      setRequirements(config.design_requirements as DesignRequirementsType);
-    }
-  }, [config]);
+export function DesignRequirements({
+  requirements,
+  onRequirementsChange,
+  onSave,
+}: DesignRequirementsProps) {
+  // Which injector-specific frozen fields to show — fetched from the backend authority so the UI
+  // matches the live injector type (no hardcoded pintle assumptions).
+  const [injectorFrozenFields, setInjectorFrozenFields] = useState<string[]>([]);
+  const refreshInjectorSchema = useCallback(() => {
+    getInjectorSchema().then((res) => {
+      if (res.data) {
+        setInjectorFrozenFields(res.data.frozen_param_fields.filter((f) => f in FROZEN_INJECTOR_META));
+      }
+    });
+  }, []);
+  useEffect(() => { refreshInjectorSchema(); }, [refreshInjectorSchema]);
+  // Re-fetch when the injector type changes at the top, so the frozen-param controls switch with it.
+  useConfigChanged(refreshInjectorSchema);
 
   const handleSave = () => {
-    onSave(requirements);
+    onSave();
   };
 
   const updateField = (field: keyof DesignRequirementsType, value: number | boolean) => {
-    setRequirements(prev => ({ ...prev, [field]: value }));
+    onRequirementsChange({ ...requirements, [field]: value });
   };
 
-  // Helper to update a frozen parameter value
   const updateFrozenParam = (field: keyof FrozenParameters, value: number | undefined) => {
-    setRequirements(prev => ({
-      ...prev,
+    // Send an explicit `null` (not `undefined`) when clearing a pin. `undefined` is dropped by
+    // JSON.stringify, so the backend would never see the key and could not remove a pin that
+    // originated from the loaded YAML — leaving the parameter silently frozen. `null` lets the
+    // backend merge logic pop it, so unchecking the box actually un-freezes the parameter.
+    onRequirementsChange({
+      ...requirements,
       frozen_parameters: {
-        ...prev.frozen_parameters,
-        [field]: value,
+        ...requirements.frozen_parameters,
+        [field]: value === undefined ? null : value,
       },
-    }));
+    });
   };
 
   // Helper to check if a parameter is frozen
@@ -139,7 +162,9 @@ export function DesignRequirements({ config, onSave }: DesignRequirementsProps) 
               max="4.0"
               step="0.1"
             />
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Target oxidizer-to-fuel mixture ratio. LOX/RP-1 optimal: 2.4-2.8 for Isp, 2.2-2.5 for stability.</p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+              Target oxidizer-to-fuel mixture ratio from CEA or mission analysis. Layer 1 rescales impinging seed jets to this MR at run start; the optimizer still adjusts jet diameters.
+            </p>
           </div>
 
           <div>
@@ -163,6 +188,28 @@ export function DesignRequirements({ config, onSave }: DesignRequirementsProps) 
       {/* Tank Pressures */}
       <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl p-6">
         <h3 className="text-lg font-semibold text-[var(--color-text-primary)] mb-4">🔋 Tank Pressures</h3>
+        <div className="mb-4 flex items-center gap-3">
+          <input
+            type="checkbox"
+            id="match_tank_pressures"
+            checked={!!requirements.W_TANK_EQUAL}
+            onChange={(e) => {
+              const matched = e.target.checked;
+              onRequirementsChange({
+                ...requirements,
+                W_TANK_EQUAL: matched ? 800.0 : 0.0,
+                max_fuel_tank_pressure_psi: matched ? requirements.max_lox_tank_pressure_psi : requirements.max_fuel_tank_pressure_psi,
+              });
+            }}
+            className="w-4 h-4 accent-blue-500"
+          />
+          <label htmlFor="match_tank_pressures" className="text-sm font-medium text-[var(--color-text-primary)] cursor-pointer">
+            Match propellant tank pressures
+          </label>
+          <span className="text-xs text-[var(--color-text-secondary)]">
+            Optimizer drives LOX and fuel tanks to the same pressure (independent of momentum-ratio matching).
+          </span>
+        </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
@@ -171,13 +218,20 @@ export function DesignRequirements({ config, onSave }: DesignRequirementsProps) 
             <input
               type="number"
               value={requirements.max_lox_tank_pressure_psi}
-              onChange={(e) => updateField('max_lox_tank_pressure_psi', parseFloat(e.target.value))}
+              onChange={(e) => {
+                const val = parseFloat(e.target.value);
+                onRequirementsChange({
+                  ...requirements,
+                  max_lox_tank_pressure_psi: val,
+                  max_fuel_tank_pressure_psi: requirements.W_TANK_EQUAL ? val : requirements.max_fuel_tank_pressure_psi,
+                });
+              }}
               className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
               min="100"
               max="5000"
               step="25"
             />
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Maximum operating pressure in LOX tank. Sets upper bound for chamber pressure.</p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Maximum operating pressure in LOX tank.</p>
           </div>
 
           <div>
@@ -188,12 +242,19 @@ export function DesignRequirements({ config, onSave }: DesignRequirementsProps) 
               type="number"
               value={requirements.max_fuel_tank_pressure_psi}
               onChange={(e) => updateField('max_fuel_tank_pressure_psi', parseFloat(e.target.value))}
-              className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={!!requirements.W_TANK_EQUAL}
+              className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                requirements.W_TANK_EQUAL
+                  ? 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] cursor-not-allowed opacity-50'
+                  : 'bg-[var(--color-bg-primary)] border-[var(--color-border)] text-[var(--color-text-primary)]'
+              }`}
               min="100"
               max="5000"
               step="25"
             />
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Maximum operating pressure in fuel tank.</p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+              {requirements.W_TANK_EQUAL ? 'Locked to LOX tank pressure.' : 'Maximum operating pressure in fuel tank.'}
+            </p>
           </div>
         </div>
       </div>
@@ -269,7 +330,7 @@ export function DesignRequirements({ config, onSave }: DesignRequirementsProps) 
               max="3.0"
               step="0.1"
             />
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Minimum characteristic length. Lower = smaller chamber but less complete combustion. Typical: 0.8-1.0m for LOX/RP-1.</p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Minimum characteristic length. Lower = smaller chamber but less complete combustion. Typical: 0.7-1.0m for LOX/hydrocarbon.</p>
           </div>
 
           <div>
@@ -285,7 +346,7 @@ export function DesignRequirements({ config, onSave }: DesignRequirementsProps) 
               max="3.0"
               step="0.1"
             />
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Maximum characteristic length. Higher = better combustion but heavier/longer chamber. Typical: 1.5-2.0m for LOX/RP-1.</p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Maximum characteristic length. Higher = better combustion but heavier/longer chamber. Typical: 1.0-2.0m for LOX/hydrocarbon.</p>
           </div>
         </div>
       </div>
@@ -541,109 +602,42 @@ export function DesignRequirements({ config, onSave }: DesignRequirementsProps) 
                 Injector Geometry
               </h4>
               <div className="grid grid-cols-2 gap-4">
-                {/* d_pintle_tip_mm */}
-                <div className={`p-3 rounded-lg border ${isFrozen('d_pintle_tip_mm') ? 'border-amber-500/50 bg-amber-500/10' : 'border-[var(--color-border)]'}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-sm font-medium text-[var(--color-text-secondary)]">
-                      Pintle Tip Ø [mm]
-                    </label>
-                    <input
-                      type="checkbox"
-                      checked={isFrozen('d_pintle_tip_mm')}
-                      onChange={(e) => updateFrozenParam('d_pintle_tip_mm', e.target.checked ? 25 : undefined)}
-                      className="w-4 h-4 text-amber-500 bg-[var(--color-bg-primary)] border-[var(--color-border)] rounded"
-                    />
-                  </div>
-                  <input
-                    type="number"
-                    value={getFrozenValue('d_pintle_tip_mm')}
-                    onChange={(e) => updateFrozenParam('d_pintle_tip_mm', e.target.value ? parseFloat(e.target.value) : undefined)}
-                    disabled={!isFrozen('d_pintle_tip_mm')}
-                    className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
-                    min="10"
-                    max="50"
-                    step="1"
-                    placeholder="e.g. 25"
-                  />
-                </div>
-
-                {/* h_gap_mm */}
-                <div className={`p-3 rounded-lg border ${isFrozen('h_gap_mm') ? 'border-amber-500/50 bg-amber-500/10' : 'border-[var(--color-border)]'}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-sm font-medium text-[var(--color-text-secondary)]">
-                      Gap Height [mm]
-                    </label>
-                    <input
-                      type="checkbox"
-                      checked={isFrozen('h_gap_mm')}
-                      onChange={(e) => updateFrozenParam('h_gap_mm', e.target.checked ? 1.0 : undefined)}
-                      className="w-4 h-4 text-amber-500 bg-[var(--color-bg-primary)] border-[var(--color-border)] rounded"
-                    />
-                  </div>
-                  <input
-                    type="number"
-                    value={getFrozenValue('h_gap_mm')}
-                    onChange={(e) => updateFrozenParam('h_gap_mm', e.target.value ? parseFloat(e.target.value) : undefined)}
-                    disabled={!isFrozen('h_gap_mm')}
-                    className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
-                    min="0.2"
-                    max="3.0"
-                    step="0.1"
-                    placeholder="e.g. 1.0"
-                  />
-                </div>
-
-                {/* n_orifices */}
-                <div className={`p-3 rounded-lg border ${isFrozen('n_orifices') ? 'border-amber-500/50 bg-amber-500/10' : 'border-[var(--color-border)]'}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-sm font-medium text-[var(--color-text-secondary)]">
-                      # LOX Orifices
-                    </label>
-                    <input
-                      type="checkbox"
-                      checked={isFrozen('n_orifices')}
-                      onChange={(e) => updateFrozenParam('n_orifices', e.target.checked ? 16 : undefined)}
-                      className="w-4 h-4 text-amber-500 bg-[var(--color-bg-primary)] border-[var(--color-border)] rounded"
-                    />
-                  </div>
-                  <input
-                    type="number"
-                    value={getFrozenValue('n_orifices')}
-                    onChange={(e) => updateFrozenParam('n_orifices', e.target.value ? parseInt(e.target.value) : undefined)}
-                    disabled={!isFrozen('n_orifices')}
-                    className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
-                    min="4"
-                    max="48"
-                    step="2"
-                    placeholder="e.g. 16"
-                  />
-                </div>
-
-                {/* d_orifice_mm */}
-                <div className={`p-3 rounded-lg border ${isFrozen('d_orifice_mm') ? 'border-amber-500/50 bg-amber-500/10' : 'border-[var(--color-border)]'}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-sm font-medium text-[var(--color-text-secondary)]">
-                      Orifice Ø [mm]
-                    </label>
-                    <input
-                      type="checkbox"
-                      checked={isFrozen('d_orifice_mm')}
-                      onChange={(e) => updateFrozenParam('d_orifice_mm', e.target.checked ? 2.5 : undefined)}
-                      className="w-4 h-4 text-amber-500 bg-[var(--color-bg-primary)] border-[var(--color-border)] rounded"
-                    />
-                  </div>
-                  <input
-                    type="number"
-                    value={getFrozenValue('d_orifice_mm')}
-                    onChange={(e) => updateFrozenParam('d_orifice_mm', e.target.value ? parseFloat(e.target.value) : undefined)}
-                    disabled={!isFrozen('d_orifice_mm')}
-                    className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
-                    min="0.5"
-                    max="8"
-                    step="0.1"
-                    placeholder="e.g. 2.5"
-                  />
-                </div>
+                {/* Injector-specific frozen params, rendered per the live injector type (backend
+                    authority via /api/config/injector_schema). Pintle shows pintle fields, doublet
+                    shows doublet fields — no cross-type leakage. */}
+                {injectorFrozenFields.length === 0 && (
+                  <p className="col-span-2 text-xs text-[var(--color-text-secondary)] italic">
+                    No freezable injector parameters for this injector type.
+                  </p>
+                )}
+                {injectorFrozenFields.map((field) => {
+                  const meta = FROZEN_INJECTOR_META[field];
+                  const key = field as keyof FrozenParameters;
+                  return (
+                    <div key={field} className={`p-3 rounded-lg border ${isFrozen(key) ? 'border-amber-500/50 bg-amber-500/10' : 'border-[var(--color-border)]'}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-sm font-medium text-[var(--color-text-secondary)]">{meta.label}</label>
+                        <input
+                          type="checkbox"
+                          checked={isFrozen(key)}
+                          onChange={(e) => updateFrozenParam(key, e.target.checked ? meta.def : undefined)}
+                          className="w-4 h-4 text-amber-500 bg-[var(--color-bg-primary)] border-[var(--color-border)] rounded"
+                        />
+                      </div>
+                      <input
+                        type="number"
+                        value={getFrozenValue(key)}
+                        onChange={(e) => updateFrozenParam(key, e.target.value ? (meta.int ? parseInt(e.target.value) : parseFloat(e.target.value)) : undefined)}
+                        disabled={!isFrozen(key)}
+                        className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
+                        min={meta.min}
+                        max={meta.max}
+                        step={meta.step}
+                        placeholder={`e.g. ${meta.def}`}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

@@ -124,7 +124,7 @@ popsize = min(32, max(8, 4 + int(3 * np.log(len(x_after_de) + 1))))
 ```
 
 **Problem**: 
-- Standard CMA-ES formula gives popsize=11 for 10D
+- Standard CMA-ES formula gives popsize≈11 for ~10 DOF (pintle); impinging Layer‑1 uses 14 DOF
 - But this objective is NOISY due to:
   - Discrete variables (n_orifices)
   - Cache quantization
@@ -393,7 +393,7 @@ All Priority 1 (P1) refinements have been successfully implemented:
   - Increased minimum population from 8→12 (line 582)
   - Increased maximum from 32→40 for larger problems
 - **Impact**: Better gradient estimation in noisy objective landscape
-- **Budget**: Modest increase (~12 evals for 10D problem, well within budget)
+- **Budget**: Modest increase (~12 evals per generation vs ~11 for pintle scale, well within budget)
 
 ### **Testing Status**
 - ✅ No linter errors

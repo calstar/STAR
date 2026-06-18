@@ -8,6 +8,7 @@ A comprehensive physics-based simulation and **multi-layer optimization pipeline
 
 **Key Capabilities:**
 - Full flow path simulation: tank → feed system → injector → combustion → nozzle → thrust
+- **Injector modes:** pintle (`injector.type: pintle`) or twin-jet **impinging** (`injector.type: impinging`); see `docs/optimizer_readme.md` (Injector types) and `configs/impinging_smoke.yaml`
 - Multi-layer optimization for complete engine design (geometry, pressure curves, thermal protection)
 - Time-varying analysis with ablative recession tracking
 - Stability analysis (chugging, acoustic, feed-system coupling)

@@ -19,11 +19,16 @@ import type {
     Layer3Settings,
     Layer3ProgressEvent,
     Layer3Results,
-    DesignRequirements
+    DesignRequirements,
+    SaveDesignRequirementsResponse,
 } from '../api/client';
 
 interface Layer3OptimizationProps {
-    requirements: DesignRequirements | null;
+    requirements: DesignRequirements;
+    isDirty: boolean;
+    saveRequirementsToServer: (
+        reqs: DesignRequirements
+    ) => Promise<{ error?: string; data?: SaveDesignRequirementsResponse }>;
 }
 
 // Helper component for result cards
@@ -81,7 +86,11 @@ function ResultCard({
     );
 }
 
-export function Layer3Optimization({ requirements }: Layer3OptimizationProps) {
+export function Layer3Optimization({
+    requirements,
+    isDirty,
+    saveRequirementsToServer,
+}: Layer3OptimizationProps) {
     const [settings, setSettings] = useState<Layer3Settings>({
         max_iterations: 20,
         save_plots: false,
@@ -190,7 +199,17 @@ export function Layer3Optimization({ requirements }: Layer3OptimizationProps) {
         }
     };
 
-    const handleRun = () => {
+    const handleRun = async () => {
+        if (isDirty) {
+            setMessage('Auto-saving Design Requirements before run...');
+            const saveResp = await saveRequirementsToServer(requirements);
+            if (saveResp.error) {
+                setError(saveResp.error);
+                setMessage('');
+                return;
+            }
+        }
+
         setIsRunning(true);
         setIsStopping(false);
         setProgress(0);
@@ -386,6 +405,11 @@ export function Layer3Optimization({ requirements }: Layer3OptimizationProps) {
                                         </div>
                                     </div>
                                 </label>
+                                {isDirty && (
+                                    <span className="text-xs px-2 py-1 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-300 self-center">
+                                        Unsaved DR — auto-save on Run
+                                    </span>
+                                )}
                                 <button
                                     onClick={handleRun}
                                     disabled={isRunning || (!requirements && !configLoaded)}

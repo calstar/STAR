@@ -730,6 +730,9 @@ def run_layer2_pressure(
          layer2_logger.info(f"  -> Adjusted LOX floor to {local_min_lox_floor/1e6:.2f} MPa")
     if local_min_fuel_floor > min_fuel_pressure_floor_pa:
          layer2_logger.info(f"  -> Adjusted Fuel floor to {local_min_fuel_floor/1e6:.2f} MPa")
+
+    from engine.optimizer.feed_pressure_model import get_feed_pressure_model, dome_regulated_tank_pair
+    skip_de_optimization = get_feed_pressure_model(optimized_config) == "dome_regulated"
     
     # Optimization variables:
     # Shared-segment parameterization with fixed N_SEGMENTS segments:
@@ -1887,299 +1890,312 @@ def run_layer2_pressure(
     lox_segments = None  # Track segments for saving to config
     fuel_segments = None
     
-    layer2_logger.info("Starting optimization...")
-    layer2_logger.info(f"Using fixed {N_SEGMENTS} segments per tank for LOX and fuel")
-    layer2_logger.info(f"Max local iterations: {layer2_state['max_iter']}")
-    layer2_logger.info("")
-    
-    try:
-        # Global search with differential evolution (coarse time grid, n_time_points_de)
-        # Increased parameters for better global search capability
-        layer2_logger.info("Running Global Search (DE) with popsize=5, maxiter=10...")
-        
-        # Callback for DE to detect convergence
-        def de_callback(intermediate_result):
-            """Callback for differential_evolution to detect and log convergence."""
-            # Check if stop was requested
-            if stop_event is not None and stop_event.is_set():
-                layer2_state["converged"] = True
-                layer2_state["stopped_by_user"] = True
-                if not layer2_state.get("stop_logged", False):
-                    layer2_logger.info("⚠ Stop requested by user during DE optimization")
-                    layer2_state["stop_logged"] = True
-                    for handler in layer2_logger.handlers:
-                        handler.flush()
-                return True
-            
-            # Track improvement for early stopping
-            current_obj = layer2_state.get("best_obj", float("inf"))
-            prev_best = layer2_state.get("de_prev_best", float("inf"))
-            
-            # Calculate improvement from previous generation
-            improvement = prev_best - current_obj
-            layer2_state["de_prev_best"] = current_obj
-            
-            # Count no-improvement generations
-            if improvement < 1.0:  # Less than 1.0 improvement
-                layer2_state["de_no_improve_count"] = layer2_state.get("de_no_improve_count", 0) + 1
-            else:
-                layer2_state["de_no_improve_count"] = 0
-            
-            # Early stop if 5 consecutive generations with < 1.0 improvement
-            if layer2_state.get("de_no_improve_count", 0) >= 5:
-                if not layer2_state.get("de_convergence_logged", False):
-                    layer2_logger.info(
-                        f"✓ DE converged early: 5 generations with < 1.0 improvement. "
-                        f"Best objective: {current_obj:.6f}"
-                    )
-                    layer2_state["de_convergence_logged"] = True
-                    for handler in layer2_logger.handlers:
-                        handler.flush()
-                return True  # Stop DE
-            
-            if layer2_state.get("converged", False):
-                # Convergence detected in objective function - stop DE
-                if not layer2_state.get("de_convergence_logged", False):
-                    layer2_logger.info(
-                        f"✓ DE stopping early: convergence detected (best_obj={layer2_state['best_obj']:.6f})."
-                    )
-                    layer2_state["de_convergence_logged"] = True
-                    for handler in layer2_logger.handlers:
-                        handler.flush()
-                return True
-            return False
-        
-        de_result = differential_evolution(
-            layer2_objective_de,
-            bounds,
-            maxiter=de_maxiter,
-            popsize=de_popsize,
-            polish=False,
-            tol=0.01,       # Population convergence tolerance
-            atol=0.5,       # Absolute tolerance for objective improvement (early stopping)
-            callback=de_callback,
+    if skip_de_optimization:
+        layer2_logger.info("Feed pressure model: dome_regulated — using eq. (6.2), skipping segment DE")
+        _, P_tank_O_optimized, P_tank_F_optimized = dome_regulated_tank_pair(
+            initial_lox_pressure_pa, initial_fuel_pressure_pa, target_burn_time, n_time_points,
         )
-        layer2_logger.info(
-            "Global search (differential_evolution) finished with objective %.6f",
-            de_result.fun,
-        )
-        if layer2_state.get("converged", False):
-            layer2_logger.info(
-                "✓ DE converged early, but proceeding to local optimization (L-BFGS-B) "
-                "for fine-grid polish regardless."
-            )
-        for handler in layer2_logger.handlers:
-            handler.flush()
-
-        # Re-scoring Top K candidates
-        # 1. Collect all valid candidates found during DE
-        candidates = layer2_state.get("de_candidates", [])
-        
-        # 2. Add the final DE result if not already included
-        if hasattr(de_result, "x"):
-             candidates.append((de_result.fun, de_result.x))
-        
-        # 3. Sort by objective (ascending)
-        # Filter out duplicates (simple check based on obj)
-        candidates.sort(key=lambda x: x[0])
-        
-        # 4. Take top K unique-ish candidates
-        top_k_count = 5
-        top_candidates = []
-        seen_objs = set()
-        for obj, x in candidates:
-             if len(top_candidates) >= top_k_count:
-                 break
-             # Rounded obj for duplicate detection
-             obj_key = round(obj, 6)
-             if obj_key not in seen_objs and obj < 1e5:
-                 seen_objs.add(obj_key)
-                 top_candidates.append((obj, x))
-        
-        if not top_candidates and layer2_state["best_x"] is not None:
-             top_candidates.append((layer2_state["best_obj"], layer2_state["best_x"]))
-        
-        # Reset convergence flag so that re-scoring evaluations are actually performed
-        # (otherwise layer2_objective returns constant best_obj immediately)
-        layer2_state["converged"] = False
-        
-        layer2_logger.info(f"Re-scoring top {len(top_candidates)} candidates on fine grid...")
-        
-        best_rescored_obj = float("inf")
-        best_rescored_x = None
-        
-        for i, (old_obj, cand_x) in enumerate(top_candidates):
-            # Evaluate on fine grid (local)
-            # This implicitly updates layer2_state["best_obj"] if it finds a new global best
-            new_obj = layer2_objective_local(cand_x)
-            layer2_logger.info(f"  Candidate #{i+1}: DE_obj={old_obj:.6f} -> Fine_obj={new_obj:.6f}")
-            
-            if new_obj < best_rescored_obj:
-                best_rescored_obj = new_obj
-                best_rescored_x = cand_x
-        
-        if best_rescored_x is not None:
-            local_start_x = best_rescored_x
-            layer2_logger.info(f"Selected best re-scored candidate (obj={best_rescored_obj:.6f}) as starting point for local optimization")
-        elif layer2_state["best_x"] is not None:
-             local_start_x = layer2_state["best_x"]
-             layer2_logger.info("Re-scoring failed to find valid candidates, using overall best x")
-        else:
-             local_start_x = de_result.x # Fallback
-        
-        for handler in layer2_logger.handlers:
-            handler.flush()
-
-        # Re-evaluate the chosen start point on the FINE grid to establish a valid baseline.
-        # This prevents comparing "apples to oranges" (coarse DE vs fine local).
-        layer2_logger.info("Re-evaluating best DE solution on fine grid to establish baseline...")
-        baseline_obj = layer2_objective_local(local_start_x)
-
-        # Force reset internal state to this fine-grid baseline
-        layer2_state["best_obj"] = baseline_obj
-        layer2_state["best_x"] = np.array(local_start_x, copy=True)
-        layer2_state["last_obj"] = baseline_obj
-        layer2_state["prev_obj"] = None
-        # Reset convergence tracking for local optimization phase
-        # (Even if DE converged early, we still run local optimization for fine-grid polish)
-        layer2_state["converged"] = False
-        layer2_state["no_improvement_count"] = 0
-        layer2_state["small_change_count"] = 0
-        layer2_state["identical_obj_count"] = 0
-        layer2_state["last_identical_obj"] = None
-
-        layer2_logger.info(f"Fine-grid baseline objective: {baseline_obj:.6f}")
-        layer2_logger.info("Proceeding to local optimization (L-BFGS-B) for fine-grid polish...")
-        for handler in layer2_logger.handlers:
-            handler.flush()
-
-        # Local polish with L-BFGS-B (full time grid, n_time_points)
-        # Use tighter tolerances to stop earlier when converged
-        # Also reduce max iterations if DE already found a good solution
-        effective_max_iter = max_iterations
-        if baseline_obj < 1.0:  # If we have a good solution (on the fine grid)
-            effective_max_iter = min(max_iterations, 15)  # Use fewer iterations
-            layer2_logger.info(
-                f"Baseline is good (obj={baseline_obj:.6f}), "
-                f"limiting local search to {effective_max_iter} iterations"
-            )
-        
-        result_layer2 = scipy_minimize(
-            layer2_objective_local,
-            local_start_x,  # Use the best X vector found during DE
-            method="L-BFGS-B",
-            bounds=bounds,
-            options={
-                "maxiter": effective_max_iter,
-                "ftol": 1e-6,  # Function tolerance - stop when function change is small
-                "gtol": 1e-5,  # Gradient tolerance - stop when gradient is small
-                "maxfun": effective_max_iter * 3,  # Limit function evaluations to prevent infinite loops
-            },
-            callback=layer2_callback,
-        )
-        
-        layer2_logger.info("")
-        layer2_logger.info("Optimization completed")
-        layer2_logger.info(f"Success: {result_layer2.success}")
-        layer2_logger.info(f"Final objective value: {result_layer2.fun:.6f}")
-        layer2_logger.info(f"Iterations: {result_layer2.nit if hasattr(result_layer2, 'nit') else 'N/A'}")
-        layer2_logger.info(f"Function evaluations: {result_layer2.nfev if hasattr(result_layer2, 'nfev') else 'N/A'}")
-        layer2_logger.info("")
-        
-        if result_layer2.success or result_layer2.fun < 1e5:
-            success = True
-            layer2_logger.info("✓ Optimization converged successfully")
-            
-            # Extract optimized segments
-            layer2_logger.info(f"Optimized solution uses {N_SEGMENTS} LOX segments and {N_SEGMENTS} fuel segments")
-            
-            # CRITICAL FIX: Use the best X vector found across all optimization phases
-            # (DE + local), not just the local optimizer's final X vector.
-            # The local optimizer may not improve upon its starting point, so
-            # result_layer2.x could be worse than the best found during DE.
-            best_x_overall = layer2_state['best_x'] if layer2_state['best_x'] is not None else result_layer2.x
-            best_obj_overall = layer2_state['best_obj']
-            
-            # Log which solution we're using for final results
-            if layer2_state['best_x'] is not None and best_obj_overall < result_layer2.fun:
-                layer2_logger.info(
-                    f"Using best solution found during optimization (obj={best_obj_overall:.6f}) "
-                    f"instead of local optimizer's final solution (obj={result_layer2.fun:.6f})"
-                )
-            else:
-                layer2_logger.info(f"Using local optimizer's final solution (obj={result_layer2.fun:.6f})")
-            
-            lox_segments, fuel_segments = decode_segments_from_x(
-                best_x_overall,  # Use best X found during entire optimization
-                N_SEGMENTS,
-                initial_lox_pressure_pa,
-                initial_fuel_pressure_pa,
-                min_lox_pressure_floor_pa,
-                min_fuel_pressure_floor_pa,
-            )
-            
-            # Generate optimized pressure curves
-            P_tank_O_optimized = generate_pressure_curve_from_segments(lox_segments, n_time_points)
-            P_tank_F_optimized = generate_pressure_curve_from_segments(fuel_segments, n_time_points)
-            
-            if update_progress:
-                update_progress(
-                    "Layer 2: Pressure Curve Optimization",
-                    0.64,
-                    f"Optimized: {N_SEGMENTS} LOX segments, {N_SEGMENTS} fuel segments"
-                )
-        else:
-            layer2_logger.warning("⚠ Optimization did not converge, using initial guess")
-            if update_progress:
-                update_progress(
-                    "Layer 2: Pressure Curve Optimization",
-                    0.64,
-                    f"⚠️ Optimization did not converge, using initial guess"
-                )
-                # Use initial guess with shared parameterization
-                lox_segments, fuel_segments = decode_segments_from_x(
-                    x0,
-                    N_SEGMENTS,
-                initial_lox_pressure_pa,
-                initial_fuel_pressure_pa,
-                min_lox_pressure_floor_pa,
-                min_fuel_pressure_floor_pa,
-                )
-            P_tank_O_optimized = generate_pressure_curve_from_segments(lox_segments, n_time_points)
-            P_tank_F_optimized = generate_pressure_curve_from_segments(fuel_segments, n_time_points)
-    
-    except Exception as e:
-        error_msg = f"Exception in optimization: {repr(e)}"
-        layer2_logger.error(error_msg)
-        import traceback
-        layer2_logger.error(traceback.format_exc())
-        if log_status:
-            log_status("Layer 2 Pressure Error", error_msg)
+        success = True
         if update_progress:
             update_progress(
-                "Layer 2: Pressure Curve Optimization",
+                "Layer 2: Dome-regulated pressure curves",
                 0.64,
-                f"⚠️ Optimization failed: {e}, using initial guess"
+                "Using regulated P_tank(t) profile (eq. 6.2)",
             )
-        # Fallback to simple linear pressure decay
-        P_tank_O_optimized = np.linspace(initial_lox_pressure_pa, initial_lox_pressure_pa * 0.7, n_time_points)
-        P_tank_F_optimized = np.linspace(initial_fuel_pressure_pa, initial_fuel_pressure_pa * 0.7, n_time_points)
-        layer2_logger.warning("Using fallback linear pressure decay")
-        # Create fallback segments for config
-        lox_segments = [{
-            "length_ratio": 1.0,
-            "type": "linear",
-            "start_pressure": initial_lox_pressure_pa,
-            "end_pressure": initial_lox_pressure_pa * 0.7,
-            "k": None,
-        }]
-        fuel_segments = [{
-            "length_ratio": 1.0,
-            "type": "linear",
-            "start_pressure": initial_fuel_pressure_pa,
-            "end_pressure": initial_fuel_pressure_pa * 0.7,
-            "k": None,
-        }]
+    else:
+        layer2_logger.info("Starting optimization...")
+        layer2_logger.info(f"Using fixed {N_SEGMENTS} segments per tank for LOX and fuel")
+        layer2_logger.info(f"Max local iterations: {layer2_state['max_iter']}")
+        layer2_logger.info("")
+
+        try:
+            # Global search with differential evolution (coarse time grid, n_time_points_de)
+            # Increased parameters for better global search capability
+            layer2_logger.info("Running Global Search (DE) with popsize=5, maxiter=10...")
+            
+            # Callback for DE to detect convergence
+            def de_callback(intermediate_result):
+                """Callback for differential_evolution to detect and log convergence."""
+                # Check if stop was requested
+                if stop_event is not None and stop_event.is_set():
+                    layer2_state["converged"] = True
+                    layer2_state["stopped_by_user"] = True
+                    if not layer2_state.get("stop_logged", False):
+                        layer2_logger.info("⚠ Stop requested by user during DE optimization")
+                        layer2_state["stop_logged"] = True
+                        for handler in layer2_logger.handlers:
+                            handler.flush()
+                    return True
+                
+                # Track improvement for early stopping
+                current_obj = layer2_state.get("best_obj", float("inf"))
+                prev_best = layer2_state.get("de_prev_best", float("inf"))
+                
+                # Calculate improvement from previous generation
+                improvement = prev_best - current_obj
+                layer2_state["de_prev_best"] = current_obj
+                
+                # Count no-improvement generations
+                if improvement < 1.0:  # Less than 1.0 improvement
+                    layer2_state["de_no_improve_count"] = layer2_state.get("de_no_improve_count", 0) + 1
+                else:
+                    layer2_state["de_no_improve_count"] = 0
+                
+                # Early stop if 5 consecutive generations with < 1.0 improvement
+                if layer2_state.get("de_no_improve_count", 0) >= 5:
+                    if not layer2_state.get("de_convergence_logged", False):
+                        layer2_logger.info(
+                            f"✓ DE converged early: 5 generations with < 1.0 improvement. "
+                            f"Best objective: {current_obj:.6f}"
+                        )
+                        layer2_state["de_convergence_logged"] = True
+                        for handler in layer2_logger.handlers:
+                            handler.flush()
+                    return True  # Stop DE
+                
+                if layer2_state.get("converged", False):
+                    # Convergence detected in objective function - stop DE
+                    if not layer2_state.get("de_convergence_logged", False):
+                        layer2_logger.info(
+                            f"✓ DE stopping early: convergence detected (best_obj={layer2_state['best_obj']:.6f})."
+                        )
+                        layer2_state["de_convergence_logged"] = True
+                        for handler in layer2_logger.handlers:
+                            handler.flush()
+                    return True
+                return False
+            
+            de_result = differential_evolution(
+                layer2_objective_de,
+                bounds,
+                maxiter=de_maxiter,
+                popsize=de_popsize,
+                polish=False,
+                tol=0.01,       # Population convergence tolerance
+                atol=0.5,       # Absolute tolerance for objective improvement (early stopping)
+                callback=de_callback,
+            )
+            layer2_logger.info(
+                "Global search (differential_evolution) finished with objective %.6f",
+                de_result.fun,
+            )
+            if layer2_state.get("converged", False):
+                layer2_logger.info(
+                    "✓ DE converged early, but proceeding to local optimization (L-BFGS-B) "
+                    "for fine-grid polish regardless."
+                )
+            for handler in layer2_logger.handlers:
+                handler.flush()
+    
+            # Re-scoring Top K candidates
+            # 1. Collect all valid candidates found during DE
+            candidates = layer2_state.get("de_candidates", [])
+            
+            # 2. Add the final DE result if not already included
+            if hasattr(de_result, "x"):
+                 candidates.append((de_result.fun, de_result.x))
+            
+            # 3. Sort by objective (ascending)
+            # Filter out duplicates (simple check based on obj)
+            candidates.sort(key=lambda x: x[0])
+            
+            # 4. Take top K unique-ish candidates
+            top_k_count = 5
+            top_candidates = []
+            seen_objs = set()
+            for obj, x in candidates:
+                 if len(top_candidates) >= top_k_count:
+                     break
+                 # Rounded obj for duplicate detection
+                 obj_key = round(obj, 6)
+                 if obj_key not in seen_objs and obj < 1e5:
+                     seen_objs.add(obj_key)
+                     top_candidates.append((obj, x))
+            
+            if not top_candidates and layer2_state["best_x"] is not None:
+                 top_candidates.append((layer2_state["best_obj"], layer2_state["best_x"]))
+            
+            # Reset convergence flag so that re-scoring evaluations are actually performed
+            # (otherwise layer2_objective returns constant best_obj immediately)
+            layer2_state["converged"] = False
+            
+            layer2_logger.info(f"Re-scoring top {len(top_candidates)} candidates on fine grid...")
+            
+            best_rescored_obj = float("inf")
+            best_rescored_x = None
+            
+            for i, (old_obj, cand_x) in enumerate(top_candidates):
+                # Evaluate on fine grid (local)
+                # This implicitly updates layer2_state["best_obj"] if it finds a new global best
+                new_obj = layer2_objective_local(cand_x)
+                layer2_logger.info(f"  Candidate #{i+1}: DE_obj={old_obj:.6f} -> Fine_obj={new_obj:.6f}")
+                
+                if new_obj < best_rescored_obj:
+                    best_rescored_obj = new_obj
+                    best_rescored_x = cand_x
+            
+            if best_rescored_x is not None:
+                local_start_x = best_rescored_x
+                layer2_logger.info(f"Selected best re-scored candidate (obj={best_rescored_obj:.6f}) as starting point for local optimization")
+            elif layer2_state["best_x"] is not None:
+                 local_start_x = layer2_state["best_x"]
+                 layer2_logger.info("Re-scoring failed to find valid candidates, using overall best x")
+            else:
+                 local_start_x = de_result.x # Fallback
+            
+            for handler in layer2_logger.handlers:
+                handler.flush()
+    
+            # Re-evaluate the chosen start point on the FINE grid to establish a valid baseline.
+            # This prevents comparing "apples to oranges" (coarse DE vs fine local).
+            layer2_logger.info("Re-evaluating best DE solution on fine grid to establish baseline...")
+            baseline_obj = layer2_objective_local(local_start_x)
+    
+            # Force reset internal state to this fine-grid baseline
+            layer2_state["best_obj"] = baseline_obj
+            layer2_state["best_x"] = np.array(local_start_x, copy=True)
+            layer2_state["last_obj"] = baseline_obj
+            layer2_state["prev_obj"] = None
+            # Reset convergence tracking for local optimization phase
+            # (Even if DE converged early, we still run local optimization for fine-grid polish)
+            layer2_state["converged"] = False
+            layer2_state["no_improvement_count"] = 0
+            layer2_state["small_change_count"] = 0
+            layer2_state["identical_obj_count"] = 0
+            layer2_state["last_identical_obj"] = None
+    
+            layer2_logger.info(f"Fine-grid baseline objective: {baseline_obj:.6f}")
+            layer2_logger.info("Proceeding to local optimization (L-BFGS-B) for fine-grid polish...")
+            for handler in layer2_logger.handlers:
+                handler.flush()
+    
+            # Local polish with L-BFGS-B (full time grid, n_time_points)
+            # Use tighter tolerances to stop earlier when converged
+            # Also reduce max iterations if DE already found a good solution
+            effective_max_iter = max_iterations
+            if baseline_obj < 1.0:  # If we have a good solution (on the fine grid)
+                effective_max_iter = min(max_iterations, 15)  # Use fewer iterations
+                layer2_logger.info(
+                    f"Baseline is good (obj={baseline_obj:.6f}), "
+                    f"limiting local search to {effective_max_iter} iterations"
+                )
+            
+            result_layer2 = scipy_minimize(
+                layer2_objective_local,
+                local_start_x,  # Use the best X vector found during DE
+                method="L-BFGS-B",
+                bounds=bounds,
+                options={
+                    "maxiter": effective_max_iter,
+                    "ftol": 1e-6,  # Function tolerance - stop when function change is small
+                    "gtol": 1e-5,  # Gradient tolerance - stop when gradient is small
+                    "maxfun": effective_max_iter * 3,  # Limit function evaluations to prevent infinite loops
+                },
+                callback=layer2_callback,
+            )
+            
+            layer2_logger.info("")
+            layer2_logger.info("Optimization completed")
+            layer2_logger.info(f"Success: {result_layer2.success}")
+            layer2_logger.info(f"Final objective value: {result_layer2.fun:.6f}")
+            layer2_logger.info(f"Iterations: {result_layer2.nit if hasattr(result_layer2, 'nit') else 'N/A'}")
+            layer2_logger.info(f"Function evaluations: {result_layer2.nfev if hasattr(result_layer2, 'nfev') else 'N/A'}")
+            layer2_logger.info("")
+            
+            if result_layer2.success or result_layer2.fun < 1e5:
+                success = True
+                layer2_logger.info("✓ Optimization converged successfully")
+                
+                # Extract optimized segments
+                layer2_logger.info(f"Optimized solution uses {N_SEGMENTS} LOX segments and {N_SEGMENTS} fuel segments")
+                
+                # CRITICAL FIX: Use the best X vector found across all optimization phases
+                # (DE + local), not just the local optimizer's final X vector.
+                # The local optimizer may not improve upon its starting point, so
+                # result_layer2.x could be worse than the best found during DE.
+                best_x_overall = layer2_state['best_x'] if layer2_state['best_x'] is not None else result_layer2.x
+                best_obj_overall = layer2_state['best_obj']
+                
+                # Log which solution we're using for final results
+                if layer2_state['best_x'] is not None and best_obj_overall < result_layer2.fun:
+                    layer2_logger.info(
+                        f"Using best solution found during optimization (obj={best_obj_overall:.6f}) "
+                        f"instead of local optimizer's final solution (obj={result_layer2.fun:.6f})"
+                    )
+                else:
+                    layer2_logger.info(f"Using local optimizer's final solution (obj={result_layer2.fun:.6f})")
+                
+                lox_segments, fuel_segments = decode_segments_from_x(
+                    best_x_overall,  # Use best X found during entire optimization
+                    N_SEGMENTS,
+                    initial_lox_pressure_pa,
+                    initial_fuel_pressure_pa,
+                    min_lox_pressure_floor_pa,
+                    min_fuel_pressure_floor_pa,
+                )
+                
+                # Generate optimized pressure curves
+                P_tank_O_optimized = generate_pressure_curve_from_segments(lox_segments, n_time_points)
+                P_tank_F_optimized = generate_pressure_curve_from_segments(fuel_segments, n_time_points)
+                
+                if update_progress:
+                    update_progress(
+                        "Layer 2: Pressure Curve Optimization",
+                        0.64,
+                        f"Optimized: {N_SEGMENTS} LOX segments, {N_SEGMENTS} fuel segments"
+                    )
+            else:
+                layer2_logger.warning("⚠ Optimization did not converge, using initial guess")
+                if update_progress:
+                    update_progress(
+                        "Layer 2: Pressure Curve Optimization",
+                        0.64,
+                        f"⚠️ Optimization did not converge, using initial guess"
+                    )
+                    # Use initial guess with shared parameterization
+                    lox_segments, fuel_segments = decode_segments_from_x(
+                        x0,
+                        N_SEGMENTS,
+                    initial_lox_pressure_pa,
+                    initial_fuel_pressure_pa,
+                    min_lox_pressure_floor_pa,
+                    min_fuel_pressure_floor_pa,
+                    )
+                P_tank_O_optimized = generate_pressure_curve_from_segments(lox_segments, n_time_points)
+                P_tank_F_optimized = generate_pressure_curve_from_segments(fuel_segments, n_time_points)
+
+        except Exception as e:
+            error_msg = f"Exception in optimization: {repr(e)}"
+            layer2_logger.error(error_msg)
+            import traceback
+            layer2_logger.error(traceback.format_exc())
+            if log_status:
+                log_status("Layer 2 Pressure Error", error_msg)
+            if update_progress:
+                update_progress(
+                    "Layer 2: Pressure Curve Optimization",
+                    0.64,
+                    f"⚠️ Optimization failed: {e}, using initial guess"
+                )
+            # Fallback to simple linear pressure decay
+            P_tank_O_optimized = np.linspace(initial_lox_pressure_pa, initial_lox_pressure_pa * 0.7, n_time_points)
+            P_tank_F_optimized = np.linspace(initial_fuel_pressure_pa, initial_fuel_pressure_pa * 0.7, n_time_points)
+            layer2_logger.warning("Using fallback linear pressure decay")
+            # Create fallback segments for config
+            lox_segments = [{
+                "length_ratio": 1.0,
+                "type": "linear",
+                "start_pressure": initial_lox_pressure_pa,
+                "end_pressure": initial_lox_pressure_pa * 0.7,
+                "k": None,
+            }]
+            fuel_segments = [{
+                "length_ratio": 1.0,
+                "type": "linear",
+                "start_pressure": initial_fuel_pressure_pa,
+                "end_pressure": initial_fuel_pressure_pa * 0.7,
+                "k": None,
+            }]
     
     # Build summary
     layer2_logger.info("")

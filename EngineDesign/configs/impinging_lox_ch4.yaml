@@ -6,7 +6,7 @@ ablative_cooling:
   char_layer_conductivity: 0.2
   char_layer_thickness: 0.001
   coverage_fraction: 0.9
-  enabled: true
+  enabled: false
   heat_of_ablation: 2500000.0
   initial_thickness: 0.008
   material_density: 1600.0
@@ -27,39 +27,39 @@ ablative_cooling:
   use_physics_based_blowing: true
 chamber: null
 chamber_geometry:
-  A_exit: 0.00801184666481737
-  A_throat: 0.0017651044259737317
-  Cf: 1.5422822280584674
-  Lstar: 1.239905396733828
-  chamber_diameter: 0.11344154349849075
-  design_MR: 2.55
+  A_exit: 0.008011846660276834
+  A_throat: 0.0017651044249737868
+  Cf: 1.5223402265660735
+  Lstar: 1.2399053967343734
+  chamber_diameter: 0.1270000000006823
+  design_MR: 3.2
   design_pressure: 2413166.0
   design_thrust: 7000.0
-  exit_diameter: 0.101
-  expansion_ratio: 4.539021344528996
-  length: 0.24846200737808025
+  exit_diameter: 0.10099999997138025
+  expansion_ratio: 4.539021344527996
+  length: 0.21154129848565129
   length_contraction: 0.0451
   length_cylindrical: 0.121
   nozzle_efficiency: 0.95
-  volume: 0.0021885625035635956
+  volume: 0.002188562502324721
 combustion:
   cea:
     MR_range:
-    - 1.0
-    - 2.5
+    - 2.4
+    - 4.2
     Pc_range:
     - 1000000.0
     - 9000000.0
-    cache_file: output/cache/cea_cache_LOX_Ethanol_3D.npz
+    cache_file: output/cache/cea_cache_LOX_CH4_3D.npz
     cea_parallel_workers: null
     eps_range:
     - 4.0
     - 15.0
-    expansion_ratio: 4.539021344528996
-    fuel_name: Ethanol
+    expansion_ratio: 4.539021344527996
+    fuel_name: CH4
     n_points: 34
     ox_name: LOX
-    use_parallel_cea_build: true
+    use_parallel_cea_build: false
   efficiency:
     A0_ethanol: 50000000.0
     A0_hydrocarbon: 10000000.0
@@ -70,7 +70,7 @@ combustion:
     Ea_hydrogen: 40000.0
     K: 0.15
     Pc_gate: 1000000.0
-    T_star_fuel_cap_K: 700.0
+    T_star_fuel_cap_K: 500.0
     cooling_efficiency_floor: 0.25
     mixture_efficiency_floor: 0.25
     model: exponential
@@ -105,18 +105,16 @@ design_requirements:
   copv_free_volume_m3: null
   feed_stability_min: 0.15
   frozen_parameters:
-    A_throat_mm2: null
-    D_chamber_outer_mm: null
-    Lstar_mm: null
+    A_throat_mm2: 1765.1044259737316
+    D_chamber_outer_mm: 152.4
+    Lstar_mm: 1239.905396733828
     P_F_start_psi: null
     P_O_start_psi: null
     d_orifice_mm: null
     d_pintle_tip_mm: null
-    expansion_ratio: null
-    h_gap_mm: 0.5
+    expansion_ratio: 4.539021344528996
+    h_gap_mm: null
     n_orifices: null
-  layer1_max_pressure_ratio: 0.99
-  layer1_min_pressure_ratio: 0.1
   fuel_tank_capacity_kg: null
   lox_tank_capacity_kg: null
   max_Lstar: 1.5
@@ -124,31 +122,31 @@ design_requirements:
   max_P_tank_O: null
   max_chamber_outer_diameter: 0.1397
   max_engine_length: 0.4
-  max_fuel_tank_pressure_psi: 800.0
+  max_fuel_tank_pressure_psi: 1200.0
   max_lox_tank_pressure_psi: 700.0
   max_nozzle_exit_diameter: 0.101
   min_Lstar: 0.95
   min_stability_margin: 1.2
   min_stability_score: 0.75
-  optimal_of_ratio: 1.4
+  optimal_of_ratio: 3.2
   require_stable_state: true
   stability_margin_handicap: 0.0
   target_apogee: 3048.0
   target_burn_time: 6.0
-  target_thrust: 7000.0
+  target_thrust: 4000.0
 discharge:
   fuel:
-    Cd_inf: 0.33
+    Cd_inf: 0.3
     Cd_min: 0.2
     P_ref: 5000000.0
-    T_ref: 300.0
+    T_ref: 112.0
     a_P: 0.0
     a_Re: 0.2
     a_T: 0.0
     use_pressure_correction: false
     use_temperature_correction: false
   oxidizer:
-    Cd_inf: 0.45
+    Cd_inf: 0.4
     Cd_min: 0.15
     P_ref: 5000000.0
     T_ref: 90.0
@@ -198,17 +196,17 @@ film_cooling:
   turbulence_sensitivity: 1.0
 fluids:
   fuel:
-    boiling_point: 351.4
-    density: 789.0
-    latent_heat: 838000.0
-    molecular_weight: 46.07
-    name: Ethanol
-    specific_heat: 2440.0
-    surface_tension: 0.0223
-    temperature: 293.0
-    thermal_conductivity: 0.17
-    vapor_pressure: 5800.0
-    viscosity: 0.0012
+    boiling_point: 111.65
+    density: 422.6
+    latent_heat: 510000.0
+    molecular_weight: 16.04
+    name: Methane
+    specific_heat: 3348.0
+    surface_tension: 0.0134
+    temperature: 112.0
+    thermal_conductivity: 0.204
+    vapor_pressure: 101325.0
+    viscosity: 0.00012
   oxidizer:
     boiling_point: null
     density: 1140.0
@@ -223,7 +221,7 @@ fluids:
     viscosity: 0.00018
 fuel_tank:
   fuel_tank_pos: 3.0
-  initial_pressure_psi: 523.6759162449396
+  initial_pressure_psi: 780.0000001788105
   mass: 7.0
   rp1_h: 0.609
   rp1_radius: 0.0762
@@ -237,7 +235,7 @@ graphite_insert:
   char_layer_thickness: 0.0005
   coverage_fraction: 1.0
   emissivity: 0.8
-  enabled: true
+  enabled: false
   feedback_fraction_max: 0.2
   feedback_fraction_min: 0.0
   friction_coefficient_override: null
@@ -265,22 +263,20 @@ graphite_insert:
   surface_temperature_limit: 2500.0
   thermal_conductivity: 100.0
 injector:
+  type: impinging
   geometry:
+    oxidizer:
+      n_elements: 12
+      d_jet: 0.003
+      impingement_angle: 45.0
+      spacing: 0.012
     fuel:
-      A_entry: 0.0006269311525882157
-      d_hydraulic: 0.0009999999980027608
-      d_pintle_tip: 0.028253027011308197
-      d_reservoir_inner: 0.02925302700931096
-      h_gap: 0.0004999999990013804
-    lox:
-      A_entry: 5.8108495056721366e-06
-      d_hydraulic: 0.0027200373856119215
-      d_orifice: 0.0027200373856119215
-      n_orifices: 14
-      theta_orifice: 90.0
-  type: pintle
+      n_elements: 10
+      d_jet: 0.0033
+      impingement_angle: 45.0
+      spacing: 0.011
 lox_tank:
-  initial_pressure_psi: 537.261547029532
+  initial_pressure_psi: 496.87110787450285
   lox_h: 1.14
   lox_radius: 0.06985
   mass: 6.75
@@ -288,22 +284,7 @@ lox_tank:
   tank_volume_m3: 0.017474
 nozzle: null
 optimizer:
-  hybrid:
-    block_method: corr_greedy
-    cycles: 3
-    elite_k: 50
-    lambda0: 0.001
-    lambda_max: 1.0
-    lambda_mult: 10.0
-    lambda_normalize: true
-    num_blocks: 3
-    num_tracks: 1
-    overlap_fraction: 0.0
-    per_block_budget_fraction: 0.5
-    refresh_budget_fraction: 0.1
-    refresh_every_pass: true
-    refresh_sigma_scale: 0.2
-  mode: hybrid_cma_blocks
+  mode: cma
 press_tank:
   dry_mass: null
   free_volume_L: 4.5
@@ -459,12 +440,6 @@ rocket:
   propulsion_dry_mass: 21.0
   radius: 0.078359
   rocket_length: 7.5
-  strakes:
-    fin_position: 3.58
-    fin_span: 0.152
-    no_fins: 4
-    root_chord: 0.305
-    tip_chord: 0.152
 solver:
   Pc_bounds:
   - 100000.0

@@ -245,8 +245,79 @@ def smd_lefebvre(
     """
     if We <= 0 or d_or <= 0:
         return d_or  # Fallback to orifice diameter
-    
-    D32 = C * d_or * (We ** (-m)) * (Oh ** p)
+
+    # Viscous damping term uses (1 + Oh)^p, NOT Oh^p. Raw Oh^p is unphysical: for a low-viscosity
+    # liquid (Oh << 1) it drives D32 -> 0 as Oh -> 0, whereas vanishing viscosity must approach the
+    # inviscid limit (no viscous correction => factor -> 1). (1 + Oh)^p -> 1 as Oh -> 0 and grows
+    # with viscosity, which is the correct trend (more viscous => larger drops).
+    D32 = C * d_or * (We ** (-m)) * ((1.0 + Oh) ** p)
+    return float(D32)
+
+
+def smd_impinging_ingebo(
+    d_jet: float,
+    u_rel: float,
+    rho_liq: float,
+    mu_liq: float,
+    sigma: float,
+    rho_gas: float,
+    C: float = 3.9,
+) -> float:
+    """Sauter Mean Diameter for impinging-jet atomization (Ingebo correlation).
+
+        D32 = C * d_jet * (We_g * Re_l)^(-1/4)
+
+    Both dimensionless groups are built on the *impingement relative velocity* ``u_rel`` — the
+    velocity at which the two jets actually collide and shear apart — not on either jet's bulk
+    speed. This is the physically correct driver for unlike-doublet sheet breakup.
+
+        We_g = rho_gas * u_rel^2 * d_jet / sigma   (aerodynamic Weber: gas shear breaks the sheet)
+        Re_l = rho_liq * u_rel * d_jet / mu_liq    (liquid Reynolds: viscosity resists breakup)
+
+    Trends are all correct: lower relative velocity, higher surface tension, higher liquid
+    viscosity (lower Re), and lower chamber gas density each increase D32. Viscosity enters
+    through Re_l, which replaces the fragile Ohnesorge term in the Lefebvre form.
+
+    Source: Ingebo, R.D., "Drop-size distributions for impinging-jet breakup in airstreams"
+    (NASA jet-atomization correlations). The prefactor ``C`` is reported in roughly the 3.9-5.0
+    range depending on the data set / breakup regime and should be calibrated against a reference
+    SMD; it is exposed via config (``spray.smd.C_ingebo``).
+
+    Parameters
+    ----------
+    d_jet : float
+        Jet (orifice) diameter [m].
+    u_rel : float
+        Impingement relative velocity [m/s].
+    rho_liq, mu_liq, sigma : float
+        Liquid density [kg/m^3], dynamic viscosity [Pa.s], surface tension [N/m].
+    rho_gas : float
+        Chamber gas density [kg/m^3] for the aerodynamic Weber number.
+    C : float
+        Correlation prefactor.
+
+    Returns
+    -------
+    D32 : float [m]
+    """
+    if (
+        d_jet <= 0
+        or u_rel <= 0
+        or sigma <= 0
+        or rho_gas <= 0
+        or rho_liq <= 0
+        or mu_liq <= 0
+        or C <= 0
+    ):
+        return float(d_jet)  # Fallback to jet diameter for degenerate inputs
+
+    We_g = rho_gas * u_rel ** 2 * d_jet / sigma
+    Re_l = rho_liq * u_rel * d_jet / mu_liq
+    product = We_g * Re_l
+    if product <= 0:
+        return float(d_jet)
+
+    D32 = C * d_jet * product ** (-0.25)
     return float(D32)
 
 

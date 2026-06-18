@@ -21,6 +21,51 @@ from engine.pipeline.numerical_robustness import (
 R_gas = 8314.462618  # J/(kmol·K) for per-kmol calculations
 
 
+def _fuel_name_for_kinetics(config: PintleEngineConfig) -> str:
+    """Label used for Arrhenius fuel-type branching (matches reaction_rate_constant lists).
+
+    Priority: legacy ``propellants.fuel.name`` → ``combustion.cea.fuel_name`` → ``fluids['fuel'].name``
+    → ``\"RP-1\"``.
+    """
+    prop = getattr(config, "propellants", None)
+    if prop is not None and getattr(prop, "fuel", None) is not None:
+        name = getattr(prop.fuel, "name", None)
+        if name:
+            return str(name)
+    cea = getattr(getattr(config, "combustion", None), "cea", None)
+    if cea is not None:
+        fn = getattr(cea, "fuel_name", None)
+        if fn:
+            return str(fn)
+    fluids = getattr(config, "fluids", None)
+    if fluids and "fuel" in fluids:
+        fuel = fluids["fuel"]
+        fn = getattr(fuel, "name", None)
+        if fn:
+            return str(fn)
+    return "RP-1"
+
+
+def _fuel_props_for_evaporation(config: PintleEngineConfig) -> Optional[Dict[str, float]]:
+    """Density and boiling point for droplet evaporation time scale."""
+    prop = getattr(config, "propellants", None)
+    if prop is not None and getattr(prop, "fuel", None) is not None:
+        bp = getattr(prop.fuel, "boiling_point", None)
+        return {
+            "density": float(prop.fuel.density),
+            "boiling_point": float(bp) if bp is not None else 489.0,
+        }
+    fluids = getattr(config, "fluids", None)
+    if not fluids or "fuel" not in fluids:
+        return None
+    fuel = fluids["fuel"]
+    bp = getattr(fuel, "boiling_point", None)
+    return {
+        "density": float(fuel.density),
+        "boiling_point": float(bp) if bp is not None else 489.0,
+    }
+
+
 def calculate_reaction_progress(
     residence_time: float,
     reaction_time_scale: float,
@@ -165,6 +210,12 @@ def calculate_reaction_rate_constant(
             n_pre = eff_cfg.n_pre_hydrogen
             Ea = eff_cfg.Ea_hydrogen
             n_pressure = 0.5
+        elif fuel_type.upper() in ["CH4", "METHANE"]:
+            # Methane: explicit branch (falls back to hydrocarbon kinetics if no methane-specific attrs)
+            A0 = getattr(eff_cfg, "A0_methane", eff_cfg.A0_hydrocarbon)
+            n_pre = getattr(eff_cfg, "n_pre_methane", eff_cfg.n_pre_hydrocarbon)
+            Ea = getattr(eff_cfg, "Ea_methane", eff_cfg.Ea_hydrocarbon)
+            n_pressure = 0.8
         else:
             # Default to hydrocarbon
             A0 = eff_cfg.A0_hydrocarbon
@@ -188,6 +239,11 @@ def calculate_reaction_rate_constant(
             n_pre = 0.2
             Ea = 40000.0
             n_pressure = 0.5
+        elif fuel_type.upper() in ["CH4", "METHANE"]:
+            A0 = 1.5e7
+            n_pre = 0.3
+            Ea = 100000.0
+            n_pressure = 0.8
         else:
             # Default: generic hydrocarbon
             A0 = 1e7
@@ -484,9 +540,8 @@ def calculate_chamber_reaction_progress(
     if not tau_valid.passed:
         raise ValueError(f"Residence time calculation failed: L*={Lstar}, c*={cstar}, R={R}, Tc={Tc}")
     
-    # Get fuel type from config
-    fuel_name = config.propellants.fuel.name if hasattr(config, 'propellants') else "RP-1"
-    
+    fuel_name = _fuel_name_for_kinetics(config)
+
     # Calculate reaction time scale from Arrhenius kinetics (Actual T_react is conservative: longer time)
     tau_reaction = calculate_reaction_time_scale(Pc, T_react, MR, fuel_name, config=config)
     
@@ -498,13 +553,8 @@ def calculate_chamber_reaction_progress(
         # Estimate from spray physics (typical SMD ~ 50-200 microns)
         smd = 100e-6  # 100 microns default
     
-    fuel_props = None
-    if hasattr(config, 'propellants') and hasattr(config.propellants, 'fuel'):
-        fuel_props = {
-            "density": config.propellants.fuel.density,
-            "boiling_point": getattr(config.propellants.fuel, 'boiling_point', 489.0),
-        }
-    
+    fuel_props = _fuel_props_for_evaporation(config)
+
     tau_evaporation = calculate_evaporation_time_scale(Pc, T_react, smd, fuel_props, gamma=gamma, R_gas=R)
     
     # Calculate mixing time from actual flow velocities

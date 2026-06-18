@@ -26,6 +26,10 @@ from engine.core.spray import (
 )
 
 from . import InjectorModel
+from engine.core.injectors.flow_capacity import (
+    effective_flow_areas_from_cd,
+    merge_effective_area_warnings,
+)
 
 
 class PintleInjector(InjectorModel):
@@ -334,5 +338,13 @@ class PintleInjector(InjectorModel):
             Cd_F_eff *= Cd_reduction
             Cd_O_eff = max(Cd_O_eff, discharge_O.Cd_min)
             Cd_F_eff = max(Cd_F_eff, discharge_F.Cd_min)
+
+        A_eff_O, A_eff_F, eff_warns = effective_flow_areas_from_cd(diagnostics, A_LOX, A_fuel)
+        diagnostics["A_geom_O"] = float(A_LOX)
+        diagnostics["A_geom_F"] = float(A_fuel)
+        diagnostics["A_eff_O"] = float(A_eff_O)
+        diagnostics["A_eff_F"] = float(A_eff_F)
+        if eff_warns:
+            merge_effective_area_warnings(diagnostics, eff_warns)
 
         return mdot_O, mdot_F, diagnostics

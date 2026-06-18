@@ -59,9 +59,17 @@ export interface UploadResponse {
 }
 
 // Evaluation types - matches runner.evaluate() output from engine/core/runner.py
+export interface StabilityOverridesRequest {
+  eta_inj_O?: number;
+  smd_um?: number;
+  n_interaction?: number;
+  chi_acoustic?: number;
+}
+
 export interface EvaluateRequest {
   lox_pressure_psi: number;
   fuel_pressure_psi: number;
+  stability_overrides?: StabilityOverridesRequest;
 }
 
 // Runner results - same field names as runner.evaluate() returns
@@ -209,6 +217,9 @@ export interface RunnerResults {
 
   // Full diagnostics
   diagnostics: Record<string, unknown>;
+
+  // Rich stability payload (forward mode / report) — see stability/types.ts
+  stability_rich?: Record<string, unknown>;
 }
 
 export interface EvaluateResponse {
@@ -219,6 +230,9 @@ export interface EvaluateResponse {
     ambient_pressure_pa: number;  // Computed from elevation
     elevation_m: number;          // Elevation from config
   };
+  // Non-fatal "needs re-optimization" flag: set when the chamber was seeded for a different
+  // injector/propellant than is now live (e.g. after a propellant switch without re-solving).
+  design_warning?: string | null;
   results: RunnerResults;
 }
 
@@ -253,6 +267,35 @@ export async function updateConfig(updates: Partial<EngineConfig>): Promise<ApiR
   return request<ConfigResponse>('/config', {
     method: 'PUT',
     body: JSON.stringify(updates),
+  });
+}
+
+// --- Injector / propellant switching (UNIFICATION P6) ---
+export interface SwitchOptions {
+  injectors: string[];
+  propellants: string[];
+  current: { injector: string | null; propellant: string | null };
+}
+
+export interface SwitchResponse {
+  status: string;
+  config: EngineConfig;
+  binding_warnings: string[];
+  // "Needs re-optimization": set when a propellant overlay left the chamber seeded for the old
+  // propellant. null after a clean injector swap (canonical configs are internally coherent).
+  design_warning?: string | null;
+}
+
+export async function getSwitchOptions(): Promise<ApiResponse<SwitchOptions>> {
+  return request<SwitchOptions>('/config/options');
+}
+
+export async function switchConfig(
+  body: { injector_type?: string | null; propellant_preset?: string | null }
+): Promise<ApiResponse<SwitchResponse>> {
+  return request<SwitchResponse>('/config/switch', {
+    method: 'POST',
+    body: JSON.stringify(body),
   });
 }
 
@@ -624,21 +667,45 @@ export async function getChamberGeometry(): Promise<ApiResponse<ChamberGeometryR
 
 // Frozen parameters for Layer 1 optimization (user-friendly units)
 export interface FrozenParameters {
+  // `null` = explicitly unfrozen (clears a YAML/baseline pin via the backend merge);
+  // `undefined`/absent = leave as-is. See updateFrozenParam in DesignRequirements.tsx.
   // Chamber geometry
-  A_throat_mm2?: number;           // Throat area [mm²]
-  Lstar_mm?: number;               // Characteristic length L* [mm]
-  expansion_ratio?: number;        // Expansion ratio (A_exit/A_throat)
-  D_chamber_outer_mm?: number;     // Chamber outer diameter [mm]
+  A_throat_mm2?: number | null;    // Throat area [mm²]
+  Lstar_mm?: number | null;        // Characteristic length L* [mm]
+  expansion_ratio?: number | null; // Expansion ratio (A_exit/A_throat)
+  D_chamber_outer_mm?: number | null; // Chamber outer diameter [mm]
 
-  // Injector geometry
-  d_pintle_tip_mm?: number;        // Pintle tip diameter [mm]
-  h_gap_mm?: number;               // Annular gap height [mm]
-  n_orifices?: number;             // Number of LOX orifices
-  d_orifice_mm?: number;           // LOX orifice diameter [mm]
+  // Injector geometry — PINTLE
+  d_pintle_tip_mm?: number | null; // Pintle tip diameter [mm]
+  h_gap_mm?: number | null;        // Annular gap height [mm]
+  n_orifices?: number | null;      // Number of LOX orifices
+  d_orifice_mm?: number | null;    // LOX orifice diameter [mm]
+  // Injector geometry — IMPINGING / doublet (INJECTOR_PARITY_PLAN W1)
+  n_doublets?: number | null;          // Number of paired unlike doublets
+  d_jet_O_mm?: number | null;          // LOX jet diameter [mm]
+  d_jet_F_mm?: number | null;          // Fuel jet diameter [mm]
+  impingement_angle_O_deg?: number | null; // LOX included impingement angle [deg]
+  impingement_angle_F_deg?: number | null; // Fuel included impingement angle [deg]
+  spacing_O_mm?: number | null;        // LOX element spacing [mm]
+  spacing_F_mm?: number | null;        // Fuel element spacing [mm]
 
   // Initial tank pressures
-  P_O_start_psi?: number;          // Initial LOX tank pressure [psi]
-  P_F_start_psi?: number;          // Initial fuel tank pressure [psi]
+  P_O_start_psi?: number | null;   // Initial LOX tank pressure [psi]
+  P_F_start_psi?: number | null;   // Initial fuel tank pressure [psi]
+}
+
+// Per-injector field schema (INJECTOR_PARITY_PLAN W5) — drives type-correct UI rendering.
+export interface InjectorSchema {
+  injector_type: string;
+  frozen_param_fields: string[];
+  geometry_fields: Record<string, unknown>;
+  smd_model: string;
+  use_geometry_cd: boolean;
+}
+
+export async function getInjectorSchema(injectorType?: string): Promise<ApiResponse<InjectorSchema>> {
+  const q = injectorType ? `?injector_type=${encodeURIComponent(injectorType)}` : '';
+  return request<InjectorSchema>(`/config/injector_schema${q}`);
 }
 
 export interface DesignRequirements {
@@ -681,6 +748,32 @@ export interface DesignRequirements {
   // COPV
   copv_free_volume_L?: number;
   copv_free_volume_m3?: number;
+
+  // Layer 1 injector gates/weights
+  injector_dp_ratio_O_min?: number;
+  injector_dp_ratio_O_max?: number;
+  injector_dp_ratio_F_min?: number;
+  injector_dp_ratio_F_max?: number;
+  W_DP?: number;
+  W_DP_O?: number;
+  W_DP_F?: number;
+  W_DP_HIGH?: number;
+  W_MOM?: number;
+  impinging_momentum_R_min?: number;
+  impinging_momentum_R_max?: number;
+  layer1_stagnation_pressure_frac_min?: number;
+  layer1_stagnation_pressure_frac_max?: number;
+  layer1_expansion_ratio_min?: number;
+  layer1_expansion_ratio_max?: number;
+  layer1_impinging_n_doublets_max?: number;
+  layer1_W_OF?: number;
+  layer1_W_OF_low_MR_scale?: number;
+  layer1_W_OF_high_MR_scale?: number;
+  W_SMD?: number;
+  target_smd_microns?: number;
+  layer1_smd_rel_tol?: number;
+  W_TANK_EQUAL?: number;
+  layer1_tank_equal_scale_psi?: number;
 
   // Frozen parameters (optional - for locking specific values during optimization)
   frozen_parameters?: FrozenParameters;
@@ -773,6 +866,24 @@ export interface Layer1Results {
       actual_pressure_ratio?: number;
       [key: string]: unknown;
     };
+    /** Echo of design_requirements dict consumed by Layer 1 (audit). */
+    layer1_requirements_used?: Record<string, unknown>;
+
+    /** Impinging jet momentum ratio sqrt(rho_O*v_O_bulk²/(rho_F*v_F_bulk²)); ~1 is balanced impingement. */
+    momentum_ratio_R?: number;
+    momentum_balance_penalty?: number;
+    momentum_gate_passed?: boolean;
+    v_O_bulk?: number;
+    v_F_bulk?: number;
+    A_jet_O?: number;
+    A_jet_F?: number;
+    rho_O_momentum?: number;
+    rho_F_momentum?: number;
+    d_jet_O?: number;
+    d_jet_F?: number;
+    momentum_ratio_n_elements_O?: number;
+    momentum_ratio_n_elements_F?: number;
+
     [key: string]: unknown;
   };
   validation: Record<string, unknown>;
@@ -783,6 +894,20 @@ export interface Layer1Results {
     best_objective: number;
   }>;
   iteration_history?: Array<Record<string, unknown>>;
+  convergence_info?: {
+    converged?: boolean;
+    iterations?: number;
+    final_change?: number;
+    best_objective?: number;
+    best_objective_breakdown?: Record<string, unknown>;
+    /** Thrust / O-F / P_exit relative errors and RMS (dimensionless); use for “true” physics convergence. */
+    primary_relative_residual?: {
+      rel_thrust?: number;
+      rel_of?: number;
+      rel_P_exit?: number;
+      rms_primary?: number;
+    };
+  };
   config?: EngineConfig;
   config_yaml?: string;
 }

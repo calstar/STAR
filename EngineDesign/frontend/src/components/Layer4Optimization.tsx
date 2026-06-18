@@ -20,10 +20,15 @@ import {
   type FlightTankConfig,
   type TimeSeriesData,
   type DesignRequirements,
+  type SaveDesignRequirementsResponse,
 } from '../api/client';
 
 interface Layer4OptimizationProps {
-  requirements: DesignRequirements | null;
+  requirements: DesignRequirements;
+  isDirty: boolean;
+  saveRequirementsToServer: (
+    reqs: DesignRequirements
+  ) => Promise<{ error?: string; data?: SaveDesignRequirementsResponse }>;
 }
 
 // Session storage key
@@ -234,7 +239,11 @@ function getTomorrowDateTuple(): [number, number, number, number] {
 
 type DataSource = 'manual' | 'timeseries';
 
-export function Layer4Optimization({ requirements }: Layer4OptimizationProps) {
+export function Layer4Optimization({
+  requirements,
+  isDirty,
+  saveRequirementsToServer,
+}: Layer4OptimizationProps) {
   // RocketPy availability
   const [rocketPyAvailable, setRocketPyAvailable] = useState<boolean | null>(null);
   const [rocketPyMessage, setRocketPyMessage] = useState<string>('');
@@ -370,6 +379,14 @@ export function Layer4Optimization({ requirements }: Layer4OptimizationProps) {
 
   // Run flight simulation
   const runSimulation = useCallback(async () => {
+    if (isDirty) {
+      const saveResp = await saveRequirementsToServer(requirements);
+      if (saveResp.error) {
+        setError(saveResp.error);
+        return;
+      }
+    }
+
     setIsRunning(true);
     setError(null);
     setResults(null);
@@ -443,7 +460,26 @@ export function Layer4Optimization({ requirements }: Layer4OptimizationProps) {
     } finally {
       setIsRunning(false);
     }
-  }, [dataSource, hasTimeSeriesData, timeSeriesData, thrust, burnTime, mdotO, mdotF, loxMass, fuelMass, loxTankConfig, fuelTankConfig, envConfig, rocketConfig, loxTankCapacity.maxMass, fuelTankCapacity.maxMass]);
+  }, [
+    dataSource,
+    hasTimeSeriesData,
+    timeSeriesData,
+    thrust,
+    burnTime,
+    mdotO,
+    mdotF,
+    loxMass,
+    fuelMass,
+    loxTankConfig,
+    fuelTankConfig,
+    envConfig,
+    rocketConfig,
+    loxTankCapacity.maxMass,
+    fuelTankCapacity.maxMass,
+    isDirty,
+    requirements,
+    saveRequirementsToServer,
+  ]);
 
   // Prepare chart data
   const altitudeChartData = useMemo(() => {
@@ -631,7 +667,7 @@ export function Layer4Optimization({ requirements }: Layer4OptimizationProps) {
                 value={fuelMass.toString()}
                 onChange={(v) => setFuelMass(parseFloat(v) || 0)}
                 unit="kg"
-                help="RP-1 fuel propellant mass"
+                help="Fuel propellant mass"
               />
               {/* Tank capacity info */}
               <div className={`mt-2 text-xs p-2 rounded ${fuelOverfilled ? 'bg-yellow-500/10 border border-yellow-500/30' : 'bg-[var(--color-bg-tertiary)]'}`}>
@@ -800,7 +836,12 @@ export function Layer4Optimization({ requirements }: Layer4OptimizationProps) {
       </div>
 
       {/* Run Button */}
-      <div className="flex justify-center">
+      <div className="flex flex-wrap justify-center items-center gap-3">
+        {isDirty && (
+          <span className="text-xs px-3 py-1 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-300">
+            Unsaved DR — auto-save on Run
+          </span>
+        )}
         <button
           onClick={runSimulation}
           disabled={isRunning || !rocketPyAvailable}

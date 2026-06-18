@@ -6,7 +6,7 @@ ablative_cooling:
   char_layer_conductivity: 0.2
   char_layer_thickness: 0.001
   coverage_fraction: 0.9
-  enabled: true
+  enabled: false
   heat_of_ablation: 2500000.0
   initial_thickness: 0.008
   material_density: 1600.0
@@ -26,40 +26,42 @@ ablative_cooling:
   turbulence_sensitivity: 1.5
   use_physics_based_blowing: true
 chamber: null
+# Chamber: 8000 N / MR 3.5 family; OD envelope 177 mm outer (≤ max); inner ≈ OD − 1 in total wall per Layer‑1 convention.
+# Initial throat/expand chosen so exit_diameter stays under nozzle OD cap (~150 mm).
 chamber_geometry:
-  A_exit: 0.008011846660276834
-  A_throat: 0.0017651044249737868
-  Cf: 1.5223402265660735
-  Lstar: 1.2399053967343734
-  chamber_diameter: 0.1270000000006823
-  design_MR: 2.55
+  A_exit: 0.01764
+  A_throat: 0.00237
+  Cf: 1.45
+  Lstar: 1.30
+  chamber_diameter: 0.15159999999999998
+  design_MR: 3.5
   design_pressure: 2413166.0
-  design_thrust: 7000.0
-  exit_diameter: 0.10099999997138025
-  expansion_ratio: 4.539021344527996
-  length: 0.21154129848565129
-  length_contraction: 0.0451
-  length_cylindrical: 0.121
+  design_thrust: 8000.0
+  exit_diameter: 0.1498664257568328
+  expansion_ratio: 7.443037974683544
+  length: 0.178
+  length_contraction: 0.047
+  length_cylindrical: 0.116
   nozzle_efficiency: 0.95
-  volume: 0.002188562502324721
+  volume: 0.0031248
 combustion:
   cea:
     MR_range:
-    - 1.0
-    - 2.5
+    - 2.4
+    - 4.2
     Pc_range:
     - 1000000.0
     - 9000000.0
-    cache_file: output/cache/cea_cache_LOX_Ethanol_3D.npz
+    cache_file: output/cache/cea_cache_LOX_CH4_3D.npz
     cea_parallel_workers: null
     eps_range:
     - 4.0
     - 15.0
-    expansion_ratio: 4.539021344527996
-    fuel_name: Ethanol
+    expansion_ratio: 7.443037974683544
+    fuel_name: CH4
     n_points: 34
     ox_name: LOX
-    use_parallel_cea_build: true
+    use_parallel_cea_build: false
   efficiency:
     A0_ethanol: 50000000.0
     A0_hydrocarbon: 10000000.0
@@ -70,7 +72,7 @@ combustion:
     Ea_hydrogen: 40000.0
     K: 0.15
     Pc_gate: 1000000.0
-    T_star_fuel_cap_K: 700.0
+    T_star_fuel_cap_K: 500.0
     cooling_efficiency_floor: 0.25
     mixture_efficiency_floor: 0.25
     model: exponential
@@ -99,47 +101,84 @@ combustion:
     xstar_limit_mm: null
     xstar_penalty_exponent: null
 design_requirements:
+  # ΔP_inj / Pc hard gate for Layer‑1 pressure_candidate_valid (soft penalties use W_DP*).
+  # LOX symmetric with fuel at equal tank pressures often lands fuel ΔP/Pc modestly above 0.45.
+  injector_dp_ratio_O_min: 0.20
+  injector_dp_ratio_O_max: 0.45
+  injector_dp_ratio_F_min: 0.20
+  injector_dp_ratio_F_max: 0.55
+  # MR: prioritize hitting optimal_of_ratio=3.5 (low_MR_scale penalizes fuel-rich drift vs target).
+  layer1_W_THRUST: 8000.0
+  # Stronger pull to MR=3.5 (fuel-rich residuals at n_doublets≤15).
+  layer1_W_OF: 4800000.0
+  layer1_W_OF_low_MR_scale: 70.0
+  layer1_W_OF_high_MR_scale: 120.0
+  # Relative MR gate for pressure_candidate_valid (prior tight 4.0% clipped ~4.34% fuel‑rich residuals).
+  layer1_of_validation_tol: 0.044
+  layer1_thrust_validation_rel_tol: 0.20
+  W_geom_ao_af_momentum: 3500.0
+  # Impinging: steer momentum_ratio_R ≈ 1 (Layer‑1 hinge + weights)
+  W_MOM: 30000.0
+  impinging_momentum_R_min: 0.9
+  impinging_momentum_R_max: 1.1
+  # Momentum R is steered to ~1 by the soft log hinge (W_MOM) + the wide validation band above.
+  # No deadband: controlled parallel-CMA tests showed a momentum deadband does NOT change the
+  # design the optimizer lands on (R still settles ~1.13 at 150 iters either way) — it only
+  # cosmetically discounts the in-band penalty — so it was removed to keep the objective honest.
+  # Manufacturability / packing: cap paired unlike doublets (LOX count = fuel count).
+  # Machining cap: allow up to 20 paired doublets (finer packing / more hydraulic DOF than n≤15 runs).
+  layer1_impinging_n_doublets_max: 20
+  W_DP: 800.0
+  W_DP_O: 12000.0
+  W_DP_F: 175000.0
+  W_DP_HIGH: 25000.0
+  # Deterministic Layer‑1 CMA restarts (same seed → repeatable geometry path on fixed code/config).
+  layer1_random_seed: 42
+  layer1_infeasibility_gate_eps: 0.002
   acoustic_margin_min: 0.1
   chugging_margin_min: 0.2
   copv_free_volume_L: 4.5
   copv_free_volume_m3: null
   feed_stability_min: 0.15
   frozen_parameters:
-    A_throat_mm2: 1765.1044259737316
-    D_chamber_outer_mm: 152.4
-    Lstar_mm: 1239.905396733828
+    # Nothing pinned by default — the optimizer co-designs chamber OD, throat, L*, ε within
+    # their min/max bands. OD is bounded above by max_chamber_outer_diameter (0.177 m); pinning
+    # it here forced D_chamber/D_throat and L/D out of band. Freeze only via the UI checkbox.
+    D_chamber_outer_mm: null
+    A_throat_mm2: null
+    Lstar_mm: null
     P_F_start_psi: null
     P_O_start_psi: null
-    d_orifice_mm: 2.7200373856119215
-    d_pintle_tip_mm: 28.2530270113081
-    expansion_ratio: 4.539021344528996
-    h_gap_mm: 0.5
-    n_orifices: 14
+    d_orifice_mm: null
+    d_pintle_tip_mm: null
+    expansion_ratio: null
+    h_gap_mm: null
+    n_orifices: null
   fuel_tank_capacity_kg: null
   lox_tank_capacity_kg: null
   max_Lstar: 1.5
   max_P_tank_F: null
   max_P_tank_O: null
-  max_chamber_outer_diameter: 0.1397
+  max_chamber_outer_diameter: 0.177
   max_engine_length: 0.4
-  max_fuel_tank_pressure_psi: 1200.0
-  max_lox_tank_pressure_psi: 700.0
-  max_nozzle_exit_diameter: 0.101
-  min_Lstar: 0.95
-  min_stability_margin: 1.2
-  min_stability_score: 0.75
-  optimal_of_ratio: 1.4
-  require_stable_state: true
+  max_fuel_tank_pressure_psi: 900.0
+  max_lox_tank_pressure_psi: 900.0
+  max_nozzle_exit_diameter: 0.177
+  min_Lstar: 0.76
+  min_stability_margin: 1.05
+  min_stability_score: 0.58
+  optimal_of_ratio: 3.5
+  require_stable_state: false
   stability_margin_handicap: 0.0
   target_apogee: 3048.0
   target_burn_time: 6.0
-  target_thrust: 4000.0
+  target_thrust: 8000.0
 discharge:
   fuel:
     Cd_inf: 0.3
     Cd_min: 0.2
     P_ref: 5000000.0
-    T_ref: 300.0
+    T_ref: 112.0
     a_P: 0.0
     a_Re: 0.2
     a_T: 0.0
@@ -161,7 +200,8 @@ environment:
   - 1
   - 30
   - 18
-  elevation: 626.67
+  # ~10000 ft MSL (~3048 m) for nozzle exit-pressure / choke context in Layer‑1
+  elevation: 3048.0
   latitude: 35.34722
   longitude: -117.8099547
 feed_system:
@@ -172,10 +212,11 @@ feed_system:
     d_inlet: 0.009525
     phi_type: none
   oxidizer:
-    A_hydraulic: 7.13e-05
+    # Dual balanced parallel 3/8" LOX feeds (effective area doubles vs single line)
+    A_hydraulic: 1.425115e-4
     K0: 2.0
     K1: 0.0
-    d_inlet: 0.009525
+    d_inlet: 0.01347035
     phi_type: none
 film_cooling:
   apply_to_fraction_of_length: 0.6
@@ -196,17 +237,17 @@ film_cooling:
   turbulence_sensitivity: 1.0
 fluids:
   fuel:
-    boiling_point: 351.4
-    density: 789.0
-    latent_heat: 838000.0
-    molecular_weight: 46.07
-    name: Ethanol
-    specific_heat: 2440.0
-    surface_tension: 0.0223
-    temperature: 293.0
-    thermal_conductivity: 0.17
-    vapor_pressure: 5800.0
-    viscosity: 0.0012
+    boiling_point: 111.65
+    density: 422.6
+    latent_heat: 510000.0
+    molecular_weight: 16.04
+    name: Methane
+    specific_heat: 3348.0
+    surface_tension: 0.0134
+    temperature: 112.0
+    thermal_conductivity: 0.204
+    vapor_pressure: 101325.0
+    viscosity: 0.00012
   oxidizer:
     boiling_point: null
     density: 1140.0
@@ -221,7 +262,7 @@ fluids:
     viscosity: 0.00018
 fuel_tank:
   fuel_tank_pos: 3.0
-  initial_pressure_psi: 780.0000001788105
+  initial_pressure_psi: 600.0
   mass: 7.0
   rp1_h: 0.609
   rp1_radius: 0.0762
@@ -235,7 +276,7 @@ graphite_insert:
   char_layer_thickness: 0.0005
   coverage_fraction: 1.0
   emissivity: 0.8
-  enabled: true
+  enabled: false
   feedback_fraction_max: 0.2
   feedback_fraction_min: 0.0
   friction_coefficient_override: null
@@ -263,22 +304,20 @@ graphite_insert:
   surface_temperature_limit: 2500.0
   thermal_conductivity: 100.0
 injector:
+  type: impinging
   geometry:
+    oxidizer:
+      n_elements: 20
+      d_jet: 0.00264
+      impingement_angle: 50.0
+      spacing: 0.0060
     fuel:
-      A_entry: 0.0006269311526226677
-      d_hydraulic: 0.0010000000019972565
-      d_pintle_tip: 0.028253027012084497
-      d_reservoir_inner: 0.029253027014081754
-      h_gap: 0.0005000000009986283
-    lox:
-      A_entry: 5.810849508963446e-06
-      d_hydraulic: 0.0027200373863822463
-      d_orifice: 0.0027200373863822463
-      n_orifices: 14
-      theta_orifice: 90.0
-  type: pintle
+      n_elements: 20
+      d_jet: 0.00179
+      impingement_angle: 60.0
+      spacing: 0.0060
 lox_tank:
-  initial_pressure_psi: 496.87110787450285
+  initial_pressure_psi: 600.0
   lox_h: 1.14
   lox_radius: 0.06985
   mass: 6.75
@@ -286,22 +325,7 @@ lox_tank:
   tank_volume_m3: 0.017474
 nozzle: null
 optimizer:
-  hybrid:
-    block_method: corr_greedy
-    cycles: 3
-    elite_k: 50
-    lambda0: 0.001
-    lambda_max: 1.0
-    lambda_mult: 10.0
-    lambda_normalize: true
-    num_blocks: 3
-    num_tracks: 1
-    overlap_fraction: 0.0
-    per_block_budget_fraction: 0.5
-    refresh_budget_fraction: 0.1
-    refresh_every_pass: true
-    refresh_sigma_scale: 0.2
-  mode: hybrid_cma_blocks
+  mode: cma
 press_tank:
   dry_mass: null
   free_volume_L: 4.5
@@ -408,7 +432,7 @@ regen_cooling:
   L_outlet: 0.1
   a_Re_entrance: 0.1
   a_Re_exit: 0.1
-  chamber_inner_diameter: 0.08491
+  chamber_inner_diameter: 0.1516
   channel_height: 0.001
   channel_length: 0.18162
   channel_width: 0.0009
@@ -484,6 +508,9 @@ spray:
     m: 0.6
     model: lefebvre
     p: 0.0
+    # Liquid We with mm jets can exceed the Lefebvre correlation's useful regime (sub-µm D32).
+    # Cap Weber **only** for D32 evaluation; spray We constraints still use the uncapped values.
+    we_corr_max: 220.0
   spray_angle:
     k: 0.5
     model: TMR

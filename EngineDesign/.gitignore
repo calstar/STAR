@@ -18,6 +18,10 @@ env/
 *.swp
 *.swo
 
+# Node dependencies (any location)
+node_modules/
+**/node_modules/
+
 # Output directory (logs, plots, cache) - all generated files
 output/
 !output/.gitkeep
@@ -60,6 +64,37 @@ Thumbs.db
 !docs/**
 !scripts/
 !scripts/**
+
+# Solver download artifacts under configs/ (must come after !configs/**)
+configs/layer1_optimized_config*.yaml
+configs/Layer*Optimized*Config*.yaml
+configs/config_2*_*.yaml
+
+# Personal / UI-exported configs (never commit — use output/user_configs/ for uploads)
+configs/Pintle Engine Designer Config*.yaml
+configs/*Designer*Config*.yaml
+configs/latest.yaml
+configs/somethinggood.yaml
+configs/lowerthrust*.yaml
+
+# Local-only tests (stability harness, golden captures, unification session tests)
+tests/test_stability_*.py
+tests/test_feed_pressure_model.py
+tests/golden/
+tests/test_assumptions_registry.py
+tests/test_config_switch.py
+tests/test_dispatch_bindings.py
+tests/test_golden_anchors.py
+tests/test_injector_parity.py
+tests/test_propellant_presets.py
+
+# Agent / session planning notes — not product docs (keep combustion_stability_physics.md etc.)
+docs/stability/M6_handoff.md
+docs/stability/stability_model_rebuild_plan.md
+docs/**/*handoff*.md
+docs/**/*_plan.md
+docs/**/*PLAN*.md
+docs/unification/
 
 # But ignore pycache in source directories
 engine/**/__pycache__/

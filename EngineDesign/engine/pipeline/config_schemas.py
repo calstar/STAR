@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from typing import Literal, Optional, Union, List, Dict, Tuple, Set
 import numpy as np
 
@@ -21,6 +21,7 @@ class FluidConfig(BaseModel):
     latent_heat: Optional[float] = Field(default=None, gt=0, description="Latent heat of vaporization [J/kg] (fuel only)")
     boiling_point: Optional[float] = Field(default=None, gt=0, description="Boiling point at 1 atm [K] (fuel only)")
     molecular_weight: Optional[float] = Field(default=None, gt=0, description="Molecular weight [g/mol] (fuel only)")
+    bulk_modulus_pa: Optional[float] = Field(default=None, gt=0, description="Liquid bulk modulus [Pa] — feed acoustics / water-hammer (stability). Preset-supplied; see configs/propellants/.")
 
 
 class PintleLOXConfig(BaseModel):
@@ -268,9 +269,58 @@ class AblativeCoolingConfig(BaseModel):
 
 class DischargeConfig(BaseModel):
     """Discharge coefficient configuration"""
-    Cd_inf: float = Field(gt=0, le=1, description="Cd at infinite Re")
+    Cd_inf: float = Field(
+        gt=0,
+        le=1,
+        description=(
+            "Baseline Cd at infinite Re for the reference orifice diameter d_ref_m "
+            "(thin-plate sharp hole, typically 0.60 for machined impinging jets)."
+        ),
+    )
     a_Re: float = Field(ge=0, description="Reynolds number correction parameter")
     Cd_min: float = Field(default=0.2, ge=0, le=1, description="Minimum Cd")
+    use_geometry_cd: bool = Field(
+        default=True,
+        description=(
+            "When True, Cd_inf is scaled from jet/orifice diameter d_hyd via cd_inf_from_orifice_diameter "
+            "before the Re correction (impinging jets; pintle orifice OD / fuel gap hydraulic diameter)."
+        ),
+    )
+    d_ref_m: float = Field(
+        default=0.002,
+        gt=0,
+        description="Reference hole diameter [m] where Cd_inf equals the Cd_inf baseline (default 2 mm).",
+    )
+    cd_small_hole_exponent: float = Field(
+        default=0.20,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "For d < d_ref: Cd_inf scales as Cd_inf * (d/d_ref)^exponent (small-hole manufacturing / L/t penalty)."
+        ),
+    )
+    cd_large_hole_log_gain: float = Field(
+        default=0.015,
+        ge=0.0,
+        description="For d > d_ref: Cd_inf += gain * ln(d/d_ref), capped at cd_inf_max.",
+    )
+    cd_inf_max: float = Field(
+        default=0.62,
+        gt=0,
+        le=1,
+        description="Upper cap on geometry-based Cd_inf (slightly radiused / large-hole asymptote).",
+    )
+    cd_inf_min_geom: float = Field(
+        default=0.48,
+        gt=0,
+        le=1,
+        description="Lower floor on geometry-based Cd_inf for very small holes.",
+    )
+    d_min_m: float = Field(
+        default=0.0004,
+        gt=0,
+        description="Minimum diameter used in Cd_geom [m] (below this, clamp to d_min_m).",
+    )
     # Pressure and temperature dependence (optional)
     use_pressure_correction: bool = Field(default=False, description="Enable pressure-dependent Cd (compressibility effects)")
     P_ref: float = Field(default=5.0e6, gt=0, description="Reference pressure for pressure correction [Pa]")
@@ -289,13 +339,56 @@ class SprayAngleConfig(BaseModel):
 
 class SMDConfig(BaseModel):
     """Sauter Mean Diameter configuration"""
-    model: Literal["lefebvre", "nukiyama_tanasawa"] = Field(
+    model: Literal["lefebvre", "nukiyama_tanasawa", "ingebo"] = Field(
         default="lefebvre",
-        description="SMD model type"
+        description=(
+            "SMD model type. 'ingebo' is the established impinging-jet correlation "
+            "D32 = C_ingebo·d·(We_g·Re_l)^(-1/4) driven by the impingement relative velocity "
+            "(recommended for impinging doublets). 'lefebvre' is the legacy We^-m·(1+Oh)^p form."
+        ),
     )
     C: float = Field(default=0.5, gt=0, description="Lefebvre constant C")
     m: float = Field(default=0.6, gt=0, description="Lefebvre exponent m")
-    p: float = Field(default=0.0, description="Lefebvre exponent p")
+    p: float = Field(default=0.0, description="Lefebvre exponent p (viscous term (1+Oh)^p)")
+    C_ingebo: float = Field(
+        default=3.9,
+        gt=0,
+        description=(
+            "Prefactor for the Ingebo impinging-jet SMD correlation "
+            "D32 = C_ingebo·d·(We_g·Re_l)^(-1/4). Literature reports ~3.9-5.0; "
+            "calibrate against a reference/target SMD."
+        ),
+    )
+    chamber_gas_R: float = Field(
+        default=360.0,
+        gt=0,
+        description=(
+            "Representative specific gas constant [J/(kg·K)] of the combustion gas, used only to "
+            "estimate the chamber gas density (rho_g = Pc/(R·T)) for the aerodynamic Weber number "
+            "in the Ingebo correlation. The injector solve runs before CEA chamber state is "
+            "available, so this is a configured representative value (LOX/CH4 ≈ 360)."
+        ),
+    )
+    chamber_gas_T: float = Field(
+        default=3500.0,
+        gt=0,
+        description=(
+            "Representative combustion-gas temperature [K] for the chamber gas density estimate "
+            "rho_g = Pc/(R·T) used in the Ingebo aerodynamic Weber number (LOX/CH4 ≈ 3500)."
+        ),
+    )
+    we_corr_max: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Optional cap applied to the liquid Weber number **only** when evaluating the "
+            "Lefebvre-style ``smd_lefebvre`` correlation (D32). Full We is still used for "
+            "``check_spray_constraints``. Jet-like impingement can produce enormous We with "
+            "liquid ρ and mm jets, which drives D32 to sub-micron values outside the correlation's "
+            "useful regime; capping We_corr is a pragmatic surrogate for secondary breakup / "
+            "turbulence limits. Default None = no cap."
+        ),
+    )
 
 
 class EvaporationConfig(BaseModel):
@@ -450,6 +543,16 @@ class CombustionEfficiencyConfig(BaseModel):
         default=0.8,
         ge=0,
         description="Pressure exponent for kinetics scaling: tau_chem ~ (P_ref/Pc)^n. Default 0.8."
+    )
+    tau_Tc_floor_K: Optional[float] = Field(
+        default=None,
+        description=(
+            "Optional floor applied to CEA chamber temperature when evaluating the global τ_chem scaling "
+            "in ``calculate_reaction_time_scale`` (finite-rate η_kinetics path). "
+            "CEA equilibrium Tc can be artificially low for some propellant/MR/Pc combinations, which "
+            "blows up the Arrhenius-like temperature factor and makes η_kinetics unrealistically small. "
+            "When set, uses Tc_eff = max(Tc, tau_Tc_floor_K) only for τ_chem (not for equilibrium properties)."
+        ),
     )
     # Gasification model transition temperature
     T_star_fuel_cap_K: float = Field(
@@ -728,11 +831,21 @@ class FrozenParametersConfig(BaseModel):
     expansion_ratio: Optional[float] = Field(default=None, gt=1, description="Frozen expansion ratio (A_exit/A_throat)")
     D_chamber_outer_mm: Optional[float] = Field(default=None, gt=0, description="Frozen chamber outer diameter [mm]")
     
-    # Injector geometry
-    d_pintle_tip_mm: Optional[float] = Field(default=None, gt=0, description="Frozen pintle tip diameter [mm]")
-    h_gap_mm: Optional[float] = Field(default=None, gt=0, description="Frozen annular gap height [mm]")
-    n_orifices: Optional[int] = Field(default=None, gt=0, description="Frozen number of LOX orifices")
-    d_orifice_mm: Optional[float] = Field(default=None, gt=0, description="Frozen LOX orifice diameter [mm]")
+    # Injector geometry — PINTLE (applies when injector.type == 'pintle')
+    d_pintle_tip_mm: Optional[float] = Field(default=None, gt=0, description="[pintle] Frozen pintle tip diameter [mm]")
+    h_gap_mm: Optional[float] = Field(default=None, gt=0, description="[pintle] Frozen annular gap height [mm]")
+    n_orifices: Optional[int] = Field(default=None, gt=0, description="[pintle] Frozen number of LOX orifices")
+    d_orifice_mm: Optional[float] = Field(default=None, gt=0, description="[pintle] Frozen LOX orifice diameter [mm]")
+    # Injector geometry — IMPINGING / doublet (applies when injector.type == 'impinging'). These were
+    # already honored by the Layer-1 frozen-param mapping; the schema just needed to declare them so the
+    # UI offers them and they validate (INJECTOR_PARITY_PLAN W1). Key names match the optimizer mapping.
+    n_doublets: Optional[int] = Field(default=None, gt=0, description="[impinging] Frozen number of paired unlike doublets")
+    d_jet_O_mm: Optional[float] = Field(default=None, gt=0, description="[impinging] Frozen LOX jet diameter [mm]")
+    d_jet_F_mm: Optional[float] = Field(default=None, gt=0, description="[impinging] Frozen fuel jet diameter [mm]")
+    impingement_angle_O_deg: Optional[float] = Field(default=None, gt=0, le=180, description="[impinging] Frozen LOX included impingement angle [deg]")
+    impingement_angle_F_deg: Optional[float] = Field(default=None, gt=0, le=180, description="[impinging] Frozen fuel included impingement angle [deg]")
+    spacing_O_mm: Optional[float] = Field(default=None, gt=0, description="[impinging] Frozen LOX element spacing [mm]")
+    spacing_F_mm: Optional[float] = Field(default=None, gt=0, description="[impinging] Frozen fuel element spacing [mm]")
     
     # Initial tank pressures
     P_O_start_psi: Optional[float] = Field(default=None, gt=0, description="Frozen initial LOX tank pressure [psi]")
@@ -781,11 +894,391 @@ class DesignRequirementsConfig(BaseModel):
     copv_free_volume_L: Optional[float] = Field(default=4.5, gt=0, description="COPV free internal volume [L]")
     copv_free_volume_m3: Optional[float] = Field(default=None, gt=0, description="COPV free volume [m³] (auto-converted from L if None)")
     
+    # Injector ΔP_inj / Pc soft penalty bands (Layer 1); quadratic hinge outside each interval
+    injector_dp_ratio_O_min: float = Field(
+        default=0.20,
+        ge=0.0,
+        description="Preferred lower edge for oxidizer ΔP_inj/Pc (soft hinge)",
+    )
+    injector_dp_ratio_O_max: float = Field(
+        default=0.40,
+        gt=0.0,
+        description="Preferred upper edge for oxidizer ΔP_inj/Pc (soft hinge)",
+    )
+    injector_dp_ratio_F_min: float = Field(
+        default=0.20,
+        ge=0.0,
+        description="Preferred lower edge for fuel ΔP_inj/Pc (soft hinge)",
+    )
+    injector_dp_ratio_F_max: float = Field(
+        default=0.40,
+        gt=0.0,
+        description="Preferred upper edge for fuel ΔP_inj/Pc (soft hinge)",
+    )
+    feed_pressure_model: str = Field(
+        default="dome_regulated",
+        description="Tank pressure time model: blowdown (decaying segments) or dome_regulated (eq. 6.2)",
+    )
+    W_geom_ao_af_momentum: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Layer 1 impinging-only: weight × (relative error)² steering A_geom_O/A_geom_F toward "
+            "MR/√(ρ_O/ρ_F) (consistent with R≈1 for bulk velocities). 0 disables."
+        ),
+    )
+    # Layer 1 impinging-only (optional overrides; omit or null to use optimizer code defaults).
+    W_MOM: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Weight on momentum_ratio_R quadratic hinge relative to bands below "
+            "(default in layer1_static_optimization.py is 75 when unset)."
+        ),
+    )
+    impinging_momentum_R_min: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Preferred lower edge for momentum_ratio_R hinge R (impinging-only). None disables.",
+    )
+    impinging_momentum_R_max: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Preferred upper edge for momentum_ratio_R validation gate (impinging-only).",
+    )
+    layer1_momentum_log_deadband_rel: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Multiplicative deadband for Layer-1 log-space momentum pull toward R=1 "
+            "(optimizer soft term; code default 0.008 when unset)."
+        ),
+    )
+    layer1_impinging_angle_deg_min: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        lt=180.0,
+        description="Preferred lower edge for effective impingement angle hinge [deg] (impinging-only).",
+    )
+    layer1_impinging_angle_deg_max: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        lt=180.0,
+        description="Preferred upper edge for effective impingement angle hinge [deg] (impinging-only).",
+    )
+    W_IMPINGING_ANGLE: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Layer 1 impinging-only weight on effective impingement angle hinge term "
+            "(uses layer1_impinging_angle_deg_min/max when both are set)."
+        ),
+    )
+    # Paired-doublet realism: constrain how far oxidizer vs fuel jet inclinations may diverge.
+    W_IMPINGING_JET_ASYM: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Impinging paired jets only: weight on normalized excess [|θ_O−θ_F| − "
+            "`layer1_impinging_jet_angle_max_asym_deg`]₊ squared (paired-doublet coherence preference)."
+        ),
+    )
+    layer1_impinging_jet_angle_max_asym_deg: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        lt=180.0,
+        description=(
+            "Impinging paired jets only: allowable |θ_O−θ_F| before asymmetry hinge activates [deg]. "
+            "Unset ⇒ optimizer defaults (see layer1_static_optimization)."
+        ),
+    )
+    # Layer 1 impinging-only: SMD (atomization) objective. Penalizes the mass-flux-weighted
+    # effective Sauter mean diameter (taken directly from the injector-physics Ingebo D32, which
+    # already captures aerodynamic Weber, liquid Reynolds/viscosity, and impingement angle via the
+    # law-of-cosines relative velocity) when it falls outside a *two-sided* band around the target.
+    W_SMD: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Layer 1 impinging-only weight on the SMD range penalty. 0/None disables. The penalty is "
+            "a two-sided deadband: zero inside [target·(1−tol), target·(1+tol)], squared outside."
+        ),
+    )
+    target_smd_microns: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Target effective Sauter mean diameter [µm] for the SMD objective (e.g. 50).",
+    )
+    layer1_smd_rel_tol: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Half-width of the SMD deadband as a fraction of target (e.g. 0.20 ⇒ band is "
+            "target·[0.8, 1.2]). Unset ⇒ optimizer default (0.20)."
+        ),
+    )
+    # Layer 1 impinging-only: equal feed/tank pressure objective. Drives the LOX and fuel tank
+    # stagnation pressures together. This is a SEPARATE objective from R≈1 — equal tank pressure does
+    # NOT imply momentum matching because the two sides have different densities, feed-line losses,
+    # and injector ΔP (different hole sizes/angles).
+    W_TANK_EQUAL: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Layer 1 impinging-only weight on ((P_tank_O − P_tank_F)/scale)². 0/None disables."
+        ),
+    )
+    layer1_tank_equal_scale_psi: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Normalizing scale [psi] for the equal-tank-pressure penalty. Unset ⇒ 100 psi.",
+    )
+    # Layer 1 impinging-only: injector geometry / vaporization-fit objective. Couples the impingement
+    # standoff (where the streams meet) and the droplet vaporization length to the available chamber
+    # length, and penalizes ring overflow / element overlap. Gives the ``spacing`` design variable a
+    # real physical effect (impingement distance + pitch-circle diameter).
+    W_IMP_GEOM: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Layer 1 impinging-only weight on the geometry/vaporization-fit penalty (normalized "
+            "squared violations of: L_imp+x* within the evaporation budget, ring pitch diameter "
+            "within the chamber bore, and element non-overlap). 0/None disables."
+        ),
+    )
+    layer1_exit_pressure_inside_quad_scale: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Inside the nominal plus-or-minus 5 percent exit-pressure deadband, multiply W_EXIT by this "
+            "coefficient times (ΔP_exit/P_tgt) squared to steer toward atmospheric-matched nozzle exit pressure."
+        ),
+    )
+    layer1_impinging_n_doublets_max: Optional[int] = Field(
+        default=None,
+        ge=5,
+        description=(
+            "Layer 1 impinging: max paired LOX/fuel element count (n_doublets). "
+            "The bore-derived ceiling from ``impinging_n_elements_hi_int`` is clipped to this value when set."
+        ),
+    )
+    layer1_random_seed: Optional[int] = Field(
+        default=None,
+        description=(
+            "Layer 1 integer seed for NumPy restart perturbations and CMA-ES ``seed`` "
+            "(each restart uses seed + restart_index × 1_000_003). Omit or null → base 42."
+        ),
+    )
+    layer1_cma_warmstart_trials: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Before legacy CMA-ES, evaluate this many clipped/snapped candidates around ``x0`` "
+            "(same worker objective as CMA). 0 disables. Default 16 in optimizer when unset."
+        ),
+    )
+    layer1_cma_warmstart_sigma_frac: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=0.5,
+        description=(
+            "Per-dimension Gaussian scale for warm-start perturbations: ``sigma_frac × (upper−lower)``. "
+            "Default 0.04 when unset."
+        ),
+    )
+    layer1_cma_restart0_sigma_scale: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "After warm-start, multiply legacy CMA-ES initial step size (restart 0 only) by this factor "
+            "so the first population stays near the feasible mean (default 0.48 in code when unset)."
+        ),
+    )
+    layer1_lbfgs_gtol: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Gradient norm tolerance for the L-BFGS-B local refinement after CMA-ES (default 1e-9 in code). "
+            "Tighter values can reduce the weighted objective; they do not target a specific absolute objective magnitude."
+        ),
+    )
+    layer1_lbfgs_second_pass: Optional[bool] = Field(
+        default=None,
+        description=(
+            "If true, run a second L-BFGS-B from the first local optimum with a tighter ``gtol`` (default true in code)."
+        ),
+    )
+    W_DP: Optional[float] = Field(default=None, ge=0.0, description="Layer 1 fallback injector ΔP weight.")
+    W_DP_O: Optional[float] = Field(default=None, ge=0.0, description="Layer 1 oxidizer stream ΔP hinge weight.")
+    W_DP_F: Optional[float] = Field(default=None, ge=0.0, description="Layer 1 fuel stream ΔP hinge weight.")
+    W_DP_HIGH: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "Layer 1 weight on injector ΔP hinge term when both ΔP/Pc streams exceed their bands "
+            "(used together with W_DP_O/W_DP_F in weighted injector ΔP penalty)."
+        ),
+    )
+    layer1_infeasibility_gate_eps: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Treat infeasibility_score ≤ eps as feasible for thrust/MR/ΔP objective blending (code default 0.002).",
+    )
+    layer1_W_THRUST: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Layer 1 weight on thrust penalty term (code default 1e4 when unset).",
+    )
+    layer1_W_OF: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Layer 1 weight on relative MR error squared (code default 1e4 when unset).",
+    )
+    layer1_W_OF_low_MR_scale: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "When MR is below optimal_of_ratio, multiply the O/F penalty by max(1, this scale) "
+            "(default 1: no extra weight on fuel-rich side)."
+        ),
+    )
+    layer1_W_OF_high_MR_scale: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description=(
+            "When MR exceeds optimal_of_ratio, multiply the O/F penalty by max(1, this scale) "
+            "(default 1: symmetric with low‑MR tuning optional)."
+        ),
+    )
+    layer1_of_validation_tol: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Relative MR error cap used for Layer‑1 bookkeeping and for ``pressure_candidate_valid`` "
+            "O/F gate (default 0.15)."
+        ),
+    )
+    layer1_thrust_validation_rel_tol: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Relative thrust error gate for ``pressure_candidate_valid``. "
+            "If unset, uses ``tolerances['thrust']`` passed into ``run_layer1_optimization`` (default 10%)."
+        ),
+    )
+    W_CHAMBER_SHAPE: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Layer 1 weight on chamber-shape regularization (D_chamber/D_throat and L_chamber/D_chamber).",
+    )
+    layer1_chamber_dt_ratio_min: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Preferred lower bound for chamber-to-throat diameter ratio D_chamber_inner/D_throat.",
+    )
+    layer1_chamber_dt_ratio_max: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Preferred upper bound for chamber-to-throat diameter ratio D_chamber_inner/D_throat.",
+    )
+    layer1_chamber_ld_ratio_min: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Preferred lower bound for chamber length ratio L_chamber/D_chamber_inner.",
+    )
+    layer1_chamber_ld_ratio_max: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Preferred upper bound for chamber length ratio L_chamber/D_chamber_inner.",
+    )
+
+    layer1_stagnation_pressure_frac_min: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Layer 1 search-box lower edge as a fraction of each tank cap: "
+            "P_O ∈ [max_lox×f_min, max_lox×f_max], P_F similarly (unless overridden below). "
+            "Default when unset: 0.65."
+        ),
+    )
+    layer1_stagnation_pressure_frac_max: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Companion upper fraction for stagnation-pressure box (default when unset: 0.85).",
+    )
+    layer1_expansion_ratio_min: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Optional lower bound for Layer 1 expansion-ratio search box (default when unset: 4.0).",
+    )
+    layer1_expansion_ratio_max: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Optional upper bound for Layer 1 expansion-ratio search box (default when unset: 12.0).",
+    )
+    layer1_P_O_start_psi_min: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Optional absolute LOX stagnation pressure lower bound [psi] for Layer 1 (overrides frac box).",
+    )
+    layer1_P_O_start_psi_max: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Optional absolute LOX stagnation upper bound [psi].",
+    )
+    layer1_P_F_start_psi_min: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Optional fuel stagnation lower bound [psi].",
+    )
+    layer1_P_F_start_psi_max: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Optional fuel stagnation upper bound [psi].",
+    )
+
     # Frozen parameters (optional - for locking specific values during optimization)
     frozen_parameters: Optional[FrozenParametersConfig] = Field(
         default=None,
         description="Optional frozen parameter values for Layer 1 optimization. When set, these values are used instead of being optimized."
     )
+
+    @model_validator(mode="after")
+    def _injector_dp_bands_ordered(self):
+        if self.injector_dp_ratio_O_max <= self.injector_dp_ratio_O_min:
+            raise ValueError("injector_dp_ratio_O_max must exceed injector_dp_ratio_O_min")
+        if self.injector_dp_ratio_F_max <= self.injector_dp_ratio_F_min:
+            raise ValueError("injector_dp_ratio_F_max must exceed injector_dp_ratio_F_min")
+        rlo, rhi = self.impinging_momentum_R_min, self.impinging_momentum_R_max
+        if (rlo is not None) ^ (rhi is not None):
+            raise ValueError("Set both impinging_momentum_R_min and impinging_momentum_R_max or neither.")
+        if rlo is not None and rhi is not None and float(rhi) <= float(rlo):
+            raise ValueError("impinging_momentum_R_max must exceed impinging_momentum_R_min.")
+        alo, ahi = self.layer1_impinging_angle_deg_min, self.layer1_impinging_angle_deg_max
+        if (alo is not None) ^ (ahi is not None):
+            raise ValueError("Set both layer1_impinging_angle_deg_min and layer1_impinging_angle_deg_max or neither.")
+        if alo is not None and ahi is not None and float(ahi) <= float(alo):
+            raise ValueError("layer1_impinging_angle_deg_max must exceed layer1_impinging_angle_deg_min.")
+        fmn, fmx = self.layer1_stagnation_pressure_frac_min, self.layer1_stagnation_pressure_frac_max
+        if fmn is not None and fmx is not None and float(fmx) <= float(fmn):
+            raise ValueError("layer1_stagnation_pressure_frac_max must exceed layer1_stagnation_pressure_frac_min.")
+        ermn, ermx = self.layer1_expansion_ratio_min, self.layer1_expansion_ratio_max
+        if ermn is not None and ermx is not None and float(ermx) <= float(ermn):
+            raise ValueError("layer1_expansion_ratio_max must exceed layer1_expansion_ratio_min.")
+        dtr_lo, dtr_hi = self.layer1_chamber_dt_ratio_min, self.layer1_chamber_dt_ratio_max
+        if (dtr_lo is not None) ^ (dtr_hi is not None):
+            raise ValueError("Set both layer1_chamber_dt_ratio_min and layer1_chamber_dt_ratio_max or neither.")
+        if dtr_lo is not None and dtr_hi is not None and float(dtr_hi) <= float(dtr_lo):
+            raise ValueError("layer1_chamber_dt_ratio_max must exceed layer1_chamber_dt_ratio_min.")
+        ldr_lo, ldr_hi = self.layer1_chamber_ld_ratio_min, self.layer1_chamber_ld_ratio_max
+        if (ldr_lo is not None) ^ (ldr_hi is not None):
+            raise ValueError("Set both layer1_chamber_ld_ratio_min and layer1_chamber_ld_ratio_max or neither.")
+        if ldr_lo is not None and ldr_hi is not None and float(ldr_hi) <= float(ldr_lo):
+            raise ValueError("layer1_chamber_ld_ratio_max must exceed layer1_chamber_ld_ratio_min.")
+        return self
 
 
 class HybridOptimizerConfig(BaseModel):
@@ -849,6 +1342,10 @@ class PressureCurvesConfig(BaseModel):
 
 class PintleEngineConfig(BaseModel):
     """Complete pintle engine configuration"""
+    # Propellant preset name (configs/propellants/<name>.yaml). Resolved by io.load_config BEFORE
+    # validation: preset supplies fluids/CEA baseline, explicit YAML fields override. Plain str (not
+    # Literal) on purpose — adding a new propellant must require zero code changes (UNIFICATION P7).
+    propellant_preset: Optional[str] = Field(default=None, description="Propellant preset to merge (e.g. 'methalox', 'ethalox', 'kerolox'); explicit fields win over preset")
     fluids: Dict[str, FluidConfig]
     injector: InjectorConfig
     feed_system: Dict[str, FeedSystemConfig]  # "oxidizer" and "fuel"
@@ -876,6 +1373,10 @@ class PintleEngineConfig(BaseModel):
     thrust: Optional[ThrustConfig] = Field(default=None, description="Thrust configuration for flight simulation")
     design_requirements: Optional[DesignRequirementsConfig] = Field(default=None, description="Design requirements for optimizer")
     pressure_curves: Optional[PressureCurvesConfig] = Field(default=None, description="Optimized pressure curves from Layer 2 optimization")
+    # Provenance stamp: which {injector, propellant} the current chamber was last solved/seeded for.
+    # Forward mode warns ("needs re-optimization") when the live injector/propellant no longer match —
+    # see engine.pipeline.config_switch.design_staleness. Set on canonical load & propellant overlay.
+    design_valid_for: Optional[Dict[str, Optional[str]]] = Field(default=None, description="{'injector','propellant'} the chamber geometry was solved for (forward-mode staleness flag)")
 
     @field_validator("feed_system", "discharge")
     @classmethod
@@ -884,6 +1385,52 @@ class PintleEngineConfig(BaseModel):
         if "oxidizer" not in v or "fuel" not in v:
             raise ValueError("Must specify both 'oxidizer' and 'fuel' branches")
         return v
+
+    @model_validator(mode="after")
+    def injector_aware_geometry_cd_default(self):
+        """FINDING F1 fix (UNIFICATION P3): ``use_geometry_cd`` schema-defaults to True (drilled
+        impinging orifices). For PINTLE the geometry-Cd correlation doesn't apply (annulus/orifice
+        Cd is fixed Cd_inf; the solver never calls it) — so when the field was NOT explicitly given,
+        derive False for pintle. Explicit YAML values are respected (model_fields_set check)."""
+        if getattr(getattr(self, "injector", None), "type", None) == "pintle":
+            for side in ("oxidizer", "fuel"):
+                d = self.discharge.get(side) if isinstance(self.discharge, dict) else None
+                if d is not None and "use_geometry_cd" not in d.model_fields_set:
+                    d.use_geometry_cd = False
+        return self
+
+    @model_validator(mode="after")
+    def align_expansion_ratio_with_exit_throat_areas(self):
+        """Nozzle thrust uses eps == A_exit/A_throat (strict); YAML often labels eps rounded."""
+        cg = self.chamber_geometry
+        if cg is None:
+            return self
+        at = cg.A_throat
+        ae = cg.A_exit
+        if at is None or ae is None:
+            return self
+        try:
+            at_f = float(at)
+            ae_f = float(ae)
+        except (TypeError, ValueError):
+            return self
+        if not np.isfinite(at_f) or not np.isfinite(ae_f) or at_f <= 0 or ae_f <= 0:
+            return self
+        eps_geo = ae_f / at_f
+        if eps_geo <= 1.0:
+            return self
+        cg.expansion_ratio = float(eps_geo)
+        try:
+            self.combustion.cea.expansion_ratio = float(eps_geo)
+        except Exception:
+            pass
+        nz = self.nozzle
+        if nz is not None:
+            try:
+                nz.expansion_ratio = float(eps_geo)
+            except Exception:
+                pass
+        return self
 
     class Config:
         extra = "allow"  # Reject unknown fields
@@ -963,5 +1510,11 @@ def ensure_chamber_geometry(config: PintleEngineConfig) -> ChamberGeometryConfig
         length_contraction=length_contraction,
         Cf=Cf,
     )
-    
+
     return config.chamber_geometry
+
+
+# Injector-agnostic alias (UNIFICATION P3 naming): the config models any bipropellant engine
+# (pintle / impinging / coaxial), not just pintle. New code should prefer `EngineConfig`; the
+# `PintleEngineConfig` name is retained for backward compatibility with the 57 existing references.
+EngineConfig = PintleEngineConfig

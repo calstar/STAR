@@ -15,6 +15,12 @@ NC='\033[0m' # No Color
 
 echo -e "${GREEN}Starting EngineDesign development servers...${NC}"
 
+# Prefer project virtualenv Python when available.
+PYTHON_CMD="python3"
+if [ -x "$PROJECT_ROOT/.venv/bin/python3" ]; then
+    PYTHON_CMD="$PROJECT_ROOT/.venv/bin/python3"
+fi
+
 # Cleanup function to kill background processes on exit
 cleanup() {
     echo -e "\n${BLUE}Shutting down servers...${NC}"
@@ -56,8 +62,8 @@ for attempt in {1..3}; do
     fi
 done
 
-# Use python -m uvicorn to avoid broken conda environment issues
-python3 -m uvicorn backend.main:app --reload --port 8000 &
+# Use selected Python -m uvicorn so local venv is respected.
+"$PYTHON_CMD" -m uvicorn backend.main:app --reload --port 8000 &
 BACKEND_PID=$!
 
 # Wait a moment to check if backend started successfully

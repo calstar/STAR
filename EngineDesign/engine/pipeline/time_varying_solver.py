@@ -722,10 +722,15 @@ class TimeVaryingCoupledSolver:
         
         # Calculate stability with pintle geometry, impingement, and recirculation
         # Use enhanced physics-based spatial stability analysis
+        # NOTE (UNIFICATION P3, FINDING F3): calculate_pintle_stability_enhanced returns a flat
+        # PLACEHOLDER (margin 0.5, 30 Hz) for non-pintle injectors. The scalars stability_margin and
+        # chugging_freq are overwritten below by the injector-agnostic comprehensive_stability_analysis,
+        # but feed_stability["stability_margin"] and the spatial `acoustic` retain placeholder values
+        # for non-pintle. Clean separation deferred to the legacy_pintle/ refactor (see CONTEXT.md).
         try:
             from engine.pipeline.stability.enhanced import calculate_pintle_stability_enhanced
             from engine.pipeline.localized_ablation import calculate_impingement_zones
-            
+
             # Create position array for spatial analysis
             n_stability_points = 50
             positions_stability = np.linspace(0.0, self.L_chamber, n_stability_points)

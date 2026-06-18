@@ -117,7 +117,7 @@ def _calculate_stage_progress(opt_state: dict, opt_config: Layer1OptimizerConfig
     
     elif stage == 'CMA':
         # Stage 2: 40% to 70%
-        # Approximate population size (will be 11-15 for 10D problem)
+        # Approximate population size (will be ~11–15 for 10D pintle / 14D impinging)
         approx_popsize = 4 + int(3 * np.log(11))  # ~11
         stage_budget = opt_config.cma_maxiter * approx_popsize
         stage_progress = min(stage_iter / max(1, stage_budget), 1.0)
@@ -157,7 +157,7 @@ progress = _calculate_stage_progress(opt_state, opt_config)
 **Lines Affected**: 579
 
 **Current Behavior**:
-- Population size = 11 for 10D problem
+- Population size ≈ 11 for 10D pintle (14D impinging uses a larger design vector)
 - Too small for noisy objective landscape
 - Slow convergence in CMA-ES
 

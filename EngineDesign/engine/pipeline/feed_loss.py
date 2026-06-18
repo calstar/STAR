@@ -1,4 +1,12 @@
-"""Generalized feed system pressure loss model with K_eff(P)"""
+"""Generalized feed system pressure loss model with K_eff(P)
+
+For twin balanced parallel runs each with nominal diameter ``d_line``, set YAML
+``d_inlet`` to ``√2 × d_line`` (or equivalently ``A_hydraulic = 2 × π (d_line/2)²``
+with ``d_inlet`` omitted) so bulk velocity halves vs a single tube at fixed ṁ.
+
+See constants: ``FEED_LINE_DUAL_3_8_EQUIVALENT_D_INLET_M`` and
+``FEED_LINE_DUAL_3_8_EQUIVALENT_A_HYDRAULIC_M2`` for two 3/8″ lines.
+"""
 
 import numpy as np
 from .config_schemas import FeedSystemConfig

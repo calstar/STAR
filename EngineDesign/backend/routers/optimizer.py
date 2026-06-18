@@ -126,9 +126,30 @@ async def save_design_requirements(request: DesignRequirementsRequest):
         )
     
     try:
+        # Merge frozen_parameters so a partial UI payload cannot silently drop YAML pins.
+        req_in = dict(request.requirements)
+        old_dr = app_state.config.design_requirements
+        old_fp: dict = {}
+        if old_dr is not None and old_dr.frozen_parameters is not None:
+            old_fp = old_dr.frozen_parameters.model_dump(exclude_none=True)
+        if "frozen_parameters" not in req_in:
+            if old_fp:
+                req_in["frozen_parameters"] = old_fp
+        else:
+            new_fp = req_in.get("frozen_parameters")
+            if not isinstance(new_fp, dict):
+                new_fp = {}
+            merged_fp = dict(old_fp)
+            for k, v in new_fp.items():
+                if v is None:
+                    merged_fp.pop(k, None)
+                else:
+                    merged_fp[k] = v
+            req_in["frozen_parameters"] = merged_fp if merged_fp else None
+
         # Validate requirements using Pydantic
-        requirements = DesignRequirementsConfig(**request.requirements)
-        
+        requirements = DesignRequirementsConfig(**req_in)
+
         # Update config with validated requirements
         app_state.config.design_requirements = requirements
         
@@ -457,6 +478,7 @@ async def run_layer1(
                 "geometry": results.get("optimized_parameters", {}),
                 "objective_history": objective_history,
                 "iteration_history": results.get("iteration_history", []),
+                "convergence_info": results.get("convergence_info", {}),
                 "config": config_to_dict(optimized_config),
                 "config_yaml": yaml.dump(config_to_dict(optimized_config), default_flow_style=False),
             })

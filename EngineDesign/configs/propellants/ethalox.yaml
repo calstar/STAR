@@ -1,0 +1,41 @@
+# Propellant preset: ETHALOX (LOX / ethanol)
+# Sources: fluids + CEA copied VERBATIM from origin/main configs/default.yaml (the working
+# ethalox-pintle baseline; anchor A fixture tests/golden/anchor_A_*). LOX latent_heat/boiling_point
+# were null on main — filled with the same standard values as the methalox preset (stability inputs
+# only; forward physics does not read them, so anchor-A bit-compatibility is unaffected).
+fluids:
+  fuel:
+    name: Ethanol
+    density: 789.0
+    viscosity: 0.0012
+    surface_tension: 0.0223
+    vapor_pressure: 5800.0
+    specific_heat: 2440.0
+    thermal_conductivity: 0.17
+    temperature: 293.0
+    latent_heat: 838000.0
+    boiling_point: 351.4
+    molecular_weight: 46.07
+    bulk_modulus_pa: 1060000000.0   # ethanol @ ~293 K, standard handbook value (stability feed-acoustics)
+  oxidizer:
+    name: LOX
+    density: 1140.0
+    viscosity: 0.00018
+    surface_tension: 0.013
+    vapor_pressure: 101325.0
+    specific_heat: 2300.0
+    thermal_conductivity: 0.15
+    temperature: 90.0
+    latent_heat: 213000.0
+    boiling_point: 90.2
+    molecular_weight: 32.0
+    bulk_modulus_pa: 1500000000.0    # order-of-magnitude LOX; refine via test T5
+combustion:
+  cea:
+    ox_name: LOX
+    fuel_name: Ethanol
+    cache_file: output/cache/cea_cache_LOX_Ethanol_3D.npz
+    Pc_range: [1000000.0, 9000000.0]
+    MR_range: [1.0, 2.5]
+    eps_range: [4.0, 15.0]
+    n_points: 34

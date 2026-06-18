@@ -391,3 +391,23 @@ DEFAULT_PROGRESS_THROAT_ND = 1.0  # Complete at throat
 STANDARD_ATMOSPHERE_PRESS_PA = 101325.0  # Pa (sea level)
 STANDARD_AMBIENT_TEMP_K = 300.0  # K (27°C)
 
+# ============================================================================
+# FEED SYSTEM (lumped Δp_feed geometry helpers)
+# ============================================================================
+#
+# Used by ``delta_p_feed()`` in ``feed_loss.py`` via YAML ``feed_system``.
+# Nominal hydraulic ID for ``3/8 in`` tubing: (3/8) × (25.4 mm/in) [m].
+FEED_LINE_D_3_8_IN_NOMINAL_M = (3.0 / 8.0) * 25.4e-3
+#
+# Two identical parallel 3/8" runs with a balanced split carry ṁ_total/2 each.
+# Effective area doubles vs one line ⇒ equivalent round inlet for the lumped model:
+#
+#    π (d_eq/2)² = 2 × π (d_line/2)²   ⇒   d_eq = √2 × d_line
+#
+FEED_LINE_DUAL_3_8_EQUIVALENT_D_INLET_M = FEED_LINE_D_3_8_IN_NOMINAL_M * (2.0 ** 0.5)
+#
+# Explicit total hydraulic area consistent with dual 3/8″ lines [m²].
+FEED_LINE_DUAL_3_8_EQUIVALENT_A_HYDRAULIC_M2 = 2.0 * 3.141592653589793 * (
+    FEED_LINE_D_3_8_IN_NOMINAL_M / 2.0
+) ** 2
+
