@@ -65,7 +65,7 @@ elodin_client_->publish(0x4200, measurement_msg);  // Measurement
 ## Navigation State
 
 - **Packet ID**: [0x45, 0x00]
-- **VTable**: Registered by web backend on Elodin connect (`elodin-vtable-navigation.ts`)
+- **VTable**: Registered by web backend on Elodin connect (`elodin-protocol.ts`)
 - **Payload**: 112 bytes — U64 timestamp_ns + 13×F64 (pos_ned, vel_ned, quat, acc_ned)
 
 Autopilot/navigation writes:
@@ -102,15 +102,15 @@ Boards (UDP) → daq_bridge → Elodin DB → relay (ws :9090) → backend → U
 
 **Controller measurement (10% sample):**
 
-- **Code**: `FSW/src/control/ControllerService.cpp` lines 657–658
+- **Code**: `diablo_server/lib/src/control/ControllerService.cpp` — the `tick % 10` measurement-write block (lines ~702–703)
 - **Logic**: `if (tick % 10 == 0) { writeMeasurementToDB(meas); }`
 - **Console**: Same condition — `[Controller] tick=N` prints every 10th tick
-- **Verify**: Run `./build/FSW/controller_service --config config/config.toml --elodin-host 127.0.0.1` — observe ticks 0, 10, 20, 30, 40… (every 10th tick)
+- **Verify**: Run `./build/bin/controller_service --config config/config.toml --elodin-host 127.0.0.1` — observe ticks 0, 10, 20, 30, 40… (every 10th tick)
 - **At 10 Hz**: ~1 measurement write/sec vs ~10 actuation + ~10 diagnostics writes/sec
 
 **Calibrated data (100 Hz throttle):**
 
-- **Code**: `scripts/calibration/calibration_server.py` lines 179–183
-- **Config**: `[calibration.sidecar] write_interval_sec = 0.01` (config.toml line 673)
+- **Code**: `tools/calibration/calibration_server.py` — the `write_interval_sec` read (~line 288)
+- **Config**: `[calibration.sidecar] write_interval_sec = 0.01` (config.toml)
 - **Logic**: Per-channel throttle; skips write if `now - last_write < interval`
 - **Effect**: Max ~100 calibrated writes/sec per channel

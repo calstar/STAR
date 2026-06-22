@@ -10,12 +10,11 @@ the subproject [`README.md`](../README.md).
   (relay, thin parser); includes VTable wire alignment notes (`u32`/`f32` must
   be 4-byte aligned; `CommsMessage` is packed, so add explicit padding after
   `u8`).
-- [DIABLOAVIONICS_PACKET_FORMAT.md](DIABLOAVIONICS_PACKET_FORMAT.md) — DiabloAvionics
-  packet format (6-byte header, little-endian).
-- [DIABLOAVIONICS_ANALYSIS.md](DIABLOAVIONICS_ANALYSIS.md) — Analysis of the
-  DiabloAvionics and DAQv2-Comms systems.
+- [../../lib/DAQv2-Comms/README.md](../../lib/DAQv2-Comms/README.md) — Wire
+  protocol (packet types, 6-byte header, serialize/parse). Single source of
+  truth for the on-wire format.
 - [DIABLOAVIONICS_NETWORK_CONFIG.md](DIABLOAVIONICS_NETWORK_CONFIG.md) — Board
-  network/IP configuration.
+  network/IP/port configuration for the DAQ bridge.
 - [SENSOR_ASSIGNMENT_SYSTEM.md](SENSOR_ASSIGNMENT_SYSTEM.md) — Sensor assignment,
   IP assignment, and configuration distribution.
 - [ACTUATOR_PIPELINE_AND_TMUX.md](ACTUATOR_PIPELINE_AND_TMUX.md) — Actuator
@@ -48,11 +47,12 @@ the subproject [`README.md`](../README.md).
 
 ## Operations & Deployment
 
-- [INSTALL.md](INSTALL.md) — Installation guide and system requirements.
+- Environment setup & build: see the monorepo [`SETUP.md`](../../SETUP.md) and
+  the subproject [`README.md`](../README.md).
 - [JETSON_DEPLOYMENT.md](JETSON_DEPLOYMENT.md) — Deployment on NVIDIA Jetson
   Xavier NX (ARM64 Ubuntu).
 - [ELODIN_GROUNDSTATION_SETUP.md](ELODIN_GROUNDSTATION_SETUP.md) — Elodin
-  database and ground station setup walkthrough.
+  smoke-test / fake-data setup walkthrough.
 - [ADC_AND_ELODIN_DIAGNOSTICS.md](ADC_AND_ELODIN_DIAGNOSTICS.md) — Diagnosing
   ADC distortion and messages not reaching Elodin.
 
@@ -66,8 +66,8 @@ the subproject [`README.md`](../README.md).
   DDP thrust-curve matching.
 - [CALIBRATION_STACK_ARCHITECTURE.tex](CALIBRATION_STACK_ARCHITECTURE.tex) —
   Calibration stack architecture (LaTeX).
-- [PT_Calibration_Writeup (1).pdf](<PT_Calibration_Writeup (1).pdf>) — PT
-  calibration writeup.
+- [PT_Calibration_Writeup.pdf](PT_Calibration_Writeup.pdf) — PT calibration
+  writeup.
 - [Robust_Dynamic_Thresholding.pdf](Robust_Dynamic_Thresholding.pdf) — Robust
   dynamic thresholding writeup.
 

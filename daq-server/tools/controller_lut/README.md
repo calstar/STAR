@@ -1,9 +1,9 @@
 ## Controller LUT tooling (engine\_sim-backed)
 
 This package provides a high-dimensional lookup-table (LUT) generator and
-interpolator for the controller, built on top of the `engine_sim` submodule.
-It **does not modify** any files inside `engine_sim`; it only imports and uses
-its public APIs.
+interpolator for the controller, built on top of the engine simulator
+(`engine_sim/`, a symlink to the monorepo's `../EngineDesign/`). It **does not
+modify** any files inside `engine_sim`; it only imports and uses its public APIs.
 
 ### Axes and outputs
 
@@ -31,11 +31,11 @@ that file.
 
 ### Generating a LUT
 
-From the project root (`sensor_system`), run:
+From the `STAR/daq-server` root, run:
 
 ```bash
-python -m scripts.controller_lut.generate_controller_lut \
-  --lut-config scripts/controller_lut/example_lut_config.yaml \
+python -m tools.controller_lut.generate_controller_lut \
+  --lut-config tools/controller_lut/example_lut_config.yaml \
   --output output/lut/controller_lut_example.npz
 ```
 
@@ -61,7 +61,7 @@ robust DDP needs: F, MR, P_ch, mdot_F, mdot_O, injector_dp, stability.
 
 ```bash
 # Full pipeline (~15 s small, ~2 hr full)
-./scripts/controller_lut/generate_engine_and_policy_lut.sh small
+tools/controller_lut/generate_engine_and_policy_lut.sh small
 ```
 
 1. **Engine LUT** — from engine config + tank pressure range (no DDP, fast)
@@ -75,7 +75,7 @@ Outputs: `output/lut/engine_performance.npz`, `output/lut/controller_policy_fsw.
 Run the FSW controller with:
 
 ```bash
-./build/FSW/controller_service --lut-path output/lut/controller_policy_fsw.bin --relay-host 127.0.0.1
+./build/bin/controller_service --lut-path output/lut/controller_policy_fsw.bin
 ```
 
 The FSW ControllerService passes `P_u_fuel`, `P_u_ox`, `thrust_desired`, `MR_ref`
@@ -90,7 +90,7 @@ The `EngineLUT` class (`engine_lut.py`) loads a `.npz` file and provides
 multilinear interpolation over all axes:
 
 ```python
-from scripts.controller_lut.engine_lut import EngineLUT
+from tools.controller_lut.engine_lut import EngineLUT
 
 lut = EngineLUT("output/lut/controller_lut_example.npz")
 prediction = lut.evaluate({
@@ -109,10 +109,10 @@ the same `.npz` file (or a derived binary form) and expose a similar
 
 ## Integration notes
 
-`engine_sim` is treated as a read-only submodule. The controller LUT
-integration is implemented **entirely outside** the submodule, but designed so
-that both the Python controller backend and the C++ FSW controller can consume
-the same LUT artifacts.
+`engine_sim` (the symlink to `../EngineDesign/`) is treated as read-only. The
+controller LUT integration is implemented **entirely outside** it, but designed
+so that both the Python controller backend and the C++ FSW controller can
+consume the same LUT artifacts.
 
 ### Python engine_sim backend
 

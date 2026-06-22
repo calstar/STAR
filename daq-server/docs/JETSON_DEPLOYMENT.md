@@ -13,7 +13,7 @@ Deploy the Sensor System on NVIDIA Jetson Xavier NX (or other ARM64 Ubuntu devic
 From the repo root:
 
 ```bash
-./scripts/setup/setup_jetson.sh
+./deploy/setup/setup_jetson.sh
 ```
 
 This installs:
@@ -30,29 +30,25 @@ This installs:
 ### 1. Clone the repo
 
 ```bash
-git clone --recursive <repo-url> sensor_system
+git clone <repo-url> sensor_system
 cd sensor_system
 ```
 
-If already cloned:
-
-```bash
-git submodule update --init --recursive
-```
+(The repo has no submodules — a plain clone gets everything.)
 
 ### 2. Run the setup script
 
 ```bash
-./scripts/setup/setup_jetson.sh
+./deploy/setup/setup_jetson.sh
 ```
 
 ### 3. Start the stack
 
-**Full stack** (DB, relay, backend, frontend, DAQ, calibration, controller):
+**Full stack** (DB, backend, frontend, DAQ, calibration, controller, sequencer):
 
 ```bash
 source .venv/bin/activate
-./scripts/startup/start_tmux_dev.sh
+./deploy/startup/start_tmux_dev.sh
 ```
 
 **Minimal** (DB + DAQ only):
@@ -60,7 +56,7 @@ source .venv/bin/activate
 ```bash
 mkdir -p ~/.local/share/elodin
 elodin-db run '[::]:2240' ~/.local/share/elodin/daq_live &
-./build/FSW/daq_bridge config/config.toml
+./build/bin/daq_bridge config/config.toml
 ```
 
 ### 4. Access the Web GUI
@@ -82,7 +78,7 @@ Update `[network].bind_ip` if needed (default `0.0.0.0` listens on all interface
 ## Optional: Run as systemd services
 
 ```bash
-./scripts/systemd/install_services.sh
+./deploy/systemd/install_services.sh
 systemctl --user start sensor-elodin sensor-daq sensor-relay sensor-backend sensor-frontend sensor-sidecar sensor-heartbeat sensor-config-broadcast
 ```
 

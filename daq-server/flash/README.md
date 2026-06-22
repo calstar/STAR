@@ -1,14 +1,30 @@
 # Flash Script Documentation
 
-This directory contains scripts for flashing executables, libraries, and configuration files to target systems (local or remote).
+This directory contains `flash.sh`, which deploys executables, libraries, and
+configuration files to target systems (local or remote).
+
+> **Status / caveat:** `flash.sh` predates the current build layout and is
+> partially stale. Binaries now build into **`build/bin/`**, but the script only
+> searches `build/`, `build/FSW/`, and `build/daq_comms/` — so it will not find
+> them until its search path is updated to include `build/bin/`. Several
+> executables in its list (`send_all_sensors_from_config`,
+> `send_all_message_types`, `esp32_pt_streamer`, `fake_esp32_packet_gen`,
+> `sitl_simulator`, `test_imu_calibration`) and the startup scripts it copies
+> (`scripts/startup/*.sh`) no longer exist. The libraries (`libdaq_comms_lib.so`,
+> `libfsw_daq_lib.so`) and config files are still valid. Treat the lists below as
+> describing the script's current (stale) behavior, not a working deploy.
 
 ## Overview
 
 The flash script handles deployment of:
-- **Executables**: `daq_bridge`, `send_all_sensors_from_config`, `send_all_message_types`, etc.
+- **Executables**: `daq_bridge` (and `test_robust_ddp`). The service binaries
+  (`sequencer_service`, `controller_service`, `calibration_service`,
+  `heartbeat_service`, `config_broadcast_service`, `ota_service`,
+  `data_logger_service`) build into `build/bin/` and should be flashed too once
+  the script's search path is fixed.
 - **Libraries**: `libdaq_comms_lib.so`, `libfsw_daq_lib.so`
 - **Config Files**: Flight/ground DAQ configurations
-- **Scripts**: Startup and system scripts
+- **Scripts**: startup scripts (currently points at removed `scripts/startup/*`)
 
 ## Usage
 
@@ -53,7 +69,7 @@ The flash script handles deployment of:
 ./flash/flash.sh -h 192.168.2.50 -u jetson -t /home/jetson/sensor_system
 
 # Flash specific executable to remote
-./flash/flash.sh -h 192.168.2.100 -e send_all_sensors_from_config
+./flash/flash.sh -h 192.168.2.100 -e daq_bridge
 ```
 
 ## Target Structure
@@ -61,12 +77,10 @@ The flash script handles deployment of:
 Files are flashed to the following structure:
 
 ```
-/opt/sensor_system/
+/opt/sensor_system/         # default target (-t to override)
 ├── bin/
 │   ├── daq_bridge
-│   ├── send_all_sensors_from_config
-│   ├── send_all_message_types
-│   └── ...
+│   └── ...                  # other binaries from build/bin/
 ├── lib/
 │   ├── libdaq_comms_lib.so
 │   └── libfsw_daq_lib.so
@@ -74,36 +88,33 @@ Files are flashed to the following structure:
 │   ├── config_flight_daq.toml
 │   ├── config_ground_daq.toml
 │   └── config.toml
-└── scripts/
-    ├── startup_daq_db.sh
-    ├── startup_daq_bridge.sh
-    └── ...
+└── scripts/                 # only if the (stale) startup scripts are restored
 ```
 
 ## Dependencies
 
 The flash script handles all current program dependencies:
 
-### Executables
-- `daq_bridge` - Main DAQ bridge (FSW) with state machine
-- `send_all_sensors_from_config` - Test program for sending sensors from config
-- `send_all_message_types` - Test program for all message types
-- `test_fsw_simulator` - FSW simulator for testing
-- `esp32_pt_streamer` - ESP32 PT streamer
-- `fake_esp32_packet_gen` - Fake ESP32 packet generator
-- `sitl_simulator` - SITL simulator (if built)
+### Executables (in `flash.sh`'s list; * = no longer a build target)
+
+- `daq_bridge` - Main DAQ bridge with state machine
 - `test_robust_ddp` - Robust DDP controller test (if built)
-- `test_imu_calibration` - IMU calibration test (if built)
+- `send_all_sensors_from_config` *
+- `send_all_message_types` *
+- `test_fsw_simulator` *
+- `esp32_pt_streamer` *
+- `fake_esp32_packet_gen` *
+- `sitl_simulator` *
+- `test_imu_calibration` *
+
+The current service binaries — `sequencer_service`, `controller_service`,
+`calibration_service`, `heartbeat_service`, `config_broadcast_service`,
+`ota_service`, `data_logger_service` — are NOT in the script's list and should be
+added.
 
 ### Libraries
-- `libdaq_comms_lib.so` - DAQ communications library (messages, parser, transport, UDP)
-- `libfsw_daq_lib.so` - FSW DAQ library (config, routing, elodin, control/state machine, calibration)
-
-### New Dependencies (State Machine & UDP)
-- `PressureStateMachine` - State machine with UDP actuator command sending
-- `DiabloBoardPacketParser` - Packet parser for actuator commands
-- `UDPSocket` - UDP transport for sending commands to boards
-- `ElodinClient` - Elodin database client for reading pressure data
+- `libdaq_comms_lib.so` - DAQ communications library (`daq_comms_lib`: messages, parser, transport, UDP)
+- `libfsw_daq_lib.so` - FSW DAQ library (`fsw_daq_lib`: config, routing, elodin, control/state machine, calibration)
 
 ### Runtime Dependencies
 - **Eigen3** - Must be installed on target system
@@ -119,7 +130,7 @@ For remote flashing, ensure:
 
 ## Notes
 
-- The script automatically searches for executables in `build/`, `build/FSW/`, and `build/daq_comms/`
+- The script searches for executables in `build/`, `build/FSW/`, and `build/daq_comms/`. **Note:** current binaries land in `build/bin/`, which the script does not yet search — fix the search path before relying on it.
 - Libraries are automatically added to library cache on local systems
 - Scripts are made executable automatically
 - Missing files are skipped with warnings

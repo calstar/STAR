@@ -6,13 +6,14 @@ Configure the web GUI to allow external connections from other devices on the ne
 ## Backend Configuration
 
 ### WebSocket Server
-The backend WebSocket server is configured to listen on `0.0.0.0` by default, allowing external connections.
+The backend WebSocket server listens on all interfaces by default (`server.ts`
+calls `httpServer.listen(WS_PORT)` with no bind address), allowing external
+connections. There is no separate bind-address env var.
 
 **Environment Variables:**
 ```bash
-WS_HOST=0.0.0.0        # Listen on all interfaces
-WS_PORT=8081           # WebSocket port
-ELODIN_HOST=127.0.0.1  # Elodin DB (local only)
+WS_PORT=8081           # WebSocket / HTTP port (binds all interfaces)
+ELODIN_HOST=127.0.0.1  # Elodin DB host
 ELODIN_PORT=2240       # Elodin DB port
 ```
 
@@ -191,7 +192,7 @@ ws.onerror = (e) => console.error('Error:', e);
 
 1. **Start the system:**
    ```bash
-   ./scripts/startup/start_tmux.sh
+   ./deploy/startup/start_tmux_dev.sh
    ```
 
 2. **Find your IP:**

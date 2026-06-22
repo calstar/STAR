@@ -10,7 +10,7 @@ Hardware Board (ESP32)
   → DAQ Bridge (C++)
   → Elodin DB (stores as VTable entries)
   → Elodin Relay (Node.js, WebSocket bridge)
-  → server-thin.ts (parses, throttles, broadcasts)
+  → server.ts (parses, throttles, broadcasts)
   → Frontend (WebSocket → DataCache → TimeSeriesPlot)
 ```
 
@@ -105,18 +105,18 @@ Match the sensor pattern: **`u8` at 8, then three padding bytes, then `u32` at 1
 
 If you change this layout, update **all** of the following in one change set:
 
-1. **`FSW/src/control/SequencerService.cpp`** — `SequencerStateMsg` type and `publishState()` (e.g. `CommsMessage<u64, u8, std::array<u8,3>, u32, u8>` with explicit zero padding).
-2. **`FSW/src/elodin/DatabaseConfig.cpp`** — `register_sequencer_vtable()`: `raw_field` offsets and lengths for `[0x50, 0x00]`.
-3. **`web-gui/backend/src/elodin-protocol.ts`** — `parseElodinPacket()` branch for `high === 0x50 && low === 0x00`: `payload.length` minimum and `readUInt32LE` / `readUInt8` offsets.
-4. **`FSW/src/services/heartbeat_service_main.cpp`** (if still relevant) — any comment or parser that documents byte offsets; code that only reads **current state at payload byte 8** remains valid.
+1. **`diablo_server/services/sequencer/SequencerService.cpp`** — `SequencerStateMsg` type and `publishState()` (e.g. `CommsMessage<u64, u8, std::array<u8,3>, u32, u8>` with explicit zero padding).
+2. **`diablo_server/lib/src/elodin/DatabaseConfig.cpp`** — `register_sequencer_vtable()`: `raw_field` offsets and lengths for `[0x50, 0x00]`.
+3. **`diablo_server/backend/src/elodin-protocol.ts`** — `parseElodinPacket()` branch for `high === 0x50 && low === 0x00`: `payload.length` minimum and `readUInt32LE` / `readUInt8` offsets.
+4. **`diablo_server/services/heartbeat/heartbeat_service_main.cpp`** (if still relevant) — any comment or parser that documents byte offsets; code that only reads **current state at payload byte 8** remains valid.
 
-The relay still needs **`[0x50, 0x00]` in `SENSOR_SUBSCRIPTIONS`** in `elodin-vtable.ts`; schema registration for this table is done by the **sequencer** via `DatabaseConfig::register_non_sensor_tables`, not necessarily by `registerControllerVTables()`.
+The relay still needs **`[0x50, 0x00]` in `SENSOR_SUBSCRIPTIONS`** in `elodin-vtable-registry.ts`; schema registration for this table is done by the **sequencer** via `DatabaseConfig::register_non_sensor_tables`, not necessarily by `registerControllerVTables()`.
 
 ## Files to Modify (in order)
 
 ### 1. C++ — DAQ Bridge Sensor Routing
 
-**`FSW/src/routing/SensorRouter.cpp`**
+**`diablo_server/lib/src/routing/SensorRouter.cpp`**
 
 Add a routing function for the new type. This extracts samples from incoming UDP frames and packages them into Elodin messages with the correct VTable ID.
 
@@ -128,7 +128,7 @@ for (auto& [vtable_id, msg] : sg_msgs) {
 }
 ```
 
-**`FSW/src/elodin/DatabaseConfig.cpp`**
+**`diablo_server/lib/src/elodin/DatabaseConfig.cpp`**
 
 Register the VTable schemas with Elodin so it accepts TABLE publishes:
 
@@ -145,7 +145,7 @@ for (int ch = 1; ch <= 6; ++ch) {
 
 ### 2. Relay — Register Schema AND Subscribe
 
-**`web-gui/backend/src/elodin-vtable.ts`**
+**`diablo_server/backend/src/elodin-vtable-registry.ts`**
 
 Two things are required in this file, and **both must be done or data will silently not flow**:
 
@@ -189,7 +189,7 @@ This sends `VTableStream` subscription messages to Elodin when the relay connect
 
 ### 3. Protocol Parser — Parse the Binary Payload
 
-**`web-gui/backend/src/elodin-protocol.ts`**
+**`diablo_server/backend/src/elodin-protocol.ts`**
 
 Add parsing logic in the `parseElodinPacket()` dispatcher function. Use the existing shared helpers for standard 21-byte layouts:
 
@@ -226,17 +226,17 @@ Add a `[sg_roles]` section (or similar) mapping channel IDs to names:
 "LOX_Tank_1" = 3
 ```
 
-**`web-gui/backend/src/routes/config.ts`**
+**`diablo_server/backend/src/routes/config.ts`**
 
 Add a loader function (similar to `loadSensorRoleMap`) that reads the TOML section and returns a `Record<number, string>` mapping channel ID → entity name.
 
-**`web-gui/backend/src/server-thin.ts`**
+**`diablo_server/backend/src/server.ts`**
 
 Pass the new entity map to `parseElodinPacket` via the `EntityMaps` parameter.
 
-### 5. server-thin.ts — No Changes Needed (Usually)
+### 5. server.ts — No Changes Needed (Usually)
 
-The relay `'packet'` handler in server-thin.ts already:
+The relay `'packet'` handler in server.ts already:
 1. Calls `parseElodinPacket()` for every packet
 2. Skips `_SEQUENCER_STATE` (special case for state updates)
 3. Broadcasts everything else as `MessageType.SENSOR_UPDATE`
@@ -248,7 +248,7 @@ As long as `parseElodinPacket` returns valid `ParsedSensorData`, the new sensor 
 
 ### 6. Frontend — Display the Data
 
-**`web-gui/shared/types.ts`**
+**`diablo_server/shared/types.ts`**
 
 Add the sensor type to `SensorType` enum if needed:
 
@@ -260,7 +260,7 @@ export enum SensorType {
 }
 ```
 
-**`web-gui/frontend/lib/store.ts`** (ALIASES)
+**`diablo_server/frontend/lib/store.ts`** (ALIASES)
 
 Add alias mappings if the entity names might come in different forms:
 
@@ -287,7 +287,7 @@ No subscription call is needed — `DataCache` has a single global `SENSOR_UPDAT
 
 ## How the 10 Hz Throttle Works
 
-`server-thin.ts` maintains a `Map<string, number>` of `entityKey → lastBroadcastMs`. For each parsed entity update:
+`server.ts` maintains a `Map<string, number>` of `entityKey → lastBroadcastMs`. For each parsed entity update:
 
 1. Increment `stats.relayEntityUpdatesReceived` (pre-throttle count)
 2. Check if `Date.now() - lastBroadcast < 100ms` — if so, skip
@@ -309,7 +309,7 @@ If a VTable isn't registered by the DAQ bridge yet when the relay subscribes, th
 
 ## Common Pitfalls
 
-1. **Forgot to register VTable schema AND/OR subscribe** — Both are required in `elodin-vtable.ts`. If the schema isn't registered, Elodin silently ignores both publishes and subscriptions — no errors logged anywhere. If the schema is registered but you forgot to subscribe, the relay won't receive the data. This is the hardest bug to find because everything appears to work (publisher says OK, no errors) but data never arrives.
+1. **Forgot to register VTable schema AND/OR subscribe** — Both are required in `elodin-vtable-registry.ts`. If the schema isn't registered, Elodin silently ignores both publishes and subscriptions — no errors logged anywhere. If the schema is registered but you forgot to subscribe, the relay won't receive the data. This is the hardest bug to find because everything appears to work (publisher says OK, no errors) but data never arrives.
 
 2. **Entity name mismatch** — The entity string in `parseElodinPacket` must match what the frontend expects. Use `config.toml` sensor roles for consistency.
 
@@ -325,12 +325,12 @@ If a VTable isn't registered by the DAQ bridge yet when the relay subscribes, th
 
 ## Testing
 
-The integration test (`scripts/test/test_integration.sh`) verifies the full pipeline. New sensor types will automatically appear in Test 1 (Sensor Data Flow) if:
-- The fake data generator (`scripts/fake_sensor_generator/`) sends data for the new type
+The integration test (`test/test_integration.sh`) verifies the full pipeline. New sensor types will automatically appear in Test 1 (Sensor Data Flow) if:
+- The simulator (`sim/board_simulator.py`) sends data for the new type
 - The DAQ bridge routes it to Elodin
 - The relay subscribes to the VTable
 - The protocol parser handles the packet ID
 
 Check the backend log for `[Elodin] Unmapped packet id=` warnings — set `ELODIN_DEBUG=1` to see packets that arrive but have no parser.
 
-With `sequencer_service` and the thin backend, the integration script also checks that **`[ThinServer] SequencerState from relay`** appears in the backend log (proof that `[0x50, 0x00]` rows are stored in Elodin and relayed). Optional: run with `INTEGRATION_SAVE_LOGS=1` to copy `integration_*.log` to `/tmp/integration_logs/` before cleanup (see `scripts/test/test_integration.sh`).
+With `sequencer_service` and the thin backend, the integration script also checks that **`[ThinServer] SequencerState from relay`** appears in the backend log (proof that `[0x50, 0x00]` rows are stored in Elodin and relayed). Optional: run with `INTEGRATION_SAVE_LOGS=1` to copy `integration_*.log` to `/tmp/integration_logs/` before cleanup (see `test/test_integration.sh`).
