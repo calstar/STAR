@@ -2,14 +2,14 @@
 
 Ground support data acquisition, monitoring, and control system for Diablo Avionics rocket test operations.
 
-The product is a full-stack pipeline: ESP32 sensor boards → UDP → DAQ bridge → Elodin time-series DB → backend → web GUI. Everything lives under `diablo_server/`.
+The product is a full-stack pipeline: ESP32 sensor boards → UDP → DAQ bridge → Elodin time-series DB → backend → web GUI. This is the `daq-server/` subproject of the STAR monorepo; the pipeline product code lives under `diablo_server/`.
 
 ---
 
 ## Repo Structure
 
 ```
-Diablo-FSW/
+daq-server/                 # this subproject (inside the STAR monorepo)
 ├── diablo_server/          # All pipeline product code
 │   ├── daq_bridge/         # C++ UDP receiver → Elodin DB publisher
 │   ├── services/           # C++ background services
@@ -35,9 +35,7 @@ Diablo-FSW/
 │   ├── config_flight_daq.toml
 │   └── config_ground_daq.toml
 │
-├── external/               # Git submodules
-│   ├── DAQv2-Comms/        # ESP32 comms library (daqv2_comms CMake target)
-│   ├── DiabloAvionics/     # Board firmware + state machine CSVs
+├── external/               # Submodule(s); contains only uWebSockets/
 │   └── uWebSockets/        # WebSocket library for C++ services
 │
 ├── deploy/                 # Deployment and operations scripts
@@ -88,12 +86,19 @@ Diablo-FSW/
 
 ### Clone
 
+`daq-server/` is part of the STAR monorepo. Clone the monorepo and follow the
+repo-root [`SETUP.md`](../SETUP.md) for full environment setup (toolchains,
+Node, Elodin, tmux). In short:
+
 ```bash
-git clone --recursive <repo-url>
-cd Diablo-FSW
+git clone https://github.com/calstar/STAR.git
+cd STAR/daq-server
 ```
 
-Or if already cloned:
+The wire-protocol library, firmware, and engine simulator are sibling trees in
+the monorepo (`../lib/DAQv2-Comms/`, `../firmware/`, `../EngineDesign/`) and are
+already vendored — no submodule init step is needed for them. The one remaining
+real submodule, `external/uWebSockets`, is initialized with:
 
 ```bash
 git submodule update --init --recursive

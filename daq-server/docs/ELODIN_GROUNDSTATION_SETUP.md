@@ -21,7 +21,7 @@ Groundstation GUI → Elodin DB → FSW Simulator → Elodin DB → GUI/Editor
 ### Terminal 1: Start Elodin Database
 
 ```bash
-cd /path/to/Diablo-FSW
+cd /path/to/STAR/daq-server
 ./scripts/test/test_elodin_groundstation.sh 2240 test_groundstation
 ```
 
@@ -44,7 +44,7 @@ Port: 2240
 ### Terminal 2: Generate Fake Sensor Data
 
 ```bash
-cd /path/to/Diablo-FSW
+cd /path/to/STAR/daq-server
 ./build/daq_comms/send_fake_pt 2240 1000
 ```
 
@@ -78,7 +78,7 @@ Messages: 1000
 If you have a FSW simulator that reads commands from Elodin:
 
 ```bash
-cd /path/to/Diablo-FSW
+cd /path/to/STAR/daq-server
 # Build the simulator
 cmake --build build --target test_fsw_simulator
 
@@ -105,7 +105,7 @@ State: STANDBY
 ### Terminal 4: Start Groundstation GUI
 
 ```bash
-cd /path/to/Diablo-FSW/groundstation
+cd /path/to/STAR/daq-server/groundstation
 python3 ground_station_elodin_gui.py
 ```
 

@@ -49,6 +49,15 @@ The controller integrates with:
 - **Safety Systems**: Constraint checking and safety filtering
 - **Logging**: Structured logging for analysis
 
+## Frontend Integration
+
+The controller is integrated into the web UI with flight-simulation coupling:
+
+- **Backend** (`backend/routers/control.py`): `POST /api/control/init`, `/step`, `/simulate`, `/reset`, and `GET /api/control/status`.
+- **Frontend** (`frontend/src/components/ControllerMode.tsx`): command-mode selection (target thrust or altitude goal), initial-condition entry, and real-time visualization of thrust tracking, pressures, actuation duty cycles, mixture ratio, value function, control effort, ullage volumes, and mass flow rates.
+
+Each controller step calls `engine_wrapper.estimate_from_pressures(...)` → `PintleEngineRunner.evaluate(...)` for full engine physics, propagates the dynamics state, and (in `/simulate`) uses the resulting thrust to update altitude/velocity for closed-loop flight coupling.
+
 ## See Also
 
 - Tests: `tests/control/robust_ddp/`

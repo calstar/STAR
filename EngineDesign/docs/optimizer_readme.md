@@ -208,6 +208,15 @@ After Layer 3, the code reruns a final burn to verify that recession, thrust, an
 
 ---
 
+### Layer 4 – Flight Validation
+
+Layer 4 (`engine/optimizer/layers/layer4_flight_simulation.py`, `run_layer4_flight_simulation()`) is an optional final step that validates the optimized design at the trajectory level:
+
+- Runs a RocketPy flight simulation for the converged engine to check trajectory‑level performance (apogee, burn behavior, tank fill iteration).
+- Only good candidates that pass Layers 1–3 are carried into the flight check.
+
+---
+
 ## Optimization Variables – Conceptual Overview
 
 Across the full pipeline, the optimizer manipulates several groups of variables (some in the coupled pintle–chamber stage, some in Layers 1–3):

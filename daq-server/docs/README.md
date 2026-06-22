@@ -1,49 +1,84 @@
 # Documentation
 
-## Essential Documentation
+Reference docs for the Diablo DAQ server / flight software. For environment
+setup and running tests, see the monorepo root [`SETUP.md`](../../SETUP.md) and
+the subproject [`README.md`](../README.md).
 
-### System Architecture
-- **adding-sensor-streams.md** - Adding Elodin streams (relay, thin parser); **includes VTable wire alignment** — `u32`/`f32` must be 4-byte aligned (`CommsMessage` is packed, so add explicit padding after `u8` when needed; see SequencerState example).
-- **DIABLOAVIONICS_PACKET_FORMAT.md** - Actual DiabloAvionics packet format (6-byte header, little-endian)
-- **DIABLOAVIONICS_ANALYSIS.md** - Complete analysis of DiabloAvionics and DAQv2-Comms systems
-- **SENSOR_ASSIGNMENT_SYSTEM.md** - Sensor assignment, IP assignment, and configuration distribution
-- **CONFIGURATION_GUIDE.md** - Flight DAQ vs Ground DAQ configuration guide
-- **ELODIN_GROUNDSTATION_SETUP.md** - Elodin database and ground station setup
-- **CLEANUP_SUMMARY.md** - Summary of cleanup and reorganization
+## Architecture & Protocol
 
-### Configuration
-- **config/README.md** - Configuration file documentation
+- [adding-sensor-streams.md](adding-sensor-streams.md) — Adding Elodin streams
+  (relay, thin parser); includes VTable wire alignment notes (`u32`/`f32` must
+  be 4-byte aligned; `CommsMessage` is packed, so add explicit padding after
+  `u8`).
+- [DIABLOAVIONICS_PACKET_FORMAT.md](DIABLOAVIONICS_PACKET_FORMAT.md) — DiabloAvionics
+  packet format (6-byte header, little-endian).
+- [DIABLOAVIONICS_ANALYSIS.md](DIABLOAVIONICS_ANALYSIS.md) — Analysis of the
+  DiabloAvionics and DAQv2-Comms systems.
+- [DIABLOAVIONICS_NETWORK_CONFIG.md](DIABLOAVIONICS_NETWORK_CONFIG.md) — Board
+  network/IP configuration.
+- [SENSOR_ASSIGNMENT_SYSTEM.md](SENSOR_ASSIGNMENT_SYSTEM.md) — Sensor assignment,
+  IP assignment, and configuration distribution.
+- [ACTUATOR_PIPELINE_AND_TMUX.md](ACTUATOR_PIPELINE_AND_TMUX.md) — Actuator
+  command pipeline and the `start_tmux_dev.sh` dev stack.
 
-## Quick Reference
+## Configuration
+
+- [CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md) — Flight DAQ vs Ground DAQ
+  configuration guide.
+- [../config/README.md](../config/README.md) — Configuration file reference.
 
 ### Flight DAQ (`config_flight_daq.toml`)
 - **Network**: `192.168.3.0/24` (IP range 100-150)
-- **Handles**: Flight sensors and actuators during flight
 - **Sensors**: PT_HP, PT_LP, PT_FUP, PT_FDP, PT_OUP, PT_ODP
-- **Use**: Flight operations
-- **During Hotfire**: Everything connects to ground DAQ instead
+- **Use**: Flight operations. During hotfire everything connects to ground DAQ.
 
 ### Ground DAQ (`config_ground_daq.toml`)
 - **Network**: `192.168.2.0/24` (IP range 100-150)
-- **Handles**: GSE sensors, and during hotfire (ALL sensors connect here)
 - **Sensors**: PT_OF, PT_FF, PT_HPF, PT_MPF, PT_LPF
-- **Use**: Development, testing, hotfire
-- **During Flight**: Flight sensors/actuators go to flight DAQ, everything else stays here
-
-## Usage
+- **Use**: Development, testing, hotfire (all sensors connect here with
+  `hotfire.enabled = true`).
 
 ```bash
 # Ground DAQ (development/hotfire)
-./build/daq_comms/daq_bridge config/config_ground_daq.toml
+./build/bin/daq_bridge config/config_ground_daq.toml
 
 # Flight DAQ (flight operations)
-./build/daq_comms/daq_bridge config/config_flight_daq.toml
-
-# Hotfire Mode: Set hotfire.enabled = true in config_ground_daq.toml
+./build/bin/daq_bridge config/config_flight_daq.toml
 ```
 
-## Operational Modes
+## Operations & Deployment
 
-1. **Development**: Use Ground DAQ config
-2. **Hotfire**: Use Ground DAQ config with `hotfire.enabled = true` (all sensors)
-3. **Flight**: Use Flight DAQ for flight sensors, Ground DAQ for GSE sensors
+- [INSTALL.md](INSTALL.md) — Installation guide and system requirements.
+- [JETSON_DEPLOYMENT.md](JETSON_DEPLOYMENT.md) — Deployment on NVIDIA Jetson
+  Xavier NX (ARM64 Ubuntu).
+- [ELODIN_GROUNDSTATION_SETUP.md](ELODIN_GROUNDSTATION_SETUP.md) — Elodin
+  database and ground station setup walkthrough.
+- [ADC_AND_ELODIN_DIAGNOSTICS.md](ADC_AND_ELODIN_DIAGNOSTICS.md) — Diagnosing
+  ADC distortion and messages not reaching Elodin.
+
+## Controller & Calibration
+
+- [ROBUST_DDP_AND_CALIBRATION.md](ROBUST_DDP_AND_CALIBRATION.md) — Robust DDP
+  controller and IMU calibration.
+- [CONTROLLER_STACK_AND_DB_WRITES.md](CONTROLLER_STACK_AND_DB_WRITES.md) —
+  Controller stack and Elodin DB writes.
+- [CONTROLLER_THRUST_CURVE_GUIDE.md](CONTROLLER_THRUST_CURVE_GUIDE.md) — Robust
+  DDP thrust-curve matching.
+- [CALIBRATION_STACK_ARCHITECTURE.tex](CALIBRATION_STACK_ARCHITECTURE.tex) —
+  Calibration stack architecture (LaTeX).
+- [PT_Calibration_Writeup (1).pdf](<PT_Calibration_Writeup (1).pdf>) — PT
+  calibration writeup.
+- [Robust_Dynamic_Thresholding.pdf](Robust_Dynamic_Thresholding.pdf) — Robust
+  dynamic thresholding writeup.
+
+## Web GUI
+
+- [web-gui/DATA_FLOW.md](web-gui/DATA_FLOW.md) — Web GUI data flow architecture.
+- [web-gui/NETWORK_ACCESS.md](web-gui/NETWORK_ACCESS.md) — Network access
+  configuration for the GUI.
+
+## Testing
+
+- [DEBUGGING_AND_TESTING_SCRIPTS.md](DEBUGGING_AND_TESTING_SCRIPTS.md) — Utility
+  and diagnostic scripts for verifying the Elodin stack, debugging protocol
+  issues, and testing race conditions.

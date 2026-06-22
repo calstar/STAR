@@ -177,15 +177,12 @@ EngineDesign/
 │   └── cache/                   # CEA cache files
 │
 ├── docs/                        # Documentation
-│   ├── pipeline_status.md       # Implementation status
-│   ├── quick_reference.md      # Quick reference guide
 │   ├── layer_requirements.md    # Layer interface requirements
-│   ├── optimizer_readme.md      # Optimizer documentation
-│   ├── optimization_layers_readme.md
+│   ├── optimizer_readme.md      # Optimizer architecture and usage
 │   └── control/                 # Control system documentation
 │       ├── README.md
-│       ├── DDP_SOLVER.md
-│       └── CONTROLLER_SUMMARY.md
+│       ├── INDEX.md
+│       └── DDP_SOLVER.md
 │
 ├── scripts/                     # Utility scripts
 │   ├── simple_example.py
@@ -197,8 +194,8 @@ EngineDesign/
 │
 ├── dev.sh                       # Development startup script
 ├── README.md
-├── QUICKSTART.md                # Quick start guide
 ├── STARTUP_GUIDE.md             # Detailed startup instructions
+├── TROUBLESHOOTING.md           # Common issues and fixes
 ├── requirements.txt
 └── .gitignore
 ```
@@ -301,8 +298,8 @@ python scripts/pressure_sweep.py
 ```
 
 **For more detailed setup instructions, see:**
-- `QUICKSTART.md` - Quick start guide for backend/frontend
 - `STARTUP_GUIDE.md` - Detailed startup instructions and troubleshooting
+- `TROUBLESHOOTING.md` - Common issues and fixes
 
 ## Configuration
 
@@ -416,19 +413,19 @@ L*-based: `η_c* = 1 - C × e^(-K×L*)`
 See the `docs/` folder for additional documentation:
 
 **Core Documentation:**
-- `docs/pipeline_status.md` - Detailed implementation status
 - `docs/layer_requirements.md` - Layer interface requirements
-- `docs/quick_reference.md` - Quick reference guide
-- `docs/optimizer_readme.md` - Optimizer architecture and usage
-- `docs/optimization_layers_readme.md` - Layer structure and responsibilities
+- `docs/optimizer_readme.md` - Optimizer architecture, layers, and usage
+- `docs/Cd_calculation_methodology.md` - Discharge coefficient methodology
+- `docs/pintle_geometry_constraints.md` - Pintle geometry constraints
+- `docs/stability/combustion_stability_physics.md` - Combustion stability physics
 
 **Control System Documentation:**
 - `docs/control/README.md` - Control system overview
+- `docs/control/INDEX.md` - Module-by-module documentation index
 - `docs/control/DDP_SOLVER.md` - DDP solver implementation
-- `docs/control/CONTROLLER_SUMMARY.md` - Controller architecture
 - `docs/control/CONSTRAINTS.md` - Safety constraints
 - `docs/control/ROBUSTNESS.md` - Robustness features
 
 **Additional Guides:**
-- `QUICKSTART.md` - Quick start for backend/frontend
 - `STARTUP_GUIDE.md` - Detailed startup and troubleshooting
+- `TROUBLESHOOTING.md` - Common issues and fixes
