@@ -49,4 +49,4 @@ Then open http://localhost:5173.
 
 ## Requirements
 
-Node.js 20.19+ or 22.12+ (required by Vite). See `../STARTUP_GUIDE.md` and `../TROUBLESHOOTING.md` for setup notes.
+Node.js 18+ (the frontend uses Vite 5; Node 18.0+ or 20.0+ recommended). See `../STARTUP_GUIDE.md` and `../TROUBLESHOOTING.md` for setup notes.

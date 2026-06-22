@@ -16,11 +16,13 @@
 
 **Layer 1** is the first major optimization step in the engine design pipeline. Its job is to find a **good starting point** for the engine geometry and initial tank pressures.
 
+> **Note on injector types:** Layer 1 supports two injector schemes, selected by `injector.type` in the config: **`pintle`** and **`impinging`** (the default in `configs/default.yaml`). The variable layout differs between them (see [Optimization Variables](#optimization-variables)). This guide originally described the pintle scheme; the impinging scheme adds per-jet diameter/angle/spacing variables and momentum-ratio constraints. Implementation: `engine/optimizer/layers/layer1_static_optimization.py`.
+
 ### What Layer 1 Optimizes (Static Only)
 
 Layer 1 optimizes **time-independent** quantities:
 - **Engine geometry**: throat area, chamber length (L*), expansion ratio, chamber diameter
-- **Injector geometry**: pintle tip diameter, gap height, number of orifices, orifice diameter
+- **Injector geometry**: pintle scheme — pintle tip diameter, gap height, number of orifices, orifice diameter; impinging scheme — number of doublets, per-jet diameter, impingement angle, and spacing for oxidizer and fuel
 - **Initial tank pressures**: single starting pressure for LOX and fuel tanks
 
 ### What Layer 1 Does NOT Optimize
@@ -176,20 +178,44 @@ Let's break down each section:
 
 ## Optimization Variables
 
-Layer 1 optimizes **10 variables**:
+The variable layout depends on `injector.type`. Indices 0-3 (chamber/nozzle geometry) are shared; the injector and pressure indices differ. The bounds below come from `run_layer1_optimization()` in `layer1_static_optimization.py` (the `if injector_type == "impinging"` / `else` branches building the `bounds` list); the actual conversion is in `create_layer1_apply_x_to_config()`.
+
+### Pintle scheme (10 variables)
 
 | Index | Variable | Bounds | Description |
 |-------|----------|--------|-------------|
-| 0 | `A_throat` | `[min_injector_area*1.1, 0.01]` | Throat area [m²] |
+| 0 | `A_throat` | `[min_A_throat_safe, 4.0e-3]` | Throat area [m²] |
 | 1 | `Lstar` | `[min_Lstar, max_Lstar]` | Characteristic length [m] |
-| 2 | `expansion_ratio` | `[4.0, 12.0]` | Nozzle expansion ratio |
-| 3 | `D_chamber_outer` | `[0.5*max_od, max_od]` | Chamber outer diameter [m] |
-| 4 | `d_pintle_tip` | `[0.010, 0.025]` | Pintle tip diameter [m] |
-| 5 | `h_gap` | `[0.0003, 0.001]` | Fuel gap height [m] |
-| 6 | `n_orifices` | `[10, 18]` | Number of LOX orifices (integer) |
-| 7 | `d_orifice` | `[0.0012, 0.0025]` | LOX orifice diameter [m] |
-| 8 | `P_O_start_psi` | `[50-95% of max]` | Initial LOX pressure [psi] |
-| 9 | `P_F_start_psi` | `[50-95% of max]` | Initial fuel pressure [psi] |
+| 2 | `expansion_ratio` | `[exp_ratio_lo, exp_ratio_hi]` (from config/requirements) | Nozzle expansion ratio |
+| 3 | `D_chamber_outer` | `[min_outer_diameter, max_chamber_od]` | Chamber outer diameter [m] |
+| 4 | `d_pintle_tip` | `[0.006, 0.040]` | Pintle tip diameter [m] |
+| 5 | `h_gap` | `[0.0003, 0.0015]` | Fuel gap height [m] |
+| 6 | `n_orifices` | `[14, 14.1]` (effectively fixed at 14) | Number of LOX orifices (integer) |
+| 7 | `d_orifice` | `[0.001, 0.004]` | LOX orifice diameter [m] |
+| 8 | `P_O_start_psi` | pressure band (default ~65-85% of max) | Initial LOX pressure [psi] |
+| 9 | `P_F_start_psi` | pressure band (default ~65-85% of max) | Initial fuel pressure [psi] |
+
+### Impinging scheme (13 variables, default)
+
+Oxidizer and fuel share a common `n_doublets` count (paired unlike-doublet elements) but have independent jet diameter, impingement angle, and spacing.
+
+| Index | Variable | Bounds | Description |
+|-------|----------|--------|-------------|
+| 0 | `A_throat` | `[min_A_throat_safe, 4.0e-3]` | Throat area [m²] |
+| 1 | `Lstar` | `[min_Lstar, max_Lstar]` | Characteristic length [m] |
+| 2 | `expansion_ratio` | `[exp_ratio_lo, exp_ratio_hi]` | Nozzle expansion ratio |
+| 3 | `D_chamber_outer` | `[min_outer_diameter, max_chamber_od]` | Chamber outer diameter [m] |
+| 4 | `n_doublets` | `[5, n_hi_upper]` (int, capped by chamber bore) | Number of doublet elements (shared O/F) |
+| 5 | `d_jet_O` | `[0.0005, d_jet_hi]` | Oxidizer jet diameter [m] |
+| 6 | `impingement_angle_O` | `[15, 85]` deg | Oxidizer impingement angle |
+| 7 | `spacing_O` | `[0.003, spacing_hi]` | Oxidizer element spacing [m] |
+| 8 | `d_jet_F` | `[0.0005, d_jet_hi]` | Fuel jet diameter [m] |
+| 9 | `impingement_angle_F` | `[15, 85]` deg | Fuel impingement angle |
+| 10 | `spacing_F` | `[0.003, spacing_hi]` | Fuel element spacing [m] |
+| 11 | `P_O_start_psi` | pressure band | Initial LOX pressure [psi] |
+| 12 | `P_F_start_psi` | pressure band | Initial fuel pressure [psi] |
+
+(`d_jet_hi`, `spacing_hi`, and `n_hi_upper` are derived from the chamber inner diameter; see `impinging_d_jet_upper_bound_m()` and surrounding code.)
 
 ### Why These Bounds?
 
@@ -229,6 +255,8 @@ x0 = [
 ## Objective Function Deep Dive
 
 The objective function is the **heart** of the optimizer. It evaluates how good a candidate design is.
+
+> **Caveat — specific weights have evolved.** The objective is computed in `_compute_objective_value()` (and the parallel-worker variants `_eval_candidate()` / `_layer1_final_primary_objective_terms()`). It now uses a two-branch structure: an **infeasibility floor** (`_LAYER1_BASE_INFEAS = 1e6`) for designs that violate hard gates, and a **weighted-sum feasible branch** with named weights (`W_CF`, `W_THRUST`, `W_CHAMBER_SHAPE`, plus impinging momentum-ratio / angle / SMD hinge terms). The exact numeric weights and target values below are illustrative of the *priority order* and may not match the current code — treat them as relative priorities, not literal constants, and read the source for current values.
 
 ### Structure
 
@@ -470,7 +498,7 @@ if not thrust_check_passed:
 
 **Root cause**: Injector too large → excess mass flow → excess thrust → high Cf.
 
-**Solution**: Code reduced injector bounds (max_d_orifice: 4mm → 2.5mm, max_n_orifices: 20 → 18).
+**Solution**: Code constrains injector bounds so the injector cannot supply far more flow than the throat can pass (see the bounds tables above for current pintle/impinging limits).
 
 **Why this works**: Smaller injector = less mass flow = proper thrust = correct Cf.
 

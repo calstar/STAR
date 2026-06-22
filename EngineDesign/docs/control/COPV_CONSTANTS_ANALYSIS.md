@@ -1,6 +1,11 @@
 # COPV Constants Analysis
 
-## Your System
+Reference for choosing the COPV consumption coefficients used by the robust DDP controller
+(`copv_cF`, `copv_cO`, `copv_loss`, `reg_ratio` / `reg_setpoint`). These can also be derived
+programmatically with `engine/control/robust_ddp/copv_calculator.py` or identified online with
+`ParameterIdentifier`. The worked example below uses a representative system.
+
+## Example System
 
 - **COPV Volume**: 6L (0.006 m³)
 - **COPV Pressure**: 2750 psi (18.96 MPa)
@@ -16,12 +21,14 @@ From `configs/robust_ddp_default.yaml`:
 - `copv_loss = 1,000 Pa/s` = **0.145 psi/s** (leakage)
 - `reg_ratio = 0.8` = **80% of COPV pressure**
 
-## Issues Identified
+## Things to Check When Configuring
 
-### 1. Regulator Ratio is Wrong
+### 1. Regulator Ratio Must Match Your Hardware
 
-**Current**: `reg_ratio = 0.8` → Would give 2200 psi regulator pressure  
-**Your System**: 1000 psi / 2750 psi = **0.364** (36.4%)
+The default `reg_ratio = 0.8` gives a regulator pressure of 80% of COPV pressure (2200 psi for a
+2750 psi COPV). If your regulated pressure differs, set it explicitly.
+
+**Example**: 1000 psi / 2750 psi = **0.364** (36.4%)
 
 **Fix**: Set `reg_ratio = 0.364` or use `reg_setpoint = 1000 * 6894.76 = 6,894,760 Pa`
 
@@ -122,12 +129,12 @@ However, for **control purposes**, the linear model is acceptable if:
 2. Operating range is limited (small pressure changes)
 3. Model is updated periodically
 
-## Action Items
+## Checklist
 
-1. ✅ **Fix `reg_ratio`**: Set to 0.364 (or use `reg_setpoint = 6.89 MPa`)
-2. ✅ **Enable online identification**: Use `ParameterIdentifier` to adapt coefficients
-3. ✅ **Monitor**: Check if identified values match expected flow rates
-4. ✅ **Validate**: Compare controller predictions to actual COPV behavior
+1. **Set `reg_ratio` / `reg_setpoint`** to match the actual regulated pressure
+2. **Enable online identification**: Use `ParameterIdentifier` to adapt coefficients
+3. **Monitor**: Check that identified values match expected flow rates
+4. **Validate**: Compare controller predictions to actual COPV behavior
 
 ## Example Config Update
 

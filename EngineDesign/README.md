@@ -1,6 +1,6 @@
 # Pintle Injector Liquid Rocket Engine Design Pipeline
 
-A comprehensive physics-based simulation and **multi-layer optimization pipeline** for LOX/RP-1 pintle injector rocket engines. Takes tank pressures as input and solves for chamber pressure, mass flow rates, thrust, and all performance parameters.
+A comprehensive physics-based simulation and **multi-layer optimization pipeline** for LOX/hydrocarbon pintle and impinging injector rocket engines (the default config in `configs/default.yaml` is LOX/CH4 impinging). Takes tank pressures as input and solves for chamber pressure, mass flow rates, thrust, and all performance parameters.
 
 ## Overview
 
@@ -307,31 +307,23 @@ Engine parameters are defined in YAML. Key sections of `configs/default.yaml`:
 
 ```yaml
 fluids:
+  fuel: { name: Methane, density: 422.6, ... }
   oxidizer: { name: LOX, density: 1140.0, ... }
-  fuel: { name: RP-1, density: 780.0, ... }
 
 injector:
-  type: pintle
+  type: impinging          # or "pintle"
   geometry:
-    lox: { n_orifices: 12, d_orifice: 0.003, ... }
-    fuel: { d_pintle_tip: 0.015, h_gap: 0.0005, ... }
+    oxidizer: { n_elements: 20, d_jet: 0.002, impingement_angle: 50.0, ... }
+    fuel: { n_elements: 20, d_jet: 0.002, impingement_angle: 60.0, ... }
 
 feed_system:
-  oxidizer: { K0: 2.0, ... }
   fuel: { K0: 2.0, ... }
+  oxidizer: { K0: 2.0, ... }
 
 combustion:
-  cea: { oxName: LOX, fuelName: RP-1, ... }
-  efficiency: { ... }
-
-chamber:
-  A_throat: 0.0005
-  Lstar: 1.0
-  ...
-
-nozzle:
-  expansion_ratio: 4.0
-  ...
+  cea: { ox_name: LOX, fuel_name: CH4, expansion_ratio: 6.14, ... }
+  efficiency: { model: exponential, ... }
+  # Lstar and A_throat live alongside the cea block in the combustion section
 
 ablative_cooling:
   enabled: true
@@ -340,7 +332,7 @@ ablative_cooling:
 
 graphite_insert:
   enabled: true
-  initial_thickness: 0.005
+  initial_thickness: 0.006
   ...
 ```
 
