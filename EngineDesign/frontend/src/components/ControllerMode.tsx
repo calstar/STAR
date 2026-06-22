@@ -8,12 +8,10 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
-  ReferenceLine,
 } from 'recharts';
 import {
   initController,
   simulateController,
-  resetController,
   getControllerStatus,
   type EngineConfig,
   type ControllerSimulateRequest,
@@ -44,8 +42,8 @@ export function ControllerMode({ config }: ControllerModeProps) {
   const [initialPreg, setInitialPreg] = useState('1000'); // psi
   const [initialPufuel, setInitialPufuel] = useState('435'); // psi
   const [initialPuox, setInitialPuox] = useState('507'); // psi
-  const [initialPdfuel, setInitialPdfuel] = useState('420'); // psi
-  const [initialPdox, setInitialPdox] = useState('500'); // psi
+  const [initialPdfuel] = useState('420'); // psi
+  const [initialPdox] = useState('500'); // psi
   const [initialAltitude, setInitialAltitude] = useState('0');
   const [initialVelocity, setInitialVelocity] = useState('0');
   const [vehicleMass, setVehicleMass] = useState('100');
@@ -125,8 +123,8 @@ export function ControllerMode({ config }: ControllerModeProps) {
       if (commandMode === 'thrust_desired') {
         if (useThrustCurve && thrustCurve.length > 0) {
           // Piecewise thrust curve
-          thrustCurveArray = thrustCurve.map(([t, f]) => f);
-          timeArray = thrustCurve.map(([t, f]) => t);
+          thrustCurveArray = thrustCurve.map(([, f]) => f);
+          timeArray = thrustCurve.map(([t]) => t);
           cmd = {
             command_type: 'thrust_desired',
             thrust_desired: null,
@@ -585,6 +583,8 @@ export function ControllerMode({ config }: ControllerModeProps) {
                                     V_u_ox: prev.map(d => d.V_u_ox || 0),
                                     mdot_F: prev.map(d => d.mdot_F || 0),
                                     mdot_O: prev.map(d => d.mdot_O || 0),
+                                    w_bar: prev.map(d => d.w_bar || []),
+                                    constraint_margins: prev.map(d => d.constraint_margins || {}),
                                   };
                                   setResults(finalResults);
                                   return prev;

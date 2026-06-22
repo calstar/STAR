@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   LineChart,
   Line,
@@ -56,7 +56,6 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
     ablative_q_conv_profiles_w_m2,
     ablative_q_rad_profiles_w_m2,
     ablative_q_net_profiles_w_m2,
-    ablative_throat_index,
   } = data;
 
   // Check if we have regen heat flux profile data
@@ -274,8 +273,8 @@ export function HeatFluxProfileChart({ data }: HeatFluxProfileChartProps) {
         <p className="text-xs text-[var(--color-text-tertiary)] mt-2">
           Debug: ablative_axial_positions_m = {ablative_axial_positions_m?.length ?? 'undefined'}, 
           ablative_q_incident_profiles = {ablative_q_incident_profiles_w_m2?.length ?? 'undefined'}
-          {ablative_q_incident_profiles_w_m2?.length > 0 && (
-            <>, first profile length = {ablative_q_incident_profiles_w_m2[0]?.length ?? 'undefined'}</>
+          {(ablative_q_incident_profiles_w_m2?.length ?? 0) > 0 && (
+            <>, first profile length = {ablative_q_incident_profiles_w_m2?.[0]?.length ?? 'undefined'}</>
           )}
         </p>
       </div>

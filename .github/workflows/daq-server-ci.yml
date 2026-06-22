@@ -12,6 +12,11 @@ name: DAQ Server CI/CD
       - '.github/workflows/daq-server-ci.yml'
   workflow_dispatch:
 
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: daq-server-${{ github.ref }}
+  cancel-in-progress: true
+
 defaults:
   run:
     working-directory: daq-server

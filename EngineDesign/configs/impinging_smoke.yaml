@@ -50,7 +50,7 @@ combustion:
     Pc_range:
     - 1000000.0
     - 9000000.0
-    cache_file: output/cache/cea_cache_LOX_Ethanol_3D.npz
+    cache_file: tests/fixtures/cea/cea_cache_LOX_Ethanol_3D.npz
     cea_parallel_workers: null
     eps_range:
     - 4.0

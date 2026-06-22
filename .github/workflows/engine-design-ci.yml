@@ -1,0 +1,137 @@
+name: Engine Design CI
+
+# Quoted `on` — YAML 1.1 treats bare `on` as boolean true, which breaks
+# workflow triggers in some parsers (matches daq-server-ci.yml).
+'on':
+  push:
+    paths:
+      - 'EngineDesign/**'
+      - '.github/workflows/engine-design-ci.yml'
+  pull_request:
+    paths:
+      - 'EngineDesign/**'
+      - '.github/workflows/engine-design-ci.yml'
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: engine-design-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: EngineDesign
+
+jobs:
+  # Python regression gate. Fast (~seconds): no gfortran/rocketcea — the one
+  # CEA-backed config loads a committed cache fixture (tests/fixtures/cea/).
+  python-tests:
+    name: Python tests (regression gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        cache-dependency-path: EngineDesign/requirements-ci.txt
+
+    - name: Install dependencies (CI subset — no rocketcea/gfortran)
+      run: pip install -r requirements-ci.txt
+
+    # The committed CEA fixture must be present so PintleEngineRunner loads
+    # (np.load) instead of building a cache via rocketcea. Fail loudly if it
+    # ever goes missing, rather than silently hanging on a live CEA build.
+    - name: Verify committed CEA cache fixture is present
+      run: test -f tests/fixtures/cea/cea_cache_LOX_Ethanol_3D.npz
+
+    # --timeout guards against any test accidentally triggering a live CEA
+    # build (which would otherwise hang the runner). thread method so a stuck
+    # C/Fortran call is still interrupted.
+    - name: Run test gate
+      run: |
+        python -m pytest tests/ \
+          --timeout=120 --timeout-method=thread \
+          --durations=15 -q
+
+  # Backend imports cleanly (FastAPI app + all routers load).
+  backend-smoke:
+    name: Backend import smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        cache-dependency-path: EngineDesign/requirements-ci.txt
+
+    - name: Install dependencies
+      run: pip install -r requirements-ci.txt
+
+    - name: Import backend app
+      run: python -c "import backend.main; print('backend.main imports OK')"
+
+  # Frontend type-checks and builds (tsc -b && vite build). eslint runs as a
+  # non-blocking signal: there is a backlog of pre-existing lint findings
+  # (mostly no-explicit-any) that should be cleaned up but should not gate.
+  frontend:
+    name: Frontend (TypeScript build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Use Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        cache-dependency-path: EngineDesign/frontend/package-lock.json
+
+    - name: Install dependencies
+      working-directory: EngineDesign/frontend
+      run: npm ci || npm install
+
+    - name: TypeScript build
+      working-directory: EngineDesign/frontend
+      run: npm run build
+
+    - name: ESLint (non-blocking — pre-existing backlog)
+      working-directory: EngineDesign/frontend
+      run: npm run lint
+      continue-on-error: true
+
+  # Aggregate status, mirroring daq-server-ci.yml's build-summary.
+  engine-design-summary:
+    name: Engine Design Summary
+    runs-on: ubuntu-latest
+    needs:
+      - python-tests
+      - backend-smoke
+      - frontend
+    if: always()
+
+    steps:
+    - name: Summary
+      working-directory: .
+      run: |
+        echo "## Engine Design CI Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Python tests (gate) | ${{ needs.python-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Backend smoke | ${{ needs.backend-smoke.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Frontend build | ${{ needs.frontend.result }} |" >> $GITHUB_STEP_SUMMARY

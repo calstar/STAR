@@ -29,6 +29,9 @@ output/
 # Individual generated files that might be in root
 *.log
 *.npz
+# Exception: committed CEA cache fixtures used by the CI test gate. These are
+# small (~300 KB), deterministic lookup tables (see tests/fixtures/cea/README).
+!tests/fixtures/cea/*.npz
 *.png
 *.jpg
 *.pdf
