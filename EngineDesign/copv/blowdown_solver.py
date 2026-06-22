@@ -13,8 +13,127 @@ Physics model:
 
 import numpy as np
 import pandas as pd
-from typing import Dict, Optional, Tuple, Callable
+from typing import Dict, Optional, Tuple, Callable, Any
 from scipy.interpolate import RegularGridInterpolator
+
+
+def split_propellant_by_of(total_kg: float, of_ratio: float) -> Tuple[float, float]:
+    """Split total propellant mass into (oxidizer_kg, fuel_kg) for O/F = of_ratio."""
+    total_kg = float(total_kg)
+    of_ratio = max(float(of_ratio), 1e-9)
+    m_fuel = total_kg / (1.0 + of_ratio)
+    m_oxidizer = total_kg - m_fuel
+    return m_oxidizer, m_fuel
+
+
+def resolve_tank_volume_m3(
+    *,
+    tank_volume_m3: Optional[float],
+    ullage_volume_m3: Optional[float],
+    propellant_mass_kg: float,
+    density_kg_m3: float,
+    tank_name: str = "tank",
+) -> float:
+    """Resolve total tank volume from either explicit volume or ullage + liquid fill."""
+    if tank_volume_m3 is not None and ullage_volume_m3 is not None:
+        liquid_vol = propellant_mass_kg / max(density_kg_m3, 1e-9)
+        expected_ullage = float(tank_volume_m3) - liquid_vol
+        rel_err = abs(expected_ullage - float(ullage_volume_m3)) / max(abs(float(ullage_volume_m3)), 1e-9)
+        if rel_err > 0.05:
+            raise ValueError(
+                f"{tank_name}: tank volume and ullage volume are inconsistent "
+                f"(expected ullage {expected_ullage:.6f} m³, got {float(ullage_volume_m3):.6f} m³)"
+            )
+        return float(tank_volume_m3)
+
+    if tank_volume_m3 is not None:
+        vol = float(tank_volume_m3)
+    elif ullage_volume_m3 is not None:
+        liquid_vol = propellant_mass_kg / max(density_kg_m3, 1e-9)
+        vol = float(ullage_volume_m3) + liquid_vol
+    else:
+        raise ValueError(f"{tank_name}: provide tank_volume_m3 or ullage_volume_m3")
+
+    liquid_vol = propellant_mass_kg / max(density_kg_m3, 1e-9)
+    if vol <= liquid_vol:
+        raise ValueError(
+            f"{tank_name}: tank volume {vol:.6f} m³ is too small for "
+            f"{propellant_mass_kg:.4f} kg propellant (liquid volume {liquid_vol:.6f} m³)"
+        )
+    return vol
+
+
+def resolve_blowdown_tank_state(
+    config: Any,
+    *,
+    total_propellant_kg: Optional[float] = None,
+    of_ratio: Optional[float] = None,
+    lox_tank_volume_m3: Optional[float] = None,
+    lox_ullage_volume_m3: Optional[float] = None,
+    fuel_tank_volume_m3: Optional[float] = None,
+    fuel_ullage_volume_m3: Optional[float] = None,
+    lox_propellant_mass_kg: Optional[float] = None,
+    fuel_propellant_mass_kg: Optional[float] = None,
+) -> Tuple[float, float, float, float, float, float]:
+    """Resolve LOX/fuel (volume_m3, mass_kg, density) for blowdown simulation.
+
+    Falls back to config tank fields when overrides are omitted.
+    """
+    rho_lox = float(config.fluids["oxidizer"].density)
+    rho_fuel = float(config.fluids["fuel"].density)
+
+    if lox_propellant_mass_kg is not None and fuel_propellant_mass_kg is not None:
+        m_lox = float(lox_propellant_mass_kg)
+        m_fuel = float(fuel_propellant_mass_kg)
+    elif total_propellant_kg is not None:
+        if of_ratio is None:
+            dr = getattr(config, "design_requirements", None)
+            of_ratio = float(getattr(dr, "optimal_of_ratio", None) or 2.5)
+        m_lox, m_fuel = split_propellant_by_of(float(total_propellant_kg), float(of_ratio))
+    else:
+        lox_tank = getattr(config, "lox_tank", None)
+        fuel_tank = getattr(config, "fuel_tank", None)
+        m_lox = float(getattr(lox_tank, "mass", None) or 0.0)
+        m_fuel = float(getattr(fuel_tank, "mass", None) or 0.0)
+        if m_lox <= 0 or m_fuel <= 0:
+            raise ValueError(
+                "Blowdown requires total_propellant_kg or positive lox_tank.mass and fuel_tank.mass in config"
+            )
+
+    if lox_tank_volume_m3 is not None or lox_ullage_volume_m3 is not None:
+        V_lox = resolve_tank_volume_m3(
+            tank_volume_m3=lox_tank_volume_m3,
+            ullage_volume_m3=lox_ullage_volume_m3,
+            propellant_mass_kg=m_lox,
+            density_kg_m3=rho_lox,
+            tank_name="LOX tank",
+        )
+    else:
+        V_lox = _config_tank_volume(config, "lox_tank", "lox_h", "lox_radius")
+
+    if fuel_tank_volume_m3 is not None or fuel_ullage_volume_m3 is not None:
+        V_fuel = resolve_tank_volume_m3(
+            tank_volume_m3=fuel_tank_volume_m3,
+            ullage_volume_m3=fuel_ullage_volume_m3,
+            propellant_mass_kg=m_fuel,
+            density_kg_m3=rho_fuel,
+            tank_name="Fuel tank",
+        )
+    else:
+        V_fuel = _config_tank_volume(config, "fuel_tank", "rp1_h", "rp1_radius")
+
+    return V_lox, m_lox, rho_lox, V_fuel, m_fuel, rho_fuel
+
+
+def _config_tank_volume(config: Any, tank_attr: str, h_attr: str, r_attr: str) -> float:
+    tank = getattr(config, tank_attr, None)
+    if tank and hasattr(tank, "tank_volume_m3") and tank.tank_volume_m3 is not None:
+        return float(tank.tank_volume_m3)
+    if tank and hasattr(tank, h_attr) and hasattr(tank, r_attr):
+        return float(np.pi * getattr(tank, r_attr) ** 2 * getattr(tank, h_attr))
+    if hasattr(config, "propellant") and hasattr(config.propellant, "tank_volume_m3"):
+        return float(config.propellant.tank_volume_m3)
+    raise ValueError(f"{tank_attr}: tank volume not specified in config or request")
 
 
 def load_Z_lookup_table(csv_path: str) -> Tuple[RegularGridInterpolator, np.ndarray, np.ndarray]:
@@ -235,6 +354,14 @@ def simulate_coupled_blowdown(
     n_polytropic: float = 1.2,
     use_real_gas: bool = True,
     n2_Z_csv: str = "n2_Z_lookup.csv",
+    total_propellant_kg: Optional[float] = None,
+    of_ratio: Optional[float] = None,
+    lox_tank_volume_m3: Optional[float] = None,
+    lox_ullage_volume_m3: Optional[float] = None,
+    fuel_tank_volume_m3: Optional[float] = None,
+    fuel_ullage_volume_m3: Optional[float] = None,
+    lox_propellant_mass_kg: Optional[float] = None,
+    fuel_propellant_mass_kg: Optional[float] = None,
 ) -> Dict[str, Dict[str, np.ndarray]]:
     """
     Simulate coupled blowdown for both LOX and fuel tanks.
@@ -259,11 +386,10 @@ def simulate_coupled_blowdown(
     if use_real_gas:
         Z_interp, _, _ = load_Z_lookup_table(n2_Z_csv)
         
-    # Helpers to extract config
+    # Helpers to extract config (legacy fallback when no overrides supplied)
     def get_tank_params(fluid_key, tank_attr, h_attr, r_attr):
         rho = float(config.fluids[fluid_key].density)
-        
-        # Volume - prioritize tank_volume_m3 from config, fallback to geometry calculation
+
         tank = getattr(config, tank_attr, None)
         if tank and hasattr(tank, 'tank_volume_m3') and tank.tank_volume_m3 is not None:
             V = float(tank.tank_volume_m3)
@@ -272,18 +398,45 @@ def simulate_coupled_blowdown(
         elif hasattr(config, 'propellant') and hasattr(config.propellant, 'tank_volume_m3'):
             V = float(config.propellant.tank_volume_m3)
         else:
-            V = 0.01 # Fallback, should likely raise
-             
-        # Mass
+            V = 0.01
+
         if tank and hasattr(tank, 'mass'):
             m = float(tank.mass)
         elif hasattr(config, 'propellant') and hasattr(config.propellant, 'initial_mass_kg'):
             m = float(config.propellant.initial_mass_kg)
         else:
             m = 0.0
-            
+
         return rho, V, m
-    
+
+    has_tank_overrides = any(
+        v is not None
+        for v in (
+            total_propellant_kg,
+            lox_tank_volume_m3,
+            lox_ullage_volume_m3,
+            fuel_tank_volume_m3,
+            fuel_ullage_volume_m3,
+            lox_propellant_mass_kg,
+            fuel_propellant_mass_kg,
+        )
+    )
+    if has_tank_overrides:
+        V_lox, m_lox, rho_lox, V_fuel, m_fuel, rho_fuel = resolve_blowdown_tank_state(
+            config,
+            total_propellant_kg=total_propellant_kg,
+            of_ratio=of_ratio,
+            lox_tank_volume_m3=lox_tank_volume_m3,
+            lox_ullage_volume_m3=lox_ullage_volume_m3,
+            fuel_tank_volume_m3=fuel_tank_volume_m3,
+            fuel_ullage_volume_m3=fuel_ullage_volume_m3,
+            lox_propellant_mass_kg=lox_propellant_mass_kg,
+            fuel_propellant_mass_kg=fuel_propellant_mass_kg,
+        )
+    else:
+        rho_lox, V_lox, m_lox = get_tank_params('oxidizer', 'lox_tank', 'lox_h', 'lox_radius')
+        rho_fuel, V_fuel, m_fuel = get_tank_params('fuel', 'fuel_tank', 'rp1_h', 'rp1_radius')
+
     # Helper to calculate approximate injector discharge area
     # NOTE: For gas venting after propellant depletion, we use a LARGER effective area
     # because: (1) gas flows much faster than liquid, (2) real systems have relief valves
@@ -319,9 +472,6 @@ def simulate_coupled_blowdown(
         except Exception:
             return 1e-3 if for_gas_venting else 1e-4
 
-    rho_lox, V_lox, m_lox = get_tank_params('oxidizer', 'lox_tank', 'lox_h', 'lox_radius')
-    rho_fuel, V_fuel, m_fuel = get_tank_params('fuel', 'fuel_tank', 'rp1_h', 'rp1_radius')
-    
     A_inj_lox = get_injector_area('oxidizer')
     A_inj_fuel = get_injector_area('fuel')
     

@@ -557,8 +557,8 @@ class TestLayer1ImpingingVector(unittest.TestCase):
     def test_min_stability_margin_default_worker_parent_aligned(self):
         """Parallel workers score candidates with ``_compute_objective_value``; parent uses ``objective()``."""
         self.assertEqual(_LAYER1_DEFAULT_MIN_STABILITY_MARGIN, 1.2)
-        self.assertEqual(_LAYER1_DEFAULT_DP_O_BAND, (0.15, 0.40))
-        self.assertEqual(_LAYER1_DEFAULT_DP_F_BAND, (0.15, 0.40))
+        self.assertEqual(_LAYER1_DEFAULT_DP_O_BAND, (0.20, 0.40))
+        self.assertEqual(_LAYER1_DEFAULT_DP_F_BAND, (0.20, 0.40))
         self.assertEqual(_LAYER1_DEFAULT_EXIT_PRESSURE_INSIDE_QUAD, 0.35)
 
     def test_exit_pressure_inside_band_quad_scale(self):

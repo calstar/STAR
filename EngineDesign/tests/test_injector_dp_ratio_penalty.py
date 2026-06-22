@@ -3,6 +3,7 @@
 import unittest
 
 from engine.optimizer.injector_dp_penalty import (
+    injector_dp_bands_from_requirements,
     injector_dp_ratio_penalty_weighted,
     injector_dp_ratios_from_eval_result,
     injector_dp_ratio_within_gate,
@@ -123,6 +124,19 @@ class TestInjectorDpRatioPenalty(unittest.TestCase):
         ro, rf = injector_dp_ratios_from_eval_result(pc, res)
         self.assertAlmostEqual(ro, 0.4)
         self.assertAlmostEqual(rf, 0.35)
+
+    def test_legacy_yaml_band_migrates_to_020_040(self):
+        reqs = {
+            "injector_dp_ratio_O_min": 0.15,
+            "injector_dp_ratio_O_max": 0.35,
+            "injector_dp_ratio_F_min": 0.15,
+            "injector_dp_ratio_F_max": 0.35,
+        }
+        o_band, f_band = injector_dp_bands_from_requirements(reqs)
+        self.assertEqual(o_band, (0.20, 0.40))
+        self.assertEqual(f_band, (0.20, 0.40))
+        self.assertTrue(injector_dp_ratio_within_gate(0.352, *o_band))
+        self.assertTrue(injector_dp_ratio_within_gate(0.342, *f_band))
 
     def test_ratio_within_gate_allows_micro_creep_above_upper_edge(self):
         """Closure noise can yield ΔP/Pc ≡ hi plus float dust; hinge is ~zero but plain ``<= hi`` can fail."""

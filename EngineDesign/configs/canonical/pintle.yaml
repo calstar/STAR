@@ -502,4 +502,4 @@ spray:
     We_min: 15.0
 stainless_steel_case: null
 thrust:
-  burn_time: 10.0
+  burn_time: 6.0

@@ -101,6 +101,30 @@ def stream_injector_dp_band_hinge_squared(r: Optional[float], lo: float, hi: flo
     return float((below / span) ** 2 + (above / span) ** 2)
 
 
+def stream_injector_dp_center_squared(r: Optional[float], lo: float, hi: float) -> float:
+    """Normalized squared deviation from the band CENTRE: ``((r - mid)/span)**2``.
+
+    Unlike the hinge (which is zero everywhere inside the band), this is nonzero inside the
+    band too, so a small weight on it gives the optimizer a gentle preference for the middle
+    of the pass band instead of parking on an edge (e.g. 0.40). Zero for missing/non-finite
+    ``r`` or an invalid band.
+    """
+    if r is None:
+        return 0.0
+    try:
+        rr = float(r)
+    except (TypeError, ValueError):
+        return 0.0
+    if not np.isfinite(rr):
+        return 0.0
+    lo_f, hi_f = float(lo), float(hi)
+    if hi_f <= lo_f:
+        return 0.0
+    span = max(hi_f - lo_f, 1e-9)
+    mid = 0.5 * (lo_f + hi_f)
+    return float(((rr - mid) / span) ** 2)
+
+
 def injector_dp_ratio_penalty_weighted(
     ratio_o: Optional[float],
     ratio_f: Optional[float],
@@ -113,6 +137,7 @@ def injector_dp_ratio_penalty_weighted(
     w_dp_f: Optional[float] = None,
     o_soft_floor: Optional[float] = None,
     w_dp_o_floor: float = 0.0,
+    w_dp_center: float = 0.0,
 ) -> float:
     """Soft weighted penalty for oxidizer and fuel ΔP_inj/Pc ratios (independent bands).
 
@@ -121,6 +146,12 @@ def injector_dp_ratio_penalty_weighted(
 
     Optionally adds ``w_dp_o_floor * (max(0, o_soft_floor - ratio_o))**2`` when
     ``o_soft_floor`` is set (stronger discourage very low oxidizer ΔP/Pc).
+
+    ``w_dp_center`` (>0) adds a gentle ``w_dp_center * ((r - mid)/span)**2`` per stream that
+    pulls each ratio toward the CENTRE of its pass band — the "soft target" so the optimizer
+    settles near the middle (~0.30 for a [0.20,0.40] band) rather than the 0.40 edge. It is
+    deliberately small relative to the band hinge so it only breaks ties inside the band and
+    never overrides feasibility/thrust/O-F.
 
     ``w_dp_high`` is retained for call-site compatibility but does not contribute (legacy tier removed).
     """
@@ -133,7 +164,12 @@ def injector_dp_ratio_penalty_weighted(
     _ = w_dp_high  # unused; kept so older signatures remain valid
     floor_pen = stream_injector_dp_soft_floor_squared(ratio_o, o_soft_floor)
     wflo = float(w_dp_o_floor) if np.isfinite(w_dp_o_floor) else 0.0
-    return wo * float(s_o) + wf * float(s_f) + wflo * float(floor_pen)
+    wc = float(w_dp_center) if np.isfinite(w_dp_center) else 0.0
+    center_pen = 0.0
+    if wc > 0.0:
+        center_pen = (stream_injector_dp_center_squared(ratio_o, lo_o, hi_o)
+                      + stream_injector_dp_center_squared(ratio_f, lo_f, hi_f))
+    return wo * float(s_o) + wf * float(s_f) + wflo * float(floor_pen) + wc * float(center_pen)
 
 
 def stream_injector_dp_raw_terms(r: float) -> Tuple[float, float]:

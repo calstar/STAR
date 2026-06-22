@@ -118,6 +118,16 @@ def load_config(config_path: Union[str, Path]) -> PintleEngineConfig:
 
     data = _apply_propellant_preset(data, path.resolve().parent)
 
+    # Re-stamp spray/discharge bindings for the declared injector type (fixes stale pintle-era
+    # lefebvre SMD + fixed Cd left on impinging YAMLs — bogus ~1 µm D32 and supply-starved Pc).
+    inj_type = (data.get("injector") or {}).get("type")
+    if inj_type:
+        try:
+            from engine.pipeline.config_switch import apply_injector_type
+            data = apply_injector_type(data, inj_type)
+        except ValueError:
+            pass
+
     # Validate and parse using Pydantic
     config = PintleEngineConfig(**data)
 

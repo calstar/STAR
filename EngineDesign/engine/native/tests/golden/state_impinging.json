@@ -1,0 +1,92 @@
+{
+ "injector_type": 1,
+ "feed_O": {
+  "d_inlet": 0.013470353244117012,
+  "A_hydraulic": 0.00014251150082346222,
+  "K0": 2.0,
+  "K1": 0.0,
+  "phi_type": 0
+ },
+ "feed_F": {
+  "d_inlet": 0.009525,
+  "A_hydraulic": 7.13e-05,
+  "K0": 2.0,
+  "K1": 0.0,
+  "phi_type": 0
+ },
+ "discharge_O": {
+  "Cd_inf": 0.6,
+  "a_Re": 0.18,
+  "Cd_min": 0.35,
+  "use_geometry_cd": 1,
+  "d_ref_m": 0.002,
+  "d_min_m": 0.0004,
+  "cd_small_hole_exponent": 0.2,
+  "cd_large_hole_log_gain": 0.015,
+  "cd_inf_max": 0.62,
+  "cd_inf_min_geom": 0.48,
+  "use_pressure_correction": 0,
+  "P_ref": 5000000.0,
+  "a_P": 0.0,
+  "use_temperature_correction": 0,
+  "T_ref": 90.0,
+  "a_T": 0.0
+ },
+ "discharge_F": {
+  "Cd_inf": 0.6,
+  "a_Re": 0.18,
+  "Cd_min": 0.35,
+  "use_geometry_cd": 1,
+  "d_ref_m": 0.002,
+  "d_min_m": 0.0004,
+  "cd_small_hole_exponent": 0.2,
+  "cd_large_hole_log_gain": 0.015,
+  "cd_inf_max": 0.62,
+  "cd_inf_min_geom": 0.48,
+  "use_pressure_correction": 0,
+  "P_ref": 5000000.0,
+  "a_P": 0.0,
+  "use_temperature_correction": 0,
+  "T_ref": 300.0,
+  "a_T": 0.0
+ },
+ "geom": {
+  "A_throat": 0.0017703959321061754,
+  "A_exit": 0.008159675026074325,
+  "volume": 0.0019492708804651003,
+  "Lstar": 1.1010366919145165,
+  "length": 0.2202290337591734,
+  "length_cylindrical": 0.121,
+  "length_contraction": 0.0451,
+  "chamber_diameter": 0.11504160142419745,
+  "exit_diameter": 0.10192752776058954,
+  "expansion_ratio": 4.608954911214158,
+  "nozzle_efficiency": 0.95,
+  "Cf": 1.6603014402898282,
+  "design_pressure": 2413166.0
+ },
+ "solver": {
+  "Pc_min_bound": 100000.0,
+  "Pc_max_bound": 8000000.0,
+  "tolerance": 1e-06,
+  "max_iterations": 100
+ },
+ "cooling": {
+  "regen_enabled": 0,
+  "film_enabled": 0,
+  "ablative_enabled": 1,
+  "graphite_enabled": 1
+ },
+ "imp_O": {
+  "n_elements": 20,
+  "d_jet": 0.002,
+  "impingement_angle": 50.0,
+  "spacing": 0.006
+ },
+ "imp_F": {
+  "n_elements": 20,
+  "d_jet": 0.002,
+  "impingement_angle": 60.0,
+  "spacing": 0.006
+ }
+}

@@ -13,6 +13,17 @@ from functools import partial
 import time
 from .config_schemas import CEAConfig
 
+def _scalar_clamp(x: float, lo: float, hi: float) -> float:
+    """float(np.clip(x, lo, hi)) for a scalar, without numpy's per-call overhead.
+    Matches np.clip exactly, including NaN pass-through (NaN < lo and NaN > hi are
+    both False, so NaN is returned). Hot path: called per CEA lookup."""
+    if x < lo:
+        return lo
+    if x > hi:
+        return hi
+    return x
+
+
 # Lazy import of rocketcea - only import if we need to build cache
 # This allows the module to work even if rocketcea is not installed/available
 # as long as a cache file exists
@@ -756,10 +767,12 @@ class CEACache:
         i_mr = np.searchsorted(self.MR_grid, MR)
         i_eps = np.searchsorted(self.eps_grid, eps)
         
-        # Clamp to valid range
-        i_pc = np.clip(i_pc, 1, len(self.Pc_grid) - 1)
-        i_mr = np.clip(i_mr, 1, len(self.MR_grid) - 1)
-        i_eps = np.clip(i_eps, 1, len(self.eps_grid) - 1)
+        # Clamp to valid range. Scalar min/max on a Python int is far cheaper than
+        # np.clip on a numpy scalar (which allocates + builds getlimits) and is
+        # identical for an in-range index. This runs 6x per CEA lookup.
+        i_pc = min(max(int(i_pc), 1), len(self.Pc_grid) - 1)
+        i_mr = min(max(int(i_mr), 1), len(self.MR_grid) - 1)
+        i_eps = min(max(int(i_eps), 1), len(self.eps_grid) - 1)
         
         # Get surrounding points
         Pc0, Pc1 = self.Pc_grid[i_pc - 1], self.Pc_grid[i_pc]
@@ -831,12 +844,12 @@ class CEACache:
 
         Pc_in, MR_in, eps_in = float(Pc), float(MR), float(eps)
 
-        # Clamp
-        Pc_clamped = float(np.clip(Pc_in, self.Pc_min, self.Pc_max))
-        MR_clamped = float(np.clip(MR_in, self.MR_min, self.MR_max))
+        # Clamp (scalar; matches float(np.clip(...)) incl. NaN pass-through)
+        Pc_clamped = _scalar_clamp(Pc_in, self.Pc_min, self.Pc_max)
+        MR_clamped = _scalar_clamp(MR_in, self.MR_min, self.MR_max)
         eps_clamped = eps_in
         if self.use_3d:
-            eps_clamped = float(np.clip(eps_in, self.eps_min, self.eps_max))
+            eps_clamped = _scalar_clamp(eps_in, self.eps_min, self.eps_max)
 
         # print(
         #     "[CEA DEBUG] in:",

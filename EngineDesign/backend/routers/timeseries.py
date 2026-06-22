@@ -451,7 +451,7 @@ def compute_timeseries_results(
         "total_propellant_kg": float(np.trapezoid(mdot_arr, times) if hasattr(np, "trapezoid") else np.trapz(mdot_arr, times)),
         "burn_time_s": float(times[-1] - times[0]) if len(times) > 1 else 0.0,
     }
-    
+
     # =========================================================================
     # Propellant Mass Remaining (Tank Fill Levels)
     # =========================================================================
@@ -464,6 +464,9 @@ def compute_timeseries_results(
     else:
         total_lox_kg = float(np.trapz(mdot_O_arr, times))
         total_fuel_kg = float(np.trapz(mdot_F_arr, times))
+
+    summary["lox_propellant_kg"] = total_lox_kg
+    summary["fuel_propellant_kg"] = total_fuel_kg
 
     # If blowdown mode provided mass history, use it directly
     if lox_mass_kg is not None and len(lox_mass_kg) == len(times):
@@ -769,6 +772,12 @@ class SegmentsRequest(BaseModel):
     blowdown_mode: bool = Field(default=False, description="Enable pure blowdown (no COPV regulation)")
     lox_initial_pressure_psi: Optional[float] = Field(default=None, gt=0, description="Initial LOX tank pressure (psi), required for blowdown mode")
     fuel_initial_pressure_psi: Optional[float] = Field(default=None, gt=0, description="Initial fuel tank pressure (psi), required for blowdown mode")
+    total_propellant_kg: Optional[float] = Field(default=None, gt=0, description="Total propellant mass [kg]; split by of_ratio")
+    of_ratio: Optional[float] = Field(default=None, gt=0, description="O/F for propellant split (defaults to design_requirements.optimal_of_ratio)")
+    lox_tank_volume_m3: Optional[float] = Field(default=None, gt=0, description="LOX tank total volume [m³]")
+    lox_ullage_volume_m3: Optional[float] = Field(default=None, gt=0, description="LOX ullage volume at start [m³]")
+    fuel_tank_volume_m3: Optional[float] = Field(default=None, gt=0, description="Fuel tank total volume [m³]")
+    fuel_ullage_volume_m3: Optional[float] = Field(default=None, gt=0, description="Fuel ullage volume at start [m³]")
 
 
 class SegmentsResponse(BaseModel):
@@ -859,8 +868,22 @@ async def generate_from_segments(request: SegmentsRequest):
         
         if request.blowdown_mode:
             # ===== BLOWDOWN MODE =====
+            from copv.blowdown_solver import simulate_coupled_blowdown, resolve_blowdown_tank_state
+
+            try:
+                V_lox, m_lox_init, _, V_fuel, m_fuel_init, _ = resolve_blowdown_tank_state(
+                    app_state.runner.config,
+                    total_propellant_kg=request.total_propellant_kg,
+                    of_ratio=request.of_ratio,
+                    lox_tank_volume_m3=request.lox_tank_volume_m3,
+                    lox_ullage_volume_m3=request.lox_ullage_volume_m3,
+                    fuel_tank_volume_m3=request.fuel_tank_volume_m3,
+                    fuel_ullage_volume_m3=request.fuel_ullage_volume_m3,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
             # Import coupled blowdown solver
-            from copv.blowdown_solver import simulate_coupled_blowdown
             
             # Define engine callback for coupled solver
             def engine_evaluator(P_lox_Pa: float, P_fuel_Pa: float):
@@ -890,6 +913,12 @@ async def generate_from_segments(request: SegmentsRequest):
                 n_polytropic=1.2,
                 use_real_gas=True,
                 n2_Z_csv=N2_Z_LOOKUP_CSV,
+                total_propellant_kg=request.total_propellant_kg,
+                of_ratio=request.of_ratio,
+                lox_tank_volume_m3=request.lox_tank_volume_m3,
+                lox_ullage_volume_m3=request.lox_ullage_volume_m3,
+                fuel_tank_volume_m3=request.fuel_tank_volume_m3,
+                fuel_ullage_volume_m3=request.fuel_ullage_volume_m3,
             )
             
             # Extract Actual Blowdown Pressures
@@ -912,7 +941,14 @@ async def generate_from_segments(request: SegmentsRequest):
                 lox_mass_kg=lox_mass_kg,
                 fuel_mass_kg=fuel_mass_kg,
             )
-            
+
+            summary["blowdown_initial_lox_mass_kg"] = float(m_lox_init)
+            summary["blowdown_initial_fuel_mass_kg"] = float(m_fuel_init)
+            summary["blowdown_lox_tank_volume_m3"] = float(V_lox)
+            summary["blowdown_fuel_tank_volume_m3"] = float(V_fuel)
+            summary["blowdown_initial_lox_ullage_m3"] = float(V_lox - m_lox_init / float(app_state.runner.config.fluids["oxidizer"].density))
+            summary["blowdown_initial_fuel_ullage_m3"] = float(V_fuel - m_fuel_init / float(app_state.runner.config.fluids["fuel"].density))
+
             # (COPV analysis skipped via flag, so no cleanup needed)
             
         else:
