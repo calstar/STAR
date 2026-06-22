@@ -1,6 +1,6 @@
 ## Full Engine Optimizer UI
 
-The **Full Engine Optimizer UI** is an end‑to‑end design environment for a LOX/hydrocarbon pintle or impinging engine (the default config is LOX/CH4 impinging).  
+The **Full Engine Optimizer UI** is an end‑to‑end design environment for liquid bipropellant engines. The propellants and injector type are set in the config — pintle or impinging, whatever propellant combination you want to evaluate.  
 It couples injector sizing, chamber/nozzle geometry, stability analysis, thermal protection, and (optionally) flight performance checks into a single multi‑layer optimization pipeline.
 
 ### Injector types (`injector.type`)

@@ -15,7 +15,7 @@ Open http://localhost:5173 in your browser.
 
 ## What the Warnings Mean
 
-### 1. "reading cea isp data files for LOX / CH4 9800 times"
+### 1. "reading cea isp data files for <ox> / <fuel> 9800 times" (e.g. LOX / CH4)
 
 This is **normal** - it happens when:
 - The CEA cache file doesn't exist yet and needs to be built

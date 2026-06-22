@@ -1,6 +1,6 @@
-# Pintle Injector Liquid Rocket Engine Design Pipeline
+# Liquid Rocket Engine Design Pipeline
 
-A comprehensive physics-based simulation and **multi-layer optimization pipeline** for LOX/hydrocarbon pintle and impinging injector rocket engines (the default config in `configs/default.yaml` is LOX/CH4 impinging). Takes tank pressures as input and solves for chamber pressure, mass flow rates, thrust, and all performance parameters.
+A comprehensive physics-based simulation and **multi-layer optimization pipeline** for liquid bipropellant rocket engines. The propellants and the injector type are **whatever you put in the config** — the whole point is to evaluate and compare different engine designs, not to model one fixed engine. Takes tank pressures as input and solves for chamber pressure, mass flow rates, thrust, and all performance parameters.
 
 ## Overview
 
@@ -19,7 +19,7 @@ A comprehensive physics-based simulation and **multi-layer optimization pipeline
 ```mermaid
 flowchart TB
     subgraph inputs [Inputs]
-        TankP["Tank Pressures: LOX + RP-1"]
+        TankP["Tank Pressures: oxidizer + fuel"]
         Config["YAML Config: configs/default.yaml"]
     end
 
@@ -303,7 +303,11 @@ python scripts/pressure_sweep.py
 
 ## Configuration
 
-Engine parameters are defined in YAML. Key sections of `configs/default.yaml`:
+Engine parameters — including the propellants and the injector type — are
+defined in YAML; pick whatever combination you want to evaluate. The block
+below is just one example (the shipped `configs/default.yaml`); see `configs/`
+for others (e.g. different propellants, pintle vs. impinging injectors). Key
+sections:
 
 ```yaml
 fluids:
