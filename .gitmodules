@@ -1,3 +1,0 @@
-[submodule "daq-server/external/uWebSockets"]
-	path = daq-server/external/uWebSockets
-	url = https://github.com/uNetworking/uWebSockets.git
