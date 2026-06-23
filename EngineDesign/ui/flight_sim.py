@@ -324,19 +324,43 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
     # RocketPy's internal tank calculations (liquid height, center of mass) can fail
     # when liquid level gets too close to tank geometry bounds due to numerical precision
     import math
-    FILL_FACTOR = 0.75  # Conservative (75%) to avoid RocketPy numerical precision issues
-    
-    lox_tank_volume = math.pi * lox_radius**2 * lox_height
-    lox_max_mass = lox_tank_volume * rho_lox * FILL_FACTOR
+    # Validate and cap propellant masses to tank capacity (fill factor from config, default 90%)
+    from engine.pipeline.tank_capacity import resolve_fuel_tank_limits, resolve_lox_tank_limits
+
+    mass_caps = {}
+    lox_max_mass, lox_tank_volume, lox_ff, _ = resolve_lox_tank_limits(config, rho_lox)
+    lox_requested = m_lox0
     if m_lox0 > lox_max_mass:
-        print(f"[flight_sim] Capping LOX mass: {m_lox0:.2f} -> {lox_max_mass:.2f} kg (tank vol: {lox_tank_volume*1000:.1f}L, 75% fill)")
+        print(
+            f"[flight_sim] Capping LOX mass: {m_lox0:.2f} -> {lox_max_mass:.2f} kg "
+            f"(tank vol: {lox_tank_volume * 1000:.1f}L, {lox_ff * 100:.0f}% fill)"
+        )
         m_lox0 = lox_max_mass
-    
-    rp1_tank_volume = math.pi * rp1_radius**2 * rp1_height
-    rp1_max_mass = rp1_tank_volume * rho_rp1 * FILL_FACTOR
+    mass_caps["lox"] = {
+        "requested_kg": lox_requested,
+        "effective_kg": m_lox0,
+        "max_fill_kg": lox_max_mass,
+        "tank_volume_m3": lox_tank_volume,
+        "was_capped": lox_requested > m_lox0 + 1e-6,
+        "fill_factor": lox_ff,
+    }
+
+    rp1_max_mass, rp1_tank_volume, fuel_ff, _ = resolve_fuel_tank_limits(config, rho_rp1)
+    fuel_requested = m_rp10
     if m_rp10 > rp1_max_mass:
-        print(f"[flight_sim] Capping Fuel mass: {m_rp10:.2f} -> {rp1_max_mass:.2f} kg (tank vol: {rp1_tank_volume*1000:.1f}L, 75% fill)")
+        print(
+            f"[flight_sim] Capping Fuel mass: {m_rp10:.2f} -> {rp1_max_mass:.2f} kg "
+            f"(tank vol: {rp1_tank_volume * 1000:.1f}L, {fuel_ff * 100:.0f}% fill)"
+        )
         m_rp10 = rp1_max_mass
+    mass_caps["fuel"] = {
+        "requested_kg": fuel_requested,
+        "effective_kg": m_rp10,
+        "max_fill_kg": rp1_max_mass,
+        "tank_volume_m3": rp1_tank_volume,
+        "was_capped": fuel_requested > m_rp10 + 1e-6,
+        "fill_factor": fuel_ff,
+    }
     
     # Check for both LOX and fuel underfill and truncate at whichever happens first
     lox_cutoff_time = detect_lox_underfill_time(mdot_lox, m_lox0, burn_time)
@@ -370,8 +394,7 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
             "message": truncation_msg
         }
         # Nudge cutoff earlier to avoid zero/negative mass at the edge.
-        # Use a stronger margin to stay safely away from the depletion point.
-        margin = max(0.5, 0.05 * burn_time)
+        margin = max(0.05, 0.01 * burn_time)
         cutoff_time = max(0.0, cutoff_time - margin)
         # If margin wipes out the burn, abort gracefully
         if cutoff_time <= 0:
@@ -625,7 +648,17 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
         longitude=config.environment.longitude,
         elevation=config.environment.elevation,
     )
-    env.set_atmospheric_model(type='Forecast', file='GFS')
+    # Atmosphere model is a toggle: deterministic ISA (default, offline) vs live GFS forecast.
+    atmos = getattr(config.environment, 'atmosphere_model', 'standard_atmosphere') or 'standard_atmosphere'
+    if str(atmos).lower() == 'forecast':
+        try:
+            env.set_atmospheric_model(type='Forecast', file='GFS')
+        except Exception as e:
+            # Forecast needs internet + a near date; fall back to ISA rather than failing the flight.
+            print(f"[flight_sim] GFS forecast unavailable ({e}); falling back to standard atmosphere.")
+            env.set_atmospheric_model(type='standard_atmosphere')
+    else:
+        env.set_atmospheric_model(type='standard_atmosphere')
     # GFS may override elevation with its terrain model - restore configured elevation
     env.set_elevation(config.environment.elevation)
 
@@ -638,9 +671,12 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
     lox_geom = CylindricalTank(radius=config.lox_tank.lox_radius, height=config.lox_tank.lox_h, spherical_caps=False)
     rp1_geom = CylindricalTank(radius=config.fuel_tank.rp1_radius, height=config.fuel_tank.rp1_h, spherical_caps=False)
 
-    # Fluids and tanks
-    lox = Fluid(name="LOX", density=rho_lox)
-    rp1 = Fluid(name="RP-1", density=rho_rp1)
+    # Fluids and tanks — names/densities come from the loaded config so this follows the propellant
+    # switch (LOX/CH4, LOX/Ethanol, LOX/RP-1, …); nothing here is hardcoded to a specific propellant.
+    ox_name = getattr(config.fluids['oxidizer'], 'name', None) or "Oxidizer"
+    fuel_name = getattr(config.fluids['fuel'], 'name', None) or "Fuel"
+    lox = Fluid(name=ox_name, density=rho_lox)
+    rp1 = Fluid(name=fuel_name, density=rho_rp1)
     # GN2 (gaseous nitrogen) for ullage and pressurant - density varies with pressure
     # Use average density during blowdown (higher at start, lower at end)
     gn2_ullage = Fluid(name="GN2", density=50)  # kg/m³ approximate for ullage
@@ -854,10 +890,25 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
     if config.press_tank:
         press_top = motor_position + config.press_tank.pres_tank_pos + config.press_tank.press_h/2
     
-    # Nose at top - above highest component
+    # Nose sits above the propulsion stack, with the avionics/payload/recovery section in between.
+    # That section length is configurable (default 4 m) rather than a magic constant.
+    avionics_payload_len = float(getattr(config.rocket, 'avionics_payload_length_m', 4.0) or 0.0)
     max_height = max(lox_top, fuel_top, press_top, motor_position)
-    nose_position = max_height + 4  # Small gap, then nose
-    rocket.add_nose(length=0.6, kind="vonKarman", position=nose_position)
+    nose_position = max_height + avionics_payload_len
+
+    # Nosecone length from fineness ratio (nose length / body DIAMETER). von Kármán (LD-Haack) is the
+    # minimum-drag transonic ogive; ~4.5:1 fineness is near-optimal. Explicit nose_length overrides.
+    body_diameter = 2.0 * rocket_radius
+    nose_kind = getattr(config.rocket, 'nose_kind', None) or "vonKarman"
+    nose_len_override = getattr(config.rocket, 'nose_length', None)
+    if nose_len_override and float(nose_len_override) > 0:
+        nose_length = float(nose_len_override)
+    else:
+        fineness = float(getattr(config.rocket, 'nose_fineness_ratio', 4.5) or 4.5)
+        nose_length = fineness * body_diameter
+    print(f"  Nosecone: {nose_kind}, length {nose_length:.3f} m "
+          f"(fineness {nose_length / body_diameter:.2f}:1 on Ø{body_diameter:.3f} m)")
+    rocket.add_nose(length=nose_length, kind=nose_kind, position=nose_position)
 
     # Compute initial thrust-to-weight ratio for validation
     # Sample thrust at t=0 from thrust curve
@@ -954,4 +1005,5 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
         "flight": flight,
         "params": config,
         "truncation_info": truncation_info,
+        "mass_caps": mass_caps,
     }

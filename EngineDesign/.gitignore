@@ -88,6 +88,10 @@ tests/test_golden_anchors.py
 tests/test_injector_parity.py
 tests/test_propellant_presets.py
 
+# Private course / teaching materials — local only (do not commit)
+docs/STAR_engine_design_course_lesson_plan.md
+docs/private/
+
 # Agent / session planning notes — not product docs (keep combustion_stability_physics.md etc.)
 docs/stability/M6_handoff.md
 docs/stability/stability_model_rebuild_plan.md

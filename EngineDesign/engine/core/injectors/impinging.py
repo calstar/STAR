@@ -34,7 +34,6 @@ from engine.core.spray import (
     spray_angle_from_TMR,
     weber_number,
     ohnesorge_number,
-    smd_lefebvre,
     smd_impinging_ingebo,
     tau_evap,
     xstar,
@@ -481,64 +480,29 @@ class ImpingingInjector(InjectorModel):
             Oh_O = ohnesorge_number(mu_O, rho_O, sigma_O, geometry.oxidizer.d_jet)
             Oh_F = ohnesorge_number(mu_F, rho_F, sigma_F, geometry.fuel.d_jet)
 
-            if spray_cfg.smd.model == "ingebo":
-                # Aerodynamic Weber number at the impingement velocity — the breakup-relevant We
-                # (the ``We_min`` constraint is the critical Weber number ~12-15 for droplet
-                # breakup) and matches the project spec (ρ_gas, u_rel). Ingebo computes its own
-                # internal We/Re from the same impingement velocity.
-                We_O = weber_number(rho_gas, u_rel, geometry.oxidizer.d_jet, sigma_O)
-                We_F = weber_number(rho_gas, u_rel, geometry.fuel.d_jet, sigma_F)
-                D32_O = smd_impinging_ingebo(
-                    geometry.oxidizer.d_jet,
-                    u_rel,
-                    rho_O,
-                    mu_O,
-                    sigma_O,
-                    rho_gas,
-                    spray_cfg.smd.C_ingebo,
-                )
-                D32_F = smd_impinging_ingebo(
-                    geometry.fuel.d_jet,
-                    u_rel,
-                    rho_F,
-                    mu_F,
-                    sigma_F,
-                    rho_gas,
-                    spray_cfg.smd.C_ingebo,
-                )
-            else:
-                # Legacy Lefebvre path, preserved as-is for backward compatibility: liquid-density
-                # Weber number built on a jet velocity blended with a fraction of the sheet speed.
-                # NOTE: its C/m constants are uncalibrated for impinging jets and yield very small
-                # D32; prefer ``model: ingebo`` for impinging doublets.
-                alpha_sheet = 0.35
-                u_eff_O = float(np.sqrt(max(u_O, 0.0) ** 2 + (alpha_sheet * max(u_rel, 0.0)) ** 2))
-                u_eff_F = float(np.sqrt(max(u_F, 0.0) ** 2 + (alpha_sheet * max(u_rel, 0.0)) ** 2))
-                We_O = weber_number(rho_O, u_eff_O, geometry.oxidizer.d_jet, sigma_O)
-                We_F = weber_number(rho_F, u_eff_F, geometry.fuel.d_jet, sigma_F)
-                _we_cap = getattr(spray_cfg.smd, "we_corr_max", None)
-                if _we_cap is not None and np.isfinite(float(_we_cap)) and float(_we_cap) > 0:
-                    We_O_smd = float(min(We_O, float(_we_cap)))
-                    We_F_smd = float(min(We_F, float(_we_cap)))
-                else:
-                    We_O_smd = float(We_O)
-                    We_F_smd = float(We_F)
-                D32_O = smd_lefebvre(
-                    geometry.oxidizer.d_jet,
-                    We_O_smd,
-                    Oh_O,
-                    spray_cfg.smd.C,
-                    spray_cfg.smd.m,
-                    spray_cfg.smd.p,
-                )
-                D32_F = smd_lefebvre(
-                    geometry.fuel.d_jet,
-                    We_F_smd,
-                    Oh_F,
-                    spray_cfg.smd.C,
-                    spray_cfg.smd.m,
-                    spray_cfg.smd.p,
-                )
+            # Impinging doublets always use Ingebo (u_rel-based aerodynamic breakup). Legacy Lefebvre
+            # on this path used uncalibrated C/m and reported bogus ~1 µm D32 when spray.smd.model was
+            # left at "lefebvre" from pintle-era YAML (see dispatch impinging bindings).
+            We_O = weber_number(rho_gas, u_rel, geometry.oxidizer.d_jet, sigma_O)
+            We_F = weber_number(rho_gas, u_rel, geometry.fuel.d_jet, sigma_F)
+            D32_O = smd_impinging_ingebo(
+                geometry.oxidizer.d_jet,
+                u_rel,
+                rho_O,
+                mu_O,
+                sigma_O,
+                rho_gas,
+                spray_cfg.smd.C_ingebo,
+            )
+            D32_F = smd_impinging_ingebo(
+                geometry.fuel.d_jet,
+                u_rel,
+                rho_F,
+                mu_F,
+                sigma_F,
+                rho_gas,
+                spray_cfg.smd.C_ingebo,
+            )
 
             tau_evap_O = tau_evap(D32_O, spray_cfg.evaporation.K)
             tau_evap_F = tau_evap(D32_F, spray_cfg.evaporation.K)

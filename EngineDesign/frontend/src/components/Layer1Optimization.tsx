@@ -147,6 +147,50 @@ function formatLayer1ResidualScalar(best: number): string {
   return best.toLocaleString(undefined, { maximumFractionDigits: 4, minimumFractionDigits: 0 });
 }
 
+/** Y-axis domain for penalty/residual charts: log when any value > 0, else a visible band at zero. */
+function layer1ChartYAxis(
+  values: Array<number | null | undefined>,
+  logScale?: boolean,
+): { scale: 'auto' | 'log'; domain: [number, number] | ['auto', 'auto'] } {
+  const finite = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  if (finite.length === 0) {
+    return { scale: 'auto', domain: ['auto', 'auto'] };
+  }
+  const pos = finite.filter((v) => v > 0);
+  if (logScale && pos.length > 0) {
+    const lo = Math.min(...pos);
+    const hi = Math.max(...pos);
+    return {
+      scale: 'log',
+      domain: [
+        Math.max(1e-12, Math.pow(10, Math.floor(Math.log10(lo)) - 0.3)),
+        Math.pow(10, Math.ceil(Math.log10(hi)) + 0.3),
+      ],
+    };
+  }
+  const lo = Math.min(...finite);
+  const hi = Math.max(...finite);
+  if (lo === hi) {
+    if (lo === 0) return { scale: 'auto', domain: [-1e-4, 1e-4] };
+    const pad = Math.max(Math.abs(lo) * 0.15, 1e-6);
+    return { scale: 'auto', domain: [lo - pad, hi + pad] };
+  }
+  return { scale: 'auto', domain: ['auto', 'auto'] };
+}
+
+/** Map final incumbent breakdown keys to iteration_history penalty field names. */
+const BREAKDOWN_TO_HISTORY_FIELD: Record<string, string> = {
+  objective: 'objective',
+  thrust_penalty: 'penalty_thrust',
+  of_penalty: 'penalty_of',
+  exit_pressure_penalty: 'penalty_exit',
+  injector_dp_penalty: 'penalty_injector_dp',
+  momentum_balance_penalty: 'penalty_momentum',
+  chamber_shape_penalty: 'penalty_chamber_shape',
+  impingement_angle_penalty: 'penalty_impingement_angle',
+  smd_penalty: 'penalty_smd',
+};
+
 const LAYER1_BASE_INFEAS = 1e6;
 
 function historyNumber(h: Record<string, unknown>, key: string): number | null {
@@ -501,17 +545,6 @@ function ParameterConvergencePlots({
       ? v.toExponential(1)
       : v.toLocaleString(undefined, { maximumFractionDigits: 4 });
 
-  const logDomain = (values: number[]): [number, number] | undefined => {
-    const pos = values.filter((v) => Number.isFinite(v) && v > 0);
-    if (pos.length === 0) return undefined;
-    const lo = Math.min(...pos);
-    const hi = Math.max(...pos);
-    return [
-      Math.max(1e-12, Math.pow(10, Math.floor(Math.log10(lo)) - 0.3)),
-      Math.pow(10, Math.ceil(Math.log10(hi)) + 0.3),
-    ];
-  };
-
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       <div className="col-span-full flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--color-text-secondary)]">
@@ -531,10 +564,11 @@ function ParameterConvergencePlots({
       {parameters.map(([key, label, unit]) => {
         const residualSpec = PARAM_CONSTRAINT_RESIDUAL[key];
         const residualKey = `residual_${key}`;
-        const residualValues = plotData
-          .map((p) => p[residualKey])
-          .filter((v): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0);
-        const residualDomain = residualSpec?.logScale ? logDomain(residualValues) : undefined;
+        const residualSeries = plotData.map((p) => p[residualKey]);
+        const residualAxis = layer1ChartYAxis(
+          residualSeries.filter((v): v is number => typeof v === 'number'),
+          residualSpec?.logScale,
+        );
         const hasResidualOverlay = residualSpec !== undefined && plotData.some((p) => p[residualKey] != null);
 
         return (
@@ -555,23 +589,13 @@ function ParameterConvergencePlots({
                   stroke="#3b82f6"
                   tick={{ fill: 'var(--color-text-secondary)', fontSize: 9 }}
                 />
-                {hasResidualOverlay && residualDomain && (
+                {hasResidualOverlay && (
                   <YAxis
                     yAxisId="right"
                     orientation="right"
-                    scale="log"
-                    domain={residualDomain}
-                    allowDataOverflow
-                    width={46}
-                    stroke="#ef4444"
-                    tick={{ fill: '#ef4444', fontSize: 9 }}
-                    tickFormatter={(v: number) => fmtResidual(v)}
-                  />
-                )}
-                {hasResidualOverlay && !residualDomain && (
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
+                    scale={residualAxis.scale}
+                    domain={residualAxis.domain}
+                    allowDataOverflow={residualAxis.scale === 'log'}
                     width={46}
                     stroke="#ef4444"
                     tick={{ fill: '#ef4444', fontSize: 9 }}
@@ -617,7 +641,7 @@ function ParameterConvergencePlots({
                     strokeOpacity={0.75}
                     dot={false}
                     isAnimationActive={false}
-                    connectNulls={false}
+                    connectNulls
                   />
                 )}
               </LineChart>
@@ -645,10 +669,12 @@ function ObjectiveTermPlots({
     const obj = historyNumber(h, 'objective');
     if (obj !== null && obj < LAYER1_BASE_INFEAS && h.eval_success !== false && obj < bestObj) {
       bestObj = obj;
-      incumbent = {};
+      const nextIncumbent: Record<string, number | null> = incumbent ? { ...incumbent } : {};
       for (const f of termFields) {
-        incumbent[f] = historyNumber(h, f);
+        const v = historyNumber(h, f);
+        nextIncumbent[f] = v !== null ? v : nextIncumbent[f] ?? null;
       }
+      incumbent = nextIncumbent;
     }
     const row: Record<string, number | string | null> = { iteration };
     if (incumbent) {
@@ -659,21 +685,26 @@ function ObjectiveTermPlots({
     return row;
   });
 
-  const hasHistoryTerms = iterationHistory.some((h) => historyNumber(h, 'penalty_thrust') !== null);
-  const fmt = (v: number) => formatLayer1ResidualScalar(v);
+  // Seed missing term fields from the final incumbent breakdown (parallel CMA often skips history).
+  if (bestBreakdown && plotData.length > 0) {
+    const last = plotData[plotData.length - 1];
+    for (const [bk, hk] of Object.entries(BREAKDOWN_TO_HISTORY_FIELD)) {
+      const bv = bestBreakdown[bk];
+      if (typeof bv === 'number' && Number.isFinite(bv) && (last[hk] == null || last[hk] === undefined)) {
+        last[hk] = bv;
+      }
+    }
+    for (const f of termFields) {
+      if (last[f] == null && typeof bestBreakdown[f] === 'number' && Number.isFinite(bestBreakdown[f] as number)) {
+        last[f] = bestBreakdown[f] as number;
+      }
+    }
+  }
 
-  const logDomain = (field: string): [number, number] | undefined => {
-    const pos = plotData
-      .map((p) => p[field])
-      .filter((v): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0);
-    if (pos.length === 0) return undefined;
-    const lo = Math.min(...pos);
-    const hi = Math.max(...pos);
-    return [
-      Math.max(1e-12, Math.pow(10, Math.floor(Math.log10(lo)) - 0.3)),
-      Math.pow(10, Math.ceil(Math.log10(hi)) + 0.3),
-    ];
-  };
+  const hasHistoryTerms =
+    iterationHistory.some((h) => historyNumber(h, 'penalty_thrust') !== null) ||
+    (bestBreakdown != null && typeof bestBreakdown.thrust_penalty === 'number');
+  const fmt = (v: number) => formatLayer1ResidualScalar(v);
 
   const breakdownRows: Array<[string, string]> = [
     ['objective', 'Weighted objective (total)'],
@@ -714,8 +745,14 @@ function ObjectiveTermPlots({
       {hasHistoryTerms ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {OBJECTIVE_TERM_PLOTS.map(({ field, label, color, logScale }) => {
-            const domain = logScale ? logDomain(field) : undefined;
-            const hasData = plotData.some((p) => p[field] != null);
+            const series = plotData.map((p) => p[field]);
+            const axis = layer1ChartYAxis(
+              series.filter((v): v is number => typeof v === 'number'),
+              logScale,
+            );
+            const hasData = plotData.some(
+              (p) => typeof p[field] === 'number' && Number.isFinite(p[field] as number),
+            );
             if (!hasData) return null;
             return (
               <div key={field} className="bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg p-4">
@@ -725,15 +762,16 @@ function ObjectiveTermPlots({
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.3} />
                     <XAxis dataKey="iteration" tick={{ fontSize: 9 }} stroke="var(--color-text-secondary)" />
                     <YAxis
-                      scale={domain ? 'log' : 'auto'}
-                      domain={domain ?? ['auto', 'auto']}
+                      scale={axis.scale}
+                      domain={axis.domain}
+                      allowDataOverflow={axis.scale === 'log'}
                       tick={{ fontSize: 9 }}
                       stroke={color}
                       tickFormatter={(v: number) => fmt(v)}
                       width={52}
                     />
                     <Tooltip formatter={(value: number | string) => [typeof value === 'number' ? fmt(value) : value, label]} />
-                    <Line type="monotone" dataKey={field} stroke={color} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+                    <Line type="monotone" dataKey={field} stroke={color} strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls />
                   </LineChart>
                 </ResponsiveContainer>
               </div>

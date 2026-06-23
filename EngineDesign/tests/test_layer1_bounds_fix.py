@@ -1,6 +1,14 @@
 """Test to verify Layer 1 optimizer bounds are correct after bug fix."""
 
 import sys
+import pytest
+
+# STALE: every test here imports `Layer1OptimizerConfig` from layer1_static_optimization, a dataclass
+# that does not exist (and never did in this branch's history — `git log -S` finds no definition). The
+# Layer-1 design vector / bounds were implemented as inline lower/upper arrays built in
+# run_layer1_optimization, not a config object with min_d_pintle_m/max_* fields. These tests can never
+# import successfully as written. Skip until reimplemented against the actual bounds API (or removed).
+pytestmark = pytest.mark.skip(reason="references nonexistent Layer1OptimizerConfig; bounds are now inline arrays")
 
 
 def test_layer1_config_bounds_validation():

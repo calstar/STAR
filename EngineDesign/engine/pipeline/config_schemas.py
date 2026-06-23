@@ -796,6 +796,13 @@ class RocketConfig(BaseModel):
     rocket_length: Optional[float] = Field(default=None, gt=0, description="Total rocket length from tail to nose tip [m]. Used for MoI estimation.")
     motor_position: float = Field(default=0.0, description="Nozzle exit position from rocket tail (z=0 at tail, positive toward nose) [m]")
     fins: Optional[FinsConfig] = Field(default=None, description="Fins configuration")
+    # Nosecone: von Kármán (LD-Haack) is the minimum-drag transonic ogive. Length is derived from the
+    # fineness ratio (nose length / body DIAMETER) — ~4.5 is a good low-drag transonic/supersonic value.
+    # Set nose_length to override the derived value.
+    nose_kind: str = Field(default="vonKarman", description="Nosecone profile (RocketPy): vonKarman | lvhaack | ogive | conical | …")
+    nose_fineness_ratio: float = Field(default=4.5, gt=0, description="Nose length / body diameter (von Kármán ~4.5:1 is near-optimal transonic). Used when nose_length is unset.")
+    nose_length: Optional[float] = Field(default=None, gt=0, description="Explicit nosecone length [m]. Overrides nose_fineness_ratio when set.")
+    avionics_payload_length_m: float = Field(default=4.0, ge=0, description="Length of avionics/payload/recovery section ABOVE the propulsion stack, before the nosecone [m].")
     
     # LEGACY fields - kept for backward compatibility
     mass: Optional[float] = Field(default=None, gt=0, description="LEGACY: Airframe mass. Use airframe_mass instead.")
@@ -811,7 +818,11 @@ class EnvironmentConfig(BaseModel):
     latitude: float = Field(ge=-90, le=90, description="Launch site latitude (positive = North, negative = South) [deg]")
     longitude: float = Field(ge=-180, le=180, description="Launch site longitude (positive = East, negative = West) [deg]")
     elevation: float = Field(description="Launch site elevation above sea level (ground level) [m]")
-    # NOTE: p_amb removed - RocketPy fetches atmospheric pressure from GFS forecast based on date/location
+    # Atmosphere model: 'standard_atmosphere' (deterministic ISA 1976, no network — DEFAULT for a design
+    # tool) or 'forecast' (live GFS weather for date/location — realistic but needs internet & a near date).
+    atmosphere_model: Literal["standard_atmosphere", "forecast"] = Field(
+        default="standard_atmosphere",
+        description="Atmospheric model: 'standard_atmosphere' (ISA, offline, deterministic) or 'forecast' (live GFS)")
 
 
 class ThrustConfig(BaseModel):
@@ -886,9 +897,15 @@ class DesignRequirementsConfig(BaseModel):
     acoustic_margin_min: float = Field(default=0.1, ge=0, description="Minimum acoustic stability margin")
     feed_stability_min: float = Field(default=0.15, ge=0, description="Minimum feed system stability margin")
     
-    # Tank capacities (for optimizer bounds)
+    # Tank capacities (for optimizer bounds and flight-sim mass caps)
     lox_tank_capacity_kg: Optional[float] = Field(default=None, gt=0, description="LOX tank capacity [kg]")
     fuel_tank_capacity_kg: Optional[float] = Field(default=None, gt=0, description="Fuel tank capacity [kg]")
+    propellant_tank_fill_factor: float = Field(
+        default=0.90,
+        gt=0.0,
+        le=1.0,
+        description="Max liquid fill fraction of tank internal volume for flight simulation (e.g. 0.90 = 90% ullage margin)",
+    )
     
     # COPV
     copv_free_volume_L: Optional[float] = Field(default=4.5, gt=0, description="COPV free internal volume [L]")
@@ -1248,6 +1265,19 @@ class DesignRequirementsConfig(BaseModel):
 
     @model_validator(mode="after")
     def _injector_dp_bands_ordered(self):
+        # Normalize the legacy ΔP/Pc band [0.15, 0.35] -> [0.20, 0.40] (M6 recalibration) on the
+        # CONFIG object itself, so the optimizer and the UI validation card agree. Previously only
+        # the optimizer migrated this (injector_dp_bands_from_requirements), while the frontend read
+        # the raw [0.15, 0.35] from the config -> a design that passed at 0.2-0.4 showed an X against
+        # the stale 0.15-0.35 display.
+        _LEGACY = (0.15, 0.35)
+        _NEW = (0.20, 0.40)
+        if (abs(self.injector_dp_ratio_O_min - _LEGACY[0]) < 1e-9
+                and abs(self.injector_dp_ratio_O_max - _LEGACY[1]) < 1e-9):
+            self.injector_dp_ratio_O_min, self.injector_dp_ratio_O_max = _NEW
+        if (abs(self.injector_dp_ratio_F_min - _LEGACY[0]) < 1e-9
+                and abs(self.injector_dp_ratio_F_max - _LEGACY[1]) < 1e-9):
+            self.injector_dp_ratio_F_min, self.injector_dp_ratio_F_max = _NEW
         if self.injector_dp_ratio_O_max <= self.injector_dp_ratio_O_min:
             raise ValueError("injector_dp_ratio_O_max must exceed injector_dp_ratio_O_min")
         if self.injector_dp_ratio_F_max <= self.injector_dp_ratio_F_min:
@@ -1430,6 +1460,14 @@ class PintleEngineConfig(BaseModel):
                 nz.expansion_ratio = float(eps_geo)
             except Exception:
                 pass
+        return self
+
+    @model_validator(mode="after")
+    def sync_burn_time_fields(self):
+        """Keep thrust.burn_time and pressure_curves.target_burn_time_s aligned with design_requirements."""
+        from engine.pipeline.burn_time_sync import sync_burn_time_fields
+
+        sync_burn_time_fields(self)
         return self
 
     class Config:

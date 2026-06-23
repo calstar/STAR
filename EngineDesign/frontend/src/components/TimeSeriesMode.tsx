@@ -13,6 +13,10 @@ import {
   type TimeSeriesSummary,
   type EngineConfig,
 } from '../api/client';
+import {
+  loadTimeSeriesResults,
+  saveTimeSeriesResults,
+} from '../utils/timeseriesSession';
 
 interface TimeSeriesModeProps {
   config: EngineConfig | null;
@@ -85,32 +89,44 @@ const defaultFuelSegments: PressureSegment[] = [
   },
 ];
 
-// Session storage key
-const TIMESERIES_RESULTS_KEY = 'timeseries_results';
-
-interface StoredResults {
-  data: TimeSeriesData;
-  summary: TimeSeriesSummary;
-  timestamp: number;
-}
-
-function saveResultsToSession(results: { data: TimeSeriesData; summary: TimeSeriesSummary }) {
-  const stored: StoredResults = {
-    ...results,
-    timestamp: Date.now(),
-  };
-  sessionStorage.setItem(TIMESERIES_RESULTS_KEY, JSON.stringify(stored));
-}
-
 function loadResultsFromSession(): { data: TimeSeriesData; summary: TimeSeriesSummary } | null {
-  try {
-    const stored = sessionStorage.getItem(TIMESERIES_RESULTS_KEY);
-    if (!stored) return null;
-    const parsed: StoredResults = JSON.parse(stored);
-    return { data: parsed.data, summary: parsed.summary };
-  } catch {
-    return null;
-  }
+  const stored = loadTimeSeriesResults();
+  if (!stored) return null;
+  return { data: stored.data, summary: stored.summary };
+}
+
+type VolumeInputMode = 'tank' | 'ullage';
+
+function getConfigBurnTime(config: EngineConfig | null): number {
+  const dr = config?.design_requirements as Record<string, unknown> | undefined;
+  return typeof dr?.target_burn_time === 'number' ? dr.target_burn_time : 5.0;
+}
+
+function getConfigOfRatio(config: EngineConfig | null): number {
+  const dr = config?.design_requirements as Record<string, unknown> | undefined;
+  return typeof dr?.optimal_of_ratio === 'number' ? dr.optimal_of_ratio : 2.5;
+}
+
+function getTankVolumeM3(
+  tank: Record<string, unknown> | undefined,
+  hKey: string,
+  rKey: string,
+): number {
+  if (!tank) return 0.01;
+  if (typeof tank.tank_volume_m3 === 'number') return tank.tank_volume_m3;
+  const h = tank[hKey] as number | undefined;
+  const r = tank[rKey] as number | undefined;
+  if (h && r) return Math.PI * r * r * h;
+  return 0.01;
+}
+
+function splitPropellantMass(totalKg: number, ofRatio: number): { lox: number; fuel: number } {
+  const mFuel = totalKg / (1 + ofRatio);
+  return { lox: totalKg - mFuel, fuel: mFuel };
+}
+
+function computeUllageLiters(tankVolumeM3: number, propMassKg: number, density: number): number {
+  return Math.max(0, tankVolumeM3 - propMassKg / density) * 1000;
 }
 
 export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) {
@@ -118,15 +134,15 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
   const [inputMode, setInputMode] = useState<InputMode>('simple');
 
   // Simple profile state
-  const [duration, setDuration] = useState(5.0);
+  const [duration, setDuration] = useState(() => getConfigBurnTime(config));
   const [nSteps, setNSteps] = useState(101);
   const [loxProfile, setLoxProfile] = useState<ProfileParams>(defaultLoxProfile);
   const [fuelProfile, setFuelProfile] = useState<ProfileParams>(defaultFuelProfile);
 
   // Segment builder state
-  const [segmentDuration, setSegmentDuration] = useState(5.0);
+  const [segmentDuration, setSegmentDuration] = useState(() => getConfigBurnTime(config));
   const [nPoints, setNPoints] = useState(200);
-  const [segmentDurationInput, setSegmentDurationInput] = useState('5.0');
+  const [segmentDurationInput, setSegmentDurationInput] = useState(() => getConfigBurnTime(config).toString());
   const [nPointsInput, setNPointsInput] = useState('200');
   const [loxSegments, setLoxSegments] = useState<PressureSegment[]>(defaultLoxSegments);
   const [fuelSegments, setFuelSegments] = useState<PressureSegment[]>(defaultFuelSegments);
@@ -134,10 +150,55 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
   // Blowdown mode state
   const [loxInitialPressure, setLoxInitialPressure] = useState(750);
   const [fuelInitialPressure, setFuelInitialPressure] = useState(600);
+  const [loxVolumeMode, setLoxVolumeMode] = useState<VolumeInputMode>('tank');
+  const [fuelVolumeMode, setFuelVolumeMode] = useState<VolumeInputMode>('tank');
+  const [loxTankVolumeL, setLoxTankVolumeL] = useState(17.474);
+  const [loxUllageVolumeL, setLoxUllageVolumeL] = useState(11.0);
+  const [fuelTankVolumeL, setFuelTankVolumeL] = useState(11.109);
+  const [fuelUllageVolumeL, setFuelUllageVolumeL] = useState(2.5);
+  const [totalPropellantKg, setTotalPropellantKg] = useState(13.75);
+  const [ofRatio, setOfRatio] = useState(2.8);
 
   // Upload state
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Sync duration and blowdown defaults from loaded config
+  useEffect(() => {
+    if (!config) return;
+
+    const burnTime = getConfigBurnTime(config);
+    setDuration(burnTime);
+    setSegmentDuration(burnTime);
+    setSegmentDurationInput(burnTime.toString());
+
+    const of = getConfigOfRatio(config);
+    setOfRatio(of);
+
+    const loxTank = config.lox_tank as Record<string, unknown> | undefined;
+    const fuelTank = config.fuel_tank as Record<string, unknown> | undefined;
+    const fluids = config.fluids as Record<string, { density?: number }> | undefined;
+    const oxDensity = fluids?.oxidizer?.density ?? 1140;
+    const fuelDensity = fluids?.fuel?.density ?? 422;
+
+    const loxVolM3 = getTankVolumeM3(loxTank, 'lox_h', 'lox_radius');
+    const fuelVolM3 = getTankVolumeM3(fuelTank, 'rp1_h', 'rp1_radius');
+    setLoxTankVolumeL(loxVolM3 * 1000);
+    setFuelTankVolumeL(fuelVolM3 * 1000);
+
+    const loxMass = typeof loxTank?.mass === 'number' ? loxTank.mass : splitPropellantMass(10, of).lox;
+    const fuelMass = typeof fuelTank?.mass === 'number' ? fuelTank.mass : splitPropellantMass(10, of).fuel;
+    setTotalPropellantKg(loxMass + fuelMass);
+    setLoxUllageVolumeL(computeUllageLiters(loxVolM3, loxMass, oxDensity));
+    setFuelUllageVolumeL(computeUllageLiters(fuelVolM3, fuelMass, fuelDensity));
+
+    if (typeof loxTank?.initial_pressure_psi === 'number') {
+      setLoxInitialPressure(loxTank.initial_pressure_psi);
+    }
+    if (typeof fuelTank?.initial_pressure_psi === 'number') {
+      setFuelInitialPressure(fuelTank.initial_pressure_psi);
+    }
+  }, [config]);
 
   // Sync local input states
   useEffect(() => {
@@ -199,7 +260,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
         summary: response.data.summary,
       };
       setResults(newResults);
-      saveResultsToSession(newResults);
+      saveTimeSeriesResults(newResults);
     }
   }, [duration, nSteps, loxProfile, fuelProfile]);
 
@@ -227,9 +288,11 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
         summary: response.data.summary,
       };
       setResults(newResults);
-      saveResultsToSession(newResults);
+      saveTimeSeriesResults(newResults);
     }
   }, [segmentDuration, nPoints, loxSegments, fuelSegments]);
+
+  const propSplit = splitPropellantMass(totalPropellantKg, ofRatio);
 
   // Handle blowdown submission
   const handleBlowdownSubmit = useCallback(async () => {
@@ -237,15 +300,30 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
     setError(null);
     setResults(null);
 
-    const response = await generateFromSegments({
-      duration_s: segmentDuration, // Reuse duration
-      n_points: nPoints,           // Reuse points
-      lox_segments: [],            // Ignored in blowdown mode
-      fuel_segments: [],           // Ignored in blowdown mode
+    const blowdownParams: Parameters<typeof generateFromSegments>[0] = {
+      duration_s: segmentDuration,
+      n_points: nPoints,
+      lox_segments: [],
+      fuel_segments: [],
       blowdown_mode: true,
       lox_initial_pressure_psi: loxInitialPressure,
       fuel_initial_pressure_psi: fuelInitialPressure,
-    });
+      total_propellant_kg: totalPropellantKg,
+      of_ratio: ofRatio,
+    };
+
+    if (loxVolumeMode === 'tank') {
+      blowdownParams.lox_tank_volume_m3 = loxTankVolumeL / 1000;
+    } else {
+      blowdownParams.lox_ullage_volume_m3 = loxUllageVolumeL / 1000;
+    }
+    if (fuelVolumeMode === 'tank') {
+      blowdownParams.fuel_tank_volume_m3 = fuelTankVolumeL / 1000;
+    } else {
+      blowdownParams.fuel_ullage_volume_m3 = fuelUllageVolumeL / 1000;
+    }
+
+    const response = await generateFromSegments(blowdownParams);
 
     setIsLoading(false);
 
@@ -257,9 +335,22 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
         summary: response.data.summary,
       };
       setResults(newResults);
-      saveResultsToSession(newResults);
+      saveTimeSeriesResults(newResults);
     }
-  }, [segmentDuration, nPoints, loxInitialPressure, fuelInitialPressure]);
+  }, [
+    segmentDuration,
+    nPoints,
+    loxInitialPressure,
+    fuelInitialPressure,
+    totalPropellantKg,
+    ofRatio,
+    loxVolumeMode,
+    fuelVolumeMode,
+    loxTankVolumeL,
+    loxUllageVolumeL,
+    fuelTankVolumeL,
+    fuelUllageVolumeL,
+  ]);
 
 
   // Handle CSV upload submission
@@ -288,7 +379,7 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
         summary: response.data.summary,
       };
       setResults(newResults);
-      saveResultsToSession(newResults);
+      saveTimeSeriesResults(newResults);
 
       // If it was a YAML config file, fetch and update the config
       const isConfigFile = uploadedFile.name.endsWith('.yaml') || uploadedFile.name.endsWith('.yml');
@@ -542,6 +633,145 @@ export function TimeSeriesMode({ config, onConfigLoaded }: TimeSeriesModeProps) 
                     step={10}
                     className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] focus:outline-none focus:border-blue-500"
                   />
+                </div>
+              </div>
+
+              {/* Propellant loading */}
+              <h4 className="text-xs font-medium text-[var(--color-text-secondary)] mb-2 uppercase tracking-wider">
+                Propellant Loading
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div>
+                  <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-2">
+                    Total Propellant (kg)
+                  </label>
+                  <input
+                    type="number"
+                    value={totalPropellantKg}
+                    onChange={(e) => setTotalPropellantKg(parseFloat(e.target.value) || 0)}
+                    min={0.1}
+                    step={0.1}
+                    className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[var(--color-text-secondary)] mb-2">
+                    O/F Ratio
+                  </label>
+                  <input
+                    type="number"
+                    value={ofRatio}
+                    onChange={(e) => setOfRatio(parseFloat(e.target.value) || 0)}
+                    min={0.5}
+                    max={20}
+                    step={0.1}
+                    className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] focus:outline-none focus:border-blue-500"
+                  />
+                  <p className="text-xs text-[var(--color-text-tertiary)] mt-1">From design requirements by default</p>
+                </div>
+                <div className="flex flex-col justify-end text-sm text-[var(--color-text-secondary)] pb-2">
+                  <div>LOX: <span className="text-cyan-400 font-medium">{propSplit.lox.toFixed(2)} kg</span></div>
+                  <div>Fuel: <span className="text-orange-400 font-medium">{propSplit.fuel.toFixed(2)} kg</span></div>
+                </div>
+              </div>
+
+              {/* Tank geometry */}
+              <h4 className="text-xs font-medium text-[var(--color-text-secondary)] mb-2 uppercase tracking-wider">
+                Tank Geometry
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div className="p-4 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm font-medium text-cyan-400">LOX Tank</span>
+                    <div className="flex rounded-md overflow-hidden border border-[var(--color-border)]">
+                      <button
+                        type="button"
+                        onClick={() => setLoxVolumeMode('tank')}
+                        className={`px-2 py-1 text-xs ${loxVolumeMode === 'tank' ? 'bg-cyan-600 text-white' : 'text-[var(--color-text-secondary)]'}`}
+                      >
+                        Volume
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLoxVolumeMode('ullage')}
+                        className={`px-2 py-1 text-xs ${loxVolumeMode === 'ullage' ? 'bg-cyan-600 text-white' : 'text-[var(--color-text-secondary)]'}`}
+                      >
+                        Ullage
+                      </button>
+                    </div>
+                  </div>
+                  {loxVolumeMode === 'tank' ? (
+                    <div>
+                      <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Tank Volume (L)</label>
+                      <input
+                        type="number"
+                        value={loxTankVolumeL}
+                        onChange={(e) => setLoxTankVolumeL(parseFloat(e.target.value) || 0)}
+                        min={0.1}
+                        step={0.1}
+                        className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-primary)]"
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Initial Ullage Volume (L)</label>
+                      <input
+                        type="number"
+                        value={loxUllageVolumeL}
+                        onChange={(e) => setLoxUllageVolumeL(parseFloat(e.target.value) || 0)}
+                        min={0.01}
+                        step={0.1}
+                        className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-primary)]"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-4 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm font-medium text-orange-400">Fuel Tank</span>
+                    <div className="flex rounded-md overflow-hidden border border-[var(--color-border)]">
+                      <button
+                        type="button"
+                        onClick={() => setFuelVolumeMode('tank')}
+                        className={`px-2 py-1 text-xs ${fuelVolumeMode === 'tank' ? 'bg-orange-600 text-white' : 'text-[var(--color-text-secondary)]'}`}
+                      >
+                        Volume
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFuelVolumeMode('ullage')}
+                        className={`px-2 py-1 text-xs ${fuelVolumeMode === 'ullage' ? 'bg-orange-600 text-white' : 'text-[var(--color-text-secondary)]'}`}
+                      >
+                        Ullage
+                      </button>
+                    </div>
+                  </div>
+                  {fuelVolumeMode === 'tank' ? (
+                    <div>
+                      <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Tank Volume (L)</label>
+                      <input
+                        type="number"
+                        value={fuelTankVolumeL}
+                        onChange={(e) => setFuelTankVolumeL(parseFloat(e.target.value) || 0)}
+                        min={0.1}
+                        step={0.1}
+                        className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-primary)]"
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-xs text-[var(--color-text-secondary)] mb-1">Initial Ullage Volume (L)</label>
+                      <input
+                        type="number"
+                        value={fuelUllageVolumeL}
+                        onChange={(e) => setFuelUllageVolumeL(parseFloat(e.target.value) || 0)}
+                        min={0.01}
+                        step={0.1}
+                        className="w-full px-3 py-2 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-primary)]"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 
