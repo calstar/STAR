@@ -4,8 +4,8 @@
       "id": "node_1",
       "type": "RTD",
       "position": {
-        "x": 840,
-        "y": -220
+        "x": 800,
+        "y": -300
       },
       "data": {
         "componentType": "RTD",
@@ -23,7 +23,7 @@
       "id": "node_3",
       "type": "RTD",
       "position": {
-        "x": 260,
+        "x": 300,
         "y": -220
       },
       "data": {
@@ -42,8 +42,8 @@
       "id": "node_5",
       "type": "MAN",
       "position": {
-        "x": 440,
-        "y": -80
+        "x": 360,
+        "y": -60
       },
       "data": {
         "componentType": "MAN",
@@ -61,8 +61,8 @@
       "id": "node_7",
       "type": "MAN",
       "position": {
-        "x": 680,
-        "y": -80
+        "x": 700,
+        "y": -140
       },
       "data": {
         "componentType": "MAN",
@@ -74,6 +74,139 @@
         "height": 60
       },
       "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "node_1",
+      "type": "LC",
+      "position": {
+        "x": 800,
+        "y": -300
+      },
+      "data": {
+        "componentType": "LC",
+        "label": "LC_#",
+        "fluidType": "default"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "node_3",
+      "type": "TC",
+      "position": {
+        "x": 300,
+        "y": -220
+      },
+      "data": {
+        "componentType": "TC",
+        "label": "TC_#",
+        "fluidType": "default"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "node_5",
+      "type": "RTD",
+      "position": {
+        "x": 360,
+        "y": -60
+      },
+      "data": {
+        "componentType": "RTD",
+        "label": "RTD_#",
+        "fluidType": "default"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "node_7",
+      "type": "ROT",
+      "position": {
+        "x": 700,
+        "y": -140
+      },
+      "data": {
+        "componentType": "ROT",
+        "label": "ROT_#",
+        "fluidType": "default"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "node_9",
+      "type": "ROT",
+      "position": {
+        "x": 460,
+        "y": -340
+      },
+      "data": {
+        "componentType": "ROT",
+        "label": "ROT_#",
+        "fluidType": "default"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "node_11",
+      "type": "PR",
+      "position": {
+        "x": 460,
+        "y": -140
+      },
+      "data": {
+        "componentType": "PR",
+        "label": "PR_#",
+        "fluidType": "default"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "node_13",
+      "type": "MAN",
+      "position": {
+        "x": 280,
+        "y": -320
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "MAN_#",
+        "fluidType": "default"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      },
+      "selected": true,
       "dragging": false
     }
   ],
