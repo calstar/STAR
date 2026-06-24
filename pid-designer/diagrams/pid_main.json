@@ -1,0 +1,142 @@
+{
+  "nodes": [
+    {
+      "id": "node_1",
+      "type": "RTD",
+      "position": {
+        "x": 840,
+        "y": -220
+      },
+      "data": {
+        "componentType": "RTD",
+        "label": "RTD_#",
+        "fluidType": "default"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "node_3",
+      "type": "RTD",
+      "position": {
+        "x": 260,
+        "y": -220
+      },
+      "data": {
+        "componentType": "RTD",
+        "label": "RTD_#",
+        "fluidType": "default"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "node_5",
+      "type": "MAN",
+      "position": {
+        "x": 440,
+        "y": -80
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "MAN_#",
+        "fluidType": "default"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      },
+      "selected": false,
+      "dragging": false
+    },
+    {
+      "id": "node_7",
+      "type": "MAN",
+      "position": {
+        "x": 680,
+        "y": -80
+      },
+      "data": {
+        "componentType": "MAN",
+        "label": "MAN_#",
+        "fluidType": "default"
+      },
+      "measured": {
+        "width": 60,
+        "height": 60
+      },
+      "selected": false,
+      "dragging": false
+    }
+  ],
+  "edges": [
+    {
+      "type": "smoothstep",
+      "style": {
+        "stroke": "#94a3b8",
+        "strokeWidth": 2
+      },
+      "source": "node_3",
+      "sourceHandle": "r",
+      "target": "node_1",
+      "targetHandle": "l",
+      "data": {
+        "fluidType": "default"
+      },
+      "id": "xy-edge__node_3r-node_1l"
+    },
+    {
+      "type": "smoothstep",
+      "style": {
+        "stroke": "#94a3b8",
+        "strokeWidth": 2
+      },
+      "source": "node_3",
+      "sourceHandle": "b",
+      "target": "node_5",
+      "targetHandle": "l",
+      "data": {
+        "fluidType": "default"
+      },
+      "id": "xy-edge__node_3b-node_5l"
+    },
+    {
+      "type": "smoothstep",
+      "style": {
+        "stroke": "#94a3b8",
+        "strokeWidth": 2
+      },
+      "source": "node_5",
+      "sourceHandle": "r",
+      "target": "node_7",
+      "targetHandle": "l",
+      "data": {
+        "fluidType": "default"
+      },
+      "id": "xy-edge__node_5r-node_7l"
+    },
+    {
+      "type": "smoothstep",
+      "style": {
+        "stroke": "#94a3b8",
+        "strokeWidth": 2
+      },
+      "source": "node_7",
+      "sourceHandle": "r",
+      "target": "node_1",
+      "targetHandle": "b",
+      "data": {
+        "fluidType": "default"
+      },
+      "id": "xy-edge__node_7r-node_1b"
+    }
+  ]
+}
