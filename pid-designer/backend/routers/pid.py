@@ -210,7 +210,10 @@ async def get_history():
     if not ref:
         return []
     try:
-        log = _run_git("log", "--format=%H|%s|%aI", "-10", ref, "--", GIT_DIAGRAM_PATH)
+        # `:(top)` forces the pathspec to be resolved from the git root rather
+        # than the process cwd (which is REPO_ROOT == pid-designer/, a subdir of
+        # the git root), so the filter matches the diagram's actual path.
+        log = _run_git("log", "--format=%H|%s|%aI", "-10", ref, "--", f":(top){GIT_DIAGRAM_PATH}")
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=f"git log failed: {e}")
 
