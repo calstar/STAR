@@ -152,7 +152,10 @@ async def save_design_requirements(request: DesignRequirementsRequest):
 
         # Update config with validated requirements
         app_state.config.design_requirements = requirements
-        
+        from engine.pipeline.burn_time_sync import sync_burn_time_fields
+
+        sync_burn_time_fields(app_state.config)
+
         return {
             "status": "success",
             "message": "Design requirements saved successfully",

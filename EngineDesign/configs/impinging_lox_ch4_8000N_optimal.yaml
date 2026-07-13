@@ -195,7 +195,7 @@ spray:
   weber:
     We_min: 15.0
   smd:
-    model: lefebvre
+    model: ingebo   # F2 (UNIFICATION): impinging injectors use the Ingebo correlation (binding-correct).
     C: 0.5
     m: 0.6
     p: 0.0
@@ -358,7 +358,7 @@ environment:
   longitude: -117.8099547
   elevation: 3048.0
 thrust:
-  burn_time: 10.0
+  burn_time: 6.0
 design_requirements:
   target_thrust: 8000.0
   target_apogee: 3048.0

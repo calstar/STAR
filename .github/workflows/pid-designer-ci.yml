@@ -2,6 +2,9 @@ name: P&ID Designer CI
 
 'on':
   push:
+    branches-ignore:
+      # Diagram checkpoints live on a data-only branch; they should never build.
+      - 'pid-diagrams'
     paths:
       - 'pid-designer/**'
       - '.github/workflows/pid-designer-ci.yml'
