@@ -249,6 +249,10 @@ class ChamberSolver:
             res = native_injector.chamber_solve(self.config, self.cea_cache,
                                                 P_tank_O, P_tank_F)
         except Exception:
+            # Strict mode (ED_REQUIRE_NATIVE=1, CI parity job): surface the failure
+            # loudly instead of silently disabling native and passing on Python.
+            if os.environ.get("ED_REQUIRE_NATIVE", "0") == "1":
+                raise
             ChamberSolver._native_chamber_ok = False
             logging.getLogger(__name__).warning(
                 "Native chamber solve raised; disabling native chamber path for this process.")

@@ -77,7 +77,7 @@ export function ChugPoleMap({ data }: Props) {
         </p>
         <p className="font-mono text-[10px] text-[var(--color-text-primary)]">
           σ={sigma.toFixed(1)} ω={omega.toFixed(0)} rad/s ({freqHz.toFixed(0)} Hz)
-          {Number.isFinite(zeta) ? ` · ζ=${zeta.toFixed(3)}` : ''}
+          {zeta != null && Number.isFinite(zeta) ? ` · ζ=${zeta.toFixed(3)}` : ''}
           {' · '}
           <span style={{ color: marginColor(data.chug.margin) }}>margin {data.chug.margin.toFixed(3)}</span>
         </p>

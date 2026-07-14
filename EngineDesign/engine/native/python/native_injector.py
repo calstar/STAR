@@ -24,6 +24,20 @@ def available() -> bool:
     return os.environ.get("ED_USE_NATIVE", "0") == "1"
 
 
+def require_native() -> bool:
+    """Strict mode (ED_REQUIRE_NATIVE=1): a *genuine* native failure (library
+    won't load, solver errors, returns rc!=0 / non-converged) raises instead of
+    returning None to fall back to Python.
+
+    This exists for the CI parity job: without it, a broken or missing native
+    build makes every call silently fall back to Python, so the parity tests pass
+    on the Python path and report a FALSE GREEN. Configs the native kernel simply
+    doesn't cover (`_can_handle*` False) still fall back quietly — that's "not
+    applicable", not a failure — so default (non-strict) runs are unaffected.
+    """
+    return os.environ.get("ED_REQUIRE_NATIVE", "0") == "1"
+
+
 def _nat():
     global _NAT
     if _NAT is None:
@@ -239,9 +253,13 @@ def solve(config, P_tank_O, P_tank_F, Pc):
         st = build_state(config)
         rc, r = nat.injector_solve(st, float(P_tank_O), float(P_tank_F), float(Pc))
         if rc != 0:
+            if require_native():
+                raise RuntimeError(f"native injector_solve returned rc={rc}")
             return None
         return float(r.mdot_O), float(r.mdot_F), _result_to_diag(config, r)
     except Exception:
+        if require_native():
+            raise
         return None
 
 
@@ -358,11 +376,17 @@ def chamber_solve(config, cache, P_tank_O, P_tank_F):
     try:
         nat = _nat()
         if not _ensure_cea(cache):
+            if require_native():
+                raise RuntimeError("native CEA cache load failed (unsupported/ non-3D grid)")
             return None
         st = build_state(config)
         rc, d = nat.chamber_solve(st, float(P_tank_O), float(P_tank_F))
         if rc != 0 or not d.converged:
+            if require_native():
+                raise RuntimeError(f"native chamber_solve rc={rc} converged={bool(d.converged)}")
             return None
         return float(d.Pc), d
     except Exception:
+        if require_native():
+            raise
         return None

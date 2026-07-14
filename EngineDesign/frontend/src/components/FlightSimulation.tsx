@@ -19,7 +19,6 @@ import {
   type FlightSimRequest,
   type FlightSimResponse,
   type FlightOptimizeResponse,
-  type FlightSourceType,
   type FlightEnvironmentConfig,
   type FlightRocketConfig,
   type FlightFinsConfig,
@@ -166,9 +165,6 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
   // RocketPy availability
   const [rocketPyAvailable, setRocketPyAvailable] = useState<boolean | null>(null);
   const [rocketPyMessage, setRocketPyMessage] = useState<string>('');
-
-  // Performance source - always timeseries
-  const source: FlightSourceType = 'timeseries';
 
   // Propellant configuration
   const [loxMass, setLoxMass] = useState('18.0');

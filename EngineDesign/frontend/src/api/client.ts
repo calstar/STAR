@@ -1248,6 +1248,8 @@ export interface CommandRequest {
 
 export interface ControllerInitRequest {
   controller_config_path?: string;
+  // Use the currently-loaded engine config from app_state (backend default: true).
+  use_engine_config?: boolean;
 }
 
 export interface ControllerSimulateRequest {

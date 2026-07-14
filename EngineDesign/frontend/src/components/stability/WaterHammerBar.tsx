@@ -1,5 +1,5 @@
 import type { StabilityRichPayload } from './types';
-import { VizCard, STABLE, UNSTABLE, MUTED } from './shared';
+import { VizCard, STABLE, UNSTABLE } from './shared';
 
 export function WaterHammerBar({ data }: { data: StabilityRichPayload }) {
   const wh = data.water_hammer;
