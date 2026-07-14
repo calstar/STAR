@@ -5,10 +5,10 @@
 # compiler. The CI gate does not need it because:
 #   * rocketcea is imported lazily, only when *building* a CEA cache
 #     (engine/pipeline/cea_cache.py::_get_CEA_Obj), and
-#   * the one CEA-backed test config loads a committed cache fixture
-#     (tests/fixtures/cea/*.npz), so no cache is ever built in CI.
+#   * the CEA-backed test configs load a committed cache table
+#     (output/cache/*.npz), so no cache is ever built in CI.
 # Keeping it out of CI avoids installing gfortran and a multi-minute source
-# build. To regenerate the cache fixture (rare), use the full requirements.txt
+# build. To regenerate the cache (rare), use the full requirements.txt
 # locally — see the "regenerate-cea-cache" workflow.
 #
 # rocketpy IS included: it is pure Python (no compiler) and is imported at

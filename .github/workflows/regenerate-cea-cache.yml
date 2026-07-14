@@ -1,11 +1,11 @@
 name: Regenerate CEA cache fixture
 
-# Manual-only. The committed CEA cache fixture
-# (EngineDesign/tests/fixtures/cea/*.npz) is a deterministic lookup table that
-# only needs rebuilding when the CEA grid/propellant in configs/impinging_smoke
-# changes or rocketcea is upgraded. This job rebuilds it (the one place that
-# needs gfortran + rocketcea) and uploads it as an artifact to download and
-# commit. It intentionally does NOT auto-commit.
+# Manual-only. The committed CEA cache table
+# (EngineDesign/output/cache/cea_cache_LOX_CH4_3D.npz) is a deterministic lookup
+# table that only needs rebuilding when the CEA grid/propellant in
+# configs/impinging_smoke changes or rocketcea is upgraded. This job rebuilds it
+# (the one place that needs gfortran + rocketcea) and uploads it as an artifact
+# to download and commit. It intentionally does NOT auto-commit.
 'on':
   workflow_dispatch:
 
@@ -44,7 +44,7 @@ jobs:
         import os
         cfg = load_config('configs/impinging_smoke.yaml')
         PintleEngineRunner(cfg)  # builds + writes cfg.combustion.cea.cache_file
-        p = 'tests/fixtures/cea/cea_cache_LOX_Ethanol_3D.npz'
+        p = 'output/cache/cea_cache_LOX_CH4_3D.npz'
         print('rebuilt:', p, os.path.getsize(p), 'bytes')
         PY
 
@@ -52,5 +52,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: cea-cache-fixture
-        path: EngineDesign/tests/fixtures/cea/cea_cache_LOX_Ethanol_3D.npz
+        path: EngineDesign/output/cache/cea_cache_LOX_CH4_3D.npz
         retention-days: 14

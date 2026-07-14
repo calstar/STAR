@@ -45,14 +45,24 @@ def _try_native_flows(
 ) -> Optional[Tuple[float, float, Dict[str, Any]]]:
     """Return native (mdot_O, mdot_F, diagnostics) or None to fall back to Python."""
     global _NATIVE_OK
+    # Strict mode (ED_REQUIRE_NATIVE=1, CI parity job): native failures raise
+    # instead of silently reverting to Python (which would pass on the fallback
+    # and report a false green). Default runs are unaffected.
+    require = os.environ.get("ED_REQUIRE_NATIVE", "0") == "1"
     if _NATIVE_OK is False:
+        if require:
+            raise RuntimeError("ED_REQUIRE_NATIVE=1 but native flows were disabled earlier this process")
         return None
     try:
         from engine.native.python import native_injector
     except Exception:
         _NATIVE_OK = False
+        if require:
+            raise
         return None
     if not native_injector.available():
+        if require:
+            raise RuntimeError("ED_REQUIRE_NATIVE=1 but ED_USE_NATIVE!=1 (native path not enabled)")
         return None
 
     res = native_injector.solve(config, P_tank_O, P_tank_F, Pc)
@@ -68,6 +78,11 @@ def _try_native_flows(
             ok = False
         _NATIVE_OK = ok
         if not ok:
+            if require:
+                raise RuntimeError(
+                    f"ED_REQUIRE_NATIVE=1 parity self-check FAILED: native mdot="
+                    f"({res[0]:g},{res[1]:g}) disagrees with Python beyond {_NATIVE_RTOL:g} rtol"
+                )
             _logger.warning(
                 "Native injector parity self-check failed (native mdot=(%g,%g)); "
                 "disabling native path for this process.", res[0], res[1]

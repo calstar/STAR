@@ -23,8 +23,8 @@ defaults:
     working-directory: EngineDesign
 
 jobs:
-  # Python regression gate. Fast (~seconds): no gfortran/rocketcea — the one
-  # CEA-backed config loads a committed cache fixture (tests/fixtures/cea/).
+  # Python regression gate. Fast (~seconds): no gfortran/rocketcea — the
+  # CEA-backed configs load a committed cache table (output/cache/*.npz).
   python-tests:
     name: Python tests (regression gate)
     runs-on: ubuntu-latest
@@ -44,11 +44,13 @@ jobs:
     - name: Install dependencies (CI subset — no rocketcea/gfortran)
       run: pip install -r requirements-ci.txt
 
-    # The committed CEA fixture must be present so PintleEngineRunner loads
+    # The committed CEA cache must be present so PintleEngineRunner loads
     # (np.load) instead of building a cache via rocketcea. Fail loudly if it
     # ever goes missing, rather than silently hanging on a live CEA build.
-    - name: Verify committed CEA cache fixture is present
-      run: test -f tests/fixtures/cea/cea_cache_LOX_Ethanol_3D.npz
+    # impinging_smoke.yaml + default.yaml (the CEA-backed test configs) are
+    # methalox, so both load the LOX/CH4 table.
+    - name: Verify committed CEA cache is present
+      run: test -f output/cache/cea_cache_LOX_CH4_3D.npz
 
     # --timeout guards against any test accidentally triggering a live CEA
     # build (which would otherwise hang the runner). thread method so a stuck
@@ -114,6 +116,87 @@ jobs:
       run: npm run lint
       continue-on-error: true
 
+  # Native C physics kernel: compile libed_physics and run its golden-vector /
+  # unit tests via CTest. Fully self-contained — golden vectors are committed
+  # (engine/native/tests/golden/), so no rocketcea/Python is involved. ubuntu
+  # ships gcc + cmake. ED_NATIVE_ARCH=OFF drops -march=native for a portable,
+  # runner-independent build; chamber_golden self-skips (exit 77) until that
+  # stage lands (CTest reports it skipped, not failed).
+  native-kernel:
+    name: Native kernel (C golden/unit tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure + build (portable — no -march=native)
+      working-directory: EngineDesign/engine/native
+      run: cmake -S . -B build -DED_NATIVE_ARCH=OFF && cmake --build build -j
+
+    - name: Run CTest suite
+      working-directory: EngineDesign/engine/native
+      run: ctest --test-dir build --output-on-failure
+
+  # Python <-> native parity: re-run the impinging tests with ED_USE_NATIVE=1 so
+  # chamber_solver's residual/Brent loop and closure's injector flows route
+  # through the C kernel. autobuild compiles libed_physics on demand.
+  #
+  # CRITICAL: the native path silently falls back to Python on any load failure
+  # (chamber_solver._native_chamber_pc), so `ED_USE_NATIVE=1 pytest` alone can be
+  # a FALSE GREEN — everything runs on Python and passes. The pre-flight below
+  # positively proves the lib compiles + ctypes-loads (ensure_lib/load raise on
+  # failure) before the parity run, so a broken native path fails loudly here.
+  native-parity:
+    name: Python-native parity (ED_USE_NATIVE=1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        cache-dependency-path: EngineDesign/requirements-ci.txt
+
+    - name: Install dependencies (CI subset — no rocketcea/gfortran)
+      run: pip install -r requirements-ci.txt
+
+    - name: Verify committed CEA cache is present
+      run: test -f output/cache/cea_cache_LOX_CH4_3D.npz
+
+    # Positive proof the native path is real (not a silent Python fallback):
+    # ensure_lib() compiles and raises on build failure; load() ctypes-loads and
+    # raises if broken; available() confirms the injector shim is wired.
+    - name: Pre-flight — native library compiles and loads
+      run: |
+        python -c "
+        from engine.native.python import autobuild, ed_native, native_injector
+        p = autobuild.ensure_lib(verbose=True)
+        ed_native.load(p)
+        assert native_injector.available(), 'native_injector.available() is False'
+        print('native lib built + ctypes-loaded OK:', p)
+        "
+
+    # ED_REQUIRE_NATIVE=1 makes a genuine native failure (lib won't load, solver
+    # errors, or injector parity self-check disagrees with Python beyond tolerance)
+    # RAISE instead of silently falling back to Python — so this job can't pass on
+    # the Python path and report a false green.
+    - name: Run impinging tests through the native path (strict)
+      env:
+        ED_USE_NATIVE: '1'
+        ED_REQUIRE_NATIVE: '1'
+      run: |
+        python -m pytest \
+          tests/test_layer1_impinging_vector.py \
+          tests/test_flow_capacity_effective_area.py \
+          --timeout=180 --timeout-method=thread -q
+
   # Aggregate status, mirroring daq-server-ci.yml's build-summary.
   engine-design-summary:
     name: Engine Design Summary
@@ -122,6 +205,8 @@ jobs:
       - python-tests
       - backend-smoke
       - frontend
+      - native-kernel
+      - native-parity
     if: always()
 
     steps:
@@ -135,3 +220,5 @@ jobs:
         echo "| Python tests (gate) | ${{ needs.python-tests.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Backend smoke | ${{ needs.backend-smoke.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Frontend build | ${{ needs.frontend.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Native kernel (C tests) | ${{ needs.native-kernel.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Python-native parity | ${{ needs.native-parity.result }} |" >> $GITHUB_STEP_SUMMARY
