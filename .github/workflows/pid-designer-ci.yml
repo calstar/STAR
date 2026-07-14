@@ -14,11 +14,6 @@ name: P&ID Designer CI
       - '.github/workflows/pid-designer-ci.yml'
   workflow_dispatch:
 
-# Cancel superseded runs on the same ref to save CI minutes.
-concurrency:
-  group: pid-designer-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   frontend:
     name: Frontend (TypeScript build)
