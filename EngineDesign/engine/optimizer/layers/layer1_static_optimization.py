@@ -6674,8 +6674,9 @@ def run_hybrid_optimization(
             # Initial mean for this block
             z0 = current_x[block_indices]
             
-            # Objective wrapper
-            def block_obj_fn(z):
+            # Objective wrapper. Bind the loop vars as defaults so the closure captures
+            # THIS block's values, not the final iteration's (B023 late-binding trap).
+            def block_obj_fn(z, current_x=current_x, block_indices=block_indices):
                 # Stitch
                 full_x = current_x.copy() # Start with current baseline
                 full_x[block_indices] = z # Overwrite block

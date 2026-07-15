@@ -1,0 +1,42 @@
+name: Lint (ruff bug-gate)
+
+# Repo-wide static bug-gate. Runs the bug-detecting ruff ruleset (see /ruff.toml)
+# over every subproject — EngineDesign, daq-server, firmware, pid-designer — to catch
+# undefined-name / use-before-assignment / redefinition defects that unit tests miss
+# when the crashing path isn't exercised. Fast (~seconds): no project deps installed,
+# just ruff itself.
+
+# Quoted `on` — YAML 1.1 treats bare `on` as boolean true (matches the other workflows).
+'on':
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ruff:
+    name: Ruff bug-gate (whole repo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    # Pinned so a future ruff release adding new rules to the selected families
+    # can't turn this gate red without an intentional bump.
+    - name: Install ruff
+      run: pip install ruff==0.15.21
+
+    # Config (rule selection) lives in /ruff.toml so local `ruff check` matches CI.
+    - name: Run ruff bug-gate
+      run: ruff check .

@@ -122,6 +122,7 @@ def solve_ddp(
     eng_estimates_all = []
     
     # Main DDP loop
+    prev_objective = float("inf")  # carried between iterations; only read when iteration > 0
     for iteration in range(cfg.max_iterations):
         # Forward rollout
         x_seq, eng_estimates, objective, constraint_violations = forward_rollout(

@@ -323,7 +323,6 @@ def setup_flight(config, thrust_curve, mdot_lox, mdot_fuel, plot_results=False):
     # Tank volume = π * r² * h, max mass = volume * density * fill_factor
     # RocketPy's internal tank calculations (liquid height, center of mass) can fail
     # when liquid level gets too close to tank geometry bounds due to numerical precision
-    import math
     # Validate and cap propellant masses to tank capacity (fill factor from config, default 90%)
     from engine.pipeline.tank_capacity import resolve_fuel_tank_limits, resolve_lox_tank_limits
 

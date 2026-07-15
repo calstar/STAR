@@ -756,7 +756,6 @@ class ChamberSolver:
             "eta_cstar": eta,
             "cooling_efficiency": cooling_eff,
             "Tc": effective_Tc,  # Use effective temperature after cooling (accounts for energy removal)
-            "Tc_ideal": cea_props["Tc"],  # Store original CEA temperature for reference
             "gamma": gamma,
             "R": R,
             "M": cea_props.get("M"),  # Molecular weight [kg/kmol]

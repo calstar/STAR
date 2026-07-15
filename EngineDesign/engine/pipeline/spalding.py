@@ -612,7 +612,8 @@ def solve_spalding_coupled(
     warned_pv_stall = False
     T_s_clipped_count = 0
     X_F_s_clipped_count = 0
-    
+    clipping_count = 0  # total clip events across the iteration; checked against max_iter below
+
     for iteration in range(max_iter):
         # Step 1: Vapor pressure at current T_s
         try:

@@ -1,0 +1,37 @@
+# Repo-wide lint gate — BUG-detecting rules only, not style.
+#
+# Rationale: this gate exists to catch the use-before-assignment / undefined-name /
+# redefinition class of bug — e.g. the `max_lox_P_psi` NameError that made the engine
+# optimizer's orchestrator crash on every run, and the missing `import serial` / `import math`
+# that would NameError the moment those GUIs ran. These are runtime crashes that unit tests
+# miss when the crashing path isn't exercised, but ruff flags statically in ~1s across the
+# whole monorepo.
+#
+# Deliberately NOT enabled: the large pre-existing style backlog (unused imports/variables,
+# f-strings without placeholders, etc.). Those are hygiene, not bugs; gating on them would
+# require a big cleanup and add noise. Expand `select` cautiously and only with rules that
+# indicate real defects.
+
+target-version = "py311"
+
+[lint]
+select = [
+    "F821",  # undefined name (missing import, typo, use-before-any-binding)
+    "F823",  # local variable referenced before assignment
+    "F811",  # redefinition of an unused name (usually a shadow / dead re-import)
+    "F601",  # `==`/`!=` against a repeated dict key literal
+    "F602",  # `in`/`not in` with a repeated literal
+    "F631",  # assert on a (always-truthy) tuple
+    "F632",  # use of `==`/`is` with a str/num/bytes literal that can't match
+    "F701",  # `break` outside a loop
+    "F702",  # `continue` outside a loop
+    "F704",  # `yield` outside a function
+    "F706",  # `return` outside a function
+    "F707",  # `except` after a bare `except`
+    "B006",  # mutable value as an argument default
+    "B023",  # closure does not bind the loop variable (late-binding trap)
+]
+
+# B008 (function-call-in-default-argument) is intentionally excluded: FastAPI's
+# File()/Depends()/Query()/Form() default-argument idiom is a required framework
+# pattern in backend/routers/*, not a bug.

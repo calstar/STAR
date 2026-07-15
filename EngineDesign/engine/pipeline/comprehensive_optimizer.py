@@ -150,6 +150,8 @@ class ComprehensivePintleOptimizer:
                     2.0 * stability_penalty
                 )
                 
+                # Overall stability margin is the worst (min) of the component margins.
+                stability_margin = min(chugging_margin, acoustic_margin, feed_margin)
                 history.append({
                     "x": x.copy(),
                     "F": F_actual,

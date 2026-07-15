@@ -34,7 +34,7 @@ def _chug_boundary_curve(streams, chamber, n_pts: int = 16) -> List[List[float]]
     curve: List[List[float]] = []
     for eta in np.linspace(0.08, 0.45, n_pts):
         # scale all streams to this eta; bisect lag factor k in [0.1, 8] for GM(k)=1
-        def gm_at(kfac: float) -> float:
+        def gm_at(kfac: float, eta=eta) -> float:
             sc = []
             for s in streams:
                 s2 = copy.copy(s)

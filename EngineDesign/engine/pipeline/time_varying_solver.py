@@ -450,13 +450,11 @@ class TimeVaryingCoupledSolver:
                     )
                 gas_viscosity = float(gas_viscosity)
 
-                # Backside temperature should come from the multi-layer thermal model; require it.
-                if 'T_stainless_throat' not in locals() or T_stainless_throat is None:
-                    # In some cases T_stainless_throat might not be calculated yet or fail
-                    # Fallback to T_backside_thermal if available, or 300K
-                    T_backside = 300.0
-                else:
-                    T_backside = float(T_stainless_throat)
+                # Backside temperature should come from the multi-layer thermal model, but it
+                # is computed later in this step, so it may not be bound yet on this path.
+                # Read it defensively (missing or None -> 300 K fallback).
+                _T_stainless = locals().get("T_stainless_throat")
+                T_backside = float(_T_stainless) if _T_stainless is not None else 300.0
             else:
                 # In simplified mode, these are not used for recession but we provide placeholders
                 gas_viscosity = 4e-5 
