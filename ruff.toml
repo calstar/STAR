@@ -14,6 +14,11 @@
 
 target-version = "py311"
 
+# Deprecated / quarantined code lives under any `archive/` directory (see the
+# EngineDesign dead-code cleanup). It is intentionally out of the active tree and
+# may retain dangling imports to since-removed modules, so the bug-gate skips it.
+extend-exclude = ["**/archive/**"]
+
 [lint]
 select = [
     "F821",  # undefined name (missing import, typo, use-before-any-binding)
