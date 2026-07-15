@@ -147,9 +147,13 @@ EngineDesign/
 │   │
 │   ├── pipeline/                # Pipeline infrastructure
 │   │   ├── config_schemas.py    # Pydantic validation
+│   │   ├── config_switch.py     # Injector/propellant switching (see docs/CONFIG_SYSTEM.md)
 │   │   ├── cea_cache.py         # CEA thermochemistry caching
-│   │   ├── io.py                # Config loading/saving
+│   │   ├── io.py                # Config loading/saving + preset resolution
 │   │   ├── time_varying_solver.py
+│   │   ├── tank_capacity.py     # Resolve max loadable propellant mass from config
+│   │   ├── burn_time_sync.py    # Keep burn-time fields aligned across config sections
+│   │   ├── flight_altitude_optimizer.py  # Min-fuel burn time for target apogee
 │   │   ├── thermal/             # Thermal protection models
 │   │   │   ├── ablative_cooling.py
 │   │   │   ├── graphite_cooling.py
@@ -157,6 +161,14 @@ EngineDesign/
 │   │   └── stability/           # Stability analysis
 │   │       ├── analysis.py
 │   │       └── coupling.py
+│   │
+│   ├── native/                  # Native C physics kernel (opt-in accelerator)
+│   │   ├── README.md            # Build, staged port plan, parity/benchmarks
+│   │   ├── CMakeLists.txt       # C11 build (auto-built on first use)
+│   │   ├── include/             # Public headers (ed_*.h)
+│   │   ├── src/                 # C implementation (chamber, CEA, injector, ...)
+│   │   ├── python/              # ctypes bindings + autobuild
+│   │   └── tests/               # Golden-vector parity tests
 │   │
 │   ├── optimizer/               # Optimization layers
 │   │   ├── main_optimizer.py    # Main orchestrator
@@ -197,7 +209,11 @@ EngineDesign/
 │   └── n2_Z_lookup.csv
 │
 ├── configs/                     # Configuration files
-│   └── default.yaml             # Base engine configuration
+│   ├── default.yaml             # What the backend loads at startup
+│   ├── canonical/               # Committed starting configs, one per injector
+│   │   ├── pintle.yaml
+│   │   └── impinging.yaml
+│   └── propellants/             # Propellant presets (fluids + CEA identity)
 │
 ├── output/                      # Generated files (gitignored)
 │   ├── logs/                    # Optimization logs
@@ -207,10 +223,14 @@ EngineDesign/
 ├── docs/                        # Documentation
 │   ├── layer_requirements.md    # Layer interface requirements
 │   ├── optimizer_readme.md      # Optimizer architecture and usage
-│   └── control/                 # Control system documentation
-│       ├── README.md
-│       ├── INDEX.md
-│       └── DDP_SOLVER.md
+│   ├── CONFIG_SYSTEM.md         # Config model, presets, switching, burn-time sync
+│   ├── flight_simulation.md     # /simulate, tank capacity, propellant regimes
+│   ├── flight_altitude_optimization.md  # Min-fuel burn time for a target apogee
+│   ├── control/                 # Control system documentation
+│   │   ├── README.md
+│   │   ├── INDEX.md
+│   │   └── DDP_SOLVER.md
+│   └── stability/               # Combustion stability physics
 │
 ├── scripts/                     # Utility scripts
 │   ├── simple_example.py
@@ -439,9 +459,16 @@ See the `docs/` folder for additional documentation:
 **Core Documentation:**
 - `docs/layer_requirements.md` - Layer interface requirements
 - `docs/optimizer_readme.md` - Optimizer architecture, layers, and usage
+- `docs/layer1_static_optimization_explained.md` - Layer 1 static optimization walkthrough
 - `docs/Cd_calculation_methodology.md` - Discharge coefficient methodology
 - `docs/pintle_geometry_constraints.md` - Pintle geometry constraints
 - `docs/stability/combustion_stability_physics.md` - Combustion stability physics
+
+**Config, Flight & Performance:**
+- `docs/CONFIG_SYSTEM.md` - Config model: two canonical configs, propellant presets, in-memory switch, burn-time sync
+- `docs/flight_simulation.md` - `/simulate` endpoint, tank-capacity resolution, and propellant regimes
+- `docs/flight_altitude_optimization.md` - Minimum-fuel burn-time optimization for a target apogee
+- `engine/native/README.md` - Native C physics kernel: build, staged port plan, and parity/benchmark methodology
 
 **Control System Documentation:**
 - `docs/control/README.md` - Control system overview
