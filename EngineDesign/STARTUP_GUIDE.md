@@ -15,14 +15,14 @@ Open http://localhost:5173 in your browser.
 
 ## What the Warnings Mean
 
-### 1. "reading cea isp data files for LOX / Ethanol 9800 times"
+### 1. "reading cea isp data files for <ox> / <fuel> 9800 times" (e.g. LOX / CH4)
 
 This is **normal** - it happens when:
 - The CEA cache file doesn't exist yet and needs to be built
 - RocketCEA library is reading ISP data files to build the cache
 - This only happens once when the cache is first created (can take a few minutes)
 
-**Solution**: Wait for it to complete. The cache will be saved to `output/cache/cea_cache_LOX_Ethanol_3D.npz` and won't need rebuilding.
+**Solution**: Wait for it to complete. The cache will be saved to `output/cache/` (e.g. `cea_cache_LOX_CH4_3D.npz` for the default LOX/CH4 config; the exact name follows the propellants in the config) and won't need rebuilding.
 
 ### 2. "Warning: Could not load default config"
 
@@ -42,13 +42,13 @@ If `./dev.sh` doesn't work, start services manually:
 
 ### Backend
 ```bash
-cd /home/kushmahajan/EngineDesign
+cd /path/to/EngineDesign   # repo root
 uvicorn backend.main:app --reload --port 8000
 ```
 
 ### Frontend (in another terminal)
 ```bash
-cd /home/kushmahajan/EngineDesign/frontend
+cd /path/to/EngineDesign/frontend
 npm run dev
 ```
 
@@ -58,7 +58,7 @@ npm run dev
    ```bash
    node --version
    ```
-   **Must be Node 20.19+ or 22.12+** for Vite 7. If you have Node 18, upgrade first (see TROUBLESHOOTING.md)
+   **Node 18+ is required** (the frontend uses Vite 5; Node 18.0+ or 20.0+ recommended). If your Node is older, upgrade first (see TROUBLESHOOTING.md)
 
 2. **Install frontend dependencies** (REQUIRED):
    ```bash
@@ -67,12 +67,12 @@ npm run dev
    ```
    This creates `node_modules/` - **required before starting frontend**
 
-2. **Create cache directory**:
+3. **Create cache directory**:
    ```bash
    mkdir -p output/cache
    ```
 
-3. **Install Python dependencies** (if not done):
+4. **Install Python dependencies** (if not done):
    ```bash
    pip install -r requirements.txt
    ```
@@ -92,7 +92,7 @@ If port 8000 or 5173 is already in use:
 - Once built, it's cached and won't rebuild unless you delete it
 
 ### Backend Not Connecting
-- Check backend is running: `curl http://localhost:8000/health`
+- Check backend is running: `curl http://localhost:8000/api/health`
 - Check frontend console for connection errors
 - Verify ports match in `dev.sh`
 

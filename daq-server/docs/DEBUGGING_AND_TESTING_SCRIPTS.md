@@ -3,7 +3,7 @@
 This document describes the various utility and diagnostic scripts used to verify the Elodin stack, debug protocol issues, and test race conditions.
 
 ## Location
-All scripts are located in `scripts/debug/`.
+All scripts are located in `tools/debug/`.
 
 ## Scripts
 
@@ -12,7 +12,7 @@ A utility to compute the FNV-1a hash-based message IDs used by the Elodin DB. Th
 
 **Usage:**
 ```bash
-node scripts/debug/compute_elodin_ids.js "VTableStream"
+node tools/debug/compute_elodin_ids.js "VTableStream"
 ```
 
 ### 2. `test_vtable_subscription.js`
@@ -20,7 +20,7 @@ A standalone TypeScript client that connects to the Elodin DB and subscribes to 
 
 **Usage:**
 ```bash
-node scripts/debug/test_vtable_subscription.js [host] [port]
+node tools/debug/test_vtable_subscription.js [host] [port]
 ```
 
 ### 3. `start_manual_no_tmux.sh`
@@ -28,7 +28,7 @@ Starts the core components of the GUI stack (DB, Relay, Backend, DAQ Bridge, and
 
 **Usage:**
 ```bash
-USE_SIM=1 bash scripts/debug/start_manual_no_tmux.sh
+USE_SIM=1 bash tools/debug/start_manual_no_tmux.sh
 ```
 *Logs are saved to `/tmp/manual_logs/`.*
 
@@ -37,7 +37,7 @@ A reproduction script for the Relay resubscription race condition. It intentiona
 
 **Usage:**
 ```bash
-bash scripts/debug/repro_relay_race.sh
+bash tools/debug/repro_relay_race.sh
 ```
 
 ## Troubleshooting Data Flow

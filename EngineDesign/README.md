@@ -1,6 +1,6 @@
-# Pintle Injector Liquid Rocket Engine Design Pipeline
+# Liquid Rocket Engine Design Pipeline
 
-A comprehensive physics-based simulation and **multi-layer optimization pipeline** for liquid bipropellant rocket engines — **LOX/RP‑1** and **LOX/CH₄ (methalox)**, with **pintle** or **impinging** injectors. Takes tank pressures as input and solves for chamber pressure, mass flow rates, thrust, and all performance parameters, accelerated by a native C physics kernel.
+A comprehensive physics-based simulation and **multi-layer optimization pipeline** for liquid bipropellant rocket engines. The propellants and the injector type are **whatever you put in the config** — the whole point is to evaluate and compare different engine designs, not to model one fixed engine. Presets ship for **LOX/RP‑1** and **LOX/CH₄ (methalox)** with **pintle** or **impinging** injectors. Takes tank pressures as input and solves for chamber pressure, mass flow rates, thrust, and all performance parameters, accelerated by a native C physics kernel.
 
 ## Overview
 
@@ -47,7 +47,7 @@ parity/benchmark methodology.
 ```mermaid
 flowchart TB
     subgraph inputs [Inputs]
-        TankP["Tank Pressures: LOX + RP-1"]
+        TankP["Tank Pressures: oxidizer + fuel"]
         Config["YAML Config: configs/default.yaml"]
     end
 
@@ -147,9 +147,13 @@ EngineDesign/
 │   │
 │   ├── pipeline/                # Pipeline infrastructure
 │   │   ├── config_schemas.py    # Pydantic validation
+│   │   ├── config_switch.py     # Injector/propellant switching (see docs/CONFIG_SYSTEM.md)
 │   │   ├── cea_cache.py         # CEA thermochemistry caching
-│   │   ├── io.py                # Config loading/saving
+│   │   ├── io.py                # Config loading/saving + preset resolution
 │   │   ├── time_varying_solver.py
+│   │   ├── tank_capacity.py     # Resolve max loadable propellant mass from config
+│   │   ├── burn_time_sync.py    # Keep burn-time fields aligned across config sections
+│   │   ├── flight_altitude_optimizer.py  # Min-fuel burn time for target apogee
 │   │   ├── thermal/             # Thermal protection models
 │   │   │   ├── ablative_cooling.py
 │   │   │   ├── graphite_cooling.py
@@ -157,6 +161,14 @@ EngineDesign/
 │   │   └── stability/           # Stability analysis
 │   │       ├── analysis.py
 │   │       └── coupling.py
+│   │
+│   ├── native/                  # Native C physics kernel (opt-in accelerator)
+│   │   ├── README.md            # Build, staged port plan, parity/benchmarks
+│   │   ├── CMakeLists.txt       # C11 build (auto-built on first use)
+│   │   ├── include/             # Public headers (ed_*.h)
+│   │   ├── src/                 # C implementation (chamber, CEA, injector, ...)
+│   │   ├── python/              # ctypes bindings + autobuild
+│   │   └── tests/               # Golden-vector parity tests
 │   │
 │   ├── optimizer/               # Optimization layers
 │   │   ├── main_optimizer.py    # Main orchestrator
@@ -197,7 +209,11 @@ EngineDesign/
 │   └── n2_Z_lookup.csv
 │
 ├── configs/                     # Configuration files
-│   └── default.yaml             # Base engine configuration
+│   ├── default.yaml             # What the backend loads at startup
+│   ├── canonical/               # Committed starting configs, one per injector
+│   │   ├── pintle.yaml
+│   │   └── impinging.yaml
+│   └── propellants/             # Propellant presets (fluids + CEA identity)
 │
 ├── output/                      # Generated files (gitignored)
 │   ├── logs/                    # Optimization logs
@@ -205,15 +221,16 @@ EngineDesign/
 │   └── cache/                   # CEA cache files
 │
 ├── docs/                        # Documentation
-│   ├── pipeline_status.md       # Implementation status
-│   ├── quick_reference.md      # Quick reference guide
 │   ├── layer_requirements.md    # Layer interface requirements
-│   ├── optimizer_readme.md      # Optimizer documentation
-│   ├── optimization_layers_readme.md
-│   └── control/                 # Control system documentation
-│       ├── README.md
-│       ├── DDP_SOLVER.md
-│       └── CONTROLLER_SUMMARY.md
+│   ├── optimizer_readme.md      # Optimizer architecture and usage
+│   ├── CONFIG_SYSTEM.md         # Config model, presets, switching, burn-time sync
+│   ├── flight_simulation.md     # /simulate, tank capacity, propellant regimes
+│   ├── flight_altitude_optimization.md  # Min-fuel burn time for a target apogee
+│   ├── control/                 # Control system documentation
+│   │   ├── README.md
+│   │   ├── INDEX.md
+│   │   └── DDP_SOLVER.md
+│   └── stability/               # Combustion stability physics
 │
 ├── scripts/                     # Utility scripts
 │   ├── simple_example.py
@@ -225,8 +242,8 @@ EngineDesign/
 │
 ├── dev.sh                       # Development startup script
 ├── README.md
-├── QUICKSTART.md                # Quick start guide
 ├── STARTUP_GUIDE.md             # Detailed startup instructions
+├── TROUBLESHOOTING.md           # Common issues and fixes
 ├── requirements.txt
 └── .gitignore
 ```
@@ -329,40 +346,36 @@ python scripts/pressure_sweep.py
 ```
 
 **For more detailed setup instructions, see:**
-- `QUICKSTART.md` - Quick start guide for backend/frontend
 - `STARTUP_GUIDE.md` - Detailed startup instructions and troubleshooting
+- `TROUBLESHOOTING.md` - Common issues and fixes
 
 ## Configuration
 
-Engine parameters are defined in YAML. Key sections of `configs/default.yaml`:
+Engine parameters — including the propellants and the injector type — are
+defined in YAML; pick whatever combination you want to evaluate. The block
+below is just one example (the shipped `configs/default.yaml`); see `configs/`
+for others (e.g. different propellants, pintle vs. impinging injectors). Key
+sections:
 
 ```yaml
 fluids:
+  fuel: { name: Methane, density: 422.6, ... }
   oxidizer: { name: LOX, density: 1140.0, ... }
-  fuel: { name: RP-1, density: 780.0, ... }
 
 injector:
-  type: pintle
+  type: impinging          # or "pintle"
   geometry:
-    lox: { n_orifices: 12, d_orifice: 0.003, ... }
-    fuel: { d_pintle_tip: 0.015, h_gap: 0.0005, ... }
+    oxidizer: { n_elements: 20, d_jet: 0.002, impingement_angle: 50.0, ... }
+    fuel: { n_elements: 20, d_jet: 0.002, impingement_angle: 60.0, ... }
 
 feed_system:
-  oxidizer: { K0: 2.0, ... }
   fuel: { K0: 2.0, ... }
+  oxidizer: { K0: 2.0, ... }
 
 combustion:
-  cea: { oxName: LOX, fuelName: RP-1, ... }
-  efficiency: { ... }
-
-chamber:
-  A_throat: 0.0005
-  Lstar: 1.0
-  ...
-
-nozzle:
-  expansion_ratio: 4.0
-  ...
+  cea: { ox_name: LOX, fuel_name: CH4, expansion_ratio: 6.14, ... }
+  efficiency: { model: exponential, ... }
+  # Lstar and A_throat live alongside the cea block in the combustion section
 
 ablative_cooling:
   enabled: true
@@ -371,7 +384,7 @@ ablative_cooling:
 
 graphite_insert:
   enabled: true
-  initial_thickness: 0.005
+  initial_thickness: 0.006
   ...
 ```
 
@@ -444,19 +457,26 @@ L*-based: `η_c* = 1 - C × e^(-K×L*)`
 See the `docs/` folder for additional documentation:
 
 **Core Documentation:**
-- `docs/pipeline_status.md` - Detailed implementation status
 - `docs/layer_requirements.md` - Layer interface requirements
-- `docs/quick_reference.md` - Quick reference guide
-- `docs/optimizer_readme.md` - Optimizer architecture and usage
-- `docs/optimization_layers_readme.md` - Layer structure and responsibilities
+- `docs/optimizer_readme.md` - Optimizer architecture, layers, and usage
+- `docs/layer1_static_optimization_explained.md` - Layer 1 static optimization walkthrough
+- `docs/Cd_calculation_methodology.md` - Discharge coefficient methodology
+- `docs/pintle_geometry_constraints.md` - Pintle geometry constraints
+- `docs/stability/combustion_stability_physics.md` - Combustion stability physics
+
+**Config, Flight & Performance:**
+- `docs/CONFIG_SYSTEM.md` - Config model: two canonical configs, propellant presets, in-memory switch, burn-time sync
+- `docs/flight_simulation.md` - `/simulate` endpoint, tank-capacity resolution, and propellant regimes
+- `docs/flight_altitude_optimization.md` - Minimum-fuel burn-time optimization for a target apogee
+- `engine/native/README.md` - Native C physics kernel: build, staged port plan, and parity/benchmark methodology
 
 **Control System Documentation:**
 - `docs/control/README.md` - Control system overview
+- `docs/control/INDEX.md` - Module-by-module documentation index
 - `docs/control/DDP_SOLVER.md` - DDP solver implementation
-- `docs/control/CONTROLLER_SUMMARY.md` - Controller architecture
 - `docs/control/CONSTRAINTS.md` - Safety constraints
 - `docs/control/ROBUSTNESS.md` - Robustness features
 
 **Additional Guides:**
-- `QUICKSTART.md` - Quick start for backend/frontend
 - `STARTUP_GUIDE.md` - Detailed startup and troubleshooting
+- `TROUBLESHOOTING.md` - Common issues and fixes

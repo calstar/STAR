@@ -2,30 +2,39 @@
 
 ## start_tmux_dev.sh — What It Does
 
-Launches the full stack in a single tmux session. Order matters:
+Launches the full stack in a single tmux session (`deploy/startup/start_tmux_dev.sh`),
+using the **thin backend** (`server.ts` connects directly to the Elodin DB — no
+relay). The legacy monolithic backend lives in `start_tmux_dev_legacy.sh`. Panes
+are created left-to-right in this order:
 
 | Pane | Component | Role |
 |------|-----------|------|
-| 0 | Elodin DB | Raw data storage (port 2240). **Single subscriber** rule: only the relay gets the stream |
-| 1 | Elodin Relay | Connects to DB first (sleep 2s). Fans out TABLE packets to backend/sidecar via WS :9090 |
-| 2 | Backend | Connects to relay, serves UI. Runs controller loop, sends actuator commands |
-| 3 | DAQ Bridge | Listens UDP :5006, parses boards → Elodin. **Sends SERVER_HEARTBEAT** (see below) |
-| 4 | Frontend | Next.js on :3000 |
-| 5 | Sidecar | Python calibration_server (HTTP :8100, WS :8101) |
-| 6 | Board Simulator | `board_simulator.py` → UDP :5006 (PT, actuator heartbeats, sensor data) |
-| 7 | Calibration Service | C++ reads RAW from Elodin, writes CALIBRATED |
-| 8 | Controller Service | C++ reads CALIBRATED, outputs PWM to actuators |
-| 9 | Actuator Service | C++ TCP :9998. Receives `STATE:GSE\n`, sends UDP actuator commands |
-| 10 | Heartbeat Service | C++ (preferred) or Python — polls `/api/engine_state`, broadcasts SERVER_HEARTBEAT |
-| 11 | Config Broadcast Service | C++ (preferred) or Python — sends ACTUATOR_CONFIG/SENSOR_CONFIG |
-| 12 | Data Logger Service | Python — connects to backend WS, writes `.sensorlog` on ARMED→IDLE |
+| 0 | Board Simulator | `sim/board_simulator.py` → UDP :5006. **Disabled** unless `USE_SIM=1` |
+| 1 | DAQ Bridge | `build/bin/daq_bridge` — listens UDP :5006, parses boards → Elodin |
+| 2 | Elodin DB | `elodin-db run [::]:2240` — raw + calibrated data land here |
+| 3 | Calibration Service | `build/bin/calibration_service` — reads RAW from Elodin, writes CALIBRATED |
+| 4 | Backend | `server.ts` (tsx) — HTTP+WS on :8081, connects directly to Elodin DB :2240 |
+| 5 | Frontend | Next.js (`npm run dev`) on :3000 |
+| 6 | Heartbeat Service | `build/bin/heartbeat_service` (C++ preferred, Python fallback) — broadcasts SERVER_HEARTBEAT |
+| 7 | Config Broadcast Service | `build/bin/config_broadcast_service` — sends ACTUATOR_CONFIG/SENSOR_CONFIG |
+| 8 | Sequencer Service | `build/bin/sequencer_service` — TCP :9998 command/actuator service |
+| 9 | OTA Service | `build/bin/ota_service` — TCP :9997 (Ethernet OTA flash) |
+| 10 | Controller Service | `build/bin/controller_service` — reads CALIBRATED, outputs PWM to actuators |
 
-**Routing:** When `actuator_service` is built and `ACTUATOR_SERVICE_ENABLED=true`:
-- State transitions → backend sends `STATE:<name>\n` to TCP :9998 → actuator_service sends UDP.
-- Backend does **not** send actuator UDP directly.
+Notes:
+- All binaries build into `build/bin/`.
+- The data logger and the legacy Elodin relay / Python calibration sidecar are
+  **not** part of this stack (they exist only in `start_tmux_dev_legacy.sh` /
+  `start_web_gui.sh`).
+- The backend's `ACTUATOR_SERVICE_PORT` (default 9998) points at the
+  **sequencer_service** TCP command port.
 
-When actuator_service is **not** running:
-- Backend sends actuator UDP directly to boards (port 5005).
+**Command routing:** state transitions and manual actuator commands go from the
+frontend → backend (WS) → **sequencer_service** over TCP :9998 as text commands
+(`TRANSITION:`, `ACTUATOR:`, …). The sequencer's `ActuatorCommander`
+(`diablo_server/services/sequencer/ActuatorCommander.cpp`) sends the UDP
+ACTUATOR_COMMAND packets to boards. The thin backend does **not** send actuator
+UDP directly.
 
 ---
 
@@ -39,57 +48,57 @@ packet_type (1B) | version (1B) | timestamp_ms (4B LE)
 
 ### 1. SERVER_HEARTBEAT (type 2) — from **heartbeat_service** (preferred) or **daq_bridge**
 
-- **Who:** `heartbeat_service` (Python) — polls backend `/api/engine_state`, broadcasts with correct engine_state. `daq_bridge` also sends (engine_state=0) when running.
+- **Who:** `heartbeat_service` (`build/bin/heartbeat_service`, C++ preferred; Python fallback `archive/legacy/python-services/heartbeat_service.py`). `daq_bridge` also sends one (engine_state=0) when running.
 - **Where:** UDP **broadcast** to `server_heartbeat.broadcast_ip` (e.g. 192.168.2.255) on port 5005
 - **Interval:** `server_heartbeat.interval_ms` (default 1000)
 - **Format:** 7 bytes total: type=2, version=0, timestamp(4), engine_state(1)
 - **Purpose:** Boards learn server IP and engine state; watchdog for connection loss
 
-**Modular:** Backend no longer sends SERVER_HEARTBEAT. Use `python scripts/services/heartbeat_service.py` (included in start_tmux_dev.sh).
+**Modular:** The thin backend does **not** send SERVER_HEARTBEAT — `heartbeat_service` does (started by `start_tmux_dev.sh`).
 
 ---
 
-### 2. ACTUATOR_COMMAND (type 4) — from **backend** or **actuator_service**
+### 2. ACTUATOR_COMMAND (type 4) — from **sequencer_service**
 
 - **Format:** Header(6) + num_commands(1) + [channel_id(1), state(1)] per command
-- **State:** 0=OFF, 1=ON (after NC/NO conversion in backend)
+- **State:** 0=OFF, 1=ON (after NC/NO conversion)
 - **Destination:** Unicast to each board IP:5005
 
-**Path A — actuator_service:**  
-`STATE:GSE\n` over TCP → actuator_service → `construct_actuator_command_packet()` → UDP to board IPs (from state_machine_actuators.csv)
+**Path:** state transition → backend sends `TRANSITION:<csvName>\n` over TCP :9998 →
+`sequencer_service` → `ActuatorCommander` (`diablo_server/services/sequencer/ActuatorCommander.cpp`,
+`construct_actuator_command_packet()`) → UDP to board IPs. The board IPs and
+actuator-role mapping come from `[boards.*]` and `[actuator_roles]` in
+`config/config.toml`; the per-state actuator positions come from
+`config/state_machine_actuators.csv`.
 
-**Path B — backend direct:**  
-State transition → `applyActuatorsForState()` → `sendActuatorCommandUDP()` → UDP to board IPs
-
-**NC/NO:** Backend converts GUI open/closed using `actuator_roles` (e.g. `["NO", 1, 12]`).  
-Bug risk: Wrong NO/NC mapping flips valve states (e.g. LOX Press).
+**NC/NO:** open/closed is converted using `actuator_roles` (e.g. `["NO", 1, 12]`).
+Bug risk: wrong NO/NC mapping flips valve states (e.g. LOX Press).
 
 ---
 
-### 3. PWM_ACTUATOR_COMMAND (type 10) — from **controller_service** or **backend**
+### 3. PWM_ACTUATOR_COMMAND (type 10) — from **controller_service**
 
 - **Format:** Header(6) + num_commands(1) + [channel_id(1), duration_ms(4), duty_cycle(4), frequency(4)] per command
-- **When:** FIRE state — controller loop drives Fuel Press / LOX Press duty
-
-**Path A — C++ controller:** controller_service reads CALIBRATED from Elodin, computes duty, sends UDP
-
-**Path B — Backend:** `USE_CPP_CONTROLLER=false` → backend `controller-loop.ts` sends PWM via `sendPWMActuatorCommandUDP()`
+- **When:** FIRE state — `controller_service` reads CALIBRATED data from Elodin,
+  computes Fuel Press / LOX Press duty, and sends the PWM commands over UDP.
 
 ---
 
-### 4. ACTUATOR_CONFIG (type 6) — from **backend**
+### 4. ACTUATOR_CONFIG (type 6) — from **config_broadcast_service**
 
-- **When:** First time an actuator board connects (heartbeat received)
-- **Requires:** Exactly one board marked `designated_survivor: true` in config
+- **When:** An actuator board first connects (heartbeat received)
+- **Requires:** Exactly one board marked `designated_survivor = true` in config
 - **Format:** Header(6) + is_abort_controller(1) + N(1) + N×[actuator_ip(4), actuator_id(1), vent_state(1), abort_state(1)] + X(1) + X×[pt_ip(4), sensor_id(1), threshold_adc(4)] + enable_serial(1)
 - **Includes:** Abort actuator list, abort PT thresholds (from calibration inverse), designated survivor IP
-- **Failure mode:** No designated survivor → `buildActuatorConfigPacket` returns null → config never sent
+- **Failure mode:** No designated survivor → config packet not built → config never sent
+
+(Sent by `diablo_server/services/config_broadcast/config_broadcast_service_main.cpp`.)
 
 ---
 
-### 5. SENSOR_CONFIG (type 5) — from **backend**
+### 5. SENSOR_CONFIG (type 5) — from **config_broadcast_service**
 
-- **When:** Sense board (PT, etc.) first connects via heartbeat
+- **When:** A sense board (PT, etc.) first connects via heartbeat
 - **Format:** num_sensors, sensor_ids, reference_voltage, necessary_for_abort, controller_ip (if abort), enable_serial
 
 ---
@@ -111,42 +120,27 @@ Bug risk: Wrong NO/NC mapping flips valve states (e.g. LOX Press).
 
 ## Likely Issue Areas
 
-1. **Duplicate command sources:** Backend and actuator_service can both send actuator commands. With actuator_service enabled, backend should only forward state over TCP; if both send UDP, boards get conflicting commands.
+1. **SERVER_HEARTBEAT targeting:** the heartbeat broadcasts to `broadcast_ip` (e.g. 192.168.2.255). If the network interface or subnet is wrong, boards never receive it and stay in "WaitingForServer".
 
-2. **SERVER_HEARTBEAT targeting:** daq_bridge broadcasts to `broadcast_ip` (e.g. 192.168.2.255). If the network interface or subnet is wrong, boards never receive it and stay in “WaitingForServer”.
+2. **ACTUATOR_CONFIG blocked:** needs `designated_survivor = true` set for exactly one actuator board. Without it, actuator boards never get abort config and may not behave correctly.
 
-3. **ACTUATOR_CONFIG blocked:** Needs `designated_survivor` set for exactly one actuator board. Without it, actuator boards never get abort config and may not behave correctly.
+3. **NC/NO in config:** `actuator_roles` must match hardware (e.g. `["NO", 1, 12]` vs `["NC", 1, 12]`). Incorrect type inverts valve logic.
 
-4. **NC/NO in config:** `actuator_roles` must match hardware (e.g. `["NO", 1, 12]` vs `["NC", 1, 12]`). Incorrect type inverts valve logic.
+4. **Port and IP mismatch:** boards expect commands on 5005. Config `actuator_cmd_port` and `server_heartbeat.broadcast_port` must both be 5005 for the intended setup.
 
-5. **actuator_service board list:** C++ actuator_service parses only `boards.actuator_board` and `boards.actuator_board_2`. Additional actuator boards in config are ignored unless the code is extended.
-
-6. **Port and IP mismatch:** Boards expect commands on 5005. Config `actuator_cmd_port` and `server_heartbeat.broadcast_port` must both be 5005 for the intended setup.
-
-## State Change Flow (Frontend → Actuator Service)
-
-When actuator_service is running and `ACTUATOR_SERVICE_ENABLED=true`:
+## State Change Flow (Frontend → Sequencer)
 
 1. User changes state in frontend (e.g. GSE → ARMED).
-2. Frontend sends WebSocket command `{ commandType: 'state', data: { newState: 'ARMED' } }`.
-3. Backend receives, validates transition, calls `forwardStateToActuatorService('ARMED', 9998)`.
-4. Backend opens TCP to `127.0.0.1:9998`, sends `STATE:Armed\n`, closes.
-5. actuator_service receives string, parses `state_machine_actuators.csv`, sends UDP ACTUATOR_COMMAND to each board IP from config.
+2. Frontend sends a WebSocket command to the backend.
+3. Backend validates the transition and calls `sendToActuatorService("TRANSITION:<csvName>\n")` (`diablo_server/backend/src/server.ts`).
+4. Backend opens TCP to `127.0.0.1:9998` (the `sequencer_service` command port), sends the line, and reads `OK\n` / `ERR:<reason>\n`.
+5. `sequencer_service` looks up the per-state actuator positions from `config/state_machine_actuators.csv` and sends UDP ACTUATOR_COMMAND packets to each board IP from config.
 
-Log line to confirm: `[ActuatorService] State ARMED → TCP :9998 (actuator_service will send UDP to boards)`.
-
-## Tuning Spike Rejection (PT Data)
-
-Env overrides for PSI jump limits (backend):
-
-- `PSI_MAX_JUMP` — max allowed PSI jump for normal PTs (default 1000). Set higher to allow faster transients, lower to reject more aggressively.
-- `HP_PT_MAX_JUMP` — for high-pressure 4-20mA PTs (default 500).
-
-Example: `PSI_MAX_JUMP=2000 HP_PT_MAX_JUMP=1000 npm run dev`
+The sequencer's TCP text protocol verbs are `TRANSITION:<state>`, `ACTUATOR:<role>:<0|1>`, `DEBUG_MODE:<0|1>`, `EXTEND_FIRE`, and `RELOAD_CONFIG` (see `diablo_server/services/sequencer/sequencer_main.cpp`).
 
 ## Parse Failures (Messages Not Read)
 
-When `parseElodinPacket` returns null, backend logs `[Relay] TABLE packet not parsed #N (packetId=0xHH,0xLL, len=L)`. First 5 and every 100th are logged. Set `ELODIN_DEBUG=1` to log every failure. Common causes:
+When `parseElodinPacket` returns null, the backend logs that a TABLE packet was not parsed (with the `packetId` and length). Set `ELODIN_DEBUG=1` to log every failure. Common causes:
 
 - Packet ID not handled in elodin-protocol.ts
 - Payload too short for expected layout

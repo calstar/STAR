@@ -7,7 +7,7 @@ Export Elodin DB data to parquet, CSV, or Arrow for analysis. This document desc
 | Source | Data | Rate | Downsampled? |
 |--------|------|------|--------------|
 | **daq_bridge** | Raw PT, TC, RTD, LC [0x20,0x21,0x22,0x23] | Every packet | No |
-| **daq_bridge** | Actuator status [0x30], actuator state [0x31] | Every packet | No |
+| **daq_bridge** | Actuator status [0x30] (actuator state [0x31] is NOT in the publish allowlist) | Every packet | No |
 | **daq_bridge** | Board heartbeats [0x10] | Every heartbeat | No |
 | **calibration_service** (C++) / **calibration_server** (Python) | Calibrated PT, TC, RTD, LC [0x20/0x21/0x22/0x23 + 0x10] | Max ~100 Hz/ch | **Yes** (throttle) |
 | **ControllerService** | Actuation [0x40], diagnostics [0x41] | Every tick | No |
@@ -18,14 +18,14 @@ Export Elodin DB data to parquet, CSV, or Arrow for analysis. This document desc
 
 **Controller measurement (10% sample):**
 
-- Code: `FSW/src/control/ControllerService.cpp` lines 657–658
+- Code: `diablo_server/lib/src/control/ControllerService.cpp` — the `tick % 10` measurement-write block (lines ~702–703)
 - Logic: `if (tick % 10 == 0) { writeMeasurementToDB(meas); }`
 - At 10 Hz: ~1 measurement/sec vs ~10 actuation + ~10 diagnostics/sec
 
 **Calibrated data (100 Hz throttle):**
 
 - Code: `tools/calibration/calibration_server.py` lines 179–183
-- Config: `[calibration.sidecar] write_interval_sec = 0.01` (config.toml line 673)
+- Config: `[calibration.sidecar] write_interval_sec = 0.01` (config.toml)
 - Effect: Max ~100 calibrated writes/sec per channel
 
 ## Packet IDs (sensor_system convention)
@@ -42,7 +42,7 @@ Export Elodin DB data to parquet, CSV, or Arrow for analysis. This document desc
 | [0x23, 0x01..0x14] | Raw LC ADC counts | daq_bridge |
 | [0x23, 0x11..] | Calibrated LC (force) | calibration_server |
 | [0x30, 0x01..0x0A] | Actuator status (current sense) | daq_bridge |
-| [0x31, 0x01..0x14] | Actuator state (open/closed) | daq_bridge |
+| [0x31, 0x01..0x14] | Actuator state (open/closed) | not in `[daq_bridge] publish` allowlist |
 | [0x40, 0x00] | Controller actuation | ControllerService |
 | [0x41, 0x00] | Controller diagnostics | ControllerService |
 | [0x42, 0x00] | Controller measurement | ControllerService (every 10th tick) |
@@ -56,7 +56,7 @@ Only data in `[daq_bridge] publish` is written. See `config/config.toml`:
 
 ```toml
 [daq_bridge]
-publish = ["pt_raw", "tc_raw", "rtd_raw", "lc_raw", "actuator_status", "actuator_state"]
+publish = ["pt_raw", "tc_raw", "rtd_raw", "lc_raw", "actuator_status", "actuator_cal", "encoder_raw"]
 ```
 
 Calibrated PT/TC/RTD/LC come from `calibration_server.py` (when `use_robust_stack = true`).
@@ -82,7 +82,7 @@ elodin-db export ~/.local/share/elodin/daq_20260307_174529 -o ./export --pattern
 ### Option 2: export_elodin_db.sh wrapper
 
 ```bash
-./scripts/postprocessing/export_elodin_db.sh ~/.local/share/elodin/daq_20260307_174529 ./export
+./tools/postprocessing/export_elodin_db.sh ~/.local/share/elodin/daq_20260307_174529 ./export
 ```
 
 ### Option 3: Elodin Editor + Lua REPL
@@ -107,13 +107,13 @@ elodin editor ~/.local/share/elodin/daq_20260307_174529
 ### Quick: plot latest DB run
 
 ```bash
-./scripts/postprocessing/plot_latest_db.sh
+./tools/postprocessing/plot_latest_db.sh
 ```
 
 Finds the most recent Elodin DB (by mtime), exports to CSV, and generates plots. **By default** the analysis uses **`--full-run`** (entire capture) so pressure and actuator timelines match the whole session. Set `FULL_RUN=0` to anchor at first PRESS_STANDBY instead. Optional: pass a DB name or path to plot a specific run.
 
 ```bash
-./scripts/postprocessing/plot_latest_db.sh daq_20260307_174529
+./tools/postprocessing/plot_latest_db.sh daq_20260307_174529
 ```
 
 ### Validate export (quick DB write check)
@@ -121,9 +121,9 @@ Finds the most recent Elodin DB (by mtime), exports to CSV, and generates plots.
 After CSV export, summarize what entity families landed on disk (PT cal, actuators, controller, etc.):
 
 ```bash
-python3 scripts/postprocessing/validate_export.py ./export_csv
+python3 tools/postprocessing/validate_export.py ./export_csv
 # Fail the script if no calibrated PT series (typical GSE/hotfire expectation):
-python3 scripts/postprocessing/validate_export.py ./export_csv --strict
+python3 tools/postprocessing/validate_export.py ./export_csv --strict
 ```
 
 `plot_latest_db.sh` runs `validate_export.py` automatically before `analyze_run.py`.
@@ -132,15 +132,15 @@ python3 scripts/postprocessing/validate_export.py ./export_csv --strict
 
 ```bash
 # 1. Export last run to CSV
-FORMAT=csv ./scripts/postprocessing/export_elodin_db.sh ~/.local/share/elodin/daq_YYYYMMDD_HHMMSS ./export_csv
+FORMAT=csv ./tools/postprocessing/export_elodin_db.sh ~/.local/share/elodin/daq_YYYYMMDD_HHMMSS ./export_csv
 
 # 2. Validate (optional; included in plot_latest_db.sh)
-python3 scripts/postprocessing/validate_export.py ./export_csv
+python3 tools/postprocessing/validate_export.py ./export_csv
 
 # 3. Run analysis and generate plots
-python3 scripts/postprocessing/analyze_run.py ./export_csv -o ./output/postprocessing/latest
+python3 tools/postprocessing/analyze_run.py ./export_csv -o ./output/postprocessing/latest
 # Full timeline (no PRESS_STANDBY anchor):
-python3 scripts/postprocessing/analyze_run.py ./export_csv -o ./output/postprocessing/latest --full-run
+python3 tools/postprocessing/analyze_run.py ./export_csv -o ./output/postprocessing/latest --full-run
 ```
 
 Plots are written to `./output/postprocessing/latest/`:
@@ -182,4 +182,4 @@ df = con.execute("SELECT * FROM './export/*.parquet'").fetchdf()
 ## Related Docs
 
 - `docs/CONTROLLER_STACK_AND_DB_WRITES.md` — Full write pattern and verification
-- `web-gui/replay_past_db.sh` — Replay past DB for GUI
+- `tools/postprocessing/replay_past_db.sh` — Replay past DB for GUI

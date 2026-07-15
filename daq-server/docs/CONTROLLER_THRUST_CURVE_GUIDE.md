@@ -1,11 +1,11 @@
 # Robust DDP Controller — Thrust Curve Matching
 
-## Config: Ethanol/LOX
+## Config: CH4/LOX (methane/LOX)
 
-Yes — the LUT uses **Ethanol/LOX** via `engine_sim/configs/default.yaml`:
-- `fuel_name: Ethanol`
+Yes — the LUT uses **CH4/LOX (methane/LOX)** via `engine_sim/configs/default.yaml`:
+- `fuel_name: CH4`
 - `ox_name: LOX`
-- `cea_cache_LOX_Ethanol_3D.npz`
+- `cea_cache_LOX_CH4_3D.npz`
 
 ## How the Controller Works
 
@@ -26,7 +26,7 @@ Your actuation plot shows Fuel/Ox duty reaching 70–100%. The current LUT has `
 
 `thrust_desired` must follow your mission profile. Right now it defaults to 1000 N.
 
-- **controller_main**: `--thrust N` sets a constant value.
+- **controller_service**: `--thrust N` sets a constant value.
 - **Web backend**: Can forward thrust from a mission timeline.
 - **TCP control**: ControllerService can receive `setCommand()` with time-varying thrust.
 
@@ -54,14 +54,16 @@ axes:
     values: [0, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000]  # Your curve points
 ```
 
-Then run `./scripts/controller_lut/generate_engine_and_policy_lut.sh full`.
+Then run `tools/controller_lut/generate_engine_and_policy_lut.sh full`.
+
+See [`../tools/controller_lut/README.md`](../tools/controller_lut/README.md) for the full LUT generation pipeline.
 
 ### 5. Run Without LUT (Online DDP)
 
 For debugging, run the controller without the LUT so it uses online DDP:
 
 ```bash
-./build/FSW/controller_service  # No --lut-path
+./build/bin/controller_service  # No --lut-path
 ```
 
 This uses the full DDP solver and may behave differently from the LUT.
@@ -70,7 +72,7 @@ This uses the full DDP solver and may behave differently from the LUT.
 
 | Item | Status |
 |------|--------|
-| Propellants | Ethanol/LOX ✓ |
+| Propellants | CH4/LOX (methane/LOX) ✓ |
 | LUT axes | P_u_fuel, P_u_ox, thrust_desired, MR_ref ✓ |
 | Duty range | 0–1 (FSW clamps u_safe to [0,1]) ✓ |
 | Thrust command | Must be supplied; default 1000 N |

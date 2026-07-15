@@ -16,7 +16,7 @@ PT Board (DiabloAvionics) → UDP :5006 → daq_bridge
   → SensorRouter.route_pt_samples (raw to Elodin)
   → SensorRouter.route_pt_samples_calibrated (daq_bridge inline calibration)
   → Elodin DB (if elodin_client connected)
-  → Relay (single subscriber) → Backend → Frontend
+  → Backend (direct subscription) → Frontend
 ```
 
 **Important:** The daq_bridge uses **DiabloBoardPacketParser** — plain DiabloAvionics format. It does **not** use EncryptedFrame / XOR decryption. If your boards send encrypted packets (different protocol), the daq_bridge will fail to parse them and nothing reaches Elodin.
@@ -40,10 +40,10 @@ with **raw ADC** (e.g. 500M–1.1B range).
 ### 2. **Calibration source mismatch**
 
 daq_bridge loads calibration from:
-1. `scripts/calibration/calibrations/*.json` (JSON from calibration GUI)
-2. `firmware/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv`
+1. `tools/calibration/calibrations/*.json` (JSON from calibration GUI)
+2. `tools/calibration/calibrations/<sensor>.json` (example per-sensor calibration file)
 
-The backend loads from `config.calibration.pt.json_path` (e.g. `scripts/calibration/calibrations/...`).
+The backend loads from `config.calibration.pt.json_path` (e.g. `tools/calibration/calibrations/...`).
 
 - If daq_bridge and backend use different calibration files/coefficients, they can disagree.
 - If the C++ calibration was created on femboy and copied here, but the **ADC scale or format** differs (e.g. 24‑bit vs 32‑bit, or different reference), the same coefficients will produce wrong PSI.
@@ -100,7 +100,7 @@ If `elodin_client.is_connected()` is false, `publishing` is false and no data is
 Run with a known-good source (e.g. board_simulator) that sends plain DiabloAvionics:
 
 ```bash
-./scripts/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006
+python sim/board_simulator.py --config config/config.toml --target 127.0.0.1 --port 5006
 ```
 
 If the simulator produces correct-looking data in the GUI but real boards do not, the real boards are likely sending a different format.

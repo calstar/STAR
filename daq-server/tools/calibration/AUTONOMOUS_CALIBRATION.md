@@ -3,7 +3,8 @@
 ## Overview
 
 The Autonomous PT Calibration System automatically calibrates pressure transducers by:
-1. Listening to PT messages from Elodin (via DAQ bridge)
+1. Listening for raw PT packets **directly from the boards over UDP**
+   (DiabloAvionics protocol — no Elodin or DAQ bridge in the loop)
 2. Collecting calibration points at known reference pressures
 3. Automatically fitting calibration polynomials
 4. Validating calibration quality
@@ -11,7 +12,8 @@ The Autonomous PT Calibration System automatically calibrates pressure transduce
 
 ## Features
 
-- **Automatic Data Collection**: Listens to Elodin PT messages (raw and calibrated)
+- **Automatic Data Collection**: Binds a UDP socket (`0.0.0.0:<port>`) and reads
+  the raw ADC values straight from the board sensor-data packets
 - **Reference Pressure Input**: Accepts reference pressures from gauges, regulators, or manual input
 - **Automatic Fitting**: Fits cubic polynomial (`psi = A*adc³ + B*adc² + C*adc + D`) when enough points are collected
 - **Quality Validation**: Uses R² to assess calibration quality
@@ -53,19 +55,24 @@ python3 tools/calibration/autonomous_pt_calibration.py \
 
 ### Options
 
-- `--elodin-host`: Elodin host (default: 127.0.0.1)
-- `--elodin-port`: Elodin port (default: 2240)
-- `--reference-pressures`: JSON file with reference pressures
-- `--sensor`: Sensor ID to calibrate (can be repeated)
-- `--pressure`: Reference pressure in PSI (can be repeated, must match sensors)
+- `--port`: UDP port to listen on (default: from `config.toml`)
+- `--board-ip`: Only accept packets from this board source IP (default: from `config.toml`; omit to accept any)
+- `--reference-pressures`: JSON file with reference pressures `{channel_id: psi}`
+- `--sensor`: Sensor channel ID to calibrate (can be repeated)
+- `--pressure`: Reference pressure in PSI (paired with `--sensor`)
+- `--ref-all`: Set all channels (1–10) to one reference pressure
+- `--collect-time`: Seconds to collect per reference point (default: 5)
 - `--status-interval`: Status print interval in seconds (default: 10.0)
+- `--interactive`: Prompt for commands interactively
 
 ## How It Works
 
-1. **Connection**: Connects to Elodin database and subscribes to PT messages (0x2000, 0x2001)
+1. **Connection**: Binds a UDP socket on `0.0.0.0:<port>` and reads board
+   sensor-data packets directly (DiabloAvionics protocol). No Elodin
+   subscription or DAQ bridge is involved.
 
 2. **Data Collection**: 
-   - Receives PT messages with raw ADC codes
+   - Parses raw ADC codes out of the board packets
    - When a reference pressure is set for a sensor, collects calibration points
    - Stores: ADC code, reference pressure, timestamp
 
@@ -86,15 +93,14 @@ python3 tools/calibration/autonomous_pt_calibration.py \
 
 ## Calibration Procedure
 
-### Step 1: Start Elodin and DAQ Bridge
+### Step 1: Bring boards online
 
-```bash
-# Terminal 1: Start Elodin
-./scripts/startup/startup_daq_db.sh
-
-# Terminal 2: Start DAQ bridge
-./build/daq_bridge
-```
+This tool talks to the boards directly over UDP, so it does **not** need Elodin
+or the DAQ bridge running — only that the PT board(s) are powered and sending
+sensor-data packets on the DAQ subnet, and that this host has an address on that
+subnet (see [../../docs/DIABLOAVIONICS_NETWORK_CONFIG.md](../../docs/DIABLOAVIONICS_NETWORK_CONFIG.md)).
+To test without hardware, run the board simulator
+(`python sim/board_simulator.py --config config/config.toml --port 5006`).
 
 ### Step 2: Set Reference Pressures
 
@@ -200,9 +206,10 @@ for pressure in pressures:
 
 ### No Messages Received
 
-- Check Elodin is running: `./scripts/startup/startup_daq_db.sh`
-- Check DAQ bridge is running: `./build/daq_bridge`
-- Verify Elodin connection: Should see "✅ Connected to Elodin"
+- Check the board(s) are powered and sending packets (board simulator, or real hardware)
+- Verify this host has an IP on the board subnet and is listening on the right
+  port (`--port`, default from `config.toml`)
+- If filtering by `--board-ip`, confirm it matches the board's source IP (or drop the flag)
 
 ### No Calibration Points Collected
 
@@ -231,7 +238,7 @@ Example status output:
 ============================================================
 🤖 Autonomous PT Calibration Status
 ============================================================
-Elodin: ✅ Connected
+UDP: ✅ Listening :5006
 Running: ✅ Yes
 
 Statistics:

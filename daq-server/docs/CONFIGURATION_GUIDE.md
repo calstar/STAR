@@ -42,13 +42,13 @@ Base configuration with common settings. Not used directly - serves as reference
 ### Ground DAQ (Development/Hotfire)
 ```bash
 # Start Ground DAQ
-./build/daq_comms/daq_bridge config/config_ground_daq.toml
+./build/bin/daq_bridge config/config_ground_daq.toml
 ```
 
 ### Flight DAQ (Flight Operations)
 ```bash
 # Start Flight DAQ
-./build/daq_comms/daq_bridge config/config_flight_daq.toml
+./build/bin/daq_bridge config/config_flight_daq.toml
 ```
 
 ### Hotfire Mode

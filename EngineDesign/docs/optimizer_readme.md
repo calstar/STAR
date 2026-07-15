@@ -1,6 +1,6 @@
 ## Full Engine Optimizer UI
 
-The **Full Engine Optimizer UI** is an end‑to‑end design environment for a LOX/RP‑1 pintle engine.  
+The **Full Engine Optimizer UI** is an end‑to‑end design environment for liquid bipropellant engines. The propellants and injector type are set in the config — pintle or impinging, whatever propellant combination you want to evaluate.  
 It couples injector sizing, chamber/nozzle geometry, stability analysis, thermal protection, and (optionally) flight performance checks into a single multi‑layer optimization pipeline.
 
 ### Injector types (`injector.type`)
@@ -42,18 +42,18 @@ Mass flow and discharge use \( \dot{m} = C_d \, A_{\mathrm{geom}} \sqrt{2\rho\,\
 
 Spacing, jet packing, and face-fit constraints continue to use **geometric** areas only.
 
-This UI is implemented in `design_optimization_view.py` and built on:
-- `PintleEngineConfig` / `config_minimal.yaml` (and optionally any exported `optimized_engine.yaml`) for configuration
+The optimization is orchestrated by `run_full_engine_optimization_with_flight_sim()` in `engine/optimizer/main_optimizer.py` (the UI in `ui/design_optimization_view.py` and the optimizer views in `engine/optimizer/views/` drive it). It is built on:
+- `PintleEngineConfig` (loaded from `configs/default.yaml` or any exported config YAML) for configuration
 - `PintleEngineRunner` for performance and stability evaluation
-- The `pintle_pipeline` optimizers (`comprehensive_optimizer`, `coupled_optimizer`, `chamber_optimizer`, etc.)
+- The `engine.pipeline` optimizers (`comprehensive_optimizer`, `coupled_optimizer`, `chamber_optimizer`, etc.)
 
 ---
 
 ## High‑Level Workflow
 
 1. **Load a base engine config**
-   - Start from `examples/pintle_engine/config_minimal.yaml` or any previously exported optimized configuration file.
-   - The YAML is parsed and validated into a `PintleEngineConfig` (see `pintle_pipeline.config_schemas`).
+   - Start from `configs/default.yaml` or any previously exported optimized configuration file (e.g. under `examples/optimization_exports/`).
+   - The YAML is parsed and validated into a `PintleEngineConfig` (see `engine.pipeline.config_schemas`).
 
 2. **Specify design requirements / constraints in the UI**
    - **Targets**: design thrust, target burn time, optimal O/F ratio, optional Isp target.
@@ -63,10 +63,10 @@ This UI is implemented in `design_optimization_view.py` and built on:
    - **Analysis options**: enable/disable time‑varying analysis, set optimization iterations and tolerances.
 
 3. **Run the full engine optimizer**
-   - The UI calls `_run_full_engine_optimization_with_flight_sim` which:
+   - The UI calls `run_full_engine_optimization_with_flight_sim()` (`engine/optimizer/main_optimizer.py`) which:
      - Builds a **multi‑objective optimizer** over geometry + pressure‑curve + thermal‑protection variables.
-     - Evaluates designs through **three main optimization layers** (Layer 1: static, Layer 2: burn candidate, Layer 3: burn analysis), preceded by a coupled geometry pre-optimization (Layer 0).
-     - Logs progress to a log file (default location: project root `full_engine_optimizer.log`) and surfaces it live in the UI.
+     - Evaluates designs through the optimization layers — Layer 1: static, Layer 2: burn candidate, Layer 3: burn analysis, Layer 4: flight validation — optionally preceded by a coupled geometry pre-optimization (Layer 0) when run from the UI.
+     - Logs progress to per-layer log files under `output/logs/` and surfaces progress live in the UI.
 
 4. **Inspect results in the UI**
    - Summary of optimized geometry and pintle parameters.
@@ -83,7 +83,7 @@ This UI is implemented in `design_optimization_view.py` and built on:
 
 ### Layer 0 – Coupled Geometry + Pintle Pre‑Optimization
 
-Before the main iterative optimizer, `_run_full_engine_optimization` performs a **coupled pintle + chamber geometry optimization** (`CoupledPintleChamberOptimizer`):
+Before the main iterative optimizer, the UI optimizer flow can perform a **coupled pintle + chamber geometry optimization** (`CoupledPintleChamberOptimizer` in `engine/pipeline/coupled_optimizer.py`, invoked from `engine/optimizer/views/tabs.py`):
 
 - **Design requirements**
   - Target thrust and burn time.
@@ -112,27 +112,23 @@ This phase provides a good starting `PintleEngineConfig` and associated runner/d
 
 ### Layer 1 – Static Test Optimization (Geometry + Pressure Candidate)
 
-Layer 1 is implemented inside the objective of `_run_full_engine_optimization_with_flight_sim`.  
-It treats a vector of **optimizer variables** `x` as a candidate engine and pressure‑curve design:
+Layer 1 is implemented in `run_layer1_optimization()` (`engine/optimizer/layers/layer1_static_optimization.py`), called by `run_full_engine_optimization_with_flight_sim()`.  
+It treats a vector of **optimizer variables** `x` as a candidate engine design (see `docs/layer1_static_optimization_explained.md` for the full variable layout):
 
 - **Representative optimization variables** (conceptual groups)
   - **Chamber / nozzle geometry**
     - Throat area $A_\mathrm{throat}$
     - $L^*$ (chamber characteristic length)
-    - Derived: chamber volume, chamber length, chamber diameter (bounded by `max_chamber_outer_diameter`), contraction ratio.
-  - **Tank pressure curve parameters**
-    - Maximum LOX and fuel tank pressures.
-    - Segmented pressure‑curve controls for LOX and fuel:
-      - Segment type: linear vs blowdown (`segments_from_optimizer_vars` / `optimizer_vars_from_segments`).
-      - Segment durations (normalized to total burn time).
-      - Start/end pressure ratios per segment.
-      - Blowdown time constant ratios.
-  - **Thermal protection seeds**
-    - Initial guesses for ablative liner and graphite insert thickness (later refined in Layers 2–3).
+    - Expansion ratio, chamber outer diameter (bounded by `max_chamber_od`).
+    - Derived: chamber volume, chamber length, chamber inner diameter, contraction ratio.
+  - **Injector geometry** (scheme depends on `injector.type`)
+    - Pintle: tip diameter, gap height, LOX orifice count and diameter.
+    - Impinging: shared `n_doublets`, plus per-side `d_jet`, `impingement_angle`, `spacing`.
+  - **Initial tank pressures**
+    - A single starting pressure per tank (`P_O_start_psi`, `P_F_start_psi`). Layer 1 optimizes only the static initial operating point — the time-varying pressure decay curves are optimized later in Layer 2 (`segments_from_optimizer_vars_pressure`).
 
 - **Layer 1 evaluation**
-  - Converts `x` → `PintleEngineConfig` and associated LOX/fuel pressure segments (`apply_x_to_config`).
-  - Selects **initial tank pressures** from the first segment’s start values.
+  - Converts `x` → `PintleEngineConfig` and initial LOX/fuel pressures (`create_layer1_apply_x_to_config()` → `apply_x_to_config`).
   - Runs a **static hot‑fire** at t=0 via `PintleEngineRunner.evaluate(P_O_initial, P_F_initial)`.
 
 - **Static objectives / penalties**
@@ -208,6 +204,15 @@ After Layer 3, the code reruns a final burn to verify that recession, thrust, an
 
 ---
 
+### Layer 4 – Flight Validation
+
+Layer 4 (`engine/optimizer/layers/layer4_flight_simulation.py`, `run_layer4_flight_simulation()`) is an optional final step that validates the optimized design at the trajectory level:
+
+- Runs a RocketPy flight simulation for the converged engine to check trajectory‑level performance (apogee, burn behavior, tank fill iteration).
+- Only good candidates that pass Layers 1–3 are carried into the flight check.
+
+---
+
 ## Optimization Variables – Conceptual Overview
 
 Across the full pipeline, the optimizer manipulates several groups of variables (some in the coupled pintle–chamber stage, some in Layers 1–3):
@@ -215,13 +220,12 @@ Across the full pipeline, the optimizer manipulates several groups of variables 
 - **Chamber / nozzle geometry**
   - Throat area $A_\mathrm{throat}$, nozzle exit area / expansion ratio.
   - $L^*$ and derived chamber volume, length, and diameter (within hardware envelopes).
-  - Contraction geometry via the chamber geometry utilities in `chamber/chamber_geometry.py`.
+  - Contraction geometry via the chamber geometry utilities in `engine/core/chamber_geometry.py`.
 
-- **Injector geometry (pintle)**
-  - Pintle tip diameter and fuel gap height.
-  - Fuel reservoir inner diameter.
-  - LOX orifice count, diameter, and (fixed) injection angle.
-  - Validated against the ranges in `_run_full_engine_optimization` constraints.
+- **Injector geometry** (pintle or impinging)
+  - Pintle: tip diameter, fuel gap height, fuel reservoir inner diameter, LOX orifice count/diameter, and (fixed 90°) injection angle.
+  - Impinging: shared doublet count, per-side jet diameter, impingement angle, and spacing.
+  - Validated against the bounds built in `run_layer1_optimization()` (and the coupled pre-optimizer).
 
 - **Feed system / tank pressure curves**
   - Max allowable LOX and fuel tank pressures.
@@ -266,7 +270,7 @@ The full engine optimizer balances several goals simultaneously:
 
 - **System / flight**
   - Use tank‑pressure profiles consistent with the COPV constraints.
-  - Optionally run a flight simulation (`_run_flight_simulation`) for good candidates to check trajectory-level performance.
+  - Optionally run a flight simulation (Layer 4, `run_layer4_flight_simulation()`) for good candidates to check trajectory-level performance.
 
 All of these are folded into the **multi‑objective cost function** with carefully tuned weights and penalties, so that only designs that satisfy performance, stability, geometry, and thermal constraints can be accepted.
 
@@ -275,7 +279,7 @@ All of these are folded into the **multi‑objective cost function** with carefu
 ## Using the UI in Practice
 
 - **Start simple**
-  - Load `config_minimal.yaml`.
+  - Load `configs/default.yaml` (or a smoke config such as `configs/impinging_smoke.yaml`).
   - Set realistic thrust, burn time, and tank pressure limits.
   - Start with moderate stability requirements and enable time‑varying analysis once basic designs converge.
 

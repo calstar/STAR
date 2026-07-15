@@ -1,30 +1,36 @@
 # CI/CD Pipeline Documentation
 
-This directory contains GitHub Actions workflows for continuous integration and deployment.
+GitHub Actions for the DAQ server live at the **monorepo root**, not in this
+directory. The relevant workflow is
+[`.github/workflows/daq-server-ci.yml`](../../.github/workflows/daq-server-ci.yml)
+(this `daq-server/.github/` holds only this README).
 
-## Workflows
+## Workflow: `daq-server-ci.yml`
 
-### `ci.yml` - Single CI pipeline
+Runs on push / PR / manual dispatch. Jobs include:
 
-One workflow run per push/PR (no separate Actions for the same event). Jobs include:
-
-1. **Format Check** — `./format.sh --check` (clang-format)
-2. **Web GUI** — `npm run test` and `npm run test:build` in `web-gui/frontend`
-3. **Build** — GCC 12 and Clang 18, **Release** only; Clang uses GCC 12’s libstdc++ in CI to avoid libstdc++ 14 + C++20 `<format>` breakage
-4. **Static Analysis** — cppcheck and clang-tidy
+1. **Code Formatting Check** — runs `./format.sh --check` from the repo root
+   (clang-format 19 for C++; `black --check` for Python).
+2. **Web GUI** — `npm run test` (Vitest) and `npm run test:build` (Next.js
+   build) in `daq-server/diablo_server/frontend`.
+3. **Build** — GCC 12 and Clang 18, **Release** only; Clang is pinned to GCC
+   12's libstdc++ (`--gcc-install-dir`) to avoid libstdc++ 14 + C++20
+   `<format>`/`<chrono>` breakage.
+4. **Static Analysis** — cppcheck and clang-tidy.
 5. **Code Quality** — TODOs, large files, etc.
-6. **Security Scan** — semgrep, secret patterns, unsafe C APIs
-7. **Tests** — CTest, sequencer test, Python tests
-8. **Integration Test** — scripted integration (Rust elodin-db, backend, etc.)
-9. **Build Summary** — table of all job results
+6. **Security Scan** — semgrep, secret patterns, unsafe C APIs.
+7. **Tests** — CTest, sequencer test, Python tests.
+8. **Integration Test** — scripted integration (Rust elodin-db, backend, etc.).
+9. **Build Summary** — table of all job results.
 
-Optional locally: [pre-commit](https://pre-commit.com/) (`.pre-commit-config.yaml`) — not run in CI.
+Optional locally: [pre-commit](https://pre-commit.com/)
+(`daq-server/.pre-commit-config.yaml`) — not run in CI.
 
 ## Setup
 
 ### Pre-commit Hooks
 
-Install pre-commit hooks locally:
+Install pre-commit hooks locally (from `daq-server/`):
 
 ```bash
 ./scripts/setup_pre_commit.sh
@@ -39,7 +45,7 @@ pre-commit install
 
 ### Running Locally
 
-Test formatting:
+Test formatting (run from the **monorepo root**, where `format.sh` lives):
 
 ```bash
 ./format.sh --check
@@ -56,7 +62,7 @@ pre-commit run --all-files
 ### Build Matrix
 
 The CI builds with:
-- **Compilers**: GCC 12, Clang 18 (with libstdc++ pinned to GCC 12 in Actions)
+- **Compilers**: GCC 12, Clang 18 (Clang pinned to GCC 12's libstdc++ in Actions)
 - **Build type (CI)**: Release only
 - **C++ Standard**: C++20
 

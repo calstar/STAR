@@ -10,9 +10,10 @@ Scope: 8 kN-class, pressure-fed (dome-regulated), unlike-impinging-doublet, LOX/
 > the **conversion/transport lag** τ_conv (chug) from the **sensitive lag** τ_sens (acoustic n–τ); fixed
 > the §4.1 heading; demoted "±14 psi" to an explicit assumption everywhere.
 
-> This document is the *physics* companion to `stability_model_rebuild_plan.md`. Section numbers
-> here are referenced by the plan so the two stay in lockstep. Where the literature is thin or the
-> modeling step is a judgement call, it is flagged **[UNCERTAINTY]** rather than asserted.
+> This document is the *physics* reference behind the stability model in
+> `engine/pipeline/stability/` (chug: `chug.py`, acoustic: `acoustic.py`, feed coupling/report:
+> `core.py`/`report.py`). Where the literature is thin or the modeling step is a judgement call, it is
+> flagged **[UNCERTAINTY]** rather than asserted.
 
 ---
 

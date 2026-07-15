@@ -21,26 +21,28 @@ React Frontend (Browser)
 ## Detailed Flow
 
 ### 1. Sensor Data Collection
-- **FSW** collects sensor readings (PT, actuators, etc.)
-- **FSW** sends data to **DAQ Bridge** via UDP/TCP
-- **DAQ Bridge** registers components in **Elodin DB** using entity names like:
-  - `PT_Cal.Fuel_Upstream`
-  - `PT_Cal.Ox_Upstream`
-  - `ACT.LOX_Main`
-  - etc.
+- Boards collect sensor readings (PT, actuators, etc.)
+- Boards send data to the **DAQ Bridge** via UDP (DiabloAvionics protocol)
+- **DAQ Bridge** registers components in **Elodin DB** using board-namespaced,
+  channel-based entity names like:
+  - `PT1.CH3` (raw), `PT1_Cal.CH3` (calibrated)
+  - `ACT4.CH5`
+  - `TC1.CH2`, etc.
 
 ### 2. Elodin DB Storage
 - **Elodin DB** stores all sensor data in tables
-- Each table has a `packet_id` (e.g., `[0x20, 0x10]` for calibrated PT data)
+- Each table has a `packet_id` (e.g., `[0x20, 0x13]` for calibrated PT board 1, CH3)
 - **Elodin DB** streams data to connected TCP clients
 
 ### 3. Backend Connection
 - **Node.js Backend** (`elodin-client.ts`) connects to Elodin DB on port 2240
 - Backend listens for incoming packets
-- Backend parses packets using `elodin-protocol.ts`:
-  - Raw PT: `[0x01, 0x00]` → `PT.*.raw_adc_counts`
-  - Calibrated PT: `[0x01, 0x01]` → `PT_Cal.*.pressure_psi`
-  - Actuator: `[0x12, 0x00]` → `ACT.*.raw_adc_counts`
+- Backend parses packets using `elodin-protocol.ts`, whose packet IDs use a
+  board-aware `[high, low]` scheme (`low = (board-1)*0x20 + channel` for raw,
+  `+0x10` for calibrated; `board = board_id % 10`):
+  - Raw PT board 1 CH3: `[0x20, 0x03]` → `PT1.CH3.raw_adc_counts`
+  - Calibrated PT board 1 CH3: `[0x20, 0x13]` → `PT1_Cal.CH3.pressure_psi`
+  - Actuator board 4 CH5: `[0x30, 0x45]` → `ACT4.CH5.raw_adc_counts`
 
 ### 4. WebSocket Broadcasting
 - Backend (`server.ts`) broadcasts parsed data to all connected WebSocket clients
@@ -58,14 +60,18 @@ React Frontend (Browser)
 
 ## Command Flow (Reverse)
 
+Commands do **not** travel back through Elodin DB. State transitions and actuator
+commands go over a separate TCP control path to the `sequencer_service`, which
+emits the UDP packets to boards:
+
 ```
 React Frontend
   ↓ (WebSocket command)
-Node.js Backend
-  ↓ (TCP command to Elodin DB)
-Elodin DB
-  ↓ (message routing)
-FSW (via DAQ Bridge or direct)
+Node.js Backend (server.ts)
+  ↓ (TCP text command, port 9998: "TRANSITION:<state>", "ACTUATOR:<role>:<0|1>")
+sequencer_service (ActuatorCommander)
+  ↓ (UDP ACTUATOR_COMMAND, port 5005)
+Boards
 ```
 
 ### Commands Supported
@@ -82,13 +88,16 @@ FSW (via DAQ Bridge or direct)
 
 ## Packet IDs Reference
 
-Based on `DatabaseConfig.cpp` and `config.toml`:
+The authoritative mapping lives in `diablo_server/backend/src/elodin-protocol.ts`.
+The high byte selects the sensor family; the low byte encodes the board and
+channel: `low = (board-1)*0x20 + channel` (raw) or `+0x10` (calibrated), where
+`board = board_id % 10`.
 
-| Packet ID | Description | Entity Pattern |
-|-----------|-------------|----------------|
-| `[0x20, 0x00]` | Raw PT ADC counts | `PT.*.raw_adc_counts` |
-| `[0x20, 0x10]` | Calibrated PT pressure | `PT_Cal.*.pressure_psi` |
-| `[0x30, 0x00]` | Actuator status | `ACT.*.raw_adc_counts` |
+| Packet ID (example) | Description | Entity (example) |
+|---------------------|-------------|------------------|
+| `[0x20, 0x03]` | Raw PT board 1, CH3 | `PT1.CH3.raw_adc_counts` |
+| `[0x20, 0x13]` | Calibrated PT board 1, CH3 | `PT1_Cal.CH3.pressure_psi` |
+| `[0x30, 0x45]` | Actuator board 4, CH5 | `ACT4.CH5.raw_adc_counts` |
 
 ## Controller Frequency
 
