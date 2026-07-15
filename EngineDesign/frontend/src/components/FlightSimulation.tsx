@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   LineChart,
   Line,
@@ -12,17 +12,23 @@ import {
 } from 'recharts';
 import {
   runFlightSimulation,
+  optimizeFlightAltitude,
   checkRocketPy,
   updateConfig,
   type EngineConfig,
   type FlightSimRequest,
   type FlightSimResponse,
-  type FlightSourceType,
+  type FlightOptimizeResponse,
   type FlightEnvironmentConfig,
   type FlightRocketConfig,
   type FlightFinsConfig,
   type TimeSeriesData,
+  type TimeSeriesSummary,
 } from '../api/client';
+import {
+  loadTimeSeriesResults,
+  TIMESERIES_UPDATED_EVENT,
+} from '../utils/timeseriesSession';
 
 interface FlightSimulationProps {
   config: EngineConfig | null;
@@ -30,23 +36,12 @@ interface FlightSimulationProps {
   onConfigUpdated?: (config: EngineConfig) => void;
 }
 
-// Session storage key (same as TimeSeriesMode)
-const TIMESERIES_RESULTS_KEY = 'timeseries_results';
+// Session storage handled via timeseriesSession utility (shared with TimeSeriesMode)
 
-interface StoredTimeSeriesResults {
-  data: TimeSeriesData;
-  timestamp: number;
-}
-
-function loadTimeSeriesFromSession(): TimeSeriesData | null {
-  try {
-    const stored = sessionStorage.getItem(TIMESERIES_RESULTS_KEY);
-    if (!stored) return null;
-    const parsed: StoredTimeSeriesResults = JSON.parse(stored);
-    return parsed.data;
-  } catch {
-    return null;
-  }
+function readTimeSeriesFromSession(): { data: TimeSeriesData; summary: TimeSeriesSummary | null; timestamp: number | null } | null {
+  const stored = loadTimeSeriesResults();
+  if (!stored) return null;
+  return { data: stored.data, summary: stored.summary, timestamp: stored.timestamp };
 }
 
 // Collapsible section component
@@ -171,9 +166,6 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
   const [rocketPyAvailable, setRocketPyAvailable] = useState<boolean | null>(null);
   const [rocketPyMessage, setRocketPyMessage] = useState<string>('');
 
-  // Performance source - always timeseries
-  const source: FlightSourceType = 'timeseries';
-
   // Propellant configuration
   const [loxMass, setLoxMass] = useState('18.0');
   const [fuelMass, setFuelMass] = useState('4.0');
@@ -188,6 +180,7 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
   const [launchMonth, setLaunchMonth] = useState(String(tomorrow.getMonth() + 1));
   const [launchDay, setLaunchDay] = useState(String(tomorrow.getDate()));
   const [launchHour, setLaunchHour] = useState('12');
+  const [atmosphereModel, setAtmosphereModel] = useState<'standard_atmosphere' | 'forecast'>('standard_atmosphere');
 
   // Rocket configuration
   const [airframeMass, setAirframeMass] = useState('78.72');
@@ -201,6 +194,8 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
   const [inertiaY, setInertiaY] = useState('8.0');
   const [inertiaZ, setInertiaZ] = useState('0.5');
   const [autoInertia, setAutoInertia] = useState(false);
+  const [noseFineness, setNoseFineness] = useState('4.5');
+  const [avionicsLength, setAvionicsLength] = useState('4.0');
 
   // Fins configuration
   const [finCount, setFinCount] = useState('3');
@@ -211,13 +206,38 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
 
   // Results
   const [results, setResults] = useState<FlightSimResponse | null>(null);
+  const [optimizeResults, setOptimizeResults] = useState<FlightOptimizeResponse | null>(null);
+  const [flightMode, setFlightMode] = useState<'manual' | 'optimize'>('manual');
+  const [targetApogeeM, setTargetApogeeM] = useState('3048');
+  const [apogeeToleranceM, setApogeeToleranceM] = useState('15');
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const lastPropellantConfigKey = useRef<string | null>(null);
 
-  // Time-series data from session
-  const timeSeriesData = useMemo(() => loadTimeSeriesFromSession(), [isVisible]);
+  // Time-series data from session (refreshed on tab focus + timeseries-updated event)
+  const [timeSeriesBundle, setTimeSeriesBundle] = useState(() => readTimeSeriesFromSession());
+  const timeSeriesData = timeSeriesBundle?.data ?? null;
+  const timeSeriesSummary = timeSeriesBundle?.summary ?? null;
+  const timeSeriesTimestamp = timeSeriesBundle?.timestamp ?? null;
   const hasTimeSeriesData = timeSeriesData !== null && timeSeriesData.time.length > 0;
+
+  const reloadTimeSeries = useCallback(() => {
+    setTimeSeriesBundle(readTimeSeriesFromSession());
+  }, []);
+
+  useEffect(() => {
+    reloadTimeSeries();
+    const onUpdate = () => reloadTimeSeries();
+    window.addEventListener(TIMESERIES_UPDATED_EVENT, onUpdate);
+    return () => window.removeEventListener(TIMESERIES_UPDATED_EVENT, onUpdate);
+  }, [reloadTimeSeries]);
+
+  useEffect(() => {
+    if (isVisible) {
+      reloadTimeSeries();
+    }
+  }, [isVisible, reloadTimeSeries]);
 
   // Check RocketPy availability on mount
   useEffect(() => {
@@ -247,11 +267,20 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
       // Date always defaults to tomorrow (set in initial state), don't load from config
     }
 
-    // Propellant masses
+    // Propellant masses — only reset sliders when config tank masses change (new upload / save)
     const loxTank = config.lox_tank as Record<string, unknown> | undefined;
     const fuelTank = config.fuel_tank as Record<string, unknown> | undefined;
-    if (loxTank && typeof loxTank.mass === 'number') setLoxMass(String(loxTank.mass));
-    if (fuelTank && typeof fuelTank.mass === 'number') setFuelMass(String(fuelTank.mass));
+    const propKey = `${loxTank?.mass ?? ''}|${fuelTank?.mass ?? ''}`;
+    if (lastPropellantConfigKey.current !== propKey) {
+      lastPropellantConfigKey.current = propKey;
+      if (loxTank && typeof loxTank.mass === 'number') setLoxMass(String(loxTank.mass));
+      if (fuelTank && typeof fuelTank.mass === 'number') setFuelMass(String(fuelTank.mass));
+    }
+
+    const dr = config.design_requirements as Record<string, unknown> | undefined;
+    if (dr && typeof dr.target_apogee === 'number') {
+      setTargetApogeeM(String(dr.target_apogee));
+    }
 
     // Rocket configuration
     const rocket = config.rocket as Record<string, unknown> | undefined;
@@ -316,21 +345,17 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
     return airframe + propulsionDryMass;
   }, [airframeMass, propulsionDryMass]);
 
-  // Run simulation
-  const handleSimulate = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      // Build environment config
+  // Build shared flight request from current UI state + time-series data
+  const buildFlightRequest = useCallback(
+    (activeTimeSeries: TimeSeriesData, lox: number, fuel: number): FlightSimRequest => {
       const environment: FlightEnvironmentConfig = {
         latitude: parseFloat(latitude),
         longitude: parseFloat(longitude),
         elevation: parseFloat(elevation),
         date: [parseInt(launchYear), parseInt(launchMonth), parseInt(launchDay), parseInt(launchHour)],
+        atmosphere_model: atmosphereModel,
       };
 
-      // Build fins config
       const fins: FlightFinsConfig = {
         no_fins: parseInt(finCount),
         root_chord: parseFloat(rootChord),
@@ -339,7 +364,6 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
         fin_position: parseFloat(finPosition),
       };
 
-      // Build rocket config
       const rocket: FlightRocketConfig = {
         airframe_mass: parseFloat(airframeMass),
         engine_mass: parseFloat(engineMass),
@@ -350,29 +374,72 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
         motor_position: parseFloat(motorPosition),
         inertia: [parseFloat(inertiaX), parseFloat(inertiaY), parseFloat(inertiaZ)],
         fins,
+        nose_fineness_ratio: parseFloat(noseFineness),
+        avionics_payload_length_m: parseFloat(avionicsLength),
       };
 
-      // Validate time-series data
-      if (!timeSeriesData) {
+      const thrustN = activeTimeSeries.thrust_kN.map((t) => t * 1000);
+
+      return {
+        time_array: activeTimeSeries.time,
+        thrust_array: thrustN,
+        mdot_O_array: activeTimeSeries.mdot_O_kg_s,
+        mdot_F_array: activeTimeSeries.mdot_F_kg_s,
+        lox_mass_kg: lox,
+        fuel_mass_kg: fuel,
+        environment,
+        rocket,
+      };
+    },
+    [
+      latitude,
+      longitude,
+      elevation,
+      launchYear,
+      launchMonth,
+      launchDay,
+      launchHour,
+      atmosphereModel,
+      finCount,
+      rootChord,
+      tipChord,
+      finSpan,
+      finPosition,
+      airframeMass,
+      engineMass,
+      loxTankMass,
+      fuelTankMass,
+      rocketRadius,
+      rocketLength,
+      motorPosition,
+      inertiaX,
+      inertiaY,
+      inertiaZ,
+      noseFineness,
+      avionicsLength,
+    ]
+  );
+
+  // Run manual simulation
+  const handleSimulate = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    setOptimizeResults(null);
+
+    try {
+      const freshBundle = readTimeSeriesFromSession();
+      if (!freshBundle?.data) {
         setError('No time-series data available. Run a time-series analysis first.');
         setIsLoading(false);
         return;
       }
+      setTimeSeriesBundle(freshBundle);
 
-      // Convert thrust from kN to N
-      const thrustN = timeSeriesData.thrust_kN.map((t) => t * 1000);
-
-      // Build request
-      const request: FlightSimRequest = {
-        time_array: timeSeriesData.time,
-        thrust_array: thrustN,
-        mdot_O_array: timeSeriesData.mdot_O_kg_s,
-        mdot_F_array: timeSeriesData.mdot_F_kg_s,
-        lox_mass_kg: parseFloat(loxMass),
-        fuel_mass_kg: parseFloat(fuelMass),
-        environment,
-        rocket,
-      };
+      const request = buildFlightRequest(
+        freshBundle.data,
+        parseFloat(loxMass),
+        parseFloat(fuelMass)
+      );
 
       const result = await runFlightSimulation(request);
 
@@ -391,34 +458,56 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
     } finally {
       setIsLoading(false);
     }
-  }, [
-    source,
-    loxMass,
-    fuelMass,
-    latitude,
-    longitude,
-    elevation,
-    launchYear,
-    launchMonth,
-    launchDay,
-    launchHour,
-    airframeMass,
-    engineMass,
-    loxTankMass,
-    fuelTankMass,
-    rocketRadius,
-    rocketLength,
-    motorPosition,
-    inertiaX,
-    inertiaY,
-    inertiaZ,
-    finCount,
-    rootChord,
-    tipChord,
-    finSpan,
-    finPosition,
-    timeSeriesData,
-  ]);
+  }, [buildFlightRequest, loxMass, fuelMass]);
+
+  // Find minimum-fuel burn time for target apogee
+  const handleOptimize = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    setResults(null);
+
+    try {
+      const freshBundle = readTimeSeriesFromSession();
+      if (!freshBundle?.data) {
+        setError('No time-series data available. Run a time-series analysis first.');
+        setIsLoading(false);
+        return;
+      }
+      setTimeSeriesBundle(freshBundle);
+
+      const baseRequest = buildFlightRequest(
+        freshBundle.data,
+        parseFloat(loxMass),
+        parseFloat(fuelMass)
+      );
+
+      const result = await optimizeFlightAltitude({
+        ...baseRequest,
+        target_apogee_m: parseFloat(targetApogeeM),
+        apogee_tolerance_m: parseFloat(apogeeToleranceM),
+      });
+
+      if (result.error) {
+        setError(result.error);
+        setOptimizeResults(null);
+      } else if (result.data) {
+        setOptimizeResults(result.data);
+        if (result.data.success && result.data.flight) {
+          setResults(result.data.flight);
+          setLoxMass(result.data.optimal_lox_kg.toFixed(2));
+          setFuelMass(result.data.optimal_fuel_kg.toFixed(2));
+        }
+        if (!result.data.success && result.data.infeasible_reason) {
+          setError(result.data.infeasible_reason);
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Optimization failed');
+      setOptimizeResults(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [buildFlightRequest, loxMass, fuelMass, targetApogeeM, apogeeToleranceM]);
 
   // Save config back to yaml
   const handleSaveConfig = useCallback(async () => {
@@ -710,10 +799,26 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
               <svg className="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
-              <p className="text-sm text-purple-400">
-                Time-series data loaded: {timeSeriesData.time.length} points,{' '}
-                {(timeSeriesData.time[timeSeriesData.time.length - 1] - timeSeriesData.time[0]).toFixed(2)}s burn
-              </p>
+              <div className="text-sm text-purple-400">
+                <p>
+                  Time-series loaded: {timeSeriesData!.time.length} points,{' '}
+                  {(timeSeriesData!.time[timeSeriesData!.time.length - 1] - timeSeriesData!.time[0]).toFixed(2)}s burn
+                  {timeSeriesSummary?.total_impulse_kNs != null && (
+                    <span>, {timeSeriesSummary.total_impulse_kNs.toFixed(1)} kN·s impulse</span>
+                  )}
+                </p>
+                {(timeSeriesSummary?.lox_propellant_kg != null || timeSeriesSummary?.fuel_propellant_kg != null) && (
+                  <p className="text-xs text-purple-300/80 mt-1">
+                    Full burn needs ~{timeSeriesSummary?.lox_propellant_kg?.toFixed(2) ?? '?'} kg LOX, ~
+                    {timeSeriesSummary?.fuel_propellant_kg?.toFixed(2) ?? '?'} kg fuel (∫mdot dt)
+                  </p>
+                )}
+                {timeSeriesTimestamp != null && (
+                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                    Updated {new Date(timeSeriesTimestamp).toLocaleTimeString()} — re-run time-series after changing burn profile
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         ) : (
@@ -732,6 +837,63 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
           </div>
         )}
 
+        {/* Flight mode */}
+        <div className="mb-4">
+          <label className="block text-sm text-[var(--color-text-secondary)] mb-2">Flight sim mode</label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setFlightMode('manual')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                flightMode === 'manual'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] hover:bg-[var(--color-bg-hover)]'
+              }`}
+            >
+              Manual iteration
+            </button>
+            <button
+              type="button"
+              onClick={() => setFlightMode('optimize')}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                flightMode === 'optimize'
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] hover:bg-[var(--color-bg-hover)]'
+              }`}
+            >
+              Optimize for altitude
+            </button>
+          </div>
+          <p className="text-xs text-[var(--color-text-muted)] mt-2">
+            {flightMode === 'manual'
+              ? 'Adjust LOX/fuel sliders and run flight sim. Use diagnostics to iterate toward a target apogee.'
+              : 'Finds the shortest burn time (minimum fuel) on the loaded time-series curve that reaches your target apogee.'}
+          </p>
+        </div>
+
+        {flightMode === 'optimize' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 p-4 rounded-lg bg-purple-500/10 border border-purple-500/30">
+            <InputField
+              label="Target Apogee"
+              value={targetApogeeM}
+              onChange={setTargetApogeeM}
+              unit="m"
+              min={100}
+              step={10}
+              help={`${(parseFloat(targetApogeeM || '0') * 3.28084).toFixed(0)} ft — from design requirements by default`}
+            />
+            <InputField
+              label="Apogee tolerance"
+              value={apogeeToleranceM}
+              onChange={setApogeeToleranceM}
+              unit="m"
+              min={0}
+              step={5}
+              help="Allowed undershoot below target (optimization accepts apogee ≥ target − tolerance)"
+            />
+          </div>
+        )}
+
         {/* Propellant configuration */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <InputField
@@ -741,7 +903,14 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
             unit="kg"
             min={0.1}
             step={0.1}
-            help="Propellant only (not tank structure)"
+            disabled={flightMode === 'optimize'}
+            help={
+              flightMode === 'optimize'
+                ? 'Set automatically after optimization (exact ∫mdot dt for optimal burn time)'
+                : timeSeriesSummary?.lox_propellant_kg != null
+                  ? `Full burn needs ~${timeSeriesSummary.lox_propellant_kg.toFixed(2)} kg (∫mdot dt)`
+                  : 'Propellant only (not tank structure)'
+            }
           />
           <InputField
             label="Initial Fuel Mass"
@@ -750,7 +919,14 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
             unit="kg"
             min={0.1}
             step={0.1}
-            help="Propellant only (not tank structure)"
+            disabled={flightMode === 'optimize'}
+            help={
+              flightMode === 'optimize'
+                ? 'Minimized by optimizer — shortest burn that hits target apogee'
+                : timeSeriesSummary?.fuel_propellant_kg != null
+                  ? `Full burn needs ~${timeSeriesSummary.fuel_propellant_kg.toFixed(2)} kg (∫mdot dt)`
+                  : 'Propellant only (not tank structure)'
+            }
           />
         </div>
       </div>
@@ -837,6 +1013,22 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
                   className="w-12 px-2 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] text-sm"
                 />
               </div>
+            </div>
+            <div>
+              <label className="block text-sm text-[var(--color-text-secondary)] mb-1">Atmosphere model</label>
+              <select
+                value={atmosphereModel}
+                onChange={(e) => setAtmosphereModel(e.target.value as 'standard_atmosphere' | 'forecast')}
+                className="w-full px-2 py-2 rounded-lg bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] text-sm"
+              >
+                <option value="standard_atmosphere">Standard atmosphere (ISA — offline, deterministic)</option>
+                <option value="forecast">Live GFS forecast (needs internet & a near date)</option>
+              </select>
+              {atmosphereModel === 'forecast' && (
+                <p className="text-xs text-amber-500 mt-1">
+                  Forecast fetches real weather for the launch date/location; use a near-future date. Falls back to ISA if unavailable.
+                </p>
+              )}
             </div>
           </div>
         </CollapsibleSection>
@@ -936,6 +1128,24 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
                   min={0}
                   step={0.1}
                   help="From tail to nozzle"
+                />
+                <InputField
+                  label="Nose Fineness"
+                  value={noseFineness}
+                  onChange={setNoseFineness}
+                  unit=":1"
+                  min={1}
+                  step={0.1}
+                  help={`von Kármán nose length ÷ diameter. ~4.5:1 ≈ ${(parseFloat(noseFineness || '4.5') * 2 * parseFloat(rocketRadius || '0.1015')).toFixed(2)} m nose`}
+                />
+                <InputField
+                  label="Avionics/Payload Length"
+                  value={avionicsLength}
+                  onChange={setAvionicsLength}
+                  unit="m"
+                  min={0}
+                  step={0.1}
+                  help="Section above propulsion, below the nose"
                 />
               </div>
             </div>
@@ -1037,16 +1247,32 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
         </CollapsibleSection>
       </div>
 
-      {/* Simulate button */}
+      {/* Simulate / Optimize button */}
       <button
-        onClick={handleSimulate}
+        onClick={flightMode === 'optimize' ? handleOptimize : handleSimulate}
         disabled={isLoading || rocketPyAvailable === null || !hasTimeSeriesData}
-        className="w-full md:w-auto px-8 py-3 rounded-lg bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        className={`w-full md:w-auto px-8 py-3 rounded-lg text-white font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${
+          flightMode === 'optimize'
+            ? 'bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700'
+            : 'bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700'
+        }`}
       >
         {isLoading ? (
           <>
             <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            Running Simulation...
+            {flightMode === 'optimize' ? 'Optimizing burn time & propellant...' : 'Running Simulation...'}
+          </>
+        ) : flightMode === 'optimize' ? (
+          <>
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+              />
+            </svg>
+            Optimize Burn Time & Fuel
           </>
         ) : (
           <>
@@ -1062,6 +1288,56 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
           </>
         )}
       </button>
+
+      {/* Optimization summary */}
+      {optimizeResults && flightMode === 'optimize' && (
+        <div
+          className={`p-4 rounded-xl border ${
+            optimizeResults.success
+              ? 'bg-purple-500/10 border-purple-500/30'
+              : 'bg-yellow-500/10 border-yellow-500/30'
+          }`}
+        >
+          <p className="font-medium text-[var(--color-text-primary)] mb-3">
+            {optimizeResults.success ? 'Minimum-fuel solution' : 'Optimization infeasible'}
+          </p>
+          {optimizeResults.success ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+              <div>
+                <p className="text-[var(--color-text-secondary)]">Optimal burn time</p>
+                <p className="font-semibold text-[var(--color-text-primary)]">
+                  {optimizeResults.optimal_burn_time_s.toFixed(2)} s
+                </p>
+              </div>
+              <div>
+                <p className="text-[var(--color-text-secondary)]">Fuel required</p>
+                <p className="font-semibold text-[var(--color-text-primary)]">
+                  {optimizeResults.optimal_fuel_kg.toFixed(2)} kg
+                </p>
+              </div>
+              <div>
+                <p className="text-[var(--color-text-secondary)]">LOX required</p>
+                <p className="font-semibold text-[var(--color-text-primary)]">
+                  {optimizeResults.optimal_lox_kg.toFixed(2)} kg
+                </p>
+              </div>
+              <div>
+                <p className="text-[var(--color-text-secondary)]">Achieved apogee</p>
+                <p className="font-semibold text-[var(--color-text-primary)]">
+                  {optimizeResults.achieved_apogee_m.toFixed(0)} m (
+                  {(optimizeResults.achieved_apogee_m * 3.28084).toFixed(0)} ft)
+                </p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-yellow-400">{optimizeResults.infeasible_reason}</p>
+          )}
+          <p className="text-xs text-[var(--color-text-muted)] mt-3">
+            Ran {optimizeResults.simulations_run} flight simulations. Switch to manual mode to tweak propellant or
+            re-run time-series with a different burn profile, then optimize again.
+          </p>
+        </div>
+      )}
 
       {/* Error message */}
       {error && (
@@ -1116,6 +1392,90 @@ export function FlightSimulation({ config, isVisible = true, onConfigUpdated }: 
               color="orange"
             />
           </div>
+
+          {/* Propellant diagnostics */}
+          {results.propellant && (
+            <div className="p-4 rounded-xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">Propellant Diagnostics</h3>
+                <span
+                  className={`text-xs px-2 py-1 rounded-full font-medium ${
+                    results.propellant.regime === 'full_burn'
+                      ? 'bg-green-500/20 text-green-400'
+                      : results.propellant.regime === 'excess_propellant'
+                        ? 'bg-orange-500/20 text-orange-400'
+                        : 'bg-yellow-500/20 text-yellow-400'
+                  }`}
+                >
+                  {results.propellant.regime.replace(/_/g, ' ')}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                <div>
+                  <p className="text-[var(--color-text-muted)]">Effective burn</p>
+                  <p className="font-mono text-[var(--color-text-primary)]">
+                    {results.propellant.effective_burn_time_s.toFixed(2)}s /{' '}
+                    {results.propellant.timeseries_burn_time_s.toFixed(2)}s
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[var(--color-text-muted)]">Impulse delivered</p>
+                  <p className="font-mono text-[var(--color-text-primary)]">
+                    {(results.propellant.total_impulse_Ns / 1000).toFixed(1)} kN·s
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[var(--color-text-muted)]">LOX loaded / required</p>
+                  <p className="font-mono text-[var(--color-text-primary)]">
+                    {results.propellant.lox_effective_kg.toFixed(2)} / {results.propellant.lox_required_kg.toFixed(2)} kg
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[var(--color-text-muted)]">Fuel loaded / required</p>
+                  <p className="font-mono text-[var(--color-text-primary)]">
+                    {results.propellant.fuel_effective_kg.toFixed(2)} / {results.propellant.fuel_required_kg.toFixed(2)} kg
+                  </p>
+                </div>
+              </div>
+              {(results.propellant.lox_tank_max_kg != null || results.propellant.fuel_tank_max_kg != null) && (
+                <p className="text-xs text-[var(--color-text-muted)]">
+                  Tank load limits
+                  {results.propellant.propellant_tank_fill_factor != null && (
+                    <span> ({(results.propellant.propellant_tank_fill_factor * 100).toFixed(0)}% fill from config)</span>
+                  )}
+                  : LOX max {results.propellant.lox_tank_max_kg?.toFixed(2) ?? '—'} kg, fuel max{' '}
+                  {results.propellant.fuel_tank_max_kg?.toFixed(2) ?? '—'} kg. Override via{' '}
+                  <code className="text-[var(--color-text-secondary)]">design_requirements.propellant_tank_fill_factor</code>,{' '}
+                  <code className="text-[var(--color-text-secondary)]">fuel_tank_capacity_kg</code>, or tank geometry /
+                  <code className="text-[var(--color-text-secondary)]"> tank_volume_m3</code>.
+                </p>
+              )}
+              {results.propellant.target_apogee_m != null && (
+                <p className="text-xs text-[var(--color-text-muted)]">
+                  Design target apogee: {results.propellant.target_apogee_m.toFixed(0)} m (
+                  {(results.propellant.target_apogee_m * 3.28084).toFixed(0)} ft) — actual{' '}
+                  {results.apogee_m.toFixed(0)} m ({results.apogee_ft.toFixed(0)} ft)
+                </p>
+              )}
+              {results.propellant.regime === 'truncated' && (
+                <p className="text-xs text-yellow-400">
+                  Increase propellant (up to required amounts) to extend burn and raise apogee.
+                </p>
+              )}
+              {results.propellant.regime === 'excess_propellant' && (
+                <p className="text-xs text-orange-400">
+                  Loaded propellant exceeds burn requirement — trim toward required values to reduce dead weight.
+                </p>
+              )}
+              {results.propellant.warnings.length > 0 && (
+                <ul className="text-xs text-red-400 space-y-1 list-disc list-inside">
+                  {results.propellant.warnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
 
           {/* Truncation warning */}
           {results.truncation?.truncated && (

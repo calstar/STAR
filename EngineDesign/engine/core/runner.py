@@ -231,9 +231,13 @@ class PintleEngineRunner:
             # Remove existing handlers
             for handler in logger.handlers[:]:
                 logger.removeHandler(handler)
-            
-            logger.setLevel(logging.INFO)
-            
+
+            # Silent path: raise the level so logger.info(...) short-circuits before
+            # the expensive logging machinery (findCaller/makeRecord) — there is no
+            # handler anyway, so output is unchanged. Saves ~0.1 ms/eval in the
+            # optimizer hot loop. Non-silent keeps INFO + a console handler as before.
+            logger.setLevel(logging.WARNING if silent else logging.INFO)
+
             # Only add console handler if not silent
             if not silent:
                 ch = logging.StreamHandler()
@@ -272,8 +276,8 @@ class PintleEngineRunner:
         #     log_info(f"  Contraction Ratio:{cg.contraction_ratio:.4f}")
         log_info("="*80 + "\n")
         
-        # Solve for chamber pressure
-        Pc, diagnostics = self.solver.solve(P_tank_O, P_tank_F, Pc_guess, debug=debug)
+        # Solve for chamber pressure (silent => skip display-only cooling profile)
+        Pc, diagnostics = self.solver.solve(P_tank_O, P_tank_F, Pc_guess, debug=debug, silent=silent)
         
 
         At = cg.A_throat

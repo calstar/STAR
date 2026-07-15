@@ -2,6 +2,7 @@
 
 import numpy as np
 import logging
+import os
 from scipy.optimize import brentq, newton
 from typing import Tuple, Dict, Any, List, Optional
 
@@ -151,6 +152,7 @@ class ChamberSolver:
             mdot_F,
             cea_props,
             diagnostics,
+            with_profile=False,  # root-find: profile is display-only, never needed here
         )
 
         geometry = self._get_chamber_geometry()
@@ -217,12 +219,76 @@ class ChamberSolver:
         
         return float(residual)
     
+    # Process-wide native chamber dispatch: True=available, False=library broken (latched off).
+    # NOTE: this latch is ONLY for genuine library breakage (load/layout/call errors). A
+    # geometry-specific residual mismatch must NOT latch — see _native_chamber_pc.
+    _native_chamber_ok = True
+    # Relative tolerance for the per-call residual guard (matches the Layer-1 native parity spec
+    # in closure.py); absolute floor keeps tiny-flow geometries from tripping on float noise.
+    _NATIVE_RESID_RTOL = 1.0e-3
+    _NATIVE_RESID_ATOL = 1.0e-3  # kg/s
+    _native_resid_warned = False
+
+    def _native_chamber_pc(self, P_tank_O: float, P_tank_F: float):
+        """Solve Pc with the native C kernel (whole residual loop) when
+        ED_USE_NATIVE=1. Returns Pc, or None to fall back to the Python solver.
+
+        Every native Pc is cheaply validated against the Python residual (one residual
+        eval, ~0.15 ms vs the ~78 ms Python solve, so the native path is still ~200x).
+        Validation is PER CALL and NON-LATCHING: a geometry where native and Python
+        disagree (rare, extreme/near-degenerate samples) falls back to Python for THAT
+        call only — native stays enabled for every other geometry. Only a genuine
+        library failure (exception) disables native for the process.
+        """
+        if os.environ.get("ED_USE_NATIVE", "0") != "1":
+            return None
+        if ChamberSolver._native_chamber_ok is False:
+            return None
+        try:
+            from engine.native.python import native_injector
+            res = native_injector.chamber_solve(self.config, self.cea_cache,
+                                                P_tank_O, P_tank_F)
+        except Exception:
+            # Strict mode (ED_REQUIRE_NATIVE=1, CI parity job): surface the failure
+            # loudly instead of silently disabling native and passing on Python.
+            if os.environ.get("ED_REQUIRE_NATIVE", "0") == "1":
+                raise
+            ChamberSolver._native_chamber_ok = False
+            logging.getLogger(__name__).warning(
+                "Native chamber solve raised; disabling native chamber path for this process.")
+            return None
+        if res is None:
+            return None
+        Pc_native = float(res[0])
+
+        # Per-call guard: native's converged Pc must also satisfy the Python residual.
+        # Tolerance is relative to native's own mdot_total so it scales across engine sizes.
+        try:
+            r = self.residual(Pc_native, P_tank_O, P_tank_F)
+            diag = res[1] if len(res) > 1 else None
+            mdot = abs(float(getattr(diag, "mdot_total", 0.0))) if diag is not None else 0.0
+            tol = max(ChamberSolver._NATIVE_RESID_RTOL * mdot,
+                      ChamberSolver._NATIVE_RESID_ATOL)
+            ok = bool(np.isfinite(r) and abs(r) <= tol)
+        except Exception:
+            ok = False
+        if not ok:
+            # Non-latching: fall back to Python for this geometry only; keep native on.
+            if not ChamberSolver._native_resid_warned:
+                ChamberSolver._native_resid_warned = True
+                logging.getLogger(__name__).info(
+                    "Native chamber Pc failed per-call residual guard for some geometries; "
+                    "using Python solve for those (native stays enabled elsewhere).")
+            return None
+        return Pc_native
+
     def solve(
         self,
         P_tank_O: float,
         P_tank_F: float,
         Pc_guess: float = None,
-        debug: bool = False
+        debug: bool = False,
+        silent: bool = False,
     ) -> Tuple[float, Dict[str, Any]]:
         """
         Solve for chamber pressure.
@@ -278,13 +344,26 @@ class ChamberSolver:
         # I'll store `self._debug = debug` temporarily or modify residual validation.
         # Storing on self is easiest for this scope.
         self._debug = debug
+        self._silent = silent  # gates the display-only cooling profile in post-processing
 
         def residual_func(Pc):
             return self.residual(Pc, P_tank_O, P_tank_F)
-        
-        # Check residual signs at bounds before solving
-        residual_min = residual_func(Pc_min)
-        residual_max = residual_func(Pc_max)
+
+        # Native fast path (ED_USE_NATIVE=1): run the entire residual loop + Brent
+        # solve in C (~400x faster). On success we skip the Python root-find and let
+        # the existing post-processing below rebuild the full diagnostics dict from
+        # the solved Pc. Dummy opposite-sign residuals bypass the no-bracket raise;
+        # skip_solve=True bypasses the Python brentq. Any failure -> Python path.
+        _native_pc = self._native_chamber_pc(P_tank_O, P_tank_F)
+        if _native_pc is not None:
+            Pc = _native_pc
+            success = True
+            skip_solve = True
+            residual_min, residual_max = -1.0, 1.0
+        else:
+            # Check residual signs at bounds before solving
+            residual_min = residual_func(Pc_min)
+            residual_max = residual_func(Pc_max)
         
         # Check for NaN values and provide better error messages
         if not np.isfinite(residual_min):
@@ -554,13 +633,17 @@ class ChamberSolver:
         # Calculate total mass flow rate (needed for various calculations below)
         mdot_total = mdot_O + mdot_F
         
-        # Calculate cooling effects early (needed for conservative reaction kinetics)
+        # Calculate cooling effects early (needed for conservative reaction kinetics).
+        # The display-only per-segment heat-flux profile is skipped on the silent
+        # (optimizer) path — it's the dominant post-processing cost and doesn't
+        # affect any returned scalar.
         cooling_results, cooling_eff, effective_Tc = self._evaluate_cooling_models(
             Pc_val,
             mdot_O,
             mdot_F,
             cea_props,
             closure_diag,
+            with_profile=not getattr(self, "_silent", False),
         )
 
         # Calculate reaction progress through chamber (if finite-rate chemistry enabled)
@@ -922,6 +1005,7 @@ class ChamberSolver:
         mdot_F: float,
         cea_props: Dict[str, float],
         closure_diag: Dict[str, Any],
+        with_profile: bool = True,
     ) -> Tuple[Dict[str, Any], float, float]:
         config = self.config
         mdot_total = mdot_O + mdot_F
@@ -1106,44 +1190,49 @@ class ChamberSolver:
             else:
                 L_nozzle = None
             
-            # Add molecular weight to gas props for profile computation
-            gas_props_profile = {
-                "Tc": effective_Tc,
-                "Pc": Pc_val,
-                "gamma": gamma,
-                "R": R,
-                "M": cea_props.get("M", 24.0),  # Molecular weight [kg/kmol]
-            }
-            
-            ablative_profile = compute_ablative_heat_flux_profile(
-                gas_props_profile,
-                abl_cfg,
-                mdot_total,
-                L_chamber,
-                D_chamber,
-                D_throat,
-                n_segments=20,
-                L_nozzle=L_nozzle,
-                D_exit=D_exit,
-                include_nozzle=True,
-            )
-            
-            # Debug logging for heat flux profile
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(f"[ABLATIVE PROFILE] L_chamber={L_chamber:.4f}m, D_chamber={D_chamber:.4f}m, D_throat={D_throat:.4f}m")
-            logger.info(f"[ABLATIVE PROFILE] segment_x length={len(ablative_profile.get('segment_x', []))}, segment_q_incident length={len(ablative_profile.get('segment_q_incident', []))}")
-            if ablative_profile.get('segment_q_incident'):
-                logger.info(f"[ABLATIVE PROFILE] q_incident range: {min(ablative_profile['segment_q_incident']):.2e} to {max(ablative_profile['segment_q_incident']):.2e} W/m²")
-            
-            # Add profile data to ablative results
-            ablative_results["segment_x"] = ablative_profile["segment_x"]
-            ablative_results["segment_q_incident"] = ablative_profile["segment_q_incident"]
-            ablative_results["segment_q_conv"] = ablative_profile["segment_q_conv"]
-            ablative_results["segment_q_rad"] = ablative_profile["segment_q_rad"]
-            ablative_results["segment_q_net"] = ablative_profile["segment_q_net"]
-            ablative_results["throat_index"] = ablative_profile["throat_index"]
-            
+            # Per-segment heat-flux PROFILE is display-only: it does not affect
+            # cooling_eff/effective_Tc (computed above) or the residual. Skip it on
+            # the optimizer/native hot path (with_profile=False) — this is the bulk
+            # of the chamber post-processing cost. Results are bit-identical.
+            if with_profile:
+                # Add molecular weight to gas props for profile computation
+                gas_props_profile = {
+                    "Tc": effective_Tc,
+                    "Pc": Pc_val,
+                    "gamma": gamma,
+                    "R": R,
+                    "M": cea_props.get("M", 24.0),  # Molecular weight [kg/kmol]
+                }
+
+                ablative_profile = compute_ablative_heat_flux_profile(
+                    gas_props_profile,
+                    abl_cfg,
+                    mdot_total,
+                    L_chamber,
+                    D_chamber,
+                    D_throat,
+                    n_segments=20,
+                    L_nozzle=L_nozzle,
+                    D_exit=D_exit,
+                    include_nozzle=True,
+                )
+
+                # Debug logging for heat flux profile
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"[ABLATIVE PROFILE] L_chamber={L_chamber:.4f}m, D_chamber={D_chamber:.4f}m, D_throat={D_throat:.4f}m")
+                logger.info(f"[ABLATIVE PROFILE] segment_x length={len(ablative_profile.get('segment_x', []))}, segment_q_incident length={len(ablative_profile.get('segment_q_incident', []))}")
+                if ablative_profile.get('segment_q_incident'):
+                    logger.info(f"[ABLATIVE PROFILE] q_incident range: {min(ablative_profile['segment_q_incident']):.2e} to {max(ablative_profile['segment_q_incident']):.2e} W/m²")
+
+                # Add profile data to ablative results
+                ablative_results["segment_x"] = ablative_profile["segment_x"]
+                ablative_results["segment_q_incident"] = ablative_profile["segment_q_incident"]
+                ablative_results["segment_q_conv"] = ablative_profile["segment_q_conv"]
+                ablative_results["segment_q_rad"] = ablative_profile["segment_q_rad"]
+                ablative_results["segment_q_net"] = ablative_profile["segment_q_net"]
+                ablative_results["throat_index"] = ablative_profile["throat_index"]
+
             cooling_results["ablative"] = ablative_results
 
         cooling_eff = self._compute_cooling_efficiency(

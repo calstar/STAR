@@ -500,14 +500,14 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
       const estimatedIsp = 250; // Conservative estimate
       const Ve = estimatedIsp * g0;
       
-      const mdotOArray = timeArray.map((_, i) => {
+      const mdotOArray = timeArray.map((_: number, i: number) => {
         const thrust = thrustArray[i] || requirements.target_thrust;
         const totalMdot = thrust / Ve;
         const OF = requirements.optimal_of_ratio || 2.0;
         return totalMdot * OF / (1 + OF);
       });
       
-      const mdotFArray = timeArray.map((_, i) => {
+      const mdotFArray = timeArray.map((_: number, i: number) => {
         const thrust = thrustArray[i] || requirements.target_thrust;
         const totalMdot = thrust / Ve;
         const OF = requirements.optimal_of_ratio || 2.0;
@@ -515,8 +515,8 @@ export function OptimizerDemo({ config }: OptimizerDemoProps) {
       });
 
       // Estimate propellant masses from burn time and mass flows
-      const avgMdotO = mdotOArray.length > 0 ? mdotOArray.reduce((a, b) => a + b, 0) / mdotOArray.length : 1.5;
-      const avgMdotF = mdotFArray.length > 0 ? mdotFArray.reduce((a, b) => a + b, 0) / mdotFArray.length : 0.75;
+      const avgMdotO = mdotOArray.length > 0 ? mdotOArray.reduce((a: number, b: number) => a + b, 0) / mdotOArray.length : 1.5;
+      const avgMdotF = mdotFArray.length > 0 ? mdotFArray.reduce((a: number, b: number) => a + b, 0) / mdotFArray.length : 0.75;
       const burnTime = requirements.target_burn_time || 10;
       
       console.log('Flight sim input:', { 

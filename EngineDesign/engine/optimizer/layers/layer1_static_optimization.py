@@ -899,6 +899,7 @@ def _layer1_final_primary_objective_terms(
     injector_dp_f_band: Tuple[float, float],
     injector_dp_o_soft_floor: Optional[float] = None,
     layer1_w_dp_o_floor: float = 0.0,
+    layer1_w_dp_center: float = 0.0,
     layer1_w_thrust: float = 1.0e4,
     layer1_w_of: float = 1.0e4,
     layer1_w_of_low_mr_scale: float = 1.0,
@@ -960,6 +961,7 @@ def _layer1_final_primary_objective_terms(
                 w_dp_f=layer1_w_dp_f,
                 o_soft_floor=injector_dp_o_soft_floor,
                 w_dp_o_floor=layer1_w_dp_o_floor,
+                w_dp_center=layer1_w_dp_center,
             )
         )
 
@@ -1618,17 +1620,24 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
     # Keep identical to ``_layer1_apply_chamber_geometry_to_config`` (evaluate/config path).
     L_chamber_curr = float(np.clip(L_chamber_curr, 0.005, 1.0))
     
-    max_chamber_length = float(requirements.get("max_chamber_length_m", 0.50))
+    # Total engine length = chamber (cylindrical + contraction) + estimated nozzle (divergent).
+    # The requirement is "max total engine length (chamber + nozzle)". This previously read a
+    # non-existent key ("max_chamber_length_m") so it ALWAYS fell back to 0.50 m and the user's
+    # max_engine_length was silently ignored. Nozzle length uses the standard bell estimate
+    # L_nozzle ≈ 0.8 * D_exit (same approximation as reaction_chemistry.py).
+    L_nozzle_est = 0.8 * float(D_exit_check) if np.isfinite(D_exit_check) else 0.0
+    L_engine_curr = L_chamber_curr + L_nozzle_est
+    max_engine_length = float(requirements.get("max_engine_length", 0.50))
     length_term = 0.0
     length_violation = False
-    if np.isfinite(L_chamber_curr) and max_chamber_length > 0:
-        if L_chamber_curr > max_chamber_length:
+    if np.isfinite(L_engine_curr) and max_engine_length > 0:
+        if L_engine_curr > max_engine_length:
             # Hard constraint: treat as infeasibility
             length_violation = True
-            length_term = ((L_chamber_curr - max_chamber_length) / max_chamber_length) ** 2
+            length_term = ((L_engine_curr - max_engine_length) / max_engine_length) ** 2
         else:
             # Soft penalty to guide optimizer away from the boundary
-            length_term = max(0.0, (L_chamber_curr - max_chamber_length * 0.9) / (max_chamber_length * 0.1)) ** 2
+            length_term = max(0.0, (L_engine_curr - max_engine_length * 0.9) / (max_engine_length * 0.1)) ** 2
     chamber_shape_term = 0.0
     
     # Lexicographic scalarization
@@ -1651,6 +1660,9 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
     W_DP_O = float(constants.get("W_DP_O", W_DP))
     W_DP_F = float(constants.get("W_DP_F", W_DP))
     W_DP_HIGH = float(constants.get("W_DP_HIGH", 480.0))
+    # Pull toward the CENTRE of the ΔP/Pc band (~0.33 for [0.20,0.40] instead of the 0.40 edge).
+    # ~50 is needed to counter the SMD/atomization benefit of high ΔP; still small vs band/thrust.
+    W_DP_CENTER = float(constants.get("W_DP_CENTER", 500.0))
     W_geom_ao_af = float(constants.get("W_geom_ao_af_momentum", 0.0))
     rho_ox_c = float(constants.get("rho_oxidizer", 1140.0))
     rho_fu_c = float(constants.get("rho_fuel", 422.6))
@@ -1759,6 +1771,7 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
                 w_dp_f=W_DP_F,
                 o_soft_floor=dp_o_soft_floor_worker,
                 w_dp_o_floor=W_DP_O_FLOOR_worker,
+                w_dp_center=W_DP_CENTER,
             )
 
     smd_term = 0.0
@@ -2025,8 +2038,15 @@ def _layer1_sync_best_from_worker_eval(
     opt_state: Dict[str, Any],
     x_vec: np.ndarray,
     obj_val: float,
+    *,
+    parent_objective: Optional[Callable[[np.ndarray], float]] = None,
 ) -> None:
-    """Keep ``best_objective`` / ``best_x`` aligned with parallel ``_eval_candidate`` results."""
+    """Keep ``best_objective`` / ``best_x`` aligned with parallel ``_eval_candidate`` results.
+
+    When ``parent_objective`` is supplied, re-run the full parent ``objective()`` once on a
+    new global best so ``iteration_history``, ``best_config``, and penalty breakdown fields
+    stay populated (parallel workers only return scalars).
+    """
     if not np.isfinite(obj_val):
         return
     cur = float(opt_state.get("best_objective", float("inf")))
@@ -2034,6 +2054,11 @@ def _layer1_sync_best_from_worker_eval(
         opt_state["best_objective"] = float(obj_val)
         opt_state["best_x"] = np.asarray(x_vec, dtype=float).copy()
         opt_state["last_best_eval"] = int(opt_state.get("function_evaluations", 0))
+        if parent_objective is not None:
+            try:
+                parent_objective(np.asarray(x_vec, dtype=float))
+            except Exception:
+                pass
 
 
 def _layer1_emit_objective_plot_point(
@@ -2332,6 +2357,7 @@ def run_layer1_optimization(
     
     # Default max_iterations for robust convergence (10-DOF pintle / 13-DOF impinging geometry + pressures)
     # With popsize ~48: many evaluations per CMA iteration unless clamped for smoke tests.
+    # (max_iterations * popsize is the hybrid eval budget, so 150 -> ~7200 evals, the known-good run.)
     max_iterations = 150
     if layer1_max_iterations is not None:
         max_iterations = max(1, int(layer1_max_iterations))
@@ -2969,6 +2995,12 @@ def run_layer1_optimization(
         requirements, "layer1_exit_pressure_inside_quad_scale", 0.35
     )
     layer1_W_DP = _requirement_float(requirements, "W_DP", 160.0)
+    # Pull toward the centre of the ΔP/Pc band. The atomization (SMD) benefit of higher ΔP is a
+    # strong competing force that pins ΔP/Pc to the 0.40 edge, so this needs a real counterweight
+    # (~50) to settle near ~0.33; it is still small vs the band hinge / thrust so it never overrides
+    # feasibility. Lower it toward 0 to allow the edge, raise it to pull harder toward 0.30. Tune via
+    # design_requirements.W_DP_CENTER.
+    layer1_W_DP_CENTER = _requirement_float(requirements, "W_DP_CENTER", 500.0)
     layer1_W_DP_O = (
         float(requirements["W_DP_O"])
         if requirements.get("W_DP_O") is not None
@@ -3565,20 +3597,24 @@ def run_layer1_optimization(
                                Cf_min_acceptable, Cf_max_acceptable,
                                scale=(Cf_max_acceptable - Cf_min_acceptable))
         
-        # Chamber length penalty: only apply if exceeds maximum (prefer shorter within bounds)
-        max_chamber_length = float(requirements.get("max_chamber_length_m", 0.50))  # 50cm max
-        L_chamber_curr = getattr(getattr(config, "chamber", None), "length", None)
-        L_chamber_curr = float(L_chamber_curr) if (L_chamber_curr is not None and np.isfinite(L_chamber_curr)) else np.nan
+        # Total engine length penalty (chamber + nozzle): matches the worker path in
+        # _compute_objective_value. Previously this read a non-existent key ("max_chamber_length_m")
+        # AND a non-existent attribute (config.chamber -> None), so it was doubly dead and the user's
+        # max_engine_length was ignored. Use cg.length (chamber) + 0.8*D_exit (standard bell estimate).
+        max_engine_length = float(requirements.get("max_engine_length", 0.50))
+        L_chamber_curr = float(cg.length) if (getattr(cg, "length", None) is not None and np.isfinite(cg.length)) else np.nan
+        L_nozzle_est = 0.8 * float(D_exit_check) if np.isfinite(D_exit_check) else 0.0
+        L_engine_curr = (L_chamber_curr + L_nozzle_est) if np.isfinite(L_chamber_curr) else np.nan
         length_term = 0.0
         length_violation = False
-        if np.isfinite(L_chamber_curr) and max_chamber_length > 0:
-            if L_chamber_curr > max_chamber_length:
+        if np.isfinite(L_engine_curr) and max_engine_length > 0:
+            if L_engine_curr > max_engine_length:
                 # Hard constraint: treat as infeasibility
                 length_violation = True
-                length_term = ((L_chamber_curr - max_chamber_length) / max_chamber_length) ** 2
+                length_term = ((L_engine_curr - max_engine_length) / max_engine_length) ** 2
             else:
                 # Soft penalty to guide optimizer away from the boundary
-                length_term = max(0.0, (L_chamber_curr - max_chamber_length * 0.9) / (max_chamber_length * 0.1)) ** 2
+                length_term = max(0.0, (L_engine_curr - max_engine_length * 0.9) / (max_engine_length * 0.1)) ** 2
         chamber_shape_term = 0.0
         chamber_dt_ratio_curr = float("nan")
         chamber_ld_ratio_curr = float("nan")
@@ -4221,6 +4257,7 @@ def run_layer1_optimization(
         'idx_P_F': idx_P_F,
         'W_MOM': layer1_W_MOM,
         'W_DP': layer1_W_DP,
+        'W_DP_CENTER': layer1_W_DP_CENTER,
         'W_DP_O': layer1_W_DP_O,
         'W_DP_F': layer1_W_DP_F,
         'W_DP_HIGH': layer1_W_DP_HIGH,
@@ -4338,7 +4375,9 @@ def run_layer1_optimization(
             best_x_global = np.asarray(x0_refined, dtype=float).copy()
             if np.isfinite(_ws_best_f):
                 best_f_global = float(_ws_best_f)
-                _layer1_sync_best_from_worker_eval(opt_state, best_x_global, float(_ws_best_f))
+                _layer1_sync_best_from_worker_eval(
+                    opt_state, best_x_global, float(_ws_best_f), parent_objective=objective
+                )
                 _layer1_emit_objective_plot_point(
                     objective_callback,
                     opt_state,
@@ -4351,10 +4390,17 @@ def run_layer1_optimization(
             layer1_logger.info("Using Hybrid CMA + Block Re-optimization mode.")
             hybrid_config = config_obj.optimizer.hybrid
             
-            # Tie hybrid budget to Layer 1 max_iterations (population-sized generations).
+            # Hybrid evaluation budget = max_iterations * popsize (population-sized generations).
+            # NOTE: a previous revision made this just `max_iterations`, which silently cut the
+            # search budget by ~popsize (48x) and caused the optimizer to terminate far too early at
+            # a much worse objective ("nothing converging"). The * popsize form is what gives the
+            # optimizer enough evaluations to actually converge; the run still stops early via the
+            # CMA stagnation/convergence criteria long before the ceiling, so this is a budget CAP,
+            # not a fixed run length. (The default max_iterations is sized so this is fast under the
+            # native kernel — see where max_iterations is set.)
             total_budget_evals = max(int(popsize), int(max_iterations) * int(popsize))
             layer1_logger.info(
-                "Hybrid evaluation budget: %s (max(%s, max_iterations=%s × popsize=%s))",
+                "Hybrid evaluation budget: %s (max(%s, max_iterations=%s x popsize=%s))",
                 total_budget_evals,
                 popsize,
                 max_iterations,
@@ -4644,7 +4690,10 @@ def run_layer1_optimization(
                             _gen_best = float(min(_fv))
                             _gi = int(np.argmin(np.asarray(_fv, dtype=float)))
                             _layer1_sync_best_from_worker_eval(
-                                opt_state, candidates_snapped[_gi], _gen_best
+                                opt_state,
+                                candidates_snapped[_gi],
+                                _gen_best,
+                                parent_objective=objective,
                             )
                             _layer1_emit_objective_plot_point(
                                 objective_callback,
@@ -4819,6 +4868,20 @@ def run_layer1_optimization(
             _incumbent_obj,
         )
         result = _ResultWrapper(np.asarray(_incumbent_x, dtype=float).copy(), _incumbent_obj)
+
+    # Parallel CMA/hybrid workers only sync scalar objectives. Re-evaluate the incumbent on
+    # the parent process so best_config, validation payloads, and iteration_history carry
+    # the full per-term penalty breakdown used by the UI convergence plots.
+    _final_inc_x = opt_state.get("best_x")
+    if _final_inc_x is not None:
+        try:
+            layer1_logger.info(
+                "Final incumbent parent re-eval (obj=%.6g) for validation snapshot and history",
+                float(opt_state.get("best_objective", float("nan"))),
+            )
+            objective(np.asarray(_final_inc_x, dtype=float))
+        except Exception as _final_exc:
+            layer1_logger.warning("Final incumbent parent re-eval failed: %s", _final_exc)
 
     validation_tank_pa: Optional[Tuple[float, float]] = None
     if opt_state["best_config"] is not None:
@@ -5701,6 +5764,7 @@ def run_layer1_optimization(
         injector_dp_f_band=layer1_dp_f_band,
         injector_dp_o_soft_floor=layer1_dp_o_soft_floor,
         layer1_w_dp_o_floor=layer1_W_DP_O_FLOOR,
+        layer1_w_dp_center=layer1_W_DP_CENTER,
         layer1_w_thrust=layer1_W_THRUST_obj,
         layer1_w_of=layer1_W_OF_obj,
         layer1_w_of_low_mr_scale=layer1_W_OF_low_MR_scale,
@@ -5886,7 +5950,7 @@ def run_cma_core(
         "tolx": 1e-8,
         "tolfun": 1e-9,
         "tolstagnation": 50,
-        "ftarget": -np.inf, 
+        "ftarget": -np.inf,
         "seed": seed,
     }
     if cma_stds is not None:
@@ -6054,6 +6118,22 @@ def run_cma_core(
                     
                     if evals >= budget:
                         stop_loop = True
+
+            # Parent-side sync: parallel workers only return scalars; record rich history on new global best.
+            if valley_escape_tracker is not None and fitness_values:
+                _fv = [
+                    float(v) if v is not None and np.isfinite(float(v)) else float("inf")
+                    for v in fitness_values
+                ]
+                if _fv and min(_fv) < float("inf"):
+                    _gen_best = float(min(_fv))
+                    _gi = int(np.argmin(np.asarray(_fv, dtype=float)))
+                    _layer1_sync_best_from_worker_eval(
+                        valley_escape_tracker,
+                        candidates_snapped[_gi],
+                        _gen_best,
+                        parent_objective=objective_fn,
+                    )
         else:
             # SEQUENTIAL EVALUATION PATH (original code)
             fitness_values = []
@@ -6288,10 +6368,10 @@ def run_hybrid_optimization(
     # Split Stage A budget into 2 restarts
     budget_a1 = int(stage_a_budget * 0.6)
     budget_a2 = stage_a_budget - budget_a1
-    
+
     # Run 1
     x_res, f_res, evs = run_cma_core(
-        objective, x0, sigma0, bounds, budget_a1, 
+        objective, x0, sigma0, bounds, budget_a1,
         popsize=16, cma_stds=cma_stds, elite_pool=elite_pool,
         valley_escape_tracker=valley_escape_tracker, logger=logger,
         # Parallel evaluation
@@ -6303,15 +6383,15 @@ def run_hybrid_optimization(
     if f_res < best_f_global:
         best_f_global = f_res
         best_x_global = x_res
-        
+
     # Run 2 (Restart from best or random?)
     # Valid restart: Perturb best logic
     rng = np.random.default_rng()
-    x0_2 = best_x_global + rng.standard_normal(dim) * (0.01 * span) # Small perturbation
-    
+    x0_2 = best_x_global + rng.standard_normal(dim) * (0.01 * span)  # Small perturbation
+
     if budget_a2 > 100:
         x_res, f_res, evs = run_cma_core(
-            objective, x0_2, sigma0 * 0.5, bounds, budget_a2, 
+            objective, x0_2, sigma0 * 0.5, bounds, budget_a2,
             popsize=16, cma_stds=cma_stds, elite_pool=elite_pool,
             valley_escape_tracker=valley_escape_tracker, logger=logger,
             # Parallel evaluation
@@ -6323,7 +6403,7 @@ def run_hybrid_optimization(
         if f_res < best_f_global:
             best_f_global = f_res
             best_x_global = x_res
-            
+
     if logger: logger.info(f"Stage A Complete. Best f: {best_f_global:.5f}")
     
     # --- CYCLES ---
@@ -6334,9 +6414,9 @@ def run_hybrid_optimization(
         if stop_event is not None and stop_event.is_set():
             raise RuntimeError("Optimization stopped by user")
         
-        if update_progress_fn: 
+        if update_progress_fn:
             update_progress_fn(f"Hybrid: Cycle {cycle_idx+1}", 0.3 + 0.6*(cycle_idx/max(1,hybrid_config.cycles)), f"Block Optimization ({hybrid_config.block_method})")
-            
+
         cycle_budget = per_cycle_budget
         
         # --- STAGE B: Build Blocks ---
@@ -6465,5 +6545,5 @@ def run_hybrid_optimization(
                     best_x_global = x_ref_res
                     current_x = x_ref_res # Update incumbent for next cycle
                     if logger: logger.info(f"    Refresh improved global best -> {best_f_global:.5f}")
-                    
+
     return best_x_global, best_f_global, evals_used

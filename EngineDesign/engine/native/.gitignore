@@ -1,0 +1,3 @@
+# CMake build trees (any arch suffix). Golden data under tests/golden is kept.
+build/
+build_*/

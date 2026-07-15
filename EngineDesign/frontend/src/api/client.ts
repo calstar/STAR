@@ -354,6 +354,12 @@ export interface SegmentsRequest {
   blowdown_mode?: boolean;
   lox_initial_pressure_psi?: number;
   fuel_initial_pressure_psi?: number;
+  total_propellant_kg?: number;
+  of_ratio?: number;
+  lox_tank_volume_m3?: number;
+  lox_ullage_volume_m3?: number;
+  fuel_tank_volume_m3?: number;
+  fuel_ullage_volume_m3?: number;
 }
 
 // Time-series data returned from the API
@@ -420,6 +426,14 @@ export interface TimeSeriesSummary {
   total_impulse_kNs: number;
   total_propellant_kg: number;
   burn_time_s: number;
+  lox_propellant_kg?: number;
+  fuel_propellant_kg?: number;
+  blowdown_initial_lox_mass_kg?: number;
+  blowdown_initial_fuel_mass_kg?: number;
+  blowdown_lox_tank_volume_m3?: number;
+  blowdown_fuel_tank_volume_m3?: number;
+  blowdown_initial_lox_ullage_m3?: number;
+  blowdown_initial_fuel_ullage_m3?: number;
   // COPV summary metrics
   copv_initial_pressure_psi?: number;
   copv_initial_mass_kg?: number;
@@ -517,6 +531,7 @@ export interface FlightEnvironmentConfig {
   longitude: number;
   elevation: number;
   date: [number, number, number, number]; // [year, month, day, hour]
+  atmosphere_model?: 'standard_atmosphere' | 'forecast'; // ISA (default) vs live GFS forecast
 }
 
 export interface FlightFinsConfig {
@@ -537,6 +552,10 @@ export interface FlightRocketConfig {
   motor_position: number;
   inertia: [number, number, number]; // [Ixx, Iyy, Izz]
   fins?: FlightFinsConfig;
+  nose_kind?: string;              // RocketPy nosecone profile (default vonKarman)
+  nose_fineness_ratio?: number;    // nose length / body diameter (default 4.5:1)
+  nose_length?: number;            // explicit nose length [m], overrides fineness ratio
+  avionics_payload_length_m?: number; // avionics/payload length above propulsion [m]
 }
 
 export interface FlightTankConfig {
@@ -582,6 +601,34 @@ export interface FlightTruncationInfo {
   reason?: string;
 }
 
+export interface MassCapInfo {
+  requested_kg: number;
+  effective_kg: number;
+  max_fill_kg: number;
+  fill_factor: number;
+  tank_volume_m3: number;
+  was_capped: boolean;
+}
+
+export interface PropellantDiagnostics {
+  regime: 'truncated' | 'full_burn' | 'excess_propellant' | string;
+  timeseries_burn_time_s: number;
+  effective_burn_time_s: number;
+  total_impulse_Ns: number;
+  lox_required_kg: number;
+  fuel_required_kg: number;
+  lox_requested_kg: number;
+  fuel_requested_kg: number;
+  lox_effective_kg: number;
+  fuel_effective_kg: number;
+  lox_tank_max_kg?: number;
+  fuel_tank_max_kg?: number;
+  target_apogee_m?: number;
+  propellant_tank_fill_factor?: number;
+  mass_caps?: Record<string, MassCapInfo>;
+  warnings: string[];
+}
+
 export interface FlightSimResponse {
   status: string;
   apogee_m: number;
@@ -590,11 +637,12 @@ export interface FlightSimResponse {
   flight_time_s: number;
   trajectory?: FlightTrajectory;
   truncation?: FlightTruncationInfo;
+  propellant?: PropellantDiagnostics;
   thrust_curve?: {
     time: number[];
     thrust_N: number[];
   };
-  rocket_diagram?: string;  // Base64-encoded PNG
+  rocket_diagram?: string;
   error?: string;
 }
 
@@ -609,6 +657,38 @@ export async function runFlightSimulation(
   params: FlightSimRequest
 ): Promise<ApiResponse<FlightSimResponse>> {
   return request<FlightSimResponse>('/flight/simulate', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+export interface FlightOptimizeRequest extends FlightSimRequest {
+  target_apogee_m: number;
+  apogee_tolerance_m?: number;
+  min_burn_time_s?: number;
+  max_burn_time_s?: number;
+}
+
+export interface FlightOptimizeResponse {
+  status: string;
+  success: boolean;
+  target_apogee_m: number;
+  apogee_tolerance_m: number;
+  optimal_burn_time_s: number;
+  optimal_lox_kg: number;
+  optimal_fuel_kg: number;
+  achieved_apogee_m: number;
+  apogee_error_m: number;
+  total_impulse_Ns: number;
+  simulations_run: number;
+  infeasible_reason?: string;
+  flight?: FlightSimResponse;
+}
+
+export async function optimizeFlightAltitude(
+  params: FlightOptimizeRequest
+): Promise<ApiResponse<FlightOptimizeResponse>> {
+  return request<FlightOptimizeResponse>('/flight/optimize-altitude', {
     method: 'POST',
     body: JSON.stringify(params),
   });
@@ -1168,6 +1248,8 @@ export interface CommandRequest {
 
 export interface ControllerInitRequest {
   controller_config_path?: string;
+  // Use the currently-loaded engine config from app_state (backend default: true).
+  use_engine_config?: boolean;
 }
 
 export interface ControllerSimulateRequest {

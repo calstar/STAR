@@ -1,4 +1,3 @@
-import React from 'react';
 import {
   LineChart,
   Line,
@@ -75,7 +74,6 @@ function getCorrelationColor(value: number): string {
 }
 
 function CorrelationHeatmap({ matrix, labels }: CorrelationHeatmapProps) {
-  const n = labels.length;
   const cellSize = 52;
   const labelWidth = 90;
 
@@ -302,6 +300,11 @@ export function PressureCurveChart({ data, summary }: PressureCurveChartProps) {
           <div className="text-lg font-bold text-cyan-400">
             {formatValue(summary.total_propellant_kg, 1)} <span className="text-sm font-normal text-[var(--color-text-secondary)]">kg</span>
           </div>
+          {(summary.lox_propellant_kg != null || summary.fuel_propellant_kg != null) && (
+            <div className="text-xs text-[var(--color-text-tertiary)] mt-1">
+              LOX {formatValue(summary.lox_propellant_kg ?? 0, 1)} · Fuel {formatValue(summary.fuel_propellant_kg ?? 0, 1)} kg
+            </div>
+          )}
         </div>
       </div>
 

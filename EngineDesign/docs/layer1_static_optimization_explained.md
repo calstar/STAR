@@ -352,6 +352,44 @@ obj = (
 
 **Validation**: This is a standard approach. Hard constraints for impossible designs, soft for suboptimal ones.
 
+### Geometry-envelope constraints (engine length & diameter)
+
+These come straight from `design_requirements` and must bind so the optimized engine fits the vehicle.
+
+**Engine length — `max_engine_length` [m].** Enforced against the **total** engine length, i.e.
+`L_chamber (cylindrical + contraction) + L_nozzle`, where the divergent length uses the standard bell
+estimate `L_nozzle ≈ 0.8 · D_exit` (the same approximation as `reaction_chemistry.py`). Over the limit
+is treated as a hard infeasibility (`(over / limit)²`, weighted at `W_LEN = 1e4`); a soft penalty in the
+top 10% of the band steers the optimizer away from the boundary. The check is computed identically in the
+parallel worker path (`_compute_objective_value`) and the parent `objective()` so both agree.
+
+> **Note:** the requirement key is `max_engine_length`. (Earlier the objective read a non-existent key,
+> so the value was silently ignored and engines could come out longer than requested — fixed.)
+
+**Diameters — two independent limits.** `max_chamber_outer_diameter` bounds the chamber outer wall (the
+design vector's outer-diameter DOF is clipped to it, and the final reported config comes from that clipped
+path, so the chamber never exceeds it). The nozzle exit is governed **separately** by
+`max_nozzle_exit_diameter`. These are intentionally independent: a bell nozzle legitimately flares wider
+than the chamber, so the engine's widest point is usually the exit. To shrink the exit, lower
+`max_nozzle_exit_diameter` — `max_chamber_outer_diameter` does not cap it.
+
+### Injector ΔP/Pc band
+
+Each propellant stream has a target injector stiffness band `ΔP_inj / Pc ∈ [lo, hi]` (default
+`[0.20, 0.40]` per stream). Two terms shape it:
+
+- **Band hinge** — zero inside the band, quadratic (normalized by band width) outside. This is the pass/fail
+  gate.
+- **Soft centre pull** — `W_DP_CENTER · ((r − mid)/span)²`, nonzero *inside* the band, biasing each ratio
+  toward the band centre (~0.30 for `[0.20, 0.40]`) instead of parking on the 0.40 edge. The atomization
+  (SMD) benefit of higher ΔP is a strong competing force, so this needs a real counterweight — the default
+  is tuned accordingly and is overridable via `design_requirements.W_DP_CENTER` (lower → allow the edge,
+  higher → pull harder toward centre).
+
+Legacy configs with the old `[0.15, 0.35]` band are migrated to `[0.20, 0.40]` at load (in the
+`DesignRequirements` schema validator), so the optimizer and the frontend validation card always read the
+same band.
+
 ### Early Exit Logic
 
 **Removed**: Code comments indicate early stopping was removed because it caused suboptimal solutions.

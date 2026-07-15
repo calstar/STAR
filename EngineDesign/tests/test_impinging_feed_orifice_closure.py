@@ -36,10 +36,15 @@ class TestImpingingFeedOrificeClosure(unittest.TestCase):
         expect_O = float(Cd_O * A_O * np.sqrt(2.0 * rho_O * dpi_O)) if dpi_O > 0 else 0.0
         expect_F = float(Cd_F * A_F * np.sqrt(2.0 * rho_F * dpi_F)) if dpi_F > 0 else 0.0
 
+        # The reported mdot_from_bernoulli_* is, by construction, exactly Cd·A·√(2ρΔp).
         np.testing.assert_allclose(diag["mdot_from_bernoulli_O"], expect_O, rtol=1e-14, atol=1e-12)
         np.testing.assert_allclose(diag["mdot_from_bernoulli_F"], expect_F, rtol=1e-14, atol=1e-12)
-        np.testing.assert_allclose(mdot_O, expect_O, rtol=1e-12, atol=1e-12)
-        np.testing.assert_allclose(mdot_F, expect_F, rtol=1e-12, atol=1e-12)
+        # The RETURNED mdot is the feed-orifice coupled fixed point (Cd depends on Re depends on
+        # mdot), which converges to the closure tolerance (solver.closure.tolerance, ~1e-4), not to
+        # machine precision. So it equals the Bernoulli form only to that tolerance.
+        closure_tol = float(getattr(cfg.solver.closure, "tolerance", 1e-4) or 1e-4)
+        np.testing.assert_allclose(mdot_O, expect_O, rtol=max(closure_tol, 1e-5), atol=1e-9)
+        np.testing.assert_allclose(mdot_F, expect_F, rtol=max(closure_tol, 1e-5), atol=1e-9)
         self.assertGreater(diag["feed_orifice_coupling_iterations"], 0)
 
 

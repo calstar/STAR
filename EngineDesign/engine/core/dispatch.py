@@ -2,8 +2,8 @@
 
 Audited reality (2026-06-11), which these bindings encode rather than invent:
   * SMD: ``PintleInjector.solve`` hard-binds ``smd_pintle`` (``spray.smd.model`` is IGNORED on the
-    pintle path); ``ImpingingInjector.solve`` dispatches ``spray.smd.model`` (ingebo vs legacy
-    lefebvre fallback).
+    pintle path); ``ImpingingInjector.solve`` hard-binds ``smd_impinging_ingebo`` (``spray.smd.model``
+    is IGNORED — legacy lefebvre on doublets yielded bogus ~1 µm D32).
   * Geometry-Cd (``cd_inf_from_orifice_diameter``): called only on the impinging path; pintle keeps
     fixed ``Cd_inf`` semantics (this is WHY anchor A stayed bit-compatible with main).
   * Layer-1 design vector: pintle 10 DOF (integer dim [6]); impinging 13 DOF (integer dim [4]).
@@ -38,7 +38,7 @@ INJECTOR_BINDINGS = {
     ),
     "impinging": InjectorBindings(
         injector_type="impinging",
-        expected_smd_model="ingebo", smd_knob_ignored=False,
+        expected_smd_model="ingebo", smd_knob_ignored=True,
         expected_use_geometry_cd=True,
         layer1_dof=13, layer1_integer_dims=[4],
     ),
@@ -71,6 +71,11 @@ INJECTOR_GEOMETRY_TEMPLATES = {
         "fuel": {"d_pintle_tip": 0.028194, "d_reservoir_inner": 0.0292862, "h_gap": 0.0005461,
                  "A_entry": 0.000624314, "d_hydraulic": 0.0010922},
     },
+    # NOTE: this template is injector-ONLY and is stamped on an injector-type switch (e.g.
+    # pintle -> impinging) onto the live chamber. The injector and chamber must be a feasible
+    # PAIR (jet area vs throat demand), so we keep the robust larger-area symmetric seed here;
+    # the curated good-basin methalox doublet (asymmetric jets + matched chamber) lives in
+    # configs/default.yaml, which is what the methalox button actually seeds from.
     "impinging": {
         "oxidizer": {"n_elements": 20, "d_jet": 0.002, "impingement_angle": 50.0, "spacing": 0.006},
         "fuel": {"n_elements": 20, "d_jet": 0.002, "impingement_angle": 60.0, "spacing": 0.006},
@@ -150,13 +155,21 @@ def validate_config_bindings(config: Any) -> List[str]:
     b = INJECTOR_BINDINGS[inj_type]
 
     smd_model = str(getattr(getattr(getattr(config, "spray", None), "smd", None), "model", "") or "")
-    if b.smd_knob_ignored and smd_model and smd_model != "lefebvre":
-        # not harmful (knob ignored) but misleading config state worth surfacing once
-        warnings.append(
-            f"spray.smd.model='{smd_model}' has NO EFFECT for injector.type='{inj_type}' "
-            f"(solver hard-binds its own correlation)"
-        )
-    if b.expected_smd_model and smd_model and smd_model != b.expected_smd_model:
+    if b.smd_knob_ignored and smd_model:
+        # Documented expected model in YAML is fine (reconciled configs); warn on misleading values.
+        if b.expected_smd_model and smd_model == b.expected_smd_model:
+            pass
+        elif not b.expected_smd_model and smd_model != "lefebvre":
+            warnings.append(
+                f"spray.smd.model='{smd_model}' has NO EFFECT for injector.type='{inj_type}' "
+                f"(solver hard-binds its own correlation)"
+            )
+        elif b.expected_smd_model and smd_model != b.expected_smd_model:
+            warnings.append(
+                f"spray.smd.model='{smd_model}' is ignored for injector.type='{inj_type}' "
+                f"(solver hard-binds {b.expected_smd_model!r}); reconcile via load/switch"
+            )
+    if b.expected_smd_model and not b.smd_knob_ignored and smd_model and smd_model != b.expected_smd_model:
         warnings.append(
             f"injector.type='{inj_type}' expects spray.smd.model='{b.expected_smd_model}' but config "
             f"says '{smd_model}' — atomization (and stability time-lag, τ∝SMD²) will use the "

@@ -1,0 +1,56 @@
+name: Regenerate CEA cache fixture
+
+# Manual-only. The committed CEA cache table
+# (EngineDesign/output/cache/cea_cache_LOX_CH4_3D.npz) is a deterministic lookup
+# table that only needs rebuilding when the CEA grid/propellant in
+# configs/impinging_smoke changes or rocketcea is upgraded. This job rebuilds it
+# (the one place that needs gfortran + rocketcea) and uploads it as an artifact
+# to download and commit. It intentionally does NOT auto-commit.
+'on':
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: EngineDesign
+
+jobs:
+  rebuild:
+    name: Rebuild CEA cache fixture
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install gfortran (required to build rocketcea / NASA CEA)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gfortran
+
+    - name: Install full dependencies (incl. rocketcea)
+      run: pip install -r requirements.txt
+
+    - name: Rebuild the cache fixture
+      run: |
+        python - <<'PY'
+        from engine.pipeline.io import load_config
+        from engine.core.runner import PintleEngineRunner
+        import os
+        cfg = load_config('configs/impinging_smoke.yaml')
+        PintleEngineRunner(cfg)  # builds + writes cfg.combustion.cea.cache_file
+        p = 'output/cache/cea_cache_LOX_CH4_3D.npz'
+        print('rebuilt:', p, os.path.getsize(p), 'bytes')
+        PY
+
+    - name: Upload rebuilt fixture
+      uses: actions/upload-artifact@v4
+      with:
+        name: cea-cache-fixture
+        path: EngineDesign/output/cache/cea_cache_LOX_CH4_3D.npz
+        retention-days: 14

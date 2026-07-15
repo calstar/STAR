@@ -16,6 +16,7 @@ pre-test design guidance, not a substitute for detailed CFD or test data.
 
 from __future__ import annotations
 
+import os
 from typing import Dict, Tuple, Optional, List, Any
 import numpy as np
 from engine.pipeline.config_schemas import PintleEngineConfig
@@ -479,9 +480,30 @@ def compute_physical_stability(config, Pc: float, MR: float, mdot_total: float, 
     """
     from engine.pipeline.stability import chug, acoustic
     inp = build_stability_inputs(config, Pc, MR, mdot_total, cstar, gamma, R, Tc, diagnostics, cg)
-    chug_fast = chug.chug_margin_fast(inp["streams"], inp["chamber"])
-    ac_fast = acoustic.fast_acoustic(inp["D_ch"], inp["L_ch"], inp["gas"],
-                                     n=inp["n_interaction"], tau_sens=inp["tau_sens"])
+    # Native fast path (ED_USE_NATIVE=1): the 200-pt complex chug sweep is the
+    # dominant per-eval stability cost. Run it in C (~machine-precision parity);
+    # fall back to Python on any issue.
+    chug_fast = None
+    if os.environ.get("ED_USE_NATIVE", "0") == "1":
+        try:
+            from engine.native.python import native_injector
+            chug_fast = native_injector.chug_margin_fast(inp["streams"], inp["chamber"])
+        except Exception:
+            chug_fast = None
+    if chug_fast is None:
+        chug_fast = chug.chug_margin_fast(inp["streams"], inp["chamber"])
+
+    ac_fast = None
+    if os.environ.get("ED_USE_NATIVE", "0") == "1":
+        try:
+            from engine.native.python import native_injector
+            ac_fast = native_injector.fast_acoustic(inp["D_ch"], inp["L_ch"], inp["gas"],
+                                                    n=inp["n_interaction"], tau_sens=inp["tau_sens"])
+        except Exception:
+            ac_fast = None
+    if ac_fast is None:
+        ac_fast = acoustic.fast_acoustic(inp["D_ch"], inp["L_ch"], inp["gas"],
+                                         n=inp["n_interaction"], tau_sens=inp["tau_sens"])
     return {
         "chug": chug_fast,
         "acoustic": ac_fast,

@@ -7,10 +7,12 @@ export function SideTooltip({ active, payload, label, coordinate, viewBox }: Pro
   if (!active || !payload?.length || !coordinate) return null;
 
   const vbW = viewBox && 'width' in viewBox ? Number(viewBox.width) : 320;
-  const placeRight = coordinate.x < vbW * 0.5;
+  const coordX = coordinate.x ?? 0;
+  const coordY = coordinate.y ?? 0;
+  const placeRight = coordX < vbW * 0.5;
   const boxW = 168;
-  const left = placeRight ? coordinate.x + 14 : coordinate.x - boxW - 14;
-  const top = Math.max(4, coordinate.y - 36);
+  const left = placeRight ? coordX + 14 : coordX - boxW - 14;
+  const top = Math.max(4, coordY - 36);
 
   return (
     <div

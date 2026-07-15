@@ -104,11 +104,17 @@ def apply_injector_type(config: Dict[str, Any], injector_type: str) -> Dict[str,
             continue
         d = dict(discharge[side])
         if baseline.get(side):
+            # Preserve an explicitly-set use_geometry_cd: a user override of the type default wins,
+            # and validate_config_bindings() warns about the mismatch rather than us silently
+            # clobbering it. (The derive-default only fills the unset case.)
+            user_ugc = d.get("use_geometry_cd", None)
             # drop stale geometry-Cd params from the previous injector, then apply this type's baseline
             for stale in ("d_ref_m", "cd_small_hole_exponent", "cd_large_hole_log_gain",
                           "cd_inf_max", "cd_inf_min_geom", "d_min_m"):
                 d.pop(stale, None)
             d.update(baseline[side])
+            if user_ugc is not None:
+                d["use_geometry_cd"] = bool(user_ugc)
         else:
             d["use_geometry_cd"] = b.expected_use_geometry_cd   # fallback if no baseline registered
         discharge[side] = d
@@ -187,6 +193,11 @@ def switch_config(config: Dict[str, Any], *, injector_type: Optional[str] = None
         cfg = apply_injector_type(cfg, injector_type)  # same type: just reconcile bindings
     if propellant_preset is not None:
         cfg = apply_propellant(cfg, propellant_preset)
+    # Propellant-only overlays leave spray/discharge from the previous injector binding; re-stamp
+    # so impinging keeps ingebo + geometry-Cd (not pintle lefebvre + fixed Cd_inf).
+    live_type = ((cfg or {}).get("injector") or {}).get("type")
+    if live_type:
+        cfg = apply_injector_type(cfg, live_type)
     return cfg
 
 
