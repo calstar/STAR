@@ -154,7 +154,7 @@ Body:
 ```cpp
 // Initialize FSW config manager
 fsw::FSWConfigManager fsw_config;
-fsw_config.initialize("0.0.0.0", 5008);
+fsw_config.initialize("0.0.0.0", 5006);
 fsw_config.set_system_state(config::SystemState::GSE);
 
 // Process board heartbeat
@@ -175,13 +175,12 @@ fsw_config.send_config_to_board(10);
 [system]
 state = "GSE"  # or "FLIGHT"
 
-[system.gse]
-base_ip = "192.168.2.0"
-ip_range_start = 100
-ip_range_end = 150
-
-[system.flight]
-base_ip = "192.168.3.0"
+[system.network]
+# Ground and flight do NOT live in the same file. Each side has its own
+# config file, each with its own [system.network] base_ip:
+#   - config_ground_daq.toml → base_ip = "192.168.2.0"
+#   - config_flight_daq.toml → base_ip = "192.168.3.0"
+base_ip = "192.168.2.0"   # (ground example; flight file uses 192.168.3.0)
 ip_range_start = 100
 ip_range_end = 150
 

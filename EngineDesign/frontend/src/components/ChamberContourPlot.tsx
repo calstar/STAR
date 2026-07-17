@@ -491,9 +491,6 @@ export function ChamberContourPlot({
     const yMin = yMin_m * unitMultiplier;
     const yMax = yMax_m * unitMultiplier;
 
-    const xRange = xRange_m * unitMultiplier;
-    const yRange = yRange_m * unitMultiplier;
-
     // Container dimensions (accounting for margins: left: 20, right: 30, top: 20, bottom: 20)
     // Use default if container not measured yet
     const effectiveWidth = containerSize.width > 0 ? containerSize.width : 1000;

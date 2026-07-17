@@ -38,12 +38,25 @@ def _try_native_flows(
     config: PintleEngineConfig,
 ) -> Optional[Tuple[float, float, Dict[str, Any]]]:
     """Native (mdot_O, mdot_F, diagnostics), or None if native is disabled or can't
-    handle this config (the caller then falls back to the Python injector model)."""
+    handle this config (the caller then falls back to the Python injector model).
+
+    Parity is guaranteed by the golden test suite + the load-time ABI assert, not a
+    runtime self-check (capability-dispatch architecture). Strict mode
+    (``ED_REQUIRE_NATIVE=1``, the CI parity job) makes a *genuine* native failure —
+    the library won't import or won't enable — raise instead of silently falling back
+    to Python, which would report a false green. A config the kernel simply doesn't
+    handle (``solve`` returns None) still falls back quietly; default runs are
+    unaffected.
+    """
     try:
         from engine.native.python import native_injector
     except Exception:
+        if os.environ.get("ED_REQUIRE_NATIVE", "0") == "1":
+            raise
         return None
     if not native_injector.available():
+        if native_injector.require_native():
+            raise RuntimeError("ED_REQUIRE_NATIVE=1 but the native path is not enabled/available")
         return None
     return native_injector.solve(config, P_tank_O, P_tank_F, Pc)
 

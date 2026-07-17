@@ -1,4 +1,3 @@
-import React from 'react';
 import {
   LineChart,
   Line,
@@ -75,7 +74,6 @@ function getCorrelationColor(value: number): string {
 }
 
 function CorrelationHeatmap({ matrix, labels }: CorrelationHeatmapProps) {
-  const n = labels.length;
   const cellSize = 52;
   const labelWidth = 90;
 

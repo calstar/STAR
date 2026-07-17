@@ -1,6 +1,6 @@
-# Pintle Injector Liquid Rocket Engine Design Pipeline
+# Liquid Rocket Engine Design Pipeline
 
-A comprehensive physics-based simulation and **multi-layer optimization pipeline** for liquid bipropellant rocket engines — **LOX/RP‑1 (kerolox)**, **LOX/CH₄ (methalox)**, and **LOX/Ethanol (ethalox)**, with **pintle** or **impinging** injectors. Takes tank pressures as input and solves for chamber pressure, mass flow rates, thrust, and all performance parameters, accelerated by a native C physics kernel.
+A comprehensive physics-based simulation and **multi-layer optimization pipeline** for liquid bipropellant rocket engines. The propellants and the injector type are **whatever you put in the config** — the whole point is to evaluate and compare different engine designs, not to model one fixed engine. Presets ship for **LOX/RP‑1** and **LOX/CH₄ (methalox)** with **pintle** or **impinging** injectors. Takes tank pressures as input and solves for chamber pressure, mass flow rates, thrust, and all performance parameters, accelerated by a native C physics kernel.
 
 ## Overview
 
@@ -9,7 +9,7 @@ A comprehensive physics-based simulation and **multi-layer optimization pipeline
 **Key Capabilities:**
 - Full flow path simulation: tank → feed system → injector → combustion → nozzle → thrust
 - **Injector modes:** pintle (`injector.type: pintle`) or twin-jet **impinging** (`injector.type: impinging`); see `docs/optimizer_readme.md` (Injector types) and `configs/canonical/impinging.yaml`
-- **Propellants:** LOX/RP‑1 (`kerolox`), LOX/CH₄ (`methalox`), and LOX/Ethanol (`ethalox`) via propellant presets in `configs/propellants/`; select with `propellant_preset: <name>` in a config. Canonical seeds in `configs/canonical/` (`pintle.yaml` is LOX/Ethanol, `impinging.yaml` is LOX/CH₄)
+- **Propellants:** LOX/RP‑1 and **LOX/CH₄ (methalox)** via propellant presets; canonical seeds in `configs/canonical/`
 - **Native C physics kernel** (`engine/native/`): the chamber solve + stability hot path runs in C, making `evaluate()` ~**88× faster** with machine‑precision parity — see [Native physics kernel](#native-c-physics-kernel-performance)
 - Multi-layer optimization for complete engine design (geometry, pressure curves, thermal protection)
 - Time-varying analysis with ablative recession tracking
@@ -20,30 +20,24 @@ A comprehensive physics-based simulation and **multi-layer optimization pipeline
 
 The evaluation hot path — chamber‑pressure solve (injector → CEA → combustion
 efficiency → ablative cooling → Brent root‑find) plus the chug/acoustic stability
-sweep — is implemented as a standalone **C11 library under `engine/native/`**. It
-exists for one purpose: making the **Layer‑1 optimizer's per‑candidate evaluation**
-fast. It is wired in at **exactly one seam** — the Layer‑1 inner loop calls
-`native_injector.evaluate()` (a single `ed_evaluate` C call) per candidate.
-Everything else — `runner.evaluate()`, `chamber_solver`, `closure`, `nozzle.py` —
-stays **pure Python and authoritative**, so native never spills into the general
-path and the Python reference implementation is never hollowed out.
+sweep — is implemented as a standalone **C11 library under `engine/native/`** and
+wired into the live path. It is an **opt‑in accelerator with automatic Python
+fallback**, not a rewrite: the Python physics remains the reference implementation
+and is used whenever native is disabled or a config isn't covered.
 
-- **Enable:** `ED_USE_NATIVE=1` (default) turns the Layer‑1 seam on; `ED_USE_NATIVE=0`
-  runs Layer‑1 entirely in Python. The FastAPI backend and the Layer‑1 parent each
-  build the library once before spawning workers; it otherwise auto‑builds lazily on
-  first use (CMake, arch‑tagged dir — requires a C compiler + CMake).
-- **Parity & safety:** native↔Python parity is guaranteed by the golden test suite
-  and a load‑time ABI assert — **not** a runtime self‑check. The seam engages only for
-  configs native can handle (impinging + ablative + advanced efficiency) and returns
-  `None` → Python otherwise. Measured agreement: chamber Pc ~5e‑10, CEA/stability
-  ~1e‑16; the general pure‑Python `runner.evaluate()` is unchanged bit‑for‑bit.
-- **Speed:** the native seam is ~4× faster per Layer‑1 candidate (single C call +
-  native stability vs. the full Python evaluate), which is what lets the 15000‑eval
-  Layer‑1 runs finish in seconds.
-- **Coverage today:** impinging injector + ablative cooling + advanced efficiency, with
-  a **frozen nozzle** (omits the ~1% shifting‑equilibrium term; the Layer‑1 winner is
-  re‑evaluated at full Python fidelity at finalization). Pintle/coaxial and
-  film/regen‑coupled cooling are not ported — those candidates evaluate in Python.
+- **Enable:** the FastAPI backend sets `ED_USE_NATIVE=1` automatically at startup
+  (and prebuilds the library), so the **frontend optimizer uses it out of the box**.
+  For CLI/scripts, `export ED_USE_NATIVE=1`. Set `ED_USE_NATIVE=0` for pure Python.
+- **Auto‑build:** on first use the library is compiled with CMake into an
+  arch‑tagged directory — no manual build step. Requires a C compiler + CMake.
+- **Parity & safety:** a one‑time self‑check compares the native result against
+  Python and falls back on any mismatch. Measured agreement: chamber Pc ~5e‑10,
+  CEA/stability ~1e‑16. A full `runner.evaluate()` matches Python to ~5e‑10.
+- **Speed:** chamber solve ~400× faster; full `evaluate()` ~88× (≈68 ms → ≈0.8 ms),
+  which is what makes the 15000‑eval Layer‑1 optimizer runs finish in seconds.
+- **Coverage today:** impinging injector + ablative cooling + advanced efficiency.
+  Pintle/coaxial, film/regen‑coupled cooling, and the nozzle/thrust step still run
+  in Python (the native path falls back automatically for those).
 
 See `engine/native/README.md` for build details, the staged port plan, and the
 parity/benchmark methodology.
@@ -53,7 +47,7 @@ parity/benchmark methodology.
 ```mermaid
 flowchart TB
     subgraph inputs [Inputs]
-        TankP["Tank Pressures: LOX + RP-1"]
+        TankP["Tank Pressures: oxidizer + fuel"]
         Config["YAML Config: configs/default.yaml"]
     end
 
@@ -142,62 +136,48 @@ engine/optimizer/main_optimizer.py
 EngineDesign/
 ├── engine/                      # Main engine package
 │   ├── core/                    # Core physics models
-│   │   ├── runner.py            # Main pipeline orchestrator (PintleEngineRunner)
-│   │   ├── chamber_solver.py    # Pc solver (supply = demand) — pure Python, authoritative
-│   │   ├── closure.py           # Injector flow closure — pure Python
-│   │   ├── dispatch.py          # Injector-model dispatch
+│   │   ├── runner.py            # Main pipeline orchestrator
+│   │   ├── chamber_solver.py    # Pc solver (supply = demand)
 │   │   ├── chamber_geometry.py  # Chamber sizing calculations
-│   │   ├── chamber_profiles.py  # Chamber contour profiles
-│   │   ├── nozzle.py            # Thrust / Isp / exit conditions
-│   │   ├── nozzle_solver.py     # Nozzle expansion + Mach solve
-│   │   ├── mach_solver.py       # Area-Mach relations
+│   │   ├── nozzle.py            # Thrust calculation
 │   │   ├── spray.py             # Spray physics (J, SMD, Weber)
 │   │   ├── discharge.py         # Dynamic Cd model
 │   │   ├── geometry.py          # Injector geometry
-│   │   ├── dxf_export.py        # DXF geometry export
-│   │   └── injectors/           # Injector models: pintle, impinging, coaxial
+│   │   └── injectors/           # Injector type implementations
 │   │
 │   ├── pipeline/                # Pipeline infrastructure
-│   │   ├── config_schemas.py    # Pydantic validation (PintleEngineConfig)
-│   │   ├── cea_cache.py         # CEA thermochemistry caching (3D .npz tables)
-│   │   ├── io.py                # Config loading/saving + propellant presets
-│   │   ├── constants.py         # Physical constants
-│   │   ├── combustion_physics.py # Advanced combustion efficiency model
-│   │   ├── reaction_chemistry.py # Shifting-equilibrium / progress chemistry
-│   │   ├── feed_loss.py         # Feed-system pressure losses
-│   │   ├── time_varying_solver.py # Transient burn solver
-│   │   ├── flight_altitude_optimizer.py # Optimal burn-time search
+│   │   ├── config_schemas.py    # Pydantic validation
+│   │   ├── config_switch.py     # Injector/propellant switching (see docs/CONFIG_SYSTEM.md)
+│   │   ├── cea_cache.py         # CEA thermochemistry caching
+│   │   ├── io.py                # Config loading/saving + preset resolution
+│   │   ├── time_varying_solver.py
+│   │   ├── tank_capacity.py     # Resolve max loadable propellant mass from config
+│   │   ├── burn_time_sync.py    # Keep burn-time fields aligned across config sections
+│   │   ├── flight_altitude_optimizer.py  # Min-fuel burn time for target apogee
 │   │   ├── thermal/             # Thermal protection models
-│   │   │   ├── ablative_cooling.py / ablative_geometry.py / ablative_sizing.py
-│   │   │   ├── graphite_cooling.py / graphite_geometry.py
-│   │   │   ├── film_cooling.py
+│   │   │   ├── ablative_cooling.py
+│   │   │   ├── graphite_cooling.py
 │   │   │   └── regen_cooling.py
 │   │   └── stability/           # Stability analysis
-│   │       ├── analysis.py      # Top-level stability orchestration
-│   │       ├── chug.py          # Chug margin (complex-impedance Nyquist sweep)
-│   │       ├── acoustic.py      # 1L/1T acoustic growth rates
-│   │       ├── core.py / enhanced.py
-│   │       └── report.py        # Rich stability payload for frontend
+│   │       ├── analysis.py
+│   │       └── coupling.py
 │   │
-│   ├── native/                  # Native C11 physics kernel (opt-in accelerator)
-│   │   ├── include/ src/        # C sources (ed_chamber, ed_cea, ed_stability, …)
-│   │   ├── python/              # ctypes shim + autobuild (native_injector.py, autobuild.py)
-│   │   ├── tests/ golden/       # C parity tests + golden vectors
-│   │   ├── tools/               # Golden/oracle exporters + parity checkers
-│   │   ├── CMakeLists.txt
-│   │   └── README.md            # Build, parity, and staged-port details
+│   ├── native/                  # Native C physics kernel (opt-in accelerator)
+│   │   ├── README.md            # Build, staged port plan, parity/benchmarks
+│   │   ├── CMakeLists.txt       # C11 build (auto-built on first use)
+│   │   ├── include/             # Public headers (ed_*.h)
+│   │   ├── src/                 # C implementation (chamber, CEA, injector, ...)
+│   │   ├── python/              # ctypes bindings + autobuild
+│   │   └── tests/               # Golden-vector parity tests
 │   │
 │   ├── optimizer/               # Optimization layers
-│   │   ├── main_optimizer.py    # Orchestrator: run_full_engine_optimization_with_flight_sim
-│   │   ├── helpers.py           # Pressure-curve / optimizer-vector conversion
-│   │   ├── feed_pressure_model.py
-│   │   ├── injector_dp_penalty.py
+│   │   ├── main_optimizer.py    # Main orchestrator
 │   │   ├── layers/              # Individual layer implementations
-│   │   │   ├── layer1_static_optimization.py  # Parallel CMA-ES static design
+│   │   │   ├── layer1_static_optimization.py
 │   │   │   ├── layer2_pressure.py
 │   │   │   ├── layer3_thermal_protection.py
 │   │   │   └── layer4_flight_simulation.py
-│   │   └── views/               # Optimizer view/result helpers
+│   │   └── views/               # UI components for optimizer
 │   │
 │   └── control/                 # Control system
 │       └── robust_ddp/          # Robust DDP controller
@@ -207,9 +187,9 @@ EngineDesign/
 │           └── constraints.py   # Safety constraints
 │
 ├── backend/                     # FastAPI backend
-│   ├── main.py                  # FastAPI entry point; sets ED_USE_NATIVE=1 at startup
+│   ├── main.py                  # FastAPI application entry point
 │   ├── state.py                 # Application state management
-│   └── routers/                 # API route handlers
+│   └── routers/                  # API route handlers
 │       ├── config.py            # Configuration endpoints
 │       ├── evaluate.py          # Engine evaluation endpoints
 │       ├── timeseries.py        # Time-series analysis endpoints
@@ -219,38 +199,40 @@ EngineDesign/
 │       └── control.py           # Control system endpoints
 │
 ├── frontend/                    # React + Vite frontend
-│   ├── src/                     # React source code (components, api, lib, utils)
+│   ├── src/                     # React source code
 │   ├── package.json             # Node.js dependencies
 │   └── vite.config.ts           # Vite configuration
 │
 ├── copv/                        # COPV pressure calculations
-│   ├── copv_solve.py / copv_solve_both.py
+│   ├── copv_solve.py
 │   ├── blowdown_solver.py       # Coupled blowdown simulation
 │   └── n2_Z_lookup.csv
 │
 ├── configs/                     # Configuration files
-│   ├── default.yaml             # Base engine configuration
-│   ├── canonical/               # Canonical seeds: pintle.yaml (ethalox), impinging.yaml (methalox)
-│   └── propellants/             # Propellant presets: kerolox / methalox / ethalox
+│   ├── default.yaml             # What the backend loads at startup
+│   ├── canonical/               # Committed starting configs, one per injector
+│   │   ├── pintle.yaml
+│   │   └── impinging.yaml
+│   └── propellants/             # Propellant presets (fluids + CEA identity)
 │
-├── output/                      # Generated files (mostly gitignored)
+├── output/                      # Generated files (gitignored)
 │   ├── logs/                    # Optimization logs
 │   ├── plots/                   # Generated plots
-│   └── cache/                   # CEA cache tables — *.npz are COMMITTED (not ignored)
+│   └── cache/                   # CEA cache files
 │
 ├── docs/                        # Documentation
-│   ├── pipeline_status.md       # Implementation status
-│   ├── quick_reference.md       # Quick reference guide
 │   ├── layer_requirements.md    # Layer interface requirements
 │   ├── optimizer_readme.md      # Optimizer architecture and usage
-│   ├── optimization_layers_readme.md
-│   ├── stability/               # Combustion stability physics notes
-│   └── control/                 # Control system documentation
-│       ├── README.md
-│       ├── DDP_SOLVER.md
-│       └── CONTROLLER_SUMMARY.md
+│   ├── CONFIG_SYSTEM.md         # Config model, presets, switching, burn-time sync
+│   ├── flight_simulation.md     # /simulate, tank capacity, propellant regimes
+│   ├── flight_altitude_optimization.md  # Min-fuel burn time for a target apogee
+│   ├── control/                 # Control system documentation
+│   │   ├── README.md
+│   │   ├── INDEX.md
+│   │   └── DDP_SOLVER.md
+│   └── stability/               # Combustion stability physics
 │
-├── scripts/                     # Utility / analysis scripts
+├── scripts/                     # Utility scripts
 │   ├── simple_example.py
 │   ├── run_full_pipeline.py
 │   └── pressure_sweep.py
@@ -258,10 +240,10 @@ EngineDesign/
 ├── tests/                       # Test suite
 │   └── control/                 # Control system tests
 │
-├── dev.sh                       # Development startup script (backend + frontend)
+├── dev.sh                       # Development startup script
 ├── README.md
-├── QUICKSTART.md                # Quick start guide
 ├── STARTUP_GUIDE.md             # Detailed startup instructions
+├── TROUBLESHOOTING.md           # Common issues and fixes
 ├── requirements.txt
 └── .gitignore
 ```
@@ -364,48 +346,36 @@ python scripts/pressure_sweep.py
 ```
 
 **For more detailed setup instructions, see:**
-- `QUICKSTART.md` - Quick start guide for backend/frontend
 - `STARTUP_GUIDE.md` - Detailed startup instructions and troubleshooting
+- `TROUBLESHOOTING.md` - Common issues and fixes
 
 ## Configuration
 
-Engine parameters are defined in YAML. The fastest way to pick a propellant
-combination is a preset — add `propellant_preset: methalox` (or `kerolox` /
-`ethalox`) at the top of a config and it fills in fluids + CEA identity from
-`configs/propellants/`. Explicit `fluids`/`combustion` fields that contradict the
-preset's propellant identity are hard-failed at load (see `engine/pipeline/io.py`).
-
-Key sections of `configs/default.yaml`:
+Engine parameters — including the propellants and the injector type — are
+defined in YAML; pick whatever combination you want to evaluate. The block
+below is just one example (the shipped `configs/default.yaml`); see `configs/`
+for others (e.g. different propellants, pintle vs. impinging injectors). Key
+sections:
 
 ```yaml
-propellant_preset: kerolox      # optional: kerolox | methalox | ethalox
-
 fluids:
+  fuel: { name: Methane, density: 422.6, ... }
   oxidizer: { name: LOX, density: 1140.0, ... }
-  fuel: { name: RP-1, density: 780.0, ... }
 
 injector:
-  type: pintle
+  type: impinging          # or "pintle"
   geometry:
-    lox: { n_orifices: 12, d_orifice: 0.003, ... }
-    fuel: { d_pintle_tip: 0.015, h_gap: 0.0005, ... }
+    oxidizer: { n_elements: 20, d_jet: 0.002, impingement_angle: 50.0, ... }
+    fuel: { n_elements: 20, d_jet: 0.002, impingement_angle: 60.0, ... }
 
 feed_system:
-  oxidizer: { K0: 2.0, ... }
   fuel: { K0: 2.0, ... }
+  oxidizer: { K0: 2.0, ... }
 
 combustion:
-  cea: { oxName: LOX, fuelName: RP-1, ... }
-  efficiency: { ... }
-
-chamber:
-  A_throat: 0.0005
-  Lstar: 1.0
-  ...
-
-nozzle:
-  expansion_ratio: 4.0
-  ...
+  cea: { ox_name: LOX, fuel_name: CH4, expansion_ratio: 6.14, ... }
+  efficiency: { model: exponential, ... }
+  # Lstar and A_throat live alongside the cea block in the combustion section
 
 ablative_cooling:
   enabled: true
@@ -414,7 +384,7 @@ ablative_cooling:
 
 graphite_insert:
   enabled: true
-  initial_thickness: 0.005
+  initial_thickness: 0.006
   ...
 ```
 
@@ -487,19 +457,26 @@ L*-based: `η_c* = 1 - C × e^(-K×L*)`
 See the `docs/` folder for additional documentation:
 
 **Core Documentation:**
-- `docs/pipeline_status.md` - Detailed implementation status
 - `docs/layer_requirements.md` - Layer interface requirements
-- `docs/quick_reference.md` - Quick reference guide
-- `docs/optimizer_readme.md` - Optimizer architecture and usage
-- `docs/optimization_layers_readme.md` - Layer structure and responsibilities
+- `docs/optimizer_readme.md` - Optimizer architecture, layers, and usage
+- `docs/layer1_static_optimization_explained.md` - Layer 1 static optimization walkthrough
+- `docs/Cd_calculation_methodology.md` - Discharge coefficient methodology
+- `docs/pintle_geometry_constraints.md` - Pintle geometry constraints
+- `docs/stability/combustion_stability_physics.md` - Combustion stability physics
+
+**Config, Flight & Performance:**
+- `docs/CONFIG_SYSTEM.md` - Config model: two canonical configs, propellant presets, in-memory switch, burn-time sync
+- `docs/flight_simulation.md` - `/simulate` endpoint, tank-capacity resolution, and propellant regimes
+- `docs/flight_altitude_optimization.md` - Minimum-fuel burn-time optimization for a target apogee
+- `engine/native/README.md` - Native C physics kernel: build, staged port plan, and parity/benchmark methodology
 
 **Control System Documentation:**
 - `docs/control/README.md` - Control system overview
+- `docs/control/INDEX.md` - Module-by-module documentation index
 - `docs/control/DDP_SOLVER.md` - DDP solver implementation
-- `docs/control/CONTROLLER_SUMMARY.md` - Controller architecture
 - `docs/control/CONSTRAINTS.md` - Safety constraints
 - `docs/control/ROBUSTNESS.md` - Robustness features
 
 **Additional Guides:**
-- `QUICKSTART.md` - Quick start for backend/frontend
 - `STARTUP_GUIDE.md` - Detailed startup and troubleshooting
+- `TROUBLESHOOTING.md` - Common issues and fixes

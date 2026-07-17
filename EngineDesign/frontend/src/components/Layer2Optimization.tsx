@@ -14,7 +14,6 @@ import {
     getLayer2Status,
     stopLayer2Optimization,
     uploadLayer2Config,
-    simulateLayer2Controller,
     simulateLayer2ControllerStream,
     API_BASE
 } from '../api/client';
@@ -1199,10 +1198,11 @@ export function Layer2Optimization({
                                 </div>
 
                                 {/* Robustness Metrics */}
+                                {controllerResults && (
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                     <ResultCard
                                         label="Max Tracking Error"
-                                        value={Math.max(...controllerResults.time.map((t, i) => 
+                                        value={Math.max(...controllerResults.time.map((_t, i) =>
                                             Math.abs(controllerResults.thrust_ref[i] - controllerResults.thrust_actual[i])
                                         ))}
                                         unit="N"
@@ -1212,7 +1212,7 @@ export function Layer2Optimization({
                                     <ResultCard
                                         label="RMS Tracking Error"
                                         value={Math.sqrt(
-                                            controllerResults.time.reduce((sum, t, i) => {
+                                            controllerResults.time.reduce((sum, _t, i) => {
                                                 const err = controllerResults.thrust_ref[i] - controllerResults.thrust_actual[i];
                                                 return sum + err * err;
                                             }, 0) / controllerResults.time.length
@@ -1242,6 +1242,7 @@ export function Layer2Optimization({
                                         color="cyan"
                                     />
                                 </div>
+                                )}
 
                                 {/* Pressures */}
                                 <div className="p-4 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)]">

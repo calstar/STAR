@@ -246,6 +246,11 @@ class ChamberSolver:
             res = native_injector.chamber_solve(self.config, self.cea_cache,
                                                 P_tank_O, P_tank_F)
         except Exception:
+            # Strict mode (ED_REQUIRE_NATIVE=1, CI parity job): surface a genuine
+            # native failure loudly instead of silently falling back to Python (which
+            # would report a false green). Default runs fall back quietly.
+            if native_injector.require_native():
+                raise
             return None
         if res is None:
             return None

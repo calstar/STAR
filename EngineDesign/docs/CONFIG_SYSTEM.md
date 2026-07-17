@@ -66,6 +66,21 @@ git check-ignore configs/canonical/pintle.yaml   # prints nothing + exit 1 = NOT
 - When you change physics that should be the new starting point for everyone, edit the **canonical**
   file and commit it. When it's a one‑off experiment, save it under an ignored name.
 
+## Burn time — one value, three slots
+
+Burn time appears in **three** config sections and they must agree:
+`design_requirements.target_burn_time`, `pressure_curves.target_burn_time_s`, and `thrust.burn_time`.
+`engine/pipeline/burn_time_sync.py` reconciles them:
+
+- `canonical_burn_time_s(config)` returns the authoritative value by priority —
+  `design_requirements.target_burn_time` → `pressure_curves.target_burn_time_s` → `thrust.burn_time`
+  (or `None` if none are set).
+- `sync_burn_time_fields(config)` writes that canonical value back into every slot that is present
+  (in place). It is also exposed as a method on `PintleEngineConfig` and is called from
+  `backend/routers/optimizer.py` so an optimizer run leaves all three slots consistent.
+
+Edit whichever slot is most convenient; sync makes the highest-priority one win.
+
 ## Where things live
 
 | File | Role |
@@ -74,5 +89,6 @@ git check-ignore configs/canonical/pintle.yaml   # prints nothing + exit 1 = NOT
 | `configs/propellants/<name>.yaml` | propellant presets (fluids + CEA identity) |
 | `configs/default.yaml` | what the backend loads at startup (currently methalox doublet) |
 | `engine/pipeline/config_switch.py` | `switch_config`, `load_canonical_config`, `apply_propellant`, `design_staleness` |
+| `engine/pipeline/burn_time_sync.py` | `canonical_burn_time_s`, `sync_burn_time_fields` (reconcile the 3 burn-time slots) |
 | `engine/pipeline/io.py` | `load_config` + preset resolution/merge |
 | `backend/routers/config.py` | `/switch`, `/options`, `/injector_schema` endpoints |

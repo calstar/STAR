@@ -25,11 +25,11 @@ npm install
 
 The `dev.sh` script now automatically installs dependencies if missing.
 
-## Node Version Issues (CRITICAL)
+## Node Version Issues
 
-### Error: "Vite requires Node.js version 20.19+ or 22.12+"
-**Cause**: Vite 7 requires Node 20.19+ or 22.12+, but you have Node 18.x  
-**Impact**: Frontend **will not start** - this is a hard requirement
+### Error: "Vite requires Node.js version ..."
+**Cause**: The frontend uses Vite 5 (see `frontend/package.json`), which requires Node 18+ (18.0+ or 20.0+). An older Node will fail.  
+**Impact**: Frontend **will not start** until Node is upgraded.
 
 ### Solution: Upgrade Node.js
 
@@ -55,13 +55,6 @@ sudo apt-get install -y nodejs
 node --version  # Should show v20.x.x
 ```
 
-**Option 3: Downgrade Vite (Not Recommended)**
-If you can't upgrade Node, downgrade Vite to version 5.x (compatible with Node 18):
-```bash
-cd frontend
-npm install vite@^5.0.0 --save-dev
-```
-
 **After upgrading Node:**
 ```bash
 cd frontend
@@ -74,7 +67,7 @@ npm run dev
 
 ### Check if backend is running:
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8000/api/health
 ```
 
 ### Check if port 8000 is in use:
@@ -107,7 +100,7 @@ Once built, cache is saved to `output/cache/` and won't rebuild.
 
 ## Frontend Shows "Backend not connected"
 
-1. Verify backend is running: `curl http://localhost:8000/health`
+1. Verify backend is running: `curl http://localhost:8000/api/health`
 2. Check browser console for errors
 3. Verify ports match:
    - Backend: 8000 (in `dev.sh`)

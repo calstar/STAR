@@ -2,14 +2,14 @@
 
 Ground support data acquisition, monitoring, and control system for Diablo Avionics rocket test operations.
 
-The product is a full-stack pipeline: ESP32 sensor boards → UDP → DAQ bridge → Elodin time-series DB → backend → web GUI. Everything lives under `diablo_server/`.
+The product is a full-stack pipeline: ESP32 sensor boards → UDP → DAQ bridge → Elodin time-series DB → backend → web GUI. This is the `daq-server/` subproject of the STAR monorepo; the pipeline product code lives under `diablo_server/`.
 
 ---
 
 ## Repo Structure
 
 ```
-Diablo-FSW/
+daq-server/                 # this subproject (inside the STAR monorepo)
 ├── diablo_server/          # All pipeline product code
 │   ├── daq_bridge/         # C++ UDP receiver → Elodin DB publisher
 │   ├── services/           # C++ background services
@@ -35,9 +35,7 @@ Diablo-FSW/
 │   ├── config_flight_daq.toml
 │   └── config_ground_daq.toml
 │
-├── external/               # Git submodules
-│   ├── DAQv2-Comms/        # ESP32 comms library (daqv2_comms CMake target)
-│   ├── DiabloAvionics/     # Board firmware + state machine CSVs
+├── external/               # Submodule(s); contains only uWebSockets/
 │   └── uWebSockets/        # WebSocket library for C++ services
 │
 ├── deploy/                 # Deployment and operations scripts
@@ -62,9 +60,10 @@ Diablo-FSW/
 │   ├── gui/                # Standalone GUI tools
 │   └── postprocessing/     # Post-flight data analysis
 │
-├── scripts/                # Build and format scripts
+├── scripts/                # Build & developer-tooling scripts
 │   ├── build.sh            # CMake build wrapper (used by `build` alias)
-│   └── format.sh           # clang-format + prettier
+│   └── ...                 # export_sensor_config.py, setup_pre_commit.sh, test_udp.py
+│                           # (clang-format/prettier: ../format.sh at the monorepo root)
 │
 ├── archive/                # Legacy code kept for reference
 │   └── legacy/             # Old Python services, old C++ monolith, nav, SITL
@@ -88,16 +87,21 @@ Diablo-FSW/
 
 ### Clone
 
-```bash
-git clone --recursive <repo-url>
-cd Diablo-FSW
-```
-
-Or if already cloned:
+`daq-server/` is part of the STAR monorepo. Clone the monorepo and follow the
+repo-root [`SETUP.md`](../SETUP.md) for full environment setup (toolchains,
+Node, Elodin, tmux). In short:
 
 ```bash
-git submodule update --init --recursive
+git clone https://github.com/calstar/STAR.git
+cd STAR/daq-server
 ```
+
+The wire-protocol library, firmware, and engine simulator are sibling trees in
+the monorepo (`../lib/DAQv2-Comms/`, `../firmware/`, `../EngineDesign/`) and are
+already vendored — the repo has **no git submodules**, so a plain clone gets you
+everything. (The optional `fsw_web_bridge` build looks for uWebSockets at
+`external/uWebSockets/`, behind an `if(EXISTS …)` guard; vendor it there
+manually only if you need that target.)
 
 ### Build C++
 
@@ -163,8 +167,9 @@ All runtime config lives in `config/config.toml`. Key sections:
 - `[calibration]` — Calibration service parameters
 
 State machine transitions and actuator positions per state are defined in:
-- `firmware/test_guis/state_transitions.csv`
-- `firmware/test_guis/state_machine_actuators.csv`
+- `config/state_transitions.csv`
+- `config/state_machine_actuators.csv`
+- `config/state_machine_actuator_delays.csv`
 
 ---
 
@@ -209,18 +214,12 @@ Most code that used to live in external repos is now vendored in-tree:
 
 | Path | Purpose |
 |------|---------|
-| `lib/DAQv2-Comms/` | ESP32 Ethernet packet format (CMake: `daqv2_comms`) |
-| `firmware/` (PT_Board, RTD_Board, LC_Board, test_guis, …) | Board firmware + state machine CSV definitions (formerly `DiabloAvionics`) |
-| `EngineDesign/` | Engine simulator (formerly `engine_sim` submodule; `daq-server/engine_sim` is a symlink to it) |
+| `../lib/DAQv2-Comms/` | ESP32 Ethernet wire protocol (CMake: `daqv2_comms`) |
+| `../firmware/` (PT_Board, RTD_Board, LC_Board, …) | Board firmware (formerly `DiabloAvionics`). Note: the state-machine CSVs the server reads live in `config/`, not here. |
+| `../EngineDesign/` | Engine simulator (formerly the `engine_sim` submodule; `daq-server/engine_sim` is now a symlink to it) |
 
-The one remaining real submodule:
+The repo has no git submodules. One optional, non-vendored dependency remains:
 
-| Submodule | Purpose |
-|-----------|---------|
-| `daq-server/external/uWebSockets` | C++ WebSocket library used by OTA service |
-
-Initialize / update:
-
-```bash
-git submodule update --init --recursive
-```
+| Path | Purpose |
+|------|---------|
+| `daq-server/external/uWebSockets` | C++ WebSocket library for the optional `fsw_web_bridge` target. Not checked in; the CMake block that uses it is guarded by `if(EXISTS …)`, so the rest of the build is unaffected. Vendor it manually only if you build that target. |

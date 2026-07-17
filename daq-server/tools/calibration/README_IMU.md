@@ -69,8 +69,3 @@ auto calibrator = std::make_shared<IMUCalibration>(SensorType::ACCELEROMETER, "i
 ```
 
 Or use Python calibration results directly in Python-based systems.
-
-## References
-
-- PT Calibration: `firmware/PT_Board/Calibration/pt_cali.py`
-- LC Calibration GUI: `firmware/LC_Board/LC_Calibration/LC_Calibration_Gui/`

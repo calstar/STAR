@@ -38,6 +38,14 @@ output/cache/*
 *.pdf
 *.dxf
 
+# Exception: the committed CEA cache tables under output/cache/ are deterministic
+# ~300 KB lookup tables loaded by the CI test gate (engine/pipeline/cea_cache.py).
+# Kept first-class tracked so a fresh checkout / `git clean` can't drop them and
+# trigger a live rocketcea (Fortran/gfortran) rebuild that would hang CI.
+!output/cache/
+output/cache/*
+!output/cache/*.npz
+
 # Distribution / packaging
 build/
 dist/

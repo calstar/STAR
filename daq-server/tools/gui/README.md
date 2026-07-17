@@ -1,6 +1,8 @@
 # FSW Combined GUI
 
-A comprehensive ground station GUI for the FSW sensor system, similar to DiabloAvionics `combined_gui.py` but fully integrated with the FSW stack and Elodin database.
+A comprehensive ground station GUI for the FSW sensor system, modeled on the
+legacy DiabloAvionics test GUI but fully integrated with the FSW stack and the
+Elodin database. Entry point: `tools/gui/combined_fsw_gui.py`.
 
 ## Features
 
@@ -48,29 +50,29 @@ pip install PyQt6 pyqtgraph numpy
 ### Basic Usage
 
 ```bash
-python3 scripts/gui/combined_fsw_gui.py
+python3 tools/gui/combined_fsw_gui.py
 ```
 
 ### With Elodin Database
 
 1. Start Elodin database:
    ```bash
-   ./scripts/startup/startup_daq_db.sh
+   ./deploy/startup/start_calibration_stack.sh
    ```
 
 2. Start DAQ bridge (if using UDP fallback):
    ```bash
-   ./build/FSW/daq_bridge config/config.toml 0.0.0.0 5006
+   ./build/bin/daq_bridge config/config.toml 0.0.0.0 5006
    ```
 
 3. Run GUI:
    ```bash
-   python3 scripts/gui/combined_fsw_gui.py
+   python3 tools/gui/combined_fsw_gui.py
    ```
 
 ## Configuration
 
-Configuration is stored in `scripts/gui/fsw_gui_config.json`:
+Configuration is stored in `tools/gui/fsw_gui_config.json` (next to `combined_fsw_gui.py`). This file is not checked into the repo; the GUI creates it on first run with defaults like:
 
 ```json
 {
@@ -155,7 +157,7 @@ Matches FSW `PressureStateMachine::SystemState`:
 
 ### Elodin Connection Failed
 
-- Ensure Elodin database is running: `./scripts/startup/startup_daq_db.sh`
+- Ensure Elodin database is running: `./deploy/startup/start_calibration_stack.sh`
 - Check Elodin is listening on `127.0.0.1:2240`
 - GUI will fall back to UDP receiver if Elodin unavailable
 
@@ -172,9 +174,9 @@ Matches FSW `PressureStateMachine::SystemState`:
 - Check Elodin connection status in GUI
 - Ensure state transition is allowed from current state
 
-## Similar to DiabloAvionics GUI
+## Similar to the legacy DiabloAvionics GUI
 
-This GUI is designed to match the functionality and layout of `firmware/test_guis/combined_gui/combined_gui.py`:
+This GUI matches the functionality and layout of the old DiabloAvionics test GUI:
 
 - ✅ Same layout (sensor plot left, actuator control right)
 - ✅ Same top bar with pressure gauges

@@ -313,5 +313,7 @@ relevant tests:
 | `firmware/` unit-testable logic | `pio test -e native` in `firmware/Hotfire_Code/Hotfire_Tests` (63/63) |
 | `firmware/Hotfire_Code/*/` board firmware | `pio run` in each affected board project |
 
-No CI is wired up at the repo root (`.github/workflows/` doesn't exist).
-Local validation is the gate.
+CI runs the same checks on every push (see `.github/workflows/`):
+`daq-server-ci.yml`, `firmware-ci.yml`, and `pid-designer-ci.yml` build and
+test their respective subprojects, and `docs.yml` publishes the Doxygen docs.
+Running the tests above locally before pushing keeps CI green.

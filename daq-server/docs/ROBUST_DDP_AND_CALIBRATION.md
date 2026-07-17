@@ -10,8 +10,8 @@ This document describes the implementation of:
 ## Robust DDP Controller
 
 ### Location
-- Header: `FSW/include/control/RobustDDPController.hpp`
-- Implementation: `FSW/src/control/RobustDDPController.cpp`
+- Header: `diablo_server/lib/include/control/RobustDDPController.hpp`
+- Implementation: `diablo_server/lib/src/control/RobustDDPController.cpp`
 
 ### Features
 - Thrust regulation via pressure control
@@ -80,8 +80,8 @@ while (running) {
 ## Enhanced EKF Navigation
 
 ### Location
-- Header: `FSW/include/nav/EKFNavigationEnhanced.hpp`
-- Implementation: `FSW/src/nav/EKFNavigationEnhanced.cpp`
+- Header: `diablo_server/lib/include/nav/EKFNavigationEnhanced.hpp`
+- Implementation: `diablo_server/lib/include/nav/EKFNavigationEnhanced.hpp` (header-only; no active .cpp source)
 
 ### Enhancements
 - Magnetometer integration for heading estimation
@@ -128,57 +128,17 @@ double heading = ekf.getHeading();
 
 ## IMU Calibration System
 
-### Python Calibration Scripts (Primary)
-Following the PT calibration pattern:
-- `scripts/calibration/imu_calibration.py` - Core calibration library
-- `scripts/calibration/imu_calibration_gui.py` - Interactive GUI
-- `scripts/calibration/accelerometer_calibration.py` - Accelerometer calibration
-- `scripts/calibration/gyroscope_calibration.py` - Gyroscope calibration
-- `scripts/calibration/magnetometer_calibration.py` - Magnetometer calibration
+### Python Calibration Workflow
+
+Calibration is performed using Python scripts (similar to PT calibration), and the resulting parameters are loaded into the C++ runtime system for real-time sensor correction.
+
+For the Python calibration workflow and per-sensor procedures, see [`../tools/calibration/README_IMU.md`](../tools/calibration/README_IMU.md).
 
 ### C++ Runtime Application
-- Header: `FSW/include/calibration/IMUCalibration.hpp`
-- Implementation: `FSW/src/calibration/IMUCalibration.cpp`
-
-**Note**: Calibration is performed using Python scripts (similar to PT calibration), and the resulting parameters are loaded into the C++ runtime system for real-time sensor correction.
-
-### Features
-
-#### Accelerometer Calibration
-- Static position calibration (6+ orientations)
-- Bias estimation
-- Scale factor and misalignment correction
-- Temperature compensation
-
-#### Gyroscope Calibration
-- Zero-velocity calibration
-- Rotation-based calibration
-- Bias estimation
-- Scale factor estimation
-
-#### Magnetometer Calibration
-- Ellipsoid fitting (hard iron + soft iron)
-- Bias correction
-- Scale and misalignment correction
-- Reference field calibration
+- Header: `diablo_server/lib/include/calibration/IMUCalibration.hpp`
+- Implementation: `diablo_server/lib/src/calibration/IMUCalibration.cpp`
 
 ### Usage
-
-**Python Calibration (Primary Method):**
-
-```bash
-# Accelerometer calibration
-python scripts/calibration/accelerometer_calibration.py --interactive --output accel_cal.json
-
-# Gyroscope calibration
-python scripts/calibration/gyroscope_calibration.py --duration 60 --output gyro_cal.json
-
-# Magnetometer calibration
-python scripts/calibration/magnetometer_calibration.py --interactive --output mag_cal.json
-
-# Or use GUI
-python scripts/calibration/imu_calibration_gui.py --sensor-type accel --port 5008
-```
 
 **C++ Runtime Application:**
 
@@ -244,34 +204,6 @@ Eigen::Vector3d gyro_calibrated = calibrated.gyroscope.value;
 Eigen::Vector3d mag_calibrated = calibrated.magnetometer.value;
 ```
 
-### Calibration Parameters
-
-Each sensor has:
-- **Bias**: Offset correction [sensor units]
-- **Scale Matrix**: Scale factors and misalignment [3x3]
-- **Temperature Coefficient**: Temperature compensation
-- **Quality Metric**: Calibration quality (0-1)
-
-### Calibration Procedures
-
-#### Accelerometer
-1. Place sensor in 6+ known orientations
-2. Collect readings at each orientation
-3. Calibration estimates bias and scale factors
-4. Uses gravity (9.81 m/s²) as reference
-
-#### Gyroscope
-1. **Zero-velocity method**: Collect during stationary periods
-2. **Rotation method**: Collect during known rotations
-3. Estimates bias and scale factors
-4. Uses zero or known rotation rates as reference
-
-#### Magnetometer
-1. Rotate sensor through multiple orientations
-2. Collect readings in known magnetic field
-3. Ellipsoid fitting corrects hard iron (bias) and soft iron (scale/misalignment)
-4. Uses Earth's magnetic field as reference
-
 ## Integration with SITL
 
 All components integrate with SITL:
@@ -284,4 +216,4 @@ All components integrate with SITL:
 
 - Engine Simulation Controller: `engine_sim/docs/control/`
 - DDP Solver: `engine_sim/docs/control/DDP_SOLVER.md`
-- EKF Navigation: `FSW/nav/include/EKFNavigation.hpp`
+- EKF Navigation: `diablo_server/lib/include/nav/EKFNavigation.hpp`

@@ -72,6 +72,23 @@
     - Integrates all components
     - See: `README.md`
 
+## Supporting Modules
+
+13. **Config Loader** (`config_loader.py`)
+    - `get_default_config()` and config helpers building `ControllerConfig`
+
+14. **COPV Calculator** (`copv_calculator.py`)
+    - Computes COPV consumption coefficients from physical parameters
+    - See: `COPV_CONSTANTS_ANALYSIS.md`
+
+15. **Engine LUT Wrapper** (`engine_lut_wrapper.py`)
+    - Drop-in replacement for `engine_wrapper.py` backed by a precomputed LUT
+    - Returns F, MR, mdot, injector_dp, stability via fast interpolation
+
+16. **Policy LUT** (`policy_lut.py`)
+    - Precomputed optimal-control look-up table over `(P_u_F, P_u_O, F_ref, MR_ref)`
+    - Fast runtime interpolation when online DDP is too slow (built via `scripts/build_policy_lut.py`)
+
 ## Usage Flow
 
 ```

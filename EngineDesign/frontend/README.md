@@ -1,73 +1,52 @@
-# React + TypeScript + Vite
+# EngineDesign Web UI
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + Vite + TypeScript frontend for the pintle-injector rocket engine design and optimization pipeline. It talks to the FastAPI backend in [`../backend`](../backend) and provides an interactive interface for forward/inverse solving, the multi-layer optimizer, time-series and flight analysis, chamber geometry visualization, and the robust DDP controller.
 
-Currently, two official plugins are available:
+## Overview
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+The UI is organized into tabs (see `src/App.tsx`), including:
 
-## React Compiler
+- **Forward** – tank pressures → performance (thrust, Pc, Isp, mixture ratio)
+- **Time Series** – transient pressure-curve analysis and plotting
+- **Flight** – RocketPy flight-simulation results
+- **Geometry** – chamber/nozzle contour and thermal graphics
+- **Optimizer** – multi-layer design optimization (Layers 1–4)
+- **Controller** – robust DDP control simulation with flight coupling
+- **Config** – load/edit/upload engine configuration YAML
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Charts are rendered with `recharts`; styling uses Tailwind CSS.
 
-## Expanding the ESLint configuration
+## Backend connection
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+The app calls the backend under the `/api` prefix (`API_BASE = '/api'` in `src/api/client.ts`). In development, Vite proxies `/api` to `http://localhost:8000` (see `vite.config.ts`), where the FastAPI server (`backend/main.py`) must be running.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Quick start
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+The simplest way to run the full stack is the development script in the project root, which starts both the backend and this frontend together:
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cd ..
+./dev.sh
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+This launches the FastAPI backend on http://localhost:8000 and the frontend dev server on http://localhost:5173 (it installs frontend dependencies automatically if missing).
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+To run the frontend on its own (backend must be started separately):
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install   # first time only
+npm run dev
 ```
+
+Then open http://localhost:5173.
+
+## Scripts
+
+- `npm run dev` – start the Vite dev server with HMR
+- `npm run build` – type-check (`tsc -b`) and build for production
+- `npm run preview` – preview the production build
+- `npm run lint` – run ESLint
+
+## Requirements
+
+Node.js 18+ (the frontend uses Vite 5; Node 18.0+ or 20.0+ recommended). See `../STARTUP_GUIDE.md` and `../TROUBLESHOOTING.md` for setup notes.

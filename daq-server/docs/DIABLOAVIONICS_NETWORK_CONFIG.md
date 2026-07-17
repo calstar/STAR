@@ -1,166 +1,90 @@
 # DiabloAvionics Network Configuration
 
-## Overview
+How the ESP32 avionics boards and the DAQ bridge are addressed on the wire. For
+the packet layout itself (header, packet types, serialize/parse helpers) see the
+wire-protocol source of truth: [`../../lib/DAQv2-Comms/README.md`](../../lib/DAQv2-Comms/README.md).
 
-This document describes how DiabloAvionics boards communicate and how to configure the DAQ bridge to receive their packets.
+## Network layout
 
-## Board Network Configuration
+Boards and the DAQ server live on a dedicated Ethernet subnet (the DAQ
+interface), separate from any WiFi/management network.
 
-### Default Board IPs
-- **Sensor boards (PT, LC, RTD)**: `192.168.2.101` (or other 192.168.2.x)
-- **Actuator board**: `192.168.2.201`
-- **Network**: `192.168.2.0/24` (subnet mask: `255.255.255.0`)
+- **Ground DAQ**: `192.168.2.0/24` (see `config/config_ground_daq.toml`)
+- **Flight DAQ**: `192.168.3.0/24` (see `config/config_flight_daq.toml`)
 
-### Board Receiver Configuration
+Board IPs are assigned per board type in `config/config.toml` under
+`[boards.*]`. The current ground-DAQ scheme is:
 
-Boards send sensor data to a **receiver IP** configured in firmware:
+| Board type | Example IPs (`[boards.*]`) |
+|------------|----------------------------|
+| PT (pressure transducer) | `192.168.2.21`, `192.168.2.22` |
+| ACTUATOR | `192.168.2.11`–`192.168.2.14` |
+| LC (load cell) | `192.168.2.41`, `192.168.2.42` |
+| TC (thermocouple) | `192.168.2.51`, `192.168.2.52` |
+| RTD | `192.168.2.31`, `192.168.2.32` |
 
-| Board Type | receiverIP | receiverPort | Notes |
-|------------|------------|--------------|-------|
-| Actuator_Testing | `192.168.2.20` | `5006` | Most common |
-| PT_BOARD_Multi | `192.168.2.20` | `5007` | Different port to avoid conflict |
-| PT_BOARD_v1 | `192.168.2.1` | `5006` | Older firmware |
-| Motor | `192.168.2.1` | `5006` | |
-| RTD_Board | `192.168.1.1` | `5006` | Different subnet! |
+Each board entry sets `type` and `ip`; see `config/README.md` for the full
+schema.
 
-**Most common configuration**: `192.168.2.20:5006`
+## Ports
 
-### Board Local Ports
+All ports come from `config/config.toml`:
 
-Boards listen on these ports for commands:
-- **Actuator commands**: `5005` (UDP)
-- **Sensor data**: Sent to receiver IP on `5006` or `5007` (UDP)
+- **`sensor_port = 5006`** — boards send `SENSOR_DATA` / `BOARD_HEARTBEAT` here;
+  the DAQ bridge binds `bind_ip:sensor_port` (default `0.0.0.0:5006`).
+- **`broadcast_port = 5005`** — boards listen here for control packets
+  (`SERVER_HEARTBEAT`, `ACTUATOR_COMMAND`, `ABORT`, …). The server broadcasts to
+  `broadcast_ip` (default `192.168.2.255`, the subnet broadcast — avoids WiFi
+  routing of `255.255.255.255`).
+- **`actuator_cmd_port = 5005`** — actuator command destination port on boards.
 
-## GUI Configuration
+## DAQ bridge setup
 
-The `combined_gui.py` uses:
-- **Bind address**: `0.0.0.0` (all interfaces)
-- **Receive port**: `5006` (default, configurable)
-- **Actuator IP**: `192.168.2.201` (default)
-- **Actuator port**: `5005` (default)
+The bridge reads its bind address and port from the config, but both can be
+overridden positionally:
 
-## DAQ Bridge Configuration
+```bash
+# config-driven (uses bind_ip / sensor_port from the TOML)
+./build/bin/daq_bridge config/config.toml
 
-### Required Setup
-
-1. **Computer IP must match board's receiverIP**:
-   ```bash
-   # If board sends to 192.168.2.20:
-   sudo ip addr add 192.168.2.20/24 dev <interface>
-   
-   # If board sends to 192.168.2.1:
-   sudo ip addr add 192.168.2.1/24 dev <interface>
-   ```
-
-2. **DAQ bridge binds to 0.0.0.0:5006** (or board's receiverPort):
-   ```bash
-   ./build/FSW/daq_bridge config/config.toml 0.0.0.0 5006
-   ```
-
-3. **Network interface auto-detection**:
-   - DAQ bridge now auto-detects the interface with 192.168.2.x IP
-   - Previously hardcoded to "eth0", now detects correctly
-
-### Packet Format
-
-DiabloAvionics uses a simple 6-byte header:
-```
-Header (6 bytes):
-  packet_type (1 byte): 3 = SENSOR_DATA
-  version (1 byte): 0
-  timestamp (4 bytes): uint32_t milliseconds (little-endian)
-
-Body:
-  num_chunks (1 byte)
-  num_sensors (1 byte)
-  For each chunk:
-    chunk_timestamp (4 bytes, uint32_t)
-    For each sensor:
-      sensor_id (1 byte)
-      data (4 bytes, uint32_t)
+# explicit bind address + port
+./build/bin/daq_bridge config/config.toml 0.0.0.0 5006
 ```
 
-## Troubleshooting
+The interface is auto-detected: `network_interface = "auto"` in `config.toml`
+selects the interface holding a `192.168.2.x` address, so it no longer matters
+whether the NIC is `eth0`, `enxXXXXXXXX`, etc.
 
-### No Packets Received
+To talk to boards, the host must have an address on the board subnet:
 
-1. **Check board's receiverIP**:
-   - Look at Serial monitor output
-   - Should show: `receiverIP = IPAddress(...)`
-   - Or: `Send to: X.X.X.X:XXXX`
+```bash
+sudo ip addr add 192.168.2.20/24 dev <interface>
+```
 
-2. **Verify computer IP matches**:
+## Troubleshooting: no packets received
+
+1. **Host IP on the board subnet?**
    ```bash
    ip addr show | grep 192.168.2
    ```
-   - Must match board's receiverIP
-
-3. **Check port**:
+2. **Bridge listening on the right port?**
    ```bash
-   sudo netstat -ulnp | grep 5006
+   sudo ss -ulnp | grep 5006
    ```
-   - DAQ bridge should be listening
-
-4. **Test with GUI**:
+3. **Board reachable / in ARP table?**
    ```bash
-   cd firmware/test_guis/combined_gui
-   python3 combined_gui.py
-   ```
-   - If GUI receives data, boards are working
-   - Compare GUI config to DAQ bridge config
-
-5. **Verify network connectivity**:
-   ```bash
-   # From board Serial monitor, ping computer IP
-   # Or check ARP table:
    arp -a | grep 192.168.2
    ```
+4. **Wrong port** — boards send to `5006`; if a board's firmware targets a
+   different port, fix the firmware or override the bridge port (arg 3 above).
+5. **Wrong interface** — handled by `network_interface = "auto"`; if it
+   misfires, set `subnet`/the bind IP explicitly in `config.toml`.
 
-### Common Issues
+## See also
 
-1. **Wrong IP**: Computer has `192.168.2.201` but board sends to `192.168.2.20`
-   - **Fix**: Change computer IP to match board's receiverIP
-
-2. **Wrong port**: Board sends to port `5007` but DAQ bridge listens on `5006`
-   - **Fix**: Start DAQ bridge on correct port
-
-3. **Wrong interface**: Discovery uses "eth0" but actual interface is "enx00e04c680240"
-   - **Fix**: Auto-detection now handles this (fixed in code)
-
-4. **No ARP entry**: Board doesn't appear in ARP table
-   - **Cause**: Board and computer not on same network
-   - **Fix**: Verify subnet masks match, check physical connection
-
-## Example Configurations
-
-### Actuator Board (192.168.2.201)
-```cpp
-IPAddress staticIP(192, 168, 2, 201);
-IPAddress receiverIP(192, 168, 2, 20);  // Sends to computer
-const int receiverPort = 5006;
-const int localPort = 5005;  // Listens for commands
-```
-
-### PT Board (192.168.2.101)
-```cpp
-IPAddress staticIP(192, 168, 2, 101);
-IPAddress receiverIP(192, 168, 2, 20);  // Sends to computer
-const int receiverPort = 5007;  // Different port
-const int localPort = 5005;
-```
-
-### Computer Setup
-```bash
-# Set IP to match board's receiverIP
-sudo ip addr add 192.168.2.20/24 dev enx00e04c680240
-
-# Start DAQ bridge
-./build/FSW/daq_bridge config/config.toml 0.0.0.0 5006
-```
-
-## References
-
-- GUI Code: `firmware/test_guis/combined_gui/combined_gui.py`
-- Board Firmware Examples:
-  - `firmware/ADC_Testing/Actuator_Testing/src/main.cpp`
-  - `firmware/PT_Board/PT_BOARD_Multi/PT_BOARD_Multi_Send/src/main.cpp`
+- [`../../lib/DAQv2-Comms/README.md`](../../lib/DAQv2-Comms/README.md) — wire
+  protocol (packet types, header, serialize/parse).
+- [SENSOR_ASSIGNMENT_SYSTEM.md](SENSOR_ASSIGNMENT_SYSTEM.md) — how board IPs map
+  to sensors and how config is distributed.
+- [ADC_AND_ELODIN_DIAGNOSTICS.md](ADC_AND_ELODIN_DIAGNOSTICS.md) — diagnosing
+  data that arrives at the bridge but not Elodin.

@@ -6,6 +6,25 @@ The goal is **design analysis**, not subscale testing.
 
 ---
 
+## 0. Variable Definitions (Paper-Consistent)
+
+The following symbols are used consistently with the paper's notation and figures.
+
+- **D_p** — Pintle outer diameter
+- **D_c** — Combustion chamber inner diameter (near injector face)
+- **A_c** — Chamber cross-sectional area
+- **A\*** — Nozzle throat area
+- **L_b** — Combustion chamber length (injector face to throat)
+- **L′** — Effective combustion length used for scaling (paper notation)
+- **L_skip** — Axial distance from injector face to primary radial–axial impingement
+- **ṁ_r, v_r** — Radial-stream mass flow rate and velocity
+- **ṁ_a, v_a** — Axial-stream mass flow rate and velocity
+- **M** — Local Mach number in chamber
+
+No efficiency symbols (η) are introduced because the paper does not define them.
+
+---
+
 ## 1. Pintle-to-Chamber Diameter Ratio
 
 ### Constraint
