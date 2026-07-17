@@ -439,6 +439,11 @@ jobs:
         cd ${{ env.BUILD_DIR }}
         ./bin/test_sequencer_elodin
 
+    - name: Run BoardClockSync Unit Test
+      run: |
+        cd ${{ env.BUILD_DIR }}
+        ./bin/test_board_clock_sync
+
     - name: Run Python smoke tests (allowlist only)
       run: |
         if [ -d "test" ]; then

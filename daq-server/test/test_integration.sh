@@ -580,7 +580,16 @@ echo "🎭 Starting fake data generator..."
 # --low-noise: constant ADC values per channel for calibration spike detection
 # TOML parsing: the sim falls back to stdlib tomllib (py>=3.11) when tomli is
 # absent; on older Pythons install it once with `pip install tomli`.
-"$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --skip-startup --stats-file "$SIM_STATS_FILE" > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
+#
+# Timing-pathology gauntlet (default ON): chunk batching, network jitter,
+# crystal drift, bogus absolute clock, a mid-run reboot, and a uint32 millis
+# wrap — the daq_bridge's [time_sync] board-clock sync must keep the timeline
+# clean, verified by ws_data_flow_test Test 14 (--only=timestamps).
+# Override with INTEGRATION_TIME_FLAGS (set to "" for a clean run — required
+# when config [time_sync] mode = "arrival", which does not de-flatten chunks).
+INTEGRATION_TIME_FLAGS="${INTEGRATION_TIME_FLAGS-"--chunks-per-packet 3 --net-jitter-ms 20 --clock-drift-ppm 200 --clock-offset-ms -3600000 --reboot-after 25 --start-near-wrap"}"
+# shellcheck disable=SC2086  # intentional word splitting of the flags
+"$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --skip-startup --stats-file "$SIM_STATS_FILE" $INTEGRATION_TIME_FLAGS > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
 SIM_PID=$!
 PIDS+=($SIM_PID)
 sleep 2

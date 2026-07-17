@@ -78,6 +78,7 @@ function parseOnlyTests(): Set<string> | null {
     '10': 'cal_stability',
     '11': 'sensor_config',
     '12': 'raw_cal_presence',
+    '14': 'timestamps',
   };
   const out = new Set<string>();
   for (const p of parts) {
@@ -89,7 +90,7 @@ function parseOnlyTests(): Set<string> | null {
     'sensor_config', 'sensor_data', 'cal_stability', 'raw_cal_presence',
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
-    'controller',
+    'controller', 'timestamps',
   ]);
   for (const id of out) {
     if (!allowed.has(id)) {
@@ -1976,6 +1977,101 @@ async function testControllerDataFlow(): Promise<void> {
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Test 14: Timestamp quality (clock-sync verification).
+ *
+ * The integration stack runs the board simulator with deliberate timing
+ * pathologies (network jitter, clock drift/offset, a mid-run reboot, a uint32
+ * millis wrap — see INTEGRATION_TIME_FLAGS in test_integration.sh). The DAQ
+ * bridge's per-board clock sync must still produce a clean timeline. Per
+ * high-rate stream this asserts:
+ *   - payload timestamps are monotonic non-decreasing,
+ *   - no timestamp is in the future (beyond small tolerance),
+ *   - pipeline latency (receivedAt − timestamp) is bounded,
+ *   - inter-sample spacing is sane (no flattening onto one instant, no stalls):
+ *     median spacing within [5 ms, 1000 ms] and samples spanning ≥50% of the
+ *     collection window.
+ */
+async function testTimestampQuality(ws: WebSocket): Promise<void> {
+  console.log('\n⏱️  Test 14: Timestamp Quality (clock sync under timing pathologies)');
+
+  const WINDOW_MS = 8000;
+  const FUTURE_TOLERANCE_MS = 250;
+  const MAX_LATENCY_MS = 10000;
+  const MIN_SAMPLES = 10;
+
+  if (VERBOSE) console.log(`  Collecting sensor updates (${WINDOW_MS / 1000}s window)…`);
+  const updates = await collectMessages(ws, MessageType.SENSOR_UPDATE, WINDOW_MS);
+
+  // Group per stream (entity.component), keep arrival order.
+  const streams = new Map<string, { ts: number[]; recv: number[] }>();
+  for (const u of updates) {
+    const p = u.payload as { entity?: string; component?: string; timestamp?: number; value?: number };
+    if (!p.entity || !p.component || typeof p.timestamp !== 'number' || !Number.isFinite(p.value)) continue;
+    const key = `${p.entity}.${p.component}`;
+    let s = streams.get(key);
+    if (!s) { s = { ts: [], recv: [] }; streams.set(key, s); }
+    s.ts.push(p.timestamp);
+    s.recv.push(u.receivedAt);
+  }
+
+  let outOfOrder = 0;
+  let future = 0;
+  const latencies: number[] = [];
+  const spacingViolations: string[] = [];
+  let highRateStreams = 0;
+
+  for (const [key, s] of streams) {
+    for (let i = 0; i < s.ts.length; i++) {
+      if (i > 0 && s.ts[i] < s.ts[i - 1]) outOfOrder++;
+      if (s.ts[i] > s.recv[i] + FUTURE_TOLERANCE_MS) future++;
+      const lat = s.recv[i] - s.ts[i];
+      if (lat >= 0 && lat < 120000) latencies.push(lat);
+    }
+
+    if (s.ts.length < MIN_SAMPLES) continue;  // event/low-rate streams: monotonic+future only
+    highRateStreams++;
+
+    const deltas: number[] = [];
+    for (let i = 1; i < s.ts.length; i++) deltas.push(s.ts[i] - s.ts[i - 1]);
+    deltas.sort((a, b) => a - b);
+    const median = deltas[Math.floor(deltas.length / 2)];
+    const span = s.ts[s.ts.length - 1] - s.ts[0];
+    if (median < 5 || median > 1000) {
+      spacingViolations.push(`${key}: median spacing ${median}ms (want 5–1000ms)`);
+    } else if (span < WINDOW_MS * 0.5) {
+      spacingViolations.push(`${key}: samples span only ${span}ms of the ${WINDOW_MS}ms window`);
+    }
+  }
+
+  latencies.sort((a, b) => a - b);
+  const p99 = latencies.length ? latencies[Math.floor(latencies.length * 0.99)] : 0;
+  const maxLat = latencies.length ? latencies[latencies.length - 1] : 0;
+
+  if (VERBOSE) {
+    console.log(`  Streams: ${streams.size} total, ${highRateStreams} high-rate (≥${MIN_SAMPLES} samples)`);
+    printLatencyStats('Pipeline latency (receivedAt − payload.timestamp)', latencies);
+  }
+
+  assert(streams.size > 0, `Timestamp quality: received data on ${streams.size} streams`);
+  assert(outOfOrder === 0,
+    outOfOrder === 0
+      ? 'All per-stream timestamps monotonic non-decreasing'
+      : `Timestamps went backwards ${outOfOrder} time(s) across streams`);
+  assert(future === 0,
+    future === 0
+      ? `No future timestamps (tolerance ${FUTURE_TOLERANCE_MS}ms)`
+      : `${future} timestamp(s) ahead of arrival by >${FUTURE_TOLERANCE_MS}ms`);
+  assert(maxLat < MAX_LATENCY_MS,
+    maxLat < MAX_LATENCY_MS
+      ? `Pipeline latency bounded (max ${maxLat}ms, p99 ${p99}ms < ${MAX_LATENCY_MS}ms)`
+      : `Pipeline latency too high: max ${maxLat}ms (limit ${MAX_LATENCY_MS}ms) — clock sync mis-anchored?`);
+  assert(spacingViolations.length === 0,
+    spacingViolations.length === 0
+      ? `Inter-sample spacing sane on all ${highRateStreams} high-rate streams (no flattening, no stalls)`
+      : `Spacing violations on ${spacingViolations.length} stream(s): ${spacingViolations.slice(0, 5).join('; ')}${spacingViolations.length > 5 ? ' …' : ''}`);
+}
+
 async function main(): Promise<void> {
   console.log('🧪 WebSocket Data Flow Integration Test');
   console.log(`   Backend: ${WS_URL} (${IS_THIN ? 'server.ts' : 'server-legacy.ts'})`);
@@ -2021,6 +2117,7 @@ async function main(): Promise<void> {
     if (runTest('sensor_data')) await testSensorDataFlow(ws);
     if (IS_THIN && runTest('backend_debug_api')) await testBackendDebugApi();
     if (runTest('raw_cal_presence')) await testRawAndCalibratedPresence(ws);
+    if (runTest('timestamps')) await testTimestampQuality(ws);
     if (runTest('cal_stability')) await testCalibratedDataStability(ws);
     if (IS_THIN) {
       if (runTest('heartbeat')) await testServerHeartbeatUdp();
