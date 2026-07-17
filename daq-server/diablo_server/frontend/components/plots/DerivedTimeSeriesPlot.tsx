@@ -4,12 +4,12 @@ import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 're
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { getDataCache } from '@/lib/data-cache';
-import { getStartupTime } from '@/lib/startup-time';
-import { getWebSocketClient } from '@/lib/websocket';
-import { MessageType, SensorUpdate } from '@/lib/types';
+import { serverNowMs } from '@/lib/plot-time';
+import { xWindowMs, tPlusAxisValues, fmtAxisVal, smartYRange, YAxisHysteresis } from '@/lib/plot-shared';
 
 const DEFAULT_WINDOW_SECONDS = 60;
-const SAMPLE_HZ = 10;  // reduces lag
+// Data refresh; backend delivers ≤ ~20 pts/s per stream.
+const RENDER_INTERVAL_MS = 100;
 
 export type TransformFn = (rawValue: number) => number | null;
 
@@ -41,25 +41,16 @@ interface DerivedTimeSeriesPlotProps {
   showControls?: boolean;
 }
 
-function fmtVal(v: number): string {
-  if (!Number.isFinite(v)) return '';
-  const abs = Math.abs(v);
-  if (abs >= 1e9) return (v / 1e9).toFixed(1) + 'G';
-  if (abs >= 1e6) return (v / 1e6).toFixed(2) + 'M';
-  if (abs >= 1e3) return (v / 1e3).toFixed(1) + 'K';
-  if (abs >= 100) return v.toFixed(0);
-  if (abs >= 1) return v.toFixed(1);
-  return v.toFixed(2);
-}
-
-function smartYRange(dataMin: number, dataMax: number): [number, number] {
-  if (dataMin === dataMax) {
-    const margin = dataMin === 0 ? 1 : Math.abs(dataMin) * 0.05;
-    return [dataMin - margin, dataMax + margin];
-  }
-  const span = dataMax - dataMin;
-  const pad = Math.max(span * 0.12, Math.abs(dataMax) * 0.001);
-  return [dataMin - pad, dataMax + pad];
+/** Full-range zoom-out over the plot's current data. */
+function zoomToFullRange(u: uPlot | null): void {
+  if (!u) return;
+  const time = (u.data?.[0] as number[] | undefined) ?? [];
+  const valid = time.filter((t) => Number.isFinite(t));
+  if (valid.length < 2) return;
+  const mn = Math.min(...valid);
+  const mx = Math.max(...valid);
+  const span = mx - mn || 1;
+  u.setScale('x', { min: mn - span * 0.02, max: mx + span * 0.02 });
 }
 
 const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTimeSeriesPlotProps>(function DerivedTimeSeriesPlot({
@@ -85,32 +76,16 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
   const uplotRef = useRef<uPlot | null>(null);
   const transformRef = useRef(transform);
   transformRef.current = transform;
-  const startTimeRef = useRef<number>(getStartupTime());
-  const latestValuesRef = useRef<number[]>(entities.map(() => NaN));
-  const receivedUpdateThisIntervalRef = useRef<boolean[]>(entities.map(() => false));
-  const dataRef = useRef<{ time: number[]; values: number[][] }>({
-    time: [],
-    values: entities.map(() => []),
-  });
   const [ready, setReady] = useState(false);
   const [internalPaused, setInternalPaused] = useState(false);
   const isPaused = controlledPaused ?? internalPaused;
   const setIsPaused = onPauseChange ?? setInternalPaused;
   const isPausedRef = useRef(false);
-  const wasPausedRef = useRef(false);
   isPausedRef.current = isPaused;
 
   useImperativeHandle(ref, () => ({
     resetZoom() {
-      const u = uplotRef.current;
-      const d = dataRef.current;
-      if (!u || !d.time.length) return;
-      const valid = d.time.filter((t) => Number.isFinite(t));
-      if (valid.length < 2) return;
-      const mn = Math.min(...valid);
-      const mx = Math.max(...valid);
-      const span = mx - mn || 1;
-      u.setScale('x', { min: mn - span * 0.02, max: mx + span * 0.02 });
+      zoomToFullRange(uplotRef.current);
     },
     ready,
   }), [ready]);
@@ -126,21 +101,13 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
   }, [enablePlayPause, isPaused]);
 
   const componentMap = entities.map(() => component);
-  const MAX_POINTS = Math.min(windowSeconds * SAMPLE_HZ, 16000);
 
   useEffect(() => {
     if (!containerRef.current || !plotRef.current) return;
 
     const cache = getDataCache();
-    const ws = getWebSocketClient();
     const seriesLabels = entities.map((e, i) => labels?.[i] ?? e.split('.').pop() ?? e);
     const colorList = entities.map((_, i) => colors[i] || '#94a3b8');
-
-    if (dataRef.current.values.length !== entities.length) {
-      dataRef.current.time = [];
-      dataRef.current.values = entities.map(() => []);
-      latestValuesRef.current = entities.map(() => NaN);
-    }
 
     if (uplotRef.current) {
       uplotRef.current.destroy();
@@ -158,7 +125,24 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
       return { w, h };
     };
 
+    /** Windowed cache read with the per-point transform applied (null → NaN). */
+    const readData = (): uPlot.AlignedData | null => {
+      const cached = cache.getAlignedHistory(entities, componentMap, windowSeconds);
+      if (!cached || cached.time.length === 0) return null;
+      const t = transformRef.current;
+      const vData = cached.values.map((arr) =>
+        arr.map((v) => {
+          if (!Number.isFinite(v)) return NaN;
+          const out = t(v);
+          return out === null || !Number.isFinite(out) ? NaN : out;
+        })
+      );
+      return [cached.time, ...vData];
+    };
+
+    const yAxis = new YAxisHysteresis(500);
     const dragZoomActive = enablePlayPause && isPausedRef.current;
+
     const buildOpts = (w: number, h: number): uPlot.Options => ({
       width: w,
       height: h,
@@ -166,35 +150,16 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
       scales: {
         x: {
           time: false,
-          range: (): [number, number] => {
-            const now = (Date.now() - startTimeRef.current) / 1000;
-            const window = Math.min(windowSeconds, now + 1);
-            return [Math.max(0, now - window), now];
+          // Live: scrolling server-timeline window. Paused: honor whatever
+          // range was requested (drag-zoom / reset-zoom setScale calls).
+          range: (_u, reqMin, reqMax): [number, number] => {
+            if (enablePlayPause && isPausedRef.current) return [reqMin, reqMax];
+            return xWindowMs(windowSeconds);
           },
         },
         y: yRange
           ? { auto: false, range: (): [number, number] => yRange }
-          : {
-            auto: true,
-            range: (u: uPlot, mn: number, mx: number): [number, number] => {
-              const allValues: number[] = [];
-              for (let i = 1; i < u.data.length; i++) {
-                const series = u.data[i] as number[];
-                if (series) {
-                  for (const val of series) {
-                    if (isFinite(val)) allValues.push(val);
-                  }
-                }
-              }
-              if (allValues.length > 0) {
-                const dataMin = allValues.reduce((a, b) => Math.min(a, b), Infinity);
-                const dataMax = allValues.reduce((a, b) => Math.max(a, b), -Infinity);
-                return smartYRange(dataMin, dataMax);
-              }
-              if (isFinite(mn) && isFinite(mx)) return smartYRange(mn, mx);
-              return [-400, 100];
-            },
-          },
+          : { auto: false },
       },
       axes: [
         {
@@ -206,7 +171,7 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
           labelFont: '12px system-ui',
           gap: 8,
           space: 120,
-          values: (_u, vals) => vals.map((v) => (v == null ? '' : Math.round(v).toString())),
+          values: tPlusAxisValues,
         },
         {
           label: yLabel,
@@ -219,8 +184,8 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
           gap: 5,
           space: 80,
           values: yTicks
-            ? (_u: uPlot, _vals: number[]) => yTicks.map((v) => fmtVal(v))
-            : (_u: uPlot, vals: number[]) => vals.map((v) => (v == null ? '' : fmtVal(v))),
+            ? (_u: uPlot, _vals: number[]) => yTicks.map((v) => fmtAxisVal(v))
+            : (_u: uPlot, vals: number[]) => vals.map((v) => (v == null ? '' : fmtAxisVal(v))),
           ...(yTicks ? { splits: () => yTicks } : {}),
         },
       ],
@@ -245,166 +210,59 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
       padding: [8, 12, 0, 0] as [number, number, number, number],
     });
 
-    const loadCacheData = (): boolean => {
-      try {
-        const cached = cache.getAlignedHistory(entities, componentMap, windowSeconds);
-        if (cached && cached.time.length > 0 && cached.values.length > 0) {
-          const t = transformRef.current;
-          dataRef.current.time = [...cached.time];
-          dataRef.current.values = cached.values.map((arr) =>
-            arr.map((v) => {
-              const out = t(v);
-              return out === null || !Number.isFinite(out) ? NaN : out;
-            })
-          );
-          cached.values.forEach((vals, i) => {
-            if (vals && vals.length > 0) {
-              for (let j = vals.length - 1; j >= 0; j--) {
-                const out = t(vals[j]);
-                if (out !== null && Number.isFinite(out)) {
-                  latestValuesRef.current[i] = out;
-                  break;
-                }
-              }
-            }
-          });
-          return true;
-        }
-      } catch (err) {
-        console.warn('[DerivedTimeSeriesPlot] Cache load failed:', err);
+    const applyYScale = (data: uPlot.AlignedData, force = false): void => {
+      const u = uplotRef.current;
+      if (!u) return;
+      if (yRange) {
+        u.setScale('y', { min: yRange[0], max: yRange[1] });
+        return;
       }
-      return false;
+      const seriesValues = data.slice(1) as number[][];
+      if (force) {
+        let mn = Infinity, mx = -Infinity;
+        for (const s of seriesValues) for (const v of s) if (Number.isFinite(v)) { if (v < mn) mn = v; if (v > mx) mx = v; }
+        if (isFinite(mn) && isFinite(mx)) {
+          const [min, max] = smartYRange(mn, mx);
+          u.setScale('y', { min, max });
+        }
+        return;
+      }
+      const range = yAxis.update(seriesValues, serverNowMs());
+      if (range) u.setScale('y', { min: range[0], max: range[1] });
     };
-
-    loadCacheData();
 
     const tryInit = () => {
       if (uplotRef.current || !plotRef.current) return;
       const dims = getDims();
       if (!dims) return;
 
-      loadCacheData();
-
-      const now = (Date.now() - startTimeRef.current) / 1000;
-      let timeData = dataRef.current.time.length > 0 ? dataRef.current.time : [now];
-      let valueData = dataRef.current.values.map((v) => (v.length > 0 ? v : [NaN]));
-
-      const maxLen = Math.max(timeData.length, ...valueData.map((v) => v.length));
-      if (maxLen === 0) {
-        timeData = [now];
-        valueData = entities.map(() => [NaN]);
-      } else {
-        while (timeData.length < maxLen) {
-          timeData.push(timeData.length > 0 ? timeData[timeData.length - 1] + 0.1 : now);
-        }
-        valueData = valueData.map((v) => {
-          const arr = [...v];
-          while (arr.length < maxLen) arr.push(NaN);
-          return arr;
-        });
-      }
-
-      const data: uPlot.AlignedData = [timeData, ...valueData];
+      const data = readData() ?? [[serverNowMs()], ...entities.map(() => [NaN])] as uPlot.AlignedData;
 
       try {
         if (!plotRef.current) return;
         uplotRef.current = new uPlot(buildOpts(dims.w, dims.h), data, plotRef.current);
+        applyYScale(data, true);
         setReady(true);
       } catch (err) {
         console.error('[DerivedTimeSeriesPlot] init failed:', err);
       }
     };
 
-    const unsubSensor = ws.on(MessageType.SENSOR_UPDATE, (payload: unknown) => {
-      const update = payload as SensorUpdate;
-      if (!isFinite(update.value)) return;
-
-      const idx = entities.indexOf(update.entity);
-      if (idx >= 0 && componentMap[idx] === update.component) {
-        const out = transformRef.current(update.value);
-        latestValuesRef.current[idx] = out !== null && Number.isFinite(out) ? out : NaN;
-        receivedUpdateThisIntervalRef.current[idx] = true;
-      }
-    });
-
-    let lastDataUpdate = 0;
-    const DATA_UPDATE_INTERVAL = 1000 / SAMPLE_HZ;
-
-    let intervalId: ReturnType<typeof setInterval> | null = null;
     const renderLoop = () => {
-      if (!uplotRef.current) return;
+      if (!uplotRef.current) { tryInit(); if (!uplotRef.current) return; }
 
-      const paused = enablePlayPause && isPausedRef.current;
-      const now = (Date.now() - startTimeRef.current) / 1000;
-      const cutoff = now - windowSeconds;
-      const d = dataRef.current;
-      const currentTime = Date.now();
+      // Paused: freeze data and scales entirely — drag-zoom owns the x-scale.
+      if (enablePlayPause && isPausedRef.current) return;
 
-      // Just unpaused: fast-forward to latest data from cache
-      if (enablePlayPause && wasPausedRef.current && !paused) {
-        wasPausedRef.current = false;
-        loadCacheData();
-        const timeData = d.time.length > 0 ? d.time : [now];
-        const valueData = d.values.map((v) => (v.length > 0 ? v : [NaN]));
+      const [xMin, xMax] = xWindowMs(windowSeconds);
+      uplotRef.current.setScale('x', { min: xMin, max: xMax });
+
+      const data = readData();
+      if (data) {
         try {
-          uplotRef.current.setData([timeData, ...valueData]);
+          uplotRef.current.setData(data, false);
         } catch (_) {}
-      }
-      if (paused) wasPausedRef.current = true;
-
-      let dataChanged = false;
-      if (!paused && currentTime - lastDataUpdate >= DATA_UPDATE_INTERVAL) {
-        d.time.push(now);
-        entities.forEach((_, i) => {
-          const val = receivedUpdateThisIntervalRef.current[i] ? latestValuesRef.current[i] : NaN;
-          d.values[i].push(val);
-          receivedUpdateThisIntervalRef.current[i] = false;
-        });
-
-        let first = 0;
-        while (first < d.time.length && d.time[first] < cutoff) first++;
-        if (first > 0) {
-          d.time = d.time.slice(first);
-          d.values = d.values.map((a) => a.slice(first));
-        }
-        if (d.time.length > MAX_POINTS) {
-          const excess = d.time.length - MAX_POINTS;
-          d.time = d.time.slice(excess);
-          d.values = d.values.map((a) => a.slice(excess));
-        }
-        lastDataUpdate = currentTime;
-        dataChanged = true;
-      }
-
-      if (!paused) {
-        uplotRef.current.setScale('x', {
-          min: Math.max(0, now - windowSeconds),
-          max: now,
-        });
-      }
-
-      if (dataChanged) {
-        const timeData = d.time.length > 0 ? d.time : [now];
-        const valueData = d.values.map((v) => (v.length > 0 ? v : [NaN]));
-        try {
-          uplotRef.current.setData([timeData, ...valueData]);
-        } catch (_) {}
-        if (yRange) {
-          uplotRef.current.setScale('y', { min: yRange[0], max: yRange[1] });
-        } else {
-          const allY: number[] = [];
-          valueData.forEach((series) => {
-            series.forEach((v) => {
-              if (Number.isFinite(v)) allY.push(v);
-            });
-          });
-          if (allY.length > 0) {
-            const yMin = Math.min(...allY);
-            const yMax = Math.max(...allY);
-            const [min, max] = smartYRange(yMin, yMax);
-            uplotRef.current.setScale('y', { min, max });
-          }
-        }
+        applyYScale(data);
       }
 
       const dims = getDims();
@@ -419,7 +277,12 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
       setTimeout(tryInit, 300);
       setTimeout(tryInit, 600);
     });
-    intervalId = setInterval(renderLoop, DATA_UPDATE_INTERVAL);
+    const intervalId = setInterval(renderLoop, RENDER_INTERVAL_MS);
+
+    // Init as soon as a backfill lands (window opened before data existed).
+    const unsubHistorical = cache.onHistoricalData(() => {
+      if (!uplotRef.current) tryInit();
+    });
 
     const ro = new ResizeObserver(() => {
       const dims = getDims();
@@ -432,11 +295,8 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
     if (containerRef.current) ro.observe(containerRef.current);
 
     return () => {
-      unsubSensor();
-      if (intervalId !== null) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
+      unsubHistorical();
+      clearInterval(intervalId);
       ro.disconnect();
       uplotRef.current?.destroy();
       uplotRef.current = null;
@@ -480,17 +340,7 @@ const DerivedTimeSeriesPlot = forwardRef<DerivedTimeSeriesPlotHandle, DerivedTim
             {isPaused && (
               <button
                 type="button"
-                onClick={() => {
-                  const u = uplotRef.current;
-                  const d = dataRef.current;
-                  if (!u || !d.time.length) return;
-                  const valid = d.time.filter((t) => Number.isFinite(t));
-                  if (valid.length < 2) return;
-                  const mn = Math.min(...valid);
-                  const mx = Math.max(...valid);
-                  const span = mx - mn || 1;
-                  u.setScale('x', { min: mn - span * 0.02, max: mx + span * 0.02 });
-                }}
+                onClick={() => zoomToFullRange(uplotRef.current)}
                 className="rounded px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-gray-400 transition-colors hover:bg-gray-700 hover:text-gray-200"
                 title="Reset zoom to full range"
               >

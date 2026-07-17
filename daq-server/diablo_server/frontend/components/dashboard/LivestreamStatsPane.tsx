@@ -5,7 +5,7 @@ import { useSensorStore, useSensorValue } from '@/lib/store';
 import { useSensorConfig } from '@/lib/sensor-config';
 import { PRESSURE_SENSORS } from '@/lib/sensor-colors';
 import { SystemState, engineStateCodeToLabel } from '@/lib/types';
-import { getServerTimeNow } from '@/lib/server-time';
+import { serverNowMs } from '@/lib/plot-time';
 
 type PressureOption = {
   entity: string;
@@ -35,10 +35,10 @@ function formatMissionTimer(ms: number): string {
 
 function useMissionTimer() {
   const countdownTargetTimeMs = useSensorStore((s) => s.countdownTargetTimeMs);
-  const [now, setNow] = useState(() => getServerTimeNow());
+  const [now, setNow] = useState(() => serverNowMs());
 
   useEffect(() => {
-    const id = window.setInterval(() => setNow(getServerTimeNow()), 250);
+    const id = window.setInterval(() => setNow(serverNowMs()), 250);
     return () => window.clearInterval(id);
   }, []);
 

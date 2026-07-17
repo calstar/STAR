@@ -3,3 +3,10 @@
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+
+# Vite build output
+/dist/
+# TypeScript incremental build state
+tsconfig.tsbuildinfo
+# Next.js leftovers (removed in SPA migration; ignore stale local dirs)
+/.next/

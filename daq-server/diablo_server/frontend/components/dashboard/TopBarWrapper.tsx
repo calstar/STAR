@@ -1,13 +1,13 @@
 'use client'
 
-import { usePathname } from 'next/navigation';
+import { useLocation } from 'react-router-dom';
 import TopBar from './TopBar';
 
 // Routes where the full desktop TopBar should be suppressed (they render their own compact header)
 const SUPPRESS_TOPBAR_PATHS = ['/window/mobile-gui', '/window/livestream'];
 
 export default function TopBarWrapper() {
-  const pathname = usePathname();
+  const { pathname } = useLocation();
   const suppress = SUPPRESS_TOPBAR_PATHS.some((p) => pathname === p || pathname?.startsWith(p + '/'));
   const isIpad = pathname === '/window/ipad' || pathname?.startsWith('/window/ipad/');
 

@@ -88,8 +88,24 @@ export interface SensorUpdate {
   entity: string; // e.g., "PT_Cal.GN2_Regulated"
   component: string; // e.g., "pressure_psi"
   value: number;
+  /** Sample time, epoch ms (bridge receipt time forwarded from Elodin). */
   timestamp: number;
 }
+
+// QUERY_HISTORICAL request payload (all fields optional; empty = full dump)
+export interface QueryHistoricalRequest {
+  /** Restrict to these entity.component keys. */
+  keys?: string[];
+  /** Only points strictly newer than this epoch-ms timestamp. */
+  sinceMs?: number;
+}
+
+// HISTORICAL_DATA payload: entity.component key → ascending epoch-ms series
+export interface HistoricalSeries {
+  time: number[]; // epoch ms, ascending
+  values: number[];
+}
+export type HistoricalDataPayload = Record<string, HistoricalSeries>;
 
 // Actuator update payload
 export interface ActuatorUpdate {

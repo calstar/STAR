@@ -101,7 +101,8 @@ pkill -9 -f "build/bin/config_broadcast_service\|build/bin/config_broadcast_serv
 pkill -9 -f "build/bin/calibration_service\|build/bin/calibration_service" 2>/dev/null || true
 pkill -9 -f "build/bin/controller_service\|build/bin/controller_service" 2>/dev/null || true
 pkill -9 -f "board_simulator" 2>/dev/null || true
-pkill -9 -f "next dev" 2>/dev/null || true
+pkill -9 -f "next dev" 2>/dev/null || true   # legacy (pre-Vite) frontend
+pkill -9 -f "vite" 2>/dev/null || true
 pkill -9 -f "tsx watch.*server\.ts\|tsx.*server\.ts" 2>/dev/null || true
 fuser -k 8081/tcp 8082/tcp 9998/tcp 2>/dev/null || true
 OTA_CMD_PORT="${OTA_SERVICE_CMD_PORT:-9997}"
@@ -190,13 +191,21 @@ THIN_ACT_PORT="${THIN_ACTUATOR_SERVICE_PORT:-9998}"
 WAIT_FOR_BACKEND='echo "  ⏳ Waiting for backend WS (port '"$THIN_WS_PORT"')..." && for i in $(seq 1 40); do (echo >/dev/tcp/127.0.0.1/'"$THIN_WS_PORT"') 2>/dev/null && break; sleep 1; done && echo "  ✅ Backend ready"'
 
 CMD_LOG_BACKEND="/tmp/gui_logs/backend.log"
-CMD_WEB_BACKEND='printf "\n  ══ BACKEND — HTTP+WS :'"${THIN_WS_PORT}"' (server.ts → Elodin DB :2240) ══\n\n" && '"$WAIT_FOR_ELODIN"' && '"$WAIT_FOR_DAQ"' && '"$WAIT_FOR_CALIBRATION"' && cd '"$PROJECT"'/diablo_server/backend && WS_PORT='"$THIN_WS_PORT"' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='"$THIN_ACT_PORT"' npx tsx src/server.ts 2>&1 | tee '"$CMD_LOG_BACKEND"
+# Backend also serves the built SPA on :3000 (GUI_PORT) and handles OTA flash
+# requests (OTA_SERVICE_PORT — previously set on the frontend's Next routes).
+CMD_WEB_BACKEND='printf "\n  ══ BACKEND — HTTP+WS :'"${THIN_WS_PORT}"' + GUI :3000 (server.ts → Elodin DB :2240) ══\n\n" && '"$WAIT_FOR_ELODIN"' && '"$WAIT_FOR_DAQ"' && '"$WAIT_FOR_CALIBRATION"' && cd '"$PROJECT"'/diablo_server/backend && WS_PORT='"$THIN_WS_PORT"' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='"$THIN_ACT_PORT"' OTA_SERVICE_PORT='"$OTA_CMD_PORT"' GUI_PORT=3000 npx tsx src/server.ts 2>&1 | tee '"$CMD_LOG_BACKEND"
 
 CMD_LOG_FRONTEND="/tmp/gui_logs/frontend.log"
-# Don't set NEXT_PUBLIC_API_URL / NEXT_PUBLIC_WS_URL — the frontend auto-detects them from
-# window.location.hostname at runtime, so remote devices hitting http://<host>:3000 can reach
-# the backend on the same host. Hardcoding 127.0.0.1 here breaks LAN clients.
-CMD_WEB_FRONTEND='printf "\n  ══ WEB GUI FRONTEND — HTTP :3000 ══\n\n" && sleep 3 && cd '"$PROJECT"'/diablo_server/frontend && OTA_SERVICE_PORT='"$OTA_CMD_PORT"' npm run dev 2>&1 | tee '"$CMD_LOG_FRONTEND"
+# The frontend is a static Vite build served by the backend (GUI_PORT=3000).
+# This pane just builds it if sources changed. API/WS URLs are derived from
+# window.location at runtime, so remote LAN clients work with no env config.
+# Dev iteration: FRONTEND_DEV=1 runs `vite dev` on :3000 instead (backend's
+# static listener stands down automatically on port conflict).
+if [ "${FRONTEND_DEV:-0}" = "1" ]; then
+  CMD_WEB_FRONTEND='printf "\n  ══ WEB GUI FRONTEND — vite dev :3000 ══\n\n" && cd '"$PROJECT"'/diablo_server/frontend && npm run dev 2>&1 | tee '"$CMD_LOG_FRONTEND"
+else
+  CMD_WEB_FRONTEND='printf "\n  ══ WEB GUI FRONTEND — static build (served by backend :3000) ══\n\n" && bash '"$PROJECT"'/deploy/startup/ensure_frontend_build.sh 2>&1 | tee '"$CMD_LOG_FRONTEND"' && printf "\n  ✅ Frontend built — served by backend on :3000\n" && sleep infinity'
+fi
 
 if [ -x "$OTA_BIN" ]; then
   CMD_LOG_OTA="/tmp/gui_logs/ota.log"
@@ -327,12 +336,13 @@ launch_background() {
     echo -n "."
   done
   echo " ready"
-  nohup bash -c "cd '$PROJECT/diablo_server/backend' && WS_PORT='${THIN_WS_PORT}' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='${THIN_ACT_PORT}' exec npx tsx watch src/server.ts" >> "$LOGDIR/backend.log" 2>&1 &
-  echo "    Backend:      PID $! → $LOGDIR/backend.log"
+  nohup bash -c "cd '$PROJECT/diablo_server/backend' && WS_PORT='${THIN_WS_PORT}' ELODIN_HOST=127.0.0.1 ELODIN_PORT=2240 ACTUATOR_SERVICE_PORT='${THIN_ACT_PORT}' OTA_SERVICE_PORT='${OTA_CMD_PORT}' GUI_PORT=3000 exec npx tsx watch src/server.ts" >> "$LOGDIR/backend.log" 2>&1 &
+  echo "    Backend:      PID $! → $LOGDIR/backend.log (serves GUI on :3000)"
 
-  # Frontend
-  nohup bash -c "cd '$PROJECT/diablo_server/frontend' && exec npm run dev" >> "$LOGDIR/frontend.log" 2>&1 &
-  echo "    Frontend:     PID $! → $LOGDIR/frontend.log"
+  # Frontend: static build served by the backend — just ensure dist/ is current.
+  bash "$PROJECT/deploy/startup/ensure_frontend_build.sh" >> "$LOGDIR/frontend.log" 2>&1 \
+    && echo "    Frontend:     built → served by backend :3000 ($LOGDIR/frontend.log)" \
+    || echo "    Frontend:     ❌ build failed — see $LOGDIR/frontend.log"
 
   # Simulator LAST (if USE_SIM=1) — wait for backend; same args as tmux CMD_SIM (full startup)
   if [ "${USE_SIM:-0}" = "1" ]; then

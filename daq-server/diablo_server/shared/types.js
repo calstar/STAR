@@ -10,6 +10,7 @@ export var MessageType;
     MessageType["SEND_COMMAND"] = "send_command";
     MessageType["QUERY_HISTORICAL"] = "query_historical";
     MessageType["CALIBRATION_COMMAND"] = "calibration_command";
+    MessageType["RESEND_CONFIG"] = "resend_config";
     // Server → Client
     MessageType["SENSOR_UPDATE"] = "sensor_update";
     MessageType["ACTUATOR_UPDATE"] = "actuator_update";
@@ -21,6 +22,10 @@ export var MessageType;
     MessageType["MISSION_START_TIME"] = "mission_start_time";
     MessageType["ACTUATOR_EXPECTED_POSITIONS_UPDATE"] = "actuator_expected_positions_update";
     MessageType["HISTORICAL_DATA"] = "historical_data";
+    MessageType["BOARD_STATUS_UPDATE"] = "board_status_update";
+    MessageType["NOTIFICATION"] = "notification";
+    MessageType["CONFIG_UPDATED"] = "config_updated";
+    MessageType["COUNTDOWN_TARGET_UPDATE"] = "countdown_target_update";
 })(MessageType || (MessageType = {}));
 // Sensor types
 export var SensorType;
@@ -68,3 +73,23 @@ export var ActuatorState;
     ActuatorState[ActuatorState["OPEN"] = 1] = "OPEN";
     ActuatorState[ActuatorState["UNKNOWN"] = 2] = "UNKNOWN";
 })(ActuatorState || (ActuatorState = {}));
+export function isNotificationOngoing(p) {
+    return 'key' in p && 'ongoing' in p;
+}
+// ── Engine state helpers ─────────────────────────────────────────────────────
+/**
+ * Map a numeric engine_state code (from SystemState / wire) to a human-readable
+ * label. Falls back to 'UNKNOWN' if the code is not recognized.
+ */
+export function engineStateCodeToLabel(code) {
+    if (code === null || code === undefined)
+        return 'UNKNOWN';
+    // TypeScript enums are bidirectional; indexing with the numeric value
+    // returns the string name when it exists.
+    const name = SystemState[code];
+    if (typeof name === 'string') {
+        return name.replace(/_/g, ' ');
+    }
+    return 'UNKNOWN';
+}
+//# sourceMappingURL=types.js.map

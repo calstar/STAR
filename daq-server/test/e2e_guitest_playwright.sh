@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start the same stack as `guitest` (USE_SIM=1 → deploy/startup/start_tmux_dev.sh) in a
-# detached tmux session, wait for backend + Next, run Playwright Sensor Info E2E, then stop
+# detached tmux session, wait for backend + GUI, run Playwright Sensor Info E2E, then stop
 # everything the same way as README `stopgui` (deploy/startup/stop_tmux.sh).
 #
 # Usage (from repo root):
@@ -68,7 +68,7 @@ if ! curl -sf "$BACKEND_CHECK" >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Waiting for Next.js at ${PLAYWRIGHT_BASE_URL}/sensor-info ..."
+echo "Waiting for GUI at ${PLAYWRIGHT_BASE_URL}/sensor-info ..."
 for _ in $(seq 1 180); do
   if curl -sf "${PLAYWRIGHT_BASE_URL}/sensor-info" >/dev/null 2>&1; then
     echo "  OK"
@@ -79,7 +79,7 @@ for _ in $(seq 1 180); do
 done
 if ! curl -sf "${PLAYWRIGHT_BASE_URL}/sensor-info" >/dev/null 2>&1; then
   echo ""
-  echo "❌ Next.js /sensor-info did not become ready in time." >&2
+  echo "❌ GUI /sensor-info did not become ready in time." >&2
   exit 1
 fi
 

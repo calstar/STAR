@@ -7,6 +7,7 @@ export declare enum MessageType {
     SEND_COMMAND = "send_command",
     QUERY_HISTORICAL = "query_historical",
     CALIBRATION_COMMAND = "calibration_command",
+    RESEND_CONFIG = "resend_config",
     SENSOR_UPDATE = "sensor_update",
     ACTUATOR_UPDATE = "actuator_update",
     STATE_UPDATE = "state_update",
@@ -15,7 +16,12 @@ export declare enum MessageType {
     CALIBRATION_STATUS = "calibration_status",
     CONTROLLER_UPDATE = "controller_update",
     MISSION_START_TIME = "mission_start_time",
-    ACTUATOR_EXPECTED_POSITIONS_UPDATE = "actuator_expected_positions_update"
+    ACTUATOR_EXPECTED_POSITIONS_UPDATE = "actuator_expected_positions_update",
+    HISTORICAL_DATA = "historical_data",
+    BOARD_STATUS_UPDATE = "board_status_update",
+    NOTIFICATION = "notification",
+    CONFIG_UPDATED = "config_updated",
+    COUNTDOWN_TARGET_UPDATE = "countdown_target_update"
 }
 export declare enum SensorType {
     PT_CAL = "PT_Cal",
@@ -46,24 +52,8 @@ export declare enum SystemState {
     ENGINE_ABORT = 17,
     GSE_ABORT = 18,
     EMERGENCY_ABORT = 19,
+    PRESS_STANDBY = 20,// Press Standby state (separate from GN2_LOW_PRESS)
     ABORT = 19
-}
-export declare enum ActuatorId {
-    LOX_MAIN = 0,
-    FUEL_MAIN = 1,
-    LOX_VENT = 2,
-    FUEL_VENT = 3,
-    LOX_PRESS = 4,
-    FUEL_PRESS = 5,
-    GSE_LOW_VENT = 6,
-    FUEL_FILL_VENT = 7,
-    FUEL_FILL_PRESS = 8,
-    LOX_FILL = 9,
-    LOX_DUMP = 10,
-    GSE_HIGH_PRESS_VENT = 11,
-    GSE_LOX_FILL_VENT = 12,
-    GSE_HIGH_PRESS_CONTROL = 13,
-    GSE_MED_PRESS_CONTROL = 14
 }
 export declare enum ActuatorState {
     CLOSED = 0,
@@ -79,10 +69,24 @@ export interface SensorUpdate {
     entity: string;
     component: string;
     value: number;
+    /** Sample time, epoch ms (bridge receipt time forwarded from Elodin). */
     timestamp: number;
 }
+export interface QueryHistoricalRequest {
+    /** Restrict to these entity.component keys. */
+    keys?: string[];
+    /** Only points strictly newer than this epoch-ms timestamp. */
+    sinceMs?: number;
+}
+export interface HistoricalSeries {
+    time: number[];
+    values: number[];
+}
+export type HistoricalDataPayload = Record<string, HistoricalSeries>;
 export interface ActuatorUpdate {
+    /** Optional numeric id for keyed maps (tests / legacy payloads). */
     actuatorId?: number;
+    /** Config role name (e.g. "LOX Main") — primary identifier */
     name: string;
     state: ActuatorState;
     rawAdcCounts: number;
@@ -92,29 +96,41 @@ export interface StateUpdate {
     currentState: SystemState;
     stateName: string;
     timestamp: number;
+    debugMode?: boolean;
 }
 export interface CommandPayload {
-    commandType: 'state_transition' | 'actuator' | 'controller_frequency' | 'pwm_actuator' | 'controller_command';
+    commandType: 'state_transition' | 'actuator' | 'controller_frequency' | 'pwm_actuator' | 'controller_command' | 'debug_mode' | 'extend_fire' | 'set_countdown_target';
     data: {
         state?: SystemState;
-        actuatorId?: ActuatorId;
+        /** Config-driven: actuator role name from config.toml actuator_roles (e.g. "LOX Main") */
+        actuatorName?: string;
         actuatorState?: ActuatorState;
         frequency?: number;
         dutyCycle?: number;
         duration?: number;
-        command_type?: 'THRUST_DESIRED' | 'ALTITUDE_GOAL';
+        command_type?: 'THRUST_DESIRED' | 'ALTITUDE_GOAL' | 'PRESSURE_TARGET';
         thrust_desired?: number;
         altitude_goal?: number;
+        pressure_fuel_target?: number;
+        pressure_ox_target?: number;
+        debugMode?: boolean;
+        /** Unix timestamp in milliseconds. null clears/pauses the countdown. */
+        targetTimeMs?: number | null;
     };
 }
 export interface ConnectionStatus {
     connected: boolean;
     elodinConnected: boolean;
+    connId?: string;
     latency?: number;
     error?: string;
 }
 export interface MissionStartTime {
     missionStartTime: number;
+}
+export interface CountdownTargetUpdate {
+    /** Unix timestamp in milliseconds; null = countdown not set */
+    targetTimeMs: number | null;
 }
 /** Confidence level derived from RLS update count + drift state */
 export type CalibrationConfidence = 'MAXIMUM' | 'HIGH' | 'MEDIUM' | 'LOW' | 'UNCALIBRATED';
@@ -142,12 +158,79 @@ export interface CalibrationStatusPayload {
     channels: CalibrationChannelStatus[];
     phase2Enabled: boolean;
     timestamp: number;
+    /** Absolute path of the calibration file that was loaded at startup, or null if none. */
+    calibrationFilePath?: string | null;
 }
 /** Commands the frontend sends to drive the calibration engine */
 export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'clear_calibration';
 export interface CalibrationCommand {
     commandType: CalibrationCommandType;
     sensorId?: number;
+    boardId?: number;
     referencePressure?: number;
 }
+/** Aggregated status for a single hardware board (PT, ACTUATOR, RTD, LC, TC, etc.). */
+export interface BoardStatus {
+    /** Board type label, e.g. "PT", "ACTUATOR", "RTD", "LC", "TC". */
+    type: string;
+    /** Human-friendly board number (from config), distinct from numeric ID. */
+    boardNumber: number | null;
+    /** Unique numeric ID for the PCB; also the last octet of its IP. */
+    id: number;
+    /** Derived IP address, typically 192.168.2.[id]. */
+    ip: string;
+    /** True if this board was defined in config.toml; false if discovered at runtime. */
+    expected: boolean;
+    /** Whether we consider the board currently connected (recent heartbeat). */
+    connected: boolean;
+    /** True when connected and board state is Setup or Active; false when in Abort/AbortDone or no heartbeat. */
+    operational?: boolean;
+    /** Timestamp of the last heartbeat in epoch milliseconds, or null if none yet. */
+    lastHeartbeatMs: number | null;
+    /** Estimated heartbeat frequency in Hz, or null if not enough data. */
+    frequencyHz?: number | null;
+    /** Raw numeric board state from heartbeat (protocol-defined). */
+    boardState: number | null;
+    /** Raw numeric engine state from heartbeat (protocol-defined). */
+    engineState: number | null;
+    /** True if a SENSOR_CONFIG has been successfully sent for this board. */
+    configured?: boolean;
+    /** Epoch ms when config was last sent successfully, for display. */
+    configLastSentAt?: number;
+    /** Optional error message if configuration failed. */
+    configError?: string;
+    /** True if this sense board is marked as necessary for abort. */
+    necessaryForAbort?: boolean;
+    /** True if this board is the designated survivor actuator controller. */
+    designatedSurvivor?: boolean;
+    /** 0 = Internal 2.5V, 1 = VDD ratiometric, 2 = 5V absolute */
+    voltageReference?: number;
+    /** History of recent heartbeat timestamps for frequency calculation. */
+    heartbeatTimes?: number[];
+}
+export interface BoardStatusPayload {
+    boards: BoardStatus[];
+}
+export type NotificationCategory = 'info' | 'warning' | 'error';
+/** Ongoing notification (keyed); when ongoing turns false, frontend keeps entry but no longer "current". */
+export interface NotificationPayloadOngoing {
+    key: string;
+    category: NotificationCategory;
+    message: string;
+    timestampMs: number;
+    ongoing: boolean;
+}
+/** One-shot notification (append-only, no key). */
+export interface NotificationPayloadOneShot {
+    category: NotificationCategory;
+    message: string;
+    timestampMs: number;
+}
+export type NotificationPayload = NotificationPayloadOngoing | NotificationPayloadOneShot;
+export declare function isNotificationOngoing(p: NotificationPayload): p is NotificationPayloadOngoing;
+/**
+ * Map a numeric engine_state code (from SystemState / wire) to a human-readable
+ * label. Falls back to 'UNKNOWN' if the code is not recognized.
+ */
+export declare function engineStateCodeToLabel(code: number | null | undefined): string;
 //# sourceMappingURL=types.d.ts.map

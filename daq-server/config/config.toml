@@ -64,6 +64,21 @@ connection_retry_attempts = 3
 connection_retry_delay_ms = 1000
 
 # =============================================================================
+# GUI stream downsampling (backend → browser SENSOR_UPDATE rate per stream)
+#   downsample_mode   = "envelope" | "throttle"
+#     envelope: each window broadcasts the min and max sample with their real
+#               timestamps, so short spikes survive downsampling.
+#     throttle: legacy behavior — first sample per 50 ms window, rest dropped.
+#               Flip to this to revert to pre-envelope behavior (no code change).
+#   points_per_second = broadcast budget per stream (envelope windows/sec = half this)
+# Applies only to high-rate DAQ streams (PT/TC/RTD/LC, actuator raw); event
+# streams (state, self-test, encoder, controller) always pass through untouched.
+# =============================================================================
+[gui]
+downsample_mode = "envelope"
+points_per_second = 20
+
+# =============================================================================
 # ADC voltage reference nominals (for sense conversions in UI)
 # Used when voltage_reference = 0 (internal) or 2 (5V absolute). Ref 1 = VDD ratiometric.
 # =============================================================================
