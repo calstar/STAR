@@ -35,7 +35,12 @@ function mapEntityToGroup(entity: string): BoardScanGroupId | null {
   return null;
 }
 
-function isPrimaryPhysicalStream(entity: string, component: string): boolean {
+/**
+ * True for the single canonical component of a physical channel sample (one match
+ * per sample row). Exported so server stats can count ingested samples 1:1 against
+ * the simulator's sent-sample ground truth in the integration test.
+ */
+export function isPrimaryPhysicalStream(entity: string, component: string): boolean {
   if (component === 'raw_adc_counts') {
     return /^PT\d+(_Cal)?\.CH|^TC\d+(_Cal)?\.CH|^LC\d+(_Cal)?\.CH|^ACT\d+(_Cal)?\.CH/.test(entity);
   }

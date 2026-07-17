@@ -34,7 +34,7 @@ import { readConfig } from './routes/config.js';
 import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } from './legacy/state-actuators.js';
 import type { StateActuatorMap } from './legacy/state-actuators.js';
 import { getStateTransitions } from './legacy/state-transitions.js';
-import { recordBoardScanIngest, getBoardScanRateHz } from './board-scan-rate.js';
+import { recordBoardScanIngest, getBoardScanRateHz, isPrimaryPhysicalStream } from './board-scan-rate.js';
 import { EnvelopeAccumulator, parseGuiStreamConfig, envelopeWindowMs, type GuiStreamConfig } from './gui-stream.js';
 import { HistoryCache } from './history-cache.js';
 import { startGuiStaticServer } from './static-gui.js';
@@ -494,6 +494,12 @@ setInterval(markStaleBoards, 1000);
 
 const stats = {
   relayEntityUpdatesReceived: 0,  // every finite-value entity parsed from Elodin DB
+  // Raw physical channel samples (non-_Cal, canonical component only): exactly one
+  // increment per per-channel per-chunk sample a board sent, so the integration test
+  // can compare this against the simulator's sent-sample ground truth for absolute
+  // end-to-end loss detection (UDP → bridge → Elodin DB → backend), independent of
+  // the GUI downsampler.
+  rawPrimarySamplesIngested: 0,
   sensorUpdatesBroadcast: 0,  // SENSOR_UPDATE messages actually sent (post-throttle)
   sequencerStatesReceived: 0,  // packets successfully streamed through Elodin DB verifying storage
   startTimeMs: Date.now(),
@@ -1034,6 +1040,10 @@ elodin.on('packet', (header: any, payload: Buffer) => {
 
       // Pre-downsample ingest rate (what boards/Elodin actually deliver) — not WS broadcast rate.
       recordBoardScanIngest(parsed.entity, parsed.component);
+      // _Cal excluded: calibration_service republications would double-count PT samples.
+      if (!parsed.entity.includes('_Cal') && isPrimaryPhysicalStream(parsed.entity, parsed.component)) {
+        stats.rawPrimarySamplesIngested++;
+      }
 
       // Sample time = Elodin field-0 timestamp (bridge receipt, epoch ms),
       // guarded against off-clock publishers.

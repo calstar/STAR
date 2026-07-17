@@ -930,10 +930,15 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     console.log(`  Extra entities (${extraEntities.length}): ${extraEntities.join(', ')}`);
   }
 
-  // ── Zero packet loss verification ──
-  // Each board sends ALL its active channels in one UDP packet. So every entity
-  // from the same board MUST have the exact same update count. If any entity has
-  // fewer updates than its board siblings, packets were dropped in the pipeline.
+  // ── Per-board channel starvation check ──
+  // Each board sends ALL its active channels in one UDP packet, so every channel
+  // of a board sees the same chunk timestamps and hence the same envelope windows.
+  // The envelope decimator emits 1 point per window for a flat channel and 2
+  // (min+max) for a varying one, so sibling channel counts legitimately differ by
+  // up to ~2x — equal counts is NOT an invariant here. What IS invariant: every
+  // channel must emit at least once per window, so each channel's count must be
+  // ≥ ~half the board's max. A channel far below that (or at zero) means genuine
+  // starvation/packet loss in the pipeline, which is what this check catches.
   const BOARD_GROUPS: Record<string, string[]> = {
     'pt_board (B1)': [
       'PT1.CH1', 'PT1.CH2', 'PT1.CH3', 'PT1.CH4', 'PT1.CH5',
@@ -961,38 +966,63 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     entityCounts[e] = (entityCounts[e] || 0) + 1;
   }
 
-  let totalDropped = 0;
+  // A channel emits 1-2 points per envelope window (see comment above); 0.45
+  // instead of 0.5 leaves slack for window-boundary edge effects at the start
+  // and end of the collection interval.
+  const MIN_SIBLING_RATIO = 0.45;
   for (const [boardName, boardEntities] of Object.entries(BOARD_GROUPS)) {
     const counts = boardEntities.map(e => entityCounts[e] || 0);
     const maxCount = Math.max(...counts);
     const minCount = Math.min(...counts);
 
-    const dropped = boardEntities.reduce((sum, e) => sum + (maxCount - (entityCounts[e] || 0)), 0);
-    const totalExpected = maxCount * boardEntities.length;
-    const totalReceived = totalExpected - dropped;
-    // maxCount === 0 means no data received at all — treat as 0% delivery, not 100%
-    const deliveryPct = totalExpected > 0 ? (totalReceived / totalExpected) * 100 : 0;
-    totalDropped += dropped;
-
-    // Per-channel delivery: allow minor timing jitter (≥95% delivery across channels).
-    // Exact parity (min===max) is unrealistic when the backend flushes on a timer.
-    const MIN_DELIVERY_PCT = 95;
-    const passed = maxCount > 0 && deliveryPct >= MIN_DELIVERY_PCT;
+    const floor = Math.max(
+      Math.floor(maxCount * MIN_SIBLING_RATIO),
+      MIN_FINITE_SAMPLES_PER_SENSOR_STREAM,
+    );
+    const starved = boardEntities.filter(e => (entityCounts[e] || 0) < floor);
+    const passed = maxCount > 0 && starved.length === 0;
     if (!passed || VERBOSE) {
-      console.log(`\n  ${boardName} (${maxCount} max updates per ch):`);
+      console.log(`\n  ${boardName} (max ${maxCount} updates per ch, floor ${floor}):`);
       for (const e of boardEntities) {
         const count = entityCounts[e] || 0;
-        const withinSpec = maxCount > 0 && count >= minCount;
-        const status = withinSpec ? '✅' : '❌';
+        const status = count >= floor ? '✅' : '❌';
         console.log(`    ${status} ${e}: ${count}/${maxCount}`);
       }
     }
     assert(passed,
       maxCount === 0
         ? `${boardName}: 0 updates received — board sent no data`
-        : dropped === 0
-          ? `${boardName}: 0 dropped — all ${boardEntities.length} channels received ${maxCount} updates each`
-          : `${boardName}: per-channel update counts differ (${deliveryPct.toFixed(1)}% delivery) — need ≥${MIN_DELIVERY_PCT}% (${minCount}-${maxCount}), ${dropped} short`);
+        : passed
+          ? `${boardName}: all ${boardEntities.length} channels healthy (${minCount}-${maxCount} updates, floor ${floor})`
+          : `${boardName}: ${starved.length} starved channel(s) below floor ${floor} (max sibling ${maxCount}): ${starved.map(e => `${e}=${entityCounts[e] || 0}`).join(', ')}`);
+  }
+
+  // ── Envelope downsampling verification ──
+  // Active only when the harness pins [gui] points_per_second (test_integration.sh
+  // sets INTEGRATION_GUI_PPS=4 in the generated config). The sim feeds PT/TC/RTD/LC
+  // at 10 Hz, so a working envelope must compress each stream to ≤ pps points/sec —
+  // the cap catches pass-through and duplicate-emission bugs — while still emitting
+  // min/max for every window — the floor catches a stalled/blackholing decimator.
+  // ACT entities are excluded (a second component, actuator_state, can share the
+  // entity and inflate its count); ENC is event-like passthrough by design.
+  const GUI_PPS = Number(process.env.INTEGRATION_GUI_PPS || 0);
+  if (GUI_PPS > 0) {
+    const windowSec = SENSOR_TIMEOUT_MS / 1000;
+    const cap = Math.ceil(GUI_PPS * windowSec * 1.25) + 2;  // +2: partial windows at collection edges
+    const floorPts = Math.floor((GUI_PPS / 2) * windowSec * 0.5);  // ≥ half the envelope windows
+    const eligible = Object.entries(BOARD_GROUPS)
+      .filter(([name]) => /^(pt|tc|rtd|lc)_/.test(name))
+      .flatMap(([, ents]) => ents);
+    const over = eligible.filter(e => (entityCounts[e] || 0) > cap);
+    const under = eligible.filter(e => (entityCounts[e] || 0) < floorPts);
+    assert(over.length === 0,
+      over.length === 0
+        ? `Envelope cap: all ${eligible.length} eligible channels ≤ ${cap} updates (${GUI_PPS} pts/s × ${windowSec}s)`
+        : `Envelope NOT downsampling — over cap ${cap} (${GUI_PPS} pts/s × ${windowSec}s): ${over.map(e => `${e}=${entityCounts[e]}`).join(', ')}`);
+    assert(under.length === 0,
+      under.length === 0
+        ? `Envelope liveness: all eligible channels ≥ ${floorPts} updates`
+        : `Envelope starving streams (below ${floorPts}): ${under.map(e => `${e}=${entityCounts[e] || 0}`).join(', ')}`);
   }
 
   if (VERBOSE) console.log(`  WS client: ${updates.length} SENSOR_UPDATE messages in window`);
@@ -1050,9 +1080,14 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     assert(received > 0, `Elodin → backend: data flowing (${received.toLocaleString()} updates)`);
     assert(received >= broadcast, `No phantom broadcasts (${broadcast.toLocaleString()} sent ≤ ${received.toLocaleString()} ingested)`);
 
+    // broadcast() is an unconditional ws.send() to every open client over loopback
+    // TCP — there is no drop path, so delivery should be ~100%. The only expected
+    // shortfall is edge skew: the /stats delta brackets the collection window, so
+    // messages in flight at either edge count as broadcast but not received. That
+    // is tens of ms of traffic per edge of a 5 s window — 3% slack covers it.
     const wsDeliveryNum = broadcast > 0 ? updates.length / broadcast : 0;
-    assert(wsDeliveryNum >= 0.85,
-      `Frontend received ${updates.length.toLocaleString()}/${broadcast.toLocaleString()} broadcasts (${(wsDeliveryNum * 100).toFixed(1)}% — need ≥85%)`);
+    assert(wsDeliveryNum >= 0.97,
+      `Frontend received ${updates.length.toLocaleString()}/${broadcast.toLocaleString()} broadcasts (${(wsDeliveryNum * 100).toFixed(1)}% — need ≥97%)`);
   } else if (IS_THIN) {
     console.log('  ℹ️  Backend stats unavailable — skipping relay→backend loss check');
   }

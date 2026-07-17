@@ -351,6 +351,18 @@ sedi "s/^port = 2240/port = $TEST_ELODIN_PORT/" "$TEST_CONFIG"
 sedi "s/^sensor_port = 5006/sensor_port = $TEST_DAQ_UDP_PORT/" "$TEST_CONFIG"
 # Replace actuator_cmd_port (under [network] section)
 sedi "s/^actuator_cmd_port = 5005/actuator_cmd_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+# Pin the GUI downsample config so the test's assertions are deterministic
+# regardless of the production [gui] toggle, and so envelope downsampling is
+# OBSERVABLE: the sim's eligible streams are only 10 Hz, and at the production
+# points_per_second = 20 (10 windows/s) the envelope sits at the pass-through
+# boundary — a broken decimator would be invisible. 4 pts/s (2 windows/s)
+# forces a real 10 Hz → ≤4/s compression, asserted in ws_data_flow_test.ts via
+# INTEGRATION_GUI_PPS. Set INTEGRATION_GUI_MODE=throttle to exercise the legacy
+# drop-throttle path instead (cap/floor asserts skip — throttle ignores
+# points_per_second and caps at a fixed ~20 Hz).
+INTEGRATION_GUI_MODE="${INTEGRATION_GUI_MODE:-envelope}"
+sedi "s/^downsample_mode = .*/downsample_mode = \"$INTEGRATION_GUI_MODE\"/" "$TEST_CONFIG"
+sedi 's/^points_per_second = .*/points_per_second = 4/' "$TEST_CONFIG"
 # Point heartbeat broadcast to localhost to avoid sending to the real subnet
 sedi 's/^broadcast_ip = .*/broadcast_ip = "127.0.0.1"/' "$TEST_CONFIG"
 # Align SERVER_HEARTBEAT UDP with the same port as udp_listener (actuator/control path in CI)
@@ -628,6 +640,11 @@ SEQ_FLAG=""; [ -n "$SEQ_SVC" ] && SEQ_FLAG="--has-sequencer"
 CTRL_FLAG=""; [ -n "$CONTROLLER_SVC" ] && CTRL_FLAG="--has-controller"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 export TEST_DAQ_UDP_PORT TEST_STARTUP_LISTEN_PORT BOARD_STARTUP_SIM="$REPO_ROOT/sim/board_startup_sim.py" PYTHON_BIN
+# Must match the points_per_second sed above — arms the envelope cap/floor asserts
+# (envelope mode only; throttle ignores points_per_second)
+if [ "$INTEGRATION_GUI_MODE" = "envelope" ]; then
+  export INTEGRATION_GUI_PPS=4
+fi
 export INTEGRATION_SKIP_STARTUP_E2E
 # Test 9 (SELF_TEST E2E): log every SELF_TEST.* SENSOR_UPDATE on the WS client
 [ "$VERBOSE" = "1" ] && export INTEGRATION_SELFTEST_DEBUG=1
@@ -646,7 +663,62 @@ WS_TEST_EXIT=$?
 # Send SIGTERM so the simulator writes its stats file before exiting.
 if [ -n "$SIM_PID" ] && kill -0 "$SIM_PID" 2>/dev/null; then
   kill "$SIM_PID" 2>/dev/null
-  sleep 1  # wait for stats file write
+  sleep 1  # wait for stats file write + in-flight samples to drain to the backend
+fi
+
+# ── Sample conservation: sim ground truth vs backend ingest ───────────────────
+# The simulator's stats file records exactly how many per-channel samples each
+# board sent over UDP. The backend's rawPrimarySamplesIngested counts the same
+# samples as they arrive from the Elodin DB stream, BEFORE the GUI downsampler
+# (one increment per raw physical sample, canonical component only, _Cal
+# republications excluded). Comparing the two detects absolute packet loss
+# anywhere in UDP → bridge → Elodin DB → backend. backend → browser delivery is
+# asserted separately inside ws_data_flow_test.ts (≥85% of WS broadcasts received).
+CONSERVATION_FAILED=0
+if [ "$BACKEND" = "thin" ] && [ -f "$SIM_STATS_FILE" ]; then
+  echo ""
+  echo "🔎 Sample conservation (sim sent vs backend ingested, pre-downsample)..."
+  if ! "$PYTHON_BIN" - "$SIM_STATS_FILE" "$TEST_BACKEND_API_PORT" <<'PYEOF'
+import json, sys, urllib.request
+
+MIN_PCT = 95.0  # slack for sim samples sent before backend subscribe / after final drain
+
+sim_stats_file, api_port = sys.argv[1], sys.argv[2]
+with open(sim_stats_file) as f:
+    sim = json.load(f)
+sent = sim.get("total_sensor_updates", 0)
+if sent <= 0:
+    print(f"  ❌ Simulator reported {sent} samples sent — sim never produced data")
+    sys.exit(1)
+
+try:
+    with urllib.request.urlopen(f"http://127.0.0.1:{api_port}/stats", timeout=5) as r:
+        backend = json.load(r)
+except Exception as e:
+    print(f"  ❌ Could not fetch backend /stats on port {api_port}: {e}")
+    sys.exit(1)
+
+ingested = backend.get("rawPrimarySamplesIngested")
+if ingested is None:
+    print("  ❌ Backend /stats has no rawPrimarySamplesIngested — stale backend build?")
+    sys.exit(1)
+
+pct = ingested / sent * 100.0
+per_board = ", ".join(
+    f"{name}={b['total_sensor_updates']}" for name, b in sorted(sim.get("boards", {}).items())
+)
+print(f"  Sim sent {sent} samples ({per_board})")
+print(f"  Backend ingested {ingested} raw primary samples ({pct:.1f}%)")
+if pct < MIN_PCT:
+    print(f"  ❌ Sample conservation FAILED: {pct:.1f}% < {MIN_PCT}% — samples lost in UDP → bridge → Elodin → backend")
+    sys.exit(1)
+print(f"  ✅ Sample conservation OK ({pct:.1f}% ≥ {MIN_PCT}%)")
+PYEOF
+  then
+    CONSERVATION_FAILED=1
+  fi
+elif [ "$BACKEND" = "thin" ]; then
+  echo "  ⚠️  Sim stats file missing — skipping sample conservation check"
 fi
 
 # Print full backend log tail if test failed
@@ -673,8 +745,10 @@ rm -f "$RECEIVED_STATS_FILE" 2>/dev/null || true
 
 FINAL_EXIT=0
 UDP_CHECK_FAILED=${UDP_CHECK_FAILED:-0}
+CONSERVATION_FAILED=${CONSERVATION_FAILED:-0}
 [ "$WS_TEST_EXIT" -ne 0 ] && FINAL_EXIT=1
 [ "$UDP_CHECK_FAILED" -ne 0 ] && FINAL_EXIT=1
+[ "$CONSERVATION_FAILED" -ne 0 ] && FINAL_EXIT=1
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
@@ -684,6 +758,7 @@ else
   echo "  ❌ INTEGRATION TEST FAILED"
   [ "$WS_TEST_EXIT" -ne 0 ] && echo "     WS test failed (exit code: $WS_TEST_EXIT)"
   [ "$UDP_CHECK_FAILED" -ne 0 ] && echo "     UDP test failed (0 or dropped packets)"
+  [ "$CONSERVATION_FAILED" -ne 0 ] && echo "     Sample conservation failed (samples lost before the GUI downsampler)"
 fi
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
