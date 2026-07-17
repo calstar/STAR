@@ -2,10 +2,13 @@
 
 A clean-room C11 port of the STAR EngineDesign hot path
 (`ChamberSolver.solve → nozzle → comprehensive_stability_analysis`), built **next
-to** the Python package. It links against **no** Python at runtime and is **not**
-wired into any production path (`runner.py`, Layer 1, routers, frontend are
-untouched). The goal, once integrated behind an opt-in flag, is a ≥10× single-core
-speedup on `evaluate + stability` with documented numerical parity.
+to** the Python package. It links against **no** Python at runtime. The chamber
+solve + per-eval stability physics are now **wired into the live path behind the
+opt-in `ED_USE_NATIVE=1` flag** (set automatically by the FastAPI backend), with
+automatic Python fallback; the Python physics remains the reference
+implementation. End-to-end `runner.evaluate()` is ~88× faster with documented
+numerical parity. The nozzle/thrust step and Layer-1 batching are the remaining
+work (Stage 4 onward).
 
 > **Status: Stages 1–3 complete and verified. The native chamber solve is wired
 > into production behind `ED_USE_NATIVE=1` with auto-build on startup.** The whole
@@ -163,57 +166,49 @@ ctest --test-dir build --output-on-failure      # root_find, cea_interp, feed_di
 python engine/native/python/bench_compare.py     # Python vs C (CEA today; combined path when implemented)
 ```
 
-## Production wiring (LIVE — chamber solve)
+## Production wiring (LIVE — one seam: the Layer-1 inner loop)
 
-The whole chamber solve is wired into the live hot path **today**, opt-in and safe:
+Native acceleration exists for **one purpose**: speeding up the Layer-1 optimizer's
+per-candidate evaluation. It is wired in at **exactly one place** and nowhere else.
 
-- **Enable:** the FastAPI backend (`backend/main.py`) sets `ED_USE_NATIVE=1` by
-  default at startup — before the Layer-1 `ProcessPoolExecutor` spawns, so worker
-  processes inherit it — and prebuilds the native lib once so workers don't race to
-  compile. So the **frontend optimizer uses the native path automatically.** Opt out
-  with `ED_USE_NATIVE=0`. For CLI/scripts not going through the backend, export
-  `ED_USE_NATIVE=1` yourself. Unset/`0` is pure Python, byte-for-byte unchanged.
-- **Config compatibility:** native engages only for **impinging** injectors with
-  **ablative-only** cooling (film/regen off) and the advanced efficiency model — the
-  ported path. Pintle/coaxial designs, or film/regen-coupled cooling, fall back to
-  Python (correct, but no speedup). If a frontend run isn't faster, check the
-  injector type and that `[native] kernel enabled` printed at backend startup.
-- **Dispatch points:**
-  - `engine/core/chamber_solver.py::solve()` calls `_native_chamber_pc()` →
-    `native_injector.chamber_solve()` → C `ed_chamber_solve` (whole residual loop +
-    Brent). On success the Python root-find is skipped and the existing
-    post-processing rebuilds the full diagnostics dict from the solved Pc, so the
-    nozzle/stability code downstream is unchanged.
-  - `engine/core/closure.py::flows()` still routes the injector branch natively for
-    any caller that uses `flows()` directly.
-  - Non-impinging injectors, film/regen-coupled cooling, or non-advanced efficiency
-    models fall back to Python automatically (`_can_handle_chamber`).
-- **CEA tables:** the live `CEACache` is dumped to a temp `.bin`, loaded into the
-  native lib once per process (so the C path uses exactly the runtime grid), and the
-  temp file is **deleted immediately after the load** — `ed_cea_load` `fread`s the
-  whole file into its own memory and closes it, so the file is dead weight the moment
-  it returns. (Earlier this leaked one ~1.8 MB `.bin` per worker process into
-  `$TMPDIR`; with a `ProcessPoolExecutor` over many optimizer runs that grew to
-  hundreds of GB.)
-- **Auto-build on startup:** importing `closure` with `ED_USE_NATIVE=1` kicks off a
-  **background** CMake build (`engine/native/python/autobuild.py::prewarm`) into an
-  arch-tagged dir; the first `flows()` call transparently waits for it. No manual
-  `cmake` step. Rebuilds only when sources change.
-- **Self-check + fallback:** the injector `flows()` path runs a one-time `mdot`
-  parity check (>0.1% disables native for the process). The chamber solve uses a
-  **per-call, non-latching guard**: every native `Pc` is validated against the Python
-  residual (one residual eval — ~0.15 ms vs the ~78 ms full Python solve, so the
-  native path is still **~200×**) with a tolerance *relative to* the solved
-  `mdot_total`. A geometry where native and Python disagree — rare, near-degenerate
-  CMA samples — falls back to Python **for that call only**; native stays enabled for
-  every other geometry. Only a genuine library failure (exception) disables native for
-  the process. This replaced an earlier *one-time latch* that disabled native for a
-  whole worker if its first sampled geometry happened to be one of those degenerate
-  cases (≈1 in 200), which is why long optimizer runs would silently drop back to
-  Python despite `ED_USE_NATIVE=1`.
-- **Layout-drift guard:** `ed_native.py` asserts `ctypes.sizeof(EdEngineState) ==
-  ed_sizeof_engine_state()` at load, so any `ed_state.h` change that isn't mirrored
-  fails loudly (→ fallback) instead of corrupting inputs.
+- **The single seam:** the Layer-1 inner loop
+  (`engine/optimizer/layers/layer1_static_optimization.py`) calls
+  `native_injector.evaluate()` per candidate — a single `ed_evaluate` C call (chamber
+  residual loop + Brent + nozzle) plus native-accelerated stability. On any
+  unsupported config or non-converged solve it returns `None` and the worker falls
+  back to the full Python `runner.evaluate()` for that candidate.
+- **The general path stays pure Python.** `runner.evaluate()`, `chamber_solver.solve`,
+  `closure.flows`, and `nozzle.py` have **no native branch** — they are the
+  authoritative implementation used by frontend solves, time-varying, flight, and
+  Layer-1 finalization. This is deliberate: native never spills past the one seam, so
+  the general path has no native/Python switch to reason about and nothing in Python
+  becomes barren.
+- **Enable / disable:** `ED_USE_NATIVE=1` (default) turns the seam on; `ED_USE_NATIVE=0`
+  makes Layer-1 run entirely in Python. The FastAPI backend (`backend/main.py`) and the
+  Layer-1 parent both `ensure_lib()` once before spawning the worker pool, so workers
+  load a ready library instead of racing to compile. The lib otherwise auto-builds
+  lazily on first use (`ed_native.load` → `autobuild.ensure_lib`); no manual `cmake`.
+- **Config compatibility:** the seam engages only for **impinging** injectors with
+  **ablative-only** cooling and the advanced efficiency model (`_can_handle_chamber`).
+  Pintle/coaxial or film/regen-coupled designs return `None` → full Python. This is
+  capability routing, not a safeguard: the C for those paths simply isn't written.
+- **Frozen nozzle (Phase 1a):** the inner-loop `ed_evaluate` nozzle omits the ~1%
+  shifting-equilibrium term, so its F/Isp are approximate. The winning design is always
+  re-evaluated at full Python fidelity (with shifting) at finalization, so the frozen
+  number never sets a reported value. Un-freezing it (porting
+  `reaction_chemistry.calculate_shifting_equilibrium_properties`) is the next port.
+- **CEA tables:** the live `CEACache` is dumped to a temp `.bin`, loaded into the native
+  lib once per process (so the C path uses exactly the runtime grid), and the temp file
+  is **deleted immediately after the load**.
+- **Parity:** there is **no runtime self-check**. Native↔Python parity is guaranteed by
+  the golden test suite (`engine/native/tests`, run in CI) and the load-time ABI assert
+  below; the seam simply trusts the native result, and a raise / non-finite `Pc` falls
+  back to Python for that call (no process-wide latch, no mutable trust flag).
+- **Layout-drift guard (the one structural safeguard):** `ed_native.py` asserts
+  `ctypes.sizeof(EdEngineState) == ed_sizeof_engine_state()` at load, so any
+  `ed_state.h` change that isn't mirrored fails loudly at import (→ native disabled for
+  the process) instead of corrupting inputs. This is an assertion on a real invariant,
+  not a trust flag — it can't be silently flipped on.
 
 ## Remaining integration (later stages)
 

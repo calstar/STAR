@@ -30,6 +30,9 @@ def comb_dict(eff):
         "tau_ref_T": float(eff.tau_ref_T), "n_pressure": float(eff.n_pressure),
         "has_tau_Tc_floor": int(getattr(eff, "tau_Tc_floor_K", None) is not None),
         "tau_Tc_floor": float(getattr(eff, "tau_Tc_floor_K", None) or 0.0),
+        "Em_peak": float(getattr(eff, "Em_peak", 0.96)),
+        "mixing_sigma": float(getattr(eff, "mixing_sigma", 1.5)),
+        "R_opt": float(getattr(eff, "R_opt", None) or 0.0),
     }
 
 
@@ -123,12 +126,14 @@ def main():
                     cea = cache.eval(MR, Pc, 101325.0, eps_default)
                     Tc, gamma, R, M = cea["Tc"], cea["gamma"], cea["R"], cea["M"]
                     cstar_ideal = cea["cstar_ideal"]
+                    momentum_ratio_R = diag.get("momentum_ratio_R")
+                    R_opt = solver._rupe_R_opt()
                     res = calculate_combustion_efficiency_advanced(
                         Lstar, Pc, Tc, cstar_ideal, gamma, R, MR, eff,
                         Ac, cg.A_throat, Dinj, mo + mf,
                         u_fuel=diag["u_F"], u_lox=diag["u_O"],
                         spray_diagnostics=diag,
-                        turbulence_intensity=diag.get("turbulence_intensity_mix", 0.08),
+                        momentum_ratio_R=momentum_ratio_R, R_opt=R_opt,
                         chamber_length=cg.length, fuel_props=solver._get_fuel_props(),
                     )
                     _, cooling_eff, eff_Tc = solver._evaluate_cooling_models(Pc, mo, mf, cea, diag)
@@ -146,12 +151,12 @@ def main():
                         "Dinj": Dinj, "chamber_length": float(cg.length),
                         "D32_O": float(diag.get("D32_O") or 0.0), "D32_F": float(diag.get("D32_F") or 0.0),
                         "u_O": float(diag["u_O"]), "u_F": float(diag["u_F"]),
-                        "turbulence_intensity": float(diag.get("turbulence_intensity_mix", 0.08)),
+                        "momentum_ratio_R": float(momentum_ratio_R), "R_opt": float(R_opt),
                         "Tc": Tc, "gamma": gamma, "R": R, "M": M, "cstar_ideal": cstar_ideal,
                         "fuel_latent_heat": L_eff, "fuel_T_star_cap": T_star_cap,
                         # expected
                         "eta_Lstar": res["eta_Lstar"], "eta_kinetics": res["eta_kinetics"],
-                        "eta_mixing": res["eta_mixing"], "eta_turbulence": res["eta_turbulence"],
+                        "eta_mixing": res["eta_mixing"],
                         "eta_total": res["eta_total"], "cooling_eff": float(cooling_eff),
                         "heat_removed": heat_removed, "eta_final": eta_final,
                         "cstar_actual": cstar_actual, "mdot_demand": mdot_demand,

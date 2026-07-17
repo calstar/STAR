@@ -81,40 +81,6 @@ def _vaporization_profile(inp: Dict[str, Any], Pc: float, n_pts: int = 40) -> Di
     }
 
 
-def _feed_pressure_traces(inp: Dict[str, Any], Pc: float, n_pts: int = 40,
-                          burn_time_s: float = 5.0) -> Dict[str, Any]:
-    """Viz #6: dome-reg setpoint band vs blowdown reference (Phys §6.2)."""
-    from engine.optimizer.feed_pressure_model import (
-        generate_blowdown_reference_curve,
-        generate_dome_regulated_pressure_curve,
-    )
-    P_set_pa = float(inp["streams"][0].Pc + inp["streams"][0].dP_feed)
-    P_set = P_set_pa / _PA_PER_PSI
-    ripple = float(inp["streams"][0].regulator.max_excursion_pa) / _PA_PER_PSI
-    if ripple <= 0:
-        ripple = 14.0
-    t_reg, P_reg = generate_dome_regulated_pressure_curve(
-        P_set_pa, burn_time_s=burn_time_s, n_points=n_pts,
-    )
-    t_bd, P_bd = generate_blowdown_reference_curve(
-        P_set_pa, burn_time_s=burn_time_s, n_points=n_pts,
-    )
-    regulated = [[float(ti), float(pi / _PA_PER_PSI)] for ti, pi in zip(t_reg, P_reg)]
-    blowdown = [[float(ti), float(pi / _PA_PER_PSI)] for ti, pi in zip(t_bd, P_bd)]
-    return {"P_set_psi": P_set, "ripple_psi": ripple, "regulated": regulated, "blowdown_ref": blowdown}
-
-
-def _water_hammer(inp: Dict[str, Any]) -> Dict[str, Any]:
-    """Viz #8 (separate): Joukowsky spike vs available feed dP. Valve transient, NOT combustion."""
-    s = inp["streams"][0]
-    rho = float(inp.get("rho_O", 1140.0))      # config-sourced (P2c)
-    K = float(inp.get("K_bulk_O", 1.5e9))      # fluids.oxidizer.bulk_modulus_pa (preset); T5 measures
-    a_liq = float(np.sqrt(K / rho))
-    v = float(s.mdot / (rho * s.feed_area)) if s.feed_area > 0 else 0.0
-    spike = rho * a_liq * v
-    return {"spike_psi": float(spike / _PA_PER_PSI), "available_dp_psi": float(s.dP_feed / _PA_PER_PSI)}
-
-
 def _sensitivity(inp: Dict[str, Any]) -> Dict[str, Any]:
     """n / chi sensitivity bands for the acoustic limiting-mode growth rate (cheap sweep)."""
     D_ch, L_ch, gas = inp["D_ch"], inp["L_ch"], inp["gas"]
@@ -153,6 +119,127 @@ def _radar(chug_margin: float, ac: Dict[str, Any], vap: Dict[str, Any],
     axes = ["chug", "1L", "1T", "vaporization"]
     values = [float(chug_margin), float(v1L), float(v1T), vap_complete]
     return {"axes": axes, "values": values, "threshold": [gate_threshold] * len(axes)}
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics — plain-language verdict + actionable levers (forward-mode panel §C)
+# ---------------------------------------------------------------------------
+
+_DRIVER_LABEL = {
+    "feed_inertance": "feed-line inertance",
+    "feed_resistance": "feed-line resistance",
+    "injector_stiffness": "injector stiffness (ΔP_inj)",
+    "regulator": "dome-regulator dynamics",
+    "unknown": "feed/injector coupling",
+}
+
+
+def _diagnostics(state: str, chug_margin: float, acoustic_margin: float, gate_threshold: float,
+                 limiting: Optional[str], chug_rich: Dict[str, Any], ac: Dict[str, Any],
+                 vap: Dict[str, Any]) -> Dict[str, Any]:
+    """Turn the rich quantities into a verdict, findings, and design actions tied to the
+    sensitivity sliders (η_inj, SMD, n, χ). Derived from the SAME numbers the cards render,
+    so the headline can never disagree with the charts."""
+    findings: List[Dict[str, str]] = []
+    actions: List[Dict[str, Optional[str]]] = []
+
+    # --- chug (low-frequency, feed-coupled) ---
+    chug_stable = chug_rich.get("stable", True)
+    chug_f = chug_rich.get("f_chug_hz")
+    driver = chug_rich.get("driver", "unknown")
+    driver_lbl = _DRIVER_LABEL.get(driver, driver)
+    if not chug_stable or chug_margin < gate_threshold:
+        txt = "Chug (low-frequency, feed-coupled) loop is "
+        txt += "growing" if not chug_stable else "near the stability boundary"
+        if chug_f is not None and np.isfinite(chug_f) and chug_f > 0:
+            txt += f" around {chug_f:.0f} Hz"
+        txt += f"; dominant driver is {driver_lbl} (margin {chug_margin:.2f})."
+        findings.append({"severity": "critical" if not chug_stable else "warn", "text": txt})
+        actions.append({
+            "text": "Stiffen the injector — raise ΔP_inj/Pc (η_inj).",
+            "rationale": "A stiffer injector decouples chamber-pressure oscillations from the feed, "
+                         "shrinking the chug loop gain.",
+            "lever": "η_inj",
+        })
+        actions.append({
+            "text": "Improve atomization — reduce SMD.",
+            "rationale": "Finer droplets shorten the vaporization lag τ, pushing the chug pole left.",
+            "lever": "SMD",
+        })
+
+    # --- acoustic (high-frequency chamber modes) ---
+    ac_modes = ac.get("modes", [])
+    lim_name = ac.get("limiting_mode")
+    lim = next((m for m in ac_modes if m.get("mode") == lim_name), ac_modes[0] if ac_modes else None)
+    if ac.get("any_unstable") or acoustic_margin < gate_threshold:
+        if lim is not None:
+            driven = lim.get("alpha", 0.0) > 0
+            txt = (f"Acoustic mode {lim.get('mode')} ({lim.get('f_hz', 0):.0f} Hz) is "
+                   f"{'driven' if driven else 'only lightly damped'} "
+                   f"(α={lim.get('alpha', 0):.0f} 1/s, margin {acoustic_margin:.2f}).")
+        else:
+            txt = f"Acoustic margin is low ({acoustic_margin:.2f})."
+        findings.append({"severity": "critical" if ac.get("any_unstable") else "warn", "text": txt})
+        actions.append({
+            "text": f"Add chamber acoustic damping (baffles / acoustic liner) tuned to "
+                    f"{lim_name or 'the limiting mode'}.",
+            "rationale": "Passive damping raises the nozzle/viscous/two-phase budget against the "
+                         "combustion driving term.",
+            "lever": None,
+        })
+        actions.append({
+            "text": "Soften the combustion response — lower the interaction index n (and check χ).",
+            "rationale": "A smaller n weakens the heat-release feedback that drives the mode (Rayleigh criterion).",
+            "lever": "n",
+        })
+
+    # --- vaporization completeness ---
+    if not vap.get("vaporized_in_chamber", True):
+        lvap, lch = vap.get("L_vap_m"), vap.get("L_ch_m")
+        ratio = (lvap / lch) if (lch and lvap is not None and np.isfinite(lvap) and lch > 0) else float("nan")
+        txt = "Droplets are not fully vaporized within the chamber"
+        if np.isfinite(ratio):
+            txt += f" (L_vap ≈ {ratio:.1f}× L_ch)"
+        txt += "; unburned propellant lengthens the combustion lag and roughens the burn."
+        findings.append({"severity": "warn", "text": txt})
+        actions.append({
+            "text": "Finer atomization (lower SMD) or a longer chamber (raise L*).",
+            "rationale": "A shorter vaporization length completes burning upstream of the nozzle.",
+            "lever": "SMD",
+        })
+
+    if not findings:
+        findings.append({"severity": "ok",
+                         "text": "No driven modes — chug, acoustic, and vaporization all clear the gate."})
+
+    if state == "stable":
+        headline = (f"Stable — every mode clears the gate "
+                    f"(min margin {min(chug_margin, acoustic_margin):.2f}). Still monitor on hot fire.")
+    elif state == "marginal":
+        headline = (f"Marginal — {limiting or 'a mode'} sits near the boundary. "
+                    "Instrument heavily and ramp up cautiously.")
+    else:
+        headline = (f"Unstable risk — {limiting or 'a mode'} is driven. "
+                    "Change the design before hot fire.")
+
+    fb = _fallbacks_used()
+    if fb:
+        names = ", ".join(str(f.get("name", "?")) for f in fb[:3])
+        more = "…" if len(fb) > 3 else ""
+        assumptions_note = (f"{len(fb)} physics input(s) fell back to recorded defaults "
+                            f"({names}{more}). Load a propellant preset for measured values.")
+    else:
+        assumptions_note = "Config fully specified the stability physics — no fallbacks used."
+
+    return {
+        "headline": headline,
+        "state": state,
+        "limiting_mode": limiting,
+        "driver": driver_lbl if limiting == "chug" else None,
+        "findings": findings,
+        "actions": actions,
+        "assumptions_note": assumptions_note,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -200,9 +287,6 @@ def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: fl
              for m in ac["modes"]]
 
     vap = _vaporization_profile(inp, Pc)
-    burn_t = float(getattr(getattr(config, "design_requirements", None), "target_burn_time", None) or 5.0)
-    feedp = _feed_pressure_traces(inp, Pc, burn_time_s=burn_t)
-    wh = _water_hammer(inp)
     sens = _sensitivity(inp)
     radar = _radar(chug_margin, ac, vap, gate_threshold)
 
@@ -211,10 +295,13 @@ def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: fl
                           and chug_rich.get("stable", True) and not ac["any_unstable"])
              else "marginal" if min_margin >= 0.95 else "unstable")
     limiting = "chug" if chug_margin <= acoustic_margin else ac.get("limiting_mode")
+    diag = _diagnostics(state, chug_margin, acoustic_margin, gate_threshold, limiting,
+                        chug_rich, ac, vap)
 
     return {
         "summary": {"state": state, "min_margin": min_margin,
                     "gate_margin_threshold": gate_threshold, "limiting_mode": limiting},
+        "diagnostics": diag,
         "chug": {
             "alpha": chug_rich.get("alpha"), "freq_hz": chug_rich.get("f_chug_hz"),
             "zeta": chug_rich.get("zeta"), "margin": chug_margin,
@@ -227,9 +314,7 @@ def build_rich_report(config, Pc: float, MR: float, mdot_total: float, cstar: fl
                      "any_unstable": ac["any_unstable"], "limiting_mode": ac["limiting_mode"]},
         "phase": phase,
         "vaporization": vap,
-        "feed_pressure": feedp,
         "radar": radar,
-        "water_hammer": wh,
         "assumptions": {
             "n": inp["n_interaction"], "chi_acoustic": inp["chi_acoustic"],
             "dP_reg_max_psi": float(streams[0].regulator.max_excursion_pa / _PA_PER_PSI),

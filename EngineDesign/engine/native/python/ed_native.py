@@ -65,6 +65,8 @@ class EdCombustionEff(C.Structure):
         ("T_star_fuel_cap_K", _d), ("A0_hydrocarbon", _d), ("Ea_hydrocarbon", _d),
         ("n_pre_hydrocarbon", _d),
         ("has_tau_Tc_floor", _u8), ("tau_Tc_floor", _d),
+        # Rupe momentum-ratio mixing model
+        ("Em_peak", _d), ("mixing_sigma", _d), ("R_opt", _d),
     ]
 
 

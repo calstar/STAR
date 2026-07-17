@@ -58,11 +58,22 @@ static double chamber_residual(double Pc, void *vctx) {
     if (ed_cooling_evaluate(st, Pc, mdot_O, mdot_F, cea.Tc, cea.gamma, cea.R, cea.M, &cool) != ED_OK)
         return NAN;
 
+    /* Rupe mixing optimum: honor an explicit R_opt override, else derive from the
+     * impinging-doublet angles (sqrt(sin(theta_F)/sin(theta_O))), 1.0 otherwise. */
+    double R_opt;
+    if (st->comb.R_opt > 0.0) {
+        R_opt = st->comb.R_opt;
+    } else {
+        const double sO = sin(st->injector.imp_O.impingement_angle * ED_PI / 180.0);
+        const double sF = sin(st->injector.imp_F.impingement_angle * ED_PI / 180.0);
+        R_opt = (sO > 0.0 && sF > 0.0) ? sqrt(sF / sO) : 1.0;
+    }
+
     EdEtaResult eta;
     if (ed_combustion_efficiency_advanced(
             &st->comb, Lstar, Pc, cea.Tc, cea.cstar_ideal, cea.gamma, cea.R, MR,
             Ac, g->A_throat, Dinj, mdot_supply, inj.u_F, inj.u_O,
-            inj.D32_O, inj.D32_F, inj.turbulence_intensity_mix,
+            inj.D32_O, inj.D32_F, inj.momentum_ratio_R, R_opt,
             st->fluid_F.latent_heat, st->comb.T_star_fuel_cap_K, &eta) != ED_OK)
         return NAN;
 

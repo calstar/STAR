@@ -1,59 +1,63 @@
 # Optimization Layers Structure
 
-This directory contains the modular layers of the full engine optimization pipeline, split from the monolithic `design_optimization_view.py` file.
+The modular layers of the full engine optimization pipeline live in
+`engine/optimizer/`. The orchestrator
+`run_full_engine_optimization_with_flight_sim()` (in `main_optimizer.py`) runs the
+layers in sequence. See `optimizer_readme.md` for the design-vector details and
+`layer_requirements.md` for the Layer 1 → Layer 2 hand-off contract.
 
 ## File Structure
 
 ```
-optimization_layers/
-├── __init__.py              # Package exports
-├── helpers.py               # Shared helper functions (pressure curves, variable conversion)
-├── layer0_pre_optimization.py  # Layer 0: Coupled geometry + pintle pre-optimization
-├── layer1_static_optimization.py  # Layer 1: Static optimization (geometry + pressure curves)
-├── layer2_pressure.py             # Layer 2: Pressure curve optimization
-├── layer3_thermal_protection.py  # Layer 3: Thermal protection optimization
-├── layer4_flight_simulation.py   # Layer 4: Flight simulation and validation
-└── display_functions.py          # Display and plotting functions for results
+engine/optimizer/
+├── __init__.py
+├── main_optimizer.py             # Orchestrator (run_full_engine_optimization_with_flight_sim)
+├── helpers.py                    # Pressure-curve + optimizer-vector conversion
+├── feed_pressure_model.py        # Feed-pressure modeling
+├── injector_dp_penalty.py        # Injector ΔP penalty terms
+├── copv_flight_helpers.py        # COPV / flight coupling helpers
+├── display_results.py            # Result formatting
+├── utils.py
+├── layers/
+│   ├── layer1_static_optimization.py   # Layer 1: static design (parallel CMA-ES)
+│   ├── layer2_pressure.py              # Layer 2: pressure-curve optimization
+│   ├── layer3_thermal_protection.py    # Layer 3: ablative/graphite sizing
+│   └── layer4_flight_simulation.py     # Layer 4: flight validation
+└── views/                        # UI view/result helpers (tabs.py, helpers.py)
 ```
 
 ## Layer Responsibilities
 
-### Layer 0: Pre-Optimization
-- **File**: `layer0_pre_optimization.py`
-- **Purpose**: Coupled pintle + chamber geometry optimization
-- **Function**: `run_layer0_pre_optimization()`
-
-### Layer 1: Static Optimization  
-- **File**: `layer1_static_optimization.py`
-- **Purpose**: Jointly optimize geometry + pressure curve parameters
-- **Function**: `create_layer1_objective()`, `validate_layer1_results()`
-- **Note**: This is where pressure curves are iterated over
+### Layer 1: Static Optimization
+- **File**: `layers/layer1_static_optimization.py`
+- **Purpose**: Jointly optimize chamber/nozzle geometry + initial tank pressures via
+  parallel CMA-ES, ranking candidates by a feasibility-gated objective (thrust / O-F
+  match, stability margins, injector ΔP).
+- **Entry**: `run_layer1_optimization()`. Supports `pintle` (10-var) and `impinging`
+  (13-var) design vectors.
 
 ### Layer 2: Pressure Curve Optimization
-- **File**: `layer2_pressure.py`
-- **Purpose**: Optimize fuel and oxidizer pressure curves for time series solver
-- **Function**: `run_layer2_pressure()`
+- **File**: `layers/layer2_pressure.py`
+- **Purpose**: Optimize the LOX/fuel tank-pressure decay curves over the burn for the
+  time-series solver. Initial pressures are fixed from Layer 1.
+- **Entry**: `run_layer2_pressure()` (with `run_layer2a_minimum_pressures()` for the
+  minimum-pressure sub-step).
 
 ### Layer 3: Thermal Protection
-- **File**: `layer3_thermal_protection.py`
-- **Purpose**: Final thermal protection sizing (ablative + graphite)
-- **Function**: `run_layer3_thermal_protection()`
+- **File**: `layers/layer3_thermal_protection.py`
+- **Purpose**: Final thermal protection sizing (ablative liner + graphite insert) sized
+  against the recession seen over the Layer 2 burn, with margin.
+- **Entry**: `run_layer3_thermal_protection()`
 
 ### Layer 4: Flight Simulation
-- **File**: `layer4_flight_simulation.py`
-- **Purpose**: Flight trajectory validation
-- **Function**: `run_layer4_flight_simulation()`
+- **File**: `layers/layer4_flight_simulation.py`
+- **Purpose**: RocketPy trajectory validation and optimal burn-time search for accepted
+  candidates.
+- **Entry**: `run_layer4_flight_simulation()`
 
 ## Helper Functions
 
-- **File**: `helpers.py`
-- Contains:
-  - `generate_segmented_pressure_curve()` - Generate pressure curves from segments
-  - `segments_from_optimizer_vars()` - Convert optimizer vars to segments
-  - `optimizer_vars_from_segments()` - Convert segments to optimizer vars
-
-## Display Functions
-
-- **File**: `display_functions.py`
-- Contains all plotting and visualization functions for optimization results
-
+`helpers.py`:
+- `generate_segmented_pressure_curve()` — build a pressure curve from segments
+- `segments_from_optimizer_vars()` — optimizer vector → pressure segments
+- `optimizer_vars_from_segments()` — pressure segments → optimizer vector

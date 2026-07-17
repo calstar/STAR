@@ -19,8 +19,7 @@ typedef struct {
     double eta_total;
     double eta_Lstar;
     double eta_kinetics;
-    double eta_mixing;
-    double eta_turbulence;
+    double eta_mixing;       /* Rupe momentum-ratio mixing efficiency */
     double Da;
     double tau_res;
     double tau_chem;
@@ -38,7 +37,7 @@ ed_status_t ed_combustion_efficiency_advanced(
     double Ac, double At, double Dinj, double m_dot_total,
     double u_fuel, double u_lox,
     double D32_O, double D32_F,
-    double turbulence_intensity,
+    double momentum_ratio_R, double R_opt,
     double fuel_latent_heat,
     double fuel_T_star_cap_K,
     EdEtaResult *out);

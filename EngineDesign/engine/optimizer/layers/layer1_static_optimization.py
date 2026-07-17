@@ -59,7 +59,28 @@ from engine.core.chamber_geometry import (
 )
 
 
-TOTAL_WALL_THICKNESS_M = 0.0254  # 1.0 inch total wall (0.5 inch per side: outer - inner diameter)
+TOTAL_WALL_THICKNESS_M = 0.0254  # fallback only: 1.0 inch total (0.5 in/side). See _layer1_total_wall_thickness_m.
+
+
+def _layer1_total_wall_thickness_m(config: Any) -> float:
+    """Total chamber-wall allowance (both sides) subtracted from OD to get the gas-side
+    inner diameter: ``2 x design_requirements.wall_thickness_per_side_m``.
+
+    This is a single explicit per-side wall thickness (metal + ablative liner combined),
+    initialized in the config (default 0.75 in/side) and OVERWRITTEN by Layer 3 with its
+    sized ablative thickness once the thermal-protection optimizer runs. Replaces the old
+    hardcoded 1-inch constant. Falls back to ``TOTAL_WALL_THICKNESS_M`` only if the field
+    is missing/invalid.
+    """
+    dr = getattr(config, "design_requirements", None)
+    per_side = getattr(dr, "wall_thickness_per_side_m", None) if dr is not None else None
+    try:
+        per_side = float(per_side)
+    except (TypeError, ValueError):
+        return TOTAL_WALL_THICKNESS_M
+    if np.isfinite(per_side) and per_side > 0.0:
+        return 2.0 * per_side
+    return TOTAL_WALL_THICKNESS_M
 
 # Default for ``requirements["min_stability_margin"]`` when unset. MUST stay identical in
 # ``run_layer1_optimization`` and ``_compute_objective_value`` — parallel CMA ranks candidates via
@@ -1115,7 +1136,7 @@ def create_layer1_apply_x_to_config(
             expansion_ratio=expansion_ratio,
             D_chamber_outer=D_chamber_outer,
             max_nozzle_exit=max_nozzle_exit,
-            wall_thickness_m=TOTAL_WALL_THICKNESS_M,
+            wall_thickness_m=_layer1_total_wall_thickness_m(base_config),
         )
 
         if inj_type == "impinging":
@@ -1539,7 +1560,27 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
     else:
         # Failed evaluation gets full penalty
         thrust_penalty_sq_term = 1.0
-    
+
+    # Optional chamber-pressure target. Pin Pc so the optimizer sizes the throat for thrust
+    # instead of pushing Pc higher. Inert unless target_chamber_pressure_psi is set.
+    # Uses an EXACT (L1) penalty: linear in |Pc - target|, NO deadband. Unlike a squared
+    # penalty (whose gradient vanishes at the target, so it parks "near"), a linear penalty
+    # keeps a constant pull to zero, so Pc lands ON the target (exact-penalty method). There
+    # are enough DOF (throat + both tank pressures) to hit thrust, MR and Pc simultaneously.
+    pc_penalty_term = 0.0
+    pc_target_pa = constants.get("layer1_target_Pc_pa")
+    if pc_target_pa and float(pc_target_pa) > 0:
+        Pc_actual = float(result.get("Pc", np.nan))
+        if np.isfinite(Pc_actual):
+            # Exact L1 outside a ±1% deadband. Inside ±1% the term is SILENT so the weaker
+            # quadratic thrust/O-F terms get the gradient back — a deadband-free L1 at 1e4
+            # dominates them near the solution and the optimizer sacrifices percent-level
+            # thrust error to polish fraction-of-a-percent Pc error.
+            _pc_rel = abs(Pc_actual - float(pc_target_pa)) / float(pc_target_pa)
+            pc_penalty_term = max(0.0, _pc_rel - 0.01)
+        else:
+            pc_penalty_term = 1.0
+
     _ins_q_raw = constants.get("layer1_exit_pressure_inside_quad_scale")
     exit_pressure_inside_quad_worker = (
         float(_ins_q_raw)
@@ -1645,6 +1686,7 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
     BASE_INFEAS = 1e6
     W_INFEAS = 1e5
     W_THRUST = float(constants.get("layer1_W_THRUST", 1e4))
+    W_PC = float(constants.get("layer1_W_PC", 0.0))  # 0 unless a Pc target is set
     W_OF = float(constants.get("layer1_W_OF", 1e4))
     w_of_low_mr = max(1.0, float(constants.get("layer1_W_OF_low_MR_scale", 1.0)))
     w_of_high_mr = max(1.0, float(constants.get("layer1_W_OF_high_MR_scale", 1.0)))
@@ -1820,6 +1862,7 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
                 of_sq *= w_of_high_mr
         obj = (
             W_THRUST * thrust_penalty_sq_term +
+            W_PC * pc_penalty_term +
             W_OF * of_sq +
             W_CF * cf_hinge +
             W_EXIT * exit_pressure_sq_term +
@@ -1840,6 +1883,19 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
 
     return float(obj)
 
+
+def _native_fast_eval_enabled() -> bool:
+    """Whether the Layer-1 inner loop uses the single-call native ed_evaluate.
+
+    On whenever the native kernel is enabled (the default). Set
+    ED_LAYER1_NATIVE_EVAL=0 to force the full Python+shifting path for the inner
+    loop (debugging / A-B parity) without disabling native elsewhere.
+    """
+    import os
+    if os.environ.get("ED_LAYER1_NATIVE_EVAL", "1") != "1":
+        return False
+    from engine.native.python import native_injector
+    return native_injector.native_enabled()
 
 
 def _eval_candidate(x_raw):
@@ -1870,13 +1926,26 @@ def _eval_candidate(x_raw):
         P_O_Pa = P_O_psi * 6894.76
         P_F_Pa = P_F_psi * 6894.76
         
-        # Evaluate using worker's runner (reused across calls)
-        result = _worker_runner.evaluate(
-            P_O_Pa, P_F_Pa,
-            P_ambient=_worker_constants['P_ambient'],
-            debug=False,
-            silent=True
-        )
+        # Evaluate using worker's runner (reused across calls).
+        # Inner-loop fast path: single native ed_evaluate call (chamber + frozen
+        # nozzle) + native-accelerated stability, ~4x faster per candidate. Falls
+        # back to the full Python+shifting path for unsupported configs (e.g.
+        # pintle) or any non-converged native solve. The winning design is always
+        # re-evaluated at full Python fidelity at finalization, so the frozen
+        # inner-loop nozzle never sets a reported number.
+        result = None
+        if _native_fast_eval_enabled():
+            from engine.native.python import native_injector as _ni
+            result = _ni.evaluate(
+                _worker_runner.config, _worker_runner.cea_cache,
+                P_O_Pa, P_F_Pa, _worker_constants['P_ambient'])
+        if result is None:
+            result = _worker_runner.evaluate(
+                P_O_Pa, P_F_Pa,
+                P_ambient=_worker_constants['P_ambient'],
+                debug=False,
+                silent=True
+            )
         
         # Compute objective value (pure function)
         obj_value = _compute_objective_value(result, x, _worker_requirements, _worker_constants)
@@ -2325,6 +2394,14 @@ def run_layer1_optimization(
     )
 
     max_chamber_od = requirements.get("max_chamber_outer_diameter", 0.15)
+    # Total OD->inner-diameter wall allowance from the explicit per-side config field
+    # (design_requirements.wall_thickness_per_side_m), not a hardcoded inch. Layer 3
+    # overwrites that field with its sized ablative thickness, so this tracks it on reruns.
+    wall_total_m = _layer1_total_wall_thickness_m(config_obj)
+    layer1_logger.info(
+        "Layer 1 wall allowance (OD - inner): %.2f mm total (%.2f mm/side) from "
+        "design_requirements.wall_thickness_per_side_m.", wall_total_m * 1e3, wall_total_m * 0.5e3,
+    )
     max_nozzle_exit = requirements.get("max_nozzle_exit_diameter", 0.101)
     thrust_tol = tolerances.get("thrust", 0.10)
     
@@ -2357,8 +2434,9 @@ def run_layer1_optimization(
     
     # Default max_iterations for robust convergence (10-DOF pintle / 13-DOF impinging geometry + pressures)
     # With popsize ~48: many evaluations per CMA iteration unless clamped for smoke tests.
-    # (max_iterations * popsize is the hybrid eval budget, so 150 -> ~7200 evals, the known-good run.)
-    max_iterations = 150
+    # Split across num_restarts as generations/restart; sized so each restart keeps ~50 generations
+    # while allowing enough restarts for genuine multi-start global exploration (see restart loop).
+    max_iterations = 200
     if layer1_max_iterations is not None:
         max_iterations = max(1, int(layer1_max_iterations))
 
@@ -2416,8 +2494,15 @@ def run_layer1_optimization(
     if hasattr(config_base, 'combustion') and hasattr(config_base.combustion, 'efficiency'):
         config_base.combustion.efficiency.use_turbulence_coupling = True
     
-    # Calculate initial A_throat guess
-    Pc_est_psi = 580.0
+    # Calculate initial A_throat guess. If the user set a chamber-pressure target, SIZE THE
+    # SEED THROAT FOR IT — F = Cf·Pc·At, so a throat seeded for the old hardcoded 580 psi is
+    # ~35-65% undersized when the target is 300-450 psi, and CMA starts in the wrong basin
+    # (low thrust at pinned Pc) it then has to climb out of.
+    _pc_tgt_seed = requirements.get("target_chamber_pressure_psi")
+    if _pc_tgt_seed is not None and float(_pc_tgt_seed) > 0:
+        Pc_est_psi = float(_pc_tgt_seed)
+    else:
+        Pc_est_psi = 580.0
     Pc_est = Pc_est_psi * psi_to_Pa
     Cf_est = 1.5
     A_throat_init = target_thrust / (Cf_est * Pc_est) if Pc_est > 0 else 0.001
@@ -2463,7 +2548,7 @@ def run_layer1_optimization(
         D_inner_bounds = impinging_chamber_inner_diameter_for_bounds(
             config_base,
             max_chamber_outer_diameter_m=max_chamber_od,
-            wall_thickness_m=TOTAL_WALL_THICKNESS_M,
+            wall_thickness_m=wall_total_m,
         )
         n_hi_int = impinging_n_elements_hi_int(D_inner_bounds)
         _nd_cap = requirements.get("layer1_impinging_n_doublets_max")
@@ -2662,7 +2747,7 @@ def run_layer1_optimization(
             A_throat_init = A_throat_in
             Lstar_init = Lstar_in
             eps_init = eps_in
-            outer_diameter_init = D_inner_in + TOTAL_WALL_THICKNESS_M
+            outer_diameter_init = D_inner_in + wall_total_m
 
             default_d_pintle = d_pintle_in
             default_h_gap = h_gap_in
@@ -2676,7 +2761,7 @@ def run_layer1_optimization(
             A_throat_init = A_throat_in
             Lstar_init = Lstar_in
             eps_init = eps_in
-            outer_diameter_init = D_inner_in + TOTAL_WALL_THICKNESS_M
+            outer_diameter_init = D_inner_in + wall_total_m
 
             default_n_doublets = int(n_doublets_in)
             default_d_jet_O = float(d_jet_O_in)
@@ -2911,10 +2996,35 @@ def run_layer1_optimization(
         )
     # =========================================================================
     
+    # When a chamber-pressure target is set, ANCHOR the tank-pressure search window to the
+    # target (the tank pressure needed to PRODUCE that Pc) rather than to the tank-pressure
+    # cap. The default window is [0.65,0.85]*cap, which fixes the achievable Pc near the cap
+    # and leaves a low Pc target sitting at the very edge — so the target penalty fights a
+    # search space that doesn't contain it. Tank ≈ Pc + injector ΔP (~20-45% of Pc) + feed,
+    # i.e. tank ≈ Pc*[1.12, 1.75]. Also re-seed x0 to the window centre (the clip below keeps
+    # it in range) so the search STARTS near the target Pc.
+    _pc_tgt_psi = requirements.get("target_chamber_pressure_psi")
+    if _pc_tgt_psi is not None and float(_pc_tgt_psi) > 0:
+        _pc_t = float(_pc_tgt_psi)
+        for _pidx, _cap in ((idx_P_O, max_lox_P_psi), (idx_P_F, max_fuel_P_psi)):
+            _lo = max(_pc_t * 1.12, 50.0)
+            _hi = min(_pc_t * 1.75, float(_cap))
+            if _hi <= _lo:
+                # Target needs more tank pressure than the cap allows → best effort near the cap.
+                _hi = float(_cap)
+                _lo = max(0.5 * _hi, min(_pc_t, _hi - 1.0))
+            bounds[_pidx] = (_lo, _hi)
+            x0[_pidx] = 0.5 * (_lo + _hi)
+        layer1_logger.info(
+            "Layer 1 tank-pressure window re-anchored to Pc target %.0f psi: tanks ∈ [%.0f, %.0f] psi "
+            "(was cap-relative). This is what lets Pc actually reach the target.",
+            _pc_t, bounds[idx_P_O][0], bounds[idx_P_O][1],
+        )
+
     # Clip to bounds
     for i, (lo, hi) in enumerate(bounds):
         x0[i] = np.clip(x0[i], lo, hi)
-    
+
     update_progress("Layer 1: Setup", 0.05, "Creating apply_x_to_config function...")
     apply_x_to_config = create_layer1_apply_x_to_config(bounds, max_chamber_od, max_nozzle_exit, l1_injector_type)
     
@@ -2922,8 +3032,10 @@ def run_layer1_optimization(
     lower_bounds = np.array([b[0] for b in bounds], dtype=float)
     upper_bounds = np.array([b[1] for b in bounds], dtype=float)
     span = np.maximum(upper_bounds - lower_bounds, 1e-9)
+    # Default to a fresh random seed each run so reruns explore the design space
+    # differently. Pin layer1_random_seed to an int only when reproducibility is wanted.
     _rs = requirements.get("layer1_random_seed")
-    layer1_seed_base = int(_rs) if _rs is not None else 42
+    layer1_seed_base = int(_rs) if _rs is not None else int(np.random.SeedSequence().entropy % (2**31))
     rng = np.random.default_rng(layer1_seed_base)
     layer1_logger.info(
         "Layer 1 RNG/CMA reproducibility: layer1_random_seed base=%s "
@@ -2977,6 +3089,18 @@ def run_layer1_optimization(
     _irm_hi = requirements.get("impinging_momentum_R_max")
     layer1_impinging_R_mom_lo = float(_irm_lo) if _irm_lo is not None else None
     layer1_impinging_R_mom_hi = float(_irm_hi) if _irm_hi is not None else None
+    # AIM band for the optimizer (penalty + interior objective gates): the middle 80% of the
+    # validation band. A zero-inside-deadband penalty lets CMA converge EPSILON OUTSIDE the
+    # band edge (gradient there is ~0, e.g. R=1.051 costs 0.03), which the hard validation
+    # gate then rejects by 0.001 — a fully converged run stamped INVALID. The penalty and the
+    # gate must never share an edge: the optimizer aims at the interior; final validation
+    # keeps the exact configured band and passes with real margin.
+    layer1_R_mom_aim_lo = layer1_R_mom_aim_hi = None
+    if layer1_impinging_R_mom_lo is not None and layer1_impinging_R_mom_hi is not None:
+        _r_half = 0.5 * (layer1_impinging_R_mom_hi - layer1_impinging_R_mom_lo)
+        _r_mid = 0.5 * (layer1_impinging_R_mom_hi + layer1_impinging_R_mom_lo)
+        layer1_R_mom_aim_lo = _r_mid - 0.8 * _r_half
+        layer1_R_mom_aim_hi = _r_mid + 0.8 * _r_half
     layer1_W_chamber_shape = _requirement_float(requirements, "W_CHAMBER_SHAPE", 2500.0)
     layer1_chamber_dt_ratio_min = _requirement_float(requirements, "layer1_chamber_dt_ratio_min", 2.2)
     layer1_chamber_dt_ratio_max = _requirement_float(requirements, "layer1_chamber_dt_ratio_max", 3.2)
@@ -3017,6 +3141,20 @@ def run_layer1_optimization(
         default_o=_LAYER1_DEFAULT_DP_O_BAND,
         default_f=_LAYER1_DEFAULT_DP_F_BAND,
     )
+
+    # Interior AIM bands for the ΔP/Pc PENALTY (workers + parent objective + diagnostics):
+    # middle 80% of the validation band, same rationale as the momentum-ratio aim band —
+    # a zero-inside-deadband penalty parks candidates ON the band edge (seen live:
+    # ΔP_F/Pc = 0.400 vs gate [0.200, 0.400] → converged run stamped INVALID). Final
+    # validation keeps the exact configured bands and now passes with real margin.
+    def _interior_band(band, frac: float = 0.8):
+        lo, hi = float(band[0]), float(band[1])
+        half = 0.5 * (hi - lo)
+        mid = 0.5 * (hi + lo)
+        return (mid - frac * half, mid + frac * half)
+
+    layer1_dp_o_aim = _interior_band(layer1_dp_o_band)
+    layer1_dp_f_aim = _interior_band(layer1_dp_f_band)
     _lio_sf_raw = requirements.get("injector_dp_ratio_O_soft_floor")
     layer1_dp_o_soft_floor: Optional[float] = (
         float(_lio_sf_raw)
@@ -3073,9 +3211,10 @@ def run_layer1_optimization(
         )
     if layer1_impinging_R_mom_lo is not None and layer1_impinging_R_mom_hi is not None:
         layer1_logger.info(
-            "Impinging momentum_ratio_R band (validation + soft objective): "
-            f"[{layer1_impinging_R_mom_lo:g}, {layer1_impinging_R_mom_hi:g}] "
-            f"(zero W_MOM penalty inside band, ratio hinge outside)"
+            "Impinging momentum_ratio_R: validation band "
+            f"[{layer1_impinging_R_mom_lo:g}, {layer1_impinging_R_mom_hi:g}], optimizer AIM band "
+            f"[{layer1_R_mom_aim_lo:g}, {layer1_R_mom_aim_hi:g}] "
+            f"(penalty pushes inside the aim band so validation passes with margin)"
         )
     if layer1_W_impinging_angle > 0.0 and layer1_impinging_angle_deg_lo is not None and layer1_impinging_angle_deg_hi is not None:
         layer1_logger.info(
@@ -3169,6 +3308,18 @@ def run_layer1_optimization(
             return 1
         return 0
     
+    # Optional chamber-pressure target for the PARENT objective. MUST mirror the workers'
+    # _compute_objective_value exactly: the parent closure scores warm-start, best-tracking
+    # and the L-BFGS-B refinement — if it lacks a term the workers have, refinement will
+    # happily walk the design off that target after CMA converged onto it (seen live:
+    # Pc target 350 → CMA hit it → L-BFGS-B drifted the final design to ~430).
+    _pc_target_pa_obj = None
+    _W_PC_obj = 0.0
+    _pc_t_req = requirements.get("target_chamber_pressure_psi")
+    if _pc_t_req is not None and float(_pc_t_req) > 0:
+        _pc_target_pa_obj = float(_pc_t_req) * 6894.757293168
+        _W_PC_obj = float(requirements.get("layer1_W_PC") or 1.0e4)
+
     # Define objective function
     def objective(x: np.ndarray) -> float:
         """Layer 1 objective function: optimize geometry + initial pressures.
@@ -3451,8 +3602,8 @@ def run_layer1_optimization(
                 ratio_f_obj,
                 layer1_W_DP,
                 layer1_W_DP_HIGH,
-                o_band=layer1_dp_o_band,
-                f_band=layer1_dp_f_band,
+                o_band=layer1_dp_o_aim,
+                f_band=layer1_dp_f_aim,
                 w_dp_o=layer1_W_DP_O,
                 w_dp_f=layer1_W_DP_F,
                 o_soft_floor=layer1_dp_o_soft_floor,
@@ -3645,8 +3796,8 @@ def run_layer1_optimization(
             if R_m is not None and np.isfinite(R_m) and float(R_m) > 0:
                 momentum_term = _impinging_momentum_hinge_squared(
                     R_m,
-                    r_band_lo=layer1_impinging_R_mom_lo,
-                    r_band_hi=layer1_impinging_R_mom_hi,
+                    r_band_lo=layer1_R_mom_aim_lo,
+                    r_band_hi=layer1_R_mom_aim_hi,
                 )
             if layer1_W_SMD > 0.0:
                 _mr_smd_main = float(MR_actual) if np.isfinite(MR_actual) and MR_actual > 0 else None
@@ -3731,7 +3882,17 @@ def run_layer1_optimization(
         gate_eps = _layer1_infeasibility_gate_eps(requirements)
         inf_residual = _layer1_inf_residual(infeasibility_score, requirements)
         raw_feasible_obj = float("nan")
-        
+
+        # Chamber-pressure target penalty — exact L1 outside a ±1% deadband, identical to the
+        # workers' _compute_objective_value (keep in lockstep or refinement diverges from CMA).
+        pc_penalty_term = 0.0
+        if _pc_target_pa_obj is not None:
+            if eval_success and np.isfinite(Pc_actual) and Pc_actual > 0:
+                _pc_rel = abs(float(Pc_actual) - _pc_target_pa_obj) / _pc_target_pa_obj
+                pc_penalty_term = max(0.0, _pc_rel - 0.01)
+            else:
+                pc_penalty_term = 1.0
+
         # Treat length violation as infeasibility (hard constraint)
         if length_violation:
             obj = BASE_INFEAS + W_INFEAS * length_term
@@ -3753,6 +3914,7 @@ def run_layer1_optimization(
                 + layer1_W_SMD * smd_term
                 + layer1_W_TANK_EQUAL * tank_equal_term
                 + layer1_W_IMP_GEOM * geom_fit_term
+                + _W_PC_obj * pc_penalty_term
             )
             raw_feasible_obj = float(obj)
 
@@ -3872,7 +4034,7 @@ def run_layer1_optimization(
         P_O_start_psi_hist = float(np.clip(x_clipped[idx_P_O], bounds[idx_P_O][0], bounds[idx_P_O][1]))
         P_F_start_psi_hist = float(np.clip(x_clipped[idx_P_F], bounds[idx_P_F][0], bounds[idx_P_F][1]))
         
-        D_inner_curr = D_outer_curr - TOTAL_WALL_THICKNESS_M
+        D_inner_curr = D_outer_curr - wall_total_m
         if D_inner_curr <= 0:
             D_inner_curr = max(D_outer_curr * 0.3, 0.01)
         
@@ -3967,6 +4129,7 @@ def run_layer1_optimization(
             "momentum_ratio_R": _finite_or_none(_R_hist),
             "raw_feasible_objective": _finite_or_none(raw_feasible_obj),
             "penalty_thrust": float(W_THRUST * thrust_penalty_sq_term),
+            "penalty_pc_target": float(_W_PC_obj * pc_penalty_term),
             "penalty_of": float(W_OF * of_sq),
             "penalty_cf": float(W_CF * cf_hinge),
             "penalty_exit": float(W_EXIT * exit_pressure_sq_term),
@@ -3989,22 +4152,22 @@ def run_layer1_optimization(
             "band_violation_dp_O_sq": float(
                 _impinging_momentum_hinge_squared(
                     ratio_o_obj,
-                    r_band_lo=float(layer1_dp_o_band[0]),
-                    r_band_hi=float(layer1_dp_o_band[1]),
+                    r_band_lo=float(layer1_dp_o_aim[0]),
+                    r_band_hi=float(layer1_dp_o_aim[1]),
                 )
             ) if ratio_o_obj is not None and np.isfinite(float(ratio_o_obj)) else None,
             "band_violation_dp_F_sq": float(
                 _impinging_momentum_hinge_squared(
                     ratio_f_obj,
-                    r_band_lo=float(layer1_dp_f_band[0]),
-                    r_band_hi=float(layer1_dp_f_band[1]),
+                    r_band_lo=float(layer1_dp_f_aim[0]),
+                    r_band_hi=float(layer1_dp_f_aim[1]),
                 )
             ) if ratio_f_obj is not None and np.isfinite(float(ratio_f_obj)) else None,
             "band_violation_momentum_R_sq": float(
                 _impinging_momentum_hinge_squared(
                     _R_hist,
-                    r_band_lo=layer1_impinging_R_mom_lo,
-                    r_band_hi=layer1_impinging_R_mom_hi,
+                    r_band_lo=layer1_R_mom_aim_lo,
+                    r_band_hi=layer1_R_mom_aim_hi,
                 )
             ) if (
                 has_impinging
@@ -4042,6 +4205,7 @@ def run_layer1_optimization(
             opt_state["best_objective_breakdown"] = {
                 "objective": float(obj),
                 "thrust_penalty": float(W_THRUST * thrust_penalty_sq_term),
+                "pc_target_penalty": float(_W_PC_obj * pc_penalty_term),
                 "of_penalty": float(W_OF * of_sq),
                 "cf_penalty": float(W_CF * cf_hinge),
                 "exit_pressure_penalty": float(W_EXIT * exit_pressure_sq_term),
@@ -4220,7 +4384,10 @@ def run_layer1_optimization(
     popsize = 48
     layer1_logger.info(f"Population size: {popsize}")
     
-    num_restarts = 3 if layer1_cma_restarts is None else max(1, int(layer1_cma_restarts))
+    # 4 restarts (with the alternating strategy: restarts 0,1,3 global-explore, 2 refines) gives
+    # three genuine global searches from diverse starts — more chances to escape a bad basin than
+    # the old 3 (which were 1 global + 2 local refinements). iter_budget keeps ~50 gens/restart.
+    num_restarts = 4 if layer1_cma_restarts is None else max(1, int(layer1_cma_restarts))
     if layer1_smoke and layer1_cma_restarts is None:
         num_restarts = 1
     layer1_logger.info(f"Using {num_restarts} CMA restart(s)")
@@ -4249,7 +4416,7 @@ def run_layer1_optimization(
         'P_ambient': target_P_exit,  # Ambient pressure (atmospheric)
         'max_lox_P_psi': max_lox_P_psi,
         'max_fuel_P_psi': max_fuel_P_psi,
-        'TOTAL_WALL_THICKNESS_M': TOTAL_WALL_THICKNESS_M,
+        'TOTAL_WALL_THICKNESS_M': wall_total_m,
         'max_nozzle_exit': max_nozzle_exit,
         'max_chamber_od': max_chamber_od,
         'injector_type': l1_injector_type,
@@ -4261,16 +4428,20 @@ def run_layer1_optimization(
         'W_DP_O': layer1_W_DP_O,
         'W_DP_F': layer1_W_DP_F,
         'W_DP_HIGH': layer1_W_DP_HIGH,
-        'injector_dp_ratio_O_min': layer1_dp_o_band[0],
-        'injector_dp_ratio_O_max': layer1_dp_o_band[1],
-        'injector_dp_ratio_F_min': layer1_dp_f_band[0],
-        'injector_dp_ratio_F_max': layer1_dp_f_band[1],
+        # Workers' ΔP/Pc PENALTY bands = interior AIM bands (validation uses the raw
+        # configured bands) — see the aim-band comment where these are derived.
+        'injector_dp_ratio_O_min': layer1_dp_o_aim[0],
+        'injector_dp_ratio_O_max': layer1_dp_o_aim[1],
+        'injector_dp_ratio_F_min': layer1_dp_f_aim[0],
+        'injector_dp_ratio_F_max': layer1_dp_f_aim[1],
         'W_geom_ao_af_momentum': layer1_W_geom_ao_af,
         'rho_oxidizer': float(config_base.fluids["oxidizer"].density),
         'rho_fuel': float(config_base.fluids["fuel"].density),
         'discharge_cd_inf_ratio': _layer1_discharge_cd_inf_ratio_from_config(config_base, l1_injector_type),
-        'impinging_momentum_R_min': layer1_impinging_R_mom_lo,
-        'impinging_momentum_R_max': layer1_impinging_R_mom_hi,
+        # Workers' hinge PENALTY band = the interior AIM band (final validation uses the raw
+        # configured band). Sharing an edge lets CMA park epsilon outside and fail validation.
+        'impinging_momentum_R_min': layer1_R_mom_aim_lo,
+        'impinging_momentum_R_max': layer1_R_mom_aim_hi,
         'layer1_momentum_log_deadband_rel': layer1_momentum_log_deadband_rel,
         'W_IMPINGING_ANGLE': layer1_W_impinging_angle,
         'W_IMPINGING_JET_ASYM': layer1_W_impinging_jet_asym,
@@ -4298,6 +4469,24 @@ def run_layer1_optimization(
         'layer1_of_validation_tol': layer1_of_validation_tol,
     }
 
+    # Optional chamber-pressure target (design_requirements.target_chamber_pressure_psi).
+    # Pc is emergent in a pressure-fed system, so this enters as a soft objective target,
+    # NOT a frozen x-pin: the optimizer moves tank pressure to land Pc here while the throat
+    # absorbs the thrust target. Only wired in (nonzero weight) when the user set a target.
+    _pc_target_psi = requirements.get("target_chamber_pressure_psi")
+    if _pc_target_psi is not None and float(_pc_target_psi) > 0:
+        constants_dict['layer1_target_Pc_pa'] = float(_pc_target_psi) * 6894.757293168
+        # Matches W_THRUST magnitude. The L1 (linear) shape is what pins Pc exactly: near a
+        # solution the squared thrust/OF terms have ~0 gradient, so the L1 Pc pull is
+        # essentially uncontested and drives Pc onto target without a huge (ill-conditioning) weight.
+        constants_dict['layer1_W_PC'] = float(requirements.get("layer1_W_PC") or 1.0e4)
+        layer1_logger.info(
+            "Layer 1 chamber-pressure target: %.0f psi (%.3f MPa), W_PC=%g (exact L1). Throat sizes "
+            "for thrust; tank pressure drives Pc to target.",
+            float(_pc_target_psi), constants_dict['layer1_target_Pc_pa'] / 1e6,
+            constants_dict['layer1_W_PC'],
+        )
+
     integer_dims = list(layer1_integer_dims)
     
     # DISPATCH: Check optimizer mode (smoke runs force pure CMA so max_iterations stays meaningful)
@@ -4311,6 +4500,19 @@ def run_layer1_optimization(
             "Layer 1 smoke: forcing pure CMA-ES (config optimizer.mode=%r ignored for hybrid).",
             optimizer_mode,
         )
+
+    # Native kernel is the Layer-1 inner-loop accelerator (single ed_evaluate call
+    # per candidate). Build it once here in the parent — before the worker pool is
+    # created — so workers load a ready library instead of racing to compile it.
+    # (Mirrors backend/main.py startup; replaces the old closure-import prewarm.)
+    # The build is otherwise lazy/idempotent, so this just front-loads it.
+    if os.environ.get("ED_USE_NATIVE", "1") != "0":
+        try:
+            from engine.native.python import autobuild as _ed_autobuild
+            _ed_autobuild.ensure_lib()
+        except Exception as e:  # never let a build hiccup block optimization
+            layer1_logger.warning(
+                "Native kernel pre-build failed (%s); Layer-1 falls back to Python evaluation.", e)
 
     # Create evaluator executor for candidate scoring.
     # On some macOS/sandboxed environments, ProcessPool creation can fail with
@@ -4488,20 +4690,27 @@ def run_layer1_optimization(
             for restart_idx in range(num_restarts):
                 restart_name = f"Restart {restart_idx + 1}/{num_restarts}" if num_restarts > 1 else "Main search"
                 
-                # IMPROVED: Multi-scale restart strategy
+                # Multi-start strategy. CRITICAL: odd restarts must RE-EXPLORE globally from a
+                # FRESH RANDOM point — not refine the incumbent — otherwise a bad first basin traps
+                # every restart at the same spot ("gives up, goes flat"). Even restarts (>0) polish
+                # the best basin found so far. So we alternate genuine global exploration with
+                # exploitation instead of doing three local refinements of one basin.
                 if restart_idx == 0:
-                    current_sigma_fraction = target_fraction_of_range # 25% (Global)
+                    current_sigma_fraction = target_fraction_of_range  # 25% (global, from warm start)
                     x_start = x0_refined
-                elif restart_idx == 1:
-                    current_sigma_fraction = 0.05 # 5% (Refined)
-                    perturbation = rng.standard_normal(len(best_x_global)) * (sigma0 * 0.1)
-                    x_start = best_x_global + perturbation
-                elif restart_idx == 2:
-                    current_sigma_fraction = 0.15 # 15% (Medium)
-                    perturbation = rng.standard_normal(len(best_x_global)) * (sigma0 * 0.3)
-                    x_start = best_x_global + perturbation
+                elif restart_idx % 2 == 1:
+                    # GLOBAL re-exploration: start from the incumbent best kicked by a WIDE
+                    # random perturbation (30% of each dim's span), with global sigma. A pure
+                    # uniform-random 13-D start is almost surely infeasible (observed: whole
+                    # restarts flatlining at the 1e6 infeasibility plateau) — anchoring at a
+                    # feasible incumbent keeps the restart searching real designs while the
+                    # big kick + 25% sigma still escapes the incumbent's basin.
+                    current_sigma_fraction = target_fraction_of_range  # 25% (global)
+                    x_start = best_x_global + rng.standard_normal(len(best_x_global)) * (0.3 * span)
+                    layer1_logger.info("  (global re-exploration: wide kick off incumbent best)")
                 else:
-                    current_sigma_fraction = 0.15 if restart_idx % 2 == 0 else 0.25
+                    # Exploit: refine around the best basin found so far.
+                    current_sigma_fraction = 0.15  # 15% (medium, local)
                     perturbation = rng.standard_normal(len(best_x_global)) * (sigma0 * 0.3)
                     x_start = best_x_global + perturbation
                 
@@ -5135,8 +5344,8 @@ def run_layer1_optimization(
                     layer1_W_MOM
                     * _impinging_momentum_hinge_squared(
                         _mr_promote,
-                        r_band_lo=layer1_impinging_R_mom_lo,
-                        r_band_hi=layer1_impinging_R_mom_hi,
+                        r_band_lo=layer1_R_mom_aim_lo,
+                        r_band_hi=layer1_R_mom_aim_hi,
                     )
                 )
             # Audit fields for UI (same definitions as impinging.flows momentum_ratio_R)
@@ -5198,8 +5407,8 @@ def run_layer1_optimization(
                 _rf_p,
                 layer1_W_DP,
                 layer1_W_DP_HIGH,
-                o_band=layer1_dp_o_band,
-                f_band=layer1_dp_f_band,
+                o_band=layer1_dp_o_aim,
+                f_band=layer1_dp_f_aim,
                 w_dp_o=layer1_W_DP_O,
                 w_dp_f=layer1_W_DP_F,
                 o_soft_floor=layer1_dp_o_soft_floor,

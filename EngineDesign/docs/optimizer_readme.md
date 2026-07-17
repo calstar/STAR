@@ -1,6 +1,6 @@
 ## Full Engine Optimizer UI
 
-The **Full Engine Optimizer UI** is an end‑to‑end design environment for a LOX/RP‑1 pintle engine.  
+The **Full Engine Optimizer UI** is an end‑to‑end design environment for LOX/RP‑1, LOX/CH₄, or LOX/Ethanol pintle and impinging engines.  
 It couples injector sizing, chamber/nozzle geometry, stability analysis, thermal protection, and (optionally) flight performance checks into a single multi‑layer optimization pipeline.
 
 ### Injector types (`injector.type`)
@@ -42,18 +42,25 @@ Mass flow and discharge use \( \dot{m} = C_d \, A_{\mathrm{geom}} \sqrt{2\rho\,\
 
 Spacing, jet packing, and face-fit constraints continue to use **geometric** areas only.
 
-This UI is implemented in `design_optimization_view.py` and built on:
-- `PintleEngineConfig` / `config_minimal.yaml` (and optionally any exported `optimized_engine.yaml`) for configuration
-- `PintleEngineRunner` for performance and stability evaluation
-- The `pintle_pipeline` optimizers (`comprehensive_optimizer`, `coupled_optimizer`, `chamber_optimizer`, etc.)
+The optimizer is orchestrated by `run_full_engine_optimization_with_flight_sim()` in
+`engine/optimizer/main_optimizer.py` and built on:
+- `PintleEngineConfig` (`engine.pipeline.config_schemas`) loaded from a YAML config —
+  e.g. `configs/default.yaml`, `configs/canonical/{pintle,impinging}.yaml`, or any
+  exported optimized config — for configuration
+- `PintleEngineRunner` (`engine/core/runner.py`) for performance and stability evaluation
+- The `engine.pipeline` optimizers (`comprehensive_optimizer`, `coupled_optimizer`,
+  `chamber_optimizer`, etc.) and the layered stages in `engine/optimizer/layers/`
 
 ---
 
 ## High‑Level Workflow
 
 1. **Load a base engine config**
-   - Start from `examples/pintle_engine/config_minimal.yaml` or any previously exported optimized configuration file.
-   - The YAML is parsed and validated into a `PintleEngineConfig` (see `pintle_pipeline.config_schemas`).
+   - Start from a canonical seed (`configs/canonical/pintle.yaml` or
+     `configs/canonical/impinging.yaml`), `configs/default.yaml`, or any previously
+     exported optimized configuration file.
+   - The YAML is parsed and validated into a `PintleEngineConfig` (see
+     `engine.pipeline.config_schemas`).
 
 2. **Specify design requirements / constraints in the UI**
    - **Targets**: design thrust, target burn time, optimal O/F ratio, optional Isp target.
@@ -63,9 +70,12 @@ This UI is implemented in `design_optimization_view.py` and built on:
    - **Analysis options**: enable/disable time‑varying analysis, set optimization iterations and tolerances.
 
 3. **Run the full engine optimizer**
-   - The UI calls `_run_full_engine_optimization_with_flight_sim` which:
+   - The UI calls `run_full_engine_optimization_with_flight_sim()` which:
      - Builds a **multi‑objective optimizer** over geometry + pressure‑curve + thermal‑protection variables.
-     - Evaluates designs through **three main optimization layers** (Layer 1: static, Layer 2: burn candidate, Layer 3: burn analysis), preceded by a coupled geometry pre-optimization (Layer 0).
+     - Evaluates designs through the **four optimization layers** in
+       `engine/optimizer/layers/` (Layer 1: static design via parallel CMA‑ES,
+       Layer 2: pressure curves, Layer 3: thermal protection, Layer 4: flight
+       validation). See `optimization_layers_readme.md` for the per-layer entry points.
      - Logs progress to a log file (default location: project root `full_engine_optimizer.log`) and surfaces it live in the UI.
 
 4. **Inspect results in the UI**
@@ -81,7 +91,16 @@ This UI is implemented in `design_optimization_view.py` and built on:
 
 ## Optimizer Structure and Layers
 
-### Layer 0 – Coupled Geometry + Pintle Pre‑Optimization
+> **Orientation:** the canonical, code-level layer breakdown is **Layer 1–4**, one
+> file each in `engine/optimizer/layers/` (static → pressure curves → thermal
+> protection → flight), documented in `optimization_layers_readme.md`. The
+> conceptual stages below predate that split: the "Layer 0" coupled geometry
+> pre-optimization runs as part of setup/seed generation, and the "burn candidate /
+> burn analysis" stages map onto today's Layer 2 (pressure curves) and Layer 3
+> (thermal protection). Treat the descriptions below as the *physics intent* of each
+> stage, not the current file layout.
+
+### Layer 0 – Coupled Geometry + Pintle Pre‑Optimization (conceptual / seed stage)
 
 Before the main iterative optimizer, `_run_full_engine_optimization` performs a **coupled pintle + chamber geometry optimization** (`CoupledPintleChamberOptimizer`):
 
@@ -215,7 +234,7 @@ Across the full pipeline, the optimizer manipulates several groups of variables 
 - **Chamber / nozzle geometry**
   - Throat area $A_\mathrm{throat}$, nozzle exit area / expansion ratio.
   - $L^*$ and derived chamber volume, length, and diameter (within hardware envelopes).
-  - Contraction geometry via the chamber geometry utilities in `chamber/chamber_geometry.py`.
+  - Contraction geometry via the chamber geometry utilities in `engine/core/chamber_geometry.py`.
 
 - **Injector geometry (pintle)**
   - Pintle tip diameter and fuel gap height.
@@ -275,7 +294,7 @@ All of these are folded into the **multi‑objective cost function** with carefu
 ## Using the UI in Practice
 
 - **Start simple**
-  - Load `config_minimal.yaml`.
+  - Load a canonical seed (`configs/canonical/pintle.yaml` or `impinging.yaml`).
   - Set realistic thrust, burn time, and tank pressure limits.
   - Start with moderate stability requirements and enable time‑varying analysis once basic designs converge.
 

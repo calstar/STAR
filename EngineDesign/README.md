@@ -1,6 +1,6 @@
 # Pintle Injector Liquid Rocket Engine Design Pipeline
 
-A comprehensive physics-based simulation and **multi-layer optimization pipeline** for liquid bipropellant rocket engines — **LOX/RP‑1** and **LOX/CH₄ (methalox)**, with **pintle** or **impinging** injectors. Takes tank pressures as input and solves for chamber pressure, mass flow rates, thrust, and all performance parameters, accelerated by a native C physics kernel.
+A comprehensive physics-based simulation and **multi-layer optimization pipeline** for liquid bipropellant rocket engines — **LOX/RP‑1 (kerolox)**, **LOX/CH₄ (methalox)**, and **LOX/Ethanol (ethalox)**, with **pintle** or **impinging** injectors. Takes tank pressures as input and solves for chamber pressure, mass flow rates, thrust, and all performance parameters, accelerated by a native C physics kernel.
 
 ## Overview
 
@@ -9,7 +9,7 @@ A comprehensive physics-based simulation and **multi-layer optimization pipeline
 **Key Capabilities:**
 - Full flow path simulation: tank → feed system → injector → combustion → nozzle → thrust
 - **Injector modes:** pintle (`injector.type: pintle`) or twin-jet **impinging** (`injector.type: impinging`); see `docs/optimizer_readme.md` (Injector types) and `configs/canonical/impinging.yaml`
-- **Propellants:** LOX/RP‑1 and **LOX/CH₄ (methalox)** via propellant presets; canonical seeds in `configs/canonical/`
+- **Propellants:** LOX/RP‑1 (`kerolox`), LOX/CH₄ (`methalox`), and LOX/Ethanol (`ethalox`) via propellant presets in `configs/propellants/`; select with `propellant_preset: <name>` in a config. Canonical seeds in `configs/canonical/` (`pintle.yaml` is LOX/Ethanol, `impinging.yaml` is LOX/CH₄)
 - **Native C physics kernel** (`engine/native/`): the chamber solve + stability hot path runs in C, making `evaluate()` ~**88× faster** with machine‑precision parity — see [Native physics kernel](#native-c-physics-kernel-performance)
 - Multi-layer optimization for complete engine design (geometry, pressure curves, thermal protection)
 - Time-varying analysis with ablative recession tracking
@@ -20,24 +20,30 @@ A comprehensive physics-based simulation and **multi-layer optimization pipeline
 
 The evaluation hot path — chamber‑pressure solve (injector → CEA → combustion
 efficiency → ablative cooling → Brent root‑find) plus the chug/acoustic stability
-sweep — is implemented as a standalone **C11 library under `engine/native/`** and
-wired into the live path. It is an **opt‑in accelerator with automatic Python
-fallback**, not a rewrite: the Python physics remains the reference implementation
-and is used whenever native is disabled or a config isn't covered.
+sweep — is implemented as a standalone **C11 library under `engine/native/`**. It
+exists for one purpose: making the **Layer‑1 optimizer's per‑candidate evaluation**
+fast. It is wired in at **exactly one seam** — the Layer‑1 inner loop calls
+`native_injector.evaluate()` (a single `ed_evaluate` C call) per candidate.
+Everything else — `runner.evaluate()`, `chamber_solver`, `closure`, `nozzle.py` —
+stays **pure Python and authoritative**, so native never spills into the general
+path and the Python reference implementation is never hollowed out.
 
-- **Enable:** the FastAPI backend sets `ED_USE_NATIVE=1` automatically at startup
-  (and prebuilds the library), so the **frontend optimizer uses it out of the box**.
-  For CLI/scripts, `export ED_USE_NATIVE=1`. Set `ED_USE_NATIVE=0` for pure Python.
-- **Auto‑build:** on first use the library is compiled with CMake into an
-  arch‑tagged directory — no manual build step. Requires a C compiler + CMake.
-- **Parity & safety:** a one‑time self‑check compares the native result against
-  Python and falls back on any mismatch. Measured agreement: chamber Pc ~5e‑10,
-  CEA/stability ~1e‑16. A full `runner.evaluate()` matches Python to ~5e‑10.
-- **Speed:** chamber solve ~400× faster; full `evaluate()` ~88× (≈68 ms → ≈0.8 ms),
-  which is what makes the 15000‑eval Layer‑1 optimizer runs finish in seconds.
-- **Coverage today:** impinging injector + ablative cooling + advanced efficiency.
-  Pintle/coaxial, film/regen‑coupled cooling, and the nozzle/thrust step still run
-  in Python (the native path falls back automatically for those).
+- **Enable:** `ED_USE_NATIVE=1` (default) turns the Layer‑1 seam on; `ED_USE_NATIVE=0`
+  runs Layer‑1 entirely in Python. The FastAPI backend and the Layer‑1 parent each
+  build the library once before spawning workers; it otherwise auto‑builds lazily on
+  first use (CMake, arch‑tagged dir — requires a C compiler + CMake).
+- **Parity & safety:** native↔Python parity is guaranteed by the golden test suite
+  and a load‑time ABI assert — **not** a runtime self‑check. The seam engages only for
+  configs native can handle (impinging + ablative + advanced efficiency) and returns
+  `None` → Python otherwise. Measured agreement: chamber Pc ~5e‑10, CEA/stability
+  ~1e‑16; the general pure‑Python `runner.evaluate()` is unchanged bit‑for‑bit.
+- **Speed:** the native seam is ~4× faster per Layer‑1 candidate (single C call +
+  native stability vs. the full Python evaluate), which is what lets the 15000‑eval
+  Layer‑1 runs finish in seconds.
+- **Coverage today:** impinging injector + ablative cooling + advanced efficiency, with
+  a **frozen nozzle** (omits the ~1% shifting‑equilibrium term; the Layer‑1 winner is
+  re‑evaluated at full Python fidelity at finalization). Pintle/coaxial and
+  film/regen‑coupled cooling are not ported — those candidates evaluate in Python.
 
 See `engine/native/README.md` for build details, the staged port plan, and the
 parity/benchmark methodology.
@@ -136,36 +142,62 @@ engine/optimizer/main_optimizer.py
 EngineDesign/
 ├── engine/                      # Main engine package
 │   ├── core/                    # Core physics models
-│   │   ├── runner.py            # Main pipeline orchestrator
-│   │   ├── chamber_solver.py    # Pc solver (supply = demand)
+│   │   ├── runner.py            # Main pipeline orchestrator (PintleEngineRunner)
+│   │   ├── chamber_solver.py    # Pc solver (supply = demand) — pure Python, authoritative
+│   │   ├── closure.py           # Injector flow closure — pure Python
+│   │   ├── dispatch.py          # Injector-model dispatch
 │   │   ├── chamber_geometry.py  # Chamber sizing calculations
-│   │   ├── nozzle.py            # Thrust calculation
+│   │   ├── chamber_profiles.py  # Chamber contour profiles
+│   │   ├── nozzle.py            # Thrust / Isp / exit conditions
+│   │   ├── nozzle_solver.py     # Nozzle expansion + Mach solve
+│   │   ├── mach_solver.py       # Area-Mach relations
 │   │   ├── spray.py             # Spray physics (J, SMD, Weber)
 │   │   ├── discharge.py         # Dynamic Cd model
 │   │   ├── geometry.py          # Injector geometry
-│   │   └── injectors/           # Injector type implementations
+│   │   ├── dxf_export.py        # DXF geometry export
+│   │   └── injectors/           # Injector models: pintle, impinging, coaxial
 │   │
 │   ├── pipeline/                # Pipeline infrastructure
-│   │   ├── config_schemas.py    # Pydantic validation
-│   │   ├── cea_cache.py         # CEA thermochemistry caching
-│   │   ├── io.py                # Config loading/saving
-│   │   ├── time_varying_solver.py
+│   │   ├── config_schemas.py    # Pydantic validation (PintleEngineConfig)
+│   │   ├── cea_cache.py         # CEA thermochemistry caching (3D .npz tables)
+│   │   ├── io.py                # Config loading/saving + propellant presets
+│   │   ├── constants.py         # Physical constants
+│   │   ├── combustion_physics.py # Advanced combustion efficiency model
+│   │   ├── reaction_chemistry.py # Shifting-equilibrium / progress chemistry
+│   │   ├── feed_loss.py         # Feed-system pressure losses
+│   │   ├── time_varying_solver.py # Transient burn solver
+│   │   ├── flight_altitude_optimizer.py # Optimal burn-time search
 │   │   ├── thermal/             # Thermal protection models
-│   │   │   ├── ablative_cooling.py
-│   │   │   ├── graphite_cooling.py
+│   │   │   ├── ablative_cooling.py / ablative_geometry.py / ablative_sizing.py
+│   │   │   ├── graphite_cooling.py / graphite_geometry.py
+│   │   │   ├── film_cooling.py
 │   │   │   └── regen_cooling.py
 │   │   └── stability/           # Stability analysis
-│   │       ├── analysis.py
-│   │       └── coupling.py
+│   │       ├── analysis.py      # Top-level stability orchestration
+│   │       ├── chug.py          # Chug margin (complex-impedance Nyquist sweep)
+│   │       ├── acoustic.py      # 1L/1T acoustic growth rates
+│   │       ├── core.py / enhanced.py
+│   │       └── report.py        # Rich stability payload for frontend
+│   │
+│   ├── native/                  # Native C11 physics kernel (opt-in accelerator)
+│   │   ├── include/ src/        # C sources (ed_chamber, ed_cea, ed_stability, …)
+│   │   ├── python/              # ctypes shim + autobuild (native_injector.py, autobuild.py)
+│   │   ├── tests/ golden/       # C parity tests + golden vectors
+│   │   ├── tools/               # Golden/oracle exporters + parity checkers
+│   │   ├── CMakeLists.txt
+│   │   └── README.md            # Build, parity, and staged-port details
 │   │
 │   ├── optimizer/               # Optimization layers
-│   │   ├── main_optimizer.py    # Main orchestrator
+│   │   ├── main_optimizer.py    # Orchestrator: run_full_engine_optimization_with_flight_sim
+│   │   ├── helpers.py           # Pressure-curve / optimizer-vector conversion
+│   │   ├── feed_pressure_model.py
+│   │   ├── injector_dp_penalty.py
 │   │   ├── layers/              # Individual layer implementations
-│   │   │   ├── layer1_static_optimization.py
+│   │   │   ├── layer1_static_optimization.py  # Parallel CMA-ES static design
 │   │   │   ├── layer2_pressure.py
 │   │   │   ├── layer3_thermal_protection.py
 │   │   │   └── layer4_flight_simulation.py
-│   │   └── views/               # UI components for optimizer
+│   │   └── views/               # Optimizer view/result helpers
 │   │
 │   └── control/                 # Control system
 │       └── robust_ddp/          # Robust DDP controller
@@ -175,9 +207,9 @@ EngineDesign/
 │           └── constraints.py   # Safety constraints
 │
 ├── backend/                     # FastAPI backend
-│   ├── main.py                  # FastAPI application entry point
+│   ├── main.py                  # FastAPI entry point; sets ED_USE_NATIVE=1 at startup
 │   ├── state.py                 # Application state management
-│   └── routers/                  # API route handlers
+│   └── routers/                 # API route handlers
 │       ├── config.py            # Configuration endpoints
 │       ├── evaluate.py          # Engine evaluation endpoints
 │       ├── timeseries.py        # Time-series analysis endpoints
@@ -187,35 +219,38 @@ EngineDesign/
 │       └── control.py           # Control system endpoints
 │
 ├── frontend/                    # React + Vite frontend
-│   ├── src/                     # React source code
+│   ├── src/                     # React source code (components, api, lib, utils)
 │   ├── package.json             # Node.js dependencies
 │   └── vite.config.ts           # Vite configuration
 │
 ├── copv/                        # COPV pressure calculations
-│   ├── copv_solve.py
+│   ├── copv_solve.py / copv_solve_both.py
 │   ├── blowdown_solver.py       # Coupled blowdown simulation
 │   └── n2_Z_lookup.csv
 │
 ├── configs/                     # Configuration files
-│   └── default.yaml             # Base engine configuration
+│   ├── default.yaml             # Base engine configuration
+│   ├── canonical/               # Canonical seeds: pintle.yaml (ethalox), impinging.yaml (methalox)
+│   └── propellants/             # Propellant presets: kerolox / methalox / ethalox
 │
-├── output/                      # Generated files (gitignored)
+├── output/                      # Generated files (mostly gitignored)
 │   ├── logs/                    # Optimization logs
 │   ├── plots/                   # Generated plots
-│   └── cache/                   # CEA cache files
+│   └── cache/                   # CEA cache tables — *.npz are COMMITTED (not ignored)
 │
 ├── docs/                        # Documentation
 │   ├── pipeline_status.md       # Implementation status
-│   ├── quick_reference.md      # Quick reference guide
+│   ├── quick_reference.md       # Quick reference guide
 │   ├── layer_requirements.md    # Layer interface requirements
-│   ├── optimizer_readme.md      # Optimizer documentation
+│   ├── optimizer_readme.md      # Optimizer architecture and usage
 │   ├── optimization_layers_readme.md
+│   ├── stability/               # Combustion stability physics notes
 │   └── control/                 # Control system documentation
 │       ├── README.md
 │       ├── DDP_SOLVER.md
 │       └── CONTROLLER_SUMMARY.md
 │
-├── scripts/                     # Utility scripts
+├── scripts/                     # Utility / analysis scripts
 │   ├── simple_example.py
 │   ├── run_full_pipeline.py
 │   └── pressure_sweep.py
@@ -223,7 +258,7 @@ EngineDesign/
 ├── tests/                       # Test suite
 │   └── control/                 # Control system tests
 │
-├── dev.sh                       # Development startup script
+├── dev.sh                       # Development startup script (backend + frontend)
 ├── README.md
 ├── QUICKSTART.md                # Quick start guide
 ├── STARTUP_GUIDE.md             # Detailed startup instructions
@@ -334,9 +369,17 @@ python scripts/pressure_sweep.py
 
 ## Configuration
 
-Engine parameters are defined in YAML. Key sections of `configs/default.yaml`:
+Engine parameters are defined in YAML. The fastest way to pick a propellant
+combination is a preset — add `propellant_preset: methalox` (or `kerolox` /
+`ethalox`) at the top of a config and it fills in fluids + CEA identity from
+`configs/propellants/`. Explicit `fluids`/`combustion` fields that contradict the
+preset's propellant identity are hard-failed at load (see `engine/pipeline/io.py`).
+
+Key sections of `configs/default.yaml`:
 
 ```yaml
+propellant_preset: kerolox      # optional: kerolox | methalox | ethalox
+
 fluids:
   oxidizer: { name: LOX, density: 1140.0, ... }
   fuel: { name: RP-1, density: 780.0, ... }

@@ -20,8 +20,43 @@ _PHI = {"none": 0, "sqrtP": 1, "logP": 2}
 _INJ = {"pintle": 0, "impinging": 1, "coaxial": 2}
 
 
+_NATIVE_LIB_OK = None
+
+# ed_combustion_physics.c implements the Rupe mixing model (eta_turbulence retired) at
+# bit-parity with Python (verified 2026-06-28, worst reldiff 5e-16 across 600-900 psi),
+# so the native fast path is on by default.
+
+
+def native_enabled() -> bool:
+    """Single source of truth for whether the native kernel is used at runtime.
+
+    ON by default; ``ED_USE_NATIVE=0`` forces it OFF (debugging / parity escape
+    hatch), and a library that cannot be built or loaded also disables it
+    (graceful fallback to Python — never a hard failure).
+
+    The ``ED_USE_NATIVE`` env var is re-read every call so the escape hatch works
+    even after the lib has loaded (tests pin it at runtime). Only the expensive
+    library-load probe is cached.
+
+    This decides *whether native is wired in at all*. Per-config capability is a
+    SEPARATE decision made by ``_can_handle*`` — pintle and other unsupported
+    configs always fall back to the Python path regardless of this flag.
+    """
+    if os.environ.get("ED_USE_NATIVE", "1") == "0":
+        return False
+    global _NATIVE_LIB_OK
+    if _NATIVE_LIB_OK is None:
+        try:
+            _nat()  # build/load the library once; cache the instance
+            _NATIVE_LIB_OK = True
+        except Exception:
+            _NATIVE_LIB_OK = False
+    return _NATIVE_LIB_OK
+
+
 def available() -> bool:
-    return os.environ.get("ED_USE_NATIVE", "0") == "1"
+    """Backwards-compatible alias for :func:`native_enabled`."""
+    return native_enabled()
 
 
 def _nat():
@@ -82,6 +117,11 @@ def _fill_comb(dst, eff):
     floor = getattr(eff, "tau_Tc_floor_K", None)
     dst.has_tau_Tc_floor = int(floor is not None)
     dst.tau_Tc_floor = float(floor or 0.0)
+    # Rupe momentum-ratio mixing model (R_opt<=0 => derive from impingement angles in C)
+    dst.Em_peak = float(getattr(eff, "Em_peak", 0.96))
+    dst.mixing_sigma = float(getattr(eff, "mixing_sigma", 1.5))
+    _ropt = getattr(eff, "R_opt", None)
+    dst.R_opt = float(_ropt) if _ropt is not None else 0.0
 
 
 def _fill_cooling(dst, cfg):
@@ -246,7 +286,9 @@ def solve(config, P_tank_O, P_tank_F, Pc):
 
 
 # --- chamber solve (Stage 3): whole residual loop in C ---------------------
-_CEA_LOADED = {}
+# Token of the CEACache whose tables are currently resident in the native lib's
+# single buffer (None = none loaded). See _ensure_cea for why this is not id()-keyed.
+_CEA_RESIDENT_TOKEN = None
 
 
 def _can_handle_chamber(config) -> bool:
@@ -264,11 +306,25 @@ def _can_handle_chamber(config) -> bool:
 
 
 def _ensure_cea(cache) -> bool:
-    """Dump the live CEACache to a temp .bin and load it into the native lib once
-    per cache object. Returns False if the cache isn't a supported 3D grid."""
+    """Load the live CEACache into the native lib's (single) resident tables buffer.
+
+    The native library holds ONE table set at a time, so we reload whenever the
+    requested cache differs from the one currently resident. Identity is tracked by
+    a token stored ON the cache object — immune to id() reuse after GC. The old
+    id(cache)-keyed flag silently served a previously-loaded config's tables when a
+    freed cache's id was reused (multi-config processes: tests, GUI config switches).
+    Returns False if the cache isn't a supported 3D grid.
+    """
+    global _CEA_RESIDENT_TOKEN
     nat = _nat()
-    key = id(cache)
-    if _CEA_LOADED.get(key):
+    token = getattr(cache, "_ed_native_token", None)
+    if token is None:
+        token = object()  # unique sentinel; lives and dies with this cache
+        try:
+            cache._ed_native_token = token
+        except Exception:
+            token = None  # cache rejects attributes -> always reload (safe, slower)
+    if token is not None and _CEA_RESIDENT_TOKEN is token:
         return True
     if not getattr(cache, "use_3d", False):
         return False
@@ -295,7 +351,7 @@ def _ensure_cea(cache) -> bool:
             os.unlink(path)
         except OSError:
             pass
-    _CEA_LOADED[key] = True
+    _CEA_RESIDENT_TOKEN = token
     return True
 
 
@@ -366,3 +422,91 @@ def chamber_solve(config, cache, P_tank_O, P_tank_F):
         return float(d.Pc), d
     except Exception:
         return None
+
+
+def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
+    """Native chamber solve + authoritative Python RPA nozzle + Python stability.
+
+    Returns a dict compatible with the keys engine.optimizer Layer-1 reads from
+    runner.evaluate() — or None to fall back to the full Python path (unsupported
+    injector type, non-3D CEA cache, or non-converged solve).
+
+    The chamber residual loop runs in C; thrust/Isp come from the SAME
+    engine.core.nozzle.calculate_thrust the finalization path uses (RPA delivered
+    thrust, F = zeta_n*Cf_vac*Pc*At - Pa*Ae), so the inner loop ranks on the exact
+    number finalization reports — no frozen-nozzle bias. The nozzle is cheap (a CEA
+    Cf_vac lookup + arithmetic), so keeping it in Python costs ~nothing. Stability
+    reuses comprehensive_stability_analysis (native kernels under the hood).
+    """
+    if not _can_handle_chamber(config):
+        return None
+    try:
+        import ctypes as C
+        nat = _nat()
+        if not _ensure_cea(cache):
+            return None
+        st = build_state(config)  # geometry changes per candidate, so rebuild each call
+        rc, r = nat.evaluate(C.byref(st), float(P_tank_O), float(P_tank_F), float(P_ambient))
+        if rc != 0 or not r.converged:
+            return None
+        # Full injector diagnostics at the converged Pc — same construction the
+        # production Python path feeds to stability (D32, delta_p_feed, Cd, A_geom,
+        # momentum_ratio_R, u_O/F, ...), so per-candidate stability is unchanged.
+        rci, ir = nat.injector_solve(st, float(P_tank_O), float(P_tank_F), float(r.Pc))
+        if rci != 0:
+            return None
+    except Exception:
+        return None
+
+    diagnostics = _result_to_diag(config, ir)
+    diagnostics.update({
+        "mdot_O": r.mdot_O, "mdot_F": r.mdot_F, "mdot_total": r.mdot_total,
+        "Pc": r.Pc, "MR": r.MR,
+        "cstar_ideal": r.cstar_ideal, "cstar_actual": r.cstar_actual, "eta_cstar": r.eta_cstar,
+        # Stability uses the cooling-adjusted effective Tc (= runner's diagnostics["Tc"]),
+        # not the ideal Tc the nozzle expands from.
+        "gamma": r.gamma, "R": r.R, "Tc": r.Tc_effective, "SMD": r.SMD,
+    })
+
+    try:
+        from engine.pipeline.stability.analysis import comprehensive_stability_analysis
+        stability_results = comprehensive_stability_analysis(
+            config=config, Pc=r.Pc, MR=r.MR, mdot_total=r.mdot_total,
+            cstar=r.cstar_actual, gamma=r.gamma, R=r.R, Tc=r.Tc_effective, diagnostics=diagnostics)
+    except Exception:
+        stability_results = {}
+
+    # Delivered thrust inline (RPA): F = zeta_n * Cf_vac * Pc * At - Pa * Ae. This is
+    # the SAME formula as engine.core.nozzle.calculate_thrust, but with a single
+    # Cf_vac lookup instead of the full Python nozzle (dict build + mach solve +
+    # validation) — keeping the Layer-1 inner loop native-fast. zeta_c (eta_c*) rides
+    # in through Pc. Exit-state fields are display-only (from the C result).
+    g0 = 9.80665
+    zeta_n = float(config.chamber_geometry.nozzle_efficiency)
+    try:
+        cf_vac = cache.eval_cf_vac(r.MR, r.Pc, r.eps)
+    except Exception:
+        return None
+    At, Ae = r.A_throat, r.A_exit
+    F = zeta_n * cf_vac * r.Pc * At - float(P_ambient) * Ae
+    if F != F:  # NaN guard
+        return None
+    Isp = F / (r.mdot_total * g0)
+    Cf_actual = F / (r.Pc * At)
+
+    return {
+        # Mirrors the runner.evaluate keys Layer-1 consumes (success is inferred
+        # from finite F/Pc by the objective, exactly as for runner.evaluate).
+        "Pc": r.Pc, "mdot_O": r.mdot_O, "mdot_F": r.mdot_F, "mdot_total": r.mdot_total,
+        "MR": r.MR, "F": F, "Isp": Isp, "v_exit": r.v_exit,
+        "P_exit": r.P_exit, "P_throat": r.P_throat, "T_exit": r.T_exit, "T_throat": r.T_throat,
+        "Tc": r.Tc_effective, "eps": r.eps, "A_throat": r.A_throat, "A_exit": r.A_exit,
+        "cstar_actual": r.cstar_actual, "cstar_ideal": r.cstar_ideal, "eta_cstar": r.eta_cstar,
+        "gamma": r.gamma, "R": r.R,
+        "Cf": Cf_actual, "Cf_actual": Cf_actual, "Cf_ideal": r.Cf_ideal,
+        "Cd_O": r.Cd_O, "Cd_F": r.Cd_F, "A_geom_O": r.A_geom_O, "A_geom_F": r.A_geom_F,
+        "stability": stability_results, "stability_results": stability_results,
+        "diagnostics": diagnostics,
+        "P_ambient": float(P_ambient),
+        "native_fast_eval": True,
+    }

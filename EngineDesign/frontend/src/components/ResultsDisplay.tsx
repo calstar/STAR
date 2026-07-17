@@ -548,9 +548,6 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure }: Resul
                   {stability.feed_system.surge_frequency !== undefined && (
                     <SmallMetric label="Surge Frequency" value={formatNumber(stability.feed_system.surge_frequency, 1)} unit="Hz" />
                   )}
-                  {stability.feed_system.water_hammer_margin !== undefined && (
-                    <SmallMetric label="Water Hammer Margin" value={formatNumber(stability.feed_system.water_hammer_margin, 2)} unit="" />
-                  )}
                   {stability.feed_system.stability_margin !== undefined && (
                     <SmallMetric 
                       label="Feed Margin" 

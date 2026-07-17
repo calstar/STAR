@@ -24,6 +24,10 @@ This is **normal** - it happens when:
 
 **Solution**: Wait for it to complete. The cache will be saved to `output/cache/cea_cache_LOX_Ethanol_3D.npz` and won't need rebuilding.
 
+> Note: the LOX/CH₄ and LOX/Ethanol cache tables (`output/cache/*.npz`) are
+> **committed to the repo**, so those propellants are ready out of the box and this
+> rebuild only happens for an uncached combination (e.g. a new propellant or grid).
+
 ### 2. "Warning: Could not load default config"
 
 This happens when:
@@ -42,13 +46,13 @@ If `./dev.sh` doesn't work, start services manually:
 
 ### Backend
 ```bash
-cd /home/kushmahajan/EngineDesign
+# from the EngineDesign/ project root
 uvicorn backend.main:app --reload --port 8000
 ```
 
 ### Frontend (in another terminal)
 ```bash
-cd /home/kushmahajan/EngineDesign/frontend
+cd frontend
 npm run dev
 ```
 

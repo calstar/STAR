@@ -134,6 +134,8 @@ def eta_cstar(
     spray_diagnostics = advanced_params.get("spray_diagnostics", None)
     turbulence_intensity = advanced_params.get("turbulence_intensity", DEFAULT_TURBULENCE_INTENSITY_ND)
     fuel_props = advanced_params.get("fuel_props", None)
+    momentum_ratio_R = advanced_params.get("momentum_ratio_R", None)
+    R_opt = advanced_params.get("R_opt", None)
     
     # Validate required parameters
     if Ac is None or m_dot_total is None:
@@ -153,11 +155,13 @@ def eta_cstar(
         Lstar, Pc, Tc, cstar_ideal, gamma, R, MR, config,
         Ac, At, Dinj, m_dot_total,
         u_fuel=u_fuel, u_lox=u_lox,
-        spray_diagnostics=spray_diagnostics, 
+        spray_diagnostics=spray_diagnostics,
         turbulence_intensity=turbulence_intensity,
         chamber_length=chamber_length,
         Tc_kinetics=Tc_kinetics,
         fuel_props=fuel_props,
+        momentum_ratio_R=momentum_ratio_R,
+        R_opt=R_opt,
         debug=debug
     )
     

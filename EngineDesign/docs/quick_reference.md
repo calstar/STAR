@@ -1,97 +1,76 @@
-# Quick Reference: Working with Separate Repositories
+# Quick Reference
 
-## Branch Setup ✅
+A cheat sheet for the EngineDesign pipeline. See `README.md` for the full picture.
 
-Two separate branches have been created and pushed:
-
-1. **`engine-only`** → `engine-design` remote (Engine Design repo)
-2. **`parachute-only`** → `parachute-dynamics` remote (Parachute Dynamics repo)
-
-## Daily Workflow
-
-### Working on Engine Design
+## Run the app
 
 ```bash
-# Switch to engine branch
-git checkout engine-only
-
-# Make your changes to pintle_models/, pintle_pipeline/, examples/pintle_engine/
-# ... edit files ...
-
-# Commit and push
-git add .
-git commit -m "Your commit message"
-git push engine-design engine-only
+./dev.sh                 # backend (:8000) + frontend (:5173), native kernel on
 ```
 
-### Working on Parachute Dynamics
+Manual: `uvicorn backend.main:app --reload --port 8000`, then `cd frontend && npm run dev`.
+
+- API docs: http://localhost:8000/docs
+- Health: http://localhost:8000/api/health
+
+## Evaluate an engine from Python
+
+```python
+from engine.pipeline.io import load_config
+from engine.core.runner import PintleEngineRunner
+
+config = load_config("configs/canonical/impinging.yaml")   # or default.yaml
+runner = PintleEngineRunner(config)
+
+results = runner.evaluate(P_tank_O, P_tank_F)   # tank pressures in Pa
+print(results["F"], results["Pc"], results["MR"], results["mdot_total"])
+```
+
+**Pc is never an input** — it is always solved so that injector supply = combustion demand.
+
+## Propellants
+
+Add `propellant_preset: <name>` at the top of a config:
+
+| Preset | Combination | Committed CEA cache |
+|--------|-------------|---------------------|
+| `kerolox`  | LOX / RP‑1    | built on first use |
+| `methalox` | LOX / CH₄     | `output/cache/cea_cache_LOX_CH4_3D.npz` |
+| `ethalox`  | LOX / Ethanol | `output/cache/cea_cache_LOX_Ethanol_3D.npz` |
+
+Presets live in `configs/propellants/`. The `*.npz` cache tables are committed, so
+methalox/ethalox run without a multi-minute first-use cache build.
+
+## Injector types
+
+Set `injector.type: pintle` or `injector.type: impinging`. Canonical seeds:
+`configs/canonical/pintle.yaml` (LOX/Ethanol) and `configs/canonical/impinging.yaml`
+(LOX/CH₄). See `optimizer_readme.md` for the per-type Layer-1 design vectors.
+
+## Native C kernel
+
+- Enabled automatically by the backend (`ED_USE_NATIVE=1`); for CLI: `export ED_USE_NATIVE=1`.
+- `ED_USE_NATIVE=0` forces pure Python (byte-for-byte reference path).
+- Engages for **impinging + ablative-only + advanced-efficiency** configs; everything
+  else falls back to Python automatically.
+- Look for `[native] kernel enabled` at backend startup. Details: `engine/native/README.md`.
+
+## Optimizer
+
+Entry point: `run_full_engine_optimization_with_flight_sim()` in
+`engine/optimizer/main_optimizer.py`. Layers run sequentially:
+
+| Layer | File | Purpose |
+|-------|------|---------|
+| 1 | `layers/layer1_static_optimization.py` | Static geometry + pressure design (parallel CMA‑ES) |
+| 2 | `layers/layer2_pressure.py` | Time-series pressure-curve optimization |
+| 3 | `layers/layer3_thermal_protection.py` | Ablative/graphite thickness sizing |
+| 4 | `layers/layer4_flight_simulation.py` | RocketPy trajectory validation |
+
+## Example scripts
 
 ```bash
-# Switch to parachute branch
-git checkout parachute-only
-
-# Make your changes to parachute/, examples/parachute/
-# ... edit files ...
-
-# Commit and push
-git add .
-git commit -m "Your commit message"
-git push parachute-dynamics parachute-only
+python scripts/simple_example.py
+python scripts/run_full_pipeline.py
+python scripts/pressure_sweep.py
 ```
-
-## Repository URLs
-
-- **Engine Design**: `git@github.com:KushMahajan/EngineDesign.git`
-- **Parachute Dynamics**: `git@github.com:KushMahajan/Parachute-Dynamics.git`
-
-## Branch Status
-
-- ✅ `engine-only` - Contains only engine files (pintle_models/, pintle_pipeline/, examples/pintle_engine/)
-- ✅ `parachute-only` - Contains only parachute files (parachute/, examples/parachute/)
-- `pintle-only` - Contains both (kept for reference, but use the specific branches above)
-
-## What's in Each Branch
-
-### engine-only branch:
-- ✅ `pintle_models/` - Core engine models
-- ✅ `pintle_pipeline/` - Pipeline infrastructure  
-- ✅ `examples/pintle_engine/` - Engine examples
-- ✅ `README.md` - Engine documentation
-- ✅ `.gitignore` - Engine-specific ignore rules
-- ❌ No parachute files
-
-### parachute-only branch:
-- ✅ `parachute/` - Parachute simulation engine
-- ✅ `examples/parachute/` - Parachute examples
-- ✅ `README_PARACHUTE.md` - Parachute documentation
-- ✅ `.gitignore` - Parachute-specific ignore rules
-- ❌ No engine files
-
-## Tips
-
-1. **Always check which branch you're on** before making changes:
-   ```bash
-   git branch --show-current
-   ```
-
-2. **If you accidentally make changes on the wrong branch**, you can:
-   - Stash them: `git stash`
-   - Switch branches: `git checkout <correct-branch>`
-   - Apply stash: `git stash pop`
-
-3. **To see what files are in each branch**:
-   ```bash
-   git checkout engine-only
-   ls  # See engine files
-   
-   git checkout parachute-only
-   ls  # See parachute files
-   ```
-
-## Next Steps
-
-You can now:
-1. Set `engine-only` as the default branch in the Engine Design repo
-2. Set `parachute-only` as the default branch in the Parachute Dynamics repo
-3. Start working on each project independently!
-

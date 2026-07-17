@@ -1,40 +1,34 @@
 """Closure logic: solve branch flows with spray constraints.
 
-By default this calls the Python injector models. When the environment variable
-ED_USE_NATIVE=1 is set, the impinging branch is routed through the native C
-kernel (engine/native) for the expensive feed-orifice fixed point, with:
-  * automatic library build on first use (no manual cmake step), and
-  * a one-time parity self-check against the Python solver — if mdot disagrees by
-    more than 0.1%, native is disabled for the rest of the process and Python is
-    used. This keeps default runs byte-identical and makes the native path safe to
-    enable in production.
+The impinging branch routes through the native C kernel (engine/native) when
+``ED_USE_NATIVE`` is on (the default). The Python injector models below run for
+everything native doesn't cover — pintle, coaxial, an unbuilt library, or
+``ED_USE_NATIVE=0``. Dispatch is pure capability routing: ``native_injector.solve``
+returns ``None`` for any config it can't handle and the Python model runs.
+
+This native fast-path matters for performance even with the Layer-1 single-call
+``ed_evaluate`` seam: ~30% of CMA candidates don't converge in the single-call native
+path and fall back to ``runner.evaluate`` → ``chamber_solver`` → here, whose Brent
+residual solves the injector many times. Keeping that native keeps the fallback fast.
+
+Native↔Python parity is guaranteed by the golden test suite (engine/native/tests)
+and the load-time ABI assert in ed_native.py — there is no runtime self-check.
 """
 
-import logging
 import os
 from typing import Tuple, Dict, Any, Optional
 
 from engine.pipeline.config_schemas import PintleEngineConfig
 from engine.core.injectors import get_injector_model
 
-_logger = logging.getLogger(__name__)
-
-# Build the native kernel on startup (background, non-blocking) when enabled, so
-# the first evaluation does not pay the one-time CMake build cost. No-op by default.
-if os.environ.get("ED_USE_NATIVE", "0") == "1":
+# Build the native kernel on startup (background, non-blocking) when enabled, so the
+# first evaluation does not pay the one-time CMake build cost. No-op by default.
+if os.environ.get("ED_USE_NATIVE", "1") != "0":
     try:
         from engine.native.python import autobuild as _autobuild
         _autobuild.prewarm()
     except Exception:  # pragma: no cover - never let prewarm break import
         pass
-
-# Process-wide native dispatch state: None=unchecked, True=use native, False=disabled.
-_NATIVE_OK: Optional[bool] = None
-_NATIVE_RTOL = 1e-3  # mdot parity tolerance for the self-check (matches Layer-1 spec)
-
-
-def _native_close(a: float, b: float) -> bool:
-    return abs(a - b) <= _NATIVE_RTOL * max(abs(b), 1e-12) + 1e-9
 
 
 def _try_native_flows(
@@ -43,49 +37,25 @@ def _try_native_flows(
     Pc: float,
     config: PintleEngineConfig,
 ) -> Optional[Tuple[float, float, Dict[str, Any]]]:
-    """Return native (mdot_O, mdot_F, diagnostics) or None to fall back to Python."""
-    global _NATIVE_OK
-    if _NATIVE_OK is False:
-        return None
+    """Native (mdot_O, mdot_F, diagnostics), or None if native is disabled or can't
+    handle this config (the caller then falls back to the Python injector model)."""
     try:
         from engine.native.python import native_injector
     except Exception:
-        _NATIVE_OK = False
         return None
     if not native_injector.available():
         return None
-
-    res = native_injector.solve(config, P_tank_O, P_tank_F, Pc)
-    if res is None:
-        return None
-
-    if _NATIVE_OK is None:
-        # One-time correctness gate before trusting native for the session.
-        try:
-            p_mo, p_mf, _ = get_injector_model(config).solve(P_tank_O, P_tank_F, Pc)
-            ok = _native_close(res[0], p_mo) and _native_close(res[1], p_mf)
-        except Exception:
-            ok = False
-        _NATIVE_OK = ok
-        if not ok:
-            _logger.warning(
-                "Native injector parity self-check failed (native mdot=(%g,%g)); "
-                "disabling native path for this process.", res[0], res[1]
-            )
-            return None
-        _logger.info("Native injector parity self-check passed; using native flows.")
-
-    return res
+    return native_injector.solve(config, P_tank_O, P_tank_F, Pc)
 
 
 def flows(
     P_tank_O: float,
     P_tank_F: float,
     Pc: float,
-    config: PintleEngineConfig
+    config: PintleEngineConfig,
 ) -> Tuple[float, float, Dict[str, Any]]:
+    """Solve injector branch flows: returns (mdot_O, mdot_F, diagnostics)."""
     native = _try_native_flows(P_tank_O, P_tank_F, Pc, config)
     if native is not None:
         return native
-    injector = get_injector_model(config)
-    return injector.solve(P_tank_O, P_tank_F, Pc)
+    return get_injector_model(config).solve(P_tank_O, P_tank_F, Pc)

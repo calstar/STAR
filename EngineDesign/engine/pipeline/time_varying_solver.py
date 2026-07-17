@@ -24,7 +24,6 @@ from engine.core.chamber_solver import ChamberSolver
 from engine.core.nozzle import calculate_thrust
 from engine.pipeline.reaction_chemistry import (
     calculate_chamber_reaction_progress,
-    calculate_shifting_equilibrium_properties,
 )
 from engine.pipeline.thermal.ablative_cooling import compute_ablative_response
 from engine.pipeline.thermal.ablative_geometry import (

@@ -1,13 +1,11 @@
 import type { StabilityRichPayload, StabilityOverrides } from './types';
+import { StabilityDiagnostics } from './StabilityDiagnostics';
+import { StabilityGlossary } from './StabilityGlossary';
 import { ChugStabilityMap } from './ChugStabilityMap';
-import { ChugPoleMap } from './ChugPoleMap';
 import { AcousticDampingBars } from './AcousticDampingBars';
-import { FrequencyLadder } from './FrequencyLadder';
 import { PhaseClock } from './PhaseClock';
 import { VaporizationProfile } from './VaporizationProfile';
-import { FeedPressureBand } from './FeedPressureBand';
 import { StabilityRadar } from './StabilityRadar';
-import { WaterHammerBar } from './WaterHammerBar';
 import { marginColor } from './shared';
 
 interface Props {
@@ -111,17 +109,24 @@ export function StabilityPanel({
         </div>
       )}
 
+      <StabilityDiagnostics data={data} />
+
+      <StabilityGlossary />
+
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
         <StabilityRadar data={data} />
         <ChugStabilityMap data={data} etaInjOverride={eta} />
-        <ChugPoleMap data={data} />
         <AcousticDampingBars data={data} />
-        <FrequencyLadder data={data} />
         <PhaseClock data={data} />
         <VaporizationProfile data={data} />
-        <FeedPressureBand data={data} />
-        <WaterHammerBar data={data} />
       </div>
+
+      <p className="text-xs text-[var(--color-text-secondary)]">
+        Tank pressure vs time isn&apos;t shown here — it depends on the feed configuration
+        (blowdown vs dome-regulated) and needs a real solve. Run the{' '}
+        <span className="text-[var(--color-text-primary)] font-medium">Time-Series</span> tab for
+        the actual pressure history.
+      </p>
     </div>
   );
 }

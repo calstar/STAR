@@ -480,13 +480,14 @@ def compute_physical_stability(config, Pc: float, MR: float, mdot_total: float, 
     """
     from engine.pipeline.stability import chug, acoustic
     inp = build_stability_inputs(config, Pc, MR, mdot_total, cstar, gamma, R, Tc, diagnostics, cg)
-    # Native fast path (ED_USE_NATIVE=1): the 200-pt complex chug sweep is the
-    # dominant per-eval stability cost. Run it in C (~machine-precision parity);
-    # fall back to Python on any issue.
+    # Native fast path: the 200-pt complex chug sweep is the dominant per-eval
+    # stability cost. Run it in C (~machine-precision parity) when native is
+    # enabled; fall back to Python on any issue.
+    from engine.native.python import native_injector
+    _native = native_injector.native_enabled()
     chug_fast = None
-    if os.environ.get("ED_USE_NATIVE", "0") == "1":
+    if _native:
         try:
-            from engine.native.python import native_injector
             chug_fast = native_injector.chug_margin_fast(inp["streams"], inp["chamber"])
         except Exception:
             chug_fast = None
@@ -494,9 +495,8 @@ def compute_physical_stability(config, Pc: float, MR: float, mdot_total: float, 
         chug_fast = chug.chug_margin_fast(inp["streams"], inp["chamber"])
 
     ac_fast = None
-    if os.environ.get("ED_USE_NATIVE", "0") == "1":
+    if _native:
         try:
-            from engine.native.python import native_injector
             ac_fast = native_injector.fast_acoustic(inp["D_ch"], inp["L_ch"], inp["gas"],
                                                     n=inp["n_interaction"], tau_sens=inp["tau_sens"])
         except Exception:
@@ -726,13 +726,6 @@ def comprehensive_stability_analysis(
         acoustic_margin = 1.10
         feed_stability["stability_margin"] = chug_margin
 
-    # Water hammer is a VALVE TRANSIENT — reported separately, NOT in the combustion margin. [Phys §6]
-    wh_margin = feed_stability.get("water_hammer_margin", float("inf"))
-    if wh_margin < 1.0:
-        issues.append("Water hammer spikes comparable to available pressure drop (valve-transient check)")
-    elif wh_margin < 2.0:
-        issues.append("Limited water-hammer margin (valve-transient check; add accumulator / slow valve closure)")
-
     # Numeric score in [0,1] monotone in the limiting gate margin (1.05 ~ gate threshold).
     min_margin = min(chug_margin, acoustic_margin)
     score = float(np.clip((min_margin - 0.85) / 0.45, 0.0, 1.0))
@@ -756,7 +749,6 @@ def comprehensive_stability_analysis(
         feed_system=feed_stability,
         mode_coupling=mode_coupling,
         Lstar=Lstar,
-        water_hammer_margin=wh_margin,
     )
 
     acoustic = {
@@ -792,7 +784,6 @@ def _generate_stability_recommendations(
     feed_system: Dict[str, float],
     mode_coupling: List[Dict[str, Any]],
     Lstar: float,
-    water_hammer_margin: float,
 ) -> List[str]:
     """Generate stability improvement recommendations based on analysis."""
     recs: List[str] = []
@@ -819,12 +810,6 @@ def _generate_stability_recommendations(
         recs.append("L* is quite short. Consider increasing chamber length or volume to improve stability and performance.")
     elif Lstar > 3.0:
         recs.append("L* is quite long. This can add mass and potentially introduce higher order acoustic issues.")
-
-    # Feed system
-    if water_hammer_margin < 1.0:
-        recs.append("Add accumulators or surge suppressors and review valve closure rates to reduce water hammer.")
-    elif water_hammer_margin < 2.0:
-        recs.append("Consider increasing line diameter or adding some compliance to improve water hammer margin.")
 
     # Mode coupling
     for pair in mode_coupling:

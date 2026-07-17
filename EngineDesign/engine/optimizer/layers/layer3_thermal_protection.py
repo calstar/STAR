@@ -878,6 +878,15 @@ def run_layer3_thermal_protection(
                     np.clip(result_layer3.x[idx_param], layer3_bounds[idx_param][0], layer3_bounds[idx_param][1])
                 )
                 thermal_results["optimized_ablative_thickness"] = optimized_config.ablative_cooling.initial_thickness
+                # Feed the sized liner back to the Layer-1 geometry knob so the next run's
+                # OD -> inner-diameter conversion matches the actual ablative thickness.
+                dr = getattr(optimized_config, "design_requirements", None)
+                if dr is not None and hasattr(dr, "wall_thickness_per_side_m"):
+                    dr.wall_thickness_per_side_m = float(optimized_config.ablative_cooling.initial_thickness)
+                    layer3_logger.info(
+                        "Updated design_requirements.wall_thickness_per_side_m -> %.3f mm (matches sized ablative)",
+                        dr.wall_thickness_per_side_m * 1000.0,
+                    )
                 update_progress(
                     "Layer 3: Burn Analysis Optimization",
                     0.70,

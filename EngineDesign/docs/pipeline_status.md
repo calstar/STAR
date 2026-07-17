@@ -1,10 +1,43 @@
 # Optimization Pipeline Status
 
-## Implementation Summary
+Current state of the multi-layer engine optimization pipeline. See
+`optimizer_readme.md` and `optimization_layers_readme.md` for structure, and the
+main `README.md` for the architecture overview.
 
-This update addresses fundamental issues in the multi-layer pintle engine optimization pipeline that were preventing convergence and causing invalid geometries. The core fixes include: (1) **Hard constraint enforcement** - invalid geometries where injector area exceeds throat area are now immediately rejected with a 1e6 penalty, preventing "Supply > Demand" errors that were causing optimizer failures; (2) **Robust pressure solving** - replaced fsolve with scipy.optimize.root using multiple methods (hybr, then lm fallback) and multiple initial guess strategies (original, 0.7x, 1.3x pressure scales), with solution verification to ensure quality even when the solver reports convergence; (3) **Stability calculation fixes** - reduced stability weight from 30.0 to 10.0 and capped penalties at 15.0 to prevent stability from dominating the objective function, while maintaining strict safety requirements; (4) **Improved initial guess** - uses realistic chamber pressure (580 psi) instead of max tank pressure for A_throat calculation, with aggressive adjustment (triggers at 15% error, direct scaling, 40% pressure segment adjustments); and (5) **Enhanced pressure search** - expanded grid search to 9 scales × 6 ratios when solve fails, with early exit at 25% error. The validation requirements remain strict (15% thrust error, 20% O/F error) as these are safety-critical, and the optimizer now properly enforces these through hard constraints rather than soft penalties.
+## Implemented
 
-## Remaining Work
+- **Chamber solve** — `engine/core/chamber_solver.py` solves chamber pressure as the
+  root of `supply(Pc) − demand(Pc) = 0` (injector supply vs. combustion demand). Pc
+  is always solved, never an input.
+- **Native C kernel** — the chamber residual loop (impinging injector → CEA →
+  advanced combustion efficiency → ablative cooling → Brent root-find) and the
+  per-eval stability physics (chug Nyquist sweep + 1L/1T acoustic growth) run in C
+  behind `ED_USE_NATIVE=1`, with automatic Python fallback. `runner.evaluate()` is
+  ~88× faster end-to-end at ~5e-10 Pc parity. The backend enables it at startup; the
+  nozzle/thrust step and Layer-1 batching still run in Python (see
+  `engine/native/README.md`).
+- **Layer 1 (static)** — `engine/optimizer/layers/layer1_static_optimization.py`.
+  Parallel CMA-ES over geometry + initial pressures, ranking candidates by a
+  feasibility-gated objective (thrust / O-F match, stability margins, injector ΔP).
+  Supports both `pintle` (10-var) and `impinging` (13-var) design vectors.
+- **Layer 2 (pressure curves)** — `layer2_pressure.py`. Optimizes the LOX/fuel
+  tank-pressure decay curves over the burn for the time-varying solver, with the
+  initial pressures fixed from Layer 1 (see `layer_requirements.md`).
+- **Layer 3 (thermal protection)** — `layer3_thermal_protection.py`. Right-sizes
+  ablative liner + graphite insert thickness against the recession seen over the burn.
+- **Layer 4 (flight validation)** — `layer4_flight_simulation.py`. RocketPy
+  trajectory simulation and optimal burn-time search for accepted candidates.
 
-The optimization pipeline still needs work to achieve reliable convergence: (1) **Layer 1 convergence** - while the hard constraints prevent invalid geometries, the optimizer may still struggle to find solutions that meet the strict 15% thrust and 20% O/F requirements; consider implementing adaptive tolerance or multi-objective optimization that prioritizes feasibility; (2) **Pressure solve robustness** - while multiple strategies help, the underlying issue may be that some geometries fundamentally cannot achieve target thrust/O/F at any pressure; add diagnostic logging to identify which geometries fail and why; (3) **Layer 2 time-varying analysis** - currently failing with high errors (46% thrust, 54% O/F); the time-varying solver may need better initial conditions from Layer 1 or the pressure curves may need refinement before Layer 2; (4) **Constraint handling** - the hard 1e6 penalty may be too aggressive and could prevent the optimizer from exploring near-valid regions; consider a graduated penalty or barrier method; (5) **Initial guess quality** - while improved, the initial guess may still be far from optimal; consider running a quick pre-optimization to find a better starting point; and (6) **Diagnostics** - add comprehensive logging of which constraints are violated, why pressure solves fail, and what the objective function landscape looks like to help debug convergence issues.
+Orchestration: `run_full_engine_optimization_with_flight_sim()` in
+`engine/optimizer/main_optimizer.py`.
 
+## Known limitations / open work
+
+- **Convergence under strict tolerances** — meeting the safety-critical thrust/O-F
+  requirements simultaneously with stability margins can require loosening geometry
+  bounds (L*, chamber OD) when Layer 1 stalls.
+- **Native coverage** — pintle/coaxial injectors, film/regen-coupled cooling, and the
+  nozzle/thrust step fall back to Python (correct, but no speedup). Porting the
+  nozzle requires the shifting-equilibrium path (Stage 4).
+- **Layers 2–4 cost** — the time-varying and flight stages are the expensive part of a
+  full run; they execute only for candidates that pass Layer 1 static validation.

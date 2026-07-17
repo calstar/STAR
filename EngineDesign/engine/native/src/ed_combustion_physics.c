@@ -100,24 +100,16 @@ static double reaction_time_scale(double Pc, double Tc, double MR,
     return cfg->tau_ref * pressure_factor * exp(exp_arg);
 }
 
-/* calculate_mixing_efficiency */
-static double mixing_eta(const ed_comb_state *s, double Tc, double Pc,
-                         double turbulence_intensity) {
-    const double I_eff = ed_clip(turbulence_intensity, 0.01, 0.30);
-    const double Lt = ed_max(s->L_mix, 1e-5);
-    const double C_mu = ED_MIX_C_MU;
-    const double k = 1.5 * (s->U_mix * I_eff) * (s->U_mix * I_eff);
-    double epsilon = pow(C_mu, 0.75) * pow(k, 1.5) / Lt;
-    epsilon = ed_max(epsilon, 1e-12);
-    const double nu_t = C_mu * (k * k) / epsilon;
-    const double D_t = nu_t;
-    const double D_m = ED_MIX_DM_REF * pow(Tc / ED_MIX_DM_T_REF, 1.75) * (ED_MIX_DM_P_REF / ed_max(Pc, 1e3));
-    const double D_eff = D_m + D_t;
-    const double tau_conv = ed_max(s->L_mix / s->U_mix, 1e-8);
-    const double tau_diff = ed_max(s->L_mix * s->L_mix / ed_max(D_eff, 1e-12), 1e-8);
-    const double tau_mix = 1.0 / (1.0 / tau_conv + 1.0 / tau_diff);
-    const double Da_mix = s->tau_res / tau_mix;
-    return 1.0 - exp(-Da_mix);
+/* calculate_rupe_mixing_efficiency: eta_mix = Em_peak * exp(-(ln(R/R_opt))^2/(2 sigma^2)).
+ * Momentum-ratio mixing efficiency (Rupe/SP-8089); replaces the k-e near-field model
+ * and the retired eta_turbulence step. Returns <0 to signal an invalid momentum ratio. */
+static double rupe_mixing_eta(double momentum_ratio_R, double R_opt,
+                              double Em_peak, double sigma) {
+    if (!(momentum_ratio_R > 0.0 && isfinite(momentum_ratio_R))) return -1.0;
+    const double Ro = (R_opt > 0.0 && isfinite(R_opt)) ? R_opt : 1.0;
+    const double sig = (sigma > 0.0 && isfinite(sigma)) ? sigma : 1.5;
+    const double z = log(momentum_ratio_R / Ro);
+    return Em_peak * exp(-(z * z) / (2.0 * sig * sig));
 }
 
 /* _mass_flux_weighted_d32_um (returns metres). do/df <=0 == absent. */
@@ -141,7 +133,7 @@ ed_status_t ed_combustion_efficiency_advanced(
     double Ac, double At, double Dinj, double m_dot_total,
     double u_fuel, double u_lox,
     double D32_O, double D32_F,
-    double turbulence_intensity,
+    double momentum_ratio_R, double R_opt,
     double fuel_latent_heat,
     double fuel_T_star_cap_K,
     EdEtaResult *out) {
@@ -173,25 +165,15 @@ ed_status_t ed_combustion_efficiency_advanced(
     const double Da = (tau_chem <= 0) ? INFINITY : st.tau_res / tau_chem;
     const double eta_kinetics = 1.0 - exp(-sqrt(Da));
 
-    /* 3. eta_mixing */
-    const double eta_mixing = mixing_eta(&st, Tc, Pc, turbulence_intensity);
-
-    /* 4. eta_turbulence */
-    double eta_turb_raw;
-    if (turbulence_intensity < 0.05) {
-        eta_turb_raw = 0.9;
-    } else if (turbulence_intensity < 0.15) {
-        eta_turb_raw = 0.95 + 0.05 * (turbulence_intensity / 0.15);
-    } else {
-        eta_turb_raw = 1.0 - 0.1 * ((turbulence_intensity - 0.15) / 0.35);
-    }
-    const double eta_turbulence = ed_clip(eta_turb_raw, 0.85, 1.0);
+    /* 3. eta_mixing (Rupe momentum-ratio model; turbulence folded in, no separate term) */
+    const double eta_mixing = rupe_mixing_eta(momentum_ratio_R, R_opt,
+                                              cfg->Em_peak, cfg->mixing_sigma);
+    if (eta_mixing < 0.0) return ED_ERR_INVALID_ARG;
 
     out->eta_Lstar = eta_Lstar;
     out->eta_kinetics = eta_kinetics;
     out->eta_mixing = eta_mixing;
-    out->eta_turbulence = eta_turbulence;
-    out->eta_total = eta_Lstar * eta_kinetics * eta_mixing * eta_turbulence;
+    out->eta_total = eta_Lstar * eta_kinetics * eta_mixing;
     out->Da = Da;
     out->tau_res = st.tau_res;
     out->tau_chem = tau_chem;
