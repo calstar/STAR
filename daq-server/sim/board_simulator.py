@@ -624,9 +624,12 @@ def main():
         stats["total_sensor_updates"] = sum(
             v["total_sensor_updates"] for v in stats["boards"].values()
         )
-        with open(args.stats_file, "w") as f:
+        # Atomic write (tmp + rename): the integration test reads this file
+        # every run while the simulator is still updating it.
+        tmp_path = args.stats_file + ".tmp"
+        with open(tmp_path, "w") as f:
             json.dump(stats, f, indent=2)
-        print(f"Stats written to {args.stats_file}", flush=True)
+        os.replace(tmp_path, args.stats_file)
 
     # Register SIGTERM handler so integration test cleanup triggers stats write
     import signal
@@ -636,6 +639,7 @@ def main():
             b.running = False
         time.sleep(0.1)  # let threads finish current send
         write_stats()
+        print(f"Stats written to {args.stats_file}", flush=True)
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, _sigterm_handler)
@@ -650,6 +654,9 @@ def main():
         else:
             while True:
                 time.sleep(1)
+                # Refresh ground-truth stats every second so the integration
+                # test's sample-conservation check can read live sent counts.
+                write_stats()
     except KeyboardInterrupt:
         print("\nStopping simulator...")
         for b in simulated_boards:

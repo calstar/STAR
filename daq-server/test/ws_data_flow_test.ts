@@ -17,7 +17,8 @@
  * --only runs a subset of tests (comma-separated). IDs: sensor_config, sensor_data,
  * cal_stability, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
  * selftest, state_transition,
- * state_debug, actuator_ws, actuator_udp, elodin_sync, controller — or numbers 1–6, 10–12
+ * state_debug, actuator_ws, actuator_udp, elodin_sync, controller, timestamps,
+ * conservation — or numbers 1–6, 10–12, 14–15
  * (same as printed test labels). Env INTEGRATION_ONLY is equivalent to --only.
  * Most IDs still need the full integration stack (Elodin, DAQ, calibration, backend);
  * state/actuator/elodin_sync need sequencer; controller needs controller_service; selftest
@@ -79,6 +80,7 @@ function parseOnlyTests(): Set<string> | null {
     '11': 'sensor_config',
     '12': 'raw_cal_presence',
     '14': 'timestamps',
+    '15': 'conservation',
   };
   const out = new Set<string>();
   for (const p of parts) {
@@ -90,7 +92,7 @@ function parseOnlyTests(): Set<string> | null {
     'sensor_config', 'sensor_data', 'cal_stability', 'raw_cal_presence',
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
-    'controller', 'timestamps',
+    'controller', 'timestamps', 'conservation',
   ]);
   for (const id of out) {
     if (!allowed.has(id)) {
@@ -2107,6 +2109,61 @@ async function testTimestampQuality(ws: WebSocket): Promise<void> {
       : `Spacing violations on ${spacingViolations.length} stream(s): ${spacingViolations.slice(0, 5).join('; ')}${spacingViolations.length > 5 ? ' …' : ''}`);
 }
 
+// ── Test 15: Sample Conservation (sim → bridge → Elodin DB → backend) ────────
+// The simulator rewrites its ground-truth stats file (samples sent per channel)
+// every second. The backend's rawPrimarySamplesIngested counts the same samples
+// as ingested from the Elodin DB stream BEFORE the GUI downsampler (one per raw
+// physical sample, canonical component only, _Cal republications excluded).
+// Comparing the two detects absolute packet loss anywhere in
+// UDP → bridge → Elodin DB → backend, independent of envelope emission.
+async function testSampleConservation(): Promise<void> {
+  console.log('\n🔎 Test 15: Sample Conservation (sim sent vs backend ingested, pre-downsample)');
+  const statsFile = process.env.INTEGRATION_SIM_STATS || '';
+  if (!statsFile) {
+    console.log('  ℹ️  INTEGRATION_SIM_STATS not set — skipping (run via test_integration.sh)');
+    return;
+  }
+
+  // Read the sim snapshot FIRST, then fetch the backend counter: the snapshot
+  // lags actual sent by ≤1s, so the backend has ingested at least as much as
+  // the snapshot claims was sent — the skew only adds slack, never false fails.
+  let sim: any;
+  try {
+    sim = JSON.parse(fs.readFileSync(statsFile, 'utf8'));
+  } catch (e: any) {
+    assert(false, `Could not read sim stats file ${statsFile}: ${e.message}`);
+    return;
+  }
+  const sent = Number(sim?.total_sensor_updates) || 0;
+  assert(sent > 0, sent > 0
+    ? `Sim ground truth: ${sent.toLocaleString()} samples sent`
+    : 'Sim stats file reports 0 samples sent — simulator produced no data');
+  if (sent <= 0) return;
+
+  const backendStats = await fetchBackendStats();
+  const ingested = Number((backendStats as any)?.rawPrimarySamplesIngested);
+  if (!Number.isFinite(ingested)) {
+    assert(false, 'Backend /stats has no rawPrimarySamplesIngested — stale backend build?');
+    return;
+  }
+
+  if (VERBOSE) {
+    const perBoard = Object.entries(sim.boards ?? {})
+      .map(([n, b]: [string, any]) => `${n}=${b.total_sensor_updates}`)
+      .sort()
+      .join(', ');
+    console.log(`  Per-board sent: ${perBoard}`);
+  }
+
+  // 95%: slack for samples in flight through the pipeline at read time.
+  const MIN_PCT = 95;
+  const pct = (ingested / sent) * 100;
+  assert(pct >= MIN_PCT,
+    pct >= MIN_PCT
+      ? `Sample conservation: backend ingested ${ingested.toLocaleString()}/${sent.toLocaleString()} raw samples (${pct.toFixed(1)}% ≥ ${MIN_PCT}%)`
+      : `Sample conservation FAILED: ingested ${ingested.toLocaleString()}/${sent.toLocaleString()} (${pct.toFixed(1)}% < ${MIN_PCT}%) — samples lost in UDP → bridge → Elodin → backend`);
+}
+
 async function main(): Promise<void> {
   console.log('🧪 WebSocket Data Flow Integration Test');
   console.log(`   Backend: ${WS_URL} (${IS_THIN ? 'server.ts' : 'server-legacy.ts'})`);
@@ -2178,6 +2235,8 @@ async function main(): Promise<void> {
     } else if (!ONLY_TESTS && !HAS_CONTROLLER) {
       console.log('\n📡 Test: Controller Data Flow — SKIPPED (controller_service not found)');
     }
+    // Last on purpose: maximizes the sample count both sides of the comparison.
+    if (IS_THIN && runTest('conservation')) await testSampleConservation();
   } finally {
     ws.close();
   }
