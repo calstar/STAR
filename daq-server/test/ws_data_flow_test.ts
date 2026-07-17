@@ -2147,12 +2147,29 @@ async function testSampleConservation(): Promise<void> {
     return;
   }
 
-  if (VERBOSE) {
-    const perBoard = Object.entries(sim.boards ?? {})
-      .map(([n, b]: [string, any]) => `${n}=${b.total_sensor_updates}`)
-      .sort()
-      .join(', ');
-    console.log(`  Per-board sent: ${perBoard}`);
+  // Per-group breakdown (always printed): pinpoints WHICH stream loses samples.
+  // Sim board names → backend board-scan groups.
+  const groupOfBoard = (name: string): string => {
+    if (/^pt_board_2/.test(name)) return 'pt2';
+    if (/^pt_board/.test(name)) return 'pt1';
+    if (/^rtd/.test(name)) return 'rtd';
+    if (/^lc/.test(name)) return 'lc';
+    if (/^tc/.test(name)) return 'tc';
+    if (/^encoder/.test(name)) return 'enc';
+    if (/^actuator/.test(name)) return 'act';
+    return 'other';
+  };
+  const sentByGroup: Record<string, number> = {};
+  for (const [name, b] of Object.entries(sim.boards ?? {}) as [string, any][]) {
+    const g = groupOfBoard(name);
+    sentByGroup[g] = (sentByGroup[g] || 0) + (Number(b.total_sensor_updates) || 0);
+  }
+  const ingestedByGroup: Record<string, number> = (backendStats as any)?.rawPrimarySamplesByGroup ?? {};
+  for (const g of Object.keys(sentByGroup).sort()) {
+    const s = sentByGroup[g];
+    const i = ingestedByGroup[g] || 0;
+    const gp = s > 0 ? ((i / s) * 100).toFixed(1) : '?';
+    console.log(`  ${g.padEnd(5)} sent ${String(s).padStart(6)}  ingested ${String(i).padStart(6)}  (${gp}%)`);
   }
 
   // 95%: slack for samples in flight through the pipeline at read time.

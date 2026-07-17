@@ -23,8 +23,9 @@ export type BoardScanGroupId = 'pt1' | 'pt2' | 'tc' | 'rtd' | 'lc' | 'act' | 'en
 /**
  * Calibrated Elodin packets carry raw_adc_counts on *Cal entities (e.g. PT1_Cal.CH1),
  * not PT1.CH1. Raw-only packets use PT1.CH1. Both must count toward board scan rate.
+ * Exported for the integration test's per-group sample-conservation breakdown.
  */
-function mapEntityToGroup(entity: string): BoardScanGroupId | null {
+export function mapEntityToGroup(entity: string): BoardScanGroupId | null {
   if (/^PT1(_Cal)?\.CH/.test(entity)) return 'pt1';
   if (/^PT2(_Cal)?\.CH/.test(entity)) return 'pt2';
   if (/^TC\d+(_Cal)?\.CH/.test(entity)) return 'tc';

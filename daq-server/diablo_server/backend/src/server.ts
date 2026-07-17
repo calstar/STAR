@@ -34,7 +34,7 @@ import { readConfig } from './routes/config.js';
 import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } from './legacy/state-actuators.js';
 import type { StateActuatorMap } from './legacy/state-actuators.js';
 import { getStateTransitions } from './legacy/state-transitions.js';
-import { recordBoardScanIngest, getBoardScanRateHz, isPrimaryPhysicalStream } from './board-scan-rate.js';
+import { recordBoardScanIngest, getBoardScanRateHz, isPrimaryPhysicalStream, mapEntityToGroup } from './board-scan-rate.js';
 import { EnvelopeAccumulator, parseGuiStreamConfig, envelopeWindowMs, type GuiStreamConfig } from './gui-stream.js';
 import { HistoryCache } from './history-cache.js';
 import { startGuiStaticServer } from './static-gui.js';
@@ -500,6 +500,9 @@ const stats = {
   // end-to-end loss detection (UDP → bridge → Elodin DB → backend), independent of
   // the GUI downsampler.
   rawPrimarySamplesIngested: 0,
+  // Same counter split by board group (pt1/pt2/tc/rtd/lc/enc/act) so a
+  // conservation failure names the lossy stream instead of just the total.
+  rawPrimarySamplesByGroup: {} as Record<string, number>,
   sensorUpdatesBroadcast: 0,  // SENSOR_UPDATE messages actually sent (post-throttle)
   sequencerStatesReceived: 0,  // packets successfully streamed through Elodin DB verifying storage
   startTimeMs: Date.now(),
@@ -1043,6 +1046,8 @@ elodin.on('packet', (header: any, payload: Buffer) => {
       // _Cal excluded: calibration_service republications would double-count PT samples.
       if (!parsed.entity.includes('_Cal') && isPrimaryPhysicalStream(parsed.entity, parsed.component)) {
         stats.rawPrimarySamplesIngested++;
+        const group = mapEntityToGroup(parsed.entity) ?? 'other';
+        stats.rawPrimarySamplesByGroup[group] = (stats.rawPrimarySamplesByGroup[group] || 0) + 1;
       }
 
       // Sample time = Elodin field-0 timestamp (bridge receipt, epoch ms),
