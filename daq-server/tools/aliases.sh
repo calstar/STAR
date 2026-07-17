@@ -13,8 +13,8 @@
 _DIABLO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ── Build ─────────────────────────────────────────────────────────────────────
-# `build` re-runs cmake configure with -DUSE_SIM=${USE_SIM:-0}, so it also
-# RESETS a stale USE_SIM in the cmake cache — run it when switching sim/hw.
+# USE_SIM is a runtime env var (launch scripts / calibration_service), not a
+# compile flag — sim and hardware use identical binaries.
 alias build="cd '$_DIABLO_ROOT' && bash scripts/build.sh"
 alias diablo-build="cd '$_DIABLO_ROOT' && bash scripts/build.sh"
 alias diablo-build-fast="cd '$_DIABLO_ROOT/build' && cmake --build . --parallel \$(nproc)"

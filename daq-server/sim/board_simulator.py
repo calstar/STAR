@@ -4,11 +4,21 @@ import struct
 import time
 import threading
 import random
-import tomli
 import os
 import argparse
 import json
 import math
+
+try:
+    import tomli
+except ModuleNotFoundError:
+    try:
+        import tomllib as tomli  # stdlib since Python 3.11, same API
+    except ModuleNotFoundError:
+        raise SystemExit(
+            "board_simulator: no TOML parser available. "
+            "Install one with `pip install tomli` (or use Python >= 3.11)."
+        )
 
 # DiabloAvionics Packet Types (DAQv2-Comms DiabloEnums.h)
 PACKET_TYPE_HEARTBEAT = 1

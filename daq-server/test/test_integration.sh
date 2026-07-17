@@ -3,7 +3,7 @@
 # Full-Stack Integration Test
 #
 # Spins up the complete pipeline and verifies data flows end-to-end:
-#   fake_packet_generator → DAQ bridge → Elodin DB → Backend → WS client
+#   board_simulator.py → DAQ bridge → Elodin DB → Backend → WS client
 #   WS client → Backend → sequencer_service (TCP) → actuator UDP
 #
 # Prerequisites:
@@ -233,23 +233,13 @@ sleep 0.5
 
 # ── Build C++ binaries ───────────────────────────────────────────────────────
 
-echo "🔨 Building C++ binaries..."
-FSW_BUILD_DIR="$REPO_ROOT/build"
-if [ ! -d "$FSW_BUILD_DIR" ]; then
-  mkdir -p "$FSW_BUILD_DIR"
-  (cd "$FSW_BUILD_DIR" && cmake "$REPO_ROOT")
-fi
-# Use cmake --build (not make): CI uses -G Ninja, which has no Makefile targets for make(1).
-NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
-(cd "$FSW_BUILD_DIR" && cmake --build . --parallel "$NPROC" \
-  --target fsw_daq_lib \
-  --target daq_bridge \
-  --target sequencer_service \
-  --target heartbeat_service \
-  --target config_broadcast_service \
-  --target calibration_service \
-  --target controller_service 2>&1) \
-  || fail "C++ build failed"
+echo "🔨 Building C++ binaries (scripts/build.sh — canonical full build)..."
+# Full build via the canonical script, NOT a hand-maintained --target list.
+# A previous targeted list here omitted fake_packet_generator, so the test ran
+# a STALE packet generator against fresh services after transport changes —
+# the classic "int fails until you run build first" bug. Full incremental
+# builds cost seconds and can never skip a binary the test uses.
+bash "$REPO_ROOT/scripts/build.sh" || fail "C++ build failed"
 echo "  ✅ C++ binaries built"
 echo ""
 
@@ -304,18 +294,13 @@ else
   echo "  ⚠️  controller_service not found — controller tests will be skipped"
 fi
 
-# Find fake packet generator or board simulator (fallback)
-FAKE_GEN="$REPO_ROOT/build/bin/fake_packet_generator"
-[ -x "$FAKE_GEN" ] || FAKE_GEN=""
+# Data source: board_simulator.py (speaks the current DAQv2-Comms protocol).
+# NOTE: transport/src/fake_packet_generator.cpp is a pre-DAQv2 fossil (0xAA
+# magic + XOR framing the current daq_bridge cannot parse) with no CMake
+# target — never use it here even if someone makes it buildable again.
 BOARD_SIM="$REPO_ROOT/sim/board_simulator.py"
-if [ -z "$FAKE_GEN" ] && [ ! -f "$BOARD_SIM" ]; then
-  fail "Neither fake_packet_generator nor board_simulator.py found"
-fi
-if [ -n "$FAKE_GEN" ]; then
-  echo "  ✅ fake_packet_generator: $FAKE_GEN"
-else
-  echo "  ✅ board_simulator: $BOARD_SIM (fallback)"
-fi
+[ -f "$BOARD_SIM" ] || fail "board_simulator.py not found"
+echo "  ✅ board_simulator: $BOARD_SIM"
 
 # Find Python (for board_simulator fallback)
 PYTHON_BIN=""
@@ -591,19 +576,13 @@ fi
 # ── Start Fake Data Generator ────────────────────────────────────────────────
 
 echo "🎭 Starting fake data generator..."
-SIM_PID=""
-if [ -n "$FAKE_GEN" ]; then
-  # fake_packet_generator: positional args = host port rate_hz
-  "$FAKE_GEN" "127.0.0.1" "$TEST_DAQ_UDP_PORT" 10 > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
-  PIDS+=($!)
-else
-  # board_simulator.py: uses --config for board definitions, --port for UDP target
-  # --low-noise: constant ADC values per channel for calibration spike detection
-  "$PYTHON_BIN" -c "import tomli" 2>/dev/null || "$PYTHON_BIN" -m pip install tomli -q 2>/dev/null || true
-  "$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --skip-startup --stats-file "$SIM_STATS_FILE" > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
-  SIM_PID=$!
-  PIDS+=($SIM_PID)
-fi
+# board_simulator.py: uses --config for board definitions, --port for UDP target
+# --low-noise: constant ADC values per channel for calibration spike detection
+# TOML parsing: the sim falls back to stdlib tomllib (py>=3.11) when tomli is
+# absent; on older Pythons install it once with `pip install tomli`.
+"$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --skip-startup --stats-file "$SIM_STATS_FILE" > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
+SIM_PID=$!
+PIDS+=($SIM_PID)
 sleep 2
 
 if ! kill -0 "${PIDS[-1]}" 2>/dev/null; then
