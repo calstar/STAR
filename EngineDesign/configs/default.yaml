@@ -406,7 +406,7 @@ design_requirements:
   max_P_tank_F: null
   max_engine_length: 0.4
   max_chamber_outer_diameter: 0.2032
-  wall_thickness_per_side_m: 0.01905  # 0.75 in/side (metal + ablative); Layer 3 overwrites with sized ablative
+  metal_wall_thickness_per_side_m: 0.00635  # 0.25 in/side metal case; total wall = this + ablative liner (derived in code)
   max_nozzle_exit_diameter: 0.2032
   min_Lstar: 0.76
   max_Lstar: 1.5

@@ -908,11 +908,14 @@ class DesignRequirementsConfig(BaseModel):
     # Geometry constraints
     max_engine_length: float = Field(default=0.5, gt=0, description="Maximum total engine length (chamber + nozzle) [m]")
     max_chamber_outer_diameter: float = Field(default=0.15, gt=0, description="Maximum chamber outer diameter [m]")
-    wall_thickness_per_side_m: float = Field(
-        default=0.01905, gt=0,
-        description="Chamber wall allowance per side (metal + ablative liner) subtracted from OD to get "
-                    "the gas-side inner diameter [m]. Layer 1 uses D_inner = OD - 2*this. Initialized to "
-                    "0.75 in; Layer 3 overwrites it with the sized ablative thickness after thermal-protection optimization.")
+    metal_wall_thickness_per_side_m: float = Field(
+        default=0.00635, gt=0,
+        description="Chamber metal case thickness per side [m] (geometry envelope; default 0.25 in). "
+                    "Layer 1 derives the total OD -> gas-side wall as 2 * (this + ablative liner "
+                    "thickness when ablative cooling is enabled) — see optimizer.utils.total_wall_thickness_m. "
+                    "There is no separate lump wall field: the ablative share tracks "
+                    "ablative_cooling.initial_thickness automatically after Layer 3 sizes it. "
+                    "Distinct from stainless_steel_case.thickness (thermal-model conduction wall, often null).")
     max_nozzle_exit_diameter: float = Field(default=0.101, gt=0, description="Maximum nozzle exit diameter [m]")
     
     # L* constraints
@@ -1511,7 +1514,10 @@ class PintleEngineConfig(BaseModel):
         return self
 
     class Config:
-        extra = "allow"  # Reject unknown fields
+        # NOTE: "allow" ACCEPTS unknown YAML keys (stores them as extra attributes)
+        # — it does not reject them. Kept permissive for legacy configs; typo'd
+        # keys are therefore silently inert.
+        extra = "allow"
 
 
 def ensure_chamber_geometry(config: PintleEngineConfig) -> ChamberGeometryConfig:

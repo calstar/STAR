@@ -7,13 +7,33 @@ the keys the chamber residual / Layer 1 / stability consume.
 Safety:
   * Only the impinging injector with regen-coupled feed loss disabled is handled;
     anything else returns None so the caller uses Python.
-  * solve_checked() runs the Python solver once and compares mdot before trusting
-    native for the session (see closure wiring); any mismatch disables native.
+  * There is no runtime parity self-check (capability-dispatch architecture):
+    native<->Python parity is enforced by the golden C tests and the live A/B
+    suite (tests/test_native_ab_parity.py, run in the CI parity job). Genuine
+    native-machinery failures raise under ED_REQUIRE_NATIVE=1 and fall back to
+    Python (logged once) otherwise.
 """
 from __future__ import annotations
 
+import logging
 import math
 import os
+
+_logger = logging.getLogger(__name__)
+
+# One-time fallback warning so a broken native path in a long optimizer run is
+# visible in the log without spamming once per candidate.
+_FALLBACK_WARNED = False
+
+
+def _warn_fallback_once(stage: str, exc: Exception) -> None:
+    global _FALLBACK_WARNED
+    if not _FALLBACK_WARNED:
+        _FALLBACK_WARNED = True
+        _logger.warning(
+            "Native evaluate %s failed (%s: %s); falling back to Python for such "
+            "calls. (Logged once; set ED_REQUIRE_NATIVE=1 to raise instead.)",
+            stage, type(exc).__name__, exc)
 
 _NAT = None
 _PHI = {"none": 0, "sqrtP": 1, "logP": 2}
@@ -488,6 +508,8 @@ def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
         st = build_state(config)  # geometry changes per candidate, so rebuild each call
         rc, r = nat.evaluate(C.byref(st), float(P_tank_O), float(P_tank_F), float(P_ambient))
         if rc != 0 or not r.converged:
+            # Per-candidate physics outcome (degenerate CMA samples legitimately
+            # fail to converge) — quiet Python fallback, never a strict-mode raise.
             return None
         # Full injector diagnostics at the converged Pc — same construction the
         # production Python path feeds to stability (D32, delta_p_feed, Cd, A_geom,
@@ -495,7 +517,15 @@ def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
         rci, ir = nat.injector_solve(st, float(P_tank_O), float(P_tank_F), float(r.Pc))
         if rci != 0:
             return None
-    except Exception:
+    except Exception as exc:
+        # Genuine native-machinery failure (lib load/build, ctypes layout, table
+        # dump) — NOT a physics outcome. Strict mode (ED_REQUIRE_NATIVE=1, the CI
+        # parity job) surfaces it instead of passing green on the Python fallback;
+        # default runs fall back quietly but leave one log line so a long
+        # optimizer run silently running 100% Python is diagnosable.
+        if require_native():
+            raise
+        _warn_fallback_once("physics", exc)
         return None
 
     diagnostics = _result_to_diag(config, ir)
@@ -513,8 +543,15 @@ def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
         stability_results = comprehensive_stability_analysis(
             config=config, Pc=r.Pc, MR=r.MR, mdot_total=r.mdot_total,
             cstar=r.cstar_actual, gamma=r.gamma, R=r.R, Tc=r.Tc_effective, diagnostics=diagnostics)
-    except Exception:
-        stability_results = {}
+    except Exception as exc:
+        # Do NOT proceed with empty stability: missing margins read as worst-case
+        # downstream, silently biasing the ranking of native-evaluated candidates
+        # vs Python-evaluated ones. Fall back to the full Python path for this
+        # call instead (strict mode raises).
+        if require_native():
+            raise
+        _warn_fallback_once("stability", exc)
+        return None
 
     # F/Isp/Cf_actual come straight from the C result — ed_evaluate.c computes the
     # RPA delivered thrust from the tables' Cf_vac (and errors out rather than

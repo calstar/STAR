@@ -63,24 +63,18 @@ TOTAL_WALL_THICKNESS_M = 0.0254  # fallback only: 1.0 inch total (0.5 in/side). 
 
 
 def _layer1_total_wall_thickness_m(config: Any) -> float:
-    """Total chamber-wall allowance (both sides) subtracted from OD to get the gas-side
-    inner diameter: ``2 x design_requirements.wall_thickness_per_side_m``.
+    """Total chamber-wall thickness (both sides) for the OD -> gas-side conversion.
 
-    This is a single explicit per-side wall thickness (metal + ablative liner combined),
-    initialized in the config (default 0.75 in/side) and OVERWRITTEN by Layer 3 with its
-    sized ablative thickness once the thermal-protection optimizer runs. Replaces the old
-    hardcoded 1-inch constant. Falls back to ``TOTAL_WALL_THICKNESS_M`` only if the field
-    is missing/invalid.
+    Thin alias for :func:`engine.optimizer.utils.total_wall_thickness_m`: the wall is
+    DERIVED as ``2 x (metal case + ablative liner when enabled)`` from the fields that
+    own those layers (``design_requirements.metal_wall_thickness_per_side_m`` and
+    ``ablative_cooling.initial_thickness``). Layer 3 re-sizing the liner therefore
+    updates the wall on the next run automatically — there is no lump wall field and
+    no write-back (the old one overwrote metal+ablative with ablative alone, so
+    rerun geometry grew past what physically fits the OD envelope).
     """
-    dr = getattr(config, "design_requirements", None)
-    per_side = getattr(dr, "wall_thickness_per_side_m", None) if dr is not None else None
-    try:
-        per_side = float(per_side)
-    except (TypeError, ValueError):
-        return TOTAL_WALL_THICKNESS_M
-    if np.isfinite(per_side) and per_side > 0.0:
-        return 2.0 * per_side
-    return TOTAL_WALL_THICKNESS_M
+    from engine.optimizer.utils import total_wall_thickness_m
+    return total_wall_thickness_m(config)
 
 # Default for ``requirements["min_stability_margin"]`` when unset. MUST stay identical in
 # ``run_layer1_optimization`` and ``_compute_objective_value`` — parallel CMA ranks candidates via
@@ -2394,13 +2388,13 @@ def run_layer1_optimization(
     )
 
     max_chamber_od = requirements.get("max_chamber_outer_diameter", 0.15)
-    # Total OD->inner-diameter wall allowance from the explicit per-side config field
-    # (design_requirements.wall_thickness_per_side_m), not a hardcoded inch. Layer 3
-    # overwrites that field with its sized ablative thickness, so this tracks it on reruns.
+    # Total OD->inner-diameter wall, DERIVED per side as metal case + ablative liner
+    # (see utils.total_wall_thickness_m). Layer 3 re-sizes the liner field itself,
+    # so reruns pick up the sized stack automatically.
     wall_total_m = _layer1_total_wall_thickness_m(config_obj)
     layer1_logger.info(
-        "Layer 1 wall allowance (OD - inner): %.2f mm total (%.2f mm/side) from "
-        "design_requirements.wall_thickness_per_side_m.", wall_total_m * 1e3, wall_total_m * 0.5e3,
+        "Layer 1 wall (OD - inner): %.2f mm total (%.2f mm/side = metal case + ablative liner).",
+        wall_total_m * 1e3, wall_total_m * 0.5e3,
     )
     max_nozzle_exit = requirements.get("max_nozzle_exit_diameter", 0.101)
     thrust_tol = tolerances.get("thrust", 0.10)
@@ -3318,7 +3312,9 @@ def run_layer1_optimization(
     _pc_t_req = requirements.get("target_chamber_pressure_psi")
     if _pc_t_req is not None and float(_pc_t_req) > 0:
         _pc_target_pa_obj = float(_pc_t_req) * 6894.757293168
-        _W_PC_obj = float(requirements.get("layer1_W_PC") or 1.0e4)
+        # None => default 1e4; an explicit 0.0 stays 0.0 (penalty off, seeding
+        # effects kept). MUST mirror constants_dict['layer1_W_PC'] below.
+        _W_PC_obj = _requirement_float(requirements, "layer1_W_PC", 1.0e4)
 
     # Define objective function
     def objective(x: np.ndarray) -> float:
@@ -4479,7 +4475,9 @@ def run_layer1_optimization(
         # Matches W_THRUST magnitude. The L1 (linear) shape is what pins Pc exactly: near a
         # solution the squared thrust/OF terms have ~0 gradient, so the L1 Pc pull is
         # essentially uncontested and drives Pc onto target without a huge (ill-conditioning) weight.
-        constants_dict['layer1_W_PC'] = float(requirements.get("layer1_W_PC") or 1.0e4)
+        # None => default 1e4; an explicit 0.0 stays 0.0 (penalty off, seeding
+        # effects kept). MUST mirror _W_PC_obj in the parent objective above.
+        constants_dict['layer1_W_PC'] = _requirement_float(requirements, "layer1_W_PC", 1.0e4)
         layer1_logger.info(
             "Layer 1 chamber-pressure target: %.0f psi (%.3f MPa), W_PC=%g (exact L1). Throat sizes "
             "for thrust; tank pressure drives Pc to target.",
