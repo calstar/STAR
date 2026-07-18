@@ -11,8 +11,6 @@
  *  5. uint32 wrap between packets      10. arrival mode (revert switch)
  */
 
-#include "time/BoardClockSync.hpp"
-
 #include <algorithm>
 #include <cinttypes>
 #include <cmath>
@@ -20,19 +18,21 @@
 #include <string>
 #include <vector>
 
+#include "time/BoardClockSync.hpp"
+
 using fsw::time::BoardClockSync;
 using fsw::time::TimeSyncConfig;
 
 static int g_failures = 0;
 
-#define CHECK(cond, ...)                                            \
-    do {                                                            \
-        if (!(cond)) {                                              \
-            g_failures++;                                           \
-            std::printf("  ❌ [%s:%d] ", __func__, __LINE__);      \
-            std::printf(__VA_ARGS__);                               \
-            std::printf("\n");                                      \
-        }                                                           \
+#define CHECK(cond, ...)                                      \
+    do {                                                      \
+        if (!(cond)) {                                        \
+            g_failures++;                                     \
+            std::printf("  ❌ [%s:%d] ", __func__, __LINE__); \
+            std::printf(__VA_ARGS__);                         \
+            std::printf("\n");                                \
+        }                                                     \
     } while (0)
 
 namespace {
@@ -52,14 +52,22 @@ TimeSyncConfig default_cfg() {
 }
 
 /** |a-b| for uint64 without underflow. */
-uint64_t absdiff(uint64_t a, uint64_t b) { return a > b ? a - b : b - a; }
+uint64_t absdiff(uint64_t a, uint64_t b) {
+    return a > b ? a - b : b - a;
+}
 
 /** Deterministic LCG so jitter sequences are reproducible. */
 struct Lcg {
     uint64_t s;
-    explicit Lcg(uint64_t seed) : s(seed) {}
-    uint64_t next() { s = s * 6364136223846793005ULL + 1442695040888963407ULL; return s >> 33; }
-    uint64_t below(uint64_t n) { return next() % n; }
+    explicit Lcg(uint64_t seed) : s(seed) {
+    }
+    uint64_t next() {
+        s = s * 6364136223846793005ULL + 1442695040888963407ULL;
+        return s >> 33;
+    }
+    uint64_t below(uint64_t n) {
+        return next() % n;
+    }
 };
 
 // ── 1. Within-packet spreading ───────────────────────────────────────────────
@@ -123,12 +131,13 @@ void test_drift() {
             const uint32_t board_ms =
                 static_cast<uint32_t>(1000.0 + real_s * 1000.0 * (1.0 + ppm * 1e-6));
             auto out = sync.stamp_packet(key, true_send + 2 * NS_MS, {board_ms});
-            if (i > 100) worst = std::max(worst, absdiff(out[0], true_send));
+            if (i > 100)
+                worst = std::max(worst, absdiff(out[0], true_send));
         }
         // Bound: delivery delay (2ms, constant → indistinguishable from offset)
         // plus window staleness (10 s × 200 ppm = 2 ms) plus ms quantization.
-        CHECK(worst <= 6 * NS_MS, "%s drift worst error %" PRIu64 " ns (limit 6ms)",
-              key.c_str(), worst);
+        CHECK(worst <= 6 * NS_MS, "%s drift worst error %" PRIu64 " ns (limit 6ms)", key.c_str(),
+              worst);
         CHECK(sync.stats(key).resyncs == 0, "%s drift must not cause resyncs", key.c_str());
     }
 }
@@ -174,8 +183,8 @@ void test_wrap_between_packets() {
         auto out = sync.stamp_packet("b1", arrival, {raw});
         if (i > 0) {
             CHECK(out[0] - prev == 100 * NS_MS,
-                  "spacing must stay exactly 100ms across the wrap (i=%d, got %" PRIu64 ")",
-                  i, out[0] - prev);
+                  "spacing must stay exactly 100ms across the wrap (i=%d, got %" PRIu64 ")", i,
+                  out[0] - prev);
         }
         prev = out[0];
         arrival += 100 * NS_MS;
@@ -220,7 +229,8 @@ void test_clamp_fallback() {
     CHECK(out2[0] == arrival2, "garbage-spaced chunk must fall back to arrival");
     CHECK(sync.stats("b1").clamp_fallbacks == 2, "second fallback counted");
     // Invariant: nothing ever stamps in the future.
-    for (auto t : out2) CHECK(t <= arrival2, "no stamp may exceed arrival");
+    for (auto t : out2)
+        CHECK(t <= arrival2, "no stamp may exceed arrival");
 }
 
 // ── 8. Per-board monotonic guard ─────────────────────────────────────────────
@@ -248,7 +258,8 @@ void test_multi_board() {
     for (int i = 0; i < 30; i++) {
         auto oa = sync.stamp_packet("A", arrival + 1 * NS_MS, {a_ms});
         sync.stamp_packet("B", arrival + 2 * NS_MS, {b_ms});
-        if (i > 0) CHECK(oa[0] - a_prev == 100 * NS_MS, "board A spacing exact");
+        if (i > 0)
+            CHECK(oa[0] - a_prev == 100 * NS_MS, "board A spacing exact");
         a_prev = oa[0];
         arrival += 100 * NS_MS;
         a_ms += 100;
@@ -268,7 +279,8 @@ void test_arrival_mode() {
     BoardClockSync sync(cfg);
     const uint64_t arrival = EPOCH + 42 * NS_MS;
     auto out = sync.stamp_packet("b1", arrival, {1000, 1100, 1200});
-    for (auto t : out) CHECK(t == arrival, "arrival mode: every chunk at arrival");
+    for (auto t : out)
+        CHECK(t == arrival, "arrival mode: every chunk at arrival");
     CHECK(sync.stats("b1").resyncs == 0 && sync.stats("b1").clamp_fallbacks == 0,
           "arrival mode touches no sync machinery");
 }
@@ -287,7 +299,7 @@ void test_fuzz_invariants() {
             chunks.push_back(board_ms);
             board_ms += 20 + static_cast<uint32_t>(rng.below(30));
         }
-        arrival += (50 + rng.below(100)) * NS_MS;                 // real time advances
+        arrival += (50 + rng.below(100)) * NS_MS;                   // real time advances
         const uint64_t jittered = arrival + rng.below(40) * NS_MS;  // one-sided delay
         auto out = sync.stamp_packet("fz", jittered, chunks);
         for (auto t : out) {

@@ -51,16 +51,17 @@ namespace time {
 struct TimeSyncConfig {
     enum class Mode { BoardClock, Arrival };
     Mode mode = Mode::BoardClock;
-    uint32_t window_seconds = 10;       // residual-min sliding window
-    uint32_t max_plausible_gap_s = 60;  // modular forward step beyond this = reboot
-    uint32_t max_batch_age_s = 5;       // stamps confined to [arrival - this, arrival]
+    uint32_t window_seconds = 10;         // residual-min sliding window
+    uint32_t max_plausible_gap_s = 60;    // modular forward step beyond this = reboot
+    uint32_t max_batch_age_s = 5;         // stamps confined to [arrival - this, arrival]
     uint32_t resync_threshold_ms = 1000;  // |residual - offset| beyond this = lost lock
-    uint32_t log_interval_s = 10;       // diagnostics cadence (used by the bridge)
+    uint32_t log_interval_s = 10;         // diagnostics cadence (used by the bridge)
 };
 
 class BoardClockSync {
 public:
-    explicit BoardClockSync(const TimeSyncConfig& cfg) : cfg_(cfg) {}
+    explicit BoardClockSync(const TimeSyncConfig& cfg) : cfg_(cfg) {
+    }
 
     /**
      * Stamp one packet's chunks for one board.
@@ -71,15 +72,14 @@ public:
      *                   uint32 millis; may wrap mid-packet)
      * @return one epoch-ns timestamp per chunk, same order as chunk_ms
      */
-    std::vector<uint64_t> stamp_packet(const std::string& board_key,
-                                       uint64_t arrival_ns,
+    std::vector<uint64_t> stamp_packet(const std::string& board_key, uint64_t arrival_ns,
                                        const std::vector<uint32_t>& chunk_ms);
 
     struct BoardStats {
-        double offset_ms = 0.0;       // current arrival-vs-board offset estimate
-        double jitter_ms = 0.0;       // EMA of residual excess over the offset floor
-        uint32_t resyncs = 0;         // reboot / lost-lock re-initializations
-        uint32_t clamp_fallbacks = 0; // chunks stamped at flat arrival (safety clamp)
+        double offset_ms = 0.0;        // current arrival-vs-board offset estimate
+        double jitter_ms = 0.0;        // EMA of residual excess over the offset floor
+        uint32_t resyncs = 0;          // reboot / lost-lock re-initializations
+        uint32_t clamp_fallbacks = 0;  // chunks stamped at flat arrival (safety clamp)
         uint64_t packets = 0;
         bool locked = false;
     };
@@ -96,10 +96,10 @@ private:
         uint32_t last_raw_ms = 0;        // newest chunk of the previous packet (raw)
         uint64_t last_unwrapped_ms = 0;  // 64-bit unwrapped counterpart
         // Offset math is exact int64 ns — doubles cannot represent epoch-ns.
-        int64_t offset_ns = 0;           // arrival_ns - unwrapped_board_ns (window min)
+        int64_t offset_ns = 0;  // arrival_ns - unwrapped_board_ns (window min)
         // (arrival_ns, residual_ns) per packet; pruned to window_seconds by arrival.
         std::deque<std::pair<uint64_t, int64_t>> window;
-        uint64_t last_emitted_ns = 0;    // per-board monotonic guard
+        uint64_t last_emitted_ns = 0;  // per-board monotonic guard
         BoardStats stats;
     };
 

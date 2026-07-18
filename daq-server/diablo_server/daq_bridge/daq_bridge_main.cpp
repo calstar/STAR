@@ -305,9 +305,8 @@ int main(int argc, char* argv[]) {
     load_board_map_from_config(config_path, board_map, &board_order, db_host, db_port,
                                &config_sensor_port, &config_bind_ip, &hb_config, &time_sync_cfg);
     std::cout << "[TimeSync] mode="
-              << (time_sync_cfg.mode == fsw::time::TimeSyncConfig::Mode::BoardClock
-                      ? "board-clock"
-                      : "arrival")
+              << (time_sync_cfg.mode == fsw::time::TimeSyncConfig::Mode::BoardClock ? "board-clock"
+                                                                                    : "arrival")
               << " window=" << time_sync_cfg.window_seconds << "s" << std::endl;
     if (config_sensor_port != 0)
         bind_port = config_sensor_port;

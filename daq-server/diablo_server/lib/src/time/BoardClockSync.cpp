@@ -35,14 +35,16 @@ void BoardClockSync::resync(BoardState& s, uint32_t newest_raw_ms, uint64_t arri
     s.window.clear();
     s.window.emplace_back(arrival_ns, residual);
     s.locked = true;
-    if (count) s.stats.resyncs++;
+    if (count)
+        s.stats.resyncs++;
 }
 
 std::vector<uint64_t> BoardClockSync::stamp_packet(const std::string& board_key,
                                                    uint64_t arrival_ns,
                                                    const std::vector<uint32_t>& chunk_ms) {
     std::vector<uint64_t> out(chunk_ms.size(), arrival_ns);
-    if (chunk_ms.empty()) return out;
+    if (chunk_ms.empty())
+        return out;
 
     BoardState& s = boards_[board_key];
     s.stats.packets++;
@@ -80,8 +82,7 @@ std::vector<uint64_t> BoardClockSync::stamp_packet(const std::string& board_key,
         const int64_t residual = static_cast<int64_t>(arrival_ns) - board_ns(s.last_unwrapped_ms);
 
         // Lost lock (clock discontinuity that kept a plausible step size)?
-        const int64_t resync_thr_ns =
-            static_cast<int64_t>(cfg_.resync_threshold_ms) * NS_PER_MS;
+        const int64_t resync_thr_ns = static_cast<int64_t>(cfg_.resync_threshold_ms) * NS_PER_MS;
         if (residual - s.offset_ns > resync_thr_ns || s.offset_ns - residual > resync_thr_ns) {
             resync(s, newest_raw, arrival_ns, /*count=*/true);
         } else {
@@ -92,7 +93,8 @@ std::vector<uint64_t> BoardClockSync::stamp_packet(const std::string& board_key,
                 s.window.pop_front();
             }
             int64_t mn = s.window.front().second;
-            for (const auto& e : s.window) mn = std::min(mn, e.second);
+            for (const auto& e : s.window)
+                mn = std::min(mn, e.second);
             // Includes the current packet's residual → offset ≤ residual, which
             // guarantees the newest chunk never stamps past arrival.
             s.offset_ns = mn;
@@ -137,7 +139,8 @@ std::vector<uint64_t> BoardClockSync::stamp_packet(const std::string& board_key,
             t_ns = static_cast<uint64_t>(t);
         }
         // Per-board monotonic guard: emitted chunk timestamps never decrease.
-        if (t_ns < s.last_emitted_ns) t_ns = s.last_emitted_ns;
+        if (t_ns < s.last_emitted_ns)
+            t_ns = s.last_emitted_ns;
         s.last_emitted_ns = t_ns;
         out[i] = t_ns;
     }
@@ -155,7 +158,8 @@ BoardClockSync::BoardStats BoardClockSync::stats(const std::string& board_key) c
 std::vector<std::string> BoardClockSync::boards() const {
     std::vector<std::string> keys;
     keys.reserve(boards_.size());
-    for (const auto& [k, _] : boards_) keys.push_back(k);
+    for (const auto& [k, _] : boards_)
+        keys.push_back(k);
     return keys;
 }
 
