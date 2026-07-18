@@ -3,15 +3,23 @@
 # STAR Monorepo — Newcomer Setup Script
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# One-shot setup for a fresh clone of github.com/calstar/STAR. Installs all
-# system dependencies, Python + Node packages, builds C++ binaries, and gets
-# you to a state where `bash daq-server/test/test_integration.sh` should run.
+# Dispatcher over the per-project setup scripts. Each subproject owns its own
+# install steps (daq-server/setup.sh, firmware/setup.sh, EngineDesign/setup.sh,
+# pid-designer/setup.sh) so you only pay for what you use — cloning the repo
+# for the P&ID editor shouldn't force you to build Rust + elodin-db.
 #
-# ─── Before running this script ──────────────────────────────────────────────
+# ─── Usage ───────────────────────────────────────────────────────────────────
 #
-#   git clone https://github.com/calstar/STAR.git
-#   cd STAR
-#   bash setup.sh
+#   bash setup.sh                    # interactive menu
+#   bash setup.sh --all              # install everything
+#   bash setup.sh --daq-server       # single project
+#   bash setup.sh --daq-server --firmware
+#   bash setup.sh --engine-design --ci   # flags pass through to sub-scripts
+#   bash setup.sh --list             # list available projects
+#   bash setup.sh --help
+#
+# Non-interactive:
+#   SETUP_YES=1 bash setup.sh --all  # or --yes / -y
 #
 # ─── Windows users ───────────────────────────────────────────────────────────
 #
@@ -24,264 +32,237 @@
 # (Or use WSL — strongly recommended over native Windows for this codebase.)
 # Without this, files that should be symlinks become plain text files
 # containing the link target, and builds will fail with confusing errors.
-#
-# ─── What this script does ───────────────────────────────────────────────────
-#
-#   1. Checks you're on macOS (with Homebrew) or Linux
-#   2. Installs Homebrew packages: cmake, openssl@3, eigen, tmux, node@20
-#      Installs black (pinned 25.11.0) via pip --user — see comments inline.
-#   3. Installs Rust (if missing) and elodin-db (the time-series telemetry DB)
-#   4. Creates a Python venv at daq-server/.venv and installs requirements
-#   5. Installs npm packages for diablo_server/{backend,frontend}
-#   6. Configures cmake and builds the C++ binaries needed by the integration test
-#   7. Prints next steps
-#
-# What it does NOT do:
-#   - Sudo-prompts you for the loopback aliases that the integration test
-#     needs at run time. Run the integration test itself for that.
-#   - Touch your shell rc files. PATH adjustments needed for ~/.cargo/bin
-#     and Homebrew are noted at the end.
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
-# Terminal colors
-CYAN='\033[0;36m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-step()  { echo -e "\n${CYAN}── $1 ──${NC}"; }
-ok()    { echo -e "  ${GREEN}✓${NC} $1"; }
-warn()  { echo -e "  ${YELLOW}!${NC} $1"; }
-fail()  { echo -e "  ${RED}✗${NC} $1" >&2; exit 1; }
-
-# Resolve repo root (this script lives at the top of the monorepo)
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
-# ─── 0. Sanity ───────────────────────────────────────────────────────────────
-step "Sanity checks"
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/setup_common.sh"
 
+# ─── Project registry ────────────────────────────────────────────────────────
+# One row per project: key | display name | script path | one-line description
+# The dispatcher runs them in this order when multiple are selected — put the
+# lightest ones first so quick projects finish before slow ones (daq-server).
+PROJECTS=(
+  "pid-designer|P&ID Designer|pid-designer/setup.sh|FastAPI + React P&ID editor (quick)"
+  "engine-design|Engine Design|EngineDesign/setup.sh|Python physics pipeline + FastAPI + React"
+  "firmware|Firmware|firmware/setup.sh|PlatformIO for ESP32 board firmware"
+  "daq-server|DAQ Server|daq-server/setup.sh|C++ + Rust + Python + Node — the big one"
+)
+
+project_field() {
+  # $1 = row, $2 = 1..4 (key/name/path/desc)
+  awk -F'|' -v i="$2" '{print $i}' <<< "$1"
+}
+
+print_project_list() {
+  printf "\n  Available projects:\n\n"
+  local i=1
+  for row in "${PROJECTS[@]}"; do
+    printf "    %d) %-15s — %s\n" "$i" "$(project_field "$row" 1)" "$(project_field "$row" 4)"
+    i=$((i+1))
+  done
+  printf "\n"
+}
+
+show_help() {
+  awk '/^#!/{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "${BASH_SOURCE[0]}"
+  print_project_list
+  cat <<'EOF'
+  Flags:
+    --all                Install every project
+    --daq-server         Install daq-server
+    --firmware           Install firmware
+    --engine-design      Install EngineDesign
+    --pid-designer       Install pid-designer
+    --list               List projects and exit
+    --yes, -y            Accept all prompts (non-interactive)
+    --no-hook            Don't offer daq-server pre-push format hook
+    --help, -h           This help
+
+  Any additional flags are passed through to each project's setup.sh, e.g.:
+    bash setup.sh --engine-design --ci --no-frontend
+    bash setup.sh --daq-server --no-build
+
+EOF
+}
+
+# ─── Argument parsing ────────────────────────────────────────────────────────
+SELECTED=()
+PASSTHRU=()
+DID_LIST=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --all)
+      for row in "${PROJECTS[@]}"; do SELECTED+=("$(project_field "$row" 1)"); done
+      ;;
+    --daq-server)    SELECTED+=("daq-server") ;;
+    --firmware)      SELECTED+=("firmware") ;;
+    --engine-design) SELECTED+=("engine-design") ;;
+    --pid-designer)  SELECTED+=("pid-designer") ;;
+    --list)          DID_LIST=1 ;;
+    --yes|-y)        export SETUP_YES=1; PASSTHRU+=("--yes") ;;
+    --no-hook)       PASSTHRU+=("--no-hook") ;;
+    --help|-h)       show_help; exit 0 ;;
+    # Anything else is passed through to sub-scripts (e.g. --ci, --no-build)
+    *)               PASSTHRU+=("$1") ;;
+  esac
+  shift
+done
+
+if [ "$DID_LIST" = "1" ]; then
+  print_project_list
+  exit 0
+fi
+
+# ─── Sanity ──────────────────────────────────────────────────────────────────
+step "Sanity checks"
 if [ ! -d daq-server ] || [ ! -d firmware ]; then
   fail "Run this from the STAR repo root (expected daq-server/ and firmware/)"
 fi
 ok "Repo root: $REPO_ROOT"
 
-OS="$(uname -s)"
+OS="$(detect_os)"
 case "$OS" in
-  Darwin) ok "Detected macOS" ;;
-  Linux)  ok "Detected Linux"  ;;
-  *)      fail "Unsupported OS: $OS — use macOS, Linux, or WSL" ;;
+  macOS|Linux|WSL) ok "Detected $OS" ;;
+  *) fail "Unsupported OS: $OS — use macOS, Linux, or WSL" ;;
 esac
 
-if [ "$OS" = "Darwin" ] && ! command -v brew >/dev/null 2>&1; then
-  fail "Homebrew not found. Install from https://brew.sh first, then re-run."
-fi
-
-# ─── 1. System packages ──────────────────────────────────────────────────────
-step "Installing system packages (Homebrew)"
-
-if [ "$OS" = "Darwin" ]; then
-  PKGS="cmake openssl@3 eigen tmux node@20"
-  echo "  brew install $PKGS"
-  brew install $PKGS
-  ok "Homebrew packages installed"
-else
-  warn "Linux: install equivalents manually with apt/dnf:"
-  warn "  cmake, libssl-dev, libeigen3-dev, tmux, nodejs (20+), npm"
-fi
-
-# Install black via pip --user (NOT brew). Reasons:
-#   (1) format.sh and the pre-push hook run outside the venv, so they need
-#       black on $PATH — the venv install alone isn't enough.
-#   (2) brew's black formula tracks latest, which can be black 26+. That
-#       requires Python ≥3.10. macOS's system Python is 3.9, so brew's
-#       black might be unusable.
-#   (3) Pinning the exact version (25.11.0) keeps laptops and CI in sync —
-#       same pin as daq-server/requirements.txt and the workflow.
-echo "  pip3 install --user black==25.11.0"
-pip3 install --user --quiet black==25.11.0 || pip3 install --user --quiet --break-system-packages black==25.11.0
-ok "black 25.11.0 installed (pip --user)"
-
-# Tell the user how to ensure it's on PATH if it isn't already.
-PY_VER="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-PY_USER_BIN="$HOME/Library/Python/$PY_VER/bin"
-[ "$OS" = "Linux" ] && PY_USER_BIN="$HOME/.local/bin"
-if ! command -v black >/dev/null 2>&1; then
-  warn "black installed but not on \$PATH yet. Add this to your shell rc:"
-  warn "  export PATH=\"$PY_USER_BIN:\$PATH\""
-fi
-
-# ─── 2. Rust + elodin-db ─────────────────────────────────────────────────────
-step "Rust + elodin-db (time-series telemetry DB)"
-
-if ! command -v cargo >/dev/null 2>&1; then
-  echo "  Installing Rust toolchain..."
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-  # shellcheck disable=SC1090
-  source "$HOME/.cargo/env"
-  ok "Rust installed"
-else
-  ok "Rust already installed ($(cargo --version))"
-fi
-
-ELODIN_BIN="$HOME/.cargo/bin/elodin-db"
-if [ -x "$ELODIN_BIN" ]; then
-  ok "elodin-db already installed: $($ELODIN_BIN --version 2>/dev/null || echo 'present')"
-else
-  echo "  Building elodin-db from source (a few minutes — Rust compile)..."
-  ELODIN_SRC="/tmp/elodin-src-$$"
-  rm -rf "$ELODIN_SRC"
-  git clone --depth 1 --branch v0.16.2 https://github.com/elodin-sys/elodin.git "$ELODIN_SRC"
-  (cd "$ELODIN_SRC" && cargo install --path libs/db)
-  rm -rf "$ELODIN_SRC"
-
-  # The crate may install as `impeller2-cli`; symlink for compatibility.
-  if [ ! -x "$ELODIN_BIN" ] && [ -x "$HOME/.cargo/bin/impeller2-cli" ]; then
-    ln -sf impeller2-cli "$ELODIN_BIN"
-  fi
-
-  if [ -x "$ELODIN_BIN" ]; then
-    ok "elodin-db built and installed"
+# ─── Interactive selection ───────────────────────────────────────────────────
+if [ ${#SELECTED[@]} -eq 0 ]; then
+  if [ ! -t 0 ] || [ "${SETUP_YES:-0}" = "1" ]; then
+    # Non-interactive with no selection = default to --all (matches the
+    # old setup.sh behavior for CI / provisioning scripts calling us).
+    warn "No projects selected and non-interactive; defaulting to --all"
+    for row in "${PROJECTS[@]}"; do SELECTED+=("$(project_field "$row" 1)"); done
   else
-    fail "elodin-db install completed but binary not found at $ELODIN_BIN"
-  fi
-fi
-
-# ─── 3. Python venv + requirements ───────────────────────────────────────────
-step "Python virtual environment (daq-server/.venv)"
-
-cd "$REPO_ROOT/daq-server"
-
-if [ ! -d .venv ]; then
-  python3 -m venv .venv
-  ok ".venv created"
-else
-  ok ".venv already exists"
-fi
-
-# shellcheck disable=SC1091
-source .venv/bin/activate
-pip install --quiet --upgrade pip
-if [ -f requirements.txt ]; then
-  pip install --quiet -r requirements.txt
-  ok "Python requirements installed"
-else
-  warn "No requirements.txt found in daq-server/ — skipping pip install"
-fi
-deactivate
-
-cd "$REPO_ROOT"
-
-# ─── 4. Node dependencies ────────────────────────────────────────────────────
-step "Node dependencies (diablo_server/backend + frontend)"
-
-if [ -d daq-server/diablo_server/backend ]; then
-  (cd daq-server/diablo_server/backend && npm install --silent)
-  ok "Backend npm install done"
-else
-  warn "daq-server/diablo_server/backend not found — skipping"
-fi
-
-if [ -d daq-server/diablo_server/frontend ]; then
-  (cd daq-server/diablo_server/frontend && npm install --silent)
-  ok "Frontend npm install done"
-else
-  warn "daq-server/diablo_server/frontend not found — skipping"
-fi
-
-# ─── 5. C++ build ────────────────────────────────────────────────────────────
-step "C++ build (cmake + make)"
-
-cd "$REPO_ROOT/daq-server"
-mkdir -p build
-cd build
-
-CMAKE_FLAGS=()
-if [ "$OS" = "Darwin" ]; then
-  CMAKE_FLAGS+=("-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)")
-fi
-
-echo "  Configuring cmake..."
-cmake "${CMAKE_FLAGS[@]}" .. > /dev/null
-ok "cmake configured"
-
-echo "  Building binaries (this is the slow step)..."
-JOBS="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)"
-make -j"$JOBS" \
-  daq_bridge \
-  sequencer_service \
-  heartbeat_service \
-  config_broadcast_service \
-  calibration_service \
-  controller_service
-ok "All target binaries built"
-
-cd "$REPO_ROOT"
-
-# ─── 6. Local format-on-push hook (optional) ─────────────────────────────────
-step "Local format-on-push hook (optional)"
-
-cat <<'EOF'
-  We ship a pre-push hook at daq-server/githooks/pre-push that runs ./format.sh
-  before every push. If formatting changes anything, the push is blocked so you
-  can stage + commit the fixes — catching format failures locally instead of in
-  CI.
-
-  Note: this is a local convenience only. The real enforcement is GitHub
-  branch protection requiring the CI format-check job to pass before merge.
-
-  Enabling sets:     git config core.hooksPath daq-server/githooks
-  Disable later:     git config --unset core.hooksPath
-  Bypass once:       git push --no-verify
+    print_project_list
+    cat <<'EOF'
+  Which projects do you want to set up?
+    - Enter a comma- or space-separated list of numbers (e.g. "1 3" or "1,3")
+    - Enter "a" for all
+    - Enter "q" to quit
 
 EOF
-
-ENABLE_HOOK=""
-if [ -t 0 ]; then
-  read -rp "  Enable format-on-push hook? [Y/n] " ENABLE_HOOK || ENABLE_HOOK=""
-else
-  warn "Non-interactive shell — skipping (hook NOT enabled)"
+    read -rp "  Choice: " REPLY || REPLY=""
+    REPLY="${REPLY// /,}"
+    case "$REPLY" in
+      q|Q|"") warn "No selection — exiting"; exit 0 ;;
+      a|A|all)
+        for row in "${PROJECTS[@]}"; do SELECTED+=("$(project_field "$row" 1)"); done
+        ;;
+      *)
+        IFS=',' read -ra CHOICES <<< "$REPLY"
+        for c in "${CHOICES[@]}"; do
+          c="${c// /}"
+          [ -z "$c" ] && continue
+          if ! [[ "$c" =~ ^[0-9]+$ ]] \
+             || [ "$c" -lt 1 ] || [ "$c" -gt "${#PROJECTS[@]}" ]; then
+            fail "Invalid choice: '$c' (want 1..${#PROJECTS[@]})"
+          fi
+          SELECTED+=("$(project_field "${PROJECTS[$((c-1))]}" 1)")
+        done
+        ;;
+    esac
+  fi
 fi
 
-case "${ENABLE_HOOK:-y}" in
-  [Yy]*|"")
-    if [ ! -x daq-server/githooks/pre-push ]; then
-      chmod +x daq-server/githooks/pre-push 2>/dev/null || true
+# Deduplicate while preserving PROJECTS order.
+FINAL=()
+for row in "${PROJECTS[@]}"; do
+  key="$(project_field "$row" 1)"
+  for sel in "${SELECTED[@]}"; do
+    if [ "$sel" = "$key" ]; then
+      FINAL+=("$row")
+      break
     fi
-    git config core.hooksPath daq-server/githooks
-    ok "Enabled — core.hooksPath = daq-server/githooks"
-    ;;
-  *)
-    warn "Skipped — enable later with: git config core.hooksPath daq-server/githooks"
-    ;;
-esac
+  done
+done
 
-# ─── Done ─────────────────────────────────────────────────────────────────────
-step "Setup complete"
+if [ ${#FINAL[@]} -eq 0 ]; then
+  fail "No valid projects selected."
+fi
+
+# ─── Shared prep ─────────────────────────────────────────────────────────────
+# Global black install: format.sh and the pre-push hook run outside any venv,
+# so black needs to be on the global $PATH. Every project's format-check ends
+# up calling the same top-level format.sh, so we install it once here rather
+# than per-project.
+step "Shared: pinned global black (for format.sh + pre-push hook)"
+ensure_pinned_black
+
+# Windows-symlink foot-gun sanity: if the DAQv2-Comms symlink got turned into
+# a text file by a Windows clone, every project's build later will fail with
+# confusing errors. Detect it once, upfront.
+LINK="$REPO_ROOT/firmware/libraries/DAQv2-Comms"
+if [ -e "$LINK" ] && [ ! -L "$LINK" ] && [ -f "$LINK" ]; then
+  warn "firmware/libraries/DAQv2-Comms is a plain file, not a symlink."
+  warn "You likely cloned on Windows without symlinks enabled. Re-clone with:"
+  warn "  git config --global core.symlinks true"
+fi
+
+# ─── Dispatch ────────────────────────────────────────────────────────────────
+printf "\n${BOLD}Plan:${NC} setup will run these projects in order:\n"
+for row in "${FINAL[@]}"; do
+  printf "    - %s (%s)\n" "$(project_field "$row" 2)" "$(project_field "$row" 3)"
+done
+printf "\n"
+
+FAILED=()
+COMPLETED=()
+for row in "${FINAL[@]}"; do
+  key="$(project_field "$row" 1)"
+  name="$(project_field "$row" 2)"
+  script="$(project_field "$row" 3)"
+
+  step "▶ $name — $script"
+
+  if [ ! -f "$REPO_ROOT/$script" ]; then
+    warn "Setup script missing: $script — skipping"
+    FAILED+=("$name (script missing)")
+    continue
+  fi
+
+  # We run each project's setup as a *subshell* rather than sourcing so a
+  # single project's failure doesn't kill the dispatcher for the others,
+  # and each project sees a clean environment.
+  if bash "$REPO_ROOT/$script" "${PASSTHRU[@]}"; then
+    COMPLETED+=("$name")
+    ok "$name setup complete"
+  else
+    rc=$?
+    FAILED+=("$name (exit $rc)")
+    warn "$name failed with exit $rc — continuing with remaining projects"
+  fi
+done
+
+# ─── Summary ─────────────────────────────────────────────────────────────────
+step "Setup summary"
+
+if [ ${#COMPLETED[@]} -gt 0 ]; then
+  printf "  ${GREEN}✓ Completed:${NC}\n"
+  for n in "${COMPLETED[@]}"; do printf "      - %s\n" "$n"; done
+fi
+
+if [ ${#FAILED[@]} -gt 0 ]; then
+  printf "  ${RED}✗ Failed:${NC}\n"
+  for n in "${FAILED[@]}"; do printf "      - %s\n" "$n"; done
+  printf "\n"
+  fail "One or more project setups failed. See output above."
+fi
 
 cat <<EOF
 
-Next steps:
+All done. Per-project next-step instructions were printed above.
 
-  1. If 'cargo' or 'elodin-db' isn't found in fresh shells, add this to your
-     ~/.zshrc or ~/.bashrc and re-source it:
-
-       export PATH="\$HOME/.cargo/bin:\$PATH"
-
-  2. Run the integration test (will sudo-prompt for loopback aliases on macOS):
-
-       cd $REPO_ROOT
-       bash daq-server/test/test_integration.sh
-
-  3. Start the dev stack interactively (web GUI + backend + sim + calibration):
-
-       bash daq-server/deploy/startup/start_tmux_dev.sh
-
-  4. Activate the Python venv when running scripts manually:
-
-       source daq-server/.venv/bin/activate
+Common reminders:
+  • Add \$HOME/.cargo/bin to \$PATH if you set up daq-server
+  • Add pip --user bin dir to \$PATH if 'black' or 'pio' aren't found
+      macOS: \$HOME/Library/Python/<ver>/bin
+      Linux: \$HOME/.local/bin
 
 EOF

@@ -50,17 +50,26 @@ through a symlink at `firmware/libraries/DAQv2-Comms`). `EngineDesign/` and
 ```bash
 git clone https://github.com/calstar/STAR.git
 cd STAR
-./setup.sh          # one-time bootstrap (deps, venv, C++ build) — macOS / Linux
+./setup.sh                        # interactive menu — pick which projects
+./setup.sh --pid-designer         # or set up a single project
+./setup.sh --all --yes            # or install everything, non-interactive
 ```
 
-`setup.sh` installs system dependencies, creates the Python virtualenv, and
-builds the C++ binaries. For the full walkthrough — prerequisites, the
-end-to-end integration test, firmware builds, and common failure modes — see
-**[`SETUP.md`](SETUP.md)**.
+The top-level `setup.sh` is a thin dispatcher over per-project setup scripts.
+Each subproject owns its own install steps
+(`daq-server/setup.sh`, `firmware/setup.sh`, `EngineDesign/setup.sh`,
+`pid-designer/setup.sh`), so you only pay for what you use — cloning the
+repo just to edit the P&ID shouldn't force you to build Rust + `elodin-db`.
 
-Each subproject can also be run on its own; see its README for specifics
-(`./dev.sh` in `EngineDesign/` and `pid-designer/`, the tmux dev stack in
-`daq-server/`, `pio` in `firmware/`).
+The `daq-server/` project has the most dependencies (C++ + Rust +
+Python + Node); the others are much lighter. Run `./setup.sh --list` to see
+available projects, or `./setup.sh --help` for all flags. For the full
+walkthrough — prerequisites, the end-to-end integration test, firmware
+builds, and common failure modes — see **[`SETUP.md`](SETUP.md)**.
+
+Each subproject's setup script is also runnable directly
+(e.g. `bash daq-server/setup.sh --no-build`); see its `--help` for options
+specific to that project.
 
 ---
 

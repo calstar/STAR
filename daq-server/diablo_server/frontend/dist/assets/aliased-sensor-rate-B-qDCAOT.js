@@ -1,0 +1,2 @@
+import{r as c,x as f,y as l}from"./index-C5GoNwl7.js";function S(e,s){const o=`${e}.${s}`;let a=f(e,s);const r=l[o];if(r)for(const t of r){const n=t.lastIndexOf(".");if(n<=0)continue;const u=t.slice(0,n),i=t.slice(n+1);a=Math.max(a,f(u,i))}return a}function x(e,s,o=500){const[a,r]=c.useState(0);return c.useEffect(()=>{const t=()=>r(S(e,s));t();const n=setInterval(t,o);return()=>clearInterval(n)},[e,s,o]),a}export{x as u};
+//# sourceMappingURL=aliased-sensor-rate-B-qDCAOT.js.map
