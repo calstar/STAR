@@ -115,10 +115,10 @@ CXX_STANDARD="$(grep 'set(CMAKE_CXX_STANDARD ' "$REPO/CMakeLists.txt" 2>/dev/nul
     | grep -v REQUIRED | grep -oE '[0-9]+' | head -1)"
 CXX_STANDARD="${CXX_STANDARD:-20}"
 
-# Node.js minimum from start.sh: if [ "$NODE_MAJOR_VER" -lt 20 ]
-NODE_MIN_MAJOR="$(grep 'NODE_MAJOR_VER -lt' "$REPO/web-gui/start.sh" 2>/dev/null \
-    | grep -oE '[0-9]+' | head -1)"
-NODE_MIN_MAJOR="${NODE_MIN_MAJOR:-20}"
+# Node.js minimum — 20 matches setup.sh, daq-server-ci.yml, and firmware-ci.yml.
+# (Was previously read from web-gui/start.sh which no longer exists; the whole
+# frontend lives under diablo_server/ now.)
+NODE_MIN_MAJOR=20
 
 # ══ 2. SYSTEM TOOLS ═════════════════════════════════════════════════════════
 section "SYSTEM TOOLS"
@@ -246,26 +246,36 @@ fi
 
 printf "\n  Checking binaries:\n"
 
-# CMake SHARED targets: .so on Linux/WSL (also used when flashing), .dylib on macOS
+# CMake SHARED targets: .so on Linux/WSL, .dylib on macOS. Static archives are
+# .a on both.
 SHLIB_EXT=".so"
 [ "$PLATFORM" = "macOS" ] && SHLIB_EXT=".dylib"
 
+# Post-diablo_server rename: executables land in build/bin/, shared libs in
+# build/lib/, and the daqv2_comms static archive (from ../lib/DAQv2-Comms) at
+# the top of build/. Kept in sync with CMakeLists targets — when a new service
+# is added under diablo_server/services/, add it here too.
 EXPECTED_BINS=(
-    "build/FSW/daq_bridge"
-    "build/FSW/controller_service"
-    "build/FSW/calibration_service"
-    "build/FSW/actuator_service"
-    "build/FSW/heartbeat_service"
-    "build/FSW/config_broadcast_service"
-    "build/FSW/libfsw_daq_lib${SHLIB_EXT}"
-    "build/daq_comms/libdaq_comms_lib${SHLIB_EXT}"
+    "build/bin/daq_bridge"
+    "build/bin/sequencer_service"
+    "build/bin/heartbeat_service"
+    "build/bin/config_broadcast_service"
+    "build/bin/calibration_service"
+    "build/bin/controller_service"
+    "build/bin/data_logger_service"
+    "build/bin/ota_service"
+    "build/lib/libfsw_daq_lib${SHLIB_EXT}"
+    "build/lib/libdaq_comms_lib${SHLIB_EXT}"
+    "build/libdaqv2_comms.a"
 )
 
+# Source dirs for the "stale binary?" check. diablo_server/ holds every C++
+# source under daq-server/; ../lib/DAQv2-Comms is the wire-protocol library
+# that gets baked into libdaqv2_comms.a, so edits there also invalidate the
+# archive.
 SOURCE_DIRS=()
-[ -d "$REPO/FSW/src" ]         && SOURCE_DIRS+=("$REPO/FSW/src")
-[ -d "$REPO/FSW/include" ]     && SOURCE_DIRS+=("$REPO/FSW/include")
-[ -d "$REPO/daq_comms/src" ]   && SOURCE_DIRS+=("$REPO/daq_comms/src")
-[ -d "$REPO/daq_comms/include" ] && SOURCE_DIRS+=("$REPO/daq_comms/include")
+[ -d "$REPO/diablo_server" ]      && SOURCE_DIRS+=("$REPO/diablo_server")
+[ -d "$REPO/../lib/DAQv2-Comms" ] && SOURCE_DIRS+=("$REPO/../lib/DAQv2-Comms")
 
 for artifact in "${EXPECTED_BINS[@]}"; do
     full_path="$REPO/$artifact"
@@ -375,10 +385,10 @@ check_node_env() {
     done
 }
 
-check_node_env "backend" "$REPO/web-gui/backend" \
+check_node_env "backend" "$REPO/diablo_server/backend" \
     "ws" "tsx" "typescript" "msgpack-lite" "@iarna/toml"
 
-check_node_env "frontend" "$REPO/web-gui/frontend" \
+check_node_env "frontend" "$REPO/diablo_server/frontend" \
     "next" "react" "typescript" "vitest" "uplot"
 
 # ══ 5. PYTHON ENVIRONMENT ═══════════════════════════════════════════════════

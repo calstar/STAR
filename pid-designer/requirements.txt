@@ -1,0 +1,9 @@
+# P&ID Designer backend dependencies.
+#
+# Pins match .github/workflows/pid-designer-ci.yml so laptops and CI resolve
+# the same versions. The backend is intentionally tiny: FastAPI + Pydantic
+# for the schema, uvicorn to serve it, and the stdlib for everything else
+# (git is shelled out via subprocess, not a Python library).
+fastapi>=0.128
+uvicorn[standard]>=0.34
+pydantic>=2.12

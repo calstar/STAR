@@ -13,12 +13,14 @@ git clone https://github.com/calstar/STAR.git
 cd STAR
 ```
 
-The repo contains three top-level trees, all already vendored (no submodule
-init step needed):
+The repo is a monorepo of mostly-independent projects, each with its own
+top-level directory, its own README, and its own `setup.sh`:
 
 - `daq-server/` — the DAQ server / FSW (C++ + TypeScript backend + Next.js GUI)
 - `firmware/` — Arduino/PlatformIO firmware for every board (PT, TC, RTD, LC,
   Encoder, Actuator), subtree of `calstar/DiabloAvionics`
+- `EngineDesign/` — engine design & optimization pipeline (Python + FastAPI + React)
+- `pid-designer/` — P&ID editor (FastAPI + React Flow)
 - `lib/DAQv2-Comms/` — wire-protocol library shared by both `daq-server` and
   `firmware/` (the latter via a symlink at `firmware/libraries/DAQv2-Comms`)
 
@@ -35,12 +37,62 @@ before cloning, OR use WSL (recommended — see above).
 
 ---
 
-## 2. Prerequisites for the integration test
+## 2. Run setup
+
+```bash
+./setup.sh                        # interactive menu
+./setup.sh --daq-server           # single project (non-interactive)
+./setup.sh --all --yes            # everything, non-interactive
+./setup.sh --list                 # list projects and exit
+./setup.sh --help                 # all flags
+```
+
+The top-level `setup.sh` is a dispatcher over per-project setup scripts.
+Each subproject owns its own steps; you only install what you'll actually use:
+
+| Project | Script | Approx. install time (cold) |
+|---|---|---|
+| `pid-designer/` | `pid-designer/setup.sh` | ~30s (Python venv + npm) |
+| `EngineDesign/` | `EngineDesign/setup.sh` | ~2 min (`--ci` skips rocketcea) |
+| `firmware/` | `firmware/setup.sh` | ~30s (PlatformIO CLI only) |
+| `daq-server/` | `daq-server/setup.sh` | ~5-10 min (C++ + Rust + Node + Python) |
+
+Any flags the dispatcher doesn't consume are passed through to the sub-scripts,
+so e.g. `./setup.sh --engine-design --ci --no-frontend` works. Each sub-script
+is also runnable directly (e.g. `bash daq-server/setup.sh --no-build`); run it
+with `--help` to see what it accepts.
+
+The shared bits (`black==25.11.0` on the global `$PATH` for `format.sh`, a
+Windows-symlink sanity check) run once in the dispatcher.
+
+### Verify a clean install (or debug a broken one)
+
+New to the repo, or is setup misbehaving? `scripts/setup-test/` runs `setup.sh`
+in an isolated scratch copy of the tree and then smoke-checks the result — so
+you can confirm a fresh install works end-to-end, or reproduce a breakage
+without touching your real checkout:
+
+```bash
+bash scripts/setup-test/run-macos.sh pid-designer   # quick sanity (~2 min)
+bash scripts/setup-test/run-macos.sh all            # every project (~20-30 min)
+```
+
+On a brand-new Mac, install Homebrew first (https://brew.sh) — the harness
+installs project deps through brew but not brew itself. See
+[`scripts/setup-test/README.md`](scripts/setup-test/README.md) for the
+Docker/Linux path and full details.
+
+---
+
+## 3. Prerequisites for the integration test
 
 The integration test (`daq-server/test/test_integration.sh`) launches the whole
 stack — Elodin DB, DAQ bridge, sequencer / heartbeat / config-broadcast /
 calibration / controller services, the Node backend, and a board simulator —
-and verifies data flows end-to-end. To do that it needs:
+and verifies data flows end-to-end.
+
+`./setup.sh --daq-server` installs everything the test needs on Linux/WSL and
+almost everything on macOS. Two things it deliberately does NOT do:
 
 ### macOS: install modern bash
 
@@ -53,52 +105,9 @@ brew install bash
 
 This installs to `/opt/homebrew/bin/bash` (Apple Silicon) or
 `/usr/local/bin/bash` (Intel). **It does not replace `/bin/bash`** — SIP
-prevents that. Invoke explicitly when running scripts (see below).
+prevents that. Invoke explicitly when running the integration test (see below).
 
 On Linux you can use the system `bash` directly.
-
-### C++ build dependencies
-
-```bash
-# macOS
-brew install cmake openssl
-
-# Linux (Debian/Ubuntu)
-sudo apt install cmake libssl-dev zlib1g-dev build-essential
-```
-
-The integration test does the cmake + make for you the first time.
-
-### Elodin DB
-
-The test relies on `elodin-db` (a Rust binary). Either build it from source
-(separate Elodin repo), or install whatever your team has cached. The script
-looks for it in `$PATH` and at `~/.cargo/bin/elodin-db`. If it's not found,
-the test fails with `elodin-db not found` at the prerequisite check.
-
-### Node.js + tsx
-
-```bash
-# macOS — Homebrew (use whatever Node version manager you prefer)
-brew install node
-
-# Verify
-node --version    # need 20+
-npx --version
-```
-
-The script will `npm install` the backend's `node_modules/` on first run.
-
-### Python 3
-
-Already on macOS. For Linux:
-
-```bash
-sudo apt install python3 python3-pip
-```
-
-The board simulator uses Python's stdlib + `tomli` (auto-installed by the
-script if missing).
 
 ### macOS-only: loopback aliases
 
@@ -108,9 +117,23 @@ will offer to add them with `sudo ifconfig lo0 alias 127.0.0.<n> up` the first
 time you run it — confirm the sudo prompt. (On Linux all `127.0.0.x` resolve
 to `lo` automatically; no action needed.)
 
+### What setup.sh handles for you
+
+For reference — you don't need to run any of this manually if you ran
+`./setup.sh --daq-server`:
+
+- C++ build deps: `cmake`, `openssl@3`, `libeigen3-dev`, `build-essential`,
+  `ninja-build`, `ccache`, `pkg-config` (list mirrors `daq-server-ci.yml`)
+- `elodin-db` (Rust binary) — installed via the upstream prebuilt installer,
+  or built from source as a fallback
+- Node 20 (from NodeSource on Linux, Homebrew on macOS) + `npm install` for
+  both `diablo_server/backend/` and `diablo_server/frontend/`
+- Python venv at `daq-server/.venv` with everything in `requirements.txt`
+- `cmake` + `make` for the target binaries (skip with `--no-build`)
+
 ---
 
-## 3. Run the integration test
+## 4. Run the integration test
 
 From the repo root:
 
@@ -158,7 +181,7 @@ Five layers, end-to-end:
 
 ---
 
-## 4. Common failure modes & fixes
+## 5. Common failure modes & fixes
 
 ### `❌ FAIL: C++ build failed` on first run
 
@@ -215,20 +238,24 @@ git checkout HEAD -- firmware/
 
 ---
 
-## 5. Running the firmware tests (optional, but recommended)
+## 6. Running the firmware tests (optional, but recommended)
 
 If you change anything in `firmware/`, validate locally before pushing:
 
 ### Install PlatformIO
 
 ```bash
-pip3 install platformio --user
+./setup.sh --firmware
 ```
 
-The `pio` binary lands at `~/Library/Python/<ver>/bin/pio` on macOS, or
-`~/.local/bin/pio` on Linux. Either add it to your `PATH` or call with the
-absolute path. PIO downloads ESP32 toolchains on first build (~500 MB —
-one-time).
+`firmware/setup.sh` runs `pip3 install --user platformio` and sanity-checks
+the `firmware/libraries/DAQv2-Comms` symlink. The `pio` binary lands at
+`~/Library/Python/<ver>/bin/pio` on macOS, or `~/.local/bin/pio` on Linux;
+add that dir to your `$PATH` (the script prints the exact line to append to
+your shell rc if `pio` isn't already on `$PATH`).
+
+PIO downloads ESP32 toolchains on first build (~500 MB — one-time).
+Pass `--with-toolchain` to `firmware/setup.sh` to pre-download them now.
 
 ### Run the unit tests (host, fast)
 
@@ -254,7 +281,7 @@ the host tests can't.
 
 ---
 
-## 6. Project layout reference
+## 7. Project layout reference
 
 ```
 STAR/
@@ -302,7 +329,7 @@ STAR/
 
 ---
 
-## 7. Pushing changes
+## 8. Pushing changes
 
 Before pushing anything that touches `daq-server/` or `firmware/`, run the
 relevant tests:
