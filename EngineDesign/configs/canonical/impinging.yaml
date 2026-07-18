@@ -375,6 +375,7 @@ design_requirements:
   max_P_tank_F: null
   max_engine_length: 0.4
   max_chamber_outer_diameter: 0.2032
+  metal_wall_thickness_per_side_m: 0.00635  # 0.25 in/side metal case; total wall = this + ablative liner (derived in code)
   max_nozzle_exit_diameter: 0.2032
   min_Lstar: 0.76
   max_Lstar: 1.5
@@ -396,8 +397,8 @@ design_requirements:
   feed_pressure_model: dome_regulated
   W_geom_ao_af_momentum: 3500.0
   W_MOM: 30000.0
-  impinging_momentum_R_min: 0.9
-  impinging_momentum_R_max: 1.1
+  impinging_momentum_R_min: 0.95
+  impinging_momentum_R_max: 1.05
   layer1_momentum_log_deadband_rel: null
   layer1_impinging_angle_deg_min: 55.0
   layer1_impinging_angle_deg_max: 90.0

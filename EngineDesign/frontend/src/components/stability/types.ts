@@ -7,6 +7,15 @@ export interface StabilityRichPayload {
     gate_margin_threshold: number;
     limiting_mode?: string;
   };
+  diagnostics: {
+    headline: string;
+    state: 'stable' | 'marginal' | 'unstable';
+    limiting_mode?: string | null;
+    driver?: string | null;
+    findings: Array<{ severity: 'critical' | 'warn' | 'ok'; text: string }>;
+    actions: Array<{ text: string; rationale: string; lever?: string | null }>;
+    assumptions_note: string;
+  };
   chug: {
     alpha?: number;
     freq_hz?: number;
@@ -36,20 +45,10 @@ export interface StabilityRichPayload {
     tau_conv_s?: number;
     tau_sens_s?: number;
   };
-  feed_pressure: {
-    P_set_psi: number;
-    ripple_psi: number;
-    regulated: [number, number][];
-    blowdown_ref: [number, number][];
-  };
   radar: {
     axes: string[];
     values: number[];
     threshold: number[];
-  };
-  water_hammer: {
-    spike_psi: number;
-    available_dp_psi: number;
   };
   assumptions: {
     n: number;

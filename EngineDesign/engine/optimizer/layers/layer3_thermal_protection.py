@@ -878,6 +878,12 @@ def run_layer3_thermal_protection(
                     np.clip(result_layer3.x[idx_param], layer3_bounds[idx_param][0], layer3_bounds[idx_param][1])
                 )
                 thermal_results["optimized_ablative_thickness"] = optimized_config.ablative_cooling.initial_thickness
+                # No wall write-back needed: Layer 1 DERIVES its OD -> inner-diameter
+                # wall from ablative_cooling.initial_thickness (+ the metal case field)
+                # via utils.total_wall_thickness_m, so the sized liner set above is
+                # picked up automatically on the next run. (The old write-back
+                # overwrote the combined metal+ablative allowance with the ablative
+                # alone, dropping the metal case from the geometry budget.)
                 update_progress(
                     "Layer 3: Burn Analysis Optimization",
                     0.70,

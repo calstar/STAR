@@ -74,7 +74,10 @@ export function DesignRequirements({
     onSave();
   };
 
-  const updateField = (field: keyof DesignRequirementsType, value: number | boolean) => {
+  const updateField = (field: keyof DesignRequirementsType, value: number | boolean | null) => {
+    // Pass `null` (not `undefined`) to clear an optional target — `undefined` is dropped by
+    // JSON.stringify so the backend would never see the cleared key (same reasoning as
+    // updateFrozenParam below).
     onRequirementsChange({ ...requirements, [field]: value });
   };
 
@@ -131,6 +134,25 @@ export function DesignRequirements({
               step="100"
             />
             <p className="text-xs text-[var(--color-text-secondary)] mt-1">Peak thrust during burn. Engine will be sized to achieve this.</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-[var(--color-text-secondary)] mb-1">
+              Target Chamber Pressure [psi] <span className="text-[var(--color-text-secondary)] font-normal">(optional)</span>
+            </label>
+            <input
+              type="number"
+              value={requirements.target_chamber_pressure_psi ?? ''}
+              placeholder="leave blank to let Pc float"
+              onChange={(e) => updateField('target_chamber_pressure_psi', e.target.value === '' ? null : parseFloat(e.target.value))}
+              className="w-full px-3 py-2 bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-lg text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500"
+              min="50"
+              max="2000"
+              step="25"
+            />
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+              Operating chamber pressure you want. When set, Layer 1 sizes the <b>throat</b> to hit the thrust target and drives tank pressure to this Pc — instead of pushing Pc higher for thrust. Leave blank to let the optimizer choose Pc freely.
+            </p>
           </div>
 
           <div>

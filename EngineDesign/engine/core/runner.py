@@ -346,8 +346,6 @@ class PintleEngineRunner:
         )
         log_info(f"[RUNNER][STATE] Pc={Pc:.3e} Pa, Pa={Pa:.3e} Pa, MR={MR:.4f}, mdot={mdot_total:.4f} kg/s")
 
-        # Check if shifting equilibrium is enabled
-        use_shifting = getattr(self.config.combustion.efficiency, 'use_shifting_equilibrium', True)
         reaction_progress = diagnostics.get("reaction_progress", None)
         
         cea_noz = self.cea_cache.eval(MR, Pc, Pa, cg.expansion_ratio)
@@ -364,8 +362,7 @@ class PintleEngineRunner:
             self.cea_cache,
             self.config,
             Pa,
-            reaction_progress=reaction_progress,  # Pass reaction progress for shifting equilibrium
-            use_shifting_equilibrium=use_shifting,
+            reaction_progress=reaction_progress,  # for reaction-completeness diagnostics
             debug=debug,
         )
         

@@ -1,8 +1,16 @@
-"""Chamber pressure solver: solve supply(Pc) = demand(Pc)"""
+"""Chamber pressure solver: solve supply(Pc) = demand(Pc).
+
+This is the authoritative, pure-Python chamber solver used by every general
+evaluation path (frontend solves, time-varying, flight, Layer-1 finalization). The
+native C kernel does not hook in here: it accelerates only the Layer-1 inner loop,
+through a single ``ed_evaluate`` call in
+``engine/native/python/native_injector.evaluate``. Keeping native out of this solver
+is deliberate — it leaves the general path simple, authoritative, and free of any
+runtime native/Python switch.
+"""
 
 import numpy as np
 import logging
-import os
 from scipy.optimize import brentq, newton
 from typing import Tuple, Dict, Any, List, Optional
 
@@ -170,6 +178,8 @@ class ChamberSolver:
             "m_dot_total": mdot_supply,
             "spray_diagnostics": diagnostics,
             "turbulence_intensity": diagnostics.get("turbulence_intensity_mix", DEFAULT_TURBULENCE_INTENSITY_ND),
+            "momentum_ratio_R": diagnostics.get("momentum_ratio_R"),
+            "R_opt": self._rupe_R_opt(),
             "fuel_props": self._get_fuel_props(),
         }
 
@@ -218,67 +228,34 @@ class ChamberSolver:
             return np.nan
         
         return float(residual)
-    
-    # Process-wide native chamber dispatch: True=available, False=library broken (latched off).
-    # NOTE: this latch is ONLY for genuine library breakage (load/layout/call errors). A
-    # geometry-specific residual mismatch must NOT latch — see _native_chamber_pc.
-    _native_chamber_ok = True
-    # Relative tolerance for the per-call residual guard (matches the Layer-1 native parity spec
-    # in closure.py); absolute floor keeps tiny-flow geometries from tripping on float noise.
-    _NATIVE_RESID_RTOL = 1.0e-3
-    _NATIVE_RESID_ATOL = 1.0e-3  # kg/s
-    _native_resid_warned = False
 
     def _native_chamber_pc(self, P_tank_O: float, P_tank_F: float):
-        """Solve Pc with the native C kernel (whole residual loop) when
-        ED_USE_NATIVE=1. Returns Pc, or None to fall back to the Python solver.
+        """Solve Pc with the native C kernel (whole residual loop + Brent) when native
+        is enabled and can handle this config; otherwise return None so the Python
+        Brent solver runs.
 
-        Every native Pc is cheaply validated against the Python residual (one residual
-        eval, ~0.15 ms vs the ~78 ms Python solve, so the native path is still ~200x).
-        Validation is PER CALL and NON-LATCHING: a geometry where native and Python
-        disagree (rare, extreme/near-degenerate samples) falls back to Python for THAT
-        call only — native stays enabled for every other geometry. Only a genuine
-        library failure (exception) disables native for the process.
+        Pure capability routing — no runtime parity self-check or process latch. Parity
+        is enforced by the golden test suite and the load-time ABI assert in
+        ed_native.py. A solve that raises or returns a non-finite Pc falls back to the
+        Python solver for that call.
         """
-        if os.environ.get("ED_USE_NATIVE", "0") != "1":
-            return None
-        if ChamberSolver._native_chamber_ok is False:
+        from engine.native.python import native_injector
+        if not native_injector.native_enabled():
             return None
         try:
-            from engine.native.python import native_injector
             res = native_injector.chamber_solve(self.config, self.cea_cache,
                                                 P_tank_O, P_tank_F)
         except Exception:
-            # Strict mode (ED_REQUIRE_NATIVE=1, CI parity job): surface the failure
-            # loudly instead of silently disabling native and passing on Python.
-            if os.environ.get("ED_REQUIRE_NATIVE", "0") == "1":
+            # Strict mode (ED_REQUIRE_NATIVE=1, CI parity job): surface a genuine
+            # native failure loudly instead of silently falling back to Python (which
+            # would report a false green). Default runs fall back quietly.
+            if native_injector.require_native():
                 raise
-            ChamberSolver._native_chamber_ok = False
-            logging.getLogger(__name__).warning(
-                "Native chamber solve raised; disabling native chamber path for this process.")
             return None
         if res is None:
             return None
         Pc_native = float(res[0])
-
-        # Per-call guard: native's converged Pc must also satisfy the Python residual.
-        # Tolerance is relative to native's own mdot_total so it scales across engine sizes.
-        try:
-            r = self.residual(Pc_native, P_tank_O, P_tank_F)
-            diag = res[1] if len(res) > 1 else None
-            mdot = abs(float(getattr(diag, "mdot_total", 0.0))) if diag is not None else 0.0
-            tol = max(ChamberSolver._NATIVE_RESID_RTOL * mdot,
-                      ChamberSolver._NATIVE_RESID_ATOL)
-            ok = bool(np.isfinite(r) and abs(r) <= tol)
-        except Exception:
-            ok = False
-        if not ok:
-            # Non-latching: fall back to Python for this geometry only; keep native on.
-            if not ChamberSolver._native_resid_warned:
-                ChamberSolver._native_resid_warned = True
-                logging.getLogger(__name__).info(
-                    "Native chamber Pc failed per-call residual guard for some geometries; "
-                    "using Python solve for those (native stays enabled elsewhere).")
+        if not np.isfinite(Pc_native) or Pc_native <= 0.0:
             return None
         return Pc_native
 
@@ -349,11 +326,12 @@ class ChamberSolver:
         def residual_func(Pc):
             return self.residual(Pc, P_tank_O, P_tank_F)
 
-        # Native fast path (ED_USE_NATIVE=1): run the entire residual loop + Brent
-        # solve in C (~400x faster). On success we skip the Python root-find and let
-        # the existing post-processing below rebuild the full diagnostics dict from
-        # the solved Pc. Dummy opposite-sign residuals bypass the no-bracket raise;
-        # skip_solve=True bypasses the Python brentq. Any failure -> Python path.
+        # Native fast path: run the whole residual loop + Brent in C when native can
+        # handle this config. On success skip the Python root-find. Importantly, this
+        # path is hit by the ~30% of Layer-1 CMA candidates that don't converge in the
+        # single-call ed_evaluate seam and fall back to runner.evaluate -> here, so
+        # keeping it native keeps that fallback fast (a pure-Python Brent solve here is
+        # ~100x slower). Any failure -> Python Brent below.
         _native_pc = self._native_chamber_pc(P_tank_O, P_tank_F)
         if _native_pc is not None:
             Pc = _native_pc
@@ -719,6 +697,8 @@ class ChamberSolver:
             "u_lox": closure_diag.get("u_O"),
             "spray_diagnostics": closure_diag,
             "turbulence_intensity": closure_diag.get("turbulence_intensity_mix", DEFAULT_TURBULENCE_INTENSITY_ND),
+            "momentum_ratio_R": closure_diag.get("momentum_ratio_R"),
+            "R_opt": self._rupe_R_opt(),
             "fuel_props": self._get_fuel_props(),
         }
         
@@ -1339,6 +1319,26 @@ class ChamberSolver:
             "area": float(area_wetted),
         }
 
+
+    def _rupe_R_opt(self) -> float:
+        """Momentum-ratio optimum for the Rupe mixing model.
+
+        Honors an explicit ``combustion.efficiency.R_opt`` override; otherwise derives
+        it from the impinging-doublet geometry (``sqrt(sin(theta_F)/sin(theta_O))``),
+        falling back to 1.0 (balanced) for pintle/coaxial or when angles are absent.
+        """
+        eff = self.config.combustion.efficiency
+        override = getattr(eff, "R_opt", None)
+        if override is not None:
+            return float(override)
+        try:
+            from engine.pipeline.combustion_physics import rupe_R_opt_from_angles
+            geom = self.config.injector.geometry
+            theta_O = getattr(getattr(geom, "oxidizer", None), "impingement_angle", None)
+            theta_F = getattr(getattr(geom, "fuel", None), "impingement_angle", None)
+            return rupe_R_opt_from_angles(theta_O, theta_F)
+        except (AttributeError, TypeError):
+            return 1.0
 
     def _get_fuel_props(self) -> Optional[Dict[str, float]]:
         """

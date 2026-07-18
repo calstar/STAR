@@ -13,12 +13,23 @@ import { SideTooltip } from './SideTooltip';
 
 const THRESHOLD = 1.05;
 
+const AXIS_INFO: Record<string, { label: string; desc: string; card: string }> = {
+  chug: { label: 'Chug', desc: 'low-frequency feed-coupled loop', card: 'Injector stiffness map' },
+  '1L': { label: '1L acoustic', desc: 'first longitudinal chamber mode', card: 'Acoustic damping budget' },
+  '1T': { label: '1T acoustic', desc: 'first tangential chamber mode', card: 'Acoustic damping budget' },
+  vaporization: { label: 'Vaporization', desc: 'droplets fully burned within L_ch', card: 'Vaporization length' },
+};
+
 export function StabilityRadar({ data }: { data: StabilityRichPayload }) {
   const rows = data.radar.axes.map((axis, i) => ({
     axis,
     value: data.radar.values[i],
     threshold: data.radar.threshold[i],
   }));
+
+  // weakest axis → tells the user where to look next
+  const weakest = rows.reduce((min, r) => (r.value < min.value ? r : min), rows[0]);
+  const weakInfo = weakest ? AXIS_INFO[weakest.axis] : undefined;
 
   return (
     <VizCard
@@ -48,19 +59,47 @@ export function StabilityRadar({ data }: { data: StabilityRichPayload }) {
           {data.summary.min_margin.toFixed(3)}
           {data.summary.limiting_mode ? ` (${data.summary.limiting_mode})` : ''}
         </p>
-        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-[var(--color-text-secondary)]">
-          {data.radar.axes.map((axis, i) => {
-            const val = data.radar.values[i];
-            const ok = val >= THRESHOLD;
-            return (
-              <span key={axis} style={{ color: ok ? STABLE : '#f59e0b' }}>
-                {axis} {val.toFixed(2)}
-              </span>
-            );
-          })}
-        </div>
-        <p className="text-[10px] opacity-80 leading-snug">
-          chug = injector/feed · 1L/1T = acoustic · vaporization = droplets burned in L_ch. ≥ {THRESHOLD} passes gate.
+        <table className="w-full text-[11px]">
+          <thead>
+            <tr className="text-[var(--color-text-secondary)] border-b border-[var(--color-border)]">
+              <th className="font-medium text-left pb-1">axis</th>
+              <th className="font-medium text-left pb-1">what it measures</th>
+              <th className="font-medium text-right pb-1">margin</th>
+              <th className="font-medium text-right pb-1">vs {THRESHOLD}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const info = AXIS_INFO[r.axis];
+              const ok = r.value >= THRESHOLD;
+              return (
+                <tr key={r.axis}>
+                  <td className="py-0.5 text-[var(--color-text-primary)]">{info?.label ?? r.axis}</td>
+                  <td className="py-0.5 text-[var(--color-text-secondary)]">{info?.desc ?? '—'}</td>
+                  <td className="py-0.5 text-right font-mono" style={{ color: ok ? STABLE : '#f59e0b' }}>
+                    {r.value.toFixed(2)}
+                  </td>
+                  <td className="py-0.5 text-right" style={{ color: ok ? STABLE : '#f59e0b' }}>
+                    {ok ? 'pass' : 'tight'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        {weakest && weakInfo && (
+          <p className="text-[11px] leading-snug pt-1">
+            <span className="text-[var(--color-text-secondary)]">Weakest axis: </span>
+            <span style={{ color: weakest.value >= THRESHOLD ? STABLE : '#f59e0b' }}>
+              {weakInfo.label} ({weakest.value.toFixed(2)})
+            </span>
+            <span className="text-[var(--color-text-secondary)]"> — open the “{weakInfo.card}” card to improve it.</span>
+          </p>
+        )}
+        <p className="text-[10px] opacity-80 leading-snug text-[var(--color-text-secondary)]">
+          Each axis is a margin: the growth rate remapped so ≥ {THRESHOLD} clears the gate. The blue
+          shape should stay outside the dashed green ring on every axis.
         </p>
       </div>
     </VizCard>

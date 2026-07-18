@@ -125,6 +125,11 @@ target_link_libraries(test_injector_golden PRIVATE ed_physics)
 target_compile_definitions(test_injector_golden PRIVATE ED_GOLDEN_DIR="${ED_GOLDEN_DIR}")
 add_test(NAME injector_golden COMMAND test_injector_golden)
 
+add_executable(test_nozzle_golden tests/test_nozzle_golden.c)
+target_link_libraries(test_nozzle_golden PRIVATE ed_physics)
+target_compile_definitions(test_nozzle_golden PRIVATE ED_GOLDEN_DIR="${ED_GOLDEN_DIR}")
+add_test(NAME nozzle_golden COMMAND test_nozzle_golden)
+
 # Golden chamber/evaluate/stability tests are wired but skip (exit 77) until the
 # corresponding physics stages land; they assert ED_ERR_NOT_IMPLEMENTED today.
 add_executable(test_chamber_golden tests/test_chamber_golden.c)

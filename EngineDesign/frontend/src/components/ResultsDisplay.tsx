@@ -548,18 +548,37 @@ export function ResultsDisplay({ results, isLoading, targetExitPressure }: Resul
                   {stability.feed_system.surge_frequency !== undefined && (
                     <SmallMetric label="Surge Frequency" value={formatNumber(stability.feed_system.surge_frequency, 1)} unit="Hz" />
                   )}
-                  {stability.feed_system.water_hammer_margin !== undefined && (
-                    <SmallMetric label="Water Hammer Margin" value={formatNumber(stability.feed_system.water_hammer_margin, 2)} unit="" />
-                  )}
                   {stability.feed_system.stability_margin !== undefined && (
-                    <SmallMetric 
-                      label="Feed Margin" 
-                      value={formatNumber(stability.feed_system.stability_margin, 2)} 
-                      unit="" 
+                    <SmallMetric
+                      label="Feed Margin"
+                      value={formatNumber(stability.feed_system.stability_margin, 2)}
+                      unit=""
                       colorClass={stability.feed_system.stability_margin > 1.0 ? 'text-green-400' : 'text-red-400'}
                     />
                   )}
+                  {stability.feed_system.water_hammer_margin !== undefined && (
+                    <SmallMetric
+                      label="Water Hammer Margin"
+                      value={formatNumber(stability.feed_system.water_hammer_margin, 2)}
+                      unit=""
+                      colorClass={stability.feed_system.water_hammer_margin >= 1.0 ? 'text-green-400' : 'text-yellow-400'}
+                    />
+                  )}
+                  {stability.feed_system.water_hammer_pressure !== undefined && (
+                    <SmallMetric
+                      label="Water Hammer Spike"
+                      value={formatNumber(stability.feed_system.water_hammer_pressure / 6894.76, 0)}
+                      unit="psi"
+                    />
+                  )}
                 </div>
+                <p className="text-[11px] text-[var(--color-text-secondary)] mt-2 leading-snug">
+                  Water hammer is a <span className="font-medium">valve transient</span> (Joukowsky
+                  spike ρ·a·v for an instantaneous stop — worst case), not a combustion-stability
+                  mode: it does not enter the stability score. Margin = available feed ΔP ÷ spike;
+                  values &lt; 1 mean an instant valve slam could exceed the feed pressure budget —
+                  mitigate with slower valve closure, accumulators, or larger lines.
+                </p>
               </div>
             )}
 

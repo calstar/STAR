@@ -857,160 +857,6 @@ def calculate_damkohler_number(
     return float(Da)
 
 
-def calculate_mixing_efficiency(
-    Tc: float,
-    Pc: float,
-    R: float,
-    Ac: float,
-    At: float,
-    Dinj: float,
-    m_dot_total: float,
-    Lstar: float,
-    u_fuel: Optional[float] = None,
-    u_lox: Optional[float] = None,
-    turbulence_intensity: float = 0.08,
-    debug: bool = False,
-) -> float:
-    """
-    Calculate mixing efficiency based on near-field stirring physics.
-    
-    This function models STIRRING/MIXING ONLY (no evaporation penalties).
-    Uses near-field length scale L_mix = C_L × Dinj (~1mm) instead of
-    macro chamber recirculation length (~30mm).
-    
-    Parameters
-    ----------
-    Tc : float
-        Chamber temperature [K]
-    Pc : float
-        Chamber pressure [Pa]
-    R : float
-        Gas constant [J/(kg·K)]
-    Ac : float
-        Chamber area [m²]
-    At : float
-        Throat area [m²]
-    Dinj : float
-        Characteristic injector diameter [m]
-    m_dot_total : float
-        Total mass flow rate [kg/s]
-    Lstar : float
-        Characteristic length [m]
-    u_fuel : float, optional
-        Fuel injection velocity [m/s]
-    u_lox : float, optional
-        LOX injection velocity [m/s]
-    turbulence_intensity : float
-        User-provided turbulence intensity (0-1)
-    
-    Returns
-    -------
-    eta_mix : float
-        Mixing efficiency (0-1)
-    """
-    # Require injection velocities for mixing physics
-    if u_fuel is None or u_lox is None:
-        raise ValueError(
-            f"u_fuel and u_lox are required for mixing efficiency calculation. "
-            f"Got u_fuel={u_fuel}, u_lox={u_lox}."
-        )
-    
-    # Use shared helper for consistent state
-    state = compute_combustion_state(
-        Pc=Pc, Tc=Tc, R=R, Ac=Ac, At=At, Lstar=Lstar,
-        m_dot_total=m_dot_total, Dinj=Dinj,
-        u_fuel=u_fuel, u_lox=u_lox
-    )
-    
-    rho_ch = state["rho_ch"]
-    tau_res = state["tau_res"]  # Pure geometric, from helper
-    L_mix = state["L_mix"]  # Near-field shear-layer thickness: C_L × Dinj (~1mm)
-    U_mix = state["U_mix"]  # Near-field mixing velocity (capped)
-    
-    # === NEAR-FIELD SHEAR-LAYER TURBULENCE CLOSURE ===
-    # (Replaces pipe-flow correlations which are not appropriate for impingement region)
-    
-    # A) Turbulence intensity from user input with physical bounds validation
-    # In injector near-field, turbulence is dominated by jet/sheet breakup and shear,
-    # not internal fully-developed pipe turbulence. Use provided value with bounds check.
-    I_min, I_max = 0.01, 0.30
-    if turbulence_intensity < I_min or turbulence_intensity > I_max:
-        warnings.warn(
-            f"[MIXING_WARN] turbulence_intensity={turbulence_intensity:.4f} outside physical range "
-            f"[{I_min}, {I_max}]. Clamping for stability."
-        )
-    I_eff = float(np.clip(turbulence_intensity, I_min, I_max))
-    
-    # B) Integral length scale = near-field mixing region thickness
-    # The eddies driving turbulent diffusion are constrained by the shear-layer/impingement
-    # sheet thickness, which is exactly what L_mix represents.
-    Lt = max(L_mix, 1e-5)  # [m]
-    
-    # C) k-ε closure anchored to near-field scales
-    C_mu = 0.09
-    k = 1.5 * (U_mix * I_eff) ** 2  # Turbulent kinetic energy [m²/s²]
-    epsilon = C_mu ** 0.75 * k ** 1.5 / Lt  # Dissipation rate [m²/s³]
-    epsilon = max(epsilon, 1e-12)  # Numerical safety only, not physics boost
-    
-    # Turbulent kinematic viscosity: nu_t = C_mu * k² / ε
-    nu_t = C_mu * (k ** 2) / epsilon
-    
-    # Turbulent diffusivity (Schmidt_t ≈ 1)
-    D_t = nu_t  # [m²/s]
-    
-    # D) Molecular diffusivity (surrogate for gas-phase species diffusion)
-    D_m = 2.0e-5 * (Tc / 300.0) ** 1.75 * (101325.0 / max(Pc, 1e3))  # [m²/s]
-    
-    # Effective diffusivity (no artificial floor that accelerates mixing)
-    D_eff = D_m + D_t
-    
-    # === TIMESCALES WITH SINGULARITY PROTECTION ===
-    # Clamp timescales, not diffusivity, to prevent division-by-zero without
-    # forcing diffusion to be faster than physics.
-    tiny = 1e-12
-    tau_conv = max(L_mix / U_mix, 1e-8)  # Convective time [s]
-    tau_diff = max(L_mix ** 2 / max(D_eff, tiny), 1e-8)  # Diffusive time [s]
-    
-    # Harmonic blend (limiting process dominates)
-    tau_mix = 1.0 / (1.0 / tau_conv + 1.0 / tau_diff)
-    
-    # Damköhler number for mixing
-    Da_mix = tau_res / tau_mix
-    
-    # Efficiency (no floor per user requirements)
-    eta_mix = 1.0 - np.exp(-Da_mix)
-    
-    # === DIAGNOSTIC WARNINGS FOR SANITY CHECKS ===
-    # Warn if D_t is unrealistically large relative to molecular diffusivity
-    D_t_D_m_ratio = D_t / max(D_m, 1e-12)
-    if D_t_D_m_ratio > 1e6:
-        warnings.warn(
-            f"[MIXING_WARN] D_t/D_m = {D_t_D_m_ratio:.2e} is extremely high. "
-            f"Check turbulence_intensity={turbulence_intensity:.4f} or U_mix={U_mix:.1f} m/s."
-        )
-    
-    # Warn if tau_diff is suspiciously small for mm-scale L_mix
-    if tau_diff < 1e-7 and L_mix > 1e-4:
-        warnings.warn(
-            f"[MIXING_WARN] tau_diff={tau_diff:.2e} s is very small for L_mix={L_mix*1e3:.2f} mm. "
-            f"This may indicate unrealistic turbulence estimate. D_t={D_t:.2e} m²/s."
-        )
-    
-    # Debug output showing near-field turbulence variables explicitly
-    if debug:
-        logger = logging.getLogger("evaluate")
-        logger.info(f"[MIXING_DEBUG] === Near-Field Shear-Layer Mixing Model ===")
-        logger.info(f"[MIXING_DEBUG] State: rho_ch={rho_ch:.4f} kg/m³, tau_res={tau_res*1e3:.3f} ms")
-        logger.info(f"[MIXING_DEBUG] Velocities: U_mix={U_mix:.2f} m/s, dU={state['dU']:.2f} m/s, U_rms_eff={state['U_rms_eff']:.2f} m/s")
-        logger.info(f"[MIXING_DEBUG] Near-field scales: L_mix={L_mix*1e3:.3f} mm, Lt={Lt*1e3:.3f} mm")
-        logger.info(f"[MIXING_DEBUG] Turbulence: I_eff={I_eff:.4f}, k={k:.2f} m²/s², ε={epsilon:.2e} m²/s³, ν_t={nu_t:.2e} m²/s")
-        logger.info(f"[MIXING_DEBUG] Diffusivity: D_m={D_m:.2e}, D_t={D_t:.2e}, D_eff={D_eff:.2e} m²/s, D_t/D_m={D_t_D_m_ratio:.1f}")
-        logger.info(f"[MIXING_DEBUG] Times: tau_conv={tau_conv*1e3:.4f} ms, tau_diff={tau_diff*1e3:.4f} ms, tau_mix={tau_mix*1e3:.4f} ms")
-        logger.info(f"[MIXING_DEBUG] Da_mix={Da_mix:.4f} -> eta_mix={eta_mix:.4f}")
-    
-    return float(eta_mix)
-
-
 def _mass_flux_weighted_d32_um(
     d32_o_m: Optional[float],
     d32_f_m: Optional[float],
@@ -1049,6 +895,76 @@ def _mass_flux_weighted_d32_um(
 
 
 
+def rupe_R_opt_from_angles(
+    theta_O_deg: Optional[float],
+    theta_F_deg: Optional[float],
+) -> float:
+    """Geometric optimum momentum ratio for an unlike impinging doublet.
+
+    Transverse momenta cancel (resultant spray axial -> most uniform mass
+    distribution) when mdot_O u_O sin(theta_O) = mdot_F u_F sin(theta_F). In the
+    code's sqrt(dynamic-pressure) momentum-ratio convention this corresponds to
+
+        R_opt = sqrt( sin(theta_F) / sin(theta_O) ).
+
+    Falls back to 1.0 (balanced) when angles are unavailable (e.g. pintle/coaxial).
+    """
+    if theta_O_deg is None or theta_F_deg is None:
+        return 1.0
+    sO = np.sin(np.deg2rad(float(theta_O_deg)))
+    sF = np.sin(np.deg2rad(float(theta_F_deg)))
+    if not (np.isfinite(sO) and np.isfinite(sF)) or sO <= 0.0 or sF <= 0.0:
+        return 1.0
+    return float(np.sqrt(sF / sO))
+
+
+def calculate_rupe_mixing_efficiency(
+    momentum_ratio_R: float,
+    R_opt: float,
+    Em_peak: float,
+    sigma: float,
+) -> float:
+    """Rupe momentum-ratio mixing efficiency (replaces the k-e near-field model).
+
+    eta_mix = Em_peak * exp( -(ln(R/R_opt))^2 / (2 sigma^2) )
+
+    For impinging doublets, inter-propellant mixing quality (Rupe's E_m, the
+    uniformity of the local mixture-ratio distribution) peaks when the impinging
+    streams' momenta are balanced (R ~ R_opt) and degrades symmetrically in *ratio*
+    space as the resultant spray tilts toward the stronger stream. Refs: Rupe
+    (JPL, 1956); NASA SP-8089; Sutton & Biblarz Ch. 9.
+
+    Parameters
+    ----------
+    momentum_ratio_R : float
+        Injector momentum ratio (impinging: sqrt(rho_O u_O^2/rho_F u_F^2);
+        pintle/coaxial: TMR).
+    R_opt : float
+        Momentum ratio at which mixing peaks (geometry-derived, see
+        ``rupe_R_opt_from_angles``).
+    Em_peak : float
+        Best-achievable mixing efficiency at R = R_opt.
+    sigma : float
+        Log-Gaussian width (in ln(R) space).
+    """
+    R = float(momentum_ratio_R)
+    Ro = float(R_opt)
+    if not (np.isfinite(R) and R > 0.0):
+        raise ValueError(
+            f"Rupe mixing efficiency requires a positive, finite momentum ratio; got R={momentum_ratio_R}. "
+            f"Check the injector solve (momentum_ratio_R / TMR)."
+        )
+    if not (np.isfinite(Ro) and Ro > 0.0):
+        Ro = 1.0
+    if not (np.isfinite(sigma) and sigma > 0.0):
+        raise ValueError(f"Invalid mixing_sigma={sigma}. Must be positive.")
+    z = np.log(R / Ro)
+    eta_mix = float(Em_peak) * float(np.exp(-(z * z) / (2.0 * sigma * sigma)))
+    if not np.isfinite(eta_mix):
+        raise ValueError(f"Non-finite eta_mix from R={R}, R_opt={Ro}, Em_peak={Em_peak}, sigma={sigma}.")
+    return float(eta_mix)
+
+
 def calculate_combustion_efficiency_advanced(
     Lstar: float,
     Pc: float,
@@ -1069,6 +985,8 @@ def calculate_combustion_efficiency_advanced(
     chamber_length: Optional[float] = None,
     Tc_kinetics: Optional[float] = None,
     fuel_props: Optional[Dict] = None,
+    momentum_ratio_R: Optional[float] = None,
+    R_opt: Optional[float] = None,
     debug: bool = False,
 ) -> Dict[str, float]:
     """
@@ -1203,9 +1121,15 @@ def calculate_combustion_efficiency_advanced(
         # Back-calculate Da_L for logging if using non-exponential models
         Da_L = np.inf if eta_Lstar > 0.999 else -np.log(max(1.0 - eta_Lstar, 1e-10))
 
-    # Log warning if eta_Lstar is low (no clamp per user requirements)
-    if eta_Lstar < 0.5:
-        warnings.warn(f"[PHYSICS_WARN] eta_Lstar={eta_Lstar:.4f} is low, check evaporation model inputs.")
+    # A low eta_Lstar at an off-design Pc guess is normal solver-bracketing noise
+    # (the converged point is what matters, and the optimizer's feasibility gate
+    # already rejects genuinely bad geometry). Keep it in the debug log only, never
+    # on the terminal, so the console stays clean.
+    if eta_Lstar < 0.5 and debug:
+        logging.getLogger("evaluate").info(
+            f"[PHYSICS_DEBUG] eta_Lstar={eta_Lstar:.4f} is low at this Pc guess "
+            f"(SMD/L*/residence-time limited)."
+        )
     
     # 2. Reaction kinetics efficiency (Damköhler number)
     # =========================================================================
@@ -1242,38 +1166,42 @@ def calculate_combustion_efficiency_advanced(
         logging.getLogger("evaluate").info(f"[KINETICS_DEBUG] Da: {Da:.4f} | tau_res: {tau_res*1e3:.3f} ms | tau_chem: {tau_chem*1e6:.1f} µs | eta: {eta_kinetics:.4f}")
         logging.getLogger("evaluate").info(f"[KINETICS_DEBUG] Using Tc_ideal={Tc:.0f} K (not T_react={T_react:.0f} K) to break circular coupling")
     
-    # 3. Mixing efficiency - uses near-field model (pure stirring, no evap penalties)
-    eta_mixing = calculate_mixing_efficiency(
-        Tc=Tc, Pc=Pc, R=R, Ac=Ac, At=At, Dinj=Dinj,
-        m_dot_total=m_dot_total, Lstar=Lstar,
-        u_fuel=u_fuel, u_lox=u_lox,
-        turbulence_intensity=turbulence_intensity,
-        debug=debug
+    # 3. Mixing efficiency - Rupe momentum-ratio model (replaces the old saturating
+    #    k-e near-field model AND the non-physical standalone eta_turbulence step).
+    #    Turbulence's effect on combustion is via mixing/atomization and is captured
+    #    here; there is no separate "turbulence efficiency" axis for liquid-rocket c*.
+    # Resolve the IMPINGING jet momentum ratio. The Rupe momentum-balance penalty and
+    # its geometric R_opt are an impinging-doublet result; do NOT substitute TMR (a
+    # different quantity on a different scale — that crushes eta_mix for pintle/coaxial).
+    if momentum_ratio_R is None and spray_diagnostics is not None:
+        momentum_ratio_R = spray_diagnostics.get("momentum_ratio_R")
+    R_opt_eff = config.R_opt if getattr(config, "R_opt", None) is not None else (
+        R_opt if R_opt is not None else 1.0
     )
-    
-    # Sanity warning for implausibly low mixing (no clamp per user requirements)
-    if eta_mixing < 0.2 and Pc > 2e6:
-        u_f = u_fuel or 0
-        u_o = u_lox or 0
-        if u_f > 10 and u_o > 10:
-            warnings.warn(
-                f"[PHYSICS_CHECK] Low mixing η={eta_mixing:.2%} at Pc={Pc/1e6:.1f}MPa "
-                f"with injection speeds u_F={u_f:.0f}, u_O={u_o:.0f} m/s. "
-                f"Check L_mix scale."
-            )
-    
-    # 4. Turbulence efficiency (enhancement)
-    if turbulence_intensity < 0.05:
-        eta_turbulence_raw = 0.9
-    elif turbulence_intensity < 0.15:
-        eta_turbulence_raw = 0.95 + 0.05 * (turbulence_intensity / 0.15)
+    Em_peak = float(getattr(config, "Em_peak", 0.96))
+    if momentum_ratio_R is not None and np.isfinite(float(momentum_ratio_R)) and float(momentum_ratio_R) > 0:
+        eta_mixing = calculate_rupe_mixing_efficiency(
+            momentum_ratio_R=float(momentum_ratio_R),
+            R_opt=float(R_opt_eff),
+            Em_peak=Em_peak,
+            sigma=float(getattr(config, "mixing_sigma", 1.5)),
+        )
     else:
-        eta_turbulence_raw = 1.0 - 0.1 * ((turbulence_intensity - 0.15) / 0.35)
-    
-    eta_turbulence = np.clip(eta_turbulence_raw, 0.85, 1.0)
-    
-    # 5. Combined efficiency (no final clamp per user requirements)
-    eta_total = eta_Lstar * eta_kinetics * eta_mixing * eta_turbulence
+        # No impinging momentum ratio available (pintle/coaxial): use the peak mixing
+        # efficiency (no momentum penalty). A pintle-specific momentum-mixing model
+        # (local momentum ratio, design-specific optimum) is future work.
+        # NOTE — intentional C-vs-Python divergence: the C kernel
+        # (ed_combustion_physics.c::rupe_mixing_eta) has no such lenient branch and
+        # hard-errors on an invalid R (-> native solve fails -> Python fallback).
+        # That's safe because C only runs for impinging configs, where the injector
+        # solve always yields a valid R; this branch exists for the other injector
+        # types, which never reach C. Same physics either way — never a wrong number.
+        eta_mixing = Em_peak
+        momentum_ratio_R = float("nan")
+
+    # 4. Combined efficiency. eta_total = vaporization * kinetics * mixing.
+    #    (eta_turbulence removed: double-counted turbulence already in mixing.)
+    eta_total = eta_Lstar * eta_kinetics * eta_mixing
     
     # Get SMD for debug output (may not be available)
     SMD = 100e-6  # default
@@ -1305,15 +1233,17 @@ def calculate_combustion_efficiency_advanced(
         
         logger.info(f"[ETA_DEBUG] DERIVED: rho_ch={rho_ch:.4f} kg/m³, U_bulk={U_bulk:.2f} m/s, G_throat={G_throat:.1f} kg/m²s")
         logger.info(f"[ETA_DEBUG] DERIVED: tau_res_ch={tau_res*1e3:.3f} ms, Da_kinetics={Da:.4f}, Da_L={Da_L:.4f}")
-        logger.info(f"[ETA_DEBUG] OUTPUTS: eta_Lstar={eta_Lstar:.4f}, eta_kinetics={eta_kinetics:.4f}, eta_mixing={eta_mixing:.4f}, eta_turbulence={eta_turbulence:.4f}")
+        logger.info(f"[ETA_DEBUG] MIXING (Rupe): R={float(momentum_ratio_R):.4f}, R_opt={float(R_opt_eff):.4f}, Em_peak={float(getattr(config,'Em_peak',0.96)):.3f}, sigma={float(getattr(config,'mixing_sigma',1.5)):.3f}")
+        logger.info(f"[ETA_DEBUG] OUTPUTS: eta_Lstar={eta_Lstar:.4f}, eta_kinetics={eta_kinetics:.4f}, eta_mixing={eta_mixing:.4f}")
         logger.info(f"[ETA_DEBUG] eta_total={eta_total:.4f}")
-    
+
     return {
         "eta_total": float(eta_total),
         "eta_Lstar": float(eta_Lstar),
         "eta_kinetics": float(eta_kinetics),
         "eta_mixing": float(eta_mixing),
-        "eta_turbulence": float(eta_turbulence),
+        "momentum_ratio_R": float(momentum_ratio_R),
+        "R_opt": float(R_opt_eff),
         "Da": float(Da),
         "tau_res": float(tau_res),
         "tau_chem": float(tau_chem),

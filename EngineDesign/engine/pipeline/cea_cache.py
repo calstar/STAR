@@ -13,6 +13,53 @@ from functools import partial
 import time
 from .config_schemas import CEAConfig
 
+# Version of the SEMANTICS of the cached tables (not the .npz container format).
+# Bump whenever a table's meaning changes or a table is added, so stale caches on
+# disk — including locally generated ones git never touches — get rebuilt instead
+# of being silently served to code that expects the new meaning.
+#   1 (implicit; pre-2026-07): "Cf" stored get_PambCf()[0]; no "Cf_vac" table.
+#   2: "Cf" is the ambient-corrected coefficient get_PambCf()[1] (reproduces CEA's
+#      own ambient Isp) and the "Cf_vac" table (RPA delivered-thrust basis) exists.
+# Caches whose meta lacks "table_schema" are treated as version 1.
+CEA_TABLE_SCHEMA_VERSION = 2
+
+
+def _isentropic_cf_vac(gamma: float, eps: float) -> float:
+    """Ideal vacuum thrust coefficient from gamma + area ratio (isentropic, frozen).
+
+    Fallback for caches built before the Cf_vac table existed. Slightly low vs CEA's
+    shifting-equilibrium Cf_vac (the same ~2% frozen gap documented in the thrust-model
+    analysis); regenerate the cache to get the exact CEA value. Self-contained to avoid
+    importing the nozzle solvers here.
+    """
+    g = float(gamma)
+    e = float(eps)
+    if not (g > 1.0) or not (e > 1.0):
+        return float("nan")
+    gm1, gp1 = g - 1.0, g + 1.0
+    # Supersonic area-Mach solve (Newton), same relation as mach_solver.
+    M = 2.5
+    for _ in range(100):
+        t = (2.0 / gp1) * (1.0 + 0.5 * gm1 * M * M)
+        AR = (1.0 / M) * t ** (gp1 / (2.0 * gm1))
+        dM = 1e-6
+        t2 = (2.0 / gp1) * (1.0 + 0.5 * gm1 * (M + dM) ** 2)
+        AR2 = (1.0 / (M + dM)) * t2 ** (gp1 / (2.0 * gm1))
+        d = (AR2 - AR) / dM
+        if d == 0.0:
+            break
+        Mn = M - (AR - e) / d
+        if Mn <= 1.0:
+            Mn = 0.5 * (M + 1.0)
+        if abs(Mn - M) < 1e-10:
+            M = Mn
+            break
+        M = Mn
+    pe_pc = (1.0 + 0.5 * gm1 * M * M) ** (-g / gm1)
+    cf = ((2.0 * g * g / gm1) * (2.0 / gp1) ** (gp1 / gm1) * (1.0 - pe_pc ** (gm1 / g))) ** 0.5 + pe_pc * e
+    return float(cf)
+
+
 def _scalar_clamp(x: float, lo: float, hi: float) -> float:
     """float(np.clip(x, lo, hi)) for a scalar, without numpy's per-call overhead.
     Matches np.clip exactly, including NaN pass-through (NaN < lo and NaN > hi are
@@ -190,9 +237,11 @@ def _compute_cea_point_chunk(
             try:
                 out = chamber.get_full_cea_output(Pc=Pc_psia, MR=MR, eps=eps_to_use)
                 Tc, gamma, R, cstar, M, Isp = parse_cea_basic(out)
-                
+
                 try:
-                    Cf_ideal = chamber.get_PambCf(Pc=Pc_psia, MR=MR, eps=eps_to_use)[0]
+                    # get_PambCf returns (CFcea, CFamb, mode); element [1] is the
+                    # ambient-corrected Cf that reproduces CEA's own ambient Isp.
+                    Cf_ideal = chamber.get_PambCf(Pc=Pc_psia, MR=MR, eps=eps_to_use)[1]
                 except Exception:
                     # Fallback: estimate from Isp
                     try:
@@ -200,16 +249,23 @@ def _compute_cea_point_chunk(
                         Cf_ideal = isp * 9.80665 / cstar if cstar > 0 else np.nan
                     except Exception:
                         Cf_ideal = np.nan
-                
-                results.append((i, j, k_idx, cstar, Cf_ideal, Tc, gamma, R, M))
+                # Vacuum thrust coefficient (shifting equilibrium): Cf_vac = Isp_vac*g0/c*.
+                # This is the RPA delivered-thrust basis: F = zeta_n*Cf_vac*Pc*At - Pa*Ae.
+                try:
+                    isp_vac = chamber.get_Isp(Pc=Pc_psia, MR=MR, eps=eps_to_use)
+                    Cf_vac = isp_vac * 9.80665 / cstar if cstar > 0 else np.nan
+                except Exception:
+                    Cf_vac = np.nan
+
+                results.append((i, j, k_idx, cstar, Cf_ideal, Tc, gamma, R, M, Cf_vac))
             finally:
                 if lock is not None:
                     lock.release()
         except Exception as e:
             # On failure (including Fortran I/O errors), store NaN values
             # This handles "I/O past end of record" and "End of file" errors
-            results.append((i, j, k_idx, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan))
-    
+            results.append((i, j, k_idx, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan))
+
     return results
 
 
@@ -266,6 +322,7 @@ class CEACache:
         self.gamma_table = None
         self.R_table = None
         self.M_table = None
+        self.Cf_vac_table = None  # vacuum thrust coefficient (RPA delivered-thrust basis)
         
         # Load from cache or build
         if os.path.exists(self.cache_file):
@@ -279,6 +336,7 @@ class CEACache:
         data = np.load(self.cache_file)
 
         meta_expected = {
+            "table_schema": CEA_TABLE_SCHEMA_VERSION,
             "ox_name": self.config.ox_name,
             "fuel_name": self.config.fuel_name,
             "expansion_ratio": self.config.expansion_ratio,
@@ -301,6 +359,17 @@ class CEACache:
             if meta_loaded_dict is None:
                 return False
             try:
+                # Critical: table SEMANTICS version must match. A stale-schema cache
+                # (e.g. pre-Cf_vac, or "Cf" stored on the old get_PambCf[0] basis)
+                # must be rebuilt, not silently served under the new meaning —
+                # git updates code but never touches locally generated caches.
+                loaded_schema = meta_loaded_dict.get("table_schema", 1)
+                if loaded_schema != meta_expected_dict["table_schema"]:
+                    logger.warning(
+                        f"CEA cache table-schema mismatch: cache has v{loaded_schema}, "
+                        f"code expects v{meta_expected_dict['table_schema']}; regenerating."
+                    )
+                    return False
                 # Critical: propellant names must match
                 if meta_loaded_dict.get("ox_name") != meta_expected_dict["ox_name"]:
                     return False
@@ -353,6 +422,9 @@ class CEACache:
         
         self.cstar_table = data["cstar"]
         self.Cf_table = data["Cf"]
+        # Cf_vac added later; old caches lack it -> None triggers an isentropic
+        # fallback in eval() until the cache is regenerated.
+        self.Cf_vac_table = data["Cf_vac"] if "Cf_vac" in data.files else None
         self.Tc_table = data["Tc"]
         self.gamma_table = data["gamma"]
         self.R_table = data["R"]
@@ -484,6 +556,7 @@ class CEACache:
         self.gamma_table = np.zeros(shape)
         self.R_table = np.zeros(shape)
         self.M_table = np.zeros(shape)
+        self.Cf_vac_table = np.zeros(shape)
         
         Pc_psia_grid = self.Pc_grid / 6894.76
         point_count = 0
@@ -507,14 +580,19 @@ class CEACache:
                         Tc, gamma, R, cstar, M, Isp = parse_cea_basic(out)
                         
                         try:
-                            Cf_ideal = chamber.get_PambCf(Pc=Pc_psia, MR=MR, eps=eps)[0]
+                            Cf_ideal = chamber.get_PambCf(Pc=Pc_psia, MR=MR, eps=eps)[1]
                         except:
                             isp = chamber.estimate_Ambient_Isp(Pc=Pc_psia, MR=MR, eps=eps)[0]
                             Cf_ideal = isp * 9.80665 / cstar if cstar > 0 else np.nan
-                        
+                        try:
+                            Cf_vac = chamber.get_Isp(Pc=Pc_psia, MR=MR, eps=eps) * 9.80665 / cstar if cstar > 0 else np.nan
+                        except Exception:
+                            Cf_vac = np.nan
+
                         if self.use_3d:
                             self.cstar_table[i, j, k_idx] = cstar
                             self.Cf_table[i, j, k_idx] = Cf_ideal
+                            self.Cf_vac_table[i, j, k_idx] = Cf_vac
                             self.Tc_table[i, j, k_idx] = Tc
                             self.gamma_table[i, j, k_idx] = gamma
                             self.R_table[i, j, k_idx] = R
@@ -522,6 +600,7 @@ class CEACache:
                         else:
                             self.cstar_table[i, j] = cstar
                             self.Cf_table[i, j] = Cf_ideal
+                            self.Cf_vac_table[i, j] = Cf_vac
                             self.Tc_table[i, j] = Tc
                             self.gamma_table[i, j] = gamma
                             self.R_table[i, j] = R
@@ -564,6 +643,7 @@ class CEACache:
         self.gamma_table = np.zeros(shape)
         self.R_table = np.zeros(shape)
         self.M_table = np.zeros(shape)
+        self.Cf_vac_table = np.zeros(shape)
         
         # Chunk grid points for parallel processing
         chunk_size = max(1, len(grid_points) // (n_workers * 4))  # 4 chunks per worker
@@ -602,10 +682,11 @@ class CEACache:
                 print(f"   [{completed}/{total_points}] {pct:.1f}% | Rate: {rate:.1f} pts/s | ETA: {eta/60:.1f} min")
                 
                 # Store results
-                for i, j, k_idx, cstar, Cf, Tc, gamma, R, M in chunk_results:
+                for i, j, k_idx, cstar, Cf, Tc, gamma, R, M, Cf_vac in chunk_results:
                     if self.use_3d:
                         self.cstar_table[i, j, k_idx] = cstar
                         self.Cf_table[i, j, k_idx] = Cf
+                        self.Cf_vac_table[i, j, k_idx] = Cf_vac
                         self.Tc_table[i, j, k_idx] = Tc
                         self.gamma_table[i, j, k_idx] = gamma
                         self.R_table[i, j, k_idx] = R
@@ -613,6 +694,7 @@ class CEACache:
                     else:
                         self.cstar_table[i, j] = cstar
                         self.Cf_table[i, j] = Cf
+                        self.Cf_vac_table[i, j] = Cf_vac
                         self.Tc_table[i, j] = Tc
                         self.gamma_table[i, j] = gamma
                         self.R_table[i, j] = R
@@ -621,6 +703,7 @@ class CEACache:
     def _save_cache(self):
         """Save CEA data to cache file"""
         meta = {
+            "table_schema": CEA_TABLE_SCHEMA_VERSION,
             "ox_name": self.config.ox_name,
             "fuel_name": self.config.fuel_name,
             "expansion_ratio": self.config.expansion_ratio,
@@ -636,6 +719,7 @@ class CEACache:
             "MR": self.MR_grid,
             "cstar": self.cstar_table,
             "Cf": self.Cf_table,
+            "Cf_vac": self.Cf_vac_table,
             "Tc": self.Tc_table,
             "gamma": self.gamma_table,
             "R": self.R_table,
@@ -877,6 +961,8 @@ class CEACache:
             gamma = float(self._trilinear_interpolate(Pc_clamped, MR_clamped, eps_clamped, self.gamma_table))
             R     = float(self._trilinear_interpolate(Pc_clamped, MR_clamped, eps_clamped, self.R_table))
             M     = float(self._trilinear_interpolate(Pc_clamped, MR_clamped, eps_clamped, self.M_table))
+            Cf_vac = (float(self._trilinear_interpolate(Pc_clamped, MR_clamped, eps_clamped, self.Cf_vac_table))
+                      if self.Cf_vac_table is not None else _isentropic_cf_vac(gamma, eps_clamped))
         else:
             cstar = float(self._bilinear_interpolate(Pc_clamped, MR_clamped, self.cstar_table))
             Cf    = float(self._bilinear_interpolate(Pc_clamped, MR_clamped, self.Cf_table))
@@ -884,10 +970,13 @@ class CEACache:
             gamma = float(self._bilinear_interpolate(Pc_clamped, MR_clamped, self.gamma_table))
             R     = float(self._bilinear_interpolate(Pc_clamped, MR_clamped, self.R_table))
             M     = float(self._bilinear_interpolate(Pc_clamped, MR_clamped, self.M_table))
+            Cf_vac = (float(self._bilinear_interpolate(Pc_clamped, MR_clamped, self.Cf_vac_table))
+                      if self.Cf_vac_table is not None else _isentropic_cf_vac(gamma, eps_clamped))
 
         out = {
             "cstar_ideal": cstar,
             "Cf_ideal": Cf,
+            "Cf_vac": Cf_vac,   # vacuum thrust coefficient (RPA delivered-thrust basis)
             "Tc": Tc,
             "gamma": gamma,
             "R": R,
@@ -911,3 +1000,24 @@ class CEACache:
             print("[CEA DEBUG][WARNING] R magnitude looks wrong. Possible units mismatch (J/kg-K vs something else).")
 
         return out
+
+    def eval_cf_vac(self, MR: float, Pc: float, eps: Optional[float] = None) -> float:
+        """Fast single-value vacuum thrust coefficient lookup (one interpolation).
+
+        Hot path for the native Layer-1 inner loop: avoids the full ``eval`` dict
+        build + sanity prints. Same value ``eval(...)["Cf_vac"]`` returns.
+        """
+        if eps is None:
+            eps = self.config.expansion_ratio
+        Pc_c = _scalar_clamp(float(Pc), self.Pc_min, self.Pc_max)
+        MR_c = _scalar_clamp(float(MR), self.MR_min, self.MR_max)
+        if self.use_3d:
+            eps_c = _scalar_clamp(float(eps), self.eps_min, self.eps_max)
+            if self.Cf_vac_table is not None:
+                return float(self._trilinear_interpolate(Pc_c, MR_c, eps_c, self.Cf_vac_table))
+            g = float(self._trilinear_interpolate(Pc_c, MR_c, eps_c, self.gamma_table))
+            return _isentropic_cf_vac(g, eps_c)
+        if self.Cf_vac_table is not None:
+            return float(self._bilinear_interpolate(Pc_c, MR_c, self.Cf_vac_table))
+        g = float(self._bilinear_interpolate(Pc_c, MR_c, self.gamma_table))
+        return _isentropic_cf_vac(g, float(eps))

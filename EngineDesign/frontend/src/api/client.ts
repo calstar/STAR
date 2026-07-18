@@ -200,6 +200,7 @@ export interface RunnerResults {
       pogo_frequency?: number;
       surge_frequency?: number;
       water_hammer_margin?: number;
+      water_hammer_pressure?: number;
       stability_margin?: number;
       sound_speed?: number;
     };
@@ -791,6 +792,7 @@ export async function getInjectorSchema(injectorType?: string): Promise<ApiRespo
 export interface DesignRequirements {
   // Performance targets
   target_thrust: number;
+  target_chamber_pressure_psi?: number;
   target_apogee?: number;
   optimal_of_ratio: number;
   target_burn_time: number;

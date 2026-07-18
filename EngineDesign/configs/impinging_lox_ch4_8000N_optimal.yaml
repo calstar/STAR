@@ -370,6 +370,7 @@ design_requirements:
   max_P_tank_F: null
   max_engine_length: 0.4
   max_chamber_outer_diameter: 0.177
+  metal_wall_thickness_per_side_m: 0.00635  # 0.25 in/side metal case; total wall = this + ablative liner (derived in code)
   max_nozzle_exit_diameter: 0.177
   min_Lstar: 0.76
   max_Lstar: 1.5
@@ -390,10 +391,10 @@ design_requirements:
   injector_dp_ratio_F_max: 0.55
   W_geom_ao_af_momentum: 3500.0
   W_MOM: 30000.0
-  impinging_momentum_R_min: 0.9
-  impinging_momentum_R_max: 1.1
+  impinging_momentum_R_min: 0.95
+  impinging_momentum_R_max: 1.05
   layer1_impinging_n_doublets_max: 20
-  layer1_random_seed: 42
+  layer1_random_seed: null
   W_DP: 800.0
   W_DP_O: 12000.0
   W_DP_F: 175000.0
@@ -421,6 +422,7 @@ design_requirements:
     d_orifice_mm: null
     P_O_start_psi: null
     P_F_start_psi: null
+    Pc_psi: null   # target chamber pressure [psi]; soft target, optimizer sizes throat for thrust
 pressure_curves:
   n_points: 200
   target_burn_time_s: 6.0

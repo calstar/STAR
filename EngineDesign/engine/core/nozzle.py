@@ -1,4 +1,23 @@
-"""Nozzle model: thrust coefficient and thrust calculation with shifting equilibrium"""
+"""Nozzle model: RPA delivered thrust + isentropic exit state.
+
+This is the AUTHORITATIVE nozzle: every runner.evaluate() call uses it (flight sim,
+time series, pintle, and Layer-1 finalization). Delivered thrust is the RPA basis
+
+    F(Pa) = zeta_n * Cf_vac * Pc * At - Pa * Ae
+
+where Cf_vac is CEA's shifting-equilibrium vacuum thrust coefficient from the cache
+tables, zeta_n = nozzle_efficiency, and combustion efficiency zeta_c (eta_c*) rides
+in through the efficiency-reduced Pc from the chamber solve — so delivered
+Isp = zeta_c * zeta_n * Isp_ideal. See docs/thrust_efficiency_bug_analysis.md for
+why the former momentum-method reconstruction (ideal-Tc exhaust velocity) was
+retired: it never applied combustion efficiency and over-predicted thrust by
+~(1 - zeta_c*zeta_n). The exit state computed here (M_exit, P_exit, T_exit,
+v_exit) is frozen-isentropic and REPORTING-ONLY — thrust does not depend on it.
+
+The native C kernel (engine/native/src/ed_evaluate.c) computes the SAME delivered
+formula from the same tables for the Layer-1 inner loop; parity is enforced live by
+tests/test_native_ab_parity.py.
+"""
 
 import numpy as np
 import logging
@@ -150,23 +169,21 @@ def calculate_thrust(
     config: Any,
     Pa: float = 101325.0,
     reaction_progress: Optional[Dict] = None,
-    use_shifting_equilibrium: bool = True,
     debug: bool = False,
 ) -> dict:
     """
-    Calculate engine thrust with high fidelity.
-    
-    Thrust consists of two components:
-    1. Momentum thrust: ṁ × v_exit
-    2. Pressure thrust: (P_exit - Pa) × A_exit
-    
-    F = ṁ × v_exit + (P_exit - Pa) × A_exit
-    
-    Or using thrust coefficient:
-    F = Cf × Pc × At
-    
-    where Cf accounts for both momentum and pressure components.
-    
+    Calculate delivered engine thrust (RPA methodology).
+
+        F(Pa) = zeta_n * Cf_vac * Pc * At - Pa * Ae
+
+    Cf_vac is CEA's shifting-equilibrium vacuum thrust coefficient (cache lookup);
+    zeta_n is config.chamber_geometry.nozzle_efficiency; combustion efficiency
+    zeta_c (eta_c*) is already carried by the efficiency-reduced Pc from the
+    chamber solve, so delivered Isp = zeta_c * zeta_n * Isp_ideal. The exit state
+    also returned here (M_exit, P_exit, T_exit, v_exit — frozen-isentropic from
+    chamber gamma) is reporting-only; thrust does not depend on it. See the module
+    docstring and docs/thrust_efficiency_bug_analysis.md.
+
     Parameters:
     -----------
     Pc : float
@@ -182,22 +199,20 @@ def calculate_thrust(
     Pa : float
         Ambient pressure [Pa] (default: sea level)
     reaction_progress : dict, optional
-        Reaction progress for shifting equilibrium
-    use_shifting_equilibrium : bool
-        Enable shifting equilibrium model
-    
+        Chamber reaction progress; used for the reaction-completeness diagnostics
+        (temperature profile), not for thrust
+
     Returns:
     --------
     results : dict
         Dictionary containing:
-        - F: Total thrust [N]
-        - F_momentum: Momentum thrust component [N]
-        - F_pressure: Pressure thrust component [N]
-        - Cf: Thrust coefficient
-        - Cf_ideal: Ideal thrust coefficient from CEA
-        - P_exit: Exit pressure [Pa]
-        - v_exit: Exit velocity [m/s]
-        - Isp: Specific impulse [s]
+        - F: Delivered thrust [N]
+        - F_momentum: vacuum term zeta_n*Cf_vac*Pc*At [N]
+        - F_pressure: ambient back-pressure term -Pa*Ae [N]
+        - Cf / Cf_actual: delivered thrust coefficient F/(Pc*At)
+        - Cf_ideal: Ideal (ambient) thrust coefficient from CEA
+        - P_exit, T_exit, v_exit, M_exit: frozen-isentropic exit state (reporting-only)
+        - Isp: Delivered specific impulse [s]
     """
     # Extract geometry from config.chamber_geometry
     cg = config.chamber_geometry
@@ -228,6 +243,7 @@ def calculate_thrust(
     # Get CEA properties (now with eps parameter for 3D cache)
     cea_props = cea_cache.eval(MR, Pc, Pa, eps)
     Cf_ideal = cea_props["Cf_ideal"]
+    Cf_vac = cea_props["Cf_vac"]   # vacuum thrust coefficient (RPA delivered-thrust basis)
     gamma = cea_props["gamma"]
     Tc = cea_props["Tc"]
     R = cea_props["R"]
@@ -385,128 +401,16 @@ def calculate_thrust(
             f"P_exit={P_exit:.3e} Pa ({P_exit/Pc_val:.4f} Pc)"
         )
 
-    # Apply shifting equilibrium if enabled
-    # PROPER ITERATIVE APPROACH: As gas expands, equilibrium composition shifts.
-    # Gamma and R change between chamber (equilibrium) and exit (shifting).
-    # Must iterate to find self-consistent solution: M_exit, P_exit, T_exit, gamma_exit, R_exit
+    # Exit-composition shift is now captured by CEA's shifting-equilibrium vacuum
+    # thrust coefficient (cea_props["Cf_vac"]); the old iterative Damkoehler
+    # approximation (reaction_chemistry.calculate_shifting_equilibrium_properties) is
+    # RETIRED — it was a ~2% correction bolted onto a ~13% thrust bug. See
+    # docs/thrust_efficiency_bug_analysis.md. gamma_exit/R_exit are reported at their
+    # frozen-chamber values (display only; delivered thrust no longer depends on them).
     gamma_exit = gamma_val
     R_exit = R
     equilibrium_factor = 1.0
-    
-    if use_shifting_equilibrium and P_exit < Pc_val:
-        try:
-            from engine.pipeline.reaction_chemistry import calculate_shifting_equilibrium_properties
-            
-            # Get reaction progress at chamber (if provided)
-            progress_chamber = 1.0  # Default: assume equilibrium at chamber
-            if reaction_progress is not None:
-                progress_chamber = reaction_progress.get("progress_throat", 1.0)
-            
-            # Reaction rate factor: Physics-based approach using Damköhler number
-            # The equilibrium_factor returned by calculate_shifting_equilibrium_properties
-            # is computed as Da/(1+Da) based on actual reaction and expansion time scales.
-            # No longer using hardcoded 0.1 - let physics determine the value.
-            #
-            # Allow user override via config if available, otherwise use physics-based default
-            reaction_rate_factor = None  # Will use default in function (physics-based)
-            if config is not None and hasattr(config, 'nozzle'):
-                if hasattr(config.nozzle, 'reaction_rate_factor'):
-                    reaction_rate_factor = config.nozzle.reaction_rate_factor
-            
-            # ITERATIVE SHIFTING EQUILIBRIUM SOLUTION
-            # Physics-based: iterate to find self-consistent M_exit, P_exit, T_exit, gamma_exit, R_exit
-            # NO ARBITRARY CONSTANTS OR CLAMPING - all from physics equations
-            gamma_exit_iter = gamma_val
-            R_exit_iter = R
-            M_exit_iter = M_exit
-            P_exit_iter = P_exit
-            T_exit_iter = T_exit
-            
-            # Use MR parameter passed to calculate_thrust (no hardcoded values)
-            # MR is already available as a function parameter - use it directly
-            MR_for_shifting = MR
-            
-            max_iterations = 20  # More iterations for convergence
-            tolerance = 1e-6  # Stricter tolerance
-            
-            for iteration in range(max_iterations):
-                gamma_exit_old = gamma_exit_iter
-                
-                # Calculate shifting equilibrium properties based on current exit conditions
-                # Only pass reaction_rate_factor if explicitly set in config
-                if reaction_rate_factor is not None:
-                    shifting_props = calculate_shifting_equilibrium_properties(
-                        Pc_val,
-                        Tc,
-                        gamma_val,
-                        R,
-                        P_exit_iter,  # Use current P_exit
-                        progress_chamber,
-                        reaction_rate_factor,
-                        cea_cache,
-                        MR=MR_for_shifting,  # Pass MR - no hardcoded values
-                    )
-                else:
-                    # Use default (physics-based Da/(1+Da))
-                    shifting_props = calculate_shifting_equilibrium_properties(
-                        Pc_val,
-                        Tc,
-                        gamma_val,
-                        R,
-                        P_exit_iter,
-                        progress_chamber,
-                        cea_cache=cea_cache,
-                        MR=MR_for_shifting,
-                    )
-                
-                gamma_exit_iter = shifting_props["gamma_exit"]
-                R_exit_iter = shifting_props["R_exit"]
-                equilibrium_factor = shifting_props["equilibrium_factor"]
-                
-                # Check convergence
-                gamma_change = abs(gamma_exit_iter - gamma_exit_old) / max(gamma_exit_old, 1.0)
-                if gamma_change < tolerance:
-                    break
-                
-                # Recalculate M_exit with new gamma_exit using consolidated solver
-                if eps_val > 1.0 and gamma_exit_iter > 1.0:
-                    M_exit_iter, _ = solve_exit_mach_robust(eps_val, gamma_exit_iter)
-                
-                # Recalculate P_exit and T_exit with new gamma_exit and M_exit_iter
-                # Using isentropic relations (physics-based, no arbitrary factors)
-                pressure_exponent_new = -gamma_exit_iter / (gamma_exit_iter - 1.0)
-                pressure_factor_new = (1.0 + (gamma_exit_iter - 1.0) / 2.0 * M_exit_iter**2) ** pressure_exponent_new
-                P_exit_iter = Pc_val * pressure_factor_new
-                
-                # Physics: P_exit cannot be negative
-                if P_exit_iter < 0:
-                    raise ValueError(f"Non-physical exit pressure: P_exit={P_exit_iter} Pa")
-                
-                # Note: P_exit can be < Pa (overexpanded) or > Pa (underexpanded)
-                # Don't clamp to Pa - that's a physics result
-                
-                temperature_factor_new = 1.0 / (1.0 + (gamma_exit_iter - 1.0) / 2.0 * M_exit_iter**2)
-                T_exit_iter = Tc * temperature_factor_new
-                
-                # Physics validation: T_exit must be positive and less than Tc
-                if T_exit_iter <= 0 or T_exit_iter >= Tc:
-                    raise ValueError(f"Non-physical exit temperature: T_exit={T_exit_iter} K, Tc={Tc} K")
-            
-            # Use converged values
-            gamma_exit = gamma_exit_iter
-            R_exit = R_exit_iter
-            M_exit = M_exit_iter
-            P_exit = P_exit_iter
-            T_exit = T_exit_iter
-            
-        except Exception as e:
-            # Don't silently fail - shifting equilibrium failure indicates physics issue
-            raise RuntimeError(
-                f"Shifting equilibrium calculation failed: {e}. "
-                f"This indicates invalid nozzle conditions or chemistry model issues. "
-                f"Pc={Pc_val:.3e} Pa, Tc={Tc} K, MR={MR:.4f}, P_exit={P_exit_iter:.3e} Pa"
-            ) from e
-    
+
     # Recalculate v_exit with final exit properties after shifting equilibrium
     # v_exit = M_exit × sqrt(gamma_exit × R_exit × T_exit)
     
@@ -541,79 +445,42 @@ def calculate_thrust(
             f"M_exit={M_exit:.4f}, sound_speed={sound_speed_exit_final:.2f} m/s"
         )
     
-    # Calculate thrust components with validation
+    # ------------------------------------------------------------------
+    # Delivered thrust — RPA methodology (see docs/thrust_efficiency_bug_analysis.md):
+    #     (Cf_vac)_delivered = zeta_n * Cf_vac                 (zeta_n = nozzle efficiency)
+    #     F(Pa) = (Cf_vac)_delivered * Pc * At  -  Pa * Ae
+    # Combustion efficiency zeta_c (= eta_c*) is ALREADY carried by Pc (the chamber
+    # solve reduced it), so delivered Isp = zeta_c * zeta_n * Isp_vac_ideal minus the
+    # ambient term — exactly RPA's (Isp_vac)_d = zeta_c * zeta_n * Isp_vac.
+    #
+    # This replaces the old momentum reconstruction (F = mdot*v_exit + (Pe-Pa)*Ae),
+    # which expanded from the IDEAL chamber Tc and therefore never applied combustion
+    # efficiency to the exhaust velocity, over-predicting thrust by ~(1 - eta_c*).
+    # ------------------------------------------------------------------
     g0 = 9.80665
-
-    PcAt = Pc_val * A_throat
-    F_mom = mdot_total * v_exit
-    F_pres = (P_exit - Pa) * A_exit
-    F_sum = F_mom + F_pres
-
-    Cf_from_sum = F_sum / PcAt
-    Isp_from_sum = F_sum / (mdot_total * g0)
-
-    # Expected “effective exhaust velocity” should be ~ Isp*g0
-    c_eff = F_sum / mdot_total
-
-    if debug:
-        logging.getLogger("evaluate").info(
-            f"[NOZZLE][THRUSTCHK] PcAt={PcAt:.1f} N | "
-            f"mdot={mdot_total:.4f} kg/s, v_exit={v_exit:.1f} m/s, c_eff=F/mdot={c_eff:.1f} m/s | "
-            f"F_mom={F_mom:.1f} N, F_pres={F_pres:.1f} N, F_sum={F_sum:.1f} N | "
-            f"Cf_sum={Cf_from_sum:.3f}, Isp_sum={Isp_from_sum:.1f} s"
-        )
-
-    # Compare to CEA-ish expectations
-    if debug:
-        logging.getLogger("evaluate").info(
-            f"[NOZZLE][EXPECT] c*_ideal={cea_props['cstar_ideal']:.1f} m/s, "
-            f"Cf_ideal={Cf_ideal:.3f} => expected c_eff~Cf*c*={Cf_ideal*cea_props['cstar_ideal']:.1f} m/s"
-        )
-
-    F_momentum = mdot_total * v_exit
-    F_pressure = (P_exit - Pa) * A_exit
+    zeta_n = efficiency  # nozzle (thrust-coefficient) efficiency, RPA zeta_n
+    Cf_vac_delivered = zeta_n * Cf_vac
+    F_momentum = Cf_vac_delivered * Pc_val * A_throat   # vacuum thrust (momentum + design exit-pressure)
+    F_pressure = -Pa * A_exit                           # ambient back-pressure term (exact, not efficiency-scaled)
     F_total = F_momentum + F_pressure
+    F = F_total
+    F_cf = F  # the cf-method and the delivered thrust are now one and the same path
+
+    if not np.isfinite(F):
+        raise ValueError(
+            f"Non-finite thrust: Cf_vac={Cf_vac}, zeta_n={zeta_n}, Pc={Pc_val:.3e} Pa, "
+            f"At={A_throat:.3e} m^2, Pa={Pa:.3e} Pa, Ae={A_exit:.3e} m^2"
+        )
+
+    # Actual (delivered) thrust coefficient from the thrust equation.
+    Cf_actual = F / (Pc_val * A_throat)
 
     if debug:
         logging.getLogger("evaluate").info(
-            f"[NOZZLE FINAL] "
-            f"Pc={Pc_val:.3e} Pa, At={A_throat:.3e} m^2, Ae={A_exit:.3e} m^2, eps={A_exit/A_throat:.3f} "
-            f"M_exit={M_exit:.4f}, gamma_exit={gamma_exit:.4f}, R_exit={R_exit:.2f} "
-            f"T_exit={T_exit:.1f} K, Tc={Tc:.1f} K "
-            f"v_exit={v_exit:.1f} m/s "
-            f"P_exit={P_exit:.3e} Pa, Pa={Pa:.3e} Pa "
-            f"mdot={mdot_total:.4f} kg/s "
-            f"F_mom={F_momentum:.1f} N, F_pres={F_pressure:.1f} N "
-            f"PcAt={Pc_val*A_throat:.1f} N "
-            f"Cf_actual={F_total/(Pc_val*A_throat):.3f}, Cf_ideal={Cf_ideal:.3f}"
+            f"[NOZZLE RPA] Cf_vac={Cf_vac:.4f} zeta_n={zeta_n:.3f} -> Cf_vac_del={Cf_vac_delivered:.4f} | "
+            f"F_vac={F_momentum:.1f} N, ambient(-Pa*Ae)={F_pressure:.1f} N, F={F:.1f} N | "
+            f"Cf_actual={Cf_actual:.3f}, Isp={F/(mdot_total*g0):.1f} s"
         )
-
-    
-    # Validate thrust components
-    if not all(np.isfinite([F_momentum, F_pressure, F_total])):
-        raise ValueError(
-            f"Non-finite thrust components: F_momentum={F_momentum} N, "
-            f"F_pressure={F_pressure} N, F_total={F_total} N"
-        )
-    
-    # Also calculate using thrust coefficient method for validation
-    F_cf = Cf * Pc_val * A_throat
-    
-    # Validate thrust equation
-    thrust_check = PhysicsValidator.validate_thrust_equation(
-        F_momentum, F_pressure, F_total, tolerance=1e-2  # 1% tolerance
-    )
-    if not thrust_check.passed and thrust_check.severity == "error":
-        # Use thrust coefficient method if momentum+pressure fails
-        F_total = F_cf
-    
-    # Use the more accurate method (momentum + pressure)
-    F = F_total
-
-    # Calculate ACTUAL thrust coefficient from thrust equation
-    # Cf_actual = F / (Pc * A_throat)
-    # This is the measured value, not the theoretical
-    Cf_actual = F / (Pc_val * A_throat)
     
     if not np.isfinite(Cf_actual):
         raise ValueError(

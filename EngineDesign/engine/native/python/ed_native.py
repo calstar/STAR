@@ -65,6 +65,8 @@ class EdCombustionEff(C.Structure):
         ("T_star_fuel_cap_K", _d), ("A0_hydrocarbon", _d), ("Ea_hydrocarbon", _d),
         ("n_pre_hydrocarbon", _d),
         ("has_tau_Tc_floor", _u8), ("tau_Tc_floor", _d),
+        # Rupe momentum-ratio mixing model
+        ("Em_peak", _d), ("mixing_sigma", _d), ("R_opt", _d),
     ]
 
 
@@ -141,7 +143,8 @@ class EdInjectorResult(C.Structure):
 
 
 class EdCeaResult(C.Structure):
-    _fields_ = [(n, _d) for n in ("cstar_ideal", "Cf_ideal", "Tc", "gamma", "R", "M")]
+    # Mirror of ed_cea.h EdCeaResult — keep field order/count in sync.
+    _fields_ = [(n, _d) for n in ("cstar_ideal", "Cf_ideal", "Tc", "gamma", "R", "M", "Cf_vac")]
 
 
 class EdChugStream(C.Structure):

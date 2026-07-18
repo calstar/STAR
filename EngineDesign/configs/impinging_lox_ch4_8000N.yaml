@@ -119,8 +119,8 @@ design_requirements:
   W_geom_ao_af_momentum: 3500.0
   # Impinging: steer momentum_ratio_R ≈ 1 (Layer‑1 hinge + weights)
   W_MOM: 30000.0
-  impinging_momentum_R_min: 0.9
-  impinging_momentum_R_max: 1.1
+  impinging_momentum_R_min: 0.95
+  impinging_momentum_R_max: 1.05
   # Momentum R is steered to ~1 by the soft log hinge (W_MOM) + the wide validation band above.
   # No deadband: controlled parallel-CMA tests showed a momentum deadband does NOT change the
   # design the optimizer lands on (R still settles ~1.13 at 150 iters either way) — it only
@@ -133,7 +133,7 @@ design_requirements:
   W_DP_F: 175000.0
   W_DP_HIGH: 25000.0
   # Deterministic Layer‑1 CMA restarts (same seed → repeatable geometry path on fixed code/config).
-  layer1_random_seed: 42
+  layer1_random_seed: null
   layer1_infeasibility_gate_eps: 0.002
   acoustic_margin_min: 0.1
   chugging_margin_min: 0.2
@@ -148,6 +148,7 @@ design_requirements:
     A_throat_mm2: null
     Lstar_mm: null
     P_F_start_psi: null
+    Pc_psi: null   # target chamber pressure [psi]; soft target, optimizer sizes throat for thrust
     P_O_start_psi: null
     d_orifice_mm: null
     d_pintle_tip_mm: null
@@ -160,6 +161,7 @@ design_requirements:
   max_P_tank_F: null
   max_P_tank_O: null
   max_chamber_outer_diameter: 0.177
+  metal_wall_thickness_per_side_m: 0.00635  # 0.25 in/side metal case; total wall = this + ablative liner (derived in code)
   max_engine_length: 0.4
   max_fuel_tank_pressure_psi: 900.0
   max_lox_tank_pressure_psi: 900.0

@@ -117,6 +117,10 @@ typedef struct {
     double A0_hydrocarbon, Ea_hydrocarbon, n_pre_hydrocarbon;
     uint8_t has_tau_Tc_floor;   /* tau_Tc_floor_K present? */
     double  tau_Tc_floor;       /* K */
+    /* Rupe momentum-ratio mixing model (replaces k-e mixing + retired eta_turbulence). */
+    double Em_peak;             /* peak mixing efficiency at the balanced momentum ratio */
+    double mixing_sigma;        /* log-Gaussian width in ln(R) space */
+    double R_opt;               /* momentum-ratio optimum override; <=0 => derive from angles */
 } EdCombustionEff;
 
 /* Cooling enable flags + params the chamber residual reads via

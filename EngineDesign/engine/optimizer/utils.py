@@ -16,6 +16,44 @@ IMPINGING_JET_PITCH_ESTIMATE_M = 0.004  # heuristic min center-to-center spacing
 IMPINGING_N_ELEMENTS_ABSOLUTE_CAP = 200
 
 
+def total_wall_thickness_m(config: Any) -> float:
+    """Total chamber-wall thickness (both sides) subtracted from the max OD to get
+    the gas-side inner diameter: ``2 x (metal case + ablative liner)``.
+
+    Derived from its physical parts instead of stored as a separate lump field:
+      * metal — ``design_requirements.metal_wall_thickness_per_side_m`` (geometry
+        envelope for the structural case; default 0.25 in/side), and
+      * liner — ``ablative_cooling.initial_thickness`` when ablative cooling is
+        enabled (the same field Layer 3 sizes, so the wall tracks the sized liner
+        on reruns automatically — no write-back step to lose the metal term).
+
+    The graphite insert is a THROAT insert (axial), not part of the chamber-barrel
+    radial stack, so it does not contribute. Film/regen cooling contribute no liner
+    thickness here (channel geometry is not modeled as barrel thickness).
+
+    Falls back to the legacy 1-inch total (``DEFAULT_IMPINGING_WALL_THICKNESS_M``)
+    only when the config lacks the fields (mocks / legacy config objects).
+    """
+    dr = getattr(config, "design_requirements", None)
+    metal = getattr(dr, "metal_wall_thickness_per_side_m", None) if dr is not None else None
+    try:
+        metal = float(metal)
+    except (TypeError, ValueError):
+        return DEFAULT_IMPINGING_WALL_THICKNESS_M
+    if not (np.isfinite(metal) and metal > 0.0):
+        return DEFAULT_IMPINGING_WALL_THICKNESS_M
+    liner = 0.0
+    ab = getattr(config, "ablative_cooling", None)
+    if ab is not None and bool(getattr(ab, "enabled", False)):
+        try:
+            t = float(getattr(ab, "initial_thickness", 0.0))
+        except (TypeError, ValueError):
+            t = 0.0
+        if np.isfinite(t) and t > 0.0:
+            liner = t
+    return 2.0 * (metal + liner)
+
+
 def extract_all_parameters(config: PintleEngineConfig) -> Dict[str, Any]:
     """Extract all optimized parameters from config."""
     params = {}

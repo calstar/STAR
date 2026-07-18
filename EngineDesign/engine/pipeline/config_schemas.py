@@ -468,7 +468,29 @@ class CombustionEfficiencyConfig(BaseModel):
     use_cooling_coupling: bool = Field(default=True, description="Apply cooling efficiency corrections")
     use_turbulence_coupling: bool = Field(
         default=False,
-        description="[DEPRECATED] Turbulence is always included in eta_mixing physics, not as separate penalty"
+        description="[DEPRECATED] Turbulence is folded into eta_mixing; the standalone eta_turbulence penalty was removed (non-physical/double-counted)."
+    )
+    # --- Mixing efficiency (Rupe momentum-ratio model) ---
+    # Replaces the old k-e near-field mixing model + the eta_turbulence step-function.
+    # eta_mix = Em_peak * exp(-(ln(R/R_opt))^2 / (2*sigma^2)), R = injector momentum ratio.
+    mixing_model: Literal["rupe"] = Field(
+        default="rupe",
+        description="Mixing efficiency model. 'rupe': momentum-ratio mixing efficiency (Rupe/SP-8089)."
+    )
+    Em_peak: float = Field(
+        default=0.96, ge=0.5, le=1.0,
+        description="Peak (best-achievable) mixing efficiency at the balanced momentum ratio. "
+                    "0.96 ~ well-built collegiate impinging doublet with adequate L*; calibrate to hot-fire c* if available."
+    )
+    mixing_sigma: float = Field(
+        default=1.5, gt=0.0,
+        description="Log-Gaussian width of the momentum-ratio mixing penalty (in ln(R) space). "
+                    "Smaller = sharper falloff away from R_opt."
+    )
+    R_opt: Optional[float] = Field(
+        default=None,
+        description="Momentum-ratio optimum for peak mixing. None => derive from injector geometry "
+                    "(impinging: sqrt(sin(theta_F)/sin(theta_O)); pintle/coaxial: 1.0)."
     )
     mixture_efficiency_floor: float = Field(default=0.25, ge=0, le=1, description="[DEPRECATED] No longer used")
     cooling_efficiency_floor: float = Field(default=0.25, ge=0, le=1, description="Minimum cooling efficiency")
@@ -521,7 +543,9 @@ class CombustionEfficiencyConfig(BaseModel):
     )
     use_shifting_equilibrium: bool = Field(
         default=True,
-        description="Use shifting equilibrium in nozzle (composition changes with expansion)"
+        description="[DEPRECATED — no effect] The iterative shifting-equilibrium nozzle was retired; "
+                    "exit-composition shift is captured exactly by CEA's Cf_vac table "
+                    "(RPA delivered thrust). Kept for config compatibility only."
     )
     # Kinetics timescale calibration (for calculate_reaction_time_scale)
     tau_ref: float = Field(
@@ -867,6 +891,12 @@ class DesignRequirementsConfig(BaseModel):
     """Design requirements for optimizer"""
     # Performance targets
     target_thrust: float = Field(default=7000.0, gt=0, description="Target peak thrust [N]")
+    target_chamber_pressure_psi: Optional[float] = Field(
+        default=None, gt=0,
+        description="Optional target chamber pressure [psi]. Pc is emergent in a pressure-fed engine, so "
+                    "this is a soft objective target (not a hard constraint): when set, the Layer-1 optimizer "
+                    "drives tank pressure to land Pc near this value and sizes the throat for the thrust target, "
+                    "instead of pushing Pc higher to make thrust. Leave null to let Pc float freely.")
     target_apogee: Optional[float] = Field(default=3048.0, gt=0, description="Target apogee above ground level [m]")
     optimal_of_ratio: float = Field(default=2.3, gt=0, description="Target oxidizer-to-fuel mixture ratio")
     target_burn_time: float = Field(default=10.0, gt=0, description="Target burn time [s]")
@@ -880,6 +910,14 @@ class DesignRequirementsConfig(BaseModel):
     # Geometry constraints
     max_engine_length: float = Field(default=0.5, gt=0, description="Maximum total engine length (chamber + nozzle) [m]")
     max_chamber_outer_diameter: float = Field(default=0.15, gt=0, description="Maximum chamber outer diameter [m]")
+    metal_wall_thickness_per_side_m: float = Field(
+        default=0.00635, gt=0,
+        description="Chamber metal case thickness per side [m] (geometry envelope; default 0.25 in). "
+                    "Layer 1 derives the total OD -> gas-side wall as 2 * (this + ablative liner "
+                    "thickness when ablative cooling is enabled) — see optimizer.utils.total_wall_thickness_m. "
+                    "There is no separate lump wall field: the ablative share tracks "
+                    "ablative_cooling.initial_thickness automatically after Layer 3 sizes it. "
+                    "Distinct from stainless_steel_case.thickness (thermal-model conduction wall, often null).")
     max_nozzle_exit_diameter: float = Field(default=0.101, gt=0, description="Maximum nozzle exit diameter [m]")
     
     # L* constraints
@@ -1146,6 +1184,13 @@ class DesignRequirementsConfig(BaseModel):
         default=None,
         ge=0.0,
         description="Layer 1 weight on thrust penalty term (code default 1e4 when unset).",
+    )
+    layer1_W_PC: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Layer 1 weight on the chamber-pressure target penalty — an exact (L1) penalty on "
+                    "|Pc - target|, so Pc lands ON the target (only active when target_chamber_pressure_psi "
+                    "is set; code default 1e4 when unset). Raise to hold Pc tighter, lower to let thrust win ties.",
     )
     layer1_W_OF: Optional[float] = Field(
         default=None,
@@ -1471,7 +1516,10 @@ class PintleEngineConfig(BaseModel):
         return self
 
     class Config:
-        extra = "allow"  # Reject unknown fields
+        # NOTE: "allow" ACCEPTS unknown YAML keys (stores them as extra attributes)
+        # — it does not reject them. Kept permissive for legacy configs; typo'd
+        # keys are therefore silently inert.
+        extra = "allow"
 
 
 def ensure_chamber_geometry(config: PintleEngineConfig) -> ChamberGeometryConfig:

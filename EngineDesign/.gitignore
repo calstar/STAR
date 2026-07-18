@@ -22,13 +22,17 @@ env/
 node_modules/
 **/node_modules/
 
-# Output directory (logs, plots, cache) - all generated files
+# Output directory (logs, plots) — generated except committed CEA cache tables
 output/*
 !output/.gitkeep
+!output/cache/
+output/cache/*
+!output/cache/*.npz
 
 # Individual generated files that might be in root
 *.log
 *.npz
+!output/cache/*.npz
 *.png
 *.jpg
 *.pdf

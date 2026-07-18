@@ -22,12 +22,14 @@ export function AcousticDampingBars({ data }: { data: StabilityRichPayload }) {
     inj: -m.damping.inj,
     twophase: -m.damping.twophase,
     alpha: m.alpha,
+    freq_hz: m.freq_hz,
   }));
+  rows.sort((a, b) => a.freq_hz - b.freq_hz);
 
   return (
     <VizCard
       title="Acoustic damping budget"
-      subtitle="Red = driving; stacked colors = damping mechanisms (hover for values)"
+      subtitle="Red = driving; stacked colors = damping mechanisms; modes ordered by frequency (hover for values)"
     >
       <ResponsiveContainer width="100%" height={Math.max(180, rows.length * 40)}>
         <BarChart data={rows} layout="vertical" margin={{ ...CHART_MARGIN, left: 36, right: 24 }}>
@@ -50,13 +52,43 @@ export function AcousticDampingBars({ data }: { data: StabilityRichPayload }) {
           <Bar dataKey="twophase" name="twophase" fill={DAMP_COLORS.twophase} stackId="b" />
         </BarChart>
       </ResponsiveContainer>
-      <div className="flex flex-wrap gap-2 mt-2 text-[10px] text-[var(--color-text-secondary)]">
-        {rows.map((r) => (
-          <span key={r.mode} style={{ color: r.alpha < 0 ? STABLE : r.alpha < 5 ? MARGINAL : UNSTABLE }}>
-            {r.mode} α={r.alpha.toFixed(0)}
-          </span>
-        ))}
-      </div>
+      <table className="w-full mt-3 text-[11px]">
+        <thead>
+          <tr className="text-[var(--color-text-secondary)] border-b border-[var(--color-border)]">
+            <th className="font-medium text-left pb-1">mode</th>
+            <th className="font-medium text-right pb-1">f [Hz]</th>
+            <th className="font-medium text-right pb-1">α [1/s]</th>
+            <th className="font-medium text-right pb-1">state</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const color = r.alpha < 0 ? STABLE : r.alpha < 5 ? MARGINAL : UNSTABLE;
+            return (
+              <tr key={r.mode}>
+                <td className="py-0.5 font-mono text-[var(--color-text-primary)]">{r.mode}</td>
+                <td className="py-0.5 text-right font-mono text-[var(--color-text-secondary)]">
+                  {Number.isFinite(r.freq_hz) ? r.freq_hz.toFixed(0) : '—'}
+                </td>
+                <td className="py-0.5 text-right font-mono" style={{ color }}>
+                  {r.alpha > 0 ? '+' : ''}
+                  {r.alpha.toFixed(0)}
+                </td>
+                <td className="py-0.5 text-right" style={{ color }}>
+                  {r.alpha < 0 ? 'damped' : 'driven'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="text-[10px] text-[var(--color-text-secondary)] mt-2 leading-snug">
+        <span className="font-mono">α</span> = net growth rate:{' '}
+        <span style={{ color: STABLE }}>α&lt;0 decays (stable)</span>,{' '}
+        <span style={{ color: UNSTABLE }}>α&gt;0 grows (driven)</span>. In each bar, the part right
+        of zero is combustion driving the mode; the stacked colors left of zero are the damping
+        mechanisms — driving minus damping is α.
+      </p>
     </VizCard>
   );
 }

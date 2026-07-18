@@ -25,6 +25,10 @@ typedef struct {
     const double *gamma_table;
     const double *R_table;
     const double *M_table;
+    /* Vacuum thrust coefficient (RPA delivered-thrust basis). NULL when loaded
+     * from a version-1 .bin (pre-Cf_vac); ed_cea_eval then reports NaN and
+     * ed_evaluate refuses to compute delivered thrust (callers fall back). */
+    const double *Cf_vac_table;
     size_t n_pc, n_mr, n_eps;
 
     /* Clamp bounds == grid endpoints (matches CEACache.{Pc,MR,eps}_{min,max}). */
@@ -36,7 +40,8 @@ typedef struct {
     void *_owned;
 } EdCeaTables;
 
-/* Output of one CEA lookup (matches CEACache.eval() dict keys). */
+/* Output of one CEA lookup (matches CEACache.eval() dict keys).
+ * MIRRORED in ed_native.py (EdCeaResult ctypes.Structure) — keep in sync. */
 typedef struct {
     double cstar_ideal;
     double Cf_ideal;
@@ -44,6 +49,7 @@ typedef struct {
     double gamma;
     double R;
     double M;
+    double Cf_vac;  /* vacuum thrust coefficient; NaN if the table lacks it (v1 .bin) */
 } EdCeaResult;
 
 /* Evaluate CEA properties at (MR, Pc, eps). Pa is accepted for API parity with

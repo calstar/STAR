@@ -54,6 +54,9 @@ int main(void) {
     cb->tau_ref_T = need(co, ce, "tau_ref_T"); cb->n_pressure = need(co, ce, "n_pressure");
     cb->has_tau_Tc_floor = (uint8_t)(int)need(co, ce, "has_tau_Tc_floor");
     cb->tau_Tc_floor = need(co, ce, "tau_Tc_floor");
+    cb->Em_peak = need(co, ce, "Em_peak");
+    cb->mixing_sigma = need(co, ce, "mixing_sigma");
+    cb->R_opt = need(co, ce, "R_opt");
 
     EdCooling *cg = &st.cooling;
     cg->regen_enabled = (uint8_t)(int)need(cc, cl, "regen_enabled");
@@ -111,7 +114,7 @@ int main(void) {
         double At = need(p, e, "At"), Dinj = need(p, e, "Dinj");
         double D32_O = need(p, e, "D32_O"), D32_F = need(p, e, "D32_F");
         double u_O = need(p, e, "u_O"), u_F = need(p, e, "u_F");
-        double ti = need(p, e, "turbulence_intensity");
+        double mom_R = need(p, e, "momentum_ratio_R"), R_opt = need(p, e, "R_opt");
         double Tc = need(p, e, "Tc"), gamma = need(p, e, "gamma"), R = need(p, e, "R"), M = need(p, e, "M");
         double cstar_ideal = need(p, e, "cstar_ideal");
         double L_eff = need(p, e, "fuel_latent_heat"), Tcap = need(p, e, "fuel_T_star_cap");
@@ -119,13 +122,12 @@ int main(void) {
         EdEtaResult eta;
         ed_status_t rc = ed_combustion_efficiency_advanced(
             cb, Lstar, Pc, Tc, cstar_ideal, gamma, R, MR, Ac, At, Dinj, mo + mf,
-            u_F, u_O, D32_O, D32_F, ti, L_eff, Tcap, &eta);
+            u_F, u_O, D32_O, D32_F, mom_R, R_opt, L_eff, Tcap, &eta);
         if (rc != ED_OK) { fprintf(stderr, "  [FAIL] sample %d eta rc=%d\n", n, rc); g_fail++; p = e + 1; n++; continue; }
 
         cmp("eta_Lstar", eta.eta_Lstar, need(p, e, "eta_Lstar"));
         cmp("eta_kinetics", eta.eta_kinetics, need(p, e, "eta_kinetics"));
         cmp("eta_mixing", eta.eta_mixing, need(p, e, "eta_mixing"));
-        cmp("eta_turbulence", eta.eta_turbulence, need(p, e, "eta_turbulence"));
         cmp("eta_total", eta.eta_total, need(p, e, "eta_total"));
 
         EdCoolingResult cool;

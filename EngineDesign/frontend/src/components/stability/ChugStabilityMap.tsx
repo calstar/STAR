@@ -23,6 +23,16 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
   const etaF = designF?.eta_inj ?? data.assumptions.eta_inj_F;
   const tauF = designF?.tau_theta_c ?? tauO;
 
+  // Dominant chug pole (folded in from the former s-plane map): σ = growth rate, ω = 2πf.
+  const sigma = data.chug.pole?.real ?? data.chug.alpha ?? NaN;
+  const omega = data.chug.pole?.imag ?? (data.chug.freq_hz ?? 0) * 2 * Math.PI;
+  const poleFinite = Number.isFinite(sigma) && Number.isFinite(omega);
+  const poleStable = sigma < 0;
+  const poleFreqHz = omega / (2 * Math.PI);
+  const decayMs = poleStable && Math.abs(sigma) > 1 ? (1000 / Math.abs(sigma)).toFixed(0) : null;
+  const zeta = data.chug.zeta;
+  const zetaStr = typeof zeta === 'number' && Number.isFinite(zeta) ? ` · ζ=${zeta.toFixed(3)}` : '';
+
   const yMax = Math.max(
     ...boundary.map(([, t]) => t),
     tauO,
@@ -49,7 +59,7 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
   return (
     <VizCard
       title="Injector stiffness map"
-      subtitle="Stiffer injector (higher η_inj) and shorter lag (lower τ/θ_c) → more stable"
+      subtitle="Stiffer injector (higher η_inj) and shorter lag (lower τ/θ_c) → more stable; dominant chug pole below"
     >
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minHeight: H }}>
         {/* grid */}
@@ -142,6 +152,61 @@ export function ChugStabilityMap({ data, etaInjOverride }: Props) {
         </span>
         <span className="opacity-70"> (below red = stable)</span>
       </p>
+
+      {/* Dominant chug pole — confirms the sign & frequency behind the margin (former s-plane card). */}
+      {poleFinite ? (
+        <p className="text-[11px] mt-1 font-mono" style={{ color: poleStable ? STABLE : UNSTABLE }}>
+          pole {poleStable ? 'stable' : 'unstable'} σ={sigma.toFixed(1)} ω={omega.toFixed(0)} rad/s (
+          {poleFreqHz.toFixed(0)} Hz)
+          {zetaStr}
+          {decayMs != null ? ` · e-fold ≈ ${decayMs} ms` : ''}
+        </p>
+      ) : (
+        <p className="text-[11px] mt-1 text-[var(--color-text-secondary)] opacity-70">
+          pole data unavailable for this evaluation
+        </p>
+      )}
+
+      {/* per-stream coordinates that put the dots on the map */}
+      <table className="w-full mt-3 text-[11px]">
+        <thead>
+          <tr className="text-[var(--color-text-secondary)] border-b border-[var(--color-border)]">
+            <th className="font-medium text-left pb-1">stream</th>
+            <th className="font-medium text-right pb-1">η_inj = ΔP/Pc</th>
+            <th className="font-medium text-right pb-1">τ / θ_c</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[
+            { stream: 'O (LOX)', eta: etaO, tau: tauO, color: STREAM_COLORS.O },
+            { stream: 'F (fuel)', eta: etaF, tau: tauF, color: STREAM_COLORS.F },
+          ].map((s) => (
+            <tr key={s.stream}>
+              <td className="py-0.5">
+                <span className="inline-block w-2 h-2 rounded-full mr-1.5 align-middle" style={{ background: s.color }} />
+                <span className="text-[var(--color-text-primary)]">{s.stream}</span>
+              </td>
+              <td className="py-0.5 text-right font-mono text-[var(--color-text-secondary)]">{s.eta.toFixed(2)}</td>
+              <td className="py-0.5 text-right font-mono text-[var(--color-text-secondary)]">{s.tau.toFixed(2)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <p className="text-[10px] text-[var(--color-text-secondary)] mt-2 leading-snug">
+        Each dot is a propellant stream at its injector stiffness (x) and combustion lag (y). Dots
+        below/right of the red marginal boundary are stable — the farther from the curve, the more
+        chug margin. To push a stream safer: <span className="text-[var(--color-text-primary)]">raise injector ΔP</span>{' '}
+        (η_inj → moves right) or <span className="text-[var(--color-text-primary)]">atomize finer</span>{' '}
+        (smaller SMD shortens the lag → moves down).
+      </p>
+      {poleFinite && (
+        <p className="text-[10px] text-[var(--color-text-secondary)] mt-1 leading-snug">
+          The pole is the actual root of the chug loop: σ&lt;0 means any chug oscillation decays
+          {decayMs != null ? `, shrinking ~3× every ${decayMs} ms` : ''}. ζ is its damping ratio
+          (higher = better damped).
+        </p>
+      )}
     </VizCard>
   );
 }
