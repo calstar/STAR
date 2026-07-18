@@ -185,10 +185,12 @@ jobs:
         print('native lib built + ctypes-loaded OK:', p)
         "
 
-    # ED_REQUIRE_NATIVE=1 makes a genuine native failure (lib won't load, solver
-    # errors, or injector parity self-check disagrees with Python beyond tolerance)
-    # RAISE instead of silently falling back to Python — so this job can't pass on
-    # the Python path and report a false green.
+    # ED_REQUIRE_NATIVE=1 makes a genuine native failure (lib won't build/load,
+    # native not enabled, or a solver error) RAISE instead of silently falling
+    # back to Python — so this job can't pass on the Python path and report a
+    # false green. NOTE: since the runtime parity self-checks were removed
+    # (capability-dispatch architecture), this flag alone only proves native RAN;
+    # it no longer compares native's numbers to Python's.
     - name: Run impinging tests through the native path (strict)
       env:
         ED_USE_NATIVE: '1'
@@ -198,6 +200,23 @@ jobs:
           tests/test_layer1_impinging_vector.py \
           tests/test_flow_capacity_effective_area.py \
           --timeout=180 --timeout-method=thread -q
+
+    # Live A/B numeric parity: run the C kernel and the authoritative Python
+    # physics on the same inputs and diff the outputs field by field — at the
+    # wrapper level (the dict Layer-1 consumes) AND the raw EdEvaluateResult
+    # struct level (the C kernel's own numbers, no Python shim). This is the
+    # actual parity enforcement for this job: unlike the golden-vector C tests
+    # (frozen snapshots that go stale when the PYTHON side changes), a live
+    # comparison fails no matter which side drifted. ED_REQUIRE_NATIVE=1 turns
+    # the test's no-toolchain skip into a hard failure here.
+    - name: Live A/B parity — native vs Python on identical inputs (strict)
+      env:
+        ED_USE_NATIVE: '1'
+        ED_REQUIRE_NATIVE: '1'
+      run: |
+        python -m pytest \
+          tests/test_native_ab_parity.py \
+          --timeout=300 --timeout-method=thread -v
 
   # Aggregate status, mirroring daq-server-ci.yml's build-summary.
   engine-design-summary:
