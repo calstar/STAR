@@ -490,7 +490,10 @@ setInterval(markStaleBoards, 1000);
 // ── Packet stats ─────────────────────────────────────────────────────────────
 // Counts raw entity updates received from Elodin DB vs broadcasts sent to WS clients.
 // GET /stats returns these so the integration test can verify no drops occur before
-// the throttle (Elodin→backend must be lossless; backend→WS is intentionally throttled).
+// the throttle (backend→WS is intentionally throttled). NOTE: Elodin→backend is NOT
+// strictly lossless — the DB's live stream coalesces same-channel rows written in one
+// burst (multi-chunk board packets), forwarding at least one row per channel per
+// packet; DB *storage* keeps every row. See integration Test 15 for the invariant.
 
 const stats = {
   relayEntityUpdatesReceived: 0,  // every finite-value entity parsed from Elodin DB
