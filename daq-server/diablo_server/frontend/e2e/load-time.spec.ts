@@ -9,12 +9,17 @@ import { test, expect } from '@playwright/test';
  * shows the trend even while the assertion passes.
  *
  * Budgets (override via env):
- *   E2E_LOAD_BUDGET_MS  — navigation start → <main> visible   (default 10s)
- *   E2E_DATA_BUDGET_MS  — navigation start → first live data  (default 20s)
+ *   E2E_LOAD_BUDGET_MS  — navigation start → <main> visible   (default 2s)
+ *   E2E_DATA_BUDGET_MS  — navigation start → first live data  (default 10s)
+ *
+ * Baseline for calibration (2026-07, WSL local run): interactive ~200-275ms,
+ * first live data ~275ms — so 2s is ~8x headroom for CI-runner noise, and CI
+ * retries once, so a transient spike must repeat to fail the job. Loosen via
+ * env rather than editing if a runner class proves noisier.
  */
 
-const LOAD_BUDGET_MS = Math.max(1, parseInt(process.env.E2E_LOAD_BUDGET_MS ?? '10000', 10) || 10000);
-const DATA_BUDGET_MS = Math.max(1, parseInt(process.env.E2E_DATA_BUDGET_MS ?? '20000', 10) || 20000);
+const LOAD_BUDGET_MS = Math.max(1, parseInt(process.env.E2E_LOAD_BUDGET_MS ?? '2000', 10) || 2000);
+const DATA_BUDGET_MS = Math.max(1, parseInt(process.env.E2E_DATA_BUDGET_MS ?? '10000', 10) || 10000);
 
 for (const path of ['/', '/sensor-info']) {
   test(`load budget: ${path} interactive within ${LOAD_BUDGET_MS}ms`, async ({ page }) => {
