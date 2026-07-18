@@ -192,18 +192,21 @@ per-candidate evaluation. It is wired in at **exactly one place** and nowhere el
   **ablative-only** cooling and the advanced efficiency model (`_can_handle_chamber`).
   Pintle/coaxial or film/regen-coupled designs return `None` → full Python. This is
   capability routing, not a safeguard: the C for those paths simply isn't written.
-- **Frozen nozzle (Phase 1a):** the inner-loop `ed_evaluate` nozzle omits the ~1%
-  shifting-equilibrium term, so its F/Isp are approximate. The winning design is always
-  re-evaluated at full Python fidelity (with shifting) at finalization, so the frozen
-  number never sets a reported value. Un-freezing it (porting
-  `reaction_chemistry.calculate_shifting_equilibrium_properties`) is the next port.
-- **CEA tables:** the live `CEACache` is dumped to a temp `.bin`, loaded into the native
-  lib once per process (so the C path uses exactly the runtime grid), and the temp file
-  is **deleted immediately after the load**.
-- **Parity:** there is **no runtime self-check**. Native↔Python parity is guaranteed by
-  the golden test suite (`engine/native/tests`, run in CI) and the load-time ABI assert
-  below; the seam simply trusts the native result, and a raise / non-finite `Pc` falls
-  back to Python for that call (no process-wide latch, no mutable trust flag).
+- **Thrust (RPA, exact):** `ed_evaluate` computes DELIVERED thrust on the same RPA basis
+  as `nozzle.py` — `F = zeta_n*Cf_vac*Pc*At - Pa*Ae`, with `Cf_vac` in the native CEA
+  tables (format v2) — so inner-loop F/Isp match finalization exactly. The frozen
+  exit-state kernel (`ed_nozzle_solve`) supplies display-only exit/throat properties;
+  its legacy momentum-method F fields are unused (see ed_nozzle.h).
+- **CEA tables:** the live `CEACache` is dumped to a temp `.bin` (format v2, incl.
+  `Cf_vac`), loaded into the native lib once per process (so the C path uses exactly
+  the runtime grid), and the temp file is **deleted immediately after the load**.
+- **Parity:** there is **no per-call runtime self-check**. Native↔Python parity is
+  enforced by (a) the golden C test suite (`engine/native/tests`), (b) the LIVE A/B
+  suite `tests/test_native_ab_parity.py` — both implementations run on the same inputs
+  in the CI parity job, at the wrapper level and the raw `EdEvaluateResult` level —
+  and (c) the load-time ABI assert below. The seam trusts the native result at
+  runtime; a raise / non-finite `Pc` falls back to Python for that call
+  (`ED_REQUIRE_NATIVE=1` makes machinery failures raise instead).
 - **Layout-drift guard (the one structural safeguard):** `ed_native.py` asserts
   `ctypes.sizeof(EdEngineState) == ed_sizeof_engine_state()` at load, so any
   `ed_state.h` change that isn't mirrored fails loudly at import (→ native disabled for

@@ -10,6 +10,16 @@ GUI flow.
 
 ## Progress log
 
+- **RPA thrust port + live A/B parity — DONE (2026-07-18).** `ed_evaluate.c` now computes
+  DELIVERED thrust on the same RPA basis as `nozzle.py` (`F = zeta_n*Cf_vac*Pc*At - Pa*Ae`;
+  `Cf_vac` added to the C CEA tables, .bin format v2, v1 still loads). The frozen nozzle
+  (`ed_nozzle_solve`) is retained for the display-only exit state; its momentum-method F/Isp
+  fields are legacy and unused. `native_injector.evaluate()` consumes the C result directly
+  (no Python-side thrust override). Parity is enforced LIVE — both implementations run on the
+  same inputs — by `tests/test_native_ab_parity.py` (wrapper level + raw EdEvaluateResult
+  level), wired into the CI `native-parity` job. Historical entries below describe pre-RPA
+  state (momentum-method oracle, shifting-vs-frozen deltas) and are kept as history;
+  `tools/check_evaluate_parity.py` and its frozen `nozzle_oracle.json` are superseded.
 - **Phase 0 — DONE (2026-06-26).** Python parity oracle captured
   (`tests/golden/nozzle_oracle.json`, pintle + impinging × 3 pressure points, shifting + frozen
   branches). Baseline: **2.73 ms / Python evaluate**. Tool: `tools/capture_nozzle_oracle.py`.
@@ -30,7 +40,9 @@ GUI flow.
   call so the escape hatch works at runtime; caches only the lib-load probe). Replaced all scattered
   `os.environ.get("ED_USE_NATIVE")` checks (closure prewarm, chamber_solver, stability/analysis,
   layer1 fast-eval). **Removed the per-call Python residual guard** in chamber_solver (the dominant
-  per-candidate Python cost) — now behind `ED_NATIVE_VERIFY=1` (debug only). Phase 6: marked
+  per-candidate Python cost) — deleted outright, no debug flag remains; runtime verification is
+  superseded by the live A/B suite `tests/test_native_ab_parity.py` (CI parity job), with
+  `ED_USE_NATIVE=0` / `ED_LAYER1_NATIVE_EVAL=0` as the manual escape hatches. Phase 6: marked
   nozzle/chamber_solver/closure as the authoritative/fallback-oracle paths in their docstrings (no
   behavior change). Two bugs found & fixed while validating: (1) `_ensure_cea` keyed by `id(cache)`
   but the native lib has ONE tables buffer → a freed cache's id reuse silently served stale CEA

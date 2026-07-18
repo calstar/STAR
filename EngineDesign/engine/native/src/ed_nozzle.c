@@ -1,10 +1,12 @@
-/* ed_nozzle.c - Frozen-gas nozzle: exit Mach (Newton on the area-Mach relation)
- * + isentropic exit state + momentum/pressure thrust. Phase 1a.
+/* ed_nozzle.c - Frozen-gas EXIT-STATE kernel: exit Mach (Newton on the area-Mach
+ * relation) + isentropic exit/throat state. Port of mach_solver.py
+ * (estimate_initial_mach / solve_mach_from_area_ratio, supersonic branch) with
+ * the same Newton tolerance (1e-10) => golden agreement near machine precision.
  *
- * Faithful C port of nozzle.py::calculate_thrust (use_shifting_equilibrium=False)
- * and mach_solver.py (estimate_initial_mach / solve_mach_from_area_ratio,
- * supersonic branch). Same formulas + same Newton tolerance (1e-10) => agreement
- * with the Python FROZEN oracle near machine precision. See ed_nozzle.h for scope.
+ * The momentum/pressure thrust computed at the bottom is the RETIRED pre-RPA
+ * reconstruction, kept only to satisfy the historical golden vectors — nothing
+ * consumes it. Delivered thrust lives in ed_evaluate.c (RPA Cf_vac basis).
+ * See ed_nozzle.h for the full scope note.
  */
 #include "ed_nozzle.h"
 

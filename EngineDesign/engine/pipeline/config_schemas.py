@@ -543,7 +543,9 @@ class CombustionEfficiencyConfig(BaseModel):
     )
     use_shifting_equilibrium: bool = Field(
         default=True,
-        description="Use shifting equilibrium in nozzle (composition changes with expansion)"
+        description="[DEPRECATED — no effect] The iterative shifting-equilibrium nozzle was retired; "
+                    "exit-composition shift is captured exactly by CEA's Cf_vac table "
+                    "(RPA delivered thrust). Kept for config compatibility only."
     )
     # Kinetics timescale calibration (for calculate_reaction_time_scale)
     tau_ref: float = Field(

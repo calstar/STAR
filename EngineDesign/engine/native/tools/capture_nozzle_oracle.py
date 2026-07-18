@@ -1,4 +1,11 @@
-"""Phase 0 — parity oracle + baseline for the C nozzle/evaluate port.
+"""HISTORICAL (Phase 0, 2026-06, pre-RPA) — parity oracle + baseline for the C port.
+
+Kept as a record of how the frozen-vs-shifting scope decision was made. Both the
+shifting-equilibrium nozzle and the momentum-method thrust it captured were since
+RETIRED (docs/thrust_efficiency_bug_analysis.md): the shifting toggle below is now
+inert (config field is a deprecated no-op) and re-running this tool would capture
+identical "shifting"/"frozen" rows on the current RPA nozzle. Live parity checking
+is tests/test_native_ab_parity.py; do not use this tool for new validation.
 
 Captures the PURE-PYTHON ``runner.evaluate()`` results (the ground truth the C
 ``ed_nozzle``/``ed_evaluate`` port is checked against) for the canonical pintle and

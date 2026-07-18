@@ -1,12 +1,10 @@
-"""Phase 3/4 validation — native_injector.evaluate() vs the Python frozen path.
+"""Manual A/B check + timing — native_injector.evaluate() vs runner.evaluate().
 
-Confirms the inner-loop fast path produces results matching runner.evaluate() with
-shifting equilibrium OFF (both native chamber + frozen nozzle), including the
-stability_results and the diagnostics keys stability depends on. The frozen-vs-
-shifting ~1% gap is a separately-accepted physics choice, isolated here by turning
-shifting OFF in the reference.
-
-Also times native_injector.evaluate() vs production runner.evaluate() (shifting ON).
+Both paths now compute the same RPA delivered thrust (the old frozen-vs-shifting
+distinction is gone; the shifting nozzle was retired), so this is a plain live
+parity sweep plus a per-call timing comparison. The pytest version of this check
+is tests/test_native_ab_parity.py (run in the CI parity job); this script remains
+for interactive use because it prints per-field tables and the speedup number.
 
 Run:  .venv/bin/python -m engine.native.tools.check_fast_eval_parity
 """
@@ -33,12 +31,6 @@ DIAG = ["mdot_O", "mdot_F", "D32_O", "D32_F", "delta_p_feed_O", "delta_p_feed_F"
         "Cd_O", "Cd_F", "momentum_ratio_R", "impingement_angle_deg"]
 
 
-def _set_shifting(config, on):
-    eff = getattr(getattr(config, "combustion", None), "efficiency", None)
-    if eff is not None and hasattr(eff, "use_shifting_equilibrium"):
-        eff.use_shifting_equilibrium = on
-
-
 def _stab_margins(s):
     return {
         "state": s.get("stability_state", "?"),
@@ -56,7 +48,6 @@ def main() -> int:
     fails = 0
     for po_psi, pf_psi in POINTS:
         p_o, p_f = po_psi * 6894.76, pf_psi * 6894.76
-        _set_shifting(runner.config, False)
         ref = runner.evaluate(p_o, p_f, P_ambient=PA, silent=True)
         nat = ni.evaluate(config, runner.cea_cache, p_o, p_f, PA)
         if nat is None:
@@ -78,12 +69,11 @@ def main() -> int:
         for k in ("score", "chug", "acoustic", "feed"):
             fails, worst = _cmp("stab." + k, ns[k], rs[k], fails, worst)
 
-    # timing: native fast path vs production runner.evaluate (shifting ON)
-    _set_shifting(runner.config, True)
+    # timing: native fast path vs production runner.evaluate
     p_o, p_f = POINTS[0][0] * 6894.76, POINTS[0][1] * 6894.76
     t_prod = _time(lambda: runner.evaluate(p_o, p_f, P_ambient=PA, silent=True))
     t_fast = _time(lambda: ni.evaluate(config, runner.cea_cache, p_o, p_f, PA))
-    print(f"\n=== {fails} failures, worst rel = {worst:.2e} (frozen-vs-frozen wiring parity) ===")
+    print(f"\n=== {fails} failures, worst rel = {worst:.2e} (live native-vs-Python parity) ===")
     print(f"timing: production runner.evaluate = {t_prod*1e6:7.1f} us/call")
     print(f"        native_injector.evaluate   = {t_fast*1e6:7.1f} us/call")
     print(f"        speedup                     = {t_prod/t_fast:.2f}x")

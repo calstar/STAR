@@ -281,10 +281,11 @@ What landed:
 - **`engine/pipeline/cea_cache.py`** — added a `Cf_vac` table (vacuum thrust coefficient, shifting),
   built from CEA's `get_Isp`; fixed the `get_PambCf[0]→[1]` ambient-Cf element; graceful isentropic
   fallback for pre-existing caches. Caches regenerated to bake `Cf_vac` in.
-- **`engine/native/python/native_injector.py`** — the Layer-1 native seam now takes thrust from the
-  **same** Python `calculate_thrust` (C does the chamber solve only). Inner-loop F now matches
-  finalization **bit-for-bit** (was +17.5% with the C frozen nozzle). The C frozen nozzle is retired
-  from the eval path.
+- **`engine/native/python/native_injector.py`** — the Layer-1 native seam ranks on the same RPA
+  delivered thrust as finalization (was +17.5% with the C frozen momentum-method nozzle).
+  *Update 2026-07-18:* the RPA formula is now computed **in C** (`ed_evaluate.c`, `Cf_vac` added
+  to the native CEA tables) rather than by a Python-side override; the frozen C nozzle survives
+  only for display-only exit state. Parity is enforced live by `tests/test_native_ab_parity.py`.
 - **`engine/pipeline/time_varying_solver.py`** — already routed thrust through `calculate_thrust`, so
   the transient/burn path picked up the RPA fix automatically; removed the now-dead shifting import.
 - The `reaction_chemistry` shifting functions (`calculate_shifting_equilibrium_properties/_gamma`,

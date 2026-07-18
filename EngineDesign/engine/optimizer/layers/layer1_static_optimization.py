@@ -1557,10 +1557,11 @@ def _compute_objective_value(result: dict, x: np.ndarray, requirements: dict, co
 
     # Optional chamber-pressure target. Pin Pc so the optimizer sizes the throat for thrust
     # instead of pushing Pc higher. Inert unless target_chamber_pressure_psi is set.
-    # Uses an EXACT (L1) penalty: linear in |Pc - target|, NO deadband. Unlike a squared
-    # penalty (whose gradient vanishes at the target, so it parks "near"), a linear penalty
-    # keeps a constant pull to zero, so Pc lands ON the target (exact-penalty method). There
-    # are enough DOF (throat + both tank pressures) to hit thrust, MR and Pc simultaneously.
+    # EXACT (L1) penalty outside a ±1% deadband. Unlike a squared penalty (whose gradient
+    # vanishes at the target, so it parks "near"), a linear penalty keeps a constant pull,
+    # so Pc lands within 1% of target (exact-penalty method); the deadband then hands the
+    # gradient back to the weaker quadratic terms (see inner comment). There are enough
+    # DOF (throat + both tank pressures) to hit thrust, MR and Pc simultaneously.
     pc_penalty_term = 0.0
     pc_target_pa = constants.get("layer1_target_Pc_pa")
     if pc_target_pa and float(pc_target_pa) > 0:

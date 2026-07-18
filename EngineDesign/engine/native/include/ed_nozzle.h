@@ -1,14 +1,17 @@
-/* ed_nozzle.h - Module 2a: frozen-gas nozzle (exit Mach -> thrust / Isp).
+/* ed_nozzle.h - frozen-gas EXIT-STATE kernel (exit Mach + isentropic exit props).
  *
- * Port target: nozzle.py::calculate_thrust with use_shifting_equilibrium=False
- * (the supersonic isentropic core + mach_solver.py::solve_exit_mach_robust).
+ * Port of the supersonic isentropic core of nozzle.py (area-Mach Newton from
+ * mach_solver.py + frozen exit state from chamber gamma/R). Python computes the
+ * same frozen exit state — both sides report it as display-only.
  *
- * SCOPE (Phase 1a): FROZEN gas only — exit properties use the chamber gamma/R.
- * The Python shifting-equilibrium correction (~1% on F/Isp) is intentionally NOT
- * ported here; it remains the authoritative Python path used at Layer-1
- * finalization. This kernel is the fast inner-loop nozzle, validated against the
- * FROZEN branch of the Python oracle (see tools/export_nozzle_golden.py). No
- * Python physics is removed. Shifting-equilibrium-in-C is tracked as Phase 1b.
+ * NOTE (2026-07): the F/Isp/Cf fields in EdNozzleResult are the RETIRED
+ * momentum-method reconstruction and are NOT consumed anywhere — delivered
+ * thrust is computed in ed_evaluate.c as zeta_n*Cf_vac*Pc*At - Pa*Ae (RPA
+ * basis, matching nozzle.py; see docs/thrust_efficiency_bug_analysis.md).
+ * ed_evaluate reads only the exit/throat state from this kernel. The legacy
+ * fields remain so the golden vectors (nozzle_golden.json) still pin the
+ * arithmetic; drop them together with a golden re-export if EdNozzleResult
+ * ever changes shape.
  */
 #ifndef ED_NOZZLE_H
 #define ED_NOZZLE_H

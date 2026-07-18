@@ -200,6 +200,7 @@ export interface RunnerResults {
       pogo_frequency?: number;
       surge_frequency?: number;
       water_hammer_margin?: number;
+      water_hammer_pressure?: number;
       stability_margin?: number;
       sound_speed?: number;
     };

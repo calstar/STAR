@@ -627,7 +627,6 @@ class TimeVaryingCoupledSolver:
             config_current,
             Pa,
             reaction_progress=reaction_progress_dict,  # TIME-VARYING reaction progress
-            use_shifting_equilibrium=True,
         )
         
         F = thrust_results["F"]

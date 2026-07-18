@@ -1,10 +1,22 @@
-"""Nozzle model: thrust coefficient and thrust calculation with shifting equilibrium.
+"""Nozzle model: RPA delivered thrust + isentropic exit state.
 
 This is the AUTHORITATIVE nozzle: every runner.evaluate() call uses it (flight sim,
-time series, pintle, and Layer-1 finalization), and it is the parity oracle for the
-C port. The native C nozzle (engine/native/src/ed_nozzle.c) is a FROZEN-gas
-approximation used only in the Layer-1 inner-loop fast path; it never sets a reported
-number. Do not delete or weaken the shifting-equilibrium path here.
+time series, pintle, and Layer-1 finalization). Delivered thrust is the RPA basis
+
+    F(Pa) = zeta_n * Cf_vac * Pc * At - Pa * Ae
+
+where Cf_vac is CEA's shifting-equilibrium vacuum thrust coefficient from the cache
+tables, zeta_n = nozzle_efficiency, and combustion efficiency zeta_c (eta_c*) rides
+in through the efficiency-reduced Pc from the chamber solve — so delivered
+Isp = zeta_c * zeta_n * Isp_ideal. See docs/thrust_efficiency_bug_analysis.md for
+why the former momentum-method reconstruction (ideal-Tc exhaust velocity) was
+retired: it never applied combustion efficiency and over-predicted thrust by
+~(1 - zeta_c*zeta_n). The exit state computed here (M_exit, P_exit, T_exit,
+v_exit) is frozen-isentropic and REPORTING-ONLY — thrust does not depend on it.
+
+The native C kernel (engine/native/src/ed_evaluate.c) computes the SAME delivered
+formula from the same tables for the Layer-1 inner loop; parity is enforced live by
+tests/test_native_ab_parity.py.
 """
 
 import numpy as np
@@ -157,23 +169,21 @@ def calculate_thrust(
     config: Any,
     Pa: float = 101325.0,
     reaction_progress: Optional[Dict] = None,
-    use_shifting_equilibrium: bool = True,
     debug: bool = False,
 ) -> dict:
     """
-    Calculate engine thrust with high fidelity.
-    
-    Thrust consists of two components:
-    1. Momentum thrust: ṁ × v_exit
-    2. Pressure thrust: (P_exit - Pa) × A_exit
-    
-    F = ṁ × v_exit + (P_exit - Pa) × A_exit
-    
-    Or using thrust coefficient:
-    F = Cf × Pc × At
-    
-    where Cf accounts for both momentum and pressure components.
-    
+    Calculate delivered engine thrust (RPA methodology).
+
+        F(Pa) = zeta_n * Cf_vac * Pc * At - Pa * Ae
+
+    Cf_vac is CEA's shifting-equilibrium vacuum thrust coefficient (cache lookup);
+    zeta_n is config.chamber_geometry.nozzle_efficiency; combustion efficiency
+    zeta_c (eta_c*) is already carried by the efficiency-reduced Pc from the
+    chamber solve, so delivered Isp = zeta_c * zeta_n * Isp_ideal. The exit state
+    also returned here (M_exit, P_exit, T_exit, v_exit — frozen-isentropic from
+    chamber gamma) is reporting-only; thrust does not depend on it. See the module
+    docstring and docs/thrust_efficiency_bug_analysis.md.
+
     Parameters:
     -----------
     Pc : float
@@ -189,22 +199,20 @@ def calculate_thrust(
     Pa : float
         Ambient pressure [Pa] (default: sea level)
     reaction_progress : dict, optional
-        Reaction progress for shifting equilibrium
-    use_shifting_equilibrium : bool
-        Enable shifting equilibrium model
-    
+        Chamber reaction progress; used for the reaction-completeness diagnostics
+        (temperature profile), not for thrust
+
     Returns:
     --------
     results : dict
         Dictionary containing:
-        - F: Total thrust [N]
-        - F_momentum: Momentum thrust component [N]
-        - F_pressure: Pressure thrust component [N]
-        - Cf: Thrust coefficient
-        - Cf_ideal: Ideal thrust coefficient from CEA
-        - P_exit: Exit pressure [Pa]
-        - v_exit: Exit velocity [m/s]
-        - Isp: Specific impulse [s]
+        - F: Delivered thrust [N]
+        - F_momentum: vacuum term zeta_n*Cf_vac*Pc*At [N]
+        - F_pressure: ambient back-pressure term -Pa*Ae [N]
+        - Cf / Cf_actual: delivered thrust coefficient F/(Pc*At)
+        - Cf_ideal: Ideal (ambient) thrust coefficient from CEA
+        - P_exit, T_exit, v_exit, M_exit: frozen-isentropic exit state (reporting-only)
+        - Isp: Delivered specific impulse [s]
     """
     # Extract geometry from config.chamber_geometry
     cg = config.chamber_geometry

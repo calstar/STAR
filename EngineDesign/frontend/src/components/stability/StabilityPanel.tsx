@@ -125,7 +125,9 @@ export function StabilityPanel({
         Tank pressure vs time isn&apos;t shown here — it depends on the feed configuration
         (blowdown vs dome-regulated) and needs a real solve. Run the{' '}
         <span className="text-[var(--color-text-primary)] font-medium">Time-Series</span> tab for
-        the actual pressure history.
+        the actual pressure history. Water hammer (a valve transient, not a combustion mode) is
+        reported under <span className="text-[var(--color-text-primary)] font-medium">Feed System
+        Stability</span> in the results view.
       </p>
     </div>
   );

@@ -1,10 +1,12 @@
-/* test_nozzle_golden.c - Parity of ed_nozzle_solve vs the Python FROZEN nozzle.
+/* test_nozzle_golden.c - Pin ed_nozzle_solve arithmetic against a frozen snapshot.
  *
- * Loads tests/golden/nozzle_golden.json (produced by tools/export_nozzle_golden.py):
- * each flat object carries the CEA-derived nozzle inputs + the expected frozen
- * outputs from runner.evaluate(use_shifting_equilibrium=False). Identical formulas
- * and identical thermo inputs => agreement near machine precision; tolerance is
- * rtol 1e-7 (far tighter than the 1e-3 program parity target).
+ * Loads tests/golden/nozzle_golden.json (captured 2026-06 by
+ * tools/export_nozzle_golden.py from the then-current Python frozen nozzle).
+ * The exit/throat-state fields are the live contract (ed_evaluate reports them);
+ * the F/Isp/Cf fields pin the RETIRED momentum-method arithmetic, which nothing
+ * consumes — delivered thrust is RPA (ed_evaluate.c) and is live-verified against
+ * Python by tests/test_native_ab_parity.py. This test therefore guards against
+ * accidental edits to the kernel, not production thrust parity.
  */
 #include "ed_nozzle.h"
 #include "ed_test_util.h"
