@@ -74,7 +74,7 @@ jobs:
       continue-on-error: false
 
   web-gui:
-    name: Web GUI (Vitest + Next.js build)
+    name: Web GUI (Vitest + Vite build)
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -89,7 +89,7 @@ jobs:
         cache: 'npm'
         cache-dependency-path: daq-server/diablo_server/frontend/package-lock.json
 
-    # API routes import ../backend/src/* which uses @iarna/toml; install backend so resolution + alias work in next build.
+    # Frontend imports ../backend/src/* (shared types/config); install backend so module resolution works.
     - name: Install backend dependencies
       working-directory: daq-server/diablo_server/backend
       run: npm ci || npm install
@@ -98,11 +98,15 @@ jobs:
       working-directory: daq-server/diablo_server/frontend
       run: npm ci || npm install
 
+    - name: Run backend unit tests
+      working-directory: daq-server/diablo_server/backend
+      run: npm run test
+
     - name: Run frontend unit tests
       working-directory: daq-server/diablo_server/frontend
       run: npm run test
 
-    - name: Verify Next.js build
+    - name: Verify Vite build
       working-directory: daq-server/diablo_server/frontend
       run: npm run test:build
 
@@ -428,11 +432,12 @@ jobs:
           ..
         cmake --build . --parallel $(nproc)
 
+    # Strict since enable_testing() ordering was fixed — ctest now registers real
+    # tests (board_clock_sync); a failure here must fail the job.
     - name: Run CTest tests
       run: |
         cd ${{ env.BUILD_DIR }}
-        ctest --output-on-failure --parallel $(nproc) || echo "No CTest tests found"
-      continue-on-error: true
+        ctest --output-on-failure --parallel $(nproc)
 
     - name: Run Sequencer Elodin Unit Test
       run: |
