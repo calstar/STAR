@@ -71,6 +71,10 @@ Each subproject's setup script is also runnable directly
 (e.g. `bash daq-server/setup.sh --no-build`); see its `--help` for options
 specific to that project.
 
+To confirm a clean install works — or to reproduce a broken setup in isolation
+— use the setup-test harness (`bash scripts/setup-test/run-macos.sh
+pid-designer`); see [`scripts/setup-test/README.md`](scripts/setup-test/README.md).
+
 ---
 
 ## Repository conventions

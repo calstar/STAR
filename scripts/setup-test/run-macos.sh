@@ -85,14 +85,34 @@ if [ -d "$SCRATCH" ]; then
   fi
 fi
 
+# Preflight: fail fast if there clearly isn't room, instead of dying halfway
+# through the copy with a cryptic "No space left on device" and leaving a
+# half-written scratch dir behind. We need roughly the source tree's size (minus
+# the excluded artifacts, but a whole-tree estimate is a safe over-count). If
+# free space is under 2x that, bail with a clear message.
+NEED_KB="$(du -sk "$REPO_ROOT" 2>/dev/null | awk '{print $1}')"
+FREE_KB="$(df -k "$(dirname "$SCRATCH")" | awk 'NR==2 {print $4}')"
+if [ -n "$NEED_KB" ] && [ -n "$FREE_KB" ] && [ "$FREE_KB" -lt $((NEED_KB * 2)) ]; then
+  echo "  ✗ Not enough free disk to copy the tree safely." >&2
+  echo "    Need ~$((NEED_KB / 1024)) MB, have $((FREE_KB / 1024)) MB free at $(dirname "$SCRATCH")." >&2
+  echo "    Free up space (e.g. 'rm -rf daq-server/.tmp' clears old test scratch) and re-run." >&2
+  exit 1
+fi
+
 echo "── Copying working tree to scratch dir: $SCRATCH"
 mkdir -p "$SCRATCH"
 # Same excludes as run-docker.sh so both harnesses test the same "fresh" state.
-rsync -a \
+# NOTE: daq-server/.tmp holds elodin integration-test scratch — sparse DB files
+# whose *logical* size is multiple TB (only ~50M on disk). rsync without
+# --sparse expands the holes into real zero-bytes and can fill the disk, so we
+# both exclude it (it's gitignored — not part of a fresh clone) and pass -S.
+rsync -aS \
   --exclude='.venv' \
   --exclude='node_modules' \
   --exclude='build/' \
   --exclude='**/build/' \
+  --exclude='.tmp/' \
+  --exclude='**/.tmp/' \
   --exclude='.next' \
   --exclude='dist' \
   --exclude='*.pyc' \

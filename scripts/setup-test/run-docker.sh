@@ -77,11 +77,17 @@ SMOKE_INVOCATION="bash scripts/setup-test/smoke/$PROJECT.sh"
 IN_CONTAINER=$(cat <<EOF
 set -euo pipefail
 echo "── Copying repo into container (excluding build artifacts)"
-rsync -a \\
+# daq-server/.tmp holds elodin integration-test scratch — sparse DB files whose
+# logical size is multiple TB (only ~50M on disk). Without --sparse rsync
+# expands the holes into real bytes and fills the container layer, so exclude it
+# (it's gitignored — not part of a fresh clone) and pass -S as insurance.
+rsync -aS \\
   --exclude='.venv' \\
   --exclude='node_modules' \\
   --exclude='build/' \\
   --exclude='**/build/' \\
+  --exclude='.tmp/' \\
+  --exclude='**/.tmp/' \\
   --exclude='.next' \\
   --exclude='dist' \\
   --exclude='*.pyc' \\

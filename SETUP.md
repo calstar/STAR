@@ -65,6 +65,23 @@ with `--help` to see what it accepts.
 The shared bits (`black==25.11.0` on the global `$PATH` for `format.sh`, a
 Windows-symlink sanity check) run once in the dispatcher.
 
+### Verify a clean install (or debug a broken one)
+
+New to the repo, or is setup misbehaving? `scripts/setup-test/` runs `setup.sh`
+in an isolated scratch copy of the tree and then smoke-checks the result — so
+you can confirm a fresh install works end-to-end, or reproduce a breakage
+without touching your real checkout:
+
+```bash
+bash scripts/setup-test/run-macos.sh pid-designer   # quick sanity (~2 min)
+bash scripts/setup-test/run-macos.sh all            # every project (~20-30 min)
+```
+
+On a brand-new Mac, install Homebrew first (https://brew.sh) — the harness
+installs project deps through brew but not brew itself. See
+[`scripts/setup-test/README.md`](scripts/setup-test/README.md) for the
+Docker/Linux path and full details.
+
 ---
 
 ## 3. Prerequisites for the integration test
