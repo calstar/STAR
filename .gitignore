@@ -10,3 +10,6 @@ docs/doxygen/
 
 # DAQ output data
 scripts/postprocessing/output/
+
+# Internal review notes (not shared with the team)
+daq-server/BACKEND_REVIEW.md
