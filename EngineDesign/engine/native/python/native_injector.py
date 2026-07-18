@@ -350,11 +350,25 @@ def _ensure_cea(cache) -> bool:
     Pc = np.ascontiguousarray(cache.Pc_grid, dtype=np.float64)
     MR = np.ascontiguousarray(cache.MR_grid, dtype=np.float64)
     eps = np.ascontiguousarray(cache.eps_grid, dtype=np.float64)
+    # Cf_vac table (format v2): the RPA delivered-thrust basis ed_evaluate needs.
+    # Caches built before the Cf_vac column exist get a per-gridpoint isentropic
+    # fallback (same physics as cea_cache._isentropic_cf_vac, so C-interpolated
+    # values stay consistent with what Python would serve for that cache).
+    cf_vac = getattr(cache, "Cf_vac_table", None)
+    if cf_vac is None:
+        from engine.pipeline.cea_cache import _isentropic_cf_vac
+        gamma_t = np.asarray(cache.gamma_table, dtype=np.float64)
+        cf_vac = np.empty_like(gamma_t)
+        for k in range(gamma_t.shape[2]):
+            e_k = float(eps[k])
+            for i in range(gamma_t.shape[0]):
+                for j in range(gamma_t.shape[1]):
+                    cf_vac[i, j, k] = _isentropic_cf_vac(gamma_t[i, j, k], e_k)
     tables = [cache.cstar_table, cache.Cf_table, cache.Tc_table,
-              cache.gamma_table, cache.R_table, cache.M_table]
+              cache.gamma_table, cache.R_table, cache.M_table, cf_vac]
     with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as f:
         path = f.name
-        f.write(b"EDCA"); f.write(struct.pack("<i", 1))
+        f.write(b"EDCA"); f.write(struct.pack("<i", 2))
         f.write(struct.pack("<iii", len(Pc), len(MR), len(eps)))
         f.write(Pc.tobytes()); f.write(MR.tobytes()); f.write(eps.tobytes())
         for t in tables:
@@ -449,18 +463,20 @@ def chamber_solve(config, cache, P_tank_O, P_tank_F):
 
 
 def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
-    """Native chamber solve + authoritative Python RPA nozzle + Python stability.
+    """Native chamber solve + native RPA delivered thrust + Python stability.
 
     Returns a dict compatible with the keys engine.optimizer Layer-1 reads from
     runner.evaluate() — or None to fall back to the full Python path (unsupported
     injector type, non-3D CEA cache, or non-converged solve).
 
-    The chamber residual loop runs in C; thrust/Isp come from the SAME
-    engine.core.nozzle.calculate_thrust the finalization path uses (RPA delivered
-    thrust, F = zeta_n*Cf_vac*Pc*At - Pa*Ae), so the inner loop ranks on the exact
-    number finalization reports — no frozen-nozzle bias. The nozzle is cheap (a CEA
-    Cf_vac lookup + arithmetic), so keeping it in Python costs ~nothing. Stability
-    reuses comprehensive_stability_analysis (native kernels under the hood).
+    The whole physics chain runs in C: chamber residual loop + the SAME RPA
+    delivered-thrust formula engine.core.nozzle.calculate_thrust uses
+    (F = zeta_n*Cf_vac*Pc*At - Pa*Ae, ed_evaluate.c), on the SAME Cf_vac table
+    (dumped from this cache, format v2). So the inner loop ranks on the exact
+    number finalization reports — no frozen-nozzle bias, and no Python-side
+    thrust override. Parity is enforced live by tests/test_native_ab_parity.py
+    at both the wrapper and raw-struct level. Stability reuses
+    comprehensive_stability_analysis (native kernels under the hood).
     """
     if not _can_handle_chamber(config):
         return None
@@ -500,34 +516,23 @@ def evaluate(config, cache, P_tank_O, P_tank_F, P_ambient=101325.0):
     except Exception:
         stability_results = {}
 
-    # Delivered thrust inline (RPA): F = zeta_n * Cf_vac * Pc * At - Pa * Ae. This is
-    # the SAME formula as engine.core.nozzle.calculate_thrust, but with a single
-    # Cf_vac lookup instead of the full Python nozzle (dict build + mach solve +
-    # validation) — keeping the Layer-1 inner loop native-fast. zeta_c (eta_c*) rides
-    # in through Pc. Exit-state fields are display-only (from the C result).
-    g0 = 9.80665
-    zeta_n = float(config.chamber_geometry.nozzle_efficiency)
-    try:
-        cf_vac = cache.eval_cf_vac(r.MR, r.Pc, r.eps)
-    except Exception:
+    # F/Isp/Cf_actual come straight from the C result — ed_evaluate.c computes the
+    # RPA delivered thrust from the tables' Cf_vac (and errors out rather than
+    # serving the retired momentum-method number, so a stale table set lands in
+    # the Python fallback above, never here).
+    if r.F != r.F:  # NaN guard
         return None
-    At, Ae = r.A_throat, r.A_exit
-    F = zeta_n * cf_vac * r.Pc * At - float(P_ambient) * Ae
-    if F != F:  # NaN guard
-        return None
-    Isp = F / (r.mdot_total * g0)
-    Cf_actual = F / (r.Pc * At)
 
     return {
         # Mirrors the runner.evaluate keys Layer-1 consumes (success is inferred
         # from finite F/Pc by the objective, exactly as for runner.evaluate).
         "Pc": r.Pc, "mdot_O": r.mdot_O, "mdot_F": r.mdot_F, "mdot_total": r.mdot_total,
-        "MR": r.MR, "F": F, "Isp": Isp, "v_exit": r.v_exit,
+        "MR": r.MR, "F": r.F, "Isp": r.Isp, "v_exit": r.v_exit,
         "P_exit": r.P_exit, "P_throat": r.P_throat, "T_exit": r.T_exit, "T_throat": r.T_throat,
         "Tc": r.Tc_effective, "eps": r.eps, "A_throat": r.A_throat, "A_exit": r.A_exit,
         "cstar_actual": r.cstar_actual, "cstar_ideal": r.cstar_ideal, "eta_cstar": r.eta_cstar,
         "gamma": r.gamma, "R": r.R,
-        "Cf": Cf_actual, "Cf_actual": Cf_actual, "Cf_ideal": r.Cf_ideal,
+        "Cf": r.Cf_actual, "Cf_actual": r.Cf_actual, "Cf_ideal": r.Cf_ideal,
         "Cd_O": r.Cd_O, "Cd_F": r.Cd_F, "A_geom_O": r.A_geom_O, "A_geom_F": r.A_geom_F,
         "stability": stability_results, "stability_results": stability_results,
         "diagnostics": diagnostics,

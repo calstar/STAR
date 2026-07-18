@@ -10,9 +10,11 @@ engine/. Run from the repository root (EngineDesign/):
         --out    engine/native/tests/golden
 
 Outputs:
-    <out>/cea_tables.bin    little-endian: "EDCA", i32 version=1, i32 n_pc/n_mr/n_eps,
-                            f64 Pc_grid, MR_grid, eps_grid, then cstar,Cf,Tc,gamma,R,M
-                            tables (C-order, n_pc*n_mr*n_eps each).
+    <out>/cea_tables.bin    little-endian: "EDCA", i32 version=2, i32 n_pc/n_mr/n_eps,
+                            f64 Pc_grid, MR_grid, eps_grid, then cstar,Cf,Tc,gamma,R,M,
+                            Cf_vac tables (C-order, n_pc*n_mr*n_eps each).
+                            (ed_cea_load also still reads version=1 files, which
+                            lack the Cf_vac table.)
     <out>/cea_samples.json  list of {MR,Pc,Pa,eps, cstar_ideal,Cf_ideal,Tc,gamma,R,M}
                             from CEACache.eval(), incl. interior + clamp-edge points.
 """
@@ -42,14 +44,26 @@ def write_bin(cache, path):
     MR = _c64(cache.MR_grid)
     eps = _c64(cache.eps_grid)
     n_pc, n_mr, n_eps = len(Pc), len(MR), len(eps)
+    # Format v2: append the Cf_vac table (RPA delivered-thrust basis). Old caches
+    # without the column get the same isentropic per-gridpoint fallback the
+    # runtime dump (native_injector._ensure_cea) uses.
+    cf_vac = getattr(cache, "Cf_vac_table", None)
+    if cf_vac is None:
+        from engine.pipeline.cea_cache import _isentropic_cf_vac
+        gamma_t = np.asarray(cache.gamma_table, dtype=np.float64)
+        cf_vac = np.empty_like(gamma_t)
+        for k in range(gamma_t.shape[2]):
+            for i in range(gamma_t.shape[0]):
+                for j in range(gamma_t.shape[1]):
+                    cf_vac[i, j, k] = _isentropic_cf_vac(gamma_t[i, j, k], float(eps[k]))
     tables = [cache.cstar_table, cache.Cf_table, cache.Tc_table,
-              cache.gamma_table, cache.R_table, cache.M_table]
+              cache.gamma_table, cache.R_table, cache.M_table, cf_vac]
     for t in tables:
         if t.shape != (n_pc, n_mr, n_eps):
             raise ValueError(f"table shape {t.shape} != grid {(n_pc, n_mr, n_eps)}")
     with open(path, "wb") as f:
         f.write(b"EDCA")
-        f.write(struct.pack("<i", 1))
+        f.write(struct.pack("<i", 2))
         f.write(struct.pack("<iii", n_pc, n_mr, n_eps))
         f.write(Pc.tobytes()); f.write(MR.tobytes()); f.write(eps.tobytes())
         for t in tables:

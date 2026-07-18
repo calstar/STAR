@@ -143,7 +143,8 @@ class EdInjectorResult(C.Structure):
 
 
 class EdCeaResult(C.Structure):
-    _fields_ = [(n, _d) for n in ("cstar_ideal", "Cf_ideal", "Tc", "gamma", "R", "M")]
+    # Mirror of ed_cea.h EdCeaResult — keep field order/count in sync.
+    _fields_ = [(n, _d) for n in ("cstar_ideal", "Cf_ideal", "Tc", "gamma", "R", "M", "Cf_vac")]
 
 
 class EdChugStream(C.Structure):

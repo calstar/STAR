@@ -1,10 +1,18 @@
 /* ed_evaluate.c - Module 2 entry point (chamber solve -> nozzle -> Isp/thrust).
  *
  * Mirrors runner._evaluate_internal(): solve the chamber, evaluate CEA at the
- * converged (MR, Pc, eps) for the nozzle thermo, run the FROZEN nozzle, then
- * flatten everything Layer-1 reads into EdEvaluateResult. The nozzle is frozen
- * (Phase 1a); the Python shifting-equilibrium nozzle stays authoritative at
- * Layer-1 finalization (see CPORT_COMPLETION_PLAN.md). */
+ * converged (MR, Pc, eps), then compute DELIVERED thrust on the same RPA basis
+ * as engine/core/nozzle.py::calculate_thrust:
+ *
+ *     F(Pa) = zeta_n * Cf_vac * Pc * At - Pa * Ae
+ *
+ * zeta_c (eta_c*) rides in through the efficiency-reduced Pc from the chamber
+ * solve; zeta_n = nozzle_efficiency. Cf_vac is CEA's shifting-equilibrium
+ * vacuum thrust coefficient from the tables (see thrust_efficiency_bug_analysis
+ * .md — the old momentum-method F expanded from the ideal Tc and over-predicted
+ * by ~(1 - zeta_c*zeta_n)). The frozen nozzle (ed_nozzle_solve) still runs to
+ * provide the display-only exit state (v_exit, P/T_exit, throat conditions),
+ * matching what nozzle.py reports; its momentum-method F is NOT used. */
 #include "ed_evaluate.h"
 #include "ed_chamber.h"
 #include "ed_nozzle.h"
@@ -53,15 +61,25 @@ ed_status_t ed_evaluate(const EdEngineState *state,
     rc = ed_nozzle_solve(&nin, &nz);
     if (rc != ED_OK) return rc;
 
+    /* Delivered thrust — RPA basis, identical to nozzle.py::calculate_thrust.
+     * Requires Cf_vac in the tables (version-2 .bin); a v1 table set yields
+     * NaN here and we refuse rather than fall back to the retired momentum
+     * method, so callers (native_injector) drop to the Python path. */
+    if (!isfinite(cr.Cf_vac)) return ED_ERR_NONFINITE;
+    const double F_delivered = g->nozzle_efficiency * cr.Cf_vac * ch.Pc * g->A_throat
+                               - P_ambient_Pa * g->A_exit;
+    if (!isfinite(F_delivered)) return ED_ERR_NONFINITE;
+
     /* Chamber / flow */
     out->Pc = ch.Pc;
     out->mdot_O = ch.mdot_O;
     out->mdot_F = ch.mdot_F;
     out->mdot_total = ch.mdot_total;
     out->MR = ch.MR;
-    /* Performance (nozzle) */
-    out->F = nz.F;
-    out->Isp = nz.Isp;
+    /* Performance: delivered F/Isp/Cf (RPA); exit state from the frozen nozzle
+     * (display-only, mirrors nozzle.py's reported exit state). */
+    out->F = F_delivered;
+    out->Isp = F_delivered / (ch.mdot_total * ED_G0);
     out->v_exit = nz.v_exit;
     out->P_exit = nz.P_exit;
     out->P_throat = nz.P_throat;
@@ -74,7 +92,7 @@ ed_status_t ed_evaluate(const EdEngineState *state,
     out->cstar_actual = ch.cstar_actual;
     out->cstar_ideal = ch.cstar_ideal;
     out->eta_cstar = ch.eta_cstar;
-    out->Cf_actual = nz.Cf_actual;
+    out->Cf_actual = F_delivered / (ch.Pc * g->A_throat);
     out->Cf_ideal = nz.Cf_ideal;
     out->eps = eps;
     out->A_throat = g->A_throat;

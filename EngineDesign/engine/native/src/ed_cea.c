@@ -141,16 +141,22 @@ ed_status_t ed_cea_eval(const EdCeaTables *t,
     out->gamma       = cea_apply(&s, t->gamma_table);
     out->R           = cea_apply(&s, t->R_table);
     out->M           = cea_apply(&s, t->M_table);
+    /* NaN (not an error) when the table set predates Cf_vac: chamber-only
+     * consumers keep working; delivered-thrust consumers must check. */
+    out->Cf_vac      = t->Cf_vac_table ? cea_apply(&s, t->Cf_vac_table) : (double)NAN;
     return ED_OK;
 }
 
 /* ---- .bin loader (offline/setup only) ---------------------------------------
- * Layout (little-endian, matches export_cea_tables.py):
+ * Layout (little-endian, matches export_cea_tables.py / native_injector._ensure_cea):
  *   char    magic[4]   = "EDCA"
- *   int32   version    = 1
+ *   int32   version    = 1 | 2
  *   int32   n_pc, n_mr, n_eps
  *   double  Pc_grid[n_pc], MR_grid[n_mr], eps_grid[n_eps]
  *   double  cstar, Cf, Tc, gamma, R, M  (each n_pc*n_mr*n_eps, C-order)
+ *   double  Cf_vac                       (version >= 2 only)
+ * Version 1 (pre-Cf_vac) still loads: Cf_vac_table is left NULL and
+ * ed_cea_eval reports Cf_vac = NaN for it.
  */
 ed_status_t ed_cea_load(const char *path, EdCeaTables *out) {
     if (!path || !out) return ED_ERR_INVALID_ARG;
@@ -161,15 +167,17 @@ ed_status_t ed_cea_load(const char *path, EdCeaTables *out) {
     char magic[4];
     int32_t version = 0, n_pc = 0, n_mr = 0, n_eps = 0;
     if (fread(magic, 1, 4, f) != 4 || memcmp(magic, "EDCA", 4) != 0) goto done;
-    if (fread(&version, sizeof version, 1, f) != 1 || version != 1) goto done;
+    if (fread(&version, sizeof version, 1, f) != 1 ||
+        (version != 1 && version != 2)) goto done;
     if (fread(&n_pc, sizeof n_pc, 1, f) != 1) goto done;
     if (fread(&n_mr, sizeof n_mr, 1, f) != 1) goto done;
     if (fread(&n_eps, sizeof n_eps, 1, f) != 1) goto done;
     if (n_pc <= 0 || n_mr <= 0 || n_eps <= 0) goto done;
 
+    const int n_tables = (version >= 2) ? 7 : 6;
     const size_t ng = (size_t)n_pc + (size_t)n_mr + (size_t)n_eps;
     const size_t nt = (size_t)n_pc * (size_t)n_mr * (size_t)n_eps;
-    const size_t total = ng + 6 * nt;
+    const size_t total = ng + (size_t)n_tables * nt;
     double *buf = (double *)malloc(total * sizeof(double));
     if (!buf) { rc = ED_ERR_IO; goto done; }
     if (fread(buf, sizeof(double), total, f) != total) { free(buf); goto done; }
@@ -187,6 +195,7 @@ ed_status_t ed_cea_load(const char *path, EdCeaTables *out) {
     out->gamma_table = p; p += nt;
     out->R_table     = p; p += nt;
     out->M_table     = p; p += nt;
+    out->Cf_vac_table = (version >= 2) ? p : NULL;
 
     out->Pc_min = out->Pc_grid[0];  out->Pc_max = out->Pc_grid[n_pc - 1];
     out->MR_min = out->MR_grid[0];  out->MR_max = out->MR_grid[n_mr - 1];
