@@ -48,9 +48,12 @@ jobs:
     - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
+        cache: 'pip'
+        cache-dependency-path: pid-designer/requirements.txt
 
     - name: Install dependencies
-      run: pip install "fastapi>=0.128" "uvicorn[standard]>=0.34" "pydantic>=2.12"
+      working-directory: pid-designer
+      run: pip install -r requirements.txt
 
     - name: Verify imports
       working-directory: pid-designer
