@@ -1,7 +1,13 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * Load-time budget guard. The pre-Vite GUI took ~20s to cold-load; the static
+ * Load-time budget guard. Named 00-* so it runs FIRST (workers=1 → alphabetical
+ * file order): the very first requests of the browser session hit a cold OS
+ * page cache and a cold Chromium first-navigation, so the measured number is
+ * the "first open" a user actually feels, not a warmed-up rerun. (Client-side
+ * cache is cold either way — Playwright gives each test a fresh context.)
+ *
+ * The pre-Vite GUI took ~20s to cold-load; the static
  * build should be interactive in well under a second on real hardware. Budgets
  * are deliberately generous (CI runners are slow and noisy) — this is a
  * regression tripwire for "someone made the GUI take ages to load", not a

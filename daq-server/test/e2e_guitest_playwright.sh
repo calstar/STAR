@@ -83,6 +83,30 @@ if ! curl -sf "${PLAYWRIGHT_BASE_URL}/sensor-info" >/dev/null 2>&1; then
   exit 1
 fi
 
+# Bounded wait for actual board sim data (any boardScanRateHz > 0) so a slow
+# CI stack start doesn't fail the content specs. Warn-only: if the sim is
+# genuinely dead the specs fail anyway and the failure path dumps pane logs.
+echo "Waiting for board sim data (boardScanRateHz > 0) ..."
+SIM_DATA_OK=0
+for _ in $(seq 1 45); do
+  if curl -sf "$BACKEND_CHECK" 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+rates = d.get("boardScanRateHz") or {}
+sys.exit(0 if any((v or 0) > 0 for v in rates.values()) else 1)
+' 2>/dev/null; then
+    SIM_DATA_OK=1
+    echo "  OK"
+    break
+  fi
+  sleep 1
+  echo -n "."
+done
+if [ "$SIM_DATA_OK" != "1" ]; then
+  echo ""
+  echo "⚠️  No board sim data after 45s — sim or bridge likely dead; content specs will fail." >&2
+fi
+
 export PLAYWRIGHT_BASE_URL
 set +e
 (cd "$FRONTEND" && npx playwright test e2e)
@@ -93,6 +117,19 @@ if [ "$PW_EXIT" -eq 0 ]; then
   echo "Playwright E2E: passed"
 else
   echo "Playwright E2E: failed"
+  # Dump each stack pane's log tail while the stack is still up — in CI these
+  # files vanish with the runner, and "all boards DISCONNECTED" class failures
+  # can only be diagnosed from the sim/bridge/backend panes.
+  echo ""
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "  Stack logs (/tmp/gui_logs/*.log — last 40 lines each)"
+  echo "═══════════════════════════════════════════════════════════════"
+  for log in /tmp/gui_logs/*.log; do
+    [ -f "$log" ] || continue
+    echo ""
+    echo "── $log ──"
+    tail -40 "$log" || true
+  done
 fi
 
 if [ "${SKIP_STOP_GUI:-0}" != "1" ]; then

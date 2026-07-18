@@ -607,6 +607,19 @@ jobs:
         CXX: g++-12
       run: bash test/e2e_guitest_playwright.sh
 
+    # Stack pane logs + Playwright traces are the only way to diagnose
+    # "boards DISCONNECTED / no sim data" class failures after the runner dies.
+    - name: Upload stack logs and Playwright traces
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-e2e-diagnostics
+        path: |
+          /tmp/gui_logs/
+          daq-server/diablo_server/frontend/test-results/
+        if-no-files-found: warn
+        retention-days: 7
+
   # Build summary
   build-summary:
     name: Build Summary
