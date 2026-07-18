@@ -1190,6 +1190,12 @@ def calculate_combustion_efficiency_advanced(
         # No impinging momentum ratio available (pintle/coaxial): use the peak mixing
         # efficiency (no momentum penalty). A pintle-specific momentum-mixing model
         # (local momentum ratio, design-specific optimum) is future work.
+        # NOTE — intentional C-vs-Python divergence: the C kernel
+        # (ed_combustion_physics.c::rupe_mixing_eta) has no such lenient branch and
+        # hard-errors on an invalid R (-> native solve fails -> Python fallback).
+        # That's safe because C only runs for impinging configs, where the injector
+        # solve always yields a valid R; this branch exists for the other injector
+        # types, which never reach C. Same physics either way — never a wrong number.
         eta_mixing = Em_peak
         momentum_ratio_R = float("nan")
 

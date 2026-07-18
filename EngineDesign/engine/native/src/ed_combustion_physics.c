@@ -102,7 +102,16 @@ static double reaction_time_scale(double Pc, double Tc, double MR,
 
 /* calculate_rupe_mixing_efficiency: eta_mix = Em_peak * exp(-(ln(R/R_opt))^2/(2 sigma^2)).
  * Momentum-ratio mixing efficiency (Rupe/SP-8089); replaces the k-e near-field model
- * and the retired eta_turbulence step. Returns <0 to signal an invalid momentum ratio. */
+ * and the retired eta_turbulence step. Returns <0 to signal an invalid momentum ratio.
+ *
+ * INTENTIONAL C-vs-Python divergence on invalid R: Python falls back to
+ * eta_mix = Em_peak (its lenient branch exists for pintle/coaxial, which have no
+ * impinging momentum ratio), whereas here an invalid R propagates as
+ * ED_ERR_INVALID_ARG -> NaN residual -> the native solve fails and that call
+ * falls back to Python. This is deliberate strictness, not a physics
+ * disagreement: the C path only runs for impinging configs, whose injector solve
+ * always produces a valid R — an invalid R here means something upstream is
+ * broken, and refusing (worst case: a slower Python answer) beats guessing. */
 static double rupe_mixing_eta(double momentum_ratio_R, double R_opt,
                               double Em_peak, double sigma) {
     if (!(momentum_ratio_R > 0.0 && isfinite(momentum_ratio_R))) return -1.0;

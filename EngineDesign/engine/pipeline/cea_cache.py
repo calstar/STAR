@@ -13,6 +13,17 @@ from functools import partial
 import time
 from .config_schemas import CEAConfig
 
+# Version of the SEMANTICS of the cached tables (not the .npz container format).
+# Bump whenever a table's meaning changes or a table is added, so stale caches on
+# disk — including locally generated ones git never touches — get rebuilt instead
+# of being silently served to code that expects the new meaning.
+#   1 (implicit; pre-2026-07): "Cf" stored get_PambCf()[0]; no "Cf_vac" table.
+#   2: "Cf" is the ambient-corrected coefficient get_PambCf()[1] (reproduces CEA's
+#      own ambient Isp) and the "Cf_vac" table (RPA delivered-thrust basis) exists.
+# Caches whose meta lacks "table_schema" are treated as version 1.
+CEA_TABLE_SCHEMA_VERSION = 2
+
+
 def _isentropic_cf_vac(gamma: float, eps: float) -> float:
     """Ideal vacuum thrust coefficient from gamma + area ratio (isentropic, frozen).
 
@@ -325,6 +336,7 @@ class CEACache:
         data = np.load(self.cache_file)
 
         meta_expected = {
+            "table_schema": CEA_TABLE_SCHEMA_VERSION,
             "ox_name": self.config.ox_name,
             "fuel_name": self.config.fuel_name,
             "expansion_ratio": self.config.expansion_ratio,
@@ -347,6 +359,17 @@ class CEACache:
             if meta_loaded_dict is None:
                 return False
             try:
+                # Critical: table SEMANTICS version must match. A stale-schema cache
+                # (e.g. pre-Cf_vac, or "Cf" stored on the old get_PambCf[0] basis)
+                # must be rebuilt, not silently served under the new meaning —
+                # git updates code but never touches locally generated caches.
+                loaded_schema = meta_loaded_dict.get("table_schema", 1)
+                if loaded_schema != meta_expected_dict["table_schema"]:
+                    logger.warning(
+                        f"CEA cache table-schema mismatch: cache has v{loaded_schema}, "
+                        f"code expects v{meta_expected_dict['table_schema']}; regenerating."
+                    )
+                    return False
                 # Critical: propellant names must match
                 if meta_loaded_dict.get("ox_name") != meta_expected_dict["ox_name"]:
                     return False
@@ -680,6 +703,7 @@ class CEACache:
     def _save_cache(self):
         """Save CEA data to cache file"""
         meta = {
+            "table_schema": CEA_TABLE_SCHEMA_VERSION,
             "ox_name": self.config.ox_name,
             "fuel_name": self.config.fuel_name,
             "expansion_ratio": self.config.expansion_ratio,
