@@ -10,3 +10,6 @@ docs/doxygen/
 
 # DAQ output data
 scripts/postprocessing/output/
+
+# Engine design review working doc (local only)
+ENGINE_DESIGN_REVIEW.md
