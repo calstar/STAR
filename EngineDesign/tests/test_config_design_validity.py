@@ -56,7 +56,12 @@ KNOWN_STALE: dict[str, str] = {
         "measured F=5774N (0.72x), MR=1.81 (0.64x), eta_O=0.576 vs band [0.2,0.4]"
     ),
     "canonical/pintle.yaml": "not yet audited; pintle path is a previous project's engine",
-    "default.yaml": "template/seed config, not a solved design (currently evaluates to NEGATIVE thrust)",
+    "default.yaml": (
+        "sets no propellant_preset, so fluids.oxidizer.name / fluids.fuel.name are both None and "
+        "the solver residual goes non-finite; via the runner it yields NEGATIVE thrust "
+        "(F=-334N, Isp=-7.27s). No longer the backend startup config (see backend/main.py) -- "
+        "still referenced by scripts/docs, so left in place rather than deleted"
+    ),
     "impinging_smoke.yaml": "byte-identical results to canonical/impinging -- appears to be a stale copy of it",
     "impinging_lox_ch4.yaml": "does not evaluate at its own design point (Supply < Demand at all Pc)",
     "impinging_lox_ch4_8000N.yaml": "eta_O=0.492 / eta_F=0.514 vs band [0.2,0.4] (drifted stiff)",
