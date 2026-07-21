@@ -48,6 +48,7 @@ diameter, which is what the old (D_chamber/D_throat)^0.1 term wrongly used.
 
 import math
 
+import numpy as np
 import pytest
 
 from engine.pipeline.thermal.bartz import (
@@ -338,6 +339,97 @@ class TestSIWrapper:
     def test_result_is_physically_plausible_for_a_large_kerolox_throat(self):
         h_si = HUZEL["product"] * BTU_IN2_S_F_TO_W_M2_K
         assert 5_000.0 < h_si < 12_000.0
+
+
+class TestThroatCurvatureMatchesDrawnContour:
+    """The R that Bartz uses must match the nozzle actually drawn by rao().
+
+    throat_curvature_radius() returns 0.941*R_t analytically. That is only
+    correct if the contour rao() draws really has those fillet radii. This
+    fits circles to the generated throat arcs and checks both the analytic
+    helper AND that the drawn geometry realizes it -- so a future change to the
+    throat treatment that breaks the assumption fails here rather than leaving
+    Bartz on a stale radius. See nozzle_solver.throat_curvature_radius.
+    """
+
+    A_THROAT = 0.01        # 100 cm^2, R_t ~ 0.0564 m
+
+    @staticmethod
+    def _fit_circle_radius(x, y):
+        """Algebraic (Kasa) circle fit -> radius. Linear least squares."""
+        x = np.asarray(x, float)
+        y = np.asarray(y, float)
+        A = np.column_stack([x, y, np.ones_like(x)])
+        b = -(x ** 2 + y ** 2)
+        D, E, F = np.linalg.lstsq(A, b, rcond=None)[0]
+        return np.sqrt(max((D * D + E * E) / 4.0 - F, 0.0))
+
+    def _contour(self):
+        from engine.core.nozzle_solver import rao
+        pts, _, _ = rao(self.A_THROAT, self.A_THROAT * 5.0,
+                        steps=400, do_plot=False, method="garcia")
+        return pts[:, 0], pts[:, 1]
+
+    def test_downstream_throat_arc_has_the_expected_radius(self):
+        """Fit the diverging-side fillet -> should be 0.382 * R_t."""
+        from engine.core.nozzle_solver import throat_radius, THROAT_ARC_COEF
+        r_t = throat_radius(self.A_THROAT)
+        x, y = self._contour()
+        # Diverging throat arc: just downstream of the throat (x = 0).
+        mask = (x > 0.02 * r_t) & (x < 0.15 * r_t)
+        radius = self._fit_circle_radius(x[mask], y[mask])
+        assert radius == pytest.approx(THROAT_ARC_COEF * r_t, rel=3e-2)
+
+    def test_upstream_entrance_arc_has_the_expected_radius(self):
+        """Fit the converging-side fillet -> should be 1.5 * R_t."""
+        from engine.core.nozzle_solver import throat_radius, THROAT_ENTRANCE_ARC_COEF
+        r_t = throat_radius(self.A_THROAT)
+        x, y = self._contour()
+        mask = (x > -0.4 * r_t) & (x < -0.05 * r_t)
+        radius = self._fit_circle_radius(x[mask], y[mask])
+        assert radius == pytest.approx(THROAT_ENTRANCE_ARC_COEF * r_t, rel=3e-2)
+
+    def test_helper_is_the_mean_of_the_two_drawn_arcs(self):
+        """throat_curvature_radius = mean of the two fitted radii."""
+        from engine.core.nozzle_solver import (
+            throat_curvature_radius, throat_radius,
+            THROAT_ARC_COEF, THROAT_ENTRANCE_ARC_COEF,
+        )
+        r_t = throat_radius(self.A_THROAT)
+        x, y = self._contour()
+        down = self._fit_circle_radius(
+            x[(x > 0.02 * r_t) & (x < 0.15 * r_t)],
+            y[(x > 0.02 * r_t) & (x < 0.15 * r_t)])
+        up = self._fit_circle_radius(
+            x[(x > -0.4 * r_t) & (x < -0.05 * r_t)],
+            y[(x > -0.4 * r_t) & (x < -0.05 * r_t)])
+        assert throat_curvature_radius(self.A_THROAT) == pytest.approx(
+            0.5 * (down + up), rel=3e-2)
+
+    def test_analytic_helper_matches_the_coefficient_definition(self):
+        from engine.core.nozzle_solver import (
+            throat_curvature_radius, throat_radius,
+            THROAT_ARC_COEF, THROAT_ENTRANCE_ARC_COEF,
+        )
+        r_t = throat_radius(self.A_THROAT)
+        expected = 0.5 * (THROAT_ENTRANCE_ARC_COEF + THROAT_ARC_COEF) * r_t
+        assert throat_curvature_radius(self.A_THROAT) == pytest.approx(expected, rel=1e-12)
+
+    def test_Dt_over_R_is_the_size_independent_constant(self):
+        """D_t/R = 2.126 for any throat, matching Huzel's sample (2.13)."""
+        from engine.core.nozzle_solver import throat_curvature_radius, throat_radius
+        for A_t in (1e-4, 1e-3, 1e-2, 0.05):
+            D_t = 2.0 * throat_radius(A_t)
+            R = throat_curvature_radius(A_t)
+            assert D_t / R == pytest.approx(2.126, rel=1e-3)
+
+    def test_matches_huzel_sample_calc_4_3_curvature(self):
+        """Huzel: R = 11.71 in for D_t = 24.9 in -> A_t from that D_t."""
+        from engine.core.nozzle_solver import throat_curvature_radius
+        D_t_m = 24.9 * 0.0254
+        A_t = np.pi * (D_t_m / 2.0) ** 2
+        R_m = throat_curvature_radius(A_t)
+        assert R_m / 0.0254 == pytest.approx(11.71, rel=1e-2)
 
 
 class TestRejectsBadInput:
