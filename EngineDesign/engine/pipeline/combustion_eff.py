@@ -79,6 +79,22 @@ def calculate_Lstar(
     return float(Lstar)
 
 
+def blend_cooling_into_cstar(eta_combustion: float, cooling_efficiency: float) -> float:
+    """Combine the combustion and cooling factors into the c* efficiency.
+
+    THE ONLY definition of how cooling converts into a c* factor. eta_cstar()
+    uses it, and so does chamber_solver, which needs eta_combustion before the
+    cooling models have run (it feeds the corrected chamber temperature into
+    them) and so cannot get the blend from eta_cstar's return value.
+
+    cooling_efficiency is an ENERGY fraction -- the share of gas enthalpy
+    surviving cooling, which is also the factor on chamber temperature. c* goes
+    as sqrt(Tc), so the conversion is a square root. Applying the energy
+    fraction to c* directly roughly doubles cooling's penalty.
+    """
+    return float(eta_combustion * np.sqrt(cooling_efficiency))
+
+
 def eta_cstar(
     Lstar: float,
     config: CombustionEfficiencyConfig,
@@ -257,8 +273,8 @@ def eta_cstar(
     # roughly doubled cooling's penalty on c*: at cooling_eff = 0.9607 it
     # applied 0.9607 where 0.9801 is correct, understating c* by 2.0%.
     cooling_eff = float(cooling_efficiency)
+    eta = blend_cooling_into_cstar(eta, cooling_eff)
     eta_cooling_on_cstar = float(np.sqrt(cooling_eff))
-    eta *= eta_cooling_on_cstar
     
     # Validate final efficiency - no clipping, raise error if invalid
     if not np.isfinite(eta):

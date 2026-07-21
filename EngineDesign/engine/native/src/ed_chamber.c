@@ -54,10 +54,6 @@ static double chamber_residual(double Pc, void *vctx) {
     const double Dinj = st->injector.imp_O.d_jet; /* _infer_injector_diameter (impinging) */
     const double Ac = ED_PI * (g->chamber_diameter * 0.5) * (g->chamber_diameter * 0.5);
 
-    EdCoolingResult cool;
-    if (ed_cooling_evaluate(st, Pc, mdot_O, mdot_F, cea.Tc, cea.gamma, cea.R, cea.M, &cool) != ED_OK)
-        return NAN;
-
     /* Rupe mixing optimum: honor an explicit R_opt override, else derive from the
      * impinging-doublet angles (sqrt(sin(theta_F)/sin(theta_O))), 1.0 otherwise. */
     double R_opt;
@@ -75,6 +71,22 @@ static double chamber_residual(double Pc, void *vctx) {
             Ac, g->A_throat, Dinj, mdot_supply, inj.u_F, inj.u_O,
             inj.D32_O, inj.D32_F, inj.momentum_ratio_R, R_opt,
             st->fluid_F.latent_heat, st->comb.T_star_fuel_cap_K, &eta) != ED_OK)
+        return NAN;
+
+    /* ORDER MATTERS: combustion efficiency FIRST, then cooling -- mirrors
+     * chamber_solver.residual(). The cooling models need a gas temperature, and
+     * a real chamber runs cooler than CEA's ideal value because combustion is
+     * incomplete, so Tc is knocked down by eta_combustion^2 (Huzel & Huang
+     * Sample Calc 4-3: c* ~ sqrt(Tc), so a c*-measured efficiency lands on
+     * temperature squared) before the heat transfer is evaluated. Running
+     * cooling first computed the heat load several hundred K too hot.
+     *
+     * Not circular: ed_combustion_efficiency_advanced takes no cooling input. */
+    const double Tc_combustion = cea.Tc * eta.eta_total * eta.eta_total;
+
+    EdCoolingResult cool;
+    if (ed_cooling_evaluate(st, Pc, mdot_O, mdot_F, Tc_combustion, cea.gamma, cea.R, cea.M,
+                            &cool) != ED_OK)
         return NAN;
 
     /* eta.eta_total is combustion-only (mixing x kinetics x L*) despite the
