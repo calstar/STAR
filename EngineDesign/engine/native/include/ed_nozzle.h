@@ -4,14 +4,9 @@
  * mach_solver.py + frozen exit state from chamber gamma/R). Python computes the
  * same frozen exit state — both sides report it as display-only.
  *
- * NOTE (2026-07): the F/Isp/Cf fields in EdNozzleResult are the RETIRED
- * momentum-method reconstruction and are NOT consumed anywhere — delivered
- * thrust is computed in ed_evaluate.c as zeta_n*Cf_vac*Pc*At - Pa*Ae (RPA
- * basis, matching nozzle.py; see docs/thrust_efficiency_bug_analysis.md).
- * ed_evaluate reads only the exit/throat state from this kernel. The legacy
- * fields remain so the golden vectors (nozzle_golden.json) still pin the
- * arithmetic; drop them together with a golden re-export if EdNozzleResult
- * ever changes shape.
+ * Scope: exit/throat state only. Delivered thrust is computed in ed_evaluate.c
+ * on the RPA basis (zeta_n*Cf_vac*Pc*At - Pa*Ae, matching nozzle.py); this
+ * kernel does not compute thrust.
  */
 #ifndef ED_NOZZLE_H
 #define ED_NOZZLE_H
@@ -31,7 +26,10 @@ typedef struct EdNozzleInputs {
     double A_throat;          /* [m^2] */
     double A_exit;            /* [m^2] */
     double eps;               /* expansion ratio A_exit/A_throat (>1) */
-    double Pa;                /* ambient pressure [Pa] */
+    double Pa;                /* ambient pressure [Pa]; unused by the exit-state
+                               * solve (it only fed the retired momentum-method
+                               * thrust) — retained so callers keep a single
+                               * nozzle-input struct. */
     double nozzle_efficiency; /* scales Cf_theoretical only (frozen F is independent) */
     double Cf_ideal;          /* CEA ideal thrust coefficient */
     double gamma;             /* chamber gamma (>1) */
@@ -39,12 +37,10 @@ typedef struct EdNozzleInputs {
     double Tc;                /* chamber temperature [K] */
 } EdNozzleInputs;
 
-/* Flat result. Mirrors the nozzle keys runner.evaluate() forwards to Layer 1. */
+/* Flat result: the frozen exit/throat state ed_evaluate.c consumes, plus the
+ * echoed/theoretical Cf. Not a mirror of runner.evaluate()'s nozzle keys —
+ * thrust and Isp are ed_evaluate.c's job. */
 typedef struct EdNozzleResult {
-    double F;            /* total thrust [N] = momentum + pressure */
-    double F_momentum;   /* [N] */
-    double F_pressure;   /* [N] */
-    double Cf_actual;    /* F / (Pc * A_throat) */
     double Cf_ideal;     /* echoed from input */
     double Cf_theoretical; /* nozzle_efficiency * Cf_ideal */
     double P_exit;       /* [Pa] */
@@ -53,7 +49,6 @@ typedef struct EdNozzleResult {
     double M_exit;       /* exit Mach (>1) */
     double P_throat;     /* [Pa] */
     double T_throat;     /* [K] */
-    double Isp;          /* [s] */
     int    converged;
 } EdNozzleResult;
 

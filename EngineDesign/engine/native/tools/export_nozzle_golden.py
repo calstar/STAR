@@ -75,19 +75,19 @@ def main() -> None:
                 "gamma": float(cea["gamma"]),
                 "R": float(cea["R"]),
                 "Tc": float(cea["Tc"]),
-                # --- expected frozen outputs ---
-                "F": float(res["F"]),
-                "Cf_actual": float(res["Cf_actual"]),
+                # --- expected frozen outputs (exit/throat state only) ---
+                # No F/Isp/Cf_actual: EdNozzleResult no longer computes thrust
+                # (delivered thrust is ed_evaluate.c on the RPA basis), so there
+                # is nothing on the C side for those keys to pin.
                 "P_exit": float(res["P_exit"]),
                 "T_exit": float(res["T_exit"]),
                 "v_exit": float(res["v_exit"]),
                 "M_exit": float(res["M_exit"]),
                 "P_throat": float(res["P_throat"]),
                 "T_throat": float(res["T_throat"]),
-                "Isp": float(res["Isp"]),
             })
-            print(f"{label:>10}  Pc={Pc/1e5:6.2f} bar  F={res['F']:8.1f} N  "
-                  f"Isp={res['Isp']:6.2f} s  M_exit={res['M_exit']:.4f}")
+            print(f"{label:>10}  Pc={Pc/1e5:6.2f} bar  M_exit={res['M_exit']:.4f}  "
+                  f"P_exit={res['P_exit']/1e3:8.2f} kPa  T_exit={res['T_exit']:7.1f} K")
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(samples, indent=1))
