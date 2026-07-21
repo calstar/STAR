@@ -103,10 +103,20 @@ DEFAULT_FUEL_BOILING_POINT_K = 489.0  # K
 # Default oxidizer properties (LOX)
 DEFAULT_LOX_DENS_KG_M3 = 1140.0  # kg/m³
 
-# Default hot gas properties
+# Default hot gas properties.
+#
+# Anchored on NASA CEA transport properties for LOX/CH4 products at Pc = 20 bar,
+# MR 2.8, FROZEN reactions (Tc = 3261 K, M = 19.50): mu 1.030e-4 Pa·s,
+# cp 2463 J/(kg·K), k 0.394 W/(m·K), Pr 0.644. See thermal/gas_transport.py for
+# why frozen rather than equilibrium, and for the known mu inconsistency.
+#
+# The previous conductivity (0.1) was ~4x low, which suppressed h_g by the same
+# factor — it was the largest single error in the gas-side chain after the
+# viscosity unit fix.
 DEFAULT_HOT_GAS_VISC_PA_S = 4.0e-5  # Pa·s
-DEFAULT_HOT_GAS_THERMAL_COND_W_M_K = 0.1  # W/(m·K)
-DEFAULT_HOT_GAS_PRANDTL_ND = 0.7  # Dimensionless
+DEFAULT_HOT_GAS_THERMAL_COND_W_M_K = 0.39  # W/(m·K)
+DEFAULT_HOT_GAS_PRANDTL_ND = 0.64  # Dimensionless
+DEFAULT_HOT_GAS_CP_J_KG_K = 2460.0  # J/(kg·K)
 
 # ============================================================================
 # HEAT TRANSFER CONSTANTS

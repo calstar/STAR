@@ -579,23 +579,18 @@ def estimate_hot_wall_heat_flux(
     rho_g = max(Pc / (R_g * max(Tc, 1.0)), MIN_DENS_KG_M3)
     V_g = mdot_total / (rho_g * A_cross)
 
-    # Get viscosity from config (for reference)
+    # Transport properties from the single provider. Local import: gas_transport
+    # imports the viscosity correlation from this module.
+    from engine.pipeline.thermal.gas_transport import hot_gas_transport
+
     mu_g_config = config.hot_gas_viscosity if config is not None else DEFAULT_HOT_GAS_VISC_PA_S
-    
-    # Calculate viscosity using Huzel's formula if molecular weight is available
     M = gas_props.get("M")  # Molecular weight [kg/kmol]
-    if M is not None and M > 0 and Tc > 0:
-        mu_g_calculated = calculate_gas_viscosity_huzel(Tc, M)
-    else:
-        mu_g_calculated = mu_g_config  # Fallback to config if M not available
-    
-    # Use calculated viscosity for calculations (more accurate)
-    mu_g = mu_g_calculated
-    
-    k_g = config.hot_gas_thermal_conductivity if config is not None else DEFAULT_HOT_GAS_THERMAL_COND_W_M_K
-    cp_g = gamma * R_g / max(gamma - 1.0, EPSILON_SMALL)
-    Pr_g_source = config.hot_gas_prandtl if (config is not None and config.hot_gas_prandtl > 0) else None
-    Pr_g = Pr_g_source if Pr_g_source is not None else (mu_g * cp_g / max(k_g, EPSILON_SMALL))
+    _tr = hot_gas_transport(Tc, M, config)
+    mu_g = _tr["mu"]
+    cp_g = _tr["cp"]
+    k_g = _tr["k"]
+    Pr_g = _tr["Pr"]
+    mu_g_calculated = mu_g
 
     Re_g = rho_g * V_g * chamber_d_inner / max(mu_g, EPSILON_TINY)
     if Re_g < 2000:
@@ -630,4 +625,10 @@ def estimate_hot_wall_heat_flux(
         "gas_viscosity": float(mu_g),  # Viscosity used in calculations (calculated from Huzel if available)
         "gas_viscosity_config": float(mu_g_config),  # Viscosity from config (for reference)
         "gas_viscosity_calculated": float(mu_g_calculated),  # Viscosity from Huzel formula (for reference)
+        # Transport properties actually used, surfaced so they can be asserted
+        # on: an unphysical Prandtl was the tell that cp/k were being derived
+        # from each other rather than supplied.
+        "gas_cp": float(cp_g),
+        "gas_thermal_conductivity": float(k_g),
+        "gas_prandtl": float(Pr_g),
     }

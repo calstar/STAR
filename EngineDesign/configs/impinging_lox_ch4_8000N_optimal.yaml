@@ -74,15 +74,15 @@ regen_cooling:
   wall_thickness: 0.002
   wall_thermal_conductivity: 320.0
   chamber_inner_diameter: 0.1516
-  hot_gas_prandtl: 0.7
+  hot_gas_prandtl: 0.644
   hot_gas_viscosity: 4.0e-05
-  hot_gas_thermal_conductivity: 0.12
+  hot_gas_thermal_conductivity: 0.394
   radiation_emissivity_hot: 0.85
   radiation_view_factor: 1.0
   n_segments: 20
   gas_turbulence_intensity: 0.1
   coolant_turbulence_intensity: 0.05
-  hot_gas_cp: 2200.0
+  hot_gas_cp: 2463.0
   recovery_factor: null
 film_cooling:
   enabled: false

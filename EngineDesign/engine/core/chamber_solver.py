@@ -1009,23 +1009,17 @@ class ChamberSolver:
         from engine.pipeline.constants import DEFAULT_HOT_GAS_VISC_PA_S
         mu_g_config = regen_cfg.hot_gas_viscosity if regen_cfg is not None else DEFAULT_HOT_GAS_VISC_PA_S
         
-        # Calculate viscosity using Huzel's formula if molecular weight is available
+        # Transport properties from the shared provider. This block used to be a
+        # near-verbatim copy of regen_cooling.estimate_hot_wall_heat_flux, down
+        # to the comments, and had the same defect: cp derived from gamma and
+        # Pr derived from it in turn.
+        from engine.pipeline.thermal.gas_transport import hot_gas_transport
         M = cea_props.get("M")  # Molecular weight [kg/kmol]
-        if M is not None and M > 0 and Tc > 0:
-            from engine.pipeline.thermal.regen_cooling import calculate_gas_viscosity_huzel
-            mu_g_calculated = calculate_gas_viscosity_huzel(Tc, M)
-        else:
-            mu_g_calculated = mu_g_config  # Fallback to config if M not available
-        
-        # Use calculated viscosity for calculations (more accurate)
-        mu_g = mu_g_calculated
-        
-        k_g = regen_cfg.hot_gas_thermal_conductivity if regen_cfg is not None else 0.1
-        Pr_g = (
-            regen_cfg.hot_gas_prandtl
-            if (regen_cfg is not None and regen_cfg.hot_gas_prandtl > 0)
-            else mu_g * gamma * R / max(k_g * (gamma - 1.0), 1e-6)
-        )
+        _tr = hot_gas_transport(Tc, M, regen_cfg)
+        mu_g = _tr["mu"]
+        k_g = _tr["k"]
+        Pr_g = _tr["Pr"]
+        mu_g_calculated = mu_g
 
         Re_g = rho_g * velocity_g * geometry["diameter"] / max(mu_g, 1e-8)
         if Re_g < 2000:

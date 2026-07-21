@@ -8,6 +8,7 @@ import numpy as np
 
 from engine.pipeline.config_schemas import AblativeCoolingConfig
 from engine.pipeline.constants import STEFAN_BOLTZMANN_W_M2_K4, EPSILON_SMALL
+from engine.pipeline.thermal.gas_transport import hot_gas_transport
 from engine.pipeline.thermal.regen_cooling import calculate_gas_viscosity_huzel
 
 
@@ -151,11 +152,15 @@ def compute_ablative_heat_flux_profile(
         
         return M
     
-    # Gas thermal conductivity estimate: k ≈ μ × cp / Pr
-    # Typical Pr for combustion gases: 0.7-0.8
-    Pr_gas = 0.75
-    cp_gas = gamma * R_gas / (gamma - 1.0)
-    
+    # Transport properties from the shared provider, so this axial profile and
+    # the lumped estimate_hot_wall_heat_flux() agree. They previously differed
+    # by 3x in both k and Pr, in opposite directions: this function pinned
+    # Pr = 0.75 and derived k, while the other pinned k and derived Pr.
+    _tr = hot_gas_transport(Tc, M_mol, None)
+    cp_gas = _tr["cp"]
+    Pr_gas = _tr["Pr"]
+    k_gas = _tr["k"]
+
     # Recovery factor for adiabatic wall temperature
     # Typical value for turbulent flow: r ≈ Pr^(1/3) ≈ 0.9
     recovery_factor = 0.9
@@ -219,7 +224,11 @@ def compute_ablative_heat_flux_profile(
         
         # Gas properties at local temperature
         mu_local = calc_viscosity(T_local, M_mol)
-        k_local = mu_local * cp_gas / Pr_gas
+        # Conductivity is taken as constant rather than re-derived from the
+        # local viscosity: that derivation implied k varies axially, but it
+        # inherited the Huzel correlation's ~35% offset, so the variation was
+        # false precision. Local viscosity still sets the local Reynolds number.
+        k_local = k_gas
         
         # Reynolds number based on local diameter
         Re_local = rho_local * V_local * D_local / max(mu_local, 1e-8)

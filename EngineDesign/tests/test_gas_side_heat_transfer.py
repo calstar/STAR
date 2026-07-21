@@ -116,17 +116,46 @@ class TestGasSideCoefficient:
         )
 
     def test_h_gas_magnitude(self):
-        """h_g for a chamber of this class is O(10^3) W/(m^2.K).
+        """h_g for a chamber of this class is ~2000-5000 W/(m^2.K).
 
-        The lower bound is set well below the physically expected 2000-5000 on
-        purpose: the default hot-gas thermal conductivity is itself suspect
-        (0.1 W/m.K, vs ~0.3-0.5 for combustion products at 3400 K), which drags
-        the computed value down. Tighten this bound once that is addressed.
+        Anchored on NASA CEA transport properties for these products
+        (LOX/CH4, Pc = 20 bar, MR 2.8, FROZEN reactions):
+
+            mu = 1.03e-4 Pa.s   cp = 2463 J/(kg.K)
+            k  = 0.394 W/(m.K)  Pr = 0.644
+
+        Those give h_g ~ 2060 here. The dominant sensitivity is k: the
+        conductivity used by the code has the largest error of the four, and it
+        alone moves h_g by a factor of ~3.
         """
         h_g = _hot_wall()["h_hot"]
-        assert 300.0 < h_g < 2.0e4, (
-            f"h_hot = {h_g:.1f} W/(m^2.K) is outside any plausible range for a "
-            f"rocket chamber; single digits indicate the laminar Nu branch"
+        assert 1.5e3 < h_g < 6.0e3, (
+            f"h_hot = {h_g:.1f} W/(m^2.K) is outside the 1500-6000 band Bartz "
+            f"gives for a chamber of this class; check cp/k/Pr, which must come "
+            f"from the gas mixture rather than being derived from gamma"
+        )
+
+    def test_prandtl_is_physical(self):
+        """A combustion gas has Pr ~ 0.5-1.0; nothing else is possible.
+
+        Deriving Pr as mu*cp/k from three independently-wrong values produced
+        2.25 here, which no gas exhibits. cp in particular must not come from
+        gamma*R/(gamma-1): that identity holds for a calorically perfect gas,
+        but CEA's GAMMAs is the isentropic exponent of a DISSOCIATING mixture,
+        not cp/cv, and the derived cp overshoots by ~40%.
+        """
+        Pr = _hot_wall()["gas_prandtl"]
+        assert 0.3 < Pr < 1.2, (
+            f"hot-gas Prandtl = {Pr:.3f} is not physical for a combustion gas "
+            f"(CEA frozen gives 0.644 for these products)"
+        )
+
+    def test_convective_flux_magnitude(self):
+        """Convective flux at an ablative wall: a few MW/m^2 at this Pc."""
+        q_conv = _hot_wall()["heat_flux_conv"]
+        assert 2.0e6 < q_conv < 8.0e6, (
+            f"convective flux {q_conv/1e6:.2f} MW/m^2 is outside the plausible "
+            f"2-8 MW/m^2 band for a 20 bar chamber with a 1200 K wall"
         )
 
 
@@ -164,7 +193,11 @@ class TestHeatFlux:
         result = _hot_wall()
         q_conv = result["heat_flux_conv"]
         q_total = result["heat_flux_total"]
-        assert q_conv / q_total > 0.5, (
+        # 0.75 (i.e. radiation under 25%) rather than a bare majority: with the
+        # transport properties corrected, convection alone already carries ~40%,
+        # so a 0.5 threshold would flip to XPASS on an unrelated nudge while
+        # radiation is still ~10x too high.
+        assert q_conv / q_total > 0.75, (
             f"convection is only {100*q_conv/q_total:.1f}% of the total heat "
             f"flux; for a rocket chamber it should dominate"
         )
