@@ -1,6 +1,8 @@
 /* test_residual_golden.c - Parity of the Stage-3 residual physics vs Python:
  * ed_combustion_efficiency_advanced (eta components) and ed_cooling_evaluate
  * (ablative cooling_eff). Reads tests/golden/residual_samples.json. */
+#include <math.h>
+
 #include "ed_combustion.h"
 #include "ed_cooling.h"
 #include "ed_test_util.h"
@@ -66,6 +68,7 @@ int main(void) {
     cg->use_cooling_coupling = (uint8_t)(int)need(cc, cl, "use_cooling_coupling");
     cg->hot_gas_viscosity = need(cc, cl, "hot_gas_viscosity");
     cg->hot_gas_thermal_conductivity = need(cc, cl, "hot_gas_thermal_conductivity");
+    cg->hot_gas_cp = need(cc, cl, "hot_gas_cp");
     cg->hot_gas_prandtl = need(cc, cl, "hot_gas_prandtl");
     cg->gas_turbulence_intensity = need(cc, cl, "gas_turbulence_intensity");
     cg->recovery_factor = need(cc, cl, "recovery_factor");
@@ -137,7 +140,9 @@ int main(void) {
         cmp("heat_removed", cool.heat_removed, need(p, e, "heat_removed"));
 
         /* derived residual quantities */
-        double eta_final = eta.eta_total * cool.cooling_eff;
+        /* c* efficiency = combustion x sqrt(cooling): cooling is an energy
+         * fraction, c* ~ sqrt(Tc). Mirrors ed_chamber.c and combustion_eff. */
+        double eta_final = eta.eta_total * sqrt(cool.cooling_eff);
         double cstar_actual = eta_final * cstar_ideal;
         double mdot_demand = Pc * At / cstar_actual;
         cmp("eta_final", eta_final, need(p, e, "eta_final"));

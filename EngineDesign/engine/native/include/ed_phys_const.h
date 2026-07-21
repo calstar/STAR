@@ -44,4 +44,20 @@
 #define ED_LB_PER_IN_S_TO_PA_S    17.8579673
 #define ED_HUZEL_COEFF            46.6e-10
 
+/* Bartz gas-side film coefficient (Huzel eq. 4-13). Mirrors thermal/bartz.py;
+ * the correlation is evaluated in Huzel's inch-pound units and converted at the
+ * boundary, exactly as the Python does, so the A/B parity holds to machine
+ * precision. Keep every constant here numerically identical to bartz.py. */
+#define ED_M_PER_IN               0.0254
+#define ED_M_PER_FT               0.3048
+#define ED_PA_PER_PSI             6894.757293168361
+#define ED_PA_S_PER_LB_IN_S       17.857967302549516
+#define ED_J_KG_K_PER_BTU_LB_F    4186.8
+#define ED_G_C_LBM_FT_LBF_S2      32.174049
+#define ED_BTU_IN2_S_F_TO_W_M2_K  2943611.716033232   /* J_per_Btu/(m2_per_in2*K_per_degF) */
+/* Throat fillet-arc coefficients; mean is the curvature radius Bartz needs.
+ * Mirror nozzle_solver.THROAT_ENTRANCE_ARC_COEF / THROAT_ARC_COEF. */
+#define ED_THROAT_ENTRANCE_ARC_COEF 1.5
+#define ED_THROAT_ARC_COEF          0.382
+
 #endif /* ED_PHYS_CONST_H */

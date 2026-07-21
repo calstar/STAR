@@ -35,6 +35,40 @@ double ed_chamber_wetted_area(const EdGeometry *g) {
     return circumference * g->length;
 }
 
+/* Bartz gas-side film coefficient (Huzel eq. 4-13) at a chamber station.
+ * Mirrors bartz.bartz_chamber_h_g: the correlation is evaluated in Huzel's
+ * inch-pound units and converted back to SI, so this matches the Python to
+ * machine precision. Returns W/(m^2 K). */
+static double ed_bartz_chamber_h_g(double A_throat, double chamber_area, double Pc,
+                                   double mdot_total, double mu_pa_s, double cp_si,
+                                   double Pr, double gamma, double mach,
+                                   double wall_T, double Tc) {
+    const double A_t = ed_max(A_throat, 1e-12);
+    const double r_t = sqrt(A_t / ED_PI);
+    const double D_throat_in = 2.0 * r_t / ED_M_PER_IN;
+    const double R_curv_in = 0.5 * (ED_THROAT_ENTRANCE_ARC_COEF + ED_THROAT_ARC_COEF)
+                             * r_t / ED_M_PER_IN;
+    /* c* = Pc*A_t/mdot makes Pc*g/c* the physical throat mass flux. */
+    const double cstar_ft_s = (Pc * A_t / ed_max(mdot_total, 1e-12)) / ED_M_PER_FT;
+    const double Pc_psia = Pc / ED_PA_PER_PSI;
+    const double mu_imp = mu_pa_s / ED_PA_S_PER_LB_IN_S;
+    const double cp_imp = cp_si / ED_J_KG_K_PER_BTU_LB_F;
+    const double area_ratio = A_t / ed_max(chamber_area, 1e-12);
+
+    const double kM = 1.0 + 0.5 * (gamma - 1.0) * mach * mach;
+    const double sigma = 1.0 / (pow(0.5 * (wall_T / ed_max(Tc, 1.0)) * kM + 0.5, 0.68)
+                                * pow(kM, 0.12));
+
+    const double diameter = 0.026 / pow(D_throat_in, 0.2);
+    const double transport = pow(mu_imp, 0.2) * cp_imp / pow(Pr, 0.6);
+    const double mass_flux = Pc_psia * ED_G_C_LBM_FT_LBF_S2 / cstar_ft_s;
+    const double mass_flux_group = pow(mass_flux, 0.8);
+    const double curvature = pow(D_throat_in / R_curv_in, 0.1);
+    const double h_imperial = diameter * transport * mass_flux_group * curvature
+                              * pow(area_ratio, 0.9) * sigma;
+    return h_imperial * ED_BTU_IN2_S_F_TO_W_M2_K;
+}
+
 /* estimate_hot_wall_heat_flux -> {q_total, q_conv, q_rad}. */
 static void hot_wall_flux(const EdEngineState *s, double Pc, double Tc, double gamma,
                           double R, double M, double mdot_total, double wall_T,
@@ -47,13 +81,20 @@ static void hot_wall_flux(const EdEngineState *s, double Pc, double Tc, double g
 
     const double mu_g = (M > 0 && Tc > 0) ? ed_gas_viscosity_huzel(Tc, M) : c->hot_gas_viscosity;
     const double k_g = c->hot_gas_thermal_conductivity;
-    const double cp_g = gamma * R / ed_max(gamma - 1.0, ED_EPS_SMALL);
+    /* cp from config, NOT gamma*R/(gamma-1). Dittus-Boelter only used cp via
+     * Pr (which is configured, so the derived value was dead); Bartz uses cp
+     * directly, so the config value must be carried through -- see the note in
+     * bartz.py. gamma*R/(gamma-1) overshoots by ~40% for a dissociating gas. */
+    const double cp_g = (c->hot_gas_cp > 0) ? c->hot_gas_cp
+                                            : gamma * R / ed_max(gamma - 1.0, ED_EPS_SMALL);
     const double Pr_g = (c->hot_gas_prandtl > 0) ? c->hot_gas_prandtl : (mu_g * cp_g / ed_max(k_g, ED_EPS_SMALL));
 
-    const double Re_g = rho_g * V_g * d / ed_max(mu_g, ED_EPS_TINY);
-    const double Nu_g = (Re_g < 2000.0) ? ED_NU_LAMINAR
-                        : ED_NU_TURB_COEF * pow(Re_g, ED_NU_TURB_RE_EXP) * pow(Pr_g, ED_NU_TURB_PR_EXP);
-    const double h_g = Nu_g * k_g / d;
+    /* Bartz (eq. 4-13) at the chamber station, replacing Dittus-Boelter. */
+    const double a_sound = sqrt(ed_max(gamma * R * ed_max(Tc, 1.0), 1.0));
+    const double M_chamber = ed_min(V_g / a_sound, 0.99);
+    const double h_g = ed_bartz_chamber_h_g(s->geom.A_throat, A_cross, Pc, mdot_total,
+                                            mu_g, cp_g, Pr_g, gamma, M_chamber,
+                                            wall_T, Tc);
 
     const double Taw = Tc * c->recovery_factor;
     const double dT = ed_max(Taw - wall_T, 0.0);

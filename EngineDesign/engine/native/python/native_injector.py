@@ -170,6 +170,7 @@ def _fill_cooling(dst, cfg):
     if rg is not None:
         dst.hot_gas_viscosity = float(rg.hot_gas_viscosity)
         dst.hot_gas_thermal_conductivity = float(rg.hot_gas_thermal_conductivity)
+        dst.hot_gas_cp = float(rg.hot_gas_cp)
         dst.hot_gas_prandtl = float(rg.hot_gas_prandtl)
         dst.gas_turbulence_intensity = float(rg.gas_turbulence_intensity)
         dst.recovery_factor = float(rg.recovery_factor) if rg.recovery_factor is not None else 0.94

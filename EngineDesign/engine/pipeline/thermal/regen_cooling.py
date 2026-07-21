@@ -591,12 +591,31 @@ def estimate_hot_wall_heat_flux(
     Pr_g = _tr["Pr"]
     mu_g_calculated = mu_g
 
-    Re_g = rho_g * V_g * chamber_d_inner / max(mu_g, EPSILON_TINY)
-    if Re_g < 2000:
-        Nu_g = NU_LAMINAR_ND
-    else:
-        Nu_g = NU_TURBULENT_COEFFICIENT_ND * (Re_g ** NU_TURBULENT_RE_EXPONENT_ND) * (Pr_g ** NU_TURBULENT_PR_EXPONENT_ND)
-    h_g = Nu_g * k_g / chamber_d_inner
+    # Gas-side film coefficient from Bartz (Huzel & Huang eq. 4-13), replacing
+    # the pipe-flow Dittus-Boelter form that was here. A thrust chamber violates
+    # every Dittus-Boelter assumption (strong wall-to-gas temperature ratio,
+    # accelerating flow, varying cross-section); Bartz was written for exactly
+    # this and carries the sigma property-variation correction plus the throat
+    # geometry terms. See thermal/bartz.py. Evaluated at the chamber station:
+    # area ratio A_t/A_chamber and the local (subsonic) Mach number.
+    from engine.pipeline.thermal.bartz import bartz_chamber_h_g
+
+    A_throat_g = gas_props.get("A_throat", DEFAULT_THROAT_AREA_M2)
+    a_sound = np.sqrt(max(gamma * R_g * max(Tc, 1.0), 1.0))
+    M_chamber = min(V_g / a_sound, 0.99)
+    h_g = bartz_chamber_h_g(
+        A_throat=A_throat_g,
+        chamber_area=A_cross,
+        Pc=Pc,
+        mdot_total=mdot_total,
+        mu=mu_g,
+        cp=cp_g,
+        Pr=Pr_g,
+        gamma=gamma,
+        mach=M_chamber,
+        wall_temperature=wall_temperature,
+        Tc=Tc,
+    )
 
     # Calculate adiabatic wall temperature using recovery factor
     # Taw = Tc × recovery_factor (accounts for kinetic energy recovery in boundary layer) see Huzel 4-10

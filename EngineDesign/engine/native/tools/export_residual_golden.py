@@ -17,7 +17,7 @@ from engine.pipeline.config_schemas import ensure_chamber_geometry
 from engine.core.closure import flows
 from engine.core.chamber_solver import ChamberSolver
 from engine.pipeline.cea_cache import CEACache
-from engine.pipeline.combustion_eff import calculate_Lstar
+from engine.pipeline.combustion_eff import calculate_Lstar, blend_cooling_into_cstar
 from engine.pipeline.combustion_physics import calculate_combustion_efficiency_advanced
 
 EFF_MODEL = {"constant": 0, "linear": 1, "exponential": 2}
@@ -47,6 +47,7 @@ def cooling_dict(cfg):
         "use_cooling_coupling": int(bool(eff.use_cooling_coupling)),
         "hot_gas_viscosity": float(rg.hot_gas_viscosity),
         "hot_gas_thermal_conductivity": float(rg.hot_gas_thermal_conductivity),
+        "hot_gas_cp": float(rg.hot_gas_cp),
         "hot_gas_prandtl": float(rg.hot_gas_prandtl),
         "gas_turbulence_intensity": float(rg.gas_turbulence_intensity),
         "recovery_factor": float(rg.recovery_factor) if rg.recovery_factor is not None else 0.94,
@@ -141,7 +142,11 @@ def main():
                     cool = diag.get("cooling", {})
                     if isinstance(cool, dict) and isinstance(cool.get("ablative"), dict):
                         heat_removed = float(cool["ablative"].get("heat_removed", 0.0))
-                    eta_final = res["eta_total"] * cooling_eff
+                    # Matches ed_chamber.c: c* efficiency = combustion x
+                    # sqrt(cooling), because cooling is an energy fraction and
+                    # c* goes as sqrt(Tc). Was linear here; that is what made
+                    # this golden stale after the sqrt fix.
+                    eta_final = blend_cooling_into_cstar(res["eta_total"], cooling_eff)
                     cstar_actual = eta_final * cstar_ideal
                     mdot_demand = Pc * cg.A_throat / cstar_actual
                     samples.append({
