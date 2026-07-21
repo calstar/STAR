@@ -1,0 +1,60 @@
+# Material preset: PHENOLIC ablative liner + GRAPHITE throat insert.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# These are properties of the SUBSTANCE, not of any particular engine: one liner material has one
+# heat of ablation regardless of which engine it lines. They were previously duplicated verbatim in
+# every config -- 61 identical fields across configs/canonical/impinging.yaml and pintle.yaml, and
+# the same values again in every impinging_* config. Nothing kept them in sync, so the first time
+# anyone measured a real value and updated one file, the rest would have diverged silently.
+#
+# This follows the pattern the codebase already uses twice: configs/propellants/*.yaml supplies
+# fluid identity, and config_switch.apply_injector_type() restamps the injector-dependent closures
+# (SMD model, discharge Cd) at load. Materials were the remaining category with no mechanism.
+#
+# OVERRIDES
+# ---------
+# Anything set explicitly in a config WINS over the value here, and every such override is LOGGED
+# by io._deep_merge_preset -- so a per-engine deviation is possible but never silent.
+#
+# WHAT IS *NOT* HERE (deliberately per-engine)
+# --------------------------------------------
+#   enabled, initial_thickness, coverage_fraction, char_layer_thickness, nozzle_ablative,
+#   track_geometry_evolution, throat_recession_multiplier   -> sizing / configuration choices
+#   blowing_*, turbulence_*                                  -> model closures, not material data
+#   ambient_temperature, radiative_sink_*, oxygen_*          -> environment, not material data
+#
+# PROVENANCE WARNING
+# ------------------
+# These values are AS-CONFIGURED, carried forward from the original configs. None is traced to a
+# datasheet or a measurement in this repo. The material identity ("phenolic") is inferred from
+# engine/pipeline/thermal_analysis.py and time_varying_solver.py, which name the layer "Phenolic
+# Ablator" -- it is NOT declared anywhere in the configs. Treat every number here as unverified
+# until someone checks it against the actual material being purchased.
+
+ablative_cooling:
+  material_density: 1600.0            # kg/m^3
+  heat_of_ablation: 2500000.0         # J/kg
+  thermal_conductivity: 0.35          # W/m-K (virgin)
+  specific_heat: 1500.0               # J/kg-K
+  pyrolysis_temperature: 950.0        # K
+  surface_temperature_limit: 1200.0   # K
+  char_layer_conductivity: 0.2        # W/m-K (charred)
+  surface_emissivity: 0.85            # -
+
+graphite_insert:
+  material_density: 2260.0            # kg/m^3
+  heat_of_ablation: 15000000.0        # J/kg
+  thermal_conductivity: 100.0         # W/m-K
+  specific_heat: 710.0                # J/kg-K
+  surface_temperature_limit: 2500.0   # K
+  emissivity: 0.8                     # -
+  char_layer_conductivity: 5.0        # W/m-K
+  # Oxidation kinetics -- graphite recession is oxidation-driven below the ablation regime.
+  oxidation_temperature: 800.0        # K, onset
+  oxidation_rate: 1.0e-06             # kg/m^2-s at the reference state below
+  activation_energy: 190000.0         # J/mol
+  oxidation_reference_temperature: 973.0    # K
+  oxidation_reference_pressure: 21000.0     # Pa (O2 partial pressure)
+  oxidation_enthalpy: 32800000.0            # J/kg
+  ablation_surface_temperature: 3000.0      # K, sublimation regime

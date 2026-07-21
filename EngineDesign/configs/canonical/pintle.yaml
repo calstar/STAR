@@ -1,24 +1,17 @@
 propellant_preset: ethalox
+material_preset: phenolic_graphite
 ablative_cooling:
   ambient_temperature: 300.0
   blowing_coefficient: 0.5
   blowing_efficiency: 0.75
   blowing_min_reduction_factor: 0.1
-  char_layer_conductivity: 0.2
   char_layer_thickness: 0.001
   coverage_fraction: 0.9
   enabled: true
-  heat_of_ablation: 2500000.0
   initial_thickness: 0.008
-  material_density: 1600.0
   nozzle_ablative: false
-  pyrolysis_temperature: 950.0
   radiative_sink_fallback_temperature: 600.0
   radiative_sink_minimum_threshold: 400.0
-  specific_heat: 1500.0
-  surface_emissivity: 0.85
-  surface_temperature_limit: 1200.0
-  thermal_conductivity: 0.35
   throat_recession_multiplier: null
   track_geometry_evolution: true
   turbulence_exponent: 1.0
@@ -228,30 +221,19 @@ fuel_tank:
   rp1_radius: 0.0762
   tank_volume_m3: 0.011109
 graphite_insert:
-  ablation_surface_temperature: 3000.0
   ablation_transition_width: 200.0
-  activation_energy: 190000.0
   ambient_temperature: 300.0
-  char_layer_conductivity: 5.0
   char_layer_thickness: 0.0005
   coverage_fraction: 1.0
-  emissivity: 0.8
   enabled: true
   feedback_fraction_max: 0.2
   feedback_fraction_min: 0.0
   friction_coefficient_override: null
-  heat_of_ablation: 15000000.0
   initial_thickness: 0.006
-  material_density: 2260.0
   mixture_mw: 0.024
-  oxidation_enthalpy: 32800000.0
   oxidation_pre_exponential: null
   oxidation_pressure_exponent: 0.5
-  oxidation_rate: 1.0e-06
-  oxidation_reference_pressure: 21000.0
-  oxidation_reference_temperature: 973.0
   oxidation_stoichiometry_ratio: 1.0
-  oxidation_temperature: 800.0
   oxygen_mass_fraction: 0.05
   oxygen_mole_fraction: null
   recession_multiplier: null
@@ -260,9 +242,6 @@ graphite_insert:
   reference_diffusivity_temperature: 1500.0
   simplified_graphite_oxidation: false
   sizing_only_mode: false
-  specific_heat: 710.0
-  surface_temperature_limit: 2500.0
-  thermal_conductivity: 100.0
 injector:
   geometry:
     fuel:

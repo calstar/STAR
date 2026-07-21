@@ -1,4 +1,5 @@
 propellant_preset: methalox
+material_preset: phenolic_graphite
 injector:
   type: impinging
   geometry:
@@ -77,14 +78,8 @@ film_cooling:
   cp_override: null
 ablative_cooling:
   enabled: true
-  material_density: 1600.0
-  heat_of_ablation: 2500000.0
-  thermal_conductivity: 0.35
-  specific_heat: 1500.0
   initial_thickness: 0.008
-  surface_temperature_limit: 1200.0
   coverage_fraction: 0.9
-  pyrolysis_temperature: 950.0
   blowing_efficiency: 0.75
   use_physics_based_blowing: true
   blowing_coefficient: 0.5
@@ -94,9 +89,7 @@ ablative_cooling:
   turbulence_exponent: 1.0
   turbulence_max_multiplier: 3.0
   throat_recession_multiplier: null
-  char_layer_conductivity: 0.2
   char_layer_thickness: 0.001
-  surface_emissivity: 0.85
   ambient_temperature: 300.0
   radiative_sink_minimum_threshold: 400.0
   radiative_sink_fallback_temperature: 600.0
@@ -104,29 +97,15 @@ ablative_cooling:
   nozzle_ablative: false
 graphite_insert:
   enabled: true
-  material_density: 2260.0
-  heat_of_ablation: 15000000.0
-  thermal_conductivity: 100.0
-  specific_heat: 710.0
   initial_thickness: 0.006
-  surface_temperature_limit: 2500.0
-  oxidation_temperature: 800.0
-  oxidation_rate: 1.0e-06
-  activation_energy: 190000.0
-  oxidation_reference_temperature: 973.0
-  oxidation_reference_pressure: 21000.0
   recession_multiplier: null
   sizing_only_mode: false
   simplified_graphite_oxidation: false
-  char_layer_conductivity: 5.0
   char_layer_thickness: 0.0005
   coverage_fraction: 1.0
-  emissivity: 0.8
   ambient_temperature: 300.0
   feedback_fraction_min: 0.0
   feedback_fraction_max: 0.2
-  oxidation_enthalpy: 32800000.0
-  ablation_surface_temperature: 3000.0
   ablation_transition_width: 200.0
   oxidation_pressure_exponent: 0.5
   oxidation_pre_exponential: null

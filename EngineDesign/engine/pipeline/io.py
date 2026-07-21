@@ -90,6 +90,44 @@ def _apply_propellant_preset(data: Dict[str, Any], config_dir: Path) -> Dict[str
     )
 
 
+def _apply_material_preset(data: Dict[str, Any], config_dir: Path) -> Dict[str, Any]:
+    """If ``material_preset`` is set, merge ``configs/materials/<name>.yaml`` under the same
+    explicit-YAML-wins semantics as the propellant preset.
+
+    Material properties (heat of ablation, densities, oxidation kinetics, ...) are constants of the
+    SUBSTANCE, not of an engine -- but they were duplicated verbatim in every config, 61 identical
+    fields across the two canonical files alone, with nothing keeping them in sync. Sharing them
+    means one authoritative value; the deep merge still lets a config override any leaf, and every
+    override is logged, so a per-engine deviation is possible but never silent.
+
+    No coherence check here (unlike propellants): a material has no "identity" field that a stale
+    explicit block could contradict into a plausible-but-wrong result.
+    """
+    name = data.get("material_preset")
+    if not name or str(name).strip().lower() == "custom":
+        return data
+    name = str(name).strip().lower()
+    for d in _material_preset_search_dirs(config_dir):
+        candidate = d / f"{name}.yaml"
+        if candidate.exists():
+            with open(candidate, "r", encoding="utf-8") as f:
+                preset = yaml.safe_load(f) or {}
+            _log.info("applying material preset '%s' from %s", name, candidate)
+            merged = _deep_merge_preset(preset, data)
+            merged["material_preset"] = name
+            return merged
+    raise FileNotFoundError(
+        f"Unknown material_preset '{name}'. Available: "
+        f"{sorted({p.stem for d in _material_preset_search_dirs(config_dir) if d.is_dir() for p in d.glob('*.yaml')})} "
+        f"(searched: {[str(d) for d in _material_preset_search_dirs(config_dir)]})"
+    )
+
+
+def _material_preset_search_dirs(config_dir: Path) -> List[Path]:
+    """Material lookup order: next to the config file first, then the repo's configs/materials."""
+    return [config_dir / "materials", _PROJECT_ROOT / "configs" / "materials"]
+
+
 def load_config(config_path: Union[str, Path]) -> PintleEngineConfig:
     """
     Load engine configuration from YAML file.
@@ -117,6 +155,7 @@ def load_config(config_path: Union[str, Path]) -> PintleEngineConfig:
         data = yaml.safe_load(f)
 
     data = _apply_propellant_preset(data, path.resolve().parent)
+    data = _apply_material_preset(data, path.resolve().parent)
 
     # Re-stamp spray/discharge bindings for the declared injector type (fixes stale pintle-era
     # lefebvre SMD + fixed Cd left on impinging YAMLs — bogus ~1 µm D32 and supply-starved Pc).

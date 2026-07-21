@@ -1462,6 +1462,11 @@ class PintleEngineConfig(BaseModel):
     # validation: preset supplies fluids/CEA baseline, explicit YAML fields override. Plain str (not
     # Literal) on purpose — adding a new propellant must require zero code changes (UNIFICATION P7).
     propellant_preset: Optional[str] = Field(default=None, description="Propellant preset to merge (e.g. 'methalox', 'ethalox', 'kerolox'); explicit fields win over preset")
+    # Material preset name (configs/materials/<name>.yaml). Same resolve-before-validation and
+    # explicit-wins semantics as propellant_preset. Supplies liner/insert MATERIAL constants only
+    # (densities, heat of ablation, oxidation kinetics) — sizing, enable flags and model closures
+    # stay per-engine. Plain str for the same reason: new materials must need zero code changes.
+    material_preset: Optional[str] = Field(default=None, description="Material preset to merge (e.g. 'phenolic_graphite'); explicit fields win over preset")
     fluids: Dict[str, FluidConfig]
     injector: InjectorConfig
     feed_system: Dict[str, FeedSystemConfig]  # "oxidizer" and "fuel"
