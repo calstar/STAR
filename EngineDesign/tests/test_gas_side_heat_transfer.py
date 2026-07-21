@@ -170,25 +170,20 @@ class TestHeatFlux:
             f"plausible 0.5-15 MW/m^2 band"
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Gas emissivity is hardcoded to the wall's surface emissivity "
-            "(0.8-0.85). That value is correct for charred phenolic but wrong "
-            "for the gas: LOX/CH4 products are non-luminous CO2/H2O band "
-            "radiators, not a grey body, so radiation is overstated by roughly "
-            "an order of magnitude. Needs a separate gas_emissivity, ideally "
-            "from mean beam length + Hottel/WSGG. Delete this marker when fixed."
-        ),
-    )
     def test_convection_dominates_over_radiation(self):
         """Convection must carry the bulk of the load.
 
         A near-total collapse of the convective term is invisible in the
         headline number, because the total is the only value surfaced to the
-        UI -- so this asserts the *split*, not just the sum. Huzel/Sutton
-        design guidance puts radiation at ~5% of the total for non-luminous
-        propellants, and up to ~40% only for metallised or heavily sooting ones.
+        UI -- so this asserts the *split*, not just the sum.
+
+        Reference for the expected split (measured, not folklore): Goebel,
+        Kniesner, Frey, Knab & Mundt, "Radiative Heat Transfer Analysis in
+        Modern Rocket Combustion Chambers", EUCASS 2013 / CEAS Space Journal
+        6:79 (2014). For a subscale CH4/O2 chamber, radiative/total wall heat
+        flux is 8% at its local peak (injector inlet) and 2.5% integrated over
+        the chamber; H2/O2 peaks at 9-10%. Convection therefore carries
+        >90% of the load, which is what the 0.75 threshold below guards.
         """
         result = _hot_wall()
         q_conv = result["heat_flux_conv"]
@@ -200,6 +195,61 @@ class TestHeatFlux:
         assert q_conv / q_total > 0.75, (
             f"convection is only {100*q_conv/q_total:.1f}% of the total heat "
             f"flux; for a rocket chamber it should dominate"
+        )
+
+
+class TestCarbonDepositWarning:
+    """Kerosene-class fuels must be flagged; clean fuels must not be.
+
+    The gas-side model omits the carbon-deposit resistance (Huzel 4-17/4-18),
+    which over-predicts kerolox heat load by ~5x. A silent 5x is exactly the
+    failure mode this whole exercise has been about, so it warns. Equally, a
+    warning that cried wolf on methalox would be worse than none -- hence the
+    negative cases carry as much weight as the positive one.
+    """
+
+    @staticmethod
+    def _cfg(fuel: str, ablative: bool = True):
+        import types
+
+        return types.SimpleNamespace(
+            combustion=types.SimpleNamespace(cea=types.SimpleNamespace(fuel_name=fuel)),
+            ablative_cooling=types.SimpleNamespace(enabled=ablative),
+            regen_cooling=types.SimpleNamespace(enabled=False),
+            graphite_insert=types.SimpleNamespace(enabled=False),
+        )
+
+    def _warn(self, fuel: str, ablative: bool = True):
+        from engine.pipeline.thermal import gas_transport
+
+        gas_transport._warned_fuels.clear()  # warns once per fuel by design
+        return gas_transport.warn_if_carbon_depositing(self._cfg(fuel, ablative))
+
+    @pytest.mark.parametrize("fuel", ["RP-1", "RP1", "Kerosene", "JP-8", "Jet-A"])
+    def test_warns_for_kerosene_class(self, fuel):
+        msg = self._warn(fuel)
+        assert msg is not None, f"{fuel} deposits carbon but was not flagged"
+        assert "over-predicted" in msg
+
+    @pytest.mark.parametrize("fuel", ["CH4", "Ethanol", "Methanol", "LH2"])
+    def test_silent_for_clean_fuels(self, fuel):
+        assert self._warn(fuel) is None, (
+            f"{fuel} does not lay down a carbon deposit; warning here would train "
+            f"users to ignore the message"
+        )
+
+    def test_silent_when_no_wall_model_runs(self):
+        """No heat-transfer model enabled -> the limitation is irrelevant."""
+        assert self._warn("RP-1", ablative=False) is None
+
+    def test_warns_only_once_per_fuel(self):
+        from engine.pipeline.thermal import gas_transport
+
+        gas_transport._warned_fuels.clear()
+        cfg = self._cfg("RP-1")
+        assert gas_transport.warn_if_carbon_depositing(cfg) is not None
+        assert gas_transport.warn_if_carbon_depositing(cfg) is None, (
+            "repeat calls must stay quiet; a per-timestep warning would be noise"
         )
 
 
@@ -246,6 +296,62 @@ class TestWallTemperatureSolver:
         assert hot > cold + 50.0, (
             f"surface temperature barely moved with h_g ({cold:.1f} -> {hot:.1f} K); "
             f"the solve is ignoring the gas-side boundary condition"
+        )
+
+    def test_matches_huzel_sample_calculation_4_7(self):
+        """Reproduce a published worked example: Huzel & Huang Sample Calc 4-7.
+
+        This is the strongest check in the file -- every other assertion here is
+        a plausibility bound we chose ourselves, whereas this one has a printed
+        answer we must land on.
+
+        Huzel eq. (4-38), radiation-cooled nozzle extension:
+
+            h_gc * (T_aw - T_wg) = eps * sigma * T_wg^4
+
+        which is exactly the surface balance this solver implements, in the
+        limit q_rad_in = 0 (no gas radiation term), T_ambient -> 0 (radiating to
+        space) and R_wall -> infinity (negligible drop through the metal, which
+        is the stated assumption). That the general form collapses onto Huzel's
+        is the justification for including the re-radiation term at all.
+
+        Given (A-4 stage nozzle extension at area ratio 8):
+            h_gc = 7.1e-5 Btu/(in^2.sec.degR),  T_aw = 4900 degR,  eps = 0.95
+        Printed answer:
+            T_wg = 2660 degR,  q = 0.159 Btu/(in^2.sec)
+        """
+        from engine.pipeline.thermal_analysis import (
+            MaterialLayer,
+            ThermalBoundaryConditions,
+            calculate_steady_state_temperature_profile,
+        )
+
+        BTU_J = 1055.05585
+        IN2_M2 = 6.4516e-4
+        h_si = 7.1e-5 * BTU_J / IN2_M2 * 1.8   # Btu/(in^2.s.degR) -> W/(m^2.K)
+        Taw_si = 4900.0 / 1.8                  # degR -> K
+
+        layers = [MaterialLayer("refractory", 0.002, 100.0, 10000.0, 300.0,
+                                emissivity=0.95)]
+        r = calculate_steady_state_temperature_profile(
+            layers,
+            ThermalBoundaryConditions(
+                T_hot_gas=Taw_si, h_hot_gas=h_si, q_rad_hot=0.0,
+                T_ambient=1e-6,     # radiating to space
+                h_ambient=1e-9,     # adiabatic back face
+            ),
+        )
+        T_wg_degR = r["T_surface_hot"] * 1.8
+        q_si = h_si * (Taw_si - r["T_surface_hot"])
+        q_huzel = 0.159 * BTU_J / IN2_M2
+
+        assert T_wg_degR == pytest.approx(2660.0, rel=0.01), (
+            f"wall temperature {T_wg_degR:.0f} degR does not reproduce Huzel "
+            f"Sample Calc 4-7 (2660 degR)"
+        )
+        assert q_si == pytest.approx(q_huzel, rel=0.02), (
+            f"heat flux {q_si/1e3:.1f} kW/m^2 does not reproduce Huzel's "
+            f"{q_huzel/1e3:.1f} kW/m^2"
         )
 
     def test_responds_to_wall_conductivity(self):

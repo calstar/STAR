@@ -73,6 +73,12 @@ class PintleEngineRunner:
         # (deep copy is done in Layer 3 before passing config to runner)
         self.config = config
         cg = ensure_chamber_geometry(self.config)
+
+        # Kerosene-class fuels lay down an insulating carbon deposit we do not
+        # model; the gas-side heat load is over-predicted for them. Warn once
+        # rather than let the number look trustworthy.
+        from engine.pipeline.thermal.gas_transport import warn_if_carbon_depositing
+        warn_if_carbon_depositing(self.config)
         
         # Initialize CEA cache
         self.cea_cache = CEACache(config.combustion.cea)
