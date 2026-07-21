@@ -41,14 +41,41 @@ ROOT = Path(__file__).resolve().parents[1]
 PSI_TO_PA = 6894.76
 PA_AMBIENT = 101325.0
 
-# Opt-in: this suite is the native-parity CI job's payload (ED_REQUIRE_NATIVE=1).
-# It self-skips in the general regression gate (`pytest tests/`) so the C-vs-
-# Python comparison is reported once, in the job whose contract it enforces.
-# Set ED_AB_PARITY=1 to run it locally/ad hoc.
-pytestmark = pytest.mark.skipif(
-    os.environ.get("ED_REQUIRE_NATIVE") != "1" and os.environ.get("ED_AB_PARITY") != "1",
-    reason="A/B parity runs in the native-parity CI job; set ED_AB_PARITY=1 to run locally",
-)
+def _parity_should_run() -> tuple[bool, str]:
+    """Run whenever this machine has already built the native kernel.
+
+    This suite is the native-parity CI job's payload, but it used to skip
+    unconditionally outside that job -- which meant `pytest tests/` could report
+    all-green while comparing today's Python against a stale binary. That is not
+    hypothetical: the native kernel is the DEFAULT execution path
+    (native_injector.native_enabled() is True unless ED_USE_NATIVE=0) and
+    chamber_solver._native_chamber_pc runs the whole Pc solve in C, so a
+    physics change made only in Python does not affect shipped numbers at all.
+    A green suite that never exercised C is actively misleading.
+
+    So: if a library is already built, the toolchain exists and running is
+    cheap -- and ensure_lib() rebuilds it when it is older than the C sources,
+    which is exactly the stale-binary case. If nothing has ever been built,
+    skip rather than impose a first-time CMake build on a plain test run.
+
+    ED_AB_PARITY=1 forces it on, ED_AB_PARITY=0 forces it off.
+    """
+    if os.environ.get("ED_REQUIRE_NATIVE") == "1" or os.environ.get("ED_AB_PARITY") == "1":
+        return True, ""
+    if os.environ.get("ED_AB_PARITY") == "0":
+        return False, "ED_AB_PARITY=0 explicitly disables the A/B parity suite"
+    try:
+        from engine.native.python import autobuild
+        if autobuild.lib_if_built() is not None:
+            return True, ""
+    except Exception as exc:  # import problems must not break collection
+        return False, f"native autobuild unavailable ({exc})"
+    return False, ("no native library has been built on this machine; build it "
+                   "or set ED_AB_PARITY=1 to force the A/B parity suite")
+
+
+_SHOULD_RUN, _SKIP_REASON = _parity_should_run()
+pytestmark = pytest.mark.skipif(not _SHOULD_RUN, reason=_SKIP_REASON)
 
 # Tank-pressure points (psi) on the canonical impinging engine — nominal plus
 # off-nominal, same operating window the manual parity tools exercised.
@@ -104,19 +131,67 @@ def native_injector_mod():
 
 @pytest.fixture(scope="module")
 def rig(native_injector_mod):
-    """Config + runner + per-point live Python reference results."""
+    """Config + runner + per-point PYTHON reference results.
+
+    The reference MUST be computed with the native path disabled. The native
+    kernel is the default execution path -- native_injector.native_enabled() is
+    True unless ED_USE_NATIVE=0, and chamber_solver._native_chamber_pc then
+    runs the entire Pc solve in C and skips Python's Brent entirely.
+
+    Measured, with a deliberate Python-only divergence live (the cooling->c*
+    conversion forced back to linear), reference taken from a default
+    runner.evaluate():
+
+        Pc, F, Isp              |native - "python"| / native = 0.000e+00
+        eta_cstar, cstar_actual |native - "python"| / native = 1.976e-02
+
+    i.e. the headline performance numbers were served straight from C and
+    compared against themselves -- they could not disagree no matter what
+    Python did. Only the fields Python recomputes on top of C's Pc (the
+    efficiency diagnostics) were genuine comparisons. Forcing the reference
+    onto the Python solver makes every field a real Python-vs-C check.
+
+    native_enabled() re-reads the env var on every call, so toggling it around
+    the reference computation is sufficient; no reload is needed.
+
+    """
     from engine.core.runner import PintleEngineRunner
     from engine.pipeline.io import load_config
 
     config = load_config(ROOT / "configs" / "canonical" / "impinging.yaml")
     if not native_injector_mod._can_handle_chamber(config):
         pytest.fail("native kernel reports it cannot handle the canonical impinging config")
-    runner = PintleEngineRunner(config)
 
     points = [(po * PSI_TO_PA, pf * PSI_TO_PA) for po, pf in POINTS_PSI]
-    reference = {}
-    for p_o, p_f in points:
-        reference[(p_o, p_f)] = runner.evaluate(p_o, p_f, P_ambient=PA_AMBIENT, silent=True)
+
+    # ED_REQUIRE_NATIVE must come off with it: the CI parity job sets it to 1,
+    # and closure._native_solve raises outright when native is required but
+    # disabled (closure.py:59). Leaving it set would make this fixture explode
+    # in CI while passing locally.
+    prior = {k: os.environ.get(k) for k in ("ED_USE_NATIVE", "ED_REQUIRE_NATIVE")}
+    os.environ["ED_USE_NATIVE"] = "0"
+    os.environ["ED_REQUIRE_NATIVE"] = "0"
+    try:
+        if native_injector_mod.native_enabled():
+            pytest.fail(
+                "ED_USE_NATIVE=0 did not disable the native path; the reference "
+                "would be C, not Python, and this suite would compare C to itself"
+            )
+        runner = PintleEngineRunner(config)
+        reference = {
+            (p_o, p_f): runner.evaluate(p_o, p_f, P_ambient=PA_AMBIENT, silent=True)
+            for p_o, p_f in points
+        }
+    finally:
+        for key, value in prior.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    if not native_injector_mod.native_enabled():
+        pytest.fail("native path did not re-enable after building the Python reference")
+
     return {"config": config, "runner": runner, "points": points, "reference": reference}
 
 
