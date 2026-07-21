@@ -1,4 +1,8 @@
-"""Feed tank/manifold pressure vs time — blowdown segments vs dome-regulated (Phys §6.2)."""
+"""Feed tank/manifold pressure vs time — regime selection and the dome-regulated curve (Phys §6.2).
+
+Regimes: ``blowdown`` (passive ullage expansion), ``dome_regulated`` (regulated setpoint + EOB
+droop), ``active`` (legacy free-form segmented curve — needs closed-loop pressure control).
+"""
 
 from __future__ import annotations
 
@@ -9,13 +13,26 @@ _PA_PER_PSI = 6894.757
 _DRIFT_PSI_PER_1000_PSI_INLET = 0.010  # Aqua 1092 supply-pressure effect [Phys §6.1]
 
 
+VALID_FEED_PRESSURE_MODELS = ("blowdown", "dome_regulated", "active")
+
+
 def get_feed_pressure_model(config: Any) -> str:
-    """Return ``blowdown`` or ``dome_regulated`` from design requirements."""
+    """Return the Layer-2 feed-pressure regime: ``blowdown``, ``dome_regulated`` or ``active``.
+
+    Missing or unrecognised values resolve to ``active`` — the legacy free-form segment search —
+    so configs that never declared a regime keep the behaviour they have today. This is
+    deliberately NOT the schema default: ``DesignRequirementsConfig.feed_pressure_model`` defaults
+    to ``dome_regulated``; this fallback only applies when design requirements are absent entirely
+    (or carry a value the schema never validated, e.g. a mock in tests).
+    """
     dr = getattr(config, "design_requirements", None)
     if dr is None:
-        return "blowdown"
-    model = getattr(dr, "feed_pressure_model", None) or "blowdown"
-    return str(model).strip().lower()
+        return "active"
+    model = getattr(dr, "feed_pressure_model", None)
+    if model is None:
+        return "active"
+    normalized = str(model).strip().lower()
+    return normalized if normalized in VALID_FEED_PRESSURE_MODELS else "active"
 
 
 def generate_dome_regulated_pressure_curve(

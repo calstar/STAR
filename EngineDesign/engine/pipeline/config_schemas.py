@@ -970,9 +970,50 @@ class DesignRequirementsConfig(BaseModel):
         gt=0.0,
         description="Preferred upper edge for fuel ΔP_inj/Pc (soft hinge)",
     )
-    feed_pressure_model: str = Field(
+    feed_pressure_model: Literal["blowdown", "dome_regulated", "active"] = Field(
         default="dome_regulated",
-        description="Tank pressure time model: blowdown (decaying segments) or dome_regulated (eq. 6.2)",
+        description=(
+            "Layer-2 feed-pressure regime. "
+            "'blowdown': passive ullage expansion — tank P(t) is a physical CONSEQUENCE of ullage "
+            "fraction + start pressure, so Layer 2 searches the ullage split, not the curve. "
+            "'dome_regulated': regulator holds a ~constant setpoint (Layer 1's pressure) with "
+            "end-of-burn droop at lockup (eq. 6.2). "
+            "'active': legacy free-form segmented pressure curve optimised directly — only "
+            "physically realisable with closed-loop active pressure control."
+        ),
+    )
+    # --- Blowdown regime knobs (used only when feed_pressure_model == "blowdown") ---
+    blowdown_ullage_frac_min: float = Field(
+        default=0.05, gt=0.0, lt=1.0,
+        description="Lower bound on the Layer-2 blowdown ullage-fraction search (gas fraction of tank volume at t=0)",
+    )
+    blowdown_ullage_frac_max: float = Field(
+        default=0.60, gt=0.0, lt=1.0,
+        description="Upper bound on the Layer-2 blowdown ullage-fraction search",
+    )
+    blowdown_n_polytropic_lox: float = Field(
+        default=1.40, gt=1.0,
+        description=(
+            "Nominal polytropic exponent for the LOX ullage. Higher than the fuel side because the "
+            "LOX ullage sits on cryogenic liquid — a heat SINK — so it cools (and so decays) faster. "
+            "Fit this to a static-fire P-vs-ullage-volume log when available."
+        ),
+    )
+    blowdown_n_polytropic_fuel: float = Field(
+        default=1.20, gt=1.0,
+        description="Nominal polytropic exponent for the fuel ullage (near-ambient walls act as a heat source)",
+    )
+    blowdown_n_polytropic_lox_hi: float = Field(
+        default=1.50, gt=1.0,
+        description=(
+            "Worst-case LOX polytropic exponent used ONLY for the chug safety re-check. Higher n = "
+            "faster decay = lower end-of-burn pressure, so this is the binding case. Performance is "
+            "scored at the nominal n; safety must hold here."
+        ),
+    )
+    blowdown_n_polytropic_fuel_hi: float = Field(
+        default=1.30, gt=1.0,
+        description="Worst-case fuel polytropic exponent for the chug safety re-check",
     )
     W_geom_ao_af_momentum: float = Field(
         default=0.0,

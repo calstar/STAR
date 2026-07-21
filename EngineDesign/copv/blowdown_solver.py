@@ -11,6 +11,8 @@ Physics model:
 - Coupled simulation: Pressure -> mdot -> Mass Depletion -> Volume Expansion -> Pressure
 """
 
+from functools import lru_cache
+
 import numpy as np
 import pandas as pd
 from typing import Dict, Optional, Tuple, Callable, Any
@@ -136,6 +138,34 @@ def _config_tank_volume(config: Any, tank_attr: str, h_attr: str, r_attr: str) -
     raise ValueError(f"{tank_attr}: tank volume not specified in config or request")
 
 
+@lru_cache(maxsize=4)
+def load_Z_lookup_table_cached(csv_path: str) -> Tuple[RegularGridInterpolator, np.ndarray, np.ndarray]:
+    """Cached :func:`load_Z_lookup_table`. The table is static, but a Layer-2 blowdown search calls
+    ``simulate_coupled_blowdown`` ~100 times; re-reading the CSV and rebuilding the interpolator
+    each time dominated the runtime."""
+    return load_Z_lookup_table(csv_path)
+
+
+def resolve_Z_table_path(csv_path: str) -> str:
+    """Resolve the N2 compressibility table path.
+
+    The default is a bare filename, which previously only resolved when the caller's cwd happened
+    to be this package — anywhere else every blowdown candidate died with FileNotFoundError. Fall
+    back to the copy that ships next to this module.
+    """
+    import os
+
+    if os.path.isfile(csv_path):
+        return csv_path
+    local = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.path.basename(csv_path))
+    if os.path.isfile(local):
+        return local
+    raise FileNotFoundError(
+        f"N2 compressibility table not found: {csv_path!r} (also tried {local!r}). "
+        "Pass n2_Z_csv=<path>, or use_real_gas=False to skip the real-gas correction."
+    )
+
+
 def load_Z_lookup_table(csv_path: str) -> Tuple[RegularGridInterpolator, np.ndarray, np.ndarray]:
     """Load compressibility factor Z(P,T) lookup table from CSV."""
     df_z = pd.read_csv(csv_path)
@@ -179,6 +209,25 @@ def Z_lookup(
     return Z_vals
 
 
+_NO_SOLUTION_MARKERS = ("no solution", "supply < demand", "insufficient mass flow")
+
+
+def is_no_solution_error(exc: BaseException) -> bool:
+    """True when the chamber solver reported that no steady operating point exists.
+
+    As the tanks decay there comes a point where injector supply is below combustion demand at
+    every chamber pressure, so the root-find has no solution and the solver raises. That is a
+    physical FLAMEOUT — the normal end of a blowdown burn — not a defect.
+
+    Deliberately narrow: a ``TypeError``/``KeyError``/``AttributeError`` from an actual bug must
+    NOT be silently reclassified as end-of-burn. Anything unrecognised propagates.
+    """
+    if not isinstance(exc, (ValueError, ArithmeticError)):
+        return False
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _NO_SOLUTION_MARKERS)
+
+
 class TankState:
     """Helper class to track individual tank state during blowdown."""
     def __init__(
@@ -219,6 +268,15 @@ class TankState:
         if self.Z_interp:
             return Z_lookup(T, P, self.Z_interp)
         return 1.0
+
+    def snapshot(self) -> Tuple[float, float, float, float, float]:
+        """Capture the mutable state so a predictor step can be rolled back (Heun corrector)."""
+        return (self.m_prop, self.V_ullage, self.m_gas, self.T_gas, self.P_gas)
+
+    def restore(self, snap: Tuple[float, float, float, float, float]) -> None:
+        """Restore state captured by :meth:`snapshot`. ``m_gas_0`` is intentionally left intact —
+        it is the *initial* gas mass and must survive a rollback."""
+        self.m_prop, self.V_ullage, self.m_gas, self.T_gas, self.P_gas = snap
 
     def step(self, mdot: float, dt: float, mdot_gas: float = 0.0) -> float:
         """Advance tank state by dt. 
@@ -352,6 +410,8 @@ def simulate_coupled_blowdown(
     T_lox_gas_K: float = 250.0,
     T_fuel_gas_K: float = 293.0,
     n_polytropic: float = 1.2,
+    n_polytropic_lox: Optional[float] = None,
+    n_polytropic_fuel: Optional[float] = None,
     use_real_gas: bool = True,
     n2_Z_csv: str = "n2_Z_lookup.csv",
     total_propellant_kg: Optional[float] = None,
@@ -384,7 +444,7 @@ def simulate_coupled_blowdown(
     # Load Z lookup
     Z_interp = None
     if use_real_gas:
-        Z_interp, _, _ = load_Z_lookup_table(n2_Z_csv)
+        Z_interp, _, _ = load_Z_lookup_table_cached(resolve_Z_table_path(n2_Z_csv))
         
     # Helpers to extract config (legacy fallback when no overrides supplied)
     def get_tank_params(fluid_key, tank_attr, h_attr, r_attr):
@@ -475,9 +535,17 @@ def simulate_coupled_blowdown(
     A_inj_lox = get_injector_area('oxidizer')
     A_inj_fuel = get_injector_area('fuel')
     
+    # Per-tank polytropic exponent. The LOX ullage sits on cryogenic liquid — a heat SINK — so it
+    # cools faster than the fuel ullage (whose near-ambient walls act as a heat SOURCE), and its
+    # effective n runs higher, potentially >= gamma. Sharing one n under-predicts LOX decay, which
+    # over-predicts end-of-burn tank pressure: the dangerous direction for the chug margin.
+    # ``n_polytropic`` remains the shared fallback so existing callers are unaffected.
+    n_lox = float(n_polytropic if n_polytropic_lox is None else n_polytropic_lox)
+    n_fuel = float(n_polytropic if n_polytropic_fuel is None else n_polytropic_fuel)
+
     # Initialize Tank States
-    lox_tank = TankState(V_lox, m_lox, rho_lox, P_lox_initial_Pa, T_lox_gas_K, R_pressurant, Z_interp, n_polytropic)
-    fuel_tank = TankState(V_fuel, m_fuel, rho_fuel, P_fuel_initial_Pa, T_fuel_gas_K, R_pressurant, Z_interp, n_polytropic)
+    lox_tank = TankState(V_lox, m_lox, rho_lox, P_lox_initial_Pa, T_lox_gas_K, R_pressurant, Z_interp, n_lox)
+    fuel_tank = TankState(V_fuel, m_fuel, rho_fuel, P_fuel_initial_Pa, T_fuel_gas_K, R_pressurant, Z_interp, n_fuel)
     
     # Arrays to store history
     N = len(times)
@@ -488,10 +556,21 @@ def simulate_coupled_blowdown(
     # Add depletion flags for flameout masking
     history['lox']['is_depleted'] = np.zeros(N, dtype=bool)
     history['fuel']['is_depleted'] = np.zeros(N, dtype=bool)
-    
+    # True once the chamber solver can no longer close (it raises "supply < demand at all Pc" as
+    # the tanks decay). That is a physical flameout, distinct from propellant depletion.
+    history['engine_out'] = np.zeros(N, dtype=bool)
+
     # Initial Conditions (t=0)
     # We need initial mdot based on initial Pressure
-    mdot_lox_0, mdot_fuel_0 = evaluate_engine_fn(P_lox_initial_Pa, P_fuel_initial_Pa)
+    try:
+        mdot_lox_0, mdot_fuel_0 = evaluate_engine_fn(P_lox_initial_Pa, P_fuel_initial_Pa)
+        engine_out = False
+    except Exception as exc:
+        if not is_no_solution_error(exc):
+            raise
+        # The engine cannot even close at the start pressure — nothing to simulate.
+        mdot_lox_0, mdot_fuel_0 = 0.0, 0.0
+        engine_out = True
     
     # Store t=0
     history['lox']['P_Pa'][0] = lox_tank.P_gas
@@ -545,18 +624,52 @@ def simulate_coupled_blowdown(
              mdot_fuel_liquid = mdot_fuel_liquid_prev
              mdot_fuel_gas = 0.0
         
-        # Step Tanks with appropriate flows
-        P_lox_new = lox_tank.step(mdot_lox_liquid, dt, mdot_lox_gas)
-        P_fuel_new = fuel_tank.step(mdot_fuel_liquid, dt, mdot_fuel_gas)
+        # --- Heun (predictor-corrector) on the LIQUID mass update -------------------------
+        # Forward Euler drains the whole interval at the start-of-step flow. Blowdown flow
+        # decreases monotonically, so that ALWAYS over-drains — a one-signed bias that
+        # accumulates and pushes end-of-burn pressure low, the dangerous direction for the chug
+        # check. Predict with the start flow, evaluate the engine at the predicted pressure, then
+        # redo the step from the original state with the average of the two. O(dt) -> O(dt^2).
+        snap_lox = lox_tank.snapshot()
+        snap_fuel = fuel_tank.snapshot()
+
+        P_lox_pred = lox_tank.step(mdot_lox_liquid, dt, mdot_lox_gas)
+        P_fuel_pred = fuel_tank.step(mdot_fuel_liquid, dt, mdot_fuel_gas)
+
+        if engine_out or lox_depleted or fuel_depleted:
+            mdot_lox_pred, mdot_fuel_pred = 0.0, 0.0
+        else:
+            try:
+                mdot_lox_pred, mdot_fuel_pred = evaluate_engine_fn(P_lox_pred, P_fuel_pred)
+            except Exception as exc:
+                if not is_no_solution_error(exc):
+                    raise
+                # No chamber solution at the predicted pressure. Degrade to plain Euler for this
+                # interval; the corrector evaluation below decides whether we have flamed out.
+                mdot_lox_pred, mdot_fuel_pred = mdot_lox_liquid, mdot_fuel_liquid
+
+        lox_tank.restore(snap_lox)
+        fuel_tank.restore(snap_fuel)
+
+        P_lox_new = lox_tank.step(0.5 * (mdot_lox_liquid + mdot_lox_pred), dt, mdot_lox_gas)
+        P_fuel_new = fuel_tank.step(0.5 * (mdot_fuel_liquid + mdot_fuel_pred), dt, mdot_fuel_gas)
         
-        # Evaluate Engine with NEW pressures to get NEW LIQUID mdot
-        # CRITICAL: If EITHER tank is depleted, engine flame-out occurs -> zero flow
-        if lox_depleted or fuel_depleted:
-            # Flameout condition: no combustion without both propellants
+        # Evaluate Engine with NEW pressures to get NEW LIQUID mdot.
+        # Flameout has two causes: (a) either tank empty, or (b) the chamber solver can no longer
+        # close as the tanks decay (it RAISES "No solution: Supply < Demand at all Pc"). Both end
+        # the burn. Tank pressure only falls further, so once out we stay out.
+        if engine_out or lox_depleted or fuel_depleted:
             mdot_lox_new = 0.0
             mdot_fuel_new = 0.0
         elif lox_tank.m_prop > 0 and fuel_tank.m_prop > 0:
-            mdot_lox_new, mdot_fuel_new = evaluate_engine_fn(P_lox_new, P_fuel_new)
+            try:
+                mdot_lox_new, mdot_fuel_new = evaluate_engine_fn(P_lox_new, P_fuel_new)
+            except Exception as exc:
+                if not is_no_solution_error(exc):
+                    raise
+                engine_out = True
+                mdot_lox_new = 0.0
+                mdot_fuel_new = 0.0
         else:
             # Safety fallback
             mdot_lox_new = 0.0
@@ -576,5 +689,6 @@ def simulate_coupled_blowdown(
         history['fuel']['mdot_kg_s'][i] = mdot_fuel_new
         history['fuel']['m_prop_kg'][i] = fuel_tank.m_prop
         history['fuel']['is_depleted'][i] = fuel_depleted
+        history['engine_out'][i] = engine_out
         
     return history

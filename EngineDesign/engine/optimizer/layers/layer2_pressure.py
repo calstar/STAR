@@ -536,6 +536,426 @@ def run_layer2a_minimum_pressures(
     return min_lox, min_fuel, summary, True
 
 
+def _blowdown_tank_volume_m3(config: Any, tank_attr: str, h_attr: str, r_attr: str, label: str) -> float:
+    """Total tank volume [m^3] for the blowdown regime.
+
+    Prefers the explicit ``tank_volume_m3`` (real hardware), falling back to the cylindrical
+    approximation. Blowdown is driven by ULLAGE VOLUME, so a volume is required — a kg
+    ``*_tank_capacity_kg`` requirement is density-dependent and cannot substitute.
+    """
+    tank = getattr(config, tank_attr, None)
+    if tank is not None:
+        vol = getattr(tank, "tank_volume_m3", None)
+        if vol:
+            return float(vol)
+        h = getattr(tank, h_attr, None)
+        r = getattr(tank, r_attr, None)
+        if h and r:
+            return float(np.pi * float(r) ** 2 * float(h))
+    raise ValueError(
+        f"feed_pressure_model='blowdown' requires a {label} tank volume: set "
+        f"config.{tank_attr}.tank_volume_m3 (or {h_attr}/{r_attr}). Blowdown pressure is set by "
+        f"ullage expansion, so tank VOLUME is required; {label}_tank_capacity_kg is a "
+        f"density-dependent mission requirement and cannot substitute."
+    )
+
+
+def _blowdown_density(config: Any, key: str) -> float:
+    fluids = getattr(config, "fluids", None)
+    fluid = fluids.get(key) if isinstance(fluids, dict) else getattr(fluids, key, None)
+    rho = getattr(fluid, "density", None) if fluid is not None else None
+    if not rho:
+        raise ValueError(f"feed_pressure_model='blowdown' requires config.fluids['{key}'].density")
+    return float(rho)
+
+
+def _run_layer2_blowdown(
+    optimized_config: PintleEngineConfig,
+    initial_lox_pressure_pa: float,
+    initial_fuel_pressure_pa: float,
+    peak_thrust: float,
+    target_apogee_m: float,
+    rocket_dry_mass_kg: float,
+    max_lox_tank_capacity_kg: float,
+    max_fuel_tank_capacity_kg: float,
+    target_burn_time: float,
+    n_time_points: int = 200,
+    update_progress: Optional[Callable] = None,
+    log_status: Optional[Callable] = None,
+    optimal_of_ratio: Optional[float] = None,
+    min_stability_margin: Optional[float] = None,
+    objective_callback: Optional[Callable] = None,
+    stop_event: Optional[Any] = None,
+    de_n_time_points: int = 25,
+    layer2_logger: Optional[Any] = None,
+) -> Tuple[PintleEngineConfig, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any], bool]:
+    """Layer 2 — PASSIVE BLOWDOWN regime.
+
+    Tank pressure is NOT a decision variable here. In a passive blowdown system P(t) is a
+    *consequence* of the pressurant expanding as propellant leaves, so the only things the
+    designer actually controls are the ullage split and the start pressure. Start pressure is
+    fixed at Layer 1's anchor (it sized the geometry at that operating point), which leaves a
+    2-D search:
+
+        ullage_frac_lox, ullage_frac_fuel   (fraction of each tank that is gas at t=0)
+
+    For a fixed tank volume, ullage fraction *is* the propellant load:
+        V_ullage = frac * V_tank ;  m_loaded = (1 - frac) * V_tank * rho
+    so more ullage buys a flatter pressure curve at the cost of carrying less propellant. That
+    trade is what makes the optimum interior.
+
+    Each candidate is forward-modelled with ``simulate_coupled_blowdown`` and then scored through
+    the SAME time-series evaluator the other regimes use, so scores stay comparable.
+
+    Returns the standard 6-tuple ``(config, t, P_O, P_F, summary, success)``.
+    """
+    from copv.blowdown_solver import simulate_coupled_blowdown
+
+    log = layer2_logger if layer2_logger is not None else logging.getLogger("layer2_blowdown")
+
+    dr = getattr(optimized_config, "design_requirements", None)
+
+    def _req(name: str, default: float) -> float:
+        val = getattr(dr, name, None) if dr is not None else None
+        return float(default if val is None else val)
+
+    # Config knobs (all optional; defaults chosen conservatively).
+    u_lo = _req("blowdown_ullage_frac_min", 0.05)
+    u_hi = _req("blowdown_ullage_frac_max", 0.60)
+    # LOX ullage sits on cryogenic liquid (a heat SINK) so it decays faster than the fuel side.
+    n_lox = _req("blowdown_n_polytropic_lox", 1.40)
+    n_fuel = _req("blowdown_n_polytropic_fuel", 1.20)
+    # Worst-case exponents for the SAFETY re-run only (higher n == faster decay == lower tail).
+    n_lox_hi = _req("blowdown_n_polytropic_lox_hi", 1.50)
+    n_fuel_hi = _req("blowdown_n_polytropic_fuel_hi", 1.30)
+
+    V_lox = _blowdown_tank_volume_m3(optimized_config, "lox_tank", "lox_h", "lox_radius", "LOX")
+    V_fuel = _blowdown_tank_volume_m3(optimized_config, "fuel_tank", "rp1_h", "rp1_radius", "fuel")
+    rho_lox = _blowdown_density(optimized_config, "oxidizer")
+    rho_fuel = _blowdown_density(optimized_config, "fuel")
+
+    log.info("=" * 70)
+    log.info("Layer 2: BLOWDOWN regime (2-D ullage search)")
+    log.info("=" * 70)
+    log.info(f"LOX tank volume : {V_lox*1e3:.3f} L (rho={rho_lox:.1f} kg/m3)")
+    log.info(f"Fuel tank volume: {V_fuel*1e3:.3f} L (rho={rho_fuel:.1f} kg/m3)")
+    log.info(f"Start pressures (Layer 1 anchor): LOX {initial_lox_pressure_pa/6894.76:.1f} psi, "
+             f"Fuel {initial_fuel_pressure_pa/6894.76:.1f} psi")
+    log.info(f"Ullage bounds: [{u_lo:.2f}, {u_hi:.2f}]  n_lox={n_lox} n_fuel={n_fuel} "
+             f"(safety n_hi: {n_lox_hi}/{n_fuel_hi})")
+
+    config_bd = copy.deepcopy(optimized_config)
+    if getattr(config_bd, "ablative_cooling", None):
+        config_bd.ablative_cooling.enabled = False
+    if getattr(config_bd, "graphite_insert", None):
+        config_bd.graphite_insert.enabled = False
+    runner = PintleEngineRunner(config_bd)
+
+    def _engine(P_lox: float, P_fuel: float) -> Tuple[float, float]:
+        """Single operating point for the blowdown solver.
+
+        Deliberately does NOT swallow exceptions: the chamber solver raises once it can no longer
+        close (supply < demand at all Pc) and ``simulate_coupled_blowdown`` interprets that as
+        flameout, which is the physically correct end of a blowdown burn.
+        """
+        res = runner.evaluate(P_lox, P_fuel, silent=True)
+        return float(res["mdot_O"]), float(res["mdot_F"])
+
+    PENALTY = 1e6
+    eval_count = {"n": 0}
+    # Why candidates were rejected. A search that finds nothing must EXPLAIN itself rather than
+    # just reporting "no feasible candidate".
+    reject_reasons: Dict[str, int] = {}
+
+    def _tally(reason: str) -> None:
+        key = reason.split(" (")[0]
+        reject_reasons[key] = reject_reasons.get(key, 0) + 1
+
+    def _simulate(u_lox: float, u_fuel: float, npts: int, n_o: float, n_f: float):
+        """Forward-model one candidate. Returns (time, P_lox, P_fuel, m_loaded_lox, m_loaded_fuel)."""
+        m_lox = (1.0 - u_lox) * V_lox * rho_lox
+        m_fuel = (1.0 - u_fuel) * V_fuel * rho_fuel
+        t = np.linspace(0.0, target_burn_time, npts)
+        hist = simulate_coupled_blowdown(
+            t,
+            _engine,
+            initial_lox_pressure_pa,
+            initial_fuel_pressure_pa,
+            config_bd,
+            n_polytropic_lox=n_o,
+            n_polytropic_fuel=n_f,
+            lox_ullage_volume_m3=u_lox * V_lox,
+            fuel_ullage_volume_m3=u_fuel * V_fuel,
+            lox_propellant_mass_kg=m_lox,
+            fuel_propellant_mass_kg=m_fuel,
+        )
+        return t, hist["lox"]["P_Pa"], hist["fuel"]["P_Pa"], m_lox, m_fuel
+
+    def _score(u_lox: float, u_fuel: float, npts: int) -> Tuple[float, Dict[str, Any]]:
+        """Objective (lower is better) + metrics for one candidate."""
+        eval_count["n"] += 1
+        try:
+            t, P_lox, P_fuel, m_load_lox, m_load_fuel = _simulate(u_lox, u_fuel, npts, n_lox, n_fuel)
+            results = runner.evaluate_arrays_with_time(
+                t, P_lox, P_fuel, track_ablative_geometry=False, use_coupled_solver=False
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed candidate must not kill the search
+            log.warning(f"blowdown candidate u=({u_lox:.3f},{u_fuel:.3f}) failed: {exc!r}")
+            return PENALTY, {"feasible": False,
+                             "reason": f"solver error: {type(exc).__name__}: {exc}"}
+
+        F = np.atleast_1d(results.get("F", np.zeros(npts)))[:npts]
+        mdot_O = np.atleast_1d(results.get("mdot_O", np.zeros(npts)))[:npts]
+        mdot_F = np.atleast_1d(results.get("mdot_F", np.zeros(npts)))[:npts]
+        th = t[: F.shape[0]]
+        if F.shape[0] < 2:
+            return PENALTY, {"feasible": False, "reason": "too few time points"}
+
+        # The array evaluator returns NaN rows for operating points it cannot solve — the same
+        # end-of-burn condition the single-point path signals by RAISING. Treat NaN as "engine
+        # out" (no thrust, no flow) instead of letting it poison the integrals, and score only
+        # the burning portion. Without this every blowdown candidate scored NaN, and because
+        # `NaN < best` is False the search silently found nothing.
+        burning = np.isfinite(F)
+        n_burn = int(burning.sum())
+        if n_burn < 2:
+            return PENALTY, {"feasible": False,
+                             "reason": "engine never produced solvable thrust at this ullage split"}
+        burn_end_s = float(th[burning][-1])
+
+        F = np.nan_to_num(F, nan=0.0, posinf=0.0, neginf=0.0)
+        mdot_O = np.nan_to_num(mdot_O, nan=0.0, posinf=0.0, neginf=0.0)
+        mdot_F = np.nan_to_num(mdot_F, nan=0.0, posinf=0.0, neginf=0.0)
+
+        consumed_lox = float(np.trapezoid(mdot_O, th))
+        consumed_fuel = float(np.trapezoid(mdot_F, th))
+        total_impulse = float(np.trapezoid(F, th))
+
+        # MASS BUDGET USES *LOADED* PROPELLANT, NOT CONSUMED. What you lift is what you loaded;
+        # propellant stranded by flameout is dead weight. Scoring on consumed would make stranding
+        # free and actively reward steep, chug-unsafe decay.
+        m_loaded_total = m_load_lox + m_load_fuel
+        required_impulse = calculate_required_impulse_from_mass(
+            target_apogee_m, rocket_dry_mass_kg, m_loaded_total, target_burn_time
+        )
+        impulse_ratio = total_impulse / max(required_impulse, 1e-9)
+
+        # O/F: pointwise deviation (same convention as the other regimes).
+        # O/F and chug are only meaningful while the engine is actually burning.
+        max_mr_err = 0.0
+        if optimal_of_ratio:
+            MR = np.atleast_1d(results.get("MR", np.full_like(th, optimal_of_ratio)))[: th.shape[0]]
+            mr_err = np.abs(MR - optimal_of_ratio) / max(optimal_of_ratio, 1e-9)
+            max_mr_err = float(np.nanmax(mr_err[burning])) if n_burn else 0.0
+
+        # Chug: min over the WHOLE burn (not just the endpoint — cheap, and it does not rely on
+        # the margin degrading monotonically). Threshold is whatever the caller configured; we do
+        # NOT invent one, because the absolute gate calibration is still un-measured.
+        def _worst(key):
+            arr = results.get(key, None)
+            if arr is None:
+                return float("nan")
+            arr = np.atleast_1d(arr)[: th.shape[0]]
+            sel = arr[burning[: arr.shape[0]]]
+            return float(np.nanmin(sel)) if sel.size and np.isfinite(sel).any() else float("nan")
+
+        min_chug = _worst("chugging_stability_margin")
+        min_gm = _worst("chug_gain_margin")
+        chug_threshold = min_stability_margin if min_stability_margin is not None else 0.7
+
+        obj = -impulse_ratio
+        if max_mr_err > 0.20:
+            obj += 50.0 * (max_mr_err - 0.20)
+        over_lox = max(0.0, consumed_lox - max_lox_tank_capacity_kg)
+        over_fuel = max(0.0, consumed_fuel - max_fuel_tank_capacity_kg)
+        if over_lox or over_fuel:
+            obj += 300.0 * (over_lox / max(max_lox_tank_capacity_kg, 1e-9)
+                            + over_fuel / max(max_fuel_tank_capacity_kg, 1e-9))
+
+        metrics = {
+            "feasible": True,
+            "ullage_frac_lox": u_lox,
+            "ullage_frac_fuel": u_fuel,
+            "m_loaded_lox_kg": m_load_lox,
+            "m_loaded_fuel_kg": m_load_fuel,
+            "consumed_lox_kg": consumed_lox,
+            "consumed_fuel_kg": consumed_fuel,
+            "stranded_lox_kg": max(0.0, m_load_lox - consumed_lox),
+            "stranded_fuel_kg": max(0.0, m_load_fuel - consumed_fuel),
+            "total_impulse": total_impulse,
+            "required_impulse": required_impulse,
+            "impulse_ratio": impulse_ratio,
+            "max_mr_error": max_mr_err,
+            "burn_end_s": burn_end_s,
+            "n_burning_points": n_burn,
+            "min_chug_margin": min_chug,
+            "min_chug_gain_margin": min_gm,
+            "chug_threshold": chug_threshold,
+        }
+
+        if not np.isfinite(obj):
+            # Reject NON-FINITE objectives EXPLICITLY. `obj < best` is False for NaN, so an
+            # unguarded NaN would silently never win and the search would report "no feasible
+            # candidate" with no explanation of why. NaN here means the time-series solver
+            # returned NaN thrust/impulse for this operating point.
+            metrics["feasible"] = False
+            metrics["reason"] = "non-finite objective (NaN thrust/impulse from time-series solver)"
+            return PENALTY, metrics
+
+        if objective_callback:
+            try:
+                objective_callback(eval_count["n"], float(obj), float(obj))
+            except Exception:  # noqa: BLE001 - a reporting hook must never break the search
+                pass
+        return float(obj), metrics
+
+    def _safety_ok(u_lox: float, u_fuel: float, npts: int) -> Tuple[bool, float]:
+        """Re-run at the WORST-CASE polytropic exponents and re-check the chug margin.
+
+        Higher n == faster decay == lower end-of-burn pressure == tighter stiffness, so n_hi is
+        the binding case. Performance is scored at nominal n; safety must hold at n_hi.
+        """
+        try:
+            t, P_lox, P_fuel, _, _ = _simulate(u_lox, u_fuel, npts, n_lox_hi, n_fuel_hi)
+            res = runner.evaluate_arrays_with_time(
+                t, P_lox, P_fuel, track_ablative_geometry=False, use_coupled_solver=False
+            )
+        except Exception:  # noqa: BLE001 - cannot verify safety => treat as unsafe
+            return False, float("nan")
+        margins = res.get("chugging_stability_margin", None)
+        if margins is None:
+            return True, float("nan")
+        worst = float(np.nanmin(np.atleast_1d(margins)))
+        threshold = min_stability_margin if min_stability_margin is not None else 0.7
+        return bool(worst >= threshold), worst
+
+    def _stopped() -> bool:
+        return stop_event is not None and getattr(stop_event, "is_set", lambda: False)()
+
+    # ---- 2-D search: coarse grid, then a refined grid around the winner -------------------
+    best = (PENALTY, None, None, None)  # (obj, u_lox, u_fuel, metrics)
+
+    def _sweep(lo_o, hi_o, lo_f, hi_f, n, stage):
+        nonlocal best
+        for u_o in np.linspace(lo_o, hi_o, n):
+            for u_f in np.linspace(lo_f, hi_f, n):
+                if _stopped():
+                    return
+                obj, m = _score(float(u_o), float(u_f), de_n_time_points)
+                if not m.get("feasible"):
+                    _tally(m.get("reason", "infeasible"))
+                    continue
+                # HARD impulse gate, matching run_layer2a_minimum_pressures. Without it the
+                # branch will happily return a design that cannot reach the target apogee --
+                # and worse, `-impulse_ratio` is gameable: loading LESS propellant lightens the
+                # rocket, cutting required impulse faster than delivered impulse falls, so the
+                # search drifts to maximum ullage and strands most of the propellant.
+                if not (m.get("impulse_ratio", 0.0) >= 1.0):
+                    _tally("impulse below required (cannot reach target apogee)")
+                    continue
+                ok, worst = _safety_ok(float(u_o), float(u_f), de_n_time_points)
+                m["safety_min_chug_at_n_hi"] = worst
+                m["safety_ok"] = ok
+                if not ok:
+                    _tally("chug gate failed at n_hi")  # hard gate at the worst-case exponent
+                    continue
+                if obj < best[0]:
+                    best = (obj, float(u_o), float(u_f), m)
+            if update_progress:
+                try:
+                    update_progress(stage, f"blowdown {stage}: best obj={best[0]:.4f}")
+                except Exception:  # noqa: BLE001
+                    pass
+
+    _sweep(u_lo, u_hi, u_lo, u_hi, 5, "coarse grid")
+    if best[1] is not None and not _stopped():
+        span_o = (u_hi - u_lo) / 4.0
+        span_f = (u_hi - u_lo) / 4.0
+        _sweep(
+            max(u_lo, best[1] - span_o), min(u_hi, best[1] + span_o),
+            max(u_lo, best[2] - span_f), min(u_hi, best[2] + span_f),
+            5, "refine",
+        )
+
+    success = best[1] is not None
+    if not success:
+        log.error("Blowdown search found no feasible, chug-safe candidate. Rejections by cause:")
+        for reason, count in sorted(reject_reasons.items(), key=lambda kv: -kv[1]):
+            log.error(f"  {count:3d} x {reason}")
+        t = np.linspace(0.0, target_burn_time, n_time_points)
+        flat_o = np.full(n_time_points, initial_lox_pressure_pa)
+        flat_f = np.full(n_time_points, initial_fuel_pressure_pa)
+        return optimized_config, t, flat_o, flat_f, {"is_success": False, "regime": "blowdown"}, False
+
+    # ---- Final run at FULL time resolution ------------------------------------------------
+    u_lox_best, u_fuel_best = best[1], best[2]
+    t, P_lox, P_fuel, m_load_lox, m_load_fuel = _simulate(
+        u_lox_best, u_fuel_best, n_time_points, n_lox, n_fuel
+    )
+    final_obj, m = _score(u_lox_best, u_fuel_best, n_time_points)
+    ok_final, worst_final = _safety_ok(u_lox_best, u_fuel_best, n_time_points)
+
+    log.info("-" * 70)
+    log.info(f"Best ullage: LOX {u_lox_best:.3f}, Fuel {u_fuel_best:.3f}  ({eval_count['n']} evals)")
+    log.info(f"Loaded  : LOX {m_load_lox:.3f} kg, Fuel {m_load_fuel:.3f} kg")
+    log.info(f"Consumed: LOX {m.get('consumed_lox_kg', 0):.3f} kg, "
+             f"Fuel {m.get('consumed_fuel_kg', 0):.3f} kg "
+             f"(stranded {m.get('stranded_lox_kg', 0):.3f}/{m.get('stranded_fuel_kg', 0):.3f} kg)")
+    log.info(f"Impulse ratio: {m.get('impulse_ratio', 0):.3f}  "
+             f"min chug {m.get('min_chug_margin', float('nan')):.3f} "
+             f"(n_hi {worst_final:.3f}, raw GM {m.get('min_chug_gain_margin', float('nan')):.3f})")
+    log.info(f"Pressure: LOX {P_lox[0]/6894.76:.1f} -> {P_lox[-1]/6894.76:.1f} psi, "
+             f"Fuel {P_fuel[0]/6894.76:.1f} -> {P_fuel[-1]/6894.76:.1f} psi")
+
+    summary = {
+        "regime": "blowdown",
+        "ullage_frac_lox": u_lox_best,
+        "ullage_frac_fuel": u_fuel_best,
+        "lox_tank_volume_m3": V_lox,
+        "fuel_tank_volume_m3": V_fuel,
+        "n_polytropic_lox": n_lox,
+        "n_polytropic_fuel": n_fuel,
+        "n_polytropic_lox_hi": n_lox_hi,
+        "n_polytropic_fuel_hi": n_fuel_hi,
+        "initial_lox_pressure_pa": initial_lox_pressure_pa,
+        "initial_fuel_pressure_pa": initial_fuel_pressure_pa,
+        "lox_start_pressure_pa": float(P_lox[0]),
+        "lox_end_pressure_pa": float(P_lox[-1]),
+        "fuel_start_pressure_pa": float(P_fuel[0]),
+        "fuel_end_pressure_pa": float(P_fuel[-1]),
+        "target_burn_time": target_burn_time,
+        "burn_time_s": target_burn_time,
+        "n_time_points": n_time_points,
+        "peak_thrust": peak_thrust,
+        "n_evaluations": eval_count["n"],
+        # Loaded vs consumed: the gap is propellant stranded by flameout (dead weight).
+        "loaded_lox_mass_kg": m_load_lox,
+        "loaded_fuel_mass_kg": m_load_fuel,
+        "lox_mass_kg": m.get("consumed_lox_kg"),
+        "fuel_mass_kg": m.get("consumed_fuel_kg"),
+        "total_lox_mass_kg": m.get("consumed_lox_kg"),
+        "total_fuel_mass_kg": m.get("consumed_fuel_kg"),
+        "total_propellant_mass_kg": m_load_lox + m_load_fuel,
+        "stranded_lox_kg": m.get("stranded_lox_kg"),
+        "stranded_fuel_kg": m.get("stranded_fuel_kg"),
+        "total_impulse_Ns": m.get("total_impulse"),
+        "required_impulse_Ns": m.get("required_impulse"),
+        "total_impulse_actual": m.get("total_impulse"),
+        "required_impulse": m.get("required_impulse"),
+        "impulse_ratio": m.get("impulse_ratio"),
+        "max_lox_tank_capacity_kg": max_lox_tank_capacity_kg,
+        "max_fuel_tank_capacity_kg": max_fuel_tank_capacity_kg,
+        "min_stability_margin": m.get("min_chug_margin"),
+        "min_chug_gain_margin": m.get("min_chug_gain_margin"),
+        "safety_min_chug_at_n_hi": worst_final,
+        "safety_ok_at_n_hi": ok_final,
+        "max_mr_error": m.get("max_mr_error"),
+        "objective": final_obj,
+        "is_success": True,
+    }
+    return optimized_config, t, P_lox, P_fuel, summary, True
+
+
 def run_layer2_pressure(
     optimized_config: PintleEngineConfig,
     initial_lox_pressure_pa: float,
@@ -732,7 +1152,35 @@ def run_layer2_pressure(
          layer2_logger.info(f"  -> Adjusted Fuel floor to {local_min_fuel_floor/1e6:.2f} MPa")
 
     from engine.optimizer.feed_pressure_model import get_feed_pressure_model, dome_regulated_tank_pair
-    skip_de_optimization = get_feed_pressure_model(optimized_config) == "dome_regulated"
+    feed_pressure_regime = get_feed_pressure_model(optimized_config)
+    layer2_logger.info(f"Feed pressure regime: {feed_pressure_regime}")
+
+    if feed_pressure_regime == "blowdown":
+        # Passive blowdown: P(t) is a CONSEQUENCE of ullage expansion, not a free curve, so the
+        # segment search below does not apply. Hand off to the physical branch, which runs its own
+        # 2-D ullage search and returns the same 6-tuple.
+        return _run_layer2_blowdown(
+            optimized_config=optimized_config,
+            initial_lox_pressure_pa=initial_lox_pressure_pa,
+            initial_fuel_pressure_pa=initial_fuel_pressure_pa,
+            peak_thrust=peak_thrust,
+            target_apogee_m=target_apogee_m,
+            rocket_dry_mass_kg=rocket_dry_mass_kg,
+            max_lox_tank_capacity_kg=max_lox_tank_capacity_kg,
+            max_fuel_tank_capacity_kg=max_fuel_tank_capacity_kg,
+            target_burn_time=target_burn_time,
+            n_time_points=n_time_points,
+            update_progress=update_progress,
+            log_status=log_status,
+            optimal_of_ratio=optimal_of_ratio,
+            min_stability_margin=min_stability_margin,
+            objective_callback=objective_callback,
+            stop_event=stop_event,
+            de_n_time_points=de_n_time_points,
+            layer2_logger=layer2_logger,
+        )
+
+    skip_de_optimization = feed_pressure_regime == "dome_regulated"
     
     # Optimization variables:
     # Shared-segment parameterization with fixed N_SEGMENTS segments:
