@@ -27,6 +27,17 @@ PRESET = ROOT / "configs" / "materials" / "phenolic_graphite.yaml"
 CANONICAL = ["canonical/impinging.yaml", "canonical/pintle.yaml"]
 
 
+def _copy_split_config(tmp_path: Path, stem: str) -> Path:
+    """Copy canonical/impinging AND its generated sidecar. The intent half alone is not a valid
+    config -- chamber geometry, injector geometry and tank pressures live in <stem>.design.yaml."""
+    src = ROOT / "configs" / "canonical" / "impinging.yaml"
+    sidecar = ROOT / "configs" / "canonical" / "impinging.design.yaml"
+    dst = tmp_path / f"{stem}.yaml"
+    dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / f"{stem}.design.yaml").write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    return dst
+
+
 @pytest.fixture(scope="module")
 def preset_doc() -> dict:
     with open(PRESET, "r", encoding="utf-8") as fh:
@@ -77,12 +88,10 @@ def test_explicit_config_value_overrides_preset(tmp_path: Path) -> None:
 
     io._deep_merge_preset logs every override, so this is possible but never silent.
     """
-    src = ROOT / "configs" / "canonical" / "impinging.yaml"
-    with open(src, "r", encoding="utf-8") as fh:
+    dst = _copy_split_config(tmp_path, "override")
+    with open(dst, "r", encoding="utf-8") as fh:
         doc = yaml.safe_load(fh)
     doc.setdefault("ablative_cooling", {})["heat_of_ablation"] = 9.99e6
-
-    dst = tmp_path / "override.yaml"
     with open(dst, "w", encoding="utf-8") as fh:
         yaml.safe_dump(doc, fh)
 
@@ -94,12 +103,10 @@ def test_explicit_config_value_overrides_preset(tmp_path: Path) -> None:
 
 def test_unknown_material_preset_is_a_clear_error(tmp_path: Path) -> None:
     """A typo must fail loudly with the available names, not silently skip the merge."""
-    src = ROOT / "configs" / "canonical" / "impinging.yaml"
-    with open(src, "r", encoding="utf-8") as fh:
+    dst = _copy_split_config(tmp_path, "bad")
+    with open(dst, "r", encoding="utf-8") as fh:
         doc = yaml.safe_load(fh)
     doc["material_preset"] = "no_such_material"
-
-    dst = tmp_path / "bad.yaml"
     with open(dst, "w", encoding="utf-8") as fh:
         yaml.safe_dump(doc, fh)
 

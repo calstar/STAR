@@ -1,0 +1,133 @@
+# GENERATED -- optimizer output. Do NOT hand-edit.
+#
+# This is the code-written half of pintle.yaml. The split is by authorship: what a human
+# types (requirements, hardware choices, model selections) stays in the intent file; what Layer 1/2
+# write back lives here. io._apply_design_sidecar overlays this at load, so the schema and every
+# downstream consumer are unchanged.
+#
+# Editing a value here is pointless -- the next optimizer run overwrites it. Setting one of these
+# fields in the intent file instead is an ERROR the loader raises, because that edit would be
+# silently discarded.
+#
+# Regenerate by re-running Layer 1 against pintle.yaml's design_requirements.
+
+chamber_geometry:
+  A_throat: 0.0017651044259737317
+  A_exit: 0.00801184666481737
+  volume: 0.0021885625035635956
+  Lstar: 1.239905396733828
+  chamber_diameter: 0.11344154349849075
+  exit_diameter: 0.101
+  expansion_ratio: 4.539021344528996
+  length: 0.24846200737808025
+  length_cylindrical: 0.121
+  length_contraction: 0.0451
+  Cf: 1.5422822280584674
+injector:
+  geometry:
+    fuel:
+      A_entry: 0.0006243142849960269
+      d_hydraulic: 0.001092199999999998
+      d_pintle_tip: 0.028194
+      d_reservoir_inner: 0.0292862
+      h_gap: 0.000546099999999999
+    lox:
+      A_entry: 5.8108495056721366e-06
+      d_hydraulic: 0.0027200373856119215
+      d_orifice: 0.0027200373856119215
+      n_orifices: 14
+      theta_orifice: 90.0
+lox_tank:
+  initial_pressure_psi: 537.261547029532
+fuel_tank:
+  initial_pressure_psi: 523.6759162449396
+pressure_curves:
+  fuel_segments:
+  - end_pressure_pa: 3374149.5056212177
+    k: 1.0784566785091103
+    length_ratio: 0.2286473154180296
+    start_pressure_pa: 3610619.76028896
+    type: blowdown
+  - end_pressure_pa: 3164729.7845391277
+    k: 1.629427648989163
+    length_ratio: 0.20249167104882543
+    start_pressure_pa: 3374149.5056212177
+    type: blowdown
+  - end_pressure_pa: 3099133.4332023407
+    k: 1.1822268290660432
+    length_ratio: 0.06342628444092534
+    start_pressure_pa: 3164729.7845391277
+    type: blowdown
+  - end_pressure_pa: 2759036.015920052
+    k: 0.9585537699775258
+    length_ratio: 0.14732213727033575
+    start_pressure_pa: 3099133.4332023407
+    type: blowdown
+  - end_pressure_pa: 2554492.049726525
+    k: 1.2370160062004798
+    length_ratio: 0.0925191694713507
+    start_pressure_pa: 2759036.015920052
+    type: blowdown
+  - end_pressure_pa: 2465667.503851008
+    k: 0.8239774831525549
+    length_ratio: 0.08588604087308514
+    start_pressure_pa: 2554492.049726525
+    type: blowdown
+  - end_pressure_pa: 2393118.9933614894
+    k: 0.8847832683519297
+    length_ratio: 0.07014845137420163
+    start_pressure_pa: 2465667.503851008
+    type: blowdown
+  - end_pressure_pa: 2004754.8014037265
+    k: 1.1673408263818559
+    length_ratio: 0.10955893010324647
+    start_pressure_pa: 2393118.9933614894
+    type: blowdown
+  initial_fuel_pressure_pa: 3610619.76028896
+  initial_lox_pressure_pa: 3704289.4239973365
+  lox_segments:
+  - end_pressure_pa: 3467819.1693295944
+    k: 0.24164644917319
+    length_ratio: 0.2286473154180296
+    start_pressure_pa: 3704289.4239973365
+    type: blowdown
+  - end_pressure_pa: 3258399.4482475044
+    k: 1.7414629743039511
+    length_ratio: 0.20249167104882543
+    start_pressure_pa: 3467819.1693295944
+    type: blowdown
+  - end_pressure_pa: 3141806.013426955
+    k: 1.3540898135161692
+    length_ratio: 0.06342628444092534
+    start_pressure_pa: 3258399.4482475044
+    type: blowdown
+  - end_pressure_pa: 2891698.2018464496
+    k: 0.7144170122671702
+    length_ratio: 0.14732213727033575
+    start_pressure_pa: 3141806.013426955
+    type: blowdown
+  - end_pressure_pa: 2796013.581510806
+    k: 1.0723820377201234
+    length_ratio: 0.0925191694713507
+    start_pressure_pa: 2891698.2018464496
+    type: blowdown
+  - end_pressure_pa: 2707189.0356352893
+    k: 1.6281617755206732
+    length_ratio: 0.08588604087308514
+    start_pressure_pa: 2796013.581510806
+    type: blowdown
+  - end_pressure_pa: 2634640.5251457705
+    k: 1.5557597269194856
+    length_ratio: 0.07014845137420163
+    start_pressure_pa: 2707189.0356352893
+    type: blowdown
+  - end_pressure_pa: 2521333.1458079717
+    k: 0.948130932276539
+    length_ratio: 0.10955893010324647
+    start_pressure_pa: 2634640.5251457705
+    type: blowdown
+  n_points: 200
+  target_burn_time_s: 6.0
+combustion:
+  cea:
+    expansion_ratio: 4.539021344528996

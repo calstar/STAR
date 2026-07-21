@@ -169,11 +169,13 @@ async def update_config(updates: dict):
         # Validate and create new config
         new_config = PintleEngineConfig(**merged)
         
-        # Save to disk if we have a path
+        # Save to disk if we have a path. MUST go through io.save_config: a split config keeps its
+        # optimizer-generated half in <stem>.design.yaml, and dumping the merged model into the
+        # intent file would put generated fields where the loader forbids them -- every subsequent
+        # load would then raise on the collision.
         if app_state.config_path:
-            with open(app_state.config_path, "w", encoding="utf-8") as f:
-                # Use clean dict (exclude unset/none if desired, but here we just dump the model)
-                yaml.dump(config_to_dict(new_config), f, default_flow_style=False, sort_keys=False)
+            from engine.pipeline.io import save_config as _save_config
+            _save_config(config_to_dict(new_config), app_state.config_path)
                 
         app_state.set_config(new_config, app_state.config_path)
         
