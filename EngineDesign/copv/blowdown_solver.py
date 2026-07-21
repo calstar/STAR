@@ -111,7 +111,7 @@ def resolve_blowdown_tank_state(
             tank_name="LOX tank",
         )
     else:
-        V_lox = _config_tank_volume(config, "lox_tank", "lox_h", "lox_radius")
+        V_lox = config_tank_volume_m3(config, "lox_tank", "lox_h", "lox_radius", "LOX tank")
 
     if fuel_tank_volume_m3 is not None or fuel_ullage_volume_m3 is not None:
         V_fuel = resolve_tank_volume_m3(
@@ -122,20 +122,75 @@ def resolve_blowdown_tank_state(
             tank_name="Fuel tank",
         )
     else:
-        V_fuel = _config_tank_volume(config, "fuel_tank", "rp1_h", "rp1_radius")
+        V_fuel = config_tank_volume_m3(config, "fuel_tank", "rp1_h", "rp1_radius", "Fuel tank")
 
     return V_lox, m_lox, rho_lox, V_fuel, m_fuel, rho_fuel
 
 
-def _config_tank_volume(config: Any, tank_attr: str, h_attr: str, r_attr: str) -> float:
+def config_tank_volume_m3(config: Any, tank_attr: str, h_attr: str, r_attr: str,
+                          label: Optional[str] = None) -> float:
+    """Total tank volume [m^3] from config.
+
+    Prefers the explicit ``tank_volume_m3`` (real hardware), then the cylindrical approximation,
+    then the legacy ``config.propellant`` fallback.
+
+    Single source of truth for every blowdown consumer (the Layer-2 branch and the
+    ``/timeseries`` blowdown endpoint both need it). Blowdown pressure is driven by ULLAGE
+    VOLUME, so a volume is genuinely required — a kg ``*_tank_capacity_kg`` mission requirement
+    is density-dependent and cannot substitute for it.
+    """
+    label = label or tank_attr
     tank = getattr(config, tank_attr, None)
-    if tank and hasattr(tank, "tank_volume_m3") and tank.tank_volume_m3 is not None:
-        return float(tank.tank_volume_m3)
-    if tank and hasattr(tank, h_attr) and hasattr(tank, r_attr):
-        return float(np.pi * getattr(tank, r_attr) ** 2 * getattr(tank, h_attr))
-    if hasattr(config, "propellant") and hasattr(config.propellant, "tank_volume_m3"):
-        return float(config.propellant.tank_volume_m3)
-    raise ValueError(f"{tank_attr}: tank volume not specified in config or request")
+    if tank is not None:
+        vol = getattr(tank, "tank_volume_m3", None)
+        if vol:
+            return float(vol)
+        h = getattr(tank, h_attr, None)
+        r = getattr(tank, r_attr, None)
+        if h and r:
+            return float(np.pi * float(r) ** 2 * float(h))
+    prop = getattr(config, "propellant", None)
+    if prop is not None and getattr(prop, "tank_volume_m3", None):
+        return float(prop.tank_volume_m3)
+    raise ValueError(
+        f"{label}: tank volume not specified. Set config.{tank_attr}.tank_volume_m3 (or "
+        f"{h_attr}/{r_attr}). Blowdown pressure is set by ullage expansion, so tank VOLUME is "
+        f"required; a kg tank-capacity requirement is density-dependent and cannot substitute."
+    )
+
+
+def make_engine_evaluator(runner: Any) -> Callable[[float, float], Tuple[float, float]]:
+    """Build the ``(P_lox_Pa, P_fuel_Pa) -> (mdot_O, mdot_F)`` callback this solver expects.
+
+    Shared by every blowdown consumer so they cannot drift apart.
+
+    Deliberately does NOT swallow exceptions. The chamber solver raises once it can no longer
+    close, and :func:`simulate_coupled_blowdown` interprets that as flameout — the physically
+    correct end of a blowdown burn. Returning ``(0, 0)`` on *any* exception (as the timeseries
+    endpoint used to) also silently reports "engine off" for genuine defects, producing a
+    plausible-looking but wrong curve.
+    """
+
+    def evaluate(P_lox_Pa: float, P_fuel_Pa: float) -> Tuple[float, float]:
+        res = runner.evaluate(P_lox_Pa, P_fuel_Pa, silent=True)
+        return float(res["mdot_O"]), float(res["mdot_F"])
+
+    return evaluate
+
+
+def polytropic_exponents_from_config(config: Any, default_lox: float = 1.40,
+                                     default_fuel: float = 1.20) -> Tuple[float, float]:
+    """Nominal per-tank polytropic exponents from ``design_requirements``.
+
+    LOX runs higher than fuel by default: the LOX ullage sits on cryogenic liquid — a heat SINK —
+    so it cools, and therefore decays, faster than a fuel ullage warmed by near-ambient walls.
+    Shared so the Layer-2 branch and the timeseries endpoint cannot model the same tank
+    differently.
+    """
+    dr = getattr(config, "design_requirements", None)
+    n_lox = getattr(dr, "blowdown_n_polytropic_lox", None) if dr is not None else None
+    n_fuel = getattr(dr, "blowdown_n_polytropic_fuel", None) if dr is not None else None
+    return float(n_lox or default_lox), float(n_fuel or default_fuel)
 
 
 @lru_cache(maxsize=4)

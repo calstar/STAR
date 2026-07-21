@@ -536,30 +536,6 @@ def run_layer2a_minimum_pressures(
     return min_lox, min_fuel, summary, True
 
 
-def _blowdown_tank_volume_m3(config: Any, tank_attr: str, h_attr: str, r_attr: str, label: str) -> float:
-    """Total tank volume [m^3] for the blowdown regime.
-
-    Prefers the explicit ``tank_volume_m3`` (real hardware), falling back to the cylindrical
-    approximation. Blowdown is driven by ULLAGE VOLUME, so a volume is required — a kg
-    ``*_tank_capacity_kg`` requirement is density-dependent and cannot substitute.
-    """
-    tank = getattr(config, tank_attr, None)
-    if tank is not None:
-        vol = getattr(tank, "tank_volume_m3", None)
-        if vol:
-            return float(vol)
-        h = getattr(tank, h_attr, None)
-        r = getattr(tank, r_attr, None)
-        if h and r:
-            return float(np.pi * float(r) ** 2 * float(h))
-    raise ValueError(
-        f"feed_pressure_model='blowdown' requires a {label} tank volume: set "
-        f"config.{tank_attr}.tank_volume_m3 (or {h_attr}/{r_attr}). Blowdown pressure is set by "
-        f"ullage expansion, so tank VOLUME is required; {label}_tank_capacity_kg is a "
-        f"density-dependent mission requirement and cannot substitute."
-    )
-
-
 def _blowdown_density(config: Any, key: str) -> float:
     fluids = getattr(config, "fluids", None)
     fluid = fluids.get(key) if isinstance(fluids, dict) else getattr(fluids, key, None)
@@ -609,7 +585,12 @@ def _run_layer2_blowdown(
 
     Returns the standard 6-tuple ``(config, t, P_O, P_F, summary, success)``.
     """
-    from copv.blowdown_solver import simulate_coupled_blowdown
+    from copv.blowdown_solver import (
+        config_tank_volume_m3,
+        make_engine_evaluator,
+        polytropic_exponents_from_config,
+        simulate_coupled_blowdown,
+    )
 
     log = layer2_logger if layer2_logger is not None else logging.getLogger("layer2_blowdown")
 
@@ -622,15 +603,15 @@ def _run_layer2_blowdown(
     # Config knobs (all optional; defaults chosen conservatively).
     u_lo = _req("blowdown_ullage_frac_min", 0.05)
     u_hi = _req("blowdown_ullage_frac_max", 0.60)
-    # LOX ullage sits on cryogenic liquid (a heat SINK) so it decays faster than the fuel side.
-    n_lox = _req("blowdown_n_polytropic_lox", 1.40)
-    n_fuel = _req("blowdown_n_polytropic_fuel", 1.20)
+    # Nominal per-tank exponents come from the shared helper so this branch and the
+    # /timeseries blowdown endpoint cannot model the same tank differently.
+    n_lox, n_fuel = polytropic_exponents_from_config(optimized_config)
     # Worst-case exponents for the SAFETY re-run only (higher n == faster decay == lower tail).
     n_lox_hi = _req("blowdown_n_polytropic_lox_hi", 1.50)
     n_fuel_hi = _req("blowdown_n_polytropic_fuel_hi", 1.30)
 
-    V_lox = _blowdown_tank_volume_m3(optimized_config, "lox_tank", "lox_h", "lox_radius", "LOX")
-    V_fuel = _blowdown_tank_volume_m3(optimized_config, "fuel_tank", "rp1_h", "rp1_radius", "fuel")
+    V_lox = config_tank_volume_m3(optimized_config, "lox_tank", "lox_h", "lox_radius", "LOX tank")
+    V_fuel = config_tank_volume_m3(optimized_config, "fuel_tank", "rp1_h", "rp1_radius", "Fuel tank")
     rho_lox = _blowdown_density(optimized_config, "oxidizer")
     rho_fuel = _blowdown_density(optimized_config, "fuel")
 
@@ -651,15 +632,9 @@ def _run_layer2_blowdown(
         config_bd.graphite_insert.enabled = False
     runner = PintleEngineRunner(config_bd)
 
-    def _engine(P_lox: float, P_fuel: float) -> Tuple[float, float]:
-        """Single operating point for the blowdown solver.
-
-        Deliberately does NOT swallow exceptions: the chamber solver raises once it can no longer
-        close (supply < demand at all Pc) and ``simulate_coupled_blowdown`` interprets that as
-        flameout, which is the physically correct end of a blowdown burn.
-        """
-        res = runner.evaluate(P_lox, P_fuel, silent=True)
-        return float(res["mdot_O"]), float(res["mdot_F"])
+    # Shared callback: lets the chamber solver's no-solution error propagate so
+    # simulate_coupled_blowdown can classify it as flameout, while genuine defects still surface.
+    _engine = make_engine_evaluator(runner)
 
     PENALTY = 1e6
     eval_count = {"n": 0}
