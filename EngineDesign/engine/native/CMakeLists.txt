@@ -101,6 +101,15 @@ set(ED_GOLDEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/golden")
 # ---- Tests ----------------------------------------------------------------
 enable_testing()
 
+# Rebuild every target before any test runs. This closes the stale-binary trap:
+# ctest was silently passing residual_golden because the test .exe had not been
+# recompiled after a source change (a shared-library-only `--target` build
+# leaves the test executables untouched, so old-binary-vs-old-golden agreed).
+# As a CTest SETUP fixture the build runs first and is a no-op when up to date,
+# so `ctest` can never again run a test binary that predates its sources.
+add_test(NAME build_all COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR})
+set_tests_properties(build_all PROPERTIES FIXTURES_SETUP build_all)
+
 add_executable(test_root_find tests/test_root_find.c)
 target_link_libraries(test_root_find PRIVATE ed_physics)
 add_test(NAME root_find COMMAND test_root_find)
@@ -137,6 +146,13 @@ target_link_libraries(test_chamber_golden PRIVATE ed_physics)
 target_compile_definitions(test_chamber_golden PRIVATE ED_GOLDEN_DIR="${ED_GOLDEN_DIR}")
 add_test(NAME chamber_golden COMMAND test_chamber_golden)
 set_tests_properties(chamber_golden PROPERTIES SKIP_RETURN_CODE 77)
+
+# Every real test depends on the build fixture, so a stale executable can never
+# be the thing under test.
+set_tests_properties(
+    root_find cea_interp feed_discharge residual_golden
+    injector_golden nozzle_golden chamber_golden
+    PROPERTIES FIXTURES_REQUIRED build_all)
 
 # ---- Benchmark ------------------------------------------------------------
 add_executable(bench_evaluate bench/bench_evaluate.c)
