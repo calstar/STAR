@@ -357,10 +357,19 @@ FEET_TO_METERS = 0.3048
 # T_Rankine = T_Kelvin × RANKINE_PER_KELVIN
 RANKINE_PER_KELVIN = 1.8
 
-# Viscosity unit conversion: lb·s/in² to Pa·s
-# Formula from Huzel uses lb·s/in², need to convert to Pa·s
-# 1 lb·s/in² = 6894.76 Pa·s
-LB_S_PER_IN2_TO_PA_S = 6894.76
+# Viscosity unit conversion: lb/(in·s) to Pa·s
+#
+# Huzel & Huang (NASA SP-125) eq. (4-16) returns viscosity in lb/(in·s) --
+# pound-MASS per inch-second. See the nomenclature under eq. (4-12):
+# "mu = Viscosity, lb/in sec".
+#
+# 1 lb/(in·s) = 0.45359237 kg / (0.0254 m · s) = 17.8579673 Pa·s
+#
+# NOTE: do not confuse this with lbf·s/in² (= psi·s), whose factor is 6894.76.
+# The two differ by exactly g_c = 386.088 lbm·in/(lbf·s²), and using the psi
+# factor here inflates viscosity by that 386x. Huzel's eq. (4-13) carries an
+# explicit `g` for precisely this lbm/lbf reconciliation.
+LB_PER_IN_S_TO_PA_S = 17.8579673
 
 # ============================================================================
 # MIXING AND TURBULENCE CONSTANTS

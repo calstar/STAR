@@ -12,8 +12,8 @@
 
 double ed_gas_viscosity_huzel(double T_K, double M) {
     const double T_rankine = T_K * ED_RANKINE_PER_KELVIN;
-    const double mu_lb_s_in2 = ED_HUZEL_COEFF * sqrt(M) * pow(T_rankine, 0.6);
-    return mu_lb_s_in2 * ED_LB_S_PER_IN2_TO_PA_S;
+    const double mu_lb_per_in_s = ED_HUZEL_COEFF * sqrt(M) * pow(T_rankine, 0.6);
+    return mu_lb_per_in_s * ED_LB_PER_IN_S_TO_PA_S;
 }
 
 double ed_chamber_wetted_area(const EdGeometry *g) {

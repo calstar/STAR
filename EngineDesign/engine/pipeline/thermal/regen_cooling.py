@@ -30,9 +30,9 @@ from engine.pipeline.constants import (
 )
 
 # Unit conversion constants for viscosity formula
-# Formula uses Rankine and lb/lb-mol, result in lb·s/in²
+# Formula uses Rankine and lb/lb-mol, result in lb/(in·s)
 # Import from constants to avoid duplication
-from engine.pipeline.constants import RANKINE_PER_KELVIN, LB_S_PER_IN2_TO_PA_S
+from engine.pipeline.constants import RANKINE_PER_KELVIN, LB_PER_IN_S_TO_PA_S
 
 
 def calculate_gas_viscosity_huzel(
@@ -47,7 +47,15 @@ def calculate_gas_viscosity_huzel(
     Where:
     - M = molecular weight [lb/lb-mol] (same as kg/kmol numerically)
     - T = temperature [°R] (Rankine)
-    - Result: μ [lb·s/in²], converted to [Pa·s]
+    - Result: μ [lb/(in·s)], converted to [Pa·s]
+
+    The correlation originates with Bartz (1957), "A Simple Equation for Rapid
+    Estimation of Rocket Nozzle Convective Heat Transfer Coefficients",
+    J. Jet Propulsion 27(1):49-51; Huzel & Huang reproduce it as eq. (4-16).
+    It is fitted to NBS air data and is stated to be reasonably accurate for
+    mixtures consisting principally of DIATOMIC gases -- combustion products
+    (CO2, H2O) are triatomic, so treat this as an approximation. Prefer CEA
+    transport properties where available.
     
     This correlation is specifically for combustion gases and accounts for:
     - Temperature dependence (T^0.6)
@@ -76,13 +84,13 @@ def calculate_gas_viscosity_huzel(
     # Molecular weight: lb/lb-mol = kg/kmol (same numerically)
     M_lb_lbmol = molecular_weight
     
-    # Calculate viscosity using Huzel's formula
+    # Calculate viscosity using Huzel eq. (4-16)
     # μ = (46.6 × 10^-10) × M^0.5 × T^0.6
-    # Result is in lb·s/in²
-    mu_lb_s_in2 = 46.6e-10 * (M_lb_lbmol ** 0.5) * (T_rankine ** 0.6)
-    
-    # Convert from lb·s/in² to Pa·s
-    viscosity_pa_s = mu_lb_s_in2 * LB_S_PER_IN2_TO_PA_S
+    # Result is in lb/(in·s)  [pound-MASS per inch-second]
+    mu_lb_per_in_s = 46.6e-10 * (M_lb_lbmol ** 0.5) * (T_rankine ** 0.6)
+
+    # Convert from lb/(in·s) to Pa·s
+    viscosity_pa_s = mu_lb_per_in_s * LB_PER_IN_S_TO_PA_S
     
     return float(viscosity_pa_s)
 

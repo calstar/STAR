@@ -8,6 +8,7 @@ import numpy as np
 
 from engine.pipeline.config_schemas import AblativeCoolingConfig
 from engine.pipeline.constants import STEFAN_BOLTZMANN_W_M2_K4, EPSILON_SMALL
+from engine.pipeline.thermal.regen_cooling import calculate_gas_viscosity_huzel
 
 
 def compute_ablative_heat_flux_profile(
@@ -115,13 +116,11 @@ def compute_ablative_heat_flux_profile(
     A_chamber = np.pi * (D_chamber / 2) ** 2
     A_exit = np.pi * (D_exit / 2) ** 2 if has_nozzle else A_throat
     
-    # Gas viscosity using Huzel formula: μ = 46.6e-10 × M^0.5 × T^0.6 [lb·s/in²]
-    # Convert to Pa·s: multiply by 6894.76
-    def calc_viscosity(T_K, M_kg_kmol):
-        T_R = T_K * 1.8  # Kelvin to Rankine
-        mu_imperial = 46.6e-10 * (M_kg_kmol ** 0.5) * (T_R ** 0.6)
-        return mu_imperial * 6894.76  # Convert to Pa·s
-    
+    # Gas viscosity: Huzel eq. (4-16), shared with the regen path so the
+    # unit conversion lives in exactly one place.
+    calc_viscosity = calculate_gas_viscosity_huzel
+
+
     # Supersonic Mach number from area ratio using Newton-Raphson
     def mach_from_area_ratio_supersonic(area_ratio, gamma, tol=1e-6, max_iter=50):
         """Solve for supersonic M given A/A* using Newton-Raphson."""

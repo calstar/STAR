@@ -36,7 +36,12 @@
 #define ED_EPS_SMALL              1e-6
 #define ED_EPS_TINY               1e-8
 #define ED_RANKINE_PER_KELVIN     1.8
-#define ED_LB_S_PER_IN2_TO_PA_S   6894.76
+/* Huzel eq. (4-16) returns viscosity in lb/(in*s) -- pound-MASS per inch-sec;
+ * see the nomenclature under eq. (4-12). NOT lbf*s/in^2 (= psi*s), whose
+ * factor is 6894.76. The two differ by exactly g_c = 386.088 lbm*in/(lbf*s^2).
+ * Must stay numerically identical to LB_PER_IN_S_TO_PA_S in
+ * engine/pipeline/constants.py or the A/B parity test will diverge. */
+#define ED_LB_PER_IN_S_TO_PA_S    17.8579673
 #define ED_HUZEL_COEFF            46.6e-10
 
 #endif /* ED_PHYS_CONST_H */
