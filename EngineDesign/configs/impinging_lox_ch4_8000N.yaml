@@ -449,7 +449,7 @@ regen_cooling:
   hot_gas_viscosity: 4.0e-05
   n_channels: 100
   n_segments: 20
-  radiation_emissivity_hot: 0.85
+  radiation_emissivity_hot: 0.10
   radiation_view_factor: 1.0
   recovery_factor: null
   roughness: 0.0

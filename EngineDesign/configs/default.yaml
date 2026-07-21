@@ -76,7 +76,7 @@ regen_cooling:
   hot_gas_prandtl: 0.644
   hot_gas_viscosity: 4.0e-05
   hot_gas_thermal_conductivity: 0.394
-  radiation_emissivity_hot: 0.85
+  radiation_emissivity_hot: 0.10
   radiation_view_factor: 1.0
   n_segments: 20
   gas_turbulence_intensity: 0.1

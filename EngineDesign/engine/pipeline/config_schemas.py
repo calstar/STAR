@@ -146,7 +146,7 @@ class RegenCoolingConfig(BaseModel):
     hot_gas_prandtl: float = Field(default=0.7, gt=0, description="Assumed hot-gas Prandtl number")
     hot_gas_viscosity: float = Field(default=4.0e-5, gt=0, description="Effective hot-gas viscosity [Pa·s]")
     hot_gas_thermal_conductivity: float = Field(default=0.1, gt=0, description="Effective hot-gas thermal conductivity [W/(m·K)]")
-    radiation_emissivity_hot: float = Field(default=0.8, ge=0, le=1, description="Effective hot-side emissivity for radiation")
+    radiation_emissivity_hot: float = Field(default=0.10, ge=0, le=1, description="Emissivity of the combustion GAS for gas->wall radiation (NOT a wall surface property; CO2/H2O band radiators are ~0.1, uncertain to ~2x). Raise only for sooting/metallised propellants.")
     radiation_view_factor: float = Field(default=1.0, ge=0, le=1, description="Radiation view factor to coolant surface")
     n_segments: int = Field(default=20, gt=0, description="Number of axial segments for heat-transfer integration")
     gas_turbulence_intensity: float = Field(default=0.1, ge=0, description="Estimated turbulence intensity of hot gas (0-1)")

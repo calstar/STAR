@@ -123,7 +123,48 @@ DEFAULT_HOT_GAS_CP_J_KG_K = 2460.0  # J/(kg·K)
 # ============================================================================
 
 # Default radiation properties
-DEFAULT_EMISSIVITY_ND = 0.8  # Typical for hot gas/combustion products
+# GAS emissivity for the gas -> wall radiation term. This is NOT a surface
+# property and must not be confused with the wall's own emissivity (~0.85 for
+# charred phenolic, which is correct where the wall re-radiates to ambient).
+#
+# LOX/CH4 and LOX/Ethanol products are CO2 and H2O: non-luminous, selectively-
+# radiating band emitters, not a grey body. At Tc ~3300 K the Planck peak sits
+# near 0.9 um, far from the 2.7/4.3/6.3 um bands, so most of the available
+# energy lies in spectral windows where the gas is transparent.
+#
+# 0.10 is an ENGINEERING ESTIMATE, not a measured or computed value, and is
+# uncertain to roughly a factor of 2. It is calibrated against the outcome rather
+# than derived from first principles:
+#
+#   Goebel, Kniesner, Frey, Knab & Mundt, "Radiative Heat Transfer Analysis in
+#   Modern Rocket Combustion Chambers", EUCASS 2013 / CEAS Space Journal 6:79
+#   (2014). CFD (NSMB, P1 radiation model, Smith and Denison WSGG models) on a
+#   subscale CH4/O2 chamber gives a radiative/total wall heat flux ratio of
+#   8% peak (at the injector inlet) and 2.5% integrated over the chamber.
+#   H2/O2 peaks at 9-10%.
+#
+# With eps = 0.10 this model produces ~6.8% for the canonical methalox case --
+# inside that band, at the high end (our single lumped value is closer to their
+# local peak than their integrated figure, so if anything it is generous).
+#
+# Do not treat 0.10 as physically derived. Computing it properly means mean beam
+# length + CO2/H2O partial pressures from CEA + a HITEMP-based correlation
+# (Alberti et al., valid 400-3000 K to 40-50 atm; classical Hottel charts are up
+# to 80% off at these pressures). That was judged not worth the cache rebuild:
+# once convection is correct, radiation carries <10% of the load, so even a 2x
+# error here moves total flux by ~7%. See ENGINE_DESIGN_REVIEW.md.
+#
+# Valid for CH4 and Ethanol, which are both practically soot-free: CH4 has no
+# C-C bond so soot kinetics are slow, and Ethanol is oxygenated (CEA puts its
+# equilibrium carbon at zero by MR 0.8, where CH4 and RP-1 still produce it).
+#
+# NOT valid for KEROSENE-CLASS fuels (RP-1, Jet-A, JP-x). Huzel & Huang eq.
+# (4-17)/(4-18) treat that carbon as an insulating deposit resistance R_d in
+# series with h_g, which REDUCES flux rather than acting as enhanced radiation.
+# R_d is unmodelled here, so kerolox heat load is over-predicted by roughly 5x --
+# conservative in direction, but far too large to call a margin. See
+# gas_transport.warn_if_carbon_depositing, which flags this at runtime.
+DEFAULT_GAS_EMISSIVITY_ND = 0.10
 DEFAULT_VIEW_FACTOR_ND = 1.0  # Full view (no obstruction)
 
 # Default turbulence intensity

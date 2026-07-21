@@ -160,6 +160,7 @@ def compute_ablative_heat_flux_profile(
     cp_gas = _tr["cp"]
     Pr_gas = _tr["Pr"]
     k_gas = _tr["k"]
+    eps_gas = _tr["eps_gas"]
 
     # Recovery factor for adiabatic wall temperature
     # Typical value for turbulent flow: r ≈ Pr^(1/3) ≈ 0.9
@@ -252,9 +253,14 @@ def compute_ablative_heat_flux_profile(
         # Convective heat flux: q_conv = h × (Taw - Tw)
         q_conv = h_local * throat_factor * max(Taw - T_wall, 0.0)
         
-        # Radiative heat flux: q_rad = ε × σ × (Tg⁴ - Tw⁴)
-        emissivity = ablative_config.surface_emissivity
-        q_rad = emissivity * STEFAN_BOLTZMANN_W_M2_K4 * (T_local ** 4 - T_wall ** 4)
+        # Radiative heat flux: q_rad = ε_gas × σ × (Tg⁴ - Tw⁴)
+        #
+        # ε here must be the GAS emissivity. This previously used
+        # ablative_config.surface_emissivity -- the CHARRED WALL's emissivity
+        # (~0.85, correct for the wall's own re-radiation below) -- which
+        # overstated gas radiation by roughly an order of magnitude for
+        # non-luminous CO2/H2O products.
+        q_rad = eps_gas * STEFAN_BOLTZMANN_W_M2_K4 * (T_local ** 4 - T_wall ** 4)
         q_rad = max(q_rad, 0.0)  # Only positive (gas → wall)
         
         # Incident heat flux (total from gas to wall)

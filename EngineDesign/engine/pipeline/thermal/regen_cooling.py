@@ -15,7 +15,6 @@ from engine.pipeline.constants import (
     DEFAULT_COOLANT_TEMP_K,
     DEFAULT_HOT_GAS_VISC_PA_S,
     DEFAULT_HOT_GAS_THERMAL_COND_W_M_K,
-    DEFAULT_EMISSIVITY_ND,
     DEFAULT_VIEW_FACTOR_ND,
     NU_LAMINAR_ND,
     NU_TURBULENT_COEFFICIENT_ND,
@@ -606,7 +605,9 @@ def estimate_hot_wall_heat_flux(
 
     delta_T = max(Taw - wall_temperature, 0.0)
     heat_flux_conv = h_g * delta_T
-    emissivity = config.radiation_emissivity_hot if config is not None else DEFAULT_EMISSIVITY_ND
+    # Gas emissivity via the shared provider, so this and the axial profile in
+    # ablative_cooling cannot drift apart.
+    emissivity = _tr["eps_gas"]
     view_factor = config.radiation_view_factor if config is not None else DEFAULT_VIEW_FACTOR_ND
     heat_flux_rad = emissivity * view_factor * STEFAN_BOLTZMANN_W_M2_K4 * (
         Tc ** 4 - wall_temperature ** 4

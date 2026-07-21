@@ -40,9 +40,11 @@ present in the text cea_cache.py fetches -- it is simply never parsed.
 
 from __future__ import annotations
 
+import warnings
 from typing import Dict, Optional
 
 from engine.pipeline.constants import (
+    DEFAULT_GAS_EMISSIVITY_ND,
     DEFAULT_HOT_GAS_CP_J_KG_K,
     DEFAULT_HOT_GAS_PRANDTL_ND,
     DEFAULT_HOT_GAS_THERMAL_COND_W_M_K,
@@ -93,4 +95,75 @@ def hot_gas_transport(
         "cp": _cfg("hot_gas_cp", DEFAULT_HOT_GAS_CP_J_KG_K),
         "k": _cfg("hot_gas_thermal_conductivity", DEFAULT_HOT_GAS_THERMAL_COND_W_M_K),
         "Pr": _cfg("hot_gas_prandtl", DEFAULT_HOT_GAS_PRANDTL_ND),
+        # Emissivity of the GAS for the gas -> wall radiation term. Carried here
+        # so the lumped and axial paths cannot diverge, and so it is impossible
+        # to reach for a wall surface emissivity by mistake -- which is exactly
+        # what compute_ablative_heat_flux_profile used to do.
+        "eps_gas": _cfg("radiation_emissivity_hot", DEFAULT_GAS_EMISSIVITY_ND),
     }
+
+
+# Fuels whose combustion products lay down a tenacious carbon deposit on the
+# chamber wall. Kerosene-class only: the deposit is driven by soot kinetics
+# (aromatics and long-chain alkanes), not by equilibrium carbon.
+#
+# Deliberately NOT listed:
+#   * CH4  -- no C-C bond, so the acetylene -> PAH -> soot chain is kinetically
+#             slow. Practically soot-free.
+#   * Ethanol -- oxygenated (the OH group partly self-oxidises), and CEA puts
+#             its equilibrium carbon at zero by MR 0.8, where CH4 and RP-1 are
+#             both still producing it. Historically clean (V-2, Redstone).
+_CARBON_DEPOSITING_FUELS = {
+    "RP-1", "RP1", "RP_1", "KEROSENE", "JETA", "JET-A", "JP-4", "JP-5", "JP-8",
+}
+
+_warned_fuels: set[str] = set()
+
+
+def warn_if_carbon_depositing(config) -> Optional[str]:
+    """Warn once per fuel that the gas-side model is wrong for kerosene-class fuels.
+
+    Huzel & Huang eqs. (4-17)/(4-18) model the LO2/RP-1 carbon deposit as a
+    thermal resistance R_d in SERIES with the gas film, and fig. 4-25 puts
+    R_d at 1100-2100 in^2.sec.degF/Btu against a film resistance 1/h_g of
+    roughly 370 -- so the deposit dominates and cuts gas-side conductance by
+    about 5x. We do not model it, because the published data is a single curve
+    at one propellant, one chamber pressure and one mixture ratio; extrapolating
+    it would be inventing precision we do not have.
+
+    The consequence is one-directional and worth stating loudly: heat load is
+    OVER-predicted, so liners come out oversized rather than undersized. Safe,
+    but badly so -- a 5x error is not a margin.
+
+    Returns the message when one is emitted, else None (so tests can assert on
+    it without capturing warnings).
+    """
+    if config is None:
+        return None
+    cea = getattr(getattr(config, "combustion", None), "cea", None)
+    fuel = str(getattr(cea, "fuel_name", "") or "").strip()
+    if fuel.upper().replace(" ", "") not in _CARBON_DEPOSITING_FUELS:
+        return None
+
+    # Only relevant if a wall heat-transfer model will actually run.
+    def _on(name: str) -> bool:
+        return bool(getattr(getattr(config, name, None), "enabled", False))
+
+    if not (_on("ablative_cooling") or _on("regen_cooling") or _on("graphite_insert")):
+        return None
+
+    if fuel in _warned_fuels:
+        return None
+    _warned_fuels.add(fuel)
+
+    msg = (
+        f"Propellant fuel '{fuel}' is kerosene-class and deposits carbon on the "
+        f"chamber wall. That deposit is an insulating thermal resistance in series "
+        f"with the gas film (Huzel & Huang eq. 4-17/4-18) and is NOT modelled here. "
+        f"Gas-side heat load is therefore over-predicted -- by roughly 5x at "
+        f"Huzel's fig. 4-25 conditions. Liner thicknesses will be oversized; treat "
+        f"absolute heat flux, wall temperature and recession as unreliable for this "
+        f"propellant."
+    )
+    warnings.warn(msg, stacklevel=2)
+    return msg
