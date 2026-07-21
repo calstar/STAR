@@ -340,14 +340,16 @@ _LOX_TBOIL_DEFAULT = 90.2      # K
 
 
 def _chug_gate_margin(gain_margin: float) -> float:
+    # Fail CLOSED on a non-finite margin. This used to return a neutral-pass 1.10, which meant a
+    # NaN gain margin (missing injector dP, un-converged root find) silently passed every gate.
     if not np.isfinite(gain_margin):
-        return 1.10  # neutral-pass when unknown (do not spuriously fail)
+        return _STABILITY_FAILSAFE_MARGIN
     return float(1.0 + _GATE_SPAN * np.tanh((gain_margin - _CHUG_GATE_CENTER) / _CHUG_GATE_SCALE))
 
 
 def _acoustic_gate_margin(alpha_max: float) -> float:
     if not np.isfinite(alpha_max):
-        return 1.10
+        return _STABILITY_FAILSAFE_MARGIN
     return float(1.0 + _GATE_SPAN * np.tanh((_ACOUSTIC_GATE_OFFSET - alpha_max) / _ACOUSTIC_GATE_SCALE))
 
 
@@ -403,12 +405,30 @@ def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, csta
     nu_g = mu_g / rho_g if rho_g > 0 else 2.0e-5
     a_snd = core.sound_speed(gamma, R, Tc)
 
+    from engine.pipeline.assumptions import assume
+
     mdot_O = float(diagnostics.get("mdot_O") or mdot_total * MR / (1.0 + MR))
     mdot_F = float(diagnostics.get("mdot_F") or mdot_total / (1.0 + MR))
-    dpiO = float(diagnostics.get("delta_p_injector_O") or 0.30 * Pc)
-    dpiF = float(diagnostics.get("delta_p_injector_F") or 0.30 * Pc)
-    dpfO = float(diagnostics.get("delta_p_feed_O") or 0.10 * Pc)
-    dpfF = float(diagnostics.get("delta_p_feed_F") or 0.10 * Pc)
+
+    def _dp_injector(side: str) -> float:
+        """Injector-face dP. NO fallback: this is the chug stiffness driver (eta = dP_inj/Pc), so a
+        missing value must poison the margin (-> NaN -> fail closed), never coast on an assumed
+        healthy injector. The old ``or 0.30 * Pc`` silently declared every such design 30% stiff —
+        and because the array path never forwarded these keys, that was EVERY time-series eval."""
+        v = diagnostics.get(f"delta_p_injector_{side}")
+        return float(v) if v is not None and np.isfinite(v) else float("nan")
+
+    def _dp_feed(side: str) -> float:
+        """Feed-line dP. Secondary (sets feed resistance, not stiffness), so a missing value is a
+        DECLARED assumption rather than a hard fail — but it is recorded, not hidden in a literal."""
+        v = diagnostics.get(f"delta_p_feed_{side}")
+        if v is not None and np.isfinite(v):
+            return float(v)
+        return float(assume(f"stability.delta_p_feed_{side}", 0.10 * Pc, unit="Pa",
+                            reason=f"delta_p_feed_{side} missing from eval diagnostics"))
+
+    dpiO, dpiF = _dp_injector("O"), _dp_injector("F")
+    dpfO, dpfF = _dp_feed("O"), _dp_feed("F")
     D32_O = float(diagnostics.get("D32_O") or 80e-6)
     D32_F = float(diagnostics.get("D32_F") or 60e-6)
     ov = overrides or {}
@@ -418,10 +438,8 @@ def build_stability_inputs(config, Pc: float, MR: float, mdot_total: float, csta
         eta_O = float(ov["eta_inj_O"])
         dpiO = eta_O * Pc
     else:
-        eta_O = dpiO / Pc if Pc > 0 else 0.3
-    eta_F = dpiF / Pc if Pc > 0 else 0.3
-
-    from engine.pipeline.assumptions import assume
+        eta_O = dpiO / Pc if Pc > 0 else float("nan")
+    eta_F = dpiF / Pc if Pc > 0 else float("nan")
 
     def _fluid(key, attr, fb_value, fb_unit):
         v = _fluid_attr(config.fluids, key, attr, None)
@@ -736,6 +754,12 @@ def comprehensive_stability_analysis(
             chugging["frequency"] = float(_fch)        # physical chug freq, not L*/c* placeholder
         chugging["stability_margin"] = chug_margin
         chugging["chug_gain_margin"] = phys["chug"].get("gain_margin")
+        # Injector stiffness eta = dP_inj/Pc, per side. This is the calibration-free chug criterion
+        # (conventional design range 0.15-0.25); unlike the gate margin it is a real ratio and does
+        # not saturate. Surfaced per-timestep so the burn-long minimum can be reported/gated.
+        chugging["eta_inj_O"] = phys.get("eta_inj_O")
+        chugging["eta_inj_F"] = phys.get("eta_inj_F")
+        chugging["dominant_driver"] = phys["chug"].get("dominant_driver")
         feed_stability["stability_margin"] = chug_margin   # feed-coupled instability IS chug (un-rig)
         if not phys["chug"].get("stable", True):
             issues.append("Chug (feed-coupled LF) margin low: stiffen injector or improve atomization")

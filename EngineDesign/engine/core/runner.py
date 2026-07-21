@@ -827,6 +827,11 @@ class PintleEngineRunner:
             # — which is a tanh-squashed gate value that saturates ~1.3 — this is the physical,
             # unbounded number. NaN here means the physical stability model fell back.
             "chug_gain_margin": np.full(n, np.nan),
+            # Injector stiffness eta = dP_inj/Pc per side. The calibration-free chug criterion
+            # (conventional range 0.15-0.25). eta ~ mdot, so in blowdown it falls monotonically and
+            # its minimum lands at depletion — the design-relevant worst point.
+            "eta_inj_O": np.full(n, np.nan),
+            "eta_inj_F": np.full(n, np.nan),
             "stability_score": np.full(n, np.nan),
             "stability_state": np.full(n, "unstable", dtype=object),
         }
@@ -946,6 +951,14 @@ class PintleEngineRunner:
                         "mdot_F": diagnostics["mdot_F"],
                         "P_tank_O": float(P_tank_O[i]),
                         "P_tank_F": float(P_tank_F[i]),
+                        # Injector/feed dP drive the chug model's stiffness term (eta = dP_inj/Pc).
+                        # These were NOT forwarded, so the stability model fell back to an assumed
+                        # 30%-stiff injector on every timestep of every array eval — i.e. the chug
+                        # gate never saw a real injector pressure drop in the time-series path.
+                        "delta_p_injector_O": diagnostics.get("delta_p_injector_O"),
+                        "delta_p_injector_F": diagnostics.get("delta_p_injector_F"),
+                        "delta_p_feed_O": diagnostics.get("delta_p_feed_O"),
+                        "delta_p_feed_F": diagnostics.get("delta_p_feed_F"),
                     }
                     
                     stability_results = comprehensive_stability_analysis(
@@ -963,6 +976,9 @@ class PintleEngineRunner:
                     # Extract stability metrics
                     results["chugging_stability_margin"][i] = stability_results.get("chugging", {}).get("stability_margin", np.nan)
                     results["chug_gain_margin"][i] = stability_results.get("chugging", {}).get("chug_gain_margin", np.nan)
+                    _chg = stability_results.get("chugging", {})
+                    results["eta_inj_O"][i] = _chg.get("eta_inj_O") if _chg.get("eta_inj_O") is not None else np.nan
+                    results["eta_inj_F"][i] = _chg.get("eta_inj_F") if _chg.get("eta_inj_F") is not None else np.nan
                     results["stability_score"][i] = stability_results.get("stability_score", np.nan)
                     results["stability_state"][i] = stability_results.get("stability_state", "unstable")
                 except Exception as e:
