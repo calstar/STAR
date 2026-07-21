@@ -316,8 +316,6 @@ environment:
   latitude: 35.34722
   longitude: -117.8099547
   elevation: 626.67
-thrust:
-  burn_time: 10.0
 design_requirements:
   target_thrust: 8000.0
   target_apogee: 3048.0

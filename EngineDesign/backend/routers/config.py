@@ -170,7 +170,7 @@ async def update_config(updates: dict):
         new_config = PintleEngineConfig(**merged)
         
         # Save to disk if we have a path. MUST go through io.save_config: a split config keeps its
-        # optimizer-generated half in <stem>.design.yaml, and dumping the merged model into the
+        # optimizer-generated half in <stem>.outputs.yaml, and dumping the merged model into the
         # intent file would put generated fields where the loader forbids them -- every subsequent
         # load would then raise on the collision.
         if app_state.config_path:

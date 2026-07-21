@@ -4,11 +4,11 @@ WHY
 ---
 A config used to hold both halves with nothing marking which was which. That is why staleness was
 invisible: a hand-edited requirement and a geometry solved for a DIFFERENT requirement look
-identical on disk. ``configs/canonical/<name>.yaml`` now holds intent; ``<name>.design.yaml`` holds
-the generated half; ``io._apply_design_sidecar`` overlays them at load so the schema and every
+identical on disk. ``configs/canonical/<name>.yaml`` now holds intent; ``<name>.outputs.yaml`` holds
+the generated half; ``io._apply_output_sidecar`` overlays them at load so the schema and every
 downstream consumer are unchanged.
 
-The split is checkable rather than a matter of taste -- ``io._GENERATED_FIELDS`` lists exactly the
+The split is checkable rather than a matter of taste -- ``io._OUTPUT_FIELDS`` lists exactly the
 fields something in the codebase assigns. Notably ``chamber_geometry.design_thrust/design_MR/
 design_pressure`` and ``nozzle_efficiency`` are NOT generated (nothing assigns them; they are schema
 declarations), so they stay intent.
@@ -26,10 +26,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from engine.pipeline.io import (  # noqa: E402
-    _GENERATED_FIELDS,
+    _OUTPUT_FIELDS,
     load_config,
     save_config,
-    split_generated,
+    split_outputs,
 )
 
 SPLIT = ["impinging", "pintle"]
@@ -39,12 +39,12 @@ SPLIT = ["impinging", "pintle"]
 def test_sidecar_exists_and_intent_holds_no_generated_fields(stem: str) -> None:
     """The intent file must not contain generated fields -- that is the whole invariant."""
     intent_path = ROOT / "configs" / "canonical" / f"{stem}.yaml"
-    sidecar_path = ROOT / "configs" / "canonical" / f"{stem}.design.yaml"
+    sidecar_path = ROOT / "configs" / "canonical" / f"{stem}.outputs.yaml"
     assert sidecar_path.exists(), f"missing generated half for {stem}"
 
     raw = yaml.safe_load(intent_path.read_text(encoding="utf-8"))
     leaked = []
-    for block, spec in _GENERATED_FIELDS.items():
+    for block, spec in _OUTPUT_FIELDS.items():
         if spec is None:
             if block in raw:
                 leaked.append(block)
@@ -56,7 +56,7 @@ def test_sidecar_exists_and_intent_holds_no_generated_fields(stem: str) -> None:
 @pytest.mark.parametrize("stem", SPLIT)
 def test_generated_half_is_actually_populated(stem: str) -> None:
     """Guard against an empty sidecar silently passing the invariant above."""
-    gen = yaml.safe_load((ROOT / "configs" / "canonical" / f"{stem}.design.yaml").read_text(encoding="utf-8"))
+    gen = yaml.safe_load((ROOT / "configs" / "canonical" / f"{stem}.outputs.yaml").read_text(encoding="utf-8"))
     assert gen, "sidecar is empty"
     assert gen["chamber_geometry"]["A_throat"] > 0
     assert gen["injector"]["geometry"]
@@ -81,8 +81,8 @@ def test_collision_between_halves_is_an_error(tmp_path: Path) -> None:
     doc.setdefault("chamber_geometry", {})["A_throat"] = 0.00123   # generated field, hand-set
 
     (tmp_path / "c.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
-    sidecar = ROOT / "configs" / "canonical" / "impinging.design.yaml"
-    (tmp_path / "c.design.yaml").write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    sidecar = ROOT / "configs" / "canonical" / "impinging.outputs.yaml"
+    (tmp_path / "c.outputs.yaml").write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
 
     with pytest.raises(ValueError, match="chamber_geometry.A_throat"):
         load_config(str(tmp_path / "c.yaml"))
@@ -95,9 +95,9 @@ def test_save_round_trip_keeps_the_split(tmp_path: Path) -> None:
     straight into the intent file.
     """
     src = ROOT / "configs" / "canonical" / "impinging.yaml"
-    sidecar = ROOT / "configs" / "canonical" / "impinging.design.yaml"
+    sidecar = ROOT / "configs" / "canonical" / "impinging.outputs.yaml"
     (tmp_path / "c.yaml").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
-    (tmp_path / "c.design.yaml").write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / "c.outputs.yaml").write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
 
     merged = load_config(str(tmp_path / "c.yaml")).model_dump(mode="json")
     save_config(merged, tmp_path / "c.yaml")
@@ -112,10 +112,10 @@ def test_save_round_trip_keeps_the_split(tmp_path: Path) -> None:
     )
 
 
-def test_split_generated_leaves_intent_fields_alone() -> None:
+def test_split_outputs_leaves_intent_fields_alone() -> None:
     """design_* and nozzle_efficiency are hand-typed (nothing assigns them) -- they stay in intent."""
     merged = load_config(str(ROOT / "configs" / "canonical" / "impinging.yaml")).model_dump(mode="json")
-    intent, generated = split_generated(merged)
+    intent, generated = split_outputs(merged)
     for key in ("design_thrust", "design_MR", "design_pressure", "nozzle_efficiency"):
         assert key in intent["chamber_geometry"], f"{key} should stay in intent"
         assert key not in generated.get("chamber_geometry", {})

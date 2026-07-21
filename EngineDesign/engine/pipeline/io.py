@@ -130,12 +130,14 @@ def _material_preset_search_dirs(config_dir: Path) -> List[Path]:
     return [config_dir / "materials", _PROJECT_ROOT / "configs" / "materials"]
 
 
-# Fields the OPTIMIZER writes back, verified by grepping for assignments (not schema declarations):
-# chamber_geometry A_throat/A_exit/... come from the chamber+nozzle sizing, Cf from
-# layer1_static_optimization:5442, injector.geometry jet sizing from Layer 1, tank start pressures
-# from Layer 1, pressure_curves from Layer 2. ``chamber_geometry.design_*`` and ``nozzle_efficiency``
-# are NOT here: nothing assigns them, so they are hand-typed intent.
-_GENERATED_FIELDS: Dict[str, Any] = {
+# Fields the OPTIMIZER writes back -> the .outputs.yaml sidecar. Verified by grepping for
+# assignments (not schema declarations): chamber_geometry A_throat/... from chamber+nozzle sizing,
+# Cf from layer1_static_optimization:5442, injector.geometry jet sizing from Layer 1, tank start
+# pressures from Layer 1, pressure_curves from Layer 2. thrust.burn_time is written by
+# sync_burn_time_fields (a synced COPY of design_requirements.target_burn_time, not an independent
+# input -- editing it in the intent file does nothing, so it belongs with the outputs). NOT here:
+# chamber_geometry.design_* and nozzle_efficiency (nothing assigns them -> hand-typed intent).
+_OUTPUT_FIELDS: Dict[str, Any] = {
     "chamber_geometry": ["A_throat", "A_exit", "volume", "Lstar", "chamber_diameter",
                          "exit_diameter", "expansion_ratio", "length", "length_cylindrical",
                          "length_contraction", "Cf"],
@@ -143,19 +145,20 @@ _GENERATED_FIELDS: Dict[str, Any] = {
     "lox_tank": ["initial_pressure_psi"],
     "fuel_tank": ["initial_pressure_psi"],
     "combustion": {"cea": ["expansion_ratio"]},
+    "thrust": None,            # whole block -- its only field, burn_time, is a synced copy
     "pressure_curves": None,   # whole block
 }
 
 
-def split_generated(data: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    """Partition a resolved config into (hand-authored intent, optimizer-generated) halves.
+def split_outputs(data: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Partition a resolved config into (hand-authored intent, optimizer-produced outputs) halves.
 
     The split is by AUTHORSHIP -- what a human types vs what the code writes back -- which is
     checkable against the source rather than a matter of taste. Used when saving so a round trip
     through the API cannot collapse a split config back into one file.
     """
     intent = copy.deepcopy(data)
-    generated: Dict[str, Any] = {}
+    outputs: Dict[str, Any] = {}
 
     def take(src: Dict[str, Any], dst: Dict[str, Any], spec: Any) -> None:
         if spec is None:
@@ -172,48 +175,59 @@ def split_generated(data: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any
                 if bucket:
                     dst[key] = bucket
 
-    for block, spec in _GENERATED_FIELDS.items():
+    for block, spec in _OUTPUT_FIELDS.items():
         if spec is None:
             if block in intent:
-                generated[block] = intent.pop(block)
+                outputs[block] = intent.pop(block)
         elif isinstance(intent.get(block), dict):
             bucket = {}
             take(intent[block], bucket, spec)
             if bucket:
-                generated[block] = bucket
-    return intent, generated
+                outputs[block] = bucket
+    return intent, outputs
+
+
+# A split config keeps its optimizer-produced half in ``<stem>.outputs.yaml`` (the intent file
+# ``<stem>.yaml`` holds only what a human types). "outputs" over "design" or "generated" because
+# that is exactly what it is: the outputs of running the optimizer on the intent.
+_OUTPUTS_SUFFIX = ".outputs.yaml"
+
+
+def _outputs_sidecar_path(config_path: Path) -> Path:
+    """``configs/canonical/impinging.yaml`` -> ``configs/canonical/impinging.outputs.yaml``."""
+    stem = config_path.with_suffix("")
+    return stem.with_name(stem.name + _OUTPUTS_SUFFIX)
 
 
 def save_config(data: Dict[str, Any], path: Union[str, Path]) -> None:
-    """Write a config, preserving the intent/generated split when a sidecar is in use.
+    """Write a config, preserving the intent/outputs split when an outputs sidecar is in use.
 
     Without this, any save through the API would write the MERGED config into the intent file; the
-    sidecar would then collide with it and every subsequent load would raise. Splitting on save is
-    what makes the split survive a round trip.
+    outputs sidecar would then collide with it and every subsequent load would raise. Splitting on
+    save is what makes the split survive a round trip.
     """
     path = Path(path)
-    sidecar = path.with_suffix("")
-    sidecar = sidecar.with_name(sidecar.name + ".design.yaml")
+    sidecar = _outputs_sidecar_path(path)
 
     if not sidecar.exists():
         with open(path, "w", encoding="utf-8") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
         return
 
-    intent, generated = split_generated(data)
+    intent, outputs = split_outputs(data)
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(intent, f, default_flow_style=False, sort_keys=False)
     with open(sidecar, "r", encoding="utf-8") as f:
         header = "".join(ln for ln in f if ln.startswith("#") or not ln.strip())
     with open(sidecar, "w", encoding="utf-8") as f:
         f.write(header)
-        yaml.dump(generated, f, default_flow_style=False, sort_keys=False)
+        yaml.dump(outputs, f, default_flow_style=False, sort_keys=False)
 
 
 def _deep_overlay(base: Dict[str, Any], overlay: Dict[str, Any], path: str = "") -> List[str]:
     """Recursively overlay ``overlay`` onto ``base`` IN PLACE. Returns the paths that collided.
 
-    A collision means a field owned by the generated sidecar was ALSO written by hand in the intent
+    A collision means a field owned by the outputs sidecar was ALSO written by hand in the intent
     file -- the one situation the split exists to make impossible-to-miss, so it is reported rather
     than silently resolved either way.
     """
@@ -229,34 +243,33 @@ def _deep_overlay(base: Dict[str, Any], overlay: Dict[str, Any], path: str = "")
     return collisions
 
 
-def _apply_design_sidecar(data: Dict[str, Any], path: Path) -> Dict[str, Any]:
-    """Overlay ``<stem>.design.yaml`` -- the optimizer-GENERATED half of a split config.
+def _apply_output_sidecar(data: Dict[str, Any], path: Path) -> Dict[str, Any]:
+    """Overlay ``<stem>.outputs.yaml`` -- the optimizer-produced half of a split config.
 
     Configs mix two kinds of content: what a human types (requirements, hardware choices, model
     selections) and what the code writes back (chamber geometry, injector jet sizing, tank
-    pressures, pressure curves). Keeping both in one file is why staleness was invisible -- nothing
-    marked which half the optimizer owns, so a hand-edited requirement and a generated geometry
-    solved for a DIFFERENT requirement looked identical on disk.
+    pressures, pressure curves, synced burn time). Keeping both in one file is why staleness was
+    invisible -- nothing marked which half the optimizer owns, so a hand-edited requirement and an
+    output geometry solved for a DIFFERENT requirement looked identical on disk.
 
     Split on disk, merged here, so the pydantic schema and every downstream consumer are unchanged.
     Absent sidecar = single-file config, legacy behaviour, unchanged.
     """
-    sidecar = path.with_suffix("")
-    sidecar = sidecar.with_name(sidecar.name + ".design.yaml")
+    sidecar = _outputs_sidecar_path(path)
     if not sidecar.exists():
         return data
 
     with open(sidecar, "r", encoding="utf-8") as f:
-        generated = yaml.safe_load(f) or {}
-    _log.info("applying design sidecar %s", sidecar)
+        outputs = yaml.safe_load(f) or {}
+    _log.info("applying output sidecar %s", sidecar)
 
-    collisions = _deep_overlay(data, generated)
+    collisions = _deep_overlay(data, outputs)
     if collisions:
         raise ValueError(
             f"{path.name} hand-sets fields owned by {sidecar.name}: {sorted(collisions)}. "
-            f"Generated values belong in the .design.yaml only -- editing them in the intent file "
+            f"Output values belong in the .outputs.yaml only -- editing them in the intent file "
             f"means the next optimizer run silently discards your edit. Remove them, or move the "
-            f"field out of the sidecar if it is genuinely hand-authored."
+            f"field out of the outputs sidecar if it is genuinely hand-authored."
         )
     return data
 
@@ -289,7 +302,7 @@ def load_config(config_path: Union[str, Path]) -> PintleEngineConfig:
 
     data = _apply_propellant_preset(data, path.resolve().parent)
     data = _apply_material_preset(data, path.resolve().parent)
-    data = _apply_design_sidecar(data, path.resolve())
+    data = _apply_output_sidecar(data, path.resolve())
 
     # Re-stamp spray/discharge bindings for the declared injector type (fixes stale pintle-era
     # lefebvre SMD + fixed Cd left on impinging YAMLs — bogus ~1 µm D32 and supply-starved Pc).

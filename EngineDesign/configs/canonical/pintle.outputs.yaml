@@ -1,13 +1,17 @@
-# GENERATED -- optimizer output. Do NOT hand-edit.
+# GENERATED -- optimizer OUTPUTS. Do NOT hand-edit.
 #
-# This is the code-written half of pintle.yaml. The split is by authorship: what a human
-# types (requirements, hardware choices, model selections) stays in the intent file; what Layer 1/2
-# write back lives here. io._apply_design_sidecar overlays this at load, so the schema and every
+# This is the code-written half of pintle.yaml. The split is by authorship: what a human types
+# (requirements, hardware choices, model selections) stays in the intent file; what Layer 1/2 write
+# back lives here. io._apply_output_sidecar overlays this at load, so the schema and every
 # downstream consumer are unchanged.
 #
 # Editing a value here is pointless -- the next optimizer run overwrites it. Setting one of these
 # fields in the intent file instead is an ERROR the loader raises, because that edit would be
 # silently discarded.
+#
+# NOTE thrust.burn_time is a synced COPY of design_requirements.target_burn_time (the hand-typed
+# input), kept here because sync_burn_time_fields writes it and editing it by hand does nothing.
+# An independent achieved-vs-target burn time is a planned future change, not this.
 #
 # Regenerate by re-running Layer 1 against pintle.yaml's design_requirements.
 
@@ -131,3 +135,5 @@ pressure_curves:
 combustion:
   cea:
     expansion_ratio: 4.539021344528996
+thrust:
+  burn_time: 6.0

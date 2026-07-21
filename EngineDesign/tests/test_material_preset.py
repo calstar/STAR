@@ -29,12 +29,12 @@ CANONICAL = ["canonical/impinging.yaml", "canonical/pintle.yaml"]
 
 def _copy_split_config(tmp_path: Path, stem: str) -> Path:
     """Copy canonical/impinging AND its generated sidecar. The intent half alone is not a valid
-    config -- chamber geometry, injector geometry and tank pressures live in <stem>.design.yaml."""
+    config -- chamber geometry, injector geometry and tank pressures live in <stem>.outputs.yaml."""
     src = ROOT / "configs" / "canonical" / "impinging.yaml"
-    sidecar = ROOT / "configs" / "canonical" / "impinging.design.yaml"
+    sidecar = ROOT / "configs" / "canonical" / "impinging.outputs.yaml"
     dst = tmp_path / f"{stem}.yaml"
     dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
-    (tmp_path / f"{stem}.design.yaml").write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / f"{stem}.outputs.yaml").write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
     return dst
 
 
