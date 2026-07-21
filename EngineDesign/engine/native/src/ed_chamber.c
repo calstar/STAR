@@ -77,7 +77,14 @@ static double chamber_residual(double Pc, void *vctx) {
             st->fluid_F.latent_heat, st->comb.T_star_fuel_cap_K, &eta) != ED_OK)
         return NAN;
 
-    const double eta_final = eta.eta_total * cool.cooling_eff;
+    /* eta.eta_total is combustion-only (mixing x kinetics x L*) despite the
+     * name; eta_final is the c* efficiency. Mirrors combustion_eff.eta_cstar --
+     * see that module's docstring before applying either to a temperature.
+     *
+     * cooling_eff is an ENERGY fraction and c* goes as sqrt(Tc), so the
+     * conversion into a c* factor is a square root. Multiplying by cooling_eff
+     * directly (as this did) roughly doubles cooling's penalty on c*. */
+    const double eta_final = eta.eta_total * sqrt(cool.cooling_eff);
     if (!(isfinite(eta_final) && eta_final > 0.0 && eta_final <= 1.0)) return NAN;
 
     const double cstar_actual = eta_final * cea.cstar_ideal;

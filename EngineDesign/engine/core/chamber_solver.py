@@ -15,7 +15,11 @@ from scipy.optimize import brentq, newton
 from typing import Tuple, Dict, Any, List, Optional
 
 from engine.pipeline.config_schemas import PintleEngineConfig, ensure_chamber_geometry
-from engine.pipeline.combustion_eff import eta_cstar, calculate_Lstar
+from engine.pipeline.combustion_eff import (
+    eta_cstar,
+    calculate_Lstar,
+    calculate_actual_chamber_temp,
+)
 from engine.pipeline.cea_cache import CEACache
 from engine.pipeline.thermal.film_cooling import compute_film_cooling
 from engine.pipeline.thermal.regen_cooling import (
@@ -312,14 +316,9 @@ class ChamberSolver:
         if Pc_guess is None:
             Pc_guess = (Pc_min + Pc_max) / 2
         
-        # Create residual function with tank pressures bound
-        # Create residual function with tank pressures bound
-        # Also pass debug to residual if needed in future (currently residual uses instance state, but we can't easily pass debug to it without changing signature broadly or storing state)
-        # However, residual calls eta_cstar which needs debug...
-        # Wait, residual() calls eta_cstar() inside.
-        # I need to update residual() to use debug flag.
-        # I'll store `self._debug = debug` temporarily or modify residual validation.
-        # Storing on self is easiest for this scope.
+        # Create residual function with tank pressures bound. residual() calls
+        # eta_cstar() internally and that needs the debug flag, but residual's
+        # signature is fixed by the root finder -- so debug is passed on self.
         self._debug = debug
         self._silent = silent  # gates the display-only cooling profile in post-processing
 
@@ -702,15 +701,18 @@ class ChamberSolver:
             "fuel_props": self._get_fuel_props(),
         }
         
-        eta = eta_cstar(
+        eta, eta_components = eta_cstar(
             current_Lstar,
             self.config.combustion.efficiency,
             cooling_eff,
             advanced_params,
             debug=debug,
+            return_components=True,
         )
-        
+
         # Comprehensive validation of final solution
+        # eta here is the c* efficiency (combustion x cooling). c* is the only
+        # quantity it may be applied to -- see combustion_eff's module docstring.
         cstar_actual = eta * cea_props["cstar_ideal"]
         gamma = cea_props["gamma"]
         R = cea_props["R"]
@@ -752,8 +754,25 @@ class ChamberSolver:
             "MR": MR,
             "cstar_ideal": cea_props["cstar_ideal"],
             "Tc_ideal": cea_props["Tc"],  # Store original ideal temperature
+            # Chamber temperature corrected for INCOMPLETE COMBUSTION, per Huzel
+            # & Huang Sample Calc 4-3 (Tc x eta_c*^2). Reported only -- the
+            # gas-side heat transfer is still evaluated at the uncorrected Tc,
+            # because _evaluate_cooling_models runs before eta is known. Closing
+            # that is tracked as the next thermal work item. Measured on
+            # configs/canonical/impinging.yaml: Tc_ideal 3013 K vs 2677 K here,
+            # a 336 K (11.2%) overstatement, worth roughly -19% on convective
+            # heat flux and -38% on gas radiation once it is wired through.
+            "Tc_combustion": calculate_actual_chamber_temp(
+                cea_props["Tc"], eta_components["eta_combustion"]
+            ),
             "cstar_actual": cstar_actual,
             "eta_cstar": eta,
+            # The two factors behind eta_cstar, unblended. eta_cstar is their
+            # product; anything correcting a TEMPERATURE needs eta_combustion
+            # alone, since cooling already reaches temperature via Tc below.
+            "eta_combustion": eta_components["eta_combustion"],
+            "eta_cooling_energy": eta_components["eta_cooling_energy"],
+            "eta_cooling_cstar": eta_components["eta_cooling_cstar"],
             "cooling_efficiency": cooling_eff,
             "Tc": effective_Tc,  # Use effective temperature after cooling (accounts for energy removal)
             "gamma": gamma,
@@ -957,6 +976,23 @@ class ChamberSolver:
         gamma: float,
         R: float,
     ) -> float:
+        """Fraction of the gas enthalpy that survives film/ablative/regen cooling.
+
+        Returned as an ENERGY fraction, 1 - Q_removed / (mdot*cp*Tc). The caller
+        multiplies it into the c* efficiency (combustion_eff.eta_cstar).
+
+        KNOWN CURRENCY MISMATCH -- deliberately left alone, not overlooked.
+        c* ~ sqrt(Tc), so an energy deficit of f should cost c* only sqrt(1-f),
+        not (1-f). Applying the energy fraction linearly to c* therefore roughly
+        doubles the intended penalty: at cooling_eff = 0.96 the c* hit is 4%
+        where sqrt gives 2%. Fixing it changes every solved Pc and needs the C
+        mirror in ed_cooling.c updated in lockstep, so it is called out here
+        rather than patched silently.
+
+        Note also that `Tc` arrives as effective_Tc -- already reduced by the
+        same cooling this function is measuring -- which shrinks the denominator
+        and slightly deepens the deficit. Second-order next to the above.
+        """
         eff_cfg = self.config.combustion.efficiency
         if not eff_cfg.use_cooling_coupling:
             return 1.0
