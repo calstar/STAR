@@ -71,7 +71,7 @@ def bartz_sigma(
     gamma: float,
     mach: float,
 ) -> float:
-    """Property-variation correction sigma (Huzel eq. 4-14, his figure 4-24).
+    """Property-variation correction sigma -- Huzel & Huang eq. (4-14) verbatim.
 
         sigma = 1 / { [0.5*(Twg/(Tc)ns)*(1+((g-1)/2)M^2) + 0.5]^0.68
                       * [1+((g-1)/2)M^2]^0.12 }
@@ -85,19 +85,24 @@ def bartz_sigma(
     cold wall thins the boundary layer. It is easy to assume a "correction
     factor" must be a knockdown; this one is not.
 
-    Huzel prints only the chart, not this expression -- the closed form is from
-    Bartz's own paper. Checked against the three values his Sample Calculation
-    4-3 reads off figure 4-24 at Twg/(Tc)ns = 0.8, gamma ~ 1.2:
+    Huzel prints this equation directly (eq. 4-14) and ALSO tabulates it as
+    figure 4-24, "as computed by Bartz". The equation is the authority here;
+    the figure is a reading aid.
 
-        station        M        figure 4-24     closed form
-        chamber        0.40     1.05            1.067
+    Cross-checked anyway against the three sigma values Sample Calculation 4-3
+    takes off figure 4-24 at Twg/(Tc)ns = 0.8, gamma ~ 1.2:
+
+        station        M        figure 4-24     eq. 4-14
+        chamber        0.4046   1.05            1.067
         throat         1.0      1.0             1.031
-        exit, eps=5    2.78     0.8             0.821
+        exit, eps=5    2.7850   0.8             0.820
 
-    Agreement is 1.6 / 3.1 / 2.6 percent. That is the accuracy of reading a
-    small log-scale figure to two significant digits -- his "1.0" at the throat
-    is plainly a chart read, not an exact value -- so the closed form is taken
-    as reproducing figure 4-24 rather than contradicting it.
+    All three sit 1.6-3.1 percent ABOVE the chart values. The consistent sign
+    is expected: the figure is a small log-scale plot read to two significant
+    digits (the printed "1.0" at the throat is plainly a chart read), so the
+    residual is his reading precision, not a discrepancy in the equation. The
+    Mach numbers are not Huzel's -- his chart is indexed by area ratio, so they
+    were solved from the isentropic area-Mach relation at gamma = 1.2.
     """
     if not (gamma > 1.0 and math.isfinite(gamma)):
         raise ValueError(f"bartz_sigma: gamma must exceed 1, got {gamma!r}")

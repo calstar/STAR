@@ -160,25 +160,32 @@ class TestAreaAndSigmaScaling:
 
 
 class TestSigmaAgainstFigure4_24:
-    """sigma from the closed form vs the three values Huzel reads off his chart.
+    """eq. (4-14) as implemented vs the sigma values Huzel reads off figure 4-24.
+
+    The implementation follows Huzel's printed eq. (4-14), so this is a
+    consistency check between his equation and his own chart, not a validation
+    of the equation itself -- the equation is the primary source.
 
     Sample Calculation 4-3 states "a (Twg/(Tc)ns) value of 0.8 is used to
     determine the a values from figure 4-24 (gamma ~ 1.2)" and then applies
     1.05 in the chamber, 1.0 at the throat and 0.8 at eps = 5.
 
-    Tolerance is 5 percent because the reference is a chart read to two
-    significant figures, not a computed value -- the printed "1.0" at the
-    throat is the giveaway. Tightening this would be pinning our arithmetic to
-    someone's ruler.
+    Tolerance is 5 percent because the CHART is the imprecise side: it is a
+    small log-scale plot read to two significant figures, and the printed "1.0"
+    at the throat is the giveaway. All three deviations are positive, which is
+    what a consistently-rounded chart read looks like.
+
+    The Mach numbers are solved from the isentropic area-Mach relation at
+    gamma = 1.2, since figure 4-24 is indexed by area ratio rather than Mach.
     """
 
     TWG_OVER_TC = 0.8
     GAMMA = 1.2
 
     @pytest.mark.parametrize("station, mach, chart", [
-        ("chamber (Ac/At = 1.6)", 0.402, 1.05),
+        ("chamber (Ac/At = 1.6)", 0.4046, 1.05),
         ("throat", 1.0, 1.0),
-        ("exit, eps = 5", 2.78, 0.8),
+        ("exit, eps = 5", 2.7850, 0.8),
     ])
     def test_matches_chart(self, station, mach, chart):
         from engine.pipeline.thermal.bartz import bartz_sigma
@@ -188,10 +195,26 @@ class TestSigmaAgainstFigure4_24:
     def test_sigma_decreases_along_the_nozzle(self):
         """Chamber > throat > exit, matching the chart's trend."""
         from engine.pipeline.thermal.bartz import bartz_sigma
-        chamber = bartz_sigma(self.TWG_OVER_TC, self.GAMMA, 0.402)
+        chamber = bartz_sigma(self.TWG_OVER_TC, self.GAMMA, 0.4046)
         throat = bartz_sigma(self.TWG_OVER_TC, self.GAMMA, 1.0)
-        exit_ = bartz_sigma(self.TWG_OVER_TC, self.GAMMA, 2.78)
+        exit_ = bartz_sigma(self.TWG_OVER_TC, self.GAMMA, 2.7850)
         assert chamber > throat > exit_
+
+    def test_matches_huzel_equation_4_14_literally(self):
+        """Transcribe eq. (4-14) independently and require an exact match.
+
+        Guards the implementation against a later "simplification" -- dropping
+        a 0.5, folding the two brackets together, or swapping the 0.68 and 0.12
+        exponents, none of which would be obvious from the resulting numbers.
+        """
+        from engine.pipeline.thermal.bartz import bartz_sigma
+        for tr in (0.35, 0.6, 0.8, 1.0):
+            for gamma in (1.14, 1.2, 1.222, 1.4):
+                for mach in (0.0, 0.3, 1.0, 2.5, 4.0):
+                    k = 1.0 + (gamma - 1.0) / 2.0 * mach ** 2
+                    expected = 1.0 / ((0.5 * tr * k + 0.5) ** 0.68 * k ** 0.12)
+                    assert bartz_sigma(tr, gamma, mach) == pytest.approx(
+                        expected, rel=1e-12), (tr, gamma, mach)
 
     def test_cold_wall_raises_h_g(self):
         """sigma > 1 for a cold wall -- it is NOT a knockdown factor.
