@@ -113,6 +113,11 @@ def test_layer2_pc_constraint():
         else:
             print(f"FAIL: Did not find zero Pc penalty (Objs: {objs_case1}).")
 
+        assert found_safe, (
+            "Case 1: expected a zero chamber-pressure-stability penalty (Pc_stab=0.00) for a "
+            f"stable pressure curve, but no such log line was emitted. objs={objs_case1}"
+        )
+
         # --- Test Case 2: Extreme Drift in Output (Objective Penalty) ---
         print("\n--- Test Case 2: Extreme Drift (>25%) ---")
         mock_logger.reset_mock()
@@ -164,6 +169,11 @@ def test_layer2_pc_constraint():
              else:
                  print(f"FAIL: Did not find high Pc penalty (Objs: {objs_case2}).")
 
+        assert found_penalty, (
+            "Case 2: expected an elevated Pc-stability penalty for a >25% chamber-pressure "
+            f"drift, but neither the objective nor the logs showed one. objs={objs_case2}"
+        )
+
         # --- Test Case 3: Severe Pressure Drop (Pre-Solver Pruning) ---
         print("\n--- Test Case 3: Severe Pressure Drop (<75% of Initial) ---")
         mock_logger.reset_mock()
@@ -210,6 +220,12 @@ def test_layer2_pc_constraint():
                 print(f"PASS: Verified high penalty for low pressure (generation constraints bypassed by mock).")
             else:
                 print(f"FAIL: Did not find high penalty for low pressure (Objs: {objs_case3}).")
+
+            assert found_pruning, (
+                "Case 3: expected a high objective penalty when the generated tank pressure is "
+                "forced below 75% of the initial chamber pressure, but the objective stayed low. "
+                f"objs={objs_case3}"
+            )
 
 if __name__ == "__main__":
     test_layer2_pc_constraint()

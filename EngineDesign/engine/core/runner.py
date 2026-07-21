@@ -467,7 +467,7 @@ class PintleEngineRunner:
             "stability_state": "unstable",
             "stability_score": 0.0,
             "is_stable": False,
-            "chugging": {"frequency": 0.0, "stability_margin": 0.0, "stability_index": 0.0, "period": 0.0, "tau_residence": 0.0, "Lstar": 0.0},
+            "chugging": {"frequency": 0.0, "stability_margin": 0.0, "period": 0.0, "tau_residence": 0.0, "Lstar": 0.0},
             "acoustic": {"stability_margin": 0.0, "modes": {}, "longitudinal_modes": [], "transverse_modes": [], "sound_speed": 0.0},
             "feed_system": {"pogo_frequency": 0.0, "surge_frequency": 0.0, "water_hammer_margin": 0.0, "stability_margin": 0.0, "sound_speed": 0.0},
             "mode_coupling": [],
@@ -817,6 +817,10 @@ class PintleEngineRunner:
             "diagnostics": [],
             # Stability arrays (comprehensive analysis for all 3 types)
             "chugging_stability_margin": np.full(n, np.nan),
+            # Raw Nyquist gain margin (GM > 1 == stable). Unlike ``chugging_stability_margin``
+            # — which is a tanh-squashed gate value that saturates ~1.3 — this is the physical,
+            # unbounded number. NaN here means the physical stability model fell back.
+            "chug_gain_margin": np.full(n, np.nan),
             "stability_score": np.full(n, np.nan),
             "stability_state": np.full(n, "unstable", dtype=object),
         }
@@ -952,6 +956,7 @@ class PintleEngineRunner:
                     
                     # Extract stability metrics
                     results["chugging_stability_margin"][i] = stability_results.get("chugging", {}).get("stability_margin", np.nan)
+                    results["chug_gain_margin"][i] = stability_results.get("chugging", {}).get("chug_gain_margin", np.nan)
                     results["stability_score"][i] = stability_results.get("stability_score", np.nan)
                     results["stability_state"][i] = stability_results.get("stability_state", "unstable")
                 except Exception as e:

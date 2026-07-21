@@ -58,6 +58,12 @@ def test_layer2a_pointwise_mr():
         else:
             print("FAIL: run_layer2a_minimum_pressures accepted spiked MR despite 30% spike.")
 
+        assert not success, (
+            "run_layer2a_minimum_pressures should REJECT a mixture ratio with a 30% pointwise "
+            "spike (limit 20%) even though the mean error is only ~1.5%. It returned success=True, "
+            f"so the pointwise MR check is not binding. summary={summary}"
+        )
+
 def test_layer2_objective_weighted_penalty():
     print("\n=== Testing Layer 2 Objective Weighted MR Penalty ===")
     
@@ -146,6 +152,12 @@ def test_layer2_objective_weighted_penalty():
             print("PASS: Objective correctly penalizes larger spikes more heavily.")
         else:
             print("FAIL: Objective did not penalize larger spike correctly.")
+
+        assert obj_very_spiked > obj_spiked, (
+            "The Layer-2 objective must penalise a larger pointwise MR spike more heavily: "
+            f"40%-spike objective ({obj_very_spiked:.4f}) should exceed the 20%-spike objective "
+            f"({obj_spiked:.4f}). Equal values mean the max-error weighting is not active."
+        )
             
         # We can't easily compare to obj_flat without knowing exact base penalties,
         # but the jump from spiked to very spiked confirms the max-weight logic.

@@ -66,8 +66,9 @@ def calculate_chugging_frequency(
         - frequency_residence: frequency from 1 / (2 pi tau_res) [Hz]
         - frequency_helmholtz: Helmholtz estimate if possible [Hz or np.nan]
         - period: oscillation period [s]
-        - stability_index: heuristic index (higher is better)
-        - stability_margin: backward compatibility field (maps from stability_index)
+        (No stability score is returned: the heuristic index/margin was removed 2026-07-21 —
+        see archive/dead_code_20260721/heuristic_chug_scoring.py. The chug margin comes from
+        compute_physical_stability.)
         - tau_residence: residence time L* / c* [s]
         - Lstar: characteristic length [m]
     """
@@ -108,52 +109,20 @@ def calculate_chugging_frequency(
 
     period = 1.0 / freq if freq > 0.0 else float("inf")
 
-    # Simple stability index:
-    # - Better if Pc is higher
-    # - Better if L* is reasonably large (say ≥ 0.8 m)
-    # - Penalize if chugging frequency is very low (hard to damp) or in a problematic band
-    # FIXED: More lenient factors to allow reasonable designs to achieve stable margins
-    Pc_ref = 1.0e6
-    Lstar_ref = 1.0
-    # More lenient Pc factor - even 0.5 MPa can be acceptable
-    Pc_factor = min(1.0, (Pc / Pc_ref) ** 0.3) if Pc > 0 else 0.0
-    # More lenient Lstar factor - even 0.6 m can be acceptable
-    Lstar_factor = min(1.0, (Lstar / Lstar_ref) ** 0.2) if Lstar > 0 else 0.0
-    # Ensure minimum factors for reasonable designs
-    Pc_factor = max(Pc_factor, 0.6) if Pc > 0.3e6 else Pc_factor  # At least 0.6 for Pc > 0.3 MPa
-    Lstar_factor = max(Lstar_factor, 0.7) if Lstar > 0.6 else Lstar_factor  # At least 0.7 for L* > 0.6 m
-
-    # Frequency health factor: prefer 20 to 400 Hz for chugging
-    # Much more lenient penalties to allow optimizer to find feasible solutions
-    if freq < 5.0:
-        f_factor = 0.6  # Very low frequencies - still penalized but not as harsh
-    elif freq < 10.0:
-        f_factor = 0.75  # Low frequencies - moderate penalty
-    elif freq > 600.0:
-        f_factor = 0.9  # High frequencies - minimal penalty
-    elif freq > 400.0:
-        f_factor = 0.95  # Moderate-high frequencies - very small penalty
-    else:
-        f_factor = 1.0  # Ideal range
-
-    stability_index = Pc_factor * Lstar_factor * f_factor
-    # Ensure minimum index for reasonable designs
-    stability_index = max(stability_index, 0.4)  # Minimum 0.4 for any reasonable design
-
-    # Backward compatibility: map stability_index to stability_margin
-    # FIXED: More generous mapping to ensure reasonable designs can meet requirements
-    # For a reasonable design (index ~ 0.6-0.8), we want margin ~ 1.2-1.5
-    # New mapping: margin = stability_index * 1.5 + 0.4 (gives 1.3 for index=0.6, 1.6 for index=0.8, 1.9 for index=1.0)
-    # This ensures reasonable designs can achieve required margins
-    stability_margin = stability_index * 1.5 + 0.4  # More generous mapping
+    # NOTE (2026-07-21): the heuristic "stability index / margin" that used to be computed here has
+    # been REMOVED. It scored Pc x L* x frequency-band only — it never looked at injector stiffness
+    # or the feed/combustion coupling that actually drives chug — it was floored so it could not
+    # fail a real design, and ``comprehensive_stability_analysis`` overwrote its margin with the
+    # physical ``chug_gate_margin`` on every evaluation anyway. The archived implementation and the
+    # full rationale live in ``archive/dead_code_20260721/heuristic_chug_scoring.py``.
+    # This function now reports chug FREQUENCY only (still used for mode-coupling checks and as a
+    # seed when the physical model yields no valid frequency).
 
     return {
         "frequency": float(freq),
         "frequency_residence": freq_res,
         "frequency_helmholtz": freq_helm,
         "period": float(period),
-        "stability_index": float(stability_index),
-        "stability_margin": float(stability_margin),  # Backward compatibility
         "tau_residence": float(tau_residence),
         "Lstar": float(Lstar),
     }
@@ -329,6 +298,40 @@ def analyze_feed_system_stability(
 _CHUG_GATE_CENTER = 0.80      # chug gain margin -> "neutral" (gate margin 1.0)
 _CHUG_GATE_SCALE = 0.20
 _GATE_SPAN = 0.30             # gate margin ranges ~[0.7, 1.3]
+# IMPORTANT — the gate margin is a SQUASHED transform, not a gain margin. Do not read a gate
+# threshold as "N% margin". Inverting ``_chug_gate_margin`` (raw Nyquist gain margin GM -> gate):
+#     GM 0.83 -> gate 1.05      (canonical ``min_stability_margin``)
+#     GM 0.96 -> gate 1.20      (Layer-1 default ``min_stability_margin``)
+#     GM 1.00 -> gate 1.229     <-- the TRUE stability boundary (GM > 1 == stable)
+#     GM 1.20 -> gate 1.289     (a genuine 20% gain margin)
+#     GM >1.3 -> gate ~1.2999   (saturated; cannot distinguish good from great)
+# Because the centre sits at GM = 0.80, every threshold currently in use (0.7 / 1.05 / 1.2) admits
+# designs that are NOT Nyquist-stable. That is deliberate-but-interim (see the note above); reason
+# about the raw ``chug_gain_margin`` instead, and re-centre only once T5/T6/T7/H3 calibrate the
+# feed/regulator inputs. Tightening onto the un-measured absolute GM would be confidently wrong.
+
+# Fail-safe margin used when the physical stability model errors: unknown stability is treated as
+# UNSAFE (fails every configured gate) rather than silently passing. Pairs with
+# ``stability_source == "fallback_failsafe"`` so the cause is visible in the result.
+_STABILITY_FAILSAFE_MARGIN = 0.0
+
+_stability_fallback_warned = False
+
+
+def _warn_stability_fallback_once(exc: Exception) -> None:
+    """Warn on the first physical-stability failure per process (avoids per-eval log spam)."""
+    global _stability_fallback_warned
+    if _stability_fallback_warned:
+        return
+    _stability_fallback_warned = True
+    import warnings
+    warnings.warn(
+        f"compute_physical_stability failed ({exc!r}); stability margins fail-safe to "
+        f"{_STABILITY_FAILSAFE_MARGIN} and the design is reported UNSTABLE. "
+        "Check stability_source == 'fallback_failsafe' in the results.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
 _ACOUSTIC_GATE_OFFSET = 350.0  # [1/s] alpha offset so marginal acoustic still passes
 _ACOUSTIC_GATE_SCALE = 1000.0  # [1/s]
 # LOX property fallbacks (default.yaml leaves LOX latent_heat / boiling_point null).
@@ -485,31 +488,44 @@ def compute_physical_stability(config, Pc: float, MR: float, mdot_total: float, 
     # enabled; fall back to Python on any issue.
     from engine.native.python import native_injector
     _native = native_injector.native_enabled()
+    # ``*_source`` breadcrumbs record which implementation actually ran. The native->Python
+    # fallback is silent by design, so without these there is no way to tell from a result
+    # whether the C kernel or the Python twin produced the margin.
     chug_fast = None
+    chug_source = "python"
     if _native:
         try:
             chug_fast = native_injector.chug_margin_fast(inp["streams"], inp["chamber"])
+            chug_source = "native" if chug_fast is not None else "python"
         except Exception:
             chug_fast = None
+            chug_source = "python"
     if chug_fast is None:
         chug_fast = chug.chug_margin_fast(inp["streams"], inp["chamber"])
+        chug_source = "python"
 
     ac_fast = None
+    acoustic_source = "python"
     if _native:
         try:
             ac_fast = native_injector.fast_acoustic(inp["D_ch"], inp["L_ch"], inp["gas"],
                                                     n=inp["n_interaction"], tau_sens=inp["tau_sens"])
+            acoustic_source = "native" if ac_fast is not None else "python"
         except Exception:
             ac_fast = None
+            acoustic_source = "python"
     if ac_fast is None:
         ac_fast = acoustic.fast_acoustic(inp["D_ch"], inp["L_ch"], inp["gas"],
                                          n=inp["n_interaction"], tau_sens=inp["tau_sens"])
+        acoustic_source = "python"
     return {
         "chug": chug_fast,
         "acoustic": ac_fast,
         "chug_gate_margin": _chug_gate_margin(chug_fast.get("gain_margin", float("nan"))),
         "acoustic_gate_margin": _acoustic_gate_margin(ac_fast.get("alpha_max", float("nan"))),
         "f_chug_hz": chug_fast.get("f_chug_hz"),
+        "chug_source": chug_source,
+        "acoustic_source": acoustic_source,
         "tau_conv_O": inp["tau_conv_O"], "tau_conv_F": inp["tau_conv_F"], "tau_sens": inp["tau_sens"],
         "eta_inj_O": inp["eta_inj_O"], "eta_inj_F": inp["eta_inj_F"], "D_ch": inp["D_ch"], "L_ch": inp["L_ch"],
     }
@@ -704,8 +720,13 @@ def comprehensive_stability_analysis(
     phys = None
     try:
         phys = compute_physical_stability(config, Pc, MR, mdot_total, cstar, gamma, R, Tc, diagnostics, cg)
-    except Exception:   # defensive: never fail the eval on a stability-model error
+    except Exception as exc:   # never abort the eval on a stability-model error — fail SAFE below
         phys = None
+        _warn_stability_fallback_once(exc)
+
+    # Which implementation actually produced the margins: "native" / "python" (physical model ran)
+    # or "fallback_failsafe" (physical model threw; margins fail closed below).
+    stability_source = phys.get("chug_source", "python") if phys is not None else "fallback_failsafe"
 
     if phys is not None:
         chug_margin = float(phys["chug_gate_margin"])
@@ -721,10 +742,12 @@ def comprehensive_stability_analysis(
         if not phys["acoustic"].get("stable", True):
             issues.append(f"Acoustic mode {phys['acoustic'].get('limiting_mode')} driven (alpha>0)")
     else:
-        # fallback: do NOT regress if extraction fails — neutral-pass margins
-        chug_margin = float(chugging.get("stability_margin", 1.10))
-        acoustic_margin = 1.10
+        # FAIL-SAFE. Previously this coasted on neutral ~1.10 margins, so a stability-model
+        # failure silently PASSED the design. Unknown stability is now treated as unsafe.
+        chug_margin = _STABILITY_FAILSAFE_MARGIN
+        acoustic_margin = _STABILITY_FAILSAFE_MARGIN
         feed_stability["stability_margin"] = chug_margin
+        chugging["stability_margin"] = chug_margin
 
     # Numeric score in [0,1] monotone in the limiting gate margin (1.05 ~ gate threshold).
     min_margin = min(chug_margin, acoustic_margin)
@@ -733,8 +756,9 @@ def comprehensive_stability_analysis(
     has_severe_mode_coupling = any(p.get("relative_difference", 1.0) < 0.05 for p in mode_coupling)
 
     # State from physical margins (growth-rate based, not heuristic).
-    chug_ok = (phys is None) or phys["chug"].get("stable", True)
-    ac_ok = (phys is None) or phys["acoustic"].get("stable", True)
+    # Fail closed: no physical model result means stability is UNKNOWN, not OK.
+    chug_ok = phys is not None and phys["chug"].get("stable", True)
+    ac_ok = phys is not None and phys["acoustic"].get("stable", True)
     if chug_margin >= 1.05 and acoustic_margin >= 1.05 and chug_ok and ac_ok:
         stability_state = "stable"
     elif chug_margin >= 0.95 and acoustic_margin >= 0.95:
@@ -766,6 +790,7 @@ def comprehensive_stability_analysis(
     return {
         "stability_state": stability_state,
         "stability_score": score,
+        "stability_source": stability_source,
         "is_stable": is_stable,  # Backward compatibility
         "chugging": chugging,
         "acoustic": acoustic,
@@ -796,7 +821,16 @@ def _generate_stability_recommendations(
         recs.append("System appears reasonably stable for this point. Still monitor during hot fire.")
 
     # Chugging related
-    if chugging["stability_index"] < 0.5:
+    # Physical chug health. (The heuristic ``stability_index`` this used to read was removed
+    # 2026-07-21 — it ignored injector stiffness, the actual chug driver.) Prefer the raw Nyquist
+    # gain margin (GM > 1 == stable); fall back to the squashed gate margin (1.229 == GM 1.0).
+    _gm = chugging.get("chug_gain_margin")
+    if _gm is not None and np.isfinite(_gm):
+        _chug_unhealthy = float(_gm) < 1.0
+    else:
+        _chug_unhealthy = float(chugging.get("stability_margin", 1.0)) < 1.229
+    if _chug_unhealthy:
+        recs.append("Low chug margin: stiffen the injector (raise dP_inj/Pc) — the dominant lever.")
         recs.append("Increase chamber pressure or L* to improve low frequency combustion stability.")
         recs.append("Consider injector or chamber damping features such as baffles or acoustic liners.")
 
