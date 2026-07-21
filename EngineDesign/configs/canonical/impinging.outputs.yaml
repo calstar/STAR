@@ -15,7 +15,11 @@
 #
 # Regenerate by re-running Layer 1 against impinging.yaml's design_requirements.
 
+
 chamber_geometry:
+  design_thrust: 7000.0
+  design_MR: 2.55
+  design_pressure: 2413166.0
   A_throat: 0.0017703959321061754
   A_exit: 0.008159675026074325
   volume: 0.0019492708804651003

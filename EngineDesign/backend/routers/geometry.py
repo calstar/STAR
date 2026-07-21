@@ -204,14 +204,19 @@ async def get_chamber_geometry():
                 # These are the inputs to solve_chamber_geometry_with_cea
                 # =====================================================================
                 if chamber_geom is not None:
-                    # New unified chamber_geometry section
-                    Pc_design = getattr(chamber_geom, 'design_pressure', 2.0e6)
-                    F_design = getattr(chamber_geom, 'design_thrust', 5000.0)
-                    MR = getattr(chamber_geom, 'design_MR', 2.55)
-                    Lstar = getattr(chamber_geom, 'Lstar', 1.0)
-                    D_chamber_design = getattr(chamber_geom, 'chamber_diameter', D_chamber)
-                    D_exit_design = getattr(chamber_geom, 'exit_diameter', D_exit)
-                    nozzle_eff = getattr(chamber_geom, 'nozzle_efficiency', 0.95)
+                    # New unified chamber_geometry section. These are REQUIRED schema fields
+                    # (ChamberGeometryConfig: design_pressure/design_thrust/design_MR/Lstar/
+                    # chamber_diameter/nozzle_efficiency all Field(gt=0), no default), so read them
+                    # directly. getattr-with-default here would be fail-open: a missing/renamed field
+                    # would silently substitute a magic number and yield a physically different
+                    # engine instead of raising -- the same masking pattern removed elsewhere.
+                    Pc_design = chamber_geom.design_pressure
+                    F_design = chamber_geom.design_thrust
+                    MR = chamber_geom.design_MR
+                    Lstar = chamber_geom.Lstar
+                    D_chamber_design = chamber_geom.chamber_diameter
+                    D_exit_design = chamber_geom.exit_diameter
+                    nozzle_eff = chamber_geom.nozzle_efficiency
                 else:
                     # Legacy sections (chamber and nozzle should exist if we get here due to check above)
                     Pc_design = getattr(chamber, 'design_pressure', 2.0e6) if chamber else 2.0e6

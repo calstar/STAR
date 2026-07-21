@@ -21,9 +21,6 @@ ablative_cooling:
   use_physics_based_blowing: true
 chamber: null
 chamber_geometry:
-  design_MR: 2.55
-  design_pressure: 2413166.0
-  design_thrust: 7000.0
   nozzle_efficiency: 0.95
 combustion:
   cea:

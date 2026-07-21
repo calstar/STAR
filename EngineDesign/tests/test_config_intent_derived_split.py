@@ -9,9 +9,11 @@ the generated half; ``io._apply_output_sidecar`` overlays them at load so the sc
 downstream consumer are unchanged.
 
 The split is checkable rather than a matter of taste -- ``io._OUTPUT_FIELDS`` lists exactly the
-fields something in the codebase assigns. Notably ``chamber_geometry.design_thrust/design_MR/
-design_pressure`` and ``nozzle_efficiency`` are NOT generated (nothing assigns them; they are schema
-declarations), so they stay intent.
+fields the optimizer produces. ``chamber_geometry.design_thrust/design_MR/design_pressure`` are the
+"what was this geometry SOLVED FOR" stamp: a property of the generated geometry (read by the
+geometry re-solve fallback + native kernel), which differs from ``design_requirements.*`` when the
+geometry is stale -- so they live with the outputs. ``nozzle_efficiency`` is a hand-typed modelling
+assumption and stays intent.
 """
 
 from __future__ import annotations
@@ -112,11 +114,26 @@ def test_save_round_trip_keeps_the_split(tmp_path: Path) -> None:
     )
 
 
-def test_split_outputs_leaves_intent_fields_alone() -> None:
-    """design_* and nozzle_efficiency are hand-typed (nothing assigns them) -- they stay in intent."""
+def test_split_outputs_partitions_chamber_geometry_correctly() -> None:
+    """nozzle_efficiency is hand-typed intent; design_* (the solved-for stamp) and the solved
+    dimensions are outputs."""
     merged = load_config(str(ROOT / "configs" / "canonical" / "impinging.yaml")).model_dump(mode="json")
-    intent, generated = split_outputs(merged)
-    for key in ("design_thrust", "design_MR", "design_pressure", "nozzle_efficiency"):
-        assert key in intent["chamber_geometry"], f"{key} should stay in intent"
-        assert key not in generated.get("chamber_geometry", {})
-    assert "A_throat" in generated["chamber_geometry"]
+    intent, outputs = split_outputs(merged)
+
+    assert intent["chamber_geometry"]["nozzle_efficiency"] > 0
+    assert "nozzle_efficiency" not in outputs.get("chamber_geometry", {})
+
+    for key in ("design_thrust", "design_MR", "design_pressure", "A_throat"):
+        assert key in outputs["chamber_geometry"], f"{key} should be an output"
+        assert key not in intent.get("chamber_geometry", {})
+
+
+def test_design_stamp_lives_with_the_geometry_it_describes() -> None:
+    """The solved-for stamp must sit in the outputs file next to the geometry, so that comparing it
+    to design_requirements.* detects staleness. Regression cover for the reclassification."""
+    out = yaml.safe_load(
+        (ROOT / "configs" / "canonical" / "impinging.outputs.yaml").read_text(encoding="utf-8")
+    )
+    assert out["chamber_geometry"]["design_thrust"] > 0
+    intent = yaml.safe_load((ROOT / "configs" / "canonical" / "impinging.yaml").read_text(encoding="utf-8"))
+    assert "design_thrust" not in (intent.get("chamber_geometry") or {})

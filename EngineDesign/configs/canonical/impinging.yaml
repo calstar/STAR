@@ -226,9 +226,6 @@ combustion:
     Ea_hydrogen: 40000.0
     n_pre_hydrogen: 0.2
 chamber_geometry:
-  design_pressure: 2413166.0
-  design_thrust: 7000.0
-  design_MR: 2.55
   nozzle_efficiency: 0.95
 chamber: null
 nozzle: null

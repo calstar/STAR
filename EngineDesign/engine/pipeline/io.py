@@ -130,17 +130,21 @@ def _material_preset_search_dirs(config_dir: Path) -> List[Path]:
     return [config_dir / "materials", _PROJECT_ROOT / "configs" / "materials"]
 
 
-# Fields the OPTIMIZER writes back -> the .outputs.yaml sidecar. Verified by grepping for
-# assignments (not schema declarations): chamber_geometry A_throat/... from chamber+nozzle sizing,
-# Cf from layer1_static_optimization:5442, injector.geometry jet sizing from Layer 1, tank start
-# pressures from Layer 1, pressure_curves from Layer 2. thrust.burn_time is written by
-# sync_burn_time_fields (a synced COPY of design_requirements.target_burn_time, not an independent
-# input -- editing it in the intent file does nothing, so it belongs with the outputs). NOT here:
-# chamber_geometry.design_* and nozzle_efficiency (nothing assigns them -> hand-typed intent).
+# Fields the OPTIMIZER produces -> the .outputs.yaml sidecar. Verified by grepping for assignments:
+# chamber_geometry A_throat/... from chamber+nozzle sizing, Cf from layer1_static_optimization:5442,
+# injector.geometry jet sizing from Layer 1, tank start pressures from Layer 1, pressure_curves from
+# Layer 2. thrust.burn_time is written by sync_burn_time_fields (a synced COPY of
+# design_requirements.target_burn_time). ``chamber_geometry.design_thrust/design_MR/design_pressure``
+# are the "what was this geometry SOLVED FOR" stamp -- a property of the generated geometry, read by
+# the geometry re-solve fallback and the native kernel. They differ from design_requirements.* when
+# the geometry is stale (7000 vs target 8000), which is signal, not a bug. Belongs with the outputs.
+# (Layer 1 does not yet WRITE them on solve -- deferred; see the provenance-stamp TODO.) NOT here:
+# nozzle_efficiency, a hand-typed modelling assumption that nothing assigns.
 _OUTPUT_FIELDS: Dict[str, Any] = {
     "chamber_geometry": ["A_throat", "A_exit", "volume", "Lstar", "chamber_diameter",
                          "exit_diameter", "expansion_ratio", "length", "length_cylindrical",
-                         "length_contraction", "Cf"],
+                         "length_contraction", "Cf",
+                         "design_thrust", "design_MR", "design_pressure"],
     "injector": ["geometry"],
     "lox_tank": ["initial_pressure_psi"],
     "fuel_tank": ["initial_pressure_psi"],
