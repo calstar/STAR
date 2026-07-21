@@ -356,7 +356,11 @@ class TimeVaryingCoupledSolver:
             mdot_total=mdot_total,
         )
         heat_flux_chamber = heat_flux_chamber_dict["heat_flux_total"]
-        h_hot_chamber = heat_flux_chamber_dict.get("h_g", 50000.0)  # Convective coefficient
+        # Indexed, not .get(): this read used the key "h_g" while the producer
+        # returns "h_hot", so it silently resolved to a hardcoded 50 000 W/(m^2.K)
+        # fallback -- 25-100x the real coefficient -- on every call. A missing key
+        # must raise here rather than substitute a plausible-looking constant.
+        h_hot_chamber = heat_flux_chamber_dict["h_hot"]
         
         # Throat heat flux using physics-based Bartz correlation
         from engine.pipeline.physics_based_replacements import calculate_throat_heat_flux_physics
@@ -910,7 +914,9 @@ class TimeVaryingCoupledSolver:
             bc_chamber = ThermalBoundaryConditions(
                 T_hot_gas=Tc,
                 h_hot_gas=h_hot_chamber,
-                q_rad_hot=heat_flux_chamber_dict.get("heat_flux_radiative", 0.0),
+                # Producer key is "heat_flux_rad"; "heat_flux_radiative" never
+                # matched, so the radiative boundary condition was always 0.
+                q_rad_hot=heat_flux_chamber_dict["heat_flux_rad"],
                 T_ambient=300.0,
                 h_ambient=10.0,  # Natural convection
             )
