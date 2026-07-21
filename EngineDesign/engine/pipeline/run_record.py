@@ -171,13 +171,18 @@ def evaluate_config(config_path: Path) -> Dict[str, Any]:
     thrust_err = abs(F - target_thrust) / target_thrust if target_thrust > 0 else float("nan")
     of_err = abs(MR - target_of) / target_of if target_of > 0 else float("nan")
 
-    failures = []
+    # OFF-SPEC IS NOT BROKEN. A config that misses its thrust target is an unconverged design, not
+    # a defect someone introduced -- blocking a commit on it means work-in-progress designs cannot
+    # be checked in, which is precisely the pressure that produces "just widen the band". These are
+    # reported and recorded, never used to fail CI. Genuine breakage (won't load, won't evaluate,
+    # non-physical output) is what the ``load_error``/``eval_error`` kinds cover, and those DO fail.
+    off_spec = []
     if not (thrust_err <= thr_tol):
-        failures.append(
+        off_spec.append(
             f"thrust {F:.0f}N vs target {target_thrust:.0f}N ({thrust_err*100:.1f}% > {thr_tol*100:.0f}%)"
         )
     if target_of > 0 and not (of_err <= of_tol):
-        failures.append(
+        off_spec.append(
             f"O/F {MR:.2f} vs target {target_of:.2f} ({of_err*100:.1f}% > {of_tol*100:.0f}%)"
         )
     for side, ratio in (("O", ro), ("F", rf)):
@@ -186,14 +191,14 @@ def evaluate_config(config_path: Path) -> Dict[str, Any]:
         if lo is None or hi is None:
             continue
         if injector_dp_ratio_within_gate(ratio, _f(lo), _f(hi)) is False:
-            failures.append(
+            off_spec.append(
                 f"dP_inj_{side}/Pc {_f(ratio):.3f} outside band [{_f(lo):.2f}, {_f(hi):.2f}]"
             )
 
     return {
         "kind": "checked",
-        "ok": not failures,
-        "failures": failures,
+        "ok": not off_spec,          # "meets its own spec" -- reported, not enforced
+        "failures": off_spec,
         "config_sha256": config_fingerprint(cfg),
         "metrics": {
             "Pc": pc,
