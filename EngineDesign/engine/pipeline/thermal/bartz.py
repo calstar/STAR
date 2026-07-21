@@ -268,3 +268,68 @@ def bartz_h_g(
         sigma=sigma,
     )
     return h_imperial * BTU_IN2_S_F_TO_W_M2_K
+
+
+def bartz_chamber_h_g(
+    *,
+    A_throat: float,
+    chamber_area: float,
+    Pc: float,
+    mdot_total: float,
+    mu: float,
+    cp: float,
+    Pr: float,
+    gamma: float,
+    mach: float,
+    wall_temperature: float,
+    Tc: float,
+) -> float:
+    """Bartz gas-side h_g [W/(m^2 K)] at a chamber/nozzle station, SI throughout.
+
+    THE single entry point the cooling models should use, so the four former
+    Dittus-Boelter sites (regen, ablative-scalar, chamber-solver, and the C
+    mirror) cannot drift into computing the gas-side coefficient four different
+    ways -- which is exactly what happened before with the transport properties.
+
+    It assembles the pieces eq. 4-13 needs from quantities a cooling model
+    already has, deriving the two it does not:
+
+      * throat radius of curvature R -- from throat_curvature_radius(A_throat),
+        the same definition the drawn nozzle uses (see nozzle_solver). Imported
+        lazily so this leaf module stays free of the geometry/plotting deps.
+      * effective c* for the mass-flux term -- c* = Pc*A_t/mdot_total, which is
+        the c* that makes Pc*g/c* equal the physical throat mass flux
+        mdot_total/A_t. Using it avoids threading a separately-computed c*
+        (and the combustion/cooling-efficiency ambiguity that comes with it)
+        through every caller.
+
+    sigma (eq. 4-14) is computed from the local Mach and the wall-to-stagnation
+    temperature ratio. NOTE the wall temperature is currently the failure-limit
+    placeholder the callers already pass for the convective delta-T; when that
+    is replaced by a solved wall temperature, sigma sharpens automatically. A
+    colder wall gives sigma > 1 -- Bartz raises h_g there, it is not a knockdown.
+
+    Parameters (all SI): A_throat [m^2], chamber_area [m^2] at the station,
+    Pc [Pa], mdot_total [kg/s], mu [Pa.s], cp [J/(kg.K)], Pr [-], gamma [-],
+    mach [-] local, wall_temperature [K], Tc [K] stagnation.
+    """
+    from engine.core.nozzle_solver import throat_curvature_radius
+
+    A_t = max(A_throat, 1e-12)
+    D_throat = 2.0 * math.sqrt(A_t / math.pi)
+    R_curv = throat_curvature_radius(A_t)
+    cstar_eff = Pc * A_t / max(mdot_total, 1e-12)
+    area_ratio = A_t / max(chamber_area, 1e-12)
+    sigma = bartz_sigma(wall_temperature / max(Tc, 1.0), gamma, mach)
+
+    return bartz_h_g(
+        D_throat_m=D_throat,
+        Pc_pa=Pc,
+        cstar_m_s=cstar_eff,
+        throat_curvature_radius_m=R_curv,
+        mu_pa_s=mu,
+        cp_j_kg_k=cp,
+        Pr=Pr,
+        area_ratio_At_over_A=area_ratio,
+        sigma=sigma,
+    )

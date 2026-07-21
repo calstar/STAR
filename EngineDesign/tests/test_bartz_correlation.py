@@ -432,6 +432,64 @@ class TestThroatCurvatureMatchesDrawnContour:
         assert R_m / 0.0254 == pytest.approx(11.71, rel=1e-2)
 
 
+class TestChamberProvider:
+    """bartz_chamber_h_g: the single SI entry point the cooling models call."""
+
+    # Representative canonical-impinging chamber state.
+    KW = dict(
+        A_throat=1.0e-3, chamber_area=3.0e-3, Pc=2.3e6, mdot_total=2.4,
+        mu=1.0e-4, cp=2460.0, Pr=0.64, gamma=1.14, mach=0.3,
+        wall_temperature=1200.0, Tc=2683.0,
+    )
+
+    def test_equals_the_hand_assembled_call(self):
+        """The provider must be exactly bartz_h_g with its derived pieces."""
+        from engine.pipeline.thermal.bartz import (
+            bartz_chamber_h_g, bartz_h_g, bartz_sigma,
+        )
+        from engine.core.nozzle_solver import throat_curvature_radius
+
+        k = self.KW
+        R_curv = throat_curvature_radius(k["A_throat"])
+        D_throat = 2.0 * math.sqrt(k["A_throat"] / math.pi)
+        cstar_eff = k["Pc"] * k["A_throat"] / k["mdot_total"]
+        sigma = bartz_sigma(k["wall_temperature"] / k["Tc"], k["gamma"], k["mach"])
+        expected = bartz_h_g(
+            D_throat, k["Pc"], cstar_eff, R_curv, k["mu"], k["cp"], k["Pr"],
+            area_ratio_At_over_A=k["A_throat"] / k["chamber_area"], sigma=sigma)
+        assert bartz_chamber_h_g(**k) == pytest.approx(expected, rel=1e-12)
+
+    def test_effective_cstar_is_the_throat_mass_flux(self):
+        """c* = Pc*A_t/mdot makes Pc*g/c* equal mdot/A_t. Verify via the group."""
+        from engine.pipeline.thermal.bartz import bartz_groups_imperial
+        k = self.KW
+        cstar_ft_s = (k["Pc"] * k["A_throat"] / k["mdot_total"]) / 0.3048
+        g = bartz_groups_imperial(
+            2.0 * math.sqrt(k["A_throat"] / math.pi) / 0.0254,
+            k["Pc"] / 6894.757293168361, cstar_ft_s,
+            1.0, k["mu"] / 17.857967302549516, k["cp"] / 4186.8, k["Pr"])
+        mass_flux_si = k["mdot_total"] / k["A_throat"]           # kg/(m^2 s)
+        mass_flux_imp = g["mass_flux"] * 703.06957829            # lb/in^2/s -> kg/m^2/s
+        assert mass_flux_imp == pytest.approx(mass_flux_si, rel=1e-3)
+
+    def test_result_is_plausible_for_a_chamber_station(self):
+        from engine.pipeline.thermal.bartz import bartz_chamber_h_g
+        h = bartz_chamber_h_g(**self.KW)
+        assert 1_000.0 < h < 8_000.0
+
+    def test_cold_wall_raises_h_via_sigma(self):
+        from engine.pipeline.thermal.bartz import bartz_chamber_h_g
+        cold = bartz_chamber_h_g(**{**self.KW, "wall_temperature": 800.0})
+        hot = bartz_chamber_h_g(**{**self.KW, "wall_temperature": 2400.0})
+        assert cold > hot
+
+    def test_h_scales_down_away_from_the_throat(self):
+        from engine.pipeline.thermal.bartz import bartz_chamber_h_g
+        near_throat = bartz_chamber_h_g(**{**self.KW, "chamber_area": 1.1e-3})
+        wide = bartz_chamber_h_g(**{**self.KW, "chamber_area": 5.0e-3})
+        assert wide < near_throat
+
+
 class TestRejectsBadInput:
     @pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("inf")])
     def test_non_physical_inputs_raise(self, bad):
