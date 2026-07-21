@@ -8,8 +8,52 @@ Contains:
 
 from __future__ import annotations
 
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
+
+
+def stamp_achieved_design_point(
+    config: Any,
+    thrust_n: float,
+    mr: float,
+    pc_pa: float,
+) -> None:
+    """Record what the optimized geometry ACTUALLY achieves into the design-point stamp.
+
+    ``chamber_geometry.design_thrust/design_MR/design_pressure`` is the "what was this geometry
+    solved for" provenance stamp (read by the geometry re-solve fallback + native kernel, split into
+    ``<name>.outputs.yaml``). Layer 1 optimizes the geometry but does NOT update the stamp, so after a
+    regeneration it still shows the SEED values (e.g. 7000 N while the geometry now makes 8000 N) --
+    a lying provenance record. Call this once on the optimized config, before saving, so the stamp
+    reflects the achieved operating point.
+
+    Achieved (not target): ``design_pressure`` is consumed downstream as the actual Pc the geometry
+    was built around, so the stamp records reality; the staleness signal is then requirement-target
+    vs achieved-stamp under the guard's normal tolerance. Non-finite/non-positive inputs are skipped
+    (the old stamp is left rather than writing garbage).
+    """
+    cg = getattr(config, "chamber_geometry", None)
+    if cg is None:
+        return
+    if np.isfinite(thrust_n) and thrust_n > 0:
+        cg.design_thrust = float(thrust_n)
+    if np.isfinite(mr) and mr > 0:
+        cg.design_MR = float(mr)
+    if np.isfinite(pc_pa) and pc_pa > 0:
+        cg.design_pressure = float(pc_pa)
+
+
+def stamp_achieved_design_point_from_results(config: Any, results: Dict[str, Any]) -> Optional[Tuple[float, float, float]]:
+    """Pull achieved F/MR/Pc from a Layer 1 ``results`` dict and stamp them. Returns what was stamped
+    (or None if the performance block is missing)."""
+    perf = results.get("performance") if isinstance(results, dict) else None
+    if not isinstance(perf, dict):
+        return None
+    f = float(perf.get("F", float("nan")))
+    mr = float(perf.get("MR", float("nan")))
+    pc = float(perf.get("Pc", float("nan")))
+    stamp_achieved_design_point(config, f, mr, pc)
+    return (f, mr, pc)
 
 
 def generate_segmented_pressure_curve(
