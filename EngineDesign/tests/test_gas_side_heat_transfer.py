@@ -203,6 +203,62 @@ class TestHeatFlux:
         )
 
 
+class TestWallTemperatureSolver:
+    """calculate_steady_state_temperature_profile must actually solve.
+
+    Its previous iteration reduced algebraically to Ts_new = Ts_guess - q_rad/h,
+    an identity that never referenced the wall stack. With q_rad = 0 it returned
+    its own initial guess (0.8 * T_hot_gas) for every input; with q_rad > 0 it
+    drifted by a fixed 10 iterations, reaching -16 650 K on realistic boundary
+    conditions. Both failure modes are invisible unless something asserts that
+    the output responds to the inputs, which is what these do.
+    """
+
+    @staticmethod
+    def _profile(h_gas=2038.0, q_rad=3.5e5, k_abl=0.35):
+        from engine.pipeline.thermal_analysis import (
+            MaterialLayer,
+            ThermalBoundaryConditions,
+            calculate_steady_state_temperature_profile,
+        )
+        layers = [
+            MaterialLayer("ablator", 0.010, k_abl, 1600.0, 1500.0, emissivity=0.85),
+            MaterialLayer("steel", 0.003, 16.0, 7900.0, 500.0),
+        ]
+        return calculate_steady_state_temperature_profile(
+            layers,
+            ThermalBoundaryConditions(T_hot_gas=3016.0, h_hot_gas=h_gas, q_rad_hot=q_rad),
+        )
+
+    def test_temperatures_are_physical(self):
+        r = self._profile()
+        assert 300.0 < r["T_surface_hot"] < 4000.0, (
+            f"hot-surface temperature {r['T_surface_hot']:.1f} K is not physical"
+        )
+        assert r["T_surface_cold"] <= r["T_surface_hot"], (
+            "back face is hotter than the hot surface — heat is flowing uphill"
+        )
+
+    def test_responds_to_gas_side_coefficient(self):
+        """More convective coupling must raise the surface temperature."""
+        cold = self._profile(h_gas=500.0)["T_surface_hot"]
+        hot = self._profile(h_gas=20000.0)["T_surface_hot"]
+        assert hot > cold + 50.0, (
+            f"surface temperature barely moved with h_g ({cold:.1f} -> {hot:.1f} K); "
+            f"the solve is ignoring the gas-side boundary condition"
+        )
+
+    def test_responds_to_wall_conductivity(self):
+        """A better-conducting liner must run a hotter back face."""
+        insulating = self._profile(k_abl=0.1)["T_surface_cold"]
+        conducting = self._profile(k_abl=16.0)["T_surface_cold"]
+        assert conducting > insulating + 50.0, (
+            f"back-face temperature barely moved with liner conductivity "
+            f"({insulating:.1f} -> {conducting:.1f} K); the conduction "
+            f"resistances are computed but not used"
+        )
+
+
 class TestNativeParity:
     """The C port reimplements the same viscosity correlation."""
 
