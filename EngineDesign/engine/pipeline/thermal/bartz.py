@@ -66,6 +66,54 @@ BARTZ_CURVATURE_EXPONENT = 0.1
 BARTZ_AREA_EXPONENT = 0.9
 
 
+def bartz_sigma(
+    wall_to_stagnation_temp_ratio: float,
+    gamma: float,
+    mach: float,
+) -> float:
+    """Property-variation correction sigma (Huzel eq. 4-14, his figure 4-24).
+
+        sigma = 1 / { [0.5*(Twg/(Tc)ns)*(1+((g-1)/2)M^2) + 0.5]^0.68
+                      * [1+((g-1)/2)M^2]^0.12 }
+
+    This is the term that makes Bartz applicable to a rocket at all. Dittus-
+    Boelter assumes a near-isothermal boundary layer; a thrust chamber runs
+    Twg/(Tc)ns around 0.35, so gas properties vary strongly across the film.
+    Bartz evaluates properties at stagnation and puts the whole variation here.
+
+    Note the direction: for a COLD wall sigma exceeds 1, i.e. it RAISES h_g. A
+    cold wall thins the boundary layer. It is easy to assume a "correction
+    factor" must be a knockdown; this one is not.
+
+    Huzel prints only the chart, not this expression -- the closed form is from
+    Bartz's own paper. Checked against the three values his Sample Calculation
+    4-3 reads off figure 4-24 at Twg/(Tc)ns = 0.8, gamma ~ 1.2:
+
+        station        M        figure 4-24     closed form
+        chamber        0.40     1.05            1.067
+        throat         1.0      1.0             1.031
+        exit, eps=5    2.78     0.8             0.821
+
+    Agreement is 1.6 / 3.1 / 2.6 percent. That is the accuracy of reading a
+    small log-scale figure to two significant digits -- his "1.0" at the throat
+    is plainly a chart read, not an exact value -- so the closed form is taken
+    as reproducing figure 4-24 rather than contradicting it.
+    """
+    if not (gamma > 1.0 and math.isfinite(gamma)):
+        raise ValueError(f"bartz_sigma: gamma must exceed 1, got {gamma!r}")
+    if not (wall_to_stagnation_temp_ratio > 0.0
+            and math.isfinite(wall_to_stagnation_temp_ratio)):
+        raise ValueError(f"bartz_sigma: temperature ratio must be finite and "
+                         f"positive, got {wall_to_stagnation_temp_ratio!r}")
+    if not (mach >= 0.0 and math.isfinite(mach)):
+        raise ValueError(f"bartz_sigma: mach must be finite and non-negative, "
+                         f"got {mach!r}")
+
+    stagnation_ratio = 1.0 + 0.5 * (gamma - 1.0) * mach * mach
+    wall_term = 0.5 * wall_to_stagnation_temp_ratio * stagnation_ratio + 0.5
+    return 1.0 / (wall_term ** 0.68 * stagnation_ratio ** 0.12)
+
+
 def bartz_groups_imperial(
     D_throat_in: float,
     Pc_psia: float,

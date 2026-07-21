@@ -159,6 +159,91 @@ class TestAreaAndSigmaScaling:
         assert scaled / base == pytest.approx(1.3, rel=1e-12)
 
 
+class TestSigmaAgainstFigure4_24:
+    """sigma from the closed form vs the three values Huzel reads off his chart.
+
+    Sample Calculation 4-3 states "a (Twg/(Tc)ns) value of 0.8 is used to
+    determine the a values from figure 4-24 (gamma ~ 1.2)" and then applies
+    1.05 in the chamber, 1.0 at the throat and 0.8 at eps = 5.
+
+    Tolerance is 5 percent because the reference is a chart read to two
+    significant figures, not a computed value -- the printed "1.0" at the
+    throat is the giveaway. Tightening this would be pinning our arithmetic to
+    someone's ruler.
+    """
+
+    TWG_OVER_TC = 0.8
+    GAMMA = 1.2
+
+    @pytest.mark.parametrize("station, mach, chart", [
+        ("chamber (Ac/At = 1.6)", 0.402, 1.05),
+        ("throat", 1.0, 1.0),
+        ("exit, eps = 5", 2.78, 0.8),
+    ])
+    def test_matches_chart(self, station, mach, chart):
+        from engine.pipeline.thermal.bartz import bartz_sigma
+        sigma = bartz_sigma(self.TWG_OVER_TC, self.GAMMA, mach)
+        assert sigma == pytest.approx(chart, rel=5e-2), station
+
+    def test_sigma_decreases_along_the_nozzle(self):
+        """Chamber > throat > exit, matching the chart's trend."""
+        from engine.pipeline.thermal.bartz import bartz_sigma
+        chamber = bartz_sigma(self.TWG_OVER_TC, self.GAMMA, 0.402)
+        throat = bartz_sigma(self.TWG_OVER_TC, self.GAMMA, 1.0)
+        exit_ = bartz_sigma(self.TWG_OVER_TC, self.GAMMA, 2.78)
+        assert chamber > throat > exit_
+
+    def test_cold_wall_raises_h_g(self):
+        """sigma > 1 for a cold wall -- it is NOT a knockdown factor.
+
+        Easy to assume any 'correction factor' reduces the answer. A cold wall
+        thins the boundary layer and increases heat transfer, so getting this
+        backwards would under-predict heat load, which is the dangerous
+        direction for a liner.
+        """
+        from engine.pipeline.thermal.bartz import bartz_sigma
+        cold = bartz_sigma(0.35, self.GAMMA, 0.2)   # realistic chamber wall
+        hot = bartz_sigma(0.95, self.GAMMA, 0.2)    # wall near gas temperature
+        assert cold > 1.0
+        assert cold > hot
+
+    def test_reduces_to_unity_when_wall_is_at_stagnation_temperature(self):
+        """Twg/(Tc)ns = 1 at M = 0 means no property variation to correct."""
+        from engine.pipeline.thermal.bartz import bartz_sigma
+        assert bartz_sigma(1.0, self.GAMMA, 0.0) == pytest.approx(1.0, rel=1e-12)
+
+    @pytest.mark.parametrize("bad_gamma", [1.0, 0.9, -1.0, float("nan")])
+    def test_rejects_bad_gamma(self, bad_gamma):
+        from engine.pipeline.thermal.bartz import bartz_sigma
+        with pytest.raises(ValueError):
+            bartz_sigma(0.8, bad_gamma, 1.0)
+
+
+class TestSampleCalculation4_3StationValues:
+    """The three h_g values Huzel prints, end to end with his chart sigmas."""
+
+    @pytest.mark.parametrize("station, area_ratio_At_over_A, sigma, expected", [
+        ("chamber", 1.0 / 1.6, 1.05, 0.00185),
+        ("throat", 1.0, 1.0, 0.0027),
+        ("exit eps=5", 1.0 / 5.0, 0.8, 0.000507),
+    ])
+    def test_station_h_g(self, station, area_ratio_At_over_A, sigma, expected):
+        h = bartz_h_g_imperial(
+            D_THROAT_IN, PC_PSIA, CSTAR_FT_S, R_CURV_IN,
+            MU_LB_IN_S, CP_BTU_LB_F, PR,
+            area_ratio_At_over_A=area_ratio_At_over_A, sigma=sigma)
+        assert h == pytest.approx(expected, rel=2e-2), station
+
+    def test_area_terms_match_huzels_printed_values(self):
+        """(1/1.6)^0.9 -> 0.655 and (1/5)^0.9 -> 0.235."""
+        assert (1.0 / 1.6) ** 0.9 == pytest.approx(0.655, rel=5e-3)
+        assert (1.0 / 5.0) ** 0.9 == pytest.approx(0.235, rel=5e-3)
+
+    def test_throat_is_the_hottest_station(self):
+        """Sanity on the whole assembly: 0.0027 > 0.00185 > 0.000507."""
+        assert 0.0027 > 0.00185 > 0.000507
+
+
 class TestPrandtlExponentIsBartzNotColburn:
     """Pr^-0.6 in eq. 4-13 means n = 0.4. Do not swap in eq. 4-12's Pr^0.34.
 
