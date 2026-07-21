@@ -5,6 +5,28 @@ group, which makes this a genuine oracle rather than a plausibility check --
 each of the four bracketed terms is asserted separately, so a failure says
 WHICH one is wrong instead of just "the correlation".
 
+WHAT IS BEING CHECKED AGAINST WHAT. Every reference value below is a number
+printed in Huzel & Huang (NASA SP-125), chapter IV. None is inferred, curve-fit
+or taken from a secondary source:
+
+    eq. (4-13), p. 100        the correlation
+    eq. (4-14), p. 101        sigma in closed form -- transcribed verbatim and
+                              re-transcribed independently in
+                              TestSigmaAgainstFigure4_24, so the implementation
+                              is pinned to the printed equation, not to a
+                              reconstruction from the chart
+    fig. 4-24,  p. 101        sigma tabulated; a cross-check on eq. (4-14),
+                              NOT the source of it
+    eqs. (4-15)/(4-16)        Pr and mu, checked in TestHuzelInputRelations
+    Sample Calc (4-3), pp. 102-103   all four groups, their product, and the
+                              three station h_g values
+
+Two tolerances are deliberately loose, in both cases because HUZEL's side is
+the imprecise one, not ours: his printed intermediates are rounded on the page
+(see TestHuzelInputRelations), and figure 4-24 is a small log-scale plot read
+to two significant figures. Both are documented where they occur rather than
+tuned until they pass.
+
     LO2/RP-1, (Pc)ns = 1000 psia, MR 2.35
     (Tc)ns theoretical 6460 degR -> design 6460 x 0.975^2 = 6140 degR
     m = 22.5 lb/mol, gamma = 1.222
@@ -162,13 +184,15 @@ class TestAreaAndSigmaScaling:
 class TestSigmaAgainstFigure4_24:
     """eq. (4-14) as implemented vs the sigma values Huzel reads off figure 4-24.
 
-    The implementation follows Huzel's printed eq. (4-14), so this is a
-    consistency check between his equation and his own chart, not a validation
-    of the equation itself -- the equation is the primary source.
+    The implementation IS Huzel's printed eq. (4-14) (p. 101), so this class is
+    a consistency check between his equation and his own chart -- not a
+    validation of the equation, which is the primary source and is pinned
+    exactly by test_matches_huzel_equation_4_14_literally below.
 
     Sample Calculation 4-3 states "a (Twg/(Tc)ns) value of 0.8 is used to
     determine the a values from figure 4-24 (gamma ~ 1.2)" and then applies
-    1.05 in the chamber, 1.0 at the throat and 0.8 at eps = 5.
+    1.05 in the chamber, 1.0 at the throat and 0.8 at eps = 5. Those three
+    numbers appear as running prose on p. 103, not as a table.
 
     Tolerance is 5 percent because the CHART is the imprecise side: it is a
     small log-scale plot read to two significant figures, and the printed "1.0"

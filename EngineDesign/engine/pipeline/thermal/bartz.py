@@ -3,6 +3,23 @@
     h_g = [ 0.026/D_t^0.2 * (mu^0.2 cp / Pr^0.6) * ((Pc)ns g / c*)^0.8
             * (D_t/R)^0.1 ] * (A_t/A)^0.9 * sigma
 
+PROVENANCE. Every equation and constant here is transcribed from Huzel & Huang,
+"Design of Liquid Propellant Rocket Engines" (NASA SP-125), chapter IV. Nothing
+is inferred, fitted, or carried over from another correlation:
+
+    eq. (4-13)  p. 100  the correlation above
+    eq. (4-14)  p. 101  sigma, in closed form -- see bartz_sigma()
+    fig. 4-24   p. 101  sigma tabulated "as computed by Bartz"
+    Sample Calculation (4-3), pp. 102-103, works the A-1 stage engine end to
+                end and PRINTS every intermediate group, which is what
+                tests/test_bartz_correlation.py asserts against, term by term.
+
+The sample calculation is the reason this module can be trusted rather than
+merely believed: its four bracketed groups (0.01366, 0.046, 4.02, 1.078), their
+product (0.0027), and the three station values of h_g (0.00185 at the chamber,
+0.0027 at the throat, 0.000507 at eps = 5) are all reproduced. A unit slip or a
+mistyped exponent cannot survive that.
+
 WHY THIS AND NOT DITTUS-BOELTER. The gas side used plain Dittus-Boelter,
 0.023 Re^0.8 Pr^0.4 on chamber diameter. That is a correlation for turbulent
 flow in a smooth pipe at MODERATE wall-to-bulk temperature difference, with
@@ -85,12 +102,22 @@ def bartz_sigma(
     cold wall thins the boundary layer. It is easy to assume a "correction
     factor" must be a knockdown; this one is not.
 
-    Huzel prints this equation directly (eq. 4-14) and ALSO tabulates it as
-    figure 4-24, "as computed by Bartz". The equation is the authority here;
-    the figure is a reading aid.
+    SOURCE: this is eq. (4-14) as printed on p. 101, transcribed directly --
+    both 0.5 factors, both exponents, same bracket structure. It is NOT a
+    reconstruction from figure 4-24 and not a formula taken from a secondary
+    source. test_matches_huzel_equation_4_14_literally re-transcribes it
+    independently and requires agreement to 1e-12 over a grid of temperature
+    ratio, gamma and Mach, so a later "simplification" -- dropping a 0.5,
+    merging the brackets, swapping 0.68 and 0.12 -- fails loudly instead of
+    quietly shifting every heat flux.
 
-    Cross-checked anyway against the three sigma values Sample Calculation 4-3
-    takes off figure 4-24 at Twg/(Tc)ns = 0.8, gamma ~ 1.2:
+    Huzel prints the equation AND tabulates it as figure 4-24 "as computed by
+    Bartz". The equation is the authority; the figure is a reading aid. Both
+    are on the same page, so if this ever needs re-checking, p. 101 has
+    everything.
+
+    Cross-checked against the three sigma values Sample Calculation 4-3 takes
+    off figure 4-24 at Twg/(Tc)ns = 0.8, gamma ~ 1.2 (pp. 102-103):
 
         station        M        figure 4-24     eq. 4-14
         chamber        0.4046   1.05            1.067
