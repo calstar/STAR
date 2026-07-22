@@ -84,7 +84,6 @@ def run_full_engine_optimization_with_flight_sim(
     """
     from engine.pipeline.system_diagnostics import SystemDiagnostics
     from scipy.optimize import minimize, differential_evolution
-    from pathlib import Path
     from datetime import datetime
     
     # Get objective tolerance for early stopping
@@ -171,6 +170,11 @@ def run_full_engine_optimization_with_flight_sim(
     lox_P_end_ratio = pressure_config.get("lox_end_pct", 0.70)
     fuel_P_start = pressure_config.get("fuel_start_psi", 500) * psi_to_Pa
     fuel_P_end_ratio = pressure_config.get("fuel_end_pct", 0.70)
+    # Hard pressure ceilings, also used as the fallback tank-start pressures (0.8x)
+    # when Layer 1 doesn't return a pressure curve. Read here rather than in the
+    # Layer 2 block below because those fallbacks are consumed far earlier.
+    max_lox_P_psi = pressure_config.get("max_lox_pressure_psi", 500)
+    max_fuel_P_psi = pressure_config.get("max_fuel_pressure_psi", 500)
 
     # ------------------------------------------------------------------
     # Estimate ambient pressure at launch site for exit-pressure targeting
@@ -360,11 +364,10 @@ def run_full_engine_optimization_with_flight_sim(
     if use_time_varying and layer1_acceptable:
         try:
             from engine.optimizer.layers.layer2_pressure import run_layer2_pressure
-            
-            # Get max pressures from config (these are HARD LIMITS - never exceeded)
-            max_lox_P_psi = pressure_config.get("max_lox_pressure_psi", 500)
-            max_fuel_P_psi = pressure_config.get("max_fuel_pressure_psi", 500)
-            
+
+            # max_lox_P_psi / max_fuel_P_psi (hard pressure ceilings) are read once
+            # near the top of the function since earlier fallbacks depend on them.
+
             # Get rocket mass and tank capacity from config (if available)
             # These are needed for impulse and capacity calculations in layer2_pressure
             rocket_dry_mass_kg = getattr(config_obj.rocket, 'dry_mass_kg', None) if hasattr(config_obj, 'rocket') else None

@@ -3591,8 +3591,7 @@ def _layer3_tab(config_obj: PintleEngineConfig, runner: Optional[PintleEngineRun
                             graphite_recession_rate_thermal = np.asarray(graphite_recession_rate_thermal[:n_points])
                             graphite_recession_rate_oxidation = np.asarray(graphite_recession_rate_oxidation[:n_points])
                         
-                        # Create plots
-                        import plotly.graph_objects as go
+                        # Create plots (go / make_subplots are imported at module scope)
                         from plotly.subplots import make_subplots
                         
                         # Convert Pa to psi (1 psi = 6894.76 Pa)

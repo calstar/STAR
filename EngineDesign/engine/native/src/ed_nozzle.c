@@ -3,10 +3,9 @@
  * (estimate_initial_mach / solve_mach_from_area_ratio, supersonic branch) with
  * the same Newton tolerance (1e-10) => golden agreement near machine precision.
  *
- * The momentum/pressure thrust computed at the bottom is the RETIRED pre-RPA
- * reconstruction, kept only to satisfy the historical golden vectors — nothing
- * consumes it. Delivered thrust lives in ed_evaluate.c (RPA Cf_vac basis).
- * See ed_nozzle.h for the full scope note.
+ * Exit/throat state only. Delivered thrust lives in ed_evaluate.c (RPA Cf_vac
+ * basis); the retired momentum-method reconstruction that used to be computed
+ * here was removed once nothing consumed it.
  */
 #include "ed_nozzle.h"
 
@@ -82,7 +81,6 @@ ed_status_t ed_nozzle_solve(const EdNozzleInputs *in, EdNozzleResult *out) {
     const double R = in->R;
     const double Tc = in->Tc;
     const double eps = in->eps;
-    const double Pa = in->Pa;
 
     /* Input guards mirror the ValueError conditions in calculate_thrust. */
     if (!(in->A_throat > 0.0) || !(in->A_exit > 0.0) || !(eps > 1.0) ||
@@ -107,22 +105,11 @@ ed_status_t ed_nozzle_solve(const EdNozzleInputs *in, EdNozzleResult *out) {
     double v_exit = M_exit * a_exit;
     if (!ed_isfinite(v_exit) || v_exit <= 0.0) return ED_ERR_NONFINITE;
 
-    /* Thrust: momentum + pressure (the primary path; frozen F is independent of
-     * nozzle_efficiency, which only scales the theoretical Cf cross-check). */
-    double F_momentum = mdot * v_exit;
-    double F_pressure = (P_exit - Pa) * in->A_exit;
-    double F = F_momentum + F_pressure;
-    if (!ed_isfinite(F)) return ED_ERR_NONFINITE;
-
     /* Throat (choked, M=1) isentropic conditions. */
     double throat_temp_ratio = 2.0 / (gamma + 1.0);
     double T_throat = Tc * throat_temp_ratio;
     double P_throat = Pc * pow(throat_temp_ratio, gamma / (gamma - 1.0));
 
-    out->F = F;
-    out->F_momentum = F_momentum;
-    out->F_pressure = F_pressure;
-    out->Cf_actual = F / (Pc * in->A_throat);
     out->Cf_ideal = in->Cf_ideal;
     out->Cf_theoretical = in->nozzle_efficiency * in->Cf_ideal;
     out->P_exit = P_exit;
@@ -131,7 +118,6 @@ ed_status_t ed_nozzle_solve(const EdNozzleInputs *in, EdNozzleResult *out) {
     out->M_exit = M_exit;
     out->P_throat = P_throat;
     out->T_throat = T_throat;
-    out->Isp = F / (mdot * ED_G0);
     out->converged = 1;
     return ED_OK;
 }

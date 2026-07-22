@@ -12,6 +12,7 @@ from engine.control.robust_ddp.safety_filter import (
     _generate_action_candidates,
     _compute_action_cost,
 )
+from engine.control.robust_ddp.robustness import get_w_bar_array
 from engine.control.robust_ddp.data_models import ControllerConfig, ControllerState
 from engine.control.robust_ddp.engine_wrapper import EngineEstimate, EngineWrapper
 from engine.control.robust_ddp.dynamics import IDX_P_U_F, IDX_P_U_O, IDX_P_COPV

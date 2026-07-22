@@ -15,7 +15,6 @@ from engine.pipeline.constants import (
     DEFAULT_COOLANT_TEMP_K,
     DEFAULT_HOT_GAS_VISC_PA_S,
     DEFAULT_HOT_GAS_THERMAL_COND_W_M_K,
-    DEFAULT_EMISSIVITY_ND,
     DEFAULT_VIEW_FACTOR_ND,
     NU_LAMINAR_ND,
     NU_TURBULENT_COEFFICIENT_ND,
@@ -30,9 +29,9 @@ from engine.pipeline.constants import (
 )
 
 # Unit conversion constants for viscosity formula
-# Formula uses Rankine and lb/lb-mol, result in lb·s/in²
+# Formula uses Rankine and lb/lb-mol, result in lb/(in·s)
 # Import from constants to avoid duplication
-from engine.pipeline.constants import RANKINE_PER_KELVIN, LB_S_PER_IN2_TO_PA_S
+from engine.pipeline.constants import RANKINE_PER_KELVIN, LB_PER_IN_S_TO_PA_S
 
 
 def calculate_gas_viscosity_huzel(
@@ -47,7 +46,15 @@ def calculate_gas_viscosity_huzel(
     Where:
     - M = molecular weight [lb/lb-mol] (same as kg/kmol numerically)
     - T = temperature [°R] (Rankine)
-    - Result: μ [lb·s/in²], converted to [Pa·s]
+    - Result: μ [lb/(in·s)], converted to [Pa·s]
+
+    The correlation originates with Bartz (1957), "A Simple Equation for Rapid
+    Estimation of Rocket Nozzle Convective Heat Transfer Coefficients",
+    J. Jet Propulsion 27(1):49-51; Huzel & Huang reproduce it as eq. (4-16).
+    It is fitted to NBS air data and is stated to be reasonably accurate for
+    mixtures consisting principally of DIATOMIC gases -- combustion products
+    (CO2, H2O) are triatomic, so treat this as an approximation. Prefer CEA
+    transport properties where available.
     
     This correlation is specifically for combustion gases and accounts for:
     - Temperature dependence (T^0.6)
@@ -76,13 +83,13 @@ def calculate_gas_viscosity_huzel(
     # Molecular weight: lb/lb-mol = kg/kmol (same numerically)
     M_lb_lbmol = molecular_weight
     
-    # Calculate viscosity using Huzel's formula
+    # Calculate viscosity using Huzel eq. (4-16)
     # μ = (46.6 × 10^-10) × M^0.5 × T^0.6
-    # Result is in lb·s/in²
-    mu_lb_s_in2 = 46.6e-10 * (M_lb_lbmol ** 0.5) * (T_rankine ** 0.6)
-    
-    # Convert from lb·s/in² to Pa·s
-    viscosity_pa_s = mu_lb_s_in2 * LB_S_PER_IN2_TO_PA_S
+    # Result is in lb/(in·s)  [pound-MASS per inch-second]
+    mu_lb_per_in_s = 46.6e-10 * (M_lb_lbmol ** 0.5) * (T_rankine ** 0.6)
+
+    # Convert from lb/(in·s) to Pa·s
+    viscosity_pa_s = mu_lb_per_in_s * LB_PER_IN_S_TO_PA_S
     
     return float(viscosity_pa_s)
 
@@ -571,30 +578,44 @@ def estimate_hot_wall_heat_flux(
     rho_g = max(Pc / (R_g * max(Tc, 1.0)), MIN_DENS_KG_M3)
     V_g = mdot_total / (rho_g * A_cross)
 
-    # Get viscosity from config (for reference)
-    mu_g_config = config.hot_gas_viscosity if config is not None else DEFAULT_HOT_GAS_VISC_PA_S
-    
-    # Calculate viscosity using Huzel's formula if molecular weight is available
-    M = gas_props.get("M")  # Molecular weight [kg/kmol]
-    if M is not None and M > 0 and Tc > 0:
-        mu_g_calculated = calculate_gas_viscosity_huzel(Tc, M)
-    else:
-        mu_g_calculated = mu_g_config  # Fallback to config if M not available
-    
-    # Use calculated viscosity for calculations (more accurate)
-    mu_g = mu_g_calculated
-    
-    k_g = config.hot_gas_thermal_conductivity if config is not None else DEFAULT_HOT_GAS_THERMAL_COND_W_M_K
-    cp_g = gamma * R_g / max(gamma - 1.0, EPSILON_SMALL)
-    Pr_g_source = config.hot_gas_prandtl if (config is not None and config.hot_gas_prandtl > 0) else None
-    Pr_g = Pr_g_source if Pr_g_source is not None else (mu_g * cp_g / max(k_g, EPSILON_SMALL))
+    # Transport properties from the single provider. Local import: gas_transport
+    # imports the viscosity correlation from this module.
+    from engine.pipeline.thermal.gas_transport import hot_gas_transport
 
-    Re_g = rho_g * V_g * chamber_d_inner / max(mu_g, EPSILON_TINY)
-    if Re_g < 2000:
-        Nu_g = NU_LAMINAR_ND
-    else:
-        Nu_g = NU_TURBULENT_COEFFICIENT_ND * (Re_g ** NU_TURBULENT_RE_EXPONENT_ND) * (Pr_g ** NU_TURBULENT_PR_EXPONENT_ND)
-    h_g = Nu_g * k_g / chamber_d_inner
+    mu_g_config = config.hot_gas_viscosity if config is not None else DEFAULT_HOT_GAS_VISC_PA_S
+    M = gas_props.get("M")  # Molecular weight [kg/kmol]
+    _tr = hot_gas_transport(Tc, M, config)
+    mu_g = _tr["mu"]
+    cp_g = _tr["cp"]
+    k_g = _tr["k"]
+    Pr_g = _tr["Pr"]
+    mu_g_calculated = mu_g
+
+    # Gas-side film coefficient from Bartz (Huzel & Huang eq. 4-13), replacing
+    # the pipe-flow Dittus-Boelter form that was here. A thrust chamber violates
+    # every Dittus-Boelter assumption (strong wall-to-gas temperature ratio,
+    # accelerating flow, varying cross-section); Bartz was written for exactly
+    # this and carries the sigma property-variation correction plus the throat
+    # geometry terms. See thermal/bartz.py. Evaluated at the chamber station:
+    # area ratio A_t/A_chamber and the local (subsonic) Mach number.
+    from engine.pipeline.thermal.bartz import bartz_chamber_h_g
+
+    A_throat_g = gas_props.get("A_throat", DEFAULT_THROAT_AREA_M2)
+    a_sound = np.sqrt(max(gamma * R_g * max(Tc, 1.0), 1.0))
+    M_chamber = min(V_g / a_sound, 0.99)
+    h_g = bartz_chamber_h_g(
+        A_throat=A_throat_g,
+        chamber_area=A_cross,
+        Pc=Pc,
+        mdot_total=mdot_total,
+        mu=mu_g,
+        cp=cp_g,
+        Pr=Pr_g,
+        gamma=gamma,
+        mach=M_chamber,
+        wall_temperature=wall_temperature,
+        Tc=Tc,
+    )
 
     # Calculate adiabatic wall temperature using recovery factor
     # Taw = Tc × recovery_factor (accounts for kinetic energy recovery in boundary layer) see Huzel 4-10
@@ -603,7 +624,9 @@ def estimate_hot_wall_heat_flux(
 
     delta_T = max(Taw - wall_temperature, 0.0)
     heat_flux_conv = h_g * delta_T
-    emissivity = config.radiation_emissivity_hot if config is not None else DEFAULT_EMISSIVITY_ND
+    # Gas emissivity via the shared provider, so this and the axial profile in
+    # ablative_cooling cannot drift apart.
+    emissivity = _tr["eps_gas"]
     view_factor = config.radiation_view_factor if config is not None else DEFAULT_VIEW_FACTOR_ND
     heat_flux_rad = emissivity * view_factor * STEFAN_BOLTZMANN_W_M2_K4 * (
         Tc ** 4 - wall_temperature ** 4
@@ -622,4 +645,10 @@ def estimate_hot_wall_heat_flux(
         "gas_viscosity": float(mu_g),  # Viscosity used in calculations (calculated from Huzel if available)
         "gas_viscosity_config": float(mu_g_config),  # Viscosity from config (for reference)
         "gas_viscosity_calculated": float(mu_g_calculated),  # Viscosity from Huzel formula (for reference)
+        # Transport properties actually used, surfaced so they can be asserted
+        # on: an unphysical Prandtl was the tell that cp/k were being derived
+        # from each other rather than supplied.
+        "gas_cp": float(cp_g),
+        "gas_thermal_conductivity": float(k_g),
+        "gas_prandtl": float(Pr_g),
     }

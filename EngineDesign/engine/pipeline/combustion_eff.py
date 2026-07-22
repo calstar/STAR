@@ -3,11 +3,37 @@
 This module provides both:
 1. Simple efficiency model (eta_cstar) - backward compatible
 2. Advanced physics-based model (via combustion_physics module)
+
+THREE SIMILAR NAMES, THREE DIFFERENT QUANTITIES. They have been confused
+before, so the distinction is spelled out here:
+
+    eta_combustion  incomplete burning alone: mixing x kinetics x L*.
+                    combustion_physics returns this under the key
+                    "eta_total" -- "total" there means the total of the
+                    combustion sub-efficiencies, NOT the total efficiency.
+    eta_cooling     energy carried off by film/ablative/regen cooling alone.
+                    Computed by chamber_solver._compute_cooling_efficiency as
+                    an ENERGY fraction, which is also the factor on chamber
+                    temperature. Its effect on c* is the SQUARE ROOT of that,
+                    because c* goes as sqrt(Tc).
+    eta_cstar       eta_combustion x sqrt(eta_cooling), and the return value of
+                    eta_cstar() below.
+
+eta_cstar is a correct name for the product: c* is reduced by both effects,
+and c*_actual = eta_cstar x c*_ideal is the only place it is ever applied.
+What it is NOT is "the combustion efficiency" -- this module's docstrings
+used to say that, which is how a cooling term ended up hiding inside a
+number that reads as combustion-only.
+
+The distinction bites whenever something OTHER than c* is being corrected.
+Chamber temperature is the live example: cooling already reaches temperature
+through chamber_solver's effective_Tc, so a temperature correction must use
+eta_combustion alone. See calculate_actual_chamber_temp.
 """
 
 import numpy as np
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple, Union
 from .config_schemas import CombustionEfficiencyConfig
 from .constants import (
     DEFAULT_CHAMBER_PRESS_PA,
@@ -53,24 +79,45 @@ def calculate_Lstar(
     return float(Lstar)
 
 
+def blend_cooling_into_cstar(eta_combustion: float, cooling_efficiency: float) -> float:
+    """Combine the combustion and cooling factors into the c* efficiency.
+
+    THE ONLY definition of how cooling converts into a c* factor. eta_cstar()
+    uses it, and so does chamber_solver, which needs eta_combustion before the
+    cooling models have run (it feeds the corrected chamber temperature into
+    them) and so cannot get the blend from eta_cstar's return value.
+
+    cooling_efficiency is an ENERGY fraction -- the share of gas enthalpy
+    surviving cooling, which is also the factor on chamber temperature. c* goes
+    as sqrt(Tc), so the conversion is a square root. Applying the energy
+    fraction to c* directly roughly doubles cooling's penalty.
+    """
+    return float(eta_combustion * np.sqrt(cooling_efficiency))
+
+
 def eta_cstar(
     Lstar: float,
     config: CombustionEfficiencyConfig,
     cooling_efficiency: float,
     advanced_params: Dict[str, Any],
     debug: bool = False,
-) -> float:
+    return_components: bool = False,
+) -> Union[float, Tuple[float, Dict[str, float]]]:
     """
-    Calculate combustion efficiency using advanced physics-based model.
-    
+    Calculate the c* efficiency: combustion efficiency x cooling efficiency.
+
+    Despite living in a module named for combustion, the return value is NOT
+    the combustion efficiency -- the cooling efficiency is multiplied in before
+    returning. Use return_components to get the two factors separately.
+
     This corrects CEA's infinite-area equilibrium assumption for finite chambers.
-    
+
     NOTE: CEA uses EQUILIBRIUM flow (not frozen). The correction accounts for:
     - Finite residence time (L*)
     - Incomplete mixing
     - Finite-rate chemistry effects
     - Heat losses (applied externally via cooling_efficiency)
-    
+
     Parameters:
     -----------
     Lstar : float
@@ -100,11 +147,32 @@ def eta_cstar(
         - fuel_props: Fuel properties dict (optional)
     debug : bool
         Enable debug logging
-    
+    return_components : bool
+        When True, also return the unblended factors. See Returns.
+
     Returns:
     --------
     eta : float
-        Combustion efficiency (0-1)
+        Combustion efficiency x cooling efficiency (0-1), applied to c*_ideal.
+    (eta, components) : tuple, when return_components is True
+        components holds the factors BEFORE they are multiplied together:
+            eta_combustion      -- incomplete burning alone (mixing x kinetics x L*)
+            eta_cooling_energy  -- cooling as an ENERGY/temperature fraction
+            eta_cooling_cstar   -- the same cooling as a c* factor, sqrt of the above
+            eta_total           -- eta_combustion x eta_cooling_cstar, i.e. `eta`
+
+    WHY THE SPLIT MATTERS: the two factors describe different physics and are
+    not interchangeable. Incomplete combustion means less chemical energy was
+    released, so it lowers BOTH c* and the chamber temperature. Cooling removes
+    energy downstream of that, and its effect on temperature is already carried
+    separately by chamber_solver's `effective_Tc`.
+
+    So a caller correcting chamber temperature for incomplete combustion (Huzel
+    & Huang, Sample Calculation 4-3: design (Tc)ns = theoretical x eta_c*^2)
+    must use eta_combustion, NOT the blended `eta`. Using the blended value
+    would subtract the cooling loss from temperature a second time.
+    scripts/validate_chamber.py works around this by passing
+    cooling_efficiency=1.0; with return_components a caller no longer has to.
     """
     from .combustion_physics import calculate_combustion_efficiency_advanced
     
@@ -165,8 +233,11 @@ def eta_cstar(
         debug=debug
     )
     
-    eta = results["eta_total"]
-    
+    # Combustion-only efficiency, before cooling is blended in below. Kept in
+    # its own name so the two factors stay separable -- see Returns.
+    eta_combustion = float(results["eta_total"])
+    eta = eta_combustion
+
     if debug:
         logging.getLogger("evaluate").info(
             f"[ADV_EFF_DEBUG] eta_total: {eta:.4f} "
@@ -188,8 +259,22 @@ def eta_cstar(
             f"Check heat transfer calculations and cooling model configuration."
         )
     
+    # cooling_efficiency arrives as an ENERGY fraction: 1 - Q_removed/(mdot*cp*Tc),
+    # i.e. the fraction of gas enthalpy surviving cooling, which is also the
+    # factor on chamber TEMPERATURE. c* is not linear in temperature --
+    # c* = sqrt(gamma*R*Tc)/Gamma, so c* goes as sqrt(Tc). Converting currencies
+    # here is therefore a square root, not a pass-through.
+    #
+    # Verified against the CEA cache: reconstructing cstar_ideal from CEA's own
+    # Tc/gamma/R reproduces it to 0.07% mean (0.17% worst) over MR 2.4-4.0, and
+    # scaling Tc by f scales c* by sqrt(f) to five decimals.
+    #
+    # This previously multiplied c* by the energy fraction directly, which
+    # roughly doubled cooling's penalty on c*: at cooling_eff = 0.9607 it
+    # applied 0.9607 where 0.9801 is correct, understating c* by 2.0%.
     cooling_eff = float(cooling_efficiency)
-    eta *= cooling_eff
+    eta = blend_cooling_into_cstar(eta, cooling_eff)
+    eta_cooling_on_cstar = float(np.sqrt(cooling_eff))
     
     # Validate final efficiency - no clipping, raise error if invalid
     if not np.isfinite(eta):
@@ -203,41 +288,65 @@ def eta_cstar(
             f"and cooling efficiency ({cooling_eff:.4f})."
         )
     
+    if return_components:
+        return float(eta), {
+            "eta_combustion": eta_combustion,
+            # Both currencies, because callers need different ones: anything
+            # correcting a TEMPERATURE wants eta_cooling_energy, anything
+            # correcting c* wants eta_cooling_cstar (its square root).
+            "eta_cooling_energy": cooling_eff,
+            "eta_cooling_cstar": eta_cooling_on_cstar,
+            "eta_total": float(eta),
+        }
     return float(eta)
 
 
 def calculate_actual_chamber_temp(
     Tc_ideal: float,
-    eta: float,
-    gamma: float
+    eta_combustion: float,
+    gamma: Optional[float] = None,
 ) -> float:
     """
-    Calculate actual chamber temperature accounting for combustion efficiency.
-    
-    T_c,actual = T_c,ideal × [η / (1 - (1-η) × (γ-1)/γ)]
-    
+    Chamber temperature corrected for incomplete combustion.
+
+        (Tc)ns,design = (Tc)ns,theoretical x eta_c*^2
+
+    Huzel & Huang, "Design of Liquid Propellant Rocket Engines" (NASA SP-125),
+    Sample Calculation 4-3, which carries 6460 degR x 0.975^2 = 6140 degR.
+
+    The exponent is not a fitted constant. c* = sqrt(gamma*R*Tc)/Gamma, so at
+    fixed gamma and R, c* is proportional to sqrt(Tc); an efficiency measured
+    on c* therefore lands on temperature squared.
+
+    THE ETA MUST BE COMBUSTION-ONLY. Pass eta_cstar(...)'s `eta_combustion`
+    component, not its blended return value. The blended value carries the
+    cooling efficiency, and chamber_solver already applies cooling to
+    temperature separately via `effective_Tc` -- squaring the blend in here
+    would deduct the cooling loss from temperature twice.
+
     Parameters:
     -----------
     Tc_ideal : float
-        Ideal chamber temperature from CEA [K]
-    eta : float
-        Combustion efficiency
-    gamma : float
-        Specific heat ratio
-    
+        Theoretical (CEA) chamber temperature [K]
+    eta_combustion : float
+        Combustion efficiency alone, in (0, 1]
+    gamma : float, optional
+        Unused. Retained so existing callers keep working; the previous
+        implementation here took a gamma because it used an unsourced
+        formula, eta / (1 - (1-eta)(gamma-1)/gamma), which disagreed with
+        Huzel by ~9% on the multiplier (0.934 vs 0.858 at eta = 0.926) and
+        could not be traced to any reference.
+
     Returns:
     --------
     Tc_actual : float [K]
     """
-    if gamma <= 1:
-        return Tc_ideal
-    
-    denominator = 1.0 - (1.0 - eta) * (gamma - 1.0) / gamma
-    if denominator <= 0:
-        return Tc_ideal
-    
-    Tc_actual = Tc_ideal * (eta / denominator)
-    return float(Tc_actual)
+    del gamma  # deliberately unused; see docstring
+
+    if not np.isfinite(eta_combustion) or eta_combustion <= 0:
+        return float(Tc_ideal)
+
+    return float(Tc_ideal * eta_combustion ** 2)
 
 
 def calculate_frozen_flow_correction(

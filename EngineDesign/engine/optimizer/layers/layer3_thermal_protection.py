@@ -1018,6 +1018,13 @@ def run_layer3_thermal_protection(
                 0.74,
                 f"⚠️ Re-evaluation failed: {e}, using original results",
             )
+            # Fail closed: the safety check above never completed, so we cannot
+            # claim the thermal protection is adequate. Leaving the optimistic
+            # default (True from initialization) would let a failed analysis
+            # report VALID — mark it invalid instead.
+            thermal_results["ablative_adequate"] = False
+            thermal_results["graphite_adequate"] = False
+            thermal_results["thermal_protection_valid"] = False
 
         status_msg = (
             "Completed | Ablative {:.2f} mm, Graphite {:.2f} mm, "

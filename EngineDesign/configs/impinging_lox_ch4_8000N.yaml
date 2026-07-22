@@ -443,13 +443,13 @@ regen_cooling:
   d_outlet: null
   enabled: false
   gas_turbulence_intensity: 0.1
-  hot_gas_cp: 2200.0
-  hot_gas_prandtl: 0.7
-  hot_gas_thermal_conductivity: 0.12
+  hot_gas_cp: 2463.0
+  hot_gas_prandtl: 0.644
+  hot_gas_thermal_conductivity: 0.394
   hot_gas_viscosity: 4.0e-05
   n_channels: 100
   n_segments: 20
-  radiation_emissivity_hot: 0.85
+  radiation_emissivity_hot: 0.10
   radiation_view_factor: 1.0
   recovery_factor: null
   roughness: 0.0

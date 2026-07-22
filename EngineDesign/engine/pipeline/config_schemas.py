@@ -146,7 +146,7 @@ class RegenCoolingConfig(BaseModel):
     hot_gas_prandtl: float = Field(default=0.7, gt=0, description="Assumed hot-gas Prandtl number")
     hot_gas_viscosity: float = Field(default=4.0e-5, gt=0, description="Effective hot-gas viscosity [Pa·s]")
     hot_gas_thermal_conductivity: float = Field(default=0.1, gt=0, description="Effective hot-gas thermal conductivity [W/(m·K)]")
-    radiation_emissivity_hot: float = Field(default=0.8, ge=0, le=1, description="Effective hot-side emissivity for radiation")
+    radiation_emissivity_hot: float = Field(default=0.10, ge=0, le=1, description="Emissivity of the combustion GAS for gas->wall radiation (NOT a wall surface property; CO2/H2O band radiators are ~0.1, uncertain to ~2x). Raise only for sooting/metallised propellants.")
     radiation_view_factor: float = Field(default=1.0, ge=0, le=1, description="Radiation view factor to coolant surface")
     n_segments: int = Field(default=20, gt=0, description="Number of axial segments for heat-transfer integration")
     gas_turbulence_intensity: float = Field(default=0.1, ge=0, description="Estimated turbulence intensity of hot gas (0-1)")
@@ -970,9 +970,50 @@ class DesignRequirementsConfig(BaseModel):
         gt=0.0,
         description="Preferred upper edge for fuel ΔP_inj/Pc (soft hinge)",
     )
-    feed_pressure_model: str = Field(
+    feed_pressure_model: Literal["blowdown", "dome_regulated", "active"] = Field(
         default="dome_regulated",
-        description="Tank pressure time model: blowdown (decaying segments) or dome_regulated (eq. 6.2)",
+        description=(
+            "Layer-2 feed-pressure regime. "
+            "'blowdown': passive ullage expansion — tank P(t) is a physical CONSEQUENCE of ullage "
+            "fraction + start pressure, so Layer 2 searches the ullage split, not the curve. "
+            "'dome_regulated': regulator holds a ~constant setpoint (Layer 1's pressure) with "
+            "end-of-burn droop at lockup (eq. 6.2). "
+            "'active': legacy free-form segmented pressure curve optimised directly — only "
+            "physically realisable with closed-loop active pressure control."
+        ),
+    )
+    # --- Blowdown regime knobs (used only when feed_pressure_model == "blowdown") ---
+    blowdown_ullage_frac_min: float = Field(
+        default=0.05, gt=0.0, lt=1.0,
+        description="Lower bound on the Layer-2 blowdown ullage-fraction search (gas fraction of tank volume at t=0)",
+    )
+    blowdown_ullage_frac_max: float = Field(
+        default=0.60, gt=0.0, lt=1.0,
+        description="Upper bound on the Layer-2 blowdown ullage-fraction search",
+    )
+    blowdown_n_polytropic_lox: float = Field(
+        default=1.40, gt=1.0,
+        description=(
+            "Nominal polytropic exponent for the LOX ullage. Higher than the fuel side because the "
+            "LOX ullage sits on cryogenic liquid — a heat SINK — so it cools (and so decays) faster. "
+            "Fit this to a static-fire P-vs-ullage-volume log when available."
+        ),
+    )
+    blowdown_n_polytropic_fuel: float = Field(
+        default=1.20, gt=1.0,
+        description="Nominal polytropic exponent for the fuel ullage (near-ambient walls act as a heat source)",
+    )
+    blowdown_n_polytropic_lox_hi: float = Field(
+        default=1.50, gt=1.0,
+        description=(
+            "Worst-case LOX polytropic exponent used ONLY for the chug safety re-check. Higher n = "
+            "faster decay = lower end-of-burn pressure, so this is the binding case. Performance is "
+            "scored at the nominal n; safety must hold here."
+        ),
+    )
+    blowdown_n_polytropic_fuel_hi: float = Field(
+        default=1.30, gt=1.0,
+        description="Worst-case fuel polytropic exponent for the chug safety re-check",
     )
     W_geom_ao_af_momentum: float = Field(
         default=0.0,
@@ -1421,6 +1462,11 @@ class PintleEngineConfig(BaseModel):
     # validation: preset supplies fluids/CEA baseline, explicit YAML fields override. Plain str (not
     # Literal) on purpose — adding a new propellant must require zero code changes (UNIFICATION P7).
     propellant_preset: Optional[str] = Field(default=None, description="Propellant preset to merge (e.g. 'methalox', 'ethalox', 'kerolox'); explicit fields win over preset")
+    # Material preset name (configs/materials/<name>.yaml). Same resolve-before-validation and
+    # explicit-wins semantics as propellant_preset. Supplies liner/insert MATERIAL constants only
+    # (densities, heat of ablation, oxidation kinetics) — sizing, enable flags and model closures
+    # stay per-engine. Plain str for the same reason: new materials must need zero code changes.
+    material_preset: Optional[str] = Field(default=None, description="Material preset to merge (e.g. 'phenolic_graphite'); explicit fields win over preset")
     fluids: Dict[str, FluidConfig]
     injector: InjectorConfig
     feed_system: Dict[str, FeedSystemConfig]  # "oxidizer" and "fuel"

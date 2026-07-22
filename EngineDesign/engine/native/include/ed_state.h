@@ -135,6 +135,7 @@ typedef struct {
     /* hot-gas / regen props used by estimate_hot_wall_heat_flux + gas prep */
     double  hot_gas_viscosity;
     double  hot_gas_thermal_conductivity;
+    double  hot_gas_cp;                 /* config cp; Bartz uses it directly */
     double  hot_gas_prandtl;
     double  gas_turbulence_intensity;
     double  recovery_factor;            /* resolved (null -> 0.94) */

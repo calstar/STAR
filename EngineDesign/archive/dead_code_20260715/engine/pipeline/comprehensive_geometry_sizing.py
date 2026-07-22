@@ -153,7 +153,8 @@ def size_complete_geometry(
     L_chamber = cg.length if cg.length else (cg.volume / cg.A_throat if cg.A_throat and cg.A_throat > 0 else 0.18)
     
     # Calculate diameters
-    if L_chamber > 0:
+    if V_chamber > 0 and A_throat > 0:
+        if L_chamber > 0:
             D_chamber_initial = np.sqrt(4.0 * V_chamber / (np.pi * L_chamber))
         else:
             D_chamber_initial = np.sqrt(4.0 * V_chamber / np.pi)  # Assume cylindrical

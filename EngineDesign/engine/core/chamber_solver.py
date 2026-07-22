@@ -15,7 +15,12 @@ from scipy.optimize import brentq, newton
 from typing import Tuple, Dict, Any, List, Optional
 
 from engine.pipeline.config_schemas import PintleEngineConfig, ensure_chamber_geometry
-from engine.pipeline.combustion_eff import eta_cstar, calculate_Lstar
+from engine.pipeline.combustion_eff import (
+    eta_cstar,
+    calculate_Lstar,
+    calculate_actual_chamber_temp,
+    blend_cooling_into_cstar,
+)
 from engine.pipeline.cea_cache import CEACache
 from engine.pipeline.thermal.film_cooling import compute_film_cooling
 from engine.pipeline.thermal.regen_cooling import (
@@ -154,15 +159,6 @@ class ChamberSolver:
         current_injector_diameter = self._infer_injector_diameter()
 
 
-        cooling_results, cooling_eff, _ = self._evaluate_cooling_models(
-            Pc_val,
-            mdot_O,
-            mdot_F,
-            cea_props,
-            diagnostics,
-            with_profile=False,  # root-find: profile is display-only, never needed here
-        )
-
         geometry = self._get_chamber_geometry()
         advanced_params = {
             "Pc": Pc_val,
@@ -192,15 +188,45 @@ class ChamberSolver:
         if hasattr(self, '_debug') and self._debug:
             logging.getLogger("evaluate").info(f"[SOLVER_DEBUG] Pc Guess: {Pc_val/1e6:.4f} MPa | Supply mdot: {mdot_supply:.4f} kg/s | MR: {MR:.3f}")
         
-        # Calculate efficiency using advanced physics-based model
-        eta = eta_cstar(
+        # ORDER MATTERS: combustion efficiency FIRST, then cooling.
+        #
+        # The cooling models need a gas temperature, and a real chamber runs
+        # cooler than CEA's ideal value because combustion is incomplete. So we
+        # establish eta_combustion (which needs nothing from cooling), correct
+        # Tc by it, and only then evaluate heat transfer. Running cooling first
+        # -- as this did -- computes the heat load at a temperature several
+        # hundred K too high.
+        #
+        # This is not circular: eta_combustion depends on geometry, Pc, mixing
+        # and kinetics only. Its Tc_kinetics input is deliberately inert
+        # (combustion_physics lines 1136-1143 take ideal Tc on purpose to break
+        # exactly this loop), verified by sweeping it 1000-4500 K for zero
+        # change in eta.
+        _debug_flag = self._debug if hasattr(self, '_debug') else False
+        _, _eta_parts = eta_cstar(
             current_Lstar,
             self.config.combustion.efficiency,
-            cooling_eff,
+            1.0,  # cooling excluded here by construction; blended in below
             advanced_params,
-            debug=self._debug if hasattr(self, '_debug') else False,
+            debug=_debug_flag,
+            return_components=True,
         )
-        
+        eta_combustion = _eta_parts["eta_combustion"]
+
+        cooling_results, cooling_eff, _ = self._evaluate_cooling_models(
+            Pc_val,
+            mdot_O,
+            mdot_F,
+            cea_props,
+            diagnostics,
+            with_profile=False,  # root-find: profile is display-only, never needed here
+            Tc_override=calculate_actual_chamber_temp(
+                advanced_params["Tc"], eta_combustion
+            ),
+        )
+
+        eta = blend_cooling_into_cstar(eta_combustion, cooling_eff)
+
         # Validate efficiency
         if not np.isfinite(eta) or eta <= 0 or eta > 1.0:
             return np.nan
@@ -312,14 +338,9 @@ class ChamberSolver:
         if Pc_guess is None:
             Pc_guess = (Pc_min + Pc_max) / 2
         
-        # Create residual function with tank pressures bound
-        # Create residual function with tank pressures bound
-        # Also pass debug to residual if needed in future (currently residual uses instance state, but we can't easily pass debug to it without changing signature broadly or storing state)
-        # However, residual calls eta_cstar which needs debug...
-        # Wait, residual() calls eta_cstar() inside.
-        # I need to update residual() to use debug flag.
-        # I'll store `self._debug = debug` temporarily or modify residual validation.
-        # Storing on self is easiest for this scope.
+        # Create residual function with tank pressures bound. residual() calls
+        # eta_cstar() internally and that needs the debug flag, but residual's
+        # signature is fixed by the root finder -- so debug is passed on self.
         self._debug = debug
         self._silent = silent  # gates the display-only cooling profile in post-processing
 
@@ -615,6 +636,53 @@ class ChamberSolver:
         # The display-only per-segment heat-flux profile is skipped on the silent
         # (optimizer) path — it's the dominant post-processing cost and doesn't
         # affect any returned scalar.
+        # Build advanced parameters for combustion efficiency calculation.
+        # This runs BEFORE the cooling models: they need a gas temperature, and
+        # the honest one is CEA's ideal Tc knocked down for incomplete
+        # combustion. See the ORDER MATTERS note in residual().
+        geometry = self._get_chamber_geometry()
+
+        advanced_params = {
+            "Pc": Pc_val,
+            "Tc": cea_props["Tc"],  # Ideal Tc (Conservative Residence Time)
+            # Tc_kinetics is deliberately NOT set. It would have to come from
+            # the cooling models, which have not run yet -- and it is inert
+            # anyway: combustion_physics computes tau_res and tau_chem from
+            # ideal Tc on purpose (its lines 1136-1143) to break that loop, so
+            # T_react reaches nothing but two debug log lines. Measured: eta is
+            # unchanged to six decimals for Tc_kinetics from 1000 K to 4500 K.
+            "cstar_ideal": cea_props.get("cstar_ideal", DEFAULT_CSTAR_IDEAL_M_S),
+            "gamma": cea_props.get("gamma", DEFAULT_GAMMA_ND),
+            "R": cea_props.get("R", DEFAULT_GAS_CONST_J_KG_K),
+            "MR": MR,
+            "Ac": geometry["area_cross"],
+            "At": cg.A_throat,
+            "chamber_length": geometry["length"],
+            "Dinj": current_injector_diameter,
+            "m_dot_total": mdot_total,
+            "u_fuel": closure_diag.get("u_F"),
+            "u_lox": closure_diag.get("u_O"),
+            "spray_diagnostics": closure_diag,
+            "turbulence_intensity": closure_diag.get("turbulence_intensity_mix", DEFAULT_TURBULENCE_INTENSITY_ND),
+            "momentum_ratio_R": closure_diag.get("momentum_ratio_R"),
+            "R_opt": self._rupe_R_opt(),
+            "fuel_props": self._get_fuel_props(),
+        }
+
+        _, _eta_parts = eta_cstar(
+            current_Lstar,
+            self.config.combustion.efficiency,
+            1.0,  # cooling excluded here by construction; blended in below
+            advanced_params,
+            debug=debug,
+            return_components=True,
+        )
+        eta_combustion = _eta_parts["eta_combustion"]
+
+        # Chamber temperature the heat transfer actually sees: CEA's ideal value
+        # corrected for incomplete combustion (Huzel Sample Calc 4-3).
+        Tc_combustion = calculate_actual_chamber_temp(cea_props["Tc"], eta_combustion)
+
         cooling_results, cooling_eff, effective_Tc = self._evaluate_cooling_models(
             Pc_val,
             mdot_O,
@@ -622,6 +690,7 @@ class ChamberSolver:
             cea_props,
             closure_diag,
             with_profile=not getattr(self, "_silent", False),
+            Tc_override=Tc_combustion,
         )
 
         # Calculate reaction progress through chamber (if finite-rate chemistry enabled)
@@ -677,40 +746,20 @@ class ChamberSolver:
             closure_diag['mixture_diagnostics'] = mixture_diag
 
 
-        # Build advanced parameters for combustion efficiency calculation
-        geometry = self._get_chamber_geometry()
-        
-        advanced_params = {
-            "Pc": Pc_val,
-            "Tc": cea_props["Tc"],  # Ideal Tc (Conservative Residence Time)
-            "Tc_kinetics": effective_Tc, # Actual Tc (Conservative Kinetics)
-            "cstar_ideal": cea_props.get("cstar_ideal", DEFAULT_CSTAR_IDEAL_M_S),
-            "gamma": cea_props.get("gamma", DEFAULT_GAMMA_ND),
-            "R": cea_props.get("R", DEFAULT_GAS_CONST_J_KG_K),
-            "MR": MR,
-            "Ac": geometry["area_cross"],
-            "At": cg.A_throat,
-            "chamber_length": geometry["length"],
-            "Dinj": current_injector_diameter,
-            "m_dot_total": mdot_total,
-            "u_fuel": closure_diag.get("u_F"),
-            "u_lox": closure_diag.get("u_O"),
-            "spray_diagnostics": closure_diag,
-            "turbulence_intensity": closure_diag.get("turbulence_intensity_mix", DEFAULT_TURBULENCE_INTENSITY_ND),
-            "momentum_ratio_R": closure_diag.get("momentum_ratio_R"),
-            "R_opt": self._rupe_R_opt(),
-            "fuel_props": self._get_fuel_props(),
+        # advanced_params and eta_combustion were computed above, before the
+        # cooling models, so the heat transfer could run at the corrected
+        # temperature. All that remains is folding cooling into the c* figure.
+        eta = blend_cooling_into_cstar(eta_combustion, cooling_eff)
+        eta_components = {
+            "eta_combustion": eta_combustion,
+            "eta_cooling_energy": float(cooling_eff),
+            "eta_cooling_cstar": float(np.sqrt(cooling_eff)),
+            "eta_total": eta,
         }
-        
-        eta = eta_cstar(
-            current_Lstar,
-            self.config.combustion.efficiency,
-            cooling_eff,
-            advanced_params,
-            debug=debug,
-        )
-        
+
         # Comprehensive validation of final solution
+        # eta here is the c* efficiency (combustion x cooling). c* is the only
+        # quantity it may be applied to -- see combustion_eff's module docstring.
         cstar_actual = eta * cea_props["cstar_ideal"]
         gamma = cea_props["gamma"]
         R = cea_props["R"]
@@ -752,11 +801,25 @@ class ChamberSolver:
             "MR": MR,
             "cstar_ideal": cea_props["cstar_ideal"],
             "Tc_ideal": cea_props["Tc"],  # Store original ideal temperature
+            # Chamber temperature corrected for INCOMPLETE COMBUSTION, per Huzel
+            # & Huang Sample Calc 4-3 (Tc x eta_c*^2). Reported only -- the
+            # gas-side heat transfer is still evaluated at the uncorrected Tc,
+            # because _evaluate_cooling_models runs before eta is known. Closing
+            # that is tracked as the next thermal work item. Measured on
+            # configs/canonical/impinging.yaml: Tc_ideal 3013 K vs 2677 K here,
+            # a 336 K (11.2%) overstatement, worth roughly -19% on convective
+            # heat flux and -38% on gas radiation once it is wired through.
+            "Tc_combustion": Tc_combustion,
             "cstar_actual": cstar_actual,
             "eta_cstar": eta,
+            # The two factors behind eta_cstar, unblended. eta_cstar is their
+            # product; anything correcting a TEMPERATURE needs eta_combustion
+            # alone, since cooling already reaches temperature via Tc below.
+            "eta_combustion": eta_components["eta_combustion"],
+            "eta_cooling_energy": eta_components["eta_cooling_energy"],
+            "eta_cooling_cstar": eta_components["eta_cooling_cstar"],
             "cooling_efficiency": cooling_eff,
             "Tc": effective_Tc,  # Use effective temperature after cooling (accounts for energy removal)
-            "Tc_ideal": cea_props["Tc"],  # Store original CEA temperature for reference
             "gamma": gamma,
             "R": R,
             "M": cea_props.get("M"),  # Molecular weight [kg/kmol]
@@ -958,6 +1021,23 @@ class ChamberSolver:
         gamma: float,
         R: float,
     ) -> float:
+        """Fraction of the gas enthalpy that survives film/ablative/regen cooling.
+
+        Returned as an ENERGY fraction, 1 - Q_removed / (mdot*cp*Tc). The caller
+        multiplies it into the c* efficiency (combustion_eff.eta_cstar).
+
+        KNOWN CURRENCY MISMATCH -- deliberately left alone, not overlooked.
+        c* ~ sqrt(Tc), so an energy deficit of f should cost c* only sqrt(1-f),
+        not (1-f). Applying the energy fraction linearly to c* therefore roughly
+        doubles the intended penalty: at cooling_eff = 0.96 the c* hit is 4%
+        where sqrt gives 2%. Fixing it changes every solved Pc and needs the C
+        mirror in ed_cooling.c updated in lockstep, so it is called out here
+        rather than patched silently.
+
+        Note also that `Tc` arrives as effective_Tc -- already reduced by the
+        same cooling this function is measuring -- which shrinks the denominator
+        and slightly deepens the deficit. Second-order next to the above.
+        """
         eff_cfg = self.config.combustion.efficiency
         if not eff_cfg.use_cooling_coupling:
             return 1.0
@@ -986,11 +1066,24 @@ class ChamberSolver:
         cea_props: Dict[str, float],
         closure_diag: Dict[str, Any],
         with_profile: bool = True,
+        Tc_override: Optional[float] = None,
     ) -> Tuple[Dict[str, Any], float, float]:
+        """Run the cooling models and report how much gas enthalpy they remove.
+
+        Tc_override : float, optional
+            Gas temperature the heat transfer is evaluated at. Callers pass the
+            COMBUSTION-CORRECTED temperature (Tc_ideal x eta_combustion^2, Huzel
+            Sample Calc 4-3) rather than CEA's ideal value, because a real
+            chamber releases less energy and therefore runs cooler. Heat flux is
+            steeply temperature-dependent -- convection roughly linear in the
+            driving delta-T, radiation as T^4 -- so using the ideal temperature
+            here over-predicts the heat load. Defaults to cea_props["Tc"] for
+            callers that have no efficiency estimate yet.
+        """
         config = self.config
         mdot_total = mdot_O + mdot_F
         cooling_results: Dict[str, Any] = {}
-        Tc = float(cea_props["Tc"])
+        Tc = float(cea_props["Tc"] if Tc_override is None else Tc_override)
 
         if mdot_total <= 0:
             closure_diag["cooling"] = cooling_results
@@ -1010,23 +1103,17 @@ class ChamberSolver:
         from engine.pipeline.constants import DEFAULT_HOT_GAS_VISC_PA_S
         mu_g_config = regen_cfg.hot_gas_viscosity if regen_cfg is not None else DEFAULT_HOT_GAS_VISC_PA_S
         
-        # Calculate viscosity using Huzel's formula if molecular weight is available
+        # Transport properties from the shared provider. This block used to be a
+        # near-verbatim copy of regen_cooling.estimate_hot_wall_heat_flux, down
+        # to the comments, and had the same defect: cp derived from gamma and
+        # Pr derived from it in turn.
+        from engine.pipeline.thermal.gas_transport import hot_gas_transport
         M = cea_props.get("M")  # Molecular weight [kg/kmol]
-        if M is not None and M > 0 and Tc > 0:
-            from engine.pipeline.thermal.regen_cooling import calculate_gas_viscosity_huzel
-            mu_g_calculated = calculate_gas_viscosity_huzel(Tc, M)
-        else:
-            mu_g_calculated = mu_g_config  # Fallback to config if M not available
-        
-        # Use calculated viscosity for calculations (more accurate)
-        mu_g = mu_g_calculated
-        
-        k_g = regen_cfg.hot_gas_thermal_conductivity if regen_cfg is not None else 0.1
-        Pr_g = (
-            regen_cfg.hot_gas_prandtl
-            if (regen_cfg is not None and regen_cfg.hot_gas_prandtl > 0)
-            else mu_g * gamma * R / max(k_g * (gamma - 1.0), 1e-6)
-        )
+        _tr = hot_gas_transport(Tc, M, regen_cfg)
+        mu_g = _tr["mu"]
+        k_g = _tr["k"]
+        Pr_g = _tr["Pr"]
+        mu_g_calculated = mu_g
 
         Re_g = rho_g * velocity_g * geometry["diameter"] / max(mu_g, 1e-8)
         if Re_g < 2000:

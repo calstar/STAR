@@ -37,7 +37,7 @@ int main(void) {
     const char *p = js, *end;
     while ((p = edt_next_object(p, &end)) != NULL) {
         EdNozzleInputs in;
-        double F, Isp, Cf_actual, P_exit, T_exit, v_exit, M_exit, P_throat, T_throat;
+        double P_exit, T_exit, v_exit, M_exit, P_throat, T_throat;
         int ok =
             edt_find_double(p, end, "Pc", &in.Pc) &&
             edt_find_double(p, end, "mdot_total", &in.mdot_total) &&
@@ -50,15 +50,12 @@ int main(void) {
             edt_find_double(p, end, "gamma", &in.gamma) &&
             edt_find_double(p, end, "R", &in.R) &&
             edt_find_double(p, end, "Tc", &in.Tc) &&
-            edt_find_double(p, end, "F", &F) &&
-            edt_find_double(p, end, "Cf_actual", &Cf_actual) &&
             edt_find_double(p, end, "P_exit", &P_exit) &&
             edt_find_double(p, end, "T_exit", &T_exit) &&
             edt_find_double(p, end, "v_exit", &v_exit) &&
             edt_find_double(p, end, "M_exit", &M_exit) &&
             edt_find_double(p, end, "P_throat", &P_throat) &&
-            edt_find_double(p, end, "T_throat", &T_throat) &&
-            edt_find_double(p, end, "Isp", &Isp);
+            edt_find_double(p, end, "T_throat", &T_throat);
         if (ok) {
             EdNozzleResult r;
             if (ed_nozzle_solve(&in, &r) != ED_OK) {
@@ -71,9 +68,6 @@ int main(void) {
                 check("v_exit", r.v_exit, v_exit, n);
                 check("P_throat", r.P_throat, P_throat, n);
                 check("T_throat", r.T_throat, T_throat, n);
-                check("F", r.F, F, n);
-                check("Cf_actual", r.Cf_actual, Cf_actual, n);
-                check("Isp", r.Isp, Isp, n);
             }
             n++;
         }

@@ -10,6 +10,7 @@ Requirements: pip install pyqt6 pyqtgraph numpy
 
 import csv
 import json
+import math
 import os
 import re
 import socket

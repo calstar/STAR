@@ -76,6 +76,18 @@ def _configure_args(build_dir: str) -> list[str]:
     return args
 
 
+def lib_if_built() -> str | None:
+    """Path to an already-built library, or None. NEVER builds or configures.
+
+    Lets a caller ask "has this machine ever built the native kernel?" without
+    paying for a build. Used by the A/B parity suite to decide whether it can
+    run inside the general regression gate: if a library is already present the
+    toolchain exists, so running costs little and ensure_lib() will refresh it
+    if it has gone stale against the C sources.
+    """
+    return _find_lib(_build_dir())
+
+
 def ensure_lib(force: bool = False, verbose: bool = False) -> str:
     """Return a path to a current, arch-matched libed_physics, building if needed.
 

@@ -1,24 +1,17 @@
 propellant_preset: ethalox
+material_preset: phenolic_graphite
 ablative_cooling:
   ambient_temperature: 300.0
   blowing_coefficient: 0.5
   blowing_efficiency: 0.75
   blowing_min_reduction_factor: 0.1
-  char_layer_conductivity: 0.2
   char_layer_thickness: 0.001
   coverage_fraction: 0.9
   enabled: true
-  heat_of_ablation: 2500000.0
   initial_thickness: 0.008
-  material_density: 1600.0
   nozzle_ablative: false
-  pyrolysis_temperature: 950.0
   radiative_sink_fallback_temperature: 600.0
   radiative_sink_minimum_threshold: 400.0
-  specific_heat: 1500.0
-  surface_emissivity: 0.85
-  surface_temperature_limit: 1200.0
-  thermal_conductivity: 0.35
   throat_recession_multiplier: null
   track_geometry_evolution: true
   turbulence_exponent: 1.0
@@ -28,21 +21,7 @@ ablative_cooling:
   use_physics_based_blowing: true
 chamber: null
 chamber_geometry:
-  A_exit: 0.00801184666481737
-  A_throat: 0.0017651044259737317
-  Cf: 1.5422822280584674
-  Lstar: 1.239905396733828
-  chamber_diameter: 0.11344154349849075
-  design_MR: 2.55
-  design_pressure: 2413166.0
-  design_thrust: 7000.0
-  exit_diameter: 0.101
-  expansion_ratio: 4.539021344528996
-  length: 0.24846200737808025
-  length_contraction: 0.0451
-  length_cylindrical: 0.121
   nozzle_efficiency: 0.95
-  volume: 0.0021885625035635956
 combustion:
   cea:
     MR_range:
@@ -56,7 +35,6 @@ combustion:
     eps_range:
     - 4.0
     - 15.0
-    expansion_ratio: 4.539021344528996
     fuel_name: Ethanol
     n_points: 34
     ox_name: LOX
@@ -222,36 +200,24 @@ fluids:
     viscosity: 0.00018
 fuel_tank:
   fuel_tank_pos: 3.0
-  initial_pressure_psi: 523.6759162449396
   mass: 7.0
   rp1_h: 0.609
   rp1_radius: 0.0762
   tank_volume_m3: 0.011109
 graphite_insert:
-  ablation_surface_temperature: 3000.0
   ablation_transition_width: 200.0
-  activation_energy: 190000.0
   ambient_temperature: 300.0
-  char_layer_conductivity: 5.0
   char_layer_thickness: 0.0005
   coverage_fraction: 1.0
-  emissivity: 0.8
   enabled: true
   feedback_fraction_max: 0.2
   feedback_fraction_min: 0.0
   friction_coefficient_override: null
-  heat_of_ablation: 15000000.0
   initial_thickness: 0.006
-  material_density: 2260.0
   mixture_mw: 0.024
-  oxidation_enthalpy: 32800000.0
   oxidation_pre_exponential: null
   oxidation_pressure_exponent: 0.5
-  oxidation_rate: 1.0e-06
-  oxidation_reference_pressure: 21000.0
-  oxidation_reference_temperature: 973.0
   oxidation_stoichiometry_ratio: 1.0
-  oxidation_temperature: 800.0
   oxygen_mass_fraction: 0.05
   oxygen_mole_fraction: null
   recession_multiplier: null
@@ -260,26 +226,9 @@ graphite_insert:
   reference_diffusivity_temperature: 1500.0
   simplified_graphite_oxidation: false
   sizing_only_mode: false
-  specific_heat: 710.0
-  surface_temperature_limit: 2500.0
-  thermal_conductivity: 100.0
 injector:
-  geometry:
-    fuel:
-      A_entry: 0.0006243142849960269
-      d_hydraulic: 0.001092199999999998
-      d_pintle_tip: 0.028194
-      d_reservoir_inner: 0.0292862
-      h_gap: 0.000546099999999999
-    lox:
-      A_entry: 5.8108495056721366e-06
-      d_hydraulic: 0.0027200373856119215
-      d_orifice: 0.0027200373856119215
-      n_orifices: 14
-      theta_orifice: 90.0
   type: pintle
 lox_tank:
-  initial_pressure_psi: 537.261547029532
   lox_h: 1.14
   lox_radius: 0.06985
   mass: 6.75
@@ -311,93 +260,6 @@ press_tank:
   pres_tank_pos: 3.6
   press_h: 0.457
   press_radius: 0.0762
-pressure_curves:
-  fuel_segments:
-  - end_pressure_pa: 3374149.5056212177
-    k: 1.0784566785091103
-    length_ratio: 0.2286473154180296
-    start_pressure_pa: 3610619.76028896
-    type: blowdown
-  - end_pressure_pa: 3164729.7845391277
-    k: 1.629427648989163
-    length_ratio: 0.20249167104882543
-    start_pressure_pa: 3374149.5056212177
-    type: blowdown
-  - end_pressure_pa: 3099133.4332023407
-    k: 1.1822268290660432
-    length_ratio: 0.06342628444092534
-    start_pressure_pa: 3164729.7845391277
-    type: blowdown
-  - end_pressure_pa: 2759036.015920052
-    k: 0.9585537699775258
-    length_ratio: 0.14732213727033575
-    start_pressure_pa: 3099133.4332023407
-    type: blowdown
-  - end_pressure_pa: 2554492.049726525
-    k: 1.2370160062004798
-    length_ratio: 0.0925191694713507
-    start_pressure_pa: 2759036.015920052
-    type: blowdown
-  - end_pressure_pa: 2465667.503851008
-    k: 0.8239774831525549
-    length_ratio: 0.08588604087308514
-    start_pressure_pa: 2554492.049726525
-    type: blowdown
-  - end_pressure_pa: 2393118.9933614894
-    k: 0.8847832683519297
-    length_ratio: 0.07014845137420163
-    start_pressure_pa: 2465667.503851008
-    type: blowdown
-  - end_pressure_pa: 2004754.8014037265
-    k: 1.1673408263818559
-    length_ratio: 0.10955893010324647
-    start_pressure_pa: 2393118.9933614894
-    type: blowdown
-  initial_fuel_pressure_pa: 3610619.76028896
-  initial_lox_pressure_pa: 3704289.4239973365
-  lox_segments:
-  - end_pressure_pa: 3467819.1693295944
-    k: 0.24164644917319
-    length_ratio: 0.2286473154180296
-    start_pressure_pa: 3704289.4239973365
-    type: blowdown
-  - end_pressure_pa: 3258399.4482475044
-    k: 1.7414629743039511
-    length_ratio: 0.20249167104882543
-    start_pressure_pa: 3467819.1693295944
-    type: blowdown
-  - end_pressure_pa: 3141806.013426955
-    k: 1.3540898135161692
-    length_ratio: 0.06342628444092534
-    start_pressure_pa: 3258399.4482475044
-    type: blowdown
-  - end_pressure_pa: 2891698.2018464496
-    k: 0.7144170122671702
-    length_ratio: 0.14732213727033575
-    start_pressure_pa: 3141806.013426955
-    type: blowdown
-  - end_pressure_pa: 2796013.581510806
-    k: 1.0723820377201234
-    length_ratio: 0.0925191694713507
-    start_pressure_pa: 2891698.2018464496
-    type: blowdown
-  - end_pressure_pa: 2707189.0356352893
-    k: 1.6281617755206732
-    length_ratio: 0.08588604087308514
-    start_pressure_pa: 2796013.581510806
-    type: blowdown
-  - end_pressure_pa: 2634640.5251457705
-    k: 1.5557597269194856
-    length_ratio: 0.07014845137420163
-    start_pressure_pa: 2707189.0356352893
-    type: blowdown
-  - end_pressure_pa: 2521333.1458079717
-    k: 0.948130932276539
-    length_ratio: 0.10955893010324647
-    start_pressure_pa: 2634640.5251457705
-    type: blowdown
-  n_points: 200
-  target_burn_time_s: 6.0
 regen_cooling:
   Cd_entrance_inf: 0.8
   Cd_entrance_min: 0.6
@@ -418,13 +280,13 @@ regen_cooling:
   d_outlet: null
   enabled: false
   gas_turbulence_intensity: 0.1
-  hot_gas_cp: 2200.0
-  hot_gas_prandtl: 0.7
-  hot_gas_thermal_conductivity: 0.12
+  hot_gas_cp: 2201.0
+  hot_gas_prandtl: 0.67
+  hot_gas_thermal_conductivity: 0.346
   hot_gas_viscosity: 4.0e-05
   n_channels: 100
   n_segments: 20
-  radiation_emissivity_hot: 0.85
+  radiation_emissivity_hot: 0.1
   radiation_view_factor: 1.0
   recovery_factor: null
   roughness: 0.0
@@ -501,5 +363,3 @@ spray:
   weber:
     We_min: 15.0
 stainless_steel_case: null
-thrust:
-  burn_time: 6.0

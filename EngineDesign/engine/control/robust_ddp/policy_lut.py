@@ -7,10 +7,13 @@ and provides fast runtime interpolation. Use when online DDP is too slow.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, TYPE_CHECKING
 import numpy as np
 
 from .dynamics import N_CONTROL, IDX_P_U_F, IDX_P_U_O
+
+if TYPE_CHECKING:
+    from scipy.interpolate import RegularGridInterpolator
 
 
 def _make_interpolator(

@@ -5,11 +5,13 @@ This module contains helper functions used by the tab functions in tabs.py.
 
 from __future__ import annotations
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 import numpy as np
 import pandas as pd
 import streamlit as st
 import copy
+from plotly.subplots import make_subplots
+from engine.core.chamber_geometry import chamber_geometry_calc
 
 from engine.pipeline.config_schemas import PintleEngineConfig
 from engine.core.runner import PintleEngineRunner

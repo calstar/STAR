@@ -5,6 +5,60 @@ from engine.core.nozzle_angles import lookup_angles_interp_bell
 
 
 # -----------------------------
+# Throat contour geometry -- the single source of truth
+# -----------------------------
+# The throat is rounded by two circular fillet arcs, one on each side, both
+# passing through the throat point (0, R_t):
+#
+#   entrance arc  1.5   * R_t   on the converging side (blends the 45 deg cone
+#                               into the throat)
+#   throat arc    0.382 * R_t   on the diverging side (blends the throat into
+#                               the bell)
+#
+# These coefficients are used in exactly one place each in rao() below, and are
+# named here so that (a) they are not anonymous magic numbers, and (b) anything
+# else that needs the throat curvature -- notably the Bartz gas-side heat
+# transfer coefficient, which carries a (D_t/R)^0.1 term -- derives it from the
+# SAME definition and cannot silently disagree with the contour actually drawn.
+#
+# If the throat treatment ever changes (different arcs, a MoC throat, a conical
+# converging section with no fillet), these change here and every consumer
+# follows. test_bartz_correlation.py fits a circle to the rao() throat and
+# asserts it matches throat_curvature_radius(), so a change that breaks the
+# coupling fails loudly instead of leaving Bartz on a stale radius.
+THROAT_ENTRANCE_ARC_COEF = 1.5     # upstream / converging-side fillet, x R_t
+THROAT_ARC_COEF = 0.382            # downstream / diverging-side fillet, x R_t
+
+
+def throat_radius(area_throat: float) -> float:
+    """Throat radius R_t = sqrt(A_t / pi) [m]."""
+    return float(np.sqrt(area_throat / np.pi))
+
+
+def throat_curvature_radius(area_throat: float) -> float:
+    """Radius of curvature of the nozzle contour AT THE THROAT [m].
+
+    Bartz's (D_t/R)^0.1 term (Huzel & Huang eq. 4-13) needs a single radius of
+    curvature at the throat. The two fillet arcs meet there with different
+    radii, so the curvature is discontinuous; Huzel resolves this by taking
+    their MEAN -- Sample Calculation 4-3 writes it out as
+
+        Mean radius of the throat contour = (18.68 + 4.75)/2 = 11.71 in
+
+    where 18.68 = 1.5 * R_t and 4.75 = 0.382 * R_t for that engine's
+    R_t = 12.45 in. So R = 0.5*(1.5 + 0.382)*R_t = 0.941 * R_t, which for a
+    standard nozzle makes D_t/R = 2 R_t / (0.941 R_t) = 2.126 independent of
+    engine size -- exactly Huzel's value.
+
+    This is the mean of both arcs by Huzel's convention. Physically the throat
+    heat flux is dominated by the tighter downstream arc, but the term is weak
+    (^0.1) and we match the validated reference rather than pick a single side.
+    """
+    mean_coef = 0.5 * (THROAT_ENTRANCE_ARC_COEF + THROAT_ARC_COEF)
+    return mean_coef * throat_radius(area_throat)
+
+
+# -----------------------------
 # Rotated parabola (Garcia Eq. 7)
 # -----------------------------
 def rotated_parabola_xy(t, m, theta, h, k):
@@ -117,15 +171,17 @@ def rao(area_throat,
     r_t = np.sqrt(area_throat / np.pi)
     r_e = np.sqrt(area_exit / np.pi)
 
-    # ----- Entrance arc: 1.5 Rt
+    # ----- Entrance arc: THROAT_ENTRANCE_ARC_COEF * Rt (converging-side fillet)
+    r_ent = THROAT_ENTRANCE_ARC_COEF * r_t
     theta1 = np.linspace(deg2rad(-135), deg2rad(-90), steps)
-    x1 = 1.5 * r_t * np.cos(theta1)
-    y1 = 1.5 * r_t * np.sin(theta1) + 1.5 * r_t + r_t
+    x1 = r_ent * np.cos(theta1)
+    y1 = r_ent * np.sin(theta1) + r_ent + r_t
 
-    # ----- Throat arc: 0.382 Rt
+    # ----- Throat arc: THROAT_ARC_COEF * Rt (diverging-side fillet)
+    r_thr = THROAT_ARC_COEF * r_t
     theta2 = np.linspace(deg2rad(-90), theta_n - deg2rad(90), steps)
-    x2 = 0.382 * r_t * np.cos(theta2)
-    y2 = 0.382 * r_t * np.sin(theta2) + 0.382 * r_t + r_t
+    x2 = r_thr * np.cos(theta2)
+    y2 = r_thr * np.sin(theta2) + r_thr + r_t
 
     # Start of bell (point N)
     Nx, Ny = x2[-1], y2[-1]

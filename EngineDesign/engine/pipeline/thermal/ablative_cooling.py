@@ -8,6 +8,8 @@ import numpy as np
 
 from engine.pipeline.config_schemas import AblativeCoolingConfig
 from engine.pipeline.constants import STEFAN_BOLTZMANN_W_M2_K4, EPSILON_SMALL
+from engine.pipeline.thermal.gas_transport import hot_gas_transport
+from engine.pipeline.thermal.regen_cooling import calculate_gas_viscosity_huzel
 
 
 def compute_ablative_heat_flux_profile(
@@ -115,13 +117,11 @@ def compute_ablative_heat_flux_profile(
     A_chamber = np.pi * (D_chamber / 2) ** 2
     A_exit = np.pi * (D_exit / 2) ** 2 if has_nozzle else A_throat
     
-    # Gas viscosity using Huzel formula: μ = 46.6e-10 × M^0.5 × T^0.6 [lb·s/in²]
-    # Convert to Pa·s: multiply by 6894.76
-    def calc_viscosity(T_K, M_kg_kmol):
-        T_R = T_K * 1.8  # Kelvin to Rankine
-        mu_imperial = 46.6e-10 * (M_kg_kmol ** 0.5) * (T_R ** 0.6)
-        return mu_imperial * 6894.76  # Convert to Pa·s
-    
+    # Gas viscosity: Huzel eq. (4-16), shared with the regen path so the
+    # unit conversion lives in exactly one place.
+    calc_viscosity = calculate_gas_viscosity_huzel
+
+
     # Supersonic Mach number from area ratio using Newton-Raphson
     def mach_from_area_ratio_supersonic(area_ratio, gamma, tol=1e-6, max_iter=50):
         """Solve for supersonic M given A/A* using Newton-Raphson."""
@@ -152,11 +152,16 @@ def compute_ablative_heat_flux_profile(
         
         return M
     
-    # Gas thermal conductivity estimate: k ≈ μ × cp / Pr
-    # Typical Pr for combustion gases: 0.7-0.8
-    Pr_gas = 0.75
-    cp_gas = gamma * R_gas / (gamma - 1.0)
-    
+    # Transport properties from the shared provider, so this axial profile and
+    # the lumped estimate_hot_wall_heat_flux() agree. They previously differed
+    # by 3x in both k and Pr, in opposite directions: this function pinned
+    # Pr = 0.75 and derived k, while the other pinned k and derived Pr.
+    _tr = hot_gas_transport(Tc, M_mol, None)
+    cp_gas = _tr["cp"]
+    Pr_gas = _tr["Pr"]
+    k_gas = _tr["k"]
+    eps_gas = _tr["eps_gas"]
+
     # Recovery factor for adiabatic wall temperature
     # Typical value for turbulent flow: r ≈ Pr^(1/3) ≈ 0.9
     recovery_factor = 0.9
@@ -220,7 +225,11 @@ def compute_ablative_heat_flux_profile(
         
         # Gas properties at local temperature
         mu_local = calc_viscosity(T_local, M_mol)
-        k_local = mu_local * cp_gas / Pr_gas
+        # Conductivity is taken as constant rather than re-derived from the
+        # local viscosity: that derivation implied k varies axially, but it
+        # inherited the Huzel correlation's ~35% offset, so the variation was
+        # false precision. Local viscosity still sets the local Reynolds number.
+        k_local = k_gas
         
         # Reynolds number based on local diameter
         Re_local = rho_local * V_local * D_local / max(mu_local, 1e-8)
@@ -244,9 +253,14 @@ def compute_ablative_heat_flux_profile(
         # Convective heat flux: q_conv = h × (Taw - Tw)
         q_conv = h_local * throat_factor * max(Taw - T_wall, 0.0)
         
-        # Radiative heat flux: q_rad = ε × σ × (Tg⁴ - Tw⁴)
-        emissivity = ablative_config.surface_emissivity
-        q_rad = emissivity * STEFAN_BOLTZMANN_W_M2_K4 * (T_local ** 4 - T_wall ** 4)
+        # Radiative heat flux: q_rad = ε_gas × σ × (Tg⁴ - Tw⁴)
+        #
+        # ε here must be the GAS emissivity. This previously used
+        # ablative_config.surface_emissivity -- the CHARRED WALL's emissivity
+        # (~0.85, correct for the wall's own re-radiation below) -- which
+        # overstated gas radiation by roughly an order of magnitude for
+        # non-luminous CO2/H2O products.
+        q_rad = eps_gas * STEFAN_BOLTZMANN_W_M2_K4 * (T_local ** 4 - T_wall ** 4)
         q_rad = max(q_rad, 0.0)  # Only positive (gas → wall)
         
         # Incident heat flux (total from gas to wall)

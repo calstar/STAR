@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .config_schemas import AblativeCoolingConfig, GraphiteInsertConfig
+from .constants import STEFAN_BOLTZMANN_W_M2_K4 as STEFAN_BOLTZMANN
 
 SIGMA = 5.670374419e-8  # Stefan-Boltzmann constant
 
@@ -93,28 +94,59 @@ def calculate_steady_state_temperature_profile(
     
     R_conv_cold = 1.0 / max(bc.h_ambient, 1e-6)
     R_total = R_conv_hot + R_cond_total + R_conv_cold
-    
-    # Calculate total heat flux (convective + radiative)
-    # Iterative: need to know surface temp for radiation
-    # Start with convective only, then iterate
-    T_surface_hot_guess = bc.T_hot_gas * 0.8  # Initial guess
-    
-    for _ in range(10):  # Iterate for radiation coupling
-        q_conv = bc.h_hot_gas * (bc.T_hot_gas - T_surface_hot_guess)
-        q_rad = bc.q_rad_hot  # Assume constant for now
-        q_total = q_conv + q_rad
-        
-        # Temperature drop across each resistance
-        delta_T_hot = q_total * R_conv_hot
-        T_surface_hot = bc.T_hot_gas - delta_T_hot
-        
-        if abs(T_surface_hot - T_surface_hot_guess) < 1.0:  # Converged
-            break
-        T_surface_hot_guess = T_surface_hot
-    
-    # Cold surface temperature
-    delta_T_cold = q_total * R_conv_cold
-    T_surface_cold = bc.T_ambient + delta_T_cold
+
+    # Resistance from the hot surface out to ambient (through the wall stack).
+    R_wall = max(R_cond_total + R_conv_cold, 1e-9)
+
+    # Hot-surface energy balance:
+    #
+    #   h(Tg - Ts) + q_rad_in  =  eps*sigma*(Ts^4 - Tamb^4) + (Ts - Tamb)/R_wall
+    #   \------ in from gas ------/   \--- re-radiated ---/   \-- conducted --/
+    #
+    # The previous implementation iterated
+    #     Ts_new = Tg - (h*(Tg - Ts_guess) + q_rad) * (1/h)
+    # which simplifies to Ts_new = Ts_guess - q_rad/h: an identity in Ts that
+    # never references the wall stack at all. With q_rad = 0 it "converged"
+    # instantly on its own initial guess (Ts = 0.8*Tg for ANY h, conductivity or
+    # thickness); with q_rad > 0 it marched down by q_rad/h per iteration for a
+    # fixed 10 iterations, reaching -16 650 K for realistic boundary conditions.
+    #
+    # Surface re-radiation is included because without it the balance has no sink
+    # other than a poorly-conducting wall, and the correct root then lands ABOVE
+    # the gas temperature (4905 K for the canonical case) -- algebraically valid,
+    # physically useless.
+    emissivity = layers[0].emissivity if layers else 0.8
+    T_amb = bc.T_ambient
+
+    def _residual(T_s: float) -> float:
+        q_in = bc.h_hot_gas * (bc.T_hot_gas - T_s) + bc.q_rad_hot
+        q_out = (emissivity * STEFAN_BOLTZMANN * (T_s ** 4 - T_amb ** 4)
+                 + (T_s - T_amb) / R_wall)
+        return q_in - q_out
+
+    # _residual is strictly decreasing in T_s, so bisection is unconditionally
+    # safe -- no initial guess to get wrong, and no iteration-count artefacts.
+    lo, hi = T_amb, 10000.0
+    if _residual(lo) <= 0.0:
+        T_surface_hot = lo
+    else:
+        while _residual(hi) > 0.0 and hi < 1.0e6:
+            hi *= 2.0
+        for _ in range(200):
+            mid = 0.5 * (lo + hi)
+            if _residual(mid) > 0.0:
+                lo = mid
+            else:
+                hi = mid
+            if hi - lo < 1e-6:
+                break
+        T_surface_hot = 0.5 * (lo + hi)
+
+    # Flux actually conducted through the wall: what the gas delivers minus what
+    # the surface re-radiates. The layer profile below is built on this, not on
+    # the incident flux.
+    q_total = (T_surface_hot - T_amb) / R_wall
+    T_surface_cold = T_amb + q_total * R_conv_cold
     
     # Build temperature profile through layers
     positions = []

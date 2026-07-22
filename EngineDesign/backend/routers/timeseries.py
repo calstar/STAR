@@ -868,7 +868,12 @@ async def generate_from_segments(request: SegmentsRequest):
         
         if request.blowdown_mode:
             # ===== BLOWDOWN MODE =====
-            from copv.blowdown_solver import simulate_coupled_blowdown, resolve_blowdown_tank_state
+            from copv.blowdown_solver import (
+                make_engine_evaluator,
+                polytropic_exponents_from_config,
+                resolve_blowdown_tank_state,
+                simulate_coupled_blowdown,
+            )
 
             try:
                 V_lox, m_lox_init, _, V_fuel, m_fuel_init, _ = resolve_blowdown_tank_state(
@@ -883,22 +888,15 @@ async def generate_from_segments(request: SegmentsRequest):
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-            # Import coupled blowdown solver
-            
-            # Define engine callback for coupled solver
-            def engine_evaluator(P_lox_Pa: float, P_fuel_Pa: float):
-                # Run single-point evaluation
-                # Note: evaluate returns dict with mdot_O and mdot_F (kg/s)
-                try:
-                    res = app_state.runner.evaluate(
-                        P_tank_O=P_lox_Pa,
-                        P_tank_F=P_fuel_Pa,
-                        silent=True
-                    )
-                    return res["mdot_O"], res["mdot_F"]
-                except Exception:
-                    # If evaluation fails (e.g. pressure too low for CEA), return 0 flow
-                    return 0.0, 0.0
+            # Shared engine callback. This previously swallowed EVERY exception and returned
+            # (0, 0), silently reporting "engine off" for genuine defects and producing a
+            # plausible-but-wrong curve. simulate_coupled_blowdown now classifies the chamber
+            # solver's no-solution error as flameout itself, so real bugs surface instead.
+            engine_evaluator = make_engine_evaluator(app_state.runner)
+
+            # Per-tank polytropic exponents, shared with the Layer-2 blowdown branch so the same
+            # tank cannot decay at two different rates depending on which entry point is called.
+            _n_lox, _n_fuel = polytropic_exponents_from_config(app_state.runner.config)
 
             # Run coupled simulation
             blowdown_results = simulate_coupled_blowdown(
@@ -910,7 +908,8 @@ async def generate_from_segments(request: SegmentsRequest):
                 R_pressurant=296.803,  # N2
                 T_lox_gas_K=250.0,
                 T_fuel_gas_K=293.0,
-                n_polytropic=1.2,
+                n_polytropic_lox=_n_lox,
+                n_polytropic_fuel=_n_fuel,
                 use_real_gas=True,
                 n2_Z_csv=N2_Z_LOOKUP_CSV,
                 total_propellant_kg=request.total_propellant_kg,

@@ -26,7 +26,6 @@ from engine.pipeline.cea_cache import CEACache
 from engine.pipeline.numerical_robustness import (
     PhysicalConstraints,
     NumericalStability,
-    PhysicsValidator,
 )
 from engine.core.mach_solver import solve_exit_mach_robust
 
@@ -584,7 +583,7 @@ def calculate_thrust(
         "Cf_theoretical": float(Cf),  # Theoretical (efficiency-adjusted ideal)
         "P_exit": float(P_exit),
         "P_throat": float(P_throat),
-        "v_exit": float(v_exit),
+        "v_exit": float(v_exit),  # ideal isentropic exit velocity (display/parity; delivered thrust uses Cf_vac_delivered)
         "T_exit": float(T_exit),
         "T_throat": float(T_throat),
         "temperature_profile": temperature_profile,  # Full profile along chamber

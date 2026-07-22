@@ -52,16 +52,27 @@ from engine.pipeline.io import load_config
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan - load default config on startup."""
-    # Try to load default config on startup
-    default_config_path = project_root / "configs" / "default.yaml"
+    """Application lifespan - load the canonical impinging config on startup.
+
+    Was ``configs/default.yaml``, which sets no ``propellant_preset`` -- so the loaded config had
+    NO fluid identity (``fluids.oxidizer.name`` and ``fluids.fuel.name`` both None). Evaluating it
+    yields non-finite solver residuals, and via the runner it produced NEGATIVE thrust
+    (F = -334 N, Isp = -7.27 s). The app booted on that config, so a fresh session evaluated a
+    physically impossible engine until the user loaded something else.
+
+    The canonical configs are already the documented source of truth -- ``POST /api/config/switch``
+    loads ``configs/canonical/<injector_type>.yaml`` wholesale on an injector change (see
+    CONFIG_SYSTEM.md). Booting from one removes a third, unmaintained config from the startup path
+    instead of keeping it in sync.
+    """
+    default_config_path = project_root / "configs" / "canonical" / "impinging.yaml"
     if default_config_path.exists():
         try:
             config_obj = load_config(str(default_config_path))
             app_state.set_config(config_obj, str(default_config_path))
-            print(f"Loaded default config from {default_config_path}")
+            print(f"Loaded startup config from {default_config_path}")
         except Exception as e:
-            print(f"Warning: Could not load default config: {e}")
+            print(f"Warning: Could not load startup config: {e}")
     
     yield  # App runs here
     

@@ -10,6 +10,7 @@ This module provides physics-based (not reference-based) models for:
 from __future__ import annotations
 
 from typing import Dict, List, Tuple, Optional, Any
+import warnings
 import numpy as np
 from engine.pipeline.config_schemas import PintleEngineConfig
 from engine.pipeline.numerical_robustness import (

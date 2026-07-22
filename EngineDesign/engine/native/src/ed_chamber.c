@@ -54,10 +54,6 @@ static double chamber_residual(double Pc, void *vctx) {
     const double Dinj = st->injector.imp_O.d_jet; /* _infer_injector_diameter (impinging) */
     const double Ac = ED_PI * (g->chamber_diameter * 0.5) * (g->chamber_diameter * 0.5);
 
-    EdCoolingResult cool;
-    if (ed_cooling_evaluate(st, Pc, mdot_O, mdot_F, cea.Tc, cea.gamma, cea.R, cea.M, &cool) != ED_OK)
-        return NAN;
-
     /* Rupe mixing optimum: honor an explicit R_opt override, else derive from the
      * impinging-doublet angles (sqrt(sin(theta_F)/sin(theta_O))), 1.0 otherwise. */
     double R_opt;
@@ -77,7 +73,30 @@ static double chamber_residual(double Pc, void *vctx) {
             st->fluid_F.latent_heat, st->comb.T_star_fuel_cap_K, &eta) != ED_OK)
         return NAN;
 
-    const double eta_final = eta.eta_total * cool.cooling_eff;
+    /* ORDER MATTERS: combustion efficiency FIRST, then cooling -- mirrors
+     * chamber_solver.residual(). The cooling models need a gas temperature, and
+     * a real chamber runs cooler than CEA's ideal value because combustion is
+     * incomplete, so Tc is knocked down by eta_combustion^2 (Huzel & Huang
+     * Sample Calc 4-3: c* ~ sqrt(Tc), so a c*-measured efficiency lands on
+     * temperature squared) before the heat transfer is evaluated. Running
+     * cooling first computed the heat load several hundred K too hot.
+     *
+     * Not circular: ed_combustion_efficiency_advanced takes no cooling input. */
+    const double Tc_combustion = cea.Tc * eta.eta_total * eta.eta_total;
+
+    EdCoolingResult cool;
+    if (ed_cooling_evaluate(st, Pc, mdot_O, mdot_F, Tc_combustion, cea.gamma, cea.R, cea.M,
+                            &cool) != ED_OK)
+        return NAN;
+
+    /* eta.eta_total is combustion-only (mixing x kinetics x L*) despite the
+     * name; eta_final is the c* efficiency. Mirrors combustion_eff.eta_cstar --
+     * see that module's docstring before applying either to a temperature.
+     *
+     * cooling_eff is an ENERGY fraction and c* goes as sqrt(Tc), so the
+     * conversion into a c* factor is a square root. Multiplying by cooling_eff
+     * directly (as this did) roughly doubles cooling's penalty on c*. */
+    const double eta_final = eta.eta_total * sqrt(cool.cooling_eff);
     if (!(isfinite(eta_final) && eta_final > 0.0 && eta_final <= 1.0)) return NAN;
 
     const double cstar_actual = eta_final * cea.cstar_ideal;

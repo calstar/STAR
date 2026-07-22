@@ -75,6 +75,7 @@ class EdCooling(C.Structure):
         ("regen_enabled", _u8), ("film_enabled", _u8), ("ablative_enabled", _u8),
         ("graphite_enabled", _u8), ("use_cooling_coupling", _u8),
         ("hot_gas_viscosity", _d), ("hot_gas_thermal_conductivity", _d),
+        ("hot_gas_cp", _d),
         ("hot_gas_prandtl", _d), ("gas_turbulence_intensity", _d),
         ("recovery_factor", _d), ("radiation_emissivity_hot", _d),
         ("radiation_view_factor", _d), ("regen_chamber_inner_diameter", _d),
