@@ -29,7 +29,8 @@ def _canonical():
 
 def test_stamps_achieved_values():
     cfg = _canonical()
-    assert cfg.chamber_geometry.design_thrust == 7000.0   # seed
+    # Do not assume canonical's current stamp (it changes whenever canonical is regenerated) --
+    # only that stamping OVERWRITES it with the achieved values, whatever it was.
     stamp_achieved_design_point(cfg, thrust_n=8020.0, mr=2.772, pc_pa=2.5e6)
     assert cfg.chamber_geometry.design_thrust == pytest.approx(8020.0)
     assert cfg.chamber_geometry.design_MR == pytest.approx(2.772)

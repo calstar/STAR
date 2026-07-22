@@ -17,39 +17,44 @@
 
 
 chamber_geometry:
-  design_thrust: 7000.0
-  design_MR: 2.55
-  design_pressure: 2413166.0
-  A_throat: 0.0017703959321061754
-  A_exit: 0.008159675026074325
-  volume: 0.0019492708804651003
-  Lstar: 1.1010366919145165
-  chamber_diameter: 0.11504160142419745
-  exit_diameter: 0.10192752776058954
-  expansion_ratio: 4.608954911214158
-  length: 0.2202290337591734
+  A_throat: 0.002425540111880856
+  A_exit: 0.010815194235761527
+  volume: 0.0035051842569332873
+  Lstar: 1.4451149415192455
+  chamber_diameter: 0.1641719813562731
+  exit_diameter: 0.11734706210622983
+  expansion_ratio: 4.458880800521998
+  length: 0.21876176450630397
   length_cylindrical: 0.121
   length_contraction: 0.0451
-  Cf: 1.6603014402898282
+  Cf: 1.3772953558205892
+  design_thrust: 7831.462191034452
+  design_MR: 2.8045236242582545
+  design_pressure: 2344268.2811699566
 injector:
   geometry:
     oxidizer:
       n_elements: 20
-      d_jet: 0.002
-      impingement_angle: 50.0
-      spacing: 0.006
+      d_jet: 0.002671058356778086
+      impingement_angle: 49.09007750725155
+      spacing: 0.0030939045708254526
     fuel:
       n_elements: 20
-      d_jet: 0.002
-      impingement_angle: 60.0
-      spacing: 0.006
+      d_jet: 0.002083277638100483
+      impingement_angle: 40.91254168986332
+      spacing: 0.01483180665163078
 lox_tank:
-  initial_pressure_psi: 563.4671262691785
+  initial_pressure_psi: 504.256762637218
 fuel_tank:
-  initial_pressure_psi: 567.6435444099167
+  initial_pressure_psi: 509.2929362707189
+combustion:
+  cea:
+    expansion_ratio: 4.458880800521998
+thrust:
+  burn_time: 6.8
 pressure_curves:
   n_points: 200
-  target_burn_time_s: 6.0
+  target_burn_time_s: 6.8
   initial_lox_pressure_pa: 3704289.4239973365
   initial_fuel_pressure_pa: 3610619.76028896
   lox_segments:
@@ -134,8 +139,3 @@ pressure_curves:
     start_pressure_pa: 2393118.9933614894
     end_pressure_pa: 2004754.8014037265
     k: 1.1673408263818559
-combustion:
-  cea:
-    expansion_ratio: 4.608954911214158
-thrust:
-  burn_time: 10.0

@@ -175,17 +175,6 @@ combustion:
   cea:
     use_parallel_cea_build: false
     cea_parallel_workers: null
-    cache_file: output/cache/cea_cache_LOX_CH4_3D.npz
-    Pc_range:
-    - 1000000.0
-    - 9000000.0
-    MR_range:
-    - 2.4
-    - 4.2
-    eps_range:
-    - 4.0
-    - 15.0
-    n_points: 34
   efficiency:
     model: exponential
     C: 0.3
@@ -195,6 +184,10 @@ combustion:
     use_mixture_coupling: false
     use_cooling_coupling: true
     use_turbulence_coupling: true
+    mixing_model: rupe
+    Em_peak: 0.96
+    mixing_sigma: 1.5
+    R_opt: null
     mixture_efficiency_floor: 0.25
     cooling_efficiency_floor: 0.25
     turbulence_efficiency_floor: 0.3
@@ -299,6 +292,10 @@ rocket:
     tip_chord: 0.20066
     fin_span: 0.20066
     fin_position: 1.054535
+  nose_kind: vonKarman
+  nose_fineness_ratio: 4.5
+  nose_length: null
+  avionics_payload_length_m: 4.0
   mass: null
   cm_wo_motor: 3.861725449
   dry_mass: null
@@ -313,8 +310,10 @@ environment:
   latitude: 35.34722
   longitude: -117.8099547
   elevation: 626.67
+  atmosphere_model: standard_atmosphere
 design_requirements:
   target_thrust: 8000.0
+  target_chamber_pressure_psi: null
   target_apogee: 3048.0
   optimal_of_ratio: 2.8
   target_burn_time: 6.8
@@ -337,6 +336,7 @@ design_requirements:
   feed_stability_min: 0.15
   lox_tank_capacity_kg: null
   fuel_tank_capacity_kg: null
+  propellant_tank_fill_factor: 0.9
   copv_free_volume_L: 4.5
   copv_free_volume_m3: null
   injector_dp_ratio_O_min: 0.2
@@ -344,6 +344,12 @@ design_requirements:
   injector_dp_ratio_F_min: 0.2
   injector_dp_ratio_F_max: 0.4
   feed_pressure_model: dome_regulated
+  blowdown_ullage_frac_min: 0.05
+  blowdown_ullage_frac_max: 0.6
+  blowdown_n_polytropic_lox: 1.4
+  blowdown_n_polytropic_fuel: 1.2
+  blowdown_n_polytropic_lox_hi: 1.5
+  blowdown_n_polytropic_fuel_hi: 1.3
   W_geom_ao_af_momentum: 3500.0
   W_MOM: 30000.0
   impinging_momentum_R_min: 0.95
@@ -374,6 +380,7 @@ design_requirements:
   W_DP_HIGH: 25000.0
   layer1_infeasibility_gate_eps: 0.002
   layer1_W_THRUST: 60000.0
+  layer1_W_PC: null
   layer1_W_OF: 20000.0
   layer1_W_OF_low_MR_scale: 1.0
   layer1_W_OF_high_MR_scale: 1.0
@@ -393,3 +400,4 @@ design_requirements:
   layer1_P_F_start_psi_min: null
   layer1_P_F_start_psi_max: null
   frozen_parameters: null
+design_valid_for: null
