@@ -203,12 +203,52 @@ def _outputs_sidecar_path(config_path: Path) -> Path:
     return stem.with_name(stem.name + _OUTPUTS_SUFFIX)
 
 
+def _strip_preset_provided(intent: Dict[str, Any], preset: Dict[str, Any]) -> None:
+    """Remove leaves from ``intent`` that equal what ``preset`` supplies (redundant duplication of a
+    preset value), in place. Emptied dicts are pruned. Leaves that DIFFER from the preset (genuine
+    overrides) and leaves absent from the preset are kept."""
+    for key, p_val in preset.items():
+        if key not in intent:
+            continue
+        i_val = intent[key]
+        if isinstance(p_val, dict) and isinstance(i_val, dict):
+            _strip_preset_provided(i_val, p_val)
+            if not i_val:
+                del intent[key]
+        elif i_val == p_val:
+            del intent[key]
+
+
+def _unmerge_presets(intent: Dict[str, Any], config_dir: Path) -> None:
+    """Inverse of the preset merge: drop intent fields a declared preset already provides.
+
+    ``save_config`` is handed the fully-RESOLVED config (``model_dump`` -- presets already merged
+    in). Writing that straight to the intent file re-inlines every preset value (fluids block,
+    material constants), silently reintroducing the duplication the presets removed and shadowing
+    future preset edits. Un-merging restores a source-shaped intent file that only carries preset
+    NAMES + genuinely hand-authored fields + real overrides."""
+    for kind, dirs in (("propellant_preset", _preset_search_dirs(config_dir)),
+                       ("material_preset", _material_preset_search_dirs(config_dir))):
+        name = intent.get(kind)
+        if not name or str(name).strip().lower() == "custom":
+            continue
+        name = str(name).strip().lower()
+        for d in dirs:
+            cand = d / f"{name}.yaml"
+            if cand.exists():
+                with open(cand, "r", encoding="utf-8") as f:
+                    preset = yaml.safe_load(f) or {}
+                _strip_preset_provided(intent, preset)
+                break
+
+
 def save_config(data: Dict[str, Any], path: Union[str, Path]) -> None:
     """Write a config, preserving the intent/outputs split when an outputs sidecar is in use.
 
     Without this, any save through the API would write the MERGED config into the intent file; the
     outputs sidecar would then collide with it and every subsequent load would raise. Splitting on
-    save is what makes the split survive a round trip.
+    save is what makes the split survive a round trip. Presets are un-merged so the intent file stays
+    source-shaped (preset names + hand-authored fields), not a re-inlined resolved dump.
     """
     path = Path(path)
     sidecar = _outputs_sidecar_path(path)
@@ -219,6 +259,7 @@ def save_config(data: Dict[str, Any], path: Union[str, Path]) -> None:
         return
 
     intent, outputs = split_outputs(data)
+    _unmerge_presets(intent, path.resolve().parent)
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(intent, f, default_flow_style=False, sort_keys=False)
     with open(sidecar, "r", encoding="utf-8") as f:

@@ -101,13 +101,24 @@ def test_save_round_trip_keeps_the_split(tmp_path: Path) -> None:
     (tmp_path / "c.yaml").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
     (tmp_path / "c.outputs.yaml").write_text(sidecar.read_text(encoding="utf-8"), encoding="utf-8")
 
+    # material sidecar too, so preset un-merge has something to strip against
+    mat = ROOT / "configs" / "materials" / "phenolic_graphite.yaml"
+    (tmp_path / "materials").mkdir(exist_ok=True)
+    (tmp_path / "materials" / "phenolic_graphite.yaml").write_text(mat.read_text(encoding="utf-8"), encoding="utf-8")
+
     merged = load_config(str(tmp_path / "c.yaml")).model_dump(mode="json")
     save_config(merged, tmp_path / "c.yaml")
 
-    # The intent file must not have absorbed the generated half...
     raw = yaml.safe_load((tmp_path / "c.yaml").read_text(encoding="utf-8"))
+    # ...the intent file must not have absorbed the generated half...
     assert "A_throat" not in (raw.get("chamber_geometry") or {})
     assert "pressure_curves" not in raw
+    # ...must not re-inline PRESET-provided fields (save writes the resolved dump; without preset
+    # un-merge the fluids block + material constants get baked back in, reintroducing duplication)...
+    assert "fluids" not in raw, "propellant preset fields re-inlined into intent"
+    assert "heat_of_ablation" not in (raw.get("ablative_cooling") or {}), "material preset re-inlined"
+    assert raw.get("material_preset") == "phenolic_graphite"   # the NAME stays
+    assert (raw.get("ablative_cooling") or {}).get("enabled") is not None  # non-preset fields stay
     # ...and the result must still load and resolve to the same geometry.
     assert load_config(str(tmp_path / "c.yaml")).chamber_geometry.A_throat == pytest.approx(
         merged["chamber_geometry"]["A_throat"]
