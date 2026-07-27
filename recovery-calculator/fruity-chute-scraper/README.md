@@ -1,25 +1,98 @@
 # Fruity Chutes scraper
 
 Pulls the full parachute metrics table for every chute in the Fruity Chutes
-descent-rate calculator into `parachutes.json` and `parachutes.csv`.
+descent-rate calculator into a committed SQLite database (`parachutes.db`), plus
+`parachutes.json` / `parachutes.csv` for eyeballing.
+
+## ⚠️ The committed DB is a 3-row seed, not the full catalogue
+
+`parachutes.db` currently holds only the three chutes (`CFC-84`, `CFC-96`,
+`TARC-16`) that appear in `capture.har`, because the machine this was written on
+had no network route to fruitychutes.com. Every row is marked `source='har'`.
+
+**Run the scraper once on a networked machine to fill it in:**
+
+```bash
+python3 scrape_fruitychutes.py --db parachutes.db --out-dir out
+```
+
+That upserts the live catalogue in alongside the seed rows (`source='api'`).
+Until then, treat the DB as a schema demo — don't size a recovery system off
+three rows.
 
 ## Usage
 
 Stdlib only — no `pip install`.
 
 ```bash
-# Everything (discovers the SKU list itself)
+# Everything: discovers the SKU list itself, upserts into out/parachutes.db
 python3 scrape_fruitychutes.py --out-dir out
 
+# Update the committed database in place
+python3 scrape_fruitychutes.py --db parachutes.db --no-flat-files
+
 # Just a few chutes
-python3 scrape_fruitychutes.py --skus CFC-96 TARC-16 IFC-48-S --print-table
+python3 scrape_fruitychutes.py --skus CFC-96 TARC-16 --print-table
 
 # Slower / gentler on their server
 python3 scrape_fruitychutes.py --out-dir out --delay 1.5
+
+# Rebuild the seed DB from the capture, no network needed
+python3 scrape_fruitychutes.py --from-har capture.har --db parachutes.db --no-flat-files
 ```
 
 `--print-table` renders each record in the same layout the calculator page uses,
 which is handy for spot-checking a row against the website.
+
+## Database
+
+Single table, `parachutes`, keyed on `sku`. The API returns every number as a
+string (`"96.0000"`), so values are coerced to `REAL` to keep the table directly
+queryable; `raw_json` keeps the untouched response in case a field is added
+upstream or a coercion ever loses something.
+
+| Column | Type | API field |
+| --- | --- | --- |
+| `sku` (PK) | TEXT | `SKU` |
+| `api_id` | INTEGER | `id` |
+| `model`, `trim` | TEXT | `model`, `trim` |
+| `style` | TEXT | `style` |
+| `canopy_style` | TEXT | `canopy_style` |
+| `diameter_in` | REAL | `diameter` |
+| `diameter_spill_in` | REAL | `diameter_spill` |
+| `gores` | REAL | `gores` |
+| `rating_20fps_lb` | REAL | `rate_20` |
+| `rating_15fps_lb` | REAL | `rate_15` |
+| `weight_oz`, `weight_g` | REAL | `weight_oz`, `weight_grams` |
+| `packing_volume_in3` | REAL | `packing_volume` |
+| `area_projected_sqft` | REAL | `area_projected` |
+| `area_canopy_sqft` | REAL | `area_canopy` |
+| `area_spill_sqft` | REAL | `area_spill` |
+| `cd_projected` | REAL | `cd_projected` |
+| `cd_area_canopy` | REAL | `cd_area_canopy` |
+| `equivalent_flat_diameter_in` | REAL | `equivalent_flattend_d` |
+| `performance_ratio_20fps` | REAL | `performance_ratio_20` |
+| `performance_ratio_15fps` | REAL | `performance_ratio_15` |
+| `manufacturer`, `description`, `url` | TEXT | same |
+| `source` | TEXT | `'api'` or `'har'` — where the row came from |
+| `scraped_at` | TEXT | ISO-8601 UTC |
+| `raw_json` | TEXT | verbatim API response object |
+
+Indexed on `model`, `diameter_in`, `rating_20fps_lb`, `rating_15fps_lb` and
+`canopy_style` — i.e. the columns a chute-sizing query filters on.
+
+Writes are **upserts on `sku`**, so an interrupted scrape tops the table up
+rather than truncating it, and re-running is idempotent.
+
+```sql
+-- Lightest chute that lands a 4 lb airframe at 20 fps or slower
+SELECT sku, weight_oz, rating_20fps_lb
+FROM parachutes WHERE rating_20fps_lb >= 4.0
+ORDER BY weight_oz LIMIT 5;
+
+-- Best mass efficiency per product line
+SELECT model, MAX(performance_ratio_20fps) FROM parachutes GROUP BY model;
+```
 
 ## How it works
 
@@ -110,12 +183,17 @@ hit counts, which makes it obvious whether partial matching is working.
 
 `test_mock.py` spins up a local HTTP server that mimics the API shape observed in
 the capture and exercises each discovery path (bulk available, partial matching,
-exact-match-only, explicit SKUs, output writers):
+exact-match-only, explicit SKUs), the output writers, the SQLite typing and
+upsert behaviour, and the HAR loader:
 
 ```bash
 python3 test_mock.py
 ```
 
-This is a mock, not a live check — it verifies the parsing, discovery fallbacks
-and output formatting, not that the real endpoint still behaves as captured.
-Run the scraper against the live site to confirm that.
+This is a mock, not a live check — it verifies the parsing, discovery fallbacks,
+schema and output formatting, not that the real endpoint still behaves as
+captured. Run the scraper against the live site to confirm that.
+
+`capture.har` is the original DevTools capture, committed so `parachutes.db` can
+be rebuilt and audited without network access. It contains no cookies or
+credentials — the API needs none.

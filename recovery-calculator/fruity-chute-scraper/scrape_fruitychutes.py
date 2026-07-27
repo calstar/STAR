@@ -8,24 +8,28 @@ backs its "Parachute Metrics" table with a plain JSON endpoint:
 
 The response fields are exactly the rows of the on-page metrics table, so there is
 no need to parse rendered HTML for the numbers. This script discovers the full SKU
-list (the calculator's "model" dropdown), fetches each record, and writes JSON + CSV.
+list (the calculator's "model" dropdown), fetches each record, and writes the
+results to SQLite (primary output), plus JSON and CSV.
 
 Stdlib only -- no pip install required.
 
     python3 scrape_fruitychutes.py --out-dir out
     python3 scrape_fruitychutes.py --skus CFC-96 TARC-16 --out-dir out
+    python3 scrape_fruitychutes.py --from-har capture.har --db parachutes.db
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import datetime as dt
 import gzip
 import json
 import logging
 import os
 import random
 import re
+import sqlite3
 import string
 import sys
 import time
@@ -33,7 +37,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zlib
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 BASE = "https://fruitychutes.com"
 API_PATH = "/parachuteapi.js"
@@ -81,6 +85,148 @@ METRIC_LABELS: Dict[str, str] = {
 }
 
 log = logging.getLogger("fruitychutes")
+
+
+# ---------------------------------------------------------------------------
+# SQLite schema
+# ---------------------------------------------------------------------------
+
+TABLE = "parachutes"
+
+# One row per SKU. The API hands back every number as a string ("96.0000"), so
+# they are coerced to REAL here to keep the table directly queryable for chute
+# sizing. `raw_json` preserves the untouched response in case a field is added
+# upstream or a coercion ever loses something.
+SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS {TABLE} (
+    sku                         TEXT    PRIMARY KEY,
+    api_id                      INTEGER,
+    model                       TEXT,
+    trim                        TEXT,
+    style                       TEXT,
+    canopy_style                TEXT,
+    diameter_in                 REAL,
+    diameter_spill_in           REAL,
+    gores                       REAL,
+    rating_20fps_lb             REAL,
+    rating_15fps_lb             REAL,
+    weight_oz                   REAL,
+    weight_g                    REAL,
+    packing_volume_in3          REAL,
+    area_projected_sqft         REAL,
+    area_canopy_sqft            REAL,
+    area_spill_sqft             REAL,
+    cd_projected                REAL,
+    cd_area_canopy              REAL,
+    equivalent_flat_diameter_in REAL,
+    performance_ratio_20fps     REAL,
+    performance_ratio_15fps     REAL,
+    manufacturer                TEXT,
+    description                 TEXT,
+    url                         TEXT,
+    source                      TEXT    NOT NULL,
+    scraped_at                  TEXT    NOT NULL,
+    raw_json                    TEXT    NOT NULL
+);
+
+-- Sizing a chute means "what holds <weight> at <descent rate>", so index the
+-- ratings and the columns used to narrow by product line and size.
+CREATE INDEX IF NOT EXISTS idx_{TABLE}_model       ON {TABLE}(model);
+CREATE INDEX IF NOT EXISTS idx_{TABLE}_diameter    ON {TABLE}(diameter_in);
+CREATE INDEX IF NOT EXISTS idx_{TABLE}_rating_20   ON {TABLE}(rating_20fps_lb);
+CREATE INDEX IF NOT EXISTS idx_{TABLE}_rating_15   ON {TABLE}(rating_15fps_lb);
+CREATE INDEX IF NOT EXISTS idx_{TABLE}_canopy      ON {TABLE}(canopy_style);
+"""
+
+# db column -> (api field, coercion)
+COLUMN_MAP: Sequence[Tuple[str, str, str]] = (
+    ("sku", "SKU", "text"),
+    ("api_id", "id", "int"),
+    ("model", "model", "text"),
+    ("trim", "trim", "text"),
+    ("style", "style", "text"),
+    ("canopy_style", "canopy_style", "text"),
+    ("diameter_in", "diameter", "real"),
+    ("diameter_spill_in", "diameter_spill", "real"),
+    ("gores", "gores", "real"),
+    ("rating_20fps_lb", "rate_20", "real"),
+    ("rating_15fps_lb", "rate_15", "real"),
+    ("weight_oz", "weight_oz", "real"),
+    ("weight_g", "weight_grams", "real"),
+    ("packing_volume_in3", "packing_volume", "real"),
+    ("area_projected_sqft", "area_projected", "real"),
+    ("area_canopy_sqft", "area_canopy", "real"),
+    ("area_spill_sqft", "area_spill", "real"),
+    ("cd_projected", "cd_projected", "real"),
+    ("cd_area_canopy", "cd_area_canopy", "real"),
+    ("equivalent_flat_diameter_in", "equivalent_flattend_d", "real"),
+    ("performance_ratio_20fps", "performance_ratio_20", "real"),
+    ("performance_ratio_15fps", "performance_ratio_15", "real"),
+    ("manufacturer", "manufacturer", "text"),
+    ("description", "description", "text"),
+    ("url", "url", "text"),
+)
+
+
+def _coerce(value: Any, kind: str) -> Any:
+    if value is None or value == "":
+        return None
+    if kind == "text":
+        return str(value)
+    try:
+        return int(value) if kind == "int" else float(value)
+    except (TypeError, ValueError):
+        log.debug("Could not coerce %r to %s; storing NULL", value, kind)
+        return None
+
+
+def _row(record: Dict[str, Any], source: str, scraped_at: str) -> Tuple[Any, ...]:
+    values = [_coerce(record.get(field), kind) for _, field, kind in COLUMN_MAP]
+    values.append(source)
+    values.append(scraped_at)
+    values.append(json.dumps(record, sort_keys=True))
+    return tuple(values)
+
+
+def write_sqlite(
+    records: Sequence[Dict[str, Any]],
+    path: str,
+    *,
+    source: str = "api",
+    scraped_at: Optional[str] = None,
+) -> int:
+    """Upsert records into the SQLite table, creating it if needed.
+
+    Upsert (rather than replace) means a partial run tops the table up instead
+    of truncating it, so a scrape interrupted halfway is never destructive.
+    """
+    stamp = scraped_at or dt.datetime.now(dt.timezone.utc).isoformat(
+        timespec="seconds"
+    )
+    columns = [column for column, _, _ in COLUMN_MAP] + [
+        "source",
+        "scraped_at",
+        "raw_json",
+    ]
+    placeholders = ",".join("?" * len(columns))
+    updates = ",".join(f"{c}=excluded.{c}" for c in columns if c != "sku")
+    statement = (
+        f"INSERT INTO {TABLE} ({','.join(columns)}) VALUES ({placeholders}) "
+        f"ON CONFLICT(sku) DO UPDATE SET {updates}"
+    )
+
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(SCHEMA)
+        with connection:
+            connection.executemany(
+                statement, [_row(r, source, stamp) for r in records]
+            )
+        total = connection.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
+    finally:
+        connection.close()
+    log.info("Wrote %s (%d upserted, %d rows total)", path, len(records), total)
+    return total
 
 
 class FruityChutesClient:
@@ -481,6 +627,34 @@ def _sorted_records(records: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+def load_from_har(path: str) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """Recover parachute records from a DevTools HAR capture.
+
+    Lets the committed database be rebuilt from a saved capture without network
+    access, and keeps its provenance auditable. Returns the records plus the
+    earliest capture timestamp, so rebuilding the same HAR is deterministic.
+    """
+    with open(path, encoding="utf-8") as handle:
+        har = json.load(handle)
+
+    found: Dict[str, Dict[str, Any]] = {}
+    stamps: List[str] = []
+    for entry in har.get("log", {}).get("entries", []):
+        url = entry.get("request", {}).get("url", "")
+        if API_PATH not in url:
+            continue
+        text = entry.get("response", {}).get("content", {}).get("text")
+        if not text:
+            continue
+        for record in _parse_records(text) or []:
+            found.setdefault(str(record["SKU"]), record)
+        if entry.get("startedDateTime"):
+            stamps.append(entry["startedDateTime"])
+
+    log.info("Recovered %d records from %s", len(found), path)
+    return list(found.values()), min(stamps) if stamps else None
+
+
 def write_json(records: Sequence[Dict[str, Any]], path: str) -> None:
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(records, handle, indent=2, sort_keys=False)
@@ -543,6 +717,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--sku-file", help="File with one SKU per line; combined with --skus"
     )
     parser.add_argument(
+        "--db",
+        default=None,
+        metavar="PATH",
+        help="SQLite database to upsert into (default: <out-dir>/parachutes.db)",
+    )
+    parser.add_argument(
+        "--from-har",
+        metavar="FILE",
+        help="Load records from a saved HAR capture instead of hitting the network",
+    )
+    parser.add_argument(
+        "--no-flat-files",
+        action="store_true",
+        help="Write only the SQLite database, skipping parachutes.json/.csv",
+    )
+    parser.add_argument(
         "--delay",
         type=float,
         default=0.5,
@@ -600,27 +790,38 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 if line and not line.startswith("#"):
                     skus.append(line)
 
-    client = FruityChutesClient(
-        delay=args.delay, timeout=args.timeout, retries=args.retries
-    )
-
-    records = collect(
-        client,
-        skus or None,
-        use_bulk=not args.no_bulk,
-        use_dropdown=not args.no_dropdown,
-        use_sweep=not args.no_sweep,
-        enumerate_max=args.enumerate_max,
-        refetch=not args.no_refetch and not skus,
-    )
+    if args.from_har:
+        records, scraped_at = load_from_har(args.from_har)
+        source = "har"
+    else:
+        client = FruityChutesClient(
+            delay=args.delay, timeout=args.timeout, retries=args.retries
+        )
+        records = collect(
+            client,
+            skus or None,
+            use_bulk=not args.no_bulk,
+            use_dropdown=not args.no_dropdown,
+            use_sweep=not args.no_sweep,
+            enumerate_max=args.enumerate_max,
+            refetch=not args.no_refetch and not skus,
+        )
+        scraped_at, source = None, "api"
 
     if not records:
         log.error("No parachutes found -- nothing written")
         return 1
 
+    records = _sorted_records({str(r["SKU"]): r for r in records})
+
     os.makedirs(args.out_dir, exist_ok=True)
-    write_json(records, os.path.join(args.out_dir, "parachutes.json"))
-    write_csv(records, os.path.join(args.out_dir, "parachutes.csv"))
+    db_path = args.db or os.path.join(args.out_dir, "parachutes.db")
+    os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+    write_sqlite(records, db_path, source=source, scraped_at=scraped_at)
+
+    if not args.no_flat_files:
+        write_json(records, os.path.join(args.out_dir, "parachutes.json"))
+        write_csv(records, os.path.join(args.out_dir, "parachutes.csv"))
 
     if args.print_table:
         for record in records:

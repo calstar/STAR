@@ -168,6 +168,66 @@ print("\nCSV header:", lines[0][:160])
 print("CSV rows:", len(lines) - 1)
 results.append(len(lines) - 1 == len(DB))
 
+# --- SQLite output -------------------------------------------------------
+import sqlite3
+
+db = os.path.join(d, "parachutes.db")
+fc.write_sqlite(recs, db)
+con = sqlite3.connect(db)
+
+n = con.execute("SELECT COUNT(*) FROM parachutes").fetchone()[0]
+ok = n == len(DB)
+print(f"\n[{'PASS' if ok else 'FAIL'}] sqlite row count: {n}/{len(DB)}")
+results.append(ok)
+
+# Strings like "96.0000" must land as queryable REALs, not text.
+row = con.execute(
+    "SELECT diameter_in, rating_20fps_lb, gores, api_id, canopy_style "
+    "FROM parachutes WHERE sku='CFC-96'"
+).fetchone()
+ok = row == (96.0, 34.4539, 12.0, 410, "elliptical")
+print(f"[{'PASS' if ok else 'FAIL'}] sqlite typed columns for CFC-96: {row}")
+results.append(ok)
+
+# NULLs must survive as NULL, not the string "None".
+trim = con.execute("SELECT trim FROM parachutes WHERE sku='CFC-96'").fetchone()[0]
+ok = trim is None
+print(f"[{'PASS' if ok else 'FAIL'}] sqlite null trim stays NULL: {trim!r}")
+results.append(ok)
+
+# The sizing query this table exists to answer.
+picks = con.execute(
+    "SELECT sku FROM parachutes WHERE rating_20fps_lb >= 10 ORDER BY rating_20fps_lb"
+).fetchall()
+ok = [p[0] for p in picks] == ["IFC-48-S", "IFC-60-S", "CFC-84", "CFC-96"]
+print(f"[{'PASS' if ok else 'FAIL'}] sizing query: {[p[0] for p in picks]}")
+results.append(ok)
+
+# Upsert must top up rather than truncate: re-writing one record leaves the
+# other four intact and updates in place rather than duplicating.
+fc.write_sqlite([recs[0]], db)
+n2 = con.execute("SELECT COUNT(*) FROM parachutes").fetchone()[0]
+ok = n2 == len(DB)
+print(f"[{'PASS' if ok else 'FAIL'}] upsert is non-destructive: {n2}/{len(DB)}")
+results.append(ok)
+con.close()
+
+# --- HAR loader ----------------------------------------------------------
+har = os.path.join(d, "capture.har")
+with open(har, "w") as h:
+    json.dump({"log": {"entries": [
+        {"request": {"url": "https://fruitychutes.com/parachuteapi.js?method=get&term=CFC-96"},
+         "response": {"content": {"text": json.dumps([DB[0]])}},
+         "startedDateTime": "2026-07-27T06:05:26.490Z"},
+        {"request": {"url": "https://fruitychutes.com/assets/fc/js/descentRate.js"},
+         "response": {"content": {"text": "not json"}},
+         "startedDateTime": "2026-07-27T06:05:20.000Z"},
+    ]}}, h)
+har_recs, stamp = fc.load_from_har(har)
+ok = [r["SKU"] for r in har_recs] == ["CFC-96"] and stamp == "2026-07-27T06:05:26.490Z"
+print(f"[{'PASS' if ok else 'FAIL'}] HAR loader: {[r['SKU'] for r in har_recs]} @ {stamp}")
+results.append(ok)
+
 print("\n--- print_metrics_table for IFC-48-S (compare to the user's example) ---")
 fc.print_metrics_table(next(r for r in recs if r["SKU"] == "IFC-48-S"))
 
