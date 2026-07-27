@@ -8,7 +8,208 @@ drift, dispersion, and measured-coefficient refinement are explicitly Phase 2.
 
 ---
 
-## 1. Why this exists
+## 1. Notation and terminology
+
+### 1.1 Conventions
+
+- **Units are SI internally**, always. Convert at the I/O boundary only.
+  Vendor data arrives in inches, feet, pounds, and fps; convert on ingest.
+- **$z$ is positive up, AGL.** Descent has $v < 0$. Drag terms are written
+  $|v|v$ so they oppose motion without a sign test.
+- **Subscript $i$** indexes recovery devices (drogue, main, …).
+- **Subscript $0$** means "fully inflated / nominal", not "initial".
+  $(C_dS)_0$ is the full-open drag area.
+- **Drag area $C_dS$ is one atomic symbol** with units m². Do not factor it
+  into a coefficient and an area.
+
+### 1.2 Terminology
+
+**Drag area ($C_dS$)** — the physical drag quantity, $F_D / \tfrac12\rho v^2$,
+in m². Contains no reference area, so it is convention-free. Equivalently: the
+area of a flat plate with $C_d = 1$ producing the same drag. **This is the only
+drag quantity that enters the equations of motion.**
+
+**Drag coefficient ($C_d$)** — $C_dS$ divided by a *declared* reference area.
+Not a property of the parachute alone: change the reference and $C_d$ changes
+inversely. A bare $C_d$ with no stated denominator is not actionable.
+
+**Nominal diameter / area ($D_0$, $S_0$)** — a bookkeeping size derived from
+total canopy cloth area, *including* vents and slots. Fixed by the sewing
+pattern, so it is a constant of the article. Enters this model **only** through
+filling time.
+
+**Projected diameter / area ($D_p$, $S_p$)** — the frontal size of the
+*inflated* canopy. A flight variable, not a manufacturing constant. Typically
+$D_p/D_0 \approx 0.67$–0.75.
+
+**Line stretch** — the instant the suspension lines and harness come taut after
+ejection. Start of inflation, and the moment of peak **snatch** load.
+
+**Snatch** — the impulsive load when slack runs out at line stretch. Driven by
+separation velocity and harness stiffness, *not* by descent speed. Frequently
+the largest load in the system.
+
+**Opening shock** — the peak load during canopy inflation, distinct from and
+later than snatch.
+
+**Filling time / filling distance ($t_f$, $s_f$)** — how long, and how far the
+vehicle falls, while the canopy inflates. Canopies fill in a roughly fixed
+*distance*, hence $s_f = nD_0$ and $t_f = s_f/v_s$.
+
+**Infinite mass** — the limiting case where the vehicle does not decelerate at
+all during inflation, so the canopy sees full $q_s$ at full area. Gives the
+conservative upper-bound load and requires no inflation knowledge. Equivalent
+to $X_1 = 1$.
+
+**Finite mass** — the real case: the vehicle sheds speed *while* the canopy is
+still growing, so peak force is lower. Credit quantified by $X_1$.
+
+**Ballistic parameter ($A$)** — dimensionless mass ratio, vehicle mass over the
+air mass the canopy processes during inflation. Large $A$ → infinite-mass
+behaviour.
+
+**Force reduction factor ($X_1$)** — the finite-mass credit, $\le 1$. Purely
+kinematic.
+
+**Opening force coefficient ($C_x$)** — transient overshoot, $\ge 1$. During
+inflation the canopy briefly produces *more* drag than its steady full-open
+value, because the entrained air's inertia carries the skirt past its
+equilibrium diameter. Empirical, and it already contains the added-mass physics.
+
+**Load factor** — dimensionless $F/W$. Reported "in g" by convention; the body's
+acceleration in g is $F/W - 1$, since weight opposes the canopy force.
+
+**Specific force** — what an accelerometer measures: non-gravitational
+acceleration only. Reads $0$ in free fall, $+g$ at rest on the pad.
+
+**Station pressure** — barometric pressure physically measured at the pad. *Not*
+the METAR altimeter setting, which is corrected to sea level.
+
+**ISA** — International Standard Atmosphere. An analytic convention (fixed
+sea-level state and lapse rates), not data and not a forecast.
+
+**Dense output** — the continuous interpolant an adaptive integrator produces
+between steps. Needed to root-find deploy altitudes and to sample peak load
+without stepping over it.
+
+### 1.3 Symbols
+
+**Atmosphere and environment** (§5)
+
+| symbol | quantity | units |
+|---|---|---|
+| $z$ | geometric altitude AGL — state variable | m |
+| $z_{\text{MSL}}$ | geometric altitude above sea level | m |
+| $z_{\text{site}}$ | pad elevation MSL | m |
+| $H$ | geopotential altitude | m |
+| $H_b$, $H_{\text{pad}}$ | layer base, pad geopotential altitude | m |
+| $R_e$ | ISA effective Earth radius, 6 356 766 | m |
+| $T$, $T_b$, $T_{\text{pad}}$ | air, layer-base, pad temperature | K |
+| $L_b$, $L_0$ | layer lapse rate, re-fitted lowest layer | K/m |
+| $p$, $p_b$, $p_{\text{pad}}$ | pressure, layer base, pad *station* | Pa |
+| $\rho$ | air density | kg/m³ |
+| $R_d$ | dry-air gas constant, 287.053 | J/(kg·K) |
+| $g$, $g_0$ | local gravity, standard 9.80665 | m/s² |
+
+**Vehicle**
+
+| symbol | quantity | units |
+|---|---|---|
+| $m$ | total descending mass | kg |
+| $m_b$ | body mass (harness-side) = $m - \sum m_{c,i}$ | kg |
+| $m_{c,i}$ | canopy + lines mass of device $i$ | kg |
+| $d_{\text{body}}$, $\ell_{\text{body}}$ | airframe diameter, length | m |
+| $h_a$ | apogee AGL | m |
+| $v$ | vertical velocity (negative descending) | m/s |
+| $v_t$ | terminal velocity | m/s |
+| $v_{\text{impact}}$ | velocity at ground contact | m/s |
+
+**Canopy and drag**
+
+| symbol | quantity | units |
+|---|---|---|
+| $C_dS$ | drag area — **the physical quantity** | m² |
+| $(C_dS)_i$ | full-open drag area of device $i$ | m² |
+| $C_dS_{\text{body}}$ | airframe drag area (banded) | m² |
+| $C_dS_{\text{tot}}$ | sum over airframe + all devices | m² |
+| $C_{d_0}$, $C_{d_p}$ | drag coeff. ref. to $S_0$ / to $S_p$ | — |
+| $D_0$, $S_0$ | nominal diameter, nominal area | m, m² |
+| $D_p$, $S_p$ | projected diameter, projected area | m, m² |
+
+**Inflation** (§6)
+
+| symbol | quantity | units |
+|---|---|---|
+| $z_{d,i}$, $\Delta t_i$ | deploy altitude AGL, deploy delay | m, s |
+| $t_{d,i}$ | deployment time | s |
+| $v_{s,i}$ | airspeed at deployment, frozen | m/s |
+| $q_{s,i}$ | dynamic pressure at deployment | Pa |
+| $n$ | filling constant — diameters fallen | — |
+| $s_{f,i}$ | filling distance $= n D_{0,i}$ | m |
+| $t_{f,i}$ | filling time $= s_f/v_s$ | s |
+| $\tau_i$ | normalized inflation progress, 0→1 | — |
+| $j_i$ | area growth exponent (2 solid, 1 slotted) | — |
+
+**Loads** (§8)
+
+| symbol | quantity | units |
+|---|---|---|
+| $C_{x,i}$ | opening force coefficient, $\ge 1$ | — |
+| $A_i$ | ballistic parameter | — |
+| $B_i$ | Pflanz auxiliary $= 1/(A(j+1))$ | — |
+| $\tau^*_i$ | normalized time of peak force | — |
+| $X_{1,i}$ | force reduction factor, $\le 1$ | — |
+| $F_{\infty,i}$ | infinite-mass opening force (the bound) | N |
+| $F_{\max,i}$ | Pflanz finite-mass opening force | N |
+| $F_T$ | harness tension — **sizes your hardware** | N |
+| $F_{D,\text{body}}$ | airframe drag force | N |
+| $F_{\text{snatch}}$ | line-stretch peak force | N |
+| $F_{\text{design}}$ | design load, incl. safety factor | N |
+| $f$ | specific force (accelerometer reading) | m/s² |
+| SF | safety factor, 1.5 | — |
+
+**Harness** (§8.4)
+
+| symbol | quantity | units |
+|---|---|---|
+| $v_{\text{rel}}$ | separation velocity at line stretch | m/s |
+| $k_j$, $k_{\text{eff}}$ | member stiffness, series total | N/m |
+| $F_{\text{rated},j}$ | rated strength of member $j$ | N |
+| $\varepsilon_j$ | fractional elongation at rated load | — |
+| $N_j$ | strands in parallel | — |
+| $L_j$, $L_e$ | member length, suspension line length | m |
+| $\theta$ | suspension line splay half-angle | rad |
+| $\mu$ | reduced mass $m_b m_c/(m_b+m_c)$ | kg |
+| $t_n$ | harness natural period | s |
+
+**Numerics and validation** (§10, §12)
+
+| symbol | quantity | units |
+|---|---|---|
+| $h$ | integrator step size | s |
+| $\lambda$ | linearized relaxation rate $= 2g/v_t$ | 1/s |
+| $\tau_{\text{relax}}$ | relaxation time $= 1/\lambda$ | s |
+| $\sigma$ | geometric scale factor (eq. 46) | — |
+| $W$ | weight $= mg$ | N |
+
+### 1.4 Symbol reuse
+
+Three letters carry different meanings in different sections. They are
+disambiguated by subscript and by scope, but be careful when implementing:
+
+| letter | §5 atmosphere | elsewhere |
+|---|---|---|
+| $L$ | $L_b$, $L_0$ — lapse rate, K/m | $L_j$, $L_e$ — lengths, m (§8.4) |
+| $T$ | $T$, $T_b$ — temperature, K | $F_T$ — tension, N (§8.1) |
+| $h$ | — (geopotential is $H$) | $h$ — step size (§10); $h_a$, $h_{\text{equiv}}$ — heights |
+
+$\tau$ is inflation progress (§6.3) but $\tau_{\text{relax}}$ is a time constant
+(§10). $\lambda$ is the relaxation rate; the geometric scale factor is $\sigma$,
+deliberately not $\lambda$.
+
+---
+
+## 2. Why this exists
 
 OpenRocket's descent model (`BasicLandingStepper`, 18 lines) has three defects
 that matter for load-bearing design work:
@@ -25,7 +226,7 @@ Phase 1 fixes all three. It does not attempt anything OpenRocket does well.
 
 ---
 
-## 2. Scope
+## 3. Scope
 
 ### In
 
@@ -42,14 +243,14 @@ Phase 1 fixes all three. It does not attempt anything OpenRocket does well.
 
 - Wind, drift, landing dispersion
 - Canopy oscillation
-- Elastic harness dynamics (justified below, §7.3)
-- Added-mass momentum term (already inside `Cx`, §7.2)
+- Elastic harness dynamics (justified below, §8.3)
+- Added-mass momentum term (already inside `Cx`, §8.2)
 - Measured `Cx` from flight data
 - Reefing
 
 ---
 
-## 3. Inputs
+## 4. Inputs
 
 | symbol | quantity | units | source |
 |---|---|---|---|
@@ -71,7 +272,7 @@ Phase 1 fixes all three. It does not attempt anything OpenRocket does well.
 
 **Sign convention:** $z$ is positive up, AGL. Descent has $v < 0$.
 
-### 3.1 Mapping from `fruity-chute-scraper`
+### 4.1 Mapping from `fruity-chute-scraper`
 
 The scraper already in this folder pulls every device input we need. Take the
 numbers straight from its output; do **not** recompute them from the advertised
@@ -118,31 +319,31 @@ All three hold to <0.2% on the Iris Ultra line.
 
 ---
 
-## 4. Atmosphere
+## 5. Atmosphere
 
 Evaluated exactly at every call. No lookup grid — OpenRocket caches the ISA on
 a 500 m table and interpolates, which is a ~0.6% density error near the ground
 for no benefit.
 
-**(1)** Geometric to geopotential altitude:
+**(1)** Geometric to geopotential altitude ($H$ geopotential, $z$ geometric):
 
-$$h = \frac{R_e\, z_{\text{MSL}}}{R_e + z_{\text{MSL}}}, \qquad R_e = 6{,}356{,}766\ \text{m}$$
+$$H = \frac{R_e\, z_{\text{MSL}}}{R_e + z_{\text{MSL}}}, \qquad R_e = 6{,}356{,}766\ \text{m}$$
 
 **(2)** Temperature within layer $b$:
 
-$$T(h) = T_b + L_b\,(h - h_b)$$
+$$T(H) = T_b + L_b\,(H - H_b)$$
 
 **(3)** Pressure, sloped layer ($L_b \neq 0$):
 
-$$p(h) = p_b\left(1 + \frac{L_b (h - h_b)}{T_b}\right)^{-g_0 / (R_d L_b)}$$
+$$p(H) = p_b\left(1 + \frac{L_b (H - H_b)}{T_b}\right)^{-g_0 / (R_d L_b)}$$
 
 **(4)** Pressure, isothermal layer ($L_b = 0$):
 
-$$p(h) = p_b \exp\left(\frac{-g_0 (h - h_b)}{R_d T_b}\right)$$
+$$p(H) = p_b \exp\left(\frac{-g_0 (H - H_b)}{R_d T_b}\right)$$
 
 **(5)** Density (dry air — humidity is a <1% effect, deferred):
 
-$$\rho(z) = \frac{p(h)}{R_d\, T(h)}, \qquad R_d = 287.053\ \text{J/(kg·K)}$$
+$$\rho(z) = \frac{p(H)}{R_d\, T(H)}, \qquad R_d = 287.053\ \text{J/(kg·K)}$$
 
 **(6)** Gravity:
 
@@ -156,9 +357,9 @@ through the measurement and still meets the standard tropopause (216.65 K at
 
 **(7)**
 
-$$L_0 = \frac{216.65 - T_{\text{pad}}}{11000 - h_{\text{pad}}}$$
+$$L_0 = \frac{216.65 - T_{\text{pad}}}{11000 - H_{\text{pad}}}$$
 
-with $p_0 = p_{\text{pad}}$ at $h_{\text{pad}}$.
+with $p_0 = p_{\text{pad}}$ at $H_{\text{pad}}$.
 
 > **Trap:** $p_{\text{pad}}$ must be *station pressure* — what a barometer at
 > the pad physically reads. A METAR altimeter setting is corrected to sea level
@@ -166,11 +367,11 @@ with $p_0 = p_{\text{pad}}$ at $h_{\text{pad}}$.
 
 ---
 
-## 5. Deployment and inflation
+## 6. Deployment and inflation
 
 This is the core improvement over OpenRocket.
 
-### 5.1 Trigger
+### 6.1 Trigger
 
 Device $i$ deploys when $z$ crosses $z_{d,i}$ descending, plus a delay:
 
@@ -181,7 +382,7 @@ $$t_{d,i} = t_{\text{cross},i} + \Delta t_i, \qquad z(t_{\text{cross},i}) = z_{d
 Apogee deployment is $z_{d,i} = h_a$. The crossing is **root-found on the dense
 output**, not detected at a step boundary.
 
-### 5.2 Filling time
+### 6.2 Filling time
 
 Airspeed is frozen at the deployment instant — standard practice, and it makes
 `CdS(t)` an analytic function within each integration segment.
@@ -199,7 +400,7 @@ $$t_{f,i} = \frac{s_{f,i}}{|v(t_{d,i})|}$$
 > during inflation") and unit-safe. A literature $n$ quoted with the $v^{0.85}$
 > convention carries units and needs a $\times 1.195$ conversion from imperial.
 
-### 5.3 Area growth
+### 6.3 Area growth
 
 **(11)** Normalized inflation progress:
 
@@ -219,24 +420,24 @@ $$C_dS_{\text{tot}}(t) = C_dS_{\text{body}} + \sum_i C_dS_i(t)$$
 
 Note eq. (13) includes the airframe. OpenRocket omits it.
 
-### 5.4 Airframe drag band
+### 6.4 Airframe drag band
 
 Attitude under canopy is not known, and the two bounds differ by two orders of
 magnitude. Run both; do not pick one.
 
 **(14)**
 
-$$C_dS_{\text{body,axial}} \approx 0.6 \cdot \frac{\pi D^2}{4}$$
+$$C_dS_{\text{body,axial}} \approx 0.6 \cdot \frac{\pi d_{\text{body}}^2}{4}$$
 
 **(15)**
 
-$$C_dS_{\text{body,broadside}} \approx 1.2 \cdot (L \cdot D)$$
+$$C_dS_{\text{body,broadside}} \approx 1.2 \cdot (\ell_{\text{body}} \cdot d_{\text{body}})$$
 
 Under a main this is noise. Under a drogue it can dominate descent rate.
 
 ---
 
-## 6. Equation of motion
+## 7. Equation of motion
 
 State $\mathbf{y} = [z,\ v]$.
 
@@ -257,26 +458,26 @@ $$v_t(z) = \sqrt{\frac{2 m\, g(z)}{\rho(z)\, C_dS_{\text{tot}}}}$$
 
 ---
 
-## 7. Loads
+## 8. Loads
 
-### 7.1 Instantaneous harness tension
+### 8.1 Instantaneous harness tension
 
 The number that sizes hardware. From a free body diagram of the airframe
 (mass $m_b$) under gravity, its own drag, and the riser:
 
 **(19)**
 
-$$D_{\text{body}} = \tfrac{1}{2}\rho\, C_dS_{\text{body}}\, v^2$$
+$$F_{D,\text{body}} = \tfrac{1}{2}\rho\, C_dS_{\text{body}}\, v^2$$
 
 **(20)**
 
-$$T(t) = m_b\left(\frac{dv}{dt} + g\right) - D_{\text{body}}$$
+$$F_T(t) = m_b\left(\frac{dv}{dt} + g\right) - F_{D,\text{body}}$$
 
 **(21)** Specific force — what an accelerometer in the av bay would read:
 
 $$f = \frac{dv}{dt} + g \qquad \Rightarrow \qquad \text{load factor} = \frac{|f|}{g_0}$$
 
-Record $\max T$ over the run, **sampled on the dense output at ≤5 ms**, not at
+Record $\max F_T$ over the run, **sampled on the dense output at ≤5 ms**, not at
 integrator step boundaries. The adaptive controller can step over the peak.
 
 > **The trajectory integration does not produce the opening overshoot.** The
@@ -288,14 +489,14 @@ integrator step boundaries. The adaptive controller can step over the peak.
 
 **(21a)** Corrected numerical peak:
 
-$$T_{\text{peak}} = C_x \cdot \max_t T(t)$$
+$$F_{T,\text{peak}} = C_x \cdot \max_t F_T(t)$$
 
 Keep $C_x$ **out** of eq. (12). Inflating the drag area by $C_x$ would
 over-decelerate the vehicle and corrupt the trajectory. The overshoot is a
 peak-force effect, not a sustained area increase — so it scales the load and
 never the motion.
 
-### 7.2 Opening load — the bound
+### 8.2 Opening load — the bound
 
 Primary Phase 1 number. Requires no inflation knowledge and cannot be exceeded.
 
@@ -316,7 +517,7 @@ would double-count.
 
 Use $C_x = 1.8$ for the design number unless flight data says otherwise.
 
-### 7.3 Opening load — Pflanz reference
+### 8.3 Opening load — Pflanz reference
 
 Reported alongside the bound so you can see how much conservatism you are
 carrying. The bound can run 3–5× the realistic value for a large main.
@@ -352,7 +553,7 @@ Eqs. (24)–(28) come from non-dimensionalizing the drag-only opening ODE, so
 they are derived rather than table-looked-up, and they must agree with a
 numerical integration of the same reduced problem.
 
-### 7.4 Snatch
+### 8.4 Snatch
 
 Line stretch is an impulsive event and is frequently the **largest** load in the
 system — often above the opening load. It must be computed.
@@ -392,27 +593,27 @@ anyway. Conversely $F_{\text{snatch}} \propto v_{\text{rel}}$, so over-charging
 the ejection buys shock load directly — ground-test down to the minimum charge
 that reliably separates.
 
-### 7.5 Rigid harness is justified
+### 8.5 Rigid harness is justified
 
 Dynamic amplification depends on load rise time versus harness natural period:
 
 **(35)**
 
-$$T_n = 2\pi\sqrt{\frac{\mu}{k_{\text{eff}}}}$$
+$$t_n = 2\pi\sqrt{\frac{\mu}{k_{\text{eff}}}}$$
 
 For realistic hardware ($k \sim 10^4$–$10^5$ N/m, $\mu \sim 1$–3 kg),
-$T_n \approx 0.02$–0.04 s against a filling time near 1 s. That is
-$t_f/T_n \approx 30$ — deep in the quasi-static regime, so DAF $\approx 1$ and
+$t_n \approx 0.02$–0.04 s against a filling time near 1 s. That is
+$t_f/t_n \approx 30$ — deep in the quasi-static regime, so DAF $\approx 1$ and
 eq. (20) is valid without a two-body elastic model.
 
 *This holds only for smooth inflation.* If reefing is ever added, re-check
-eq. (35) at each disreef, where the rise time can approach $T_n$.
+eq. (35) at each disreef, where the rise time can approach $t_n$.
 
-### 7.6 Design load
+### 8.6 Design load
 
 **(36)**
 
-$$F_{\text{design}} = \text{SF}\cdot\max\left(F_{\text{snatch}},\ \max_i F_{\infty,i},\ \max_t T(t)\right), \qquad \text{SF} = 1.5$$
+$$F_{\text{design}} = \text{SF}\cdot\max\left(F_{\text{snatch}},\ \max_i F_{\infty,i},\ C_x\max_t F_T(t)\right), \qquad \text{SF} = 1.5$$
 
 **(37)** Invert against the weakest link in the chain to get a speed limit:
 
@@ -420,7 +621,7 @@ $$v_{s,\max} = \sqrt{\frac{2 F_{\text{allow}}}{\rho\, (C_dS)\, C_x}}$$
 
 ---
 
-## 8. Landing metrics
+## 9. Landing metrics
 
 **(38)**
 
@@ -432,7 +633,7 @@ $$h_{\text{equiv}} = \frac{v_{\text{impact}}^2}{2 g_0}$$
 
 ---
 
-## 9. Numerical method
+## 10. Numerical method
 
 Forward Euler is the wrong tool here. Linearizing eq. (17) about terminal
 velocity gives a relaxation rate
@@ -458,22 +659,22 @@ with `dense_output=True` and terminal events, restarted at each deployment.
 - **Tolerances:** `rtol=1e-8`, `atol=1e-10`. This problem is cheap.
 - **Load sampling:** re-sample the dense output at ≤5 ms for eq. (20).
 
-Note that adding finite inflation (§5) removes the discontinuity that made the
+Note that adding finite inflation (§6) removes the discontinuity that made the
 problem stiff in the first place. Fixes 1 and 3 reinforce each other.
 
 ---
 
-## 10. Module structure
+## 11. Module structure
 
 ```
 recovery-calculator/
-    fruity-chute-scraper/         (exists) device data source, §3.1
+    fruity-chute-scraper/         (exists) device data source, §4.1
     star_recovery/
     atmosphere.py    eqs (1)-(7)
     devices.py       eqs (8)-(15)   device dataclass, CdS(t), triggers
     dynamics.py      eqs (16)-(18)  derivative function
     loads.py         eqs (19)-(37)  tension, Pflanz, snatch, design load
-    solver.py        §9             segmented RK45 driver
+    solver.py        §10             segmented RK45 driver
     report.py        eqs (38)-(39)  formatted output
     cli.py                          YAML/JSON config in, report out
 tests/
@@ -511,8 +712,8 @@ def simulate(vehicle, devices, site):
         t, y = seg.t_event, seg.y_event
 
     traj  = resample(segments, dt=0.005)
-    T_max = max(tension(s) for s in traj)          # eq. (20)
-    return Result(traj, T_max, opening_loads, snatch, landing)
+    FT_max = max(tension(s) for s in traj)         # eq. (20)
+    return Result(traj, FT_max, opening_loads, snatch, landing)
 ```
 
 ### Sweep, don't sample
@@ -528,7 +729,7 @@ v_{\text{rel}} \in \{5,\ 20\}$$
 
 ---
 
-## 11. Validation
+## 12. Validation
 
 Assert these in the test suite. They are cheap and they catch real bugs.
 
@@ -551,10 +752,10 @@ $$X_1 \propto (C_dS)^{-2/3} \quad \Rightarrow \quad F \propto (C_dS)^{1/3}$$
 
 Doubling canopy size raises opening load only 26%.
 
-**(46)** Geometric scaling by $\lambda$ (all lengths $\times\lambda$,
-$m \propto \lambda^2$ at fixed descent rate):
+**(46)** Geometric scaling by $\sigma$ (all lengths $\times\sigma$,
+$m \propto \sigma^2$ at fixed descent rate):
 
-$$\frac{F}{W} \propto \lambda^{-2/3}$$
+$$\frac{F}{W} \propto \sigma^{-2/3}$$
 
 Small vehicles see higher load factors than large ones. Flag this when a proven
 design is scaled down.
@@ -567,7 +768,7 @@ A 50% error in filling distance is a 30% error in load.
 
 **(48)** The two independent load paths must agree. With eq. (21a) applied:
 
-$$0.8 \;<\; \frac{C_x \max_t T(t)}{F_{\max}} \;<\; 1.3$$
+$$0.8 \;<\; \frac{C_x \max_t F_T(t)}{F_{\max}} \;<\; 1.3$$
 
 Divergence beyond this means the inflation law, the event timing, or the dense-
 output sampling is wrong. This is the single most valuable test in the suite —
@@ -577,13 +778,13 @@ completely different assumptions.
 **(49)** Raw numerical peak must come in *below* Pflanz, since it lacks the
 overshoot:
 
-$$\max_t T(t) < F_{\max}$$
+$$\max_t F_T(t) < F_{\max}$$
 
 If it does not, $C_x$ has leaked into eq. (12).
 
 ---
 
-## 12. Worked example
+## 13. Worked example
 
 Inputs:
 
@@ -611,7 +812,7 @@ Outputs, from numerical integration of eqs. (16)–(17) with RK45 at
 | $q_s$ at deploy | 279 Pa |
 | **$F_\infty$ (bound, $C_x{=}1.8$)** | **1249 N — load factor 22.5** |
 | $F_{\max}$ (Pflanz, $X_1 = 0.266$) | 333 N — load factor 6.0 |
-| numerical $\max T$, raw | 210 N |
+| numerical $\max F_T$, raw | 210 N |
 | numerical $\times\, C_x$, eq. (21a) | 378 N |
 | **$F_{\text{snatch}}$** | **597 N** |
 | main descent rate | 5.95 m/s (19.5 fps) |
@@ -623,7 +824,7 @@ Four things this example demonstrates:
 
 1. **Snatch (597 N) exceeds the realistic opening load (378 N).** If you only
    model opening, you under-report the peak by 1.6×. This is the argument for
-   including §7.4 in Phase 1, not deferring it.
+   including §8.4 in Phase 1, not deferring it.
 2. **Numerical and Pflanz agree within 14%** once eq. (21a) is applied
    (378 vs 333 N). The residual is gravity acting during inflation, which
    Pflanz neglects and the integration does not. That agreement is the main
@@ -640,14 +841,14 @@ and model agree to 0.05%.
 
 ---
 
-## 13. Phase 2
+## 14. Phase 2
 
 In rough priority order:
 
 1. Wind profile (power law + tabulated sounding, PCHIP-interpolated) and drift
 2. Landing dispersion via Monte Carlo over wind and $C_dS$ uncertainty
 3. Flight-measured $C_x$, $t_f$, $n$, and $v_{\text{rel}}$ from a high-rate
-   accelerometer — collapses every band in §10 into measured numbers
+   accelerometer — collapses every band in §11 into measured numbers
 4. Canopy oscillation as a stochastic tilt (drives dispersion, not mean drift)
 5. Reefing, with the eq. (35) check at each disreef
 
