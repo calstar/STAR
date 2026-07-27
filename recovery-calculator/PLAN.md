@@ -266,11 +266,29 @@ Phase 1 fixes all three. It does not attempt anything OpenRocket does well.
 | $j_i$ | area growth exponent | — | 2 solid, 1 slotted |
 | $C_{x,i}$ | opening force coefficient | — | 1.2–1.8 band |
 | $n$ | filling constant | — | sweep 6–12 |
-| $z_{d,i}$ | deploy altitude AGL | m | design choice |
+| $z_{d,i}$ **or** $t_{a,i}$ | deploy altitude AGL **or** time after apogee | m **or** s | design choice, §6.1 |
+| $\Delta t_i$ | charge-to-canopy delay | s | 0 unless known |
 | $v_{\text{rel}}$ | separation velocity | m/s | ground test, 5–20 |
-| $k_{\text{eff}}$ | harness stiffness | N/m | eq. (27) |
+| $k_{\text{eff}}$ | harness stiffness | N/m | eq. (32) |
 
 **Sign convention:** $z$ is positive up, AGL. Descent has $v < 0$.
+
+### 4.0 Initial condition
+
+The run starts at apogee by default:
+
+$$z(0) = h_a, \qquad v(0) = 0$$
+
+Both are overridable as $(z_0, v_0)$. This is the escape hatch for **early
+deployment** — a motor ejection charge whose delay grain fires before apogee.
+Phase 1 cannot integrate the powered/coast phase, so for that case start the run
+at the ejection point with the actual altitude and velocity from your ascent
+sim, rather than at apogee.
+
+> **Deployment velocity is computed, never assumed.** You supply apogee and a
+> trigger; the integration returns $v_{s,i}$ at each deployment. This matters
+> because $F \propto v_s^2$ — deployment speed is the single largest term in the
+> load, and it is an *output* of the descent, not an input. See §6.2.
 
 ### 4.1 Mapping from `fruity-chute-scraper`
 
@@ -371,16 +389,80 @@ with $p_0 = p_{\text{pad}}$ at $H_{\text{pad}}$.
 
 This is the core improvement over OpenRocket.
 
-### 6.1 Trigger
+### 6.1 Deploy triggers
 
-Device $i$ deploys when $z$ crosses $z_{d,i}$ descending, plus a delay:
+Any number of devices, each carrying **exactly one** trigger of either type,
+plus an optional delay $\Delta t_i$ for charge-to-canopy lag.
+
+**Type ALTITUDE** — fires when $z$ crosses $z_{d,i}$ descending:
 
 **(8)**
 
-$$t_{d,i} = t_{\text{cross},i} + \Delta t_i, \qquad z(t_{\text{cross},i}) = z_{d,i},\ \ v < 0$$
+$$t_{d,i} = t_{x,i} + \Delta t_i, \qquad z(t_{x,i}) = z_{d,i},\ \ v < 0$$
 
-Apogee deployment is $z_{d,i} = h_a$. The crossing is **root-found on the dense
-output**, not detected at a step boundary.
+**Type TIME** — fires at a fixed time after the run starts:
+
+**(8a)**
+
+$$t_{d,i} = t_{a,i} + \Delta t_i$$
+
+Since the run begins at apogee (§4.0), $t_{a,i}$ is literally "seconds after
+apogee." Apogee deployment is either $z_{d,i} = h_a$ or $t_{a,i} = 0$.
+
+**Guard** — a device that would fire after impact is a design error:
+
+**(8b)**
+
+$$\text{skip device } i \ \text{ and warn if } \ t_{d,i} \ge t_{\text{ground}}$$
+
+Never silently ignore it.
+
+The two types get different numerical treatment:
+
+| | ALTITUDE | TIME |
+|---|---|---|
+| detection | root-find $z(t) - z_{d,i} = 0$ on the dense output | exact, known a priori |
+| segment end | Brent on the interpolant | terminate at $t = t_{d,i}$ |
+| cost | one root-find | free |
+
+Ordering: at each segment, integrate to the **earliest** of {any pending
+altitude crossing, the next pending TIME trigger, ground hit}. Fire that one,
+restart. Because triggers can interleave, resolve them one at a time rather
+than pre-sorting.
+
+### 6.1.1 Configurations this supports
+
+| configuration | devices |
+|---|---|
+| dual deploy | drogue ALTITUDE $= h_a$, main ALTITUDE $= 150$ m |
+| single deploy | main ALTITUDE $= h_a$ |
+| motor-eject drogue | drogue TIME $= t_a$, main ALTITUDE |
+| drogueless / ballistic | main ALTITUDE, body drag only above it |
+| redundant backup | second main TIME, as a late backup |
+
+Nothing in §6–§8 assumes two devices, or any particular device. A drogue is
+just a device with a small $C_dS$ that happens to deploy first, and it keeps
+contributing drag after the main opens — see eq. (13) and §13, note 4.
+
+### 6.1.2 The phase before first deployment
+
+Between apogee (or $z_0$) and the first deployment the vehicle is **not** in
+vacuum free fall — it falls on airframe drag alone, eq. (14)/(15), with
+$C_dS_{\text{tot}} = C_dS_{\text{body}}$. That distinction is not academic:
+
+$$\text{no drag, } 3\ \text{s}: \ v = gt = 29.4\ \text{m/s}$$
+
+$$\text{with } C_dS_{\text{body}} = 0.05\ \text{m}^2,\ m = 5.67\ \text{kg}: \ v = 25.7\ \text{m/s}$$
+
+13% lower at 3 s, and the gap widens with delay because the ballistic terminal
+velocity here is only 44 m/s. Since $F \propto v_s^2$, treating this phase as
+vacuum free fall overstates drogue opening load by ~30% at 3 s — conservative,
+but enough to distort a trade study. Use the real drag.
+
+This phase is also where the airframe-attitude band (§6.4) does the most
+damage: tumbling versus nose-down changes $C_dS_{\text{body}}$ by two orders of
+magnitude, and therefore changes the drogue's $v_s$ substantially. Run both
+bounds.
 
 ### 6.2 Filling time
 
@@ -694,8 +776,13 @@ def simulate(vehicle, devices, site):
     segments = []
 
     while y[0] > 0:
-        events = [ground_hit] + [alt_trigger(i) for i in pending(state)]
-        seg = solve_ivp(deriv, [t, T_MAX], y,
+        # ALTITUDE triggers become root-found events; TIME triggers just
+        # cap the segment. Integrate to whichever comes first.  eq. (8)/(8a)
+        events  = [ground_hit] + [alt_trigger(i) for i in pending_alt(state)]
+        t_cap   = min([d.t_a + d.delay for d in pending_time(state)],
+                      default=T_MAX)
+
+        seg = solve_ivp(deriv, [t, t_cap], y,
                         events=events, dense_output=True,
                         rtol=1e-8, atol=1e-10)
         segments.append(seg)
@@ -703,13 +790,22 @@ def simulate(vehicle, devices, site):
         if seg.event is ground_hit:
             break
 
-        i = seg.event.device                      # eq. (8)
-        state[i].t_deploy = seg.t_event + devices[i].delay
-        state[i].v_s      = abs(seg.y_event[1])
-        state[i].t_f      = n * devices[i].D0 / state[i].v_s   # eqs (9),(10)
+        if seg.event is None:            # hit t_cap -> a TIME trigger fired
+            i = device_at(t_cap)
+        else:                            # an ALTITUDE crossing fired
+            i = seg.event.device
+
+        # v_s is an OUTPUT of the integration, never an input
+        state[i].t_deploy = seg.t[-1] + devices[i].delay
+        state[i].v_s      = abs(seg.y[1, -1])
+        state[i].t_f      = n * devices[i].D0 / state[i].v_s   # eqs (11),(12)
         record_opening_load(i, state[i].v_s,
-                            atm.density(seg.y_event[0] + site.elevation))
-        t, y = seg.t_event, seg.y_event
+                            atm.density(seg.y[0, -1] + site.elevation))
+        t, y = seg.t[-1], seg.y[:, -1]
+
+    # any device that never fired -> eq. (8b)
+    for i in pending(state):
+        warn(f"device {i} would deploy at or after ground impact")
 
     traj  = resample(segments, dt=0.005)
     FT_max = max(tension(s) for s in traj)         # eq. (20)
@@ -781,6 +877,23 @@ overshoot:
 $$\max_t F_T(t) < F_{\max}$$
 
 If it does not, $C_x$ has leaked into eq. (12).
+
+**(50)–(51)** Pre-deployment ballistic phase. At constant $\rho$ and constant
+$C_dS$, released from rest, eq. (17) has a closed solution — a direct test of
+the integrator over the §6.1.2 phase:
+
+$$v(t) = -v_t \tanh\!\left(\frac{g t}{v_t}\right)$$
+
+$$z(t) = z_0 - \frac{v_t^2}{g}\ln\cosh\!\left(\frac{g t}{v_t}\right)$$
+
+Both must reproduce to integrator tolerance. As $t \to 0$ these reduce to
+$v \to -gt$ and $z \to z_0 - \tfrac12 g t^2$, confirming that vacuum free fall
+is the small-time limit and *not* the model.
+
+**(52)** Trigger equivalence. A device set to ALTITUDE $z_{d}$ and the same
+device set to TIME $t_a$ must produce identical results when $t_a$ is the time
+the altitude run reports for that crossing. Round-tripping this catches sign
+errors, off-by-one segment handling, and delay double-counting.
 
 ---
 
