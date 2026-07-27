@@ -142,7 +142,7 @@ without stepping over it.
 |---|---|---|
 | $z_{d,i}$, $\Delta t_i$ | deploy altitude AGL, deploy delay | m, s |
 | $t_{d,i}$ | deployment time | s |
-| $v_{s,i}$ | airspeed at deployment, frozen | m/s |
+| $v_{s,i}$ | freestream speed at line stretch, **frozen** (eq. 9a) | m/s |
 | $q_{s,i}$ | dynamic pressure at deployment | Pa |
 | $n$ | filling constant — diameters fallen | — |
 | $s_{f,i}$ | filling distance $= n D_{0,i}$ | m |
@@ -172,7 +172,7 @@ without stepping over it.
 
 | symbol | quantity | units |
 |---|---|---|
-| $v_{\text{rel}}$ | separation velocity at line stretch | m/s |
+| $v_{\text{rel}}$ | **separation** velocity between the two masses — not $v_s$ | m/s |
 | $k_j$, $k_{\text{eff}}$ | member stiffness, series total | N/m |
 | $F_{\text{rated},j}$ | rated strength of member $j$ | N |
 | $\varepsilon_j$ | fractional elongation at rated load | — |
@@ -473,9 +473,16 @@ Airspeed is frozen at the deployment instant — standard practice, and it makes
 
 $$s_{f,i} = n\, D_{0,i} \qquad \text{(filling distance)}$$
 
+**(9a)**
+
+$$v_{s,i} \equiv |v(t_{d,i})|$$
+
+the freestream speed at line stretch — **frozen**, a single scalar per device,
+and an *output* of the integration rather than an input.
+
 **(10)**
 
-$$t_{f,i} = \frac{s_{f,i}}{|v(t_{d,i})|}$$
+$$t_{f,i} = \frac{s_{f,i}}{v_{s,i}}$$
 
 > Parameterize on filling **distance** $s_f$, not on $n$ and $D_0$ separately.
 > With the velocity exponent at 1.0, $n$ is dimensionless ("diameters fallen
@@ -584,7 +591,7 @@ Primary Phase 1 number. Requires no inflation knowledge and cannot be exceeded.
 
 **(22)** Dynamic pressure at deployment:
 
-$$q_{s,i} = \tfrac{1}{2}\rho(z_{d,i})\, v(t_{d,i})^2$$
+$$q_{s,i} = \tfrac{1}{2}\rho(z_{d,i})\, v_{s,i}^2$$
 
 **(23)** Infinite-mass opening force:
 
@@ -798,7 +805,7 @@ def simulate(vehicle, devices, site):
         # v_s is an OUTPUT of the integration, never an input
         state[i].t_deploy = seg.t[-1] + devices[i].delay
         state[i].v_s      = abs(seg.y[1, -1])
-        state[i].t_f      = n * devices[i].D0 / state[i].v_s   # eqs (11),(12)
+        state[i].t_f      = n * devices[i].D0 / state[i].v_s   # eqs (9),(9a),(10)
         record_opening_load(i, state[i].v_s,
                             atm.density(seg.y[0, -1] + site.elevation))
         t, y = seg.t[-1], seg.y[:, -1]
