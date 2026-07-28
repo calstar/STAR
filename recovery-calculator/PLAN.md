@@ -258,7 +258,7 @@ Phase 1 fixes all three. It does not attempt anything OpenRocket does well.
 | $m_b$ | body mass (harness-side) | kg | $m$ − canopy masses |
 | $h_a$ | apogee AGL | m | flight |
 | $z_{\text{site}}$ | pad elevation MSL | m | site |
-| $T_{\text{pad}}, p_{\text{pad}}$ | pad temperature, station pressure | K, Pa | measured |
+| $T_{\text{pad}}, p_{\text{pad}}$ | pad temperature, station pressure | K, Pa | measured — station pressure, not METAR altimeter setting; see eq. (7a) |
 | $C_dS_{\text{body}}$ | airframe drag area | m² | geometry, banded |
 | $(C_dS)_i$ | device drag area | m² | vendor spec |
 | $D_{0,i}$ | device nominal diameter | m | vendor spec |
@@ -359,9 +359,15 @@ $$p(H) = p_b\left(1 + \frac{L_b (H - H_b)}{T_b}\right)^{-g_0 / (R_d L_b)}$$
 
 $$p(H) = p_b \exp\left(\frac{-g_0 (H - H_b)}{R_d T_b}\right)$$
 
-**(5)** Density (dry air — humidity is a <1% effect, deferred):
+**(5)** Density (dry air — humidity is a ≤1.5% effect, deferred):
 
 $$\rho(z) = \frac{p(H)}{R_d\, T(H)}, \qquad R_d = 287.053\ \text{J/(kg·K)}$$
+
+Moist air is *less* dense than dry, since H₂O (18 g/mol) is lighter than the
+28.96 g/mol it displaces. The correction, with $e$ the water vapour partial
+pressure, is $\rho_{\text{moist}} = \rho\,(1 - 0.378\,e/p)$ — worth 1.6% at
+30 °C and saturated, under 0.5% in typical conditions. Twenty times smaller
+than the $C_x$ band, so it stays deferred.
 
 **(6)** Gravity:
 
@@ -382,6 +388,41 @@ with $p_0 = p_{\text{pad}}$ at $H_{\text{pad}}$.
 > **Trap:** $p_{\text{pad}}$ must be *station pressure* — what a barometer at
 > the pad physically reads. A METAR altimeter setting is corrected to sea level
 > and is a different number.
+
+The cleanest way to satisfy that is to read raw barometric pressure off your own
+altimeter while it sits on the pad; Featherweight, Eggtimer and StratoLogger all
+log it unconverted. If you only have a METAR, its altimeter setting $A$ is
+defined as *the pressure that makes an altimeter at the field read field
+elevation*, so invert that definition to recover station pressure:
+
+**(7a)**
+
+$$p_{\text{pad}} = A \left(1 - \frac{0.0065\, H_{\text{pad}}}{288.15}\right)^{5.2559}, \qquad 1\ \text{inHg} = 3386.389\ \text{Pa}$$
+
+This is eq. (3) for layer 0 run downward, which is exactly how the altimeter
+setting was constructed. Note that (7a) uses the **standard** $L_0$ and $T_0$
+even when eq. (7) has already replaced $L_0$ — the altimeter setting is defined
+against the standard column, not against today's air, so substituting your
+re-fit lapse rate here would be wrong.
+
+Skipping the conversion is the single largest available error in this section.
+At a 1000 m field reporting a standard setting ($A$ = 101,325 Pa), the METAR
+number taken naively is 101,325 Pa against a true station pressure of
+89,875 Pa — **12.7%** in density, roughly 6% in descent rate, larger than every
+other error in §5 combined. That 89,875 Pa is also the published ISA pressure at
+1000 m, which makes this case a usable unit test for the implementation.
+
+> **Do not use the `SLPxxx` group** in METAR remarks either. That is sea-level
+> pressure, a third distinct number reduced using the actual station
+> temperature rather than the standard column.
+
+The 216.65 K anchor in eq. (7) is a slope-setting device, not a claim about
+conditions at 11 km — the real tropopause moves in both height and temperature
+daily, and we never fly there. It is deliberately left at the standard value:
+perturbing it by 10 K shifts density at 3 km by only 0.8%, and it preserves a
+free regression test, since feeding $T_{\text{pad}} = 288.15$ K must return
+$L_0 = -6.5$ K/km exactly. Real profile accuracy comes from a sounding
+(§14), not from a better anchor.
 
 ---
 
