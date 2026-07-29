@@ -258,7 +258,8 @@ Phase 1 fixes all three. It does not attempt anything OpenRocket does well.
 | $m_b$ | body mass (harness-side) | kg | $m$ − canopy masses |
 | $h_a$ | apogee AGL | m | flight |
 | $z_{\text{site}}$ | pad elevation MSL | m | site |
-| $T_{\text{pad}}, p_{\text{pad}}$ | pad temperature, station pressure | K, Pa | measured — station pressure, not METAR altimeter setting; see eq. (7a) |
+| $T_{\text{pad}}$ | pad temperature | K | measured — the one atmospheric input worth an instrument |
+| $p_{\text{pad}}$ | pad station pressure | Pa | ISA at site elevation by default, eq. (7a); pad barometer if recorded. Never a raw METAR altimeter setting — see eq. (7b) |
 | $C_dS_{\text{body}}$ | airframe drag area | m² | geometry, banded |
 | $(C_dS)_i$ | device drag area | m² | vendor spec |
 | $D_{0,i}$ | device nominal diameter | m | vendor spec |
@@ -389,28 +390,79 @@ with $p_0 = p_{\text{pad}}$ at $H_{\text{pad}}$.
 > the pad physically reads. A METAR altimeter setting is corrected to sea level
 > and is a different number.
 
-The cleanest way to satisfy that is to read raw barometric pressure off your own
-altimeter while it sits on the pad; Featherweight, Eggtimer and StratoLogger all
-log it unconverted. If you only have a METAR, its altimeter setting $A$ is
-defined as *the pressure that makes an altimeter at the field read field
-elevation*, so invert that definition to recover station pressure:
+### Pad pressure — source hierarchy
 
-**(7a)**
+Unlike temperature, pad pressure can be estimated from site elevation alone to
+within a couple of percent, because sea-level pressure only wanders a few
+percent with synoptic weather. That makes the ranking unusual:
+
+| source | $p_{\text{pad}}$ error | status |
+|---|---|---|
+| ISA at site elevation, eq. (7a) | ~2% | **Phase 1 default** |
+| pad barometer at launch time | ~0% | use whenever recorded |
+| METAR altimeter setting + eq. (7b) | 0.3–0.6% | Phase 2 refinement, conditional |
+| METAR altimeter setting used raw | 11–18% | never |
+
+**(7a)** Phase 1 default — the standard column evaluated at your site:
+
+$$p_{\text{pad}} = 101325 \left(1 - \frac{0.0065\, H_{\text{pad}}}{288.15}\right)^{5.2559}$$
+
+This is eq. (3) for layer 0 run from sea level, and it needs nothing but site
+elevation. It assumes a standard sea-level pressure, which costs about $\pm2\%$
+across ordinary highs and lows — worth roughly 1% in descent rate and nothing at
+all in the main opening load, which is density-free by eq. (23). Note that the
+$T$ and $p$ anchors are independent: pairing a *measured* $T_{\text{pad}}$ in
+eq. (7) with an *estimated* $p_{\text{pad}}$ from (7a) is consistent, and is the
+expected Phase 1 configuration.
+
+Prefer a real reading when you have one. Every flight altimeter logs raw
+barometric pressure before any altitude conversion — Featherweight, Eggtimer and
+StratoLogger all do — so a device sitting on the pad gives $p_{\text{pad}}$
+directly, with no elevation lookup and no conversion to get wrong.
+
+**(7b)** Phase 2 refinement — recovering station pressure from a METAR. The
+altimeter setting $A$ is defined as *the pressure that makes an altimeter at the
+field read field elevation*, so invert that definition:
 
 $$p_{\text{pad}} = A \left(1 - \frac{0.0065\, H_{\text{pad}}}{288.15}\right)^{5.2559}, \qquad 1\ \text{inHg} = 3386.389\ \text{Pa}$$
 
-This is eq. (3) for layer 0 run downward, which is exactly how the altimeter
-setting was constructed. Note that (7a) uses the **standard** $L_0$ and $T_0$
-even when eq. (7) has already replaced $L_0$ — the altimeter setting is defined
-against the standard column, not against today's air, so substituting your
-re-fit lapse rate here would be wrong.
+Same expression as (7a) with the standard sea-level value replaced by the
+reported setting, which is exactly what the refinement buys: today's synoptic
+pressure instead of an assumed standard one. It is an exact algebraic inversion,
+so the residual comes entirely from the reporting station not being your pad.
 
-Skipping the conversion is the single largest available error in this section.
-At a 1000 m field reporting a standard setting ($A$ = 101,325 Pa), the METAR
-number taken naively is 101,325 Pa against a true station pressure of
-89,875 Pa — **12.7%** in density, roughly 6% in descent rate, larger than every
-other error in §5 combined. That 89,875 Pa is also the published ISA pressure at
-1000 m, which makes this case a usable unit test for the implementation.
+The binding term is the **elevation gap**, since (7b) transfers the reported
+setting across $\Delta H = H_{\text{pad}} - H_{\text{station}}$ through a
+*standard* column while the real air is not standard. It scales with the gap,
+not with site elevation: roughly 0.25% for a 300 m gap on a 20 K anomalous day,
+0.5% at 500 m, and 1.6% at 1500 m. Horizontal pressure gradient adds 0.03–0.5%
+depending on distance and whether a front is nearby, and reporting quantisation
+0.03% (US, 0.01 inHg) or 0.10% (1 hPa elsewhere).
+
+**This refinement is only worth taking when a reporting station sits within a
+few hundred metres of site elevation.** Past roughly a 1500 m gap it degrades to
+the eq. (7a) default and there is no reason to prefer it. Even in the good case
+it buys about 1.5% in density — 0.75% in descent rate, nothing at all in the
+main opening load — so it ranks below every other Phase 2 item. High-desert
+launch sites and their nearest airports usually sit in the same elevation band,
+which is what makes the refinement viable there at all; verify per site rather
+than assuming.
+
+Note that (7a) and (7b) both use the **standard** $L_0$ and $T_0$ even when
+eq. (7) has already replaced $L_0$. The altimeter setting is defined against the
+standard column, not against today's air, so substituting the re-fit lapse rate
+would decode with a different function than the station encoded with and would
+*introduce* an error where none existed.
+
+Using the setting raw, without either conversion, is the single largest
+available error in this section. At a 1000 m field reporting a standard setting
+($A$ = 101,325 Pa), the naive value is 101,325 Pa against a true station
+pressure of 89,875 Pa — **12.7%** in density, roughly 6% in descent rate. The
+error is the ISA pressure ratio at field elevation, so it vanishes at sea level
+and grows with site height: 11.3% at 890 m, 15.4% at 1190 m, 18.4% at 1400 m.
+It is therefore invisible in testing and worst at exactly the high desert sites
+these vehicles fly from. That 89,875 Pa is also the published ISA pressure at
+1000 m, which makes this case a usable unit test.
 
 > **Do not use the `SLPxxx` group** in METAR remarks either. That is sea-level
 > pressure, a third distinct number reduced using the actual station
@@ -1012,6 +1064,10 @@ In rough priority order:
    accelerometer — collapses every band in §11 into measured numbers
 4. Canopy oscillation as a stochastic tilt (drives dispersion, not mean drift)
 5. Reefing, with the eq. (35) check at each disreef
+6. Observed pad pressure in place of the eq. (7a) standard-column estimate,
+   either from a METAR altimeter setting via eq. (7b) or from a logged pad
+   barometer reading — worth about 1.5% in density, so it ranks below
+   everything above it
 
 Item 3 is the highest value per unit effort. One instrumented flight replaces
 every table lookup in this document with a measurement of your actual hardware.
