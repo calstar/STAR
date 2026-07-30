@@ -974,7 +974,10 @@ recovery-calculator/
         figures.py       matplotlib, headless -- export artifacts
         report.py        eqs (38)-(39)  formatted output
         schema.py        Pydantic models, the contract
-        data/parachutes.db          produced by the scraper
+        data/
+            parachutes.csv          scraper output, committed
+            manual.csv              hand-entered devices, same columns
+            raw/<sku>.json          one raw API payload per SKU
     backend/
         main.py
         routers/
@@ -1002,9 +1005,29 @@ UI are built together, since the failure modes here are mostly *shapes* (a wrong
 $j$, a mis-sequenced event, a $\tau$ clock that fails to reset) and those are far
 easier to catch on a live plot than in a regenerated PNG.
 
-The scraper stays decoupled: it writes `parachutes.db`, and `devices.py` reads it
-with stdlib `sqlite3`. No import relationship, so the scraper keeps its
-stdlib-only property and the core never needs network access.
+The scraper stays decoupled: it writes CSV, and `devices.py` reads it with
+stdlib `csv`. No import relationship, so the scraper keeps its stdlib-only
+property and the core never needs network access.
+
+**CSV, not SQLite.** The device table is committed reference data feeding
+structural load calculations, so a reviewer must be able to see a vendor
+revising $C_d$ from 2.2 to 1.9 — a 14% shift in $C_dS$, straight into
+eq. (23) — as a readable line in a pull request. A binary database makes every
+re-scrape an unreviewable blob delta. Performance favours CSV here too: at 1000
+rows (well beyond the whole hobby catalogue) an in-memory substring scan takes
+0.061 ms against 0.349 ms for SQLite connect-and-query, because at this scale
+connection overhead dominates any indexing benefit. CSV also removes the
+async-connection question entirely, and `csv` + Pydantic gives *stronger* typing
+than a non-`STRICT` SQLite table.
+
+`raw_json` moves out of the row into `raw/<sku>.json`, one file per device, so
+the raw vendor payloads stay diffable too and CSV quoting stays sane.
+`manual.csv` carries hand-entered devices — a canopy no vendor sells, or one
+measured in-house — so they survive a re-scrape and can be tagged as
+lower-confidence in the picker.
+
+The loader validates on read with Pydantic, and asserts eqs. (A4)-(A6) there, so
+a malformed scrape fails loudly instead of yielding a silently wrong $C_dS$.
 
 ### 11.3 Inputs
 
@@ -1020,7 +1043,7 @@ and accepted verbatim by the CLI.
 | **hardware** | **optional** — see §4, enables PASS/FAIL |
 | sweep | which parameters to corner-sweep, and their bounds |
 
-**Device picker.** `GET /api/devices?q=iris+48` searches the scraper's SQLite;
+**Device picker.** `GET /api/devices?q=iris+48` searches the device CSV;
 selecting a row auto-fills $(C_dS)$, $D_0$, $m_c$ and $j$, each marked with a
 badge. This is the highest-value control in the application because it removes
 the §4.1 trap by construction — nobody who picks from the list can recompute
