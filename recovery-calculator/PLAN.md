@@ -699,6 +699,23 @@ would double-count.
 
 Use $C_x = 1.8$ for the design number unless flight data says otherwise.
 
+> **Validity — the bound is not unconditional.** It assumes the vehicle neither
+> gains nor loses speed during inflation, which makes $X_1 \le 1$ and therefore
+> $F_\infty$ an upper bound. That argument is Pflanz's, and Pflanz has no
+> gravity. At low $v_s$ the filling time $t_f = s_f/v_s$ grows, gravity has
+> longer to act, and the speed at the peak can exceed $v_s$ — at which point
+> $F_\infty$ evaluated at $v_s$ is an *under*estimate. The crossover is where
+> the speed gained during inflation is comparable to $v_s$ itself:
+>
+> $$v_s \sim \sqrt{g\,s_f}$$
+>
+> For the IFC-48 main this predicts 11.2 m/s, and numerical integration puts the
+> actual failure between 8 and 11 m/s. A main deployed from a stabilised drogue
+> descent sits at 20–30 m/s and is safe; a drogue deployed near apogee is not,
+> and at $v_s \to 0$ the bound goes to zero while the real load does not. This is
+> why eq. (36) takes a max over all three candidates instead of assuming the
+> bound governs, and it is the defect Phase 2 item 2 exists to fix.
+
 ### 8.3 Opening load — Pflanz reference
 
 Reported alongside the bound so you can see how much conservatism you are
@@ -1059,15 +1076,56 @@ and model agree to 0.05%.
 In rough priority order:
 
 1. Wind profile (power law + tabulated sounding, PCHIP-interpolated) and drift
-2. Landing dispersion via Monte Carlo over wind and $C_dS$ uncertainty
-3. Flight-measured $C_x$, $t_f$, $n$, and $v_{\text{rel}}$ from a high-rate
+
+2. **Drogue load from relative airspeed and angle of attack.** Phase 1 carries a
+   1-D vertical state, so at apogee $v \to 0$, the drogue's $q_s \to 0$, and the
+   eq. (23) bound degenerates — see the validity note in §8.2. The vehicle is
+   not stationary at apogee. It retains horizontal velocity from weathercocking
+   during ascent, and the air itself is moving. What the canopy responds to is
+   the **relative** airspeed:
+
+   **(53)**
+
+   $$\vec{v}_{\text{rel}} = \vec{v}_{\text{veh}} - \vec{v}_{\text{wind}}(z), \qquad v_{s} = \lvert\vec{v}_{\text{rel}}\rvert$$
+
+   with $\vec{v}_{\text{veh}}$ at apogee taken from the ascent simulation rather
+   than assumed zero. Because $F \propto v_s^2$, a horizontal component that is
+   irrelevant to descent rate is decisive for the drogue's opening load — and it
+   is the only thing keeping $v_s$ above the $\sqrt{g\,s_f}$ floor at which the
+   bound stops being a bound.
+
+   The same vector fixes the §6.4 attitude band. With $\hat{a}$ the vehicle axis:
+
+   **(54)**
+
+   $$\alpha = \arccos\!\left(\frac{\vec{v}_{\text{rel}}\cdot\hat{a}}{\lvert\vec{v}_{\text{rel}}\rvert}\right)$$
+
+   **(55)**
+
+   $$C_dS_{\text{body}}(\alpha) \approx C_dS_{\text{axial}}\cos^2\alpha + C_dS_{\text{broadside}}\sin^2\alpha$$
+
+   Eq. (55) is a first-order interpolation between eqs. (14) and (15), not a
+   validated model, and should be checked against measured attitude before being
+   trusted. But §6.1.2 already identifies the axial-versus-broadside band as the
+   dominant error of the pre-deployment phase, and *any* defensible attitude
+   estimate collapses two orders of magnitude into a number. Near apogee the
+   vehicle is tipping over with the freestream increasingly broadside, so the
+   axial bound is the wrong one to be sizing against there.
+
+   Depends on the 2-D state from item 1, so it lands with the wind work rather
+   than before it.
+
+3. Landing dispersion via Monte Carlo over wind and $C_dS$ uncertainty
+4. Flight-measured $C_x$, $t_f$, $n$, and $v_{\text{rel}}$ from a high-rate
    accelerometer — collapses every band in §11 into measured numbers
-4. Canopy oscillation as a stochastic tilt (drives dispersion, not mean drift)
-5. Reefing, with the eq. (35) check at each disreef
-6. Observed pad pressure in place of the eq. (7a) standard-column estimate,
+5. Canopy oscillation as a stochastic tilt (drives dispersion, not mean drift)
+6. Reefing, with the eq. (35) check at each disreef
+7. Observed pad pressure in place of the eq. (7a) standard-column estimate,
    either from a METAR altimeter setting via eq. (7b) or from a logged pad
    barometer reading — worth about 1.5% in density, so it ranks below
    everything above it
 
-Item 3 is the highest value per unit effort. One instrumented flight replaces
+Item 4 is the highest value per unit effort. One instrumented flight replaces
 every table lookup in this document with a measurement of your actual hardware.
+Item 2 is the highest value per unit *correctness* — it is the only one that
+repairs a case Phase 1 gets structurally wrong rather than merely imprecisely.
