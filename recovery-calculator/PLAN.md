@@ -1672,3 +1672,113 @@ Item 4 is the highest value per unit effort. One instrumented flight replaces
 every table lookup in this document with a measurement of your actual hardware.
 Item 2 is the highest value per unit *correctness* — it is the only one that
 repairs a case Phase 1 gets structurally wrong rather than merely imprecisely.
+
+---
+
+## 15. Assumptions register
+
+Every approximation the model makes, with its cost where we have quantified it.
+This is the section to read first when reviewing a number this tool produced.
+Direction is **cons** (errs safe), **non-cons** (errs unsafe), or **?** (sign
+unknown, bracketed by the §11.9 corner sweep).
+
+### 15.1 Scope
+
+| assumption | cost | § |
+|---|---|---|
+| 1-D vertical motion, no wind or drift | drift absent entirely | §3 |
+| Point mass — no attitude, rotation, or recontact | recontact unrepresentable | §3 |
+| Rigid harness, DAF $\approx 1$ | $\le 2\%$ for a main; see §8.5 | §8.5 |
+| All devices share one attachment point | single $F_T$ | §8.1 |
+| Constant mass | exact | — |
+| Run starts at apogee, $v_0 = 0$ | early deployment is a load bound only | §4.0 |
+
+### 15.2 Atmosphere
+
+| assumption | cost | dir |
+|---|---|---|
+| ISA piecewise-linear $T(H)$ | structural | — |
+| $L_0$ empirical, or re-fit from $T_{\text{pad}}$ | 3% density at 3 km | ? |
+| Tropopause anchor fixed at 216.65 K | 0.8% per 10 K | ? |
+| Dry air, humidity neglected | $\le 1.5\%$ density | **non-cons** |
+| $p_{\text{pad}}$ from eq. (7a) standard column | ~2% | ? |
+| Geopotential correction retained | 1.5 m at 10k ft | negligible |
+| $g(z)$ inverse-square | 0.09% at 3 km | negligible |
+
+### 15.3 Inflation
+
+| assumption | cost | dir |
+|---|---|---|
+| $\tau^{j}$ growth law, empirical | structural | — |
+| $j = 2$ solid / $1$ slotted | modeling choice | ? |
+| **$n$ swept 6–12, never measured** | $X_1 \times 0.63$ on a main | ? |
+| $v_s$ frozen — $\tau$ advances in time, not distance | **23% in $t_f$** | absorbed into $n$ |
+| Monotonic growth, no overshoot represented | requires $C_x$ | — |
+| $\Delta t = 0.3$–$1.0$ s when bagged | **+48% drogue load at 0.5 s** | ? |
+
+### 15.4 Loads
+
+| assumption | cost | dir |
+|---|---|---|
+| **$C_x \in [1.2, 1.8]$, unmeasured** | **$\pm20\%$ — dominant term** | ? |
+| $C_x$ applied uniformly though it acts at $\tau = 1$ | ~10% | **cons** |
+| Pflanz omits gravity | +13% vs numerical | cons |
+| Pflanz omits airframe drag | $-6\%$ vs numerical | non-cons |
+| $F_\infty$ bounds only for $v_s \gg \sqrt{g s_f}$ | fails below ~11 m/s | **non-cons there** |
+| Springs linear to break, no hysteresis | unquantified | cons |
+| Snatch by energy conservation, undamped | — | cons |
+| Snatch and opening do not superpose | 16 harness periods apart | cons |
+| $\varepsilon_{\text{rated}}$ usually unpublished | $k$ estimated | ? |
+| $F_{\max}$ used as harness tension, ignoring $m_c$ | 3.9% | cons |
+| SF stacked on a conservative $C_x$ | compounds | cons |
+
+### 15.5 Airframe
+
+| assumption | cost | dir |
+|---|---|---|
+| **Attitude unknown, axial vs broadside** | **$2.55\,\ell/d$ — 36× at our fineness** | ? |
+| $C_d = 0.6$ axial | rule of thumb | probably low |
+| $C_d = 1.2$ broadside | textbook cylinder in crossflow | solid |
+| Single $C_d$ across the descent | descent spans the drag crisis | non-cons at speed |
+| Fins in neither reference area | unquantified | non-cons |
+
+### 15.6 Data
+
+| assumption | dir |
+|---|---|
+| Vendor $C_dS$ taken as published | ? |
+| **Canopy assumed stronger than the hardware** | **untested — no published rating exists** |
+
+### 15.7 What actually moves the answer
+
+$$\underbrace{C_x}_{\pm20\%} \;>\; \underbrace{C_dS_{\text{body}}}_{36\times} \;>\; \underbrace{\Delta t}_{+48\%} \;>\; \underbrace{v_{\text{rel}}}_{4\times} \;>\; \underbrace{n}_{0.63\times} \;\gg\; \underbrace{\text{atmosphere}}_{1\text{–}3\%}$$
+
+**§5 is the longest section in this document and contributes the least.** The
+atmosphere is worth 1–3% on descent rate and *exactly zero* on the main's
+opening load, which cancels density entirely. Recorded here so nobody chases a
+sounding while $C_x$ remains a guess.
+
+Three measurements collapse the top of that list:
+
+| measurement | removes | cost |
+|---|---|---|
+| static ejection filmed at 240 fps | $\Delta t$ **and** $v_{\text{rel}}$ | an afternoon |
+| known load hung on the harness | $k_{\text{eff}}$ | ten minutes |
+| accelerometer in the av bay | $C_x$, $n$, $t_f$ | one flight |
+
+### 15.8 Where it errs unsafely
+
+These do not announce themselves, so they are listed separately:
+
+1. **The bound below $v_s \approx \sqrt{g s_f}$** — a drogue near apogee has
+   $F_\infty \to 0$ while the real load does not. Mitigated by eq. (36) taking a
+   max over three candidates rather than trusting the bound.
+2. **Canopy strength** — the last link in the load path carries no number, and
+   the design implicitly assumes it exceeds the hardware.
+3. **Recontact** — a point mass cannot see it, and it is a real failure mode.
+4. **Reynolds at speed** — $C_d = 1.2$ broadside is optimistic above
+   $Re \approx 3\times10^5$, which the descent crosses.
+5. **Dry air** — small, but always in the same direction.
+
+Everything else errs conservative or has unknown sign, and unknown-sign terms
+are bracketed by the corner sweep.
