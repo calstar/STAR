@@ -268,7 +268,7 @@ Phase 1 fixes all three. It does not attempt anything OpenRocket does well.
 | $C_{x,i}$ | opening force coefficient | — | 1.2–1.8 band |
 | $n$ | filling constant | — | sweep 6–12 |
 | $z_{d,i}$ **or** $t_{a,i}$ | deploy altitude AGL **or** time after apogee | m **or** s | design choice, §6.1 |
-| $\Delta t_i$ | charge-to-canopy delay | s | 0 unless known |
+| $\Delta t_i$ | charge-to-canopy delay | s | 0 free-packed; **0.3–1.0 s bagged** — first-order for a drogue, see §6.1.3 |
 | $v_{\text{rel}}$ | separation velocity | m/s | ground test, 5–20 |
 | $k_{\text{eff}}$ | harness stiffness | N/m | eq. (32) |
 
@@ -632,10 +632,79 @@ damage: tumbling versus nose-down changes $C_dS_{\text{body}}$ by two orders of
 magnitude, and therefore changes the drogue's $v_s$ substantially. Run both
 bounds.
 
+### 6.1.3 Bagged deployment
+
+A deployment bag does not change the inflation law. It changes **when inflation
+starts**, which is exactly what $\Delta t_i$ in eq. (8a) is for — cord pays out,
+stows release in sequence, canopy strips from the bag, and only then does eq.
+(11) start its clock.
+
+$\Delta t$ is not a rounding term. The vehicle keeps accelerating throughout,
+and $F \propto v_s^2$:
+
+| $\Delta t$ | $v_s$ | drogue $F_\infty$ |
+|---|---|---|
+| 0 | 18.7 m/s | 42 N |
+| 0.25 s | 20.7 m/s | +23% |
+| 0.50 s | 22.7 m/s | **+48%** |
+| 1.00 s | 26.4 m/s | **+100%** |
+
+A bag extraction plausibly runs 0.3–1.0 s, so bagging roughly **doubles the
+drogue opening load** for the same trigger — not because the bag is worse, but
+because the vehicle is falling faster by the time the canopy sees air.
+
+**This is a drogue-only sensitivity.** A main deployed from a stabilised drogue
+descent is already at terminal velocity, so an extra half-second changes $v_s$
+by nothing; it merely opens ~11 m lower.
+
+**Mass bookkeeping.** The bag sits between the shock cord and the shroud lines,
+so it rides on the canopy side of the harness: $m_{c,i}$ in eq. (33) is canopy +
+lines + bag, and the bag is excluded from $m_b$ in eq. (20). Since
+$F_{\text{snatch}} \propto \sqrt{\mu}$, a ~70 g bag on a 213 g canopy raises
+snatch by about **14%**. Use the full bagged assembly for event A, which is the
+governing event; splitting the bag out for event B is not worth chasing given
+the $0.625$ bound.
+
+**Stows are not compliance.** Elastic line stows do not enter $k_{\text{eff}}$.
+During event A the load path is body → cord → bag, with the stows unloaded along
+it; during payout each carries only its small retention force and drops out of
+the path once released. They sequence the deployment, they do not spring it.
+
+Whether bagging shifts $n$ itself is not established here. The bag acts upstream
+of inflation, and once the canopy is out with lines taut inflation proceeds on
+its own terms — but bagging clearly buys *repeatability*, since a free-packed
+canopy can emerge tangled or inverted. Keep sweeping $n$ either way.
+
+> **Both bag-specific unknowns fall out of one ground test.** A static ejection
+> filmed at 240 fps gives $\Delta t$ (frames from charge to canopy exposure) and
+> $v_{\text{rel}}$ (frame-to-frame displacement of the bag). Neither is on any
+> datasheet, and between them they cover a ±48% swing on the drogue load and a
+> linear factor on snatch. Comparable value to the §14 item 4 flight
+> measurement, at an afternoon's cost.
+
 ### 6.2 Filling time
 
-Airspeed is frozen at the deployment instant — standard practice, and it makes
-`CdS(t)` an analytic function within each integration segment.
+**Only the filling-time parameter is frozen — the vehicle's velocity is not.**
+The wording matters, because the two are easy to conflate:
+
+| | frozen? | role |
+|---|---|---|
+| $v(t)$ in eq. (17) | **no** | integrated continuously, responds to the growing $C_dS$ |
+| $v_{s,i}$ in eq. (9a) | **yes** | a single scalar, used only to set $t_f$ |
+
+The vehicle decelerates hard during inflation and the integration captures all
+of it — under the worked main, $v$ falls to **52% of $v_s$ by full inflation**.
+What is frozen is the scalar that sets how fast the $\tau$ clock runs.
+
+The consequence is that $\tau$ advances linearly in wall-clock time, whereas a
+canopy physically fills by *distance*, which would give $d\tau/dt = |v(t)|/s_f$
+and a filling time about **23% longer** as the vehicle slows. We keep the frozen
+form anyway, because $n$ is calibrated against it: literature values assume
+$t_f = nD_0/v_s$ with $v_s$ at line stretch, so a distance-based advance paired
+with a book $n$ mixes conventions and turns an acknowledged approximation into a
+silent one. The residual is absorbed by sweeping $n$.
+
+Freezing also makes `CdS(t)` analytic within each integration segment.
 
 **(9)**
 
