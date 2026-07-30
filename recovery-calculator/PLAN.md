@@ -280,11 +280,47 @@ The run starts at apogee by default:
 
 $$z(0) = h_a, \qquad v(0) = 0$$
 
-Both are overridable as $(z_0, v_0)$. This is the escape hatch for **early
-deployment** — a motor ejection charge whose delay grain fires before apogee.
-Phase 1 cannot integrate the powered/coast phase, so for that case start the run
-at the ejection point with the actual altitude and velocity from your ascent
-sim, rather than at apogee.
+Both are overridable as $(z_0, v_0)$, but see the survivability note below
+before using that for early deployment.
+
+**Early deployment is a load check, not a trajectory.** A motor ejection charge
+whose delay grain fires before apogee leaves the vehicle climbing, and the
+inflation model does not apply there. $v_s$ passes through zero during filling,
+so freezing it per eq. (9a) is not a mild approximation but a sign error;
+$s_f = nD_0$ is calibrated as a *descent* distance and no longer means what $n$
+was measured against; the $\tau^j$ law was fitted to canopies trailing a
+descending vehicle; and a 1-D point mass cannot represent recontact, where the
+vehicle arcs over into its own canopy.
+
+What *is* computable is the load, because eq. (23) needs only $v_s$. Rather than
+guessing how early the charge fires, invert it — eq. (37) already gives the
+maximum survivable deployment speed per device, and the ballistic coast converts
+that to a time before apogee:
+
+**(56)**
+
+$$\Delta t_{\max,i} = \frac{v_c}{g}\arctan\!\left(\frac{v_{s,\max,i}}{v_c}\right),
+\qquad v_c = \sqrt{\frac{2mg}{\rho\, C_dS_{\text{axial}}}}$$
+
+Note eq. (56) uses the **axial** drag area, eq. (14) — during coast the vehicle
+is flying nose-first, not in the tumbling attitude assumed for descent.
+
+Report both bounds for every device. For the worked vehicle with a 1000 lbf
+weakest link: the drogue survives to 156 m/s (10.6 s before apogee), the main
+only to 38 m/s (3.8 s). **The main is the binding constraint by roughly 3×** — a
+delay grain four seconds long destroys it while the drogue would shrug it off.
+
+Two properties of eq. (56) are worth knowing. Doubling hardware strength barely
+moves the time bound (1000 → 2000 lbf takes the main from 3.8 s to 5.1 s),
+because $\arctan$ saturates. And that saturation gives a hard ceiling
+
+$$\Delta t_{\max} \to \frac{v_c}{g}\cdot\frac{\pi}{2} = 17.3\ \text{s}$$
+
+beyond which no deployment survives at any hardware strength. It is set by coast
+dynamics, not by what you build.
+
+Running from $(z_0, v_0)$ with $v_0 > 0$ is therefore only meaningful for a
+device the bound says survives — in practice a drogue, never a main.
 
 > **Deployment velocity is computed, never assumed.** You supply apogee and a
 > trigger; the integration returns $v_{s,i}$ at each deployment. This matters
@@ -534,6 +570,12 @@ $$t_{d,i} = t_{a,i} + \Delta t_i$$
 
 Since the run begins at apogee (§4.0), $t_{a,i}$ is literally "seconds after
 apogee." Apogee deployment is either $z_{d,i} = h_a$ or $t_{a,i} = 0$.
+
+**Guard** — ALTITUDE triggers fire only on a **descending** crossing
+(`direction = -1` in the root-finder). A vehicle passes its main deployment
+altitude on the way up as well, and accepting either crossing fires the main
+during boost at several hundred m/s. This is inert while runs start at apogee
+with $v = 0$, and becomes a live bug the moment §4.0 permits $v_0 > 0$.
 
 **Guard** — a device that would fire after impact is a design error:
 
@@ -812,12 +854,35 @@ $$\mu = \frac{m_b\, m_c}{m_b + m_c}$$
 
 $$F_{\text{snatch}} = v_{\text{rel}}\sqrt{k_{\text{eff}}\, \mu}$$
 
-Compute **two cases** and take the worse:
+Two events, and in a bagged deployment they are **sequential rather than
+alternative** — the cord goes taut first with only the Kevlar in the path, then
+the lines pay out and the nylon enters it:
 
-| case | when | $k$ |
+| event | when | $k$ |
 |---|---|---|
 | A — harness snatch | cord taut, canopy still bagged | Kevlar alone (stiffer, worse) |
 | B — line stretch | lines paid out, both loaded | series, eq. (32) |
+
+The second is bounded by the first, because both the stiffness *and* the
+surviving relative velocity are lower:
+
+$$\frac{F_B}{F_A} = f\sqrt{\frac{k_{\text{series}}}{k_{\text{cord}}}}
+\;\le\; \sqrt{\frac{k_{\text{series}}}{k_{\text{cord}}}}$$
+
+with $f \le 1$ the fraction of $v_{\text{rel}}$ surviving event A. For the
+worked harness that ceiling is **0.625 even at $f = 1$**, a perfectly elastic
+rebound losing no energy. So A always governs, and taking the max is correct —
+as the larger of two events in a sequence, not as a choice between scenarios we
+cannot distinguish. The bound holds without knowing $f$, which is what makes it
+useful.
+
+Packing determines whether B occurs at all. Free-packed canopies have only B.
+Bagged canopies with lines stowed in bights keep the lines under tension
+throughout payout, so slack never accumulates and there is nothing to run out —
+the canopy then strips progressively from the bag rather than engaging as a
+rigid mass, and what follows is inflation, not a third impulse. That argument
+assumes stows in good condition; the $0.625$ bound does not, which is why sizing
+should rest on the bound rather than on the packing.
 
 **Design lever:** $k \propto 1/L$, so $F_{\text{snatch}} \propto L^{-1/2}$.
 Doubling harness length cuts snatch 29%, and longer harness reduces recontact
