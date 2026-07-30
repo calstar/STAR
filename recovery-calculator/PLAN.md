@@ -1060,9 +1060,12 @@ recovery_2026-07-30T14-30-22/
     result.json       full Result object
     report.txt        human-readable summary
     report.md         same, for pasting into design docs
-    trajectory.csv    t, z, v, a, F_T, CdS_tot
+    trajectory.csv    t, z, v, a, F_T, CdS_tot   (nominal)
     figures/
-        flight.png              5-panel history
+        nominal/flight.png          5-panel history
+        simultaneous/flight.png     off-nominal 1, §11.5
+        no_main/flight.png          off-nominal 2
+        no_drogue/flight.png        off-nominal 3
         sweep_drogue_delay.png
         sweep_drogue_cds.png
         tornado.png
@@ -1078,7 +1081,77 @@ Clean division: Recharts for interaction, matplotlib for artifacts. The CLI need
 headless figures regardless, so the plotting code is written once and both paths
 use it.
 
-### 11.5 Interface
+### 11.5 Off-nominal cases
+
+Sizing to the nominal sequence hides single-point failures, so three off-nominal
+cases are computed on **every** run and presented alongside it. They are not
+optional and not a separate mode — a report that shows only the nominal case is
+the failure this section exists to prevent.
+
+| case | what it is |
+|---|---|
+| **nominal** | drogue at its trigger, main at its altitude |
+| **1. simultaneous** | main fires at the drogue's trigger time, near apogee |
+| **2. main fails** | descends under drogue alone to the ground |
+| **3. drogue fails** | main opens out of ballistic free fall |
+
+The reason all three are worth carrying is that **each fails in a different
+category**, so no single pass/fail number covers them. For the worked vehicle:
+
+| case | descent | impact | KE | max $F_{\infty}$ | fails on |
+|---|---|---|---|---|---|
+| nominal | 168 s | 5.8 m/s | 96 J | 1248 N | — |
+| 1. simultaneous | **478 s** | 5.8 m/s | 96 J | 709 N | **drift** |
+| 2. main fails | 132 s | **21.3 m/s** | **1290 J** | 43 N | **impact** |
+| 3. drogue fails | 110 s | 6.0 m/s | 101 J | **5029 N** | **structure** |
+
+Reading across:
+
+**Case 1 is structurally the gentlest**, which is counterintuitive — the main
+opens at 18.6 m/s instead of 21.6 because the vehicle has not yet reached drogue
+terminal velocity, giving **57% of the nominal load**. Its danger is entirely
+recovery-zone: 2.8× the descent time, and drift scales with it. Nothing in a
+load report would flag this case, which is exactly why descent time has to be a
+reported output and not a footnote.
+
+**Case 2 loads nothing** — no main means no main opening — but lands at 21.3 m/s
+for **13× the nominal impact energy**, equivalent to dropping the vehicle off a
+23 m building.
+
+**Case 3 is the structural one**, at 4× the nominal load and past the design
+load. It is a single point of failure that breaks the main, so it warrants an
+explicit decision: a redundant drogue charge, or a recorded acceptance that a
+drogue failure loses the vehicle.
+
+Each case therefore reports against a different metric, and the summary names
+the category rather than emitting a bare PASS/FAIL:
+
+| case | metric to check |
+|---|---|
+| 1 | descent time, drift (Phase 2) |
+| 2 | impact velocity, $\text{KE}_{\text{impact}}$, eq. (38)/(39) |
+| 3 | $F_{\text{design}}$ against $F_{\text{allow}}$ |
+
+**Interface.** A dropdown selects which case the figures and tables show,
+**defaulting to nominal**. The off-nominal cases are computed on the same run —
+four integrations at 23 ms is still under 100 ms, so there is no reason to gate
+them behind a button. Any case whose own category fails is badged in the
+dropdown itself, so a failure cannot be missed by never opening the menu.
+
+**Export.** The bundle carries a figure set per case:
+
+```
+figures/
+    nominal/        flight.png
+    simultaneous/   flight.png
+    no_main/        flight.png
+    no_drogue/      flight.png
+```
+
+and `result.json` carries all four under a `cases` key with the nominal one
+duplicated at the top level, so existing consumers keep working.
+
+### 11.6 Interface
 
 Split view — inputs left, results right, both scrolling independently, so the
 force curve visibly responds while a device is being edited. Collapsible
@@ -1086,13 +1159,18 @@ sections with sticky nav; **not a wizard**, since these values get iterated
 dozens of times and a linear flow fights that. Devices are a repeatable card
 list, so 1, 2 or 3 canopies need no special-casing.
 
-A 23 ms run means the nominal case needs no Run button:
+A 23 ms run means neither the nominal case nor the off-nominal set needs a Run
+button:
 
 | tier | cost | trigger |
 |---|---|---|
-| nominal run | 23 ms | **live, debounced ~150 ms** |
+| nominal + 3 off-nominal (§11.5) | 4 × 23 ms | **live, debounced ~150 ms** |
 | 16-corner sweep | 0.4 s | debounced ~500 ms |
-| design sweeps (§11.9) | ~11 s | explicit button, with progress |
+| design sweeps (§11.10) | ~11 s | explicit button, with progress |
+
+The off-nominal cases ride along in the live tier deliberately. Under 100 ms for
+all four is cheap enough that there is no justification for hiding a
+single-point failure behind a button nobody presses.
 
 **Figure 1 — flight history.** Five stacked panels on a shared time axis
 (Recharts `syncId`): altitude, velocity, acceleration **in g**, harness tension,
@@ -1110,7 +1188,7 @@ a sluggish chart. Resample adaptively for transport: 2 ms within ±0.5 s of each
 event, 100 ms elsewhere. ~3,700 points, ~120 KB, and full resolution exactly
 where it matters.
 
-### 11.6 Save, load, validate
+### 11.7 Save, load, validate
 
 The form state **is** the config schema — one serialiser, no translation layer.
 Save downloads `config.json`; Load accepts it by picker or drag-drop; named
@@ -1135,7 +1213,7 @@ non-positive mass or drag area.
 The first matters most. A tool that reports only the nominal case hides a
 single-point failure that exceeds the design load by ~2.7×.
 
-### 11.7 Driver pseudocode
+### 11.8 Driver pseudocode
 
 ```python
 def simulate(vehicle, devices, site):
@@ -1194,7 +1272,7 @@ def simulate(vehicle, devices, site):
     return Result(traj, FT_max, per_device, snatch, landing)
 ```
 
-### 11.8 Corner sweep — sweep, don't sample
+### 11.9 Corner sweep — sweep, don't sample
 
 Phase 1 has no random inputs. Corner-sweep the genuinely-unknown parameters and
 take the worst:
@@ -1205,7 +1283,7 @@ v_{\text{rel}} \in \{5,\ 20\}$$
 
 16 runs, milliseconds each. Monte Carlo belongs in Phase 2 with wind.
 
-### 11.9 Design sweeps
+### 11.10 Design sweeps
 
 Distinct from the uncertainty corners above. Those bound what you *don't know*;
 these show how margin responds to what you *choose*. Each is plotted against
@@ -1237,7 +1315,7 @@ design rule: **the drogue has a minimum size set by hardware ratings, not by
 descent-rate preference.** Undersize it and the main opens too fast for the
 weakest link regardless of how the descent rate looks on paper.
 
-### 11.10 Roadmap
+### 11.11 Roadmap
 
 One phase, not two — the library and the interface are built together (§11.2).
 Inside it there is still an order.
