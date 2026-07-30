@@ -336,6 +336,39 @@ $$\frac{\texttt{rate\_15}}{\texttt{rate\_20}} = \left(\frac{15}{20}\right)^2 = 0
 
 All three hold to <0.2% on the Iris Ultra line.
 
+### 4.2 Hardware ratings — optional
+
+Eq. (37) needs $F_{\text{allow}}$, which is not part of the physics. Supply it as
+an **optional** block: without it the tool reports loads, with it the tool also
+returns a verdict. Optional so that a run is possible before hardware is chosen.
+
+| symbol | quantity | units | source |
+|---|---|---|---|
+| $\text{SF}$ | safety factor | — | 1.5 default, §8.6 |
+| $R_k$ | rated strength of link $k$ | N | vendor |
+| $F_{\text{allow}}$ | $\min_k R_k / \text{SF}$ | N | derived |
+
+One rating per element of the load path, so the report can name **which** link
+governs rather than only that something does:
+
+```yaml
+hardware:                    # optional; enables PASS/FAIL
+  safety_factor: 1.5
+  links:
+    bulkhead_eyebolt: 1500 lbf
+    quick_link:       1000 lbf
+    shock_cord:       2000 lbf
+    swivel:           1500 lbf
+```
+
+Every element carries $F_{\text{design}}$, so the weakest sets the limit — and it
+is rarely the shock cord. Quick links, eyebolt thread engagement into the
+bulkhead, and sewn-loop stitching are the usual governing items.
+
+> The canopy itself has no published load rating. Fruity Chutes' "12.75 lb
+> @ 20 fps" is a *descent-rate sizing* figure, not a structural limit, so the
+> last link in the chain has no number — the same category of gap as $C_x$.
+
 ---
 
 ## 5. Atmosphere
@@ -893,27 +926,193 @@ problem stiff in the first place. Fixes 1 and 3 reinforce each other.
 
 ---
 
-## 11. Module structure
+## 11. Application
+
+### 11.1 Independence
+
+This is a **standalone application**. It shares technology choices with
+`EngineDesign` because the team already knows that stack; it shares no runtime,
+no tooling and no configuration with it.
+
+| | recovery-calculator | EngineDesign |
+|---|---|---|
+| backend port | **8100** | 8000 |
+| frontend port | **5273** | 5173 |
+| virtualenv | own | own |
+| Python deps | own `pyproject.toml` | own |
+| JS deps | own `package.json` | own |
+| dev script | own `dev.sh` | own |
+| cross-imports | **none, either direction** | — |
+
+Distinct ports are load-bearing, not cosmetic: `EngineDesign/dev.sh` force-kills
+whatever holds port 8000, so sharing it would let one app silently kill the
+other. The repo-root `pyproject.toml` touches both, but it is `[tool.black]`
+only — shared formatting, not shared runtime.
+
+**Stack:** React 19 + TypeScript + Vite + Recharts + Tailwind on the frontend;
+FastAPI + uvicorn + Pydantic on the backend; numpy/scipy for the physics.
+
+Python throughout. Measured: **23 ms** for a full apogee-to-ground descent with
+two devices and event root-finding (1684 RHS evaluations), so the 16-corner
+sweep is 0.4 s and nothing in Phase 1 approaches a performance wall. Phase 2
+Monte Carlo at 10⁴ samples is ~230 s, and the first fix there is
+`multiprocessing` over samples, not a rewrite.
+
+### 11.2 Layout
 
 ```
 recovery-calculator/
-    fruity-chute-scraper/         (exists) device data source, §4.1
-    star_recovery/
-    atmosphere.py    eqs (1)-(7)
-    devices.py       eqs (8)-(15)   device dataclass, CdS(t), triggers
-    dynamics.py      eqs (16)-(18)  derivative function
-    loads.py         eqs (19)-(37)  tension, Pflanz, snatch, design load
-    solver.py        §10             segmented RK45 driver
-    report.py        eqs (38)-(39)  formatted output
-    cli.py                          YAML/JSON config in, report out
-tests/
-    test_atmosphere.py
-    test_inflation.py
-    test_descent.py
-    test_loads.py
+    pyproject.toml            own deps and metadata
+    dev.sh                    backend :8100 + frontend :5273
+    star_recovery/            physics core -- numpy/scipy only, NO web imports
+        atmosphere.py    eqs (1)-(7b)
+        pad_state.py     §5 resolution, METAR/ISA
+        devices.py       eqs (8)-(15)   device dataclass, CdS(t), triggers
+        dynamics.py      eqs (16)-(18)  derivative function
+        loads.py         eqs (19)-(37)  tension, Pflanz, snatch, design load
+        solver.py        §10            segmented RK45 driver
+        figures.py       matplotlib, headless -- export artifacts
+        report.py        eqs (38)-(39)  formatted output
+        schema.py        Pydantic models, the contract
+        data/parachutes.db          produced by the scraper
+    backend/
+        main.py
+        routers/
+            simulate.py     POST /api/simulate
+            sweep.py        POST /api/sweep
+            devices.py      GET  /api/devices    query the scraper DB
+            atmosphere.py   POST /api/atmosphere pad state
+    frontend/                 vite.config.ts pins server.port = 5273
+    tools/
+        fruity-chute-scraper/     (exists) standalone, stdlib-only
+    tests/
 ```
 
-### Driver pseudocode
+**`star_recovery` must never import FastAPI.** It is a library with a CLI; the
+web app is one consumer, the test suite and notebooks are others. The §12
+assertions run headless in CI with no server, and
+
+```
+python -m star_recovery config.json
+```
+
+stays working as a debugging escape hatch — a way to bisect a bug without React
+in the stack. This is an invariant, not a development phase: the library and the
+UI are built together, since the failure modes here are mostly *shapes* (a wrong
+$j$, a mis-sequenced event, a $\tau$ clock that fails to reset) and those are far
+easier to catch on a live plot than in a regenerated PNG.
+
+The scraper stays decoupled: it writes `parachutes.db`, and `devices.py` reads it
+with stdlib `sqlite3`. No import relationship, so the scraper keeps its
+stdlib-only property and the core never needs network access.
+
+### 11.3 Inputs
+
+Sections map to §4. Everything is one schema, serialised identically by the GUI
+and accepted verbatim by the CLI.
+
+| section | fields |
+|---|---|
+| vehicle | $m$, $h_a$, $d_{\text{body}}$, $\ell_{\text{body}}$; optional $(z_0, v_0)$ override for early deployment (§4.0) |
+| site | $z_{\text{site}}$, $T_{\text{pad}}$, $p_{\text{pad}}$ source (ISA default / pad barometer / METAR) |
+| devices | repeatable 1..N: picker selection, $(C_dS)$, $D_0$, $m_c$, $j$, $C_x$, trigger (ALTITUDE $z_d$ or TIME $t_a$), delay $\Delta t_i$ |
+| harness | $v_{\text{rel}}$, and either $k_{\text{eff}}$ directly or the eq. (30)/(31) members |
+| **hardware** | **optional** — see §4, enables PASS/FAIL |
+| sweep | which parameters to corner-sweep, and their bounds |
+
+**Device picker.** `GET /api/devices?q=iris+48` searches the scraper's SQLite;
+selecting a row auto-fills $(C_dS)$, $D_0$, $m_c$ and $j$, each marked with a
+badge. This is the highest-value control in the application because it removes
+the §4.1 trap by construction — nobody who picks from the list can recompute
+$S_p$ as $\pi D^2/4$ and silently overstate $C_dS$ by 3.2%. Manual override is
+permitted, strips the badge, and displays the vendor value it replaced.
+
+### 11.4 Outputs and export
+
+Live in the GUI, and written to disk by a single **Export run** action:
+
+```
+recovery_2026-07-30T14-30-22/
+    config.json       exact inputs -- reload to reproduce, byte-identical to Save
+    result.json       full Result object
+    report.txt        human-readable summary
+    report.md         same, for pasting into design docs
+    trajectory.csv    t, z, v, a, F_T, CdS_tot
+    figures/
+        flight.png              5-panel history
+        sweep_drogue_delay.png
+        sweep_drogue_cds.png
+        tornado.png
+    meta.json         version, git SHA, schema version, timestamp
+```
+
+`meta.json` carries the **git SHA**. When a number from this tool reaches a
+design review, which version of the physics produced it must be recoverable.
+Cheap now, impossible to retrofit.
+
+**Figures are rendered server-side with matplotlib, not exported from Recharts.**
+Clean division: Recharts for interaction, matplotlib for artifacts. The CLI needs
+headless figures regardless, so the plotting code is written once and both paths
+use it.
+
+### 11.5 Interface
+
+Split view — inputs left, results right, both scrolling independently, so the
+force curve visibly responds while a device is being edited. Collapsible
+sections with sticky nav; **not a wizard**, since these values get iterated
+dozens of times and a linear flow fights that. Devices are a repeatable card
+list, so 1, 2 or 3 canopies need no special-casing.
+
+A 23 ms run means the nominal case needs no Run button:
+
+| tier | cost | trigger |
+|---|---|---|
+| nominal run | 23 ms | **live, debounced ~150 ms** |
+| 16-corner sweep | 0.4 s | debounced ~500 ms |
+| design sweeps (§11.9) | ~11 s | explicit button, with progress |
+
+**Figure 1 — flight history.** Five stacked panels on a shared time axis
+(Recharts `syncId`): altitude, velocity, acceleration **in g**, harness tension,
+and $C_dS_{\text{tot}}$. Vertical event markers across all panels at apogee, each
+line stretch, each full inflation, and ground; horizontal reference lines on the
+tension panel at $F_\infty$, $F_{\text{snatch}}$, $F_{\text{design}}$ and
+$F_{\text{allow}}$.
+
+The $C_dS_{\text{tot}}$ panel is not decoration — it makes the tension panel
+legible by showing the $\tau^j$ ramp the force is following, and it is the
+fastest way to spot an inflation bug.
+
+**Wire format.** A 168 s descent at 5 ms is 33,600 points, megabytes of JSON and
+a sluggish chart. Resample adaptively for transport: 2 ms within ±0.5 s of each
+event, 100 ms elsewhere. ~3,700 points, ~120 KB, and full resolution exactly
+where it matters.
+
+### 11.6 Save, load, validate
+
+The form state **is** the config schema — one serialiser, no translation layer.
+Save downloads `config.json`; Load accepts it by picker or drag-drop; named
+presets live in `localStorage` and remain individually downloadable. The saved
+file is exactly what `python -m star_recovery` accepts, which is what makes the
+headless path real rather than aspirational.
+
+**Hard errors** block the run: deploy altitude above apogee, no devices,
+non-positive mass or drag area.
+
+**Warnings** run anyway and display inline:
+
+| condition | message |
+|---|---|
+| drogue-failure case exceeds $F_{\text{design}}$ | off-nominal: main at free-fall speed → FAIL |
+| $C_x$ unmeasured | ±20% band; see §14 item 4 |
+| $p_{\text{pad}}$ from the eq. (7a) default | ~2%; a pad barometer removes it |
+| $v_{s,\max}$ within 20% of drogue descent rate | thin margin on eq. (37) |
+| main $C_dS$ below drogue $C_dS$ | devices may be swapped |
+| any device has $v_s < \sqrt{g\,s_f}$ | bound invalid here, §8.2 |
+
+The first matters most. A tool that reports only the nominal case hides a
+single-point failure that exceeds the design load by ~2.7×.
+
+### 11.7 Driver pseudocode
 
 ```python
 def simulate(vehicle, devices, site):
@@ -972,7 +1171,7 @@ def simulate(vehicle, devices, site):
     return Result(traj, FT_max, per_device, snatch, landing)
 ```
 
-### Sweep, don't sample
+### 11.8 Corner sweep — sweep, don't sample
 
 Phase 1 has no random inputs. Corner-sweep the genuinely-unknown parameters and
 take the worst:
@@ -982,6 +1181,72 @@ C_dS_{\text{body}} \in \{\text{axial},\ \text{broadside}\},\quad
 v_{\text{rel}} \in \{5,\ 20\}$$
 
 16 runs, milliseconds each. Monte Carlo belongs in Phase 2 with wind.
+
+### 11.9 Design sweeps
+
+Distinct from the uncertainty corners above. Those bound what you *don't know*;
+these show how margin responds to what you *choose*. Each is plotted against
+$F_{\text{allow}}$ as a horizontal line, so the safe region is read off directly
+— cheaper than an inverse solver, with no convergence failures or
+no-solution-exists cases, and it shows how *fast* margin degrades rather than
+only where it reaches zero.
+
+| sweep | $x$ | drives |
+|---|---|---|
+| drogue delay | seconds after apogee | drogue $F_\infty$ |
+| drogue size | $(C_dS)_{\text{drogue}}$ | **main** $F_\infty$, via eq. (37) |
+
+> **Deployment altitude is deliberately not a load sweep.** The main deploys
+> from a stabilised drogue descent, so
+> $q_s = \tfrac12\rho v_t^2 = mg/(C_dS)_{d+b}$ — density cancels exactly and the
+> main's opening load is *independent of deployment altitude*. Verified: 1246 N
+> at 150 m and 1246 N at 2400 m, a 16× altitude range. Plotting it produces a
+> horizontal line. Main deployment altitude still belongs in the tool because it
+> drives descent time, drift and the deployed-too-low-to-reach-terminal check —
+> just never on a load axis.
+
+The second sweep is the useful form of eq. (37). Solved through, it says
+
+$$(C_dS)_{\text{drogue}} + (C_dS)_{\text{body}} \;\ge\; \frac{mg\,(C_dS)_{\text{main}}\,C_x}{F_{\text{allow}}}$$
+
+with $\rho$ cancelling on both sides, so it is a density-free, altitude-free
+design rule: **the drogue has a minimum size set by hardware ratings, not by
+descent-rate preference.** Undersize it and the main opens too fast for the
+weakest link regardless of how the descent rate looks on paper.
+
+### 11.10 Roadmap
+
+One phase, not two — the library and the interface are built together (§11.2).
+Inside it there is still an order.
+
+**v1 — the tool**
+
+1. `schema.py` first. The Pydantic models are the contract both sides build
+   against, so they precede both.
+2. Stub `POST /api/simulate` returning a canned `Result` fixture, so the
+   frontend can build the full figure on day one in parallel with the physics.
+   Writing a *plausible* canned result is itself a check on the schema.
+3. Physics replaces the stub endpoint by endpoint; the fixture survives as a
+   frontend test double.
+4. §12 assertions in CI from the start, headless.
+
+**v2 — live data and depth**
+
+5. **NWS integration.** Resolve pad state automatically from site coordinates:
+   nearest reporting station lookup, METAR fetch, decode, and eq. (7b)
+   conversion, replacing hand-entered $T_{\text{pad}}$ and $p_{\text{pad}}$.
+   Source is the Aviation Weather Center API at `aviationweather.gov`
+   (`/api/data/metar`, `/api/data/stationinfo`). Extends naturally to the
+   §14 items that need more than a surface observation — radiosonde and model
+   soundings for a real $T(H)$ profile, and winds aloft for drift. Note that
+   station choice must be checked per site: `stationinfo` is the authoritative
+   test of whether a field actually reports, since aggregator pages substitute
+   the nearest reporting neighbour without saying so.
+6. Device picker over the scraper DB (§11.3), sweep figures, tornado plot,
+   saved presets.
+
+Egress to `aviationweather.gov` must be reachable from wherever this runs; it is
+blocked by policy in some sandboxes.
 
 ---
 
