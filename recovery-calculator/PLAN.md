@@ -818,6 +818,36 @@ $$F_{\text{design}} = \text{SF}\cdot\max\left(F_{\text{snatch}},\ \max_i F_{\inf
 
 $$v_{s,\max} = \sqrt{\frac{2 F_{\text{allow}}}{\rho\, (C_dS)\, C_x}}$$
 
+### 8.7 Report the expected load, not only the design load
+
+Eq. (36) sizes to the bound, which is deliberately pessimistic. The tool must
+also say **by how much**, so report per device:
+
+| quantity | eq. | what it is |
+|---|---|---|
+| $F_{\infty,i}$ | (23) | infinite-mass bound, $X_1 = 1$ — what §8.6 sizes to |
+| $F_{\max,i} = F_{\infty,i}X_{1,i}$ | (28) | **Pflanz expected value** — the finite-mass estimate |
+| $C_x\max_t F_T(t)$ | (21a) | numerical peak, with gravity and airframe drag |
+| $1/X_{1,i}$ | (27) | **conservatism ratio** |
+
+$F_{\max,i}$ can never govern eq. (36): it is exactly $F_{\infty,i}X_{1,i}$ and
+$X_{1,i}\le1$ by construction, since $X_1 = \max_\tau \tau^{j}u^2$ with both
+factors bounded by 1. That is the reason to report it separately rather than
+fold it into the max — it is the only number that says whether the bound is
+costing you 5% or 240%.
+
+$$\frac{1}{X_{1}} = \frac{\text{what you build}}{\text{what you expect}}$$
+
+For the IFC-48 main, $A = 0.356$ gives $1/X_1 = 3.4$: the structure is sized to
+**3.4× the expected load**. For a drogue at $A = 15$, $1/X_1 = 1.05$ and the
+bound is nearly free. Which regime a device sits in is what decides whether
+measuring $C_x$ and $n$ in flight (§14 item 4) is worth the trouble — there is
+no point instrumenting a drogue, and a large main is where the mass is.
+
+Note the numerical value is *not* bounded by $F_{\infty,i}$ — it contains
+gravity, which Pflanz omits — so it is reported for its own sake as well as for
+the eq. (48) cross-check. See the validity note in §8.2.
+
 ---
 
 ## 9. Landing metrics
@@ -926,7 +956,20 @@ def simulate(vehicle, devices, site):
 
     traj  = resample(segments, dt=0.005)
     FT_max = max(tension(s) for s in traj)         # eq. (20)
-    return Result(traj, FT_max, opening_loads, snatch, landing)
+
+    # Per device, report all three load estimates -- not just the one that
+    # sizes the hardware. F_pflanz can never govern eq. (36) since it is
+    # F_inf * X1 with X1 <= 1, which is exactly why it must be reported:
+    # F_inf / F_pflanz = 1 / X1 is the conservatism the design is carrying.
+    per_device = {
+        i: dict(F_inf    = q_s[i] * d.CdS * d.Cx,              # eq. (23)
+                X1       = X1_of(A[i], d.j),                   # eq. (27)/(29)
+                F_pflanz = q_s[i] * d.CdS * d.Cx * X1_of(A[i], d.j),   # eq. (28)
+                ratio    = 1.0 / X1_of(A[i], d.j),             # §8.7
+                v_s      = v_s[i], A = A[i], tau_star = tau_star[i])
+        for i, d in enumerate(devices)}
+
+    return Result(traj, FT_max, per_device, snatch, landing)
 ```
 
 ### Sweep, don't sample
