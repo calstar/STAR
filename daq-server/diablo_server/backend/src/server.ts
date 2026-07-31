@@ -801,7 +801,12 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       break;
     }
     case 'extend_fire':
-      sendToActuatorService('EXTEND_FIRE\n').catch(() => { });
+      sendToActuatorService('EXTEND_FIRE\n').then(({ ok, reply }) => {
+        console.log(`[ThinServer] Extend fire: ${ok ? 'OK' : 'FAIL'} (${reply})`);
+        if (!ok) {
+          send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Extend fire failed: ${reply}` } });
+        }
+      });
       break;
     case 'set_countdown_target':
       countdownTargetMs = command.data.targetTimeMs ?? null;
@@ -1002,9 +1007,19 @@ elodin.on('packet', (header: any, payload: Buffer) => {
       broadcastCommandedActuatorsForState(currentState);
       scheduleActuatorMismatchCheck(currentState);
       if (currentState === SystemState.FIRE && prevState !== SystemState.FIRE) {
-        sendToControllerService('FIRE_START\n').catch(() => { /* non-fatal */ });
+        sendToControllerService('FIRE_START\n').then(({ ok, reply }) => {
+          if (!ok) {
+            console.error(`[ThinServer] FIRE_START not acknowledged by controller_service: ${reply}`);
+            broadcastNotification({ key: 'fire_start_failed', category: 'error', message: `FIRE_START not acknowledged by controller: ${reply}`, timestampMs: Date.now(), ongoing: false });
+          }
+        });
       } else if (prevState === SystemState.FIRE && currentState !== SystemState.FIRE) {
-        sendToControllerService('FIRE_STOP\n').catch(() => { /* non-fatal */ });
+        sendToControllerService('FIRE_STOP\n').then(({ ok, reply }) => {
+          if (!ok) {
+            console.error(`[ThinServer] FIRE_STOP not acknowledged by controller_service: ${reply}`);
+            broadcastNotification({ key: 'fire_stop_failed', category: 'error', message: `FIRE_STOP not acknowledged by controller: ${reply}`, timestampMs: Date.now(), ongoing: false });
+          }
+        });
       }
       return;
     }
