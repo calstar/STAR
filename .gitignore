@@ -10,3 +10,7 @@ docs/doxygen/
 
 # DAQ output data
 scripts/postprocessing/output/
+
+# Python
+__pycache__/
+*.py[cod]

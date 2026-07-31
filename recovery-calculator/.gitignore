@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+# Scraper scratch output (`--out-dir out`); the committed table lives in
+# star_recovery/data/.
+out/
+
+# Export bundles from PLAN.md §11.4 — timestamped run directories.
+recovery_*/
+
+# Which unit each quantity renders in, written by /api/settings. A property of
+# the workstation, not of the design — two people sharing this repo should not
+# fight over whether force reads in newtons.
+.gui-settings.json
+.gui-settings-*.tmp

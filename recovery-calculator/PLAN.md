@@ -144,8 +144,8 @@ without stepping over it.
 | $t_{d,i}$ | deployment time | s |
 | $v_{s,i}$ | freestream speed at line stretch, **frozen** (eq. 9a) | m/s |
 | $q_{s,i}$ | dynamic pressure at deployment | Pa |
-| $n$ | filling constant — diameters fallen | — |
-| $s_{f,i}$ | filling distance $= n D_{0,i}$ | m |
+| $n_i$ | filling constant — diameters fallen | — |
+| $s_{f,i}$ | filling distance $= n_i D_{0,i}$ | m |
 | $t_{f,i}$ | filling time $= s_f/v_s$ | s |
 | $\tau_i$ | normalized inflation progress, 0→1 | — |
 | $j_i$ | area growth exponent (2 solid, 1 slotted) | — |
@@ -163,7 +163,7 @@ without stepping over it.
 | $F_{\max,i}$ | Pflanz finite-mass opening force | N |
 | $F_T$ | harness tension — **sizes your hardware** | N |
 | $F_{D,\text{body}}$ | airframe drag force | N |
-| $F_{\text{snatch}}$ | line-stretch peak force | N |
+| $F_{\text{snatch},i}$ | line-stretch peak force, device $i$ | N |
 | $F_{\text{design}}$ | design load, incl. safety factor | N |
 | $f$ | specific force (accelerometer reading) | m/s² |
 | SF | safety factor, 1.5 | — |
@@ -172,15 +172,19 @@ without stepping over it.
 
 | symbol | quantity | units |
 |---|---|---|
-| $v_{\text{rel}}$ | **separation** velocity between the two masses — not $v_s$ | m/s |
-| $k_j$, $k_{\text{eff}}$ | member stiffness, series total | N/m |
+| $v_{\text{rel},i}$ | **separation** velocity between the two masses — not $v_s$ | m/s |
+| $k_j$, $k_{\text{eff},i}$ | member stiffness, series total for device $i$ | N/m |
 | $F_{\text{rated},j}$ | rated strength of member $j$ | N |
 | $\varepsilon_j$ | fractional elongation at rated load | — |
 | $N_j$ | strands in parallel | — |
 | $L_j$, $L_e$ | member length, suspension line length | m |
 | $\theta$ | suspension line splay half-angle | rad |
-| $\mu$ | reduced mass $m_b m_c/(m_b+m_c)$ | kg |
+| $\mu_i$ | reduced mass $m_b m_{c,i}/(m_b+m_{c,i})$ | kg |
 | $t_n$ | harness natural period | s |
+
+Members are indexed by $j$ *within* a device's load path; $j$ also names the
+area growth exponent $j_i$ in §6.3. Different scopes, and the collision is
+noted in §1.4.
 
 **Numerics and validation** (§10, §12)
 
@@ -206,6 +210,11 @@ disambiguated by subscript and by scope, but be careful when implementing:
 $\tau$ is inflation progress (§6.3) but $\tau_{\text{relax}}$ is a time constant
 (§10). $\lambda$ is the relaxation rate; the geometric scale factor is $\sigma$,
 deliberately not $\lambda$.
+
+$j$ carries two meanings and they nest: $j_i$ is the area growth exponent of
+device $i$ (§6.3), while $j$ alone indexes the members of one device's harness
+load path (§8.4). Both appear in expressions subscripted by $i$, so read the
+scope, not the letter.
 
 ---
 
@@ -266,11 +275,21 @@ Phase 1 fixes all three. It does not attempt anything OpenRocket does well.
 | $m_{c,i}$ | canopy + lines mass | kg | vendor spec |
 | $j_i$ | area growth exponent | — | 2 solid, 1 slotted |
 | $C_{x,i}$ | opening force coefficient | — | 1.2–1.8 band |
-| $n$ | filling constant | — | sweep 6–12 |
+| $n_i$ | filling constant | — | sweep 6–12 |
 | $z_{d,i}$ **or** $t_{a,i}$ | deploy altitude AGL **or** time after apogee | m **or** s | design choice, §6.1 |
 | $\Delta t_i$ | charge-to-canopy delay | s | 0 free-packed; **0.3–1.0 s bagged** — first-order for a drogue, see §6.1.3 |
-| $v_{\text{rel}}$ | separation velocity | m/s | ground test, 5–20 |
-| $k_{\text{eff}}$ | harness stiffness | N/m | eq. (32) |
+| $v_{\text{rel},i}$ | separation velocity | m/s | ground test, 5–20 |
+| $k_{\text{eff},i}$ | harness stiffness | N/m | eq. (32) |
+
+> **Everything below $m$, $h_a$ and the site block is per device.** §6.1.1
+> promises that nothing assumes two devices or any particular device, and that
+> only holds if the inflation *and* the harness parameters are both indexed.
+> A drogue and a main do not share a filling constant (it is coupled to $j_i$),
+> a separation velocity (one is an ejection charge against a stowed canopy, the
+> other a bag extraction from a stabilised descent), or a harness stiffness
+> (different line lengths, different materials, different splay). Carrying any
+> of them as a single global is a silent coupling between two independent
+> events. See §8.4.
 
 **Sign convention:** $z$ is positive up, AGL. Descent has $v < 0$.
 
@@ -303,21 +322,36 @@ $$\Delta t_{\max,i} = \frac{v_c}{g}\arctan\!\left(\frac{v_{s,\max,i}}{v_c}\right
 \qquad v_c = \sqrt{\frac{2mg}{\rho\, C_dS_{\text{axial}}}}$$
 
 Note eq. (56) uses the **axial** drag area, eq. (14) — during coast the vehicle
-is flying nose-first, not in the tumbling attitude assumed for descent.
+is flying nose-first, not in the tumbling attitude assumed for descent. This is
+the one place in the model where the §6.4 band does *not* apply, because the
+attitude is known.
 
-Report both bounds for every device. For the worked vehicle with a 1000 lbf
-weakest link: the drogue survives to 156 m/s (10.6 s before apogee), the main
-only to 38 m/s (3.8 s). **The main is the binding constraint by roughly 3×** — a
-delay grain four seconds long destroys it while the drogue would shrug it off.
+Report both bounds for every device. For the §13 vehicle with a 1000 lbf weakest
+link ($F_{\text{allow}} = 2965$ N after SF), $v_c = 147$ m/s:
+
+| device | $v_{s,\max}$, eq. (37) | $\Delta t_{\max}$, eq. (56) |
+|---|---|---|
+| drogue | 143 m/s | 11.6 s |
+| main | **35 m/s** | **3.5 s** |
+
+**The main is the binding constraint by 3.3×** — a delay grain four seconds long
+destroys it while the drogue would shrug it off.
 
 Two properties of eq. (56) are worth knowing. Doubling hardware strength barely
-moves the time bound (1000 → 2000 lbf takes the main from 3.8 s to 5.1 s),
-because $\arctan$ saturates. And that saturation gives a hard ceiling
+moves the time bound (1000 → 2000 lbf takes the main from 3.5 s to 4.9 s —
+**doubling the hardware buys 1.4 seconds**), because $\arctan$ saturates. And
+that saturation gives a hard ceiling
 
-$$\Delta t_{\max} \to \frac{v_c}{g}\cdot\frac{\pi}{2} = 17.3\ \text{s}$$
+$$\Delta t_{\max} \to \frac{v_c}{g}\cdot\frac{\pi}{2} = 23.6\ \text{s}$$
 
 beyond which no deployment survives at any hardware strength. It is set by coast
 dynamics, not by what you build.
+
+> Both numbers scale with $v_c$ and therefore with the airframe, so they are not
+> transferable between vehicles. The §13 vehicle is slick — $v_c = 146$ m/s
+> axially — and a draggier one is bounded much harder: at the *broadside* area
+> the same vehicle has $v_c = 24$ m/s and a ceiling of 3.9 s. Recompute per
+> vehicle; do not carry these numbers across.
 
 Running from $(z_0, v_0)$ with $v_0 > 0$ is therefore only meaningful for a
 device the bound says survives — in practice a drogue, never a main.
@@ -583,20 +617,26 @@ with $v = 0$, and becomes a live bug the moment §4.0 permits $v_0 > 0$.
 
 $$\text{skip device } i \ \text{ and warn if } \ t_{d,i} \ge t_{\text{ground}}$$
 
-Never silently ignore it.
+Never silently ignore it. Note this is a guard on $t_{d,i}$, **not** on
+$t_{x,i}$: a device whose charge fires above ground but whose lines would come
+taut below it has still failed, and it is a distinct case from a device that
+never triggered at all. Both must be caught.
 
-The two types get different numerical treatment:
+The two trigger types get different numerical treatment:
 
 | | ALTITUDE | TIME |
 |---|---|---|
 | detection | root-find $z(t) - z_{d,i} = 0$ on the dense output | exact, known a priori |
-| segment end | Brent on the interpolant | terminate at $t = t_{d,i}$ |
+| segment end | Brent on the interpolant, at $t_{x,i}$ | terminate at $t = t_{a,i}$ |
 | cost | one root-find | free |
 
+Both end a segment at the **trigger** $t_{x,i}$, never at $t_{d,i}$ — see
+§6.1.4.
+
 Ordering: at each segment, integrate to the **earliest** of {any pending
-altitude crossing, the next pending TIME trigger, ground hit}. Fire that one,
-restart. Because triggers can interleave, resolve them one at a time rather
-than pre-sorting.
+altitude crossing, the next pending TIME trigger, any pending line stretch,
+ground hit}. Fire that one, restart. Because these can interleave, resolve them
+one at a time rather than pre-sorting.
 
 ### 6.1.1 Configurations this supports
 
@@ -610,27 +650,43 @@ than pre-sorting.
 
 Nothing in §6–§8 assumes two devices, or any particular device. A drogue is
 just a device with a small $C_dS$ that happens to deploy first, and it keeps
-contributing drag after the main opens — see eq. (13) and §13, note 4.
+contributing drag after the main opens — see eq. (13) and §13.3, note 5.
+
+> **Guard — deployment at exactly apogee is degenerate.** The first row above
+> deploys a drogue at $z_{d} = h_a$, and a run that starts at apogee with
+> $v_0 = 0$ then has $v_s = 0$: eq. (10) divides by zero, and eq. (23) returns a
+> bound of zero for a load that is emphatically not zero (§8.2). Reject
+> $v_s < \sqrt{g\,s_f}$ rather than dividing — §11.7 already warns on it — and
+> in practice give the device the real apogee-detect lag, which is what §13
+> does with a 2.0 s TIME trigger. Phase 2 item 2 is the actual fix: at apogee
+> the vehicle retains horizontal velocity, so the true $v_s$ is not zero, it is
+> just not visible to a 1-D state.
 
 ### 6.1.2 The phase before first deployment
 
 Between apogee (or $z_0$) and the first deployment the vehicle is **not** in
 vacuum free fall — it falls on airframe drag alone, eq. (14)/(15), with
-$C_dS_{\text{tot}} = C_dS_{\text{body}}$. That distinction is not academic:
+$C_dS_{\text{tot}} = C_dS_{\text{body}}$.
 
-$$\text{no drag, } 3\ \text{s}: \ v = gt = 29.4\ \text{m/s}$$
+How much that matters depends entirely on attitude, and this is the phase where
+the §6.4 band does the most damage. For the §13 vehicle at 3 s:
 
-$$\text{with } C_dS_{\text{body}} = 0.05\ \text{m}^2,\ m = 5.67\ \text{kg}: \ v = 25.7\ \text{m/s}$$
+| | $C_dS_{\text{body}}$ | ballistic $v_t$ | $v(3\ \text{s})$ | vs vacuum |
+|---|---|---|---|---|
+| vacuum free fall | 0 | ∞ | 29.4 m/s | — |
+| axial | 0.00486 m² | 147 m/s | 29.0 m/s | −1.2% |
+| broadside | 0.17556 m² | 24.5 m/s | 20.4 m/s | **−31%** |
 
-13% lower at 3 s, and the gap widens with delay because the ballistic terminal
-velocity here is only 44 m/s. Since $F \propto v_s^2$, treating this phase as
-vacuum free fall overstates drogue opening load by ~30% at 3 s — conservative,
-but enough to distort a trade study. Use the real drag.
+Nose-down, the phase really is close to free fall and the drag term is a
+correction. Broadside, it is nothing of the sort: the vehicle is already at 84%
+of a terminal velocity it reaches within a few seconds, and since
+$F \propto v_s^2$, assuming vacuum free fall would overstate the drogue opening
+load by **2.1×**.
 
-This phase is also where the airframe-attitude band (§6.4) does the most
-damage: tumbling versus nose-down changes $C_dS_{\text{body}}$ by two orders of
-magnitude, and therefore changes the drogue's $v_s$ substantially. Run both
-bounds.
+So the error of ignoring airframe drag here is not a fixed percentage — it
+ranges from negligible to a factor of two across a band nobody has measured.
+That is the argument for carrying eq. (14)/(15) properly *and* for running both
+bounds, rather than for either simplification.
 
 ### 6.1.3 Bagged deployment
 
@@ -642,16 +698,21 @@ stows release in sequence, canopy strips from the bag, and only then does eq.
 $\Delta t$ is not a rounding term. The vehicle keeps accelerating throughout,
 and $F \propto v_s^2$:
 
+For the §13 vehicle at the axial bound:
+
 | $\Delta t$ | $v_s$ | drogue $F_\infty$ |
 |---|---|---|
-| 0 | 18.7 m/s | 42 N |
-| 0.25 s | 20.7 m/s | +23% |
-| 0.50 s | 22.7 m/s | **+48%** |
-| 1.00 s | 26.4 m/s | **+100%** |
+| 0 | 19.5 m/s | 55 N |
+| 0.25 s | 21.9 m/s | +26% |
+| 0.50 s | 24.3 m/s | **+55%** |
+| 1.00 s | 29.0 m/s | **+122%** |
 
 A bag extraction plausibly runs 0.3–1.0 s, so bagging roughly **doubles the
 drogue opening load** for the same trigger — not because the bag is worse, but
 because the vehicle is falling faster by the time the canopy sees air.
+
+This is the effect §6.1.4 exists to preserve. Sampling $v_s$ at the trigger
+rather than at line stretch collapses every row of that table to the first one.
 
 **This is a drogue-only sensitivity.** A main deployed from a stabilised drogue
 descent is already at terminal velocity, so an extra half-second changes $v_s$
@@ -682,6 +743,49 @@ canopy can emerge tangled or inverted. Keep sweeping $n$ either way.
 > linear factor on snatch. Comparable value to the §14 item 4 flight
 > measurement, at an afternoon's cost.
 
+### 6.1.4 The delay is a segment, not an offset
+
+$\Delta t_i$ cannot be implemented as a number added to a timestamp. Eq. (9a)
+evaluates $v_{s,i}$ at **line stretch**, $t_{d,i}$, and the vehicle accelerates
+throughout the delay on airframe drag alone — which is the entire content of
+§6.1.3. Sampling the velocity at the trigger $t_{x,i}$ instead discards that
+acceleration and, by §6.1.3's own table, under-predicts the drogue opening load
+by up to 48%.
+
+So **line stretch is a third event class**, alongside the two trigger types:
+
+| class | known | detection |
+|---|---|---|
+| ALTITUDE trigger | a priori as a *height* | root-find on the dense output |
+| TIME trigger | a priori as a *time* | exact |
+| **line stretch** | **only once that device has triggered** | exact, $t_{x,i} + \Delta t_i$ |
+
+It joins the same earliest-of merge rather than being handled as "integrate one
+extra segment and carry on", because **another device can trigger inside a
+delay window** — a drogue with $\Delta t = 1.0$ s whose main crosses its
+altitude 0.4 s later. Only one ordering rule can be correct, and it is the one
+already stated in §6.1.
+
+Three consequences, all of which the model gets wrong if the delay is treated
+as an offset:
+
+1. $v_{s,i}$, eq. (9a), is $|v(t_{d,i})|$ — sampled at the line-stretch event.
+2. $\rho$ in eq. (22) is evaluated at $z(t_{d,i})$, the altitude at line
+   stretch. This is ~11 m below the trigger altitude for a main and worth
+   0.13% in density, so it is a notation fix rather than a numerical one — but
+   a TIME-triggered device has no $z_{d,i}$ at all, so the equation is
+   otherwise undefined for half the §6.1.1 configurations.
+3. The error is a clean multiplicative $\left(v(t_{d,i})/v(t_{x,i})\right)^2$
+   on every load number, because $A_i$ is independent of $v_s$ at fixed $s_f$
+   (eq. 44). Nothing looks inconsistent when it is wrong — even the eq. (48)
+   cross-check still passes, since both paths carry the same factor. It errs
+   **low**, and therefore unsafe.
+
+During the delay the device contributes **no** drag: $\tau_i < 0$, so
+$C_dS_i = 0$ by eq. (12). Physically the bag and pilot chute are already out and
+pulling, so the real vehicle is slightly slower than modelled and the modelled
+$v_{s,i}$ is slightly high. Conservative, and left alone in Phase 1.
+
 ### 6.2 Filling time
 
 **Only the filling-time parameter is frozen — the vehicle's velocity is not.**
@@ -708,7 +812,7 @@ Freezing also makes `CdS(t)` analytic within each integration segment.
 
 **(9)**
 
-$$s_{f,i} = n\, D_{0,i} \qquad \text{(filling distance)}$$
+$$s_{f,i} = n_i\, D_{0,i} \qquad \text{(filling distance)}$$
 
 **(9a)**
 
@@ -721,10 +825,15 @@ and an *output* of the integration rather than an input.
 
 $$t_{f,i} = \frac{s_{f,i}}{v_{s,i}}$$
 
-> Parameterize on filling **distance** $s_f$, not on $n$ and $D_0$ separately.
-> With the velocity exponent at 1.0, $n$ is dimensionless ("diameters fallen
-> during inflation") and unit-safe. A literature $n$ quoted with the $v^{0.85}$
-> convention carries units and needs a $\times 1.195$ conversion from imperial.
+> Parameterize on filling **distance** $s_{f,i}$, not on $n_i$ and $D_{0,i}$
+> separately. With the velocity exponent at 1.0, $n_i$ is dimensionless
+> ("diameters fallen during inflation") and unit-safe. A literature $n$ quoted
+> with the $v^{0.85}$ convention carries units and needs a $\times 1.195$
+> conversion from imperial.
+>
+> $n_i$ is per device because it is coupled to $j_i$ — solid and slotted
+> canopies fill over different distances — so a single global $n$ would force a
+> drogue and a main to share a constant neither of them was measured with.
 
 ### 6.3 Area growth
 
@@ -759,7 +868,11 @@ $$C_dS_{\text{body,axial}} \approx 0.6 \cdot \frac{\pi d_{\text{body}}^2}{4}$$
 
 $$C_dS_{\text{body,broadside}} \approx 1.2 \cdot (\ell_{\text{body}} \cdot d_{\text{body}})$$
 
-Under a main this is noise. Under a drogue it can dominate descent rate.
+The ratio is $2.55\,\ell/d$, so it grows with fineness: **36.1×** for the §13
+vehicle at $\ell/d = 14.2$. Under a main this is noise. Under a drogue it can
+dominate descent rate, and before any deployment it is worth a factor of two in
+opening load (§6.1.2). §13 reports every headline number at both bounds for this
+reason.
 
 ---
 
@@ -826,9 +939,13 @@ never the motion.
 
 Primary Phase 1 number. Requires no inflation knowledge and cannot be exceeded.
 
-**(22)** Dynamic pressure at deployment:
+**(22)** Dynamic pressure at line stretch:
 
-$$q_{s,i} = \tfrac{1}{2}\rho(z_{d,i})\, v_{s,i}^2$$
+$$q_{s,i} = \tfrac{1}{2}\rho\big(z(t_{d,i})\big)\, v_{s,i}^2$$
+
+Both the density and the speed are evaluated at $t_{d,i}$, the line-stretch
+event — not at the trigger, and not at the input altitude $z_{d,i}$, which does
+not exist for a TIME-triggered device. See §6.1.4.
 
 **(23)** Infinite-mass opening force:
 
@@ -867,7 +984,7 @@ carrying. The bound can run 3–5× the realistic value for a large main.
 
 **(24)** Ballistic parameter:
 
-$$A_i = \frac{2m}{\rho(z_{d,i})\,(C_dS)_i\, s_{f,i}}$$
+$$A_i = \frac{2m}{\rho\big(z(t_{d,i})\big)\,(C_dS)_i\, s_{f,i}}$$
 
 **(25)**
 
@@ -901,31 +1018,40 @@ numerical integration of the same reduced problem.
 Line stretch is an impulsive event and is frequently the **largest** load in the
 system — often above the opening load. It must be computed.
 
+**Every device has its own snatch event**, at its own line stretch, with its own
+separation velocity, stiffness and reduced mass. A drogue ejected by a charge
+against a stowed canopy and a main extracted from a bag during a stabilised
+descent share nothing here but the airframe. Everything in this section is
+therefore indexed by $i$, and eq. (36) takes the max over devices.
+
 **(30)** Stiffness of one member ($N$ strands in parallel):
 
 $$k_j = \frac{N_j\, F_{\text{rated},j}}{\varepsilon_{\text{rated},j}\, L_j}$$
 
 **(31)** Suspension lines splay from the skirt; only the axial component carries:
 
-$$k_{\text{lines}} = \frac{N F_{\text{rated}}}{\varepsilon_{\text{rated}} L}\cos^2\theta,
-\qquad \theta = \arcsin\!\left(\frac{D_p/2}{L_e}\right)$$
+$$k_{\text{lines},i} = \frac{N F_{\text{rated}}}{\varepsilon_{\text{rated}} L}\cos^2\theta_i,
+\qquad \theta_i = \arcsin\!\left(\frac{D_{p,i}/2}{L_{e,i}}\right)$$
 
 **(32)** Series combination — the load path is nylon lines **in series with** the
 Kevlar shock cord, and the softer element dominates:
 
-$$\frac{1}{k_{\text{eff}}} = \sum_j \frac{1}{k_j}$$
+$$\frac{1}{k_{\text{eff},i}} = \sum_j \frac{1}{k_j}$$
+
+with $j$ running over the members of device $i$'s load path.
 
 **(33)** Reduced mass:
 
-$$\mu = \frac{m_b\, m_c}{m_b + m_c}$$
+$$\mu_i = \frac{m_b\, m_{c,i}}{m_b + m_{c,i}}$$
 
 **(34)** Peak snatch force:
 
-$$F_{\text{snatch}} = v_{\text{rel}}\sqrt{k_{\text{eff}}\, \mu}$$
+$$F_{\text{snatch},i} = v_{\text{rel},i}\sqrt{k_{\text{eff},i}\, \mu_i}$$
 
-Two events, and in a bagged deployment they are **sequential rather than
-alternative** — the cord goes taut first with only the Kevlar in the path, then
-the lines pay out and the nylon enters it:
+Within a *single* device's deployment there are two events, and in a bagged
+deployment they are **sequential rather than alternative** — the cord goes taut
+first with only the Kevlar in the path, then the lines pay out and the nylon
+enters it:
 
 | event | when | $k$ |
 |---|---|---|
@@ -965,7 +1091,7 @@ Dynamic amplification depends on load rise time versus harness natural period:
 
 **(35)**
 
-$$t_n = 2\pi\sqrt{\frac{\mu}{k_{\text{eff}}}}$$
+$$t_{n,i} = 2\pi\sqrt{\frac{\mu_i}{k_{\text{eff},i}}}$$
 
 For realistic hardware ($k \sim 10^4$–$10^5$ N/m, $\mu \sim 1$–3 kg),
 $t_n \approx 0.02$–0.04 s against a filling time near 1 s. That is
@@ -979,11 +1105,17 @@ eq. (35) at each disreef, where the rise time can approach $t_n$.
 
 **(36)**
 
-$$F_{\text{design}} = \text{SF}\cdot\max\left(F_{\text{snatch}},\ \max_i F_{\infty,i},\ C_x\max_t F_T(t)\right), \qquad \text{SF} = 1.5$$
+$$F_{\text{design}} = \text{SF}\cdot\max\left(\max_i F_{\text{snatch},i},\ \max_i F_{\infty,i},\ \max_i C_{x,i}\max_t F_T(t)\right), \qquad \text{SF} = 1.5$$
 
-**(37)** Invert against the weakest link in the chain to get a speed limit:
+All three candidates now max over devices. Report **which device and which
+candidate** governs, not only the number — a design limited by drogue snatch and
+one limited by main opening call for different fixes, and the bare maximum
+cannot tell them apart.
 
-$$v_{s,\max} = \sqrt{\frac{2 F_{\text{allow}}}{\rho\, (C_dS)\, C_x}}$$
+**(37)** Invert against the weakest link in the chain to get a speed limit, per
+device:
+
+$$v_{s,\max,i} = \sqrt{\frac{2 F_{\text{allow}}}{\rho\, (C_dS)_i\, C_{x,i}}}$$
 
 ### 8.7 Report the expected load, not only the design load
 
@@ -1005,9 +1137,10 @@ costing you 5% or 240%.
 
 $$\frac{1}{X_{1}} = \frac{\text{what you build}}{\text{what you expect}}$$
 
-For the IFC-48 main, $A = 0.356$ gives $1/X_1 = 3.4$: the structure is sized to
-**3.4× the expected load**. For a drogue at $A = 15$, $1/X_1 = 1.05$ and the
-bound is nearly free. Which regime a device sits in is what decides whether
+For the §13 IFC-48 main, $A = 0.309$ gives $1/X_1 = 3.75$: the structure is
+sized to **3.75× the expected load**. For that vehicle's drogue at $A = 14.7$,
+$1/X_1 = 1.05$ and the bound is nearly free. Which regime a device sits in
+is what decides whether
 measuring $C_x$ and $n$ in flight (§14 item 4) is worth the trouble — there is
 no point instrumenting a drogue, and a large main is where the mass is.
 
@@ -1098,14 +1231,14 @@ Monte Carlo at 10⁴ samples is ~230 s, and the first fix there is
 recovery-calculator/
     pyproject.toml            own deps and metadata
     dev.sh                    backend :8100 + frontend :5273
-    star_recovery/            physics core -- numpy/scipy only, NO web imports
+    physics/            physics core -- numpy/scipy only, NO web imports
         atmosphere.py    eqs (1)-(7b)
         pad_state.py     §5 resolution, METAR/ISA
         devices.py       eqs (8)-(15)   device dataclass, CdS(t), triggers
         dynamics.py      eqs (16)-(18)  derivative function
         loads.py         eqs (19)-(37)  tension, Pflanz, snatch, design load
         solver.py        §10            segmented RK45 driver
-        figures.py       matplotlib, headless -- export artifacts
+        cases.py         §11.5/§11.9    off-nominal set, corner sweep
         report.py        eqs (38)-(39)  formatted output
         schema.py        Pydantic models, the contract
         data/
@@ -1125,12 +1258,12 @@ recovery-calculator/
     tests/
 ```
 
-**`star_recovery` must never import FastAPI.** It is a library with a CLI; the
+**`physics` must never import FastAPI.** It is a library with a CLI; the
 web app is one consumer, the test suite and notebooks are others. The §12
 assertions run headless in CI with no server, and
 
 ```
-python -m star_recovery config.json
+python -m physics config.json
 ```
 
 stays working as a debugging escape hatch — a way to bisect a bug without React
@@ -1172,8 +1305,8 @@ and accepted verbatim by the CLI.
 |---|---|
 | vehicle | $m$, $h_a$, $d_{\text{body}}$, $\ell_{\text{body}}$; optional $(z_0, v_0)$ override for early deployment (§4.0) |
 | site | $z_{\text{site}}$, $T_{\text{pad}}$, $p_{\text{pad}}$ source (ISA default / pad barometer / METAR) |
-| devices | repeatable 1..N: picker selection, $(C_dS)$, $D_0$, $m_c$, $j$, $C_x$, trigger (ALTITUDE $z_d$ or TIME $t_a$), delay $\Delta t_i$ |
-| harness | $v_{\text{rel}}$, and either $k_{\text{eff}}$ directly or the eq. (30)/(31) members |
+| devices | repeatable 1..N: picker selection, $(C_dS)_i$, $D_{0,i}$, $m_{c,i}$, $j_i$, $C_{x,i}$, $n_i$, trigger (ALTITUDE $z_{d,i}$ or TIME $t_{a,i}$), delay $\Delta t_i$ |
+| harness | **per device**, on the same card: $v_{\text{rel},i}$, and either $k_{\text{eff},i}$ directly or the eq. (30)/(31) members |
 | **hardware** | **optional** — see §4, enables PASS/FAIL |
 | sweep | which parameters to corner-sweep, and their bounds |
 
@@ -1191,18 +1324,10 @@ Live in the GUI, and written to disk by a single **Export run** action:
 ```
 recovery_2026-07-30T14-30-22/
     config.json       exact inputs -- reload to reproduce, byte-identical to Save
-    result.json       full Result object
+    result.json       full Result object, all four cases
     report.txt        human-readable summary
     report.md         same, for pasting into design docs
-    trajectory.csv    t, z, v, a, F_T, CdS_tot   (nominal)
-    figures/
-        nominal/flight.png          5-panel history
-        simultaneous/flight.png     off-nominal 1, §11.5
-        no_main/flight.png          off-nominal 2
-        no_drogue/flight.png        off-nominal 3
-        sweep_drogue_delay.png
-        sweep_drogue_cds.png
-        tornado.png
+    trajectory.csv    t, z, v, a, F_T, CdS_tot   (one per case)
     meta.json         version, git SHA, schema version, timestamp
 ```
 
@@ -1210,10 +1335,19 @@ recovery_2026-07-30T14-30-22/
 design review, which version of the physics produced it must be recoverable.
 Cheap now, impossible to retrofit.
 
-**Figures are rendered server-side with matplotlib, not exported from Recharts.**
-Clean division: Recharts for interaction, matplotlib for artifacts. The CLI needs
-headless figures regardless, so the plotting code is written once and both paths
-use it.
+**There is one plotting implementation, and it is Recharts in the browser.**
+The export bundle carries `trajectory.csv` and `result.json`, not PNGs.
+
+The alternative — rendering figures server-side with matplotlib so the CLI can
+emit them headlessly — buys a self-contained bundle at the cost of a second
+plotting implementation to keep visually consistent with the first, plus a
+dependency the physics core does not otherwise need. It is not worth it. A
+`trajectory.csv` plots in anything, the numbers that matter are already in
+`report.md` and `result.json`, and a figure for a design review can be captured
+from the GUI that produced it.
+
+Consequence worth stating: `python -m physics config.json` produces
+numbers and CSV, never images. That is the intended division, not a gap.
 
 ### 11.5 Off-nominal cases
 
@@ -1230,32 +1364,41 @@ the failure this section exists to prevent.
 | **3. drogue fails** | main opens out of ballistic free fall |
 
 The reason all three are worth carrying is that **each fails in a different
-category**, so no single pass/fail number covers them. For the worked vehicle:
+category**, so no single pass/fail number covers them. For the §13 vehicle at
+the axial bound — the load-conservative one, and the choice is stated because
+§6.4 forbids picking silently:
 
 | case | descent | impact | KE | max $F_{\infty}$ | fails on |
 |---|---|---|---|---|---|
-| nominal | 168 s | 5.8 m/s | 96 J | 1248 N | — |
-| 1. simultaneous | **478 s** | 5.8 m/s | 96 J | 709 N | **drift** |
-| 2. main fails | 132 s | **21.3 m/s** | **1290 J** | 43 N | **impact** |
-| 3. drogue fails | 110 s | 6.0 m/s | 101 J | **5029 N** | **structure** |
+| nominal | 55 s | 6.04 m/s | 103 J | 1613 N | — |
+| 1. simultaneous | **146 s** | 6.04 m/s | 103 J | 900 N | **drift** |
+| 2. main fails | 37 s | **25.0 m/s** | **1768 J** | 54 N | **impact** |
+| 3. drogue fails | 35 s | 6.21 m/s | 109 J | **27 065 N** | **structure** |
 
 Reading across:
 
 **Case 1 is structurally the gentlest**, which is counterintuitive — the main
-opens at 18.6 m/s instead of 21.6 because the vehicle has not yet reached drogue
-terminal velocity, giving **57% of the nominal load**. Its danger is entirely
-recovery-zone: 2.8× the descent time, and drift scales with it. Nothing in a
-load report would flag this case, which is exactly why descent time has to be a
-reported output and not a footnote.
+opens at 19.5 m/s instead of 25.0 because the vehicle has not yet reached drogue
+terminal velocity, and it opens where the air is thinner, giving **56% of the
+nominal load**. Its danger is entirely recovery-zone: 2.7× the descent time, and
+drift scales with it. Nothing in a load report would flag this case, which is
+exactly why descent time has to be a reported output and not a footnote.
 
-**Case 2 loads nothing** — no main means no main opening — but lands at 21.3 m/s
-for **13× the nominal impact energy**, equivalent to dropping the vehicle off a
-23 m building.
+**Case 2 loads nothing** — no main means no main opening — but lands at 24.8 m/s
+for **17× the nominal impact energy**, equivalent to dropping the vehicle off a
+31 m building.
 
-**Case 3 is the structural one**, at 4× the nominal load and past the design
-load. It is a single point of failure that breaks the main, so it warrants an
-explicit decision: a redundant drogue charge, or a recorded acceptance that a
-drogue failure loses the vehicle.
+**Case 3 is the structural one**, at **17× the nominal load** and far past
+anything the hardware will hold. A slick airframe reaches 103 m/s in the 762 m
+of free fall before the main's altitude, and $F \propto v_s^2$ does the rest. It
+is a single point of failure that destroys the vehicle outright, so it warrants
+an explicit decision: a redundant drogue charge, or a recorded acceptance that a
+drogue failure loses the airframe.
+
+> Case 3 is also where the §6.4 band bites hardest, and in the direction that
+> should worry you least: broadside, the same failure gives 1423 N rather than
+> 27 065 N, because a tumbling airframe is its own drogue. The axial figure is
+> the one to design against, since nothing guarantees the vehicle tumbles.
 
 Each case therefore reports against a different metric, and the summary names
 the category rather than emitting a bare PASS/FAIL:
@@ -1272,18 +1415,18 @@ four integrations at 23 ms is still under 100 ms, so there is no reason to gate
 them behind a button. Any case whose own category fails is badged in the
 dropdown itself, so a failure cannot be missed by never opening the menu.
 
-**Export.** The bundle carries a figure set per case:
+**Export.** The bundle carries a trajectory per case:
 
 ```
-figures/
-    nominal/        flight.png
-    simultaneous/   flight.png
-    no_main/        flight.png
-    no_drogue/      flight.png
+trajectory_nominal.csv
+trajectory_simultaneous.csv
+trajectory_no_main.csv
+trajectory_no_drogue.csv
 ```
 
 and `result.json` carries all four under a `cases` key with the nominal one
-duplicated at the top level, so existing consumers keep working.
+duplicated at the top level, so existing consumers keep working. No images —
+see §11.4.
 
 ### 11.6 Interface
 
@@ -1310,8 +1453,9 @@ single-point failure behind a button nobody presses.
 (Recharts `syncId`): altitude, velocity, acceleration **in g**, harness tension,
 and $C_dS_{\text{tot}}$. Vertical event markers across all panels at apogee, each
 line stretch, each full inflation, and ground; horizontal reference lines on the
-tension panel at $F_\infty$, $F_{\text{snatch}}$, $F_{\text{design}}$ and
-$F_{\text{allow}}$.
+tension panel at $\max_i F_{\infty,i}$, $\max_i F_{\text{snatch},i}$,
+$F_{\text{design}}$ and $F_{\text{allow}}$, with the governing device named in
+the legend per eq. (36).
 
 The $C_dS_{\text{tot}}$ panel is not decoration — it makes the tension panel
 legible by showing the $\tau^j$ ramp the force is following, and it is the
@@ -1327,7 +1471,7 @@ where it matters.
 The form state **is** the config schema — one serialiser, no translation layer.
 Save downloads `config.json`; Load accepts it by picker or drag-drop; named
 presets live in `localStorage` and remain individually downloadable. The saved
-file is exactly what `python -m star_recovery` accepts, which is what makes the
+file is exactly what `python -m physics` accepts, which is what makes the
 headless path real rather than aspirational.
 
 **Hard errors** block the run: deploy altitude above apogee, no devices,
@@ -1345,50 +1489,74 @@ non-positive mass or drag area.
 | any device has $v_s < \sqrt{g\,s_f}$ | bound invalid here, §8.2 |
 
 The first matters most. A tool that reports only the nominal case hides a
-single-point failure that exceeds the design load by ~2.7×.
+single-point failure that exceeds the design load by **11×** for the §13
+vehicle.
 
 ### 11.8 Driver pseudocode
 
 ```python
 def simulate(vehicle, devices, site):
-    atm  = Atmosphere(site.elevation, site.T_pad, site.p_pad)
-    state = {i: DeviceState() for i in devices}
-    y, t  = [vehicle.apogee, 0.0], 0.0
+    atm      = Atmosphere(site.elevation, site.T_pad, site.p_pad)
+    state    = {i: DeviceState() for i in devices}
+    y, t     = [vehicle.apogee, 0.0], 0.0
     segments = []
 
     while y[0] > 0:
-        # ALTITUDE triggers become root-found events; TIME triggers just
-        # cap the segment. Integrate to whichever comes first.  eq. (8)/(8a)
-        events  = [ground_hit] + [alt_trigger(i) for i in pending_alt(state)]
-        t_cap   = min([d.t_a + d.delay for d in pending_time(state)],
-                      default=T_MAX)
+        # Three event classes, one merge -- §6.1.4:
+        #   ALTITUDE trigger  root-found on the dense output        eq. (8)
+        #   TIME trigger      known a priori                        eq. (8a)
+        #   LINE STRETCH      known a priori, but only once that
+        #                     device has already triggered
+        # Line stretch is scheduled, never added to a timestamp, because a
+        # second device can trigger inside another's delay window.
+        events = [ground_hit] + [alt_trigger(i) for i in pending_alt(state)]
+        t_cap  = min([d.t_a for d in pending_time(state)]
+                     + [state[i].t_stretch for i in triggered(state)],
+                     default=T_MAX)
 
         seg = solve_ivp(deriv, [t, t_cap], y,
                         events=events, dense_output=True,
                         rtol=1e-8, atol=1e-10)
         segments.append(seg)
+        t, y = seg.t[-1], seg.y[:, -1]
 
         if seg.event is ground_hit:
             break
 
-        if seg.event is None:            # hit t_cap -> a TIME trigger fired
-            i = device_at(t_cap)
-        else:                            # an ALTITUDE crossing fired
-            i = seg.event.device
+        i, kind = resolve(seg, t_cap, state)   # which device, which class
 
-        # v_s is an OUTPUT of the integration, never an input
-        state[i].t_deploy = seg.t[-1] + devices[i].delay
-        state[i].v_s      = abs(seg.y[1, -1])
-        state[i].t_f      = n * devices[i].D0 / state[i].v_s   # eqs (9),(9a),(10)
-        record_opening_load(i, state[i].v_s,
-                            atm.density(seg.y[0, -1] + site.elevation))
-        t, y = seg.t[-1], seg.y[:, -1]
+        if kind is TRIGGER:
+            # The charge has fired; the canopy is still stowed and still
+            # contributes no drag (eq. 12, tau < 0). Schedule line stretch
+            # and keep integrating -- the vehicle accelerates through the
+            # whole delay, which is the entire point of §6.1.3.
+            state[i].t_x       = t
+            state[i].t_stretch = t + devices[i].delay
+            if devices[i].delay == 0.0:
+                kind = LINE_STRETCH        # collapse; no zero-length segment
+            else:
+                continue
 
-    # any device that never fired -> eq. (8b)
-    for i in pending(state):
-        warn(f"device {i} would deploy at or after ground impact")
+        # LINE STRETCH. The canopy is now in the airstream, and only now is
+        # v_s defined. Sampling at t_x instead drops the §6.1.3 effect
+        # entirely -- up to 48% low on a bagged drogue, and silently, since
+        # A is independent of v_s (eq. 44) so nothing looks inconsistent.
+        d = devices[i]
+        state[i].t_deploy = t                          # eq. (8) = t_x + delta_t
+        state[i].v_s      = abs(y[1])                  # eq. (9a)
+        state[i].rho_s    = atm.density(y[0] + site.elevation)   # at z(t_d)
+        state[i].t_f      = d.n * d.D0 / state[i].v_s  # eqs (9), (10), per-device n
+        record_opening_load(i, state[i].v_s, state[i].rho_s)     # eqs (22), (23)
+        record_snatch(i, d.v_rel, d.k_eff, mu(vehicle, d))       # eq. (34), per device
 
-    traj  = resample(segments, dt=0.005)
+    # eq. (8b) -- two distinct failures, and the second is easy to miss
+    for i in never_triggered(state):
+        warn(f"device {i} never reached its trigger before impact")
+    for i in triggered(state):          # fired, but lines never came taut
+        warn(f"device {i} fired at t={state[i].t_x:.2f} s but line stretch "
+             f"falls at or below ground -- it never opened")
+
+    traj   = resample(segments, dt=0.005)
     FT_max = max(tension(s) for s in traj)         # eq. (20)
 
     # Per device, report all three load estimates -- not just the one that
@@ -1400,11 +1568,16 @@ def simulate(vehicle, devices, site):
                 X1       = X1_of(A[i], d.j),                   # eq. (27)/(29)
                 F_pflanz = q_s[i] * d.CdS * d.Cx * X1_of(A[i], d.j),   # eq. (28)
                 ratio    = 1.0 / X1_of(A[i], d.j),             # §8.7
+                F_snatch = snatch[i],                          # eq. (34)
                 v_s      = v_s[i], A = A[i], tau_star = tau_star[i])
         for i, d in enumerate(devices)}
 
-    return Result(traj, FT_max, per_device, snatch, landing)
+    return Result(traj, FT_max, per_device, landing)
 ```
+
+Note `triggered(state)` means *triggered but not yet stretched* — a device
+leaves that set at line stretch. Reaching the end of the run still in it is the
+second eq. (8b) failure.
 
 ### 11.9 Corner sweep — sweep, don't sample
 
@@ -1416,6 +1589,14 @@ C_dS_{\text{body}} \in \{\text{axial},\ \text{broadside}\},\quad
 v_{\text{rel}} \in \{5,\ 20\}$$
 
 16 runs, milliseconds each. Monte Carlo belongs in Phase 2 with wind.
+
+The three per-device parameters here — $C_x$, $n$, $v_{\text{rel}}$ — are swept
+**in common across devices**, not independently. They are the same unmeasured
+physics appearing in several places, so a corner where the drogue sits at
+$C_x = 1.2$ while the main sits at $1.8$ is not a physical case, and sweeping
+them independently would inflate $2^4 = 16$ runs to $2^{2N+2}$ for no added
+coverage. Per-device values remain independent as *inputs*; the sweep perturbs
+them together, applying each corner as an override across every device.
 
 ### 11.10 Design sweeps
 
@@ -1434,11 +1615,19 @@ only where it reaches zero.
 > **Deployment altitude is deliberately not a load sweep.** The main deploys
 > from a stabilised drogue descent, so
 > $q_s = \tfrac12\rho v_t^2 = mg/(C_dS)_{d+b}$ — density cancels exactly and the
-> main's opening load is *independent of deployment altitude*. Verified: 1246 N
-> at 150 m and 1246 N at 2400 m, a 16× altitude range. Plotting it produces a
-> horizontal line. Main deployment altitude still belongs in the tool because it
-> drives descent time, drift and the deployed-too-low-to-reach-terminal check —
-> just never on a load axis.
+> main's opening load is *independent of deployment altitude*. Verified on the
+> §13 vehicle: **1613 N at 152 m, 300 m and 500 m**, identical to four
+> figures, while $v_s$ rises with altitude and $\rho$ falls to
+> compensate. Plotting it produces a horizontal line. Main deployment altitude
+> still belongs in the tool because it drives descent time, drift and the
+> deployed-too-low-to-reach-terminal check — just never on a load axis.
+>
+> The cancellation requires the vehicle to be *at* drogue terminal velocity when
+> the main fires. Deploy high enough that it has not yet settled — above ~800 m
+> for the §13 vehicle, which deploys its drogue at 895 m — and the load drops
+> off, because $v_s$ has not yet reached $v_t$. So the curve is flat everywhere
+> it matters and sags at the top, which is the one part worth checking rather
+> than assuming.
 
 The second sweep is the useful form of eq. (37). Solved through, it says
 
@@ -1502,11 +1691,19 @@ reduced opening ODE.
 
 $$F \propto v_s^2 \quad \text{exactly}$$
 
-**(45)** In the finite-mass regime:
+**(45)** In the finite-mass regime, **at fixed $s_f$**:
 
 $$X_1 \propto (C_dS)^{-2/3} \quad \Rightarrow \quad F \propto (C_dS)^{1/3}$$
 
-Doubling canopy size raises opening load only 26%.
+Doubling drag area alone raises opening load only 26%.
+
+The "at fixed $s_f$" clause is load-bearing and easy to drop. A canopy scaled
+*geometrically* has $D_0 \propto \sqrt{C_dS}$ and therefore
+$s_f \propto \sqrt{C_dS}$, which makes $A \propto (C_dS)^{-3/2}$,
+$X_1 \propto (C_dS)^{-1}$ and $F$ **flat** — no increase at all. Both statements
+are correct about different experiments; only the fixed-$s_f$ one is a property
+of eq. (24) rather than of a particular way of growing a canopy. Test the
+fixed-$s_f$ form, since it is the one the equation asserts.
 
 **(46)** Geometric scaling by $\sigma$ (all lengths $\times\sigma$,
 $m \propto \sigma^2$ at fixed descent rate):
@@ -1522,21 +1719,37 @@ $$X_1 \propto s_f^{-2/3}$$
 
 A 50% error in filling distance is a 30% error in load.
 
-**(48)** The two independent load paths must agree. With eq. (21a) applied:
+**(48)** The two independent load paths must agree. With eq. (21a) applied,
+**per device $i$, over that device's own inflation window**
+$t \in [t_{d,i},\ t_{d,i} + t_{f,i}]$:
 
-$$0.8 \;<\; \frac{C_x \max_t F_T(t)}{F_{\max}} \;<\; 1.3$$
+$$0.8 \;<\; \frac{C_{x,i} \max_t F_T(t)}{F_{\max,i}} \;<\; 1.3$$
 
 Divergence beyond this means the inflation law, the event timing, or the dense-
 output sampling is wrong. This is the single most valuable test in the suite —
 it cross-checks the numerical integrator against a closed form derived from
 completely different assumptions.
 
-**(49)** Raw numerical peak must come in *below* Pflanz, since it lacks the
-overshoot:
+**(49)** Raw numerical peak must come in *below* Pflanz over the same window,
+since it lacks the overshoot:
 
-$$\max_t F_T(t) < F_{\max}$$
+$$\max_t F_T(t) < F_{\max,i}$$
 
 If it does not, $C_x$ has leaked into eq. (12).
+
+> **Both are per device, and both are skipped below the eq. (23) validity
+> floor.** Two scoping rules, and neither is optional:
+>
+> A **global** $\max_t F_T$ is dominated by whichever device is largest, so
+> comparing it against a drogue's $F_{\max}$ compares two unrelated events and
+> fails for reasons that have nothing to do with correctness. Restrict the
+> maximum to each device's own filling interval.
+>
+> And where $v_{s,i} < \sqrt{g\,s_{f,i}}$ the §8.2 validity note says
+> $F_{\infty}$ is not a bound at all, so $F_{\max}$ is not a reference either
+> — a near-apogee drogue sits exactly there. Assert only for devices that
+> clear the floor, and report the rest as unbounded rather than failing them.
+> Without this the suite fails on the drogue of any correct implementation.
 
 **(50)–(51)** Pre-deployment ballistic phase. At constant $\rho$ and constant
 $C_dS$, released from rest, eq. (17) has a closed solution — a direct test of
@@ -1555,62 +1768,129 @@ device set to TIME $t_a$ must produce identical results when $t_a$ is the time
 the altitude run reports for that crossing. Round-tripping this catches sign
 errors, off-by-one segment handling, and delay double-counting.
 
+**(57)** Delay sensitivity — the §6.1.4 regression. Run one device twice,
+identical but for $\Delta t$. During the delay the vehicle is in the §6.1.2
+ballistic phase, so eq. (50) gives the answer in closed form:
+
+$$\frac{v_s(\Delta t)}{v_s(0)} = \frac{\tanh\!\big(g(t_x + \Delta t)/v_t\big)}{\tanh\!\big(g\,t_x/v_t\big)}
+\qquad\Rightarrow\qquad
+\frac{F_\infty(\Delta t)}{F_\infty(0)} = \left(\frac{v_s(\Delta t)}{v_s(0)}\right)^{2}$$
+
+to within the density change over the fall, which is negligible. Both must
+hold. Sampling $v_s$ at the trigger instead of at line stretch makes the ratio
+identically 1, which is exactly the failure this assertion exists to catch —
+and note that eq. (48) still passes in that state, so (48) does **not** cover
+it.
+
+**(58)** A device with $\Delta t = 0$ must be bit-identical to one where the
+trigger and line-stretch events are resolved separately. This exercises the
+degenerate collapse in §11.8 and guarantees the delay path is not a second
+code path with its own arithmetic.
+
 ---
 
 ## 13. Worked example
 
-Inputs:
+**One vehicle, used by every worked number in this document.** §4.0, §6.1.2,
+§6.1.3, §6.4, §8.7, §11.5 and §11.10 all quote results from these inputs — if a
+number appears anywhere in this plan, it came from here. Every input is listed,
+so the whole document is reproducible from one config and this section is the
+regression fixture.
 
-| | |
-|---|---|
-| $m$ | 5.67 kg (12.5 lb) |
-| apogee | 914 m AGL (3000 ft) |
-| site elevation | 500 m MSL |
-| drogue | $C_dS = 0.15$ m², $D_0 = 0.6$ m, at apogee |
-| main | Iris Ultra IFC-48: $C_dS = 2.489$ m², $D_0 = 1.601$ m, at 152 m AGL |
-| $C_dS_{\text{body}}$ | 0.05 m² (axial) |
-| harness | $k_{\text{eff}} = 17{,}400$ N/m (series), $v_{\text{rel}} = 10$ m/s |
+### 13.1 Inputs
 
-Expected outputs:
+| | | |
+|---|---|---|
+| $m$ | 5.67 kg (12.5 lb) | total descending mass |
+| $h_a$ | 914 m AGL (3000 ft) | apogee |
+| $z_{\text{site}}$ | **610 m MSL** | FAR pad elevation — a constant, not an input (§4.3) |
+| $T_{\text{pad}}$ | 284.185 K | **= ISA at 610 m**, so eq. (7) re-fits to $L_0 = -6.5$ K/km exactly and the free regression test of §5 is live |
+| $p_{\text{pad}}$ | 94 209 Pa | eq. (7a) default |
+| $d_{\text{body}}$, $\ell_{\text{body}}$ | 0.1016 m (4 in), 1.44 m | fineness 14.2 |
+| $C_dS_{\text{body}}$ | **0.00486 m² axial / 0.17556 m² broadside** | eqs. (14), (15) — a 36.1× band, run both |
+| SF | 1.5 | |
 
-Outputs, from numerical integration of eqs. (16)–(17) with RK45 at
-`rtol=1e-9`:
+Devices, both solid-cloth ($j = 2$), both $C_x = 1.8$, both $n = 8$,
+both $\Delta t = 0$ (free-packed) unless a section says otherwise:
 
-| quantity | value |
-|---|---|
-| drogue terminal rate | 22.4 m/s |
-| drogue phase duration | 35.6 s |
-| main deploy velocity $v_s$ | 22.0 m/s |
-| filling time $t_f$ | 0.58 s |
-| $q_s$ at deploy | 279 Pa |
-| **$F_\infty$ (bound, $C_x{=}1.8$)** | **1249 N — load factor 22.5** |
-| $F_{\max}$ (Pflanz, $X_1 = 0.266$) | 333 N — load factor 6.0 |
-| numerical $\max F_T$, raw | 210 N |
-| numerical $\times\, C_x$, eq. (21a) | 378 N |
-| **$F_{\text{snatch}}$** | **597 N** |
-| main descent rate | 5.95 m/s (19.5 fps) |
-| total descent time | 59.6 s |
-| impact KE | 100 J |
-| **$F_{\text{design}}$ (bound × 1.5)** | **1874 N (421 lbf)** |
+| | drogue | main |
+|---|---|---|
+| $(C_dS)_i$ | 0.15 m² | 2.489 m² (Iris Ultra IFC-48) |
+| $D_{0,i}$ | 0.6 m | 1.601 m |
+| $m_{c,i}$ | 0.060 kg | 0.213 kg |
+| trigger | TIME, $t_a = 2.0$ s | ALTITUDE, $z_d = 152$ m |
+| $k_{\text{eff},i}$ | 25 000 N/m | 17 400 N/m |
+| $v_{\text{rel},i}$ | 10 m/s | 10 m/s |
 
-Four things this example demonstrates:
+giving $m_b = 5.397$ kg, and $\mu = 0.2049$ kg for the main, $0.0593$ kg for the
+drogue.
 
-1. **Snatch (597 N) exceeds the realistic opening load (378 N).** If you only
-   model opening, you under-report the peak by 1.6×. This is the argument for
-   including §8.4 in Phase 1, not deferring it.
-2. **Numerical and Pflanz agree within 14%** once eq. (21a) is applied
-   (378 vs 333 N). The residual is gravity acting during inflation, which
-   Pflanz neglects and the integration does not. That agreement is the main
-   validation that both paths are implemented correctly.
-3. **The bound is 3.8× the Pflanz value.** Fine for Phase 1 sizing, but report
-   both so nobody over-builds a bulkhead fourfold without knowing it.
-4. **The drogue keeps flying after main deployment.** Descent rate uses
-   $C_dS = 2.489 + 0.15 + 0.05$, giving 19.5 fps rather than the 20.1 fps you
-   would get from the main alone. Easy to get wrong by hand; eq. (13) handles it.
+The main's $k_{\text{eff}}$ is the eq. (32) series of a Kevlar shock cord at
+44 545 N/m and nylon suspension lines at 28 556 N/m. Those two numbers are what
+make §8.4's event-B ceiling $\sqrt{17400/44545} = 0.625$.
+
+> **The drogue fires 2.0 s after apogee, not at it.** A trigger at exactly
+> $h_a$ with $v_0 = 0$ makes $v_s = 0$, so eq. (10) divides by zero and eq. (23)
+> returns a bound of zero for a load that is not zero. 2.0 s is a realistic
+> apogee-detect lag and it keeps the example on the valid side of §8.2. See the
+> guard in §6.1.1.
+
+### 13.2 Outputs
+
+From numerical integration of eqs. (16)–(17), reported at **both** airframe
+bounds because §6.4 does not permit picking one:
+
+| quantity | axial | broadside |
+|---|---|---|
+| drogue $v_s$ at line stretch | 19.49 m/s | 16.27 m/s |
+| drogue $F_\infty$ | 54 N | 38 N |
+| main deploy time | 31.3 s | 44.2 s |
+| main $v_s$ | **25.16 m/s** | **17.34 m/s** |
+| main $q_s$ | 360 Pa | 171 Pa |
+| main filling time $t_f$ | 0.509 s | 0.739 s |
+| main $A$, $X_1$ | 0.313, 0.268 | 0.313, 0.268 |
+| **main $F_\infty$ (bound)** | **1613 N — load factor 29.0** | **766 N — load factor 13.8** |
+| main $F_{\max}$ (Pflanz) | 433 N | 206 N |
+| numerical $\max F_T$, raw | 266 N | 133 N |
+| numerical $\times\,C_x$, eq. (21a) | 479 N | 240 N |
+| $F_{\text{snatch}}$, main / drogue | 597 N / 385 N | 597 N / 385 N |
+| descent rate under main | 6.04 m/s (19.8 fps) | 5.85 m/s (19.2 fps) |
+| total descent time | 54.8 s | 68.8 s |
+| impact KE | 103 J | 97 J |
+| **$F_{\text{design}}$, eq. (36)** | **2420 N (544 lbf)** | **1149 N (258 lbf)** |
+
+$A$ and $X_1$ are identical across the two columns because eq. (24) contains no
+$v_s$ — the attitude band moves the *load* but not the finite-mass credit, which
+is eq. (44) visible in a table.
+
+### 13.3 What this example demonstrates
+
+1. **The airframe attitude band is worth 2.1× on the design load** (2420 vs
+   1149 N) and 26% on descent time. It is a single unmeasured binary, and it
+   outranks everything except $C_x$. This is §15.5 made concrete, and it is the
+   argument for §6.4's "run both, do not pick one."
+2. **Snatch (597 N) exceeds the realistic opening load** at both bounds
+   (476 N axial, 239 N broadside). If you model only opening you under-report
+   the peak by 1.3–2.5×. That is the argument for including §8.4 in Phase 1
+   rather than deferring it — and note it governs eq. (36) in neither column,
+   because the *bound* is larger still.
+3. **Numerical and Pflanz agree to 11%** (476 vs 430 N axial) once eq. (21a) is
+   applied. The residual is gravity during inflation, which Pflanz omits and the
+   integration does not. This is the eq. (48) cross-check passing, and it is the
+   main evidence both load paths are implemented correctly.
+4. **The bound is 3.73× the Pflanz value.** Fine for Phase 1 sizing, but report
+   both (§8.7) so nobody over-builds a bulkhead fourfold without knowing it.
+5. **The drogue keeps flying after main deployment.** Descent rate uses
+   $C_dS = 2.489 + 0.15 + C_dS_{\text{body}}$, giving 19.8 fps rather than the
+   20.4 fps the main alone would give at this site. Easy to get wrong by hand;
+   eq. (13) handles it.
 
 Cross-check against the vendor: Fruity Chutes claims 19.8 fps at 12.5 lb, and
-eq. (18) at sea-level density with the main alone gives 19.81 fps. Spec sheet
-and model agree to 0.05%.
+eq. (18) with the main alone **at sea-level density** (1.225 kg/m³, the
+condition the vendor quotes) gives 19.81 fps. Spec sheet and model agree to
+0.05%. Note this is deliberately not the site-elevation number above — at 500 m
+the same canopy alone gives 20.3 fps, and the difference is density, not
+disagreement.
 
 ---
 
@@ -1714,7 +1994,7 @@ unknown, bracketed by the §11.9 corner sweep).
 | **$n$ swept 6–12, never measured** | $X_1 \times 0.63$ on a main | ? |
 | $v_s$ frozen — $\tau$ advances in time, not distance | **23% in $t_f$** | absorbed into $n$ |
 | Monotonic growth, no overshoot represented | requires $C_x$ | — |
-| $\Delta t = 0.3$–$1.0$ s when bagged | **+48% drogue load at 0.5 s** | ? |
+| $\Delta t = 0.3$–$1.0$ s when bagged | **+55% drogue load at 0.5 s** | ? |
 
 ### 15.4 Loads
 
@@ -1722,7 +2002,7 @@ unknown, bracketed by the §11.9 corner sweep).
 |---|---|---|
 | **$C_x \in [1.2, 1.8]$, unmeasured** | **$\pm20\%$ — dominant term** | ? |
 | $C_x$ applied uniformly though it acts at $\tau = 1$ | ~10% | **cons** |
-| Pflanz omits gravity | +13% vs numerical | cons |
+| Pflanz omits gravity | +11% vs numerical | cons |
 | Pflanz omits airframe drag | $-6\%$ vs numerical | non-cons |
 | $F_\infty$ bounds only for $v_s \gg \sqrt{g s_f}$ | fails below ~11 m/s | **non-cons there** |
 | Springs linear to break, no hysteresis | unquantified | cons |
@@ -1736,7 +2016,7 @@ unknown, bracketed by the §11.9 corner sweep).
 
 | assumption | cost | dir |
 |---|---|---|
-| **Attitude unknown, axial vs broadside** | **$2.55\,\ell/d$ — 36× at our fineness** | ? |
+| **Attitude unknown, axial vs broadside** | **$2.55\,\ell/d$ — 36.1× at $\ell/d = 14.2$; 2.1× on $F_{\text{design}}$** | ? |
 | $C_d = 0.6$ axial | rule of thumb | probably low |
 | $C_d = 1.2$ broadside | textbook cylinder in crossflow | solid |
 | Single $C_d$ across the descent | descent spans the drag crisis | non-cons at speed |
@@ -1751,7 +2031,13 @@ unknown, bracketed by the §11.9 corner sweep).
 
 ### 15.7 What actually moves the answer
 
-$$\underbrace{C_x}_{\pm20\%} \;>\; \underbrace{C_dS_{\text{body}}}_{36\times} \;>\; \underbrace{\Delta t}_{+48\%} \;>\; \underbrace{v_{\text{rel}}}_{4\times} \;>\; \underbrace{n}_{0.63\times} \;\gg\; \underbrace{\text{atmosphere}}_{1\text{–}3\%}$$
+$$\underbrace{C_dS_{\text{body}}}_{2.1\times\ \text{on}\ F_{\text{design}}} \;>\; \underbrace{C_x}_{\pm20\%} \;>\; \underbrace{\Delta t}_{+55\%} \;>\; \underbrace{v_{\text{rel}}}_{4\times} \;>\; \underbrace{n}_{0.63\times} \;\gg\; \underbrace{\text{atmosphere}}_{1\text{–}3\%}$$
+
+$C_dS_{\text{body}}$ moves to the front once §13 is run at both bounds: the
+attitude band is a 36× swing in the input and a **2.1× swing in the design
+load**, against $C_x$'s 1.5×. It also cannot be swept away — it is a binary
+about which way the vehicle is pointing, not a tolerance — which is why §14
+item 2 is ranked as the correctness fix rather than a refinement.
 
 **§5 is the longest section in this document and contributes the least.** The
 atmosphere is worth 1–3% on descent rate and *exactly zero* on the main's
