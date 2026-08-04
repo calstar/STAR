@@ -271,9 +271,19 @@ npm install
 
 **Recommended: Development Script**
 ```bash
-./dev.sh
+./dev.sh                 # start (detached — survives closing the terminal)
+./dev.sh --attach        # ...and watch it; Ctrl-B then D to detach again
+./dev.sh --status        # up? which ports are listening?
+./dev.sh --logs backend  # follow one process
+./dev.sh --stop
 ```
-This automatically starts both the FastAPI backend (http://localhost:8000) and React frontend (http://localhost:5173). The frontend provides an interactive web interface for engine design and optimization. See `STARTUP_GUIDE.md` for details and troubleshooting.
+Starts the FastAPI backend (http://localhost:8000) and the React frontend
+(http://localhost:5173) in a detached tmux session, installing frontend
+dependencies on first run. Because it stays running in the background, you can
+ssh in later and `--attach` to debug. `--foreground` runs it in this terminal
+instead; `./dev.sh --help` lists every flag. The same interface works in every
+STAR project. Ports are overridable via `ENGINE_DESIGN_API_PORT` and
+`ENGINE_DESIGN_UI_PORT`. See `STARTUP_GUIDE.md` for troubleshooting.
 
 **Manual Startup (Alternative)**
 If you prefer to start services manually:

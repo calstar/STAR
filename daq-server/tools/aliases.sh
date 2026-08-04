@@ -30,11 +30,19 @@ alias daq-test-int="cd '$_DAQ_ROOT' && bash test/test_integration.sh"
 alias daq-playwright="bash '$_DAQ_ROOT/test/e2e_guitest_playwright.sh'"
 
 # ── Dev stack ─────────────────────────────────────────────────────────────────
-# daq-gui     → real hardware (USE_SIM unset)
-# daq-guitest → fake data via board_simulator (USE_SIM=1)
-alias daq-gui="cd '$_DAQ_ROOT' && bash deploy/startup/start_tmux_dev.sh"
-alias daq-guitest="cd '$_DAQ_ROOT' && USE_SIM=1 bash deploy/startup/start_tmux_dev.sh"
-alias daq-stopgui="cd '$_DAQ_ROOT' && bash deploy/startup/stop_tmux.sh"
+# These go through ./dev.sh, the same front door every STAR project has, so
+# there is one implementation to keep working. It still runs
+# deploy/startup/start_tmux_dev.sh underneath.
+#
+# daq-gui     → real hardware (USE_SIM unset), attaches to the session
+# daq-guitest → fake data via board_simulator (USE_SIM=1), attaches
+# The session is started detached either way, so it survives closing the
+# terminal — detach with Ctrl-B then D and it keeps running.
+alias daq-gui="bash '$_DAQ_ROOT/dev.sh' --attach"
+alias daq-guitest="bash '$_DAQ_ROOT/dev.sh' --sim-attach"
+alias daq-stopgui="bash '$_DAQ_ROOT/dev.sh' --stop"
+alias daq-status="bash '$_DAQ_ROOT/dev.sh' --status"
+alias daq-logs="bash '$_DAQ_ROOT/dev.sh' --logs"
 alias daq-backend="cd '$_DAQ_ROOT/diablo_server/backend' && npx tsx src/server.ts"
 alias daq-frontend="cd '$_DAQ_ROOT/diablo_server/frontend' && npm run dev"
 

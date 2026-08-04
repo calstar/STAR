@@ -19,10 +19,10 @@ Since the Vite migration the frontend derives API/WS URLs from `window.location`
 
 ## Run locally
 
-1. Start the full stack (e.g. `guitest`) — the backend serves the built GUI on :3000.
+1. Start the full stack (e.g. `./dev.sh --sim`, alias `daq-guitest`) — the backend serves the built GUI on :3000.
 2. From repo root: `bash test/e2e_sensor_info.sh`, **or** `npm run test:e2e` in `diablo_server/frontend` against the running stack.
 
-### One-shot: guitest + Playwright + stop (same as README `stopgui`)
+### One-shot: sim stack + Playwright + stop
 
 From repo root:
 
@@ -30,7 +30,7 @@ From repo root:
 bash test/e2e_guitest_playwright.sh
 ```
 
-This starts the **guitest** stack (`USE_SIM=1`, detached tmux — no interactive attach), waits for :8081 and :3000, runs the Sensor Info Playwright spec, then runs `deploy/startup/stop_tmux.sh` (same role as README **`stopgui`**). Use `SKIP_STOP_GUI=1` to leave the stack running after tests.
+This starts the **simulated** stack (`USE_SIM=1`, detached tmux — no interactive attach), waits for :8081 and :3000, runs the Sensor Info Playwright spec, then runs `deploy/startup/stop_tmux.sh` (what `./dev.sh --stop` does). Use `SKIP_STOP_GUI=1` to leave the stack running after tests.
 
 ## CI
 

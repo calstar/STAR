@@ -46,18 +46,32 @@ Node 20+, and git.
 
 ```bash
 cd pid-designer
-./dev.sh
+./dev.sh                 # start (detached — survives closing the terminal)
+./dev.sh --attach        # ...and watch it; Ctrl-B then D to detach again
+./dev.sh --status        # up? which ports are listening?
+./dev.sh --logs backend  # follow one process
+./dev.sh --stop
 ```
 
-`dev.sh` installs the frontend dependencies on first run, then launches both
-services:
+`dev.sh` creates the virtualenv and installs dependencies on first run, then
+launches both services in a detached tmux session:
 
 - Backend (FastAPI) → http://localhost:8001
 - Frontend (Vite)   → http://localhost:5174
 
+Detached means the stack survives closing the terminal — ssh back in later and
+`--attach` to debug. `--foreground` runs it here instead, and `./dev.sh --help`
+lists every flag. The same interface works in every STAR project; ports are
+overridable via `PID_DESIGNER_API_PORT` and `PID_DESIGNER_UI_PORT`.
+
 Open the frontend URL and start editing. Changes autosave to
 `diagrams/pid_main.json`; use the in-app controls to checkpoint (commit + push)
 or pull the latest version.
+
+Checkpointing is a dev-machine feature: it commits to a branch of this repo and
+pushes it, which needs a clone and a push credential. The deployed instance at
+`pid-designer.starberkeley.org` autosaves to a volume and returns 503 from the
+checkpoint/history endpoints — see [`deploy/README.md`](../deploy/README.md).
 
 To run a piece on its own:
 

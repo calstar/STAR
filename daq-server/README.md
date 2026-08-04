@@ -133,12 +133,25 @@ cd diablo_server/frontend && npm install
 Start the full pipeline (Elodin DB + DAQ bridge + backend + frontend + services):
 
 ```bash
-gui         # starts deploy/startup/start_tmux_dev.sh in a tmux session
-stopgui     # kills the tmux session
-guitest     # same as gui but with USE_SIM=1 (board simulator instead of hardware)
+./dev.sh --sim           # simulated boards — no test stand needed
+./dev.sh                 # real hardware
+./dev.sh --attach        # watch it; Ctrl-B then arrows to switch panes, D to detach
+./dev.sh --status        # up? which ports are listening?
+./dev.sh --logs backend  # follow one process
+./dev.sh --stop
 ```
 
 Navigate to **http://localhost:3000** for the web GUI.
+
+The session starts detached, so the stack keeps running after you close the
+terminal — ssh back in later and `--attach` to debug. `./dev.sh` is the same
+interface every STAR project has; it is a front door onto
+`deploy/startup/start_tmux_dev.sh`, which still does the actual work of
+sequencing the eleven processes and is unchanged.
+
+The `daq-gui` / `daq-guitest` / `daq-stopgui` aliases from
+[`tools/aliases.sh`](tools/aliases.sh) still work — they now call `./dev.sh
+--attach`, `--sim-attach` and `--stop`. `daq-status` and `daq-logs` are new.
 
 ---
 
