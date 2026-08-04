@@ -2,9 +2,17 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Env, not CLI flags: pip installs an sdist's build dependencies by spawning a
+# fresh subprocess that inherits no command-line options, so --timeout/--retries
+# there would silently fall back to the stock 15s. Env vars reach it.
+ENV PIP_RETRIES=10 \
+    PIP_TIMEOUT=120 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_INPUT=1
+
 COPY requirements.txt .
-# Retries/timeout: a single slow PyPI read should not fail a deploy build.
-RUN pip install --no-cache-dir --retries 5 --timeout 120 -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 
 COPY . .
 

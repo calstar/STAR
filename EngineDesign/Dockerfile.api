@@ -4,6 +4,18 @@
 FROM python:3.12-slim
 WORKDIR /app
 
+# Set as environment, not as `pip install --retries ... --timeout ...` flags.
+# Some dependencies here (simplekml, via rocketpy) ship only an sdist, so pip
+# builds them in an isolated environment -- and it installs that environment's
+# build deps by spawning a *fresh pip subprocess* which inherits none of the
+# parent's command-line flags. That subprocess was falling back to the stock
+# 15s timeout and dying on a slow setuptools download. Env vars reach it.
+ENV PIP_RETRIES=10 \
+    PIP_TIMEOUT=120 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_INPUT=1
+
 # requirements-base.txt, not requirements.txt: the latter adds rocketcea, which
 # has no wheel (a 69 MB Fortran sdist) and needs gfortran to compile -- neither
 # of which this image has any use for. rocketcea is imported lazily and only to
@@ -11,11 +23,17 @@ WORKDIR /app
 # Same reasoning as CI. See requirements-base.txt.
 COPY EngineDesign/requirements-base.txt .
 
-# The cache mount matters more than --retries here: pip retries connections,
-# not a download that breaks mid-stream, so without it every failed attempt at
-# a large package starts again from zero.
+# The cache mount matters more than retries: pip retries connections, not a
+# download that breaks mid-stream, so without it every failed attempt at a large
+# package starts again from zero. Both layers share the mount.
+#
+# setuptools and wheel go in first so the sdist builds below find them already
+# present and cached, rather than each fetching its own copy over the network.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --retries 5 --timeout 120 -r requirements-base.txt
+    pip install --upgrade pip setuptools wheel
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements-base.txt
 
 # Shared JWT helper, imported by the backend's auth middleware
 COPY auth/shared_auth.py /auth/shared_auth.py
