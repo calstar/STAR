@@ -54,7 +54,10 @@ services:
     profiles: ["tunnel"]
     command: tunnel --no-autoupdate run
     environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env}
+      # Same reasoning as JWT_SECRET below: a required-variable guard would
+      # break every other compose command. cloudflared exits with a clear
+      # error of its own when the token is empty.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     depends_on:
       - caddy
 
@@ -85,7 +88,12 @@ services:
       # Caddy is the enforcement point. This is defence in depth for the case
       # where a site block is added without `import protected`.
       AUTH_ENABLED: "true"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      # Not ${JWT_SECRET:?...}: Compose interpolates the whole file before it
+      # does anything, so a required-variable guard here fails `build` and
+      # `config` too -- you would need the production secret just to compile an
+      # image. The backends refuse to start with AUTH_ENABLED=true and an empty
+      # secret, which catches the same mistake at the point it matters.
+      JWT_SECRET: ${JWT_SECRET:-}
 
   engine-design-frontend:
     build:
@@ -101,7 +109,7 @@ services:
     restart: unless-stopped
     environment:
       AUTH_ENABLED: "true"
-      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      JWT_SECRET: ${JWT_SECRET:-}
     volumes:
       # Diagram autosave. Git-backed checkpointing needs the STAR repo and a
       # push credential, which this image deliberately does not carry -- those

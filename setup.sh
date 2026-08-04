@@ -209,6 +209,11 @@ else
   install_star_aliases "$REPO_ROOT"
 fi
 
+# docker compose interpolates the whole file up front, so without these even
+# `docker compose build` fails. Cheap to create, never overwritten.
+step "Shared: deployment env files"
+bootstrap_env_files "$REPO_ROOT"
+
 # Windows-symlink foot-gun sanity: if the DAQv2-Comms symlink got turned into
 # a text file by a Windows clone, every project's build later will fail with
 # confusing errors. Detect it once, upfront.

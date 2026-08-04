@@ -104,6 +104,16 @@ if _AUTH_ENABLED:
         _sys.path.insert(0, str(_auth_dir))
     from shared_auth import verify_session  # type: ignore[import]
 
+    # Fail now, loudly. With an empty secret verify_session() rejects every
+    # token, so the app would come up healthy and 401 every request -- which
+    # reads as "login is broken", not "the secret is missing".
+    if not os.environ.get("JWT_SECRET"):
+        raise RuntimeError(
+            "AUTH_ENABLED=true but JWT_SECRET is empty. Set it in the root .env "
+            "(it must match the value in auth/.env), or unset AUTH_ENABLED for "
+            "local development."
+        )
+
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
         # Always allow health checks through so Caddy probes don't break.
