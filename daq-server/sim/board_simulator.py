@@ -78,6 +78,7 @@ class SimulatedBoard:
         sim_pt_targets=None,
         skip_startup=False,
         timing=None,
+        sensor_hz=None,
     ):
         self.name = name
         self.board_index = board_index
@@ -86,6 +87,10 @@ class SimulatedBoard:
         self.target_port = target_port
         self.low_noise = low_noise
         self.sim_pt_targets = sim_pt_targets or {}
+        # None → per-type production defaults (see _run). A value overrides every
+        # board type uniformly, for CI where the point is "did anything obviously
+        # break", not sustaining hardware rates.
+        self.sensor_hz = sensor_hz
 
         # ── Board clock model (faithful to firmware millis(): uptime-relative) ──
         self.timing = timing or TimingPathology()
@@ -215,8 +220,16 @@ class SimulatedBoard:
         last_sensor_data = 0
 
         heartbeat_interval = 1.0  # 1 Hz
-        sensor_interval = 0.02 if self.board_type_str == "ENCODER" else 0.1  # 50 Hz for ENCODER, 10 Hz default
-        actuator_current_interval = 0.1  # Explicitly keep actuator current-sense packets at 10 Hz
+        if self.sensor_hz:
+            # Uniform override (--sensor-hz): every board type, encoder included.
+            # Encoder is normally 5x the others AND exempt from GUI envelope
+            # downsampling, so it dominates pipeline load — flattening it is the
+            # single biggest reduction available.
+            sensor_interval = 1.0 / self.sensor_hz
+            actuator_current_interval = sensor_interval
+        else:
+            sensor_interval = 0.02 if self.board_type_str == "ENCODER" else 0.1  # 50 Hz for ENCODER, 10 Hz default
+            actuator_current_interval = 0.1  # Explicitly keep actuator current-sense packets at 10 Hz
 
         while self.running:
             now = time.time()
@@ -479,6 +492,17 @@ def main():
         action="store_true",
         help="Skip SETUP/SELF_TEST lifecycle, go directly to ACTIVE",
     )
+    parser.add_argument(
+        "--sensor-hz",
+        type=float,
+        default=None,
+        metavar="HZ",
+        help="Uniform sensor scan rate for ALL board types, overriding the per-type "
+             "defaults (10 Hz, 50 Hz encoder). For CI, where the goal is verifying "
+             "nothing obviously broke rather than sustaining hardware rates. Keep "
+             "above the GUI envelope budget (points_per_second) or downsampling "
+             "becomes a pass-through and stops being tested.",
+    )
     # ── Timing pathologies (exercise the DAQ bridge's clock sync; default off) ──
     parser.add_argument(
         "--chunks-per-packet",
@@ -570,6 +594,7 @@ def main():
             board_index=active_count,
             sim_pt_targets=sim_pt_targets,
             skip_startup=args.skip_startup,
+            sensor_hz=args.sensor_hz,
             timing=TimingPathology(
                 chunks_per_packet=args.chunks_per_packet,
                 net_jitter_ms=args.net_jitter_ms,

@@ -600,8 +600,21 @@ echo "🎭 Starting fake data generator..."
 # Override with INTEGRATION_TIME_FLAGS (set to "" for a clean run — required
 # when config [time_sync] mode = "arrival", which does not de-flatten chunks).
 INTEGRATION_TIME_FLAGS="${INTEGRATION_TIME_FLAGS-"--chunks-per-packet 3 --net-jitter-ms 20 --clock-drift-ppm 200 --clock-offset-ms -3600000 --reboot-after 25 --start-near-wrap"}"
+#
+# Sensor rate: uniform 5 Hz rather than the production 10 Hz / 50 Hz-encoder.
+# This test verifies that the pipeline is correct, not that it sustains hardware
+# rates, and the encoder alone was ~39% of all UDP traffic (5x rate, and exempt
+# from GUI envelope downsampling) — flattening it cuts total load ~60%. CI
+# runners have 4 cores for an 11-process stack, and the resulting starvation was
+# the dominant source of false failures here.
+#
+# Do not drop below points_per_second (pinned to 4 above): at or under the
+# envelope budget the decimator degrades to a pass-through and the cap/floor
+# assertions in ws_data_flow_test stop testing anything. 5 Hz keeps real
+# 5 Hz -> <=4/s compression while staying clear of the liveness floor.
+INTEGRATION_SENSOR_HZ="${INTEGRATION_SENSOR_HZ:-5}"
 # shellcheck disable=SC2086  # intentional word splitting of the flags
-"$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --skip-startup --stats-file "$SIM_STATS_FILE" $INTEGRATION_TIME_FLAGS > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
+"$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --skip-startup --sensor-hz "$INTEGRATION_SENSOR_HZ" --stats-file "$SIM_STATS_FILE" $INTEGRATION_TIME_FLAGS > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
 SIM_PID=$!
 PIDS+=($SIM_PID)
 sleep 2

@@ -3,6 +3,10 @@ name: DAQ Server CI/CD
 # Quoted `on` — YAML 1.1 treats bare `on` as boolean true, which breaks workflow triggers in some parsers.
 'on':
   push:
+    # main only. Without a branch filter, pushing to a branch with an open PR
+    # fires push AND pull_request, running this whole workflow twice on the same
+    # commit — doubling both runner cost and the odds of a flaky red check.
+    branches: [main]
     paths:
       - 'daq-server/**'
       - '.github/workflows/daq-server-ci.yml'
@@ -11,6 +15,12 @@ name: DAQ Server CI/CD
       - 'daq-server/**'
       - '.github/workflows/daq-server-ci.yml'
   workflow_dispatch:
+
+# Supersede in-flight runs for the same ref: this workflow does a full C++ build
+# plus an 11-process stack plus Chromium, so stacking pushes is expensive.
+concurrency:
+  group: daq-server-${{ github.ref }}
+  cancel-in-progress: true
 
 defaults:
   run:

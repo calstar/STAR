@@ -54,6 +54,12 @@ export TMUX_ATTACH=0
 # distinguish "Elodin delivered nothing" (entityUpdates=0) from "the GUI stream
 # downsampler dropped everything" (entityUpdates>0, broadcasts=0).
 export THIN_STATS_LOG=1
+# Uniform 5 Hz instead of production 10 Hz / 50 Hz-encoder. These specs check that
+# the GUI renders live data, not that the stack sustains hardware rates, and the
+# encoder alone was ~39% of UDP traffic (5x rate, exempt from envelope
+# downsampling). Cuts total pipeline load ~60% so an 11-process stack plus
+# Chromium fits in a 4-core runner. Override with SIM_SENSOR_HZ.
+export SIM_SENSOR_HZ="${SIM_SENSOR_HZ:-5}"
 SKIP_CPP_BUILD=1 bash "$REPO_ROOT/deploy/startup/start_tmux_dev.sh"
 
 echo ""
@@ -125,18 +131,26 @@ dump_stack_logs() {
   done
 }
 
-# Hard gate on actual board sim data (any boardScanRateHz > 0). If the stack never
-# ingests a sample the content specs produce hundreds of "---" placeholder failures
-# that bury the real cause, so fail fast here with the stack logs instead.
-echo "Waiting for board sim data (boardScanRateHz > 0) ..."
+# Hard gate on EVERY board group reporting, not merely one. The content specs
+# assert on all 8 boards and every channel, so starting them while only some
+# groups are live produces hundreds of "---" placeholder failures that bury the
+# cause — observed repeatedly, with four groups flat at 0 while three flowed.
+# Waiting for the whole stack, then asserting, makes the run sequential rather
+# than overlapping with startup.
+echo "Waiting for ALL board groups to report (boardScanRateHz) ..."
 SIM_DATA_OK=0
 for _ in $(seq 1 "${SIM_DATA_WAIT_S:-90}"); do
   if curl -sf "$BACKEND_CHECK" 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 rates = d.get("boardScanRateHz") or {}
-sys.exit(0 if any((v or 0) > 0 for v in rates.values()) else 1)
-' 2>/dev/null; then
+expected = ("pt1", "pt2", "tc", "rtd", "lc", "act", "enc")
+missing = [g for g in expected if not (rates.get(g) or 0) > 0]
+if missing:
+    sys.stderr.write("still zero: " + ",".join(missing) + "\n")
+    sys.exit(1)
+sys.exit(0)
+' 2>/tmp/e2e_gate_missing.txt; then
     SIM_DATA_OK=1
     echo "  OK"
     break
@@ -147,9 +161,12 @@ done
 
 if [ "$SIM_DATA_OK" != "1" ]; then
   echo ""
-  echo "❌ No board sim data after ${SIM_DATA_WAIT_S:-90}s — the stack never ingested a" >&2
-  echo "   sample, so the content specs cannot pass. Skipping Playwright; see the" >&2
-  echo "   ingest counters and pane logs below for which stage stalled." >&2
+  echo "❌ Not every board group reported within ${SIM_DATA_WAIT_S:-90}s, so the content" >&2
+  echo "   specs cannot pass. Skipping Playwright." >&2
+  if [ -s /tmp/e2e_gate_missing.txt ]; then
+    echo "   Groups never seen: $(tail -1 /tmp/e2e_gate_missing.txt)" >&2
+  fi
+  echo "   See the ingest counters and pane logs below for which stage stalled." >&2
   dump_stack_logs
   PW_EXIT=1
 else

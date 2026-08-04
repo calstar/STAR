@@ -221,9 +221,17 @@ fi
 # Board simulator (pane 0); set USE_SIM=1 to run (default off for real hardware)
 # Waits for the backend WS port so the Elodin→backend pipeline is up before traffic.
 # Full firmware lifecycle: SETUP → SENSOR_CONFIG → SELF_TEST → ACTIVE (no --skip-startup).
+#
+# SIM_SENSOR_HZ overrides every board's scan rate (production: 10 Hz, encoder
+# 50 Hz). Unset by default so interactive dev sees realistic traffic; the E2E
+# harness sets it to keep CI runners from starving. Empty → flag omitted entirely.
+SIM_RATE_FLAG=""
+if [ -n "${SIM_SENSOR_HZ:-}" ]; then
+  SIM_RATE_FLAG="--sensor-hz ${SIM_SENSOR_HZ}"
+fi
 if [ "${USE_SIM:-0}" = "1" ]; then
   CMD_LOG_SIM="/tmp/gui_logs/sim.log"
-  CMD_SIM='printf "\n  ══ BOARD SIMULATOR — UDP → :5006 (All Boards) ══\n\n" && '"$WAIT_FOR_BACKEND"' && cd '"$PROJECT"' && exec '"$PYTHON_BIN"' sim/board_simulator.py --config '"$CONFIG_FILE"' --target 127.0.0.1 --port 5006 2>&1 | tee '"$CMD_LOG_SIM"
+  CMD_SIM='printf "\n  ══ BOARD SIMULATOR — UDP → :5006 (All Boards) ══\n\n" && '"$WAIT_FOR_BACKEND"' && cd '"$PROJECT"' && exec '"$PYTHON_BIN"' sim/board_simulator.py --config '"$CONFIG_FILE"' --target 127.0.0.1 --port 5006 '"$SIM_RATE_FLAG"' 2>&1 | tee '"$CMD_LOG_SIM"
 else
   CMD_SIM='printf "\n  ══ BOARD SIMULATOR — DISABLED (USE_SIM=1 to enable) ══\n\n" && sleep infinity'
 fi
@@ -357,7 +365,7 @@ launch_background() {
       echo -n "."
     done
     echo " ready"
-    nohup bash -c "cd '$PROJECT' && exec '$PYTHON_BIN' sim/board_simulator.py --config '$CONFIG_FILE' --target 127.0.0.1 --port 5006" >> "$LOGDIR/sim.log" 2>&1 &
+    nohup bash -c "cd '$PROJECT' && exec '$PYTHON_BIN' sim/board_simulator.py --config '$CONFIG_FILE' --target 127.0.0.1 --port 5006 $SIM_RATE_FLAG" >> "$LOGDIR/sim.log" 2>&1 &
     echo "    Simulator:    PID $! → $LOGDIR/sim.log"
   fi
 
