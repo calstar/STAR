@@ -388,7 +388,10 @@ setInterval(() => {
     console.log(`[ThinServer] Heartbeat arrival rate: ${entries}`);
   }
   hbDiagCount.clear();
-  if (THIN_STATS_LOG && stats.relayEntityUpdatesReceived > 0) {
+  // Logged unconditionally when enabled — entityUpdates=0 is the single most
+  // useful reading there is (Elodin delivered nothing vs. downsampler dropped
+  // everything), so it must not be suppressed by a `> 0` guard.
+  if (THIN_STATS_LOG) {
     console.log(`[ThinServer] Stats: entityUpdates=${stats.relayEntityUpdatesReceived} broadcasts=${stats.sensorUpdatesBroadcast} wsClients=${wss.clients.size}`);
   }
 }, 5000);

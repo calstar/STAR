@@ -50,6 +50,10 @@ echo "════════════════════════�
 echo "  Starting guitest stack (USE_SIM=1, detached tmux — no attach)"
 echo "═══════════════════════════════════════════════════════════════"
 export TMUX_ATTACH=0
+# Record the backend's periodic ingest counters. Without this a failed run cannot
+# distinguish "Elodin delivered nothing" (entityUpdates=0) from "the GUI stream
+# downsampler dropped everything" (entityUpdates>0, broadcasts=0).
+export THIN_STATS_LOG=1
 SKIP_CPP_BUILD=1 bash "$REPO_ROOT/deploy/startup/start_tmux_dev.sh"
 
 echo ""
@@ -83,12 +87,50 @@ if ! curl -sf "${PLAYWRIGHT_BASE_URL}/sensor-info" >/dev/null 2>&1; then
   exit 1
 fi
 
-# Bounded wait for actual board sim data (any boardScanRateHz > 0) so a slow
-# CI stack start doesn't fail the content specs. Warn-only: if the sim is
-# genuinely dead the specs fail anyway and the failure path dumps pane logs.
+# Dump each stack pane's log tail while the stack is still up — in CI these files
+# vanish with the runner, and "all boards DISCONNECTED" class failures can only be
+# diagnosed from the sim/bridge/backend panes.
+dump_stack_logs() {
+  echo ""
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "  Backend ingest counters ([ThinServer] Stats, THIN_STATS_LOG=1)"
+  echo "═══════════════════════════════════════════════════════════════"
+  # Pulled out separately because backend.log's tail fills with WS conn_open/
+  # conn_close noise, burying these. entityUpdates=0 means Elodin delivered
+  # nothing; entityUpdates>0 with broadcasts=0 means the downsampler ate it.
+  if [ -f /tmp/gui_logs/backend.log ]; then
+    # Command substitution rather than `grep | tail || echo`: that form only
+    # reports "no matches" because pipefail is set, and would silently print
+    # nothing if pipefail were ever dropped from the set -e line above.
+    local stats
+    stats="$(grep -F '[ThinServer] Stats:' /tmp/gui_logs/backend.log | tail -10 || true)"
+    if [ -n "$stats" ]; then
+      echo "$stats"
+    else
+      echo "  (no Stats lines — backend never reached its 5s tick, or THIN_STATS_LOG was unset)"
+    fi
+  else
+    echo "  (no backend.log)"
+  fi
+
+  echo ""
+  echo "═══════════════════════════════════════════════════════════════"
+  echo "  Stack logs (/tmp/gui_logs/*.log — last 40 lines each)"
+  echo "═══════════════════════════════════════════════════════════════"
+  for log in /tmp/gui_logs/*.log; do
+    [ -f "$log" ] || continue
+    echo ""
+    echo "── $log ──"
+    tail -40 "$log" || true
+  done
+}
+
+# Hard gate on actual board sim data (any boardScanRateHz > 0). If the stack never
+# ingests a sample the content specs produce hundreds of "---" placeholder failures
+# that bury the real cause, so fail fast here with the stack logs instead.
 echo "Waiting for board sim data (boardScanRateHz > 0) ..."
 SIM_DATA_OK=0
-for _ in $(seq 1 45); do
+for _ in $(seq 1 "${SIM_DATA_WAIT_S:-90}"); do
   if curl -sf "$BACKEND_CHECK" 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
@@ -102,34 +144,27 @@ sys.exit(0 if any((v or 0) > 0 for v in rates.values()) else 1)
   sleep 1
   echo -n "."
 done
+
 if [ "$SIM_DATA_OK" != "1" ]; then
   echo ""
-  echo "⚠️  No board sim data after 45s — sim or bridge likely dead; content specs will fail." >&2
-fi
-
-export PLAYWRIGHT_BASE_URL
-set +e
-(cd "$FRONTEND" && npx playwright test e2e)
-PW_EXIT=$?
-set -e
-
-if [ "$PW_EXIT" -eq 0 ]; then
-  echo "Playwright E2E: passed"
+  echo "❌ No board sim data after ${SIM_DATA_WAIT_S:-90}s — the stack never ingested a" >&2
+  echo "   sample, so the content specs cannot pass. Skipping Playwright; see the" >&2
+  echo "   ingest counters and pane logs below for which stage stalled." >&2
+  dump_stack_logs
+  PW_EXIT=1
 else
-  echo "Playwright E2E: failed"
-  # Dump each stack pane's log tail while the stack is still up — in CI these
-  # files vanish with the runner, and "all boards DISCONNECTED" class failures
-  # can only be diagnosed from the sim/bridge/backend panes.
-  echo ""
-  echo "═══════════════════════════════════════════════════════════════"
-  echo "  Stack logs (/tmp/gui_logs/*.log — last 40 lines each)"
-  echo "═══════════════════════════════════════════════════════════════"
-  for log in /tmp/gui_logs/*.log; do
-    [ -f "$log" ] || continue
-    echo ""
-    echo "── $log ──"
-    tail -40 "$log" || true
-  done
+  export PLAYWRIGHT_BASE_URL
+  set +e
+  (cd "$FRONTEND" && npx playwright test e2e)
+  PW_EXIT=$?
+  set -e
+
+  if [ "$PW_EXIT" -eq 0 ]; then
+    echo "Playwright E2E: passed"
+  else
+    echo "Playwright E2E: failed"
+    dump_stack_logs
+  fi
 fi
 
 if [ "${SKIP_STOP_GUI:-0}" != "1" ]; then
