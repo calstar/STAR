@@ -108,6 +108,19 @@ you need no test stand.
 **No login appears in dev.** Auth is enforced by Caddy in production only
 (see [Deployment](#deployment)), and `dev.sh` never runs Caddy.
 
+### Aliases
+
+Optional, and they save the `cd`:
+
+```bash
+echo "source ~/STAR/scripts/aliases.sh" >> ~/.bashrc   # adjust to your clone path
+```
+
+Every project gets the same verbs — `engine-dev`, `pid-attach`, `daq-logs`,
+`landing-stop`, `auth-status` — plus `star-status` and `star-stop` across all
+of them at once, and the daq-server build/test shortcuts. Run **`star-help`**
+for the full list.
+
 To confirm a clean install works — or to reproduce a broken setup in isolation
 — use the setup-test harness (`bash scripts/setup-test/run-macos.sh
 pid-designer`); see [`scripts/setup-test/README.md`](scripts/setup-test/README.md).

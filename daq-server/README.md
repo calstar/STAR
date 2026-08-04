@@ -149,9 +149,12 @@ interface every STAR project has; it is a front door onto
 `deploy/startup/start_tmux_dev.sh`, which still does the actual work of
 sequencing the eleven processes and is unchanged.
 
-The `daq-gui` / `daq-guitest` / `daq-stopgui` aliases from
-[`tools/aliases.sh`](tools/aliases.sh) still work — they now call `./dev.sh
---attach`, `--sim-attach` and `--stop`. `daq-status` and `daq-logs` are new.
+The `daq-gui` / `daq-guitest` / `daq-stopgui` aliases still work — they now call
+`./dev.sh --attach`, `--sim-attach` and `--stop`, and `daq-status`, `daq-logs`
+and `daq-sim` are new. They moved to the repo-root
+[`scripts/aliases.sh`](../scripts/aliases.sh), which covers every project;
+`tools/aliases.sh` is a shim so an existing `~/.bashrc` line keeps working. Run
+`star-help` for the list.
 
 ---
 
