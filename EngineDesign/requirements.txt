@@ -15,3 +15,6 @@ CoolProp
 fastapi
 uvicorn[standard]
 python-multipart
+
+# Verifying the shared session cookie (auth/shared_auth.py) when AUTH_ENABLED=true.
+pyjwt>=2.8

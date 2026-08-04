@@ -29,14 +29,42 @@ DIAGRAM_BRANCH = "pid-diagrams"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DIAGRAM_PATH = REPO_ROOT / "diagrams" / "pid_main.json"
 
-def _git_root() -> Path:
-    r = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=REPO_ROOT,
-                       capture_output=True, text=True)
+def _git_root() -> Path | None:
+    """Repo root containing the diagram, or None when there isn't one.
+
+    None is the normal case in the production container: the image ships the
+    backend sources, not a clone. Editing and autosave work from the filesystem
+    regardless; only the checkpoint/history endpoints need git, and they report
+    GIT_UNAVAILABLE rather than failing at import time.
+    """
+    try:
+        r = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=REPO_ROOT,
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None  # git not installed
+    if r.returncode != 0 or not r.stdout.strip():
+        return None  # not inside a work tree
     return Path(r.stdout.strip())
+
 
 GIT_ROOT = _git_root()
 # Path used in `git show <hash>:<path>` — must be relative to the git repo root.
-GIT_DIAGRAM_PATH = str(DIAGRAM_PATH.relative_to(GIT_ROOT))
+try:
+    GIT_DIAGRAM_PATH = str(DIAGRAM_PATH.relative_to(GIT_ROOT)) if GIT_ROOT else None
+except ValueError:
+    # Repo found, but the diagram lives outside it (e.g. a mounted volume).
+    GIT_DIAGRAM_PATH = None
+
+GIT_UNAVAILABLE = (
+    "Diagram version control needs the STAR git repository. This deployment "
+    "serves the designer without it, so checkpoints and history are disabled; "
+    "edits are still saved."
+)
+
+
+def _require_git() -> None:
+    if GIT_DIAGRAM_PATH is None:
+        raise HTTPException(status_code=503, detail=GIT_UNAVAILABLE)
 
 
 def _run_git(*args: str, env: dict | None = None) -> str:
@@ -126,6 +154,7 @@ async def pull_latest():
     Only the diagram file is materialized — the developer's working tree and
     current branch are untouched (no `git pull`/checkout).
     """
+    _require_git()
     _fetch_diagram_branch()
     ref = _diagram_ref()
     if not ref:
@@ -152,7 +181,9 @@ async def checkpoint(payload: CheckpointPayload):
     touched. The new commit is pushed to origin/<DIAGRAM_BRANCH>; the local
     branch ref is updated to match.
     """
+    # Save first: the edit should survive even where checkpointing cannot run.
     _write_diagram({"nodes": payload.nodes, "edges": payload.edges})
+    _require_git()
 
     commit_message = payload.title.strip()
     if not commit_message:
@@ -205,6 +236,7 @@ async def checkpoint(payload: CheckpointPayload):
 @router.get("/history")
 async def get_history():
     """Return the last 10 commits that touched diagrams/pid_main.json."""
+    _require_git()
     _fetch_diagram_branch()
     ref = _diagram_ref()
     if not ref:
@@ -231,6 +263,7 @@ async def get_history():
 @router.get("/version/{commit_hash}")
 async def get_version(commit_hash: str):
     """Return the diagram snapshot at a specific commit."""
+    _require_git()
     try:
         content = _run_git("show", f"{commit_hash}:{GIT_DIAGRAM_PATH}")
     except RuntimeError as e:

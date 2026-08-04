@@ -3,7 +3,8 @@ FROM python:3.12-slim
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Retries/timeout: a single slow PyPI read should not fail a deploy build.
+RUN pip install --no-cache-dir --retries 5 --timeout 120 -r requirements.txt
 
 COPY . .
 

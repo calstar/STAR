@@ -7,3 +7,6 @@
 fastapi>=0.128
 uvicorn[standard]>=0.34
 pydantic>=2.12
+
+# Verifying the shared session cookie (auth/shared_auth.py) when AUTH_ENABLED=true.
+pyjwt>=2.8

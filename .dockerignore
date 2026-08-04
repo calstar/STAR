@@ -1,0 +1,41 @@
+# Applies to builds that use the repo root as their context -- currently the two
+# FastAPI images, which need auth/shared_auth.py alongside their own sources.
+# Without this the context would include every sibling project and their
+# node_modules, which is slow and bloats the layer cache.
+
+.git
+.github
+.claude
+
+# Other projects: not part of any root-context image.
+daq-server
+firmware
+recovery-calculator
+landing
+lib
+docs
+scripts/setup-test
+
+# Dependencies and build output
+**/node_modules
+**/dist
+**/.next
+**/.venv
+venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.pio
+**/build
+
+# Secrets — must never reach an image layer
+.env
+*.env
+!*.env.example
+**/.env
+
+# Local noise
+**/.DS_Store
+**/*.log
+EngineDesign/output
+EngineDesign/archive

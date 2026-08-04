@@ -77,6 +77,24 @@ pid-designer`); see [`scripts/setup-test/README.md`](scripts/setup-test/README.m
 
 ---
 
+## Deployment
+
+The tools are served together at `*.starberkeley.org`, behind a single Google
+login restricted to `@berkeley.edu`. Caddy checks every request with the auth
+service before forwarding it, so the apps carry no auth code of their own —
+and local development, which never runs Caddy, never sees a login screen.
+
+```bash
+cp .env.example .env && cp auth/.env.example auth/.env   # fill both in
+docker compose up -d --build
+```
+
+See **[`deploy/README.md`](deploy/README.md)** for the full picture: how the
+auth handoff works, the Let's Encrypt and Cloudflare Tunnel options, why the
+DAQ server runs natively rather than in a container, and how to add an app.
+
+---
+
 ## Repository conventions
 
 **Documentation.** Every subproject directory has a `README.md` as its front

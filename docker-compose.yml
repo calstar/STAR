@@ -1,0 +1,133 @@
+# STAR Internal Tools — production stack.
+#
+# Lives at the repo root on purpose: Compose resolves relative paths against the
+# directory holding this file, so from deploy/ every `./auth`, `./landing` etc.
+# would have pointed at deploy/auth, deploy/landing.
+#
+# Usage:
+#   cp .env.example .env         # then fill it in
+#   cp auth/.env.example auth/.env
+#   docker compose up -d --build
+#
+# Behind a Cloudflare Tunnel instead of Let's Encrypt:
+#   SCHEME=http docker compose --profile tunnel up -d --build
+#   (and drop the published 80/443 below -- nothing needs to reach Caddy
+#    directly once cloudflared is the only ingress)
+
+services:
+  # ── Reverse proxy + TLS + auth gate ──────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SCHEME: ${SCHEME:-https}
+      BASE_DOMAIN: ${BASE_DOMAIN:-starberkeley.org}
+      ACME_EMAIL: ${ACME_EMAIL:-infra@starberkeley.org}
+      # DAQ is not a container -- see the daq-server block in the Caddyfile.
+      DAQ_BACKEND: ${DAQ_BACKEND:-host.docker.internal:8081}
+      DAQ_GUI: ${DAQ_GUI:-host.docker.internal:3000}
+    extra_hosts:
+      # Lets Caddy reach the DAQ processes running natively on the host.
+      # Docker Desktop provides this name already; on Linux it must be mapped.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # TLS certificates (persisted across restarts)
+      - caddy_config:/config
+    depends_on:
+      - auth
+      - engine-design-api
+      - engine-design-frontend
+      - pid-designer-api
+      - pid-designer-frontend
+      - landing
+
+  # ── Cloudflare Tunnel (optional ingress) ─────────────────────────────────
+  # Opt in with `--profile tunnel`. Cloudflare terminates TLS at the edge, so
+  # set SCHEME=http to stop Caddy from trying to issue its own certificates.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env}
+    depends_on:
+      - caddy
+
+  # ── Auth service ─────────────────────────────────────────────────────────
+  auth:
+    build:
+      context: ./auth
+    restart: unless-stopped
+    env_file:
+      # Optional so the stack can also be driven from the real environment
+      # (systemd EnvironmentFile, a secret manager) instead of a file in the
+      # repo. If neither supplies the values, auth fails loudly at startup.
+      - path: ./auth/.env # copy from auth/.env.example and fill in
+        required: false
+    environment:
+      BASE_DOMAIN: ${BASE_DOMAIN:-starberkeley.org}
+      AUTH_PUBLIC_URL: ${AUTH_PUBLIC_URL:-https://auth.starberkeley.org}
+
+  # ── Engine Design ────────────────────────────────────────────────────────
+  # Built from the repo root so the image can include auth/shared_auth.py;
+  # a Dockerfile cannot COPY from outside its own build context.
+  engine-design-api:
+    build:
+      context: .
+      dockerfile: EngineDesign/Dockerfile.api
+    restart: unless-stopped
+    environment:
+      # Caddy is the enforcement point. This is defence in depth for the case
+      # where a site block is added without `import protected`.
+      AUTH_ENABLED: "true"
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+
+  engine-design-frontend:
+    build:
+      context: ./EngineDesign/frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
+  # ── P&ID Designer ────────────────────────────────────────────────────────
+  pid-designer-api:
+    build:
+      context: .
+      dockerfile: pid-designer/Dockerfile.api
+    restart: unless-stopped
+    environment:
+      AUTH_ENABLED: "true"
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+    volumes:
+      # Diagram autosave. Git-backed checkpointing needs the STAR repo and a
+      # push credential, which this image deliberately does not carry -- those
+      # endpoints return 503 here and the feature stays a dev-machine one.
+      - pid_diagrams:/app/diagrams
+
+  pid-designer-frontend:
+    build:
+      context: ./pid-designer/frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
+  # ── DAQ Server ───────────────────────────────────────────────────────────
+  # Intentionally absent. The C++ bridge, elodin-db and the Node backend need
+  # the test-stand hardware, so they run natively under systemd -- see
+  # daq-server/deploy/systemd/. Caddy proxies to them on the host; the routes
+  # are in deploy/Caddyfile.
+
+  # ── Landing page ─────────────────────────────────────────────────────────
+  landing:
+    build:
+      context: ./landing
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pid_diagrams:
