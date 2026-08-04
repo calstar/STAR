@@ -27,6 +27,14 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.environ["FLASK_SECRET_KEY"]
 
+# Flask's own session cookie is named "session" by default -- the same name we
+# use for the JWT. Authlib keeps the OAuth state in the Flask session and pops
+# it in /callback, which makes Flask emit a *second* Set-Cookie for "session"
+# after ours (an expiry, since the session is then empty). The browser applies
+# the last header, so the JWT was being deleted the instant it was set and every
+# login bounced straight back to /login. Give Flask a different cookie name.
+app.config["SESSION_COOKIE_NAME"] = "oauth_state"
+
 JWT_SECRET = os.environ["JWT_SECRET"]
 COOKIE_DOMAIN = os.environ.get("COOKIE_DOMAIN", ".starberkeley.org")
 ALLOWED_DOMAIN = os.environ.get("ALLOWED_EMAIL_DOMAIN", "berkeley.edu")
