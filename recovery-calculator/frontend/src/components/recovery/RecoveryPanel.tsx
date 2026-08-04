@@ -14,8 +14,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Result, UiConfig } from '../../types/schema'
-import { getClimatology, simulate } from '../../api/client'
-import type { LapseTable, PadNormals } from './InputForms'
+import { simulate } from '../../api/client'
+import { usePadClimatology } from '../../lib/climatology'
 import { defaultUiConfig, physicsKey, toWireConfig } from '../../lib/serialise'
 import { Badge, Button, Card } from '../ui'
 import { InputColumn } from './InputForms'
@@ -31,52 +31,10 @@ export function RecoveryPanel({ ui, onChange: setUi }: {
   const [error, setError] = useState<string | null>(null)
   const [live, setLive] = useState(true)
 
-  /**
-   * Measured monthly lapse rates for the Site form's profile dropdown.
-   *
-   * The pooled Edwards + China Lake dataset, which is the default in
-   * site-climatology and the only one inside 50 km of the pad. Same source the
-   * Atmospheric Data tab plots, so the number offered here and the curve shown
-   * there cannot disagree.
-   */
-  const [lapseByMonth, setLapseByMonth] = useState<LapseTable>(null)
-
-  /** Monthly-normal pad state per station, for the 'Monthly normal' pressure
-   *  source. Same bundle as the lapse table above and the same month picker
-   *  drives both, so the two cannot come from different seasons. */
-  const [padNormals, setPadNormals] = useState<PadNormals>(null)
-
-  useEffect(() => {
-    let live_ = true
-    getClimatology().then((res) => {
-      if (!live_ || !res.data) return
-      const rows = res.data.upper.lapse['edw-nid']
-      if (rows) {
-        const table: Record<number, { L: number; n: number }> = {}
-        for (const r of rows) table[r.month] = { L: r.L_mean, n: r.n }
-        setLapseByMonth(table)
-      }
-      const normals: NonNullable<PadNormals> = {}
-      for (const [icao, months] of Object.entries(res.data.surface.monthly)) {
-        const byMonth: Record<number, { T: number | null; p: number; n: number }> = {}
-        for (const m of months) {
-          // Launch-window temperature (15-23Z, roughly 8am-4pm local) when the
-          // month has one. A 24 h mean is several kelvin colder than any hour
-          // anyone launches in, and temperature is the input worth ~7% in
-          // density. Pressure has no meaningful diurnal signal at this scale,
-          // so the all-hours mean is used for it either way.
-          byMonth[m.month] = {
-            T: m.lw_t_mean ?? m.t_mean,
-            p: m.p_mean,
-            n: m.lw_t_mean !== null ? m.lw_n : m.n,
-          }
-        }
-        normals[icao] = byMonth
-      }
-      setPadNormals(normals)
-    })
-    return () => { live_ = false }
-  }, [])
+  /** The measured lapse rates and monthly normals the Site form resolves the
+   *  pad state from. Shared with the Sweep tab's pad-state axes, which resolve
+   *  from the same reduction -- see `lib/climatology`. */
+  const { lapseByMonth, padNormals } = usePadClimatology()
 
   // Guards against a slow response overwriting a newer one.
   const seq = useRef(0)

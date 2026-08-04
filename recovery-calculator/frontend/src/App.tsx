@@ -10,14 +10,15 @@
 import { useEffect, useState } from 'react'
 import { getHealth } from './api/client'
 import type { UiConfig } from './types/schema'
-import { defaultUiConfig } from './lib/serialise'
+import { loadUiConfig, saveUiConfig } from './lib/persist'
 import { RecoveryPanel } from './components/recovery/RecoveryPanel'
 import { CornersPanel } from './components/corners/CornersPanel'
 import { StudyPanel } from './components/study/StudyPanel'
+import { CrosscheckPanel } from './components/crosscheck/CrosscheckPanel'
 import { AtmospherePanel } from './components/atmosphere/AtmospherePanel'
 import { UnitsPanel } from './components/settings/UnitsPanel'
 
-type Tab = 'recovery' | 'corners' | 'study' | 'atmosphere' | 'units'
+type Tab = 'recovery' | 'corners' | 'study' | 'crosscheck' | 'atmosphere' | 'units'
 
 const TABS: { id: Tab; label: string; hint: string; accent: string }[] = [
   { id: 'recovery', label: 'Setup & Basic Run', hint: 'Descent, loads and off-nominal cases',
@@ -26,6 +27,9 @@ const TABS: { id: Tab; label: string; hint: string; accent: string }[] = [
     accent: 'border-violet-500 text-violet-400' },
   { id: 'study', label: 'Sweep', hint: 'Compare designs — parachutes, altitudes, mass',
     accent: 'border-amber-500 text-amber-400' },
+  { id: 'crosscheck', label: 'Cross-check',
+    hint: 'This tool vs OpenRocket vs the recovery mastersheet',
+    accent: 'border-rose-500 text-rose-400' },
   { id: 'atmosphere', label: 'Atmospheric Data', hint: 'Measured climatology at FAR',
     accent: 'border-emerald-500 text-emerald-400' },
   // Last, and visually quieter than the three that do work. It is a settings
@@ -47,8 +51,13 @@ export default function App() {
    * Lifted rather than put in a context -- the app has no context today and one
    * shared value does not earn one. Everything else each panel needs (results,
    * climatology, the sweep response) stays local to that panel.
+   *
+   * Restored from `localStorage` on open, which is why every tab's inputs
+   * survive a reload: they all live on this one object. `loadUiConfig` is
+   * passed as an initialiser rather than called, so it runs once instead of on
+   * every render.
    */
-  const [ui, setUi] = useState<UiConfig>(defaultUiConfig)
+  const [ui, setUi] = useState<UiConfig>(loadUiConfig)
 
   useEffect(() => {
     getHealth().then((res) => {
@@ -56,6 +65,14 @@ export default function App() {
       setSha(res.data?.git_sha ?? null)
     })
   }, [])
+
+  // Debounced, because `ui` changes on every keystroke in every form and this
+  // serialises the whole config. 400 ms is well under the time it takes to
+  // reach for the reload key and well over a typing gap.
+  useEffect(() => {
+    const id = setTimeout(() => saveUiConfig(ui), 400)
+    return () => clearTimeout(id)
+  }, [ui])
 
   return (
     <div className="min-h-screen bg-[var(--color-bg-primary)]">
@@ -123,6 +140,9 @@ export default function App() {
         </div>
         <div className={tab === 'study' ? '' : 'hidden'}>
           <StudyPanel ui={ui} onChange={setUi} />
+        </div>
+        <div className={tab === 'crosscheck' ? '' : 'hidden'}>
+          <CrosscheckPanel ui={ui} />
         </div>
         <div className={tab === 'atmosphere' ? '' : 'hidden'}>
           <AtmospherePanel />

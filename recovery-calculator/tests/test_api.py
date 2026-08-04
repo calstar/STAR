@@ -776,3 +776,104 @@ def test_every_kind_the_frontend_knows_about_is_accepted(settings_file):
                   json={"units": {k: "imperial" for k in kinds}})
     assert r.status_code == 200
     assert set(r.json()["units"]) == set(kinds)
+
+
+# --- /api/crosscheck -------------------------------------------------------
+
+
+def test_crosscheck_returns_all_three_models():
+    res = client().post("/api/crosscheck", json=load_fixture())
+    assert res.status_code == 200
+    body = res.json()
+
+    assert set(body["models"]) == {"ours", "openrocket", "mastersheet"}
+    for name, model in body["models"].items():
+        assert model["label"]
+        assert model["trajectory"], name
+        assert isinstance(model["computes_load"], bool)
+
+    # §11.4 again, for the foreign model: which OpenRocket produced the
+    # comparison has to be recoverable from the response alone.
+    assert body["openrocket_version"]["release"] == "release-24.12"
+    assert body["openrocket_version"]["commit"]
+
+
+def test_crosscheck_sends_absences_as_null_not_zero():
+    """The contract the whole tab rests on.
+
+    A load of `0` next to our 1613 N reads as OpenRocket predicting no load.
+    `null` reads as OpenRocket having no opinion, which is the truth. If this
+    ever regresses to 0 the UI will render a passing number for a check nobody
+    performed.
+    """
+    body = client().post("/api/crosscheck", json=load_fixture()).json()
+    by_key = {m["key"]: m for m in body["metrics"]}
+
+    assert by_key["F_peak"]["values"]["openrocket"] is None
+    assert by_key["peak_decel"]["values"]["mastersheet"] is None
+    assert by_key["drift"]["values"]["ours"] is None
+    assert by_key["drift"]["values"]["openrocket"] is None
+    for key in ("F_peak", "peak_decel", "drift"):
+        assert by_key[key]["note"], key
+
+    assert body["models"]["openrocket"]["computes_load"] is False
+    # ...and the trajectory carries the same absence, so the tension channel
+    # draws a gap rather than a line along zero.
+    assert all(p["F_T"] is None
+               for p in body["models"]["openrocket"]["trajectory"])
+
+
+def test_crosscheck_metric_kinds_are_ones_the_frontend_knows():
+    """An unknown `kind` does not render badly — it blanks the whole page.
+
+    `unitFor` does `QUANTITIES[kind].units[prefs[kind]]`, so a kind the
+    frontend has never heard of throws "Cannot read properties of undefined
+    (reading 'undefined')" during render and React unmounts the app. It shipped
+    exactly once, with `descent_time` carrying `kind: "time"` — and
+    `lib/quantities.ts` deliberately has no `time`, because seconds have no
+    imperial form and a unit dropdown for them would be a control that does
+    nothing.
+
+    The union is read out of the TypeScript rather than restated here, so this
+    cannot drift the way a hand-copied list would. `null` is legal and means
+    "no imperial form": the row then carries a literal `unit` instead.
+    """
+    import re
+
+    source = (ROOT / "frontend" / "src" / "lib" / "quantities.ts").read_text(
+        encoding="utf-8")
+    match = re.search(r"export type Kind\s*=(.*?)\n\n", source, re.S)
+    assert match, "could not find the Kind union in quantities.ts"
+    known = set(re.findall(r"'([A-Za-z]+)'", match.group(1)))
+    assert "altitude" in known and "force" in known, known
+    assert "time" not in known, "quantities.ts gained a `time` kind"
+
+    body = client().post("/api/crosscheck", json=load_fixture()).json()
+    for metric in body["metrics"]:
+        kind = metric["kind"]
+        if kind is None:
+            assert metric["unit"], (
+                "%s has no kind, so it must carry a literal unit"
+                % metric["key"])
+        else:
+            assert kind in known, "%s: %r is not a Kind" % (metric["key"], kind)
+
+
+def test_crosscheck_wind_moves_drift_and_nothing_else():
+    still = client().post("/api/crosscheck?wind=0", json=load_fixture()).json()
+    windy = client().post("/api/crosscheck?wind=9.8", json=load_fixture()).json()
+
+    def by_key(body):
+        return {m["key"]: m["values"] for m in body["metrics"]}
+
+    a, b = by_key(still), by_key(windy)
+    assert a["drift"]["mastersheet"] == 0.0
+    assert b["drift"]["mastersheet"] > 0.0
+    for key in ("descent_time", "impact_velocity", "impact_ke", "F_peak"):
+        assert a[key] == b[key], key
+
+
+def test_crosscheck_rejects_an_unrunnable_config():
+    bad = load_fixture()
+    bad["devices"][0]["CdS"] = -1.0
+    assert client().post("/api/crosscheck", json=bad).status_code == 422

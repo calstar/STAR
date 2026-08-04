@@ -25,7 +25,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from backend.routers import (  # noqa: E402
-    atmosphere, climatology, devices, settings, simulate, study,
+    atmosphere, climatology, crosscheck, devices, settings, simulate, study,
 )
 from backend.serialise import SCHEMA_VERSION, git_sha  # noqa: E402
 
@@ -72,6 +72,7 @@ app.add_middleware(
 
 app.include_router(simulate.router)
 app.include_router(study.router)
+app.include_router(crosscheck.router)
 app.include_router(devices.router)
 app.include_router(atmosphere.router)
 app.include_router(climatology.router)

@@ -231,7 +231,52 @@ that matter for load-bearing design work:
    deployed recovery devices, so the body contributes nothing. This is a real
    error during drogue descent.
 
-Phase 1 fixes all three. It does not attempt anything OpenRocket does well.
+Phase 1 fixes all three. It does not attempt anything OpenRocket does well —
+and note that this is a criticism of its *descent* model only. Before the first
+canopy, OpenRocket runs `RK4SimulationStepper` with the full Barrowman
+aerodynamic model, which is far beyond anything here.
+
+### 2.1 The three defects, measured
+
+The list above was asserted for a long time without a number behind it.
+`physics/openrocket.py` is a port of OpenRocket **release-24.12**'s descent
+model, and the Cross-check tab runs it against ours on the same config. On the
+§13 worked example:
+
+| Defect | Measurement |
+|---|---|
+| 1. Step deployment | Peak deceleration **163 m/s² against our 39.7** — a factor of **4.11**, entirely an artefact of opening a canopy between two integration points. The trigger also fires **7.1 m low** (152 m configured, 144.9 m actual), because the crossing is only detected at the end of a 0.5 s step. |
+| 2. No shock load | Nothing to compare. Our 1613 N against an absence — which is why the tab renders it "not computed" rather than as a zero. |
+| 3. Airframe dropped | Drogue descent rate 25.56 m/s against our 25.19 m/s. Small *here* because the worked example's drogue is 31× the axial airframe area; it grows as the drogue shrinks. |
+
+The port is validated against OpenRocket's own JUnit values and converges onto
+our RK45 with the residual attributed to gravity and density, not integration —
+see `tests/test_openrocket.py`. `tools/openrocket-golden/` closes the last gap
+against an actual run of the program.
+
+### 2.2 The recovery mastersheets
+
+The team's two Google Sheets mastersheets (`reference/mastersheets/`) have sized
+real flight hardware and had never been checked against anything.
+`physics/mastersheet.py` transcribes their eight Named Functions verbatim and
+reproduces every workbook cell exactly. Their model is: terminal velocity
+everywhere, instantaneous deployment, one point load per canopy. Their
+`SHOCK_LOAD` **is** eq (23), times a hand-entered reduction factor where we
+compute Pflanz (eq 28) — the sheet notes "Pflanz method to be added later".
+
+Their peak load lands within 3% of ours, which is real evidence for both: the
+two reach the deployment velocity by completely different routes. Three things
+they get wrong, all pinned as arithmetic in `tests/test_mastersheet.py`:
+
+* `TROP_DESCENT_TIME` is `DESCENT_WITH_LAPSE` at `ref_alt = 0`, so it has no
+  field elevation, and the sheets feed it AGL altitudes while feeding
+  `TROP_DENSITY` AMSL ones. Descent time runs **6.8% high** and drift with it.
+* `DESCENT_TIME`, the correct 7-layer version, is defined in both books and
+  **never called**.
+* LE3's 3-parachute sheet is a partially-edited copy of the 2-parachute one:
+  main 1's load is evaluated at main 2's density (+5.6%), and the landing speed
+  uses main 1's canopy though main 2 deploys last (1.71× on speed, 2.9× on
+  energy).
 
 ---
 
@@ -444,8 +489,16 @@ bulkhead, and sewn-loop stitching are the usual governing items.
 ## 5. Atmosphere
 
 Evaluated exactly at every call. No lookup grid — OpenRocket caches the ISA on
-a 500 m table and interpolates, which is a ~0.6% density error near the ground
-for no benefit.
+a 500 m table and interpolates.
+
+That table was described here as "a ~0.6% density error near the ground". It is
+not: `physics/openrocket.py` now implements the same grid, and
+`tests/test_openrocket.py::test_grid_density_error_is_0_04_percent_not_0_6`
+measures **0.036%** mid-cell, zero at the nodes, peaking at 0.045% over the
+first 5 km. The original figure was an estimate nobody had checked, and it was
+seventeen times too large. Evaluating exactly is still the right call — it is a
+handful of flops and removes the question entirely — but the reason is
+simplicity, not accuracy.
 
 **(1)** Geometric to geopotential altitude ($H$ geopotential, $z$ geometric):
 
@@ -1952,6 +2005,30 @@ Item 4 is the highest value per unit effort. One instrumented flight replaces
 every table lookup in this document with a measurement of your actual hardware.
 Item 2 is the highest value per unit *correctness* — it is the only one that
 repairs a case Phase 1 gets structurally wrong rather than merely imprecisely.
+
+### 14.1 Candidates the §2 cross-check surfaced
+
+Three more, added after porting OpenRocket and the mastersheets and finding out
+what they carry that this does not:
+
+8. **Drift under wind.** The mastersheets estimate it as descent time × wind
+   speed and this tool does not estimate it at all, so the Cross-check tab has
+   a row only one of the three models can fill. Crude as their version is, it is
+   the constraint that actually picks a canopy at a range with a waiver box —
+   and it lands in the same place as item 1 above, so it is really an argument
+   for prioritising that.
+9. **Ejection-charge and shear-pin sizing.** Both mastersheets carry black
+   powder mass against bay pressure, force on the bulkhead, and how many nylon
+   screws that shears. Entirely outside this document's scope today, and
+   entirely inside the recovery engineer's job.
+10. **A sharper axial bound from OpenRocket's own drag terms.**
+    `BarrowmanDragCalculator.calculateBaseCD(M)` (`0.12 + 0.13M²` subsonic,
+    `0.25/M` above) and `calculateStagnationCD(M)` are static, Mach-only and
+    about ten lines each — they need no component tree, unlike the rest of
+    Barrowman. They are real closed forms where eq. (14)'s `0.6·πd²/4` is a
+    round number. Worth having for the *axial* bound only: §6.4's whole
+    argument is that attitude under canopy is unknown, and nothing here should
+    be used to collapse the band.
 
 ---
 

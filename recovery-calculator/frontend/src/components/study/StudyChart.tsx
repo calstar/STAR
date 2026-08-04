@@ -20,10 +20,16 @@ import { Empty } from '../ui'
 
 const HEIGHT = 'h-[30rem]'
 
-export function StudyChart({ points, nominal, hidden, channel, showContext, refLines }: {
+export function StudyChart({
+  points, nominal, showNominal, hidden, channel, showContext, refLines,
+}: {
   points: StudyPoint[]
-  /** The unstudied config, always drawn as the reference. */
+  /** The unstudied config, drawn as the dashed reference line. */
   nominal: StudyResult['nominal']
+  /** Whether to draw it. Off is for a study whose designs all sit clear of the
+   *  current one, where the reference is a line in the way rather than a
+   *  datum. The table's "now" row goes with it. */
+  showNominal: boolean
   /** Ids the user has unticked. Hidden rather than selected, because the
    *  default is to show the whole family and prune from there. */
   hidden: string[]
@@ -75,7 +81,7 @@ export function StudyChart({ points, nominal, hidden, channel, showContext, refL
   return (
     <TrajectoryOverlay
       series={drawn}
-      nominal={nominal.trajectory}
+      nominal={showNominal ? nominal.trajectory : undefined}
       nominalLabel="current config"
       channel={channel}
       refLines={refLines}

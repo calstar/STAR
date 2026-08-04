@@ -53,6 +53,28 @@ def test_pad_state_imports_without_numpy_scipy_or_pydantic():
     assert "ok" in proc.stdout
 
 
+def test_reference_model_ports_are_stdlib_only():
+    """`mastersheet` and `openrocket` are ports of other people's models.
+
+    Both are scalar arithmetic -- eight LAMBDAs and a hand-rolled Euler loop --
+    so neither needs numpy, and neither may import `schema` and drag pydantic
+    in behind it. They are duck-typed on `Config` instead. Keeping them in the
+    stdlib tier means the Cross-check comparison can be reasoned about, and
+    run, without the heavy half of the dependency tree.
+    """
+    proc = _run(
+        "import sys\n"
+        "sys.path.insert(0, '.')\n"
+        "import physics.mastersheet, physics.openrocket\n"
+        "heavy = [m for m in ('numpy', 'scipy', 'pydantic', 'matplotlib')\n"
+        "         if m in sys.modules]\n"
+        "assert not heavy, 'reference ports pulled in ' + repr(heavy)\n"
+        "print('ok')\n"
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "ok" in proc.stdout
+
+
 def test_package_init_imports_nothing():
     """An import here -- even a convenience re-export of Config or simulate --
     would pull pydantic and scipy into every consumer of atmosphere."""
@@ -119,3 +141,27 @@ def test_cli_entry_point_works():
     assert proc.returncode == 0, proc.stderr
     assert "F_design" in proc.stdout
     assert "OFF-NOMINAL CASES" in proc.stdout
+
+
+def test_cli_json_output_is_serialisable():
+    """`--json` is documented in the README, and it was broken.
+
+    `DeviceLoads.bound_valid` came back as a `numpy.bool`, which `json` refuses.
+    The failure was invisible in two ways: nothing exercised `--json`, and the
+    error message names the type numpy *reports*, so it read "Object of type
+    bool is not JSON serializable" -- which looks impossible and sends you
+    looking anywhere but at numpy. Every config hit it.
+    """
+    import json as _json
+
+    fixture = os.path.join(ROOT, "tests", "fixtures", "worked_example.json")
+    proc = subprocess.run(
+        [sys.executable, "-m", "physics", fixture, "--which", "axial", "--json"],
+        cwd=ROOT, capture_output=True, text=True, timeout=300,
+    )
+    assert proc.returncode == 0, proc.stderr
+    payload = _json.loads(proc.stdout)
+    assert payload["axial"]["nominal"]["devices"]
+    # The specific field that broke it.
+    assert isinstance(payload["axial"]["nominal"]["devices"][0]["bound_valid"],
+                      bool)

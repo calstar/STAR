@@ -23,6 +23,7 @@ const AXIS = {
   mode: 'list' as const, start: null, stop: null, points: null,
   values: null,
   canopies: [{ label: 'Iris 60', CdS: 3.889, D0: 2.002, m_c: 0.298, j: 2 }],
+  pads: null,
 }
 
 describe('the wire config', () => {
@@ -40,8 +41,8 @@ describe('the wire config', () => {
     // Posting an unknown key is a 422, not a shrug, so this is the whole
     // reason `toWireConfig` names fields instead of spreading.
     expect(Object.keys(wire).sort()).toEqual(
-      ['canopies', 'device', 'enabled', 'key', 'mode', 'points', 'start',
-       'stop', 'values'])
+      ['canopies', 'device', 'enabled', 'key', 'mode', 'pads', 'points',
+       'start', 'stop', 'values'])
   })
 
   it('round-trips the study through a save', () => {

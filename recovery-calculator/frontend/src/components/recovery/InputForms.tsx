@@ -9,8 +9,10 @@ import { useEffect, useState } from 'react'
 import type { StationPad } from '../../api/client'
 import { getStationPad } from '../../api/client'
 import type { TempProfile, UiConfig, UiHardware, UiSite, Vehicle } from '../../types/schema'
-import type { PadSource, SweepParam } from '../../types/schema'
+import type { SweepParam } from '../../types/schema'
 import type { Kind } from '../../lib/quantities'
+import type { LapseTable, PadNormals } from '../../lib/climatology'
+import { SOURCES } from '../../lib/climatology'
 import { Badge, Card, Field, Info, NumberInput, Select, Stat, Toggle, UnitInput } from '../ui'
 import { airframeBand, monthName } from '../../lib/units'
 import { useUnits } from '../../lib/unitsContext'
@@ -111,22 +113,6 @@ export function VehicleForm({ value, onChange }: {
     </Card>
   )
 }
-
-const SOURCES: { value: PadSource; label: string }[] = [
-  { value: 'isa', label: 'ISA standard column' },
-  { value: 'barometer', label: 'Pad barometer — measured' },
-  { value: 'metar', label: 'METAR — latest observation' },
-  { value: 'climatology', label: 'Monthly normal — station record' },
-]
-
-/** Measured monthly lapse rates, K/km, keyed by calendar month. */
-export type LapseTable = Record<number, { L: number; n: number }> | null
-
-/** Monthly-normal pad state, keyed by station then calendar month. Already
- *  reduced to the pad: pressure inverted from the altimeter setting, and
- *  temperature carried across the station/pad elevation gap. */
-export type PadNormals =
-  Record<string, Record<number, { T: number | null; p: number; n: number }>> | null
 
 export function SiteForm({ value, onChange, lapseByMonth, padNormals }: {
   value: UiSite

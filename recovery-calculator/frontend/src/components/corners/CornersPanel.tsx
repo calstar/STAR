@@ -92,6 +92,12 @@ export function CornersPanel({ ui, onChange }: {
   return (
     <div className="space-y-4">
       <Card>
+        <p className="mb-3 font-prose text-sm leading-relaxed text-[var(--color-text-secondary)]">
+          Every uncertain input at both of its bounds, one run per combination.{' '}
+          <span className="text-[var(--color-text-primary)]">
+            The spread is how much of the answer is actually known.
+          </span>
+        </p>
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => void run()} variant="primary" disabled={running}>
             {running ? 'Sweeping…' : 'Run sweep'}

@@ -22,7 +22,7 @@ import { STUDY_COLOURS, studyColour } from '../components/chartTheme'
 function linear(start: number, stop: number, points: number): UiStudyAxis {
   return {
     uid: 'a1', key: 'm', device: null, enabled: true, mode: 'linear',
-    start, stop, points, values: null, canopies: null,
+    start, stop, points, values: null, canopies: null, pads: null,
   }
 }
 
@@ -30,6 +30,7 @@ function list(values: number[], enabled = true): UiStudyAxis {
   return {
     uid: 'a2', key: 'n', device: 'main', enabled, mode: 'list',
     start: null, stop: null, points: null, values, canopies: null,
+    pads: null,
   }
 }
 
@@ -104,8 +105,12 @@ describe('variables', () => {
   it('declares a kind for everything with a physical dimension', () => {
     // A study value the user types must land in the right unit. Anything
     // without a kind has to be genuinely dimensionless or in seconds --
-    // `quantities.ts` deliberately offers no dropdown for those.
-    const dimensionless = ['canopy', 'trigger', 'n', 'Cx', 'j', 'delay']
+    // `quantities.ts` deliberately offers no dropdown for those -- or an
+    // object the user picks rather than types, which is what the canopy and
+    // the two pad-state keys are. A pad state has three quantities at once, so
+    // one `kind` could not describe it.
+    const dimensionless = ['canopy', 'trigger', 'n', 'Cx', 'j', 'delay',
+                           'pad_source', 'pad_month']
     for (const v of STUDY_VARS) {
       if (dimensionless.includes(v.key)) continue
       expect(v.kind, `${v.key} needs a kind`).toBeDefined()

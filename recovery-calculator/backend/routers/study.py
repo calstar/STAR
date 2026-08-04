@@ -17,8 +17,9 @@ from backend.serialise import (
 )
 from physics.atmosphere import Atmosphere
 from physics.cases import evaluate
-from physics.schema import Config, StudyKey
+from physics.schema import Config
 from physics.study import (
+    LABELLED_KEYS,
     MAX_RUNS,
     axis_values,
     current_value,
@@ -68,8 +69,9 @@ def _axis_echo(axis, config):
         "key": axis.key.value,
         "device": axis.device,
         "mode": axis.mode.value,
+        # Objects carry their own name; numbers are their own name.
         "labels": [v.label for v in values]
-        if axis.key is StudyKey.canopy else list(values),
+        if axis.key.value in LABELLED_KEYS else list(values),
         "current": current_value(config, axis),
     }
 

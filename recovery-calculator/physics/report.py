@@ -213,3 +213,54 @@ def render(config, results, which="axial"):
 
     out.append(THIN)
     return "\n".join(out)
+
+
+def render_crosscheck(comparison):
+    """The §2 cross-check: our model, OpenRocket and the mastersheet.
+
+    Deliberately renders a missing value as `not computed` with a footnote
+    rather than as a dash in a numeric column. OpenRocket has no opening-load
+    calculation at all and the mastersheet has no acceleration; a reader
+    skimming a column of numbers must not take either absence for a small
+    number.
+    """
+    c = comparison
+    out = [RULE, "CROSS-CHECK -- our model vs OpenRocket vs the mastersheet",
+           RULE, ""]
+    out.append("  Comparison only. Nothing here sizes hardware: no off-nominal")
+    out.append("  cases, no corner sweep, no safety factor. Our column is the")
+    out.append("  nominal case at the %s airframe bound." % c.which.upper())
+    out.append("")
+
+    out.append("  %-26s %12s %12s %12s %8s"
+               % ("", "ours", "OpenRocket", "mastersheet", "spread"))
+    out.append("  " + THIN[:74])
+
+    notes = []
+    for m in c.metrics:
+        cells = []
+        for model in ("ours", "openrocket", "mastersheet"):
+            v = m.values.get(model)
+            cells.append("%12s" % "--" if v is None else "%12.3f" % v)
+        spread = "%7.2fx" % m.spread if m.spread else "%7s" % "--"
+        marker = ""
+        if m.note:
+            notes.append((len(notes) + 1, m.label, m.note))
+            marker = " [%d]" % len(notes)
+        out.append("  %-26s %s %s %s %s%s"
+                   % (m.label, cells[0], cells[1], cells[2], spread, marker))
+
+    out.append("")
+    if notes:
+        for n, label, note in notes:
+            out.append("  [%d] %s: %s" % (n, label, note))
+        out.append("")
+
+    if c.warnings:
+        out.append("WARNINGS")
+        for w in c.warnings:
+            out.append("  * %s" % w)
+        out.append("")
+
+    out.append(THIN)
+    return "\n".join(out)

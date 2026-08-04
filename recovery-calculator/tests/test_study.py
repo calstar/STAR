@@ -413,3 +413,129 @@ def test_no_study_is_a_single_run():
     assert res.status_code == 200
     assert res.json()["runs"] == 1
     assert res.json()["points"][0]["values"] == {}
+
+
+# --- the site axes ---------------------------------------------------------
+#
+# `pad_source` and `pad_month` are the third scope, added after the vehicle and
+# device ones. They are the only axes that move the *atmosphere* rather than
+# the vehicle, which is the property worth pinning: `run_points` is handed an
+# `Atmosphere` built from the config as posted, and a site axis has to rebuild
+# it per point or every month of the year silently flies through January air.
+
+ISA_PAD = {"label": "ISA standard column",
+           "T_pad": None, "p_pad": None, "lapse": None}
+JAN_PAD = {"label": "KNID Jan normal",
+           "T_pad": 281.0, "p_pad": 92100.0, "lapse": -0.0071}
+JUL_PAD = {"label": "KNID Jul normal",
+           "T_pad": 308.0, "p_pad": 91500.0, "lapse": -0.0079}
+
+
+def pads(*rows, key="pad_source"):
+    return {"key": key, "device": None, "mode": "list", "pads": list(rows)}
+
+
+def test_a_pad_axis_rebuilds_the_atmosphere_per_point():
+    """The whole point of the axis. Hot July air is thinner, so the same
+    vehicle under the same canopies descends FASTER and lands HARDER -- if the
+    two points came out equal, the caller's atmosphere had been reused."""
+    points = run_points(cfg(pads(JAN_PAD, JUL_PAD)))
+    (_, jan), (_, jul) = points
+    assert jul.run.t_ground < jan.run.t_ground
+    assert jul.run.v_impact > jan.run.v_impact
+    # And by a margin worth reporting, not a rounding difference.
+    assert jul.run.v_impact / jan.run.v_impact > 1.02
+
+
+def test_a_pad_point_sets_all_three_fields_including_the_nulls():
+    """Copying only the non-null fields would leave a monthly normal's measured
+    lapse rate in place under an ISA point -- an atmosphere that never existed,
+    and one nothing downstream could detect."""
+    from physics.study import _apply
+
+    c = cfg(pads(JUL_PAD, ISA_PAD))
+    mutated = c.model_copy(deep=True)
+    _apply(mutated, c.study[0], c.study[0].pads[0])
+    assert (mutated.site.T_pad, mutated.site.lapse) == (308.0, -0.0079)
+    _apply(mutated, c.study[0], c.study[0].pads[1])
+    assert (mutated.site.T_pad, mutated.site.p_pad, mutated.site.lapse) \
+        == (None, None, None)
+
+
+def test_a_pad_axis_takes_no_device():
+    """There is one atmosphere over the whole flight, so "which device" is not
+    a question a site axis can answer."""
+    res = client().post("/api/study",
+                        json=with_study(dict(pads(ISA_PAD), device="main")))
+    assert res.status_code == 422
+    assert "takes no device" in json.dumps(res.json())
+
+
+def test_the_two_pad_axes_cannot_be_crossed():
+    """Different keys, same three fields. `_check_study`'s duplicate test is
+    per (key, device) so it does not catch this: crossing them is not a grid,
+    it is whichever axis the resolver applied last."""
+    res = client().post("/api/study", json=with_study(
+        pads(ISA_PAD, JAN_PAD),
+        pads(JAN_PAD, JUL_PAD, key="pad_month")))
+    assert res.status_code == 422
+    assert "cannot be crossed" in json.dumps(res.json())
+
+
+def test_a_pad_axis_cannot_be_a_linear_grid():
+    """There is no month halfway between March and April, and no pad state
+    halfway between a METAR and the standard column."""
+    res = client().post("/api/study", json=with_study(
+        {"key": "pad_month", "device": None, "mode": "linear",
+         "start": 1.0, "stop": 12.0, "points": 12}))
+    assert res.status_code == 422
+    assert "only be swept as a list" in json.dumps(res.json())
+
+
+def test_a_pad_axis_carries_pads_not_values():
+    res = client().post("/api/study",
+                        json=with_study(dict(pads(ISA_PAD), values=[1.0])))
+    assert res.status_code == 422
+    assert "not values" in json.dumps(res.json())
+
+
+def test_an_empty_pad_axis_is_rejected():
+    res = client().post("/api/study", json=with_study(pads()))
+    assert res.status_code == 422
+    assert "at least one pad state" in json.dumps(res.json())
+
+
+def test_the_labels_travel_so_a_column_can_be_read():
+    """`p_pad = 92100` is not something a reader can match back to "January"."""
+    body = client().post("/api/study",
+                         json=with_study(pads(ISA_PAD, JAN_PAD))).json()
+    assert body["axes"][0]["labels"] == ["ISA standard column",
+                                         "KNID Jan normal"]
+    assert [p["values"]["pad_source"] for p in body["points"]] \
+        == ["ISA standard column", "KNID Jan normal"]
+
+
+def test_the_configured_pad_state_is_named_when_it_is_among_the_points():
+    """Same rule as the fitted canopy: two points that resolve to the same
+    three numbers are the same design point, whatever they were picked from."""
+    body = load_fixture()
+    body["site"] = {"T_pad": JAN_PAD["T_pad"], "p_pad": JAN_PAD["p_pad"],
+                    "lapse": JAN_PAD["lapse"]}
+    body["study"] = [pads(ISA_PAD, JAN_PAD)]
+    out = client().post("/api/study", json=body).json()
+    assert out["axes"][0]["current"] == "KNID Jan normal"
+
+
+def test_an_unlisted_pad_state_is_null_not_a_guess():
+    body = client().post("/api/study",
+                         json=with_study(pads(JAN_PAD, JUL_PAD))).json()
+    assert body["axes"][0]["current"] is None
+
+
+def test_a_month_axis_is_the_same_machinery_under_a_different_name():
+    """The two keys differ only in what question the column header asks."""
+    body = client().post("/api/study", json=with_study(
+        pads(JAN_PAD, JUL_PAD, key="pad_month"))).json()
+    assert body["runs"] == 2
+    assert body["axes"][0]["key"] == "pad_month"
+    assert body["axes"][0]["labels"] == ["KNID Jan normal", "KNID Jul normal"]

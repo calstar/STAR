@@ -13,16 +13,16 @@
  * `tests/test_study.py`.
  */
 
-import type { UiStudyAxis, WireCanopy } from '../types/schema'
+import type { UiStudyAxis, WireCanopy, WirePad } from '../types/schema'
 import type { Kind } from './quantities'
 
 /** SI value plus its quantity, to a display string. `useUnits().num`. Absent in
  *  tests, which get SI. */
 export type Show = (si: number, kind: Kind) => string
 
-/** Whether an axis lives on the vehicle or on one named device. Mirrors
- *  `study.VEHICLE_KEYS` / `study.DEVICE_KEYS`. */
-export type Scope = 'vehicle' | 'device'
+/** Whether an axis lives on the vehicle, on one named device, or on the site.
+ *  Mirrors `study.VEHICLE_KEYS` / `DEVICE_KEYS` / `SITE_KEYS`. */
+export type Scope = 'vehicle' | 'device' | 'site'
 
 export interface StudyVar {
   key: string
@@ -95,7 +95,30 @@ export const STUDY_VARS: StudyVar[] = [
   { key: 'k_eff', scope: 'device', label: 'Harness stiffness', kind: 'stiffness',
     help: 'Series stiffness of the load path, eq (32). A softer harness cuts '
         + 'the snatch load and does nothing to the opening load.' },
+
+  // Last, because they vary the air rather than the vehicle. Both write the
+  // same three site fields and the backend refuses to cross them -- see
+  // `Config._check_study`.
+  { key: 'pad_source', scope: 'site', label: 'Pad state (pressure source)',
+    listOnly: true,
+    help: 'Compare where the pad state comes from: the standard column, a pad '
+        + 'barometer, the latest METAR, or the station monthly normal. Each '
+        + 'point carries the temperature, pressure and lapse rate it resolved '
+        + 'to, so it is a comparison of atmospheres, not of labels.' },
+  { key: 'pad_month', scope: 'site', label: 'Month (monthly normals)',
+    listOnly: true,
+    help: 'The same station record, month by month — what the season is worth '
+        + 'on descent time and impact speed. Summer air is thinner, so the '
+        + 'vehicle descends faster and lands harder on the same canopy.' },
 ]
+
+/** Site axes, by key. Both carry `pads` rather than numbers, and neither takes
+ *  a device: there is one atmosphere over the whole flight. Mirrors
+ *  `study.SITE_KEYS`. */
+export const SITE_KEYS = ['pad_source', 'pad_month'] as const
+
+export const isSiteKey = (key: string): boolean =>
+  (SITE_KEYS as readonly string[]).includes(key)
 
 export function studyVar(key: string): StudyVar | undefined {
   return STUDY_VARS.find((v) => v.key === key)
@@ -131,9 +154,11 @@ export function axisKind(
  * Identical arithmetic to `study.axis_values` in Python, in the same order, so
  * the two produce bit-identical doubles rather than merely close ones.
  */
-export function axisValues(axis: UiStudyAxis): (number | WireCanopy)[] {
+export function axisValues(axis: UiStudyAxis): (number | WireCanopy | WirePad)[] {
   if (axis.mode === 'list') {
-    return axis.key === 'canopy' ? [...(axis.canopies ?? [])] : [...(axis.values ?? [])]
+    if (axis.key === 'canopy') return [...(axis.canopies ?? [])]
+    if (isSiteKey(axis.key)) return [...(axis.pads ?? [])]
+    return [...(axis.values ?? [])]
   }
   const { start, stop, points } = axis
   if (start === null || stop === null || points === null || points < 1) return []
@@ -163,7 +188,7 @@ export const MAX_RUNS = 20
  *  injected converter when they have a quantity, and are trimmed otherwise so
  *  a table of `n` reads 6 rather than 6.000. */
 export function axisValueLabel(
-  value: number | string | WireCanopy,
+  value: number | string | WireCanopy | WirePad,
   kind?: Kind,
   show?: Show,
 ): string {

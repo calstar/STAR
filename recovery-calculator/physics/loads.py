@@ -74,7 +74,29 @@ class DeviceLoads:
             setattr(self, k, kw.get(k))
 
     def as_dict(self):
-        return {k: getattr(self, k) for k in self.__slots__}
+        """Native Python scalars, so the result is JSON-serialisable.
+
+        Most of these fields arrive from numpy: the trajectory is a numpy array
+        and anything derived from it carries `numpy.float64` or `numpy.bool`.
+        `json` refuses both, and the error names the *Python* type it thinks it
+        saw -- numpy 2 calls its boolean `numpy.bool`, so a stray one reports as
+        "Object of type bool is not JSON serializable", which reads like an
+        impossibility and sends you looking in the wrong place. It broke
+        `python -m physics --json` outright, silently, for every config.
+
+        Coerced here rather than at each call site because this method exists to
+        be serialised -- that is the only thing it is for.
+        """
+        out = {}
+        for k in self.__slots__:
+            v = getattr(self, k)
+            if isinstance(v, bool) or v is None or isinstance(v, str):
+                out[k] = v
+            elif hasattr(v, "item"):        # any numpy scalar
+                out[k] = v.item()
+            else:
+                out[k] = v
+        return out
 
 
 def device_loads(device, state, m, m_b, traj=None):

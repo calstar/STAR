@@ -5,8 +5,15 @@ nothing at one point per call, and staying dependency-free lets
 `site-climatology/` and `pad_state` import this without a venv.
 
 Evaluated exactly at every call, with no lookup grid. OpenRocket caches the ISA
-on a 500 m table and interpolates, which is a ~0.6% density error near the
-ground for no benefit; this is a handful of flops.
+on a 500 m table and interpolates; this is a handful of flops and removes the
+question.
+
+That table used to be described here as a "~0.6% density error near the
+ground". It is 0.036% mid-cell and zero at the nodes -- measured, once
+`physics/openrocket.py` implemented the same grid, in
+`tests/test_openrocket.py::test_grid_density_error_is_0_04_percent_not_0_6`.
+Evaluating exactly is still right; the justification is simplicity, not a
+0.6% error that was never there.
 
 The central idea of §5 is the **pad re-fit**: rather than assume the standard
 sea-level state, replace the lowest layer with one that passes through the

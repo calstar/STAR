@@ -40,6 +40,11 @@ export function StudyPanel({ ui, onChange }: {
   const [error, setError] = useState<string | null>(null)
   const [channel, setChannel] = useState<Channel>('z')
   const [showContext, setShowContext] = useState(false)
+  /** The current setup, as the dashed reference line and the "now" row. On by
+   *  default -- it is what every design is being compared against -- but a
+   *  study that has already moved past it is one line and one row clearer
+   *  without it. */
+  const [showNominal, setShowNominal] = useState(true)
 
   /** Unticked designs, not ticked ones. The default is the whole family --
    *  seeing all of them at once is the reason the chart exists -- so the list
@@ -100,6 +105,12 @@ export function StudyPanel({ ui, onChange }: {
   return (
     <div className="space-y-4">
       <Card>
+        <p className="mb-3 font-prose text-sm leading-relaxed text-[var(--color-text-secondary)]">
+          One run per design, all at nominal conditions.{' '}
+          <span className="text-[var(--color-text-primary)]">
+            For choosing hardware — the Corners tab is what checks it.
+          </span>
+        </p>
         <div className="flex flex-wrap items-center gap-2">
           <Button
             onClick={() => void run()}
@@ -170,6 +181,7 @@ export function StudyPanel({ ui, onChange }: {
             <StudyChart
               points={result.points}
               nominal={result.nominal}
+              showNominal={showNominal}
               hidden={hidden}
               channel={channel}
               showContext={showContext}
@@ -183,6 +195,8 @@ export function StudyPanel({ ui, onChange }: {
             onToggle={toggle}
             showContext={showContext}
             onShowContext={setShowContext}
+            showNominal={showNominal}
+            onShowNominal={setShowNominal}
             devices={ui.devices}
           />
         </>

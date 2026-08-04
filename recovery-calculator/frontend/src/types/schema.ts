@@ -125,6 +125,27 @@ export interface WireCanopy {
   j: number
 }
 
+/**
+ * One resolved pad state as a design point. Mirrors `schema.PadState`.
+ *
+ * The values travel rather than the recipe, for the same reason `WireCanopy`
+ * does: "KNID, March, monthly normal" is a lookup against a climatology bundle
+ * the backend does not have and that gets regenerated when the record is
+ * re-scraped. Resolving once, when the user picks it, is also what makes a
+ * METAR point reproducible -- an observation is only an observation if it is
+ * the one that was actually read.
+ *
+ * All three are nullable and null is meaningful, exactly as on `Site`: no
+ * `T_pad` means the standard column at pad elevation rather than a
+ * measurement, and no `lapse` means the eq (7) re-fit infers the slope.
+ */
+export interface WirePad {
+  label: string
+  T_pad: number | null
+  p_pad: number | null
+  lapse: number | null
+}
+
 /** One variable of a design study. Mirrors `schema.StudyAxis`.
  *
  *  Note this is NOT `WireSweepParam`: that one carries two corners of an
@@ -132,8 +153,8 @@ export interface WireCanopy {
  *  carries a grid of a chosen parameter applied to one named device. */
 export interface WireStudyAxis {
   key: string
-  /** Device NAME, required for a per-device key and forbidden for a vehicle
-   *  one. By name rather than index so removing a device cannot silently
+  /** Device NAME, required for a per-device key and forbidden for a vehicle or
+   *  site one. By name rather than index so removing a device cannot silently
    *  retarget the axis at a different one. */
   device: string | null
   enabled: boolean
@@ -143,6 +164,7 @@ export interface WireStudyAxis {
   points: number | null
   values: number[] | null
   canopies: WireCanopy[] | null
+  pads: WirePad[] | null
 }
 
 export interface Config {
@@ -261,6 +283,7 @@ export interface UiStudyAxis {
   points: number | null
   values: number[] | null
   canopies: WireCanopy[] | null
+  pads: WirePad[] | null
 }
 
 export interface UiConfig {
@@ -341,6 +364,27 @@ export interface TrajectorySample {
   v: number
   a: number
   F_T: number
+  CdS_tot: number
+}
+
+/**
+ * What a chart can draw: a `TrajectorySample` whose `a` and `F_T` may be absent.
+ *
+ * Only the Cross-check tab produces these. OpenRocket computes no opening load
+ * anywhere in its codebase and the mastersheet model assumes terminal velocity
+ * so has no acceleration -- both are **absences**, and they have to travel as
+ * null rather than 0 all the way to the axis, or a line at zero reads as a
+ * measured zero.
+ *
+ * `TrajectorySample[]` is assignable to this, so every existing caller is
+ * unaffected.
+ */
+export interface ChartSample {
+  t: number
+  z: number
+  v: number
+  a: number | null
+  F_T: number | null
   CdS_tot: number
 }
 

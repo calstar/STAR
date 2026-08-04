@@ -284,6 +284,17 @@ class StudyKey(str, Enum):
     # CdS, D0, m_c and j together -- one catalogue row. See `Canopy`.
     canopy = "canopy"
 
+    # --- site ------------------------------------------------------------
+    # T_pad, p_pad and lapse together -- one resolved pad state. See
+    # `PadState`. Two keys rather than one because they answer different
+    # questions with the same machinery: `pad_source` compares ways of
+    # KNOWING the pad state (standard column, barometer, METAR, monthly
+    # normal) and `pad_month` compares SEASONS of one of them. A single key
+    # would leave a column of four labels with no way to say which question
+    # produced it.
+    pad_source = "pad_source"
+    pad_month = "pad_month"
+
 
 class Canopy(BaseModel):
     """One catalogue row as a design point.
@@ -317,6 +328,54 @@ class Canopy(BaseModel):
         return self
 
 
+class PadState(BaseModel):
+    """One resolved pad state as a design point.
+
+    The same reasoning as `Canopy`, applied to §5's three site fields. The
+    values travel rather than the recipe that produced them -- "KNID, March,
+    monthly normal" is a lookup against a climatology bundle that `physics/`
+    does not have and that gets regenerated when the record is re-scraped, so
+    a study carrying the recipe could change meaning between two runs of the
+    same file. Resolving once, at the moment the user picks it, is also what
+    makes a METAR point reproducible: an observation is only an observation if
+    it is the one that was actually read.
+
+    All three fields are optional because *unset is meaningful* here, and it
+    is not the same as zero. `T_pad = None` means the standard column at pad
+    elevation (eq 7a) rather than a measurement, and `lapse = None` means the
+    eq (7) re-fit infers the slope from the pad temperature instead of being
+    handed a measured one. This is exactly `Site`'s own convention, so a
+    `PadState` is assignable to a `Site` field for field, which is what
+    `study._apply` does.
+
+    `label` is what the chart legend and the table column say. `p_pad = 92871`
+    is not something a reader can match back to "KNID March normal".
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    T_pad: Optional[float] = Field(default=None, gt=0.0)
+    p_pad: Optional[float] = Field(default=None, gt=0.0)
+    lapse: Optional[float] = None
+
+
+def _list_field(key):
+    """Which LIST payload this key's values live in, or None for plain floats.
+
+    Three of the study keys vary something that is not a number: a canopy is
+    four correlated vendor fields and a pad state is three correlated site
+    fields. They are unswept by any grid -- see `StudyAxis._check` -- and each
+    needs its own typed payload, because `List[float]` cannot hold either and
+    a loosely-typed one would accept a canopy where a pad state belongs.
+    """
+    if key is StudyKey.canopy:
+        return "canopies"
+    if key in (StudyKey.pad_source, StudyKey.pad_month):
+        return "pads"
+    return None
+
+
 class StudyAxis(BaseModel):
     """One variable of a design study, and the values it takes.
 
@@ -345,42 +404,57 @@ class StudyAxis(BaseModel):
     # --- LIST ---
     values: Optional[List[float]] = None
     canopies: Optional[List[Canopy]] = None
+    pads: Optional[List[PadState]] = None
 
     @model_validator(mode="after")
     def _check(self):
-        from physics.study import VEHICLE_KEYS
+        from physics.study import SITE_KEYS, VEHICLE_KEYS
 
-        if self.key is StudyKey.canopy and self.mode is not StudyMode.LIST:
-            # There is no canopy halfway between a 48 and a 60. Interpolating
-            # four correlated fields would invent a parachute nobody sells.
-            raise ValueError("canopy can only be swept as a list")
+        listed = _list_field(self.key)
+        if listed is not None and self.mode is not StudyMode.LIST:
+            # There is no canopy halfway between a 48 and a 60, and no month
+            # halfway between March and April. Interpolating either would
+            # invent a design point that does not exist.
+            raise ValueError("%s can only be swept as a list" % self.key.value)
+
+        # Every LIST payload, so each branch below can name the one it wants
+        # and reject the other two by exclusion rather than by a list that
+        # needs extending every time a payload is added.
+        payloads = ("values", "canopies", "pads")
 
         if self.mode is StudyMode.LINEAR:
             missing = [f for f in ("start", "stop", "points")
                        if getattr(self, f) is None]
             if missing:
                 raise ValueError("linear sweep needs %s" % ", ".join(missing))
-            if self.values is not None or self.canopies is not None:
+            if any(getattr(self, f) is not None for f in payloads):
                 raise ValueError("linear sweep cannot also carry a value list")
         else:
-            if self.key is StudyKey.canopy:
-                if not self.canopies:
-                    raise ValueError("canopy sweep needs at least one canopy")
-                if self.values is not None:
-                    raise ValueError("canopy sweep carries canopies, not values")
-            else:
-                if not self.values:
-                    raise ValueError("list sweep needs at least one value")
-                if self.canopies is not None:
-                    raise ValueError("only a canopy sweep carries canopies")
+            want = listed or "values"
+            if not getattr(self, want):
+                raise ValueError(
+                    "%s sweep needs at least one %s"
+                    % (self.key.value if listed else "list",
+                       {"values": "value", "canopies": "canopy",
+                        "pads": "pad state"}[want]))
+            extra = [f for f in payloads
+                     if f != want and getattr(self, f) is not None]
+            if extra:
+                raise ValueError("%s sweep carries %s, not %s"
+                                 % (self.key.value, want, ", ".join(extra)))
             if any(f is not None for f in (self.start, self.stop, self.points)):
                 raise ValueError("list sweep cannot also carry start/stop/points")
 
-        on_vehicle = self.key.value in VEHICLE_KEYS
-        if on_vehicle and self.device is not None:
-            raise ValueError("%s is a vehicle parameter and takes no device"
-                             % self.key.value)
-        if not on_vehicle and self.device is None:
+        # Three scopes, and only one of them takes a device. A site axis is
+        # like a vehicle axis in that respect: there is one atmosphere over the
+        # whole flight, so "which device" is not a question it can answer.
+        per_device = self.key.value not in VEHICLE_KEYS + SITE_KEYS
+        if not per_device and self.device is not None:
+            raise ValueError(
+                "%s is a %s parameter and takes no device"
+                % (self.key.value,
+                   "site" if self.key.value in SITE_KEYS else "vehicle"))
+        if per_device and self.device is None:
             raise ValueError("%s is per-device -- name which device"
                              % self.key.value)
         return self
@@ -508,14 +582,15 @@ class Config(BaseModel):
         return self
 
     def _check_study(self, device_names):
-        """The three things a study can get wrong that the axis cannot see.
+        """The four things a study can get wrong that the axis cannot see.
 
         `StudyAxis` validates itself in isolation; these need the rest of the
         config -- which devices exist, what the other axes are.
         """
-        from physics.study import MAX_RUNS
+        from physics.study import MAX_RUNS, SITE_KEYS
 
         pairs = []
+        site_axes = []
         runs = 1
         for axis in self.study:
             if axis.device is not None and axis.device not in device_names:
@@ -536,7 +611,20 @@ class Config(BaseModel):
                     % (axis.key.value,
                        " on %s" % axis.device if axis.device else ""))
             pairs.append(pair)
+            if axis.key.value in SITE_KEYS:
+                site_axes.append(axis.key.value)
             runs *= len(axis.resolved)
+
+        # The duplicate check above is per (key, device), so it does not catch
+        # this: pad_source and pad_month are different keys writing the same
+        # three site fields. Crossing them is not a grid, it is a race -- the
+        # resolver applies axes in order, so the second would overwrite the
+        # first and every point would silently be one of the two axes only.
+        if len(site_axes) > 1:
+            raise ValueError(
+                "%s both set the pad state -- they cannot be crossed, because "
+                "the second would overwrite the first. Sweep one at a time."
+                % " and ".join(site_axes))
 
         if runs > MAX_RUNS:
             # A cap, not a truncation. Silently running the first 20 of 24

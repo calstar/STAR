@@ -11,6 +11,19 @@ design work: deployment is a step function with no filling time, shock load is
 never computed at all, and airframe drag is dropped after deployment. This
 fixes those three and does not attempt anything OpenRocket already does well.
 
+Those three used to be an assertion. They are now measured — the **Cross-check**
+tab runs a port of OpenRocket 24.12's descent model and a port of the team's
+recovery mastersheets against this one, on the same config:
+
+| | measured on the §13 worked example |
+|---|---|
+| step deployment | peak deceleration **4.11×** ours, and the altitude trigger fires **7.1 m low** |
+| no shock load | our 1613 N against an absence — rendered "not computed", never zero |
+| airframe dropped | drogue descent rate 25.56 vs 25.19 m/s here; it grows as the drogue shrinks |
+
+The mastersheets land within 3% of our peak load, by a completely different
+route, which is evidence for both. Where they don't, PLAN.md §2.2 says why.
+
 ## Quick start
 
 ```bash
@@ -21,7 +34,8 @@ bash setup.sh                    # venv at .venv
 
 The CLI prints the descent, the per-device loads, the eq (36) design load and
 the four off-nominal cases, at **both** airframe-drag bounds. `--sweep` adds the
-16-corner uncertainty sweep; `--json` emits machine-readable output.
+16-corner uncertainty sweep; `--crosscheck` adds the three-model comparison;
+`--json` emits machine-readable output.
 
 For the GUI:
 
@@ -48,6 +62,10 @@ physics/       physics core -- numpy/scipy/pydantic, never FastAPI
     cases.py         off-nominal set, corner sweep
     report.py        eqs (38)-(39)
     data/            parachutes.csv (121 devices) + raw/<sku>.json
+    -- ports of OTHER people's models, for comparison only (§2) --
+    openrocket.py    OpenRocket 24.12's descent model   [stdlib]
+    mastersheet.py   the recovery mastersheets' model   [stdlib]
+    crosscheck.py    all three on one config
 backend/             FastAPI on :8100 -- imports physics, never the reverse
     main.py          app, CORS, health
     serialise.py     internal results -> the wire contract the frontend uses
@@ -55,6 +73,9 @@ backend/             FastAPI on :8100 -- imports physics, never the reverse
 frontend/            React + Vite + Recharts on :5273
 tests/               the §12 validation suite -- the real deliverable
 tools/               stdlib-only, no venv needed
+    openrocket-golden/   diff the port against a run of the real program
+reference/           source material, never read at runtime
+    mastersheets/        the two .xlsx, and where their math lives
 site-climatology/    stdlib-only, no venv needed
 ```
 
@@ -93,6 +114,15 @@ cross-check the model against closed forms derived from different assumptions:
 `tests/test_worked_example.py` runs PLAN.md §13 as a golden fixture: the
 document's numbers are assertions against the library, so if the two disagree
 CI says so. It has already caught one wrong number in the plan.
+
+The two model ports carry their own suites, and both are validated against the
+thing they are a port *of* rather than against this project's opinion of it:
+
+| | |
+|---|---|
+| `test_mastersheet.py` | every expected value is a **workbook cell**, quoted with its address. The Named Functions survive the `.xlsx` export as `<definedName>` LAMBDAs, so this is transcription with no fitted constants. |
+| `test_openrocket.py` | the ISA against **OpenRocket's own JUnit values**, to their own ±0.01 Pa tolerances; then the Euler stepper converging onto our RK45 with the residual attributed to gravity (−0.092%) and density (+0.027%), not to integration. That attribution is what separates "a coarsely integrated different model" from "a bug". |
+| `test_openrocket_golden.py` | the port against a run of the actual program. Skips until someone exports one — see `tools/openrocket-golden/`. |
 
 ## What this does not do
 

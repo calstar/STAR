@@ -31,13 +31,19 @@ const METRICS = [
 ] as const
 
 export function StudyTable({
-  result, hidden, onToggle, showContext, onShowContext, devices,
+  result, hidden, onToggle, showContext, onShowContext,
+  showNominal, onShowNominal, devices,
 }: {
   result: StudyResult
   hidden: string[]
   onToggle: (id: string) => void
   showContext: boolean
   onShowContext: (v: boolean) => void
+  /** Whether the current setup is drawn and tabulated alongside the designs.
+   *  On by default -- it is what every row is read against -- but a study of
+   *  designs that all beat it spends a line and a row saying so. */
+  showNominal: boolean
+  onShowNominal: (v: boolean) => void
   devices: Device[]
 }) {
   const { num, lab, dur } = useUnits()
@@ -56,11 +62,18 @@ export function StudyTable({
       title="Designs"
       subtitle="The same four figures the Recovery summary shows, one row per design."
       right={
-        <Toggle
-          checked={showContext}
-          onChange={onShowContext}
-          label="draw hidden ones in grey"
-        />
+        <div className="flex flex-wrap items-center gap-4">
+          <Toggle
+            checked={showNominal}
+            onChange={onShowNominal}
+            label="show current setup"
+          />
+          <Toggle
+            checked={showContext}
+            onChange={onShowContext}
+            label="draw hidden ones in grey"
+          />
+        </div>
       }
     >
       <div className="overflow-x-auto">
@@ -90,7 +103,10 @@ export function StudyTable({
                 the designs -- the canopy fitted today need not be among the
                 ones being compared -- which is exactly why it is the thing
                 every row below is read against. It also names the dashed white
-                line, which is why the chart needs no legend of its own. */}
+                line, which is why the chart needs no legend of its own.
+                Hidden together with that line, never separately: a legend for
+                a line nobody is drawing is worse than neither. */}
+            {showNominal && (
             <tr className="border-b border-[var(--color-border)] bg-[var(--color-bg-tertiary)]/40">
               {/* The dashed swatch names the chart's white reference line, and
                   the word names the row -- the axis columns now carry values,
@@ -109,14 +125,15 @@ export function StudyTable({
               {result.axes.map((a) => (
                 <td key={`${a.key}-${a.device}`} className="py-1.5 pr-3">
                   {a.current === null ? (
-                    /* Only a canopy axis can land here: the fitted chute is
-                       not one of the ones being compared. Saying so is the
-                       useful answer -- a blank cell reads as missing data,
-                       and a drag area in a column of canopy names reads as a
-                       different kind of thing. */
+                    /* Only an axis of picked objects can land here -- a canopy
+                       or a pad state -- and it means the one configured now is
+                       not among those being compared. Saying so is the useful
+                       answer: a blank cell reads as missing data, and a drag
+                       area in a column of canopy names reads as a different
+                       kind of thing. */
                     <span
                       className="italic text-[var(--color-text-muted)]"
-                      title="The canopy fitted now is not among the ones being compared."
+                      title="What is configured now is not among the ones being compared."
                     >
                       not compared
                     </span>
@@ -131,6 +148,7 @@ export function StudyTable({
                 </td>
               ))}
             </tr>
+            )}
 
             {result.points.map((p: StudyPoint, i) => {
               const off = hidden.includes(p.id)

@@ -17,7 +17,7 @@ import {
   CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer,
   Tooltip, XAxis, YAxis,
 } from 'recharts'
-import type { TrajectorySample } from '../types/schema'
+import type { ChartSample } from '../types/schema'
 import type { Channel } from './chartTheme'
 import {
   AXIS, CHANNELS, CONTEXT_OPACITY, GRID, NOMINAL_COLOUR,
@@ -32,7 +32,14 @@ export interface OverlaySeries {
   label: string
   colour: string
   muted?: boolean
-  trajectory: TrajectorySample[]
+  trajectory: ChartSample[]
+  /** Draw dashed. For a model whose curve is a closed form rather than an
+   *  integration, so it does not read as the same kind of object as the rest. */
+  dashed?: boolean
+  /** Draw as dots with no connecting line, and keep it out of the legend.
+   *  For marking which points a model actually *reports*, as against the
+   *  curve reconstructed between them. */
+  markersOnly?: boolean
 }
 
 /** The reference run's series key. Cannot collide with a corner id ("c<n>") or
@@ -86,9 +93,11 @@ export function TrajectoryOverlay({
 }: {
   /** Drawn in order, so put the ones that matter last. */
   series: OverlaySeries[]
-  /** The reference run. Always drawn, always last, dashed white. */
-  nominal: TrajectorySample[] | undefined
-  nominalLabel: string
+  /** The reference run. Always drawn, always last, dashed white. Undefined
+   *  where every series is a peer -- the Cross-check tab has no reference,
+   *  because "which of these three is right" is the open question. */
+  nominal: ChartSample[] | undefined
+  nominalLabel?: string
   channel: Channel
   /** Horizontal markers on the altitude channel, in SI. */
   refLines?: { name: string; y: number }[]
@@ -103,8 +112,11 @@ export function TrajectoryOverlay({
   // Convert the DATA, not just the label: the ticks, the tooltip, the
   // reference lines and the y domain all have to agree, and only one of them
   // ever reads the label.
-  const show = (si: number) => val(si, meta.kind)
   const unit = lab(meta.kind) + (meta.suffix ?? '')
+  /** Null in, null out. A model that does not compute this channel must leave
+   *  a gap in the line, not a point on the zero axis. */
+  const show = (si: number | null | undefined) =>
+    si === null || si === undefined ? null : val(si, meta.kind)
 
   // Merge on t so every run shares one x axis. They end at different times --
   // a bigger canopy descends a minute longer -- and that ragged right-hand
@@ -134,7 +146,9 @@ export function TrajectoryOverlay({
   }
   const data = [...byT.values()].sort((a, b) => (a.t as number) - (b.t as number))
 
-  const named = series.filter((s) => !s.muted)
+  // Marker series carry no identity of their own -- they annotate a line that
+  // is already in the legend, so listing them would key the same colour twice.
+  const named = series.filter((s) => !s.muted && !s.markersOnly)
 
   return (
     <div className={className}>
@@ -161,7 +175,9 @@ export function TrajectoryOverlay({
               rather than inferred from a kink in the line. */}
           {channel === 'z' && refLines.map((r) => (
             <ReferenceLine
-              key={r.name} y={show(r.y)} stroke="#9fb0c4"
+              // `show` is nullable now for the Cross-check tab's absent
+              // channels; a reference line's altitude never is.
+              key={r.name} y={show(r.y) ?? undefined} stroke="#9fb0c4"
               strokeDasharray="2 3" strokeWidth={1}
               label={{ value: r.name, position: 'insideTopLeft',
                        fill: '#cbd5e1', fontSize: 12, offset: 6 }}
@@ -179,8 +195,13 @@ export function TrajectoryOverlay({
                   value: s.label, type: 'line' as const,
                   id: s.id, color: s.colour,
                 })),
-                { value: nominalLabel, type: 'line' as const,
-                  id: NOMINAL_KEY, color: NOMINAL_COLOUR },
+                // Only when there IS a reference run. Listing it against an
+                // empty series would put a key on the chart for a line that
+                // was never drawn.
+                ...((nominal?.length ?? 0) > 0 && nominalLabel
+                  ? [{ value: nominalLabel, type: 'line' as const,
+                       id: NOMINAL_KEY, color: NOMINAL_COLOUR }]
+                  : []),
               ]}
             />
           )}
@@ -191,11 +212,15 @@ export function TrajectoryOverlay({
               dataKey={s.id}
               name={s.label}
               stroke={s.colour}
-              strokeWidth={s.muted ? 1 : 2}
+              strokeWidth={s.markersOnly ? 0 : s.muted ? 1 : 2}
               strokeOpacity={s.muted ? CONTEXT_OPACITY : 1}
+              strokeDasharray={s.dashed ? '6 4' : undefined}
               // Twenty runs is ~8k points; dots would be 8k DOM nodes and the
-              // animation on top of that is unusable.
-              dot={false}
+              // animation on top of that is unusable. A marker series is a
+              // handful of points and is nothing BUT dots.
+              dot={s.markersOnly
+                ? { r: 4, fill: s.colour, stroke: '#12121a', strokeWidth: 1.5 }
+                : false}
               isAnimationActive={false}
               connectNulls
               legendType="none"

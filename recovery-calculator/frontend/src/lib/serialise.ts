@@ -100,6 +100,7 @@ export function toWireConfig(ui: UiConfig): Config {
       points: a.points,
       values: a.values,
       canopies: a.canopies,
+      pads: a.pads,
     })),
   }
 }

@@ -36,12 +36,26 @@ MAX_RUNS = 20
 VEHICLE_KEYS = ("m", "h_a", "d_body", "l_body")
 DEVICE_KEYS = ("CdS", "D0", "m_c", "j", "n", "Cx", "delay", "v_rel", "k_eff",
                "trigger", "canopy")
+# The third scope. Both keys write the same three `Site` fields; what differs
+# is the question -- see `StudyKey`. `Config._check_study` refuses to cross
+# them for exactly that reason.
+SITE_KEYS = ("pad_source", "pad_month")
 
 # The four fields one catalogue row supplies. NOT everything on a device: n,
 # Cx, delay, v_rel, k_eff and the trigger are properties of how you deploy it
 # and how it was packed, not of what the vendor sells, so swapping canopies
 # leaves them alone.
 CANOPY_FIELDS = ("CdS", "D0", "m_c", "j")
+
+# The three fields one pad state supplies -- §5's whole input. `z_site` is
+# deliberately not among them: the project models one range, so pad elevation
+# is a constant rather than a thing a study may vary.
+PAD_FIELDS = ("T_pad", "p_pad", "lapse")
+
+# Keys whose points are objects carrying their own display name, rather than
+# numbers. The chart legend and the table cells read `label`; `physics/` never
+# formats anything, so this is the one place that says which keys have one.
+LABELLED_KEYS = ("canopy",) + SITE_KEYS
 
 
 def axis_values(axis):
@@ -58,12 +72,11 @@ def axis_values(axis):
     together by a shared case table in `tests/test_study.py` and
     `lib/study.test.ts`.
     """
-    from physics.schema import StudyKey, StudyMode
+    from physics.schema import StudyMode, _list_field
 
     if axis.mode is StudyMode.LIST:
-        if axis.key is StudyKey.canopy:
-            return list(axis.canopies)
-        return list(axis.values)
+        listed = _list_field(axis.key)
+        return list(getattr(axis, listed) if listed else axis.values)
 
     if axis.points == 1:
         return [axis.start]
@@ -106,6 +119,15 @@ def _apply(cfg, axis, value):
         setattr(cfg.vehicle, key.value, value)
         return
 
+    if key.value in SITE_KEYS:
+        # All three fields together, including the Nones. Copying only the
+        # non-null ones would leave a monthly normal's measured lapse rate in
+        # place under an ISA point, which is an atmosphere that never existed
+        # -- the same failure the GUI's single month picker exists to prevent.
+        for field in PAD_FIELDS:
+            setattr(cfg.site, field, getattr(value, field))
+        return
+
     device = _device(cfg.devices, axis.device)
     if key is StudyKey.canopy:
         for field in CANOPY_FIELDS:
@@ -122,9 +144,7 @@ def _apply(cfg, axis, value):
 
 def _label(axis, value):
     """What this axis's value is called, for the point's `values` map."""
-    from physics.schema import StudyKey
-
-    return value.label if axis.key is StudyKey.canopy else value
+    return value.label if axis.key.value in LABELLED_KEYS else value
 
 
 def _describe(values):
@@ -146,11 +166,22 @@ def current_value(config, axis):
     four fields the swap actually sets, because that is what "the same canopy"
     means here: two rows with the same drag area, diameter, mass and cloth type
     are the same design point whatever the vendor calls them.
+
+    Pad states work the same way and for the same reason -- an ISA point and a
+    January normal are the same design point if they resolve to the same three
+    numbers, whatever the user picked them from.
     """
     from physics.schema import StudyKey
 
     if axis.key.value in VEHICLE_KEYS:
         return getattr(config.vehicle, axis.key.value)
+
+    if axis.key.value in SITE_KEYS:
+        for pad in axis.pads or []:
+            if all(getattr(pad, f) == getattr(config.site, f)
+                   for f in PAD_FIELDS):
+                return pad.label
+        return None
 
     device = _device(config.devices, axis.device)
     if axis.key is StudyKey.trigger:
@@ -186,6 +217,14 @@ def run_points(config, atm=None):
     axes = enabled_axes(config)
     grids = [axis_values(a) for a in axes]
 
+    # A site axis moves the atmosphere itself, so the one built above -- from
+    # the config as posted -- is only right for the points that did not move
+    # it. Rebuilding per point costs a handful of flops (`Atmosphere` is an
+    # eq-7 re-fit, not a table); reusing the caller's would run every month of
+    # the year through January's air and report the differences as if they
+    # were seasonal.
+    site_swept = any(a.key.value in SITE_KEYS for a in axes)
+
     out = []
     for combo in itertools.product(*grids):
         cfg = config.model_copy(deep=True)
@@ -213,5 +252,10 @@ def run_points(config, atm=None):
                     e["msg"].replace("Value error, ", "")
                     for e in exc.errors()))) from exc
 
-        out.append((values, evaluate(cfg, "axial", "nominal", atm=atm)))
+        point_atm = atm
+        if site_swept:
+            point_atm = Atmosphere(cfg.site.z_site, cfg.site.T_pad,
+                                   cfg.site.p_pad, cfg.site.lapse)
+
+        out.append((values, evaluate(cfg, "axial", "nominal", atm=point_atm)))
     return out

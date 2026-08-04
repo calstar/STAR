@@ -14,7 +14,7 @@ import json
 import sys
 
 from physics.cases import evaluate_all, sweep
-from physics.report import render, render_sweep
+from physics.report import render, render_crosscheck, render_sweep
 from physics.schema import Config
 
 
@@ -32,6 +32,17 @@ def main(argv=None):
     )
     ap.add_argument("--sweep", action="store_true",
                     help="also run the 16-corner uncertainty sweep")
+    ap.add_argument(
+        "--crosscheck", action="store_true",
+        help="also run OpenRocket's descent model and the recovery "
+             "mastersheet's, and tabulate all three. Comparison only -- it "
+             "sizes nothing.",
+    )
+    ap.add_argument(
+        "--wind", type=float, default=0.0, metavar="M_S",
+        help="wind speed for the mastersheet's drift estimate, m/s. Ours and "
+             "OpenRocket's runs are windless either way (Phase 1, §14).",
+    )
     ap.add_argument("--json", action="store_true",
                     help="emit machine-readable results instead of a report")
     args = ap.parse_args(argv)
@@ -54,8 +65,30 @@ def main(argv=None):
         if not args.json:
             print(render_sweep(rows))
 
+    comparison = None
+    if args.crosscheck:
+        # Always at the axial bound, whatever --which asked for: the other two
+        # models have no airframe term to vary, so running the comparison at
+        # both bounds would print the same two foreign columns twice.
+        from physics.crosscheck import crosscheck
+
+        comparison = crosscheck(config, which="axial", wind_ms=args.wind)
+        if not args.json:
+            print(render_crosscheck(comparison))
+
     if args.json:
-        print(json.dumps(_to_json(payload), indent=2))
+        out = _to_json(payload)
+        if comparison is not None:
+            # A sibling key, not a member of `payload`: that dict is indexed by
+            # airframe bound and `_to_json` walks it as such, so hanging a
+            # comparison off it would be a shape error waiting to happen.
+            out["crosscheck"] = {
+                "which": comparison.which,
+                "wind_ms": comparison.wind,
+                "metrics": [m.as_dict() for m in comparison.metrics],
+                "warnings": comparison.warnings,
+            }
+        print(json.dumps(out, indent=2))
     return 0
 
 

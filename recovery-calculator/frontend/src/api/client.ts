@@ -12,7 +12,10 @@
  */
 
 import type { Climatology } from '../types/climatology'
-import type { Config, Result, TrajectorySample } from '../types/schema'
+import type { Kind } from '../lib/quantities'
+import type {
+  ChartSample, Config, Result, TrajectorySample,
+} from '../types/schema'
 import bundledClimatology from '../fixtures/climatology.json'
 import { stubResult } from './fixture'
 
@@ -517,9 +520,9 @@ export interface StudyAxisEcho {
   mode: string
   labels: (number | string)[]
   /** What the config as posted has on this axis, so the reference row can say
-   *  where today's design sits. Null on a canopy axis means the fitted canopy
-   *  is not one of the ones being compared -- which is worth saying, and is
-   *  not the same as "unknown". */
+   *  where today's design sits. Null on a canopy or pad-state axis means the
+   *  one configured now is not among the ones being compared -- which is worth
+   *  saying, and is not the same as "unknown". */
   current: number | string | null
 }
 
@@ -551,6 +554,105 @@ export async function runStudy(
   config: Config, trajectories = false,
 ): Promise<ApiResponse<StudyResult>> {
   return request<StudyResult>(`/study${trajectories ? '?trajectories=1' : ''}`, {
+    method: 'POST',
+    body: JSON.stringify(config),
+  })
+}
+
+// --- /api/crosscheck --------------------------------------------------------
+
+/** Which of the three models a column belongs to. */
+export type CrossModel = 'ours' | 'openrocket' | 'mastersheet'
+
+/**
+ * One row of the comparison table.
+ *
+ * `values[model]` is **null** where that model does not compute the quantity at
+ * all -- OpenRocket has no opening-load calculation anywhere in its codebase,
+ * and the mastersheet assumes terminal velocity so has no acceleration. Render
+ * null as "not computed", never as 0: an absence shown as a number reads as a
+ * prediction, and in the load row it reads as a *safe* one.
+ */
+export interface CrossMetric {
+  key: string
+  label: string
+  /** A `lib/quantities.ts` Kind, so the row converts with the unit switcher —
+   *  or **null** for a quantity that has no imperial form and therefore no
+   *  Kind, such as seconds. Passing an unknown kind to `unitFor` dereferences
+   *  undefined and blanks the page, so this is nullable on purpose. */
+  kind: Kind | null
+  /** The literal unit, used only when `kind` is null. */
+  unit: string | null
+  values: Record<CrossModel, number | null>
+  /** Why a model is absent, or what the row is really showing. */
+  note: string | null
+  /** max/min over the models that answered. Null when fewer than two did. */
+  spread: number | null
+}
+
+/** A deployment, as each model sees it. Loads are null for OpenRocket. */
+export interface CrossEvent {
+  t: number
+  device: string
+  z: number | null
+  v_deploy: number | null
+  F_inf: number | null
+  F_reduced: number | null
+  X: number | null
+}
+
+export interface CrossModelResult {
+  label: string
+  trajectory: ChartSample[]
+  events: CrossEvent[]
+  /** False for OpenRocket. The tension channel must say so rather than
+   *  rendering an empty chart the reader will take for a flat line. */
+  computes_load: boolean
+  /** OpenRocket only: the airframe area used before the first deployment. */
+  coast_CdS?: number
+  /** Mastersheet only: the points the workbook itself puts a number on, as
+   *  against the closed form reconstructed between them. Drawn as dots so it
+   *  is obvious which is which. */
+  reported?: ChartSample[]
+  /** Mastersheet only: what their own never-called DESCENT_TIME would say. */
+  descent_time_layered?: number
+}
+
+/** One row of the differences table: an aspect, and what each model does. */
+export interface ModelDifference {
+  aspect: string
+  ours: string
+  openrocket: string
+  mastersheet: string
+}
+
+export interface CrosscheckResult {
+  git_sha: string
+  openrocket_version: { release: string; commit: string }
+  which: string
+  wind: number
+  metrics: CrossMetric[]
+  /** `shared` is what all three take for granted; `differs` is where they part
+   *  company. Kept apart so a reader can scan for disagreement without first
+   *  filtering out the lines everyone agrees on. */
+  assumptions: { shared: string[]; differs: ModelDifference[] }
+  /** About this config, not about the models. */
+  warnings: string[]
+  models: Record<CrossModel, CrossModelResult>
+}
+
+/**
+ * POST /api/crosscheck. Our model against OpenRocket and the mastersheet.
+ *
+ * No stub fallback, for the same reason `runStudy` has none and more sharply
+ * still: a fabricated cross-check is a fabricated validation. The entire value
+ * of this tab is that the numbers came from three real models, so inventing one
+ * when the backend is down would defeat the only thing it is for.
+ */
+export async function runCrosscheck(
+  config: Config, wind = 0,
+): Promise<ApiResponse<CrosscheckResult>> {
+  return request<CrosscheckResult>(`/crosscheck?wind=${wind}`, {
     method: 'POST',
     body: JSON.stringify(config),
   })
