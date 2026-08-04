@@ -110,7 +110,8 @@ you need no test stand.
 
 ### Aliases
 
-Optional, and they save the `cd`:
+`./setup.sh` offers to add these to your shell rc (`--no-aliases` to skip). To
+add them by hand:
 
 ```bash
 echo "source ~/STAR/scripts/aliases.sh" >> ~/.bashrc   # adjust to your clone path

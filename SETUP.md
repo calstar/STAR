@@ -47,6 +47,11 @@ before cloning, OR use WSL (recommended — see above).
 ./setup.sh --help                 # all flags
 ```
 
+Setup also offers to add the STAR shell aliases to your `~/.bashrc` (or
+`~/.zshrc`) — `engine-dev`, `daq-logs`, `star-status`, and the rest; run
+`star-help` afterwards for the list. Pass `--no-aliases` to skip, and it never
+adds a duplicate if you already source them.
+
 The top-level `setup.sh` is a dispatcher over per-project setup scripts.
 Each subproject owns its own steps; you only install what you'll actually use:
 

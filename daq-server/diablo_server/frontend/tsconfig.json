@@ -18,7 +18,6 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "types": ["vite/client"],
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./*"],
       "@iarna/toml": ["./node_modules/@iarna/toml"]

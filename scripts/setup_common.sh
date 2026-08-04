@@ -13,6 +13,7 @@
 #   - ensure_pinned_black — installs black==25.11.0 to pip --user
 #   - ensure_homebrew / ensure_apt_packages helpers
 #   - prompt_yes_no + AUTO_YES support (respects $SETUP_YES=1)
+#   - install_star_aliases — adds scripts/aliases.sh to the user's shell rc
 
 # Guard against double-source (per-project setup.sh + dispatcher may both source).
 if [ "${_STAR_SETUP_COMMON_LOADED:-0}" = "1" ]; then
@@ -221,4 +222,64 @@ find_repo_root() {
     dir="$(dirname "$dir")"
   done
   return 1
+}
+
+# ─── Shell aliases ───────────────────────────────────────────────────────────
+# Adds `source <repo>/scripts/aliases.sh` to the user's shell rc, which gives
+# them the uniform per-project aliases (engine-dev, pid-attach, daq-logs, …).
+# Idempotent, and never appends a duplicate.
+#
+# Usage: install_star_aliases <repo_root>
+install_star_aliases() {
+  local repo_root="$1"
+  local aliases_file="$repo_root/scripts/aliases.sh"
+  local rc line
+
+  if [ ! -f "$aliases_file" ]; then
+    warn "scripts/aliases.sh not found — skipping alias setup"
+    return 0
+  fi
+
+  # Which file the user's shell actually reads. macOS Terminal starts bash as a
+  # *login* shell, which reads .bash_profile and never .bashrc.
+  case "${SHELL:-/bin/bash}" in
+    */zsh)
+      rc="$HOME/.zshrc"
+      ;;
+    *)
+      if [ "$(detect_os)" = "macOS" ] && [ -f "$HOME/.bash_profile" ]; then
+        rc="$HOME/.bash_profile"
+      else
+        rc="$HOME/.bashrc"
+      fi
+      ;;
+  esac
+
+  # Already set up? Either path counts: daq-server/tools/aliases.sh is a shim
+  # that sources the same file, so adding ours too would just load it twice.
+  if [ -f "$rc" ] && grep -qF "scripts/aliases.sh" "$rc"; then
+    ok "STAR aliases already in $(basename "$rc")"
+    return 0
+  fi
+  if [ -f "$rc" ] && grep -qF "daq-server/tools/aliases.sh" "$rc"; then
+    ok "STAR aliases already loaded in $(basename "$rc") (via the daq-server shim)"
+    warn "That still works. To use the canonical path, replace that line with:"
+    warn "  source \"$aliases_file\""
+    return 0
+  fi
+
+  if ! prompt_yes_no "Add STAR aliases (engine-dev, daq-logs, star-help, …) to $(basename "$rc")?" y; then
+    warn "Skipped. To add them later:"
+    warn "  echo 'source \"$aliases_file\"' >> $rc"
+    return 0
+  fi
+
+  line="source \"$aliases_file\""
+  {
+    printf '\n# STAR monorepo aliases — run `star-help` for the list\n'
+    printf '%s\n' "$line"
+  } >> "$rc"
+
+  ok "Added STAR aliases to $rc"
+  ok "Run 'source $rc' (or open a new shell), then 'star-help'"
 }
