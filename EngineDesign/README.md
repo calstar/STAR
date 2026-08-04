@@ -177,7 +177,6 @@ EngineDesign/
 │   │   │   ├── layer2_pressure.py
 │   │   │   ├── layer3_thermal_protection.py
 │   │   │   └── layer4_flight_simulation.py
-│   │   └── views/               # UI components for optimizer
 │   │
 │   └── control/                 # Control system
 │       └── robust_ddp/          # Robust DDP controller

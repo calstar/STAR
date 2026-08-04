@@ -16,7 +16,9 @@ matplotlib
 pydantic
 PyYAML
 rocketpy
-streamlit
+# No streamlit: the Streamlit UI is retired (see archive/streamlit-ui/). plotly
+# stays -- engine/pipeline/comprehensive_geometry_sizing.py and
+# chamber_geometry_visualizer.py use it directly, without Streamlit.
 plotly
 ezdxf
 cma

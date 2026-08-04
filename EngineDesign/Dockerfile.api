@@ -44,6 +44,13 @@ COPY EngineDesign/engine/  ./engine/
 COPY EngineDesign/copv/    ./copv/
 COPY EngineDesign/configs/ ./configs/
 
+# Flight simulation: engine/optimizer/copv_flight_helpers.py imports
+# ui.flight_sim lazily. Without this the import raises ModuleNotFoundError,
+# which its outer `except Exception` swallows into {"success": False,
+# "error": "No module named 'ui'"} -- the feature breaks silently rather than
+# loudly. Safe to copy now that the Streamlit files have left ui/.
+COPY EngineDesign/ui/ ./ui/
+
 # Committed CEA tables. Without these the engine pipeline would try to build a
 # cache on first use and fail on the missing rocketcea -- the rest of
 # output/ is generated data and stays out (see .dockerignore).
