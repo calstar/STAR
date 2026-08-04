@@ -3,7 +3,7 @@
 # Full-Stack Integration Test
 #
 # Spins up the complete pipeline and verifies data flows end-to-end:
-#   fake_packet_generator → DAQ bridge → Elodin DB → Backend → WS client
+#   board_simulator.py → DAQ bridge → Elodin DB → Backend → WS client
 #   WS client → Backend → sequencer_service (TCP) → actuator UDP
 #
 # Prerequisites:
@@ -136,7 +136,7 @@ cleanup() {
   rm -rf "$TEST_DB_PATH" 2>/dev/null || true
   rm -f "$TEST_CONFIG" 2>/dev/null || true
   rm -f "$UDP_COMMANDS_FILE" 2>/dev/null || true
-  rm -f "$SIM_STATS_FILE" 2>/dev/null || true
+  rm -f "$SIM_STATS_FILE" "$SIM_STATS_FILE.tmp" 2>/dev/null || true
   echo "✅ Cleanup done"
 }
 
@@ -233,24 +233,25 @@ sleep 0.5
 
 # ── Build C++ binaries ───────────────────────────────────────────────────────
 
-echo "🔨 Building C++ binaries..."
-FSW_BUILD_DIR="$REPO_ROOT/build"
-if [ ! -d "$FSW_BUILD_DIR" ]; then
-  mkdir -p "$FSW_BUILD_DIR"
-  (cd "$FSW_BUILD_DIR" && cmake "$REPO_ROOT")
+# Full build via the canonical script, NOT a hand-maintained --target list.
+# A previous targeted list here omitted fake_packet_generator, so the test ran
+# a STALE packet generator against fresh services after transport changes —
+# the classic "int fails until you run build first" bug. Full incremental
+# builds cost seconds and can never skip a binary the test uses.
+#
+# SKIP_CPP_BUILD=1 bypasses this — for CI, which already built every binary in
+# the `build` job and downloads them as artifacts. Do NOT set it locally: an
+# incremental build costs seconds here and is what protects you from running
+# tests against stale binaries.
+if [ "${SKIP_CPP_BUILD:-0}" = "1" ]; then
+  echo "⏭️  Skipping C++ build (SKIP_CPP_BUILD=1 — binaries must already exist)."
+  [ -x "$REPO_ROOT/build/bin/daq_bridge" ] \
+    || fail "SKIP_CPP_BUILD=1 but $REPO_ROOT/build/bin/daq_bridge is missing or not executable"
+else
+  echo "🔨 Building C++ binaries (scripts/build.sh — canonical full build)..."
+  bash "$REPO_ROOT/scripts/build.sh" || fail "C++ build failed"
+  echo "  ✅ C++ binaries built"
 fi
-# Use cmake --build (not make): CI uses -G Ninja, which has no Makefile targets for make(1).
-NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
-(cd "$FSW_BUILD_DIR" && cmake --build . --parallel "$NPROC" \
-  --target fsw_daq_lib \
-  --target daq_bridge \
-  --target sequencer_service \
-  --target heartbeat_service \
-  --target config_broadcast_service \
-  --target calibration_service \
-  --target controller_service 2>&1) \
-  || fail "C++ build failed"
-echo "  ✅ C++ binaries built"
 echo ""
 
 # ── Check prerequisites ──────────────────────────────────────────────────────
@@ -304,18 +305,13 @@ else
   echo "  ⚠️  controller_service not found — controller tests will be skipped"
 fi
 
-# Find fake packet generator or board simulator (fallback)
-FAKE_GEN="$REPO_ROOT/build/bin/fake_packet_generator"
-[ -x "$FAKE_GEN" ] || FAKE_GEN=""
+# Data source: board_simulator.py (speaks the current DAQv2-Comms protocol).
+# NOTE: transport/src/fake_packet_generator.cpp is a pre-DAQv2 fossil (0xAA
+# magic + XOR framing the current daq_bridge cannot parse) with no CMake
+# target — never use it here even if someone makes it buildable again.
 BOARD_SIM="$REPO_ROOT/sim/board_simulator.py"
-if [ -z "$FAKE_GEN" ] && [ ! -f "$BOARD_SIM" ]; then
-  fail "Neither fake_packet_generator nor board_simulator.py found"
-fi
-if [ -n "$FAKE_GEN" ]; then
-  echo "  ✅ fake_packet_generator: $FAKE_GEN"
-else
-  echo "  ✅ board_simulator: $BOARD_SIM (fallback)"
-fi
+[ -f "$BOARD_SIM" ] || fail "board_simulator.py not found"
+echo "  ✅ board_simulator: $BOARD_SIM"
 
 # Find Python (for board_simulator fallback)
 PYTHON_BIN=""
@@ -366,6 +362,18 @@ sedi "s/^port = 2240/port = $TEST_ELODIN_PORT/" "$TEST_CONFIG"
 sedi "s/^sensor_port = 5006/sensor_port = $TEST_DAQ_UDP_PORT/" "$TEST_CONFIG"
 # Replace actuator_cmd_port (under [network] section)
 sedi "s/^actuator_cmd_port = 5005/actuator_cmd_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+# Pin the GUI downsample config so the test's assertions are deterministic
+# regardless of the production [gui] toggle, and so envelope downsampling is
+# OBSERVABLE: the sim's eligible streams are only 10 Hz, and at the production
+# points_per_second = 20 (10 windows/s) the envelope sits at the pass-through
+# boundary — a broken decimator would be invisible. 4 pts/s (2 windows/s)
+# forces a real 10 Hz → ≤4/s compression, asserted in ws_data_flow_test.ts via
+# INTEGRATION_GUI_PPS. Set INTEGRATION_GUI_MODE=throttle to exercise the legacy
+# drop-throttle path instead (cap/floor asserts skip — throttle ignores
+# points_per_second and caps at a fixed ~20 Hz).
+INTEGRATION_GUI_MODE="${INTEGRATION_GUI_MODE:-envelope}"
+sedi "s/^downsample_mode = .*/downsample_mode = \"$INTEGRATION_GUI_MODE\"/" "$TEST_CONFIG"
+sedi 's/^points_per_second = .*/points_per_second = 4/' "$TEST_CONFIG"
 # Point heartbeat broadcast to localhost to avoid sending to the real subnet
 sedi 's/^broadcast_ip = .*/broadcast_ip = "127.0.0.1"/' "$TEST_CONFIG"
 # Align SERVER_HEARTBEAT UDP with the same port as udp_listener (actuator/control path in CI)
@@ -591,19 +599,41 @@ fi
 # ── Start Fake Data Generator ────────────────────────────────────────────────
 
 echo "🎭 Starting fake data generator..."
-SIM_PID=""
-if [ -n "$FAKE_GEN" ]; then
-  # fake_packet_generator: positional args = host port rate_hz
-  "$FAKE_GEN" "127.0.0.1" "$TEST_DAQ_UDP_PORT" 10 > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
-  PIDS+=($!)
-else
-  # board_simulator.py: uses --config for board definitions, --port for UDP target
-  # --low-noise: constant ADC values per channel for calibration spike detection
-  "$PYTHON_BIN" -c "import tomli" 2>/dev/null || "$PYTHON_BIN" -m pip install tomli -q 2>/dev/null || true
-  "$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --skip-startup --stats-file "$SIM_STATS_FILE" > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
-  SIM_PID=$!
-  PIDS+=($SIM_PID)
+# board_simulator.py: uses --config for board definitions, --port for UDP target
+# --low-noise: constant ADC values per channel for calibration spike detection
+# TOML parsing: the sim falls back to stdlib tomllib (py>=3.11) when tomli is
+# absent; on older Pythons install it once with `pip install tomli`.
+#
+# Timing-pathology gauntlet (default ON): chunk batching, network jitter,
+# crystal drift, bogus absolute clock, a mid-run reboot, and a uint32 millis
+# wrap — the daq_bridge's [time_sync] board-clock sync must keep the timeline
+# clean, verified by ws_data_flow_test Test 14 (--only=timestamps).
+# Override with INTEGRATION_TIME_FLAGS (set to "" for a clean run — required
+# when config [time_sync] mode = "arrival", which does not de-flatten chunks).
+INTEGRATION_TIME_FLAGS="${INTEGRATION_TIME_FLAGS-"--chunks-per-packet 3 --net-jitter-ms 20 --clock-drift-ppm 200 --clock-offset-ms -3600000 --reboot-after 25 --start-near-wrap"}"
+#
+# Sensor rate: unset → production rates (10 Hz, 50 Hz encoder). Local runs stay
+# realistic; a dev box has the cores for it and this is where you want full load
+# before trusting a change on hardware.
+#
+# CI sets INTEGRATION_SENSOR_HZ=5 (see .github/workflows/daq-server-ci.yml) because
+# a 4-core runner starves on an 11-process stack, which was the dominant source of
+# false failures. The encoder alone is ~39% of UDP traffic — 5x the rate of every
+# other board, and exempt from GUI envelope downsampling — so flattening it cuts
+# total load ~60%.
+#
+# If you set this, do not go below points_per_second (pinned to 4 above): at or
+# under the envelope budget the decimator degrades to a pass-through and the
+# cap/floor assertions in ws_data_flow_test stop testing anything.
+INTEGRATION_SENSOR_HZ="${INTEGRATION_SENSOR_HZ:-}"
+SIM_RATE_FLAG=""
+if [ -n "$INTEGRATION_SENSOR_HZ" ]; then
+  SIM_RATE_FLAG="--sensor-hz $INTEGRATION_SENSOR_HZ"
 fi
+# shellcheck disable=SC2086  # intentional word splitting of the flags
+"$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --skip-startup $SIM_RATE_FLAG --stats-file "$SIM_STATS_FILE" $INTEGRATION_TIME_FLAGS > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
+SIM_PID=$!
+PIDS+=($SIM_PID)
 sleep 2
 
 if ! kill -0 "${PIDS[-1]}" 2>/dev/null; then
@@ -640,6 +670,13 @@ SEQ_FLAG=""; [ -n "$SEQ_SVC" ] && SEQ_FLAG="--has-sequencer"
 CTRL_FLAG=""; [ -n "$CONTROLLER_SVC" ] && CTRL_FLAG="--has-controller"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 export TEST_DAQ_UDP_PORT TEST_STARTUP_LISTEN_PORT BOARD_STARTUP_SIM="$REPO_ROOT/sim/board_startup_sim.py" PYTHON_BIN
+# Test 15 (sample conservation) reads the sim's live ground-truth stats file
+export INTEGRATION_SIM_STATS="$SIM_STATS_FILE"
+# Must match the points_per_second sed above — arms the envelope cap/floor asserts
+# (envelope mode only; throttle ignores points_per_second)
+if [ "$INTEGRATION_GUI_MODE" = "envelope" ]; then
+  export INTEGRATION_GUI_PPS=4
+fi
 export INTEGRATION_SKIP_STARTUP_E2E
 # Test 9 (SELF_TEST E2E): log every SELF_TEST.* SENSOR_UPDATE on the WS client
 [ "$VERBOSE" = "1" ] && export INTEGRATION_SELFTEST_DEBUG=1
@@ -658,8 +695,11 @@ WS_TEST_EXIT=$?
 # Send SIGTERM so the simulator writes its stats file before exiting.
 if [ -n "$SIM_PID" ] && kill -0 "$SIM_PID" 2>/dev/null; then
   kill "$SIM_PID" 2>/dev/null
-  sleep 1  # wait for stats file write
+  sleep 1  # wait for final stats file write
 fi
+# NOTE: sample conservation (sim sent vs backend ingested) is Test 15 inside
+# ws_data_flow_test.ts — part of the same pass/fail summary, reading the sim's
+# live stats file via INTEGRATION_SIM_STATS.
 
 # Print full backend log tail if test failed
 if [ "$WS_TEST_EXIT" -ne 0 ]; then

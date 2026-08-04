@@ -14,7 +14,7 @@ are created left-to-right in this order:
 | 2 | Elodin DB | `elodin-db run [::]:2240` — raw + calibrated data land here |
 | 3 | Calibration Service | `build/bin/calibration_service` — reads RAW from Elodin, writes CALIBRATED |
 | 4 | Backend | `server.ts` (tsx) — HTTP+WS on :8081, connects directly to Elodin DB :2240 |
-| 5 | Frontend | Next.js (`npm run dev`) on :3000 |
+| 5 | Frontend | Vite static build (served by backend on :3000; `FRONTEND_DEV=1` for vite dev) |
 | 6 | Heartbeat Service | `build/bin/heartbeat_service` (C++ preferred, Python fallback) — broadcasts SERVER_HEARTBEAT |
 | 7 | Config Broadcast Service | `build/bin/config_broadcast_service` — sends ACTUATOR_CONFIG/SENSOR_CONFIG |
 | 8 | Sequencer Service | `build/bin/sequencer_service` — TCP :9998 command/actuator service |

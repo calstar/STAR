@@ -27,7 +27,7 @@ daq-server/                 # this subproject (inside the STAR monorepo)
 │   │   ├── include/
 │   │   └── src/
 │   ├── backend/            # Node.js/TypeScript backend (server.ts → WS+HTTP)
-│   ├── frontend/           # React/Next.js web GUI
+│   ├── frontend/           # React/Vite SPA web GUI (static build served by backend :3000)
 │   └── shared/             # Shared TypeScript types
 │
 ├── config/                 # Runtime config files
@@ -191,7 +191,7 @@ ESP32 boards (UDP)
   sequencer_service    ◄── WS SEND_COMMAND   browser WebSocket
   (TCP :9998 state machine + actuator UDP)         │
                                                   ▼
-                                             frontend (Next.js :3000)
+                                             frontend (Vite SPA :3000)
 ```
 
 ---

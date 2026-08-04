@@ -26,7 +26,8 @@ pkill -f "elodin-db run.*2240"         2>/dev/null || true
 
 # ── Web GUI (frontend + backend) ──────────────────────────────────────────────
 # Repo-anchored only — do not use pkill -f "node.*server" (matches IDE remote Node).
-pkill -f "next dev"                    2>/dev/null || true
+pkill -f "next dev"                    2>/dev/null || true  # legacy (pre-Vite)
+pkill -f "${REPO_ROOT}/diablo_server/frontend.*vite" 2>/dev/null || true
 pkill -f "${REPO_ROOT}/diablo_server/backend.*server\.ts" 2>/dev/null || true
 pkill -f "${REPO_ROOT}/diablo_server/backend.*server-legacy\.ts" 2>/dev/null || true
 pkill -f "${REPO_ROOT}/diablo_server/backend.*elodin-relay\.ts" 2>/dev/null || true

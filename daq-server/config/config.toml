@@ -64,6 +64,39 @@ connection_retry_attempts = 3
 connection_retry_delay_ms = 1000
 
 # =============================================================================
+# GUI stream downsampling (backend → browser SENSOR_UPDATE rate per stream)
+#   downsample_mode   = "envelope" | "throttle"
+#     envelope: each window broadcasts the min and max sample with their real
+#               timestamps, so short spikes survive downsampling.
+#     throttle: legacy behavior — first sample per 50 ms window, rest dropped.
+#               Flip to this to revert to pre-envelope behavior (no code change).
+#   points_per_second = broadcast budget per stream (envelope windows/sec = half this)
+# Applies only to high-rate DAQ streams (PT/TC/RTD/LC, actuator raw); event
+# streams (state, self-test, encoder, controller) always pass through untouched.
+# =============================================================================
+[gui]
+downsample_mode = "envelope"
+points_per_second = 20
+
+# =============================================================================
+# DAQ bridge sample timestamping (per-board clock sync)
+#   mode = "board-clock": reconstruct true sample times from the boards'
+#     per-chunk millis() — batched chunks keep their real spacing, network
+#     jitter is filtered out (sliding-window-min offset), reboots and uint32
+#     wraps handled automatically. Safety-clamped so the worst case equals
+#     "arrival" mode.
+#   mode = "arrival": legacy behavior — every sample in a packet stamped with
+#     the bridge receive time. Flip to this to revert (no code change).
+# =============================================================================
+[time_sync]
+mode = "board-clock"
+window_seconds = 10          # residual-min sliding window
+max_plausible_gap_s = 60     # board-clock forward jump beyond this = reboot -> resync
+max_batch_age_s = 5          # stamps confined to [arrival - this, arrival]
+resync_threshold_ms = 1000   # |residual - offset| beyond this = lost lock -> resync
+log_interval_s = 10          # per-board [TimeSync] diagnostics log cadence
+
+# =============================================================================
 # ADC voltage reference nominals (for sense conversions in UI)
 # Used when voltage_reference = 0 (internal) or 2 (5V absolute). Ref 1 = VDD ratiometric.
 # =============================================================================

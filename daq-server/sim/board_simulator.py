@@ -4,11 +4,21 @@ import struct
 import time
 import threading
 import random
-import tomli
 import os
 import argparse
 import json
 import math
+
+try:
+    import tomli
+except ModuleNotFoundError:
+    try:
+        import tomllib as tomli  # stdlib since Python 3.11, same API
+    except ModuleNotFoundError:
+        raise SystemExit(
+            "board_simulator: no TOML parser available. "
+            "Install one with `pip install tomli` (or use Python >= 3.11)."
+        )
 
 # DiabloAvionics Packet Types (DAQv2-Comms DiabloEnums.h)
 PACKET_TYPE_HEARTBEAT = 1
@@ -31,6 +41,31 @@ BOARD_TYPE_TC = 4
 BOARD_TYPE_ACTUATOR = 5
 
 
+class TimingPathology:
+    """Deliberate timing defects for exercising the bridge's clock sync.
+
+    All default off → simulator behaves exactly as before. See --net-jitter-ms,
+    --clock-drift-ppm, --clock-offset-ms, --reboot-after, --start-near-wrap,
+    --chunks-per-packet.
+    """
+
+    def __init__(
+        self,
+        chunks_per_packet=1,
+        net_jitter_ms=0.0,
+        clock_drift_ppm=0.0,
+        clock_offset_ms=0.0,
+        reboot_after_s=None,
+        start_near_wrap=False,
+    ):
+        self.chunks_per_packet = max(1, int(chunks_per_packet))
+        self.net_jitter_ms = float(net_jitter_ms)
+        self.clock_drift_ppm = float(clock_drift_ppm)
+        self.clock_offset_ms = float(clock_offset_ms)
+        self.reboot_after_s = reboot_after_s
+        self.start_near_wrap = bool(start_near_wrap)
+
+
 class SimulatedBoard:
     def __init__(
         self,
@@ -42,6 +77,8 @@ class SimulatedBoard:
         board_index=0,
         sim_pt_targets=None,
         skip_startup=False,
+        timing=None,
+        sensor_hz=None,
     ):
         self.name = name
         self.board_index = board_index
@@ -50,6 +87,30 @@ class SimulatedBoard:
         self.target_port = target_port
         self.low_noise = low_noise
         self.sim_pt_targets = sim_pt_targets or {}
+        # None → per-type production defaults (see _run). A value overrides every
+        # board type uniformly, for CI where the point is "did anything obviously
+        # break", not sustaining hardware rates.
+        self.sensor_hz = sensor_hz
+
+        # ── Board clock model (faithful to firmware millis(): uptime-relative) ──
+        self.timing = timing or TimingPathology()
+        # Alternate drift sign across boards so both directions are exercised.
+        self.drift_ppm = self.timing.clock_drift_ppm * (
+            1 if board_index % 2 == 0 else -1
+        )
+        self._boot_epoch = time.time()
+        # start-near-wrap: begin ~30 s before the uint32 boundary. Compensate
+        # for clock_offset_ms so the wrap still lands ~30 s in when both
+        # pathologies are enabled together.
+        self._clock_base_ms = (
+            int(2**32 - 30_000 - self.timing.clock_offset_ms)
+            if self.timing.start_near_wrap
+            else 0
+        )
+        self._rebooted_at = None
+        # Deterministic per-board RNG for network jitter (reproducible runs).
+        self._jitter_rng = random.Random(0xD1AB70 + board_index * 7919)
+        self._pending_chunks = []  # [(chunk_ts_ms, packed_samples_bytes), ...]
 
         self.ip = board_config.get("ip", "127.0.0.1")
         self.board_id = board_config.get("board_id", 0)
@@ -139,18 +200,53 @@ class SimulatedBoard:
         self.thread.daemon = True
         self.thread.start()
 
+    def _board_ms(self, now):
+        """Board clock (uint32 millis), with optional drift/offset/wrap pathologies."""
+        uptime_s = (now - self._boot_epoch) * (1.0 + self.drift_ppm * 1e-6)
+        return (
+            int(uptime_s * 1000.0 + self._clock_base_ms + self.timing.clock_offset_ms)
+            & 0xFFFFFFFF
+        )
+
+    def _jitter_delay(self):
+        """One-sided network delay in seconds (0 when jitter disabled)."""
+        if self.timing.net_jitter_ms <= 0:
+            return 0.0
+        return self._jitter_rng.uniform(0.0, self.timing.net_jitter_ms) / 1000.0
+
     def _run(self):
         run_started = time.time()
         last_heartbeat = 0
         last_sensor_data = 0
 
         heartbeat_interval = 1.0  # 1 Hz
-        sensor_interval = 0.02 if self.board_type_str == "ENCODER" else 0.1  # 50 Hz for ENCODER, 10 Hz default
-        actuator_current_interval = 0.1  # Explicitly keep actuator current-sense packets at 10 Hz
+        if self.sensor_hz:
+            # Uniform override (--sensor-hz): every board type, encoder included.
+            # Encoder is normally 5x the others AND exempt from GUI envelope
+            # downsampling, so it dominates pipeline load — flattening it is the
+            # single biggest reduction available.
+            sensor_interval = 1.0 / self.sensor_hz
+            actuator_current_interval = sensor_interval
+        else:
+            sensor_interval = 0.02 if self.board_type_str == "ENCODER" else 0.1  # 50 Hz for ENCODER, 10 Hz default
+            actuator_current_interval = 0.1  # Explicitly keep actuator current-sense packets at 10 Hz
 
         while self.running:
             now = time.time()
-            ts_ms = int(now * 1000) & 0xFFFFFFFF
+
+            # --- Pathology: one-time reboot (millis resets to ~0) ---
+            if (
+                self.timing.reboot_after_s is not None
+                and self._rebooted_at is None
+                and now - run_started >= self.timing.reboot_after_s
+            ):
+                self._boot_epoch = now
+                self._clock_base_ms = 0  # a rebooted board counts from zero
+                self._rebooted_at = now
+                self._pending_chunks = []
+                print(f"[{self.name}] simulated REBOOT — board millis reset", flush=True)
+
+            ts_ms = self._board_ms(now)
 
             # --- SETUP: wait for SENSOR_CONFIG (no timeout — matches real firmware) ---
             if self.board_state == BOARD_STATE_SETUP:
@@ -224,7 +320,7 @@ class SimulatedBoard:
         if not active_connectors:
             active_connectors = list(range(1, self.num_sensors + 1))
 
-        ts_ms = int(time.time() * 1000) & 0xFFFFFFFF
+        ts_ms = self._board_ms(time.time())
         header = struct.pack("<BBI", PACKET_TYPE_SELF_TEST, 0, ts_ms)
 
         adc_good = 1
@@ -253,26 +349,36 @@ class SimulatedBoard:
             pass
 
     def _send_sensor_data(self, ts_ms):
-        header = struct.pack("<BB I", PACKET_TYPE_SENSOR_DATA, 0, ts_ms)
-
+        """Collect one chunk (one scan of all channels, stamped with the board
+        clock); send a packet once chunks_per_packet chunks are accumulated —
+        matching real firmware batching (SENSOR_MAX_CHUNKS_BEFORE_SEND)."""
         active_connectors = self.config.get("active_connectors", [])
         if not active_connectors:
             active_connectors = list(range(1, self.num_sensors + 1))
 
-        num_chunks = 1
-        body_header = struct.pack("<BB", num_chunks, len(active_connectors))
-
-        chunk_ts = ts_ms
-        chunk_data = struct.pack("<I", chunk_ts)
-
+        chunk_data = struct.pack("<I", ts_ms)
         for sensor_id in active_connectors:
             val = self._generate_data(sensor_id)
             chunk_data += struct.pack("<B I", sensor_id, val)
+        self._pending_chunks.append(chunk_data)
+
+        if len(self._pending_chunks) < self.timing.chunks_per_packet:
+            return
+
+        header = struct.pack("<BB I", PACKET_TYPE_SENSOR_DATA, 0, ts_ms)
+        body_header = struct.pack(
+            "<BB", len(self._pending_chunks), len(active_connectors)
+        )
+        payload = header + body_header + b"".join(self._pending_chunks)
+        self._pending_chunks = []
+
+        # Pathology: one-sided network delay before the send.
+        delay = self._jitter_delay()
+        if delay > 0:
+            time.sleep(delay)
 
         try:
-            self.sock.sendto(
-                header + body_header + chunk_data, (self.target_ip, self.target_port)
-            )
+            self.sock.sendto(payload, (self.target_ip, self.target_port))
             self.packets_sent += 1
         except Exception:
             pass
@@ -386,6 +492,58 @@ def main():
         action="store_true",
         help="Skip SETUP/SELF_TEST lifecycle, go directly to ACTIVE",
     )
+    parser.add_argument(
+        "--sensor-hz",
+        type=float,
+        default=None,
+        metavar="HZ",
+        help="Uniform sensor scan rate for ALL board types, overriding the per-type "
+             "defaults (10 Hz, 50 Hz encoder). For CI, where the goal is verifying "
+             "nothing obviously broke rather than sustaining hardware rates. Keep "
+             "above the GUI envelope budget (points_per_second) or downsampling "
+             "becomes a pass-through and stops being tested.",
+    )
+    # ── Timing pathologies (exercise the DAQ bridge's clock sync; default off) ──
+    parser.add_argument(
+        "--chunks-per-packet",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Batch N chunks (scans) per sensor packet, each with its own board-clock timestamp",
+    )
+    parser.add_argument(
+        "--net-jitter-ms",
+        type=float,
+        default=0.0,
+        metavar="MS",
+        help="Random one-sided network delay in [0, MS] ms per sensor packet (seeded per board)",
+    )
+    parser.add_argument(
+        "--clock-drift-ppm",
+        type=float,
+        default=0.0,
+        metavar="PPM",
+        help="Board crystal drift; sign alternates per board so both directions run",
+    )
+    parser.add_argument(
+        "--clock-offset-ms",
+        type=float,
+        default=0.0,
+        metavar="MS",
+        help="Absolute board-clock offset (bogus clock)",
+    )
+    parser.add_argument(
+        "--reboot-after",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Reset every board's millis to ~0 once, after this many seconds",
+    )
+    parser.add_argument(
+        "--start-near-wrap",
+        action="store_true",
+        help="Start board millis ~30 s before the uint32 wrap so a wrap occurs mid-run",
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.config):
@@ -436,6 +594,15 @@ def main():
             board_index=active_count,
             sim_pt_targets=sim_pt_targets,
             skip_startup=args.skip_startup,
+            sensor_hz=args.sensor_hz,
+            timing=TimingPathology(
+                chunks_per_packet=args.chunks_per_packet,
+                net_jitter_ms=args.net_jitter_ms,
+                clock_drift_ppm=args.clock_drift_ppm,
+                clock_offset_ms=args.clock_offset_ms,
+                reboot_after_s=args.reboot_after,
+                start_near_wrap=args.start_near_wrap,
+            ),
         )
         board.start()
         simulated_boards.append(board)
@@ -468,14 +635,26 @@ def main():
                 "board_id": b.board_id,
                 "packets_sent": b.packets_sent,
                 "channels_per_packet": len(active),
-                "total_sensor_updates": b.packets_sent * len(active),
+                "chunks_per_packet": b.timing.chunks_per_packet,
+                "total_sensor_updates": b.packets_sent
+                * len(active)
+                * b.timing.chunks_per_packet,
+                # Timing-pathology ground truth (for timestamp-quality tests)
+                "clock_drift_ppm": b.drift_ppm,
+                "clock_offset_ms": b.timing.clock_offset_ms,
+                "net_jitter_ms": b.timing.net_jitter_ms,
+                "start_near_wrap": b.timing.start_near_wrap,
+                "rebooted_at": b._rebooted_at,
             }
         stats["total_sensor_updates"] = sum(
             v["total_sensor_updates"] for v in stats["boards"].values()
         )
-        with open(args.stats_file, "w") as f:
+        # Atomic write (tmp + rename): the integration test reads this file
+        # every run while the simulator is still updating it.
+        tmp_path = args.stats_file + ".tmp"
+        with open(tmp_path, "w") as f:
             json.dump(stats, f, indent=2)
-        print(f"Stats written to {args.stats_file}", flush=True)
+        os.replace(tmp_path, args.stats_file)
 
     # Register SIGTERM handler so integration test cleanup triggers stats write
     import signal
@@ -485,6 +664,7 @@ def main():
             b.running = False
         time.sleep(0.1)  # let threads finish current send
         write_stats()
+        print(f"Stats written to {args.stats_file}", flush=True)
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, _sigterm_handler)
@@ -499,6 +679,9 @@ def main():
         else:
             while True:
                 time.sleep(1)
+                # Refresh ground-truth stats every second so the integration
+                # test's sample-conservation check can read live sent counts.
+                write_stats()
     except KeyboardInterrupt:
         print("\nStopping simulator...")
         for b in simulated_boards:

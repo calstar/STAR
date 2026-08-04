@@ -113,12 +113,10 @@ if [ -x "$PROJECT/build/bin/actuator_service" ]; then
   echo "✅ Actuator service"
 fi
 
-# 9. Frontend
-cd "$PROJECT/diablo_server/frontend"
-[ ! -d node_modules ] && npm install --silent
-npm run dev > /tmp/frontend_fake.log 2>&1 &
-sleep 2
-echo "✅ Frontend :3000"
+# 9. Frontend: static Vite build served by the backend on GUI_PORT (:3000).
+bash "$PROJECT/deploy/startup/ensure_frontend_build.sh" > /tmp/frontend_fake.log 2>&1 \
+  && echo "✅ Frontend built (served by backend :3000)" \
+  || echo "❌ Frontend build failed — see /tmp/frontend_fake.log"
 
 echo ""
 echo "┌─────────────────────────────────────────────────────────────────────────┐"
