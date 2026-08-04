@@ -1,4 +1,7 @@
-import tomli
+try:
+    import tomli
+except ModuleNotFoundError:
+    import tomllib as tomli  # stdlib since Python 3.11, same API
 import json
 import os
 import sys

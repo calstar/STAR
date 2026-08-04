@@ -47,10 +47,10 @@ export function ControlModeProvider({ children }: { children: React.ReactNode })
     setUnlocking(true);
     setError(null);
     try {
-      const expected = process.env.NEXT_PUBLIC_CONTROL_PASSWORD ?? "";
+      const expected = (import.meta.env?.VITE_CONTROL_PASSWORD as string | undefined) ?? "";
       if (!expected) {
         console.warn(
-          "[ControlMode] NEXT_PUBLIC_CONTROL_PASSWORD is not set; using password 'diablo' for testing only."
+          "[ControlMode] VITE_CONTROL_PASSWORD is not set; using password 'diablo' for testing only."
         );
       }
       const effectiveExpected = expected || "diablo";

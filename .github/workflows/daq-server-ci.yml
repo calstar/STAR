@@ -3,6 +3,10 @@ name: DAQ Server CI/CD
 # Quoted `on` — YAML 1.1 treats bare `on` as boolean true, which breaks workflow triggers in some parsers.
 'on':
   push:
+    # main only. Without a branch filter, pushing to a branch with an open PR
+    # fires push AND pull_request, running this whole workflow twice on the same
+    # commit — doubling both runner cost and the odds of a flaky red check.
+    branches: [main]
     paths:
       - 'daq-server/**'
       - '.github/workflows/daq-server-ci.yml'
@@ -11,6 +15,12 @@ name: DAQ Server CI/CD
       - 'daq-server/**'
       - '.github/workflows/daq-server-ci.yml'
   workflow_dispatch:
+
+# Supersede in-flight runs for the same ref: this workflow does a full C++ build
+# plus an 11-process stack plus Chromium, so stacking pushes is expensive.
+concurrency:
+  group: daq-server-${{ github.ref }}
+  cancel-in-progress: true
 
 defaults:
   run:
@@ -74,7 +84,7 @@ jobs:
       continue-on-error: false
 
   web-gui:
-    name: Web GUI (Vitest + Next.js build)
+    name: Web GUI (Vitest + Vite build)
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -89,7 +99,7 @@ jobs:
         cache: 'npm'
         cache-dependency-path: daq-server/diablo_server/frontend/package-lock.json
 
-    # API routes import ../backend/src/* which uses @iarna/toml; install backend so resolution + alias work in next build.
+    # Frontend imports ../backend/src/* (shared types/config); install backend so module resolution works.
     - name: Install backend dependencies
       working-directory: daq-server/diablo_server/backend
       run: npm ci || npm install
@@ -98,11 +108,15 @@ jobs:
       working-directory: daq-server/diablo_server/frontend
       run: npm ci || npm install
 
+    - name: Run backend unit tests
+      working-directory: daq-server/diablo_server/backend
+      run: npm run test
+
     - name: Run frontend unit tests
       working-directory: daq-server/diablo_server/frontend
       run: npm run test
 
-    - name: Verify Next.js build
+    - name: Verify Vite build
       working-directory: daq-server/diablo_server/frontend
       run: npm run test:build
 
@@ -200,15 +214,19 @@ jobs:
         echo "Checking for built executables..."
         find bin/ -type f -executable | head -10 || true
 
+    # Every binary and shared library, not a hand-picked subset: integration-test
+    # and playwright-guitest-e2e consume this instead of each doing their own cold
+    # C++ build, and they launch the whole stack (calibration, heartbeat, config
+    # broadcast, controller, sequencer, OTA). A partial list here reintroduces the
+    # stale/missing-binary class of failure the test scripts exist to prevent.
     - name: Upload build artifacts
       if: matrix.compiler == 'gcc-12'
       uses: actions/upload-artifact@v4
       with:
         name: build-artifacts-${{ matrix.compiler }}-Release
         path: |
-          daq-server/${{ env.BUILD_DIR }}/lib/*.so
-          daq-server/${{ env.BUILD_DIR }}/bin/daq_bridge
-          daq-server/${{ env.BUILD_DIR }}/bin/sequencer_service
+          daq-server/${{ env.BUILD_DIR }}/bin/
+          daq-server/${{ env.BUILD_DIR }}/lib/
         retention-days: 7
 
   # Static analysis
@@ -428,16 +446,22 @@ jobs:
           ..
         cmake --build . --parallel $(nproc)
 
+    # Strict since enable_testing() ordering was fixed — ctest now registers real
+    # tests (board_clock_sync); a failure here must fail the job.
     - name: Run CTest tests
       run: |
         cd ${{ env.BUILD_DIR }}
-        ctest --output-on-failure --parallel $(nproc) || echo "No CTest tests found"
-      continue-on-error: true
+        ctest --output-on-failure --parallel $(nproc)
 
     - name: Run Sequencer Elodin Unit Test
       run: |
         cd ${{ env.BUILD_DIR }}
         ./bin/test_sequencer_elodin
+
+    - name: Run BoardClockSync Unit Test
+      run: |
+        cd ${{ env.BUILD_DIR }}
+        ./bin/test_board_clock_sync
 
     - name: Run Python smoke tests (allowlist only)
       run: |
@@ -479,6 +503,13 @@ jobs:
     needs: [build]
     timeout-minutes: 25
 
+    # Uniform 5 Hz instead of production 10 Hz / 50 Hz-encoder. A 4-core runner
+    # starves on an 11-process stack, and that starvation — not any defect — was
+    # the dominant source of false failures. Unset locally, where full rate runs.
+    # Keep >= points_per_second (4) or envelope downsampling stops being tested.
+    env:
+      INTEGRATION_SENSOR_HZ: '5'
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -514,17 +545,19 @@ jobs:
       with:
         node-version: '20.x'
 
-    - name: Build C++ binaries
-      env:
-        CC: gcc-12
-        CXX: g++-12
+    # Reuse the `build` job's Release output instead of compiling again. Same
+    # binaries this job built for itself before (it already used Release), just
+    # without paying for the compile a second time. upload-artifact does not
+    # preserve the executable bit, so restore it.
+    - name: Download C++ binaries from build job
+      uses: actions/download-artifact@v4
+      with:
+        name: build-artifacts-gcc-12-Release
+        path: daq-server/${{ env.BUILD_DIR }}
+    - name: Restore executable bits
       run: |
-        mkdir -p build && cd build
-        cmake -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_C_COMPILER=gcc-12 \
-              -DCMAKE_CXX_COMPILER=g++-12 \
-              -G Ninja ..
-        cmake --build . --parallel $(nproc)
+        chmod +x "${BUILD_DIR}/bin/"* || true
+        ls -l "${BUILD_DIR}/bin/"
 
     - name: Install backend dependencies
       run: |
@@ -536,6 +569,8 @@ jobs:
 
     # WebSocket / stack checks only. Browser E2E runs in job playwright-guitest-e2e (full guitest stack).
     - name: Run integration test
+      env:
+        SKIP_CPP_BUILD: '1'   # binaries came from the build job above
       run: |
         bash test/test_integration.sh
 
@@ -546,27 +581,50 @@ jobs:
     needs: [build]
     timeout-minutes: 45
 
+    # Same reasoning as integration-test above, plus Chromium on the same 4 cores.
+    env:
+      SIM_SENSOR_HZ: '5'
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
         submodules: recursive
 
+    # Chromium's own libs are already on ubuntu-latest; only the font packages
+    # are genuinely missing, so they go in this existing apt call rather than
+    # `playwright install --with-deps`, which re-ran apt-get update every build
+    # to install the same nine packages.
     - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
           build-essential cmake ninja-build libeigen3-dev pkg-config \
-          gcc-12 g++-12 python3 python3-pip tmux
+          gcc-12 g++-12 python3 python3-pip tmux \
+          fonts-freefont-ttf fonts-ipafont-gothic fonts-unifont \
+          fonts-wqy-zenhei fonts-liberation fonts-noto-color-emoji
+
+    # Pinned version, so a cache hit skips the download entirely.
+    - name: Cache elodin-db
+      id: cache-elodin
+      uses: actions/cache@v4
+      with:
+        path: ~/.cargo/bin/elodin-db
+        key: ${{ runner.os }}-elodin-db-v0.16.1
 
     - name: Install elodin-db
+      if: steps.cache-elodin.outputs.cache-hit != 'true'
       run: |
         ELODIN_VERSION="v0.16.1"
         ELODIN_DB_INSTALLER_URL="https://github.com/elodin-sys/elodin/releases/download/${ELODIN_VERSION}/elodin-db-installer.sh"
         mkdir -p "$HOME/.cargo/bin"
-        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
         export PATH="$HOME/.cargo/bin:$PATH"
         curl --proto '=https' --tlsv1.2 -LsSf "$ELODIN_DB_INSTALLER_URL" | sh
+
+    - name: Put elodin-db on PATH
+      run: |
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        chmod +x "$HOME/.cargo/bin/elodin-db"
 
     - name: Verify elodin-db is on PATH
       run: command -v elodin-db && elodin-db --help >/dev/null
@@ -578,14 +636,39 @@ jobs:
         cache: 'npm'
         cache-dependency-path: daq-server/diablo_server/frontend/package-lock.json
 
+    # Reuse the build job's Release output rather than compiling in this job.
+    # Note this job previously ran the unoptimized default build via build.sh;
+    # these are optimized, which should also ease the CPU contention that has
+    # been starving the stack on 4-core runners.
+    - name: Download C++ binaries from build job
+      uses: actions/download-artifact@v4
+      with:
+        name: build-artifacts-gcc-12-Release
+        path: daq-server/${{ env.BUILD_DIR }}
+    - name: Restore executable bits
+      run: |
+        chmod +x "${BUILD_DIR}/bin/"* || true
+        ls -l "${BUILD_DIR}/bin/"
+
     - name: Install backend dependencies
       run: cd diablo_server/backend && (npm ci || npm install)
 
-    - name: Install frontend dependencies and Playwright Chromium (system libs + browser)
-      run: |
-        cd diablo_server/frontend
-        npm ci || npm install
-        npx playwright install --with-deps chromium
+    - name: Install frontend dependencies
+      run: cd diablo_server/frontend && (npm ci || npm install)
+
+    # ~/.cache/ms-playwright is NOT covered by setup-node's npm cache, so
+    # Chromium (~150 MB) was re-downloaded on every run.
+    - name: Cache Playwright browsers
+      id: cache-playwright
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ hashFiles('daq-server/diablo_server/frontend/package-lock.json') }}
+        restore-keys: ${{ runner.os }}-playwright-
+
+    - name: Install Playwright Chromium
+      if: steps.cache-playwright.outputs.cache-hit != 'true'
+      run: cd diablo_server/frontend && npx playwright install chromium
 
     - name: Install Python dependencies (sim / config)
       run: pip3 install tomli || pip3 install --user tomli || true
@@ -595,7 +678,22 @@ jobs:
       env:
         CC: gcc-12
         CXX: g++-12
+        SKIP_CPP_BUILD: '1'          # binaries came from the build job above
+        SKIP_PLAYWRIGHT_INSTALL: '1' # browser installed/cached in its own step
       run: bash test/e2e_guitest_playwright.sh
+
+    # Stack pane logs + Playwright traces are the only way to diagnose
+    # "boards DISCONNECTED / no sim data" class failures after the runner dies.
+    - name: Upload stack logs and Playwright traces
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-e2e-diagnostics
+        path: |
+          /tmp/gui_logs/
+          daq-server/diablo_server/frontend/test-results/
+        if-no-files-found: warn
+        retention-days: 7
 
   # Build summary
   build-summary:

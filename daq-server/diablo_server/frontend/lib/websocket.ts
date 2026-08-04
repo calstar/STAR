@@ -4,7 +4,7 @@
 
 import { MessageType, SensorUpdate, ConnectionStatus, CommandPayload } from './types';
 import { useSensorStore, buildAliasesFromConfig } from './store';
-import { updateServerTimeOffset } from './server-time';
+import { noteServerTimestamp } from './plot-time';
 
 export interface WSMessage {
   type: MessageType;
@@ -15,15 +15,15 @@ export interface WSMessage {
 /** If no message received for this long, treat connection as stale and reconnect.
  *  Disabled by default because some hardware runs can have sparse/bursty streams and
  *  aggressive stale-closing causes false frontend disconnect loops.
- *  Enable by setting NEXT_PUBLIC_WS_STALE_MS to a positive integer (ms).
+ *  Enable by setting VITE_WS_STALE_MS to a positive integer (ms) at build time.
  */
 const STALE_CONNECTION_MS = (() => {
-  const raw = (typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_WS_STALE_MS : undefined) ?? '';
+  const raw = (import.meta.env?.VITE_WS_STALE_MS as string | undefined) ?? '';
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 })();
 const STALE_CHECK_INTERVAL_MS = 30 * 1000; // check every 30s
-const WS_CLIENT_VERSION = 2;
+const WS_CLIENT_VERSION = 3; // v3: server-timeline plot time + sinceMs backfills
 
 export class WebSocketClient {
   public readonly _version = WS_CLIENT_VERSION;
@@ -119,12 +119,14 @@ export class WebSocketClient {
         this.subscribeToAllSensors();
         console.log('✅ Subscription requests sent');
 
-        // Request historical data for plots
+        // Request historical data for plots. The provider (data-cache)
+        // narrows this to a sinceMs backfill once we hold data, so
+        // reconnects fetch only the gap instead of the full dump.
         console.log('📊 Requesting historical plot data...');
         this.send({
           type: MessageType.QUERY_HISTORICAL,
           timestamp: Date.now(),
-          payload: {},
+          payload: this.historicalQueryProvider ? this.historicalQueryProvider() : {},
         });
       };
 
@@ -230,7 +232,8 @@ export class WebSocketClient {
 
   private handleMessage(message: WSMessage): void {
     if (message.timestamp) {
-      updateServerTimeOffset(message.timestamp);
+      // Advance the server timeline "now" edge (see plot-time.ts).
+      noteServerTimestamp(message.timestamp);
     }
 
     // Handle both MessageType enum values and custom string types (like 'state_transitions')
@@ -271,6 +274,14 @@ export class WebSocketClient {
         listeners.delete(callback);
       }
     };
+  }
+
+  private historicalQueryProvider: (() => { keys?: string[]; sinceMs?: number }) | null = null;
+
+  /** Supply the QUERY_HISTORICAL payload for (re)connects — set by the data
+   *  cache so backfills request only points newer than what it holds. */
+  setHistoricalQueryProvider(provider: () => { keys?: string[]; sinceMs?: number }): void {
+    this.historicalQueryProvider = provider;
   }
 
   onConnectionStatus(callback: (status: ConnectionStatus) => void): () => void {
@@ -408,28 +419,17 @@ declare global {
   var __DIABLO_WS_CLIENT__: WebSocketClient | undefined;
 }
 
+/** Backend API base URL. Derived at RUNTIME from wherever the browser loaded
+ *  the page, so one build works from localhost and any LAN client alike.
+ *  VITE_API_URL is an escape hatch for unusual setups only. */
 export function getApiBaseUrl(): string {
-  if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) {
-    const envUrl = process.env.NEXT_PUBLIC_API_URL;
-    // Guard against common misconfig: hardcoded localhost while viewing UI from another host.
-    if (typeof window !== 'undefined') {
-      try {
-        const parsed = new URL(envUrl);
-        const isLocalEnv = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
-        const isRemoteClient = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
-        if (isLocalEnv && isRemoteClient) {
-          const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
-          return `${protocol}//${window.location.hostname}:8081`;
-        }
-      } catch {
-        // Fall through to existing behavior.
-      }
-    }
-    return envUrl;
-  }
+  const override = import.meta.env?.VITE_API_URL as string | undefined;
+  if (override) return override;
   if (typeof window !== 'undefined' && window.location.hostname) {
     const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
-    return `${protocol}//${window.location.hostname}:8081`;
+    let hostname = window.location.hostname;
+    if (hostname === '0.0.0.0' || hostname === '') hostname = 'localhost';
+    return `${protocol}//${hostname}:8081`;
   }
   return 'http://localhost:8081';
 }
@@ -464,9 +464,8 @@ function getWebSocketFallbackUrls(): string[] {
     if (!urls.includes(u)) urls.push(u);
   };
 
-  if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_WS_URL) {
-    add(process.env.NEXT_PUBLIC_WS_URL);
-  }
+  const override = import.meta.env?.VITE_WS_URL as string | undefined;
+  if (override) add(override);
 
   if (typeof window !== 'undefined') {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

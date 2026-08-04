@@ -24,9 +24,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(daqv2_comms PRIVATE "-include" "cstddef")
 endif()
 
+# enable_testing() must come BEFORE add_subdirectory() — subdirectories added
+# earlier never emit their add_test() registrations into CTest.
+enable_testing()
+
 add_subdirectory(diablo_server)
 
-enable_testing()
 if(EXISTS ${CMAKE_SOURCE_DIR}/tests)
     add_subdirectory(tests)
 endif()

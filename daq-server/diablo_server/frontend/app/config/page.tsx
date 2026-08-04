@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react';
-import { getWebSocketClient } from '@/lib/websocket';
+import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { MessageType } from '@/lib/types';
 import { useControlMode } from '@/lib/control-mode';
 import { useSensorStore } from '@/lib/store';
@@ -130,8 +130,8 @@ export default function ConfigPage() {
       setLoading(true);
       setError(null);
 
-      // Request config from backend
-      const response = await fetch('/api/config');
+      // Request config from backend (:8081 — the Next.js proxy route is gone)
+      const response = await fetch(`${getApiBaseUrl()}/api/config`);
       if (!response.ok) {
         throw new Error('Failed to load config');
       }
@@ -159,7 +159,7 @@ export default function ConfigPage() {
       setError(null);
       setSuccess(false);
 
-      const response = await fetch('/api/config', {
+      const response = await fetch(`${getApiBaseUrl()}/api/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ config }),

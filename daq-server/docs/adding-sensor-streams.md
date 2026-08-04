@@ -187,6 +187,18 @@ This sends `VTableStream` subscription messages to Elodin when the relay connect
 
 **If you skip this:** The relay won't receive the data even though Elodin has it.
 
+**VTableStream is NOT lossless (by design).** Verified against elodin-db source
+(`libs/db/src/vtable_stream.rs` `RealTimeStage::next`): the streamer task wakes on a
+write and forwards `time_series.latest()` — the newest value only. Rows written to the
+same component while a send is in flight are coalesced away. With multi-chunk board
+packets (N samples per channel per UDP packet, which real firmware sends via
+`SENSOR_MAX_CHUNKS_BEFORE_SEND`), a subscriber typically receives ~1 of N rows per
+burst. DB **storage** appends every row regardless — `GetTimeSeries`/SQL queries see
+everything; only the live push stream thins. If a consumer ever needs every sample
+live, elodin-db's `FollowStream` replication protocol streams contiguous ranges
+losslessly. Integration Test 15 (`ws_data_flow_test.ts`) asserts the resulting
+invariant: at least one row per channel per packet must reach the backend.
+
 ### 3. Protocol Parser — Parse the Binary Payload
 
 **`diablo_server/backend/src/elodin-protocol.ts`**

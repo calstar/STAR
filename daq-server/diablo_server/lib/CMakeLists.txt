@@ -10,6 +10,7 @@ set(FSW_SOURCES
     src/config/LoadActiveBoards.cpp
     src/routing/HeartbeatRouter.cpp
     src/routing/SensorRouter.cpp
+    src/time/BoardClockSync.cpp
     src/elodin/DatabaseConfig.cpp
     src/elodin/ElodinClient.cpp
     src/streams/SensorFramePipeline.cpp
@@ -55,6 +56,14 @@ target_include_directories(test_robust_ddp PRIVATE
 )
 target_link_libraries(test_robust_ddp
     fsw_daq_lib daq_comms_lib Eigen3::Eigen Threads::Threads pthread ${RT_LIBRARY})
+
+add_executable(test_board_clock_sync test/test_board_clock_sync.cpp)
+target_include_directories(test_board_clock_sync PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(test_board_clock_sync
+    fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME board_clock_sync COMMAND test_board_clock_sync)
 
 add_executable(test_sequencer_elodin
     test/test_sequencer_elodin.cpp
