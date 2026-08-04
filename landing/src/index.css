@@ -1,0 +1,141 @@
+@import "tailwindcss";
+
+/* ── Design tokens ─────────────────────────────────────────────────────── */
+:root {
+  --color-bg-primary:    #0a0a0f;
+  --color-bg-secondary:  #12121a;
+  --color-bg-tertiary:   #1a1a24;
+  --color-accent:        #3b82f6;
+  --color-accent-hover:  #2563eb;
+  --color-success:       #22c55e;
+  --color-warning:       #f59e0b;
+  --color-danger:        #ef4444;
+  --color-text-primary:  #f8fafc;
+  --color-text-secondary:#94a3b8;
+  --color-border:        #2d2d3a;
+}
+
+/* ── Base ──────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--color-bg-secondary); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-secondary); }
+
+/* ── Grid background ───────────────────────────────────────────────────── */
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(59, 130, 246, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(59, 130, 246, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* ── Glow orbs ─────────────────────────────────────────────────────────── */
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  pointer-events: none;
+}
+
+/* ── App card ──────────────────────────────────────────────────────────── */
+.app-card {
+  position: relative;
+  background: linear-gradient(135deg, var(--color-bg-secondary) 0%, var(--color-bg-tertiary) 100%);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+  transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  overflow: hidden;
+}
+
+.app-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.app-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.app-card:hover::before { opacity: 1; }
+
+/* Per-card accent colours */
+.card-blue  { --card-accent: #3b82f6; }
+.card-green { --card-accent: #22c55e; }
+.card-purple{ --card-accent: #a855f7; }
+
+.app-card:hover { border-color: var(--card-accent); }
+.app-card::before {
+  background: radial-gradient(ellipse at top left, color-mix(in srgb, var(--card-accent) 8%, transparent), transparent 60%);
+}
+.app-card:hover { box-shadow: 0 20px 60px rgba(0,0,0,0.4), 0 0 0 1px color-mix(in srgb, var(--card-accent) 30%, transparent); }
+
+/* ── Icon wrapper ──────────────────────────────────────────────────────── */
+.icon-wrap {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* ── Arrow chip ────────────────────────────────────────────────────────── */
+.arrow-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  color: var(--card-accent);
+  margin-top: auto;
+  opacity: 0.7;
+  transition: opacity 0.2s, gap 0.2s;
+}
+.app-card:hover .arrow-chip { opacity: 1; gap: 10px; }
+
+/* ── Mono label ────────────────────────────────────────────────────────── */
+.mono { font-family: 'JetBrains Mono', monospace; }
+
+/* ── Status dot pulse ──────────────────────────────────────────────────── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+/* ── Fade-in stagger ───────────────────────────────────────────────────── */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fade-up 0.6s ease both; }
+.delay-1 { animation-delay: 0.1s; }
+.delay-2 { animation-delay: 0.2s; }
+.delay-3 { animation-delay: 0.3s; }
+.delay-4 { animation-delay: 0.4s; }
+.delay-5 { animation-delay: 0.5s; }

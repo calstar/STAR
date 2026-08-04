@@ -1,0 +1,5 @@
+flask>=3.0
+authlib>=1.3
+requests>=2.32
+pyjwt>=2.8
+python-dotenv>=1.0

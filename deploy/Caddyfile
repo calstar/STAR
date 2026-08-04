@@ -1,0 +1,42 @@
+# STAR Internal Tools — Caddyfile
+# Handles TLS automatically via Let's Encrypt.
+# No auth logic here — auth is enforced per-app.
+
+# ── Auth service ───────────────────────────────────────────────────────────
+auth.starberkeley.org {
+    reverse_proxy auth:5000
+}
+
+# ── Engine Design ──────────────────────────────────────────────────────────
+engine-design.starberkeley.org {
+    # API calls go to the FastAPI backend
+    handle /api/* {
+        reverse_proxy engine-design-api:8000
+    }
+    # Everything else goes to the Vite frontend
+    handle {
+        reverse_proxy engine-design-frontend:4173
+    }
+}
+
+# ── DAQ Server ─────────────────────────────────────────────────────────────
+daq-server.starberkeley.org {
+    reverse_proxy daq-server:3000
+}
+
+# ── P&ID Designer ──────────────────────────────────────────────────────────
+pid-designer.starberkeley.org {
+    # API calls go to the FastAPI backend
+    handle /api/* {
+        reverse_proxy pid-designer-api:8001
+    }
+    # Everything else goes to the Vite frontend
+    handle {
+        reverse_proxy pid-designer-frontend:4174
+    }
+}
+
+# ── Landing page ───────────────────────────────────────────────────────────
+starberkeley.org {
+    reverse_proxy landing:4175
+}

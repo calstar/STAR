@@ -16,6 +16,7 @@ function resolveIarnaTomlPackageRoot() {
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  output: 'standalone',  // enables minimal Docker image via .next/standalone
   // Import sensor backend .ts sources from app routes (they use .js extensions in ESM imports).
   webpack: (config) => {
     config.resolve.extensionAlias = {
