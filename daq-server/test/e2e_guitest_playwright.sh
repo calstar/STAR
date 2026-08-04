@@ -36,14 +36,28 @@ if [ ! -d "$FRONTEND/node_modules/@playwright" ]; then
   echo "Installing Playwright (npm install in frontend)..."
   (cd "$FRONTEND" && npm install)
 fi
-(cd "$FRONTEND" && npx playwright install chromium)
+# Skipped in CI, which installs and caches the browser in its own step.
+if [ "${SKIP_PLAYWRIGHT_INSTALL:-0}" != "1" ]; then
+  (cd "$FRONTEND" && npx playwright install chromium)
+fi
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
 echo "  C++ build (USE_SIM=1, same as scripts/build.sh / \`build\` alias)"
 echo "═══════════════════════════════════════════════════════════════"
 export USE_SIM=1
-bash "$REPO_ROOT/scripts/build.sh"
+# SKIP_CPP_BUILD=1 bypasses this — for CI, which already built every binary in
+# the `build` job and downloads them as artifacts. Do NOT set it locally: the
+# incremental build is what keeps you from testing stale binaries.
+if [ "${SKIP_CPP_BUILD:-0}" = "1" ]; then
+  echo "⏭️  Skipping C++ build (SKIP_CPP_BUILD=1 — binaries must already exist)."
+  if [ ! -x "$REPO_ROOT/build/bin/daq_bridge" ]; then
+    echo "❌ SKIP_CPP_BUILD=1 but $REPO_ROOT/build/bin/daq_bridge is missing or not executable." >&2
+    exit 1
+  fi
+else
+  bash "$REPO_ROOT/scripts/build.sh"
+fi
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"

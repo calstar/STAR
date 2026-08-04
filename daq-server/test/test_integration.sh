@@ -233,14 +233,25 @@ sleep 0.5
 
 # ── Build C++ binaries ───────────────────────────────────────────────────────
 
-echo "🔨 Building C++ binaries (scripts/build.sh — canonical full build)..."
 # Full build via the canonical script, NOT a hand-maintained --target list.
 # A previous targeted list here omitted fake_packet_generator, so the test ran
 # a STALE packet generator against fresh services after transport changes —
 # the classic "int fails until you run build first" bug. Full incremental
 # builds cost seconds and can never skip a binary the test uses.
-bash "$REPO_ROOT/scripts/build.sh" || fail "C++ build failed"
-echo "  ✅ C++ binaries built"
+#
+# SKIP_CPP_BUILD=1 bypasses this — for CI, which already built every binary in
+# the `build` job and downloads them as artifacts. Do NOT set it locally: an
+# incremental build costs seconds here and is what protects you from running
+# tests against stale binaries.
+if [ "${SKIP_CPP_BUILD:-0}" = "1" ]; then
+  echo "⏭️  Skipping C++ build (SKIP_CPP_BUILD=1 — binaries must already exist)."
+  [ -x "$REPO_ROOT/build/bin/daq_bridge" ] \
+    || fail "SKIP_CPP_BUILD=1 but $REPO_ROOT/build/bin/daq_bridge is missing or not executable"
+else
+  echo "🔨 Building C++ binaries (scripts/build.sh — canonical full build)..."
+  bash "$REPO_ROOT/scripts/build.sh" || fail "C++ build failed"
+  echo "  ✅ C++ binaries built"
+fi
 echo ""
 
 # ── Check prerequisites ──────────────────────────────────────────────────────
