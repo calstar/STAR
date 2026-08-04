@@ -125,7 +125,8 @@ jobs:
           paths = sorted(p for p in app.openapi()['paths'] if p.startswith('/api'))
           print(chr(10).join(paths))
           required = {'/api/health', '/api/simulate', '/api/devices',
-                      '/api/atmosphere', '/api/climatology', '/api/sweep'}
+                      '/api/atmosphere', '/api/climatology', '/api/sweep',
+                      '/api/crosscheck'}
           missing = required - set(paths)
           assert not missing, 'missing routes: ' + repr(missing)
           print('backend.main imports OK, %d /api routes' % len(paths))
