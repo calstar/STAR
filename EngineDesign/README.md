@@ -244,7 +244,9 @@ EngineDesign/
 ├── README.md
 ├── STARTUP_GUIDE.md             # Detailed startup instructions
 ├── TROUBLESHOOTING.md           # Common issues and fixes
-├── requirements.txt
+├── requirements-base.txt        # shared deps (no rocketcea, no test tooling)
+├── requirements.txt             # base + rocketcea (needs gfortran)
+├── requirements-ci.txt          # base + pytest
 └── .gitignore
 ```
 
@@ -254,8 +256,14 @@ EngineDesign/
 
 **Python Backend:**
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt        # everything, incl. rocketcea
+pip install -r requirements-base.txt   # skip rocketcea (no gfortran needed)
 ```
+
+`rocketcea` compiles NASA CEA from Fortran and ships as a 69 MB sdist. You
+only need it to *regenerate* the CEA cache; everything else reads the
+committed tables in `output/cache/`. CI and the API container use the base
+list for exactly that reason.
 
 **Frontend (Optional, for web UI):**
 ```bash

@@ -37,5 +37,8 @@ venv
 # Local noise
 **/.DS_Store
 **/*.log
-EngineDesign/output
+# Generated data — but output/cache holds the committed CEA tables the engine
+# reads at runtime, so those have to reach the image.
+EngineDesign/output/*
+!EngineDesign/output/cache
 EngineDesign/archive

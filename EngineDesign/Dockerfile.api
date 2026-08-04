@@ -4,10 +4,18 @@
 FROM python:3.12-slim
 WORKDIR /app
 
-# Install Python deps
-COPY EngineDesign/requirements.txt .
-# Retries/timeout: a single slow PyPI read should not fail a deploy build.
-RUN pip install --no-cache-dir --retries 5 --timeout 120 -r requirements.txt
+# requirements-base.txt, not requirements.txt: the latter adds rocketcea, which
+# has no wheel (a 69 MB Fortran sdist) and needs gfortran to compile -- neither
+# of which this image has any use for. rocketcea is imported lazily and only to
+# *build* a CEA cache; the API reads the committed tables copied in below.
+# Same reasoning as CI. See requirements-base.txt.
+COPY EngineDesign/requirements-base.txt .
+
+# The cache mount matters more than --retries here: pip retries connections,
+# not a download that breaks mid-stream, so without it every failed attempt at
+# a large package starts again from zero.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --retries 5 --timeout 120 -r requirements-base.txt
 
 # Shared JWT helper, imported by the backend's auth middleware
 COPY auth/shared_auth.py /auth/shared_auth.py
@@ -17,6 +25,11 @@ COPY EngineDesign/backend/ ./backend/
 COPY EngineDesign/engine/  ./engine/
 COPY EngineDesign/copv/    ./copv/
 COPY EngineDesign/configs/ ./configs/
+
+# Committed CEA tables. Without these the engine pipeline would try to build a
+# cache on first use and fail on the missing rocketcea -- the rest of
+# output/ is generated data and stays out (see .dockerignore).
+COPY EngineDesign/output/cache/ ./output/cache/
 
 ENV PYTHONPATH=/app:/auth
 EXPOSE 8000
