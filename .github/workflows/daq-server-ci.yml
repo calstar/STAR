@@ -499,6 +499,13 @@ jobs:
     needs: [build]
     timeout-minutes: 25
 
+    # Uniform 5 Hz instead of production 10 Hz / 50 Hz-encoder. A 4-core runner
+    # starves on an 11-process stack, and that starvation — not any defect — was
+    # the dominant source of false failures. Unset locally, where full rate runs.
+    # Keep >= points_per_second (4) or envelope downsampling stops being tested.
+    env:
+      INTEGRATION_SENSOR_HZ: '5'
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -565,6 +572,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build]
     timeout-minutes: 45
+
+    # Same reasoning as integration-test above, plus Chromium on the same 4 cores.
+    env:
+      SIM_SENSOR_HZ: '5'
 
     steps:
     - name: Checkout code

@@ -54,12 +54,12 @@ export TMUX_ATTACH=0
 # distinguish "Elodin delivered nothing" (entityUpdates=0) from "the GUI stream
 # downsampler dropped everything" (entityUpdates>0, broadcasts=0).
 export THIN_STATS_LOG=1
-# Uniform 5 Hz instead of production 10 Hz / 50 Hz-encoder. These specs check that
-# the GUI renders live data, not that the stack sustains hardware rates, and the
-# encoder alone was ~39% of UDP traffic (5x rate, exempt from envelope
-# downsampling). Cuts total pipeline load ~60% so an 11-process stack plus
-# Chromium fits in a 4-core runner. Override with SIM_SENSOR_HZ.
-export SIM_SENSOR_HZ="${SIM_SENSOR_HZ:-5}"
+# Sensor rate: unset → production rates (10 Hz, 50 Hz encoder), so running this
+# locally exercises the stack the way it actually runs. CI sets SIM_SENSOR_HZ=5
+# (see .github/workflows/daq-server-ci.yml) — a 4-core runner cannot carry an
+# 11-process stack plus Chromium at full rate, and the resulting starvation, not
+# any defect, was what kept these specs red.
+export SIM_SENSOR_HZ="${SIM_SENSOR_HZ:-}"
 SKIP_CPP_BUILD=1 bash "$REPO_ROOT/deploy/startup/start_tmux_dev.sh"
 
 echo ""
