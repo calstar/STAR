@@ -75,7 +75,7 @@ export function AxisEditor({ ui, onChange }: {
   return (
     <Card
       title="Sweeps"
-      subtitle="Each sweep is one variable and the values it takes. Two sweeps make a grid - every combination is run."
+      subtitle="Sweeps combine multiplicatively: every combination of values across all sweeps is run."
       right={
         <Badge tone={over ? 'danger' : runs > 1 ? 'accent' : 'neutral'}>
           {axes.filter((a) => a.enabled).length} sweeps → {runs} design{runs === 1 ? '' : 's'}
@@ -84,9 +84,7 @@ export function AxisEditor({ ui, onChange }: {
     >
       {axes.length === 0 ? (
         <p className="font-prose text-xs leading-relaxed text-[var(--color-text-muted)]">
-          No sweeps yet. Add one to compare designs - the obvious first question
-          is a canopy swap: pick three or four chutes and see what each does to
-          impact energy.
+          No sweeps yet. Add one to compare designs.
         </p>
       ) : (
         <div className="space-y-3">

@@ -84,10 +84,9 @@ export function VehicleForm({ value, onChange }: {
               the two numbers are. Both appear, so without this the loads below
               could plausibly belong to either -- and they differ by 2.1x. */}
           <p className="font-prose mt-1.5 text-xs leading-snug text-[var(--color-text-muted)]">
-            Derived from the diameter and length. The{' '}
+            From diameter and length. The{' '}
             <span className="text-[var(--color-text-secondary)]">axial</span>{' '}
-            bound is used by default, being the conservative one for load; the
-            corner sweep runs both.
+            bound is the default; the corner sweep runs both.
           </p>
         </Field>
       </div>
@@ -306,7 +305,7 @@ export function SiteForm({ value, onChange, lapseByMonth, padNormals }: {
         <Field
           label="Pad temperature"
           kind="temperature"
-          hint={isa ? 'ISA at site elevation'
+          hint={isa ? undefined
                 : normal
                   ? `${value.station} ${monthName(value.month)} mean, daytime hours`
                   : value.source === 'metar'
@@ -327,7 +326,7 @@ export function SiteForm({ value, onChange, lapseByMonth, padNormals }: {
         <Field
           label="Pad pressure"
           kind="pressure"
-          hint={isa ? 'standard column'
+          hint={isa ? undefined
                 : normal
                   ? `${value.station} ${monthName(value.month)} mean, reduced to the pad`
                   : value.source === 'metar'

@@ -291,9 +291,7 @@ function DeviceCard({ device, index, count, onChange, onRemove }: {
               label="Charge to line stretch (dt)"
               unit="s"
               wide
-              hint={device.delay === 0
-                ? 'free-packed. Bagged is 0.3–1.0 s - not a rounding term: +55% on drogue load at 0.5 s.'
-                : 'bagged'}
+              hint={device.delay === 0 ? 'free-packed' : 'bagged'}
             >
               <NumberInput value={device.delay} step={0.05} min={0}
                            onChange={(v) => set('delay', v ?? 0)} />
@@ -306,7 +304,7 @@ function DeviceCard({ device, index, count, onChange, onRemove }: {
               kind="stiffness"
               hint={device.k_eff === null
                 ? 'empty - snatch load is skipped entirely'
-                : undefined}
+                : 'characterize from Instron testing; ~20,000 N/m is a reasonable default'}
             >
               <UnitInput value={device.k_eff} kind="stiffness"
                          onChange={(v) => set('k_eff', v)}
@@ -315,7 +313,7 @@ function DeviceCard({ device, index, count, onChange, onRemove }: {
             <Field
               label="Separation velocity (v_rel)"
               kind="speed"
-              hint="at line stretch, not the descent speed"
+              hint="characterize from ground testing"
             >
               <UnitInput value={device.v_rel} kind="speed" min={0}
                          onChange={(v) => set('v_rel', v ?? 0)} />
