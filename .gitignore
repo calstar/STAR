@@ -11,5 +11,9 @@ docs/doxygen/
 # DAQ output data
 scripts/postprocessing/output/
 
+# Python
+__pycache__/
+*.py[cod]
+
 # Internal review notes (not shared with the team)
 daq-server/BACKEND_REVIEW.md

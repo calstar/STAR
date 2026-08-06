@@ -1,0 +1,20 @@
+# Recovery calculator — physics core.
+#
+# physics.atmosphere and physics.pad_state are deliberately stdlib-only (see
+# physics/__init__.py), so site-climatology can import the canonical ISA
+# equations without any of this. Everything below is for the solver and the
+# schema.
+
+numpy>=1.24
+scipy>=1.10
+pydantic>=2.0
+
+# The API layer (PLAN.md §11.2). FastAPI is Pydantic-native, so schema.py IS
+# the wire contract with no translation code -- which is what §11.7 means by
+# "one serialiser, no translation layer".
+fastapi>=0.110
+uvicorn[standard]>=0.27
+
+# No plotting dependency on purpose. Charts are rendered in the browser with
+# Recharts; the CLI writes trajectory.csv and leaves plotting to whoever wants
+# it. See §11.4.

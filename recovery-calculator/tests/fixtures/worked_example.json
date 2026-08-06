@@ -1,0 +1,52 @@
+{
+  "vehicle": {
+    "m": 5.67,
+    "h_a": 914.0,
+    "d_body": 0.1016,
+    "l_body": 1.44
+  },
+  "site": {
+    "T_pad": 284.0554
+  },
+  "devices": [
+    {
+      "name": "drogue",
+      "CdS": 0.15,
+      "D0": 0.6,
+      "m_c": 0.06,
+      "j": 2,
+      "n": 8.0,
+      "Cx": 1.8,
+      "trigger": {
+        "kind": "TIME",
+        "value": 2.0
+      },
+      "delay": 0.0,
+      "k_eff": 25000.0,
+      "v_rel": 10.0
+    },
+    {
+      "name": "main",
+      "CdS": 2.489,
+      "D0": 1.601,
+      "m_c": 0.213,
+      "j": 2,
+      "n": 8.0,
+      "Cx": 1.8,
+      "trigger": {
+        "kind": "ALTITUDE",
+        "value": 152.0
+      },
+      "delay": 0.0,
+      "k_eff": 17400.0,
+      "v_rel": 10.0
+    }
+  ],
+  "hardware": {
+    "safety_factor": 1.5,
+    "links": {
+      "quick_link": 4448.22,
+      "bulkhead_eyebolt": 6672.33
+    }
+  }
+}

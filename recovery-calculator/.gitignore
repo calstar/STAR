@@ -1,0 +1,21 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+# Node deps, anywhere under the project. frontend/.gitignore already covers
+# frontend/, but a stray root-level node_modules (e.g. from running `npx` at
+# this level) must be ignored too so it cannot be committed by accident.
+node_modules/
+
+# Scraper scratch output (`--out-dir out`); the committed table lives in
+# star_recovery/data/.
+out/
+
+# Export bundles from PLAN.md §11.4 — timestamped run directories.
+recovery_*/
+
+# Which unit each quantity renders in, written by /api/settings. A property of
+# the workstation, not of the design — two people sharing this repo should not
+# fight over whether force reads in newtons.
+.gui-settings.json
+.gui-settings-*.tmp
