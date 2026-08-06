@@ -43,6 +43,10 @@ services:
       - engine-design-frontend
       - pid-designer-api
       - pid-designer-frontend
+      - recovery-calculator-api
+      - recovery-calculator-frontend
+      - onshape-viewer-api
+      - onshape-viewer-frontend
       - landing
 
   # ── Cloudflare Tunnel (optional ingress) ─────────────────────────────────
@@ -122,6 +126,44 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
 
+  # ── Recovery Calculator ──────────────────────────────────────────────────
+  # No in-app auth (Caddy is the gate) and no dependency on auth/shared_auth.py,
+  # so the build context is the subproject, not the repo root.
+  recovery-calculator-api:
+    build:
+      context: ./recovery-calculator
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+
+  recovery-calculator-frontend:
+    build:
+      context: ./recovery-calculator/frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
+  # ── Onshape CM Viewer ────────────────────────────────────────────────────
+  onshape-viewer-api:
+    build:
+      context: ./onshape-viewer
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    env_file:
+      # Onshape API key pair (ONSHAPE_ACCESS_KEY / ONSHAPE_SECRET_KEY). Optional
+      # so the stack still comes up without it -- the cache-first endpoints work,
+      # and only live Onshape calls (refresh/build) fail until it is filled in.
+      - path: ./onshape-viewer/.env
+        required: false
+    volumes:
+      # Built-model cache: expensive Onshape builds (manifest + glb) survive a
+      # rebuild. CACHE_ROOT in backend/main.py is /app/cache.
+      - onshape_cache:/app/cache
+
+  onshape-viewer-frontend:
+    build:
+      context: ./onshape-viewer/frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
   # ── DAQ Server ───────────────────────────────────────────────────────────
   # Intentionally absent. The C++ bridge, elodin-db and the Node backend need
   # the test-stand hardware, so they run natively under systemd -- see
@@ -139,3 +181,4 @@ volumes:
   caddy_data:
   caddy_config:
   pid_diagrams:
+  onshape_cache:

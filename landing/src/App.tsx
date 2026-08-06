@@ -23,6 +23,22 @@ function IconPID() {
     </svg>
   );
 }
+function IconRecovery() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 11a10 10 0 0 1 20 0z" />
+      <path d="M2 11l5 3M22 11l-5 3M12 11v9M9 14l3 6M15 14l-3 6" />
+    </svg>
+  );
+}
+function IconCAD() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+      <path d="M3.27 6.96 12 12.01l8.73-5.05M12 22.08V12" />
+    </svg>
+  );
+}
 function IconArrow() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -133,6 +149,30 @@ const APPS = [
     colorClass: 'card-purple',
     iconBg: 'linear-gradient(135deg, #7e22ce 0%, #a855f7 100%)',
     iconColor: '#d8b4fe',
+  },
+  {
+    id: 'recovery-calculator',
+    href: 'https://recovery-calculator.starberkeley.org',
+    label: 'Recovery Calculator',
+    subdomain: 'recovery-calculator.starberkeley.org',
+    description:
+      'Parachute descent physics. Size the drogue and main from mass and altitude, and sweep designs to see impact energy, opening loads, and descent time.',
+    icon: <IconRecovery />,
+    colorClass: 'card-orange',
+    iconBg: 'linear-gradient(135deg, #c2410c 0%, #f97316 100%)',
+    iconColor: '#fdba74',
+  },
+  {
+    id: 'onshape-viewer',
+    href: 'https://onshape-viewer.starberkeley.org',
+    label: 'Onshape CM Viewer',
+    subdomain: 'onshape-viewer.starberkeley.org',
+    description:
+      'Pulls assemblies from Onshape and renders them in 3D with per-part mass and centre-of-mass. Access is limited to an approved list of users.',
+    icon: <IconCAD />,
+    colorClass: 'card-cyan',
+    iconBg: 'linear-gradient(135deg, #0e7490 0%, #06b6d4 100%)',
+    iconColor: '#67e8f9',
   },
 ] as const;
 
