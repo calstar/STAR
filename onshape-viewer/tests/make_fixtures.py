@@ -66,21 +66,71 @@ def is_parts_list(payload: object) -> bool:
     return isinstance(payload, list) and bool(payload) and "partId" in payload[0]
 
 
+# Facets kept per body in tessellation.json. Adjacency survives truncation --
+# facets within a face arrive in strip order and keep sharing edges -- so
+# welding still collapses vertices, which is what test_tessellate asserts.
+SCHEMA_FACETS = 40
+
+# Keys Onshape sends that `parse_tessellation` never looks at. `normals` is
+# always empty in practice; `btType` is repeated on every single vertex, which
+# is most of the weight. `facetPoints` and `bodiesInfo` are kept at the top
+# level on purpose -- a test asserts they are the decoys they look like.
+TESSELLATION_PASSTHROUGH = ("btType", "facetPoints", "bodiesInfo", "documentId", "elementId")
+
+
 def trim_tessellation(payload: dict) -> dict:
-    """Keep a few whole bodies at full fidelity, for the schema tests."""
+    """Shrink the schema fixture to what the parser actually reads.
+
+    This used to keep whole bodies at full fidelity, which cost 25k lines and
+    645 KB -- 60% of the entire subproject's diff -- for 924 facets nothing
+    asserts the shape of. The tests here are about the response *schema*
+    (bodies is a list, vertices are {x,y,z} objects, the top-level facetPoints
+    is a decoy) and about welding; none of that needs a faithful surface, and
+    geometric accuracy is covered in test_geometry.py against analytic solids.
+    """
     kept = [b for b in payload.get("bodies", []) if b.get("id") in KEEP_BODIES]
     if not kept:
         kept = sorted(
             payload.get("bodies", []),
             key=lambda b: sum(len(f.get("facets", [])) for f in b.get("faces", [])),
         )[:2]
-    return {**payload, "bodies": kept}
+    trimmed = {key: payload.get(key) for key in TESSELLATION_PASSTHROUGH}
+    trimmed["bodies"] = _decimate_bodies(kept, SCHEMA_FACETS, precision=7)
+    return trimmed
 
 
 # Facets kept per body in the decimated per-source fixtures. Enough to give
 # every part a mesh and a non-degenerate centroid; the full model is ~50k
 # facets, which is far past the repo's 5 MB file ceiling.
 DECIMATE_FACETS = 30
+
+
+def _decimate_bodies(bodies: list[dict], budget_per_body: int, precision: int) -> list[dict]:
+    """Keep the first `budget_per_body` facets of each body, vertices only."""
+    out = []
+    for body in bodies:
+        faces, budget = [], budget_per_body
+        for face in body.get("faces", []):
+            if budget <= 0:
+                break
+            facets = [
+                {
+                    "vertices": [
+                        {
+                            "x": round(v["x"], precision),
+                            "y": round(v["y"], precision),
+                            "z": round(v["z"], precision),
+                        }
+                        for v in facet["vertices"]
+                    ]
+                }
+                for facet in (face.get("facets") or [])[:budget]
+            ]
+            if facets:
+                faces.append({"id": face.get("id"), "facets": facets})
+                budget -= len(facets)
+        out.append({"id": body.get("id"), "name": body.get("name"), "faces": faces})
+    return out
 
 
 def decimate_tessellation(payload: dict) -> dict:
@@ -95,25 +145,7 @@ def decimate_tessellation(payload: dict) -> dict:
     Geometric accuracy is covered in test_geometry.py against analytic solids,
     which is a better test of it than any captured mesh would be.
     """
-    bodies = []
-    for body in payload.get("bodies", []):
-        faces, budget = [], DECIMATE_FACETS
-        for face in body.get("faces", []):
-            if budget <= 0:
-                break
-            facets = [
-                {
-                    "vertices": [
-                        {"x": round(v["x"], 6), "y": round(v["y"], 6), "z": round(v["z"], 6)}
-                        for v in facet["vertices"]
-                    ]
-                }
-                for facet in (face.get("facets") or [])[:budget]
-            ]
-            if facets:
-                faces.append({"id": face.get("id"), "facets": facets})
-                budget -= len(facets)
-        bodies.append({"id": body.get("id"), "name": body.get("name"), "faces": faces})
+    bodies = _decimate_bodies(payload.get("bodies", []), DECIMATE_FACETS, precision=6)
     return {"bodies": bodies}
 
 
@@ -136,12 +168,25 @@ def main() -> int:
             return payload
         return None
 
+    written: dict[str, str] = {}
+
     def write(name: str, payload: object | None, compact: bool = False) -> None:
         if payload is None:
             print(f"  {name}: SKIPPED (not in cache)")
             return
+        text = json.dumps(payload, indent=None if compact else 1)
+        # The main Part Studio is both "the generic example" and "one of the
+        # five sources", so it used to be written twice under two names --
+        # ~1700 identical lines in the diff. FakeClient already falls back from
+        # a missing per-source fixture to the generic one, so skipping the copy
+        # changes nothing it serves.
+        duplicate = next((n for n, t in written.items() if t == text), None)
+        if duplicate is not None:
+            print(f"  {name}: SKIPPED (byte-identical to {duplicate})")
+            return
+        written[name] = text
         path = FIXTURES / name
-        path.write_text(json.dumps(payload, indent=None if compact else 1))
+        path.write_text(text)
         print(f"  {name}: {path.stat().st_size / 1024:.1f} KB")
 
     write("assembly.json", pick(is_assembly, populated=True))
