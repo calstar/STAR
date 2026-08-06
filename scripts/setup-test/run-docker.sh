@@ -2,7 +2,7 @@
 # run-docker.sh — test setup.sh in a clean Ubuntu container.
 #
 # Usage: bash scripts/setup-test/run-docker.sh <project>
-#   project: pid-designer | engine-design | firmware | daq-server | all
+#   project: pid-designer | onshape-viewer | engine-design | firmware | daq-server | all
 #
 # What it does:
 #   1. Builds the ubuntu:24.04 test image (cached).
@@ -46,12 +46,12 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$PROJECT" ]; then
-  echo "Usage: $0 <pid-designer|engine-design|firmware|daq-server|all>" >&2
+  echo "Usage: $0 <pid-designer|onshape-viewer|engine-design|firmware|daq-server|all>" >&2
   exit 1
 fi
 
 case "$PROJECT" in
-  pid-designer|engine-design|firmware|daq-server|all) ;;
+  pid-designer|onshape-viewer|engine-design|firmware|daq-server|all) ;;
   *) echo "Unknown project: $PROJECT" >&2; exit 1 ;;
 esac
 
