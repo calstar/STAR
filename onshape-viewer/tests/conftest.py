@@ -2,17 +2,45 @@
 
 Regenerate the underlying JSON with `python tests/make_fixtures.py` after a
 build. See that script for what each file is and why it is trimmed.
+
+Onshape bills us per API call against a finite quota, so this suite must never
+touch the network -- not in CI, not on a laptop that happens to have credentials
+exported. `_no_network` below enforces that at the socket layer rather than
+trusting every future test to remember.
 """
 
 from __future__ import annotations
 
 import json
+import socket
 import sys
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make any outbound connection raise, for every test in the suite.
+
+    Blocking at `socket.socket.connect` catches httpx, urllib, and anything else
+    a future test might reach for, and it fails loudly at the call site instead
+    of quietly spending API credit. `make_fixtures.py` is a script, not a test,
+    so it is unaffected.
+    """
+
+    def refuse(self: socket.socket, address: object) -> None:
+        raise RuntimeError(
+            f"network access is blocked in tests (tried to connect to {address!r}). "
+            "Add a fixture under tests/fixtures/ instead -- Onshape API calls "
+            "cost quota."
+        )
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket.socket, "connect_ex", refuse)
+
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

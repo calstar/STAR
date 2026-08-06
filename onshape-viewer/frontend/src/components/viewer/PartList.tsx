@@ -20,12 +20,16 @@ import { useMemo, useState } from 'react'
 
 import type { Part } from '../../types'
 import { formatMass } from '../../lib/cm'
+import { displayName } from '../../lib/names'
+import { STATUS_TEXT, massStatus, worstStatus } from '../../lib/status'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 
 interface Props {
   parts: Part[]
   visibleKeys: Set<string>
   selectedKeys: Set<string>
+  /** Parts whose mass the user has taken over; see lib/status. */
+  overriddenKeys: Set<string>
   onToggle: (keys: string[], visible: boolean) => void
   /** Replaces the selection outright; the last key is treated as primary. */
   onSelect: (keys: string[]) => void
@@ -54,11 +58,6 @@ interface MenuState {
   items: MenuItem[]
 }
 
-/** Instance suffixes like "<2>" are stripped so copies collapse together. */
-function baseName(name: string): string {
-  return name.replace(/\s*<\d+>\s*$/, '').trim() || name
-}
-
 const groupRowId = (name: string) => `g:${name}`
 const partRowId = (key: string) => `p:${key}`
 
@@ -66,6 +65,7 @@ export function PartList({
   parts,
   visibleKeys,
   selectedKeys,
+  overriddenKeys,
   onToggle,
   onSelect,
   onHover,
@@ -79,7 +79,8 @@ export function PartList({
   const groups = useMemo<Group[]>(() => {
     const byName = new Map<string, Part[]>()
     for (const part of parts) {
-      const key = baseName(part.name)
+      // Onshape's instance counter is stripped, so copies collapse together.
+      const key = displayName(part).name
       const existing = byName.get(key)
       if (existing) existing.push(part)
       else byName.set(key, [part])
@@ -239,12 +240,7 @@ export function PartList({
 
       {selectedKeys.size > 0 && (
         <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/80 px-3 py-1 text-xs text-cyan-300">
-          <span>
-            {selectedKeys.size} selected
-            {selectedKeys.size > 1 && (
-              <span className="ml-1 text-slate-500">· right click to act on all</span>
-            )}
-          </span>
+          <span>{selectedKeys.size} selected</span>
           <button
             type="button"
             className="rounded px-1.5 py-0.5 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
@@ -270,7 +266,9 @@ export function PartList({
           const groupMass = group.parts
             .filter((part) => visibleKeys.has(part.key))
             .reduce((sum, part) => sum + part.mass, 0)
-          const anyEstimated = group.parts.some((part) => part.materialDefaulted)
+          const status = worstStatus(
+            group.parts.map((part) => massStatus(part, overriddenKeys.has(part.key))),
+          )
           const leaf = group.parts[0]
           const row: Row = hasChildren
             ? { id: groupRowId(group.name), keys }
@@ -299,7 +297,7 @@ export function PartList({
                 onContextMenu={(event) => openMenu(event, row)}
                 onMouseEnter={() => onHover(keys)}
                 onMouseLeave={() => onHover([])}
-                className={`flex cursor-pointer items-center gap-2 px-2 py-2 hover:bg-slate-800/60 ${
+                className={`flex cursor-pointer items-center gap-2 px-2 py-2 hover:bg-slate-800/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-cyan-400/50 ${
                   isSelected ? 'bg-cyan-500/15' : isPartial ? 'bg-cyan-500/5' : ''
                 }`}
                 title="Left click to expand · Shift or Ctrl click to select several · Right click for options"
@@ -315,9 +313,7 @@ export function PartList({
                   className={`flex-1 truncate ${
                     isHidden
                       ? 'text-slate-600 line-through'
-                      : anyEstimated
-                        ? 'text-amber-300'
-                        : 'text-slate-200'
+                      : STATUS_TEXT[status] || 'text-slate-200'
                   }`}
                 >
                   {group.name}
@@ -341,6 +337,7 @@ export function PartList({
                 <ul className="bg-slate-900/40">
                   {group.parts.map((part) => {
                     const partHidden = !visibleKeys.has(part.key)
+                    const partStatus = massStatus(part, overriddenKeys.has(part.key))
                     const childRow: Row = { id: partRowId(part.key), keys: [part.key] }
                     return (
                       <li key={part.key}>
@@ -357,16 +354,25 @@ export function PartList({
                           onContextMenu={(event) => openMenu(event, childRow)}
                           onMouseEnter={() => onHover([part.key])}
                           onMouseLeave={() => onHover([])}
-                          className={`flex cursor-pointer items-center gap-2 py-1.5 pl-9 pr-2 text-sm hover:bg-slate-800/60 ${
+                          className={`flex cursor-pointer items-center gap-2 py-1.5 pl-9 pr-2 text-sm hover:bg-slate-800/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-cyan-400/50 ${
                             selectedKeys.has(part.key) ? 'bg-cyan-500/15' : ''
                           }`}
                         >
                           <span
                             className={`flex-1 truncate ${
-                              partHidden ? 'text-slate-600 line-through' : 'text-slate-300'
+                              partHidden
+                                ? 'text-slate-600 line-through'
+                                : STATUS_TEXT[partStatus] || 'text-slate-300'
                             }`}
                           >
-                            {part.name}
+                            {displayName(part).name}
+                            {/* Copies are otherwise indistinguishable once the
+                                instance counter is stripped off the name. */}
+                            {displayName(part).instance !== null && (
+                              <span className="ml-1.5 text-xs text-slate-500">
+                                {displayName(part).instance}
+                              </span>
+                            )}
                           </span>
                           <span
                             className={`tabular-nums ${

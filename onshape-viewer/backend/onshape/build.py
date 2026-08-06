@@ -18,6 +18,7 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -28,11 +29,11 @@ from .assembly import AssemblyWalk, Occurrence, SourceKey, walk_assembly
 from .client import OnshapeClient, OnshapeError
 from .geometry import transform_point, volume_and_centroid
 from .glb import GLBBuilder, MeshKey
-from .mass import DEFAULT_DENSITY, AssemblyTotals, BodyMass, Material
+from .mass import AssemblyTotals, BodyMass, Material
 from .tessellate import PartMesh, fetch_source_meshes
 from .urls import ResolvedRef, parse_document_url, resolve
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 CACHE_ROOT = Path(__file__).resolve().parents[2] / "cache"
 
 # Relative tolerance for reconciling the per-part sum against the assembly total.
@@ -46,6 +47,9 @@ class SourceData:
     source: SourceKey
     bodies: dict[str, BodyMass]
     materials: dict[str, Material]
+    # The Part Studio's own name per part id, which the assembly instance name
+    # is derived from. Kept so the viewer can strip the instance counter.
+    part_names: dict[str, str]
     meshes: dict[str, PartMesh]
 
 
@@ -54,6 +58,7 @@ class PartRecord:
     """One occurrence, fully resolved: geometry, mass, and world-frame centroid."""
 
     occurrence: Occurrence
+    part_name: str | None
     mass: float
     volume: float
     centroid_local: list[float]
@@ -75,31 +80,48 @@ class BuildReport:
 def build(
     url: str,
     output_dir: Path | None = None,
-    default_density: float = DEFAULT_DENSITY,
     emit_gltf: bool = False,
     offline: bool = False,
+    on_progress: Callable[[str], None] | None = None,
 ) -> dict:
-    """Run the full build and return the manifest dict."""
+    """Run the full build and return the manifest dict.
+
+    ``on_progress`` receives the same milestone lines the CLI prints, so a
+    caller driving this from a web request can stream them without having to
+    capture stdout.
+    """
     started = time.time()
     report = BuildReport()
 
+    def say(message: str) -> None:
+        print(message)
+        if on_progress is not None:
+            on_progress(message)
+
     ref_in = parse_document_url(url)
-    cache_dir = (output_dir or CACHE_ROOT / f"{ref_in.document_id}_{ref_in.wvm_id}")
+    # The element id is part of the key, not just the document and ref. A
+    # document can hold several assembly tabs -- BART has two -- and without it
+    # they share a directory, so building the second silently overwrites the
+    # first and they can never both be listed.
+    slug = f"{ref_in.document_id}_{ref_in.wvm_id}"
+    if ref_in.element_id:
+        slug = f"{slug}_{ref_in.element_id}"
+    cache_dir = output_dir or CACHE_ROOT / slug
     raw_dir = cache_dir / "raw"
 
     with OnshapeClient(cache_dir=raw_dir, offline=offline) as client:
         # Note: document info is /documents/{did} with no /d/ segment, unlike
         # every other endpoint here (and unlike orkv2.md 9, which lists /d/).
         document = client.get_json(f"/documents/{ref_in.document_id}")
-        print(f"Document: {document.get('name')}")
+        say(f"Document: {document.get('name')}")
 
         ref = resolve(client, ref_in)
         report.warnings.extend(ref.warnings)
-        print(f"Building against {ref.wvm}/{ref.wvm_id} ({ref.resolved_from})")
+        say(f"Building against {ref.wvm}/{ref.wvm_id} ({ref.resolved_from})")
 
         walk = walk_assembly(client, ref)
         report.warnings.extend(walk.warnings)
-        print(
+        say(
             f"Assembly: {len(walk.occurrences)} parts from {walk.total_occurrences} occurrences, "
             f"{walk.subassembly_count} subassemblies, {len(walk.sources)} tessellation targets"
         )
@@ -109,12 +131,24 @@ def build(
                 "assembly tab with geometry in it."
             )
 
-        totals = mass_mod.fetch_assembly_totals(client, ref.element_path)
-        print(f"Assembly mass (ground truth): {totals.mass:.6f} kg, {totals.mass_missing_count} parts without mass")
+        # The assembly definition response has no tab name in it, so the walk
+        # falls back to the element id. Look up the real one; an id in the UI
+        # where a name belongs is not useful to anyone.
+        assembly_name = _fetch_element_name(client, ref, report)
+        if assembly_name:
+            walk.assembly_name = assembly_name
 
+        totals = mass_mod.fetch_assembly_totals(client, ref.element_path)
+        say(
+            f"Assembly mass (ground truth): {totals.mass:.6f} kg, "
+            f"{totals.mass_missing_count} parts without mass"
+        )
+
+        say(f"Fetching geometry and mass for {len(walk.sources)} sources")
         sources = _fetch_sources(client, walk, ref.document_id, report)
 
-    parts = _resolve_parts(walk, sources, default_density, report)
+    parts = _resolve_parts(walk, sources, report)
+    say(f"Writing GLB for {len(parts)} parts")
     glb_path = cache_dir / "model.glb"
     _write_glb(parts, sources, glb_path, emit_gltf, report)
 
@@ -124,17 +158,39 @@ def build(
         parts=parts,
         totals=totals,
         document_name=document.get("name", ""),
-        default_density=default_density,
         report=report,
         elapsed=time.time() - started,
         stats=client.stats(),
     )
+
+    # The directory name is the id the API serves this model under. Recorded
+    # here rather than recomputed by callers: it is derived from the *requested*
+    # ref, so it cannot be reconstructed from the resolved one in the manifest.
+    manifest["source"]["modelId"] = cache_dir.name
 
     manifest_path = cache_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
     _print_report(manifest, glb_path, manifest_path)
     return manifest
+
+
+def _fetch_element_name(
+    client: OnshapeClient, ref: ResolvedRef, report: BuildReport
+) -> str | None:
+    """The assembly tab's display name, from the document's element list."""
+    try:
+        elements = client.get_json(
+            f"/documents/{ref.path_prefix}/elements", {"elementType": "ASSEMBLY"}
+        )
+    except OnshapeError as exc:
+        report.warn(f"Could not read the element list, so the assembly name is its id: {exc}")
+        return None
+
+    for element in elements if isinstance(elements, list) else []:
+        if element.get("id") == ref.element_id:
+            return element.get("name")
+    return None
 
 
 def _fetch_sources(
@@ -152,16 +208,19 @@ def _fetch_sources(
             report.warn(f"Mass properties failed for {source.element_id}: {exc}")
             bodies = {}
         try:
+            # One endpoint behind both, so the second call is a cache hit.
             materials = mass_mod.fetch_source_materials(client, source, link)
+            part_names = mass_mod.fetch_source_part_names(client, source, link)
         except OnshapeError as exc:
             report.warn(f"Materials failed for {source.element_id}: {exc}")
             materials = {}
+            part_names = {}
         try:
             meshes = fetch_source_meshes(client, source, link)
         except OnshapeError as exc:
             report.warn(f"Tessellation failed for {source.element_id}: {exc}")
             meshes = {}
-        return SourceData(source, bodies, materials, meshes)
+        return SourceData(source, bodies, materials, part_names, meshes)
 
     results = client.map_parallel(fetch, walk.sources)
     return {data.source: data for data in results}
@@ -170,10 +229,9 @@ def _fetch_sources(
 def _resolve_parts(
     walk: AssemblyWalk,
     sources: dict[SourceKey, SourceData],
-    default_density: float,
     report: BuildReport,
 ) -> list[PartRecord]:
-    """Join geometry and mass per occurrence, defaulting density where needed."""
+    """Join geometry and mass per occurrence."""
     records: list[PartRecord] = []
 
     for occ in walk.occurrences:
@@ -197,10 +255,15 @@ def _resolve_parts(
 
         if defaulted:
             # Onshape zeroes both the mass and the centroid for a part with no
-            # material. Volume survives and is exact, so mass is recovered from
-            # volume x assumed density; the centroid has to be integrated from
-            # the mesh because there is no other source for it.
-            part_mass = volume * default_density
+            # material, and nothing is substituted for the mass here: the part
+            # weighs nothing until someone says otherwise in the viewer, and
+            # until then it is excluded from the centre of mass rather than
+            # quietly guessed at.
+            #
+            # Volume survives and is exact, and the centroid is integrated from
+            # the mesh -- which is a geometric centroid, valid under uniform
+            # density, so it is where an assigned mass belongs.
+            part_mass = 0.0
             centroid_local = _mesh_centroid(mesh, occ, volume, report)
         else:
             part_mass = body.mass
@@ -209,6 +272,7 @@ def _resolve_parts(
         records.append(
             PartRecord(
                 occurrence=occ,
+                part_name=data.part_names.get(occ.part_id),
                 mass=part_mass,
                 volume=volume,
                 centroid_local=centroid_local,
@@ -294,25 +358,22 @@ def _build_manifest(
     parts: list[PartRecord],
     totals: AssemblyTotals,
     document_name: str,
-    default_density: float,
     report: BuildReport,
     elapsed: float,
     stats: dict,
 ) -> dict:
-    measured = [p for p in parts if not p.material_defaulted]
     defaulted = [p for p in parts if p.material_defaulted]
 
-    mass_measured = sum(p.mass for p in measured)
-    mass_defaulted = sum(p.mass for p in defaulted)
+    # Parts with no material carry no mass, so this is already the measured
+    # subset -- which is what the assembly total covers, and therefore what is
+    # comparable to it.
+    mass_total = sum(p.mass for p in parts)
 
-    # The assembly total excludes materialless parts, so only the measured
-    # subset is comparable to it. Including the defaulted mass here would
-    # guarantee a mismatch and make the check meaningless.
-    delta = abs(mass_measured - totals.mass)
+    delta = abs(mass_total - totals.mass)
     relative = delta / totals.mass if totals.mass else 0.0
     if relative > RECONCILE_TOLERANCE:
         report.warn(
-            f"Mass reconciliation FAILED: measured parts sum to {mass_measured:.6f} kg but the "
+            f"Mass reconciliation FAILED: parts sum to {mass_total:.6f} kg but the "
             f"assembly reports {totals.mass:.6f} kg (relative error {relative:.2e}). "
             "Parts have probably been dropped from the walk."
         )
@@ -320,8 +381,8 @@ def _build_manifest(
     if defaulted:
         report.warn(
             f"{len(defaulted)} of {len(parts)} parts have no material assigned in Onshape. "
-            f"Their mass is estimated as volume x {default_density:.0f} kg/m^3 and their "
-            "centroid is integrated from the mesh. These are assumptions, not measurements."
+            "They contribute no mass and are excluded from the centre of mass until a mass "
+            "is assigned to them in the viewer."
         )
 
     return {
@@ -340,14 +401,10 @@ def _build_manifest(
         # Declared so the viewer knows the axis swap is already baked into the
         # GLB and must not be applied again.
         "upAxisHandling": "glb-root",
-        "defaultDensity": default_density,
         "totals": {
-            "mass": mass_measured + mass_defaulted,
-            "massMeasured": mass_measured,
-            "massDefaulted": mass_defaulted,
+            "mass": mass_total,
             "assemblyMass": totals.mass,
             "centroid": _weighted_centroid(parts),
-            "centroidMeasured": _weighted_centroid(measured),
             "assemblyCentroid": totals.centroid,
             "partCount": len(parts),
             "partsWithoutMaterial": len(defaulted),
@@ -362,6 +419,10 @@ def _build_manifest(
                 "instanceId": p.occurrence.instance_id,
                 "occurrencePath": p.occurrence.path,
                 "name": p.occurrence.name,
+                # The Part Studio name, before the assembly's instance counter
+                # was appended to it. Null when the parts endpoint had nothing
+                # for this part id.
+                "partName": p.part_name,
                 "sourceDocumentId": p.occurrence.source.document_id,
                 "sourceElementId": p.occurrence.source.element_id,
                 "configuration": p.occurrence.source.configuration,
@@ -394,8 +455,8 @@ def _print_report(manifest: dict, glb_path: Path, manifest_path: Path) -> None:
     print()
     print("=== Build report ===")
     print(f"  parts               : {totals['partCount']}")
-    print(f"  measured mass       : {totals['massMeasured']:.6f} kg  ({totals['partCount'] - totals['partsWithoutMaterial']} parts)")
-    print(f"  defaulted mass      : {totals['massDefaulted']:.6f} kg  ({totals['partsWithoutMaterial']} parts)")
+    print(f"  mass                : {totals['mass']:.6f} kg  ({totals['partCount'] - totals['partsWithoutMaterial']} parts)")
+    print(f"  no material         : {totals['partsWithoutMaterial']} parts, no mass")
     print(f"  assembly ground truth: {totals['assemblyMass']:.6f} kg")
     status = "OK" if totals["reconciled"] else "FAILED"
     print(f"  reconciliation      : {status} (relative {totals['reconciliationRelative']:.2e})")
@@ -417,12 +478,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("url", help="Onshape assembly URL")
     parser.add_argument("--output-dir", type=Path, default=None, help="override the cache directory")
-    parser.add_argument(
-        "--default-density",
-        type=float,
-        default=DEFAULT_DENSITY,
-        help=f"kg/m^3 assumed for parts with no material (default {DEFAULT_DENSITY:.0f})",
-    )
     parser.add_argument("--gltf", action="store_true", help="also emit readable .gltf")
     parser.add_argument(
         "--offline", action="store_true", help="serve entirely from cache; fail if anything is missing"
@@ -433,7 +488,6 @@ def main(argv: list[str] | None = None) -> int:
         manifest = build(
             args.url,
             output_dir=args.output_dir,
-            default_density=args.default_density,
             emit_gltf=args.gltf,
             offline=args.offline,
         )

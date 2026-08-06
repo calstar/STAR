@@ -1,12 +1,22 @@
 # Build artifacts. The GLB alone exceeds the 5 MB ceiling that
 # .github/workflows/large-files.yml enforces repo-wide on every PR.
+# cache/ also holds browse.json, the model picker's document cache.
 cache/
 
 # Credentials. Never commit these -- see README.md.
 .env
+
+# Scraped material database (~21 MB), regenerate with
+# `python backend/materials/scrape.py`. Four times over the large-files ceiling,
+# and derived data besides.
+backend/data/
 
 .venv/
 node_modules/
 __pycache__/
 *.pyc
 dist/
+
+# tsc -b incremental state. Machine-specific, rewritten on every build, and
+# nothing reads it but the compiler that wrote it.
+frontend/tsconfig.tsbuildinfo

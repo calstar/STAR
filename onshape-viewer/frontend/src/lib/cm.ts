@@ -17,41 +17,43 @@ export interface CMResult {
   centroid: [number, number, number]
   /** Total mass, kg. */
   mass: number
-  /** Portion of `mass` that came from an assumed density rather than a material. */
-  massDefaulted: number
+  /** How many of `parts` had no mass at all, and so contributed nothing. */
+  masslessCount: number
   partCount: number
 }
 
 const ZERO: CMResult = {
   centroid: [0, 0, 0],
   mass: 0,
-  massDefaulted: 0,
+  masslessCount: 0,
   partCount: 0,
 }
 
 export function centreOfMass(parts: Part[]): CMResult {
   let mass = 0
-  let massDefaulted = 0
+  let massless = 0
   let x = 0
   let y = 0
   let z = 0
 
   for (const part of parts) {
     const m = part.mass
-    if (!(m > 0)) continue
+    if (!(m > 0)) {
+      massless += 1
+      continue
+    }
     x += part.centroidWorld[0] * m
     y += part.centroidWorld[1] * m
     z += part.centroidWorld[2] * m
     mass += m
-    if (part.materialDefaulted) massDefaulted += m
   }
 
-  if (mass <= 0) return { ...ZERO, partCount: parts.length }
+  if (mass <= 0) return { ...ZERO, partCount: parts.length, masslessCount: massless }
 
   return {
     centroid: [x / mass, y / mass, z / mass],
     mass,
-    massDefaulted,
+    masslessCount: massless,
     partCount: parts.length,
   }
 }

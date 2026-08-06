@@ -63,60 +63,75 @@ def test_part_count(built):
     assert len(manifest["parts"]) == EXPECTED_PARTS
 
 
-def test_measured_mass_reconciles_with_the_assembly_total(built):
+def test_mass_reconciles_with_the_assembly_total(built):
     """The acceptance check: dropped parts show up here and nowhere else.
 
-    Only the measured subset is comparable -- the assembly total excludes parts
-    with no material, so folding the estimated mass in would guarantee a
-    mismatch and make the check meaningless.
+    Comparable because nothing is substituted for the parts Onshape has no mass
+    for: they weigh nothing on both sides of this comparison.
     """
     manifest, _ = built
     totals = manifest["totals"]
-    assert totals["massMeasured"] == pytest.approx(ASSEMBLY_MASS, rel=1e-9)
+    assert totals["mass"] == pytest.approx(ASSEMBLY_MASS, rel=1e-9)
     assert totals["reconciled"] is True
     assert totals["reconciliationRelative"] < 1e-6
 
 
-def test_measured_centroid_matches_onshape(built):
+def test_centroid_matches_onshape(built):
     manifest, _ = built
     totals = manifest["totals"]
-    assert totals["centroidMeasured"][2] == pytest.approx(ASSEMBLY_CENTROID_Z, abs=1e-9)
-    assert totals["centroidMeasured"] == pytest.approx(totals["assemblyCentroid"], abs=1e-9)
+    assert totals["centroid"][2] == pytest.approx(ASSEMBLY_CENTROID_Z, abs=1e-9)
+    assert totals["centroid"] == pytest.approx(totals["assemblyCentroid"], abs=1e-9)
 
 
-def test_parts_without_material_are_counted_and_estimated(built):
+def test_parts_without_material_are_counted_and_carry_no_mass(built):
     manifest, _ = built
     assert manifest["totals"]["partsWithoutMaterial"] == EXPECTED_WITHOUT_MATERIAL
 
-    estimated = [part for part in manifest["parts"] if part["materialDefaulted"]]
-    assert len(estimated) == EXPECTED_WITHOUT_MATERIAL
-    for part in estimated:
+    unassigned = [part for part in manifest["parts"] if part["materialDefaulted"]]
+    assert len(unassigned) == EXPECTED_WITHOUT_MATERIAL
+    for part in unassigned:
         assert part["material"] is None
-        assert part["mass"] == pytest.approx(part["volume"] * manifest["defaultDensity"])
+        # No density is substituted: mass stays zero until a user assigns one.
+        assert part["mass"] == 0.0
+        # Volume is exact regardless of material, and is what an assigned
+        # density would be applied to.
+        assert part["volume"] > 0
 
 
-def test_estimated_parts_are_not_placed_at_the_origin(built):
+def test_unassigned_parts_are_not_placed_at_the_origin(built):
     """Onshape zeroes the centroid along with the mass; the mesh has to supply it.
 
-    Without this the estimated mass lands at the Part Studio origin and drags
-    the centre of mass somewhere plainly wrong.
+    Without this, a mass assigned later in the viewer lands at the Part Studio
+    origin and drags the centre of mass somewhere plainly wrong.
     """
     manifest, _ = built
-    estimated = [part for part in manifest["parts"] if part["materialDefaulted"]]
-    non_zero = [part for part in estimated if any(abs(c) > 1e-9 for c in part["centroidLocal"])]
-    assert len(non_zero) == len(estimated)
+    unassigned = [part for part in manifest["parts"] if part["materialDefaulted"]]
+    non_zero = [part for part in unassigned if any(abs(c) > 1e-9 for c in part["centroidLocal"])]
+    assert len(non_zero) == len(unassigned)
 
 
-def test_estimated_mass_is_reported_separately(built):
+def test_total_mass_is_only_the_parts_onshape_weighed(built):
     manifest, _ = built
     totals = manifest["totals"]
-    assert totals["massDefaulted"] > 0
-    assert totals["mass"] == pytest.approx(totals["massMeasured"] + totals["massDefaulted"])
-    # The estimate must never contaminate the ground-truth comparison.
-    assert totals["massMeasured"] != pytest.approx(totals["mass"])
+    weighed = [part for part in manifest["parts"] if not part["materialDefaulted"]]
+    assert totals["mass"] == pytest.approx(sum(part["mass"] for part in weighed))
 
 
-def test_warns_about_estimated_parts(built):
+def test_part_studio_names_accompany_instance_names(built):
+    """The viewer needs both to strip Onshape's instance counter safely.
+
+    "Bulkhead <2>" is the instance; "Bulkhead" is the part. Without the second,
+    a part genuinely named with angle brackets is indistinguishable from a
+    counter and gets truncated.
+    """
+    manifest, _ = built
+    named = [part for part in manifest["parts"] if part["partName"]]
+    assert len(named) == len(manifest["parts"])
+    for part in named:
+        assert part["name"].startswith(part["partName"])
+
+
+def test_warns_about_parts_without_material(built):
     manifest, _ = built
     assert any("no material" in warning for warning in manifest["warnings"])
 

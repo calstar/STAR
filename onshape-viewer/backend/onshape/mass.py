@@ -1,4 +1,4 @@
-"""Mass properties and materials, with a default density for unassigned parts.
+"""Mass properties and materials.
 
 Two API behaviours drive the shape of this module.
 
@@ -12,10 +12,11 @@ returns per-part entries.
 
 **Parts with no material are zeroed, not omitted.** They come back with
 ``hasMass: false``, ``mass: 0`` and ``centroid: [0, 0, 0]``, and the assembly
-total excludes them entirely. orkv2.md 7.1 says never to substitute a default
-density; that has been overridden by an explicit product decision, so this module
-does substitute one -- but records it per part, totals it separately, and never
-lets it contaminate the reconciliation against the assembly total.
+total excludes them entirely. Per orkv2.md 7.1 no density is substituted for
+them: they carry no mass until someone assigns one in the viewer, and they are
+flagged so it is visible which parts those are. Volume is exact regardless, and
+their centroid comes from the mesh, so an assigned mass lands in the right
+place.
 """
 
 from __future__ import annotations
@@ -24,10 +25,6 @@ from dataclasses import dataclass
 
 from .assembly import SourceKey
 from .client import OnshapeClient
-
-# Fiberglass, the material already dominant in the reference assembly. Only ever
-# applied to parts with no material of their own, and always flagged.
-DEFAULT_DENSITY = 1750.0
 
 
 @dataclass
@@ -109,10 +106,7 @@ def fetch_source_materials(
     present with a zero density, so callers must treat a missing key as
     "unassigned" and not as "weightless".
     """
-    payload = client.get_json(
-        f"/parts/{source.path_prefix()}",
-        {"configuration": source.configuration, "linkDocumentId": link_document_id},
-    )
+    payload = _fetch_parts(client, source, link_document_id)
 
     materials: dict[str, Material] = {}
     for part in payload or []:
@@ -131,6 +125,39 @@ def fetch_source_materials(
             density=float(density),
         )
     return materials
+
+
+def fetch_source_part_names(
+    client: OnshapeClient, source: SourceKey, link_document_id: str | None = None
+) -> dict[str, str]:
+    """Part Studio names, keyed by part id.
+
+    Not the same thing as the name on an assembly instance: Onshape appends an
+    instance counter there, so one part called "Bulkhead" appears as
+    "Bulkhead <1>", "Bulkhead <2>" and so on. Telling that suffix apart from a
+    part whose name genuinely ends in angle brackets is only possible by
+    comparing against the name here, which is why the viewer carries both.
+
+    Same endpoint as the materials fetch, so on a real build this costs a cache
+    hit rather than a second request.
+    """
+    payload = _fetch_parts(client, source, link_document_id)
+
+    names: dict[str, str] = {}
+    for part in payload or []:
+        name = part.get("name")
+        if name:
+            names[part["partId"]] = name
+    return names
+
+
+def _fetch_parts(
+    client: OnshapeClient, source: SourceKey, link_document_id: str | None
+) -> list[dict]:
+    return client.get_json(
+        f"/parts/{source.path_prefix()}",
+        {"configuration": source.configuration, "linkDocumentId": link_document_id},
+    )
 
 
 def _scalar(value: object) -> float:

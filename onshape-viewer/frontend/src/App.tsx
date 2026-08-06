@@ -3,11 +3,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { fetchManifest, glbUrl, listModels } from './api/client'
 import { centreOfMass, formatMass, formatMetres } from './lib/cm'
 import { MaterialWarning } from './components/viewer/MaterialWarning'
+import { ModelPicker } from './components/viewer/ModelPicker'
 import { PartList } from './components/viewer/PartList'
 import { PropertiesPanel } from './components/viewer/PropertiesPanel'
 import { Row } from './components/viewer/Row'
 import { Scene } from './components/viewer/Scene'
-import type { Manifest, ModelSummary, Part } from './types'
+import type { Manifest, ModelSummary, Part, PartOverride } from './types'
+import { MATERIALS_BY_KEY } from './lib/materials'
+
+/** Survives reloads so a new build does not hijack which model is open. */
+const LAST_MODEL_KEY = 'onshape-viewer:last-model'
 
 export default function App() {
   const [models, setModels] = useState<ModelSummary[]>([])
@@ -21,18 +26,43 @@ export default function App() {
   const [selectedKeys, setSelectedKeys] = useState<string[]>([])
   // Lifted out of the viewer so the parts list can drive the same highlight.
   const [hoveredKeys, setHoveredKeys] = useState<string[]>([])
-  const [density, setDensity] = useState(1750)
+  // Session-only edits, keyed by part. Nothing is written back to Onshape and
+  // nothing survives a reload; see PropertiesPanel for what they can change.
+  const [overrides, setOverrides] = useState<Map<string, PartOverride>>(new Map())
   const [opacity, setOpacity] = useState(0.55)
   const [showAssemblyCentroid, setShowAssemblyCentroid] = useState(true)
+  // Bumped when a build finishes, so rebuilding the model already on screen
+  // refetches it. Without this the manifest effect keys only on the id, which
+  // has not changed, and the viewer would keep showing the previous build.
+  const [reloadNonce, setReloadNonce] = useState(0)
 
   useEffect(() => {
     listModels()
       .then((found) => {
         setModels(found)
-        if (found.length > 0) setModelId(found[0].id)
-        else setError('No built models found. Run: python -m backend.onshape.build <onshape-url>')
+        if (found.length === 0) {
+          setError('No models built yet. Use the picker in the header to build one.')
+          return
+        }
+        // Whatever was open last, if it is still built. Falling back to
+        // found[0] alone means the newest *build* wins, so building a second
+        // assembly silently moves everyone onto it at the next reload -- which
+        // reads as being dumped into some sub-assembly for no reason.
+        const remembered = window.localStorage.getItem(LAST_MODEL_KEY)
+        const restored = found.find((model) => model.id === remembered)
+        setModelId((restored ?? found[0]).id)
       })
       .catch((exc) => setError(String(exc)))
+  }, [])
+
+  useEffect(() => {
+    if (modelId) window.localStorage.setItem(LAST_MODEL_KEY, modelId)
+  }, [modelId])
+
+  const handleBuilt = useCallback((builtId: string) => {
+    listModels().then(setModels).catch(() => undefined)
+    setModelId(builtId)
+    setReloadNonce((value) => value + 1)
   }, [])
 
   useEffect(() => {
@@ -40,23 +70,47 @@ export default function App() {
     fetchManifest(modelId)
       .then((loaded) => {
         setManifest(loaded)
-        setDensity(loaded.defaultDensity)
+        setOverrides(new Map())
         setVisibleKeys(new Set(loaded.parts.map((part) => part.key)))
         setSelectedKeys([])
         setError(null)
       })
       .catch((exc) => setError(String(exc)))
-  }, [modelId])
+  }, [modelId, reloadNonce])
 
-  // Re-derive estimated masses whenever the assumed density changes. Volume is
-  // exact even for parts Onshape gave no mass for, so this needs no rebuild.
+  // The manifest as edited: a user-assigned mass replaces Onshape's, and every
+  // downstream number -- the centre of mass, the totals, the parts list -- is
+  // computed from this rather than from the raw manifest.
   const parts = useMemo<Part[]>(() => {
     if (!manifest) return []
-    if (density === manifest.defaultDensity) return manifest.parts
-    return manifest.parts.map((part) =>
-      part.materialDefaulted ? { ...part, mass: part.volume * density } : part,
-    )
-  }, [manifest, density])
+    if (overrides.size === 0) return manifest.parts
+    return manifest.parts.map((part) => {
+      const override = overrides.get(part.key)
+      if (!override) return part
+      // A typed-in mass wins over everything, including a chosen material.
+      if (override.massOverridden) return { ...part, mass: override.mass ?? 0 }
+      // Otherwise a catalog material sets the mass from its density and the
+      // part's exact volume. Onshape's own material is left untouched.
+      if (override.material) {
+        const material = MATERIALS_BY_KEY[override.material]
+        if (material) return { ...part, mass: part.volume * material.density }
+      }
+      return part
+    })
+  }, [manifest, overrides])
+
+  // Which parts carry a user override at all -- a typed-in mass or a chosen
+  // material. Colour depends on it and the effective mass alone cannot say: an
+  // override equal to Onshape's own figure is still an override.
+  const overriddenKeys = useMemo(
+    () =>
+      new Set(
+        [...overrides]
+          .filter(([, override]) => override.massOverridden || override.material != null)
+          .map(([key]) => key),
+      ),
+    [overrides],
+  )
 
   const activeParts = useMemo(
     () => parts.filter((part) => visibleKeys.has(part.key)),
@@ -64,10 +118,15 @@ export default function App() {
   )
 
   const cm = useMemo(() => centreOfMass(activeParts), [activeParts])
-  const measuredOnly = useMemo(
-    () => centreOfMass(activeParts.filter((part) => !part.materialDefaulted)),
-    [activeParts],
-  )
+
+  const handleOverrideChange = useCallback((key: string, override: PartOverride | null) => {
+    setOverrides((current) => {
+      const next = new Map(current)
+      if (override) next.set(key, override)
+      else next.delete(key)
+      return next
+    })
+  }, [])
 
   const handleToggle = useCallback((keys: string[], visible: boolean) => {
     setVisibleKeys((current) => {
@@ -80,8 +139,6 @@ export default function App() {
     })
   }, [])
 
-  // The scene highlights one part, so it gets the most recent of the selection.
-  const selectedKey = selectedKeys.length > 0 ? selectedKeys[selectedKeys.length - 1] : null
   const selectedSet = useMemo(() => new Set(selectedKeys), [selectedKeys])
 
   // A click in the 3D view replaces the selection rather than adding to it;
@@ -101,6 +158,17 @@ export default function App() {
         <div className="max-w-xl rounded border border-slate-700 bg-slate-900 p-6">
           <h1 className="mb-2 text-lg font-semibold text-slate-100">Nothing to show</h1>
           <p className="text-sm whitespace-pre-wrap">{error}</p>
+          {/* The picker lives in the header, which does not exist yet on a
+              fresh install -- so it is repeated here, otherwise there would be
+              no way to build a first model without going back to the CLI. */}
+          <div className="mt-4">
+            <ModelPicker
+              models={models}
+              modelId={modelId}
+              onSelectModel={setModelId}
+              onBuilt={handleBuilt}
+            />
+          </div>
         </div>
       </div>
     )
@@ -119,26 +187,16 @@ export default function App() {
   return (
     <div className="flex h-screen flex-col bg-slate-950 text-slate-100">
       <header className="flex flex-wrap items-center gap-3 border-b border-slate-700 px-4 py-2">
-        <h1 className="text-base font-semibold">
-          {manifest.source.documentName}
-          <span className="ml-2 text-sm font-normal text-slate-400">
-            {manifest.source.assemblyName}
-          </span>
-        </h1>
+        {/* Fixed title. What is loaded is the picker's job to say, and it
+            already does -- naming it twice just made the header noisy. */}
+        <h1 className="text-base font-semibold">Onshape Viewer</h1>
 
-        {models.length > 1 && (
-          <select
-            value={modelId}
-            onChange={(event) => setModelId(event.target.value)}
-            className="rounded border border-slate-600 bg-slate-900 px-2 py-1 text-sm"
-          >
-            {models.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.documentName ?? model.id}
-              </option>
-            ))}
-          </select>
-        )}
+        <ModelPicker
+          models={models}
+          modelId={modelId}
+          onSelectModel={setModelId}
+          onBuilt={handleBuilt}
+        />
 
         <label className="ml-auto flex items-center gap-2 text-sm text-slate-300">
           Opacity
@@ -164,13 +222,7 @@ export default function App() {
         </label>
       </header>
 
-      <MaterialWarning
-        manifest={manifest}
-        density={density}
-        onDensityChange={setDensity}
-        estimatedMass={cm.massDefaulted}
-        measuredMass={cm.mass - cm.massDefaulted}
-      />
+      <MaterialWarning parts={parts} />
 
       <div className="flex min-h-0 flex-1">
         <aside className="w-72 shrink-0 border-r border-slate-700 bg-slate-900/60">
@@ -178,6 +230,7 @@ export default function App() {
             parts={parts}
             visibleKeys={visibleKeys}
             selectedKeys={selectedSet}
+            overriddenKeys={overriddenKeys}
             onToggle={handleToggle}
             onSelect={setSelectedKeys}
             onHover={setHoveredKeys}
@@ -189,7 +242,8 @@ export default function App() {
             modelUrl={glbUrl(modelId)}
             manifest={manifest}
             visibleKeys={visibleKeys}
-            selectedKey={selectedKey}
+            selectedKeys={selectedSet}
+            overriddenKeys={overriddenKeys}
             hoveredKeys={hoveredKeys}
             onSelect={handleSceneSelect}
             onHover={setHoveredKeys}
@@ -201,21 +255,18 @@ export default function App() {
           <div className="pointer-events-none absolute left-4 top-4 w-80 space-y-3">
             <section className="pointer-events-auto rounded border border-slate-700 bg-slate-900/90 p-3 text-sm backdrop-blur">
               <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Centre of mass — {cm.partCount} of {parts.length} parts
+                Centre of mass — {cm.partCount - cm.masslessCount} of {parts.length} parts
               </h2>
               <Row label="Total mass" value={formatMass(cm.mass)} />
               <Row label="CM x" value={formatMetres(cm.centroid[0])} />
               <Row label="CM y" value={formatMetres(cm.centroid[1])} />
               <Row label="CM z" value={formatMetres(cm.centroid[2])} highlight />
 
-              {cm.massDefaulted > 0 && (
-                <div className="mt-2 border-t border-slate-700 pt-2 text-xs">
-                  <p className="mb-1 text-amber-300">
-                    Excluding estimated parts ({formatMass(cm.massDefaulted)} assumed):
-                  </p>
-                  <Row label="Measured mass" value={formatMass(measuredOnly.mass)} small />
-                  <Row label="Measured CM z" value={formatMetres(measuredOnly.centroid[2])} small />
-                </div>
+              {cm.masslessCount > 0 && (
+                <p className="mt-2 border-t border-slate-700 pt-2 text-xs text-amber-300">
+                  {cm.masslessCount} visible {cm.masslessCount === 1 ? 'part has' : 'parts have'} no
+                  mass and {cm.masslessCount === 1 ? 'is' : 'are'} not in this figure.
+                </p>
               )}
             </section>
 
@@ -234,7 +285,12 @@ export default function App() {
         </main>
 
         <aside className="w-80 shrink-0 border-l border-slate-700 bg-slate-900/60">
-          <PropertiesPanel selected={selectedParts} visibleKeys={visibleKeys} density={density} />
+          <PropertiesPanel
+            selected={selectedParts}
+            visibleKeys={visibleKeys}
+            overrides={overrides}
+            onOverrideChange={handleOverrideChange}
+          />
         </aside>
       </div>
     </div>

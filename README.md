@@ -23,6 +23,7 @@ top-level directory with its own README. Start with the one you're working on.
 | [`lib/DAQv2-Comms/`](lib/DAQv2-Comms/README.md) | The **wire protocol** shared by the firmware and the DAQ server — packet definitions, enums, and (de)serialization. The single source of truth for what goes over the wire. | C++ (Arduino library) |
 | [`EngineDesign/`](EngineDesign/README.md) | **Engine design & optimization pipeline** — physics simulation of liquid bipropellant engines (propellants and injector type are configurable) plus a multi-layer optimizer, a control system, and a web UI. Solves chamber pressure, thrust, and Isp from tank pressures. | Python, FastAPI, React |
 | [`pid-designer/`](pid-designer/README.md) | Interactive **P&ID (Piping & Instrumentation Diagram) editor** for the propulsion feed system, with git-backed versioning. | FastAPI, React + React Flow |
+| [`onshape-viewer/`](onshape-viewer/README.md) | **Onshape CM viewer** — renders an assembly from CAD and computes its centre of mass, recomputing live as parts are toggled or re-materialled. | FastAPI, React + three.js |
 
 ### How they fit together
 
@@ -40,8 +41,8 @@ top-level directory with its own README. Start with the one you're working on.
 
 `firmware/` and `daq-server/` are the two ends of the same conversation, and
 they speak the protocol defined in `lib/DAQv2-Comms/` (the firmware reaches it
-through a symlink at `firmware/libraries/DAQv2-Comms`). `EngineDesign/` and
-`pid-designer/` are standalone design tools.
+through a symlink at `firmware/libraries/DAQv2-Comms`). `EngineDesign/`,
+`pid-designer/`, and `onshape-viewer/` are standalone design tools.
 
 ---
 
@@ -58,8 +59,9 @@ cd STAR
 The top-level `setup.sh` is a thin dispatcher over per-project setup scripts.
 Each subproject owns its own install steps
 (`daq-server/setup.sh`, `firmware/setup.sh`, `EngineDesign/setup.sh`,
-`pid-designer/setup.sh`), so you only pay for what you use — cloning the
-repo just to edit the P&ID shouldn't force you to build Rust + `elodin-db`.
+`pid-designer/setup.sh`, `onshape-viewer/setup.sh`), so you only pay for what
+you use — cloning the repo just to edit the P&ID shouldn't force you to build
+Rust + `elodin-db`.
 
 The `daq-server/` project has the most dependencies (C++ + Rust +
 Python + Node); the others are much lighter. Run `./setup.sh --list` to see
@@ -99,6 +101,9 @@ install an optional pre-push hook; CI also enforces it.
 | `daq-server-ci.yml` | changes under `daq-server/` | builds the C++ stack, runs the integration test, lints |
 | `firmware-ci.yml` | changes under `firmware/` | compiles each flight project + host unit tests with PlatformIO |
 | `pid-designer-ci.yml` | changes under `pid-designer/` | TypeScript build + backend import check |
+| `engine-design-ci.yml` | changes under `EngineDesign/` | pytest gate, native C kernel + parity, frontend build |
+| `onshape-viewer-ci.yml` | changes under `onshape-viewer/` | pytest gate, frontend build, and a check that the suite makes no Onshape API calls |
+| `large-files.yml` | every pull request | fails any file over 5 MB added or modified by the PR |
 | `docs.yml` | push to `main` | builds Doxygen docs and deploys to GitHub Pages |
 
 **Branches.** Work on a feature branch; the test suites described in

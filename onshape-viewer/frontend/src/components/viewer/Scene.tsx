@@ -24,6 +24,7 @@ import { Grid, OrbitControls, OrthographicCamera, useGLTF } from '@react-three/d
 import * as THREE from 'three'
 
 import type { Manifest, Part } from '../../types'
+import { STATUS_COLOR, massStatus } from '../../lib/status'
 import { CMMarker } from './CMMarker'
 
 /** Mirrors the GLB's internal root rotation, for things given in Onshape coords. */
@@ -33,7 +34,6 @@ const Z_UP_TO_Y_UP: [number, number, number] = [-Math.PI / 2, 0, 0]
 const LIE_DOWN: [number, number, number] = [0, 0, -Math.PI / 2]
 
 const COLOR_DEFAULT = '#94a3b8'
-const COLOR_ESTIMATED = '#f59e0b'
 const COLOR_SELECTED = '#22d3ee'
 
 const EDGE_COLOR = '#0f172a'
@@ -51,6 +51,32 @@ const EDGE_ANGLE = 30
 
 /** Silhouette width, in CSS pixels, held constant at every zoom level. */
 const OUTLINE_PX = 3
+
+/**
+ * Draw order for the transparent pass.
+ *
+ * At any opacity below 1 every part is transparent, which means depth is not
+ * written and the image is decided purely by the order things are painted in.
+ * three orders the transparent pass back-to-front by each object's view-space
+ * depth, taken from its bounding-sphere centre -- and this model is a stack of
+ * concentric tubes whose centres all sit on the same axis. Their sort keys are
+ * therefore equal to within floating-point noise, and rotating through a
+ * symmetric orientation flips the comparison, so the order visibly pops and a
+ * buried part jumps to the front.
+ *
+ * Depth cannot answer "is the inner tube in front of the outer tube" for two
+ * concentric shells, so it is not asked. Parts are ordered largest-first
+ * instead, which is stable under rotation and reads correctly: an inner part is
+ * always painted over the shell that contains it, which is what you want to see
+ * through a translucent airframe.
+ *
+ * Parts take 0..ORDER_PART_MAX; the bands above are absolute so a part can
+ * never be sorted into the middle of the overlays.
+ */
+const ORDER_PART_MAX = 399
+const ORDER_EDGES = 500
+const ORDER_SELECTED = 900
+const ORDER_SELECTED_EDGES = 950
 
 /**
  * Silhouette outlines, drawn as ordinary geometry.
@@ -174,23 +200,41 @@ function HullUniforms() {
   return null
 }
 
+/**
+ * Model bounds, tagged with the model they belong to.
+ *
+ * The tag is the whole point. Bounds arrive from an effect one or more frames
+ * after the model URL changes, so for a moment the newest bounds in state still
+ * describe the *previous* model -- and React runs child effects before parent
+ * ones, so a child cannot rely on the parent having cleared them first. Anyone
+ * consuming these compares the url instead of trusting the timing.
+ */
+interface Bounds {
+  url: string
+  box: THREE.Box3
+}
+
 interface ModelProps {
   url: string
   parts: Map<string, Part>
   visibleKeys: Set<string>
-  selectedKey: string | null
+  /** Every selected part, not just the most recent one. */
+  selectedKeys: Set<string>
+  /** Parts whose mass the user has taken over; see lib/status. */
+  overriddenKeys: Set<string>
   hoveredKeys: Set<string>
   onSelect: (key: string | null) => void
   onHover: (keys: string[]) => void
   opacity: number
-  onBounds: (box: THREE.Box3) => void
+  onBounds: (bounds: Bounds) => void
 }
 
 function Model({
   url,
   parts,
   visibleKeys,
-  selectedKey,
+  selectedKeys,
+  overriddenKeys,
   hoveredKeys,
   onSelect,
   onHover,
@@ -217,6 +261,23 @@ function Model({
     clone.traverse((object) => {
       if (object instanceof THREE.Mesh) meshes.push(object)
     })
+
+    // Stable painter's order, assigned once. Largest radius first, with the
+    // part key breaking ties so two parts of identical size cannot swap between
+    // loads. Array.sort is stable, so equal keys keep traversal order.
+    const radius = (mesh: THREE.Mesh) => {
+      if (!mesh.geometry.boundingSphere) mesh.geometry.computeBoundingSphere()
+      return mesh.geometry.boundingSphere?.radius ?? 0
+    }
+    ;[...meshes]
+      .sort((a, b) => {
+        const delta = radius(b) - radius(a)
+        if (delta !== 0) return delta
+        return String(a.userData?.key ?? '').localeCompare(String(b.userData?.key ?? ''))
+      })
+      .forEach((mesh, index) => {
+        mesh.userData.drawOrder = Math.min(index, ORDER_PART_MAX)
+      })
 
     for (const object of meshes) {
       object.material = new THREE.MeshStandardMaterial({
@@ -284,8 +345,10 @@ function Model({
     // the box would come back in the wrong space.
     model.updateWorldMatrix(true, true)
     const box = new THREE.Box3().setFromObject(model)
-    if (!box.isEmpty()) onBounds(box)
-  }, [model, onBounds])
+    // Stamped with the URL they were measured from, so a consumer can tell
+    // whether they describe the model it is currently looking at.
+    if (!box.isEmpty()) onBounds({ url, box })
+  }, [model, url, onBounds])
 
   // Visibility, colour and opacity all derive from props, so this runs on every
   // toggle. It is a traversal of a few hundred nodes -- cheap enough to keep
@@ -299,14 +362,21 @@ function Model({
       object.visible = visibleKeys.has(key)
 
       const part = parts.get(key)
-      const isSelected = key === selectedKey
+      const isSelected = selectedKeys.has(key)
       // Hover marks the edges only; the surface stays as it is until a click,
       // matching how Onshape previews a pick.
       const isHovered = hoveredKeys.has(key) && !isSelected
       const material = object.material as THREE.MeshStandardMaterial
 
+      // Same three-state encoding as the parts tree: red for a part nobody has
+      // given a mass, green once one has been supplied, yellow where Onshape's
+      // own figure was overridden.
       material.color.set(
-        isSelected ? COLOR_SELECTED : part?.materialDefaulted ? COLOR_ESTIMATED : COLOR_DEFAULT,
+        isSelected
+          ? COLOR_SELECTED
+          : part
+            ? STATUS_COLOR[massStatus(part, overriddenKeys.has(key))]
+            : COLOR_DEFAULT,
       )
 
       // Depth is left alone for every part, including the selected one. An
@@ -319,7 +389,14 @@ function Model({
       material.opacity = surfaceOpacity
       material.depthTest = true
       material.depthWrite = surfaceOpacity >= 1
-      object.renderOrder = 0
+
+      // The selected part is lifted above the whole stack rather than left in
+      // it. Otherwise a smaller part nested in front of it paints over it, and
+      // how the selection looks depends on which parts happen to be drawn after
+      // it -- which is the same thing as its appearance depending on what is on
+      // top of it.
+      const drawOrder = (object.userData.drawOrder as number | undefined) ?? 0
+      object.renderOrder = isSelected ? ORDER_SELECTED : drawOrder
       material.needsUpdate = true
 
       const lit = isSelected || isHovered
@@ -336,7 +413,9 @@ function Model({
         line.depthTest = true
         line.transparent = true
         line.opacity = lit ? 1 : Math.min(1, opacity + 0.35)
-        outline.renderOrder = 1
+        // Above every surface, so edges are never washed out by a translucent
+        // part painted after them, and in the same stable order as the parts.
+        outline.renderOrder = isSelected ? ORDER_SELECTED_EDGES : ORDER_EDGES + drawOrder
         line.needsUpdate = true
       }
 
@@ -351,7 +430,7 @@ function Model({
         hull.material = isSelected ? HULL_SELECTED : HULL_HOVERED
       }
     })
-  }, [model, parts, visibleKeys, selectedKey, hoveredKeys, opacity])
+  }, [model, parts, visibleKeys, selectedKeys, overriddenKeys, hoveredKeys, opacity])
 
   return (
     <primitive
@@ -376,13 +455,36 @@ function Model({
   )
 }
 
-/** Frames the camera on the model the first time bounds become known. */
-function FitCamera({ box, controls }: { box: THREE.Box3 | null; controls: React.RefObject<any> }) {
+/**
+ * Frames the camera on the model, once per model.
+ *
+ * The fit is latched so that orbiting and zooming are not undone on every
+ * re-render. The latch records *which* model was framed rather than a bare
+ * boolean, and the fit only runs against bounds tagged with the model now being
+ * displayed. Both halves matter: a boolean latch cleared on model change still
+ * re-latches immediately against the outgoing model's bounds, because those are
+ * what is in state at that moment. The result is an OrbitControls target left
+ * on the old model's centre -- and since that target is the point zoom and
+ * orbit pivot around, the new model appears to swing about an arbitrary spot
+ * somewhere off to one side of itself.
+ */
+function FitCamera({
+  bounds,
+  controls,
+  modelUrl,
+}: {
+  bounds: Bounds | null
+  controls: React.RefObject<any>
+  modelUrl: string
+}) {
   const { camera, size } = useThree()
-  const fitted = useRef(false)
+  const fittedFor = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!box || fitted.current || !(camera instanceof THREE.OrthographicCamera)) return
+    if (!bounds || bounds.url !== modelUrl) return
+    if (fittedFor.current === modelUrl) return
+    if (!(camera instanceof THREE.OrthographicCamera)) return
+    const box = bounds.box
 
     // `box` is already in world space, so the display group's rotation is
     // baked in and must not be applied again here.
@@ -399,12 +501,15 @@ function FitCamera({ box, controls }: { box: THREE.Box3 | null; controls: React.
     camera.position.set(target.x, target.y, target.z + 10)
     camera.updateProjectionMatrix()
 
+    // Only latch once the target actually landed. If the controls ref is not
+    // attached yet, latching here would leave the pivot at the world origin
+    // permanently -- which is the same failure by a different route.
     if (controls.current) {
       controls.current.target.copy(target)
       controls.current.update()
+      fittedFor.current = modelUrl
     }
-    fitted.current = true
-  }, [box, camera, size, controls])
+  }, [bounds, modelUrl, camera, size, controls])
 
   return null
 }
@@ -413,7 +518,10 @@ interface SceneProps {
   modelUrl: string
   manifest: Manifest
   visibleKeys: Set<string>
-  selectedKey: string | null
+  /** Every selected part, not just the most recent one. */
+  selectedKeys: Set<string>
+  /** Parts whose mass the user has taken over; see lib/status. */
+  overriddenKeys: Set<string>
   hoveredKeys: string[]
   onSelect: (key: string | null) => void
   onHover: (keys: string[]) => void
@@ -426,7 +534,8 @@ export function Scene({
   modelUrl,
   manifest,
   visibleKeys,
-  selectedKey,
+  selectedKeys,
+  overriddenKeys,
   hoveredKeys,
   onSelect,
   onHover,
@@ -435,9 +544,12 @@ export function Scene({
   opacity,
 }: SceneProps) {
   const controls = useRef<any>(null)
-  const [box, setBox] = useState<THREE.Box3 | null>(null)
+  const [bounds, setBounds] = useState<Bounds | null>(null)
+  // Only for things that merely need a rough scale, and are happy to use the
+  // outgoing model's for the frame or two before the new one is measured.
+  const box = bounds?.box ?? null
   // Stable identity: Model calls this from an effect keyed on it.
-  const handleBounds = useCallback((next: THREE.Box3) => setBox(next), [])
+  const handleBounds = useCallback((next: Bounds) => setBounds(next), [])
 
   const hoveredSet = useMemo(() => new Set(hoveredKeys), [hoveredKeys])
 
@@ -475,7 +587,8 @@ export function Scene({
           url={modelUrl}
           parts={parts}
           visibleKeys={visibleKeys}
-          selectedKey={selectedKey}
+          selectedKeys={selectedKeys}
+          overriddenKeys={overriddenKeys}
           hoveredKeys={hoveredSet}
           onSelect={onSelect}
           onHover={onHover}
@@ -516,7 +629,7 @@ export function Scene({
         position={[0, box ? box.min.y - 0.05 : -0.2, 0]}
       />
 
-      <FitCamera box={box} controls={controls} />
+      <FitCamera bounds={bounds} controls={controls} modelUrl={modelUrl} />
       <HullUniforms />
     </Canvas>
   )
