@@ -222,6 +222,70 @@ def test_verify_401s_a_mutating_request_rather_than_redirecting(client):
     assert resp.status_code == 401
 
 
+# ── Per-app allowlist (onshape-viewer) ──────────────────────────────────────
+
+
+def _onshape_headers(accept="text/html", uri="/", method="GET"):
+    return {
+        "Accept": accept,
+        "X-Forwarded-Method": method,
+        "X-Forwarded-Host": "onshape-viewer.starberkeley.org",
+        "X-Forwarded-Uri": uri,
+    }
+
+
+def test_verify_allows_an_approved_user_on_onshape(client, monkeypatch):
+    monkeypatch.setattr(main.allowlist, "is_approved", lambda app, email: True)
+    client.set_cookie("session", _token(email="ok@berkeley.edu"))
+    resp = client.get("/verify", headers=_onshape_headers())
+    assert resp.status_code == 200
+    assert resp.headers["X-Auth-Email"] == "ok@berkeley.edu"
+
+
+def test_verify_403s_a_valid_but_unapproved_user_on_onshape(client, monkeypatch):
+    """Authenticated but not authorized: a 403 page, not a login redirect."""
+    monkeypatch.setattr(main.allowlist, "is_approved", lambda app, email: False)
+    client.set_cookie("session", _token(email="nope@berkeley.edu"))
+    resp = client.get("/verify", headers=_onshape_headers())
+    assert resp.status_code == 403
+    assert "Location" not in resp.headers  # not bounced to login
+
+
+def test_verify_403s_an_unapproved_xhr_on_onshape(client, monkeypatch):
+    monkeypatch.setattr(main.allowlist, "is_approved", lambda app, email: False)
+    client.set_cookie("session", _token(email="nope@berkeley.edu"))
+    resp = client.get(
+        "/verify", headers=_onshape_headers(accept="application/json", uri="/api/models")
+    )
+    assert resp.status_code == 403
+
+
+def test_verify_unrestricted_apps_ignore_the_allowlist(client, monkeypatch):
+    """A denying allowlist must not affect apps that don't use one."""
+    monkeypatch.setattr(main.allowlist, "is_approved", lambda app, email: app != "onshape-viewer")
+    client.set_cookie("session", _token())
+    resp = client.get(
+        "/verify", headers={"X-Forwarded-Host": "engine-design.starberkeley.org"}
+    )
+    assert resp.status_code == 200
+
+
+def test_allowlist_file_is_read_and_matches_case_insensitively(tmp_path):
+    f = tmp_path / "onshape.txt"
+    f.write_text("# approved\nAidan@Berkeley.edu\n\n# comment line\n")
+    from allowlist import _load
+
+    emails = _load(str(f))
+    assert "aidan@berkeley.edu" in emails
+    assert "someoneelse@berkeley.edu" not in emails
+
+
+def test_allowlist_fails_closed_when_file_missing(tmp_path):
+    from allowlist import _load
+
+    assert _load(str(tmp_path / "does-not-exist.txt")) == frozenset()
+
+
 # ── Cookie shape ───────────────────────────────────────────────────────────
 
 

@@ -1,0 +1,21 @@
+# Build context is auth/, so the repo-root .dockerignore does NOT apply here —
+# this file must exist on its own.
+#
+# Above all: never bake secrets into an image layer. In CI the checkout has no
+# .env (it's gitignored), but a local `docker build ./auth` with a real .env
+# present would COPY it in without this.
+.env
+*.env
+!*.env.example
+
+# Local noise / not needed at runtime
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+test_main.py
+requirements-dev.txt
+dev.sh
+*.log
+.DS_Store

@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 from flask import Flask, make_response, redirect, request, session
 from markupsafe import escape
 
+import allowlist
 from shared_auth import verify_session
 
 load_dotenv()
@@ -92,6 +93,22 @@ def _host_is_ours(host: str) -> bool:
 def _is_prod_request() -> bool:
     """Check if the current request is coming through the production domain."""
     return _host_is_ours(_forwarded_host())
+
+
+def _requested_app() -> str:
+    """The app being accessed, as the leftmost label of the forwarded host.
+
+    `onshape-viewer.starberkeley.org` -> `onshape-viewer`; the bare domain ->
+    `""`. This is what /verify uses to look up a per-app allowlist. Off
+    production (localhost dev) Caddy is not in the loop, so this is not reached.
+    """
+    host = _forwarded_host().split(":")[0].lower()
+    if host == BASE_DOMAIN:
+        return ""
+    suffix = f".{BASE_DOMAIN}"
+    if host.endswith(suffix):
+        return host[: -len(suffix)]
+    return host
 
 
 def _safe_next(raw: str | None) -> str:
@@ -224,16 +241,39 @@ def verify():
     claims = verify_session(request.cookies.get("session") or "")
 
     if claims:
+        email = claims.get("email", "")
+        app = _requested_app()
+
+        # Authentication passed (valid @berkeley.edu session). Some apps add an
+        # authorization step -- a named allowlist -- on top. A denied user is
+        # already logged in, so this is a 403, never a login bounce: re-logging
+        # in would not change the answer.
+        if not allowlist.is_approved(app, email):
+            if _wants_interactive_login():
+                return _not_approved_page(email, app), 403
+            return "Forbidden", 403
+
         resp = make_response("OK", 200)
         # Caddy copies these upstream via copy_headers, so apps can identify the
         # caller without parsing the JWT themselves.
-        resp.headers["X-Auth-Email"] = claims.get("email", "")
+        resp.headers["X-Auth-Email"] = email
         resp.headers["X-Auth-User"] = claims.get("name", "")
         return resp
 
     if _wants_interactive_login():
         return redirect(f"{AUTH_PUBLIC_URL}/login?{urlencode({'next': _original_url()})}")
     return "Unauthorized", 401
+
+
+def _not_approved_page(email: str, app: str) -> str:
+    """Shown to an authenticated user who is not on an app's allowlist."""
+    return (
+        f"<h2>Access restricted</h2>"
+        f"<p>You're signed in as {escape(email)}, but "
+        f"<b>{escape(app)}</b> is limited to an approved list of users.</p>"
+        f"<p>Ask an admin to add you, then reload this page.</p>"
+        f"<p><a href='/logout'>Log out</a></p>"
+    )
 
 
 def _wants_interactive_login() -> bool:
