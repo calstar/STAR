@@ -1,0 +1,113 @@
+[
+ {
+  "name": "Part 1",
+  "state": "IN_PROGRESS",
+  "description": null,
+  "revision": null,
+  "partNumber": null,
+  "elementId": "1c28f3ba48debe7b52d542ac",
+  "partId": "JHD",
+  "bodyType": "solid",
+  "microversionId": "53ff9eb118e83e8db40bcc4f",
+  "isFlattenedBody": false,
+  "partQuery": "query=qCompressed(1.0,\"%B5$QueryM5S12$disambiguationDataA1M2S12$disambiguationTypeS13$ORIGINAL_DEPENDENCYS9$originalsA2C0M5Sa$entityTypeBa$EntityTypeS4$EDGESb$historyTypeS8$CREATIONSb$operationIdB2$IdA1S11.6$FajsXCnCvdRNCwZ_0wireOpS9$queryTypeSd$SKETCH_ENTITYSe$sketchEntityIdSc$UOp2gVD0QVygC0M5R4R5R6R7R8RaRbRcRdSc$GGUP2StGhcmGR4C6S4$BODYR6R7R8CbA1S11.9$FRkhbbggXMcBZ6K_0opExtrudeRbSa$SWEPT_BODY\",id);",
+  "material": {
+   "properties": [
+    {
+     "name": "COMPRESSIVE_YIELD_STRENGTH",
+     "value": "151680000",
+     "type": "REAL",
+     "displayName": "Compressive Yield Strength",
+     "units": "Pa",
+     "category": "Physical",
+     "description": "Compressive yield strength"
+    },
+    {
+     "name": "YOUNGS_MODULUS",
+     "value": "73000000000",
+     "type": "REAL",
+     "displayName": "Young's Modulus",
+     "units": "Pa",
+     "category": "Physical",
+     "description": "Young's modulus"
+    },
+    {
+     "name": "TENSILE_YIELD_STRENGTH",
+     "value": "206840000",
+     "type": "REAL",
+     "displayName": "Tensile Yield Strength",
+     "units": "Pa",
+     "category": "Physical",
+     "description": "Tensile yield strength"
+    },
+    {
+     "name": "DENS",
+     "value": "1750",
+     "type": "REAL",
+     "displayName": "Density",
+     "units": "kg/m^3",
+     "category": "Physical",
+     "description": "Density"
+    },
+    {
+     "name": "ULTIMATE_COMPRESSIVE_STRENGTH",
+     "value": "241320000",
+     "type": "REAL",
+     "displayName": "Ultimate Compressive Strength",
+     "units": "Pa",
+     "category": "Physical",
+     "description": "Ultimate compressive strength"
+    },
+    {
+     "name": "POISSONS_RATIO",
+     "value": "0.2",
+     "type": "REAL",
+     "displayName": "Poisson's Ratio",
+     "units": "",
+     "category": "Physical",
+     "description": "Poisson's ratio"
+    },
+    {
+     "name": "ULTIMATE_TENSILE_STRENGTH",
+     "value": "344740000",
+     "type": "REAL",
+     "displayName": "Ultimate Tensile Strength",
+     "units": "Pa",
+     "category": "Physical",
+     "description": "Ultimate tensile strength"
+    }
+   ],
+   "id": "tJsvnHDf2luw93Bu",
+   "displayName": "Fiberglass",
+   "libraryName": "Material Library 1",
+   "libraryReference": {
+    "versionId": "60dc17929b65e58907dae8c0",
+    "elementId": "bb4b70eef7468c4722d9935d",
+    "documentId": "7b7abcc78545161a08b6f8f2",
+    "elementMicroversionId": "8a73ef0bb66f29da79e19e2d"
+   }
+  },
+  "partIdentity": "3f680dc0c01681ec962312bf",
+  "meshState": "NO_MESH",
+  "isHidden": false,
+  "configurationId": "",
+  "thumbnailConfigurationId": "",
+  "propertySourceTypes": {
+   "57f3fb8efa3416c06701d615": 3,
+   "57f3fb8efa3416c06701d60d": 0
+  },
+  "metadataMicroversion": "6790125d64fcc23831f99fa5",
+  "defaultColorHash": "FRkhbbggXMcBZ6K_0_0",
+  "ordinal": 0,
+  "isMesh": false,
+  "appearance": {
+   "color": {
+    "red": 157,
+    "green": 207,
+    "blue": 237
+   },
+   "isGenerated": true,
+   "opacity": 255
+  }
+ }
+]

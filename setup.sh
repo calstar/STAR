@@ -5,8 +5,9 @@
 #
 # Dispatcher over the per-project setup scripts. Each subproject owns its own
 # install steps (daq-server/setup.sh, firmware/setup.sh, EngineDesign/setup.sh,
-# pid-designer/setup.sh) so you only pay for what you use — cloning the repo
-# for the P&ID editor shouldn't force you to build Rust + elodin-db.
+# pid-designer/setup.sh, onshape-viewer/setup.sh) so you only pay for what you
+# use — cloning the repo for the P&ID editor shouldn't force you to build
+# Rust + elodin-db.
 #
 # ─── Usage ───────────────────────────────────────────────────────────────────
 #
@@ -49,6 +50,7 @@ source "$REPO_ROOT/scripts/setup_common.sh"
 PROJECTS=(
   "pid-designer|P&ID Designer|pid-designer/setup.sh|FastAPI + React P&ID editor (quick)"
   "recovery-calculator|Recovery Calculator|recovery-calculator/setup.sh|Parachute descent physics + FastAPI + React"
+  "onshape-viewer|Onshape CM Viewer|onshape-viewer/setup.sh|FastAPI + React/three.js CAD centre-of-mass viewer (quick)"
   "engine-design|Engine Design|EngineDesign/setup.sh|Python physics pipeline + FastAPI + React"
   "firmware|Firmware|firmware/setup.sh|PlatformIO for ESP32 board firmware"
   "daq-server|DAQ Server|daq-server/setup.sh|C++ + Rust + Python + Node — the big one"
@@ -79,6 +81,8 @@ show_help() {
     --firmware           Install firmware
     --engine-design      Install EngineDesign
     --pid-designer       Install pid-designer
+    --recovery-calculator Install recovery-calculator
+    --onshape-viewer     Install onshape-viewer
     --list               List projects and exit
     --yes, -y            Accept all prompts (non-interactive)
     --no-hook            Don't offer daq-server pre-push format hook
@@ -101,11 +105,12 @@ while [ $# -gt 0 ]; do
     --all)
       for row in "${PROJECTS[@]}"; do SELECTED+=("$(project_field "$row" 1)"); done
       ;;
-    --daq-server)    SELECTED+=("daq-server") ;;
-    --firmware)      SELECTED+=("firmware") ;;
-    --engine-design) SELECTED+=("engine-design") ;;
-    --pid-designer)  SELECTED+=("pid-designer") ;;
+    --daq-server)          SELECTED+=("daq-server") ;;
+    --firmware)            SELECTED+=("firmware") ;;
+    --engine-design)       SELECTED+=("engine-design") ;;
+    --pid-designer)        SELECTED+=("pid-designer") ;;
     --recovery-calculator) SELECTED+=("recovery-calculator") ;;
+    --onshape-viewer)      SELECTED+=("onshape-viewer") ;;
     --list)          DID_LIST=1 ;;
     --yes|-y)        export SETUP_YES=1; PASSTHRU+=("--yes") ;;
     --no-hook)       PASSTHRU+=("--no-hook") ;;
