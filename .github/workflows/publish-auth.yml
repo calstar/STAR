@@ -1,0 +1,72 @@
+name: Publish auth image
+
+# Builds the auth service and pushes it to GHCR so the EC2 box (which runs
+# OpenProject) can `docker pull` it instead of cloning this repo. See
+# deploy/auth-ec2/README.md.
+#
+# auth/ lives only on landing-page, so that is the branch that publishes. main
+# has no auth/**, so its pushes never match the path filter anyway.
+
+# Quoted `on` — YAML 1.1 treats bare `on` as boolean true, which breaks
+# workflow triggers in some parsers (matches the other workflows here).
+'on':
+  push:
+    branches:
+      - landing-page
+      - main
+    paths:
+      - 'auth/**'
+      - '.github/workflows/publish-auth.yml'
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: publish-auth-${{ github.ref }}
+  cancel-in-progress: true
+
+# GITHUB_TOKEN needs packages:write to push to GHCR; no PAT required for pushing
+# to an image under this repo's owner.
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/star-auth
+
+jobs:
+  publish:
+    name: build + push (GHCR)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          # `latest` for the box to track, plus an immutable short-sha tag so a
+          # specific build can be pinned or rolled back to.
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./auth
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Registry-side layer cache keyed to this workflow — a rebuild that
+          # only changes main.py reuses the pip-install layer.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

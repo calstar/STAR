@@ -1,0 +1,59 @@
+# STAR auth — standalone deploy for the EC2 box that already runs OpenProject.
+#
+# This is deliberately NOT the full-stack docker-compose.yml at the repo root.
+# That file brings up Caddy + every app and expects to own :80/:443 — which the
+# OpenProject box already uses. This one runs only the auth service and a
+# Cloudflare Tunnel, so it slots in next to OpenProject without touching it:
+#
+#   browser ──▶ Cloudflare edge (TLS) ──▶ cloudflared ──▶ auth:5000
+#
+# No inbound ports are opened on the instance; cloudflared makes only outbound
+# connections. OpenProject keeps its existing A-record and its own ports.
+#
+# Usage (from this directory, on the EC2 box):
+#   cp .env.example .env      # then fill it in
+#   docker compose up -d --build
+#
+# See README.md for the full runbook, including the Cloudflare dashboard steps.
+
+services:
+  # ── Auth service ───────────────────────────────────────────────────────────
+  # Pulled from GHCR (built by .github/workflows/publish-auth.yml), so the box
+  # needs no repo checkout to build — just this compose file and a .env. The
+  # image is self-contained (Dockerfile COPYs the whole auth/ dir, including
+  # shared_auth.py and onshape_allowlist.txt). gunicorn already trusts
+  # X-Forwarded-* (--forwarded-allow-ips *), which lets it sit behind
+  # Cloudflare's HTTPS termination.
+  #
+  # Private package: `docker login ghcr.io` once on the box (PAT with
+  # read:packages), or make the package public in its GitHub settings.
+  auth:
+    image: ghcr.io/calstar/star-auth:latest
+    pull_policy: always
+    restart: unless-stopped
+    # Reads GOOGLE_*, JWT_SECRET, FLASK_SECRET_KEY, AUTH_PUBLIC_URL, etc.
+    # The app calls os.environ[...] for the required ones, so a missing secret
+    # fails the container loudly at startup rather than booting half-configured.
+    env_file:
+      - path: .env
+        required: true
+    # No published ports on purpose — only cloudflared (same compose network)
+    # reaches it, by the service name `auth` on :5000.
+    expose:
+      - "5000"
+
+  # ── Cloudflare Tunnel ──────────────────────────────────────────────────────
+  # Remote-managed tunnel: create it in the Zero Trust dashboard, point the
+  # public hostname auth.starberkeley.org at http://auth:5000, and paste the
+  # connector token below. cloudflared resolves `auth` because both containers
+  # share this compose's default network.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      # cloudflared exits with its own clear error if this is empty, so no
+      # ${VAR:?} guard here (that would also break `build`/`config`).
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - auth
