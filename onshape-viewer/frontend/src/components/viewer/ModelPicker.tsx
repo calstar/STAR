@@ -1,0 +1,418 @@
+/**
+ * Model picker, in the header.
+ *
+ * Two ways in, because one is not enough:
+ *
+ *   Search covers documents these credentials own (Onshape's `filter=0`). It
+ *   has to be a search rather than a dropdown of everything: this account has
+ *   600+ documents and Onshape caps /documents at 20 per page, so enumerating
+ *   would cost 30+ requests before the user typed anything -- and then one more
+ *   call per document to find which of its tabs are assemblies.
+ *
+ *   A pasted URL covers everything search cannot reach: a document owned by
+ *   someone else, a public one, or a specific version rather than whatever the
+ *   workspace happens to hold right now.
+ *
+ * Typing costs nothing. Onshape bills per API call against a finite quota, and
+ * this panel used to be the worst offender in the app: it searched on a 300 ms
+ * debounce, so browsing for a model could cost more requests than building one
+ * and produced no artifact for them. Now the field filters what the server has
+ * already cached (backend/onshape/browse.py), and reaching Onshape is a button
+ * the user presses. The panel says how stale the list is so that trade is
+ * visible rather than a silent downgrade.
+ *
+ * Building is the slow part, so it runs as a polled job rather than a blocking
+ * request.
+ */
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+
+import { buildStatus, listAssemblies, searchDocuments, startBuild } from '../../api/client'
+import type { BuildJob, ModelSummary, OnshapeAssembly, OnshapeDocument } from '../../types'
+
+interface Props {
+  models: ModelSummary[]
+  modelId: string | null
+  onSelectModel: (id: string) => void
+  /** Called with the new model id once a build finishes. */
+  onBuilt: (modelId: string) => void
+}
+
+const POLL_INTERVAL_MS = 700
+
+/** Matches an Onshape document URL well enough to tell it from a search term. */
+function looksLikeUrl(text: string): boolean {
+  return /^https?:\/\//i.test(text.trim())
+}
+
+/** "3 Aug, 14:02" — enough to judge staleness without eating the panel width. */
+function whenCached(stamp: string | null): string {
+  if (!stamp) return 'never'
+  const parsed = new Date(stamp)
+  if (Number.isNaN(parsed.getTime())) return stamp
+  return parsed.toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+export function ModelPicker({ models, modelId, onSelectModel, onBuilt }: Props) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [documents, setDocuments] = useState<OnshapeDocument[]>([])
+  const [searching, setSearching] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+
+  const [documentsCachedAt, setDocumentsCachedAt] = useState<string | null>(null)
+
+  const [chosen, setChosen] = useState<OnshapeDocument | null>(null)
+  const [assemblies, setAssemblies] = useState<OnshapeAssembly[] | null>(null)
+  const [assembliesCachedAt, setAssembliesCachedAt] = useState<string | null>(null)
+
+  const [job, setJob] = useState<BuildJob | null>(null)
+  const [buildError, setBuildError] = useState<string | null>(null)
+
+  const panel = useRef<HTMLDivElement>(null)
+  const busy = job?.status === 'queued' || job?.status === 'running'
+
+  // The header is a fixed title now, so this button is the only thing naming
+  // what is loaded -- it carries the assembly as well as the document.
+  const current = models.find((model) => model.id === modelId)
+  const label = current?.documentName ?? 'Select a model'
+
+  // Close on outside click or Escape, the same housekeeping ContextMenu does.
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (panel.current && !panel.current.contains(event.target as Node)) setOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointerDown, true)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown, true)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
+  // Filter the cached index as the user types. This never reaches Onshape --
+  // it is a local substring match on our own server -- so there is no debounce
+  // and no quota cost, and the results land as fast as the keystrokes. The
+  // abort still matters for ordering: a slow early response must not overwrite
+  // a fresher one.
+  useEffect(() => {
+    if (!open) return
+    const term = query.trim()
+    if (looksLikeUrl(term)) {
+      setDocuments([])
+      setSearchError(null)
+      return
+    }
+
+    const controller = new AbortController()
+    setSearchError(null)
+    searchDocuments(term, { signal: controller.signal })
+      .then((found) => {
+        setDocuments(found.items)
+        setDocumentsCachedAt(found.cachedAt)
+      })
+      .catch((exc: unknown) => {
+        if (controller.signal.aborted) return
+        setSearchError(exc instanceof Error ? exc.message : String(exc))
+      })
+
+    return () => controller.abort()
+  }, [query, open])
+
+  /** The one path that spends an Onshape API call to look things up. */
+  const refreshDocuments = useCallback(() => {
+    setSearching(true)
+    setSearchError(null)
+    searchDocuments(query.trim(), { refresh: true })
+      .then((found) => {
+        setDocuments(found.items)
+        setDocumentsCachedAt(found.cachedAt)
+      })
+      .catch((exc: unknown) => {
+        setSearchError(exc instanceof Error ? exc.message : String(exc))
+      })
+      .finally(() => setSearching(false))
+  }, [query])
+
+  // Poll a running build.
+  useEffect(() => {
+    if (!job || (job.status !== 'queued' && job.status !== 'running')) return
+    const timer = window.setInterval(() => {
+      buildStatus(job.id)
+        .then((next) => {
+          setJob(next)
+          if (next.status === 'done' && next.modelId) {
+            onBuilt(next.modelId)
+            setOpen(false)
+            setJob(null)
+          } else if (next.status === 'error') {
+            setBuildError(next.message)
+          }
+        })
+        .catch((exc: unknown) => setBuildError(exc instanceof Error ? exc.message : String(exc)))
+    }, POLL_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [job, onBuilt])
+
+  // Free on a repeat visit; the first expansion of a document has to spend one
+  // call, because there is nothing cached to serve and no other way to learn
+  // which of its tabs are assemblies.
+  const loadAssemblies = useCallback(
+    (document: OnshapeDocument, refresh: boolean) => {
+      setAssemblies(null)
+      listAssemblies(document.documentId, document.workspaceId, { refresh })
+        .then((found) => {
+          setAssemblies(found.items)
+          setAssembliesCachedAt(found.cachedAt)
+        })
+        .catch((exc: unknown) => {
+          setAssemblies([])
+          setSearchError(exc instanceof Error ? exc.message : String(exc))
+        })
+    },
+    [],
+  )
+
+  const chooseDocument = useCallback(
+    (document: OnshapeDocument) => {
+      setChosen(document)
+      loadAssemblies(document, false)
+    },
+    [loadAssemblies],
+  )
+
+  const launch = useCallback(
+    async (request: Parameters<typeof startBuild>[0]) => {
+      setBuildError(null)
+      try {
+        const { jobId } = await startBuild(request)
+        setJob({
+          id: jobId,
+          status: 'queued',
+          message: 'Queued.',
+          log: [],
+          url: '',
+          modelId: null,
+          startedAt: '',
+        })
+      } catch (exc: unknown) {
+        setBuildError(exc instanceof Error ? exc.message : String(exc))
+      }
+    },
+    [],
+  )
+
+  return (
+    <div className="relative" ref={panel}>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex items-center gap-2 rounded border border-slate-600 bg-slate-900 px-2 py-1 text-sm text-slate-200 hover:bg-slate-800"
+      >
+        <span className="max-w-56 truncate">{label}</span>
+        {current?.assemblyName && (
+          <span className="max-w-40 truncate text-xs text-slate-400">{current.assemblyName}</span>
+        )}
+        {busy && <span className="text-xs text-cyan-300">building…</span>}
+        <span className="text-slate-500">▾</span>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-40 mt-1 w-[26rem] rounded border border-slate-600 bg-slate-800 p-3 text-sm shadow-xl">
+          <input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            // Enter is the same explicit gesture as the button: the user asking
+            // for documents this cache has not seen yet.
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !looksLikeUrl(query)) refreshDocuments()
+            }}
+            placeholder="Filter cached documents, or paste an Onshape URL"
+            className="w-full rounded border border-slate-600 bg-slate-900 px-2 py-1.5 text-slate-100 placeholder:text-slate-500"
+          />
+
+          {looksLikeUrl(query) ? (
+            <div className="mt-3">
+              <p className="mb-2 text-xs text-slate-400">
+                Builds this URL directly. Use this for documents you do not own, or to pin a
+                specific version.
+              </p>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => launch({ url: query.trim() })}
+                className="rounded bg-cyan-600 px-3 py-1.5 text-white hover:bg-cyan-500 disabled:opacity-50"
+              >
+                Build from URL
+              </button>
+            </div>
+          ) : chosen ? (
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setChosen(null)
+                  setAssemblies(null)
+                }}
+                className="mb-2 text-xs text-slate-400 hover:text-slate-200"
+              >
+                ‹ back to results
+              </button>
+              <div className="mb-1 flex items-baseline gap-2">
+                <p className="min-w-0 flex-1 truncate font-semibold text-slate-200">
+                  {chosen.name}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => loadAssemblies(chosen, true)}
+                  title="Re-read this document's tabs from Onshape (1 API call)"
+                  className="shrink-0 text-xs text-slate-400 hover:text-slate-200"
+                >
+                  ↻ refresh
+                </button>
+              </div>
+              {assembliesCachedAt && (
+                <p className="mb-1 text-[11px] text-slate-500">
+                  cached {whenCached(assembliesCachedAt)}
+                </p>
+              )}
+
+              {assemblies === null ? (
+                <p className="text-xs text-slate-400">Loading assemblies…</p>
+              ) : assemblies.length === 0 ? (
+                <p className="text-xs text-amber-300">
+                  This document has no assembly tabs. Only assemblies can be built.
+                </p>
+              ) : (
+                <ul className="max-h-56 overflow-y-auto">
+                  {assemblies.map((assembly) => (
+                    <li key={assembly.elementId}>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          launch({
+                            documentId: chosen.documentId,
+                            workspaceId: chosen.workspaceId,
+                            elementId: assembly.elementId,
+                          })
+                        }
+                        className="block w-full truncate rounded px-2 py-1.5 text-left text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+                      >
+                        {assembly.name}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : (
+            <div className="mt-3">
+              {models.length > 0 && (
+                <>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Already built
+                  </p>
+                  <ul className="mb-3">
+                    {models.map((model) => (
+                      <li key={model.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onSelectModel(model.id)
+                            setOpen(false)
+                          }}
+                          className={`block w-full truncate rounded px-2 py-1.5 text-left hover:bg-slate-700 ${
+                            model.id === modelId ? 'text-cyan-300' : 'text-slate-200'
+                          }`}
+                        >
+                          {model.documentName ?? model.id}
+                          <span className="ml-2 text-xs text-slate-500">{model.assemblyName}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+
+              <div className="mb-1 flex items-baseline gap-2">
+                <p className="flex-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Documents
+                </p>
+                <button
+                  type="button"
+                  disabled={searching}
+                  onClick={refreshDocuments}
+                  title="Ask Onshape for documents matching this text (1 API call)"
+                  className="shrink-0 rounded border border-slate-600 px-1.5 py-0.5 text-xs text-slate-300 hover:bg-slate-700 disabled:opacity-50"
+                >
+                  {searching ? 'searching…' : '↻ search Onshape'}
+                </button>
+              </div>
+              {/* Naming the cost is the point: without it, "search Onshape"
+                  looks like a slower version of typing rather than the only
+                  thing here that spends quota. */}
+              <p className="mb-1 text-[11px] text-slate-500">
+                Filtering {documents.length} cached {documents.length === 1 ? 'document' : 'documents'}
+                {' · last fetched '}
+                {whenCached(documentsCachedAt)}
+              </p>
+              {!searching && documents.length === 0 && (
+                <p className="text-xs text-slate-400">
+                  {documentsCachedAt
+                    ? 'Nothing cached matches. Search Onshape to look it up.'
+                    : 'No documents cached yet. Search Onshape to fetch some.'}
+                </p>
+              )}
+              <ul className="max-h-56 overflow-y-auto">
+                {documents.map((document) => (
+                  <li key={document.documentId}>
+                    <button
+                      type="button"
+                      onClick={() => chooseDocument(document)}
+                      className="block w-full truncate rounded px-2 py-1.5 text-left text-slate-200 hover:bg-slate-700"
+                    >
+                      {document.name}
+                      {document.owner && (
+                        <span className="ml-2 text-xs text-slate-500">{document.owner}</span>
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {searchError && <p className="mt-2 text-xs text-amber-300">{searchError}</p>}
+
+          {job && (
+            <div className="mt-3 border-t border-slate-700 pt-2">
+              <p className="text-xs text-cyan-300">{job.message}</p>
+              {job.log.length > 0 && (
+                <p className="mt-1 truncate text-[11px] text-slate-500">
+                  {job.log[job.log.length - 1]}
+                </p>
+              )}
+            </div>
+          )}
+
+          {buildError && (
+            <p className="mt-2 rounded bg-amber-500/15 px-2 py-1 text-xs text-amber-300">
+              {buildError}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}

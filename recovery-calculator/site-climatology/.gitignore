@@ -1,0 +1,4 @@
+# Raw archive downloads. 58 MB and regenerable in a few minutes; the derived
+# CSVs in data/ are what the model actually reads.
+cache/
+__pycache__/

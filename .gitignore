@@ -22,7 +22,7 @@ auth/.env
 venv/
 __pycache__/
 **/__pycache__/
-*.pyc
+*.py[cod]
 
 # Node / dependencies
 node_modules/

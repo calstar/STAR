@@ -21,6 +21,7 @@ top-level directory, its own README, and its own `setup.sh`:
   Encoder, Actuator), subtree of `calstar/DiabloAvionics`
 - `EngineDesign/` — engine design & optimization pipeline (Python + FastAPI + React)
 - `pid-designer/` — P&ID editor (FastAPI + React Flow)
+- `onshape-viewer/` — Onshape centre-of-mass viewer (FastAPI + React/three.js)
 - `lib/DAQv2-Comms/` — wire-protocol library shared by both `daq-server` and
   `firmware/` (the latter via a symlink at `firmware/libraries/DAQv2-Comms`)
 
@@ -58,6 +59,7 @@ Each subproject owns its own steps; you only install what you'll actually use:
 | Project | Script | Approx. install time (cold) |
 |---|---|---|
 | `pid-designer/` | `pid-designer/setup.sh` | ~30s (Python venv + npm) |
+| `onshape-viewer/` | `onshape-viewer/setup.sh` | ~40s (Python venv + npm) |
 | `EngineDesign/` | `EngineDesign/setup.sh` | ~2 min (`--ci` skips rocketcea) |
 | `firmware/` | `firmware/setup.sh` | ~30s (PlatformIO CLI only) |
 | `daq-server/` | `daq-server/setup.sh` | ~5-10 min (C++ + Rust + Node + Python) |
@@ -69,6 +71,13 @@ with `--help` to see what it accepts.
 
 The shared bits (`black==25.11.0` on the global `$PATH` for `format.sh`, a
 Windows-symlink sanity check) run once in the dispatcher.
+
+`onshape-viewer/setup.sh` additionally writes an empty, gitignored
+`onshape-viewer/.env` for the Onshape API key pair. Fill it in from
+https://dev-portal.onshape.com before building a model — no script in this repo
+ever holds a credential. Onshape bills per API call against a finite quota, so
+see [`onshape-viewer/README.md`](onshape-viewer/README.md) for what each action
+costs; the tests and CI make no calls at all.
 
 ### Verify a clean install (or debug a broken one)
 
@@ -344,8 +353,12 @@ relevant tests:
 | `daq-server/` C++, config.toml, backend | `bash daq-server/test/test_integration.sh` (must pass 58/58) |
 | `firmware/` unit-testable logic | `pio test -e native` in `firmware/Hotfire_Code/Hotfire_Tests` (63/63) |
 | `firmware/Hotfire_Code/*/` board firmware | `pio run` in each affected board project |
+| `EngineDesign/` | `python -m pytest tests/ -q` in `EngineDesign/` |
+| `onshape-viewer/` | `.venv/bin/python -m pytest tests/ -q` in `onshape-viewer/` (offline; no credentials needed) |
 
 CI runs the same checks on every push (see `.github/workflows/`):
-`daq-server-ci.yml`, `firmware-ci.yml`, and `pid-designer-ci.yml` build and
-test their respective subprojects, and `docs.yml` publishes the Doxygen docs.
-Running the tests above locally before pushing keeps CI green.
+`daq-server-ci.yml`, `firmware-ci.yml`, `pid-designer-ci.yml`,
+`engine-design-ci.yml`, and `onshape-viewer-ci.yml` build and test their
+respective subprojects; `large-files.yml` rejects files over 5 MB on every PR;
+and `docs.yml` publishes the Doxygen docs. Running the tests above locally
+before pushing keeps CI green.

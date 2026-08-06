@@ -1,0 +1,5 @@
+# CI subset: everything in requirements.txt plus the test runner.
+# Kept separate so the CI pip cache key is stable.
+-r requirements.txt
+pytest>=7.0
+pytest-timeout>=2.0

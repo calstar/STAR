@@ -53,7 +53,7 @@ bash scripts/setup-test/run-macos.sh pid-designer
 bash scripts/setup-test/run-macos.sh all
 ```
 
-Projects: `pid-designer` | `engine-design` | `firmware` | `daq-server` | `all`
+Projects: `pid-designer` | `onshape-viewer` | `engine-design` | `firmware` | `daq-server` | `all`
 
 ### Useful flags
 
