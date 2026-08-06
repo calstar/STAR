@@ -1,0 +1,58 @@
+# STAR EC2 box — full stack: OpenProject + auth, behind one Cloudflare Tunnel.
+#
+# Supersedes deploy/auth-ec2/ (auth-only). Everything shares this compose's
+# default network, so cloudflared reaches both services by name — no published
+# host ports, no direct A-record, OpenProject and auth both tunnel-only.
+#
+#   browser ─▶ Cloudflare edge (TLS) ─▶ cloudflared ─▶ auth:5000
+#                                                    └▶ openproject:80
+#
+# Data: reuses OpenProject's EXISTING volumes (openproject_pgdata /
+# openproject_assets) as external, so the DB and uploads carry over. See
+# README.md for the safe cutover (back up → down old → up this → repoint tunnel).
+
+name: star-ec2
+
+services:
+  openproject:
+    image: openproject/openproject:15
+    restart: always
+    # No `ports:` — reached only through the tunnel. Add "80:80" back only if you
+    # need host access during the cutover, then remove it.
+    environment:
+      OPENPROJECT_HOST__NAME: ${OPENPROJECT_HOST__NAME:-openproject.starberkeley.org}
+      OPENPROJECT_HTTPS: "true"
+      # Reuse the EXISTING value from ~/openproject — do not regenerate.
+      OPENPROJECT_SECRET_KEY_BASE: ${OPENPROJECT_SECRET_KEY_BASE:?set in .env}
+    volumes:
+      - pgdata:/var/openproject/pgdata
+      - assets:/var/openproject/assets
+
+  auth:
+    image: ghcr.io/calstar/star-auth:latest
+    pull_policy: always
+    restart: unless-stopped
+    env_file:
+      - .env
+    expose:
+      - "5000"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - auth
+      - openproject
+
+# External so Compose attaches the data already on the box rather than creating
+# empty volumes under this project's name. These must already exist.
+volumes:
+  pgdata:
+    external: true
+    name: openproject_pgdata
+  assets:
+    external: true
+    name: openproject_assets
