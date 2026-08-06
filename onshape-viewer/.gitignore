@@ -1,0 +1,12 @@
+# Build artifacts. The GLB alone exceeds the 5 MB ceiling that
+# .github/workflows/large-files.yml enforces repo-wide on every PR.
+cache/
+
+# Credentials. Never commit these -- see README.md.
+.env
+
+.venv/
+node_modules/
+__pycache__/
+*.pyc
+dist/

@@ -1,0 +1,114 @@
+[
+ {
+  "name": "Part 1",
+  "state": "IN_PROGRESS",
+  "revision": null,
+  "description": null,
+  "partNumber": null,
+  "elementId": "db91140ba830303790da5bcd",
+  "partId": "JHD",
+  "bodyType": "solid",
+  "microversionId": "53ff9eb118e83e8db40bcc4f",
+  "isFlattenedBody": false,
+  "partQuery": "query=qCompressed(1.0,\"&1e6$eJx1kMtygkAQRX+ms4zFKCAueYyGQkBniJFsqAEmOsbwHJ9fH5CqbFIuu/v0vd33xdJgfeLNzdcoGkMuWvaTit2JSVEWDpPMRP74/yS6VZyiCYTEXbiBuUwcvMKBgwM7pjMoG7ETBTu2pmYrnTADXkghb/2WxQD/FVQF7CwwTWEvWlk2Q9MAm2AzcsOgG5QVbx6Wbm6Nwc1NRBEa6TC/YnG3kFnfDY5XdqJcRMPDqnOv+3ceQjlQD0f2W4KDyI1iyqH95jLbDwe4Oc1gJqb+hoRfeuOq/a1EJRrRyZQYhJGUZKSHDGqYduHpbVWcnkLt5TpNFX9zOUT1M2g0gTIL0jrfzuL1eyDL6gn5irSRBl2Me0lUW+9yskInHiA7HTKYwVx61lKGn9RbsMNWTZSyIvxcHs+cpF3o9AOvoqRf/AVonpzv\",id);",
+  "material": {
+   "properties": [
+    {
+     "name": "COMPRESSIVE_YIELD_STRENGTH",
+     "value": "0",
+     "type": "REAL",
+     "displayName": "Compressive Yield Strength",
+     "units": "Pa",
+     "category": "Physical",
+     "description": "Compressive Yield Strength"
+    },
+    {
+     "name": "YOUNGS_MODULUS",
+     "value": "68900000000",
+     "type": "REAL",
+     "displayName": "Young's Modulus",
+     "units": "Pa",
+     "category": "Physical",
+     "description": "Young's Modulus"
+    },
+    {
+     "name": "TENSILE_YIELD_STRENGTH",
+     "value": "241000000",
+     "type": "REAL",
+     "displayName": "Tensile Yield Strength",
+     "units": "Pa",
+     "category": "Physical",
+     "description": "Tensile Yield Strength"
+    },
+    {
+     "name": "DENS",
+     "value": "2720",
+     "type": "REAL",
+     "displayName": "Density",
+     "units": "kg/m^3",
+     "category": "Physical",
+     "description": "Density"
+    },
+    {
+     "name": "ULTIMATE_COMPRESSIVE_STRENGTH",
+     "value": "0",
+     "type": "REAL",
+     "displayName": "Ultimate Compressive Strength",
+     "units": "Pa",
+     "category": "Physical",
+     "description": "Ultimate Compressive Strength"
+    },
+    {
+     "name": "POISSONS_RATIO",
+     "value": "0.35",
+     "type": "REAL",
+     "displayName": "Poisson's Ratio",
+     "units": "",
+     "category": "Physical",
+     "description": "Poisson's Ratio"
+    },
+    {
+     "name": "ULTIMATE_TENSILE_STRENGTH",
+     "value": "290000000",
+     "type": "REAL",
+     "displayName": "Ultimate Tensile Strength",
+     "units": "Pa",
+     "category": "Physical",
+     "description": "Ultimate Tensile Strength"
+    }
+   ],
+   "id": "Aluminum - 6061",
+   "displayName": "Aluminum - 6061",
+   "libraryName": "Onshape Material Library",
+   "libraryReference": {
+    "versionId": "00551e3bfba06025872715c0",
+    "elementId": "6bbab304a1f64e7d640a2d7d",
+    "documentId": "2718281828459eacfeeda11f",
+    "elementMicroversionId": "5c9010d279aaf0b434afbc4d"
+   }
+  },
+  "partIdentity": "2bcbbe3587a3dadbd6472d53",
+  "meshState": "NO_MESH",
+  "isHidden": false,
+  "configurationId": "",
+  "thumbnailConfigurationId": "",
+  "propertySourceTypes": {
+   "57f3fb8efa3416c06701d60d": 0,
+   "57f3fb8efa3416c06701d615": 3,
+   "57f3fb8efa3416c06701d60c": 3
+  },
+  "metadataMicroversion": "41fd27798f4e5f8e32c37f61",
+  "defaultColorHash": "FtKBLtOZSKGajX4_0_0",
+  "ordinal": 0,
+  "isMesh": false,
+  "appearance": {
+   "color": {
+    "red": 255,
+    "green": 255,
+    "blue": 255
+   },
+   "isGenerated": false,
+   "opacity": 255
+  }
+ }
+]
