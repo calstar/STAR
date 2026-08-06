@@ -201,7 +201,7 @@ def render(config, results, which="axial"):
     if no_drogue is not None and d.F_design is not None:
         nd = no_drogue.design
         if nd.F_design and nd.F_design > d.F_design:
-            warns.insert(0, "Drogue failure reaches %.0f N — %.1fx the "
+            warns.insert(0, "Drogue failure reaches %.0f N - %.1fx the "
                             "nominal design load. The main opens out of "
                             "free fall."
                             % (nd.F_design, nd.F_design / d.F_design))

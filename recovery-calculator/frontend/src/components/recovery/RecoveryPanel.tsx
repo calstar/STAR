@@ -17,7 +17,7 @@ import type { Result, UiConfig } from '../../types/schema'
 import { simulate } from '../../api/client'
 import { usePadClimatology } from '../../lib/climatology'
 import { defaultUiConfig, physicsKey, toWireConfig } from '../../lib/serialise'
-import { Badge, Button, Card } from '../ui'
+import { Button, Card, PageHeader } from '../ui'
 import { InputColumn } from './InputForms'
 import { DeviceList } from './DeviceList'
 import { ResultsPanel } from './ResultsPanel'
@@ -101,8 +101,6 @@ export function RecoveryPanel({ ui, onChange: setUi }: {
             catalog: null,
             collapsed: false,
           })),
-          hardware: { ...base.hardware, ...(wire.hardware ?? {}),
-                      enabled: wire.hardware != null },
         })
         setError(null)
       } catch (e) {
@@ -113,6 +111,10 @@ export function RecoveryPanel({ ui, onChange: setUi }: {
 
   return (
     <div className="space-y-4">
+      <PageHeader title="Setup & Basic Run">
+        Descent, loads and off-nominal cases.
+      </PageHeader>
+
       <Card>
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => void run(ui)} variant="primary" disabled={running}>
@@ -144,15 +146,12 @@ export function RecoveryPanel({ ui, onChange: setUi }: {
           <Button
             onClick={() => result && download('result.json', result)}
             disabled={!result}
-            title="The full export bundle — figures, report, git SHA — is written server-side. This is just the result object."
+            title="The full export bundle - figures, report, git SHA - is written server-side. This is just the result object."
           >
             Export result.json
           </Button>
 
           <span className="ml-auto flex items-center gap-2">
-            <Badge tone="neutral" title="The reference vehicle every worked number in the plan came from.">
-              worked example
-            </Badge>
             <Button onClick={() => setUi(defaultUiConfig())} variant="ghost">
               Reset
             </Button>

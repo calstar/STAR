@@ -22,7 +22,7 @@ import { physicsKey, toWireConfig } from '../../lib/serialise'
 import type { UiConfig } from '../../types/schema'
 import type { Channel } from '../chartTheme'
 import { CHANNELS } from '../chartTheme'
-import { Badge, Button, Card, Empty, NumberInput } from '../ui'
+import { Badge, Button, Card, Empty, NumberInput, PageHeader } from '../ui'
 import { CrosscheckAssumptions } from './CrosscheckAssumptions'
 import { CrosscheckChart } from './CrosscheckChart'
 import { CrosscheckTable } from './CrosscheckTable'
@@ -84,15 +84,15 @@ export function CrosscheckPanel({ ui }: { ui: UiConfig }) {
 
   return (
     <div className="space-y-4">
+      <PageHeader title="Cross-check">
+        This tool vs OpenRocket vs the recovery mastersheet.
+      </PageHeader>
+
       <Card>
         <div className="flex flex-wrap items-center gap-3">
           <div>
-            <p className="font-prose text-sm leading-relaxed text-[var(--color-text-secondary)]">
-              The same vehicle through three models: this tool, OpenRocket's
-              descent stepper, and the recovery mastersheet.{' '}
-              <span className="text-[var(--color-text-primary)]">
-                Comparison only — nothing on this tab sizes hardware.
-              </span>
+            <p className="font-prose text-sm leading-relaxed text-[var(--color-text-primary)]">
+              Comparison only - nothing on this tab sizes hardware.
             </p>
           </div>
           {/* No version badge here. The release is already in the model's own
@@ -114,7 +114,7 @@ export function CrosscheckPanel({ ui }: { ui: UiConfig }) {
       )}
 
       {!result && !error && (
-        <Card title="Cross-check">
+        <Card>
           <Empty>{running ? 'Running…' : 'Waiting for a config.'}</Empty>
         </Card>
       )}
@@ -123,7 +123,6 @@ export function CrosscheckPanel({ ui }: { ui: UiConfig }) {
         <>
           <Card
             title="Descent by model"
-            subtitle="Three models, one set of axes. None of them is the reference."
             right={
               <div className="flex flex-wrap gap-1">
                 {CHANNELS.map((c) => (
@@ -149,7 +148,7 @@ export function CrosscheckPanel({ ui }: { ui: UiConfig }) {
 
           <Card
             title="Wind"
-            subtitle="Moves the drift row and nothing else."
+            subtitle="Moves the drift row and nothing else. Drift in this model is coming soon."
           >
             <div className="flex flex-wrap items-center gap-3">
               <div className="w-40">
@@ -161,10 +160,7 @@ export function CrosscheckPanel({ ui }: { ui: UiConfig }) {
                 />
               </div>
               <p className="font-prose text-xs leading-relaxed text-[var(--color-text-secondary)]">
-                m/s. Only the mastersheet models wind — descent time times wind
-                speed. The other two runs are windless, so their trajectories
-                stay comparable. It is the one thing the spreadsheet estimates
-                that this tool does not.
+                m/s.
               </p>
             </div>
           </Card>

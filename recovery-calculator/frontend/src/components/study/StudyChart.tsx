@@ -45,7 +45,7 @@ export function StudyChart({
   if (!withTraj.length) {
     return (
       <div className={HEIGHT}>
-        <Empty>No flight histories in this response — re-run the sweep.</Empty>
+        <Empty>No flight histories in this response - re-run the sweep.</Empty>
       </div>
     )
   }
@@ -73,7 +73,7 @@ export function StudyChart({
   if (!drawn.length) {
     return (
       <div className={HEIGHT}>
-        <Empty>Every design is hidden — tick one in the table below.</Empty>
+        <Empty>Every design is hidden - tick one in the table below.</Empty>
       </div>
     )
   }

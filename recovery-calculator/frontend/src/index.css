@@ -81,13 +81,35 @@
 
 body {
   @apply bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] antialiased;
-  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Consolas', monospace;
+  /* The UI reads as an ordinary application, not a terminal: a proportional
+     sans for all chrome, labels, prose and headings. Numbers opt back into a
+     monospace face via `.font-num` (and the data tables below) so columns of
+     figures still line up. */
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
 }
 
-/* Prose gets a proportional face; everything numeric stays monospace so
-   columns of figures line up. */
+/* Redundant now that the body default is already Inter, but kept because ~28
+   call sites still name it and removing it would be churn with no effect. */
 .font-prose {
   font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* Numbers use the SAME sans font as everything else -- there is no separate
+   monospace tier. `tabular-nums` is the one concession to alignment: it makes
+   every digit share one advance width so columns of figures still line up,
+   without changing the typeface. Applied to numeric readouts (stat values,
+   range bands, inputs) via this class, and to whole data tables below. */
+.font-num {
+  font-feature-settings: 'tnum' 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Data tables: same sans body font, tabular figures so rows align down the
+   column the way a spreadsheet does. */
+table {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
 }
 
 ::-webkit-scrollbar {

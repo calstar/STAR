@@ -187,12 +187,13 @@ def run_crosscheck(config: Config, wind: float = Query(0.0, ge=0.0)):
         # `differs` is where they part company -- keeping them apart is what
         # lets a reader scan for disagreement without filtering out the eight
         # lines everyone agrees on. `warnings` stays separate again: those are
-        # about *this config*, not about the models.
+        # about *this config*, not about the models -- the SAME set the Setup
+        # tab shows, so the Warnings card is identical on both tabs.
         "assumptions": {
             "shared": list(SHARED_ASSUMPTIONS),
             "differs": [dict(row) for row in MODEL_DIFFERENCES],
         },
-        "warnings": comparison.warnings,
+        "warnings": list(config.warnings()),
         "models": {
             "ours": {
                 "label": "This tool",

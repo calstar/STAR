@@ -75,7 +75,6 @@ export function reviveUiConfig(raw: string | null): UiConfig | null {
       // reconcile two different cards as one.
       uid: nextUid(),
     })),
-    hardware: { ...base.hardware, ...saved.hardware },
     sweep: Array.isArray(saved.sweep) && saved.sweep.length
       ? saved.sweep
       : base.sweep,

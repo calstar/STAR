@@ -166,6 +166,14 @@ jobs:
       - name: Unit conversion tests
         run: npm test
 
+      # `npm run build` runs `tsc -b` before vite, so this is a typecheck as
+      # much as a build. That matters more than usual here for one specific
+      # reason: src/api/client.ts assigns the committed climatology.json to the
+      # `Climatology` interface with a plain annotation rather than an `as`
+      # cast, so with resolveJsonModule on, tsc validates the actual data file
+      # against the declared types. Rename a column in export_json.py without
+      # updating the frontend and this job fails, instead of a chart silently
+      # going blank in someone's browser.
       - name: Type check and build
         run: npm run build
 
@@ -276,49 +284,6 @@ jobs:
       - name: Run mock-server tests
         run: python3 test_mock.py
 
-  # frontend: React 19 + TS + Vite + Recharts + Tailwind (PLAN.md §11.1).
-  #
-  # `npm run build` runs `tsc -b` before vite, so this is a typecheck as much
-  # as a build. That matters more than usual here for one specific reason:
-  # src/api/client.ts assigns the committed climatology.json to the
-  # `Climatology` interface with a plain annotation rather than an `as` cast,
-  # so with resolveJsonModule on, tsc validates the actual data file against
-  # the declared types. Rename a column in export_json.py without updating the
-  # frontend and this job fails, instead of a chart silently going blank in
-  # someone's browser.
-  #
-  # This is the only job that needs the network (npm registry), so no proxy
-  # block. `npm ci` is used rather than `npm install` so the lockfile is
-  # authoritative and a transitive bump cannot turn a green build red.
-  frontend:
-    name: frontend
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    defaults:
-      run:
-        working-directory: recovery-calculator/frontend
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: recovery-calculator/frontend/package-lock.json
-
-      - name: Install
-        run: npm ci
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Typecheck and build
-        run: npm run build
-
   # Reported at the end so a failure is visible without opening each job.
   # It sets working-directory explicitly because it has no checkout step, so
   # any inherited subproject path would not exist on the runner.
@@ -346,5 +311,4 @@ jobs:
             echo "| frontend (vitest + build) | ${{ needs.frontend.result }} |"
             echo "| site-climatology | ${{ needs.site-climatology.result }} |"
             echo "| fruity-chute-scraper | ${{ needs.fruity-chute-scraper.result }} |"
-            echo "| frontend (lint+build) | ${{ needs.frontend.result }} |"
           } >> "$GITHUB_STEP_SUMMARY"

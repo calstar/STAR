@@ -113,7 +113,7 @@ export function StudyTable({
                   so there is nowhere else for the label to live. */}
               <td
                 className="whitespace-nowrap py-1.5 pr-2"
-                title="The config you have now — the dashed white line on the chart."
+                title="The config you have now - the dashed white line on the chart."
               >
                 <span className="flex items-center gap-1.5">
                   <span className="h-0 w-3 shrink-0 border-t-2 border-dashed border-white" />

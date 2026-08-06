@@ -76,8 +76,7 @@ def resolve_pad(req: PadRequest):
         # zero* on the main's opening load, which cancels density entirely.
         # Stated here so nobody chases a sounding while Cx remains a guess.
         "note": (
-            "Temperature dominates: it is worth ~7% in density against ~0.4% "
-            "for pressure. Bring a thermometer; look up your elevation."
+            "Temperature dominates: ~7% in density vs ~0.4% for pressure."
         ),
     }
 

@@ -74,7 +74,7 @@ function Tip({ active, payload, label, unit }: {
                 style={{ backgroundColor: r.color }} />
           <span className="text-[var(--color-text-secondary)]">{r.name}</span>
           <span className="ml-auto text-[var(--color-text-primary)]">
-            {typeof r.value === 'number' ? dec(r.value, 2) : '—'} {unit}
+            {typeof r.value === 'number' ? dec(r.value, 2) : '-'} {unit}
           </span>
         </div>
       ))}

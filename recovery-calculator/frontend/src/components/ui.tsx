@@ -8,6 +8,30 @@ import type { ReactNode } from 'react'
 import type { Kind } from '../lib/quantities'
 import { useUnits } from '../lib/unitsContext'
 
+/**
+ * The one-line header a tab opens on: what the page is, in a sentence. It is
+ * its own block above the page's cards -- deliberately separate from any run
+ * controls, so "what this page is" and "the button that runs it" do not share a
+ * row. Every tab uses the same shape so they read as one application.
+ */
+export function PageHeader({ title, children }: {
+  title: ReactNode
+  children?: ReactNode
+}) {
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-1">
+      <h1 className="text-lg font-semibold text-[var(--color-text-primary)]">
+        {title}
+      </h1>
+      {children && (
+        <p className="font-prose text-sm text-[var(--color-text-secondary)]">
+          {children}
+        </p>
+      )}
+    </div>
+  )
+}
+
 export function Card({ title, subtitle, right, children, className = '' }: {
   title?: ReactNode
   subtitle?: ReactNode
@@ -21,7 +45,7 @@ export function Card({ title, subtitle, right, children, className = '' }: {
         <header className="flex items-start justify-between gap-4 border-b border-[var(--color-border)] px-4 py-3">
           <div className="min-w-0">
             {title && (
-              <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">
+              <h2 className="text-base font-semibold text-[var(--color-text-primary)]">
                 {title}
               </h2>
             )}
@@ -105,7 +129,7 @@ export function NumberInput({ value, display, onChange, step = 'any', min, max, 
   return (
     <input
       type="number"
-      className={`${inputClass} ${disabled ? 'opacity-50' : ''}`}
+      className={`${inputClass} font-num ${disabled ? 'opacity-50' : ''}`}
       value={shown}
       step={step}
       min={min}
@@ -299,12 +323,17 @@ export function Stat({ label, value, unit, kind, tone, hint }: {
   return (
     <div
       title={hint}
-      className="rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-3 py-2"
+      // `h-full` + the grid's default row-stretch makes every box in a row take
+      // the height of the tallest, so a two-line label no longer sits a box
+      // taller than its neighbours. `mt-auto` on the value then pins every
+      // number to the bottom edge, so the readouts line up across the row
+      // regardless of how many lines each label wrapped to.
+      className="flex h-full flex-col rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-3 py-2"
     >
       <div className="text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
         {label}
       </div>
-      <div className={`mt-0.5 text-lg leading-tight ${colour}`}>
+      <div className={`font-num mt-auto pt-0.5 text-lg leading-tight ${colour}`}>
         {value}
         {shownUnit && (
           <span className="ml-1 text-xs text-[var(--color-text-secondary)]">
@@ -334,7 +363,7 @@ export function Band({ low, high, value, unit = '' }: {
   const pct = span > 0 ? Math.min(100, Math.max(0, ((value - low) / span) * 100)) : 50
   return (
     <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-3 py-2">
-      <div className="flex items-baseline justify-between text-xs text-[var(--color-text-secondary)]">
+      <div className="font-num flex items-baseline justify-between text-xs text-[var(--color-text-secondary)]">
         <span>{low}{unit}</span>
         <span className="text-base text-[var(--color-text-primary)]">
           {value}{unit}
@@ -423,6 +452,28 @@ export function StubBanner({ children }: { children: ReactNode }) {
       <span className="mt-0.5 text-amber-400">▲</span>
       <p className="font-prose text-xs leading-relaxed text-amber-200">{children}</p>
     </div>
+  )
+}
+
+/** The Warnings card, rendered identically wherever warnings appear -- the
+ *  Setup tab and the Cross-check tab share this one component so the two cannot
+ *  drift. Renders nothing when there are no warnings. */
+export function WarningsCard({ warnings }: { warnings: string[] }) {
+  if (!warnings.length) return null
+  return (
+    <Card title="Warnings">
+      <ul className="space-y-1.5">
+        {warnings.map((w, i) => (
+          <li
+            key={i}
+            className="flex gap-2 text-xs leading-relaxed text-amber-200/90"
+          >
+            <span className="shrink-0 text-amber-500">•</span>
+            <span>{w}</span>
+          </li>
+        ))}
+      </ul>
+    </Card>
   )
 }
 

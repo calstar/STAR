@@ -53,14 +53,14 @@ const CATEGORIES: {
   {
     key: 'structure',
     label: 'Structure',
-    why: 'Highest peak load — what the hardware must survive.',
+    why: 'Highest peak load - what the hardware must survive.',
     kind: 'force',
     of: (r) => r.F_peak ?? 0,
   },
   {
     key: 'drift',
     label: 'Drift',
-    why: 'Longest descent — furthest downwind.',
+    why: 'Longest descent - furthest downwind.',
     unit: 's',
     of: (r) => r.descent_time,
     fmt: (v, dec) => dec(v, 1),
@@ -100,7 +100,7 @@ function CornerChips({ worst }: { worst: SweepWorst }) {
           <span
             key={k}
             title={dead
-              ? `${meta.help}\n\nThis metric is identical at both bounds of this parameter, so the value shown is whichever the tie-break landed on — the other bound gives the same answer.`
+              ? `${meta.help}\n\nThis metric is identical at both bounds of this parameter, so the value shown is whichever the tie-break landed on - the other bound gives the same answer.`
               : meta.help}
             className={`rounded border px-2 py-1 leading-tight ${
               dead

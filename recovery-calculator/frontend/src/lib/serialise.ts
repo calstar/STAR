@@ -10,7 +10,7 @@
 
 import type { Config, Device, UiConfig, UiDevice, UiSite } from '../types/schema'
 import { REFERENCE_CONFIG } from '../api/fixture'
-import { N_PER_LBF, airframeBand } from './units'
+import { airframeBand } from './units'
 
 let uidCounter = 0
 export function nextUid(): string {
@@ -63,9 +63,6 @@ export function toWireConfig(ui: UiConfig): Config {
       lapse: site.profile === 'measured' ? site.lapse : null,
     },
     devices: ui.devices.map(toWireDevice),
-    hardware: ui.hardware.enabled
-      ? { safety_factor: ui.hardware.safety_factor, links: ui.hardware.links }
-      : null,
     // The sweep spec rides on the config, so /api/simulate and /api/sweep take
     // one body (§11.7). The presentation fields -- label, unit -- are dropped
     // here rather than sent and ignored: `Config` is extra="forbid", so
@@ -204,19 +201,6 @@ export function defaultUiConfig(): UiConfig {
         : null,
       collapsed: false,
     })),
-    hardware: {
-      enabled: true,
-      safety_factor: ref.hardware?.safety_factor ?? 1.5,
-      // Stored in newtons, edited in lbf. Written as the exact conversion of
-      // the round rating each part is sold under, so the card opens on 2000
-      // rather than 1999.9.
-      links: {
-        shock_cord: 2000 * N_PER_LBF,
-        quick_link: 1000 * N_PER_LBF,
-        eyebolt: 1500 * N_PER_LBF,
-        sewn_loop: 1200 * N_PER_LBF,
-      },
-    },
     // These bounds mirror `physics/cases.default_sweep` exactly, and the
     // mirroring is checked by `units.test.ts`. They used to differ -- Cx read
     // 1.4-2.2 here against 1.2-1.8 there, and v_rel 5-15 against 5-20 -- which

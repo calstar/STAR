@@ -26,7 +26,7 @@ import { studyKey, toWireConfig } from '../../lib/serialise'
 import { MAX_RUNS, runCount } from '../../lib/study'
 import type { Channel } from '../chartTheme'
 import { CHANNELS } from '../chartTheme'
-import { Badge, Button, Card, Empty } from '../ui'
+import { Badge, Button, Card, Empty, PageHeader } from '../ui'
 import { AxisEditor } from './AxisEditor'
 import { StudyChart } from './StudyChart'
 import { StudyTable } from './StudyTable'
@@ -104,13 +104,11 @@ export function StudyPanel({ ui, onChange }: {
 
   return (
     <div className="space-y-4">
+      <PageHeader title="Sweep">
+        Compare designs - one run per design at nominal conditions.
+      </PageHeader>
+
       <Card>
-        <p className="mb-3 font-prose text-sm leading-relaxed text-[var(--color-text-secondary)]">
-          One run per design, all at nominal conditions.{' '}
-          <span className="text-[var(--color-text-primary)]">
-            For choosing hardware — the Corners tab is what checks it.
-          </span>
-        </p>
         <div className="flex flex-wrap items-center gap-2">
           <Button
             onClick={() => void run()}
@@ -133,7 +131,7 @@ export function StudyPanel({ ui, onChange }: {
             )}
             {stale && (
               <Badge tone="warning" title="The vehicle, site or the sweeps changed after this ran.">
-                inputs changed — re-run
+                inputs changed - re-run
               </Badge>
             )}
           </span>

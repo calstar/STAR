@@ -50,7 +50,7 @@ export function SoundingProfile({ clim }: { clim: Climatology }) {
     }
     return Object.keys(clim.soundings)
       .sort()
-      .map((k) => ({ value: k, label: `${k} — ${label[k] ?? k}` }))
+      .map((k) => ({ value: k, label: `${k} - ${label[k] ?? k}` }))
   }, [clim])
 
   const [station, setStation] = useState(stationOptions[0]?.value ?? '')
@@ -116,8 +116,8 @@ export function SoundingProfile({ clim }: { clim: Climatology }) {
   const hasData = source === 'climatology' ? !!monthRec : !!selected
 
   const title = source === 'climatology'
-    ? `${station} — ${monthName(month)} climatology`
-    : selected ? `${station} — ${selected.label}` : station
+    ? `${station} - ${monthName(month)} climatology`
+    : selected ? `${station} - ${selected.label}` : station
 
   return (
     <Card
@@ -382,7 +382,7 @@ function ProfileFacts({ clim, source, monthRec, sounding, grid, padH, tag, month
             map a 2 K error would read as 35.6 °F, which looks like a
             catastrophically bad model rather than a good one. */}
         <div className={`mt-0.5 ${Math.abs(eq7Top ?? 0) > 3 ? 'text-amber-400' : 'text-[var(--color-text-primary)]'}`}>
-          {eq7Top === null ? '—'
+          {eq7Top === null ? '-'
             : `${eq7Top > 0 ? '+' : ''}${q(eq7Top, 'tempDelta')}`}
         </div>
       </div>
@@ -391,7 +391,7 @@ function ProfileFacts({ clim, source, monthRec, sounding, grid, padH, tag, month
           implied rho error
         </div>
         <div className={`mt-0.5 ${Math.abs(drho ?? 0) > 1 ? 'text-amber-400' : 'text-[var(--color-text-primary)]'}`}>
-          {drho === null ? '—' : `${drho > 0 ? '+' : ''}${dec(drho, 2)} %`}
+          {drho === null ? '-' : `${drho > 0 ? '+' : ''}${dec(drho, 2)} %`}
           {n !== null && (
             <span className="ml-1 text-2xs text-[var(--color-text-muted)]">
               n={n}

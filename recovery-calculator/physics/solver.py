@@ -241,8 +241,8 @@ def integrate(config, which="axial", devices=None, atm=None, label="",
                 "%s never reached its trigger before impact." % d.name)
         elif not s.stretched:
             warnings.append(
-                "%s fired at t=%.2f s but never opened — line stretch falls "
-                "at or below ground." % (d.name, s.t_x))
+                "%s fired at t=%.2f s but never opened before ground."
+                % (d.name, s.t_x))
 
     # --- deployed too low to reach a steady descent rate (§11.10) ----------
     #
@@ -260,10 +260,9 @@ def integrate(config, which="axial", devices=None, atm=None, label="",
     v_settled = (2.0 * m * rho_g[1] / (rho_g[0] * CdS_final)) ** 0.5  # eq (18)
     if v_impact > 1.02 * v_settled:
         warnings.append(
-            "Impact at %.2f m/s is %.1fx the settled rate of %.2f m/s — "
-            "%.1fx the energy. Deployed too low to slow down; the speed is "
-            "real, not an error."
-            % (v_impact, v_impact / v_settled, v_settled,
+            "Impact at %.2f m/s is %.1fx the settled rate (%.1fx energy); "
+            "deployed too low to slow down."
+            % (v_impact, v_impact / v_settled,
                (v_impact / v_settled) ** 2)
         )
 

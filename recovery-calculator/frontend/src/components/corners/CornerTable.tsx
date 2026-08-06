@@ -65,7 +65,7 @@ export function CornerTable({ result, selectedIds, onToggle, showContext, onShow
                 )
               })}
               <th className="py-1.5 pr-3 text-right font-medium"
-                  title="The eq (36) maximum before the safety factor — the load the hardware actually sees.">
+                  title="The eq (36) maximum before the safety factor - the load the hardware actually sees.">
                 peak load
               </th>
               <th className="py-1.5 pr-3 text-right font-medium">descent</th>
@@ -94,7 +94,7 @@ export function CornerTable({ result, selectedIds, onToggle, showContext, onShow
                         disabled={blocked}
                         onChange={() => onToggle(row.id)}
                         title={blocked
-                          ? `${MAX_SELECTED} corners already plotted — untick one first.`
+                          ? `${MAX_SELECTED} corners already plotted - untick one first.`
                           : undefined}
                         className="h-3.5 w-3.5 accent-[var(--color-accent)] disabled:opacity-30"
                       />

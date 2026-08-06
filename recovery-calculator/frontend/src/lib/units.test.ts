@@ -23,7 +23,6 @@ import {
   lb2kg,
   m2ft,
   m2in,
-  n2lbf,
 } from './units'
 import { defaultUiConfig, toWireConfig } from './serialise'
 import type { UiConfig } from '../types/schema'
@@ -107,8 +106,6 @@ describe('the wire config carries SI', () => {
       ['apogee, ft', v.h_a / 0.3048],
       ['diameter, in', v.d_body / M_PER_IN],
       ['length, in', v.l_body / M_PER_IN],
-      ...Object.entries(wire.hardware?.links ?? {})
-        .map(([k, n]): [string, number] => [`${k}, lbf`, n2lbf(n)]),
       ...wire.devices
         .filter((d) => d.trigger.kind === 'ALTITUDE')
         .map((d): [string, number] => [`${d.name} trigger, ft`, m2ft(d.trigger.value)]),

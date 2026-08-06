@@ -1,5 +1,5 @@
 /**
- * What the three models assume — shared first, then where they part company.
+ * What the three models assume - shared first, then where they part company.
  *
  * This replaced a flat list of a dozen sentences tagged by model. The list was
  * unreadable for a specific reason: most of it was agreement, and a reader
@@ -9,7 +9,7 @@
  */
 
 import type { CrossModelResult, CrossModel, ModelDifference } from '../../api/client'
-import { Card } from '../ui'
+import { Card, WarningsCard } from '../ui'
 import { MODEL_COLOUR, MODEL_ORDER } from './models'
 
 export function CrosscheckAssumptions({ shared, differs, models, warnings }: {
@@ -35,10 +35,10 @@ export function CrosscheckAssumptions({ shared, differs, models, warnings }: {
 
       <Card title="Where they differ">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[52rem] text-sm">
+          <table className="w-full min-w-[44rem] text-sm">
             <thead>
               <tr className="border-b border-[var(--color-border)] text-left align-bottom">
-                <th className="py-2 pr-4 font-medium text-[var(--color-text-secondary)]">
+                <th className="w-32 whitespace-nowrap py-2 pr-4 font-medium text-[var(--color-text-secondary)]">
                   Aspect
                 </th>
                 {MODEL_ORDER.map((id) => (
@@ -62,7 +62,7 @@ export function CrosscheckAssumptions({ shared, differs, models, warnings }: {
                   key={row.aspect}
                   className="border-b border-[var(--color-border)]/50 align-top"
                 >
-                  <td className="py-2 pr-4 text-[var(--color-text-primary)]">
+                  <td className="whitespace-nowrap py-2 pr-4 text-[var(--color-text-primary)]">
                     {row.aspect}
                   </td>
                   {MODEL_ORDER.map((id) => (
@@ -80,23 +80,7 @@ export function CrosscheckAssumptions({ shared, differs, models, warnings }: {
         </div>
       </Card>
 
-      {warnings.length > 0 && (
-        <Card
-          title="About this config"
-          subtitle="Not properties of the models — properties of the numbers you typed."
-        >
-          <ul className="space-y-1.5">
-            {warnings.map((w, i) => (
-              <li
-                key={i}
-                className="font-prose text-xs leading-relaxed text-[var(--color-text-secondary)]"
-              >
-                <span className="text-[var(--color-text-muted)]">•</span> {w}
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
+      <WarningsCard warnings={warnings} />
     </>
   )
 }

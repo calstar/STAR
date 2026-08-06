@@ -118,7 +118,7 @@ export function PressureByMonth({ clim }: { clim: Climatology }) {
               ? 'Each line is the same quantity estimated from a different '
                 + 'METAR station. An altimeter setting is defined against the '
                 + 'standard column, so inverting it at the pad height recovers '
-                + 'station pressure there directly — the reporting station\'s '
+                + 'station pressure there directly - the reporting station\'s '
                 + 'own elevation never enters. Good to 0.3–0.6%.'
               : 'Density is pressure over temperature, so it carries both '
                 + 'corrections. Pressure comes down the standard column, but '
@@ -141,7 +141,7 @@ export function PressureByMonth({ clim }: { clim: Climatology }) {
             active={shown.includes(s.id)}
             onClick={() => toggle(s.id)}
             colour={colourOf[s.id]}
-            title={`${s.name} — ${q(s.distance_km * 1000, 'distance')}, ${s.gap_m > 0 ? '+' : ''}${q(s.gap_m, 'altitude')} elevation gap. ${s.note}`}
+            title={`${s.name} - ${q(s.distance_km * 1000, 'distance')}, ${s.gap_m > 0 ? '+' : ''}${q(s.gap_m, 'altitude')} elevation gap. ${s.note}`}
           >
             {s.id}
             {s.primary && (
@@ -241,7 +241,7 @@ export function PressureByMonth({ clim }: { clim: Climatology }) {
 
       <p className="mt-2 text-xs text-[var(--color-text-muted)]">
         {metric === 'pressure'
-          ? `Extrapolated to the ${q(clim.meta.pad.elev_m, 'altitude')} pad down the standard column — the reporting station's elevation does not enter.`
+          ? `Extrapolated to the ${q(clim.meta.pad.elev_m, 'altitude')} pad down the standard column - the reporting station's elevation does not enter.`
           : `Extrapolated to the ${q(clim.meta.pad.elev_m, 'altitude')} pad: pressure down the standard column, temperature carried across the elevation gap at ${q(-0.0065, 'lapse')}.`}
       </p>
 
@@ -297,7 +297,7 @@ function StationTable({ clim, shown, colourOf, metric }: {
               ? vals.reduce((a, b) => a + b, 0) / vals.length : null
             const gaps = rows.filter((r) => r.n === 0).map((r) => monthName(r.month))
             // What the ISA default costs, as a percentage. This is the number
-            // §5 quotes as "~2% in density" — here it is, measured.
+            // §5 quotes as "~2% in density" - here it is, measured.
             const isaRef = metric === 'pressure' ? clim.isa.pad.p : clim.isa.pad.rho
             const dIsa = mean === null ? null : ((mean - isaRef) / isaRef) * 100
             return (
@@ -316,14 +316,14 @@ function StationTable({ clim, shown, colourOf, metric }: {
                 </td>
                 <td className="py-1.5 pr-3">{n.toLocaleString('en-US')}</td>
                 <td className="py-1.5 pr-3 text-[var(--color-text-primary)]">
-                  {mean === null ? '—' : q(mean, kind)}
+                  {mean === null ? '-' : q(mean, kind)}
                 </td>
                 <td className={`py-1.5 pr-3 ${Math.abs(dIsa ?? 0) > 1 ? 'text-amber-400' : ''}`}>
-                  {dIsa === null ? '—'
+                  {dIsa === null ? '-'
                     : `${dIsa > 0 ? '+' : ''}${dec(dIsa, 2)} %`}
                 </td>
                 <td className="py-1.5 text-amber-400/80">
-                  {gaps.length ? gaps.join(', ') : '—'}
+                  {gaps.length ? gaps.join(', ') : '-'}
                 </td>
               </tr>
             )

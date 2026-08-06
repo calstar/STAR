@@ -20,14 +20,14 @@ const SPREAD_WARN = 1.25
 function Spread({ value }: { value: number | null }) {
   const { dec } = useUnits()
   if (value === null) {
-    return <span className="text-[var(--color-text-muted)]">—</span>
+    return <span className="text-[var(--color-text-muted)]">-</span>
   }
   const wide = value >= SPREAD_WARN
   return (
     <span
       className={wide ? 'text-amber-400' : 'text-[var(--color-text-secondary)]'}
       title={wide
-        ? 'The models disagree by more than 25% — worth understanding before trusting any of them.'
+        ? 'The models disagree by more than 25% - worth understanding before trusting any of them.'
         : undefined}
     >
       {dec(value, 2)}×
@@ -40,8 +40,6 @@ export function CrosscheckTable({ metrics, models }: {
   models: Record<CrossModel, CrossModelResult>
 }) {
   const { val, lab, dec } = useUnits()
-
-  const notes = metrics.filter((m) => m.note)
 
   return (
     <Card title="Headline numbers" subtitle="Same config, three models.">
@@ -72,7 +70,6 @@ export function CrosscheckTable({ metrics, models }: {
           </thead>
           <tbody>
             {metrics.map((m) => {
-              const noteIndex = notes.indexOf(m)
               return (
                 <tr
                   key={m.key}
@@ -80,11 +77,6 @@ export function CrosscheckTable({ metrics, models }: {
                 >
                   <td className="py-2 pr-4 text-[var(--color-text-primary)]">
                     {m.label}
-                    {noteIndex >= 0 && (
-                      <sup className="ml-0.5 text-[var(--color-text-muted)]">
-                        {noteIndex + 1}
-                      </sup>
-                    )}
                     <span className="ml-2 text-xs text-[var(--color-text-muted)]">
                       {m.kind ? lab(m.kind) : m.unit}
                     </span>
@@ -117,21 +109,6 @@ export function CrosscheckTable({ metrics, models }: {
           </tbody>
         </table>
       </div>
-
-      {notes.length > 0 && (
-        <ol className="mt-3 space-y-1.5">
-          {notes.map((m, i) => (
-            <li
-              key={m.key}
-              className="font-prose text-xs leading-relaxed text-[var(--color-text-secondary)]"
-            >
-              <span className="text-[var(--color-text-muted)]">{i + 1}.</span>{' '}
-              <span className="text-[var(--color-text-primary)]">{m.label}</span>
-              {' — '}{m.note}
-            </li>
-          ))}
-        </ol>
-      )}
     </Card>
   )
 }

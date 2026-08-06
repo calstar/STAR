@@ -35,7 +35,7 @@ const CHANNEL_NOUN: Partial<Record<Channel, string>> = {
  *  wrong one is worse than saying nothing. */
 const REASON: Partial<Record<CrossModel, Partial<Record<Channel, string>>>> = {
   openrocket: {
-    F_T: 'OpenRocket has no opening-force calculation at all — only a warning above 20 m/s.',
+    F_T: 'OpenRocket has no opening-force calculation at all - only a warning above 20 m/s.',
   },
   mastersheet: {
     F_T: 'The mastersheet gives one load per canopy rather than a history; those are in the table below.',
@@ -79,7 +79,7 @@ export function CrosscheckChart({ models, channel, refLines }: {
    * at altitudes its authors never evaluated. That is legitimate but it is not
    * a cell anybody designed against, and without the dots a reader will take
    * every point on the smooth curve for a reported one. Only the mastersheet
-   * has this — the other two integrate every sample they draw.
+   * has this - the other two integrate every sample they draw.
    */
   for (const id of drawn) {
     const reported = models[id].reported
@@ -123,23 +123,19 @@ export function CrosscheckChart({ models, channel, refLines }: {
       {hasMarkers && (
         <p className="font-prose text-xs leading-relaxed text-[var(--color-text-secondary)]">
           <span className="text-[var(--color-text-primary)]">
-            Dots are the numbers the mastersheet actually puts on the page
+            Dots are the mastersheet's own numbers
           </span>{' '}
-          — each canopy's deployment and the landing. The line between them is
-          the trajectory its descent-time formula implies. That formula
-          integrates a speed which changes with altitude, so the slope is the
-          sheet's, not decoration: freeze the speed at its deployment value and
-          the sheet's own descent time comes out 13% short.
+          (each deployment and the landing); the line is the trajectory its
+          descent-time formula implies. Freeze the speed at deployment and the
+          sheet's descent time comes out 13% short.
           {channel === 'v' && (
             <>
               {' '}
               <span className="text-amber-300">
                 The dots do not sit on the line, and that is the finding.
               </span>{' '}
-              The sheet's velocity cells measure density from sea level plus
-              the field elevation; its descent-time formula has no field
-              elevation at all. Two conventions, 7% apart, both in the same
-              workbook.
+              Its velocity cells and its descent-time formula use different
+              elevation conventions, 7% apart.
             </>
           )}
         </p>
@@ -153,7 +149,7 @@ export function CrosscheckChart({ models, channel, refLines }: {
           {silent.length > 1 ? 'Neither' : 'It'} computes{' '}
           {CHANNEL_NOUN[channel] ?? 'this quantity'}, so{' '}
           {silent.length > 1 ? 'they are' : 'it is'} left out of the legend
-          rather than drawn as a line along zero — an absence, not a
+          rather than drawn as a line along zero - an absence, not a
           measurement.{' '}
           {silent.map((id) => REASON[id]?.[channel]).filter(Boolean).join(' ')}
         </p>

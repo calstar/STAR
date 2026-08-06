@@ -63,19 +63,19 @@ export const STUDY_VARS: StudyVar[] = [
     listOnly: true,
     help: 'Swap the whole canopy: drag area, nominal diameter, mass and cloth '
         + 'type together, from vendor data. Everything about how it is '
-        + 'deployed — trigger, delay, packing — stays as configured.' },
+        + 'deployed - trigger, delay, packing - stays as configured.' },
   { key: 'CdS', scope: 'device', label: 'Drag area (CdS)', kind: 'area',
-    help: 'Full-open drag area. One atomic symbol — never a coefficient times '
+    help: 'Full-open drag area. One atomic symbol - never a coefficient times '
         + 'an area (§1.2). Prefer the canopy swap, which keeps D0 and mass '
         + 'consistent with it.' },
   { key: 'D0', scope: 'device', label: 'Nominal diameter (D0)', kind: 'length',
-    help: 'Enters only through the filling distance, eq (9) — so it changes '
+    help: 'Enters only through the filling distance, eq (9) - so it changes '
         + 'how long the canopy takes to open, not how much it drags.' },
   { key: 'm_c', scope: 'device', label: 'Canopy mass', kind: 'mass',
     help: 'Canopy, lines and bag. Comes out of the descending mass, so a '
         + 'heavier canopy means a lighter body, not a heavier vehicle.' },
   { key: 'trigger', scope: 'device', label: 'Deploy trigger',
-    help: 'Altitude AGL, or seconds after apogee — whichever this device is '
+    help: 'Altitude AGL, or seconds after apogee - whichever this device is '
         + 'set to. The kind is not swept: that would be two designs, not one '
         + 'axis.' },
   { key: 'delay', scope: 'device', label: 'Deployment delay',
@@ -84,7 +84,7 @@ export const STUDY_VARS: StudyVar[] = [
   { key: 'n', scope: 'device', label: 'Filling constant (n)',
     help: 'Canopy diameters fallen during inflation. Sets the fill time.' },
   { key: 'Cx', scope: 'device', label: 'Opening coefficient (Cx)',
-    help: 'Eq (23). The dominant uncertainty in the model — worth sweeping '
+    help: 'Eq (23). The dominant uncertainty in the model - worth sweeping '
         + 'here only to see its effect; the Corners tab already bounds it.' },
   { key: 'j', scope: 'device', label: 'Cloth type (j)', integer: true,
     listOnly: true,
@@ -107,7 +107,7 @@ export const STUDY_VARS: StudyVar[] = [
         + 'to, so it is a comparison of atmospheres, not of labels.' },
   { key: 'pad_month', scope: 'site', label: 'Month (monthly normals)',
     listOnly: true,
-    help: 'The same station record, month by month — what the season is worth '
+    help: 'The same station record, month by month - what the season is worth '
         + 'on descent time and impact speed. Summer air is thinner, so the '
         + 'vehicle descends faster and lands harder on the same canopy.' },
 ]
@@ -144,7 +144,7 @@ export function axisKind(
 }
 
 /**
- * The values one axis takes, in order. SI in, SI out — units never enter here.
+ * The values one axis takes, in order. SI in, SI out - units never enter here.
  *
  * Linear includes BOTH ends: `points` is how many values you get, not how many
  * gaps, so 5 points from 800 to 2000 is 800/1100/1400/1700/2000. `points === 1`

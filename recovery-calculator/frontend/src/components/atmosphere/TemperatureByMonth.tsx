@@ -123,7 +123,7 @@ export function TemperatureByMonth({ clim }: { clim: Climatology }) {
             active={shown.includes(d.id)}
             onClick={() => toggle(d.id)}
             colour={colourOf[d.id]}
-            title={`${d.label} — ${d.n.toLocaleString('en-US')} soundings${d.pooled ? ', pooled' : ''}`}
+            title={`${d.label} - ${d.n.toLocaleString('en-US')} soundings${d.pooled ? ', pooled' : ''}`}
           >
             {d.label}
             <span className="text-2xs text-[var(--color-text-muted)]">
@@ -224,7 +224,7 @@ export function TemperatureByMonth({ clim }: { clim: Climatology }) {
                   key={`${d.id}__eq7`}
                   type="monotone"
                   dataKey={`${d.id}__eq7`}
-                  name={`${d.label} — inferred from surface T`}
+                  name={`${d.label} - inferred from surface T`}
                   stroke={colourOf[d.id]}
                   strokeWidth={1}
                   strokeDasharray="4 3"
@@ -266,7 +266,7 @@ function SampleTable({ clim, shown, colourOf }: {
               </th>
             ))}
             <th className="py-1.5 pl-2 text-right font-medium"
-                title="Thinnest month — what limits the whole curve.">min</th>
+                title="Thinnest month - what limits the whole curve.">min</th>
           </tr>
         </thead>
         <tbody className="text-[var(--color-text-secondary)]">

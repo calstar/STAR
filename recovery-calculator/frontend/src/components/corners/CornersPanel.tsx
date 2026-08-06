@@ -22,7 +22,7 @@ import { runSweep } from '../../api/client'
 import { cornersKey, toWireConfig } from '../../lib/serialise'
 import type { Channel } from '../chartTheme'
 import { CHANNELS, MAX_SELECTED } from '../chartTheme'
-import { Badge, Button, Card, Empty } from '../ui'
+import { Badge, Button, Card, Empty, PageHeader } from '../ui'
 import { SweepForm } from '../recovery/InputForms'
 import { CornerChart } from './CornerChart'
 import { CornerTable } from './CornerTable'
@@ -91,13 +91,11 @@ export function CornersPanel({ ui, onChange }: {
 
   return (
     <div className="space-y-4">
+      <PageHeader title="Corners">
+        Every uncertain input at both bounds - the spread is how much of the answer is known.
+      </PageHeader>
+
       <Card>
-        <p className="mb-3 font-prose text-sm leading-relaxed text-[var(--color-text-secondary)]">
-          Every uncertain input at both of its bounds, one run per combination.{' '}
-          <span className="text-[var(--color-text-primary)]">
-            The spread is how much of the answer is actually known.
-          </span>
-        </p>
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => void run()} variant="primary" disabled={running}>
             {running ? 'Sweeping…' : 'Run sweep'}
@@ -132,7 +130,7 @@ export function CornersPanel({ ui, onChange }: {
             )}
             {stale && (
               <Badge tone="warning" title="The vehicle, site or sweep bounds changed after this ran.">
-                inputs changed — re-run
+                inputs changed - re-run
               </Badge>
             )}
           </span>
@@ -152,8 +150,7 @@ export function CornersPanel({ ui, onChange }: {
           <Empty>
             {running
               ? 'Sweeping…'
-              : 'Press Run sweep. Every enabled parameter is evaluated at both '
-                + 'bounds, so the run count is 2^n — 32 corners, about 1.5 s.'}
+              : 'Press Run sweep. Every enabled parameter is evaluated at both bounds.'}
           </Empty>
         </Card>
       )}

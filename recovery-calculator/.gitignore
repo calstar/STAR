@@ -2,6 +2,11 @@
 __pycache__/
 *.py[cod]
 
+# Node deps, anywhere under the project. frontend/.gitignore already covers
+# frontend/, but a stray root-level node_modules (e.g. from running `npx` at
+# this level) must be ignored too so it cannot be committed by accident.
+node_modules/
+
 # Scraper scratch output (`--out-dir out`); the committed table lives in
 # star_recovery/data/.
 out/

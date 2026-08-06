@@ -32,19 +32,19 @@ const KEYS: {
   help: string
 }[] = [
   { key: 'Cx', short: 'Cx', name: 'Cx', unit: '',
-    help: 'Opening force coefficient. Never measured for this hardware — the '
+    help: 'Opening force coefficient. Never measured for this hardware - the '
         + 'largest single uncertainty in the model.' },
   { key: 'n', short: 'n', name: 'fill const n', unit: '',
     help: 'Filling constant: canopy diameters fallen during inflation. Sets '
         + 'how long the canopy takes to open.' },
   { key: 'CdS_body', short: '', name: 'airframe', unit: '', kind: 'area',
     help: 'Airframe attitude under canopy. Axial is nose-down, broadside is '
-        + 'sideways — a 36x difference in drag area, and nobody knows which.' },
+        + 'sideways - a 36x difference in drag area, and nobody knows which.' },
   { key: 'v_rel', short: 'v', name: 'separation', unit: 'm/s', kind: 'speed',
     help: 'Separation velocity between body and canopy at line stretch. '
         + 'Drives the snatch load.' },
   { key: 'delay', short: 'Δt', name: 'delay', unit: 's',
-    help: 'Charge-to-line-stretch lag. 0 is free-packed, up to 1 s bagged — '
+    help: 'Charge-to-line-stretch lag. 0 is free-packed, up to 1 s bagged - '
         + 'the vehicle keeps accelerating until the canopy sees air.' },
   { key: 'm', short: 'm', name: 'mass', unit: 'kg', kind: 'mass',
     help: 'Descending mass.' },

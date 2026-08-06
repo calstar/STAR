@@ -200,8 +200,8 @@ function DeviceCard({ device, index, count, onChange, onRemove }: {
                 value={String(device.j)}
                 onChange={(v) => setCatalogField('j', Number(v))}
                 options={[
-                  { value: '2', label: '2 — solid cloth' },
-                  { value: '1', label: '1 — slotted' },
+                  { value: '2', label: '2 - solid cloth' },
+                  { value: '1', label: '1 - slotted' },
                 ]}
               />
             </Field>
@@ -221,11 +221,11 @@ function DeviceCard({ device, index, count, onChange, onRemove }: {
               Unlock is deliberate friction: §14 item 4 says one instrumented
               flight collapses every band in §11 into measured numbers, and
               that is the only thing that should turn these into inputs. */}
-          <FieldGroup label="Inflation — unmeasured bands, not data">
+          <FieldGroup label="Inflation (unmeasured, estimated bands)">
             <Field label="Filling constant (n)" unit="diameters"
                    hint={device.measured
-                     ? `measured — filling distance ${q(s_f, 'length')}`
-                     : `swept 6–12 · nominal ${dec(device.n, 1)} · filling distance ${q(s_f, 'length')}`}>
+                     ? `measured - filling distance ${q(s_f, 'length')}`
+                     : 'Hardcoded default.'}>
               {device.measured
                 ? <NumberInput value={device.n} step={0.5} min={0.1}
                                onChange={(v) => set('n', v ?? 8)} />
@@ -234,7 +234,7 @@ function DeviceCard({ device, index, count, onChange, onRemove }: {
             <Field label="Opening force coefficient (Cx)"
                    hint={device.measured
                      ? 'measured from flight data'
-                     : `swept 1.2–1.8 · nominal ${dec(device.Cx, 2)} · the dominant uncertainty in the model`}>
+                     : 'Hardcoded default.'}>
               {device.measured
                 ? <NumberInput value={device.Cx} step={0.05} min={1}
                                onChange={(v) => set('Cx', v ?? 1.8)} />
@@ -292,7 +292,7 @@ function DeviceCard({ device, index, count, onChange, onRemove }: {
               unit="s"
               wide
               hint={device.delay === 0
-                ? 'free-packed. Bagged is 0.3–1.0 s — not a rounding term: +55% on drogue load at 0.5 s.'
+                ? 'free-packed. Bagged is 0.3–1.0 s - not a rounding term: +55% on drogue load at 0.5 s.'
                 : 'bagged'}
             >
               <NumberInput value={device.delay} step={0.05} min={0}
@@ -305,12 +305,12 @@ function DeviceCard({ device, index, count, onChange, onRemove }: {
               label="Harness stiffness (k_eff)"
               kind="stiffness"
               hint={device.k_eff === null
-                ? 'empty — snatch load is skipped entirely'
+                ? 'empty - snatch load is skipped entirely'
                 : undefined}
             >
               <UnitInput value={device.k_eff} kind="stiffness"
                          onChange={(v) => set('k_eff', v)}
-                         placeholder="empty — skip snatch" />
+                         placeholder="empty - skip snatch" />
             </Field>
             <Field
               label="Separation velocity (v_rel)"
@@ -386,7 +386,7 @@ function CatalogPicker({ onPick }: { onPick: (d: CatalogDevice) => void }) {
     <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3">
       <div className="mb-2 flex items-center gap-2">
         <div className="flex-1">
-          <TextInput value={q} onChange={setQ} placeholder="search — e.g. iris 48" />
+          <TextInput value={q} onChange={setQ} placeholder="search - e.g. iris 48" />
         </div>
         {stub && (
           <Badge tone="warning" title="The backend device endpoint is not up; this is a four-row placeholder, not the catalog.">

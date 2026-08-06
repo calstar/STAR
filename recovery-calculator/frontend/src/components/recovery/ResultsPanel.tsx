@@ -23,7 +23,7 @@ import {
 import { CASE_IDS, CASE_META } from '../../types/schema'
 import type { CaseId, CaseResult, Result } from '../../types/schema'
 import { STUB_SHA } from '../../api/fixture'
-import { Badge, Button, Card, Empty, Stat, StubBanner } from '../ui'
+import { Badge, Button, Card, Empty, Stat, StubBanner, WarningsCard } from '../ui'
 import { AXIS, CHANNELS, GRID, MARGIN, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE, axisLabel } from '../chartTheme'
 import type { Channel } from '../chartTheme'
 import { useUnits } from '../../lib/unitsContext'
@@ -35,7 +35,7 @@ export function ResultsPanel({ result, running, error }: {
 }) {
   const [active, setActive] = useState<CaseId>('nominal')
   const [channel, setChannel] = useState<Channel>('z')
-  const { num, q, dec, dur } = useUnits()
+  const { num, q, dur } = useUnits()
 
   if (error) {
     return (
@@ -62,7 +62,7 @@ export function ResultsPanel({ result, running, error }: {
     <div className="space-y-4">
       {isStub && (
         <StubBanner>
-          <strong>Placeholder numbers — the backend is not running.</strong>{' '}
+          <strong>Placeholder numbers - the backend is not running.</strong>{' '}
           Start it with <code>./dev.sh</code>. Nothing here is computed.
         </StubBanner>
       )}
@@ -70,11 +70,16 @@ export function ResultsPanel({ result, running, error }: {
       <CaseSelector result={result} active={active} onChange={setActive} />
 
       <Card
-        title={`${CASE_META[active].label} — summary`}
+        title={`${CASE_META[active].label} summary`}
         subtitle={CASE_META[active].detail}
-        right={<StatusBadge c={cur} />}
       >
         <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+          {/* The tone highlights, in yellow, whichever figure this case is
+              chosen to stress -- a drift case flags its descent time, an impact
+              case its landing speed and energy, a structural case its peak
+              load. It is a "look here", not a pass/fail: no threshold is
+              compared, so it never turns red. Nominal stresses nothing in
+              particular and highlights nothing. */}
           <Stat
             label="Descent time"
             value={dur(cur.descent_time)}
@@ -84,43 +89,23 @@ export function ResultsPanel({ result, running, error }: {
           <Stat
             label="Impact velocity"
             value={num(cur.impact_velocity, 'speed')} kind="speed"
-            tone={CASE_META[active].category === 'impact' ? 'danger' : undefined}
+            tone={CASE_META[active].category === 'impact' ? 'warning' : undefined}
           />
           <Stat
             label="Impact energy"
             value={num(cur.impact_ke, 'energy')} kind="energy"
-            tone={CASE_META[active].category === 'impact' ? 'danger' : undefined}
+            tone={CASE_META[active].category === 'impact' ? 'warning' : undefined}
             hint={`Equivalent to a ${q(cur.h_equiv, 'altitude', 1)} drop`}
           />
-          {/* The unfactored eq (36) max, not F_design. This is the load the
-              hardware actually sees and the number `case_status` checks
-              against F_allow -- F_allow already carries SF, so the verdict
-              never involved F_design either. Multiplying by a margin the
-              designer chose only obscures what the physics predicted. The
-              factored number stays one line down, with the arithmetic shown
-              rather than left to be inferred. */}
+          {/* The unfactored eq (36) max -- the load the hardware actually sees.
+              No safety factor is applied and no allowable is compared: a
+              pass/fail verdict is intentionally deferred to a future update. */}
           <Stat
             label="Max load (F_peak)"
             value={num(cur.F_peak_max, 'force')} kind="force"
-            tone={CASE_META[active].category === 'structure' ? 'danger' : undefined}
-            hint={`×${dec(cur.safety_factor, 2)} = ${q(cur.F_design, 'force')} design${cur.governing_link ? ` · vs ${cur.governing_link}` : ''}`}
+            tone={CASE_META[active].category === 'structure' ? 'warning' : undefined}
           />
         </div>
-
-        {/* Each off-nominal case fails in a different way (§11.5), so which of
-            the four figures above carries the verdict changes with the case --
-            a main failure is an impact problem, a drogue failure a structural
-            one. Nominal is held to all four, so the note would contradict
-            itself there and is omitted. */}
-        {CASE_META[active].category !== 'none' && (
-          <p className="mt-3 text-xs text-[var(--color-text-muted)]">
-            Whether this case is acceptable is decided by{' '}
-            <span className="text-[var(--color-text-secondary)]">
-              {CASE_META[active].metric}
-            </span>
-            . The other figures are shown for context.
-          </p>
-        )}
       </Card>
 
       <Card
@@ -151,39 +136,9 @@ export function ResultsPanel({ result, running, error }: {
           seen, and leading with them pushed the actual results below the
           fold. Nothing here blocks a run -- warnings travel as data and the
           run happens regardless -- so they belong at the end. */}
-      {result.warnings.length > 0 && (
-        <Card
-          title="Caveats"
-          subtitle={`${result.warnings.length} — none of these stopped the run`}
-        >
-          <ul className="space-y-1.5">
-            {result.warnings.map((w, i) => (
-              <li
-                key={i}
-                className="flex gap-2 text-xs leading-relaxed text-amber-200/90"
-              >
-                <span className="shrink-0 text-amber-500">•</span>
-                <span>{w}</span>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
+      <WarningsCard warnings={result.warnings} />
     </div>
   )
-}
-
-function StatusBadge({ c }: { c: CaseResult }) {
-  if (c.status === 'na') {
-    return <Badge tone="neutral" title="No hardware declared, so no verdict.">no verdict</Badge>
-  }
-  // The nominal case has no failure category of its own, so naming one would
-  // read as "passed the none check".
-  const cat = CASE_META[c.case].category
-  const suffix = cat === 'none' ? '' : ` — ${cat}`
-  return c.status === 'pass'
-    ? <Badge tone="success">pass{suffix}</Badge>
-    : <Badge tone="danger">FAIL{suffix}</Badge>
 }
 
 function CaseSelector({ result, active, onChange }: {
@@ -198,7 +153,6 @@ function CaseSelector({ result, active, onChange }: {
         const c = result.cases[id]
         const meta = CASE_META[id]
         const on = id === active
-        const failed = c.status === 'fail'
         return (
           <button
             key={id}
@@ -211,16 +165,11 @@ function CaseSelector({ result, active, onChange }: {
             <div className="flex items-center gap-2">
               <span className="h-2 w-2 shrink-0 rounded-full"
                     style={{ backgroundColor: meta.colour }} />
-              <span className={`text-xs ${on ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'}`}>
+              <span className={`text-sm ${on ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'}`}>
                 {meta.label}
               </span>
-              {failed && (
-                <span className="ml-auto shrink-0">
-                  <Badge tone="danger">{meta.category}</Badge>
-                </span>
-              )}
             </div>
-            <div className="mt-1 flex gap-3 text-2xs text-[var(--color-text-muted)]">
+            <div className="font-num mt-1.5 flex gap-3 text-sm text-[var(--color-text-muted)]">
               <span>{dec(c.descent_time, 0)} s</span>
               <span>{q(c.impact_velocity, 'speed', 1)}</span>
               {/* Unfactored, to match the summary Stat -- the chip and the
@@ -389,7 +338,7 @@ function LoadsTable({ c }: { c: CaseResult }) {
               <th className="py-1.5 pr-3 text-right font-medium" title="Infinite-mass bound">Bound (F_inf)</th>
               <th className="py-1.5 pr-3 text-right font-medium">Peak (F_peak)</th>
               <th className="py-1.5 text-right font-medium"
-                  title="Line-stretch shock: v_rel * sqrt(k_eff * mu), eq (34). Driven by v_rel, the separation velocity between body and canopy, and the harness stiffness k_eff — both set per device. The descent speed v_s does not enter it.">
+                  title="Line-stretch shock: v_rel * sqrt(k_eff * mu), eq (34). Driven by v_rel, the separation velocity between body and canopy, and the harness stiffness k_eff - both set per device. The descent speed v_s does not enter it.">
                 Snatch load (F_s)
               </th>
             </tr>
@@ -400,7 +349,7 @@ function LoadsTable({ c }: { c: CaseResult }) {
                 <td className="py-1.5 pr-3 text-[var(--color-text-primary)]">
                   {d.device}
                   {d.below_validity_floor && (
-                    <Badge tone="danger" title="v_s is below the sqrt(g * s_f) floor — the infinite-mass figure stops being an upper bound here, so it errs low.">
+                    <Badge tone="danger" title="v_s is below the sqrt(g * s_f) floor - the infinite-mass figure stops being an upper bound here, so it errs low.">
                       below floor
                     </Badge>
                   )}

@@ -160,7 +160,7 @@ export function UnitsProvider({ children }: { children: ReactNode }) {
      *  which is what makes the Units tab's setting global rather than a
      *  suggestion individual call sites can ignore. */
     const render = (v: number | null | undefined, fieldDigits: number) => {
-      if (v === null || v === undefined || !Number.isFinite(v)) return '—'
+      if (v === null || v === undefined || !Number.isFinite(v)) return '-'
       const dp = decimalsFor(v, fieldDigits, precision)
       // Thousands separators once the magnitude earns them: 27,263 N reads
       // badly next to 1,613 without.
@@ -171,7 +171,7 @@ export function UnitsProvider({ children }: { children: ReactNode }) {
     }
 
     const num = (si: number | null | undefined, kind: Kind, digits?: number) => {
-      if (si === null || si === undefined || !Number.isFinite(si)) return '—'
+      if (si === null || si === undefined || !Number.isFinite(si)) return '-'
       const def = u(kind)
       return render(toDisplay(si, def), digits ?? def.digits)
     }

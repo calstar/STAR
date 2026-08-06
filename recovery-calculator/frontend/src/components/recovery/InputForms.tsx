@@ -8,12 +8,12 @@
 import { useEffect, useState } from 'react'
 import type { StationPad } from '../../api/client'
 import { getStationPad } from '../../api/client'
-import type { TempProfile, UiConfig, UiHardware, UiSite, Vehicle } from '../../types/schema'
+import type { TempProfile, UiConfig, UiSite, Vehicle } from '../../types/schema'
 import type { SweepParam } from '../../types/schema'
 import type { Kind } from '../../lib/quantities'
 import type { LapseTable, PadNormals } from '../../lib/climatology'
 import { SOURCES } from '../../lib/climatology'
-import { Badge, Card, Field, Info, NumberInput, Select, Stat, Toggle, UnitInput } from '../ui'
+import { Badge, Card, Field, Info, NumberInput, Select, Stat, UnitInput } from '../ui'
 import { airframeBand, monthName } from '../../lib/units'
 import { useUnits } from '../../lib/unitsContext'
 
@@ -228,7 +228,7 @@ export function SiteForm({ value, onChange, lapseByMonth, padNormals }: {
           label="Pressure source"
           wide
           hint={value.source === 'metar'
-            ? 'the observation issued in the last hour — no month applies'
+            ? 'the observation issued in the last hour - no month applies'
             : undefined}
         >
           <Select value={value.source} onChange={(v) => apply({ source: v })}
@@ -243,9 +243,9 @@ export function SiteForm({ value, onChange, lapseByMonth, padNormals }: {
               options={[
                 // Great-circle to the pad. Stored in metres so the distance
                 // unit applies; see site-climatology/README for the survey.
-                { value: 'KNID', label: `KNID — China Lake (${num(39_000, 'distance')} ${lab('distance')})` },
-                { value: 'KEDW', label: `KEDW — Edwards AFB (${num(50_000, 'distance')} ${lab('distance')})` },
-                { value: 'KMHV', label: `KMHV — Mojave (${num(45_000, 'distance')} ${lab('distance')})` },
+                { value: 'KNID', label: `KNID - China Lake (${num(39_000, 'distance')} ${lab('distance')})` },
+                { value: 'KEDW', label: `KEDW - Edwards AFB (${num(50_000, 'distance')} ${lab('distance')})` },
+                { value: 'KMHV', label: `KMHV - Mojave (${num(45_000, 'distance')} ${lab('distance')})` },
               ]}
             />
           </Field>
@@ -257,7 +257,7 @@ export function SiteForm({ value, onChange, lapseByMonth, padNormals }: {
           hint={measured
             ? (lapseByMonth
                 ? 'lapse rate measured from 10 years of soundings'
-                : 'climatology unavailable — using the standard column')
+                : 'climatology unavailable - using the standard column')
             : 'slope inferred from the pad temperature alone'}
         >
           <Select
@@ -265,7 +265,7 @@ export function SiteForm({ value, onChange, lapseByMonth, padNormals }: {
             onChange={(v) => setProfile(v)}
             options={[
               { value: 'standard', label: 'ISA standard column' },
-              { value: 'measured', label: 'Measured — soundings by month' },
+              { value: 'measured', label: 'Measured - soundings by month' },
             ]}
           />
         </Field>
@@ -295,7 +295,7 @@ export function SiteForm({ value, onChange, lapseByMonth, padNormals }: {
                 return {
                   value: String(i + 1),
                   label: measured && r
-                    ? `${monthName(i + 1)} — ${q(r.L / 1000, 'lapse')}`
+                    ? `${monthName(i + 1)} - ${q(r.L / 1000, 'lapse')}`
                     : monthName(i + 1),
                 }
               })}
@@ -331,7 +331,7 @@ export function SiteForm({ value, onChange, lapseByMonth, padNormals }: {
                 : normal
                   ? `${value.station} ${monthName(value.month)} mean, reduced to the pad`
                   : value.source === 'metar'
-                    ? 'inverted from the altimeter setting — never the setting itself'
+                    ? 'inverted from the altimeter setting - never the setting itself'
                     : 'station pressure, not an altimeter setting'}
         >
           <UnitInput value={isa ? null : value.p_pad}
@@ -343,7 +343,7 @@ export function SiteForm({ value, onChange, lapseByMonth, padNormals }: {
 
         {value.source === 'metar' && current?.error && (
           <Field wide label="">
-            <Info>{`Could not resolve ${value.station}: ${current.error}. Temperature and pressure are unchanged — pick another source rather than trusting these.`}</Info>
+            <Info>{`Could not resolve ${value.station}: ${current.error}. Temperature and pressure are unchanged - pick another source rather than trusting these.`}</Info>
           </Field>
         )}
         {value.source === 'metar' && current?.info?.maintenance_flag && (
@@ -353,93 +353,6 @@ export function SiteForm({ value, onChange, lapseByMonth, padNormals }: {
         )}
       </div>
 
-    </Card>
-  )
-}
-
-export function HardwareForm({ value, onChange }: {
-  value: UiHardware
-  onChange: (v: UiHardware) => void
-}) {
-  const { q, lab } = useUnits()
-  const set = <K extends keyof UiHardware>(k: K, v: UiHardware[K]) =>
-    onChange({ ...value, [k]: v })
-
-  const entries = Object.entries(value.links)
-  const governing = entries.length
-    ? entries.reduce((a, b) => (a[1] <= b[1] ? a : b))
-    : null
-  const allow = governing ? governing[1] / value.safety_factor : null
-
-  return (
-    <Card
-      title="Hardware"
-      subtitle="Optional. Without it, loads are reported but no verdict."
-      right={
-        <Toggle checked={value.enabled} onChange={(v) => set('enabled', v)}
-                label="enabled" />
-      }
-    >
-      {!value.enabled ? (
-        <p className="font-prose text-xs text-[var(--color-text-muted)]">
-          Disabled — loads are still reported, but no case gets a verdict.
-        </p>
-      ) : (
-        <>
-          <div className="mb-3">
-            <Field label="Safety factor" unit="—">
-              <NumberInput value={value.safety_factor}
-                           onChange={(v) => set('safety_factor', v ?? 1.5)}
-                           step={0.1} min={0.1} />
-            </Field>
-          </div>
-
-          {/* Hardware is sold rated in lbf -- a 2000 lb shock cord, a 1/4 in
-              quick link -- which is why force defaults to lbf on the Units
-              tab. Whatever is chosen there, the wire stays newtons. */}
-          <div className="space-y-2">
-            {entries.map(([k, v]) => (
-              <div key={k} className="flex items-center gap-2">
-                <span className="w-32 shrink-0 text-xs text-[var(--color-text-secondary)]">
-                  {k.replace(/_/g, ' ')}
-                </span>
-                <div className="flex-1">
-                  <UnitInput
-                    value={v}
-                    kind="force"
-                    min={0}
-                    onChange={(nv) =>
-                      set('links', { ...value.links, [k]: nv ?? 0 })}
-                  />
-                </div>
-                <span className="w-10 shrink-0 text-2xs text-[var(--color-text-muted)]">
-                  {lab('force')}
-                </span>
-                {governing && governing[0] === k && (
-                  <Badge tone="warning" title="Lowest rating — this is the link that governs.">
-                    governs
-                  </Badge>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {allow !== null && (
-            <div className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-3 py-2 text-xs">
-              <span className="text-[var(--color-text-secondary)]">
-                Allowable load (F_allow) ={' '}
-              </span>
-              <span className="text-[var(--color-text-primary)]">
-                {q(allow, 'force')}
-              </span>
-              <span className="ml-1 text-[var(--color-text-muted)]">
-                — lowest rating / SF
-              </span>
-            </div>
-          )}
-
-        </>
-      )}
     </Card>
   )
 }
@@ -505,7 +418,7 @@ export function SweepForm({ value, onChange, vehicle }: {
                   type="checkbox"
                   checked={p.enabled}
                   title={derived
-                    ? 'Off runs the axial bound only. §6.4 wants both — the band is 2.1x on the design load.'
+                    ? 'Off runs the axial bound only. §6.4 wants both - the band is 2.1x on the design load.'
                     : undefined}
                   onChange={(e) => update(i, { enabled: e.target.checked })}
                   className="h-3.5 w-3.5 accent-[var(--color-accent)]"
@@ -524,7 +437,7 @@ export function SweepForm({ value, onChange, vehicle }: {
               </span>
               {derived ? (
                 <span className={`flex w-[13.5rem] items-center justify-end gap-2 text-xs ${p.enabled ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)] opacity-60'}`}
-                      title="Axial and broadside bounds, derived from the vehicle — locked, not editable">
+                      title="Axial and broadside bounds, derived from the vehicle - locked, not editable">
                   <span>{p.kind ? num(lo, p.kind, 5) : dec(lo, 5)}</span>
                   <span className="text-[var(--color-text-muted)]">…</span>
                   <span>{p.kind ? num(hi, p.kind, 5) : dec(hi, 5)}</span>
@@ -584,7 +497,6 @@ export function InputColumn({ ui, onChange, lapseByMonth, padNormals }: {
       <VehicleForm value={ui.vehicle} onChange={(v) => onChange({ ...ui, vehicle: v })} />
       <SiteForm value={ui.site} onChange={(v) => onChange({ ...ui, site: v })}
                 lapseByMonth={lapseByMonth} padNormals={padNormals} />
-      <HardwareForm value={ui.hardware} onChange={(v) => onChange({ ...ui, hardware: v })} />
       {/* SweepForm is NOT here. The corner bounds only affect the Corners tab,
           so they live with the sweep they control -- and keeping them off this
           column means editing them cannot trigger a simulate re-run. */}

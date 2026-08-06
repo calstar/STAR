@@ -45,7 +45,7 @@ MODELS = ("ours", "openrocket", "mastersheet")
 # reader scanning for "where do these disagree" should not have to filter out
 # eight lines they agree on.
 SHARED_ASSUMPTIONS = (
-    "1-D vertical descent — no horizontal motion, drift or dispersion.",
+    "1-D vertical descent - no horizontal motion, drift or dispersion.",
     "Point mass. No attitude, rotation, canopy oscillation or recontact.",
     "Constant mass throughout.",
     "Every device hangs off one attachment point.",
@@ -58,29 +58,27 @@ SHARED_ASSUMPTIONS = (
 MODEL_DIFFERENCES = (
     {
         "aspect": "Deployment",
-        "ours": "Finite filling time; drag area grows as the canopy inflates.",
-        "openrocket": "Instantaneous. The altitude crossing is only detected "
-                      "at the end of a 0.5 s step, so the canopy opens low.",
+        "ours": "Finite filling time.",
+        "openrocket": "Instantaneous; opens low (0.5 s step).",
         "mastersheet": "Instantaneous.",
     },
     {
         "aspect": "Descent",
-        "ours": "Adaptive RK45. Every speed is integrated, none assumed.",
-        "openrocket": "Forward Euler, 0.5 s nominal step.",
-        "mastersheet": "Terminal velocity assumed in every phase.",
+        "ours": "Adaptive RK45; every speed integrated.",
+        "openrocket": "Forward Euler, 0.5 s step.",
+        "mastersheet": "Terminal velocity assumed.",
     },
     {
         "aspect": "Airframe drag",
         "ours": "Kept for the whole descent.",
-        "openrocket": "Dropped the moment a canopy is out.",
+        "openrocket": "Dropped once a canopy is out.",
         "mastersheet": "Never included.",
     },
     {
         "aspect": "Opening load",
-        "ours": "Infinite-mass bound and the Pflanz finite-mass value.",
-        "openrocket": "Not computed at all — only a warning above 20 m/s.",
-        "mastersheet": "Infinite-mass bound times a hand-entered reduction "
-                       "factor.",
+        "ours": "Infinite-mass bound + Pflanz.",
+        "openrocket": "Not computed.",
+        "mastersheet": "Bound times a hand-entered factor.",
     },
     {
         "aspect": "Snatch load",
@@ -90,25 +88,21 @@ MODEL_DIFFERENCES = (
     },
     {
         "aspect": "Atmosphere",
-        "ours": "Standard atmosphere re-fit to the measured pad state, "
-                "evaluated exactly.",
-        "openrocket": "Same re-fit, then sampled onto a 500 m table and "
-                      "interpolated.",
-        "mastersheet": "Textbook sea-level column. No pad measurement anywhere "
-                       "in it.",
+        "ours": "Re-fit to measured pad state.",
+        "openrocket": "Same re-fit, sampled onto a table.",
+        "mastersheet": "Sea-level column; no pad data.",
     },
     {
         "aspect": "Gravity",
-        "ours": "9.80665 m/s², inverse-square with altitude.",
-        "openrocket": "WGS84 — varies with latitude and altitude.",
+        "ours": "9.807 m/s², inverse-square.",
+        "openrocket": "WGS84; varies with lat/alt.",
         "mastersheet": "32.174 ft/s², constant.",
     },
     {
         "aspect": "Wind",
         "ours": "None.",
         "openrocket": "None.",
-        "mastersheet": "Added to descent time for drift, and to the first "
-                       "canopy's opening speed.",
+        "mastersheet": "Added to drift and first opening speed.",
     },
 )
 
@@ -296,13 +290,13 @@ def crosscheck(config, which="axial", wind_ms=0.0, latitude=None, atm=None):
             "openrocket": or_drogue,
             "mastersheet": ms_drogue,
         }, note="The phase with the smallest canopy, so the airframe is the "
-                "largest share of total drag area — this is where dropping it "
+                "largest share of total drag area - this is where dropping it "
                 "shows up."),
         Metric("F_peak", "Peak opening load", "force", {
             "ours": ours.design.governing_value,
             "openrocket": None,
             "mastersheet": sheet.F_peak,
-        }, note="OpenRocket computes no opening load at all — an absence, not "
+        }, note="OpenRocket computes no opening load at all - an absence, not "
                 "a zero. The mastersheet figure is its infinite-mass column, "
                 "the one comparable to ours."),
         Metric("peak_decel", "Peak deceleration", "accel", {
@@ -315,7 +309,7 @@ def crosscheck(config, which="axial", wind_ms=0.0, latitude=None, atm=None):
             "ours": None,
             "openrocket": None,
             "mastersheet": sheet.drift,
-        }, note="Only the mastersheet models wind — descent time times wind "
+        }, note="Only the mastersheet models wind - descent time times wind "
                 "speed."),
     ]
 
@@ -328,7 +322,7 @@ def crosscheck(config, which="axial", wind_ms=0.0, latitude=None, atm=None):
         warnings.append(
             "Before the first charge, OpenRocket really uses a full "
             "aerodynamic model needing geometry this tool does not carry, so "
-            "that stretch runs on our airframe area instead — %.2f s of a "
+            "that stretch runs on our airframe area instead - %.2f s of a "
             "%.1f s descent." % (first_deploy, theirs.t_ground))
 
     return Comparison(ours=ours, openrocket=theirs, mastersheet=sheet,

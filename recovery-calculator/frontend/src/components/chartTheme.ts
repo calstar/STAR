@@ -30,7 +30,7 @@ export const TOOLTIP_STYLE = {
   border: '1px solid #383848',
   borderRadius: 6,
   fontSize: 14,
-  fontFamily: "'JetBrains Mono', monospace",
+  fontFamily: "'Inter', system-ui, sans-serif",
 } as const
 
 export const TOOLTIP_LABEL_STYLE = {

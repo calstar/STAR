@@ -12,7 +12,7 @@
 import { useEffect, useState } from 'react'
 import type { Climatology } from '../../types/climatology'
 import { getClimatology } from '../../api/client'
-import { Badge, Empty, Info } from '../ui'
+import { Badge, Empty, Info, PageHeader } from '../ui'
 import { PressureByMonth } from './PressureByMonth'
 import { TemperatureByMonth } from './TemperatureByMonth'
 import { SoundingProfile } from './SoundingProfile'
@@ -21,7 +21,6 @@ import { useUnits } from '../../lib/unitsContext'
 export function AtmospherePanel() {
   const { q } = useUnits()
   const [clim, setClim] = useState<Climatology | null>(null)
-  const [bundled, setBundled] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -30,7 +29,6 @@ export function AtmospherePanel() {
       if (!live) return
       if (res.data) {
         setClim(res.data)
-        setBundled(!!res.stub)
       } else {
         setError(res.error ?? 'could not load climatology')
       }
@@ -49,31 +47,36 @@ export function AtmospherePanel() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1">
-        <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">
-          Friends of Amateur Rocketry
-          <Info>
+      <PageHeader
+        title={
+          <span className="inline-flex items-center">
+            Atmospheric Data
             {/* Coordinates keep their five decimals whatever the precision
                 setting says. They are an identifier for a place, not a
                 measurement of a quantity -- two decimals moves the pad by
                 about a kilometre. */}
-            {`${pad.lat.toFixed(5)}°, ${pad.lon.toFixed(5)}° at ${q(pad.elev_m, 'altitude')} MSL. `
-             + 'Surface pressure from the IEM ASOS archive of NWS/FAA METARs, '
-             + 'corrected to pad station pressure. Temperature aloft '
-             + "from NOAA's Integrated Global Radiosonde Archive, 10 years. "
-             + 'Heights are geopotential (H). '
-             + `Generated ${clim.meta.generated.slice(0, 10)}.`}
-          </Info>
-        </h2>
-        {bundled
-          ? <Badge tone="accent" title="Served from the committed bundle rather than the backend. Real measured numbers either way.">bundled data</Badge>
-          : <Badge tone="success">live from backend</Badge>}
-        {pad.elev_is_estimate && (
-          <Badge tone="warning" title={`Pad elevation is unconfirmed. ${q(10, 'altitude')} of error is 0.12% in pressure — worth a GPS fix.`}>
+            <Info>
+              {'Friends of Amateur Rocketry (FAR) data. '
+               + `${pad.lat.toFixed(5)}°, ${pad.lon.toFixed(5)}° at ${q(pad.elev_m, 'altitude')} MSL. `
+               + 'Surface pressure from the IEM ASOS archive of NWS/FAA METARs, '
+               + 'corrected to pad station pressure. Temperature aloft '
+               + "from NOAA's Integrated Global Radiosonde Archive, 10 years. "
+               + 'Heights are geopotential (H). '
+               + `Generated ${clim.meta.generated.slice(0, 10)}.`}
+            </Info>
+          </span>
+        }
+      >
+        Measured climatology at FAR.
+      </PageHeader>
+
+      {pad.elev_is_estimate && (
+        <div className="px-1">
+          <Badge tone="warning" title={`Pad elevation is unconfirmed. ${q(10, 'altitude')} of error is 0.12% in pressure - worth a GPS fix.`}>
             pad elev estimated
           </Badge>
-        )}
-      </div>
+        </div>
+      )}
 
       <PressureByMonth clim={clim} />
       <TemperatureByMonth clim={clim} />

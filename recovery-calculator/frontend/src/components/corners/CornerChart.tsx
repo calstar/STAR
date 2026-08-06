@@ -41,7 +41,7 @@ export function CornerChart({ corners, nominal, selectedIds, channel, showContex
   if (!withTraj.length) {
     return (
       <div className={HEIGHT}>
-        <Empty>No flight histories in this response — re-run the sweep.</Empty>
+        <Empty>No flight histories in this response - re-run the sweep.</Empty>
       </div>
     )
   }

@@ -103,7 +103,7 @@ export interface Sounding {
  *
  * Computed in `export_json.py` with `physics.atmosphere`, not in the
  * browser, so the baseline drawn here is the same standard atmosphere the
- * solver integrates. ISA has no seasonality — a flat line against a monthly
+ * solver integrates. ISA has no seasonality - a flat line against a monthly
  * curve is the comparison.
  */
 export interface Isa {

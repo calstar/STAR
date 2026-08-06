@@ -33,14 +33,14 @@ export const monthName = (m: number) => MONTHS[m - 1] ?? String(m)
 
 /** Fixed decimals without the exponent surprises of toPrecision. */
 export function fmt(v: number | null | undefined, digits = 2): string {
-  if (v === null || v === undefined || !Number.isFinite(v)) return '—'
+  if (v === null || v === undefined || !Number.isFinite(v)) return '-'
   return v.toFixed(digits)
 }
 
 /** Thousands-separated integer. For newtons and joules, where the magnitude
  *  is the point and 27263 reads badly next to 1613. */
 export function fmtInt(v: number | null | undefined): string {
-  if (v === null || v === undefined || !Number.isFinite(v)) return '—'
+  if (v === null || v === undefined || !Number.isFinite(v)) return '-'
   return Math.round(v).toLocaleString('en-US')
 }
 
@@ -50,7 +50,7 @@ export function fmtInt(v: number | null | undefined): string {
  *  Units tab's precision bound like every other number. The m:ss branch has no
  *  decimals to bound -- it is a clock format, not a measurement. */
 export function fmtDuration(s: number, digits = 1): string {
-  if (!Number.isFinite(s)) return '—'
+  if (!Number.isFinite(s)) return '-'
   if (s < 60) return `${s.toFixed(digits)} s`
   const m = Math.floor(s / 60)
   return `${m}:${(s - m * 60).toFixed(0).padStart(2, '0')} (${s.toFixed(0)} s)`

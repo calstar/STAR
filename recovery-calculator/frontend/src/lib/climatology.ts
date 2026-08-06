@@ -29,9 +29,9 @@ import type { PadSource } from '../types/schema'
  */
 export const SOURCES: { value: PadSource; label: string }[] = [
   { value: 'isa', label: 'ISA standard column' },
-  { value: 'barometer', label: 'Pad barometer — measured' },
-  { value: 'metar', label: 'METAR — latest observation' },
-  { value: 'climatology', label: 'Monthly normal — station record' },
+  { value: 'barometer', label: 'Pad barometer - measured' },
+  { value: 'metar', label: 'METAR - latest observation' },
+  { value: 'climatology', label: 'Monthly normal - station record' },
 ]
 
 /** Measured monthly lapse rates, K/km, keyed by calendar month. Null until the

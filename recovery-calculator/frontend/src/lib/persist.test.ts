@@ -35,7 +35,7 @@ describe('reviving a stored config', () => {
     }
   })
 
-  it('is null on a config with no devices — that is not a config', () => {
+  it('is null on a config with no devices - that is not a config', () => {
     expect(reviveUiConfig(stored({ devices: [] }))).toBeNull()
     expect(reviveUiConfig(stored({ devices: [null] }))).toBeNull()
   })
@@ -48,7 +48,7 @@ describe('reviving a stored config', () => {
     expect(ui!.vehicle.h_a).toBe(1500)
   })
 
-  it('keeps the corner bounds and the sweeps — the whole point of this', () => {
+  it('keeps the corner bounds and the sweeps - the whole point of this', () => {
     const base = defaultUiConfig()
     const ui = reviveUiConfig(stored({
       sweep: base.sweep.map((p) => (p.key === 'Cx' ? { ...p, max: 2.4 } : p)),

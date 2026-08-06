@@ -25,7 +25,7 @@ const TABS: { id: Tab; label: string; hint: string; accent: string }[] = [
     accent: 'border-blue-500 text-blue-400' },
   { id: 'corners', label: 'Corners', hint: 'Uncertainty sweep and the governing corner',
     accent: 'border-violet-500 text-violet-400' },
-  { id: 'study', label: 'Sweep', hint: 'Compare designs — parachutes, altitudes, mass',
+  { id: 'study', label: 'Sweep', hint: 'Compare designs - parachutes, altitudes, mass',
     accent: 'border-amber-500 text-amber-400' },
   { id: 'crosscheck', label: 'Cross-check',
     hint: 'This tool vs OpenRocket vs the recovery mastersheet',
@@ -107,7 +107,7 @@ export default function App() {
               <span className="text-sm text-[var(--color-text-secondary)]">
                 {connected === null ? 'Connecting…'
                   : connected ? `Backend :8100${sha ? ` · ${sha.slice(0, 7)}` : ''}`
-                  : 'No backend — fixture mode'}
+                  : 'No backend - fixture mode'}
               </span>
             </div>
           </div>

@@ -17,20 +17,17 @@ import type { Kind, System } from '../../lib/quantities'
 import { useUnits } from '../../lib/unitsContext'
 import { Button, Card, Select } from '../ui'
 
-const GROUPS: { title: string; note: string; kinds: Kind[] }[] = [
+const GROUPS: { title: string; kinds: Kind[] }[] = [
   {
     title: 'Vehicle and geometry',
-    note: 'What you type on the vehicle and device cards.',
     kinds: ['altitude', 'length', 'area', 'mass', 'distance'],
   },
   {
     title: 'Motion and loads',
-    note: 'The descent, the opening loads and the hardware check.',
     kinds: ['speed', 'accel', 'force', 'stiffness', 'energy'],
   },
   {
     title: 'Atmosphere',
-    note: 'The pad state and the measured climatology.',
     kinds: ['pressure', 'temperature', 'tempDelta', 'density', 'lapse'],
   },
 ]
@@ -41,7 +38,7 @@ const HELP: Partial<Record<Kind, string>> = {
     + 'sounding profile.',
   length: 'Airframe diameter and length, canopy nominal diameter.',
   distance: 'How far the observing stations are from the pad.',
-  tempDelta: 'Temperature DIFFERENCES — the sounding profile’s error against '
+  tempDelta: 'Temperature DIFFERENCES - the sounding profile’s error against '
     + 'the eq (7) line, for instance. Separate from Temperature because a '
     + 'difference converts by the ratio alone: 1 K is 1.8 °F, not 33.8 °F.',
   lapse: 'How fast temperature falls with height. Stored per metre; K/km is '
@@ -62,7 +59,7 @@ export function UnitsPanel() {
     <div className="mx-auto max-w-3xl space-y-4">
       <Card
         title="Units"
-        subtitle="Applies everywhere at once — pick feet and every altitude in the app is feet. Display only: the physics always runs in SI, and the numbers on screen are converted, never recomputed."
+        subtitle="Applies throughout app immediately, affects display not physics"
         right={
           <div className="flex shrink-0 gap-1">
             <Button onClick={() => setAll('metric')}>All metric</Button>
@@ -80,10 +77,7 @@ export function UnitsPanel() {
                       className="h-3.5 w-0.5 shrink-0 rounded-full bg-[var(--color-accent)]" />
                 {group.title}
               </h3>
-              <p className="font-prose mb-3 text-xs text-[var(--color-text-muted)]">
-                {group.note}
-              </p>
-              <div className="space-y-1.5">
+              <div className="mt-2 space-y-1.5">
                 {group.kinds.map((kind) => (
                   <UnitRow key={kind} kind={kind} value={prefs[kind]}
                            onChange={(s) => setKind(kind, s)} />
@@ -140,7 +134,7 @@ function PrecisionGroup() {
         Precision
       </h3>
       <p className="font-prose mb-3 text-xs text-[var(--color-text-muted)]">
-        Bounds, not targets — a number that is naturally coarser stays coarser,
+        Bounds, not targets - a number that is naturally coarser stays coarser,
         and the minimum wins where the two disagree.
       </p>
       <div className="space-y-1.5">
@@ -193,14 +187,14 @@ function UnitRow({ kind, value, onChange }: {
   const q = QUANTITIES[kind]
   return (
     <div className="flex items-center gap-3" data-unit-row={kind}>
-      <span className="min-w-0 flex-1 truncate text-xs text-[var(--color-text-secondary)]"
+      <span className="min-w-0 flex-1 truncate text-sm text-[var(--color-text-secondary)]"
             title={HELP[kind]}>
         {q.name}
       </span>
       {/* The SI unit the wire carries, so it is visible that choosing a
           different one changes the display and nothing else. Wide enough for
           `kg/m³` on one line -- at w-16 it wrapped and the row grew. */}
-      <span className="w-20 shrink-0 whitespace-nowrap text-right text-2xs text-[var(--color-text-muted)]">
+      <span className="w-20 shrink-0 whitespace-nowrap text-right text-xs text-[var(--color-text-muted)]">
         SI: {q.si}
       </span>
       <div className="w-32 shrink-0">
@@ -225,7 +219,7 @@ function SaveNote({ state }: { state: ReturnType<typeof useUnits>['save'] }) {
   if (state === 'offline') {
     return (
       <span className="text-amber-300/90">
-        Backend unreachable — remembered in this browser only, not written to{' '}
+        Backend unreachable - remembered in this browser only, not written to{' '}
         <code>.gui-settings.json</code>.
       </span>
     )

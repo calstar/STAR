@@ -305,7 +305,7 @@ export interface StoredSettings {
  * genuinely fine: with no backend the GUI falls back to localStorage and says
  * so. A unit preference is not worth blocking on.
  *
- * Deliberately short-timeout — this fires on every preference change, and a
+ * Deliberately short-timeout - this fires on every preference change, and a
  * hung save must not make the Units tab feel broken.
  */
 export async function getSettings(): Promise<ApiResponse<StoredSettings>> {
@@ -379,7 +379,7 @@ export interface StationPad {
  */
 export async function getStationPad(icao: string): Promise<ApiResponse<StationPad>> {
   if (!(await backendWorthTrying())) {
-    return { error: 'backend unreachable — cannot resolve a live observation',
+    return { error: 'backend unreachable - cannot resolve a live observation',
              kind: 'unreachable' }
   }
   // Longer than TIMEOUT_MS on purpose. Every other route is arithmetic in the
@@ -576,7 +576,7 @@ export type CrossModel = 'ours' | 'openrocket' | 'mastersheet'
 export interface CrossMetric {
   key: string
   label: string
-  /** A `lib/quantities.ts` Kind, so the row converts with the unit switcher —
+  /** A `lib/quantities.ts` Kind, so the row converts with the unit switcher -
    *  or **null** for a quantity that has no imperial form and therefore no
    *  Kind, such as seconds. Passing an unknown kind to `unitFor` dereferences
    *  undefined and blanks the page, so this is nullable on purpose. */

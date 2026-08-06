@@ -69,15 +69,6 @@ export const REFERENCE_CONFIG: Config = {
       v_rel: 10,
     },
   ],
-  hardware: {
-    safety_factor: 1.5,
-    links: {
-      shock_cord: 8896,    // 2000 lbf
-      quick_link: 4448,    // 1000 lbf
-      eyebolt: 6672,       // 1500 lbf
-      sewn_loop: 5338,     // 1200 lbf
-    },
-  },
   // null, not []: the canonical corner set from cases.default_sweep.
   // An empty list would mean 'sweep nothing', which is a different run.
   sweep: null,

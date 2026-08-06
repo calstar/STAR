@@ -647,26 +647,19 @@ class Config(BaseModel):
         if not FAR_ELEV_CONFIRMED:
             out.append(
                 "Pad elevation %.0f m is an unconfirmed estimate (%.1f%% in "
-                "density per 10 m). A GPS fix at the pad retires it."
-                % (FAR_ELEV_M, 0.12)
+                "density per 10 m)." % (FAR_ELEV_M, 0.12)
             )
 
         if self.site.T_pad is None:
-            out.append(
-                "Pad temperature is assumed, not measured — worth ~7% in "
-                "density. Bring a thermometer."
-            )
+            out.append("Pad temperature assumed, not measured (~7% in density).")
         if self.site.p_pad is None:
-            out.append(
-                "Pad pressure is the standard column — ~2% in density, and "
-                "nothing at all in the main's opening load."
-            )
+            out.append("Pad pressure is the standard column (~2% in density).")
 
         unmeasured = [d.name for d in self.devices if d.Cx == 1.8]
         if unmeasured:
             out.append(
-                "Cx is the unmeasured 1.8 default on %s — ±20%%, the largest "
-                "single uncertainty here." % ", ".join(unmeasured)
+                "Cx is the unmeasured 1.8 default on %s (±20%%)."
+                % ", ".join(unmeasured)
             )
 
         if len(self.devices) >= 2:
@@ -679,7 +672,7 @@ class Config(BaseModel):
             )
             if first is biggest:
                 out.append(
-                    "%s deploys first and has the largest drag area — the "
+                    "%s deploys first and has the largest drag area; the "
                     "devices may be swapped." % first.name
                 )
         return out

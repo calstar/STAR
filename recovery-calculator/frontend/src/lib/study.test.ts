@@ -64,7 +64,7 @@ describe('axis values', () => {
     expect(axisValues(list([6, 8, 12]))).toEqual([6, 8, 12])
   })
 
-  it('is unit-free — SI in, SI out, no converter anywhere', () => {
+  it('is unit-free - SI in, SI out, no converter anywhere', () => {
     // The grid is arithmetic on stored values. Units are applied when a value
     // is *shown*, never when it is resolved, or switching to feet would move
     // the designs being compared.
@@ -88,7 +88,7 @@ describe('run count', () => {
     expect(runCount([linear(0, 1, 4), list([6, 8, 12], false)])).toBe(4)
   })
 
-  it('is 1 with no axes at all — the design you already have', () => {
+  it('is 1 with no axes at all - the design you already have', () => {
     expect(runCount([])).toBe(1)
   })
 
@@ -125,7 +125,7 @@ describe('variables', () => {
     }
   })
 
-  it('makes the canopy list-only — there is nothing halfway between two', () => {
+  it('makes the canopy list-only - there is nothing halfway between two', () => {
     expect(studyVar('canopy')?.listOnly).toBe(true)
     expect(studyVar('m')?.listOnly).toBeFalsy()
   })

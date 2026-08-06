@@ -90,12 +90,6 @@ export interface Site {
   lapse: number | null
 }
 
-export interface Hardware {
-  safety_factor: number
-  /** Rated strength per load-path element, N. Named so the report can say
-   *  which link governs -- it is rarely the shock cord. */
-  links: Record<string, number>
-}
 
 /** One entry of the corner sweep, as schema.py's `SweepParam` wants it.
  *  Note `low`/`high`, not the UI's `min`/`max`: the UI carries presentation
@@ -171,7 +165,6 @@ export interface Config {
   vehicle: Vehicle
   site: Site
   devices: Device[]
-  hardware: Hardware | null
   sweep: WireSweepParam[] | null
   /** The design study. Rides on the config for the same reasons `sweep` does:
    *  one body schema across /simulate, /sweep and /study, and Save config
@@ -243,11 +236,6 @@ export interface UiSite extends Site {
   month: number
 }
 
-export interface UiHardware extends Hardware {
-  /** §4.2 makes hardware optional; unticked means `hardware: null`. */
-  enabled: boolean
-}
-
 /** Which parameters to corner-sweep, and over what bounds (§11.3). Not in
  *  schema.py yet -- the sweep endpoint is separate from simulate. */
 export interface SweepParam {
@@ -290,7 +278,6 @@ export interface UiConfig {
   vehicle: Vehicle
   site: UiSite
   devices: UiDevice[]
-  hardware: UiHardware
   sweep: SweepParam[]
   /** Empty by default. Which designs are worth comparing is not something the
    *  tool can guess, so unlike `sweep` there is no canonical starting set. */

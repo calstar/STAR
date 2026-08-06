@@ -75,7 +75,7 @@ export function AxisEditor({ ui, onChange }: {
   return (
     <Card
       title="Sweeps"
-      subtitle="Each sweep is one variable and the values it takes. Two sweeps make a grid — every combination is run."
+      subtitle="Each sweep is one variable and the values it takes. Two sweeps make a grid - every combination is run."
       right={
         <Badge tone={over ? 'danger' : runs > 1 ? 'accent' : 'neutral'}>
           {axes.filter((a) => a.enabled).length} sweeps → {runs} design{runs === 1 ? '' : 's'}
@@ -84,7 +84,7 @@ export function AxisEditor({ ui, onChange }: {
     >
       {axes.length === 0 ? (
         <p className="font-prose text-xs leading-relaxed text-[var(--color-text-muted)]">
-          No sweeps yet. Add one to compare designs — the obvious first question
+          No sweeps yet. Add one to compare designs - the obvious first question
           is a canopy swap: pick three or four chutes and see what each does to
           impact energy.
         </p>
@@ -107,7 +107,7 @@ export function AxisEditor({ ui, onChange }: {
         <Button onClick={add} variant="secondary">+ Add sweep</Button>
         {over && (
           <span className="text-xs text-red-300">
-            {runs} designs is over the limit of {MAX_RUNS} — drop a sweep or use
+            {runs} designs is over the limit of {MAX_RUNS} - drop a sweep or use
             fewer points.
           </span>
         )}
@@ -272,7 +272,7 @@ function AxisRow({ axis, ui, clim, onPatch, onRemove }: {
            its own pad state, so the numbers below are the same rocket in
            different atmospheres. */
         <p className="mt-2 text-2xs text-[var(--color-text-muted)]">
-          Each point re-fits the atmosphere from its own pad state — same
+          Each point re-fits the atmosphere from its own pad state - same
           vehicle, different air. Thinner air means a faster descent and a
           harder landing on the same canopy.
         </p>
@@ -407,7 +407,7 @@ function PadSourcePicker({ chosen, site, clim, onChange }: {
         label: label(src), T_pad, p_pad, lapse: siteLapse(site),
       }])
       if (p_pad === null) {
-        setError(`${site.station} reported no usable altimeter setting — that `
+        setError(`${site.station} reported no usable altimeter setting - that `
           + 'point runs on the standard column pressure.')
       } else if (observed) {
         setError(null)
@@ -437,7 +437,7 @@ function PadSourcePicker({ chosen, site, clim, onChange }: {
               title={blocked ?? undefined}
             >
               {already ? `${s.label} ✓`
-                : busy === s.value ? `${s.label} — resolving…`
+                : busy === s.value ? `${s.label} - resolving…`
                 : s.label}
             </Button>
           )
@@ -449,7 +449,7 @@ function PadSourcePicker({ chosen, site, clim, onChange }: {
       )}
 
       <p className="text-2xs text-[var(--color-text-muted)]">
-        Resolved when added, and the numbers are what travel — a station or
+        Resolved when added, and the numbers are what travel - a station or
         month changed afterwards on the Setup tab does not move a point already
         here. Every point takes the temperature profile the Setup tab has now,
         so only the pressure source differs.
@@ -541,13 +541,13 @@ function PadMonthPicker({ chosen, site, clim, onChange }: {
 
       <p className="text-2xs text-[var(--color-text-muted)]">
         {missing
-          ? 'The station record has not loaded — no months can be resolved.'
+          ? 'The station record has not loaded - no months can be resolved.'
           : <>
               {site.station}, from the same record the Setup tab resolves a
               monthly normal from.{' '}
               {site.profile === 'measured'
                 ? 'The measured lapse rate moves with the month too, so each point is one season of air.'
-                : 'The temperature profile is set to the standard column, so only the pad state moves — switch it to Measured on the Setup tab for the seasonal lapse rate as well.'}
+                : 'The temperature profile is set to the standard column, so only the pad state moves - switch it to Measured on the Setup tab for the seasonal lapse rate as well.'}
             </>}
       </p>
     </div>
@@ -741,7 +741,7 @@ function CanopyPicker({ chosen, onChange }: {
           />
         </div>
         <div className="flex-1">
-          <TextInput value={q} onChange={setQ} placeholder="search — e.g. iris 48" />
+          <TextInput value={q} onChange={setQ} placeholder="search - e.g. iris 48" />
         </div>
       </div>
 

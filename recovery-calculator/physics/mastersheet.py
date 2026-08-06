@@ -510,7 +510,7 @@ def evaluate(phases_si, m_kg, ground_elev_m, v_first_ms, wind_ms=0.0):
     v_impact = v_impact_fts * FT_TO_M
 
     warnings = [
-        "Its descent time ignores field elevation — the altitudes go in AGL "
+        "Its descent time ignores field elevation - the altitudes go in AGL "
         "while density uses %.0f m AMSL, so it integrates through denser air "
         "than the vehicle ever flies through. Runs high: %.1f s against the "
         "%.1f s its own unused layered function gives."
