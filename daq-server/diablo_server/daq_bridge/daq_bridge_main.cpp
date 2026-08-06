@@ -50,6 +50,7 @@ std::vector<uint8_t> build_server_heartbeat_packet() {
 #include "routing/HeartbeatRouter.hpp"
 #include "routing/SensorRouter.hpp"
 #include "streams/SensorFramePipeline.hpp"
+#include "time/BoardClockSync.hpp"
 
 std::atomic<bool> running(true);
 
@@ -87,7 +88,8 @@ static void load_board_map_from_config(const std::string& config_path,
                                        BoardOrder* out_board_order, std::string& db_host,
                                        uint16_t& db_port, uint16_t* out_sensor_port = nullptr,
                                        std::string* out_bind_ip = nullptr,
-                                       ServerHeartbeatConfig* out_hb = nullptr) {
+                                       ServerHeartbeatConfig* out_hb = nullptr,
+                                       fsw::time::TimeSyncConfig* out_ts = nullptr) {
     db_host = "127.0.0.1";
     db_port = 2240;
     std::ifstream f(config_path);
@@ -176,6 +178,20 @@ static void load_board_map_from_config(const std::string& config_path,
         } else if (current_section == "heartbeat_service" && out_hb) {
             if (key == "enabled" && (val == "true" || val == "1"))
                 out_hb->send_from_daq_bridge = false;  // heartbeat_service owns it
+        } else if (current_section == "time_sync" && out_ts) {
+            if (key == "mode")
+                out_ts->mode = (val == "arrival") ? fsw::time::TimeSyncConfig::Mode::Arrival
+                                                  : fsw::time::TimeSyncConfig::Mode::BoardClock;
+            else if (key == "window_seconds")
+                out_ts->window_seconds = static_cast<uint32_t>(std::stoul(val));
+            else if (key == "max_plausible_gap_s")
+                out_ts->max_plausible_gap_s = static_cast<uint32_t>(std::stoul(val));
+            else if (key == "max_batch_age_s")
+                out_ts->max_batch_age_s = static_cast<uint32_t>(std::stoul(val));
+            else if (key == "resync_threshold_ms")
+                out_ts->resync_threshold_ms = static_cast<uint32_t>(std::stoul(val));
+            else if (key == "log_interval_s")
+                out_ts->log_interval_s = static_cast<uint32_t>(std::stoul(val));
         } else if (current_section.compare(0, 7, "boards.") == 0) {
             if (key == "type")
                 board_type_str = val;
@@ -285,8 +301,13 @@ int main(int argc, char* argv[]) {
     uint16_t config_sensor_port = 0;
     std::string config_bind_ip;
     ServerHeartbeatConfig hb_config;
+    fsw::time::TimeSyncConfig time_sync_cfg;
     load_board_map_from_config(config_path, board_map, &board_order, db_host, db_port,
-                               &config_sensor_port, &config_bind_ip, &hb_config);
+                               &config_sensor_port, &config_bind_ip, &hb_config, &time_sync_cfg);
+    std::cout << "[TimeSync] mode="
+              << (time_sync_cfg.mode == fsw::time::TimeSyncConfig::Mode::BoardClock ? "board-clock"
+                                                                                    : "arrival")
+              << " window=" << time_sync_cfg.window_seconds << "s" << std::endl;
     if (config_sensor_port != 0)
         bind_port = config_sensor_port;
     if (!config_bind_ip.empty())
@@ -507,6 +528,12 @@ int main(int argc, char* argv[]) {
     auto last_heartbeat_send = std::chrono::steady_clock::now();
     auto last_config_save = std::chrono::steady_clock::now();
 
+    // Per-board clock sync: reconstructs true sample times from chunk board
+    // millis (spreading + offset estimation + wrap/reboot handling). Keyed by
+    // source IP. See time/BoardClockSync.hpp; [time_sync] in config.toml.
+    fsw::time::BoardClockSync clock_sync(time_sync_cfg);
+    auto last_sync_log = std::chrono::steady_clock::now();
+
     while (running) {
         auto now = std::chrono::steady_clock::now();
         // Broadcast SERVER_HEARTBEAT only when heartbeat_service is not used
@@ -722,12 +749,33 @@ int main(int argc, char* argv[]) {
         uint8_t board_offset =
             static_cast<uint8_t>((static_cast<unsigned>(board_number) - 1u) * 0x20u);
 
+        // ── Clock sync: per-chunk corrected timestamps ──────────────────────
+        // Samples arrive chunk-major, each carrying its chunk's board millis
+        // (sample_timestamp_ms). Collect the distinct chunk timestamps in send
+        // order, reconstruct their true epoch-ns times (spreading + per-board
+        // offset; in "arrival" mode this returns receive_timestamp_ns for
+        // every chunk — the legacy behavior, byte-for-byte).
+        std::map<uint32_t, uint64_t> chunk_time_ns;
+        {
+            std::vector<uint32_t> chunk_ts;
+            for (const auto& sample : batch.value().pt_samples) {
+                if (chunk_ts.empty() || chunk_ts.back() != sample.sample_timestamp_ms)
+                    chunk_ts.push_back(sample.sample_timestamp_ms);
+            }
+            if (!chunk_ts.empty()) {
+                auto stamped = clock_sync.stamp_packet(source_ip, receive_timestamp_ns, chunk_ts);
+                for (size_t i = 0; i < chunk_ts.size(); i++)
+                    chunk_time_ns[chunk_ts[i]] = stamped[i];
+            }
+        }
+
         // Helper lambda: build board-namespaced packet and publish a raw sample
         auto publish_raw_sample = [&](uint8_t type_hi, const auto& sample) {
             uint8_t pkt_lo = static_cast<uint8_t>(board_offset + sample.channel_id);
             std::array<uint8_t, 2> pkt_id = {type_hi, pkt_lo};
             comms::messages::sensor::RawPTMessage msg;
-            msg.setField<0>(receive_timestamp_ns);
+            auto ts_it = chunk_time_ns.find(sample.sample_timestamp_ms);
+            msg.setField<0>(ts_it != chunk_time_ns.end() ? ts_it->second : receive_timestamp_ns);
             msg.setField<1>(sample.channel_id);
             msg.setField<2>(std::array<uint8_t, 3>{0, 0, 0});
             msg.setField<3>(sample.raw_adc_counts);
@@ -786,6 +834,24 @@ int main(int argc, char* argv[]) {
         }
 
         // ── Periodic stats (every 2 seconds) ──
+        // Periodic clock-sync diagnostics (logs only; [time_sync] log_interval_s).
+        if (time_sync_cfg.mode == fsw::time::TimeSyncConfig::Mode::BoardClock &&
+            time_sync_cfg.log_interval_s > 0) {
+            auto sync_elapsed = std::chrono::steady_clock::now() - last_sync_log;
+            if (std::chrono::duration_cast<std::chrono::seconds>(sync_elapsed).count() >=
+                static_cast<int64_t>(time_sync_cfg.log_interval_s)) {
+                last_sync_log = std::chrono::steady_clock::now();
+                for (const auto& key : clock_sync.boards()) {
+                    const auto st = clock_sync.stats(key);
+                    std::cout << "[TimeSync] board=" << key << std::fixed << std::setprecision(1)
+                              << " offset=" << st.offset_ms << "ms jitter=" << st.jitter_ms
+                              << "ms resyncs=" << st.resyncs << " clamped=" << st.clamp_fallbacks
+                              << " locked=" << (st.locked ? "yes" : "no") << std::defaultfloat
+                              << std::endl;
+                }
+            }
+        }
+
         auto elapsed = std::chrono::steady_clock::now() - last_stats_time;
         if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() >= 2) {
             last_stats_time = std::chrono::steady_clock::now();

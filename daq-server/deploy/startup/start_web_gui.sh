@@ -159,16 +159,10 @@ fi
 # Wait for backend to start
 sleep 2
 
-# Start frontend
-echo "🌐 Starting Next.js frontend..."
-cd frontend
-if [ ! -d "node_modules" ]; then
-    echo "📦 Installing frontend dependencies..."
-    npm install
-fi
-npm run dev &
-FRONTEND_PID=$!
-cd ..
+# Frontend: static Vite build served by the backend on GUI_PORT (:3000).
+echo "🌐 Building frontend (static SPA, served by backend :3000)..."
+bash "$(dirname "$0")/ensure_frontend_build.sh"
+FRONTEND_PID=""
 
 echo ""
 echo "✅ Web GUI started!"

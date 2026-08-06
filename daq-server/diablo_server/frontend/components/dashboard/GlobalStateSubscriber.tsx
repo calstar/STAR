@@ -41,7 +41,8 @@ export default function GlobalStateSubscriber() {
             const update = p as SensorUpdate;
             updateSensor(update);
             if (Number.isFinite(update.value)) {
-                getDataCache().addDataPoint(update.entity, update.component, update.value);
+                // Server timestamp (epoch ms) keys the point — never arrival time.
+                getDataCache().addDataPoint(update.entity, update.component, update.value, update.timestamp);
             }
         });
         const u2 = ws.on(MessageType.STATE_UPDATE, (p: unknown) => {

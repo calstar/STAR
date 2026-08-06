@@ -5,9 +5,9 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
-import { getStartupTime } from '@/lib/startup-time';
 import { getDataCache } from '@/lib/data-cache';
-import { getServerTimeNow } from '@/lib/server-time';
+import { serverNowMs } from '@/lib/plot-time';
+import { xWindowMs, tPlusAxisValues, fmtAxisVal, YAxisHysteresis } from '@/lib/plot-shared';
 
 interface TimeSeriesPlotProps {
   title: string;
@@ -24,35 +24,13 @@ interface TimeSeriesPlotProps {
   valueTransforms?: ((v: number) => number)[];
 }
 
-// ── Smart Y-range — padding so flat lines are always visible ─────────────────
-function smartYRange(dataMin: number, dataMax: number): [number, number] {
-  if (dataMin === dataMax) {
-    const margin = dataMin === 0 ? 1 : Math.abs(dataMin) * 0.05;
-    return [dataMin - margin, dataMax + margin];
-  }
-  const span = dataMax - dataMin;
-  const pad = Math.max(span * 0.12, Math.abs(dataMax) * 0.001);
-  return [dataMin - pad, dataMax + pad];
-}
-
-// ── Axis formatter ────────────────────────────────────────────────────────────
-function fmtAxisVal(val: number): string {
-  if (!isFinite(val)) return '';
-  const abs = Math.abs(val);
-  if (abs >= 1e9) return (val / 1e9).toFixed(1) + 'G';
-  if (abs >= 1e6) return (val / 1e6).toFixed(2) + 'M';
-  if (abs >= 1e3) return (val / 1e3).toFixed(1) + 'K';
-  if (abs >= 100) return val.toFixed(0);
-  if (abs >= 1)   return val.toFixed(1);
-  return val.toFixed(2);
-}
-
 function applyTransform(v: number, transform?: (x: number) => number): number {
   return !isFinite(v) || !transform ? v : transform(v);
 }
 
 const DEFAULT_WINDOW_SECONDS = 60;
-// Match data-cache ~40 Hz so uPlot gets enough points for smooth pressure traces (was 10 Hz → stair steps).
+// Data/scroll refresh. Backend delivers ≤ ~20 pts/s per stream; 25 ms keeps the
+// x-scroll smooth without wasting CPU.
 const RENDER_INTERVAL_MS     = 25;
 // Y-axis scale is only allowed to recompute this often. Higher = less shaking under noisy data.
 const Y_AXIS_INTERVAL_MS     = 1500;
@@ -69,7 +47,6 @@ export default function TimeSeriesPlot({
   const containerRef   = useRef<HTMLDivElement>(null);
   const plotRef        = useRef<HTMLDivElement>(null);
   const plotInstanceRef = useRef<uPlot | null>(null);
-  const startTimeRef   = useRef<number>(getStartupTime());
   const initializedRef = useRef(false);
   const [isInitialized, setIsInitialized] = useState(false);
   const [legendFontSize, setLegendFontSize] = useState(14);
@@ -78,15 +55,6 @@ export default function TimeSeriesPlot({
   const updateConnectionStatus = useSensorStore((s) => s.updateConnectionStatus);
   const connectionStatus       = useSensorStore((s) => s.connectionStatus);
   const actuallyConnected      = connectionStatus?.connected ?? false;
-  const missionStartTime       = useSensorStore((s) => s.missionStartTime);
-
-  // Re-anchor time base when the backend sends missionStartTime.
-  useEffect(() => {
-    if (missionStartTime !== null && missionStartTime > 0 && missionStartTime !== startTimeRef.current) {
-      startTimeRef.current = missionStartTime;
-      // No local buffer to clear — render loop reads from DataCache on next tick.
-    }
-  }, [missionStartTime]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const entitiesKey = entities.join(',');
   const colorsKey   = colors.join(',');
@@ -106,24 +74,22 @@ export default function TimeSeriesPlot({
     const seriesLabels = entities.map((e, i) => labels?.[i] ?? e.split('.').pop() ?? e);
 
     // ── uPlot options ─────────────────────────────────────────────────────────
-    // Per-plot Y-axis bounds cache for hysteresis — shared between buildOpts and render loop.
-    // auto:false means uPlot never auto-scales Y; we drive it explicitly every Y_AXIS_INTERVAL_MS.
-    const _yCache: { last: [number, number] | null } = { last: null };
+    // X data/scales are epoch ms on the server timeline (see plot-time.ts);
+    // the axis DISPLAYS T+ seconds via tPlusAxisValues — a missionStartTime
+    // change relabels the axis without touching data.
+    // Y: auto:false — we drive it explicitly with hysteresis (see plot-shared).
+    const yAxis = new YAxisHysteresis(Y_AXIS_INTERVAL_MS);
 
     const buildOpts = (w: number, h: number): uPlot.Options => ({
       width: w, height: h, pxAlign: true,
       scales: {
         x: {
           time: false,
-          range: (): [number, number] => {
-            const now = (getServerTimeNow() - startTimeRef.current) / 1000;
-            return [Math.max(0, now - Math.min(windowSeconds, now + 1)), now];
-          },
+          range: (): [number, number] => xWindowMs(windowSeconds),
         },
         y: {
           // auto: false — prevents uPlot from recalculating Y on every setScale('x') call
-          // (which fires 40×/sec and causes visible axis jumping). Y bounds are set
-          // explicitly via setScale('y', ...) in the render loop every Y_AXIS_INTERVAL_MS.
+          // (which fires 40×/sec and causes visible axis jumping).
           auto: false,
         },
       },
@@ -133,7 +99,7 @@ export default function TimeSeriesPlot({
           grid: { show: true, stroke: '#555', width: 1 },
           ticks: { show: true, stroke: '#777', width: 1 },
           font: 'bold 12px monospace', labelFont: '12px system-ui', gap: 8, space: 120,
-          values: (_u, vals) => vals.map(v => v == null ? '' : Math.round(v).toString()),
+          values: tPlusAxisValues,
         },
         {
           label: yLabel, stroke: '#9CA3AF',
@@ -169,9 +135,8 @@ export default function TimeSeriesPlot({
       const dims = getDims();
       if (!dims) return;
 
-      const now     = (getServerTimeNow() - startTimeRef.current) / 1000;
       const cached  = cache.getAlignedHistory(entities, componentMap, windowSeconds);
-      const tData   = cached?.time.length   ? cached.time   : [now];
+      const tData   = cached?.time.length   ? cached.time   : [serverNowMs()];
       const vData   = cached?.values.length
         ? cached.values.map((v, i) => v.map(x => applyTransform(x, transforms[i])))
         : entities.map(() => [NaN]);
@@ -216,20 +181,16 @@ export default function TimeSeriesPlot({
 
     // ── Render loop — reads DataCache (see RENDER_INTERVAL_MS) ─────────────────
     let lastDataUpdate  = 0;
-    let lastYAxisUpdate = 0;
 
     const renderLoop = () => {
       if (!initializedRef.current) { tryInit(); if (!initializedRef.current) return; }
       if (!plotInstanceRef.current) return;
 
-      const now     = (getServerTimeNow() - startTimeRef.current) / 1000;
-      const nowMs   = getServerTimeNow();
+      const [xMin, xMax] = xWindowMs(windowSeconds);
+      const nowMs = xMax;
 
       // Scroll x-axis every tick.
-      plotInstanceRef.current.setScale('x', {
-        min: Math.max(0, now - windowSeconds),
-        max: now,
-      });
+      plotInstanceRef.current.setScale('x', { min: xMin, max: xMax });
 
       if (nowMs - lastDataUpdate >= RENDER_INTERVAL_MS) {
         const cached = cache.getAlignedHistory(entities, componentMap, windowSeconds);
@@ -243,34 +204,10 @@ export default function TimeSeriesPlot({
             console.error('[TimeSeriesPlot] setData failed:', err);
           }
 
-          // Explicit Y-axis update with hysteresis, rate-limited to Y_AXIS_INTERVAL_MS.
-          // auto:false means uPlot never auto-scales; we drive it here so setScale('x')
-          // calls in the scroll path above never cause Y to jump.
-          if (nowMs - lastYAxisUpdate >= Y_AXIS_INTERVAL_MS) {
-            lastYAxisUpdate = nowMs;
-            let mn = Infinity, mx = -Infinity;
-            for (const series of vData) {
-              for (const v of series) {
-                if (isFinite(v)) {
-                  if (v < mn) mn = v;
-                  if (v > mx) mx = v;
-                }
-              }
-            }
-            if (isFinite(mn) && isFinite(mx)) {
-              const proposed = smartYRange(mn, mx);
-              let shouldUpdate = !_yCache.last;
-              if (_yCache.last) {
-                const span = _yCache.last[1] - _yCache.last[0];
-                const thr = Math.max(span * 0.20, 2.0);
-                shouldUpdate = Math.abs(proposed[0] - _yCache.last[0]) >= thr ||
-                               Math.abs(proposed[1] - _yCache.last[1]) >= thr;
-              }
-              if (shouldUpdate) {
-                _yCache.last = proposed;
-                plotInstanceRef.current.setScale('y', { min: proposed[0], max: proposed[1] });
-              }
-            }
+          // Explicit Y-axis update with hysteresis, rate-limited (plot-shared).
+          const yRange = yAxis.update(vData, nowMs);
+          if (yRange) {
+            plotInstanceRef.current.setScale('y', { min: yRange[0], max: yRange[1] });
           }
         }
         lastDataUpdate = nowMs;

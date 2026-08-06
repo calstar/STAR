@@ -34,12 +34,15 @@ import { readConfig } from './routes/config.js';
 import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } from './legacy/state-actuators.js';
 import type { StateActuatorMap } from './legacy/state-actuators.js';
 import { getStateTransitions } from './legacy/state-transitions.js';
-import { recordBoardScanIngest, getBoardScanRateHz } from './board-scan-rate.js';
+import { recordBoardScanIngest, getBoardScanRateHz, isPrimaryPhysicalStream, mapEntityToGroup } from './board-scan-rate.js';
+import { EnvelopeAccumulator, parseGuiStreamConfig, envelopeWindowMs, type GuiStreamConfig } from './gui-stream.js';
+import { HistoryCache } from './history-cache.js';
+import { startGuiStaticServer } from './static-gui.js';
 import { handleCalibrationCommand, type CalibrationHost } from './calibration-handler.js';
 import { loadPTCalibration, type CalibrationCoefficients } from './calibration.js';
 import { MessageType, SystemState } from '../../shared/types.js';
 import type { NotificationPayload } from '../../shared/types.js';
-import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUpdate } from '../../shared/types.js';
+import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUpdate, QueryHistoricalRequest } from '../../shared/types.js';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -52,10 +55,12 @@ const THIN_VERBOSE_CONNECTION_LOG = process.env.THIN_VERBOSE_CONNECTION_LOG === 
 const THIN_HEARTBEAT_DIAG_LOG = process.env.THIN_HEARTBEAT_DIAG_LOG === '1';
 const THIN_STATS_LOG = process.env.THIN_STATS_LOG === '1';
 
-// ~20 Hz × 300 s (5 min window) ≈ 6000; keep extra for HISTORICAL_DATA on reconnect.
-const HISTORY_MAX_POINTS = 16000;  // per series
-const HISTORY_MAX_KEYS = 200;
-const HISTORY_STALE_MS = 5 * 60 * 1000;
+// ~20 Hz × 800 s ≈ 13 min per full series; rings grow lazily so sparse/event
+// streams stay small. Key cap must exceed the live stream count (>200) or
+// active series get silently evicted and reconnect backfills lose data.
+const HISTORY_MAX_POINTS = 16000;  // per series (ceiling)
+const HISTORY_MAX_KEYS = 1000;
+const HISTORY_STALE_MS = 30 * 60 * 1000;
 const BOARD_STATUS_HZ = 1;     // broadcast rate for board status
 /** Board marked disconnected if no Elodin [0x10] heartbeat for this long. Too low causes UI flap when DB or TCP jitters; heartbeats are usually multi-Hz but not hard-real-time. */
 const BOARD_HEARTBEAT_STALE_MS = 5000;
@@ -75,76 +80,65 @@ function shouldThrottleSensorStreamPacket(high: number, _low: number): boolean {
   return false;
 }
 
-// ── History cache (ring buffer) ───────────────────────────────────────────────
-// Uses Float64Array ring buffers to avoid O(n) splice shifts on every write.
+// ── History cache (epoch-ms timestamps; see history-cache.ts) ────────────────
 
-interface HistorySeries {
-  tBuf: Float64Array;
-  vBuf: Float64Array;
-  head: number;   // next write index
-  len:  number;   // fill count 0..HISTORY_MAX_POINTS
-  lastMs: number;
+const history = new HistoryCache({
+  maxPoints: HISTORY_MAX_POINTS,
+  maxKeys: HISTORY_MAX_KEYS,
+  staleMs: HISTORY_STALE_MS,
+});
+const broadcastLastTime = new Map<string, number>();  // per-key throttle gate (legacy mode)
+
+setInterval(() => history.prune(), 60_000);
+
+// ── GUI stream downsampling (config.toml [gui]; see gui-stream.ts) ───────────
+
+let guiStreamConfig: GuiStreamConfig = parseGuiStreamConfig(safeReadConfigForGui());
+const envelope = new EnvelopeAccumulator(envelopeWindowMs(guiStreamConfig));
+console.log(`[ThinServer] GUI downsampling: ${guiStreamConfig.mode} @ ${guiStreamConfig.pointsPerSecond} pts/s per stream`);
+
+function safeReadConfigForGui(): unknown {
+  try { return readConfig(); } catch { return null; }
 }
 
-const historyCache = new Map<string, HistorySeries>();
-const historyCacheTime = new Map<string, number>(); // wall-clock last update
-const broadcastLastTime = new Map<string, number>();  // per-key throttle gate
-
-function recordHistory(key: string, timeSec: number, value: number): void {
-  let s = historyCache.get(key);
-  if (!s) {
-    s = { tBuf: new Float64Array(HISTORY_MAX_POINTS), vBuf: new Float64Array(HISTORY_MAX_POINTS), head: 0, len: 0, lastMs: 0 };
-    historyCache.set(key, s);
+/** Re-read [gui] settings after a config save (wired via onConfigUpdated). */
+function reloadGuiStreamConfig(): void {
+  const next = parseGuiStreamConfig(safeReadConfigForGui());
+  if (next.mode !== guiStreamConfig.mode || next.pointsPerSecond !== guiStreamConfig.pointsPerSecond) {
+    console.log(`[ThinServer] GUI downsampling changed: ${next.mode} @ ${next.pointsPerSecond} pts/s per stream`);
   }
-  // Overwrite last entry if same timestamp; otherwise advance ring.
-  const lastIdx = (s.head - 1 + HISTORY_MAX_POINTS) % HISTORY_MAX_POINTS;
-  if (s.len > 0 && s.tBuf[lastIdx] === timeSec) {
-    s.vBuf[lastIdx] = value;
-  } else {
-    s.tBuf[s.head] = timeSec;
-    s.vBuf[s.head] = value;
-    s.head = (s.head + 1) % HISTORY_MAX_POINTS;
-    if (s.len < HISTORY_MAX_POINTS) s.len++;
-  }
-  const now = Date.now();
-  s.lastMs = now;
-  historyCacheTime.set(key, now);
+  guiStreamConfig = next;
+  envelope.setWindowMs(envelopeWindowMs(next));
 }
 
-/** Read ring buffer as plain arrays for sendHistoricalData (allocates once per call, OK since it's only on connect). */
-function readHistorySeries(s: HistorySeries): { time: number[]; values: number[] } {
-  const len = s.len;
-  const tail = len < HISTORY_MAX_POINTS ? 0 : s.head;
-  const time: number[] = new Array(len);
-  const values: number[] = new Array(len);
-  for (let i = 0; i < len; i++) {
-    const idx = (tail + i) % HISTORY_MAX_POINTS;
-    time[i]   = s.tBuf[idx];
-    values[i] = s.vBuf[idx];
-  }
-  return { time, values };
+/** Sample timestamps are forwarded from Elodin (bridge receipt, epoch ms). A
+ *  publisher on the wrong clock (e.g. steady_clock) would poison plots, so
+ *  anything implausibly far from the backend's clock falls back to receipt
+ *  time — worst case is exactly the pre-refactor behavior. */
+const MAX_SAMPLE_TS_SKEW_MS = 60_000;
+function saneSampleTimeMs(tsMs: number, fallbackMs: number): number {
+  return Number.isFinite(tsMs) && Math.abs(tsMs - fallbackMs) <= MAX_SAMPLE_TS_SKEW_MS
+    ? tsMs : fallbackMs;
 }
 
-function pruneHistory(): void {
-  const now = Date.now();
-  if (historyCache.size <= HISTORY_MAX_KEYS) {
-    for (const [key, s] of historyCache) {
-      if (now - s.lastMs > HISTORY_STALE_MS) {
-        historyCache.delete(key);
-        historyCacheTime.delete(key);
-      }
-    }
-  } else {
-    const byAge = Array.from(historyCacheTime.entries()).sort((a, b) => a[1] - b[1]);
-    const toRemove = historyCache.size - HISTORY_MAX_KEYS;
-    for (let i = 0; i < toRemove && i < byAge.length; i++) {
-      historyCache.delete(byAge[i][0]);
-      historyCacheTime.delete(byAge[i][0]);
+/** Single exit point for downsampled sensor streams: history + stats + WS. */
+function emitSensorPoint(key: string, entity: string, component: string, value: number, tMs: number): void {
+  history.record(key, tMs, value);
+  stats.sensorUpdatesBroadcast++;
+  const update: SensorUpdate = { entity, component, value, timestamp: tMs };
+  broadcast({ type: MessageType.SENSOR_UPDATE, timestamp: Date.now(), payload: update });
+}
+
+// Timer flush so trickling/stopped streams don't hold their last window open.
+// Runs regardless of mode so a runtime envelope→throttle switch drains any
+// still-open windows instead of dropping them (map is empty in throttle mode).
+setInterval(() => {
+  for (const closed of envelope.flushOlderThan(Date.now())) {
+    for (const p of closed.points) {
+      emitSensorPoint(closed.key, closed.entity, closed.component, p.value, p.tMs);
     }
   }
-}
-
-setInterval(pruneHistory, 60_000);
+}, 50);
 
 // ── Mission time ─────────────────────────────────────────────────────────────
 
@@ -282,10 +276,7 @@ function broadcastCommandedActuatorsForState(state: SystemState): void {
     const cmdEntity = resolveActuatorCmdEntity(actuatorName);
     if (!cmdEntity) continue;
     const key = `${cmdEntity}.actuator_state_commanded`;
-    if (firstPacketTimeMs !== null) {
-      const timeSec = (epochNow - firstPacketTimeMs) / 1000;
-      if (timeSec >= 0 && timeSec < 86400) recordHistory(key, timeSec, value);
-    }
+    history.record(key, epochNow, value);
     stats.sensorUpdatesBroadcast++;
     broadcast({
       type: MessageType.SENSOR_UPDATE,
@@ -397,7 +388,10 @@ setInterval(() => {
     console.log(`[ThinServer] Heartbeat arrival rate: ${entries}`);
   }
   hbDiagCount.clear();
-  if (THIN_STATS_LOG && stats.relayEntityUpdatesReceived > 0) {
+  // Logged unconditionally when enabled — entityUpdates=0 is the single most
+  // useful reading there is (Elodin delivered nothing vs. downsampler dropped
+  // everything), so it must not be suppressed by a `> 0` guard.
+  if (THIN_STATS_LOG) {
     console.log(`[ThinServer] Stats: entityUpdates=${stats.relayEntityUpdatesReceived} broadcasts=${stats.sensorUpdatesBroadcast} wsClients=${wss.clients.size}`);
   }
 }, 5000);
@@ -499,10 +493,22 @@ setInterval(markStaleBoards, 1000);
 // ── Packet stats ─────────────────────────────────────────────────────────────
 // Counts raw entity updates received from Elodin DB vs broadcasts sent to WS clients.
 // GET /stats returns these so the integration test can verify no drops occur before
-// the throttle (Elodin→backend must be lossless; backend→WS is intentionally throttled).
+// the throttle (backend→WS is intentionally throttled). NOTE: Elodin→backend is NOT
+// strictly lossless — the DB's live stream coalesces same-channel rows written in one
+// burst (multi-chunk board packets), forwarding at least one row per channel per
+// packet; DB *storage* keeps every row. See integration Test 15 for the invariant.
 
 const stats = {
   relayEntityUpdatesReceived: 0,  // every finite-value entity parsed from Elodin DB
+  // Raw physical channel samples (non-_Cal, canonical component only): exactly one
+  // increment per per-channel per-chunk sample a board sent, so the integration test
+  // can compare this against the simulator's sent-sample ground truth for absolute
+  // end-to-end loss detection (UDP → bridge → Elodin DB → backend), independent of
+  // the GUI downsampler.
+  rawPrimarySamplesIngested: 0,
+  // Same counter split by board group (pt1/pt2/tc/rtd/lc/enc/act) so a
+  // conservation failure names the lossy stream instead of just the total.
+  rawPrimarySamplesByGroup: {} as Record<string, number>,
   sensorUpdatesBroadcast: 0,  // SENSOR_UPDATE messages actually sent (post-throttle)
   sequencerStatesReceived: 0,  // packets successfully streamed through Elodin DB verifying storage
   startTimeMs: Date.now(),
@@ -520,10 +526,13 @@ const apiHandler = createAPIHandler({
     relayConnected: elodin.isConnected(),
     relayPacketsReceived: stats.relayEntityUpdatesReceived,
     wsClients: wss.clients.size,
-    sensorCacheSize: historyCache.size,
+    sensorCacheSize: history.size,
     useRelay: false,
     boardScanRateHz: getBoardScanRateHz(),
   }),
+  onConfigUpdated: () => {
+    reloadGuiStreamConfig();
+  },
 });
 
 const httpServer = http.createServer(async (req, res) => {
@@ -716,17 +725,13 @@ wss.on('connection', (ws: WebSocket, req) => {
   });
 });
 
-function sendHistoricalData(ws: WebSocket): void {
+/** Historical backfill. Times are epoch ms (same clock as SENSOR_UPDATE
+ *  payload timestamps — clients merge by timestamp, no rebasing). Optional
+ *  query narrows to specific keys and/or points newer than sinceMs; no query
+ *  = full dump (legacy behavior, still used on connect). */
+function sendHistoricalData(ws: WebSocket, query?: QueryHistoricalRequest): void {
   const MAX_SEND_POINTS = 3000;
-  const payload: Record<string, { time: number[]; values: number[] }> = {};
-  for (const [key, series] of historyCache) {
-    if (series.len === 0) continue;
-    const { time, values } = readHistorySeries(series);
-    const start = time.length > MAX_SEND_POINTS ? time.length - MAX_SEND_POINTS : 0;
-    payload[key] = start > 0
-      ? { time: time.slice(start), values: values.slice(start) }
-      : { time, values };
-  }
+  const payload = history.buildPayload(query, MAX_SEND_POINTS);
   send(ws, { type: MessageType.HISTORICAL_DATA, timestamp: Date.now(), payload });
 }
 
@@ -738,7 +743,7 @@ function handleMessage(ws: WebSocket, message: any): void {
       handleCommand(ws, message.payload as CommandPayload);
       break;
     case MessageType.QUERY_HISTORICAL:
-      sendHistoricalData(ws);
+      sendHistoricalData(ws, message.payload as QueryHistoricalRequest | undefined);
       break;
     case MessageType.CALIBRATION_COMMAND:
       handleCalibrationCommand(calibrationHost, ws, message.payload);
@@ -801,7 +806,12 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       break;
     }
     case 'extend_fire':
-      sendToActuatorService('EXTEND_FIRE\n').catch(() => { });
+      sendToActuatorService('EXTEND_FIRE\n').then(({ ok, reply }) => {
+        console.log(`[ThinServer] Extend fire: ${ok ? 'OK' : 'FAIL'} (${reply})`);
+        if (!ok) {
+          send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Extend fire failed: ${reply}` } });
+        }
+      });
       break;
     case 'set_countdown_target':
       countdownTargetMs = command.data.targetTimeMs ?? null;
@@ -1002,9 +1012,19 @@ elodin.on('packet', (header: any, payload: Buffer) => {
       broadcastCommandedActuatorsForState(currentState);
       scheduleActuatorMismatchCheck(currentState);
       if (currentState === SystemState.FIRE && prevState !== SystemState.FIRE) {
-        sendToControllerService('FIRE_START\n').catch(() => { /* non-fatal */ });
+        sendToControllerService('FIRE_START\n').then(({ ok, reply }) => {
+          if (!ok) {
+            console.error(`[ThinServer] FIRE_START not acknowledged by controller_service: ${reply}`);
+            broadcastNotification({ key: 'fire_start_failed', category: 'error', message: `FIRE_START not acknowledged by controller: ${reply}`, timestampMs: Date.now(), ongoing: false });
+          }
+        });
       } else if (prevState === SystemState.FIRE && currentState !== SystemState.FIRE) {
-        sendToControllerService('FIRE_STOP\n').catch(() => { /* non-fatal */ });
+        sendToControllerService('FIRE_STOP\n').then(({ ok, reply }) => {
+          if (!ok) {
+            console.error(`[ThinServer] FIRE_STOP not acknowledged by controller_service: ${reply}`);
+            broadcastNotification({ key: 'fire_stop_failed', category: 'error', message: `FIRE_STOP not acknowledged by controller: ${reply}`, timestampMs: Date.now(), ongoing: false });
+          }
+        });
       }
       return;
     }
@@ -1042,23 +1062,39 @@ elodin.on('packet', (header: any, payload: Buffer) => {
       const key = `${parsed.entity}.${parsed.component}`;
       stats.relayEntityUpdatesReceived++;
 
-      // Pre-throttle ingest rate (what boards/Elodin actually deliver) — not WS broadcast rate.
+      // Pre-downsample ingest rate (what boards/Elodin actually deliver) — not WS broadcast rate.
       recordBoardScanIngest(parsed.entity, parsed.component);
-
-      const throttle = shouldThrottleSensorStreamPacket(high, low);
-      const lastBcast = broadcastLastTime.get(key) ?? 0;
-      if (throttle && epochNow - lastBcast < BROADCAST_MIN_MS) continue;
-      broadcastLastTime.set(key, epochNow);
-
-      const update: SensorUpdate = { entity: parsed.entity, component: parsed.component, value: parsed.value, timestamp: epochNow };
-      const timeSec = (epochNow - firstPacketTimeMs) / 1000;
-
-      if (timeSec >= 0 && timeSec < 86400) {
-        recordHistory(key, timeSec, parsed.value);
+      // _Cal excluded: calibration_service republications would double-count PT samples.
+      if (!parsed.entity.includes('_Cal') && isPrimaryPhysicalStream(parsed.entity, parsed.component)) {
+        stats.rawPrimarySamplesIngested++;
+        const group = mapEntityToGroup(parsed.entity) ?? 'other';
+        stats.rawPrimarySamplesByGroup[group] = (stats.rawPrimarySamplesByGroup[group] || 0) + 1;
       }
 
-      stats.sensorUpdatesBroadcast++;
-      broadcast({ type: MessageType.SENSOR_UPDATE, timestamp: epochNow, payload: update });
+      // Sample time = Elodin field-0 timestamp (bridge receipt, epoch ms),
+      // guarded against off-clock publishers.
+      const tsMs = saneSampleTimeMs(parsed.timestamp, epochNow);
+
+      if (!shouldThrottleSensorStreamPacket(high, low)) {
+        // Event-like streams (state, self-test, encoder, controller): every
+        // update goes out immediately, no downsampling.
+        emitSensorPoint(key, parsed.entity, parsed.component, parsed.value, tsMs);
+        continue;
+      }
+
+      if (guiStreamConfig.mode === 'throttle') {
+        // Legacy drop-throttle (config.toml [gui] downsample_mode = "throttle").
+        const lastBcast = broadcastLastTime.get(key) ?? 0;
+        if (epochNow - lastBcast < BROADCAST_MIN_MS) continue;
+        broadcastLastTime.set(key, epochNow);
+        emitSensorPoint(key, parsed.entity, parsed.component, parsed.value, tsMs);
+      } else {
+        // Min/max envelope: extremes of each window survive with their real
+        // timestamps, so transients can't hide between broadcast slots.
+        for (const p of envelope.add(key, parsed.entity, parsed.component, tsMs, parsed.value)) {
+          emitSensorPoint(key, parsed.entity, parsed.component, p.value, p.tMs);
+        }
+      }
     }
   } catch (err) {
     console.error('[ThinServer] Packet error:', err);
@@ -1094,6 +1130,10 @@ httpServer.on('error', (err: NodeJS.ErrnoException) => {
     console.error('[ThinServer] HTTP server error:', err);
   }
 });
+
+// Serve the built SPA (frontend/dist) on GUI_PORT; 0 disables.
+const GUI_PORT = parseInt(process.env.GUI_PORT ?? '3000', 10);
+startGuiStaticServer(GUI_PORT);
 
 httpServer.listen(WS_PORT, () => {
   console.log(`[ThinServer] WebSocket server listening on port ${WS_PORT}`);

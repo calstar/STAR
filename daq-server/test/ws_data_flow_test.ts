@@ -17,7 +17,8 @@
  * --only runs a subset of tests (comma-separated). IDs: sensor_config, sensor_data,
  * cal_stability, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
  * selftest, state_transition,
- * state_debug, actuator_ws, actuator_udp, elodin_sync, controller — or numbers 1–6, 10–12
+ * state_debug, actuator_ws, actuator_udp, elodin_sync, controller, timestamps,
+ * conservation — or numbers 1–6, 10–12, 14–15
  * (same as printed test labels). Env INTEGRATION_ONLY is equivalent to --only.
  * Most IDs still need the full integration stack (Elodin, DAQ, calibration, backend);
  * state/actuator/elodin_sync need sequencer; controller needs controller_service; selftest
@@ -78,6 +79,8 @@ function parseOnlyTests(): Set<string> | null {
     '10': 'cal_stability',
     '11': 'sensor_config',
     '12': 'raw_cal_presence',
+    '14': 'timestamps',
+    '15': 'conservation',
   };
   const out = new Set<string>();
   for (const p of parts) {
@@ -89,7 +92,7 @@ function parseOnlyTests(): Set<string> | null {
     'sensor_config', 'sensor_data', 'cal_stability', 'raw_cal_presence',
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
-    'controller',
+    'controller', 'timestamps', 'conservation',
   ]);
   for (const id of out) {
     if (!allowed.has(id)) {
@@ -929,10 +932,15 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     console.log(`  Extra entities (${extraEntities.length}): ${extraEntities.join(', ')}`);
   }
 
-  // ── Zero packet loss verification ──
-  // Each board sends ALL its active channels in one UDP packet. So every entity
-  // from the same board MUST have the exact same update count. If any entity has
-  // fewer updates than its board siblings, packets were dropped in the pipeline.
+  // ── Per-board channel starvation check ──
+  // Each board sends ALL its active channels in one UDP packet, so every channel
+  // of a board sees the same chunk timestamps and hence the same envelope windows.
+  // The envelope decimator emits 1 point per window for a flat channel and 2
+  // (min+max) for a varying one, so sibling channel counts legitimately differ by
+  // up to ~2x — equal counts is NOT an invariant here. What IS invariant: every
+  // channel must emit at least once per window, so each channel's count must be
+  // ≥ ~half the board's max. A channel far below that (or at zero) means genuine
+  // starvation/packet loss in the pipeline, which is what this check catches.
   const BOARD_GROUPS: Record<string, string[]> = {
     'pt_board (B1)': [
       'PT1.CH1', 'PT1.CH2', 'PT1.CH3', 'PT1.CH4', 'PT1.CH5',
@@ -960,38 +968,63 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     entityCounts[e] = (entityCounts[e] || 0) + 1;
   }
 
-  let totalDropped = 0;
+  // A channel emits 1-2 points per envelope window (see comment above); 0.45
+  // instead of 0.5 leaves slack for window-boundary edge effects at the start
+  // and end of the collection interval.
+  const MIN_SIBLING_RATIO = 0.45;
   for (const [boardName, boardEntities] of Object.entries(BOARD_GROUPS)) {
     const counts = boardEntities.map(e => entityCounts[e] || 0);
     const maxCount = Math.max(...counts);
     const minCount = Math.min(...counts);
 
-    const dropped = boardEntities.reduce((sum, e) => sum + (maxCount - (entityCounts[e] || 0)), 0);
-    const totalExpected = maxCount * boardEntities.length;
-    const totalReceived = totalExpected - dropped;
-    // maxCount === 0 means no data received at all — treat as 0% delivery, not 100%
-    const deliveryPct = totalExpected > 0 ? (totalReceived / totalExpected) * 100 : 0;
-    totalDropped += dropped;
-
-    // Per-channel delivery: allow minor timing jitter (≥95% delivery across channels).
-    // Exact parity (min===max) is unrealistic when the backend flushes on a timer.
-    const MIN_DELIVERY_PCT = 95;
-    const passed = maxCount > 0 && deliveryPct >= MIN_DELIVERY_PCT;
+    const floor = Math.max(
+      Math.floor(maxCount * MIN_SIBLING_RATIO),
+      MIN_FINITE_SAMPLES_PER_SENSOR_STREAM,
+    );
+    const starved = boardEntities.filter(e => (entityCounts[e] || 0) < floor);
+    const passed = maxCount > 0 && starved.length === 0;
     if (!passed || VERBOSE) {
-      console.log(`\n  ${boardName} (${maxCount} max updates per ch):`);
+      console.log(`\n  ${boardName} (max ${maxCount} updates per ch, floor ${floor}):`);
       for (const e of boardEntities) {
         const count = entityCounts[e] || 0;
-        const withinSpec = maxCount > 0 && count >= minCount;
-        const status = withinSpec ? '✅' : '❌';
+        const status = count >= floor ? '✅' : '❌';
         console.log(`    ${status} ${e}: ${count}/${maxCount}`);
       }
     }
     assert(passed,
       maxCount === 0
         ? `${boardName}: 0 updates received — board sent no data`
-        : dropped === 0
-          ? `${boardName}: 0 dropped — all ${boardEntities.length} channels received ${maxCount} updates each`
-          : `${boardName}: per-channel update counts differ (${deliveryPct.toFixed(1)}% delivery) — need ≥${MIN_DELIVERY_PCT}% (${minCount}-${maxCount}), ${dropped} short`);
+        : passed
+          ? `${boardName}: all ${boardEntities.length} channels healthy (${minCount}-${maxCount} updates, floor ${floor})`
+          : `${boardName}: ${starved.length} starved channel(s) below floor ${floor} (max sibling ${maxCount}): ${starved.map(e => `${e}=${entityCounts[e] || 0}`).join(', ')}`);
+  }
+
+  // ── Envelope downsampling verification ──
+  // Active only when the harness pins [gui] points_per_second (test_integration.sh
+  // sets INTEGRATION_GUI_PPS=4 in the generated config). The sim feeds PT/TC/RTD/LC
+  // at 10 Hz, so a working envelope must compress each stream to ≤ pps points/sec —
+  // the cap catches pass-through and duplicate-emission bugs — while still emitting
+  // min/max for every window — the floor catches a stalled/blackholing decimator.
+  // ACT entities are excluded (a second component, actuator_state, can share the
+  // entity and inflate its count); ENC is event-like passthrough by design.
+  const GUI_PPS = Number(process.env.INTEGRATION_GUI_PPS || 0);
+  if (GUI_PPS > 0) {
+    const windowSec = SENSOR_TIMEOUT_MS / 1000;
+    const cap = Math.ceil(GUI_PPS * windowSec * 1.25) + 2;  // +2: partial windows at collection edges
+    const floorPts = Math.floor((GUI_PPS / 2) * windowSec * 0.5);  // ≥ half the envelope windows
+    const eligible = Object.entries(BOARD_GROUPS)
+      .filter(([name]) => /^(pt|tc|rtd|lc)_/.test(name))
+      .flatMap(([, ents]) => ents);
+    const over = eligible.filter(e => (entityCounts[e] || 0) > cap);
+    const under = eligible.filter(e => (entityCounts[e] || 0) < floorPts);
+    assert(over.length === 0,
+      over.length === 0
+        ? `Envelope cap: all ${eligible.length} eligible channels ≤ ${cap} updates (${GUI_PPS} pts/s × ${windowSec}s)`
+        : `Envelope NOT downsampling — over cap ${cap} (${GUI_PPS} pts/s × ${windowSec}s): ${over.map(e => `${e}=${entityCounts[e]}`).join(', ')}`);
+    assert(under.length === 0,
+      under.length === 0
+        ? `Envelope liveness: all eligible channels ≥ ${floorPts} updates`
+        : `Envelope starving streams (below ${floorPts}): ${under.map(e => `${e}=${entityCounts[e] || 0}`).join(', ')}`);
   }
 
   if (VERBOSE) console.log(`  WS client: ${updates.length} SENSOR_UPDATE messages in window`);
@@ -1049,9 +1082,14 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
     assert(received > 0, `Elodin → backend: data flowing (${received.toLocaleString()} updates)`);
     assert(received >= broadcast, `No phantom broadcasts (${broadcast.toLocaleString()} sent ≤ ${received.toLocaleString()} ingested)`);
 
+    // broadcast() is an unconditional ws.send() to every open client over loopback
+    // TCP — there is no drop path, so delivery should be ~100%. The only expected
+    // shortfall is edge skew: the /stats delta brackets the collection window, so
+    // messages in flight at either edge count as broadcast but not received. That
+    // is tens of ms of traffic per edge of a 5 s window — 3% slack covers it.
     const wsDeliveryNum = broadcast > 0 ? updates.length / broadcast : 0;
-    assert(wsDeliveryNum >= 0.85,
-      `Frontend received ${updates.length.toLocaleString()}/${broadcast.toLocaleString()} broadcasts (${(wsDeliveryNum * 100).toFixed(1)}% — need ≥85%)`);
+    assert(wsDeliveryNum >= 0.97,
+      `Frontend received ${updates.length.toLocaleString()}/${broadcast.toLocaleString()} broadcasts (${(wsDeliveryNum * 100).toFixed(1)}% — need ≥97%)`);
   } else if (IS_THIN) {
     console.log('  ℹ️  Backend stats unavailable — skipping relay→backend loss check');
   }
@@ -1976,6 +2014,192 @@ async function testControllerDataFlow(): Promise<void> {
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Test 14: Timestamp quality (clock-sync verification).
+ *
+ * The integration stack runs the board simulator with deliberate timing
+ * pathologies (network jitter, clock drift/offset, a mid-run reboot, a uint32
+ * millis wrap — see INTEGRATION_TIME_FLAGS in test_integration.sh). The DAQ
+ * bridge's per-board clock sync must still produce a clean timeline. Per
+ * high-rate stream this asserts:
+ *   - payload timestamps are monotonic non-decreasing,
+ *   - no timestamp is in the future (beyond small tolerance),
+ *   - pipeline latency (receivedAt − timestamp) is bounded,
+ *   - inter-sample spacing is sane (no flattening onto one instant, no stalls):
+ *     median spacing within [5 ms, 1000 ms] and samples spanning ≥50% of the
+ *     collection window.
+ */
+async function testTimestampQuality(ws: WebSocket): Promise<void> {
+  console.log('\n⏱️  Test 14: Timestamp Quality (clock sync under timing pathologies)');
+
+  const WINDOW_MS = 8000;
+  const FUTURE_TOLERANCE_MS = 250;
+  const MAX_LATENCY_MS = 10000;
+  const MIN_SAMPLES = 10;
+
+  if (VERBOSE) console.log(`  Collecting sensor updates (${WINDOW_MS / 1000}s window)…`);
+  const updates = await collectMessages(ws, MessageType.SENSOR_UPDATE, WINDOW_MS);
+
+  // Group per stream (entity.component), keep arrival order.
+  const streams = new Map<string, { ts: number[]; recv: number[] }>();
+  for (const u of updates) {
+    const p = u.payload as { entity?: string; component?: string; timestamp?: number; value?: number };
+    if (!p.entity || !p.component || typeof p.timestamp !== 'number' || !Number.isFinite(p.value)) continue;
+    const key = `${p.entity}.${p.component}`;
+    let s = streams.get(key);
+    if (!s) { s = { ts: [], recv: [] }; streams.set(key, s); }
+    s.ts.push(p.timestamp);
+    s.recv.push(u.receivedAt);
+  }
+
+  let outOfOrder = 0;
+  let future = 0;
+  const latencies: number[] = [];
+  const spacingViolations: string[] = [];
+  let highRateStreams = 0;
+
+  for (const [key, s] of streams) {
+    for (let i = 0; i < s.ts.length; i++) {
+      if (i > 0 && s.ts[i] < s.ts[i - 1]) outOfOrder++;
+      if (s.ts[i] > s.recv[i] + FUTURE_TOLERANCE_MS) future++;
+      const lat = s.recv[i] - s.ts[i];
+      if (lat >= 0 && lat < 120000) latencies.push(lat);
+    }
+
+    if (s.ts.length < MIN_SAMPLES) continue;  // event/low-rate streams: monotonic+future only
+    highRateStreams++;
+
+    const deltas: number[] = [];
+    for (let i = 1; i < s.ts.length; i++) deltas.push(s.ts[i] - s.ts[i - 1]);
+    deltas.sort((a, b) => a - b);
+    const median = deltas[Math.floor(deltas.length / 2)];
+    const span = s.ts[s.ts.length - 1] - s.ts[0];
+    if (median < 5 || median > 1000) {
+      spacingViolations.push(`${key}: median spacing ${median}ms (want 5–1000ms)`);
+    } else if (span < WINDOW_MS * 0.5) {
+      spacingViolations.push(`${key}: samples span only ${span}ms of the ${WINDOW_MS}ms window`);
+    }
+  }
+
+  latencies.sort((a, b) => a - b);
+  const p99 = latencies.length ? latencies[Math.floor(latencies.length * 0.99)] : 0;
+  const maxLat = latencies.length ? latencies[latencies.length - 1] : 0;
+
+  if (VERBOSE) {
+    console.log(`  Streams: ${streams.size} total, ${highRateStreams} high-rate (≥${MIN_SAMPLES} samples)`);
+    printLatencyStats('Pipeline latency (receivedAt − payload.timestamp)', latencies);
+  }
+
+  assert(streams.size > 0, `Timestamp quality: received data on ${streams.size} streams`);
+  assert(outOfOrder === 0,
+    outOfOrder === 0
+      ? 'All per-stream timestamps monotonic non-decreasing'
+      : `Timestamps went backwards ${outOfOrder} time(s) across streams`);
+  assert(future === 0,
+    future === 0
+      ? `No future timestamps (tolerance ${FUTURE_TOLERANCE_MS}ms)`
+      : `${future} timestamp(s) ahead of arrival by >${FUTURE_TOLERANCE_MS}ms`);
+  assert(maxLat < MAX_LATENCY_MS,
+    maxLat < MAX_LATENCY_MS
+      ? `Pipeline latency bounded (max ${maxLat}ms, p99 ${p99}ms < ${MAX_LATENCY_MS}ms)`
+      : `Pipeline latency too high: max ${maxLat}ms (limit ${MAX_LATENCY_MS}ms) — clock sync mis-anchored?`);
+  assert(spacingViolations.length === 0,
+    spacingViolations.length === 0
+      ? `Inter-sample spacing sane on all ${highRateStreams} high-rate streams (no flattening, no stalls)`
+      : `Spacing violations on ${spacingViolations.length} stream(s): ${spacingViolations.slice(0, 5).join('; ')}${spacingViolations.length > 5 ? ' …' : ''}`);
+}
+
+// ── Test 15: Sample Conservation (sim → bridge → Elodin DB → backend) ────────
+// The simulator rewrites its ground-truth stats file (samples sent per channel)
+// every second. The backend's rawPrimarySamplesIngested counts the same samples
+// as ingested from the Elodin DB stream BEFORE the GUI downsampler (one per raw
+// physical sample, canonical component only, _Cal republications excluded).
+// Comparing the two detects absolute packet loss anywhere in
+// UDP → bridge → Elodin DB → backend, independent of envelope emission.
+async function testSampleConservation(): Promise<void> {
+  console.log('\n🔎 Test 15: Sample Conservation (sim sent vs backend ingested, pre-downsample)');
+  const statsFile = process.env.INTEGRATION_SIM_STATS || '';
+  if (!statsFile) {
+    console.log('  ℹ️  INTEGRATION_SIM_STATS not set — skipping (run via test_integration.sh)');
+    return;
+  }
+
+  // Read the sim snapshot FIRST, then fetch the backend counter: the snapshot
+  // lags actual sent by ≤1s, so the backend has ingested at least as much as
+  // the snapshot claims was sent — the skew only adds slack, never false fails.
+  let sim: any;
+  try {
+    sim = JSON.parse(fs.readFileSync(statsFile, 'utf8'));
+  } catch (e: any) {
+    assert(false, `Could not read sim stats file ${statsFile}: ${e.message}`);
+    return;
+  }
+  const sent = Number(sim?.total_sensor_updates) || 0;
+  assert(sent > 0, sent > 0
+    ? `Sim ground truth: ${sent.toLocaleString()} samples sent`
+    : 'Sim stats file reports 0 samples sent — simulator produced no data');
+  if (sent <= 0) return;
+
+  const backendStats = await fetchBackendStats();
+  const ingested = Number((backendStats as any)?.rawPrimarySamplesIngested);
+  if (!Number.isFinite(ingested)) {
+    assert(false, 'Backend /stats has no rawPrimarySamplesIngested — stale backend build?');
+    return;
+  }
+
+  // Per-group breakdown (always printed): pinpoints WHICH stream loses samples.
+  // Sim board names → backend board-scan groups.
+  const groupOfBoard = (name: string): string => {
+    if (/^pt_board_2/.test(name)) return 'pt2';
+    if (/^pt_board/.test(name)) return 'pt1';
+    if (/^rtd/.test(name)) return 'rtd';
+    if (/^lc/.test(name)) return 'lc';
+    if (/^tc/.test(name)) return 'tc';
+    if (/^encoder/.test(name)) return 'enc';
+    if (/^actuator/.test(name)) return 'act';
+    return 'other';
+  };
+  const sentByGroup: Record<string, number> = {};
+  for (const [name, b] of Object.entries(sim.boards ?? {}) as [string, any][]) {
+    const g = groupOfBoard(name);
+    sentByGroup[g] = (sentByGroup[g] || 0) + (Number(b.total_sensor_updates) || 0);
+  }
+  const ingestedByGroup: Record<string, number> = (backendStats as any)?.rawPrimarySamplesByGroup ?? {};
+  for (const g of Object.keys(sentByGroup).sort()) {
+    const s = sentByGroup[g];
+    const i = ingestedByGroup[g] || 0;
+    const gp = s > 0 ? ((i / s) * 100).toFixed(1) : '?';
+    console.log(`  ${g.padEnd(5)} sent ${String(s).padStart(6)}  ingested ${String(i).padStart(6)}  (${gp}%)`);
+  }
+
+  // Loss model (verified against bridge logs): the bridge receives and publishes
+  // every sample (its [Stats] line counts drops), but Elodin DB's live stream to
+  // subscribers coalesces same-channel rows written in one burst — with N chunks
+  // per packet, each channel gets N rows in one TCP batch and the DB may forward
+  // fewer (storage keeps all rows; only the push stream thins). Genuine pipeline
+  // loss (UDP drop, flush failure, disconnect) loses WHOLE packets, so the hard
+  // invariant is one surviving row per channel per packet: packets × channels.
+  // In clean 1-chunk mode that floor equals full sample count — strict lossless.
+  const uniqueScans = Object.values(sim.boards ?? {}).reduce(
+    (sum: number, b: any) => sum + (Number(b.packets_sent) || 0) * (Number(b.channels_per_packet) || 0), 0);
+  const MIN_PCT = 95;
+  const floorScans = Math.floor(uniqueScans * (MIN_PCT / 100));
+  const pctOfSent = (ingested / sent) * 100;
+  const pctOfScans = uniqueScans > 0 ? (ingested / uniqueScans) * 100 : 0;
+  console.log(`  Ingested ${ingested.toLocaleString()}/${sent.toLocaleString()} samples (${pctOfSent.toFixed(1)}% of sent, ${pctOfScans.toFixed(1)}% of per-packet channel scans)`);
+  assert(ingested >= floorScans,
+    ingested >= floorScans
+      ? `Sample conservation: ingested ≥ ${MIN_PCT}% of ${uniqueScans.toLocaleString()} channel scans (whole-packet loss check)`
+      : `Sample conservation FAILED: ingested ${ingested.toLocaleString()} < ${floorScans.toLocaleString()} (${MIN_PCT}% of ${uniqueScans.toLocaleString()} channel scans) — whole packets lost in UDP → bridge → Elodin → backend`);
+  // Upper sanity bound: ingesting far more than sent means double counting
+  // (e.g. _Cal republications leaking into the counter). 5% covers the ≤1s
+  // stats-file snapshot lag.
+  assert(ingested <= sent * 1.05,
+    ingested <= sent * 1.05
+      ? `No double counting (ingested ≤ sent + snapshot lag)`
+      : `Ingested ${ingested.toLocaleString()} exceeds sent ${sent.toLocaleString()} by >5% — counter double-counting a stream?`);
+}
+
 async function main(): Promise<void> {
   console.log('🧪 WebSocket Data Flow Integration Test');
   console.log(`   Backend: ${WS_URL} (${IS_THIN ? 'server.ts' : 'server-legacy.ts'})`);
@@ -2021,6 +2245,7 @@ async function main(): Promise<void> {
     if (runTest('sensor_data')) await testSensorDataFlow(ws);
     if (IS_THIN && runTest('backend_debug_api')) await testBackendDebugApi();
     if (runTest('raw_cal_presence')) await testRawAndCalibratedPresence(ws);
+    if (runTest('timestamps')) await testTimestampQuality(ws);
     if (runTest('cal_stability')) await testCalibratedDataStability(ws);
     if (IS_THIN) {
       if (runTest('heartbeat')) await testServerHeartbeatUdp();
@@ -2046,6 +2271,8 @@ async function main(): Promise<void> {
     } else if (!ONLY_TESTS && !HAS_CONTROLLER) {
       console.log('\n📡 Test: Controller Data Flow — SKIPPED (controller_service not found)');
     }
+    // Last on purpose: maximizes the sample count both sides of the comparison.
+    if (IS_THIN && runTest('conservation')) await testSampleConservation();
   } finally {
     ws.close();
   }

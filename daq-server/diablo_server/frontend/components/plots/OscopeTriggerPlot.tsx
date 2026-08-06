@@ -23,7 +23,7 @@ const ENC_COLORS = ['#3B82F6', '#F97316'];
 type TriggerState = 'IDLE' | 'ARMED' | 'TRIGGERED';
 
 interface ChannelSample {
-  t: number; // ms (Date.now)
+  t: number; // ms (server timestamp from the message, epoch)
   v: number; // degrees
 }
 
@@ -256,9 +256,13 @@ export default function OscopeTriggerPlot() {
         return;
       }
 
-      const nowMs = Date.now();
+      // Sample time = server timestamp from the message (epoch ms) — inter-
+      // encoder skew must not include per-message delivery jitter. Staleness
+      // tracking stays on the local clock (compared against Date.now()).
+      const nowMs = Number.isFinite(update.timestamp) && update.timestamp > 0
+        ? update.timestamp : Date.now();
       const deg = rawToDeg(update.value);
-      lastEncoderPacketMsRef.current = nowMs;
+      lastEncoderPacketMsRef.current = Date.now();
 
       if (triggerStateRef.current === 'TRIGGERED') return;
 
