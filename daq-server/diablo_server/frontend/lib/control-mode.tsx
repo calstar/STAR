@@ -1,9 +1,14 @@
 "use client";
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { MessageType } from "./types";
+import { getWebSocketClient } from "./websocket";
 
 interface ControlModeContextValue {
+  /** Armed: the backend has authorized this connection (operator + password). */
   controlEnabled: boolean;
+  /** This user is on the DAQ operators allowlist (from the backend). */
+  isOperator: boolean;
   unlocking: boolean;
   error: string | null;
   unlock: (password: string) => void;
@@ -12,70 +17,61 @@ interface ControlModeContextValue {
 
 const ControlModeContext = createContext<ControlModeContextValue | undefined>(undefined);
 
-const STORAGE_KEY = "diablo-control-enabled";
-
+/**
+ * Engine-control arm state — entirely backend-driven, so the UI can never show
+ * "armed" when the backend would reject the commands. The backend enforces the
+ * operator allowlist + password server-side (see backend/src/server.ts); this
+ * context just reflects its decisions:
+ *   - CONTROL_STATUS (on connect): are you an approved operator?
+ *   - CONTROL_UNLOCK_RESULT (reply to unlock): did the password unlock control?
+ * No password lives in the frontend, and nothing is persisted — each connection
+ * re-arms, because the backend resets authorization on every (re)connect.
+ */
 export function ControlModeProvider({ children }: { children: React.ReactNode }) {
   const [controlEnabled, setControlEnabled] = useState(false);
+  const [isOperator, setIsOperator] = useState(false);
   const [unlocking, setUnlocking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    try {
-      const stored = typeof window !== "undefined" ? window.sessionStorage.getItem(STORAGE_KEY) : null;
-      if (stored === "true") {
-        setControlEnabled(true);
-      }
-    } catch {
-      // ignore storage errors
-    }
-  }, []);
+    const ws = getWebSocketClient();
 
-  useEffect(() => {
-    try {
-      if (typeof window === "undefined") return;
-      if (controlEnabled) {
-        window.sessionStorage.setItem(STORAGE_KEY, "true");
+    const offStatus = ws.on(MessageType.CONTROL_STATUS, (payload) => {
+      const p = payload as { operator?: boolean };
+      setIsOperator(!!p.operator);
+      // Every (re)connect resets server-side authorization → require re-arm.
+      setControlEnabled(false);
+      setUnlocking(false);
+    });
+
+    const offResult = ws.on(MessageType.CONTROL_UNLOCK_RESULT, (payload) => {
+      const p = payload as { ok?: boolean; reason?: string };
+      setUnlocking(false);
+      if (p.ok) {
+        setControlEnabled(true);
+        setError(null);
       } else {
-        window.sessionStorage.removeItem(STORAGE_KEY);
+        setControlEnabled(false);
+        setError(
+          p.reason === "not_operator"
+            ? "You're not an approved operator."
+            : "Incorrect password."
+        );
       }
-    } catch {
-      // ignore storage errors
-    }
-  }, [controlEnabled]);
+    });
+
+    ws.connect("control-mode");
+    return () => { offStatus(); offResult(); };
+  }, []);
 
   const unlock = useCallback((password: string) => {
     setUnlocking(true);
     setError(null);
-    try {
-      const expected = (import.meta.env?.VITE_CONTROL_PASSWORD as string | undefined) ?? "";
-      // Differentiate local vs server by Vite's build mode: `vite dev` (local)
-      // permits the well-known dev password, but a production `vite build` (the
-      // deployed server) REQUIRES the real secret and never falls back -- so a
-      // misconfigured build fails closed instead of shipping 'diablo'.
-      //
-      // NOTE: this is a client-side gate; the value is baked into the bundle at
-      // build time, so it only raises the bar. Real protection against
-      // unauthorized engine control must be enforced server-side on the control
-      // commands (allowlist keyed on X-Auth-Email). See frontend/.env.example.
-      if (!expected && import.meta.env.PROD) {
-        setError("Control is disabled: no control password configured for this build.");
-        return;
-      }
-      if (!expected) {
-        console.warn(
-          "[ControlMode] VITE_CONTROL_PASSWORD is not set; using password 'diablo' (dev only)."
-        );
-      }
-      const effectiveExpected = expected || "diablo";
-      if (password === effectiveExpected) {
-        setControlEnabled(true);
-        setError(null);
-      } else {
-        setError("Incorrect password.");
-      }
-    } finally {
-      setUnlocking(false);
-    }
+    getWebSocketClient().send({
+      type: MessageType.CONTROL_UNLOCK,
+      timestamp: Date.now(),
+      payload: { password },
+    });
   }, []);
 
   const lock = useCallback(() => {
@@ -84,11 +80,7 @@ export function ControlModeProvider({ children }: { children: React.ReactNode })
   }, []);
 
   const value: ControlModeContextValue = {
-    controlEnabled,
-    unlocking,
-    error,
-    unlock,
-    lock,
+    controlEnabled, isOperator, unlocking, error, unlock, lock,
   };
 
   return <ControlModeContext.Provider value={value}>{children}</ControlModeContext.Provider>;

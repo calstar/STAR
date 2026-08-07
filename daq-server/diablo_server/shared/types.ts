@@ -27,6 +27,11 @@ export enum MessageType {
   NOTIFICATION = 'notification',
   CONFIG_UPDATED = 'config_updated',
   COUNTDOWN_TARGET_UPDATE = 'countdown_target_update',
+
+  // Engine-control authorization (DAQ operator gate)
+  CONTROL_STATUS = 'control_status',                // Server → Client: { operator, email }
+  CONTROL_UNLOCK = 'control_unlock',                // Client → Server: { password }
+  CONTROL_UNLOCK_RESULT = 'control_unlock_result',  // Server → Client: { ok, reason }
 }
 
 // Sensor types
