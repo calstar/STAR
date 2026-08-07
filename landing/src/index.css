@@ -88,6 +88,7 @@ body {
 .card-purple{ --card-accent: #a855f7; }
 .card-orange{ --card-accent: #f97316; }
 .card-cyan  { --card-accent: #06b6d4; }
+.card-indigo{ --card-accent: #6366f1; }
 
 .app-card:hover { border-color: var(--card-accent); }
 .app-card::before {
