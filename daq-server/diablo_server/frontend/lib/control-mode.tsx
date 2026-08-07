@@ -48,9 +48,22 @@ export function ControlModeProvider({ children }: { children: React.ReactNode })
     setError(null);
     try {
       const expected = (import.meta.env?.VITE_CONTROL_PASSWORD as string | undefined) ?? "";
+      // Differentiate local vs server by Vite's build mode: `vite dev` (local)
+      // permits the well-known dev password, but a production `vite build` (the
+      // deployed server) REQUIRES the real secret and never falls back -- so a
+      // misconfigured build fails closed instead of shipping 'diablo'.
+      //
+      // NOTE: this is a client-side gate; the value is baked into the bundle at
+      // build time, so it only raises the bar. Real protection against
+      // unauthorized engine control must be enforced server-side on the control
+      // commands (allowlist keyed on X-Auth-Email). See frontend/.env.example.
+      if (!expected && import.meta.env.PROD) {
+        setError("Control is disabled: no control password configured for this build.");
+        return;
+      }
       if (!expected) {
         console.warn(
-          "[ControlMode] VITE_CONTROL_PASSWORD is not set; using password 'diablo' for testing only."
+          "[ControlMode] VITE_CONTROL_PASSWORD is not set; using password 'diablo' (dev only)."
         );
       }
       const effectiveExpected = expected || "diablo";
