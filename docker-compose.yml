@@ -96,12 +96,6 @@ services:
       # needs no auth/.env at all. On a login node, keep the Google/Flask secrets
       # in auth/.env; JWT_SECRET here still wins, so set it in root .env.
       JWT_SECRET: ${JWT_SECRET:-}
-    volumes:
-      # onshape-viewer's approved-users roster, kept on the server (gitignored),
-      # NOT baked into the image. Create ./onshape_allowlist.txt before `up`
-      # (copy onshape_allowlist.example.txt); missing = deny everyone at
-      # onshape-viewer (fail-closed). Re-read on change, no restart.
-      - ./onshape_allowlist.txt:/app/onshape_allowlist.txt:ro
 
   # ── Engine Design ────────────────────────────────────────────────────────
   # Built from the repo root: the native-builder stage and runtime copy several

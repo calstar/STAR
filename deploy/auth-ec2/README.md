@@ -57,10 +57,8 @@ republishes `:latest`), then `docker compose pull && docker compose up -d`.
 ## Notes
 - **Local-machine apps:** reuse the same `JWT_SECRET`, serve under
   `*.starberkeley.org`, and point their Caddy `forward_auth` at this EC2 auth.
-- **onshape allowlist:** onshape-viewer runs on the apps machine, so its
-  approved-users roster lives there (a gitignored `onshape_allowlist.txt` mounted
-  into that machine's auth) — see deploy/apps/README.md. This EC2 login auth does
-  not gate onshape and needs no roster.
+- **onshape allowlist:** edit `auth/onshape_allowlist.txt` and republish, or mount
+  an override via `ONSHAPE_ALLOWLIST_FILE`.
 - **Moving OpenProject onto the tunnel later:** its ingress must target
   `http://host.docker.internal:80` (host-gateway), not `localhost` — OpenProject
   runs on the host, not this compose network.

@@ -27,11 +27,6 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 
 # app (subdomain label) -> path to its allowlist file. An app absent from this
 # map has no allowlist: the shared @berkeley.edu gate is the whole check.
-#
-# The onshape file is NOT committed -- it is a roster kept on the server and
-# bind-mounted into this container at the default path below (see
-# docker-compose.yml), or pointed at by ONSHAPE_ALLOWLIST_FILE. When absent,
-# _load() returns empty and onshape-viewer denies everyone (fail-closed).
 _APP_FILES = {
     "onshape-viewer": os.environ.get(
         "ONSHAPE_ALLOWLIST_FILE", os.path.join(_HERE, "onshape_allowlist.txt")
