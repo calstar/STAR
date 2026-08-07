@@ -7,6 +7,8 @@
 .env
 *.env
 !*.env.example
+# The approved-users roster is mounted at runtime, never baked into the image.
+onshape_allowlist.txt
 
 # Local noise / not needed at runtime
 __pycache__/

@@ -15,6 +15,9 @@ scripts/postprocessing/output/
 .env
 *.env
 auth/.env
+# onshape-viewer approved-users roster — lives on the server only, mounted into
+# the auth container. Template is onshape_allowlist.example.txt.
+onshape_allowlist.txt
 
 # Python / Virtualenvs
 .venv/

@@ -62,6 +62,15 @@ Set in `.env`:
 No `auth/.env` is needed (verify-only). For live Onshape builds, put the key pair
 in `onshape-viewer/.env` (optional — cache-first endpoints work without it).
 
+**onshape-viewer approved users** — create the roster on this machine (gitignored,
+mounted into the auth container). It must exist before `up`, or Docker creates a
+directory in its place and onshape-viewer denies everyone:
+```bash
+cp onshape_allowlist.example.txt onshape_allowlist.txt   # then edit: one email/line
+```
+Edits take effect on the next request (no restart). If you did the sparse checkout
+and the example isn't present, just create `onshape_allowlist.txt` directly.
+
 ## 3. Launch
 ```bash
 docker compose --profile tunnel pull              # SCHEME=http is read from .env
