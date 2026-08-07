@@ -312,3 +312,51 @@ def test_cookie_is_not_domain_scoped_or_secure_in_local_dev(client):
 
 def test_healthz_needs_no_auth(client):
     assert client.get("/healthz").status_code == 200
+
+
+# ── Verify-only mode ─────────────────────────────────────────────────────────
+
+
+def test_verify_only_boots_without_google_credentials():
+    """A verify-only node (the auth next to the apps on another machine) must
+    boot with only JWT_SECRET -- no Google client secret, no Flask secret -- and
+    still validate cookies. Run in a subprocess so it is a clean import with a
+    stripped environment, independent of this module's already-imported `main`."""
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        """
+        import datetime, jwt, main
+        assert main.VERIFY_ONLY is True
+        assert main.google is None                 # OAuth never wired
+        c = main.app.test_client()
+        assert c.get("/healthz").status_code == 200
+        now = datetime.datetime.now(datetime.timezone.utc)
+        tok = jwt.encode({"email": "a@berkeley.edu", "name": "A",
+                          "iat": now, "exp": now + datetime.timedelta(days=1)},
+                         main.JWT_SECRET, algorithm="HS256")
+        c.set_cookie("session", tok)
+        r = c.get("/verify")
+        assert r.status_code == 200 and r.headers["X-Auth-Email"] == "a@berkeley.edu"
+        # /login bounces to the central login rather than touching a Google client
+        r = c.get("/login?next=/x")
+        assert r.status_code == 302 and "auth.starberkeley.org/login" in r.headers["Location"]
+        print("VERIFY_ONLY_OK")
+        """
+    )
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "AUTH_VERIFY_ONLY": "true",
+        "JWT_SECRET": "verify-only-jwt-secret-0123456789abcdef",
+        "AUTH_PUBLIC_URL": "https://auth.starberkeley.org",
+        # deliberately NO GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / FLASK_SECRET_KEY
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=os.path.dirname(os.path.abspath(__file__)),
+        env=env, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "VERIFY_ONLY_OK" in result.stdout

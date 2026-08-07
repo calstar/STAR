@@ -1,18 +1,26 @@
-# STAR Internal Tools — production stack.
+# STAR Internal Tools — the apps-machine stack.
+#
+# This is the reverse proxy (Caddy) + a verify-only auth + every app + an
+# optional Cloudflare Tunnel. In the current split deployment it runs on the
+# apps machine; the EC2 box runs OpenProject + the *login* auth separately (see
+# deploy/ec2/). The full apps-machine runbook is deploy/apps/README.md.
+#
+# Auth split: login (Google OAuth, cookie minting) is centralized on the EC2
+# auth at auth.starberkeley.org. The auth here runs with AUTH_VERIFY_ONLY=true
+# and only validates cookies -- one minter, many verifiers. It shares JWT_SECRET
+# with EC2 and sends logins to AUTH_PUBLIC_URL.
 #
 # Lives at the repo root on purpose: Compose resolves relative paths against the
 # directory holding this file, so from deploy/ every `./auth`, `./landing` etc.
 # would have pointed at deploy/auth, deploy/landing.
 #
-# Usage:
-#   cp .env.example .env         # then fill it in
-#   cp auth/.env.example auth/.env
-#   docker compose up -d --build
-#
-# Behind a Cloudflare Tunnel instead of Let's Encrypt:
+# Usage (apps machine, behind a tunnel):
+#   cp .env.example .env         # then fill it in (SCHEME=http, AUTH_VERIFY_ONLY=true, …)
 #   SCHEME=http docker compose --profile tunnel up -d --build
-#   (and drop the published 80/443 below -- nothing needs to reach Caddy
-#    directly once cloudflared is the only ingress)
+#   (drop the published 80/443 below -- cloudflared is the only ingress)
+#
+# Let's Encrypt instead of a tunnel (single public machine): leave SCHEME=https
+# and `docker compose up -d --build`.
 
 services:
   # ── Reverse proxy + TLS + auth gate ──────────────────────────────────────
@@ -67,6 +75,7 @@ services:
 
   # ── Auth service ─────────────────────────────────────────────────────────
   auth:
+    image: ghcr.io/calstar/star-auth:latest
     build:
       context: ./auth
     restart: unless-stopped
@@ -79,41 +88,46 @@ services:
     environment:
       BASE_DOMAIN: ${BASE_DOMAIN:-starberkeley.org}
       AUTH_PUBLIC_URL: ${AUTH_PUBLIC_URL:-https://auth.starberkeley.org}
+      # On the apps machine set AUTH_VERIFY_ONLY=true: this auth only validates
+      # cookies (login lives on the EC2 box), so it needs just JWT_SECRET and no
+      # Google secret. See deploy/apps/. Default false = full login node.
+      AUTH_VERIFY_ONLY: ${AUTH_VERIFY_ONLY:-false}
+      # Single source for the shared secret (root .env), so a verify-only node
+      # needs no auth/.env at all. On a login node, keep the Google/Flask secrets
+      # in auth/.env; JWT_SECRET here still wins, so set it in root .env.
+      JWT_SECRET: ${JWT_SECRET:-}
 
   # ── Engine Design ────────────────────────────────────────────────────────
-  # Built from the repo root so the image can include auth/shared_auth.py;
-  # a Dockerfile cannot COPY from outside its own build context.
+  # Built from the repo root: the native-builder stage and runtime copy several
+  # EngineDesign/ subtrees. Auth is Caddy's job, so no JWT_SECRET here.
   engine-design-api:
+    image: ghcr.io/calstar/star-engine-design-api:latest
     build:
       context: .
       dockerfile: EngineDesign/Dockerfile.api
     restart: unless-stopped
     environment:
-      # Caddy is the enforcement point. This is defence in depth for the case
-      # where a site block is added without `import protected`.
-      AUTH_ENABLED: "true"
-      # Not ${JWT_SECRET:?...}: Compose interpolates the whole file before it
-      # does anything, so a required-variable guard here fails `build` and
-      # `config` too -- you would need the production secret just to compile an
-      # image. The backends refuse to start with AUTH_ENABLED=true and an empty
-      # secret, which catches the same mistake at the point it matters.
-      JWT_SECRET: ${JWT_SECRET:-}
+      # Per-user saved configs live here (a mounted volume). See userdata.py.
+      USERDATA_DIR: /data
+    volumes:
+      - userdata:/data
 
   engine-design-frontend:
+    image: ghcr.io/calstar/star-engine-design-frontend:latest
     build:
       context: ./EngineDesign/frontend
       dockerfile: Dockerfile
     restart: unless-stopped
 
   # ── P&ID Designer ────────────────────────────────────────────────────────
+  # Auth is Caddy's job; the image is self-contained, so it builds from the
+  # subproject dir.
   pid-designer-api:
+    image: ghcr.io/calstar/star-pid-designer-api:latest
     build:
-      context: .
-      dockerfile: pid-designer/Dockerfile.api
+      context: ./pid-designer
+      dockerfile: Dockerfile.api
     restart: unless-stopped
-    environment:
-      AUTH_ENABLED: "true"
-      JWT_SECRET: ${JWT_SECRET:-}
     volumes:
       # Diagram autosave. Git-backed checkpointing needs the STAR repo and a
       # push credential, which this image deliberately does not carry -- those
@@ -121,6 +135,7 @@ services:
       - pid_diagrams:/app/diagrams
 
   pid-designer-frontend:
+    image: ghcr.io/calstar/star-pid-designer-frontend:latest
     build:
       context: ./pid-designer/frontend
       dockerfile: Dockerfile
@@ -130,12 +145,19 @@ services:
   # No in-app auth (Caddy is the gate) and no dependency on auth/shared_auth.py,
   # so the build context is the subproject, not the repo root.
   recovery-calculator-api:
+    image: ghcr.io/calstar/star-recovery-calculator-api:latest
     build:
       context: ./recovery-calculator
       dockerfile: Dockerfile.api
     restart: unless-stopped
+    environment:
+      # Per-user units + saved configs live here (a mounted volume). See userdata.py.
+      USERDATA_DIR: /data
+    volumes:
+      - userdata:/data
 
   recovery-calculator-frontend:
+    image: ghcr.io/calstar/star-recovery-calculator-frontend:latest
     build:
       context: ./recovery-calculator/frontend
       dockerfile: Dockerfile
@@ -143,6 +165,7 @@ services:
 
   # ── Onshape CM Viewer ────────────────────────────────────────────────────
   onshape-viewer-api:
+    image: ghcr.io/calstar/star-onshape-viewer-api:latest
     build:
       context: ./onshape-viewer
       dockerfile: Dockerfile.api
@@ -159,6 +182,7 @@ services:
       - onshape_cache:/app/cache
 
   onshape-viewer-frontend:
+    image: ghcr.io/calstar/star-onshape-viewer-frontend:latest
     build:
       context: ./onshape-viewer/frontend
       dockerfile: Dockerfile
@@ -172,6 +196,7 @@ services:
 
   # ── Landing page ─────────────────────────────────────────────────────────
   landing:
+    image: ghcr.io/calstar/star-landing:latest
     build:
       context: ./landing
       dockerfile: Dockerfile
@@ -182,3 +207,7 @@ volumes:
   caddy_config:
   pid_diagrams:
   onshape_cache:
+  # Per-user data (engine-design + recovery-calculator): named configs, and
+  # recovery unit prefs. One shared volume so a future cross-user "browse + copy"
+  # is a single tree. Keyed by X-Auth-Email inside. See */backend/userdata.py.
+  userdata:

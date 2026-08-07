@@ -20,6 +20,7 @@ Required env vars (see .env.example):
 
 import datetime
 import os
+import secrets
 from urllib.parse import urlencode, urlparse
 
 import jwt
@@ -33,8 +34,20 @@ from shared_auth import verify_session
 
 load_dotenv()
 
+# A verify-only node validates cookies but never runs the OAuth login -- that is
+# centralized on the one public auth at AUTH_PUBLIC_URL. Such a node (the auth
+# container that runs next to the apps on another machine) needs only JWT_SECRET,
+# not the Google client secret, which keeps that secret on the login box alone.
+VERIFY_ONLY = os.environ.get("AUTH_VERIFY_ONLY", "false").lower() == "true"
+
 app = Flask(__name__)
-app.secret_key = os.environ["FLASK_SECRET_KEY"]
+# FLASK_SECRET_KEY secures the OAuth state during login. A verify-only node runs
+# no login, so it is optional there (an ephemeral key is fine); a login node MUST
+# set it, and consistently, or OAuth state fails to validate across workers.
+if VERIFY_ONLY:
+    app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
+else:
+    app.secret_key = os.environ["FLASK_SECRET_KEY"]
 
 # Flask's own session cookie is named "session" by default -- the same name we
 # use for the JWT. Authlib keeps the OAuth state in the Flask session and pops
@@ -56,14 +69,18 @@ BASE_DOMAIN = COOKIE_DOMAIN.lstrip(".")
 # Public URL of this service, used to build login links for other sites.
 AUTH_PUBLIC_URL = os.environ.get("AUTH_PUBLIC_URL", f"https://auth.{BASE_DOMAIN}").rstrip("/")
 
-oauth = OAuth(app)
-google = oauth.register(
-    name="google",
-    client_id=os.environ["GOOGLE_CLIENT_ID"],
-    client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
-    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-    client_kwargs={"scope": "openid email profile"},
-)
+# Google OAuth is only wired on a login node. A verify-only node skips it, and so
+# does not require the Google credentials to boot.
+google = None
+if not VERIFY_ONLY:
+    oauth = OAuth(app)
+    google = oauth.register(
+        name="google",
+        client_id=os.environ["GOOGLE_CLIENT_ID"],
+        client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"},
+    )
 
 
 # ── Request helpers ────────────────────────────────────────────────────────
@@ -174,6 +191,10 @@ def login():
     a value an attacker controls, which is precisely the CSRF defence the
     parameter exists to provide.
     """
+    if VERIFY_ONLY:
+        # This node runs no OAuth; hand off to the central login, preserving next.
+        qs = request.query_string.decode()
+        return redirect(f"{AUTH_PUBLIC_URL}/login" + (f"?{qs}" if qs else ""))
     session["next"] = _safe_next(request.args.get("next"))
     return google.authorize_redirect(_callback_url())
 
@@ -181,6 +202,9 @@ def login():
 @app.route("/callback")
 def callback():
     """Google redirects here after login. Validates email, mints JWT, sets cookie."""
+    if VERIFY_ONLY:
+        # Google never calls a verify-only node; nothing to complete here.
+        return redirect("/")
     try:
         # Also validates the state nonce against the Flask session.
         token = google.authorize_access_token()
