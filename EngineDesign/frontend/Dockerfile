@@ -1,5 +1,5 @@
 # Multi-stage: build Vite app, then serve with a minimal Node static server
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 
 # Env vars, not flags -- npm spawns child processes for lifecycle scripts, and
