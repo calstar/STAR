@@ -10,6 +10,7 @@ import { Optimizer } from './components/Optimizer';
 import { ControllerMode } from './components/ControllerMode';
 import { OptimizerDemo } from './components/OptimizerDemo';
 import ConfigurationSelector from './components/ConfigurationSelector';
+import { SavedConfigs } from './components/SavedConfigs';
 import { emitConfigChanged } from './lib/configBus';
 import { getConfig, getHealth } from './api/client';
 import type { EngineConfig } from './api/client';
@@ -90,6 +91,11 @@ function App() {
                 </span>
               </div>
             </div>
+          </div>
+
+          {/* Per-user saved config library */}
+          <div className="py-2 border-t border-[var(--color-border)]">
+            <SavedConfigs config={config} onLoad={handleConfigLoaded} />
           </div>
 
           {/* Navigation tabs */}

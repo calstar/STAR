@@ -1,6 +1,8 @@
-# Build context is the REPO ROOT, not EngineDesign/ -- a Dockerfile cannot COPY
-# from outside its context, and this image needs auth/shared_auth.py. See the
-# engine-design-api service in docker-compose.yml.
+# Build context is the REPO ROOT, not EngineDesign/: the native-builder stage and
+# the runtime image copy several EngineDesign/ subtrees, and keeping one context
+# for both stages is simplest. The app implements no auth (Caddy is the gate), so
+# nothing from auth/ is needed here. See the engine-design-api service in
+# docker-compose.yml.
 
 # ── Stage 1: the native C physics kernel ───────────────────────────────────
 #
@@ -67,9 +69,6 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements-base.txt
 
-# Shared JWT helper, imported by the backend's auth middleware
-COPY auth/shared_auth.py /auth/shared_auth.py
-
 # Backend source
 COPY EngineDesign/backend/ ./backend/
 COPY EngineDesign/engine/  ./engine/
@@ -94,7 +93,7 @@ COPY EngineDesign/output/cache/ ./output/cache/
 # rather than triggering a rebuild the runtime image could not perform.
 COPY --from=native-builder /build/engine/native/ ./engine/native/
 
-ENV PYTHONPATH=/app:/auth
+ENV PYTHONPATH=/app
 
 # Assert the kernel is actually usable, at build time. ensure_lib() returns the
 # prebuilt library if it is current; if it is missing or stale it shells out to

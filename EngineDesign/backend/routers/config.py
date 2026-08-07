@@ -59,6 +59,23 @@ async def get_config():
     return {"config": config_to_dict(app_state.config)}
 
 
+@router.post("/load")
+async def load_config_json(body: dict):
+    """Replace the current config with a full config dict (not a merge).
+
+    The per-user saved-config library (/api/configs) stores a complete config;
+    loading it must replace app_state wholesale. PUT deep-merges partial updates,
+    which would leave stale keys behind when the saved config is a different
+    injector type than the one currently loaded.
+    """
+    try:
+        config = PintleEngineConfig(**body)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=f"Config validation error: {e}")
+    app_state.set_config(config, app_state.config_path)
+    return {"status": "success", "config": config_to_dict(config)}
+
+
 @router.get("/options")
 async def get_switch_options():
     """Available injector types and propellant presets for the UI selectors (UNIFICATION P6)."""

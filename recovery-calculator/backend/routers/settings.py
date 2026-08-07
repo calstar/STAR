@@ -1,14 +1,14 @@
-"""GET/PUT /api/settings. The workstation's GUI preferences.
+"""GET/PUT /api/settings. The workstation's GUI preferences, per user.
 
 Which unit each quantity renders in is a property of whoever is sitting at the
 machine, not of the design -- so it does NOT live in the config a user saves
-and shares. A `config.json` written by someone working in feet has to load
+and shares. A saved config written by someone working in feet has to load
 identically for someone working in metres, which means unit choices cannot be
-in it. They go here instead, in a gitignored file next to the app.
+in it. They go here instead.
 
-This is the only route that writes to disk, and the only state the frontend
-keeps between sessions; everything else it needs is either computed per request
-or compiled in.
+Stored per user (units.json under the caller's data dir), so two people sharing
+a deployment keep their own units. Identity is X-Auth-Email (from Caddy) with a
+`local` dev fallback; there is no gating here. See backend/userdata.py.
 """
 
 import json
@@ -16,16 +16,18 @@ import os
 import tempfile
 from typing import Literal, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
+
+from backend import userdata
 
 router = APIRouter(prefix="/api", tags=["settings"])
 
-# backend/routers/settings.py -> backend/routers -> backend ->
-# recovery-calculator. Three dirnames land on the project root itself; see the
-# same comment in climatology.py for the 404 this once caused.
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_PATH = os.path.join(_ROOT, ".gui-settings.json")
+
+def _path(request: Request) -> str:
+    """This caller's units file: <userdata>/<user>/recovery/units.json."""
+    return os.path.join(userdata.user_dir(userdata.current_user(request)), "units.json")
+
 
 System = Optional[Literal["metric", "imperial"]]
 
@@ -85,7 +87,7 @@ class Settings(BaseModel):
     precision: Precision = Precision()
 
 
-def _read():
+def _read(path: str):
     """The stored settings, or empty when nothing has been saved yet.
 
     A corrupt file returns empty rather than raising: a half-written JSON blob
@@ -93,7 +95,7 @@ def _read():
     it anyway.
     """
     try:
-        with open(_PATH, encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, ValueError):
         data = None
@@ -106,12 +108,12 @@ def _read():
 
 
 @router.get("/settings")
-def get_settings():
-    return _read()
+def get_settings(request: Request):
+    return _read(_path(request))
 
 
 @router.put("/settings")
-def put_settings(settings: Settings):
+def put_settings(settings: Settings, request: Request):
     """Write atomically.
 
     A truncate-then-write can be interrupted -- a refresh mid-request, a
@@ -128,12 +130,13 @@ def put_settings(settings: Settings):
         "precision": {k: v for k, v in settings.precision.model_dump().items()
                       if v is not None},
     }
-    fd, tmp = tempfile.mkstemp(dir=_ROOT, prefix=".gui-settings-", suffix=".tmp")
+    path = _path(request)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".units-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(body, handle, indent=2, sort_keys=True)
             handle.write("\n")
-        os.replace(tmp, _PATH)
+        os.replace(tmp, path)
     except BaseException:
         # Never leave the temp file behind on a failed write.
         if os.path.exists(tmp):

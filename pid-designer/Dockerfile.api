@@ -1,6 +1,6 @@
-# Build context is the REPO ROOT, not pid-designer/ -- a Dockerfile cannot COPY
-# from outside its context, and this image needs auth/shared_auth.py. See the
-# pid-designer-api service in docker-compose.yml.
+# Build context is the subproject dir: the app implements no auth (Caddy is the
+# gate), so nothing from the repo root is needed. See the pid-designer-api
+# service in docker-compose.yml.
 FROM python:3.12-slim
 WORKDIR /app
 
@@ -20,18 +20,15 @@ ENV PIP_RETRIES=10 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_INPUT=1
 
-COPY pid-designer/requirements.txt .
+COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 
-# Shared JWT helper, imported by the backend's auth middleware
-COPY auth/shared_auth.py /auth/shared_auth.py
-
-COPY pid-designer/backend/ ./backend/
+COPY backend/ ./backend/
 
 # Diagram autosave target. Mounted as a volume in compose so edits survive a
 # rebuild; REPO_ROOT in routers/pid.py resolves to /app.
 RUN mkdir -p /app/diagrams
 
-ENV PYTHONPATH=/app:/auth
+ENV PYTHONPATH=/app
 EXPOSE 8001
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8001"]

@@ -14,7 +14,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Result, UiConfig } from '../../types/schema'
-import { simulate } from '../../api/client'
+import {
+  deleteSavedConfig, getSavedConfig, listSavedConfigs, saveNamedConfig,
+  simulate, type SavedConfigMeta,
+} from '../../api/client'
 import { usePadClimatology } from '../../lib/climatology'
 import { defaultUiConfig, physicsKey, toWireConfig } from '../../lib/serialise'
 import { Button, Card, PageHeader } from '../ui'
@@ -83,31 +86,70 @@ export function RecoveryPanel({ ui, onChange: setUi }: {
     URL.revokeObjectURL(url)
   }
 
+  // Rebuild the UI from a wire config (physics fields only). The UI-side
+  // bookkeeping a saved config drops -- collapsed cards, which catalog row
+  // filled a device -- is rebuilt from defaults, then overwritten. Shared by
+  // the file loader and the server-side library.
+  const applyWireConfig = useCallback((wire: Record<string, unknown>) => {
+    const base = defaultUiConfig()
+    setUi({
+      ...base,
+      vehicle: { ...base.vehicle, ...(wire.vehicle as object) },
+      site: { ...base.site, ...(wire.site as object) },
+      devices: ((wire.devices as Record<string, unknown>[]) ?? []).map((d, i) => ({
+        ...(base.devices[i] ?? base.devices[0]),
+        ...d,
+        uid: `l${i}`,
+        catalog: null,
+        collapsed: false,
+      })),
+    })
+    setError(null)
+  }, [setUi])
+
   const loadConfig = (file: File) => {
     file.text().then((text) => {
       try {
-        // Only the wire fields are in a saved config, so the UI-side
-        // bookkeeping is rebuilt from defaults and then overwritten.
-        const wire = JSON.parse(text)
-        const base = defaultUiConfig()
-        setUi({
-          ...base,
-          vehicle: { ...base.vehicle, ...wire.vehicle },
-          site: { ...base.site, ...wire.site },
-          devices: (wire.devices ?? []).map((d: Record<string, unknown>, i: number) => ({
-            ...(base.devices[i] ?? base.devices[0]),
-            ...d,
-            uid: `l${i}`,
-            catalog: null,
-            collapsed: false,
-          })),
-        })
-        setError(null)
+        applyWireConfig(JSON.parse(text))
       } catch (e) {
         setError(`could not read that config: ${e instanceof Error ? e.message : e}`)
       }
     })
   }
+
+  // ── Server-side named config library (per user) ──────────────────────────
+  const [saved, setSaved] = useState<SavedConfigMeta[]>([])
+  const [configName, setConfigName] = useState('')
+
+  const refreshSaved = useCallback(async () => {
+    const res = await listSavedConfigs()
+    setSaved(res.data?.configs ?? [])  // no backend -> empty, silently
+  }, [])
+
+  useEffect(() => { void refreshSaved() }, [refreshSaved])
+
+  const saveToLibrary = useCallback(async () => {
+    const name = configName.trim()
+    if (!name) return
+    const res = await saveNamedConfig(name, toWireConfig(ui))
+    if (res.error) { setError(`could not save "${name}": ${res.error}`); return }
+    setConfigName('')
+    setError(null)
+    void refreshSaved()
+  }, [configName, ui, refreshSaved])
+
+  const loadFromLibrary = useCallback(async (slug: string) => {
+    if (!slug) return
+    const res = await getSavedConfig(slug)
+    if (res.data) applyWireConfig(res.data.config as unknown as Record<string, unknown>)
+    else setError(res.error ?? 'could not load that config')
+  }, [applyWireConfig])
+
+  const deleteFromLibrary = useCallback(async (slug: string) => {
+    const res = await deleteSavedConfig(slug)
+    if (res.error) { setError(res.error); return }
+    void refreshSaved()
+  }, [refreshSaved])
 
   return (
     <div className="space-y-4">
@@ -156,6 +198,38 @@ export function RecoveryPanel({ ui, onChange: setUi }: {
               Reset
             </Button>
           </span>
+        </div>
+
+        {/* Per-user saved-config library (server-side, keyed by logged-in user;
+            'local' when running without auth). Empty and quiet with no backend. */}
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--color-border)] pt-3">
+          <span className="text-xs font-medium text-[var(--color-text-secondary)]">My configs</span>
+          <input
+            value={configName}
+            onChange={(e) => setConfigName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void saveToLibrary() }}
+            placeholder="name…"
+            className="w-40 rounded border border-[var(--color-border)] bg-transparent px-2 py-1.5 text-xs text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]"
+          />
+          <Button onClick={() => void saveToLibrary()} disabled={!configName.trim()}>
+            Save to my configs
+          </Button>
+          {saved.length > 0 && <span className="mx-1 h-4 w-px bg-[var(--color-border)]" />}
+          {saved.map((c) => (
+            <span key={c.slug}
+                  className="inline-flex items-center rounded border border-[var(--color-border)] text-xs">
+              <button onClick={() => void loadFromLibrary(c.slug)}
+                      title={`Load "${c.name}"`}
+                      className="py-1 pl-2 text-[var(--color-text-primary)] hover:text-[var(--color-accent)]">
+                {c.name}
+              </button>
+              <button onClick={() => void deleteFromLibrary(c.slug)}
+                      title="Delete" aria-label={`Delete ${c.name}`}
+                      className="px-1.5 py-1 text-[var(--color-text-muted)] hover:text-red-400">
+                ×
+              </button>
+            </span>
+          ))}
         </div>
 
       </Card>
