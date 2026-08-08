@@ -158,6 +158,8 @@ enum MessageType {
   ACTUATOR_UPDATE = 'actuator_update',
   STATE_UPDATE = 'state_update',
   BOARD_STATUS_UPDATE = 'board_status_update',
+  CONTROL_UNLOCK = 'control_unlock',
+  CONTROL_UNLOCK_RESULT = 'control_unlock_result',
 }
 
 enum SystemState {
@@ -460,6 +462,25 @@ async function connectWS(): Promise<WebSocket> {
       reject(err);
     });
   });
+}
+
+// Engine-control commands (state_transition, debug_mode, actuator, extend_fire)
+// are gated behind a per-connection unlock in server.ts (added with the operator
+// allowlist). With no X-Auth-Email header the test connection is treated as an
+// operator, but it must still send CONTROL_UNLOCK with the fat-finger password
+// before the backend accepts control commands. Only the thin backend enforces
+// this; legacy has no such gate (and never replies CONTROL_UNLOCK_RESULT).
+const CONTROL_PASSWORD = process.env.CONTROL_PASSWORD || 'diablo';
+
+async function unlockControl(ws: WebSocket): Promise<void> {
+  const resultPromise = waitForMessage(ws, MessageType.CONTROL_UNLOCK_RESULT, COMMAND_TIMEOUT_MS,
+    (payload) => payload.ok === true);
+  send(ws, {
+    type: MessageType.CONTROL_UNLOCK,
+    timestamp: Date.now(),
+    payload: { password: CONTROL_PASSWORD },
+  });
+  await resultPromise;
 }
 
 // ── Expected entities from config.toml enabled boards ────────────────────────
@@ -2222,6 +2243,18 @@ async function main(): Promise<void> {
   }
 
   const canRunCommandTests = !IS_THIN || HAS_SEQUENCER;
+
+  // Thin backend gates control commands behind an operator unlock — do it once
+  // up front so the state/actuator/debug tests below are authorized.
+  if (IS_THIN && canRunCommandTests) {
+    try {
+      await unlockControl(ws);
+      console.log('🔓 Control unlocked (approved operator + password)');
+    } catch (err: any) {
+      console.error(`❌ Control unlock failed: ${err.message}`);
+      process.exit(1);
+    }
+  }
 
   if (ONLY_TESTS) {
     const needsSeq = ['state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync']
