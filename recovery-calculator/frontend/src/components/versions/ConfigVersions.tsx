@@ -220,7 +220,7 @@ export function ConfigVersions({ config, onRestore }: Props) {
   return (
     <div className="relative">
       <div className="flex flex-wrap items-center gap-2 px-4 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
-        <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] shrink-0">Design</span>
+        <span className="text-2xs uppercase tracking-wider text-[var(--color-text-muted)] shrink-0">Design</span>
         <select
           value={activeId ?? ''}
           onChange={e => select(e.target.value)}
@@ -259,24 +259,24 @@ export function ConfigVersions({ config, onRestore }: Props) {
           {histStatus === 'err' && <p className="py-2 text-xs text-red-500">Failed to load history.</p>}
           {histStatus === 'idle' && (
             <>
-              <p className="mb-2 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Releases</p>
+              <p className="mb-2 text-2xs uppercase tracking-wider text-[var(--color-text-muted)]">Releases</p>
               {releases.length === 0 && <p className="pb-2 text-xs text-[var(--color-text-muted)]">No releases yet — Release publishes {nextLabel(releases)}.</p>}
               {releases.map(r => (
                 <button key={r.label} onClick={() => restoreRelease(r)} disabled={restoring === `rel:${r.label}`}
                   className="mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50">
-                  <span className="shrink-0 rounded border border-emerald-600/40 bg-emerald-600/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">{r.label}</span>
-                  <span className="flex-1 text-[10px] text-[var(--color-text-muted)]">{restoring === `rel:${r.label}` ? 'Restoring…' : relativeTime(r.savedAt)}</span>
+                  <span className="shrink-0 rounded border border-emerald-600/40 bg-emerald-600/10 px-1.5 py-0.5 text-2xs font-semibold text-emerald-600 dark:text-emerald-400">{r.label}</span>
+                  <span className="flex-1 text-2xs text-[var(--color-text-muted)]">{restoring === `rel:${r.label}` ? 'Restoring…' : relativeTime(r.savedAt)}</span>
                 </button>
               ))}
 
-              <p className="mb-2 mt-3 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Auto-saves (microversions)</p>
+              <p className="mb-2 mt-3 text-2xs uppercase tracking-wider text-[var(--color-text-muted)]">Auto-saves (microversions)</p>
               {micro.length === 0 && <p className="py-2 text-xs text-[var(--color-text-muted)]">No auto-saves yet.</p>}
               {micro.map(v => (
                 <button key={v.versionId} onClick={() => restoreMicro(v)} disabled={restoring === v.versionId}
                   className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50">
                   <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-border)]" />
                   <span className="flex-1 truncate text-xs text-[var(--color-text-primary)]">{new Date(v.savedAt).toLocaleString()}</span>
-                  <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{restoring === v.versionId ? 'Restoring…' : relativeTime(v.savedAt)}</span>
+                  <span className="shrink-0 text-2xs text-[var(--color-text-muted)]">{restoring === v.versionId ? 'Restoring…' : relativeTime(v.savedAt)}</span>
                 </button>
               ))}
             </>
