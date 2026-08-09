@@ -60,10 +60,12 @@ services:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     extra_hosts:
       # SSH access to the *host* box over this same tunnel — no open ports, no
-      # Elastic IP, no security-group rule (cloudflared is outbound-only). Add a
-      # Public Hostname in the Zero Trust dashboard (e.g. ssh-ec2.starberkeley.org
-      # → Service SSH → host.docker.internal:22) on THIS tunnel. `host-gateway`
-      # lets the container reach the host's sshd on port 22. Client side:
+      # Elastic IP, no security-group rule (cloudflared is outbound-only). In the
+      # Zero Trust dashboard, "Add published application" on THIS tunnel (e.g.
+      # ssh-ec2.starberkeley.org, Service URL ssh://host.docker.internal:22 --
+      # the new UI has no type dropdown, the ssh:// scheme is the type).
+      # `host-gateway` lets the container reach the host's sshd on port 22.
+      # Client side:
       # `ssh -o ProxyCommand="cloudflared access ssh --hostname
       # ssh-ec2.starberkeley.org" ec2-user@ssh-ec2.starberkeley.org`.
       - "host.docker.internal:host-gateway"

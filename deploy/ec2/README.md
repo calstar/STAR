@@ -71,6 +71,48 @@ Open `https://openproject.starberkeley.org` → your existing projects/users loa
 Data is untouched (same volumes). Restore a backup only if a volume was lost:
 `docker run --rm -v openproject_pgdata:/d -v "$PWD":/b alpine sh -c "rm -rf /d/* && tar xzf /b/pgdata-backup.tgz -C /d"`.
 
+## SSH into the box over the tunnel (no open ports, no static IP)
+
+`cloudflared` (already on this box for OpenProject + auth) can also carry SSH, so
+you reach the box with **no inbound security-group rule and no Elastic IP** —
+the connector is outbound-only. This mirrors the apps machine.
+
+**1. Add the route in Cloudflare.** Zero Trust → Networks → Tunnels → this
+tunnel → **Add published application** (the new UI's name for a Public Hostname —
+there is no service *type* dropdown, the URL scheme is the type):
+- Subdomain `ssh-ec2`, Domain `starberkeley.org`, Path empty
+- **Service URL:** `ssh://host.docker.internal:22`
+
+The `compose` `cloudflared` service maps `host.docker.internal` to the host via
+`extra_hosts`, so the route lands on the host's own `sshd`.
+
+**2. Apply on the box** (in-place; only recreates the connector, ~a few seconds'
+tunnel blip — OpenProject/auth data untouched, and never `down`):
+```bash
+cd ~/STAR && git pull
+cd ~/STAR/deploy/ec2 && docker compose up -d       # recreates only cloudflared
+docker compose logs --tail=20 cloudflared          # "Registered tunnel connection"
+```
+
+**3. Connect** (needs `cloudflared` installed locally — see
+`deploy/apps/FRESH-INSTALL.md` §7). `~/.ssh/config`:
+```
+Host star-ec2
+  HostName ssh-ec2.starberkeley.org
+  User ec2-user
+  ProxyCommand cloudflared access ssh --hostname %h
+```
+Then `ssh star-ec2`.
+
+**4. Close port 22** once tunnel SSH works, with a session still open as a safety
+net:
+```bash
+aws ec2 revoke-security-group-ingress --group-id sg-XXXX --protocol tcp --port 22 --cidr <old-cidr>
+```
+Verify `ssh star-ec2` still works and a direct `ssh ec2-user@<public-ip>` now
+times out. Recommended follow-up: gate `ssh-ec2` behind a Zero Trust Access
+policy (Access → Applications → Self-hosted), same as the apps machine.
+
 ## Email (Amazon SES)
 
 OpenProject sends notifications, invites, and password resets by **relaying

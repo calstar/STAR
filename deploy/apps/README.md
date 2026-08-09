@@ -21,23 +21,26 @@ lives here. One minter (EC2), many verifiers.
 
 ## 1. Cloudflare — a second tunnel for this machine
 Zero Trust → Networks → Tunnels → **create a new tunnel** (Docker), copy the token.
-Add **Public Hostnames**, all → Service **HTTP** `caddy:80`:
+Add routes with **Add published application** (the new UI's name for a Public
+Hostname). There is no service *type* dropdown — the **type is the URL scheme**:
+`http://` for the apps, `ssh://` for SSH. Leave **Path** empty. All web routes →
+Service URL `http://caddy:80`:
 
-| Subdomain | Domain |
-| --- | --- |
-| *(none / apex)* | `starberkeley.org` → landing |
-| `engine-design` | `starberkeley.org` |
-| `pid-designer` | `starberkeley.org` |
-| `recovery-calculator` | `starberkeley.org` |
-| `onshape-viewer` | `starberkeley.org` |
-
-Plus one **SSH** hostname on the same tunnel for remote admin — Service **SSH**
-`host.docker.internal:22` (the `cloudflared` service maps `host.docker.internal`
-to the host via `extra_hosts`, so this reaches the box's sshd):
-
-| Subdomain | Domain | Service |
+| Subdomain | Domain | Service URL |
 | --- | --- | --- |
-| `ssh` | `starberkeley.org` | SSH `host.docker.internal:22` |
+| *(none / apex)* | `starberkeley.org` → landing | `http://caddy:80` |
+| `engine-design` | `starberkeley.org` | `http://caddy:80` |
+| `pid-designer` | `starberkeley.org` | `http://caddy:80` |
+| `recovery-calculator` | `starberkeley.org` | `http://caddy:80` |
+| `onshape-viewer` | `starberkeley.org` | `http://caddy:80` |
+
+Plus one **SSH** route on the same tunnel for remote admin — the `ssh://` scheme
+makes it SSH, and `cloudflared` maps `host.docker.internal` to the host via
+`extra_hosts`, so it reaches the box's sshd:
+
+| Subdomain | Domain | Service URL |
+| --- | --- | --- |
+| `ssh` | `starberkeley.org` | `ssh://host.docker.internal:22` |
 
 Connect with `ProxyCommand cloudflared access ssh --hostname ssh.starberkeley.org`
 — see [`FRESH-INSTALL.md`](FRESH-INSTALL.md) §7. Do **not** add `auth.` here —

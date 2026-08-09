@@ -161,32 +161,42 @@ docker compose version
 
 In **Cloudflare Zero Trust → Networks → Tunnels**, create a tunnel (connector
 type **Docker**) for this box and copy its **token** (goes in `.env` as
-`CLOUDFLARE_TUNNEL_TOKEN`, §6). On the tunnel's **Public Hostname** tab add the
-web routes:
+`CLOUDFLARE_TUNNEL_TOKEN`, §6). Then add routes with **Add published
+application** (Cloudflare's newer UI — this is the renamed "Public Hostname").
 
-| Hostname | Service |
+> **UI note:** the new form has no service *type* dropdown. The **type is the
+> scheme you type into the Service URL** — `http://…` for the web apps,
+> `ssh://…` for SSH (its own hint shows `tcp://localhost:3306` as an example).
+> Leave **Path** empty.
+
+Web routes — Service URL `http://caddy:80` for each:
+
+| Hostname | Service URL |
 | --- | --- |
-| `starberkeley.org` (apex → landing) | HTTP `caddy:80` |
-| `engine-design.starberkeley.org` | HTTP `caddy:80` |
-| `pid-designer.starberkeley.org` | HTTP `caddy:80` |
-| `recovery-calculator.starberkeley.org` | HTTP `caddy:80` |
-| `onshape-viewer.starberkeley.org` | HTTP `caddy:80` |
+| `starberkeley.org` (apex → landing) | `http://caddy:80` |
+| `engine-design.starberkeley.org` | `http://caddy:80` |
+| `pid-designer.starberkeley.org` | `http://caddy:80` |
+| `recovery-calculator.starberkeley.org` | `http://caddy:80` |
+| `onshape-viewer.starberkeley.org` | `http://caddy:80` |
 
 Do **not** add `auth.` here — that stays on the EC2 tunnel. The SSH route is §5a.
 
 ### 5a. Add the SSH route to the same tunnel
 
-Still on the tunnel's **Public Hostname** tab → **Add a public hostname**:
+**Add published application** again:
 
 - **Subdomain:** `ssh`  **Domain:** `starberkeley.org`
-- **Type:** `SSH`  **URL:** `host.docker.internal:22`
+- **Path:** empty
+- **Service URL:** `ssh://host.docker.internal:22`
 - Save.
 
-`host.docker.internal` resolves to the host box because the `cloudflared`
-service in `docker-compose.yml` maps it with `extra_hosts: host-gateway`, so the
-container-side connector reaches the host's own `sshd` on port 22. This is a
-DNS-less route — Cloudflare auto-creates the `ssh.starberkeley.org` CNAME to the
-tunnel; you don't add an A record and no port is opened on the box.
+The `ssh://` scheme is what makes it an SSH route (no separate type field in the
+new UI). `host.docker.internal` resolves to the host box because the
+`cloudflared` service in `docker-compose.yml` maps it with `extra_hosts:
+host-gateway`, so the container-side connector reaches the host's own `sshd` on
+port 22. This is a DNS-less route — Cloudflare auto-creates the
+`ssh.starberkeley.org` CNAME to the tunnel; you don't add an A record and no port
+is opened on the box.
 
 ### 5b. Gate SSH behind Zero Trust Access (recommended — can add later)
 

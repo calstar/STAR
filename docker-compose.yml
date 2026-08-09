@@ -71,9 +71,11 @@ services:
       # error of its own when the token is empty.
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     extra_hosts:
-      # SSH access to the *host* box over the same tunnel. Add a Public Hostname
-      # in the Zero Trust dashboard (e.g. ssh.starberkeley.org → Service SSH →
-      # host.docker.internal:22) on this tunnel, and cloudflared proxies it to
+      # SSH access to the *host* box over the same tunnel. In the Zero Trust
+      # dashboard, "Add published application" on this tunnel (e.g.
+      # ssh.starberkeley.org, Service URL ssh://host.docker.internal:22 -- the
+      # new UI has no type dropdown, the ssh:// scheme is the type), and
+      # cloudflared proxies it to
       # the host's sshd. `host-gateway` is what lets the container reach the
       # host's port 22 (Docker Desktop provides the name already; Linux needs
       # this mapping). Client side: `ssh -o ProxyCommand="cloudflared access ssh
