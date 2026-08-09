@@ -83,9 +83,86 @@ curl -sI https://engine-design.starberkeley.org/          # 302 → auth.../logi
 Log in as an `@berkeley.edu` account; open onshape-viewer to confirm the allowlist
 (non-approved users authenticate but get 403 there).
 
+## P&ID diagram versioning (S3)
+
+Each user's P&ID diagrams autosave to a working copy on the `userdata` volume;
+their **version history** — automatic *microversions* + explicit *releases* —
+lives in a **versioned S3 bucket**. This is optional: leave `PID_S3_BUCKET` empty
+and history falls back to the local volume (fine for a single dev box, but the
+history then shares the box's fate — S3 is what makes it durable + off-box).
+
+This machine is **not** on EC2, so it authenticates with **IAM access keys**, not
+an instance role.
+
+**One-time AWS setup** (run where you're logged into AWS — your laptop is fine):
+```bash
+# 1. Versioned, private bucket
+aws s3api create-bucket --bucket star-pid-designer --region us-east-2 \
+  --create-bucket-configuration LocationConstraint=us-east-2
+aws s3api put-public-access-block --bucket star-pid-designer \
+  --public-access-block-configuration \
+  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+aws s3api put-bucket-versioning --bucket star-pid-designer \
+  --versioning-configuration Status=Enabled
+# Prune old microversions (noncurrent versions of current.json), keeping the
+# latest state + every release (their own current objects) forever.
+aws s3api put-bucket-lifecycle-configuration --bucket star-pid-designer \
+  --lifecycle-configuration '{"Rules":[{"ID":"prune-microversions","Status":"Enabled","Filter":{},"NoncurrentVersionExpiration":{"NoncurrentDays":90}}]}'
+
+# 2. IAM user + access keys, scoped to just this bucket
+aws iam create-user --user-name star-pid-designer
+aws iam put-user-policy --user-name star-pid-designer \
+  --policy-name pid-s3 --policy-document file://deploy/apps/pid-s3-policy.json
+aws iam create-access-key --user-name star-pid-designer   # copy the keys
+```
+
+**On the apps machine**, add to `.env` (then `docker compose … up -d`):
+```
+PID_S3_BUCKET=star-pid-designer
+PID_S3_PREFIX=pid
+AWS_DEFAULT_REGION=us-east-2
+AWS_ACCESS_KEY_ID=AKIA…
+AWS_SECRET_ACCESS_KEY=…
+```
+
+**Verify:** open pid-designer, create a diagram, edit for a few minutes, then
+`aws s3api list-object-versions --bucket star-pid-designer --prefix pid/` — you'll
+see microversions accrue as versions of `…/current.json`, and any release as its
+own `…/releases/<label>.json`.
+
+## Engine Design + Recovery Calculator config versioning (S3)
+
+Same model, same tiers: each user's designs autosave to a working copy on the
+`userdata` volume, and their **version history** (microversions + releases) goes
+to a versioned S3 bucket — or the local volume when the bucket var is empty.
+Give each app its own bucket (or reuse one bucket with distinct prefixes); both
+reuse the same `AWS_*` credentials as the P&ID setup.
+
+Repeat the **One-time AWS setup** above for each app's bucket, e.g.
+`star-engine-design` and `star-recovery-calculator`, including the **same
+lifecycle rule** (prune noncurrent versions of `…/current.json`; the immutable
+`releases/` objects are current versions and are untouched):
+```bash
+aws s3api put-bucket-lifecycle-configuration --bucket star-engine-design \
+  --lifecycle-configuration '{"Rules":[{"ID":"prune-microversions","Status":"Enabled","Filter":{},"NoncurrentVersionExpiration":{"NoncurrentDays":90}}]}'
+```
+
+**On the apps machine**, add to `.env`:
+```
+ENGINE_S3_BUCKET=star-engine-design
+ENGINE_S3_PREFIX=engine
+RECOVERY_S3_BUCKET=star-recovery-calculator
+RECOVERY_S3_PREFIX=recovery
+```
+
+**Verify:** open engine-design (or recovery-calculator), edit a design, cut a
+release, then `aws s3api list-object-versions --bucket star-engine-design
+--prefix engine/`.
+
 ## Notes
 - **`JWT_SECRET` must match EC2 exactly** — it's the whole trust link.
-- **Per-user data** (engine + recovery saved configs, recovery units) lives in the
-  `userdata` volume on this machine, keyed by `X-Auth-Email`.
+- **Per-user data** (engine + recovery saved configs, recovery units, **P&ID
+  working copies**) lives in the `userdata` volume on this machine, keyed by
+  `X-Auth-Email`. P&ID *version history* additionally lives in S3 (above).
 - **Updating:** `docker compose --profile tunnel pull && docker compose --profile tunnel up -d`
   (CI republishes `:latest` on every push to `landing-page`).

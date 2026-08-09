@@ -67,6 +67,60 @@ Open `https://openproject.starberkeley.org` → your existing projects/users loa
 Data is untouched (same volumes). Restore a backup only if a volume was lost:
 `docker run --rm -v openproject_pgdata:/d -v "$PWD":/b alpine sh -c "rm -rf /d/* && tar xzf /b/pgdata-backup.tgz -C /d"`.
 
+## Email (Amazon SES)
+
+OpenProject sends notifications, invites, and password resets by **relaying
+through Amazon SES** over SMTP (port 587) — it is not a mail server itself, and
+nothing here depends on OpenProject running on EC2 (SES accepts SMTP from
+anywhere). Compose already wires the `OPENPROJECT_SMTP__*` vars; you supply the
+creds + DNS. Do this once.
+
+### 1. Verify the domain in SES
+
+SES console (pick a region — `us-east-2` matches the backup bucket) → **Verified
+identities → Create identity → Domain** → `starberkeley.org` → enable **Easy
+DKIM** (RSA 2048). SES shows **3 CNAME records**.
+
+### 2. Add DNS records in Cloudflare
+
+All of these are **DNS-only (grey cloud)** — never proxy them:
+
+| Type | Name | Value | Notes |
+|------|------|-------|-------|
+| CNAME ×3 | `<token>._domainkey` | `<token>.dkim.amazonses.com` | the 3 SES gives you — DKIM, this is what makes DMARC pass |
+| TXT | `@` | `v=spf1 include:amazonses.com ~all` | SPF. **Merge** into your existing SPF if one exists — only one SPF TXT allowed |
+| TXT | `_dmarc` | `v=DMARC1; p=none; rua=mailto:you@starberkeley.org` | start at `p=none` to monitor, tighten later |
+
+SES marks the identity **verified** within minutes once the DKIM CNAMEs
+resolve. *(Optional: set a custom MAIL FROM subdomain in SES for SPF alignment —
+adds one MX + one TXT. DKIM alone already passes DMARC, so skip unless needed.)*
+
+### 3. Create SMTP credentials
+
+SES console → **SMTP settings → Create SMTP credentials**. This provisions an
+IAM user and shows an **SMTP username + password** *once* (the password is
+derived from an AWS secret key — it is NOT your account secret key). Put them in
+`.env` as `SES_SMTP_USERNAME` / `SES_SMTP_PASSWORD`, and set `SES_SMTP_ADDRESS`
+to the region you verified in (`email-smtp.<region>.amazonaws.com`).
+
+### 4. Leave the sandbox
+
+New SES accounts are **sandboxed**: they can only send *to* addresses you've
+verified. To email arbitrary teammates, SES console → **Account dashboard →
+Request production access** (short form, usually approved < 24h). Until then,
+verify each recipient under Verified identities to test.
+
+### 5. Apply + test
+
+```bash
+cd ~/STAR/deploy/ec2 && git pull
+grep -E 'SES_SMTP_(USERNAME|PASSWORD)' .env    # both non-empty
+docker compose up -d openproject               # picks up the new env
+```
+In OpenProject: **Administration → Emails and notifications → Email
+notifications → Send test email**. Check SES **Account dashboard** for the send
+count, and the DKIM/SPF results in the received message's headers.
+
 ## Off-box backups to S3
 
 `backup.sh` sends a **consistent** snapshot to S3 on a schedule: `pg_dump` the DB
@@ -84,7 +138,7 @@ s3://star-openproject-backups/assets/2026-08-08T0300Z.tgz
 **1. Bucket — versioning on, public access blocked** (pick your region):
 ```bash
 aws s3api create-bucket --bucket star-openproject-backups \
-  --region us-east-1 --create-bucket-configuration LocationConstraint=us-east-1
+  --region us-east-2 --create-bucket-configuration LocationConstraint=us-east-2
 aws s3api put-public-access-block --bucket star-openproject-backups \
   --public-access-block-configuration \
   BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
@@ -93,7 +147,8 @@ aws s3api put-bucket-versioning --bucket star-openproject-backups \
 aws s3api put-bucket-lifecycle-configuration --bucket star-openproject-backups \
   --lifecycle-configuration file://s3-lifecycle.json   # keep 90d; old versions 30d
 ```
-(`us-east-1` is special: **omit** `--create-bucket-configuration` there.)
+(Only `us-east-1` omits `--create-bucket-configuration`; every other region,
+including `us-east-2`, requires the matching `LocationConstraint` as shown.)
 
 **2. IAM role on the instance — no keys on the box.** Console → IAM → Roles →
 create role → *AWS service: EC2* → attach a policy from `iam-backup-policy.json`

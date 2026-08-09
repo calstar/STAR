@@ -24,6 +24,20 @@ services:
       OPENPROJECT_HTTPS: "true"
       # Reuse the EXISTING value from ~/openproject — do not regenerate.
       OPENPROJECT_SECRET_KEY_BASE: ${OPENPROJECT_SECRET_KEY_BASE:?set in .env}
+
+      # ── Outbound email via Amazon SES (SMTP submission, port 587) ──────────
+      # OpenProject just relays through SES; it is not a mail server itself.
+      # SES creds + region live in .env. The From address must be at a domain
+      # verified in SES (starberkeley.org). See README "Email (Amazon SES)".
+      OPENPROJECT_EMAIL__DELIVERY__METHOD: smtp
+      OPENPROJECT_SMTP__ADDRESS: ${SES_SMTP_ADDRESS:-email-smtp.us-east-2.amazonaws.com}
+      OPENPROJECT_SMTP__PORT: "587"
+      OPENPROJECT_SMTP__DOMAIN: ${OPENPROJECT_HOST__NAME:-openproject.starberkeley.org}
+      OPENPROJECT_SMTP__AUTHENTICATION: login
+      OPENPROJECT_SMTP__USER__NAME: ${SES_SMTP_USERNAME:?set in .env}
+      OPENPROJECT_SMTP__PASSWORD: ${SES_SMTP_PASSWORD:?set in .env}
+      OPENPROJECT_SMTP__ENABLE__STARTTLS__AUTO: "true"
+      OPENPROJECT_MAIL__FROM: ${OPENPROJECT_MAIL__FROM:-openproject@starberkeley.org}
     volumes:
       - pgdata:/var/openproject/pgdata
       - assets:/var/openproject/assets
