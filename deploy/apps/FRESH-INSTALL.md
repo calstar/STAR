@@ -185,7 +185,7 @@ Do **not** add `auth.` here — that stays on the EC2 tunnel. The SSH route is �
 
 **Add published application** again:
 
-- **Subdomain:** `ssh`  **Domain:** `starberkeley.org`
+- **Subdomain:** `ssh-rfs`  **Domain:** `starberkeley.org`
 - **Path:** empty
 - **Service URL:** `ssh://host.docker.internal:22`
 - Save.
@@ -195,21 +195,21 @@ new UI). `host.docker.internal` resolves to the host box because the
 `cloudflared` service in `docker-compose.yml` maps it with `extra_hosts:
 host-gateway`, so the container-side connector reaches the host's own `sshd` on
 port 22. This is a DNS-less route — Cloudflare auto-creates the
-`ssh.starberkeley.org` CNAME to the tunnel; you don't add an A record and no port
+`ssh-rfs.starberkeley.org` CNAME to the tunnel; you don't add an A record and no port
 is opened on the box.
 
 ### 5b. Gate SSH behind Zero Trust Access (recommended — can add later)
 
 **You can skip this at first and add it whenever.** Until it's in place, SSH is
 still protected by your key (§3) and the box has no open ports — but *anyone*
-who can run `cloudflared access ssh --hostname ssh.starberkeley.org` can reach
+who can run `cloudflared access ssh --hostname ssh-rfs.starberkeley.org` can reach
 the `sshd` login prompt and take swings at it. Adding this puts a Cloudflare
 login in front of that prompt so unapproved identities never even reach it. To
 do it now:
 
 1. **Zero Trust → Access → Applications → Add an application → Self-hosted.**
 2. **Application name:** `star-apps SSH`.  **Session duration:** e.g. `24h`.
-3. **Public hostname:** subdomain `ssh`, domain `starberkeley.org` (matches §5a).
+3. **Public hostname:** subdomain `ssh-rfs`, domain `starberkeley.org` (matches §5a).
 4. **Add a policy** → Action **Allow**:
    - Name: `team`.
    - Include → **Emails** (specific admins) *or* **Emails ending in**
@@ -273,19 +273,44 @@ apps and the tunnel back up automatically.
 
 ## 7. Connect over SSH (from your laptop)
 
-Install `cloudflared` locally (`brew install cloudflared`, or the Cloudflare apt
-repo on Linux), then add to `~/.ssh/config`:
+**Install `cloudflared` locally.** The tunnel only *transports* the connection —
+it does not authenticate you — so you still SSH with a normal key.
 
+- **macOS:** `brew install cloudflared`
+- **Linux / WSL:** grab the static binary (WSL is real Linux — do **not** use
+  brew):
+  ```bash
+  curl -L -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+  sudo install -m 0755 cloudflared /usr/local/bin/cloudflared && rm cloudflared
+  cloudflared --version   # arm machine? use …-linux-arm64
+  ```
+
+**Authorize your local key on the box.** The `User` you SSH as is just a Linux
+account on the machine (§3's admin user, `star` here) — the tunnel has nothing to
+do with it. You log in as whichever user holds your public key. Easiest: while
+you have any shell on the box, append your laptop's public key:
+```bash
+# on your laptop / WSL:
+ls ~/.ssh/id_ed25519.pub || ssh-keygen -t ed25519
+cat ~/.ssh/id_ed25519.pub                 # copy this line
+# on the box, as the `star` user:
+echo 'ssh-ed25519 AAAA… you@laptop' >> ~/.ssh/authorized_keys
+```
+
+**Add the SSH config** (`~/.ssh/config`):
 ```
 Host star-apps
-  HostName ssh.starberkeley.org
+  HostName ssh-rfs.starberkeley.org
   User star
+  IdentityFile ~/.ssh/id_ed25519
   ProxyCommand cloudflared access ssh --hostname %h
 ```
 
 Now `ssh star-apps` works from anywhere — no open ports, no VPN. The first
 connection opens a browser for the Zero Trust Access login if you added the
-policy in §5.
+policy in §5b. Confirm the mapping the tunnel relies on is present with
+`docker inspect <cloudflared-container> --format '{{.HostConfig.ExtraHosts}}'`
+→ `[host.docker.internal:host-gateway]`.
 
 ---
 

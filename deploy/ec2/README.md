@@ -91,15 +91,28 @@ tunnel blip — OpenProject/auth data untouched, and never `down`):
 ```bash
 cd ~/STAR && git pull
 cd ~/STAR/deploy/ec2 && docker compose up -d       # recreates only cloudflared
-docker compose logs --tail=20 cloudflared          # "Registered tunnel connection"
+docker compose logs --tail=20 cloudflared          # precheck PASS, "Environment is healthy"
+# confirm the host-gateway mapping actually landed (this is what reaches sshd):
+docker inspect star-ec2-cloudflared-1 --format '{{.HostConfig.ExtraHosts}}'
+#   -> [host.docker.internal:host-gateway]
 ```
 
 **3. Connect** (needs `cloudflared` installed locally — see
-`deploy/apps/FRESH-INSTALL.md` §7). `~/.ssh/config`:
+`deploy/apps/FRESH-INSTALL.md` §7). The tunnel only transports the connection;
+you still authenticate to the box's `sshd` with a normal key, as an OS user on
+the box. `ec2-user` is the Amazon Linux default (Ubuntu AMIs → `ubuntu`); you log
+in as whichever user holds your public key. No `.pem` hunting needed — while you
+have any shell on the box, authorize your laptop key:
+```bash
+cat ~/.ssh/id_ed25519.pub                          # on your laptop: copy this
+echo 'ssh-ed25519 AAAA… you@laptop' >> ~/.ssh/authorized_keys   # on the box, as ec2-user
+```
+Then `~/.ssh/config`:
 ```
 Host star-ec2
   HostName ssh-ec2.starberkeley.org
   User ec2-user
+  IdentityFile ~/.ssh/id_ed25519
   ProxyCommand cloudflared access ssh --hostname %h
 ```
 Then `ssh star-ec2`.

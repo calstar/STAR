@@ -40,9 +40,9 @@ makes it SSH, and `cloudflared` maps `host.docker.internal` to the host via
 
 | Subdomain | Domain | Service URL |
 | --- | --- | --- |
-| `ssh` | `starberkeley.org` | `ssh://host.docker.internal:22` |
+| `ssh-rfs` | `starberkeley.org` | `ssh://host.docker.internal:22` |
 
-Connect with `ProxyCommand cloudflared access ssh --hostname ssh.starberkeley.org`
+Connect with `ProxyCommand cloudflared access ssh --hostname ssh-rfs.starberkeley.org`
 — see [`FRESH-INSTALL.md`](FRESH-INSTALL.md) §7. Do **not** add `auth.` here —
 that stays on the EC2 tunnel.
 
