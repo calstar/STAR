@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import type { ReactNode } from 'react';
 
 /* ── Icons ──────────────────────────────────────────────────────────────── */
 function IconEngine() {
@@ -62,6 +63,14 @@ function IconStar() {
     </svg>
   );
 }
+function IconLock() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="11" width="18" height="11" rx="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  );
+}
 
 /* ── Canvas starfield ─────────────────────────────────────────────────── */
 function Starfield() {
@@ -122,7 +131,20 @@ function Starfield() {
 }
 
 /* ── App card data ───────────────────────────────────────────────────── */
-const APPS = [
+type AppCard = {
+  id: string;
+  href: string;
+  label: string;
+  subdomain: string;
+  description: string;
+  icon: ReactNode;
+  colorClass: string;
+  iconBg: string;
+  iconColor: string;
+  restricted?: string;
+};
+
+const APPS: AppCard[] = [
   {
     id: 'engine-design',
     href: 'https://engine-design.starberkeley.org',
@@ -146,6 +168,8 @@ const APPS = [
     colorClass: 'card-green',
     iconBg: 'linear-gradient(135deg, #15803d 0%, #22c55e 100%)',
     iconColor: '#86efac',
+    restricted:
+      'Control is restricted to authorized operators. Contact Aidan for access.',
   },
   {
     id: 'pid-designer',
@@ -182,6 +206,8 @@ const APPS = [
     colorClass: 'card-cyan',
     iconBg: 'linear-gradient(135deg, #0e7490 0%, #06b6d4 100%)',
     iconColor: '#67e8f9',
+    restricted:
+      'Only authorized users can use this; Onshape API credits are limited. Contact Aidan for access.',
   },
   {
     id: 'openproject',
@@ -189,7 +215,7 @@ const APPS = [
     label: 'OpenProject',
     subdomain: 'openproject.starberkeley.org',
     description:
-      'Team project management — work packages, timelines, and task boards for tracking work across the team.',
+      'Team project management: work packages, timelines, and task boards for tracking work across the team.',
     icon: <IconBoard />,
     colorClass: 'card-indigo',
     iconBg: 'linear-gradient(135deg, #4338ca 0%, #6366f1 100%)',
@@ -315,11 +341,22 @@ export default function App() {
                   {app.description}
                 </p>
 
-                {/* Arrow */}
-                <div style={{ marginTop: 4 }}>
+                {/* Footer row: Open (left) + optional Restricted chip (right) */}
+                <div className="card-footer">
                   <span className="arrow-chip">
                     Open <IconArrow />
                   </span>
+                  {app.restricted && (
+                    <span
+                      className="restricted-chip"
+                      onClick={e => e.preventDefault()}
+                    >
+                      <IconLock /> Restricted
+                      <span className="restricted-tip" role="tooltip">
+                        {app.restricted}
+                      </span>
+                    </span>
+                  )}
                 </div>
               </a>
             ))}

@@ -115,14 +115,75 @@ body {
   font-family: 'JetBrains Mono', monospace;
   font-size: 14px;
   color: var(--card-accent);
-  margin-top: auto;
   opacity: 0.7;
   transition: opacity 0.2s, gap 0.2s;
 }
 .app-card:hover .arrow-chip { opacity: 1; gap: 10px; }
 
+/* ── Card footer row (Open + Restricted, aligned to card bottom) ───────── */
+.card-footer {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 /* ── Mono label ────────────────────────────────────────────────────────── */
 .mono { font-family: 'JetBrains Mono', monospace; }
+
+/* ── Restricted chip + tooltip ─────────────────────────────────────────── */
+.restricted-chip {
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+  cursor: help;
+  transition: background 0.2s, border-color 0.2s;
+}
+.restricted-chip:hover {
+  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 60%, transparent);
+}
+
+.restricted-tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: 220px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0;
+  text-align: left;
+  color: var(--color-text-primary);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.restricted-chip:hover .restricted-tip,
+.restricted-chip:focus-visible .restricted-tip {
+  opacity: 1;
+  transform: translateY(0);
+}
 
 /* ── Status dot pulse ──────────────────────────────────────────────────── */
 @keyframes pulse-dot {
