@@ -4,13 +4,6 @@
 FROM python:3.12-slim
 WORKDIR /app
 
-# The backend shells out to git for diagram checkpointing. Present so that the
-# feature works when a repo is mounted; without one the module still imports and
-# the checkpoint/history endpoints report 503 (see backend/routers/pid.py).
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
-    && rm -rf /var/lib/apt/lists/*
-
 # Env, not CLI flags: pip installs an sdist's build dependencies by spawning a
 # fresh subprocess that inherits no command-line options, so --timeout/--retries
 # there would silently fall back to the stock 15s. Env vars reach it.
@@ -25,9 +18,8 @@ RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 
 COPY backend/ ./backend/
 
-# Diagram autosave target. Mounted as a volume in compose so edits survive a
-# rebuild; REPO_ROOT in routers/pid.py resolves to /app.
-RUN mkdir -p /app/diagrams
+# Per-user working copies live under USERDATA_DIR (a mounted volume, /data in
+# compose); version history lives in S3. Nothing diagram-related is baked in.
 
 ENV PYTHONPATH=/app
 EXPOSE 8001

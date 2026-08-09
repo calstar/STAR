@@ -107,8 +107,17 @@ services:
       dockerfile: EngineDesign/Dockerfile.api
     restart: unless-stopped
     environment:
-      # Per-user saved configs live here (a mounted volume). See userdata.py.
+      # Per-user saved configs + working copies live here (a mounted volume).
+      # See userdata.py.
       USERDATA_DIR: /data
+      # Design version history (microversions + releases) in S3. Empty bucket ->
+      # history falls back to the local volume (dev/no-AWS). IAM access keys, not
+      # an instance role (the apps machine is not on EC2).
+      ENGINE_S3_BUCKET: ${ENGINE_S3_BUCKET:-}
+      ENGINE_S3_PREFIX: ${ENGINE_S3_PREFIX:-engine}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     volumes:
       - userdata:/data
 
@@ -128,11 +137,20 @@ services:
       context: ./pid-designer
       dockerfile: Dockerfile.api
     restart: unless-stopped
+    environment:
+      # Per-user working copies (autosave target) live on this volume, keyed by
+      # X-Auth-Email. See pid-designer/backend/userdata.py.
+      USERDATA_DIR: /data
+      # Diagram version history (microversions + releases) in S3. Empty bucket ->
+      # history falls back to the local volume (dev/no-AWS). The apps machine is
+      # not on EC2, so these are IAM access keys, not an instance role.
+      PID_S3_BUCKET: ${PID_S3_BUCKET:-}
+      PID_S3_PREFIX: ${PID_S3_PREFIX:-pid}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     volumes:
-      # Diagram autosave. Git-backed checkpointing needs the STAR repo and a
-      # push credential, which this image deliberately does not carry -- those
-      # endpoints return 503 here and the feature stays a dev-machine one.
-      - pid_diagrams:/app/diagrams
+      - userdata:/data
 
   pid-designer-frontend:
     image: ghcr.io/calstar/star-pid-designer-frontend:latest
@@ -151,8 +169,16 @@ services:
       dockerfile: Dockerfile.api
     restart: unless-stopped
     environment:
-      # Per-user units + saved configs live here (a mounted volume). See userdata.py.
+      # Per-user units + saved configs + working copies live here (a mounted
+      # volume). See userdata.py.
       USERDATA_DIR: /data
+      # Config version history (microversions + releases) in S3. Empty bucket ->
+      # history falls back to the local volume (dev/no-AWS).
+      RECOVERY_S3_BUCKET: ${RECOVERY_S3_BUCKET:-}
+      RECOVERY_S3_PREFIX: ${RECOVERY_S3_PREFIX:-recovery}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     volumes:
       - userdata:/data
 
@@ -205,9 +231,9 @@ services:
 volumes:
   caddy_data:
   caddy_config:
-  pid_diagrams:
   onshape_cache:
-  # Per-user data (engine-design + recovery-calculator): named configs, and
-  # recovery unit prefs. One shared volume so a future cross-user "browse + copy"
-  # is a single tree. Keyed by X-Auth-Email inside. See */backend/userdata.py.
+  # Per-user data (engine-design + recovery-calculator + pid-designer): named
+  # configs, recovery unit prefs, and P&ID working copies. One shared volume so
+  # a future cross-user "browse + copy" is a single tree. Keyed by X-Auth-Email
+  # inside. See */backend/userdata.py.
   userdata:

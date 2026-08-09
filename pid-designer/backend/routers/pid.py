@@ -1,274 +1,331 @@
-"""PID diagram persistence and git-backed version control.
+"""Per-user P&ID diagram persistence with S3-backed version history.
 
-Checkpoints are committed to a single dedicated branch (DIAGRAM_BRANCH) that
-holds only the diagram file — never to whatever code branch the developer
-happens to have checked out. The commit is built with git plumbing against a
-throwaway index, so the developer's working tree, index, and current branch
-are left untouched. This keeps diagram history isolated from code history and
-out of the code branches' CI.
+Each user (``X-Auth-Email``, or ``local`` in dev) owns a private set of named
+diagrams. Three tiers of durability:
+
+* **autosave** -> a fast working copy on the volume (``current.json``). Never
+  hits S3. This is what ``/load`` returns -- always the freshest state.
+* **microversions** -> automatic point-in-time snapshots pushed to S3 over time
+  (throttled to ``PID_MICRO_INTERVAL`` while editing) plus a best-effort ``/flush``
+  when the tab closes. They ride on S3 object versioning; a lifecycle rule prunes
+  old ones. The safety net.
+* **releases** -> explicit, immutable, user-named milestones ("0.1").
+
+Version history lives in :mod:`backend.storage` (S3 in prod, filesystem in dev).
+This module owns the working copy and the per-user diagram index only. Auth is
+Caddy's job; a missing header just means the ``local`` user (never a rejection).
 """
 
 from __future__ import annotations
 
 import json
 import os
-import subprocess
 import tempfile
+import time
+from datetime import datetime, timezone
 from pathlib import Path
-
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 from typing import Any
+
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
+
+from backend import storage, userdata
 
 router = APIRouter(prefix="/api/pid", tags=["pid"])
 
-# Dedicated branch that stores diagram checkpoints. Excluded from CI in
-# .github/workflows/pid-designer-ci.yml so checkpoints never trigger a build.
-DIAGRAM_BRANCH = "pid-diagrams"
+# How long (seconds) between automatic microversion snapshots for one diagram
+# while it is being actively autosaved. The on-close /flush ignores this.
+MICRO_INTERVAL = int(os.environ.get("PID_MICRO_INTERVAL", "300"))
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DIAGRAM_PATH = REPO_ROOT / "diagrams" / "pid_main.json"
+# (user, diagram_id) -> monotonic time of the last microversion. In-process only;
+# after a restart the worst case is one extra snapshot, which is harmless.
+_last_micro: dict[tuple[str, str], float] = {}
 
-def _git_root() -> Path | None:
-    """Repo root containing the diagram, or None when there isn't one.
 
-    None is the normal case in the production container: the image ships the
-    backend sources, not a clone. Editing and autosave work from the filesystem
-    regardless; only the checkpoint/history endpoints need git, and they report
-    GIT_UNAVAILABLE rather than failing at import time.
-    """
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+# ── working copy + diagram index (on the volume) ─────────────────────────────
+
+def _index_path(user: str) -> Path:
+    return userdata.user_dir(user) / "index.json"
+
+
+def _load_index(user: str) -> list[dict]:
+    p = _index_path(user)
+    if not p.is_file():
+        return []
     try:
-        r = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=REPO_ROOT,
-                           capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.SubprocessError):
-        return None  # git not installed
-    if r.returncode != 0 or not r.stdout.strip():
-        return None  # not inside a work tree
-    return Path(r.stdout.strip())
+        data = json.loads(p.read_text("utf-8"))
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
 
 
-GIT_ROOT = _git_root()
-# Path used in `git show <hash>:<path>` — must be relative to the git repo root.
-try:
-    GIT_DIAGRAM_PATH = str(DIAGRAM_PATH.relative_to(GIT_ROOT)) if GIT_ROOT else None
-except ValueError:
-    # Repo found, but the diagram lives outside it (e.g. a mounted volume).
-    GIT_DIAGRAM_PATH = None
-
-GIT_UNAVAILABLE = (
-    "Diagram version control needs the STAR git repository. This deployment "
-    "serves the designer without it, so checkpoints and history are disabled; "
-    "edits are still saved."
-)
-
-
-def _require_git() -> None:
-    if GIT_DIAGRAM_PATH is None:
-        raise HTTPException(status_code=503, detail=GIT_UNAVAILABLE)
-
-
-def _run_git(*args: str, env: dict | None = None) -> str:
-    """Run a git command in the repo root, return stdout. Raises RuntimeError on failure."""
-    result = subprocess.run(
-        ["git", *args],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        env=env,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
-    return result.stdout
-
-
-def _resolve(ref: str) -> str | None:
-    """Return the commit sha a ref points to, or None if it doesn't exist."""
+def _save_index(user: str, index: list[dict]) -> None:
+    p = _index_path(user)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".tmp-", suffix=".json")
     try:
-        return _run_git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").strip() or None
-    except RuntimeError:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(index, fh, indent=2)
+        os.replace(tmp, p)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def _require_id(diagram_id: str) -> str:
+    """Sanitize a path-supplied id into a safe segment, or 404."""
+    safe = userdata.slugify(diagram_id)
+    if not safe:
+        raise HTTPException(status_code=404, detail="Unknown diagram")
+    return safe
+
+
+def _unique_id(user: str, name: str) -> str:
+    base = userdata.slugify(name) or "diagram"
+    existing = {d["id"] for d in _load_index(user)}
+    if base not in existing:
+        return base
+    n = 2
+    while f"{base}-{n}" in existing:
+        n += 1
+    return f"{base}-{n}"
+
+
+def _working_path(user: str, diagram_id: str) -> Path:
+    return userdata.user_dir(user) / diagram_id / "current.json"
+
+
+def _read_working(user: str, diagram_id: str) -> dict | None:
+    p = _working_path(user, diagram_id)
+    if not p.is_file():
+        return None
+    try:
+        return json.loads(p.read_text("utf-8"))
+    except (OSError, ValueError):
         return None
 
 
-def _fetch_diagram_branch() -> None:
-    """Best-effort fetch of the diagram branch so remote-tracking ref is current.
-
-    Silently ignored when the branch doesn't exist on the remote yet (first
-    ever checkpoint) or when offline — callers fall back to local refs.
-    """
+def _write_working(user: str, diagram_id: str, data: dict) -> None:
+    p = _working_path(user, diagram_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".tmp-", suffix=".json")
     try:
-        _run_git("fetch", "origin", DIAGRAM_BRANCH)
-    except RuntimeError:
-        pass
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2)
+        os.replace(tmp, p)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 
 
-def _diagram_ref() -> str | None:
-    """Best available ref for reading diagram history: remote-tracking, then local."""
-    return _resolve(f"refs/remotes/origin/{DIAGRAM_BRANCH}") or _resolve(f"refs/heads/{DIAGRAM_BRANCH}")
+def _touch_index(user: str, diagram_id: str) -> None:
+    index = _load_index(user)
+    for d in index:
+        if d["id"] == diagram_id:
+            d["updatedAt"] = _now_iso()
+            _save_index(user, index)
+            return
 
 
-def _read_diagram() -> dict:
-    if not DIAGRAM_PATH.exists():
-        return {"nodes": [], "edges": []}
-    return json.loads(DIAGRAM_PATH.read_text())
-
-
-def _write_diagram(data: dict) -> None:
-    DIAGRAM_PATH.parent.mkdir(parents=True, exist_ok=True)
-    DIAGRAM_PATH.write_text(json.dumps(data, indent=2))
-
-
-# ── Request models ────────────────────────────────────────────────────────────
+# ── request models ───────────────────────────────────────────────────────────
 
 class DiagramPayload(BaseModel):
     nodes: list[Any]
     edges: list[Any]
 
 
-class CheckpointPayload(BaseModel):
-    nodes: list[Any]
-    edges: list[Any]
-    title: str
-    description: str = ""
+class NamePayload(BaseModel):
+    name: str
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
-
-@router.get("/load")
-async def load_diagram():
-    """Load the current diagram from disk."""
-    return _read_diagram()
+class ReleasePayload(BaseModel):
+    label: str
+    nodes: list[Any] | None = None
+    edges: list[Any] | None = None
 
 
-@router.post("/autosave")
-async def autosave_diagram(payload: DiagramPayload):
-    """Write diagram to disk silently — no git commit."""
-    _write_diagram({"nodes": payload.nodes, "edges": payload.edges})
+# ── diagram CRUD ─────────────────────────────────────────────────────────────
+
+@router.get("/diagrams")
+async def list_diagrams(request: Request):
+    """The caller's diagrams, newest-updated first."""
+    user = userdata.current_user(request)
+    index = _load_index(user)
+    index.sort(key=lambda d: d.get("updatedAt") or "", reverse=True)
+    return index
+
+
+@router.post("/diagrams")
+async def create_diagram(request: Request, payload: NamePayload):
+    """Create a new empty diagram owned by the caller."""
+    user = userdata.current_user(request)
+    name = payload.name.strip() or "Untitled"
+    diagram_id = _unique_id(user, name)
+    now = _now_iso()
+    meta = {"id": diagram_id, "name": name, "createdAt": now, "updatedAt": now}
+    index = _load_index(user)
+    index.append(meta)
+    _save_index(user, index)
+    _write_working(user, diagram_id, {"nodes": [], "edges": []})
+    return meta
+
+
+@router.patch("/diagrams/{diagram_id}")
+async def rename_diagram(request: Request, diagram_id: str, payload: NamePayload):
+    """Rename a diagram. The id (and all storage keys) stay fixed."""
+    user = userdata.current_user(request)
+    diagram_id = _require_id(diagram_id)
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    index = _load_index(user)
+    for d in index:
+        if d["id"] == diagram_id:
+            d["name"] = name
+            d["updatedAt"] = _now_iso()
+            _save_index(user, index)
+            return d
+    raise HTTPException(status_code=404, detail="Unknown diagram")
+
+
+@router.delete("/diagrams/{diagram_id}")
+async def delete_diagram(request: Request, diagram_id: str):
+    """Remove a diagram: index entry, working copy, and its version history."""
+    user = userdata.current_user(request)
+    diagram_id = _require_id(diagram_id)
+    index = [d for d in _load_index(user) if d["id"] != diagram_id]
+    _save_index(user, index)
+    storage.backend.delete_diagram(user, diagram_id)
+    _last_micro.pop((user, diagram_id), None)
     return {"ok": True}
 
 
-@router.post("/pull")
-async def pull_latest():
-    """Fetch the latest diagram from the diagram branch and write it to disk.
+# ── working copy: load + autosave ────────────────────────────────────────────
 
-    Only the diagram file is materialized — the developer's working tree and
-    current branch are untouched (no `git pull`/checkout).
+@router.get("/diagrams/{diagram_id}/load")
+async def load_diagram(request: Request, diagram_id: str):
+    """Load the freshest state: the working copy.
+
+    Falls back to the latest S3 microversion only if the working copy is missing
+    (a fresh or lost volume) -- self-healing after volume loss. Never silently
+    returns an older snapshot otherwise; that is what /history is for.
     """
-    _require_git()
-    _fetch_diagram_branch()
-    ref = _diagram_ref()
-    if not ref:
-        # No checkpoints pushed yet; just return whatever is on disk.
-        return _read_diagram()
+    user = userdata.current_user(request)
+    diagram_id = _require_id(diagram_id)
+    data = _read_working(user, diagram_id)
+    if data is None:
+        data = storage.backend.latest_micro(user, diagram_id)
+        if data is not None:
+            _write_working(user, diagram_id, data)  # rehydrate the volume
+    return data or {"nodes": [], "edges": []}
+
+
+@router.post("/diagrams/{diagram_id}/autosave")
+async def autosave_diagram(request: Request, diagram_id: str, payload: DiagramPayload):
+    """Write the working copy; snapshot to S3 only once per MICRO_INTERVAL."""
+    user = userdata.current_user(request)
+    diagram_id = _require_id(diagram_id)
+    data = {"nodes": payload.nodes, "edges": payload.edges}
+    _write_working(user, diagram_id, data)
+
+    micro = False
+    key = (user, diagram_id)
+    now = time.monotonic()
+    if now - _last_micro.get(key, 0.0) >= MICRO_INTERVAL:
+        try:
+            storage.backend.snapshot_micro(user, diagram_id, data)
+            _last_micro[key] = now
+            _touch_index(user, diagram_id)
+            micro = True
+        except Exception:
+            # Never let a snapshot failure lose the edit -- the working copy is
+            # already saved. Retry on the next autosave.
+            pass
+    return {"ok": True, "micro": micro}
+
+
+@router.post("/diagrams/{diagram_id}/flush")
+async def flush_diagram(request: Request, diagram_id: str, payload: DiagramPayload):
+    """Force an immediate microversion. Target of the on-close sendBeacon."""
+    user = userdata.current_user(request)
+    diagram_id = _require_id(diagram_id)
+    data = {"nodes": payload.nodes, "edges": payload.edges}
+    _write_working(user, diagram_id, data)
     try:
-        content = _run_git("show", f"{ref}:{GIT_DIAGRAM_PATH}")
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=f"git show failed: {e}")
-    try:
-        data = json.loads(content)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="Latest diagram snapshot is not valid JSON")
-    _write_diagram(data)
+        storage.backend.snapshot_micro(user, diagram_id, data)
+        _last_micro[(user, diagram_id)] = time.monotonic()
+        _touch_index(user, diagram_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Snapshot failed: {e}")
+    return {"ok": True}
+
+
+# ── microversion history ─────────────────────────────────────────────────────
+
+@router.get("/diagrams/{diagram_id}/history")
+async def get_history(request: Request, diagram_id: str):
+    """Recent automatic microversions, newest first."""
+    user = userdata.current_user(request)
+    diagram_id = _require_id(diagram_id)
+    return storage.backend.list_micro(user, diagram_id)
+
+
+@router.get("/diagrams/{diagram_id}/version/{version_id}")
+async def get_version(request: Request, diagram_id: str, version_id: str):
+    """Fetch one microversion (for preview/restore). Does not touch the working copy."""
+    user = userdata.current_user(request)
+    diagram_id = _require_id(diagram_id)
+    data = storage.backend.get_micro(user, diagram_id, version_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Version not found")
     return data
 
 
-@router.post("/checkpoint")
-async def checkpoint(payload: CheckpointPayload):
-    """Write the diagram and commit it onto the dedicated diagram branch.
+# ── releases ─────────────────────────────────────────────────────────────────
 
-    The commit is assembled with git plumbing against a temporary index so the
-    developer's working tree, staged changes, and current branch are never
-    touched. The new commit is pushed to origin/<DIAGRAM_BRANCH>; the local
-    branch ref is updated to match.
-    """
-    # Save first: the edit should survive even where checkpointing cannot run.
-    _write_diagram({"nodes": payload.nodes, "edges": payload.edges})
-    _require_git()
+@router.post("/diagrams/{diagram_id}/release")
+async def create_release(request: Request, diagram_id: str, payload: ReleasePayload):
+    """Publish the current state as an immutable named release (e.g. "0.1")."""
+    user = userdata.current_user(request)
+    diagram_id = _require_id(diagram_id)
+    label = userdata.slugify(payload.label)
+    if not label:
+        raise HTTPException(status_code=400, detail="A version label is required")
 
-    commit_message = payload.title.strip()
-    if not commit_message:
-        raise HTTPException(status_code=400, detail="Checkpoint title is required")
-    if payload.description.strip():
-        commit_message += f"\n\n{payload.description.strip()}"
+    if payload.nodes is not None and payload.edges is not None:
+        data = {"nodes": payload.nodes, "edges": payload.edges}
+        _write_working(user, diagram_id, data)
+    else:
+        data = _read_working(user, diagram_id) or {"nodes": [], "edges": []}
 
-    # Parent is the current tip of the diagram branch (remote preferred), if any.
-    _fetch_diagram_branch()
-    parent = _diagram_ref()
-
-    # Build the commit against a throwaway index that contains ONLY the diagram
-    # file, so nothing else from the working tree leaks into the diagram branch.
-    fd, tmp_index = tempfile.mkstemp(prefix="pid-index-")
-    os.close(fd)
-    # Remove the empty placeholder: git treats a 0-byte index as corrupt. It
-    # creates a fresh index at this path on first write instead.
-    os.unlink(tmp_index)
     try:
-        env = {**os.environ, "GIT_INDEX_FILE": tmp_index}
-        rel_path = str(DIAGRAM_PATH.relative_to(REPO_ROOT))
-
-        # Seed the temp index from the parent tree (if any) so the commit is a
-        # clean delta on the diagram branch, then stage just the diagram file.
-        if parent:
-            _run_git("read-tree", parent, env=env)
-        _run_git("add", "--", rel_path, env=env)
-        tree = _run_git("write-tree", env=env).strip()
-
-        commit_args = ["commit-tree", tree, "-m", commit_message]
-        if parent:
-            commit_args += ["-p", parent]
-        new_commit = _run_git(*commit_args).strip()
-
-        # Move the local branch ref and push. Use an explicit refspec so we never
-        # depend on (or disturb) the developer's checked-out branch or upstream.
-        _run_git("update-ref", f"refs/heads/{DIAGRAM_BRANCH}", new_commit)
-        _run_git("push", "origin", f"{new_commit}:refs/heads/{DIAGRAM_BRANCH}")
-        # Keep the remote-tracking ref in sync so /history and /pull see it.
-        _run_git("update-ref", f"refs/remotes/origin/{DIAGRAM_BRANCH}", new_commit)
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=f"git operation failed: {e}")
-    finally:
-        if os.path.exists(tmp_index):
-            os.unlink(tmp_index)
-
-    return {"ok": True, "commit": new_commit[:7]}
+        meta = storage.backend.create_release(user, diagram_id, label, data)
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail=f"Release '{label}' already exists")
+    _touch_index(user, diagram_id)
+    return meta
 
 
-@router.get("/history")
-async def get_history():
-    """Return the last 10 commits that touched diagrams/pid_main.json."""
-    _require_git()
-    _fetch_diagram_branch()
-    ref = _diagram_ref()
-    if not ref:
-        return []
-    try:
-        # `:(top)` forces the pathspec to be resolved from the git root rather
-        # than the process cwd (which is REPO_ROOT == pid-designer/, a subdir of
-        # the git root), so the filter matches the diagram's actual path.
-        log = _run_git("log", "--format=%H|%s|%aI", "-10", ref, "--", f":(top){GIT_DIAGRAM_PATH}")
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=f"git log failed: {e}")
-
-    entries = []
-    for line in log.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        parts = line.split("|", 2)
-        if len(parts) == 3:
-            entries.append({"hash": parts[0], "title": parts[1], "timestamp": parts[2]})
-    return entries
+@router.get("/diagrams/{diagram_id}/releases")
+async def list_releases(request: Request, diagram_id: str):
+    """Published releases, newest first."""
+    user = userdata.current_user(request)
+    diagram_id = _require_id(diagram_id)
+    return storage.backend.list_releases(user, diagram_id)
 
 
-@router.get("/version/{commit_hash}")
-async def get_version(commit_hash: str):
-    """Return the diagram snapshot at a specific commit."""
-    _require_git()
-    try:
-        content = _run_git("show", f"{commit_hash}:{GIT_DIAGRAM_PATH}")
-    except RuntimeError as e:
-        raise HTTPException(status_code=404, detail=f"Version not found: {e}")
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="Snapshot at that commit is not valid JSON")
+@router.get("/diagrams/{diagram_id}/release/{label}")
+async def get_release(request: Request, diagram_id: str, label: str):
+    """Fetch one release snapshot (for preview/restore)."""
+    user = userdata.current_user(request)
+    diagram_id = _require_id(diagram_id)
+    data = storage.backend.get_release(user, diagram_id, userdata.slugify(label))
+    if data is None:
+        raise HTTPException(status_code=404, detail="Release not found")
+    return data
