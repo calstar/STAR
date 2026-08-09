@@ -1,13 +1,13 @@
 """Config management endpoints."""
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 import os
 from pathlib import Path
 from pydantic import ValidationError
 import yaml
 
 from engine.pipeline.config_schemas import PintleEngineConfig
-from backend.state import app_state
+from backend.session import UserSession, get_session
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -18,26 +18,31 @@ def config_to_dict(config: PintleEngineConfig) -> dict:
 
 
 @router.post("/upload")
-async def upload_config(file: UploadFile = File(...)):
+async def upload_config(
+    file: UploadFile = File(...),
+    session: UserSession = Depends(get_session),
+):
     """Upload a YAML config file and parse it."""
     if not file.filename or not file.filename.endswith((".yaml", ".yml")):
         raise HTTPException(status_code=400, detail="File must be a YAML file (.yaml or .yml)")
-    
+
     try:
         content = await file.read()
-        
-        # Save uploads outside configs/ — personal exports must not land in the tracked tree.
+
+        # Save uploads outside configs/ — personal exports must not land in the
+        # tracked tree — and under the caller's own folder, so two users
+        # uploading files with the same name do not overwrite each other.
         from backend.main import project_root
-        uploads_dir = project_root / "output" / "user_configs"
+        uploads_dir = project_root / "output" / "user_configs" / session.user
         uploads_dir.mkdir(parents=True, exist_ok=True)
         save_path = uploads_dir / file.filename
-        
+
         with open(save_path, "wb") as f:
             f.write(content)
-            
+
         data = yaml.safe_load(content.decode("utf-8"))
         config = PintleEngineConfig(**data)
-        app_state.set_config(config, str(save_path))
+        session.app_state.set_config(config, str(save_path))
         return {
             "status": "success",
             "message": f"Config loaded from {file.filename}",
@@ -52,15 +57,15 @@ async def upload_config(file: UploadFile = File(...)):
 
 
 @router.get("")
-async def get_config():
+async def get_config(session: UserSession = Depends(get_session)):
     """Get the current config as JSON."""
-    if not app_state.has_config():
+    if not session.app_state.has_config():
         raise HTTPException(status_code=404, detail="No config loaded. Upload a config file first.")
-    return {"config": config_to_dict(app_state.config)}
+    return {"config": config_to_dict(session.app_state.config)}
 
 
 @router.post("/load")
-async def load_config_json(body: dict):
+async def load_config_json(body: dict, session: UserSession = Depends(get_session)):
     """Replace the current config with a full config dict (not a merge).
 
     The per-user saved-config library (/api/configs) stores a complete config;
@@ -72,19 +77,19 @@ async def load_config_json(body: dict):
         config = PintleEngineConfig(**body)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=f"Config validation error: {e}")
-    app_state.set_config(config, app_state.config_path)
+    session.app_state.set_config(config, session.app_state.config_path)
     return {"status": "success", "config": config_to_dict(config)}
 
 
 @router.get("/options")
-async def get_switch_options():
+async def get_switch_options(session: UserSession = Depends(get_session)):
     """Available injector types and propellant presets for the UI selectors (UNIFICATION P6)."""
     from engine.pipeline.config_switch import available_injectors, available_propellants
     current_injector = None
     current_propellant = None
-    if app_state.has_config():
-        current_injector = getattr(getattr(app_state.config, "injector", None), "type", None)
-        current_propellant = getattr(app_state.config, "propellant_preset", None)
+    if session.app_state.has_config():
+        current_injector = getattr(getattr(session.app_state.config, "injector", None), "type", None)
+        current_propellant = getattr(session.app_state.config, "propellant_preset", None)
     return {
         "injectors": available_injectors(),
         "propellants": available_propellants(),
@@ -93,7 +98,10 @@ async def get_switch_options():
 
 
 @router.get("/injector_schema")
-async def get_injector_schema(injector_type: str | None = None):
+async def get_injector_schema(
+    injector_type: str | None = None,
+    session: UserSession = Depends(get_session),
+):
     """Per-injector field schema for the UI to render the RIGHT controls (frozen params, geometry)
     instead of hardcoding pintle fields (INJECTOR_PARITY_PLAN W5). Defaults to the loaded config's type.
     """
@@ -101,8 +109,8 @@ async def get_injector_schema(injector_type: str | None = None):
         frozen_param_fields_for, INJECTOR_GEOMETRY_TEMPLATES, bindings_for,
     )
     t = injector_type
-    if t is None and app_state.has_config():
-        t = getattr(getattr(app_state.config, "injector", None), "type", None)
+    if t is None and session.app_state.has_config():
+        t = getattr(getattr(session.app_state.config, "injector", None), "type", None)
     t = t or "impinging"
     b = bindings_for(t)
     return {
@@ -115,7 +123,7 @@ async def get_injector_schema(injector_type: str | None = None):
 
 
 @router.post("/switch")
-async def switch_config_endpoint(body: dict):
+async def switch_config_endpoint(body: dict, session: UserSession = Depends(get_session)):
     """Switch injector type and/or propellant, auto-reconciling the config to the right physics.
 
     Body: {"injector_type": "pintle"|"impinging"|null, "propellant_preset": "methalox"|...|null}.
@@ -132,11 +140,11 @@ async def switch_config_endpoint(body: dict):
     A propellant overlay leaves the chamber seeded for the previous propellant; the response carries a
     ``design_warning`` ("needs re-optimization") so the UI can flag the design as a seed, not a solution.
     """
-    if not app_state.has_config():
+    if not session.app_state.has_config():
         raise HTTPException(status_code=404, detail="No config loaded. Upload a config file first.")
     from engine.pipeline.config_switch import switch_config, design_staleness
     try:
-        current = config_to_dict(app_state.config)
+        current = config_to_dict(session.app_state.config)
         reconciled = switch_config(
             current,
             injector_type=body.get("injector_type"),
@@ -147,7 +155,7 @@ async def switch_config_endpoint(body: dict):
         raise HTTPException(status_code=422, detail=f"Switch failed: {e}")
 
     # Update in-memory state only; preserve the original config_path WITHOUT writing to it.
-    app_state.set_config(new_config, app_state.config_path)
+    session.app_state.set_config(new_config, session.app_state.config_path)
 
     from engine.core.dispatch import validate_config_bindings
     return {
@@ -159,18 +167,18 @@ async def switch_config_endpoint(body: dict):
 
 
 @router.put("")
-async def update_config(updates: dict):
+async def update_config(updates: dict, session: UserSession = Depends(get_session)):
     """Update the current config with partial updates.
-    
+
     Accepts a nested dict of updates that will be merged with the current config.
     """
-    if not app_state.has_config():
+    if not session.app_state.has_config():
         raise HTTPException(status_code=404, detail="No config loaded. Upload a config file first.")
-    
+
     try:
         # Get current config as dict
-        current = config_to_dict(app_state.config)
-        
+        current = config_to_dict(session.app_state.config)
+
         # Deep merge updates
         def deep_merge(base: dict, updates: dict) -> dict:
             result = base.copy()
@@ -180,20 +188,18 @@ async def update_config(updates: dict):
                 else:
                     result[key] = value
             return result
-        
+
         merged = deep_merge(current, updates)
-        
+
         # Validate and create new config
         new_config = PintleEngineConfig(**merged)
-        
-        # Save to disk if we have a path
-        if app_state.config_path:
-            with open(app_state.config_path, "w", encoding="utf-8") as f:
-                # Use clean dict (exclude unset/none if desired, but here we just dump the model)
-                yaml.dump(config_to_dict(new_config), f, default_flow_style=False, sort_keys=False)
-                
-        app_state.set_config(new_config, app_state.config_path)
-        
+
+        # In-memory only. Live edits used to be written back to config_path, but
+        # that path is the shared, git-tracked configs/default.yaml -- one user's
+        # edit would clobber it for everyone. Durable saves go through the
+        # per-user library (POST /api/configs); this working copy stays in memory.
+        session.app_state.set_config(new_config, session.app_state.config_path)
+
         return {
             "status": "success",
             "message": "Config updated",

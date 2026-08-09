@@ -1,12 +1,12 @@
 """Flight simulation endpoints."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal
 import numpy as np
 import copy
 
-from backend.state import app_state
+from backend.session import UserSession, get_session
 
 router = APIRouter(prefix="/api/flight", tags=["flight"])
 
@@ -761,13 +761,13 @@ def _execute_flight_simulation(
 # ============================================================================
 
 @router.post("/simulate", response_model=FlightSimResponse)
-async def simulate_flight(request: FlightSimRequest):
+async def simulate_flight(request: FlightSimRequest, session: UserSession = Depends(get_session)):
     """Run flight simulation using time-series data.
 
     Uses provided thrust/mdot arrays from time-series analysis.
     Returns apogee, max velocity, and flight trajectory.
     """
-    if not app_state.has_config():
+    if not session.app_state.has_config():
         raise HTTPException(
             status_code=400,
             detail="No config loaded. Upload a config file first.",
@@ -782,7 +782,7 @@ async def simulate_flight(request: FlightSimRequest):
                 detail=f"RocketPy or flight simulation module not available: {e}",
             )
 
-        return _execute_flight_simulation(app_state.config, request)
+        return _execute_flight_simulation(session.app_state.config, request)
 
     except HTTPException:
         raise
@@ -794,9 +794,9 @@ async def simulate_flight(request: FlightSimRequest):
 
 
 @router.post("/optimize-altitude", response_model=FlightOptimizeResponse)
-async def optimize_flight_altitude(request: FlightOptimizeRequest):
+async def optimize_flight_altitude(request: FlightOptimizeRequest, session: UserSession = Depends(get_session)):
     """Find minimum-fuel burn time to reach a target apogee for the loaded time-series curve."""
-    if not app_state.has_config():
+    if not session.app_state.has_config():
         raise HTTPException(
             status_code=400,
             detail="No config loaded. Upload a config file first.",
@@ -831,7 +831,7 @@ async def optimize_flight_altitude(request: FlightOptimizeRequest):
                 times, thrust, mdot_O, mdot_F, burn_time_s
             )
             flight_result = _execute_flight_simulation(
-                app_state.config,
+                session.app_state.config,
                 request,
                 time_array=t_out,
                 thrust_array=thrust_out,
@@ -878,7 +878,7 @@ async def optimize_flight_altitude(request: FlightOptimizeRequest):
                 times, thrust, mdot_O, mdot_F, opt.optimal_burn_time_s
             )
             flight_at_optimum = _execute_flight_simulation(
-                app_state.config,
+                session.app_state.config,
                 request,
                 time_array=t_out,
                 thrust_array=thrust_out,

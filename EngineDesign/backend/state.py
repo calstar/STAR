@@ -25,6 +25,7 @@ class AppState:
         return self.config is not None and self.runner is not None
 
 
-# Global singleton instance
-app_state = AppState()
+# There is intentionally no module-level singleton. Live state is per-user:
+# each request resolves its own AppState via backend.session.get_session, so two
+# users connected at once never share one config/runner. See backend/session.py.
 

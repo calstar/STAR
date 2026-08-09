@@ -31,3 +31,7 @@ python-multipart
 
 # Verifying the shared session cookie (auth/shared_auth.py) when AUTH_ENABLED=true.
 pyjwt>=2.8
+
+# Design version history in S3 (microversions + releases) when ENGINE_S3_BUCKET
+# is set. Lazy-imported in backend/storage.py, so dev without AWS never needs it.
+boto3>=1.34
