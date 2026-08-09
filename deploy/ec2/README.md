@@ -1,10 +1,14 @@
 # STAR EC2 box — OpenProject + auth, one tunnel
 
 Unified stack: OpenProject, auth, and cloudflared on one network. Reaches both
-apps by service name through the tunnel — no host ports, no A-records.
-Supersedes `deploy/auth-ec2/`.
+apps by service name through the tunnel — no host ports, no A-records. This
+replaced the old auth-only stack (formerly `deploy/auth-ec2/`, now removed).
 
 ## Cutover (safe — no data loss)
+
+> **Already done.** The box was cut over to this stack; this section is kept as
+> a historical record. The `.env` now lives in `deploy/ec2/`. The steps below
+> reference the old `deploy/auth-ec2/` folder, which no longer exists.
 
 Run on the box. **Never use `docker compose down -v`** (that deletes volumes).
 

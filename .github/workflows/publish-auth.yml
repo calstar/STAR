@@ -2,7 +2,7 @@ name: Publish auth image
 
 # Builds the auth service and pushes it to GHCR so the EC2 box (which runs
 # OpenProject) can `docker pull` it instead of cloning this repo. See
-# deploy/auth-ec2/README.md.
+# deploy/ec2/README.md.
 #
 # auth/ lives only on landing-page, so that is the branch that publishes. main
 # has no auth/**, so its pushes never match the path filter anyway.

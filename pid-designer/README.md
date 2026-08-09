@@ -87,7 +87,7 @@ everything works with no AWS.
 
 Deploy + AWS setup (bucket, versioning, lifecycle, IAM keys) is in
 [`deploy/apps/README.md`](../deploy/apps/README.md) and
-[`deploy/apps/pid-s3-policy.json`](../deploy/apps/pid-s3-policy.json).
+[`deploy/apps/app-s3-policy.json`](../deploy/apps/app-s3-policy.json).
 
 ## API
 

@@ -5,6 +5,9 @@ from the EC2 box (which runs OpenProject + the central login auth). This machine
 runs the root `docker-compose.yml`: Caddy (the gate) + a **verify-only** auth +
 all app frontends/APIs + cloudflared.
 
+> Setting up the box from a **blank Ubuntu install** (OS, Docker, SSH-over-the-tunnel,
+> desktop auto-login)? Do [`FRESH-INSTALL.md`](FRESH-INSTALL.md) first, then this.
+
 ```
 browser ─▶ Cloudflare edge (TLS) ─▶ cloudflared ─▶ caddy ─▶ app
                                                       └▶ auth:5000/verify (local, fast)
@@ -28,7 +31,17 @@ Add **Public Hostnames**, all → Service **HTTP** `caddy:80`:
 | `recovery-calculator` | `starberkeley.org` |
 | `onshape-viewer` | `starberkeley.org` |
 
-Do **not** add `auth.` here — that stays on the EC2 tunnel.
+Plus one **SSH** hostname on the same tunnel for remote admin — Service **SSH**
+`host.docker.internal:22` (the `cloudflared` service maps `host.docker.internal`
+to the host via `extra_hosts`, so this reaches the box's sshd):
+
+| Subdomain | Domain | Service |
+| --- | --- | --- |
+| `ssh` | `starberkeley.org` | SSH `host.docker.internal:22` |
+
+Connect with `ProxyCommand cloudflared access ssh --hostname ssh.starberkeley.org`
+— see [`FRESH-INSTALL.md`](FRESH-INSTALL.md) §7. Do **not** add `auth.` here —
+that stays on the EC2 tunnel.
 
 ## 2. On the apps machine — get the compose + configure
 Images are pulled from GHCR (built by `publish-apps.yml` / `publish-auth.yml`), so
@@ -44,11 +57,10 @@ git sparse-checkout set deploy/apps      # cone mode also brings the root files
 cp .env.example .env
 ```
 
-GHCR packages are private by default, so log in once (classic PAT, `read:packages`)
-or make the `star-*` packages public:
-```bash
-echo "<classic_PAT>" | docker login ghcr.io -u <github-user> --password-stdin
-```
+The `star-*` GHCR packages are **public**, so no `docker login` is needed — the
+pull in §3 just works. (If you ever flip them back to private, log in first with
+a classic PAT scoped `read:packages`: `echo "<PAT>" | docker login ghcr.io -u
+<github-user> --password-stdin`.)
 
 Set in `.env`:
 | Var | Value |
@@ -83,81 +95,65 @@ curl -sI https://engine-design.starberkeley.org/          # 302 → auth.../logi
 Log in as an `@berkeley.edu` account; open onshape-viewer to confirm the allowlist
 (non-approved users authenticate but get 403 there).
 
-## P&ID diagram versioning (S3)
+## Version history in S3 (P&ID + Engine + Recovery)
 
-Each user's P&ID diagrams autosave to a working copy on the `userdata` volume;
-their **version history** — automatic *microversions* + explicit *releases* —
-lives in a **versioned S3 bucket**. This is optional: leave `PID_S3_BUCKET` empty
-and history falls back to the local volume (fine for a single dev box, but the
-history then shares the box's fate — S3 is what makes it durable + off-box).
+All three apps use the same model: each user's designs/diagrams autosave to a
+working copy on the `userdata` volume, and their **version history** — automatic
+*microversions* + explicit *releases* — lives in a **versioned S3 bucket**. This
+is optional: leave a `*_S3_BUCKET` var empty and that app's history falls back to
+the local volume (fine for a single dev box, but the history then shares the
+box's fate — S3 is what makes it durable + off-box).
 
-This machine is **not** on EC2, so it authenticates with **IAM access keys**, not
-an instance role.
+Each app gets **its own bucket** (blast-radius isolation), but they share **one
+IAM user** — the apps machine holds a single `AWS_*` key pair in `.env`, so one
+user with a policy spanning all three buckets is what lets every app reach its
+own. This machine is **not** on EC2, so it authenticates with **IAM access
+keys**, not an instance role.
 
 **One-time AWS setup** (run where you're logged into AWS — your laptop is fine):
 ```bash
-# 1. Versioned, private bucket
-aws s3api create-bucket --bucket star-pid-designer --region us-east-2 \
-  --create-bucket-configuration LocationConstraint=us-east-2
-aws s3api put-public-access-block --bucket star-pid-designer \
-  --public-access-block-configuration \
-  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
-aws s3api put-bucket-versioning --bucket star-pid-designer \
-  --versioning-configuration Status=Enabled
-# Prune old microversions (noncurrent versions of current.json), keeping the
-# latest state + every release (their own current objects) forever.
-aws s3api put-bucket-lifecycle-configuration --bucket star-pid-designer \
-  --lifecycle-configuration '{"Rules":[{"ID":"prune-microversions","Status":"Enabled","Filter":{},"NoncurrentVersionExpiration":{"NoncurrentDays":90}}]}'
+# 1. Three versioned, private buckets — same recipe for each.
+for b in star-pid-designer star-engine-design star-recovery-calculator; do
+  aws s3api create-bucket --bucket "$b" --region us-east-2 \
+    --create-bucket-configuration LocationConstraint=us-east-2
+  aws s3api put-public-access-block --bucket "$b" \
+    --public-access-block-configuration \
+    BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+  aws s3api put-bucket-versioning --bucket "$b" \
+    --versioning-configuration Status=Enabled
+  # Prune old microversions (noncurrent versions of current.json), keeping the
+  # latest state + every release (their own current objects) forever.
+  aws s3api put-bucket-lifecycle-configuration --bucket "$b" \
+    --lifecycle-configuration '{"Rules":[{"ID":"prune-microversions","Status":"Enabled","Filter":{},"NoncurrentVersionExpiration":{"NoncurrentDays":90}}]}'
+done
 
-# 2. IAM user + access keys, scoped to just this bucket
-aws iam create-user --user-name star-pid-designer
-aws iam put-user-policy --user-name star-pid-designer \
-  --policy-name pid-s3 --policy-document file://deploy/apps/pid-s3-policy.json
-aws iam create-access-key --user-name star-pid-designer   # copy the keys
+# 2. ONE IAM user + access keys, policy scoped to all three buckets.
+aws iam create-user --user-name star-app-s3
+aws iam put-user-policy --user-name star-app-s3 \
+  --policy-name app-s3 --policy-document file://deploy/apps/app-s3-policy.json
+aws iam create-access-key --user-name star-app-s3   # copy the keys
 ```
+
+> Bucket names are baked into `deploy/apps/app-s3-policy.json`. If you rename a
+> bucket, edit the ARNs there too.
 
 **On the apps machine**, add to `.env` (then `docker compose … up -d`):
 ```
 PID_S3_BUCKET=star-pid-designer
 PID_S3_PREFIX=pid
+ENGINE_S3_BUCKET=star-engine-design
+ENGINE_S3_PREFIX=engine
+RECOVERY_S3_BUCKET=star-recovery-calculator
+RECOVERY_S3_PREFIX=recovery
 AWS_DEFAULT_REGION=us-east-2
 AWS_ACCESS_KEY_ID=AKIA…
 AWS_SECRET_ACCESS_KEY=…
 ```
 
-**Verify:** open pid-designer, create a diagram, edit for a few minutes, then
+**Verify:** open an app, edit for a few minutes / cut a release, then
 `aws s3api list-object-versions --bucket star-pid-designer --prefix pid/` — you'll
 see microversions accrue as versions of `…/current.json`, and any release as its
-own `…/releases/<label>.json`.
-
-## Engine Design + Recovery Calculator config versioning (S3)
-
-Same model, same tiers: each user's designs autosave to a working copy on the
-`userdata` volume, and their **version history** (microversions + releases) goes
-to a versioned S3 bucket — or the local volume when the bucket var is empty.
-Give each app its own bucket (or reuse one bucket with distinct prefixes); both
-reuse the same `AWS_*` credentials as the P&ID setup.
-
-Repeat the **One-time AWS setup** above for each app's bucket, e.g.
-`star-engine-design` and `star-recovery-calculator`, including the **same
-lifecycle rule** (prune noncurrent versions of `…/current.json`; the immutable
-`releases/` objects are current versions and are untouched):
-```bash
-aws s3api put-bucket-lifecycle-configuration --bucket star-engine-design \
-  --lifecycle-configuration '{"Rules":[{"ID":"prune-microversions","Status":"Enabled","Filter":{},"NoncurrentVersionExpiration":{"NoncurrentDays":90}}]}'
-```
-
-**On the apps machine**, add to `.env`:
-```
-ENGINE_S3_BUCKET=star-engine-design
-ENGINE_S3_PREFIX=engine
-RECOVERY_S3_BUCKET=star-recovery-calculator
-RECOVERY_S3_PREFIX=recovery
-```
-
-**Verify:** open engine-design (or recovery-calculator), edit a design, cut a
-release, then `aws s3api list-object-versions --bucket star-engine-design
---prefix engine/`.
+own `…/releases/<label>.json`. (Swap bucket + prefix for the other two apps.)
 
 ## Notes
 - **`JWT_SECRET` must match EC2 exactly** — it's the whole trust link.
