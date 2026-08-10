@@ -93,7 +93,8 @@ class OnshapeClient:
             raise MissingCredentials(
                 "ONSHAPE_ACCESS_KEY and ONSHAPE_SECRET_KEY must be set. "
                 "Get a key pair from https://dev-portal.onshape.com and put them "
-                "in onshape-viewer/.env (gitignored), or export them."
+                "in the stack's .env (the shared root .env, alongside JWT_SECRET "
+                "and the AWS_* keys), then recreate the container; or export them."
             )
         return access, secret
 

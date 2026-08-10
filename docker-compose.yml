@@ -207,12 +207,16 @@ services:
       context: ./onshape-viewer
       dockerfile: Dockerfile.api
     restart: unless-stopped
-    env_file:
-      # Onshape API key pair (ONSHAPE_ACCESS_KEY / ONSHAPE_SECRET_KEY). Optional
-      # so the stack still comes up without it -- the cache-first endpoints work,
-      # and only live Onshape calls (refresh/build) fail until it is filled in.
-      - path: ./onshape-viewer/.env
-        required: false
+    environment:
+      # Onshape API key pair. Lives in the shared root .env like every other
+      # service's secrets (JWT_SECRET, AWS_*) -- one env file for the whole
+      # stack. Empty -> the stack still comes up and the cache-first endpoints
+      # work; only live Onshape calls (refresh/build) fail until it's filled in.
+      # Get a pair at https://dev-portal.onshape.com.
+      ONSHAPE_ACCESS_KEY: ${ONSHAPE_ACCESS_KEY:-}
+      ONSHAPE_SECRET_KEY: ${ONSHAPE_SECRET_KEY:-}
+      # Optional: only to target a non-default Onshape instance / api version.
+      ONSHAPE_BASE_URL: ${ONSHAPE_BASE_URL:-}
     volumes:
       # Built-model cache: expensive Onshape builds (manifest + glb) survive a
       # rebuild. CACHE_ROOT in backend/main.py is /app/cache.
