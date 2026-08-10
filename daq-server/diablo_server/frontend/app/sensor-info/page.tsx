@@ -338,9 +338,9 @@ const SENSE_COLORS = ['#F59E0B', '#10B981', '#3B82F6', '#EC4899', '#F87171', '#A
 export default function SensorInfoPage() {
   const ws = getWebSocketClient();
 
-  // ── DAQ / relay data-rate probe (Elodin relay → backend) ────────────────────
-  const [relayPackets, setRelayPackets] = useState<number | null>(null);
-  const [relayRateHz, setRelayRateHz] = useState<number>(0);
+  // ── DAQ ingest data-rate probe (Elodin → backend) ───────────────────────────
+  const [ingestPackets, setIngestPackets] = useState<number | null>(null);
+  const [ingestRateHz, setIngestRateHz] = useState<number>(0);
   /** Backend avg per-channel Hz per board group from Elodin ingest (pre-WS-throttle ≈ scan rate). */
   const [boardScanHz, setBoardScanHz] = useState({
     pt1: 0, pt2: 0, tc: 0, rtd: 0, lc: 0, act: 0, enc: 0,
@@ -359,14 +359,14 @@ export default function SensorInfoPage() {
         .then((r) => (r.ok ? r.json() : null))
         .then((data: any) => {
           if (!data || cancelled) return;
-          const count: number = typeof data.relayPacketsReceived === 'number' ? data.relayPacketsReceived : 0;
+          const count: number = typeof data.ingestPacketsReceived === 'number' ? data.ingestPacketsReceived : 0;
           const now = Date.now();
-          setRelayPackets(count);
+          setIngestPackets(count);
           if (prevCount != null && prevTime != null) {
             const dt = (now - prevTime) / 1000;
             const dn = count - prevCount;
             if (dt > 0 && dn >= 0) {
-              setRelayRateHz(dn / dt);
+              setIngestRateHz(dn / dt);
             }
           }
           prevCount = count;
@@ -511,13 +511,13 @@ export default function SensorInfoPage() {
               <div>
                 <span className="text-gray-500 mr-1">Packets:</span>
                 <span className="text-cyan-400" data-testid="sensor-info-packets-count">
-                  {ingestMetricsStale ? '---' : relayPackets != null ? relayPackets.toLocaleString() : '---'}
+                  {ingestMetricsStale ? '---' : ingestPackets != null ? ingestPackets.toLocaleString() : '---'}
                 </span>
               </div>
               <div>
                 <span className="text-gray-500 mr-1">Ingest Rate:</span>
                 <span className="text-cyan-400" data-testid="sensor-info-ingest-rate-hz">
-                  {ingestMetricsStale ? '---' : `${fmtHz(relayRateHz)} Hz`}
+                  {ingestMetricsStale ? '---' : `${fmtHz(ingestRateHz)} Hz`}
                 </span>
               </div>
             </div>
@@ -531,7 +531,7 @@ export default function SensorInfoPage() {
               Board ingest scan rate (avg Hz / channel)
             </div>
             <div className="text-[10px] text-gray-600 mb-1">
-              Mean per-channel rate from relay before WebSocket throttle (true DAQ/board delivery rate).
+              Mean per-channel Elodin ingest rate before WebSocket throttle (true DAQ/board delivery rate).
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-x-4 gap-y-1" data-testid="sensor-info-board-scan">
               <div>

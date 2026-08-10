@@ -530,7 +530,7 @@ const EXPECTED_ENTITIES: string[] = [
 
 // ── GET /api/debug · backend rate-card contract ────────────────────────────
 // Asserts the Sensor Info page header cards will show non-zero values.
-// sensor-info/page.tsx polls GET /api/debug every 1s for relayPacketsReceived
+// sensor-info/page.tsx polls GET /api/debug every 1s for ingestPacketsReceived
 // and boardScanRateHz.{pt1,pt2,tc,rtd,lc,act,enc}. If this check fails the
 // "Backend Ingest" and "Board ingest scan rate" cards will show "---".
 
@@ -538,9 +538,9 @@ async function testBackendDebugApi(): Promise<void> {
   console.log('\n📊 Test: Backend /api/debug (Sensor Info header cards)');
 
   interface DebugApiResponse {
-    relayPacketsReceived?: number;
+    ingestPacketsReceived?: number;
     boardScanRateHz?: Record<string, number>;
-    relayConnected?: boolean;
+    ingestConnected?: boolean;
   }
 
   const result = await new Promise<DebugApiResponse | null>((resolve) => {
@@ -559,8 +559,8 @@ async function testBackendDebugApi(): Promise<void> {
   if (!result) return;
 
   assert(
-    typeof result.relayPacketsReceived === 'number' && result.relayPacketsReceived > 0,
-    `relayPacketsReceived > 0 (got ${result.relayPacketsReceived ?? 'missing'}) — "Ingest Rate" card would show "---"`,
+    typeof result.ingestPacketsReceived === 'number' && result.ingestPacketsReceived > 0,
+    `ingestPacketsReceived > 0 (got ${result.ingestPacketsReceived ?? 'missing'}) — "Ingest Rate" card would show "---"`,
   );
 
   const bsr = result.boardScanRateHz;
@@ -840,7 +840,7 @@ function assertSensorInfoParity(updates: CollectedMessage[], sensorApi: { sensor
 // ── Backend stats (thin backend only) ────────────────────────────────────────
 
 interface BackendStats {
-  relayEntityUpdatesReceived: number;
+  ingestEntityUpdatesReceived: number;
   sensorUpdatesBroadcast: number;
   uptimeMs: number;
 }
@@ -1091,7 +1091,7 @@ async function testSensorDataFlow(ws: WebSocket): Promise<void> {
   // ── Backend throughput stats (thin backend only) ──────────────────────────
   if (IS_THIN && statsAtWindowStart && statsAtWindowEnd) {
     // Use window delta so we measure only what happened during the sensor collection window.
-    const received = statsAtWindowEnd.relayEntityUpdatesReceived - statsAtWindowStart.relayEntityUpdatesReceived;
+    const received = statsAtWindowEnd.ingestEntityUpdatesReceived - statsAtWindowStart.ingestEntityUpdatesReceived;
     const broadcast = statsAtWindowEnd.sensorUpdatesBroadcast - statsAtWindowStart.sensorUpdatesBroadcast;
     const wsDelivery = broadcast > 0 ? (updates.length / broadcast * 100).toFixed(1) : '0.0';
 

@@ -1,6 +1,6 @@
 [Unit]
 Description=Sensor System Web GUI Backend
-After=network.target sensor-relay.service
+After=network.target
 
 [Service]
 Type=simple
@@ -8,10 +8,11 @@ WorkingDirectory=%h/sensor_system/diablo_server/backend
 ExecStart=/usr/bin/npm run dev
 Restart=always
 RestartSec=5
-# DB → relay → backend: all data from Elodin via relay (modular, invariant to upstream)
-Environment=ELODIN_RELAY_WS_URL=ws://localhost:9090
-Environment=USE_DIRECT_DAQ=false
+# Backend subscribes directly to Elodin DB (127.0.0.1:2240 by default).
 Environment=USE_CALIBRATION_SERVICE_CALIBRATED=false
+# This is the always-on server: enable run-session control + auto-stop. Laptops
+# (start_tmux_dev.sh) leave this unset → the feature stays fully inert.
+Environment=SESSION_SERVICE_MODE=systemd
 # State transitions → C++ actuator_service (TCP :9998) → UDP to boards
 Environment=ACTUATOR_SERVICE_PORT=9998
 # Serve the built frontend SPA (frontend/dist) on :3000

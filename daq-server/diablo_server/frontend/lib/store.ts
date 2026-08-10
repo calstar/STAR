@@ -26,6 +26,7 @@ import {
   NotificationPayload,
   NotificationCategory,
   isNotificationOngoing,
+  SessionStatus,
 } from './types';
 import type { VoltageRefNominals } from './voltageRef';
 import { recordSensorUpdate, isSensorKeyFresh } from './sensor-rate';
@@ -56,6 +57,7 @@ interface SensorSystemState {
   missionStartTime: number | null; // T+0 from first packet (backend)
   /** Global countdown target time (epoch ms), shared across all clients. */
   countdownTargetTimeMs: number | null;
+  session: SessionStatus | null;
   actuatorExpectedPositions: Record<number, Record<string, 'open' | 'closed' | null>>; // state → entity → position
   /** Global actuator state by entity (updated from backend ACTUATOR_UPDATE and on manual command). */
   actuatorStateByEntity: Record<string, ActuatorState>;
@@ -77,6 +79,7 @@ interface SensorSystemState {
   updateConnectionStatus: (status: ConnectionStatus) => void;
   updateMissionStartTime: (time: number) => void;
   updateCountdownTargetTime: (timeMs: number | null) => void;
+  updateSession: (session: SessionStatus) => void;
   updateActuatorExpectedPositions: (positions: Record<number, Record<string, 'open' | 'closed' | null>>) => void;
   getSensorValue: (entity: string, component: string) => number | null;
   setDebugMode: (mode: boolean) => void;
@@ -375,6 +378,7 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   debugMode: false,
   missionStartTime: null,
   countdownTargetTimeMs: null,
+  session: null,
   actuatorExpectedPositions: {},
   actuatorStateByEntity: {},
   actuatorCommandedOverrides: {},
@@ -515,6 +519,10 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
 
   updateCountdownTargetTime: (timeMs: number | null) => {
     set({ countdownTargetTimeMs: timeMs });
+  },
+
+  updateSession: (session: SessionStatus) => {
+    set({ session });
   },
 
   updateBoards: (boards: BoardStatus[]) => {

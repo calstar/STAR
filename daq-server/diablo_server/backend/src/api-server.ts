@@ -251,8 +251,8 @@ export interface BoardScanRateHz {
 }
 
 export interface DebugInfo {
-  relayConnected: boolean;
-  relayPacketsReceived: number;
+  ingestConnected: boolean;
+  ingestPacketsReceived: number;
   heartbeatPacketsReceived?: number;
   wsClients: number;
   sensorCacheSize: number;

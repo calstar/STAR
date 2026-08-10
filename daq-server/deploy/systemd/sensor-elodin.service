@@ -4,8 +4,13 @@ After=network.target
 
 [Service]
 Type=simple
+# Per-run store: the session-manager writes ELODIN_DB_DIR into session.env before
+# starting this unit (see backend service-controller.ts). Falls back to daq_live
+# when session control isn't driving it. The `-` makes the file optional.
+Environment=ELODIN_DB_DIR=%h/.local/share/elodin/daq_live
+EnvironmentFile=-%h/.config/daq/session.env
 ExecStartPre=/usr/bin/mkdir -p %h/.local/share/elodin
-ExecStart=%h/.cargo/bin/elodin-db run '[::]:2240' '%h/.local/share/elodin/daq_live'
+ExecStart=%h/.cargo/bin/elodin-db run '[::]:2240' '${ELODIN_DB_DIR}'
 Restart=always
 RestartSec=5
 Environment=RUST_LOG=info

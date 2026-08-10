@@ -1,6 +1,6 @@
 [Unit]
 Description=Sensor System Controller Service (C++ — Elodin→RobustDDP→PWM)
-After=network.target sensor-elodin.service sensor-relay.service
+After=network.target sensor-elodin.service
 
 [Service]
 Type=simple

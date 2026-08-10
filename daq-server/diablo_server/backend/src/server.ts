@@ -54,7 +54,7 @@ const WS_PORT = parseInt(process.env.WS_PORT ?? '8081', 10);
 const CONTROL_PASSWORD = process.env.CONTROL_PASSWORD || 'diablo';
 // Command types that actuate/transition the engine — gated by the operator
 // unlock. Read-only queries and countdown display are not.
-const CONTROL_COMMAND_TYPES = new Set(['state_transition', 'actuator', 'extend_fire', 'debug_mode']);
+const CONTROL_COMMAND_TYPES = new Set(['state_transition', 'actuator', 'extend_fire', 'debug_mode', 'session_start', 'session_stop', 'session_extend']);
 // Per-connection control-auth state, stashed on the WebSocket.
 type WsWithControl = WebSocket & { __daqOperator?: boolean; __daqControlAuthorized?: boolean };
 const ELODIN_HOST = process.env.ELODIN_HOST ?? '127.0.0.1';
@@ -155,6 +155,7 @@ setInterval(() => {
 let firstPacketTimeMs: number | null = null;
 import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from './countdown-state.js';
 let countdownTargetMs: number | null = loadCountdownTargetTimeMs();
+import { sessionManager } from './session-manager.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -402,7 +403,7 @@ setInterval(() => {
   // useful reading there is (Elodin delivered nothing vs. downsampler dropped
   // everything), so it must not be suppressed by a `> 0` guard.
   if (THIN_STATS_LOG) {
-    console.log(`[ThinServer] Stats: entityUpdates=${stats.relayEntityUpdatesReceived} broadcasts=${stats.sensorUpdatesBroadcast} wsClients=${wss.clients.size}`);
+    console.log(`[ThinServer] Stats: entityUpdates=${stats.ingestEntityUpdatesReceived} broadcasts=${stats.sensorUpdatesBroadcast} wsClients=${wss.clients.size}`);
   }
 }, 5000);
 
@@ -509,7 +510,7 @@ setInterval(markStaleBoards, 1000);
 // packet; DB *storage* keeps every row. See integration Test 15 for the invariant.
 
 const stats = {
-  relayEntityUpdatesReceived: 0,  // every finite-value entity parsed from Elodin DB
+  ingestEntityUpdatesReceived: 0,  // every finite-value entity parsed from Elodin DB
   // Raw physical channel samples (non-_Cal, canonical component only): exactly one
   // increment per per-channel per-chunk sample a board sent, so the integration test
   // can compare this against the simulator's sent-sample ground truth for absolute
@@ -533,8 +534,8 @@ let debugMode = false;
 const apiHandler = createAPIHandler({
   getEngineState: () => currentState,
   getDebugInfo: () => ({
-    relayConnected: elodin.isConnected(),
-    relayPacketsReceived: stats.relayEntityUpdatesReceived,
+    ingestConnected: elodin.isConnected(),
+    ingestPacketsReceived: stats.ingestEntityUpdatesReceived,
     wsClients: wss.clients.size,
     sensorCacheSize: history.size,
     useRelay: false,
@@ -667,6 +668,12 @@ wss.on('connection', (ws: WebSocket, req) => {
   });
   outboundMessages++;
   lastOutboundAt = Date.now();
+
+  // Session status (enabled=false in off mode → clients hide the button).
+  send(ws, {
+    type: MessageType.SESSION_UPDATE, timestamp: Date.now(),
+    payload: sessionManager.getStatus(),
+  });
 
   // Current state
   send(ws, {
@@ -868,6 +875,23 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       countdownTargetMs = command.data.targetTimeMs ?? null;
       saveCountdownTargetTimeMs(countdownTargetMs);
       broadcast({ type: MessageType.COUNTDOWN_TARGET_UPDATE, timestamp: Date.now(), payload: { targetTimeMs: countdownTargetMs } });
+      break;
+    case 'session_start':
+      sessionManager
+        .start(!!command.data.keepData, command.data.durationMs ?? 0)
+        .catch((err) => send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Session start failed: ${err.message}` } }));
+      break;
+    case 'session_stop':
+      sessionManager
+        .stop(false)
+        .catch((err) => send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Session stop failed: ${err.message}` } }));
+      break;
+    case 'session_extend':
+      try {
+        sessionManager.extend(command.data.addMs ?? 0);
+      } catch (err) {
+        send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Session extend failed: ${(err as Error).message}` } });
+      }
       break;
     default:
       // stub for unhandled commands (calibration, controller_frequency, etc.)
@@ -1111,7 +1135,7 @@ elodin.on('packet', (header: any, payload: Buffer) => {
       }
 
       const key = `${parsed.entity}.${parsed.component}`;
-      stats.relayEntityUpdatesReceived++;
+      stats.ingestEntityUpdatesReceived++;
 
       // Pre-downsample ingest rate (what boards/Elodin actually deliver) — not WS broadcast rate.
       recordBoardScanIngest(parsed.entity, parsed.component);
@@ -1190,4 +1214,7 @@ httpServer.listen(WS_PORT, () => {
   console.log(`[ThinServer] WebSocket server listening on port ${WS_PORT}`);
   console.log(`[ThinServer] Elodin DB: ${ELODIN_HOST}:${ELODIN_PORT}`);
   console.log(`[ThinServer] Actuator service: localhost:${ACT_SVC_PORT}`);
+  // Init the run-session manager last, once broadcast/notify + wss are live.
+  // No-op (enabled=false) unless SESSION_SERVICE_MODE is mock/systemd.
+  sessionManager.init(broadcast, broadcastNotification);
 });
