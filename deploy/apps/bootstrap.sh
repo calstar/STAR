@@ -70,7 +70,10 @@ EOF
   # the user's dconf, so they persist even run from here; but they only take
   # visible effect in a live GNOME session, so we ALSO print them for the user
   # to re-run in their session if a suspend already happened.
-  sudo -u "$ADMIN_USER" dbus-run-session -- bash -c '
+  # NOTE: `-H` is essential — without it HOME stays /root and the settings land
+  # in root's dconf instead of the user's (they then have no effect on the
+  # desktop). dbus-run-session gives a bus so gsettings can write.
+  sudo -u "$ADMIN_USER" -H dbus-run-session -- bash -c '
     gsettings set org.gnome.desktop.session idle-delay 0
     gsettings set org.gnome.desktop.screensaver lock-enabled false
     gsettings set org.gnome.desktop.screensaver idle-activation-enabled false
