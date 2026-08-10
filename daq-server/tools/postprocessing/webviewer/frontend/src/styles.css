@@ -1,0 +1,149 @@
+/*
+ * Dark-only theme, adopting the conventions enforced by the recovery-calculator
+ * (see its src/lib/theme.test.ts): a `--color-*` token namespace where every
+ * text tier clears WCAG AAA (7:1) on every background, a `--text-*` scale that
+ * never drops below 13px, and themed scrollbars. `theme.check.mjs` parses this
+ * file and fails if any of those rules break.
+ */
+:root {
+  /* Backgrounds, darkest → lightest. bg-tertiary is the lightest surface any
+     text sits on, so it is the worst case the contrast test asserts against. */
+  --color-bg-primary: #0a0a0f;
+  --color-bg-secondary: #12121a;
+  --color-bg-tertiary: #1a1a24;
+
+  /* Text tiers. All three clear 7:1 (AAA) on bg-tertiary and stay distinct. */
+  --color-text-primary: #f8fafc;
+  --color-text-secondary: #cbd5e1;
+  --color-text-muted: #9fb0c4;
+
+  --color-border: #383848;
+  --color-accent: #3b82f6;
+  --color-accent-hover: #2563eb;
+  --color-danger: #ef4444;
+
+  /* Type scale, rem against a 16px root. Smallest step is 13px on purpose. */
+  --text-2xs: 0.8125rem;
+  --text-xs: 0.875rem;
+  --text-sm: 1rem;
+  --text-base: 1.125rem;
+  --text-lg: 1.375rem;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font: var(--text-xs)/1.45 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+}
+
+/* Scrollbars: track recedes into the surface, thumb is the divider colour. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--color-bg-secondary); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
+* { scrollbar-color: var(--color-border) var(--color-bg-secondary); }
+
+.app { display: flex; flex-direction: column; height: 100%; }
+.topbar {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 12px 18px; background: var(--color-bg-secondary); border-bottom: 1px solid var(--color-border);
+}
+.topbar h1 { font-size: var(--text-base); margin: 0; font-weight: 650; }
+.topbar .sub { color: var(--color-text-muted); font-size: var(--text-2xs); }
+
+.body { display: flex; flex: 1; min-height: 0; }
+.sidebar { width: 290px; border-right: 1px solid var(--color-border); background: var(--color-bg-secondary); display: flex; }
+.content { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 14px 18px; overflow: auto; }
+.placeholder { color: var(--color-text-muted); padding: 40px; text-align: center; font-size: var(--text-sm); }
+
+/* Run list */
+.runlist { display: flex; flex-direction: column; width: 100%; }
+.runlist-head { padding: 12px 16px; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase; font-size: var(--text-2xs); letter-spacing: .05em; }
+.runlist-scroll { overflow-y: auto; flex: 1; }
+.run-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; text-align: left; padding: 10px 16px; border: 0; border-left: 2px solid transparent;
+  background: none; color: var(--color-text-primary); cursor: pointer; position: relative;
+}
+.run-item:hover { background: var(--color-bg-tertiary); }
+.run-item.active { background: var(--color-bg-tertiary); border-left-color: var(--color-accent); }
+.run-date { font-size: var(--text-sm); font-weight: 550; }
+.run-id { font-size: var(--text-xs); color: var(--color-text-muted); }
+.run-cached { position: absolute; right: 14px; top: 13px; color: var(--color-accent); font-size: var(--text-2xs); }
+
+/* Run header */
+.run-header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+.run-title { font-size: var(--text-base); font-weight: 650; }
+.run-meta { color: var(--color-text-muted); font-size: var(--text-xs); }
+.busy { color: var(--color-accent); font-size: var(--text-xs); }
+.error { color: var(--color-danger); font-size: var(--text-xs); }
+
+/* Workspace layout */
+.workspace { display: flex; gap: 16px; flex: 1; min-height: 0; }
+.pane-left { width: 290px; flex-shrink: 0; display: flex; }
+.pane-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+
+/* Sensor picker */
+.picker { display: flex; flex-direction: column; width: 100%; background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; }
+.picker-controls { display: flex; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid var(--color-border); flex-wrap: wrap; }
+.picker-search { flex: 1; min-width: 110px; padding: 6px 9px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-bg-tertiary); color: var(--color-text-primary); font-size: var(--text-xs); }
+.picker-toggle { display: flex; align-items: center; gap: 5px; color: var(--color-text-muted); font-size: var(--text-2xs); white-space: nowrap; }
+.picker-groups { overflow-y: auto; padding: 4px 0; }
+
+/* Collapsible tree: family → field/type → sensors. */
+.tree-row {
+  display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
+  border: 0; background: none; color: var(--color-text-primary); cursor: pointer;
+}
+.tree-row:hover { background: var(--color-bg-tertiary); }
+.caret {
+  display: inline-block; width: 10px; color: var(--color-text-muted);
+  transition: transform .12s ease; font-size: var(--text-2xs);
+}
+.caret.open { transform: rotate(90deg); }
+.tree-badge {
+  margin-left: auto; background: var(--color-accent); color: #fff;
+  font-size: var(--text-2xs); border-radius: 9px; padding: 0 7px; line-height: 1.6;
+}
+
+.tree-fam { padding: 7px 12px; font-weight: 700; font-size: var(--text-2xs); text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-secondary); position: sticky; top: 0; background: var(--color-bg-secondary); }
+.tree-field-hdr { gap: 6px; padding: 3px 12px 3px 22px; }
+.tree-caret-btn { flex-shrink: 0; display: flex; align-items: center; border: 0; background: none; padding: 0; cursor: pointer; }
+.tree-check { flex-shrink: 0; cursor: pointer; }
+.tree-toggle { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; border: 0; background: none; padding: 2px 0; text-align: left; cursor: pointer; color: var(--color-text-secondary); font-size: var(--text-xs); }
+.tree-field-name { font-weight: 550; }
+.tree-count { color: var(--color-text-muted); font-size: var(--text-2xs); }
+
+.picker-item { display: flex; align-items: center; gap: 7px; padding: 3px 12px 3px 40px; cursor: pointer; }
+.picker-item:hover { background: var(--color-bg-tertiary); }
+.picker-label { font-size: var(--text-xs); color: var(--color-text-primary); }
+.picker-empty { padding: 16px; color: var(--color-text-muted); text-align: center; font-size: var(--text-xs); }
+
+/* Toolbar */
+.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.spacer { flex: 1; }
+.timerange { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: var(--text-xs); }
+.tr-label { color: var(--color-text-secondary); }
+.tr-input { width: 82px; padding: 5px 7px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-bg-tertiary); color: var(--color-text-primary); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.tr-dash { color: var(--color-text-muted); }
+.tr-total { color: var(--color-text-muted); font-size: var(--text-2xs); }
+
+.btn {
+  padding: 6px 13px; border: 1px solid var(--color-border); border-radius: 6px;
+  background: var(--color-bg-tertiary); color: var(--color-text-primary); cursor: pointer; text-decoration: none; font-size: var(--text-xs);
+}
+.btn:hover { border-color: var(--color-text-muted); }
+.btn.disabled, .btn:disabled { opacity: .45; pointer-events: none; }
+.btn-link { background: none; border: 0; color: var(--color-accent); cursor: pointer; font-size: var(--text-2xs); padding: 2px 4px; }
+
+/* Chart */
+.chart-wrap { position: relative; background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: 8px; padding: 20px 22px; flex: 1; min-height: 440px; }
+.chart-busy { position: absolute; top: 16px; right: 18px; color: var(--color-accent); font-size: var(--text-2xs); }
+
+/* uPlot legend — canvas axis text is themed in chartTheme.ts (var() doesn't
+   resolve in a canvas), the legend is real DOM so it is themed here. */
+.u-legend { font-size: var(--text-2xs); color: var(--color-text-secondary); }
+.u-legend .u-value { color: var(--color-text-primary); font-variant-numeric: tabular-nums; }
+.u-legend .u-label { color: var(--color-text-secondary); }
