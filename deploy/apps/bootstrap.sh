@@ -52,6 +52,13 @@ apt-get install -y curl git ca-certificates ufw gnupg
 say "§1 Firewall (deny inbound; tunnel is outbound-only)"
 ufw default deny incoming
 ufw default allow outgoing
+# Let the Cloudflare Tunnel connector (a container on a docker bridge) reach the
+# host's sshd, so SSH-over-the-tunnel works. Without this, ufw silently DROPS the
+# container->host:22 packets and `cloudflared access ssh` times out with
+# `dial tcp 172.17.0.1:22: i/o timeout` (a drop, not a refuse). 172.16.0.0/12
+# covers every default docker bridge subnet (docker0 + per-compose bridges), and
+# being source-based it matches regardless of which bridge iface the packet hits.
+ufw allow from 172.16.0.0/12 to any port 22 proto tcp
 ufw --force enable
 
 # ── §2  Desktop auto-login (only if a desktop/GDM is present) ────────────────

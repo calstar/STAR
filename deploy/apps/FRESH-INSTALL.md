@@ -53,11 +53,19 @@ is outbound-only, so you lose no access by doing this):
 ```bash
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
+# Critical for SSH-over-the-tunnel: the cloudflared container reaches the host's
+# sshd from a docker bridge, which ufw treats as "incoming". Without this rule
+# ufw silently DROPS it and `cloudflared access ssh` times out with
+# `dial tcp 172.17.0.1:22: i/o timeout`. 172.16.0.0/12 = all docker bridge subnets.
+sudo ufw allow from 172.16.0.0/12 to any port 22 proto tcp
 sudo ufw --force enable
 ```
 
 > Keep a physical console or a cloud web-console handy the first time — until
-> the tunnel is up (§6) this firewall means no inbound SSH.
+> the tunnel is up (§6) this firewall means no inbound SSH. If you already ran
+> ufw *without* the `172.16.0.0/12` allow above and SSH-over-the-tunnel times
+> out, add that one rule (`sudo ufw allow from 172.16.0.0/12 to any port 22
+> proto tcp`) — it's the fix.
 
 ---
 
