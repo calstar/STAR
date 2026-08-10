@@ -51,7 +51,6 @@ function axisGroups(series: Series[], units: string[]) {
 export default function Chart({ series, units, minHeight = 320, onViewChange, onReady }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const uRef = useRef<uPlot | null>(null);
-  const suppress = useRef(false); // ignore setScale fired by our own setData
   const legendH = useRef(0); // uPlot renders its legend below the canvas
   const viewCb = useRef(onViewChange);
   viewCb.current = onViewChange;
@@ -166,20 +165,22 @@ export default function Chart({ series, units, minHeight = 320, onViewChange, on
       },
       legend: { live: true },
       hooks: {
-        setScale: [
-          (u, key) => {
-            if (key !== 'x' || suppress.current) return;
-            const { min, max } = u.scales.x;
-            if (min != null && max != null && viewCb.current) viewCb.current(min, max);
+        // Refetch a higher-res window ONLY on a real user drag-zoom. setSelect
+        // fires just for that; using setScale instead caught every programmatic
+        // redraw (setData/setSize) and chased the returned data extent forever.
+        setSelect: [
+          (u) => {
+            if (u.select.width <= 0 || !viewCb.current) return;
+            const min = u.posToVal(u.select.left, 'x');
+            const max = u.posToVal(u.select.left + u.select.width, 'x');
+            if (min < max) viewCb.current(min, max);
           },
         ],
       },
     };
 
     const data = mergeForUplot(series) as uPlot.AlignedData;
-    suppress.current = true;
     const u = new uPlot(opts, data, el);
-    suppress.current = false;
     uRef.current = u;
     onReady?.(u);
 
@@ -212,9 +213,7 @@ export default function Chart({ series, units, minHeight = 320, onViewChange, on
   useEffect(() => {
     const u = uRef.current;
     if (!u) return;
-    suppress.current = true;
     u.setData(mergeForUplot(series) as uPlot.AlignedData);
-    suppress.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series]);
 
