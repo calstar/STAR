@@ -271,6 +271,56 @@ export async function updateConfig(updates: Partial<EngineConfig>): Promise<ApiR
   });
 }
 
+// Replace the whole config (not a merge) -- used when loading a saved config.
+export async function loadConfigJson(config: EngineConfig): Promise<ApiResponse<ConfigResponse>> {
+  return request<ConfigResponse>('/config/load', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  });
+}
+
+// --- Per-user saved config library (/api/configs) -------------------------
+// Server-side, keyed by the logged-in user (X-Auth-Email, or `local` in dev).
+// The blob holds the design input; outputs are derived from it, so they are
+// recomputed on load rather than stored (a saved output could drift from the
+// inputs shown beside it).
+export interface SavedConfigMeta {
+  slug: string;
+  name: string;
+  savedAt: string | null;
+}
+
+export interface SavedConfigBlob {
+  name: string;
+  savedAt: string;
+  config: { input: EngineConfig };
+}
+
+export async function listSavedConfigs(): Promise<ApiResponse<{ configs: SavedConfigMeta[] }>> {
+  return request<{ configs: SavedConfigMeta[] }>('/configs');
+}
+
+export async function getSavedConfig(slug: string): Promise<ApiResponse<SavedConfigBlob>> {
+  return request<SavedConfigBlob>(`/configs/${encodeURIComponent(slug)}`);
+}
+
+export async function saveNamedConfig(
+  name: string, config: { input: EngineConfig },
+): Promise<ApiResponse<SavedConfigMeta>> {
+  return request<SavedConfigMeta>('/configs', {
+    method: 'POST',
+    body: JSON.stringify({ name, config }),
+  });
+}
+
+export async function deleteSavedConfig(
+  slug: string,
+): Promise<ApiResponse<{ status: string; slug: string }>> {
+  return request<{ status: string; slug: string }>(
+    `/configs/${encodeURIComponent(slug)}`, { method: 'DELETE' },
+  );
+}
+
 // --- Injector / propellant switching (UNIFICATION P6) ---
 export interface SwitchOptions {
   injectors: string[];

@@ -13,6 +13,8 @@
 #   - ensure_pinned_black — installs black==25.11.0 to pip --user
 #   - ensure_homebrew / ensure_apt_packages helpers
 #   - prompt_yes_no + AUTO_YES support (respects $SETUP_YES=1)
+#   - install_star_aliases — adds scripts/aliases.sh to the user's shell rc
+#   - bootstrap_env_files — creates .env / auth/.env with a generated secret
 
 # Guard against double-source (per-project setup.sh + dispatcher may both source).
 if [ "${_STAR_SETUP_COMMON_LOADED:-0}" = "1" ]; then
@@ -221,4 +223,122 @@ find_repo_root() {
     dir="$(dirname "$dir")"
   done
   return 1
+}
+
+# ─── Shell aliases ───────────────────────────────────────────────────────────
+# Adds `source <repo>/scripts/aliases.sh` to the user's shell rc, which gives
+# them the uniform per-project aliases (engine-dev, pid-attach, daq-logs, …).
+# Idempotent, and never appends a duplicate.
+#
+# Usage: install_star_aliases <repo_root>
+install_star_aliases() {
+  local repo_root="$1"
+  local aliases_file="$repo_root/scripts/aliases.sh"
+  local rc line
+
+  if [ ! -f "$aliases_file" ]; then
+    warn "scripts/aliases.sh not found — skipping alias setup"
+    return 0
+  fi
+
+  # Which file the user's shell actually reads. macOS Terminal starts bash as a
+  # *login* shell, which reads .bash_profile and never .bashrc.
+  case "${SHELL:-/bin/bash}" in
+    */zsh)
+      rc="$HOME/.zshrc"
+      ;;
+    *)
+      if [ "$(detect_os)" = "macOS" ] && [ -f "$HOME/.bash_profile" ]; then
+        rc="$HOME/.bash_profile"
+      else
+        rc="$HOME/.bashrc"
+      fi
+      ;;
+  esac
+
+  # Already set up? Either path counts: daq-server/tools/aliases.sh is a shim
+  # that sources the same file, so adding ours too would just load it twice.
+  if [ -f "$rc" ] && grep -qF "scripts/aliases.sh" "$rc"; then
+    ok "STAR aliases already in $(basename "$rc")"
+    return 0
+  fi
+  if [ -f "$rc" ] && grep -qF "daq-server/tools/aliases.sh" "$rc"; then
+    ok "STAR aliases already loaded in $(basename "$rc") (via the daq-server shim)"
+    warn "That still works. To use the canonical path, replace that line with:"
+    warn "  source \"$aliases_file\""
+    return 0
+  fi
+
+  if ! prompt_yes_no "Add STAR aliases (engine-dev, daq-logs, star-help, …) to $(basename "$rc")?" y; then
+    warn "Skipped. To add them later:"
+    warn "  echo 'source \"$aliases_file\"' >> $rc"
+    return 0
+  fi
+
+  line="source \"$aliases_file\""
+  {
+    printf '\n# STAR monorepo aliases — run `star-help` for the list\n'
+    printf '%s\n' "$line"
+  } >> "$rc"
+
+  ok "Added STAR aliases to $rc"
+  ok "Run 'source $rc' (or open a new shell), then 'star-help'"
+}
+
+# ─── Deployment env files ────────────────────────────────────────────────────
+# Creates .env and auth/.env from their .example templates, generating a real
+# JWT_SECRET and writing the SAME value to both -- they have to match or every
+# app rejects every login. Never overwrites an existing file.
+#
+# Usage: bootstrap_env_files <repo_root>
+bootstrap_env_files() {
+  local repo_root="$1"
+  local root_env="$repo_root/.env"
+  local auth_env="$repo_root/auth/.env"
+  local secret=""
+
+  if [ -f "$root_env" ] && [ -f "$auth_env" ]; then
+    ok ".env and auth/.env already exist — leaving them alone"
+    return 0
+  fi
+
+  # Reuse the secret already in place, so adding the missing file cannot
+  # desynchronise a working pair.
+  if [ -f "$root_env" ]; then
+    secret="$(sed -n 's/^JWT_SECRET=//p' "$root_env" | head -1)"
+  elif [ -f "$auth_env" ]; then
+    secret="$(sed -n 's/^JWT_SECRET=//p' "$auth_env" | head -1)"
+  fi
+  if [ -z "$secret" ] || [ "$secret" = "replace-with-a-long-random-string" ]; then
+    secret="$(python3 -c 'import secrets; print(secrets.token_hex(32))' 2>/dev/null)" || secret=""
+  fi
+  if [ -z "$secret" ]; then
+    warn "Could not generate a JWT_SECRET (python3 missing?) — skipping env setup"
+    return 0
+  fi
+
+  _write_env_from_example() {
+    local example="$1" target="$2"
+    [ -f "$target" ] && return 0
+    [ -f "$example" ] || { warn "Missing $example — skipping $target"; return 0; }
+    sed "s|^JWT_SECRET=.*|JWT_SECRET=$secret|" "$example" > "$target"
+    chmod 600 "$target"
+    ok "Created ${target#"$repo_root"/} (JWT_SECRET generated)"
+  }
+
+  _write_env_from_example "$repo_root/.env.example" "$root_env"
+  _write_env_from_example "$repo_root/auth/.env.example" "$auth_env"
+  unset -f _write_env_from_example
+
+  # The Flask session key is independent of JWT_SECRET and only the auth
+  # service uses it, so it can be generated freely.
+  if [ -f "$auth_env" ] && grep -q '^FLASK_SECRET_KEY=replace-with' "$auth_env"; then
+    local flask_key
+    flask_key="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+    sed -i.bak "s|^FLASK_SECRET_KEY=.*|FLASK_SECRET_KEY=$flask_key|" "$auth_env"
+    rm -f "$auth_env.bak"
+  fi
+
+  warn "auth/.env still needs your Google OAuth credentials before deploying."
+  warn "  GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET — see deploy/README.md"
 }

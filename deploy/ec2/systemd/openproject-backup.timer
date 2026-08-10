@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily OpenProject → S3 backup
+
+[Timer]
+# 03:00 UTC daily. Persistent=true runs a missed backup (box was off) on boot.
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

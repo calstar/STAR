@@ -660,18 +660,16 @@ def test_the_sweep_grid_is_coarser_than_simulates():
 
 @pytest.fixture
 def settings_file(tmp_path, monkeypatch):
-    """Point the route at a scratch file.
+    """Point per-user storage at a scratch dir and return the local user's file.
 
-    Without this the suite would read and overwrite whatever units the
-    developer running it happens to have chosen, which is both a surprising
-    side effect and a flaky test.
+    Settings are now per user (keyed by X-Auth-Email, `local` with no header --
+    which is how these tests hit the API). Setting USERDATA_DIR isolates the
+    suite from whatever units the developer running it happens to have chosen.
     """
-    from backend.routers import settings as mod
-
-    path = tmp_path / ".gui-settings.json"
-    monkeypatch.setattr(mod, "_PATH", str(path))
-    monkeypatch.setattr(mod, "_ROOT", str(tmp_path))
-    return path
+    monkeypatch.setenv("USERDATA_DIR", str(tmp_path))
+    d = tmp_path / "local" / "recovery"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "units.json"
 
 
 def test_settings_are_empty_before_anything_is_saved(settings_file):
@@ -761,7 +759,7 @@ def test_the_write_leaves_no_temp_file_behind(settings_file, tmp_path):
     write loses the user's preferences outright."""
     with client() as c:
         c.put("/api/settings", json={"units": {"mass": "metric"}})
-    assert [p.name for p in tmp_path.iterdir()] == [".gui-settings.json"]
+    assert [p.name for p in settings_file.parent.iterdir()] == ["units.json"]
 
 
 def test_every_kind_the_frontend_knows_about_is_accepted(settings_file):

@@ -39,34 +39,22 @@ from backend.routers import control
 
 # Import other routers optionally (may fail if dependencies missing)
 _optional_routers = {}
-for router_name in ['config', 'evaluate', 'timeseries', 'flight', 'geometry', 'optimizer']:
+for router_name in ['config', 'configs_store', 'documents', 'evaluate', 'timeseries', 'flight', 'geometry', 'optimizer']:
     try:
         router_module = __import__(f'backend.routers.{router_name}', fromlist=[router_name])
         _optional_routers[router_name] = router_module
     except (ImportError, TypeError) as e:
         print(f"Warning: Router '{router_name}' unavailable (non-critical): {e}")
 
-from backend.state import app_state
-from engine.pipeline.io import load_config
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan - load default config on startup."""
-    # Try to load default config on startup
-    default_config_path = project_root / "configs" / "default.yaml"
-    if default_config_path.exists():
-        try:
-            config_obj = load_config(str(default_config_path))
-            app_state.set_config(config_obj, str(default_config_path))
-            print(f"Loaded default config from {default_config_path}")
-        except Exception as e:
-            print(f"Warning: Could not load default config: {e}")
-    
+    """Application lifespan.
+
+    Live state is per-user now (backend/session.py), so there is no global config
+    to load at boot: each user's session loads configs/default.yaml on creation,
+    the first time that user hits the API. Nothing to do here.
+    """
     yield  # App runs here
-    
-    # Cleanup (if needed)
-    pass
 
 
 app = FastAPI(
@@ -84,11 +72,18 @@ app.add_middleware(
         "http://localhost:3000",  # Alternative React port
         "http://127.0.0.1:5173",
         "http://127.0.0.1:3000",
+        "https://engine-design.starberkeley.org",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Auth is Caddy's job: the reverse proxy verifies the session before any request
+# reaches this app (deploy/Caddyfile), and this container never publishes a host
+# port, so it is only reachable through Caddy. The app therefore does no auth --
+# it only reads X-Auth-Email for per-user data (backend/userdata.py), which falls
+# back to a local user in dev where there is no Caddy.
 
 # Include routers (control is required, others optional)
 app.include_router(control.router)
@@ -109,15 +104,15 @@ async def root():
         "name": "Pintle Engine Design API",
         "version": "1.0.0",
         "docs": "/docs",
-        "config_loaded": app_state.has_config(),
     }
 
 
 @app.get("/api/health")
 async def health():
-    """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "config_loaded": app_state.has_config(),
-    }
+    """Health check endpoint.
+
+    A liveness probe with no user context, so it no longer reports config_loaded
+    (that is a per-user fact now -- see GET /api/config).
+    """
+    return {"status": "healthy"}
 

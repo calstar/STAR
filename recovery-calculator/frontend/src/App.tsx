@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react'
 import { getHealth } from './api/client'
 import type { UiConfig } from './types/schema'
 import { loadUiConfig, saveUiConfig } from './lib/persist'
+import { ConfigVersions } from './components/versions/ConfigVersions'
 import { RecoveryPanel } from './components/recovery/RecoveryPanel'
 import { CornersPanel } from './components/corners/CornersPanel'
 import { StudyPanel } from './components/study/StudyPanel'
@@ -130,6 +131,14 @@ export default function App() {
           </nav>
         </div>
       </header>
+
+      {/* Versioned designs: pick/create a design, auto-saved with microversions
+          and immutable releases you can restore. Durable server-side timeline
+          behind the localStorage working cache. */}
+      <ConfigVersions
+        config={ui}
+        onRestore={(c) => { setUi(c); saveUiConfig(c) }}
+      />
 
       <main className="mx-auto max-w-[1800px] px-4 py-6 sm:px-6 lg:px-8">
         <div className={tab === 'recovery' ? '' : 'hidden'}>

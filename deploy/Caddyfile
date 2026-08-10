@@ -1,0 +1,130 @@
+# STAR Internal Tools — Caddyfile
+#
+# Auth lives here, once, for every app.
+#
+# Each protected site imports the (protected) snippet, which calls the auth
+# service's /verify ahead of the request. Caddy forwards only on a 2xx and
+# copies anything else straight back to the browser -- so /verify answering
+# "302 to the login page" is what bounces an unauthenticated visitor, and
+# "401" is what a fetch() or WebSocket gets instead. See auth/main.py.
+#
+# The apps themselves implement no auth, and dev never runs Caddy, which is why
+# `./dev.sh` shows no login screen.
+#
+# ── TLS ──
+#   Default:           Caddy obtains and renews Let's Encrypt certificates.
+#   Cloudflare Tunnel: set SCHEME=http. Cloudflare terminates TLS at the edge
+#                      and cloudflared speaks plain HTTP to Caddy, so Caddy
+#                      binds :80 only and issues no certificates.
+#
+# ── Env ──
+#   SCHEME        https (default) | http
+#   BASE_DOMAIN   starberkeley.org
+#   ACME_EMAIL    contact address for Let's Encrypt
+#   DAQ_BACKEND   host:port of the DAQ Node backend  (API + WebSocket)
+#   DAQ_GUI       host:port of the DAQ static SPA server
+{
+	email {$ACME_EMAIL:infra@starberkeley.org}
+	# trusted_proxies is deliberately unset: Caddy then overwrites X-Forwarded-*
+	# on every request rather than honouring what a client sent, which is what
+	# lets /verify trust those headers when rebuilding the original URL.
+}
+
+# Gate a site on a valid session. Import this first in each site block.
+(protected) {
+	forward_auth {$AUTH_UPSTREAM:auth:5000} {
+		uri /verify
+		# Identity for the upstream app, taken from the /verify response.
+		copy_headers X-Auth-Email X-Auth-User
+	}
+}
+
+# ── Auth service ───────────────────────────────────────────────────────────
+# Never gated -- it is what grants access, so protecting it would deadlock.
+{$SCHEME:https}://auth.{$BASE_DOMAIN:starberkeley.org} {
+	reverse_proxy {$AUTH_UPSTREAM:auth:5000}
+}
+
+# ── Landing page ───────────────────────────────────────────────────────────
+# Protected like everything else: it is the index of internal tools, not a
+# public site. Drop the import to make it the one public page.
+{$SCHEME:https}://{$BASE_DOMAIN:starberkeley.org} {
+	import protected
+	reverse_proxy landing:4175
+}
+
+# ── Engine Design ──────────────────────────────────────────────────────────
+{$SCHEME:https}://engine-design.{$BASE_DOMAIN:starberkeley.org} {
+	import protected
+
+	handle /api/* {
+		reverse_proxy engine-design-api:8000
+	}
+	handle {
+		reverse_proxy engine-design-frontend:4173
+	}
+}
+
+# ── P&ID Designer ──────────────────────────────────────────────────────────
+{$SCHEME:https}://pid-designer.{$BASE_DOMAIN:starberkeley.org} {
+	import protected
+
+	handle /api/* {
+		reverse_proxy pid-designer-api:8001
+	}
+	handle {
+		reverse_proxy pid-designer-frontend:4174
+	}
+}
+
+# ── Recovery Calculator ──────────────────────────────────────────────────────
+{$SCHEME:https}://recovery-calculator.{$BASE_DOMAIN:starberkeley.org} {
+	import protected
+
+	handle /api/* {
+		reverse_proxy recovery-calculator-api:8100
+	}
+	handle {
+		reverse_proxy recovery-calculator-frontend:4176
+	}
+}
+
+# ── Onshape CM Viewer ─────────────────────────────────────────────────────────
+# `import protected` is the same shared gate as everywhere else. The tighter
+# approved-users allowlist for this app is enforced inside auth's /verify (it
+# brokers Onshape credentials), so it needs nothing extra here -- /verify simply
+# answers 403 for a signed-in user who is not on the list. See auth/allowlist.py.
+{$SCHEME:https}://onshape-viewer.{$BASE_DOMAIN:starberkeley.org} {
+	import protected
+
+	handle /api/* {
+		reverse_proxy onshape-viewer-api:8002
+	}
+	handle {
+		reverse_proxy onshape-viewer-frontend:4177
+	}
+}
+
+# ── DAQ Server ─────────────────────────────────────────────────────────────
+# Not containerised. The C++ bridge, elodin-db and the Node backend run
+# natively on the test-stand machine (daq-server/deploy/systemd), because they
+# need the hardware. One backend process serves both listeners:
+#   :8081  REST API + WebSocket
+#   :3000  the built SPA (frontend/dist)
+# The SPA detects it was served on a default port and switches to same-origin
+# /api and /ws, which is what these routes expect.
+{$SCHEME:https}://daq-server.{$BASE_DOMAIN:starberkeley.org} {
+	import protected
+
+	handle /api/* {
+		reverse_proxy {$DAQ_BACKEND:host.docker.internal:8081}
+	}
+	# Caddy proxies the upgrade transparently; the backend's WebSocketServer is
+	# bound to the whole HTTP server, so the /ws path needs no rewrite.
+	handle /ws* {
+		reverse_proxy {$DAQ_BACKEND:host.docker.internal:8081}
+	}
+	handle {
+		reverse_proxy {$DAQ_GUI:host.docker.internal:3000}
+	}
+}

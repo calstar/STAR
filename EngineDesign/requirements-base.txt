@@ -1,0 +1,37 @@
+# Everything EngineDesign needs except rocketcea and test tooling.
+#
+# Single source of truth -- requirements.txt and requirements-ci.txt both
+# include this file and add only what is specific to them, so the shared list
+# cannot drift between local, CI, and the container.
+#
+# rocketcea is deliberately NOT here: it builds NASA CEA from Fortran source
+# (needs gfortran) and ships as a 69 MB sdist with no wheel. It is imported
+# lazily and only when *building* a CEA cache
+# (engine/pipeline/cea_cache.py::_get_CEA_Obj); everything else reads the
+# committed cache tables in output/cache/*.npz. See requirements.txt.
+numpy
+scipy
+pandas
+matplotlib
+pydantic
+PyYAML
+rocketpy
+# No streamlit: the Streamlit UI is retired (see archive/streamlit-ui/). plotly
+# stays -- engine/pipeline/comprehensive_geometry_sizing.py and
+# chamber_geometry_visualizer.py use it directly, without Streamlit.
+plotly
+ezdxf
+cma
+CoolProp
+
+# FastAPI backend
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Verifying the shared session cookie (auth/shared_auth.py) when AUTH_ENABLED=true.
+pyjwt>=2.8
+
+# Design version history in S3 (microversions + releases) when ENGINE_S3_BUCKET
+# is set. Lazy-imported in backend/storage.py, so dev without AWS never needs it.
+boto3>=1.34

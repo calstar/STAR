@@ -73,9 +73,78 @@ Each subproject's setup script is also runnable directly
 (e.g. `bash daq-server/setup.sh --no-build`); see its `--help` for options
 specific to that project.
 
+### Running something
+
+Every project has a `./dev.sh` at its root, and they all take the same flags:
+
+```bash
+cd EngineDesign && ./dev.sh          # start it
+./dev.sh --attach                    # ...and look at it (Ctrl-B, D to leave)
+./dev.sh --status                    # is it up? which ports are listening?
+./dev.sh --logs backend              # follow one process
+./dev.sh --stop
+```
+
+`./dev.sh` starts a **detached** tmux session, so the stack survives closing
+the terminal — ssh back in later and `--attach` to debug. `--foreground` runs
+it in the terminal instead. `./dev.sh --help` lists everything.
+
+| Project | Command | Ports |
+| --- | --- | --- |
+| `EngineDesign/` | `./dev.sh` | UI 5173, API 8000 |
+| `pid-designer/` | `./dev.sh` | UI 5174, API 8001 |
+| `landing/` | `./dev.sh` | 5175 |
+| `auth/` | `./dev.sh` | 5000 |
+| `daq-server/` | `./dev.sh --sim` | GUI 3000, API+WS 8081 |
+
+They use different ports on purpose — all five can run at once. Each is
+overridable (`ENGINE_DESIGN_UI_PORT`, `THIN_WS_PORT`, …); see the project's
+`./dev.sh --help`.
+
+`daq-server` is the exception in substance if not in interface: it drives
+eleven coordinated processes with real ordering constraints, so its `dev.sh`
+is a front door onto `deploy/startup/start_tmux_dev.sh` rather than a
+reimplementation. `--sim` runs the whole pipeline against simulated boards, so
+you need no test stand.
+
+**No login appears in dev.** Auth is enforced by Caddy in production only
+(see [Deployment](#deployment)), and `dev.sh` never runs Caddy.
+
+### Aliases
+
+`./setup.sh` offers to add these to your shell rc (`--no-aliases` to skip). To
+add them by hand:
+
+```bash
+echo "source ~/STAR/scripts/aliases.sh" >> ~/.bashrc   # adjust to your clone path
+```
+
+Every project gets the same verbs — `engine-dev`, `pid-attach`, `daq-logs`,
+`landing-stop`, `auth-status` — plus `star-status` and `star-stop` across all
+of them at once, and the daq-server build/test shortcuts. Run **`star-help`**
+for the full list.
+
 To confirm a clean install works — or to reproduce a broken setup in isolation
 — use the setup-test harness (`bash scripts/setup-test/run-macos.sh
 pid-designer`); see [`scripts/setup-test/README.md`](scripts/setup-test/README.md).
+
+---
+
+## Deployment
+
+The tools are served together at `*.starberkeley.org`, behind a single Google
+login restricted to `@berkeley.edu`. Caddy checks every request with the auth
+service before forwarding it, so the apps carry no auth code of their own —
+and local development, which never runs Caddy, never sees a login screen.
+
+```bash
+cp .env.example .env && cp auth/.env.example auth/.env   # fill both in
+docker compose up -d --build
+```
+
+See **[`deploy/README.md`](deploy/README.md)** for the full picture: how the
+auth handoff works, the Let's Encrypt and Cloudflare Tunnel options, why the
+DAQ server runs natively rather than in a container, and how to add an app.
 
 ---
 

@@ -15,6 +15,10 @@ pydantic>=2.0
 fastapi>=0.110
 uvicorn[standard]>=0.27
 
+# Config version history in S3 (microversions + releases) when RECOVERY_S3_BUCKET
+# is set. Lazy-imported in backend/storage.py, so dev without AWS never needs it.
+boto3>=1.34
+
 # No plotting dependency on purpose. Charts are rendered in the browser with
 # Recharts; the CLI writes trajectory.csv and leaves plotting to whoever wants
 # it. See §11.4.

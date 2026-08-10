@@ -1,6 +1,6 @@
 """Controller endpoints for robust DDP thrust control."""
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Literal
@@ -9,7 +9,7 @@ import json
 import asyncio
 import yaml
 
-from backend.state import app_state
+from backend.session import UserSession, get_session, gated_stream
 from engine.control.robust_ddp import (
     RobustDDPController,
     ControllerConfig,
@@ -25,9 +25,10 @@ from engine.pipeline.io import load_config as load_engine_config
 
 router = APIRouter(prefix="/api/control", tags=["control"])
 
-# Global controller instance (stored in app_state would be better, but this works)
-_controller: Optional[RobustDDPController] = None
-_controller_logger: Optional[ControllerLogger] = None
+# The controller instance is per-user now, held on session.controller
+# (backend/session.py). It used to be a module global, so two users shared one
+# controller: B's /step ran against the controller and engine config A had
+# initialized. Each endpoint below reaches it through session.controller.*.
 
 
 def safe_float(val):
@@ -105,7 +106,7 @@ class ControllerInitRequest(BaseModel):
     )
     use_engine_config: bool = Field(
         default=True,
-        description="Use currently loaded engine config from app_state"
+        description="Use the caller's currently loaded engine config"
     )
 
 
@@ -215,9 +216,8 @@ class Layer2ConfigSimulateRequest(BaseModel):
 # ============================================================================
 
 @router.post("/init")
-async def init_controller(request: ControllerInitRequest):
+async def init_controller(request: ControllerInitRequest, session: UserSession = Depends(get_session)):
     """Initialize the robust DDP controller."""
-    global _controller, _controller_logger
     
     try:
         # Load controller config
@@ -228,18 +228,18 @@ async def init_controller(request: ControllerInitRequest):
             cfg = get_default_config()
         
         # Get engine config (REQUIRED for controller - needed for chamber design, injector geometry, etc.)
-        if not app_state.has_config():
+        if not session.app_state.has_config():
             raise HTTPException(
                 status_code=400,
                 detail="No engine config loaded. The controller requires an engine config to formulate the control pipeline (chamber design, injector geometry, etc.). Please load a config first."
             )
-        engine_config = app_state.config
+        engine_config = session.app_state.config
         
         # Create logger (optional, for now just in-memory)
-        # _controller_logger = ControllerLogger("controller_run.json", format="json")
+        # session.controller.controller_logger = ControllerLogger("controller_run.json", format="json")
         
         # Create controller (engine_config is required)
-        _controller = RobustDDPController(cfg, engine_config, logger=None)
+        session.controller.controller = RobustDDPController(cfg, engine_config, logger=None)
         
         return {
             "status": "initialized",
@@ -250,11 +250,10 @@ async def init_controller(request: ControllerInitRequest):
 
 
 @router.post("/step")
-async def controller_step(request: ControllerStepRequest):
+async def controller_step(request: ControllerStepRequest, session: UserSession = Depends(get_session)):
     """Execute one controller step."""
-    global _controller
     
-    if _controller is None:
+    if session.controller.controller is None:
         raise HTTPException(status_code=400, detail="Controller not initialized. Call /init first.")
     
     try:
@@ -283,7 +282,7 @@ async def controller_step(request: ControllerStepRequest):
         )
         
         # Run controller step
-        actuation_cmd, diagnostics = _controller.step(measurement, nav_state, command)
+        actuation_cmd, diagnostics = session.controller.controller.step(measurement, nav_state, command)
         
         # Extract only primitive values - avoid any numpy arrays or complex objects
         def safe_float_val(val, default=0.0):
@@ -356,21 +355,20 @@ async def controller_step(request: ControllerStepRequest):
 
 
 @router.post("/simulate")
-async def simulate_controller(request: ControllerSimulateRequest):
+async def simulate_controller(request: ControllerSimulateRequest, session: UserSession = Depends(get_session)):
     """Simulate controller over a time series."""
-    global _controller
     
     # Initialize controller if needed
-    if _controller is None:
+    if session.controller.controller is None:
         try:
             cfg = get_default_config()
-            if not app_state.has_config():
+            if not session.app_state.has_config():
                 raise HTTPException(
                     status_code=400,
                     detail="No engine config loaded. Load a config first."
                 )
-            engine_config = app_state.config
-            _controller = RobustDDPController(cfg, engine_config, logger=None)
+            engine_config = session.app_state.config
+            session.controller.controller = RobustDDPController(cfg, engine_config, logger=None)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to initialize controller: {e}")
     
@@ -420,10 +418,10 @@ async def simulate_controller(request: ControllerSimulateRequest):
         from engine.control.robust_ddp.dynamics import IDX_P_COPV, IDX_P_REG, IDX_P_U_F, IDX_P_U_O, IDX_P_D_F, IDX_P_D_O, IDX_V_U_F, IDX_V_U_O
         
         # Get dynamics params
-        dynamics_params = DynamicsParams.from_config(_controller.cfg)
+        dynamics_params = DynamicsParams.from_config(session.controller.controller.cfg)
         
         # Build initial state vector
-        x = _controller._build_state(meas)
+        x = session.controller.controller._build_state(meas)
         
         # Validate initial state size
         if len(x) != N_STATE:
@@ -477,7 +475,7 @@ async def simulate_controller(request: ControllerSimulateRequest):
                     )
             
             # Controller step
-            actuation, diagnostics = _controller.step(meas, nav, cmd)
+            actuation, diagnostics = session.controller.controller.step(meas, nav, cmd)
             
             # Get DDP solution for value function
             solution = diagnostics.get("solution")
@@ -572,8 +570,8 @@ async def simulate_controller(request: ControllerSimulateRequest):
             meas.P_d_ox = x_next[IDX_P_D_O]
             
             # Update internal ullage volumes
-            _controller.V_u_F = x_next[IDX_V_U_F]
-            _controller.V_u_O = x_next[IDX_V_U_O]
+            session.controller.controller.V_u_F = x_next[IDX_V_U_F]
+            session.controller.controller.V_u_O = x_next[IDX_V_U_O]
             
             # Update nav using flight dynamics integrated with engine physics
             # Use actual thrust from engine to compute acceleration
@@ -612,34 +610,32 @@ async def simulate_controller(request: ControllerSimulateRequest):
 
 
 @router.post("/reset")
-async def reset_controller():
+async def reset_controller(session: UserSession = Depends(get_session)):
     """Reset controller state."""
-    global _controller
-    if _controller is None:
+    if session.controller.controller is None:
         raise HTTPException(status_code=400, detail="Controller not initialized")
-    _controller.reset()
+    session.controller.controller.reset()
     return {"status": "reset"}
 
 
 @router.post("/simulate-layer2")
-async def simulate_layer2_controller(request: Layer2ControllerSimulateRequest):
+async def simulate_layer2_controller(request: Layer2ControllerSimulateRequest, session: UserSession = Depends(get_session)):
     """Run controller simulation using Layer 2 optimized thrust curve as reference."""
-    global _controller
     
     # Initialize dt as function-level variable (always defined)
     dt = float(request.dt) if request.dt is not None else 0.01
     
     # Initialize controller if needed
-    if _controller is None:
+    if session.controller.controller is None:
         try:
             cfg = get_default_config()
-            if not app_state.has_config():
+            if not session.app_state.has_config():
                 raise HTTPException(
                     status_code=400,
                     detail="No engine config loaded. Load a config first."
                 )
-            engine_config = app_state.config
-            _controller = RobustDDPController(cfg, engine_config, logger=None)
+            engine_config = session.app_state.config
+            session.controller.controller = RobustDDPController(cfg, engine_config, logger=None)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to initialize controller: {e}")
     
@@ -710,10 +706,10 @@ async def simulate_layer2_controller(request: Layer2ControllerSimulateRequest):
         from engine.control.robust_ddp.dynamics import IDX_P_COPV, IDX_P_REG, IDX_P_U_F, IDX_P_U_O, IDX_P_D_F, IDX_P_D_O, IDX_V_U_F, IDX_V_U_O
         
         # Get dynamics params
-        dynamics_params = DynamicsParams.from_config(_controller.cfg)
+        dynamics_params = DynamicsParams.from_config(session.controller.controller.cfg)
         
         # Build initial state vector
-        x = _controller._build_state(meas)
+        x = session.controller.controller._build_state(meas)
         
         # Simulate over Layer 2 time array
         n_steps = len(time_array)
@@ -759,7 +755,7 @@ async def simulate_layer2_controller(request: Layer2ControllerSimulateRequest):
             )
             
             # Controller step
-            actuation, diagnostics = _controller.step(meas, nav, cmd)
+            actuation, diagnostics = session.controller.controller.step(meas, nav, cmd)
             
             # Get diagnostics
             eng_est = diagnostics.get("eng_est")
@@ -776,7 +772,7 @@ async def simulate_layer2_controller(request: Layer2ControllerSimulateRequest):
             
             # Get robustness bounds
             from engine.control.robust_ddp.robustness import get_w_bar_array
-            w_bar = get_w_bar_array(_controller.state).tolist()
+            w_bar = get_w_bar_array(session.controller.controller.state).tolist()
             
             # Get constraint margins
             constraint_margins = diagnostics.get("constraint_margins", {})
@@ -799,8 +795,8 @@ async def simulate_layer2_controller(request: Layer2ControllerSimulateRequest):
             results["velocity"].append(float(nav.vz))
             results["value_function"].append(value_func)
             results["control_effort"].append(control_effort)
-            results["V_u_fuel"].append(float(_controller.V_u_F))
-            results["V_u_ox"].append(float(_controller.V_u_O))
+            results["V_u_fuel"].append(float(session.controller.controller.V_u_F))
+            results["V_u_ox"].append(float(session.controller.controller.V_u_O))
             results["mdot_F"].append(float(eng_est.mdot_F) if eng_est and eng_est.mdot_F else 0.0)
             results["mdot_O"].append(float(eng_est.mdot_O) if eng_est and eng_est.mdot_O else 0.0)
             results["w_bar"].append(w_bar)
@@ -831,8 +827,8 @@ async def simulate_layer2_controller(request: Layer2ControllerSimulateRequest):
             meas.P_d_ox = x_next[IDX_P_D_O]
             
             # Update internal ullage volumes
-            _controller.V_u_F = x_next[IDX_V_U_F]
-            _controller.V_u_O = x_next[IDX_V_U_O]
+            session.controller.controller.V_u_F = x_next[IDX_V_U_F]
+            session.controller.controller.V_u_O = x_next[IDX_V_U_O]
             
             # Update nav using flight dynamics
             F_actual = diagnostics.get("F_hat", 0.0)
@@ -864,16 +860,14 @@ async def simulate_layer2_controller(request: Layer2ControllerSimulateRequest):
 
 
 @router.post("/simulate-layer2-stream")
-async def simulate_layer2_controller_stream(request: Layer2ControllerSimulateRequest):
+async def simulate_layer2_controller_stream(request: Layer2ControllerSimulateRequest, session: UserSession = Depends(get_session)):
     """Stream controller simulation in real-time using Layer 2 optimized thrust curve."""
-    global _controller
     
     def safe_json_dumps(obj):
         """Safely serialize to JSON, handling non-serializable types."""
         return json.dumps(convert_numpy(obj), allow_nan=False)
     
     async def event_generator():
-        global _controller
         
         # Initialize dt as function-level variable (always defined)
         dt = float(request.dt) if request.dt is not None else 0.01
@@ -881,12 +875,12 @@ async def simulate_layer2_controller_stream(request: Layer2ControllerSimulateReq
         # Always reinitialize controller with fresh config to ensure latest settings
         try:
             cfg = get_default_config()
-            if not app_state.has_config():
+            if not session.app_state.has_config():
                 yield f"data: {safe_json_dumps({'type': 'error', 'error': 'No engine config loaded. Load a config first.'})}\n\n"
                 return
-            engine_config = app_state.config
-            _controller = RobustDDPController(cfg, engine_config, logger=None)
-            _controller.reset()  # Reset to ensure fresh state
+            engine_config = session.app_state.config
+            session.controller.controller = RobustDDPController(cfg, engine_config, logger=None)
+            session.controller.controller.reset()  # Reset to ensure fresh state
         except Exception as e:
             yield f"data: {safe_json_dumps({'type': 'error', 'error': f'Failed to initialize controller: {e}'})}\n\n"
             return
@@ -952,8 +946,8 @@ async def simulate_layer2_controller_stream(request: Layer2ControllerSimulateReq
             from engine.control.robust_ddp.dynamics import step as dynamics_step, DynamicsParams
             from engine.control.robust_ddp.dynamics import IDX_P_COPV, IDX_P_REG, IDX_P_U_F, IDX_P_U_O, IDX_P_D_F, IDX_P_D_O, IDX_V_U_F, IDX_V_U_O
             
-            dynamics_params = DynamicsParams.from_config(_controller.cfg)
-            x = _controller._build_state(meas)
+            dynamics_params = DynamicsParams.from_config(session.controller.controller.cfg)
+            x = session.controller.controller._build_state(meas)
             u_prev = None
             
             # Simulate and stream results
@@ -972,7 +966,7 @@ async def simulate_layer2_controller_stream(request: Layer2ControllerSimulateReq
                 )
                 
                 # Controller step
-                actuation, diagnostics = _controller.step(meas, nav, cmd)
+                actuation, diagnostics = session.controller.controller.step(meas, nav, cmd)
                 
                 # Get diagnostics
                 eng_est = diagnostics.get("eng_est")
@@ -988,7 +982,7 @@ async def simulate_layer2_controller_stream(request: Layer2ControllerSimulateReq
                 
                 # Get robustness bounds
                 from engine.control.robust_ddp.robustness import get_w_bar_array
-                w_bar = get_w_bar_array(_controller.state).tolist()
+                w_bar = get_w_bar_array(session.controller.controller.state).tolist()
                 constraint_margins = diagnostics.get("constraint_margins", {})
                 
                 # Stream data point (sanitize all float values to handle NaN/Inf)
@@ -1011,8 +1005,8 @@ async def simulate_layer2_controller_stream(request: Layer2ControllerSimulateReq
                     "velocity": safe_float(nav.vz),
                     "value_function": safe_float(value_func),
                     "control_effort": safe_float(control_effort),
-                    "V_u_fuel": safe_float(_controller.V_u_F),
-                    "V_u_ox": safe_float(_controller.V_u_O),
+                    "V_u_fuel": safe_float(session.controller.controller.V_u_F),
+                    "V_u_ox": safe_float(session.controller.controller.V_u_O),
                     "mdot_F": safe_float(eng_est.mdot_F if eng_est and eng_est.mdot_F else 0.0),
                     "mdot_O": safe_float(eng_est.mdot_O if eng_est and eng_est.mdot_O else 0.0),
                     "w_bar": convert_numpy(w_bar),  # Already handles NaN recursively
@@ -1044,8 +1038,8 @@ async def simulate_layer2_controller_stream(request: Layer2ControllerSimulateReq
                 meas.P_d_fuel = x_next[IDX_P_D_F]
                 meas.P_d_ox = x_next[IDX_P_D_O]
                 
-                _controller.V_u_F = x_next[IDX_V_U_F]
-                _controller.V_u_O = x_next[IDX_V_U_O]
+                session.controller.controller.V_u_F = x_next[IDX_V_U_F]
+                session.controller.controller.V_u_O = x_next[IDX_V_U_O]
                 
                 # Update nav
                 F_actual = diagnostics.get("F_hat", 0.0)
@@ -1077,16 +1071,15 @@ async def simulate_layer2_controller_stream(request: Layer2ControllerSimulateReq
             yield f"data: {safe_json_dumps({'type': 'error', 'error': error_detail})}\n\n"
     
     return StreamingResponse(
-        event_generator(),
+        gated_stream(event_generator()),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
     )
 
 
 @router.post("/simulate-from-config")
-async def simulate_from_layer2_config(request: Layer2ConfigSimulateRequest):
+async def simulate_from_layer2_config(request: Layer2ConfigSimulateRequest, session: UserSession = Depends(get_session)):
     """Run controller simulation from a Layer 2 config file by extracting thrust curve."""
-    global _controller
     
     try:
         # Load config
@@ -1094,12 +1087,12 @@ async def simulate_from_layer2_config(request: Layer2ConfigSimulateRequest):
             config = load_engine_config(request.config_path)
         else:
             # Use currently loaded config
-            if not app_state.has_config():
+            if not session.app_state.has_config():
                 raise HTTPException(
                     status_code=400,
                     detail="No config loaded. Provide config_path or load a config first."
                 )
-            config = app_state.config
+            config = session.app_state.config
         
         # Check if config has pressure curves
         if not config.pressure_curves:
@@ -1172,8 +1165,10 @@ async def simulate_from_layer2_config(request: Layer2ConfigSimulateRequest):
             dt=request.dt,
         )
         
-        # Call the existing simulate endpoint
-        return await simulate_layer2_controller(layer2_request)
+        # Call the existing simulate endpoint. Pass session explicitly: this is a
+        # direct function call, not a FastAPI-resolved dependency, so the default
+        # Depends(get_session) would not be filled in.
+        return await simulate_layer2_controller(layer2_request, session=session)
         
     except Exception as e:
         import traceback
@@ -1182,16 +1177,14 @@ async def simulate_from_layer2_config(request: Layer2ConfigSimulateRequest):
 
 
 @router.post("/simulate-from-config-stream")
-async def simulate_from_layer2_config_stream(request: Layer2ConfigSimulateRequest):
+async def simulate_from_layer2_config_stream(request: Layer2ConfigSimulateRequest, session: UserSession = Depends(get_session)):
     """Stream controller simulation from a Layer 2 config file in real-time."""
-    global _controller
     
     def safe_json_dumps(obj):
         """Safely serialize to JSON, handling non-serializable types."""
         return json.dumps(convert_numpy(obj), allow_nan=False)
     
     async def event_generator():
-        global _controller
         
         try:
             # Load config
@@ -1199,10 +1192,10 @@ async def simulate_from_layer2_config_stream(request: Layer2ConfigSimulateReques
                 config = load_engine_config(request.config_path)
             else:
                 # Use currently loaded config
-                if not app_state.has_config():
+                if not session.app_state.has_config():
                     yield f"data: {safe_json_dumps({'type': 'error', 'error': 'No config loaded. Provide config_path or load a config first.'})}\n\n"
                     return
-                config = app_state.config
+                config = session.app_state.config
             
             # Check if config has pressure curves
             if not config.pressure_curves:
@@ -1285,12 +1278,12 @@ async def simulate_from_layer2_config_stream(request: Layer2ConfigSimulateReques
             # Always reinitialize controller with fresh config to ensure latest settings
             # This ensures controller uses the most aggressive settings for responsiveness
             cfg = get_default_config()
-            if not app_state.has_config():
+            if not session.app_state.has_config():
                 yield f"data: {safe_json_dumps({'type': 'error', 'error': 'No engine config loaded. Load a config first.'})}\n\n"
                 return
-            engine_config = app_state.config
-            _controller = RobustDDPController(cfg, engine_config, logger=None)
-            _controller.reset()  # Reset to ensure fresh state
+            engine_config = session.app_state.config
+            session.controller.controller = RobustDDPController(cfg, engine_config, logger=None)
+            session.controller.controller.reset()  # Reset to ensure fresh state
             
             # Continue with simulation (reuse code from simulate_layer2_controller_stream)
             # ... (rest of the simulation code)
@@ -1335,8 +1328,8 @@ async def simulate_from_layer2_config_stream(request: Layer2ConfigSimulateReques
             from engine.control.robust_ddp.dynamics import step as dynamics_step, DynamicsParams
             from engine.control.robust_ddp.dynamics import IDX_P_COPV, IDX_P_REG, IDX_P_U_F, IDX_P_U_O, IDX_P_D_F, IDX_P_D_O, IDX_V_U_F, IDX_V_U_O
             
-            dynamics_params = DynamicsParams.from_config(_controller.cfg)
-            x = _controller._build_state(meas)
+            dynamics_params = DynamicsParams.from_config(session.controller.controller.cfg)
+            x = session.controller.controller._build_state(meas)
             u_prev = None
             
             # Simulate and stream
@@ -1353,7 +1346,7 @@ async def simulate_from_layer2_config_stream(request: Layer2ConfigSimulateReques
                     thrust_desired=thrust_ref,
                 )
                 
-                actuation, diagnostics = _controller.step(meas, nav, cmd)
+                actuation, diagnostics = session.controller.controller.step(meas, nav, cmd)
                 
                 eng_est = diagnostics.get("eng_est")
                 solution = diagnostics.get("solution")
@@ -1368,7 +1361,7 @@ async def simulate_from_layer2_config_stream(request: Layer2ConfigSimulateReques
                 
                 # Get robustness bounds
                 from engine.control.robust_ddp.robustness import get_w_bar_array
-                w_bar = get_w_bar_array(_controller.state).tolist()
+                w_bar = get_w_bar_array(session.controller.controller.state).tolist()
                 constraint_margins = diagnostics.get("constraint_margins", {})
                 
                 # Stream data point
@@ -1392,8 +1385,8 @@ async def simulate_from_layer2_config_stream(request: Layer2ConfigSimulateReques
                     "velocity": safe_float(nav.vz),
                     "value_function": safe_float(value_func),
                     "control_effort": safe_float(control_effort),
-                    "V_u_fuel": safe_float(_controller.V_u_F),
-                    "V_u_ox": safe_float(_controller.V_u_O),
+                    "V_u_fuel": safe_float(session.controller.controller.V_u_F),
+                    "V_u_ox": safe_float(session.controller.controller.V_u_O),
                     "mdot_F": safe_float(eng_est.mdot_F if eng_est and eng_est.mdot_F else 0.0),
                     "mdot_O": safe_float(eng_est.mdot_O if eng_est and eng_est.mdot_O else 0.0),
                     "w_bar": convert_numpy(w_bar),  # Already handles NaN recursively
@@ -1423,8 +1416,8 @@ async def simulate_from_layer2_config_stream(request: Layer2ConfigSimulateReques
                 meas.P_d_fuel = x_next[IDX_P_D_F]
                 meas.P_d_ox = x_next[IDX_P_D_O]
                 
-                _controller.V_u_F = x_next[IDX_V_U_F]
-                _controller.V_u_O = x_next[IDX_V_U_O]
+                session.controller.controller.V_u_F = x_next[IDX_V_U_F]
+                session.controller.controller.V_u_O = x_next[IDX_V_U_O]
                 
                 F_actual = diagnostics.get("F_hat", 0.0)
                 if isinstance(F_actual, (int, float)) and F_actual > 0:
@@ -1452,7 +1445,7 @@ async def simulate_from_layer2_config_stream(request: Layer2ConfigSimulateReques
             yield f"data: {safe_json_dumps({'type': 'error', 'error': error_detail})}\n\n"
     
     return StreamingResponse(
-        event_generator(),
+        gated_stream(event_generator()),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
     )
@@ -1462,6 +1455,7 @@ async def simulate_from_layer2_config_stream(request: Layer2ConfigSimulateReques
 async def upload_config_and_simulate(
     file: UploadFile = File(...),
     dt: float = 0.01,
+    session: UserSession = Depends(get_session),
 ):
     """Upload a Layer 2 config file and immediately run controller simulation."""
     def safe_json_dumps(obj):
@@ -1469,7 +1463,6 @@ async def upload_config_and_simulate(
         return json.dumps(convert_numpy(obj), allow_nan=False)
     
     async def event_generator():
-        global _controller
         
         try:
             # Read uploaded file
@@ -1523,9 +1516,9 @@ async def upload_config_and_simulate(
             
             yield f"data: {safe_json_dumps({'type': 'status', 'progress': 0.2, 'stage': 'Evaluating Engine', 'message': 'Computing thrust curve from pressure curves...'})}\n\n"
             
-            # Temporarily set app_state config for engine evaluation
-            original_config = app_state.config if app_state.has_config() else None
-            app_state.set_config(config)
+            # Temporarily set session.app_state config for engine evaluation
+            original_config = session.app_state.config if session.app_state.has_config() else None
+            session.app_state.set_config(config)
             
             try:
                 # Evaluate engine to get thrust
@@ -1553,10 +1546,10 @@ async def upload_config_and_simulate(
                 # Initialize controller
                 dt_val = float(dt)
                 
-                if _controller is None:
+                if session.controller.controller is None:
                     cfg = get_default_config()
                     engine_config = config  # Use the uploaded config
-                    _controller = RobustDDPController(cfg, engine_config, logger=None)
+                    session.controller.controller = RobustDDPController(cfg, engine_config, logger=None)
                 
                 # Default initial conditions from config
                 meas = Measurement(
@@ -1572,8 +1565,8 @@ async def upload_config_and_simulate(
                 from engine.control.robust_ddp.dynamics import step as dynamics_step, DynamicsParams
                 from engine.control.robust_ddp.dynamics import IDX_P_COPV, IDX_P_REG, IDX_P_U_F, IDX_P_U_O, IDX_P_D_F, IDX_P_D_O, IDX_V_U_F, IDX_V_U_O
                 
-                dynamics_params = DynamicsParams.from_config(_controller.cfg)
-                x = _controller._build_state(meas)
+                dynamics_params = DynamicsParams.from_config(session.controller.controller.cfg)
+                x = session.controller.controller._build_state(meas)
                 u_prev = None
                 
                 # Simulate and stream
@@ -1590,7 +1583,7 @@ async def upload_config_and_simulate(
                         thrust_desired=thrust_ref,
                     )
                     
-                    actuation, diagnostics = _controller.step(meas, nav, cmd)
+                    actuation, diagnostics = session.controller.controller.step(meas, nav, cmd)
                     
                     eng_est = diagnostics.get("eng_est")
                     solution = diagnostics.get("solution")
@@ -1605,7 +1598,7 @@ async def upload_config_and_simulate(
                     
                     # Get robustness bounds
                     from engine.control.robust_ddp.robustness import get_w_bar_array
-                    w_bar = get_w_bar_array(_controller.state).tolist()
+                    w_bar = get_w_bar_array(session.controller.controller.state).tolist()
                     constraint_margins = diagnostics.get("constraint_margins", {})
                     
                     # Stream data point (sanitize all float values to handle NaN/Inf)
@@ -1628,8 +1621,8 @@ async def upload_config_and_simulate(
                         "velocity": safe_float(nav.vz),
                         "value_function": safe_float(value_func),
                         "control_effort": safe_float(control_effort),
-                        "V_u_fuel": safe_float(_controller.V_u_F),
-                        "V_u_ox": safe_float(_controller.V_u_O),
+                        "V_u_fuel": safe_float(session.controller.controller.V_u_F),
+                        "V_u_ox": safe_float(session.controller.controller.V_u_O),
                         "mdot_F": safe_float(eng_est.mdot_F if eng_est and eng_est.mdot_F else 0.0),
                         "mdot_O": safe_float(eng_est.mdot_O if eng_est and eng_est.mdot_O else 0.0),
                         "w_bar": convert_numpy(w_bar),  # Already handles NaN recursively
@@ -1659,8 +1652,8 @@ async def upload_config_and_simulate(
                     meas.P_d_fuel = x_next[IDX_P_D_F]
                     meas.P_d_ox = x_next[IDX_P_D_O]
                     
-                    _controller.V_u_F = x_next[IDX_V_U_F]
-                    _controller.V_u_O = x_next[IDX_V_U_O]
+                    session.controller.controller.V_u_F = x_next[IDX_V_U_F]
+                    session.controller.controller.V_u_O = x_next[IDX_V_U_O]
                     
                     F_actual = diagnostics.get("F_hat", 0.0)
                     if isinstance(F_actual, (int, float)) and F_actual > 0:
@@ -1685,7 +1678,7 @@ async def upload_config_and_simulate(
             finally:
                 # Restore original config
                 if original_config:
-                    app_state.set_config(original_config)
+                    session.app_state.set_config(original_config)
             
         except Exception as e:
             import traceback
@@ -1693,22 +1686,21 @@ async def upload_config_and_simulate(
             yield f"data: {safe_json_dumps({'type': 'error', 'error': error_detail})}\n\n"
     
     return StreamingResponse(
-        event_generator(),
+        gated_stream(event_generator()),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
     )
 
 
 @router.get("/status")
-async def get_controller_status():
+async def get_controller_status(session: UserSession = Depends(get_session)):
     """Get current controller status."""
-    global _controller
-    if _controller is None:
+    if session.controller.controller is None:
         return {"initialized": False}
     
     return {
         "initialized": True,
-        "tick": _controller.tick,
-        "state": convert_numpy(_controller.state.to_dict()),
+        "tick": session.controller.controller.tick,
+        "state": convert_numpy(session.controller.controller.state.to_dict()),
     }
 

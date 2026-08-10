@@ -1,0 +1,19 @@
+# onshape-viewer approved users.
+#
+# One email per line. `#` starts a comment; blank lines are ignored. Matching is
+# case-insensitive. Anyone with a valid @berkeley.edu session is authenticated,
+# but only the addresses below are AUTHORIZED to use onshape-viewer -- it brokers
+# Onshape API credentials, so access is deliberately narrower than the other
+# tools. See auth/allowlist.py.
+#
+# Edits take effect on the user's next request (the file is re-read on change);
+# no restart needed. In production this file can be overridden by mounting one
+# at $ONSHAPE_ALLOWLIST_FILE.
+
+aidanrickert@berkeley.edu
+aahilsyed72@berkeley.edu
+24mhaggag@berkeley.edu
+manank_doshi@berkeley.edu
+rchikka15@berkeley.edu
+inez9@berkeley.edu
+carlosbautista@berkeley.edu

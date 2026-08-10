@@ -1,21 +1,22 @@
 import { useEffect, useState } from 'react';
 import type { ReactFlowInstance, Node, Edge } from '@xyflow/react';
-import type { InteractionMode } from './PIDDesigner';
-import type { VersionEntry } from './PIDDesigner';
+import type { InteractionMode, MicroVersion, ReleaseVersion } from './PIDDesigner';
 
 interface PIDToolbarProps {
-  rfInstance:       ReactFlowInstance | null;
-  getSnapshot:      () => { nodes: Node[]; edges: Edge[] };
-  loadSnapshot:     (data: { nodes: Node[]; edges: Edge[] }) => void;
-  onClear:          () => void;
-  onUndo:           () => void;
-  onRedo:           () => void;
-  onCheckpoint:     (title: string, description: string) => Promise<{ ok: boolean; commit: string }>;
-  onGetLatest:      () => Promise<void>;
-  onGetHistory:     () => Promise<VersionEntry[]>;
-  onRestoreVersion: (hash: string) => Promise<void>;
-  mode:             InteractionMode;
-  onModeChange:     (mode: InteractionMode) => void;
+  rfInstance:        ReactFlowInstance | null;
+  getSnapshot:       () => { nodes: Node[]; edges: Edge[] };
+  loadSnapshot:      (data: { nodes: Node[]; edges: Edge[] }) => void;
+  onClear:           () => void;
+  onUndo:            () => void;
+  onRedo:            () => void;
+  onRelease:         (label: string) => Promise<{ label: string; savedAt: string }>;
+  onGetHistory:      () => Promise<MicroVersion[]>;
+  onGetReleases:     () => Promise<ReleaseVersion[]>;
+  onRestoreMicro:    (versionId: string) => Promise<void>;
+  onRestoreRelease:  (label: string) => Promise<void>;
+  canVersion:        boolean;
+  mode:              InteractionMode;
+  onModeChange:      (mode: InteractionMode) => void;
 }
 
 function relativeTime(iso: string): string {
@@ -30,23 +31,21 @@ function relativeTime(iso: string): string {
 
 export function PIDToolbar({
   rfInstance, getSnapshot, loadSnapshot, onClear, onUndo, onRedo,
-  onCheckpoint, onGetLatest, onGetHistory, onRestoreVersion,
-  mode, onModeChange,
+  onRelease, onGetHistory, onGetReleases, onRestoreMicro, onRestoreRelease,
+  canVersion, mode, onModeChange,
 }: PIDToolbarProps) {
   const fitView = () => rfInstance?.fitView({ padding: 0.1 });
 
-  const [showCheckpoint, setShowCheckpoint] = useState(false);
-  const [cpTitle, setCpTitle]               = useState('');
-  const [cpDesc, setCpDesc]                 = useState('');
-  const [cpStatus, setCpStatus]             = useState<'idle' | 'saving' | 'ok' | 'err'>('idle');
-  const [cpError, setCpError]               = useState('');
+  const [showRelease, setShowRelease] = useState(false);
+  const [relLabel, setRelLabel]       = useState('');
+  const [relStatus, setRelStatus]     = useState<'idle' | 'saving' | 'ok' | 'err'>('idle');
+  const [relError, setRelError]       = useState('');
 
-  const [showHistory, setShowHistory]       = useState(false);
-  const [history, setHistory]               = useState<VersionEntry[]>([]);
-  const [historyStatus, setHistoryStatus]   = useState<'idle' | 'loading' | 'err'>('idle');
-  const [latestStatus, setLatestStatus]     = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
-  const [restoring, setRestoring]           = useState<string | null>(null);
-  const [currentHash, setCurrentHash]       = useState<string | null>(null);
+  const [showHistory, setShowHistory]     = useState(false);
+  const [micro, setMicro]                 = useState<MicroVersion[]>([]);
+  const [releases, setReleases]           = useState<ReleaseVersion[]>([]);
+  const [historyStatus, setHistoryStatus] = useState<'idle' | 'loading' | 'err'>('idle');
+  const [restoring, setRestoring]         = useState<string | null>(null);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -65,62 +64,59 @@ export function PIDToolbar({
     return () => window.removeEventListener('keydown', handler);
   }, [onUndo, onRedo, onModeChange]);
 
-  const submitCheckpoint = async () => {
-    if (!cpTitle.trim()) return;
-    setCpStatus('saving');
-    setCpError('');
+  const submitRelease = async () => {
+    if (!relLabel.trim()) return;
+    setRelStatus('saving');
+    setRelError('');
     try {
-      await onCheckpoint(cpTitle.trim(), cpDesc.trim());
-      setCpStatus('ok');
+      await onRelease(relLabel.trim());
+      setRelStatus('ok');
+      if (showHistory) void refreshHistory();
       setTimeout(() => {
-        setShowCheckpoint(false);
-        setCpTitle('');
-        setCpDesc('');
-        setCpStatus('idle');
+        setShowRelease(false);
+        setRelLabel('');
+        setRelStatus('idle');
       }, 1200);
     } catch (e) {
-      setCpStatus('err');
-      setCpError(e instanceof Error ? e.message : 'Unknown error');
+      setRelStatus('err');
+      setRelError(e instanceof Error ? e.message : 'Unknown error');
+    }
+  };
+
+  const refreshHistory = async () => {
+    setHistoryStatus('loading');
+    try {
+      const [m, r] = await Promise.all([onGetHistory(), onGetReleases()]);
+      setMicro(m);
+      setReleases(r);
+      setHistoryStatus('idle');
+    } catch {
+      setHistoryStatus('err');
     }
   };
 
   const openHistory = async () => {
-    setShowHistory(h => !h);
-    if (!showHistory) {
-      setHistoryStatus('loading');
-      try {
-        const entries = await onGetHistory();
-        setHistory(entries);
-        setHistoryStatus('idle');
-        if (currentHash === null && entries.length > 0) setCurrentHash(entries[0].hash);
-      } catch {
-        setHistoryStatus('err');
-      }
+    const next = !showHistory;
+    setShowHistory(next);
+    if (next) void refreshHistory();
+  };
+
+  const restoreMicro = async (v: MicroVersion) => {
+    if (!confirm(`Restore microversion from ${new Date(v.savedAt).toLocaleString()}?\n\nThis replaces your current canvas (your working copy is snapshotted continuously, so you can undo).`)) return;
+    setRestoring(v.versionId);
+    try {
+      await onRestoreMicro(v.versionId);
+      setShowHistory(false);
+    } finally {
+      setRestoring(null);
     }
   };
 
-  const handleGetLatest = async () => {
-    setLatestStatus('loading');
+  const restoreRelease = async (r: ReleaseVersion) => {
+    if (!confirm(`Restore release "${r.label}"?\n\nThis replaces your current canvas.`)) return;
+    setRestoring(`rel:${r.label}`);
     try {
-      await onGetLatest();
-      setLatestStatus('ok');
-      setTimeout(() => setLatestStatus('idle'), 1500);
-      // Re-fetch history so currentHash reflects the new HEAD
-      const entries = await onGetHistory();
-      setHistory(entries);
-      if (entries.length > 0) setCurrentHash(entries[0].hash);
-    } catch {
-      setLatestStatus('err');
-      setTimeout(() => setLatestStatus('idle'), 2500);
-    }
-  };
-
-  const handleRestore = async (hash: string, title: string) => {
-    if (!confirm(`Restore to: "${title}"?\n\nThis will replace your current canvas.`)) return;
-    setRestoring(hash);
-    try {
-      await onRestoreVersion(hash);
-      setCurrentHash(hash);
+      await onRestoreRelease(r.label);
       setShowHistory(false);
     } finally {
       setRestoring(null);
@@ -213,24 +209,22 @@ export function PIDToolbar({
         </button>
         <div className="w-px h-5 bg-[#334155]" />
 
-        <button onClick={handleGetLatest} className={latestStatus === 'ok' ? green : latestStatus === 'err' ? danger : def} title="Pull latest from remote">
-          {latestStatus === 'loading'
-            ? <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
-            : <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-          }
-          {latestStatus === 'ok' ? 'Up to date' : latestStatus === 'err' ? 'Pull failed' : 'Get Latest'}
-        </button>
-
-        <button onClick={() => { setShowCheckpoint(true); setCpStatus('idle'); setCpError(''); }} className={green}>
+        <button
+          onClick={() => { setShowRelease(true); setRelStatus('idle'); setRelError(''); }}
+          disabled={!canVersion}
+          className={`${green} disabled:opacity-40`}
+          title="Publish an immutable, named version (e.g. 0.1)"
+        >
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5a1.99 1.99 0 011.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.99 1.99 0 013 12V7a4 4 0 014-4z" />
           </svg>
-          Checkpoint
+          Release
         </button>
 
         <button
           onClick={openHistory}
-          className={`${btn} ${showHistory ? 'bg-blue-600/20 text-blue-300 border-blue-600/40' : 'bg-[#1e293b] text-slate-300 hover:bg-[#334155] border-[#334155]'}`}
+          disabled={!canVersion}
+          className={`${btn} disabled:opacity-40 ${showHistory ? 'bg-blue-600/20 text-blue-300 border-blue-600/40' : 'bg-[#1e293b] text-slate-300 hover:bg-[#334155] border-[#334155]'}`}
         >
           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -249,79 +243,95 @@ export function PIDToolbar({
       </div>
 
       {showHistory && (
-        <div className="border-b border-[#1e293b] bg-[#0a1628] px-4 py-3">
-          <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Version History (last 10 checkpoints)</p>
-          {historyStatus === 'loading' && <p className="text-xs text-slate-500 py-2">Loading...</p>}
+        <div className="border-b border-[#1e293b] bg-[#0a1628] px-4 py-3 max-h-[320px] overflow-y-auto">
+          {historyStatus === 'loading' && <p className="text-xs text-slate-500 py-2">Loading…</p>}
           {historyStatus === 'err' && <p className="text-xs text-red-400 py-2">Failed to load history — is the backend running?</p>}
-          {historyStatus === 'idle' && history.length === 0 && <p className="text-xs text-slate-600 py-2">No checkpoints yet.</p>}
-          {historyStatus === 'idle' && history.length > 0 && (
-            <div className="flex flex-col gap-1">
-              {history.map((entry) => (
-                <button
-                  key={entry.hash}
-                  onClick={() => handleRestore(entry.hash, entry.title)}
-                  disabled={restoring === entry.hash}
-                  className="flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-[#1e293b] transition-colors group disabled:opacity-50"
-                >
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${entry.hash === currentHash ? 'bg-emerald-400' : 'bg-[#334155]'}`} />
-                  <span className="text-xs text-slate-300 flex-1 truncate">{entry.title}</span>
-                  <span className="text-[10px] text-slate-600 shrink-0 group-hover:text-slate-400">
-                    {restoring === entry.hash ? 'Restoring...' : relativeTime(entry.timestamp)}
-                  </span>
-                </button>
-              ))}
-            </div>
+
+          {historyStatus === 'idle' && (
+            <>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Releases</p>
+              {releases.length === 0 && <p className="text-xs text-slate-600 pb-2">No releases yet — click Release to publish 0.1.</p>}
+              {releases.length > 0 && (
+                <div className="flex flex-col gap-1 mb-3">
+                  {releases.map(r => (
+                    <button
+                      key={r.label}
+                      onClick={() => restoreRelease(r)}
+                      disabled={restoring === `rel:${r.label}`}
+                      className="flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-[#1e293b] transition-colors group disabled:opacity-50"
+                    >
+                      <span className="inline-flex items-center justify-center text-[10px] font-semibold text-emerald-300 bg-emerald-900/40 border border-emerald-800/50 rounded px-1.5 py-0.5 shrink-0">{r.label}</span>
+                      <span className="text-[10px] text-slate-600 flex-1 group-hover:text-slate-400">
+                        {restoring === `rel:${r.label}` ? 'Restoring…' : relativeTime(r.savedAt)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Microversions (auto-saved)</p>
+              {micro.length === 0 && <p className="text-xs text-slate-600 py-2">No microversions yet.</p>}
+              {micro.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  {micro.map(v => (
+                    <button
+                      key={v.versionId}
+                      onClick={() => restoreMicro(v)}
+                      disabled={restoring === v.versionId}
+                      className="flex items-center gap-2 text-left px-2 py-1.5 rounded hover:bg-[#1e293b] transition-colors group disabled:opacity-50"
+                    >
+                      <span className="w-2 h-2 rounded-full shrink-0 bg-[#334155]" />
+                      <span className="text-xs text-slate-300 flex-1 truncate">{new Date(v.savedAt).toLocaleString()}</span>
+                      <span className="text-[10px] text-slate-600 shrink-0 group-hover:text-slate-400">
+                        {restoring === v.versionId ? 'Restoring…' : relativeTime(v.savedAt)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
 
-      {showCheckpoint && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => cpStatus !== 'saving' && setShowCheckpoint(false)}>
+      {showRelease && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => relStatus !== 'saving' && setShowRelease(false)}>
           <div className="bg-[#0f172a] border border-[#334155] rounded-xl shadow-2xl p-6 w-[420px] max-w-[90vw]" onClick={e => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold text-slate-200 mb-4">Save Checkpoint</h3>
+            <h3 className="text-sm font-semibold text-slate-200 mb-1">Publish a release</h3>
+            <p className="text-xs text-slate-500 mb-4">An immutable, named snapshot of this diagram. Reuse of a label is rejected.</p>
 
-            <label className="block text-xs text-slate-400 mb-1">Title <span className="text-red-400">*</span></label>
+            <label className="block text-xs text-slate-400 mb-1">Version label <span className="text-red-400">*</span></label>
             <input
               autoFocus
-              value={cpTitle}
-              onChange={e => setCpTitle(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') submitCheckpoint(); if (e.key === 'Escape') setShowCheckpoint(false); }}
-              placeholder="LE4 - Added Fuel Lines"
-              disabled={cpStatus === 'saving'}
-              className="w-full bg-[#1e293b] border border-[#334155] rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-blue-500/60 mb-3 disabled:opacity-50"
+              value={relLabel}
+              onChange={e => setRelLabel(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') submitRelease(); if (e.key === 'Escape') setShowRelease(false); }}
+              placeholder="0.1"
+              disabled={relStatus === 'saving'}
+              className="w-full bg-[#1e293b] border border-[#334155] rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-blue-500/60 mb-4 disabled:opacity-50"
             />
 
-            <label className="block text-xs text-slate-400 mb-1">Description <span className="text-slate-600">(optional)</span></label>
-            <textarea
-              value={cpDesc}
-              onChange={e => setCpDesc(e.target.value)}
-              placeholder="What changed in this version..."
-              rows={3}
-              disabled={cpStatus === 'saving'}
-              className="w-full bg-[#1e293b] border border-[#334155] rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 outline-none focus:border-blue-500/60 resize-none mb-4 disabled:opacity-50"
-            />
-
-            {cpStatus === 'err' && <p className="text-xs text-red-400 mb-3">{cpError}</p>}
-            {cpStatus === 'ok' && <p className="text-xs text-emerald-400 mb-3">Checkpoint saved!</p>}
+            {relStatus === 'err' && <p className="text-xs text-red-400 mb-3">{relError}</p>}
+            {relStatus === 'ok' && <p className="text-xs text-emerald-400 mb-3">Release published!</p>}
 
             <div className="flex gap-2 justify-end">
               <button
-                onClick={() => setShowCheckpoint(false)}
-                disabled={cpStatus === 'saving'}
+                onClick={() => setShowRelease(false)}
+                disabled={relStatus === 'saving'}
                 className={`${btn} bg-[#1e293b] text-slate-400 hover:bg-[#334155] border-[#334155] disabled:opacity-50`}
               >
                 Cancel
               </button>
               <button
-                onClick={submitCheckpoint}
-                disabled={!cpTitle.trim() || cpStatus === 'saving'}
+                onClick={submitRelease}
+                disabled={!relLabel.trim() || relStatus === 'saving'}
                 className={`${btn} bg-emerald-700/50 text-emerald-300 hover:bg-emerald-700/70 border-emerald-700/50 disabled:opacity-40`}
               >
-                {cpStatus === 'saving'
+                {relStatus === 'saving'
                   ? <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
                   : <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                 }
-                {cpStatus === 'saving' ? 'Saving...' : 'Save & Push'}
+                {relStatus === 'saving' ? 'Publishing…' : 'Publish'}
               </button>
             </div>
           </div>

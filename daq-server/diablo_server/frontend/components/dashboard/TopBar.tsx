@@ -97,7 +97,7 @@ export default function TopBar() {
   const debugMode = useSensorStore((s) => s.debugMode);
   const setDebugMode = useSensorStore((s) => s.setDebugMode);
   const countdownTargetTimeMs = useSensorStore((s) => s.countdownTargetTimeMs);
-  const { controlEnabled, unlocking, error, unlock, lock } = useControlMode();
+  const { controlEnabled, isOperator, unlocking, error, unlock, lock } = useControlMode();
   const [passwordInput, setPasswordInput] = useState('');
   const [showUnlockForm, setShowUnlockForm] = useState(false);
 
@@ -485,33 +485,41 @@ export default function TopBar() {
             </button>
 
             {!controlEnabled && showUnlockForm && (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  unlock(passwordInput);
-                }}
-                className="absolute top-full right-0 mt-1 flex flex-col gap-1 bg-background border border-gray-700 rounded px-2 py-2 shadow-lg z-50 w-48"
-              >
-                <input
-                  type="password"
-                  value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
-                  placeholder="Control password"
-                  className="px-2 py-1 rounded bg-black/60 border border-gray-700 text-[11px] text-white"
-                />
-                <button
-                  type="submit"
-                  disabled={unlocking || !passwordInput}
-                  className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wider border border-blue-700 bg-blue-700/80 hover:bg-blue-600 disabled:opacity-50"
-                >
-                  {unlocking ? 'Unlocking…' : 'Submit'}
-                </button>
+              <div className="absolute top-full right-0 mt-1 flex flex-col gap-1 bg-background border border-gray-700 rounded px-2 py-2 shadow-lg z-50 w-48">
+                {!isOperator ? (
+                  <span className="text-[10px] text-yellow-400">
+                    You&apos;re not an approved operator — control is view-only.
+                  </span>
+                ) : (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      unlock(passwordInput);
+                    }}
+                    className="flex flex-col gap-1"
+                  >
+                    <input
+                      type="password"
+                      value={passwordInput}
+                      onChange={(e) => setPasswordInput(e.target.value)}
+                      placeholder="Control password"
+                      className="px-2 py-1 rounded bg-black/60 border border-gray-700 text-[11px] text-white"
+                    />
+                    <button
+                      type="submit"
+                      disabled={unlocking || !passwordInput}
+                      className="px-2 py-1 rounded text-[10px] font-semibold uppercase tracking-wider border border-blue-700 bg-blue-700/80 hover:bg-blue-600 disabled:opacity-50"
+                    >
+                      {unlocking ? 'Unlocking…' : 'Submit'}
+                    </button>
+                  </form>
+                )}
                 {error && (
                   <span className="text-[10px] text-red-400">
                     {error}
                   </span>
                 )}
-              </form>
+              </div>
             )}
           </div>
 

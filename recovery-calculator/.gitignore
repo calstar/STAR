@@ -14,8 +14,11 @@ out/
 # Export bundles from PLAN.md §11.4 — timestamped run directories.
 recovery_*/
 
-# Which unit each quantity renders in, written by /api/settings. A property of
-# the workstation, not of the design — two people sharing this repo should not
-# fight over whether force reads in newtons.
+# Per-user data written when running without a mounted volume (dev): unit prefs
+# (/api/settings) and named saved configs (/api/configs). USERDATA_DIR points
+# elsewhere in prod; unset in dev this lands here. Never commit it.
+.userdata/
+
+# Legacy: the old global settings file, before units went per-user.
 .gui-settings.json
 .gui-settings-*.tmp

@@ -8,7 +8,6 @@ Modules:
 - layers/layer2_pressure.py: Layer 2 pressure curve optimization  
 - layers/layer3_thermal_protection.py: Layer 3 thermal protection sizing
 - layers/layer4_flight_simulation.py: Layer 4 flight simulation
-- display_results.py: Plotting and visualization functions
 - copv_flight_helpers.py: COPV and flight simulation utilities
 - utils.py: Parameter extraction and misc utilities
 
@@ -23,9 +22,6 @@ Usage:
         run_layer2_pressure,
         run_layer3_thermal_protection,
         run_layer4_flight_simulation,
-        # Display
-        plot_pressure_curves,
-        plot_optimization_convergence,
         # Utilities
         extract_all_parameters,
         calculate_copv_pressure_curve,
@@ -61,15 +57,10 @@ from engine.optimizer.layers.layer4_flight_simulation import (
     run_layer4_flight_simulation,
 )
 
-# Display functions
-from engine.optimizer.display_results import (
-    plot_pressure_curves,
-    plot_copv_pressure,
-    plot_flight_trajectory,
-    plot_optimization_convergence,
-    plot_time_varying_results,
-    plot_layer1_parameterization_history,
-)
+# Display functions used to be re-exported here from display_results.py. That
+# import ran on any `from engine.optimizer... import`, which dragged Streamlit
+# into the FastAPI backend and its container. The Streamlit UI is retired --
+# see archive/streamlit-ui/.
 
 # COPV and flight helpers
 from engine.optimizer.copv_flight_helpers import (
@@ -101,13 +92,6 @@ __all__ = [
     'run_layer3_thermal_protection',
     # Layer 4
     'run_layer4_flight_simulation',
-    # Display functions
-    'plot_pressure_curves',
-    'plot_copv_pressure',
-    'plot_flight_trajectory',
-    'plot_optimization_convergence',
-    'plot_time_varying_results',
-    'plot_layer1_parameterization_history',
     # COPV and flight
     'calculate_copv_pressure_curve',
     'run_flight_simulation',

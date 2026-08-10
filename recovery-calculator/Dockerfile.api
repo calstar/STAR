@@ -1,0 +1,30 @@
+# Recovery Calculator — API image.
+#
+# Unlike pid-designer/EngineDesign, this build context is the SUBPROJECT dir,
+# not the repo root: the backend implements no auth (Caddy is the gate, see
+# deploy/Caddyfile), so it never needs auth/shared_auth.py and there is no
+# reason to ship the whole repo as build context.
+FROM python:3.12-slim
+WORKDIR /app
+
+# Env, not CLI flags: pip installs an sdist's build dependencies in a fresh
+# subprocess that inherits no command-line options, so --timeout/--retries there
+# would silently fall back to the stock 15s. Env vars reach it.
+ENV PIP_RETRIES=10 \
+    PIP_TIMEOUT=120 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_INPUT=1
+
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
+
+# The web app is one consumer of the `physics` package; backend/main.py puts the
+# subproject root (/app) on sys.path so `import physics` resolves. physics/ also
+# carries data/parachutes.csv, loaded once at startup.
+COPY physics/ ./physics/
+COPY backend/ ./backend/
+
+ENV PYTHONPATH=/app
+EXPOSE 8100
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8100"]

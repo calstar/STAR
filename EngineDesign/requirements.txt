@@ -1,17 +1,16 @@
-numpy
-scipy
-pandas
-matplotlib
-pydantic
-PyYAML
+# Full local development install.
+#
+# Everything in requirements-base.txt, plus rocketcea.
+#
+# rocketcea builds NASA CEA from Fortran source, so it needs gfortran and a
+# multi-minute compile, and it downloads as a 69 MB sdist (there is no wheel).
+# You only need it to *regenerate* the CEA cache, which is rare -- it is
+# imported lazily in engine/pipeline/cea_cache.py, and everything else reads
+# the committed tables in output/cache/*.npz.
+#
+# If you don't need to regenerate the cache, install requirements-base.txt
+# instead and skip the compiler entirely. That is what CI (requirements-ci.txt)
+# and the API container (Dockerfile.api) do.
+-r requirements-base.txt
+
 rocketcea
-rocketpy
-streamlit
-plotly
-ezdxf
-cma
-CoolProp
-# FastAPI backend
-fastapi
-uvicorn[standard]
-python-multipart

@@ -20,6 +20,7 @@ import '@xyflow/react/dist/style.css';
 
 import { ComponentPalette } from './ComponentPalette';
 import { PIDToolbar } from './PIDToolbar';
+import { DiagramBar } from './DiagramBar';
 import { nodeTypes } from './nodes';
 import { BranchableEdge } from './BranchableEdge';
 import { FLUID_COLORS, COMPONENT_DEFS } from './types';
@@ -27,11 +28,31 @@ import type { PIDNodeData, ComponentType, FluidType } from './types';
 
 export type InteractionMode = 'pan' | 'select';
 
-export interface VersionEntry {
-  hash: string;
-  title: string;
-  timestamp: string;
+export type Snapshot = { nodes: Node[]; edges: Edge[] };
+
+/** One of the user's diagrams (metadata; the geometry lives in current.json). */
+export interface DiagramMeta {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
 }
+
+/** An automatic point-in-time snapshot in S3 (bucket-versioned). */
+export interface MicroVersion {
+  versionId: string;
+  savedAt: string;
+  size: number;
+}
+
+/** An explicit, immutable, user-named milestone. */
+export interface ReleaseVersion {
+  label: string;
+  savedAt: string;
+  size: number;
+}
+
+const ACTIVE_KEY = 'pid.activeDiagramId';
 
 let _idCounter = 1;
 const genId = () => `node_${_idCounter++}`;
@@ -42,8 +63,6 @@ function defaultLabel(type: ComponentType) {
 
 // ── Undo / redo history ──────────────────────────────────────────────────────
 const MAX_HISTORY = 100;
-
-type Snapshot = { nodes: Node[]; edges: Edge[] };
 
 function useHistory(
   nodes: Node[],
@@ -94,22 +113,24 @@ function useHistory(
 
 // ── Inner canvas ─────────────────────────────────────────────────────────────
 interface CanvasProps {
-  onInstance:        (inst: ReactFlowInstance) => void;
-  getRef:            React.MutableRefObject<() => Snapshot>;
-  loadRef:           React.MutableRefObject<(d: Snapshot) => void>;
-  clearRef:          React.MutableRefObject<() => void>;
-  undoRef:           React.MutableRefObject<() => void>;
-  redoRef:           React.MutableRefObject<() => void>;
-  checkpointRef:     React.MutableRefObject<(title: string, desc: string) => Promise<{ ok: boolean; commit: string }>>;
-  getLatestRef:      React.MutableRefObject<() => Promise<void>>;
-  getHistoryRef:     React.MutableRefObject<() => Promise<VersionEntry[]>>;
-  restoreVersionRef: React.MutableRefObject<(hash: string) => Promise<void>>;
-  mode:              InteractionMode;
+  diagramId:          string;
+  onInstance:         (inst: ReactFlowInstance) => void;
+  getRef:             React.MutableRefObject<() => Snapshot>;
+  loadRef:            React.MutableRefObject<(d: Snapshot) => void>;
+  clearRef:           React.MutableRefObject<() => void>;
+  undoRef:            React.MutableRefObject<() => void>;
+  redoRef:            React.MutableRefObject<() => void>;
+  releaseRef:         React.MutableRefObject<(label: string) => Promise<{ label: string; savedAt: string }>>;
+  getHistoryRef:      React.MutableRefObject<() => Promise<MicroVersion[]>>;
+  getReleasesRef:     React.MutableRefObject<() => Promise<ReleaseVersion[]>>;
+  restoreMicroRef:    React.MutableRefObject<(versionId: string) => Promise<void>>;
+  restoreReleaseRef:  React.MutableRefObject<(label: string) => Promise<void>>;
+  mode:               InteractionMode;
 }
 
 function PIDCanvas({
-  onInstance, getRef, loadRef, clearRef, undoRef, redoRef,
-  checkpointRef, getLatestRef, getHistoryRef, restoreVersionRef,
+  diagramId, onInstance, getRef, loadRef, clearRef, undoRef, redoRef,
+  releaseRef, getHistoryRef, getReleasesRef, restoreMicroRef, restoreReleaseRef,
   mode,
 }: CanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -119,28 +140,60 @@ function PIDCanvas({
 
   const { undo, redo } = useHistory(nodes, edges, setNodes, setEdges);
 
+  // Which diagram the current nodes/edges belong to. Guards autosave from writing
+  // the previous diagram's geometry into the newly-selected one before it loads.
+  const loadedId  = useRef<string | null>(null);
+  const snapshot  = useRef<Snapshot>({ nodes: [], edges: [] });
+  snapshot.current = { nodes, edges };
+
+  const base = `/api/pid/diagrams/${encodeURIComponent(diagramId)}`;
+
+  // Load the selected diagram's working copy whenever the selection changes.
   useEffect(() => {
-    fetch('/api/pid/load')
+    loadedId.current = null;
+    let cancelled = false;
+    fetch(`${base}/load`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
-        if (data?.nodes && data?.edges) {
-          setNodes(data.nodes);
-          setEdges(data.edges);
-        }
+        if (cancelled) return;
+        setNodes(data?.nodes ?? []);
+        setEdges(data?.edges ?? []);
+        loadedId.current = diagramId;
       })
-      .catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+      .catch(() => { if (!cancelled) loadedId.current = diagramId; });
+    return () => { cancelled = true; };
+  }, [diagramId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Debounced autosave of the working copy — only once the active diagram has
+  // actually loaded, so switching never clobbers a diagram with another's data.
   useEffect(() => {
+    if (loadedId.current !== diagramId) return;
     const t = setTimeout(() => {
-      fetch('/api/pid/autosave', {
+      fetch(`${base}/autosave`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nodes, edges }),
       }).catch(() => {});
     }, 1000);
     return () => clearTimeout(t);
-  }, [nodes, edges]);
+  }, [nodes, edges, diagramId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Best-effort flush to S3 on tab close / hide, so the last few edits land even
+  // between the periodic (server-throttled) microversions.
+  useEffect(() => {
+    const flush = () => {
+      if (loadedId.current !== diagramId) return;
+      const body = JSON.stringify(snapshot.current);
+      navigator.sendBeacon(`${base}/flush`, new Blob([body], { type: 'application/json' }));
+    };
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flush(); };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [diagramId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -162,43 +215,46 @@ function PIDCanvas({
   undoRef.current  = undo;
   redoRef.current  = redo;
 
-  checkpointRef.current = useCallback(async (title: string, description: string) => {
-    const res = await fetch('/api/pid/checkpoint', {
+  releaseRef.current = useCallback(async (label: string) => {
+    const res = await fetch(`${base}/release`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nodes, edges, title, description }),
+      body: JSON.stringify({ label, nodes, edges }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error((err as { detail?: string }).detail || 'Checkpoint failed');
+      throw new Error((err as { detail?: string }).detail || 'Release failed');
     }
-    return res.json() as Promise<{ ok: boolean; commit: string }>;
-  }, [nodes, edges]);
-
-  getLatestRef.current = useCallback(async () => {
-    const res = await fetch('/api/pid/pull', { method: 'POST' });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error((err as { detail?: string }).detail || 'Pull failed');
-    }
-    const data = await res.json() as { nodes: Node[]; edges: Edge[] };
-    setNodes(data.nodes);
-    setEdges(data.edges);
-  }, [setNodes, setEdges]);
+    return res.json() as Promise<{ label: string; savedAt: string }>;
+  }, [nodes, edges, base]);
 
   getHistoryRef.current = useCallback(async () => {
-    const res = await fetch('/api/pid/history');
+    const res = await fetch(`${base}/history`);
     if (!res.ok) throw new Error('Failed to load history');
-    return res.json() as Promise<VersionEntry[]>;
-  }, []);
+    return res.json() as Promise<MicroVersion[]>;
+  }, [base]);
 
-  restoreVersionRef.current = useCallback(async (hash: string) => {
-    const res = await fetch(`/api/pid/version/${hash}`);
+  getReleasesRef.current = useCallback(async () => {
+    const res = await fetch(`${base}/releases`);
+    if (!res.ok) throw new Error('Failed to load releases');
+    return res.json() as Promise<ReleaseVersion[]>;
+  }, [base]);
+
+  restoreMicroRef.current = useCallback(async (versionId: string) => {
+    const res = await fetch(`${base}/version/${encodeURIComponent(versionId)}`);
     if (!res.ok) throw new Error('Version not found');
-    const data = await res.json() as { nodes: Node[]; edges: Edge[] };
+    const data = await res.json() as Snapshot;
     setNodes(data.nodes);
     setEdges(data.edges);
-  }, [setNodes, setEdges]);
+  }, [base, setNodes, setEdges]);
+
+  restoreReleaseRef.current = useCallback(async (label: string) => {
+    const res = await fetch(`${base}/release/${encodeURIComponent(label)}`);
+    if (!res.ok) throw new Error('Release not found');
+    const data = await res.json() as Snapshot;
+    setNodes(data.nodes);
+    setEdges(data.edges);
+  }, [base, setNodes, setEdges]);
 
   const onInit = useCallback((inst: ReactFlowInstance) => {
     setRfInst(inst);
@@ -315,20 +371,101 @@ export function PIDDesigner() {
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
   const [mode, setMode] = useState<InteractionMode>('pan');
 
+  const [diagrams, setDiagrams] = useState<DiagramMeta[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+
   const getRef            = useRef<() => Snapshot>(() => ({ nodes: [], edges: [] }));
   const loadRef           = useRef<(d: Snapshot) => void>(() => {});
   const clearRef          = useRef<() => void>(() => {});
   const undoRef           = useRef<() => void>(() => {});
   const redoRef           = useRef<() => void>(() => {});
-  const checkpointRef     = useRef<(title: string, desc: string) => Promise<{ ok: boolean; commit: string }>>(() => Promise.resolve({ ok: false, commit: '' }));
-  const getLatestRef      = useRef<() => Promise<void>>(() => Promise.resolve());
-  const getHistoryRef     = useRef<() => Promise<VersionEntry[]>>(() => Promise.resolve([]));
-  const restoreVersionRef = useRef<(hash: string) => Promise<void>>(() => Promise.resolve());
+  const releaseRef        = useRef<(label: string) => Promise<{ label: string; savedAt: string }>>(() => Promise.resolve({ label: '', savedAt: '' }));
+  const getHistoryRef     = useRef<() => Promise<MicroVersion[]>>(() => Promise.resolve([]));
+  const getReleasesRef    = useRef<() => Promise<ReleaseVersion[]>>(() => Promise.resolve([]));
+  const restoreMicroRef   = useRef<(versionId: string) => Promise<void>>(() => Promise.resolve());
+  const restoreReleaseRef = useRef<(label: string) => Promise<void>>(() => Promise.resolve());
 
   const handleInstance = useCallback((inst: ReactFlowInstance) => setRfInstance(inst), []);
 
+  // Load the user's diagram list once; create a first one if they have none.
+  useEffect(() => {
+    (async () => {
+      let list: DiagramMeta[] = [];
+      try {
+        const res = await fetch('/api/pid/diagrams');
+        if (res.ok) list = await res.json();
+      } catch { /* offline — fall through to create */ }
+      if (list.length === 0) {
+        try {
+          const res = await fetch('/api/pid/diagrams', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'Untitled' }),
+          });
+          if (res.ok) list = [await res.json()];
+        } catch { /* ignore */ }
+      }
+      const stored = localStorage.getItem(ACTIVE_KEY);
+      const initial = list.find(d => d.id === stored)?.id ?? list[0]?.id ?? null;
+      setDiagrams(list);
+      setActiveId(initial);
+      setReady(true);
+    })();
+  }, []);
+
+  const selectDiagram = useCallback((id: string) => {
+    setActiveId(id);
+    localStorage.setItem(ACTIVE_KEY, id);
+  }, []);
+
+  const createDiagram = useCallback(async (name: string) => {
+    const res = await fetch('/api/pid/diagrams', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) return;
+    const meta = await res.json() as DiagramMeta;
+    setDiagrams(ds => [meta, ...ds]);
+    selectDiagram(meta.id);
+  }, [selectDiagram]);
+
+  const renameDiagram = useCallback(async (id: string, name: string) => {
+    const res = await fetch(`/api/pid/diagrams/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) return;
+    const meta = await res.json() as DiagramMeta;
+    setDiagrams(ds => ds.map(d => d.id === id ? meta : d));
+  }, []);
+
+  const deleteDiagram = useCallback(async (id: string) => {
+    const res = await fetch(`/api/pid/diagrams/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) return;
+    setDiagrams(ds => {
+      const next = ds.filter(d => d.id !== id);
+      if (activeId === id) {
+        const fallback = next[0]?.id ?? null;
+        setActiveId(fallback);
+        if (fallback) localStorage.setItem(ACTIVE_KEY, fallback); else localStorage.removeItem(ACTIVE_KEY);
+      }
+      return next;
+    });
+  }, [activeId]);
+
   return (
     <div className="flex flex-col h-[calc(100vh-56px)] min-h-[600px] rounded-xl overflow-hidden border border-[#1e293b]">
+      <DiagramBar
+        diagrams={diagrams}
+        activeId={activeId}
+        onSelect={selectDiagram}
+        onCreate={createDiagram}
+        onRename={renameDiagram}
+        onDelete={deleteDiagram}
+      />
       <PIDToolbar
         rfInstance={rfInstance}
         getSnapshot={() => getRef.current()}
@@ -336,29 +473,40 @@ export function PIDDesigner() {
         onClear={() => clearRef.current()}
         onUndo={() => undoRef.current()}
         onRedo={() => redoRef.current()}
-        onCheckpoint={(title, desc) => checkpointRef.current(title, desc)}
-        onGetLatest={() => getLatestRef.current()}
+        onRelease={label => releaseRef.current(label)}
         onGetHistory={() => getHistoryRef.current()}
-        onRestoreVersion={hash => restoreVersionRef.current(hash)}
+        onGetReleases={() => getReleasesRef.current()}
+        onRestoreMicro={versionId => restoreMicroRef.current(versionId)}
+        onRestoreRelease={label => restoreReleaseRef.current(label)}
+        canVersion={!!activeId}
         mode={mode}
         onModeChange={setMode}
       />
       <div className="flex flex-1 overflow-hidden">
         <ComponentPalette />
         <ReactFlowProvider>
-          <PIDCanvas
-            onInstance={handleInstance}
-            getRef={getRef}
-            loadRef={loadRef}
-            clearRef={clearRef}
-            undoRef={undoRef}
-            redoRef={redoRef}
-            checkpointRef={checkpointRef}
-            getLatestRef={getLatestRef}
-            getHistoryRef={getHistoryRef}
-            restoreVersionRef={restoreVersionRef}
-            mode={mode}
-          />
+          {ready && activeId ? (
+            <PIDCanvas
+              key={activeId}
+              diagramId={activeId}
+              onInstance={handleInstance}
+              getRef={getRef}
+              loadRef={loadRef}
+              clearRef={clearRef}
+              undoRef={undoRef}
+              redoRef={redoRef}
+              releaseRef={releaseRef}
+              getHistoryRef={getHistoryRef}
+              getReleasesRef={getReleasesRef}
+              restoreMicroRef={restoreMicroRef}
+              restoreReleaseRef={restoreReleaseRef}
+              mode={mode}
+            />
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-sm text-slate-600">
+              {ready ? 'Create a diagram to begin.' : 'Loading…'}
+            </div>
+          )}
         </ReactFlowProvider>
       </div>
     </div>

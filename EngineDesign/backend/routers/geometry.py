@@ -1,11 +1,11 @@
 """Chamber geometry visualization endpoint."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
 import numpy as np
 
-from backend.state import app_state
+from backend.session import UserSession, get_session
 from engine.pipeline.chamber_geometry_fixed import calculate_chamber_geometry_fixed
 from engine.pipeline.config_schemas import AblativeCoolingConfig, GraphiteInsertConfig
 from engine.core.nozzle_solver import rao
@@ -55,22 +55,22 @@ class GeometryResponse(BaseModel):
 
 
 @router.get("", response_model=GeometryResponse)
-async def get_chamber_geometry():
+async def get_chamber_geometry(session: UserSession = Depends(get_session)):
     """Get chamber geometry for visualization.
-    
+
     Returns the geometry arrays needed to render the chamber cross-section:
     - Gas boundary (inner surface)
     - Ablative liner (chamber region)
     - Graphite insert (throat region)
     - Stainless steel case (outer)
     """
-    if not app_state.has_config():
+    if not session.app_state.has_config():
         raise HTTPException(
             status_code=400,
             detail="No config loaded. Upload a config file first."
         )
-    
-    config = app_state.config
+
+    config = session.app_state.config
     
     try:
         # =====================================================================
@@ -294,10 +294,12 @@ async def get_chamber_geometry():
         t_abl_opt_mm: float | None = None
         t_gra_opt_mm: float | None = None
         
-        # Try to get results from optimizer router (which stores them in its global state)
-        from backend.routers.optimizer import _layer3_status
-        if _layer3_status.get("results") is not None:
-            l3_results = _layer3_status["results"]
+        # Overlay this user's own Layer 3 optimizer results, if they have run it.
+        # Per-user now (session.optimizer), so one person's Layer 3 run never bleeds
+        # optimized thicknesses into another person's geometry view.
+        layer3_status = session.optimizer.layer3_status
+        if layer3_status.get("results") is not None:
+            l3_results = layer3_status["results"]
             summary = l3_results.get("summary", {})
             t_abl_opt_mm = summary.get("optimized_ablative_thickness")
             if t_abl_opt_mm is not None:

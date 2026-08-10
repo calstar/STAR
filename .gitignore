@@ -11,9 +11,26 @@ docs/doxygen/
 # DAQ output data
 scripts/postprocessing/output/
 
-# Python
+# Secrets — never commit these
+.env
+*.env
+auth/.env
+
+# Python / Virtualenvs
+.venv/
+**/.venv/
+venv/
 __pycache__/
+**/__pycache__/
 *.py[cod]
+
+# Node / dependencies
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.next/
+**/.next/
 
 # Internal review notes (not shared with the team)
 daq-server/BACKEND_REVIEW.md

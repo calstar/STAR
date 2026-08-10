@@ -130,7 +130,8 @@ export default function ConfigPage() {
       setLoading(true);
       setError(null);
 
-      // Request config from backend (:8081 — the Next.js proxy route is gone)
+      // Request config straight from the backend — the Next.js proxy route is gone.
+      // getApiBaseUrl() resolves to :8081 directly, or same-origin behind Caddy.
       const response = await fetch(`${getApiBaseUrl()}/api/config`);
       if (!response.ok) {
         throw new Error('Failed to load config');

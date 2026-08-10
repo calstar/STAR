@@ -1,0 +1,18 @@
+[Unit]
+Description=OpenProject → S3 backup (pg_dump + assets tar → dated S3 keys)
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Adjust the path if the repo lives elsewhere than /home/ec2-user/STAR.
+WorkingDirectory=/home/ec2-user/STAR/deploy/ec2
+ExecStart=/home/ec2-user/STAR/deploy/ec2/backup.sh backup
+# Override the defaults here if your bucket / volume names differ:
+# Environment=BACKUP_BUCKET=s3://star-openproject-backups
+# Environment=ASSETS_VOLUME=openproject_assets
+# AWS creds come from the instance IAM role via metadata — nothing to set.
+
+[Install]
+WantedBy=multi-user.target

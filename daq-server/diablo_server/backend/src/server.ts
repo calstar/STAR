@@ -41,12 +41,22 @@ import { startGuiStaticServer } from './static-gui.js';
 import { handleCalibrationCommand, type CalibrationHost } from './calibration-handler.js';
 import { loadPTCalibration, type CalibrationCoefficients } from './calibration.js';
 import { MessageType, SystemState } from '../../shared/types.js';
+import { isOperator } from './operators.js';
 import type { NotificationPayload } from '../../shared/types.js';
 import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUpdate, QueryHistoricalRequest } from '../../shared/types.js';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
 const WS_PORT = parseInt(process.env.WS_PORT ?? '8081', 10);
+// Engine-control fat-finger password (server-side). Shared, not per-user; the
+// real authorization is the operators allowlist (see operators.ts). Default is
+// the well-known dev value; set CONTROL_PASSWORD on the deployed server.
+const CONTROL_PASSWORD = process.env.CONTROL_PASSWORD || 'diablo';
+// Command types that actuate/transition the engine — gated by the operator
+// unlock. Read-only queries and countdown display are not.
+const CONTROL_COMMAND_TYPES = new Set(['state_transition', 'actuator', 'extend_fire', 'debug_mode']);
+// Per-connection control-auth state, stashed on the WebSocket.
+type WsWithControl = WebSocket & { __daqOperator?: boolean; __daqControlAuthorized?: boolean };
 const ELODIN_HOST = process.env.ELODIN_HOST ?? '127.0.0.1';
 const ELODIN_PORT = parseInt(process.env.ELODIN_PORT ?? '2240', 10);
 const ACT_SVC_PORT = parseInt(process.env.ACTUATOR_SERVICE_PORT ?? '9998', 10);
@@ -608,6 +618,16 @@ wss.on('connection', (ws: WebSocket, req) => {
     req.socket.remoteAddress ||
     'unknown';
   const userAgent = req.headers['user-agent'] ?? 'unknown';
+
+  // Engine-control authorization. Caddy injects X-Auth-Email on the upgrade
+  // (from the session cookie). No header ⇒ no Caddy in front (dev/test-stand) ⇒
+  // trusted local ⇒ treat as operator. Control still requires the password
+  // unlock below (__daqControlAuthorized) — a fat-finger guard in every env.
+  const authEmail = ((req.headers['x-auth-email'] as string | undefined) || '').trim();
+  const isOp = authEmail === '' ? true : isOperator(authEmail);
+  (ws as WsWithControl).__daqOperator = isOp;
+  (ws as WsWithControl).__daqControlAuthorized = false;
+
   let inboundMessages = 0;
   let outboundMessages = 0;
   let lastInboundAt = 0;
@@ -618,6 +638,16 @@ wss.on('connection', (ws: WebSocket, req) => {
   send(ws, {
     type: MessageType.CONNECTION_STATUS, timestamp: Date.now(),
     payload: { connected: true, elodinConnected: elodin.isConnected(), connId },
+  });
+  outboundMessages++;
+  lastOutboundAt = Date.now();
+
+  // Control authorization status — lets the UI enable/disable the arm step
+  // before any password is typed (non-operators see it disabled, never a
+  // false-armed state).
+  send(ws, {
+    type: MessageType.CONTROL_STATUS, timestamp: Date.now(),
+    payload: { operator: isOp, email: authEmail || null },
   });
   outboundMessages++;
   lastOutboundAt = Date.now();
@@ -742,6 +772,18 @@ function handleMessage(ws: WebSocket, message: any): void {
     case MessageType.SEND_COMMAND:
       handleCommand(ws, message.payload as CommandPayload);
       break;
+    case MessageType.CONTROL_UNLOCK: {
+      // Fat-finger password + operator identity, both checked server-side. The
+      // reply drives the UI's armed state, so it can never disagree with what the
+      // backend will actually accept.
+      const password = (message.payload && message.payload.password) || '';
+      const op = (ws as WsWithControl).__daqOperator === true;
+      const ok = op && password === CONTROL_PASSWORD;
+      (ws as WsWithControl).__daqControlAuthorized = ok;
+      const reason = !op ? 'not_operator' : ok ? 'ok' : 'incorrect_password';
+      send(ws, { type: MessageType.CONTROL_UNLOCK_RESULT, timestamp: Date.now(), payload: { ok, reason } });
+      break;
+    }
     case MessageType.QUERY_HISTORICAL:
       sendHistoricalData(ws, message.payload as QueryHistoricalRequest | undefined);
       break;
@@ -768,6 +810,15 @@ function broadcastStateUpdate(): void {
 }
 
 function handleCommand(ws: WebSocket, command: CommandPayload): void {
+  // The real, unbypassable gate: engine-control commands require an unlocked
+  // (operator + password) connection, regardless of what the UI shows.
+  if (CONTROL_COMMAND_TYPES.has(command.commandType) && !(ws as WsWithControl).__daqControlAuthorized) {
+    send(ws, {
+      type: MessageType.ERROR, timestamp: Date.now(),
+      payload: { message: 'Control locked: unlock as an approved operator first.' },
+    });
+    return;
+  }
   switch (command.commandType) {
     case 'state_transition': {
       const targetState = command.data.state!;

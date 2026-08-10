@@ -117,3 +117,7 @@ engine/**/__pycache__/
 ui/**/__pycache__/
 copv/**/__pycache__/
 scripts/**/__pycache__/
+
+# Per-user saved configs written without a mounted volume (dev). USERDATA_DIR
+# points at the volume in prod; unset in dev this lands here. Never commit it.
+.userdata/

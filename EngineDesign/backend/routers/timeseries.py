@@ -1,7 +1,7 @@
 """Time-series evaluation endpoints."""
 
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional, Literal
 import numpy as np
@@ -9,7 +9,7 @@ import pandas as pd
 import io
 import yaml
 
-from backend.state import app_state
+from backend.session import UserSession, get_session
 from engine.pipeline.time_series import generate_pressure_profile
 from engine.pipeline.config_schemas import PintleEngineConfig
 from engine.optimizer.layers.layer2_pressure import generate_pressure_curve_from_segments
@@ -686,12 +686,12 @@ class GenerateProfileResponse(BaseModel):
 
 
 @router.post("/generate", response_model=GenerateProfileResponse)
-async def generate_timeseries(request: GenerateProfileRequest):
+async def generate_timeseries(request: GenerateProfileRequest, session: UserSession = Depends(get_session)):
     """Generate time-series results from simple pressure profiles.
     
     Supports linear, exponential, and power profile types.
     """
-    if not app_state.has_config():
+    if not session.app_state.has_config():
         raise HTTPException(
             status_code=400,
             detail="No config loaded. Upload a config file first."
@@ -732,7 +732,7 @@ async def generate_timeseries(request: GenerateProfileRequest):
         
         # Compute time-series results
         data, summary = compute_timeseries_results(
-            app_state.runner,
+            session.app_state.runner,
             times,
             lox_pressures,
             fuel_pressures,
@@ -820,7 +820,7 @@ def segments_to_dict_list(segments: List[PressureSegment]) -> List[dict]:
 
 
 @router.post("/from-segments", response_model=SegmentsResponse)
-async def generate_from_segments(request: SegmentsRequest):
+async def generate_from_segments(request: SegmentsRequest, session: UserSession = Depends(get_session)):
     """Generate time-series results from segment-based pressure curves.
     
     Two modes:
@@ -836,7 +836,7 @@ async def generate_from_segments(request: SegmentsRequest):
     
     The blowdown formula: P(t) = P_end + (P_start - P_end) * exp(-k * t_norm)
     """
-    if not app_state.has_config():
+    if not session.app_state.has_config():
         raise HTTPException(
             status_code=400,
             detail="No config loaded. Upload a config file first."
@@ -872,7 +872,7 @@ async def generate_from_segments(request: SegmentsRequest):
 
             try:
                 V_lox, m_lox_init, _, V_fuel, m_fuel_init, _ = resolve_blowdown_tank_state(
-                    app_state.runner.config,
+                    session.app_state.runner.config,
                     total_propellant_kg=request.total_propellant_kg,
                     of_ratio=request.of_ratio,
                     lox_tank_volume_m3=request.lox_tank_volume_m3,
@@ -890,7 +890,7 @@ async def generate_from_segments(request: SegmentsRequest):
                 # Run single-point evaluation
                 # Note: evaluate returns dict with mdot_O and mdot_F (kg/s)
                 try:
-                    res = app_state.runner.evaluate(
+                    res = session.app_state.runner.evaluate(
                         P_tank_O=P_lox_Pa,
                         P_tank_F=P_fuel_Pa,
                         silent=True
@@ -906,7 +906,7 @@ async def generate_from_segments(request: SegmentsRequest):
                 evaluate_engine_fn=engine_evaluator,
                 P_lox_initial_Pa=request.lox_initial_pressure_psi * PSI_TO_PA,
                 P_fuel_initial_Pa=request.fuel_initial_pressure_psi * PSI_TO_PA,
-                config=app_state.runner.config,
+                config=session.app_state.runner.config,
                 R_pressurant=296.803,  # N2
                 T_lox_gas_K=250.0,
                 T_fuel_gas_K=293.0,
@@ -933,7 +933,7 @@ async def generate_from_segments(request: SegmentsRequest):
             
             # Run final evaluation with actual blowdown pressures
             data, summary = compute_timeseries_results(
-                app_state.runner,
+                session.app_state.runner,
                 times,
                 lox_curve_psi,
                 fuel_curve_psi,
@@ -946,8 +946,8 @@ async def generate_from_segments(request: SegmentsRequest):
             summary["blowdown_initial_fuel_mass_kg"] = float(m_fuel_init)
             summary["blowdown_lox_tank_volume_m3"] = float(V_lox)
             summary["blowdown_fuel_tank_volume_m3"] = float(V_fuel)
-            summary["blowdown_initial_lox_ullage_m3"] = float(V_lox - m_lox_init / float(app_state.runner.config.fluids["oxidizer"].density))
-            summary["blowdown_initial_fuel_ullage_m3"] = float(V_fuel - m_fuel_init / float(app_state.runner.config.fluids["fuel"].density))
+            summary["blowdown_initial_lox_ullage_m3"] = float(V_lox - m_lox_init / float(session.app_state.runner.config.fluids["oxidizer"].density))
+            summary["blowdown_initial_fuel_ullage_m3"] = float(V_fuel - m_fuel_init / float(session.app_state.runner.config.fluids["fuel"].density))
 
             # (COPV analysis skipped via flag, so no cleanup needed)
             
@@ -973,7 +973,7 @@ async def generate_from_segments(request: SegmentsRequest):
             
             # Compute time-series results (includes COPV analysis)
             data, summary = compute_timeseries_results(
-                app_state.runner,
+                session.app_state.runner,
                 times,
                 lox_curve_psi,
                 fuel_curve_psi,
@@ -1034,7 +1034,7 @@ async def preview_curve(request: PreviewSegmentsRequest):
 
 
 @router.post("/from-csv", response_model=GenerateProfileResponse)
-async def generate_from_csv(file: UploadFile = File(...)):
+async def generate_from_csv(file: UploadFile = File(...), session: UserSession = Depends(get_session)):
     """Generate time-series results from uploaded CSV file or YAML config file.
     
     CSV files must contain columns:
@@ -1108,11 +1108,11 @@ async def generate_from_csv(file: UploadFile = File(...)):
                     times = np.linspace(0, target_burn_time_s, n_points)
                     
                     # Set config as active
-                    app_state.set_config(config)
+                    session.app_state.set_config(config)
                     
                     # Compute time-series results
                     data, summary = compute_timeseries_results(
-                        app_state.runner,
+                        session.app_state.runner,
                         times,
                         lox_curve_psi,
                         fuel_curve_psi,
@@ -1125,7 +1125,7 @@ async def generate_from_csv(file: UploadFile = File(...)):
                     )
                 else:
                     # Config doesn't have pressure_curves, just set it as active
-                    app_state.set_config(config)
+                    session.app_state.set_config(config)
                     raise HTTPException(
                         status_code=400,
                         detail="Config file does not contain a 'pressure_curves' section. Please upload a config with pressure_curves or use a CSV file."
@@ -1150,7 +1150,7 @@ async def generate_from_csv(file: UploadFile = File(...)):
                 )
         else:
             # Process as CSV file
-            if not app_state.has_config():
+            if not session.app_state.has_config():
                 raise HTTPException(
                     status_code=400,
                     detail="No config loaded. Upload a config file first."
@@ -1216,7 +1216,7 @@ async def generate_from_csv(file: UploadFile = File(...)):
                 
                 # Compute time-series results
                 data, summary = compute_timeseries_results(
-                    app_state.runner,
+                    session.app_state.runner,
                     times,
                     P_tank_O_psi,
                     P_tank_F_psi,

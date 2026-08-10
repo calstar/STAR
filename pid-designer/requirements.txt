@@ -2,8 +2,11 @@
 #
 # Pins match .github/workflows/pid-designer-ci.yml so laptops and CI resolve
 # the same versions. The backend is intentionally tiny: FastAPI + Pydantic
-# for the schema, uvicorn to serve it, and the stdlib for everything else
-# (git is shelled out via subprocess, not a Python library).
+# for the schema, uvicorn to serve it, and the stdlib for the working copy.
 fastapi>=0.128
 uvicorn[standard]>=0.34
 pydantic>=2.12
+
+# Diagram version history in S3 (microversions + releases) when PID_S3_BUCKET is
+# set. Imported lazily by backend/storage.py, so dev without S3 never needs it.
+boto3>=1.34

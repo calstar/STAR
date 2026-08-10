@@ -86,6 +86,7 @@ show_help() {
     --list               List projects and exit
     --yes, -y            Accept all prompts (non-interactive)
     --no-hook            Don't offer daq-server pre-push format hook
+    --no-aliases         Don't add the STAR shell aliases to your shell rc
     --help, -h           This help
 
   Any additional flags are passed through to each project's setup.sh, e.g.:
@@ -99,6 +100,7 @@ EOF
 SELECTED=()
 PASSTHRU=()
 DID_LIST=0
+NO_ALIASES=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -114,6 +116,9 @@ while [ $# -gt 0 ]; do
     --list)          DID_LIST=1 ;;
     --yes|-y)        export SETUP_YES=1; PASSTHRU+=("--yes") ;;
     --no-hook)       PASSTHRU+=("--no-hook") ;;
+    # Not passed through: aliases are monorepo-wide, installed once by the
+    # dispatcher rather than per project.
+    --no-aliases)    NO_ALIASES=1 ;;
     --help|-h)       show_help; exit 0 ;;
     # Anything else is passed through to sub-scripts (e.g. --ci, --no-build)
     *)               PASSTHRU+=("$1") ;;
@@ -202,6 +207,20 @@ fi
 step "Shared: pinned global black (for format.sh + pre-push hook)"
 ensure_pinned_black
 
+# Prompted here, before the long builds, so all the questions come up front and
+# you can walk away. The summary reminds you at the end.
+if [ "$NO_ALIASES" = "1" ]; then
+  ok "Skipping shell aliases (--no-aliases)"
+else
+  step "Shared: shell aliases"
+  install_star_aliases "$REPO_ROOT"
+fi
+
+# docker compose interpolates the whole file up front, so without these even
+# `docker compose build` fails. Cheap to create, never overwritten.
+step "Shared: deployment env files"
+bootstrap_env_files "$REPO_ROOT"
+
 # Windows-symlink foot-gun sanity: if the DAQv2-Comms symlink got turned into
 # a text file by a Windows clone, every project's build later will fail with
 # confusing errors. Detect it once, upfront.
@@ -265,6 +284,12 @@ fi
 cat <<EOF
 
 All done. Per-project next-step instructions were printed above.
+
+To run anything:
+  cd <project> && ./dev.sh          # starts detached; --attach to watch it
+                                    # --status, --logs, --stop; --help for all
+  star-help                         # the alias list, if you added them
+                                    # (open a new shell first)
 
 Common reminders:
   • Add \$HOME/.cargo/bin to \$PATH if you set up daq-server

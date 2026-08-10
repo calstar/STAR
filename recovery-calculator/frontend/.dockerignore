@@ -1,0 +1,22 @@
+# Build context hygiene. Without this, `docker build` uploads the whole local
+# node_modules (~100MB+) that `npm ci` deletes and reinstalls anyway -- slow,
+# and it busts the layer cache every time you run npm install locally.
+#
+# The repo-root .dockerignore does NOT cover this: these images build with
+# their own directory as the context, so the ignore file must live here.
+node_modules
+dist
+build
+.next
+
+# Never bake secrets or local noise into an image layer
+.env
+*.env
+!*.env.example
+*.log
+.DS_Store
+
+# Test output
+coverage
+playwright-report
+test-results

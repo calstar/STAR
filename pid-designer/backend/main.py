@@ -19,11 +19,16 @@ app.add_middleware(
         "http://localhost:5174",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:5174",
+        "https://pid-designer.starberkeley.org",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Auth is Caddy's job: the reverse proxy verifies the session before any request
+# reaches this app (deploy/Caddyfile), and this container never publishes a host
+# port, so it is only reachable through Caddy. The app implements no auth itself.
 
 app.include_router(pid.router)
 

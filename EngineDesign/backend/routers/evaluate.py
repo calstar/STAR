@@ -1,10 +1,10 @@
 """Engine evaluation endpoints."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 import numpy as np
 
-from backend.state import app_state
+from backend.session import UserSession, get_session
 
 router = APIRouter(prefix="/api/evaluate", tags=["evaluate"])
 
@@ -48,14 +48,14 @@ def convert_numpy(obj):
 
 
 @router.post("")
-async def evaluate(request: EvaluateRequest):
+async def evaluate(request: EvaluateRequest, session: UserSession = Depends(get_session)):
     """Run forward evaluation: tank pressures -> performance.
-    
+
     Takes LOX and fuel tank pressures in psi, returns the full results from runner.evaluate().
     Ambient pressure is computed automatically by the runner from the config's environment elevation.
     The results dict is passed through directly (with numpy conversion) - same format as Streamlit UI uses.
     """
-    if not app_state.has_config():
+    if not session.app_state.has_config():
         raise HTTPException(
             status_code=400, 
             detail="No config loaded. Upload a config file first."
@@ -72,7 +72,7 @@ async def evaluate(request: EvaluateRequest):
             overrides = {
                 k: v for k, v in request.stability_overrides.model_dump().items() if v is not None
             } or None
-        results = app_state.runner.evaluate(
+        results = session.app_state.runner.evaluate(
             P_tank_O, P_tank_F, debug=True, rich_stability=True, stability_overrides=overrides,
         )
 
@@ -80,7 +80,7 @@ async def evaluate(request: EvaluateRequest):
         # than is now live, surface a non-fatal warning so the forward result is read as a seed, not
         # a validated design.
         from engine.pipeline.config_switch import design_staleness
-        design_warning = design_staleness(app_state.config)
+        design_warning = design_staleness(session.app_state.config)
 
         # Convert numpy types to JSON-serializable and return directly
         # Frontend uses the same field names as runner.py outputs

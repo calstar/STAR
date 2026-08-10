@@ -419,6 +419,21 @@ declare global {
   var __DIABLO_WS_CLIENT__: WebSocketClient | undefined;
 }
 
+/** True when the page was served through a reverse proxy rather than fetched
+ *  directly from one of our own listeners.
+ *
+ *  Direct access always carries an explicit port — the Vite dev server (:5173),
+ *  the backend's static GUI server (:3000). A page on the scheme's default port
+ *  (no port in the URL) can only have come through Caddy, and in production
+ *  :8081 is not published: the proxy exposes the backend at same-origin /api
+ *  and /ws instead. Deciding at runtime keeps a single build working for
+ *  localhost, LAN clients, and the public hostname alike. */
+function isProxiedOrigin(): boolean {
+  if (typeof window === 'undefined') return false;
+  const port = window.location.port;
+  return port === '' || port === '80' || port === '443';
+}
+
 /** Backend API base URL. Derived at RUNTIME from wherever the browser loaded
  *  the page, so one build works from localhost and any LAN client alike.
  *  VITE_API_URL is an escape hatch for unusual setups only. */
@@ -426,6 +441,8 @@ export function getApiBaseUrl(): string {
   const override = import.meta.env?.VITE_API_URL as string | undefined;
   if (override) return override;
   if (typeof window !== 'undefined' && window.location.hostname) {
+    // Behind the proxy the backend is same-origin; callers append /api/...
+    if (isProxiedOrigin()) return window.location.origin;
     const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
     let hostname = window.location.hostname;
     if (hostname === '0.0.0.0' || hostname === '') hostname = 'localhost';
@@ -457,7 +474,7 @@ export function getWebSocketClient(): WebSocketClient {
   return globalThis.__DIABLO_WS_CLIENT__;
 }
 
-function getWebSocketFallbackUrls(): string[] {
+export function getWebSocketFallbackUrls(): string[] {
   const urls: string[] = [];
   const add = (u: string) => {
     if (!u) return;
@@ -471,9 +488,15 @@ function getWebSocketFallbackUrls(): string[] {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     let hostname = window.location.hostname;
     if (hostname === '0.0.0.0' || hostname === '') hostname = 'localhost';
-    add(`${protocol}//${hostname}:8081`);
-    add(`${protocol}//localhost:8081`);
-    add(`${protocol}//127.0.0.1:8081`);
+    if (isProxiedOrigin()) {
+      // Only the proxied path is reachable here — :8081 is not published, and
+      // the localhost fallbacks would point at the *viewer's* machine.
+      add(`${protocol}//${window.location.host}/ws`);
+    } else {
+      add(`${protocol}//${hostname}:8081`);
+      add(`${protocol}//localhost:8081`);
+      add(`${protocol}//127.0.0.1:8081`);
+    }
   }
 
   if (urls.length === 0) add('ws://localhost:8081');

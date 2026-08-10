@@ -1,34 +1,22 @@
 # CI/test dependencies for the EngineDesign gate.
 #
-# This is requirements.txt MINUS rocketcea. rocketcea builds NASA CEA from
-# Fortran source (needs gfortran) and is the only dependency that requires a
-# compiler. The CI gate does not need it because:
+# requirements-base.txt (i.e. requirements.txt MINUS rocketcea) plus the test
+# runner. rocketcea builds NASA CEA from Fortran source (needs gfortran) and is
+# the only dependency that requires a compiler. The CI gate does not need it
+# because:
 #   * rocketcea is imported lazily, only when *building* a CEA cache
 #     (engine/pipeline/cea_cache.py::_get_CEA_Obj), and
 #   * the CEA-backed test configs load a committed cache table
 #     (output/cache/*.npz), so no cache is ever built in CI.
 # Keeping it out of CI avoids installing gfortran and a multi-minute source
 # build. To regenerate the cache (rare), use the full requirements.txt
-# locally — see the "regenerate-cea-cache" workflow.
+# locally -- see the "regenerate-cea-cache" workflow.
 #
-# rocketpy IS included: it is pure Python (no compiler) and is imported at
-# module load by tests/test_hybrid_optimizer.py via the flight-sim layer.
-numpy
-scipy
-pandas
-matplotlib
-pydantic
-PyYAML
-rocketpy
-streamlit
-plotly
-ezdxf
-cma
-CoolProp
-# FastAPI backend
-fastapi
-uvicorn[standard]
-python-multipart
+# rocketpy IS included (via the base list): it is pure Python (no compiler) and
+# is imported at module load by tests/test_hybrid_optimizer.py via the
+# flight-sim layer.
+-r requirements-base.txt
+
 # Test runner
 pytest
 pytest-timeout

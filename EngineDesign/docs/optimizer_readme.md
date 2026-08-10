@@ -42,7 +42,7 @@ Mass flow and discharge use \( \dot{m} = C_d \, A_{\mathrm{geom}} \sqrt{2\rho\,\
 
 Spacing, jet packing, and face-fit constraints continue to use **geometric** areas only.
 
-The optimization is orchestrated by `run_full_engine_optimization_with_flight_sim()` in `engine/optimizer/main_optimizer.py` (the UI in `ui/design_optimization_view.py` and the optimizer views in `engine/optimizer/views/` drive it). It is built on:
+The optimization is orchestrated by `run_full_engine_optimization_with_flight_sim()` in `engine/optimizer/main_optimizer.py`, driven by the FastAPI backend (`backend/routers/optimizer.py`) for the React frontend. (The retired Streamlit UI that used to drive it is in `archive/streamlit-ui/`.) It is built on:
 - `PintleEngineConfig` (loaded from `configs/default.yaml` or any exported config YAML) for configuration
 - `PintleEngineRunner` for performance and stability evaluation
 - The `engine.pipeline` optimizers (`comprehensive_optimizer`, `coupled_optimizer`, `chamber_optimizer`, etc.)
@@ -83,7 +83,7 @@ The optimization is orchestrated by `run_full_engine_optimization_with_flight_si
 
 ### Layer 0 – Coupled Geometry + Pintle Pre‑Optimization
 
-Before the main iterative optimizer, the UI optimizer flow can perform a **coupled pintle + chamber geometry optimization** (`CoupledPintleChamberOptimizer` in `engine/pipeline/coupled_optimizer.py`, invoked from `engine/optimizer/views/tabs.py`):
+Before the main iterative optimizer, the UI optimizer flow can perform a **coupled pintle + chamber geometry optimization** (`CoupledPintleChamberOptimizer` in `engine/pipeline/coupled_optimizer.py`):
 
 - **Design requirements**
   - Target thrust and burn time.

@@ -1,0 +1,105 @@
+# Build context is the REPO ROOT, not EngineDesign/: the native-builder stage and
+# the runtime image copy several EngineDesign/ subtrees, and keeping one context
+# for both stages is simplest. The app implements no auth (Caddy is the gate), so
+# nothing from auth/ is needed here. See the engine-design-api service in
+# docker-compose.yml.
+
+# ── Stage 1: the native C physics kernel ───────────────────────────────────
+#
+# backend/main.py sets ED_USE_NATIVE=1 and auto-builds this at startup, which
+# needs CMake and a C compiler. The runtime image has neither, so it was
+# failing over to the pure-Python path -- ~68-88x slower on runner.evaluate(),
+# which is what turns a 15000-eval Layer-1 optimizer run from seconds into
+# minutes. It fails soft, so nothing errored; the optimizer was just crawling.
+#
+# Building it here keeps the compiler out of the runtime image entirely.
+FROM python:3.12-slim AS native-builder
+# build-essential, not bare gcc: on debian-slim, gcc alone has no C runtime
+# startup objects, so even CMake's compiler test fails with
+# "cannot find Scrt1.o". This stage is discarded, so its size does not matter.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cmake build-essential \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY EngineDesign/engine/native/ ./engine/native/
+# The output directory is arch-tagged, and autobuild.py::_build_dir() derives
+# the tag the same way -- so the runtime image finds this build instead of
+# trying (and failing) to make its own.
+# TAG mirrors autobuild.py::_build_dir(), which is
+# f"{platform.system().lower()}_{platform.machine().lower()}". This stage is
+# always Linux, and platform.machine() is uname -m there, so no Python needed
+# -- and no nested quoting to get wrong.
+RUN TAG="linux_$(uname -m | tr '[:upper:]' '[:lower:]')" \
+    && cmake -S engine/native -B "engine/native/build_auto_${TAG}" -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build "engine/native/build_auto_${TAG}" --config Release --target ed_physics_shared -j \
+    && ls -la "engine/native/build_auto_${TAG}"/libed_physics.so
+
+# ── Stage 2: the runtime image ─────────────────────────────────────────────
+FROM python:3.12-slim
+WORKDIR /app
+
+# Set as environment, not as `pip install --retries ... --timeout ...` flags.
+# Some dependencies here (simplekml, via rocketpy) ship only an sdist, so pip
+# builds them in an isolated environment -- and it installs that environment's
+# build deps by spawning a *fresh pip subprocess* which inherits none of the
+# parent's command-line flags. That subprocess was falling back to the stock
+# 15s timeout and dying on a slow setuptools download. Env vars reach it.
+ENV PIP_RETRIES=10 \
+    PIP_TIMEOUT=120 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_INPUT=1
+
+# requirements-base.txt, not requirements.txt: the latter adds rocketcea, which
+# has no wheel (a 69 MB Fortran sdist) and needs gfortran to compile -- neither
+# of which this image has any use for. rocketcea is imported lazily and only to
+# *build* a CEA cache; the API reads the committed tables copied in below.
+# Same reasoning as CI. See requirements-base.txt.
+COPY EngineDesign/requirements-base.txt .
+
+# The cache mount matters more than retries: pip retries connections, not a
+# download that breaks mid-stream, so without it every failed attempt at a large
+# package starts again from zero. Both layers share the mount.
+#
+# setuptools and wheel go in first so the sdist builds below find them already
+# present and cached, rather than each fetching its own copy over the network.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip setuptools wheel
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements-base.txt
+
+# Backend source
+COPY EngineDesign/backend/ ./backend/
+COPY EngineDesign/engine/  ./engine/
+COPY EngineDesign/copv/    ./copv/
+COPY EngineDesign/configs/ ./configs/
+
+# Flight simulation: engine/optimizer/copv_flight_helpers.py imports
+# ui.flight_sim lazily. Without this the import raises ModuleNotFoundError,
+# which its outer `except Exception` swallows into {"success": False,
+# "error": "No module named 'ui'"} -- the feature breaks silently rather than
+# loudly. Safe to copy now that the Streamlit files have left ui/.
+COPY EngineDesign/ui/ ./ui/
+
+# Committed CEA tables. Without these the engine pipeline would try to build a
+# cache on first use and fail on the missing rocketcea -- the rest of
+# output/ is generated data and stays out (see .dockerignore).
+COPY EngineDesign/output/cache/ ./output/cache/
+
+# The prebuilt kernel, on top of the sources copied above. Its mtime is newer
+# than the .c/.h files (it was compiled after they were copied), which is what
+# autobuild.py's staleness check compares -- so it is accepted as current
+# rather than triggering a rebuild the runtime image could not perform.
+COPY --from=native-builder /build/engine/native/ ./engine/native/
+
+ENV PYTHONPATH=/app
+
+# Assert the kernel is actually usable, at build time. ensure_lib() returns the
+# prebuilt library if it is current; if it is missing or stale it shells out to
+# CMake, which is absent here, so this fails the build loudly. Without it a
+# mistake would surface only as the silent slow path in production.
+RUN python -c "from engine.native.python import autobuild; print('[native] prebuilt kernel:', autobuild.ensure_lib())"
+
+EXPOSE 8000
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

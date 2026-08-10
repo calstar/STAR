@@ -10,7 +10,9 @@ import { Optimizer } from './components/Optimizer';
 import { ControllerMode } from './components/ControllerMode';
 import { OptimizerDemo } from './components/OptimizerDemo';
 import ConfigurationSelector from './components/ConfigurationSelector';
+import { SavedConfigs } from './components/SavedConfigs';
 import { emitConfigChanged } from './lib/configBus';
+import { DesignVersions } from './components/DesignVersions';
 import { getConfig, getHealth } from './api/client';
 import type { EngineConfig } from './api/client';
 
@@ -42,12 +44,12 @@ function App() {
       }
       setIsConnected(true);
 
-      // If config is already loaded on backend, fetch it
-      if (healthResult.data?.config_loaded) {
-        const configResult = await getConfig();
-        if (configResult.data) {
-          setConfig(configResult.data.config);
-        }
+      // The backend always has a config in the caller's session (the default is
+      // loaded lazily per user), so fetch it unconditionally. DesignVersions may
+      // then swap in the active document's working copy.
+      const configResult = await getConfig();
+      if (configResult.data) {
+        setConfig(configResult.data.config);
       }
     }
     init();
@@ -90,6 +92,11 @@ function App() {
                 </span>
               </div>
             </div>
+          </div>
+
+          {/* Per-user saved config library */}
+          <div className="py-2 border-t border-[var(--color-border)]">
+            <SavedConfigs config={config} onLoad={handleConfigLoaded} />
           </div>
 
           {/* Navigation tabs */}
@@ -178,6 +185,12 @@ function App() {
           </nav>
         </div>
       </header>
+
+      {/* Versioned designs: pick/create a design, auto-saved with microversions
+          and immutable releases you can restore. Durable server-side timeline. */}
+      <DesignVersions
+        onRestore={(c) => { setConfig(c); emitConfigChanged(c); }}
+      />
 
       {/* Main content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">

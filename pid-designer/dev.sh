@@ -1,49 +1,37 @@
 #!/usr/bin/env bash
-set -e
+# P&ID Designer dev stack — FastAPI backend + Vite frontend.
+#
+# Run ./dev.sh --help for the flags. Same interface in every STAR project.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/../scripts/dev_common.sh"
 
-cleanup() {
-  echo ""
-  echo "Shutting down..."
-  kill "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null
-  wait "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null
+API_PORT="${PID_DESIGNER_API_PORT:-8001}"
+UI_PORT="${PID_DESIGNER_UI_PORT:-5174}"
+
+dev_init pid-designer "$HERE"
+
+dev_preflight() {
+  if [ ! -d "$HERE/.venv" ]; then
+    echo "  creating backend virtualenv..."
+    python3 -m venv "$HERE/.venv"
+  fi
+  if [ ! -x "$HERE/.venv/bin/uvicorn" ]; then
+    echo "  installing backend dependencies..."
+    "$HERE/.venv/bin/python3" -m pip install --upgrade pip >/dev/null
+    "$HERE/.venv/bin/python3" -m pip install -r "$HERE/requirements.txt"
+  fi
+  if [ ! -d "$HERE/frontend/node_modules" ]; then
+    echo "  installing frontend dependencies..."
+    (cd "$HERE/frontend" && npm install)
+  fi
 }
-trap cleanup EXIT INT TERM
 
-# Create and populate a local Python virtualenv for the backend if needed.
-if [ ! -d ".venv" ]; then
-  echo "Creating backend virtualenv..."
-  python3 -m venv .venv
-fi
-PYTHON_CMD="$SCRIPT_DIR/.venv/bin/python3"
+dev_pane backend  ".venv/bin/python3 -m uvicorn backend.main:app --reload --port $API_PORT"
+dev_pane frontend "cd frontend && npm run dev -- --port $UI_PORT"
 
-# Install backend deps if uvicorn isn't present in the venv yet.
-if [ ! -x "$SCRIPT_DIR/.venv/bin/uvicorn" ]; then
-  echo "Installing backend dependencies..."
-  "$PYTHON_CMD" -m pip install --upgrade pip >/dev/null
-  "$PYTHON_CMD" -m pip install -r backend/requirements.txt
-fi
+dev_service Frontend "$UI_PORT"  "http://localhost:$UI_PORT"
+dev_service API      "$API_PORT" "http://localhost:$API_PORT/docs"
 
-# Install frontend deps if needed
-if [ ! -d "frontend/node_modules" ]; then
-  echo "Installing frontend dependencies..."
-  (cd frontend && npm install)
-fi
-
-# Free port 8001 if a previous run left something behind.
-if command -v lsof >/dev/null 2>&1; then
-  PIDS=$(lsof -ti:8001 2>/dev/null || true)
-  [ -n "$PIDS" ] && echo "Freeing port 8001..." && echo "$PIDS" | xargs kill -9 2>/dev/null || true
-fi
-
-echo "Starting backend on http://localhost:8001"
-"$PYTHON_CMD" -m uvicorn backend.main:app --reload --port 8001 &
-BACKEND_PID=$!
-
-echo "Starting frontend on http://localhost:5174"
-(cd frontend && npm run dev) &
-FRONTEND_PID=$!
-
-wait "$BACKEND_PID" "$FRONTEND_PID"
+dev_main "$@"

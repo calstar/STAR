@@ -1,0 +1,250 @@
+# STAR Internal Tools — the apps-machine stack.
+#
+# This is the reverse proxy (Caddy) + a verify-only auth + every app + an
+# optional Cloudflare Tunnel. In the current split deployment it runs on the
+# apps machine; the EC2 box runs OpenProject + the *login* auth separately (see
+# deploy/ec2/). The full apps-machine runbook is deploy/apps/README.md.
+#
+# Auth split: login (Google OAuth, cookie minting) is centralized on the EC2
+# auth at auth.starberkeley.org. The auth here runs with AUTH_VERIFY_ONLY=true
+# and only validates cookies -- one minter, many verifiers. It shares JWT_SECRET
+# with EC2 and sends logins to AUTH_PUBLIC_URL.
+#
+# Lives at the repo root on purpose: Compose resolves relative paths against the
+# directory holding this file, so from deploy/ every `./auth`, `./landing` etc.
+# would have pointed at deploy/auth, deploy/landing.
+#
+# Usage (apps machine, behind a tunnel):
+#   cp .env.example .env         # then fill it in (SCHEME=http, AUTH_VERIFY_ONLY=true, …)
+#   SCHEME=http docker compose --profile tunnel up -d --build
+#   (drop the published 80/443 below -- cloudflared is the only ingress)
+#
+# Let's Encrypt instead of a tunnel (single public machine): leave SCHEME=https
+# and `docker compose up -d --build`.
+
+services:
+  # ── Reverse proxy + TLS + auth gate ──────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SCHEME: ${SCHEME:-https}
+      BASE_DOMAIN: ${BASE_DOMAIN:-starberkeley.org}
+      ACME_EMAIL: ${ACME_EMAIL:-infra@starberkeley.org}
+      # DAQ is not a container -- see the daq-server block in the Caddyfile.
+      DAQ_BACKEND: ${DAQ_BACKEND:-host.docker.internal:8081}
+      DAQ_GUI: ${DAQ_GUI:-host.docker.internal:3000}
+    extra_hosts:
+      # Lets Caddy reach the DAQ processes running natively on the host.
+      # Docker Desktop provides this name already; on Linux it must be mapped.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # TLS certificates (persisted across restarts)
+      - caddy_config:/config
+    depends_on:
+      - auth
+      - engine-design-api
+      - engine-design-frontend
+      - pid-designer-api
+      - pid-designer-frontend
+      - recovery-calculator-api
+      - recovery-calculator-frontend
+      - onshape-viewer-api
+      - onshape-viewer-frontend
+      - landing
+
+  # ── Cloudflare Tunnel (optional ingress) ─────────────────────────────────
+  # Opt in with `--profile tunnel`. Cloudflare terminates TLS at the edge, so
+  # set SCHEME=http to stop Caddy from trying to issue its own certificates.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    command: tunnel --no-autoupdate run
+    environment:
+      # Same reasoning as JWT_SECRET below: a required-variable guard would
+      # break every other compose command. cloudflared exits with a clear
+      # error of its own when the token is empty.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    extra_hosts:
+      # SSH access to the *host* box over the same tunnel. In the Zero Trust
+      # dashboard, "Add published application" on this tunnel (e.g.
+      # ssh-rfs.starberkeley.org, Service URL ssh://host.docker.internal:22 -- the
+      # new UI has no type dropdown, the ssh:// scheme is the type), and
+      # cloudflared proxies it to
+      # the host's sshd. `host-gateway` is what lets the container reach the
+      # host's port 22 (Docker Desktop provides the name already; Linux needs
+      # this mapping). Client side: `ssh -o ProxyCommand="cloudflared access ssh
+      # --hostname ssh-rfs.starberkeley.org" user@ssh-rfs.starberkeley.org`.
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - caddy
+
+  # ── Auth service ─────────────────────────────────────────────────────────
+  auth:
+    image: ghcr.io/calstar/star-auth:latest
+    build:
+      context: ./auth
+    restart: unless-stopped
+    env_file:
+      # Optional so the stack can also be driven from the real environment
+      # (systemd EnvironmentFile, a secret manager) instead of a file in the
+      # repo. If neither supplies the values, auth fails loudly at startup.
+      - path: ./auth/.env # copy from auth/.env.example and fill in
+        required: false
+    environment:
+      BASE_DOMAIN: ${BASE_DOMAIN:-starberkeley.org}
+      AUTH_PUBLIC_URL: ${AUTH_PUBLIC_URL:-https://auth.starberkeley.org}
+      # On the apps machine set AUTH_VERIFY_ONLY=true: this auth only validates
+      # cookies (login lives on the EC2 box), so it needs just JWT_SECRET and no
+      # Google secret. See deploy/apps/. Default false = full login node.
+      AUTH_VERIFY_ONLY: ${AUTH_VERIFY_ONLY:-false}
+      # Single source for the shared secret (root .env), so a verify-only node
+      # needs no auth/.env at all. On a login node, keep the Google/Flask secrets
+      # in auth/.env; JWT_SECRET here still wins, so set it in root .env.
+      JWT_SECRET: ${JWT_SECRET:-}
+
+  # ── Engine Design ────────────────────────────────────────────────────────
+  # Built from the repo root: the native-builder stage and runtime copy several
+  # EngineDesign/ subtrees. Auth is Caddy's job, so no JWT_SECRET here.
+  engine-design-api:
+    image: ghcr.io/calstar/star-engine-design-api:latest
+    build:
+      context: .
+      dockerfile: EngineDesign/Dockerfile.api
+    restart: unless-stopped
+    environment:
+      # Per-user saved configs + working copies live here (a mounted volume).
+      # See userdata.py.
+      USERDATA_DIR: /data
+      # Design version history (microversions + releases) in S3. Empty bucket ->
+      # history falls back to the local volume (dev/no-AWS). IAM access keys, not
+      # an instance role (the apps machine is not on EC2).
+      ENGINE_S3_BUCKET: ${ENGINE_S3_BUCKET:-}
+      ENGINE_S3_PREFIX: ${ENGINE_S3_PREFIX:-engine}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    volumes:
+      - userdata:/data
+
+  engine-design-frontend:
+    image: ghcr.io/calstar/star-engine-design-frontend:latest
+    build:
+      context: ./EngineDesign/frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
+  # ── P&ID Designer ────────────────────────────────────────────────────────
+  # Auth is Caddy's job; the image is self-contained, so it builds from the
+  # subproject dir.
+  pid-designer-api:
+    image: ghcr.io/calstar/star-pid-designer-api:latest
+    build:
+      context: ./pid-designer
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    environment:
+      # Per-user working copies (autosave target) live on this volume, keyed by
+      # X-Auth-Email. See pid-designer/backend/userdata.py.
+      USERDATA_DIR: /data
+      # Diagram version history (microversions + releases) in S3. Empty bucket ->
+      # history falls back to the local volume (dev/no-AWS). The apps machine is
+      # not on EC2, so these are IAM access keys, not an instance role.
+      PID_S3_BUCKET: ${PID_S3_BUCKET:-}
+      PID_S3_PREFIX: ${PID_S3_PREFIX:-pid}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    volumes:
+      - userdata:/data
+
+  pid-designer-frontend:
+    image: ghcr.io/calstar/star-pid-designer-frontend:latest
+    build:
+      context: ./pid-designer/frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
+  # ── Recovery Calculator ──────────────────────────────────────────────────
+  # No in-app auth (Caddy is the gate) and no dependency on auth/shared_auth.py,
+  # so the build context is the subproject, not the repo root.
+  recovery-calculator-api:
+    image: ghcr.io/calstar/star-recovery-calculator-api:latest
+    build:
+      context: ./recovery-calculator
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    environment:
+      # Per-user units + saved configs + working copies live here (a mounted
+      # volume). See userdata.py.
+      USERDATA_DIR: /data
+      # Config version history (microversions + releases) in S3. Empty bucket ->
+      # history falls back to the local volume (dev/no-AWS).
+      RECOVERY_S3_BUCKET: ${RECOVERY_S3_BUCKET:-}
+      RECOVERY_S3_PREFIX: ${RECOVERY_S3_PREFIX:-recovery}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    volumes:
+      - userdata:/data
+
+  recovery-calculator-frontend:
+    image: ghcr.io/calstar/star-recovery-calculator-frontend:latest
+    build:
+      context: ./recovery-calculator/frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
+  # ── Onshape CM Viewer ────────────────────────────────────────────────────
+  onshape-viewer-api:
+    image: ghcr.io/calstar/star-onshape-viewer-api:latest
+    build:
+      context: ./onshape-viewer
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    env_file:
+      # Onshape API key pair (ONSHAPE_ACCESS_KEY / ONSHAPE_SECRET_KEY). Optional
+      # so the stack still comes up without it -- the cache-first endpoints work,
+      # and only live Onshape calls (refresh/build) fail until it is filled in.
+      - path: ./onshape-viewer/.env
+        required: false
+    volumes:
+      # Built-model cache: expensive Onshape builds (manifest + glb) survive a
+      # rebuild. CACHE_ROOT in backend/main.py is /app/cache.
+      - onshape_cache:/app/cache
+
+  onshape-viewer-frontend:
+    image: ghcr.io/calstar/star-onshape-viewer-frontend:latest
+    build:
+      context: ./onshape-viewer/frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
+  # ── DAQ Server ───────────────────────────────────────────────────────────
+  # Intentionally absent. The C++ bridge, elodin-db and the Node backend need
+  # the test-stand hardware, so they run natively under systemd -- see
+  # daq-server/deploy/systemd/. Caddy proxies to them on the host; the routes
+  # are in deploy/Caddyfile.
+
+  # ── Landing page ─────────────────────────────────────────────────────────
+  landing:
+    image: ghcr.io/calstar/star-landing:latest
+    build:
+      context: ./landing
+      dockerfile: Dockerfile
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
+  onshape_cache:
+  # Per-user data (engine-design + recovery-calculator + pid-designer): named
+  # configs, recovery unit prefs, and P&ID working copies. One shared volume so
+  # a future cross-user "browse + copy" is a single tree. Keyed by X-Auth-Email
+  # inside. See */backend/userdata.py.
+  userdata:

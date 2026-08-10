@@ -1,0 +1,12 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-old-backups",
+      "Status": "Enabled",
+      "Filter": {},
+      "Expiration": { "Days": 90 },
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 30 },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 7 }
+    }
+  ]
+}

@@ -21,7 +21,10 @@ export declare enum MessageType {
     BOARD_STATUS_UPDATE = "board_status_update",
     NOTIFICATION = "notification",
     CONFIG_UPDATED = "config_updated",
-    COUNTDOWN_TARGET_UPDATE = "countdown_target_update"
+    COUNTDOWN_TARGET_UPDATE = "countdown_target_update",
+    CONTROL_STATUS = "control_status",
+    CONTROL_UNLOCK = "control_unlock",
+    CONTROL_UNLOCK_RESULT = "control_unlock_result"
 }
 export declare enum SensorType {
     PT_CAL = "PT_Cal",

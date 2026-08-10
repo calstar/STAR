@@ -1,0 +1,84 @@
+# STAR EC2 box — full stack: OpenProject + auth, behind one Cloudflare Tunnel.
+#
+# Replaced the old auth-only stack (formerly deploy/auth-ec2/, now removed).
+# Everything shares this compose's default network, so cloudflared reaches both
+# services by name — no published host ports, no direct A-record, OpenProject
+# and auth both tunnel-only.
+#
+#   browser ─▶ Cloudflare edge (TLS) ─▶ cloudflared ─▶ auth:5000
+#                                                    └▶ openproject:80
+#
+# Data: reuses OpenProject's EXISTING volumes (openproject_pgdata /
+# openproject_assets) as external, so the DB and uploads carry over. See
+# README.md for the safe cutover (back up → down old → up this → repoint tunnel).
+
+name: star-ec2
+
+services:
+  openproject:
+    image: openproject/openproject:15
+    restart: always
+    # No `ports:` — reached only through the tunnel. Add "80:80" back only if you
+    # need host access during the cutover, then remove it.
+    environment:
+      OPENPROJECT_HOST__NAME: ${OPENPROJECT_HOST__NAME:-openproject.starberkeley.org}
+      OPENPROJECT_HTTPS: "true"
+      # Reuse the EXISTING value from ~/openproject — do not regenerate.
+      OPENPROJECT_SECRET_KEY_BASE: ${OPENPROJECT_SECRET_KEY_BASE:?set in .env}
+
+      # ── Outbound email via Amazon SES (SMTP submission, port 587) ──────────
+      # OpenProject just relays through SES; it is not a mail server itself.
+      # SES creds + region live in .env. The From address must be at a domain
+      # verified in SES (starberkeley.org). See README "Email (Amazon SES)".
+      OPENPROJECT_EMAIL__DELIVERY__METHOD: smtp
+      OPENPROJECT_SMTP__ADDRESS: ${SES_SMTP_ADDRESS:-email-smtp.us-east-2.amazonaws.com}
+      OPENPROJECT_SMTP__PORT: "587"
+      OPENPROJECT_SMTP__DOMAIN: ${OPENPROJECT_HOST__NAME:-openproject.starberkeley.org}
+      OPENPROJECT_SMTP__AUTHENTICATION: login
+      OPENPROJECT_SMTP__USER__NAME: ${SES_SMTP_USERNAME:?set in .env}
+      OPENPROJECT_SMTP__PASSWORD: ${SES_SMTP_PASSWORD:?set in .env}
+      OPENPROJECT_SMTP__ENABLE__STARTTLS__AUTO: "true"
+      OPENPROJECT_MAIL__FROM: ${OPENPROJECT_MAIL__FROM:-openproject@starberkeley.org}
+    volumes:
+      - pgdata:/var/openproject/pgdata
+      - assets:/var/openproject/assets
+
+  auth:
+    image: ghcr.io/calstar/star-auth:latest
+    pull_policy: always
+    restart: unless-stopped
+    env_file:
+      - .env
+    expose:
+      - "5000"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    extra_hosts:
+      # SSH access to the *host* box over this same tunnel — no open ports, no
+      # Elastic IP, no security-group rule (cloudflared is outbound-only). In the
+      # Zero Trust dashboard, "Add published application" on THIS tunnel (e.g.
+      # ssh-ec2.starberkeley.org, Service URL ssh://host.docker.internal:22 --
+      # the new UI has no type dropdown, the ssh:// scheme is the type).
+      # `host-gateway` lets the container reach the host's sshd on port 22.
+      # Client side:
+      # `ssh -o ProxyCommand="cloudflared access ssh --hostname
+      # ssh-ec2.starberkeley.org" ec2-user@ssh-ec2.starberkeley.org`.
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - auth
+      - openproject
+
+# External so Compose attaches the data already on the box rather than creating
+# empty volumes under this project's name. These must already exist.
+volumes:
+  pgdata:
+    external: true
+    name: openproject_pgdata
+  assets:
+    external: true
+    name: openproject_assets
