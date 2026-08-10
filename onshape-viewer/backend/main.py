@@ -31,9 +31,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from .onshape.aero.axis import Axis
+from .onshape.aero.fins import (
+    count_fins,
+    detect_fin_faces,
+    extract_fin_planform,
+    planform_outline_3d,
+)
+from .onshape.aero.outer_surface import detect_outer_surface
+from .onshape.aero.profile import build_profile
+from .onshape.aero.stability import compute_stability
 from .onshape.browse import BrowseCache
 from .onshape.build import build as run_build
 from .onshape.client import MissingCredentials, OnshapeClient, OnshapeError
+from .onshape.geometry_store import GeometryStore
 
 CACHE_ROOT = Path(__file__).resolve().parent.parent / "cache"
 
@@ -123,6 +134,170 @@ async def get_glb(model_id: str):
         # under a client that has already fetched them.
         headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
+
+
+# -- Stability / centre of pressure -------------------------------------------
+#
+# All aerodynamic + CG maths runs here, offline: it reads the geometry sidecar
+# and manifest a build already wrote, and never touches Onshape. This is the
+# single source of truth for CG, CoP and static margin, so both halves of the
+# margin come from one code path (see aero/stability.py).
+
+
+class FaceRef(BaseModel):
+    key: str  # occurrence key ("occ:<path>")
+    faceId: str
+
+
+class AxisInput(BaseModel):
+    origin: list[float]
+    direction: list[float]
+
+
+class StabilityRequest(BaseModel):
+    #: Approved outer airframe faces. Empty means "auto-detect them for me".
+    outerFaces: list[FaceRef] = []
+    #: Approved fin faces. None means auto-detect; [] means "no fins".
+    finFaces: list[FaceRef] | None = None
+    #: Override the detected fin count (e.g. a partial selection).
+    nFins: int | None = None
+    #: Occurrence key -> resolved mass (kg), overriding the manifest mass. This
+    #: is how a mass typed in for a material-less part reaches the CG.
+    overrides: dict[str, float] = {}
+    #: Optional user-confirmed axis; auto-detected from the surface when absent.
+    axis: AxisInput | None = None
+
+
+def _model_dir(model_id: str) -> Path:
+    if "/" in model_id or "\\" in model_id or model_id.startswith("."):
+        raise HTTPException(status_code=400, detail="invalid model id")
+    path = CACHE_ROOT / model_id
+    if not (path / "manifest.json").exists():
+        raise HTTPException(status_code=404, detail=f"unknown model {model_id}")
+    return path
+
+
+def _load_store(model_dir: Path) -> GeometryStore:
+    if not GeometryStore.exists(model_dir):
+        # Older builds predate the sidecar; there is no way to analyse them
+        # without rebuilding, and rebuilding is a deliberate, credentialed act.
+        raise HTTPException(
+            status_code=409,
+            detail="this model has no geometry sidecar; rebuild it to enable stability analysis",
+        )
+    try:
+        return GeometryStore.load(model_dir)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _axis_payload(axis: Axis) -> dict:
+    return {"origin": axis.origin.tolist(), "direction": axis.direction.tolist()}
+
+
+@app.get("/api/models/{model_id}/outer-surface")
+async def outer_surface(model_id: str):
+    """Auto-detected outer airframe faces, for the approval UI to seed from."""
+    store = _load_store(_model_dir(model_id))
+    try:
+        guess = detect_outer_surface(store)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "faces": [{"key": k, "faceId": f} for k, f in guess.faces],
+        "axis": _axis_payload(guess.axis),
+    }
+
+
+@app.get("/api/models/{model_id}/fins")
+async def fins(model_id: str):
+    """Auto-detected fin faces + count, for the approval UI to seed from."""
+    store = _load_store(_model_dir(model_id))
+    try:
+        guess = detect_outer_surface(store)
+        all_faces = store.iter_faces()
+        skin = store.faces_for(guess.faces)
+        import numpy as np
+
+        profile, axis = build_profile(np.concatenate([f.triangles for f in skin]), axis=guess.axis)
+        fin_faces = detect_fin_faces(all_faces, axis, profile.r_max)
+        fin_geo = store.faces_for(fin_faces)
+        count = 0
+        planforms: list = []
+        if fin_geo:
+            pf = extract_fin_planform(fin_geo, axis, profile.r_max)
+            count = pf.n_fins
+            planforms = [planform_outline_3d(pf, axis, az) for az in pf.azimuths]
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "faces": [{"key": k, "faceId": f} for k, f in fin_faces],
+        "count": count,
+        "axis": _axis_payload(axis),
+        "bodyRadius": profile.r_max,
+        # The exposed fin planforms, so Auto-detect shows the same surface Compute
+        # does (rooted at the body, tab excluded) rather than nothing.
+        "planforms": planforms,
+    }
+
+
+@app.post("/api/models/{model_id}/stability")
+async def stability(model_id: str, request: StabilityRequest):
+    """CG, CoP and static margin from an approved outer-surface selection."""
+    model_dir = _model_dir(model_id)
+    store = _load_store(model_dir)
+    manifest = json.loads((model_dir / "manifest.json").read_text())
+
+    faces = [(f.key, f.faceId) for f in request.outerFaces]
+    axis = None
+    if not faces:
+        faces = detect_outer_surface(store).faces
+    if request.axis is not None:
+        import numpy as np
+
+        axis = Axis(
+            origin=np.asarray(request.axis.origin, dtype=float),
+            direction=np.asarray(request.axis.direction, dtype=float)
+            / (np.linalg.norm(request.axis.direction) or 1.0),
+        )
+
+    fin_faces = (
+        [(f.key, f.faceId) for f in request.finFaces] if request.finFaces is not None else None
+    )
+
+    try:
+        result = compute_stability(
+            store,
+            manifest_parts=manifest.get("parts", []),
+            outer_faces=faces,
+            axis=axis,
+            overrides=request.overrides,
+            fin_faces=fin_faces,
+            n_fins=request.nFins,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return {
+        "cg": {"world": result.cg_world, "fromNose": result.cg_from_nose},
+        "cp": {"world": result.cp_world, "fromNose": result.cp_from_nose},
+        "cna": result.cna,
+        "refDiameter": result.ref_diameter,
+        "rMax": result.r_max,
+        "staticMargin": result.static_margin,
+        "bodyLength": result.body_length,
+        "mass": result.mass,
+        "fins": {
+            "count": result.n_fins,
+            "cna": result.fin_cna,
+            "rootChord": result.fin_root_chord,
+            "tipChord": result.fin_tip_chord,
+            "sweep": result.fin_sweep,
+            "span": result.fin_span,
+            "area": result.fin_area,
+            "planforms": result.fin_planforms,
+        },
+    }
 
 
 # -- Onshape browsing ---------------------------------------------------------

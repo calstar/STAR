@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { fetchManifest, glbUrl, listModels } from './api/client'
+import {
+  computeStability,
+  fetchFins,
+  fetchManifest,
+  fetchOuterSurface,
+  glbUrl,
+  listModels,
+} from './api/client'
 import { centreOfMass, formatMass, formatMetres } from './lib/cm'
 import { MaterialWarning } from './components/viewer/MaterialWarning'
 import { ModelPicker } from './components/viewer/ModelPicker'
@@ -8,7 +15,16 @@ import { PartList } from './components/viewer/PartList'
 import { PropertiesPanel } from './components/viewer/PropertiesPanel'
 import { Row } from './components/viewer/Row'
 import { Scene } from './components/viewer/Scene'
-import type { Manifest, ModelSummary, Part, PartOverride } from './types'
+import { StabilityPanel } from './components/viewer/StabilityPanel'
+import type {
+  FaceRef,
+  FinPlanform,
+  Manifest,
+  ModelSummary,
+  Part,
+  PartOverride,
+  StabilityResult,
+} from './types'
 import { MATERIALS_BY_KEY } from './lib/materials'
 
 /** Survives reloads so a new build does not hijack which model is open. */
@@ -31,6 +47,22 @@ export default function App() {
   const [overrides, setOverrides] = useState<Map<string, PartOverride>>(new Map())
   const [opacity, setOpacity] = useState(0.55)
   const [showAssemblyCentroid, setShowAssemblyCentroid] = useState(true)
+  // Backend-computed stability (CG, CoP, static margin). Null until the user
+  // asks for it; cleared when the model changes so a stale margin never lingers.
+  const [stability, setStability] = useState<StabilityResult | null>(null)
+  const [stabilityBusy, setStabilityBusy] = useState(false)
+  const [stabilityError, setStabilityError] = useState<string | null>(null)
+  // Outer-surface selection: which faces are the airframe. Empty means "let the
+  // backend auto-detect on compute". Editing lets the user correct the guess.
+  const [outerFaces, setOuterFaces] = useState<FaceRef[]>([])
+  const [finFaces, setFinFaces] = useState<FaceRef[]>([])
+  const [finCount, setFinCount] = useState(0)
+  // The exposed fin planform surfaces to draw; from auto-detect or compute.
+  const [finPlanforms, setFinPlanforms] = useState<FinPlanform[]>([])
+  const [faceEditMode, setFaceEditMode] = useState(false)
+  const [editTarget, setEditTarget] = useState<'body' | 'fin'>('body')
+  const [autoBusy, setAutoBusy] = useState(false)
+  const [isolateOuterFaces, setIsolateOuterFaces] = useState(false)
   // Bumped when a build finishes, so rebuilding the model already on screen
   // refetches it. Without this the manifest effect keys only on the id, which
   // has not changed, and the viewer would keep showing the previous build.
@@ -73,6 +105,15 @@ export default function App() {
         setOverrides(new Map())
         setVisibleKeys(new Set(loaded.parts.map((part) => part.key)))
         setSelectedKeys([])
+        setStability(null)
+        setStabilityError(null)
+        setOuterFaces([])
+        setFinFaces([])
+        setFinCount(0)
+        setFinPlanforms([])
+        setFaceEditMode(false)
+        setEditTarget('body')
+        setIsolateOuterFaces(false)
         setError(null)
       })
       .catch((exc) => setError(String(exc)))
@@ -118,6 +159,93 @@ export default function App() {
   )
 
   const cm = useMemo(() => centreOfMass(activeParts), [activeParts])
+
+  // Effective mass per occurrence, sent to the backend so its CG matches exactly
+  // what is on screen (material and typed-in overrides included). The backend is
+  // the source of truth for the stability CG; this just feeds it the same edits.
+  const massOverrides = useMemo(
+    () => Object.fromEntries(parts.map((part) => [part.key, part.mass])),
+    [parts],
+  )
+
+  const handleComputeStability = useCallback(async () => {
+    if (!modelId) return
+    setStabilityBusy(true)
+    setStabilityError(null)
+    setFaceEditMode(false) // leave edit mode so raw fin faces stop showing
+    try {
+      // Use the user's picked faces. If none yet, auto-detect body + fins and
+      // keep them in state so what fed the result is highlighted too.
+      let body = outerFaces
+      let fins = finFaces
+      if (body.length === 0) {
+        body = (await fetchOuterSurface(modelId)).faces
+        setOuterFaces(body)
+      }
+      if (fins.length === 0) {
+        const guess = await fetchFins(modelId)
+        fins = guess.faces
+        setFinFaces(fins)
+        setFinCount(guess.count)
+        setFinPlanforms(guess.planforms)
+      }
+      const result = await computeStability(modelId, {
+        outerFaces: body,
+        finFaces: fins,
+        overrides: massOverrides,
+      })
+      setStability(result)
+      setFinCount(result.fins.count)
+      setFinPlanforms(result.fins.planforms)
+    } catch (exc) {
+      setStabilityError(String(exc))
+    } finally {
+      setStabilityBusy(false)
+    }
+  }, [modelId, massOverrides, outerFaces, finFaces])
+
+  const handleAutoDetect = useCallback(async () => {
+    if (!modelId) return
+    setAutoBusy(true)
+    setStabilityError(null)
+    setFaceEditMode(false)
+    try {
+      const [surface, fins] = await Promise.all([fetchOuterSurface(modelId), fetchFins(modelId)])
+      setOuterFaces(surface.faces)
+      setFinFaces(fins.faces)
+      setFinCount(fins.count)
+      setFinPlanforms(fins.planforms)
+    } catch (exc) {
+      setStabilityError(String(exc))
+    } finally {
+      setAutoBusy(false)
+    }
+  }, [modelId])
+
+  const handleToggleFaceEdit = useCallback(
+    (target: 'body' | 'fin') => {
+      setEditTarget(target)
+      setFaceEditMode((on) => {
+        // Toggle off only if re-clicking the active target; switching target
+        // stays in edit mode. Seed from auto-detect the first time in.
+        if (outerFaces.length === 0 && finFaces.length === 0) void handleAutoDetect()
+        return !(on && editTarget === target)
+      })
+    },
+    [outerFaces.length, finFaces.length, editTarget, handleAutoDetect],
+  )
+
+  const handleFaceToggle = useCallback(
+    (target: 'body' | 'fin', occurrenceKey: string, faceId: string) => {
+      const setter = target === 'fin' ? setFinFaces : setOuterFaces
+      setter((current) => {
+        const idx = current.findIndex((f) => f.key === occurrenceKey && f.faceId === faceId)
+        if (idx >= 0) return current.filter((_, i) => i !== idx)
+        return [...current, { key: occurrenceKey, faceId }]
+      })
+    },
+    [],
+  )
 
   const handleOverrideChange = useCallback((key: string, override: PartOverride | null) => {
     setOverrides((current) => {
@@ -250,6 +378,14 @@ export default function App() {
             centroid={cm.centroid}
             showAssemblyCentroid={showAssemblyCentroid}
             opacity={opacity}
+            copPosition={stability?.cp.world ?? null}
+            finPlanforms={faceEditMode && editTarget === 'fin' ? [] : finPlanforms}
+            faceEditMode={faceEditMode}
+            editTarget={editTarget}
+            outerFaces={outerFaces}
+            finFaces={finFaces}
+            onFaceToggle={handleFaceToggle}
+            isolateOuterFaces={isolateOuterFaces}
           />
 
           <div className="pointer-events-none absolute left-4 top-4 w-80 space-y-3">
@@ -270,6 +406,22 @@ export default function App() {
               )}
             </section>
 
+            <StabilityPanel
+              result={stability}
+              busy={stabilityBusy}
+              error={stabilityError}
+              onCompute={handleComputeStability}
+              faceEditMode={faceEditMode}
+              editTarget={editTarget}
+              onToggleEditMode={handleToggleFaceEdit}
+              onAutoDetect={handleAutoDetect}
+              outerFaceCount={outerFaces.length}
+              finFaceCount={finFaces.length}
+              finCount={finCount}
+              autoBusy={autoBusy}
+              isolate={isolateOuterFaces}
+              onToggleIsolate={() => setIsolateOuterFaces((on) => !on)}
+            />
           </div>
 
           <div className="pointer-events-none absolute bottom-3 right-4 text-right text-xs text-slate-500">

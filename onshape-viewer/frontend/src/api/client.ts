@@ -7,6 +7,10 @@ import type {
   ModelSummary,
   OnshapeAssembly,
   OnshapeDocument,
+  FinGuess,
+  OuterSurfaceGuess,
+  StabilityRequest,
+  StabilityResult,
 } from '../types'
 
 /** The server puts the real reason in `detail`; surfacing it beats a bare 502. */
@@ -85,4 +89,29 @@ export async function startBuild(
 
 export function buildStatus(jobId: string): Promise<BuildJob> {
   return getJSON<BuildJob>(`/api/build/${jobId}`)
+}
+
+/** Auto-detected outer airframe faces, to seed the approval UI. Offline. */
+export function fetchOuterSurface(modelId: string): Promise<OuterSurfaceGuess> {
+  return getJSON<OuterSurfaceGuess>(`/api/models/${modelId}/outer-surface`)
+}
+
+/** Auto-detected fin faces + count, to seed the fin approval UI. Offline. */
+export function fetchFins(modelId: string): Promise<FinGuess> {
+  return getJSON<FinGuess>(`/api/models/${modelId}/fins`)
+}
+
+/** CG, CoP and static margin from the approved (or auto-detected) surface. */
+export async function computeStability(
+  modelId: string,
+  request: StabilityRequest,
+): Promise<StabilityResult> {
+  const url = `/api/models/${modelId}/stability`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) await fail(url, response)
+  return response.json() as Promise<StabilityResult>
 }

@@ -26,8 +26,10 @@ import numpy as np
 
 from . import mass as mass_mod
 from .assembly import AssemblyWalk, Occurrence, SourceKey, walk_assembly
+from .bodydetails import FaceSurface, fetch_source_surfaces
 from .client import OnshapeClient, OnshapeError
 from .geometry import transform_point, volume_and_centroid
+from .geometry_store import write_geometry
 from .glb import GLBBuilder, MeshKey
 from .mass import AssemblyTotals, BodyMass, Material
 from .tessellate import PartMesh, fetch_source_meshes
@@ -51,6 +53,9 @@ class SourceData:
     # is derived from. Kept so the viewer can strip the instance counter.
     part_names: dict[str, str]
     meshes: dict[str, PartMesh]
+    # {part_id: {face_id: FaceSurface}} -- B-rep surface type per face, for the
+    # stability auto-detector. Empty if bodydetails failed for this source.
+    surfaces: dict[str, dict[str, FaceSurface]]
 
 
 @dataclass
@@ -152,6 +157,10 @@ def build(
     glb_path = cache_dir / "model.glb"
     _write_glb(parts, sources, glb_path, emit_gltf, report)
 
+    # Analysis-oriented geometry copy for the offline stability/CoP endpoint.
+    geo_stats = write_geometry(cache_dir, parts, sources)
+    say(f"Geometry sidecar: {geo_stats['meshes']} meshes, {geo_stats['occurrences']} occurrences")
+
     manifest = _build_manifest(
         ref=ref,
         walk=walk,
@@ -220,7 +229,12 @@ def _fetch_sources(
         except OnshapeError as exc:
             report.warn(f"Tessellation failed for {source.element_id}: {exc}")
             meshes = {}
-        return SourceData(source, bodies, materials, part_names, meshes)
+        try:
+            surfaces = fetch_source_surfaces(client, source, link)
+        except OnshapeError as exc:
+            report.warn(f"Body details failed for {source.element_id}: {exc}")
+            surfaces = {}
+        return SourceData(source, bodies, materials, part_names, meshes, surfaces)
 
     results = client.map_parallel(fetch, walk.sources)
     return {data.source: data for data in results}

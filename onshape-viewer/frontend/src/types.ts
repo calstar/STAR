@@ -93,6 +93,74 @@ export interface PartOverride {
   mass: number | null
 }
 
+/** A single B-rep face of a placed occurrence: the picking/selection unit. */
+export interface FaceRef {
+  key: string // occurrence key ("occ:<path>")
+  faceId: string
+}
+
+export interface AxisInfo {
+  origin: [number, number, number]
+  direction: [number, number, number]
+}
+
+/** Auto-detected outer airframe faces, from GET .../outer-surface. */
+export interface OuterSurfaceGuess {
+  faces: FaceRef[]
+  axis: AxisInfo
+}
+
+export interface StabilityRequest {
+  /** Approved outer faces; empty asks the backend to auto-detect them. */
+  outerFaces: FaceRef[]
+  /** Approved fin faces; null auto-detects, [] means no fins. */
+  finFaces?: FaceRef[] | null
+  /** Override the detected fin count. */
+  nFins?: number | null
+  /** Occurrence key -> resolved mass (kg), overriding the manifest mass. */
+  overrides: Record<string, number>
+  axis?: AxisInfo | null
+}
+
+/** One fin's exposed planform outline, in the Onshape Z-up frame. */
+export interface FinPlanform {
+  lead: [number, number, number][]
+  trail: [number, number, number][]
+}
+
+export interface FinData {
+  count: number
+  cna: number
+  rootChord: number
+  tipChord: number
+  sweep: number
+  span: number
+  area: number
+  planforms: FinPlanform[]
+}
+
+/** Auto-detected fin faces, from GET .../fins. */
+export interface FinGuess {
+  faces: FaceRef[]
+  count: number
+  axis: AxisInfo
+  bodyRadius: number
+  planforms: FinPlanform[]
+}
+
+/** CG, CoP and static margin from POST .../stability. All backend-computed. */
+export interface StabilityResult {
+  cg: { world: [number, number, number]; fromNose: number }
+  cp: { world: [number, number, number]; fromNose: number }
+  cna: number
+  refDiameter: number
+  rMax: number
+  staticMargin: number | null
+  bodyLength: number
+  mass: number
+  fins: FinData
+}
+
 export interface OnshapeDocument {
   documentId: string
   name: string
