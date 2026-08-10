@@ -328,6 +328,22 @@ policy in §5b. Confirm the mapping the tunnel relies on is present with
 `docker inspect <cloudflared-container> --format '{{.HostConfig.ExtraHosts}}'`
 → `[host.docker.internal:host-gateway]`.
 
+**Troubleshooting — SSH hangs / `websocket: bad handshake` while the web apps
+work.** The web apps ride container→container traffic (Docker's own network);
+SSH is container→**host**, which the host firewall governs separately. Open the
+tunnel's **Live logs** in the dashboard and trigger the SSH — if you see
+`dial tcp 172.17.0.1:22: i/o timeout`, the connector reached the host fine and
+`ufw` is silently dropping the packet (a timeout, not "connection refused", is
+the drop signature). Fix is the §1 rule:
+```bash
+sudo ufw allow from 172.16.0.0/12 to any port 22 proto tcp
+```
+Other checks: `sudo ss -tlnp | grep ':22'` (sshd actually listening); the key's
+perms (`~/.ssh` = 700, `authorized_keys` = 600, owned by the login user, or sshd
+ignores it); and that `ssh-rfs` is a published application on the **same** tunnel
+whose connector is running here (a route on a different tunnel gives the same
+handshake error).
+
 ---
 
 ## 8. Verify

@@ -46,6 +46,11 @@ Connect with `ProxyCommand cloudflared access ssh --hostname ssh-rfs.starberkele
 — see [`FRESH-INSTALL.md`](FRESH-INSTALL.md) §7. Do **not** add `auth.` here —
 that stays on the EC2 tunnel.
 
+> **Firewall:** the connector reaches the host's sshd over the Docker bridge, so
+> `ufw` must allow it — `sudo ufw allow from 172.16.0.0/12 to any port 22 proto
+> tcp`. `bootstrap.sh` does this; without it SSH times out
+> (`dial tcp 172.17.0.1:22: i/o timeout`) while the web apps still work.
+
 ## 2. On the apps machine — get the compose + configure
 Images are pulled from GHCR (built by `publish-apps.yml` / `publish-auth.yml`), so
 the box needs only the root compose + `.env`, not the app source. Grab just those
