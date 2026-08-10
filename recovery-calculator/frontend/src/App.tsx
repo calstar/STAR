@@ -95,9 +95,6 @@ export default function App() {
                 <h1 className="text-lg font-bold text-[var(--color-text-primary)]">
                   Recovery Calculator
                 </h1>
-                <p className="font-prose text-xs text-[var(--color-text-secondary)]">
-                  Parachute descent, opening loads and recovery hardware sizing
-                </p>
               </div>
             </div>
 
