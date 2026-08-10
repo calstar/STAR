@@ -117,6 +117,24 @@ fi
 # Let the admin user run docker without sudo (takes effect on next login).
 usermod -aG docker "$ADMIN_USER" || true
 
+# ── §4b cloudflared CLI (native) ─────────────────────────────────────────────
+# The tunnel *connector* runs in Docker (the cloudflared compose service), so
+# this isn't required for the tunnel — but it gives the box the `cloudflared`
+# CLI (e.g. `cloudflared access ssh` to reach other boxes, tunnel debugging).
+# The 'any' codename works on every Ubuntu/Debian release (no per-release lag).
+if command -v cloudflared >/dev/null 2>&1; then
+  say "§4b cloudflared already present — skipping"
+else
+  say "§4b Installing cloudflared CLI (apt repo, 'any' codename)"
+  mkdir -p --mode=0755 /usr/share/keyrings
+  curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+    -o /usr/share/keyrings/cloudflare-main.gpg
+  echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' \
+    > /etc/apt/sources.list.d/cloudflared.list
+  apt-get update -y
+  apt-get install -y cloudflared
+fi
+
 # ── §5  Repo checkout ────────────────────────────────────────────────────────
 say "§5 Repo checkout at $CLONE_DIR"
 if [[ -d "$CLONE_DIR/.git" ]]; then
