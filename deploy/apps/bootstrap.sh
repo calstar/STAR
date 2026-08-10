@@ -66,13 +66,17 @@ WaylandEnable=false
 EOF
   # Never sleep/suspend — it's a server that must stay reachable.
   systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target || true
-  # Kill idle-blank / auto-suspend / lock for the desktop session.
+  # Kill idle-blank / auto-suspend / lock for the desktop session. These write
+  # the user's dconf, so they persist even run from here; but they only take
+  # visible effect in a live GNOME session, so we ALSO print them for the user
+  # to re-run in their session if a suspend already happened.
   sudo -u "$ADMIN_USER" dbus-run-session -- bash -c '
     gsettings set org.gnome.desktop.session idle-delay 0
     gsettings set org.gnome.desktop.screensaver lock-enabled false
+    gsettings set org.gnome.desktop.screensaver idle-activation-enabled false
     gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type nothing
     gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type nothing
-  ' 2>/dev/null || warn "gsettings tweaks skipped (no GNOME session yet) — harmless."
+  ' 2>/dev/null || warn "gsettings tweaks skipped (no GNOME session yet) — re-run them in the desktop session; the systemctl mask below is the hard stop."
 else
   say "§2 No desktop (Ubuntu Server) — skipping auto-login"
 fi
