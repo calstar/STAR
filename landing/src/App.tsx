@@ -151,7 +151,7 @@ const APPS: AppCard[] = [
     label: 'Engine Design',
     subdomain: 'engine-design.starberkeley.org',
     description:
-      'Physics simulation of the bipropellant engine. Input tank pressures and injector geometry, get chamber pressure, thrust, Isp, and time-series blowdown curves.',
+      'Simulation and optimization of the liquid engine. Includes static geometry, the feed system, and thermodynamics.',
     icon: <IconEngine />,
     colorClass: 'card-blue',
     iconBg: 'linear-gradient(135deg, #1d4ed8 0%, #3b82f6 100%)',
@@ -163,7 +163,7 @@ const APPS: AppCard[] = [
     label: 'DAQ Server',
     subdomain: 'daq-server.starberkeley.org',
     description:
-      'Live ground station UI. Displays sensor telemetry from the avionics boards, drives the hotfire state machine, and logs all data to Elodin DB.',
+      'Live GUI of the DAQ box, when it is setup at RFS. Allows for monitoring and control of the engine.',
     icon: <IconDAQ />,
     colorClass: 'card-green',
     iconBg: 'linear-gradient(135deg, #15803d 0%, #22c55e 100%)',
@@ -177,7 +177,7 @@ const APPS: AppCard[] = [
     label: 'P&ID Designer',
     subdomain: 'pid-designer.starberkeley.org',
     description:
-      'Drag-and-drop editor for the propulsion feed system P&ID. Changes are committed directly to git.',
+      'Software similar to draw.io that is designed to make P&ID diagrams. Includes version control and backups.',
     icon: <IconPID />,
     colorClass: 'card-purple',
     iconBg: 'linear-gradient(135deg, #7e22ce 0%, #a855f7 100%)',
@@ -189,7 +189,7 @@ const APPS: AppCard[] = [
     label: 'Recovery Calculator',
     subdomain: 'recovery-calculator.starberkeley.org',
     description:
-      'Parachute descent physics. Size the drogue and main from mass and altitude, and sweep designs to see impact energy, opening loads, and descent time.',
+      'Tool to determine how parachute recovery systems perform under simulated conditions, used as a design aid.',
     icon: <IconRecovery />,
     colorClass: 'card-orange',
     iconBg: 'linear-gradient(135deg, #c2410c 0%, #f97316 100%)',
@@ -201,7 +201,7 @@ const APPS: AppCard[] = [
     label: 'Onshape CM Viewer',
     subdomain: 'onshape-viewer.starberkeley.org',
     description:
-      'Pulls assemblies from Onshape and renders them in 3D with per-part mass and centre-of-mass. Access is limited to an approved list of users.',
+      'Pulls assemblies from Onshape and renders. Soon to become an improved version of OpenRocket.',
     icon: <IconCAD />,
     colorClass: 'card-cyan',
     iconBg: 'linear-gradient(135deg, #0e7490 0%, #06b6d4 100%)',
@@ -215,7 +215,7 @@ const APPS: AppCard[] = [
     label: 'OpenProject',
     subdomain: 'openproject.starberkeley.org',
     description:
-      'Team project management: work packages, timelines, and task boards for tracking work across the team.',
+      'Our project management platform, where tasks and project planning is handled. Please request an account from Aidan.',
     icon: <IconBoard />,
     colorClass: 'card-indigo',
     iconBg: 'linear-gradient(135deg, #4338ca 0%, #6366f1 100%)',
@@ -308,8 +308,7 @@ export default function App() {
               margin: '0 auto',
               lineHeight: 1.7,
             }}>
-              Design, simulate, and monitor the liquid-propellant rocket engine
-              powering STAR's next launch.
+              Please authenticate using your Berkeley account. Some apps are restricted as marked below. Contact Aidan if you have any issues.
             </p>
           </div>
 
