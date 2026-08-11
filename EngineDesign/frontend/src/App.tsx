@@ -10,7 +10,6 @@ import { Optimizer } from './components/Optimizer';
 import { ControllerMode } from './components/ControllerMode';
 import { OptimizerDemo } from './components/OptimizerDemo';
 import ConfigurationSelector from './components/ConfigurationSelector';
-import { SavedConfigs } from './components/SavedConfigs';
 import { emitConfigChanged } from './lib/configBus';
 import { DesignVersions } from './components/DesignVersions';
 import { getConfig, getHealth } from './api/client';
@@ -94,9 +93,13 @@ function App() {
             </div>
           </div>
 
-          {/* Per-user saved config library */}
-          <div className="py-2 border-t border-[var(--color-border)]">
-            <SavedConfigs config={config} onLoad={handleConfigLoaded} />
+          {/* Versioned designs, tucked between the title and the tabs so the
+              design you are on sits with the rest of the app chrome. */}
+          <div className="border-t border-[var(--color-border)]">
+            <DesignVersions
+              onRestore={(c) => { setConfig(c); emitConfigChanged(c); }}
+              inline
+            />
           </div>
 
           {/* Navigation tabs */}
@@ -185,12 +188,6 @@ function App() {
           </nav>
         </div>
       </header>
-
-      {/* Versioned designs: pick/create a design, auto-saved with microversions
-          and immutable releases you can restore. Durable server-side timeline. */}
-      <DesignVersions
-        onRestore={(c) => { setConfig(c); emitConfigChanged(c); }}
-      />
 
       {/* Main content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">

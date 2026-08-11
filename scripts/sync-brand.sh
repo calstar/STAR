@@ -16,6 +16,7 @@ SRC="$ROOT/assets/brand"
 # copy of the brand masters. Add a line here when a new app adopts the logo.
 CONSUMERS=(
   "landing/src/assets"
+  "recovery-calculator/frontend/src/assets"
 )
 
 # The master files to distribute (basenames under assets/brand/).

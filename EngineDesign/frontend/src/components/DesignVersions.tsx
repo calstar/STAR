@@ -11,15 +11,83 @@
  * config (GET /api/config) and writes the working copy when it changes. Restores
  * apply through POST /api/config/load so the session (and thus every tab) sees
  * the restored design.
+ *
+ * Every dialog here (new/rename/delete, restore confirmations, the file-load
+ * error, and history) is an in-app centred modal styled like the rest of the
+ * app -- never a browser prompt/confirm/alert, which cannot be themed.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { getConfig, loadConfigJson, type EngineConfig } from '../api/client';
 import * as api from '../api/documents';
 import type { DocMeta, MicroVersion, ReleaseVersion } from '../api/documents';
 
 const ACTIVE_KEY = 'engine-design.activeDoc.v1';
 const AUTOSAVE_POLL_MS = 4000;
+
+const btn =
+  'inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2.5 py-1 text-xs font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-40';
+const primaryBtn =
+  'inline-flex items-center gap-1 rounded border border-transparent bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-[var(--color-accent-hover)] disabled:opacity-40';
+const dangerBtn =
+  'inline-flex items-center gap-1 rounded border border-red-500/50 bg-red-500/10 px-3 py-1 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/20 disabled:opacity-40';
+const ghostBtn =
+  'inline-flex items-center gap-1 rounded border border-transparent px-3 py-1 text-xs font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)] disabled:opacity-40';
+
+/** The one at-a-time dialog the bar drives: a text prompt, a confirmation
+ *  (optionally destructive), or a plain message. Replaces window.prompt /
+ *  confirm / alert so every dialog is centred and styled like the app. */
+type Dialog =
+  | { kind: 'prompt'; title: string; label?: string; placeholder?: string; confirmLabel: string; onConfirm: (value: string) => void | Promise<void> }
+  | { kind: 'confirm'; title: string; message: ReactNode; confirmLabel: string; danger?: boolean; onConfirm: () => void | Promise<void> }
+  | { kind: 'alert'; title: string; message: ReactNode };
+
+/**
+ * A centred, app-styled modal. The one dialog shell everything else builds on
+ * -- prompts, confirmations, the design history -- so the app never falls back
+ * to a browser alert/confirm/prompt, which cannot be themed and land in the
+ * wrong place. Click the backdrop or press Escape to dismiss.
+ */
+function Modal({ open, onClose, title, children, footer, width = 'w-[440px]' }: {
+  open: boolean;
+  onClose: () => void;
+  title: ReactNode;
+  children?: ReactNode;
+  footer?: ReactNode;
+  width?: string;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div
+        className={`${width} max-w-[90vw] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 shadow-2xl`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</h3>
+        {children && <div className="mt-4">{children}</div>}
+        {footer && <div className="mt-5 flex justify-end gap-2">{footer}</div>}
+      </div>
+    </div>
+  );
+}
+
+/** Download any JSON payload as a file, the browser way. */
+function downloadJson(filename: string, data: unknown): void {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 /** Propose the next minor release, e.g. 0.1 -> 0.2, given existing labels. */
 function nextLabel(releases: ReleaseVersion[]): string {
@@ -49,9 +117,12 @@ interface Props {
   /** Apply a config to the app's own state (the backend session is synced
    *  separately, before this is called). */
   onRestore: (config: EngineConfig) => void;
+  /** Render just the bar row, no background or width container -- for dropping
+   *  inside a parent (the header) that already provides both. */
+  inline?: boolean;
 }
 
-export function DesignVersions({ onRestore }: Props) {
+export function DesignVersions({ onRestore, inline = false }: Props) {
   const [documents, setDocuments] = useState<DocMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const loadedId = useRef<string | null>(null);
@@ -68,6 +139,29 @@ export function DesignVersions({ onRestore }: Props) {
   const [relLabel, setRelLabel] = useState('');
   const [relStatus, setRelStatus] = useState<'idle' | 'saving' | 'ok' | 'err'>('idle');
   const [relError, setRelError] = useState('');
+
+  // One at-a-time dialog (prompt / confirm / alert) and, for prompts, its input.
+  const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [dialogValue, setDialogValue] = useState('');
+  const askPrompt = (opts: Extract<Dialog, { kind: 'prompt' }> & { value?: string }) => {
+    setDialogValue(opts.value ?? '');
+    setDialog(opts);
+  };
+  const runDialog = async () => {
+    const d = dialog;
+    if (!d) return;
+    if (d.kind === 'prompt') {
+      const v = dialogValue.trim();
+      if (!v) return;
+      setDialog(null);
+      await d.onConfirm(v);
+    } else if (d.kind === 'confirm') {
+      setDialog(null);
+      await d.onConfirm();
+    } else {
+      setDialog(null);
+    }
+  };
 
   const active = documents.find((d) => d.id === activeId) ?? null;
 
@@ -178,40 +272,106 @@ export function DesignVersions({ onRestore }: Props) {
     setShowHistory(false);
   };
 
-  const create = async () => {
-    const name = window.prompt('New design name:', `Design ${documents.length + 1}`);
-    if (!name || !name.trim()) return;
-    const seed = (await fetchConfig()) ?? undefined;
-    const meta = await api.createDocument(name.trim(), seed);
-    setDocuments((d) => [meta, ...d]);
-    setActiveId(meta.id);
-    loadedId.current = meta.id;
-    if (seed) {
-      lastConfig.current = seed;
-      lastSaved.current = JSON.stringify(seed);
+  const create = () =>
+    askPrompt({
+      kind: 'prompt',
+      title: 'New design',
+      label: 'Design name',
+      placeholder: 'Design name',
+      value: `Design ${documents.length + 1}`,
+      confirmLabel: 'Create',
+      onConfirm: async (name) => {
+        const seed = (await fetchConfig()) ?? undefined;
+        const meta = await api.createDocument(name, seed);
+        setDocuments((d) => [meta, ...d]);
+        setActiveId(meta.id);
+        loadedId.current = meta.id;
+        if (seed) {
+          lastConfig.current = seed;
+          lastSaved.current = JSON.stringify(seed);
+        }
+        localStorage.setItem(ACTIVE_KEY, meta.id);
+      },
+    });
+
+  const rename = () => {
+    if (!active) return;
+    askPrompt({
+      kind: 'prompt',
+      title: 'Rename design',
+      label: 'Design name',
+      value: active.name,
+      confirmLabel: 'Rename',
+      onConfirm: async (name) => {
+        const meta = await api.renameDocument(active.id, name);
+        setDocuments((d) => d.map((x) => (x.id === meta.id ? meta : x)));
+      },
+    });
+  };
+
+  const remove = () => {
+    if (!active) return;
+    setDialog({
+      kind: 'confirm',
+      title: `Delete "${active.name}"?`,
+      message: 'This removes the design, its microversions, and its releases. This cannot be undone.',
+      confirmLabel: 'Delete',
+      danger: true,
+      onConfirm: async () => {
+        await api.deleteDocument(active.id);
+        const rest = documents.filter((d) => d.id !== active.id);
+        setDocuments(rest);
+        if (rest.length > 0) select(rest[0].id);
+        else {
+          setActiveId(null);
+          loadedId.current = null;
+          localStorage.removeItem(ACTIVE_KEY);
+        }
+      },
+    });
+  };
+
+  // ── File save / load ──────────────────────────────────────────────────────
+  // The server is the home for a design; these are the escape hatch: hand a
+  // design to someone as a file, or bring one in. A file holds the config, the
+  // same payload the server stores.
+  const saveToFile = async () => {
+    const cfg = (await fetchConfig()) ?? lastConfig.current;
+    if (!cfg) {
+      setDialog({ kind: 'alert', title: 'Nothing to save', message: 'No configuration is loaded yet.' });
+      return;
     }
-    localStorage.setItem(ACTIVE_KEY, meta.id);
+    const slug = (active?.name ?? 'design').replace(/[^\w.-]+/g, '-').toLowerCase();
+    downloadJson(`${slug || 'design'}.engine.json`, cfg);
   };
 
-  const rename = async () => {
-    if (!active) return;
-    const name = window.prompt('Rename design:', active.name);
-    if (!name || !name.trim()) return;
-    const meta = await api.renameDocument(active.id, name.trim());
-    setDocuments((d) => d.map((x) => (x.id === meta.id ? meta : x)));
-  };
-
-  const remove = async () => {
-    if (!active) return;
-    if (!window.confirm(`Delete "${active.name}"?\n\nThis removes the design, its microversions, and its releases. This cannot be undone.`)) return;
-    await api.deleteDocument(active.id);
-    const rest = documents.filter((d) => d.id !== active.id);
-    setDocuments(rest);
-    if (rest.length > 0) select(rest[0].id);
-    else {
-      setActiveId(null);
-      loadedId.current = null;
-      localStorage.removeItem(ACTIVE_KEY);
+  // Import a file as a new server-backed design and apply it to the session.
+  const importFile = async (file: File) => {
+    let cfg: EngineConfig;
+    try {
+      cfg = JSON.parse(await file.text());
+    } catch {
+      setDialog({ kind: 'alert', title: 'Could not load file', message: `"${file.name}" is not valid JSON.` });
+      return;
+    }
+    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
+      setDialog({ kind: 'alert', title: 'Could not load file', message: `"${file.name}" is not a valid design file.` });
+      return;
+    }
+    const name = file.name.replace(/\.engine\.json$/i, '').replace(/\.json$/i, '') || 'Imported design';
+    try {
+      const meta = await api.createDocument(name, cfg);
+      setDocuments((d) => [meta, ...d]);
+      setActiveId(meta.id);
+      loadedId.current = meta.id;
+      localStorage.setItem(ACTIVE_KEY, meta.id);
+    } catch {
+      // History backend unavailable -- still apply it to the live session below.
+    }
+    try {
+      await apply(cfg);
+    } catch (e) {
+      setDialog({ kind: 'alert', title: 'Could not load file', message: e instanceof Error ? e.message : 'The backend rejected this config.' });
     }
   };
 
@@ -254,38 +414,55 @@ export function DesignVersions({ onRestore }: Props) {
     }
   };
 
-  const restoreMicro = async (v: MicroVersion) => {
+  const restoreMicro = (v: MicroVersion) => {
     if (!activeId) return;
-    if (!window.confirm(`Restore the auto-save from ${new Date(v.savedAt).toLocaleString()}?\n\nThis replaces the current design. Your working copy keeps auto-saving, so you can restore again.`)) return;
-    setRestoring(v.versionId);
-    try {
-      const { config } = await api.getVersion(activeId, v.versionId);
-      await apply(config);
-      setShowHistory(false);
-    } finally {
-      setRestoring(null);
-    }
+    setDialog({
+      kind: 'confirm',
+      title: 'Restore this auto-save?',
+      message: `From ${new Date(v.savedAt).toLocaleString()}. This replaces the current design. Your working copy keeps auto-saving, so you can restore again.`,
+      confirmLabel: 'Restore',
+      onConfirm: async () => {
+        setRestoring(v.versionId);
+        try {
+          const { config } = await api.getVersion(activeId, v.versionId);
+          await apply(config);
+          setShowHistory(false);
+        } finally {
+          setRestoring(null);
+        }
+      },
+    });
   };
 
-  const restoreRelease = async (r: ReleaseVersion) => {
+  const restoreRelease = (r: ReleaseVersion) => {
     if (!activeId) return;
-    if (!window.confirm(`Restore release "${r.label}"?\n\nThis replaces the current design.`)) return;
-    setRestoring(`rel:${r.label}`);
-    try {
-      const { config } = await api.getRelease(activeId, r.label);
-      await apply(config);
-      setShowHistory(false);
-    } finally {
-      setRestoring(null);
-    }
+    setDialog({
+      kind: 'confirm',
+      title: `Restore release "${r.label}"?`,
+      message: 'This replaces the current design.',
+      confirmLabel: 'Restore',
+      onConfirm: async () => {
+        setRestoring(`rel:${r.label}`);
+        try {
+          const { config } = await api.getRelease(activeId, r.label);
+          await apply(config);
+          setShowHistory(false);
+        } finally {
+          setRestoring(null);
+        }
+      },
+    });
   };
-
-  const btn =
-    'inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2.5 py-1 text-xs font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-40';
 
   return (
-    <div className="relative">
-      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-1.5">
+    <div className={inline ? 'relative' : 'relative bg-[var(--color-bg-secondary)]'}>
+      <div
+        className={
+          inline
+            ? 'flex flex-wrap items-center gap-2 py-2'
+            : 'mx-auto flex max-w-7xl flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-4 py-1.5 sm:px-6 lg:px-8'
+        }
+      >
         <span className="shrink-0 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Design</span>
         <select
           value={activeId ?? ''}
@@ -305,6 +482,23 @@ export function DesignVersions({ onRestore }: Props) {
 
         <div className="mx-1 h-4 w-px bg-[var(--color-border)]" />
 
+        <button onClick={() => void saveToFile()} className={btn} title="Download this design as a file">Save to file</button>
+        <label className={`${btn} cursor-pointer`} title="Load a design from a file">
+          Load from file
+          <input
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void importFile(f);
+              e.currentTarget.value = '';
+            }}
+          />
+        </label>
+
+        <div className="mx-1 h-4 w-px bg-[var(--color-border)]" />
+
         <button
           onClick={() => { setShowRelease(true); setRelLabel(nextLabel(releases)); setRelStatus('idle'); setRelError(''); }}
           disabled={!active}
@@ -318,8 +512,8 @@ export function DesignVersions({ onRestore }: Props) {
         </button>
       </div>
 
-      {showHistory && active && (
-        <div className="absolute right-4 top-full z-40 mt-1 max-h-[360px] w-[340px] overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 shadow-xl">
+      <Modal open={showHistory && !!active} onClose={() => setShowHistory(false)} title="History" width="w-[440px]">
+        <div className="max-h-[60vh] overflow-y-auto">
           {histStatus === 'loading' && <p className="py-2 text-xs text-[var(--color-text-muted)]">Loading…</p>}
           {histStatus === 'err' && <p className="py-2 text-xs text-red-500">Failed to load history.</p>}
           {histStatus === 'idle' && (
@@ -347,32 +541,70 @@ export function DesignVersions({ onRestore }: Props) {
             </>
           )}
         </div>
-      )}
+      </Modal>
 
-      {showRelease && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => relStatus !== 'saving' && setShowRelease(false)}>
-          <div className="w-[420px] max-w-[90vw] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="mb-1 text-sm font-semibold text-[var(--color-text-primary)]">Publish a release</h3>
-            <p className="mb-4 text-xs text-[var(--color-text-muted)]">An immutable, named snapshot of this design. Reusing a label is rejected.</p>
-            <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Version label <span className="text-red-500">*</span></label>
-            <input
-              autoFocus value={relLabel} onChange={(e) => setRelLabel(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void submitRelease(); if (e.key === 'Escape') setShowRelease(false); }}
-              placeholder="0.1" disabled={relStatus === 'saving'}
-              className="mb-4 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none disabled:opacity-50"
-            />
-            {relStatus === 'err' && <p className="mb-3 text-xs text-red-500">{relError}</p>}
-            {relStatus === 'ok' && <p className="mb-3 text-xs text-emerald-500">Release published.</p>}
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setShowRelease(false)} disabled={relStatus === 'saving'} className={btn}>Cancel</button>
-              <button onClick={() => void submitRelease()} disabled={!relLabel.trim() || relStatus === 'saving'}
-                className="inline-flex items-center gap-1 rounded border border-emerald-600/50 bg-emerald-600/20 px-3 py-1 text-xs font-medium text-emerald-600 hover:bg-emerald-600/30 disabled:opacity-40 dark:text-emerald-400">
-                {relStatus === 'saving' ? 'Publishing…' : 'Publish'}
+      <Modal
+        open={showRelease}
+        onClose={() => { if (relStatus !== 'saving') setShowRelease(false); }}
+        title="Publish a release"
+        width="w-[420px]"
+        footer={
+          <>
+            <button onClick={() => setShowRelease(false)} disabled={relStatus === 'saving'} className={ghostBtn}>Cancel</button>
+            <button onClick={() => void submitRelease()} disabled={!relLabel.trim() || relStatus === 'saving'} className={primaryBtn}>
+              {relStatus === 'saving' ? 'Publishing…' : 'Publish'}
+            </button>
+          </>
+        }
+      >
+        <p className="mb-4 text-xs text-[var(--color-text-muted)]">An immutable, named snapshot of this design. Reusing a label is rejected.</p>
+        <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Version label <span className="text-red-500">*</span></label>
+        <input
+          autoFocus value={relLabel} onChange={(e) => setRelLabel(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') void submitRelease(); }}
+          placeholder="0.1" disabled={relStatus === 'saving'}
+          className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none disabled:opacity-50"
+        />
+        {relStatus === 'err' && <p className="mt-3 text-xs text-red-500">{relError}</p>}
+        {relStatus === 'ok' && <p className="mt-3 text-xs text-emerald-500">Release published.</p>}
+      </Modal>
+
+      {/* The one prompt / confirm / alert, styled like the app instead of the browser. */}
+      <Modal
+        open={dialog !== null}
+        onClose={() => setDialog(null)}
+        title={dialog?.title ?? ''}
+        footer={
+          dialog?.kind === 'alert' ? (
+            <button onClick={() => setDialog(null)} className={primaryBtn}>OK</button>
+          ) : (
+            <>
+              <button onClick={() => setDialog(null)} className={ghostBtn}>Cancel</button>
+              <button
+                onClick={() => void runDialog()}
+                className={dialog?.kind === 'confirm' && dialog.danger ? dangerBtn : primaryBtn}
+                disabled={dialog?.kind === 'prompt' && !dialogValue.trim()}
+              >
+                {dialog && dialog.kind !== 'alert' ? dialog.confirmLabel : ''}
               </button>
-            </div>
-          </div>
-        </div>
-      )}
+            </>
+          )
+        }
+      >
+        {dialog?.kind === 'prompt' ? (
+          <>
+            {dialog.label && <label className="mb-1 block text-xs text-[var(--color-text-muted)]">{dialog.label}</label>}
+            <input
+              autoFocus value={dialogValue} onChange={(e) => setDialogValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void runDialog(); }}
+              placeholder={dialog.placeholder}
+              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none"
+            />
+          </>
+        ) : dialog ? (
+          <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">{dialog.message}</p>
+        ) : null}
+      </Modal>
     </div>
   );
 }

@@ -323,51 +323,6 @@ export async function putSettings(
 }
 
 /**
- * Per-user named config library (`/api/configs`).
- *
- * Server-side, keyed by the logged-in user (X-Auth-Email, or `local` in dev) --
- * the counterpart to the file-based Save/Load, which moves a config between
- * machines. Unlike simulate(), these never fall back to a fixture: with no
- * backend the library is simply unavailable, and the caller shows that.
- */
-export interface SavedConfigMeta {
-  slug: string
-  name: string
-  savedAt: string | null
-}
-
-export interface SavedConfig {
-  name: string
-  savedAt: string
-  config: Config
-}
-
-export async function listSavedConfigs(): Promise<ApiResponse<{ configs: SavedConfigMeta[] }>> {
-  return request<{ configs: SavedConfigMeta[] }>('/configs', {}, SETTINGS_TIMEOUT_MS)
-}
-
-export async function getSavedConfig(slug: string): Promise<ApiResponse<SavedConfig>> {
-  return request<SavedConfig>(`/configs/${encodeURIComponent(slug)}`, {}, SETTINGS_TIMEOUT_MS)
-}
-
-export async function saveNamedConfig(
-  name: string, config: Config,
-): Promise<ApiResponse<SavedConfigMeta>> {
-  return request<SavedConfigMeta>('/configs', {
-    method: 'POST',
-    body: JSON.stringify({ name, config }),
-  }, SETTINGS_TIMEOUT_MS)
-}
-
-export async function deleteSavedConfig(
-  slug: string,
-): Promise<ApiResponse<{ status: string; slug: string }>> {
-  return request<{ status: string; slug: string }>(
-    `/configs/${encodeURIComponent(slug)}`, { method: 'DELETE' }, SETTINGS_TIMEOUT_MS,
-  )
-}
-
-/**
  * GET /api/climatology. Always succeeds: the bundle is compiled in, so the
  * Atmospheric Data tab works with no server at all.
  *
