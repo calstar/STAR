@@ -7,7 +7,7 @@
  * Disabled entirely when SESSION_SERVICE_MODE=off (the launch-site laptop): no
  * timers, no auto-stop, `enabled=false` so the UI hides the button.
  */
-import { statfsSync, rmSync } from 'fs';
+import { statfsSync, rmSync, existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { SessionStatus, NotificationPayload } from '../../shared/types.js';
@@ -15,8 +15,20 @@ import { MessageType } from '../../shared/types.js';
 import { ServiceController, getSessionServiceMode } from './service-controller.js';
 import { loadSession, saveSession } from './session-state.js';
 
-// Default 5 min; override low (e.g. 60000) to exercise the warning quickly in tests.
-const WARN_LEAD_MS = parseInt(process.env.SESSION_WARN_LEAD_MS || '300000', 10);
+// Warn the operator at each of these leads before auto-stop. Default: 5 min and
+// 1 min. Override with SESSION_WARN_LEADS_MS (comma-separated ms) to exercise the
+// warnings quickly in tests, e.g. "20000,10000". The legacy single-value
+// SESSION_WARN_LEAD_MS is still honored if SESSION_WARN_LEADS_MS is unset.
+function parseWarnLeads(): number[] {
+  const raw = process.env.SESSION_WARN_LEADS_MS || process.env.SESSION_WARN_LEAD_MS || '300000,60000';
+  const leads = raw
+    .split(',')
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  // De-dupe and sort descending so the earliest (largest-lead) warning fires first.
+  return Array.from(new Set(leads)).sort((a, b) => b - a);
+}
+const WARN_LEADS_MS = parseWarnLeads();
 const ELODIN_ROOT = join(homedir(), '.local', 'share', 'elodin');
 
 type Broadcast = (message: object) => void;
@@ -28,13 +40,35 @@ function timestampName(): string {
   return `daq_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-function freeDiskBytes(): number | null {
+// True on WSL, where the Linux home lives on a thin-provisioned ext4 vhdx.
+const IS_WSL = (() => {
+  if (process.env.WSL_DISTRO_NAME) return true;
   try {
-    const s = statfsSync(ELODIN_ROOT);
+    return readFileSync('/proc/version', 'utf8').toLowerCase().includes('microsoft');
+  } catch {
+    return false;
+  }
+})();
+
+function statfsFree(path: string): number | null {
+  try {
+    const s = statfsSync(path);
     return s.bavail * s.bsize;
   } catch {
     return null;
   }
+}
+
+function freeDiskBytes(): number | null {
+  // On WSL, statfs(ELODIN_ROOT) reports the vhdx's ~1 TB virtual size, not the
+  // real free space — the actual limit is the Windows drive backing it (/mnt/c).
+  // Report that instead so the number is truthful. On real Linux (server + CI)
+  // this branch never runs and statfs(ELODIN_ROOT) is already correct.
+  if (IS_WSL && existsSync('/mnt/c')) {
+    const win = statfsFree('/mnt/c');
+    if (win != null) return win;
+  }
+  return statfsFree(ELODIN_ROOT);
 }
 
 class SessionManager {
@@ -49,7 +83,7 @@ class SessionManager {
   private keepData = false;
   private deadlineMs: number | null = null;
   private durationMs: number | null = null;
-  private warnTimer: NodeJS.Timeout | null = null;
+  private warnTimers: NodeJS.Timeout[] = [];
   private stopTimer: NodeJS.Timeout | null = null;
 
   init(broadcast: Broadcast, notify: Notify): void {
@@ -97,31 +131,45 @@ class SessionManager {
   }
 
   private clearTimers(): void {
-    if (this.warnTimer) {
-      clearTimeout(this.warnTimer);
-      this.warnTimer = null;
-    }
+    for (const t of this.warnTimers) clearTimeout(t);
+    this.warnTimers = [];
     if (this.stopTimer) {
       clearTimeout(this.stopTimer);
       this.stopTimer = null;
     }
   }
 
+  /** Dismiss any live warning banners (e.g. after Add time moves the deadline out). */
+  private clearWarnings(): void {
+    for (const lead of WARN_LEADS_MS) {
+      this.notify({
+        key: `session-timeout-${lead}`,
+        category: 'error',
+        message: '',
+        timestampMs: Date.now(),
+        ongoing: false,
+      });
+    }
+  }
+
   private scheduleTimers(): void {
     this.clearTimers();
+    this.clearWarnings(); // re-arming (start/extend) supersedes stale banners
     if (this.deadlineMs == null) return;
     const now = Date.now();
-    const warnAt = this.deadlineMs - WARN_LEAD_MS;
-    if (warnAt > now) {
-      this.warnTimer = setTimeout(() => this.fireWarning(), warnAt - now);
+    for (const lead of WARN_LEADS_MS) {
+      const warnAt = this.deadlineMs - lead;
+      if (warnAt > now) {
+        this.warnTimers.push(setTimeout(() => this.fireWarning(lead), warnAt - now));
+      }
     }
     this.stopTimer = setTimeout(() => void this.stop(true), Math.max(0, this.deadlineMs - now));
   }
 
-  private fireWarning(): void {
-    const mins = Math.max(1, Math.round(WARN_LEAD_MS / 60000));
+  private fireWarning(leadMs: number): void {
+    const mins = Math.max(1, Math.round(leadMs / 60000));
     this.notify({
-      key: 'session-timeout',
+      key: `session-timeout-${leadMs}`,
       category: 'error',
       message: `Run auto-stops in ${mins} min — add time in Session`,
       timestampMs: Date.now(),
@@ -160,6 +208,7 @@ class SessionManager {
     if (!this.enabled) throw new Error('Session control is disabled in this mode.');
     if (!this.active) return;
     this.clearTimers();
+    this.clearWarnings();
     await this.controller.stop();
     const stoppedDir = this.dbDir;
     if (!this.keepData && stoppedDir) {

@@ -275,29 +275,29 @@ export default function TopBar() {
             <span className="text-3xl font-bold tracking-widest text-blue-400 uppercase leading-none">
               DIABLO DAQ
             </span>
-            {session?.enabled && (
-              <button
-                type="button"
-                onClick={() => navigate('/session')}
-                title="Open session control"
-                className={`rounded-md border px-2 py-0.5 text-xs font-bold uppercase tracking-wider tabular-nums transition ${
-                  session.active
-                    ? 'border-green-600 bg-green-900/40 text-green-300 hover:bg-green-800/60'
-                    : 'border-gray-700 bg-gray-900 text-gray-400 hover:bg-gray-800'
-                }`}
-              >
-                {session.active
-                  ? `RUN ${formatCountdown((session.deadlineMs ?? 0) - Date.now()).value}`
-                  : 'SESSION — stopped'}
-              </button>
-            )}
           </div>
           <div className="flex items-center gap-2">
             <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isFullyConnected ? 'bg-green-500' : isConnected ? 'bg-yellow-500' : 'bg-red-500'}`} />
             <span className="text-sm text-gray-300 font-semibold">
-              {isFullyConnected ? 'Connected' : isConnected ? 'WS Only' : 'Disconnected'}
+              {isFullyConnected ? 'Connected' : isConnected ? 'Data Pipeline Down' : 'Disconnected'}
             </span>
           </div>
+          {session?.enabled && (
+            <button
+              type="button"
+              onClick={() => navigate('/session')}
+              title="Open session control"
+              className={`self-start rounded-md border px-2 py-0.5 text-xs font-bold uppercase tracking-wider tabular-nums transition ${
+                session.active
+                  ? 'border-green-600 bg-green-900/40 text-green-300 hover:bg-green-800/60'
+                  : 'border-gray-700 bg-gray-900 text-gray-400 hover:bg-gray-800'
+              }`}
+            >
+              {session.active
+                ? `RUN ${formatCountdown((session.deadlineMs ?? 0) - Date.now()).value}`
+                : 'SESSION — stopped'}
+            </button>
+          )}
           <span className="text-xl font-mono text-gray-200 tabular-nums font-bold leading-tight">{clock}</span>
           <div ref={countdownRef} className="relative flex items-center gap-2">
             <button

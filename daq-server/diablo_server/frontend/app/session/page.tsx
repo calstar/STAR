@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { useControlMode } from '@/lib/control-mode';
@@ -16,15 +17,26 @@ function formatRemaining(ms: number | null): string {
   return `${p(h)}:${p(m)}:${p(s)}`;
 }
 
-function formatGiB(bytes: number | null): string {
+function formatGB(bytes: number | null): string {
   if (bytes == null || !Number.isFinite(bytes)) return '—';
-  return `${(bytes / 1024 ** 3).toFixed(1)} GiB free`;
+  return `${(bytes / 1e9).toFixed(1)} GB free`;
 }
 
 export default function SessionPage() {
   const session = useSensorStore((s) => s.session);
   const { controlEnabled } = useControlMode();
   const ws = getWebSocketClient();
+  const navigate = useNavigate();
+
+  const backLink = (
+    <button
+      type="button"
+      onClick={() => navigate('/')}
+      className="mb-4 inline-flex items-center gap-1 text-sm text-gray-400 hover:text-white"
+    >
+      <span aria-hidden>←</span> Back to dashboard
+    </button>
+  );
 
   const [keepData, setKeepData] = useState(true); // Save is the safe default
   const [durationMin, setDurationMin] = useState(60);
@@ -37,10 +49,9 @@ export default function SessionPage() {
     return () => clearInterval(id);
   }, []);
 
-  const remainingMs = useMemo(
-    () => (session?.deadlineMs != null ? session.deadlineMs - Date.now() : null),
-    [session?.deadlineMs],
-  );
+  // Recompute every render (the 1 Hz tick above drives re-renders) so the
+  // countdown ticks live — do NOT memoize on deadlineMs or it freezes.
+  const remainingMs = session?.deadlineMs != null ? session.deadlineMs - Date.now() : null;
 
   const send = (command: Parameters<typeof ws.sendCommand>[0]) => {
     if (!controlEnabled) return;
@@ -50,8 +61,9 @@ export default function SessionPage() {
   if (!session?.enabled) {
     return (
       <main className="p-8 text-text">
-        <h1 className="text-2xl font-bold mb-2">Session control</h1>
-        <p className="text-text-muted max-w-xl">
+        {backLink}
+        <h1 className="text-3xl font-bold mb-3">Session control</h1>
+        <p className="text-lg text-gray-200 max-w-2xl leading-relaxed">
           Session control is disabled in this deployment — the stack runs until the process is
           stopped manually. (This is the expected behavior on a launch-site laptop with no
           server.)
@@ -65,10 +77,11 @@ export default function SessionPage() {
 
   return (
     <main className="p-6 sm:p-8 text-text max-w-3xl mx-auto w-full">
+      {backLink}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Session control</h1>
+        <h1 className="text-3xl font-bold">Session control</h1>
         <span
-          className={`rounded-full px-3 py-1 text-sm font-bold uppercase tracking-wider ${
+          className={`rounded-full px-4 py-1.5 text-base font-bold uppercase tracking-wider ${
             active ? 'bg-green-900/50 text-green-300' : 'bg-gray-800 text-gray-400'
           }`}
         >
@@ -79,20 +92,20 @@ export default function SessionPage() {
       {/* Status card */}
       <div className="rounded-xl border border-gray-800 bg-card p-5 mb-6 grid grid-cols-2 gap-4">
         <div>
-          <div className="text-[11px] uppercase tracking-widest text-gray-500 mb-1">Time remaining</div>
+          <div className="text-sm uppercase tracking-widest text-gray-300 mb-2">Time remaining</div>
           <div className={`text-3xl font-mono tabular-nums font-bold ${remainingMs != null && remainingMs <= 5 * 60000 ? 'text-red-400' : 'text-white'}`}>
             {active ? formatRemaining(remainingMs) : '—'}
           </div>
         </div>
         <div>
-          <div className="text-[11px] uppercase tracking-widest text-gray-500 mb-1">Disk</div>
-          <div className="text-3xl font-mono tabular-nums font-bold text-white">{formatGiB(session.freeDiskBytes)}</div>
+          <div className="text-sm uppercase tracking-widest text-gray-300 mb-2">Disk</div>
+          <div className="text-3xl font-mono tabular-nums font-bold text-white">{formatGB(session.freeDiskBytes)}</div>
         </div>
         <div className="col-span-2">
-          <div className="text-[11px] uppercase tracking-widest text-gray-500 mb-1">Run store</div>
-          <div className="text-sm font-mono text-gray-300 break-all">
+          <div className="text-sm uppercase tracking-widest text-gray-300 mb-2">Run store</div>
+          <div className="text-base font-mono text-gray-200 break-all">
             {session.dbDir ?? '—'}
-            {active && <span className="ml-2 text-gray-500">({session.keepData ? 'Save' : 'Discard'})</span>}
+            {active && <span className="ml-2 text-gray-400">({session.keepData ? 'Save' : 'Discard'})</span>}
           </div>
         </div>
       </div>
@@ -100,11 +113,11 @@ export default function SessionPage() {
       {/* Controls */}
       {!active ? (
         <div className="rounded-xl border border-gray-800 bg-card p-5">
-          <h2 className="text-lg font-semibold mb-4">Start a run</h2>
+          <h2 className="text-xl font-semibold mb-4">Start a run</h2>
 
           <div className="flex flex-wrap items-end gap-6">
             <div>
-              <div className="text-[11px] uppercase tracking-widest text-gray-500 mb-1">On stop, data is…</div>
+              <div className="text-sm uppercase tracking-widest text-gray-300 mb-2">On stop, data is…</div>
               <div className="flex rounded-lg border border-gray-700 bg-gray-900 p-0.5">
                 <button
                   type="button"
@@ -124,7 +137,7 @@ export default function SessionPage() {
             </div>
 
             <div>
-              <div className="text-[11px] uppercase tracking-widest text-gray-500 mb-1">Auto-stop after (min)</div>
+              <div className="text-sm uppercase tracking-widest text-gray-300 mb-2">Auto-stop after (min)</div>
               <input
                 type="number"
                 min={1}
@@ -147,10 +160,10 @@ export default function SessionPage() {
         </div>
       ) : (
         <div className="rounded-xl border border-gray-800 bg-card p-5">
-          <h2 className="text-lg font-semibold mb-4">Manage run</h2>
+          <h2 className="text-xl font-semibold mb-4">Manage run</h2>
           <div className="flex flex-wrap items-end gap-4">
             <div>
-              <div className="text-[11px] uppercase tracking-widest text-gray-500 mb-1">Add time (min)</div>
+              <div className="text-sm uppercase tracking-widest text-gray-300 mb-2">Add time (min)</div>
               <input
                 type="number"
                 min={1}

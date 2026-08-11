@@ -139,7 +139,7 @@ export default function MobileDashboard() {
             <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
               isFullyConnected ? 'bg-green-500' : connected ? 'bg-yellow-500' : 'bg-red-500'
             }`} />
-            <span className="text-xs text-gray-400">{isFullyConnected ? 'Connected' : connected ? 'WS Only' : 'Disconnected'}</span>
+            <span className="text-xs text-gray-400">{isFullyConnected ? 'Connected' : connected ? 'Data Pipeline Down' : 'Disconnected'}</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-xs font-mono text-gray-400 tabular-nums">{clock}</span>
