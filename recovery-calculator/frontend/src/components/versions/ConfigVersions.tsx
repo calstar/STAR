@@ -451,7 +451,7 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
                 variant={dialog?.kind === 'confirm' && dialog.danger ? 'danger' : 'primary'}
                 disabled={dialog?.kind === 'prompt' && !dialogValue.trim()}
               >
-                {dialog && dialog.kind !== 'alert' ? dialog.confirmLabel : ''}
+                {dialog ? dialog.confirmLabel : ''}
               </Button>
             </>
           )

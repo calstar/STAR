@@ -585,7 +585,7 @@ export function DesignVersions({ onRestore, inline = false }: Props) {
                 className={dialog?.kind === 'confirm' && dialog.danger ? dangerBtn : primaryBtn}
                 disabled={dialog?.kind === 'prompt' && !dialogValue.trim()}
               >
-                {dialog && dialog.kind !== 'alert' ? dialog.confirmLabel : ''}
+                {dialog ? dialog.confirmLabel : ''}
               </button>
             </>
           )
