@@ -49,6 +49,14 @@ function IconBoard() {
     </svg>
   );
 }
+function IconChart() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 3v18h18" />
+      <path d="M7 14l3.5-4 3 3L21 7" />
+    </svg>
+  );
+}
 function IconArrow() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -170,6 +178,18 @@ const APPS: AppCard[] = [
     iconColor: '#86efac',
     restricted:
       'Control is restricted to authorized operators. Contact Aidan for access.',
+  },
+  {
+    id: 'daq-viewer',
+    href: 'https://daq-viewer.starberkeley.org',
+    label: 'DAQ Run Viewer',
+    subdomain: 'daq-viewer.starberkeley.org',
+    description:
+      'View and export previous DAQ server runs from the Elodin DB on the STAR RFS server.',
+    icon: <IconChart />,
+    colorClass: 'card-teal',
+    iconBg: 'linear-gradient(135deg, #0f766e 0%, #14b8a6 100%)',
+    iconColor: '#5eead4',
   },
   {
     id: 'pid-designer',

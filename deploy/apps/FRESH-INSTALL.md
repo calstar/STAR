@@ -249,7 +249,7 @@ do it now:
 Follow [`README.md`](README.md) from **§2** onward. In short:
 
 ```bash
-git clone --depth 1 --filter=blob:none --sparse -b landing-page \
+git clone --depth 1 --filter=blob:none --sparse -b ork-onshape \
   https://github.com/calstar/STAR.git
 cd STAR
 git sparse-checkout set deploy/apps        # brings the root compose + .env.example

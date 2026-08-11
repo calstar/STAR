@@ -4,16 +4,17 @@ name: Publish auth image
 # OpenProject) can `docker pull` it instead of cloning this repo. See
 # deploy/ec2/README.md.
 #
-# auth/ lives only on landing-page, so that is the branch that publishes. main
-# has no auth/**, so its pushes never match the path filter anyway.
+# auth/ now lives on main (landing-page was merged into main and retired). main
+# is the eventual home; ork-onshape is the current deploy branch. A push only
+# publishes when it also touches auth/** (the path filter below).
 
 # Quoted `on` — YAML 1.1 treats bare `on` as boolean true, which breaks
 # workflow triggers in some parsers (matches the other workflows here).
 'on':
   push:
     branches:
-      - landing-page
       - main
+      - ork-onshape
     paths:
       - 'auth/**'
       - '.github/workflows/publish-auth.yml'

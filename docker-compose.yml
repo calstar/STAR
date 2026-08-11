@@ -55,6 +55,7 @@ services:
       - recovery-calculator-frontend
       - onshape-viewer-api
       - onshape-viewer-frontend
+      - daq-viewer
       - landing
 
   # ── Cloudflare Tunnel (optional ingress) ─────────────────────────────────
@@ -229,6 +230,40 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
 
+  # ── DAQ Run Viewer ───────────────────────────────────────────────────────
+  # Read-only web viewer for PAST Elodin runs (browse, plot, export CSV). One
+  # container: FastAPI serves both /api and the built SPA on 8420. It reads the
+  # run DBs straight off the host (bind-mounted read-only) and shells out to the
+  # elodin-db binary baked into the image to export them to parquet. This is a
+  # separate concern from the DAQ *server* below, which stays on the host.
+  daq-viewer:
+    image: ghcr.io/calstar/star-daq-viewer:latest
+    build:
+      context: ./daq-server/tools/postprocessing/webviewer
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # elodin-db is built on io_uring (stellarator), and Docker's default seccomp
+    # profile blocks the io_uring_* syscalls -- without this the binary panics at
+    # startup (io_uring_setup -> EPERM), so every export would fail. This is the
+    # one app that needs it; it's an internal, login-gated, read-only tool.
+    security_opt:
+      - seccomp=unconfined
+    environment:
+      ELODIN_DB_DIR: /data/elodin
+      WEBVIEWER_CACHE_DIR: /cache
+      # Pace CSV downloads so a multi-GB export can't saturate the box uplink.
+      WEBVIEWER_MAX_DOWNLOAD_BPS: ${WEBVIEWER_MAX_DOWNLOAD_BPS:-10485760}  # 10 MB/s
+    volumes:
+      # The host's Elodin run-DB directory. Point ELODIN_DB_HOST_DIR at the real
+      # path on the box (see .env.example) -- a wrong path silently bind-mounts an
+      # empty dir and the viewer shows zero runs. NOT read-only: elodin-db mmaps
+      # each DB O_RDWR even just to *export* it, so a :ro mount fails with
+      # "Read-only file system". The viewer's own code never writes here (only to
+      # /cache), and past-run dirs are immutable, so rw is safe.
+      - ${ELODIN_DB_HOST_DIR:-/home/aidan/.local/share/elodin}:/data/elodin
+      # Writable parquet export cache (immutable past runs -> never invalidated).
+      - daq_viewer_cache:/cache
+
   # ── DAQ Server ───────────────────────────────────────────────────────────
   # Intentionally absent. The C++ bridge, elodin-db and the Node backend need
   # the test-stand hardware, so they run natively under systemd -- see
@@ -247,6 +282,9 @@ volumes:
   caddy_data:
   caddy_config:
   onshape_cache:
+  # Parquet export cache for the DAQ Run Viewer. Immutable past runs, so this is
+  # a pure cache -- safe to wipe; it just re-exports on next view.
+  daq_viewer_cache:
   # Per-user data (engine-design + recovery-calculator + pid-designer): named
   # configs, recovery unit prefs, and P&ID working copies. One shared volume so
   # a future cross-user "browse + copy" is a single tree. Keyed by X-Auth-Email

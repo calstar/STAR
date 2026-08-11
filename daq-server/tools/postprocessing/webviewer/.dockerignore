@@ -1,0 +1,7 @@
+# Keep the build context small: none of these belong in the image.
+.cache/
+.venv/
+frontend/node_modules/
+frontend/dist/
+**/__pycache__/
+*.pyc
