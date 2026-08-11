@@ -8,6 +8,7 @@ import type {
   OnshapeAssembly,
   OnshapeDocument,
   FinGuess,
+  MotorSearchResult,
   OuterSurfaceGuess,
   StabilityRequest,
   StabilityResult,
@@ -99,6 +100,19 @@ export function fetchOuterSurface(modelId: string): Promise<OuterSurfaceGuess> {
 /** Auto-detected fin faces + count, to seed the fin approval UI. Offline. */
 export function fetchFins(modelId: string): Promise<FinGuess> {
   return getJSON<FinGuess>(`/api/models/${modelId}/fins`)
+}
+
+/**
+ * Search the offline motor mirror (thrustcurve.org catalog). Offline; `available`
+ * is false until `python -m backend.motors.fetch` has populated cache/motors.
+ */
+export function searchMotors(
+  query: string,
+  options: { limit?: number; signal?: AbortSignal } = {},
+): Promise<MotorSearchResult> {
+  const params = new URLSearchParams({ query })
+  if (options.limit) params.set('limit', String(options.limit))
+  return getJSON<MotorSearchResult>(`/api/motors?${params.toString()}`, options.signal)
 }
 
 /** CG, CoP and static margin from the approved (or auto-detected) surface. */

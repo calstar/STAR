@@ -110,6 +110,71 @@ export interface OuterSurfaceGuess {
   axis: AxisInfo
 }
 
+/**
+ * A motor's datafile. The UI labels these "Full model" (RockSim) vs "Basic model"
+ * (RASP) by `format`: thrustcurve.org serves both with mid-casing CG, so `quality`
+ * (real per-time CG vs the length/2 assumption) rarely differs and is not the label.
+ */
+export interface MotorSimfileRef {
+  simfileId: string
+  format: 'RASP' | 'RockSim'
+  quality: 'full' | 'basic'
+}
+
+/** One row in the motor picker (from GET /api/motors). Weights in grams, dims in mm. */
+export interface MotorSummary {
+  motorId: string
+  manufacturer: string
+  manufacturerAbbrev: string
+  designation: string
+  commonName: string
+  impulseClass: string
+  diameter: number
+  length: number
+  type: string
+  totalWeightG: number | null
+  propWeightG: number | null
+  delays: string | null
+  avgThrustN: number | null
+  maxThrustN: number | null
+  totImpulseNs: number | null
+  burnTimeS: number | null
+  simfiles: MotorSimfileRef[]
+}
+
+export interface MotorSearchResult {
+  items: MotorSummary[]
+  fetchedAt: string | null
+  available: boolean
+}
+
+/** A motor chosen to fold into the CG / static margin. */
+export interface MotorSelection {
+  motorId: string
+  simfileId?: string | null
+  /** Aft-end position from the nose tip (m); null = aft-flush with the airframe base. */
+  aftFromNose?: number | null
+  state: 'launch' | 'burnout'
+}
+
+/** The motor block echoed back in a StabilityResult (masses kg, positions m). */
+export interface MotorResult {
+  motorId: string
+  simfileId: string
+  name: string
+  quality: 'full' | 'basic'
+  format: 'RASP' | 'RockSim'
+  state: 'launch' | 'burnout'
+  wetMass: number
+  dryMass: number
+  propMass: number
+  length: number
+  diameter: number
+  burnTime: number
+  cgFromNose: number | null
+  aftFromNose: number | null
+}
+
 export interface StabilityRequest {
   /** Approved outer faces; empty asks the backend to auto-detect them. */
   outerFaces: FaceRef[]
@@ -120,6 +185,8 @@ export interface StabilityRequest {
   /** Occurrence key -> resolved mass (kg), overriding the manifest mass. */
   overrides: Record<string, number>
   axis?: AxisInfo | null
+  /** Optional motor to include in the CG / static margin. */
+  motor?: MotorSelection | null
 }
 
 /** One fin's exposed planform outline, in the Onshape Z-up frame. */
@@ -159,6 +226,8 @@ export interface StabilityResult {
   bodyLength: number
   mass: number
   fins: FinData
+  /** Present only when a motor was included in the request. */
+  motor?: MotorResult | null
 }
 
 export interface OnshapeDocument {

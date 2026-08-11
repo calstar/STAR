@@ -52,13 +52,16 @@ def compute_cg(
     parts: list[dict],
     overrides: dict[str, float] | None = None,
     include_keys: set[str] | None = None,
+    extra_masses: list[tuple[float, np.ndarray]] | None = None,
 ) -> tuple[np.ndarray, float]:
     """Mass-weighted CG in the world (Onshape Z-up) frame.
 
     ``overrides`` maps an occurrence key to a resolved mass in kg (the frontend
     resolves material/density to a number), overriding the manifest mass -- this
     is how a mass typed in for a material-less part reaches the CG. ``parts`` are
-    manifest part dicts with ``key``, ``mass`` and ``centroidWorld``.
+    manifest part dicts with ``key``, ``mass`` and ``centroidWorld``. ``extra_masses``
+    are additional ``(mass, world_point)`` contributors -- the motor enters here, so it
+    blends into CG exactly like a part.
     """
     overrides = overrides or {}
     acc = np.zeros(3)
@@ -72,9 +75,29 @@ def compute_cg(
             continue
         acc += np.asarray(p["centroidWorld"], dtype=np.float64) * m
         mass += m
+    for m, point in extra_masses or []:
+        if not (m > 0):
+            continue
+        acc += np.asarray(point, dtype=np.float64) * m
+        mass += m
     if mass <= 0:
         return np.zeros(3), 0.0
     return acc / mass, mass
+
+
+@dataclass
+class MotorPlacement:
+    """A selected motor to fold into the CG, placed along the detected axis.
+
+    ``mass`` and ``cmx`` are resolved for the chosen state (launch or burnout); ``cmx`` is
+    the motor CG measured from its own forward end. ``aft_from_nose`` positions the motor's
+    aft end measured from the nose tip; ``None`` means aft-flush with the airframe base.
+    """
+
+    mass: float
+    length: float
+    cmx: float
+    aft_from_nose: float | None = None
 
 
 @dataclass
@@ -101,6 +124,10 @@ class StabilityResult:
     fin_area: float
     #: Per-fin planform outline (Onshape frame): {"lead":[[x,y,z]...],"trail":[...]}.
     fin_planforms: list
+    #: Motor contribution (0 / None when no motor was given). Masses in kg, positions in m.
+    motor_mass: float = 0.0
+    motor_cg_from_nose: float | None = None
+    motor_aft_from_nose: float | None = None
 
     @property
     def cp_from_nose(self) -> float:
@@ -120,6 +147,7 @@ def compute_stability(
     fin_faces: list[tuple[str, str]] | None = None,
     n_fins: int | None = None,
     include_fins: bool = True,
+    motor: MotorPlacement | None = None,
 ) -> StabilityResult:
     """Stability from the outer surface, plus fins (given, or auto-detected).
 
@@ -164,7 +192,24 @@ def compute_stability(
     cp_axial, cna_total = merge_cp(contributions)
     cp_world = axis.origin + cp_axial * axis.direction
 
-    cg_world, mass = compute_cg(manifest_parts, overrides)
+    # Motor: place along the centerline and fold into CG like any part. The nose tip is at
+    # profile.x_fore in axial coords; "from nose" distances add along the axis direction.
+    body_length = profile.x_aft - profile.x_fore
+    extra_masses: list[tuple[float, np.ndarray]] = []
+    motor_mass = 0.0
+    motor_cg_from_nose: float | None = None
+    motor_aft_from_nose: float | None = None
+    if motor is not None and motor.mass > 0:
+        motor_aft_from_nose = (
+            motor.aft_from_nose if motor.aft_from_nose is not None else body_length
+        )
+        motor_cg_from_nose = (motor_aft_from_nose - motor.length) + motor.cmx
+        motor_cg_axial = profile.x_fore + motor_cg_from_nose
+        motor_cg_world = axis.origin + motor_cg_axial * axis.direction
+        extra_masses.append((motor.mass, motor_cg_world))
+        motor_mass = motor.mass
+
+    cg_world, mass = compute_cg(manifest_parts, overrides, extra_masses=extra_masses)
     cg_axial = float((cg_world - axis.origin) @ axis.direction) if mass > 0 else 0.0
 
     ref_diameter = 2.0 * profile.r_max
@@ -194,4 +239,7 @@ def compute_stability(
         fin_planforms=(
             [planform_outline_3d(fin_pf, axis, az) for az in fin_pf.azimuths] if fin_pf else []
         ),
+        motor_mass=motor_mass,
+        motor_cg_from_nose=motor_cg_from_nose,
+        motor_aft_from_nose=motor_aft_from_nose,
     )

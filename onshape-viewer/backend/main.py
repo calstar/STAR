@@ -40,17 +40,22 @@ from .onshape.aero.fins import (
 )
 from .onshape.aero.outer_surface import detect_outer_surface
 from .onshape.aero.profile import build_profile
-from .onshape.aero.stability import compute_stability
+from .onshape.aero.stability import MotorPlacement, compute_stability
 from .onshape.browse import BrowseCache
 from .onshape.build import build as run_build
 from .onshape.client import MissingCredentials, OnshapeClient, OnshapeError
 from .onshape.geometry_store import GeometryStore
+from .motors.db import MotorDB
 
 CACHE_ROOT = Path(__file__).resolve().parent.parent / "cache"
 
 #: Lives beside the model directories. `_model_dirs` only considers directories
 #: holding a manifest, so a loose file here is invisible to the model list.
 _browse = BrowseCache(CACHE_ROOT / "browse.json")
+
+#: Global (not per-model) motor catalog mirrored from thrustcurve.org by
+#: `python -m backend.motors.fetch`. Offline; empty until that runs.
+_motor_db = MotorDB(CACHE_ROOT / "motors")
 
 app = FastAPI(title="Onshape CM Viewer API", version="1.0.0")
 
@@ -154,6 +159,17 @@ class AxisInput(BaseModel):
     direction: list[float]
 
 
+class MotorSelection(BaseModel):
+    #: thrustcurve.org motor id, and which datafile of it (None = best available).
+    motorId: str
+    simfileId: str | None = None
+    #: Axial position of the motor's aft end, measured from the nose tip (m).
+    #: None means aft-flush with the airframe base.
+    aftFromNose: float | None = None
+    #: "launch" (wet) or "burnout" (dry) -- picks which end of the mass table to use.
+    state: str = "launch"
+
+
 class StabilityRequest(BaseModel):
     #: Approved outer airframe faces. Empty means "auto-detect them for me".
     outerFaces: list[FaceRef] = []
@@ -166,6 +182,8 @@ class StabilityRequest(BaseModel):
     overrides: dict[str, float] = {}
     #: Optional user-confirmed axis; auto-detected from the surface when absent.
     axis: AxisInput | None = None
+    #: Optional motor to fold into the CG / static margin.
+    motor: MotorSelection | None = None
 
 
 def _model_dir(model_id: str) -> Path:
@@ -265,6 +283,8 @@ async def stability(model_id: str, request: StabilityRequest):
         [(f.key, f.faceId) for f in request.finFaces] if request.finFaces is not None else None
     )
 
+    motor_placement, motor_block = _resolve_motor(request.motor)
+
     try:
         result = compute_stability(
             store,
@@ -274,9 +294,14 @@ async def stability(model_id: str, request: StabilityRequest):
             overrides=request.overrides,
             fin_faces=fin_faces,
             n_fins=request.nFins,
+            motor=motor_placement,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if motor_block is not None:
+        motor_block["cgFromNose"] = result.motor_cg_from_nose
+        motor_block["aftFromNose"] = result.motor_aft_from_nose
 
     return {
         "cg": {"world": result.cg_world, "fromNose": result.cg_from_nose},
@@ -297,6 +322,90 @@ async def stability(model_id: str, request: StabilityRequest):
             "area": result.fin_area,
             "planforms": result.fin_planforms,
         },
+        "motor": motor_block,
+    }
+
+
+def _resolve_motor(selection: "MotorSelection | None"):
+    """Turn a MotorSelection into a MotorPlacement (for the CG) plus a response block.
+
+    Returns ``(None, None)`` when no motor is selected. Raises 404 if the motor id is not in
+    the mirror (e.g. the catalog has not been fetched yet).
+    """
+    if selection is None:
+        return None, None
+    motor = _motor_db.get_motor(selection.motorId, selection.simfileId)
+    if motor is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"unknown motor {selection.motorId} (has the catalog been fetched?)",
+        )
+    dry = selection.state == "burnout"
+    mass = motor.burnout_mass if dry else motor.launch_mass
+    cmx = motor.burnout_cgx if dry else motor.launch_cgx
+    placement = MotorPlacement(
+        mass=mass, length=motor.length, cmx=cmx, aft_from_nose=selection.aftFromNose
+    )
+    name = f"{motor.manufacturer} {motor.designation}".strip()
+    block = {
+        "motorId": selection.motorId,
+        "simfileId": motor.simfile_id,
+        "name": name,
+        "quality": motor.quality,
+        "format": motor.file_format,
+        "state": selection.state,
+        "wetMass": motor.launch_mass,
+        "dryMass": motor.burnout_mass,
+        "propMass": motor.propellant_mass,
+        "length": motor.length,
+        "diameter": motor.diameter,
+        "burnTime": motor.burn_time,
+    }
+    return placement, block
+
+
+# -- Motor catalog (global, mirrored from thrustcurve.org) --------------------
+
+
+@app.get("/api/motors")
+async def search_motors(query: str = Query("", max_length=100), limit: int = Query(50, ge=1, le=200)):
+    """Search the offline motor mirror by manufacturer / designation / common name."""
+    return {
+        "items": _motor_db.search(query, limit=limit),
+        "fetchedAt": _motor_db.fetched_at,
+        "available": _motor_db.exists(),
+    }
+
+
+@app.get("/api/motors/{motor_id}")
+async def get_motor(motor_id: str):
+    """Full detail for one motor: metadata plus every datafile (Full/Basic) and its curve."""
+    meta = _motor_db.get_meta(motor_id)
+    simfiles = _motor_db.get_simfiles(motor_id)
+    if meta is None and not simfiles:
+        raise HTTPException(status_code=404, detail=f"unknown motor {motor_id}")
+    return {
+        "meta": meta,
+        "simfiles": [
+            {
+                "simfileId": s.simfile_id,
+                "format": s.file_format,
+                "quality": s.quality,
+                "designation": s.designation,
+                "manufacturer": s.manufacturer,
+                "length": s.length,
+                "diameter": s.diameter,
+                "wetMass": s.launch_mass,
+                "dryMass": s.burnout_mass,
+                "propMass": s.propellant_mass,
+                "burnTime": s.burn_time,
+                "time": s.time,
+                "thrust": s.thrust,
+                "cgX": s.cg_x,
+                "mass": s.mass,
+            }
+            for s in simfiles
+        ],
     }
 
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   computeStability,
@@ -21,6 +21,8 @@ import type {
   FinPlanform,
   Manifest,
   ModelSummary,
+  MotorSelection,
+  MotorSummary,
   Part,
   PartOverride,
   StabilityResult,
@@ -63,6 +65,13 @@ export default function App() {
   const [editTarget, setEditTarget] = useState<'body' | 'fin'>('body')
   const [autoBusy, setAutoBusy] = useState(false)
   const [isolateOuterFaces, setIsolateOuterFaces] = useState(false)
+  // Selected motor, folded into the CG / static margin by the backend. Null = none.
+  // motorSummary keeps the picker's metadata for labelling before a compute round-trips.
+  const [motorSel, setMotorSel] = useState<MotorSelection | null>(null)
+  const [motorSummary, setMotorSummary] = useState<MotorSummary | null>(null)
+  // True once a stability result exists, so changing the motor recomputes live
+  // rather than silently waiting for the next manual Compute.
+  const computedOnce = useRef(false)
   // Bumped when a build finishes, so rebuilding the model already on screen
   // refetches it. Without this the manifest effect keys only on the id, which
   // has not changed, and the viewer would keep showing the previous build.
@@ -107,6 +116,7 @@ export default function App() {
         setSelectedKeys([])
         setStability(null)
         setStabilityError(null)
+        computedOnce.current = false
         setOuterFaces([])
         setFinFaces([])
         setFinCount(0)
@@ -114,6 +124,8 @@ export default function App() {
         setFaceEditMode(false)
         setEditTarget('body')
         setIsolateOuterFaces(false)
+        setMotorSel(null)
+        setMotorSummary(null)
         setError(null)
       })
       .catch((exc) => setError(String(exc)))
@@ -193,16 +205,46 @@ export default function App() {
         outerFaces: body,
         finFaces: fins,
         overrides: massOverrides,
+        motor: motorSel,
       })
       setStability(result)
       setFinCount(result.fins.count)
       setFinPlanforms(result.fins.planforms)
+      computedOnce.current = true
     } catch (exc) {
       setStabilityError(String(exc))
     } finally {
       setStabilityBusy(false)
     }
-  }, [modelId, massOverrides, outerFaces, finFaces])
+  }, [modelId, massOverrides, outerFaces, finFaces, motorSel])
+
+  // Recompute when the motor selection changes, but only after the first manual
+  // Compute -- otherwise selecting a motor would fire a compute with no surfaces
+  // chosen yet. A ref holds the latest callback so this effect keys on motorSel
+  // alone (not on face edits, which must not trigger a recompute).
+  const computeRef = useRef(handleComputeStability)
+  computeRef.current = handleComputeStability
+  useEffect(() => {
+    if (computedOnce.current) void computeRef.current()
+  }, [motorSel])
+
+  const handleSelectMotor = useCallback((motor: MotorSummary, simfileId: string) => {
+    setMotorSummary(motor)
+    setMotorSel({ motorId: motor.motorId, simfileId, aftFromNose: null, state: 'launch' })
+  }, [])
+
+  const handleClearMotor = useCallback(() => {
+    setMotorSel(null)
+    setMotorSummary(null)
+  }, [])
+
+  const handleSetMotorState = useCallback((state: 'launch' | 'burnout') => {
+    setMotorSel((current) => (current ? { ...current, state } : current))
+  }, [])
+
+  const handleSetMotorAft = useCallback((aftFromNose: number | null) => {
+    setMotorSel((current) => (current ? { ...current, aftFromNose } : current))
+  }, [])
 
   const handleAutoDetect = useCallback(async () => {
     if (!modelId) return
@@ -421,6 +463,12 @@ export default function App() {
               autoBusy={autoBusy}
               isolate={isolateOuterFaces}
               onToggleIsolate={() => setIsolateOuterFaces((on) => !on)}
+              motorSel={motorSel}
+              motorSummary={motorSummary}
+              onSelectMotor={handleSelectMotor}
+              onClearMotor={handleClearMotor}
+              onSetMotorState={handleSetMotorState}
+              onSetMotorAft={handleSetMotorAft}
             />
           </div>
 

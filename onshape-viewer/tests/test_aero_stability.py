@@ -5,7 +5,13 @@ from __future__ import annotations
 import numpy as np
 
 from backend.onshape.aero.outer_surface import detect_outer_surface
-from backend.onshape.aero.stability import CPContribution, compute_cg, compute_stability, merge_cp
+from backend.onshape.aero.stability import (
+    CPContribution,
+    MotorPlacement,
+    compute_cg,
+    compute_stability,
+    merge_cp,
+)
 from backend.onshape.geometry_store import FaceGeometry
 from test_aero_body import surface_of_revolution
 
@@ -89,6 +95,41 @@ def test_body_stability_cop_and_margin():
     # Margin = (cp - cg)/d_ref; here CG is well aft of the nose CoP -> unstable (<0).
     assert result.static_margin == (result.cp_axial - result.cg_axial) / result.ref_diameter
     assert result.static_margin < 0
+
+
+def test_compute_cg_blends_extra_point_mass():
+    parts = [{"key": "a", "mass": 1.0, "centroidWorld": [0, 0, 0.0]}]
+    cg, mass = compute_cg(parts, extra_masses=[(3.0, np.array([0, 0, 4.0]))])
+    assert mass == 4.0
+    assert cg[2] == (1.0 * 0.0 + 3.0 * 4.0) / 4.0  # 3.0
+
+
+def test_motor_placement_shifts_cg_aft_and_reduces_margin():
+    face, L_nose, L_tube, R = cone_tube_faces()
+    store = StubStore([face])
+    total_len = L_nose + L_tube
+    # A single light part at the nose, so the motor dominates the CG shift.
+    parts = [{"key": "nose", "mass": 0.5, "centroidWorld": [0, 0, 0.1 * total_len]}]
+
+    base = compute_stability(store, parts, outer_faces=[("occ:body", "F_outer")])
+
+    # A 0.2 m motor, 1 kg, CG at its own mid, aft-flush with the base.
+    motor = MotorPlacement(mass=1.0, length=0.2, cmx=0.1, aft_from_nose=None)
+    withm = compute_stability(
+        store, parts, outer_faces=[("occ:body", "F_outer")], motor=motor
+    )
+
+    # Aft-flush default: aft end at the body base (total_len from nose).
+    assert withm.motor_aft_from_nose == total_len
+    # Motor CG sits (length - cmx) forward of the base.
+    assert withm.motor_cg_from_nose == total_len - 0.2 + 0.1
+    assert withm.motor_mass == 1.0
+    # Adding aft mass moves CG aft and total mass up.
+    assert withm.cg_from_nose > base.cg_from_nose
+    assert withm.mass == base.mass + 1.0
+    # CP is mass-independent, so a bigger cg (aft) shrinks the margin.
+    assert withm.cp_from_nose == base.cp_from_nose
+    assert withm.static_margin < base.static_margin
 
 
 def test_detect_outer_surface_rejects_inner_bore():
