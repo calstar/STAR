@@ -326,7 +326,8 @@ export default function App() {
                 href={app.href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`app-card ${app.colorClass} fade-up delay-${i + 2}`}
+                className={`app-card ${app.colorClass} fade-up`}
+                style={{ animationDelay: `${0.1 * (i + 2)}s` }}
               >
                 {/* Icon + label inline, URL below */}
                 <div>
