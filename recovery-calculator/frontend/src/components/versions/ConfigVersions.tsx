@@ -129,7 +129,13 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
   }, [onRestore])
 
   // Mount: list documents; seed one from the current config if there are none.
+  // Guarded to run its bootstrap exactly once: even if a parent passes an
+  // unstable onRestore (which recreates openDoc and re-fires this effect), we
+  // must not re-list + re-open, or restore would loop into setUi every render.
+  const bootstrapped = useRef(false)
   useEffect(() => {
+    if (bootstrapped.current) return
+    bootstrapped.current = true
     let cancelled = false
     ;(async () => {
       try {

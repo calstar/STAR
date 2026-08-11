@@ -7,7 +7,7 @@
  * must not discard a half-filled device card.
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import starWordmark from './assets/star-wordmark.png'
 import { getHealth } from './api/client'
 import type { UiConfig } from './types/schema'
@@ -76,6 +76,14 @@ export default function App() {
     return () => clearTimeout(id)
   }, [ui])
 
+  // Stable so ConfigVersions' openDoc / mount effect don't re-run every render.
+  // An inline arrow here recreates onRestore each render, which churned the
+  // designs bar into a restore -> setUi -> render loop.
+  const handleRestore = useCallback((c: UiConfig) => {
+    setUi(c)
+    saveUiConfig(c)
+  }, [])
+
   return (
     <div className="min-h-screen bg-[var(--color-bg-primary)]">
       <header className="border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
@@ -108,7 +116,7 @@ export default function App() {
           <div className="border-t border-[var(--color-border)]">
             <ConfigVersions
               config={ui}
-              onRestore={(c) => { setUi(c); saveUiConfig(c) }}
+              onRestore={handleRestore}
               inline
             />
           </div>
