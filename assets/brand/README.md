@@ -23,3 +23,12 @@ then run the script.
 ## Files
 
 - `star-wordmark.png` — full STAR wordmark, dark/transparent (for dark headers).
+  Synced into each consuming app's `src/assets/` and imported by React.
+- `star-icon.svg` — browser-tab favicon: just the white STAR rocket logo on a
+  transparent background, cropped tight to the rocket. Crisp on dark tabs, nearly
+  invisible on light tabs (an accepted tradeoff for now). Synced into each app's
+  `public/` and referenced from `index.html` as `/star-icon.svg`. Generated from
+  `star-logo-white.png` by `scripts/make-star-icon.mjs` — do not hand-edit; rerun
+  that then `sync-brand.sh`.
+- `star-logo-white.png` — white STAR rocket logo, transparent background. Source
+  for `star-icon.svg` only (not synced to apps on its own).
