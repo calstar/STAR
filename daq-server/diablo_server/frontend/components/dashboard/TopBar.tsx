@@ -1,5 +1,6 @@
 'use client'
 
+import { useNavigate } from 'react-router-dom';
 import { useSensorStore, useSensorValue } from '@/lib/store';
 import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { startDataCache } from '@/lib/data-cache';
@@ -97,6 +98,8 @@ export default function TopBar() {
   const debugMode = useSensorStore((s) => s.debugMode);
   const setDebugMode = useSensorStore((s) => s.setDebugMode);
   const countdownTargetTimeMs = useSensorStore((s) => s.countdownTargetTimeMs);
+  const session = useSensorStore((s) => s.session);
+  const navigate = useNavigate();
   const { controlEnabled, isOperator, unlocking, error, unlock, lock } = useControlMode();
   const [passwordInput, setPasswordInput] = useState('');
   const [showUnlockForm, setShowUnlockForm] = useState(false);
@@ -268,15 +271,33 @@ export default function TopBar() {
 
         {/* Left: brand + connection + clock + countdown */}
         <div className="flex flex-col justify-start gap-1 flex-shrink-0 pr-2 border-r border-gray-800/60">
-          <span className="text-3xl font-bold tracking-widest text-blue-400 uppercase leading-none">
-            DIABLO DAQ
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-3xl font-bold tracking-widest text-blue-400 uppercase leading-none">
+              DIABLO DAQ
+            </span>
+          </div>
           <div className="flex items-center gap-2">
             <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isFullyConnected ? 'bg-green-500' : isConnected ? 'bg-yellow-500' : 'bg-red-500'}`} />
             <span className="text-sm text-gray-300 font-semibold">
-              {isFullyConnected ? 'Connected' : isConnected ? 'WS Only' : 'Disconnected'}
+              {isFullyConnected ? 'Connected' : isConnected ? 'Data Pipeline Down' : 'Disconnected'}
             </span>
           </div>
+          {session?.enabled && (
+            <button
+              type="button"
+              onClick={() => navigate('/session')}
+              title="Open session control"
+              className={`self-start rounded-md border px-2 py-0.5 text-xs font-bold uppercase tracking-wider tabular-nums transition ${
+                session.active
+                  ? 'border-green-600 bg-green-900/40 text-green-300 hover:bg-green-800/60'
+                  : 'border-gray-700 bg-gray-900 text-gray-400 hover:bg-gray-800'
+              }`}
+            >
+              {session.active
+                ? `RUN ${formatCountdown((session.deadlineMs ?? 0) - Date.now()).value}`
+                : 'SESSION — stopped'}
+            </button>
+          )}
           <span className="text-xl font-mono text-gray-200 tabular-nums font-bold leading-tight">{clock}</span>
           <div ref={countdownRef} className="relative flex items-center gap-2">
             <button

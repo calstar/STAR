@@ -22,6 +22,7 @@ export declare enum MessageType {
     NOTIFICATION = "notification",
     CONFIG_UPDATED = "config_updated",
     COUNTDOWN_TARGET_UPDATE = "countdown_target_update",
+    SESSION_UPDATE = "session_update",
     CONTROL_STATUS = "control_status",
     CONTROL_UNLOCK = "control_unlock",
     CONTROL_UNLOCK_RESULT = "control_unlock_result"
@@ -102,7 +103,7 @@ export interface StateUpdate {
     debugMode?: boolean;
 }
 export interface CommandPayload {
-    commandType: 'state_transition' | 'actuator' | 'controller_frequency' | 'pwm_actuator' | 'controller_command' | 'debug_mode' | 'extend_fire' | 'set_countdown_target';
+    commandType: 'state_transition' | 'actuator' | 'controller_frequency' | 'pwm_actuator' | 'controller_command' | 'debug_mode' | 'extend_fire' | 'set_countdown_target' | 'session_start' | 'session_stop' | 'session_extend';
     data: {
         state?: SystemState;
         /** Config-driven: actuator role name from config.toml actuator_roles (e.g. "LOX Main") */
@@ -119,7 +120,19 @@ export interface CommandPayload {
         debugMode?: boolean;
         /** Unix timestamp in milliseconds. null clears/pauses the countdown. */
         targetTimeMs?: number | null;
+        keepData?: boolean;
+        durationMs?: number;
+        addMs?: number;
     };
+}
+export interface SessionStatus {
+    enabled: boolean;
+    active: boolean;
+    dbDir: string | null;
+    keepData: boolean;
+    deadlineMs: number | null;
+    remainingMs: number | null;
+    freeDiskBytes: number | null;
 }
 export interface ConnectionStatus {
     connected: boolean;

@@ -26,6 +26,7 @@ export var MessageType;
     MessageType["NOTIFICATION"] = "notification";
     MessageType["CONFIG_UPDATED"] = "config_updated";
     MessageType["COUNTDOWN_TARGET_UPDATE"] = "countdown_target_update";
+    MessageType["SESSION_UPDATE"] = "session_update";
     // Engine-control authorization (DAQ operator gate)
     MessageType["CONTROL_STATUS"] = "control_status";
     MessageType["CONTROL_UNLOCK"] = "control_unlock";

@@ -93,6 +93,216 @@ export interface PartOverride {
   mass: number | null
 }
 
+/** A single B-rep face of a placed occurrence: the picking/selection unit. */
+export interface FaceRef {
+  key: string // occurrence key ("occ:<path>")
+  faceId: string
+}
+
+export interface AxisInfo {
+  origin: [number, number, number]
+  direction: [number, number, number]
+}
+
+/** Auto-detected outer airframe faces, from GET .../outer-surface. */
+export interface OuterSurfaceGuess {
+  faces: FaceRef[]
+  axis: AxisInfo
+}
+
+/**
+ * A motor's datafile. The UI labels these "Full model" (RockSim) vs "Basic model"
+ * (RASP) by `format`: thrustcurve.org serves both with mid-casing CG, so `quality`
+ * (real per-time CG vs the length/2 assumption) rarely differs and is not the label.
+ */
+export interface MotorSimfileRef {
+  simfileId: string
+  format: 'RASP' | 'RockSim'
+  quality: 'full' | 'basic'
+}
+
+/** One row in the motor picker (from GET /api/motors). Weights in grams, dims in mm. */
+export interface MotorSummary {
+  motorId: string
+  manufacturer: string
+  manufacturerAbbrev: string
+  designation: string
+  commonName: string
+  impulseClass: string
+  diameter: number
+  length: number
+  type: string
+  totalWeightG: number | null
+  propWeightG: number | null
+  delays: string | null
+  avgThrustN: number | null
+  maxThrustN: number | null
+  totImpulseNs: number | null
+  burnTimeS: number | null
+  simfiles: MotorSimfileRef[]
+}
+
+/** One datafile of a motor with its full time-domain curves (from GET /api/motors/{id}). */
+export interface MotorSimfileDetail {
+  simfileId: string
+  format: 'RASP' | 'RockSim'
+  quality: 'full' | 'basic'
+  designation: string
+  manufacturer: string
+  length: number
+  diameter: number
+  wetMass: number
+  dryMass: number
+  propMass: number
+  burnTime: number
+  /** Parallel arrays: time (s), thrust (N), CG from the fore end (m), total mass (kg). */
+  time: number[]
+  thrust: number[]
+  cgX: number[]
+  mass: number[]
+}
+
+export interface MotorDetail {
+  meta: { manufacturer?: string; designation?: string } | null
+  simfiles: MotorSimfileDetail[]
+}
+
+export interface MotorSearchResult {
+  items: MotorSummary[]
+  /** Total matches before the limit slice, for a "showing N of M" hint. */
+  total: number
+  fetchedAt: string | null
+  available: boolean
+}
+
+/** A motor chosen to fold into the CG / static margin. */
+export interface MotorSelection {
+  motorId: string
+  simfileId?: string | null
+  /**
+   * Offset of the motor's aft end from its datum (m), aft-positive. The datum is the
+   * airframe base, or `refFace` when set. 0 = aft-flush with the base / at the face.
+   */
+  aftOffset?: number
+  /** A face to measure the aft end from; must be normal to the rocket axis. */
+  refFace?: FaceRef | null
+  state: 'launch' | 'burnout'
+}
+
+/** The motor block echoed back in a StabilityResult (masses kg, positions m). */
+export interface MotorResult {
+  motorId: string
+  simfileId: string
+  name: string
+  quality: 'full' | 'basic'
+  format: 'RASP' | 'RockSim'
+  state: 'launch' | 'burnout'
+  wetMass: number
+  dryMass: number
+  propMass: number
+  length: number
+  diameter: number
+  burnTime: number
+  cgFromNose: number | null
+  /** Aft-end offset from the datum (base or reference face), m. */
+  aftFromBase: number | null
+  /** Motor cylinder endpoints (Onshape Z-up frame) and radius (m), for drawing it. */
+  aftWorld: [number, number, number] | null
+  foreWorld: [number, number, number] | null
+  radius: number | null
+  /** Motor CG (Onshape Z-up frame) for the chosen state, to fold into the CM marker. */
+  cgWorld: [number, number, number] | null
+}
+
+export interface StabilityRequest {
+  /** Approved outer faces; empty asks the backend to auto-detect them. */
+  outerFaces: FaceRef[]
+  /** Approved fin faces; null auto-detects, [] means no fins. */
+  finFaces?: FaceRef[] | null
+  /** Override the detected fin count. */
+  nFins?: number | null
+  /** Occurrence key -> resolved mass (kg), overriding the manifest mass. */
+  overrides: Record<string, number>
+  axis?: AxisInfo | null
+  /** Optional motor to include in the CG / static margin. */
+  motor?: MotorSelection | null
+  /** Guided rail length (m) for the flight sim's off-rail velocity. */
+  railLength?: number
+}
+
+/** One fin's exposed planform outline, in the Onshape Z-up frame. */
+export interface FinPlanform {
+  lead: [number, number, number][]
+  trail: [number, number, number][]
+}
+
+export interface FinData {
+  count: number
+  cna: number
+  rootChord: number
+  tipChord: number
+  sweep: number
+  span: number
+  area: number
+  planforms: FinPlanform[]
+}
+
+/** Auto-detected fin faces, from GET .../fins. */
+export interface FinGuess {
+  faces: FaceRef[]
+  count: number
+  axis: AxisInfo
+  bodyRadius: number
+  planforms: FinPlanform[]
+}
+
+/** CG, CP and static margin from POST .../stability. All backend-computed. */
+export interface StabilityResult {
+  cg: { world: [number, number, number]; fromNose: number }
+  cp: { world: [number, number, number]; fromNose: number }
+  cna: number
+  refDiameter: number
+  rMax: number
+  staticMargin: number | null
+  bodyLength: number
+  mass: number
+  fins: FinData
+  /** Present only when a motor was included in the request. */
+  motor?: MotorResult | null
+}
+
+/** One time step of the ascent sim. Masses kg, lengths m, times s, margin cal. */
+export interface FlightSample {
+  t: number
+  altitude: number
+  velocity: number
+  acceleration: number
+  thrust: number
+  mass: number
+  staticMargin: number | null
+}
+
+/** Ascent flight profile from POST .../flight (no drag yet; apogee is an upper bound). */
+export interface FlightResult {
+  motor: { name: string; format: string }
+  samples: FlightSample[]
+  apogee: number
+  apogeeTime: number
+  maxVelocity: number
+  maxAcceleration: number
+  burnoutTime: number
+  burnoutAltitude: number
+  burnoutVelocity: number
+  liftoffMass: number
+  thrustToWeight: number
+  liftoff: boolean
+  /** Guided rail length (m) and the velocity/time at full departure (rear lug clears). */
+  railLength: number
+  railExitVelocity: number | null
+  railExitTime: number | null
+  railCleared: boolean
+}
+
 export interface OnshapeDocument {
   documentId: string
   name: string

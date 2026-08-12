@@ -7,6 +7,13 @@ import type {
   ModelSummary,
   OnshapeAssembly,
   OnshapeDocument,
+  FinGuess,
+  FlightResult,
+  MotorDetail,
+  MotorSearchResult,
+  OuterSurfaceGuess,
+  StabilityRequest,
+  StabilityResult,
 } from '../types'
 
 /** The server puts the real reason in `detail`; surfacing it beats a bare 502. */
@@ -85,4 +92,64 @@ export async function startBuild(
 
 export function buildStatus(jobId: string): Promise<BuildJob> {
   return getJSON<BuildJob>(`/api/build/${jobId}`)
+}
+
+/** Auto-detected outer airframe faces, to seed the approval UI. Offline. */
+export function fetchOuterSurface(modelId: string): Promise<OuterSurfaceGuess> {
+  return getJSON<OuterSurfaceGuess>(`/api/models/${modelId}/outer-surface`)
+}
+
+/** Auto-detected fin faces + count, to seed the fin approval UI. Offline. */
+export function fetchFins(modelId: string): Promise<FinGuess> {
+  return getJSON<FinGuess>(`/api/models/${modelId}/fins`)
+}
+
+/**
+ * Search the offline motor mirror (thrustcurve.org catalog). Offline; `available`
+ * is false until `python -m backend.motors.fetch` has populated cache/motors.
+ */
+export function searchMotors(
+  query: string,
+  options: { limit?: number; impulseClass?: string; model?: string; signal?: AbortSignal } = {},
+): Promise<MotorSearchResult> {
+  const params = new URLSearchParams({ query })
+  if (options.limit) params.set('limit', String(options.limit))
+  if (options.impulseClass) params.set('impulseClass', options.impulseClass)
+  if (options.model) params.set('model', options.model)
+  return getJSON<MotorSearchResult>(`/api/motors?${params.toString()}`, options.signal)
+}
+
+/** CG, CP and static margin from the approved (or auto-detected) surface. */
+export async function computeStability(
+  modelId: string,
+  request: StabilityRequest,
+): Promise<StabilityResult> {
+  const url = `/api/models/${modelId}/stability`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) await fail(url, response)
+  return response.json() as Promise<StabilityResult>
+}
+
+/** Full detail for one motor: every datafile (Full/Basic) with its thrust/mass/CG curves. */
+export function fetchMotor(motorId: string): Promise<MotorDetail> {
+  return getJSON<MotorDetail>(`/api/motors/${encodeURIComponent(motorId)}`)
+}
+
+/** Ascent flight profile (altitude/velocity/acceleration + static margin over time). */
+export async function computeFlight(
+  modelId: string,
+  request: StabilityRequest,
+): Promise<FlightResult> {
+  const url = `/api/models/${modelId}/flight`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) await fail(url, response)
+  return response.json() as Promise<FlightResult>
 }

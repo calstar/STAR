@@ -8,13 +8,15 @@ name: Publish app images
 # other workflows).
 'on':
   push:
+    # main is the deploy branch (landing-page and ork-onshape were merged in and retired).
     branches:
-      - landing-page
+      - main
     paths:
       - 'EngineDesign/**'
       - 'pid-designer/**'
       - 'recovery-calculator/**'
       - 'onshape-viewer/**'
+      - 'daq-server/tools/postprocessing/webviewer/**'
       - 'landing/**'
       - '.github/workflows/publish-apps.yml'
   workflow_dispatch:
@@ -47,6 +49,8 @@ jobs:
           - { name: recovery-calculator-frontend, context: ./recovery-calculator/frontend, dockerfile: ./recovery-calculator/frontend/Dockerfile }
           - { name: onshape-viewer-api,           context: ./onshape-viewer,            dockerfile: ./onshape-viewer/Dockerfile.api }
           - { name: onshape-viewer-frontend,      context: ./onshape-viewer/frontend,   dockerfile: ./onshape-viewer/frontend/Dockerfile }
+          # DAQ Run Viewer: one image serves both API and SPA (see its Dockerfile).
+          - { name: daq-viewer,                   context: ./daq-server/tools/postprocessing/webviewer, dockerfile: ./daq-server/tools/postprocessing/webviewer/Dockerfile }
     steps:
       - uses: actions/checkout@v4
 

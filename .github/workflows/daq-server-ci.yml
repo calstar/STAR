@@ -695,6 +695,116 @@ jobs:
         if-no-files-found: warn
         retention-days: 7
 
+  # Session-control end-to-end on the SAME systemd path the server uses (sim
+  # overlay). First CI coverage of SESSION_SERVICE_MODE=systemd — the session
+  # button starting/stopping the real pipeline, auto-stop warnings, auto-stop,
+  # Discard cleanup, Save + extend. The rest of CI only exercises `off` mode.
+  session-systemd-e2e:
+    name: Session Control E2E (systemd)
+    runs-on: ubuntu-latest
+    needs: [build]
+    timeout-minutes: 25
+
+    # Uniform low sim rate — same 4-core-runner reasoning as integration-test.
+    env:
+      SIM_SENSOR_HZ: '5'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3 python3-pip libeigen3-dev
+
+    - name: Cache elodin-db
+      id: cache-elodin
+      uses: actions/cache@v4
+      with:
+        path: ~/.cargo/bin/elodin-db
+        key: ${{ runner.os }}-elodin-db-v0.16.1
+
+    - name: Install elodin-db
+      if: steps.cache-elodin.outputs.cache-hit != 'true'
+      run: |
+        ELODIN_DB_INSTALLER_URL="https://github.com/elodin-sys/elodin/releases/download/v0.16.1/elodin-db-installer.sh"
+        mkdir -p "$HOME/.cargo/bin"
+        export PATH="$HOME/.cargo/bin:$PATH"
+        curl --proto '=https' --tlsv1.2 -LsSf "$ELODIN_DB_INSTALLER_URL" | sh
+
+    - name: Put elodin-db on PATH
+      run: |
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        chmod +x "$HOME/.cargo/bin/elodin-db"
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+
+    # Reuse the build job's Release binaries (upload-artifact drops the +x bit).
+    - name: Download C++ binaries from build job
+      uses: actions/download-artifact@v4
+      with:
+        name: build-artifacts-gcc-12-Release
+        path: daq-server/${{ env.BUILD_DIR }}
+    - name: Restore executable bits
+      run: chmod +x "${BUILD_DIR}/bin/"* || true
+
+    - name: Install backend dependencies
+      run: cd diablo_server/backend && (npm ci || npm install)
+
+    - name: Install Python dependencies (sim / config)
+      run: pip3 install tomli || pip3 install --user tomli || true
+
+    # systemd --user units run with a fixed PATH (…:/usr/local/bin:/usr/bin:…)
+    # and sensor-backend hardcodes /usr/bin/npm — neither sees setup-node's
+    # hostedtoolcache node. Expose node/npm/npx where the units look.
+    - name: Expose node/npm/npx to systemd units
+      run: |
+        sudo ln -sf "$(command -v node)" /usr/local/bin/node
+        sudo ln -sf "$(command -v npm)"  /usr/bin/npm
+        sudo ln -sf "$(command -v npx)"  /usr/local/bin/npx
+        /usr/bin/npm --version
+
+    # Bring a user systemd instance to life (GitHub runners have no login
+    # session by default): enable-linger starts user@<uid>.service; wait for its
+    # bus. This is the one piece the server/laptop already have for free.
+    - name: Start user systemd instance
+      run: |
+        echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        sudo loginctl enable-linger "$USER"
+        for _ in $(seq 1 30); do systemctl --user show-environment >/dev/null 2>&1 && break; sleep 1; done
+        systemctl --user show-environment >/dev/null || { echo "::error::systemctl --user not available"; exit 1; }
+        echo "user systemd is up"
+
+    - name: Run session-control E2E
+      run: bash test/test_session.sh
+
+    - name: Capture journals on failure
+      if: failure()
+      run: |
+        mkdir -p /tmp/session_logs
+        for u in sensor-backend sensor-elodin sensor-daq sensor-calibration \
+                 sensor-controller sensor-actuator sensor-simulator \
+                 sensor-config-broadcast sensor-heartbeat; do
+          journalctl --user -u "$u" --no-pager > "/tmp/session_logs/$u.log" 2>&1 || true
+        done
+      continue-on-error: true
+
+    - name: Upload session E2E diagnostics
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: session-e2e-diagnostics
+        path: /tmp/session_logs/
+        if-no-files-found: warn
+        retention-days: 7
+
   # Build summary
   build-summary:
     name: Build Summary
@@ -709,6 +819,7 @@ jobs:
       - test
       - integration-test
       - playwright-guitest-e2e
+      - session-systemd-e2e
     if: always()
 
     steps:
@@ -731,3 +842,4 @@ jobs:
         echo "| Tests | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Integration Test | ${{ needs.integration-test.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Playwright E2E (guitest) | ${{ needs.playwright-guitest-e2e.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Session Control E2E (systemd) | ${{ needs.session-systemd-e2e.result }} |" >> $GITHUB_STEP_SUMMARY

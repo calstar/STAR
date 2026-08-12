@@ -66,6 +66,7 @@ export default function App() {
               <Route path="/self-tests" element={<P.SelfTestsPage />} />
               <Route path="/sensor-info" element={<P.SensorInfoPage />} />
               <Route path="/status" element={<P.StatusPage />} />
+              <Route path="/session" element={<P.SessionPage />} />
               <Route path="/plots/all" element={<P.AllPlotsPage />} />
               <Route path="/plots/chamber" element={<P.ChamberPage />} />
               <Route path="/plots/copv" element={<P.CopvPage />} />

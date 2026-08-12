@@ -135,6 +135,11 @@ class GLBBuilder:
                 primitives=[
                     pygltflib.Primitive(attributes=pygltflib.Attributes(POSITION=position), indices=indices)
                 ],
+                # Face grouping for face-level picking in the viewer: triangle i
+                # (three.js raycast faceIndex) belongs to the face whose running
+                # `faceTriCounts` first covers it. Lives on the shared mesh, not
+                # the per-occurrence node, so it is stored once per geometry.
+                extras={"faceIds": list(mesh.face_ids), "faceTriCounts": list(mesh.face_tri_counts)},
             )
         )
         index = len(self._meshes) - 1

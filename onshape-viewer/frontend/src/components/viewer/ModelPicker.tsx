@@ -282,7 +282,7 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt }: Props) 
                 </button>
               </div>
               {assembliesCachedAt && (
-                <p className="mb-1 text-[11px] text-slate-500">
+                <p className="mb-1 text-2xs text-slate-500">
                   cached {whenCached(assembliesCachedAt)}
                 </p>
               )}
@@ -362,7 +362,7 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt }: Props) 
               {/* Naming the cost is the point: without it, "search Onshape"
                   looks like a slower version of typing rather than the only
                   thing here that spends quota. */}
-              <p className="mb-1 text-[11px] text-slate-500">
+              <p className="mb-1 text-2xs text-slate-500">
                 Filtering {documents.length} cached {documents.length === 1 ? 'document' : 'documents'}
                 {' · last fetched '}
                 {whenCached(documentsCachedAt)}
@@ -399,7 +399,7 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt }: Props) 
             <div className="mt-3 border-t border-slate-700 pt-2">
               <p className="text-xs text-cyan-300">{job.message}</p>
               {job.log.length > 0 && (
-                <p className="mt-1 truncate text-[11px] text-slate-500">
+                <p className="mt-1 truncate text-2xs text-slate-500">
                   {job.log[job.log.length - 1]}
                 </p>
               )}

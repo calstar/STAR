@@ -129,6 +129,10 @@ class FakeClient:
         # every source would silently drop the 11 parts that live elsewhere.
         if "tessellatedfaces" in path:
             return self._source_fixture(path, "tess") or load("tessellation.json")
+        if "bodydetails" in path:
+            # No default fixture: an empty body list means "no surface types",
+            # which the build tolerates (faces fall back to type OTHER).
+            return self._source_fixture(path, "bodydetails") or {"bodies": []}
         if "massproperties" in path and path.startswith("/assemblies"):
             return load("assembly_massproperties.json")
         if "massproperties" in path:

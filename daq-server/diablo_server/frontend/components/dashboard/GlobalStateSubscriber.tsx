@@ -12,7 +12,8 @@ import {
     MissionStartTime,
     CountdownTargetUpdate,
     NotificationPayload,
-    ActuatorUpdate
+    ActuatorUpdate,
+    SessionStatus
 } from '@/lib/types';
 import { startDataCache, getDataCache } from '@/lib/data-cache';
 
@@ -25,6 +26,7 @@ export default function GlobalStateSubscriber() {
     const updateCountdownTargetTime = useSensorStore((state) => state.updateCountdownTargetTime);
     const updateBoards = useSensorStore((state) => state.updateBoards);
     const updateNotification = useSensorStore((state) => state.updateNotification);
+    const updateSession = useSensorStore((state) => state.updateSession);
     const updateActuatorExpectedPositions = useSensorStore((state) => state.updateActuatorExpectedPositions);
 
     useEffect(() => {
@@ -70,6 +72,9 @@ export default function GlobalStateSubscriber() {
             const payload = p as CountdownTargetUpdate;
             updateCountdownTargetTime(payload.targetTimeMs);
         });
+        const u10 = ws.on(MessageType.SESSION_UPDATE, (p: unknown) => {
+            updateSession(p as SessionStatus);
+        });
 
         // Register listeners before opening socket to avoid missing first status/data burst.
         ws.connect('GlobalStateSubscriber');
@@ -77,11 +82,11 @@ export default function GlobalStateSubscriber() {
 
         return () => {
             console.log('[WS] GlobalStateSubscriber cleanup');
-            u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); u9();
+            u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); u9(); u10();
         };
     }, [
         updateSensor, updateState, updateActuator, updateConnectionStatus,
-        updateMissionStartTime, updateCountdownTargetTime, updateBoards, updateNotification, updateActuatorExpectedPositions
+        updateMissionStartTime, updateCountdownTargetTime, updateBoards, updateNotification, updateSession, updateActuatorExpectedPositions
     ]);
 
     // Drive _staleRenderTick so useSensorValue / useGetSensorValue re-check SENSOR_DATA_STALE_MS

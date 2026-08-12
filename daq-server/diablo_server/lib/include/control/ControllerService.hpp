@@ -12,7 +12,6 @@
 
 #include "ControllerLUT.hpp"
 #include "RobustDDPController.hpp"
-#include "calibration/PTCalibration.hpp"
 #include "elodin/ElodinClient.hpp"
 
 namespace fsw {
@@ -119,8 +118,6 @@ private:
     // ── Controller loop ────────────────────────────────────────────────
     void controllerLoop();
     void elodinSubscriberLoop();
-    // DEPRECATED — relay WebSocket subscriber, replaced by direct Elodin subscription
-    void relaySubscriberLoop();
 
     // ── State ──────────────────────────────────────────────────────────
     std::atomic<bool> running_{false};
@@ -146,13 +143,6 @@ private:
     std::string elodin_host_;
     uint16_t elodin_port_ = 2240;
 
-    // DEPRECATED — Relay WebSocket (replaced by direct Elodin subscription above)
-    std::string relay_host_ = "127.0.0.1";
-    uint16_t relay_port_ = 9090;
-
-    // DEPRECATED — PT calibration was only used by relay subscriber for raw ADC → PSI
-    fsw::calibration::PTCalibrationManager pt_calibration_;
-
     // PWM output
     PWMConfig pwm_config_;
     int udp_socket_fd_ = -1;
@@ -172,7 +162,6 @@ private:
     // Loop timing
     std::thread controller_thread_;
     std::thread elodin_subscriber_thread_;
-    std::thread relay_subscriber_thread_;
     double loop_rate_hz_ = 10.0;
     double loop_interval_ms_ = 100.0;
 

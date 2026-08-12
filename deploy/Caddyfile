@@ -105,6 +105,16 @@
 	}
 }
 
+# ── DAQ Run Viewer ───────────────────────────────────────────────────────────
+# Read-only viewer for past Elodin runs. Unlike the apps above it is a single
+# container: FastAPI serves both /api and the built SPA, so one reverse_proxy
+# covers everything (no /api split). See the daq-viewer service in
+# docker-compose.yml. This is separate from the DAQ *server* below.
+{$SCHEME:https}://daq-viewer.{$BASE_DOMAIN:starberkeley.org} {
+	import protected
+	reverse_proxy daq-viewer:8420
+}
+
 # ── DAQ Server ─────────────────────────────────────────────────────────────
 # Not containerised. The C++ bridge, elodin-db and the Node backend run
 # natively on the test-stand machine (daq-server/deploy/systemd), because they

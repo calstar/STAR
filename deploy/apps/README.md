@@ -33,6 +33,7 @@ Service URL `http://caddy:80`:
 | `pid-designer` | `starberkeley.org` | `http://caddy:80` |
 | `recovery-calculator` | `starberkeley.org` | `http://caddy:80` |
 | `onshape-viewer` | `starberkeley.org` | `http://caddy:80` |
+| `daq-viewer` | `starberkeley.org` | `http://caddy:80` |
 
 Plus one **SSH** route on the same tunnel for remote admin — the `ssh://` scheme
 makes it SSH, and `cloudflared` maps `host.docker.internal` to the host via
@@ -46,13 +47,18 @@ Connect with `ProxyCommand cloudflared access ssh --hostname ssh-rfs.starberkele
 — see [`FRESH-INSTALL.md`](FRESH-INSTALL.md) §7. Do **not** add `auth.` here —
 that stays on the EC2 tunnel.
 
+> **Firewall:** the connector reaches the host's sshd over the Docker bridge, so
+> `ufw` must allow it — `sudo ufw allow from 172.16.0.0/12 to any port 22 proto
+> tcp`. `bootstrap.sh` does this; without it SSH times out
+> (`dial tcp 172.17.0.1:22: i/o timeout`) while the web apps still work.
+
 ## 2. On the apps machine — get the compose + configure
 Images are pulled from GHCR (built by `publish-apps.yml` / `publish-auth.yml`), so
 the box needs only the root compose + `.env`, not the app source. Grab just those
 with a sparse checkout:
 
 ```bash
-git clone --depth 1 --filter=blob:none --sparse -b landing-page \
+git clone --depth 1 --filter=blob:none --sparse -b main \
   https://github.com/calstar/STAR.git
 cd STAR
 git sparse-checkout set deploy/apps      # cone mode also brings the root files
@@ -164,4 +170,4 @@ own `…/releases/<label>.json`. (Swap bucket + prefix for the other two apps.)
   working copies**) lives in the `userdata` volume on this machine, keyed by
   `X-Auth-Email`. P&ID *version history* additionally lives in S3 (above).
 - **Updating:** `docker compose --profile tunnel pull && docker compose --profile tunnel up -d`
-  (CI republishes `:latest` on every push to `landing-page`).
+  (CI republishes `:latest` on every push to `main`).

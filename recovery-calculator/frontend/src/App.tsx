@@ -7,7 +7,8 @@
  * must not discard a half-filled device card.
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import starWordmark from './assets/star-wordmark.png'
 import { getHealth } from './api/client'
 import type { UiConfig } from './types/schema'
 import { loadUiConfig, saveUiConfig } from './lib/persist'
@@ -75,29 +76,26 @@ export default function App() {
     return () => clearTimeout(id)
   }, [ui])
 
+  // Stable so ConfigVersions' openDoc / mount effect don't re-run every render.
+  // An inline arrow here recreates onRestore each render, which churned the
+  // designs bar into a restore -> setUi -> render loop.
+  const handleRestore = useCallback((c: UiConfig) => {
+    setUi(c)
+    saveUiConfig(c)
+  }, [])
+
   return (
     <div className="min-h-screen bg-[var(--color-bg-primary)]">
       <header className="border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
         <div className="mx-auto max-w-[1800px] px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-emerald-500">
-                {/* A canopy over a payload. */}
-                <svg className="h-6 w-6 text-white" viewBox="0 0 24 24" fill="none"
-                     stroke="currentColor" strokeWidth={1.8}>
-                  <path d="M2 10a10 10 0 0 1 20 0" strokeLinecap="round" />
-                  <path d="M2 10c2.5 0 3.2 -6 5 -6s2.5 6 5 6 3.2 -6 5 -6 2.5 6 5 6" />
-                  <path d="M7 10l5 7M17 10l-5 7" strokeLinecap="round" />
-                  <rect x="10.5" y="17" width="3" height="4" rx="0.5" />
-                </svg>
-              </div>
+              <img src={starWordmark} alt="STAR" className="h-12 w-auto" />
+              <div className="h-8 w-px bg-[var(--color-border)]" />
               <div>
-                <h1 className="text-lg font-bold text-[var(--color-text-primary)]">
+                <h1 className="text-xl font-bold text-[var(--color-text-primary)]">
                   Recovery Calculator
                 </h1>
-                <p className="font-prose text-xs text-[var(--color-text-secondary)]">
-                  Parachute descent, opening loads and recovery hardware sizing
-                </p>
               </div>
             </div>
 
@@ -111,6 +109,16 @@ export default function App() {
                   : 'No backend - fixture mode'}
               </span>
             </div>
+          </div>
+
+          {/* Versioned designs, tucked between the title and the tabs so the
+              design you are on sits with the rest of the app chrome. */}
+          <div className="border-t border-[var(--color-border)]">
+            <ConfigVersions
+              config={ui}
+              onRestore={handleRestore}
+              inline
+            />
           </div>
 
           <nav className="-mb-px flex gap-1">

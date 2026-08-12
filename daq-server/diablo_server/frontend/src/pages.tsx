@@ -20,6 +20,7 @@ export const LivestreamPage     = lazy(() => import('@/app/livestream/page'));
 export const SelfTestsPage      = lazy(() => import('@/app/self-tests/page'));
 export const SensorInfoPage     = lazy(() => import('@/app/sensor-info/page'));
 export const StatusPage         = lazy(() => import('@/app/status/page'));
+export const SessionPage        = lazy(() => import('@/app/session/page'));
 
 export const AllPlotsPage       = lazy(() => import('@/app/plots/all/page'));
 export const ChamberPage        = lazy(() => import('@/app/plots/chamber/page'));

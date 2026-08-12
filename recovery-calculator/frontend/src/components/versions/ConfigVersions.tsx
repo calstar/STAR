@@ -12,13 +12,23 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import type { UiConfig } from '../../types/schema'
 import { reviveUiConfig } from '../../lib/persist'
+import { Button, Modal } from '../ui'
 import * as api from '../../api/documents'
 import type { DocMeta, MicroVersion, ReleaseVersion } from '../../api/documents'
 
 const ACTIVE_KEY = 'recovery-calculator.activeDoc.v1'
 const AUTOSAVE_MS = 1500
+
+/** The one at-a-time dialog the bar drives: a text prompt, a confirmation
+ *  (optionally destructive), or a plain message. Replaces window.prompt /
+ *  confirm / alert so every dialog is centred and styled like the app. */
+type Dialog =
+  | { kind: 'prompt'; title: string; label?: string; placeholder?: string; confirmLabel: string; onConfirm: (value: string) => void | Promise<void> }
+  | { kind: 'confirm'; title: string; message: ReactNode; confirmLabel: string; danger?: boolean; onConfirm: () => void | Promise<void> }
+  | { kind: 'alert'; title: string; message: ReactNode }
 
 /** Regenerate uids / merge onto defaults so a restored config is as safe to
  *  load as one revived from localStorage (see persist.reviveUiConfig). */
@@ -36,6 +46,17 @@ function nextLabel(releases: ReleaseVersion[]): string {
   return `0.${maxMinor + 1}`
 }
 
+/** Download any JSON payload as a file, the browser way. */
+function downloadJson(filename: string, data: unknown): void {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 function relativeTime(iso: string): string {
   const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
   if (mins < 1) return 'just now'
@@ -48,9 +69,12 @@ function relativeTime(iso: string): string {
 interface Props {
   config: UiConfig
   onRestore: (config: UiConfig) => void
+  /** Render just the bar row, no background or width container -- for dropping
+   *  inside a parent (the header) that already provides both. */
+  inline?: boolean
 }
 
-export function ConfigVersions({ config, onRestore }: Props) {
+export function ConfigVersions({ config, onRestore, inline = false }: Props) {
   const [documents, setDocuments] = useState<DocMeta[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const loadedId = useRef<string | null>(null)
@@ -68,6 +92,29 @@ export function ConfigVersions({ config, onRestore }: Props) {
   const [relStatus, setRelStatus] = useState<'idle' | 'saving' | 'ok' | 'err'>('idle')
   const [relError, setRelError] = useState('')
 
+  // One at-a-time dialog (prompt / confirm / alert) and, for prompts, its input.
+  const [dialog, setDialog] = useState<Dialog | null>(null)
+  const [dialogValue, setDialogValue] = useState('')
+  const askPrompt = (opts: Extract<Dialog, { kind: 'prompt' }> & { value?: string }) => {
+    setDialogValue(opts.value ?? '')
+    setDialog(opts)
+  }
+  const runDialog = async () => {
+    const d = dialog
+    if (!d) return
+    if (d.kind === 'prompt') {
+      const v = dialogValue.trim()
+      if (!v) return
+      setDialog(null)
+      await d.onConfirm(v)
+    } else if (d.kind === 'confirm') {
+      setDialog(null)
+      await d.onConfirm()
+    } else {
+      setDialog(null)
+    }
+  }
+
   const active = documents.find(d => d.id === activeId) ?? null
 
   // Load a document's working copy and apply it to the live config.
@@ -82,7 +129,13 @@ export function ConfigVersions({ config, onRestore }: Props) {
   }, [onRestore])
 
   // Mount: list documents; seed one from the current config if there are none.
+  // Guarded to run its bootstrap exactly once: even if a parent passes an
+  // unstable onRestore (which recreates openDoc and re-fires this effect), we
+  // must not re-list + re-open, or restore would loop into setUi every render.
+  const bootstrapped = useRef(false)
   useEffect(() => {
+    if (bootstrapped.current) return
+    bootstrapped.current = true
     let cancelled = false
     ;(async () => {
       try {
@@ -138,32 +191,83 @@ export function ConfigVersions({ config, onRestore }: Props) {
     setShowHistory(false)
   }
 
-  const create = async () => {
-    const name = window.prompt('New design name:', `Design ${documents.length + 1}`)
-    if (!name || !name.trim()) return
-    const meta = await api.createDocument(name.trim(), configRef.current)
-    setDocuments(d => [meta, ...d])
-    setActiveId(meta.id)
-    loadedId.current = meta.id
-    localStorage.setItem(ACTIVE_KEY, meta.id)
+  const create = () => askPrompt({
+    kind: 'prompt',
+    title: 'New design',
+    label: 'Design name',
+    placeholder: 'Design name',
+    value: `Design ${documents.length + 1}`,
+    confirmLabel: 'Create',
+    onConfirm: async (name) => {
+      const meta = await api.createDocument(name, configRef.current)
+      setDocuments(d => [meta, ...d])
+      setActiveId(meta.id)
+      loadedId.current = meta.id
+      localStorage.setItem(ACTIVE_KEY, meta.id)
+    },
+  })
+
+  const rename = () => {
+    if (!active) return
+    askPrompt({
+      kind: 'prompt',
+      title: 'Rename design',
+      label: 'Design name',
+      value: active.name,
+      confirmLabel: 'Rename',
+      onConfirm: async (name) => {
+        const meta = await api.renameDocument(active.id, name)
+        setDocuments(d => d.map(x => (x.id === meta.id ? meta : x)))
+      },
+    })
   }
 
-  const rename = async () => {
+  const remove = () => {
     if (!active) return
-    const name = window.prompt('Rename design:', active.name)
-    if (!name || !name.trim()) return
-    const meta = await api.renameDocument(active.id, name.trim())
-    setDocuments(d => d.map(x => (x.id === meta.id ? meta : x)))
+    setDialog({
+      kind: 'confirm',
+      title: `Delete "${active.name}"?`,
+      message: 'This removes the design, its microversions, and its releases. This cannot be undone.',
+      confirmLabel: 'Delete',
+      danger: true,
+      onConfirm: async () => {
+        await api.deleteDocument(active.id)
+        const rest = documents.filter(d => d.id !== active.id)
+        setDocuments(rest)
+        if (rest.length > 0) select(rest[0].id)
+        else { setActiveId(null); loadedId.current = null; localStorage.removeItem(ACTIVE_KEY) }
+      },
+    })
   }
 
-  const remove = async () => {
-    if (!active) return
-    if (!window.confirm(`Delete "${active.name}"?\n\nThis removes the design, its microversions, and its releases. This cannot be undone.`)) return
-    await api.deleteDocument(active.id)
-    const rest = documents.filter(d => d.id !== active.id)
-    setDocuments(rest)
-    if (rest.length > 0) select(rest[0].id)
-    else { setActiveId(null); loadedId.current = null; localStorage.removeItem(ACTIVE_KEY) }
+  // ── File save / load ──────────────────────────────────────────────────────
+  // The server (S3 in prod, local disk in dev) is the home for a design; these
+  // are the escape hatch: hand a design to someone as a file, or bring one in.
+  // A file holds the full UiConfig, the same payload the server stores.
+  const saveToFile = () => {
+    const slug = (active?.name ?? 'design').replace(/[^\w.-]+/g, '-').toLowerCase()
+    downloadJson(`${slug || 'design'}.recovery.json`, config)
+  }
+
+  // Import a file as a new server-backed design. Falls back to loading it into
+  // the working copy only, so a file still opens when there is no backend.
+  const importFile = async (file: File) => {
+    const cfg = reviveUiConfig(await file.text())
+    if (!cfg) {
+      setDialog({ kind: 'alert', title: 'Could not load file', message: `"${file.name}" is not a valid design file.` })
+      return
+    }
+    const name = file.name.replace(/\.recovery\.json$/i, '').replace(/\.json$/i, '') || 'Imported design'
+    try {
+      const meta = await api.createDocument(name, cfg)
+      setDocuments(d => [meta, ...d])
+      setActiveId(meta.id)
+      loadedId.current = meta.id
+      localStorage.setItem(ACTIVE_KEY, meta.id)
+    } catch {
+      // No backend: at least load it into the live (localStorage-backed) config.
+    }
+    onRestore(cfg)
   }
 
   const refreshHistory = useCallback(async () => {
@@ -195,31 +299,47 @@ export function ConfigVersions({ config, onRestore }: Props) {
     }
   }
 
-  const restoreMicro = async (v: MicroVersion) => {
+  const restoreMicro = (v: MicroVersion) => {
     if (!activeId) return
-    if (!window.confirm(`Restore the auto-save from ${new Date(v.savedAt).toLocaleString()}?\n\nThis replaces the current design. Your working copy keeps auto-saving, so you can restore again.`)) return
-    setRestoring(v.versionId)
-    try {
-      const { config: c } = await api.getVersion(activeId, v.versionId)
-      onRestore(normalise(c)); setShowHistory(false)
-    } finally { setRestoring(null) }
+    setDialog({
+      kind: 'confirm',
+      title: 'Restore this auto-save?',
+      message: `From ${new Date(v.savedAt).toLocaleString()}. This replaces the current design. Your working copy keeps auto-saving, so you can restore again.`,
+      confirmLabel: 'Restore',
+      onConfirm: async () => {
+        setRestoring(v.versionId)
+        try {
+          const { config: c } = await api.getVersion(activeId, v.versionId)
+          onRestore(normalise(c)); setShowHistory(false)
+        } finally { setRestoring(null) }
+      },
+    })
   }
 
-  const restoreRelease = async (r: ReleaseVersion) => {
+  const restoreRelease = (r: ReleaseVersion) => {
     if (!activeId) return
-    if (!window.confirm(`Restore release "${r.label}"?\n\nThis replaces the current design.`)) return
-    setRestoring(`rel:${r.label}`)
-    try {
-      const { config: c } = await api.getRelease(activeId, r.label)
-      onRestore(normalise(c)); setShowHistory(false)
-    } finally { setRestoring(null) }
+    setDialog({
+      kind: 'confirm',
+      title: `Restore release "${r.label}"?`,
+      message: 'This replaces the current design.',
+      confirmLabel: 'Restore',
+      onConfirm: async () => {
+        setRestoring(`rel:${r.label}`)
+        try {
+          const { config: c } = await api.getRelease(activeId, r.label)
+          onRestore(normalise(c)); setShowHistory(false)
+        } finally { setRestoring(null) }
+      },
+    })
   }
 
   const btn = 'inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2.5 py-1 text-xs font-medium text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-bg-tertiary)] disabled:opacity-40'
 
   return (
-    <div className="relative">
-      <div className="flex flex-wrap items-center gap-2 px-4 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+    <div className={inline ? 'relative' : 'relative bg-[var(--color-bg-secondary)]'}>
+      <div className={inline
+        ? 'flex flex-wrap items-center gap-2 py-2'
+        : 'mx-auto flex max-w-[1800px] flex-wrap items-center gap-2 px-4 py-1.5 sm:px-6 lg:px-8'}>
         <span className="text-2xs uppercase tracking-wider text-[var(--color-text-muted)] shrink-0">Design</span>
         <select
           value={activeId ?? ''}
@@ -232,6 +352,17 @@ export function ConfigVersions({ config, onRestore }: Props) {
         <button onClick={create} className={btn} title="New design">+ New</button>
         <button onClick={rename} disabled={!active} className={btn} title="Rename">Rename</button>
         <button onClick={remove} disabled={!active} className={btn} title="Delete design">Delete</button>
+
+        <div className="mx-1 h-4 w-px bg-[var(--color-border)]" />
+
+        <button onClick={saveToFile} className={btn} title="Download this design as a file">Save to file</button>
+        <label className={`${btn} cursor-pointer`} title="Load a design from a file">
+          Load from file
+          <input
+            type="file" accept="application/json,.json" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) void importFile(f); e.currentTarget.value = '' }}
+          />
+        </label>
 
         <div className="mx-1 h-4 w-px bg-[var(--color-border)]" />
 
@@ -253,8 +384,8 @@ export function ConfigVersions({ config, onRestore }: Props) {
         </button>
       </div>
 
-      {showHistory && active && (
-        <div className="absolute right-4 top-full z-40 mt-1 max-h-[360px] w-[340px] overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 shadow-xl">
+      <Modal open={showHistory && !!active} onClose={() => setShowHistory(false)} title="History" width="w-[440px]">
+        <div className="max-h-[60vh] overflow-y-auto">
           {histStatus === 'loading' && <p className="py-2 text-xs text-[var(--color-text-muted)]">Loading…</p>}
           {histStatus === 'err' && <p className="py-2 text-xs text-red-500">Failed to load history.</p>}
           {histStatus === 'idle' && (
@@ -282,32 +413,70 @@ export function ConfigVersions({ config, onRestore }: Props) {
             </>
           )}
         </div>
-      )}
+      </Modal>
 
-      {showRelease && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => relStatus !== 'saving' && setShowRelease(false)}>
-          <div className="w-[420px] max-w-[90vw] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <h3 className="mb-1 text-sm font-semibold text-[var(--color-text-primary)]">Publish a release</h3>
-            <p className="mb-4 text-xs text-[var(--color-text-muted)]">An immutable, named snapshot of this design. Reusing a label is rejected.</p>
-            <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Version label <span className="text-red-500">*</span></label>
+      <Modal
+        open={showRelease}
+        onClose={() => { if (relStatus !== 'saving') setShowRelease(false) }}
+        title="Publish a release"
+        width="w-[420px]"
+        footer={
+          <>
+            <Button onClick={() => setShowRelease(false)} disabled={relStatus === 'saving'} variant="ghost">Cancel</Button>
+            <Button onClick={() => void submitRelease()} disabled={!relLabel.trim() || relStatus === 'saving'} variant="primary">
+              {relStatus === 'saving' ? 'Publishing…' : 'Publish'}
+            </Button>
+          </>
+        }
+      >
+        <p className="mb-4 text-xs text-[var(--color-text-muted)]">An immutable, named snapshot of this design. Reusing a label is rejected.</p>
+        <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Version label <span className="text-red-500">*</span></label>
+        <input
+          autoFocus value={relLabel} onChange={e => setRelLabel(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') void submitRelease() }}
+          placeholder="0.1" disabled={relStatus === 'saving'}
+          className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none disabled:opacity-50"
+        />
+        {relStatus === 'err' && <p className="mt-3 text-xs text-red-500">{relError}</p>}
+        {relStatus === 'ok' && <p className="mt-3 text-xs text-emerald-500">Release published.</p>}
+      </Modal>
+
+      {/* The one prompt / confirm / alert, styled like the app instead of the browser. */}
+      <Modal
+        open={dialog !== null}
+        onClose={() => setDialog(null)}
+        title={dialog?.title ?? ''}
+        footer={
+          dialog?.kind === 'alert' ? (
+            <Button onClick={() => setDialog(null)} variant="primary">OK</Button>
+          ) : (
+            <>
+              <Button onClick={() => setDialog(null)} variant="ghost">Cancel</Button>
+              <Button
+                onClick={() => void runDialog()}
+                variant={dialog?.kind === 'confirm' && dialog.danger ? 'danger' : 'primary'}
+                disabled={dialog?.kind === 'prompt' && !dialogValue.trim()}
+              >
+                {dialog ? dialog.confirmLabel : ''}
+              </Button>
+            </>
+          )
+        }
+      >
+        {dialog?.kind === 'prompt' ? (
+          <>
+            {dialog.label && <label className="mb-1 block text-xs text-[var(--color-text-muted)]">{dialog.label}</label>}
             <input
-              autoFocus value={relLabel} onChange={e => setRelLabel(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') void submitRelease(); if (e.key === 'Escape') setShowRelease(false) }}
-              placeholder="0.1" disabled={relStatus === 'saving'}
-              className="mb-4 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none disabled:opacity-50"
+              autoFocus value={dialogValue} onChange={e => setDialogValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') void runDialog() }}
+              placeholder={dialog.placeholder}
+              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none"
             />
-            {relStatus === 'err' && <p className="mb-3 text-xs text-red-500">{relError}</p>}
-            {relStatus === 'ok' && <p className="mb-3 text-xs text-emerald-500">Release published.</p>}
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setShowRelease(false)} disabled={relStatus === 'saving'} className={btn}>Cancel</button>
-              <button onClick={() => void submitRelease()} disabled={!relLabel.trim() || relStatus === 'saving'}
-                className="inline-flex items-center gap-1 rounded border border-emerald-600/50 bg-emerald-600/20 px-3 py-1 text-xs font-medium text-emerald-600 hover:bg-emerald-600/30 disabled:opacity-40 dark:text-emerald-400">
-                {relStatus === 'saving' ? 'Publishing…' : 'Publish'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          </>
+        ) : dialog ? (
+          <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">{dialog.message}</p>
+        ) : null}
+      </Modal>
     </div>
   )
 }

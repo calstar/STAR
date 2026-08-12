@@ -222,9 +222,6 @@ void ControllerService::stop() {
     if (controller_thread_.joinable()) {
         controller_thread_.join();
     }
-    if (relay_subscriber_thread_.joinable()) {
-        relay_subscriber_thread_.join();
-    }
     if (elodin_subscriber_thread_.joinable()) {
         elodin_subscriber_thread_.join();
     }
@@ -531,7 +528,7 @@ void ControllerService::controllerLoop() {
             have_data = has_measurement_;
         }
 
-        // When relay only sends upstream (ch 1, 5), P_d_fuel/P_d_ox stay 0 so engine estimate
+        // When only upstream (ch 1, 5) is present, P_d_fuel/P_d_ox stay 0 so engine estimate
         // and diagnostics (MR, P_ch, F_est) are zero. Use upstream as fallback for injector
         // pressure so the controller sees varying state instead of defaulting to fixed duty.
         // This is an estimated fallback only — flag it in diagnostics if it triggers during FIRE.
@@ -559,7 +556,7 @@ void ControllerService::controllerLoop() {
         const bool run_without_data = (fire_active_ && lut_.is_loaded());
         if (!have_data && !use_test_duty && !run_without_data) {
             if (tick == 0 || tick % 50 == 0) {
-                std::cout << "[ControllerService] ⏳ Waiting for sensor data from Elodin relay…"
+                std::cout << "[ControllerService] ⏳ Waiting for sensor data from Elodin…"
                           << std::endl;
             }
             ++tick;
@@ -685,7 +682,7 @@ void ControllerService::controllerLoop() {
             if (fire_active_.load() && diagnostics.F_estimated == 0.0 && tick % 100 == 0) {
                 std::cerr << "[Controller] ⚠️ F_est=0: P_u_fuel=" << meas.P_u_fuel / 6894.76
                           << " psi, P_u_ox=" << meas.P_u_ox / 6894.76
-                          << " psi (need both ≥14.5 psi). Check relay PT ch1/ch5." << std::endl;
+                          << " psi (need both ≥14.5 psi). Check PT ch1/ch5." << std::endl;
             }
             std::cout << "[Controller] tick=" << tick << " duty_F=" << actuation.duty_F
                       << " duty_O=" << actuation.duty_O << " F_ref=" << diagnostics.F_ref
@@ -721,199 +718,6 @@ void ControllerService::controllerLoop() {
             std::this_thread::sleep_for(loop_interval - elapsed);
         }
     }
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-//  DEPRECATED — RELAY WEBSOCKET SUBSCRIBER
-//  Replaced by direct Elodin DB subscription (elodinSubscriberLoop).
-//  This code is retained for reference but is no longer started.
-//  Minimal WebSocket client — connects to Elodin Relay (ws://host:port)
-//  and parses binary frames containing Elodin TABLE packets.
-// ═══════════════════════════════════════════════════════════════════════
-
-static int ws_tcp_connect(const std::string& host, uint16_t port) {
-    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0)
-        return -1;
-    struct sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {
-        ::close(fd);
-        return -1;
-    }
-    if (::connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) != 0) {
-        ::close(fd);
-        return -1;
-    }
-    return fd;
-}
-
-static bool read_exact(int fd, uint8_t* buf, size_t n) {
-    size_t total = 0;
-    while (total < n) {
-        ssize_t r = recv(fd, buf + total, n - total, 0);
-        if (r <= 0)
-            return false;
-        total += static_cast<size_t>(r);
-    }
-    return true;
-}
-
-static bool ws_upgrade(int fd, const std::string& host, uint16_t port) {
-    std::string req =
-        "GET / HTTP/1.1\r\n"
-        "Host: " +
-        host + ":" + std::to_string(port) +
-        "\r\n"
-        "Upgrade: websocket\r\n"
-        "Connection: Upgrade\r\n"
-        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-        "Sec-WebSocket-Version: 13\r\n"
-        "\r\n";
-    if (send(fd, req.c_str(), req.size(), 0) < 0)
-        return false;
-    char buf[2048];
-    std::string resp;
-    while (resp.find("\r\n\r\n") == std::string::npos) {
-        ssize_t n = recv(fd, buf, sizeof(buf) - 1, 0);
-        if (n <= 0)
-            return false;
-        buf[n] = '\0';
-        resp += buf;
-    }
-    return resp.find("101") != std::string::npos;
-}
-
-static bool ws_read_frame(int fd, std::vector<uint8_t>& out) {
-    uint8_t hdr[2];
-    if (!read_exact(fd, hdr, 2))
-        return false;
-    uint8_t opcode = hdr[0] & 0x0F;
-    if (opcode == 0x08)
-        return false;  // close frame
-    uint64_t plen = hdr[1] & 0x7F;
-    if (plen == 126) {
-        uint8_t ext[2];
-        if (!read_exact(fd, ext, 2))
-            return false;
-        plen = (uint64_t(ext[0]) << 8) | ext[1];
-    } else if (plen == 127) {
-        uint8_t ext[8];
-        if (!read_exact(fd, ext, 8))
-            return false;
-        plen = 0;
-        for (int i = 0; i < 8; ++i)
-            plen = (plen << 8) | ext[i];
-    }
-    if (plen == 0) {
-        out.clear();
-        return true;
-    }
-    out.resize(plen);
-    return read_exact(fd, out.data(), plen);
-}
-
-void ControllerService::relaySubscriberLoop() {
-    std::cout << "[ControllerService] Relay subscriber: ws://" << relay_host_ << ":" << relay_port_
-              << std::endl;
-    std::vector<uint8_t> frame;
-    static std::atomic<bool> logged_ch1{false};
-    static std::atomic<bool> logged_ch5{false};
-
-    while (running_) {
-        int fd = ws_tcp_connect(relay_host_, relay_port_);
-        if (fd < 0) {
-            std::cerr << "[ControllerService] Relay connect failed, retrying in 2s..." << std::endl;
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-            continue;
-        }
-        if (!ws_upgrade(fd, relay_host_, relay_port_)) {
-            std::cerr << "[ControllerService] Relay WS handshake failed, retrying..." << std::endl;
-            ::close(fd);
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-            continue;
-        }
-        std::cout << "[ControllerService] ✅ Connected to Elodin Relay WS" << std::endl;
-
-        while (running_) {
-            if (!ws_read_frame(fd, frame))
-                break;
-            if (frame.size() < 8)
-                continue;
-
-            // 8-byte Elodin header: len(4) ty(1) packetId[2](1+1) requestId(1)
-            uint8_t ty = frame[4];
-            uint8_t pid_hi = frame[5];
-            uint8_t pid_lo = frame[6];
-
-            if (ty != 1)
-                continue;  // TABLE only
-            if (pid_hi != 0x20)
-                continue;
-
-            const uint8_t* payload = frame.data() + 8;
-            size_t payload_size = frame.size() - 8;
-
-            float pressure_psi = 0.0f;
-            uint8_t ch = 0;
-
-            if (pid_lo >= 0x01 && pid_lo <= 0x0A) {
-                // ── Raw PT [0x20, 0x01..0x0A] — skip; controller uses calibrated stream only ──
-                continue;
-            } else if (pid_lo >= 0x11 && pid_lo <= 0x1A) {
-                // ── Calibrated PT [0x20, 0x11..0x1A] — use directly ───────
-                if (payload_size < comms::messages::sensor::CalibratedPTMessage::nbytes())
-                    continue;
-                comms::messages::sensor::CalibratedPTMessage cal_msg;
-                cal_msg.deserialize(payload);
-                ch = pid_lo - 0x10;  // channel 1-10
-                pressure_psi = cal_msg.getField<3>();
-            } else {
-                continue;
-            }
-
-            if (ch == 0 || !std::isfinite(pressure_psi))
-                continue;
-
-            {
-                std::lock_guard<std::mutex> lock(input_mutex_);
-                // Channel mapping from config.toml [sensor_roles_pt_board]:
-                // ch=1: FUEL UP, 3: FUEL DN, 5: LOX UP, 7: LOX DN, 6: GN2 REG
-                // ch=4: Chamber Mid PT 1, ch=8: Chamber Mid PT 2 (P_ch estimate)
-                if (ch == 1) {
-                    current_meas_.P_u_fuel = pressure_psi * 6894.76;
-                    if (!logged_ch1.exchange(true))
-                        std::cout << "[ControllerService] ✅ PT ch1 (Fuel Up) received: "
-                                  << pressure_psi << " psi" << std::endl;
-                } else if (ch == 5) {
-                    current_meas_.P_u_ox = pressure_psi * 6894.76;
-                    if (!logged_ch5.exchange(true))
-                        std::cout << "[ControllerService] ✅ PT ch5 (Ox Up) received: "
-                                  << pressure_psi << " psi" << std::endl;
-                } else if (ch == 3)
-                    current_meas_.P_d_fuel = pressure_psi * 6894.76;
-                else if (ch == 7)
-                    current_meas_.P_d_ox = pressure_psi * 6894.76;
-                else if (ch == 6) {
-                    current_meas_.P_reg = pressure_psi * 6894.76;
-                    current_meas_.P_copv = pressure_psi * 6894.76;
-                } else if (ch == 4)
-                    current_meas_.P_ch_mp1 = pressure_psi * 6894.76;
-                else if (ch == 8)
-                    current_meas_.P_ch_mp2 = pressure_psi * 6894.76;
-                current_meas_.timestamp = std::chrono::steady_clock::now();
-                has_measurement_ = true;
-            }
-        }
-
-        ::close(fd);
-        if (running_) {
-            std::cerr << "[ControllerService] Relay WS disconnected, reconnecting..." << std::endl;
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-        }
-    }
-    std::cout << "[ControllerService] Relay subscriber stopped." << std::endl;
 }
 
 void ControllerService::elodinSubscriberLoop() {

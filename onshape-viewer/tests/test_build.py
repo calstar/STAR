@@ -229,3 +229,54 @@ def test_glb_positions_have_accessor_bounds(built):
         assert accessor.min is not None and len(accessor.min) == 3
         assert accessor.max is not None and len(accessor.max) == 3
         assert all(lo <= hi for lo, hi in zip(accessor.min, accessor.max))
+
+
+def test_glb_meshes_carry_face_groups(built):
+    """Face grouping rides on the shared mesh so the viewer can pick a face."""
+    _, output = built
+    gltf = GLTF2().load(str(output / "model.glb"))
+    for mesh in gltf.meshes:
+        extras = mesh.extras or {}
+        assert "faceIds" in extras and "faceTriCounts" in extras
+        assert len(extras["faceIds"]) == len(extras["faceTriCounts"])
+        assert sum(extras["faceTriCounts"]) > 0
+
+
+# -- geometry sidecar ------------------------------------------------------
+
+
+def test_geometry_sidecar_is_written(built):
+    _, output = built
+    assert (output / "geometry.json").exists()
+    assert (output / "geometry.npz").exists()
+
+
+def test_geometry_store_round_trips(built):
+    """The sidecar reloads and every occurrence with geometry is present."""
+    from backend.onshape.geometry_store import GeometryStore
+
+    manifest, output = built
+    store = GeometryStore.load(output)
+
+    with_geometry = {p["key"] for p in manifest["parts"] if p["hasGeometry"]}
+    assert set(store.occurrence_keys()) == with_geometry
+
+
+def test_geometry_store_face_triangles_are_world_frame(built):
+    """A picked face resolves to triangles placed by the occurrence transform."""
+    from backend.onshape.geometry_store import GeometryStore
+
+    manifest, output = built
+    store = GeometryStore.load(output)
+    faces = store.iter_faces()
+    assert faces
+
+    # Every face's triangles are (T, 3, 3) and finite.
+    for fg in faces[:50]:
+        assert fg.triangles.ndim == 3 and fg.triangles.shape[1:] == (3, 3)
+        assert np.isfinite(fg.triangles).all()
+
+    # faces_for is a strict subset resolving the requested (key, faceId) pairs.
+    sel = [(faces[0].occurrence_key, faces[0].face_id)]
+    got = store.faces_for(sel)
+    assert [(g.occurrence_key, g.face_id) for g in got] == sel

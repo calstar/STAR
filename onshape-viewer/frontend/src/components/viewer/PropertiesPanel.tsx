@@ -33,40 +33,36 @@ interface Props {
   onOverrideChange: (key: string, override: PartOverride | null) => void
 }
 
+/**
+ * The Properties tab body. No header or scroll container of its own -- the
+ * InspectorPanel that hosts it owns the tab strip and the one scroll region.
+ */
 export function PropertiesPanel({ selected, visibleKeys, overrides, onOverrideChange }: Props) {
   if (selected.length === 0) {
     return (
-      <Shell>
-        <p className="px-3 py-4 text-slate-500">
-          Nothing selected. Click a part in the list or in the model; shift or ctrl click to
-          select several.
-        </p>
-      </Shell>
+      <p className="px-3 py-4 text-slate-500">
+        Nothing selected. Click a part in the list or in the model; shift or ctrl click to
+        select several.
+      </p>
     )
   }
 
   if (selected.length === 1) {
     const part = selected[0]
     return (
-      <Shell>
-        <PartProperties
-          // Remounts on a new selection, so the mass field cannot carry a
-          // half-typed value from the previous part.
-          key={part.key}
-          part={part}
-          hidden={!visibleKeys.has(part.key)}
-          override={overrides.get(part.key) ?? null}
-          onOverrideChange={onOverrideChange}
-        />
-      </Shell>
+      <PartProperties
+        // Remounts on a new selection, so the mass field cannot carry a
+        // half-typed value from the previous part.
+        key={part.key}
+        part={part}
+        hidden={!visibleKeys.has(part.key)}
+        override={overrides.get(part.key) ?? null}
+        onOverrideChange={onOverrideChange}
+      />
     )
   }
 
-  return (
-    <Shell>
-      <Selection selected={selected} visibleKeys={visibleKeys} />
-    </Shell>
-  )
+  return <Selection selected={selected} visibleKeys={visibleKeys} />
 }
 
 function PartProperties({
@@ -304,25 +300,10 @@ function Selection({ selected, visibleKeys }: { selected: Part[]; visibleKeys: S
   )
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center border-b border-slate-700 px-3 py-2">
-        <span className="text-base font-semibold text-slate-200">Properties</span>
-      </div>
-      {/* One scroll region for the whole body: a long selection list and a
-          part with every identity field both overflow the same way.
-          text-[15px] is the parts tree's body size -- the two sidebars are read
-          together, so they set text at the same scale. */}
-      <div className="min-h-0 flex-1 overflow-y-auto text-[15px]">{children}</div>
-    </div>
-  )
-}
-
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="border-b border-slate-800 px-3 py-2">
-      <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+      <h4 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-200">
         {title}
       </h4>
       <div className="space-y-0.5">{children}</div>

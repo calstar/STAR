@@ -23,7 +23,7 @@ import { Grid, OrbitControls, OrthographicCamera, useGLTF } from '@react-three/d
 
 import * as THREE from 'three'
 
-import type { Manifest, Part } from '../../types'
+import type { FaceRef, Manifest, MotorResult, Part } from '../../types'
 import { STATUS_COLOR, massStatus } from '../../lib/status'
 import { CMMarker } from './CMMarker'
 
@@ -227,6 +227,93 @@ interface ModelProps {
   onHover: (keys: string[]) => void
   opacity: number
   onBounds: (bounds: Bounds) => void
+  /** When true, a click toggles a *face* into the active edit set. */
+  faceEditMode: boolean
+  /** Which set clicks edit while in face-edit mode. */
+  editTarget: 'body' | 'fin' | 'motor'
+  /** occurrence key -> set of face ids, per highlight layer. */
+  bodyFaces: Map<string, Set<string>>
+  finFaces: Map<string, Set<string>>
+  /** The motor's single reference (datum) face, highlighted fuchsia. */
+  motorFaces: Map<string, Set<string>>
+  onFaceToggle: (target: 'body' | 'fin' | 'motor', occurrenceKey: string, faceId: string) => void
+  /** Show ONLY the selected faces -- hide every other surface and edge. */
+  isolateOuterFaces: boolean
+}
+
+/** Feature edges of the isolated surfaces, so the shape stays legible. */
+const FACE_EDGE_MATERIAL = new THREE.LineBasicMaterial({
+  color: '#0f172a',
+  transparent: true,
+  opacity: 0.9,
+  depthTest: true,
+})
+
+/**
+ * Highlight fill for picked aerodynamic surfaces.
+ *
+ * Unlike the click-selection silhouette (which floats to the front of the canvas
+ * on purpose), this must read as a real surface *on* the part: it writes depth
+ * and is depth-tested, so a chosen face at the back of the rocket is occluded by
+ * whatever is in front of it. Without that, anything highlighted behind a part
+ * bleeds through and the whole model looks selected. Mode is set per-frame in the
+ * effect below: a translucent tint in normal view, an opaque solid when
+ * isolating so the used surfaces render as a clean, properly-occluded shell.
+ *
+ * Two layers with distinct colours, both different from the click-selection cyan:
+ * the body-of-revolution skin (teal) and the fins (orange).
+ */
+function makeFaceHighlight(color: string): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.5,
+    side: THREE.DoubleSide,
+    depthTest: true,
+    depthWrite: true,
+    // Nudge toward the camera so it wins the coplanar tie against its own base
+    // surface (otherwise the part, drawn after, hides it). Tiny, so geometry that
+    // is genuinely in front still occludes it.
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  })
+}
+
+// Distinct from the click-selection cyan (COLOR_SELECTED) and each other.
+const BODY_HL_MATERIAL = makeFaceHighlight('#a78bfa') // violet: airframe skin
+const FIN_HL_MATERIAL = makeFaceHighlight('#f97316') // orange: fins
+const MOTOR_HL_MATERIAL = makeFaceHighlight('#e879f9') // fuchsia: motor datum face
+
+/** The motor cylinder's colour, matching the datum-face highlight. */
+const MOTOR_COLOR = '#e879f9'
+
+interface HighlightLayer {
+  name: 'body' | 'fin' | 'motor'
+  material: THREE.MeshBasicMaterial
+  hlKey: string // userData slot for the fill mesh
+  edgeKey: string // userData slot for the edge lines
+}
+
+const HIGHLIGHT_LAYERS: HighlightLayer[] = [
+  { name: 'body', material: BODY_HL_MATERIAL, hlKey: 'bodyHL', edgeKey: 'bodyEdges' },
+  { name: 'fin', material: FIN_HL_MATERIAL, hlKey: 'finHL', edgeKey: 'finEdges' },
+  { name: 'motor', material: MOTOR_HL_MATERIAL, hlKey: 'motorHL', edgeKey: 'motorEdges' },
+]
+
+/**
+ * Resolve a raycast triangle index to its Onshape face id.
+ *
+ * Triangles are stored grouped by face (glb.py writes `faceTriCounts` onto the
+ * mesh), so the face is the group whose running total first covers `faceIndex`.
+ */
+function faceIdFor(faceIds: string[], counts: number[], faceIndex: number): string | null {
+  let start = 0
+  for (let g = 0; g < counts.length; g++) {
+    start += counts[g]
+    if (faceIndex < start) return faceIds[g]
+  }
+  return null
 }
 
 function Model({
@@ -240,6 +327,13 @@ function Model({
   onHover,
   opacity,
   onBounds,
+  faceEditMode,
+  editTarget,
+  bodyFaces,
+  finFaces,
+  motorFaces,
+  onFaceToggle,
+  isolateOuterFaces,
 }: ModelProps) {
   const { scene } = useGLTF(url)
 
@@ -334,10 +428,117 @@ function Model({
       object.userData.mask = mask
       object.userData.hull = hull
       object.add(mask, hull)
+
+      // One overlay per highlight layer (body skin, fins), each sharing the
+      // part's position buffer but carrying its own index (rebuilt as the
+      // selection changes) plus feature edges for isolate mode. Distinct colours.
+      for (const layer of HIGHLIGHT_LAYERS) {
+        const hlGeometry = new THREE.BufferGeometry()
+        hlGeometry.setAttribute('position', object.geometry.getAttribute('position'))
+        hlGeometry.setIndex([])
+        const hl = new THREE.Mesh(hlGeometry, layer.material)
+        hl.renderOrder = 1 // natural depth order, not the front-of-canvas overlay
+        hl.visible = false
+        hl.raycast = () => {}
+        object.userData[layer.hlKey] = hl
+        object.add(hl)
+
+        const edges = new THREE.LineSegments(new THREE.BufferGeometry(), FACE_EDGE_MATERIAL)
+        edges.renderOrder = 2
+        edges.visible = false
+        edges.raycast = () => {}
+        object.userData[layer.edgeKey] = edges
+        object.add(edges)
+      }
     }
 
     return clone
   }, [scene])
+
+  // Repaint the face-selection overlay whenever the picked set changes. For each
+  // part, gather the triangle indices of its selected faces and set them as the
+  // overlay's index. The source index is grouped by face, so a face's triangles
+  // are the contiguous block its running `faceTriCounts` describes.
+  useEffect(() => {
+    // Isolate: an opaque, depth-writing solid so the shell occludes itself and
+    // reads as a real shape. Normal: a translucent tint that still writes depth,
+    // so a chosen face is hidden behind whatever is in front of it rather than
+    // bleeding through to the front of the canvas.
+    for (const layer of HIGHLIGHT_LAYERS) {
+      layer.material.transparent = !isolateOuterFaces
+      layer.material.opacity = isolateOuterFaces ? 1 : 0.5
+      // The camera-ward nudge is only needed in normal view to beat the base
+      // surface; in isolate there is no base, and it would hide the edges.
+      layer.material.polygonOffset = !isolateOuterFaces
+      layer.material.needsUpdate = true
+    }
+    const layerMaps: Record<string, Map<string, Set<string>>> = {
+      body: bodyFaces,
+      fin: finFaces,
+      motor: motorFaces,
+    }
+
+    model.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return
+      const key = object.userData?.key as string | undefined
+      if (!key) return
+      const faceIds = object.userData?.faceIds as string[] | undefined
+      const counts = object.userData?.faceTriCounts as number[] | undefined
+      const srcIndex = object.geometry.index?.array
+
+      for (const layer of HIGHLIGHT_LAYERS) {
+        const hl = object.userData?.[layer.hlKey] as THREE.Mesh | undefined
+        const edges = object.userData?.[layer.edgeKey] as THREE.LineSegments | undefined
+        if (!hl) continue
+        const chosen = layerMaps[layer.name].get(key)
+
+        // The body skin and the motor datum face show whenever picked. The fin
+        // FACE highlight (the raw CAD face, which runs through the tube on a
+        // through-the-wall fin) shows ONLY while editing fins -- otherwise the fin
+        // is represented by its rendered planform surface, clipped to the exposed part.
+        const layerActive =
+          layer.name === 'body' ||
+          layer.name === 'motor' ||
+          (faceEditMode && editTarget === 'fin')
+
+        if (!layerActive || !chosen || chosen.size === 0 || !faceIds || !counts || !srcIndex) {
+          hl.visible = false
+          if (edges) edges.visible = false
+          continue
+        }
+
+        const picked: number[] = []
+        let start = 0
+        for (let g = 0; g < counts.length; g++) {
+          const count = counts[g]
+          if (chosen.has(faceIds[g])) {
+            for (let t = start; t < start + count; t++) {
+              picked.push(srcIndex[t * 3], srcIndex[t * 3 + 1], srcIndex[t * 3 + 2])
+            }
+          }
+          start += count
+        }
+        hl.geometry.setIndex(picked)
+        hl.visible = picked.length > 0
+
+        // Feature edges of exactly the picked faces, so isolate mode reads as a
+        // shape rather than a flat blob (in normal mode the part's own edges show).
+        if (edges) {
+          edges.geometry.dispose()
+          if (isolateOuterFaces && picked.length > 0) {
+            const sub = new THREE.BufferGeometry()
+            sub.setAttribute('position', object.geometry.getAttribute('position'))
+            sub.setIndex(picked)
+            edges.geometry = new THREE.EdgesGeometry(sub, EDGE_ANGLE)
+            edges.visible = true
+          } else {
+            edges.geometry = new THREE.BufferGeometry()
+            edges.visible = false
+          }
+        }
+      }
+    })
+  }, [model, faceEditMode, editTarget, bodyFaces, finFaces, motorFaces, isolateOuterFaces])
 
   useEffect(() => {
     // Force world matrices before measuring: setFromObject reads matrixWorld,
@@ -360,6 +561,27 @@ function Model({
       if (!key) return
 
       object.visible = visibleKeys.has(key)
+
+      const outlineObj = object.userData?.edges as THREE.LineSegments | undefined
+
+      // Isolate mode: render every part's surface invisibly (no colour, no depth
+      // write, so it neither shows nor occludes) and hide its edges, leaving only
+      // the selected-face overlay -- so exactly the surfaces feeding the CP show.
+      if (isolateOuterFaces) {
+        const mat = object.material as THREE.MeshStandardMaterial
+        mat.transparent = true
+        mat.opacity = 0
+        mat.depthWrite = false
+        mat.depthTest = true
+        mat.needsUpdate = true
+        if (outlineObj) outlineObj.visible = false
+        const m = object.userData.mask as THREE.Mesh | undefined
+        const h = object.userData.hull as THREE.Mesh | undefined
+        if (m) m.visible = false
+        if (h) h.visible = false
+        return
+      }
+      if (outlineObj) outlineObj.visible = true
 
       const part = parts.get(key)
       const isSelected = selectedKeys.has(key)
@@ -430,7 +652,7 @@ function Model({
         hull.material = isSelected ? HULL_SELECTED : HULL_HOVERED
       }
     })
-  }, [model, parts, visibleKeys, selectedKeys, overriddenKeys, hoveredKeys, opacity])
+  }, [model, parts, visibleKeys, selectedKeys, overriddenKeys, hoveredKeys, opacity, isolateOuterFaces])
 
   return (
     <primitive
@@ -439,7 +661,21 @@ function Model({
       // orbiting the camera does not re-select whatever the drag started over.
       onClick={(event: any) => {
         event.stopPropagation()
-        const key = event.object?.userData?.key as string | undefined
+        const object = event.object
+        const key = object?.userData?.key as string | undefined
+
+        // In face-edit mode a click toggles the picked face rather than
+        // selecting the whole part.
+        if (faceEditMode && key) {
+          const faceIds = object.userData?.faceIds as string[] | undefined
+          const counts = object.userData?.faceTriCounts as number[] | undefined
+          if (faceIds && counts && typeof event.faceIndex === 'number') {
+            const faceId = faceIdFor(faceIds, counts, event.faceIndex)
+            if (faceId) onFaceToggle(editTarget, key, faceId)
+          }
+          return
+        }
+
         onSelect(key ?? null)
       }}
       // onPointerMove rather than onPointerOver: the whole model is one
@@ -514,6 +750,107 @@ function FitCamera({
   return null
 }
 
+/**
+ * Renders the extracted fin planforms as their own surfaces, in the Onshape
+ * frame. This is the *aerodynamic* fin the calc uses -- rooted at the body
+ * surface, tip outward -- so it shows exactly what feeds the CP and makes plain
+ * that an internal mounting tab is excluded (the surface simply starts at the
+ * tube). Drawn depth-tested so it sits in the model rather than floating on top.
+ */
+function FinPlanforms({ planforms }: { planforms: { lead: number[][]; trail: number[][] }[] }) {
+  const built = useMemo(() => {
+    return planforms.map((pf) => {
+      const n = Math.min(pf.lead.length, pf.trail.length)
+      const pos = new Float32Array(n * 2 * 3)
+      for (let i = 0; i < n; i++) {
+        pos.set(pf.lead[i], i * 6)
+        pos.set(pf.trail[i], i * 6 + 3)
+      }
+      const index: number[] = []
+      for (let i = 0; i < n - 1; i++) {
+        const a = 2 * i
+        index.push(a, a + 1, a + 2, a + 1, a + 3, a + 2)
+      }
+      const fill = new THREE.BufferGeometry()
+      fill.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+      fill.setIndex(index)
+
+      const loop = new Float32Array(n * 2 * 3)
+      for (let i = 0; i < n; i++) loop.set(pf.lead[i], i * 3)
+      for (let i = 0; i < n; i++) loop.set(pf.trail[n - 1 - i], (n + i) * 3)
+      const outline = new THREE.BufferGeometry()
+      outline.setAttribute('position', new THREE.BufferAttribute(loop, 3))
+      return { fill, outline }
+    })
+  }, [planforms])
+
+  return (
+    <group>
+      {built.map((m, i) => (
+        <group key={i}>
+          <mesh geometry={m.fill} renderOrder={3}>
+            <meshBasicMaterial color="#f97316" transparent opacity={0.55} side={THREE.DoubleSide} depthWrite={false} />
+          </mesh>
+          <lineLoop geometry={m.outline} renderOrder={4}>
+            <lineBasicMaterial color="#fdba74" />
+          </lineLoop>
+        </group>
+      ))}
+    </group>
+  )
+}
+
+/**
+ * The selected motor, drawn as a translucent cylinder from its aft end to its fore
+ * end along the rocket axis. Endpoints come from the backend (aero/stability.py),
+ * already in the Onshape frame, so this lives inside the same Z-up group as the CP/CM
+ * markers and lands on the centerline by construction. depthWrite is off so it blends
+ * with the translucent airframe instead of punching a hole in it.
+ */
+function MotorCylinder({
+  aft,
+  fore,
+  radius,
+}: {
+  aft: [number, number, number]
+  fore: [number, number, number]
+  radius: number
+}) {
+  const { geometry, position, quaternion } = useMemo(() => {
+    const a = new THREE.Vector3(aft[0], aft[1], aft[2])
+    const f = new THREE.Vector3(fore[0], fore[1], fore[2])
+    const dir = new THREE.Vector3().subVectors(f, a)
+    const len = Math.max(dir.length(), 1e-6)
+    const geom = new THREE.CylinderGeometry(radius, radius, len, 40, 1, false)
+    // CylinderGeometry runs along +Y; rotate that onto the aft->fore direction.
+    const q = new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      dir.clone().normalize(),
+    )
+    const mid = new THREE.Vector3().addVectors(a, f).multiplyScalar(0.5)
+    return { geometry: geom, position: mid, quaternion: q }
+  }, [aft, fore, radius])
+
+  return (
+    <group position={position} quaternion={quaternion}>
+      <mesh geometry={geometry} renderOrder={5}>
+        <meshStandardMaterial
+          color={MOTOR_COLOR}
+          transparent
+          opacity={0.55}
+          metalness={0.2}
+          roughness={0.5}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      <mesh geometry={geometry} renderOrder={6}>
+        <meshBasicMaterial color={MOTOR_COLOR} wireframe transparent opacity={0.3} depthWrite={false} />
+      </mesh>
+    </group>
+  )
+}
+
 interface SceneProps {
   modelUrl: string
   manifest: Manifest
@@ -528,6 +865,25 @@ interface SceneProps {
   centroid: [number, number, number]
   showAssemblyCentroid: boolean
   opacity: number
+  /** Backend-computed centre of pressure, in the Onshape Z-up frame. */
+  copPosition?: [number, number, number] | null
+  /** Extracted fin planforms to render as their own surfaces (Onshape frame). */
+  finPlanforms?: { lead: number[][]; trail: number[][] }[]
+  /** When true, clicks pick faces (into the active edit target) instead of parts. */
+  faceEditMode?: boolean
+  /** Which set clicks edit while in face-edit mode. */
+  editTarget?: 'body' | 'fin' | 'motor'
+  /** The currently-picked outer (body) faces, highlighted teal. */
+  outerFaces?: FaceRef[]
+  /** The currently-picked fin faces, highlighted orange. */
+  finFaces?: FaceRef[]
+  onFaceToggle?: (target: 'body' | 'fin' | 'motor', occurrenceKey: string, faceId: string) => void
+  /** Show only the picked faces, hiding every other surface. */
+  isolateOuterFaces?: boolean
+  /** Selected motor, drawn as a cylinder on the axis. Null = none placed. */
+  motor?: MotorResult | null
+  /** The motor's datum face, highlighted fuchsia. */
+  motorRefFace?: FaceRef | null
 }
 
 export function Scene({
@@ -542,6 +898,16 @@ export function Scene({
   centroid,
   showAssemblyCentroid,
   opacity,
+  copPosition,
+  finPlanforms,
+  faceEditMode = false,
+  editTarget = 'body',
+  outerFaces,
+  finFaces,
+  onFaceToggle,
+  isolateOuterFaces = false,
+  motor,
+  motorRefFace,
 }: SceneProps) {
   const controls = useRef<any>(null)
   const [bounds, setBounds] = useState<Bounds | null>(null)
@@ -552,6 +918,28 @@ export function Scene({
   const handleBounds = useCallback((next: Bounds) => setBounds(next), [])
 
   const hoveredSet = useMemo(() => new Set(hoveredKeys), [hoveredKeys])
+
+  // occurrence key -> set of picked face ids, per highlight layer.
+  const toMap = (faces: FaceRef[] | undefined) => {
+    const map = new Map<string, Set<string>>()
+    for (const face of faces ?? []) {
+      let set = map.get(face.key)
+      if (!set) {
+        set = new Set()
+        map.set(face.key, set)
+      }
+      set.add(face.faceId)
+    }
+    return map
+  }
+  const bodyFaceMap = useMemo(() => toMap(outerFaces), [outerFaces])
+  const finFaceMap = useMemo(() => toMap(finFaces), [finFaces])
+  const motorFaceMap = useMemo(
+    () => toMap(motorRefFace ? [motorRefFace] : []),
+    [motorRefFace],
+  )
+
+  const noopFaceToggle = useCallback(() => undefined, [])
 
   const parts = useMemo(
     () => new Map(manifest.parts.map((part) => [part.key, part])),
@@ -570,7 +958,11 @@ export function Scene({
       // stencil is off by default in current three, and the silhouette outline
       // is stencil-masked, so without this the rim fills the whole part.
       gl={{ antialias: true, alpha: false, stencil: true }}
-      onPointerMissed={() => onSelect(null)}
+      // A miss clears the part selection, but not while editing faces -- there a
+      // stray click off the model should not wipe the picked set.
+      onPointerMissed={() => {
+        if (!faceEditMode) onSelect(null)
+      }}
       style={{ cursor: hoveredKeys.length > 0 ? 'pointer' : 'default' }}
     >
       <color attach="background" args={['#0b1120']} />
@@ -594,6 +986,13 @@ export function Scene({
           onHover={onHover}
           opacity={opacity}
           onBounds={handleBounds}
+          faceEditMode={faceEditMode}
+          editTarget={editTarget}
+          bodyFaces={bodyFaceMap}
+          finFaces={finFaceMap}
+          motorFaces={motorFaceMap}
+          onFaceToggle={onFaceToggle ?? noopFaceToggle}
+          isolateOuterFaces={isolateOuterFaces}
         />
 
         {/* Onshape-frame quantities live in here, matching the GLB's own root. */}
@@ -613,6 +1012,19 @@ export function Scene({
               color="#34d399"
               label="Onshape"
             />
+          )}
+          {copPosition && (
+            <CMMarker
+              position={copPosition}
+              scale={markerScale}
+              armLength={armLength}
+              color="#f59e0b"
+              label="CP"
+            />
+          )}
+          {finPlanforms && finPlanforms.length > 0 && <FinPlanforms planforms={finPlanforms} />}
+          {motor?.aftWorld && motor.foreWorld && motor.radius != null && (
+            <MotorCylinder aft={motor.aftWorld} fore={motor.foreWorld} radius={motor.radius} />
           )}
         </group>
       </group>

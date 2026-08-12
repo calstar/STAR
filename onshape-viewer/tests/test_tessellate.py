@@ -89,6 +89,41 @@ def test_non_triangular_facets_are_dropped():
     assert meshes["AAA"].facet_count == 1
 
 
+def test_face_groups_partition_the_triangles(tessellation):
+    """Face groups must cover every triangle exactly once, in order."""
+    meshes = parse_tessellation(tessellation)
+    for mesh in meshes.values():
+        assert len(mesh.face_ids) == len(mesh.face_tri_counts)
+        assert sum(mesh.face_tri_counts) == mesh.triangle_count
+        per_tri = mesh.face_id_per_triangle()
+        assert per_tri.shape == (mesh.triangle_count,)
+        assert per_tri.max() < len(mesh.face_ids)
+
+
+def test_face_ids_are_preserved():
+    """A body's face ids survive parsing rather than being flattened away."""
+    payload = {
+        "bodies": [
+            {
+                "id": "AAA",
+                "faces": [
+                    {"id": "F1", "facets": [
+                        {"vertices": [{"x": 0, "y": 0, "z": 0}, {"x": 1, "y": 0, "z": 0}, {"x": 0, "y": 1, "z": 0}]},
+                    ]},
+                    {"id": "F2", "facets": [
+                        {"vertices": [{"x": 0, "y": 0, "z": 1}, {"x": 1, "y": 0, "z": 1}, {"x": 0, "y": 1, "z": 1}]},
+                        {"vertices": [{"x": 1, "y": 1, "z": 1}, {"x": 1, "y": 0, "z": 1}, {"x": 0, "y": 1, "z": 1}]},
+                    ]},
+                ],
+            }
+        ]
+    }
+    mesh = parse_tessellation(payload)["AAA"]
+    assert mesh.face_ids == ["F1", "F2"]
+    assert mesh.face_tri_counts == [1, 2]
+    assert mesh.face_id_per_triangle().tolist() == [0, 1, 1]
+
+
 def test_vertices_are_float64(tessellation):
     """Mass-adjacent maths runs on these, so precision is kept until GLB export."""
     mesh = next(iter(parse_tessellation(tessellation).values()))

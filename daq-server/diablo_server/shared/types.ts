@@ -27,6 +27,7 @@ export enum MessageType {
   NOTIFICATION = 'notification',
   CONFIG_UPDATED = 'config_updated',
   COUNTDOWN_TARGET_UPDATE = 'countdown_target_update',
+  SESSION_UPDATE = 'session_update',
 
   // Engine-control authorization (DAQ operator gate)
   CONTROL_STATUS = 'control_status',                // Server → Client: { operator, email }
@@ -141,7 +142,10 @@ export interface CommandPayload {
   | 'controller_command'
   | 'debug_mode'
   | 'extend_fire'
-  | 'set_countdown_target';
+  | 'set_countdown_target'
+  | 'session_start'
+  | 'session_stop'
+  | 'session_extend';
   data: {
     state?: SystemState;
     /** Config-driven: actuator role name from config.toml actuator_roles (e.g. "LOX Main") */
@@ -158,7 +162,28 @@ export interface CommandPayload {
     debugMode?: boolean; // Debug mode toggle
     /** Unix timestamp in milliseconds. null clears/pauses the countdown. */
     targetTimeMs?: number | null;
+    /** session_start: Save (true) keeps the run's DB; Discard (false) deletes it on stop. */
+    keepData?: boolean;
+    /** session_start: auto-stop timeout in milliseconds. */
+    durationMs?: number;
+    /** session_extend: milliseconds to push the auto-stop deadline out by. */
+    addMs?: number;
   };
+}
+
+/**
+ * DAQ run session — a run started/stopped from the session screen with a
+ * backend-owned auto-stop timeout. `enabled` is false when SESSION_SERVICE_MODE
+ * is off (the launch-site laptop): the UI hides the button and nothing auto-stops.
+ */
+export interface SessionStatus {
+  enabled: boolean;
+  active: boolean;
+  dbDir: string | null;
+  keepData: boolean;
+  deadlineMs: number | null;
+  remainingMs: number | null;
+  freeDiskBytes: number | null;
 }
 
 // Connection status
