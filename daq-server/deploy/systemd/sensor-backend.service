@@ -20,6 +20,9 @@ Environment=GUI_PORT=3000
 # PWM during FIRE → C++ controller_service (reads Elodin, runs RobustDDP, sends UDP PWM)
 Environment=USE_CPP_CONTROLLER=true
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Optional local/CI sim overlay (USE_SIM, CONFIG_PATH → remapped sim config).
+# Absent on the server ⇒ hardware config, USE_SIM unset, no simulator in the pipeline.
+EnvironmentFile=-%h/.config/daq/pipeline.env
 
 [Install]
 WantedBy=default.target

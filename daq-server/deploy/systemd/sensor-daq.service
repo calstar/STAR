@@ -5,7 +5,12 @@ After=network.target sensor-elodin.service
 [Service]
 Type=simple
 WorkingDirectory=%h/sensor_system
-ExecStart=/bin/bash -c 'if [ -x ./build/bin/daq_bridge ]; then exec ./build/bin/daq_bridge config/config.toml; else echo "daq_bridge not found — run: cd build && cmake .. && make daq_bridge"; exit 1; fi'
+# Config path defaults to the hardware config; a local/CI sim overlay points
+# DAQ_CONFIG at a remapped sim config via the optional EnvironmentFile (absent
+# on the server ⇒ no change).
+Environment=DAQ_CONFIG=config/config.toml
+EnvironmentFile=-%h/.config/daq/pipeline.env
+ExecStart=/bin/bash -c 'if [ -x ./build/bin/daq_bridge ]; then exec ./build/bin/daq_bridge ${DAQ_CONFIG}; else echo "daq_bridge not found — run: cd build && cmake .. && make daq_bridge"; exit 1; fi'
 Restart=always
 RestartSec=5
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

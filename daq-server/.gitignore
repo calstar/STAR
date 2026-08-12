@@ -209,3 +209,4 @@ config_local.toml
 # Runtime session/countdown state (written next to config.toml at runtime; never commit)
 config/session_state.json
 config/countdown_state.json
+config/sim_config.toml
