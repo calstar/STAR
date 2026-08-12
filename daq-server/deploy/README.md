@@ -13,6 +13,19 @@ are up on the host, the public URL just works — nothing to change in the Docke
 > that actually *starts* it is the `systemctl --user enable --now …` in Step 6 — everything
 > before that is just clone/build/install. You watch it with `journalctl`, not tmux.
 
+## Automated (bootstrap)
+
+On the combined apps+DAQ box, the apps bootstrap can provision all of this in one shot —
+it runs the exact steps below as the DAQ user:
+
+```bash
+WITH_DAQ=1 sudo -E bash deploy/apps/bootstrap.sh      # add USE_SIM=1 for a no-hardware box
+```
+
+That clones to `~/STAR-daq`, installs the build deps + Node + elodin-db, builds the C++ and
+the SPA, installs the systemd units, and starts the web layer. The rest of this doc is the
+manual/reference version of the same steps (and what to do if the bootstrap run warns).
+
 ## Where it goes
 
 In the **DAQ user's home**, not `/opt`:
