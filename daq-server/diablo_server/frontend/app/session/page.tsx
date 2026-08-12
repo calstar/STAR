@@ -58,7 +58,24 @@ export default function SessionPage() {
     ws.sendCommand(command);
   };
 
-  if (!session?.enabled) {
+  // session is null until the first SESSION_UPDATE arrives over the WebSocket.
+  // Distinguish "haven't heard yet" from "backend says disabled" — conflating
+  // them makes a correctly-configured server look like a launch-site laptop when
+  // the real problem is the WebSocket never connected.
+  if (!session) {
+    return (
+      <main className="p-8 text-text">
+        {backLink}
+        <h1 className="text-3xl font-bold mb-3">Session control</h1>
+        <p className="text-lg text-gray-200 max-w-2xl leading-relaxed">
+          Connecting… (waiting for the backend WebSocket). If this persists, the live data
+          connection isn’t reaching the browser.
+        </p>
+      </main>
+    );
+  }
+
+  if (!session.enabled) {
     return (
       <main className="p-8 text-text">
         {backLink}

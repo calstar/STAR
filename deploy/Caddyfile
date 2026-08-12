@@ -36,6 +36,14 @@
 		uri /verify
 		# Identity for the upstream app, taken from the /verify response.
 		copy_headers X-Auth-Email X-Auth-User
+		# A WebSocket handshake carries Connection: Upgrade + Upgrade: websocket.
+		# gunicorn (the auth service) 400s on the /verify subrequest when both are
+		# present, so Caddy denies the upgrade before it reaches the app — which is
+		# why any protected app's WebSocket (e.g. daq-server) never connects. Strip
+		# them from the auth subrequest ONLY; Caddy still proxies the real upgrade
+		# to the app untouched.
+		header_up -Connection
+		header_up -Upgrade
 	}
 }
 
