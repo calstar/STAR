@@ -58,7 +58,7 @@ the box needs only the root compose + `.env`, not the app source. Grab just thos
 with a sparse checkout:
 
 ```bash
-git clone --depth 1 --filter=blob:none --sparse -b ork-onshape \
+git clone --depth 1 --filter=blob:none --sparse -b main \
   https://github.com/calstar/STAR.git
 cd STAR
 git sparse-checkout set deploy/apps      # cone mode also brings the root files
@@ -170,5 +170,4 @@ own `…/releases/<label>.json`. (Swap bucket + prefix for the other two apps.)
   working copies**) lives in the `userdata` volume on this machine, keyed by
   `X-Auth-Email`. P&ID *version history* additionally lives in S3 (above).
 - **Updating:** `docker compose --profile tunnel pull && docker compose --profile tunnel up -d`
-  (CI republishes `:latest` on every push to `main` or `ork-onshape`, the current
-  deploy branch until it merges to `main`).
+  (CI republishes `:latest` on every push to `main`).

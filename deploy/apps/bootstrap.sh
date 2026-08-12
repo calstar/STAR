@@ -22,10 +22,8 @@ set -euo pipefail
 
 # ── Tunables (override via env, e.g. `sudo BRANCH=main bash bootstrap.sh`) ────
 REPO_URL="${REPO_URL:-https://github.com/calstar/STAR.git}"
-# Current deploy branch. landing-page was merged into main and retired;
-# ork-onshape carries the latest apps (incl. the DAQ viewer) until it merges to
-# main -- flip this default to `main` once that lands.
-BRANCH="${BRANCH:-ork-onshape}"
+# Current deploy branch: main (landing-page and ork-onshape were merged in and retired).
+BRANCH="${BRANCH:-main}"
 CLONE_DIR="${CLONE_DIR:-/opt/STAR}"          # where the repo lands on the box
 # The human admin account (desktop auto-login + docker group). Defaults to the
 # user who invoked sudo.

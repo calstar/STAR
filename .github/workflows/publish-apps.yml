@@ -8,12 +8,9 @@ name: Publish app images
 # other workflows).
 'on':
   push:
-    # landing-page was merged into main and retired. main is the eventual home;
-    # ork-onshape is the current deploy branch (carries the DAQ viewer until it
-    # merges). Drop ork-onshape once that merge lands.
+    # main is the deploy branch (landing-page and ork-onshape were merged in and retired).
     branches:
       - main
-      - ork-onshape
     paths:
       - 'EngineDesign/**'
       - 'pid-designer/**'
