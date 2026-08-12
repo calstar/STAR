@@ -140,6 +140,14 @@ export default function App() {
         </div>
       </header>
 
+      {/* Versioned designs: pick/create a design, auto-saved with microversions
+          and immutable releases you can restore. Durable server-side timeline
+          behind the localStorage working cache. */}
+      <ConfigVersions
+        config={ui}
+        onRestore={(c) => { setUi(c); saveUiConfig(c) }}
+      />
+
       <main className="mx-auto max-w-[1800px] px-4 py-6 sm:px-6 lg:px-8">
         <div className={tab === 'recovery' ? '' : 'hidden'}>
           <RecoveryPanel ui={ui} onChange={setUi} />
