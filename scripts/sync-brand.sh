@@ -25,6 +25,7 @@ COPIES=(
   # Full STAR wordmark (imported in React)
   "star-wordmark.png:landing/src/assets"
   "star-wordmark.png:recovery-calculator/frontend/src/assets"
+  "star-wordmark.png:onshape-viewer/frontend/src/assets"
 
   # Browser-tab favicon (served from each app's public/ at /star-icon.svg)
   "star-icon.svg:landing/public"

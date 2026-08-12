@@ -8,6 +8,8 @@ import type {
   OnshapeAssembly,
   OnshapeDocument,
   FinGuess,
+  FlightResult,
+  MotorDetail,
   MotorSearchResult,
   OuterSurfaceGuess,
   StabilityRequest,
@@ -108,14 +110,16 @@ export function fetchFins(modelId: string): Promise<FinGuess> {
  */
 export function searchMotors(
   query: string,
-  options: { limit?: number; signal?: AbortSignal } = {},
+  options: { limit?: number; impulseClass?: string; model?: string; signal?: AbortSignal } = {},
 ): Promise<MotorSearchResult> {
   const params = new URLSearchParams({ query })
   if (options.limit) params.set('limit', String(options.limit))
+  if (options.impulseClass) params.set('impulseClass', options.impulseClass)
+  if (options.model) params.set('model', options.model)
   return getJSON<MotorSearchResult>(`/api/motors?${params.toString()}`, options.signal)
 }
 
-/** CG, CoP and static margin from the approved (or auto-detected) surface. */
+/** CG, CP and static margin from the approved (or auto-detected) surface. */
 export async function computeStability(
   modelId: string,
   request: StabilityRequest,
@@ -128,4 +132,24 @@ export async function computeStability(
   })
   if (!response.ok) await fail(url, response)
   return response.json() as Promise<StabilityResult>
+}
+
+/** Full detail for one motor: every datafile (Full/Basic) with its thrust/mass/CG curves. */
+export function fetchMotor(motorId: string): Promise<MotorDetail> {
+  return getJSON<MotorDetail>(`/api/motors/${encodeURIComponent(motorId)}`)
+}
+
+/** Ascent flight profile (altitude/velocity/acceleration + static margin over time). */
+export async function computeFlight(
+  modelId: string,
+  request: StabilityRequest,
+): Promise<FlightResult> {
+  const url = `/api/models/${modelId}/flight`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) await fail(url, response)
+  return response.json() as Promise<FlightResult>
 }

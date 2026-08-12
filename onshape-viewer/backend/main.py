@@ -40,6 +40,7 @@ from .onshape.aero.fins import (
 )
 from .onshape.aero.outer_surface import detect_outer_surface
 from .onshape.aero.profile import build_profile
+from .onshape.aero.flight import simulate_flight
 from .onshape.aero.stability import MotorPlacement, compute_stability
 from .onshape.browse import BrowseCache
 from .onshape.build import build as run_build
@@ -163,9 +164,11 @@ class MotorSelection(BaseModel):
     #: thrustcurve.org motor id, and which datafile of it (None = best available).
     motorId: str
     simfileId: str | None = None
-    #: Axial position of the motor's aft end, measured from the nose tip (m).
-    #: None means aft-flush with the airframe base.
-    aftFromNose: float | None = None
+    #: Offset of the motor's aft end from its datum (m), aft-positive. The datum is the
+    #: airframe base by default, or ``refFace`` when given. 0 = aft-flush / at the face.
+    aftOffset: float = 0.0
+    #: Optional face to measure the aft end from; must be normal to the rocket axis.
+    refFace: FaceRef | None = None
     #: "launch" (wet) or "burnout" (dry) -- picks which end of the mass table to use.
     state: str = "launch"
 
@@ -184,6 +187,8 @@ class StabilityRequest(BaseModel):
     axis: AxisInput | None = None
     #: Optional motor to fold into the CG / static margin.
     motor: MotorSelection | None = None
+    #: Guided rail length (m) for the flight sim's off-rail velocity. Ignored by /stability.
+    railLength: float | None = None
 
 
 def _model_dir(model_id: str) -> Path:
@@ -301,7 +306,11 @@ async def stability(model_id: str, request: StabilityRequest):
 
     if motor_block is not None:
         motor_block["cgFromNose"] = result.motor_cg_from_nose
-        motor_block["aftFromNose"] = result.motor_aft_from_nose
+        motor_block["aftFromBase"] = result.motor_aft_from_base
+        motor_block["aftWorld"] = result.motor_aft_world
+        motor_block["foreWorld"] = result.motor_fore_world
+        motor_block["radius"] = result.motor_radius
+        motor_block["cgWorld"] = result.motor_cg_world
 
     return {
         "cg": {"world": result.cg_world, "fromNose": result.cg_from_nose},
@@ -326,6 +335,93 @@ async def stability(model_id: str, request: StabilityRequest):
     }
 
 
+@app.post("/api/models/{model_id}/flight")
+async def flight(model_id: str, request: StabilityRequest):
+    """Ascent flight profile (altitude/velocity/acceleration + static margin over time).
+
+    A motor is required. 1-DOF, thrust minus weight, no drag yet (see aero/flight.py), so the
+    apogee is an upper bound until the atmosphere model lands.
+    """
+    if request.motor is None:
+        raise HTTPException(status_code=422, detail="a motor is required to simulate a flight")
+
+    model_dir = _model_dir(model_id)
+    store = _load_store(model_dir)
+    manifest = json.loads((model_dir / "manifest.json").read_text())
+
+    faces = [(f.key, f.faceId) for f in request.outerFaces]
+    axis = None
+    if not faces:
+        faces = detect_outer_surface(store).faces
+    if request.axis is not None:
+        import numpy as np
+
+        axis = Axis(
+            origin=np.asarray(request.axis.origin, dtype=float),
+            direction=np.asarray(request.axis.direction, dtype=float)
+            / (np.linalg.norm(request.axis.direction) or 1.0),
+        )
+    fin_faces = (
+        [(f.key, f.faceId) for f in request.finFaces] if request.finFaces is not None else None
+    )
+
+    motor_obj = _motor_db.get_motor(request.motor.motorId, request.motor.simfileId)
+    if motor_obj is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"unknown motor {request.motor.motorId} (has the catalog been fetched?)",
+        )
+    placement, motor_block = _resolve_motor(request.motor)
+
+    rail_length = request.railLength if request.railLength and request.railLength > 0 else 1.0
+    try:
+        result = simulate_flight(
+            store,
+            manifest_parts=manifest.get("parts", []),
+            outer_faces=faces,
+            motor=motor_obj,
+            placement=placement,
+            axis=axis,
+            overrides=request.overrides,
+            fin_faces=fin_faces,
+            n_fins=request.nFins,
+            rail_length=rail_length,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    samples = [
+        {
+            "t": result.times[i],
+            "altitude": result.altitude[i],
+            "velocity": result.velocity[i],
+            "acceleration": result.acceleration[i],
+            "thrust": result.thrust[i],
+            "mass": result.mass[i],
+            "staticMargin": result.static_margin[i],
+        }
+        for i in range(len(result.times))
+    ]
+    return {
+        "motor": {"name": motor_block["name"], "format": motor_block["format"]},
+        "samples": samples,
+        "apogee": result.apogee,
+        "apogeeTime": result.apogee_time,
+        "maxVelocity": result.max_velocity,
+        "maxAcceleration": result.max_acceleration,
+        "burnoutTime": result.burnout_time,
+        "burnoutAltitude": result.burnout_altitude,
+        "burnoutVelocity": result.burnout_velocity,
+        "liftoffMass": result.liftoff_mass,
+        "thrustToWeight": result.thrust_to_weight,
+        "liftoff": result.liftoff,
+        "railLength": result.rail_length,
+        "railExitVelocity": result.rail_exit_velocity,
+        "railExitTime": result.rail_exit_time,
+        "railCleared": result.rail_cleared,
+    }
+
+
 def _resolve_motor(selection: "MotorSelection | None"):
     """Turn a MotorSelection into a MotorPlacement (for the CG) plus a response block.
 
@@ -343,8 +439,16 @@ def _resolve_motor(selection: "MotorSelection | None"):
     dry = selection.state == "burnout"
     mass = motor.burnout_mass if dry else motor.launch_mass
     cmx = motor.burnout_cgx if dry else motor.launch_cgx
+    ref_face = (
+        (selection.refFace.key, selection.refFace.faceId) if selection.refFace else None
+    )
     placement = MotorPlacement(
-        mass=mass, length=motor.length, cmx=cmx, aft_from_nose=selection.aftFromNose
+        mass=mass,
+        length=motor.length,
+        cmx=cmx,
+        diameter=motor.diameter,
+        aft_offset=selection.aftOffset,
+        ref_face=ref_face,
     )
     name = f"{motor.manufacturer} {motor.designation}".strip()
     block = {
@@ -368,10 +472,23 @@ def _resolve_motor(selection: "MotorSelection | None"):
 
 
 @app.get("/api/motors")
-async def search_motors(query: str = Query("", max_length=100), limit: int = Query(50, ge=1, le=200)):
-    """Search the offline motor mirror by manufacturer / designation / common name."""
+async def search_motors(
+    query: str = Query("", max_length=100),
+    impulseClass: str = Query("", max_length=2),
+    model: str = Query("", max_length=8),
+    limit: int = Query(60, ge=1, le=500),
+):
+    """Search the offline motor mirror by manufacturer / designation / common name.
+
+    ``impulseClass`` filters to one class exactly (A..O). ``model`` filters by tier: "full"
+    (has a RockSim datafile) or "basic" (RASP only). ``total`` is the full match count before
+    the ``limit`` slice, so the UI can say "showing N of M".
+    """
+    cls = impulseClass or None
+    tier = model or None
     return {
-        "items": _motor_db.search(query, limit=limit),
+        "items": _motor_db.search(query, impulse_class=cls, model=tier, limit=limit),
+        "total": _motor_db.count(query, impulse_class=cls, model=tier),
         "fetchedAt": _motor_db.fetched_at,
         "available": _motor_db.exists(),
     }

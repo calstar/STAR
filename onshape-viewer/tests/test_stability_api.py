@@ -186,7 +186,11 @@ def test_stability_with_motor_shifts_cg_and_margin(monkeypatch, tmp_path):
 
     assert withm["motor"]["quality"] == "basic"
     assert withm["motor"]["wetMass"] == motor.launch_mass
-    assert withm["motor"]["aftFromNose"] == 1.0  # aft-flush with the 1 m body
+    assert withm["motor"]["aftFromBase"] == 0.0  # aft-flush with the airframe base
+    # Cylinder geometry is returned for drawing the motor.
+    assert withm["motor"]["aftWorld"] is not None
+    assert withm["motor"]["foreWorld"] is not None
+    assert withm["motor"]["radius"] == motor.diameter / 2
     assert withm["mass"] == base["mass"] + motor.launch_mass
     # Motor added aft of the nose part -> CG moves aft, margin drops.
     assert withm["cg"]["fromNose"] > base["cg"]["fromNose"]

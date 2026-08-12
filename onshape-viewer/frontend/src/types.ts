@@ -142,8 +142,35 @@ export interface MotorSummary {
   simfiles: MotorSimfileRef[]
 }
 
+/** One datafile of a motor with its full time-domain curves (from GET /api/motors/{id}). */
+export interface MotorSimfileDetail {
+  simfileId: string
+  format: 'RASP' | 'RockSim'
+  quality: 'full' | 'basic'
+  designation: string
+  manufacturer: string
+  length: number
+  diameter: number
+  wetMass: number
+  dryMass: number
+  propMass: number
+  burnTime: number
+  /** Parallel arrays: time (s), thrust (N), CG from the fore end (m), total mass (kg). */
+  time: number[]
+  thrust: number[]
+  cgX: number[]
+  mass: number[]
+}
+
+export interface MotorDetail {
+  meta: { manufacturer?: string; designation?: string } | null
+  simfiles: MotorSimfileDetail[]
+}
+
 export interface MotorSearchResult {
   items: MotorSummary[]
+  /** Total matches before the limit slice, for a "showing N of M" hint. */
+  total: number
   fetchedAt: string | null
   available: boolean
 }
@@ -152,8 +179,13 @@ export interface MotorSearchResult {
 export interface MotorSelection {
   motorId: string
   simfileId?: string | null
-  /** Aft-end position from the nose tip (m); null = aft-flush with the airframe base. */
-  aftFromNose?: number | null
+  /**
+   * Offset of the motor's aft end from its datum (m), aft-positive. The datum is the
+   * airframe base, or `refFace` when set. 0 = aft-flush with the base / at the face.
+   */
+  aftOffset?: number
+  /** A face to measure the aft end from; must be normal to the rocket axis. */
+  refFace?: FaceRef | null
   state: 'launch' | 'burnout'
 }
 
@@ -172,7 +204,14 @@ export interface MotorResult {
   diameter: number
   burnTime: number
   cgFromNose: number | null
-  aftFromNose: number | null
+  /** Aft-end offset from the datum (base or reference face), m. */
+  aftFromBase: number | null
+  /** Motor cylinder endpoints (Onshape Z-up frame) and radius (m), for drawing it. */
+  aftWorld: [number, number, number] | null
+  foreWorld: [number, number, number] | null
+  radius: number | null
+  /** Motor CG (Onshape Z-up frame) for the chosen state, to fold into the CM marker. */
+  cgWorld: [number, number, number] | null
 }
 
 export interface StabilityRequest {
@@ -187,6 +226,8 @@ export interface StabilityRequest {
   axis?: AxisInfo | null
   /** Optional motor to include in the CG / static margin. */
   motor?: MotorSelection | null
+  /** Guided rail length (m) for the flight sim's off-rail velocity. */
+  railLength?: number
 }
 
 /** One fin's exposed planform outline, in the Onshape Z-up frame. */
@@ -215,7 +256,7 @@ export interface FinGuess {
   planforms: FinPlanform[]
 }
 
-/** CG, CoP and static margin from POST .../stability. All backend-computed. */
+/** CG, CP and static margin from POST .../stability. All backend-computed. */
 export interface StabilityResult {
   cg: { world: [number, number, number]; fromNose: number }
   cp: { world: [number, number, number]; fromNose: number }
@@ -228,6 +269,38 @@ export interface StabilityResult {
   fins: FinData
   /** Present only when a motor was included in the request. */
   motor?: MotorResult | null
+}
+
+/** One time step of the ascent sim. Masses kg, lengths m, times s, margin cal. */
+export interface FlightSample {
+  t: number
+  altitude: number
+  velocity: number
+  acceleration: number
+  thrust: number
+  mass: number
+  staticMargin: number | null
+}
+
+/** Ascent flight profile from POST .../flight (no drag yet; apogee is an upper bound). */
+export interface FlightResult {
+  motor: { name: string; format: string }
+  samples: FlightSample[]
+  apogee: number
+  apogeeTime: number
+  maxVelocity: number
+  maxAcceleration: number
+  burnoutTime: number
+  burnoutAltitude: number
+  burnoutVelocity: number
+  liftoffMass: number
+  thrustToWeight: number
+  liftoff: boolean
+  /** Guided rail length (m) and the velocity/time at full departure (rear lug clears). */
+  railLength: number
+  railExitVelocity: number | null
+  railExitTime: number | null
+  railCleared: boolean
 }
 
 export interface OnshapeDocument {

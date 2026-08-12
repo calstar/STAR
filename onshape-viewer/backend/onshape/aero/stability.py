@@ -48,6 +48,55 @@ def merge_cp(contributions: list[CPContribution]) -> tuple[float, float]:
     return cp, cna_total
 
 
+#: A face counts as normal to the axis when its normal is within this angle of the axis
+#: direction. cos(15 deg) ~= 0.966; a mount face milled square to the tube clears it easily.
+_AXIS_NORMAL_COS = 0.9659
+
+
+def _face_axial_position(triangles: np.ndarray, axis: Axis) -> tuple[float, float]:
+    """Area-weighted axial position of a set of triangles, and how axis-normal they are.
+
+    Returns ``(axial, cos)`` where ``axial`` is the face centroid projected onto the axis
+    (same coordinate as ``profile.x_*``) and ``cos`` is the area-weighted mean of each
+    triangle's ``|unit_normal . axis_dir|`` -- 1.0 only when *every* facet is square to the
+    axis (a flat plane normal to it). Summing the raw normals instead would be fooled by a
+    cone, whose radial components cancel to leave a spurious axial resultant.
+    """
+    v0, v1, v2 = triangles[:, 0], triangles[:, 1], triangles[:, 2]
+    cross = np.cross(v1 - v0, v2 - v0)  # length is twice each triangle's area
+    areas = np.linalg.norm(cross, axis=1)
+    total = float(areas.sum())
+    if total <= 0:
+        raise ValueError("motor reference face has no area")
+    centroids = triangles.mean(axis=1)
+    centroid = (centroids * areas[:, None]).sum(axis=0) / total
+    # Per-triangle unit normals; skip degenerate (zero-area) facets.
+    good = areas > 0
+    unit = cross[good] / areas[good, None]
+    cos = float(np.abs(unit @ axis.direction) @ areas[good] / total)
+    axial = float((centroid - axis.origin) @ axis.direction)
+    return axial, cos
+
+
+def _aftmost_axial(store: GeometryStore, axis: Axis) -> float | None:
+    """The aft-most point of the whole model, as an axial coordinate.
+
+    Axial coordinates increase nose->tail, so this is the maximum projection of every
+    triangle vertex onto the axis -- the true rear of the rocket, including anything that
+    protrudes past the airframe skin (a nozzle, retainer, boat tail, motor mount). Returns
+    ``None`` when the model has no geometry.
+    """
+    aftmost: float | None = None
+    for fg in store.iter_faces():
+        verts = fg.triangles.reshape(-1, 3)
+        if verts.size == 0:
+            continue
+        m = float(((verts - axis.origin) @ axis.direction).max())
+        if aftmost is None or m > aftmost:
+            aftmost = m
+    return aftmost
+
+
 def compute_cg(
     parts: list[dict],
     overrides: dict[str, float] | None = None,
@@ -90,14 +139,24 @@ class MotorPlacement:
     """A selected motor to fold into the CG, placed along the detected axis.
 
     ``mass`` and ``cmx`` are resolved for the chosen state (launch or burnout); ``cmx`` is
-    the motor CG measured from its own forward end. ``aft_from_nose`` positions the motor's
-    aft end measured from the nose tip; ``None`` means aft-flush with the airframe base.
+    the motor CG measured from its own forward end. ``diameter`` is only used to draw the
+    motor cylinder.
+
+    Placement is measured from a datum plane normal to the rocket axis. By default the datum
+    is the airframe's aft (base) end; if ``ref_face`` is given it is that face's axial
+    position instead (the face is required to be normal to the axis). ``aft_offset`` then
+    shifts the motor's aft end along the axis from that datum -- positive is aft (rearward,
+    out the back), negative recesses it forward into the body. Aft-flush is ``aft_offset=0``
+    with no ``ref_face``.
     """
 
     mass: float
     length: float
     cmx: float
-    aft_from_nose: float | None = None
+    diameter: float = 0.0
+    aft_offset: float = 0.0
+    #: (occurrence_key, face_id) of a face to measure the aft end from; None = airframe base.
+    ref_face: tuple[str, str] | None = None
 
 
 @dataclass
@@ -127,7 +186,16 @@ class StabilityResult:
     #: Motor contribution (0 / None when no motor was given). Masses in kg, positions in m.
     motor_mass: float = 0.0
     motor_cg_from_nose: float | None = None
-    motor_aft_from_nose: float | None = None
+    #: Motor aft end offset from its datum (airframe base, or the reference face) in m.
+    motor_aft_from_base: float | None = None
+    #: Motor cylinder endpoints in the world (Onshape Z-up) frame, and its radius (m), for
+    #: drawing the motor in the scene. None when no motor was placed.
+    motor_aft_world: list[float] | None = None
+    motor_fore_world: list[float] | None = None
+    motor_radius: float | None = None
+    #: Motor CG in the world frame for the chosen state (wet/dry), so the loaded-CM marker
+    #: can blend it in and move with the wet/dry toggle. None when no motor was placed.
+    motor_cg_world: list[float] | None = None
 
     @property
     def cp_from_nose(self) -> float:
@@ -136,6 +204,118 @@ class StabilityResult:
     @property
     def cg_from_nose(self) -> float:
         return self.cg_axial - self.nose_axial
+
+
+@dataclass
+class AeroCore:
+    """Body-of-revolution profile, axis, and merged CoP -- the geometry/aero setup
+    shared by ``compute_stability`` and the flight simulator."""
+
+    profile: object
+    axis: Axis
+    cp_axial: float
+    cna_total: float
+    fin_count: int
+    fin_cna: float
+    fin_pf: object
+
+
+def aero_core(
+    store: GeometryStore,
+    outer_faces: list[tuple[str, str]],
+    axis: Axis | None = None,
+    fin_faces: list[tuple[str, str]] | None = None,
+    n_fins: int | None = None,
+    include_fins: bool = True,
+) -> AeroCore:
+    """Resolve the airframe profile/axis and the merged (body + fins) centre of pressure.
+
+    Fins are used as given, else auto-detected. Body and fins are combined the way
+    OpenRocket merges components: a CNa-weighted average of their cps.
+    """
+    faces = store.faces_for(outer_faces)
+    if not faces:
+        raise ValueError("no geometry resolved for the selected outer faces")
+    triangles = np.concatenate([fg.triangles for fg in faces], axis=0)
+
+    profile, axis = build_profile(triangles, axis=axis)
+    aero = body_aero(
+        x_fore=profile.x_fore,
+        x_aft=profile.x_aft,
+        r_fore=profile.r_fore,
+        r_aft=profile.r_aft,
+        volume=profile.volume,
+        r_max=profile.r_max,
+    )
+
+    contributions = [CPContribution(cna=aero.cna, cp_axial=aero.cp)]
+
+    fin_count = 0
+    fin_cna = 0.0
+    fin_pf = None
+    if include_fins:
+        if fin_faces is None:
+            fin_faces = detect_fin_faces(store.iter_faces(), axis, profile.r_max)
+        fin_geo = store.faces_for(fin_faces) if fin_faces else []
+        if fin_geo:
+            fin_aero, fin_pf = fin_set_aero_from_faces(
+                fin_geo, axis, body_radius=profile.r_max, r_ref=profile.r_max, n_fins=n_fins
+            )
+            fin_count = fin_pf.n_fins
+            fin_cna = fin_aero.cna
+            contributions.append(CPContribution(cna=fin_aero.cna, cp_axial=fin_aero.cp))
+
+    cp_axial, cna_total = merge_cp(contributions)
+    return AeroCore(profile, axis, cp_axial, cna_total, fin_count, fin_cna, fin_pf)
+
+
+@dataclass
+class MotorAxial:
+    """A placed motor's axial coordinates (nose->tail) and world points."""
+
+    fore_axial: float
+    aft_axial: float
+    aft_from_base: float
+    #: CG axial position for the placement's ``cmx`` (the resolved state's CG from the fore end).
+    cg_axial: float
+    cg_world: np.ndarray
+    aft_world: np.ndarray
+    fore_world: np.ndarray
+    radius: float
+
+
+def place_motor(store: GeometryStore, profile, axis: Axis, motor: MotorPlacement) -> MotorAxial:
+    """Resolve where the motor sits on the centerline, from the aft-most datum (or a chosen
+    axis-normal face) plus ``aft_offset``. Axial coordinates increase nose->tail."""
+    # The base datum is the true aft-most point of the whole model (not just the airframe skin),
+    # so a nozzle or retainer that protrudes past the tube is what the motor sits flush with by
+    # default. Fall back to the skin's aft if there is no geometry.
+    base_axial = _aftmost_axial(store, axis)
+    if base_axial is None:
+        base_axial = profile.x_aft
+    datum_axial = base_axial
+    if motor.ref_face is not None:
+        ref_geo = store.faces_for([motor.ref_face])
+        if not ref_geo:
+            raise ValueError("motor reference face was not found in the model")
+        ref_tris = np.concatenate([fg.triangles for fg in ref_geo], axis=0)
+        datum_axial, cos = _face_axial_position(ref_tris, axis)
+        if cos < _AXIS_NORMAL_COS:
+            raise ValueError("the selected motor reference face is not normal to the rocket axis")
+    # aft_offset is measured aft-positive from the datum; the motor extends forward.
+    aft_axial = datum_axial + motor.aft_offset
+    fore_axial = aft_axial - motor.length
+    cg_axial = fore_axial + motor.cmx
+    return MotorAxial(
+        fore_axial=fore_axial,
+        aft_axial=aft_axial,
+        aft_from_base=aft_axial - base_axial,
+        cg_axial=cg_axial,
+        cg_world=axis.origin + cg_axial * axis.direction,
+        aft_world=axis.origin + aft_axial * axis.direction,
+        fore_world=axis.origin + fore_axial * axis.direction,
+        radius=motor.diameter / 2.0,
+    )
 
 
 def compute_stability(
@@ -155,58 +335,30 @@ def compute_stability(
     average of their cps. Pass ``fin_faces`` to fix the fin selection, ``n_fins``
     to override the detected count, or ``include_fins=False`` for a body-only run.
     """
-    faces = store.faces_for(outer_faces)
-    if not faces:
-        raise ValueError("no geometry resolved for the selected outer faces")
-    triangles = np.concatenate([fg.triangles for fg in faces], axis=0)
-
-    profile, axis = build_profile(triangles, axis=axis)
-    aero = body_aero(
-        x_fore=profile.x_fore,
-        x_aft=profile.x_aft,
-        r_fore=profile.r_fore,
-        r_aft=profile.r_aft,
-        volume=profile.volume,
-        r_max=profile.r_max,
-    )
-
-    contributions = [CPContribution(cna=aero.cna, cp_axial=aero.cp)]
-
-    # Fins: use the given selection, else auto-detect faces protruding past the
-    # airframe. The fin attaches at the airframe radius (r_max for a straight body).
-    fin_count = 0
-    fin_cna = 0.0
-    fin_pf = None
-    if include_fins:
-        if fin_faces is None:
-            fin_faces = detect_fin_faces(store.iter_faces(), axis, profile.r_max)
-        fin_geo = store.faces_for(fin_faces) if fin_faces else []
-        if fin_geo:
-            fin_aero, fin_pf = fin_set_aero_from_faces(
-                fin_geo, axis, body_radius=profile.r_max, r_ref=profile.r_max, n_fins=n_fins
-            )
-            fin_count = fin_pf.n_fins
-            fin_cna = fin_aero.cna
-            contributions.append(CPContribution(cna=fin_aero.cna, cp_axial=fin_aero.cp))
-
-    cp_axial, cna_total = merge_cp(contributions)
+    core = aero_core(store, outer_faces, axis, fin_faces, n_fins, include_fins)
+    profile, axis = core.profile, core.axis
+    cp_axial, cna_total = core.cp_axial, core.cna_total
+    fin_pf = core.fin_pf
     cp_world = axis.origin + cp_axial * axis.direction
 
-    # Motor: place along the centerline and fold into CG like any part. The nose tip is at
-    # profile.x_fore in axial coords; "from nose" distances add along the axis direction.
-    body_length = profile.x_aft - profile.x_fore
+    # Motor: place along the centerline and fold into CG like any part.
     extra_masses: list[tuple[float, np.ndarray]] = []
     motor_mass = 0.0
     motor_cg_from_nose: float | None = None
-    motor_aft_from_nose: float | None = None
+    motor_aft_from_base: float | None = None
+    motor_aft_world: list[float] | None = None
+    motor_fore_world: list[float] | None = None
+    motor_radius: float | None = None
+    motor_cg_world_out: list[float] | None = None
     if motor is not None and motor.mass > 0:
-        motor_aft_from_nose = (
-            motor.aft_from_nose if motor.aft_from_nose is not None else body_length
-        )
-        motor_cg_from_nose = (motor_aft_from_nose - motor.length) + motor.cmx
-        motor_cg_axial = profile.x_fore + motor_cg_from_nose
-        motor_cg_world = axis.origin + motor_cg_axial * axis.direction
-        extra_masses.append((motor.mass, motor_cg_world))
+        placed = place_motor(store, profile, axis, motor)
+        motor_cg_from_nose = placed.cg_axial - profile.x_fore
+        motor_aft_from_base = placed.aft_from_base
+        motor_cg_world_out = placed.cg_world.tolist()
+        motor_aft_world = placed.aft_world.tolist()
+        motor_fore_world = placed.fore_world.tolist()
+        motor_radius = placed.radius
+        extra_masses.append((motor.mass, placed.cg_world))
         motor_mass = motor.mass
 
     cg_world, mass = compute_cg(manifest_parts, overrides, extra_masses=extra_masses)
@@ -229,8 +381,8 @@ def compute_stability(
         static_margin=static_margin,
         body_length=profile.x_aft - profile.x_fore,
         nose_axial=profile.x_fore,
-        n_fins=fin_count,
-        fin_cna=fin_cna,
+        n_fins=core.fin_count,
+        fin_cna=core.fin_cna,
         fin_root_chord=(fin_pf.root_chord if fin_pf else 0.0),
         fin_tip_chord=(fin_pf.tip_chord if fin_pf else 0.0),
         fin_sweep=(fin_pf.sweep if fin_pf else 0.0),
@@ -241,5 +393,9 @@ def compute_stability(
         ),
         motor_mass=motor_mass,
         motor_cg_from_nose=motor_cg_from_nose,
-        motor_aft_from_nose=motor_aft_from_nose,
+        motor_aft_from_base=motor_aft_from_base,
+        motor_aft_world=motor_aft_world,
+        motor_fore_world=motor_fore_world,
+        motor_radius=motor_radius,
+        motor_cg_world=motor_cg_world_out,
     )

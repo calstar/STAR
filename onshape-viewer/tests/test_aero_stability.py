@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from backend.onshape.aero.outer_surface import detect_outer_surface
 from backend.onshape.aero.stability import (
@@ -113,23 +114,109 @@ def test_motor_placement_shifts_cg_aft_and_reduces_margin():
 
     base = compute_stability(store, parts, outer_faces=[("occ:body", "F_outer")])
 
-    # A 0.2 m motor, 1 kg, CG at its own mid, aft-flush with the base.
-    motor = MotorPlacement(mass=1.0, length=0.2, cmx=0.1, aft_from_nose=None)
+    # A 0.2 m motor, 1 kg, CG at its own mid, aft-flush with the base (aft_offset=0).
+    motor = MotorPlacement(mass=1.0, length=0.2, cmx=0.1)
     withm = compute_stability(
         store, parts, outer_faces=[("occ:body", "F_outer")], motor=motor
     )
 
-    # Aft-flush default: aft end at the body base (total_len from nose).
-    assert withm.motor_aft_from_nose == total_len
+    # Aft-flush default: aft end at the body base, i.e. zero offset from the base.
+    assert withm.motor_aft_from_base == 0.0
     # Motor CG sits (length - cmx) forward of the base.
     assert withm.motor_cg_from_nose == total_len - 0.2 + 0.1
     assert withm.motor_mass == 1.0
+    # Cylinder endpoints straddle the base along +z (the axis here).
+    assert abs(withm.motor_aft_world[2] - total_len) < 1e-9
+    assert abs(withm.motor_fore_world[2] - (total_len - 0.2)) < 1e-9
+    assert withm.motor_radius == pytest.approx(0.0)  # no diameter given
     # Adding aft mass moves CG aft and total mass up.
     assert withm.cg_from_nose > base.cg_from_nose
     assert withm.mass == base.mass + 1.0
     # CP is mass-independent, so a bigger cg (aft) shrinks the margin.
     assert withm.cp_from_nose == base.cp_from_nose
     assert withm.static_margin < base.static_margin
+
+
+def test_motor_aft_offset_pushes_motor_rearward():
+    face, L_nose, L_tube, R = cone_tube_faces()
+    store = StubStore([face])
+    total_len = L_nose + L_tube
+    parts = [{"key": "nose", "mass": 0.5, "centroidWorld": [0, 0, 0.1 * total_len]}]
+
+    # 50 mm aft offset: the motor's aft end protrudes past the base.
+    motor = MotorPlacement(mass=1.0, length=0.2, cmx=0.1, diameter=0.05, aft_offset=0.05)
+    withm = compute_stability(
+        store, parts, outer_faces=[("occ:body", "F_outer")], motor=motor
+    )
+    assert withm.motor_aft_from_base == pytest.approx(0.05)
+    assert withm.motor_aft_world[2] == pytest.approx(total_len + 0.05)
+    assert withm.motor_radius == pytest.approx(0.025)
+
+
+def test_motor_default_datum_is_aftmost_geometry_not_skin():
+    face, L_nose, L_tube, R = cone_tube_faces()
+    total_len = L_nose + L_tube  # the skin's aft end
+    # A retainer disc protruding 40 mm past the skin's aft end.
+    z0 = total_len + 0.04
+    ring = np.linspace(0, 2 * np.pi, 24)
+    hub = np.array([0.0, 0.0, z0])
+    tris = [
+        [hub, np.array([R * np.cos(a), R * np.sin(a), z0]),
+         np.array([R * np.cos(b), R * np.sin(b), z0])]
+        for a, b in zip(ring[:-1], ring[1:])
+    ]
+    retainer = _sor_face("occ:body", "F_ret", np.array(tris), R, surface_type="PLANE")
+    store = StubStore([face, retainer])
+    parts = [{"key": "nose", "mass": 0.5, "centroidWorld": [0, 0, 0.1]}]
+
+    # No reference face: aft-flush should sit on the protruding retainer, not the skin.
+    motor = MotorPlacement(mass=1.0, length=0.2, cmx=0.1)
+    withm = compute_stability(
+        store, parts, outer_faces=[("occ:body", "F_outer")], motor=motor
+    )
+    assert withm.motor_aft_world[2] == pytest.approx(z0)
+    assert withm.motor_aft_from_base == pytest.approx(0.0)  # flush with the aft-most point
+
+
+def test_motor_reference_face_places_from_that_plane():
+    face, L_nose, L_tube, R = cone_tube_faces()
+    # A cap disc normal to +z at z = 0.4 m, standing in for a motor mount bulkhead.
+    z0 = 0.4
+    ring = np.linspace(0, 2 * np.pi, 24)
+    hub = np.array([0.0, 0.0, z0])
+    tris = []
+    for a, b in zip(ring[:-1], ring[1:]):
+        p1 = np.array([R * np.cos(a), R * np.sin(a), z0])
+        p2 = np.array([R * np.cos(b), R * np.sin(b), z0])
+        tris.append([hub, p1, p2])
+    disc = _sor_face("occ:body", "F_cap", np.array(tris), R, surface_type="PLANE")
+    store = StubStore([face, disc])
+    parts = [{"key": "nose", "mass": 0.5, "centroidWorld": [0, 0, 0.1]}]
+
+    motor = MotorPlacement(
+        mass=1.0, length=0.2, cmx=0.1, ref_face=("occ:body", "F_cap")
+    )
+    withm = compute_stability(
+        store, parts, outer_faces=[("occ:body", "F_outer")], motor=motor
+    )
+    # Aft end sits on the cap plane; datum-relative offset is zero.
+    assert withm.motor_aft_from_base == pytest.approx(z0 - (L_nose + L_tube))
+    assert withm.motor_aft_world[2] == pytest.approx(z0)
+    assert withm.motor_fore_world[2] == pytest.approx(z0 - 0.2)
+
+
+def test_motor_reference_face_must_be_axis_normal():
+    face, L_nose, L_tube, R = cone_tube_faces()
+    # The outer cone/tube skin is parallel to the axis, not normal to it -> rejected.
+    store = StubStore([face])
+    parts = [{"key": "nose", "mass": 0.5, "centroidWorld": [0, 0, 0.1]}]
+    motor = MotorPlacement(
+        mass=1.0, length=0.2, cmx=0.1, ref_face=("occ:body", "F_outer")
+    )
+    with pytest.raises(ValueError, match="normal to the rocket axis"):
+        compute_stability(
+            store, parts, outer_faces=[("occ:body", "F_outer")], motor=motor
+        )
 
 
 def test_detect_outer_surface_rejects_inner_bore():

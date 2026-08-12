@@ -65,25 +65,61 @@ class MotorDB:
     def all_meta(self) -> list[dict]:
         return self._load_index().get("motors", [])
 
-    def search(self, query: str = "", limit: int = 50) -> list[dict]:
-        """Substring match over manufacturer / designation / common name / impulse class."""
+    def _filter(
+        self, query: str = "", impulse_class: str | None = None, model: str | None = None
+    ) -> list[dict]:
+        """Motors matching the query terms, an exact impulse class, and a model tier.
+
+        ``model`` is "full" (has a RockSim datafile) or "basic" (RASP only) -- matching the
+        single tier badge the picker shows. Sorted for browsing: by impulse class (A..O..),
+        then manufacturer, then designation, so the list reads small-to-large.
+        """
         motors = self.all_meta()
         q = query.strip().lower()
-        if not q:
-            hits = motors
-        else:
-            terms = q.split()
+        cls = (impulse_class or "").strip().upper()
+        tier = (model or "").strip().lower()
 
-            def matches(m: dict) -> bool:
-                hay = " ".join(
-                    str(m.get(k, ""))
-                    for k in ("manufacturer", "manufacturerAbbrev", "designation",
-                              "commonName", "impulseClass")
-                ).lower()
-                return all(t in hay for t in terms)
+        terms = q.split()
 
-            hits = [m for m in motors if matches(m)]
-        return hits[:limit]
+        def is_full(m: dict) -> bool:
+            return any(s.get("format") == "RockSim" for s in m.get("simfiles", []))
+
+        def matches(m: dict) -> bool:
+            if cls and str(m.get("impulseClass", "")).upper() != cls:
+                return False
+            if tier == "full" and not is_full(m):
+                return False
+            if tier == "basic" and is_full(m):
+                return False
+            if not terms:
+                return True
+            hay = " ".join(
+                str(m.get(k, ""))
+                for k in ("manufacturer", "manufacturerAbbrev", "designation",
+                          "commonName", "impulseClass")
+            ).lower()
+            return all(t in hay for t in terms)
+
+        hits = [m for m in motors if matches(m)]
+
+        def sort_key(m: dict) -> tuple:
+            ic = str(m.get("impulseClass", "") or "~")
+            return (ic.upper(), str(m.get("manufacturerAbbrev", "")), str(m.get("designation", "")))
+
+        return sorted(hits, key=sort_key)
+
+    def search(
+        self, query: str = "", impulse_class: str | None = None, model: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Substring match over manufacturer / designation / common name, plus class/model filters."""
+        return self._filter(query, impulse_class, model)[:limit]
+
+    def count(
+        self, query: str = "", impulse_class: str | None = None, model: str | None = None
+    ) -> int:
+        """How many motors match, before the ``limit`` slice -- for a 'showing N of M' hint."""
+        return len(self._filter(query, impulse_class, model))
 
     def get_meta(self, motor_id: str) -> dict | None:
         for m in self.all_meta():

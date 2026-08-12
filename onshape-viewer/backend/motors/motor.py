@@ -103,6 +103,17 @@ class Motor:
     def get_propellant_mass(self, motor_time: float) -> float:
         return self.get_total_mass(motor_time) - self.burnout_mass
 
+    def get_thrust(self, motor_time: float) -> float:
+        """Interpolated thrust (N) at a motor time; 0 before ignition and after burnout."""
+        if not self.time or motor_time < 0 or motor_time > self.time[-1]:
+            return 0.0
+        lower = self._index(motor_time)
+        upper = lower + 1
+        if upper >= len(self.time):
+            return self.thrust[lower]
+        frac = self._index_fraction(motor_time, lower)
+        return self.thrust[lower] * (1 - frac) + self.thrust[upper] * frac
+
     @property
     def launch_mass(self) -> float:
         return self.mass[0]

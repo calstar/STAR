@@ -212,7 +212,7 @@ const APPS: AppCard[] = [
   {
     id: 'onshape-viewer',
     href: 'https://onshape-viewer.starberkeley.org',
-    label: 'Onshape CM Viewer',
+    label: 'Onshape Viewer',
     subdomain: 'onshape-viewer.starberkeley.org',
     description:
       'Pulls assemblies from Onshape and renders. Soon to become an improved version of OpenRocket.',

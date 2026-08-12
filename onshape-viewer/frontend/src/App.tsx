@@ -1,26 +1,32 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import starWordmark from './assets/star-wordmark.png'
 import {
+  computeFlight,
   computeStability,
   fetchFins,
   fetchManifest,
+  fetchMotor,
   fetchOuterSurface,
   glbUrl,
   listModels,
 } from './api/client'
-import { centreOfMass, formatMass, formatMetres } from './lib/cm'
+import { centreOfMass, formatMass } from './lib/cm'
+import { FlightProfileModal } from './components/viewer/FlightProfileModal'
+import { InspectorPanel } from './components/viewer/InspectorPanel'
+import { MotorCurvesModal } from './components/viewer/MotorCurvesModal'
 import { MaterialWarning } from './components/viewer/MaterialWarning'
 import { ModelPicker } from './components/viewer/ModelPicker'
 import { PartList } from './components/viewer/PartList'
-import { PropertiesPanel } from './components/viewer/PropertiesPanel'
-import { Row } from './components/viewer/Row'
+import { ResizableSidebar } from './components/viewer/ResizableSidebar'
 import { Scene } from './components/viewer/Scene'
-import { StabilityPanel } from './components/viewer/StabilityPanel'
 import type {
   FaceRef,
   FinPlanform,
   Manifest,
+  FlightResult,
   ModelSummary,
+  MotorDetail,
   MotorSelection,
   MotorSummary,
   Part,
@@ -49,7 +55,7 @@ export default function App() {
   const [overrides, setOverrides] = useState<Map<string, PartOverride>>(new Map())
   const [opacity, setOpacity] = useState(0.55)
   const [showAssemblyCentroid, setShowAssemblyCentroid] = useState(true)
-  // Backend-computed stability (CG, CoP, static margin). Null until the user
+  // Backend-computed stability (CG, CP, static margin). Null until the user
   // asks for it; cleared when the model changes so a stale margin never lingers.
   const [stability, setStability] = useState<StabilityResult | null>(null)
   const [stabilityBusy, setStabilityBusy] = useState(false)
@@ -62,13 +68,25 @@ export default function App() {
   // The exposed fin planform surfaces to draw; from auto-detect or compute.
   const [finPlanforms, setFinPlanforms] = useState<FinPlanform[]>([])
   const [faceEditMode, setFaceEditMode] = useState(false)
-  const [editTarget, setEditTarget] = useState<'body' | 'fin'>('body')
+  const [editTarget, setEditTarget] = useState<'body' | 'fin' | 'motor'>('body')
   const [autoBusy, setAutoBusy] = useState(false)
   const [isolateOuterFaces, setIsolateOuterFaces] = useState(false)
   // Selected motor, folded into the CG / static margin by the backend. Null = none.
   // motorSummary keeps the picker's metadata for labelling before a compute round-trips.
   const [motorSel, setMotorSel] = useState<MotorSelection | null>(null)
   const [motorSummary, setMotorSummary] = useState<MotorSummary | null>(null)
+  // Flight-profile popup: fetched on open from the current surfaces + motor.
+  const [flightOpen, setFlightOpen] = useState(false)
+  const [flightResult, setFlightResult] = useState<FlightResult | null>(null)
+  const [flightBusy, setFlightBusy] = useState(false)
+  const [flightError, setFlightError] = useState<string | null>(null)
+  // Guided rail length (m) — travel to full departure (rear lug clears), for off-rail velocity.
+  const [railLength, setRailLength] = useState(1.0)
+  // Motor-curves popup: the selected motor's raw thrust/weight/CG datafile.
+  const [curvesOpen, setCurvesOpen] = useState(false)
+  const [curvesDetail, setCurvesDetail] = useState<MotorDetail | null>(null)
+  const [curvesBusy, setCurvesBusy] = useState(false)
+  const [curvesError, setCurvesError] = useState<string | null>(null)
   // True once a stability result exists, so changing the motor recomputes live
   // rather than silently waiting for the next manual Compute.
   const computedOnce = useRef(false)
@@ -126,6 +144,12 @@ export default function App() {
         setIsolateOuterFaces(false)
         setMotorSel(null)
         setMotorSummary(null)
+        setFlightOpen(false)
+        setFlightResult(null)
+        setFlightError(null)
+        setCurvesOpen(false)
+        setCurvesDetail(null)
+        setCurvesError(null)
         setError(null)
       })
       .catch((exc) => setError(String(exc)))
@@ -171,6 +195,24 @@ export default function App() {
   )
 
   const cm = useMemo(() => centreOfMass(activeParts), [activeParts])
+
+  // The "CM" marker in the 3D view folds in the selected motor at its wet/dry mass,
+  // so it sits where the *loaded* rocket balances -- the same CG the static margin
+  // uses -- and moves when the wet/dry toggle changes. Parts stay visibility-filtered
+  // as before; with no motor this is just the parts CM.
+  const markerCentroid = useMemo<[number, number, number]>(() => {
+    const motor = stability?.motor
+    if (!motor?.cgWorld) return cm.centroid
+    const motorMass = motor.state === 'burnout' ? motor.dryMass : motor.wetMass
+    const total = cm.mass + motorMass
+    if (!(total > 0)) return cm.centroid
+    const cg = motor.cgWorld
+    return [0, 1, 2].map((i) => (cm.centroid[i] * cm.mass + cg[i] * motorMass) / total) as [
+      number,
+      number,
+      number,
+    ]
+  }, [cm, stability])
 
   // Effective mass per occurrence, sent to the backend so its CG matches exactly
   // what is on screen (material and typed-in overrides included). The backend is
@@ -218,33 +260,87 @@ export default function App() {
     }
   }, [modelId, massOverrides, outerFaces, finFaces, motorSel])
 
-  // Recompute when the motor selection changes, but only after the first manual
-  // Compute -- otherwise selecting a motor would fire a compute with no surfaces
-  // chosen yet. A ref holds the latest callback so this effect keys on motorSel
-  // alone (not on face edits, which must not trigger a recompute).
+  // Recompute when the motor selection changes. Selecting a motor computes even
+  // without a prior manual Compute -- handleComputeStability auto-detects the body
+  // and fins when none are chosen, so the motor's effect on CG/margin shows up at
+  // once. A ref holds the latest callback so this effect keys on motorSel alone
+  // (not on face edits, which must not trigger a recompute).
   const computeRef = useRef(handleComputeStability)
   computeRef.current = handleComputeStability
   useEffect(() => {
-    if (computedOnce.current) void computeRef.current()
+    if (motorSel || computedOnce.current) void computeRef.current()
   }, [motorSel])
 
   const handleSelectMotor = useCallback((motor: MotorSummary, simfileId: string) => {
     setMotorSummary(motor)
-    setMotorSel({ motorId: motor.motorId, simfileId, aftFromNose: null, state: 'launch' })
+    // Keep any reference face the user already picked when swapping the motor.
+    setMotorSel((current) => ({
+      motorId: motor.motorId,
+      simfileId,
+      aftOffset: current?.aftOffset ?? 0,
+      refFace: current?.refFace ?? null,
+      state: current?.state ?? 'launch',
+    }))
   }, [])
 
   const handleClearMotor = useCallback(() => {
     setMotorSel(null)
     setMotorSummary(null)
-  }, [])
+    // Drop motor-face editing if it was on.
+    setFaceEditMode((on) => (editTarget === 'motor' ? false : on))
+  }, [editTarget])
 
   const handleSetMotorState = useCallback((state: 'launch' | 'burnout') => {
     setMotorSel((current) => (current ? { ...current, state } : current))
   }, [])
 
-  const handleSetMotorAft = useCallback((aftFromNose: number | null) => {
-    setMotorSel((current) => (current ? { ...current, aftFromNose } : current))
+  const handleSetMotorOffset = useCallback((aftOffset: number) => {
+    setMotorSel((current) => (current ? { ...current, aftOffset } : current))
   }, [])
+
+  const handleSetMotorRefFace = useCallback((refFace: FaceRef | null) => {
+    setMotorSel((current) => (current ? { ...current, refFace } : current))
+  }, [])
+
+  // Open the flight-profile popup and simulate, reusing the surfaces/overrides/motor that
+  // fed the current stability result.
+  const handleViewFlight = useCallback(async () => {
+    if (!modelId || !motorSel) return
+    setFlightOpen(true)
+    setFlightBusy(true)
+    setFlightError(null)
+    setFlightResult(null)
+    try {
+      const result = await computeFlight(modelId, {
+        outerFaces,
+        finFaces,
+        overrides: massOverrides,
+        motor: motorSel,
+        railLength,
+      })
+      setFlightResult(result)
+    } catch (exc) {
+      setFlightError(String(exc))
+    } finally {
+      setFlightBusy(false)
+    }
+  }, [modelId, motorSel, outerFaces, finFaces, massOverrides, railLength])
+
+  // Open the motor-curves popup and fetch the selected motor's raw datafile.
+  const handleViewMotorCurves = useCallback(async () => {
+    if (!motorSel) return
+    setCurvesOpen(true)
+    setCurvesBusy(true)
+    setCurvesError(null)
+    setCurvesDetail(null)
+    try {
+      setCurvesDetail(await fetchMotor(motorSel.motorId))
+    } catch (exc) {
+      setCurvesError(String(exc))
+    } finally {
+      setCurvesBusy(false)
+    }
+  }, [motorSel])
 
   const handleAutoDetect = useCallback(async () => {
     if (!modelId) return
@@ -265,12 +361,14 @@ export default function App() {
   }, [modelId])
 
   const handleToggleFaceEdit = useCallback(
-    (target: 'body' | 'fin') => {
+    (target: 'body' | 'fin' | 'motor') => {
       setEditTarget(target)
       setFaceEditMode((on) => {
         // Toggle off only if re-clicking the active target; switching target
-        // stays in edit mode. Seed from auto-detect the first time in.
-        if (outerFaces.length === 0 && finFaces.length === 0) void handleAutoDetect()
+        // stays in edit mode. Seed the body/fin sets from auto-detect the first
+        // time in; the motor reference face needs no seed.
+        if (target !== 'motor' && outerFaces.length === 0 && finFaces.length === 0)
+          void handleAutoDetect()
         return !(on && editTarget === target)
       })
     },
@@ -278,7 +376,17 @@ export default function App() {
   )
 
   const handleFaceToggle = useCallback(
-    (target: 'body' | 'fin', occurrenceKey: string, faceId: string) => {
+    (target: 'body' | 'fin' | 'motor', occurrenceKey: string, faceId: string) => {
+      // The motor reference is a single face: clicking sets it, clicking the same
+      // one again clears it. (The backend rejects a face not normal to the axis.)
+      if (target === 'motor') {
+        setMotorSel((current) => {
+          if (!current) return current
+          const same = current.refFace?.key === occurrenceKey && current.refFace?.faceId === faceId
+          return { ...current, refFace: same ? null : { key: occurrenceKey, faceId } }
+        })
+        return
+      }
       const setter = target === 'fin' ? setFinFaces : setOuterFaces
       setter((current) => {
         const idx = current.findIndex((f) => f.key === occurrenceKey && f.faceId === faceId)
@@ -356,10 +464,14 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col bg-slate-950 text-slate-100">
-      <header className="flex flex-wrap items-center gap-3 border-b border-slate-700 px-4 py-2">
+      <header className="flex flex-wrap items-center gap-3 border-b border-slate-700 px-4 py-4">
+        {/* STAR wordmark, then a divider, then the app title -- mirrors the
+            recovery calculator's header. */}
+        <img src={starWordmark} alt="STAR" className="h-14 w-auto" />
+        <div className="h-9 w-px bg-slate-700" />
         {/* Fixed title. What is loaded is the picker's job to say, and it
             already does -- naming it twice just made the header noisy. */}
-        <h1 className="text-base font-semibold">Onshape Viewer</h1>
+        <h1 className="text-xl font-bold">Onshape Viewer</h1>
 
         <ModelPicker
           models={models}
@@ -395,7 +507,7 @@ export default function App() {
       <MaterialWarning parts={parts} />
 
       <div className="flex min-h-0 flex-1">
-        <aside className="w-72 shrink-0 border-r border-slate-700 bg-slate-900/60">
+        <ResizableSidebar side="left" defaultWidth={340} storageKey="onshape-viewer:left-width">
           <PartList
             parts={parts}
             visibleKeys={visibleKeys}
@@ -405,7 +517,7 @@ export default function App() {
             onSelect={setSelectedKeys}
             onHover={setHoveredKeys}
           />
-        </aside>
+        </ResizableSidebar>
 
         <main className="relative min-w-0 flex-1">
           <Scene
@@ -417,7 +529,7 @@ export default function App() {
             hoveredKeys={hoveredKeys}
             onSelect={handleSceneSelect}
             onHover={setHoveredKeys}
-            centroid={cm.centroid}
+            centroid={markerCentroid}
             showAssemblyCentroid={showAssemblyCentroid}
             opacity={opacity}
             copPosition={stability?.cp.world ?? null}
@@ -428,49 +540,9 @@ export default function App() {
             finFaces={finFaces}
             onFaceToggle={handleFaceToggle}
             isolateOuterFaces={isolateOuterFaces}
+            motor={stability?.motor ?? null}
+            motorRefFace={motorSel?.refFace ?? null}
           />
-
-          <div className="pointer-events-none absolute left-4 top-4 w-80 space-y-3">
-            <section className="pointer-events-auto rounded border border-slate-700 bg-slate-900/90 p-3 text-sm backdrop-blur">
-              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Centre of mass — {cm.partCount - cm.masslessCount} of {parts.length} parts
-              </h2>
-              <Row label="Total mass" value={formatMass(cm.mass)} />
-              <Row label="CM x" value={formatMetres(cm.centroid[0])} />
-              <Row label="CM y" value={formatMetres(cm.centroid[1])} />
-              <Row label="CM z" value={formatMetres(cm.centroid[2])} highlight />
-
-              {cm.masslessCount > 0 && (
-                <p className="mt-2 border-t border-slate-700 pt-2 text-xs text-amber-300">
-                  {cm.masslessCount} visible {cm.masslessCount === 1 ? 'part has' : 'parts have'} no
-                  mass and {cm.masslessCount === 1 ? 'is' : 'are'} not in this figure.
-                </p>
-              )}
-            </section>
-
-            <StabilityPanel
-              result={stability}
-              busy={stabilityBusy}
-              error={stabilityError}
-              onCompute={handleComputeStability}
-              faceEditMode={faceEditMode}
-              editTarget={editTarget}
-              onToggleEditMode={handleToggleFaceEdit}
-              onAutoDetect={handleAutoDetect}
-              outerFaceCount={outerFaces.length}
-              finFaceCount={finFaces.length}
-              finCount={finCount}
-              autoBusy={autoBusy}
-              isolate={isolateOuterFaces}
-              onToggleIsolate={() => setIsolateOuterFaces((on) => !on)}
-              motorSel={motorSel}
-              motorSummary={motorSummary}
-              onSelectMotor={handleSelectMotor}
-              onClearMotor={handleClearMotor}
-              onSetMotorState={handleSetMotorState}
-              onSetMotorAft={handleSetMotorAft}
-            />
-          </div>
 
           <div className="pointer-events-none absolute bottom-3 right-4 text-right text-xs text-slate-500">
             <div>
@@ -484,15 +556,67 @@ export default function App() {
           </div>
         </main>
 
-        <aside className="w-80 shrink-0 border-l border-slate-700 bg-slate-900/60">
-          <PropertiesPanel
+        <ResizableSidebar side="right" defaultWidth={440} storageKey="onshape-viewer:right-width">
+          <InspectorPanel
+            // Properties tab
             selected={selectedParts}
             visibleKeys={visibleKeys}
             overrides={overrides}
             onOverrideChange={handleOverrideChange}
+            // Auto-switch to Properties on a new part selection (unless pinned).
+            primarySelectedKey={selectedKeys.at(-1) ?? null}
+            // Analysis tab: centre of mass + stability
+            cm={cm}
+            partCount={parts.length}
+            result={stability}
+            busy={stabilityBusy}
+            error={stabilityError}
+            onCompute={handleComputeStability}
+            faceEditMode={faceEditMode}
+            editTarget={editTarget}
+            onToggleEditMode={handleToggleFaceEdit}
+            onAutoDetect={handleAutoDetect}
+            outerFaceCount={outerFaces.length}
+            finFaceCount={finFaces.length}
+            finCount={finCount}
+            autoBusy={autoBusy}
+            isolate={isolateOuterFaces}
+            onToggleIsolate={() => setIsolateOuterFaces((on) => !on)}
+            motorSel={motorSel}
+            motorSummary={motorSummary}
+            onSelectMotor={handleSelectMotor}
+            onClearMotor={handleClearMotor}
+            onSetMotorState={handleSetMotorState}
+            onSetMotorOffset={handleSetMotorOffset}
+            onSetMotorRefFace={handleSetMotorRefFace}
+            motorFaceEdit={faceEditMode && editTarget === 'motor'}
+            onToggleMotorFaceEdit={() => handleToggleFaceEdit('motor')}
+            onViewFlight={handleViewFlight}
+            railLength={railLength}
+            onSetRailLength={setRailLength}
+            onViewMotorCurves={handleViewMotorCurves}
           />
-        </aside>
+        </ResizableSidebar>
       </div>
+
+      {flightOpen && (
+        <FlightProfileModal
+          result={flightResult}
+          busy={flightBusy}
+          error={flightError}
+          onClose={() => setFlightOpen(false)}
+        />
+      )}
+
+      {curvesOpen && (
+        <MotorCurvesModal
+          detail={curvesDetail}
+          simfileId={motorSel?.simfileId ?? null}
+          busy={curvesBusy}
+          error={curvesError}
+          onClose={() => setCurvesOpen(false)}
+        />
+      )}
     </div>
   )
 }

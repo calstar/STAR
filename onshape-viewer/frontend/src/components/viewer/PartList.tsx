@@ -256,7 +256,7 @@ export function PartList({
 
       {/* select-none: without it, shift-clicking two rows drags a text
           selection across everything between them. */}
-      <ul className="flex-1 select-none overflow-y-auto text-[15px]">
+      <ul className="flex-1 select-none overflow-y-auto text-sm">
         {groups.map((group) => {
           const keys = group.parts.map((part) => part.key)
           const shown = keys.filter((key) => visibleKeys.has(key)).length
@@ -322,7 +322,7 @@ export function PartList({
                   )}
                 </span>
                 {shown > 0 && shown < keys.length && (
-                  <span className="shrink-0 text-[10px] text-slate-500">{shown}/{keys.length}</span>
+                  <span className="shrink-0 text-2xs text-slate-500">{shown}/{keys.length}</span>
                 )}
                 <span
                   className={`shrink-0 tabular-nums text-sm ${

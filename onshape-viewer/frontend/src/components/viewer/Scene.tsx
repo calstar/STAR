@@ -23,7 +23,7 @@ import { Grid, OrbitControls, OrthographicCamera, useGLTF } from '@react-three/d
 
 import * as THREE from 'three'
 
-import type { FaceRef, Manifest, Part } from '../../types'
+import type { FaceRef, Manifest, MotorResult, Part } from '../../types'
 import { STATUS_COLOR, massStatus } from '../../lib/status'
 import { CMMarker } from './CMMarker'
 
@@ -230,11 +230,13 @@ interface ModelProps {
   /** When true, a click toggles a *face* into the active edit set. */
   faceEditMode: boolean
   /** Which set clicks edit while in face-edit mode. */
-  editTarget: 'body' | 'fin'
+  editTarget: 'body' | 'fin' | 'motor'
   /** occurrence key -> set of face ids, per highlight layer. */
   bodyFaces: Map<string, Set<string>>
   finFaces: Map<string, Set<string>>
-  onFaceToggle: (target: 'body' | 'fin', occurrenceKey: string, faceId: string) => void
+  /** The motor's single reference (datum) face, highlighted fuchsia. */
+  motorFaces: Map<string, Set<string>>
+  onFaceToggle: (target: 'body' | 'fin' | 'motor', occurrenceKey: string, faceId: string) => void
   /** Show ONLY the selected faces -- hide every other surface and edge. */
   isolateOuterFaces: boolean
 }
@@ -281,9 +283,13 @@ function makeFaceHighlight(color: string): THREE.MeshBasicMaterial {
 // Distinct from the click-selection cyan (COLOR_SELECTED) and each other.
 const BODY_HL_MATERIAL = makeFaceHighlight('#a78bfa') // violet: airframe skin
 const FIN_HL_MATERIAL = makeFaceHighlight('#f97316') // orange: fins
+const MOTOR_HL_MATERIAL = makeFaceHighlight('#e879f9') // fuchsia: motor datum face
+
+/** The motor cylinder's colour, matching the datum-face highlight. */
+const MOTOR_COLOR = '#e879f9'
 
 interface HighlightLayer {
-  name: 'body' | 'fin'
+  name: 'body' | 'fin' | 'motor'
   material: THREE.MeshBasicMaterial
   hlKey: string // userData slot for the fill mesh
   edgeKey: string // userData slot for the edge lines
@@ -292,6 +298,7 @@ interface HighlightLayer {
 const HIGHLIGHT_LAYERS: HighlightLayer[] = [
   { name: 'body', material: BODY_HL_MATERIAL, hlKey: 'bodyHL', edgeKey: 'bodyEdges' },
   { name: 'fin', material: FIN_HL_MATERIAL, hlKey: 'finHL', edgeKey: 'finEdges' },
+  { name: 'motor', material: MOTOR_HL_MATERIAL, hlKey: 'motorHL', edgeKey: 'motorEdges' },
 ]
 
 /**
@@ -324,6 +331,7 @@ function Model({
   editTarget,
   bodyFaces,
   finFaces,
+  motorFaces,
   onFaceToggle,
   isolateOuterFaces,
 }: ModelProps) {
@@ -464,7 +472,11 @@ function Model({
       layer.material.polygonOffset = !isolateOuterFaces
       layer.material.needsUpdate = true
     }
-    const layerMaps: Record<string, Map<string, Set<string>>> = { body: bodyFaces, fin: finFaces }
+    const layerMaps: Record<string, Map<string, Set<string>>> = {
+      body: bodyFaces,
+      fin: finFaces,
+      motor: motorFaces,
+    }
 
     model.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return
@@ -480,11 +492,14 @@ function Model({
         if (!hl) continue
         const chosen = layerMaps[layer.name].get(key)
 
-        // The body skin highlight shows whenever picked. The fin FACE highlight
-        // (the raw CAD face, which runs through the tube on a through-the-wall
-        // fin) shows ONLY while editing fins -- otherwise the fin is represented
-        // by its rendered planform surface, which is clipped to the exposed part.
-        const layerActive = layer.name === 'body' || (faceEditMode && editTarget === 'fin')
+        // The body skin and the motor datum face show whenever picked. The fin
+        // FACE highlight (the raw CAD face, which runs through the tube on a
+        // through-the-wall fin) shows ONLY while editing fins -- otherwise the fin
+        // is represented by its rendered planform surface, clipped to the exposed part.
+        const layerActive =
+          layer.name === 'body' ||
+          layer.name === 'motor' ||
+          (faceEditMode && editTarget === 'fin')
 
         if (!layerActive || !chosen || chosen.size === 0 || !faceIds || !counts || !srcIndex) {
           hl.visible = false
@@ -523,7 +538,7 @@ function Model({
         }
       }
     })
-  }, [model, faceEditMode, editTarget, bodyFaces, finFaces, isolateOuterFaces])
+  }, [model, faceEditMode, editTarget, bodyFaces, finFaces, motorFaces, isolateOuterFaces])
 
   useEffect(() => {
     // Force world matrices before measuring: setFromObject reads matrixWorld,
@@ -738,7 +753,7 @@ function FitCamera({
 /**
  * Renders the extracted fin planforms as their own surfaces, in the Onshape
  * frame. This is the *aerodynamic* fin the calc uses -- rooted at the body
- * surface, tip outward -- so it shows exactly what feeds the CoP and makes plain
+ * surface, tip outward -- so it shows exactly what feeds the CP and makes plain
  * that an internal mounting tab is excluded (the surface simply starts at the
  * tube). Drawn depth-tested so it sits in the model rather than floating on top.
  */
@@ -785,6 +800,57 @@ function FinPlanforms({ planforms }: { planforms: { lead: number[][]; trail: num
   )
 }
 
+/**
+ * The selected motor, drawn as a translucent cylinder from its aft end to its fore
+ * end along the rocket axis. Endpoints come from the backend (aero/stability.py),
+ * already in the Onshape frame, so this lives inside the same Z-up group as the CP/CM
+ * markers and lands on the centerline by construction. depthWrite is off so it blends
+ * with the translucent airframe instead of punching a hole in it.
+ */
+function MotorCylinder({
+  aft,
+  fore,
+  radius,
+}: {
+  aft: [number, number, number]
+  fore: [number, number, number]
+  radius: number
+}) {
+  const { geometry, position, quaternion } = useMemo(() => {
+    const a = new THREE.Vector3(aft[0], aft[1], aft[2])
+    const f = new THREE.Vector3(fore[0], fore[1], fore[2])
+    const dir = new THREE.Vector3().subVectors(f, a)
+    const len = Math.max(dir.length(), 1e-6)
+    const geom = new THREE.CylinderGeometry(radius, radius, len, 40, 1, false)
+    // CylinderGeometry runs along +Y; rotate that onto the aft->fore direction.
+    const q = new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      dir.clone().normalize(),
+    )
+    const mid = new THREE.Vector3().addVectors(a, f).multiplyScalar(0.5)
+    return { geometry: geom, position: mid, quaternion: q }
+  }, [aft, fore, radius])
+
+  return (
+    <group position={position} quaternion={quaternion}>
+      <mesh geometry={geometry} renderOrder={5}>
+        <meshStandardMaterial
+          color={MOTOR_COLOR}
+          transparent
+          opacity={0.55}
+          metalness={0.2}
+          roughness={0.5}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      <mesh geometry={geometry} renderOrder={6}>
+        <meshBasicMaterial color={MOTOR_COLOR} wireframe transparent opacity={0.3} depthWrite={false} />
+      </mesh>
+    </group>
+  )
+}
+
 interface SceneProps {
   modelUrl: string
   manifest: Manifest
@@ -806,14 +872,18 @@ interface SceneProps {
   /** When true, clicks pick faces (into the active edit target) instead of parts. */
   faceEditMode?: boolean
   /** Which set clicks edit while in face-edit mode. */
-  editTarget?: 'body' | 'fin'
+  editTarget?: 'body' | 'fin' | 'motor'
   /** The currently-picked outer (body) faces, highlighted teal. */
   outerFaces?: FaceRef[]
   /** The currently-picked fin faces, highlighted orange. */
   finFaces?: FaceRef[]
-  onFaceToggle?: (target: 'body' | 'fin', occurrenceKey: string, faceId: string) => void
+  onFaceToggle?: (target: 'body' | 'fin' | 'motor', occurrenceKey: string, faceId: string) => void
   /** Show only the picked faces, hiding every other surface. */
   isolateOuterFaces?: boolean
+  /** Selected motor, drawn as a cylinder on the axis. Null = none placed. */
+  motor?: MotorResult | null
+  /** The motor's datum face, highlighted fuchsia. */
+  motorRefFace?: FaceRef | null
 }
 
 export function Scene({
@@ -836,6 +906,8 @@ export function Scene({
   finFaces,
   onFaceToggle,
   isolateOuterFaces = false,
+  motor,
+  motorRefFace,
 }: SceneProps) {
   const controls = useRef<any>(null)
   const [bounds, setBounds] = useState<Bounds | null>(null)
@@ -862,6 +934,10 @@ export function Scene({
   }
   const bodyFaceMap = useMemo(() => toMap(outerFaces), [outerFaces])
   const finFaceMap = useMemo(() => toMap(finFaces), [finFaces])
+  const motorFaceMap = useMemo(
+    () => toMap(motorRefFace ? [motorRefFace] : []),
+    [motorRefFace],
+  )
 
   const noopFaceToggle = useCallback(() => undefined, [])
 
@@ -914,6 +990,7 @@ export function Scene({
           editTarget={editTarget}
           bodyFaces={bodyFaceMap}
           finFaces={finFaceMap}
+          motorFaces={motorFaceMap}
           onFaceToggle={onFaceToggle ?? noopFaceToggle}
           isolateOuterFaces={isolateOuterFaces}
         />
@@ -946,6 +1023,9 @@ export function Scene({
             />
           )}
           {finPlanforms && finPlanforms.length > 0 && <FinPlanforms planforms={finPlanforms} />}
+          {motor?.aftWorld && motor.foreWorld && motor.radius != null && (
+            <MotorCylinder aft={motor.aftWorld} fore={motor.foreWorld} radius={motor.radius} />
+          )}
         </group>
       </group>
 
