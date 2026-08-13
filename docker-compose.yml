@@ -27,6 +27,13 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    # --watch reloads the config in place when deploy/caddy/Caddyfile changes, so
+    # a `git pull` on the box takes effect with no manual reload. The config dir
+    # (not the single file) is mounted below: a single-file bind mount pins to the
+    # file's inode, and git rewrites the file to a new inode on pull, so the
+    # container would keep serving the stale config until recreated. Mounting the
+    # dir means the container always reads the current Caddyfile.
+    command: caddy run --config /etc/caddy/Caddyfile --adapter caddyfile --watch
     ports:
       - "80:80"
       - "443:443"
@@ -42,7 +49,7 @@ services:
       # Docker Desktop provides this name already; on Linux it must be mapped.
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/caddy:/etc/caddy:ro   # mount the dir, not the file (see command above)
       - caddy_data:/data # TLS certificates (persisted across restarts)
       - caddy_config:/config
     depends_on:
@@ -268,7 +275,7 @@ services:
   # Intentionally absent. The C++ bridge, elodin-db and the Node backend need
   # the test-stand hardware, so they run natively under systemd -- see
   # daq-server/deploy/systemd/. Caddy proxies to them on the host; the routes
-  # are in deploy/Caddyfile.
+  # are in deploy/caddy/Caddyfile.
 
   # ── Landing page ─────────────────────────────────────────────────────────
   landing:
