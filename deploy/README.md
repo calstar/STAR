@@ -105,7 +105,7 @@ cloudflared is the only ingress.
 ## Adding an app
 
 1. Add the service to `docker-compose.yml`.
-2. Add a site block to `deploy/Caddyfile` — **with `import protected`**.
+2. Add a site block to `deploy/caddy/Caddyfile` — **with `import protected`**.
 3. Add the DNS record.
 
 Forgetting step 2's import is the mistake to watch for. The two FastAPI
@@ -124,7 +124,7 @@ curl -sI -H 'Accept: application/json' \
 Check the Caddyfile without restarting anything:
 
 ```bash
-docker run --rm -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+docker run --rm -v "$PWD/deploy/caddy:/etc/caddy:ro" \
   caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 ```
 
