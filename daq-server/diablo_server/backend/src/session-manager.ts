@@ -81,6 +81,7 @@ class SessionManager {
   private active = false;
   private dbDir: string | null = null;
   private keepData = false;
+  private simulated = false;
   private deadlineMs: number | null = null;
   private durationMs: number | null = null;
   private warnTimers: NodeJS.Timeout[] = [];
@@ -96,18 +97,27 @@ class SessionManager {
       this.active = true;
       this.dbDir = persisted.dbDir;
       this.keepData = persisted.keepData;
+      this.simulated = persisted.simulated;
       this.deadlineMs = persisted.deadlineMs;
       this.durationMs = persisted.durationMs;
       if (this.deadlineMs != null && this.deadlineMs <= Date.now()) {
         void this.stop(true); // expired while we were down
       } else {
         this.scheduleTimers();
+        // The spawned simulator (mock mode) dies with the backend — re-launch it
+        // for a recovered simulated run. (systemd units survive; resume is a no-op.)
+        void this.controller.resume(this.simulated);
       }
     }
   }
 
   isEnabled(): boolean {
     return this.enabled;
+  }
+
+  /** True when an active run is fed by the board simulator (drives the "Simulated Data" badge). */
+  isSimulated(): boolean {
+    return this.active && this.simulated;
   }
 
   getStatus(): SessionStatus {
@@ -119,6 +129,7 @@ class SessionManager {
       deadlineMs: this.deadlineMs,
       remainingMs: this.deadlineMs != null ? this.deadlineMs - Date.now() : null,
       freeDiskBytes: this.enabled ? freeDiskBytes() : null,
+      simulated: this.active && this.simulated,
     };
   }
 
@@ -184,10 +195,11 @@ class SessionManager {
       keepData: this.keepData,
       deadlineMs: this.deadlineMs,
       durationMs: this.durationMs,
+      simulated: this.simulated,
     });
   }
 
-  async start(keepData: boolean, durationMs: number): Promise<void> {
+  async start(keepData: boolean, durationMs: number, simulated = false): Promise<void> {
     if (!this.enabled) throw new Error('Session control is disabled in this mode.');
     if (this.active) throw new Error('A run is already active.');
     if (!Number.isFinite(durationMs) || durationMs <= 0) {
@@ -195,9 +207,10 @@ class SessionManager {
     }
     this.dbDir = join(ELODIN_ROOT, timestampName());
     this.keepData = keepData;
+    this.simulated = simulated;
     this.durationMs = durationMs;
     this.deadlineMs = Date.now() + durationMs;
-    await this.controller.start(this.dbDir);
+    await this.controller.start(this.dbDir, this.simulated);
     this.active = true;
     this.scheduleTimers();
     this.persist();
@@ -227,6 +240,7 @@ class SessionManager {
     this.deadlineMs = null;
     this.durationMs = null;
     this.keepData = false;
+    this.simulated = false;
     this.persist();
     this.emit();
   }

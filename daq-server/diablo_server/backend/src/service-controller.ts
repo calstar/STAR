@@ -9,10 +9,16 @@
  *
  * Only the always-on server's sensor-backend.service sets SESSION_SERVICE_MODE=systemd.
  */
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import { writeFileSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import { homedir } from 'os';
+
+// daq-server repo root (…/daq-server), from …/daq-server/diablo_server/backend/{src,dist}.
+const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const SIM_SCRIPT = join(PROJECT_ROOT, 'sim', 'board_simulator.py');
+const SIM_CONFIG = join(PROJECT_ROOT, 'config', 'sim_config.toml');
 
 export type SessionServiceMode = 'off' | 'mock' | 'systemd';
 
@@ -31,14 +37,17 @@ const BASE_UNITS = [
   'sensor-actuator',
 ];
 
-function pipelineUnits(): string[] {
+function pipelineUnits(simulated: boolean): string[] {
   const units = [...BASE_UNITS];
-  if (process.env.USE_SIM === '1') units.push('sensor-simulator');
+  if (simulated) units.push('sensor-simulator');
   return units;
 }
 
 // The elodin unit reads its per-run DB dir from this EnvironmentFile (systemd mode).
 const SESSION_ENV_PATH = join(homedir(), '.config', 'daq', 'session.env');
+// Optional data-source overlay the pipeline units already read: a simulated run
+// sets USE_SIM=1 + the IP-remapped sim config; a live run points back at hardware.
+const PIPELINE_ENV_PATH = join(homedir(), '.config', 'daq', 'pipeline.env');
 
 function runSystemctl(action: 'start' | 'stop', units: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -53,21 +62,66 @@ function runSystemctl(action: 'start' | 'stop', units: string[]): Promise<void> 
 export class ServiceController {
   constructor(private readonly mode: SessionServiceMode) {}
 
-  async start(dbDir: string): Promise<void> {
+  /** Mock-mode simulator child (systemd manages the sensor-simulator unit instead). */
+  private simProc: ChildProcess | null = null;
+
+  async start(dbDir: string, simulated = false): Promise<void> {
     if (this.mode === 'systemd') {
       mkdirSync(dirname(SESSION_ENV_PATH), { recursive: true });
       writeFileSync(SESSION_ENV_PATH, `ELODIN_DB_DIR=${dbDir}\n`);
-      await runSystemctl('start', pipelineUnits());
+      // Per-run data-source overlay consumed by the pipeline units.
+      writeFileSync(
+        PIPELINE_ENV_PATH,
+        simulated
+          ? 'USE_SIM=1\nDAQ_CONFIG=config/sim_config.toml\n'
+          : 'USE_SIM=0\nDAQ_CONFIG=config/config.toml\n',
+      );
+      await runSystemctl('start', pipelineUnits(simulated));
     } else {
-      console.log(`[Session] (mock) start pipeline → ${dbDir} :: ${pipelineUnits().join(', ')}`);
+      console.log(`[Session] (mock) start pipeline → ${dbDir} (simulated=${simulated})`);
+      // In mock mode the pipeline is already running; only the simulator is ours
+      // to start/stop for the run.
+      if (simulated) this.spawnSimulator();
     }
   }
 
   async stop(): Promise<void> {
     if (this.mode === 'systemd') {
-      await runSystemctl('stop', pipelineUnits());
+      // Stop the superset (incl. the simulator) so no data source lingers between runs.
+      await runSystemctl('stop', pipelineUnits(true));
     } else {
-      console.log(`[Session] (mock) stop pipeline :: ${pipelineUnits().join(', ')}`);
+      console.log('[Session] (mock) stop pipeline');
+      this.stopSimulator();
     }
+  }
+
+  /** Re-assert the simulator after a backend restart recovered an active simulated run. */
+  async resume(simulated: boolean): Promise<void> {
+    if (!simulated) return;
+    if (this.mode === 'systemd') {
+      await runSystemctl('start', ['sensor-simulator']);
+    } else {
+      this.spawnSimulator();
+    }
+  }
+
+  private spawnSimulator(): void {
+    if (this.simProc && !this.simProc.killed) return; // already running
+    const args = [SIM_SCRIPT, '--config', SIM_CONFIG, '--target', '127.0.0.1', '--port', '5006'];
+    const proc = spawn('python3', args, { cwd: PROJECT_ROOT, stdio: 'inherit' });
+    proc.on('error', (err) => console.error('[Session] board simulator failed to start:', err));
+    proc.on('exit', (code) => {
+      console.log(`[Session] board simulator exited (${code})`);
+      if (this.simProc === proc) this.simProc = null;
+    });
+    this.simProc = proc;
+    console.log(`[Session] board simulator started (pid ${proc.pid})`);
+  }
+
+  private stopSimulator(): void {
+    if (!this.simProc) return;
+    console.log(`[Session] stopping board simulator (pid ${this.simProc.pid})`);
+    this.simProc.kill('SIGTERM');
+    this.simProc = null;
   }
 }

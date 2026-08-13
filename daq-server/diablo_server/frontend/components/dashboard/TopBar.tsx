@@ -218,6 +218,10 @@ export default function TopBar() {
   const stateColor = STATE_COLORS[effectiveState] ?? 'text-text';
   const isConnected = connectionStatus.connected;
   const isFullyConnected = connectionStatus.connected && connectionStatus.elodinConnected;
+  const isSimulated = !!connectionStatus.simulated;
+  // Session-enabled deployment with no active run: the pipeline is intentionally
+  // down, so show "Session Stopped" rather than a "Data Pipeline Down" alarm.
+  const sessionStopped = !!(session?.enabled && !session.active);
 
   const effectivePressureBars = useMemo(() => {
     if (pressureBars.length > 0) return pressureBars;
@@ -276,9 +280,9 @@ export default function TopBar() {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isFullyConnected ? 'bg-green-500' : isConnected ? 'bg-yellow-500' : 'bg-red-500'}`} />
+            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isSimulated ? 'bg-purple-500' : isFullyConnected ? 'bg-green-500' : sessionStopped ? 'bg-gray-500' : isConnected ? 'bg-yellow-500' : 'bg-red-500'}`} />
             <span className="text-sm text-gray-300 font-semibold">
-              {isFullyConnected ? 'Connected' : isConnected ? 'Data Pipeline Down' : 'Disconnected'}
+              {isSimulated ? 'Simulated Data' : isFullyConnected ? 'Connected' : sessionStopped ? 'Session Stopped' : isConnected ? 'Data Pipeline Down' : 'Disconnected'}
             </span>
           </div>
           {session?.enabled && (

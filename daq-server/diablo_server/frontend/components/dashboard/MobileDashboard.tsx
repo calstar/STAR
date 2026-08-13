@@ -72,8 +72,12 @@ export default function MobileDashboard() {
   const debugMode = useSensorStore((s) => s.debugMode);
   const setDebugMode = useSensorStore((s) => s.setDebugMode);
   const connectionStatus = useSensorStore((s) => s.connectionStatus) ?? { connected: false, elodinConnected: false };
+  const session = useSensorStore((s) => s.session);
   const connected = connectionStatus.connected;
   const elodinConnected = connectionStatus.elodinConnected;
+  const isSimulated = !!connectionStatus.simulated;
+  // Session-enabled deployment with no active run: pipeline is intentionally down.
+  const sessionStopped = !!(session?.enabled && !session.active);
 
   const [clock, setClock] = useState('');
   const [timeWindow, setTimeWindow] = useState(60);
@@ -137,9 +141,9 @@ export default function MobileDashboard() {
           <div className="flex items-center gap-2">
             <span className="text-base font-bold tracking-widest text-blue-400 uppercase">DIABLO DAQ</span>
             <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-              isFullyConnected ? 'bg-green-500' : connected ? 'bg-yellow-500' : 'bg-red-500'
+              isSimulated ? 'bg-purple-500' : isFullyConnected ? 'bg-green-500' : sessionStopped ? 'bg-gray-500' : connected ? 'bg-yellow-500' : 'bg-red-500'
             }`} />
-            <span className="text-xs text-gray-400">{isFullyConnected ? 'Connected' : connected ? 'Data Pipeline Down' : 'Disconnected'}</span>
+            <span className="text-xs text-gray-400">{isSimulated ? 'Simulated Data' : isFullyConnected ? 'Connected' : sessionStopped ? 'Session Stopped' : connected ? 'Data Pipeline Down' : 'Disconnected'}</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-xs font-mono text-gray-400 tabular-nums">{clock}</span>

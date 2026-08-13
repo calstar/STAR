@@ -111,10 +111,11 @@ async function main(): Promise<void> {
   console.log('\n▶ Run 1 — Discard, auto-stop');
   const startedAt = Date.now();
   const activePromise = waitFor(ws, 'session_update', 10000, (p) => p.active === true);
-  send(ws, 'send_command', { commandType: 'session_start', data: { keepData: false, durationMs: DURATION_MS } });
+  send(ws, 'send_command', { commandType: 'session_start', data: { keepData: false, durationMs: DURATION_MS, simulated: true } });
   const active = await activePromise;
   const dbDir1: string = active.dbDir;
   assert(active.active === true, 'session_start → active');
+  assert(active.simulated === true, 'session_start (simulated) → SESSION_UPDATE.simulated true');
   assert(typeof dbDir1 === 'string' && dbDir1.startsWith(join(ELODIN_ROOT, 'daq_')), `fresh timestamped dbDir (${dbDir1})`);
   await sleep(300);
   assert(existsSync(dbDir1), 'run DB dir created on disk');
@@ -140,7 +141,7 @@ async function main(): Promise<void> {
   // ── Run 2: Save + extend → deadline moves out, dir persists on stop ────────
   console.log('\n▶ Run 2 — Save, extend, manual stop');
   const active2Promise = waitFor(ws, 'session_update', 10000, (p) => p.active === true);
-  send(ws, 'send_command', { commandType: 'session_start', data: { keepData: true, durationMs: 600000 } });
+  send(ws, 'send_command', { commandType: 'session_start', data: { keepData: true, durationMs: 600000, simulated: true } });
   const active2 = await active2Promise;
   const dbDir2: string = active2.dbDir;
   const deadline1: number = active2.deadlineMs;

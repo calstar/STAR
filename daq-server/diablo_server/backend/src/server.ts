@@ -635,7 +635,7 @@ wss.on('connection', (ws: WebSocket, req) => {
   // Connection status
   send(ws, {
     type: MessageType.CONNECTION_STATUS, timestamp: Date.now(),
-    payload: { connected: true, elodinConnected: elodin.isConnected(), connId },
+    payload: { connected: true, elodinConnected: elodin.isConnected(), connId, simulated: isSimulated() },
   });
   outboundMessages++;
   lastOutboundAt = Date.now();
@@ -872,12 +872,14 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       break;
     case 'session_start':
       sessionManager
-        .start(!!command.data.keepData, command.data.durationMs ?? 0)
+        .start(!!command.data.keepData, command.data.durationMs ?? 0, !!command.data.simulated)
+        .then(() => broadcastConnectionStatus())
         .catch((err) => send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Session start failed: ${err.message}` } }));
       break;
     case 'session_stop':
       sessionManager
         .stop(false)
+        .then(() => broadcastConnectionStatus())
         .catch((err) => send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Session stop failed: ${err.message}` } }));
       break;
     case 'session_extend':
@@ -991,9 +993,29 @@ function scheduleResubscribe(attempt: number): void {
   }, 5000);
 }
 
+// True when incoming data is synthetic. In a session-enabled deployment this is
+// exactly "an active simulated run" — the backend's own USE_SIM env is ignored
+// there because the systemd sim harness sets USE_SIM=1 on the backend process
+// permanently (so it would wrongly read simulated even when the run is stopped or
+// live). Only the field-laptop path (session control off, no run concept) falls
+// back to USE_SIM=1 (the terminal `dev.sh --sim` stack). Drives the purple badge.
+function isSimulated(): boolean {
+  if (sessionManager.isEnabled()) return sessionManager.isSimulated();
+  return process.env.USE_SIM === '1';
+}
+
+// Re-broadcast connection status (used when the simulated state flips on session
+// start/stop so the badge updates without waiting for an Elodin reconnect).
+function broadcastConnectionStatus(): void {
+  broadcast({
+    type: MessageType.CONNECTION_STATUS, timestamp: Date.now(),
+    payload: { connected: true, elodinConnected: elodin.isConnected(), simulated: isSimulated() },
+  });
+}
+
 elodin.on('connected', () => {
   console.log('[ThinServer] Elodin Connected');
-  broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true } });
+  broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true, simulated: isSimulated() } });
 
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
   shouldResubscribe = true;
@@ -1008,7 +1030,7 @@ elodin.on('connected', () => {
 
 elodin.on('disconnected', () => {
   console.log('[ThinServer] Elodin DB disconnected');
-  broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false } });
+  broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false, simulated: isSimulated() } });
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
   clearSubscriptionState();
 });

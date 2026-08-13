@@ -49,11 +49,13 @@ fi
 mkdir -p "$DAQ_DIR"
 sed 's/192\.168\.2\./127.0.0./g' "$PROJECT/config/config.toml" > "$SIM_CONFIG"
 cat > "$PIPELINE_ENV" <<EOF
-# Written by start_systemd_sim.sh — sim overlay read by the pipeline units and
-# the backend. Remove (stop_systemd_sim.sh) to return to a hardware config.
+# Written by start_systemd_sim.sh — points the always-on backend at the remapped
+# (no-hardware) config. The data source (live vs simulated) is chosen PER RUN from
+# the Session screen: session-start writes USE_SIM + the pipeline's config into this
+# file itself, so the harness no longer forces USE_SIM. Remove (stop_systemd_sim.sh)
+# to return to a hardware config.
 DAQ_CONFIG=$SIM_CONFIG
 CONFIG_PATH=$SIM_CONFIG
-USE_SIM=1
 EOF
 # Optional: fast auto-stop warnings for the integration test (env passthrough).
 [ -n "${SESSION_WARN_LEADS_MS:-}" ] && echo "SESSION_WARN_LEADS_MS=$SESSION_WARN_LEADS_MS" >> "$PIPELINE_ENV"

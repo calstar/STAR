@@ -166,6 +166,8 @@ export interface CommandPayload {
     keepData?: boolean;
     /** session_start: auto-stop timeout in milliseconds. */
     durationMs?: number;
+    /** session_start: run against the board simulator (true) instead of live hardware. */
+    simulated?: boolean;
     /** session_extend: milliseconds to push the auto-stop deadline out by. */
     addMs?: number;
   };
@@ -184,6 +186,8 @@ export interface SessionStatus {
   deadlineMs: number | null;
   remainingMs: number | null;
   freeDiskBytes: number | null;
+  /** True when the active run is fed by the board simulator instead of hardware. */
+  simulated: boolean;
 }
 
 // Connection status
@@ -193,6 +197,8 @@ export interface ConnectionStatus {
   connId?: string;
   latency?: number;
   error?: string;
+  /** True when incoming data is synthetic (board simulator running). */
+  simulated?: boolean;
 }
 
 // Mission start time (T+0 from first packet)

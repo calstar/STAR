@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useSensorStore } from '@/lib/store';
 import { getWebSocketClient } from '@/lib/websocket';
 import { useControlMode } from '@/lib/control-mode';
@@ -26,19 +25,9 @@ export default function SessionPage() {
   const session = useSensorStore((s) => s.session);
   const { controlEnabled } = useControlMode();
   const ws = getWebSocketClient();
-  const navigate = useNavigate();
-
-  const backLink = (
-    <button
-      type="button"
-      onClick={() => navigate('/')}
-      className="mb-4 inline-flex items-center gap-1 text-sm text-gray-400 hover:text-white"
-    >
-      <span aria-hidden>←</span> Back to dashboard
-    </button>
-  );
 
   const [keepData, setKeepData] = useState(true); // Save is the safe default
+  const [simulated, setSimulated] = useState(false); // Live data is the safe default
   const [durationMin, setDurationMin] = useState(60);
   const [addMin, setAddMin] = useState(15);
 
@@ -65,7 +54,6 @@ export default function SessionPage() {
   if (!session) {
     return (
       <main className="p-8 text-text">
-        {backLink}
         <h1 className="text-3xl font-bold mb-3">Session control</h1>
         <p className="text-lg text-gray-200 max-w-2xl leading-relaxed">
           Connecting… (waiting for the backend WebSocket). If this persists, the live data
@@ -78,7 +66,6 @@ export default function SessionPage() {
   if (!session.enabled) {
     return (
       <main className="p-8 text-text">
-        {backLink}
         <h1 className="text-3xl font-bold mb-3">Session control</h1>
         <p className="text-lg text-gray-200 max-w-2xl leading-relaxed">
           Session control is disabled in this deployment — the stack runs until the process is
@@ -94,7 +81,6 @@ export default function SessionPage() {
 
   return (
     <main className="p-6 sm:p-8 text-text max-w-3xl mx-auto w-full">
-      {backLink}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-3xl font-bold">Session control</h1>
         <span
@@ -154,6 +140,26 @@ export default function SessionPage() {
             </div>
 
             <div>
+              <div className="text-sm uppercase tracking-widest text-gray-300 mb-2">Data source</div>
+              <div className="flex rounded-lg border border-gray-700 bg-gray-900 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setSimulated(false)}
+                  className={`rounded-md px-3 py-1.5 text-sm font-semibold ${!simulated ? 'bg-white text-black' : 'text-gray-300 hover:bg-white/10'}`}
+                >
+                  Real
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSimulated(true)}
+                  className={`rounded-md px-3 py-1.5 text-sm font-semibold ${simulated ? 'bg-purple-500 text-white' : 'text-gray-300 hover:bg-white/10'}`}
+                >
+                  Simulated
+                </button>
+              </div>
+            </div>
+
+            <div>
               <div className="text-sm uppercase tracking-widest text-gray-300 mb-2">Auto-stop after (min)</div>
               <input
                 type="number"
@@ -168,7 +174,7 @@ export default function SessionPage() {
               type="button"
               disabled={!controlEnabled}
               title={lockedNote}
-              onClick={() => send({ commandType: 'session_start', data: { keepData, durationMs: durationMin * 60000 } })}
+              onClick={() => send({ commandType: 'session_start', data: { keepData, durationMs: durationMin * 60000, simulated } })}
               className="rounded-lg border border-green-600 bg-green-800/70 px-5 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Start run
