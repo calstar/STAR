@@ -12,6 +12,7 @@ import {
   listModels,
 } from './api/client'
 import { centreOfMass, formatMass } from './lib/cm'
+import { FlightDynamicsTab } from './components/viewer/FlightDynamicsTab'
 import { FlightProfileModal } from './components/viewer/FlightProfileModal'
 import { InspectorPanel } from './components/viewer/InspectorPanel'
 import { MotorCurvesModal } from './components/viewer/MotorCurvesModal'
@@ -94,6 +95,9 @@ export default function App() {
   // refetches it. Without this the manifest effect keys only on the id, which
   // has not changed, and the viewer would keep showing the previous build.
   const [reloadNonce, setReloadNonce] = useState(0)
+
+  // Top-level tab: the CAD viewer (all existing UI) vs the 6-DOF flight dynamics.
+  const [activeTab, setActiveTab] = useState<'cad' | 'flight'>('cad')
 
   useEffect(() => {
     listModels()
@@ -473,6 +477,18 @@ export default function App() {
             already does -- naming it twice just made the header noisy. */}
         <h1 className="text-xl font-bold">Onshape Viewer</h1>
 
+        <nav className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900/60 p-1 text-sm">
+          {(['cad', 'flight'] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`rounded px-3 py-1 font-medium ${activeTab === tab ? 'bg-cyan-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}
+            >
+              {tab === 'cad' ? 'CAD & Stability' : 'Flight Dynamics'}
+            </button>
+          ))}
+        </nav>
+
         <ModelPicker
           models={models}
           modelId={modelId}
@@ -504,6 +520,18 @@ export default function App() {
         </label>
       </header>
 
+      {activeTab === 'flight' ? (
+        <FlightDynamicsTab
+          modelId={modelId}
+          motorSel={motorSel}
+          outerFaces={outerFaces}
+          finFaces={finFaces}
+          nFins={finCount}
+          railLength={railLength}
+          overrides={massOverrides}
+        />
+      ) : (
+        <>
       <MaterialWarning parts={parts} />
 
       <div className="flex min-h-0 flex-1">
@@ -598,6 +626,8 @@ export default function App() {
           />
         </ResizableSidebar>
       </div>
+        </>
+      )}
 
       {flightOpen && (
         <FlightProfileModal

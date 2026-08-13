@@ -41,6 +41,7 @@ from .onshape.aero.fins import (
 from .onshape.aero.outer_surface import detect_outer_surface
 from .onshape.aero.profile import build_profile
 from .onshape.aero.flight import simulate_flight
+from .onshape.aero.rocketpy_flight import simulate_flight_dynamics
 from .onshape.aero.stability import MotorPlacement, compute_stability
 from .onshape.browse import BrowseCache
 from .onshape.build import build as run_build
@@ -189,6 +190,22 @@ class StabilityRequest(BaseModel):
     motor: MotorSelection | None = None
     #: Guided rail length (m) for the flight sim's off-rail velocity. Ignored by /stability.
     railLength: float | None = None
+
+
+class FlightDynamicsRequest(StabilityRequest):
+    """A StabilityRequest plus the launch conditions the 6-DOF RocketPy flight needs."""
+
+    #: Rail inclination from horizontal (deg); 90 = vertical.
+    inclination: float = 85.0
+    #: Rail heading / azimuth (deg from north).
+    heading: float = 0.0
+    #: Constant wind speed (m/s) and the compass bearing it blows *from* (deg).
+    windSpeed: float = 0.0
+    windDirection: float = 0.0
+    #: Launch-site elevation (m MSL) and coordinates (for gravity/geodesy).
+    elevation: float = 0.0
+    latitude: float = 32.99
+    longitude: float = -106.97
 
 
 def _model_dir(model_id: str) -> Path:
@@ -399,6 +416,7 @@ async def flight(model_id: str, request: StabilityRequest):
             "thrust": result.thrust[i],
             "mass": result.mass[i],
             "staticMargin": result.static_margin[i],
+            "mach": result.mach[i],
         }
         for i in range(len(result.times))
     ]
@@ -419,6 +437,116 @@ async def flight(model_id: str, request: StabilityRequest):
         "railExitVelocity": result.rail_exit_velocity,
         "railExitTime": result.rail_exit_time,
         "railCleared": result.rail_cleared,
+        "minStaticMargin": result.min_static_margin,
+        "minMarginTime": result.min_margin_time,
+        "minMarginMach": result.min_margin_mach,
+    }
+
+
+@app.post("/api/models/{model_id}/flight-dynamics")
+async def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
+    """6-DOF ascent via RocketPy: full trajectory, stability, loads and drift to apogee.
+
+    Requires a motor and the optional ``rocketpy`` dependency. Aero uses native
+    RocketPy surfaces; the stability panel overlays our CP(M) margin against RocketPy's.
+    """
+    if request.motor is None:
+        raise HTTPException(status_code=422, detail="a motor is required to simulate a flight")
+
+    model_dir = _model_dir(model_id)
+    store = _load_store(model_dir)
+    manifest = json.loads((model_dir / "manifest.json").read_text())
+
+    faces = [(f.key, f.faceId) for f in request.outerFaces]
+    if not faces:
+        faces = detect_outer_surface(store).faces
+    axis = None
+    if request.axis is not None:
+        import numpy as np
+
+        axis = Axis(
+            origin=np.asarray(request.axis.origin, dtype=float),
+            direction=np.asarray(request.axis.direction, dtype=float)
+            / (np.linalg.norm(request.axis.direction) or 1.0),
+        )
+    fin_faces = (
+        [(f.key, f.faceId) for f in request.finFaces] if request.finFaces is not None else None
+    )
+
+    placement, motor_block = _resolve_motor(request.motor)
+    motor_obj = _motor_db.get_motor(request.motor.motorId, request.motor.simfileId)
+    if motor_obj is None:
+        raise HTTPException(status_code=404, detail=f"unknown motor {request.motor.motorId}")
+
+    rail_length = request.railLength if request.railLength and request.railLength > 0 else 1.0
+    try:
+        result = simulate_flight_dynamics(
+            store,
+            manifest_parts=manifest.get("parts", []),
+            outer_faces=faces,
+            motor=motor_obj,
+            placement=placement,
+            axis=axis,
+            overrides=request.overrides,
+            fin_faces=fin_faces,
+            n_fins=request.nFins,
+            rail_length=rail_length,
+            inclination=request.inclination,
+            heading=request.heading,
+            wind_speed=request.windSpeed,
+            wind_direction=request.windDirection,
+            elevation=request.elevation,
+            latitude=request.latitude,
+            longitude=request.longitude,
+        )
+    except ModuleNotFoundError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail="rocketpy is not installed; install requirements-flight.txt to run flight dynamics",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    samples = [
+        {
+            "t": result.times[i],
+            "altitude": result.altitude[i],
+            "speed": result.speed[i],
+            "mach": result.mach[i],
+            "acceleration": result.acceleration[i],
+            "dynamicPressure": result.dynamic_pressure[i],
+            "angleOfAttack": result.angle_of_attack[i],
+            "stabilityMarginRocketpy": result.stability_margin_rocketpy[i],
+            "stabilityMarginOurs": result.stability_margin_ours[i],
+            "driftX": result.drift_x[i],
+            "driftY": result.drift_y[i],
+            "bendingMoment": result.bending_moment[i],
+            "omegaPitch": result.omega_pitch[i],
+        }
+        for i in range(len(result.times))
+    ]
+    return {
+        "motor": {"name": motor_block["name"], "format": motor_block["format"]},
+        "samples": samples,
+        "fft": {"frequency": result.fft_frequency, "amplitude": result.fft_amplitude},
+        "apogee": result.apogee,
+        "apogeeTime": result.apogee_time,
+        "maxSpeed": result.max_speed,
+        "maxMach": result.max_mach,
+        "maxAcceleration": result.max_acceleration,
+        "maxDynamicPressure": result.max_dynamic_pressure,
+        "maxDynamicPressureTime": result.max_dynamic_pressure_time,
+        "outOfRailVelocity": result.out_of_rail_velocity,
+        "outOfRailStabilityMargin": result.out_of_rail_stability_margin,
+        "minStabilityMargin": result.min_stability_margin,
+        "minStabilityMarginTime": result.min_stability_margin_time,
+        "minStabilityMarginOurs": result.min_stability_margin_ours,
+        "maxAngleOfAttack": result.max_angle_of_attack,
+        "maxBendingMoment": result.max_bending_moment,
+        "driftDistance": result.drift_distance,
+        "driftBearing": result.drift_bearing,
+        "launchStable": result.launch_stable,
+        "approximations": result.approximations,
     }
 
 

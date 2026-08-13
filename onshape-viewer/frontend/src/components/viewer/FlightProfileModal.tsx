@@ -92,9 +92,9 @@ export function FlightProfileModal({ result, busy, error, onClose }: Props) {
                 </p>
               )}
 
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
                 <Tile label="Apogee" value={`${result.apogee.toFixed(0)} m`} sub={`at ${result.apogeeTime.toFixed(1)} s`} />
-                <Tile label="Max velocity" value={`${result.maxVelocity.toFixed(0)} m/s`} sub={`Mach ${(result.maxVelocity / 343).toFixed(2)}`} />
+                <Tile label="Max velocity" value={`${result.maxVelocity.toFixed(0)} m/s`} sub={`Mach ${(result.maxVelocity / 340.29).toFixed(2)}`} />
                 <Tile label="Max accel" value={`${(result.maxAcceleration / G).toFixed(1)} g`} sub={`${result.maxAcceleration.toFixed(0)} m/s²`} />
                 <Tile
                   label="Off-rail velocity"
@@ -103,6 +103,11 @@ export function FlightProfileModal({ result, busy, error, onClose }: Props) {
                 />
                 <Tile label="Burnout" value={`${result.burnoutTime.toFixed(2)} s`} sub={`${result.burnoutAltitude.toFixed(0)} m · ${result.burnoutVelocity.toFixed(0)} m/s`} />
                 <Tile label="Thrust-to-weight" value={result.thrustToWeight.toFixed(1)} />
+                <Tile
+                  label="Min margin"
+                  value={result.minStaticMargin != null ? `${result.minStaticMargin.toFixed(2)} cal` : '—'}
+                  sub={result.minMarginMach != null ? `at Mach ${result.minMarginMach.toFixed(2)}` : 'no fins'}
+                />
               </div>
 
               <div className="min-h-0 flex-1">

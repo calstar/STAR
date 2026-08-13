@@ -280,6 +280,8 @@ export interface FlightSample {
   thrust: number
   mass: number
   staticMargin: number | null
+  /** Mach number at this sample (v / speed of sound), so margin can be read vs Mach. */
+  mach: number
 }
 
 /** Ascent flight profile from POST .../flight (no drag yet; apogee is an upper bound). */
@@ -301,6 +303,63 @@ export interface FlightResult {
   railExitVelocity: number | null
   railExitTime: number | null
   railCleared: boolean
+  /** Minimum static margin over the flight (the transonic dip) and where it occurs. */
+  minStaticMargin: number | null
+  minMarginTime: number | null
+  minMarginMach: number | null
+}
+
+// -- Flight dynamics (6-DOF ascent via RocketPy) ------------------------------
+
+export interface FlightDynamicsSample {
+  t: number
+  altitude: number
+  speed: number
+  mach: number
+  acceleration: number
+  dynamicPressure: number
+  angleOfAttack: number | null
+  stabilityMarginRocketpy: number
+  stabilityMarginOurs: number | null
+  driftX: number
+  driftY: number
+  bendingMoment: number
+  omegaPitch: number
+}
+
+export interface FlightDynamicsResult {
+  motor: { name: string; format: string }
+  samples: FlightDynamicsSample[]
+  fft: { frequency: number[]; amplitude: number[] }
+  apogee: number
+  apogeeTime: number
+  maxSpeed: number
+  maxMach: number
+  maxAcceleration: number
+  maxDynamicPressure: number
+  maxDynamicPressureTime: number
+  outOfRailVelocity: number
+  outOfRailStabilityMargin: number
+  minStabilityMargin: number
+  minStabilityMarginTime: number
+  minStabilityMarginOurs: number | null
+  maxAngleOfAttack: number
+  maxBendingMoment: number
+  driftDistance: number
+  driftBearing: number
+  launchStable: boolean
+  approximations: string[]
+}
+
+/** Launch conditions for the 6-DOF flight, on top of the geometry/motor request. */
+export interface FlightDynamicsRequest extends StabilityRequest {
+  inclination?: number
+  heading?: number
+  windSpeed?: number
+  windDirection?: number
+  elevation?: number
+  latitude?: number
+  longitude?: number
 }
 
 export interface OnshapeDocument {

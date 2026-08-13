@@ -23,6 +23,7 @@ import numpy as np
 from ..geometry_store import GeometryStore
 from .axis import Axis
 from .barrowman_body import body_aero
+from .barrowman_fins import fin_set_aero
 from .fins import detect_fin_faces, fin_set_aero_from_faces, planform_outline_3d
 from .profile import build_profile
 
@@ -218,6 +219,10 @@ class AeroCore:
     fin_count: int
     fin_cna: float
     fin_pf: object
+    #: Body-only contribution (Mach-flat), kept so the fin part can be re-evaluated
+    #: at any Mach and re-merged without re-tessellating -- see ``cp_axial_at_mach``.
+    body_cna: float = 0.0
+    body_cp_axial: float = 0.0
 
 
 def aero_core(
@@ -227,6 +232,7 @@ def aero_core(
     fin_faces: list[tuple[str, str]] | None = None,
     n_fins: int | None = None,
     include_fins: bool = True,
+    mach: float = 0.3,
 ) -> AeroCore:
     """Resolve the airframe profile/axis and the merged (body + fins) centre of pressure.
 
@@ -259,14 +265,40 @@ def aero_core(
         fin_geo = store.faces_for(fin_faces) if fin_faces else []
         if fin_geo:
             fin_aero, fin_pf = fin_set_aero_from_faces(
-                fin_geo, axis, body_radius=profile.r_max, r_ref=profile.r_max, n_fins=n_fins
+                fin_geo, axis, body_radius=profile.r_max, r_ref=profile.r_max, n_fins=n_fins, mach=mach
             )
             fin_count = fin_pf.n_fins
             fin_cna = fin_aero.cna
             contributions.append(CPContribution(cna=fin_aero.cna, cp_axial=fin_aero.cp))
 
     cp_axial, cna_total = merge_cp(contributions)
-    return AeroCore(profile, axis, cp_axial, cna_total, fin_count, fin_cna, fin_pf)
+    return AeroCore(
+        profile, axis, cp_axial, cna_total, fin_count, fin_cna, fin_pf,
+        body_cna=aero.cna, body_cp_axial=aero.cp,
+    )
+
+
+def aero_at_mach(core: AeroCore, mach: float) -> tuple[float, float]:
+    """Merged (body + fins) ``(cp_axial, cna_total)`` at an arbitrary Mach.
+
+    The body is Mach-flat, so only the fin CNa/CP are re-evaluated (from the stored
+    planform) and re-merged -- no re-tessellation. Falls back to the body-only values
+    when there are no fins.
+    """
+    contributions = [CPContribution(cna=core.body_cna, cp_axial=core.body_cp_axial)]
+    pf = core.fin_pf
+    if pf is not None:
+        fin_aero = fin_set_aero(
+            pf.chord_lead, pf.chord_trail, pf.span, pf.body_radius, pf.n_fins,
+            core.profile.r_max, mach,
+        )
+        contributions.append(CPContribution(cna=fin_aero.cna, cp_axial=fin_aero.cp))
+    return merge_cp(contributions)
+
+
+def cp_axial_at_mach(core: AeroCore, mach: float) -> float:
+    """Merged (body + fins) CoP at an arbitrary Mach (see ``aero_at_mach``)."""
+    return aero_at_mach(core, mach)[0]
 
 
 @dataclass
@@ -328,14 +360,17 @@ def compute_stability(
     n_fins: int | None = None,
     include_fins: bool = True,
     motor: MotorPlacement | None = None,
+    mach: float = 0.3,
 ) -> StabilityResult:
     """Stability from the outer surface, plus fins (given, or auto-detected).
 
     Body and fins are combined the way OpenRocket merges components: a CNa-weighted
     average of their cps. Pass ``fin_faces`` to fix the fin selection, ``n_fins``
     to override the detected count, or ``include_fins=False`` for a body-only run.
+    ``mach`` sets the flight condition (default 0.3, OpenRocket's design-view number);
+    fin CNa and CP migrate with it, the body is Mach-flat.
     """
-    core = aero_core(store, outer_faces, axis, fin_faces, n_fins, include_fins)
+    core = aero_core(store, outer_faces, axis, fin_faces, n_fins, include_fins, mach=mach)
     profile, axis = core.profile, core.axis
     cp_axial, cna_total = core.cp_axial, core.cna_total
     fin_pf = core.fin_pf

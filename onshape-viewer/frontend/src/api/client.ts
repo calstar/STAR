@@ -8,6 +8,8 @@ import type {
   OnshapeAssembly,
   OnshapeDocument,
   FinGuess,
+  FlightDynamicsRequest,
+  FlightDynamicsResult,
   FlightResult,
   MotorDetail,
   MotorSearchResult,
@@ -152,4 +154,19 @@ export async function computeFlight(
   })
   if (!response.ok) await fail(url, response)
   return response.json() as Promise<FlightResult>
+}
+
+/** 6-DOF ascent via RocketPy: full trajectory, stability, loads and drift to apogee. */
+export async function computeFlightDynamics(
+  modelId: string,
+  request: FlightDynamicsRequest,
+): Promise<FlightDynamicsResult> {
+  const url = `/api/models/${modelId}/flight-dynamics`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) await fail(url, response)
+  return response.json() as Promise<FlightDynamicsResult>
 }

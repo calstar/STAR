@@ -21,9 +21,13 @@ import numpy as np
 from ...motors.motor import Motor
 from ..geometry_store import GeometryStore
 from .axis import Axis
-from .stability import MotorPlacement, aero_core, compute_cg, place_motor
+from .stability import MotorPlacement, aero_core, compute_cg, cp_axial_at_mach, place_motor
 
 G0 = 9.80665  # m/s^2, standard gravity
+# Speed of sound placeholder: constant sea-level ISA. flight.py has no atmosphere
+# yet, so Mach = v / A_SOUND here; swap for ISA a(h)=sqrt(gamma*R*T(h)) when the
+# shared atmosphere lands (same merge that adds ascent drag).  ← atmosphere hook
+A_SOUND = 340.29  # m/s
 _DT = 0.005  # s, integration step
 _MAX_T = 300.0  # s, safety cap
 _MAX_SAMPLES = 400  # points sent to the client (downsampled)
@@ -66,6 +70,8 @@ class FlightResult:
     thrust: list[float]
     mass: list[float]
     static_margin: list[float | None]
+    #: Mach at each sample (v / A_SOUND), so the client can plot margin vs Mach.
+    mach: list[float]
     apogee: float
     apogee_time: float
     max_velocity: float
@@ -80,6 +86,11 @@ class FlightResult:
     rail_exit_velocity: float | None
     rail_exit_time: float | None
     rail_cleared: bool
+    #: Minimum static margin over the flight and where it occurs -- the transonic
+    #: dip. None when no fins / margin is undefined throughout.
+    min_static_margin: float | None = None
+    min_margin_time: float | None = None
+    min_margin_mach: float | None = None
 
 
 def _interp(xs: list[float], ys: list[float], x: float) -> float:
@@ -244,7 +255,6 @@ def simulate_flight(
     """
     core = aero_core(store, outer_faces, axis, fin_faces, n_fins, include_fins=True)
     profile, axis = core.profile, core.axis
-    cp_axial = core.cp_axial
     ref_diameter = 2.0 * profile.r_max
 
     placed = place_motor(store, profile, axis, placement)
@@ -260,7 +270,7 @@ def simulate_flight(
     idx = _downsample(len(asc.times), _MAX_SAMPLES)
     burn = motor.burn_time
 
-    def margin_at(t: float) -> float | None:
+    def margin_at(t: float, velocity: float) -> float | None:
         tm = min(max(t, 0.0), burn)
         m_motor = motor.get_total_mass(tm)
         cg_motor_axial = fore_axial + motor.get_cmx(tm)
@@ -268,7 +278,22 @@ def simulate_flight(
         if total <= 0 or ref_diameter <= 0:
             return None
         cg_total = (cg_cad_axial * mass_cad + cg_motor_axial * m_motor) / total
+        # CP migrates with Mach; recompute the fin contribution at this sample's Mach.
+        cp_axial = cp_axial_at_mach(core, abs(velocity) / A_SOUND)
         return (cp_axial - cg_total) / ref_diameter
+
+    sample_mach = [abs(asc.velocity[i]) / A_SOUND for i in idx]
+    sample_margin = [margin_at(asc.times[i], asc.velocity[i]) for i in idx]
+
+    # Minimum margin over the flight -- the transonic dip is the point of the exercise.
+    min_static_margin = min_margin_time = min_margin_mach = None
+    defined = [
+        (m, asc.times[i], mc)
+        for m, i, mc in zip(sample_margin, idx, sample_mach)
+        if m is not None
+    ]
+    if defined:
+        min_static_margin, min_margin_time, min_margin_mach = min(defined, key=lambda r: r[0])
 
     return FlightResult(
         times=[asc.times[i] for i in idx],
@@ -277,7 +302,8 @@ def simulate_flight(
         acceleration=[asc.acceleration[i] for i in idx],
         thrust=[asc.thrust[i] for i in idx],
         mass=[asc.mass[i] for i in idx],
-        static_margin=[margin_at(asc.times[i]) for i in idx],
+        static_margin=sample_margin,
+        mach=sample_mach,
         apogee=asc.apogee,
         apogee_time=asc.apogee_time,
         max_velocity=asc.max_velocity,
@@ -292,4 +318,7 @@ def simulate_flight(
         rail_exit_velocity=asc.rail_exit_velocity,
         rail_exit_time=asc.rail_exit_time,
         rail_cleared=asc.rail_cleared,
+        min_static_margin=min_static_margin,
+        min_margin_time=min_margin_time,
+        min_margin_mach=min_margin_mach,
     )

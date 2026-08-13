@@ -38,5 +38,18 @@ export const SERIES = {
   margin: '#e879f9', // fuchsia
 } as const
 
+/** Extra hues for the flight-dynamics tab panels. */
+export const FD = {
+  mach: '#38bdf8', // sky
+  pressure: '#f97316', // orange — dynamic pressure / max-Q
+  aoa: '#facc15', // yellow — angle of attack
+  drift: '#a78bfa', // violet — ground track
+  bending: '#fb7185', // rose — loads
+  omega: '#2dd4bf', // teal — angular rate
+  fft: '#c084fc', // purple — frequency response
+  marginOurs: '#e879f9', // fuchsia — our CP margin
+  marginRocketpy: '#60a5fa', // blue — RocketPy CP margin
+} as const
+
 export const REFERENCE = '#cbd5e1' // slate-300 — burnout / apogee guide lines (legible on dark)
 export const REFERENCE_RAIL = '#fbbf24' // amber-400 — off-rail guide line
