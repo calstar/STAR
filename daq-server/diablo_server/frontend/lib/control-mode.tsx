@@ -5,13 +5,13 @@ import { MessageType } from "./types";
 import { getWebSocketClient } from "./websocket";
 
 interface ControlModeContextValue {
-  /** Armed: the backend has authorized this connection (operator + password). */
+  /** Armed: the backend has authorized this connection (approved operator). */
   controlEnabled: boolean;
   /** This user is on the DAQ operators allowlist (from the backend). */
   isOperator: boolean;
   unlocking: boolean;
   error: string | null;
-  unlock: (password: string) => void;
+  unlock: () => void;
   lock: () => void;
 }
 
@@ -20,12 +20,12 @@ const ControlModeContext = createContext<ControlModeContextValue | undefined>(un
 /**
  * Engine-control arm state — entirely backend-driven, so the UI can never show
  * "armed" when the backend would reject the commands. The backend enforces the
- * operator allowlist + password server-side (see backend/src/server.ts); this
- * context just reflects its decisions:
+ * operator allowlist server-side (see backend/src/server.ts); this context just
+ * reflects its decisions:
  *   - CONTROL_STATUS (on connect): are you an approved operator?
- *   - CONTROL_UNLOCK_RESULT (reply to unlock): did the password unlock control?
- * No password lives in the frontend, and nothing is persisted — each connection
- * re-arms, because the backend resets authorization on every (re)connect.
+ *   - CONTROL_UNLOCK_RESULT (reply to arm): did the backend arm control?
+ * Nothing is persisted — each connection re-arms, because the backend resets
+ * authorization on every (re)connect.
  */
 export function ControlModeProvider({ children }: { children: React.ReactNode }) {
   const [controlEnabled, setControlEnabled] = useState(false);
@@ -52,11 +52,7 @@ export function ControlModeProvider({ children }: { children: React.ReactNode })
         setError(null);
       } else {
         setControlEnabled(false);
-        setError(
-          p.reason === "not_operator"
-            ? "You're not an approved operator."
-            : "Incorrect password."
-        );
+        setError("You're not an approved operator.");
       }
     });
 
@@ -64,13 +60,13 @@ export function ControlModeProvider({ children }: { children: React.ReactNode })
     return () => { offStatus(); offResult(); };
   }, []);
 
-  const unlock = useCallback((password: string) => {
+  const unlock = useCallback(() => {
     setUnlocking(true);
     setError(null);
     getWebSocketClient().send({
       type: MessageType.CONTROL_UNLOCK,
       timestamp: Date.now(),
-      payload: { password },
+      payload: {},
     });
   }, []);
 

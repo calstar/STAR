@@ -31,7 +31,7 @@ export enum MessageType {
 
   // Engine-control authorization (DAQ operator gate)
   CONTROL_STATUS = 'control_status',                // Server → Client: { operator, email }
-  CONTROL_UNLOCK = 'control_unlock',                // Client → Server: { password }
+  CONTROL_UNLOCK = 'control_unlock',                // Client → Server: {} (arm control; identity-gated)
   CONTROL_UNLOCK_RESULT = 'control_unlock_result',  // Server → Client: { ok, reason }
 }
 
