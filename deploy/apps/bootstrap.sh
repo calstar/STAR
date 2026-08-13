@@ -28,6 +28,12 @@ CLONE_DIR="${CLONE_DIR:-/opt/STAR}"          # where the repo lands on the box
 # The human admin account (desktop auto-login + docker group). Defaults to the
 # user who invoked sudo.
 ADMIN_USER="${ADMIN_USER:-${SUDO_USER:-$(id -un)}}"
+# WITH_DAQ=1 also provisions the native DAQ server (build deps, clone, C++ +
+# frontend build, systemd --user services) as $ADMIN_USER — see §7. Off by
+# default so a pure apps box isn't made to build the DAQ. USE_SIM=1 builds/runs
+# the DAQ against the simulator instead of test-stand hardware.
+WITH_DAQ="${WITH_DAQ:-0}"
+DAQ_CLONE="${DAQ_CLONE:-/home/$ADMIN_USER/STAR-daq}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 say() { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
@@ -60,6 +66,12 @@ ufw default allow outgoing
 # covers every default docker bridge subnet (docker0 + per-compose bridges), and
 # being source-based it matches regardless of which bridge iface the packet hits.
 ufw allow from 172.16.0.0/12 to any port 22 proto tcp
+# Same reason for the DAQ server: it's the one app Caddy reverse-proxies to a
+# NATIVE host process (deploy/systemd, :8081 API/WS + :3000 SPA — not a container,
+# it needs the test-stand hardware). Without these, the container->host packets are
+# silently DROPped and daq-server.<domain> 502s with `dial tcp 172.x.0.1:3000: i/o timeout`.
+ufw allow from 172.16.0.0/12 to any port 8081 proto tcp
+ufw allow from 172.16.0.0/12 to any port 3000 proto tcp
 ufw --force enable
 
 # ── §2  Desktop auto-login (only if a desktop/GDM is present) ────────────────
@@ -201,6 +213,73 @@ $(say "Almost there — finish the .env, then launch")
      cd $CLONE_DIR && docker compose --profile tunnel pull \\
        && docker compose --profile tunnel up -d
 EOF
+fi
+
+# ── §7  DAQ server (native, systemd --user) — opt-in via WITH_DAQ=1 ───────────
+# The DAQ isn't containerised (it needs the test-stand hardware), so it can't be
+# a compose service. This provisions it exactly like deploy/README.md, run as
+# $ADMIN_USER (it's a --user install with home-rooted paths). Best-effort: any
+# failure warns but never rolls back the apps stack, which is already up.
+if [[ "$WITH_DAQ" == "1" ]]; then
+  say "§7 DAQ server — build deps + clone + build + services (as $ADMIN_USER)"
+
+  # Build + runtime deps (root). CMake needs ZLIB + OpenSSL + Eigen.
+  apt-get install -y build-essential cmake ninja-build libeigen3-dev pkg-config \
+    zlib1g-dev libssl-dev python3 python3-venv \
+    || warn "§7 build-dep install failed — the DAQ build below will likely fail"
+
+  # Node 20+ for the web GUI (backend tsx + frontend build).
+  if ! command -v node >/dev/null 2>&1 || [[ "$(node -v 2>/dev/null | sed 's/v//;s/\..*//')" -lt 20 ]]; then
+    say "§7 Installing Node.js 20 (NodeSource)"
+    if curl -fsSL https://deb.nodesource.com/setup_20.x | bash -; then
+      apt-get install -y nodejs || warn "§7 nodejs install failed"
+    else
+      warn "§7 NodeSource setup failed — install Node 20+ manually, then re-run WITH_DAQ=1"
+    fi
+  fi
+
+  # enable-linger (root) so the user's systemd instance runs headless — required
+  # before `systemctl --user enable --now` and for services to survive reboot.
+  loginctl enable-linger "$ADMIN_USER" || true
+
+  DAQ_UID="$(id -u "$ADMIN_USER")"
+  # Everything else runs AS the DAQ user (home-rooted: ~/.cargo/bin/elodin-db,
+  # ~/.local/share/elodin, ~/.config/daq, `systemctl --user`).
+  if sudo -u "$ADMIN_USER" -H \
+       env REPO_URL="$REPO_URL" BRANCH="$BRANCH" DAQ_CLONE="$DAQ_CLONE" \
+           USE_SIM="${USE_SIM:-0}" XDG_RUNTIME_DIR="/run/user/$DAQ_UID" \
+       bash -euo pipefail -c '
+    # Clone shallow (no history) or update in place.
+    if [[ -d "$DAQ_CLONE/.git" ]]; then
+      git -C "$DAQ_CLONE" fetch --depth 1 origin "$BRANCH"
+      git -C "$DAQ_CLONE" reset --hard "origin/$BRANCH"
+    else
+      git clone --depth 1 -b "$BRANCH" "$REPO_URL" "$DAQ_CLONE"
+    fi
+    cd "$DAQ_CLONE/daq-server"
+
+    # elodin-db → ~/.cargo/bin (the sensor-elodin unit runs it by absolute path).
+    if [[ ! -x "$HOME/.cargo/bin/elodin-db" ]] && ! command -v elodin-db >/dev/null 2>&1; then
+      curl --proto "=https" --tlsv1.2 -LsSf \
+        https://github.com/elodin-sys/elodin/releases/download/v0.16.1/elodin-db-installer.sh | sh
+    fi
+
+    USE_SIM="$USE_SIM" bash scripts/build.sh                    # C++ binaries (build/bin)
+    (cd diablo_server/backend  && (npm ci || npm install))
+    (cd diablo_server/frontend && (npm ci || npm install))
+    bash deploy/startup/ensure_frontend_build.sh               # frontend/dist (served on :3000)
+
+    bash deploy/systemd/install_services.sh                    # units + WorkingDirectory drop-ins
+    # Wait for the user bus (enable-linger may still be bringing it up).
+    for _ in $(seq 1 20); do systemctl --user show-environment >/dev/null 2>&1 && break; sleep 1; done
+    # Always-on web layer; the run pipeline is started on demand by the Session button.
+    systemctl --user enable --now sensor-backend sensor-frontend sensor-config-broadcast sensor-heartbeat
+  '; then
+    say "§7 DAQ up — check: sudo -u $ADMIN_USER XDG_RUNTIME_DIR=/run/user/$DAQ_UID systemctl --user status sensor-backend"
+  else
+    warn "§7 DAQ provisioning failed — apps stack is unaffected. Re-run: WITH_DAQ=1 sudo -E bash $0"
+    warn "    (details + manual steps: daq-server/deploy/README.md)"
+  fi
 fi
 
 cat <<EOF

@@ -1,40 +1,49 @@
 #!/bin/bash
 set -e
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# deploy/systemd → daq-server. pwd -P so a symlinked checkout still resolves to
+# the real path.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+DAQ_DIR="$(cd "$DIR/../.." && pwd -P)"          # the repo's daq-server/ dir
 SYSTEMD_DIR="$HOME/.config/systemd/user"
+
+UNITS="sensor-elodin sensor-daq sensor-simulator sensor-calibration \
+sensor-controller sensor-actuator sensor-backend sensor-frontend sensor-sidecar \
+sensor-heartbeat sensor-config-broadcast"
 
 mkdir -p "$SYSTEMD_DIR"
 
-echo "Symlinking systemd services..."
-ln -sf "$DIR/sensor-elodin.service" "$SYSTEMD_DIR/"
-ln -sf "$DIR/sensor-daq.service" "$SYSTEMD_DIR/"
-ln -sf "$DIR/sensor-simulator.service" "$SYSTEMD_DIR/"
-ln -sf "$DIR/sensor-calibration.service" "$SYSTEMD_DIR/"
-ln -sf "$DIR/sensor-controller.service" "$SYSTEMD_DIR/"
-ln -sf "$DIR/sensor-actuator.service" "$SYSTEMD_DIR/"
-ln -sf "$DIR/sensor-backend.service" "$SYSTEMD_DIR/"
-ln -sf "$DIR/sensor-frontend.service" "$SYSTEMD_DIR/"
-ln -sf "$DIR/sensor-sidecar.service" "$SYSTEMD_DIR/"
-ln -sf "$DIR/sensor-heartbeat.service" "$SYSTEMD_DIR/"
-ln -sf "$DIR/sensor-config-broadcast.service" "$SYSTEMD_DIR/"
+echo "Installing systemd services (WorkingDirectory → $DAQ_DIR)..."
+for u in $UNITS; do
+  ln -sf "$DIR/$u.service" "$SYSTEMD_DIR/"
+  # The committed units carry a placeholder WorkingDirectory=%h/sensor_system[/subdir].
+  # Rebase that onto the real checkout path via a drop-in, so the DAQ works from
+  # wherever it's cloned — no ~/sensor_system symlink required. Preserve any
+  # subdir suffix (sensor-backend uses .../diablo_server/backend); overriding the
+  # whole path with $DAQ_DIR would run npm from the wrong dir.
+  wd="$(sed -n 's/^WorkingDirectory=//p' "$DIR/$u.service" | head -n1)"
+  case "$wd" in
+    %h/sensor_system*) suffix="${wd#%h/sensor_system}";;
+    *) continue;;   # unexpected/absent WorkingDirectory — leave the unit as-is
+  esac
+  mkdir -p "$SYSTEMD_DIR/$u.service.d"
+  printf '[Service]\nWorkingDirectory=%s\n' "$DAQ_DIR$suffix" \
+    > "$SYSTEMD_DIR/$u.service.d/workdir.conf"
+done
 
 echo "Reloading systemd user daemon..."
 systemctl --user daemon-reload
 
+echo ""
 echo "Pipeline: UDP → daq_bridge → Elodin DB → backend → frontend."
 echo ""
-echo "Start order:"
-echo "  systemctl --user start sensor-elodin      # DB first"
-echo "  systemctl --user start sensor-daq         # daq_bridge (UDP → DB)"
-echo "  systemctl --user start sensor-simulator   # synthetic data (skip if using real hardware)"
-echo "  systemctl --user start sensor-calibration sensor-backend sensor-frontend sensor-sidecar sensor-heartbeat sensor-config-broadcast"
+echo "Start the always-on web layer (the run pipeline is started by the GUI Session button):"
+echo "  systemctl --user enable --now sensor-backend sensor-frontend sensor-config-broadcast sensor-heartbeat"
 echo ""
-echo "Or start all:"
-echo "  systemctl --user start sensor-elodin sensor-daq sensor-simulator sensor-calibration sensor-backend sensor-frontend sensor-sidecar sensor-heartbeat sensor-config-broadcast"
+echo "Or start the whole stack by hand:"
+echo "  systemctl --user start sensor-elodin sensor-daq sensor-simulator sensor-calibration \\"
+echo "    sensor-controller sensor-actuator sensor-backend sensor-frontend sensor-config-broadcast sensor-heartbeat"
 echo ""
-echo "To enable on boot:"
-echo "  systemctl --user enable sensor-elodin sensor-daq sensor-simulator sensor-calibration sensor-backend sensor-frontend sensor-sidecar sensor-heartbeat sensor-config-broadcast"
-echo ""
-echo "You can view their logs cleanly with:"
-echo "  ../startup/start_tmux_logs.sh"
+echo "Logs:"
+echo "  journalctl --user -u sensor-backend -f          # one service"
+echo "  bash $DAQ_DIR/deploy/startup/start_tmux_logs.sh # optional multi-pane journal view"

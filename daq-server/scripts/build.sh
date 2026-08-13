@@ -12,8 +12,12 @@ set -euo pipefail
 
 trap 'echo "Build failed." >&2' ERR
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# pwd -P (physical path) so building through a symlink still resolves the repo's
+# sibling `../lib` correctly. On a systemd deploy ~/sensor_system is a symlink to
+# this daq-server dir; a logical `pwd` would make CMake's `../lib` escape to the
+# symlink's parent (e.g. ~/lib) and fail with "Cannot find source file".
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 BUILD_DIR="$ROOT/build"
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 
