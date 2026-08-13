@@ -115,6 +115,16 @@ services:
       # needs no auth/.env at all. On a login node, keep the Google/Flask secrets
       # in auth/.env; JWT_SECRET here still wins, so set it in root .env.
       JWT_SECRET: ${JWT_SECRET:-}
+      # Read the onshape allowlist from the bind-mounted config dir below, not
+      # the copy baked into the image, so it can be edited live on the server.
+      ONSHAPE_ALLOWLIST_FILE: /config/onshape_allowlist.txt
+    volumes:
+      # Editable-on-the-server allowlists. allowlist.py re-reads on mtime change,
+      # so edits here take effect on the user's next request -- no restart, no
+      # rebuild. Mount the *directory* (not the single file): an editor that
+      # saves via rename swaps the inode, which a single-file bind mount would
+      # not follow and the mtime watch would never see.
+      - ./auth/allowlists:/config:ro
 
   # ── Engine Design ────────────────────────────────────────────────────────
   # Built from the repo root: the native-builder stage and runtime copy several

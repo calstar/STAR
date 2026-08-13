@@ -29,7 +29,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 # map has no allowlist: the shared @berkeley.edu gate is the whole check.
 _APP_FILES = {
     "onshape-viewer": os.environ.get(
-        "ONSHAPE_ALLOWLIST_FILE", os.path.join(_HERE, "onshape_allowlist.txt")
+        "ONSHAPE_ALLOWLIST_FILE",
+        os.path.join(_HERE, "allowlists", "onshape_allowlist.txt"),
     ),
 }
 

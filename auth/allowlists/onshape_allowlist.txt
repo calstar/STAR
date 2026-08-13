@@ -7,8 +7,9 @@
 # tools. See auth/allowlist.py.
 #
 # Edits take effect on the user's next request (the file is re-read on change);
-# no restart needed. In production this file can be overridden by mounting one
-# at $ONSHAPE_ALLOWLIST_FILE.
+# no restart or rebuild needed. In production docker-compose bind-mounts this
+# directory into the auth container at /config (ONSHAPE_ALLOWLIST_FILE), so
+# editing this file on the server is picked up live.
 
 aidanrickert@berkeley.edu
 aahilsyed72@berkeley.edu
