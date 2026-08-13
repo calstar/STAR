@@ -101,11 +101,46 @@ static std::string resolveDataPath(const std::string& rel) {
     return rel;  // original — caller will get the open error
 }
 
+// Read a "section.key" string value from raw config.toml content, stripping
+// surrounding whitespace and quotes. Returns `fallback` if not found.
+static std::string configString(const std::string& content, const std::string& section,
+                                const std::string& key, const std::string& fallback) {
+    const std::string header = "[" + section + "]";
+    auto pos = content.find(header);
+    if (pos == std::string::npos)
+        return fallback;
+    auto start = pos + header.size();
+    auto next = content.find("\n[", start);
+    const std::string sec =
+        (next == std::string::npos) ? content.substr(start) : content.substr(start, next - start);
+    std::istringstream iss(sec);
+    std::string line;
+    while (std::getline(iss, line)) {
+        auto c = line.find('#');
+        if (c != std::string::npos)
+            line = line.substr(0, c);
+        auto eq = line.find('=');
+        if (eq == std::string::npos)
+            continue;
+        std::string k = line.substr(0, eq);
+        k.erase(0, k.find_first_not_of(" \t"));
+        k.erase(k.find_last_not_of(" \t") + 1);
+        if (k != key)
+            continue;
+        std::string v = line.substr(eq + 1);
+        v.erase(0, v.find_first_not_of(" \t\r\n\""));
+        v.erase(v.find_last_not_of(" \t\r\n\"") + 1);
+        return v.empty() ? fallback : v;
+    }
+    return fallback;
+}
+
 bool SequencerService::init(const std::string& config_path) {
     loadConfig(config_path);
 
-    // State machine CSV
-    std::string sm_csv = resolveDataPath("firmware/test_guis/state_transitions.csv");
+    // State machine CSV — path from config.toml (canonical: daq-server/config/).
+    std::string sm_csv = resolveDataPath(
+        configString(config_content_, "state_machine", "transitions_csv", "config/state_transitions.csv"));
     if (!state_machine_.load(sm_csv)) {
         std::cerr
             << "[SequencerService] Failed to load state_transitions.csv (tried relative to cwd: "
@@ -113,8 +148,9 @@ bool SequencerService::init(const std::string& config_path) {
         return false;
     }
 
-    // Actuator commander
-    std::string act_csv = resolveDataPath("firmware/test_guis/state_machine_actuators.csv");
+    // Actuator commander — path from config.toml (canonical: daq-server/config/).
+    std::string act_csv = resolveDataPath(
+        configString(config_content_, "state_machine", "actuator_csv", "config/state_machine_actuators.csv"));
     if (!actuator_commander_.load(config_content_, act_csv)) {
         std::cerr << "[SequencerService] Failed to load state_machine_actuators.csv (tried: "
                   << act_csv << ")" << std::endl;
@@ -352,12 +388,14 @@ bool SequencerService::reloadConfig() {
     std::cout << "[SequencerService] Reloading config..." << std::endl;
     loadConfig(config_path_);
 
-    std::string act_csv = resolveDataPath("firmware/test_guis/state_machine_actuators.csv");
+    std::string act_csv = resolveDataPath(
+        configString(config_content_, "state_machine", "actuator_csv", "config/state_machine_actuators.csv"));
     if (!actuator_commander_.load(config_content_, act_csv)) {
         std::cerr << "[SequencerService] Reload: failed to reload actuator CSV" << std::endl;
         return false;
     }
-    std::string sm_csv = resolveDataPath("firmware/test_guis/state_transitions.csv");
+    std::string sm_csv = resolveDataPath(
+        configString(config_content_, "state_machine", "transitions_csv", "config/state_transitions.csv"));
     if (!state_machine_.load(sm_csv)) {
         std::cerr << "[SequencerService] Reload: failed to reload state transitions CSV"
                   << std::endl;

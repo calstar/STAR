@@ -123,9 +123,7 @@ CONFIG_FILE = Path(__file__).parent / "fsw_gui_config.json"
 # State machine CSV path
 _STATE_MACHINE_CSV = (
     Path(__file__).parent.parent.parent
-    / "external"
-    / "DiabloAvionics"
-    / "test_guis"
+    / "config"
     / "state_machine_actuators.csv"
 )
 
@@ -1631,9 +1629,7 @@ class CombinedFSWMainWindow(QtWidgets.QMainWindow):
         """Load state machine actuator mapping from CSV"""
         csv_path = (
             Path(__file__).parent.parent.parent
-            / "external"
-            / "DiabloAvionics"
-            / "test_guis"
+            / "config"
             / "state_machine_actuators.csv"
         )
         self._state_actuator_map = {}

@@ -199,11 +199,11 @@ bool ActuatorCommander::load(const std::string& config_content, const std::strin
     std::cout << "[ActuatorCommander] Loaded " << roles_.size() << " actuator roles from config"
               << std::endl;
 
-    // -- State→actuator CSV --
+    // -- State→actuator CSV -- canonical source: daq-server/config/.
     const char* fallbacks[] = {
-        "firmware/test_guis/state_machine_actuators.csv",
-        "../firmware/test_guis/state_machine_actuators.csv",
-        "../../firmware/test_guis/state_machine_actuators.csv",
+        "config/state_machine_actuators.csv",
+        "../config/state_machine_actuators.csv",
+        "../../config/state_machine_actuators.csv",
     };
 
     std::ifstream f(csv_path);

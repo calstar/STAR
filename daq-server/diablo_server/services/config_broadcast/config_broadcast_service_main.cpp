@@ -392,7 +392,7 @@ int main(int argc, char* argv[]) {
     const char* csv_fbs[] = {
         "config/state_machine_actuators.csv",
         "../config/state_machine_actuators.csv",
-        "external/DiabloAvionics/test_guis/state_machine_actuators.csv",
+        "../../config/state_machine_actuators.csv",
     };
     for (const char* fb : csv_fbs) {
         std::ifstream t(fb);
