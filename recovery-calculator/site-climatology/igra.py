@@ -44,14 +44,26 @@ RD = 287.053
 
 
 class Level:
-    __slots__ = ("p", "t", "gph", "is_surface", "z")
+    __slots__ = ("p", "t", "gph", "is_surface", "z", "wdir", "wspd", "u", "v")
 
-    def __init__(self, p, t, gph, is_surface):
+    def __init__(self, p, t, gph, is_surface, wdir=None, wspd=None):
         self.p = p                  # Pa
         self.t = t                  # K, or None
         self.gph = gph              # m, reported geopotential height, or None
         self.is_surface = is_surface
         self.z = None               # m, our hydrostatic height (see build_heights)
+        self.wdir = wdir            # deg the wind blows FROM, or None
+        self.wspd = wspd            # m/s, or None
+        # East/north components, meteorological convention (wind FROM wdir), so
+        # the vector points where the air -- and a drifting canopy -- travels.
+        # Kept in step with physics/wind.py's uv_from_speed_dir.
+        if wdir is not None and wspd is not None:
+            r = math.radians(wdir)
+            self.u = -wspd * math.sin(r)   # east
+            self.v = -wspd * math.cos(r)   # north
+        else:
+            self.u = None
+            self.v = None
 
 
 class Sounding:
@@ -157,6 +169,8 @@ def parse(stream, since=None, until=None, p_floor=0.0):
         p = _int(line[9:15])                # spec 10-15, Pa
         gph = _int(line[16:21])             # spec 17-21, m
         t = _int(line[22:27])               # spec 23-27, tenths of degC
+        wdir = _int(line[40:45])            # spec 41-45, degrees
+        wspd = _int(line[46:51])            # spec 47-51, tenths of m/s
         if p is None or p < p_floor:
             continue
         cur.levels.append(Level(
@@ -164,6 +178,8 @@ def parse(stream, since=None, until=None, p_floor=0.0):
             t=None if t is None else t / 10.0 + 273.15,
             gph=None if gph is None else float(gph),
             is_surface=(lvltyp2 == "1"),
+            wdir=None if wdir is None else float(wdir),
+            wspd=None if wspd is None else wspd / 10.0,
         ))
     if cur is not None and keep and cur.levels:
         yield cur
@@ -251,15 +267,18 @@ def gph_residual(levels):
             if l.z is not None and l.gph is not None]
 
 
-def interp(levels, targets):
-    """Temperature at each target geopotential height, linear in height.
+EXTRAP_M = 200.0
 
-    Returns None for a target outside the profile, except that up to
-    EXTRAP_M below the lowest level it extrapolates on the lowest layer's own
-    lapse rate -- the pad sits ~90 m under Edwards and refusing to answer for
-    the bottom 90 m of a 7.6 km profile would be pedantry.
+
+def _interp_series(levels, targets, get):
+    """`get(level)` at each target height, linear in height.
+
+    Returns None for a target outside the profile, except that up to EXTRAP_M
+    below the lowest level it extrapolates on the lowest layer's own slope --
+    the pad sits ~90 m under Edwards and refusing to answer for the bottom 90 m
+    of a 7.6 km profile would be pedantry. `levels` must already be sorted
+    ascending by `z` and carry a non-None value at `get`.
     """
-    EXTRAP_M = 200.0
     if len(levels) < 2:
         return [None] * len(targets)
     out = []
@@ -269,8 +288,8 @@ def interp(levels, targets):
                 out.append(None)
                 continue
             a, b = levels[0], levels[1]
-            lapse = (b.t - a.t) / (b.z - a.z)
-            out.append(a.t + lapse * (z - a.z))
+            slope = (get(b) - get(a)) / (b.z - a.z)
+            out.append(get(a) + slope * (z - a.z))
             continue
         if z > levels[-1].z:
             out.append(None)
@@ -278,10 +297,32 @@ def interp(levels, targets):
         for a, b in zip(levels, levels[1:]):
             if a.z <= z <= b.z:
                 if b.z == a.z:
-                    out.append(a.t)
+                    out.append(get(a))
                 else:
-                    out.append(a.t + (b.t - a.t) * (z - a.z) / (b.z - a.z))
+                    out.append(get(a) + (get(b) - get(a)) * (z - a.z) / (b.z - a.z))
                 break
         else:
             out.append(None)
     return out
+
+
+def interp(levels, targets):
+    """Temperature at each target geopotential height, linear in height."""
+    return _interp_series(levels, targets, lambda l: l.t)
+
+
+def interp_wind(levels, targets):
+    """(u_east, v_north) m/s at each target height, linear in height.
+
+    Interpolates the two components independently -- the correct thing to do,
+    since interpolating speed and direction would swing the vector the long way
+    round a backing wind. `levels` comes from `build_heights` (so it carries
+    `z`); levels lacking a wind observation are filtered out first, which is why
+    a profile can cover the temperature grid yet return None for wind where the
+    radiosonde reported no wind. Returns a list of (u, v) tuples, (None, None)
+    outside the wind-reporting band.
+    """
+    w = [l for l in levels if l.u is not None and l.v is not None]
+    us = _interp_series(w, targets, lambda l: l.u)
+    vs = _interp_series(w, targets, lambda l: l.v)
+    return list(zip(us, vs))

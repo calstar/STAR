@@ -14,7 +14,7 @@
 import type { Climatology } from '../types/climatology'
 import type { Kind } from '../lib/quantities'
 import type {
-  ChartSample, Config, Result, TrajectorySample,
+  ChartSample, Config, DriftResult, Result, TrajectorySample, WindInput,
 } from '../types/schema'
 import bundledClimatology from '../fixtures/climatology.json'
 import { stubResult } from './fixture'
@@ -700,5 +700,24 @@ export async function runCrosscheck(
   return request<CrosscheckResult>(`/crosscheck?wind=${wind}`, {
     method: 'POST',
     body: JSON.stringify(config),
+  })
+}
+
+// --- /api/drift (PLAN.md §21) ----------------------------------------------
+
+/**
+ * POST /api/drift. The nominal descent's downwind drift under a given wind.
+ *
+ * No stub fallback, like the other analysis routes: drift is real physics, and
+ * a fabricated landing point is exactly the kind of number a range-safety
+ * conversation should never be built on. With no backend the caller shows the
+ * error instead.
+ */
+export async function runDrift(
+  config: Config, wind: WindInput, which = 'axial',
+): Promise<ApiResponse<DriftResult>> {
+  return request<DriftResult>(`/drift?which=${encodeURIComponent(which)}`, {
+    method: 'POST',
+    body: JSON.stringify({ config, wind }),
   })
 }

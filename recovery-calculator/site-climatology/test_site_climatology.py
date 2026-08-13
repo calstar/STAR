@@ -79,6 +79,18 @@ check_eq("filtered sounding keeps its own levels", len(only20[0].levels), 2)
 floored = list(igra.parse(io.StringIO(IGRA_SAMPLE), p_floor=85000.0))
 check_eq("p_floor drops levels above the ceiling", len(floored[0].levels), 4)
 
+# Wind columns sit further right on the same fixed-width records (WDIR 41-45,
+# WSPD 47-51 in tenths of m/s) -- one slice off by a column parses the neighbour.
+check("surface wind direction, deg", l0.wdir, 240.0, 0.0)
+check("surface wind speed, tenths m/s -> m/s", l0.wspd, 4.6, 1e-9)
+check("925 hPa wind direction", l2.wdir, 275.0, 0.0)
+check("925 hPa wind speed", l2.wspd, 4.6, 1e-9)
+# A wind FROM 275 deg (near-westerly) blows toward the east: u positive, v small.
+check_eq("westerly gives an eastward u component", l2.u > 0.0, True)
+check("v component near zero for a near-westerly", l2.v, 0.0, 0.6)
+check_eq("missing wind speed -> None", snds[0].levels[1].wspd, None)
+check_eq("missing wind -> no u component", snds[0].levels[1].u, None)
+
 
 # --- hydrostatic heights ---------------------------------------------------
 # Isothermal column: dZ = (Rd T / g0) ln(p1/p2) is exact, not an approximation,
@@ -156,6 +168,29 @@ below = igra.interp(ls, [ls[0].z - 100.0])[0]
 lapse = (ls[1].t - ls[0].t) / (ls[1].z - ls[0].z)
 check("interp extrapolates 100 m down on the base lapse rate",
       below, 300.0 - lapse * 100.0, 1e-9)
+
+
+# --- wind interpolation ----------------------------------------------------
+# Components interpolate independently. Both legs blow from the west (270), so
+# u = +speed and v = 0, and the midpoint speed is the average of the two.
+
+wind = igra.Sounding("TEST", 2020, 1, 1, 12)
+wind.levels = [igra.Level(90000.0, 300.0, 1000.0, True, wdir=270.0, wspd=10.0),
+               igra.Level(70000.0, 280.0, 3000.0, False, wdir=270.0, wspd=20.0)]
+ls = igra.build_heights(wind, station_elev=1000.0)
+mid = 0.5 * (ls[0].z + ls[1].z)
+u_mid, v_mid = igra.interp_wind(ls, [mid])[0]
+check("interp_wind is linear in u at the midpoint", u_mid, 15.0, 1e-9)
+check("interp_wind keeps v ~zero for a pure westerly", v_mid, 0.0, 1e-9)
+check_eq("interp_wind refuses above the top level",
+         igra.interp_wind(ls, [ls[-1].z + 1.0])[0], (None, None))
+
+# A profile whose levels carry temperature but no wind returns (None, None):
+# the wind grid is independent of the temperature grid.
+nowind = iso_sounding([1.0, 0.8, 0.6])
+ls = igra.build_heights(nowind, station_elev=1000.0)
+check_eq("interp_wind is None where no wind was reported",
+         igra.interp_wind(ls, [ls[1].z])[0], (None, None))
 
 
 # --- lapse fitting ---------------------------------------------------------
@@ -354,6 +389,45 @@ for tag in PROFILE_TAGS:
     # Anything else means the anchor drifted off the bottom of the grid.
     check("%s-tprofile eq (7) error is zero at the anchor" % tag,
           float(jan[0]["eq7_minus_measured_k"]), 0.0, 1e-9)
+
+
+# --- committed wind products -----------------------------------------------
+# Same gate as the temperature profiles, on the wind CSVs wind_profile.py
+# writes. nid alone is the sparsest tag (~22/month), so it sets the floor.
+
+WIND_TAGS = ("edw-nid", "vef", "nid")
+
+for tag in WIND_TAGS:
+    name = "%s-wprofile-monthly.csv" % tag
+    rows = load_csv(name)
+    check_eq("%s is non-empty" % name, len(rows) > 0, True)
+    check_eq("%s covers all 12 months" % name,
+             sorted({int(r["month"]) for r in rows}), list(range(1, 13)))
+    check_cols("%s-wprofile" % tag, rows,
+               ["month", "n_soundings", "H_msl_m", "H_agl_ft",
+                "u_mean_ms", "v_mean_ms", "spd_mean_ms", "spd_p05_ms",
+                "spd_p50_ms", "spd_p95_ms", "dir_mean_deg"])
+    # Speed is a magnitude, so non-negative; 80 m/s covers the winter jet aloft
+    # with headroom. A negative or absurd value means a component/parse error.
+    check_range("%s-wprofile" % tag, rows, "spd_mean_ms", 0.0, 80.0)
+    check_range("%s-wprofile" % tag, rows, "spd_p95_ms", 0.0, 80.0)
+    check_range("%s-wprofile" % tag, rows, "dir_mean_deg", 0.0, 360.0)
+    check_eq("%s-wprofile speed quantiles are ordered" % tag,
+             [r["H_msl_m"] for r in rows
+              if not (float(r["spd_p05_ms"]) <= float(r["spd_p50_ms"])
+                      <= float(r["spd_p95_ms"]))][:3], [])
+    check_eq("%s-wprofile mean speed dominates its components" % tag,
+             [r["H_msl_m"] for r in rows
+              if float(r["spd_mean_ms"]) + 1e-6
+              < math.hypot(float(r["u_mean_ms"]), float(r["v_mean_ms"]))][:3], [])
+    check_eq("%s-wprofile has enough soundings per month" % tag,
+             [r["month"] for r in rows if int(r["n_soundings"]) < 20], [])
+    jan = [r for r in rows if r["month"] == "1"]
+    hs = [float(r["H_msl_m"]) for r in jan]
+    check_eq("%s-wprofile heights ascend within a month" % tag,
+             hs == sorted(hs), True)
+    check_eq("%s-wprofile reaches the 25 kft AGL ceiling" % tag,
+             max(float(r["H_agl_ft"]) for r in jan) >= 25000.0, True)
 
 
 print()

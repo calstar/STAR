@@ -18,9 +18,10 @@ import { CornersPanel } from './components/corners/CornersPanel'
 import { StudyPanel } from './components/study/StudyPanel'
 import { CrosscheckPanel } from './components/crosscheck/CrosscheckPanel'
 import { AtmospherePanel } from './components/atmosphere/AtmospherePanel'
+import { DriftPanel } from './components/drift/DriftPanel'
 import { UnitsPanel } from './components/settings/UnitsPanel'
 
-type Tab = 'recovery' | 'corners' | 'study' | 'crosscheck' | 'atmosphere' | 'units'
+type Tab = 'recovery' | 'corners' | 'study' | 'drift' | 'crosscheck' | 'atmosphere' | 'units'
 
 const TABS: { id: Tab; label: string; hint: string; accent: string }[] = [
   { id: 'recovery', label: 'Setup & Basic Run', hint: 'Descent, loads and off-nominal cases',
@@ -29,6 +30,8 @@ const TABS: { id: Tab; label: string; hint: string; accent: string }[] = [
     accent: 'border-violet-500 text-violet-400' },
   { id: 'study', label: 'Sweep', hint: 'Compare designs - parachutes, altitudes, mass',
     accent: 'border-amber-500 text-amber-400' },
+  { id: 'drift', label: 'Drift', hint: 'Downwind drift and landing point under recovery',
+    accent: 'border-sky-500 text-sky-400' },
   { id: 'crosscheck', label: 'Cross-check',
     hint: 'This tool vs OpenRocket vs the recovery mastersheet',
     accent: 'border-rose-500 text-rose-400' },
@@ -43,7 +46,6 @@ const TABS: { id: Tab; label: string; hint: string; accent: string }[] = [
 export default function App() {
   const [tab, setTab] = useState<Tab>('recovery')
   const [connected, setConnected] = useState<boolean | null>(null)
-  const [sha, setSha] = useState<string | null>(null)
 
   /**
    * The config, held here because two tabs edit and read it: Recovery owns the
@@ -64,7 +66,6 @@ export default function App() {
   useEffect(() => {
     getHealth().then((res) => {
       setConnected(!res.error)
-      setSha(res.data?.git_sha ?? null)
     })
   }, [])
 
@@ -102,11 +103,10 @@ export default function App() {
             <div className="flex items-center gap-2">
               <div className={`h-2 w-2 rounded-full ${
                 connected === null ? 'animate-pulse bg-yellow-500'
-                  : connected ? 'bg-green-500' : 'bg-amber-500'}`} />
+                  : connected ? 'bg-green-500' : 'bg-red-500'}`} />
               <span className="text-sm text-[var(--color-text-secondary)]">
                 {connected === null ? 'Connecting…'
-                  : connected ? `Backend :8100${sha ? ` · ${sha.slice(0, 7)}` : ''}`
-                  : 'No backend - fixture mode'}
+                  : connected ? 'Connected' : 'Disconnected'}
               </span>
             </div>
           </div>
@@ -149,6 +149,9 @@ export default function App() {
         </div>
         <div className={tab === 'study' ? '' : 'hidden'}>
           <StudyPanel ui={ui} onChange={setUi} />
+        </div>
+        <div className={tab === 'drift' ? '' : 'hidden'}>
+          <DriftPanel ui={ui} />
         </div>
         <div className={tab === 'crosscheck' ? '' : 'hidden'}>
           <CrosscheckPanel ui={ui} />

@@ -1,7 +1,9 @@
 """POST /api/simulate and /api/sweep. PLAN.md §11.5, §11.9."""
 
+from typing import List, Literal, Union
+
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from backend.serialise import (
     SWEEP_COARSE_DT,
@@ -20,7 +22,10 @@ from physics.cases import (
     sweep,
     worst_by_category,
 )
+from physics.drift import compute_drift
 from physics.schema import Config
+from physics.solver import integrate
+from physics.wind import WindProfile
 
 router = APIRouter(prefix="/api", tags=["simulate"])
 
@@ -230,4 +235,123 @@ def run_sweep(config: Config, case: str = Query("nominal"),
         "governing_candidates": governing_candidates(rows),
         "range": {"min": min(designs), "max": max(designs),
                   "ratio": (max(designs) / min(designs)) if min(designs) else None},
+    }
+
+
+# --- drift (PLAN.md §21) ---------------------------------------------------
+
+
+class ConstantWind(BaseModel):
+    """A uniform wind: one speed and the bearing it blows from."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["constant"] = "constant"
+    speed: float = Field(ge=0.0, description="Wind speed, m/s.")
+    direction: float = Field(
+        description="Bearing the wind blows FROM, degrees clockwise from north "
+                    "(270 = a westerly). The met convention, matching a METAR.")
+
+
+class ProfileWind(BaseModel):
+    """A tabulated wind profile: u (east) / v (north) m/s vs altitude MSL.
+
+    The frontend resolves a climatology month/percentile to these arrays before
+    posting -- values travel, not the recipe, the same way `PadState` and
+    `Canopy` carry resolved numbers rather than a lookup key (see schema.py).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["profile"] = "profile"
+    heights_msl: List[float] = Field(min_length=1)
+    u: List[float] = Field(min_length=1)
+    v: List[float] = Field(min_length=1)
+
+
+WindInput = Union[ConstantWind, ProfileWind]
+
+
+class DriftRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    config: Config
+    wind: WindInput = Field(discriminator="kind")
+
+
+# The ground track is smooth (no events), so a plain time stride is enough;
+# ~300 points keeps the plan-view curve crisp without shipping the full
+# 5 ms load grid.
+_TRACK_MAX_POINTS = 300
+
+
+def _thin_track(drift):
+    n = len(drift.t)
+    if n == 0:
+        return []
+    step = max(1, n // _TRACK_MAX_POINTS)
+    idx = list(range(0, n, step))
+    if idx[-1] != n - 1:
+        idx.append(n - 1)
+    return [
+        {"t": float(drift.t[i]), "z": float(drift.z[i]),
+         "x": float(drift.x[i]), "y": float(drift.y[i])}
+        for i in idx
+    ]
+
+
+def _wind_profile_from(wind, site_elev):
+    if isinstance(wind, ConstantWind):
+        return WindProfile.constant(wind.speed, wind.direction,
+                                    site_elev=site_elev)
+    if not (len(wind.heights_msl) == len(wind.u) == len(wind.v)):
+        raise HTTPException(
+            status_code=422,
+            detail="wind profile heights_msl, u and v must be the same length")
+    return WindProfile.from_grid(wind.heights_msl, wind.u, wind.v,
+                                 site_elev=site_elev)
+
+
+@router.post("/drift")
+def run_drift(
+    req: DriftRequest,
+    which: str = Query(
+        "axial",
+        description="Airframe drag bound: 'axial' or 'broadside'. Descent rate "
+                    "sets how long the vehicle is exposed to the wind, so the "
+                    "bound moves drift slightly; broadside descends slower and "
+                    "drifts a touch further."),
+):
+    """Downwind drift of the nominal descent under a given wind.
+
+    Runs the nominal descent (config.devices as-is, not the §11.5 off-nominal
+    cases), then carries it sideways with the wind via the equilibrium model in
+    physics/drift.py. Returns the ground track plus the total distance and
+    bearing from the pad.
+    """
+    if which not in ("axial", "broadside"):
+        raise HTTPException(status_code=400,
+                            detail="which must be 'axial' or 'broadside'")
+    try:
+        atm = _atmosphere(req.config)
+        run = integrate(req.config, which, atm=atm)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    wind = _wind_profile_from(req.wind, req.config.site.z_site)
+    drift = compute_drift(run, wind)
+
+    return {
+        "distance": drift.distance,
+        "bearing_deg": drift.bearing_deg,
+        "descent_time": run.t_ground,
+        "landing": {"x": float(drift.x[-1]), "y": float(drift.y[-1])},
+        "track": _thin_track(drift),
+        # What the physics actually used at the ground, so the report is not
+        # asserting a wind the run did not see.
+        "wind_ground": {
+            "speed": wind.speed(0.0),
+            "heading_deg": wind.heading(0.0),
+        },
+        "airframe_bound": which,
     }

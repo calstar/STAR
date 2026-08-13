@@ -875,3 +875,55 @@ def test_crosscheck_rejects_an_unrunnable_config():
     bad = load_fixture()
     bad["devices"][0]["CdS"] = -1.0
     assert client().post("/api/crosscheck", json=bad).status_code == 422
+
+
+# --- drift (PLAN.md §21) ---------------------------------------------------
+
+
+def _drift_body(wind):
+    return {"config": load_fixture(), "wind": wind}
+
+
+def test_drift_constant_wind_matches_speed_times_descent_time():
+    with client() as c:
+        body = c.post("/api/drift", json=_drift_body(
+            {"kind": "constant", "speed": 8.0, "direction": 270.0})).json()
+    # A westerly blows toward the east: bearing 90, distance = speed*t.
+    assert abs(body["distance"] - 8.0 * body["descent_time"]) < 1e-3
+    assert abs(body["bearing_deg"] - 90.0) < 1e-3
+    assert body["landing"]["x"] > 0.0
+    assert abs(body["landing"]["y"]) < 1e-3
+
+
+def test_drift_zero_wind_is_no_drift():
+    with client() as c:
+        body = c.post("/api/drift", json=_drift_body(
+            {"kind": "constant", "speed": 0.0, "direction": 0.0})).json()
+    assert body["distance"] == 0.0
+
+
+def test_drift_track_is_time_ordered_and_starts_at_the_pad():
+    with client() as c:
+        body = c.post("/api/drift", json=_drift_body(
+            {"kind": "constant", "speed": 5.0, "direction": 180.0})).json()
+    track = body["track"]
+    assert track[0]["x"] == 0.0 and track[0]["y"] == 0.0
+    assert all(b["t"] >= a["t"] for a, b in zip(track, track[1:]))
+    # Wire contract for the ground-track plot.
+    assert set(track[0]) == {"t", "z", "x", "y"}
+
+
+def test_drift_accepts_a_resolved_profile():
+    prof = {"kind": "profile",
+            "heights_msl": [630.0, 1630.0, 4630.0],
+            "u": [3.0, 6.0, 12.0], "v": [0.0, 0.0, 0.0]}
+    with client() as c:
+        body = c.post("/api/drift", json=_drift_body(prof)).json()
+    assert body["distance"] > 0.0
+    assert abs(body["bearing_deg"] - 90.0) < 1e-6  # all eastward
+
+
+def test_drift_rejects_an_unrunnable_config():
+    bad = _drift_body({"kind": "constant", "speed": 5.0, "direction": 0.0})
+    bad["config"]["devices"][0]["CdS"] = -1.0
+    assert client().post("/api/drift", json=bad).status_code == 422

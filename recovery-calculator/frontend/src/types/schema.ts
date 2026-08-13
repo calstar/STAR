@@ -463,3 +463,40 @@ export interface Result {
   /** Non-null only when the §6.4 band was run both ways. */
   body_drag_band: { axial: number; broadside: number } | null
 }
+
+// ============================================================================
+// DRIFT -- PLAN.md §21
+// ============================================================================
+
+/**
+ * The wind a drift run is carried by, as `/api/drift` wants it.
+ *
+ * A discriminated union on `kind`, mirroring the backend's `WindInput`. The
+ * frontend resolves a climatology month/percentile to the `profile` arrays
+ * before posting -- values travel, not the recipe, the same way a study carries
+ * a resolved `PadState` rather than a lookup key.
+ */
+export type WindInput =
+  | { kind: 'constant'; speed: number; direction: number }
+  | { kind: 'profile'; heights_msl: number[]; u: number[]; v: number[] }
+
+/** One point on the horizontal ground track. East = +x, North = +y, metres. */
+export interface DriftTrackSample {
+  t: number
+  z: number
+  x: number
+  y: number
+}
+
+export interface DriftResult {
+  /** Straight-line pad-to-landing distance, m. */
+  distance: number
+  /** Compass bearing pad -> landing, degrees (0 = north, 90 = east). */
+  bearing_deg: number
+  descent_time: number
+  landing: { x: number; y: number }
+  track: DriftTrackSample[]
+  /** What the wind actually was at the ground in the run. */
+  wind_ground: { speed: number; heading_deg: number }
+  airframe_bound: string
+}
