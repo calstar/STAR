@@ -53,6 +53,33 @@ def _face_area(fg: FaceGeometry) -> float:
     return float(0.5 * np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1).sum())
 
 
+def is_fin_face(fg: FaceGeometry, axis: Axis, min_azimuthal: float = 0.5) -> bool:
+    """True if a face is a fin *surface*, not a protruding edge.
+
+    A fin lies in a plane that passes through the body axis, so its flat side has an
+    **azimuthal** normal -- perpendicular to both the axis and the radial direction.
+    A fin's edges protrude just as far but fail this: the tip edge's normal is radial,
+    the leading/trailing edges' normals are axial. Area-weighted normal (summed
+    triangle cross products) so a warped or airfoil face still reads its mean facing.
+    """
+    t = fg.triangles
+    if len(t) == 0:
+        return False
+    n = np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]).sum(axis=0)
+    nn = float(np.linalg.norm(n))
+    if nn < 1e-12:
+        return False
+    n = n / nn
+    d = axis.direction
+    c = t.reshape(-1, 3).mean(axis=0) - axis.origin
+    radial = c - (c @ d) * d
+    rr = float(np.linalg.norm(radial))
+    if rr < 1e-9:
+        return True  # face centred on the axis -- radial undefined, do not reject
+    azimuthal = np.cross(d, radial / rr)
+    return abs(float(n @ azimuthal)) >= min_azimuthal
+
+
 def detect_fin_faces(
     faces: list[FaceGeometry],
     axis: Axis,
@@ -71,7 +98,9 @@ def detect_fin_faces(
     cands: list[FaceGeometry] = []
     for fg in faces:
         _, rho = axis.axial_radial(fg.triangles.reshape(-1, 3))
-        if float(rho.max()) > body_r_max * protrusion:
+        # Protrudes past the airframe *and* is a fin surface (not a protruding edge,
+        # whose plane does not pass through the axis).
+        if float(rho.max()) > body_r_max * protrusion and is_fin_face(fg, axis):
             cands.append(fg)
     if not cands:
         return []
@@ -82,6 +111,25 @@ def detect_fin_faces(
         for fg, a in zip(cands, areas)
         if a >= min_area_fraction * a_max
     ]
+
+
+def fins_symmetric(azimuths: list[float], threshold: float = 0.12) -> bool:
+    """Whether the fin set is azimuthally symmetric, so it has no net side force.
+
+    Uses the resultant of the fins' unit azimuth vectors, normalised by fin count:
+    ~0 for an evenly spaced set (and for two opposed fins), large for a missing or
+    uneven fin (e.g. 0.5 for a 3-fin set with one removed). A lone fin is inherently
+    one-sided; no fins is trivially symmetric. When asymmetric the true CP sits off
+    the axis and the axial model here under-states the instability -- hence a warning.
+    """
+    n = len(azimuths)
+    if n == 0:
+        return True
+    if n == 1:
+        return False
+    rad = np.radians(np.asarray(azimuths, dtype=float))
+    resultant = float(np.hypot(np.cos(rad).sum(), np.sin(rad).sum())) / n
+    return resultant < threshold
 
 
 def _perp_basis(direction: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

@@ -12,7 +12,12 @@ from __future__ import annotations
 import numpy as np
 
 from backend.onshape.aero.axis import Axis
-from backend.onshape.aero.fins import extract_fin_planform, fin_set_aero_from_faces
+from backend.onshape.aero.fins import (
+    detect_fin_faces,
+    extract_fin_planform,
+    fin_set_aero_from_faces,
+    is_fin_face,
+)
 from backend.onshape.geometry_store import FaceGeometry
 
 ROOT, TIP, SWEEP, SPAN = 0.05, 0.03, 0.02, 0.05
@@ -62,6 +67,47 @@ def test_counts_three_fins_and_span():
     # Root chord (extrapolated to the tube) recovered near the true 0.05.
     root_chord = pf.chord_trail[0] - pf.chord_lead[0]
     assert abs(root_chord - ROOT) < 2e-3, root_chord
+
+
+def _quad_face(occ, corners) -> FaceGeometry:
+    a, b, c, d = corners
+    return FaceGeometry(
+        occurrence_key=occ, part_id="p", face_id=occ,
+        triangles=np.asarray([[a, b, c], [b, d, c]]),
+        surface_type="PLANE", axis_origin=None, axis_dir=None, radius=None,
+    )
+
+
+def test_fin_flat_face_passes_edges_rejected():
+    phi = 0.0
+    u = np.array([np.cos(phi), np.sin(phi), 0.0])  # radial
+    w = np.array([-np.sin(phi), np.cos(phi), 0.0])  # azimuthal
+    z = np.array([0.0, 0.0, 1.0])  # axis
+    R = BODY_R + SPAN
+
+    # Flat fin side: lies in the (axis, radial) plane -> azimuthal normal -> a fin.
+    assert is_fin_face(make_fin(phi), AXIS) is True
+    # Tip edge: faces radially outward (normal = radial) -> not a fin.
+    tip = _quad_face("tip", [0 * z + R * u - 1e-3 * w, 0.05 * z + R * u - 1e-3 * w,
+                             0 * z + R * u + 1e-3 * w, 0.05 * z + R * u + 1e-3 * w])
+    assert is_fin_face(tip, AXIS) is False
+    # Leading edge: faces along the axis (normal = axis) -> not a fin.
+    lead = _quad_face("lead", [0 * z + BODY_R * u - 1e-3 * w, 0 * z + R * u - 1e-3 * w,
+                               0 * z + BODY_R * u + 1e-3 * w, 0 * z + R * u + 1e-3 * w])
+    assert is_fin_face(lead, AXIS) is False
+
+
+def test_detect_excludes_edge_faces():
+    fins = [make_fin(a) for a in (0, 120, 240)]
+    R = BODY_R + SPAN
+    u = np.array([1.0, 0.0, 0.0])
+    w = np.array([0.0, 1.0, 0.0])
+    z = np.array([0.0, 0.0, 1.0])
+    tip = _quad_face("tipedge", [R * u - 1e-3 * w, 0.05 * z + R * u - 1e-3 * w,
+                                 R * u + 1e-3 * w, 0.05 * z + R * u + 1e-3 * w])
+    detected = detect_fin_faces([*fins, tip], AXIS, BODY_R)
+    keys = {k for k, _ in detected}
+    assert "occ:fin0" in keys and "tipedge" not in keys  # the edge is not a fin face
 
 
 def test_extracted_cna_matches_openrocket():

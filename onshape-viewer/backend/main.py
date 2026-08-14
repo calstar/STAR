@@ -74,6 +74,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Versioned designs: per-user documents with autosaved working copy, microversion
+# history and immutable releases (local files in dev; S3 when the bucket env is set).
+from .routers import documents  # noqa: E402
+
+app.include_router(documents.router)
+
 
 def _model_dirs() -> list[Path]:
     if not CACHE_ROOT.exists():
@@ -202,10 +208,6 @@ class FlightDynamicsRequest(StabilityRequest):
     #: Constant wind speed (m/s) and the compass bearing it blows *from* (deg).
     windSpeed: float = 0.0
     windDirection: float = 0.0
-    #: Launch-site elevation (m MSL) and coordinates (for gravity/geodesy).
-    elevation: float = 0.0
-    latitude: float = 32.99
-    longitude: float = -106.97
 
 
 def _model_dir(model_id: str) -> Path:
@@ -332,6 +334,7 @@ async def stability(model_id: str, request: StabilityRequest):
     return {
         "cg": {"world": result.cg_world, "fromNose": result.cg_from_nose},
         "cp": {"world": result.cp_world, "fromNose": result.cp_from_nose},
+        "axisDirection": result.axis_direction,
         "cna": result.cna,
         "refDiameter": result.ref_diameter,
         "rMax": result.r_max,
@@ -347,6 +350,7 @@ async def stability(model_id: str, request: StabilityRequest):
             "span": result.fin_span,
             "area": result.fin_area,
             "planforms": result.fin_planforms,
+            "symmetric": result.fin_symmetric,
         },
         "motor": motor_block,
     }
@@ -495,9 +499,6 @@ async def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
             heading=request.heading,
             wind_speed=request.windSpeed,
             wind_direction=request.windDirection,
-            elevation=request.elevation,
-            latitude=request.latitude,
-            longitude=request.longitude,
         )
     except ModuleNotFoundError as exc:
         raise HTTPException(

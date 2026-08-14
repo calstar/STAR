@@ -16,6 +16,10 @@ import { Row } from './Row'
 
 export interface StabilityPanelProps {
   result: StabilityResult | null
+  /** Static margin recomputed client-side from live mass edits (CP is fixed). Falls back to
+   *  the backend value when absent. */
+  liveMargin?: number | null
+  liveCgFromNose?: number | null
   busy: boolean
   error: string | null
   onCompute: () => void
@@ -65,6 +69,8 @@ function marginTone(margin: number | null): string {
 
 export function StabilityPanel({
   result,
+  liveMargin,
+  liveCgFromNose,
   busy,
   error,
   onCompute,
@@ -394,15 +400,30 @@ export function StabilityPanel({
 
         {result && (
           <>
-            <div className="mb-2 flex items-baseline justify-between">
-              <span className="text-slate-400">Static margin</span>
-              <span className={`text-lg font-semibold tabular-nums ${marginTone(result.staticMargin)}`}>
-                {formatMargin(result.staticMargin)}
-              </span>
-            </div>
-            <Row label="CP from nose" value={`${result.cp.fromNose.toFixed(4)} m`} />
-            <Row label="CG from nose" value={`${result.cg.fromNose.toFixed(4)} m`} />
+            {(() => {
+              // CP is fixed by geometry; CG (and so the margin) tracks live mass edits.
+              const margin = liveMargin ?? result.staticMargin
+              const cgFromNose = liveCgFromNose ?? result.cg.fromNose
+              return (
+                <>
+                  <div className="mb-2 flex items-baseline justify-between">
+                    <span className="text-slate-400">Static margin</span>
+                    <span className={`text-lg font-semibold tabular-nums ${marginTone(margin)}`}>
+                      {formatMargin(margin)}
+                    </span>
+                  </div>
+                  <Row label="CP from nose" value={`${result.cp.fromNose.toFixed(4)} m`} />
+                  <Row label="CG from nose" value={`${cgFromNose.toFixed(4)} m`} />
+                </>
+              )
+            })()}
             <Row label="CNₐ (total)" value={result.cna.toFixed(3)} small />
+            {result.fins.count > 0 && !result.fins.symmetric && (
+              <p className="mt-2 border-t border-slate-700 pt-2 text-xs text-amber-300">
+                ⚠ Fins are not azimuthally symmetric — the true CP sits off the axis and this
+                axial model under-states the instability. Expected {result.fins.count === 1 ? 'a single fin' : `${result.fins.count} uneven fins`}; check the fin selection.
+              </p>
+            )}
             {(() => {
               // Total loaded mass at each end of the burn: the CAD mass plus the motor's wet or
               // dry mass. `result.mass` already includes the motor at the selected state, so back

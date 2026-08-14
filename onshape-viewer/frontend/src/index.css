@@ -1,5 +1,20 @@
 @import 'tailwindcss';
 
+/* Palette tokens the ported design bar (components/versions/ConfigVersions) and
+   ui.tsx reference via var(--color-*). Mapped to this app's slate palette so the
+   shared component renders correctly here without editing its JSX. */
+:root {
+  --color-bg-primary: #020617;   /* slate-950 */
+  --color-bg-secondary: #0f172a; /* slate-900 */
+  --color-bg-tertiary: #1e293b;  /* slate-800 */
+  --color-border: #334155;       /* slate-700 */
+  --color-text-primary: #f1f5f9; /* slate-100 */
+  --color-text-secondary: #cbd5e1; /* slate-300 */
+  --color-text-muted: #94a3b8;   /* slate-400 */
+  --color-accent: #0891b2;       /* cyan-600 */
+  --color-accent-hover: #06b6d4; /* cyan-500 */
+}
+
 /* ── Type scale ──────────────────────────────────────────────────────────────
    Overrides Tailwind's default steps so every `text-*` in the app moves together
    toward legible sizes, matching the recovery-calculator app. Sizes are absolute

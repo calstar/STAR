@@ -245,6 +245,8 @@ export interface FinData {
   span: number
   area: number
   planforms: FinPlanform[]
+  /** Azimuthally symmetric fin set. False (e.g. a fin removed) ⇒ off-axis CP, warn. */
+  symmetric: boolean
 }
 
 /** Auto-detected fin faces, from GET .../fins. */
@@ -260,6 +262,8 @@ export interface FinGuess {
 export interface StabilityResult {
   cg: { world: [number, number, number]; fromNose: number }
   cp: { world: [number, number, number]; fromNose: number }
+  /** Unit axis direction (nose→tail), so the client can recompute margin on a mass edit. */
+  axisDirection: [number, number, number]
   cna: number
   refDiameter: number
   rMax: number

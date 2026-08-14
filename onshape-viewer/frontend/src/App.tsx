@@ -12,6 +12,9 @@ import {
   listModels,
 } from './api/client'
 import { centreOfMass, formatMass } from './lib/cm'
+import { loadViewerConfig, saveViewerConfig } from './lib/persist'
+import type { FlightParams, ViewerConfig } from './types/config'
+import { ConfigVersions } from './components/versions/ConfigVersions'
 import { FlightDynamicsTab } from './components/viewer/FlightDynamicsTab'
 import { FlightProfileModal } from './components/viewer/FlightProfileModal'
 import { InspectorPanel } from './components/viewer/InspectorPanel'
@@ -40,8 +43,11 @@ import { MATERIALS_BY_KEY } from './lib/materials'
 const LAST_MODEL_KEY = 'onshape-viewer:last-model'
 
 export default function App() {
+  // The persisted working config, read once so a reload restores the inputs below.
+  const [initialConfig] = useState(loadViewerConfig)
+
   const [models, setModels] = useState<ModelSummary[]>([])
-  const [modelId, setModelId] = useState<string | null>(null)
+  const [modelId, setModelId] = useState<string | null>(initialConfig.modelId)
   const [manifest, setManifest] = useState<Manifest | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -53,7 +59,9 @@ export default function App() {
   const [hoveredKeys, setHoveredKeys] = useState<string[]>([])
   // Session-only edits, keyed by part. Nothing is written back to Onshape and
   // nothing survives a reload; see PropertiesPanel for what they can change.
-  const [overrides, setOverrides] = useState<Map<string, PartOverride>>(new Map())
+  const [overrides, setOverrides] = useState<Map<string, PartOverride>>(
+    () => new Map(Object.entries(initialConfig.overrides)),
+  )
   const [opacity, setOpacity] = useState(0.55)
   const [showAssemblyCentroid, setShowAssemblyCentroid] = useState(true)
   // Backend-computed stability (CG, CP, static margin). Null until the user
@@ -63,9 +71,9 @@ export default function App() {
   const [stabilityError, setStabilityError] = useState<string | null>(null)
   // Outer-surface selection: which faces are the airframe. Empty means "let the
   // backend auto-detect on compute". Editing lets the user correct the guess.
-  const [outerFaces, setOuterFaces] = useState<FaceRef[]>([])
-  const [finFaces, setFinFaces] = useState<FaceRef[]>([])
-  const [finCount, setFinCount] = useState(0)
+  const [outerFaces, setOuterFaces] = useState<FaceRef[]>(initialConfig.outerFaces)
+  const [finFaces, setFinFaces] = useState<FaceRef[]>(initialConfig.finFaces)
+  const [finCount, setFinCount] = useState(initialConfig.finCount)
   // The exposed fin planform surfaces to draw; from auto-detect or compute.
   const [finPlanforms, setFinPlanforms] = useState<FinPlanform[]>([])
   const [faceEditMode, setFaceEditMode] = useState(false)
@@ -74,7 +82,7 @@ export default function App() {
   const [isolateOuterFaces, setIsolateOuterFaces] = useState(false)
   // Selected motor, folded into the CG / static margin by the backend. Null = none.
   // motorSummary keeps the picker's metadata for labelling before a compute round-trips.
-  const [motorSel, setMotorSel] = useState<MotorSelection | null>(null)
+  const [motorSel, setMotorSel] = useState<MotorSelection | null>(initialConfig.motor)
   const [motorSummary, setMotorSummary] = useState<MotorSummary | null>(null)
   // Flight-profile popup: fetched on open from the current surfaces + motor.
   const [flightOpen, setFlightOpen] = useState(false)
@@ -82,7 +90,14 @@ export default function App() {
   const [flightBusy, setFlightBusy] = useState(false)
   const [flightError, setFlightError] = useState<string | null>(null)
   // Guided rail length (m) — travel to full departure (rear lug clears), for off-rail velocity.
-  const [railLength, setRailLength] = useState(1.0)
+  const [railLength, setRailLength] = useState(initialConfig.railLength)
+
+  // Flight Dynamics launch params, lifted here so they are versioned in the config.
+  const [flight, setFlightState] = useState<FlightParams>(initialConfig.flight)
+  const setFlight = useCallback(
+    (patch: Partial<FlightParams>) => setFlightState((f) => ({ ...f, ...patch })),
+    [],
+  )
   // Motor-curves popup: the selected motor's raw thrust/weight/CG datafile.
   const [curvesOpen, setCurvesOpen] = useState(false)
   const [curvesDetail, setCurvesDetail] = useState<MotorDetail | null>(null)
@@ -217,6 +232,91 @@ export default function App() {
       number,
     ]
   }, [cm, stability])
+
+  // Static margin is (CP − CG)/d. CP is fixed by geometry (only a surface change moves it),
+  // so a mass edit is pure algebra on the CG — recompute it here instead of round-tripping to
+  // the backend. Uses ALL parts (override-adjusted), not the visibility-filtered marker: the
+  // margin is the whole rocket's. Folds in the motor exactly as the backend does.
+  const liveStability = useMemo(() => {
+    if (!stability) return null
+    const axis = stability.axisDirection
+    const full = centreOfMass(parts)
+    let cg = full.centroid
+    let mass = full.mass
+    const motor = stability.motor
+    if (motor?.cgWorld && mass >= 0) {
+      const mMotor = motor.state === 'burnout' ? motor.dryMass : motor.wetMass
+      const total = mass + mMotor
+      if (total > 0) {
+        cg = [0, 1, 2].map((i) => (full.centroid[i] * mass + motor.cgWorld![i] * mMotor) / total) as [
+          number,
+          number,
+          number,
+        ]
+        mass = total
+      }
+    }
+    if (!(mass > 0)) return null
+    const cpw = stability.cp.world
+    // Nose point on the axis, then project the live CG onto the nose→tail axis.
+    const nose = [0, 1, 2].map((i) => cpw[i] - stability.cp.fromNose * axis[i])
+    const cgFromNose = [0, 1, 2].reduce((s, i) => s + (cg[i] - nose[i]) * axis[i], 0)
+    const margin = stability.refDiameter > 0 ? (stability.cp.fromNose - cgFromNose) / stability.refDiameter : null
+    return { cgFromNose, margin }
+  }, [stability, parts])
+
+  // CM along the rocket axis (from the nose) plus its off-axis (radial) offset. A
+  // non-trivial radial offset means the visible mass is laterally unbalanced — a
+  // symmetry problem the CM section flags. Needs the detected axis (from stability).
+  const cmAnalysis = useMemo(() => {
+    if (!stability) return null
+    const axis = stability.axisDirection
+    const cpw = stability.cp.world
+    const nose = [0, 1, 2].map((i) => cpw[i] - stability.cp.fromNose * axis[i])
+    const d = [0, 1, 2].map((i) => cm.centroid[i] - nose[i])
+    const along = d[0] * axis[0] + d[1] * axis[1] + d[2] * axis[2]
+    const radial = Math.hypot(...[0, 1, 2].map((i) => d[i] - along * axis[i]))
+    // Off-axis if the lateral offset exceeds ~1% of the airframe diameter.
+    const offAxis = radial > 0.01 * stability.refDiameter
+    return { fromNose: along, radial, offAxis }
+  }, [stability, cm])
+
+  // -- Versioning: gather the user inputs into one ViewerConfig, persist it, and
+  // apply a restored one. localStorage is the reload cache; ConfigVersions drives
+  // the durable server-side timeline (named designs, history, releases).
+  const config = useMemo<ViewerConfig>(
+    () => ({
+      version: 1,
+      modelId,
+      overrides: Object.fromEntries(overrides),
+      outerFaces,
+      finFaces,
+      finCount,
+      motor: motorSel,
+      railLength,
+      flight,
+    }),
+    [modelId, overrides, outerFaces, finFaces, finCount, motorSel, railLength, flight],
+  )
+
+  // Debounced: `config` changes on every keystroke and this serialises it all.
+  useEffect(() => {
+    const id = setTimeout(() => saveViewerConfig(config), 400)
+    return () => clearTimeout(id)
+  }, [config])
+
+  // Stable, so ConfigVersions' mount/restore effects don't re-run every render.
+  const handleRestore = useCallback((c: ViewerConfig) => {
+    setModelId(c.modelId)
+    setOverrides(new Map(Object.entries(c.overrides)))
+    setOuterFaces(c.outerFaces)
+    setFinFaces(c.finFaces)
+    setFinCount(c.finCount)
+    setMotorSel(c.motor)
+    setRailLength(c.railLength)
+    setFlightState(c.flight)
+    saveViewerConfig(c)
+  }, [])
 
   // Effective mass per occurrence, sent to the backend so its CG matches exactly
   // what is on screen (material and typed-in overrides included). The backend is
@@ -456,7 +556,10 @@ export default function App() {
     )
   }
 
-  if (!manifest || !modelId) {
+  // Only take over the screen while a *selected* model's manifest is loading. With
+  // no model (e.g. a fresh/blank design) we still render the header + design bar so
+  // the user can pick a model or switch designs -- the body shows a prompt instead.
+  if (modelId && !manifest) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-950 text-slate-400">
         Loading…
@@ -464,11 +567,10 @@ export default function App() {
     )
   }
 
-  const totals = manifest.totals
-
   return (
     <div className="flex h-screen flex-col bg-slate-950 text-slate-100">
-      <header className="flex flex-wrap items-center gap-3 border-b border-slate-700 px-4 py-4">
+      <header className="flex flex-col border-b border-slate-700">
+        <div className="flex flex-wrap items-center gap-3 px-4 py-4">
         {/* STAR wordmark, then a divider, then the app title -- mirrors the
             recovery calculator's header. */}
         <img src={starWordmark} alt="STAR" className="h-14 w-auto" />
@@ -518,6 +620,12 @@ export default function App() {
           />
           Onshape CM
         </label>
+        </div>
+
+        {/* Versioned designs, as a full-width strip at the bottom of the header. */}
+        <div className="border-t border-slate-800 px-4 py-1.5">
+          <ConfigVersions config={config} onRestore={handleRestore} inline />
+        </div>
       </header>
 
       {activeTab === 'flight' ? (
@@ -529,7 +637,13 @@ export default function App() {
           nFins={finCount}
           railLength={railLength}
           overrides={massOverrides}
+          flight={flight}
+          onFlightChange={setFlight}
         />
+      ) : !manifest || !modelId ? (
+        <div className="flex flex-1 items-center justify-center p-8 text-center text-slate-400">
+          Select or build a model in the header to begin — this design has no model yet.
+        </div>
       ) : (
         <>
       <MaterialWarning parts={parts} />
@@ -574,11 +688,11 @@ export default function App() {
 
           <div className="pointer-events-none absolute bottom-3 right-4 text-right text-xs text-slate-500">
             <div>
-              Onshape total {formatMass(totals.assemblyMass)} · CM z{' '}
-              {totals.assemblyCentroid[2].toFixed(4)} m
+              Onshape total {formatMass(manifest.totals.assemblyMass)} · CM z{' '}
+              {manifest.totals.assemblyCentroid[2].toFixed(4)} m
             </div>
             <div>
-              {totals.reconciled ? 'reconciled' : 'NOT reconciled'} · built{' '}
+              {manifest.totals.reconciled ? 'reconciled' : 'NOT reconciled'} · built{' '}
               {manifest.source.builtAt} · {manifest.source.resolvedFrom}
             </div>
           </div>
@@ -596,7 +710,10 @@ export default function App() {
             // Analysis tab: centre of mass + stability
             cm={cm}
             partCount={parts.length}
+            cmAnalysis={cmAnalysis}
             result={stability}
+            liveMargin={liveStability?.margin ?? null}
+            liveCgFromNose={liveStability?.cgFromNose ?? null}
             busy={stabilityBusy}
             error={stabilityError}
             onCompute={handleComputeStability}

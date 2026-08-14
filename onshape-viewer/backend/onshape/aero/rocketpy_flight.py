@@ -39,6 +39,11 @@ from .stability import (
 A_SOUND = 340.29
 #: Number of evenly spaced samples returned to the client.
 _N_SAMPLES = 300
+# Friends of Amateur Rocketry (FAR), Mojave -- the fixed launch site. Mirrors the
+# recovery calculator's physics/site.py; kept here until that module merges in.
+FAR_ELEV_M = 630.0
+FAR_LAT = 35.353333
+FAR_LON = -117.807167
 #: Stub drag Cd(Mach): subsonic ~0.45 with a transonic bump. See FUTURE_IMPROVEMENTS.md.
 _STUB_DRAG = [[0.0, 0.45], [0.6, 0.48], [0.9, 0.55], [1.0, 0.62], [1.2, 0.58], [2.0, 0.48], [5.0, 0.40]]
 
@@ -149,9 +154,9 @@ def run_flight(
     heading: float = 0.0,
     wind_speed: float = 0.0,
     wind_direction: float = 0.0,
-    elevation: float = 0.0,
-    latitude: float = 32.99,
-    longitude: float = -106.97,
+    elevation: float = FAR_ELEV_M,
+    latitude: float = FAR_LAT,
+    longitude: float = FAR_LON,
     drag_curve: list | None = None,
     our_margin_fn: Callable[[float, float], float | None] | None = None,
 ) -> FlightDynamicsResult:
@@ -328,9 +333,9 @@ def simulate_flight_dynamics(
     heading: float = 0.0,
     wind_speed: float = 0.0,
     wind_direction: float = 0.0,
-    elevation: float = 0.0,
-    latitude: float = 32.99,
-    longitude: float = -106.97,
+    elevation: float = FAR_ELEV_M,
+    latitude: float = FAR_LAT,
+    longitude: float = FAR_LON,
 ) -> FlightDynamicsResult:
     """Extract the rocket from CAD + Barrowman, then run the RocketPy ascent."""
     core = aero_core(store, outer_faces, axis, fin_faces, n_fins, include_fins=True)

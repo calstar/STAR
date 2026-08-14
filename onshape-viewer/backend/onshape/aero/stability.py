@@ -24,7 +24,13 @@ from ..geometry_store import GeometryStore
 from .axis import Axis
 from .barrowman_body import body_aero
 from .barrowman_fins import fin_set_aero
-from .fins import detect_fin_faces, fin_set_aero_from_faces, planform_outline_3d
+from .fins import (
+    detect_fin_faces,
+    fin_set_aero_from_faces,
+    fins_symmetric,
+    is_fin_face,
+    planform_outline_3d,
+)
 from .profile import build_profile
 
 
@@ -197,6 +203,13 @@ class StabilityResult:
     #: Motor CG in the world frame for the chosen state (wet/dry), so the loaded-CM marker
     #: can blend it in and move with the wet/dry toggle. None when no motor was placed.
     motor_cg_world: list[float] | None = None
+    #: Unit axis direction (nose->tail), so the client can project a live-edited CG onto the
+    #: axis and recompute the margin as pure algebra -- no backend round-trip. CP is fixed by
+    #: geometry, so only a surface change needs a recompute.
+    axis_direction: list[float] | None = None
+    #: Whether the detected fins are azimuthally symmetric. False (e.g. a fin removed) means
+    #: the true CP sits off-axis and this axial model under-states the instability -- warn.
+    fin_symmetric: bool = True
 
     @property
     def cp_from_nose(self) -> float:
@@ -263,6 +276,10 @@ def aero_core(
         if fin_faces is None:
             fin_faces = detect_fin_faces(store.iter_faces(), axis, profile.r_max)
         fin_geo = store.faces_for(fin_faces) if fin_faces else []
+        # Drop anything that is not a fin surface (a protruding edge whose plane does
+        # not pass through the axis), so a stray/left-over edge face cannot keep a fin
+        # alive after its flat faces are deselected.
+        fin_geo = [fg for fg in fin_geo if is_fin_face(fg, axis)]
         if fin_geo:
             fin_aero, fin_pf = fin_set_aero_from_faces(
                 fin_geo, axis, body_radius=profile.r_max, r_ref=profile.r_max, n_fins=n_fins, mach=mach
@@ -433,4 +450,6 @@ def compute_stability(
         motor_fore_world=motor_fore_world,
         motor_radius=motor_radius,
         motor_cg_world=motor_cg_world_out,
+        axis_direction=axis.direction.tolist(),
+        fin_symmetric=fins_symmetric(fin_pf.azimuths) if fin_pf is not None else True,
     )

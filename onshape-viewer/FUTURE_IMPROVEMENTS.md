@@ -80,3 +80,24 @@ without that risk.
 **Path to better.** Validate the injection by building a native-fin rocket and an
 injected-surface rocket with the *same* CP(M) and asserting their trajectories/margins
 agree; then offer an "our CP drives the flight" mode.
+
+---
+
+## 4. Static CP is axial-only (assumes an axisymmetric fin set)
+
+**Today.** `stability.py` computes CP as a 1-D **axial** position -- a CNa-weighted
+merge of the body (on-axis) and a fin set modelled as *symmetric* (one representative
+fin's planform × the detected count). The CP therefore always sits on the centreline.
+
+**Why it's a simplification.** Deselecting/removing one fin of N, or physically
+uneven fins, makes the set asymmetric -- which produces a side force, a roll moment,
+and an effective CP that moves *off* the axis. The current model cannot represent
+that: an asymmetric selection only changes the axial CP position (via the fin count),
+never its lateral position. So "CP stays on the body axis when I remove one fin" is
+expected, not a bug -- but it also means the tool cannot flag the instability an
+asymmetric fin set really causes.
+
+**Path to better.** Compute per-fin CNa and CP at each fin's actual azimuth and sum
+the lateral (side-force) contributions, yielding an off-axis CP / roll estimate for
+asymmetric sets -- or at minimum warn when the selected fins are not azimuthally
+symmetric.

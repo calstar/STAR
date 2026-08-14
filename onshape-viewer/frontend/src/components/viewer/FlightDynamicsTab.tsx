@@ -8,7 +8,8 @@
  * exact, performance tiles (apogee, max-Q) are flagged approximate.
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   CartesianGrid,
   ComposedChart,
@@ -27,6 +28,7 @@ import {
 } from 'recharts'
 
 import { computeFlightDynamics } from '../../api/client'
+import type { FlightParams } from '../../types/config'
 import type { FaceRef, FlightDynamicsResult, MotorSelection } from '../../types'
 import { AXIS, FD, GRID, REFERENCE, SERIES, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from './chartTheme'
 
@@ -38,9 +40,11 @@ interface Props {
   nFins: number
   railLength: number
   overrides: Record<string, number>
+  /** Launch params, owned by App so they are versioned in the config. */
+  flight: FlightParams
+  onFlightChange: (patch: Partial<FlightParams>) => void
 }
 
-type CpModel = 'ours' | 'rocketpy' | 'both'
 const G = 9.80665
 
 function Tile({ label, value, sub, warn }: { label: string; value: string; sub?: string; warn?: boolean }) {
@@ -53,14 +57,69 @@ function Tile({ label, value, sub, warn }: { label: string; value: string; sub?:
   )
 }
 
+const ExpandIcon = () => (
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
+  </svg>
+)
+
 function Panel({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
+  const [expanded, setExpanded] = useState(false)
+
+  // Escape closes the expanded view.
+  useEffect(() => {
+    if (!expanded) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpanded(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [expanded])
+
   return (
-    <div className="flex min-h-[240px] flex-col rounded-lg border border-slate-700 bg-slate-900/40 p-3">
-      <div className="mb-1">
+    <div className="relative flex min-h-[240px] flex-col rounded-lg border border-slate-700 bg-slate-900/40 p-3">
+      <button
+        type="button"
+        onClick={() => setExpanded(true)}
+        title="Expand"
+        className="absolute right-2 top-2 z-10 rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+      >
+        <ExpandIcon />
+      </button>
+      <div className="mb-1 pr-8">
         <div className="text-sm font-semibold text-slate-200">{title}</div>
         <div className="text-[11px] leading-tight text-slate-500">{hint}</div>
       </div>
       <div className="min-h-0 flex-1">{children}</div>
+
+      {expanded &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onClick={() => setExpanded(false)}
+          >
+            <div
+              className="flex h-[min(940px,96vh)] w-[min(1500px,97vw)] flex-col rounded-lg border border-slate-700 bg-slate-900 p-4 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-2 flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-base font-semibold text-slate-100">{title}</div>
+                  <div className="text-xs text-slate-500">{hint}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setExpanded(false)}
+                  className="rounded bg-slate-700 px-3 py-1 text-sm text-slate-200 hover:bg-slate-600"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="min-h-0 flex-1">{children}</div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }
@@ -96,13 +155,8 @@ function TimeLine({
   )
 }
 
-export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFins, railLength, overrides }: Props) {
-  const [inclination, setInclination] = useState(85)
-  const [heading, setHeading] = useState(0)
-  const [windSpeed, setWindSpeed] = useState(5)
-  const [windDirection, setWindDirection] = useState(270)
-  const [elevation, setElevation] = useState(1400)
-  const [cpModel, setCpModel] = useState<CpModel>('both')
+export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFins, railLength, overrides, flight, onFlightChange }: Props) {
+  const { inclination, heading, windSpeed, windDirection, cpModel } = flight
 
   const [result, setResult] = useState<FlightDynamicsResult | null>(null)
   const [busy, setBusy] = useState(false)
@@ -124,7 +178,6 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
         heading,
         windSpeed,
         windDirection,
-        elevation,
       })
       setResult(res)
     } catch (e) {
@@ -142,14 +195,13 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-slate-950 p-4">
       {/* Controls */}
       <div className="mb-3 flex flex-wrap items-end gap-3 rounded-lg border border-slate-700 bg-slate-900/60 p-3">
-        <Field label="Rail incl. (°)" value={inclination} set={setInclination} min={0} max={90} />
-        <Field label="Heading (°)" value={heading} set={setHeading} min={0} max={360} />
-        <Field label="Wind (m/s)" value={windSpeed} set={setWindSpeed} min={0} max={40} step={0.5} />
-        <Field label="Wind from (°)" value={windDirection} set={setWindDirection} min={0} max={360} />
-        <Field label="Elevation (m)" value={elevation} set={setElevation} min={0} max={4000} step={10} />
+        <Field label="Rail angle (° from horiz, 90=up)" value={inclination} set={(v) => onFlightChange({ inclination: v })} min={0} max={90} />
+        <Field label="Heading (° from N)" value={heading} set={(v) => onFlightChange({ heading: v })} min={0} max={360} />
+        <Field label="Wind (m/s)" value={windSpeed} set={(v) => onFlightChange({ windSpeed: v })} min={0} max={40} step={0.5} />
+        <Field label="Wind from (° bearing)" value={windDirection} set={(v) => onFlightChange({ windDirection: v })} min={0} max={360} />
         <label className="flex flex-col text-xs text-slate-400">
           CP model
-          <select value={cpModel} onChange={(e) => setCpModel(e.target.value as CpModel)} className="mt-1 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-slate-100">
+          <select value={cpModel} onChange={(e) => onFlightChange({ cpModel: e.target.value as FlightParams['cpModel'] })} className="mt-1 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-slate-100">
             <option value="both">Both (compare)</option>
             <option value="ours">Ours (CAD Barrowman)</option>
             <option value="rocketpy">RocketPy native</option>
@@ -163,6 +215,10 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
           {busy ? 'Simulating…' : 'Run flight'}
         </button>
       </div>
+      <p className="mb-3 text-[11px] text-slate-500">
+        Launch site: Friends of Amateur Rocketry (FAR), 630 m — fixed. Wind is a constant
+        placeholder until the site wind climatology merges in.
+      </p>
 
       {!motorSel && <p className="text-sm text-amber-300">Select a motor in the CAD tab first — a flight needs one.</p>}
       {error && <p className="text-sm text-rose-400">{error}</p>}

@@ -27,6 +27,9 @@ interface Props extends StabilityPanelProps {
   /** Analysis tab: the live centre of mass and how many parts feed it. */
   cm: CMResult
   partCount: number
+  /** CM projected on the rocket axis (from nose) + its off-axis offset; null until
+   *  a stability result gives the axis. */
+  cmAnalysis: { fromNose: number; radial: number; offAxis: boolean } | null
   /** The primary selected part; a change to a non-null key switches to Properties. */
   primarySelectedKey: string | null
 }
@@ -40,6 +43,7 @@ export function InspectorPanel({
   onOverrideChange,
   cm,
   partCount,
+  cmAnalysis,
   primarySelectedKey,
   ...stability
 }: Props) {
@@ -81,7 +85,7 @@ export function InspectorPanel({
           />
         ) : (
           <>
-            <MassSummary cm={cm} partCount={partCount} />
+            <MassSummary cm={cm} partCount={partCount} cmAnalysis={cmAnalysis} />
             <StabilityPanel {...stability} />
           </>
         )}
@@ -147,16 +151,35 @@ function PinButton({ pinned, onToggle }: { pinned: boolean; onToggle: () => void
 }
 
 /** The live centre of mass, formerly the top card of the floating overlay. */
-function MassSummary({ cm, partCount }: { cm: CMResult; partCount: number }) {
+function MassSummary({
+  cm,
+  partCount,
+  cmAnalysis,
+}: {
+  cm: CMResult
+  partCount: number
+  cmAnalysis: { fromNose: number; radial: number; offAxis: boolean } | null
+}) {
   return (
     <section className="border-b border-slate-800 p-3 text-sm">
       <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-200">
         Center of mass — {cm.partCount - cm.masslessCount} of {partCount} parts
       </h2>
       <Row label="Total mass" value={formatMass(cm.mass)} />
-      <Row label="CM x" value={formatMetres(cm.centroid[0])} />
-      <Row label="CM y" value={formatMetres(cm.centroid[1])} />
-      <Row label="CM z" value={formatMetres(cm.centroid[2])} highlight />
+      {cmAnalysis ? (
+        <Row label="CM from nose" value={formatMetres(cmAnalysis.fromNose)} highlight />
+      ) : (
+        // No axis yet (compute stability): fall back to the raw world coordinate.
+        <Row label="CM z (world)" value={formatMetres(cm.centroid[2])} highlight />
+      )}
+
+      {cmAnalysis?.offAxis && (
+        <p className="mt-2 border-t border-slate-700 pt-2 text-xs text-amber-300">
+          ⚠ Mass is off-axis by {(cmAnalysis.radial * 1000).toFixed(1)} mm — the rocket is
+          laterally unbalanced. CG should sit on the centreline; check for an asymmetric or
+          material-less part.
+        </p>
+      )}
 
       {cm.masslessCount > 0 && (
         <p className="mt-2 border-t border-slate-700 pt-2 text-xs text-amber-300">
