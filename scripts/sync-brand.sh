@@ -24,14 +24,12 @@ SRC="$ROOT/assets/brand"
 COPIES=(
   # Full STAR wordmark (imported in React)
   "star-wordmark.png:landing/src/assets"
-  "star-wordmark.png:recovery-calculator/frontend/src/assets"
   "star-wordmark.png:star-openrocket/frontend/src/assets"
 
   # Browser-tab favicon (served from each app's public/ at /star-icon.svg)
   "star-icon.svg:landing/public"
   "star-icon.svg:EngineDesign/frontend/public"
   "star-icon.svg:pid-designer/frontend/public"
-  "star-icon.svg:recovery-calculator/frontend/public"
   "star-icon.svg:star-openrocket/frontend/public"
   "star-icon.svg:daq-server/diablo_server/frontend/public"
   "star-icon.svg:daq-server/tools/postprocessing/webviewer/frontend/public"

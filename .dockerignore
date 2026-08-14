@@ -10,7 +10,6 @@
 # Other projects: not part of any root-context image.
 daq-server
 firmware
-recovery-calculator
 landing
 lib
 docs

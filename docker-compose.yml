@@ -64,8 +64,6 @@ services:
       - engine-design-frontend
       - pid-designer-api
       - pid-designer-frontend
-      - recovery-calculator-api
-      - recovery-calculator-frontend
       - star-openrocket-api
       - star-openrocket-frontend
       - daq-viewer
@@ -194,37 +192,10 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
 
-  # ── Recovery Calculator ──────────────────────────────────────────────────
-  # No in-app auth (Caddy is the gate) and no dependency on auth/shared_auth.py,
-  # so the build context is the subproject, not the repo root.
-  recovery-calculator-api:
-    image: ghcr.io/calstar/star-recovery-calculator-api:${STAR_IMAGE_TAG:-latest}
-    build:
-      context: ./recovery-calculator
-      dockerfile: Dockerfile.api
-    restart: unless-stopped
-    environment:
-      # Per-user units + saved configs + working copies live here (a mounted
-      # volume). See userdata.py.
-      USERDATA_DIR: /data
-      # Config version history (microversions + releases) in S3. Empty bucket ->
-      # history falls back to the local volume (dev/no-AWS).
-      RECOVERY_S3_BUCKET: ${RECOVERY_S3_BUCKET:-}
-      RECOVERY_S3_PREFIX: ${RECOVERY_S3_PREFIX:-recovery}
-      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-    volumes:
-      - userdata:/data
-
-  recovery-calculator-frontend:
-    image: ghcr.io/calstar/star-recovery-calculator-frontend:${STAR_IMAGE_TAG:-latest}
-    build:
-      context: ./recovery-calculator/frontend
-      dockerfile: Dockerfile
-    restart: unless-stopped
-
-  # ── Onshape CM Viewer ────────────────────────────────────────────────────
+  # ── STAR OpenRocket ──────────────────────────────────────────────────────
+  # CAD stability + ascent flight dynamics + recovery (the recovery calculator
+  # merged in as a tab). No in-app auth: Caddy is the gate, and it brokers the
+  # Onshape key pair server-side.
   star-openrocket-api:
     image: ghcr.io/calstar/star-openrocket-api:${STAR_IMAGE_TAG:-latest}
     build:
@@ -241,10 +212,21 @@ services:
       ONSHAPE_SECRET_KEY: ${ONSHAPE_SECRET_KEY:-}
       # Optional: only to target a non-default Onshape instance / api version.
       ONSHAPE_BASE_URL: ${ONSHAPE_BASE_URL:-}
+      # Per-user saved designs, units and configs live here (a mounted volume).
+      USERDATA_DIR: /data
+      # Design version history (microversions + releases) in S3. Empty bucket ->
+      # history falls back to the local volume (dev/no-AWS).
+      OPENROCKET_S3_BUCKET: ${OPENROCKET_S3_BUCKET:-}
+      OPENROCKET_S3_PREFIX: ${OPENROCKET_S3_PREFIX:-openrocket}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     volumes:
       # Built-model cache: expensive Onshape builds (manifest + glb) survive a
       # rebuild. CACHE_ROOT in backend/main.py is /app/cache.
       - onshape_cache:/app/cache
+      # Per-user designs / configs (userdata.py writes under USERDATA_DIR).
+      - userdata:/data
 
   star-openrocket-frontend:
     image: ghcr.io/calstar/star-openrocket-frontend:${STAR_IMAGE_TAG:-latest}
@@ -308,7 +290,7 @@ volumes:
   # Parquet export cache for the DAQ Run Viewer. Immutable past runs, so this is
   # a pure cache -- safe to wipe; it just re-exports on next view.
   daq_viewer_cache:
-  # Per-user data (engine-design + recovery-calculator + pid-designer): named
+  # Per-user data (engine-design + star-openrocket + pid-designer): named
   # configs, recovery unit prefs, and P&ID working copies. One shared volume so
   # a future cross-user "browse + copy" is a single tree. Keyed by X-Auth-Email
   # inside. See */backend/userdata.py.

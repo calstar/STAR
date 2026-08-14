@@ -31,7 +31,6 @@ Service URL `http://caddy:80`:
 | *(none / apex)* | `starberkeley.org` → landing | `http://caddy:80` |
 | `engine-design` | `starberkeley.org` | `http://caddy:80` |
 | `pid-designer` | `starberkeley.org` | `http://caddy:80` |
-| `recovery-calculator` | `starberkeley.org` | `http://caddy:80` |
 | `star-openrocket` | `starberkeley.org` | `http://caddy:80` |
 | `daq-viewer` | `starberkeley.org` | `http://caddy:80` |
 
@@ -139,7 +138,7 @@ keys**, not an instance role.
 **One-time AWS setup** (run where you're logged into AWS — your laptop is fine):
 ```bash
 # 1. Three versioned, private buckets — same recipe for each.
-for b in star-pid-designer star-engine-design star-recovery-calculator; do
+for b in star-pid-designer star-engine-design star-openrocket; do
   aws s3api create-bucket --bucket "$b" --region us-east-2 \
     --create-bucket-configuration LocationConstraint=us-east-2
   aws s3api put-public-access-block --bucket "$b" \
@@ -169,8 +168,8 @@ PID_S3_BUCKET=star-pid-designer
 PID_S3_PREFIX=pid
 ENGINE_S3_BUCKET=star-engine-design
 ENGINE_S3_PREFIX=engine
-RECOVERY_S3_BUCKET=star-recovery-calculator
-RECOVERY_S3_PREFIX=recovery
+OPENROCKET_S3_BUCKET=star-openrocket
+OPENROCKET_S3_PREFIX=openrocket
 AWS_DEFAULT_REGION=us-east-2
 AWS_ACCESS_KEY_ID=AKIA…
 AWS_SECRET_ACCESS_KEY=…

@@ -14,7 +14,6 @@ name: Publish app images
     paths:
       - 'EngineDesign/**'
       - 'pid-designer/**'
-      - 'recovery-calculator/**'
       - 'star-openrocket/**'
       - 'daq-server/tools/postprocessing/webviewer/**'
       - 'landing/**'
@@ -45,8 +44,6 @@ jobs:
           - { name: engine-design-frontend,       context: ./EngineDesign/frontend,     dockerfile: ./EngineDesign/frontend/Dockerfile }
           - { name: pid-designer-api,             context: ./pid-designer,              dockerfile: ./pid-designer/Dockerfile.api }
           - { name: pid-designer-frontend,        context: ./pid-designer/frontend,     dockerfile: ./pid-designer/frontend/Dockerfile }
-          - { name: recovery-calculator-api,      context: ./recovery-calculator,       dockerfile: ./recovery-calculator/Dockerfile.api }
-          - { name: recovery-calculator-frontend, context: ./recovery-calculator/frontend, dockerfile: ./recovery-calculator/frontend/Dockerfile }
           - { name: star-openrocket-api,           context: ./star-openrocket,            dockerfile: ./star-openrocket/Dockerfile.api }
           - { name: star-openrocket-frontend,      context: ./star-openrocket/frontend,   dockerfile: ./star-openrocket/frontend/Dockerfile }
           # DAQ Run Viewer: one image serves both API and SPA (see its Dockerfile).

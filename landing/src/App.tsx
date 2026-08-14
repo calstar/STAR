@@ -25,14 +25,6 @@ function IconPID() {
     </svg>
   );
 }
-function IconRecovery() {
-  return (
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2 11a10 10 0 0 1 20 0z" />
-      <path d="M2 11l5 3M22 11l-5 3M12 11v9M9 14l3 6M15 14l-3 6" />
-    </svg>
-  );
-}
 function IconCAD() {
   return (
     <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -196,18 +188,6 @@ const APPS: AppCard[] = [
     colorClass: 'card-purple',
     iconBg: 'linear-gradient(135deg, #7e22ce 0%, #a855f7 100%)',
     iconColor: '#d8b4fe',
-  },
-  {
-    id: 'recovery-calculator',
-    href: 'https://recovery-calculator.starberkeley.org',
-    label: 'Recovery Calculator',
-    subdomain: 'recovery-calculator.starberkeley.org',
-    description:
-      'Tool to determine how parachute recovery systems perform under simulated conditions, used as a design aid.',
-    icon: <IconRecovery />,
-    colorClass: 'card-orange',
-    iconBg: 'linear-gradient(135deg, #c2410c 0%, #f97316 100%)',
-    iconColor: '#fdba74',
   },
   {
     id: 'star-openrocket',

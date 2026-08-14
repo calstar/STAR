@@ -85,19 +85,7 @@
 	}
 }
 
-# ── Recovery Calculator ──────────────────────────────────────────────────────
-{$SCHEME:https}://recovery-calculator.{$BASE_DOMAIN:starberkeley.org} {
-	import protected
-
-	handle /api/* {
-		reverse_proxy recovery-calculator-api:8100
-	}
-	handle {
-		reverse_proxy recovery-calculator-frontend:4176
-	}
-}
-
-# ── Onshape CM Viewer ─────────────────────────────────────────────────────────
+# ── STAR OpenRocket ───────────────────────────────────────────────────────────
 # `import protected` is the same shared gate as everywhere else. The tighter
 # approved-users allowlist for this app is enforced inside auth's /verify (it
 # brokers Onshape credentials), so it needs nothing extra here -- /verify simply

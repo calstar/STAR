@@ -1,7 +1,7 @@
 # Apps machine — full setup from a fresh Linux install
 
 End-to-end provisioning for the **apps machine** (Engine Design, P&ID Designer,
-Recovery Calculator, Onshape Viewer, landing) starting from a blank Ubuntu
+STAR OpenRocket, landing) starting from a blank Ubuntu
 install. It layers the base OS + Docker + SSH-over-Cloudflare underneath the
 app-level runbook in [`README.md`](README.md) — do that one after this.
 
@@ -192,7 +192,6 @@ Web routes — Service URL `http://caddy:80` for each:
 | `starberkeley.org` (apex → landing) | `http://caddy:80` |
 | `engine-design.starberkeley.org` | `http://caddy:80` |
 | `pid-designer.starberkeley.org` | `http://caddy:80` |
-| `recovery-calculator.starberkeley.org` | `http://caddy:80` |
 | `openrocket.starberkeley.org` | `http://caddy:80` |
 
 Do **not** add `auth.` here — that stays on the EC2 tunnel. The SSH route is §5a.
