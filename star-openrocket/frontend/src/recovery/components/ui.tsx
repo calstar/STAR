@@ -138,6 +138,10 @@ export function NumberInput({ value, display, onChange, step = 'any', min, max, 
       disabled={disabled}
       onFocus={() => setEditing(true)}
       onBlur={() => setEditing(false)}
+      // A value like "159.66" has a "." word boundary, so a double-click grabs
+      // only "159" or "66" and you'd need a triple-click for the whole number.
+      // Select all of it on double-click instead.
+      onDoubleClick={(e) => e.currentTarget.select()}
       // Empty means "not supplied", which is a meaningful state in this schema
       // -- Optional[float] on T_pad, p_pad, k_eff and CdS_body all mean
       // "compute a default" rather than "zero".
