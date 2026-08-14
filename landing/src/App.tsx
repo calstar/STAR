@@ -210,12 +210,12 @@ const APPS: AppCard[] = [
     iconColor: '#fdba74',
   },
   {
-    id: 'onshape-viewer',
-    href: 'https://onshape-viewer.starberkeley.org',
-    label: 'Onshape Viewer',
-    subdomain: 'onshape-viewer.starberkeley.org',
+    id: 'star-openrocket',
+    href: 'https://openrocket.starberkeley.org',
+    label: 'STAR OpenRocket',
+    subdomain: 'openrocket.starberkeley.org',
     description:
-      'Pulls assemblies from Onshape and renders. Soon to become an improved version of OpenRocket.',
+      'Pulls assemblies from Onshape and computes centre of mass, stability, ascent flight dynamics, and parachute recovery — a STAR take on OpenRocket.',
     icon: <IconCAD />,
     colorClass: 'card-cyan',
     iconBg: 'linear-gradient(135deg, #0e7490 0%, #06b6d4 100%)',

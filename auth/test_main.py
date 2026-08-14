@@ -222,14 +222,14 @@ def test_verify_401s_a_mutating_request_rather_than_redirecting(client):
     assert resp.status_code == 401
 
 
-# ── Per-app allowlist (onshape-viewer) ──────────────────────────────────────
+# ── Per-app allowlist (openrocket / STAR OpenRocket) ──────────────────────────────────────
 
 
 def _onshape_headers(accept="text/html", uri="/", method="GET"):
     return {
         "Accept": accept,
         "X-Forwarded-Method": method,
-        "X-Forwarded-Host": "onshape-viewer.starberkeley.org",
+        "X-Forwarded-Host": "openrocket.starberkeley.org",
         "X-Forwarded-Uri": uri,
     }
 
@@ -262,7 +262,7 @@ def test_verify_403s_an_unapproved_xhr_on_onshape(client, monkeypatch):
 
 def test_verify_unrestricted_apps_ignore_the_allowlist(client, monkeypatch):
     """A denying allowlist must not affect apps that don't use one."""
-    monkeypatch.setattr(main.allowlist, "is_approved", lambda app, email: app != "onshape-viewer")
+    monkeypatch.setattr(main.allowlist, "is_approved", lambda app, email: app != "openrocket")
     client.set_cookie("session", _token())
     resp = client.get(
         "/verify", headers={"X-Forwarded-Host": "engine-design.starberkeley.org"}

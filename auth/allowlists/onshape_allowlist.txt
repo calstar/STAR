@@ -1,8 +1,8 @@
-# onshape-viewer approved users.
+# STAR OpenRocket (openrocket.*) approved users.
 #
 # One email per line. `#` starts a comment; blank lines are ignored. Matching is
 # case-insensitive. Anyone with a valid @berkeley.edu session is authenticated,
-# but only the addresses below are AUTHORIZED to use onshape-viewer -- it brokers
+# but only the addresses below are AUTHORIZED to use STAR OpenRocket -- it brokers
 # Onshape API credentials, so access is deliberately narrower than the other
 # tools. See auth/allowlist.py.
 #

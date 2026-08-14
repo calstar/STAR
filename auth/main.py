@@ -115,7 +115,7 @@ def _is_prod_request() -> bool:
 def _requested_app() -> str:
     """The app being accessed, as the leftmost label of the forwarded host.
 
-    `onshape-viewer.starberkeley.org` -> `onshape-viewer`; the bare domain ->
+    `openrocket.starberkeley.org` -> `openrocket`; the bare domain ->
     `""`. This is what /verify uses to look up a per-app allowlist. Off
     production (localhost dev) Caddy is not in the loop, so this is not reached.
     """

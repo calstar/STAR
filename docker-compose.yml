@@ -66,8 +66,8 @@ services:
       - pid-designer-frontend
       - recovery-calculator-api
       - recovery-calculator-frontend
-      - onshape-viewer-api
-      - onshape-viewer-frontend
+      - star-openrocket-api
+      - star-openrocket-frontend
       - daq-viewer
       - landing
 
@@ -225,10 +225,10 @@ services:
     restart: unless-stopped
 
   # ── Onshape CM Viewer ────────────────────────────────────────────────────
-  onshape-viewer-api:
-    image: ghcr.io/calstar/star-onshape-viewer-api:${STAR_IMAGE_TAG:-latest}
+  star-openrocket-api:
+    image: ghcr.io/calstar/star-openrocket-api:${STAR_IMAGE_TAG:-latest}
     build:
-      context: ./onshape-viewer
+      context: ./star-openrocket
       dockerfile: Dockerfile.api
     restart: unless-stopped
     environment:
@@ -246,10 +246,10 @@ services:
       # rebuild. CACHE_ROOT in backend/main.py is /app/cache.
       - onshape_cache:/app/cache
 
-  onshape-viewer-frontend:
-    image: ghcr.io/calstar/star-onshape-viewer-frontend:${STAR_IMAGE_TAG:-latest}
+  star-openrocket-frontend:
+    image: ghcr.io/calstar/star-openrocket-frontend:${STAR_IMAGE_TAG:-latest}
     build:
-      context: ./onshape-viewer/frontend
+      context: ./star-openrocket/frontend
       dockerfile: Dockerfile
     restart: unless-stopped
 

@@ -32,7 +32,7 @@ Service URL `http://caddy:80`:
 | `engine-design` | `starberkeley.org` | `http://caddy:80` |
 | `pid-designer` | `starberkeley.org` | `http://caddy:80` |
 | `recovery-calculator` | `starberkeley.org` | `http://caddy:80` |
-| `onshape-viewer` | `starberkeley.org` | `http://caddy:80` |
+| `star-openrocket` | `starberkeley.org` | `http://caddy:80` |
 | `daq-viewer` | `starberkeley.org` | `http://caddy:80` |
 
 Plus one **SSH** route on the same tunnel for remote admin — the `ssh://` scheme
@@ -81,7 +81,7 @@ Set in `.env`:
 | `CLOUDFLARE_TUNNEL_TOKEN` | this machine's tunnel token |
 
 No `auth/.env` is needed (verify-only). For live Onshape builds, put the key pair
-in `onshape-viewer/.env` (optional — cache-first endpoints work without it).
+in `star-openrocket/.env` (optional — cache-first endpoints work without it).
 
 ## 3. Launch
 ```bash
@@ -118,7 +118,7 @@ Open `https://engine-design.starberkeley.org` in a browser → it bounces to
 ```bash
 curl -sI https://engine-design.starberkeley.org/          # 302 → auth.../login
 ```
-Log in as an `@berkeley.edu` account; open onshape-viewer to confirm the allowlist
+Log in as an `@berkeley.edu` account; open star-openrocket to confirm the allowlist
 (non-approved users authenticate but get 403 there).
 
 ## Version history in S3 (P&ID + Engine + Recovery)

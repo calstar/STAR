@@ -6,7 +6,7 @@ set -euo pipefail
 
 SMOKE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-PROJECTS=(pid-designer onshape-viewer engine-design firmware daq-server)
+PROJECTS=(pid-designer star-openrocket engine-design firmware daq-server)
 
 FAILED=()
 for p in "${PROJECTS[@]}"; do

@@ -2,7 +2,7 @@
 # run-macos.sh — test setup.sh on native macOS in an isolated scratch dir.
 #
 # Usage: bash scripts/setup-test/run-macos.sh <project>
-#   project: pid-designer | onshape-viewer | engine-design | firmware | daq-server | all
+#   project: pid-designer | star-openrocket | engine-design | firmware | daq-server | all
 #
 # What it does:
 #   1. rsyncs the current working tree to $HOME/STAR-setup-test/ (scratch dir,
@@ -54,12 +54,12 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$PROJECT" ]; then
-  echo "Usage: $0 <pid-designer|onshape-viewer|engine-design|firmware|daq-server|all>" >&2
+  echo "Usage: $0 <pid-designer|star-openrocket|engine-design|firmware|daq-server|all>" >&2
   exit 1
 fi
 
 case "$PROJECT" in
-  pid-designer|onshape-viewer|engine-design|firmware|daq-server|all) ;;
+  pid-designer|star-openrocket|engine-design|firmware|daq-server|all) ;;
   *) echo "Unknown project: $PROJECT" >&2; exit 1 ;;
 esac
 

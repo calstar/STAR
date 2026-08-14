@@ -4,8 +4,9 @@ The session cookie proves *identity* (a valid @berkeley.edu account). Most apps
 need nothing more. A few need a tighter *authorization* check -- a named
 allowlist -- because they do more than read:
 
-    onshape-viewer brokers Onshape API credentials, so anyone who can reach it
-    can spend the key pair's rate limit and read any document it can read.
+    STAR OpenRocket (openrocket.*) brokers Onshape API credentials, so anyone
+    who can reach it can spend the key pair's rate limit and read any document
+    it can read.
 
 This is checked live in /verify (see main.py), NOT baked into the JWT, so that
 adding or removing someone takes effect on their next request rather than
@@ -28,7 +29,9 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 # app (subdomain label) -> path to its allowlist file. An app absent from this
 # map has no allowlist: the shared @berkeley.edu gate is the whole check.
 _APP_FILES = {
-    "onshape-viewer": os.environ.get(
+    # STAR OpenRocket (subdomain openrocket.*) brokers Onshape API credentials,
+    # so it keeps its own approved-user allowlist on top of the @berkeley.edu gate.
+    "openrocket": os.environ.get(
         "ONSHAPE_ALLOWLIST_FILE",
         os.path.join(_HERE, "allowlists", "onshape_allowlist.txt"),
     ),

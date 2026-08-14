@@ -193,7 +193,7 @@ Web routes — Service URL `http://caddy:80` for each:
 | `engine-design.starberkeley.org` | `http://caddy:80` |
 | `pid-designer.starberkeley.org` | `http://caddy:80` |
 | `recovery-calculator.starberkeley.org` | `http://caddy:80` |
-| `onshape-viewer.starberkeley.org` | `http://caddy:80` |
+| `openrocket.starberkeley.org` | `http://caddy:80` |
 
 Do **not** add `auth.` here — that stays on the EC2 tunnel. The SSH route is §5a.
 

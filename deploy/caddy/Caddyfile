@@ -102,14 +102,14 @@
 # approved-users allowlist for this app is enforced inside auth's /verify (it
 # brokers Onshape credentials), so it needs nothing extra here -- /verify simply
 # answers 403 for a signed-in user who is not on the list. See auth/allowlist.py.
-{$SCHEME:https}://onshape-viewer.{$BASE_DOMAIN:starberkeley.org} {
+{$SCHEME:https}://openrocket.{$BASE_DOMAIN:starberkeley.org} {
 	import protected
 
 	handle /api/* {
-		reverse_proxy onshape-viewer-api:8002
+		reverse_proxy star-openrocket-api:8002
 	}
 	handle {
-		reverse_proxy onshape-viewer-frontend:4177
+		reverse_proxy star-openrocket-frontend:4177
 	}
 }
 

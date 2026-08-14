@@ -1,0 +1,32 @@
+# STAR OpenRocket — API image.
+#
+# Build context is the subproject dir: the backend implements no auth (Caddy is
+# the gate, see deploy/Caddyfile), so it needs nothing from the repo root.
+#
+# Security posture (see backend/main.py): this process brokers Onshape API calls
+# with a key pair from the environment. Anyone who can reach it can spend that
+# key's rate limit and read any document it can read -- which is exactly why the
+# star-openrocket site block sits behind `import protected`, and why an approved-
+# users allowlist on top of the shared gate is planned.
+FROM python:3.12-slim
+WORKDIR /app
+
+ENV PIP_RETRIES=10 \
+    PIP_TIMEOUT=120 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_INPUT=1
+
+COPY requirements.txt .
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
+
+COPY backend/ ./backend/
+
+# Built-model cache (browse.json + per-model manifest/glb). Mounted as a named
+# volume in compose so expensive Onshape builds survive a rebuild. CACHE_ROOT in
+# backend/main.py resolves to /app/cache.
+RUN mkdir -p /app/cache
+
+ENV PYTHONPATH=/app
+EXPOSE 8002
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8002"]
