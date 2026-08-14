@@ -8,9 +8,19 @@
 
 export const AXIS = {
   stroke: '#94a3b8', // slate-400
-  fontSize: 12,
+  fontSize: 13,
   tickLine: false,
 } as const
+
+/** Tick label size — matches the app's `--text-2xs` (13px) floor so chart text
+ *  tracks the rest of the UI instead of the old hard-coded 10–11px. */
+export const TICK_FONT = 13
+
+/** Axis-title styling (rotated Y titles included), shared by all flight charts. */
+export const axisLabelX = (value: string) =>
+  ({ value, position: 'insideBottom' as const, offset: -4, fill: '#cbd5e1', fontSize: 13 })
+export const axisLabelY = (value: string) =>
+  ({ value, angle: -90, position: 'insideLeft' as const, offset: 4, fill: '#cbd5e1', fontSize: 13, style: { textAnchor: 'middle' as const } })
 
 export const GRID = {
   stroke: '#334155', // slate-700

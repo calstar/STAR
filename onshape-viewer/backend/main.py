@@ -517,6 +517,7 @@ async def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
             "acceleration": result.acceleration[i],
             "dynamicPressure": result.dynamic_pressure[i],
             "angleOfAttack": result.angle_of_attack[i],
+            "angleFromVertical": result.angle_from_vertical[i],
             "stabilityMarginRocketpy": result.stability_margin_rocketpy[i],
             "stabilityMarginOurs": result.stability_margin_ours[i],
             "driftX": result.drift_x[i],

@@ -29,6 +29,7 @@ import type {
   FinPlanform,
   Manifest,
   FlightResult,
+  FlightDynamicsResult,
   ModelSummary,
   MotorDetail,
   MotorSelection,
@@ -87,6 +88,8 @@ export default function App() {
   // Flight-profile popup: fetched on open from the current surfaces + motor.
   const [flightOpen, setFlightOpen] = useState(false)
   const [flightResult, setFlightResult] = useState<FlightResult | null>(null)
+  // Flight Dynamics tab result, lifted here so it survives CAD/Flight tab switches.
+  const [flightDynResult, setFlightDynResult] = useState<FlightDynamicsResult | null>(null)
   const [flightBusy, setFlightBusy] = useState(false)
   const [flightError, setFlightError] = useState<string | null>(null)
   // Guided rail length (m) — travel to full departure (rear lug clears), for off-rail velocity.
@@ -639,6 +642,8 @@ export default function App() {
           overrides={massOverrides}
           flight={flight}
           onFlightChange={setFlight}
+          result={flightDynResult}
+          onResult={setFlightDynResult}
         />
       ) : !manifest || !modelId ? (
         <div className="flex flex-1 items-center justify-center p-8 text-center text-slate-400">

@@ -74,6 +74,7 @@ class FlightDynamicsResult:
     acceleration: list[float]       # m/s^2
     dynamic_pressure: list[float]   # Pa
     angle_of_attack: list[float | None]    # deg; None where airspeed too low to define
+    angle_from_vertical: list[float]       # deg; rocket axis tilt off straight-up
     stability_margin_rocketpy: list[float]  # cal (RocketPy's CP)
     stability_margin_ours: list[float | None]  # cal (our CP(M))
     drift_x: list[float]            # m east of pad
@@ -229,7 +230,7 @@ def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom) -> Fligh
     _AOA_MIN_AIRSPEED = 15.0  # m/s
 
     altitude, speed, mach, accel, q, aoa = [], [], [], [], [], []
-    marg_rp, marg_ours, dx, dy, bend, wpitch = [], [], [], [], [], []
+    marg_rp, marg_ours, dx, dy, bend, wpitch, avert = [], [], [], [], [], [], []
     for t in ts:
         m = _safe(flight.mach_number, t)
         altitude.append(_safe(flight.altitude, t) - 0.0)  # RocketPy altitude() is already AGL
@@ -238,9 +239,14 @@ def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom) -> Fligh
         accel.append(_safe(flight.acceleration, t))
         q.append(_safe(flight.dynamic_pressure, t))
         if _safe(flight.free_stream_speed, t) >= _AOA_MIN_AIRSPEED:
-            aoa.append(min(180.0, math.degrees(abs(_safe(flight.angle_of_attack, t)))))
+            # RocketPy's angle_of_attack is already in degrees (rad2deg(arccos(...)),
+            # bounded [0, 180]) — do NOT re-convert. abs() guards any sign edge case.
+            aoa.append(abs(_safe(flight.angle_of_attack, t)))
         else:
             aoa.append(None)
+        # attitude_angle is the axis angle above horizontal (deg); vertical tilt is its
+        # complement — a defined-everywhere reference the AoA can be read against.
+        avert.append(90.0 - _safe(flight.attitude_angle, t))
         marg_rp.append(_safe(flight.stability_margin, t))
         marg_ours.append(our_margin_fn(float(t), m) if our_margin_fn else None)
         dx.append(_safe(flight.x, t))
@@ -275,6 +281,7 @@ def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom) -> Fligh
         acceleration=accel,
         dynamic_pressure=q,
         angle_of_attack=aoa,
+        angle_from_vertical=avert,
         stability_margin_rocketpy=marg_rp,
         stability_margin_ours=marg_ours,
         drift_x=dx,

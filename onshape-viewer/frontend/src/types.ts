@@ -323,6 +323,7 @@ export interface FlightDynamicsSample {
   acceleration: number
   dynamicPressure: number
   angleOfAttack: number | null
+  angleFromVertical: number
   stabilityMarginRocketpy: number
   stabilityMarginOurs: number | null
   driftX: number
