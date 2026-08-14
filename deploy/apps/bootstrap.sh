@@ -174,6 +174,18 @@ else
 fi
 chown -R "$ADMIN_USER":"$ADMIN_USER" "$CLONE_DIR"
 
+# ── §5b  Wi-Fi hardening (keep the uplink alive on Wi-Fi-only hosts) ──────────
+# This box is often Wi-Fi-only, and 802.11 association is soft state: the radio
+# can stay "connected" while passing zero frames (power-save desync, wedged USB
+# firmware). NetworkManager only recovers on carrier loss, which never happens
+# in that case. The installer disables power save and lays down a watchdog that
+# tests the path end-to-end and reassociates when it's dead. No-ops cleanly on a
+# wired box. Runs from the checkout above, so the files are present. Best-effort:
+# never abort bootstrap over the network-recovery layer.
+say "§5b Wi-Fi hardening"
+bash "$CLONE_DIR/deploy/apps/wifi/install-wifi-hardening.sh" \
+  || warn "§5b Wi-Fi hardening failed — apply manually: deploy/apps/wifi/install-wifi-hardening.sh"
+
 # ── .env: use star-apps.env from the flash drive, else lay down a template ────
 LAUNCH=1
 if [[ -f "$SCRIPT_DIR/star-apps.env" ]]; then
