@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { UiConfig } from '../../types/schema'
 import { reviveUiConfig } from '../../lib/persist'
+import { defaultUiConfig } from '../../lib/serialise'
 import { Button, Modal } from '../ui'
 import * as api from '../../api/documents'
 import type { DocMeta, MicroVersion, ReleaseVersion } from '../../api/documents'
@@ -91,6 +92,14 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
   const [relLabel, setRelLabel] = useState('')
   const [relStatus, setRelStatus] = useState<'idle' | 'saving' | 'ok' | 'err'>('idle')
   const [relError, setRelError] = useState('')
+
+  // New-design dialog: a name plus a seed -- 'default' values or a copy of an
+  // existing design (by id).
+  const [showNew, setShowNew] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newSource, setNewSource] = useState<'default' | string>('default')
+  const [newStatus, setNewStatus] = useState<'idle' | 'saving' | 'err'>('idle')
+  const [newError, setNewError] = useState('')
 
   // One at-a-time dialog (prompt / confirm / alert) and, for prompts, its input.
   const [dialog, setDialog] = useState<Dialog | null>(null)
@@ -191,21 +200,38 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
     setShowHistory(false)
   }
 
-  const create = () => askPrompt({
-    kind: 'prompt',
-    title: 'New design',
-    label: 'Design name',
-    placeholder: 'Design name',
-    value: `Design ${documents.length + 1}`,
-    confirmLabel: 'Create',
-    onConfirm: async (name) => {
-      const meta = await api.createDocument(name, configRef.current)
+  const openNew = () => {
+    setNewName(`Design ${documents.length + 1}`)
+    setNewSource('default')
+    setNewStatus('idle')
+    setNewError('')
+    setShowNew(true)
+  }
+
+  const submitNew = async () => {
+    const name = newName.trim()
+    if (!name) return
+    setNewStatus('saving')
+    setNewError('')
+    try {
+      // 'default' seeds from the built-in config; anything else is the id of a
+      // design to copy -- load its working copy from the server and normalise
+      // it (fresh uids etc.) as if it came off disk.
+      const seed = newSource === 'default'
+        ? defaultUiConfig()
+        : normalise(((await api.loadDocument(newSource)).config ?? defaultUiConfig()) as UiConfig)
+      const meta = await api.createDocument(name, seed)
       setDocuments(d => [meta, ...d])
       setActiveId(meta.id)
       loadedId.current = meta.id
       localStorage.setItem(ACTIVE_KEY, meta.id)
-    },
-  })
+      onRestore(seed)
+      setShowNew(false)
+    } catch (e) {
+      setNewStatus('err')
+      setNewError(e instanceof Error ? e.message : 'Could not create design')
+    }
+  }
 
   const rename = () => {
     if (!active) return
@@ -349,7 +375,7 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
           {documents.length === 0 && <option value="">No designs</option>}
           {documents.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
         </select>
-        <button onClick={create} className={btn} title="New design">+ New</button>
+        <button onClick={openNew} className={btn} title="New design">+ New</button>
         <button onClick={rename} disabled={!active} className={btn} title="Rename">Rename</button>
         <button onClick={remove} disabled={!active} className={btn} title="Delete design">Delete</button>
 
@@ -413,6 +439,42 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
             </>
           )}
         </div>
+      </Modal>
+
+      <Modal
+        open={showNew}
+        onClose={() => { if (newStatus !== 'saving') setShowNew(false) }}
+        title="New design"
+        width="w-[420px]"
+        footer={
+          <>
+            <Button onClick={() => setShowNew(false)} disabled={newStatus === 'saving'} variant="ghost">Cancel</Button>
+            <Button onClick={() => void submitNew()} disabled={!newName.trim() || newStatus === 'saving'} variant="primary">
+              {newStatus === 'saving' ? 'Creating…' : 'Create'}
+            </Button>
+          </>
+        }
+      >
+        <label className="mb-1 block text-xs text-[var(--color-text-muted)]">Design name <span className="text-red-500">*</span></label>
+        <input
+          autoFocus value={newName} onChange={e => setNewName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') void submitNew() }}
+          placeholder="Design name" disabled={newStatus === 'saving'}
+          className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none disabled:opacity-50"
+        />
+        <label className="mb-1 mt-4 block text-xs text-[var(--color-text-muted)]">Start from</label>
+        <select
+          value={newSource} onChange={e => setNewSource(e.target.value)} disabled={newStatus === 'saving'}
+          className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none disabled:opacity-50"
+        >
+          <option value="default">Default values</option>
+          {documents.length > 0 && (
+            <optgroup label="Copy from design">
+              {documents.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </optgroup>
+          )}
+        </select>
+        {newStatus === 'err' && <p className="mt-3 text-xs text-red-500">{newError}</p>}
       </Modal>
 
       <Modal

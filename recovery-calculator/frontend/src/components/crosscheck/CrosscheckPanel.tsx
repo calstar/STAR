@@ -85,16 +85,12 @@ export function CrosscheckPanel({ ui }: { ui: UiConfig }) {
   return (
     <div className="space-y-4">
       <PageHeader title="Cross-check">
-        This tool vs OpenRocket vs the recovery mastersheet.
+        This tool vs OpenRocket vs the recovery mastersheet. Comparison only
+        - nothing on this tab sizes hardware.
       </PageHeader>
 
       <Card>
         <div className="flex flex-wrap items-center gap-3">
-          <div>
-            <p className="font-prose text-sm leading-relaxed text-[var(--color-text-primary)]">
-              Comparison only - nothing on this tab sizes hardware.
-            </p>
-          </div>
           {/* No version badge here. The release is already in the model's own
               label -- it names the chart legend and both table headers -- so a
               badge repeated it a fourth time. The commit still travels in the

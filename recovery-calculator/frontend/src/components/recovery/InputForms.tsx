@@ -32,11 +32,9 @@ export function VehicleForm({ value, onChange }: {
   value: Vehicle
   onChange: (v: Vehicle) => void
 }) {
-  const { num, dec } = useUnits()
+  const { num } = useUnits()
   const set = <K extends keyof Vehicle>(k: K, v: Vehicle[K]) =>
     onChange({ ...value, [k]: v })
-
-  const fineness = value.d_body > 0 ? value.l_body / value.d_body : 0
 
   return (
     <Card title="Vehicle">
@@ -59,11 +57,7 @@ export function VehicleForm({ value, onChange }: {
           <UnitInput value={value.d_body} onChange={(v) => set('d_body', v ?? 0)}
                      kind="length" min={0} />
         </Field>
-        <Field
-          label="Airframe length"
-          kind="length"
-          hint={`fineness ratio ${dec(fineness, 1)}`}
-        >
+        <Field label="Airframe length" kind="length">
           <UnitInput value={value.l_body} onChange={(v) => set('l_body', v ?? 0)}
                      kind="length" step={1} min={0} />
         </Field>

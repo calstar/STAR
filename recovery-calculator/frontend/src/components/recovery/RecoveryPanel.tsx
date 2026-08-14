@@ -13,14 +13,25 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import type { Result, UiConfig } from '../../types/schema'
 import { simulate } from '../../api/client'
 import { usePadClimatology } from '../../lib/climatology'
-import { defaultUiConfig, physicsKey, toWireConfig } from '../../lib/serialise'
+import { physicsKey, toWireConfig } from '../../lib/serialise'
 import { Button, Card, PageHeader } from '../ui'
 import { InputColumn } from './InputForms'
 import { DeviceList } from './DeviceList'
 import { ResultsPanel } from './ResultsPanel'
+
+/** Column label above each side of the two-column layout, so the left stack
+ *  reads as Inputs and the right as Outputs at a glance. */
+function ColumnHeader({ children }: { children: ReactNode }) {
+  return (
+    <h2 className="px-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]">
+      {children}
+    </h2>
+  )
+}
 
 export function RecoveryPanel({ ui, onChange: setUi }: {
   ui: UiConfig
@@ -103,14 +114,8 @@ export function RecoveryPanel({ ui, onChange: setUi }: {
 
           <span className="mx-2 h-4 w-px bg-[var(--color-border)]" />
 
-          {/* Named designs live on the Designs bar (server, with file save/load).
-              These two are the one-file snapshot of this run for sharing. */}
-          <Button
-            onClick={() => download('recovery-setup.json', { config: toWireConfig(ui), result })}
-            title="Download your inputs and, if you have run, the results together in one file."
-          >
-            Download setup
-          </Button>
+          {/* Save/load of a whole design lives on the Designs bar (server, with
+              file save/load). This is just the last result object. */}
           <Button
             onClick={() => result && download('result.json', result)}
             disabled={!result}
@@ -118,17 +123,12 @@ export function RecoveryPanel({ ui, onChange: setUi }: {
           >
             Export result.json
           </Button>
-
-          <span className="ml-auto flex items-center gap-2">
-            <Button onClick={() => setUi(defaultUiConfig())} variant="ghost">
-              Reset
-            </Button>
-          </span>
         </div>
       </Card>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
         <div className="space-y-4">
+          <ColumnHeader>Inputs</ColumnHeader>
           <DeviceList
             devices={ui.devices}
             onChange={(devices) => setUi({ ...ui, devices })}
@@ -136,7 +136,10 @@ export function RecoveryPanel({ ui, onChange: setUi }: {
           <InputColumn ui={ui} onChange={setUi} lapseByMonth={lapseByMonth}
                        padNormals={padNormals} />
         </div>
-        <ResultsPanel result={result} running={running} error={error} />
+        <div className="space-y-4">
+          <ColumnHeader>Outputs</ColumnHeader>
+          <ResultsPanel result={result} running={running} error={error} />
+        </div>
       </div>
     </div>
   )
