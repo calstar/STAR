@@ -34,7 +34,10 @@ type Dialog =
 /** Regenerate uids / merge onto defaults so a restored config is as safe to
  *  load as one revived from localStorage (see persist.reviveUiConfig). */
 function normalise(config: UiConfig): UiConfig {
-  return reviveUiConfig(JSON.stringify(config)) ?? config
+  // Always hand back a fully-shaped config. reviveUiConfig defaults any missing
+  // slice of a pre-merge blob; the `?? default` guards a non-object stored value
+  // so `onRestore` never receives something that would throw downstream.
+  return reviveUiConfig(JSON.stringify(config)) ?? defaultUiConfig()
 }
 
 /** Propose the next minor release, e.g. 0.1 -> 0.2, given existing labels. */
@@ -287,7 +290,7 @@ export function ConfigVersions({ config, onRestore, inline = false }: Props) {
       setDialog({ kind: 'alert', title: 'Could not load file', message: `"${file.name}" is not a valid design file.` })
       return
     }
-    const name = file.name.replace(/\.viewer\.json$/i, '').replace(/\.json$/i, '') || 'Imported design'
+    const name = file.name.replace(/\.ork\.json$/i, '').replace(/\.json$/i, '') || 'Imported design'
     try {
       const meta = await api.createDocument(name, cfg)
       setDocuments(d => [meta, ...d])

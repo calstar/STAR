@@ -14,6 +14,7 @@ import {
 import { centreOfMass, formatMass } from './lib/cm'
 import { loadOrkConfig, saveOrkConfig } from './lib/persist'
 import type { FlightParams, OrkConfig } from './types/config'
+import { defaultOrkConfig } from './types/config'
 import { RecoveryTab } from './recovery/RecoveryTab'
 import type { DesignSource, UiConfig } from './recovery/types/schema'
 import { ConfigVersions } from './components/versions/ConfigVersions'
@@ -331,7 +332,13 @@ export default function App() {
 
   // Stable, so ConfigVersions' mount/restore effects don't re-run every render.
   const handleRestore = useCallback((c: OrkConfig) => {
-    const cad = c.cad
+    // Defensive: a pre-merge blob (a flat ViewerConfig, or a bare recovery
+    // UiConfig) has no `cad`/`recovery` key. reviveOrkConfig already defaults
+    // those, but guard here too so a hand-loaded old file resets to defaults
+    // rather than throwing on `c.cad.modelId`.
+    const d = defaultOrkConfig()
+    const cad = c?.cad ?? d.cad
+    const recovery = c?.recovery ?? d.recovery
     setModelId(cad.modelId)
     setOverrides(new Map(Object.entries(cad.overrides)))
     setOuterFaces(cad.outerFaces)
@@ -340,8 +347,8 @@ export default function App() {
     setMotorSel(cad.motor)
     setRailLength(cad.railLength)
     setFlightState(cad.flight)
-    setRecovery(c.recovery)
-    saveOrkConfig(c)
+    setRecovery(recovery)
+    saveOrkConfig({ version: 1, cad, recovery })
   }, [])
 
   // Effective mass per occurrence, sent to the backend so its CG matches exactly
