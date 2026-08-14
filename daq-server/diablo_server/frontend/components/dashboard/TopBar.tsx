@@ -12,6 +12,8 @@ import { plotEntityKeysForPressureBar } from '@/lib/sensor-colors';
 import NotificationPanel from '@/components/dashboard/NotificationPanel';
 import { useControlMode } from '@/lib/control-mode';
 import { useSensorConfig } from '@/lib/sensor-config';
+import { useGuiConfig } from '@/lib/gui-config';
+import { usePressureLimits } from '@/lib/pressure-limits';
 import { buildPressureBarDefsFromSensorConfig, type PressureBarDef } from '@/lib/pressure-bar-defs';
 
 const STATE_NAMES: Record<number, string> = {
@@ -107,8 +109,16 @@ export default function TopBar() {
   const [clock, setClock] = useState('');
   const [countdown, setCountdown] = useState('---:--:--');
   const [countdownExpired, setCountdownExpired] = useState(false);
-  const [pressureBars, setPressureBars] = useState<PressureBarDef[]>([]);
   const sensors = useSensorConfig();
+  const { pressureBars: barConfig } = useGuiConfig();
+  const pressureLimits = usePressureLimits();
+
+  // Top-bar gauges come from config ([[gui.pressure_bars]]) with NOP/MEOP from
+  // [pressure_limits]; all three hooks refetch on CONFIG_UPDATED, so edits are live.
+  const pressureBars = useMemo(
+    () => buildPressureBarDefsFromSensorConfig(sensors, barConfig, pressureLimits),
+    [sensors, barConfig, pressureLimits],
+  );
 
   const ws = getWebSocketClient();
 
@@ -118,23 +128,13 @@ export default function TopBar() {
   const [dateTimeInput, setDateTimeInput] = useState('');
   const [hitZeroMode, setHitZeroMode] = useState<'time' | 'datetime'>('time');
 
-  const loadPressureBars = useCallback(() => {
-    setPressureBars(buildPressureBarDefsFromSensorConfig(sensors));
-  }, [sensors]);
-
-  useEffect(() => {
-    loadPressureBars();
-  }, [loadPressureBars]);
-
   useEffect(() => {
     try {
       startDataCache(); // begin 1 Hz background sampling for plot history
     } catch (err) {
       console.error('[TopBar] Failed to start data cache:', err);
     }
-    const unsubConfig = ws.on(MessageType.CONFIG_UPDATED, () => loadPressureBars());
-    return () => { unsubConfig(); };
-  }, [ws, loadPressureBars]);
+  }, []);
 
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString('en-US', { hour12: true }));

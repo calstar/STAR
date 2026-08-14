@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import { MessageType } from '@/lib/types';
 import { useControlMode } from '@/lib/control-mode';
 import { useSensorStore } from '@/lib/store';
+import { NAV_ITEMS, navItemById } from '@/lib/nav-items';
 
 interface ConfigData {
   server_heartbeat?: {
@@ -93,6 +94,12 @@ interface ConfigData {
     use_cpp_controller?: boolean;
   };
   phase2?: Record<string, any>;
+  gui?: {
+    downsample_mode?: string;
+    points_per_second?: number;
+    tabs?: string[];
+    pressure_bars?: Array<{ label?: string; role?: string; avg_roles?: string[]; limits?: string; color?: string }>;
+  };
 }
 
 // Keep defaults minimal: config.toml is the source of truth.
@@ -104,12 +111,15 @@ export default function ConfigPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-  const [activeTab, setActiveTab] = useState('system');
+  const [activeTab, setActiveTab] = useState('network');
   const [advancedText, setAdvancedText] = useState('');
   const [advancedError, setAdvancedError] = useState<string | null>(null);
 
   const ws = getWebSocketClient();
-  const { controlEnabled } = useControlMode();
+  // Config editing is gated on operator identity (the DAQ allowlist), enforced
+  // server-side too. Non-operators see every field greyed out and read-only.
+  const { isOperator } = useControlMode();
+  const canEdit = isOperator;
 
   useEffect(() => {
     loadConfig();
@@ -182,6 +192,44 @@ export default function ConfigPage() {
     }
   };
 
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+
+  // Download the raw config.toml from the server as a file.
+  const downloadConfig = () => {
+    const a = document.createElement('a');
+    a.href = `${getApiBaseUrl()}/api/config/export`;
+    a.download = 'config.toml';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  // Upload a config.toml to replace the current one (operators only, server-validated).
+  const importConfig = async (file: File) => {
+    try {
+      setSaving(true);
+      setError(null);
+      setSuccess(false);
+      const text = await file.text();
+      const response = await fetch(`${getApiBaseUrl()}/api/config/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: text,
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Import failed (${response.status})`);
+      }
+      setSuccess(true);
+      await loadConfig(); // mirror what the server accepted
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err: any) {
+      setError(err.message || 'Failed to import config');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const updateField = (section: string, field: string, value: any, subSection?: string) => {
     setConfig((prev) => {
       const next: any = { ...(prev as any) };
@@ -221,6 +269,23 @@ export default function ConfigPage() {
     });
   };
 
+  // ── [gui] helpers: tab list + top-bar pressure bars ──────────────────────────
+  const guiTabs: string[] = config.gui?.tabs ?? [];
+  const guiBars = config.gui?.pressure_bars ?? [];
+
+  const setGuiTabs = (tabsList: string[]) =>
+    setConfig((prev) => ({ ...prev, gui: { ...(prev.gui || {}), tabs: tabsList } }));
+  const setGuiBars = (bars: any[]) =>
+    setConfig((prev) => ({ ...prev, gui: { ...(prev.gui || {}), pressure_bars: bars } }));
+
+  const moveInArray = <T,>(arr: T[], i: number, dir: -1 | 1): T[] => {
+    const j = i + dir;
+    if (j < 0 || j >= arr.length) return arr;
+    const next = arr.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    return next;
+  };
+
   const updateArrayField = (section: string, field: string, value: string) => {
     const array = value.split(',').map(s => s.trim()).filter(s => s).map(s => {
       const num = parseInt(s, 10);
@@ -235,8 +300,12 @@ export default function ConfigPage() {
     onChange: (val: any) => void,
     type: 'text' | 'number' | 'select' | 'boolean' | 'array' = 'text',
     options?: string[],
-    description?: string
+    description?: string,
+    // Always disabled, even for operators — for startup-only infra that must not
+    // be edited from the live GUI (e.g. network ports the pipeline binds at launch).
+    readOnly?: boolean
   ) => {
+    const fieldDisabled = !canEdit || readOnly;
     return (
       <div className="space-y-1">
         <label className="block text-sm font-semibold">
@@ -247,7 +316,8 @@ export default function ConfigPage() {
           <select
             value={value || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white"
+            disabled={fieldDisabled}
+            className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {options?.map((opt) => (
               <option key={opt} value={opt}>{opt}</option>
@@ -259,7 +329,8 @@ export default function ConfigPage() {
               type="checkbox"
               checked={!!value}
               onChange={(e) => onChange(e.target.checked)}
-              className="w-4 h-4"
+              disabled={fieldDisabled}
+              className="w-4 h-4 disabled:opacity-50 disabled:cursor-not-allowed"
             />
             <span>{value ? 'Enabled' : 'Disabled'}</span>
           </label>
@@ -274,7 +345,8 @@ export default function ConfigPage() {
               });
               onChange(array);
             }}
-            className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white"
+            disabled={fieldDisabled}
+            className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
             placeholder="Comma-separated values (e.g., 1, 2, 3)"
           />
         ) : type === 'number' ? (
@@ -290,14 +362,16 @@ export default function ConfigPage() {
               const n = Number(raw);
               onChange(Number.isFinite(n) ? n : undefined);
             }}
-            className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white"
+            disabled={fieldDisabled}
+            className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
           />
         ) : (
           <input
             type="text"
             value={value || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white"
+            disabled={fieldDisabled}
+            className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
           />
         )}
       </div>
@@ -315,7 +389,6 @@ export default function ConfigPage() {
   }
 
   const tabs = [
-    { id: 'system', label: 'System' },
     { id: 'network', label: 'Network' },
     { id: 'adc', label: 'ADC' },
     { id: 'server_heartbeat', label: 'Server Heartbeat' },
@@ -328,10 +401,8 @@ export default function ConfigPage() {
     { id: 'controller', label: 'Controller' },
     { id: 'controller_service', label: 'Controller Service' },
     { id: 'actuator_service', label: 'Actuator Service' },
-    { id: 'phase2', label: 'Phase2' },
-    { id: 'calibration', label: 'Calibration' },
     { id: 'pressure_limits', label: 'Pressure Limits' },
-    { id: 'display', label: 'Display' },
+    { id: 'gui', label: 'Top Bar & Tabs' },
     { id: 'state_machine', label: 'State Machine' },
     { id: 'advanced', label: 'Advanced JSON' },
   ];
@@ -355,12 +426,34 @@ export default function ConfigPage() {
               Reload
             </button>
             <button
-              onClick={saveConfig}
-              disabled={saving || loading || !controlEnabled}
-              className="px-4 py-2 bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              title={controlEnabled ? undefined : 'Viewer mode: config changes disabled'}
+              onClick={downloadConfig}
+              className="px-4 py-2 bg-card rounded-lg hover:bg-opacity-80"
+              title="Download config.toml"
             >
-              {saving ? 'Saving...' : controlEnabled ? 'Save Config' : 'Save Disabled (Viewer)'}
+              Download
+            </button>
+            <button
+              onClick={() => uploadInputRef.current?.click()}
+              disabled={!canEdit || saving}
+              className="px-4 py-2 bg-card rounded-lg hover:bg-opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={canEdit ? 'Upload a config.toml to replace the current one' : 'Operators only'}
+            >
+              Upload
+            </button>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept=".toml,text/plain"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) importConfig(f); e.target.value = ''; }}
+            />
+            <button
+              onClick={saveConfig}
+              disabled={saving || loading || !canEdit}
+              className="px-4 py-2 bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={canEdit ? undefined : 'Operators only: config changes disabled'}
+            >
+              {saving ? 'Saving...' : canEdit ? 'Save Config' : 'Save Disabled (Read-only)'}
             </button>
           </div>
         </div>
@@ -377,9 +470,9 @@ export default function ConfigPage() {
           </div>
         )}
 
-        {!controlEnabled && (
+        {!canEdit && (
           <div className="mb-4 p-3 bg-yellow-900/40 border border-yellow-600 rounded-lg text-yellow-200 text-sm">
-            Viewer mode: configuration changes are disabled. Unlock controls in the top bar to enable saving.
+            Read-only — you are not an approved operator. Fields are disabled and saving/uploading is blocked (also enforced server-side).
           </div>
         )}
 
@@ -402,54 +495,34 @@ export default function ConfigPage() {
           </div>
         </div>
 
-        {/* Tab Content */}
-        <div className="space-y-6">
-          {activeTab === 'system' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">System</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField(
-                  'Mode',
-                  config.system?.mode,
-                  (val) => updateField('system', 'mode', val),
-                  'select',
-                  ['GROUND', 'FLIGHT']
-                )}
-                {renderField(
-                  'Initial State',
-                  config.system?.state,
-                  (val) => updateField('system', 'state', val)
-                )}
-              </div>
-            </div>
-          )}
-
+        {/* Tab Content — a disabled fieldset greys out and blocks every control
+            inside for non-operators (mirrors the server-side operator gate). */}
+        <fieldset disabled={!canEdit} className={`space-y-6 border-0 m-0 p-0 min-w-0${!canEdit ? ' opacity-60' : ''}`}>
           {activeTab === 'network' && (
             <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">Network</h2>
+              <h2 className="text-xl font-bold mb-1">Network</h2>
+              <p className="text-sm text-amber-300/90 mb-4">
+                Read-only — these are startup-only binds for the pipeline services and must match the
+                board firmware. Changing them requires a deploy/restart, not a live edit.
+              </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {renderField(
                   'Bind IP',
                   config.network?.bind_ip,
-                  (val) => updateField('network', 'bind_ip', val)
+                  (val) => updateField('network', 'bind_ip', val),
+                  'text', undefined, 'DAQ bridge sensor-socket interface', true
                 )}
                 {renderField(
                   'Sensor Port',
                   config.network?.sensor_port,
                   (val) => updateField('network', 'sensor_port', val),
-                  'number'
+                  'number', undefined, 'UDP port boards send sensor data to', true
                 )}
                 {renderField(
                   'Actuator Command Port',
                   config.network?.actuator_cmd_port,
                   (val) => updateField('network', 'actuator_cmd_port', val),
-                  'number'
-                )}
-                {renderField(
-                  'Buffer Size',
-                  config.network?.buffer_size,
-                  (val) => updateField('network', 'buffer_size', val),
-                  'number'
+                  'number', undefined, 'Port boards listen on for actuator commands', true
                 )}
               </div>
             </div>
@@ -718,7 +791,8 @@ export default function ConfigPage() {
                         <select
                           value={String((board as any).voltage_reference ?? 0)}
                           onChange={(e) => updateBoard(boardKey, 'voltage_reference', parseInt(e.target.value, 10))}
-                          className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white"
+                          disabled={!canEdit}
+                          className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <option value="0">Internal (2.5V)</option>
                           <option value="1">VDD (ratiometric)</option>
@@ -1070,222 +1144,108 @@ export default function ConfigPage() {
             </div>
           )}
 
-          {activeTab === 'phase2' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">Phase2 (raw object)</h2>
-              <p className="text-sm text-text-muted mb-3">
-                This section is stored as a TOML table. Edit as JSON here (advanced users).
-              </p>
-              <textarea
-                value={JSON.stringify(config.phase2 || {}, null, 2)}
-                onChange={(e) => {
-                  try {
-                    const obj = JSON.parse(e.target.value || '{}');
-                    setConfig({ ...config, phase2: obj });
-                  } catch {
-                    // ignore until valid JSON
-                  }
-                }}
-                className="w-full h-72 px-3 py-2 bg-background border border-gray-700 rounded text-white font-mono text-xs"
-              />
-            </div>
-          )}
-
-          {activeTab === 'calibration' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">Calibration</h2>
-              <div className="space-y-6">
-                {renderField(
-                  'Enabled',
-                  config.calibration?.enabled,
-                  (val) => updateField('calibration', 'enabled', val),
-                  'boolean'
-                )}
-                {renderField(
-                  'Use Robust Stack',
-                  config.calibration?.use_robust_stack,
-                  (val) => updateField('calibration', 'use_robust_stack', val),
-                  'boolean',
-                  undefined,
-                  'Python calibration_server sole writer; C++ polynomial disabled'
-                )}
-                {renderField(
-                  'Exclude HP PT',
-                  config.calibration?.exclude_hp_pt,
-                  (val) => updateField('calibration', 'exclude_hp_pt', val),
-                  'boolean',
-                  undefined,
-                  'Skip high-pressure 4-20 mA PTs in robust stack'
-                )}
-                {renderField(
-                  'Prior From Polynomial',
-                  config.calibration?.prior_from_polynomial,
-                  (val) => updateField('calibration', 'prior_from_polynomial', val),
-                  'boolean',
-                  undefined,
-                  'Load polynomial calibration as initial priors'
-                )}
-
-                <div className="border-t border-gray-700 pt-4">
-                  <h3 className="text-lg font-semibold mb-4">Orchestrator Settings</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {renderField(
-                      'Min Points',
-                      config.calibration?.orchestrator?.min_points,
-                      (val) => updateField('calibration', 'min_points', val, 'orchestrator'),
-                      'number'
-                    )}
-                    {renderField(
-                      'Target Points',
-                      config.calibration?.orchestrator?.target_points,
-                      (val) => updateField('calibration', 'target_points', val, 'orchestrator'),
-                      'number'
-                    )}
-                    {renderField(
-                      'Max Points',
-                      config.calibration?.orchestrator?.max_points,
-                      (val) => updateField('calibration', 'max_points', val, 'orchestrator'),
-                      'number'
-                    )}
-                    {renderField(
-                      'Min R²',
-                      config.calibration?.orchestrator?.min_r_squared,
-                      (val) => updateField('calibration', 'min_r_squared', val, 'orchestrator'),
-                      'number'
-                    )}
-                    {renderField(
-                      'Target R²',
-                      config.calibration?.orchestrator?.target_r_squared,
-                      (val) => updateField('calibration', 'target_r_squared', val, 'orchestrator'),
-                      'number'
-                    )}
-                    {renderField(
-                      'RLS Forgetting Factor',
-                      config.calibration?.orchestrator?.rls_forgetting_factor,
-                      (val) => updateField('calibration', 'rls_forgetting_factor', val, 'orchestrator'),
-                      'number'
-                    )}
-                    {renderField(
-                      'Drift GLR Threshold',
-                      config.calibration?.orchestrator?.drift_glr_threshold,
-                      (val) => updateField('calibration', 'drift_glr_threshold', val, 'orchestrator'),
-                      'number'
-                    )}
-                    {renderField(
-                      'Auto Save Interval (sec)',
-                      config.calibration?.orchestrator?.auto_save_interval_sec,
-                      (val) => updateField('calibration', 'auto_save_interval_sec', val, 'orchestrator'),
-                      'number'
-                    )}
-                    {renderField(
-                      'Status Interval (sec)',
-                      config.calibration?.orchestrator?.status_interval_sec,
-                      (val) => updateField('calibration', 'status_interval_sec', val, 'orchestrator'),
-                      'number'
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
           {activeTab === 'pressure_limits' && (
             <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">Pressure Limits</h2>
-              <div className="space-y-6">
-                {['GN2', 'ETH', 'LOX'].map((system) => (
+              <h2 className="text-xl font-bold mb-1">Pressure Limits</h2>
+              <p className="text-sm text-text-muted mb-4">
+                NOP/MEOP/POP per system. These are the single source of truth for gauge thresholds —
+                each top-bar gauge points at one of these keys via its <code>limits</code> field (Top Bar &amp; Tabs), and the plots read them too.
+              </p>
+              <div className="space-y-4">
+                {Object.keys(config.pressure_limits || {}).map((system) => (
                   <div key={system} className="border border-gray-700 rounded-lg p-4">
-                    <h3 className="text-lg font-semibold mb-3">{system}</h3>
+                    <h3 className="text-lg font-semibold mb-3 font-mono">{system}</h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      {renderField(
-                        'THRESH',
-                        config.pressure_limits?.[system]?.THRESH,
-                        (val) => updateField('pressure_limits', 'THRESH', val, system),
-                        'number'
-                      )}
-                      {renderField(
-                        'NOP',
-                        config.pressure_limits?.[system]?.NOP,
-                        (val) => updateField('pressure_limits', 'NOP', val, system),
-                        'number'
-                      )}
-                      {renderField(
-                        'MEOP',
-                        config.pressure_limits?.[system]?.MEOP,
-                        (val) => updateField('pressure_limits', 'MEOP', val, system),
-                        'number'
-                      )}
-                      {renderField(
-                        'POP',
-                        config.pressure_limits?.[system]?.POP,
-                        (val) => updateField('pressure_limits', 'POP', val, system),
-                        'number'
-                      )}
+                      {renderField('THRESH', (config.pressure_limits as any)?.[system]?.THRESH, (val) => updateField('pressure_limits', 'THRESH', val, system), 'number')}
+                      {renderField('NOP', (config.pressure_limits as any)?.[system]?.NOP, (val) => updateField('pressure_limits', 'NOP', val, system), 'number')}
+                      {renderField('MEOP', (config.pressure_limits as any)?.[system]?.MEOP, (val) => updateField('pressure_limits', 'MEOP', val, system), 'number')}
+                      {renderField('POP', (config.pressure_limits as any)?.[system]?.POP, (val) => updateField('pressure_limits', 'POP', val, system), 'number')}
                     </div>
                   </div>
                 ))}
+                {Object.keys(config.pressure_limits || {}).length === 0 && (
+                  <p className="text-sm text-text-muted">No pressure limits defined in config.</p>
+                )}
               </div>
             </div>
           )}
 
-          {activeTab === 'display' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">Display Settings</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField(
-                  'ADC Bits',
-                  config.display?.adc_bits,
-                  (val) => updateField('display', 'adc_bits', val),
-                  'number'
-                )}
-                {renderField(
-                  'Window Seconds',
-                  config.display?.window_seconds,
-                  (val) => updateField('display', 'window_seconds', val),
-                  'number'
-                )}
-                {renderField(
-                  'Y Axis Min',
-                  config.display?.y_axis_min,
-                  (val) => updateField('display', 'y_axis_min', val),
-                  'number'
-                )}
-                {renderField(
-                  'Y Axis Max',
-                  config.display?.y_axis_max,
-                  (val) => updateField('display', 'y_axis_max', val),
-                  'number'
-                )}
-                {renderField(
-                  'Y Axis Autoscale',
-                  config.display?.y_axis_autoscale,
-                  (val) => updateField('display', 'y_axis_autoscale', val),
-                  'boolean'
-                )}
-                {renderField(
-                  'Only Show Actuators With Roles',
-                  config.display?.only_show_actuators_with_roles,
-                  (val) => updateField('display', 'only_show_actuators_with_roles', val),
-                  'boolean'
-                )}
-                {renderField(
-                  'Only Show PT With Roles',
-                  config.display?.only_show_pt_with_roles,
-                  (val) => updateField('display', 'only_show_pt_with_roles', val),
-                  'boolean'
-                )}
-                {renderField(
-                  'Graph MA Samples',
-                  config.display?.graph_ma_samples,
-                  (val) => updateField('display', 'graph_ma_samples', val),
-                  'number'
-                )}
-                {renderField(
-                  'Display MA Samples',
-                  config.display?.display_ma_samples,
-                  (val) => updateField('display', 'display_ma_samples', val),
-                  'number'
-                )}
+          {activeTab === 'gui' && (
+            <div className="space-y-6">
+              {/* ── Tab bar ──────────────────────────────────────────────── */}
+              <div className="bg-card rounded-lg p-6">
+                <h2 className="text-xl font-bold mb-1">Tab Bar</h2>
+                <p className="text-sm text-text-muted mb-4">
+                  Which views are pinned to the header, in order. Others stay reachable via “All Views”.
+                </p>
+                <div className="space-y-2">
+                  {guiTabs.map((id, i) => (
+                    <div key={`${id}:${i}`} className="flex items-center gap-2">
+                      <span className="w-8 text-text-muted text-sm text-right">{i + 1}.</span>
+                      <span className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded">
+                        {navItemById(id)?.name ?? id}
+                        <span className="text-text-muted text-xs ml-2">({id})</span>
+                      </span>
+                      <button onClick={() => setGuiTabs(moveInArray(guiTabs, i, -1))} className="px-2 py-2 bg-gray-700 rounded hover:bg-gray-600" title="Move up">↑</button>
+                      <button onClick={() => setGuiTabs(moveInArray(guiTabs, i, 1))} className="px-2 py-2 bg-gray-700 rounded hover:bg-gray-600" title="Move down">↓</button>
+                      <button onClick={() => setGuiTabs(guiTabs.filter((_, k) => k !== i))} className="px-3 py-2 bg-red-600 rounded hover:bg-red-700">Remove</button>
+                    </div>
+                  ))}
+                  {guiTabs.length === 0 && (
+                    <p className="text-sm text-text-muted">No tabs configured — the tab bar falls back to built-in defaults.</p>
+                  )}
+                </div>
+                <div className="mt-4 flex items-center gap-2">
+                  <select
+                    value=""
+                    onChange={(e) => { if (e.target.value) setGuiTabs([...guiTabs, e.target.value]); }}
+                    className="px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50"
+                  >
+                    <option value="">+ Add tab…</option>
+                    {NAV_ITEMS.filter((v) => !v.deprecated && !guiTabs.includes(v.id)).map((v) => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* ── Top-bar pressure gauges ──────────────────────────────── */}
+              <div className="bg-card rounded-lg p-6">
+                <h2 className="text-xl font-bold mb-1">Top-Bar Pressure Gauges</h2>
+                <p className="text-sm text-text-muted mb-4">
+                  Ordered gauges in the header. NOP/MEOP come from the Pressure Limits tab (via the <code>limits</code> key).
+                </p>
+                <datalist id="pressure-limit-keys">
+                  {Object.keys(config.pressure_limits || {}).map((k) => <option key={k} value={k} />)}
+                </datalist>
+                <div className="space-y-3">
+                  {guiBars.map((bar: any, i: number) => {
+                    const setBar = (patch: any) => setGuiBars(guiBars.map((b: any, k: number) => (k === i ? { ...b, ...patch } : b)));
+                    return (
+                      <div key={i} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center border border-gray-800 rounded p-2">
+                        <input value={bar.label ?? ''} onChange={(e) => setBar({ label: e.target.value })} placeholder="Label" className="md:col-span-2 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
+                        <input value={bar.role ?? ''} onChange={(e) => setBar({ role: e.target.value })} placeholder="Sensor role" className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
+                        <input list="pressure-limit-keys" value={bar.limits ?? ''} onChange={(e) => setBar({ limits: e.target.value })} placeholder="Limits key" className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
+                        <div className="md:col-span-2 flex items-center gap-1">
+                          <input type="color" value={bar.color ?? '#888888'} onChange={(e) => setBar({ color: e.target.value })} className="h-8 w-10 bg-background border border-gray-700 rounded" />
+                          <input value={bar.color ?? ''} onChange={(e) => setBar({ color: e.target.value })} placeholder="#RRGGBB" className="flex-1 min-w-0 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
+                        </div>
+                        <div className="md:col-span-2 flex items-center justify-end gap-1">
+                          <button onClick={() => setGuiBars(moveInArray(guiBars, i, -1))} className="px-2 py-1.5 bg-gray-700 rounded hover:bg-gray-600" title="Move up">↑</button>
+                          <button onClick={() => setGuiBars(moveInArray(guiBars, i, 1))} className="px-2 py-1.5 bg-gray-700 rounded hover:bg-gray-600" title="Move down">↓</button>
+                          <button onClick={() => setGuiBars(guiBars.filter((_: any, k: number) => k !== i))} className="px-2 py-1.5 bg-red-600 rounded hover:bg-red-700" title="Remove">✕</button>
+                        </div>
+                        <input value={(bar.avg_roles ?? []).join(', ')} onChange={(e) => { const parts = e.target.value.split(',').map((s) => s.trim()).filter(Boolean); setBar({ avg_roles: parts.length ? parts : undefined }); }} placeholder="avg roles (optional, comma-separated)" className="md:col-span-12 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  onClick={() => setGuiBars([...guiBars, { label: 'NEW', role: '', limits: '', color: '#888888' }])}
+                  className="mt-4 px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
+                >
+                  + Add Gauge
+                </button>
               </div>
             </div>
           )}
@@ -1354,7 +1314,7 @@ export default function ConfigPage() {
               </div>
             </div>
           )}
-        </div>
+        </fieldset>
 
         <div className="mt-6 text-sm text-text-muted">
           <p className="mb-2">⚠️ <strong>Warning:</strong> Editing configuration can affect system behavior.</p>

@@ -3,12 +3,9 @@
 # Modular config for boards, sensors, actuators, calibration, and routing
 # =============================================================================
 
-# =============================================================================
-# System
-# =============================================================================
-[system]
-mode = "GROUND"          # "FLIGHT" or "GROUND"
-state = "GSE"            # Initial state: GSE, HOTFIRE, etc.
+# NOTE: [system] (mode/state) removed 2026-08-13 — dead config. Nothing read it;
+# FLIGHT vs GROUND is determined by the config filename (config_flight_daq.toml
+# vs config_ground_daq.toml) in daq_bridge, not by this section.
 
 # =============================================================================
 # Network - DAQ Bridge Listener
@@ -17,7 +14,7 @@ state = "GSE"            # Initial state: GSE, HOTFIRE, etc.
 bind_ip = "0.0.0.0"
 sensor_port = 5006       # Port for all sensor data (PT, LC, TC, RTD boards send here)
 actuator_cmd_port = 5005 # Port actuator boards listen on for commands
-buffer_size = 1024
+# buffer_size removed 2026-08-13 — was only a struct field in lib/Config.h, no socket used it
 
 # =============================================================================
 # Server Heartbeat - UDP broadcast config (used by heartbeat_service and daq_bridge)
@@ -78,6 +75,79 @@ connection_retry_delay_ms = 1000
 downsample_mode = "envelope"
 points_per_second = 20
 
+# ── Tab bar: which views are pinned to the header, in order ───────────────────
+# Ids index the frontend view catalog (lib/nav-items.ts). Reorder / add / remove
+# to change the tab bar live (no rebuild). Views not listed here are still
+# reachable via the "All Views" tab. Single Pane ("unified") is the primary view.
+tabs = ["unified", "fuel", "lox", "chamber", "copv", "controller", "boards", "session"]
+
+# ── Top-bar pressure gauges (ordered) ────────────────────────────────────────
+# label   — text shown on the gauge
+# role    — sensor role name (from [sensor_roles_*]) → resolved to its cal entity
+# limits  — key into [pressure_limits.*]; supplies NOP/MEOP (single source of truth)
+# color   — gauge accent
+# avg_roles (optional) — gauge value = mean of these roles (e.g. chamber mids)
+[[gui.pressure_bars]]
+label = "GN2 HI"
+role = "GN2 High"
+limits = "GN2_High"
+color = "#ADFF2F"
+
+[[gui.pressure_bars]]
+label = "GN2 REG"
+role = "GN2 Regulated"
+limits = "GN2_Regulated"
+color = "#228B22"
+
+[[gui.pressure_bars]]
+label = "FUEL UP"
+role = "Fuel Upstream"
+limits = "Fuel_Upstream"
+color = "#FF4500"
+
+[[gui.pressure_bars]]
+label = "FUEL DN"
+role = "Fuel Downstream"
+limits = "Fuel_Downstream"
+color = "#CC0000"
+
+[[gui.pressure_bars]]
+label = "LOX UP"
+role = "Ox Upstream"
+limits = "Ox_Upstream"
+color = "#38BDF8"
+
+[[gui.pressure_bars]]
+label = "LOX DN"
+role = "Ox Downstream"
+limits = "Ox_Downstream"
+color = "#4169E1"
+
+[[gui.pressure_bars]]
+label = "GSE LO"
+role = "GSE Low"
+limits = "GSE_Low"
+color = "#D8B4FE"
+
+[[gui.pressure_bars]]
+label = "GSE MID"
+role = "GSE Mid"
+limits = "GSE_Mid"
+color = "#C026D3"
+
+[[gui.pressure_bars]]
+label = "GSE HI"
+role = "GSE High"
+limits = "GSE_High"
+color = "#7B2FBE"
+
+[[gui.pressure_bars]]
+label = "CHAMBER"
+role = "Chamber Mid PT 1"
+avg_roles = ["Chamber Mid PT 1", "Chamber Mid PT 2"]
+limits = "Chamber"
+color = "#F97316"
+
 # =============================================================================
 # DAQ bridge sample timestamping (per-board clock sync)
 #   mode = "board-clock": reconstruct true sample times from the boards'
@@ -97,13 +167,20 @@ resync_threshold_ms = 1000   # |residual - offset| beyond this = lost lock -> re
 log_interval_s = 10          # per-board [TimeSync] diagnostics log cadence
 
 # =============================================================================
-# ADC voltage reference nominals (for sense conversions in UI)
-# Used when voltage_reference = 0 (internal) or 2 (5V absolute). Ref 1 = VDD ratiometric.
+# ADC voltage reference nominals (for sense conversions in the UI)
+#
+# Each board sets a `voltage_reference` (in its [boards.*] block). It selects
+# which nominal below the UI uses to turn ADC counts into a voltage:
+#   0 = Internal 2.5V reference  -> uses internal_v
+#   1 = VDD (ratiometric)        -> NO voltage conversion (reading is a ratio of
+#                                   VDD, which cancels out); vdd_nominal_v is
+#                                   display-only, never used in a calculation
+#   2 = 5V absolute reference    -> uses absolute_5v_v
 # =============================================================================
 [adc]
-internal_v = 2.5       # Nominal internal reference (V); boards with voltage_reference = 0
-vdd_nominal_v = 5.0    # Nominal VDD for display only; ratiometric boards don't use voltage conversion
-absolute_5v_v = 5.0    # Nominal 5V absolute reference (V); boards with voltage_reference = 2
+internal_v = 2.5       # Nominal internal reference (V) — voltage_reference = 0
+vdd_nominal_v = 5.0    # Nominal VDD (V) — display only; ratiometric boards don't convert voltage
+absolute_5v_v = 5.0    # Nominal 5V absolute reference (V) — voltage_reference = 2
 
 # =============================================================================
 # Board Discovery
@@ -490,101 +567,16 @@ fire_duration_ms = 6000
 # Extended fire duration (ms) when user taps "Extend Fire".
 fire_extended_ms = 10000
 
-# =============================================================================
-# Elodin Table Routing - Maps sensor types to Elodin table IDs (config-driven, no fixed hexes in code)
-# packet_id = [high_byte, low_byte]; channels = 1-based channel count (low byte 0x01..0x0N).
-# Backend (server.ts) and daq_bridge both read this; add/remove routing types here for modularity.
-# =============================================================================
-[routing.pt_raw]
-packet_id = [0x20, 0x00]
-channels = 14
-description = "Raw PT ADC counts — 0x01..0x0E (board1: 1-7, board2+offset10: 11-14)"
-
-[routing.pt_calibrated]
-packet_id = [0x20, 0x10]
-channels = 30
-description = "Calibrated PT pressure (PSI) — 0x11..0x1E (board1: 0x11-0x17, board2: 0x1B-0x1E)"
-
-[routing.tc_raw]
-packet_id = [0x21, 0x00]
-channels = 20
-description = "Raw TC ADC counts"
-
-[routing.rtd_raw]
-packet_id = [0x22, 0x00]
-channels = 20
-description = "Raw RTD resistance counts"
-
-[routing.lc_raw]
-packet_id = [0x23, 0x00]
-channels = 20
-description = "Raw LC ADC counts"
-
-[routing.lc_calibrated]
-packet_id = [0x23, 0x10]
-channels = 20
-description = "Calibrated LC force"
-
-[routing.actuator_status]
-packet_id = [0x30, 0x00]
-channels = 20
-description = "Actuator current sense readings"
-
-[routing.actuator_cal]
-packet_id = [0x31, 0x00]
-channels = 20
-description = "Calibrated actuator current (amps) from calibration_service"
-
-[routing.encoder_raw]
-packet_id = [0x24, 0x00]
-channels = 2
-description = "Raw encoder angle (0-4095) — AS5600 12-bit"
-
-# Which routing types daq_bridge publishes to Elodin.
-# PT_Cal/TC_Cal/LC_Cal/RTD_Cal are written by calibration_server (subscribes to relay, applies calibration, writes to Elodin).
-[daq_bridge]
-publish = ["pt_raw", "tc_raw", "rtd_raw", "lc_raw", "actuator_status", "actuator_cal", "encoder_raw"]
+# NOTE: [routing.*] and [daq_bridge].publish were removed 2026-08-13 — dead config.
+# daq_bridge derives packet IDs from board config + code-based SensorRouter/HeartbeatRouter;
+# nothing read these sections (verified across backend + C++).
 
 # =============================================================================
 # Calibration
 # =============================================================================
-[calibration]
-enabled = true
-# use_robust_stack: when true (default), Python calibration_server is sole writer; C++ polynomial disabled
-use_robust_stack = true
-# exclude_hp_pt: when true (default), robust stack skips high-pressure 4-20 mA PTs (boards with hp_pt_connectors)
-exclude_hp_pt = true
-# prior_from_polynomial: when true, load polynomial calibration (calibration/*.json) as initial priors
-# so ZERO ALL + CAPTURE match polynomial accuracy (fixes 150 PSI reading as 56.8)
-prior_from_polynomial = true
-
-# Orchestrator settings (Phase 1 + Phase 2 lifecycle)
-[calibration.orchestrator]
-# consensus_enabled: true = test/calibration (PTs on common manifold); false = flight (independent measurements)
-consensus_enabled = true
-self_cal_alpha_threshold = 0.6   # α≥ this for self-calibration
-agreement_threshold = 0.6        # agreement≥ this for consensus-based self-cal
-min_points = 5               # Minimum points to attempt a fit
-target_points = 15           # Target for HIGH confidence
-max_points = 30              # Keep at most this many per channel
-min_r_squared = 0.95         # Minimum R² for acceptable calibration
-target_r_squared = 0.99      # R² for MAXIMUM confidence
-rls_forgetting_factor = 0.995  # Phase 2 RLS forgetting factor (0.99–1.0)
-drift_glr_threshold = 3.0   # GLR statistic threshold for drift alarm
-auto_save_interval_sec = 300 # Phase 2 auto-save interval
-status_interval_sec = 30     # Phase 2 status print interval
-
-# PT calibration sources (tried in order: JSON first, then CSV)
-# Same path as femboy/combined_fsw_gui and daq_bridge: scripts/calibration/calibrations
-# If json_path is set, that file is used; otherwise latest in json_dir is used.
-[calibration.pt]
-# json_path = "scripts/calibration/calibrations/calibration_YYYY-MM-DD....json"  # optional override
-json_dir = "scripts/calibration/calibrations"
-csv_paths = [
-    "../firmware/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv"
-]
-# Polynomial: psi = A*(adc^3) + B*(adc^2) + C*adc + D
-
+# NOTE: [calibration], [calibration.orchestrator], [calibration.pt] removed 2026-08-13 — dead config
+# (read only by the deprecated Python robust-cal). The live C++ calibration_service reads its PT
+# coefficients from hardcoded paths and only parses [calibration.tc/rtd/lc] below for default formulas.
 [calibration.tc]
 json_dir = "scripts/calibration/calibrations/tc"
 csv_paths = []
@@ -662,25 +654,8 @@ NOP = 500
 MEOP = 650
 POP = 800
 
-# Pressure sensor → fluid system mapping (sensor_id → system)
-[pressure_mappings]
-GN2 = 6
-ETH = 1
-LOX = 5
-
-# =============================================================================
-# Display Settings
-# =============================================================================
-[display]
-adc_bits = 32
-window_seconds = 26.0
-y_axis_min = 0.0
-y_axis_max = 700.0
-y_axis_autoscale = true
-only_show_actuators_with_roles = true
-only_show_pt_with_roles = true
-graph_ma_samples = 1
-display_ma_samples = 1
+# NOTE: [pressure_mappings] (old system→channel index, superseded by [sensor_roles_*])
+# and [display] (GUI defaults nothing reads) removed 2026-08-13 — dead config.
 
 # =============================================================================
 # State Machine
@@ -744,53 +719,5 @@ thrust_curve_path = "output/lut/thrust_curve.csv"
 # When set, DDP uses fast LUT lookups instead of physics. Generate with engine_lut_config.yaml.
 engine_lut_path = "output/lut/engine_performance.npz"
 
-# =============================================================================
-# Phase 2 Calibration Settings
-# =============================================================================
-[phase2]
-# Enable Phase 2 autonomous calibration
-enabled = false
-# Drift detection threshold (GLR statistic)
-drift_threshold = 2.0
-# Process noise for covariance growth (models drift rate)
-process_noise = 1e-6
-# EMA smoothing factor for prediction baseline (0.01-0.1)
-ema_smoothing_alpha = 0.02
-# RLS forgetting factor (0.99-0.999)
-forgetting_factor = 0.995
-# Auto-save interval (seconds)
-save_interval_seconds = 300
-# Minimum residuals required for drift detection
-min_residuals_for_drift_check = 10
-# Absolute drift threshold (PSI) - also triggers on mean residual > this value
-absolute_drift_threshold_psi = 2.0
-# Cross-sensor consensus threshold (PSI) - sensors in same group should agree within this
-consensus_threshold_psi = 1.0
-# Consensus update rate (0.0-1.0) - how aggressively to update based on sensor agreement
-consensus_update_rate = 0.1
-
-# =============================================================================
-# Robust Calibration Integration (Python Sidecar)
-# =============================================================================
-[calibration.sidecar]
-enabled = true
-host = "127.0.0.1"
-port = 8100
-relay_host = "127.0.0.1"
-relay_port = 9090
-reconnect_interval_ms = 5000
-adc_forward_interval_ms = 200
-# write_interval_sec: min interval per channel (0.01=100Hz, 0.005=200Hz). Lower = faster, more DB load.
-write_interval_sec = 0.01
-# When false, Python sidecar does not write calibrated TABLE rows to Elodin (recommended if
-# calibration_service / C++ is running — two writers fight and calibrated PSI spikes in the DB).
-write_to_elodin = false
-
-[calibration.environmental]
-temperature = 25.0
-humidity = 50.0
-vibration = 0.0
-aging_factor = 1.0
-mounting_torque = 1.0
-# Minimum sensors needed for consensus-based updates
-min_consensus_sensors = 2
+# NOTE: [phase2], [calibration.sidecar], [calibration.environmental] removed 2026-08-13 — dead config
+# (deprecated Python autonomous-cal / sidecar; the live C++ calibration_service reads none of them).

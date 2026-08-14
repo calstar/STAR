@@ -114,6 +114,22 @@ export function readConfig(): any {
   }
 }
 
+/**
+ * Serialize `actuator_roles` by hand. Its values are mixed-type inline arrays
+ * (e.g. ["NC", 1, 12]) which @iarna/toml's stringify rejects ("Array values
+ * can't have mixed types"), so we emit the section manually — the inverse of the
+ * manual parse in readConfig. Strings are quoted, numbers are raw.
+ */
+function stringifyActuatorRoles(roles: Record<string, unknown>): string {
+  const lines = ['[actuator_roles]'];
+  for (const [name, value] of Object.entries(roles)) {
+    const arr = Array.isArray(value) ? value : [];
+    const parts = arr.map((v) => (typeof v === 'string' ? JSON.stringify(v) : String(v)));
+    lines.push(`${JSON.stringify(name)} = [${parts.join(', ')}]`);
+  }
+  return lines.join('\n') + '\n';
+}
+
 export function writeConfig(config: any): void {
   const configPath = getConfigPath();
   try {
@@ -127,7 +143,13 @@ export function writeConfig(config: any): void {
       console.warn(`   File may not exist yet, will create`);
     }
 
-    const content = stringifyToml(config);
+    // actuator_roles holds mixed-type arrays that @iarna/toml can't stringify —
+    // pull it out, stringify the rest, then append the section by hand.
+    const { actuator_roles, ...rest } = config ?? {};
+    let content = stringifyToml(rest);
+    if (actuator_roles && typeof actuator_roles === 'object') {
+      content += '\n' + stringifyActuatorRoles(actuator_roles as Record<string, unknown>);
+    }
     console.log(`   Generated TOML content: ${content.length} bytes`);
 
     // Write with explicit error handling

@@ -539,6 +539,9 @@ const apiHandler = createAPIHandler({
   }),
   onConfigUpdated: () => {
     reloadGuiStreamConfig();
+    // Tell every open client the config changed so they refetch /api/* live
+    // (sensor-config, pressure-limits, pressure-bars) — no reload/restart.
+    broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
   },
 });
 

@@ -1,14 +1,17 @@
 /**
  * SPA root — layout formerly in app/layout.tsx plus the route table
- * (formerly Next.js file-system routing under app/). URLs are unchanged:
- * WindowLauncher, Playwright specs, and operator bookmarks keep working.
+ * (formerly Next.js file-system routing under app/). Every view has one
+ * canonical path; the legacy `/window/:view` popup URLs redirect to it so
+ * operator bookmarks and older popups keep resolving.
  */
 import { Suspense } from 'react';
-import { Routes, Route, useParams } from 'react-router-dom';
+import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import TopBarWrapper from '@/components/dashboard/TopBarWrapper';
 import { ControlModeProvider } from '@/lib/control-mode';
 import GlobalStateSubscriber from '@/components/dashboard/GlobalStateSubscriber';
 import WindowDetector from '@/components/windows/WindowDetector';
+import OpenInPopupButton from '@/components/windows/OpenInPopupButton';
+import { VIEW_ID_TO_PATH } from '@/lib/nav-items';
 import * as P from './pages';
 
 function PageFallback() {
@@ -19,42 +22,33 @@ function PageFallback() {
   );
 }
 
-/** Popup-window dispatcher: /window/:view → page from the shared registry. */
-function WindowViewPage() {
+/** Legacy popup dispatcher: `/window/:view` → the view's canonical path. */
+function WindowRedirect() {
   const { view } = useParams();
-  const Component = view ? P.windowViews[view] : undefined;
-
-  if (!Component) {
-    return (
-      <main className="min-h-screen bg-background text-text p-8">
-        <WindowDetector />
-        <div className="max-w-7xl mx-auto">
-          <h1 className="text-3xl font-bold text-red-500">Invalid View</h1>
-          <p className="text-text-muted">View &quot;{view}&quot; not found</p>
-        </div>
-      </main>
-    );
-  }
-
-  // TopBar is rendered by the root layout — just give the page remaining height.
-  return (
-    <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-      <WindowDetector />
-      <Component />
-    </div>
-  );
+  const target = view ? VIEW_ID_TO_PATH[view] : undefined;
+  return <Navigate to={target ?? '/'} replace />;
 }
 
 export default function App() {
   return (
     <>
       <GlobalStateSubscriber />
+      <WindowDetector />
       <ControlModeProvider>
         <TopBarWrapper />
         <div className="flex-1 min-h-0 overflow-auto flex flex-col">
           <Suspense fallback={<PageFallback />}>
             <Routes>
-              <Route path="/" element={<P.HomePage />} />
+              {/* Home removed — land on the most-used view (Single Pane). */}
+              <Route path="/" element={<Navigate to="/single-pane" replace />} />
+              <Route path="/views" element={<P.AllViewsPage />} />
+
+              {/* ── Full-window dashboards ─────────────────────────────── */}
+              <Route path="/single-pane" element={<P.UnifiedWindowPage />} />
+              <Route path="/ipad" element={<P.IpadWindowPage />} />
+              <Route path="/mobile" element={<P.MobileGuiPage />} />
+
+              {/* ── Panes / tools ──────────────────────────────────────── */}
               <Route path="/boards" element={<P.BoardsPage />} />
               <Route path="/calibration" element={<P.CalibrationPage />} />
               <Route path="/config" element={<P.ConfigPage />} />
@@ -67,6 +61,18 @@ export default function App() {
               <Route path="/sensor-info" element={<P.SensorInfoPage />} />
               <Route path="/status" element={<P.StatusPage />} />
               <Route path="/session" element={<P.SessionPage />} />
+
+              {/* ── Plot pages: short canonical path + legacy /plots alias ── */}
+              <Route path="/chamber" element={<P.ChamberPage />} />
+              <Route path="/copv" element={<P.CopvPage />} />
+              <Route path="/feed-char" element={<P.FeedCharPage />} />
+              <Route path="/fuel" element={<P.FuelPage />} />
+              <Route path="/gse" element={<P.GsePage />} />
+              <Route path="/lcs-tcs-rtd" element={<P.LcsTcsRtdPage />} />
+              <Route path="/lox" element={<P.LoxPage />} />
+              <Route path="/raw" element={<P.RawPage />} />
+              <Route path="/solenoid-char" element={<P.SolenoidCharPage />} />
+
               <Route path="/plots/all" element={<P.AllPlotsPage />} />
               <Route path="/plots/chamber" element={<P.ChamberPage />} />
               <Route path="/plots/copv" element={<P.CopvPage />} />
@@ -77,7 +83,10 @@ export default function App() {
               <Route path="/plots/lox" element={<P.LoxPage />} />
               <Route path="/plots/raw" element={<P.RawPage />} />
               <Route path="/plots/solenoid-characterization" element={<P.SolenoidCharPage />} />
-              <Route path="/window/:view" element={<WindowViewPage />} />
+
+              {/* ── Legacy popup URLs → canonical path ─────────────────── */}
+              <Route path="/window/:view" element={<WindowRedirect />} />
+
               <Route
                 path="*"
                 element={
@@ -89,6 +98,7 @@ export default function App() {
             </Routes>
           </Suspense>
         </div>
+        <OpenInPopupButton />
       </ControlModeProvider>
     </>
   );

@@ -11,6 +11,8 @@ import ActuatorControlByName from '@/components/controls/ActuatorControlByName';
 import TimeSeriesPlot from '@/components/plots/TimeSeriesPlot';
 import { useControlMode } from '@/lib/control-mode';
 import { useSensorConfig } from '@/lib/sensor-config';
+import { useGuiConfig } from '@/lib/gui-config';
+import { usePressureLimits } from '@/lib/pressure-limits';
 import { buildPressureBarDefsFromSensorConfig, buildPressurePlotSeriesFromSensorList } from '@/lib/pressure-bar-defs';
 
 // ── Constants shared with TopBar/UnifiedDashboard ────────────────────────────
@@ -126,8 +128,10 @@ export default function MobileDashboard() {
     sendState(SystemState.EMERGENCY_ABORT);
   };
 
-  const pressureBarDefs = useMemo(() => buildPressureBarDefsFromSensorConfig(sensors), [sensors]);
-  const pressureSensorsPlot = useMemo(() => buildPressurePlotSeriesFromSensorList(sensors), [sensors]);
+  const { pressureBars } = useGuiConfig();
+  const limits = usePressureLimits();
+  const pressureBarDefs = useMemo(() => buildPressureBarDefsFromSensorConfig(sensors, pressureBars, limits), [sensors, pressureBars, limits]);
+  const pressureSensorsPlot = useMemo(() => buildPressurePlotSeriesFromSensorList(sensors, pressureBars, limits), [sensors, pressureBars, limits]);
   const pressurePlotForChart = usePressureHistoryPlotSeries(pressureSensorsPlot);
 
   return (

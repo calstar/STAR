@@ -7,7 +7,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { IncomingMessage, ServerResponse } from 'http';
-import { readConfig, writeConfig } from './routes/config.js';
+import { readConfig, writeConfig, getConfigPath } from './routes/config.js';
+import { isOperator } from './operators.js';
 import { discoverProjects, getEnabledBoardsForFlash, getOtaWorkspaceRoot, BOARD_TYPE_TO_PROJECT } from './ota-build.js';
 import { otaBuildFlash, otaFlashFirmwareFile } from './ota-service-cmd.js';
 import { ElodinQueryClient, QueryOptions } from './elodin-query.js';
@@ -269,6 +270,17 @@ export interface APIHandlerOptions {
 }
 
 /**
+ * Config edits require an approved operator. Identity is the `X-Auth-Email`
+ * header Caddy injects on every proxied request; an empty header means no proxy
+ * in front (local/dev/test stand) and is treated as operator — same rule the WS
+ * control path uses in server.ts. Present-but-not-allowlisted → denied.
+ */
+function isConfigWriteAuthorized(req: IncomingMessage): boolean {
+  const authEmail = ((req.headers['x-auth-email'] as string | undefined) || '').trim();
+  return authEmail === '' ? true : isOperator(authEmail);
+}
+
+/**
  * Create an HTTP request handler for all /api/* routes.
  * Mount this on an existing http.Server — it does NOT create its own server.
  * Returns true if the request was handled, false if not (so the caller can fall through).
@@ -300,7 +312,12 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ config }));
       } else if (url.pathname === '/api/config' && req.method === 'POST') {
-        // Write config
+        // Write config — approved operators only
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
         let body = '';
         req.on('data', (chunk) => {
           body += chunk.toString();
@@ -325,6 +342,54 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
             console.error('❌ Config save error:', error);
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: error.message || 'Failed to save config' }));
+          }
+        });
+      } else if (url.pathname === '/api/config/export' && req.method === 'GET') {
+        // Raw config.toml download (backup). Read-only — no operator gate.
+        try {
+          const raw = fs.readFileSync(getConfigPath(), 'utf-8');
+          res.writeHead(200, {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Content-Disposition': 'attachment; filename="config.toml"',
+          });
+          res.end(raw);
+        } catch (error: any) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error.message || 'Failed to read config' }));
+        }
+      } else if (url.pathname === '/api/config/import' && req.method === 'POST') {
+        // Replace config.toml with an uploaded file (restore). Operators only.
+        // Validate by writing then re-reading with the app's tolerant parser;
+        // roll back to the previous contents if it fails to parse.
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        let body = '';
+        req.on('data', (chunk) => { body += chunk.toString(); });
+        req.on('end', () => {
+          const configPath = getConfigPath();
+          let previous: string | null = null;
+          try {
+            if (!body.trim()) throw new Error('Uploaded config is empty');
+            previous = fs.readFileSync(configPath, 'utf-8');
+            fs.writeFileSync(configPath, body, 'utf-8');
+            readConfig(); // throws if the uploaded TOML is invalid
+            if (onConfigUpdated) {
+              setImmediate(() => {
+                try { onConfigUpdated(); } catch (e) { console.warn('⚠️ onConfigUpdated handler threw:', e); }
+              });
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: 'Config imported successfully' }));
+          } catch (error: any) {
+            if (previous !== null) {
+              try { fs.writeFileSync(configPath, previous, 'utf-8'); } catch { /* best effort */ }
+            }
+            console.error('❌ Config import error:', error);
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message || 'Invalid config file' }));
           }
         });
       } else if (url.pathname === '/api/query' && req.method === 'GET') {
@@ -364,6 +429,18 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         const limits = config.pressure_limits || {};
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ pressure_limits: limits }));
+      } else if (url.pathname === '/api/gui-config' && req.method === 'GET') {
+        // GUI-driven config lists from config.toml [gui]: the ordered top-bar
+        // pressure gauges ([[gui.pressure_bars]]) and the tab-bar tabs+order
+        // (gui.tabs). Fresh per request → reflects edits live. Bar NOP/MEOP come
+        // from [pressure_limits]; tab ids index the frontend view catalog.
+        const config = readConfig();
+        const gui = config.gui ?? {};
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          pressure_bars: gui.pressure_bars ?? [],
+          tabs: gui.tabs ?? [],
+        }));
       } else if (url.pathname === '/api/sensor-config' && req.method === 'GET') {
         // Return sensor configuration derived from config.toml:
         // role names, board assignments, entity strings, calibration flags
