@@ -37,20 +37,18 @@ export function ResultsPanel({ result, running, error }: {
   const [channel, setChannel] = useState<Channel>('z')
   const { num, q, dur } = useUnits()
 
-  if (error) {
-    return (
-      <Card title="Results">
-        <div className="rounded border border-red-500/50 bg-red-500/10 px-3 py-2">
-          <p className="font-prose text-xs leading-relaxed text-red-200">{error}</p>
-        </div>
-      </Card>
-    )
-  }
-  if (running) return <Card title="Results"><Empty>Running…</Empty></Card>
+  // Nothing computed yet (first run, or before any run) is the only state with
+  // no height to preserve, so a full-panel message is fine here.
   if (!result) {
     return (
       <Card title="Results">
-        <Empty>Press Run to simulate.</Empty>
+        {error ? (
+          <div className="rounded border border-red-500/50 bg-red-500/10 px-3 py-2">
+            <p className="font-prose text-xs leading-relaxed text-red-200">{error}</p>
+          </div>
+        ) : (
+          <Empty>{running ? 'Running…' : 'Press Run to simulate.'}</Empty>
+        )}
       </Card>
     )
   }
@@ -60,6 +58,19 @@ export function ResultsPanel({ result, running, error }: {
 
   return (
     <div className="space-y-4">
+      {/* Recompute is live-on-edit, so the previous result stays on screen while
+          a fresher one is computed -- swapping it for a "Running…" card would
+          collapse the column and jump the page. This status line is always
+          present at a fixed height so toggling its text shifts nothing; it
+          carries the recompute note, or an error, without dropping the numbers
+          the error would replace. */}
+      <div className="flex h-4 items-center text-2xs text-[var(--color-text-muted)]">
+        {error ? (
+          <span className="truncate text-red-300">{error}</span>
+        ) : running ? (
+          <span>Updating…</span>
+        ) : null}
+      </div>
       {isStub && (
         <StubBanner>
           <strong>Placeholder numbers - the backend is not running.</strong>{' '}
