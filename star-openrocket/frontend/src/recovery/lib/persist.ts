@@ -89,6 +89,7 @@ export function reviveUiConfig(raw: string | null): UiConfig | null {
           uid: `r${i}`,
         }))
       : base.study,
+    sources: { ...base.sources, ...(saved.sources ?? {}) },
   }
 }
 

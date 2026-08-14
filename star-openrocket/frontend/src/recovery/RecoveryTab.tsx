@@ -6,8 +6,8 @@
  * half-filled device card survives a subtab switch, matching the standalone app.
  */
 
-import { useState } from 'react'
-import type { UiConfig } from './types/schema'
+import { useEffect, useState } from 'react'
+import type { DesignSource, UiConfig } from './types/schema'
 import { RecoveryPanel } from './components/recovery/RecoveryPanel'
 import { CornersPanel } from './components/corners/CornersPanel'
 import { StudyPanel } from './components/study/StudyPanel'
@@ -39,10 +39,23 @@ const TABS: { id: Tab; label: string; hint: string; accent: string }[] = [
 interface Props {
   ui: UiConfig
   onChange: (u: UiConfig) => void
+  /** Apogee / mass offered by the ascent design (CAD + Flight Dynamics). */
+  design: DesignSource
 }
 
-export function RecoveryTab({ ui, onChange }: Props) {
+export function RecoveryTab({ ui, onChange, design }: Props) {
   const [tab, setTab] = useState<Tab>('recovery')
+
+  // When a from-design toggle is on, keep the vehicle field synced to the ascent
+  // design so every panel and the physics use it. Converges: only writes on a
+  // real difference. Turning a toggle off leaves the last value in place, editable.
+  const { apogeeFromDesign, massFromDesign } = ui.sources
+  useEffect(() => {
+    let v = ui.vehicle
+    if (massFromDesign && design.massKg != null && v.m !== design.massKg) v = { ...v, m: design.massKg }
+    if (apogeeFromDesign && design.apogee != null && v.h_a !== design.apogee) v = { ...v, h_a: design.apogee }
+    if (v !== ui.vehicle) onChange({ ...ui, vehicle: v })
+  }, [apogeeFromDesign, massFromDesign, design.apogee, design.massKg, ui, onChange])
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-primary)]">
@@ -66,7 +79,7 @@ export function RecoveryTab({ ui, onChange }: Props) {
 
         <div className="py-6">
           <div className={tab === 'recovery' ? '' : 'hidden'}>
-            <RecoveryPanel ui={ui} onChange={onChange} />
+            <RecoveryPanel ui={ui} onChange={onChange} design={design} />
           </div>
           <div className={tab === 'corners' ? '' : 'hidden'}>
             <CornersPanel ui={ui} onChange={onChange} />

@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { Result, UiConfig } from '../../types/schema'
+import type { DesignSource, Result, UiConfig } from '../../types/schema'
 import { simulate } from '../../api/client'
 import { usePadClimatology } from '../../lib/climatology'
 import { physicsKey, toWireConfig } from '../../lib/serialise'
@@ -33,9 +33,10 @@ function ColumnHeader({ children }: { children: ReactNode }) {
   )
 }
 
-export function RecoveryPanel({ ui, onChange: setUi }: {
+export function RecoveryPanel({ ui, onChange: setUi, design }: {
   ui: UiConfig
   onChange: (v: UiConfig) => void
+  design: DesignSource
 }) {
   const [result, setResult] = useState<Result | null>(null)
   const [running, setRunning] = useState(false)
@@ -133,7 +134,7 @@ export function RecoveryPanel({ ui, onChange: setUi }: {
             devices={ui.devices}
             onChange={(devices) => setUi({ ...ui, devices })}
           />
-          <InputColumn ui={ui} onChange={setUi} lapseByMonth={lapseByMonth}
+          <InputColumn ui={ui} onChange={setUi} design={design} lapseByMonth={lapseByMonth}
                        padNormals={padNormals} />
         </div>
         <div className="space-y-4">

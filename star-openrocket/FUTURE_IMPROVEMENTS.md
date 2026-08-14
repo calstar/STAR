@@ -101,3 +101,14 @@ asymmetric fin set really causes.
 the lateral (side-force) contributions, yielding an off-axis CP / roll estimate for
 asymmetric sets -- or at minimum warn when the selected fins are not azimuthally
 symmetric.
+
+## Recovery: lateral velocity at apogee from the ascent
+
+The Recovery tab can now pull **apogee** and **descending mass** from the ascent
+design (CAD structure + spent motor, and the Flight Dynamics apogee) via the
+"from design" toggles on the Vehicle form. The descent solver's horizontal
+initial condition (`Vehicle.v0`, lateral velocity at deployment) is still left to
+the manual early-deployment override and is **not** sourced from the ascent yet.
+Once the ascent state at apogee exposes a horizontal velocity component, wire it
+into the recovery `v0` the same way apogee/mass are wired, so a weathercocked
+trajectory carries its cross-range speed into the drift calculation.

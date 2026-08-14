@@ -15,7 +15,7 @@ import { centreOfMass, formatMass } from './lib/cm'
 import { loadOrkConfig, saveOrkConfig } from './lib/persist'
 import type { FlightParams, OrkConfig } from './types/config'
 import { RecoveryTab } from './recovery/RecoveryTab'
-import type { UiConfig } from './recovery/types/schema'
+import type { DesignSource, UiConfig } from './recovery/types/schema'
 import { ConfigVersions } from './components/versions/ConfigVersions'
 import { FlightDynamicsTab } from './components/viewer/FlightDynamicsTab'
 import { FlightProfileModal } from './components/viewer/FlightProfileModal'
@@ -289,6 +289,17 @@ export default function App() {
     const offAxis = radial > 0.01 * stability.refDiameter
     return { fromNose: along, radial, offAxis }
   }, [stability, cm])
+
+  // What the Recovery tab can pull from the ascent design: apogee from the last
+  // Flight Dynamics run, and the descending mass (CAD structure + spent-motor
+  // casing). Null when there is no run / model to read them from.
+  const designSource = useMemo<DesignSource>(
+    () => ({
+      apogee: flightDynResult?.apogee ?? null,
+      massKg: manifest ? centreOfMass(parts).mass + (stability?.motor?.dryMass ?? 0) : null,
+    }),
+    [flightDynResult, manifest, parts, stability],
+  )
 
   // -- Versioning: gather the user inputs into one ViewerConfig, persist it, and
   // apply a restored one. localStorage is the reload cache; ConfigVersions drives
@@ -644,7 +655,7 @@ export default function App() {
       </header>
 
       {activeTab === 'recovery' ? (
-        <RecoveryTab ui={recovery} onChange={setRecovery} />
+        <RecoveryTab ui={recovery} onChange={setRecovery} design={designSource} />
       ) : activeTab === 'flight' ? (
         <FlightDynamicsTab
           modelId={modelId}

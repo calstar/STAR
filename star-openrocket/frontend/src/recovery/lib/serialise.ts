@@ -241,6 +241,9 @@ export function defaultUiConfig(): UiConfig {
     // comparing depends entirely on what the user is trying to decide, and
     // seeding one would put numbers on screen that mean nothing to them.
     study: [],
+    // Apogee and mass default to typed-in (manual). The Recovery tab flips these
+    // to read the ascent design once there is a flight run / built model.
+    sources: { apogeeFromDesign: false, massFromDesign: false },
   }
 }
 

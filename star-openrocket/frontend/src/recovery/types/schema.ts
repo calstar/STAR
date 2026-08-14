@@ -274,6 +274,24 @@ export interface UiStudyAxis {
   pads: WirePad[] | null
 }
 
+/** Whether apogee / descending mass are typed in or pulled from the ascent
+ *  design (the CAD assembly + Flight Dynamics run). UI-only: `toWireConfig`
+ *  never sends it, and when a source is on, the effective value is written into
+ *  `vehicle.h_a` / `vehicle.m` so every panel and the physics see it. */
+export interface InputSources {
+  apogeeFromDesign: boolean
+  massFromDesign: boolean
+}
+
+/** The ascent design's values offered to the recovery inputs. Null when there
+ *  is no run / model to read them from. Lateral velocity at apogee is deferred. */
+export interface DesignSource {
+  /** Apogee (m AGL) from the Flight Dynamics ascent run. */
+  apogee: number | null
+  /** Descending mass (kg): CAD structure + spent-motor casing. */
+  massKg: number | null
+}
+
 export interface UiConfig {
   vehicle: Vehicle
   site: UiSite
@@ -282,6 +300,8 @@ export interface UiConfig {
   /** Empty by default. Which designs are worth comparing is not something the
    *  tool can guess, so unlike `sweep` there is no canonical starting set. */
   study: UiStudyAxis[]
+  /** Apogee / mass from-design toggles (UI-only, stripped by toWireConfig). */
+  sources: InputSources
 }
 
 // ============================================================================

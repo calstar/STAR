@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react'
 import type { StationPad } from '../../api/client'
 import { getStationPad } from '../../api/client'
-import type { TempProfile, UiConfig, UiSite, Vehicle } from '../../types/schema'
+import type { DesignSource, InputSources, TempProfile, UiConfig, UiSite, Vehicle } from '../../types/schema'
 import type { SweepParam } from '../../types/schema'
 import type { Kind } from '../../lib/quantities'
 import type { LapseTable, PadNormals } from '../../lib/climatology'
@@ -28,9 +28,41 @@ function bounds(p: SweepParam, axial: number, broadside: number): number[] {
   return lo === hi ? [lo] : [lo, hi]
 }
 
-export function VehicleForm({ value, onChange }: {
+/** The "from ascent design" toggle under the mass / apogee inputs. Disabled
+ *  until the design has a value to offer (a built model / a flight run). */
+function DesignLink({ checked, available, label, onChange }: {
+  checked: boolean
+  available: boolean
+  label: string
+  onChange: (c: boolean) => void
+}) {
+  return (
+    <label
+      className={`mt-1 flex items-center gap-1.5 text-2xs ${
+        available
+          ? 'cursor-pointer text-[var(--color-text-secondary)]'
+          : 'cursor-not-allowed text-[var(--color-text-muted)] opacity-60'
+      }`}
+      title={available ? 'Use the value from the ascent design' : 'Run a flight / build a model first'}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={!available}
+        onChange={(e) => onChange(e.target.checked)}
+        className="h-3 w-3 accent-[var(--color-accent)]"
+      />
+      {label}
+    </label>
+  )
+}
+
+export function VehicleForm({ value, onChange, design, sources, onSourcesChange }: {
   value: Vehicle
   onChange: (v: Vehicle) => void
+  design: DesignSource
+  sources: InputSources
+  onSourcesChange: (s: InputSources) => void
 }) {
   const { num } = useUnits()
   const set = <K extends keyof Vehicle>(k: K, v: Vehicle[K]) =>
@@ -44,14 +76,35 @@ export function VehicleForm({ value, onChange }: {
             boundary, so the state below these widgets is still kg and metres
             whatever the Units tab says. The conversions are exact, so a value
             typed here reads back unchanged. Nothing restates the SI underneath
-            -- a second copy of every number is noise, not reassurance. */}
+            -- a second copy of every number is noise, not reassurance.
+
+            Mass and apogee can be typed in or pulled from the ascent design
+            (CAD structure + spent motor; Flight Dynamics apogee). While a
+            from-design toggle is on the field is read-only and RecoveryTab keeps
+            it synced to the design value. */}
         <Field label="Descending mass" kind="mass">
           <UnitInput value={value.m} onChange={(v) => set('m', v ?? 0)}
-                     kind="mass" min={0} />
+                     kind="mass" min={0} disabled={sources.massFromDesign} />
+          <DesignLink
+            checked={sources.massFromDesign}
+            available={design.massKg != null}
+            onChange={(c) => onSourcesChange({ ...sources, massFromDesign: c })}
+            label={design.massKg != null
+              ? `from design (${num(design.massKg, 'mass')})`
+              : 'from design — build a model first'}
+          />
         </Field>
         <Field label="Apogee" kind="altitude" hint="above ground level">
           <UnitInput value={value.h_a} onChange={(v) => set('h_a', v ?? 0)}
-                     kind="altitude" step={100} min={0} />
+                     kind="altitude" step={100} min={0} disabled={sources.apogeeFromDesign} />
+          <DesignLink
+            checked={sources.apogeeFromDesign}
+            available={design.apogee != null}
+            onChange={(c) => onSourcesChange({ ...sources, apogeeFromDesign: c })}
+            label={design.apogee != null
+              ? `from design (${num(design.apogee, 'altitude')})`
+              : 'from design — run a flight first'}
+          />
         </Field>
         <Field label="Airframe diameter" kind="length">
           <UnitInput value={value.d_body} onChange={(v) => set('d_body', v ?? 0)}
@@ -479,15 +532,18 @@ function Bound({ value, kind, disabled, onChange }: {
 }
 
 /** Everything at once, in the order §11.3 lists it. */
-export function InputColumn({ ui, onChange, lapseByMonth, padNormals }: {
+export function InputColumn({ ui, onChange, design, lapseByMonth, padNormals }: {
   ui: UiConfig
   onChange: (v: UiConfig) => void
+  design: DesignSource
   lapseByMonth: LapseTable
   padNormals: PadNormals
 }) {
   return (
     <div className="space-y-4">
-      <VehicleForm value={ui.vehicle} onChange={(v) => onChange({ ...ui, vehicle: v })} />
+      <VehicleForm value={ui.vehicle} onChange={(v) => onChange({ ...ui, vehicle: v })}
+                   design={design} sources={ui.sources}
+                   onSourcesChange={(s) => onChange({ ...ui, sources: s })} />
       <SiteForm value={ui.site} onChange={(v) => onChange({ ...ui, site: v })}
                 lapseByMonth={lapseByMonth} padNormals={padNormals} />
       {/* SweepForm is NOT here. The corner bounds only affect the Corners tab,
