@@ -125,7 +125,7 @@ def test_v_terminal_is_not_called_by_the_library():
     """
     import pathlib
 
-    root = pathlib.Path(__file__).resolve().parent.parent / "physics"
+    root = pathlib.Path(__file__).resolve().parent.parent.parent / "physics"
     for name in ("solver.py", "loads.py", "cases.py", "devices.py"):
         source = (root / name).read_text(encoding="utf-8")
         # The solver computes a settled rate inline for the §11.10 warning,

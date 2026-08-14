@@ -22,6 +22,12 @@ RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 
 COPY backend/ ./backend/
 
+# physics/ is the recovery calculator's pure library (imported as a top-level
+# package by backend/recovery/*). site-climatology/ is an optional data source
+# for the /api/climatology route (it falls back to the bundled frontend copy).
+COPY physics/ ./physics/
+COPY site-climatology/ ./site-climatology/
+
 # Built-model cache (browse.json + per-model manifest/glb). Mounted as a named
 # volume in compose so expensive Onshape builds survive a rebuild. CACHE_ROOT in
 # backend/main.py resolves to /app/cache.

@@ -14,7 +14,7 @@ import os
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _run(code):
@@ -133,7 +133,7 @@ def test_cli_entry_point_works():
     """§11.2 makes `python -m physics config.json` an invariant, not a
     development phase -- it is the escape hatch for bisecting a bug without
     React in the stack."""
-    fixture = os.path.join(ROOT, "tests", "fixtures", "worked_example.json")
+    fixture = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "worked_example.json")
     proc = subprocess.run(
         [sys.executable, "-m", "physics", fixture, "--which", "axial"],
         cwd=ROOT, capture_output=True, text=True, timeout=300,
@@ -154,7 +154,7 @@ def test_cli_json_output_is_serialisable():
     """
     import json as _json
 
-    fixture = os.path.join(ROOT, "tests", "fixtures", "worked_example.json")
+    fixture = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "worked_example.json")
     proc = subprocess.run(
         [sys.executable, "-m", "physics", fixture, "--which", "axial", "--json"],
         cwd=ROOT, capture_output=True, text=True, timeout=300,

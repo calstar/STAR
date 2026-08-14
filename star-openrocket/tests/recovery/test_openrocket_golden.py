@@ -20,9 +20,9 @@ import sys
 
 import pytest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TOOL = os.path.join(ROOT, "tools", "openrocket-golden")
-GOLDEN_DIR = os.path.join(ROOT, "tests", "fixtures", "openrocket")
+GOLDEN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "openrocket")
 
 sys.path.insert(0, TOOL)
 

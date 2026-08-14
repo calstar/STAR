@@ -23,8 +23,8 @@ from physics.openrocket import simulate
 from physics.report import render_crosscheck
 from physics.schema import Config
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FIXTURES = os.path.join(ROOT, "tests", "fixtures")
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 
 
 @pytest.fixture

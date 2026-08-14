@@ -8,7 +8,7 @@ request body (both specs ride on `Config`) and mean entirely different things.
 
 from fastapi import APIRouter, HTTPException, Query
 
-from backend.serialise import (
+from backend.recovery.serialise import (
     SWEEP_COARSE_DT,
     SWEEP_EVENT_WINDOW,
     SWEEP_FINE_DT,

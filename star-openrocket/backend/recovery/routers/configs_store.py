@@ -12,7 +12,7 @@ gating here, only whose folder to use. See backend/userdata.py.
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from backend import userdata
+from backend.recovery import userdata
 
 router = APIRouter(prefix="/api/configs", tags=["configs"])
 

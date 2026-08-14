@@ -16,7 +16,7 @@ import sys
 
 import pytest
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Blocking the network turns "someone added a live fetch to a test" into a hard
 # failure rather than an intermittent flake that only shows up when the vendor

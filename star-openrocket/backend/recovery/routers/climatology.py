@@ -17,20 +17,21 @@ from fastapi import APIRouter, HTTPException
 
 router = APIRouter(prefix="/api", tags=["climatology"])
 
-# backend/routers/climatology.py -> backend/routers -> backend ->
-# recovery-calculator. Three dirnames land on the project root itself, so the
-# paths below must NOT repeat "recovery-calculator" -- doing so pointed every
-# candidate at recovery-calculator/recovery-calculator/... and made this route
-# a guaranteed 404.
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# backend/recovery/routers/climatology.py -> routers -> recovery -> backend ->
+# star-openrocket (the app root). Four dirnames land on the app root, next to
+# site-climatology/ and frontend/.
+_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
 
 # Where export_json.py writes, then the frontend's committed copy as a
 # fallback. Preferring the generated file means a re-export is visible without
-# rebuilding the frontend; falling back means a fresh checkout still works.
+# rebuilding the frontend; falling back means a fresh checkout still works. The
+# recovery frontend lives under frontend/src/recovery/ in the merged app.
 _CANDIDATES = (
     os.path.join(_ROOT, "site-climatology", "data", "climatology.json"),
     os.path.join(_ROOT, "site-climatology", "climatology.json"),
-    os.path.join(_ROOT, "frontend", "src", "fixtures", "climatology.json"),
+    os.path.join(_ROOT, "frontend", "src", "recovery", "fixtures", "climatology.json"),
 )
 
 

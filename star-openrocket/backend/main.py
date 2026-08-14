@@ -1,4 +1,4 @@
-"""Standalone FastAPI backend for the Onshape CM Viewer.
+"""Standalone FastAPI backend for STAR OpenRocket (CAD stability + ascent flight + recovery).
 
 Run with:
     cd star-openrocket
@@ -22,9 +22,18 @@ from __future__ import annotations
 import json
 import threading
 import uuid
+import sys as _sys
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# physics/ (the recovery calculator's pure library) sits at the app root next to
+# backend/. Put the app root on sys.path so `import physics` resolves regardless
+# of the process CWD (dev shell, pytest, or the Docker WORKDIR).
+_APP_ROOT = str(Path(__file__).resolve().parent.parent)
+if _APP_ROOT not in _sys.path:
+    _sys.path.insert(0, _APP_ROOT)
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -59,7 +68,22 @@ _browse = BrowseCache(CACHE_ROOT / "browse.json")
 #: `python -m backend.motors.fetch`. Offline; empty until that runs.
 _motor_db = MotorDB(CACHE_ROOT / "motors")
 
-app = FastAPI(title="STAR OpenRocket API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Recovery calculator: load the parachute catalogue once at startup (121 rows
+    # of committed CSV) so a malformed table fails loudly at boot, not per request.
+    try:
+        from physics.devices import load_catalogue
+
+        app.state.catalogue = load_catalogue()
+        print(f"Loaded {len(app.state.catalogue)} recovery devices")
+    except Exception as exc:  # noqa: BLE001 - startup diagnostics
+        app.state.catalogue = {}
+        print(f"WARNING: recovery device catalogue unavailable: {exc}")
+    yield
+
+
+app = FastAPI(title="STAR OpenRocket API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -80,6 +104,34 @@ from .routers import documents  # noqa: E402
 
 app.include_router(documents.router)
 
+# Recovery calculator routers, merged in from the standalone recovery-calculator
+# app: descent/loads (simulate), design sweep (study), cross-check, device
+# catalogue, atmosphere, climatology, unit settings, and the named-config library.
+# Prefixes are generic (/api/simulate, /api/study, ...) and don't collide with the
+# viewer's /api/models|motors|onshape|build.
+from .recovery.routers import (  # noqa: E402
+    atmosphere,
+    climatology,
+    configs_store,
+    crosscheck,
+    devices,
+    settings,
+    simulate,
+    study,
+)
+
+for _recovery_router in (
+    simulate,
+    study,
+    crosscheck,
+    devices,
+    atmosphere,
+    climatology,
+    settings,
+    configs_store,
+):
+    app.include_router(_recovery_router.router)
+
 
 def _model_dirs() -> list[Path]:
     if not CACHE_ROOT.exists():
@@ -89,7 +141,11 @@ def _model_dirs() -> list[Path]:
 
 @app.get("/api/health")
 async def health():
-    return {"status": "healthy"}
+    # git_sha + schema_version come from the recovery serialiser so the recovery
+    # frontend's health poll (and its contract test) keep working post-merge.
+    from .recovery.serialise import SCHEMA_VERSION, git_sha
+
+    return {"status": "healthy", "git_sha": git_sha(), "schema_version": SCHEMA_VERSION}
 
 
 @app.get("/api/models")

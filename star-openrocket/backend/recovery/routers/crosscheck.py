@@ -12,7 +12,7 @@ does not compute, and a `note` saying why. See `physics/crosscheck.py`.
 
 from fastapi import APIRouter, HTTPException, Query
 
-from backend.serialise import build_events, git_sha
+from backend.recovery.serialise import build_events, git_sha
 from physics.atmosphere import Atmosphere
 from physics.crosscheck import (
     MODEL_DIFFERENCES,
@@ -38,7 +38,7 @@ def _our_trajectory(run):
     chart is a comparison of three lines, not the load analysis, and §8.1's
     <=5 ms sampling still happens inside `_resample` regardless.
     """
-    from backend.serialise import (
+    from backend.recovery.serialise import (
         SWEEP_COARSE_DT,
         SWEEP_EVENT_WINDOW,
         SWEEP_FINE_DT,

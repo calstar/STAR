@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from backend.main import app  # noqa: E402
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
 FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "fixtures", "worked_example.json")
@@ -274,7 +274,7 @@ def test_climatology_route_resolves_to_a_real_file():
     made every candidate point at recovery-calculator/recovery-calculator/...
     and turned the route into a guaranteed 404 that no other test noticed.
     """
-    from backend.routers.climatology import _locate
+    from backend.recovery.routers.climatology import _locate
 
     path = _locate()
     assert path is not None, "no climatology bundle found on any candidate path"
@@ -517,7 +517,7 @@ def test_the_gui_default_sweep_matches_the_backend_default_sweep():
 
     from physics.cases import default_sweep
 
-    src = (ROOT / "frontend" / "src" / "lib" / "serialise.ts").read_text()
+    src = (ROOT / "frontend" / "src" / "recovery" / "lib" / "serialise.ts").read_text()
     block = src.split("sweep: [", 1)[1].split("\n    ],", 1)[0]
     gui = {
         m.group("key"): (float(m.group("lo")), float(m.group("hi")))
@@ -548,7 +548,7 @@ def test_the_gui_and_backend_agree_on_the_airframe_band():
 
     from physics.devices import airframe_band
 
-    src = (ROOT / "frontend" / "src" / "lib" / "units.ts").read_text()
+    src = (ROOT / "frontend" / "src" / "recovery" / "lib" / "units.ts").read_text()
     body = re.search(r"export function airframeBand[^{]*\{(.*?)\n\}", src, re.S)
     assert body, "airframeBand not found in units.ts"
 
@@ -838,7 +838,7 @@ def test_crosscheck_metric_kinds_are_ones_the_frontend_knows():
     """
     import re
 
-    source = (ROOT / "frontend" / "src" / "lib" / "quantities.ts").read_text(
+    source = (ROOT / "frontend" / "src" / "recovery" / "lib" / "quantities.ts").read_text(
         encoding="utf-8")
     match = re.search(r"export type Kind\s*=(.*?)\n\n", source, re.S)
     assert match, "could not find the Kind union in quantities.ts"

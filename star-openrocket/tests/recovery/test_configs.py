@@ -17,7 +17,7 @@ pytest.importorskip("httpx", reason="fastapi TestClient needs httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from backend import userdata  # noqa: E402
+from backend.recovery import userdata  # noqa: E402
 from backend.main import app  # noqa: E402
 
 A = {"X-Auth-Email": "alice@berkeley.edu"}

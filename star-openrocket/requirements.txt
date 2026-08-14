@@ -16,3 +16,7 @@ pydantic>=2.12
 httpx>=0.28
 pygltflib>=1.16
 numpy>=1.26
+
+# Recovery calculator (merged in): descent solver uses scipy; boto3 is lazy (S3 only).
+scipy>=1.11
+boto3>=1.34

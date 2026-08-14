@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from backend import userdata
+from backend.recovery import userdata
 
 Snapshot = dict[str, Any]
 

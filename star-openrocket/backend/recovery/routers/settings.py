@@ -19,7 +19,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend import userdata
+from backend.recovery import userdata
 
 router = APIRouter(prefix="/api", tags=["settings"])
 
