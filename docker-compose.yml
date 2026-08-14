@@ -21,6 +21,12 @@
 #
 # Let's Encrypt instead of a tunnel (single public machine): leave SCHEME=https
 # and `docker compose up -d --build`.
+#
+# Image pinning: every ghcr.io/calstar/star-* image is tagged ${STAR_IMAGE_TAG:-latest}.
+# Unset (the default) tracks :latest — the newest push to main. To pin the whole
+# stack to a specific build, set STAR_IMAGE_TAG=sha-<short> in .env (CI publishes a
+# sha-<short> tag alongside :latest on every push). Roll back = change that one line
+# and `docker compose up -d`. See deploy/apps/README.md.
 
 services:
   # ── Reverse proxy + TLS + auth gate ──────────────────────────────────────
@@ -94,7 +100,7 @@ services:
 
   # ── Auth service ─────────────────────────────────────────────────────────
   auth:
-    image: ghcr.io/calstar/star-auth:latest
+    image: ghcr.io/calstar/star-auth:${STAR_IMAGE_TAG:-latest}
     build:
       context: ./auth
     restart: unless-stopped
@@ -130,7 +136,7 @@ services:
   # Built from the repo root: the native-builder stage and runtime copy several
   # EngineDesign/ subtrees. Auth is Caddy's job, so no JWT_SECRET here.
   engine-design-api:
-    image: ghcr.io/calstar/star-engine-design-api:latest
+    image: ghcr.io/calstar/star-engine-design-api:${STAR_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: EngineDesign/Dockerfile.api
@@ -151,7 +157,7 @@ services:
       - userdata:/data
 
   engine-design-frontend:
-    image: ghcr.io/calstar/star-engine-design-frontend:latest
+    image: ghcr.io/calstar/star-engine-design-frontend:${STAR_IMAGE_TAG:-latest}
     build:
       context: ./EngineDesign/frontend
       dockerfile: Dockerfile
@@ -161,7 +167,7 @@ services:
   # Auth is Caddy's job; the image is self-contained, so it builds from the
   # subproject dir.
   pid-designer-api:
-    image: ghcr.io/calstar/star-pid-designer-api:latest
+    image: ghcr.io/calstar/star-pid-designer-api:${STAR_IMAGE_TAG:-latest}
     build:
       context: ./pid-designer
       dockerfile: Dockerfile.api
@@ -182,7 +188,7 @@ services:
       - userdata:/data
 
   pid-designer-frontend:
-    image: ghcr.io/calstar/star-pid-designer-frontend:latest
+    image: ghcr.io/calstar/star-pid-designer-frontend:${STAR_IMAGE_TAG:-latest}
     build:
       context: ./pid-designer/frontend
       dockerfile: Dockerfile
@@ -192,7 +198,7 @@ services:
   # No in-app auth (Caddy is the gate) and no dependency on auth/shared_auth.py,
   # so the build context is the subproject, not the repo root.
   recovery-calculator-api:
-    image: ghcr.io/calstar/star-recovery-calculator-api:latest
+    image: ghcr.io/calstar/star-recovery-calculator-api:${STAR_IMAGE_TAG:-latest}
     build:
       context: ./recovery-calculator
       dockerfile: Dockerfile.api
@@ -212,7 +218,7 @@ services:
       - userdata:/data
 
   recovery-calculator-frontend:
-    image: ghcr.io/calstar/star-recovery-calculator-frontend:latest
+    image: ghcr.io/calstar/star-recovery-calculator-frontend:${STAR_IMAGE_TAG:-latest}
     build:
       context: ./recovery-calculator/frontend
       dockerfile: Dockerfile
@@ -220,7 +226,7 @@ services:
 
   # ── Onshape CM Viewer ────────────────────────────────────────────────────
   onshape-viewer-api:
-    image: ghcr.io/calstar/star-onshape-viewer-api:latest
+    image: ghcr.io/calstar/star-onshape-viewer-api:${STAR_IMAGE_TAG:-latest}
     build:
       context: ./onshape-viewer
       dockerfile: Dockerfile.api
@@ -241,7 +247,7 @@ services:
       - onshape_cache:/app/cache
 
   onshape-viewer-frontend:
-    image: ghcr.io/calstar/star-onshape-viewer-frontend:latest
+    image: ghcr.io/calstar/star-onshape-viewer-frontend:${STAR_IMAGE_TAG:-latest}
     build:
       context: ./onshape-viewer/frontend
       dockerfile: Dockerfile
@@ -254,7 +260,7 @@ services:
   # elodin-db binary baked into the image to export them to parquet. This is a
   # separate concern from the DAQ *server* below, which stays on the host.
   daq-viewer:
-    image: ghcr.io/calstar/star-daq-viewer:latest
+    image: ghcr.io/calstar/star-daq-viewer:${STAR_IMAGE_TAG:-latest}
     build:
       context: ./daq-server/tools/postprocessing/webviewer
       dockerfile: Dockerfile
@@ -289,7 +295,7 @@ services:
 
   # ── Landing page ─────────────────────────────────────────────────────────
   landing:
-    image: ghcr.io/calstar/star-landing:latest
+    image: ghcr.io/calstar/star-landing:${STAR_IMAGE_TAG:-latest}
     build:
       context: ./landing
       dockerfile: Dockerfile

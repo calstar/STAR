@@ -91,6 +91,23 @@ docker compose ps
 ```
 (Building on the box instead — needs a full clone and ≥4 GB RAM for the React
 builds — is `docker compose --profile tunnel up -d --build`.)
+
+**Image version (`STAR_IMAGE_TAG`).** Every `star-*` image is pulled at the tag
+`${STAR_IMAGE_TAG:-latest}`. CI publishes two tags on each push to `main`:
+`latest` (moving) and an immutable `sha-<short>` (e.g. `sha-abc1234`).
+- **Default — `latest`:** leave `STAR_IMAGE_TAG` unset (or `=latest`). `pull` then
+  `up -d` moves the stack to the newest build. This is the current workflow.
+- **Pinned — `sha-<short>`:** set `STAR_IMAGE_TAG=sha-abc1234` in `.env` to lock the
+  whole stack to one build. `pull` + `up -d` fetches exactly that build; nothing
+  moves until you change the line. Roll back the same way — set an older `sha-…`
+  and `up -d`.
+
+  Pin only to a sha CI actually published: `publish-apps.yml` builds *all* app
+  images together and `publish-auth.yml` builds auth, each on their own path
+  filters, so a given commit's `sha-…` exists for every image only if that commit
+  touched both an app path and `auth/`. Check the repo's GHCR **Packages** for the
+  tags that exist. `docker compose config --images` prints the exact tags Compose
+  will pull, so you can confirm the pin before `up -d`.
 Then drop the host's published web ports (cloudflared is the only ingress): remove
 the `80:80` / `443:443` lines from the `caddy` service, or block them at the
 firewall. SSH (22) is all you need inbound.
@@ -170,4 +187,6 @@ own `…/releases/<label>.json`. (Swap bucket + prefix for the other two apps.)
   working copies**) lives in the `userdata` volume on this machine, keyed by
   `X-Auth-Email`. P&ID *version history* additionally lives in S3 (above).
 - **Updating:** `docker compose --profile tunnel pull && docker compose --profile tunnel up -d`
-  (CI republishes `:latest` on every push to `main`).
+  (CI republishes `:latest` on every push to `main`). To deploy a **specific**
+  build instead of the newest, set `STAR_IMAGE_TAG=sha-<short>` in `.env` first —
+  see §3 "Image version". Default (unset) tracks `latest`.
