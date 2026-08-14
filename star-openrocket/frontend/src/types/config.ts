@@ -57,3 +57,22 @@ export function defaultViewerConfig(): ViewerConfig {
     flight: defaultFlightParams(),
   }
 }
+
+// -- Unified design --------------------------------------------------------
+//
+// One saved design spans the whole app: the CAD/stability/ascent inputs
+// (`cad`) and the recovery calculator inputs (`recovery`). Both slices survive
+// a reload and are versioned together by the single header design bar.
+
+import type { UiConfig } from '../recovery/types/schema'
+import { defaultUiConfig } from '../recovery/lib/serialise'
+
+export interface OrkConfig {
+  version: 1
+  cad: ViewerConfig
+  recovery: UiConfig
+}
+
+export function defaultOrkConfig(): OrkConfig {
+  return { version: 1, cad: defaultViewerConfig(), recovery: defaultUiConfig() }
+}

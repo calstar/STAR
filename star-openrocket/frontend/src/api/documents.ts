@@ -9,7 +9,7 @@
  * the backend is absent, so callers treat a throw as "history unavailable".
  */
 
-import type { ViewerConfig as UiConfig } from '../types/config'
+import type { OrkConfig as UiConfig } from '../types/config'
 
 const BASE = '/api/documents'
 

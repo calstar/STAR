@@ -50,18 +50,43 @@ export function reviveViewerConfig(raw: string | null): ViewerConfig | null {
   }
 }
 
-/** The stored config, or the default. Never throws: storage off/full ⇒ defaults. */
-export function loadViewerConfig(): ViewerConfig {
+// -- Unified design (CAD + recovery) ---------------------------------------
+//
+// A design is one OrkConfig = { cad, recovery }. Each slice is revived onto its
+// own defaults so a field added to either half arrives with its default rather
+// than undefined. The recovery slice reuses the recovery calculator's own
+// `reviveUiConfig` (fed the stringified slice).
+
+import type { OrkConfig } from '../types/config'
+import { defaultOrkConfig } from '../types/config'
+import { reviveUiConfig } from '../recovery/lib/persist'
+import { defaultUiConfig } from '../recovery/lib/serialise'
+
+export function reviveOrkConfig(raw: string | null): OrkConfig | null {
+  if (!raw) return null
+  let saved: { cad?: unknown; recovery?: unknown }
   try {
-    return reviveViewerConfig(localStorage.getItem(STORAGE_KEY)) ?? defaultViewerConfig()
+    saved = JSON.parse(raw)
   } catch {
-    return defaultViewerConfig()
+    return null
+  }
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return null
+  const cad = reviveViewerConfig(saved.cad ? JSON.stringify(saved.cad) : null) ?? defaultViewerConfig()
+  const recovery = reviveUiConfig(saved.recovery ? JSON.stringify(saved.recovery) : null) ?? defaultUiConfig()
+  return { version: 1, cad, recovery }
+}
+
+/** The stored unified design, or the default. Never throws. */
+export function loadOrkConfig(): OrkConfig {
+  try {
+    return reviveOrkConfig(localStorage.getItem(STORAGE_KEY)) ?? defaultOrkConfig()
+  } catch {
+    return defaultOrkConfig()
   }
 }
 
-/** Store the config. Quietly does nothing if storage refuses — a failed save must
- *  not take down the app the user is still editing in. */
-export function saveViewerConfig(config: ViewerConfig): void {
+/** Store the unified design. Quietly does nothing if storage refuses. */
+export function saveOrkConfig(config: OrkConfig): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(config))
   } catch {

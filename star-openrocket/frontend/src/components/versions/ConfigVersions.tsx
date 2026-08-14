@@ -13,9 +13,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { ViewerConfig as UiConfig } from '../../types/config'
-import { reviveViewerConfig as reviveUiConfig } from '../../lib/persist'
-import { defaultViewerConfig as defaultUiConfig } from '../../types/config'
+import type { OrkConfig as UiConfig } from '../../types/config'
+import { reviveOrkConfig as reviveUiConfig } from '../../lib/persist'
+import { defaultOrkConfig as defaultUiConfig } from '../../types/config'
 import { Button, Modal } from '../ui'
 import * as api from '../../api/documents'
 import type { DocMeta, MicroVersion, ReleaseVersion } from '../../api/documents'

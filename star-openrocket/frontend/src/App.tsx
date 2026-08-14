@@ -12,8 +12,10 @@ import {
   listModels,
 } from './api/client'
 import { centreOfMass, formatMass } from './lib/cm'
-import { loadViewerConfig, saveViewerConfig } from './lib/persist'
-import type { FlightParams, ViewerConfig } from './types/config'
+import { loadOrkConfig, saveOrkConfig } from './lib/persist'
+import type { FlightParams, OrkConfig } from './types/config'
+import { RecoveryTab } from './recovery/RecoveryTab'
+import type { UiConfig } from './recovery/types/schema'
 import { ConfigVersions } from './components/versions/ConfigVersions'
 import { FlightDynamicsTab } from './components/viewer/FlightDynamicsTab'
 import { FlightProfileModal } from './components/viewer/FlightProfileModal'
@@ -44,8 +46,12 @@ import { MATERIALS_BY_KEY } from './lib/materials'
 const LAST_MODEL_KEY = 'star-openrocket:last-model'
 
 export default function App() {
-  // The persisted working config, read once so a reload restores the inputs below.
-  const [initialConfig] = useState(loadViewerConfig)
+  // The persisted working design, read once so a reload restores the inputs below.
+  // One OrkConfig spans CAD (`cad`) and recovery (`recovery`); the CAD seeding
+  // below reads the `cad` slice, and the recovery tab owns the `recovery` slice.
+  const [initialOrk] = useState(loadOrkConfig)
+  const initialConfig = initialOrk.cad
+  const [recovery, setRecovery] = useState<UiConfig>(initialOrk.recovery)
 
   const [models, setModels] = useState<ModelSummary[]>([])
   const [modelId, setModelId] = useState<string | null>(initialConfig.modelId)
@@ -114,8 +120,8 @@ export default function App() {
   // has not changed, and the viewer would keep showing the previous build.
   const [reloadNonce, setReloadNonce] = useState(0)
 
-  // Top-level tab: the CAD viewer (all existing UI) vs the 6-DOF flight dynamics.
-  const [activeTab, setActiveTab] = useState<'cad' | 'flight'>('cad')
+  // Top-level tab: CAD viewer, the 6-DOF ascent flight dynamics, or recovery.
+  const [activeTab, setActiveTab] = useState<'cad' | 'flight' | 'recovery'>('cad')
 
   useEffect(() => {
     listModels()
@@ -287,38 +293,44 @@ export default function App() {
   // -- Versioning: gather the user inputs into one ViewerConfig, persist it, and
   // apply a restored one. localStorage is the reload cache; ConfigVersions drives
   // the durable server-side timeline (named designs, history, releases).
-  const config = useMemo<ViewerConfig>(
+  const config = useMemo<OrkConfig>(
     () => ({
       version: 1,
-      modelId,
-      overrides: Object.fromEntries(overrides),
-      outerFaces,
-      finFaces,
-      finCount,
-      motor: motorSel,
-      railLength,
-      flight,
+      cad: {
+        version: 1,
+        modelId,
+        overrides: Object.fromEntries(overrides),
+        outerFaces,
+        finFaces,
+        finCount,
+        motor: motorSel,
+        railLength,
+        flight,
+      },
+      recovery,
     }),
-    [modelId, overrides, outerFaces, finFaces, finCount, motorSel, railLength, flight],
+    [modelId, overrides, outerFaces, finFaces, finCount, motorSel, railLength, flight, recovery],
   )
 
   // Debounced: `config` changes on every keystroke and this serialises it all.
   useEffect(() => {
-    const id = setTimeout(() => saveViewerConfig(config), 400)
+    const id = setTimeout(() => saveOrkConfig(config), 400)
     return () => clearTimeout(id)
   }, [config])
 
   // Stable, so ConfigVersions' mount/restore effects don't re-run every render.
-  const handleRestore = useCallback((c: ViewerConfig) => {
-    setModelId(c.modelId)
-    setOverrides(new Map(Object.entries(c.overrides)))
-    setOuterFaces(c.outerFaces)
-    setFinFaces(c.finFaces)
-    setFinCount(c.finCount)
-    setMotorSel(c.motor)
-    setRailLength(c.railLength)
-    setFlightState(c.flight)
-    saveViewerConfig(c)
+  const handleRestore = useCallback((c: OrkConfig) => {
+    const cad = c.cad
+    setModelId(cad.modelId)
+    setOverrides(new Map(Object.entries(cad.overrides)))
+    setOuterFaces(cad.outerFaces)
+    setFinFaces(cad.finFaces)
+    setFinCount(cad.finCount)
+    setMotorSel(cad.motor)
+    setRailLength(cad.railLength)
+    setFlightState(cad.flight)
+    setRecovery(c.recovery)
+    saveOrkConfig(c)
   }, [])
 
   // Effective mass per occurrence, sent to the backend so its CG matches exactly
@@ -583,13 +595,13 @@ export default function App() {
         <h1 className="text-xl font-bold">STAR OpenRocket</h1>
 
         <nav className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900/60 p-1 text-sm">
-          {(['cad', 'flight'] as const).map((tab) => (
+          {(['cad', 'flight', 'recovery'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={`rounded px-3 py-1 font-medium ${activeTab === tab ? 'bg-cyan-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}
             >
-              {tab === 'cad' ? 'CAD & Stability' : 'Flight Dynamics'}
+              {tab === 'cad' ? 'CAD & Stability' : tab === 'flight' ? 'Flight Dynamics' : 'Recovery'}
             </button>
           ))}
         </nav>
@@ -631,7 +643,9 @@ export default function App() {
         </div>
       </header>
 
-      {activeTab === 'flight' ? (
+      {activeTab === 'recovery' ? (
+        <RecoveryTab ui={recovery} onChange={setRecovery} />
+      ) : activeTab === 'flight' ? (
         <FlightDynamicsTab
           modelId={modelId}
           motorSel={motorSel}

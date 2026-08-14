@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const CSS = readFileSync(
-  fileURLToPath(new URL('../index.css', import.meta.url)),
+  fileURLToPath(new URL('../../index.css', import.meta.url)),
   'utf8',
 )
 

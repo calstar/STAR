@@ -22,17 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 _QUARANTINE_FILES = {}
 
 # "<file>::<test>" -> reason. Empty is the desired state.
-# These read the recovery frontend source / climatology bundle, which land under
-# frontend/src/recovery/ in Phase 3 of the STAR OpenRocket merge. Un-quarantine
-# once the frontend is relocated (the paths above already point at the new home).
-_MERGE_PHASE3 = "pending Phase 3 frontend relocation (frontend/src/recovery/)"
-_QUARANTINE_TESTS = {
-    "test_api.py::test_climatology_route_resolves_to_a_real_file": _MERGE_PHASE3,
-    "test_api.py::test_climatology_serves_the_bundle_shape": _MERGE_PHASE3,
-    "test_api.py::test_the_gui_default_sweep_matches_the_backend_default_sweep": _MERGE_PHASE3,
-    "test_api.py::test_the_gui_and_backend_agree_on_the_airframe_band": _MERGE_PHASE3,
-    "test_api.py::test_crosscheck_metric_kinds_are_ones_the_frontend_knows": _MERGE_PHASE3,
-}
+_QUARANTINE_TESTS = {}
 
 
 def pytest_collection_modifyitems(config, items):

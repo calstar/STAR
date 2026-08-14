@@ -3,9 +3,12 @@ import { createRoot } from 'react-dom/client'
 
 import App from './App'
 import './index.css'
+import { UnitsProvider } from './recovery/lib/unitsContext'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <UnitsProvider>
+      <App />
+    </UnitsProvider>
   </StrictMode>,
 )
