@@ -21,7 +21,8 @@ enum class PacketType : uint8_t {
   NO_CONNECTION_ABORT = 11,
   SELF_TEST = 12,
   ENVIRONMENTAL_DATA = 13,
-  STACKLIGHT_COMMAND = 14
+  STACKLIGHT_COMMAND = 14,
+  LOGS = 15  // Board -> server: buffered, newline-delimited log text (see create_log_packet)
 };
 
 /**

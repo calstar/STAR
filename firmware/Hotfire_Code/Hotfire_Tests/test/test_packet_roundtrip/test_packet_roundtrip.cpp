@@ -460,6 +460,36 @@ void test_parse_null_buffer() {
 }
 
 // ---------------------------------------------------------------------------
+// LOGS packet (type 15) — no parse_ counterpart yet; assert the byte layout.
+// ---------------------------------------------------------------------------
+
+void test_log_packet_layout() {
+    const char* text = "line1\nline2\n";
+    const uint16_t text_len = (uint16_t)strlen(text);
+    uint8_t buf[64];
+    size_t n = daq::create_log_packet(0x01, (const uint8_t*)text, text_len,
+                                      0xDEADBEEFu, buf, sizeof(buf));
+    const size_t hdr = sizeof(daq::PacketHeader);
+    TEST_ASSERT_EQUAL(hdr + 3 + text_len, n);
+    TEST_ASSERT_EQUAL_UINT8((uint8_t)daq::PacketType::LOGS, buf[0]);
+    uint32_t ts;
+    memcpy(&ts, buf + 2, 4);
+    TEST_ASSERT_EQUAL_UINT32(0xDEADBEEFu, ts);          // timestamp (u32 LE)
+    TEST_ASSERT_EQUAL_UINT8(0x01, buf[hdr]);            // flags: TRUNCATED
+    uint16_t tl;
+    memcpy(&tl, buf + hdr + 1, 2);
+    TEST_ASSERT_EQUAL_UINT16(text_len, tl);             // text_len (u16 LE)
+    TEST_ASSERT_EQUAL_MEMORY(text, buf + hdr + 3, text_len);
+}
+
+void test_log_packet_buffer_too_small() {
+    const char* text = "hello";
+    uint8_t buf[4];  // smaller than the header alone
+    TEST_ASSERT_EQUAL(
+        0, daq::create_log_packet(0, (const uint8_t*)text, 5, 0u, buf, sizeof(buf)));
+}
+
+// ---------------------------------------------------------------------------
 // Unity runner
 // ---------------------------------------------------------------------------
 
@@ -506,6 +536,9 @@ int main(int argc, char** argv) {
     // Abort Done
     RUN_TEST(test_abort_done_roundtrip);
     RUN_TEST(test_abort_done_buffer_too_small);
+
+    RUN_TEST(test_log_packet_layout);
+    RUN_TEST(test_log_packet_buffer_too_small);
 
     // Null buffer
     RUN_TEST(test_parse_null_buffer);

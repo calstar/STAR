@@ -147,6 +147,25 @@ size_t create_stacklight_command_packet(const StacklightCommandPacket &data,
                                         uint32_t timestamp_ms,
                                         uint8_t *buffer, size_t buffer_size);
 
+/**
+ * @brief Creates a LOGS packet (type 15): buffered board log text for the server.
+ *
+ * Layout: PacketHeader (LOGS) + flags (1B) + text_len (2B, uint16 LE) + text bytes.
+ * The board is identified server-side by UDP source IP (static 192.168.2.<board_id>),
+ * so no board_id field. `text` is newline-delimited log lines blobbed together.
+ *
+ * @param flags       bit0 = TRUNCATED (some lines dropped on buffer overflow); rest reserved.
+ * @param text        Log text bytes (ASCII, '\n'-delimited).
+ * @param text_len    Number of text bytes.
+ * @param timestamp_ms Value for PacketHeader.timestamp.
+ * @param buffer      Output buffer.
+ * @param buffer_size Size of the output buffer.
+ * @return Total bytes written (sizeof(PacketHeader) + 3 + text_len), or 0 on error.
+ */
+size_t create_log_packet(uint8_t flags, const uint8_t *text, uint16_t text_len,
+                         uint32_t timestamp_ms,
+                         uint8_t *buffer, size_t buffer_size);
+
 //==============================================================================
 // PACKET DESERIALIZATION (uint8_t* Buffer -> Struct)
 //==============================================================================

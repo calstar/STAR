@@ -777,4 +777,31 @@ bool parse_actuator_config_packet(const uint8_t *buffer, size_t buffer_size,
   return true;
 }
 
+size_t create_log_packet(uint8_t flags, const uint8_t *text, uint16_t text_len,
+                         uint32_t timestamp_ms,
+                         uint8_t *buffer, size_t buffer_size) {
+  const size_t header_size = sizeof(PacketHeader);
+  const size_t total_size = header_size + 1 /*flags*/ + 2 /*text_len*/ + text_len;
+  if (buffer_size < total_size) {
+    return 0; // Buffer too small
+  }
+
+  PacketHeader header;
+  header.packet_type = PacketType::LOGS;
+  header.version = DIABLO_COMMS_VERSION;
+  header.timestamp = timestamp_ms;
+
+  uint8_t *ptr = buffer;
+  memcpy(ptr, &header, header_size);
+  ptr += header_size;
+
+  *ptr++ = flags;
+  memcpy(ptr, &text_len, sizeof(text_len)); // uint16 LE (host is little-endian)
+  ptr += sizeof(text_len);
+  if (text_len && text) {
+    memcpy(ptr, text, text_len);
+  }
+  return total_size;
+}
+
 } // namespace daq

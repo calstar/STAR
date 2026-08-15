@@ -522,7 +522,10 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
                 abort_actuator_locations = act_locs;
                 abort_pt_locations = pt_locs;
                 config_valid = true;
-                g_verbose = (enable_serial != 0);
+                // enable_serial is the mode byte (0..3): bit0 = USB verbose,
+                // upper part = server log stream level. See hotfire_log.h.
+                g_verbose = (enable_serial & 1);
+                g_log_stream_level = (enable_serial >= 2) ? (enable_serial - 1) : 0;
                 return IncomingPacketKind::Config;
             }
             return IncomingPacketKind::None;
@@ -1030,6 +1033,24 @@ static void initializePWMStates() {
 }
 
 //-----------------------------------------------------------------------------
+// Log streaming: flush the buffer to the server as a LOGS packet (type 15).
+// Board identified server-side by UDP source IP.
+//-----------------------------------------------------------------------------
+static void flushLogs() {
+    if (g_logbuf.empty())
+        return;
+    static uint8_t pkt[sizeof(daq::PacketHeader) + 3 + LOG_BUF_SIZE];
+    size_t n = daq::create_log_packet(g_logbuf.flags(), g_logbuf.data(),
+                                      g_logbuf.length(), millis(), pkt, sizeof(pkt));
+    if (n > 0) {
+        udp.beginPacket(serverIP, serverPort);
+        udp.write(pkt, n);
+        udp.endPacket();
+    }
+    g_logbuf.clear();
+}
+
+//-----------------------------------------------------------------------------
 // Setup and loop
 //-----------------------------------------------------------------------------
 void setup() {
@@ -1074,6 +1095,15 @@ void setup() {
     last_server_heartbeat_ms = 0;
 
     Serial.println("Setup complete. State: WaitingForServer");
+
+    // Ethernet is up — first log the server can receive. Announce identity + IP
+    // and flush immediately so the server sees the board come online.
+    HF_LOG("ONLINE board=");
+    HF_LOG(static_cast<unsigned>(board_id));
+    HF_LOG(" ip=");
+    HF_LOG(Ethernet.localIP());
+    HF_LOGLN_();
+    flushLogs();
 }
 
 void loop() {
@@ -1161,6 +1191,14 @@ void loop() {
             Serial.flush();
         }
         sendBoardHeartbeat();
+    }
+
+    // Flush buffered logs to the server ~1 Hz (or sooner if the buffer is filling).
+    static unsigned long s_last_log_flush_ms = 0;
+    if (!g_logbuf.empty() &&
+        (g_logbuf.nearFull() || now - s_last_log_flush_ms >= 1000)) {
+        s_last_log_flush_ms = now;
+        flushLogs();
     }
 
     delay(LOOP_DELAY_MS);

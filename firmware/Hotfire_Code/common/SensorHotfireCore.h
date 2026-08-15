@@ -206,9 +206,13 @@ inline IncomingPacketKind processIncomingPacket(CoreState& s, const Config& cfg,
             cfg.on_reference_voltage_config(cfg.user_data,
                                             s.stored_config.reference_voltage);
 
-        g_verbose = (enable_serial_printing != 0);
+        // enable_serial_printing is the mode byte (0..3): bit0 = USB verbose,
+        // upper part = server log stream level. See hotfire_log.h.
+        const uint8_t log_mode = enable_serial_printing;
+        g_verbose = (log_mode & 1);
+        g_log_stream_level = (log_mode >= 2) ? (log_mode - 1) : 0;
 
-        HF_LOGLN("SENSOR_CONFIG received (DAQv2-Comms):");
+        HF_LOGLN("SENSOR_CONFIG received:");
         // Field-by-field breakdown is verbose-only; the header above is Tier 1.
         HF_VERBOSE("  num_sensors=");
         HF_VERBOSELN(static_cast<unsigned>(sensor_ids.size()));
@@ -352,6 +356,22 @@ inline void updateStateLed(CoreState& s, const Config& cfg, int state_num) {
     }
 }
 
+// Flush the accumulated log buffer to the server as one LOGS packet (type 15).
+// The board is identified server-side by UDP source IP, so no board_id is sent.
+inline void flushLogs(CoreState& s) {
+    if (g_logbuf.empty())
+        return;
+    static uint8_t pkt[sizeof(daq::PacketHeader) + 3 + LOG_BUF_SIZE];
+    size_t n = daq::create_log_packet(g_logbuf.flags(), g_logbuf.data(),
+                                      g_logbuf.length(), millis(), pkt, sizeof(pkt));
+    if (n > 0) {
+        s.udp.beginPacket(s.serverIP, s.serverPort);
+        s.udp.write(pkt, n);
+        s.udp.endPacket();
+    }
+    g_logbuf.clear();
+}
+
 inline void setup(CoreState& s, const Config& cfg) {
     Serial.begin(115200);
     delay(SERIAL_MONITOR_READY_DELAY_MS);
@@ -442,6 +462,16 @@ inline void setup(CoreState& s, const Config& cfg) {
     Serial.println(":5005");
     Serial.flush();
     HF_LOGLN("Setup complete. State: WaitingForServer");
+
+    // Ethernet is up now, so this is the first log the server can actually receive
+    // (boot logs before Ethernet are unsendable). Announce identity + IP and flush
+    // immediately so the server sees the board come online.
+    HF_LOG("ONLINE board=");
+    HF_LOG(static_cast<unsigned>(s.board_id));
+    HF_LOG(" ip=");
+    HF_LOG(Ethernet.localIP());
+    HF_LOGLN_();
+    flushLogs(s);
 }
 
 inline void loop(CoreState& s, const Config& cfg) {
@@ -610,6 +640,14 @@ inline void loop(CoreState& s, const Config& cfg) {
                 }
                 break;
         }
+    }
+
+    // Flush buffered logs to the server ~1 Hz (or sooner if the buffer is filling).
+    static unsigned long s_last_log_flush_ms = 0;
+    if (!g_logbuf.empty() &&
+        (g_logbuf.nearFull() || now - s_last_log_flush_ms >= 1000)) {
+        s_last_log_flush_ms = now;
+        flushLogs(s);
     }
 
     delay(LOOP_DELAY_MS);
