@@ -18,6 +18,8 @@
 #include <Ethernet.h>
 #include <Update.h>
 
+#include "hotfire_log.h"  // HF_VERBOSEF for verbose-only progress
+
 #ifndef HOTFIRE_OTA_CHUNK_SIZE
 #define HOTFIRE_OTA_CHUNK_SIZE 4096
 #endif
@@ -108,11 +110,13 @@ inline void hotfire_handleOTA(EthernetClient& client) {
                 totalReceived += bytesRead;
                 lastDataTime = millis();
 
+                // Progress is verbose-only and throttled to 25% steps (lifecycle
+                // start/success/errors below are Tier 1 and always print).
                 int percent = (int)((totalReceived * 100UL) / firmwareSize);
-                if (percent / 5 != lastPercent / 5) {
+                if (percent / 25 != lastPercent / 25) {
                     lastPercent = percent;
-                    Serial.printf("[OTA] Progress: %d%% (%u / %u bytes)\n",
-                                  percent, totalReceived, firmwareSize);
+                    HF_VERBOSEF("[OTA] Progress: %d%% (%u / %u bytes)\n",
+                                percent, totalReceived, firmwareSize);
                 }
             }
         } else {

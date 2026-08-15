@@ -46,20 +46,12 @@ EthernetUDP udp;
 static OTAEthernetServer otaServer(HOTFIRE_OTA_PORT);
 
 //-----------------------------------------------------------------------------
-// Serial gating from ACTUATOR_CONFIG (enable_serial_printing); default on until
-// config says otherwise
+// Verbose serial gate from ACTUATOR_CONFIG (enable_serial_printing); default on
+// until config says otherwise. Shared two-tier logging: HF_LOG* = always,
+// HF_VERBOSE* = verbose-only (this flag).
 //-----------------------------------------------------------------------------
-static bool g_actuator_serial = true;
-#define ACTUATOR_PRINT(x)      \
-    do {                       \
-        if (g_actuator_serial) \
-            Serial.print(x);   \
-    } while (0)
-#define ACTUATOR_PRINTLN(x)    \
-    do {                       \
-        if (g_actuator_serial) \
-            Serial.println(x); \
-    } while (0)
+#include "hotfire_log.h"
+bool g_verbose = true;
 
 //-----------------------------------------------------------------------------
 // State machine
@@ -258,10 +250,10 @@ static void sendBoardHeartbeat() {
     if (len == 0)
         return;
 
-    Serial.print("Sent: heartbeat to ");
-    Serial.print(serverIP);
-    Serial.print(":");
-    Serial.println(serverPort);
+    HF_VERBOSE("Sent: heartbeat to ");
+    HF_VERBOSE(serverIP);
+    HF_VERBOSE(":");
+    HF_VERBOSELN(serverPort);
     Serial.flush();
     udp.beginPacket(serverIP, serverPort);
     udp.write(packetBuffer, len);
@@ -343,10 +335,10 @@ static void applyVentToAllActuators() {
                                 udpListenPort);
                 udp.write(packetBuffer, len);
                 udp.endPacket();
-                ACTUATOR_PRINT("Sent: actuator_command (vent) to ");
-                ACTUATOR_PRINT(uint32ToIPAddress(loc.ip_address));
-                ACTUATOR_PRINT(":");
-                ACTUATOR_PRINTLN(udpListenPort);
+                HF_VERBOSE("Sent: actuator_command (vent) to ");
+                HF_VERBOSE(uint32ToIPAddress(loc.ip_address));
+                HF_VERBOSE(":");
+                HF_VERBOSELN(udpListenPort);
             }
         }
     }
@@ -374,10 +366,10 @@ static void applyAbortToAllActuators() {
                                 udpListenPort);
                 udp.write(packetBuffer, len);
                 udp.endPacket();
-                ACTUATOR_PRINT("Sent: actuator_command (abort) to ");
-                ACTUATOR_PRINT(uint32ToIPAddress(loc.ip_address));
-                ACTUATOR_PRINT(":");
-                ACTUATOR_PRINTLN(udpListenPort);
+                HF_VERBOSE("Sent: actuator_command (abort) to ");
+                HF_VERBOSE(uint32ToIPAddress(loc.ip_address));
+                HF_VERBOSE(":");
+                HF_VERBOSELN(udpListenPort);
             }
         }
     }
@@ -530,7 +522,7 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
                 abort_actuator_locations = act_locs;
                 abort_pt_locations = pt_locs;
                 config_valid = true;
-                g_actuator_serial = (enable_serial != 0);
+                g_verbose = (enable_serial != 0);
                 return IncomingPacketKind::Config;
             }
             return IncomingPacketKind::None;
@@ -591,15 +583,15 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
             std::vector<Diablo::ActuatorCommand> commands;
             if (Diablo::parse_actuator_command_packet(buffer, len, cmd_header,
                                                       commands)) {
-                ACTUATOR_PRINTLN("ACTUATOR_COMMAND received (DAQv2-Comms):");
+                HF_VERBOSELN("ACTUATOR_COMMAND received (DAQv2-Comms):");
                 for (size_t i = 0; i < commands.size(); ++i) {
                     const auto& cmd = commands[i];
-                    ACTUATOR_PRINT("  [");
-                    ACTUATOR_PRINT(static_cast<unsigned>(i));
-                    ACTUATOR_PRINT("] actuator_id=");
-                    ACTUATOR_PRINT(static_cast<unsigned>(cmd.actuator_id));
-                    ACTUATOR_PRINT(" actuator_state=");
-                    ACTUATOR_PRINTLN(static_cast<unsigned>(cmd.actuator_state));
+                    HF_VERBOSE("  [");
+                    HF_VERBOSE(static_cast<unsigned>(i));
+                    HF_VERBOSE("] actuator_id=");
+                    HF_VERBOSE(static_cast<unsigned>(cmd.actuator_id));
+                    HF_VERBOSE(" actuator_state=");
+                    HF_VERBOSELN(static_cast<unsigned>(cmd.actuator_state));
                 }
                 Serial.flush();
                 if (stateAcceptsActuatorCommand(remote_ip32))
@@ -612,20 +604,20 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
             std::vector<Diablo::PWMActuatorCommand> commands;
             if (Diablo::parse_pwm_actuator_packet(buffer, len, cmd_header,
                                                   commands)) {
-                ACTUATOR_PRINTLN(
+                HF_VERBOSELN(
                     "PWM_ACTUATOR_COMMAND received (DAQv2-Comms):");
                 for (size_t i = 0; i < commands.size(); ++i) {
                     const auto& cmd = commands[i];
-                    ACTUATOR_PRINT("  [");
-                    ACTUATOR_PRINT(static_cast<unsigned>(i));
-                    ACTUATOR_PRINT("] actuator_id=");
-                    ACTUATOR_PRINT(static_cast<unsigned>(cmd.actuator_id));
-                    ACTUATOR_PRINT(" duration_ms=");
-                    ACTUATOR_PRINT(cmd.duration);
-                    ACTUATOR_PRINT(" duty_cycle=");
-                    ACTUATOR_PRINT(cmd.duty_cycle);
-                    ACTUATOR_PRINT(" frequency=");
-                    ACTUATOR_PRINTLN(cmd.frequency);
+                    HF_VERBOSE("  [");
+                    HF_VERBOSE(static_cast<unsigned>(i));
+                    HF_VERBOSE("] actuator_id=");
+                    HF_VERBOSE(static_cast<unsigned>(cmd.actuator_id));
+                    HF_VERBOSE(" duration_ms=");
+                    HF_VERBOSE(cmd.duration);
+                    HF_VERBOSE(" duty_cycle=");
+                    HF_VERBOSE(cmd.duty_cycle);
+                    HF_VERBOSE(" frequency=");
+                    HF_VERBOSELN(cmd.frequency);
                 }
                 Serial.flush();
                 if (stateAcceptsActuatorCommand(remote_ip32))
@@ -763,10 +755,10 @@ static void readCurrentSensePinsAndSend() {
     udp.beginPacket(serverIP, serverPort);
     udp.write(packetBuffer, packetSize);
     udp.endPacket();
-    ACTUATOR_PRINT("Sent: sensor_data to ");
-    ACTUATOR_PRINT(serverIP);
-    ACTUATOR_PRINT(":");
-    ACTUATOR_PRINTLN(serverPort);
+    HF_VERBOSE("Sent: sensor_data to ");
+    HF_VERBOSE(serverIP);
+    HF_VERBOSE(":");
+    HF_VERBOSELN(serverPort);
 }
 
 static bool heartbeatTimedOut() {
@@ -796,10 +788,10 @@ static void sendNoConnectionAbortToAllPTs() {
         udp.beginPacket(uint32ToIPAddress(loc.ip_address), ptBoardPort);
         udp.write(packetBuffer, len);
         udp.endPacket();
-        ACTUATOR_PRINT("Sent: no_connection_abort to ");
-        ACTUATOR_PRINT(uint32ToIPAddress(loc.ip_address));
-        ACTUATOR_PRINT(":");
-        ACTUATOR_PRINTLN(ptBoardPort);
+        HF_VERBOSE("Sent: no_connection_abort to ");
+        HF_VERBOSE(uint32ToIPAddress(loc.ip_address));
+        HF_VERBOSE(":");
+        HF_VERBOSELN(ptBoardPort);
     }
 }
 
@@ -812,7 +804,7 @@ static void sendAbortDoneToAllBoards() {
     if (len == 0)
         return;
 
-    ACTUATOR_PRINTLN("Broadcasting ABORT_DONE to network...");
+    HF_VERBOSELN("Broadcasting ABORT_DONE to network...");
 
     // Broadcast to all PTs
     for (const auto& loc : abort_pt_locations) {
@@ -1004,7 +996,7 @@ static void applyPacketTransition(IncomingPacketKind kind) {
 // Pin setup
 //-----------------------------------------------------------------------------
 static void initializeActuators() {
-    ACTUATOR_PRINTLN("Initializing actuators...");
+    HF_VERBOSELN("Initializing actuators...");
     for (int i = 1; i <= NUM_ACTUATORS; i++) {
         int pin = getActuatorPin(i);
         if (pin < 0)
@@ -1013,7 +1005,7 @@ static void initializeActuators() {
         digitalWrite(pin, LOW);
         actuator_states[i - 1] = 0;
     }
-    ACTUATOR_PRINTLN("All actuators initialized to OFF state");
+    HF_VERBOSELN("All actuators initialized to OFF state");
 }
 
 static void initializeCurrentSensePins() {
@@ -1102,27 +1094,26 @@ void loop() {
             const uint8_t pktType =
                 bytesRead >= (int)sizeof(Diablo::PacketHeader) ? packetBuffer[0]
                                                                : 0;
-            ACTUATOR_PRINT("Received packet from ");
-            ACTUATOR_PRINT(remoteIP);
-            ACTUATOR_PRINT(":");
-            ACTUATOR_PRINT(udp.remotePort());
-            ACTUATOR_PRINT(" type ");
-            ACTUATOR_PRINT(static_cast<unsigned>(pktType));
+            HF_VERBOSE("Received packet from ");
+            HF_VERBOSE(remoteIP);
+            HF_VERBOSE(":");
+            HF_VERBOSE(udp.remotePort());
+            HF_VERBOSE(" type ");
+            HF_VERBOSE(static_cast<unsigned>(pktType));
             if (pktType == 4 || pktType == 10) {
-                ACTUATOR_PRINT(" (");
-                ACTUATOR_PRINT(actuatorPacketTypeName(pktType));
-                ACTUATOR_PRINT(") len=");
-                ACTUATOR_PRINT(bytesRead);
-                ACTUATOR_PRINT(" hex:");
+                HF_VERBOSE(" (");
+                HF_VERBOSE(actuatorPacketTypeName(pktType));
+                HF_VERBOSE(") len=");
+                HF_VERBOSE(bytesRead);
+                HF_VERBOSE(" hex:");
                 for (int i = 0; i < bytesRead && i < 32; i++) {
-                    ACTUATOR_PRINT(" ");
+                    HF_VERBOSE(" ");
                     if (packetBuffer[i] < 16)
-                        ACTUATOR_PRINT("0");
-                    if (g_actuator_serial)
-                        Serial.print(packetBuffer[i], HEX);
+                        HF_VERBOSE("0");
+                    HF_VERBOSE(packetBuffer[i], HEX);
                 }
             }
-            ACTUATOR_PRINTLN("");
+            HF_VERBOSELN("");
             Serial.flush();
             connection_loss_received_ips.insert(
                 static_cast<uint32_t>(remoteIP[0]) << 24 |
@@ -1166,7 +1157,7 @@ void loop() {
     if (now - lastHeartbeatMillis >= BOARD_HEARTBEAT_INTERVAL_MS) {
         lastHeartbeatMillis = now;
         if (state == ActuatorControllerState::WaitingForServer) {
-            Serial.println("Setup state: sending heartbeat");
+            HF_VERBOSELN("Setup state: sending heartbeat");
             Serial.flush();
         }
         sendBoardHeartbeat();

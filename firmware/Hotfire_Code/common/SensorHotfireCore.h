@@ -35,35 +35,9 @@
 #define SENSOR_UDP_LISTEN_PORT 5005
 #endif
 
-// Serial output gated by this flag (define in one .cpp per project, e.g.
-// main.cpp). Default is true until SENSOR_CONFIG is received; the packet's
-// enable_serial_printing field then updates g_sensor_hotfire_serial for loop()
-// / runtime SENSOR_HOTFIRE_PRINT*. setup() uses SENSOR_HOTFIRE_BOOT_* so boot
-// diagnostics always appear on Serial.
-extern bool g_sensor_hotfire_serial;
-#define SENSOR_HOTFIRE_PRINT(x)      \
-    do {                             \
-        if (g_sensor_hotfire_serial) \
-            Serial.print(x);         \
-    } while (0)
-#define SENSOR_HOTFIRE_PRINTLN(x)    \
-    do {                             \
-        if (g_sensor_hotfire_serial) \
-            Serial.println(x);       \
-    } while (0)
-#define SENSOR_HOTFIRE_PRINTLN_()    \
-    do {                             \
-        if (g_sensor_hotfire_serial) \
-            Serial.println();        \
-    } while (0)
-#define SENSOR_HOTFIRE_BOOT_PRINT(x) \
-    do {                             \
-        Serial.print(x);             \
-    } while (0)
-#define SENSOR_HOTFIRE_BOOT_PRINTLN(x) \
-    do {                               \
-        Serial.println(x);             \
-    } while (0)
+// Two-tier serial logging (HF_LOG* = always, HF_VERBOSE* = verbose-only, gated by
+// g_verbose). Each board defines `bool g_verbose = true;` once in its main .cpp.
+#include "hotfire_log.h"
 
 namespace SensorHotfire {
 
@@ -232,39 +206,40 @@ inline IncomingPacketKind processIncomingPacket(CoreState& s, const Config& cfg,
             cfg.on_reference_voltage_config(cfg.user_data,
                                             s.stored_config.reference_voltage);
 
-        g_sensor_hotfire_serial = (enable_serial_printing != 0);
+        g_verbose = (enable_serial_printing != 0);
 
-        Serial.println("SENSOR_CONFIG received (DAQv2-Comms):");
-        Serial.print("  num_sensors=");
-        Serial.println(static_cast<unsigned>(sensor_ids.size()));
-        Serial.print("  sensor_ids=");
+        HF_LOGLN("SENSOR_CONFIG received (DAQv2-Comms):");
+        // Field-by-field breakdown is verbose-only; the header above is Tier 1.
+        HF_VERBOSE("  num_sensors=");
+        HF_VERBOSELN(static_cast<unsigned>(sensor_ids.size()));
+        HF_VERBOSE("  sensor_ids=");
         if (!sensor_ids.empty()) {
             for (size_t i = 0; i < sensor_ids.size(); ++i) {
                 if (i)
-                    Serial.print(",");
-                Serial.print(static_cast<unsigned>(sensor_ids[i]));
+                    HF_VERBOSE(",");
+                HF_VERBOSE(static_cast<unsigned>(sensor_ids[i]));
             }
-            Serial.println();
+            HF_VERBOSELN_();
         } else {
-            Serial.println("(none)");
+            HF_VERBOSELN("(none)");
         }
-        Serial.print("  reference_voltage=");
-        Serial.println(
+        HF_VERBOSE("  reference_voltage=");
+        HF_VERBOSELN(
             static_cast<unsigned>(s.stored_config.reference_voltage));
-        Serial.print("  necessary_for_abort=");
-        Serial.println(s.stored_config.necessary_for_abort ? 1 : 0);
-        Serial.print("  actuator_controller_ip=");
+        HF_VERBOSE("  necessary_for_abort=");
+        HF_VERBOSELN(s.stored_config.necessary_for_abort ? 1 : 0);
+        HF_VERBOSE("  actuator_controller_ip=");
         if (s.stored_config.actuator_controller_ip != 0) {
             const uint8_t* ip_bytes = reinterpret_cast<const uint8_t*>(
                 &s.stored_config.actuator_controller_ip);
             IPAddress actuatorIP(ip_bytes[0], ip_bytes[1], ip_bytes[2],
                                  ip_bytes[3]);
-            Serial.println(actuatorIP);
+            HF_VERBOSELN(actuatorIP);
         } else {
-            Serial.println("0.0.0.0");
+            HF_VERBOSELN("0.0.0.0");
         }
-        Serial.print("  enable_serial_printing=");
-        Serial.println(g_sensor_hotfire_serial ? 1 : 0);
+        HF_VERBOSE("  enable_serial_printing=");
+        HF_VERBOSELN(g_verbose ? 1 : 0);
         Serial.flush();
         return IncomingPacketKind::SensorConfig;
     }
@@ -331,11 +306,10 @@ inline void sendBoardHeartbeat(CoreState& s, const Config& cfg,
                                                      sizeof(packetBuffer));
     if (n == 0)
         return;
-    Serial.print("Sent: heartbeat to ");
-    Serial.print(dest_ip);
-    Serial.print(":");
-    Serial.println(dest_port);
-    Serial.flush();
+    HF_VERBOSE("Sent: heartbeat to ");
+    HF_VERBOSE(dest_ip);
+    HF_VERBOSE(":");
+    HF_VERBOSELN(dest_port);
     s.udp.beginPacket(dest_ip, dest_port);
     s.udp.write(packetBuffer, n);
     s.udp.endPacket();
@@ -382,15 +356,15 @@ inline void setup(CoreState& s, const Config& cfg) {
     Serial.begin(115200);
     delay(SERIAL_MONITOR_READY_DELAY_MS);
     FirmwareHash::print();
-    SENSOR_HOTFIRE_BOOT_PRINT(cfg.board_name);
-    SENSOR_HOTFIRE_BOOT_PRINTLN(" Hotfire state machine starting...");
+    HF_LOG(cfg.board_name);
+    HF_LOGLN(" Hotfire state machine starting...");
 
     s.board_id = (uint8_t)BOARD_ID;
     s.staticIP = IPAddress(192, 168, 2, (uint8_t)BOARD_ID);
-    SENSOR_HOTFIRE_BOOT_PRINT("Board ID and IP: ");
-    SENSOR_HOTFIRE_BOOT_PRINT(static_cast<unsigned>(s.board_id));
-    SENSOR_HOTFIRE_BOOT_PRINT(" / 192.168.2.");
-    SENSOR_HOTFIRE_BOOT_PRINTLN(static_cast<unsigned>(s.board_id));
+    HF_LOG("Board ID and IP: ");
+    HF_LOG(static_cast<unsigned>(s.board_id));
+    HF_LOG(" / 192.168.2.");
+    HF_LOGLN(static_cast<unsigned>(s.board_id));
 
     const sense_board_pins::Layout& Pins = *cfg.pins;
     pinMode(Pins.LED, OUTPUT);
@@ -409,40 +383,40 @@ inline void setup(CoreState& s, const Config& cfg) {
 
     // W5500 / Ethernet status (same pattern as Stream_ADC_Data and other DAQ
     // sketches)
-    SENSOR_HOTFIRE_BOOT_PRINTLN("[ETH] Ethernet initialized (SPI WIZnet)");
-    SENSOR_HOTFIRE_BOOT_PRINT("Configured static IP: ");
-    SENSOR_HOTFIRE_BOOT_PRINTLN(s.staticIP);
-    SENSOR_HOTFIRE_BOOT_PRINT("Stack IP (Ethernet.localIP): ");
-    SENSOR_HOTFIRE_BOOT_PRINTLN(Ethernet.localIP());
-    SENSOR_HOTFIRE_BOOT_PRINT("Hardware: ");
+    HF_LOGLN("[ETH] Ethernet initialized (SPI WIZnet)");
+    HF_LOG("Configured static IP: ");
+    HF_LOGLN(s.staticIP);
+    HF_LOG("Stack IP (Ethernet.localIP): ");
+    HF_LOGLN(Ethernet.localIP());
+    HF_LOG("Hardware: ");
     switch (Ethernet.hardwareStatus()) {
         case EthernetNoHardware:
-            SENSOR_HOTFIRE_BOOT_PRINTLN(
+            HF_LOGLN(
                 "no chip detected — check CS / SPI wiring");
             break;
         case EthernetW5100:
-            SENSOR_HOTFIRE_BOOT_PRINTLN("W5100");
+            HF_LOGLN("W5100");
             break;
         case EthernetW5200:
-            SENSOR_HOTFIRE_BOOT_PRINTLN("W5200");
+            HF_LOGLN("W5200");
             break;
         case EthernetW5500:
-            SENSOR_HOTFIRE_BOOT_PRINTLN("W5500");
+            HF_LOGLN("W5500");
             break;
         default:
-            SENSOR_HOTFIRE_BOOT_PRINTLN("unknown");
+            HF_LOGLN("unknown");
             break;
     }
-    SENSOR_HOTFIRE_BOOT_PRINT("Link status: ");
+    HF_LOG("Link status: ");
     if (Ethernet.linkStatus() == LinkON) {
-        SENSOR_HOTFIRE_BOOT_PRINTLN("Connected");
+        HF_LOGLN("Connected");
     } else if (Ethernet.linkStatus() == LinkOFF) {
-        SENSOR_HOTFIRE_BOOT_PRINTLN("Disconnected");
+        HF_LOGLN("Disconnected");
     } else {
-        SENSOR_HOTFIRE_BOOT_PRINTLN("Unknown");
+        HF_LOGLN("Unknown");
     }
     if (Ethernet.localIP() == IPAddress(0, 0, 0, 0)) {
-        SENSOR_HOTFIRE_BOOT_PRINTLN(
+        HF_LOGLN(
             "[ETH] WARNING: stack IP is 0.0.0.0 — check cable / W5500");
     }
     Serial.flush();
@@ -467,7 +441,7 @@ inline void setup(CoreState& s, const Config& cfg) {
     Serial.print(static_cast<unsigned>(s.board_id));
     Serial.println(":5005");
     Serial.flush();
-    SENSOR_HOTFIRE_BOOT_PRINTLN("Setup complete. State: WaitingForServer");
+    HF_LOGLN("Setup complete. State: WaitingForServer");
 }
 
 inline void loop(CoreState& s, const Config& cfg) {
@@ -491,30 +465,28 @@ inline void loop(CoreState& s, const Config& cfg) {
         uint8_t packetBuffer[SENSOR_HOTFIRE_MAX_PACKET_SIZE];
         int bytesRead = s.udp.read(packetBuffer, maxPacket);
         if (bytesRead <= 0) {
-            Serial.print("WARNING: parsePacket returned ");
-            Serial.print(packetSize);
-            Serial.println(" but read() returned 0");
-            Serial.flush();
+            HF_LOG("WARNING: parsePacket returned ");
+            HF_LOG(packetSize);
+            HF_LOGLN(" but read() returned 0");
         } else {
-            Serial.print("Received packet from ");
-            Serial.print(remoteIP);
-            Serial.print(":");
-            Serial.print(remotePort);
-            Serial.print(" type ");
-            Serial.print(static_cast<unsigned>(packetBuffer[0]));
-            Serial.print(" (");
-            Serial.print(packetTypeName(packetBuffer[0]));
-            Serial.print(") len=");
-            Serial.print(bytesRead);
-            Serial.print(" hex:");
+            HF_VERBOSE("Received packet from ");
+            HF_VERBOSE(remoteIP);
+            HF_VERBOSE(":");
+            HF_VERBOSE(remotePort);
+            HF_VERBOSE(" type ");
+            HF_VERBOSE(static_cast<unsigned>(packetBuffer[0]));
+            HF_VERBOSE(" (");
+            HF_VERBOSE(packetTypeName(packetBuffer[0]));
+            HF_VERBOSE(") len=");
+            HF_VERBOSE(bytesRead);
+            HF_VERBOSE(" hex:");
             for (int i = 0; i < bytesRead && i < 12; i++) {
-                Serial.print(" ");
+                HF_VERBOSE(" ");
                 if (packetBuffer[i] < 16)
-                    Serial.print("0");
-                Serial.print(packetBuffer[i], HEX);
+                    HF_VERBOSE("0");
+                HF_VERBOSE(packetBuffer[i], HEX);
             }
-            Serial.println();
-            Serial.flush();
+            HF_VERBOSELN_();
             IncomingPacketKind kind = processIncomingPacket(
                 s, cfg, packetBuffer, bytesRead, remoteIP, remotePort);
             if (kind == IncomingPacketKind::SensorConfig) {
@@ -556,10 +528,10 @@ inline void loop(CoreState& s, const Config& cfg) {
                 s.udp.beginPacket(s.serverIP, s.serverPort);
                 s.udp.write(packetBuffer, packetSize);
                 s.udp.endPacket();
-                SENSOR_HOTFIRE_PRINT("Sent: SELF_TEST to ");
-                SENSOR_HOTFIRE_PRINT(s.serverIP);
-                SENSOR_HOTFIRE_PRINT(":");
-                SENSOR_HOTFIRE_PRINTLN(s.serverPort);
+                HF_VERBOSE("Sent: SELF_TEST to ");
+                HF_VERBOSE(s.serverIP);
+                HF_VERBOSE(":");
+                HF_VERBOSELN(s.serverPort);
             }
         }
         s.state = State::Active;
@@ -600,20 +572,18 @@ inline void loop(CoreState& s, const Config& cfg) {
     unsigned long now = millis();
     if (s.state == State::WaitingForServer && (now - s_last_debug_ms >= 2000)) {
         s_last_debug_ms = now;
-        Serial.print("PT debug: state=WaitingForServer IP=");
-        Serial.print(Ethernet.localIP());
-        Serial.print(" udp_checks=");
-        Serial.print(s_udp_check_count);
-        Serial.print(" last_parse=");
-        Serial.println(s_last_parse_result);
-        Serial.flush();
+        HF_VERBOSE("PT debug: state=WaitingForServer IP=");
+        HF_VERBOSE(Ethernet.localIP());
+        HF_VERBOSE(" udp_checks=");
+        HF_VERBOSE(s_udp_check_count);
+        HF_VERBOSE(" last_parse=");
+        HF_VERBOSELN(s_last_parse_result);
     }
     if (now - s.lastHeartbeatMillis >= BOARD_HEARTBEAT_INTERVAL_MS) {
         s.lastHeartbeatMillis = now;
         switch (s.state) {
             case State::WaitingForServer:
-                Serial.println("Setup state: sending heartbeat");
-                Serial.flush();
+                HF_VERBOSELN("Setup state: sending heartbeat");
                 sendBoardHeartbeat(s, cfg, Diablo::BoardState::SETUP,
                                    s.serverIP, s.serverPort);
                 break;
