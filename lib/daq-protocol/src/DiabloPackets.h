@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <vector>
 
-namespace Diablo {
+namespace daq {
 
 /**
  * @brief The standard 6-byte header preceding every packet.
@@ -323,4 +323,4 @@ struct __attribute__((packed)) StacklightCommandPacket {
   uint8_t buzzer;
 };
 
-} // namespace Diablo
+} // namespace daq

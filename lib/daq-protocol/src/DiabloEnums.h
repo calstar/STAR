@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-namespace Diablo {
+namespace daq {
 
 /**
  * @brief Defines the type of data contained in a packet.
@@ -53,4 +53,4 @@ enum class EngineState : uint8_t {
   POST_FIRE = 4
 };
 
-} // namespace Diablo
+} // namespace daq

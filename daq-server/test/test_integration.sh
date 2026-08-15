@@ -305,7 +305,7 @@ else
   echo "  ⚠️  controller_service not found — controller tests will be skipped"
 fi
 
-# Data source: board_simulator.py (speaks the current DAQv2-Comms protocol).
+# Data source: board_simulator.py (speaks the current daq-protocol protocol).
 # NOTE: transport/src/fake_packet_generator.cpp is a pre-DAQv2 fossil (0xAA
 # magic + XOR framing the current daq_bridge cannot parse) with no CMake
 # target — never use it here even if someone makes it buildable again.

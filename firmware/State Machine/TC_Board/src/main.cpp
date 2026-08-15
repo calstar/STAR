@@ -10,7 +10,7 @@
 #include "main.h"
 
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
+#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
@@ -76,7 +76,7 @@ struct StoredSensorConfig {
 static StoredSensorConfig stored_config = {false, false, 0};
 
 // Sensor data collection (Stream_ADC_Data style)
-std::vector<Diablo::SensorDataChunkCollection> dataChunks;
+std::vector<daq::SensorDataChunkCollection> dataChunks;
 uint8_t sensorId = 0;
 
 // Heartbeat at fixed interval (main.h: BOARD_HEARTBEAT_INTERVAL_MS)
@@ -112,10 +112,10 @@ static void flush_cycles(int cycles) {
 // Read packet header (for type dispatch)
 //-----------------------------------------------------------------------------
 static bool readPacketHeader(const uint8_t* buffer, size_t len,
-                             Diablo::PacketHeader& hdr_out) {
-    if (len < sizeof(Diablo::PacketHeader))
+                             daq::PacketHeader& hdr_out) {
+    if (len < sizeof(daq::PacketHeader))
         return false;
-    memcpy(&hdr_out, buffer, sizeof(Diablo::PacketHeader));
+    memcpy(&hdr_out, buffer, sizeof(daq::PacketHeader));
     return true;
 }
 
@@ -127,15 +127,15 @@ static bool readPacketHeader(const uint8_t* buffer, size_t len,
 static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
                                                 size_t len, IPAddress remote_ip,
                                                 int remote_port) {
-    Diablo::PacketHeader hdr;
+    daq::PacketHeader hdr;
     if (!readPacketHeader(buffer, len, hdr))
         return IncomingPacketKind::None;
 
     switch (hdr.packet_type) {
-        case Diablo::PacketType::SERVER_HEARTBEAT: {
-            Diablo::PacketHeader dummy;
-            Diablo::ServerHeartbeatPacket data;
-            if (Diablo::parse_server_heartbeat_packet(buffer, len, dummy,
+        case daq::PacketType::SERVER_HEARTBEAT: {
+            daq::PacketHeader dummy;
+            daq::ServerHeartbeatPacket data;
+            if (daq::parse_server_heartbeat_packet(buffer, len, dummy,
                                                       data)) {
                 serverIP = remote_ip;
                 serverPort = remote_port;
@@ -143,7 +143,7 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
             }
             return IncomingPacketKind::None;
         }
-        case Diablo::PacketType::SENSOR_CONFIG:
+        case daq::PacketType::SENSOR_CONFIG:
             // Store config: layout per generate_packets (necessary_for_abort
             // byte, then optional controller_ip)
             stored_config.valid = true;
@@ -160,10 +160,10 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
                 }
             }
             return IncomingPacketKind::SensorConfig;
-        case Diablo::PacketType::CLEAR_ABORT:
+        case daq::PacketType::CLEAR_ABORT:
             return IncomingPacketKind::ClearAbort;
-        case Diablo::PacketType::NO_CONNECTION_ABORT: {
-            if (len >= sizeof(Diablo::PacketHeader))
+        case daq::PacketType::NO_CONNECTION_ABORT: {
+            if (len >= sizeof(daq::PacketHeader))
                 return IncomingPacketKind::NoConnAbort;
             return IncomingPacketKind::None;
         }
@@ -176,16 +176,16 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
 // Send board heartbeat (board ID + boardState), like actuator_c /
 // Stream_ADC_Data
 //-----------------------------------------------------------------------------
-static void sendBoardHeartbeat(Diablo::BoardState board_state,
+static void sendBoardHeartbeat(daq::BoardState board_state,
                                IPAddress dest_ip, int dest_port) {
-    Diablo::BoardHeartbeatPacket hb;
+    daq::BoardHeartbeatPacket hb;
     memset(hb.firmware_hash, 0, sizeof(hb.firmware_hash));
     hb.board_id = board_id;
-    hb.engine_state = Diablo::EngineState::SAFE;
+    hb.engine_state = daq::EngineState::SAFE;
     hb.board_state = board_state;
 
     uint8_t packetBuffer[MAX_PACKET_SIZE];
-    size_t n = Diablo::create_board_heartbeat_packet(hb, millis(), packetBuffer,
+    size_t n = daq::create_board_heartbeat_packet(hb, millis(), packetBuffer,
                                                      sizeof(packetBuffer));
     if (n == 0)
         return;
@@ -201,7 +201,7 @@ static void sendSensorDataPacketTo(IPAddress dest_ip, int dest_port) {
     if (dataChunks.empty())
         return;
     uint8_t packetBuffer[MAX_PACKET_SIZE];
-    size_t packetSize = Diablo::create_sensor_data_packet(
+    size_t packetSize = daq::create_sensor_data_packet(
         dataChunks, static_cast<uint8_t>(NUM_PTS), millis(), packetBuffer,
         sizeof(packetBuffer));
     if (packetSize == 0)
@@ -216,7 +216,7 @@ static void sendSensorDataPacketTo(IPAddress dest_ip, int dest_port) {
 // Read ADC data for current connector and push chunk (Stream_ADC_Data style)
 //-----------------------------------------------------------------------------
 static void read_data(int count) {
-    Diablo::SensorDataChunkCollection chunk(millis(), NUM_PTS);
+    daq::SensorDataChunkCollection chunk(millis(), NUM_PTS);
     for (int i = 0; i < count; i++) {
         while (digitalRead(Pins.ADC_DRDY_1) != LOW)
             delayMicroseconds(10);
@@ -390,17 +390,17 @@ void loop() {
         lastHeartbeatMillis = now;
         switch (state) {
             case PTHotfireState::WaitingForServer:
-                sendBoardHeartbeat(Diablo::BoardState::SETUP, serverIP,
+                sendBoardHeartbeat(daq::BoardState::SETUP, serverIP,
                                    serverPort);
                 break;
             case PTHotfireState::Active:
-                sendBoardHeartbeat(Diablo::BoardState::ACTIVE, serverIP,
+                sendBoardHeartbeat(daq::BoardState::ACTIVE, serverIP,
                                    serverPort);
                 break;
             case PTHotfireState::StandaloneAbort:
                 if (!stored_config.valid ||
                     stored_config.actuator_controller_ip == 0)
-                    sendBoardHeartbeat(Diablo::BoardState::STANDALONE_ABORT,
+                    sendBoardHeartbeat(daq::BoardState::STANDALONE_ABORT,
                                        serverIP, serverPort);
                 else {
                     IPAddress actuatorIP(
@@ -408,7 +408,7 @@ void loop() {
                         (stored_config.actuator_controller_ip >> 16) & 0xFF,
                         (stored_config.actuator_controller_ip >> 8) & 0xFF,
                         stored_config.actuator_controller_ip & 0xFF);
-                    sendBoardHeartbeat(Diablo::BoardState::STANDALONE_ABORT,
+                    sendBoardHeartbeat(daq::BoardState::STANDALONE_ABORT,
                                        actuatorIP, serverPortDefault);
                 }
                 break;

@@ -10,7 +10,7 @@
 #include "main.h"
 
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
+#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
@@ -43,7 +43,7 @@ ADS126X_ASSERT_FILTER_RATE(FILTER, DATA_RATE);
 
 static ADS126X ads126x;
 SPIClass ADC_SPI(HSPI);
-std::vector<Diablo::SensorDataChunkCollection> dataChunks;
+std::vector<daq::SensorDataChunkCollection> dataChunks;
 
 static SensorHotfire::CoreState coreState;
 static SensorHotfire::Config coreConfig;
@@ -71,7 +71,7 @@ static void collect_chunk_impl() {
         return;
     const uint8_t* active_ids = coreState.stored_config.sensor_ids;
 
-    Diablo::SensorDataChunkCollection chunk(millis(), active_count);
+    daq::SensorDataChunkCollection chunk(millis(), active_count);
     for (uint8_t i = 0; i < active_count; i++) {
         ads126x.setInputMux(getAdcChannel(active_ids[i], TEST_PIN),
                             ADS126X_AINCOM);
@@ -98,7 +98,7 @@ static void send_chunks_to_impl(IPAddress dest_ip, int dest_port,
         return;
     uint8_t packetBuffer[SENSOR_HOTFIRE_MAX_PACKET_SIZE];
     const uint8_t num_sensors = dataChunks[0].num_sensors;
-    size_t packetSize = Diablo::create_sensor_data_packet(
+    size_t packetSize = daq::create_sensor_data_packet(
         dataChunks, num_sensors, millis(), packetBuffer, sizeof(packetBuffer));
     if (packetSize == 0)
         return;
@@ -194,11 +194,11 @@ static const char* bias_result_str(SensorSelfTest::BiasResult r) {
 
 static void run_self_test_cb(void*,
                              const SensorHotfire::StoredSensorConfig& cfg,
-                             std::vector<Diablo::SelfTestResult>& results_out) {
+                             std::vector<daq::SelfTestResult>& results_out) {
     // 1. ADC self-test (TDAC internal)
     auto adc_result = SensorSelfTest::run_adc_self_test(
         ads126x, Pins.ADC_DRDY_1, ADS126X_REF_NEG_VSS, ADS126X_REF_POS_INT);
-    results_out.push_back(Diablo::SelfTestResult{
+    results_out.push_back(daq::SelfTestResult{
         0u, static_cast<uint8_t>(adc_result.passed ? 1 : 0)});
 
     HF_LOGLN("=== ADC TDAC Self-Test ===");
@@ -225,7 +225,7 @@ static void run_self_test_cb(void*,
             HF_LOG("  sensor id=");
             HF_LOG(id);
             HF_LOGLN("  channel=INVALID  result=FAIL");
-            results_out.push_back(Diablo::SelfTestResult{id, 0u});
+            results_out.push_back(daq::SelfTestResult{id, 0u});
             continue;
         }
         auto bias = SensorSelfTest::read_sensor_bias(
@@ -245,7 +245,7 @@ static void run_self_test_cb(void*,
         HF_LOG("  -> ");
         HF_LOGLN(bias_result_str(bias.result));
 
-        results_out.push_back(Diablo::SelfTestResult{id, pass});
+        results_out.push_back(daq::SelfTestResult{id, pass});
     }
     Serial.flush();
     SensorSelfTest::sensor_bias_disable(ads126x);

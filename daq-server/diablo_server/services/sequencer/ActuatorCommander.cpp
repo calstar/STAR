@@ -294,7 +294,7 @@ bool ActuatorCommander::sendUDP(const std::string& board_ip,
     if (id_state_pairs.empty())
         return true;
 
-    std::vector<Diablo::ActuatorCommand> cmds;
+    std::vector<daq::ActuatorCommand> cmds;
     cmds.reserve(id_state_pairs.size());
     for (const auto& [id, st] : id_state_pairs)
         cmds.push_back({id, st});
@@ -304,7 +304,7 @@ bool ActuatorCommander::sendUDP(const std::string& board_ip,
                                                std::chrono::steady_clock::now().time_since_epoch())
                                                .count() &
                                            0xFFFFFFFFu);
-    size_t len = Diablo::create_actuator_command_packet(cmds, ts_ms, buf, sizeof(buf));
+    size_t len = daq::create_actuator_command_packet(cmds, ts_ms, buf, sizeof(buf));
     if (len == 0) {
         std::cerr << "[ActuatorCommander] create_actuator_command_packet returned 0" << std::endl;
         return false;

@@ -252,7 +252,7 @@ SHLIB_EXT=".so"
 [ "$PLATFORM" = "macOS" ] && SHLIB_EXT=".dylib"
 
 # Post-diablo_server rename: executables land in build/bin/, shared libs in
-# build/lib/, and the daqv2_comms static archive (from ../lib/DAQv2-Comms) at
+# build/lib/, and the daqv2_comms static archive (from ../lib/daq-protocol) at
 # the top of build/. Kept in sync with CMakeLists targets — when a new service
 # is added under diablo_server/services/, add it here too.
 EXPECTED_BINS=(
@@ -270,12 +270,12 @@ EXPECTED_BINS=(
 )
 
 # Source dirs for the "stale binary?" check. diablo_server/ holds every C++
-# source under daq-server/; ../lib/DAQv2-Comms is the wire-protocol library
+# source under daq-server/; ../lib/daq-protocol is the wire-protocol library
 # that gets baked into libdaqv2_comms.a, so edits there also invalidate the
 # archive.
 SOURCE_DIRS=()
 [ -d "$REPO/diablo_server" ]      && SOURCE_DIRS+=("$REPO/diablo_server")
-[ -d "$REPO/../lib/DAQv2-Comms" ] && SOURCE_DIRS+=("$REPO/../lib/DAQv2-Comms")
+[ -d "$REPO/../lib/daq-protocol" ] && SOURCE_DIRS+=("$REPO/../lib/daq-protocol")
 
 for artifact in "${EXPECTED_BINS[@]}"; do
     full_path="$REPO/$artifact"

@@ -46,15 +46,15 @@ public:
      * [0x20,…] IDs, so a wire/config mismatch only breaks board status / heartbeats UI unless
      * overridden.
      */
-    BoardEvent process_heartbeat(const Diablo::PacketHeader& header,
-                                 const Diablo::BoardHeartbeatPacket& heartbeat,
+    BoardEvent process_heartbeat(const daq::PacketHeader& header,
+                                 const daq::BoardHeartbeatPacket& heartbeat,
                                  uint8_t board_type_wire, uint64_t receive_ts_ns,
                                  int elodin_board_id_if_known = -1);
 
 private:
     struct PerBoardState {
         std::chrono::steady_clock::time_point last_seen;
-        Diablo::BoardState last_board_state = Diablo::BoardState::SETUP;
+        daq::BoardState last_board_state = daq::BoardState::SETUP;
         bool seen_before = false;
     };
 

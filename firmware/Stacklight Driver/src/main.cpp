@@ -5,7 +5,7 @@
  */
 
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
+#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
@@ -39,7 +39,7 @@ static EthernetUDP udp;
 static OTAEthernetServer otaServer(HOTFIRE_OTA_PORT);
 static unsigned long lastHeartbeatMillis = 0;
 static unsigned long last_server_heartbeat_ms = 0;
-static Diablo::EngineState last_engine_state = Diablo::EngineState::SAFE;
+static daq::EngineState last_engine_state = daq::EngineState::SAFE;
 
 static void applyStacklightOutputs(uint8_t red, uint8_t yellow, uint8_t green,
                                    uint8_t buzzer) {
@@ -67,14 +67,14 @@ static void initOutputs() {
 }
 
 static void sendBoardHeartbeat() {
-    Diablo::BoardHeartbeatPacket hb;
+    daq::BoardHeartbeatPacket hb;
     memcpy(hb.firmware_hash, FirmwareHash::get(), 32);
     hb.board_id = board_id;
     hb.engine_state = last_engine_state;
-    hb.board_state = Diablo::BoardState::ACTIVE;
+    hb.board_state = daq::BoardState::ACTIVE;
 
     uint8_t packetBuffer[MAX_PACKET_SIZE];
-    size_t len = Diablo::create_board_heartbeat_packet(
+    size_t len = daq::create_board_heartbeat_packet(
         hb, millis(), packetBuffer, sizeof(packetBuffer));
     if (len == 0)
         return;
@@ -126,14 +126,14 @@ void loop() {
         uint8_t packetBuffer[MAX_PACKET_SIZE];
         int bytesRead = udp.read(packetBuffer, sizeof(packetBuffer));
         if (bytesRead > 0 &&
-            bytesRead >= static_cast<int>(sizeof(Diablo::PacketHeader))) {
-            Diablo::PacketHeader hdr;
+            bytesRead >= static_cast<int>(sizeof(daq::PacketHeader))) {
+            daq::PacketHeader hdr;
             memcpy(&hdr, packetBuffer, sizeof(hdr));
             switch (hdr.packet_type) {
-                case Diablo::PacketType::SERVER_HEARTBEAT: {
-                    Diablo::PacketHeader dummy;
-                    Diablo::ServerHeartbeatPacket sh;
-                    if (Diablo::parse_server_heartbeat_packet(
+                case daq::PacketType::SERVER_HEARTBEAT: {
+                    daq::PacketHeader dummy;
+                    daq::ServerHeartbeatPacket sh;
+                    if (daq::parse_server_heartbeat_packet(
                             packetBuffer, static_cast<size_t>(bytesRead), dummy,
                             sh)) {
                         last_server_heartbeat_ms = millis();
@@ -141,10 +141,10 @@ void loop() {
                     }
                     break;
                 }
-                case Diablo::PacketType::STACKLIGHT_COMMAND: {
-                    Diablo::PacketHeader dummy;
-                    Diablo::StacklightCommandPacket cmd;
-                    if (Diablo::parse_stacklight_command_packet(
+                case daq::PacketType::STACKLIGHT_COMMAND: {
+                    daq::PacketHeader dummy;
+                    daq::StacklightCommandPacket cmd;
+                    if (daq::parse_stacklight_command_packet(
                             packetBuffer, static_cast<size_t>(bytesRead), dummy,
                             cmd)) {
                         applyStacklightOutputs(cmd.red, cmd.yellow, cmd.green,

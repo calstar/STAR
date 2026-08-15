@@ -1,9 +1,9 @@
 #include "DiabloPacketUtils.h"
-#include "DAQv2-Comms.h"
+#include "daq-protocol.h"
 #include <cstring> // For memcpy
 #include <cstddef> // For size_t
 
-namespace Diablo {
+namespace daq {
 
 //==============================================================================
 // PACKET SERIALIZATION IMPLEMENTATIONS
@@ -777,4 +777,4 @@ bool parse_actuator_config_packet(const uint8_t *buffer, size_t buffer_size,
   return true;
 }
 
-} // namespace Diablo
+} // namespace daq

@@ -12,7 +12,7 @@
 #include "main.h"
 
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
+#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
@@ -47,7 +47,7 @@ ADS126X_ASSERT_FILTER_RATE(FILTER, DATA_RATE);
 static ADS126X ads126x;    // ADC1 — connectors 1 & 2
 static ADS126X ads126x_2;  // ADC2 — connectors 3 & 4
 SPIClass ADC_SPI(HSPI);
-std::vector<Diablo::SensorDataChunkCollection> dataChunks;
+std::vector<daq::SensorDataChunkCollection> dataChunks;
 
 static SensorHotfire::CoreState coreState;
 static SensorHotfire::Config coreConfig;
@@ -88,7 +88,7 @@ static void collect_chunk_impl() {
         return;
     const uint8_t* active_ids = coreState.stored_config.sensor_ids;
 
-    Diablo::SensorDataChunkCollection chunk(millis(), active_count);
+    daq::SensorDataChunkCollection chunk(millis(), active_count);
     for (uint8_t i = 0; i < active_count; i++) {
         const uint8_t conn = active_ids[i];
         set_connector_rtd(conn);
@@ -117,7 +117,7 @@ static void send_chunks_to_impl(IPAddress dest_ip, int dest_port,
         return;
     uint8_t packetBuffer[SENSOR_HOTFIRE_MAX_PACKET_SIZE];
     const uint8_t num_sensors = dataChunks[0].num_sensors;
-    size_t packetSize = Diablo::create_sensor_data_packet(
+    size_t packetSize = daq::create_sensor_data_packet(
         dataChunks, num_sensors, millis(), packetBuffer, sizeof(packetBuffer));
     if (packetSize == 0)
         return;
@@ -242,16 +242,16 @@ static void send_chunks_to_cb(void*, IPAddress dest_ip, int dest_port,
 
 static void run_self_test_cb(void*,
                              const SensorHotfire::StoredSensorConfig& cfg,
-                             std::vector<Diablo::SelfTestResult>& results_out) {
+                             std::vector<daq::SelfTestResult>& results_out) {
     // 1. ADC self-test (TDAC internal) for both ADCs
     auto adc1_result = SensorSelfTest::run_adc_self_test(
         ads126x, Pins.ADC_DRDY_1, ADS126X_REF_NEG_VSS, ADS126X_REF_POS_INT);
-    results_out.push_back(Diablo::SelfTestResult{
+    results_out.push_back(daq::SelfTestResult{
         0u, static_cast<uint8_t>(adc1_result.passed ? 1 : 0)});
 
     auto adc2_result = SensorSelfTest::run_adc_self_test(
         ads126x_2, Pins.ADC_DRDY_2, ADS126X_REF_NEG_VSS, ADS126X_REF_POS_INT);
-    results_out.push_back(Diablo::SelfTestResult{
+    results_out.push_back(daq::SelfTestResult{
         100u, static_cast<uint8_t>(adc2_result.passed ? 1 : 0)});
 
     // 2. Sensor bias continuity test
@@ -273,7 +273,7 @@ static void run_self_test_cb(void*,
                                                      static_cast<uint8_t>(ch2));
         uint8_t pass =
             (bias.result == SensorSelfTest::BiasResult::CONNECTED) ? 1u : 0u;
-        results_out.push_back(Diablo::SelfTestResult{id, pass});
+        results_out.push_back(daq::SelfTestResult{id, pass});
     }
 
     SensorSelfTest::sensor_bias_disable(ads126x);

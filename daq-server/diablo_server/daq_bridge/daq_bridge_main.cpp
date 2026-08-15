@@ -15,7 +15,7 @@
 #include <thread>
 #include <vector>
 
-#include "DAQv2-Comms.h"
+#include "daq-protocol.h"
 #include "comms/messages/board/BoardHeartbeatMessage.hpp"
 #include "comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "comms/messages/sensor/SensorMessages.hpp"
@@ -422,12 +422,12 @@ int main(int argc, char* argv[]) {
     for (const auto& [ip, cfg] : board_map) {
         if (cfg.board_id < 0 || !cfg.enabled || cfg.type == BoardType::ACTUATOR)
             continue;
-        Diablo::BoardHeartbeatPacket synthetic{};
+        daq::BoardHeartbeatPacket synthetic{};
         synthetic.board_id = static_cast<uint8_t>(cfg.board_id);
-        synthetic.engine_state = Diablo::EngineState::SAFE;
-        synthetic.board_state = Diablo::BoardState::SETUP;
-        Diablo::PacketHeader syn_hdr{};
-        syn_hdr.packet_type = Diablo::PacketType::BOARD_HEARTBEAT;
+        synthetic.engine_state = daq::EngineState::SAFE;
+        synthetic.board_state = daq::BoardState::SETUP;
+        daq::PacketHeader syn_hdr{};
+        syn_hdr.packet_type = daq::PacketType::BOARD_HEARTBEAT;
         syn_hdr.version = DIABLO_COMMS_VERSION;
         syn_hdr.timestamp =
             static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -558,9 +558,9 @@ int main(int argc, char* argv[]) {
             if (hb) {
                 discovery.process_board_announcement(hb->data.data(), hb->data.size(),
                                                      hb->source_ip);
-                Diablo::PacketHeader ph;
-                Diablo::BoardHeartbeatPacket hb_body;
-                if (Diablo::parse_board_heartbeat_packet(hb->data.data(), hb->data.size(), ph,
+                daq::PacketHeader ph;
+                daq::BoardHeartbeatPacket hb_body;
+                if (daq::parse_board_heartbeat_packet(hb->data.data(), hb->data.size(), ph,
                                                          hb_body)) {
                     uint8_t board_type_wire = fsw::daq_wire::kUnknown;
                     int elodin_board_id = -1;

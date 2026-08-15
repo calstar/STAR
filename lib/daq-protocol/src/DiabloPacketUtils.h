@@ -5,7 +5,7 @@
 #include <stdint.h>        // For standard integer types
 #include <vector>          // For std::vector
 
-namespace Diablo {
+namespace daq {
 
 //==============================================================================
 // PACKET SERIALIZATION (Struct -> uint8_t* Buffer)
@@ -291,4 +291,4 @@ bool parse_actuator_config_packet(const uint8_t *buffer, size_t buffer_size,
                                   std::vector<AbortPTLocation> &abort_pts_out,
                                   uint8_t &enable_serial_printing_out);
 
-} // namespace Diablo
+} // namespace daq

@@ -40,17 +40,17 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
         return std::nullopt;
     }
 
-    if (received < static_cast<ssize_t>(sizeof(Diablo::PacketHeader))) {
+    if (received < static_cast<ssize_t>(sizeof(daq::PacketHeader))) {
         return std::nullopt;
     }
 
-    Diablo::PacketHeader peek{};
+    daq::PacketHeader peek{};
     std::memcpy(&peek, receive_buffer_.data(), sizeof(peek));
 
-    if (peek.packet_type == Diablo::PacketType::SENSOR_DATA) {
-        Diablo::PacketHeader sensor_header;
-        std::vector<Diablo::SensorDataChunkCollection> chunks;
-        if (!Diablo::parse_sensor_data_packet(receive_buffer_.data(), static_cast<size_t>(received),
+    if (peek.packet_type == daq::PacketType::SENSOR_DATA) {
+        daq::PacketHeader sensor_header;
+        std::vector<daq::SensorDataChunkCollection> chunks;
+        if (!daq::parse_sensor_data_packet(receive_buffer_.data(), static_cast<size_t>(received),
                                               sensor_header, chunks)) {
             static size_t parse_fail_count = 0;
             if (++parse_fail_count <= 10 || parse_fail_count % 500 == 0) {
@@ -85,11 +85,11 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
         return batch;
     }
 
-    if (peek.packet_type == Diablo::PacketType::SELF_TEST) {
-        Diablo::PacketHeader st_header;
+    if (peek.packet_type == daq::PacketType::SELF_TEST) {
+        daq::PacketHeader st_header;
         uint8_t adc_good = 0;
-        std::vector<Diablo::SelfTestResult> st_results;
-        if (!Diablo::parse_self_test_packet(receive_buffer_.data(), static_cast<size_t>(received),
+        std::vector<daq::SelfTestResult> st_results;
+        if (!daq::parse_self_test_packet(receive_buffer_.data(), static_cast<size_t>(received),
                                             st_header, adc_good, st_results)) {
             std::cerr << "[Pipeline] SELF_TEST parse failed from " << last_source_ip_ << std::endl;
             return std::nullopt;
@@ -116,7 +116,7 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
         return batch;
     }
 
-    if (peek.packet_type == Diablo::PacketType::BOARD_HEARTBEAT) {
+    if (peek.packet_type == daq::PacketType::BOARD_HEARTBEAT) {
         last_heartbeat_buffer_.assign(receive_buffer_.data(),
                                       receive_buffer_.data() + static_cast<size_t>(received));
         last_heartbeat_source_ip_ = last_source_ip_;

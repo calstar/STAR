@@ -9,7 +9,7 @@
  */
 
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
+#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
@@ -51,23 +51,23 @@ unsigned long lastSendMs = 0;
 // ---------------------------------------------------------------------------
 static const char* packetTypeName(uint8_t t) {
     switch (t) {
-        case (uint8_t)Diablo::PacketType::BOARD_HEARTBEAT:
+        case (uint8_t)daq::PacketType::BOARD_HEARTBEAT:
             return "BOARD_HEARTBEAT";
-        case (uint8_t)Diablo::PacketType::SERVER_HEARTBEAT:
+        case (uint8_t)daq::PacketType::SERVER_HEARTBEAT:
             return "SERVER_HEARTBEAT";
-        case (uint8_t)Diablo::PacketType::SENSOR_DATA:
+        case (uint8_t)daq::PacketType::SENSOR_DATA:
             return "SENSOR_DATA";
-        case (uint8_t)Diablo::PacketType::ACTUATOR_COMMAND:
+        case (uint8_t)daq::PacketType::ACTUATOR_COMMAND:
             return "ACTUATOR_COMMAND";
-        case (uint8_t)Diablo::PacketType::SENSOR_CONFIG:
+        case (uint8_t)daq::PacketType::SENSOR_CONFIG:
             return "SENSOR_CONFIG";
-        case (uint8_t)Diablo::PacketType::ACTUATOR_CONFIG:
+        case (uint8_t)daq::PacketType::ACTUATOR_CONFIG:
             return "ACTUATOR_CONFIG";
-        case (uint8_t)Diablo::PacketType::ABORT:
+        case (uint8_t)daq::PacketType::ABORT:
             return "ABORT";
-        case (uint8_t)Diablo::PacketType::ABORT_DONE:
+        case (uint8_t)daq::PacketType::ABORT_DONE:
             return "ABORT_DONE";
-        case (uint8_t)Diablo::PacketType::CLEAR_ABORT:
+        case (uint8_t)daq::PacketType::CLEAR_ABORT:
             return "CLEAR_ABORT";
         default:
             return "UNKNOWN";
@@ -76,7 +76,7 @@ static const char* packetTypeName(uint8_t t) {
 
 void printReceivedPacket(const uint8_t* buf, size_t len, IPAddress fromIP,
                          uint16_t fromPort) {
-    if (!buf || len < sizeof(Diablo::PacketHeader)) {
+    if (!buf || len < sizeof(daq::PacketHeader)) {
         Serial.print("RECV: (invalid, too short) ");
         Serial.print(len);
         Serial.print(" bytes from ");
@@ -85,8 +85,8 @@ void printReceivedPacket(const uint8_t* buf, size_t len, IPAddress fromIP,
         Serial.println(fromPort);
         return;
     }
-    Diablo::PacketHeader h;
-    memcpy(&h, buf, sizeof(Diablo::PacketHeader));
+    daq::PacketHeader h;
+    memcpy(&h, buf, sizeof(daq::PacketHeader));
     Serial.print("RECV: [");
     Serial.print(packetTypeName((uint8_t)h.packet_type));
     Serial.print("] ");
@@ -108,7 +108,7 @@ void printReceivedPacket(const uint8_t* buf, size_t len, IPAddress fromIP,
 // ---------------------------------------------------------------------------
 void sendSensorPacket() {
     unsigned long ts = millis();
-    Diablo::SensorDataChunkCollection chunk(ts, NUM_SENSORS);
+    daq::SensorDataChunkCollection chunk(ts, NUM_SENSORS);
     float v0 = (float)(ts % 10000) / 1000.0f;
     float v1 = (float)((ts / 17) % 1000) / 100.0f;
     uint32_t b0, b1;
@@ -117,10 +117,10 @@ void sendSensorPacket() {
     chunk.add_datapoint(0, b0);
     chunk.add_datapoint(1, b1);
 
-    std::vector<Diablo::SensorDataChunkCollection> chunks;
+    std::vector<daq::SensorDataChunkCollection> chunks;
     chunks.push_back(chunk);
 
-    size_t n = Diablo::create_sensor_data_packet(
+    size_t n = daq::create_sensor_data_packet(
         chunks, NUM_SENSORS, millis(), packetBuffer, sizeof(packetBuffer));
     if (n == 0) {
         Serial.println("SENT: (create_sensor_data_packet failed)");

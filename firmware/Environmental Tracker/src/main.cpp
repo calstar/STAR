@@ -2,7 +2,7 @@
 
 #include <Adafruit_BME280.h>
 #include <Arduino.h>
-#include <DAQv2-Comms.h>
+#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
@@ -85,11 +85,11 @@ void loop() {
     int pkt_size = udp.parsePacket();
     if (pkt_size > 0) {
         int bytes_read = udp.read(pkt_buf, sizeof(pkt_buf));
-        if (bytes_read > 0 && static_cast<Diablo::PacketType>(pkt_buf[0]) ==
-                                  Diablo::PacketType::SERVER_HEARTBEAT) {
-            Diablo::PacketHeader hdr;
-            Diablo::ServerHeartbeatPacket data;
-            if (Diablo::parse_server_heartbeat_packet(pkt_buf, bytes_read, hdr,
+        if (bytes_read > 0 && static_cast<daq::PacketType>(pkt_buf[0]) ==
+                                  daq::PacketType::SERVER_HEARTBEAT) {
+            daq::PacketHeader hdr;
+            daq::ServerHeartbeatPacket data;
+            if (daq::parse_server_heartbeat_packet(pkt_buf, bytes_read, hdr,
                                                       data)) {
                 Serial.print("Server heartbeat received (t=");
                 Serial.print(hdr.timestamp);
@@ -108,7 +108,7 @@ void loop() {
         uint32_t press = (uint32_t)bme.readPressure();
         float hum = bme.readHumidity();
 
-        size_t n = Diablo::create_environmental_data_packet(
+        size_t n = daq::create_environmental_data_packet(
             temp, press, hum, millis(), pkt_buf, sizeof(pkt_buf));
         if (n > 0) {
             udp.beginPacket(server_ip, ENV_SERVER_PORT);
@@ -124,13 +124,13 @@ void loop() {
     if (now - last_heartbeat >= ENV_HEARTBEAT_INTERVAL_MS) {
         last_heartbeat = now;
 
-        Diablo::BoardHeartbeatPacket hb;
+        daq::BoardHeartbeatPacket hb;
         memcpy(hb.firmware_hash, FirmwareHash::get(), 32);
         hb.board_id = ENV_BOARD_ID;
-        hb.engine_state = Diablo::EngineState::SAFE;
-        hb.board_state = Diablo::BoardState::ACTIVE;
+        hb.engine_state = daq::EngineState::SAFE;
+        hb.board_state = daq::BoardState::ACTIVE;
 
-        size_t n = Diablo::create_board_heartbeat_packet(hb, millis(), pkt_buf,
+        size_t n = daq::create_board_heartbeat_packet(hb, millis(), pkt_buf,
                                                          sizeof(pkt_buf));
         if (n > 0) {
             udp.beginPacket(server_ip, ENV_SERVER_PORT);

@@ -266,7 +266,7 @@ std::vector<uint8_t> SensorAssignmentManager::generate_board_config_packet(uint8
     const auto& config = it->second;
 
     // Generate SENSOR_CONFIG packet using canonical DAQv2-Comms serializer so that
-    // the on-wire format exactly matches Diablo::parse_sensor_config_packet.
+    // the on-wire format exactly matches daq::parse_sensor_config_packet.
     // Body: num_sensors | sensor_ids | reference_voltage | necessary_for_abort
     //       | [controller_ip if necessary_for_abort] | enable_serial_printing
 
@@ -289,7 +289,7 @@ std::vector<uint8_t> SensorAssignmentManager::generate_board_config_packet(uint8
                                                std::chrono::steady_clock::now().time_since_epoch())
                                                .count() &
                                            0xFFFFFFFFu);
-    size_t written = Diablo::create_sensor_config_packet(
+    size_t written = daq::create_sensor_config_packet(
         sensor_ids, reference_voltage, necessary_for_abort, controller_ip, enable_serial_printing,
         ts_ms, buffer, sizeof(buffer));
 
