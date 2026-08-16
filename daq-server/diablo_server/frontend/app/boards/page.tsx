@@ -248,7 +248,7 @@ export default function BoardsPage() {
                                 testStatus === 'Failed' ? 'text-red-400' :
                                 testStatus === 'Pending' ? 'text-amber-400' : 'text-gray-500'
                               }`}>
-                                {testStatus === 'Passed' ? 'PASSED' :
+                                {testStatus === 'Passed' ? 'ALL PASSED' :
                                  testStatus === 'Failed' ? 'FAILED' :
                                  testStatus === 'Pending' ? 'PENDING' : 'UNTESTED'}
                               </span>
