@@ -1,10 +1,11 @@
 'use client'
 
 import { NavLink } from 'react-router-dom';
-import { ACTIVE_NAV_ITEMS, DEPRECATED_NAV_ITEMS, type NavItem } from '@/lib/nav-items';
+import { ACTIVE_NAV_ITEMS, DEPRECATED_NAV_ITEMS, resolveTabItems, type NavItem } from '@/lib/nav-items';
+import { useGuiConfig } from '@/lib/gui-config';
 
 // ── Single view card — navigates to the view's canonical route ───────────────
-function ViewCard({ item, muted }: { item: NavItem; muted?: boolean }) {
+function ViewCard({ item, muted, pinned }: { item: NavItem; muted?: boolean; pinned?: boolean }) {
   return (
     <NavLink
       to={item.path}
@@ -20,7 +21,7 @@ function ViewCard({ item, muted }: { item: NavItem; muted?: boolean }) {
           </span>
           {item.deprecated ? (
             <span className="text-[10px] font-semibold text-amber-400/80 flex-shrink-0 uppercase tracking-wider">Deprecated</span>
-          ) : item.common ? (
+          ) : pinned ? (
             <span className="text-[10px] font-semibold text-white flex-shrink-0 uppercase tracking-wider">Pinned</span>
           ) : null}
         </div>
@@ -43,13 +44,17 @@ function SectionHeader({ color, children }: { color: string; children: React.Rea
 
 // ── All Views: full grid of every navigable view, active + deprecated ────────
 export default function AllViewsPage() {
+  // Which views are "Pinned" is driven by config.toml [gui].tabs (same source as the
+  // TabBar), not the static nav-items `common` flag — so it updates when config changes.
+  const { tabs } = useGuiConfig();
+  const pinnedIds = new Set(resolveTabItems(tabs).map((i) => i.id));
   return (
     <main className="flex-1 bg-background text-text flex flex-col overflow-auto">
       <div className="w-full px-4 py-4 flex flex-col gap-3">
         <SectionHeader color="#22C55E">All Views</SectionHeader>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
           {ACTIVE_NAV_ITEMS.map((item) => (
-            <ViewCard key={item.id} item={item} />
+            <ViewCard key={item.id} item={item} pinned={pinnedIds.has(item.id)} />
           ))}
         </div>
 
