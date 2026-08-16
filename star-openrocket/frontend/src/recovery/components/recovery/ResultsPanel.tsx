@@ -112,8 +112,9 @@ export function ResultsPanel({ result, running, error }: {
               No safety factor is applied and no allowable is compared: a
               pass/fail verdict is intentionally deferred to a future update. */}
           <Stat
-            label="Max load (F_peak)"
+            label="Max load"
             value={num(cur.F_peak_max, 'force')} kind="force"
+            hint="The governing load to size to: the largest of every device's F_p,inf bound, its snatch load, and its numerical peak F_num."
             tone={CASE_META[active].category === 'structure' ? 'warning' : undefined}
           />
         </div>
@@ -327,7 +328,7 @@ function LoadsTable({ c }: { c: CaseResult }) {
   return (
     <Card
       title="Opening loads"
-      subtitle="Per device. The bound is infinite-mass; the peak applies the finite-mass reduction."
+      subtitle="Per device. F_num is the integrated peak and the load to size to; F_p,inf and F_p,fin are the analytic Pflanz figures. Hover a column for detail."
     >
       <div className="overflow-x-auto">
         <table className="w-full min-w-[720px] text-left text-xs">
@@ -346,10 +347,20 @@ function LoadsTable({ c }: { c: CaseResult }) {
               <th className="py-1.5 pr-3 text-right font-medium">Fill time (t_f)</th>
               <th className="py-1.5 pr-3 text-right font-medium" title="Ballistic parameter">Ballistic (A)</th>
               <th className="py-1.5 pr-3 text-right font-medium" title="Finite-mass reduction factor">Reduction (X1)</th>
-              <th className="py-1.5 pr-3 text-right font-medium" title="Infinite-mass bound">Bound (F_inf)</th>
-              <th className="py-1.5 pr-3 text-right font-medium">Peak (F_peak)</th>
+              <th className="py-1.5 pr-3 text-right font-medium"
+                  title="Pflanz infinite-mass opening bound. Gravity-free; a conservative upper bound only while above the validity floor.">
+                F<sub>p,inf</sub>
+              </th>
+              <th className="py-1.5 pr-3 text-right font-medium"
+                  title="Pflanz finite-mass expected opening load, F_p,inf * X1. Also gravity-free.">
+                F<sub>p,fin</sub>
+              </th>
+              <th className="py-1.5 pr-3 text-right font-medium text-[var(--color-text-primary)]"
+                  title="Numerical peak cord tension from the integrated trajectory - includes gravity and airframe drag. The physical peak, and the load to size to.">
+                F<sub>num</sub>
+              </th>
               <th className="py-1.5 text-right font-medium"
-                  title="Line-stretch shock: v_rel * sqrt(k_eff * mu), eq (34). Driven by v_rel, the separation velocity between body and canopy, and the harness stiffness k_eff - both set per device. The descent speed v_s does not enter it.">
+                  title="Line-stretch shock: v_rel * sqrt(k_eff * mu). Driven by v_rel, the separation velocity between body and canopy, and the harness stiffness k_eff - both set per device. The descent speed v_s does not enter it.">
                 Snatch load (F_s)
               </th>
             </tr>
@@ -360,7 +371,7 @@ function LoadsTable({ c }: { c: CaseResult }) {
                 <td className="py-1.5 pr-3 text-[var(--color-text-primary)]">
                   {d.device}
                   {d.below_validity_floor && (
-                    <Badge tone="danger" title="v_s is below the sqrt(g * s_f) floor - the infinite-mass figure stops being an upper bound here, so it errs low.">
+                    <Badge tone="danger" title="Deploys too slowly for F_p,inf to stay a bound — the real peak can be higher. Use F_num.">
                       below floor
                     </Badge>
                   )}
@@ -369,10 +380,11 @@ function LoadsTable({ c }: { c: CaseResult }) {
                 <td className="py-1.5 pr-3 text-right">{dec(d.t_fill, 3)} s</td>
                 <td className="py-1.5 pr-3 text-right">{dec(d.A, 3)}</td>
                 <td className="py-1.5 pr-3 text-right">{dec(d.X1, 3)}</td>
-                <td className="py-1.5 pr-3 text-right text-[var(--color-text-primary)]">
-                  {q(d.F_inf, 'force')}
-                </td>
+                <td className="py-1.5 pr-3 text-right">{q(d.F_inf, 'force')}</td>
                 <td className="py-1.5 pr-3 text-right">{q(d.F_peak, 'force')}</td>
+                <td className="py-1.5 pr-3 text-right text-[var(--color-text-primary)]">
+                  {d.F_num === null ? '—' : q(d.F_num, 'force')}
+                </td>
                 <td className="py-1.5 text-right">
                   {d.F_snatch === null
                     ? <span className="text-[var(--color-text-muted)]">no k_eff</span>

@@ -425,6 +425,9 @@ export interface DeviceLoads {
   F_inf: number
   /** Finite-mass peak, F_inf * X1. */
   F_peak: number
+  /** Numerical integrated peak, eq (21a) -- gravity and airframe drag included.
+   *  The physical peak, and the headline load. Null when no trajectory. */
+  F_num: number | null
   /** Snatch load, eq (34). Null when k_eff was not supplied. */
   F_snatch: number | null
   /** Inflation duration, eq (10). */

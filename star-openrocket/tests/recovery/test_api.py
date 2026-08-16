@@ -83,8 +83,8 @@ def test_simulate_matches_the_frontend_result_contract():
     assert set(sample) == {"t", "z", "v", "a", "F_T", "CdS_tot"}
 
     load = case["device_loads"][0]
-    for key in ("device", "v_s", "A", "X1", "F_inf", "F_peak", "F_snatch",
-                "t_fill", "below_validity_floor"):
+    for key in ("device", "v_s", "A", "X1", "F_inf", "F_peak", "F_num",
+                "F_snatch", "t_fill", "below_validity_floor"):
         assert key in load, key
 
     event = case["events"][0]

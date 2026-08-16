@@ -464,7 +464,7 @@ export function SweepForm({ value, onChange, vehicle }: {
                   type="checkbox"
                   checked={p.enabled}
                   title={derived
-                    ? 'Off runs the axial bound only. §6.4 wants both - the band is 2.1x on the design load.'
+                    ? 'Off runs the axial bound only. Both attitudes matter - the band is 2.1x on the design load.'
                     : undefined}
                   onChange={(e) => update(i, { enabled: e.target.checked })}
                   className="h-3.5 w-3.5 accent-[var(--color-accent)]"
@@ -474,7 +474,7 @@ export function SweepForm({ value, onChange, vehicle }: {
                 {p.label}
                 {derived && (
                   <Info>
-                    Derived from the airframe diameter and length by eqs (14) and (15),
+                    Derived from the airframe diameter and length,
                     so it tracks the vehicle and cannot disagree with it. Not editable:
                     this band is the largest single term in the model, and narrowing it
                     by hand is the one error the derived drag area exists to prevent.

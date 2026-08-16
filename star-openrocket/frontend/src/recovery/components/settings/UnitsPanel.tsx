@@ -39,7 +39,7 @@ const HELP: Partial<Record<Kind, string>> = {
   length: 'Airframe diameter and length, canopy nominal diameter.',
   distance: 'How far the observing stations are from the pad.',
   tempDelta: 'Temperature DIFFERENCES - the sounding profile’s error against '
-    + 'the eq (7) line, for instance. Separate from Temperature because a '
+    + 'the inferred profile, for instance. Separate from Temperature because a '
     + 'difference converts by the ratio alone: 1 K is 1.8 °F, not 33.8 °F.',
   lapse: 'How fast temperature falls with height. Stored per metre; K/km is '
     + 'already a display convention.',

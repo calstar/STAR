@@ -54,8 +54,8 @@ export const STUDY_VARS: StudyVar[] = [
   { key: 'h_a', scope: 'vehicle', label: 'Apogee', kind: 'altitude',
     help: 'How high the flight gets. Sets how long the descent has to run.' },
   { key: 'd_body', scope: 'vehicle', label: 'Airframe diameter', kind: 'length',
-    help: 'Body tube diameter. Feeds the airframe drag area through eqs (14) '
-        + 'and (15), so it moves the descent even before a canopy is out.' },
+    help: 'Body tube diameter. Feeds the airframe drag area, so it moves the '
+        + 'descent even before a canopy is out.' },
   { key: 'l_body', scope: 'vehicle', label: 'Airframe length', kind: 'length',
     help: 'Body tube length. Only enters through the broadside drag bound.' },
 
@@ -66,10 +66,10 @@ export const STUDY_VARS: StudyVar[] = [
         + 'deployed - trigger, delay, packing - stays as configured.' },
   { key: 'CdS', scope: 'device', label: 'Drag area (CdS)', kind: 'area',
     help: 'Full-open drag area. One atomic symbol - never a coefficient times '
-        + 'an area (§1.2). Prefer the canopy swap, which keeps D0 and mass '
+        + 'an area. Prefer the canopy swap, which keeps D0 and mass '
         + 'consistent with it.' },
   { key: 'D0', scope: 'device', label: 'Nominal diameter (D0)', kind: 'length',
-    help: 'Enters only through the filling distance, eq (9) - so it changes '
+    help: 'Enters only through the filling distance - so it changes '
         + 'how long the canopy takes to open, not how much it drags.' },
   { key: 'm_c', scope: 'device', label: 'Canopy mass', kind: 'mass',
     help: 'Canopy, lines and bag. Comes out of the descending mass, so a '
@@ -84,7 +84,7 @@ export const STUDY_VARS: StudyVar[] = [
   { key: 'n', scope: 'device', label: 'Filling constant (n)',
     help: 'Canopy diameters fallen during inflation. Sets the fill time.' },
   { key: 'Cx', scope: 'device', label: 'Opening coefficient (Cx)',
-    help: 'Eq (23). The dominant uncertainty in the model - worth sweeping '
+    help: 'The dominant uncertainty in the model - worth sweeping '
         + 'here only to see its effect; the Corners tab already bounds it.' },
   { key: 'j', scope: 'device', label: 'Cloth type (j)', integer: true,
     listOnly: true,
@@ -93,7 +93,7 @@ export const STUDY_VARS: StudyVar[] = [
     help: 'Body-to-canopy speed at line stretch. Drives the snatch load. NOT '
         + 'the descent speed.' },
   { key: 'k_eff', scope: 'device', label: 'Harness stiffness', kind: 'stiffness',
-    help: 'Series stiffness of the load path, eq (32). A softer harness cuts '
+    help: 'Series stiffness of the load path. A softer harness cuts '
         + 'the snatch load and does nothing to the opening load.' },
 
   // Last, because they vary the air rather than the vehicle. Both write the

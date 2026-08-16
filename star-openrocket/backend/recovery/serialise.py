@@ -9,6 +9,7 @@ and renaming would break a running app to no benefit:
     wire                    internal
     device                  DeviceLoads.name
     F_peak                  DeviceLoads.F_pflanz    (eq 28, finite-mass)
+    F_num                   DeviceLoads.F_T_peak    (eq 21a, integrated peak)
     t_fill                  DeviceLoads.t_f         (eq 10)
     below_validity_floor    not DeviceLoads.bound_valid
 
@@ -184,6 +185,7 @@ def device_loads_payload(per_device):
             "X1": dl.X1,
             "F_inf": dl.F_inf,
             "F_peak": dl.F_pflanz,     # eq (28), the finite-mass expectation
+            "F_num": dl.F_T_peak,      # eq (21a), integrated peak (gravity + drag)
             "F_snatch": dl.F_snatch,
             "t_fill": dl.t_f,          # eq (10)
             "below_validity_floor": not dl.bound_valid,

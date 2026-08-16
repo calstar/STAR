@@ -147,13 +147,13 @@ function integrate(
 /** §13.2, axial bound. Transcribed, not computed. */
 const DROGUE_LOADS: DeviceLoads = {
   device: 'drogue', v_s: 19.49, A: 12.4, X1: 0.94,
-  F_inf: 55, F_peak: 52, F_snatch: 1180, t_fill: 0.246,
+  F_inf: 55, F_peak: 52, F_num: 50, F_snatch: 1180, t_fill: 0.246,
   below_validity_floor: false,
 }
 
 const MAIN_LOADS: DeviceLoads = {
   device: 'main', v_s: 25.02, A: 0.309, X1: 0.266,
-  F_inf: 1613, F_peak: 430, F_snatch: 2090, t_fill: 0.512,
+  F_inf: 1613, F_peak: 430, F_num: 455, F_snatch: 2090, t_fill: 0.512,
   below_validity_floor: false,
 }
 
