@@ -52,6 +52,10 @@ const state = {
   elodinConnected: false,
   warnKeys: new Set<string>(),
   lastSession: null as any,
+  // Boards that produced a SELF_TEST.* SENSOR_UPDATE — proves the config→self-test
+  // lifecycle ran (i.e. config_broadcast reached the sim boards). A wrong-config
+  // service unit leaves this empty even though plain sensor data still flows.
+  selfTestBoards: new Set<string>(),
 };
 
 function connect(): Promise<WebSocket> {
@@ -82,7 +86,11 @@ function waitFor(ws: WebSocket, type: string, timeoutMs: number, pred?: (p: any)
 function attachObserver(ws: WebSocket): void {
   ws.on('message', (d) => {
     let m: WSMessage; try { m = JSON.parse(d.toString()); } catch { return; }
-    if (m.type === 'sensor_update') state.sensorUpdates++;
+    if (m.type === 'sensor_update') {
+      state.sensorUpdates++;
+      const ent = m.payload?.entity;
+      if (typeof ent === 'string' && ent.startsWith('SELF_TEST.')) state.selfTestBoards.add(ent.split('.')[1] ?? ent);
+    }
     else if (m.type === 'connection_status' && m.payload?.elodinConnected) state.elodinConnected = true;
     else if (m.type === 'session_update') state.lastSession = m.payload;
     else if (m.type === 'notification' && typeof m.payload?.key === 'string'
@@ -127,6 +135,11 @@ async function main(): Promise<void> {
   await sleep(6000);
   const flowed = state.sensorUpdates - before;
   assert(flowed > 50, `sensor data flowing (${flowed} SENSOR_UPDATE in 6s)`);
+  // Config→self-test lifecycle ran: sim boards received SENSOR_CONFIG and emitted
+  // SELF_TEST. Empty here means config_broadcast never reached the boards (e.g. a
+  // service unit wired to the hardware config instead of the sim overlay).
+  assert(state.selfTestBoards.size > 0,
+    `boards ran self-test (${state.selfTestBoards.size} boards: ${[...state.selfTestBoards].join(',') || 'none'})`);
 
   // Auto-stop at the deadline; warnings should have fired before it.
   const remaining = Math.max(0, DURATION_MS - (Date.now() - startedAt));
@@ -146,6 +159,16 @@ async function main(): Promise<void> {
   const dbDir2: string = active2.dbDir;
   const deadline1: number = active2.deadlineMs;
   assert(active2.active === true && active2.keepData === true, 'session_start (Save) → active, keepData');
+
+  // Data must flow AGAIN on the second run over the SAME long-lived WS connection.
+  // Start/Stop run bounces elodin to a fresh DB without restarting the backend, so
+  // a client that never reconnects must still receive the new run's data. (Regression
+  // guard for the "no data after stop→start until manual reload" class of bug.)
+  await waitFor(ws, 'connection_status', 30000, (p) => p.elodinConnected === true).catch(() => {});
+  const before2 = state.sensorUpdates;
+  await sleep(6000);
+  const flowed2 = state.sensorUpdates - before2;
+  assert(flowed2 > 50, `sensor data flowing after session restart (${flowed2} SENSOR_UPDATE in 6s, same WS connection)`);
 
   const extendedPromise = waitFor(ws, 'session_update', 8000, (p) => p.active && p.deadlineMs > deadline1);
   send(ws, 'send_command', { commandType: 'session_extend', data: { addMs: 120000 } });
