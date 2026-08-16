@@ -39,6 +39,7 @@ export default function BoardsPage() {
   const boardsMap = useSensorStore((s) => s.boards as Record<number, BoardStatus>);
   const sensorData = useSensorStore((s) => s.sensorData);
   const boardLogStats = useSensorStore((s) => s.boardLogStats);
+  const selfTestTs = useSensorStore((s) => s.selfTestTs);
   const ws = getWebSocketClient();
   /** Re-check BOARD_LIVE_TELEMETRY_STALE_MS vs lastHeartbeatMs on the same ~250ms cadence as sensor readouts. */
   useStaleRenderTick();
@@ -251,6 +252,11 @@ export default function BoardsPage() {
                                  testStatus === 'Failed' ? 'FAILED' :
                                  testStatus === 'Pending' ? 'PENDING' : 'UNTESTED'}
                               </span>
+                              {testStatus !== 'Untested' && selfTestTs[b.id] != null && (
+                                <span className="text-xs text-gray-500 font-mono" title="When this board last self-tested (persists across reconnects)">
+                                  at {formatConfigSentAt(selfTestTs[b.id])}
+                                </span>
+                              )}
                             </div>
                           </div>
                           <div className="flex-1 min-w-0">

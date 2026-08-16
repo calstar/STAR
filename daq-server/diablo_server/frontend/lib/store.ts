@@ -52,6 +52,10 @@ const BOARD_LOG_LINES_MAX = 300;
 
 interface SensorSystemState {
   sensorData: SensorData;
+  /** Latest SELF_TEST arrival time (epoch ms) per board id. Self-test is one-shot
+   *  at board activation and persists across reconnects, so the GUI timestamps it
+   *  and lets the operator judge currency. */
+  selfTestTs: Record<number, number>;
   _updateVersion?: number; // Bumps each flush; subscribe via useSensorDataVersion()
   /** Bumps ~4×/s so readouts re-evaluate SENSOR_DATA_STALE_MS without relying on sensorData changes. */
   _staleRenderTick?: number;
@@ -385,6 +389,7 @@ function flushSensorWrites() {
 
 export const useSensorStore = create<SensorSystemState>((set, get) => ({
   sensorData: {},
+  selfTestTs: {},
   _staleRenderTick: 0,
   actuators: new Map(),
   currentState: SystemState.IDLE,
@@ -454,6 +459,17 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
     // bursts often deliver calibrated PT rows slightly out of order vs raw; rejecting them left
     // pressure_psi stuck at 0 while raw_adc_counts kept updating.
     _sensorTimestamps[key] = Math.max(_sensorTimestamps[key] || 0, update.timestamp);
+
+    // Self-test is one-shot at board activation; capture its arrival time so the GUI
+    // can show WHEN it ran (a reconnecting board legitimately keeps its last result).
+    if (update.entity.startsWith('SELF_TEST.BOARD_')) {
+      const bid = parseInt(update.entity.slice('SELF_TEST.BOARD_'.length), 10);
+      if (Number.isFinite(bid)) {
+        set((s) => (update.timestamp > (s.selfTestTs[bid] ?? 0)
+          ? { selfTestTs: { ...s.selfTestTs, [bid]: update.timestamp } }
+          : {}));
+      }
+    }
 
     _pendingSensorWrites[key] = update.value;
 
