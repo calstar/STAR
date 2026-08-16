@@ -14,12 +14,13 @@ would be a silent coupling between two independent events.
 """
 
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from physics.constants import LBF_TO_N
 from physics.site import FAR_ELEV_CONFIRMED, FAR_ELEV_M, FAR_NAME
+from physics.wind import WindProfile
 
 
 class TriggerKind(str, Enum):
@@ -140,10 +141,23 @@ class Vehicle(BaseModel):
 
     z0: Optional[float] = Field(default=None, description="Initial altitude "
                                 "override, m AGL. Defaults to apogee.")
-    v0: Optional[float] = Field(default=None, description="Initial velocity "
-                                "override, m/s. Defaults to 0. Positive "
-                                "values are only meaningful for a device the "
-                                "eq (56) bound says survives.")
+    v0: Optional[float] = Field(default=None, description="Initial VERTICAL "
+                                "velocity override, m/s (positive up). Defaults "
+                                "to 0. Only meaningful for a device the eq (56) "
+                                "bound says survives an early deployment. NOT "
+                                "the lateral velocity -- see v_lat below.")
+
+    # Lateral (horizontal) GROUND velocity at apogee, e.g. a weathercocked rocket
+    # arriving sideways. The descent is now a coupled point mass (solver carries
+    # vx, vy), so this seeds the horizontal state; drag on the resultant
+    # air-relative velocity relaxes it toward the wind. Distinct from v0 (which is
+    # vertical). Default None -> 0, which reduces the coupled descent exactly to
+    # the 1-D vertical one.
+    v_lat: Optional[float] = Field(default=None, description="Lateral (horizontal) "
+                                   "GROUND speed at apogee, m/s. Default 0.")
+    v_lat_dir: Optional[float] = Field(default=None, description="Compass bearing "
+                                       "the lateral velocity points TOWARD, deg "
+                                       "clockwise from north (0=N, 90=E). Default 0.")
 
 
 class Site(BaseModel):
@@ -506,6 +520,47 @@ class Hardware(BaseModel):
         )
 
 
+class ConstantWind(BaseModel):
+    """A uniform wind: one speed and the bearing it blows FROM (met convention)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["constant"] = "constant"
+    speed: float = Field(ge=0.0, description="Wind speed, m/s.")
+    direction: float = Field(
+        description="Bearing the wind blows FROM, degrees clockwise from north "
+                    "(270 = a westerly). The met convention, matching a METAR.")
+
+    def to_profile(self, site_elev):
+        return WindProfile.constant(self.speed, self.direction, site_elev=site_elev)
+
+
+class ProfileWind(BaseModel):
+    """A tabulated wind profile: u (east) / v (north) m/s vs altitude MSL.
+
+    The frontend resolves a climatology month/percentile to these arrays before
+    posting -- values travel, not the recipe (see `PadState`/`Canopy`).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["profile"] = "profile"
+    heights_msl: List[float] = Field(min_length=1)
+    u: List[float] = Field(min_length=1)
+    v: List[float] = Field(min_length=1)
+
+    def to_profile(self, site_elev):
+        if not (len(self.heights_msl) == len(self.u) == len(self.v)):
+            raise ValueError(
+                "wind profile heights_msl, u and v must be the same length")
+        return WindProfile.from_grid(self.heights_msl, self.u, self.v,
+                                     site_elev=site_elev)
+
+
+#: The two shapes a wind can arrive in, discriminated on `kind`.
+WindInput = Union[ConstantWind, ProfileWind]
+
+
 class Config(BaseModel):
     """A complete run. This file is what the GUI saves and the CLI accepts."""
 
@@ -515,6 +570,12 @@ class Config(BaseModel):
     site: Site = Field(default_factory=Site)
     devices: List[Device] = Field(min_length=1)
     hardware: Optional[Hardware] = None
+
+    # Horizontal wind, promoted from the drift-only request so the WHOLE model is
+    # wind-aware: the coupled descent uses it for the deployment airspeed (-> loads)
+    # and the ground track, not just a post-process. None = still air, which
+    # reproduces the windless model exactly. Discriminated on `kind`.
+    wind: Optional[WindInput] = Field(default=None, discriminator="kind")
 
     # Which corners the §11.9 sweep visits. Lives on the config rather than
     # being a separate request body for two reasons: the GUI saves this file

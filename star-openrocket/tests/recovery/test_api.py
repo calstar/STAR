@@ -881,15 +881,20 @@ def test_crosscheck_rejects_an_unrunnable_config():
 
 
 def _drift_body(wind):
-    return {"config": load_fixture(), "wind": wind}
+    # Wind now rides on the config (config.wind), so the descent is wind-aware.
+    cfg = load_fixture()
+    cfg["wind"] = wind
+    return {"config": cfg}
 
 
-def test_drift_constant_wind_matches_speed_times_descent_time():
+def test_drift_constant_wind_is_just_under_speed_times_descent_time():
     with client() as c:
         body = c.post("/api/drift", json=_drift_body(
             {"kind": "constant", "speed": 8.0, "direction": 270.0})).json()
-    # A westerly blows toward the east: bearing 90, distance = speed*t.
-    assert abs(body["distance"] - 8.0 * body["descent_time"]) < 1e-3
+    # A westerly blows toward the east (bearing 90). The vehicle relaxes to the
+    # wind rather than matching it instantly, so drift is a hair under speed*t.
+    ideal = 8.0 * body["descent_time"]
+    assert 0.90 * ideal < body["distance"] < ideal
     assert abs(body["bearing_deg"] - 90.0) < 1e-3
     assert body["landing"]["x"] > 0.0
     assert abs(body["landing"]["y"]) < 1e-3

@@ -1,29 +1,20 @@
 """Downwind drift under recovery. PLAN.md §21 (Phase 2).
 
-Post-processing, not a second integration: it takes the descent a `solver.run`
-already produced and carries the vehicle sideways with the wind. That is
-sufficient here because the model is deliberately the **equilibrium** one --
+Now a thin reader over the **coupled** descent: `solver.integrate` carries the
+horizontal ground position `(x, y)` in its state, integrating the real
+equation of horizontal motion --
 
-    horizontally the only force on the canopy is drag, and drag drives its
-    horizontal velocity to match the local wind, so v_horizontal(z) = v_wind(z)
+    m dv_h/dt = -0.5 rho CdS |v_rel| (v_h - v_wind(z))
 
--- which needs only the altitude-vs-time history, not a coupled 2-D state. The
-same Cd*S that sets the descent rate is what couples the canopy to the wind, so
-there is no separate "how much wind it catches" term; a round (non-gliding)
-canopy simply goes where the air goes.
+so the canopy relaxes toward the local wind over the drag time
+`tau = 2m/(rho CdS |v_rel|)` rather than matching it instantly. That captures
+both the apogee lateral velocity (carried, then decaying) and the vehicle
+lagging a *changing* wind through shear -- neither of which the old
+`v_horizontal(z) = v_wind(z)` post-process could represent. With no wind and no
+lateral velocity the track is identically zero, exactly as before.
 
-Assumptions, all first-order and matching §21:
-  * **Horizontal wind only** -- no vertical air motion (thermals are left as
-    future uncertainty, not modelled here).
-  * **No response lag** -- the ~1 s relaxation to a new wind is neglected, so
-    the canopy is taken to match the wind instantly. This biases drift very
-    slightly high in shear, which is the conservative direction.
-  * **No pendulum / glide** -- a round canopy, so no net lift.
-
-This is the altitude-resolved version of the mastersheet's scalar estimate
-(`mastersheet.py`: drift = wind * descent_time). Integrating over the trajectory
-instead weights the wind by the time spent at each altitude, so the slow descent
-under the main correctly picks up more of the low-altitude wind.
+Assumptions still first-order and matching §21: horizontal wind only (no
+thermals), a round non-gliding canopy (no pendulum / lift).
 """
 
 import math
@@ -49,31 +40,23 @@ class DriftResult:
                 % (self.distance, self.bearing_deg))
 
 
-def compute_drift(run, wind):
-    """Integrate the wind over `run`'s descent. Returns a `DriftResult`.
+def compute_drift(run, wind=None):
+    """Read the coupled ground track off `run`. Returns a `DriftResult`.
 
-    `run` is a `solver.RunResult`; `wind` is a `wind.WindProfile`. The track
-    starts at the pad (0, 0) at apogee and accumulates by the trapezoid rule,
-    so it lands where the summed wind carried it.
+    `run` is a `solver.RunResult` whose trajectory already carries the integrated
+    horizontal position `(x, y)` (the wind, the apogee lateral velocity and shear
+    lag are all in the descent). `wind` is accepted for backward-compatible call
+    sites but is no longer needed -- the drift is the descent's own ground track.
     """
     t = np.asarray(run.traj.t, dtype=float)
     z = np.asarray(run.traj.z, dtype=float)
+    x = np.asarray(run.traj.x, dtype=float)
+    y = np.asarray(run.traj.y, dtype=float)
 
     if t.size < 2:
         # A degenerate run (never left the pad). No descent, no drift.
         zero = np.zeros(t.size)
         return DriftResult(t, z, zero, zero, 0.0, 0.0)
-
-    # Wind at each trajectory altitude. WindProfile is scalar per call; the
-    # trajectory is ~a few thousand samples, evaluated once.
-    u = np.array([wind.u(zi) for zi in z])
-    v = np.array([wind.v(zi) for zi in z])
-
-    dt = np.diff(t)
-    # Trapezoid: mean of the endpoint winds over each step, since the canopy
-    # moves with the local wind at every instant.
-    x = np.concatenate(([0.0], np.cumsum(0.5 * (u[:-1] + u[1:]) * dt)))
-    y = np.concatenate(([0.0], np.cumsum(0.5 * (v[:-1] + v[1:]) * dt)))
 
     x_end, y_end = float(x[-1]), float(y[-1])
     distance = math.hypot(x_end, y_end)

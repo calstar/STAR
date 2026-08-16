@@ -100,8 +100,8 @@ MODEL_DIFFERENCES = (
     },
     {
         "aspect": "Wind",
-        "ours": "None.",
-        "openrocket": "None.",
+        "ours": "Coupled: air-relative airspeed at each deploy (loads) + ground track.",
+        "openrocket": "None (ported landing stepper is windless).",
         "mastersheet": "Added to drift and first opening speed.",
     },
 )
@@ -252,6 +252,13 @@ def crosscheck(config, which="axial", wind_ms=0.0, latitude=None, atm=None):
     so §6.4's band is a property this comparison cannot share -- which is
     itself part of the finding.
     """
+    # Wind lives on the config now, so our descent is already wind-aware (it feeds
+    # the deployment airspeed -> loads, and the ground track). Drive the mastersheet
+    # from the SAME wind so the two wind-aware models are compared like-for-like;
+    # OpenRocket stays windless (its ported landing stepper has no wind).
+    if config.wind is not None:
+        wind_ms = config.wind.to_profile(config.site.z_site).speed(0.0)
+
     ours = evaluate(config, which=which, case="nominal", atm=atm)
     theirs = orx.simulate(config, latitude=latitude)
     sheet = run_mastersheet(config, theirs, wind_ms=wind_ms)

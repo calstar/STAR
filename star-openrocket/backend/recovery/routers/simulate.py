@@ -23,9 +23,8 @@ from physics.cases import (
     worst_by_category,
 )
 from physics.drift import compute_drift
-from physics.schema import Config
+from physics.schema import Config, ConstantWind, ProfileWind, WindInput  # noqa: F401
 from physics.solver import integrate
-from physics.wind import WindProfile
 
 router = APIRouter(prefix="/api", tags=["simulate"])
 
@@ -241,42 +240,12 @@ def run_sweep(config: Config, case: str = Query("nominal"),
 # --- drift (PLAN.md §21) ---------------------------------------------------
 
 
-class ConstantWind(BaseModel):
-    """A uniform wind: one speed and the bearing it blows from."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    kind: Literal["constant"] = "constant"
-    speed: float = Field(ge=0.0, description="Wind speed, m/s.")
-    direction: float = Field(
-        description="Bearing the wind blows FROM, degrees clockwise from north "
-                    "(270 = a westerly). The met convention, matching a METAR.")
-
-
-class ProfileWind(BaseModel):
-    """A tabulated wind profile: u (east) / v (north) m/s vs altitude MSL.
-
-    The frontend resolves a climatology month/percentile to these arrays before
-    posting -- values travel, not the recipe, the same way `PadState` and
-    `Canopy` carry resolved numbers rather than a lookup key (see schema.py).
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    kind: Literal["profile"] = "profile"
-    heights_msl: List[float] = Field(min_length=1)
-    u: List[float] = Field(min_length=1)
-    v: List[float] = Field(min_length=1)
-
-
-WindInput = Union[ConstantWind, ProfileWind]
-
-
 class DriftRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # Wind now rides on the config (config.wind), so the descent itself is
+    # wind-aware and the drift is just its ground track.
     config: Config
-    wind: WindInput = Field(discriminator="kind")
 
 
 # The ground track is smooth (no events), so a plain time stride is enough;
@@ -298,18 +267,6 @@ def _thin_track(drift):
          "x": float(drift.x[i]), "y": float(drift.y[i])}
         for i in idx
     ]
-
-
-def _wind_profile_from(wind, site_elev):
-    if isinstance(wind, ConstantWind):
-        return WindProfile.constant(wind.speed, wind.direction,
-                                    site_elev=site_elev)
-    if not (len(wind.heights_msl) == len(wind.u) == len(wind.v)):
-        raise HTTPException(
-            status_code=422,
-            detail="wind profile heights_msl, u and v must be the same length")
-    return WindProfile.from_grid(wind.heights_msl, wind.u, wind.v,
-                                 site_elev=site_elev)
 
 
 @router.post("/drift")
@@ -334,12 +291,19 @@ def run_drift(
                             detail="which must be 'axial' or 'broadside'")
     try:
         atm = _atmosphere(req.config)
+        # The descent reads config.wind and integrates the horizontal track, so
+        # the drift is simply that track (compute_drift reads run.traj.x/y).
         run = integrate(req.config, which, atm=atm)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    wind = _wind_profile_from(req.wind, req.config.site.z_site)
-    drift = compute_drift(run, wind)
+    drift = compute_drift(run)
+    # The wind the run actually saw at the ground, for the report.
+    if req.config.wind is not None:
+        wind = req.config.wind.to_profile(req.config.site.z_site)
+    else:
+        from physics.wind import WindProfile
+        wind = WindProfile.constant(0.0, 0.0, site_elev=req.config.site.z_site)
 
     return {
         "distance": drift.distance,

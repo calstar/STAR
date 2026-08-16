@@ -7,23 +7,34 @@ so it allocates nothing and calls nothing it does not need.
 from physics.devices import CdS_total
 
 
-def make_deriv(devices, states, m, CdS_body, atm):
+def make_deriv(devices, states, m, CdS_body, atm, wind):
     """Build the RHS closure for one segment.
 
-    State y = [z, v] with z geometric AGL and v positive up, so descent has
-    v < 0 (§1.1).
+    State y = [z, vz, x, vx, y, vy]: z geometric AGL (vz positive up, so descent
+    has vz < 0, §1.1), and the horizontal ground position/velocity (x east, y
+    north). A parachute trails the *resultant* airflow, so drag is
+    `0.5·rho·CdS·|v_rel|·v_rel` opposing the air-relative velocity
+    `v_rel = (vx - u_wind, vy - v_wind, vz)`, using the SAME CdS the descent uses.
+
+    At calm wind and zero horizontal velocity `|v_rel| = |vz|`, the horizontal
+    derivatives vanish, and the vertical row is exactly eq (17) -- i.e. this
+    reduces to the 1-D vertical descent.
     """
 
     rho_g = atm.rho_g
 
     def deriv(t, y):
-        z, v = y[0], y[1]
-        # Eq (17). The |v|v form makes drag oppose motion in either direction
-        # without a sign test; with v < 0 the drag term is positive (upward),
-        # as it must be.
+        z, vz, _x, vx, _y, vy = y
         CdS = CdS_total(devices, states, t, CdS_body)
         rho, g = rho_g(z)
-        return (v, -g - rho * CdS / (2.0 * m) * abs(v) * v)
+        # Air-relative velocity (wind is horizontal: u east, v north).
+        arx = vx - wind.u(z)
+        ary = vy - wind.v(z)
+        # |v_rel| couples horizontal and vertical: a big sideways speed raises the
+        # total drag on both. k already folds in the resultant speed.
+        k = rho * CdS / (2.0 * m) * (arx * arx + ary * ary + vz * vz) ** 0.5
+        # Vertical: eq (17) with |v_rel| in place of |vz| (identical when arx=ary=0).
+        return (vz, -g - k * vz, vx, -k * arx, vy, -k * ary)
 
     return deriv
 

@@ -20,12 +20,15 @@ device can trigger inside another's delay window -- a drogue with delay 1.0 s
 whose main crosses its altitude 0.4 s later.
 """
 
+import math
+
 import numpy as np
 from scipy.integrate import solve_ivp
 
 from physics.devices import CdS_of, CdS_total, DeviceState, airframe_band
 from physics.dynamics import make_deriv
 from physics.schema import TriggerKind
+from physics.wind import WindProfile
 
 T_MAX = 100000.0  # s; a run that reaches this has not converged
 RTOL = 1e-8
@@ -38,12 +41,17 @@ GROUND = "ground"
 
 
 class Trajectory:
-    """Resampled history plus the raw segments that produced it."""
+    """Resampled history plus the raw segments that produced it.
 
-    __slots__ = ("t", "z", "v", "a", "CdS", "F_T", "segments")
+    `x`/`y` are the horizontal ground track (east/north, m from the pad),
+    integrated by the coupled descent -- the drift model reads them directly.
+    """
 
-    def __init__(self, t, z, v, a, CdS, F_T, segments):
+    __slots__ = ("t", "z", "v", "a", "x", "y", "CdS", "F_T", "segments")
+
+    def __init__(self, t, z, v, a, x, y, CdS, F_T, segments):
         self.t, self.z, self.v, self.a = t, z, v, a
+        self.x, self.y = x, y
         self.CdS, self.F_T = CdS, F_T
         self.segments = segments
 
@@ -120,15 +128,32 @@ def integrate(config, which="axial", devices=None, atm=None, label="",
     states = [DeviceState() for _ in devices]
     warnings = []
 
+    # Horizontal wind. Promoted onto Config so the descent itself is wind-aware
+    # (deployment airspeed -> loads, and the ground track). None = still air, which
+    # makes `wind.u/v` identically 0 and leaves the descent 1-D.
+    if config.wind is not None:
+        wind = config.wind.to_profile(config.site.z_site)
+    else:
+        wind = WindProfile.constant(0.0, 0.0, site_elev=config.site.z_site)
+
+    # Coupled state [z, vz, x, vx, y, vy]. The horizontal seed is the apogee lateral
+    # GROUND velocity (a weathercocked rocket arriving sideways); default 0, which
+    # keeps `x=y=0` and reduces the run to the 1-D vertical descent.
+    v_lat = vehicle.v_lat or 0.0
+    r_lat = math.radians(vehicle.v_lat_dir or 0.0)
+    vx0 = v_lat * math.sin(r_lat)   # east
+    vy0 = v_lat * math.cos(r_lat)   # north
+
     t = 0.0
     y = np.array(
         [vehicle.z0 if vehicle.z0 is not None else vehicle.h_a,
-         vehicle.v0 if vehicle.v0 is not None else 0.0],
+         vehicle.v0 if vehicle.v0 is not None else 0.0,
+         0.0, vx0, 0.0, vy0],
         dtype=float,
     )
 
     segments = []
-    deriv = make_deriv(devices, states, m, CdS_body, atm)
+    deriv = make_deriv(devices, states, m, CdS_body, atm, wind)
 
     def ground_event(t_, y_):
         return y_[0]
@@ -162,7 +187,11 @@ def integrate(config, which="axial", devices=None, atm=None, label="",
                         s.fire(t_now, d.delay)
                         moved = True
                 if s.triggered and not s.stretched and s.t_d <= t_now + 1e-12:
-                    s.stretch(t_now, y_now[0], y_now[1], d, atm, atm.site_elev)
+                    # Horizontal air-relative speed at the event, so the loads see
+                    # the resultant deployment airspeed (0 in the windless 1-D case).
+                    s_h = math.hypot(y_now[3] - wind.u(y_now[0]),
+                                     y_now[5] - wind.v(y_now[0]))
+                    s.stretch(t_now, y_now[0], y_now[1], d, atm, atm.site_elev, s_h)
                     moved = True
 
     guard = 0
@@ -266,12 +295,12 @@ def integrate(config, which="axial", devices=None, atm=None, label="",
                (v_impact / v_settled) ** 2)
         )
 
-    traj = _resample(segments, devices, states, m, m_b, CdS_body, atm)
+    traj = _resample(segments, devices, states, m, m_b, CdS_body, atm, wind)
     return RunResult(traj, states, devices, atm, m, m_b, CdS_body,
                      t_ground, v_impact, warnings, label)
 
 
-def _resample(segments, devices, states, m, m_b, CdS_body, atm):
+def _resample(segments, devices, states, m, m_b, CdS_body, atm, wind):
     """Sample the dense output at <= LOAD_DT and evaluate loads there.
 
     §8.1: record max F_T sampled on the dense output at <= 5 ms, NOT at
@@ -282,7 +311,7 @@ def _resample(segments, devices, states, m, m_b, CdS_body, atm):
     segments, because `CdS_of` returns 0 for any t before that device's line
     stretch. There is no need to replay the state machine.
     """
-    ts, zs, vs = [], [], []
+    ts, zs, vs, xs, ys, vxs, vys = [], [], [], [], [], [], []
     for seg in segments:
         t0, t1 = float(seg.t[0]), float(seg.t[-1])
         if t1 <= t0:
@@ -291,27 +320,40 @@ def _resample(segments, devices, states, m, m_b, CdS_body, atm):
         grid = np.linspace(t0, t1, n)
         y = seg.sol(grid)
         ts.append(grid)
-        zs.append(y[0])
-        vs.append(y[1])
+        zs.append(y[0]); vs.append(y[1])
+        xs.append(y[2]); vxs.append(y[3])
+        ys.append(y[4]); vys.append(y[5])
 
     if not ts:
         empty = np.zeros(0)
-        return Trajectory(empty, empty, empty, empty, empty, empty, segments)
+        return Trajectory(empty, empty, empty, empty, empty, empty,
+                          empty, empty, segments)
 
     t = np.concatenate(ts)
     z = np.concatenate(zs)
     v = np.concatenate(vs)
+    x = np.concatenate(xs); vx = np.concatenate(vxs)
+    y_pos = np.concatenate(ys); vy = np.concatenate(vys)
 
     # Drop duplicated segment boundaries so event markers are unambiguous.
     keep = np.concatenate(([True], np.diff(t) > 1e-12))
     t, z, v = t[keep], z[keep], v[keep]
+    x, vx, y_pos, vy = x[keep], vx[keep], y_pos[keep], vy[keep]
 
     CdS = np.array([CdS_total(devices, states, ti, CdS_body) for ti in t])
     rho_g = np.array([atm.rho_g(zi) for zi in z])
     rho, g = rho_g[:, 0], rho_g[:, 1]
 
-    a = -g - rho * CdS / (2.0 * m) * np.abs(v) * v          # eq (17)
-    F_D_body = 0.5 * rho * CdS_body * v * v                 # eq (19)
+    # Resultant air-relative speed drives the drag (|v_rel|=|v| when windless and
+    # straight-down, so a/F_T are unchanged in the 1-D case).
+    u = np.array([wind.u(zi) for zi in z])
+    w = np.array([wind.v(zi) for zi in z])
+    v_rel = np.sqrt((vx - u) ** 2 + (vy - w) ** 2 + v * v)
+
+    a = -g - rho * CdS / (2.0 * m) * v_rel * v               # eq (17), coupled
+    # Airframe axial drag stays on the axial (vertical) airspeed -- the body drags
+    # along its axis, not the resultant -- so eq (19)/(20) are unchanged at calm.
+    F_D_body = 0.5 * rho * CdS_body * v * v                  # eq (19)
     F_T = m_b * (a + g) - F_D_body                          # eq (20)
 
-    return Trajectory(t, z, v, a, CdS, F_T, segments)
+    return Trajectory(t, z, v, a, x, y_pos, CdS, F_T, segments)

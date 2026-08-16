@@ -71,11 +71,19 @@ class DeviceState:
         self.t_x = t
         self.t_d = t + delay
 
-    def stretch(self, t, z, v, device, atm, site_elev):
-        """Line stretch. The only place v_s is defined, per eq (9a)."""
+    def stretch(self, t, z, v, device, atm, site_elev, s_h=0.0):
+        """Line stretch. The only place v_s is defined, per eq (9a).
+
+        `v` is the vertical speed and `s_h` the horizontal AIR-RELATIVE speed at
+        the event; the deployment airspeed the loads see is the resultant
+        `|v_rel| = hypot(v, s_h)`. `s_h` defaults to 0 (the 1-D windless case), so
+        a drogue at apogee with no sideways speed keeps its old `v_s = |v|`. A
+        sideways velocity also lifts a would-be zero-speed apogee deploy off the
+        floor below.
+        """
         self.t_d = t
         self.z_d = z
-        self.v_s = abs(v)
+        self.v_s = (v * v + s_h * s_h) ** 0.5
         if self.v_s <= 0.0:
             raise ValueError(
                 "device %r reached line stretch at zero speed, so eq (10) "
