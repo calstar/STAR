@@ -1096,6 +1096,10 @@ elodin.on('connected', () => {
 
 elodin.on('disconnected', () => {
   console.log('[ThinServer] Elodin DB disconnected');
+  // The data source is gone (run stopped / DB swap). Clear the freshness clock so a
+  // new run starts as "not delivering" (dataFresh=false) instead of briefly showing
+  // the stale previous run's fresh state — fixes the "Simulated Data" flash on start.
+  lastIngestMs = 0;
   broadcastConnectionStatus();
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
   clearSubscriptionState();
