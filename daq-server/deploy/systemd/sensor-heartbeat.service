@@ -5,7 +5,11 @@ After=network.target sensor-backend.service
 [Service]
 Type=simple
 WorkingDirectory=%h/sensor_system
-ExecStart=/bin/bash -c 'if [ -x ./build/bin/heartbeat_service ]; then exec ./build/bin/heartbeat_service --config config/config.toml; else exec python3 archive/legacy/python-services/heartbeat_service.py --config config/config.toml; fi'
+# Config defaults to hardware; the sim overlay points DAQ_CONFIG at the sim config
+# via the optional EnvironmentFile (absent on the server ⇒ no change).
+Environment=DAQ_CONFIG=config/config.toml
+EnvironmentFile=-%h/.config/daq/pipeline.env
+ExecStart=/bin/bash -c 'if [ -x ./build/bin/heartbeat_service ]; then exec ./build/bin/heartbeat_service --config ${DAQ_CONFIG}; else exec python3 archive/legacy/python-services/heartbeat_service.py --config ${DAQ_CONFIG}; fi'
 Restart=always
 RestartSec=5
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
