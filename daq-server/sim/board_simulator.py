@@ -147,6 +147,13 @@ class SimulatedBoard:
         # SETUP→SELF_TEST→ACTIVE path never runs — self-test UDP is never sent unless we
         # emit it once here (GUI + Playwright expect SELF_TEST.BOARD_* in sensorData).
         self._skip_startup_self_test_sent = False
+        # Self-test is a one-shot at activation, but on a session start it races the
+        # pipeline coming up (daq_bridge binding :5006, backend re-subscribing to the
+        # new Elodin DB). A single packet is often lost → no self-test shown. Re-send
+        # the same result a few times over the first seconds so at least one lands
+        # once the pipeline is ready. (Same idea as board_startup_sim's send burst.)
+        self._selftest_resend_until = 0.0  # wall-clock deadline; 0 = not arming
+        self._selftest_last_resend = 0.0
 
         self.running = False
         self.sock = None
@@ -266,10 +273,22 @@ class SimulatedBoard:
             ):
                 self._send_self_test()
                 self._skip_startup_self_test_sent = True
+                self._selftest_resend_until = now + 6.0  # re-send window (pipeline-startup race)
                 print(
                     f"[{self.name}] skip-startup: one-shot SELF_TEST sent (pass all active connectors)",
                     flush=True,
                 )
+
+            # --- Self-test re-send window: the result is one-shot, but a session start
+            # races the pipeline coming up, so resend it ~1 Hz for a few seconds after
+            # activation. Same values (idempotent in the backend cache); ensures delivery. ---
+            if (
+                self._selftest_resend_until > 0.0
+                and now < self._selftest_resend_until
+                and now - self._selftest_last_resend >= 1.0
+            ):
+                self._send_self_test()
+                self._selftest_last_resend = now
 
             # --- Send Heartbeat (all states, matching firmware) ---
             if now - last_heartbeat >= heartbeat_interval:
@@ -309,6 +328,7 @@ class SimulatedBoard:
                 # Firmware: run self-test once, send results, immediately go ACTIVE
                 # (SensorHotfireCore.h: SelfTest state is transient — same loop iteration)
                 self._send_self_test()
+                self._selftest_resend_until = time.time() + 6.0  # re-send window (pipeline-startup race)
                 self.board_state = BOARD_STATE_ACTIVE
                 print(
                     f"[{self.name}] SELF_TEST sent, transitioning to ACTIVE",
