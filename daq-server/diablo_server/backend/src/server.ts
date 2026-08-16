@@ -526,6 +526,12 @@ setInterval(markStaleBoards, 1000);
 // burst (multi-chunk board packets), forwarding at least one row per channel per
 // packet; DB *storage* keeps every row. See integration Test 15 for the invariant.
 
+// Authoritative "data is actually flowing" signal: epoch-ms of the last entity we
+// ingested from Elodin. The status badge derives dataFresh from this, so it reflects
+// real end-to-end delivery — not just "a run is marked active" or the WS being open.
+let lastIngestMs = 0;
+const DATA_FRESH_MS = 3000; // no ingest for this long ⇒ pipeline is not delivering
+
 const stats = {
   ingestEntityUpdatesReceived: 0,  // every finite-value entity parsed from Elodin DB
   // Raw physical channel samples (non-_Cal, canonical component only): exactly one
@@ -664,7 +670,7 @@ wss.on('connection', (ws: WebSocket, req) => {
   // Connection status
   send(ws, {
     type: MessageType.CONNECTION_STATUS, timestamp: Date.now(),
-    payload: { connected: true, elodinConnected: elodin.isConnected(), connId, simulated: isSimulated() },
+    payload: connectionStatusPayload({ connId }),
   });
   outboundMessages++;
   lastOutboundAt = Date.now();
@@ -1048,18 +1054,34 @@ function isSimulated(): boolean {
   return process.env.USE_SIM === '1';
 }
 
+// Single source of truth for the status badge. Every field is backend-observed —
+// no frontend guessing: connected (this socket), elodinConnected (backend↔Elodin
+// link), simulated (active simulated run), and dataFresh (we actually ingested a
+// row from Elodin within DATA_FRESH_MS — i.e. the pipeline is really delivering).
+function connectionStatusPayload(extra: Record<string, unknown> = {}) {
+  return {
+    connected: true,
+    elodinConnected: elodin.isConnected(),
+    simulated: isSimulated(),
+    dataFresh: Date.now() - lastIngestMs < DATA_FRESH_MS,
+    ...extra,
+  };
+}
+
 // Re-broadcast connection status (used when the simulated state flips on session
 // start/stop so the badge updates without waiting for an Elodin reconnect).
 function broadcastConnectionStatus(): void {
-  broadcast({
-    type: MessageType.CONNECTION_STATUS, timestamp: Date.now(),
-    payload: { connected: true, elodinConnected: elodin.isConnected(), simulated: isSimulated() },
-  });
+  broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: connectionStatusPayload() });
 }
+
+// Push the authoritative status ~1 Hz so dataFresh (and thus the badge) never goes
+// stale — otherwise it would only refresh on connect/elodin-flip and could show
+// "Simulated Data" long after the pipeline stopped delivering.
+setInterval(broadcastConnectionStatus, 1000);
 
 elodin.on('connected', () => {
   console.log('[ThinServer] Elodin Connected');
-  broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true, simulated: isSimulated() } });
+  broadcastConnectionStatus();
 
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
   shouldResubscribe = true;
@@ -1074,7 +1096,7 @@ elodin.on('connected', () => {
 
 elodin.on('disconnected', () => {
   console.log('[ThinServer] Elodin DB disconnected');
-  broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false, simulated: isSimulated() } });
+  broadcastConnectionStatus();
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
   clearSubscriptionState();
 });
@@ -1196,6 +1218,7 @@ elodin.on('packet', (header: any, payload: Buffer) => {
 
       const key = `${parsed.entity}.${parsed.component}`;
       stats.ingestEntityUpdatesReceived++;
+      lastIngestMs = Date.now();
 
       // Pre-downsample ingest rate (what boards/Elodin actually deliver) — not WS broadcast rate.
       recordBoardScanIngest(parsed.entity, parsed.component);

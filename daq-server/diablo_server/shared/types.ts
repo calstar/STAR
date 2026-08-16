@@ -200,6 +200,9 @@ export interface ConnectionStatus {
   error?: string;
   /** True when incoming data is synthetic (board simulator running). */
   simulated?: boolean;
+  /** Backend-authoritative: an Elodin row was ingested within the freshness window,
+   *  i.e. the pipeline is actually delivering data right now (not just "run active"). */
+  dataFresh?: boolean;
 }
 
 // Mission start time (T+0 from first packet)

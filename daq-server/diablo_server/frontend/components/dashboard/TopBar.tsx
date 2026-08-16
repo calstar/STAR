@@ -219,6 +219,10 @@ export default function TopBar() {
   const isConnected = connectionStatus.connected;
   const isFullyConnected = connectionStatus.connected && connectionStatus.elodinConnected;
   const isSimulated = !!connectionStatus.simulated;
+  // Backend-authoritative "pipeline is actually delivering data" — the badge shows
+  // Simulated/Connected only when this is true, so a run marked active but not yet
+  // (or no longer) producing data reads "Data Pipeline Down", never a stale badge.
+  const dataFresh = !!connectionStatus.dataFresh;
   // Session-enabled deployment with no active run: the pipeline is intentionally
   // down, so show "Session Stopped" rather than a "Data Pipeline Down" alarm.
   const sessionStopped = !!(session?.enabled && !session.active);
@@ -280,9 +284,9 @@ export default function TopBar() {
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isSimulated ? 'bg-purple-500' : isFullyConnected ? 'bg-green-500' : sessionStopped ? 'bg-gray-500' : isConnected ? 'bg-yellow-500' : 'bg-red-500'}`} />
+            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${!isConnected ? 'bg-red-500' : sessionStopped ? 'bg-gray-500' : dataFresh ? (isSimulated ? 'bg-purple-500' : 'bg-green-500') : 'bg-yellow-500'}`} />
             <span className="text-sm text-gray-300 font-semibold">
-              {isSimulated ? 'Simulated Data' : isFullyConnected ? 'Connected' : sessionStopped ? 'Session Stopped' : isConnected ? 'Data Pipeline Down' : 'Disconnected'}
+              {!isConnected ? 'Disconnected' : sessionStopped ? 'Session Stopped' : dataFresh ? (isSimulated ? 'Simulated Data' : 'Connected') : 'Data Pipeline Down'}
             </span>
           </div>
           {session?.enabled && (
