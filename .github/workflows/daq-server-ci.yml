@@ -317,6 +317,9 @@ jobs:
           echo "✅ No TODO/FIXME/HACK comments found"
         fi
 
+    - name: Config TOML has no underscore-separated numbers
+      run: python3 test/check_toml_no_underscore_ints.py
+
     - name: Check for large files
       run: |
         echo "Checking for large files..."
