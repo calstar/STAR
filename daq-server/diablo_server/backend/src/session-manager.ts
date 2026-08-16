@@ -77,6 +77,10 @@ class SessionManager {
   private readonly controller = new ServiceController(this.mode);
   private broadcast: Broadcast = () => {};
   private notify: Notify = () => {};
+  /** Fired after a run stops, so the server can revert board status to the
+   *  pristine config baseline (else boards keep a stale heartbeat timestamp and
+   *  read "---" instead of the disconnected baseline shown on fresh startup). */
+  private onStopped: () => void = () => {};
 
   private active = false;
   private dbDir: string | null = null;
@@ -87,9 +91,10 @@ class SessionManager {
   private warnTimers: NodeJS.Timeout[] = [];
   private stopTimer: NodeJS.Timeout | null = null;
 
-  init(broadcast: Broadcast, notify: Notify): void {
+  init(broadcast: Broadcast, notify: Notify, onStopped: () => void = () => {}): void {
     this.broadcast = broadcast;
     this.notify = notify;
+    this.onStopped = onStopped;
     if (!this.enabled) return;
     // Recover a session that outlived a backend restart.
     const persisted = loadSession();
@@ -243,6 +248,7 @@ class SessionManager {
     this.simulated = false;
     this.persist();
     this.emit();
+    this.onStopped(); // revert board status to the disconnected baseline
   }
 
   extend(addMs: number): void {

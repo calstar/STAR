@@ -1244,7 +1244,12 @@ httpServer.listen(WS_PORT, () => {
   console.log(`[ThinServer] Actuator service: localhost:${ACT_SVC_PORT}`);
   // Init the run-session manager last, once broadcast/notify + wss are live.
   // No-op (enabled=false) unless SESSION_SERVICE_MODE is mock/systemd.
-  sessionManager.init(broadcast, broadcastNotification);
+  // On run stop, re-baseline board status from config (clears stale heartbeat
+  // timestamps) so boards read "disconnected", matching fresh startup, instead of "---".
+  sessionManager.init(broadcast, broadcastNotification, () => {
+    loadBoardsFromConfig();
+    broadcastBoardStatus();
+  });
   // Board diagnostic logs (type-15 LOGS forwarded by daq_bridge over loopback UDP).
   startBoardLogReceiver(broadcast);
 });
