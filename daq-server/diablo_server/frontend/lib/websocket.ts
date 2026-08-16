@@ -36,6 +36,8 @@ export class WebSocketClient {
    *  restarted by Start/Stop run, so onopen does not re-fire and the data view
    *  would otherwise go stale (no historical backfill for the new run). */
   private lastElodinConnected = false;
+  /** Last session.active we saw, to detect a new run (Start run) and re-init data. */
+  private lastSessionActive = false;
   private staleCheckTimer: ReturnType<typeof setInterval> | null = null;
   private lastMessageTime = 0;
   private listeners: Map<string, Set<(payload: unknown) => void>> = new Map();
@@ -168,6 +170,7 @@ export class WebSocketClient {
           this.log('fallback_advance', { nextUrl, urlIndex: this.urlIndex });
         }
         this.lastElodinConnected = false;
+        this.lastSessionActive = false;
         this.notifyConnectionStatus({ connected: false, elodinConnected: false });
         this.scheduleReconnect();
       };
@@ -267,6 +270,16 @@ export class WebSocketClient {
       }
       this.lastElodinConnected = status.elodinConnected;
       this.notifyConnectionStatus(status);
+    }
+    // Belt-and-suspenders with the elodin-reconnect trigger above: a new run
+    // (session.active false→true) deterministically means a fresh DB, so re-run
+    // the data-init even if the elodin connection_status transition was missed.
+    if (message.type === MessageType.SESSION_UPDATE) {
+      const active = !!(message.payload as { active?: boolean } | null)?.active;
+      if (active && !this.lastSessionActive && this.ws?.readyState === WebSocket.OPEN) {
+        this.initDataStreams('session_start');
+      }
+      this.lastSessionActive = active;
     }
   }
 
