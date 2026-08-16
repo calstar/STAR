@@ -425,8 +425,25 @@ const selfTestNotifiedBoards = new Set<number>();
  *  Replayed as SENSOR_UPDATE on WS connect so late-connecting browsers see results. */
 const selfTestLatest = new Map<string, SensorUpdate>();
 
+// Rolling notification history so a reloaded/late-connecting browser recovers the
+// last few minutes of warnings/info instead of starting blank. Replayed on connect.
+const NOTIFICATION_BUFFER_MS = 5 * 60 * 1000;
+const NOTIFICATION_BUFFER_MAX = 500; // hard cap so a flapping alert can't grow it unbounded
+const notificationBuffer: { at: number; payload: NotificationPayload }[] = [];
+
+function pruneNotificationBuffer(now: number): void {
+  const cutoff = now - NOTIFICATION_BUFFER_MS;
+  while (notificationBuffer.length > 0 && notificationBuffer[0].at < cutoff) notificationBuffer.shift();
+  if (notificationBuffer.length > NOTIFICATION_BUFFER_MAX) {
+    notificationBuffer.splice(0, notificationBuffer.length - NOTIFICATION_BUFFER_MAX);
+  }
+}
+
 function broadcastNotification(payload: NotificationPayload): void {
-  broadcast({ type: MessageType.NOTIFICATION, timestamp: Date.now(), payload });
+  const at = Date.now();
+  notificationBuffer.push({ at, payload });
+  pruneNotificationBuffer(at);
+  broadcast({ type: MessageType.NOTIFICATION, timestamp: at, payload });
 }
 
 function boardLabel(status: BoardStatus): string {
@@ -725,6 +742,21 @@ wss.on('connection', (ws: WebSocket, req) => {
     }
     outboundMessages += selfTestLatest.size;
     lastOutboundAt = Date.now();
+  }
+
+  // Notification history: replay the last few minutes (chronological, so the
+  // client's keyed dedup reconstructs current vs cleared state) so a reloaded
+  // browser recovers recent warnings/info instead of starting blank.
+  {
+    const now = Date.now();
+    pruneNotificationBuffer(now);
+    for (const n of notificationBuffer) {
+      send(ws, { type: MessageType.NOTIFICATION, timestamp: n.at, payload: n.payload });
+    }
+    if (notificationBuffer.length > 0) {
+      outboundMessages += notificationBuffer.length;
+      lastOutboundAt = now;
+    }
   }
 
   // Historical data
