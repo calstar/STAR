@@ -21,6 +21,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -35,15 +36,19 @@ from .stability import (
     place_motor,
 )
 
+# Friends of Amateur Rocketry (FAR), Mojave -- the fixed launch site. Now shared
+# with the recovery calculator via physics/site.py (single source of truth), so
+# the ascent and the descent agree on where they fly.
+from physics.site import FAR_ELEV_M, FAR_LAT, FAR_LON  # noqa: E402
+
+if TYPE_CHECKING:  # hints only -- the env is duck-typed off .to_rocketpy()/.T()/.p()
+    from physics.atmosphere import Atmosphere
+    from physics.wind import WindProfile
+
 #: Sea-level ISA speed of sound, matching flight.py (Mach for our-margin overlay).
 A_SOUND = 340.29
 #: Number of evenly spaced samples returned to the client.
 _N_SAMPLES = 300
-# Friends of Amateur Rocketry (FAR), Mojave -- the fixed launch site. Mirrors the
-# recovery calculator's physics/site.py; kept here until that module merges in.
-FAR_ELEV_M = 630.0
-FAR_LAT = 35.353333
-FAR_LON = -117.807167
 #: Stub drag Cd(Mach): subsonic ~0.45 with a transonic bump. See FUTURE_IMPROVEMENTS.md.
 _STUB_DRAG = [[0.0, 0.45], [0.6, 0.48], [0.9, 0.55], [1.0, 0.62], [1.2, 0.58], [2.0, 0.48], [5.0, 0.40]]
 
@@ -73,6 +78,7 @@ class FlightDynamicsResult:
     mach: list[float]
     acceleration: list[float]       # m/s^2
     dynamic_pressure: list[float]   # Pa
+    wind_speed: list[float]         # m/s; ambient horizontal wind at the rocket's altitude
     angle_of_attack: list[float | None]    # deg; None where airspeed too low to define
     angle_from_vertical: list[float]       # deg; rocket axis tilt off straight-up
     stability_margin_rocketpy: list[float]  # cal (RocketPy's CP)
@@ -87,6 +93,7 @@ class FlightDynamicsResult:
     # summary scalars
     apogee: float
     apogee_time: float
+    burnout_time: float             # s from ignition (motor burn duration; ignition at t=0)
     max_speed: float
     max_mach: float
     max_acceleration: float
@@ -141,10 +148,8 @@ def _approx_inertia(mass: float, length: float, radius: float) -> tuple[float, f
     return i_long, i_long, i_roll
 
 
-def _wind_uv(speed: float, direction_from_deg: float) -> tuple[float, float]:
-    """(u_east, v_north) m/s from wind speed and the bearing it blows *from* (met. convention)."""
-    r = math.radians(direction_from_deg)
-    return -speed * math.sin(r), -speed * math.cos(r)
+#: Top of the ascent atmosphere column, m MSL -- above any apogee we simulate.
+_ATMOS_TOP_MSL = 30000.0
 
 
 def run_flight(
@@ -155,8 +160,8 @@ def run_flight(
     rail_length: float = 1.0,
     inclination: float = 85.0,
     heading: float = 0.0,
-    wind_speed: float = 0.0,
-    wind_direction: float = 0.0,
+    wind_profile: "WindProfile | None" = None,
+    atmosphere: "Atmosphere | None" = None,
     elevation: float = FAR_ELEV_M,
     latitude: float = FAR_LAT,
     longitude: float = FAR_LON,
@@ -165,19 +170,41 @@ def run_flight(
 ) -> FlightDynamicsResult:
     """Assemble RocketPy Environment + Rocket + Motor from ``geom`` and run to apogee.
 
+    ``wind_profile`` and ``atmosphere`` are the SAME shared-environment objects the
+    descent integrates (``physics.wind.WindProfile`` / ``physics.atmosphere.Atmosphere``),
+    so the ascent flies through identical air. Both default to None -- a calm ISA column
+    referenced to ``elevation`` -- for callers that do not supply an environment.
+
     ``our_margin_fn(t, mach)`` supplies our-CP static margin per sample for the overlay;
     when None the ``stability_margin_ours`` series is all None.
     """
     from rocketpy import Environment, Flight, Rocket
 
     env = Environment(latitude=latitude, longitude=longitude, elevation=elevation)
-    u, v = _wind_uv(wind_speed, wind_direction)
-    top = 30000.0
-    env.set_atmospheric_model(
-        type="custom_atmosphere",
-        wind_u=[[0, u], [top, u]],
-        wind_v=[[0, v], [top, v]],
-    )
+    top = _ATMOS_TOP_MSL
+    # One MSL grid shared by wind and the temperature/pressure column, so both are
+    # monotonic and span the whole flight regardless of a climatology profile's own
+    # (possibly single-level, possibly short) grid.
+    levels = np.linspace(elevation, top, 60)
+    if wind_profile is not None:
+        wind_u = [[float(h), float(wind_profile.u(h - elevation))] for h in levels]
+        wind_v = [[float(h), float(wind_profile.v(h - elevation))] for h in levels]
+    else:
+        wind_u = [[elevation, 0.0], [top, 0.0]]
+        wind_v = [[elevation, 0.0], [top, 0.0]]
+
+    atmos_model: dict = {"type": "custom_atmosphere", "wind_u": wind_u, "wind_v": wind_v}
+    if atmosphere is not None:
+        # RocketPy derives density from (p, T); a fraction-of-a-percent gas-constant
+        # difference vs Atmosphere.rho is acceptable -- it is the same column the
+        # descent uses, sampled onto the MSL grid.
+        atmos_model["temperature"] = [
+            [float(h), float(atmosphere.T(h - elevation))] for h in levels
+        ]
+        atmos_model["pressure"] = [
+            [float(h), float(atmosphere.p(h - elevation))] for h in levels
+        ]
+    env.set_atmospheric_model(**atmos_model)
 
     drag = drag_curve if drag_curve is not None else _STUB_DRAG
     rocket = Rocket(
@@ -213,7 +240,8 @@ def run_flight(
         verbose=False,
     )
 
-    return _sample(flight, env, elevation, our_margin_fn, launch_stable, geom)
+    return _sample(flight, env, elevation, our_margin_fn, launch_stable, geom,
+                   float(motor.burn_time))
 
 
 def _safe(fn, t: float, default: float = 0.0) -> float:
@@ -223,7 +251,8 @@ def _safe(fn, t: float, default: float = 0.0) -> float:
         return default
 
 
-def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom) -> FlightDynamicsResult:
+def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom,
+            burnout_time) -> FlightDynamicsResult:
     t_end = float(flight.apogee_time)
     ts = np.linspace(0.0, t_end, _N_SAMPLES)
 
@@ -231,15 +260,23 @@ def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom) -> Fligh
     # free-stream speed it is numerically singular (near apogee), so we null it out.
     _AOA_MIN_AIRSPEED = 15.0  # m/s
 
-    altitude, speed, mach, accel, q, aoa = [], [], [], [], [], []
+    altitude, speed, mach, accel, q, aoa, wind = [], [], [], [], [], [], []
     marg_rp, marg_ours, dx, dy, bend, wpitch, avert = [], [], [], [], [], [], []
     for t in ts:
         m = _safe(flight.mach_number, t)
-        altitude.append(_safe(flight.altitude, t) - 0.0)  # RocketPy altitude() is already AGL
+        alt = _safe(flight.altitude, t)  # RocketPy altitude() is already AGL
+        altitude.append(alt)
         speed.append(_safe(flight.speed, t))
         mach.append(m)
         accel.append(_safe(flight.acceleration, t))
         q.append(_safe(flight.dynamic_pressure, t))
+        # Ambient horizontal wind the rocket flies through at this instant -- read from
+        # the same environment column the ascent used, sampled at the rocket's altitude
+        # (env wind functions take height ASL). Constant wind reads flat; a climatology
+        # profile varies with height as the rocket climbs through the shear.
+        z_asl = alt + elevation
+        wind.append(math.hypot(_safe(env.wind_velocity_x, z_asl),
+                               _safe(env.wind_velocity_y, z_asl)))
         if _safe(flight.free_stream_speed, t) >= _AOA_MIN_AIRSPEED:
             # RocketPy's angle_of_attack is already in degrees (rad2deg(arccos(...)),
             # bounded [0, 180]) — do NOT re-convert. abs() guards any sign edge case.
@@ -292,6 +329,7 @@ def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom) -> Fligh
         mach=mach,
         acceleration=accel,
         dynamic_pressure=q,
+        wind_speed=wind,
         angle_of_attack=aoa,
         angle_from_vertical=avert,
         stability_margin_rocketpy=marg_rp,
@@ -304,6 +342,7 @@ def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom) -> Fligh
         fft_amplitude=fft_a,
         apogee=_safe(flight.altitude, t_end),
         apogee_time=t_end,
+        burnout_time=burnout_time,
         max_speed=float(flight.max_speed),
         max_mach=float(flight.max_mach_number),
         max_acceleration=float(flight.max_acceleration),
@@ -352,8 +391,8 @@ def simulate_flight_dynamics(
     rail_length: float = 1.0,
     inclination: float = 85.0,
     heading: float = 0.0,
-    wind_speed: float = 0.0,
-    wind_direction: float = 0.0,
+    wind_profile: "WindProfile | None" = None,
+    atmosphere: "Atmosphere | None" = None,
     elevation: float = FAR_ELEV_M,
     latitude: float = FAR_LAT,
     longitude: float = FAR_LON,
@@ -415,8 +454,8 @@ def simulate_flight_dynamics(
         rail_length=rail_length,
         inclination=inclination,
         heading=heading,
-        wind_speed=wind_speed,
-        wind_direction=wind_direction,
+        wind_profile=wind_profile,
+        atmosphere=atmosphere,
         elevation=elevation,
         latitude=latitude,
         longitude=longitude,

@@ -60,10 +60,12 @@ def test_absences_are_none_and_carry_a_reason(config):
     assert by_key["peak_decel"].values["mastersheet"] is None
     assert by_key["peak_decel"].note
 
-    # Only the mastersheet models wind.
+    # OpenRocket's ported landing stepper is windless, so its drift is the
+    # absence here; ours (coupled ground track) and the mastersheet both compute
+    # it -- 0 with no wind, but a computed 0, not a None.
     drift = by_key["drift"]
-    assert drift.values["ours"] is None
     assert drift.values["openrocket"] is None
+    assert drift.values["ours"] is not None
     assert drift.values["mastersheet"] is not None
     assert drift.note
 
@@ -85,8 +87,13 @@ def test_spread_ignores_models_that_did_not_answer(config):
         / min(by_key["F_peak"].values["ours"],
               by_key["F_peak"].values["mastersheet"]))
 
-    # One answer gives none at all.
-    assert by_key["drift"].spread is None
+    # Drift: OpenRocket did not answer (windless), but ours and the mastersheet
+    # did, so the spread is over those two -- not infinite from counting a None.
+    d = by_key["drift"]
+    assert d.values["openrocket"] is None
+    assert d.spread == pytest.approx(
+        max(d.values["ours"], d.values["mastersheet"])
+        / min(d.values["ours"], d.values["mastersheet"]))
 
 
 def test_the_three_agree_on_the_things_they_all_model(config):

@@ -33,7 +33,7 @@ System = Optional[Literal["metric", "imperial"]]
 
 
 class UnitPrefs(BaseModel):
-    """One field per `Kind` in frontend/src/lib/quantities.ts.
+    """One field per `Kind` in frontend/src/lib/units/quantities.ts.
 
     Spelled out rather than accepted as a free-form mapping so a typo'd key is
     a 422 the developer sees, not a preference that silently never applies.
@@ -68,7 +68,7 @@ class UnitPrefs(BaseModel):
 class Precision(BaseModel):
     """How precise every number in the GUI looks.
 
-    Two bounds, mirroring `Precision` in frontend/src/lib/quantities.ts. The
+    Two bounds, mirroring `Precision` in frontend/src/lib/units/quantities.ts. The
     ranges are enforced here as well as there because a value outside them --
     a negative decimal count in particular -- reaches `Number.toFixed` in the
     browser and throws, blanking the page. A 422 is a much better failure.

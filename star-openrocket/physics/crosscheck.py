@@ -22,7 +22,8 @@ not symmetric:
   * The mastersheet computes loads but **no trajectory in time** -- it assumes
     terminal velocity everywhere, so `a(t)` does not exist and its `z(t)` is a
     closed form rather than an integration.
-  * Only the mastersheet has wind, so only it has drift.
+  * Our model and the mastersheet both carry wind, so both have drift; only
+    OpenRocket's ported landing stepper is windless (an absence, not a zero).
 
 `Metric.values` therefore carries `None` for "this model does not compute
 this", and `Metric.note` says why. A caller that renders `None` as `0` has
@@ -34,6 +35,8 @@ from physics import mastersheet as ms
 from physics import openrocket as orx
 from physics.cases import evaluate
 from physics.constants import G0
+from physics.drift import compute_drift
+from physics.schema import ConstantWind
 
 # What each model is called on screen and in the CLI. Fixed order: ours first,
 # because the other two are being compared *to* it.
@@ -256,8 +259,16 @@ def crosscheck(config, which="axial", wind_ms=0.0, latitude=None, atm=None):
     # the deployment airspeed -> loads, and the ground track). Drive the mastersheet
     # from the SAME wind so the two wind-aware models are compared like-for-like;
     # OpenRocket stays windless (its ported landing stepper has no wind).
+    #
+    # Priority: an explicit config.wind wins. Otherwise, a bare `wind_ms` (the
+    # crosscheck tab's wind slider) is synthesised onto the config as a constant
+    # wind so OUR coupled descent sees it too -- not only the mastersheet. The
+    # bearing is arbitrary: drift distance does not depend on wind direction.
     if config.wind is not None:
         wind_ms = config.wind.to_profile(config.site.z_site).speed(0.0)
+    elif wind_ms > 0.0:
+        config = config.model_copy(
+            update={"wind": ConstantWind(speed=wind_ms, direction=270.0)})
 
     ours = evaluate(config, which=which, case="nominal", atm=atm)
     theirs = orx.simulate(config, latitude=latitude)
@@ -274,6 +285,10 @@ def crosscheck(config, which="axial", wind_ms=0.0, latitude=None, atm=None):
     ours_drogue = _v_before_ours(ours.run, last_deploy) if last_deploy else None
     or_drogue = _v_before(theirs, last_deploy) if last_deploy else None
     ms_drogue = sheet.phases[0].v_terminal if len(sheet.phases) > 1 else None
+
+    # Our drift is the coupled ground track's pad-to-landing distance: the descent
+    # integrates config.wind, so this is a real prediction, not descent-time x wind.
+    ours_drift = compute_drift(ours.run).distance
 
     metrics = [
         # Seconds have no imperial form, so no Kind -- see `Metric`.
@@ -313,11 +328,14 @@ def crosscheck(config, which="axial", wind_ms=0.0, latitude=None, atm=None):
         }, note="OpenRocket's figure is an artefact of opening the canopy "
                 "between two integration points, not a load prediction."),
         Metric("drift", "Drift in wind", "distance", {
-            "ours": None,
+            "ours": ours_drift,
             "openrocket": None,
             "mastersheet": sheet.drift,
-        }, note="Only the mastersheet models wind - descent time times wind "
-                "speed."),
+        }, note="Ours integrates the coupled ground track (the descent lags the "
+                "wind, so it is not simply descent time times wind speed); the "
+                "mastersheet is exactly that product. OpenRocket's ported "
+                "landing stepper is windless, so it has no drift - an absence, "
+                "not a zero."),
     ]
 
     warnings = list(config.warnings())

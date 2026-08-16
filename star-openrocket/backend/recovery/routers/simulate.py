@@ -254,7 +254,7 @@ class DriftRequest(BaseModel):
 _TRACK_MAX_POINTS = 300
 
 
-def _thin_track(drift):
+def _thin_track(drift, wind):
     n = len(drift.t)
     if n == 0:
         return []
@@ -267,7 +267,11 @@ def _thin_track(drift):
          "x": float(drift.x[i]), "y": float(drift.y[i]),
          # v/a carry the full descent trajectory for the Full Flight tab, which
          # glues this onto the ascent. GroundTrack ignores them.
-         "v": float(drift.v[i]), "a": float(drift.a[i])}
+         "v": float(drift.v[i]), "a": float(drift.a[i]),
+         # Ambient horizontal wind at this altitude -- same definition as the
+         # ascent's windSpeed, so the Full Flight plot can show one wind curve
+         # over the whole flight.
+         "wind": float(wind.speed(float(drift.z[i])))}
         for i in idx
     ]
 
@@ -313,7 +317,11 @@ def run_drift(
         "bearing_deg": drift.bearing_deg,
         "descent_time": run.t_ground,
         "landing": {"x": float(drift.x[-1]), "y": float(drift.y[-1])},
-        "track": _thin_track(drift),
+        "track": _thin_track(drift, wind),
+        # Descent events (line-stretch = deploy, trigger, inflation, ground) so
+        # the Full Flight tab can mark drogue/main deployment on the glued
+        # timeline. Times are seconds after apogee (descent t=0 is apogee).
+        "events": build_events(run),
         # What the physics actually used at the ground, so the report is not
         # asserting a wind the run did not see.
         "wind_ground": {

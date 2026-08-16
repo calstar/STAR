@@ -763,7 +763,7 @@ def test_the_write_leaves_no_temp_file_behind(settings_file, tmp_path):
 
 
 def test_every_kind_the_frontend_knows_about_is_accepted(settings_file):
-    """The field list here mirrors `Kind` in frontend/src/lib/quantities.ts.
+    """The field list here mirrors `Kind` in frontend/src/lib/units/quantities.ts.
     A kind added there and forgotten here is a 422 the user sees as a silent
     failure to save."""
     kinds = ("altitude", "length", "distance", "area", "mass", "speed",
@@ -809,7 +809,7 @@ def test_crosscheck_sends_absences_as_null_not_zero():
 
     assert by_key["F_peak"]["values"]["openrocket"] is None
     assert by_key["peak_decel"]["values"]["mastersheet"] is None
-    assert by_key["drift"]["values"]["ours"] is None
+    # OpenRocket is windless, so drift is its absence; ours is a computed number.
     assert by_key["drift"]["values"]["openrocket"] is None
     for key in ("F_peak", "peak_decel", "drift"):
         assert by_key[key]["note"], key
@@ -828,7 +828,7 @@ def test_crosscheck_metric_kinds_are_ones_the_frontend_knows():
     frontend has never heard of throws "Cannot read properties of undefined
     (reading 'undefined')" during render and React unmounts the app. It shipped
     exactly once, with `descent_time` carrying `kind: "time"` — and
-    `lib/quantities.ts` deliberately has no `time`, because seconds have no
+    `lib/units/quantities.ts` deliberately has no `time`, because seconds have no
     imperial form and a unit dropdown for them would be a control that does
     nothing.
 
@@ -838,7 +838,7 @@ def test_crosscheck_metric_kinds_are_ones_the_frontend_knows():
     """
     import re
 
-    source = (ROOT / "frontend" / "src" / "recovery" / "lib" / "quantities.ts").read_text(
+    source = (ROOT / "frontend" / "src" / "lib" / "units" / "quantities.ts").read_text(
         encoding="utf-8")
     match = re.search(r"export type Kind\s*=(.*?)\n\n", source, re.S)
     assert match, "could not find the Kind union in quantities.ts"
@@ -857,7 +857,7 @@ def test_crosscheck_metric_kinds_are_ones_the_frontend_knows():
             assert kind in known, "%s: %r is not a Kind" % (metric["key"], kind)
 
 
-def test_crosscheck_wind_moves_drift_and_nothing_else():
+def test_crosscheck_wind_moves_our_and_mastersheet_drift_not_openrocket():
     still = client().post("/api/crosscheck?wind=0", json=load_fixture()).json()
     windy = client().post("/api/crosscheck?wind=9.8", json=load_fixture()).json()
 
@@ -865,10 +865,14 @@ def test_crosscheck_wind_moves_drift_and_nothing_else():
         return {m["key"]: m["values"] for m in body["metrics"]}
 
     a, b = by_key(still), by_key(windy)
-    assert a["drift"]["mastersheet"] == 0.0
-    assert b["drift"]["mastersheet"] > 0.0
-    for key in ("descent_time", "impact_velocity", "impact_ke", "F_peak"):
-        assert a[key] == b[key], key
+    # Both wind-aware models gain drift; OpenRocket stays a windless absence.
+    assert a["drift"]["mastersheet"] == 0.0 and b["drift"]["mastersheet"] > 0.0
+    assert a["drift"]["ours"] == 0.0 and b["drift"]["ours"] > 0.0
+    assert b["drift"]["openrocket"] is None
+    # Our descent is coupled, so wind perturbs our vertical metrics too. The
+    # OpenRocket port is run windless, so its numbers must NOT move.
+    for key in ("descent_time", "impact_velocity", "impact_ke"):
+        assert a[key]["openrocket"] == b[key]["openrocket"], key
 
 
 def test_crosscheck_rejects_an_unrunnable_config():
@@ -914,9 +918,10 @@ def test_drift_track_is_time_ordered_and_starts_at_the_pad():
     track = body["track"]
     assert track[0]["x"] == 0.0 and track[0]["y"] == 0.0
     assert all(b["t"] >= a["t"] for a, b in zip(track, track[1:]))
-    # Wire contract: t,z,x,y for the ground-track plot, plus v,a so the Full
-    # Flight tab gets the whole descent trajectory from this one route.
-    assert set(track[0]) == {"t", "z", "x", "y", "v", "a"}
+    # Wire contract: t,z,x,y for the ground-track plot, plus v,a and the ambient
+    # wind so the Full Flight tab gets the whole descent trajectory (and one wind
+    # curve end to end) from this one route.
+    assert set(track[0]) == {"t", "z", "x", "y", "v", "a", "wind"}
 
 
 def test_drift_accepts_a_resolved_profile():

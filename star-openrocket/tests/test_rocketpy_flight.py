@@ -14,6 +14,11 @@ pytest.importorskip("rocketpy")
 
 from backend.motors.motor import Motor  # noqa: E402
 from backend.onshape.aero.rocketpy_flight import RocketGeom, run_flight  # noqa: E402
+from physics.atmosphere import Atmosphere  # noqa: E402
+from physics.wind import WindProfile  # noqa: E402
+
+#: The pad elevation `_run` launches from; the shared-env objects live on the same grid.
+_ELEV = 1400.0
 
 
 def _motor() -> Motor:
@@ -38,12 +43,16 @@ def _stable_geom() -> RocketGeom:
 def _run(**kw):
     return run_flight(
         _stable_geom(), _motor(), motor_position_from_nose=1.5, rail_length=3.0,
-        inclination=88, heading=0, elevation=1400, our_margin_fn=lambda t, m: 2.0, **kw,
+        inclination=88, heading=0, elevation=_ELEV, our_margin_fn=lambda t, m: 2.0, **kw,
     )
 
 
+def _wind(speed: float, direction: float = 270.0) -> WindProfile:
+    return WindProfile.constant(speed, direction, site_elev=_ELEV)
+
+
 def test_stable_flight_is_well_formed():
-    res = _run(wind_speed=6.0, wind_direction=270.0)
+    res = _run(wind_profile=_wind(6.0))
     assert res.launch_stable is True
     assert res.apogee > 100.0
     assert 0.0 < res.max_mach < 5.0
@@ -59,6 +68,16 @@ def test_stable_flight_is_well_formed():
 
 
 def test_wind_drives_downwind_drift():
-    calm = _run(wind_speed=0.0, wind_direction=270.0)
-    windy = _run(wind_speed=8.0, wind_direction=270.0)
+    calm = _run(wind_profile=_wind(0.0))
+    windy = _run(wind_profile=_wind(8.0))
     assert windy.drift_distance > calm.drift_distance  # wind moves the apogee point
+
+
+def test_shared_atmosphere_couples_to_apogee():
+    """The ascent flies through the same Atmosphere the descent uses, so a warmer
+    (thinner) pad column -> less drag -> a measurably higher apogee. This is the
+    coupling the Environment tab exists to make real."""
+    cold = _run(atmosphere=Atmosphere(_ELEV, T_pad=250.0))
+    hot = _run(atmosphere=Atmosphere(_ELEV, T_pad=320.0))
+    assert cold.apogee > 100.0 and hot.apogee > 100.0
+    assert hot.apogee > cold.apogee

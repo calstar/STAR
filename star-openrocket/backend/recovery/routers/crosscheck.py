@@ -154,10 +154,11 @@ def _mastersheet_events(result):
 def run_crosscheck(config: Config, wind: float = Query(0.0, ge=0.0)):
     """Run all three models on one config.
 
-    `wind` feeds the mastersheet's drift estimate only. Our descent and the
-    OpenRocket one are windless either way -- Phase 1 has no wind (§3, §14) and
-    the OpenRocket port is run without it so the two trajectories stay
-    comparable.
+    `wind` (m/s) drives both wind-aware models: our coupled descent computes a
+    real ground-track drift under it, and the mastersheet its descent-time x
+    wind estimate. An explicit `config.wind` (set on the Drift tab) takes
+    precedence. Only the OpenRocket port stays windless -- it is run without
+    wind so its trajectory stays comparable, so its drift is an absence.
     """
     try:
         atm = Atmosphere(config.site.z_site, config.site.T_pad,

@@ -32,6 +32,10 @@ class PadRequest(BaseModel):
                                       "no elevation field at all.")
     T_pad: float | None = Field(default=None, gt=0.0)
     p_pad: float | None = Field(default=None, gt=0.0)
+    lapse: float | None = Field(default=None,
+                                description="Measured lapse rate, K/m (negative "
+                                            "for a cooling column). None re-fits "
+                                            "eq (7) from T_pad, as before.")
     max_altitude: float = Field(default=4000.0, gt=0.0,
                                 description="Profile ceiling, m AGL")
     samples: int = Field(default=40, ge=2, le=500)
@@ -40,7 +44,7 @@ class PadRequest(BaseModel):
 @router.post("/atmosphere")
 def resolve_pad(req: PadRequest):
     try:
-        atm = Atmosphere(req.z_site, req.T_pad, req.p_pad)
+        atm = Atmosphere(req.z_site, req.T_pad, req.p_pad, req.lapse)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

@@ -38,7 +38,13 @@ if _APP_ROOT not in _sys.path:
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+# The shared environment models: the flight-dynamics ascent now flies through the
+# same site atmosphere and wind the recovery descent integrates (physics/ library).
+from physics.atmosphere import Atmosphere  # noqa: E402
+from physics.schema import Site, WindInput  # noqa: E402
+from physics.site import FAR_ELEV_M  # noqa: E402
 
 from .onshape.aero.axis import Axis
 from .onshape.aero.fins import (
@@ -261,9 +267,11 @@ class FlightDynamicsRequest(StabilityRequest):
     inclination: float = 85.0
     #: Rail heading / azimuth (deg from north).
     heading: float = 0.0
-    #: Constant wind speed (m/s) and the compass bearing it blows *from* (deg).
-    windSpeed: float = 0.0
-    windDirection: float = 0.0
+    #: The shared environment (set on the Environment tab, same objects the descent
+    #: uses): the wind the ascent climbs through and the site atmosphere it flies in.
+    #: Both optional -- absent wind is calm; absent site is the standard column at FAR.
+    wind: WindInput | None = Field(default=None, discriminator="kind")
+    site: Site | None = None
 
 
 def _model_dir(model_id: str) -> Path:
@@ -539,6 +547,23 @@ async def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
         raise HTTPException(status_code=404, detail=f"unknown motor {request.motor.motorId}")
 
     rail_length = request.railLength if request.railLength and request.railLength > 0 else 1.0
+
+    # The shared environment: build the SAME wind profile and atmosphere column the
+    # recovery descent integrates, so the ascent flies through identical air. Elevation
+    # is the fixed FAR pad on both sides. Absent wind -> calm; absent site -> the
+    # standard column, but still via physics/atmosphere so both halves agree.
+    site = request.site
+    wind_profile = request.wind.to_profile(FAR_ELEV_M) if request.wind is not None else None
+    try:
+        atmosphere = Atmosphere(
+            FAR_ELEV_M,
+            T_pad=site.T_pad if site else None,
+            p_pad=site.p_pad if site else None,
+            lapse=site.lapse if site else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     try:
         result = simulate_flight_dynamics(
             store,
@@ -553,8 +578,8 @@ async def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
             rail_length=rail_length,
             inclination=request.inclination,
             heading=request.heading,
-            wind_speed=request.windSpeed,
-            wind_direction=request.windDirection,
+            wind_profile=wind_profile,
+            atmosphere=atmosphere,
         )
     except ModuleNotFoundError as exc:
         raise HTTPException(
@@ -572,6 +597,7 @@ async def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
             "mach": result.mach[i],
             "acceleration": result.acceleration[i],
             "dynamicPressure": result.dynamic_pressure[i],
+            "windSpeed": result.wind_speed[i],
             "angleOfAttack": result.angle_of_attack[i],
             "angleFromVertical": result.angle_from_vertical[i],
             "stabilityMarginRocketpy": result.stability_margin_rocketpy[i],
@@ -589,6 +615,7 @@ async def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
         "fft": {"frequency": result.fft_frequency, "amplitude": result.fft_amplitude},
         "apogee": result.apogee,
         "apogeeTime": result.apogee_time,
+        "burnoutTime": result.burnout_time,
         "maxSpeed": result.max_speed,
         "maxMach": result.max_mach,
         "maxAcceleration": result.max_acceleration,
