@@ -28,8 +28,8 @@ import {
   parsePrefs,
   toDisplay,
   unitFor,
-} from './quantities'
-import type { Kind, UnitPrefs } from './quantities'
+} from '../../lib/units/quantities'
+import type { Kind, UnitPrefs } from '../../lib/units/quantities'
 import { cornersKey, defaultUiConfig, physicsKey, studyKey } from './serialise'
 
 describe('the exact factors stay exact', () => {

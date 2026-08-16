@@ -12,11 +12,9 @@ import { RecoveryPanel } from './components/recovery/RecoveryPanel'
 import { CornersPanel } from './components/corners/CornersPanel'
 import { StudyPanel } from './components/study/StudyPanel'
 import { CrosscheckPanel } from './components/crosscheck/CrosscheckPanel'
-import { AtmospherePanel } from './components/atmosphere/AtmospherePanel'
 import { DriftPanel } from './components/drift/DriftPanel'
-import { UnitsPanel } from './components/settings/UnitsPanel'
 
-type Tab = 'recovery' | 'corners' | 'study' | 'drift' | 'crosscheck' | 'atmosphere' | 'units'
+type Tab = 'recovery' | 'corners' | 'study' | 'drift' | 'crosscheck'
 
 const TABS: { id: Tab; label: string; hint: string; accent: string }[] = [
   { id: 'recovery', label: 'Setup & Basic Run', hint: 'Descent, loads and off-nominal cases',
@@ -30,10 +28,6 @@ const TABS: { id: Tab; label: string; hint: string; accent: string }[] = [
   { id: 'crosscheck', label: 'Cross-check',
     hint: 'This tool vs OpenRocket vs the recovery mastersheet',
     accent: 'border-rose-500 text-rose-400' },
-  { id: 'atmosphere', label: 'Atmospheric Data', hint: 'Measured climatology at FAR',
-    accent: 'border-emerald-500 text-emerald-400' },
-  { id: 'units', label: 'Units', hint: 'Which unit each quantity displays in',
-    accent: 'border-[var(--color-text-muted)] text-[var(--color-text-primary)]' },
 ]
 
 interface Props {
@@ -95,12 +89,6 @@ export function RecoveryTab({ ui, onChange, design }: Props) {
           </div>
           <div className={tab === 'crosscheck' ? '' : 'hidden'}>
             <CrosscheckPanel ui={ui} />
-          </div>
-          <div className={tab === 'atmosphere' ? '' : 'hidden'}>
-            <AtmospherePanel />
-          </div>
-          <div className={tab === 'units' ? '' : 'hidden'}>
-            <UnitsPanel />
           </div>
         </div>
       </div>

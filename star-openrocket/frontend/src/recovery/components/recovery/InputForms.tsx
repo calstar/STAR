@@ -10,12 +10,12 @@ import type { StationPad } from '../../api/client'
 import { getStationPad } from '../../api/client'
 import type { DesignSource, InputSources, TempProfile, UiConfig, UiSite, Vehicle } from '../../types/schema'
 import type { SweepParam } from '../../types/schema'
-import type { Kind } from '../../lib/quantities'
+import type { Kind } from '../../../lib/units/quantities'
 import type { LapseTable, PadNormals } from '../../lib/climatology'
 import { SOURCES } from '../../lib/climatology'
 import { Badge, Card, Field, Info, NumberInput, Select, Stat, UnitInput } from '../ui'
 import { airframeBand, monthName } from '../../lib/units'
-import { useUnits } from '../../lib/unitsContext'
+import { useUnits } from '../../../lib/units/unitsContext'
 
 const grid = 'grid grid-cols-2 gap-3'
 
@@ -552,23 +552,20 @@ function Bound({ value, kind, disabled, onChange }: {
 }
 
 /** Everything at once, in the order §11.3 lists it. */
-export function InputColumn({ ui, onChange, design, lapseByMonth, padNormals }: {
+export function InputColumn({ ui, onChange, design }: {
   ui: UiConfig
   onChange: (v: UiConfig) => void
   design: DesignSource
-  lapseByMonth: LapseTable
-  padNormals: PadNormals
 }) {
   return (
     <div className="space-y-4">
       <VehicleForm value={ui.vehicle} onChange={(v) => onChange({ ...ui, vehicle: v })}
                    design={design} sources={ui.sources}
                    onSourcesChange={(s) => onChange({ ...ui, sources: s })} />
-      <SiteForm value={ui.site} onChange={(v) => onChange({ ...ui, site: v })}
-                lapseByMonth={lapseByMonth} padNormals={padNormals} />
-      {/* SweepForm is NOT here. The corner bounds only affect the Corners tab,
-          so they live with the sweep they control -- and keeping them off this
-          column means editing them cannot trigger a simulate re-run. */}
+      {/* The Site atmosphere moved to the top-level Environment tab (shared with the
+          ascent). SweepForm is NOT here either: the corner bounds only affect the
+          Corners tab, so they live with the sweep they control -- and keeping them off
+          this column means editing them cannot trigger a simulate re-run. */}
     </div>
   )
 }

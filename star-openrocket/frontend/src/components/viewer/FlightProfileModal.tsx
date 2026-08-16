@@ -21,6 +21,7 @@ import {
 } from 'recharts'
 
 import type { FlightResult } from '../../types'
+import { useUnits } from '../../lib/units/unitsContext'
 import {
   AXIS,
   GRID,
@@ -51,11 +52,21 @@ function Tile({ label, value, sub }: { label: string; value: string; sub?: strin
 }
 
 export function FlightProfileModal({ result, busy, error, onClose }: Props) {
+  const { val, lab, q } = useUnits()
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  // Chart data pre-scaled to the chosen display units (static margin stays cal).
+  const chartData = (result?.samples ?? []).map((s) => ({
+    t: s.t,
+    altitude: val(s.altitude, 'altitude'),
+    velocity: val(s.velocity, 'speed'),
+    acceleration: val(s.acceleration, 'accel'),
+    staticMargin: s.staticMargin,
+  }))
 
   return createPortal(
     <div
@@ -93,15 +104,15 @@ export function FlightProfileModal({ result, busy, error, onClose }: Props) {
               )}
 
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
-                <Tile label="Apogee" value={`${result.apogee.toFixed(0)} m`} sub={`at ${result.apogeeTime.toFixed(1)} s`} />
-                <Tile label="Max velocity" value={`${result.maxVelocity.toFixed(0)} m/s`} sub={`Mach ${(result.maxVelocity / 340.29).toFixed(2)}`} />
-                <Tile label="Max accel" value={`${(result.maxAcceleration / G).toFixed(1)} g`} sub={`${result.maxAcceleration.toFixed(0)} m/s²`} />
+                <Tile label="Apogee" value={q(result.apogee, 'altitude')} sub={`at ${result.apogeeTime.toFixed(1)} s`} />
+                <Tile label="Max velocity" value={q(result.maxVelocity, 'speed')} sub={`Mach ${(result.maxVelocity / 340.29).toFixed(2)}`} />
+                <Tile label="Max accel" value={`${(result.maxAcceleration / G).toFixed(1)} g`} sub={q(result.maxAcceleration, 'accel')} />
                 <Tile
                   label="Off-rail velocity"
-                  value={result.railCleared && result.railExitVelocity != null ? `${result.railExitVelocity.toFixed(1)} m/s` : '—'}
-                  sub={result.railCleared ? `${result.railLength.toFixed(2)} m rail` : `rail > apogee`}
+                  value={result.railCleared && result.railExitVelocity != null ? q(result.railExitVelocity, 'speed') : '—'}
+                  sub={result.railCleared ? `${q(result.railLength, 'length')} rail` : `rail > apogee`}
                 />
-                <Tile label="Burnout" value={`${result.burnoutTime.toFixed(2)} s`} sub={`${result.burnoutAltitude.toFixed(0)} m · ${result.burnoutVelocity.toFixed(0)} m/s`} />
+                <Tile label="Burnout" value={`${result.burnoutTime.toFixed(2)} s`} sub={`${q(result.burnoutAltitude, 'altitude')} · ${q(result.burnoutVelocity, 'speed')}`} />
                 <Tile label="Thrust-to-weight" value={result.thrustToWeight.toFixed(1)} />
                 <Tile
                   label="Min margin"
@@ -112,7 +123,7 @@ export function FlightProfileModal({ result, busy, error, onClose }: Props) {
 
               <div className="min-h-0 flex-1">
                 <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={result.samples} margin={{ top: 44, right: 56, bottom: 8, left: 8 }}>
+                  <ComposedChart data={chartData} margin={{ top: 44, right: 56, bottom: 8, left: 8 }}>
                     <CartesianGrid stroke={GRID.stroke} strokeDasharray={GRID.strokeDasharray} />
                     <XAxis
                       dataKey="t"
@@ -145,9 +156,9 @@ export function FlightProfileModal({ result, busy, error, onClose }: Props) {
                     <ReferenceLine yAxisId="alt" x={result.burnoutTime} stroke={REFERENCE} strokeWidth={1.5} strokeDasharray="4 3" label={{ value: 'burnout', fill: REFERENCE, fontSize: 13, fontWeight: 600, position: 'top', dy: -8 }} />
                     <ReferenceLine yAxisId="alt" x={result.apogeeTime} stroke={REFERENCE} strokeWidth={1.5} strokeDasharray="4 3" label={{ value: 'apogee', fill: REFERENCE, fontSize: 13, fontWeight: 600, position: 'top', dy: -8 }} />
 
-                    <Line yAxisId="alt" type="monotone" dataKey="altitude" name="Altitude (m)" stroke={SERIES.altitude} dot={false} strokeWidth={2} isAnimationActive={false} />
-                    <Line yAxisId="vel" type="monotone" dataKey="velocity" name="Velocity (m/s)" stroke={SERIES.velocity} dot={false} strokeWidth={2} isAnimationActive={false} />
-                    <Line yAxisId="acc" type="monotone" dataKey="acceleration" name="Acceleration (m/s²)" stroke={SERIES.acceleration} dot={false} strokeWidth={1.5} isAnimationActive={false} />
+                    <Line yAxisId="alt" type="monotone" dataKey="altitude" name={`Altitude (${lab('altitude')})`} stroke={SERIES.altitude} dot={false} strokeWidth={2} isAnimationActive={false} />
+                    <Line yAxisId="vel" type="monotone" dataKey="velocity" name={`Velocity (${lab('speed')})`} stroke={SERIES.velocity} dot={false} strokeWidth={2} isAnimationActive={false} />
+                    <Line yAxisId="acc" type="monotone" dataKey="acceleration" name={`Acceleration (${lab('accel')})`} stroke={SERIES.acceleration} dot={false} strokeWidth={1.5} isAnimationActive={false} />
                     <Line yAxisId="margin" type="monotone" dataKey="staticMargin" name="Static margin (cal)" stroke={SERIES.margin} dot={false} strokeWidth={1.5} strokeDasharray="5 3" isAnimationActive={false} connectNulls />
                   </ComposedChart>
                 </ResponsiveContainer>

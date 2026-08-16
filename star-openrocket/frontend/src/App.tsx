@@ -11,7 +11,8 @@ import {
   glbUrl,
   listModels,
 } from './api/client'
-import { centreOfMass, formatMass } from './lib/cm'
+import { centreOfMass } from './lib/cm'
+import { useUnits } from './lib/units/unitsContext'
 import { loadOrkConfig, saveOrkConfig } from './lib/persist'
 import type { FlightParams, OrkConfig } from './types/config'
 import { defaultOrkConfig } from './types/config'
@@ -20,6 +21,8 @@ import type { DesignSource, UiConfig } from './recovery/types/schema'
 import { ConfigVersions } from './components/versions/ConfigVersions'
 import { FlightDynamicsTab } from './components/viewer/FlightDynamicsTab'
 import { FullFlightTab } from './components/viewer/FullFlightTab'
+import { EnvironmentTab } from './components/environment/EnvironmentTab'
+import { UnitsPanel } from './components/units/UnitsPanel'
 import { FlightProfileModal } from './components/viewer/FlightProfileModal'
 import { InspectorPanel } from './components/viewer/InspectorPanel'
 import { MotorCurvesModal } from './components/viewer/MotorCurvesModal'
@@ -54,6 +57,7 @@ export default function App() {
   const [initialOrk] = useState(loadOrkConfig)
   const initialConfig = initialOrk.cad
   const [recovery, setRecovery] = useState<UiConfig>(initialOrk.recovery)
+  const { q } = useUnits()
 
   const [models, setModels] = useState<ModelSummary[]>([])
   const [modelId, setModelId] = useState<string | null>(initialConfig.modelId)
@@ -123,7 +127,7 @@ export default function App() {
   const [reloadNonce, setReloadNonce] = useState(0)
 
   // Top-level tab: CAD viewer, the 6-DOF ascent flight dynamics, or recovery.
-  const [activeTab, setActiveTab] = useState<'cad' | 'flight' | 'recovery' | 'fullflight'>('cad')
+  const [activeTab, setActiveTab] = useState<'cad' | 'environment' | 'flight' | 'recovery' | 'fullflight' | 'units'>('cad')
 
   useEffect(() => {
     listModels()
@@ -616,16 +620,18 @@ export default function App() {
         <h1 className="text-xl font-bold">STAR OpenRocket</h1>
 
         <nav className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900/60 p-1 text-sm">
-          {(['cad', 'flight', 'recovery', 'fullflight'] as const).map((tab) => (
+          {(['cad', 'environment', 'flight', 'recovery', 'fullflight', 'units'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={`rounded px-3 py-1 font-medium ${activeTab === tab ? 'bg-cyan-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}
             >
               {tab === 'cad' ? 'CAD & Stability'
+                : tab === 'environment' ? 'Environment'
                 : tab === 'flight' ? 'Flight Dynamics'
                 : tab === 'recovery' ? 'Recovery'
-                : 'Full Flight'}
+                : tab === 'fullflight' ? 'Full Flight'
+                : 'Units'}
             </button>
           ))}
         </nav>
@@ -667,8 +673,15 @@ export default function App() {
         </div>
       </header>
 
-      {activeTab === 'fullflight' ? (
-        <FullFlightTab result={flightDynResult} recovery={recovery} design={designSource} />
+      {activeTab === 'units' ? (
+        <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-primary)] px-4 py-6 sm:px-6 lg:px-8">
+          <UnitsPanel />
+        </div>
+      ) : activeTab === 'environment' ? (
+        <EnvironmentTab recovery={recovery} onChange={setRecovery} />
+      ) : activeTab === 'fullflight' ? (
+        <FullFlightTab result={flightDynResult} recovery={recovery} design={designSource}
+          flight={flight} onFlightChange={setFlight} />
       ) : activeTab === 'recovery' ? (
         <RecoveryTab ui={recovery} onChange={setRecovery} design={designSource} />
       ) : activeTab === 'flight' ? (
@@ -682,6 +695,7 @@ export default function App() {
           overrides={massOverrides}
           flight={flight}
           onFlightChange={setFlight}
+          recovery={recovery}
           result={flightDynResult}
           onResult={setFlightDynResult}
         />
@@ -733,8 +747,8 @@ export default function App() {
 
           <div className="pointer-events-none absolute bottom-3 right-4 text-right text-xs text-slate-500">
             <div>
-              Onshape total {formatMass(manifest.totals.assemblyMass)} · CM z{' '}
-              {manifest.totals.assemblyCentroid[2].toFixed(4)} m
+              Onshape total {q(manifest.totals.assemblyMass, 'mass')} · CM z{' '}
+              {q(manifest.totals.assemblyCentroid[2], 'length')}
             </div>
             <div>
               {manifest.totals.reconciled ? 'reconciled' : 'NOT reconciled'} · built{' '}

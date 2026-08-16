@@ -16,7 +16,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { DesignSource, Result, UiConfig } from '../../types/schema'
 import { simulate } from '../../api/client'
-import { usePadClimatology } from '../../lib/climatology'
 import { physicsKey, toWireConfig } from '../../lib/serialise'
 import { Button, Card, PageHeader } from '../ui'
 import { InputColumn } from './InputForms'
@@ -42,11 +41,6 @@ export function RecoveryPanel({ ui, onChange: setUi, design }: {
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [live, setLive] = useState(true)
-
-  /** The measured lapse rates and monthly normals the Site form resolves the
-   *  pad state from. Shared with the Sweep tab's pad-state axes, which resolve
-   *  from the same reduction -- see `lib/climatology`. */
-  const { lapseByMonth, padNormals } = usePadClimatology()
 
   // Guards against a slow response overwriting a newer one.
   const seq = useRef(0)
@@ -134,8 +128,7 @@ export function RecoveryPanel({ ui, onChange: setUi, design }: {
             devices={ui.devices}
             onChange={(devices) => setUi({ ...ui, devices })}
           />
-          <InputColumn ui={ui} onChange={setUi} design={design} lapseByMonth={lapseByMonth}
-                       padNormals={padNormals} />
+          <InputColumn ui={ui} onChange={setUi} design={design} />
         </div>
         <div className="space-y-4">
           <ColumnHeader>Outputs</ColumnHeader>

@@ -59,6 +59,7 @@ export const FD = {
   fft: '#c084fc', // purple — frequency response
   marginOurs: '#e879f9', // fuchsia — our CP margin
   marginRocketpy: '#60a5fa', // blue — RocketPy CP margin
+  wind: '#22d3ee', // cyan — ambient wind the rocket flies through
 } as const
 
 export const REFERENCE = '#cbd5e1' // slate-300 — burnout / apogee guide lines (legible on dark)

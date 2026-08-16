@@ -14,7 +14,7 @@
  */
 
 import type { UiStudyAxis, WireCanopy, WirePad } from '../types/schema'
-import type { Kind } from './quantities'
+import type { Kind } from '../../lib/units/quantities'
 
 /** SI value plus its quantity, to a display string. `useUnits().num`. Absent in
  *  tests, which get SI. */

@@ -57,12 +57,3 @@ export function centreOfMass(parts: Part[]): CMResult {
     partCount: parts.length,
   }
 }
-
-/** Format a length in metres, with millimetres for readability. */
-export function formatMetres(value: number): string {
-  return `${value.toFixed(4)} m`
-}
-
-export function formatMass(value: number): string {
-  return value < 1 ? `${(value * 1000).toFixed(1)} g` : `${value.toFixed(4)} kg`
-}

@@ -19,11 +19,14 @@ export interface FlightParams {
   inclination: number
   /** Rail heading from north (deg). */
   heading: number
-  /** Constant wind speed (m/s) and the bearing it blows from (deg). */
-  windSpeed: number
-  windDirection: number
   /** Which CP model the stability overlay shows. */
   cpModel: 'ours' | 'rocketpy' | 'both'
+  /** Which series are ticked on the Flight Dynamics compare plot. Persisted (a view
+   *  preference, not physics) so the chosen overlay survives reloads and travels in the
+   *  save file like everything else. */
+  compareSeries: string[]
+  /** Same, for the Full Flight compare plot (its own series set: altitude/speed/accel). */
+  fullCompareSeries: string[]
 }
 
 export interface ViewerConfig {
@@ -41,7 +44,11 @@ export interface ViewerConfig {
 }
 
 export function defaultFlightParams(): FlightParams {
-  return { inclination: 85, heading: 0, windSpeed: 5, windDirection: 270, cpModel: 'both' }
+  return {
+    inclination: 85, heading: 0, cpModel: 'both',
+    compareSeries: ['altitude', 'speed'],
+    fullCompareSeries: ['altitude', 'speed'],
+  }
 }
 
 export function defaultViewerConfig(): ViewerConfig {

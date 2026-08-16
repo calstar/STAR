@@ -19,7 +19,7 @@
 import { useMemo, useState } from 'react'
 
 import type { Part } from '../../types'
-import { formatMass } from '../../lib/cm'
+import { useUnits } from '../../lib/units/unitsContext'
 import { displayName } from '../../lib/names'
 import { STATUS_TEXT, massStatus, worstStatus } from '../../lib/status'
 import { ContextMenu, type MenuItem } from './ContextMenu'
@@ -70,6 +70,7 @@ export function PartList({
   onSelect,
   onHover,
 }: Props) {
+  const { q } = useUnits()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [menu, setMenu] = useState<MenuState | null>(null)
   // Where a shift-range starts. Held here rather than derived from the
@@ -329,7 +330,7 @@ export function PartList({
                     isHidden ? 'text-slate-600' : 'text-slate-400'
                   }`}
                 >
-                  {formatMass(groupMass)}
+                  {q(groupMass, 'mass')}
                 </span>
               </div>
 
@@ -379,7 +380,7 @@ export function PartList({
                               partHidden ? 'text-slate-600' : 'text-slate-500'
                             }`}
                           >
-                            {formatMass(part.mass)}
+                            {q(part.mass, 'mass')}
                           </span>
                         </div>
                       </li>

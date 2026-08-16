@@ -22,18 +22,20 @@ import { physicsKey, toWireConfig } from '../../lib/serialise'
 import type { UiConfig } from '../../types/schema'
 import type { Channel } from '../chartTheme'
 import { CHANNELS } from '../chartTheme'
-import { Badge, Button, Card, Empty, NumberInput, PageHeader } from '../ui'
+import { Badge, Button, Card, Empty, PageHeader, UnitInput } from '../ui'
+import { useUnits } from '../../../lib/units/unitsContext'
 import { CrosscheckAssumptions } from './CrosscheckAssumptions'
 import { CrosscheckChart } from './CrosscheckChart'
 import { CrosscheckTable } from './CrosscheckTable'
 
 export function CrosscheckPanel({ ui }: { ui: UiConfig }) {
+  const { lab } = useUnits()
   const [result, setResult] = useState<CrosscheckResult | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [channel, setChannel] = useState<Channel>('z')
-  /** Mastersheet drift only. Ours and OpenRocket's runs are windless either
-   *  way, so this moves exactly one row and says so. */
+  /** Drives both wind-aware models: our coupled descent's ground-track drift and
+   *  the mastersheet's descent-time × wind. OpenRocket stays windless. */
   const [wind, setWind] = useState(0)
 
   const first = useRef(true)
@@ -144,19 +146,19 @@ export function CrosscheckPanel({ ui }: { ui: UiConfig }) {
 
           <Card
             title="Wind"
-            subtitle="Moves the drift row and nothing else. Drift in this model is coming soon."
+            subtitle="Drives the drift row for both wind-aware models — our coupled ground-track drift and the mastersheet's estimate. OpenRocket stays windless."
           >
             <div className="flex flex-wrap items-center gap-3">
               <div className="w-40">
-                <NumberInput
+                <UnitInput
                   value={wind}
                   onChange={(v) => setWind(Math.max(0, v ?? 0))}
+                  kind="speed"
                   min={0}
-                  step={0.5}
                 />
               </div>
               <p className="font-prose text-xs leading-relaxed text-[var(--color-text-secondary)]">
-                m/s.
+                {lab('speed')}.
               </p>
             </div>
           </Card>

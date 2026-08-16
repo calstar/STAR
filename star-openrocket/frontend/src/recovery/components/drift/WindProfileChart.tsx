@@ -14,7 +14,7 @@ import {
 } from 'recharts'
 import type { WindMonth } from '../../types/climatology'
 import { AXIS, GRID, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE, axisLabel } from '../chartTheme'
-import { useUnits } from '../../lib/unitsContext'
+import { useUnits } from '../../../lib/units/unitsContext'
 
 export function WindProfileChart({ wm, grid, padH, worst }: {
   wm: WindMonth

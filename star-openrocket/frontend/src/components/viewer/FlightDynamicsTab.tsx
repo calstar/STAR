@@ -8,7 +8,7 @@
  * exact, performance tiles (apogee, max-Q) are flagged approximate.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   CartesianGrid,
@@ -27,6 +27,10 @@ import {
 import { computeFlightDynamics } from '../../api/client'
 import type { FlightParams } from '../../types/config'
 import type { FaceRef, FlightDynamicsResult, FlightDynamicsSample, MotorSelection } from '../../types'
+import { toWireConfig } from '../../recovery/lib/serialise'
+import { useUnits } from '../../lib/units/unitsContext'
+import type { Kind } from '../../lib/units/quantities'
+import type { UiConfig } from '../../recovery/types/schema'
 import { AXIS, FD, GRID, REFERENCE, SERIES, TICK_FONT, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE, axisLabelX, axisLabelY } from './chartTheme'
 
 interface Props {
@@ -40,20 +44,15 @@ interface Props {
   /** Launch params, owned by App so they are versioned in the config. */
   flight: FlightParams
   onFlightChange: (patch: Partial<FlightParams>) => void
+  /** The shared recovery config — its site + wind (set on the Environment tab) are
+   *  the atmosphere/wind this ascent flies through, so both halves of the flight agree. */
+  recovery: UiConfig
   /** Last run result, owned by App so it survives tab switches. */
   result: FlightDynamicsResult | null
   onResult: (result: FlightDynamicsResult | null) => void
 }
 
 const G = 9.80665
-
-/** Round up to a clean 1/2/5×10ⁿ, so axis ticks derived from it are round numbers. */
-function niceCeil(v: number): number {
-  if (v <= 0) return 1
-  const base = Math.pow(10, Math.floor(Math.log10(v)))
-  const f = v / base
-  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * base
-}
 
 export function Tile({ label, value, sub, warn }: { label: string; value: string; sub?: string; warn?: boolean }) {
   return (
@@ -136,27 +135,32 @@ export function Panel({ title, hint, children, heightClass = 'min-h-[360px]' }: 
 
 const tip = { contentStyle: TOOLTIP_STYLE, labelStyle: TOOLTIP_LABEL_STYLE }
 
-/** Selectable time series for the compare overlay: each is one colored Y axis. */
+/** Selectable time series for the compare overlay: each is one colored Y axis.
+ *  `get` returns SI; `kind` (when present) routes the value + label through the
+ *  units selection. `unit` is the literal label for the non-convertible ones —
+ *  angle (°), calibers (cal), rad/s — which have no imperial form. */
 interface SeriesDef {
   key: string
-  label: string // includes unit, e.g. "Altitude (m)"
-  unit: string
+  name: string // bare, e.g. "Altitude" — the unit is appended from `kind`/`unit`
+  kind?: Kind
+  unit?: string
   color: string
   get: (s: FlightDynamicsSample) => number | null
-  fmt: (v: number) => string
+  digits: number
 }
 
 const COMPARE_SERIES: SeriesDef[] = [
-  { key: 'altitude', label: 'Altitude (m)', unit: 'm', color: SERIES.altitude, get: (s) => s.altitude, fmt: (v) => v.toFixed(0) },
-  { key: 'speed', label: 'Speed (m/s)', unit: 'm/s', color: SERIES.velocity, get: (s) => s.speed, fmt: (v) => v.toFixed(0) },
-  { key: 'acceleration', label: 'Accel (m/s²)', unit: 'm/s²', color: SERIES.acceleration, get: (s) => s.acceleration, fmt: (v) => v.toFixed(0) },
-  { key: 'dynamicPressure', label: 'Dyn. pressure (kPa)', unit: 'kPa', color: FD.pressure, get: (s) => s.dynamicPressure / 1000, fmt: (v) => v.toFixed(1) },
-  { key: 'angleOfAttack', label: 'Angle of attack (°)', unit: '°', color: FD.aoa, get: (s) => s.angleOfAttack, fmt: (v) => v.toFixed(1) },
-  { key: 'angleFromVertical', label: 'Angle from vertical (°)', unit: '°', color: FD.mach, get: (s) => s.angleFromVertical, fmt: (v) => v.toFixed(1) },
-  { key: 'stabilityMarginOurs', label: 'Margin — ours (cal)', unit: 'cal', color: FD.marginOurs, get: (s) => s.stabilityMarginOurs, fmt: (v) => v.toFixed(2) },
-  { key: 'stabilityMarginRocketpy', label: 'Margin — RocketPy (cal)', unit: 'cal', color: FD.marginRocketpy, get: (s) => s.stabilityMarginRocketpy, fmt: (v) => v.toFixed(2) },
-  { key: 'bendingMoment', label: 'Bending (N·m)', unit: 'N·m', color: FD.bending, get: (s) => s.bendingMoment, fmt: (v) => v.toFixed(1) },
-  { key: 'omegaPitch', label: 'Pitch rate (rad/s)', unit: 'rad/s', color: FD.omega, get: (s) => s.omegaPitch, fmt: (v) => v.toFixed(2) },
+  { key: 'altitude', name: 'Altitude', kind: 'altitude', color: SERIES.altitude, get: (s) => s.altitude, digits: 0 },
+  { key: 'speed', name: 'Speed', kind: 'speed', color: SERIES.velocity, get: (s) => s.speed, digits: 0 },
+  { key: 'acceleration', name: 'Accel', kind: 'accel', color: SERIES.acceleration, get: (s) => s.acceleration, digits: 0 },
+  { key: 'dynamicPressure', name: 'Dyn. pressure', kind: 'pressure', color: FD.pressure, get: (s) => s.dynamicPressure, digits: 1 },
+  { key: 'windSpeed', name: 'Wind', kind: 'speed', color: FD.wind, get: (s) => s.windSpeed, digits: 1 },
+  { key: 'angleOfAttack', name: 'Angle of attack', unit: '°', color: FD.aoa, get: (s) => s.angleOfAttack, digits: 1 },
+  { key: 'angleFromVertical', name: 'Angle from vertical', unit: '°', color: FD.mach, get: (s) => s.angleFromVertical, digits: 1 },
+  { key: 'stabilityMarginOurs', name: 'Margin — ours', unit: 'cal', color: FD.marginOurs, get: (s) => s.stabilityMarginOurs, digits: 2 },
+  { key: 'stabilityMarginRocketpy', name: 'Margin — RocketPy', unit: 'cal', color: FD.marginRocketpy, get: (s) => s.stabilityMarginRocketpy, digits: 2 },
+  { key: 'bendingMoment', name: 'Bending', kind: 'torque', color: FD.bending, get: (s) => s.bendingMoment, digits: 1 },
+  { key: 'omegaPitch', name: 'Pitch rate', unit: 'rad/s', color: FD.omega, get: (s) => s.omegaPitch, digits: 2 },
 ]
 
 /** First sample time at or above a Mach threshold, for the transonic/supersonic markers. */
@@ -197,25 +201,40 @@ function TimeLine({
   )
 }
 
-export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFins, railLength, overrides, flight, onFlightChange, result, onResult }: Props) {
-  const { inclination, heading, windSpeed, windDirection, cpModel } = flight
+export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFins, railLength, overrides, flight, onFlightChange, recovery, result, onResult }: Props) {
+  const { inclination, heading, cpModel } = flight
+  const { val, lab, dec, q } = useUnits()
+
+  // Display helpers: convert SI → the chosen unit for the convertible series,
+  // and build the "name (unit)" label. The non-convertible ones (°, cal, rad/s)
+  // pass through untouched with their literal `unit`.
+  const unitLabel = (d: SeriesDef) => (d.kind ? lab(d.kind) : d.unit ?? '')
+  const seriesLabel = (d: SeriesDef) => `${d.name} (${unitLabel(d)})`
+  const dispVal = (d: SeriesDef, s: FlightDynamicsSample): number | null => {
+    const raw = d.get(s)
+    if (raw == null) return null
+    return d.kind ? val(raw, d.kind) : raw
+  }
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Which series to overlay on the shared-time compare plot (default: the core two).
-  const [compare, setCompare] = useState<Set<string>>(() => new Set(['altitude', 'speed']))
-  const toggleCompare = (key: string) =>
-    setCompare((prev) => {
-      const next = new Set(prev)
-      next.has(key) ? next.delete(key) : next.add(key)
-      return next
-    })
+  // Which series to overlay on the shared-time compare plot. Persisted on the config
+  // (flight.compareSeries) so the selection survives reloads and rides in the save file.
+  const compare = useMemo(() => new Set(flight.compareSeries), [flight.compareSeries])
+  const toggleCompare = (key: string) => {
+    const next = new Set(flight.compareSeries)
+    next.has(key) ? next.delete(key) : next.add(key)
+    onFlightChange({ compareSeries: [...next] })
+  }
 
   async function run() {
     if (!modelId || !motorSel) return
     setBusy(true)
     setError(null)
     try {
+      // Attach the shared environment: the same site atmosphere + wind the recovery
+      // descent uses, so the ascent flies through identical air (set on Environment).
+      const wire = toWireConfig(recovery)
       const res = await computeFlightDynamics(modelId, {
         outerFaces,
         finFaces: finFaces.length ? finFaces : null,
@@ -225,8 +244,8 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
         railLength,
         inclination,
         heading,
-        windSpeed,
-        windDirection,
+        site: wire.site,
+        wind: wire.wind,
       })
       onResult(res)
     } catch (e) {
@@ -237,20 +256,30 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
   }
 
   const samples = result?.samples ?? []
-  const track = samples.map((s) => ({ x: s.driftX, y: s.driftY, t: s.t }))
+  // Ground track in the chosen distance unit. The pad is the origin; drift x/y are SI
+  // metres from the backend, converted through `val(_, 'distance')` like the recovery
+  // and full-flight ground tracks so all three read in the same unit.
+  const dist = (m: number) => val(m, 'distance')
+  const track = samples.map((s) => ({ x: dist(s.driftX), y: dist(s.driftY), t: s.t }))
   const apogeePt = track.at(-1)
-  // Symmetric, origin-centered extent so the ground track reads as four quadrants
-  // of drift around the pad. Snapped up to a round 1/2/5×10ⁿ so the axis ticks land
-  // on meaningful values (…-50, 0, 50…) instead of Recharts' auto 11.5-style ticks.
-  const driftDomain = niceCeil(Math.max(10, ...track.flatMap((p) => [Math.abs(p.x), Math.abs(p.y)])) * 1.1)
+  // Symmetric, origin-centered extent so the ground track reads as four quadrants of
+  // drift around the pad — and zoomed in as tight as the trace allows: the half-extent
+  // is the farthest point from the pad plus a small margin for the marker labels, NOT
+  // snapped up to a round 1/2/5×10ⁿ (which zoomed the track out by up to ~2x). The floor
+  // is in DISPLAY units (val(50,'distance')) since 'distance' shows km/mi.
+  const driftDomain = Math.max(
+    val(50, 'distance'),
+    ...track.flatMap((p) => [Math.abs(p.x), Math.abs(p.y)]),
+  ) * 1.12
   const driftTicks = [-driftDomain, -driftDomain / 2, 0, driftDomain / 2, driftDomain]
+  const trackDigits = driftDomain < 2 ? 1 : 0
 
   const compareSeries = COMPARE_SERIES.filter((d) => compare.has(d.key))
-  // One row per sample with every series pre-scaled to display units (e.g. q→kPa),
+  // One row per sample with every series pre-scaled to the chosen display units,
   // so each Line can use a plain string dataKey.
   const compareData = samples.map((s) => {
     const row: Record<string, number | null> = { t: s.t }
-    for (const d of COMPARE_SERIES) row[d.key] = d.get(s)
+    for (const d of COMPARE_SERIES) row[d.key] = dispVal(d, s)
     return row
   })
   // Vertical guides for the compressibility regimes on the compare plot.
@@ -265,8 +294,6 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
       <div className="mb-3 flex flex-wrap items-end gap-3 rounded-lg border border-slate-700 bg-slate-900/60 p-3">
         <Field label="Rail angle (° from horiz, 90=up)" value={inclination} set={(v) => onFlightChange({ inclination: v })} min={0} max={90} />
         <Field label="Heading (° from N)" value={heading} set={(v) => onFlightChange({ heading: v })} min={0} max={360} />
-        <Field label="Wind (m/s)" value={windSpeed} set={(v) => onFlightChange({ windSpeed: v })} min={0} max={40} step={0.5} />
-        <Field label="Wind from (° bearing)" value={windDirection} set={(v) => onFlightChange({ windDirection: v })} min={0} max={360} />
         <label className="flex flex-col text-xs text-slate-300">
           CP model
           <select value={cpModel} onChange={(e) => onFlightChange({ cpModel: e.target.value as FlightParams['cpModel'] })} className="mt-1 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-sm text-slate-100">
@@ -284,8 +311,9 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
         </button>
       </div>
       <p className="mb-3 text-2xs text-slate-400">
-        Launch site: Friends of Amateur Rocketry (FAR), 630 m — fixed. Wind is a constant
-        placeholder until the site wind climatology merges in.
+        Launch site: Friends of Amateur Rocketry (FAR), 630 m — fixed. Wind and the pad
+        atmosphere come from the <span className="font-semibold text-slate-200">Environment</span> tab,
+        so this ascent and the recovery descent fly through the same air.
       </p>
 
       {!motorSel && <p className="text-sm text-amber-300">Select a motor in the CAD tab first — a flight needs one.</p>}
@@ -301,14 +329,14 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
 
           {/* Summary tiles */}
           <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
-            <Tile label="Apogee" value={`${result.apogee.toFixed(0)} m`} sub={`at ${result.apogeeTime.toFixed(1)} s · approx drag`} />
-            <Tile label="Max velocity" value={`${result.maxSpeed.toFixed(0)} m/s`} sub={`Mach ${result.maxMach.toFixed(2)}`} />
-            <Tile label="Max-Q" value={`${(result.maxDynamicPressure / 1000).toFixed(1)} kPa`} sub={`at ${result.maxDynamicPressureTime.toFixed(1)} s`} />
+            <Tile label="Apogee" value={q(result.apogee, 'altitude')} sub={`at ${result.apogeeTime.toFixed(1)} s · approx drag`} />
+            <Tile label="Max velocity" value={q(result.maxSpeed, 'speed')} sub={`Mach ${result.maxMach.toFixed(2)}`} />
+            <Tile label="Max-Q" value={q(result.maxDynamicPressure, 'pressure')} sub={`at ${result.maxDynamicPressureTime.toFixed(1)} s`} />
             <Tile label="Max accel" value={`${(result.maxAcceleration / G).toFixed(1)} g`} />
-            <Tile label="Off-rail" value={`${result.outOfRailVelocity.toFixed(1)} m/s`} sub={`${result.outOfRailStabilityMargin.toFixed(2)} cal`} warn={result.outOfRailStabilityMargin < 1} />
+            <Tile label="Off-rail" value={q(result.outOfRailVelocity, 'speed')} sub={`${result.outOfRailStabilityMargin.toFixed(2)} cal`} warn={result.outOfRailStabilityMargin < 1} />
             <Tile label="Min margin" value={`${result.minStabilityMargin.toFixed(2)} cal`} sub={result.minStabilityMarginOurs != null ? `ours ${result.minStabilityMarginOurs.toFixed(2)}` : undefined} warn={result.minStabilityMargin < 1} />
             <Tile label="Max AoA" value={`${result.maxAngleOfAttack.toFixed(1)}°`} />
-            <Tile label="Drift @ apogee" value={`${result.driftDistance.toFixed(0)} m`} sub={`bearing ${result.driftBearing.toFixed(0)}°`} />
+            <Tile label="Drift @ apogee" value={q(result.driftDistance, 'distance')} sub={`bearing ${result.driftBearing.toFixed(0)}°`} />
           </div>
 
           {/* Full-width overlay: compare any time series on a shared time axis. */}
@@ -321,7 +349,7 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
               {COMPARE_SERIES.map((d) => (
                 <label key={d.key} className="flex cursor-pointer items-center gap-1.5 text-xs">
                   <input type="checkbox" checked={compare.has(d.key)} onChange={() => toggleCompare(d.key)} style={{ accentColor: d.color }} />
-                  <span style={{ color: d.color }}>{d.label}</span>
+                  <span style={{ color: d.color }}>{seriesLabel(d)}</span>
                 </label>
               ))}
             </div>
@@ -334,15 +362,15 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
                     <CartesianGrid stroke={GRID.stroke} strokeDasharray={GRID.strokeDasharray} />
                     <XAxis dataKey="t" type="number" domain={[0, 'dataMax']} stroke={AXIS.stroke} tick={{ fontSize: TICK_FONT, fill: AXIS.stroke }} tickLine={false} tickFormatter={(v: number) => v.toFixed(0)} label={axisLabelX('Time (s)')} />
                     {compareSeries.map((d, i) => (
-                      <YAxis key={d.key} yAxisId={d.key} orientation={i % 2 === 0 ? 'left' : 'right'} stroke={d.color} tick={{ fontSize: TICK_FONT, fill: d.color }} tickLine={false} width={56} tickFormatter={d.fmt} />
+                      <YAxis key={d.key} yAxisId={d.key} orientation={i % 2 === 0 ? 'left' : 'right'} stroke={d.color} tick={{ fontSize: TICK_FONT, fill: d.color }} tickLine={false} width={56} tickFormatter={(v: number) => dec(v, d.digits)} />
                     ))}
-                    <Tooltip {...tip} labelFormatter={(t: number) => `t = ${t.toFixed(2)} s`} formatter={(v: number, n: string) => { const d = COMPARE_SERIES.find((s) => s.label === n); return [`${d ? d.fmt(v) : v} ${d?.unit ?? ''}`, n] }} />
+                    <Tooltip {...tip} labelFormatter={(t: number) => `t = ${t.toFixed(2)} s`} formatter={(v: number, n: string) => { const d = COMPARE_SERIES.find((s) => s.name === n); return [`${d ? dec(v, d.digits) : v} ${d ? unitLabel(d) : ''}`, n] }} />
                     <Legend verticalAlign="bottom" wrapperStyle={{ fontSize: TICK_FONT, paddingTop: 8 }} />
                     {machMarks.map((mk) => (
                       <ReferenceLine key={mk.label} yAxisId={compareSeries[0].key} x={mk.t} stroke={REFERENCE} strokeDasharray="4 3" label={{ value: mk.label, fill: REFERENCE, fontSize: TICK_FONT, position: 'top' }} />
                     ))}
                     {compareSeries.map((d) => (
-                      <Line key={d.key} yAxisId={d.key} type="monotone" dataKey={d.key} name={d.label} stroke={d.color} dot={false} strokeWidth={1.75} isAnimationActive={false} connectNulls />
+                      <Line key={d.key} yAxisId={d.key} type="monotone" dataKey={d.key} name={d.name} stroke={d.color} dot={false} strokeWidth={1.75} isAnimationActive={false} connectNulls />
                     ))}
                   </ComposedChart>
                 </ResponsiveContainer>
@@ -361,12 +389,12 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={track} margin={{ top: 24, right: 16, bottom: 24, left: 16 }}>
                   <CartesianGrid stroke={GRID.stroke} strokeDasharray={GRID.strokeDasharray} />
-                  <XAxis type="number" dataKey="x" name="East" domain={[-driftDomain, driftDomain]} ticks={driftTicks} stroke={AXIS.stroke} tick={{ fontSize: TICK_FONT, fill: AXIS.stroke }} tickLine={false} tickFormatter={(v: number) => v.toFixed(0)} label={axisLabelX('East drift (m)')} />
-                  <YAxis type="number" dataKey="y" name="North" domain={[-driftDomain, driftDomain]} ticks={driftTicks} stroke={AXIS.stroke} tick={{ fontSize: TICK_FONT, fill: AXIS.stroke }} tickLine={false} width={64} tickFormatter={(v: number) => v.toFixed(0)} label={axisLabelY('North drift (m)')} />
+                  <XAxis type="number" dataKey="x" name="East" domain={[-driftDomain, driftDomain]} ticks={driftTicks} stroke={AXIS.stroke} tick={{ fontSize: TICK_FONT, fill: AXIS.stroke }} tickLine={false} tickFormatter={(v: number) => dec(v, trackDigits)} label={axisLabelX(`East drift (${lab('distance')})`)} />
+                  <YAxis type="number" dataKey="y" name="North" domain={[-driftDomain, driftDomain]} ticks={driftTicks} stroke={AXIS.stroke} tick={{ fontSize: TICK_FONT, fill: AXIS.stroke }} tickLine={false} width={64} tickFormatter={(v: number) => dec(v, trackDigits)} label={axisLabelY(`North drift (${lab('distance')})`)} />
                   <Tooltip
                     {...tip}
                     itemStyle={{ color: '#e2e8f0' }}
-                    formatter={(v: number, _n, item: { payload?: { x: number } }) => [`E ${item.payload?.x.toFixed(0)} m, N ${v.toFixed(0)} m`, 'position']}
+                    formatter={(v: number, _n, item: { payload?: { x: number } }) => [`E ${dec(item.payload?.x, trackDigits)} ${lab('distance')}, N ${dec(v, trackDigits)} ${lab('distance')}`, 'position']}
                     labelFormatter={(_x, payload) => { const t = (payload?.[0]?.payload as { t?: number } | undefined)?.t; return t != null ? `t = ${t.toFixed(1)} s` : '' }}
                   />
                   {/* Quadrant cross through the pad, so drift direction reads at a glance. */}

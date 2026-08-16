@@ -21,6 +21,7 @@ import {
 } from 'recharts'
 
 import type { MotorDetail } from '../../types'
+import { useUnits } from '../../lib/units/unitsContext'
 import { AXIS, GRID, SERIES, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE } from './chartTheme'
 
 interface Props {
@@ -33,6 +34,7 @@ interface Props {
 }
 
 export function MotorCurvesModal({ detail, simfileId, busy, error, onClose }: Props) {
+  const { val, lab, num, q } = useUnits()
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
@@ -49,11 +51,11 @@ export function MotorCurvesModal({ detail, simfileId, busy, error, onClose }: Pr
     const n = Math.min(sim.time.length, sim.thrust.length, sim.mass.length, sim.cgX.length)
     return Array.from({ length: n }, (_, i) => ({
       t: sim.time[i],
-      thrust: sim.thrust[i],
-      massG: sim.mass[i] * 1000, // kg -> g
-      cgMm: sim.cgX[i] * 1000, // m -> mm from the fore end
+      thrust: val(sim.thrust[i], 'force'),
+      mass: val(sim.mass[i], 'mass'),
+      cg: val(sim.cgX[i], 'length'), // from the fore end
     }))
-  }, [sim])
+  }, [sim, val])
 
   const title = sim ? `${sim.manufacturer} ${sim.designation}` : 'Motor curves'
 
@@ -84,8 +86,8 @@ export function MotorCurvesModal({ detail, simfileId, busy, error, onClose }: Pr
           {sim && !busy && !error && (
             <>
               <div className="grid grid-cols-3 gap-2">
-                <Tile label="Wet / dry" value={`${(sim.wetMass * 1000).toFixed(1)} / ${(sim.dryMass * 1000).toFixed(1)} g`} />
-                <Tile label="Propellant" value={`${(sim.propMass * 1000).toFixed(1)} g`} />
+                <Tile label="Wet / dry" value={`${num(sim.wetMass, 'mass')} / ${q(sim.dryMass, 'mass')}`} />
+                <Tile label="Propellant" value={q(sim.propMass, 'mass')} />
                 <Tile label="Burn time" value={`${sim.burnTime.toFixed(2)} s`} />
               </div>
 
@@ -114,9 +116,9 @@ export function MotorCurvesModal({ detail, simfileId, busy, error, onClose }: Pr
                     />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
 
-                    <Line yAxisId="thrust" type="monotone" dataKey="thrust" name="Thrust (N)" stroke={SERIES.acceleration} dot={false} strokeWidth={2} isAnimationActive={false} />
-                    <Line yAxisId="mass" type="monotone" dataKey="massG" name="Weight (g)" stroke={SERIES.velocity} dot={false} strokeWidth={2} isAnimationActive={false} />
-                    <Line yAxisId="cg" type="monotone" dataKey="cgMm" name="CG from fore end (mm)" stroke={SERIES.altitude} dot={false} strokeWidth={1.5} strokeDasharray="5 3" isAnimationActive={false} />
+                    <Line yAxisId="thrust" type="monotone" dataKey="thrust" name={`Thrust (${lab('force')})`} stroke={SERIES.acceleration} dot={false} strokeWidth={2} isAnimationActive={false} />
+                    <Line yAxisId="mass" type="monotone" dataKey="mass" name={`Weight (${lab('mass')})`} stroke={SERIES.velocity} dot={false} strokeWidth={2} isAnimationActive={false} />
+                    <Line yAxisId="cg" type="monotone" dataKey="cg" name={`CG from fore end (${lab('length')})`} stroke={SERIES.altitude} dot={false} strokeWidth={1.5} strokeDasharray="5 3" isAnimationActive={false} />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>

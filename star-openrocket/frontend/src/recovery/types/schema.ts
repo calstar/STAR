@@ -20,7 +20,7 @@
  * provisional; anything under CONFIG is not.
  */
 
-import type { Kind } from '../lib/quantities'
+import type { Kind } from '../../lib/units/quantities'
 
 // ============================================================================
 // CONFIG -- mirrors schema.py, settled
@@ -320,6 +320,11 @@ export interface UiConfig {
   /** Horizontal wind (shared across tabs so the loads and the drift use the same
    *  wind). The Drift tab's selection UI resolves into this. Null = still air. */
   wind: WindInput | null
+  /** Airframe drag bound during descent: 'axial' (nose-down) vs 'broadside'. It sets
+   *  the descent rate, so it moves the drift and the Full Flight ground track. Chosen on
+   *  the Drift tab but stored HERE, on the persisted config, so Full Flight sees it from
+   *  the save file — never as a side effect of whether the Drift tab was opened. */
+  airframeBound: 'axial' | 'broadside'
 }
 
 // ============================================================================
@@ -521,6 +526,22 @@ export type WindInput =
   | { kind: 'constant'; speed: number; direction: number }
   | { kind: 'profile'; heights_msl: number[]; u: number[]; v: number[] }
 
+/** One level of the SELECTED atmosphere profile (from POST /api/atmosphere), i.e. the
+ *  T/p/rho the physics actually uses for the chosen pad state — plotted on the Environment
+ *  tab so the design's own atmosphere is visible, not just the reference climatology. */
+export interface AtmosphereProfilePoint {
+  z_agl: number; z_msl: number; T: number; p: number; rho: number; g: number
+}
+
+export interface AtmosphereProfile {
+  pad: {
+    z_site: number; H_pad: number; T_pad: number; p_pad: number; rho_pad: number
+    lapse: number; lapse_isa: number; refit: boolean; T_source: string; p_source: string
+  }
+  profile: AtmosphereProfilePoint[]
+  note: string
+}
+
 /** One point on the horizontal ground track. East = +x, North = +y, metres. */
 export interface DriftTrackSample {
   t: number
@@ -531,6 +552,9 @@ export interface DriftTrackSample {
    *  descent trajectory, glued onto the ascent by the Full Flight tab. */
   v: number
   a: number
+  /** Ambient horizontal wind at this altitude (m/s) — same definition as the
+   *  ascent's windSpeed, so the Full Flight plot shows one wind curve end to end. */
+  wind: number
 }
 
 export interface DriftResult {
@@ -541,6 +565,9 @@ export interface DriftResult {
   descent_time: number
   landing: { x: number; y: number }
   track: DriftTrackSample[]
+  /** Descent events (deploy/trigger/inflation/ground), t seconds after apogee.
+   *  The Full Flight tab marks drogue/main deployment from the line_stretch ones. */
+  events: FlightEvent[]
   /** What the wind actually was at the ground in the run. */
   wind_ground: { speed: number; heading_deg: number }
   airframe_bound: string

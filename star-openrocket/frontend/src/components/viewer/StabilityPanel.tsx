@@ -11,8 +11,42 @@
 import { useState } from 'react'
 
 import type { FaceRef, MotorSelection, MotorSummary, StabilityResult } from '../../types'
+import { useUnits } from '../../lib/units/unitsContext'
+import type { Kind } from '../../lib/units/quantities'
 import { MotorPicker } from './MotorPicker'
 import { Row } from './Row'
+
+/**
+ * A number input in the chosen unit that stores SI. Mirrors the recovery
+ * UnitInput's editing/display split (full precision while focused, the bounded
+ * form when blurred) so typing a fractional value never fights the formatter,
+ * but keeps the viewer's slate styling. Commits SI on every change.
+ */
+function UnitField({ value, onChange, kind, min }: {
+  value: number
+  onChange: (si: number) => void
+  kind: Kind
+  min?: number
+}) {
+  const { val, si, forInput, u } = useUnits()
+  const [editing, setEditing] = useState(false)
+  const shown = editing ? val(value, kind) : forInput(value, kind)
+  return (
+    <input
+      type="number"
+      step={u(kind).step}
+      min={min}
+      value={shown}
+      onFocus={() => setEditing(true)}
+      onBlur={() => setEditing(false)}
+      onChange={(e) => {
+        const t = e.target.value.trim()
+        onChange(t === '' ? 0 : si(Number(t), kind))
+      }}
+      className="w-20 rounded border border-slate-700 bg-slate-800 px-1 py-0.5 text-right text-slate-100 focus:border-cyan-500 focus:outline-none"
+    />
+  )
+}
 
 export interface StabilityPanelProps {
   result: StabilityResult | null
@@ -98,6 +132,7 @@ export function StabilityPanel({
   onSetRailLength,
   onViewMotorCurves,
 }: StabilityPanelProps) {
+  const { q, lab, num } = useUnits()
   const [pickerOpen, setPickerOpen] = useState(false)
   return (
     <div className="text-sm">
@@ -184,8 +219,8 @@ export function StabilityPanel({
       {/* Airframe dimensions from the detected surface, shown once computed. */}
       {result && (
         <div className="mt-2 border-t border-slate-700 pt-2">
-          <Row label="Body length" value={`${result.bodyLength.toFixed(4)} m`} small />
-          <Row label="Ref diameter" value={`${(result.refDiameter * 1000).toFixed(1)} mm`} small />
+          <Row label="Body length" value={q(result.bodyLength, 'length')} small />
+          <Row label="Ref diameter" value={q(result.refDiameter, 'length')} small />
         </div>
       )}
 
@@ -202,11 +237,11 @@ export function StabilityPanel({
           </div>
           {result.fins.count > 0 && (
             <>
-              <Row label="Fin area (each)" value={`${(result.fins.area * 1e4).toFixed(1)} cm²`} small />
-              <Row label="Root chord" value={`${(result.fins.rootChord * 1000).toFixed(1)} mm`} small />
-              <Row label="Tip chord" value={`${(result.fins.tipChord * 1000).toFixed(1)} mm`} small />
-              <Row label="Span" value={`${(result.fins.span * 1000).toFixed(1)} mm`} small />
-              <Row label="Sweep" value={`${(result.fins.sweep * 1000).toFixed(1)} mm`} small />
+              <Row label="Fin area (each)" value={q(result.fins.area, 'area')} small />
+              <Row label="Root chord" value={q(result.fins.rootChord, 'length')} small />
+              <Row label="Tip chord" value={q(result.fins.tipChord, 'length')} small />
+              <Row label="Span" value={q(result.fins.span, 'length')} small />
+              <Row label="Sweep" value={q(result.fins.sweep, 'length')} small />
               <Row label="CNₐ (fins)" value={result.fins.cna.toFixed(3)} small />
             </>
           )}
@@ -344,17 +379,8 @@ export function StabilityPanel({
             <label className="mb-1 flex items-center justify-between gap-2 text-xs text-slate-400">
               {motorSel.refFace ? 'Aft offset from face' : 'Aft offset from base'}
               <span className="flex items-center gap-1">
-                <input
-                  type="number"
-                  step={1}
-                  value={Math.round((motorSel.aftOffset ?? 0) * 1000)}
-                  onChange={(e) => {
-                    const v = e.target.value.trim()
-                    onSetMotorOffset(v === '' ? 0 : Number(v) / 1000)
-                  }}
-                  className="w-20 rounded border border-slate-700 bg-slate-800 px-1 py-0.5 text-right text-slate-100 focus:border-cyan-500 focus:outline-none"
-                />
-                <span className="text-slate-500">mm</span>
+                <UnitField value={motorSel.aftOffset ?? 0} onChange={onSetMotorOffset} kind="length" />
+                <span className="text-slate-500">{lab('length')}</span>
               </span>
             </label>
 
@@ -362,16 +388,12 @@ export function StabilityPanel({
               <>
                 <Row
                   label="Motor wet / dry mass"
-                  value={`${(result.motor.wetMass * 1000).toFixed(1)} / ${(
-                    result.motor.dryMass * 1000
-                  ).toFixed(1)} g`}
+                  value={`${num(result.motor.wetMass, 'mass')} / ${q(result.motor.dryMass, 'mass')}`}
                   small
                 />
                 <Row
                   label="Motor L × D"
-                  value={`${(result.motor.length * 1000).toFixed(0)} × ${(
-                    result.motor.diameter * 1000
-                  ).toFixed(0)} mm`}
+                  value={`${num(result.motor.length, 'length')} × ${q(result.motor.diameter, 'length')}`}
                   small
                 />
               </>
@@ -412,8 +434,8 @@ export function StabilityPanel({
                       {formatMargin(margin)}
                     </span>
                   </div>
-                  <Row label="CP from nose" value={`${result.cp.fromNose.toFixed(4)} m`} />
-                  <Row label="CG from nose" value={`${cgFromNose.toFixed(4)} m`} />
+                  <Row label="CP from nose" value={q(result.cp.fromNose, 'length')} />
+                  <Row label="CG from nose" value={q(cgFromNose, 'length')} />
                 </>
               )
             })()}
@@ -439,7 +461,7 @@ export function StabilityPanel({
               return (
                 <Row
                   label="Total wet / dry mass"
-                  value={`${wet.toFixed(3)} / ${dry.toFixed(3)} kg`}
+                  value={`${num(wet, 'mass')} / ${q(dry, 'mass')}`}
                   small
                 />
               )
@@ -459,18 +481,13 @@ export function StabilityPanel({
           <label className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-400">
             Guided rail length
             <span className="flex items-center gap-1">
-              <input
-                type="number"
-                min={0}
-                step={0.1}
+              <UnitField
                 value={railLength}
-                onChange={(e) => {
-                  const v = Number(e.target.value)
-                  onSetRailLength(Number.isFinite(v) && v >= 0 ? v : 0)
-                }}
-                className="w-20 rounded border border-slate-700 bg-slate-800 px-1 py-0.5 text-right text-slate-100 focus:border-cyan-500 focus:outline-none"
+                onChange={(m) => onSetRailLength(Number.isFinite(m) && m >= 0 ? m : 0)}
+                kind="length"
+                min={0}
               />
-              <span className="text-slate-500">m</span>
+              <span className="text-slate-500">{lab('length')}</span>
             </span>
           </label>
           <button

@@ -19,7 +19,8 @@
 import { useEffect, useState } from 'react'
 
 import type { Part, PartOverride } from '../../types'
-import { centreOfMass, formatMass, formatMetres } from '../../lib/cm'
+import { centreOfMass } from '../../lib/cm'
+import { useUnits } from '../../lib/units/unitsContext'
 import { MATERIAL_CATALOG, MATERIALS_BY_KEY } from '../../lib/materials'
 import { displayName } from '../../lib/names'
 import { STATUS_TEXT, massStatus } from '../../lib/status'
@@ -76,6 +77,7 @@ function PartProperties({
   override: PartOverride | null
   onOverrideChange: (key: string, override: PartOverride | null) => void
 }) {
+  const { q, lab, si, forInput } = useUnits()
   const overridden = override?.massOverridden ?? false
   // The material the user picked from the catalog, if any. It sets the mass
   // (via density x volume, in App) but leaves Onshape's own material in place --
@@ -85,9 +87,10 @@ function PartProperties({
   const materialKey = override?.material ?? 'onshape'
 
   // Held as text, not a number: a controlled number input that round-trips
-  // through parseFloat eats the keystroke in "0." and cannot be cleared.
+  // through parseFloat eats the keystroke in "0." and cannot be cleared. The
+  // text is in the CHOSEN mass unit; it converts to SI kg on commit.
   const [draft, setDraft] = useState(() =>
-    override?.mass != null ? String(override.mass) : '',
+    override?.mass != null ? forInput(override.mass, 'mass') : '',
   )
 
   useEffect(() => {
@@ -97,10 +100,11 @@ function PartProperties({
   const commit = (text: string) => {
     setDraft(text)
     const value = Number(text)
+    const valid = text.trim() !== '' && Number.isFinite(value) && value >= 0
     onOverrideChange(part.key, {
       material: override?.material ?? null,
       massOverridden: true,
-      mass: text.trim() !== '' && Number.isFinite(value) && value >= 0 ? value : null,
+      mass: valid ? si(value, 'mass') : null,
     })
   }
 
@@ -128,7 +132,7 @@ function PartProperties({
     // Seeded with whatever mass the part already has -- Onshape's, or the one a
     // chosen material gave it -- so overriding starts from its real value.
     const seed = part.mass > 0 ? part.mass : null
-    setDraft(seed != null ? String(seed) : '')
+    setDraft(seed != null ? forInput(seed, 'mass') : '')
     onOverrideChange(part.key, {
       material: override?.material ?? null,
       massOverridden: true,
@@ -163,20 +167,20 @@ function PartProperties({
       <Section title="Mass">
         <Row
           label="Mass"
-          value={part.mass > 0 ? formatMass(part.mass) : 'none'}
+          value={part.mass > 0 ? q(part.mass, 'mass') : 'none'}
           highlight={overridden}
         />
         <Row label="Material" value={displayMaterial?.name ?? 'none assigned'} />
         {displayMaterial && (
-          <Row label="Density" value={`${displayMaterial.density.toFixed(0)} kg/m³`} />
+          <Row label="Density" value={q(displayMaterial.density, 'density')} />
         )}
-        <Row label="Volume" value={`${(part.volume * 1e6).toFixed(1)} cm³`} />
+        <Row label="Volume" value={q(part.volume, 'volume')} />
       </Section>
 
       <Section title="Centre of mass">
-        <Row label="x" value={formatMetres(part.centroidWorld[0])} />
-        <Row label="y" value={formatMetres(part.centroidWorld[1])} />
-        <Row label="z" value={formatMetres(part.centroidWorld[2])} highlight />
+        <Row label="x" value={q(part.centroidWorld[0], 'length')} />
+        <Row label="y" value={q(part.centroidWorld[1], 'length')} />
+        <Row label="z" value={q(part.centroidWorld[2], 'length')} highlight />
       </Section>
 
       <Section title="User properties">
@@ -217,7 +221,7 @@ function PartProperties({
           <span
             className={`mb-1 block text-sm ${overridden ? 'text-slate-400' : 'text-slate-600'}`}
           >
-            Mass (kg)
+            Mass ({lab('mass')})
           </span>
           <input
             type="number"
@@ -250,6 +254,7 @@ function PartProperties({
 }
 
 function Selection({ selected, visibleKeys }: { selected: Part[]; visibleKeys: Set<string> }) {
+  const { q } = useUnits()
   const cm = centreOfMass(selected)
   const hidden = selected.filter((part) => !visibleKeys.has(part.key)).length
 
@@ -260,10 +265,10 @@ function Selection({ selected, visibleKeys }: { selected: Part[]; visibleKeys: S
       </div>
 
       <Section title="Selection">
-        <Row label="Combined mass" value={formatMass(cm.mass)} />
-        <Row label="CM x" value={formatMetres(cm.centroid[0])} />
-        <Row label="CM y" value={formatMetres(cm.centroid[1])} />
-        <Row label="CM z" value={formatMetres(cm.centroid[2])} highlight />
+        <Row label="Combined mass" value={q(cm.mass, 'mass')} />
+        <Row label="CM x" value={q(cm.centroid[0], 'length')} />
+        <Row label="CM y" value={q(cm.centroid[1], 'length')} />
+        <Row label="CM z" value={q(cm.centroid[2], 'length')} highlight />
         <Row label="Hidden" value={`${hidden} of ${selected.length}`} />
         {cm.masslessCount > 0 && (
           <Row label="Without mass" value={`${cm.masslessCount} of ${selected.length}`} />
@@ -290,7 +295,7 @@ function Selection({ selected, visibleKeys }: { selected: Part[]; visibleKeys: S
                   part.mass > 0 ? 'text-slate-500' : 'text-red-400/80'
                 }`}
               >
-                {part.mass > 0 ? formatMass(part.mass) : 'no mass'}
+                {part.mass > 0 ? q(part.mass, 'mass') : 'no mass'}
               </span>
             </li>
           ))}

@@ -26,7 +26,7 @@ import { STUB_SHA } from '../../api/fixture'
 import { Badge, Button, Card, Empty, Stat, StubBanner, WarningsCard } from '../ui'
 import { AXIS, CHANNELS, GRID, MARGIN, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE, axisLabel } from '../chartTheme'
 import type { Channel } from '../chartTheme'
-import { useUnits } from '../../lib/unitsContext'
+import { useUnits } from '../../../lib/units/unitsContext'
 
 export function ResultsPanel({ result, running, error }: {
   result: Result | null

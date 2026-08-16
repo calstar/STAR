@@ -5,8 +5,8 @@
 
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { Kind } from '../lib/quantities'
-import { useUnits } from '../lib/unitsContext'
+import type { Kind } from '../../lib/units/quantities'
+import { useUnits } from '../../lib/units/unitsContext'
 
 /**
  * The one-line header a tab opens on: what the page is, in a sentence. It is

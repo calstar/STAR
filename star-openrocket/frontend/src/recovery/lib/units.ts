@@ -11,8 +11,8 @@
  * the whole GUI reads. Re-exported here so the older call sites keep working
  * while they are converted -- but defined in exactly one place, because two
  * copies of 0.45359237 is two chances to mistype it. */
-export { G0, KG_PER_LB, M_PER_FT, M_PER_IN, N_PER_LBF } from './quantities'
-import { KG_PER_LB, M_PER_FT, M_PER_IN, N_PER_LBF } from './quantities'
+export { G0, KG_PER_LB, M_PER_FT, M_PER_IN, N_PER_LBF } from '../../lib/units/quantities'
+import { KG_PER_LB, M_PER_FT, M_PER_IN, N_PER_LBF } from '../../lib/units/quantities'
 
 export const FT_PER_M = 1 / M_PER_FT
 
@@ -42,18 +42,6 @@ export function fmt(v: number | null | undefined, digits = 2): string {
 export function fmtInt(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return '-'
   return Math.round(v).toLocaleString('en-US')
-}
-
-/** Seconds as m:ss when it is long enough for that to help.
- *
- *  `digits` comes from the caller so the plain-seconds branch follows the
- *  Units tab's precision bound like every other number. The m:ss branch has no
- *  decimals to bound -- it is a clock format, not a measurement. */
-export function fmtDuration(s: number, digits = 1): string {
-  if (!Number.isFinite(s)) return '-'
-  if (s < 60) return `${s.toFixed(digits)} s`
-  const m = Math.floor(s / 60)
-  return `${m}:${(s - m * 60).toFixed(0).padStart(2, '0')} (${s.toFixed(0)} s)`
 }
 
 /** Distinct, colour-blind-safe hues for the per-station chart lines. Ordered

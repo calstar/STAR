@@ -15,7 +15,7 @@ import {
   MAX_RUNS, STUDY_VARS, axisKind, axisValueLabel, axisValues, runCount,
   studyVar,
 } from './study'
-import { QUANTITIES } from './quantities'
+import { QUANTITIES } from '../../lib/units/quantities'
 import type { UiStudyAxis } from '../types/schema'
 import { STUDY_COLOURS, studyColour } from '../components/chartTheme'
 

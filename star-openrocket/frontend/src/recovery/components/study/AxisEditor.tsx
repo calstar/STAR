@@ -24,7 +24,7 @@ import {
   MAX_RUNS, STUDY_VARS, axisKind, axisValues, isSiteKey, runCount, studyVar,
 } from '../../lib/study'
 import { monthName } from '../../lib/units'
-import { useUnits } from '../../lib/unitsContext'
+import { useUnits } from '../../../lib/units/unitsContext'
 import {
   Badge, Button, Card, Info, NumberInput, Select, TextInput, UnitInput,
 } from '../ui'

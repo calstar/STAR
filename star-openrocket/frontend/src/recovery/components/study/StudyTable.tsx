@@ -18,7 +18,7 @@ import type { Device } from '../../types/schema'
 import { CONTEXT_COLOUR, studyColour } from '../chartTheme'
 import { Card, Toggle } from '../ui'
 import { axisKind, axisTitle, axisValueLabel } from '../../lib/study'
-import { useUnits } from '../../lib/unitsContext'
+import { useUnits } from '../../../lib/units/unitsContext'
 
 /** Which metric each column reads, and in what quantity. `kind: null` means
  *  the quantity has no imperial form -- seconds, in this table's case -- and

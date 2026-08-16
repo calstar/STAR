@@ -12,19 +12,19 @@
  * whole first group imperial and probably nothing else.
  */
 
-import { KINDS, PRECISION_LIMITS, QUANTITIES } from '../../lib/quantities'
-import type { Kind, System } from '../../lib/quantities'
-import { useUnits } from '../../lib/unitsContext'
-import { Button, Card, Select } from '../ui'
+import { KINDS, PRECISION_LIMITS, QUANTITIES } from '../../lib/units/quantities'
+import type { Kind, System } from '../../lib/units/quantities'
+import { useUnits } from '../../lib/units/unitsContext'
+import { Button, Card, Select } from '../../recovery/components/ui'
 
 const GROUPS: { title: string; kinds: Kind[] }[] = [
   {
     title: 'Vehicle and geometry',
-    kinds: ['altitude', 'length', 'area', 'mass', 'distance'],
+    kinds: ['altitude', 'length', 'area', 'volume', 'mass', 'distance'],
   },
   {
     title: 'Motion and loads',
-    kinds: ['speed', 'accel', 'force', 'stiffness', 'energy'],
+    kinds: ['speed', 'accel', 'force', 'torque', 'stiffness', 'energy'],
   },
   {
     title: 'Atmosphere',

@@ -252,6 +252,9 @@ export function defaultUiConfig(): UiConfig {
     sources: { apogeeFromDesign: false, massFromDesign: false, lateralFromDesign: false },
     // Still air by default; the Drift tab's wind selection resolves into this.
     wind: null,
+    // Nose-down by default (the structural bound); the Drift tab can switch it, and
+    // Full Flight reads it from here.
+    airframeBound: 'axial',
   }
 }
 

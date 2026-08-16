@@ -16,7 +16,7 @@ import { Badge, Empty, Info, PageHeader } from '../ui'
 import { PressureByMonth } from './PressureByMonth'
 import { TemperatureByMonth } from './TemperatureByMonth'
 import { SoundingProfile } from './SoundingProfile'
-import { useUnits } from '../../lib/unitsContext'
+import { useUnits } from '../../../lib/units/unitsContext'
 
 export function AtmospherePanel() {
   const { q } = useUnits()

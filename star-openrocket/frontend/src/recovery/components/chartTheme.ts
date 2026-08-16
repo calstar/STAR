@@ -12,7 +12,7 @@
  * font-size multiplier the charts would not see.
  */
 
-import type { Kind } from '../lib/quantities'
+import type { Kind } from '../../lib/units/quantities'
 
 export const AXIS = {
   stroke: '#9fb0c4', // --color-text-muted

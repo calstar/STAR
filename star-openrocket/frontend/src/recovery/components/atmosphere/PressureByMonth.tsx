@@ -23,8 +23,8 @@ import type { Climatology } from '../../types/climatology'
 import { Card, Chip, Info, Select, Toggle } from '../ui'
 import { AXIS, GRID, MARGIN, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE, axisLabel } from '../chartTheme'
 import { monthName, seriesColour } from '../../lib/units'
-import type { Kind } from '../../lib/quantities'
-import { useUnits } from '../../lib/unitsContext'
+import type { Kind } from '../../../lib/units/quantities'
+import { useUnits } from '../../../lib/units/unitsContext'
 
 type Metric = 'pressure' | 'density'
 

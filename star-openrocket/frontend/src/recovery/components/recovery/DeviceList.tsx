@@ -18,7 +18,7 @@ import type { TriggerKind, UiDevice } from '../../types/schema'
 import { blankDevice } from '../../lib/serialise'
 import { Badge, Band, Button, Card, Field, NumberInput, Select, TextInput, Toggle, UnitInput } from '../ui'
 import { G0 } from '../../lib/units'
-import { useUnits } from '../../lib/unitsContext'
+import { useUnits } from '../../../lib/units/unitsContext'
 
 /** The four fields a catalog pick fills in. Must stay in step with
  *  `CatalogProvenance.values` in the schema types. */

@@ -12,7 +12,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import type { CMResult } from '../../lib/cm'
-import { formatMass, formatMetres } from '../../lib/cm'
+import { useUnits } from '../../lib/units/unitsContext'
 import type { Part, PartOverride } from '../../types'
 import { PropertiesPanel } from './PropertiesPanel'
 import { Row } from './Row'
@@ -160,22 +160,23 @@ function MassSummary({
   partCount: number
   cmAnalysis: { fromNose: number; radial: number; offAxis: boolean } | null
 }) {
+  const { q } = useUnits()
   return (
     <section className="border-b border-slate-800 p-3 text-sm">
       <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-200">
         Center of mass — {cm.partCount - cm.masslessCount} of {partCount} parts
       </h2>
-      <Row label="Total mass" value={formatMass(cm.mass)} />
+      <Row label="Total mass" value={q(cm.mass, 'mass')} />
       {cmAnalysis ? (
-        <Row label="CM from nose" value={formatMetres(cmAnalysis.fromNose)} highlight />
+        <Row label="CM from nose" value={q(cmAnalysis.fromNose, 'length')} highlight />
       ) : (
         // No axis yet (compute stability): fall back to the raw world coordinate.
-        <Row label="CM z (world)" value={formatMetres(cm.centroid[2])} highlight />
+        <Row label="CM z (world)" value={q(cm.centroid[2], 'length')} highlight />
       )}
 
       {cmAnalysis?.offAxis && (
         <p className="mt-2 border-t border-slate-700 pt-2 text-xs text-amber-300">
-          ⚠ Mass is off-axis by {(cmAnalysis.radial * 1000).toFixed(1)} mm — the rocket is
+          ⚠ Mass is off-axis by {q(cmAnalysis.radial, 'length')} — the rocket is
           laterally unbalanced. CG should sit on the centreline; check for an asymmetric or
           material-less part.
         </p>

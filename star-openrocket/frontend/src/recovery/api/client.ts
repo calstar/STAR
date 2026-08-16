@@ -12,9 +12,9 @@
  */
 
 import type { Climatology } from '../types/climatology'
-import type { Kind } from '../lib/quantities'
+import type { Kind } from '../../lib/units/quantities'
 import type {
-  ChartSample, Config, DriftResult, Result, TrajectorySample,
+  AtmosphereProfile, ChartSample, Config, DriftResult, Result, TrajectorySample,
 } from '../types/schema'
 import bundledClimatology from '../fixtures/climatology.json'
 import { stubResult } from './fixture'
@@ -720,5 +720,18 @@ export async function runDrift(
   return request<DriftResult>(`/drift?which=${encodeURIComponent(which)}`, {
     method: 'POST',
     body: JSON.stringify({ config }),
+  })
+}
+
+/** The SELECTED atmosphere (T/p/rho vs altitude) the physics uses for a pad state —
+ *  the same `physics.atmosphere.Atmosphere` the solver runs. Send the resolved wire site
+ *  (T_pad/p_pad/lapse, any of them null = standard/re-fit). Plotted on the Environment tab. */
+export async function resolveAtmosphere(body: {
+  T_pad: number | null; p_pad: number | null; lapse: number | null
+  max_altitude?: number; samples?: number
+}): Promise<ApiResponse<AtmosphereProfile>> {
+  return request<AtmosphereProfile>('/atmosphere', {
+    method: 'POST',
+    body: JSON.stringify(body),
   })
 }

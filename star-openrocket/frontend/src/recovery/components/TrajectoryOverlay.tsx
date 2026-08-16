@@ -23,7 +23,7 @@ import {
   AXIS, CHANNELS, CONTEXT_OPACITY, GRID, NOMINAL_COLOUR,
   TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE, axisLabel,
 } from './chartTheme'
-import { useUnits } from '../lib/unitsContext'
+import { useUnits } from '../../lib/units/unitsContext'
 
 /** One line. `muted` is the anonymous context layer: drawn, but with no
  *  identity and no tooltip entry. */

@@ -18,13 +18,23 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from 'react'
 import type { ReactNode } from 'react'
-import { getSettings, putSettings } from '../api/client'
-import { fmtDuration } from './units'
+import { getSettings, putSettings } from '../../recovery/api/client'
 import {
   DEFAULT_PREFS, DEFAULT_PRECISION, KINDS, decimalsFor, formatForInput,
   fromDisplay, parsePrecision, parsePrefs, toDisplay, unitFor,
 } from './quantities'
 import type { Kind, Precision, System, UnitDef, UnitPrefs } from './quantities'
+
+/** Seconds as m:ss when it is long enough for that to help. The plain-seconds
+ *  branch takes its decimals from the caller so it follows the Units tab's
+ *  precision bound; the m:ss branch is a clock format, with no decimals to bound.
+ *  Local to the provider -- the `dur` helper below is its only consumer. */
+function fmtDuration(s: number, digits = 1): string {
+  if (!Number.isFinite(s)) return '-'
+  if (s < 60) return `${s.toFixed(digits)} s`
+  const m = Math.floor(s / 60)
+  return `${m}:${(s - m * 60).toFixed(0).padStart(2, '0')} (${s.toFixed(0)} s)`
+}
 
 /** Survives a reload when the backend is down, which is a state this app
  *  supports on every other route too. The server always wins when it answers;

@@ -1,32 +1,25 @@
 /**
  * The Drift tab: how far the vehicle drifts under recovery, and where it lands.
  *
- * The wind can come from three places, in rising order of how much the user is
- * asserting: the monthly climatology **mean** (the realistic central estimate,
- * the same dataset the Atmospheric Data tab plots), its **p95** sibling (a
- * deterministic worst-case wind, standing in for a Monte-Carlo dispersion the
- * tool does not yet do), or a **manual** constant the user types.
+ * This is a RESULTS view. The wind is the shared launch wind, chosen once on the
+ * top-level Environment tab and carried on `ui.wind`; the loads, the cross-check and
+ * the ascent all read the same wind. This tab just runs the nominal descent under it
+ * and draws the ground track. The only knob here is the airframe attitude, which sets
+ * the descent rate (and so the exposure time), because that is genuinely a drift-only
+ * choice — it does not belong to the environment.
  *
- * The physics is the equilibrium "canopy moves with the wind" model in
- * physics/drift.py -- there is no separate "how much wind it catches" term, a
- * round canopy simply goes where the air goes -- so the interesting output is
- * purely geometric: a plan-view ground track plus the distance and bearing.
- *
- * Wind selection is local component state, not on the shared config: it does
- * not change the vehicle, and the panel stays mounted when tabs switch, so a
- * chosen month survives everything but a full reload.
+ * The physics is the coupled descent in physics/drift.py: a round canopy relaxes toward
+ * the local wind, so the interesting output is purely geometric — a plan-view ground
+ * track plus the distance and bearing.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { DriftResult, UiConfig, WindInput } from '../../types/schema'
+import { useEffect, useRef, useState } from 'react'
+import type { DriftResult, UiConfig } from '../../types/schema'
 import { runDrift } from '../../api/client'
 import { physicsKey, toWireConfig } from '../../lib/serialise'
-import { profileWindInput, useWindClimatology, type WindMode } from '../../lib/wind'
-import { monthName } from '../../lib/units'
-import { useUnits } from '../../lib/unitsContext'
-import { Card, Empty, Field, NumberInput, PageHeader, Select, Stat, UnitInput } from '../ui'
+import { useUnits } from '../../../lib/units/unitsContext'
+import { Card, Empty, Field, PageHeader, Select, Stat } from '../ui'
 import { GroundTrack } from './GroundTrack'
-import { WindProfileChart } from './WindProfileChart'
 
 /** 16-point compass label for a bearing, so 293° also reads as WNW. */
 const POINTS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
@@ -39,58 +32,27 @@ export function DriftPanel({ ui, onChange }: {
   ui: UiConfig
   onChange: (u: UiConfig) => void
 }) {
-  const { grid_m, byTag, tags } = useWindClimatology()
-
-  const [mode, setMode] = useState<WindMode>('climatology')
-  const [tag, setTag] = useState('edw-nid')
-  // Default the month to whatever the Site form is using, so the two tabs agree.
-  const [month, setMonth] = useState(ui.site.month)
-  const [manualSpeed, setManualSpeed] = useState<number | null>(5) // m/s SI
-  const [manualDir, setManualDir] = useState<number | null>(270)   // from west
-  const [which, setWhich] = useState<'axial' | 'broadside'>('axial')
+  // The airframe bound is stored on the shared config, not in local state, so Full
+  // Flight (and the save file) reflect this choice without depending on a visit here.
+  const which = ui.airframeBound
+  const setWhich = (v: 'axial' | 'broadside') => onChange({ ...ui, airframeBound: v })
 
   const [drift, setDrift] = useState<DriftResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
 
-  // Fall back to the first tag that actually carries wind if the default is
-  // absent (e.g. a bundle without the pooled set).
-  const activeTag = byTag && byTag[tag] ? tag : tags[0]?.id ?? tag
-  const wm = byTag?.[activeTag]?.[month] ?? null
-  const isClimatology = mode === 'climatology' || mode === 'worst'
-
-  // The WindInput posted to the backend -- values, not the recipe.
-  const windInput = useMemo<WindInput | null>(() => {
-    if (!isClimatology) {
-      return { kind: 'constant', speed: manualSpeed ?? 0, direction: manualDir ?? 0 }
-    }
-    if (!wm || !grid_m) return null
-    return profileWindInput(wm, grid_m, mode === 'worst')
-  }, [isClimatology, manualSpeed, manualDir, wm, grid_m, mode])
-
+  const hasWind = ui.wind != null
+  // physicsKey folds in the shared wind, so the drift re-runs when the Environment tab
+  // changes it; `which` re-runs the descent at the other airframe bound.
   const cfgKey = physicsKey(ui)
-  const windKey = JSON.stringify(windInput)
   const seq = useRef(0)
 
-  // Publish the resolved wind onto the shared config so the SAME wind reaches the
-  // loads (Setup tab) and the crosscheck -- the model is wind-aware everywhere now,
-  // not just here. The selection UI (mode/climatology/manual) stays local; only the
-  // resolved WindInput is shared. Keyed on windKey, and only written when it
-  // actually changed, so it does not loop with the parent re-render.
   useEffect(() => {
-    if (JSON.stringify(ui.wind ?? null) !== windKey) {
-      onChange({ ...ui, wind: windInput })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windKey])
-
-  useEffect(() => {
-    if (!windInput) return
+    if (!hasWind) { setDrift(null); return }
     const mine = ++seq.current
     const id = setTimeout(() => {
       setRunning(true)
-      // Inject the wind so the drift is immediate even before the sync above lands.
-      runDrift(toWireConfig({ ...ui, wind: windInput }), which).then((res) => {
+      runDrift(toWireConfig(ui), which).then((res) => {
         if (mine !== seq.current) return
         setRunning(false)
         if (res.data) { setDrift(res.data); setError(null) }
@@ -98,124 +60,46 @@ export function DriftPanel({ ui, onChange }: {
       })
     }, 250)
     return () => clearTimeout(id)
-    // cfgKey/windKey stand in for ui/windInput; `which` re-runs the descent.
+    // cfgKey stands in for ui; `which` re-runs the descent.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfgKey, windKey, which])
+  }, [cfgKey, which, hasWind])
 
   return (
     <div className="space-y-4">
       <PageHeader title="Drift">
-        How far the nominal descent drifts downwind, and where it lands. The
-        canopy is carried by the wind at every altitude; pick the wind below.
+        How far the nominal descent drifts downwind, and where it lands. The wind is the
+        shared launch wind — pick it on the Environment tab.
       </PageHeader>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[360px_1fr]">
-        <WindControls
-          mode={mode} setMode={setMode}
-          tag={activeTag} setTag={setTag} tags={tags} hasWind={!!byTag}
-          month={month} setMonth={setMonth} byTag={byTag} activeTag={activeTag}
-          manualSpeed={manualSpeed} setManualSpeed={setManualSpeed}
-          manualDir={manualDir} setManualDir={setManualDir}
-          which={which} setWhich={setWhich}
-        />
+        <Card title="Descent">
+          <Field label="Airframe attitude"
+                 hint="Sets the descent rate, and so the exposure time: broadside falls slower and drifts a touch further.">
+            <Select value={which} onChange={setWhich}
+                    options={[{ value: 'axial', label: 'Axial (nose-down)' },
+                              { value: 'broadside', label: 'Broadside' }]} />
+          </Field>
+        </Card>
 
-        <div className="space-y-4">
-          <DriftResults drift={windInput ? drift : null} error={error} running={running} />
-          {isClimatology && wm && grid_m && (
-            <Card title={`Wind aloft - ${monthName(month)}`}
-                  subtitle="The climatology the drift above is integrated over.">
-              <WindProfileChart wm={wm} grid={grid_m} padH={grid_m[0]}
-                                worst={mode === 'worst'} />
-            </Card>
-          )}
-        </div>
+        <DriftResults drift={hasWind ? drift : null} error={error}
+                      running={running} hasWind={hasWind} />
       </div>
     </div>
   )
 }
 
-function WindControls({
-  mode, setMode, tag, setTag, tags, hasWind, month, setMonth, byTag, activeTag,
-  manualSpeed, setManualSpeed, manualDir, setManualDir, which, setWhich,
-}: {
-  mode: WindMode; setMode: (v: WindMode) => void
-  tag: string; setTag: (v: string) => void; tags: { id: string; label: string }[]
-  hasWind: boolean
-  month: number; setMonth: (v: number) => void
-  byTag: Record<string, Record<number, unknown>> | null; activeTag: string
-  manualSpeed: number | null; setManualSpeed: (v: number | null) => void
-  manualDir: number | null; setManualDir: (v: number | null) => void
-  which: 'axial' | 'broadside'; setWhich: (v: 'axial' | 'broadside') => void
-}) {
-  const isClimatology = mode === 'climatology' || mode === 'worst'
-  return (
-    <Card title="Wind">
-      <div className="space-y-3">
-        <Field label="Source">
-          <Select
-            value={mode} onChange={setMode}
-            options={[
-              { value: 'climatology', label: 'Climatology - monthly mean' },
-              { value: 'worst', label: 'Worst-case - monthly p95' },
-              { value: 'manual', label: 'Manual - constant wind' },
-            ]}
-          />
-        </Field>
-
-        {isClimatology ? (
-          !hasWind ? (
-            <Empty>No wind climatology in this bundle. Run
-              site-climatology/wind_profile.py.</Empty>
-          ) : (
-            <>
-              <Field label="Dataset">
-                <Select value={tag} onChange={setTag}
-                        options={tags.map((t) => ({ value: t.id, label: t.label }))} />
-              </Field>
-              <Field label="Month">
-                <Select
-                  value={String(month)} onChange={(v) => setMonth(Number(v))}
-                  options={Array.from({ length: 12 }, (_, i) => {
-                    const rec = byTag?.[activeTag]?.[i + 1] as { n: number } | undefined
-                    return {
-                      value: String(i + 1),
-                      label: `${monthName(i + 1)}${rec ? ` (n=${rec.n})` : ' (no data)'}`,
-                    }
-                  })}
-                />
-              </Field>
-            </>
-          )
-        ) : (
-          <>
-            <Field label="Wind speed" kind="speed">
-              <UnitInput value={manualSpeed} onChange={setManualSpeed}
-                         kind="speed" min={0} />
-            </Field>
-            <Field label="Direction (from)" unit="°"
-                   hint="Bearing the wind blows FROM: 270 is a westerly.">
-              <NumberInput value={manualDir} onChange={setManualDir}
-                           min={0} max={360} step={5} />
-            </Field>
-          </>
-        )}
-
-        <Field label="Airframe attitude"
-               hint="Sets the descent rate, and so the exposure time: broadside falls slower and drifts a touch further.">
-          <Select value={which} onChange={setWhich}
-                  options={[{ value: 'axial', label: 'Axial (nose-down)' },
-                            { value: 'broadside', label: 'Broadside' }]} />
-        </Field>
-      </div>
-    </Card>
-  )
-}
-
-function DriftResults({ drift, error, running }: {
-  drift: DriftResult | null; error: string | null; running: boolean
+function DriftResults({ drift, error, running, hasWind }: {
+  drift: DriftResult | null; error: string | null; running: boolean; hasWind: boolean
 }) {
   const { num, dec } = useUnits()
 
+  if (!hasWind) {
+    return (
+      <Card title="Drift">
+        <Empty>Set the wind on the Environment tab to compute drift.</Empty>
+      </Card>
+    )
+  }
   if (error) {
     return (
       <Card title="Drift">
@@ -226,7 +110,7 @@ function DriftResults({ drift, error, running }: {
   if (!drift) {
     return (
       <Card title="Drift">
-        <Empty>{running ? 'Computing…' : 'Pick a wind to compute drift.'}</Empty>
+        <Empty>{running ? 'Computing…' : 'Computing drift…'}</Empty>
       </Card>
     )
   }

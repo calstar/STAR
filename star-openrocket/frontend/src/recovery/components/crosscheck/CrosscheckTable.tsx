@@ -10,7 +10,7 @@
  */
 
 import type { CrossMetric, CrossModel, CrossModelResult } from '../../api/client'
-import { useUnits } from '../../lib/unitsContext'
+import { useUnits } from '../../../lib/units/unitsContext'
 import { Card } from '../ui'
 import { MODEL_COLOUR, MODEL_ORDER } from './models'
 

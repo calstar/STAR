@@ -22,9 +22,9 @@ import type { SweepCorner, SweepResult, SweepWorst } from '../../api/client'
 import { Card } from '../ui'
 import { colourFor } from '../chartTheme'
 import { candidateLabel, cornerValue, keyMeta, orderedKeys } from '../../lib/corners'
-import type { Kind } from '../../lib/quantities'
-import { useUnits } from '../../lib/unitsContext'
-import type { Units } from '../../lib/unitsContext'
+import type { Kind } from '../../../lib/units/quantities'
+import { useUnits } from '../../../lib/units/unitsContext'
+import type { Units } from '../../../lib/units/unitsContext'
 
 type CategoryKey = 'structure' | 'drift' | 'impact'
 

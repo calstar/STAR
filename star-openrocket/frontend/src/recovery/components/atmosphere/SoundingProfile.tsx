@@ -31,7 +31,7 @@ import type { Climatology, Sounding, UpperMonth } from '../../types/climatology'
 import { Card, Empty, Select, Toggle } from '../ui'
 import { AXIS, GRID, TOOLTIP_LABEL_STYLE, TOOLTIP_STYLE, axisLabel } from '../chartTheme'
 import { monthName } from '../../lib/units'
-import { useUnits } from '../../lib/unitsContext'
+import { useUnits } from '../../../lib/units/unitsContext'
 
 type Source = 'climatology' | 'sounding'
 

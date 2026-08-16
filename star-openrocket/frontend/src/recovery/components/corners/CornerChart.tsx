@@ -17,7 +17,7 @@ import { colourFor } from '../chartTheme'
 import { TrajectoryOverlay } from '../TrajectoryOverlay'
 import type { OverlaySeries } from '../TrajectoryOverlay'
 import { cornerLabel } from '../../lib/corners'
-import { useUnits } from '../../lib/unitsContext'
+import { useUnits } from '../../../lib/units/unitsContext'
 import { Empty } from '../ui'
 
 /** Wider than the results chart. It is the point of the tab, and 32 overlaid

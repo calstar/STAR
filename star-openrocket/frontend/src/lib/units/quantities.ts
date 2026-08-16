@@ -27,8 +27,8 @@ export type System = 'metric' | 'imperial'
  * dropdown for them would be a control that does nothing.
  */
 export type Kind =
-  | 'altitude' | 'length' | 'distance' | 'area'
-  | 'mass' | 'speed' | 'accel' | 'force' | 'stiffness' | 'energy'
+  | 'altitude' | 'length' | 'distance' | 'area' | 'volume'
+  | 'mass' | 'speed' | 'accel' | 'force' | 'torque' | 'stiffness' | 'energy'
   | 'pressure' | 'temperature' | 'tempDelta' | 'density' | 'lapse'
 
 export interface UnitDef {
@@ -85,6 +85,13 @@ export const QUANTITIES: Record<Kind, {
     metric: { label: 'm²', perUnit: 1, digits: 4, step: 0.001 },
     imperial: { label: 'ft²', perUnit: M_PER_FT ** 2, digits: 3, step: 0.01 },
   },
+  volume: {
+    // Part volumes are small: cm³ is what the properties panel has always
+    // shown, so metric stays cm³ (1e-6 m³) rather than a mostly-zero m³.
+    name: 'Volume', si: 'm³',
+    metric: { label: 'cm³', perUnit: 1e-6, digits: 1, step: 1 },
+    imperial: { label: 'in³', perUnit: M_PER_IN ** 3, digits: 2, step: 0.1 },
+  },
   mass: {
     name: 'Mass', si: 'kg',
     metric: { label: 'kg', perUnit: 1, digits: 2, step: 0.05 },
@@ -104,6 +111,13 @@ export const QUANTITIES: Record<Kind, {
     name: 'Force', si: 'N',
     metric: { label: 'N', perUnit: 1, digits: 0, step: 100 },
     imperial: { label: 'lbf', perUnit: N_PER_LBF, digits: 0, step: 50 },
+  },
+  torque: {
+    // Bending moment on the airframe, and any other moment readout. Imperial
+    // is ft·lbf, derived from the base constants like every other unit here.
+    name: 'Torque / moment', si: 'N·m',
+    metric: { label: 'N·m', perUnit: 1, digits: 1, step: 1 },
+    imperial: { label: 'ft·lbf', perUnit: N_PER_LBF * M_PER_FT, digits: 1, step: 1 },
   },
   stiffness: {
     name: 'Stiffness', si: 'N/m',
@@ -173,8 +187,10 @@ export const DEFAULT_PREFS: UnitPrefs = {
   force: 'imperial',
   distance: 'metric',
   area: 'metric',
+  volume: 'metric',
   speed: 'metric',
   accel: 'metric',
+  torque: 'metric',
   stiffness: 'metric',
   energy: 'metric',
   pressure: 'metric',

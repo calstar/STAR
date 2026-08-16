@@ -6,7 +6,7 @@
  * the same screen.
  */
 
-import type { Kind } from './quantities'
+import type { Kind } from '../../lib/units/quantities'
 import { fmt } from './units'
 
 /**

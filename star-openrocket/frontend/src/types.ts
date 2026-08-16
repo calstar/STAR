@@ -322,6 +322,7 @@ export interface FlightDynamicsSample {
   mach: number
   acceleration: number
   dynamicPressure: number
+  windSpeed: number
   angleOfAttack: number | null
   angleFromVertical: number
   stabilityMarginRocketpy: number
@@ -338,6 +339,8 @@ export interface FlightDynamicsResult {
   fft: { frequency: number[]; amplitude: number[] }
   apogee: number
   apogeeTime: number
+  /** Motor burnout time, s from ignition (ignition at t=0). */
+  burnoutTime: number
   maxSpeed: number
   maxMach: number
   maxAcceleration: number
@@ -363,8 +366,15 @@ export interface FlightDynamicsResult {
 export interface FlightDynamicsRequest extends StabilityRequest {
   inclination?: number
   heading?: number
-  windSpeed?: number
-  windDirection?: number
+  /** The shared environment (set on the Environment tab): the site atmosphere the
+   *  ascent flies in and the wind it climbs through — the same objects the recovery
+   *  descent integrates, so both halves of the flight agree. Mirrors the recovery
+   *  wire shapes (`Site`, `WindInput`). */
+  site?: { T_pad: number | null; p_pad: number | null; lapse: number | null }
+  wind?:
+    | { kind: 'constant'; speed: number; direction: number }
+    | { kind: 'profile'; heights_msl: number[]; u: number[]; v: number[] }
+    | null
   elevation?: number
   latitude?: number
   longitude?: number
