@@ -35,7 +35,10 @@ function compass(deg: number): string {
   return POINTS[Math.round(deg / 22.5) % 16]
 }
 
-export function DriftPanel({ ui }: { ui: UiConfig }) {
+export function DriftPanel({ ui, onChange }: {
+  ui: UiConfig
+  onChange: (u: UiConfig) => void
+}) {
   const { grid_m, byTag, tags } = useWindClimatology()
 
   const [mode, setMode] = useState<WindMode>('climatology')
@@ -69,12 +72,25 @@ export function DriftPanel({ ui }: { ui: UiConfig }) {
   const windKey = JSON.stringify(windInput)
   const seq = useRef(0)
 
+  // Publish the resolved wind onto the shared config so the SAME wind reaches the
+  // loads (Setup tab) and the crosscheck -- the model is wind-aware everywhere now,
+  // not just here. The selection UI (mode/climatology/manual) stays local; only the
+  // resolved WindInput is shared. Keyed on windKey, and only written when it
+  // actually changed, so it does not loop with the parent re-render.
+  useEffect(() => {
+    if (JSON.stringify(ui.wind ?? null) !== windKey) {
+      onChange({ ...ui, wind: windInput })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windKey])
+
   useEffect(() => {
     if (!windInput) return
     const mine = ++seq.current
     const id = setTimeout(() => {
       setRunning(true)
-      runDrift(toWireConfig(ui), windInput, which).then((res) => {
+      // Inject the wind so the drift is immediate even before the sync above lands.
+      runDrift(toWireConfig({ ...ui, wind: windInput }), which).then((res) => {
         if (mine !== seq.current) return
         setRunning(false)
         if (res.data) { setDrift(res.data); setError(null) }

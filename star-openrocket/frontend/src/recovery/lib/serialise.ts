@@ -49,6 +49,8 @@ export function toWireConfig(ui: UiConfig): Config {
       // ignore.
       z0: ui.vehicle.z0,
       v0: ui.vehicle.v0,
+      v_lat: ui.vehicle.v_lat,
+      v_lat_dir: ui.vehicle.v_lat_dir,
     },
     site: {
       // No z_site: pad elevation is a backend constant, and posting it is a
@@ -99,6 +101,8 @@ export function toWireConfig(ui: UiConfig): Config {
       canopies: a.canopies,
       pads: a.pads,
     })),
+    // Wind rides on the config so the loads and the drift use the same wind.
+    wind: ui.wind ?? null,
   }
 }
 
@@ -122,6 +126,8 @@ const DEFAULT_VEHICLE = {
   l_body: 56 * 0.0254,   // 56 in
   z0: null,
   v0: null,
+  v_lat: null,
+  v_lat_dir: null,
 }
 
 const round5 = (x: number) => Number(x.toFixed(5))
@@ -241,9 +247,11 @@ export function defaultUiConfig(): UiConfig {
     // comparing depends entirely on what the user is trying to decide, and
     // seeding one would put numbers on screen that mean nothing to them.
     study: [],
-    // Apogee and mass default to typed-in (manual). The Recovery tab flips these
-    // to read the ascent design once there is a flight run / built model.
-    sources: { apogeeFromDesign: false, massFromDesign: false },
+    // Apogee, mass and lateral velocity default to typed-in (manual). The Recovery
+    // tab flips these to read the ascent design once there is a flight run / model.
+    sources: { apogeeFromDesign: false, massFromDesign: false, lateralFromDesign: false },
+    // Still air by default; the Drift tab's wind selection resolves into this.
+    wind: null,
   }
 }
 

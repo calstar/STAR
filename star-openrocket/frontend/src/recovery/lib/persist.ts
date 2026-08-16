@@ -90,6 +90,7 @@ export function reviveUiConfig(raw: string | null): UiConfig | null {
         }))
       : base.study,
     sources: { ...base.sources, ...(saved.sources ?? {}) },
+    wind: saved.wind ?? base.wind,
   }
 }
 

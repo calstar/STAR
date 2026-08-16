@@ -352,6 +352,9 @@ export interface FlightDynamicsResult {
   maxBendingMoment: number
   driftDistance: number
   driftBearing: number
+  /** Horizontal ground speed at apogee (m/s) and the compass bearing it points toward. */
+  lateralVelocityAtApogee: number
+  lateralBearingAtApogee: number
   launchStable: boolean
   approximations: string[]
 }

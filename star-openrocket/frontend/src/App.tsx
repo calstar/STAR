@@ -298,6 +298,8 @@ export default function App() {
     () => ({
       apogee: flightDynResult?.apogee ?? null,
       massKg: manifest ? centreOfMass(parts).mass + (stability?.motor?.dryMass ?? 0) : null,
+      lateralVelocity: flightDynResult?.lateralVelocityAtApogee ?? null,
+      lateralBearing: flightDynResult?.lateralBearingAtApogee ?? null,
     }),
     [flightDynResult, manifest, parts, stability],
   )

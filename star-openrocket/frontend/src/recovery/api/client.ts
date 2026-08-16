@@ -14,7 +14,7 @@
 import type { Climatology } from '../types/climatology'
 import type { Kind } from '../lib/quantities'
 import type {
-  ChartSample, Config, DriftResult, Result, TrajectorySample, WindInput,
+  ChartSample, Config, DriftResult, Result, TrajectorySample,
 } from '../types/schema'
 import bundledClimatology from '../fixtures/climatology.json'
 import { stubResult } from './fixture'
@@ -714,10 +714,11 @@ export async function runCrosscheck(
  * error instead.
  */
 export async function runDrift(
-  config: Config, wind: WindInput, which = 'axial',
+  config: Config, which = 'axial',
 ): Promise<ApiResponse<DriftResult>> {
+  // Wind rides on the config now (config.wind), so there is no separate wind arg.
   return request<DriftResult>(`/drift?which=${encodeURIComponent(which)}`, {
     method: 'POST',
-    body: JSON.stringify({ config, wind }),
+    body: JSON.stringify({ config }),
   })
 }

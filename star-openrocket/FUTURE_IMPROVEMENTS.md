@@ -102,13 +102,20 @@ the lateral (side-force) contributions, yielding an off-axis CP / roll estimate 
 asymmetric sets -- or at minimum warn when the selected fins are not azimuthally
 symmetric.
 
-## Recovery: lateral velocity at apogee from the ascent
+## Recovery: descent-model refinements (lateral velocity is now done)
 
-The Recovery tab can now pull **apogee** and **descending mass** from the ascent
-design (CAD structure + spent motor, and the Flight Dynamics apogee) via the
-"from design" toggles on the Vehicle form. The descent solver's horizontal
-initial condition (`Vehicle.v0`, lateral velocity at deployment) is still left to
-the manual early-deployment override and is **not** sourced from the ascent yet.
-Once the ascent state at apogee exposes a horizontal velocity component, wire it
-into the recovery `v0` the same way apogee/mass are wired, so a weathercocked
-trajectory carries its cross-range speed into the drift calculation.
+The descent is now a **wind-aware coupled point mass**: wind lives on the config,
+the horizontal ground track is integrated (`Vehicle.v_lat`/`v_lat_dir` seed it),
+the deployment airspeed the loads use is the resultant air-relative speed, and the
+Drift tab reads the coupled track. Apogee, mass and lateral velocity all pull from
+the ascent via the "from design" toggles. Remaining refinements:
+
+- **Snatch load and wind.** The opening/inflation load couples to the resultant
+  airspeed, but the snatch load (eq 34) still uses the separate `device.v_rel`
+  input, not the resultant deployment airspeed. Fold the lateral/wind component in.
+- **Wind-shear lag in the loads.** Shear lag is modeled in the coupled descent for
+  the track; its effect on the deployment airspeed is captured too (same state), so
+  this is largely covered -- confirm it against a strong-shear case.
+- **Resultant impact velocity.** `v_impact` is still the vertical descent rate; a
+  vehicle landing with horizontal speed (~wind) has extra KE the impact metric
+  ignores. Consider reporting the resultant landing speed.

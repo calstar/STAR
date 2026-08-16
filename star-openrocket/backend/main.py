@@ -603,6 +603,8 @@ async def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
         "maxBendingMoment": result.max_bending_moment,
         "driftDistance": result.drift_distance,
         "driftBearing": result.drift_bearing,
+        "lateralVelocityAtApogee": result.lateral_velocity_at_apogee,
+        "lateralBearingAtApogee": result.lateral_bearing_at_apogee,
         "launchStable": result.launch_stable,
         "approximations": result.approximations,
     }

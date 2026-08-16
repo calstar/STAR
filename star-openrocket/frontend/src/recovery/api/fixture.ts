@@ -43,6 +43,8 @@ export const REFERENCE_CONFIG: Config = {
     l_body: 1.44,
     z0: null,
     v0: null,
+    v_lat: null,
+    v_lat_dir: null,
   },
   site: {
     T_pad: 284.185,
@@ -73,6 +75,7 @@ export const REFERENCE_CONFIG: Config = {
   // An empty list would mean 'sweep nothing', which is a different run.
   sweep: null,
   study: null,
+  wind: null,
 }
 
 const RHO = 1.16 // constant. The real solver integrates eq (5) down the column.

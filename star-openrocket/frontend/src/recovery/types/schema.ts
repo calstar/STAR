@@ -68,7 +68,13 @@ export interface Vehicle {
    * design load -- and because a typed value can silently disagree with the
    * geometry above it. Posting one is a 422. */
   z0: number | null
+  /** VERTICAL initial velocity override (early deployment). NOT the lateral one. */
   v0: number | null
+  /** Lateral (horizontal) GROUND speed at apogee, m/s (a weathercocked rocket
+   *  arriving sideways). Seeds the coupled descent's horizontal state. Null = 0. */
+  v_lat: number | null
+  /** Compass bearing v_lat points TOWARD, deg CW from north (0=N, 90=E). Null = 0. */
+  v_lat_dir: number | null
 }
 
 /**
@@ -165,6 +171,10 @@ export interface Config {
   vehicle: Vehicle
   site: Site
   devices: Device[]
+  /** Horizontal wind, promoted onto the config so the whole model is wind-aware
+   *  (deployment airspeed -> loads, and the ground track), not just the drift
+   *  post-process. Null = still air. Discriminated on `kind`. */
+  wind: WindInput | null
   sweep: WireSweepParam[] | null
   /** The design study. Rides on the config for the same reasons `sweep` does:
    *  one body schema across /simulate, /sweep and /study, and Save config
@@ -281,15 +291,20 @@ export interface UiStudyAxis {
 export interface InputSources {
   apogeeFromDesign: boolean
   massFromDesign: boolean
+  /** When on, the lateral velocity magnitude + bearing are pulled from the ascent. */
+  lateralFromDesign: boolean
 }
 
 /** The ascent design's values offered to the recovery inputs. Null when there
- *  is no run / model to read them from. Lateral velocity at apogee is deferred. */
+ *  is no run / model to read them from. */
 export interface DesignSource {
   /** Apogee (m AGL) from the Flight Dynamics ascent run. */
   apogee: number | null
   /** Descending mass (kg): CAD structure + spent-motor casing. */
   massKg: number | null
+  /** Horizontal ground speed at apogee (m/s) and the bearing it points toward. */
+  lateralVelocity: number | null
+  lateralBearing: number | null
 }
 
 export interface UiConfig {
@@ -300,8 +315,11 @@ export interface UiConfig {
   /** Empty by default. Which designs are worth comparing is not something the
    *  tool can guess, so unlike `sweep` there is no canonical starting set. */
   study: UiStudyAxis[]
-  /** Apogee / mass from-design toggles (UI-only, stripped by toWireConfig). */
+  /** Apogee / mass / lateral from-design toggles (UI-only, stripped by toWireConfig). */
   sources: InputSources
+  /** Horizontal wind (shared across tabs so the loads and the drift use the same
+   *  wind). The Drift tab's selection UI resolves into this. Null = still air. */
+  wind: WindInput | null
 }
 
 // ============================================================================

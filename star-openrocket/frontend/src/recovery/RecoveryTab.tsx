@@ -49,13 +49,16 @@ export function RecoveryTab({ ui, onChange, design }: Props) {
   // When a from-design toggle is on, keep the vehicle field synced to the ascent
   // design so every panel and the physics use it. Converges: only writes on a
   // real difference. Turning a toggle off leaves the last value in place, editable.
-  const { apogeeFromDesign, massFromDesign } = ui.sources
+  const { apogeeFromDesign, massFromDesign, lateralFromDesign } = ui.sources
   useEffect(() => {
     let v = ui.vehicle
     if (massFromDesign && design.massKg != null && v.m !== design.massKg) v = { ...v, m: design.massKg }
     if (apogeeFromDesign && design.apogee != null && v.h_a !== design.apogee) v = { ...v, h_a: design.apogee }
+    if (lateralFromDesign && design.lateralVelocity != null && v.v_lat !== design.lateralVelocity) v = { ...v, v_lat: design.lateralVelocity }
+    if (lateralFromDesign && design.lateralBearing != null && v.v_lat_dir !== design.lateralBearing) v = { ...v, v_lat_dir: design.lateralBearing }
     if (v !== ui.vehicle) onChange({ ...ui, vehicle: v })
-  }, [apogeeFromDesign, massFromDesign, design.apogee, design.massKg, ui, onChange])
+  }, [apogeeFromDesign, massFromDesign, lateralFromDesign,
+      design.apogee, design.massKg, design.lateralVelocity, design.lateralBearing, ui, onChange])
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-primary)]">
@@ -88,7 +91,7 @@ export function RecoveryTab({ ui, onChange, design }: Props) {
             <StudyPanel ui={ui} onChange={onChange} />
           </div>
           <div className={tab === 'drift' ? '' : 'hidden'}>
-            <DriftPanel ui={ui} />
+            <DriftPanel ui={ui} onChange={onChange} />
           </div>
           <div className={tab === 'crosscheck' ? '' : 'hidden'}>
             <CrosscheckPanel ui={ui} />

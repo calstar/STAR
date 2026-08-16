@@ -106,6 +106,26 @@ export function VehicleForm({ value, onChange, design, sources, onSourcesChange 
               : 'from design — run a flight first'}
           />
         </Field>
+        {/* Lateral (sideways) airspeed at apogee, from a weathercocked ascent.
+            Feeds the coupled descent: it raises the drogue opening load and curves
+            the drift track, then relaxes to the wind. From-design fills both the
+            speed and the bearing from the RocketPy velocity at apogee. */}
+        <Field label="Lateral velocity at apogee" kind="speed" hint="sideways airspeed the drogue sees">
+          <UnitInput value={value.v_lat ?? 0} onChange={(v) => set('v_lat', v ?? 0)}
+                     kind="speed" min={0} disabled={sources.lateralFromDesign} />
+          <DesignLink
+            checked={sources.lateralFromDesign}
+            available={design.lateralVelocity != null}
+            onChange={(c) => onSourcesChange({ ...sources, lateralFromDesign: c })}
+            label={design.lateralVelocity != null
+              ? `from design (${num(design.lateralVelocity, 'speed')})`
+              : 'from design — run a flight first'}
+          />
+        </Field>
+        <Field label="Lateral bearing" hint="deg toward (0=N, 90=E)">
+          <NumberInput value={value.v_lat_dir ?? 0} onChange={(v) => set('v_lat_dir', v ?? 0)}
+                       min={0} max={360} step={5} disabled={sources.lateralFromDesign} />
+        </Field>
         <Field label="Airframe diameter" kind="length">
           <UnitInput value={value.d_body} onChange={(v) => set('d_body', v ?? 0)}
                      kind="length" min={0} />

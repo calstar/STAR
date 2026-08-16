@@ -101,6 +101,8 @@ class FlightDynamicsResult:
     max_bending_moment: float
     drift_distance: float           # m, pad to apogee ground point
     drift_bearing: float            # deg, compass bearing pad->apogee point
+    lateral_velocity_at_apogee: float   # m/s, horizontal GROUND speed at apogee
+    lateral_bearing_at_apogee: float    # deg, compass bearing it points TOWARD
     launch_stable: bool
     approximations: list[str] = field(default_factory=list)
 
@@ -273,6 +275,16 @@ def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom) -> Fligh
     dist = math.hypot(dx[-1], dy[-1])
     bearing = (math.degrees(math.atan2(dx[-1], dy[-1])) + 360.0) % 360.0  # x=E, y=N
 
+    # Ground velocity vector at apogee (the last sample IS apogee; vertical speed
+    # ~0 there). Fed to the recovery calculator as the descent's initial lateral
+    # ground velocity -- a weathercocked rocket arrives at apogee moving sideways.
+    vx_ap = _safe(flight.vx, t_end)
+    vy_ap = _safe(flight.vy, t_end)
+    lat_v_apogee = math.hypot(vx_ap, vy_ap)
+    lat_bearing_apogee = (
+        (math.degrees(math.atan2(vx_ap, vy_ap)) + 360.0) % 360.0  # x=E, y=N, TOWARD
+    )
+
     return FlightDynamicsResult(
         times=ts.tolist(),
         altitude=altitude,
@@ -306,6 +318,8 @@ def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom) -> Fligh
         max_bending_moment=max((abs(b) for b in bend), default=0.0),
         drift_distance=dist,
         drift_bearing=bearing,
+        lateral_velocity_at_apogee=lat_v_apogee,
+        lateral_bearing_at_apogee=lat_bearing_apogee,
         launch_stable=launch_stable,
         approximations=[
             "inertia: rod/cylinder estimate (no CAD inertia tensor)",
