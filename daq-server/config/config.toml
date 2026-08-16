@@ -1,57 +1,29 @@
-# =============================================================================
-# Sensor System Configuration
-# Modular config for boards, sensors, actuators, calibration, and routing
-# =============================================================================
-
-# NOTE: [system] (mode/state) removed 2026-08-13 — dead config. Nothing read it;
-# FLIGHT vs GROUND is determined by the config filename (config_flight_daq.toml
-# vs config_ground_daq.toml) in daq_bridge, not by this section.
-
-# =============================================================================
-# Network - DAQ Bridge Listener
-# =============================================================================
 [network]
 bind_ip = "0.0.0.0"
-sensor_port = 5006       # Port for all sensor data (PT, LC, TC, RTD boards send here)
-actuator_cmd_port = 5005 # Port actuator boards listen on for commands
-# buffer_size removed 2026-08-13 — was only a struct field in lib/Config.h, no socket used it
+sensor_port = 5006
+actuator_cmd_port = 5005
 
-# =============================================================================
-# Server Heartbeat - UDP broadcast config (used by heartbeat_service and daq_bridge)
-# =============================================================================
 [server_heartbeat]
-interval_ms = 200                  # Broadcast SERVER_HEARTBEAT every 200 ms
-broadcast_port = 5005              # Boards listen on 5005 for control packets
-broadcast_ip = "192.168.2.255"     # Subnet broadcast on DAQ interface; avoids WiFi routing for 255.255.255.255
+interval_ms = 200
+broadcast_port = 5005
+broadcast_ip = "192.168.2.255"
 
-# =============================================================================
-# Heartbeat Service - SERVER_HEARTBEAT to boards (C++ preferred for flight)
-# =============================================================================
 [heartbeat_service]
 enabled = true
-backend_url = "http://127.0.0.1:8082"   # GUI backend API for engine_state
-interval_ms = 200                        # Same as server_heartbeat
+backend_url = "http://127.0.0.1:8082"
+interval_ms = 200
 broadcast_ip = "192.168.2.255"
 broadcast_port = 5005
 
-# =============================================================================
-# Config Broadcast Service - ACTUATOR_CONFIG / SENSOR_CONFIG to boards (C++ preferred for flight)
-# =============================================================================
 [config_broadcast_service]
 enabled = true
 backend_url = "http://127.0.0.1:8082"
 interval_ms = 1000
 
-# =============================================================================
-# Data Logger Service - .sensorlog binary recording (modular, not in backend)
-# =============================================================================
 [data_logger_service]
 enabled = true
 ws_url = "ws://127.0.0.1:8081"
 
-# =============================================================================
-# Network - Elodin Database
-# =============================================================================
 [database]
 host = "127.0.0.1"
 port = 2240
@@ -60,246 +32,159 @@ max_buffer_size = 4096
 connection_retry_attempts = 3
 connection_retry_delay_ms = 1000
 
-# =============================================================================
-# GUI stream downsampling (backend → browser SENSOR_UPDATE rate per stream)
-#   downsample_mode   = "envelope" | "throttle"
-#     envelope: each window broadcasts the min and max sample with their real
-#               timestamps, so short spikes survive downsampling.
-#     throttle: legacy behavior — first sample per 50 ms window, rest dropped.
-#               Flip to this to revert to pre-envelope behavior (no code change).
-#   points_per_second = broadcast budget per stream (envelope windows/sec = half this)
-# Applies only to high-rate DAQ streams (PT/TC/RTD/LC, actuator raw); event
-# streams (state, self-test, encoder, controller) always pass through untouched.
-# =============================================================================
 [gui]
 downsample_mode = "envelope"
 points_per_second = 20
+tabs = [
+  "unified",
+  "lcs-tcs-rtd",
+  "boards",
+  "self-tests",
+  "session",
+  "config"
+]
 
-# ── Tab bar: which views are pinned to the header, in order ───────────────────
-# Ids index the frontend view catalog (lib/nav-items.ts). Reorder / add / remove
-# to change the tab bar live (no rebuild). Views not listed here are still
-# reachable via the "All Views" tab. Single Pane ("unified") is the primary view.
-tabs = ["unified", "fuel", "lox", "chamber", "copv", "controller", "boards", "session"]
+  [[gui.pressure_bars]]
+  label = "GN2 HI"
+  role = "GN2 High"
+  limits = "GN2_High"
+  color = "#ADFF2F"
 
-# ── Top-bar pressure gauges (ordered) ────────────────────────────────────────
-# label   — text shown on the gauge
-# role    — sensor role name (from [sensor_roles_*]) → resolved to its cal entity
-# limits  — key into [pressure_limits.*]; supplies NOP/MEOP (single source of truth)
-# color   — gauge accent
-# avg_roles (optional) — gauge value = mean of these roles (e.g. chamber mids)
-[[gui.pressure_bars]]
-label = "GN2 HI"
-role = "GN2 High"
-limits = "GN2_High"
-color = "#ADFF2F"
+  [[gui.pressure_bars]]
+  label = "GN2 REG"
+  role = "GN2 Regulated"
+  limits = "GN2_Regulated"
+  color = "#228B22"
 
-[[gui.pressure_bars]]
-label = "GN2 REG"
-role = "GN2 Regulated"
-limits = "GN2_Regulated"
-color = "#228B22"
+  [[gui.pressure_bars]]
+  label = "FUEL UP"
+  role = "Fuel Upstream"
+  limits = "Fuel_Upstream"
+  color = "#FF4500"
 
-[[gui.pressure_bars]]
-label = "FUEL UP"
-role = "Fuel Upstream"
-limits = "Fuel_Upstream"
-color = "#FF4500"
+  [[gui.pressure_bars]]
+  label = "FUEL DN"
+  role = "Fuel Downstream"
+  limits = "Fuel_Downstream"
+  color = "#CC0000"
 
-[[gui.pressure_bars]]
-label = "FUEL DN"
-role = "Fuel Downstream"
-limits = "Fuel_Downstream"
-color = "#CC0000"
+  [[gui.pressure_bars]]
+  label = "LOX UP"
+  role = "Ox Upstream"
+  limits = "Ox_Upstream"
+  color = "#38BDF8"
 
-[[gui.pressure_bars]]
-label = "LOX UP"
-role = "Ox Upstream"
-limits = "Ox_Upstream"
-color = "#38BDF8"
+  [[gui.pressure_bars]]
+  label = "LOX DN"
+  role = "Ox Downstream"
+  limits = "Ox_Downstream"
+  color = "#4169E1"
 
-[[gui.pressure_bars]]
-label = "LOX DN"
-role = "Ox Downstream"
-limits = "Ox_Downstream"
-color = "#4169E1"
+  [[gui.pressure_bars]]
+  label = "GSE LO"
+  role = "GSE Low"
+  limits = "GSE_Low"
+  color = "#D8B4FE"
 
-[[gui.pressure_bars]]
-label = "GSE LO"
-role = "GSE Low"
-limits = "GSE_Low"
-color = "#D8B4FE"
+  [[gui.pressure_bars]]
+  label = "GSE MID"
+  role = "GSE Mid"
+  limits = "GSE_Mid"
+  color = "#C026D3"
 
-[[gui.pressure_bars]]
-label = "GSE MID"
-role = "GSE Mid"
-limits = "GSE_Mid"
-color = "#C026D3"
+  [[gui.pressure_bars]]
+  label = "GSE HI"
+  role = "GSE High"
+  limits = "GSE_High"
+  color = "#7B2FBE"
 
-[[gui.pressure_bars]]
-label = "GSE HI"
-role = "GSE High"
-limits = "GSE_High"
-color = "#7B2FBE"
+  [[gui.pressure_bars]]
+  label = "CHAMBER"
+  role = "Chamber Mid PT 1"
+  avg_roles = [ "Chamber Mid PT 1", "Chamber Mid PT 2" ]
+  limits = "Chamber"
+  color = "#F97316"
 
-[[gui.pressure_bars]]
-label = "CHAMBER"
-role = "Chamber Mid PT 1"
-avg_roles = ["Chamber Mid PT 1", "Chamber Mid PT 2"]
-limits = "Chamber"
-color = "#F97316"
-
-# =============================================================================
-# DAQ bridge sample timestamping (per-board clock sync)
-#   mode = "board-clock": reconstruct true sample times from the boards'
-#     per-chunk millis() — batched chunks keep their real spacing, network
-#     jitter is filtered out (sliding-window-min offset), reboots and uint32
-#     wraps handled automatically. Safety-clamped so the worst case equals
-#     "arrival" mode.
-#   mode = "arrival": legacy behavior — every sample in a packet stamped with
-#     the bridge receive time. Flip to this to revert (no code change).
-# =============================================================================
 [time_sync]
 mode = "board-clock"
-window_seconds = 10          # residual-min sliding window
-max_plausible_gap_s = 60     # board-clock forward jump beyond this = reboot -> resync
-max_batch_age_s = 5          # stamps confined to [arrival - this, arrival]
-resync_threshold_ms = 1000   # |residual - offset| beyond this = lost lock -> resync
-log_interval_s = 10          # per-board [TimeSync] diagnostics log cadence
+window_seconds = 10
+max_plausible_gap_s = 60
+max_batch_age_s = 5
+resync_threshold_ms = 1000
+log_interval_s = 10
 
-# =============================================================================
-# Board log streaming
-#
-# Boards stream diagnostic logs to the server as type-15 LOGS packets (one per
-# board per second; gated by each board's serial-print mode byte). daq_bridge
-# parses them and forwards to the Node backend over loopback UDP on this port —
-# they are cached in memory and shown in the GUI, deliberately NOT written to
-# Elodin (no need to replay board logs for past runs). The backend must bind the
-# same port (LOG_INGEST_PORT env, same default).
-# =============================================================================
 [logs]
 backend_udp_port = 8092
 
-# =============================================================================
-# ADC voltage reference nominals (for sense conversions in the UI)
-#
-# Each board sets a `voltage_reference` (in its [boards.*] block). It selects
-# which nominal below the UI uses to turn ADC counts into a voltage:
-#   0 = Internal 2.5V reference  -> uses internal_v
-#   1 = VDD (ratiometric)        -> NO voltage conversion (reading is a ratio of
-#                                   VDD, which cancels out); vdd_nominal_v is
-#                                   display-only, never used in a calculation
-#   2 = 5V absolute reference    -> uses absolute_5v_v
-# =============================================================================
 [adc]
-internal_v = 2.5       # Nominal internal reference (V) — voltage_reference = 0
-vdd_nominal_v = 5.0    # Nominal VDD (V) — display only; ratiometric boards don't convert voltage
-absolute_5v_v = 5.0    # Nominal 5V absolute reference (V) — voltage_reference = 2
+internal_v = 2.5
+vdd_nominal_v = 5
+absolute_5v_v = 5
 
-# =============================================================================
-# Board Discovery
-# =============================================================================
 [discovery]
 enabled = true
-network_interface = "auto"  # "auto" = detect interface with 192.168.2.x IP
-mode = "hybrid"             # "passive", "active", "hybrid"
+network_interface = "auto"
+mode = "hybrid"
 subnet = "192.168.2.0/24"
 ip_range_start = 100
 ip_range_end = 150
 discovery_timeout_seconds = 30
 
-# =============================================================================
-# Boards - Each board has a type, IP, and sends/receives on specific ports
-#
-# Board types: PT (Pressure Transducer), LC (Load Cell), TC (Thermocouple),
-#              RTD (Resistance Temperature Detector), ACTUATOR
-# =============================================================================
-
 [boards.pt_board]
 type = "PT"
 ip = "192.168.2.21"
-send_port = 5005           # Board sends SENSOR_DATA to this port on our PC
-num_sensors = 10            # 10 connectors on this board
-board_id = 21               # PT Board #1 (label on board)
+send_port = 5005
+num_sensors = 10
+board_id = 21
 enabled = true
 enable_serial_printing = 0
-# voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
 voltage_reference = 1
-necessary_for_abort = true   # This sense board participates in abort logic
-# Exactly one actuator board should be marked as designated_survivor
-# (PT boards are never designated survivors)
+necessary_for_abort = true
 designated_survivor = false
-# Active connectors: list of connector IDs (1-10) that have sensors plugged in
-# Leave empty [] to use all connectors, or specify only active ones
-active_connectors = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]  # 7 GSE/prop + 4 chamber PTs
-
-# Sim PT targets (PSI) — board_simulator generates ADC to calibrate to these.
-# System start: 500 psi both tanks, 4k COPV, 1k reg.
-[sim_pt_targets]
-# pt_board channels 1–10 (Fuel Up, GSE Low, Fuel Down, Chamber 1, Ox Up, GN2 Reg, Ox Down, Chamber 2, Throat 1–2)
-1 = 500   # Fuel Upstream
-2 = 450   # GSE Low
-3 = 480   # Fuel Downstream
-4 = 400   # Chamber Mid 1
-5 = 500   # Ox Upstream
-6 = 4000  # GN2 Reg / COPV (controller P_copv, P_reg — storage at 4k)
-7 = 480   # Ox Downstream
-8 = 400   # Chamber Mid 2
-9 = 380   # Chamber Throat 1
-10 = 380  # Chamber Throat 2
-# pt_board_2 HP PT channels 11–14 (GSE High, Excitation, GSE Mid, GN2 High)
-11 = 3500   # GSE High (HP)
-12 = 24.0   # Excitation voltage (V) — loop supply for 4-20 mA transmitters
-13 = 1000   # GSE Mid (HP)
-14 = 4000   # GN2 High / COPV (HP)
+active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
 
 [boards.pt_board_2]
 type = "PT"
 ip = "192.168.2.22"
-send_port = 5005           # Board sends SENSOR_DATA to this port on our PC
-num_sensors = 10            # 10 connectors on this board
-board_id = 22               # PT Board #2 (label on board)
+send_port = 5005
+num_sensors = 10
+board_id = 22
 enabled = true
 enable_serial_printing = 1
-# voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
 voltage_reference = 0
-adc_ref_voltage = 2.5      # Fixed ADC reference voltage for this board (V)
-# hp_pt_connectors lists whichever connectors have HP PT sensors plugged in.
-# Set excitation_connector_id = -1 to disable dedicated excitation channel behavior.
-active_connectors = [1, 2, 3, 4]
-hp_pt_connectors = [1, 3, 4]   # Connectors with 4-20 mA HP PT sensors
-excitation_connector_id = 2   # Connector 2 = loop excitation voltage monitor
-hp_pt_full_scale_psi = 5000.0   # Full-scale pressure at 20 mA (PSI)
-hp_pt_sense_resistor_ohms = 120 # Sense resistor for 4-20 mA → voltage (Ω)
-# Excitation voltage divider: ADC sees this fraction of V_exc; V_exc = V_adc / this value
+adc_ref_voltage = 2.5
+active_connectors = [ 1, 2, 3, 4 ]
+hp_pt_connectors = [ 1, 3, 4 ]
+excitation_connector_id = 2
+hp_pt_full_scale_psi = 5000
+hp_pt_sense_resistor_ohms = 120
 excitation_divider_attenuation = 0.0762
 
 [boards.actuator_board]
 type = "ACTUATOR"
 ip = "192.168.2.11"
-send_port = 5005           # Actuator board also sends current sense data here
-listen_port = 5005         # Actuator board listens for ACTUATOR_COMMAND on this port
+send_port = 5005
+listen_port = 5005
 num_actuators = 10
-num_sensors = 10            # 10 current sense ADC channels
-board_id = 11              # Actuator Board #1 (label on board)
+num_sensors = 10
+board_id = 11
 enabled = false
 enable_serial_printing = 1
 necessary_for_abort = false
-# voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
 voltage_reference = 0
 
 [boards.actuator_board_2]
 type = "ACTUATOR"
 ip = "192.168.2.12"
-send_port = 5005           # Actuator board also sends current sense data here
-listen_port = 5005         # Actuator board listens for ACTUATOR_COMMAND on this port
+send_port = 5005
+listen_port = 5005
 num_actuators = 10
-num_sensors = 10            # 10 current sense ADC channels
-board_id = 12              # Actuator Board #2 (label on board)
+num_sensors = 10
+board_id = 12
 enabled = true
 enable_serial_printing = 1
 designated_survivor = true
 necessary_for_abort = false
-# voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
 voltage_reference = 0
 
 [boards.actuator_board_3]
@@ -309,7 +194,7 @@ send_port = 5005
 listen_port = 5005
 num_actuators = 10
 num_sensors = 10
-board_id = 13              # Actuator Board #3 (label on board)
+board_id = 13
 enabled = false
 enable_serial_printing = 1
 necessary_for_abort = false
@@ -322,7 +207,7 @@ send_port = 5005
 listen_port = 5005
 num_actuators = 10
 num_sensors = 10
-board_id = 14              # Actuator Board #4 (label on board)
+board_id = 14
 enabled = true
 enable_serial_printing = 1
 necessary_for_abort = false
@@ -333,89 +218,79 @@ type = "LC"
 ip = "192.168.2.41"
 send_port = 5005
 num_sensors = 4
-board_id = 41              # LC Board #1 (label on board)
-enabled = false             # flip to true when board is connected
+board_id = 41
+enabled = false
 enable_serial_printing = 1
 necessary_for_abort = false
 designated_survivor = false
-# voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
 voltage_reference = 1
-# Active connectors: list of connector IDs (1-4) that have sensors plugged in
-# Leave empty [] to use all connectors, or specify only active ones
-active_connectors = [1, 2, 3]  # 3 load cell sensors (IDs 1, 2, 3)
+active_connectors = [ 1, 2, 3 ]
 
 [boards.lc_board_2]
 type = "LC"
 ip = "192.168.2.42"
 send_port = 5005
 num_sensors = 4
-board_id = 42              # LC Board #2 (label on board)
+board_id = 42
 enabled = true
 enable_serial_printing = 1
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 0
-active_connectors = [1, 2, 6]
+active_connectors = [ 1, 2, 6 ]
 
 [boards.tc_board]
 type = "TC"
 ip = "192.168.2.51"
 send_port = 5005
 num_sensors = 10
-board_id = 51              # TC Board #1 (label on board)
+board_id = 51
 enabled = true
 enable_serial_printing = 1
 necessary_for_abort = false
 designated_survivor = false
-# voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
 voltage_reference = 0
-# Active connectors: list of connector IDs (1-10) that have sensors plugged in
-# Leave empty [] to use all connectors, or specify only active ones
-active_connectors = [2, 3, 4, 5]  # 4 existing + 4 chamber TCs (Chamber Mid 1&2, Chamber Throat 1&2)
+active_connectors = [ 2, 3, 4, 5 ]
 
 [boards.tc_board_2]
 type = "TC"
 ip = "192.168.2.52"
 send_port = 5005
 num_sensors = 10
-board_id = 52              # TC Board #2 (label on board)
+board_id = 52
 enabled = false
 enable_serial_printing = 1
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 0
-active_connectors = []
+active_connectors = [ ]
 
 [boards.rtd_board]
 type = "RTD"
 ip = "192.168.2.31"
 send_port = 5005
 num_sensors = 4
-board_id = 31              # RTD Board #1 (label on board)
+board_id = 31
 enabled = true
 enable_serial_printing = 1
 necessary_for_abort = false
 designated_survivor = false
-# voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
 voltage_reference = 0
-# Active connectors: list of connector IDs (1-4) that have sensors plugged in
-# Leave empty [] to use all connectors, or specify only active ones
-active_connectors = [1,2,3,4]  # Example: [1, 2] if only connectors 1-2 are used
+active_connectors = [ 1, 2, 3, 4 ]
 
 [boards.rtd_board_2]
 type = "RTD"
 ip = "192.168.2.32"
 send_port = 5005
 num_sensors = 4
-board_id = 32              # RTD Board #2 (label on board)
+board_id = 32
 enabled = false
 enable_serial_printing = 1
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 0
-active_connectors = []
+active_connectors = [ ]
 
-# Encoder board #1 (slot #6, board_id 61). UNKNOWN heartbeat on wire until DAQv2-Comms ENCODER enum.
 [boards.encoder_board]
 type = "ENCODER"
 ip = "192.168.2.61"
@@ -428,130 +303,62 @@ enable_serial_printing = 0
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 1
-active_connectors = [1, 2]
+active_connectors = [ 1, 2 ]
 
-# =============================================================================
-# Multiple Boards Example (commented out - uncomment to use)
-# =============================================================================
-# You can define multiple boards of the same type by using different section names:
-#
-# [boards.pt_board_1]
-# type = "PT"
-# ip = "192.168.2.101"
-# send_port = 5005
-# num_sensors = 10
-# board_id = 1
-# enabled = true
-# active_connectors = [1, 2, 3, 4, 5]
-#
-# [boards.pt_board_2]
-# type = "PT"
-# ip = "192.168.2.111"
-# send_port = 5005
-# num_sensors = 10
-# board_id = 11
-# enabled = true
-# active_connectors = [1, 2, 3]
-#
-# The config parser will find all boards with type="PT" and process them separately.
-# Each board can have different IPs and different active_connectors.
+[sim_pt_targets]
+1 = 500
+2 = 450
+3 = 480
+4 = 400
+5 = 500
+6 = 4000
+7 = 480
+8 = 400
+9 = 380
+10 = 380
+11 = 3500
+12 = 24
+13 = 1000
+14 = 4000
 
-
-
-# =============================================================================
-# Sensor Roles - PT Board #1 (board_id = 21)
-# Board-specific mapping to prevent cross-contamination between boards.
-# pt_board in [boards] has board_id = 21.
-# Chamber PTs: connector 4 = Mid 1, 8 = Mid 2, 9 = Throat 1, 10 = Throat 2.
-# =============================================================================
 [sensor_roles_pt_board]
-"Fuel Upstream"      = 1
-"GSE Low"            = 2
-"Fuel Downstream"    = 3
-"Chamber Mid PT 1"   = 4
-"Ox Upstream"        = 5
-"GN2 Regulated"      = 6
-"Ox Downstream"      = 7
-"Chamber Mid PT 2"   = 8
+"Fuel Upstream" = 1
+"GSE Low" = 2
+"Fuel Downstream" = 3
+"Chamber Mid PT 1" = 4
+"Ox Upstream" = 5
+"GN2 Regulated" = 6
+"Ox Downstream" = 7
+"Chamber Mid PT 2" = 8
 "Chamber Throat PT 1" = 9
 "Chamber Throat PT 2" = 10
 
-# =============================================================================
-# Abort PTs - PTs required for abort logic (sensor role name → pressure threshold PSI)
-# Threshold is converted to ADC code per PT calibration when building ACTUATOR_CONFIG.
-# =============================================================================
 [abort_pts]
-"Fuel Upstream"   = 400
-"Ox Upstream"     = 400
+"Fuel Upstream" = 400
+"Ox Upstream" = 400
 
-# =============================================================================
-# Sensor Roles - RTD Board #1 (board_id = 31)
-# Channel 1 = COPV temp (COPV pane); channels 2–4 = LOX tank (LOX pane)
-# =============================================================================
 [sensor_roles_rtd_board]
-"COPV RTD"  = 1
+"COPV RTD" = 1
 "LOX Upper" = 2
-"LOX Mid"   = 3
+"LOX Mid" = 3
 "LOX Lower" = 4
 
-# =============================================================================
-# Sensor Roles - TC Board #1 (board_id = 51)
-# Chamber TCs: 2 on chamber mid, 2 on chamber throat
-# =============================================================================
 [sensor_roles_tc_board]
-"Chamber Mid TC 1"    = 2
-"Chamber Mid TC 2"    = 3
+"Chamber Mid TC 1" = 2
+"Chamber Mid TC 2" = 3
 "Chamber Throat TC 1" = 4
 "Chamber Throat TC 2" = 5
 
-# =============================================================================
-# Sensor Roles - PT Board #2 (board_id = 22, High-Pressure 4-20 mA sensors)
-# Maps connector_id (1-indexed) to human-readable names for hp_pt_connectors.
-# pt_board_2 in [boards] has board_id = 22.
-# If excitation_connector_id is -1, no dedicated excitation channel is required.
-# =============================================================================
 [sensor_roles_pt2]
-"GSE High"    = 1    # Connector 1 = GSE High (HP PT)
-"Excitation V" = 2   # Connector 2 = 4-20 mA loop excitation voltage monitor
-"GSE Mid"     = 3    # Connector 3 = GSE Mid (HP PT)
-"GN2 High"   = 4    # Connector 4 is GN2 High (HP PT sensor)
+"GSE High" = 1
+"Excitation V" = 2
+"GSE Mid" = 3
+"GN2 High" = 4
 
-# =============================================================================
-# Sensor Roles - Encoder Board (board_id = 61)
-# AS5600 magnetic encoders — 12-bit angle (0-4095)
-# =============================================================================
 [sensor_roles_encoder_board]
 "Encoder 1" = 1
 "Encoder 2" = 2
 
-# =============================================================================
-# Actuator Roles - Maps role names to [type, actuator_id, board_id]
-# type: "NC" (Normally Closed) or "NO" (Normally Open)
-# actuator_id: 1-indexed connector number on the actuator board
-# board_id: numeric board ID from [boards] (e.g. 14 = Actuator Board #1, 12 = Actuator Board #2).
-#           IP is resolved from config.boards by board_id.
-# =============================================================================
-[actuator_roles]
-# Actuator Board #1 → board_id 12 (names match state_machine_actuators.csv)
-"LOX Main"               = ["NC", 1, 12]
-"Fuel Vent"             = ["NC", 2, 12]
-"Fuel Press"            = ["NC", 3, 12]
-"Fuel Main"             = ["NO", 7, 12]
-"LOX Vent"              = ["NC", 6, 12]
-"LOX Press"             = ["NO", 8, 12]
-"GSE Low Press Vent"    = ["NC", 5, 12]
-"Fuel Fill Press"       = ["NC", 2, 14]
-# Actuator Board #2 → board_id 14
-"Fuel Fill Vent"        = ["NC", 1, 14]
-"GSE LOX Fill Vent"     = ["NC", 10, 14]
-"GSE High Press Control" = ["NC", 3, 14]
-"GSE Med Press Control" = ["NC", 4, 14]
-"GSE High Press Vent"   = ["NC", 5, 14]
-"GN2 Vent"              = ["NC", 6, 14]
-"LOX Fill"              = ["NC", 7, 14]
-"LOX Dump"              = ["NC", 8, 14]
-
-# Abbreviation mapping for state machine CSV
 [actuator_abbrev]
 FV = "Fuel Vent"
 OV = "LOX Vent"
@@ -561,61 +368,33 @@ FM = "Fuel Main"
 OM = "LOX Main"
 FF = "Fuel Fill"
 
-# Actuator service (C++) — when port is set, backend forwards state transitions here;
-# actuator commands are sent by C++ instead of Node.
-# Env ACTUATOR_SERVICE_PORT overrides this; startup script sets it automatically.
-# bind_address: bind outbound UDP to this IP so packets use the right interface.
-# On multi-homed hosts (e.g. WiFi + DAQ Ethernet), set to your 192.168.2.x IP.
 [actuator_service]
 port = 9998
 bind_address = "0.0.0.0"
 
-# Controller service (C++) — TCP port for FIRE_START / FIRE_STOP commands.
-# Backend sends FIRE_START when entering FIRE state, FIRE_STOP on exit.
-# PWM is only sent to actuator boards while fire_active is set.
 [controller_service]
 port = 9999
-# Hotfire duration (ms). FIRE state auto-ends after this unless extended.
 fire_duration_ms = 6000
-# Extended fire duration (ms) when user taps "Extend Fire".
 fire_extended_ms = 10000
 
-# NOTE: [routing.*] and [daq_bridge].publish were removed 2026-08-13 — dead config.
-# daq_bridge derives packet IDs from board config + code-based SensorRouter/HeartbeatRouter;
-# nothing read these sections (verified across backend + C++).
-
-# =============================================================================
-# Calibration
-# =============================================================================
-# NOTE: [calibration], [calibration.orchestrator], [calibration.pt] removed 2026-08-13 — dead config
-# (read only by the deprecated Python robust-cal). The live C++ calibration_service reads its PT
-# coefficients from hardcoded paths and only parses [calibration.tc/rtd/lc] below for default formulas.
 [calibration.tc]
 json_dir = "scripts/calibration/calibrations/tc"
-csv_paths = []
-# Raw K-type fallback: ADC ref voltage (V)
+csv_paths = [ ]
 adc_ref_voltage = 2.5
 
 [calibration.rtd]
 json_dir = "scripts/calibration/calibrations/rtd"
-csv_paths = []
-# Raw ADC→temp fallback (when no calibration points): Pt1000 r0=1000
+csv_paths = [ ]
 r0_ohm = 1000
-adc_ref_voltage = 2.5   # ADC reference (V)
-excitation_ua = 1000    # IDAC excitation (µA)
+adc_ref_voltage = 2.5
+excitation_ua = 1000
 
 [calibration.lc]
 json_dir = "scripts/calibration/calibrations/lc"
-csv_paths = []
-# Raw LC fallback: sensitivity (mV/V), pga_gain, full_scale_value (kg)
-sensitivity_mv_per_v = 2.0
-pga_gain = 32.0
-full_scale_value = 300.0
-
-# =============================================================================
-# Pressure Limits (for GUI gauges and alarms)
-# =============================================================================
-
+csv_paths = [ ]
+sensitivity_mv_per_v = 2
+pga_gain = 32
+full_scale_value = 300
 
 [pressure_limits.GN2_High]
 NOP = 4000
@@ -667,66 +446,50 @@ NOP = 500
 MEOP = 650
 POP = 800
 
-# NOTE: [pressure_mappings] (old system→channel index, superseded by [sensor_roles_*])
-# and [display] (GUI defaults nothing reads) removed 2026-08-13 — dead config.
-
-# =============================================================================
-# State Machine
-# =============================================================================
 [state_machine]
 actuator_csv = "config/state_machine_actuators.csv"
 actuator_delay_csv = "config/state_machine_actuator_delays.csv"
-# Repo-local state transition matrix; sequencer + backend both resolve via state_machine.transitions_csv
 transitions_csv = "config/state_transitions.csv"
 
-# =============================================================================
-# Controller Settings (PWM Control)
-# =============================================================================
 [controller]
-# PWM frequency for actuator control (Hz)
-pwm_frequency_hz = 6.0
-# PWM command duration (ms) - how long each command stays active
+pwm_frequency_hz = 6
 pwm_duration_ms = 2000
-# Fallback duty cycles when controller service is unavailable (0.0-1.0).
-# When controller_service runs, non-zero values also act as open-loop test duty (bypass DDP/LUT).
-# For LUT mode, set both to 0 so the LUT is used.
-fallback_fuel_duty_cycle = 0.0
-fallback_ox_duty_cycle = 0.0
-# Controller loop update rate (Hz)
-controller_loop_hz = 100.0
-# NOTE: controller_service_url / controller_config_path removed 2026-08-14 — Python-only
-# (FastAPI controller). Dead while use_cpp_controller = true; the LUT tools read their own YAML.
-# Minimum COPV/tank pressure (Pa) required by safety filter before PWM is allowed.
-# Set to 0 to disable the constraint (simulation / open-loop test).
-# For a real hotfire with COPV, set to ~689476 (100 psi) or higher.
-P_copv_min_pa = 0.0
-
-# Controller Targets (used when state machine enters FIRE state)
-# command_type can be: "THRUST_DESIRED", "ALTITUDE_GOAL", or "PRESSURE_TARGET"
+fallback_fuel_duty_cycle = 0
+fallback_ox_duty_cycle = 0
+controller_loop_hz = 100
+P_copv_min_pa = 0
 command_type = "THRUST_DESIRED"
-thrust_desired = 1000.0        # Target thrust in Newtons
-altitude_goal = 0.0            # Target altitude (if using ALTITUDE_GOAL)
-pressure_fuel_target = 0.0     # Target fuel pressure (if using PRESSURE_TARGET)
-pressure_ox_target = 0.0       # Target ox pressure (if using PRESSURE_TARGET)
-# Duty sweep: open-loop multi-step test (no controller service needed).
+thrust_desired = 1000
+altitude_goal = 0
+pressure_fuel_target = 0
+pressure_ox_target = 0
 duty_sweep_enabled = false
-duty_sweep_step_duration_sec = 2.0
-# Steps as [fuel_duty, ox_duty] in 0.0-1.0; 5 steps x 2s = 10s
-duty_sweep_steps = [[0.1, 0.1], [0.3, 0.2], [0.5, 0.4], [0.3, 0.3], [0.1, 0.1]]
-
-# Use C++ RobustDDPController service for PWM instead of Python FastAPI.
-# When true, the web backend will not start its own controller loop or send PWM.
+duty_sweep_step_duration_sec = 2
+duty_sweep_steps = [
+  [ 0.1, 0.1 ],
+  [ 0.3, 0.2 ],
+  [ 0.5, 0.4 ],
+  [ 0.3, 0.3 ],
+  [ 0.1, 0.1 ]
+]
 use_cpp_controller = true
-
-# Policy LUT path for C++ controller. If set and load succeeds, bypasses DDP
-# and uses precomputed duty_F/duty_O from LUT (multilinear interpolation).
-# Generate: ./scripts/controller_lut/generate_engine_and_policy_lut.sh full
 lut_path = "output/lut/controller_policy_fsw.bin"
-# Thrust curve CSV (time_s,thrust_N) from Layer 2 pressure curves. When set, F_ref follows curve.
 thrust_curve_path = "output/lut/thrust_curve.csv"
 
-# NOTE: engine_lut_path removed 2026-08-14 — Python/SITL-only (DDP LUT); the C++ controller
-# doesn't read it, and the LUT tools take it from their own engine_lut_config.yaml.
-
-# NOTE: [phase2], [calibration.sidecar], [calibration.environmental] removed 2026-08-13 — dead config
-# (deprecated Python autonomous-cal / sidecar; the live C++ calibration_service reads none of them).
+[actuator_roles]
+"LOX Main" = ["NC", 1, 12]
+"Fuel Vent" = ["NC", 2, 12]
+"Fuel Press" = ["NC", 3, 12]
+"Fuel Main" = ["NO", 7, 12]
+"LOX Vent" = ["NC", 6, 12]
+"LOX Press" = ["NO", 8, 12]
+"GSE Low Press Vent" = ["NC", 5, 12]
+"Fuel Fill Press" = ["NC", 2, 14]
+"Fuel Fill Vent" = ["NC", 1, 14]
+"GSE LOX Fill Vent" = ["NC", 10, 14]
+"GSE High Press Control" = ["NC", 3, 14]
+"GSE Med Press Control" = ["NC", 4, 14]
+"GSE High Press Vent" = ["NC", 5, 14]
+"GN2 Vent" = ["NC", 6, 14]
+"LOX Fill" = ["NC", 7, 14]
+"LOX Dump" = ["NC", 8, 14]
