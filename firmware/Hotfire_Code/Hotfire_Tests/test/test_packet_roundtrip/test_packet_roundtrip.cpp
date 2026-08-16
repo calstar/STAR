@@ -30,8 +30,7 @@ void test_board_heartbeat_roundtrip() {
 
     const uint32_t ts = 99999u;
     uint8_t buf[512];
-    size_t n =
-        daq::create_board_heartbeat_packet(hb_in, ts, buf, sizeof(buf));
+    size_t n = daq::create_board_heartbeat_packet(hb_in, ts, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     daq::PacketHeader hdr_out;
@@ -42,8 +41,7 @@ void test_board_heartbeat_roundtrip() {
     TEST_ASSERT_EQUAL(daq::PacketType::BOARD_HEARTBEAT, hdr_out.packet_type);
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(42, hb_out.board_id);
-    TEST_ASSERT_EQUAL((int)daq::EngineState::FIRING,
-                      (int)hb_out.engine_state);
+    TEST_ASSERT_EQUAL((int)daq::EngineState::FIRING, (int)hb_out.engine_state);
     TEST_ASSERT_EQUAL((int)daq::BoardState::ACTIVE, (int)hb_out.board_state);
     TEST_ASSERT_EQUAL_MEMORY(hb_in.firmware_hash, hb_out.firmware_hash, 32);
 }
@@ -60,15 +58,13 @@ void test_board_heartbeat_parse_wrong_type() {
     uint8_t buf[512];
     daq::BoardHeartbeatPacket hb_in{};
     hb_in.board_id = 1;
-    size_t n =
-        daq::create_board_heartbeat_packet(hb_in, 1u, buf, sizeof(buf));
+    size_t n = daq::create_board_heartbeat_packet(hb_in, 1u, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
     // Corrupt the packet type
     buf[0] = (uint8_t)daq::PacketType::SENSOR_DATA;
     daq::PacketHeader hdr;
     daq::BoardHeartbeatPacket hb_out;
-    TEST_ASSERT_FALSE(
-        daq::parse_board_heartbeat_packet(buf, n, hdr, hb_out));
+    TEST_ASSERT_FALSE(daq::parse_board_heartbeat_packet(buf, n, hdr, hb_out));
 }
 
 // ---------------------------------------------------------------------------
@@ -120,8 +116,8 @@ void test_sensor_data_roundtrip() {
 
     const uint32_t hdr_ts = 5555u;
     uint8_t buf[512];
-    size_t n = daq::create_sensor_data_packet(chunks, num_sensors, hdr_ts,
-                                                 buf, sizeof(buf));
+    size_t n = daq::create_sensor_data_packet(chunks, num_sensors, hdr_ts, buf,
+                                              sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     daq::PacketHeader hdr_out;
@@ -165,8 +161,7 @@ void test_actuator_command_roundtrip() {
 
     const uint32_t ts = 7777u;
     uint8_t buf[512];
-    size_t n =
-        daq::create_actuator_command_packet(cmds, ts, buf, sizeof(buf));
+    size_t n = daq::create_actuator_command_packet(cmds, ts, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     daq::PacketHeader hdr_out;
@@ -211,8 +206,7 @@ void test_pwm_actuator_roundtrip() {
 
     daq::PacketHeader hdr_out;
     std::vector<daq::PWMActuatorCommand> cmds_out;
-    TEST_ASSERT_TRUE(
-        daq::parse_pwm_actuator_packet(buf, n, hdr_out, cmds_out));
+    TEST_ASSERT_TRUE(daq::parse_pwm_actuator_packet(buf, n, hdr_out, cmds_out));
 
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(1, cmds_out.size());
@@ -292,7 +286,7 @@ void test_sensor_config_empty_sensors() {
     std::vector<uint8_t> sensor_ids;  // empty
     uint8_t buf[512];
     size_t n = daq::create_sensor_config_packet(sensor_ids, 0, false, 0, 1,
-                                                   11113u, buf, sizeof(buf));
+                                                11113u, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     daq::PacketHeader hdr_out;
@@ -318,8 +312,8 @@ void test_actuator_config_roundtrip() {
     pts.push_back({0xC0A80203, 2, 500000});  // IP, sensor_id, threshold
 
     uint8_t buf[512];
-    size_t n = daq::create_actuator_config_packet(1, actuators, pts, 1,
-                                                     22222u, buf, sizeof(buf));
+    size_t n = daq::create_actuator_config_packet(1, actuators, pts, 1, 22222u,
+                                                  buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     daq::PacketHeader hdr_out;
@@ -349,8 +343,8 @@ void test_actuator_config_no_pts() {
     std::vector<daq::AbortPTLocation> pts;  // empty
 
     uint8_t buf[512];
-    size_t n = daq::create_actuator_config_packet(0, actuators, pts, 0,
-                                                     22223u, buf, sizeof(buf));
+    size_t n = daq::create_actuator_config_packet(0, actuators, pts, 0, 22223u,
+                                                  buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     daq::PacketHeader hdr_out;
@@ -379,15 +373,14 @@ void test_self_test_roundtrip() {
 
     const uint32_t ts = 33333u;
     uint8_t buf[512];
-    size_t n =
-        daq::create_self_test_packet(1, results, ts, buf, sizeof(buf));
+    size_t n = daq::create_self_test_packet(1, results, ts, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     daq::PacketHeader hdr_out;
     uint8_t adc_good_out;
     std::vector<daq::SelfTestResult> results_out;
-    TEST_ASSERT_TRUE(daq::parse_self_test_packet(buf, n, hdr_out,
-                                                    adc_good_out, results_out));
+    TEST_ASSERT_TRUE(daq::parse_self_test_packet(buf, n, hdr_out, adc_good_out,
+                                                 results_out));
 
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(1, adc_good_out);
@@ -410,8 +403,8 @@ void test_self_test_adc_bad() {
     daq::PacketHeader hdr_out;
     uint8_t adc_good_out;
     std::vector<daq::SelfTestResult> results_out;
-    TEST_ASSERT_TRUE(daq::parse_self_test_packet(buf, n, hdr_out,
-                                                    adc_good_out, results_out));
+    TEST_ASSERT_TRUE(daq::parse_self_test_packet(buf, n, hdr_out, adc_good_out,
+                                                 results_out));
     TEST_ASSERT_EQUAL(33334u, hdr_out.timestamp);
     TEST_ASSERT_EQUAL(0, adc_good_out);
 }
@@ -436,8 +429,7 @@ void test_abort_done_roundtrip() {
 
 void test_abort_done_buffer_too_small() {
     uint8_t buf[2];
-    TEST_ASSERT_EQUAL(0,
-                      daq::create_abort_done_packet(0u, buf, sizeof(buf)));
+    TEST_ASSERT_EQUAL(0, daq::create_abort_done_packet(0u, buf, sizeof(buf)));
 }
 
 // ---------------------------------------------------------------------------
@@ -447,12 +439,10 @@ void test_abort_done_buffer_too_small() {
 void test_parse_null_buffer() {
     daq::PacketHeader hdr;
     daq::BoardHeartbeatPacket hb;
-    TEST_ASSERT_FALSE(
-        daq::parse_board_heartbeat_packet(nullptr, 100, hdr, hb));
+    TEST_ASSERT_FALSE(daq::parse_board_heartbeat_packet(nullptr, 100, hdr, hb));
 
     std::vector<daq::SensorDataChunkCollection> chunks;
-    TEST_ASSERT_FALSE(
-        daq::parse_sensor_data_packet(nullptr, 100, hdr, chunks));
+    TEST_ASSERT_FALSE(daq::parse_sensor_data_packet(nullptr, 100, hdr, chunks));
 
     std::vector<daq::ActuatorCommand> cmds;
     TEST_ASSERT_FALSE(
@@ -474,19 +464,19 @@ void test_log_packet_layout() {
     TEST_ASSERT_EQUAL_UINT8((uint8_t)daq::PacketType::LOGS, buf[0]);
     uint32_t ts;
     memcpy(&ts, buf + 2, 4);
-    TEST_ASSERT_EQUAL_UINT32(0xDEADBEEFu, ts);          // timestamp (u32 LE)
-    TEST_ASSERT_EQUAL_UINT8(0x01, buf[hdr]);            // flags: TRUNCATED
+    TEST_ASSERT_EQUAL_UINT32(0xDEADBEEFu, ts);  // timestamp (u32 LE)
+    TEST_ASSERT_EQUAL_UINT8(0x01, buf[hdr]);    // flags: TRUNCATED
     uint16_t tl;
     memcpy(&tl, buf + hdr + 1, 2);
-    TEST_ASSERT_EQUAL_UINT16(text_len, tl);             // text_len (u16 LE)
+    TEST_ASSERT_EQUAL_UINT16(text_len, tl);  // text_len (u16 LE)
     TEST_ASSERT_EQUAL_MEMORY(text, buf + hdr + 3, text_len);
 }
 
 void test_log_packet_buffer_too_small() {
     const char* text = "hello";
     uint8_t buf[4];  // smaller than the header alone
-    TEST_ASSERT_EQUAL(
-        0, daq::create_log_packet(0, (const uint8_t*)text, 5, 0u, buf, sizeof(buf)));
+    TEST_ASSERT_EQUAL(0, daq::create_log_packet(0, (const uint8_t*)text, 5, 0u,
+                                                buf, sizeof(buf)));
 }
 
 void test_log_packet_roundtrip() {
@@ -501,7 +491,8 @@ void test_log_packet_roundtrip() {
     uint8_t flags = 0;
     const uint8_t* out_text = nullptr;
     uint16_t out_len = 0;
-    TEST_ASSERT_TRUE(daq::parse_log_packet(buf, n, hdr, flags, out_text, out_len));
+    TEST_ASSERT_TRUE(
+        daq::parse_log_packet(buf, n, hdr, flags, out_text, out_len));
     TEST_ASSERT_EQUAL_UINT8((uint8_t)daq::PacketType::LOGS, hdr.packet_type);
     TEST_ASSERT_EQUAL_UINT32(0x12345678u, hdr.timestamp);
     TEST_ASSERT_EQUAL_UINT8(0x01, flags);
@@ -512,7 +503,8 @@ void test_log_packet_roundtrip() {
 void test_log_packet_parse_truncated() {
     const char* text = "hello";
     uint8_t buf[64];
-    size_t n = daq::create_log_packet(0, (const uint8_t*)text, 5, 0u, buf, sizeof(buf));
+    size_t n = daq::create_log_packet(0, (const uint8_t*)text, 5, 0u, buf,
+                                      sizeof(buf));
     TEST_ASSERT_NOT_EQUAL(0, n);
 
     daq::PacketHeader hdr;
@@ -520,7 +512,8 @@ void test_log_packet_parse_truncated() {
     const uint8_t* out_text = nullptr;
     uint16_t out_len = 0;
     // Claim one fewer byte than the text needs -> must fail.
-    TEST_ASSERT_FALSE(daq::parse_log_packet(buf, n - 1, hdr, flags, out_text, out_len));
+    TEST_ASSERT_FALSE(
+        daq::parse_log_packet(buf, n - 1, hdr, flags, out_text, out_len));
 }
 
 void test_log_packet_parse_wrong_type() {
@@ -534,7 +527,8 @@ void test_log_packet_parse_wrong_type() {
     uint8_t flags = 0;
     const uint8_t* out_text = nullptr;
     uint16_t out_len = 0;
-    TEST_ASSERT_FALSE(daq::parse_log_packet(buf, n, hdr, flags, out_text, out_len));
+    TEST_ASSERT_FALSE(
+        daq::parse_log_packet(buf, n, hdr, flags, out_text, out_len));
 }
 
 // ---------------------------------------------------------------------------

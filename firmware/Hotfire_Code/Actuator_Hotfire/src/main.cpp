@@ -12,10 +12,10 @@
 #include "main.h"
 
 #include <Arduino.h>
-#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -245,8 +245,8 @@ static void sendBoardHeartbeat() {
     hb.board_state = getBoardStateForHeartbeat();
 
     uint8_t packetBuffer[MAX_PACKET_SIZE];
-    size_t len = daq::create_board_heartbeat_packet(
-        hb, millis(), packetBuffer, sizeof(packetBuffer));
+    size_t len = daq::create_board_heartbeat_packet(hb, millis(), packetBuffer,
+                                                    sizeof(packetBuffer));
     if (len == 0)
         return;
 
@@ -497,8 +497,7 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
         case daq::PacketType::SERVER_HEARTBEAT: {
             daq::PacketHeader dummy;
             daq::ServerHeartbeatPacket data;
-            if (daq::parse_server_heartbeat_packet(buffer, len, dummy,
-                                                      data)) {
+            if (daq::parse_server_heartbeat_packet(buffer, len, dummy, data)) {
                 last_server_heartbeat_ms = millis();
                 uint32_t sip = (static_cast<uint32_t>(serverIP[0]) << 24) |
                                (static_cast<uint32_t>(serverIP[1]) << 16) |
@@ -516,8 +515,8 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
             std::vector<daq::AbortActuatorLocation> act_locs;
             std::vector<daq::AbortPTLocation> pt_locs;
             if (daq::parse_actuator_config_packet(buffer, len, dummy,
-                                                     is_controller, act_locs,
-                                                     pt_locs, enable_serial)) {
+                                                  is_controller, act_locs,
+                                                  pt_locs, enable_serial)) {
                 is_abort_controller = (is_controller != 0);
                 abort_actuator_locations = act_locs;
                 abort_pt_locations = pt_locs;
@@ -525,7 +524,8 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
                 // enable_serial is the mode byte (0..3): bit0 = USB verbose,
                 // upper part = server log stream level. See hotfire_log.h.
                 g_verbose = (enable_serial & 1);
-                g_log_stream_level = (enable_serial >= 2) ? (enable_serial - 1) : 0;
+                g_log_stream_level =
+                    (enable_serial >= 2) ? (enable_serial - 1) : 0;
                 return IncomingPacketKind::Config;
             }
             return IncomingPacketKind::None;
@@ -542,8 +542,7 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
                 config_valid && !abort_pt_locations.empty()) {
                 std::vector<daq::SensorDataChunkCollection> chunks;
                 daq::PacketHeader dummy;
-                if (daq::parse_sensor_data_packet(buffer, len, dummy,
-                                                     chunks)) {
+                if (daq::parse_sensor_data_packet(buffer, len, dummy, chunks)) {
                     for (const auto& col : chunks)
                         for (const auto& dp : col.datapoints)
                             for (size_t i = 0; i < abort_pt_locations.size();
@@ -559,8 +558,7 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
                 !abort_pt_locations.empty()) {
                 std::vector<daq::SensorDataChunkCollection> chunks;
                 daq::PacketHeader dummy;
-                if (daq::parse_sensor_data_packet(buffer, len, dummy,
-                                                     chunks)) {
+                if (daq::parse_sensor_data_packet(buffer, len, dummy, chunks)) {
                     for (const auto& col : chunks) {
                         for (const auto& dp : col.datapoints) {
                             for (size_t i = 0; i < abort_pt_locations.size();
@@ -585,7 +583,7 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
             daq::PacketHeader cmd_header;
             std::vector<daq::ActuatorCommand> commands;
             if (daq::parse_actuator_command_packet(buffer, len, cmd_header,
-                                                      commands)) {
+                                                   commands)) {
                 HF_VERBOSELN("ACTUATOR_COMMAND received (DAQv2-Comms):");
                 for (size_t i = 0; i < commands.size(); ++i) {
                     const auto& cmd = commands[i];
@@ -606,9 +604,8 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
             daq::PacketHeader cmd_header;
             std::vector<daq::PWMActuatorCommand> commands;
             if (daq::parse_pwm_actuator_packet(buffer, len, cmd_header,
-                                                  commands)) {
-                HF_VERBOSELN(
-                    "PWM_ACTUATOR_COMMAND received (DAQv2-Comms):");
+                                               commands)) {
+                HF_VERBOSELN("PWM_ACTUATOR_COMMAND received (DAQv2-Comms):");
                 for (size_t i = 0; i < commands.size(); ++i) {
                     const auto& cmd = commands[i];
                     HF_VERBOSE("  [");
@@ -1040,8 +1037,9 @@ static void flushLogs() {
     if (g_logbuf.empty())
         return;
     static uint8_t pkt[sizeof(daq::PacketHeader) + 3 + LOG_BUF_SIZE];
-    size_t n = daq::create_log_packet(g_logbuf.flags(), g_logbuf.data(),
-                                      g_logbuf.length(), millis(), pkt, sizeof(pkt));
+    size_t n =
+        daq::create_log_packet(g_logbuf.flags(), g_logbuf.data(),
+                               g_logbuf.length(), millis(), pkt, sizeof(pkt));
     if (n > 0) {
         udp.beginPacket(serverIP, serverPort);
         udp.write(pkt, n);
@@ -1121,9 +1119,9 @@ void loop() {
         uint8_t packetBuffer[MAX_PACKET_SIZE];
         int bytesRead = udp.read(packetBuffer, sizeof(packetBuffer));
         if (bytesRead > 0) {
-            const uint8_t pktType =
-                bytesRead >= (int)sizeof(daq::PacketHeader) ? packetBuffer[0]
-                                                               : 0;
+            const uint8_t pktType = bytesRead >= (int)sizeof(daq::PacketHeader)
+                                        ? packetBuffer[0]
+                                        : 0;
             HF_VERBOSE("Received packet from ");
             HF_VERBOSE(remoteIP);
             HF_VERBOSE(":");
@@ -1193,7 +1191,8 @@ void loop() {
         sendBoardHeartbeat();
     }
 
-    // Flush buffered logs to the server ~1 Hz (or sooner if the buffer is filling).
+    // Flush buffered logs to the server ~1 Hz (or sooner if the buffer is
+    // filling).
     static unsigned long s_last_log_flush_ms = 0;
     if (!g_logbuf.empty() &&
         (g_logbuf.nearFull() || now - s_last_log_flush_ms >= 1000)) {

@@ -14,10 +14,10 @@
 #pragma once
 
 #include <Arduino.h>
-#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -35,8 +35,9 @@
 #define SENSOR_UDP_LISTEN_PORT 5005
 #endif
 
-// Two-tier serial logging (HF_LOG* = always, HF_VERBOSE* = verbose-only, gated by
-// g_verbose). Each board defines `bool g_verbose = true;` once in its main .cpp.
+// Two-tier serial logging (HF_LOG* = always, HF_VERBOSE* = verbose-only, gated
+// by g_verbose). Each board defines `bool g_verbose = true;` once in its main
+// .cpp.
 #include "hotfire_log.h"
 
 namespace SensorHotfire {
@@ -228,8 +229,7 @@ inline IncomingPacketKind processIncomingPacket(CoreState& s, const Config& cfg,
             HF_VERBOSELN("(none)");
         }
         HF_VERBOSE("  reference_voltage=");
-        HF_VERBOSELN(
-            static_cast<unsigned>(s.stored_config.reference_voltage));
+        HF_VERBOSELN(static_cast<unsigned>(s.stored_config.reference_voltage));
         HF_VERBOSE("  necessary_for_abort=");
         HF_VERBOSELN(s.stored_config.necessary_for_abort ? 1 : 0);
         HF_VERBOSE("  actuator_controller_ip=");
@@ -297,8 +297,8 @@ inline void applyPacketTransition(CoreState& s, const Config& cfg,
 }
 
 inline void sendBoardHeartbeat(CoreState& s, const Config& cfg,
-                               daq::BoardState board_state,
-                               IPAddress dest_ip, int dest_port) {
+                               daq::BoardState board_state, IPAddress dest_ip,
+                               int dest_port) {
     daq::BoardHeartbeatPacket hb;
     memcpy(hb.firmware_hash, FirmwareHash::get(), 32);
     hb.board_id = s.board_id;
@@ -307,7 +307,7 @@ inline void sendBoardHeartbeat(CoreState& s, const Config& cfg,
 
     uint8_t packetBuffer[SENSOR_HOTFIRE_MAX_PACKET_SIZE];
     size_t n = daq::create_board_heartbeat_packet(hb, millis(), packetBuffer,
-                                                     sizeof(packetBuffer));
+                                                  sizeof(packetBuffer));
     if (n == 0)
         return;
     HF_VERBOSE("Sent: heartbeat to ");
@@ -362,8 +362,9 @@ inline void flushLogs(CoreState& s) {
     if (g_logbuf.empty())
         return;
     static uint8_t pkt[sizeof(daq::PacketHeader) + 3 + LOG_BUF_SIZE];
-    size_t n = daq::create_log_packet(g_logbuf.flags(), g_logbuf.data(),
-                                      g_logbuf.length(), millis(), pkt, sizeof(pkt));
+    size_t n =
+        daq::create_log_packet(g_logbuf.flags(), g_logbuf.data(),
+                               g_logbuf.length(), millis(), pkt, sizeof(pkt));
     if (n > 0) {
         s.udp.beginPacket(s.serverIP, s.serverPort);
         s.udp.write(pkt, n);
@@ -411,8 +412,7 @@ inline void setup(CoreState& s, const Config& cfg) {
     HF_LOG("Hardware: ");
     switch (Ethernet.hardwareStatus()) {
         case EthernetNoHardware:
-            HF_LOGLN(
-                "no chip detected — check CS / SPI wiring");
+            HF_LOGLN("no chip detected — check CS / SPI wiring");
             break;
         case EthernetW5100:
             HF_LOGLN("W5100");
@@ -436,8 +436,7 @@ inline void setup(CoreState& s, const Config& cfg) {
         HF_LOGLN("Unknown");
     }
     if (Ethernet.localIP() == IPAddress(0, 0, 0, 0)) {
-        HF_LOGLN(
-            "[ETH] WARNING: stack IP is 0.0.0.0 — check cable / W5500");
+        HF_LOGLN("[ETH] WARNING: stack IP is 0.0.0.0 — check cable / W5500");
     }
     Serial.flush();
 
@@ -463,9 +462,9 @@ inline void setup(CoreState& s, const Config& cfg) {
     Serial.flush();
     HF_LOGLN("Setup complete. State: WaitingForServer");
 
-    // Ethernet is up now, so this is the first log the server can actually receive
-    // (boot logs before Ethernet are unsendable). Announce identity + IP and flush
-    // immediately so the server sees the board come online.
+    // Ethernet is up now, so this is the first log the server can actually
+    // receive (boot logs before Ethernet are unsendable). Announce identity +
+    // IP and flush immediately so the server sees the board come online.
     HF_LOG("ONLINE board=");
     HF_LOG(static_cast<unsigned>(s.board_id));
     HF_LOG(" ip=");
@@ -614,12 +613,12 @@ inline void loop(CoreState& s, const Config& cfg) {
         switch (s.state) {
             case State::WaitingForServer:
                 HF_VERBOSELN("Setup state: sending heartbeat");
-                sendBoardHeartbeat(s, cfg, daq::BoardState::SETUP,
-                                   s.serverIP, s.serverPort);
+                sendBoardHeartbeat(s, cfg, daq::BoardState::SETUP, s.serverIP,
+                                   s.serverPort);
                 break;
             case State::Active:
-                sendBoardHeartbeat(s, cfg, daq::BoardState::ACTIVE,
-                                   s.serverIP, s.serverPort);
+                sendBoardHeartbeat(s, cfg, daq::BoardState::ACTIVE, s.serverIP,
+                                   s.serverPort);
                 break;
             case State::SelfTest:
                 sendBoardHeartbeat(s, cfg, daq::BoardState::SELF_TEST,
@@ -642,7 +641,8 @@ inline void loop(CoreState& s, const Config& cfg) {
         }
     }
 
-    // Flush buffered logs to the server ~1 Hz (or sooner if the buffer is filling).
+    // Flush buffered logs to the server ~1 Hz (or sooner if the buffer is
+    // filling).
     static unsigned long s_last_log_flush_ms = 0;
     if (!g_logbuf.empty() &&
         (g_logbuf.nearFull() || now - s_last_log_flush_ms >= 1000)) {

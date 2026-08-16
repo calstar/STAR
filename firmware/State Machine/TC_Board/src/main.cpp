@@ -10,11 +10,11 @@
 #include "main.h"
 
 #include <Arduino.h>
-#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
 #include <SPIFFS.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -135,8 +135,7 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
         case daq::PacketType::SERVER_HEARTBEAT: {
             daq::PacketHeader dummy;
             daq::ServerHeartbeatPacket data;
-            if (daq::parse_server_heartbeat_packet(buffer, len, dummy,
-                                                      data)) {
+            if (daq::parse_server_heartbeat_packet(buffer, len, dummy, data)) {
                 serverIP = remote_ip;
                 serverPort = remote_port;
                 return IncomingPacketKind::ServerHeartbeat;
@@ -176,8 +175,8 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
 // Send board heartbeat (board ID + boardState), like actuator_c /
 // Stream_ADC_Data
 //-----------------------------------------------------------------------------
-static void sendBoardHeartbeat(daq::BoardState board_state,
-                               IPAddress dest_ip, int dest_port) {
+static void sendBoardHeartbeat(daq::BoardState board_state, IPAddress dest_ip,
+                               int dest_port) {
     daq::BoardHeartbeatPacket hb;
     memset(hb.firmware_hash, 0, sizeof(hb.firmware_hash));
     hb.board_id = board_id;
@@ -186,7 +185,7 @@ static void sendBoardHeartbeat(daq::BoardState board_state,
 
     uint8_t packetBuffer[MAX_PACKET_SIZE];
     size_t n = daq::create_board_heartbeat_packet(hb, millis(), packetBuffer,
-                                                     sizeof(packetBuffer));
+                                                  sizeof(packetBuffer));
     if (n == 0)
         return;
     udp.beginPacket(dest_ip, dest_port);

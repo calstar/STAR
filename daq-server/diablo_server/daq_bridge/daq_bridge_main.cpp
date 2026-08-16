@@ -19,10 +19,10 @@
 #include <thread>
 #include <vector>
 
-#include "daq-protocol.h"
 #include "comms/messages/board/BoardHeartbeatMessage.hpp"
 #include "comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "comms/messages/sensor/SensorMessages.hpp"
+#include "daq-protocol.h"
 #include "fsw/BoardTypeWire.hpp"
 
 namespace {
@@ -50,7 +50,7 @@ std::vector<uint8_t> build_server_heartbeat_packet() {
 //
 // Envelope (little-endian): [board_id:u8][flags:u8][text_len:u16][text bytes].
 class BackendLogForwarder {
-   public:
+public:
     BackendLogForwarder(const std::string& host, uint16_t port) {
         sock_ = socket(AF_INET, SOCK_DGRAM, 0);
         std::memset(&dest_, 0, sizeof(dest_));
@@ -63,7 +63,9 @@ class BackendLogForwarder {
             close(sock_);
     }
 
-    bool ready() const { return sock_ >= 0; }
+    bool ready() const {
+        return sock_ >= 0;
+    }
 
     void forward(uint8_t board_id, uint8_t flags, const uint8_t* text, uint16_t text_len) {
         if (sock_ < 0)
@@ -80,7 +82,7 @@ class BackendLogForwarder {
                sizeof(dest_));
     }
 
-   private:
+private:
     int sock_ = -1;
     sockaddr_in dest_{};
 };
@@ -619,7 +621,7 @@ int main(int argc, char* argv[]) {
                 daq::PacketHeader ph;
                 daq::BoardHeartbeatPacket hb_body;
                 if (daq::parse_board_heartbeat_packet(hb->data.data(), hb->data.size(), ph,
-                                                         hb_body)) {
+                                                      hb_body)) {
                     uint8_t board_type_wire = fsw::daq_wire::kUnknown;
                     int elodin_board_id = -1;
                     if (const BoardConfig* hb_cfg = resolve_board_config_by_source_ip(

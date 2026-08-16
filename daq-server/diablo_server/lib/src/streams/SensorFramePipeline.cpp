@@ -51,7 +51,7 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
         daq::PacketHeader sensor_header;
         std::vector<daq::SensorDataChunkCollection> chunks;
         if (!daq::parse_sensor_data_packet(receive_buffer_.data(), static_cast<size_t>(received),
-                                              sensor_header, chunks)) {
+                                           sensor_header, chunks)) {
             static size_t parse_fail_count = 0;
             if (++parse_fail_count <= 10 || parse_fail_count % 500 == 0) {
                 std::cerr << "[Pipeline] SENSOR_DATA parse failed #" << parse_fail_count
@@ -90,7 +90,7 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
         uint8_t adc_good = 0;
         std::vector<daq::SelfTestResult> st_results;
         if (!daq::parse_self_test_packet(receive_buffer_.data(), static_cast<size_t>(received),
-                                            st_header, adc_good, st_results)) {
+                                         st_header, adc_good, st_results)) {
             std::cerr << "[Pipeline] SELF_TEST parse failed from " << last_source_ip_ << std::endl;
             return std::nullopt;
         }

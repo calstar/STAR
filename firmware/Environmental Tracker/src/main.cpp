@@ -2,11 +2,11 @@
 
 #include <Adafruit_BME280.h>
 #include <Arduino.h>
-#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
 #include <Wire.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include "firmware_hash.h"
@@ -90,7 +90,7 @@ void loop() {
             daq::PacketHeader hdr;
             daq::ServerHeartbeatPacket data;
             if (daq::parse_server_heartbeat_packet(pkt_buf, bytes_read, hdr,
-                                                      data)) {
+                                                   data)) {
                 Serial.print("Server heartbeat received (t=");
                 Serial.print(hdr.timestamp);
                 Serial.println("ms)");
@@ -131,7 +131,7 @@ void loop() {
         hb.board_state = daq::BoardState::ACTIVE;
 
         size_t n = daq::create_board_heartbeat_packet(hb, millis(), pkt_buf,
-                                                         sizeof(pkt_buf));
+                                                      sizeof(pkt_buf));
         if (n > 0) {
             udp.beginPacket(server_ip, ENV_SERVER_PORT);
             udp.write(pkt_buf, n);

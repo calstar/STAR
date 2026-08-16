@@ -9,10 +9,10 @@
  */
 
 #include <Arduino.h>
-#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -52,8 +52,8 @@ void sendReplyTo(IPAddress primaryIP) {
     std::vector<daq::SensorDataChunkCollection> chunks;
     chunks.push_back(chunk);
 
-    size_t n = daq::create_sensor_data_packet(
-        chunks, numSensors, millis(), replyBuffer, sizeof(replyBuffer));
+    size_t n = daq::create_sensor_data_packet(chunks, numSensors, millis(),
+                                              replyBuffer, sizeof(replyBuffer));
     if (n == 0)
         return;
 

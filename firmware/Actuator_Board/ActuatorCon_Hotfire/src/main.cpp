@@ -8,11 +8,11 @@
  */
 
 #include <Arduino.h>
-#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
 #include <SPIFFS.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -197,8 +197,8 @@ static void sendBoardHeartbeat() {
     hb.board_state = getBoardStateForHeartbeat();
 
     uint8_t packetBuffer[MAX_PACKET_SIZE];
-    size_t len = daq::create_board_heartbeat_packet(
-        hb, millis(), packetBuffer, sizeof(packetBuffer));
+    size_t len = daq::create_board_heartbeat_packet(hb, millis(), packetBuffer,
+                                                    sizeof(packetBuffer));
     if (len == 0)
         return;
 
@@ -258,8 +258,7 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
         case daq::PacketType::SERVER_HEARTBEAT: {
             daq::PacketHeader dummy;
             daq::ServerHeartbeatPacket data;
-            if (daq::parse_server_heartbeat_packet(buffer, len, dummy,
-                                                      data)) {
+            if (daq::parse_server_heartbeat_packet(buffer, len, dummy, data)) {
                 last_server_heartbeat_ms = millis();
                 return IncomingPacketKind::ServerHeartbeat;
             }
@@ -304,7 +303,7 @@ static IncomingPacketKind processIncomingPacket(const uint8_t* buffer,
             daq::PacketHeader cmd_header;
             std::vector<daq::ActuatorCommand> commands;
             if (daq::parse_actuator_command_packet(buffer, len, cmd_header,
-                                                      commands) &&
+                                                   commands) &&
                 (state == ActuatorControllerState::Active ||
                  state == ActuatorControllerState::StandardAbort)) {
                 processActuatorCommands(commands);

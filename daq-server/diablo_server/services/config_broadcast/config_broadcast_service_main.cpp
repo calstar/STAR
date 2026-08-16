@@ -162,8 +162,10 @@ std::vector<BoardInfo> parseBoards(const std::string& content) {
                     ser = 0;
                 }
             }
-            if (ser < 0) ser = 0;
-            if (ser > 3) ser = 3;
+            if (ser < 0)
+                ser = 0;
+            if (ser > 3)
+                ser = 3;
         }
         int num_sens = 10;
         try {
@@ -607,7 +609,8 @@ int main(int argc, char* argv[]) {
     auto packets = buildPackets(config_path, pt_cal);
     if (packets.empty())
         std::cerr << "[ConfigBroadcast] No packets from config yet (no designated_survivor?); "
-                     "retrying each cycle" << std::endl;
+                     "retrying each cycle"
+                  << std::endl;
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {

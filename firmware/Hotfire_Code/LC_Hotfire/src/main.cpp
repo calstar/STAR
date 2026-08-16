@@ -13,10 +13,10 @@
 #include "main.h"
 
 #include <Arduino.h>
-#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -108,8 +108,7 @@ static void send_chunks_to_impl(IPAddress dest_ip, int dest_port,
     size_t packetSize = daq::create_sensor_data_packet(
         dataChunks, num_sensors, millis(), packetBuffer, sizeof(packetBuffer));
     if (packetSize == 0) {
-        HF_VERBOSE(
-            "Send FAIL: create_sensor_data_packet returned 0 (n=");
+        HF_VERBOSE("Send FAIL: create_sensor_data_packet returned 0 (n=");
         HF_VERBOSE(dataChunks.size());
         HF_VERBOSE(", buf=");
         HF_VERBOSE(SENSOR_HOTFIRE_MAX_PACKET_SIZE);

@@ -1,7 +1,7 @@
-#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 
 #include <cstring>
 
@@ -141,7 +141,7 @@ bool sendHeartbeatPacket() {
     // Prepare heartbeat packet data
     daq::BoardHeartbeatPacket heartbeatData;
     memset(heartbeatData.firmware_hash, 0, sizeof(heartbeatData.firmware_hash));
-    heartbeatData.board_id = 1;                              // Change as needed
+    heartbeatData.board_id = 1;                           // Change as needed
     heartbeatData.engine_state = daq::EngineState::SAFE;  // Change as needed
     heartbeatData.board_state = daq::BoardState::ACTIVE;  // Change as needed
 

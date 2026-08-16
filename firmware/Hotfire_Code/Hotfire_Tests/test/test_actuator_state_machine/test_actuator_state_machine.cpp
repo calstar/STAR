@@ -270,18 +270,15 @@ void test_actuator_heartbeat_board_id_preserved() {
         getBoardStateForHeartbeat(ActuatorControllerState::PTAbort);
 
     uint8_t buf[512];
-    size_t n =
-        daq::create_board_heartbeat_packet(hb, 12346u, buf, sizeof(buf));
+    size_t n = daq::create_board_heartbeat_packet(hb, 12346u, buf, sizeof(buf));
 
     daq::PacketHeader hdr_out;
     daq::BoardHeartbeatPacket hb_out;
     TEST_ASSERT_TRUE(
         daq::parse_board_heartbeat_packet(buf, n, hdr_out, hb_out));
     TEST_ASSERT_EQUAL(127, hb_out.board_id);
-    TEST_ASSERT_EQUAL((int)daq::EngineState::FIRING,
-                      (int)hb_out.engine_state);
-    TEST_ASSERT_EQUAL((int)daq::BoardState::PT_ABORT,
-                      (int)hb_out.board_state);
+    TEST_ASSERT_EQUAL((int)daq::EngineState::FIRING, (int)hb_out.engine_state);
+    TEST_ASSERT_EQUAL((int)daq::BoardState::PT_ABORT, (int)hb_out.board_state);
 }
 
 // ===========================================================================

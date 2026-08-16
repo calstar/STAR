@@ -139,8 +139,8 @@ bool SequencerService::init(const std::string& config_path) {
     loadConfig(config_path);
 
     // State machine CSV — path from config.toml (canonical: daq-server/config/).
-    std::string sm_csv = resolveDataPath(
-        configString(config_content_, "state_machine", "transitions_csv", "config/state_transitions.csv"));
+    std::string sm_csv = resolveDataPath(configString(
+        config_content_, "state_machine", "transitions_csv", "config/state_transitions.csv"));
     if (!state_machine_.load(sm_csv)) {
         std::cerr
             << "[SequencerService] Failed to load state_transitions.csv (tried relative to cwd: "
@@ -149,8 +149,8 @@ bool SequencerService::init(const std::string& config_path) {
     }
 
     // Actuator commander — path from config.toml (canonical: daq-server/config/).
-    std::string act_csv = resolveDataPath(
-        configString(config_content_, "state_machine", "actuator_csv", "config/state_machine_actuators.csv"));
+    std::string act_csv = resolveDataPath(configString(
+        config_content_, "state_machine", "actuator_csv", "config/state_machine_actuators.csv"));
     if (!actuator_commander_.load(config_content_, act_csv)) {
         std::cerr << "[SequencerService] Failed to load state_machine_actuators.csv (tried: "
                   << act_csv << ")" << std::endl;
@@ -388,14 +388,14 @@ bool SequencerService::reloadConfig() {
     std::cout << "[SequencerService] Reloading config..." << std::endl;
     loadConfig(config_path_);
 
-    std::string act_csv = resolveDataPath(
-        configString(config_content_, "state_machine", "actuator_csv", "config/state_machine_actuators.csv"));
+    std::string act_csv = resolveDataPath(configString(
+        config_content_, "state_machine", "actuator_csv", "config/state_machine_actuators.csv"));
     if (!actuator_commander_.load(config_content_, act_csv)) {
         std::cerr << "[SequencerService] Reload: failed to reload actuator CSV" << std::endl;
         return false;
     }
-    std::string sm_csv = resolveDataPath(
-        configString(config_content_, "state_machine", "transitions_csv", "config/state_transitions.csv"));
+    std::string sm_csv = resolveDataPath(configString(
+        config_content_, "state_machine", "transitions_csv", "config/state_transitions.csv"));
     if (!state_machine_.load(sm_csv)) {
         std::cerr << "[SequencerService] Reload: failed to reload state transitions CSV"
                   << std::endl;

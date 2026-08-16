@@ -1,7 +1,7 @@
-#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 
 #include <cstring>
 
@@ -328,7 +328,7 @@ void decodeAndPrintPacket(const uint8_t* buffer, size_t size) {
         case daq::PacketType::BOARD_HEARTBEAT: {
             daq::BoardHeartbeatPacket heartbeatData;
             if (daq::parse_board_heartbeat_packet(buffer, size, header,
-                                                     heartbeatData)) {
+                                                  heartbeatData)) {
                 printBoardHeartbeat(header, heartbeatData);
                 decoded = true;
             } else {
@@ -346,7 +346,7 @@ void decodeAndPrintPacket(const uint8_t* buffer, size_t size) {
         case daq::PacketType::SERVER_HEARTBEAT: {
             daq::ServerHeartbeatPacket heartbeatData;
             if (daq::parse_server_heartbeat_packet(buffer, size, header,
-                                                      heartbeatData)) {
+                                                   heartbeatData)) {
                 printServerHeartbeat(header, heartbeatData);
                 decoded = true;
             } else {

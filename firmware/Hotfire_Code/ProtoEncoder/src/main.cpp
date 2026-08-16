@@ -8,11 +8,11 @@
  */
 
 #include <Arduino.h>
-#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
 #include <Wire.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -186,7 +186,7 @@ static void runSelfTest() {
 
     uint8_t buf[ENCODER_PACKET_BUF_SIZE];
     size_t n = daq::create_self_test_packet(adc_good, results, millis(), buf,
-                                               sizeof(buf));
+                                            sizeof(buf));
     if (n > 0) {
         udp.beginPacket(serverIP, serverPort);
         udp.write(buf, n);
@@ -211,8 +211,8 @@ static void sendDataChunks() {
         return;
 
     uint8_t buf[ENCODER_PACKET_BUF_SIZE];
-    size_t n = daq::create_sensor_data_packet(dataChunks, NUM_SENSORS,
-                                                 millis(), buf, sizeof(buf));
+    size_t n = daq::create_sensor_data_packet(dataChunks, NUM_SENSORS, millis(),
+                                              buf, sizeof(buf));
     if (n == 0) {
         dataChunks.clear();
         return;

@@ -110,8 +110,9 @@ inline void hotfire_handleOTA(EthernetClient& client) {
                 totalReceived += bytesRead;
                 lastDataTime = millis();
 
-                // Progress is verbose-only and throttled to 25% steps (lifecycle
-                // start/success/errors below are Tier 1 and always print).
+                // Progress is verbose-only and throttled to 25% steps
+                // (lifecycle start/success/errors below are Tier 1 and always
+                // print).
                 int percent = (int)((totalReceived * 100UL) / firmwareSize);
                 if (percent / 25 != lastPercent / 25) {
                     lastPercent = percent;

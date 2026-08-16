@@ -1,8 +1,8 @@
 #include <Arduino.h>
-#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -46,8 +46,7 @@ unsigned long lastAdcReadTime = 0;
 
 // Forward declarations
 void initializeActuators();
-void processActuatorCommand(
-    const std::vector<daq::ActuatorCommand>& commands);
+void processActuatorCommand(const std::vector<daq::ActuatorCommand>& commands);
 void processPWMActuatorCommand(
     const std::vector<daq::PWMActuatorCommand>& commands);
 void updatePWM();
@@ -163,7 +162,7 @@ void loop() {
                 std::vector<daq::PWMActuatorCommand> commands;
 
                 if (daq::parse_pwm_actuator_packet(packetBuffer, bytesRead,
-                                                      parsedHeader, commands)) {
+                                                   parsedHeader, commands)) {
                     Serial.print("Received PWM actuator command packet with ");
                     Serial.print(commands.size());
                     Serial.println(" commands");
@@ -227,8 +226,7 @@ void initializeActuators() {
     }
 }
 
-void processActuatorCommand(
-    const std::vector<daq::ActuatorCommand>& commands) {
+void processActuatorCommand(const std::vector<daq::ActuatorCommand>& commands) {
     for (const auto& cmd : commands) {
         // Actuator IDs are 1-indexed (1-10) from the server
         // Validate actuator ID

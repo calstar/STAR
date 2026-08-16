@@ -114,8 +114,8 @@ static IncomingPacketKind processIncomingPacket(StoredConfig& stored_config,
         uint32_t controller_ip;
         uint8_t serial;
         if (daq::parse_sensor_config_packet(buf, len, hdr_out, ids, ref,
-                                               abort_needed, controller_ip,
-                                               serial)) {
+                                            abort_needed, controller_ip,
+                                            serial)) {
             stored_config.valid = true;
             stored_config.num_sensors = ids.size();
             for (size_t i = 0; i < ids.size() && i < 10; i++) {
@@ -241,7 +241,7 @@ void test_sensor_process_sensor_config_packet() {
     std::vector<uint8_t> sensor_ids = {1, 2, 3};
     uint8_t buf[512];
     size_t n = daq::create_sensor_config_packet(sensor_ids, 0, false, 0, 1,
-                                                   9001u, buf, sizeof(buf));
+                                                9001u, buf, sizeof(buf));
     TEST_ASSERT_GREATER_THAN(0, n);
 
     SensorSM::StoredConfig cfg{};
@@ -307,8 +307,7 @@ void test_sensor_heartbeat_state_mapping_table() {
     } mappings[] = {
         {SensorSM::State::WaitingForServer, daq::BoardState::SETUP},
         {SensorSM::State::Active, daq::BoardState::ACTIVE},
-        {SensorSM::State::StandaloneAbort,
-         daq::BoardState::STANDALONE_ABORT},
+        {SensorSM::State::StandaloneAbort, daq::BoardState::STANDALONE_ABORT},
         {SensorSM::State::SelfTest, daq::BoardState::SELF_TEST},
     };
 

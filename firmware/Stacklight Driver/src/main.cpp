@@ -5,10 +5,10 @@
  */
 
 #include <Arduino.h>
-#include <daq-protocol.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <SPI.h>
+#include <daq-protocol.h>
 #include <esp_mac.h>
 
 #include <cstring>
@@ -74,8 +74,8 @@ static void sendBoardHeartbeat() {
     hb.board_state = daq::BoardState::ACTIVE;
 
     uint8_t packetBuffer[MAX_PACKET_SIZE];
-    size_t len = daq::create_board_heartbeat_packet(
-        hb, millis(), packetBuffer, sizeof(packetBuffer));
+    size_t len = daq::create_board_heartbeat_packet(hb, millis(), packetBuffer,
+                                                    sizeof(packetBuffer));
     if (len == 0)
         return;
 
