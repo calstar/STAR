@@ -201,7 +201,7 @@ const APPS: AppCard[] = [
     iconBg: 'linear-gradient(135deg, #0e7490 0%, #06b6d4 100%)',
     iconColor: '#67e8f9',
     restricted:
-      'Only authorized users can use this; Onshape API credits are limited. Contact Aidan for access.',
+      'Open to any Berkeley login. Pulling or building CAD from Onshape is limited to approved users (shared API credits) — contact Aidan for import access.',
   },
   {
     id: 'openproject',

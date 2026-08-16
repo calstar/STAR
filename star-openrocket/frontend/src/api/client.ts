@@ -20,6 +20,15 @@ import type {
 
 /** The server puts the real reason in `detail`; surfacing it beats a bare 502. */
 async function fail(url: string, response: Response): Promise<never> {
+  // A 403 here is the auth gate, not the app: searching or building from Onshape
+  // is limited to approved users, while the rest of the app is open to any
+  // Berkeley login. (The backend never 403s itself -- missing credentials are a
+  // 503, a bad request a 4xx with a `detail`.)
+  if (response.status === 403) {
+    throw new Error(
+      'Importing or building from Onshape is limited to approved users. Contact Aidan for access.',
+    )
+  }
   let detail = ''
   try {
     const body = await response.json()

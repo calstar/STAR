@@ -86,10 +86,12 @@
 }
 
 # ── STAR OpenRocket ───────────────────────────────────────────────────────────
-# `import protected` is the same shared gate as everywhere else. The tighter
-# approved-users allowlist for this app is enforced inside auth's /verify (it
-# brokers Onshape credentials), so it needs nothing extra here -- /verify simply
-# answers 403 for a signed-in user who is not on the list. See auth/allowlist.py.
+# `import protected` is the same shared @berkeley.edu gate as everywhere else, so
+# the whole app still requires a login. The tighter approved-users allowlist is
+# enforced inside auth's /verify ONLY on the Onshape search/build paths (those
+# spend the shared key pair) -- /verify reads the forwarded URI and answers 403
+# for an unapproved user on just those calls, 200 everywhere else. Nothing extra
+# is needed here. See auth/allowlist.py (_APP_PROTECTED_PATHS).
 {$SCHEME:https}://openrocket.{$BASE_DOMAIN:starberkeley.org} {
 	import protected
 

@@ -2,11 +2,13 @@
 
 The session cookie proves *identity* (a valid @berkeley.edu account). Most apps
 need nothing more. A few need a tighter *authorization* check -- a named
-allowlist -- because they do more than read:
+allowlist -- on the specific requests that do more than read:
 
-    STAR OpenRocket (openrocket.*) brokers Onshape API credentials, so anyone
-    who can reach it can spend the key pair's rate limit and read any document
-    it can read.
+    STAR OpenRocket (openrocket.*) is open to any Berkeley login for its
+    cache-first features, but its Onshape search/build endpoints spend a shared
+    key pair's rate limit and can read any document that pair can. So the
+    allowlist gates only those paths (see `_APP_PROTECTED_PATHS` +
+    `path_needs_approval`), not the whole app.
 
 This is checked live in /verify (see main.py), NOT baked into the JWT, so that
 adding or removing someone takes effect on their next request rather than
@@ -35,6 +37,15 @@ _APP_FILES = {
         "ONSHAPE_ALLOWLIST_FILE",
         os.path.join(_HERE, "allowlists", "onshape_allowlist.txt"),
     ),
+}
+
+# app -> URL path prefixes that actually spend the app's brokered API credits and
+# so require the allowlist. Everything else on the app needs only a valid session.
+# STAR OpenRocket is open to any @berkeley.edu login for its cache-first features
+# (recovery, flight, stability on built models); only searching Onshape or building
+# a model from CAD hits the shared key pair, so only those paths are gated.
+_APP_PROTECTED_PATHS = {
+    "openrocket": ("/api/onshape", "/api/build"),
 }
 
 _LOCK = threading.Lock()
@@ -79,6 +90,21 @@ def _load(path: str) -> frozenset:
 def app_requires_allowlist(app: str) -> bool:
     """True if `app` gates on an allowlist beyond the shared domain check."""
     return app in _APP_FILES
+
+
+def path_needs_approval(app: str, uri: str) -> bool:
+    """Whether this request path is one the app gates on its allowlist.
+
+    An app with no protected paths (the default) never consults the allowlist:
+    a valid session is the whole check. For an app that does, only requests whose
+    path starts with one of its protected prefixes are gated; the query string is
+    ignored so `/api/build?foo=1` gates the same as `/api/build`.
+    """
+    prefixes = _APP_PROTECTED_PATHS.get(app)
+    if not prefixes:
+        return False
+    path = uri.split("?", 1)[0]
+    return any(path.startswith(prefix) for prefix in prefixes)
 
 
 def is_approved(app: str, email: str) -> bool:

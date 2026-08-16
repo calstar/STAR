@@ -234,30 +234,46 @@ def _onshape_headers(accept="text/html", uri="/", method="GET"):
     }
 
 
-def test_verify_allows_an_approved_user_on_onshape(client, monkeypatch):
+#: A path that spends the Onshape key pair -- the only kind the allowlist gates.
+_ONSHAPE_PATH = "/api/onshape/documents"
+
+
+def test_verify_allows_an_approved_user_on_a_protected_path(client, monkeypatch):
     monkeypatch.setattr(main.allowlist, "is_approved", lambda app, email: True)
     client.set_cookie("session", _token(email="ok@berkeley.edu"))
-    resp = client.get("/verify", headers=_onshape_headers())
+    resp = client.get("/verify", headers=_onshape_headers(uri=_ONSHAPE_PATH))
     assert resp.status_code == 200
     assert resp.headers["X-Auth-Email"] == "ok@berkeley.edu"
 
 
-def test_verify_403s_a_valid_but_unapproved_user_on_onshape(client, monkeypatch):
-    """Authenticated but not authorized: a 403 page, not a login redirect."""
+def test_verify_403s_a_valid_but_unapproved_user_on_a_protected_path(client, monkeypatch):
+    """Authenticated but not authorized for the Onshape calls: a 403, not a login
+    redirect -- re-logging in would not change the answer."""
     monkeypatch.setattr(main.allowlist, "is_approved", lambda app, email: False)
     client.set_cookie("session", _token(email="nope@berkeley.edu"))
-    resp = client.get("/verify", headers=_onshape_headers())
+    resp = client.get("/verify", headers=_onshape_headers(uri=_ONSHAPE_PATH))
     assert resp.status_code == 403
     assert "Location" not in resp.headers  # not bounced to login
 
 
-def test_verify_403s_an_unapproved_xhr_on_onshape(client, monkeypatch):
+def test_verify_403s_an_unapproved_xhr_on_build(client, monkeypatch):
     monkeypatch.setattr(main.allowlist, "is_approved", lambda app, email: False)
     client.set_cookie("session", _token(email="nope@berkeley.edu"))
     resp = client.get(
-        "/verify", headers=_onshape_headers(accept="application/json", uri="/api/models")
+        "/verify", headers=_onshape_headers(accept="application/json", uri="/api/build")
     )
     assert resp.status_code == 403
+
+
+def test_verify_lets_an_unapproved_user_use_the_rest_of_the_app(client, monkeypatch):
+    """The whole point of the change: a signed-in but unapproved user can open the
+    app and use every cache-first feature; only the Onshape paths are gated."""
+    monkeypatch.setattr(main.allowlist, "is_approved", lambda app, email: False)
+    client.set_cookie("session", _token(email="nope@berkeley.edu"))
+    for uri in ("/", "/api/models", "/api/simulate", "/api/models/abc/stability"):
+        resp = client.get("/verify", headers=_onshape_headers(uri=uri))
+        assert resp.status_code == 200, uri
+        assert resp.headers["X-Auth-Email"] == "nope@berkeley.edu"
 
 
 def test_verify_unrestricted_apps_ignore_the_allowlist(client, monkeypatch):
@@ -268,6 +284,19 @@ def test_verify_unrestricted_apps_ignore_the_allowlist(client, monkeypatch):
         "/verify", headers={"X-Forwarded-Host": "engine-design.starberkeley.org"}
     )
     assert resp.status_code == 200
+
+
+def test_path_needs_approval_gates_only_the_onshape_key_paths():
+    from allowlist import path_needs_approval
+
+    assert path_needs_approval("openrocket", "/api/onshape/documents") is True
+    assert path_needs_approval("openrocket", "/api/build") is True
+    assert path_needs_approval("openrocket", "/api/build/abc123") is True
+    assert path_needs_approval("openrocket", "/api/build?force=1") is True  # query ignored
+    assert path_needs_approval("openrocket", "/api/models") is False
+    assert path_needs_approval("openrocket", "/") is False
+    # An app with no protected paths never consults the allowlist.
+    assert path_needs_approval("engine-design", "/api/onshape/documents") is False
 
 
 def test_allowlist_file_is_read_and_matches_case_insensitively(tmp_path):

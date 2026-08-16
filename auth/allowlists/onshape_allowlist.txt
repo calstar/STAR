@@ -1,10 +1,10 @@
 # STAR OpenRocket (openrocket.*) approved users.
 #
 # One email per line. `#` starts a comment; blank lines are ignored. Matching is
-# case-insensitive. Anyone with a valid @berkeley.edu session is authenticated,
-# but only the addresses below are AUTHORIZED to use STAR OpenRocket -- it brokers
-# Onshape API credentials, so access is deliberately narrower than the other
-# tools. See auth/allowlist.py.
+# case-insensitive. Anyone with a valid @berkeley.edu session can USE the app
+# (recovery, flight dynamics, stability on built models); only the addresses
+# below may SEARCH or BUILD from Onshape -- those calls spend the shared key
+# pair's rate limit. See auth/allowlist.py (_APP_PROTECTED_PATHS).
 #
 # Edits take effect on the user's next request (the file is re-read on change);
 # no restart or rebuild needed. In production docker-compose bind-mounts this
