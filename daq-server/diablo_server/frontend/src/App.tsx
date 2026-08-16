@@ -66,7 +66,7 @@ export default function App() {
       <WindowDetector />
       <ControlModeProvider>
         <TopBarWrapper />
-        <div className="flex-1 min-h-0 overflow-auto flex flex-col">
+        <div className="flex-1 min-h-0 overflow-auto flex flex-col bg-background">
           <Suspense fallback={<PageFallback />}>
             <Routes>
               {/* Home removed — land on the most-used view (Single Pane). */}
