@@ -130,6 +130,27 @@ function stringifyActuatorRoles(roles: Record<string, unknown>): string {
   return lines.join('\n') + '\n';
 }
 
+/** Remove `_` digit-separators from numeric tokens in TOML text, leaving quoted
+ *  strings intact. @iarna emits e.g. `port = 5_006`; our C++ parsers need `5006`.
+ *  Char-level scan so it also covers numbers inside arrays (`[1_000, 2_000]`). */
+export function stripNumericUnderscores(toml: string): string {
+  let out = '';
+  let quote: '"' | "'" | null = null; // inside a basic (") or literal (') string
+  for (let i = 0; i < toml.length; i++) {
+    const c = toml[i];
+    if (quote) {
+      out += c;
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") { quote = c; out += c; continue; }
+    // Drop a separator only when it sits between two digits, outside any string.
+    if (c === '_' && /[0-9]/.test(toml[i - 1] ?? '') && /[0-9]/.test(toml[i + 1] ?? '')) continue;
+    out += c;
+  }
+  return out;
+}
+
 export function writeConfig(config: any): void {
   const configPath = getConfigPath();
   try {
@@ -150,6 +171,11 @@ export function writeConfig(config: any): void {
     if (actuator_roles && typeof actuator_roles === 'object') {
       content += '\n' + stringifyActuatorRoles(actuator_roles as Record<string, unknown>);
     }
+    // @iarna/toml stringifies integers ≥1000 with `_` digit separators (5006 → "5_006").
+    // Valid TOML, but the minimal C++ config parsers use std::stoul, which stops at the
+    // underscore (→ 5) — truncating ports/timeouts and crash-looping daq_bridge. Strip the
+    // separators from numeric tokens; quoted strings are left untouched.
+    content = stripNumericUnderscores(content);
     console.log(`   Generated TOML content: ${content.length} bytes`);
 
     // Write with explicit error handling
