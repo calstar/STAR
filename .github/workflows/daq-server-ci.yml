@@ -463,6 +463,15 @@ jobs:
         cd ${{ env.BUILD_DIR }}
         ./bin/test_board_clock_sync
 
+    # Ethernet OTA flash wire-format test: drives the real ota_service binary
+    # against a loopback fake board (no hardware). Guards the espota handshake
+    # (big-endian size header, 4 KB chunk streaming, OK/silent-reboot/ERR paths)
+    # that a real ESP32-S3 depends on. Strict — a regression here must fail the job.
+    - name: Run OTA fake-board test
+      env:
+        OTA_SERVICE_BIN: ${{ env.BUILD_DIR }}/bin/ota_service
+      run: python3 test/test_ota_flash.py
+
     - name: Run Python smoke tests (allowlist only)
       run: |
         if [ -d "test" ]; then
