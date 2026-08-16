@@ -914,8 +914,9 @@ def test_drift_track_is_time_ordered_and_starts_at_the_pad():
     track = body["track"]
     assert track[0]["x"] == 0.0 and track[0]["y"] == 0.0
     assert all(b["t"] >= a["t"] for a, b in zip(track, track[1:]))
-    # Wire contract for the ground-track plot.
-    assert set(track[0]) == {"t", "z", "x", "y"}
+    # Wire contract: t,z,x,y for the ground-track plot, plus v,a so the Full
+    # Flight tab gets the whole descent trajectory from this one route.
+    assert set(track[0]) == {"t", "z", "x", "y", "v", "a"}
 
 
 def test_drift_accepts_a_resolved_profile():

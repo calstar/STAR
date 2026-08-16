@@ -19,6 +19,7 @@ import { RecoveryTab } from './recovery/RecoveryTab'
 import type { DesignSource, UiConfig } from './recovery/types/schema'
 import { ConfigVersions } from './components/versions/ConfigVersions'
 import { FlightDynamicsTab } from './components/viewer/FlightDynamicsTab'
+import { FullFlightTab } from './components/viewer/FullFlightTab'
 import { FlightProfileModal } from './components/viewer/FlightProfileModal'
 import { InspectorPanel } from './components/viewer/InspectorPanel'
 import { MotorCurvesModal } from './components/viewer/MotorCurvesModal'
@@ -122,7 +123,7 @@ export default function App() {
   const [reloadNonce, setReloadNonce] = useState(0)
 
   // Top-level tab: CAD viewer, the 6-DOF ascent flight dynamics, or recovery.
-  const [activeTab, setActiveTab] = useState<'cad' | 'flight' | 'recovery'>('cad')
+  const [activeTab, setActiveTab] = useState<'cad' | 'flight' | 'recovery' | 'fullflight'>('cad')
 
   useEffect(() => {
     listModels()
@@ -615,13 +616,16 @@ export default function App() {
         <h1 className="text-xl font-bold">STAR OpenRocket</h1>
 
         <nav className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900/60 p-1 text-sm">
-          {(['cad', 'flight', 'recovery'] as const).map((tab) => (
+          {(['cad', 'flight', 'recovery', 'fullflight'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={`rounded px-3 py-1 font-medium ${activeTab === tab ? 'bg-cyan-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}
             >
-              {tab === 'cad' ? 'CAD & Stability' : tab === 'flight' ? 'Flight Dynamics' : 'Recovery'}
+              {tab === 'cad' ? 'CAD & Stability'
+                : tab === 'flight' ? 'Flight Dynamics'
+                : tab === 'recovery' ? 'Recovery'
+                : 'Full Flight'}
             </button>
           ))}
         </nav>
@@ -663,7 +667,9 @@ export default function App() {
         </div>
       </header>
 
-      {activeTab === 'recovery' ? (
+      {activeTab === 'fullflight' ? (
+        <FullFlightTab result={flightDynResult} recovery={recovery} design={designSource} />
+      ) : activeTab === 'recovery' ? (
         <RecoveryTab ui={recovery} onChange={setRecovery} design={designSource} />
       ) : activeTab === 'flight' ? (
         <FlightDynamicsTab

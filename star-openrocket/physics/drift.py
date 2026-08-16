@@ -23,15 +23,22 @@ import numpy as np
 
 
 class DriftResult:
-    """Horizontal ground track and its summary. East = +x, North = +y."""
+    """Horizontal ground track and its summary. East = +x, North = +y.
 
-    __slots__ = ("t", "z", "x", "y", "distance", "bearing_deg")
+    Carries the full descent trajectory (`v` vertical velocity, `a` vertical
+    acceleration alongside `z/x/y`) so a caller wanting the whole descent -- the
+    Full Flight tab -- gets it from this one object.
+    """
 
-    def __init__(self, t, z, x, y, distance, bearing_deg):
+    __slots__ = ("t", "z", "x", "y", "v", "a", "distance", "bearing_deg")
+
+    def __init__(self, t, z, x, y, distance, bearing_deg, v=None, a=None):
         self.t = t                    # s, from apogee
         self.z = z                    # m AGL, matches the descent trajectory
         self.x = x                    # m east of the pad
         self.y = y                    # m north of the pad
+        self.v = v                    # m/s, vertical velocity (signed, - descending)
+        self.a = a                    # m/s^2, vertical acceleration
         self.distance = distance      # m, straight-line pad-to-landing
         self.bearing_deg = bearing_deg  # compass bearing pad->landing, deg
 
@@ -52,15 +59,17 @@ def compute_drift(run, wind=None):
     z = np.asarray(run.traj.z, dtype=float)
     x = np.asarray(run.traj.x, dtype=float)
     y = np.asarray(run.traj.y, dtype=float)
+    v = np.asarray(run.traj.v, dtype=float)
+    a = np.asarray(run.traj.a, dtype=float)
 
     if t.size < 2:
         # A degenerate run (never left the pad). No descent, no drift.
         zero = np.zeros(t.size)
-        return DriftResult(t, z, zero, zero, 0.0, 0.0)
+        return DriftResult(t, z, zero, zero, 0.0, 0.0, v=v, a=a)
 
     x_end, y_end = float(x[-1]), float(y[-1])
     distance = math.hypot(x_end, y_end)
     # Compass bearing pad -> landing: 0 = north, 90 = east.
     bearing = math.degrees(math.atan2(x_end, y_end)) % 360.0 if distance else 0.0
 
-    return DriftResult(t, z, x, y, distance, bearing)
+    return DriftResult(t, z, x, y, distance, bearing, v=v, a=a)

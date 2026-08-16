@@ -527,6 +527,10 @@ export interface DriftTrackSample {
   z: number
   x: number
   y: number
+  /** Vertical velocity (signed, − descending) and acceleration — the full
+   *  descent trajectory, glued onto the ascent by the Full Flight tab. */
+  v: number
+  a: number
 }
 
 export interface DriftResult {

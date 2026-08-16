@@ -55,7 +55,7 @@ function niceCeil(v: number): number {
   return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * base
 }
 
-function Tile({ label, value, sub, warn }: { label: string; value: string; sub?: string; warn?: boolean }) {
+export function Tile({ label, value, sub, warn }: { label: string; value: string; sub?: string; warn?: boolean }) {
   return (
     <div className={`rounded-lg border px-3 py-2 ${warn ? 'border-rose-500/40 bg-rose-500/10' : 'border-slate-700 bg-slate-900/60'}`}>
       <div className="text-2xs uppercase tracking-wide text-slate-300">{label}</div>
@@ -71,7 +71,7 @@ const ExpandIcon = () => (
   </svg>
 )
 
-function Panel({ title, hint, children, heightClass = 'min-h-[360px]' }: { title?: string; hint?: string; children: React.ReactNode; heightClass?: string }) {
+export function Panel({ title, hint, children, heightClass = 'min-h-[360px]' }: { title?: string; hint?: string; children: React.ReactNode; heightClass?: string }) {
   const [expanded, setExpanded] = useState(false)
 
   // Escape closes the expanded view.

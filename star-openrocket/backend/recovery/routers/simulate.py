@@ -264,7 +264,10 @@ def _thin_track(drift):
         idx.append(n - 1)
     return [
         {"t": float(drift.t[i]), "z": float(drift.z[i]),
-         "x": float(drift.x[i]), "y": float(drift.y[i])}
+         "x": float(drift.x[i]), "y": float(drift.y[i]),
+         # v/a carry the full descent trajectory for the Full Flight tab, which
+         # glues this onto the ascent. GroundTrack ignores them.
+         "v": float(drift.v[i]), "a": float(drift.a[i])}
         for i in idx
     ]
 
