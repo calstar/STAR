@@ -59,6 +59,38 @@ function runSystemctl(action: 'start' | 'stop', units: string[]): Promise<void> 
   });
 }
 
+/** Per-unit state via `systemctl is-active` (one line per unit). Never rejects. */
+function systemctlStates(units: string[]): Promise<string[]> {
+  return new Promise((resolve) => {
+    const proc = spawn('systemctl', ['--user', 'is-active', ...units], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let out = '';
+    proc.stdout?.on('data', (d) => (out += d.toString()));
+    proc.on('error', () => resolve(units.map(() => 'unknown')));
+    proc.on('exit', () => resolve(out.trim().split('\n').map((s) => s.trim())));
+  });
+}
+
+// A run's UDP sockets (esp. daq_bridge:5006) are only freed once its unit's process
+// exits. Starting the next run before teardown finishes makes the new daq_bridge
+// collide and crash-loop → no data. Treat only these as "settled": active/activating/
+// deactivating mean a process may still hold the port.
+const SETTLED_STATES = new Set(['inactive', 'failed', 'unknown', '']);
+
+async function waitUntilSettled(units: string[], timeoutMs = 15000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const states = await systemctlStates(units);
+    if (states.every((s) => SETTLED_STATES.has(s))) return true;
+    if (Date.now() >= deadline) {
+      console.warn(`[Session] teardown not settled in ${timeoutMs}ms; units: ${states.join(',')}`);
+      return false;
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
 export class ServiceController {
   constructor(private readonly mode: SessionServiceMode) {}
 
@@ -76,6 +108,9 @@ export class ServiceController {
           ? 'USE_SIM=1\nDAQ_CONFIG=config/sim_config.toml\n'
           : 'USE_SIM=0\nDAQ_CONFIG=config/config.toml\n',
       );
+      // Never start onto a not-yet-torn-down previous run — a lingering daq_bridge
+      // still owns :5006 and the new one would crash-loop. Wait for a clean slate.
+      await waitUntilSettled(pipelineUnits(true));
       await runSystemctl('start', pipelineUnits(simulated));
     } else {
       console.log(`[Session] (mock) start pipeline → ${dbDir} (simulated=${simulated})`);
@@ -89,6 +124,9 @@ export class ServiceController {
     if (this.mode === 'systemd') {
       // Stop the superset (incl. the simulator) so no data source lingers between runs.
       await runSystemctl('stop', pipelineUnits(true));
+      // Confirm every process actually exited (sockets freed) before we report done,
+      // so a subsequent start() sees a clean slate.
+      await waitUntilSettled(pipelineUnits(true));
     } else {
       console.log('[Session] (mock) stop pipeline');
       this.stopSimulator();

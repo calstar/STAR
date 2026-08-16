@@ -31,6 +31,22 @@ export default function SessionPage() {
   const [durationMin, setDurationMin] = useState(60);
   const [addMin, setAddMin] = useState(15);
 
+  // While a start/stop is in flight the backend is tearing down / bringing up the
+  // pipeline (which now blocks until it's a clean slate). Gate the buttons on this
+  // so a rapid stop→start can't race the teardown. Cleared when session.active
+  // settles to the expected value, or after a timeout if the command never lands.
+  const [pending, setPending] = useState<null | 'start' | 'stop'>(null);
+  const active = !!session?.active;
+  useEffect(() => {
+    if (pending === 'start' && active) setPending(null);
+    if (pending === 'stop' && !active) setPending(null);
+  }, [pending, active]);
+  useEffect(() => {
+    if (!pending) return;
+    const id = setTimeout(() => setPending(null), 30000); // failsafe
+    return () => clearTimeout(id);
+  }, [pending]);
+
   // 1 Hz tick so the live countdown re-renders even when no WS update arrives.
   const [, setNow] = useState(Date.now());
   useEffect(() => {
@@ -76,7 +92,6 @@ export default function SessionPage() {
     );
   }
 
-  const active = session.active;
   const lockedNote = controlEnabled ? undefined : 'Viewer mode: unlock as an operator to control runs.';
 
   return (
@@ -173,12 +188,12 @@ export default function SessionPage() {
 
             <button
               type="button"
-              disabled={!controlEnabled}
-              title={lockedNote}
-              onClick={() => send({ commandType: 'session_start', data: { keepData, durationMs: durationMin * 60000, simulated } })}
+              disabled={!controlEnabled || pending !== null}
+              title={pending ? 'Waiting for the pipeline to settle…' : lockedNote}
+              onClick={() => { setPending('start'); send({ commandType: 'session_start', data: { keepData, durationMs: durationMin * 60000, simulated } }); }}
               className="rounded-lg border border-green-600 bg-green-800/70 px-5 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Start run
+              {pending === 'start' ? 'Starting…' : 'Start run'}
             </button>
           </div>
         </div>
@@ -220,16 +235,16 @@ export default function SessionPage() {
             </div>
             <button
               type="button"
-              disabled={!controlEnabled}
-              title={lockedNote}
+              disabled={!controlEnabled || pending !== null}
+              title={pending ? 'Tearing down the pipeline…' : lockedNote}
               onClick={() => {
                 if (confirm(`Stop this run? Its data will be ${session.keepData ? 'KEPT' : 'DISCARDED'}.`)) {
-                  send({ commandType: 'session_stop', data: {} });
+                  setPending('stop'); send({ commandType: 'session_stop', data: {} });
                 }
               }}
               className="ml-auto rounded-lg border border-red-600 bg-red-800/70 px-5 py-2 text-sm font-bold uppercase tracking-wider text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Stop run
+              {pending === 'stop' ? 'Stopping…' : 'Stop run'}
             </button>
           </div>
         </div>
