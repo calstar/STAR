@@ -804,4 +804,33 @@ size_t create_log_packet(uint8_t flags, const uint8_t *text, uint16_t text_len,
   return total_size;
 }
 
+bool parse_log_packet(const uint8_t *buffer, size_t buffer_size,
+                      PacketHeader &header_out,
+                      uint8_t &flags_out,
+                      const uint8_t *&text_out,
+                      uint16_t &text_len_out) {
+  const size_t header_size = sizeof(PacketHeader);
+  const size_t fixed_body = 1u /*flags*/ + 2u /*text_len*/;
+  if (!buffer || buffer_size < header_size + fixed_body) return false;
+
+  PacketHeader hdr;
+  memcpy(&hdr, buffer, header_size);
+  if (hdr.packet_type != PacketType::LOGS) return false;
+
+  const uint8_t *ptr = buffer + header_size;
+  const uint8_t flags = *ptr++;
+
+  uint16_t text_len;
+  memcpy(&text_len, ptr, sizeof(text_len)); // uint16 LE (host is little-endian)
+  ptr += sizeof(text_len);
+
+  if (buffer_size < header_size + fixed_body + text_len) return false;
+
+  header_out = hdr;
+  flags_out = flags;
+  text_len_out = text_len;
+  text_out = ptr;
+  return true;
+}
+
 } // namespace daq

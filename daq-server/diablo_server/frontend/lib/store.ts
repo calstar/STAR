@@ -27,6 +27,9 @@ import {
   NotificationCategory,
   isNotificationOngoing,
   SessionStatus,
+  BoardLogLine,
+  BoardLogPayload,
+  BoardLogTotals,
 } from './types';
 import type { VoltageRefNominals } from './voltageRef';
 import { recordSensorUpdate, isSensorKeyFresh } from './sensor-rate';
@@ -43,6 +46,9 @@ export interface NotificationEntry {
 }
 
 const NOTIFICATIONS_MAX = 10;
+// Per-board live log ring buffer cap (the modal backfills older history from
+// /api/board-logs on open; this only needs to cover what streams while open).
+const BOARD_LOG_LINES_MAX = 300;
 
 interface SensorSystemState {
   sensorData: SensorData;
@@ -69,6 +75,10 @@ interface SensorSystemState {
   /** Load cell zero offsets (lbf) by cal entity e.g. LC_Cal.CH1. Display = raw_lbf - offset. Persisted to localStorage. */
   loadCellZeroOffsets: Record<string, number>;
   notifications: NotificationEntry[];
+  /** Per-board live diagnostic log lines (ring buffer; accumulates while app is open). */
+  boardLogs: Record<number, BoardLogLine[]>;
+  /** Per-board cumulative log counters (packets received / truncated) from the backend. */
+  boardLogStats: Record<number, BoardLogTotals>;
 
   updateSensor: (update: SensorUpdate) => void;
   setLoadCellZeroOffset: (calEntity: string, offsetLbf: number | null) => void;
@@ -87,6 +97,10 @@ interface SensorSystemState {
   setVoltageRefNominals: (nominals: VoltageRefNominals) => void;
   updateNotification: (payload: NotificationPayload) => void;
   clearNotifications: () => void;
+  /** Append one BOARD_LOG packet's lines + latest totals for a board. */
+  appendBoardLog: (payload: BoardLogPayload) => void;
+  /** Backfill per-board counters (from GET /api/board-logs/stats on mount). */
+  seedBoardLogStats: (stats: Record<number, BoardLogTotals>) => void;
   /** Calibrated PT entities hidden from combined Pressure History plots (top bar click toggles). */
   pressureHistoryHiddenEntities: Record<string, true>;
   togglePressureHistoryPlotVisibility: (plotEntityKeys: string[]) => void;
@@ -383,6 +397,8 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
   actuatorStateByEntity: {},
   actuatorCommandedOverrides: {},
   boards: {},
+  boardLogs: {},
+  boardLogStats: {},
   voltageRefNominals: { internalV: 2.5, absolute5vV: 5 },
   loadCellZeroOffsets: loadStoredLcZeroOffsets(),
   notifications: [],
@@ -537,6 +553,29 @@ export const useSensorStore = create<SensorSystemState>((set, get) => ({
 
   setVoltageRefNominals: (nominals: VoltageRefNominals) => {
     set({ voltageRefNominals: nominals });
+  },
+
+  appendBoardLog: (payload: BoardLogPayload) => {
+    set((state) => {
+      const prev = state.boardLogs[payload.boardId] ?? [];
+      const additions: BoardLogLine[] = payload.lines.map((line) => ({
+        boardId: payload.boardId,
+        ts: payload.ts,
+        line,
+      }));
+      let combined = prev.concat(additions);
+      if (combined.length > BOARD_LOG_LINES_MAX) {
+        combined = combined.slice(combined.length - BOARD_LOG_LINES_MAX);
+      }
+      return {
+        boardLogs: { ...state.boardLogs, [payload.boardId]: combined },
+        boardLogStats: { ...state.boardLogStats, [payload.boardId]: payload.totals },
+      };
+    });
+  },
+
+  seedBoardLogStats: (stats: Record<number, BoardLogTotals>) => {
+    set((state) => ({ boardLogStats: { ...state.boardLogStats, ...stats } }));
   },
 
   updateNotification: (payload: NotificationPayload) => {

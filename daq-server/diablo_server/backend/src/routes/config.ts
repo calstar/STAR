@@ -167,3 +167,54 @@ export function writeConfig(config: any): void {
     throw new Error(`Failed to write config: ${error.message}`);
   }
 }
+
+/**
+ * Surgically set a single integer field on the `[boards.<key>]` section whose
+ * `board_id` matches `boardId`, editing the raw TOML text in place. Unlike
+ * writeConfig (whole-object round-trip via @iarna/toml, which drops comments and
+ * could clobber a concurrent edit), this rewrites only the one line, leaving the
+ * rest of the file — comments included — byte-for-byte unchanged. Used by the
+ * Boards-tab logging-mode dropdown; config_broadcast_service re-reads the file.
+ */
+export function patchBoardField(boardId: number, field: string, value: number): void {
+  const configPath = getConfigPath();
+  const raw = readFileSync(configPath, 'utf-8');
+
+  // Map board_id → section key (e.g. "pt_board") via the parsed config.
+  const boards = (readConfig()?.boards ?? {}) as Record<string, { board_id?: unknown }>;
+  let boardKey: string | null = null;
+  for (const [key, b] of Object.entries(boards)) {
+    if (Number(b?.board_id) === boardId) { boardKey = key; break; }
+  }
+  if (!boardKey) throw new Error(`No board with board_id=${boardId} in config`);
+
+  const esc = boardKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const headerRe = new RegExp(`^\\s*\\[boards\\.${esc}\\]\\s*$`);
+  const nextSectionRe = /^\s*\[/;
+  const fieldRe = new RegExp(`^(\\s*)${field}(\\s*)=.*$`);
+
+  const lines = raw.split('\n');
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (headerRe.test(lines[i])) { start = i; break; }
+  }
+  if (start < 0) throw new Error(`Section [boards.${boardKey}] not found`);
+
+  // Scan the block (header+1 .. next section header / EOF) for the field.
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (nextSectionRe.test(lines[i])) { end = i; break; }
+  }
+  let replaced = false;
+  for (let i = start + 1; i < end; i++) {
+    const m = lines[i].match(fieldRe);
+    if (m) {
+      lines[i] = `${m[1]}${field}${m[2]}= ${value}`;
+      replaced = true;
+      break;
+    }
+  }
+  if (!replaced) lines.splice(start + 1, 0, `${field} = ${value}`);
+
+  writeFileSync(configPath, lines.join('\n'), { encoding: 'utf-8', flag: 'w' });
+}

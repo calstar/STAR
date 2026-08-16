@@ -460,7 +460,7 @@ void test_parse_null_buffer() {
 }
 
 // ---------------------------------------------------------------------------
-// LOGS packet (type 15) — no parse_ counterpart yet; assert the byte layout.
+// LOGS packet (type 15).
 // ---------------------------------------------------------------------------
 
 void test_log_packet_layout() {
@@ -487,6 +487,54 @@ void test_log_packet_buffer_too_small() {
     uint8_t buf[4];  // smaller than the header alone
     TEST_ASSERT_EQUAL(
         0, daq::create_log_packet(0, (const uint8_t*)text, 5, 0u, buf, sizeof(buf)));
+}
+
+void test_log_packet_roundtrip() {
+    const char* text = "ONLINE board=3\nstate=IDLE\n";
+    const uint16_t text_len = (uint16_t)strlen(text);
+    uint8_t buf[128];
+    size_t n = daq::create_log_packet(0x01, (const uint8_t*)text, text_len,
+                                      0x12345678u, buf, sizeof(buf));
+    TEST_ASSERT_NOT_EQUAL(0, n);
+
+    daq::PacketHeader hdr;
+    uint8_t flags = 0;
+    const uint8_t* out_text = nullptr;
+    uint16_t out_len = 0;
+    TEST_ASSERT_TRUE(daq::parse_log_packet(buf, n, hdr, flags, out_text, out_len));
+    TEST_ASSERT_EQUAL_UINT8((uint8_t)daq::PacketType::LOGS, hdr.packet_type);
+    TEST_ASSERT_EQUAL_UINT32(0x12345678u, hdr.timestamp);
+    TEST_ASSERT_EQUAL_UINT8(0x01, flags);
+    TEST_ASSERT_EQUAL_UINT16(text_len, out_len);
+    TEST_ASSERT_EQUAL_MEMORY(text, out_text, text_len);
+}
+
+void test_log_packet_parse_truncated() {
+    const char* text = "hello";
+    uint8_t buf[64];
+    size_t n = daq::create_log_packet(0, (const uint8_t*)text, 5, 0u, buf, sizeof(buf));
+    TEST_ASSERT_NOT_EQUAL(0, n);
+
+    daq::PacketHeader hdr;
+    uint8_t flags = 0;
+    const uint8_t* out_text = nullptr;
+    uint16_t out_len = 0;
+    // Claim one fewer byte than the text needs -> must fail.
+    TEST_ASSERT_FALSE(daq::parse_log_packet(buf, n - 1, hdr, flags, out_text, out_len));
+}
+
+void test_log_packet_parse_wrong_type() {
+    // A heartbeat packet must not parse as LOGS.
+    uint8_t buf[64];
+    daq::BoardHeartbeatPacket hb{};
+    size_t n = daq::create_board_heartbeat_packet(hb, 0u, buf, sizeof(buf));
+    TEST_ASSERT_NOT_EQUAL(0, n);
+
+    daq::PacketHeader hdr;
+    uint8_t flags = 0;
+    const uint8_t* out_text = nullptr;
+    uint16_t out_len = 0;
+    TEST_ASSERT_FALSE(daq::parse_log_packet(buf, n, hdr, flags, out_text, out_len));
 }
 
 // ---------------------------------------------------------------------------
@@ -539,6 +587,9 @@ int main(int argc, char** argv) {
 
     RUN_TEST(test_log_packet_layout);
     RUN_TEST(test_log_packet_buffer_too_small);
+    RUN_TEST(test_log_packet_roundtrip);
+    RUN_TEST(test_log_packet_parse_truncated);
+    RUN_TEST(test_log_packet_parse_wrong_type);
 
     // Null buffer
     RUN_TEST(test_parse_null_buffer);

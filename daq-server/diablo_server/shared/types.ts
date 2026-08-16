@@ -28,6 +28,7 @@ export enum MessageType {
   CONFIG_UPDATED = 'config_updated',
   COUNTDOWN_TARGET_UPDATE = 'countdown_target_update',
   SESSION_UPDATE = 'session_update',
+  BOARD_LOG = 'board_log',                           // Server → Client: { boardId, ts, lines, truncated }
 
   // Engine-control authorization (DAQ operator gate)
   CONTROL_STATUS = 'control_status',                // Server → Client: { operator, email }
@@ -303,6 +304,30 @@ export interface BoardStatus {
 
 export interface BoardStatusPayload {
   boards: BoardStatus[];
+}
+
+// ── Board diagnostic logs (type-15 firmware logs, forwarded via daq_bridge) ──
+
+/** One cached board log line, stamped with server arrival time. */
+export interface BoardLogLine {
+  boardId: number;
+  ts: number;   // server arrival time, epoch ms
+  line: string;
+}
+
+/** Running per-board log counters (cumulative since backend start). */
+export interface BoardLogTotals {
+  received: number;   // BOARD_LOG packets (1 Hz flushes) received
+  truncated: number;  // of those, how many carried the TRUNCATED flag
+}
+
+/** MessageType.BOARD_LOG payload: one packet's worth of newline-split lines. */
+export interface BoardLogPayload {
+  boardId: number;
+  ts: number;          // server arrival time, epoch ms
+  lines: string[];
+  truncated: boolean;  // this packet overflowed the board's buffer
+  totals: BoardLogTotals;
 }
 
 // ── Notification types ─────────────────────────────────────────────────────

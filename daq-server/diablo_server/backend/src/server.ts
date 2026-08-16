@@ -30,6 +30,7 @@ import { loadSensorRoleMap } from './sensor-config.js';
 import { registerVTables, clearSubscriptionState } from './elodin-vtable-registry.js';
 import { registerControllerVTables } from './legacy/elodin-vtable-controller.js';
 import { createAPIHandler } from './api-server.js';
+import { startBoardLogReceiver } from './board-logs.js';
 import { readConfig } from './routes/config.js';
 import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } from './legacy/state-actuators.js';
 import type { StateActuatorMap } from './legacy/state-actuators.js';
@@ -170,7 +171,10 @@ try {
   }
 } catch { /* no calibration file — fine */ }
 
-const calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
+// Sensor-role → entity naming. Rebuilt on config save (onConfigUpdated) so a
+// Sensor Roles edit reflects without a backend restart. calibrationHost reads
+// this via its channelToEntityMap property (updated in lockstep below).
+let calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
 
 /** Cached slot→board_id map for uniqueIdFromPtEntity — built once, avoids config re-reads on hot path. */
 const _ptSlotToBoardId = new Map<number, number>();
@@ -539,6 +543,11 @@ const apiHandler = createAPIHandler({
   }),
   onConfigUpdated: () => {
     reloadGuiStreamConfig();
+    // Rebuild sensor-role-derived caches so a Sensor Roles / board_id edit reflects
+    // live (the backend is always-on and isn't restarted by a session start).
+    calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
+    calibrationHost.channelToEntityMap = calChannelToEntityMap;
+    _ptSlotToBoardId.clear();
     // Tell every open client the config changed so they refetch /api/* live
     // (sensor-config, pressure-limits, pressure-bars) — no reload/restart.
     broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
@@ -1236,4 +1245,6 @@ httpServer.listen(WS_PORT, () => {
   // Init the run-session manager last, once broadcast/notify + wss are live.
   // No-op (enabled=false) unless SESSION_SERVICE_MODE is mock/systemd.
   sessionManager.init(broadcast, broadcastNotification);
+  // Board diagnostic logs (type-15 LOGS forwarded by daq_bridge over loopback UDP).
+  startBoardLogReceiver(broadcast);
 });

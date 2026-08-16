@@ -54,6 +54,9 @@ TEST_BACKEND_WS_PORT="${TEST_BACKEND_WS_PORT:-8181}"
 TEST_BACKEND_API_PORT="${TEST_BACKEND_API_PORT:-8182}"
 TEST_ACTUATOR_UDP_PORT="${TEST_ACTUATOR_UDP_PORT:-5015}"
 TEST_STARTUP_LISTEN_PORT="${TEST_STARTUP_LISTEN_PORT:-5014}"
+# Board-log ingest UDP port (daq_bridge → backend). Fixed 8092 in prod; offset here
+# so the test never collides with a running stack's log receiver.
+TEST_LOG_INGEST_PORT="${TEST_LOG_INGEST_PORT:-8192}"
 # sequencer_service TCP port (thin backend forwards SEND_COMMAND here)
 TEST_SEQUENCER_PORT="${TEST_SEQUENCER_PORT:-9998}"
 TEST_CONTROLLER_PORT="${TEST_CONTROLLER_PORT:-9997}"
@@ -95,7 +98,7 @@ kill_stale_integration_processes() {
   # Elodin DB — match on the test DB path pattern
   pkill -f "elodin.*integration_test" 2>/dev/null && killed=$((killed + 1)) || true
   # Also kill any process bound to our test ports
-  for port in $TEST_ELODIN_PORT $TEST_DAQ_UDP_PORT $TEST_BACKEND_WS_PORT $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_SEQUENCER_PORT; do
+  for port in $TEST_ELODIN_PORT $TEST_DAQ_UDP_PORT $TEST_BACKEND_WS_PORT $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_LOG_INGEST_PORT $TEST_SEQUENCER_PORT; do
     lsof -ti ":$port" 2>/dev/null | xargs kill 2>/dev/null || true
   done
   if [ "$killed" -gt 0 ]; then
@@ -219,7 +222,7 @@ kill_port() {
   fi
 }
 
-for port in $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_DAQ_UDP_PORT; do
+for port in $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_LOG_INGEST_PORT $TEST_DAQ_UDP_PORT; do
   kill_port "$port" udp
 done
 sleep 0.3
@@ -362,6 +365,8 @@ sedi "s/^port = 2240/port = $TEST_ELODIN_PORT/" "$TEST_CONFIG"
 sedi "s/^sensor_port = 5006/sensor_port = $TEST_DAQ_UDP_PORT/" "$TEST_CONFIG"
 # Replace actuator_cmd_port (under [network] section)
 sedi "s/^actuator_cmd_port = 5005/actuator_cmd_port = $TEST_ACTUATOR_UDP_PORT/" "$TEST_CONFIG"
+# Replace board-log ingest port (under [logs] section) — daq_bridge reads it, backend binds it (env below)
+sedi "s/^backend_udp_port = .*/backend_udp_port = $TEST_LOG_INGEST_PORT/" "$TEST_CONFIG"
 # Pin the GUI downsample config so the test's assertions are deterministic
 # regardless of the production [gui] toggle, and so envelope downsampling is
 # OBSERVABLE: the sim's eligible streams are only 10 Hz, and at the production
@@ -412,7 +417,7 @@ num_sensors = 1
 active_connectors = [1]
 voltage_reference = 1
 necessary_for_abort = false
-enable_serial_printing = false
+enable_serial_printing = 0
 designated_survivor = false
 EOF
 
@@ -532,6 +537,7 @@ if [ "$BACKEND" = "thin" ]; then
     ELODIN_PORT=$TEST_ELODIN_PORT \
     ACTUATOR_SERVICE_PORT=9998 \
     CONFIG_PATH="$TEST_CONFIG" \
+    LOG_INGEST_PORT=$TEST_LOG_INGEST_PORT \
     npx tsx src/server.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
 else
   echo "🖥️  Starting Backend server (server-legacy.ts)..."

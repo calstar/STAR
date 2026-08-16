@@ -81,8 +81,6 @@ interface ConfigData {
     fallback_fuel_duty_cycle?: number;
     fallback_ox_duty_cycle?: number;
     controller_loop_hz?: number;
-    controller_service_url?: string;
-    controller_config_path?: string;
     command_type?: 'THRUST_DESIRED' | 'ALTITUDE_GOAL' | 'PRESSURE_TARGET' | string;
     thrust_desired?: number;
     altitude_goal?: number;
@@ -112,8 +110,6 @@ export default function ConfigPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [activeTab, setActiveTab] = useState('network');
-  const [advancedText, setAdvancedText] = useState('');
-  const [advancedError, setAdvancedError] = useState<string | null>(null);
 
   const ws = getWebSocketClient();
   // Config editing is gated on operator identity (the DAQ allowlist), enforced
@@ -155,8 +151,6 @@ export default function ConfigPage() {
       if (adc && typeof adc.internal_v === 'number' && typeof adc.absolute_5v_v === 'number') {
         useSensorStore.getState().setVoltageRefNominals({ internalV: adc.internal_v, absolute5vV: adc.absolute_5v_v });
       }
-      setAdvancedText(JSON.stringify(nextConfig, null, 2));
-      setAdvancedError(null);
       setLoading(false);
     } catch (err: any) {
       setError(err?.message || 'Failed to load config');
@@ -394,7 +388,6 @@ export default function ConfigPage() {
     { id: 'server_heartbeat', label: 'Server Heartbeat' },
     { id: 'services', label: 'Services' },
     { id: 'database', label: 'Database' },
-    { id: 'discovery', label: 'Discovery' },
     { id: 'boards', label: 'Boards' },
     { id: 'sensor_roles', label: 'Sensor Roles' },
     { id: 'actuator_roles', label: 'Actuator Roles' },
@@ -404,7 +397,6 @@ export default function ConfigPage() {
     { id: 'pressure_limits', label: 'Pressure Limits' },
     { id: 'gui', label: 'Top Bar & Tabs' },
     { id: 'state_machine', label: 'State Machine' },
-    { id: 'advanced', label: 'Advanced JSON' },
   ];
 
   return (
@@ -499,31 +491,78 @@ export default function ConfigPage() {
             inside for non-operators (mirrors the server-side operator gate). */}
         <fieldset disabled={!canEdit} className={`space-y-6 border-0 m-0 p-0 min-w-0${!canEdit ? ' opacity-60' : ''}`}>
           {activeTab === 'network' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-1">Network</h2>
-              <p className="text-sm text-amber-300/90 mb-4">
-                Read-only — these are startup-only binds for the pipeline services and must match the
-                board firmware. Changing them requires a deploy/restart, not a live edit.
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField(
-                  'Bind IP',
-                  config.network?.bind_ip,
-                  (val) => updateField('network', 'bind_ip', val),
-                  'text', undefined, 'DAQ bridge sensor-socket interface', true
-                )}
-                {renderField(
-                  'Sensor Port',
-                  config.network?.sensor_port,
-                  (val) => updateField('network', 'sensor_port', val),
-                  'number', undefined, 'UDP port boards send sensor data to', true
-                )}
-                {renderField(
-                  'Actuator Command Port',
-                  config.network?.actuator_cmd_port,
-                  (val) => updateField('network', 'actuator_cmd_port', val),
-                  'number', undefined, 'Port boards listen on for actuator commands', true
-                )}
+            <div className="bg-card rounded-lg p-6 space-y-6">
+              <div>
+                <h2 className="text-xl font-bold mb-1">Network</h2>
+                <p className="text-sm text-amber-300/90 mb-4">
+                  Read-only — these are startup-only binds for the pipeline services and must match the
+                  board firmware. Changing them requires a deploy/restart, not a live edit.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {renderField(
+                    'Bind IP',
+                    config.network?.bind_ip,
+                    (val) => updateField('network', 'bind_ip', val),
+                    'text', undefined, 'DAQ bridge sensor-socket interface', true
+                  )}
+                  {renderField(
+                    'Sensor Port',
+                    config.network?.sensor_port,
+                    (val) => updateField('network', 'sensor_port', val),
+                    'number', undefined, 'UDP port boards send sensor data to', true
+                  )}
+                  {renderField(
+                    'Actuator Command Port',
+                    config.network?.actuator_cmd_port,
+                    (val) => updateField('network', 'actuator_cmd_port', val),
+                    'number', undefined, 'Port boards listen on for actuator commands', true
+                  )}
+                </div>
+              </div>
+
+              <div className="border-t border-gray-700 pt-6">
+                <h3 className="text-lg font-semibold mb-1">Board Discovery</h3>
+                <p className="text-sm text-amber-300/90 mb-4">
+                  Read-only — the discovery service scans this subnet/interface at startup. Editing it
+                  live has no effect until the pipeline restarts.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {renderField(
+                    'Enabled', config.discovery?.enabled,
+                    (val) => updateField('discovery', 'enabled', val),
+                    'boolean', undefined, undefined, true
+                  )}
+                  {renderField(
+                    'Network Interface', config.discovery?.network_interface,
+                    (val) => updateField('discovery', 'network_interface', val),
+                    'text', undefined, '"auto" = interface with a 192.168.2.x IP', true
+                  )}
+                  {renderField(
+                    'Mode', config.discovery?.mode,
+                    (val) => updateField('discovery', 'mode', val),
+                    'select', ['passive', 'active', 'hybrid'], undefined, true
+                  )}
+                  {renderField(
+                    'Subnet', config.discovery?.subnet,
+                    (val) => updateField('discovery', 'subnet', val),
+                    'text', undefined, undefined, true
+                  )}
+                  {renderField(
+                    'IP Range Start', config.discovery?.ip_range_start,
+                    (val) => updateField('discovery', 'ip_range_start', val),
+                    'number', undefined, undefined, true
+                  )}
+                  {renderField(
+                    'IP Range End', config.discovery?.ip_range_end,
+                    (val) => updateField('discovery', 'ip_range_end', val),
+                    'number', undefined, undefined, true
+                  )}
+                  {renderField(
+                    'Discovery Timeout (seconds)', config.discovery?.discovery_timeout_seconds,
+                    (val) => updateField('discovery', 'discovery_timeout_seconds', val),
+                    'number', undefined, undefined, true
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -565,24 +604,29 @@ export default function ConfigPage() {
 
           {activeTab === 'server_heartbeat' && (
             <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">Server Heartbeat</h2>
+              <h2 className="text-xl font-bold mb-1">Server Heartbeat</h2>
+              <p className="text-sm text-amber-300/90 mb-4">
+                Read-only — the heartbeat broadcast is set up by the C++ services at startup. Editing it
+                live has no effect until the pipeline restarts.
+              </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {renderField(
                   'Interval (ms)',
                   config.server_heartbeat?.interval_ms,
                   (val) => updateField('server_heartbeat', 'interval_ms', val),
-                  'number'
+                  'number', undefined, undefined, true
                 )}
                 {renderField(
                   'Broadcast Port',
                   config.server_heartbeat?.broadcast_port,
                   (val) => updateField('server_heartbeat', 'broadcast_port', val),
-                  'number'
+                  'number', undefined, undefined, true
                 )}
                 {renderField(
                   'Broadcast IP',
                   config.server_heartbeat?.broadcast_ip,
-                  (val) => updateField('server_heartbeat', 'broadcast_ip', val)
+                  (val) => updateField('server_heartbeat', 'broadcast_ip', val),
+                  'text', undefined, undefined, true
                 )}
               </div>
             </div>
@@ -590,7 +634,12 @@ export default function ConfigPage() {
 
           {activeTab === 'services' && (
             <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">Services</h2>
+              <h2 className="text-xl font-bold mb-1">Services</h2>
+              <p className="text-sm text-amber-300/90 mb-4">
+                Read-only — these are always-on support services (heartbeat, config-broadcast, data-logger).
+                They read their config once at their own startup and are <em>not</em> restarted by a session,
+                so edits here wouldn&apos;t take effect on a Start. Change them via a deploy/restart.
+              </p>
               <div className="space-y-8">
                 <div className="border border-gray-700 rounded-lg p-4">
                   <h3 className="text-lg font-semibold mb-3">Heartbeat Service</h3>
@@ -598,22 +647,23 @@ export default function ConfigPage() {
                     Polls backend /api/engine_state, broadcasts SERVER_HEARTBEAT to boards.
                   </p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {renderField('Enabled', config.heartbeat_service?.enabled, (val) => updateField('heartbeat_service', 'enabled', val), 'boolean')}
-                    {renderField('Backend URL', config.heartbeat_service?.backend_url, (val) => updateField('heartbeat_service', 'backend_url', val))}
-                    {renderField('Interval (ms)', config.heartbeat_service?.interval_ms, (val) => updateField('heartbeat_service', 'interval_ms', val), 'number')}
-                    {renderField('Broadcast IP', config.heartbeat_service?.broadcast_ip, (val) => updateField('heartbeat_service', 'broadcast_ip', val))}
-                    {renderField('Broadcast Port', config.heartbeat_service?.broadcast_port, (val) => updateField('heartbeat_service', 'broadcast_port', val), 'number')}
+                    {renderField('Enabled', config.heartbeat_service?.enabled, (val) => updateField('heartbeat_service', 'enabled', val), 'boolean', undefined, undefined, true)}
+                    {renderField('Backend URL', config.heartbeat_service?.backend_url, (val) => updateField('heartbeat_service', 'backend_url', val), 'text', undefined, undefined, true)}
+                    {renderField('Interval (ms)', config.heartbeat_service?.interval_ms, (val) => updateField('heartbeat_service', 'interval_ms', val), 'number', undefined, undefined, true)}
+                    {renderField('Broadcast IP', config.heartbeat_service?.broadcast_ip, (val) => updateField('heartbeat_service', 'broadcast_ip', val), 'text', undefined, undefined, true)}
+                    {renderField('Broadcast Port', config.heartbeat_service?.broadcast_port, (val) => updateField('heartbeat_service', 'broadcast_port', val), 'number', undefined, undefined, true)}
                   </div>
                 </div>
                 <div className="border border-gray-700 rounded-lg p-4">
                   <h3 className="text-lg font-semibold mb-3">Config Broadcast Service</h3>
                   <p className="text-sm text-text-muted mb-3">
-                    Sends ACTUATOR_CONFIG / SENSOR_CONFIG to boards.
+                    Sends ACTUATOR_CONFIG / SENSOR_CONFIG to boards. (It re-reads board config live each
+                    cycle; only these service-level settings need a restart.)
                   </p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {renderField('Enabled', config.config_broadcast_service?.enabled, (val) => updateField('config_broadcast_service', 'enabled', val), 'boolean')}
-                    {renderField('Backend URL', config.config_broadcast_service?.backend_url, (val) => updateField('config_broadcast_service', 'backend_url', val))}
-                    {renderField('Interval (ms)', config.config_broadcast_service?.interval_ms, (val) => updateField('config_broadcast_service', 'interval_ms', val), 'number')}
+                    {renderField('Enabled', config.config_broadcast_service?.enabled, (val) => updateField('config_broadcast_service', 'enabled', val), 'boolean', undefined, undefined, true)}
+                    {renderField('Backend URL', config.config_broadcast_service?.backend_url, (val) => updateField('config_broadcast_service', 'backend_url', val), 'text', undefined, undefined, true)}
+                    {renderField('Interval (ms)', config.config_broadcast_service?.interval_ms, (val) => updateField('config_broadcast_service', 'interval_ms', val), 'number', undefined, undefined, true)}
                   </div>
                 </div>
                 <div className="border border-gray-700 rounded-lg p-4">
@@ -622,8 +672,8 @@ export default function ConfigPage() {
                     Records .sensorlog files; connects to backend WebSocket.
                   </p>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {renderField('Enabled', config.data_logger_service?.enabled, (val) => updateField('data_logger_service', 'enabled', val), 'boolean')}
-                    {renderField('WebSocket URL', config.data_logger_service?.ws_url, (val) => updateField('data_logger_service', 'ws_url', val))}
+                    {renderField('Enabled', config.data_logger_service?.enabled, (val) => updateField('data_logger_service', 'enabled', val), 'boolean', undefined, undefined, true)}
+                    {renderField('WebSocket URL', config.data_logger_service?.ws_url, (val) => updateField('data_logger_service', 'ws_url', val), 'text', undefined, undefined, true)}
                   </div>
                 </div>
               </div>
@@ -632,99 +682,63 @@ export default function ConfigPage() {
 
           {activeTab === 'database' && (
             <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">Database</h2>
+              <h2 className="text-xl font-bold mb-1">Database</h2>
+              <p className="text-sm text-amber-300/90 mb-4">
+                Read-only — the Elodin DB connection is established at startup. Changing host/port live
+                would drop the live data link; edit via a deploy/restart, not here.
+              </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {renderField(
                   'Host',
                   config.database?.host,
-                  (val) => updateField('database', 'host', val)
+                  (val) => updateField('database', 'host', val),
+                  'text', undefined, undefined, true
                 )}
                 {renderField(
                   'Port',
                   config.database?.port,
                   (val) => updateField('database', 'port', val),
-                  'number'
+                  'number', undefined, undefined, true
                 )}
                 {renderField(
                   'Auto Flush Interval (ms)',
                   config.database?.auto_flush_interval_ms,
                   (val) => updateField('database', 'auto_flush_interval_ms', val),
-                  'number'
+                  'number', undefined, undefined, true
                 )}
                 {renderField(
                   'Max Buffer Size',
                   config.database?.max_buffer_size,
                   (val) => updateField('database', 'max_buffer_size', val),
-                  'number'
+                  'number', undefined, undefined, true
                 )}
                 {renderField(
                   'Connection Retry Attempts',
                   config.database?.connection_retry_attempts,
                   (val) => updateField('database', 'connection_retry_attempts', val),
-                  'number'
+                  'number', undefined, undefined, true
                 )}
                 {renderField(
                   'Connection Retry Delay (ms)',
                   config.database?.connection_retry_delay_ms,
                   (val) => updateField('database', 'connection_retry_delay_ms', val),
-                  'number'
+                  'number', undefined, undefined, true
                 )}
               </div>
             </div>
           )}
 
-          {activeTab === 'discovery' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">Discovery</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField(
-                  'Enabled',
-                  config.discovery?.enabled,
-                  (val) => updateField('discovery', 'enabled', val),
-                  'boolean'
-                )}
-                {renderField(
-                  'Network Interface',
-                  config.discovery?.network_interface,
-                  (val) => updateField('discovery', 'network_interface', val)
-                )}
-                {renderField(
-                  'Mode',
-                  config.discovery?.mode,
-                  (val) => updateField('discovery', 'mode', val),
-                  'select',
-                  ['passive', 'active', 'hybrid']
-                )}
-                {renderField(
-                  'Subnet',
-                  config.discovery?.subnet,
-                  (val) => updateField('discovery', 'subnet', val)
-                )}
-                {renderField(
-                  'IP Range Start',
-                  config.discovery?.ip_range_start,
-                  (val) => updateField('discovery', 'ip_range_start', val),
-                  'number'
-                )}
-                {renderField(
-                  'IP Range End',
-                  config.discovery?.ip_range_end,
-                  (val) => updateField('discovery', 'ip_range_end', val),
-                  'number'
-                )}
-                {renderField(
-                  'Discovery Timeout (seconds)',
-                  config.discovery?.discovery_timeout_seconds,
-                  (val) => updateField('discovery', 'discovery_timeout_seconds', val),
-                  'number'
-                )}
-              </div>
-            </div>
-          )}
 
           {activeTab === 'boards' && (
             <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">Boards</h2>
+              <h2 className="text-xl font-bold mb-1">Boards</h2>
+              <p className="text-sm text-text-muted mb-4">
+                Editable. Board config (roles, active connectors, voltage reference, abort thresholds,
+                enable flags) is re-broadcast to the boards live — the config-broadcast service re-reads
+                on save, so changes apply without restarting the server or a session. Note: the DAQ
+                pipeline (daq_bridge/calibration/controller) picks up routing/identity changes on the
+                next session start.
+              </p>
               <div className="space-y-6">
                 {Object.entries(config.boards || {}).map(([boardKey, board]) => (
                   <div key={boardKey} className="border border-gray-700 rounded-lg p-4">
@@ -767,12 +781,12 @@ export default function ConfigPage() {
                         'boolean'
                       )}
                       {renderField(
-                        'Enable serial printing',
-                        (board as any).enable_serial_printing,
-                        (val) => updateBoard(boardKey, 'enable_serial_printing', val),
-                        'boolean',
-                        undefined,
-                        'Board will enable serial debug when config is applied'
+                        'Logging mode',
+                        String((board as any).enable_serial_printing ?? 0),
+                        (val) => updateBoard(boardKey, 'enable_serial_printing', Number(val)),
+                        'select',
+                        ['0', '1', '2', '3'],
+                        '0 USB only · 1 USB verbose · 2 stream Tier-1 · 3 stream Tier-1+2'
                       )}
                       {(board as any).necessary_for_abort !== undefined && renderField(
                         'Necessary for abort',
@@ -863,7 +877,7 @@ export default function ConfigPage() {
                     const newKey = `board_${Object.keys(config.boards || {}).length + 1}`;
                     updateBoard(newKey, 'type', 'PT');
                     updateBoard(newKey, 'enabled', false);
-                    updateBoard(newKey, 'enable_serial_printing', false);
+                    updateBoard(newKey, 'enable_serial_printing', 0);
                     updateBoard(newKey, 'voltage_reference', 0);
                   }}
                   className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
@@ -1046,27 +1060,29 @@ export default function ConfigPage() {
 
           {activeTab === 'controller_service' && (
             <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">Controller Service (C++)</h2>
-              <p className="text-sm text-text-muted mb-4">
-                TCP port for FIRE_START / FIRE_STOP. Backend sends FIRE_START when entering FIRE state.
+              <h2 className="text-xl font-bold mb-1">Controller Service (C++)</h2>
+              <p className="text-sm text-amber-300/90 mb-4">
+                Read-only for now — TCP port for FIRE_START / FIRE_STOP, read by the C++ controller
+                service at startup. Editing it live has no effect until the pipeline restarts.
               </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField('Port', config.controller_service?.port, (val) => updateField('controller_service', 'port', val), 'number')}
-                {renderField('Fire Duration (ms)', config.controller_service?.fire_duration_ms, (val) => updateField('controller_service', 'fire_duration_ms', val), 'number')}
-                {renderField('Fire Extended (ms)', config.controller_service?.fire_extended_ms, (val) => updateField('controller_service', 'fire_extended_ms', val), 'number')}
+                {renderField('Port', config.controller_service?.port, (val) => updateField('controller_service', 'port', val), 'number', undefined, undefined, true)}
+                {renderField('Fire Duration (ms)', config.controller_service?.fire_duration_ms, (val) => updateField('controller_service', 'fire_duration_ms', val), 'number', undefined, undefined, true)}
+                {renderField('Fire Extended (ms)', config.controller_service?.fire_extended_ms, (val) => updateField('controller_service', 'fire_extended_ms', val), 'number', undefined, undefined, true)}
               </div>
             </div>
           )}
 
           {activeTab === 'actuator_service' && (
             <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">Actuator Service (C++)</h2>
-              <p className="text-sm text-text-muted mb-4">
-                When port is set, backend forwards state transitions here; actuator commands sent by C++.
+              <h2 className="text-xl font-bold mb-1">Actuator Service (C++)</h2>
+              <p className="text-sm text-amber-300/90 mb-4">
+                Read-only for now — the port/bind are read at C++ service startup (and the port is
+                overridden by an env var the startup script sets). Editing it live has no effect.
               </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {renderField('Port', config.actuator_service?.port, (val) => updateField('actuator_service', 'port', val), 'number')}
-                {renderField('Bind Address', config.actuator_service?.bind_address, (val) => updateField('actuator_service', 'bind_address', val))}
+                {renderField('Port', config.actuator_service?.port, (val) => updateField('actuator_service', 'port', val), 'number', undefined, undefined, true)}
+                {renderField('Bind Address', config.actuator_service?.bind_address, (val) => updateField('actuator_service', 'bind_address', val), 'text', undefined, undefined, true)}
               </div>
             </div>
           )}
@@ -1092,16 +1108,6 @@ export default function ConfigPage() {
                   config.controller?.pwm_duration_ms,
                   (val) => updateField('controller', 'pwm_duration_ms', val),
                   'number'
-                )}
-                {renderField(
-                  'Controller Service URL',
-                  config.controller?.controller_service_url,
-                  (val) => updateField('controller', 'controller_service_url', val)
-                )}
-                {renderField(
-                  'Controller Config Path',
-                  config.controller?.controller_config_path,
-                  (val) => updateField('controller', 'controller_config_path', val)
                 )}
                 {renderField(
                   'Use C++ Controller',
@@ -1155,8 +1161,7 @@ export default function ConfigPage() {
                 {Object.keys(config.pressure_limits || {}).map((system) => (
                   <div key={system} className="border border-gray-700 rounded-lg p-4">
                     <h3 className="text-lg font-semibold mb-3 font-mono">{system}</h3>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      {renderField('THRESH', (config.pressure_limits as any)?.[system]?.THRESH, (val) => updateField('pressure_limits', 'THRESH', val, system), 'number')}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       {renderField('NOP', (config.pressure_limits as any)?.[system]?.NOP, (val) => updateField('pressure_limits', 'NOP', val, system), 'number')}
                       {renderField('MEOP', (config.pressure_limits as any)?.[system]?.MEOP, (val) => updateField('pressure_limits', 'MEOP', val, system), 'number')}
                       {renderField('POP', (config.pressure_limits as any)?.[system]?.POP, (val) => updateField('pressure_limits', 'POP', val, system), 'number')}
@@ -1252,68 +1257,28 @@ export default function ConfigPage() {
 
           {activeTab === 'state_machine' && (
             <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-4">State Machine</h2>
+              <h2 className="text-xl font-bold mb-1">State Machine</h2>
+              <p className="text-sm text-amber-300/90 mb-4">
+                Read-only — state-machine setup (the actuator/transition CSVs) is managed outside this
+                editor. These paths are loaded by the sequencer at pipeline start, not live-editable here.
+              </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {renderField(
                   'Actuator CSV',
                   config.state_machine?.actuator_csv,
-                  (val) => updateField('state_machine', 'actuator_csv', val)
+                  (val) => updateField('state_machine', 'actuator_csv', val),
+                  'text', undefined, 'sequencer actuator sequence', true
                 )}
                 {renderField(
                   'Transitions CSV',
                   config.state_machine?.transitions_csv,
-                  (val) => updateField('state_machine', 'transitions_csv', val)
+                  (val) => updateField('state_machine', 'transitions_csv', val),
+                  'text', undefined, 'state transition matrix', true
                 )}
               </div>
             </div>
           )}
 
-          {activeTab === 'advanced' && (
-            <div className="bg-card rounded-lg p-6">
-              <h2 className="text-xl font-bold mb-2">Advanced JSON</h2>
-              <p className="text-sm text-text-muted mb-4">
-                Full config object as JSON. This is an escape hatch for fields not yet covered by the form tabs.
-              </p>
-              {advancedError && (
-                <div className="mb-3 p-3 bg-red-900/30 border border-red-500 rounded text-red-200 text-sm">
-                  {advancedError}
-                </div>
-              )}
-              <textarea
-                value={advancedText}
-                onChange={(e) => {
-                  setAdvancedText(e.target.value);
-                  setAdvancedError(null);
-                }}
-                className="w-full h-[60vh] min-h-[320px] max-h-[75vh] px-3 py-2 bg-background border border-gray-700 rounded text-white font-mono text-xs"
-              />
-              <div className="mt-4 flex gap-3">
-                <button
-                  onClick={() => {
-                    try {
-                      const obj = JSON.parse(advancedText || '{}');
-                      setConfig(obj);
-                      setAdvancedError(null);
-                    } catch (e: any) {
-                      setAdvancedError(e?.message || 'Invalid JSON');
-                    }
-                  }}
-                  className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
-                >
-                  Apply JSON to Form
-                </button>
-                <button
-                  onClick={() => {
-                    setAdvancedText(JSON.stringify(config || {}, null, 2));
-                    setAdvancedError(null);
-                  }}
-                  className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
-                >
-                  Reset to Current Form
-                </button>
-              </div>
-            </div>
-          )}
         </fieldset>
 
         <div className="mt-6 text-sm text-text-muted">

@@ -310,4 +310,23 @@ bool parse_actuator_config_packet(const uint8_t *buffer, size_t buffer_size,
                                   std::vector<AbortPTLocation> &abort_pts_out,
                                   uint8_t &enable_serial_printing_out);
 
+/**
+ * @brief Parses a LOGS packet (type 15) from buffer.
+ *
+ * Mirrors the on-wire format produced by create_log_packet:
+ * PacketHeader (LOGS) + flags (1B) + text_len (2B, uint16 LE) + text bytes.
+ * On success, text_out points into `buffer` (no copy) and is valid for the
+ * lifetime of `buffer`.
+ *
+ * @param flags_out    bit0 = TRUNCATED.
+ * @param text_out     Set to point at the first text byte inside `buffer`.
+ * @param text_len_out Number of text bytes.
+ * @return true on success, false on error (type/size mismatch or buffer too small).
+ */
+bool parse_log_packet(const uint8_t *buffer, size_t buffer_size,
+                      PacketHeader &header_out,
+                      uint8_t &flags_out,
+                      const uint8_t *&text_out,
+                      uint16_t &text_len_out);
+
 } // namespace daq

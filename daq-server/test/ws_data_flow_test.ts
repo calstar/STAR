@@ -92,7 +92,7 @@ function parseOnlyTests(): Set<string> | null {
     'sensor_config', 'sensor_data', 'cal_stability', 'raw_cal_presence',
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
-    'controller', 'timestamps', 'conservation',
+    'controller', 'timestamps', 'conservation', 'board_logs', 'board_log_mode',
   ]);
   for (const id of out) {
     if (!allowed.has(id)) {
@@ -160,6 +160,7 @@ enum MessageType {
   BOARD_STATUS_UPDATE = 'board_status_update',
   CONTROL_UNLOCK = 'control_unlock',
   CONTROL_UNLOCK_RESULT = 'control_unlock_result',
+  BOARD_LOG = 'board_log',
 }
 
 enum SystemState {
@@ -856,6 +857,43 @@ function fetchBackendStats(): Promise<BackendStats | null> {
     });
     req.on('error', (err) => { if (VERBOSE) console.log(`    [stats] fetch error: ${err.message}`); resolve(null); });
     req.setTimeout(2000, () => { if (VERBOSE) console.log('    [stats] fetch timeout'); req.destroy(); resolve(null); });
+  });
+}
+
+/** GET a JSON body from the backend REST API (served on WS_PORT for the thin backend). */
+function httpGetJson(path: string): Promise<any | null> {
+  return new Promise((resolve) => {
+    const req = http.get(`http://127.0.0.1:${WS_PORT}${path}`, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve(null); } });
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(3000, () => { req.destroy(); resolve(null); });
+  });
+}
+
+/** POST a JSON body to the backend REST API; resolves { status, json }. */
+function httpPostJson(path: string, body: unknown): Promise<{ status: number; json: any | null }> {
+  return new Promise((resolve) => {
+    const payload = Buffer.from(JSON.stringify(body), 'utf-8');
+    const req = http.request(
+      `http://127.0.0.1:${WS_PORT}${path}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length } },
+      (res) => {
+        let data = '';
+        res.on('data', (c) => { data += c; });
+        res.on('end', () => {
+          let json: any = null;
+          try { json = JSON.parse(data); } catch { /* non-JSON */ }
+          resolve({ status: res.statusCode ?? 0, json });
+        });
+      },
+    );
+    req.on('error', () => resolve({ status: 0, json: null }));
+    req.setTimeout(3000, () => { req.destroy(); resolve({ status: 0, json: null }); });
+    req.write(payload);
+    req.end();
   });
 }
 
@@ -2221,6 +2259,82 @@ async function testSampleConservation(): Promise<void> {
       : `Ingested ${ingested.toLocaleString()} exceeds sent ${sent.toLocaleString()} by >5% — counter double-counting a stream?`);
 }
 
+// ── Test: Board logs reach the frontend (board_simulator → daq_bridge → backend → WS/REST) ──
+// The sim streams simple type-15 LOGS unconditionally (it does NOT honor the mode byte).
+async function testBoardLogs(ws: WebSocket): Promise<void> {
+  console.log('\n🪵 Test: Board diagnostic logs → WebSocket + REST cache');
+  console.log('  The board_simulator streams type-15 LOGS (1 Hz/board); daq_bridge forwards them to the backend cache.');
+  try {
+    const { payload } = await waitForMessage(
+      ws,
+      MessageType.BOARD_LOG,
+      12000,
+      (p) => p && p.boardId > 0 && Array.isArray(p.lines) && p.lines.length > 0,
+    );
+    assert(payload.boardId > 0 && payload.lines.length > 0,
+      `BOARD_LOG frame received over WS (board ${payload.boardId}, ${payload.lines.length} line(s): "${String(payload.lines[0]).slice(0, 60)}")`);
+  } catch (e: any) {
+    assert(false, `BOARD_LOG frame over WS: ${e.message}`);
+  }
+
+  // REST cache: /api/board-logs/stats should show a board with received > 0.
+  const stats = await httpGetJson('/api/board-logs/stats');
+  const entries: [string, any][] = stats && stats.stats ? Object.entries(stats.stats) : [];
+  const streaming = entries.find(([, v]) => v && v.received > 0);
+  assert(!!streaming, streaming
+    ? `/api/board-logs/stats shows board ${streaming[0]} received=${streaming[1].received}`
+    : `/api/board-logs/stats has a board with received>0 (got ${JSON.stringify(stats?.stats ?? {})})`);
+
+  if (streaming) {
+    const hist = await httpGetJson(`/api/board-logs?board=${streaming[0]}&limit=20`);
+    const lines = hist && Array.isArray(hist.lines) ? hist.lines : [];
+    assert(lines.length > 0,
+      lines.length > 0
+        ? `/api/board-logs?board=${streaming[0]} returned ${lines.length} cached line(s)`
+        : `/api/board-logs?board=${streaming[0]} returned cached lines`);
+  }
+}
+
+// ── Test: a GUI logging-mode change reaches the board (frontend → config → config_broadcast → board 60) ──
+// board_startup_sim (127.0.0.60) receives SENSOR_CONFIG and reports the enable_serial_printing byte;
+// the board does NOT have to act on it — we only prove the changed byte arrives.
+async function testBoardLogMode(_ws: WebSocket): Promise<void> {
+  console.log('\n🎚️  Test: GUI log-mode change reaches board 60 (POST → config.toml → config_broadcast → SENSOR_CONFIG)');
+  if (!BOARD_STARTUP_SIM || !fs.existsSync(BOARD_STARTUP_SIM) || TEST_STARTUP_LISTEN_PORT <= 0) {
+    console.log('  SKIPPED (BOARD_STARTUP_SIM / port not available)');
+    return;
+  }
+  const TARGET_MODE = 3;
+  const post = await httpPostJson('/api/board-log-mode', { boardId: 60, mode: TARGET_MODE });
+  assert(post.status === 200 && post.json?.success === true,
+    post.status === 200 ? `POST /api/board-log-mode {60,${TARGET_MODE}} accepted` : `POST /api/board-log-mode failed (status ${post.status})`);
+  if (post.status !== 200) return;
+
+  // Let config_broadcast (≥1.5s cycle) re-read the patched config and start sending the new byte.
+  const waitMs = parseInt(process.env.INTEGRATION_LOGMODE_WAIT_MS || '4000', 10);
+  console.log(`  Waiting ${waitMs / 1000}s for config_broadcast to pick up the change before starting the board sim…`);
+  await new Promise((r) => setTimeout(r, waitMs));
+
+  const r = spawnSync(
+    PYTHON_BIN,
+    [
+      BOARD_STARTUP_SIM,
+      '--listen-port', String(TEST_STARTUP_LISTEN_PORT),
+      '--daq-port', String(TEST_DAQ_UDP_PORT),
+      '--board-ip', '127.0.0.60',
+      '--board-id', '60',
+    ],
+    { stdio: 'pipe', encoding: 'utf-8', timeout: 30000 },
+  );
+  const out = `${r.stdout || ''}`;
+  const m = out.match(/enable_serial_printing=(\d+)/);
+  const seen = m ? parseInt(m[1], 10) : -1;
+  assert(seen === TARGET_MODE,
+    seen === TARGET_MODE
+      ? `Board 60 received the GUI-set log mode over the wire (enable_serial_printing=${seen})`
+      : `Board 60 should receive enable_serial_printing=${TARGET_MODE} (saw ${seen === -1 ? 'no config' : seen}). Sim out: ${out.slice(0, 300)}`);
+}
+
 async function main(): Promise<void> {
   console.log('🧪 WebSocket Data Flow Integration Test');
   console.log(`   Backend: ${WS_URL} (${IS_THIN ? 'server.ts' : 'server-legacy.ts'})`);
@@ -2285,6 +2399,9 @@ async function main(): Promise<void> {
       if (runTest('board_status')) await testBoardStatusToFrontend(ws);
       if (runTest('selftest')) await testBoardStartupSelfTestToFrontend(ws);
       if (runTest('selftest_replay')) await testSelfTestReplayOnLateConnect();
+      if (runTest('board_logs')) await testBoardLogs(ws);
+      // After selftest so board_startup_sim's port (5014) is free to reuse.
+      if (runTest('board_log_mode')) await testBoardLogMode(ws);
     }
     if (canRunCommandTests) {
       if (runTest('state_transition')) await testStateTransition(ws);

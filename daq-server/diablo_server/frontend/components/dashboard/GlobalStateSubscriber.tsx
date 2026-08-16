@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 import { useSensorStore } from '@/lib/store';
-import { getWebSocketClient } from '@/lib/websocket';
+import { getWebSocketClient, getApiBaseUrl } from '@/lib/websocket';
 import {
     MessageType,
     SensorUpdate,
@@ -13,7 +13,9 @@ import {
     CountdownTargetUpdate,
     NotificationPayload,
     ActuatorUpdate,
-    SessionStatus
+    SessionStatus,
+    BoardLogPayload,
+    BoardLogTotals
 } from '@/lib/types';
 import { startDataCache, getDataCache } from '@/lib/data-cache';
 
@@ -28,6 +30,8 @@ export default function GlobalStateSubscriber() {
     const updateNotification = useSensorStore((state) => state.updateNotification);
     const updateSession = useSensorStore((state) => state.updateSession);
     const updateActuatorExpectedPositions = useSensorStore((state) => state.updateActuatorExpectedPositions);
+    const appendBoardLog = useSensorStore((state) => state.appendBoardLog);
+    const seedBoardLogStats = useSensorStore((state) => state.seedBoardLogStats);
 
     useEffect(() => {
         console.log('[WS] GlobalStateSubscriber effect start');
@@ -75,6 +79,18 @@ export default function GlobalStateSubscriber() {
         const u10 = ws.on(MessageType.SESSION_UPDATE, (p: unknown) => {
             updateSession(p as SessionStatus);
         });
+        // Board diagnostic logs — accumulate app-wide so counts stay accurate off the Boards tab.
+        const u11 = ws.on(MessageType.BOARD_LOG, (p: unknown) => {
+            appendBoardLog(p as BoardLogPayload);
+        });
+
+        // Backfill cumulative log counters so the Boards tab shows totals before the next packet.
+        fetch(`${getApiBaseUrl()}/api/board-logs/stats`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data: { stats?: Record<number, BoardLogTotals> } | null) => {
+                if (data?.stats) seedBoardLogStats(data.stats);
+            })
+            .catch(() => {});
 
         // Register listeners before opening socket to avoid missing first status/data burst.
         ws.connect('GlobalStateSubscriber');
@@ -82,11 +98,12 @@ export default function GlobalStateSubscriber() {
 
         return () => {
             console.log('[WS] GlobalStateSubscriber cleanup');
-            u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); u9(); u10();
+            u1(); u2(); u3(); u4(); u5(); u6(); u7(); u8(); u9(); u10(); u11();
         };
     }, [
         updateSensor, updateState, updateActuator, updateConnectionStatus,
-        updateMissionStartTime, updateCountdownTargetTime, updateBoards, updateNotification, updateSession, updateActuatorExpectedPositions
+        updateMissionStartTime, updateCountdownTargetTime, updateBoards, updateNotification, updateSession, updateActuatorExpectedPositions,
+        appendBoardLog, seedBoardLogStats
     ]);
 
     // Drive _staleRenderTick so useSensorValue / useGetSensorValue re-check SENSOR_DATA_STALE_MS

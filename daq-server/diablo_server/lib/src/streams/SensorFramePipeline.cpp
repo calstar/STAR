@@ -123,6 +123,13 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
         return std::nullopt;
     }
 
+    if (peek.packet_type == daq::PacketType::LOGS) {
+        last_log_buffer_.assign(receive_buffer_.data(),
+                                receive_buffer_.data() + static_cast<size_t>(received));
+        last_log_source_ip_ = last_source_ip_;
+        return std::nullopt;
+    }
+
     return std::nullopt;
 }
 
@@ -148,6 +155,18 @@ std::optional<SensorFramePipeline::LastHeartbeat> SensorFramePipeline::get_last_
     out.source_ip = std::move(last_heartbeat_source_ip_);
     last_heartbeat_buffer_.clear();
     last_heartbeat_source_ip_.clear();
+    return out;
+}
+
+std::optional<SensorFramePipeline::LastLog> SensorFramePipeline::get_last_log() {
+    if (last_log_buffer_.empty()) {
+        return std::nullopt;
+    }
+    LastLog out;
+    out.data = std::move(last_log_buffer_);
+    out.source_ip = std::move(last_log_source_ip_);
+    last_log_buffer_.clear();
+    last_log_source_ip_.clear();
     return out;
 }
 

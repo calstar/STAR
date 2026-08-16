@@ -94,7 +94,10 @@ struct BoardInfo {
     bool designated_survivor;
     bool necessary_for_abort;
     int voltage_reference;
-    bool enable_serial_printing;
+    // Serial-print / log-stream mode byte (0..3): 0 USB Tier-1, 1 USB verbose,
+    // 2 stream Tier-1, 3 stream Tier-1+2. Sent verbatim as the config packet's
+    // enable_serial_printing byte; the firmware interprets it as the mode.
+    int enable_serial_printing;
     std::vector<int> active_connectors;
     int num_sensors;
     uint16_t listen_port;
@@ -143,7 +146,25 @@ std::vector<BoardInfo> parseBoards(const std::string& content) {
             ref = std::stoi(getTomlValue(content, sec, "voltage_reference", "0"));
         } catch (...) {
         }
-        bool ser = getTomlValue(content, sec, "enable_serial_printing", "false") == "true";
+        // Mode byte 0..3. Tolerate a legacy "true"/"false" value (→ 1/0) so a
+        // stale config doesn't crash stoi; clamp to the valid range.
+        int ser = 0;
+        {
+            std::string ser_raw = getTomlValue(content, sec, "enable_serial_printing", "0");
+            if (ser_raw == "true") {
+                ser = 1;
+            } else if (ser_raw == "false") {
+                ser = 0;
+            } else {
+                try {
+                    ser = std::stoi(ser_raw);
+                } catch (...) {
+                    ser = 0;
+                }
+            }
+            if (ser < 0) ser = 0;
+            if (ser > 3) ser = 3;
+        }
         int num_sens = 10;
         try {
             num_sens = std::stoi(getTomlValue(content, sec, "num_sensors", "10"));
@@ -307,63 +328,27 @@ void parseVentAbortFromCsv(const std::string& csv_path, std::map<std::string, in
     }
 }
 
-}  // namespace
+// One UDP packet to send: (packet type, bytes, dest IP, dest port).
+using ConfigPacket = std::tuple<uint8_t, std::vector<uint8_t>, std::string, uint16_t>;
 
-int main(int argc, char* argv[]) {
-    std::string config_path = "config/config.toml";
-    int interval_ms = -1;  // -1 = use config
-
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "--config" && i + 1 < argc)
-            config_path = argv[++i];
-        else if (arg == "--interval-ms" && i + 1 < argc)
-            interval_ms = std::max(500, std::atoi(argv[++i]));
-        else if (arg == "--help" || arg == "-h") {
-            std::cout << "Usage: " << argv[0] << " [--config PATH] [--interval-ms MS]\n";
-            return 0;
-        }
-    }
-
+// Read config.toml fresh and build the full SENSOR_CONFIG/ACTUATOR_CONFIG packet set.
+// Called every broadcast cycle so board edits (roles, active_connectors, voltage_reference,
+// abort thresholds, enable flags) go live without restarting the service or a session.
+// Returns an empty vector on any failure (missing/truncated file, no designated survivor);
+// the caller keeps the last-good set rather than dropping board config for a cycle.
+std::vector<ConfigPacket> buildPackets(const std::string& config_path,
+                                       fsw::calibration::PTCalibrationManager& pt_cal) {
     std::string config_content;
     {
         std::ifstream f(config_path);
-        if (!f.is_open()) {
-            for (const auto& fp : {"config/config.toml", "../config/config.toml"}) {
-                f.open(fp);
-                if (f.is_open()) {
-                    config_path = fp;
-                    break;
-                }
-            }
-        }
-        if (f.is_open()) {
-            std::ostringstream ss;
-            ss << f.rdbuf();
-            config_content = ss.str();
-        }
+        if (!f.is_open())
+            return {};
+        std::ostringstream ss;
+        ss << f.rdbuf();
+        config_content = ss.str();
     }
-
-    if (config_content.empty()) {
-        std::cerr << "[ConfigBroadcast] No config loaded" << std::endl;
-        return 1;
-    }
-
-    if (interval_ms < 0 && !config_content.empty()) {
-        std::string val =
-            getTomlValue(config_content, "config_broadcast_service", "interval_ms", "");
-        if (!val.empty()) {
-            try {
-                interval_ms = std::max(500, std::stoi(val));
-            } catch (...) {
-            }
-        }
-    }
-    if (interval_ms < 0)
-        interval_ms = 1000;
-
-    signal(SIGINT, signalHandler);
-    signal(SIGTERM, signalHandler);
+    if (config_content.empty())
+        return {};
 
     auto boards = parseBoards(config_content);
     std::string designated_ip;
@@ -375,11 +360,9 @@ int main(int argc, char* argv[]) {
             break;
         }
     }
-
-    if (designated_ip.empty()) {
-        std::cerr << "[ConfigBroadcast] No designated_survivor actuator board" << std::endl;
-        return 1;
-    }
+    // No designated survivor → treat as a bad/partial read and keep last-good.
+    if (designated_ip.empty())
+        return {};
 
     std::map<int, std::string> board_id_to_ip;
     for (const auto& b : boards)
@@ -408,16 +391,10 @@ int main(int argc, char* argv[]) {
         sensor_roles = parseSensorRoles(config_content, "sensor_roles");
     auto abort_pts = parseAbortPts(config_content);
 
-    fsw::calibration::PTCalibrationManager::set_default_paths(
-        "scripts/calibration/calibrations",
-        "external/DiabloAvionics/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv");
-    fsw::calibration::PTCalibrationManager pt_cal;
-    pt_cal.load_calibration();
-
     std::string current_section;
     std::map<std::string, std::tuple<int, int, bool>> actuator_roles;
     std::istringstream cfg(config_content);
-    std::string line, cell;
+    std::string line;
     while (std::getline(cfg, line)) {
         auto c = line.find('#');
         if (c != std::string::npos)
@@ -441,14 +418,11 @@ int main(int argc, char* argv[]) {
             actuator_roles[key] = {ch, bid > 0 ? bid : 12, is_no};
     }
 
-    std::vector<std::tuple<uint8_t, std::vector<uint8_t>, std::string, uint16_t>> packets;
-
     auto build_actuator_config = [&](int is_abort_controller,
-                                     bool enable_serial) -> std::vector<uint8_t> {
+                                     int enable_serial) -> std::vector<uint8_t> {
         std::vector<std::tuple<uint32_t, uint8_t, uint8_t, uint8_t>> abort_actuators;
         for (const auto& [name, tup] : actuator_roles) {
             int ch = std::get<0>(tup), bid = std::get<1>(tup);
-            bool is_no = std::get<2>(tup);
             std::string ip = board_id_to_ip.count(bid) ? board_id_to_ip[bid] : designated_ip;
             uint8_t vent = static_cast<uint8_t>(vent_map.count(name) ? vent_map[name] : 0);
             uint8_t abort = static_cast<uint8_t>(abort_map.count(name) ? abort_map[name] : 0);
@@ -510,7 +484,7 @@ int main(int argc, char* argv[]) {
             *reinterpret_cast<uint32_t*>(&buf[off]) = adc;
             off += 4;
         }
-        buf[off] = enable_serial ? 1 : 0;
+        buf[off] = static_cast<uint8_t>(enable_serial);  // mode byte 0..3
         return buf;
     };
 
@@ -542,10 +516,11 @@ int main(int argc, char* argv[]) {
             buf[off + 3] = ip_be & 0xFF;
             off += 4;
         }
-        buf[off] = b.enable_serial_printing ? 1 : 0;
+        buf[off] = static_cast<uint8_t>(b.enable_serial_printing);  // mode byte 0..3
         return buf;
     };
 
+    std::vector<ConfigPacket> packets;
     for (const auto& b : boards) {
         if (!b.enabled)
             continue;
@@ -560,6 +535,79 @@ int main(int argc, char* argv[]) {
             packets.push_back({SENSOR_CONFIG, pkt, b.ip, b.listen_port});
         }
     }
+    return packets;
+}
+
+}  // namespace
+
+int main(int argc, char* argv[]) {
+    std::string config_path = "config/config.toml";
+    int interval_ms = -1;  // -1 = use config
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--config" && i + 1 < argc)
+            config_path = argv[++i];
+        else if (arg == "--interval-ms" && i + 1 < argc)
+            interval_ms = std::max(500, std::atoi(argv[++i]));
+        else if (arg == "--help" || arg == "-h") {
+            std::cout << "Usage: " << argv[0] << " [--config PATH] [--interval-ms MS]\n";
+            return 0;
+        }
+    }
+
+    std::string config_content;
+    {
+        std::ifstream f(config_path);
+        if (!f.is_open()) {
+            for (const auto& fp : {"config/config.toml", "../config/config.toml"}) {
+                f.open(fp);
+                if (f.is_open()) {
+                    config_path = fp;
+                    break;
+                }
+            }
+        }
+        if (f.is_open()) {
+            std::ostringstream ss;
+            ss << f.rdbuf();
+            config_content = ss.str();
+        }
+    }
+
+    if (config_content.empty()) {
+        std::cerr << "[ConfigBroadcast] No config loaded" << std::endl;
+        return 1;
+    }
+
+    if (interval_ms < 0 && !config_content.empty()) {
+        std::string val =
+            getTomlValue(config_content, "config_broadcast_service", "interval_ms", "");
+        if (!val.empty()) {
+            try {
+                interval_ms = std::max(500, std::stoi(val));
+            } catch (...) {
+            }
+        }
+    }
+    if (interval_ms < 0)
+        interval_ms = 1000;
+
+    signal(SIGINT, signalHandler);
+    signal(SIGTERM, signalHandler);
+
+    // Calibration is loaded once (board edits don't change it). Packets are rebuilt from
+    // the live config every cycle (below) so board changes apply with no restart / no session.
+    fsw::calibration::PTCalibrationManager::set_default_paths(
+        "scripts/calibration/calibrations",
+        "external/DiabloAvionics/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv");
+    fsw::calibration::PTCalibrationManager pt_cal;
+    pt_cal.load_calibration();
+
+    auto packets = buildPackets(config_path, pt_cal);
+    if (packets.empty())
+        std::cerr << "[ConfigBroadcast] No packets from config yet (no designated_survivor?); "
+                     "retrying each cycle" << std::endl;
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
@@ -571,15 +619,20 @@ int main(int argc, char* argv[]) {
     memset(&dest, 0, sizeof(dest));
     dest.sin_family = AF_INET;
 
-    std::cout << "[ConfigBroadcast] Started — interval=" << interval_ms << "ms (C++ standalone)"
-              << std::endl;
-    std::cout << "[ConfigBroadcast] " << packets.size() << " packet types to " << boards.size()
-              << " boards" << std::endl;
+    std::cout << "[ConfigBroadcast] Started — interval=" << interval_ms
+              << "ms (C++ standalone, live config reload)" << std::endl;
+    std::cout << "[ConfigBroadcast] " << packets.size() << " packet types" << std::endl;
 
     unsigned long total_sent = 0;
     auto last_log = std::chrono::steady_clock::now();
 
     while (g_running) {
+        // Re-read config.toml and rebuild each cycle so board edits go live. Keep the
+        // last-good set if a read is empty/mid-write (buildPackets returns {} on failure).
+        auto fresh = buildPackets(config_path, pt_cal);
+        if (!fresh.empty())
+            packets.swap(fresh);
+
         for (const auto& [pkt_type, pkt, ip, listen_port] : packets) {
             if (inet_pton(AF_INET, ip.c_str(), &dest.sin_addr) != 1)
                 continue;

@@ -29,14 +29,23 @@ import { loadSensorRoleMap } from './sensor-config.js';
 import { registerVTables, clearSubscriptionState } from './elodin-vtable-registry.js';
 import { registerControllerVTables } from './legacy/elodin-vtable-controller.js';
 import { createAPIHandler } from './api-server.js';
+import { startBoardLogReceiver } from './board-logs.js';
 import { readConfig } from './routes/config.js';
 import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } from './legacy/state-actuators.js';
 import { getStateTransitions } from './legacy/state-transitions.js';
+import { recordBoardScanIngest, getBoardScanRateHz, isPrimaryPhysicalStream, mapEntityToGroup } from './board-scan-rate.js';
+import { EnvelopeAccumulator, parseGuiStreamConfig, envelopeWindowMs } from './gui-stream.js';
+import { HistoryCache } from './history-cache.js';
+import { startGuiStaticServer } from './static-gui.js';
 import { handleCalibrationCommand } from './calibration-handler.js';
 import { loadPTCalibration } from './calibration.js';
 import { MessageType, SystemState } from '../../shared/types.js';
+import { isOperator } from './operators.js';
 // ── Config ───────────────────────────────────────────────────────────────────
 const WS_PORT = parseInt(process.env.WS_PORT ?? '8081', 10);
+// Command types that actuate/transition the engine — gated by the operator
+// unlock. Read-only queries and countdown display are not.
+const CONTROL_COMMAND_TYPES = new Set(['state_transition', 'actuator', 'extend_fire', 'debug_mode', 'session_start', 'session_stop', 'session_extend']);
 const ELODIN_HOST = process.env.ELODIN_HOST ?? '127.0.0.1';
 const ELODIN_PORT = parseInt(process.env.ELODIN_PORT ?? '2240', 10);
 const ACT_SVC_PORT = parseInt(process.env.ACTUATOR_SERVICE_PORT ?? '9998', 10);
@@ -44,10 +53,12 @@ const CTRL_SVC_PORT = parseInt(process.env.CONTROLLER_SERVICE_PORT ?? '9999', 10
 const THIN_VERBOSE_CONNECTION_LOG = process.env.THIN_VERBOSE_CONNECTION_LOG === '1';
 const THIN_HEARTBEAT_DIAG_LOG = process.env.THIN_HEARTBEAT_DIAG_LOG === '1';
 const THIN_STATS_LOG = process.env.THIN_STATS_LOG === '1';
-// ~20 Hz × 300 s (5 min window) ≈ 6000; keep extra for HISTORICAL_DATA on reconnect.
-const HISTORY_MAX_POINTS = 16000; // per series
-const HISTORY_MAX_KEYS = 200;
-const HISTORY_STALE_MS = 5 * 60 * 1000;
+// ~20 Hz × 800 s ≈ 13 min per full series; rings grow lazily so sparse/event
+// streams stay small. Key cap must exceed the live stream count (>200) or
+// active series get silently evicted and reconnect backfills lose data.
+const HISTORY_MAX_POINTS = 16000; // per series (ceiling)
+const HISTORY_MAX_KEYS = 1000;
+const HISTORY_STALE_MS = 30 * 60 * 1000;
 const BOARD_STATUS_HZ = 1; // broadcast rate for board status
 /** Board marked disconnected if no Elodin [0x10] heartbeat for this long. Too low causes UI flap when DB or TCP jitters; heartbeats are usually multi-Hz but not hard-real-time. */
 const BOARD_HEARTBEAT_STALE_MS = 5000;
@@ -67,68 +78,66 @@ function shouldThrottleSensorStreamPacket(high, _low) {
         return true;
     return false;
 }
-const historyCache = new Map();
-const historyCacheTime = new Map(); // wall-clock last update
-const broadcastLastTime = new Map(); // per-key throttle gate
-function recordHistory(key, timeSec, value) {
-    let s = historyCache.get(key);
-    if (!s) {
-        s = { tBuf: new Float64Array(HISTORY_MAX_POINTS), vBuf: new Float64Array(HISTORY_MAX_POINTS), head: 0, len: 0, lastMs: 0 };
-        historyCache.set(key, s);
+// ── History cache (epoch-ms timestamps; see history-cache.ts) ────────────────
+const history = new HistoryCache({
+    maxPoints: HISTORY_MAX_POINTS,
+    maxKeys: HISTORY_MAX_KEYS,
+    staleMs: HISTORY_STALE_MS,
+});
+const broadcastLastTime = new Map(); // per-key throttle gate (legacy mode)
+setInterval(() => history.prune(), 60_000);
+// ── GUI stream downsampling (config.toml [gui]; see gui-stream.ts) ───────────
+let guiStreamConfig = parseGuiStreamConfig(safeReadConfigForGui());
+const envelope = new EnvelopeAccumulator(envelopeWindowMs(guiStreamConfig));
+console.log(`[ThinServer] GUI downsampling: ${guiStreamConfig.mode} @ ${guiStreamConfig.pointsPerSecond} pts/s per stream`);
+function safeReadConfigForGui() {
+    try {
+        return readConfig();
     }
-    // Overwrite last entry if same timestamp; otherwise advance ring.
-    const lastIdx = (s.head - 1 + HISTORY_MAX_POINTS) % HISTORY_MAX_POINTS;
-    if (s.len > 0 && s.tBuf[lastIdx] === timeSec) {
-        s.vBuf[lastIdx] = value;
+    catch {
+        return null;
     }
-    else {
-        s.tBuf[s.head] = timeSec;
-        s.vBuf[s.head] = value;
-        s.head = (s.head + 1) % HISTORY_MAX_POINTS;
-        if (s.len < HISTORY_MAX_POINTS)
-            s.len++;
-    }
-    const now = Date.now();
-    s.lastMs = now;
-    historyCacheTime.set(key, now);
 }
-/** Read ring buffer as plain arrays for sendHistoricalData (allocates once per call, OK since it's only on connect). */
-function readHistorySeries(s) {
-    const len = s.len;
-    const tail = len < HISTORY_MAX_POINTS ? 0 : s.head;
-    const time = new Array(len);
-    const values = new Array(len);
-    for (let i = 0; i < len; i++) {
-        const idx = (tail + i) % HISTORY_MAX_POINTS;
-        time[i] = s.tBuf[idx];
-        values[i] = s.vBuf[idx];
+/** Re-read [gui] settings after a config save (wired via onConfigUpdated). */
+function reloadGuiStreamConfig() {
+    const next = parseGuiStreamConfig(safeReadConfigForGui());
+    if (next.mode !== guiStreamConfig.mode || next.pointsPerSecond !== guiStreamConfig.pointsPerSecond) {
+        console.log(`[ThinServer] GUI downsampling changed: ${next.mode} @ ${next.pointsPerSecond} pts/s per stream`);
     }
-    return { time, values };
+    guiStreamConfig = next;
+    envelope.setWindowMs(envelopeWindowMs(next));
 }
-function pruneHistory() {
-    const now = Date.now();
-    if (historyCache.size <= HISTORY_MAX_KEYS) {
-        for (const [key, s] of historyCache) {
-            if (now - s.lastMs > HISTORY_STALE_MS) {
-                historyCache.delete(key);
-                historyCacheTime.delete(key);
-            }
+/** Sample timestamps are forwarded from Elodin (bridge receipt, epoch ms). A
+ *  publisher on the wrong clock (e.g. steady_clock) would poison plots, so
+ *  anything implausibly far from the backend's clock falls back to receipt
+ *  time — worst case is exactly the pre-refactor behavior. */
+const MAX_SAMPLE_TS_SKEW_MS = 60_000;
+function saneSampleTimeMs(tsMs, fallbackMs) {
+    return Number.isFinite(tsMs) && Math.abs(tsMs - fallbackMs) <= MAX_SAMPLE_TS_SKEW_MS
+        ? tsMs : fallbackMs;
+}
+/** Single exit point for downsampled sensor streams: history + stats + WS. */
+function emitSensorPoint(key, entity, component, value, tMs) {
+    history.record(key, tMs, value);
+    stats.sensorUpdatesBroadcast++;
+    const update = { entity, component, value, timestamp: tMs };
+    broadcast({ type: MessageType.SENSOR_UPDATE, timestamp: Date.now(), payload: update });
+}
+// Timer flush so trickling/stopped streams don't hold their last window open.
+// Runs regardless of mode so a runtime envelope→throttle switch drains any
+// still-open windows instead of dropping them (map is empty in throttle mode).
+setInterval(() => {
+    for (const closed of envelope.flushOlderThan(Date.now())) {
+        for (const p of closed.points) {
+            emitSensorPoint(closed.key, closed.entity, closed.component, p.value, p.tMs);
         }
     }
-    else {
-        const byAge = Array.from(historyCacheTime.entries()).sort((a, b) => a[1] - b[1]);
-        const toRemove = historyCache.size - HISTORY_MAX_KEYS;
-        for (let i = 0; i < toRemove && i < byAge.length; i++) {
-            historyCache.delete(byAge[i][0]);
-            historyCacheTime.delete(byAge[i][0]);
-        }
-    }
-}
-setInterval(pruneHistory, 60_000);
+}, 50);
 // ── Mission time ─────────────────────────────────────────────────────────────
 let firstPacketTimeMs = null;
 import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from './countdown-state.js';
 let countdownTargetMs = loadCountdownTargetTimeMs();
+import { sessionManager } from './session-manager.js';
 // ── Calibration state ────────────────────────────────────────────────────────
 const ptCalibration = new Map();
 const calibrationPoints = new Map();
@@ -145,7 +154,10 @@ try {
     }
 }
 catch { /* no calibration file — fine */ }
-const calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
+// Sensor-role → entity naming. Rebuilt on config save (onConfigUpdated) so a
+// Sensor Roles edit reflects without a backend restart. calibrationHost reads
+// this via its channelToEntityMap property (updated in lockstep below).
+let calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
 /** Cached slot→board_id map for uniqueIdFromPtEntity — built once, avoids config re-reads on hot path. */
 const _ptSlotToBoardId = new Map();
 function _ensurePtSlotCache() {
@@ -257,11 +269,7 @@ function broadcastCommandedActuatorsForState(state) {
         if (!cmdEntity)
             continue;
         const key = `${cmdEntity}.actuator_state_commanded`;
-        if (firstPacketTimeMs !== null) {
-            const timeSec = (epochNow - firstPacketTimeMs) / 1000;
-            if (timeSec >= 0 && timeSec < 86400)
-                recordHistory(key, timeSec, value);
-        }
+        history.record(key, epochNow, value);
         stats.sensorUpdatesBroadcast++;
         broadcast({
             type: MessageType.SENSOR_UPDATE,
@@ -373,8 +381,11 @@ setInterval(() => {
         console.log(`[ThinServer] Heartbeat arrival rate: ${entries}`);
     }
     hbDiagCount.clear();
-    if (THIN_STATS_LOG && stats.relayEntityUpdatesReceived > 0) {
-        console.log(`[ThinServer] Stats: entityUpdates=${stats.relayEntityUpdatesReceived} broadcasts=${stats.sensorUpdatesBroadcast} wsClients=${wss.clients.size}`);
+    // Logged unconditionally when enabled — entityUpdates=0 is the single most
+    // useful reading there is (Elodin delivered nothing vs. downsampler dropped
+    // everything), so it must not be suppressed by a `> 0` guard.
+    if (THIN_STATS_LOG) {
+        console.log(`[ThinServer] Stats: entityUpdates=${stats.ingestEntityUpdatesReceived} broadcasts=${stats.sensorUpdatesBroadcast} wsClients=${wss.clients.size}`);
     }
 }, 5000);
 // Count heartbeat arrivals (called from packet handler before updateBoard)
@@ -388,6 +399,9 @@ const prevConnectedState = new Map();
 const boardFirstSeenSetupMs = new Map();
 const activeNotificationKeys = new Set();
 const selfTestNotifiedBoards = new Set();
+/** Latest self-test results — key = "SELF_TEST.BOARD_{id}.sensor_{n}", value = 0|1.
+ *  Replayed as SENSOR_UPDATE on WS connect so late-connecting browsers see results. */
+const selfTestLatest = new Map();
 function broadcastNotification(payload) {
     broadcast({ type: MessageType.NOTIFICATION, timestamp: Date.now(), payload });
 }
@@ -462,9 +476,21 @@ setInterval(markStaleBoards, 1000);
 // ── Packet stats ─────────────────────────────────────────────────────────────
 // Counts raw entity updates received from Elodin DB vs broadcasts sent to WS clients.
 // GET /stats returns these so the integration test can verify no drops occur before
-// the throttle (Elodin→backend must be lossless; backend→WS is intentionally throttled).
+// the throttle (backend→WS is intentionally throttled). NOTE: Elodin→backend is NOT
+// strictly lossless — the DB's live stream coalesces same-channel rows written in one
+// burst (multi-chunk board packets), forwarding at least one row per channel per
+// packet; DB *storage* keeps every row. See integration Test 15 for the invariant.
 const stats = {
-    relayEntityUpdatesReceived: 0, // every finite-value entity parsed from Elodin DB
+    ingestEntityUpdatesReceived: 0, // every finite-value entity parsed from Elodin DB
+    // Raw physical channel samples (non-_Cal, canonical component only): exactly one
+    // increment per per-channel per-chunk sample a board sent, so the integration test
+    // can compare this against the simulator's sent-sample ground truth for absolute
+    // end-to-end loss detection (UDP → bridge → Elodin DB → backend), independent of
+    // the GUI downsampler.
+    rawPrimarySamplesIngested: 0,
+    // Same counter split by board group (pt1/pt2/tc/rtd/lc/enc/act) so a
+    // conservation failure names the lossy stream instead of just the total.
+    rawPrimarySamplesByGroup: {},
     sensorUpdatesBroadcast: 0, // SENSOR_UPDATE messages actually sent (post-throttle)
     sequencerStatesReceived: 0, // packets successfully streamed through Elodin DB verifying storage
     startTimeMs: Date.now(),
@@ -476,12 +502,24 @@ let debugMode = false;
 const apiHandler = createAPIHandler({
     getEngineState: () => currentState,
     getDebugInfo: () => ({
-        relayConnected: elodin.isConnected(),
-        relayPacketsReceived: stats.relayEntityUpdatesReceived,
+        ingestConnected: elodin.isConnected(),
+        ingestPacketsReceived: stats.ingestEntityUpdatesReceived,
         wsClients: wss.clients.size,
-        sensorCacheSize: historyCache.size,
+        sensorCacheSize: history.size,
         useRelay: false,
+        boardScanRateHz: getBoardScanRateHz(),
     }),
+    onConfigUpdated: () => {
+        reloadGuiStreamConfig();
+        // Rebuild sensor-role-derived caches so a Sensor Roles / board_id edit reflects
+        // live (the backend is always-on and isn't restarted by a session start).
+        calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
+        calibrationHost.channelToEntityMap = calChannelToEntityMap;
+        _ptSlotToBoardId.clear();
+        // Tell every open client the config changed so they refetch /api/* live
+        // (sensor-config, pressure-limits, pressure-bars) — no reload/restart.
+        broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
+    },
 });
 const httpServer = http.createServer(async (req, res) => {
     const urlPath = (req.url ?? '').split('?')[0] ?? '';
@@ -555,6 +593,15 @@ wss.on('connection', (ws, req) => {
         req.socket.remoteAddress ||
         'unknown';
     const userAgent = req.headers['user-agent'] ?? 'unknown';
+    // Engine-control authorization. Caddy injects X-Auth-Email on the upgrade
+    // (from the session cookie). No header ⇒ no Caddy in front (dev/test-stand) ⇒
+    // trusted local ⇒ treat as operator. Approved operators still explicitly arm
+    // control via the toggle below (__daqControlAuthorized) — a fat-finger guard
+    // in every env.
+    const authEmail = (req.headers['x-auth-email'] || '').trim();
+    const isOp = authEmail === '' ? true : isOperator(authEmail);
+    ws.__daqOperator = isOp;
+    ws.__daqControlAuthorized = false;
     let inboundMessages = 0;
     let outboundMessages = 0;
     let lastInboundAt = 0;
@@ -563,7 +610,15 @@ wss.on('connection', (ws, req) => {
     // Connection status
     send(ws, {
         type: MessageType.CONNECTION_STATUS, timestamp: Date.now(),
-        payload: { connected: true, elodinConnected: elodin.isConnected(), connId },
+        payload: { connected: true, elodinConnected: elodin.isConnected(), connId, simulated: isSimulated() },
+    });
+    outboundMessages++;
+    lastOutboundAt = Date.now();
+    // Control authorization status — lets the UI enable/disable the arm step
+    // before arming (non-operators see it disabled, never a false-armed state).
+    send(ws, {
+        type: MessageType.CONTROL_STATUS, timestamp: Date.now(),
+        payload: { operator: isOp, email: authEmail || null },
     });
     outboundMessages++;
     lastOutboundAt = Date.now();
@@ -581,6 +636,11 @@ wss.on('connection', (ws, req) => {
     });
     outboundMessages++;
     lastOutboundAt = Date.now();
+    // Session status (enabled=false in off mode → clients hide the button).
+    send(ws, {
+        type: MessageType.SESSION_UPDATE, timestamp: Date.now(),
+        payload: sessionManager.getStatus(),
+    });
     // Current state
     send(ws, {
         type: MessageType.STATE_UPDATE, timestamp: Date.now(),
@@ -610,6 +670,17 @@ wss.on('connection', (ws, req) => {
             outboundMessages++;
             lastOutboundAt = Date.now();
         }
+    }
+    // Self-test snapshot: replay latest results so late-connecting browsers see them.
+    // Self-test is a one-shot event during board SETUP — without this, browsers that
+    // connect after SETUP would never receive the results.
+    if (selfTestLatest.size > 0) {
+        const t = Date.now();
+        for (const update of selfTestLatest.values()) {
+            send(ws, { type: MessageType.SENSOR_UPDATE, timestamp: t, payload: update });
+        }
+        outboundMessages += selfTestLatest.size;
+        lastOutboundAt = Date.now();
     }
     // Historical data
     sendHistoricalData(ws);
@@ -652,18 +723,13 @@ wss.on('connection', (ws, req) => {
         })}`);
     });
 });
-function sendHistoricalData(ws) {
+/** Historical backfill. Times are epoch ms (same clock as SENSOR_UPDATE
+ *  payload timestamps — clients merge by timestamp, no rebasing). Optional
+ *  query narrows to specific keys and/or points newer than sinceMs; no query
+ *  = full dump (legacy behavior, still used on connect). */
+function sendHistoricalData(ws, query) {
     const MAX_SEND_POINTS = 3000;
-    const payload = {};
-    for (const [key, series] of historyCache) {
-        if (series.len === 0)
-            continue;
-        const { time, values } = readHistorySeries(series);
-        const start = time.length > MAX_SEND_POINTS ? time.length - MAX_SEND_POINTS : 0;
-        payload[key] = start > 0
-            ? { time: time.slice(start), values: values.slice(start) }
-            : { time, values };
-    }
+    const payload = history.buildPayload(query, MAX_SEND_POINTS);
     send(ws, { type: MessageType.HISTORICAL_DATA, timestamp: Date.now(), payload });
 }
 // ── Message handling ─────────────────────────────────────────────────────────
@@ -672,8 +738,18 @@ function handleMessage(ws, message) {
         case MessageType.SEND_COMMAND:
             handleCommand(ws, message.payload);
             break;
+        case MessageType.CONTROL_UNLOCK: {
+            // Arming is identity-only: approved operators may toggle control on. Checked
+            // server-side; the reply drives the UI's armed state, so it can never
+            // disagree with what the backend will actually accept.
+            const op = ws.__daqOperator === true;
+            ws.__daqControlAuthorized = op;
+            const reason = op ? 'ok' : 'not_operator';
+            send(ws, { type: MessageType.CONTROL_UNLOCK_RESULT, timestamp: Date.now(), payload: { ok: op, reason } });
+            break;
+        }
         case MessageType.QUERY_HISTORICAL:
-            sendHistoricalData(ws);
+            sendHistoricalData(ws, message.payload);
             break;
         case MessageType.CALIBRATION_COMMAND:
             handleCalibrationCommand(calibrationHost, ws, message.payload);
@@ -696,39 +772,25 @@ function broadcastStateUpdate() {
     });
 }
 function handleCommand(ws, command) {
+    // The real, unbypassable gate: engine-control commands require an armed
+    // (approved-operator) connection, regardless of what the UI shows.
+    if (CONTROL_COMMAND_TYPES.has(command.commandType) && !ws.__daqControlAuthorized) {
+        send(ws, {
+            type: MessageType.ERROR, timestamp: Date.now(),
+            payload: { message: 'Control locked: unlock as an approved operator first.' },
+        });
+        return;
+    }
     switch (command.commandType) {
         case 'state_transition': {
-            const prevState = currentState;
             const targetState = command.data.state;
             const stateName = SystemState[targetState] ?? String(targetState);
             const csvName = STATE_TO_CSV_NAME[stateName] ?? stateName;
-            // Optimistic UI: reflect requested state immediately; roll back if sequencer rejects.
-            currentState = targetState;
-            broadcastStateUpdate();
-            // Actuator tiles read ACT_CMD.* from CSV snapshot — do not wait for actuator_service TCP
-            // (that round-trip was causing ~1–2s lag vs state buttons).
-            broadcastCommandedActuatorsForState(currentState);
-            if (targetState === SystemState.FIRE && prevState !== SystemState.FIRE) {
-                sendToControllerService('FIRE_START\n').catch(() => { });
-            }
-            else if (prevState === SystemState.FIRE && targetState !== SystemState.FIRE) {
-                sendToControllerService('FIRE_STOP\n').catch(() => { });
-            }
+            // No optimistic update — real state/actuator positions arrive via _SEQUENCER_STATE [0x50]
+            // and [0x32] packets from Elodin. FIRE_START/FIRE_STOP are sent from the subscriber path.
             sendToActuatorService(`TRANSITION:${csvName}\n`).then(({ ok, reply }) => {
                 console.log(`[ThinServer] State transition ${stateName} → ${csvName}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
-                if (ok) {
-                    scheduleActuatorMismatchCheck(currentState);
-                }
-                else {
-                    currentState = prevState;
-                    broadcastStateUpdate();
-                    broadcastCommandedActuatorsForState(prevState);
-                    if (prevState === SystemState.FIRE && targetState !== SystemState.FIRE) {
-                        sendToControllerService('FIRE_START\n').catch(() => { });
-                    }
-                    else if (targetState === SystemState.FIRE && prevState !== SystemState.FIRE) {
-                        sendToControllerService('FIRE_STOP\n').catch(() => { });
-                    }
+                if (!ok) {
                     send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition failed: ${reply}` } });
                 }
             });
@@ -737,36 +799,10 @@ function handleCommand(ws, command) {
         case 'actuator': {
             const open = command.data.actuatorState === 1 || command.data.actuatorState === 'open';
             const actuatorName = command.data.actuatorName;
-            const cmdEntity = resolveActuatorCmdEntity(actuatorName);
-            const v = open ? 1 : 0;
-            const pushActuatorCmdBroadcast = (val) => {
-                if (!cmdEntity)
-                    return;
-                const ts = Date.now();
-                const key = `${cmdEntity}.actuator_state_commanded`;
-                if (firstPacketTimeMs !== null) {
-                    const timeSec = (ts - firstPacketTimeMs) / 1000;
-                    if (timeSec >= 0 && timeSec < 86400)
-                        recordHistory(key, timeSec, val);
-                }
-                stats.sensorUpdatesBroadcast++;
-                broadcast({
-                    type: MessageType.SENSOR_UPDATE,
-                    timestamp: ts,
-                    payload: { entity: cmdEntity, component: 'actuator_state_commanded', value: val, timestamp: ts },
-                });
-            };
-            // Optimistic UI; debug manual commands keep the clicked value (sequencer does not re-CSV).
-            pushActuatorCmdBroadcast(v);
+            // No optimistic update — real commanded state arrives via [0x32] packets from Elodin.
             sendToActuatorService(`ACTUATOR:${actuatorName}:${open ? 1 : 0}\n`).then(({ ok, reply }) => {
                 if (!ok) {
-                    pushActuatorCmdBroadcast(open ? 0 : 1);
                     send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Actuator command failed: ${reply}` } });
-                    return;
-                }
-                // Non-debug: snap tiles to full state CSV. Debug: keep manual override (do not overwrite click).
-                if (!debugMode) {
-                    broadcastCommandedActuatorsForState(currentState);
                 }
             });
             break;
@@ -783,12 +819,37 @@ function handleCommand(ws, command) {
             break;
         }
         case 'extend_fire':
-            sendToActuatorService('EXTEND_FIRE\n').catch(() => { });
+            sendToActuatorService('EXTEND_FIRE\n').then(({ ok, reply }) => {
+                console.log(`[ThinServer] Extend fire: ${ok ? 'OK' : 'FAIL'} (${reply})`);
+                if (!ok) {
+                    send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Extend fire failed: ${reply}` } });
+                }
+            });
             break;
         case 'set_countdown_target':
             countdownTargetMs = command.data.targetTimeMs ?? null;
             saveCountdownTargetTimeMs(countdownTargetMs);
             broadcast({ type: MessageType.COUNTDOWN_TARGET_UPDATE, timestamp: Date.now(), payload: { targetTimeMs: countdownTargetMs } });
+            break;
+        case 'session_start':
+            sessionManager
+                .start(!!command.data.keepData, command.data.durationMs ?? 0, !!command.data.simulated)
+                .then(() => broadcastConnectionStatus())
+                .catch((err) => send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Session start failed: ${err.message}` } }));
+            break;
+        case 'session_stop':
+            sessionManager
+                .stop(false)
+                .then(() => broadcastConnectionStatus())
+                .catch((err) => send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Session stop failed: ${err.message}` } }));
+            break;
+        case 'session_extend':
+            try {
+                sessionManager.extend(command.data.addMs ?? 0);
+            }
+            catch (err) {
+                send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Session extend failed: ${err.message}` } });
+            }
             break;
         default:
             // stub for unhandled commands (calibration, controller_frequency, etc.)
@@ -892,9 +953,28 @@ function scheduleResubscribe(attempt) {
         });
     }, 5000);
 }
+// True when incoming data is synthetic. In a session-enabled deployment this is
+// exactly "an active simulated run" — the backend's own USE_SIM env is ignored
+// there because the systemd sim harness sets USE_SIM=1 on the backend process
+// permanently (so it would wrongly read simulated even when the run is stopped or
+// live). Only the field-laptop path (session control off, no run concept) falls
+// back to USE_SIM=1 (the terminal `dev.sh --sim` stack). Drives the purple badge.
+function isSimulated() {
+    if (sessionManager.isEnabled())
+        return sessionManager.isSimulated();
+    return process.env.USE_SIM === '1';
+}
+// Re-broadcast connection status (used when the simulated state flips on session
+// start/stop so the badge updates without waiting for an Elodin reconnect).
+function broadcastConnectionStatus() {
+    broadcast({
+        type: MessageType.CONNECTION_STATUS, timestamp: Date.now(),
+        payload: { connected: true, elodinConnected: elodin.isConnected(), simulated: isSimulated() },
+    });
+}
 elodin.on('connected', () => {
     console.log('[ThinServer] Elodin Connected');
-    broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true } });
+    broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: true, simulated: isSimulated() } });
     if (resubscribeTimer) {
         clearTimeout(resubscribeTimer);
         resubscribeTimer = null;
@@ -909,7 +989,7 @@ elodin.on('connected', () => {
 });
 elodin.on('disconnected', () => {
     console.log('[ThinServer] Elodin DB disconnected');
-    broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false } });
+    broadcast({ type: MessageType.CONNECTION_STATUS, timestamp: Date.now(), payload: { connected: true, elodinConnected: false, simulated: isSimulated() } });
     if (resubscribeTimer) {
         clearTimeout(resubscribeTimer);
         resubscribeTimer = null;
@@ -937,10 +1017,12 @@ elodin.on('packet', (header, payload) => {
             return;
         }
         const epochNow = Date.now();
-        // ── Self-test failure → NOTIFICATION ────────────────────────────────
-        if (high === 0x60 && parsedList.length > 0) {
+        // ── Self-test results → snapshot + NOTIFICATION ────────────────────
+        if (high >= 0x60 && high <= 0x6F && parsedList.length > 0) {
             const boardId = low;
             for (const parsed of parsedList) {
+                const stKey = `${parsed.entity}.${parsed.component}`;
+                selfTestLatest.set(stKey, { entity: parsed.entity, component: parsed.component, value: parsed.value, timestamp: epochNow });
                 if (parsed.value === 0 && !selfTestNotifiedBoards.has(boardId)) {
                     selfTestNotifiedBoards.add(boardId);
                     const status = boardsStatus.get(boardId);
@@ -974,10 +1056,20 @@ elodin.on('packet', (header, payload) => {
             broadcastCommandedActuatorsForState(currentState);
             scheduleActuatorMismatchCheck(currentState);
             if (currentState === SystemState.FIRE && prevState !== SystemState.FIRE) {
-                sendToControllerService('FIRE_START\n').catch(() => { });
+                sendToControllerService('FIRE_START\n').then(({ ok, reply }) => {
+                    if (!ok) {
+                        console.error(`[ThinServer] FIRE_START not acknowledged by controller_service: ${reply}`);
+                        broadcastNotification({ key: 'fire_start_failed', category: 'error', message: `FIRE_START not acknowledged by controller: ${reply}`, timestampMs: Date.now(), ongoing: false });
+                    }
+                });
             }
             else if (prevState === SystemState.FIRE && currentState !== SystemState.FIRE) {
-                sendToControllerService('FIRE_STOP\n').catch(() => { });
+                sendToControllerService('FIRE_STOP\n').then(({ ok, reply }) => {
+                    if (!ok) {
+                        console.error(`[ThinServer] FIRE_STOP not acknowledged by controller_service: ${reply}`);
+                        broadcastNotification({ key: 'fire_stop_failed', category: 'error', message: `FIRE_STOP not acknowledged by controller: ${reply}`, timestampMs: Date.now(), ongoing: false });
+                    }
+                });
             }
             return;
         }
@@ -1013,19 +1105,39 @@ elodin.on('packet', (header, payload) => {
                 }
             }
             const key = `${parsed.entity}.${parsed.component}`;
-            stats.relayEntityUpdatesReceived++;
-            const throttle = shouldThrottleSensorStreamPacket(high, low);
-            const lastBcast = broadcastLastTime.get(key) ?? 0;
-            if (throttle && epochNow - lastBcast < BROADCAST_MIN_MS)
-                continue;
-            broadcastLastTime.set(key, epochNow);
-            const update = { entity: parsed.entity, component: parsed.component, value: parsed.value, timestamp: epochNow };
-            const timeSec = (epochNow - firstPacketTimeMs) / 1000;
-            if (timeSec >= 0 && timeSec < 86400) {
-                recordHistory(key, timeSec, parsed.value);
+            stats.ingestEntityUpdatesReceived++;
+            // Pre-downsample ingest rate (what boards/Elodin actually deliver) — not WS broadcast rate.
+            recordBoardScanIngest(parsed.entity, parsed.component);
+            // _Cal excluded: calibration_service republications would double-count PT samples.
+            if (!parsed.entity.includes('_Cal') && isPrimaryPhysicalStream(parsed.entity, parsed.component)) {
+                stats.rawPrimarySamplesIngested++;
+                const group = mapEntityToGroup(parsed.entity) ?? 'other';
+                stats.rawPrimarySamplesByGroup[group] = (stats.rawPrimarySamplesByGroup[group] || 0) + 1;
             }
-            stats.sensorUpdatesBroadcast++;
-            broadcast({ type: MessageType.SENSOR_UPDATE, timestamp: epochNow, payload: update });
+            // Sample time = Elodin field-0 timestamp (bridge receipt, epoch ms),
+            // guarded against off-clock publishers.
+            const tsMs = saneSampleTimeMs(parsed.timestamp, epochNow);
+            if (!shouldThrottleSensorStreamPacket(high, low)) {
+                // Event-like streams (state, self-test, encoder, controller): every
+                // update goes out immediately, no downsampling.
+                emitSensorPoint(key, parsed.entity, parsed.component, parsed.value, tsMs);
+                continue;
+            }
+            if (guiStreamConfig.mode === 'throttle') {
+                // Legacy drop-throttle (config.toml [gui] downsample_mode = "throttle").
+                const lastBcast = broadcastLastTime.get(key) ?? 0;
+                if (epochNow - lastBcast < BROADCAST_MIN_MS)
+                    continue;
+                broadcastLastTime.set(key, epochNow);
+                emitSensorPoint(key, parsed.entity, parsed.component, parsed.value, tsMs);
+            }
+            else {
+                // Min/max envelope: extremes of each window survive with their real
+                // timestamps, so transients can't hide between broadcast slots.
+                for (const p of envelope.add(key, parsed.entity, parsed.component, tsMs, parsed.value)) {
+                    emitSensorPoint(key, parsed.entity, parsed.component, p.value, p.tMs);
+                }
+            }
         }
     }
     catch (err) {
@@ -1057,8 +1169,16 @@ httpServer.on('error', (err) => {
         console.error('[ThinServer] HTTP server error:', err);
     }
 });
+// Serve the built SPA (frontend/dist) on GUI_PORT; 0 disables.
+const GUI_PORT = parseInt(process.env.GUI_PORT ?? '3000', 10);
+startGuiStaticServer(GUI_PORT);
 httpServer.listen(WS_PORT, () => {
     console.log(`[ThinServer] WebSocket server listening on port ${WS_PORT}`);
     console.log(`[ThinServer] Elodin DB: ${ELODIN_HOST}:${ELODIN_PORT}`);
     console.log(`[ThinServer] Actuator service: localhost:${ACT_SVC_PORT}`);
+    // Init the run-session manager last, once broadcast/notify + wss are live.
+    // No-op (enabled=false) unless SESSION_SERVICE_MODE is mock/systemd.
+    sessionManager.init(broadcast, broadcastNotification);
+    // Board diagnostic logs (type-15 LOGS forwarded by daq_bridge over loopback UDP).
+    startBoardLogReceiver(broadcast);
 });

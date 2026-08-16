@@ -27,6 +27,7 @@ PACKET_TYPE_ACTUATOR_COMMAND = 4
 PACKET_TYPE_SENSOR_CONFIG = 5
 PACKET_TYPE_ACTUATOR_CONFIG = 6
 PACKET_TYPE_SELF_TEST = 12
+PACKET_TYPE_LOGS = 15
 
 # Board States (DAQv2-Comms DiabloEnums.h)
 BOARD_STATE_SETUP = 1
@@ -218,8 +219,11 @@ class SimulatedBoard:
         run_started = time.time()
         last_heartbeat = 0
         last_sensor_data = 0
+        last_log = 0
+        log_seq = 0
 
         heartbeat_interval = 1.0  # 1 Hz
+        log_interval = 1.0  # 1 Hz — simple diagnostic logs, always on (see _send_logs)
         if self.sensor_hz:
             # Uniform override (--sensor-hz): every board type, encoder included.
             # Encoder is normally 5x the others AND exempt from GUI envelope
@@ -271,6 +275,13 @@ class SimulatedBoard:
             if now - last_heartbeat >= heartbeat_interval:
                 self._send_heartbeat(ts_ms)
                 last_heartbeat = now
+
+            # --- Send diagnostic LOGS (type 15), 1 Hz, always on (does NOT honor the
+            # config mode byte — the sim just streams so the pipeline can be tested). ---
+            if now - last_log >= log_interval:
+                self._send_logs(ts_ms, log_seq)
+                log_seq += 1
+                last_log = now
 
             # --- Send Sensor Data (ACTIVE only, matching firmware) ---
             if self.board_state == BOARD_STATE_ACTIVE:
@@ -345,6 +356,22 @@ class SimulatedBoard:
         )
         try:
             self.sock.sendto(header + body, (self.target_ip, self.target_port))
+        except Exception:
+            pass
+
+    def _send_logs(self, ts_ms, seq):
+        """Send a type-15 LOGS packet: a simple, board-identifying diagnostic line.
+        Wire format matches daq::create_log_packet / parse_log_packet:
+          PacketHeader(6B: type,version,ts) + flags(1B) + text_len(2B LE) + text.
+        The sim always streams these (it does NOT gate on the config mode byte) so
+        the board→bridge→backend→frontend log path can be exercised end to end."""
+        text = f"[SIM] board {self.board_id} {self.board_type_str} alive #{seq}".encode("utf-8")
+        flags = 0
+        text_len = len(text) & 0xFFFF
+        # <BBIBH = type(u8) version(u8) ts(u32 LE) flags(u8) text_len(u16 LE)
+        header = struct.pack("<BBIBH", PACKET_TYPE_LOGS, 0, ts_ms, flags, text_len)
+        try:
+            self.sock.sendto(header + text[:text_len], (self.target_ip, self.target_port))
         except Exception:
             pass
 

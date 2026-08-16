@@ -167,6 +167,19 @@ resync_threshold_ms = 1000   # |residual - offset| beyond this = lost lock -> re
 log_interval_s = 10          # per-board [TimeSync] diagnostics log cadence
 
 # =============================================================================
+# Board log streaming
+#
+# Boards stream diagnostic logs to the server as type-15 LOGS packets (one per
+# board per second; gated by each board's serial-print mode byte). daq_bridge
+# parses them and forwards to the Node backend over loopback UDP on this port —
+# they are cached in memory and shown in the GUI, deliberately NOT written to
+# Elodin (no need to replay board logs for past runs). The backend must bind the
+# same port (LOG_INGEST_PORT env, same default).
+# =============================================================================
+[logs]
+backend_udp_port = 8092
+
+# =============================================================================
 # ADC voltage reference nominals (for sense conversions in the UI)
 #
 # Each board sets a `voltage_reference` (in its [boards.*] block). It selects
@@ -208,7 +221,7 @@ send_port = 5005           # Board sends SENSOR_DATA to this port on our PC
 num_sensors = 10            # 10 connectors on this board
 board_id = 21               # PT Board #1 (label on board)
 enabled = true
-enable_serial_printing = false
+enable_serial_printing = 0
 # voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
 voltage_reference = 1
 necessary_for_abort = true   # This sense board participates in abort logic
@@ -246,7 +259,7 @@ send_port = 5005           # Board sends SENSOR_DATA to this port on our PC
 num_sensors = 10            # 10 connectors on this board
 board_id = 22               # PT Board #2 (label on board)
 enabled = true
-enable_serial_printing = true
+enable_serial_printing = 1
 # voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
 voltage_reference = 0
 adc_ref_voltage = 2.5      # Fixed ADC reference voltage for this board (V)
@@ -269,7 +282,7 @@ num_actuators = 10
 num_sensors = 10            # 10 current sense ADC channels
 board_id = 11              # Actuator Board #1 (label on board)
 enabled = false
-enable_serial_printing = true
+enable_serial_printing = 1
 necessary_for_abort = false
 # voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
 voltage_reference = 0
@@ -283,7 +296,7 @@ num_actuators = 10
 num_sensors = 10            # 10 current sense ADC channels
 board_id = 12              # Actuator Board #2 (label on board)
 enabled = true
-enable_serial_printing = true
+enable_serial_printing = 1
 designated_survivor = true
 necessary_for_abort = false
 # voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
@@ -298,7 +311,7 @@ num_actuators = 10
 num_sensors = 10
 board_id = 13              # Actuator Board #3 (label on board)
 enabled = false
-enable_serial_printing = true
+enable_serial_printing = 1
 necessary_for_abort = false
 voltage_reference = 0
 
@@ -311,7 +324,7 @@ num_actuators = 10
 num_sensors = 10
 board_id = 14              # Actuator Board #4 (label on board)
 enabled = true
-enable_serial_printing = true
+enable_serial_printing = 1
 necessary_for_abort = false
 voltage_reference = 0
 
@@ -322,7 +335,7 @@ send_port = 5005
 num_sensors = 4
 board_id = 41              # LC Board #1 (label on board)
 enabled = false             # flip to true when board is connected
-enable_serial_printing = true
+enable_serial_printing = 1
 necessary_for_abort = false
 designated_survivor = false
 # voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
@@ -338,7 +351,7 @@ send_port = 5005
 num_sensors = 4
 board_id = 42              # LC Board #2 (label on board)
 enabled = true
-enable_serial_printing = true
+enable_serial_printing = 1
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 0
@@ -351,7 +364,7 @@ send_port = 5005
 num_sensors = 10
 board_id = 51              # TC Board #1 (label on board)
 enabled = true
-enable_serial_printing = true
+enable_serial_printing = 1
 necessary_for_abort = false
 designated_survivor = false
 # voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
@@ -367,7 +380,7 @@ send_port = 5005
 num_sensors = 10
 board_id = 52              # TC Board #2 (label on board)
 enabled = false
-enable_serial_printing = true
+enable_serial_printing = 1
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 0
@@ -380,7 +393,7 @@ send_port = 5005
 num_sensors = 4
 board_id = 31              # RTD Board #1 (label on board)
 enabled = true
-enable_serial_printing = true
+enable_serial_printing = 1
 necessary_for_abort = false
 designated_survivor = false
 # voltage_reference: 0 = Internal 2.5V, 1 = VDD (ratiometric), 2 = 5V absolute
@@ -396,7 +409,7 @@ send_port = 5005
 num_sensors = 4
 board_id = 32              # RTD Board #2 (label on board)
 enabled = false
-enable_serial_printing = true
+enable_serial_printing = 1
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 0
@@ -411,7 +424,7 @@ listen_port = 5005
 num_sensors = 2
 board_id = 61
 enabled = true
-enable_serial_printing = false
+enable_serial_printing = 0
 necessary_for_abort = false
 designated_survivor = false
 voltage_reference = 1
@@ -681,11 +694,8 @@ fallback_fuel_duty_cycle = 0.0
 fallback_ox_duty_cycle = 0.0
 # Controller loop update rate (Hz)
 controller_loop_hz = 100.0
-# Controller service URL
-controller_service_url = "http://localhost:8000"
-# Controller config path (YAML file relative to engine_sim/configs/). If empty, uses default.
-# Example: "controller_default.yaml" or "hotfire_conservative.yaml"
-controller_config_path = ""
+# NOTE: controller_service_url / controller_config_path removed 2026-08-14 — Python-only
+# (FastAPI controller). Dead while use_cpp_controller = true; the LUT tools read their own YAML.
 # Minimum COPV/tank pressure (Pa) required by safety filter before PWM is allowed.
 # Set to 0 to disable the constraint (simulation / open-loop test).
 # For a real hotfire with COPV, set to ~689476 (100 psi) or higher.
@@ -715,9 +725,8 @@ lut_path = "output/lut/controller_policy_fsw.bin"
 # Thrust curve CSV (time_s,thrust_N) from Layer 2 pressure curves. When set, F_ref follows curve.
 thrust_curve_path = "output/lut/thrust_curve.csv"
 
-# Engine LUT path (for Python controller / SITL). Stems from engine config + tank pressure range.
-# When set, DDP uses fast LUT lookups instead of physics. Generate with engine_lut_config.yaml.
-engine_lut_path = "output/lut/engine_performance.npz"
+# NOTE: engine_lut_path removed 2026-08-14 — Python/SITL-only (DDP LUT); the C++ controller
+# doesn't read it, and the LUT tools take it from their own engine_lut_config.yaml.
 
 # NOTE: [phase2], [calibration.sidecar], [calibration.environmental] removed 2026-08-13 — dead config
 # (deprecated Python autonomous-cal / sidecar; the live C++ calibration_service reads none of them).

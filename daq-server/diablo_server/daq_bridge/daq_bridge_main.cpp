@@ -1,4 +1,8 @@
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <signal.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include <array>
 #include <atomic>
@@ -39,6 +43,47 @@ std::vector<uint8_t> build_server_heartbeat_packet() {
     pkt[6] = 0;  // engine_state = SAFE
     return pkt;
 }
+
+// Forwards parsed board-log text to the Node backend over UDP (loopback). The
+// backend caches it in memory and pushes it to the GUI — logs deliberately do
+// NOT go to Elodin (no need to replay board logs for past runs).
+//
+// Envelope (little-endian): [board_id:u8][flags:u8][text_len:u16][text bytes].
+class BackendLogForwarder {
+   public:
+    BackendLogForwarder(const std::string& host, uint16_t port) {
+        sock_ = socket(AF_INET, SOCK_DGRAM, 0);
+        std::memset(&dest_, 0, sizeof(dest_));
+        dest_.sin_family = AF_INET;
+        dest_.sin_port = htons(port);
+        inet_pton(AF_INET, host.c_str(), &dest_.sin_addr);
+    }
+    ~BackendLogForwarder() {
+        if (sock_ >= 0)
+            close(sock_);
+    }
+
+    bool ready() const { return sock_ >= 0; }
+
+    void forward(uint8_t board_id, uint8_t flags, const uint8_t* text, uint16_t text_len) {
+        if (sock_ < 0)
+            return;
+        std::vector<uint8_t> env;
+        env.reserve(4u + text_len);
+        env.push_back(board_id);
+        env.push_back(flags);
+        env.push_back(static_cast<uint8_t>(text_len & 0xFF));
+        env.push_back(static_cast<uint8_t>((text_len >> 8) & 0xFF));
+        if (text && text_len)
+            env.insert(env.end(), text, text + text_len);
+        sendto(sock_, env.data(), env.size(), 0, reinterpret_cast<sockaddr*>(&dest_),
+               sizeof(dest_));
+    }
+
+   private:
+    int sock_ = -1;
+    sockaddr_in dest_{};
+};
 }  // namespace
 #include "calibration/PTCalibration.hpp"
 #include "calibration/SensorCalibration.hpp"
@@ -89,7 +134,8 @@ static void load_board_map_from_config(const std::string& config_path,
                                        uint16_t& db_port, uint16_t* out_sensor_port = nullptr,
                                        std::string* out_bind_ip = nullptr,
                                        ServerHeartbeatConfig* out_hb = nullptr,
-                                       fsw::time::TimeSyncConfig* out_ts = nullptr) {
+                                       fsw::time::TimeSyncConfig* out_ts = nullptr,
+                                       uint16_t* out_log_port = nullptr) {
     db_host = "127.0.0.1";
     db_port = 2240;
     std::ifstream f(config_path);
@@ -178,6 +224,9 @@ static void load_board_map_from_config(const std::string& config_path,
         } else if (current_section == "heartbeat_service" && out_hb) {
             if (key == "enabled" && (val == "true" || val == "1"))
                 out_hb->send_from_daq_bridge = false;  // heartbeat_service owns it
+        } else if (current_section == "logs" && out_log_port) {
+            if (key == "backend_udp_port")
+                *out_log_port = static_cast<uint16_t>(std::stoul(val));
         } else if (current_section == "time_sync" && out_ts) {
             if (key == "mode")
                 out_ts->mode = (val == "arrival") ? fsw::time::TimeSyncConfig::Mode::Arrival
@@ -302,8 +351,10 @@ int main(int argc, char* argv[]) {
     std::string config_bind_ip;
     ServerHeartbeatConfig hb_config;
     fsw::time::TimeSyncConfig time_sync_cfg;
+    uint16_t log_backend_port = 8092;  // [logs] backend_udp_port default
     load_board_map_from_config(config_path, board_map, &board_order, db_host, db_port,
-                               &config_sensor_port, &config_bind_ip, &hb_config, &time_sync_cfg);
+                               &config_sensor_port, &config_bind_ip, &hb_config, &time_sync_cfg,
+                               &log_backend_port);
     std::cout << "[TimeSync] mode="
               << (time_sync_cfg.mode == fsw::time::TimeSyncConfig::Mode::BoardClock ? "board-clock"
                                                                                     : "arrival")
@@ -405,6 +456,13 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::cout << "✅ Sensor pipeline ready on port " << bind_port << std::endl;
+
+    // Board-log forwarder → Node backend (loopback UDP; not Elodin).
+    BackendLogForwarder log_forwarder("127.0.0.1", log_backend_port);
+    if (log_forwarder.ready())
+        std::cout << "✅ Board-log forwarder → 127.0.0.1:" << log_backend_port << std::endl;
+    else
+        std::cerr << "⚠️  Board-log forwarder socket failed (logs won't reach backend)" << std::endl;
 
     if (pipeline.set_broadcast(true)) {
         if (hb_config.send_from_daq_bridge)
@@ -591,6 +649,26 @@ int main(int argc, char* argv[]) {
                 }
                 // NOTE: config.toml.auto generation removed. Board discovery remains in-memory
                 // for this process only; other services must use config/config.toml.
+            }
+
+            // ── Board LOGS (type 15): forward to backend, do NOT publish to Elodin ──
+            auto log = pipeline.get_last_log();
+            if (log) {
+                daq::PacketHeader log_hdr;
+                uint8_t flags = 0;
+                const uint8_t* text = nullptr;
+                uint16_t text_len = 0;
+                if (daq::parse_log_packet(log->data.data(), log->data.size(), log_hdr, flags, text,
+                                          text_len)) {
+                    // Board attribution by source IP (same mapping as sensor/heartbeat paths).
+                    uint8_t board_id = 0;
+                    if (const BoardConfig* log_cfg = resolve_board_config_by_source_ip(
+                            log->source_ip, board_map, board_order)) {
+                        if (log_cfg->board_id >= 0)
+                            board_id = static_cast<uint8_t>(log_cfg->board_id);
+                    }
+                    log_forwarder.forward(board_id, flags, text, text_len);
+                }
             }
 
             std::this_thread::sleep_for(std::chrono::microseconds(500));

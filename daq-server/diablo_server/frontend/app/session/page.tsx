@@ -53,7 +53,7 @@ export default function SessionPage() {
   // the real problem is the WebSocket never connected.
   if (!session) {
     return (
-      <main className="p-8 text-text">
+      <main className="h-full bg-background text-text overflow-auto p-8">
         <h1 className="text-3xl font-bold mb-3">Session control</h1>
         <p className="text-lg text-gray-200 max-w-2xl leading-relaxed">
           Connecting… (waiting for the backend WebSocket). If this persists, the live data
@@ -65,7 +65,7 @@ export default function SessionPage() {
 
   if (!session.enabled) {
     return (
-      <main className="p-8 text-text">
+      <main className="h-full bg-background text-text overflow-auto p-8">
         <h1 className="text-3xl font-bold mb-3">Session control</h1>
         <p className="text-lg text-gray-200 max-w-2xl leading-relaxed">
           Session control is disabled in this deployment — the stack runs until the process is
@@ -80,7 +80,8 @@ export default function SessionPage() {
   const lockedNote = controlEnabled ? undefined : 'Viewer mode: unlock as an operator to control runs.';
 
   return (
-    <main className="p-6 sm:p-8 text-text max-w-3xl mx-auto w-full">
+    <main className="h-full bg-background text-text overflow-auto">
+      <div className="p-6 sm:p-8 max-w-3xl mx-auto w-full">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-3xl font-bold">Session control</h1>
         <span
@@ -235,6 +236,7 @@ export default function SessionPage() {
       )}
 
       {lockedNote && <p className="mt-4 text-sm text-yellow-400">{lockedNote}</p>}
+      </div>
     </main>
   );
 }

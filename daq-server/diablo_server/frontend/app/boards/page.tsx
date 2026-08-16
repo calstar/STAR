@@ -6,6 +6,17 @@ import { useSensorStore, useStaleRenderTick } from '@/lib/store';
 import { isBoardLiveTelemetryStale } from '@/lib/sensor-rate';
 import { getApiBaseUrl, getWebSocketClient } from '@/lib/websocket';
 import { MessageType, BoardStatusPayload, BoardStatus, engineStateCodeToLabel } from '@/lib/types';
+import BoardLogModal from '@/components/dashboard/BoardLogModal';
+
+// Per-board logging / serial-print mode byte (0..3). Sent to the board in its
+// config packet; the firmware interprets it as: bit0 = USB verbose, mode>=2 =
+// stream Tier-1 to the server, mode 3 = stream Tier-1+2.
+const LOG_MODE_OPTIONS: { value: number; label: string }[] = [
+  { value: 0, label: 'USB only' },
+  { value: 1, label: 'USB verbose' },
+  { value: 2, label: 'Stream T1' },
+  { value: 3, label: 'Stream T1+2' },
+];
 
 function formatConfigSentAt(ms: number | undefined): string {
   if (ms == null) return '';
@@ -27,19 +38,25 @@ export default function BoardsPage() {
   const updateBoards = useSensorStore((s) => s.updateBoards);
   const boardsMap = useSensorStore((s) => s.boards as Record<number, BoardStatus>);
   const sensorData = useSensorStore((s) => s.sensorData);
+  const boardLogStats = useSensorStore((s) => s.boardLogStats);
   const ws = getWebSocketClient();
   /** Re-check BOARD_LIVE_TELEMETRY_STALE_MS vs lastHeartbeatMs on the same ~250ms cadence as sensor readouts. */
   useStaleRenderTick();
 
   const [expectedCountById, setExpectedCountById] = useState<Record<number, number>>({});
+  /** Current logging mode byte per board_id (from config; optimistically updated on change). */
+  const [logModeById, setLogModeById] = useState<Record<number, number>>({});
+  /** Board whose log modal is open (null = closed). */
+  const [openLogsBoardId, setOpenLogsBoardId] = useState<number | null>(null);
 
   useEffect(() => {
     fetch(`${getApiBaseUrl()}/api/config`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((data: { config?: { boards?: Record<string, { board_id?: number; enabled?: boolean; active_connectors?: number[]; num_sensors?: number }> } } | null) => {
+      .then((data: { config?: { boards?: Record<string, { board_id?: number; enabled?: boolean; active_connectors?: number[]; num_sensors?: number; enable_serial_printing?: number | boolean }> } } | null) => {
         const boards = data?.config?.boards;
         if (!boards || typeof boards !== 'object') return;
         const next: Record<number, number> = {};
+        const modes: Record<number, number> = {};
         Object.values(boards).forEach((b) => {
           if (b.enabled === false) return;
           const boardId = Number(b?.board_id);
@@ -48,10 +65,24 @@ export default function BoardsPage() {
             ? b.active_connectors.length
             : Math.max(0, Number(b.num_sensors) || 0);
           next[boardId] = 1 + channelCount; // TDAC + channels
+          // Tolerate a legacy boolean value (true→1, false→0).
+          const raw = b.enable_serial_printing;
+          const mode = typeof raw === 'boolean' ? (raw ? 1 : 0) : Number(raw);
+          modes[boardId] = Number.isInteger(mode) ? Math.min(3, Math.max(0, mode)) : 0;
         });
         setExpectedCountById(next);
+        setLogModeById(modes);
       })
       .catch(() => {});
+  }, []);
+
+  const setLogMode = useCallback((boardId: number, mode: number) => {
+    setLogModeById((prev) => ({ ...prev, [boardId]: mode })); // optimistic
+    fetch(`${getApiBaseUrl()}/api/board-log-mode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boardId, mode }),
+    }).catch(() => {});
   }, []);
 
   const TYPE_ORDER = ['ACTUATOR', 'PT', 'LC', 'TC', 'RTD', 'ENCODER'];
@@ -110,7 +141,7 @@ export default function BoardsPage() {
           <button
             type="button"
             onClick={handleResendConfig}
-            className="min-h-[48px] px-8 py-3 text-lg font-bold rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity shadow-lg"
+            className="min-h-[48px] px-8 py-3 text-lg font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-500 transition-colors shadow-lg"
           >
             Resend config
           </button>
@@ -199,6 +230,43 @@ export default function BoardsPage() {
                             </div>
                           </div>
                         </div>
+                        {/* Second status row: Self Test outcome + Logging mode */}
+                        <div className="flex flex-wrap gap-4 mb-3 text-lg">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-text-muted mb-1.5 text-sm uppercase tracking-wider">Self Test</div>
+                            <div className="flex items-center gap-2.5">
+                              <div
+                                className={`w-3.5 h-3.5 rounded-full flex-shrink-0 ${
+                                  testStatus === 'Passed' ? 'bg-green-500' :
+                                  testStatus === 'Failed' ? 'bg-red-500' :
+                                  testStatus === 'Pending' ? 'bg-amber-500' : 'bg-gray-500'
+                                }`}
+                              />
+                              <span className={`font-mono font-bold text-lg truncate ${
+                                testStatus === 'Passed' ? 'text-green-400' :
+                                testStatus === 'Failed' ? 'text-red-400' :
+                                testStatus === 'Pending' ? 'text-amber-400' : 'text-gray-500'
+                              }`}>
+                                {testStatus === 'Passed' ? 'PASSED' :
+                                 testStatus === 'Failed' ? 'FAILED' :
+                                 testStatus === 'Pending' ? 'PENDING' : 'UNTESTED'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-text-muted mb-1.5 text-sm uppercase tracking-wider">Logging</div>
+                            <select
+                              value={logModeById[b.id] ?? 0}
+                              onChange={(e) => setLogMode(b.id, Number(e.target.value))}
+                              title="Board logging / stream mode — persisted to config.toml"
+                              className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm font-mono text-text focus:outline-none focus:border-blue-500"
+                            >
+                              {LOG_MODE_OPTIONS.map((o) => (
+                                <option key={o.value} value={o.value}>{o.value} · {o.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
                         <div className="text-sm text-text-muted font-mono mb-2">
                           Engine: {engineLabel}
                         </div>
@@ -222,31 +290,33 @@ export default function BoardsPage() {
                             Config error: {b.configError}
                           </div>
                         )}
-                        <div className="flex items-center gap-2 mb-2 font-mono">
-                          <span className="text-text-muted text-sm uppercase tracking-wider">Self Test:</span>
-                          <span className={`text-sm font-bold ${
-                            testStatus === 'Passed' ? 'text-green-400' :
-                            testStatus === 'Failed' ? 'text-red-400' :
-                            testStatus === 'Pending' ? 'text-amber-400' : 'text-gray-500'
-                            }`}>
-                            {testStatus === 'Passed' ? 'ALL PASSED' :
-                             testStatus === 'Failed' ? 'FAILED' :
-                             testStatus === 'Pending' ? 'PENDING' : 'UNTESTED'}
-                          </span>
-                        </div>
                         <div className="text-base text-text-muted font-mono mb-2">
                           Heartbeat: {freq}
+                        </div>
+                        <div className="text-base text-text-muted font-mono mb-2">
+                          Logs: <span className="text-text">{boardLogStats[b.id]?.truncated ?? 0}</span>
+                          <span className="text-gray-500">/{boardLogStats[b.id]?.received ?? 0}</span>
+                          <span className="text-xs text-gray-500 ml-1.5">trunc / recv</span>
                         </div>
                         <div className="flex items-center justify-between gap-2 mt-auto pt-3">
                           <span className="text-sm text-gray-500 font-mono truncate" title={b.ip}>
                             ID {b.id} · {b.ip}
                           </span>
-                          <Link
-                            to={`/flash?ip=${encodeURIComponent(b.ip)}&boardId=${b.id}`}
-                            className="text-xs px-2 py-1 rounded bg-cyan-900/50 text-cyan-300 hover:bg-cyan-800/60 font-semibold"
-                          >
-                            Flash
-                          </Link>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <Link
+                              to={`/flash?ip=${encodeURIComponent(b.ip)}&boardId=${b.id}`}
+                              className="text-xs px-2 py-1 rounded bg-cyan-900/50 text-cyan-300 hover:bg-cyan-800/60 font-semibold"
+                            >
+                              Flash
+                            </Link>
+                            <button
+                              type="button"
+                              onClick={() => setOpenLogsBoardId(b.id)}
+                              className="text-xs px-2 py-1 rounded bg-slate-700/60 text-slate-200 hover:bg-slate-600/60 font-semibold"
+                            >
+                              Log
+                            </button>
+                          </div>
                         </div>
                       </div>
                     );
@@ -258,6 +328,18 @@ export default function BoardsPage() {
         </div>
       )}
 
+      <BoardLogModal
+        boardId={openLogsBoardId}
+        title={openLogsBoardId != null ? (() => {
+          const b = boardsMap?.[openLogsBoardId];
+          if (!b) return `Board ${openLogsBoardId}`;
+          const parts: string[] = [];
+          if (b.type) parts.push(b.type);
+          if (b.boardNumber != null) parts.push(`Board ${b.boardNumber}`);
+          return parts.join(' · ') || `ID ${b.id}`;
+        })() : undefined}
+        onClose={() => setOpenLogsBoardId(null)}
+      />
     </main>
   );
 }

@@ -4,13 +4,15 @@
  * canonical path; the legacy `/window/:view` popup URLs redirect to it so
  * operator bookmarks and older popups keep resolving.
  */
-import { Suspense } from 'react';
-import { Routes, Route, Navigate, useParams } from 'react-router-dom';
+import { Suspense, useEffect, useRef } from 'react';
+import { Routes, Route, Navigate, useParams, useNavigate } from 'react-router-dom';
 import TopBarWrapper from '@/components/dashboard/TopBarWrapper';
 import { ControlModeProvider } from '@/lib/control-mode';
 import GlobalStateSubscriber from '@/components/dashboard/GlobalStateSubscriber';
 import WindowDetector from '@/components/windows/WindowDetector';
 import OpenInPopupButton from '@/components/windows/OpenInPopupButton';
+import { useWindowManager } from '@/components/windows/WindowManager';
+import { isPopupWindow } from '@/lib/is-popup';
 import { VIEW_ID_TO_PATH } from '@/lib/nav-items';
 import * as P from './pages';
 
@@ -27,6 +29,34 @@ function WindowRedirect() {
   const { view } = useParams();
   const target = view ? VIEW_ID_TO_PATH[view] : undefined;
   return <Navigate to={target ?? '/'} replace />;
+}
+
+/**
+ * Livestream always opens in its own popup window (it's a broadcast pane meant
+ * to live on a dedicated screen). Inside a popup we render it normally; in the
+ * main window, hitting /livestream pops it out and bounces back to the prior view.
+ */
+function LivestreamRoute() {
+  const popup = isPopupWindow();
+  const { openWindow } = useWindowManager();
+  const navigate = useNavigate();
+  const opened = useRef(false);
+
+  useEffect(() => {
+    if (popup || opened.current) return;
+    opened.current = true;
+    openWindow('popout:/livestream', 'Livestream Stats', '/livestream');
+    // Return to where they came from; fall back to Single Pane on a direct load.
+    if (window.history.length > 1) navigate(-1);
+    else navigate('/single-pane', { replace: true });
+  }, [popup, openWindow, navigate]);
+
+  if (popup) return <P.LivestreamPage />;
+  return (
+    <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">
+      Opening Livestream in a popup…
+    </div>
+  );
 }
 
 export default function App() {
@@ -56,7 +86,7 @@ export default function App() {
               <Route path="/controls" element={<P.ControlsPage />} />
               <Route path="/encoders" element={<P.EncodersPage />} />
               <Route path="/flash" element={<P.FlashPage />} />
-              <Route path="/livestream" element={<P.LivestreamPage />} />
+              <Route path="/livestream" element={<LivestreamRoute />} />
               <Route path="/self-tests" element={<P.SelfTestsPage />} />
               <Route path="/sensor-info" element={<P.SensorInfoPage />} />
               <Route path="/status" element={<P.StatusPage />} />
