@@ -47,7 +47,9 @@ fi
 # Board IPs 192.168.2.x → 127.0.0.x so the simulator can bind them on loopback,
 # exactly as start_tmux_dev.sh does for its sim config.
 mkdir -p "$DAQ_DIR"
-sed 's/192\.168\.2\./127.0.0./g' "$PROJECT/config/config.toml" > "$SIM_CONFIG"
+# Derive from the frozen canonical config_base.toml (dedicated sim/test config), not the
+# runtime-mutable config.toml, so the systemd sim stack + session tests are deterministic.
+sed 's/192\.168\.2\./127.0.0./g' "$PROJECT/config/config_base.toml" > "$SIM_CONFIG"
 cat > "$PIPELINE_ENV" <<EOF
 # Written by start_systemd_sim.sh — points the always-on backend at the remapped
 # (no-hardware) config. The data source (live vs simulated) is chosen PER RUN from

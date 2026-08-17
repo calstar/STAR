@@ -346,8 +346,11 @@ echo ""
 # our test Elodin DB and listens on our test UDP port.
 
 echo "📝 Creating test config..."
-CONFIG_FILE="$REPO_ROOT/config/config.toml"
-[ ! -f "$CONFIG_FILE" ] && fail "config/config.toml not found"
+# Source from the frozen canonical config (config_base.toml), NOT config.toml — the latter is
+# overwritten at runtime by the config-profile deploy/switch, so tests must not depend on it.
+# config_base.toml is committed and only changed deliberately alongside test assertions.
+CONFIG_FILE="$REPO_ROOT/config/config_base.toml"
+[ ! -f "$CONFIG_FILE" ] && fail "config/config_base.toml not found"
 
 # Cross-platform in-place sed (macOS requires -i '', Linux requires -i)
 sedi() {

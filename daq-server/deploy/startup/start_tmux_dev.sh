@@ -121,9 +121,11 @@ OTA_CMD_PORT="${OTA_SERVICE_CMD_PORT:-9997}"
 # simulator bind to the config IPs and config_broadcast_service actually reach them.
 CONFIG_FILE="config/config.toml"
 if [ "${USE_SIM:-0}" = "1" ]; then
+  # Sim runs derive from the frozen canonical config_base.toml (the dedicated sim/test config),
+  # NOT the runtime-mutable config.toml — keeps E2E deterministic and matches "sim forces the sim config".
   CONFIG_FILE="/tmp/gui_logs/sim_config.toml"
-  sed 's/192\.168\.2\./127.0.0./g' "$PROJECT/config/config.toml" > "$CONFIG_FILE"
-  echo "  📝 Sim config: board IPs remapped 192.168.2.x → 127.0.0.x"
+  sed 's/192\.168\.2\./127.0.0./g' "$PROJECT/config/config_base.toml" > "$CONFIG_FILE"
+  echo "  📝 Sim config: board IPs remapped 192.168.2.x → 127.0.0.x (from config_base.toml)"
   echo "     $CONFIG_FILE"
 fi
 
