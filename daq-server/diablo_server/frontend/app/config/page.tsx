@@ -110,6 +110,13 @@ export default function ConfigPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [activeTab, setActiveTab] = useState('network');
+  // Config profiles v2: the editor edits the ACTIVE PROFILE; config.toml is the deployed/running file.
+  // When idle, a save/switch deploys to config.toml; during a session config.toml is frozen (draft).
+  const [profiles, setProfiles] = useState<{ name: string; active: boolean }[]>([]);
+  const [activeProfile, setActiveProfile] = useState('');
+  const [sessionActive, setSessionActive] = useState(false);
+  const [runningToml, setRunningToml] = useState<string | null>(null); // read-only view of config.toml
+  const [showRunning, setShowRunning] = useState(false);
 
   const ws = getWebSocketClient();
   // Config editing is gated on operator identity (the DAQ allowlist), enforced
@@ -119,17 +126,25 @@ export default function ConfigPage() {
 
   useEffect(() => {
     loadConfig();
+    loadProfiles();
 
     const unsubConn = ws.on(MessageType.CONNECTION_STATUS, () => {});
     const unsubConfig = ws.on(MessageType.CONFIG_UPDATED, () => {
       loadConfig();
+      loadProfiles();
+      if (showRunning) loadRunningToml();
+    });
+    // A session freezes config.toml + blocks switching — keep the gate current.
+    const unsubSession = ws.on(MessageType.SESSION_UPDATE, (payload: any) => {
+      setSessionActive(!!payload?.active);
     });
 
     return () => {
       unsubConn();
       unsubConfig();
+      unsubSession();
     };
-  }, [ws]);
+  }, [ws, showRunning]);
 
   const loadConfig = async () => {
     try {
@@ -144,9 +159,10 @@ export default function ConfigPage() {
       }
 
       const data = await response.json();
-      // config.toml is canonical; don't overlay stale defaults
+      // GET /api/config returns the ACTIVE PROFILE (the draft you edit) + its name.
       const nextConfig = (data.config || {}) as ConfigData;
       setConfig(nextConfig);
+      if (typeof data.active === 'string') setActiveProfile(data.active);
       const adc = nextConfig.adc;
       if (adc && typeof adc.internal_v === 'number' && typeof adc.absolute_5v_v === 'number') {
         useSensorStore.getState().setVoltageRefNominals({ internalV: adc.internal_v, absolute5vV: adc.absolute_5v_v });
@@ -188,14 +204,101 @@ export default function ConfigPage() {
 
   const uploadInputRef = useRef<HTMLInputElement>(null);
 
-  // Download the raw config.toml from the server as a file.
+  // Download the raw config.toml from the server as a file (named after the active profile).
   const downloadConfig = () => {
     const a = document.createElement('a');
     a.href = `${getApiBaseUrl()}/api/config/export`;
-    a.download = 'config.toml';
+    a.download = `${activeProfile || 'config'}.toml`;
     document.body.appendChild(a);
     a.click();
     a.remove();
+  };
+
+  // ── Config profiles v2 ───────────────────────────────────────────────────────
+  const loadProfiles = async () => {
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/api/config/profiles`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setProfiles(Array.isArray(data.profiles) ? data.profiles : []);
+      setActiveProfile(data.active || '');
+      setSessionActive(!!data.sessionActive);
+    } catch { /* non-fatal */ }
+  };
+
+  // Read-only view of the deployed/running config.toml (what the pipeline reads).
+  const loadRunningToml = async () => {
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/api/config/export`);
+      setRunningToml(res.ok ? await res.text() : '(failed to load config.toml)');
+    } catch { setRunningToml('(failed to load config.toml)'); }
+  };
+  const toggleRunning = async () => {
+    const next = !showRunning;
+    setShowRunning(next);
+    if (next) await loadRunningToml();
+  };
+
+  const profileAction = async (action: string, body: Record<string, unknown>) => {
+    setError(null);
+    const res = await fetch(`${getApiBaseUrl()}/api/config/profiles/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `${action} failed (${res.status})`);
+    }
+    return res.json();
+  };
+
+  const switchProfile = async (name: string) => {
+    if (!name || name === activeProfile) return;
+    try {
+      await profileAction('switch', { name }); // deploys the profile to config.toml (idle only)
+      await loadProfiles();
+      await loadConfig();
+      if (showRunning) await loadRunningToml();
+    } catch (err: any) {
+      setError(err.message || 'Failed to switch config');
+      await loadProfiles();
+    }
+  };
+
+  const createProfile = async () => {
+    const name = window.prompt('New config name (letters, digits, _ or -):', '')?.trim();
+    if (!name) return;
+    try {
+      await profileAction('create', { name, from: activeProfile || undefined });
+      await loadProfiles();
+      if (window.confirm(`Created "${name}". Switch to it now?`)) await switchProfile(name);
+    } catch (err: any) {
+      setError(err.message || 'Failed to create config');
+    }
+  };
+
+  const renameProfile = async () => {
+    if (!activeProfile) return;
+    const newName = window.prompt(`Rename "${activeProfile}" to:`, activeProfile)?.trim();
+    if (!newName || newName === activeProfile) return;
+    try {
+      await profileAction('rename', { name: activeProfile, newName });
+      await loadProfiles();
+    } catch (err: any) {
+      setError(err.message || 'Failed to rename config');
+    }
+  };
+
+  const deleteProfile = async (name: string) => {
+    if (!name || name === activeProfile) return;
+    if (!window.confirm(`Delete config "${name}"? This cannot be undone.`)) return;
+    try {
+      await profileAction('delete', { name });
+      await loadProfiles();
+    } catch (err: any) {
+      setError(err.message || 'Failed to delete config');
+    }
   };
 
   // Upload a config.toml to replace the current one (operators only, server-validated).
@@ -449,6 +552,66 @@ export default function ConfigPage() {
             </button>
           </div>
         </div>
+
+        {/* Config profiles: pick which config is loaded/edited. Selecting deploys it to config.toml
+            (the running file) when idle; switching is blocked while a session runs. The editor always
+            edits the selected profile — config.toml is view-only below. */}
+        <div className="mb-4 p-3 bg-card rounded-lg flex flex-wrap items-center gap-3">
+          <span className="text-sm font-semibold">Config profile:</span>
+          <select
+            value={activeProfile}
+            onChange={(e) => switchProfile(e.target.value)}
+            disabled={!canEdit || sessionActive || saving || loading}
+            title={
+              !canEdit ? 'Operators only'
+                : sessionActive ? 'Stop the session to switch configs'
+                : 'Load a config (deploys it to config.toml)'
+            }
+            className="px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed min-w-[12rem]"
+          >
+            {profiles.length === 0 && <option value="">{activeProfile || '—'}</option>}
+            {profiles.map((p) => (
+              <option key={p.name} value={p.name}>{p.name}{p.active ? ' (active)' : ''}</option>
+            ))}
+          </select>
+          <button onClick={createProfile} disabled={!canEdit}
+            className="px-3 py-2 bg-card border border-gray-700 rounded-lg hover:bg-opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+            title={canEdit ? 'Create a new config from the current one' : 'Operators only'}>New</button>
+          <button onClick={renameProfile} disabled={!canEdit || !activeProfile}
+            className="px-3 py-2 bg-card border border-gray-700 rounded-lg hover:bg-opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+            title={canEdit ? 'Rename the active config' : 'Operators only'}>Rename</button>
+          <button
+            onClick={() => {
+              const inactive = profiles.filter((p) => !p.active).map((p) => p.name);
+              if (inactive.length === 0) return;
+              const name = window.prompt(`Delete which config? (${inactive.join(', ')})`, inactive[0])?.trim();
+              if (name && inactive.includes(name)) deleteProfile(name);
+              else if (name) setError(`No inactive config named "${name}"`);
+            }}
+            disabled={!canEdit || profiles.filter((p) => !p.active).length === 0}
+            className="px-3 py-2 bg-card border border-gray-700 rounded-lg hover:bg-opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+            title={!canEdit ? 'Operators only' : 'Delete an inactive config'}>Delete…</button>
+          <button onClick={toggleRunning}
+            className="px-3 py-2 bg-card border border-gray-700 rounded-lg hover:bg-opacity-80"
+            title="View the deployed config.toml the pipeline is running (read-only)">
+            {showRunning ? 'Hide' : 'View'} running config.toml
+          </button>
+        </div>
+
+        {sessionActive && (
+          <div className="mb-4 p-3 bg-yellow-900/40 border border-yellow-600 rounded-lg text-yellow-200 text-sm">
+            Session running — the running <code>config.toml</code> is frozen. Edits save to the
+            <strong> {activeProfile || 'active'}</strong> profile as a draft and apply at the next session start.
+            Switching configs is disabled until the session stops.
+          </div>
+        )}
+
+        {showRunning && (
+          <div className="mb-4 p-3 bg-background border border-gray-700 rounded-lg">
+            <div className="text-xs text-text-muted mb-2">Running <code>config.toml</code> (read-only — deployed to the pipeline)</div>
+            <pre className="text-xs font-mono whitespace-pre overflow-auto max-h-96 text-text-muted">{runningToml ?? 'Loading…'}</pre>
+          </div>
+        )}
 
         {error && (
           <div className="mb-4 p-4 bg-red-900/30 border border-red-500 rounded-lg text-red-200">

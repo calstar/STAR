@@ -8,6 +8,12 @@ import * as os from 'os';
 import * as path from 'path';
 import { IncomingMessage, ServerResponse } from 'http';
 import { readConfig, writeConfig, getConfigPath, patchBoardField } from './routes/config.js';
+import {
+  listProfiles, switchProfile, createProfile, renameProfile, deleteProfile,
+  getActiveProfileName, ensureSeeded, readActiveProfile, writeActiveProfile, deployActiveProfile,
+  getActiveProfilePath,
+} from './routes/config-profiles.js';
+import { sessionManager } from './session-manager.js';
 import { isOperator } from './operators.js';
 import { discoverProjects, getEnabledBoardsForFlash, getOtaWorkspaceRoot, BOARD_TYPE_TO_PROJECT } from './ota-build.js';
 import { otaBuildFlash, otaFlashFirmwareFile } from './ota-service-cmd.js';
@@ -271,6 +277,19 @@ function isConfigWriteAuthorized(req: IncomingMessage): boolean {
   return authEmail === '' ? true : isOperator(authEmail);
 }
 
+/** Collect and JSON-parse a request body. Rejects on invalid JSON. */
+function readJsonBody(req: IncomingMessage): Promise<any> {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk.toString(); });
+    req.on('end', () => {
+      try { resolve(body.trim() ? JSON.parse(body) : {}); }
+      catch { reject(new Error('Invalid JSON body')); }
+    });
+    req.on('error', reject);
+  });
+}
+
 /**
  * Create an HTTP request handler for all /api/* routes.
  * Mount this on an existing http.Server — it does NOT create its own server.
@@ -298,12 +317,13 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
 
     try {
       if (url.pathname === '/api/config' && req.method === 'GET') {
-        // Read config
-        const config = readConfig();
+        // The editor reads the ACTIVE PROFILE (the draft you edit), not the deployed config.toml.
+        const config = readActiveProfile();
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ config }));
+        res.end(JSON.stringify({ config, active: getActiveProfileName() }));
       } else if (url.pathname === '/api/config' && req.method === 'POST') {
-        // Write config — approved operators only
+        // Save to the ACTIVE PROFILE. When idle, also deploy it to config.toml (the running file);
+        // during a session config.toml is frozen — the write is a draft applied at the next start.
         if (!isConfigWriteAuthorized(req)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Not an approved operator' }));
@@ -316,19 +336,19 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         req.on('end', () => {
           try {
             const { config } = JSON.parse(body);
-            console.log(`📝 Received config save request`);
-            writeConfig(config);
-            try {
+            const sessionActive = sessionManager.getStatus().active;
+            console.log(`📝 Config save → active profile "${getActiveProfileName()}"${sessionActive ? ' (draft; config.toml frozen — session active)' : ' (+ deploy to config.toml)'}`);
+            writeActiveProfile(config);
+            if (!sessionActive) {
+              deployActiveProfile();
               if (onConfigUpdated) {
                 setImmediate(() => {
                   try { onConfigUpdated(); } catch (e) { console.warn('⚠️ onConfigUpdated handler threw:', e); }
                 });
               }
-            } catch (e) {
-              console.warn('⚠️ onConfigUpdated handler threw:', e);
             }
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, message: 'Config saved successfully' }));
+            res.end(JSON.stringify({ success: true, deployed: !sessionActive, message: sessionActive ? 'Saved as draft (applies at next session start)' : 'Config saved and deployed' }));
           } catch (error: any) {
             console.error('❌ Config save error:', error);
             res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -360,29 +380,111 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         let body = '';
         req.on('data', (chunk) => { body += chunk.toString(); });
         req.on('end', () => {
-          const configPath = getConfigPath();
+          // Import replaces the ACTIVE PROFILE (validated), then deploys to config.toml when idle —
+          // same freeze rule as a save.
+          const target = getActiveProfilePath();
           let previous: string | null = null;
           try {
             if (!body.trim()) throw new Error('Uploaded config is empty');
-            previous = fs.readFileSync(configPath, 'utf-8');
-            fs.writeFileSync(configPath, body, 'utf-8');
-            readConfig(); // throws if the uploaded TOML is invalid
-            if (onConfigUpdated) {
-              setImmediate(() => {
-                try { onConfigUpdated(); } catch (e) { console.warn('⚠️ onConfigUpdated handler threw:', e); }
-              });
+            previous = fs.existsSync(target) ? fs.readFileSync(target, 'utf-8') : null;
+            fs.writeFileSync(target, body, 'utf-8');
+            readConfig(target); // throws if the uploaded TOML is invalid
+            const sessionActive = sessionManager.getStatus().active;
+            if (!sessionActive) {
+              deployActiveProfile();
+              if (onConfigUpdated) {
+                setImmediate(() => {
+                  try { onConfigUpdated(); } catch (e) { console.warn('⚠️ onConfigUpdated handler threw:', e); }
+                });
+              }
             }
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, message: 'Config imported successfully' }));
+            res.end(JSON.stringify({ success: true, deployed: !sessionActive, message: sessionActive ? 'Imported as draft (applies at next session start)' : 'Config imported and deployed' }));
           } catch (error: any) {
             if (previous !== null) {
-              try { fs.writeFileSync(configPath, previous, 'utf-8'); } catch { /* best effort */ }
+              try { fs.writeFileSync(target, previous, 'utf-8'); } catch { /* best effort */ }
             }
             console.error('❌ Config import error:', error);
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: error.message || 'Invalid config file' }));
           }
         });
+      } else if (url.pathname === '/api/config/profiles' && req.method === 'GET') {
+        // List profiles + which is active + whether a session freezes deploys/switching.
+        ensureSeeded();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          profiles: listProfiles(),
+          active: getActiveProfileName(),
+          sessionActive: sessionManager.getStatus().active,
+        }));
+      } else if (url.pathname === '/api/config/profiles/switch' && req.method === 'POST') {
+        // Switch the active profile and deploy it. Operators only; blocked while a session runs.
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        try {
+          const { name } = await readJsonBody(req);
+          if (sessionManager.getStatus().active) {
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Cannot switch config while a session is running' }));
+            return true;
+          }
+          switchProfile(name);
+          if (onConfigUpdated) setImmediate(() => { try { onConfigUpdated(); } catch (e) { console.warn('⚠️ onConfigUpdated threw:', e); } });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, active: getActiveProfileName() }));
+        } catch (error: any) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error?.message || 'Failed to switch profile' }));
+        }
+      } else if (url.pathname === '/api/config/profiles/create' && req.method === 'POST') {
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        try {
+          const { name, from } = await readJsonBody(req);
+          createProfile(name, from);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, profiles: listProfiles() }));
+        } catch (error: any) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error?.message || 'Failed to create profile' }));
+        }
+      } else if (url.pathname === '/api/config/profiles/rename' && req.method === 'POST') {
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        try {
+          const { name, newName } = await readJsonBody(req);
+          renameProfile(name, newName);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, profiles: listProfiles(), active: getActiveProfileName() }));
+        } catch (error: any) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error?.message || 'Failed to rename profile' }));
+        }
+      } else if (url.pathname === '/api/config/profiles/delete' && req.method === 'POST') {
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        try {
+          const { name } = await readJsonBody(req);
+          deleteProfile(name);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, profiles: listProfiles() }));
+        } catch (error: any) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: error?.message || 'Failed to delete profile' }));
+        }
       } else if (url.pathname === '/api/query' && req.method === 'GET') {
         // Query historical data from Elodin DB
         const currentQueryClient = getQueryClient ? getQueryClient() : null;

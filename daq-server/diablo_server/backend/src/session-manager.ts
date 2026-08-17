@@ -14,6 +14,7 @@ import type { SessionStatus, NotificationPayload } from '../../shared/types.js';
 import { MessageType } from '../../shared/types.js';
 import { ServiceController, getSessionServiceMode } from './service-controller.js';
 import { loadSession, saveSession } from './session-state.js';
+import { deployActiveProfile } from './routes/config-profiles.js';
 
 // Warn the operator at each of these leads before auto-stop. Default: 5 min and
 // 1 min. Override with SESSION_WARN_LEADS_MS (comma-separated ms) to exercise the
@@ -215,6 +216,13 @@ class SessionManager {
     this.simulated = simulated;
     this.durationMs = durationMs;
     this.deadlineMs = Date.now() + durationMs;
+    // Deploy the selected profile into config.toml right before the (live) run starts, then it's
+    // frozen for the session. Simulated runs use the committed frozen sim overlay (config_base →
+    // sim_config.toml) instead, so we don't touch config.toml for them.
+    if (!this.simulated) {
+      try { deployActiveProfile(); }
+      catch (e) { console.warn('⚠️ Failed to deploy active profile at session start:', e); }
+    }
     await this.controller.start(this.dbDir, this.simulated);
     this.active = true;
     this.scheduleTimers();

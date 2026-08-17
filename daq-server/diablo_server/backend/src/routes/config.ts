@@ -39,9 +39,10 @@ export function getConfigPath(): string {
 
 let _actuatorRolesParseWarned = false;
 
-export function readConfig(): any {
+/** Read + parse a config TOML. Defaults to the deployed config.toml (getConfigPath), but any
+ *  path can be given — the config-profiles editor reads the active profile file this way. */
+export function readConfig(path: string = getConfigPath()): any {
   try {
-    const path = getConfigPath();
     const content = readFileSync(path, 'utf-8');
 
     // Try to parse normally first
@@ -151,8 +152,9 @@ export function stripNumericUnderscores(toml: string): string {
   return out;
 }
 
-export function writeConfig(config: any): void {
-  const configPath = getConfigPath();
+/** Serialize + write a config object as TOML. Defaults to the deployed config.toml, but any path
+ *  can be given — the config-profiles editor writes the active profile file this way. */
+export function writeConfig(config: any, configPath: string = getConfigPath()): void {
   try {
     console.log(`💾 Writing config to: ${configPath}`);
 
