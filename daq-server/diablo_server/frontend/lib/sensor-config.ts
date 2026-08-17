@@ -22,7 +22,7 @@ export interface SensorConfig {
     boardId: number;
     /** Board IP address */
     boardIp: string;
-    /** true if this sensor is a high-pressure 4-20 mA PT (sensor_roles_pt2) */
+    /** true if this sensor is on a high-pressure 4-20 mA PT board (config hp_pt_* fields) */
     isHpPt: boolean;
     /** false → HP PT (no calibration capture); true → low-pressure PT */
     inCalibrationSequence: boolean;
@@ -102,6 +102,23 @@ export function filterByRole(sensors: SensorConfig[], ...substrings: string[]): 
     return sensors.filter((s) =>
         substrings.some((sub) => s.role.toLowerCase().includes(sub.toLowerCase()))
     );
+}
+
+/**
+ * Resolve an explicit display group (config [gui.groups]) to its sensors, in the group's
+ * declared order. `roleNames` is the ordered role list for the group; roles with no live
+ * sensor are skipped. This replaces role-name substring parsing for page membership — the
+ * config decides what shows on a page, not the sensor's name.
+ */
+export function resolveGroup(sensors: SensorConfig[], roleNames: string[] | undefined): SensorConfig[] {
+    if (!roleNames || roleNames.length === 0) return [];
+    const byRole = new Map(sensors.map((s) => [s.role, s]));
+    const out: SensorConfig[] = [];
+    for (const role of roleNames) {
+        const s = byRole.get(role);
+        if (s) out.push(s);
+    }
+    return out;
 }
 
 /** Filter sensors by board ID. */

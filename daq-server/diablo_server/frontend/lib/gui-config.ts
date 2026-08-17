@@ -32,9 +32,12 @@ export interface GuiConfig {
   pressureBars: PressureBarConfig[];
   /** Ordered tab-bar view ids (index into lib/nav-items). Empty → use defaults. */
   tabs: string[];
+  /** [gui.groups]: page/group name → ordered list of sensor role names. Explicit sensor→page
+   *  membership (replaces role-name substring parsing). Array order = display order. */
+  groups: Record<string, string[]>;
 }
 
-const EMPTY: GuiConfig = { pressureBars: [], tabs: [] };
+const EMPTY: GuiConfig = { pressureBars: [], tabs: [], groups: {} };
 
 // ── Module-level cache so all components share one fetch ───────────────────────
 
@@ -50,8 +53,8 @@ export async function fetchGuiConfig(): Promise<GuiConfig> {
       if (!res.ok) throw new Error(`gui-config fetch failed: ${res.status}`);
       return res.json();
     })
-    .then((data: { pressure_bars?: PressureBarConfig[]; tabs?: string[] }) => {
-      _cache = { pressureBars: data.pressure_bars ?? [], tabs: data.tabs ?? [] };
+    .then((data: { pressure_bars?: PressureBarConfig[]; tabs?: string[]; groups?: Record<string, string[]> }) => {
+      _cache = { pressureBars: data.pressure_bars ?? [], tabs: data.tabs ?? [], groups: data.groups ?? {} };
       return _cache;
     })
     .catch((err) => {

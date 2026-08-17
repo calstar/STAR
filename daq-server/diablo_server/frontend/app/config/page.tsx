@@ -59,7 +59,7 @@ interface ConfigData {
   boards?: Record<string, any>;
   sensor_roles?: Record<string, number>; // legacy fallback
   sensor_roles_pt_board?: Record<string, number>;
-  sensor_roles_pt2?: Record<string, number>;
+  sensor_roles_pt_board_2?: Record<string, number>; // HP PT board (was sensor_roles_pt2)
   sensor_roles_rtd_board?: Record<string, number>;
   sensor_roles_tc_board?: Record<string, number>;
   abort_pts?: Record<string, number>;
@@ -892,12 +892,16 @@ export default function ConfigPage() {
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Sensor Roles</h2>
               <div className="space-y-8">
-                {([
-                  { key: 'sensor_roles_pt_board', title: 'PT Board Roles (sensor_roles_pt_board)' },
-                  { key: 'sensor_roles_pt2', title: 'HP PT Roles (sensor_roles_pt2)' },
-                  { key: 'sensor_roles_rtd_board', title: 'RTD Board Roles (sensor_roles_rtd_board)' },
-                  { key: 'sensor_roles_tc_board', title: 'TC Board Roles (sensor_roles_tc_board)' },
-                ] as const).map(({ key, title }) => {
+                {/* One role panel per sensor board in config: sensor_roles_<boardKey>. Generalized
+                    from a fixed pt_board/pt2/rtd/tc list so any board (incl. a 3rd PT board or an
+                    HP board) gets a panel; the HP board is no longer special (was sensor_roles_pt2). */}
+                {(Object.entries(((config as any).boards || {}) as Record<string, any>)
+                  .filter(([, b]) => ['PT', 'RTD', 'TC', 'ENCODER'].includes(b?.type))
+                  .map(([boardKey, b]) => ({
+                    key: `sensor_roles_${boardKey}`,
+                    title: `${b.type} Roles — ${boardKey} (sensor_roles_${boardKey})`,
+                  }))
+                ).map(({ key, title }) => {
                   const map = (config as any)[key] as Record<string, number> | undefined;
                   const entries = Object.entries(map || {});
                   return (

@@ -251,14 +251,8 @@ export function buildAliasesFromConfig(config: any): void {
     }
   }
 
-  // sensor_roles_pt2 (HP PT — board_id 22 → board_number 2)
-  const pt2Roles = config.sensor_roles_pt2 as Record<string, number> | undefined;
-  if (pt2Roles && typeof pt2Roles === 'object') {
-    for (const [name, connector] of Object.entries(pt2Roles)) {
-      const ch = typeof connector === 'number' ? connector : Number(connector);
-      if (isFinite(ch)) addSensorAliases(name, ch, 'PT2', 'PT2_Cal', ptComponents, true);
-    }
-  }
+  // (HP PT board reads its own [sensor_roles_<boardKey>] section in the generic loop above —
+  // no special sensor_roles_pt2 handling needed; prefix comes from board_id % 10.)
 
   // Actuator roles — board-namespaced: ACT2.CH1, ACT4.CH3
   const actRoles = config.actuator_roles as Record<string, any> | undefined;

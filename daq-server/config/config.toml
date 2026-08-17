@@ -105,6 +105,14 @@ tabs = [
   limits = "Chamber"
   color = "#F97316"
 
+# Explicit sensor→page membership (replaces role-name substring parsing in the plot pages).
+# Group name → ordered list of sensor role names; array order = display order on that page.
+# Roles must match the [sensor_roles_*] names. Sensors only for now.
+[gui.groups]
+LOX = [ "Ox Upstream", "Ox Downstream", "LOX Upper", "LOX Mid", "LOX Lower", "COPV RTD" ]
+Fuel = [ "Fuel Upstream", "Fuel Downstream" ]
+Chamber = [ "Chamber Mid PT 1", "Chamber Mid PT 2", "Chamber Throat PT 1", "Chamber Throat PT 2" ]
+
 [time_sync]
 mode = "board-clock"
 window_seconds = 10
@@ -349,7 +357,7 @@ active_connectors = [ 1, 2 ]
 "Chamber Throat TC 1" = 4
 "Chamber Throat TC 2" = 5
 
-[sensor_roles_pt2]
+[sensor_roles_pt_board_2]
 "GSE High" = 1
 "Excitation V" = 2
 "GSE Mid" = 3

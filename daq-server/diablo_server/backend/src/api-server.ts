@@ -26,7 +26,7 @@ export interface SensorConfigEntry {
   boardId: number;
   /** Board IP address */
   boardIp: string;
-  /** true if this sensor is a high-pressure 4-20 mA PT (sensor_roles_pt2) */
+  /** true if this sensor is on a high-pressure 4-20 mA PT board (config hp_pt_* fields) */
   isHpPt: boolean;
   /** true → eligible for calibration capture */
   inCalibrationSequence: boolean;
@@ -75,15 +75,9 @@ function buildSensorConfig(): SensorConfigEntry[] {
       rolesSection = config.sensor_roles as Record<string, any>;
     }
 
-    // sensor_roles_pt2 uses the same format but is stored separately
-    const pt2Roles = isHpBoard
-      ? ((config.sensor_roles_pt2 || {}) as Record<string, any>)
-      : {};
-
-    // Build entries from the relevant roles section
-    const effectiveRoles = Object.keys(pt2Roles).length > 0 && isHpBoard ? pt2Roles : rolesSection;
-
-    for (const [roleName, channelIdRaw] of Object.entries(effectiveRoles)) {
+    // Every PT board uses its own [sensor_roles_<boardKey>] section — HP boards included
+    // (no separate sensor_roles_pt2 section). The excitation channel is dropped below.
+    for (const [roleName, channelIdRaw] of Object.entries(rolesSection)) {
       const channelId = typeof channelIdRaw === 'number' ? channelIdRaw : Number(channelIdRaw);
       if (!isFinite(channelId)) continue;
 
@@ -241,16 +235,12 @@ function buildSensorConfig(): SensorConfigEntry[] {
   return sensors;
 }
 
-/** Average Hz of primary raw streams per board group from relay ingest (pre-WS-throttle). */
-export interface BoardScanRateHz {
-  pt1: number;
-  pt2: number;
-  tc: number;
-  rtd: number;
-  lc: number;
-  act: number;
-  enc: number;
-}
+/**
+ * Average Hz of primary raw streams per board group from relay ingest (pre-WS-throttle).
+ * Dynamic keys: `pt<n>` per PT board (n = board_id % 10) plus aggregated `tc`/`rtd`/`lc`/`act`/`enc`.
+ * A group only appears once it has seen data — read a missing group as 0.
+ */
+export type BoardScanRateHz = Record<string, number>;
 
 export interface DebugInfo {
   ingestConnected: boolean;
@@ -441,6 +431,8 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         res.end(JSON.stringify({
           pressure_bars: gui.pressure_bars ?? [],
           tabs: gui.tabs ?? [],
+          // [gui.groups]: page name → ordered role-name list (explicit sensor→page membership).
+          groups: gui.groups ?? {},
         }));
       } else if (url.pathname === '/api/sensor-config' && req.method === 'GET') {
         // Return sensor configuration derived from config.toml:

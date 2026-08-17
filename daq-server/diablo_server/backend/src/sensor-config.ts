@@ -7,6 +7,30 @@ import { readConfig } from './routes/config.js';
 import type { HpPtBoardConfig } from './server-types.js';
 
 /**
+ * Board-numbers (board_id % 10, with 0→10) of the PT boards that are high-pressure
+ * 4-20 mA current-loop boards. A board is HP iff it declares HP config (hp_pt_connectors
+ * or hp_pt_full_scale_psi) — the same signal the C++ calibration service keys off, so
+ * there is one source of truth and no positional "slot 2 is HP" assumption. Used by the
+ * Elodin decoder to pick unsigned-vs-signed raw-ADC interpretation and by the GUI to label
+ * HP boards. `config` is optional so callers on the hot path can pass a cached config.
+ */
+export function hpBoardNumbers(config?: any): Set<number> {
+    const out = new Set<number>();
+    try {
+        const cfg = config ?? readConfig();
+        const boards = (cfg.boards || {}) as Record<string, any>;
+        for (const board of Object.values(boards)) {
+            const isHp = (Array.isArray(board?.hp_pt_connectors) && board.hp_pt_connectors.length > 0)
+                || typeof board?.hp_pt_full_scale_psi === 'number';
+            if (!isHp || typeof board?.board_id !== 'number') continue;
+            const mod = board.board_id % 10;
+            out.add(mod === 0 ? 10 : mod);
+        }
+    } catch { /* empty set on config error */ }
+    return out;
+}
+
+/**
  * Build actuator channel → entity map from config.toml actuator_roles.
  * Used so Elodin parser uses same names as config (replica of backend/DB).
  */
@@ -45,25 +69,24 @@ export function loadSensorRoleMap(): {
 
     try {
         const config = readConfig();
-        // Config has [sensor_roles_pt_board] and [sensor_roles_pt2], NOT [sensor_roles]
-        const sensorRolesPtBoard = (config as any).sensor_roles_pt_board || {};
-        const sensorRolesPt2 = (config as any).sensor_roles_pt2 || {};
         const boards = config.boards || {};
 
-        // Build reverse map: channel_id → role_name from BOTH PT boards
+        // Build reverse map: (connector + (boardNumber-1)*10) → PT_Cal.<role>, iterating every
+        // PT board's own [sensor_roles_<boardKey>] section. The per-board offset (board 1 → +0,
+        // board 2 → +10, board 3 → +20, …) keeps roles from different PT boards from colliding in
+        // this flat legacy map; boardNumber = board_id % 10 (0→10), matching the packet-ID scheme.
+        // (Previously hardcoded to sensor_roles_pt_board + a fixed +10 on sensor_roles_pt2.)
         const reverseMap: Record<number, string> = {};
-        // PT board 1 (sensor_roles_pt_board): payload channel byte IS the connector id (1-indexed). No +1.
-        for (const [roleName, channelId] of Object.entries(sensorRolesPtBoard)) {
-            if (typeof channelId === 'number' && channelId >= 1 && channelId <= 10) {
-                const entityName = roleName.replace(/\s+/g, '_');
-                reverseMap[channelId] = `PT_Cal.${entityName}`;
-            }
-        }
-        // PT board 2 (sensor_roles_pt2): reverseMap keys use connector+10 so HP PT roles don’t collide with board 1’s channel ids in this legacy map (hardcoded here, not from config).
-        for (const [roleName, channelId] of Object.entries(sensorRolesPt2)) {
-            if (typeof channelId === 'number' && channelId >= 1 && channelId <= 10) {
-                const entityName = roleName.replace(/\s+/g, '_');
-                reverseMap[channelId + 10] = `PT_Cal.${entityName}`;  // payloadCh for connector 1 = 11
+        for (const [boardKey, boardRaw] of Object.entries(boards)) {
+            const board = boardRaw as any;
+            if (board.type !== 'PT' || typeof board.board_id !== 'number') continue;
+            const mod = board.board_id % 10;
+            const boardNumber = mod === 0 ? 10 : mod;
+            const roles = (config as any)[`sensor_roles_${boardKey}`] || {};
+            for (const [roleName, channelId] of Object.entries(roles)) {
+                if (typeof channelId === 'number' && channelId >= 1 && channelId <= 10) {
+                    reverseMap[channelId + (boardNumber - 1) * 10] = `PT_Cal.${roleName.replace(/\s+/g, '_')}`;
+                }
             }
         }
 
@@ -79,9 +102,9 @@ export function loadSensorRoleMap(): {
                 const isHpBoard = Array.isArray(board.hp_pt_connectors) && board.hp_pt_connectors.length > 0;
                 const excitationId = typeof board.excitation_connector_id === 'number' ? board.excitation_connector_id : -1;
 
-                // HP PT board uses sensor_roles_pt2; others use sensor_roles_<boardKey> (e.g. sensor_roles_pt_board)
-                const boardSensorRolesKey = isHpBoard ? 'sensor_roles_pt2' : `sensor_roles_${boardKey}`;
-                const boardSensorRoles = (config as any)[boardSensorRolesKey] || sensorRolesPtBoard;
+                // Every board reads its own [sensor_roles_<boardKey>] section — HP boards included
+                // (no special sensor_roles_pt2 section anymore).
+                const boardSensorRoles = (config as any)[`sensor_roles_${boardKey}`] || {};
 
                 const boardMap: Record<string, string> = {};
                 for (const [roleName, channelId] of Object.entries(boardSensorRoles)) {
@@ -134,7 +157,7 @@ export function loadHpPtConfig(): Map<string, HpPtBoardConfig> {
         const boards = config.boards || {};
         console.log(`   Found ${Object.keys(boards).length} board(s) in config`);
 
-        const sensorRolesPt2: Record<string, number> = (config.sensor_roles_pt2 as Record<string, number>) || {};
+        const sensorRolesPt2: Record<string, number> = (config.sensor_roles_pt_board_2 as Record<string, number>) || {};
         console.log(`   Found ${Object.keys(sensorRolesPt2).length} sensor role(s) for pt2`);
 
         // Build reverse map for pt2: connector_id → entity name

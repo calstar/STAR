@@ -26,7 +26,7 @@ import * as http from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
-import { loadSensorRoleMap } from './sensor-config.js';
+import { loadSensorRoleMap, hpBoardNumbers } from './sensor-config.js';
 import { registerVTables, clearSubscriptionState } from './elodin-vtable-registry.js';
 import { registerControllerVTables } from './legacy/elodin-vtable-controller.js';
 import { createAPIHandler } from './api-server.js';
@@ -175,6 +175,10 @@ try {
 // Sensor Roles edit reflects without a backend restart. calibrationHost reads
 // this via its channelToEntityMap property (updated in lockstep below).
 let calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
+
+/** Cached HP (4-20 mA) PT board-number set for the Elodin decode hot path. Rebuilt on config
+ *  reload (onConfigUpdated) so moving/adding an HP board takes effect without a restart. */
+let _hpBoardNumbers = hpBoardNumbers();
 
 /** Cached slot→board_id map for uniqueIdFromPtEntity — built once, avoids config re-reads on hot path. */
 const _ptSlotToBoardId = new Map<number, number>();
@@ -571,6 +575,7 @@ const apiHandler = createAPIHandler({
     calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
     calibrationHost.channelToEntityMap = calChannelToEntityMap;
     _ptSlotToBoardId.clear();
+    _hpBoardNumbers = hpBoardNumbers();
     // Tell every open client the config changed so they refetch /api/* live
     // (sensor-config, pressure-limits, pressure-bars) — no reload/restart.
     broadcast({ type: MessageType.CONFIG_UPDATED, timestamp: Date.now(), payload: {} });
@@ -1121,7 +1126,7 @@ elodin.on('packet', (header: any, payload: Buffer) => {
     }
 
     // ── Parse sensor/actuator/state packets ──────────────────────────────────
-    const parsedList = parseElodinPacket(header.packetId, payload);
+    const parsedList = parseElodinPacket(header.packetId, payload, _hpBoardNumbers);
 
     if (parsedList.length === 0) {
       if (high >= 0x40) {
