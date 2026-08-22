@@ -35,22 +35,31 @@ export function getConfigPath(): string {
   }
 
   // config.toml is a generated runtime artifact (git-ignored). If it doesn't exist yet — a fresh
-  // checkout that hasn't deployed a profile — self-heal by materializing it from the committed
-  // default profile (config/profiles/default.toml) sitting next to it. This keeps the backend and
-  // every C++ service that reads config.toml working without a manual bootstrap step.
+  // checkout that hasn't deployed a profile — self-heal by materializing it from the ACTIVE profile
+  // (config/.active_profile → config/profiles/<name>.toml), falling back to default.toml. Respecting
+  // the active profile matters on a deployed server: a missing config.toml must regenerate as that
+  // box's real config, not the repo default. Keeps the backend + every C++ service working with no
+  // manual bootstrap step.
   for (const path of possiblePaths) {
-    const defaultProfile = join(dirname(path), 'profiles', 'default.toml');
-    if (existsSync(defaultProfile)) {
-      try {
-        copyFileSync(defaultProfile, path);
-        readFileSync(path, 'utf-8');
-        console.log(`🌱 Generated config.toml from ${defaultProfile}`);
-        return path;
-      } catch { continue; }
+    const dir = dirname(path);
+    let activeName = 'default';
+    try {
+      const a = readFileSync(join(dir, '.active_profile'), 'utf-8').trim();
+      if (/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(a)) activeName = a;
+    } catch { /* no pointer → default */ }
+    for (const src of [join(dir, 'profiles', `${activeName}.toml`), join(dir, 'profiles', 'default.toml')]) {
+      if (existsSync(src)) {
+        try {
+          copyFileSync(src, path);
+          readFileSync(path, 'utf-8');
+          console.log(`🌱 Generated config.toml from ${src}`);
+          return path;
+        } catch { /* try next */ }
+      }
     }
   }
 
-  throw new Error('Config file not found (and no config/profiles/default.toml to generate it from)');
+  throw new Error('Config file not found (and no config/profiles/*.toml to generate it from)');
 }
 
 let _actuatorRolesParseWarned = false;

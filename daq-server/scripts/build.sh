@@ -21,12 +21,19 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 BUILD_DIR="$ROOT/build"
 
 # config.toml is a generated runtime artifact (git-ignored); the committed source of truth is
-# config/profiles/*.toml. Materialize config.toml from the default profile if a fresh checkout hasn't
-# deployed one yet, so every stack that reads config/config.toml directly (daq_bridge, controller, …)
-# has it present. The backend also self-heals this at read time.
-if [ ! -f "$ROOT/config/config.toml" ] && [ -f "$ROOT/config/profiles/default.toml" ]; then
-  cp "$ROOT/config/profiles/default.toml" "$ROOT/config/config.toml"
-  echo "🌱 Generated config/config.toml from config/profiles/default.toml"
+# config/profiles/*.toml. Materialize config.toml from the ACTIVE profile (config/.active_profile,
+# default: "default") if a fresh checkout hasn't deployed one yet, so every stack that reads
+# config/config.toml directly (daq_bridge, controller, …) has it present. Respecting the active
+# profile means a deployed box regenerates its OWN config, not the repo default. Backend self-heals too.
+if [ ! -f "$ROOT/config/config.toml" ]; then
+  _profile="default"
+  [ -f "$ROOT/config/.active_profile" ] && _profile="$(tr -d '[:space:]' < "$ROOT/config/.active_profile")"
+  _src="$ROOT/config/profiles/${_profile}.toml"
+  [ -f "$_src" ] || _src="$ROOT/config/profiles/default.toml"
+  if [ -f "$_src" ]; then
+    cp "$_src" "$ROOT/config/config.toml"
+    echo "🌱 Generated config/config.toml from $_src"
+  fi
 fi
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 
