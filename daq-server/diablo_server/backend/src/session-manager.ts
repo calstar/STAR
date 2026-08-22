@@ -35,10 +35,14 @@ const ELODIN_ROOT = join(homedir(), '.local', 'share', 'elodin');
 type Broadcast = (message: object) => void;
 type Notify = (payload: NotificationPayload) => void;
 
-function timestampName(): string {
+function timestampName(simulated = false): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, '0');
-  return `daq_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  // Simulated runs get a `daq_sim_` prefix so recorded synthetic data is self-identifying on disk —
+  // a .sensorlog reviewed weeks later can't be mistaken for real test-stand data. Still starts with
+  // `daq_` so existing path assertions hold.
+  const prefix = simulated ? 'daq_sim_' : 'daq_';
+  return `${prefix}${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
 // True on WSL, where the Linux home lives on a thin-provisioned ext4 vhdx.
@@ -211,7 +215,7 @@ class SessionManager {
     if (!Number.isFinite(durationMs) || durationMs <= 0) {
       throw new Error('durationMs must be a positive number.');
     }
-    this.dbDir = join(ELODIN_ROOT, timestampName());
+    this.dbDir = join(ELODIN_ROOT, timestampName(simulated));
     this.keepData = keepData;
     this.simulated = simulated;
     this.durationMs = durationMs;

@@ -36,10 +36,17 @@ Why this script (vs. the old `setup.sh`): it pins **one** elodin-db version matc
 runs every step (no commented-out installs), and **hard-verifies elodin-db** — a box that can't run
 the DB fails loudly here instead of silently respawning `sensor-elodin` every 5 s later.
 
-> **Before a real run, two host things the script can't do for you:**
-> 1. **Network:** the board-LAN NIC must be statically **`192.168.2.20/24`** — the board firmware
->    (`firmware/Hotfire_Code/common/hotfire_config.h`) hardcodes the server at `192.168.2.20:5006`,
->    so any other address silently drops all board traffic. (nmcli/netplan, OS-level.)
+> **Before a real run, two host things to get right:**
+> 1. **Network + firewall:** the board-LAN NIC must be statically **`192.168.2.20/24`** — the board
+>    firmware (`firmware/Hotfire_Code/common/hotfire_config.h`) hardcodes the server at
+>    `192.168.2.20:5006`, so any other address silently drops all board traffic. Set it with
+>    nmcli/netplan (OS-level; the script can't). The **host firewall must also allow inbound board
+>    UDP** — `bootstrap_daq.sh` adds these automatically when `ufw` is active and the NIC is already
+>    on `192.168.2.20` (else run them by hand, substituting your board NIC):
+>    ```bash
+>    sudo ufw allow in on enp4s0 from 192.168.2.0/24 to any port 5006 proto udp comment 'DAQ sensor data'
+>    sudo ufw allow in on enp4s0 from 192.168.2.0/24 to any port 5008 proto udp comment 'DAQ FSW config'
+>    ```
 > 2. **Config:** `config/config.toml` is a **generated artifact** now; the source of truth is
 >    `config/profiles/*.toml`. Edit config via the GUI **Config tab** (it edits the active profile
 >    and deploys it); a live session-start deploys the active profile. Carrying a pre-existing config

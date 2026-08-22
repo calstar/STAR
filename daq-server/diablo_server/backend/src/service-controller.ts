@@ -178,6 +178,16 @@ export class ServiceController {
   /** Re-assert the simulator after a backend restart recovered an active simulated run. */
   async resume(simulated: boolean): Promise<void> {
     if (!simulated) return;
+    // Persisted session state can disagree with the live overlay (operator reset pipeline.env to
+    // hardware, a crash mid-transition, …). The pipeline.env overlay is what the units actually obey,
+    // so re-read it before resurrecting the simulator — otherwise a backend restart can re-launch the
+    // sim onto a box that's since been switched to live, injecting synthetic data into a real run.
+    let overlay = '';
+    try { overlay = readFileSync(PIPELINE_ENV_PATH, 'utf-8'); } catch { /* no overlay */ }
+    if (!/^USE_SIM=1$/m.test(overlay)) {
+      console.warn('[Session] not resuming simulator — pipeline.env overlay is not USE_SIM=1 (live or absent).');
+      return;
+    }
     if (this.mode === 'systemd') {
       await runSystemctl('start', ['sensor-simulator']);
     } else {

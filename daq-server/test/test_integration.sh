@@ -640,7 +640,10 @@ if [ -n "$INTEGRATION_SENSOR_HZ" ]; then
   SIM_RATE_FLAG="--sensor-hz $INTEGRATION_SENSOR_HZ"
 fi
 # shellcheck disable=SC2086  # intentional word splitting of the flags
-"$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --skip-startup $SIM_RATE_FLAG --stats-file "$SIM_STATS_FILE" $INTEGRATION_TIME_FLAGS > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
+# --allow-ip-fallback: this test's config keeps 192.168.2.x board IPs and deliberately relies on the
+# sim's loopback rebind (127.0.0.{2+idx}); the flag is REQUIRED here since that fallback now aborts by
+# default (so a hardware config can't silently emit synthetic data tagged as real boards).
+"$PYTHON_BIN" "$BOARD_SIM" --config "$TEST_CONFIG" --target 127.0.0.1 --port "$TEST_DAQ_UDP_PORT" --low-noise --skip-startup --allow-ip-fallback $SIM_RATE_FLAG --stats-file "$SIM_STATS_FILE" $INTEGRATION_TIME_FLAGS > "$REPO_ROOT/.tmp/integration_fakegen_$$.log" 2>&1 &
 SIM_PID=$!
 PIDS+=($SIM_PID)
 sleep 2

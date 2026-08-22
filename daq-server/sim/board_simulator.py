@@ -5,6 +5,7 @@ import time
 import threading
 import random
 import os
+import sys
 import argparse
 import json
 import math
@@ -80,10 +81,15 @@ class SimulatedBoard:
         skip_startup=False,
         timing=None,
         sensor_hz=None,
+        allow_ip_fallback=False,
     ):
         self.name = name
         self.board_index = board_index
         self.config = board_config
+        # Only permit rebinding a non-bindable config IP to loopback when explicitly allowed
+        # (sim_config.toml already uses loopback IPs so it never needs this; a hardware config
+        # must NOT silently fall back — that emits synthetic data tagged with real board IDs).
+        self.allow_ip_fallback = bool(allow_ip_fallback)
         self.target_ip = target_ip
         self.target_port = target_port
         self.low_noise = low_noise
@@ -175,6 +181,17 @@ class SimulatedBoard:
                 f"[{self.name}] Bound to {bind_ip}:{bind_port}", flush=True
             )
         except Exception:
+            # The config IP (e.g. 192.168.2.21) is not on this host. Falling back to loopback here
+            # is how synthetic data ends up tagged with a REAL board's identity — the root cause of
+            # sim data sneaking into a live run. Only do it when explicitly allowed (sim_config.toml
+            # uses loopback IPs and doesn't need this; the integration test opts in). Otherwise abort.
+            if not self.allow_ip_fallback:
+                sys.exit(
+                    f"[{self.name}] FATAL: config IP {self.config.get('ip')} is not bindable on this "
+                    f"host. Refusing loopback fallback — it would emit synthetic data tagged as board "
+                    f"{self.config.get('board_id')}. Run the simulator against config/sim_config.toml "
+                    f"(loopback IPs), or pass --allow-ip-fallback (integration test only)."
+                )
             # When config IPs (e.g. 192.168.2.21) are not on this host, use distinct
             # loopback IPs so daq_bridge can route each board's data correctly.
             # 127.0.0.2 = first board, 127.0.0.3 = second, etc.
@@ -540,6 +557,13 @@ def main():
         help="Skip SETUP/SELF_TEST lifecycle, go directly to ACTIVE",
     )
     parser.add_argument(
+        "--allow-ip-fallback",
+        action="store_true",
+        help="Permit binding loopback when a config IP isn't on this host (sim_config.toml / "
+             "integration test only — NEVER with a hardware config; it would emit synthetic data "
+             "tagged with real board IDs).",
+    )
+    parser.add_argument(
         "--sensor-hz",
         type=float,
         default=None,
@@ -642,6 +666,7 @@ def main():
             sim_pt_targets=sim_pt_targets,
             skip_startup=args.skip_startup,
             sensor_hz=args.sensor_hz,
+            allow_ip_fallback=args.allow_ip_fallback,
             timing=TimingPathology(
                 chunks_per_packet=args.chunks_per_packet,
                 net_jitter_ms=args.net_jitter_ms,

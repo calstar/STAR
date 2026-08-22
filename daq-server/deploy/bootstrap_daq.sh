@@ -141,6 +141,26 @@ else
   c_info "START=0 — built + installed only; not enabling services."
 fi
 
+# ── 9. Firewall: allow inbound board UDP on the board-LAN NIC (ufw only, idempotent) ──
+# The host firewall blocks the boards' UDP otherwise — the boards send sensor data / heartbeats /
+# self-test / logs to :5006 and the FSW config manager listens on :5008. (5005 is server→board,
+# outbound, already allowed.) Interface-scoped so only the board LAN can reach these ports.
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+  IFACE="${BOARD_IFACE:-$(ip -o -4 addr show 2>/dev/null | awk '$4 ~ /^192\.168\.2\./ {print $2; exit}')}"
+  if [ -n "$IFACE" ]; then
+    c_info "ufw: allowing inbound board UDP on $IFACE (5006 sensor data, 5008 FSW config)"
+    sudo ufw allow in on "$IFACE" from 192.168.2.0/24 to any port 5006 proto udp comment 'DAQ sensor data'
+    sudo ufw allow in on "$IFACE" from 192.168.2.0/24 to any port 5008 proto udp comment 'DAQ FSW config'
+    c_ok "firewall rules applied"
+  else
+    c_warn "ufw active but no NIC on 192.168.2.x yet — set the board NIC to 192.168.2.20/24 first, then either re-run this script or add manually:"
+    echo "    sudo ufw allow in on <iface> from 192.168.2.0/24 to any port 5006 proto udp comment 'DAQ sensor data'"
+    echo "    sudo ufw allow in on <iface> from 192.168.2.0/24 to any port 5008 proto udp comment 'DAQ FSW config'"
+  fi
+else
+  c_info "ufw not active — skipping firewall rules (nothing blocking board UDP)."
+fi
+
 echo
 c_ok "DAQ bootstrap complete."
 echo "  Verify:  curl -s localhost:8081/api/debug | head ;  curl -sI localhost:3000 | head -1"
