@@ -109,20 +109,23 @@ const DEFAULT_CONFIG: ConfigData = {};
  * list mid-edit and yank the row (and your cursor) elsewhere. Syncs down when the prop changes.
  */
 function CommitOnBlurNumber({
-  value, onCommit, disabled, className, placeholder,
+  value, onCommit, allowEmpty, disabled, className, placeholder,
 }: {
   value: number | undefined;
-  onCommit: (n: number) => void;
+  onCommit: (n: number | undefined) => void;
+  allowEmpty?: boolean;       // true → clearing the field commits `undefined` (optional field)
   disabled?: boolean;
   className?: string;
   placeholder?: string;
 }) {
-  const [local, setLocal] = useState<string>(value === undefined || value === null ? '' : String(value));
-  useEffect(() => { setLocal(value === undefined || value === null ? '' : String(value)); }, [value]);
+  const toStr = (v?: number) => (v === undefined || v === null || Number.isNaN(v) ? '' : String(v));
+  const [local, setLocal] = useState<string>(toStr(value));
+  useEffect(() => { setLocal(toStr(value)); }, [value]);
   const commit = () => {
-    const n = parseInt(local, 10);
+    if (local.trim() === '') { allowEmpty ? onCommit(undefined) : setLocal(toStr(value)); return; }
+    const n = Number(local);   // float-capable (ports, ADC volts, thresholds)
     if (Number.isFinite(n)) onCommit(n);
-    else setLocal(value === undefined || value === null ? '' : String(value)); // revert junk
+    else setLocal(toStr(value)); // revert junk
   };
   return (
     <input
@@ -444,6 +447,12 @@ export default function ConfigPage() {
   // ── [gui] helpers: tab list + top-bar pressure bars ──────────────────────────
   const guiTabs: string[] = config.gui?.tabs ?? [];
   const guiBars = config.gui?.pressure_bars ?? [];
+  // Every sensor role name across all [sensor_roles_*] sections — the choices a pressure gauge can point at.
+  const allSensorRoles: string[] = Array.from(new Set(
+    Object.keys(config).filter((k) => k.startsWith('sensor_roles_'))
+      .flatMap((k) => Object.keys((config as any)[k] || {})),
+  )).sort();
+  const pressureLimitKeys: string[] = Object.keys(config.pressure_limits ?? {}).sort();
 
   const setGuiTabs = (tabsList: string[]) =>
     setConfig((prev) => ({ ...prev, gui: { ...(prev.gui || {}), tabs: tabsList } }));
@@ -522,18 +531,10 @@ export default function ConfigPage() {
             placeholder="Comma-separated values (e.g., 1, 2, 3)"
           />
         ) : type === 'number' ? (
-          <input
-            type="number"
-            value={value ?? ''}
-            onChange={(e) => {
-              const raw = e.target.value;
-              if (raw === '') {
-                onChange(undefined);
-                return;
-              }
-              const n = Number(raw);
-              onChange(Number.isFinite(n) ? n : undefined);
-            }}
+          <CommitOnBlurNumber
+            value={value == null || value === '' ? undefined : Number(value)}
+            allowEmpty
+            onCommit={(n) => onChange(n)}
             disabled={fieldDisabled}
             className="w-full px-3 py-2 bg-background border border-gray-700 rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
           />
@@ -1176,6 +1177,7 @@ export default function ConfigPage() {
                             <CommitOnBlurNumber
                               value={typeof sensorId === 'number' ? sensorId : Number(sensorId)}
                               onCommit={(n) => {
+                                if (n === undefined) return;
                                 const updated = { ...(map || {}) };
                                 updated[name] = n;
                                 setConfig({ ...config, [key]: updated } as any);
@@ -1229,7 +1231,13 @@ export default function ConfigPage() {
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Actuator Roles</h2>
               <div className="space-y-4">
-                {Object.entries(config.actuator_roles || {}).map(([name, value], idx) => {
+                {Object.entries(config.actuator_roles || {})
+                  // Order by board_id then channel (numbers commit on blur, so this re-sort doesn't fire mid-edit).
+                  .sort((a, b) => {
+                    const av = Array.isArray(a[1]) ? a[1] : [], bv = Array.isArray(b[1]) ? b[1] : [];
+                    return (Number(av[2] ?? 0) - Number(bv[2] ?? 0)) || (Number(av[1] ?? 0) - Number(bv[1] ?? 0));
+                  })
+                  .map(([name, value], idx) => {
                   const arr = Array.isArray(value) ? value : [];
                   const type = (arr[0] as string) || 'NC';
                   const actuatorId = typeof arr[1] === 'number' ? arr[1] : Number(arr[1] || 1);
@@ -1265,29 +1273,23 @@ export default function ConfigPage() {
                       <option value="NO">NO (Normally Open)</option>
                       <option value="NC">NC (Normally Closed)</option>
                     </select>
-                    <input
-                      type="number"
+                    <CommitOnBlurNumber
                       value={actuatorId}
-                      onChange={(e) => {
+                      onCommit={(n) => {
+                        if (n === undefined) return;
                         const updated = { ...config.actuator_roles };
-                        const ch = parseInt(e.target.value, 10);
-                        updated[name] = third !== undefined ? ([type, ch, third] as any) : ([type, ch] as any);
+                        updated[name] = third !== undefined ? ([type, n, third] as any) : ([type, n] as any);
                         setConfig({ ...config, actuator_roles: updated });
                       }}
                       className="w-24 px-3 py-2 bg-background border border-gray-700 rounded text-white"
-                      placeholder="ID"
+                      placeholder="Ch"
                     />
-                    <input
-                      type="number"
-                      value={Number.isFinite(boardId as number) ? (boardId as number) : ''}
-                      onChange={(e) => {
-                        const raw = e.target.value;
+                    <CommitOnBlurNumber
+                      value={Number.isFinite(boardId as number) ? (boardId as number) : undefined}
+                      allowEmpty
+                      onCommit={(n) => {
                         const updated = { ...config.actuator_roles };
-                        if (raw === '') {
-                          updated[name] = [type, actuatorId] as any;
-                        } else {
-                          updated[name] = [type, actuatorId, parseInt(raw, 10)] as any;
-                        }
+                        updated[name] = n === undefined ? ([type, actuatorId] as any) : ([type, actuatorId, n] as any);
                         setConfig({ ...config, actuator_roles: updated });
                       }}
                       className="w-32 px-3 py-2 bg-background border border-gray-700 rounded text-white"
@@ -1309,7 +1311,10 @@ export default function ConfigPage() {
                 <button
                   onClick={() => {
                     const updated = { ...config.actuator_roles };
-                    updated['New Actuator'] = ['NC', 1, 12] as any;
+                    let name = 'New Actuator';   // unique name so it doesn't merge onto an existing row
+                    let n = 2;
+                    while (name in updated) name = `New Actuator ${n++}`;
+                    updated[name] = ['NC', 1, 12] as any;
                     setConfig({ ...config, actuator_roles: updated });
                   }}
                   className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
@@ -1491,8 +1496,16 @@ export default function ConfigPage() {
                     return (
                       <div key={i} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center border border-gray-800 rounded p-2">
                         <input value={bar.label ?? ''} onChange={(e) => setBar({ label: e.target.value })} placeholder="Label" className="md:col-span-2 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
-                        <input value={bar.role ?? ''} onChange={(e) => setBar({ role: e.target.value })} placeholder="Sensor role" className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
-                        <input list="pressure-limit-keys" value={bar.limits ?? ''} onChange={(e) => setBar({ limits: e.target.value })} placeholder="Limits key" className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
+                        <select value={bar.role ?? ''} onChange={(e) => setBar({ role: e.target.value || undefined })} className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white">
+                          <option value="">— sensor role —</option>
+                          {allSensorRoles.map((r) => <option key={r} value={r}>{r}</option>)}
+                          {bar.role && !allSensorRoles.includes(bar.role) && <option value={bar.role}>{bar.role} (not in config)</option>}
+                        </select>
+                        <select value={bar.limits ?? ''} onChange={(e) => setBar({ limits: e.target.value || undefined })} className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white">
+                          <option value="">— limits key —</option>
+                          {pressureLimitKeys.map((k) => <option key={k} value={k}>{k}</option>)}
+                          {bar.limits && !pressureLimitKeys.includes(bar.limits) && <option value={bar.limits}>{bar.limits} (not in config)</option>}
+                        </select>
                         <div className="md:col-span-2 flex items-center gap-1">
                           <input type="color" value={bar.color ?? '#888888'} onChange={(e) => setBar({ color: e.target.value })} className="h-8 w-10 bg-background border border-gray-700 rounded" />
                           <input value={bar.color ?? ''} onChange={(e) => setBar({ color: e.target.value })} placeholder="#RRGGBB" className="flex-1 min-w-0 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
