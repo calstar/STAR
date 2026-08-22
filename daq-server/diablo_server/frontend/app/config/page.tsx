@@ -1528,7 +1528,7 @@ export default function ConfigPage() {
                           <button onClick={() => setGuiBars(moveInArray(guiBars, i, 1))} className="px-2 py-1.5 bg-gray-700 rounded hover:bg-gray-600" title="Move down">↓</button>
                           <button onClick={() => setGuiBars(guiBars.filter((_: any, k: number) => k !== i))} className="px-2 py-1.5 bg-red-600 rounded hover:bg-red-700" title="Remove">✕</button>
                         </div>
-                        <input value={(bar.avg_roles ?? []).join(', ')} onChange={(e) => { const parts = e.target.value.split(',').map((s) => s.trim()).filter(Boolean); setBar({ avg_roles: parts.length ? parts : undefined }); }} placeholder="avg roles (optional, comma-separated)" className="md:col-span-12 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
+                        <input value={(bar.avg_roles ?? []).join(', ')} onChange={(e) => { const parts = e.target.value.split(',').map((s) => s.trim()).filter(Boolean); setBar({ avg_roles: parts.length ? parts : undefined }); }} placeholder="Optional — average multiple redundant sensors into this one gauge (comma-separated role names, e.g. two chamber PTs). Leave blank for a single sensor." className="md:col-span-12 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
                       </div>
                     );
                   })}
