@@ -10,7 +10,7 @@
  * Only the always-on server's sensor-backend.service sets SESSION_SERVICE_MODE=systemd.
  */
 import { spawn, type ChildProcess } from 'child_process';
-import { writeFileSync, mkdirSync } from 'fs';
+import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
@@ -19,6 +19,22 @@ import { homedir } from 'os';
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const SIM_SCRIPT = join(PROJECT_ROOT, 'sim', 'board_simulator.py');
 const SIM_CONFIG = join(PROJECT_ROOT, 'config', 'sim_config.toml');
+// The frozen canonical config the sim overlay derives from (committed; tests use it too).
+const CONFIG_BASE = join(PROJECT_ROOT, 'config', 'config_base.toml');
+
+/**
+ * Generate the loopback sim overlay (config/sim_config.toml) from config_base.toml — the same
+ * 192.168.2.x → 127.0.0.x remap start_systemd_sim.sh does. Done here so a simulated run works on
+ * ANY box (a hardware server never runs start_systemd_sim.sh, so the file would otherwise be missing
+ * and the simulated pipeline would point at a nonexistent config and fail). Regenerated each sim
+ * start so it tracks config_base.
+ */
+function ensureSimConfig(): void {
+  if (!existsSync(CONFIG_BASE)) {
+    throw new Error(`Cannot start a simulated run: ${CONFIG_BASE} is missing (it is committed — is the checkout complete?)`);
+  }
+  writeFileSync(SIM_CONFIG, readFileSync(CONFIG_BASE, 'utf-8').replace(/192\.168\.2\./g, '127.0.0.'));
+}
 
 export type SessionServiceMode = 'off' | 'mock' | 'systemd';
 
@@ -112,6 +128,9 @@ export class ServiceController {
 
   async start(dbDir: string, simulated = false): Promise<void> {
     if (this.mode === 'systemd') {
+      // A simulated run reads config/sim_config.toml (loopback overlay). Generate it here so sim
+      // works on ANY box — a hardware server never runs start_systemd_sim.sh, so it'd be missing.
+      if (simulated) ensureSimConfig();
       mkdirSync(dirname(SESSION_ENV_PATH), { recursive: true });
       writeFileSync(SESSION_ENV_PATH, `ELODIN_DB_DIR=${dbDir}\n`);
       // Per-run data-source overlay consumed by the pipeline units.

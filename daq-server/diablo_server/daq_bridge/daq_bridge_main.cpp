@@ -341,6 +341,22 @@ int main(int argc, char* argv[]) {
     std::cout << "Listening on: " << bind_address << ":" << bind_port << std::endl;
     std::cout << std::endl;
 
+    // Hard-fail on a missing config. Otherwise every downstream loader treats "not found" as an
+    // empty config: daq_bridge binds :5006, registers 0 VTables, prints a green ✅, and sits
+    // "active (running)" forever while nothing can ever arrive — a healthy-looking no-op that
+    // presents as a vague "pipeline down". (This is exactly what a sim run does when it points at a
+    // config/sim_config.toml that was never generated.) A visible exit is far better.
+    {
+        std::ifstream cfg_check(config_path);
+        if (!cfg_check.is_open()) {
+            std::cerr << "❌ FATAL: daq_bridge config not found: '" << config_path
+                      << "'. Refusing to start as a 0-board no-op. For a simulated run the backend "
+                      << "generates config/sim_config.toml at session start; for hardware it is "
+                      << "config/config.toml (generated from config/profiles/*.toml)." << std::endl;
+            return 1;
+        }
+    }
+
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
