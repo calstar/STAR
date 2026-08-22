@@ -13,9 +13,9 @@ Internet ─▶ Cloudflare edge ─▶ cloudflared (in Docker) ─┬▶ caddy:8
 One tunnel, one connector. The web apps and SSH both ride it, so **no inbound
 ports need to be open on the box** — not even 22.
 
-> **Don't want to type §1–§6 by hand?** [`bootstrap.sh`](bootstrap.sh) does all
+> **Don't want to type §1–§6 by hand?** [`bootstrap_apps.sh`](bootstrap_apps.sh) does all
 > of it. Copy it to a USB stick (optionally with a filled-in `star-apps.env`
-> next to it), then on the fresh box: `sudo bash /path/to/bootstrap.sh`. It
+> next to it), then on the fresh box: `sudo bash /path/to/bootstrap_apps.sh`. It
 > installs base packages, desktop auto-login, sshd, and Docker; checks out the
 > repo to `/opt/STAR`; and — if `star-apps.env` is present with a tunnel token —
 > launches the stack. The Cloudflare dashboard routes (below) are still manual.

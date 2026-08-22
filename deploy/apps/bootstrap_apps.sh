@@ -8,8 +8,8 @@
 # ── Flash-drive use ──────────────────────────────────────────────────────────
 #   1. Copy this file (and, optionally, a filled-in `star-apps.env`) onto a USB.
 #   2. On the new box: plug in, open a terminal, then:
-#        sudo bash /media/$USER/*/bootstrap.sh
-#      (or cd to the drive and `sudo bash bootstrap.sh`)
+#        sudo bash /media/$USER/*/bootstrap_apps.sh
+#      (or cd to the drive and `sudo bash bootstrap_apps.sh`)
 #
 # If a file named `star-apps.env` sits next to this script, it's used as the
 # stack's .env and the script launches the stack. Otherwise it drops a template
@@ -20,7 +20,7 @@
 
 set -euo pipefail
 
-# ── Tunables (override via env, e.g. `sudo BRANCH=main bash bootstrap.sh`) ────
+# ── Tunables (override via env, e.g. `sudo BRANCH=main bash bootstrap_apps.sh`) ────
 REPO_URL="${REPO_URL:-https://github.com/calstar/STAR.git}"
 # Current deploy branch: main (landing-page and ork-onshape were merged in and retired).
 BRANCH="${BRANCH:-main}"

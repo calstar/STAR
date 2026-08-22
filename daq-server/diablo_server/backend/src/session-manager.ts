@@ -237,6 +237,9 @@ class SessionManager {
     this.clearWarnings();
     await this.controller.stop();
     const stoppedDir = this.dbDir;
+    // Did the run actually record anything? elodin creates the DB dir; a pipeline that never
+    // came up leaves it absent. Don't report "saved" for a run that recorded nothing.
+    const recorded = !!stoppedDir && existsSync(stoppedDir);
     if (!this.keepData && stoppedDir) {
       try {
         rmSync(stoppedDir, { recursive: true, force: true });
@@ -245,8 +248,11 @@ class SessionManager {
         console.warn('⚠️ Failed to remove discarded DB dir:', err);
       }
     }
-    console.log(
-      `[Session] ${auto ? 'auto-' : ''}stopped run (${this.keepData ? 'saved' : 'discarded'}) ${stoppedDir}`,
+    const disposition = this.keepData
+      ? (recorded ? 'saved' : 'saved — WARNING: no data recorded (DB dir was never created)')
+      : 'discarded';
+    (this.keepData && !recorded ? console.warn : console.log)(
+      `[Session] ${auto ? 'auto-' : ''}stopped run (${disposition}) ${stoppedDir}`,
     );
     this.active = false;
     this.dbDir = null;

@@ -13,18 +13,45 @@ are up on the host, the public URL just works — nothing to change in the Docke
 > that actually *starts* it is the `systemctl --user enable --now …` in Step 6 — everything
 > before that is just clone/build/install. You watch it with `journalctl`, not tmux.
 
-## Automated (bootstrap)
+## Automated (bootstrap) — recommended
 
-On the combined apps+DAQ box, the apps bootstrap can provision all of this in one shot —
-it runs the exact steps below as the DAQ user:
+**`deploy/bootstrap_daq.sh`** does the whole thing in one shot: apt deps, Node 20, **elodin-db
+(pinned to the CI-validated version and hard-verified)**, C++ build, SPA build, systemd unit
+install, and it enables + starts the web layer. It's **idempotent** — re-run it to update a box.
 
 ```bash
-WITH_DAQ=1 sudo -E bash deploy/apps/bootstrap.sh      # add USE_SIM=1 for a no-hardware box
+# on the server, as the DAQ user (NOT root — only apt uses sudo internally):
+bash deploy/bootstrap_daq.sh
+```
+Fresh box / specific branch (it will clone if the repo isn't there yet):
+```bash
+BRANCH=main DAQ_CLONE=~/STAR-daq bash deploy/bootstrap_daq.sh
+# or pull it straight from the raw URL and pipe to bash with BRANCH set.
 ```
 
-That clones to `~/STAR-daq`, installs the build deps + Node + elodin-db, builds the C++ and
-the SPA, installs the systemd units, and starts the web layer. The rest of this doc is the
-manual/reference version of the same steps (and what to do if the bootstrap run warns).
+Env knobs: `BRANCH` (default `main`), `DAQ_CLONE` (`~/STAR-daq`), `REPO_URL`, `USE_SIM` (`0`;
+`1` = build/run without hardware), `START` (`1`; `0` = build+install only, don't start).
+
+Why this script (vs. the old `setup.sh`): it pins **one** elodin-db version matching CI, actually
+runs every step (no commented-out installs), and **hard-verifies elodin-db** — a box that can't run
+the DB fails loudly here instead of silently respawning `sensor-elodin` every 5 s later.
+
+> **Before a real run, two host things the script can't do for you:**
+> 1. **Network:** the board-LAN NIC must be statically **`192.168.2.20/24`** — the board firmware
+>    (`firmware/Hotfire_Code/common/hotfire_config.h`) hardcodes the server at `192.168.2.20:5006`,
+>    so any other address silently drops all board traffic. (nmcli/netplan, OS-level.)
+> 2. **Config:** `config/config.toml` is a **generated artifact** now; the source of truth is
+>    `config/profiles/*.toml`. Edit config via the GUI **Config tab** (it edits the active profile
+>    and deploys it); a live session-start deploys the active profile. Carrying a pre-existing config
+>    forward: save it as `config/profiles/<name>.toml` and `echo <name> > config/.active_profile`.
+
+**Combined apps + DAQ box:** the apps-stack bootstrap can also pull the DAQ in:
+```bash
+WITH_DAQ=1 sudo -E bash deploy/apps/bootstrap_apps.sh      # add USE_SIM=1 for a no-hardware box
+```
+
+The rest of this doc is the manual/reference version of the same steps (and what to do if a
+bootstrap run warns).
 
 ## Where it goes
 
@@ -58,15 +85,26 @@ present up front. Works on an air-gapped test-stand with no further fetches.
 
 ## 2. Prerequisites (once per box)
 
+All three of these are **required** — run each (the `bootstrap_daq.sh` path above does them for you):
+
 ```bash
+# 1) build deps (CMake needs ZLIB + OpenSSL + Eigen):
 sudo apt-get update && sudo apt-get install -y \
   build-essential cmake ninja-build libeigen3-dev pkg-config python3 python3-venv \
-  zlib1g-dev libssl-dev
-#   CMake requires ZLIB + OpenSSL (zlib1g-dev, libssl-dev) and Eigen (libeigen3-dev).
-# Node 20+ :  bash deploy/setup/install_nodejs.sh   (or nvm)
-# elodin-db :  curl -LsSf https://github.com/elodin-sys/elodin/releases/download/v0.16.1/elodin-db-installer.sh | sh
-#              (installs to ~/.cargo/bin — make sure that's on PATH)
+  zlib1g-dev libssl-dev curl git
+
+# 2) Node 20+ (do NOT skip):
+bash deploy/setup/install_nodejs.sh          # or nvm
+
+# 3) elodin-db — the DB the pipeline records to; installs to ~/.cargo/bin (do NOT skip):
+curl -LsSf https://github.com/elodin-sys/elodin/releases/download/v0.16.1/elodin-db-installer.sh | sh
+"$HOME/.cargo/bin/elodin-db" --version       # MUST print a version — if not, no run will record data
 ```
+
+> If `elodin-db` is missing, `sensor-elodin` now fails immediately and visibly
+> (`AssertPathExists`), and a session start is rejected rather than reporting a phantom "saved"
+> run. On ARM64/Jetson the prebuilt installer won't work (musl-only) — use
+> `deploy/setup/setup_jetson.sh` (builds it from source).
 
 ## 3. Build the C++ binaries
 

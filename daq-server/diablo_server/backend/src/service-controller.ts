@@ -91,6 +91,19 @@ async function waitUntilSettled(units: string[], timeoutMs = 15000): Promise<boo
   }
 }
 
+/** Poll until every unit reports `active`; bail early (false) on a hard `failed`
+ *  (e.g. AssertPathExists tripped by a missing elodin-db), or on timeout. */
+async function waitUntilActive(units: string[], timeoutMs = 10000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const states = await systemctlStates(units);
+    if (states.every((s) => s === 'active')) return true;
+    if (states.some((s) => s === 'failed')) return false;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
 export class ServiceController {
   constructor(private readonly mode: SessionServiceMode) {}
 
@@ -112,6 +125,16 @@ export class ServiceController {
       // still owns :5006 and the new one would crash-loop. Wait for a clean slate.
       await waitUntilSettled(pipelineUnits(true));
       await runSystemctl('start', pipelineUnits(simulated));
+      // A run isn't real unless the DB actually came up. If elodin-db is missing/broken,
+      // sensor-elodin hard-fails (AssertPathExists) or crash-loops — without this check the
+      // session would report "active" and later claim the run was "saved" with no data.
+      if (!(await waitUntilActive(['sensor-elodin'], 10000))) {
+        await runSystemctl('stop', pipelineUnits(true)).catch(() => {});
+        throw new Error(
+          'Pipeline failed to start: sensor-elodin (elodin-db) did not become active. ' +
+          'Is elodin-db installed at ~/.cargo/bin/elodin-db? See deploy/bootstrap_daq.sh.',
+        );
+      }
     } else {
       console.log(`[Session] (mock) start pipeline → ${dbDir} (simulated=${simulated})`);
       // In mock mode the pipeline is already running; only the simulator is ours
