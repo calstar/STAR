@@ -103,6 +103,41 @@ interface ConfigData {
 // Keep defaults minimal: config.toml is the source of truth.
 const DEFAULT_CONFIG: ConfigData = {};
 
+/**
+ * Number input that holds a LOCAL value while you type and only commits on blur / Enter. Used for
+ * fields the list is sorted by (sensor channel) — committing on every keystroke would re-sort the
+ * list mid-edit and yank the row (and your cursor) elsewhere. Syncs down when the prop changes.
+ */
+function CommitOnBlurNumber({
+  value, onCommit, disabled, className, placeholder,
+}: {
+  value: number | undefined;
+  onCommit: (n: number) => void;
+  disabled?: boolean;
+  className?: string;
+  placeholder?: string;
+}) {
+  const [local, setLocal] = useState<string>(value === undefined || value === null ? '' : String(value));
+  useEffect(() => { setLocal(value === undefined || value === null ? '' : String(value)); }, [value]);
+  const commit = () => {
+    const n = parseInt(local, 10);
+    if (Number.isFinite(n)) onCommit(n);
+    else setLocal(value === undefined || value === null ? '' : String(value)); // revert junk
+  };
+  return (
+    <input
+      type="number"
+      value={local}
+      disabled={disabled}
+      placeholder={placeholder}
+      className={className}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+    />
+  );
+}
+
 export default function ConfigPage() {
   const [config, setConfig] = useState<ConfigData>(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(true);
@@ -1066,7 +1101,11 @@ export default function ConfigPage() {
                   }))
                 ).map(({ key, title }) => {
                   const map = (config as any)[key] as Record<string, number> | undefined;
-                  const entries = Object.entries(map || {});
+                  // Display ordered by channel number (not config/insertion order). The number field
+                  // commits on blur so this re-sort doesn't fire mid-keystroke.
+                  const entries = Object.entries(map || {}).sort(
+                    (a, b) => (Number(a[1]) || 0) - (Number(b[1]) || 0),
+                  );
                   return (
                     <div key={key} className="space-y-4">
                       <h3 className="text-lg font-semibold">{title}</h3>
@@ -1076,28 +1115,28 @@ export default function ConfigPage() {
                         </p>
                       )}
                       <div className="space-y-3">
-                        {entries.map(([name, sensorId]) => (
-                          <div key={`${key}:${name}`} className="flex items-center gap-4">
+                        {entries.map(([name, sensorId], idx) => (
+                          // Key by index, not name: keying by the (changing) name remounts the input
+                          // on every keystroke → focus loss. Renames rebuild the map preserving order
+                          // so the row stays in place (delete+re-add would jump it to the end).
+                          <div key={`${key}:${idx}`} className="flex items-center gap-4">
                             <input
                               type="text"
                               value={name}
                               onChange={(e) => {
-                                const updated = { ...(map || {}) };
-                                delete updated[name];
-                                updated[e.target.value] = sensorId;
-                                setConfig({ ...config, [key]: updated } as any);
+                                const newName = e.target.value;
+                                const rebuilt: Record<string, any> = {};
+                                for (const [k, v] of Object.entries(map || {})) rebuilt[k === name ? newName : k] = v;
+                                setConfig({ ...config, [key]: rebuilt } as any);
                               }}
                               className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                             />
                             <span className="text-text-muted">=</span>
-                            <input
-                              type="number"
-                              value={sensorId ?? ''}
-                              onChange={(e) => {
-                                const raw = e.target.value;
+                            <CommitOnBlurNumber
+                              value={typeof sensorId === 'number' ? sensorId : Number(sensorId)}
+                              onCommit={(n) => {
                                 const updated = { ...(map || {}) };
-                                if (raw === '') return;
-                                updated[name] = parseInt(raw, 10);
+                                updated[name] = n;
                                 setConfig({ ...config, [key]: updated } as any);
                               }}
                               className="w-28 px-3 py-2 bg-background border border-gray-700 rounded text-white"
@@ -1136,22 +1175,24 @@ export default function ConfigPage() {
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Actuator Roles</h2>
               <div className="space-y-4">
-                {Object.entries(config.actuator_roles || {}).map(([name, value]) => {
+                {Object.entries(config.actuator_roles || {}).map(([name, value], idx) => {
                   const arr = Array.isArray(value) ? value : [];
                   const type = (arr[0] as string) || 'NC';
                   const actuatorId = typeof arr[1] === 'number' ? arr[1] : Number(arr[1] || 1);
                   const third = arr.length >= 3 ? arr[2] : undefined;
                   const boardId = typeof third === 'number' ? third : (typeof third === 'string' ? Number(third) : undefined);
                   return (
-                  <div key={name} className="flex items-center gap-4">
+                  // Key by index, not name — keying by the changing name remounts the row each
+                  // keystroke (focus loss). Rename rebuilds preserving order so the row stays put.
+                  <div key={`act:${idx}`} className="flex items-center gap-4">
                     <input
                       type="text"
                       value={name}
                       onChange={(e) => {
-                        const updated = { ...config.actuator_roles };
-                        delete updated[name];
-                        updated[e.target.value] = third !== undefined ? ([type, actuatorId, third] as any) : ([type, actuatorId] as any);
-                        setConfig({ ...config, actuator_roles: updated });
+                        const newName = e.target.value;
+                        const rebuilt: Record<string, any> = {};
+                        for (const [k, v] of Object.entries(config.actuator_roles || {})) rebuilt[k === name ? newName : k] = v;
+                        setConfig({ ...config, actuator_roles: rebuilt });
                       }}
                       className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                     />
