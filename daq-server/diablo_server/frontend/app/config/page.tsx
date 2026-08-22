@@ -1489,6 +1489,14 @@ export default function ConfigPage() {
                 <p className="text-sm text-text-muted mb-4">
                   Ordered gauges in the header. NOP/MEOP come from the Pressure Limits tab (via the <code>limits</code> key).
                 </p>
+                {/* Column header so each field is labeled (md+ only; on mobile the fields stack). */}
+                <div className="hidden md:grid md:grid-cols-12 gap-2 px-2 mb-1 text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+                  <div className="md:col-span-3">Sensor (PT role)</div>
+                  <div className="md:col-span-3">Label on gauge</div>
+                  <div className="md:col-span-2">Limits (NOP/MEOP)</div>
+                  <div className="md:col-span-2">Color</div>
+                  <div className="md:col-span-2 text-right">Order · remove</div>
+                </div>
                 <div className="space-y-3">
                   {guiBars.map((bar: any, i: number) => {
                     const setBar = (patch: any) => setGuiBars(guiBars.map((b: any, k: number) => (k === i ? { ...b, ...patch } : b)));
@@ -1511,14 +1519,14 @@ export default function ConfigPage() {
                             }
                             setBar(patch);
                           }}
-                          className="md:col-span-4 px-2 py-1.5 bg-background border border-gray-700 rounded text-white"
+                          className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white"
                         >
                           <option value="">— pressure sensor —</option>
                           {pressureRoles.map((r) => <option key={r} value={r}>{r}</option>)}
                           {bar.role && !pressureRoles.includes(bar.role) && <option value={bar.role}>{bar.role} (not a PT role)</option>}
                         </select>
                         <input value={bar.label ?? ''} onChange={(e) => setBar({ label: e.target.value })} placeholder="Label (shown on gauge)" className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
-                        <div className="md:col-span-1 text-xs text-text-muted truncate" title="Pressure limits (NOP/MEOP) for this gauge — from the Pressure Limits tab, matched to the sensor">
+                        <div className="md:col-span-2 text-xs text-text-muted truncate self-center" title="Pressure limits (NOP/MEOP) for this gauge — from the Pressure Limits tab, matched to the sensor by name. 'default' = no matching limits, so generic thresholds are used.">
                           {bar.limits ? bar.limits : 'default'}
                         </div>
                         <div className="md:col-span-2 flex items-center gap-1">
