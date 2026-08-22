@@ -138,6 +138,46 @@ function CommitOnBlurNumber({
   );
 }
 
+/**
+ * Text input for a map KEY (role name) that commits on blur / Enter and refuses to silently merge
+ * onto an existing name. Holds a local value while typing (so no mid-keystroke object rebuilds), and
+ * on commit: empty or unchanged → revert; duplicate of another key → call onError + revert; otherwise
+ * onRename. Renaming a role onto an existing one used to overwrite it (one role vanished).
+ */
+function CommitOnBlurName({
+  value, siblings, onRename, onError, className,
+}: {
+  value: string;
+  siblings: string[];
+  onRename: (newName: string) => void;
+  onError: (msg: string) => void;
+  className?: string;
+}) {
+  const [local, setLocal] = useState<string>(value);
+  useEffect(() => { setLocal(value); }, [value]);
+  const commit = () => {
+    const next = local.trim();
+    if (next === value) { setLocal(value); return; }
+    if (next === '') { onError('Name cannot be empty.'); setLocal(value); return; }
+    if (siblings.some((s) => s !== value && s === next)) {
+      onError(`A role named "${next}" already exists — rename skipped so the two aren't merged.`);
+      setLocal(value);
+      return;
+    }
+    onRename(next);
+  };
+  return (
+    <input
+      type="text"
+      value={local}
+      className={className}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+    />
+  );
+}
+
 export default function ConfigPage() {
   const [config, setConfig] = useState<ConfigData>(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(true);
@@ -1098,8 +1138,9 @@ export default function ConfigPage() {
                   .map(([boardKey, b]) => ({
                     key: `sensor_roles_${boardKey}`,
                     title: `${b.type} Roles — ${boardKey} (sensor_roles_${boardKey})`,
+                    maxCh: typeof b.num_sensors === 'number' && b.num_sensors > 0 ? b.num_sensors : 10,
                   }))
-                ).map(({ key, title }) => {
+                ).map(({ key, title, maxCh }) => {
                   const map = (config as any)[key] as Record<string, number> | undefined;
                   // Display ordered by channel number (not config/insertion order). The number field
                   // commits on blur so this re-sort doesn't fire mid-keystroke.
@@ -1120,15 +1161,15 @@ export default function ConfigPage() {
                           // on every keystroke → focus loss. Renames rebuild the map preserving order
                           // so the row stays in place (delete+re-add would jump it to the end).
                           <div key={`${key}:${idx}`} className="flex items-center gap-4">
-                            <input
-                              type="text"
+                            <CommitOnBlurName
                               value={name}
-                              onChange={(e) => {
-                                const newName = e.target.value;
+                              siblings={Object.keys(map || {})}
+                              onRename={(newName) => {
                                 const rebuilt: Record<string, any> = {};
                                 for (const [k, v] of Object.entries(map || {})) rebuilt[k === name ? newName : k] = v;
                                 setConfig({ ...config, [key]: rebuilt } as any);
                               }}
+                              onError={(msg) => { setError(msg); setTimeout(() => setError(null), 4000); }}
                               className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                             />
                             <span className="text-text-muted">=</span>
@@ -1157,7 +1198,20 @@ export default function ConfigPage() {
                       <button
                         onClick={() => {
                           const updated = { ...(map || {}) };
-                          updated['New Sensor'] = 1;
+                          // First free channel 1..maxCh (board's num_sensors). Full → don't add.
+                          const used = new Set(Object.values(updated).map((v) => Number(v)));
+                          let freeCh = 0;
+                          for (let c = 1; c <= maxCh; c++) { if (!used.has(c)) { freeCh = c; break; } }
+                          if (freeCh === 0) {
+                            setError(`All ${maxCh} channels are in use here — remove a role before adding another.`);
+                            setTimeout(() => setError(null), 4000);
+                            return;
+                          }
+                          // Unique name so the new row doesn't merge onto an existing one.
+                          let newName = `New Sensor ${freeCh}`;
+                          let n = 2;
+                          while (newName in updated) newName = `New Sensor ${freeCh} (${n++})`;
+                          updated[newName] = freeCh;
                           setConfig({ ...config, [key]: updated } as any);
                         }}
                         className="px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
@@ -1185,15 +1239,15 @@ export default function ConfigPage() {
                   // Key by index, not name — keying by the changing name remounts the row each
                   // keystroke (focus loss). Rename rebuilds preserving order so the row stays put.
                   <div key={`act:${idx}`} className="flex items-center gap-4">
-                    <input
-                      type="text"
+                    <CommitOnBlurName
                       value={name}
-                      onChange={(e) => {
-                        const newName = e.target.value;
+                      siblings={Object.keys(config.actuator_roles || {})}
+                      onRename={(newName) => {
                         const rebuilt: Record<string, any> = {};
                         for (const [k, v] of Object.entries(config.actuator_roles || {})) rebuilt[k === name ? newName : k] = v;
                         setConfig({ ...config, actuator_roles: rebuilt });
                       }}
+                      onError={(msg) => { setError(msg); setTimeout(() => setError(null), 4000); }}
                       className="flex-1 px-3 py-2 bg-background border border-gray-700 rounded text-white"
                     />
                     <span className="text-text-muted">=</span>
