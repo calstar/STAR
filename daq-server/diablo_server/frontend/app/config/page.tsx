@@ -1502,7 +1502,9 @@ export default function ConfigPage() {
                           onChange={(e) => {
                             const newRole = e.target.value || undefined;
                             const patch: any = { role: newRole };
-                            if (!bar.label || bar.label === bar.role) patch.label = newRole ?? '';
+                            // Auto-fill the label from the sensor name unless the user typed a custom one.
+                            // "Uncustomized" = empty, the 'NEW' add-default, or equal to the previous role.
+                            if (!bar.label || bar.label === 'NEW' || bar.label === bar.role) patch.label = newRole ?? '';
                             if (newRole) {
                               const conv = newRole.replace(/\s+/g, '_');
                               if (pressureLimitKeys.includes(conv)) patch.limits = conv;
@@ -1534,7 +1536,7 @@ export default function ConfigPage() {
                   })}
                 </div>
                 <button
-                  onClick={() => setGuiBars([...guiBars, { label: 'NEW', role: '', limits: '', color: '#888888' }])}
+                  onClick={() => setGuiBars([...guiBars, { label: '', role: '', limits: '', color: '#888888' }])}
                   className="mt-4 px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600"
                 >
                   + Add Gauge
