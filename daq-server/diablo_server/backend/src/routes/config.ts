@@ -3,7 +3,7 @@
  * Handles reading and writing config.toml
  */
 
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, copyFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { parse as parseToml, stringify as stringifyToml } from '@iarna/toml';
@@ -34,7 +34,23 @@ export function getConfigPath(): string {
     }
   }
 
-  throw new Error('Config file not found');
+  // config.toml is a generated runtime artifact (git-ignored). If it doesn't exist yet — a fresh
+  // checkout that hasn't deployed a profile — self-heal by materializing it from the committed
+  // default profile (config/profiles/default.toml) sitting next to it. This keeps the backend and
+  // every C++ service that reads config.toml working without a manual bootstrap step.
+  for (const path of possiblePaths) {
+    const defaultProfile = join(dirname(path), 'profiles', 'default.toml');
+    if (existsSync(defaultProfile)) {
+      try {
+        copyFileSync(defaultProfile, path);
+        readFileSync(path, 'utf-8');
+        console.log(`🌱 Generated config.toml from ${defaultProfile}`);
+        return path;
+      } catch { continue; }
+    }
+  }
+
+  throw new Error('Config file not found (and no config/profiles/default.toml to generate it from)');
 }
 
 let _actuatorRolesParseWarned = false;

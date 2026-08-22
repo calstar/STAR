@@ -19,6 +19,15 @@ trap 'echo "Build failed." >&2' ERR
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 BUILD_DIR="$ROOT/build"
+
+# config.toml is a generated runtime artifact (git-ignored); the committed source of truth is
+# config/profiles/*.toml. Materialize config.toml from the default profile if a fresh checkout hasn't
+# deployed one yet, so every stack that reads config/config.toml directly (daq_bridge, controller, …)
+# has it present. The backend also self-heals this at read time.
+if [ ! -f "$ROOT/config/config.toml" ] && [ -f "$ROOT/config/profiles/default.toml" ]; then
+  cp "$ROOT/config/profiles/default.toml" "$ROOT/config/config.toml"
+  echo "🌱 Generated config/config.toml from config/profiles/default.toml"
+fi
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 
 echo "🔨 Building Sensor System..."

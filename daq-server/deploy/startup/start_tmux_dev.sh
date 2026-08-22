@@ -119,6 +119,10 @@ OTA_CMD_PORT="${OTA_SERVICE_CMD_PORT:-9997}"
 # When USE_SIM=1, remap board IPs from 192.168.2.x (real hardware subnet) to
 # 127.0.0.x (loopback — the full /8 is routable on Linux). This lets the board
 # simulator bind to the config IPs and config_broadcast_service actually reach them.
+# config.toml is a generated runtime artifact — materialize it from the committed default profile if
+# a fresh checkout hasn't deployed one (build.sh also does this; this covers SKIP_CPP_BUILD runs).
+[ -f "$PROJECT/config/config.toml" ] || cp "$PROJECT/config/profiles/default.toml" "$PROJECT/config/config.toml"
+
 CONFIG_FILE="config/config.toml"
 if [ "${USE_SIM:-0}" = "1" ]; then
   # Sim runs derive from the frozen canonical config_base.toml (the dedicated sim/test config),

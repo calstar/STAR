@@ -60,7 +60,12 @@ def main() -> int:
     here = os.path.dirname(os.path.abspath(__file__))
     daq_root = os.path.dirname(here)  # daq-server/
     config_dir = os.path.join(daq_root, "config")
-    files = sorted(glob.glob(os.path.join(config_dir, "*.toml")))
+    # config/*.toml plus the committed config profiles (config/profiles/*.toml — the source of truth;
+    # config.toml itself is a git-ignored generated artifact).
+    files = sorted(
+        glob.glob(os.path.join(config_dir, "*.toml"))
+        + glob.glob(os.path.join(config_dir, "profiles", "*.toml"))
+    )
     if not files:
         print(f"[check_toml] no TOML files found in {config_dir}", flush=True)
         return 0

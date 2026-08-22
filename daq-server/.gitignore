@@ -212,6 +212,6 @@ config/countdown_state.json
 config/sim_config.toml
 # Active config-profile pointer (machine-specific runtime state)
 config/.active_profile
-# Config profiles — runtime-generated from config.toml in this phase (a later phase commits them
-# as the source of truth). Ignored for now so the seeded default.toml doesn't clutter git status.
-config/profiles/
+# config.toml is now a generated runtime artifact (deployed from the active profile / self-healed
+# from config/profiles/default.toml). The committed source of truth is config/profiles/*.toml.
+config/config.toml
