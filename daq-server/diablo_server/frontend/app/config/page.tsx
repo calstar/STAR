@@ -447,10 +447,12 @@ export default function ConfigPage() {
   // ── [gui] helpers: tab list + top-bar pressure bars ──────────────────────────
   const guiTabs: string[] = config.gui?.tabs ?? [];
   const guiBars = config.gui?.pressure_bars ?? [];
-  // Every sensor role name across all [sensor_roles_*] sections — the choices a pressure gauge can point at.
-  const allSensorRoles: string[] = Array.from(new Set(
-    Object.keys(config).filter((k) => k.startsWith('sensor_roles_'))
-      .flatMap((k) => Object.keys((config as any)[k] || {})),
+  // Pressure-sensor role names ONLY — a top-bar gauge shows a pressure, so it should offer roles from
+  // PT boards, not TC/RTD/LC/encoder. Derived from each PT board's own [sensor_roles_<boardKey>] section.
+  const pressureRoles: string[] = Array.from(new Set(
+    Object.entries(config.boards || {})
+      .filter(([, b]) => (b as any)?.type === 'PT')
+      .flatMap(([boardKey]) => Object.keys((config as any)[`sensor_roles_${boardKey}`] || {})),
   )).sort();
   const pressureLimitKeys: string[] = Object.keys(config.pressure_limits ?? {}).sort();
 
@@ -1487,25 +1489,36 @@ export default function ConfigPage() {
                 <p className="text-sm text-text-muted mb-4">
                   Ordered gauges in the header. NOP/MEOP come from the Pressure Limits tab (via the <code>limits</code> key).
                 </p>
-                <datalist id="pressure-limit-keys">
-                  {Object.keys(config.pressure_limits || {}).map((k) => <option key={k} value={k} />)}
-                </datalist>
                 <div className="space-y-3">
                   {guiBars.map((bar: any, i: number) => {
                     const setBar = (patch: any) => setGuiBars(guiBars.map((b: any, k: number) => (k === i ? { ...b, ...patch } : b)));
                     return (
                       <div key={i} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center border border-gray-800 rounded p-2">
-                        <input value={bar.label ?? ''} onChange={(e) => setBar({ label: e.target.value })} placeholder="Label" className="md:col-span-2 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
-                        <select value={bar.role ?? ''} onChange={(e) => setBar({ role: e.target.value || undefined })} className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white">
-                          <option value="">— sensor role —</option>
-                          {allSensorRoles.map((r) => <option key={r} value={r}>{r}</option>)}
-                          {bar.role && !allSensorRoles.includes(bar.role) && <option value={bar.role}>{bar.role} (not in config)</option>}
+                        {/* Pick the pressure sensor in ONE dropdown; its limits come with it (matched by
+                            the space→underscore [pressure_limits] key convention), and the label auto-fills
+                            with the sensor name (still editable — shorten it as you like). */}
+                        <select
+                          value={bar.role ?? ''}
+                          onChange={(e) => {
+                            const newRole = e.target.value || undefined;
+                            const patch: any = { role: newRole };
+                            if (!bar.label || bar.label === bar.role) patch.label = newRole ?? '';
+                            if (newRole) {
+                              const conv = newRole.replace(/\s+/g, '_');
+                              if (pressureLimitKeys.includes(conv)) patch.limits = conv;
+                            }
+                            setBar(patch);
+                          }}
+                          className="md:col-span-4 px-2 py-1.5 bg-background border border-gray-700 rounded text-white"
+                        >
+                          <option value="">— pressure sensor —</option>
+                          {pressureRoles.map((r) => <option key={r} value={r}>{r}</option>)}
+                          {bar.role && !pressureRoles.includes(bar.role) && <option value={bar.role}>{bar.role} (not a PT role)</option>}
                         </select>
-                        <select value={bar.limits ?? ''} onChange={(e) => setBar({ limits: e.target.value || undefined })} className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white">
-                          <option value="">— limits key —</option>
-                          {pressureLimitKeys.map((k) => <option key={k} value={k}>{k}</option>)}
-                          {bar.limits && !pressureLimitKeys.includes(bar.limits) && <option value={bar.limits}>{bar.limits} (not in config)</option>}
-                        </select>
+                        <input value={bar.label ?? ''} onChange={(e) => setBar({ label: e.target.value })} placeholder="Label (shown on gauge)" className="md:col-span-3 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
+                        <div className="md:col-span-1 text-xs text-text-muted truncate" title="Pressure limits (NOP/MEOP) for this gauge — from the Pressure Limits tab, matched to the sensor">
+                          {bar.limits ? bar.limits : 'default'}
+                        </div>
                         <div className="md:col-span-2 flex items-center gap-1">
                           <input type="color" value={bar.color ?? '#888888'} onChange={(e) => setBar({ color: e.target.value })} className="h-8 w-10 bg-background border border-gray-700 rounded" />
                           <input value={bar.color ?? ''} onChange={(e) => setBar({ color: e.target.value })} placeholder="#RRGGBB" className="flex-1 min-w-0 px-2 py-1.5 bg-background border border-gray-700 rounded text-white" />
