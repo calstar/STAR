@@ -1,6 +1,6 @@
 "use server";
 
-import { Prisma } from "@prisma/client";
+import { Prisma, type TaskStatus } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
@@ -85,5 +85,30 @@ export async function deleteTask(formData: FormData) {
   await getCurrentDbUser();
   const id = String(formData.get("id"));
   const task = await prisma.task.delete({ where: { id } });
+  revalidatePath(`/projects/${task.projectId}`);
+}
+
+/**
+ * Kanban move: set a task's column (status) and its fractional position
+ * (boardOrder). Called with typed args from the board client component.
+ */
+export async function moveTask(
+  id: string,
+  status: TaskStatus,
+  boardOrder: number,
+) {
+  await getCurrentDbUser();
+  const parsed = z
+    .object({
+      id: z.string().min(1),
+      status: TaskStatusEnum,
+      boardOrder: z.number().finite(),
+    })
+    .parse({ id, status, boardOrder });
+
+  const task = await prisma.task.update({
+    where: { id: parsed.id },
+    data: { status: parsed.status, boardOrder: parsed.boardOrder },
+  });
   revalidatePath(`/projects/${task.projectId}`);
 }
