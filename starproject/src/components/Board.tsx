@@ -12,7 +12,7 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import type { TaskStatus } from "@prisma/client";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
 import { moveTask } from "@/lib/actions/tasks";
 import {
@@ -33,6 +33,26 @@ export function Board({ tasks }: { tasks: BoardTask[] }) {
   const [cols, setCols] = useState<Columns>(() => groupByStatus(tasks));
   const [activeId, setActiveId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
+
+  // Re-sync from the server after any mutation revalidates (e.g. a blocker being
+  // marked done changes other cards' derived "Blocked" badge). Keyed on a content
+  // signature so it only resets when meaningful data actually changed.
+  const signature = useMemo(
+    () =>
+      tasks
+        .map(
+          (t) =>
+            `${t.id}:${t.status}:${t.boardOrder}:${(t.blockedBy ?? [])
+              .map((b) => b.blockedByTask.status)
+              .join(",")}`,
+        )
+        .join("|"),
+    [tasks],
+  );
+  useEffect(() => {
+    setCols(groupByStatus(tasks));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -119,7 +139,7 @@ export function Board({ tasks }: { tasks: BoardTask[] }) {
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveId(null)}
     >
-      <div className="flex gap-3 overflow-x-auto pb-2">
+      <div className="flex gap-3 pb-2">
         {STATUS_COLUMNS.map((c) => (
           <Column
             key={c.key}

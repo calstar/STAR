@@ -5,14 +5,28 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { z } from "zod";
 
+import {
+  dateLabel,
+  priorityLabel,
+  recordActivity,
+  subteamLabel,
+  userLabel,
+} from "@/lib/activity";
 import { prisma } from "@/lib/db";
 import { notifyAssignment } from "@/lib/notifications";
+import { STATUS_LABEL } from "@/lib/tasks";
 import { getCurrentDbUser } from "@/lib/user";
 import {
   TaskPriorityEnum,
   TaskStatusEnum,
   taskCreateSchema,
 } from "@/lib/validation";
+
+// What updateTask / moveTask re-read so activities can render human values.
+const withNames = {
+  assignee: { select: { name: true, email: true } },
+  subteam: { select: { name: true } },
+} as const;
 
 export async function createTask(formData: FormData) {
   const user = await getCurrentDbUser();
@@ -22,6 +36,7 @@ export async function createTask(formData: FormData) {
     description: formData.get("description"),
     priority: formData.get("priority"),
     assigneeId: formData.get("assigneeId"),
+    subteamId: formData.get("subteamId"),
     startDate: formData.get("startDate"),
     dueDate: formData.get("dueDate"),
   });
@@ -32,12 +47,24 @@ export async function createTask(formData: FormData) {
       description: data.description,
       priority: data.priority,
       assigneeId: data.assigneeId,
+      subteamId: data.subteamId,
       startDate: data.startDate,
       dueDate: data.dueDate,
       createdById: user.id,
     },
   });
+
+  await recordActivity({
+    actorId: user.id,
+    taskId: created.id,
+    projectId: created.projectId,
+    taskTitle: created.title,
+    kind: "created",
+  });
+
   revalidatePath(`/projects/${data.projectId}`);
+  revalidatePath("/tasks");
+  revalidatePath("/activity");
 
   if (data.assigneeId) {
     const assigneeId = data.assigneeId;
@@ -50,29 +77,19 @@ export async function createTask(formData: FormData) {
 /**
  * Partial update: only fields actually present in the FormData are touched, so
  * each inline control in a TaskRow can submit just its own field without
- * clobbering the others. An empty value clears the (nullable) field.
+ * clobbering the others. An empty value clears the (nullable) field. Every
+ * changed field is logged to the Activity feed with its before/after value.
  */
 export async function updateTask(formData: FormData) {
   const user = await getCurrentDbUser();
   const id = String(formData.get("id"));
   if (!id) throw new Error("updateTask: missing task id");
 
-  // Detect an assignee change up front (need the previous value so a no-op
-  // re-save doesn't send an email).
-  const changingAssignee = formData.has("assigneeId");
-  const newAssigneeId = changingAssignee
-    ? formData.get("assigneeId")
-      ? String(formData.get("assigneeId"))
-      : null
-    : null;
-  let oldAssigneeId: string | null = null;
-  if (changingAssignee && newAssigneeId) {
-    const before = await prisma.task.findUnique({
-      where: { id },
-      select: { assigneeId: true },
-    });
-    oldAssigneeId = before?.assigneeId ?? null;
-  }
+  const old = await prisma.task.findUnique({
+    where: { id },
+    include: withNames,
+  });
+  if (!old) throw new Error("updateTask: task not found");
 
   const data: Prisma.TaskUpdateInput = {};
 
@@ -94,6 +111,10 @@ export async function updateTask(formData: FormData) {
     const v = formData.get("assigneeId");
     data.assignee = v ? { connect: { id: String(v) } } : { disconnect: true };
   }
+  if (formData.has("subteamId")) {
+    const v = formData.get("subteamId");
+    data.subteam = v ? { connect: { id: String(v) } } : { disconnect: true };
+  }
   if (formData.has("dueDate")) {
     const v = String(formData.get("dueDate") ?? "");
     data.dueDate = v === "" ? null : new Date(v);
@@ -103,10 +124,51 @@ export async function updateTask(formData: FormData) {
     data.startDate = v === "" ? null : new Date(v);
   }
 
-  const task = await prisma.task.update({ where: { id }, data });
+  const task = await prisma.task.update({
+    where: { id },
+    data,
+    include: withNames,
+  });
   revalidatePath(`/projects/${task.projectId}`);
+  revalidatePath("/tasks");
 
-  if (newAssigneeId && newAssigneeId !== oldAssigneeId) {
+  // Log each changed field (skip description — long/noisy).
+  const log = (field: string, from: string, to: string) =>
+    recordActivity({
+      actorId: user.id,
+      taskId: task.id,
+      projectId: task.projectId,
+      taskTitle: task.title,
+      kind: "updated",
+      field,
+      from,
+      to,
+    });
+
+  if (formData.has("title") && old.title !== task.title)
+    await log("title", old.title, task.title);
+  if (formData.has("status") && old.status !== task.status)
+    await log("status", STATUS_LABEL[old.status], STATUS_LABEL[task.status]);
+  if (formData.has("priority") && old.priority !== task.priority)
+    await log("priority", priorityLabel(old.priority), priorityLabel(task.priority));
+  if (
+    formData.has("dueDate") &&
+    old.dueDate?.getTime() !== task.dueDate?.getTime()
+  )
+    await log("due", dateLabel(old.dueDate), dateLabel(task.dueDate));
+  if (formData.has("assigneeId") && old.assigneeId !== task.assigneeId)
+    await log("assignee", userLabel(old.assignee), userLabel(task.assignee));
+  if (formData.has("subteamId") && old.subteamId !== task.subteamId)
+    await log(
+      "subteam",
+      subteamLabel(old.subteam?.name),
+      subteamLabel(task.subteam?.name),
+    );
+
+  revalidatePath("/activity");
+
+  if (task.assigneeId && task.assigneeId !== old.assigneeId) {
+    const newAssigneeId = task.assigneeId;
     after(() =>
       notifyAssignment({
         taskId: task.id,
@@ -118,10 +180,21 @@ export async function updateTask(formData: FormData) {
 }
 
 export async function deleteTask(formData: FormData) {
-  await getCurrentDbUser();
+  const user = await getCurrentDbUser();
   const id = String(formData.get("id"));
   const task = await prisma.task.delete({ where: { id } });
+
+  await recordActivity({
+    actorId: user.id,
+    taskId: null, // task is gone; the log keeps the title snapshot
+    projectId: task.projectId,
+    taskTitle: task.title,
+    kind: "deleted",
+  });
+
   revalidatePath(`/projects/${task.projectId}`);
+  revalidatePath("/tasks");
+  revalidatePath("/activity");
 }
 
 /**
@@ -133,7 +206,7 @@ export async function moveTask(
   status: TaskStatus,
   boardOrder: number,
 ) {
-  await getCurrentDbUser();
+  const user = await getCurrentDbUser();
   const parsed = z
     .object({
       id: z.string().min(1),
@@ -142,9 +215,29 @@ export async function moveTask(
     })
     .parse({ id, status, boardOrder });
 
+  const old = await prisma.task.findUnique({
+    where: { id: parsed.id },
+    select: { status: true },
+  });
+
   const task = await prisma.task.update({
     where: { id: parsed.id },
     data: { status: parsed.status, boardOrder: parsed.boardOrder },
   });
   revalidatePath(`/projects/${task.projectId}`);
+  revalidatePath("/tasks");
+
+  if (old && old.status !== task.status) {
+    await recordActivity({
+      actorId: user.id,
+      taskId: task.id,
+      projectId: task.projectId,
+      taskTitle: task.title,
+      kind: "updated",
+      field: "status",
+      from: STATUS_LABEL[old.status],
+      to: STATUS_LABEL[task.status],
+    });
+    revalidatePath("/activity");
+  }
 }

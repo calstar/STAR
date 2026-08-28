@@ -1,1 +1,7 @@
 @import "tailwindcss";
+
+/* frappe-gantt is display-only: disable dragging/resizing task bars. */
+.gantt .bar-wrapper,
+.gantt .handle {
+  pointer-events: none;
+}

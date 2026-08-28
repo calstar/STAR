@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { recordActivity } from "@/lib/activity";
 import { prisma } from "@/lib/db";
 import { getCurrentDbUser } from "@/lib/user";
 
@@ -34,13 +35,14 @@ function revalidateFor(projectId: string, taskId: string) {
   revalidatePath(`/projects/${projectId}/tasks/${taskId}`);
   revalidatePath(`/projects/${projectId}`);
   revalidatePath("/tasks");
+  revalidatePath("/activity");
 }
 
 export async function addBlockerAction(
   _prev: BlockerFormState,
   formData: FormData,
 ): Promise<BlockerFormState> {
-  await getCurrentDbUser();
+  const user = await getCurrentDbUser();
   const taskId = String(formData.get("taskId") ?? "");
   const blockedById = String(formData.get("blockedById") ?? "");
 
@@ -48,8 +50,14 @@ export async function addBlockerAction(
   if (taskId === blockedById) return { error: "A task can't block itself." };
 
   const [task, blocker] = await Promise.all([
-    prisma.task.findUnique({ where: { id: taskId }, select: { projectId: true } }),
-    prisma.task.findUnique({ where: { id: blockedById }, select: { projectId: true } }),
+    prisma.task.findUnique({
+      where: { id: taskId },
+      select: { projectId: true, title: true },
+    }),
+    prisma.task.findUnique({
+      where: { id: blockedById },
+      select: { projectId: true, title: true },
+    }),
   ]);
   if (!task || !blocker) return { error: "Task not found." };
   if (task.projectId !== blocker.projectId)
@@ -64,23 +72,42 @@ export async function addBlockerAction(
     return { error: "That would create a circular dependency." };
 
   await prisma.taskBlocker.create({ data: { taskId, blockedById } });
+  await recordActivity({
+    actorId: user.id,
+    taskId,
+    projectId: task.projectId,
+    taskTitle: task.title,
+    kind: "blocker_added",
+    to: blocker.title,
+  });
   revalidateFor(task.projectId, taskId);
   return { ok: true };
 }
 
 export async function removeBlocker(formData: FormData) {
-  await getCurrentDbUser();
+  const user = await getCurrentDbUser();
   const taskId = String(formData.get("taskId"));
   const blockedById = String(formData.get("blockedById"));
 
   const edge = await prisma.taskBlocker.findUnique({
     where: { taskId_blockedById: { taskId, blockedById } },
-    select: { task: { select: { projectId: true } } },
+    select: {
+      task: { select: { projectId: true, title: true } },
+      blockedByTask: { select: { title: true } },
+    },
   });
   if (!edge) return;
 
   await prisma.taskBlocker.delete({
     where: { taskId_blockedById: { taskId, blockedById } },
+  });
+  await recordActivity({
+    actorId: user.id,
+    taskId,
+    projectId: edge.task.projectId,
+    taskTitle: edge.task.title,
+    kind: "blocker_removed",
+    to: edge.blockedByTask.title,
   });
   revalidateFor(edge.task.projectId, taskId);
 }

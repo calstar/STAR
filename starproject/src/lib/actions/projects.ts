@@ -13,12 +13,24 @@ export async function createProject(formData: FormData) {
     name: formData.get("name"),
     description: formData.get("description"),
     color: formData.get("color"),
+    parentId: formData.get("parentId"),
   });
+  if (data.parentId) {
+    const parent = await prisma.project.findUnique({
+      where: { id: data.parentId },
+      select: { parentId: true },
+    });
+    if (!parent) throw new Error("Parent project not found");
+    // Enforce a single level of nesting.
+    if (parent.parentId)
+      throw new Error("Subprojects can't have their own subprojects");
+  }
   const project = await prisma.project.create({
     data: {
       name: data.name,
       description: data.description,
       color: data.color,
+      parentId: data.parentId,
       createdById: user.id,
     },
   });

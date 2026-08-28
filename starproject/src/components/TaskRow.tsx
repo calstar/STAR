@@ -3,7 +3,7 @@
 import type { User } from "@prisma/client";
 import Link from "next/link";
 
-import { deleteTask, updateTask } from "@/lib/actions/tasks";
+import { deleteTask } from "@/lib/actions/tasks";
 import type { BoardTask } from "@/lib/board";
 import { isBlocked } from "@/lib/tasks";
 
@@ -23,23 +23,13 @@ export function TaskRow({ task, users }: { task: BoardTask; users: User[] }) {
     <tr className="border-b border-neutral-100">
       <td className={`${cell} w-full`}>
         <div className="flex items-center gap-2">
-          <form action={updateTask} className="min-w-0 flex-1">
-            <input type="hidden" name="id" value={task.id} />
-            <input
-              name="title"
-              defaultValue={task.title}
-              onBlur={(e) => e.currentTarget.form?.requestSubmit()}
-              className="w-full rounded border border-transparent px-2 py-1 text-sm hover:border-neutral-300 focus:border-neutral-400 focus:outline-none"
-            />
-          </form>
-          {isBlocked(task.blockedBy) && <BlockedBadge />}
           <Link
             href={`/projects/${task.projectId}/tasks/${task.id}`}
-            className="shrink-0 rounded px-1.5 py-1 text-xs text-neutral-500 hover:bg-neutral-100"
-            title="Open task"
+            className="min-w-0 flex-1 truncate rounded px-2 py-1 text-sm font-medium hover:bg-neutral-100 hover:underline"
           >
-            ↗
+            {task.title}
           </Link>
+          {isBlocked(task.blockedBy) && <BlockedBadge />}
         </div>
       </td>
       <td className={cell}>

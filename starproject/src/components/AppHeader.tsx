@@ -9,7 +9,7 @@ export async function AppHeader() {
   const user = await getCurrentDbUser();
   return (
     <header className="border-b border-neutral-200 bg-white">
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
+      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
         <div className="flex items-center gap-6">
           <Link href="/" className="font-semibold tracking-tight">
             STARProject
@@ -20,6 +20,18 @@ export async function AppHeader() {
             </Link>
             <Link href="/tasks" className="text-neutral-600 hover:text-neutral-900">
               Tasks
+            </Link>
+            <Link
+              href="/subteams"
+              className="text-neutral-600 hover:text-neutral-900"
+            >
+              Subteams
+            </Link>
+            <Link
+              href="/activity"
+              className="text-neutral-600 hover:text-neutral-900"
+            >
+              Activity
             </Link>
           </nav>
         </div>

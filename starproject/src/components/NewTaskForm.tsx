@@ -8,9 +8,11 @@ import { createTask } from "@/lib/actions/tasks";
 export function NewTaskForm({
   projectId,
   users,
+  subteams,
 }: {
   projectId: string;
   users: User[];
+  subteams: { id: string; name: string }[];
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const control = "rounded border border-neutral-300 px-3 py-1.5 text-sm";
@@ -42,6 +44,14 @@ export function NewTaskForm({
         {users.map((u) => (
           <option key={u.id} value={u.id}>
             {u.name ?? u.email}
+          </option>
+        ))}
+      </select>
+      <select name="subteamId" defaultValue="" className={control} aria-label="Subteam">
+        <option value="">No subteam</option>
+        {subteams.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}
           </option>
         ))}
       </select>

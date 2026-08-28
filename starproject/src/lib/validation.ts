@@ -10,6 +10,7 @@ export const projectCreateSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(200),
   description: z.preprocess(emptyToUndef, z.string().trim().max(2000).optional()),
   color: z.preprocess(emptyToUndef, z.string().trim().max(20).optional()),
+  parentId: z.preprocess(emptyToUndef, z.string().optional()),
 });
 
 export const taskCreateSchema = z.object({
@@ -18,6 +19,12 @@ export const taskCreateSchema = z.object({
   description: z.preprocess(emptyToUndef, z.string().trim().max(5000).optional()),
   priority: z.preprocess(emptyToUndef, TaskPriorityEnum.optional()),
   assigneeId: z.preprocess(emptyToUndef, z.string().optional()),
+  subteamId: z.preprocess(emptyToUndef, z.string().optional()),
   startDate: z.preprocess(emptyToUndef, z.coerce.date().optional()),
   dueDate: z.preprocess(emptyToUndef, z.coerce.date().optional()),
+});
+
+export const subteamCreateSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(200),
+  color: z.preprocess(emptyToUndef, z.string().trim().max(20).optional()),
 });

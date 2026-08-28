@@ -7,6 +7,7 @@ import { NewTaskForm } from "@/components/NewTaskForm";
 import { TaskRow } from "@/components/TaskRow";
 import { deleteProject } from "@/lib/actions/projects";
 import { prisma } from "@/lib/db";
+import { getSubteams } from "@/lib/subteams";
 import { getTeamUsers } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
@@ -25,10 +26,16 @@ export default async function ProjectPage({
   const view: View =
     rawView === "list" ? "list" : rawView === "gantt" ? "gantt" : "board";
 
-  const [project, users] = await Promise.all([
+  const [project, users, subteams] = await Promise.all([
     prisma.project.findUnique({
       where: { id },
       include: {
+        parent: { select: { id: true, name: true } },
+        children: {
+          where: { archived: false },
+          select: { id: true, name: true, color: true },
+          orderBy: { createdAt: "desc" },
+        },
         tasks: {
           include: {
             assignee: true,
@@ -43,6 +50,7 @@ export default async function ProjectPage({
       },
     }),
     getTeamUsers(),
+    getSubteams(),
   ]);
 
   if (!project) notFound();
@@ -56,9 +64,21 @@ export default async function ProjectPage({
     }`;
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8">
+    <div className="mx-auto max-w-7xl px-6 py-8">
       <div className="flex items-start justify-between gap-4">
         <div>
+          {project.parent && (
+            <div className="mb-1 text-sm text-neutral-500">
+              <Link
+                href={`/projects/${project.parent.id}`}
+                className="hover:underline"
+              >
+                {project.parent.name}
+              </Link>
+              <span className="mx-1">›</span>
+              <span>{project.name}</span>
+            </div>
+          )}
           <div className="flex items-center gap-3">
             <span
               className="inline-block h-4 w-4 rounded-full"
@@ -68,6 +88,26 @@ export default async function ProjectPage({
           </div>
           {project.description && (
             <p className="mt-1 text-neutral-600">{project.description}</p>
+          )}
+          {project.children.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+                Subprojects
+              </span>
+              {project.children.map((c) => (
+                <Link
+                  key={c.id}
+                  href={`/projects/${c.id}`}
+                  className="flex items-center gap-1.5 rounded-full border border-neutral-300 px-2.5 py-0.5 text-sm hover:bg-neutral-100"
+                >
+                  <span
+                    className="inline-block h-2 w-2 rounded-full"
+                    style={{ background: c.color ?? "#a3a3a3" }}
+                  />
+                  {c.name}
+                </Link>
+              ))}
+            </div>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-4">
@@ -102,7 +142,7 @@ export default async function ProjectPage({
       </div>
 
       <div className="mt-4">
-        <NewTaskForm projectId={project.id} users={users} />
+        <NewTaskForm projectId={project.id} users={users} subteams={subteams} />
       </div>
 
       {view === "list" ? (

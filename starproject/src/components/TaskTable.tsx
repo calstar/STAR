@@ -14,7 +14,7 @@ import {
 import Link from "next/link";
 import { useState } from "react";
 
-import { STATUS_LABEL } from "@/lib/tasks";
+import { PRIORITY_BADGE, STATUS_BADGE, STATUS_LABEL } from "@/lib/tasks";
 
 import { BlockedBadge } from "./BlockedBadge";
 
@@ -27,6 +27,8 @@ export type TaskRowData = {
   priority: string;
   assigneeId: string;
   assigneeName: string;
+  subteamId: string;
+  subteamName: string;
   due: string;
   overdue: boolean;
   blocked: boolean;
@@ -55,17 +57,36 @@ const columns = [
     filterFn: "equals",
     cell: (info) => info.row.original.projectName,
   }),
+  col.accessor("subteamId", {
+    id: "subteam",
+    header: "Subteam",
+    filterFn: "equals",
+    cell: (info) => info.row.original.subteamName || "—",
+  }),
   col.accessor("status", {
     header: "Status",
     filterFn: "equals",
-    cell: (info) => STATUS_LABEL[info.getValue()],
+    cell: (info) => (
+      <span
+        className={`rounded px-1.5 py-0.5 text-xs font-medium ${STATUS_BADGE[info.getValue()]}`}
+      >
+        {STATUS_LABEL[info.getValue()]}
+      </span>
+    ),
   }),
   col.accessor("priority", {
     header: "Priority",
     filterFn: "equals",
-    cell: (info) => (
-      <span className="capitalize">{info.getValue() || "—"}</span>
-    ),
+    cell: (info) =>
+      info.getValue() ? (
+        <span
+          className={`rounded px-1.5 py-0.5 text-xs font-medium capitalize ${PRIORITY_BADGE[info.getValue()]}`}
+        >
+          {info.getValue()}
+        </span>
+      ) : (
+        "—"
+      ),
   }),
   col.accessor("assigneeId", {
     header: "Assignee",
@@ -87,17 +108,25 @@ const columns = [
 
 export function TaskTable({
   rows,
-  users,
-  projects,
-  currentUserId,
+  users = [],
+  projects = [],
+  subteams = [],
+  currentUserId = "",
+  initialSubteam,
+  hideFilters = false,
 }: {
   rows: TaskRowData[];
-  users: User[];
-  projects: { id: string; name: string }[];
-  currentUserId: string;
+  users?: User[];
+  projects?: { id: string; name: string }[];
+  subteams?: { id: string; name: string }[];
+  currentUserId?: string;
+  initialSubteam?: string;
+  hideFilters?: boolean;
 }) {
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(
+    initialSubteam ? [{ id: "subteam", value: initialSubteam }] : [],
+  );
   const [globalFilter, setGlobalFilter] = useState("");
 
   const table = useReactTable({
@@ -110,7 +139,14 @@ export function TaskTable({
     globalFilterFn: (row, _id, value) => {
       const v = String(value).toLowerCase();
       const r = row.original;
-      return [r.title, r.projectName, r.assigneeName, r.priority, STATUS_LABEL[r.status]]
+      return [
+        r.title,
+        r.projectName,
+        r.subteamName,
+        r.assigneeName,
+        r.priority,
+        STATUS_LABEL[r.status],
+      ]
         .join(" ")
         .toLowerCase()
         .includes(v);
@@ -132,7 +168,9 @@ export function TaskTable({
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+      <div
+        className={`mb-3 flex flex-wrap items-center gap-2 ${hideFilters ? "hidden" : ""}`}
+      >
         <input
           value={globalFilter}
           onChange={(e) => setGlobalFilter(e.target.value)}
@@ -140,8 +178,17 @@ export function TaskTable({
           className="min-w-48 flex-1 rounded border border-neutral-300 px-3 py-1.5 text-sm"
         />
         <button
-          onClick={() => setFilter("assigneeId", currentUserId)}
-          className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700"
+          onClick={() =>
+            setFilter(
+              "assigneeId",
+              filterValue("assigneeId") === currentUserId ? "" : currentUserId,
+            )
+          }
+          className={`rounded px-3 py-1.5 text-sm font-medium ${
+            filterValue("assigneeId") === currentUserId
+              ? "bg-neutral-900 text-white"
+              : "border border-neutral-300 text-neutral-700 hover:bg-neutral-100"
+          }`}
         >
           My tasks
         </button>
@@ -154,6 +201,18 @@ export function TaskTable({
           {projects.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filterValue("subteam")}
+          onChange={(e) => setFilter("subteam", e.target.value)}
+          className={sel}
+        >
+          <option value="">All subteams</option>
+          {subteams.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
             </option>
           ))}
         </select>

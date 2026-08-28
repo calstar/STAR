@@ -14,3 +14,17 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
   in_progress: "In progress",
   done: "Done",
 };
+
+// Shared color coding for status + priority, used everywhere they're shown.
+export const STATUS_BADGE: Record<TaskStatus, string> = {
+  backlog: "bg-slate-100 text-slate-600",
+  todo: "bg-blue-100 text-blue-700",
+  in_progress: "bg-amber-100 text-amber-700",
+  done: "bg-green-100 text-green-700",
+};
+
+export const PRIORITY_BADGE: Record<string, string> = {
+  low: "bg-slate-100 text-slate-600",
+  medium: "bg-amber-100 text-amber-700",
+  high: "bg-red-100 text-red-700",
+};

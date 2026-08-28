@@ -10,14 +10,17 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
+  modal,
 }: {
   children: React.ReactNode;
+  modal: React.ReactNode;
 }) {
   return (
     <html lang="en">
       <body className="min-h-screen bg-neutral-50 text-neutral-900 antialiased">
         <AppHeader />
         {children}
+        {modal}
       </body>
     </html>
   );

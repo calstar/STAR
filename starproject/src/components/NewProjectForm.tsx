@@ -4,7 +4,11 @@ import { createProject } from "@/lib/actions/projects";
 
 // createProject redirects to the new project page, so the form doesn't need to
 // reset — navigation replaces it.
-export function NewProjectForm() {
+export function NewProjectForm({
+  parents,
+}: {
+  parents: { id: string; name: string }[];
+}) {
   return (
     <form
       action={createProject}
@@ -21,6 +25,19 @@ export function NewProjectForm() {
         placeholder="Description (optional)"
         className="min-w-48 flex-1 rounded border border-neutral-300 px-3 py-1.5 text-sm"
       />
+      <select
+        name="parentId"
+        defaultValue=""
+        aria-label="Parent project"
+        className="rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"
+      >
+        <option value="">Top-level project</option>
+        {parents.map((p) => (
+          <option key={p.id} value={p.id}>
+            Subproject of {p.name}
+          </option>
+        ))}
+      </select>
       <input
         type="color"
         name="color"

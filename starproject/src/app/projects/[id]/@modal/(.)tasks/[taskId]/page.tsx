@@ -1,11 +1,14 @@
 import { notFound } from "next/navigation";
 
 import { TaskDetail } from "@/components/TaskDetail";
+import { TaskModal } from "@/components/TaskModal";
 import { getTaskDetailData } from "@/lib/task-detail";
 
 export const dynamic = "force-dynamic";
 
-export default async function TaskDetailPage({
+// Intercepts /projects/[id]/tasks/[taskId] when navigated to from the board,
+// rendering the detail inside a modal. Direct load / refresh hits the real page.
+export default async function InterceptedTaskModal({
   params,
 }: {
   params: Promise<{ id: string; taskId: string }>;
@@ -15,8 +18,8 @@ export default async function TaskDetailPage({
   if (!data) notFound();
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
+    <TaskModal>
       <TaskDetail data={data} />
-    </div>
+    </TaskModal>
   );
 }

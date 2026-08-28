@@ -1,6 +1,10 @@
 "use client";
 
+import type { TaskStatus } from "@prisma/client";
+import { useState } from "react";
+
 import { updateTask } from "@/lib/actions/tasks";
+import { STATUS_BADGE } from "@/lib/tasks";
 
 const OPTS: [string, string][] = [
   ["backlog", "Backlog"],
@@ -16,17 +20,23 @@ export function StatusSelect({
   taskId: string;
   value: string;
 }) {
+  const [v, setV] = useState(value);
   return (
     <form action={updateTask}>
       <input type="hidden" name="id" value={taskId} />
       <select
         name="status"
-        defaultValue={value}
-        onChange={(e) => e.currentTarget.form?.requestSubmit()}
-        className="rounded border border-neutral-300 bg-white px-2 py-1 text-sm"
+        value={v}
+        onChange={(e) => {
+          setV(e.target.value);
+          e.currentTarget.form?.requestSubmit();
+        }}
+        className={`rounded border border-neutral-300 px-2 py-1 text-sm font-medium ${
+          STATUS_BADGE[v as TaskStatus] ?? ""
+        }`}
       >
-        {OPTS.map(([v, l]) => (
-          <option key={v} value={v}>
+        {OPTS.map(([val, l]) => (
+          <option key={val} value={val}>
             {l}
           </option>
         ))}

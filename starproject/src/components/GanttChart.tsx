@@ -14,6 +14,11 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
   const { scheduled, unscheduled } = useMemo(() => toGanttTasks(tasks), [tasks]);
   const [viewMode, setViewMode] = useState<ViewMode>("Week");
   const ref = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  function scrollTimeline(dir: number) {
+    scrollRef.current?.scrollBy({ left: dir * 600, behavior: "smooth" });
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -22,8 +27,9 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
     el.innerHTML = ""; // clear a previous render (view-mode change / re-run)
 
     // frappe-gantt touches `document`, so it's imported only in the browser.
-    // Import the prebuilt UMD dist (the package `main` is SCSS source).
-    import("frappe-gantt/dist/frappe-gantt.min.js").then((mod) => {
+    // The dist builds are bare global scripts (no module exports); the real
+    // entry is the package's ESM source (compiled via sass).
+    import("frappe-gantt").then((mod) => {
       if (cancelled || !ref.current) return;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const Gantt: any = (mod as any).default ?? mod;
@@ -50,22 +56,43 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
 
   return (
     <div>
-      <div className="mb-3 flex items-center gap-1">
-        {VIEW_MODES.map((m) => (
+      <div className="mb-3 flex items-center gap-2">
+        <div className="flex items-center gap-1">
+          {VIEW_MODES.map((m) => (
+            <button
+              key={m}
+              onClick={() => setViewMode(m)}
+              className={`rounded px-3 py-1 text-sm ${
+                viewMode === m
+                  ? "bg-neutral-900 text-white"
+                  : "text-neutral-600 hover:bg-neutral-100"
+              }`}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+        <div className="ml-auto flex items-center gap-1">
           <button
-            key={m}
-            onClick={() => setViewMode(m)}
-            className={`rounded px-3 py-1 text-sm ${
-              viewMode === m
-                ? "bg-neutral-900 text-white"
-                : "text-neutral-600 hover:bg-neutral-100"
-            }`}
+            onClick={() => scrollTimeline(-1)}
+            aria-label="Scroll earlier"
+            className="rounded border border-neutral-300 px-2 py-1 text-sm hover:bg-neutral-100"
           >
-            {m}
+            ◀
           </button>
-        ))}
+          <button
+            onClick={() => scrollTimeline(1)}
+            aria-label="Scroll later"
+            className="rounded border border-neutral-300 px-2 py-1 text-sm hover:bg-neutral-100"
+          >
+            ▶
+          </button>
+        </div>
       </div>
-      <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white p-2">
+      <div
+        ref={scrollRef}
+        className="overflow-x-auto rounded-lg border border-neutral-200 bg-white p-2"
+      >
         <div ref={ref} />
       </div>
       {unscheduled > 0 && (
