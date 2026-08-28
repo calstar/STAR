@@ -302,6 +302,16 @@ services:
       PORT: 3000
       HOSTNAME: 0.0.0.0
       DATABASE_URL: postgresql://${STARPROJECT_DB_USER:-starproject}:${STARPROJECT_DB_PASSWORD:-starproject}@starproject-db:5432/${STARPROJECT_DB_NAME:-starproject}?schema=public
+      # Notifications (Phase 5). Emails send only when SES_FROM is set; otherwise
+      # the app logs instead. SES reuses the stack's shared AWS_* creds; the app
+      # reads AWS_REGION or falls back to AWS_DEFAULT_REGION.
+      APP_BASE_URL: ${STARPROJECT_APP_BASE_URL:-https://project.starberkeley.org}
+      SES_FROM: ${STARPROJECT_SES_FROM:-}
+      CRON_SECRET: ${STARPROJECT_CRON_SECRET:-}
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     depends_on:
       starproject-db:
         condition: service_healthy
@@ -320,6 +330,25 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # Nightly deadline-notification trigger. POSTs the app's INTERNAL route
+  # (bypasses Caddy) with the shared secret; the route runs the due-soon/overdue
+  # scan (idempotent via NotifLog). Optional — a host crontab or AWS EventBridge
+  # POSTing the same route is an equivalent drop-in.
+  starproject-cron:
+    image: alpine:3
+    restart: unless-stopped
+    depends_on:
+      - starproject
+    environment:
+      CRON_SECRET: ${STARPROJECT_CRON_SECRET:-}
+    command:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache curl >/dev/null
+        echo "0 8 * * * curl -fsS -X POST -H \"X-Cron-Secret: $$CRON_SECRET\" http://starproject:3000/api/cron/deadlines >/proc/1/fd/1 2>&1" > /etc/crontabs/root
+        crond -f -l 8
 
 volumes:
   caddy_data:

@@ -2,9 +2,11 @@
 
 import { Prisma, type TaskStatus } from "@prisma/client";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { z } from "zod";
 
 import { prisma } from "@/lib/db";
+import { notifyAssignment } from "@/lib/notifications";
 import { getCurrentDbUser } from "@/lib/user";
 import {
   TaskPriorityEnum,
@@ -23,7 +25,7 @@ export async function createTask(formData: FormData) {
     startDate: formData.get("startDate"),
     dueDate: formData.get("dueDate"),
   });
-  await prisma.task.create({
+  const created = await prisma.task.create({
     data: {
       projectId: data.projectId,
       title: data.title,
@@ -36,6 +38,13 @@ export async function createTask(formData: FormData) {
     },
   });
   revalidatePath(`/projects/${data.projectId}`);
+
+  if (data.assigneeId) {
+    const assigneeId = data.assigneeId;
+    after(() =>
+      notifyAssignment({ taskId: created.id, assigneeId, actorId: user.id }),
+    );
+  }
 }
 
 /**
@@ -44,9 +53,26 @@ export async function createTask(formData: FormData) {
  * clobbering the others. An empty value clears the (nullable) field.
  */
 export async function updateTask(formData: FormData) {
-  await getCurrentDbUser();
+  const user = await getCurrentDbUser();
   const id = String(formData.get("id"));
   if (!id) throw new Error("updateTask: missing task id");
+
+  // Detect an assignee change up front (need the previous value so a no-op
+  // re-save doesn't send an email).
+  const changingAssignee = formData.has("assigneeId");
+  const newAssigneeId = changingAssignee
+    ? formData.get("assigneeId")
+      ? String(formData.get("assigneeId"))
+      : null
+    : null;
+  let oldAssigneeId: string | null = null;
+  if (changingAssignee && newAssigneeId) {
+    const before = await prisma.task.findUnique({
+      where: { id },
+      select: { assigneeId: true },
+    });
+    oldAssigneeId = before?.assigneeId ?? null;
+  }
 
   const data: Prisma.TaskUpdateInput = {};
 
@@ -79,6 +105,16 @@ export async function updateTask(formData: FormData) {
 
   const task = await prisma.task.update({ where: { id }, data });
   revalidatePath(`/projects/${task.projectId}`);
+
+  if (newAssigneeId && newAssigneeId !== oldAssigneeId) {
+    after(() =>
+      notifyAssignment({
+        taskId: task.id,
+        assigneeId: newAssigneeId,
+        actorId: user.id,
+      }),
+    );
+  }
 }
 
 export async function deleteTask(formData: FormData) {
