@@ -36,6 +36,7 @@ model User {
   createdProjects Project[] @relation("ProjectCreatedBy")
   createdTasks    Task[]    @relation("TaskCreatedBy")
   assignedTasks   Task[]    @relation("TaskAssignee")
+  activities      Activity[] @relation("ActivityActor")
 }
 
 model Project {
@@ -49,6 +50,23 @@ model Project {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  // Optional parent for a subproject. Enforced to a single level (a subproject
+  // can't itself be a parent) in createProject.
+  parentId String?
+  parent   Project?  @relation("ProjectHierarchy", fields: [parentId], references: [id])
+  children Project[] @relation("ProjectHierarchy")
+
+  tasks Task[]
+}
+
+// A discipline/organizational group, a peer lens to Project. Purely a task tag
+// (no membership/roster) — filtering, not access control.
+model Subteam {
+  id        String   @id @default(cuid())
+  name      String
+  color     String?
+  createdAt DateTime @default(now())
+
   tasks Task[]
 }
 
@@ -56,6 +74,8 @@ model Task {
   id          String        @id @default(cuid())
   projectId   String
   project     Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  subteamId   String?
+  subteam     Subteam?      @relation(fields: [subteamId], references: [id])
   title       String
   description String?
   status      TaskStatus    @default(backlog)
@@ -72,6 +92,7 @@ model Task {
 
   blockedBy TaskBlocker[] @relation("BlockedTask") // tasks blocking THIS one
   blocking  TaskBlocker[] @relation("BlockerTask") // tasks THIS one blocks
+  activities Activity[]
 
   @@index([projectId, status])
 }
@@ -100,4 +121,23 @@ model NotifLog {
   sentAt DateTime @default(now())
 
   @@index([taskId, userId, kind])
+}
+
+// Append-only audit log rendered as the Activity feed. Values are stored as the
+// human-readable strings at the time of the change (immutable history).
+model Activity {
+  id        String   @id @default(cuid())
+  kind      String // created | deleted | updated | blocker_added | blocker_removed
+  field     String? // for kind=updated: assignee | status | priority | due | title | subteam
+  fromValue String?
+  toValue   String?
+  taskTitle String
+  taskId    String?
+  task      Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  projectId String?
+  actorId   String
+  actor     User     @relation("ActivityActor", fields: [actorId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }
