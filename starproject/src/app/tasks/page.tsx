@@ -60,7 +60,7 @@ export default async function TasksPage({
   return (
     <div className="mx-auto max-w-7xl px-6 py-8">
       <h1 className="text-2xl font-semibold">Tasks</h1>
-      <p className="mt-1 text-sm text-neutral-500">
+      <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
         All tasks across every project.
       </p>
       <div className="mt-6">

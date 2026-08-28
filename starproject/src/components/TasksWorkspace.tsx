@@ -96,18 +96,18 @@ export function TasksWorkspace({
     `rounded px-3 py-1 text-sm ${
       view === v
         ? "bg-neutral-900 text-white"
-        : "text-neutral-600 hover:bg-neutral-100"
+        : "text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100"
     }`;
   const chip = (active: boolean) =>
     `rounded-full border px-2.5 py-0.5 text-sm ${
       active
         ? "border-neutral-900 bg-neutral-900 text-white"
-        : "border-neutral-300 text-neutral-700 hover:bg-neutral-100"
+        : "border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100"
     }`;
 
   return (
     <div>
-      <div className="flex flex-col gap-3 rounded-lg border border-neutral-200 bg-white p-3">
+      <div className="flex flex-col gap-3 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1">
             <button onClick={() => setView("table")} className={tabBtn("table")}>
@@ -124,14 +124,14 @@ export function TasksWorkspace({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search tasks…"
-            className="min-w-48 flex-1 rounded border border-neutral-300 px-3 py-1.5 text-sm"
+            className="min-w-48 flex-1 rounded border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm"
           />
           <button
             onClick={() => setMyOnly((v) => !v)}
             className={`rounded px-3 py-1.5 text-sm font-medium ${
               myOnly
                 ? "bg-neutral-900 text-white"
-                : "border border-neutral-300 text-neutral-700 hover:bg-neutral-100"
+                : "border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100"
             }`}
           >
             My tasks
@@ -139,7 +139,7 @@ export function TasksWorkspace({
           <select
             value={status}
             onChange={(e) => setStatus(e.target.value)}
-            className="rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"
+            className="rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1.5 text-sm"
           >
             <option value="">All statuses</option>
             {(Object.keys(STATUS_LABEL) as TaskStatus[]).map((s) => (
@@ -157,7 +157,7 @@ export function TasksWorkspace({
                 setProjSel(new Set());
                 setSubSel(new Set());
               }}
-              className="text-sm text-neutral-500 hover:underline"
+              className="text-sm text-neutral-500 dark:text-neutral-400 hover:underline"
             >
               Clear
             </button>
@@ -165,7 +165,7 @@ export function TasksWorkspace({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+          <span className="text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
             Projects
           </span>
           {projects.map((p) => (
@@ -181,7 +181,7 @@ export function TasksWorkspace({
 
         {subteams.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+            <span className="text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
               Subteams
             </span>
             {subteams.map((s) => (
@@ -197,7 +197,7 @@ export function TasksWorkspace({
         )}
       </div>
 
-      <p className="mt-3 text-sm text-neutral-500">
+      <p className="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
         {filtered.length} task{filtered.length === 1 ? "" : "s"}
       </p>
 

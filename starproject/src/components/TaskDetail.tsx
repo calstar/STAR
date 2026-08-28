@@ -24,12 +24,12 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
     ? new Date(task.dueDate).toISOString().slice(0, 10)
     : "";
 
-  const label = "text-xs font-medium uppercase tracking-wide text-neutral-500";
-  const section = "rounded-lg border border-neutral-200 bg-white p-4 shadow-sm";
+  const label = "text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400";
+  const section = "rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 shadow-sm";
 
   return (
     <div>
-      <div className="flex items-center gap-2 text-sm text-neutral-500">
+      <div className="flex items-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
         <Link href="/" className="hover:underline">
           Projects
         </Link>
@@ -109,7 +109,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
           <p className={label}>Blocked by</p>
           <ul className="mt-2 space-y-1.5">
             {task.blockedBy.length === 0 && (
-              <li className="text-sm text-neutral-500">
+              <li className="text-sm text-neutral-500 dark:text-neutral-400">
                 Nothing blocking this task.
               </li>
             )}
@@ -141,7 +141,7 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
           <p className={`${label} mt-5`}>Blocking</p>
           <ul className="mt-2 space-y-1.5">
             {task.blocking.length === 0 && (
-              <li className="text-sm text-neutral-500">
+              <li className="text-sm text-neutral-500 dark:text-neutral-400">
                 This task isn&apos;t blocking anything.
               </li>
             )}

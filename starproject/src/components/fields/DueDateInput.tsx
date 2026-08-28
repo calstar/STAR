@@ -17,7 +17,7 @@ export function DueDateInput({
         name="dueDate"
         defaultValue={value}
         onChange={(e) => e.currentTarget.form?.requestSubmit()}
-        className="rounded border border-neutral-300 bg-white px-2 py-1 text-sm"
+        className="rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
       />
     </form>
   );

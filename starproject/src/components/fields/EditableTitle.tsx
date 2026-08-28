@@ -30,7 +30,7 @@ export function EditableTitle({
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === "Escape") setEditing(false);
           }}
-          className="w-full rounded border border-neutral-300 px-2 py-1 text-2xl font-semibold focus:outline-none"
+          className="w-full rounded border border-neutral-300 dark:border-neutral-700 px-2 py-1 text-2xl font-semibold focus:outline-none"
         />
       </form>
     );
@@ -42,7 +42,7 @@ export function EditableTitle({
       <button
         onClick={() => setEditing(true)}
         title="Rename"
-        className="rounded px-1.5 py-0.5 text-xs text-neutral-500 hover:bg-neutral-200 hover:text-neutral-700"
+        className="rounded px-1.5 py-0.5 text-xs text-neutral-500 dark:text-neutral-400 hover:bg-neutral-200 hover:text-neutral-700 dark:text-neutral-200"
       >
         ✎ Edit
       </button>

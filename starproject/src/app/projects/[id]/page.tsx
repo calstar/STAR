@@ -63,7 +63,7 @@ export default async function ProjectPage({
     `rounded px-3 py-1 text-sm ${
       active
         ? "bg-neutral-900 text-white"
-        : "text-neutral-600 hover:bg-neutral-100"
+        : "text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100"
     }`;
 
   return (
@@ -71,7 +71,7 @@ export default async function ProjectPage({
       <div className="flex items-start justify-between gap-4">
         <div>
           {project.parent && (
-            <div className="mb-1 text-sm text-neutral-500">
+            <div className="mb-1 text-sm text-neutral-500 dark:text-neutral-400">
               <Link
                 href={`/projects/${project.parent.id}`}
                 className="hover:underline"
@@ -90,18 +90,18 @@ export default async function ProjectPage({
             <h1 className="text-2xl font-semibold">{project.name}</h1>
           </div>
           {project.description && (
-            <p className="mt-1 text-neutral-600">{project.description}</p>
+            <p className="mt-1 text-neutral-600 dark:text-neutral-300">{project.description}</p>
           )}
           {project.children.length > 0 && (
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+              <span className="text-xs font-medium uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
                 Subprojects
               </span>
               {project.children.map((c) => (
                 <Link
                   key={c.id}
                   href={`/projects/${c.id}`}
-                  className="flex items-center gap-1.5 rounded-full border border-neutral-300 px-2.5 py-0.5 text-sm hover:bg-neutral-100"
+                  className="flex items-center gap-1.5 rounded-full border border-neutral-300 dark:border-neutral-700 px-2.5 py-0.5 text-sm hover:bg-neutral-100"
                 >
                   <span
                     className="inline-block h-2 w-2 rounded-full"
@@ -114,7 +114,7 @@ export default async function ProjectPage({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-4">
-          <Link href="/" className="text-sm text-neutral-500 hover:underline">
+          <Link href="/" className="text-sm text-neutral-500 dark:text-neutral-400 hover:underline">
             ← All projects
           </Link>
           {admin && (
@@ -151,10 +151,10 @@ export default async function ProjectPage({
       </div>
 
       {view === "list" ? (
-        <div className="mt-6 overflow-x-auto rounded-lg border border-neutral-200 bg-white">
+        <div className="mt-6 overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
           <table className="w-full border-collapse text-left">
             <thead>
-              <tr className="border-b border-neutral-200 text-xs uppercase tracking-wide text-neutral-500">
+              <tr className="border-b border-neutral-200 dark:border-neutral-800 text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
                 <th className={th}>Task</th>
                 <th className={th}>Status</th>
                 <th className={th}>Priority</th>
@@ -166,7 +166,7 @@ export default async function ProjectPage({
             <tbody>
               {project.tasks.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-2 py-4 text-neutral-500">
+                  <td colSpan={6} className="px-2 py-4 text-neutral-500 dark:text-neutral-400">
                     No tasks yet. Add one above.
                   </td>
                 </tr>

@@ -45,9 +45,9 @@ export function TaskCard({ task }: { task: BoardTask }) {
           router.push(href);
         }
       }}
-      className="cursor-pointer touch-none rounded-lg border border-neutral-200 bg-white p-3 shadow-sm hover:border-neutral-300 active:cursor-grabbing"
+      className="cursor-pointer touch-none rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 shadow-sm hover:border-neutral-300 dark:border-neutral-700 active:cursor-grabbing"
     >
-      <p className="text-sm font-medium text-neutral-900">{task.title}</p>
+      <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">{task.title}</p>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
         {blocked && <BlockedBadge />}
         {task.priority && (
@@ -58,12 +58,12 @@ export function TaskCard({ task }: { task: BoardTask }) {
           </span>
         )}
         {task.assignee && (
-          <span className="text-neutral-500">
+          <span className="text-neutral-500 dark:text-neutral-400">
             {task.assignee.name ?? task.assignee.email}
           </span>
         )}
         {due && (
-          <span className={overdue ? "font-medium text-red-600" : "text-neutral-500"}>
+          <span className={overdue ? "font-medium text-red-600" : "text-neutral-500 dark:text-neutral-400"}>
             {due.toISOString().slice(0, 10)}
           </span>
         )}

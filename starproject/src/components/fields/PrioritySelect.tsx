@@ -30,7 +30,7 @@ export function PrioritySelect({
           setV(e.target.value);
           e.currentTarget.form?.requestSubmit();
         }}
-        className={`rounded border border-neutral-300 px-2 py-1 text-sm font-medium ${
+        className={`rounded border border-neutral-300 dark:border-neutral-700 px-2 py-1 text-sm font-medium ${
           PRIORITY_BADGE[v] ?? ""
         }`}
       >

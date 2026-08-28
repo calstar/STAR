@@ -8,7 +8,9 @@ import { getCurrentDbUser } from "@/lib/user";
 import { subteamCreateSchema } from "@/lib/validation";
 
 export async function createSubteam(formData: FormData) {
-  await getCurrentDbUser();
+  const user = await getCurrentDbUser();
+  if (!isAdmin(user.email))
+    throw new Error("Only admins can create subteams.");
   const data = subteamCreateSchema.parse({
     name: formData.get("name"),
     color: formData.get("color"),

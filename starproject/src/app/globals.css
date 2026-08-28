@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Class-based dark mode: `dark:` variants apply when <html class="dark">. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* frappe-gantt is display-only: disable dragging/resizing task bars. */
 .gantt .bar-wrapper,
 .gantt .handle {

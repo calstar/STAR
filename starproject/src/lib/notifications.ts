@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { sendEmail } from "@/lib/mail";
+import { getSettings } from "@/lib/settings";
 
 function escapeHtml(s: string): string {
   return s
@@ -38,6 +39,9 @@ export async function notifyAssignment({
     },
   });
   if (!task || !task.assignee || task.assignee.id !== assigneeId) return;
+
+  const settings = await getSettings(task.assignee.id);
+  if (!settings.emailAssignments) return;
 
   const link = taskLink(task.projectId, task.id);
   const ok = await sendEmail({
@@ -91,6 +95,10 @@ export async function runDeadlineScan(): Promise<{
   for (const t of tasks) {
     if (!t.assignee || !t.dueDate) continue;
     const kind = t.dueDate < startOfToday ? "overdue" : "due_soon";
+
+    const settings = await getSettings(t.assignee.id);
+    if (kind === "due_soon" && !settings.emailDueSoon) continue;
+    if (kind === "overdue" && !settings.emailOverdue) continue;
 
     const already = await prisma.notifLog.findFirst({
       where: { taskId: t.id, userId: t.assignee.id, kind },

@@ -20,7 +20,7 @@ export function TitleInput({
         onBlur={(e) => e.currentTarget.form?.requestSubmit()}
         className={
           className ??
-          "w-full rounded border border-transparent px-2 py-1 hover:border-neutral-300 focus:border-neutral-400 focus:outline-none"
+          "w-full rounded border border-transparent px-2 py-1 hover:border-neutral-300 dark:border-neutral-700 focus:border-neutral-400 focus:outline-none"
         }
       />
     </form>

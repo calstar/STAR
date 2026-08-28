@@ -17,36 +17,38 @@ export default async function SubteamsPage() {
   return (
     <div className="mx-auto max-w-7xl px-6 py-8">
       <h1 className="text-2xl font-semibold">Subteams</h1>
-      <p className="mt-1 text-sm text-neutral-500">
+      <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
         A subteam is a task tag, a peer to projects. Filter the Tasks view by one
         to see everything it owns across every project.
       </p>
 
-      <form
-        action={createSubteam}
-        className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 bg-white p-3"
-      >
-        <input
-          name="name"
-          required
-          placeholder="New subteam name"
-          className="min-w-48 flex-1 rounded border border-neutral-300 px-3 py-1.5 text-sm"
-        />
-        <input
-          type="color"
-          name="color"
-          defaultValue="#0ea5e9"
-          aria-label="Subteam color"
-          className="h-9 w-10 rounded border border-neutral-300"
-        />
-        <button className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700">
-          Create
-        </button>
-      </form>
+      {admin && (
+        <form
+          action={createSubteam}
+          className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3"
+        >
+          <input
+            name="name"
+            required
+            placeholder="New subteam name"
+            className="min-w-48 flex-1 rounded border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm"
+          />
+          <input
+            type="color"
+            name="color"
+            defaultValue="#0ea5e9"
+            aria-label="Subteam color"
+            className="h-9 w-10 rounded border border-neutral-300 dark:border-neutral-700"
+          />
+          <button className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700">
+            Create
+          </button>
+        </form>
+      )}
 
-      <ul className="mt-6 divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 bg-white">
+      <ul className="mt-6 divide-y divide-neutral-200 dark:divide-neutral-800 overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
         {subteams.length === 0 && (
-          <li className="p-4 text-neutral-500">
+          <li className="p-4 text-neutral-500 dark:text-neutral-400">
             No subteams yet. Create one above.
           </li>
         )}
@@ -63,14 +65,14 @@ export default async function SubteamsPage() {
               >
                 {s.name}
               </Link>
-              <span className="text-sm text-neutral-500">
+              <span className="text-sm text-neutral-500 dark:text-neutral-400">
                 {s._count.tasks} task{s._count.tasks === 1 ? "" : "s"}
               </span>
             </span>
             <div className="flex items-center gap-4">
               <Link
                 href={`/tasks?subteam=${s.id}`}
-                className="text-sm text-neutral-500 hover:underline"
+                className="text-sm text-neutral-500 dark:text-neutral-400 hover:underline"
               >
                 View in Tasks →
               </Link>

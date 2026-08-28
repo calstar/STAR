@@ -18,7 +18,7 @@ export function DescriptionInput({
         onBlur={(e) => e.currentTarget.form?.requestSubmit()}
         rows={3}
         placeholder="Add a description…"
-        className="w-full rounded border border-neutral-300 px-2 py-1 text-sm"
+        className="w-full rounded border border-neutral-300 dark:border-neutral-700 px-2 py-1 text-sm"
       />
     </form>
   );

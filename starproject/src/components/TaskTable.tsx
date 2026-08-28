@@ -164,7 +164,7 @@ export function TaskTable({
       return value ? [...rest, { id, value }] : rest;
     });
 
-  const sel = "rounded border border-neutral-300 bg-white px-2 py-1 text-sm";
+  const sel = "rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm";
 
   return (
     <div>
@@ -175,7 +175,7 @@ export function TaskTable({
           value={globalFilter}
           onChange={(e) => setGlobalFilter(e.target.value)}
           placeholder="Search tasks…"
-          className="min-w-48 flex-1 rounded border border-neutral-300 px-3 py-1.5 text-sm"
+          className="min-w-48 flex-1 rounded border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm"
         />
         <button
           onClick={() =>
@@ -187,7 +187,7 @@ export function TaskTable({
           className={`rounded px-3 py-1.5 text-sm font-medium ${
             filterValue("assigneeId") === currentUserId
               ? "bg-neutral-900 text-white"
-              : "border border-neutral-300 text-neutral-700 hover:bg-neutral-100"
+              : "border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100"
           }`}
         >
           My tasks
@@ -246,20 +246,20 @@ export function TaskTable({
               setColumnFilters([]);
               setGlobalFilter("");
             }}
-            className="text-sm text-neutral-500 hover:underline"
+            className="text-sm text-neutral-500 dark:text-neutral-400 hover:underline"
           >
             Clear
           </button>
         )}
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white">
+      <div className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
         <table className="w-full border-collapse text-left text-sm">
           <thead>
             {table.getHeaderGroups().map((hg) => (
               <tr
                 key={hg.id}
-                className="border-b border-neutral-200 text-xs uppercase tracking-wide text-neutral-500"
+                className="border-b border-neutral-200 dark:border-neutral-800 text-xs uppercase tracking-wide text-neutral-500 dark:text-neutral-400"
               >
                 {hg.headers.map((h) => (
                   <th
@@ -277,13 +277,13 @@ export function TaskTable({
           <tbody>
             {table.getRowModel().rows.length === 0 && (
               <tr>
-                <td colSpan={columns.length} className="px-3 py-4 text-neutral-500">
+                <td colSpan={columns.length} className="px-3 py-4 text-neutral-500 dark:text-neutral-400">
                   No tasks match.
                 </td>
               </tr>
             )}
             {table.getRowModel().rows.map((row) => (
-              <tr key={row.id} className="border-b border-neutral-100">
+              <tr key={row.id} className="border-b border-neutral-100 dark:border-neutral-800">
                 {row.getVisibleCells().map((cell) => (
                   <td key={cell.id} className="px-3 py-2">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}

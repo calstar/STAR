@@ -15,7 +15,7 @@ export function NewTaskForm({
   subteams: { id: string; name: string }[];
 }) {
   const formRef = useRef<HTMLFormElement>(null);
-  const control = "rounded border border-neutral-300 px-3 py-1.5 text-sm";
+  const control = "rounded border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm";
 
   return (
     <form
@@ -24,7 +24,7 @@ export function NewTaskForm({
         await createTask(fd);
         formRef.current?.reset();
       }}
-      className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 bg-white p-3"
+      className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3"
     >
       <input type="hidden" name="projectId" value={projectId} />
       <input

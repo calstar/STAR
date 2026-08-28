@@ -100,19 +100,19 @@ export default async function ActivityPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
       <h1 className="text-2xl font-semibold">Activity</h1>
-      <p className="mt-1 text-sm text-neutral-500">
+      <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
         Recent changes across all tasks.
       </p>
-      <ul className="mt-6 divide-y divide-neutral-200 rounded-lg border border-neutral-200 bg-white">
+      <ul className="mt-6 divide-y divide-neutral-200 dark:divide-neutral-800 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
         {items.length === 0 && (
-          <li className="p-4 text-neutral-500">No activity yet.</li>
+          <li className="p-4 text-neutral-500 dark:text-neutral-400">No activity yet.</li>
         )}
         {items.map((a) => (
           <li
             key={a.id}
             className="flex items-start justify-between gap-4 p-3 text-sm"
           >
-            <span className="text-neutral-700">{renderActivity(a)}</span>
+            <span className="text-neutral-700 dark:text-neutral-200">{renderActivity(a)}</span>
             <span className="shrink-0 text-xs text-neutral-400">
               {timeAgo(a.createdAt)}
             </span>

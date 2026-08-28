@@ -34,14 +34,14 @@ export default async function Health() {
     <main className="mx-auto flex max-w-xl flex-col gap-6 px-6 py-10">
       <h1 className="text-xl font-semibold">Health</h1>
 
-      <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-medium text-neutral-500">Signed in as</h2>
+      <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 shadow-sm">
+        <h2 className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Signed in as</h2>
         <p className="mt-1 text-lg font-medium">{user.name}</p>
-        <p className="text-neutral-600">{user.email}</p>
+        <p className="text-neutral-600 dark:text-neutral-300">{user.email}</p>
       </section>
 
-      <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-medium text-neutral-500">Database</h2>
+      <section className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 shadow-sm">
+        <h2 className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Database</h2>
         <p className="mt-1 flex items-center gap-2 text-lg font-medium">
           <span
             aria-hidden
@@ -52,7 +52,7 @@ export default async function Health() {
           />
           {db.ok ? "Healthy" : "Unavailable"}
         </p>
-        <p className="mt-1 break-words text-sm text-neutral-600">{db.detail}</p>
+        <p className="mt-1 break-words text-sm text-neutral-600 dark:text-neutral-300">{db.detail}</p>
       </section>
     </main>
   );

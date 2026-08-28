@@ -47,7 +47,7 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
 
   if (scheduled.length === 0) {
     return (
-      <div className="rounded-lg border border-neutral-200 bg-white p-6 text-sm text-neutral-500">
+      <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 text-sm text-neutral-500 dark:text-neutral-400">
         No scheduled tasks. Add a start or due date to a task to place it on the
         timeline.
       </div>
@@ -65,7 +65,7 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
               className={`rounded px-3 py-1 text-sm ${
                 viewMode === m
                   ? "bg-neutral-900 text-white"
-                  : "text-neutral-600 hover:bg-neutral-100"
+                  : "text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100"
               }`}
             >
               {m}
@@ -76,14 +76,14 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
           <button
             onClick={() => scrollTimeline(-1)}
             aria-label="Scroll earlier"
-            className="rounded border border-neutral-300 px-2 py-1 text-sm hover:bg-neutral-100"
+            className="rounded border border-neutral-300 dark:border-neutral-700 px-2 py-1 text-sm hover:bg-neutral-100"
           >
             ◀
           </button>
           <button
             onClick={() => scrollTimeline(1)}
             aria-label="Scroll later"
-            className="rounded border border-neutral-300 px-2 py-1 text-sm hover:bg-neutral-100"
+            className="rounded border border-neutral-300 dark:border-neutral-700 px-2 py-1 text-sm hover:bg-neutral-100"
           >
             ▶
           </button>
@@ -91,12 +91,12 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
       </div>
       <div
         ref={scrollRef}
-        className="overflow-x-auto rounded-lg border border-neutral-200 bg-white p-2"
+        className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-2"
       >
         <div ref={ref} />
       </div>
       {unscheduled > 0 && (
-        <p className="mt-2 text-sm text-neutral-500">
+        <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
           {unscheduled} unscheduled task{unscheduled === 1 ? "" : "s"} (no dates)
           not shown.
         </p>

@@ -37,6 +37,8 @@ model User {
   createdTasks    Task[]    @relation("TaskCreatedBy")
   assignedTasks   Task[]    @relation("TaskAssignee")
   activities      Activity[] @relation("ActivityActor")
+  settings        UserSettings?
+  digestSubscriptions DigestSubscription[]
 }
 
 model Project {
@@ -56,7 +58,8 @@ model Project {
   parent   Project?  @relation("ProjectHierarchy", fields: [parentId], references: [id])
   children Project[] @relation("ProjectHierarchy")
 
-  tasks Task[]
+  tasks      Task[]
+  digestSubs DigestSubscription[]
 }
 
 // A discipline/organizational group, a peer lens to Project. Purely a task tag
@@ -67,7 +70,34 @@ model Subteam {
   color     String?
   createdAt DateTime @default(now())
 
-  tasks Task[]
+  tasks      Task[]
+  digestSubs DigestSubscription[]
+}
+
+// Per-user preferences (1:1 with User).
+model UserSettings {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id])
+  theme            String   @default("light") // light | dark
+  emailAssignments Boolean  @default(true)
+  emailDueSoon     Boolean  @default(true)
+  emailOverdue     Boolean  @default(true)
+  digestKinds      String[] @default([]) // activity kinds included in the nightly digest
+}
+
+// A project/subteam a user follows for their nightly digest.
+model DigestSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  subteamId String?
+  subteam   Subteam? @relation(fields: [subteamId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model Task {

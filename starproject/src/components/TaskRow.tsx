@@ -28,7 +28,7 @@ export function TaskRow({
   const cell = "px-2 py-1.5 align-middle";
 
   return (
-    <tr className="border-b border-neutral-100">
+    <tr className="border-b border-neutral-100 dark:border-neutral-800">
       <td className={`${cell} w-full`}>
         <div className="flex items-center gap-2">
           <Link

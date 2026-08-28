@@ -12,24 +12,24 @@ export function NewProjectForm({
   return (
     <form
       action={createProject}
-      className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 bg-white p-3"
+      className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3"
     >
       <input
         name="name"
         required
         placeholder="New project name"
-        className="min-w-48 flex-1 rounded border border-neutral-300 px-3 py-1.5 text-sm"
+        className="min-w-48 flex-1 rounded border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm"
       />
       <input
         name="description"
         placeholder="Description (optional)"
-        className="min-w-48 flex-1 rounded border border-neutral-300 px-3 py-1.5 text-sm"
+        className="min-w-48 flex-1 rounded border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm"
       />
       <select
         name="parentId"
         defaultValue=""
         aria-label="Parent project"
-        className="rounded border border-neutral-300 bg-white px-2 py-1.5 text-sm"
+        className="rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1.5 text-sm"
       >
         <option value="">Top-level project</option>
         {parents.map((p) => (
@@ -43,7 +43,7 @@ export function NewProjectForm({
         name="color"
         defaultValue="#6366f1"
         aria-label="Project color"
-        className="h-9 w-10 rounded border border-neutral-300"
+        className="h-9 w-10 rounded border border-neutral-300 dark:border-neutral-700"
       />
       <button
         type="submit"

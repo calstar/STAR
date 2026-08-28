@@ -29,9 +29,9 @@ export default async function Home() {
         <NewProjectForm parents={parents} />
       </div>
 
-      <ul className="mt-6 divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 bg-white">
+      <ul className="mt-6 divide-y divide-neutral-200 dark:divide-neutral-800 overflow-hidden rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
         {projects.length === 0 && (
-          <li className="p-4 text-neutral-500">
+          <li className="p-4 text-neutral-500 dark:text-neutral-400">
             No projects yet. Create one above.
           </li>
         )}
@@ -48,18 +48,18 @@ export default async function Home() {
                 />
                 <span className="font-medium">{p.name}</span>
                 {p.description && (
-                  <span className="text-sm text-neutral-500">
+                  <span className="text-sm text-neutral-500 dark:text-neutral-400">
                     {p.description}
                   </span>
                 )}
               </span>
-              <span className="text-sm text-neutral-500">
+              <span className="text-sm text-neutral-500 dark:text-neutral-400">
                 {p._count.tasks} task{p._count.tasks === 1 ? "" : "s"}
               </span>
             </Link>
 
             {p.children.length > 0 && (
-              <ul className="border-t border-neutral-100 bg-neutral-50/60">
+              <ul className="border-t border-neutral-100 dark:border-neutral-800 bg-neutral-50/60">
                 {p.children.map((c) => (
                   <li key={c.id}>
                     <Link
@@ -74,7 +74,7 @@ export default async function Home() {
                         />
                         <span className="text-sm font-medium">{c.name}</span>
                       </span>
-                      <span className="text-sm text-neutral-500">
+                      <span className="text-sm text-neutral-500 dark:text-neutral-400">
                         {c._count.tasks} task{c._count.tasks === 1 ? "" : "s"}
                       </span>
                     </Link>
