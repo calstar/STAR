@@ -1,6 +1,8 @@
 import Link from "next/link";
 
 import { createSubteam, deleteSubteam } from "@/lib/actions/subteams";
+import { isAdmin } from "@/lib/admins";
+import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +12,7 @@ export default async function SubteamsPage() {
     orderBy: { name: "asc" },
     include: { _count: { select: { tasks: true } } },
   });
+  const admin = isAdmin((await getCurrentUser()).email);
 
   return (
     <div className="mx-auto max-w-7xl px-6 py-8">
@@ -71,12 +74,14 @@ export default async function SubteamsPage() {
               >
                 View in Tasks →
               </Link>
-              <form action={deleteSubteam}>
-                <input type="hidden" name="id" value={s.id} />
-                <button className="text-sm text-red-600 hover:underline">
-                  Delete
-                </button>
-              </form>
+              {admin && (
+                <form action={deleteSubteam}>
+                  <input type="hidden" name="id" value={s.id} />
+                  <button className="text-sm text-red-600 hover:underline">
+                    Delete
+                  </button>
+                </form>
+              )}
             </div>
           </li>
         ))}

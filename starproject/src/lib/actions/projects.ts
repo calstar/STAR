@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
 import { getCurrentDbUser } from "@/lib/user";
 import { projectCreateSchema } from "@/lib/validation";
@@ -47,7 +48,9 @@ export async function archiveProject(formData: FormData) {
 }
 
 export async function deleteProject(formData: FormData) {
-  await getCurrentDbUser();
+  const user = await getCurrentDbUser();
+  if (!isAdmin(user.email))
+    throw new Error("Only admins can delete projects.");
   const id = String(formData.get("id"));
   await prisma.project.delete({ where: { id } }); // cascades to its tasks
   revalidatePath("/");

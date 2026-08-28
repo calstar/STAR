@@ -13,7 +13,15 @@ import { DueDateInput } from "./fields/DueDateInput";
 import { PrioritySelect } from "./fields/PrioritySelect";
 import { StatusSelect } from "./fields/StatusSelect";
 
-export function TaskRow({ task, users }: { task: BoardTask; users: User[] }) {
+export function TaskRow({
+  task,
+  users,
+  isAdmin = false,
+}: {
+  task: BoardTask;
+  users: User[];
+  isAdmin?: boolean;
+}) {
   const due = task.dueDate
     ? new Date(task.dueDate).toISOString().slice(0, 10)
     : "";
@@ -45,12 +53,14 @@ export function TaskRow({ task, users }: { task: BoardTask; users: User[] }) {
         <DueDateInput taskId={task.id} value={due} />
       </td>
       <td className={cell}>
-        <form action={deleteTask}>
-          <input type="hidden" name="id" value={task.id} />
-          <button className="rounded px-2 py-1 text-sm text-red-600 hover:bg-red-50">
-            Delete
-          </button>
-        </form>
+        {isAdmin && (
+          <form action={deleteTask}>
+            <input type="hidden" name="id" value={task.id} />
+            <button className="rounded px-2 py-1 text-sm text-red-600 hover:bg-red-50">
+              Delete
+            </button>
+          </form>
+        )}
       </td>
     </tr>
   );

@@ -6,6 +6,8 @@ import { GanttChart } from "@/components/GanttChart";
 import { NewTaskForm } from "@/components/NewTaskForm";
 import { TaskRow } from "@/components/TaskRow";
 import { deleteProject } from "@/lib/actions/projects";
+import { isAdmin } from "@/lib/admins";
+import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getSubteams } from "@/lib/subteams";
 import { getTeamUsers } from "@/lib/user";
@@ -55,6 +57,7 @@ export default async function ProjectPage({
 
   if (!project) notFound();
 
+  const admin = isAdmin((await getCurrentUser()).email);
   const th = "px-2 py-2 font-medium";
   const tab = (active: boolean) =>
     `rounded px-3 py-1 text-sm ${
@@ -114,12 +117,14 @@ export default async function ProjectPage({
           <Link href="/" className="text-sm text-neutral-500 hover:underline">
             ← All projects
           </Link>
-          <form action={deleteProject}>
-            <input type="hidden" name="id" value={project.id} />
-            <button className="text-sm text-red-600 hover:underline">
-              Delete project
-            </button>
-          </form>
+          {admin && (
+            <form action={deleteProject}>
+              <input type="hidden" name="id" value={project.id} />
+              <button className="text-sm text-red-600 hover:underline">
+                Delete project
+              </button>
+            </form>
+          )}
         </div>
       </div>
 
@@ -167,7 +172,7 @@ export default async function ProjectPage({
                 </tr>
               )}
               {project.tasks.map((t) => (
-                <TaskRow key={t.id} task={t} users={users} />
+                <TaskRow key={t.id} task={t} users={users} isAdmin={admin} />
               ))}
             </tbody>
           </table>

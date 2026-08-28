@@ -12,6 +12,7 @@ import {
   subteamLabel,
   userLabel,
 } from "@/lib/activity";
+import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
 import { notifyAssignment } from "@/lib/notifications";
 import { STATUS_LABEL } from "@/lib/tasks";
@@ -181,6 +182,8 @@ export async function updateTask(formData: FormData) {
 
 export async function deleteTask(formData: FormData) {
   const user = await getCurrentDbUser();
+  if (!isAdmin(user.email))
+    throw new Error("Only admins can delete tasks.");
   const id = String(formData.get("id"));
   const task = await prisma.task.delete({ where: { id } });
 
