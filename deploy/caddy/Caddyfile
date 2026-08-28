@@ -123,6 +123,17 @@
 	reverse_proxy daq-viewer:8420
 }
 
+# ── STARProject ────────────────────────────────────────────────────────────
+# Team task tracker. Single container: Next.js serves both its pages and /api
+# routes, so one reverse_proxy (no /api split), like daq-viewer above. First
+# DB-backed app — its Postgres is the starproject-db service in
+# docker-compose.yml. Reachable at project.starberkeley.org (add the matching
+# Cloudflare published-hostname route too).
+{$SCHEME:https}://project.{$BASE_DOMAIN:starberkeley.org} {
+	import protected
+	reverse_proxy starproject:3000
+}
+
 # ── DAQ Server ─────────────────────────────────────────────────────────────
 # Not containerised. The C++ bridge, elodin-db and the Node backend run
 # natively on the test-stand machine (daq-server/deploy/systemd), because they

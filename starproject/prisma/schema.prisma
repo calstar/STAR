@@ -1,0 +1,21 @@
+// STARProject schema. Phase 0 introduces just the User table (the first real
+// model everything else will reference) to prove the migrate flow end to end.
+
+generator client {
+  provider = "prisma-client-js"
+  // native = local dev; debian-openssl-3.0.x = the node:22-bookworm-slim runtime
+  // image. Prisma needs the matching query engine for wherever the client runs.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+}

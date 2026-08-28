@@ -18,6 +18,7 @@ name: Publish app images
       - 'onshape-viewer/**'
       - 'daq-server/tools/postprocessing/webviewer/**'
       - 'landing/**'
+      - 'starproject/**'
       - '.github/workflows/publish-apps.yml'
   workflow_dispatch:
 
@@ -51,6 +52,8 @@ jobs:
           - { name: onshape-viewer-frontend,      context: ./onshape-viewer/frontend,   dockerfile: ./onshape-viewer/frontend/Dockerfile }
           # DAQ Run Viewer: one image serves both API and SPA (see its Dockerfile).
           - { name: daq-viewer,                   context: ./daq-server/tools/postprocessing/webviewer, dockerfile: ./daq-server/tools/postprocessing/webviewer/Dockerfile }
+          # STARProject: one Next.js image serves pages + /api and runs migrations on start.
+          - { name: starproject,                  context: ./starproject,               dockerfile: ./starproject/Dockerfile }
     steps:
       - uses: actions/checkout@v4
 

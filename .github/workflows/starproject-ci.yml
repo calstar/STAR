@@ -1,0 +1,44 @@
+name: STARProject CI
+
+'on':
+  push:
+    paths:
+      - 'starproject/**'
+      - '.github/workflows/starproject-ci.yml'
+  pull_request:
+    paths:
+      - 'starproject/**'
+      - '.github/workflows/starproject-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (Next.js + Prisma)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+        cache-dependency-path: starproject/package-lock.json
+
+    - name: Install dependencies
+      working-directory: starproject
+      run: npm ci || npm install
+
+    - name: Prisma generate
+      working-directory: starproject
+      run: npx prisma generate
+
+    - name: Typecheck
+      working-directory: starproject
+      run: npm run typecheck
+
+    # `next build` is force-dynamic on the only page, so no database is needed.
+    - name: Build
+      working-directory: starproject
+      run: npm run build

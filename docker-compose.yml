@@ -64,6 +64,7 @@ services:
       - onshape-viewer-frontend
       - daq-viewer
       - landing
+      - starproject
 
   # ── Cloudflare Tunnel (optional ingress) ─────────────────────────────────
   # Opt in with `--profile tunnel`. Cloudflare terminates TLS at the edge, so
@@ -285,6 +286,41 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
 
+  # ── STARProject (task tracker) ───────────────────────────────────────────
+  # The first DB-backed app in the stack: a Next.js standalone server plus its
+  # own Postgres (starproject-db). Auth is Caddy's job (X-Auth-Email injected
+  # upstream), so no JWT_SECRET here. The image runs `prisma migrate deploy` on
+  # startup (starproject/docker-entrypoint.sh), so a pull-only apps box needs no
+  # migration step of its own.
+  starproject:
+    image: ghcr.io/calstar/star-starproject:latest
+    build:
+      context: ./starproject
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      DATABASE_URL: postgresql://${STARPROJECT_DB_USER:-starproject}:${STARPROJECT_DB_PASSWORD:-starproject}@starproject-db:5432/${STARPROJECT_DB_NAME:-starproject}?schema=public
+    depends_on:
+      starproject-db:
+        condition: service_healthy
+
+  starproject-db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${STARPROJECT_DB_USER:-starproject}
+      POSTGRES_PASSWORD: ${STARPROJECT_DB_PASSWORD:-starproject}
+      POSTGRES_DB: ${STARPROJECT_DB_NAME:-starproject}
+    volumes:
+      - starproject_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${STARPROJECT_DB_USER:-starproject} -d ${STARPROJECT_DB_NAME:-starproject}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   caddy_data:
   caddy_config:
@@ -297,3 +333,6 @@ volumes:
   # a future cross-user "browse + copy" is a single tree. Keyed by X-Auth-Email
   # inside. See */backend/userdata.py.
   userdata:
+  # STARProject's Postgres data. The first database in the stack — back this up
+  # separately from the S3-backed userdata volume above.
+  starproject_pg:
