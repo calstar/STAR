@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { Board } from "@/components/Board";
+import { GanttChart } from "@/components/GanttChart";
 import { NewTaskForm } from "@/components/NewTaskForm";
 import { TaskRow } from "@/components/TaskRow";
 import { deleteProject } from "@/lib/actions/projects";
@@ -9,6 +10,8 @@ import { prisma } from "@/lib/db";
 import { getTeamUsers } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
+
+type View = "board" | "list" | "gantt";
 
 export default async function ProjectPage({
   params,
@@ -18,8 +21,9 @@ export default async function ProjectPage({
   searchParams: Promise<{ view?: string }>;
 }) {
   const { id } = await params;
-  const { view } = await searchParams;
-  const isList = view === "list";
+  const { view: rawView } = await searchParams;
+  const view: View =
+    rawView === "list" ? "list" : rawView === "gantt" ? "gantt" : "board";
 
   const [project, users] = await Promise.all([
     prisma.project.findUnique({
@@ -80,11 +84,20 @@ export default async function ProjectPage({
       </div>
 
       <div className="mt-6 flex items-center gap-1">
-        <Link href={`/projects/${project.id}`} className={tab(!isList)}>
+        <Link href={`/projects/${project.id}`} className={tab(view === "board")}>
           Board
         </Link>
-        <Link href={`/projects/${project.id}?view=list`} className={tab(isList)}>
+        <Link
+          href={`/projects/${project.id}?view=list`}
+          className={tab(view === "list")}
+        >
           List
+        </Link>
+        <Link
+          href={`/projects/${project.id}?view=gantt`}
+          className={tab(view === "gantt")}
+        >
+          Timeline
         </Link>
       </div>
 
@@ -92,7 +105,7 @@ export default async function ProjectPage({
         <NewTaskForm projectId={project.id} users={users} />
       </div>
 
-      {isList ? (
+      {view === "list" ? (
         <div className="mt-6 overflow-x-auto rounded-lg border border-neutral-200 bg-white">
           <table className="w-full border-collapse text-left">
             <thead>
@@ -118,6 +131,10 @@ export default async function ProjectPage({
               ))}
             </tbody>
           </table>
+        </div>
+      ) : view === "gantt" ? (
+        <div className="mt-6">
+          <GanttChart tasks={project.tasks} />
         </div>
       ) : (
         <div className="mt-6">
