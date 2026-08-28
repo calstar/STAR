@@ -17,8 +17,9 @@ function taskLink(projectId: string, taskId: string): string {
 }
 
 /**
- * Email a task's assignee that it was assigned to them. Skipped when the
- * assignee is the person who made the change (no point emailing yourself).
+ * Queue an assignment notification (skipped for self-assignment or when the
+ * recipient disabled assignment emails). Not sent immediately — flushed as one
+ * batched email per recipient by runEmailBatch() every 15 minutes.
  */
 export async function notifyAssignment({
   taskId,
@@ -33,30 +34,97 @@ export async function notifyAssignment({
 
   const task = await prisma.task.findUnique({
     where: { id: taskId },
-    include: {
-      project: { select: { id: true, name: true } },
-      assignee: { select: { id: true, email: true, name: true } },
-    },
+    select: { id: true, title: true, projectId: true, assigneeId: true },
   });
-  if (!task || !task.assignee || task.assignee.id !== assigneeId) return;
+  if (!task || task.assigneeId !== assigneeId) return;
 
-  const settings = await getSettings(task.assignee.id);
+  const settings = await getSettings(assigneeId);
   if (!settings.emailAssignments) return;
 
-  const link = taskLink(task.projectId, task.id);
-  const ok = await sendEmail({
-    to: task.assignee.email,
-    subject: `Assigned: ${task.title}`,
-    html: `<p>You were assigned <strong>${escapeHtml(task.title)}</strong> in ${escapeHtml(
-      task.project.name,
-    )}.</p><p><a href="${link}">Open the task</a></p>`,
-    text: `You were assigned "${task.title}" in ${task.project.name}.\n${link}`,
+  const actor = await prisma.user.findUnique({
+    where: { id: actorId },
+    select: { name: true, email: true },
   });
-  if (ok) {
-    await prisma.notifLog.create({
-      data: { taskId: task.id, userId: assigneeId, kind: "assigned" },
-    });
+
+  await prisma.emailQueueItem.create({
+    data: {
+      userId: assigneeId,
+      kind: "assigned",
+      taskId: task.id,
+      taskTitle: task.title,
+      projectId: task.projectId,
+      actorName: actor?.name ?? actor?.email ?? null,
+    },
+  });
+}
+
+/**
+ * Flush the assignment queue: one email per recipient covering everything queued
+ * since the last run. Run every 15 minutes to conserve SES sends (100 tasks
+ * assigned to someone in a window → one email).
+ */
+export async function runEmailBatch(): Promise<{
+  emails: number;
+  items: number;
+}> {
+  const items = await prisma.emailQueueItem.findMany({
+    where: { sentAt: null },
+    include: { user: { select: { email: true, name: true } } },
+    orderBy: { createdAt: "asc" },
+  });
+  if (items.length === 0) return { emails: 0, items: 0 };
+
+  const byUser = new Map<string, typeof items>();
+  for (const it of items) {
+    const arr = byUser.get(it.userId) ?? [];
+    arr.push(it);
+    byUser.set(it.userId, arr);
   }
+
+  let emails = 0;
+  for (const group of byUser.values()) {
+    const to = group[0].user.email;
+    const rows = group.map((g) => ({
+      title: escapeHtml(g.taskTitle),
+      plain: g.taskTitle,
+      link: g.taskId && g.projectId ? taskLink(g.projectId, g.taskId) : "",
+      actor: g.actorName,
+    }));
+    const subject =
+      group.length === 1
+        ? `Assigned: ${group[0].taskTitle}`
+        : `${group.length} tasks assigned to you`;
+    const html =
+      `<p>You were assigned:</p><ul>` +
+      rows
+        .map(
+          (r) =>
+            `<li><a href="${r.link}">${r.title}</a>${
+              r.actor ? ` — by ${escapeHtml(r.actor)}` : ""
+            }</li>`,
+        )
+        .join("") +
+      `</ul>`;
+    const text =
+      `You were assigned:\n` +
+      rows
+        .map(
+          (r) =>
+            `- ${r.plain}${r.actor ? ` (by ${r.actor})` : ""}\n  ${r.link}`,
+        )
+        .join("\n");
+
+    const ok = await sendEmail({ to, subject, html, text });
+    if (ok) {
+      await prisma.emailQueueItem.updateMany({
+        where: { id: { in: group.map((g) => g.id) } },
+        data: { sentAt: new Date() },
+      });
+      emails++;
+    }
+  }
+
+  return { emails, items: items.length };
 }
 
 /**

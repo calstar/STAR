@@ -347,7 +347,11 @@ services:
       - -c
       - |
         apk add --no-cache curl >/dev/null
-        echo "0 8 * * * curl -fsS -X POST -H \"X-Cron-Secret: $$CRON_SECRET\" http://starproject:3000/api/cron/deadlines >/proc/1/fd/1 2>&1" > /etc/crontabs/root
+        {
+          echo "0 8 * * * curl -fsS -X POST -H \"X-Cron-Secret: $$CRON_SECRET\" http://starproject:3000/api/cron/deadlines >/proc/1/fd/1 2>&1"
+          echo "0 7 * * * curl -fsS -X POST -H \"X-Cron-Secret: $$CRON_SECRET\" http://starproject:3000/api/cron/digest >/proc/1/fd/1 2>&1"
+          echo "*/15 * * * * curl -fsS -X POST -H \"X-Cron-Secret: $$CRON_SECRET\" http://starproject:3000/api/cron/email-batch >/proc/1/fd/1 2>&1"
+        } > /etc/crontabs/root
         crond -f -l 8
 
 volumes:

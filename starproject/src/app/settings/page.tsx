@@ -1,11 +1,41 @@
+import { DigestSettings } from "@/components/settings/DigestSettings";
 import { EmailPrefToggle } from "@/components/settings/EmailPrefToggle";
 import { ThemeToggle } from "@/components/settings/ThemeToggle";
+import { prisma } from "@/lib/db";
+import { DIGEST_KINDS } from "@/lib/digest";
 import { getCurrentSettings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
-  const { settings } = await getCurrentSettings();
+  const { user, settings } = await getCurrentSettings();
+
+  const [projects, subteams, subs] = await Promise.all([
+    prisma.project.findMany({
+      where: { archived: false },
+      select: { id: true, name: true, parent: { select: { name: true } } },
+      orderBy: { name: "asc" },
+    }),
+    prisma.subteam.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.digestSubscription.findMany({
+      where: { userId: user.id },
+      select: { projectId: true, subteamId: true },
+    }),
+  ]);
+
+  const projectOptions = projects.map((p) => ({
+    id: p.id,
+    label: p.parent ? `${p.parent.name} › ${p.name}` : p.name,
+  }));
+  const followedProjects = subs
+    .map((s) => s.projectId)
+    .filter((x): x is string => !!x);
+  const followedSubteams = subs
+    .map((s) => s.subteamId)
+    .filter((x): x is string => !!x);
 
   const card = "rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 shadow-sm";
 
@@ -40,10 +70,23 @@ export default async function SettingsPage() {
             value={settings.emailOverdue}
           />
         </div>
-        <p className="mt-4 text-sm text-neutral-400">
-          Daily digest (follow projects/subteams + choose what to hear about) —
-          coming next.
+      </section>
+
+      <section className={`mt-4 ${card}`}>
+        <h2 className="font-medium">Daily digest</h2>
+        <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+          A nightly summary of what happened in the work you care about.
         </p>
+        <div className="mt-3">
+          <DigestSettings
+            projects={projectOptions}
+            subteams={subteams}
+            followedProjects={followedProjects}
+            followedSubteams={followedSubteams}
+            kinds={settings.digestKinds}
+            kindOptions={DIGEST_KINDS}
+          />
+        </div>
       </section>
     </div>
   );

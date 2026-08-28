@@ -39,6 +39,7 @@ model User {
   activities      Activity[] @relation("ActivityActor")
   settings        UserSettings?
   digestSubscriptions DigestSubscription[]
+  emailQueue      EmailQueueItem[]
 }
 
 model Project {
@@ -84,6 +85,23 @@ model UserSettings {
   emailDueSoon     Boolean  @default(true)
   emailOverdue     Boolean  @default(true)
   digestKinds      String[] @default([]) // activity kinds included in the nightly digest
+}
+
+// Queued transactional emails (currently task assignments), flushed as ONE email
+// per recipient every 15 minutes to conserve SES sends.
+model EmailQueueItem {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  kind      String // "assigned"
+  taskId    String?
+  taskTitle String
+  projectId String?
+  actorName String?
+  createdAt DateTime  @default(now())
+  sentAt    DateTime?
+
+  @@index([sentAt])
 }
 
 // A project/subteam a user follows for their nightly digest.
