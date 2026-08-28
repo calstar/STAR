@@ -1,0 +1,23 @@
+import { z } from "zod";
+
+export const TaskStatusEnum = z.enum(["backlog", "todo", "in_progress", "done"]);
+export const TaskPriorityEnum = z.enum(["low", "medium", "high"]);
+
+// FormData gives strings (and "" for empty). Treat "" / null as "not set".
+const emptyToUndef = (v: unknown) => (v === "" || v == null ? undefined : v);
+
+export const projectCreateSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(200),
+  description: z.preprocess(emptyToUndef, z.string().trim().max(2000).optional()),
+  color: z.preprocess(emptyToUndef, z.string().trim().max(20).optional()),
+});
+
+export const taskCreateSchema = z.object({
+  projectId: z.string().min(1),
+  title: z.string().trim().min(1, "Title is required").max(300),
+  description: z.preprocess(emptyToUndef, z.string().trim().max(5000).optional()),
+  priority: z.preprocess(emptyToUndef, TaskPriorityEnum.optional()),
+  assigneeId: z.preprocess(emptyToUndef, z.string().optional()),
+  startDate: z.preprocess(emptyToUndef, z.coerce.date().optional()),
+  dueDate: z.preprocess(emptyToUndef, z.coerce.date().optional()),
+});

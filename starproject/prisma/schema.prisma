@@ -1,5 +1,6 @@
-// STARProject schema. Phase 0 introduces just the User table (the first real
-// model everything else will reference) to prove the migrate flow end to end.
+// STARProject schema — the flat task-tracker model. No per-project permissions:
+// any authenticated user sees and edits everything (filtering, not access
+// control, gives "my tasks" later). Blockers are display-only edges.
 
 generator client {
   provider = "prisma-client-js"
@@ -13,9 +14,90 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum TaskStatus {
+  backlog
+  todo
+  in_progress
+  done
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+}
+
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
   name      String?
   createdAt DateTime @default(now())
+
+  createdProjects Project[] @relation("ProjectCreatedBy")
+  createdTasks    Task[]    @relation("TaskCreatedBy")
+  assignedTasks   Task[]    @relation("TaskAssignee")
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  color       String?
+  archived    Boolean  @default(false)
+  createdById String
+  createdBy   User     @relation("ProjectCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tasks Task[]
+}
+
+model Task {
+  id          String        @id @default(cuid())
+  projectId   String
+  project     Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  status      TaskStatus    @default(backlog)
+  priority    TaskPriority?
+  assigneeId  String?
+  assignee    User?         @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  startDate   DateTime?
+  dueDate     DateTime?
+  boardOrder  Float         @default(0) // ordering within a kanban column (Phase 2)
+  createdById String
+  createdBy   User          @relation("TaskCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  blockedBy TaskBlocker[] @relation("BlockedTask") // tasks blocking THIS one
+  blocking  TaskBlocker[] @relation("BlockerTask") // tasks THIS one blocks
+
+  @@index([projectId, status])
+}
+
+// Display-only dependency edges: "task is blocked by blockedByTask". No cascade
+// scheduling — used to render a "blocked" badge (Phase 3) and Gantt arrows
+// (Phase 4).
+model TaskBlocker {
+  id            String   @id @default(cuid())
+  taskId        String
+  task          Task     @relation("BlockedTask", fields: [taskId], references: [id], onDelete: Cascade)
+  blockedById   String
+  blockedByTask Task     @relation("BlockerTask", fields: [blockedById], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+
+  @@unique([taskId, blockedById])
+}
+
+// Idempotency ledger for Phase 5 emails (assignment / due-soon / overdue), so
+// the deadline cron never double-sends.
+model NotifLog {
+  id     String   @id @default(cuid())
+  taskId String
+  userId String
+  kind   String
+  sentAt DateTime @default(now())
+
+  @@index([taskId, userId, kind])
 }

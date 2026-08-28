@@ -1,57 +1,57 @@
-import { getCurrentUser } from "@/lib/auth";
+import Link from "next/link";
+
+import { NewProjectForm } from "@/components/NewProjectForm";
 import { prisma } from "@/lib/db";
 
-// Reads request headers + the DB per request, so this route is always dynamic.
+// Reads the DB per request.
 export const dynamic = "force-dynamic";
 
-type Health = { ok: boolean; detail: string };
-
-async function checkDb(): Promise<Health> {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    const users = await prisma.user.count();
-    return { ok: true, detail: `connected — ${users} user record(s)` };
-  } catch (err) {
-    return {
-      ok: false,
-      detail: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
-
 export default async function Home() {
-  const user = await getCurrentUser();
-  const db = await checkDb();
+  const projects = await prisma.project.findMany({
+    where: { archived: false },
+    orderBy: { createdAt: "desc" },
+    include: { _count: { select: { tasks: true } } },
+  });
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center gap-8 px-6">
-      <div>
-        <p className="text-sm font-medium uppercase tracking-wide text-neutral-500">
-          STARProject
-        </p>
-        <h1 className="mt-1 text-3xl font-semibold">Phase 0 — it&apos;s alive</h1>
+    <div className="mx-auto max-w-5xl px-6 py-8">
+      <h1 className="text-2xl font-semibold">Projects</h1>
+
+      <div className="mt-4">
+        <NewProjectForm />
       </div>
 
-      <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-medium text-neutral-500">Signed in as</h2>
-        <p className="mt-1 text-lg font-medium">{user.name}</p>
-        <p className="text-neutral-600">{user.email}</p>
-      </section>
-
-      <section className="rounded-xl border border-neutral-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-medium text-neutral-500">Database</h2>
-        <p className="mt-1 flex items-center gap-2 text-lg font-medium">
-          <span
-            aria-hidden
-            className={
-              "inline-block h-2.5 w-2.5 rounded-full " +
-              (db.ok ? "bg-green-500" : "bg-red-500")
-            }
-          />
-          {db.ok ? "Healthy" : "Unavailable"}
-        </p>
-        <p className="mt-1 break-words text-sm text-neutral-600">{db.detail}</p>
-      </section>
-    </main>
+      <ul className="mt-6 divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 bg-white">
+        {projects.length === 0 && (
+          <li className="p-4 text-neutral-500">
+            No projects yet. Create one above.
+          </li>
+        )}
+        {projects.map((p) => (
+          <li key={p.id} className="hover:bg-neutral-50">
+            <Link
+              href={`/projects/${p.id}`}
+              className="flex items-center justify-between p-4"
+            >
+              <span className="flex items-center gap-3">
+                <span
+                  className="inline-block h-3 w-3 shrink-0 rounded-full"
+                  style={{ background: p.color ?? "#a3a3a3" }}
+                />
+                <span className="font-medium">{p.name}</span>
+                {p.description && (
+                  <span className="text-sm text-neutral-500">
+                    {p.description}
+                  </span>
+                )}
+              </span>
+              <span className="text-sm text-neutral-500">
+                {p._count.tasks} task{p._count.tasks === 1 ? "" : "s"}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
