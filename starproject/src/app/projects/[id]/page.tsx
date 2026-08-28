@@ -26,7 +26,14 @@ export default async function ProjectPage({
       where: { id },
       include: {
         tasks: {
-          include: { assignee: true },
+          include: {
+            assignee: true,
+            blockedBy: {
+              include: {
+                blockedByTask: { select: { id: true, title: true, status: true } },
+              },
+            },
+          },
           orderBy: [{ boardOrder: "asc" }, { createdAt: "asc" }],
         },
       },

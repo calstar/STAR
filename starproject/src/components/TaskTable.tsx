@@ -1,0 +1,240 @@
+"use client";
+
+import type { TaskStatus, User } from "@prisma/client";
+import {
+  type ColumnFiltersState,
+  type SortingState,
+  createColumnHelper,
+  flexRender,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import Link from "next/link";
+import { useState } from "react";
+
+import { STATUS_LABEL } from "@/lib/tasks";
+
+import { BlockedBadge } from "./BlockedBadge";
+
+export type TaskRowData = {
+  id: string;
+  title: string;
+  projectId: string;
+  projectName: string;
+  status: TaskStatus;
+  priority: string;
+  assigneeId: string;
+  assigneeName: string;
+  due: string;
+  overdue: boolean;
+  blocked: boolean;
+};
+
+const col = createColumnHelper<TaskRowData>();
+
+const columns = [
+  col.accessor("title", {
+    header: "Task",
+    cell: (info) => (
+      <div className="flex items-center gap-2">
+        <Link
+          href={`/projects/${info.row.original.projectId}/tasks/${info.row.original.id}`}
+          className="font-medium hover:underline"
+        >
+          {info.getValue()}
+        </Link>
+        {info.row.original.blocked && <BlockedBadge />}
+      </div>
+    ),
+  }),
+  col.accessor("projectId", {
+    id: "project",
+    header: "Project",
+    filterFn: "equals",
+    cell: (info) => info.row.original.projectName,
+  }),
+  col.accessor("status", {
+    header: "Status",
+    filterFn: "equals",
+    cell: (info) => STATUS_LABEL[info.getValue()],
+  }),
+  col.accessor("priority", {
+    header: "Priority",
+    filterFn: "equals",
+    cell: (info) => (
+      <span className="capitalize">{info.getValue() || "—"}</span>
+    ),
+  }),
+  col.accessor("assigneeId", {
+    header: "Assignee",
+    filterFn: "equals",
+    cell: (info) => info.row.original.assigneeName || "—",
+  }),
+  col.accessor("due", {
+    header: "Due",
+    cell: (info) =>
+      info.getValue() ? (
+        <span className={info.row.original.overdue ? "font-medium text-red-600" : ""}>
+          {info.getValue()}
+        </span>
+      ) : (
+        "—"
+      ),
+  }),
+];
+
+export function TaskTable({
+  rows,
+  users,
+  projects,
+  currentUserId,
+}: {
+  rows: TaskRowData[];
+  users: User[];
+  projects: { id: string; name: string }[];
+  currentUserId: string;
+}) {
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [globalFilter, setGlobalFilter] = useState("");
+
+  const table = useReactTable({
+    data: rows,
+    columns,
+    state: { sorting, columnFilters, globalFilter },
+    onSortingChange: setSorting,
+    onColumnFiltersChange: setColumnFilters,
+    onGlobalFilterChange: setGlobalFilter,
+    globalFilterFn: (row, _id, value) => {
+      const v = String(value).toLowerCase();
+      const r = row.original;
+      return [r.title, r.projectName, r.assigneeName, r.priority, STATUS_LABEL[r.status]]
+        .join(" ")
+        .toLowerCase()
+        .includes(v);
+    },
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+  });
+
+  const filterValue = (id: string) =>
+    (columnFilters.find((f) => f.id === id)?.value as string) ?? "";
+  const setFilter = (id: string, value: string) =>
+    setColumnFilters((prev) => {
+      const rest = prev.filter((f) => f.id !== id);
+      return value ? [...rest, { id, value }] : rest;
+    });
+
+  const sel = "rounded border border-neutral-300 bg-white px-2 py-1 text-sm";
+
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <input
+          value={globalFilter}
+          onChange={(e) => setGlobalFilter(e.target.value)}
+          placeholder="Search tasks…"
+          className="min-w-48 flex-1 rounded border border-neutral-300 px-3 py-1.5 text-sm"
+        />
+        <button
+          onClick={() => setFilter("assigneeId", currentUserId)}
+          className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700"
+        >
+          My tasks
+        </button>
+        <select
+          value={filterValue("project")}
+          onChange={(e) => setFilter("project", e.target.value)}
+          className={sel}
+        >
+          <option value="">All projects</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filterValue("status")}
+          onChange={(e) => setFilter("status", e.target.value)}
+          className={sel}
+        >
+          <option value="">All statuses</option>
+          {(Object.keys(STATUS_LABEL) as TaskStatus[]).map((s) => (
+            <option key={s} value={s}>
+              {STATUS_LABEL[s]}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filterValue("assigneeId")}
+          onChange={(e) => setFilter("assigneeId", e.target.value)}
+          className={sel}
+        >
+          <option value="">All assignees</option>
+          {users.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.name ?? u.email}
+            </option>
+          ))}
+        </select>
+        {(columnFilters.length > 0 || globalFilter) && (
+          <button
+            onClick={() => {
+              setColumnFilters([]);
+              setGlobalFilter("");
+            }}
+            className="text-sm text-neutral-500 hover:underline"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-neutral-200 bg-white">
+        <table className="w-full border-collapse text-left text-sm">
+          <thead>
+            {table.getHeaderGroups().map((hg) => (
+              <tr
+                key={hg.id}
+                className="border-b border-neutral-200 text-xs uppercase tracking-wide text-neutral-500"
+              >
+                {hg.headers.map((h) => (
+                  <th
+                    key={h.id}
+                    onClick={h.column.getToggleSortingHandler()}
+                    className="cursor-pointer select-none px-3 py-2 font-medium"
+                  >
+                    {flexRender(h.column.columnDef.header, h.getContext())}
+                    {{ asc: " ▲", desc: " ▼" }[h.column.getIsSorted() as string] ?? ""}
+                  </th>
+                ))}
+              </tr>
+            ))}
+          </thead>
+          <tbody>
+            {table.getRowModel().rows.length === 0 && (
+              <tr>
+                <td colSpan={columns.length} className="px-3 py-4 text-neutral-500">
+                  No tasks match.
+                </td>
+              </tr>
+            )}
+            {table.getRowModel().rows.map((row) => (
+              <tr key={row.id} className="border-b border-neutral-100">
+                {row.getVisibleCells().map((cell) => (
+                  <td key={cell.id} className="px-3 py-2">
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}

@@ -2,6 +2,7 @@ import type { Task, TaskStatus } from "@prisma/client";
 
 export type BoardTask = Task & {
   assignee: { id: string; name: string | null; email: string } | null;
+  blockedBy?: { blockedByTask: { id: string; title: string; status: TaskStatus } }[];
 };
 
 export type Columns = Record<TaskStatus, BoardTask[]>;

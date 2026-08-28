@@ -1,118 +1,58 @@
 "use client";
 
-import type { Task, User } from "@prisma/client";
+import type { User } from "@prisma/client";
+import Link from "next/link";
 
 import { deleteTask, updateTask } from "@/lib/actions/tasks";
+import type { BoardTask } from "@/lib/board";
+import { isBlocked } from "@/lib/tasks";
 
-const STATUS_OPTS: [string, string][] = [
-  ["backlog", "Backlog"],
-  ["todo", "To do"],
-  ["in_progress", "In progress"],
-  ["done", "Done"],
-];
-const PRIORITY_OPTS: [string, string][] = [
-  ["", "—"],
-  ["low", "Low"],
-  ["medium", "Medium"],
-  ["high", "High"],
-];
+import { BlockedBadge } from "./BlockedBadge";
+import { AssigneeSelect } from "./fields/AssigneeSelect";
+import { DueDateInput } from "./fields/DueDateInput";
+import { PrioritySelect } from "./fields/PrioritySelect";
+import { StatusSelect } from "./fields/StatusSelect";
 
-// Submit the containing <form> whenever a control changes, so each inline edit
-// persists immediately (and only sends its own field — see updateTask).
-function submit(e: { currentTarget: { form: HTMLFormElement | null } }) {
-  e.currentTarget.form?.requestSubmit();
-}
-
-export function TaskRow({
-  task,
-  users,
-}: {
-  task: Task & { assignee: User | null };
-  users: User[];
-}) {
+export function TaskRow({ task, users }: { task: BoardTask; users: User[] }) {
   const due = task.dueDate
     ? new Date(task.dueDate).toISOString().slice(0, 10)
     : "";
   const cell = "px-2 py-1.5 align-middle";
-  const control =
-    "rounded border border-neutral-300 bg-white px-2 py-1 text-sm";
 
   return (
     <tr className="border-b border-neutral-100">
       <td className={`${cell} w-full`}>
-        <form action={updateTask}>
-          <input type="hidden" name="id" value={task.id} />
-          <input
-            name="title"
-            defaultValue={task.title}
-            onBlur={submit}
-            className="w-full rounded border border-transparent px-2 py-1 text-sm hover:border-neutral-300 focus:border-neutral-400 focus:outline-none"
-          />
-        </form>
-      </td>
-      <td className={cell}>
-        <form action={updateTask}>
-          <input type="hidden" name="id" value={task.id} />
-          <select
-            name="status"
-            defaultValue={task.status}
-            onChange={submit}
-            className={control}
+        <div className="flex items-center gap-2">
+          <form action={updateTask} className="min-w-0 flex-1">
+            <input type="hidden" name="id" value={task.id} />
+            <input
+              name="title"
+              defaultValue={task.title}
+              onBlur={(e) => e.currentTarget.form?.requestSubmit()}
+              className="w-full rounded border border-transparent px-2 py-1 text-sm hover:border-neutral-300 focus:border-neutral-400 focus:outline-none"
+            />
+          </form>
+          {isBlocked(task.blockedBy) && <BlockedBadge />}
+          <Link
+            href={`/projects/${task.projectId}/tasks/${task.id}`}
+            className="shrink-0 rounded px-1.5 py-1 text-xs text-neutral-500 hover:bg-neutral-100"
+            title="Open task"
           >
-            {STATUS_OPTS.map(([v, l]) => (
-              <option key={v} value={v}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </form>
+            ↗
+          </Link>
+        </div>
       </td>
       <td className={cell}>
-        <form action={updateTask}>
-          <input type="hidden" name="id" value={task.id} />
-          <select
-            name="priority"
-            defaultValue={task.priority ?? ""}
-            onChange={submit}
-            className={control}
-          >
-            {PRIORITY_OPTS.map(([v, l]) => (
-              <option key={v} value={v}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </form>
+        <StatusSelect taskId={task.id} value={task.status} />
       </td>
       <td className={cell}>
-        <form action={updateTask}>
-          <input type="hidden" name="id" value={task.id} />
-          <select
-            name="assigneeId"
-            defaultValue={task.assigneeId ?? ""}
-            onChange={submit}
-            className={control}
-          >
-            <option value="">Unassigned</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name ?? u.email}
-              </option>
-            ))}
-          </select>
-        </form>
+        <PrioritySelect taskId={task.id} value={task.priority ?? ""} />
       </td>
       <td className={cell}>
-        <form action={updateTask}>
-          <input type="hidden" name="id" value={task.id} />
-          <input
-            type="date"
-            name="dueDate"
-            defaultValue={due}
-            onChange={submit}
-            className={control}
-          />
-        </form>
+        <AssigneeSelect taskId={task.id} value={task.assigneeId ?? ""} users={users} />
+      </td>
+      <td className={cell}>
+        <DueDateInput taskId={task.id} value={due} />
       </td>
       <td className={cell}>
         <form action={deleteTask}>
