@@ -37,7 +37,7 @@ export function BlockerEditor({
         </select>
         <button
           disabled={pending || candidates.length === 0}
-          className="rounded bg-neutral-900 px-3 py-1 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+          className="rounded bg-neutral-900 px-3 py-1 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300 disabled:opacity-50"
         >
           Add
         </button>

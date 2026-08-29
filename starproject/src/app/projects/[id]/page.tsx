@@ -62,8 +62,8 @@ export default async function ProjectPage({
   const tab = (active: boolean) =>
     `rounded px-3 py-1 text-sm ${
       active
-        ? "bg-neutral-900 text-white"
-        : "text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100"
+        ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
+        : "text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
     }`;
 
   return (
@@ -101,7 +101,7 @@ export default async function ProjectPage({
                 <Link
                   key={c.id}
                   href={`/projects/${c.id}`}
-                  className="flex items-center gap-1.5 rounded-full border border-neutral-300 dark:border-neutral-700 px-2.5 py-0.5 text-sm hover:bg-neutral-100"
+                  className="flex items-center gap-1.5 rounded-full border border-neutral-300 dark:border-neutral-700 px-2.5 py-0.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"
                 >
                   <span
                     className="inline-block h-2 w-2 rounded-full"

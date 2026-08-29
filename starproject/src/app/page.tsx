@@ -27,7 +27,6 @@ export default async function Home() {
         blockedBy: { include: { blockedByTask: { select: { status: true } } } },
       },
       orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
-      take: 25,
     }),
   ]);
 
@@ -49,8 +48,8 @@ export default async function Home() {
         </span>
       </h1>
 
-      <div className="mt-6 grid gap-4 md:grid-cols-3">
-        {/* Projects */}
+      <div className="mt-6 grid items-start gap-4 md:grid-cols-4">
+        {/* Projects — 1/4 */}
         <section className={tile}>
           <div className="flex items-center justify-between">
             <h2 className="font-medium">Projects</h2>
@@ -58,7 +57,7 @@ export default async function Home() {
               All →
             </Link>
           </div>
-          <div className="mt-3 max-h-[28rem] space-y-0.5 overflow-y-auto">
+          <div className="mt-3 space-y-0.5">
             {projects.length === 0 && (
               <p className="px-2 py-2 text-sm text-neutral-500 dark:text-neutral-400">
                 No projects yet.
@@ -79,7 +78,7 @@ export default async function Home() {
           </div>
         </section>
 
-        {/* Subteams */}
+        {/* Subteams — 1/4 */}
         <section className={tile}>
           <div className="flex items-center justify-between">
             <h2 className="font-medium">Subteams</h2>
@@ -87,7 +86,7 @@ export default async function Home() {
               All →
             </Link>
           </div>
-          <div className="mt-3 max-h-[28rem] space-y-0.5 overflow-y-auto">
+          <div className="mt-3 space-y-0.5">
             {subteams.length === 0 && (
               <p className="px-2 py-2 text-sm text-neutral-500 dark:text-neutral-400">
                 No subteams yet.
@@ -108,15 +107,15 @@ export default async function Home() {
           </div>
         </section>
 
-        {/* My tasks */}
-        <section className={tile}>
+        {/* My tasks — 1/2 */}
+        <section className={`${tile} md:col-span-2`}>
           <div className="flex items-center justify-between">
             <h2 className="font-medium">My tasks</h2>
             <Link href="/tasks" className={seeAll}>
               All →
             </Link>
           </div>
-          <div className="mt-3 max-h-[28rem] space-y-0.5 overflow-y-auto">
+          <div className="mt-3 space-y-0.5">
             {myTasks.length === 0 && (
               <p className="px-2 py-2 text-sm text-neutral-500 dark:text-neutral-400">
                 Nothing assigned to you. Nice.

@@ -95,14 +95,14 @@ export function TasksWorkspace({
   const tabBtn = (v: View) =>
     `rounded px-3 py-1 text-sm ${
       view === v
-        ? "bg-neutral-900 text-white"
-        : "text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100"
+        ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
+        : "text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
     }`;
   const chip = (active: boolean) =>
     `rounded-full border px-2.5 py-0.5 text-sm ${
       active
-        ? "border-neutral-900 bg-neutral-900 text-white"
-        : "border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100"
+        ? "border-neutral-900 bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
+        : "border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
     }`;
 
   return (
@@ -130,8 +130,8 @@ export function TasksWorkspace({
             onClick={() => setMyOnly((v) => !v)}
             className={`rounded px-3 py-1.5 text-sm font-medium ${
               myOnly
-                ? "bg-neutral-900 text-white"
-                : "border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100"
+                ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
+                : "border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
             }`}
           >
             My tasks

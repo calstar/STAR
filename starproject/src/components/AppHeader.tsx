@@ -1,37 +1,56 @@
+import Image from "next/image";
 import Link from "next/link";
 
 import { UserMenu } from "@/components/UserMenu";
 import { getCurrentDbUser } from "@/lib/user";
 
 // Rendered in the root layout. Calling getCurrentDbUser here also guarantees the
-// viewer is upserted into the DB on any page they visit, so they appear in
-// assignee pickers even before they create anything.
+// viewer is upserted into the DB on any page they visit.
 export async function AppHeader() {
   const user = await getCurrentDbUser();
+
+  const navLink =
+    "text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100";
+
   return (
-    <header className="border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
+    <header className="border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
         <div className="flex items-center gap-6">
-          <Link href="/" className="font-semibold tracking-tight">
-            STARProject
+          <Link href="/" className="flex items-center gap-1.5">
+            {/* Blue wordmark in light mode, white wordmark in dark mode. */}
+            <Image
+              src="/star-blue.png"
+              alt="STAR"
+              width={5016}
+              height={1772}
+              priority
+              unoptimized
+              className="h-7 w-auto dark:hidden"
+            />
+            <Image
+              src="/star-wordmark.png"
+              alt="STAR"
+              width={5016}
+              height={1772}
+              priority
+              unoptimized
+              className="hidden h-7 w-auto dark:block"
+            />
+            <span className="text-xl font-semibold tracking-tight text-neutral-900 dark:text-neutral-100">
+              project
+            </span>
           </Link>
           <nav className="flex items-center gap-4 text-sm">
-            <Link href="/projects" className="text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:text-neutral-100">
+            <Link href="/projects" className={navLink}>
               Projects
             </Link>
-            <Link href="/tasks" className="text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:text-neutral-100">
+            <Link href="/tasks" className={navLink}>
               Tasks
             </Link>
-            <Link
-              href="/subteams"
-              className="text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:text-neutral-100"
-            >
+            <Link href="/subteams" className={navLink}>
               Subteams
             </Link>
-            <Link
-              href="/activity"
-              className="text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:text-neutral-100"
-            >
+            <Link href="/activity" className={navLink}>
               Activity
             </Link>
           </nav>

@@ -41,8 +41,8 @@ export function DigestSettings({
   const chip = (active: boolean) =>
     `rounded-full border px-2.5 py-0.5 text-sm ${
       active
-        ? "border-neutral-900 bg-neutral-900 text-white"
-        : "border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100"
+        ? "border-neutral-900 bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
+        : "border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
     }`;
 
   return (

@@ -182,8 +182,8 @@ export function TaskTable({
           }
           className={`rounded px-3 py-1.5 text-sm font-medium ${
             filterValue("assigneeId") === currentUserId
-              ? "bg-neutral-900 text-white"
-              : "border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100"
+              ? "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900"
+              : "border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"
           }`}
         >
           My tasks
@@ -286,7 +286,7 @@ export function TaskTable({
                     `/projects/${row.original.projectId}/tasks/${row.original.id}`,
                   )
                 }
-                className="cursor-pointer border-b border-neutral-100 hover:bg-neutral-50 dark:border-neutral-800 dark:hover:bg-neutral-800/40"
+                className="cursor-pointer border-b border-neutral-100 hover:bg-neutral-50 dark:hover:bg-neutral-900 dark:border-neutral-800 dark:hover:bg-neutral-800/40"
               >
                 {row.getVisibleCells().map((cell) => (
                   <td key={cell.id} className="px-3 py-2">

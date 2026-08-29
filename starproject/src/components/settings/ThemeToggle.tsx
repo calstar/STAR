@@ -24,7 +24,7 @@ export function ThemeToggle({ theme }: { theme: string }) {
         role="switch"
         aria-checked={dark}
         className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-          dark ? "bg-neutral-900" : "bg-neutral-300"
+          dark ? "bg-neutral-500" : "bg-neutral-300"
         }`}
       >
         <span

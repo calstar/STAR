@@ -44,7 +44,7 @@ export function EditableTitle({
       <button
         onClick={() => setEditing(true)}
         title="Rename"
-        className="rounded px-1.5 py-0.5 text-xs text-neutral-500 dark:text-neutral-400 hover:bg-neutral-200 hover:text-neutral-700"
+        className="rounded px-1.5 py-0.5 text-xs text-neutral-500 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700 hover:text-neutral-700"
       >
         ✎ Edit
       </button>

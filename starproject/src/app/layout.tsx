@@ -7,6 +7,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "STARProject",
   description: "STAR team task tracker",
+  icons: { icon: "/star-icon.svg" },
 };
 
 export default async function RootLayout({

@@ -8,3 +8,37 @@
 .gantt .handle {
   pointer-events: none;
 }
+
+/* frappe-gantt ships a light-only stylesheet; make it legible in dark mode. */
+.dark .gantt .grid-background {
+  fill: transparent;
+}
+.dark .gantt .grid-row {
+  fill: #171717;
+}
+.dark .gantt .grid-row:nth-child(even) {
+  fill: #1f1f1f;
+}
+.dark .gantt .row-line {
+  stroke: #262626;
+}
+.dark .gantt .tick {
+  stroke: #3f3f46;
+}
+.dark .gantt .tick.thick {
+  stroke: #52525b;
+}
+.dark .gantt .today-highlight {
+  fill: #3f3f46;
+  opacity: 0.35;
+}
+.dark .gantt .lower-text,
+.dark .gantt .upper-text {
+  fill: #a3a3a3;
+}
+.dark .gantt .bar-label {
+  fill: #fff;
+}
+.dark .gantt .bar-label.big {
+  fill: #d4d4d4;
+}

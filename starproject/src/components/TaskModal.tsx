@@ -33,7 +33,7 @@ export function TaskModal({ children }: { children: React.ReactNode }) {
         <button
           onClick={() => router.back()}
           aria-label="Close"
-          className="absolute right-3 top-3 z-10 rounded p-1 text-neutral-400 hover:bg-neutral-200 hover:text-neutral-700 dark:text-neutral-200"
+          className="absolute right-3 top-3 z-10 rounded p-1 text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700 hover:text-neutral-700 dark:hover:text-neutral-200"
         >
           ✕
         </button>

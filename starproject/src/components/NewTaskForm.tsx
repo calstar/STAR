@@ -58,7 +58,7 @@ export function NewTaskForm({
       <input type="date" name="dueDate" className={control} aria-label="Due date" />
       <button
         type="submit"
-        className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700"
+        className="rounded bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
       >
         Add task
       </button>

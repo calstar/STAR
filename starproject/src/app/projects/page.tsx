@@ -39,7 +39,7 @@ export default async function Home() {
           <li key={p.id}>
             <Link
               href={`/projects/${p.id}`}
-              className="flex items-center justify-between p-4 hover:bg-neutral-50"
+              className="flex items-center justify-between p-4 hover:bg-neutral-50 dark:hover:bg-neutral-900"
             >
               <span className="flex items-center gap-3">
                 <span
@@ -64,7 +64,7 @@ export default async function Home() {
                   <li key={c.id}>
                     <Link
                       href={`/projects/${c.id}`}
-                      className="flex items-center justify-between py-2.5 pl-10 pr-4 hover:bg-neutral-100"
+                      className="flex items-center justify-between py-2.5 pl-10 pr-4 hover:bg-neutral-100 dark:hover:bg-neutral-800"
                     >
                       <span className="flex items-center gap-3">
                         <span className="text-neutral-300">↳</span>
